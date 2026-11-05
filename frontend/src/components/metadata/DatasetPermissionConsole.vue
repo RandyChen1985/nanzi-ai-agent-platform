@@ -9,7 +9,7 @@
  *   白名单是 fail-closed 的，黑名单一旦加表就会漏；
  * - 合并语义只在后端实现一次，前端「权限模拟」直接读后端结果，避免两套口径。
  */
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import axios from '../../utils/axios'
 import { useToast } from '../../composables/useToast'
 
@@ -45,6 +45,8 @@ const props = defineProps<{
   rowFilterEnabled?: boolean
   /** 数据集自身的行级配置（读 dataset.row_filter_config） */
   rowFilterConfig?: Record<string, any>
+  /** 从外部直达某个子视图（数据行策略），值来自路由的 permView */
+  initialView?: 'subjects' | 'tables' | 'rows'
 }>()
 
 const emit = defineEmits<{ (e: 'changed'): void }>()
@@ -58,7 +60,9 @@ const grants = ref<Grant[]>([])
 const tables = ref<TableMeta[]>([])
 const candidates = ref<{ roles: any[]; users: any[] }>({ roles: [], users: [] })
 
-const view = ref<'subjects' | 'tables' | 'rows' | 'simulate'>('subjects')
+const resolveInitialView = (): 'subjects' | 'tables' | 'rows' =>
+  props.initialView === 'tables' || props.initialView === 'rows' ? props.initialView : 'subjects'
+const view = ref<'subjects' | 'tables' | 'rows'>(resolveInitialView())
 
 const allMembersGrant = computed(() => grants.value.find((g) => g.kind === 'all') || null)
 const roleGrants = computed(() => grants.value.filter((g) => g.kind === 'role'))
@@ -164,7 +168,15 @@ const load = async () => {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  document.addEventListener('click', closeSimPicker)
+  document.addEventListener('keydown', handleSimEsc)
+  void load()
+})
+onUnmounted(() => {
+  document.removeEventListener('click', closeSimPicker)
+  document.removeEventListener('keydown', handleSimEsc)
+})
 
 // 同一个 tab 内切换数据集时组件不会重建，必须显式重载，否则会继续显示上一个数据集的授权。
 watch(
@@ -388,6 +400,61 @@ const removeGrant = async (grant: Grant) => {
 // ---------------------------------------------------------------------------
 
 const simUserId = ref<number | null>(null)
+// 成员可能有几百个，原生 select 只能盲滚：改成可搜索的下拉（输入过滤姓名/账号）。
+const simOpen = ref(false)
+const simQuery = ref('')
+const simSearchRef = ref<HTMLInputElement | null>(null)
+const simSelectedLabel = computed(() => {
+  const u = (candidates.value.users || []).find((item) => Number(item.id) === simUserId.value)
+  if (!u) return ''
+  const name = String(u.real_name || '').trim()
+  const account = String(u.user_name || '').trim()
+  return name && name !== account ? `${name}（${account}）` : account || name
+})
+const simFilteredUsers = computed(() => {
+  const keyword = simQuery.value.trim().toLowerCase()
+  const users = candidates.value.users || []
+  if (!keyword) return users
+  return users.filter((u) =>
+    `${u.real_name || ''} ${u.user_name || ''}`.toLowerCase().includes(keyword),
+  )
+})
+const toggleSimOpen = () => {
+  simOpen.value = !simOpen.value
+  if (simOpen.value) simQuery.value = ''
+}
+const pickSimUser = (user: any) => {
+  simUserId.value = Number(user.id)
+  simOpen.value = false
+  simQuery.value = ''
+  // 换了人必须清掉上一次结果，否则屏幕上还是上一个人的表和行。
+  simResult.value = null
+}
+const closeSimPicker = () => {
+  simOpen.value = false
+}
+// 模拟是「查一个具体的人」的一次性动作，不占页签：放进弹框，看完就关。
+const simModalOpen = ref(false)
+const openSimulateModal = () => {
+  simModalOpen.value = true
+}
+const closeSimModal = () => {
+  simModalOpen.value = false
+  simOpen.value = false
+}
+const handleSimEsc = (event: KeyboardEvent) => {
+  if (event.key !== 'Escape') return
+  if (scopeHelpKey.value) {
+    scopeHelpKey.value = null
+    return
+  }
+  if (simModalOpen.value) closeSimModal()
+}
+watch(simOpen, async (open) => {
+  if (!open) return
+  await nextTick()
+  simSearchRef.value?.focus()
+})
 const simLoading = ref(false)
 const simResult = ref<any | null>(null)
 
@@ -476,15 +543,78 @@ const rolePolicyCount = (roleCode?: string) =>
 const allViewTabs = [
   { key: 'subjects', label: '按主体' },
   { key: 'tables', label: '按表' },
-  { key: 'rows', label: '行级策略' },
-  { key: 'simulate', label: '权限模拟' },
+  { key: 'rows', label: '数据行策略' },
 ] as const
 
-// 权限模拟要调管理端接口（需要 element:metadata:edit），只读用户看不到这个 tab，
+type ScopeHelpKey = 'dataset' | 'table' | 'row'
+
+const scopeHelpKey = ref<ScopeHelpKey | null>(null)
+
+// 三层门禁的说明：一张卡片上的数字看不出来「这层到底管什么」，
+// 而配错层的代价不一样（数据集级配宽 = 全表可见），所以每层都给一个「?」。
+const SCOPE_HELP: Record<ScopeHelpKey, {
+  title: string
+  subtitle: string
+  impact: string[]
+  principle: string[]
+  pitfall: string
+}> = {
+  dataset: {
+    title: '数据集级 · 谁能进',
+    subtitle: '决定「这个数据集对谁存在」',
+    impact: [
+      '在 ChatBI 里能不能检索到这个数据集的表结构：没有授权，模型连表名和字段都看不到。',
+      '能不能对它下面的表执行 SQL：不在授权范围内的数据集，查询会直接返回 Permission Denied。',
+      '在数据集列表、资源广场里能不能看到它、能不能申请它的权限。',
+    ],
+    principle: [
+      '一条授权 = 一个主体（全员 / 角色 / 用户）+ 一个数据集 + 一个有效期，落在 ai_agent_resource_permissions 里。',
+      '判定时取「本人授权 ∪ 本人所有角色的授权 ∪ 全员基线」，多个角色取并集——角色越多，能看到的数据集只增不减。',
+      '用户级授权覆盖角色级：可以给某个人单独放宽，也可以把某个人的范围收窄，不必改角色。',
+      '全员基线是不可收窄的公共底线：一旦授了全员，任何人的个人授权都无法把「能进」改回「不能进」。',
+      '过期的授权不再参与判定，但记录保留——续期只需改日期，不用重配范围和行级条件。',
+    ],
+    pitfall: '这一层通过 ≠ 能看到所有表。还要再过表级（能查哪些表）和行级（能看哪些行）两道。',
+  },
+  table: {
+    title: '表级 · 能查哪些表',
+    subtitle: '决定「进了这个数据集，能碰哪几张表」',
+    impact: [
+      '同一个数据集里，这个主体能看到哪些表的表结构、能把哪些表写进 SQL 和 join。',
+      'SQL 里出现授权范围外的表，整条查询会被拒绝，而不是悄悄把那张表过滤掉——悄悄过滤会让人以为数据缺失。',
+    ],
+    principle: [
+      '每条授权的表范围只有两种：全部表，或指定表的白名单（选 N 张具体的表）。',
+      '白名单是 fail-closed：如果写成「指定表」却一张都没选，等于一张都不给，而不是退化成全部表。',
+      '多个角色的白名单取并集；用户级授权覆盖角色级，所以给个人收窄是有效的。',
+      '新同步进来的表：授权是「全部表」时自动包含；已经收窄成白名单时，新表默认不可见，页面顶部会出现「N 张新表待确认」。',
+      '执行时按每张表自己的归属数据集校验，跨数据集 join 的附表同样拦得住。',
+    ],
+    pitfall: '数据集级有权限、表级又收窄了白名单，最终只能查白名单里的表——两层的交集，不是并集。',
+  },
+  row: {
+    title: '行级 · 能看哪些行',
+    subtitle: '决定「同一张表里，能看到哪些行」',
+    impact: [
+      '查询返回的数据行会被自动加上 WHERE 条件，例如只能看到本部门的订单。',
+      '对导出、看板、定时报表同样生效——它们和 ChatBI 走的是同一条执行链。',
+    ],
+    principle: [
+      '每条授权选一种策略：继承数据集策略 / 不过滤 / 自定义条件。',
+      '继承数据集策略：用数据集自身的行级配置，优先级是「用户例外 → 角色策略 → 默认策略」。',
+      '不过滤：显式跳过行级过滤，能看到可见表的所有行（慎用，等于对这一条授权放弃了行级隔离）。',
+      '自定义条件：把这条授权自己的 SQL 条件拼进 WHERE，和数据集自身的配置无关。',
+      '重写发生在 SQL 执行前：先解析 SQL 结构、再改 WHERE，不是简单的字符串拼接，所以子查询和 join 里的表也能加条件。',
+    ],
+    pitfall: '自定义条件如果引用了本次查询里没有的表、无法生效，系统会直接拒绝执行，而不是返回全量数据。',
+  },
+}
+
+const scopeHelp = computed(() => (scopeHelpKey.value ? SCOPE_HELP[scopeHelpKey.value] : null))
+
+// 权限模拟要调管理端接口（需要 element:metadata:edit），只读用户看不到入口；
 // 否则点进去只会拿到 403。
-const viewTabs = computed(() =>
-  props.canEdit ? allViewTabs : allViewTabs.filter((tab) => tab.key !== 'simulate'),
-)
+const viewTabs = computed(() => allViewTabs)
 
 const subjectKindOptions: { key: SubjectKind; label: string; desc: string }[] = [
   { key: 'all', label: '全员', desc: '所有能进入的人' },
@@ -525,7 +655,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
         <button
           v-if="canEdit"
           class="px-3 py-2 rounded-xl border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-all"
-          @click="view = 'simulate'"
+          @click="openSimulateModal"
         >
           权限模拟
         </button>
@@ -560,7 +690,15 @@ const subjectBadgeClass = (kind: SubjectKind) =>
     <!-- 概览 -->
     <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
       <div class="rounded-xl border border-gray-100 bg-gradient-to-br from-white to-slate-50/60 p-3.5">
-        <p class="text-[11px] font-semibold text-gray-400 select-none">数据集级 · 谁能进</p>
+        <p class="flex items-center gap-1.5 text-[11px] font-semibold text-gray-400 select-none">
+          数据集级 · 谁能进
+          <button
+            type="button"
+            class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-gray-300 text-[9px] font-bold leading-none text-gray-400 transition-colors hover:border-emerald-400 hover:text-emerald-600"
+            title="这一层管什么、怎么判定"
+            @click.stop="scopeHelpKey = 'dataset'"
+          >?</button>
+        </p>
         <p class="mt-1.5 text-xl font-bold text-gray-900">
           {{ subjectCount }} <span class="text-xs font-medium text-gray-400">条授权</span>
           <span v-if="expiredCount" class="ml-1 text-[11px] font-semibold text-gray-400">（{{ expiredCount }} 条已过期）</span>
@@ -571,7 +709,15 @@ const subjectBadgeClass = (kind: SubjectKind) =>
         </p>
       </div>
       <div class="rounded-xl border border-gray-100 bg-gradient-to-br from-white to-emerald-50/40 p-3.5">
-        <p class="text-[11px] font-semibold text-gray-400 select-none">表级 · 能查哪些表</p>
+        <p class="flex items-center gap-1.5 text-[11px] font-semibold text-gray-400 select-none">
+          表级 · 能查哪些表
+          <button
+            type="button"
+            class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-gray-300 text-[9px] font-bold leading-none text-gray-400 transition-colors hover:border-emerald-400 hover:text-emerald-600"
+            title="这一层管什么、怎么判定"
+            @click.stop="scopeHelpKey = 'table'"
+          >?</button>
+        </p>
         <p class="mt-1.5 text-xl font-bold text-gray-900">
           {{ tableScopeStats.covered }}
           <span class="text-xs font-medium text-gray-400">/ {{ tables.length }} 张被显式点名</span>
@@ -581,7 +727,15 @@ const subjectBadgeClass = (kind: SubjectKind) =>
         </p>
       </div>
       <div class="rounded-xl border border-gray-100 bg-gradient-to-br from-white to-amber-50/40 p-3.5">
-        <p class="text-[11px] font-semibold text-gray-400 select-none">行级 · 能看哪些行</p>
+        <p class="flex items-center gap-1.5 text-[11px] font-semibold text-gray-400 select-none">
+          行级 · 能看哪些行
+          <button
+            type="button"
+            class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-gray-300 text-[9px] font-bold leading-none text-gray-400 transition-colors hover:border-emerald-400 hover:text-emerald-600"
+            title="这一层管什么、怎么判定"
+            @click.stop="scopeHelpKey = 'row'"
+          >?</button>
+        </p>
         <p class="mt-1.5 text-xl font-bold text-gray-900">
           {{ rowPolicyStats.custom }} <span class="text-xs font-medium text-gray-400">条自定义</span>
         </p>
@@ -776,12 +930,12 @@ const subjectBadgeClass = (kind: SubjectKind) =>
       </div>
     </div>
 
-    <!-- 视图 3：行级策略 -->
+    <!-- 视图 3：数据行策略 -->
     <div v-else-if="view === 'rows'" class="space-y-3">
       <div class="rounded-xl border border-gray-100 bg-white p-3.5">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <h3 class="text-xs font-bold text-gray-700">
-            数据集自身行级策略
+            数据集自身数据行策略
             <span class="ml-1 rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">只读</span>
           </h3>
           <span
@@ -830,7 +984,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
       </div>
 
       <div class="rounded-xl border border-gray-100 bg-white p-3.5">
-        <h3 class="text-xs font-bold text-gray-700">三种行级策略</h3>
+        <h3 class="text-xs font-bold text-gray-700">三种数据行策略</h3>
         <ul class="mt-2 space-y-1.5 text-[11px] text-gray-600">
           <li><span class="font-semibold text-gray-700">继承数据集策略</span>（默认）：走数据集自身的行级配置（用户例外 → 角色策略 → 默认策略），在「数据权限配置」里维护，改动对所有继承的人生效。</li>
           <li><span class="font-semibold text-amber-700">不做行级过滤</span>：跳过重写。只应给审计、运维这类需要看全量的个人授权，属于高风险选项。</li>
@@ -866,106 +1020,6 @@ const subjectBadgeClass = (kind: SubjectKind) =>
           所有授权都继承数据集策略，没有单独的行级覆盖。
         </div>
       </div>
-    </div>
-
-    <!-- 视图 4：权限模拟 -->
-    <div v-else class="space-y-3">
-      <div class="flex flex-wrap items-end gap-2 rounded-xl border border-gray-100 bg-gray-50/50 p-3">
-        <div class="min-w-[16rem] flex-1">
-          <label class="mb-1 block text-[11px] font-semibold text-gray-500">选择成员</label>
-          <select v-model.number="simUserId" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs">
-            <option :value="null">请选择要模拟的成员</option>
-            <option v-for="u in candidates.users" :key="u.id" :value="Number(u.id)">
-              {{ u.real_name || u.user_name }}（{{ u.user_name }}）
-            </option>
-          </select>
-        </div>
-        <button
-          class="rounded-xl bg-gray-900 px-4 py-2 text-xs font-semibold text-white transition-all hover:bg-gray-800 disabled:opacity-40"
-          :disabled="!simUserId || simLoading"
-          @click="runSimulate"
-        >{{ simLoading ? '计算中…' : '开始模拟' }}</button>
-        <p class="text-[11px] text-gray-400">模拟结果由后端按真实判定链计算，与 ChatBI 执行时一致。</p>
-      </div>
-
-      <div v-if="!simResult" class="rounded-xl border border-dashed border-gray-200 bg-gray-50/30 py-8 text-center text-[11px] text-gray-400">
-        选一个成员，看他在这个数据集里最终能看到哪些表、哪些行，以及命中了哪些授权。
-      </div>
-
-      <template v-else>
-        <div class="rounded-xl border p-3.5" :class="simResult.has_access ? 'border-emerald-200 bg-emerald-50/40' : 'border-red-200 bg-red-50/40'">
-          <p class="text-xs font-bold" :class="simResult.has_access ? 'text-emerald-800' : 'text-red-800'">
-            {{ simResult.has_access ? '① 数据集级：可以进入' : '① 数据集级：被拒绝' }}
-          </p>
-          <p class="mt-1 text-[11px]" :class="simResult.has_access ? 'text-emerald-700' : 'text-red-700'">
-            <template v-if="simResult.has_access">
-              命中授权来源：{{ (simResult.scope?.sources || []).map((s: string) => s === 'user' ? '用户级' : s === 'role' ? '角色级' : '全员基线').join(' + ') || '—' }}
-            </template>
-            <template v-else>该成员没有任何命中该数据集的授权，ChatBI 不会返回这个数据集的任何内容。</template>
-          </p>
-        </div>
-
-        <div class="rounded-xl border border-gray-100 p-3.5">
-          <p class="text-xs font-bold text-gray-800">
-            ② 表级：{{ simVisibleTables.length }} / {{ simResult.total_tables }} 张表可见
-            <span v-if="simResult.scope?.mode === 'all'" class="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">范围=全部表</span>
-            <span v-else class="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">范围=指定表</span>
-          </p>
-          <div class="mt-2 flex flex-wrap gap-1">
-            <span
-              v-for="t in simVisibleTables"
-              :key="t.id"
-              class="rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] text-emerald-700"
-            >{{ t.physical_name }}</span>
-          </div>
-          <div v-if="simExcludedTables.length" class="mt-2.5">
-            <p class="text-[10px] font-semibold text-gray-400">被表级白名单排除（查询会返回 Permission Denied）</p>
-            <div class="mt-1 flex flex-wrap gap-1">
-              <span
-                v-for="t in simExcludedTables"
-                :key="t.id"
-                class="rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-mono text-[10px] text-gray-500 line-through"
-              >{{ t.physical_name }}</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="rounded-xl border border-gray-100 p-3.5">
-          <p class="text-xs font-bold text-gray-800">③ 行级：{{ rowPolicyText(simResult.row_policy) }}</p>
-          <p v-if="simResult.row_policy === 'custom' && simResult.row_condition" class="mt-1 font-mono text-[11px] text-indigo-700">
-            {{ simResult.row_condition }}
-          </p>
-          <p v-else-if="simResult.row_policy === 'none'" class="mt-1 text-[11px] text-amber-700">
-            该成员的授权显式跳过了行级过滤，能看到可见表的所有行。
-          </p>
-          <p v-else class="mt-1 text-[11px] text-gray-500">
-            按数据集自身行级配置重写 WHERE（用户例外 → 角色策略 → 默认策略）。
-          </p>
-        </div>
-
-        <div class="rounded-xl border border-gray-100 p-3.5">
-          <p class="text-xs font-bold text-gray-800">命中的授权条目</p>
-          <div v-if="simGrantRows.length" class="mt-2 space-y-1.5">
-            <div
-              v-for="g in simGrantRows"
-              :key="g.permission_id"
-              class="flex flex-wrap items-center gap-2 rounded-lg border border-gray-100 bg-gray-50/50 px-2.5 py-1.5 text-[11px]"
-            >
-              <span class="rounded border px-1.5 py-0.5 text-[10px] font-semibold" :class="subjectBadgeClass(g.subject)">
-                {{ g.subject === 'all' ? '全员基线' : g.subject === 'role' ? '角色' : '用户' }}
-              </span>
-              <span class="font-semibold text-gray-700">{{ g.subject === 'role' ? (g.subject_name || '角色') : g.subject === 'all' ? '所有成员' : '本人' }}</span>
-              <span class="text-gray-500">{{ g.mode === 'all' ? '全部表' : `${g.table_ids.length} 张表` }}</span>
-              <span class="text-gray-500">{{ rowPolicyText(g.row_policy) }}</span>
-              <code v-if="g.row_condition" class="font-mono text-[10px] text-gray-500">{{ g.row_condition }}</code>
-            </div>
-          </div>
-          <p v-else class="mt-1 text-[11px] text-gray-400">没有命中任何授权行。</p>
-          <p v-if="simResult.roles?.length" class="mt-2 text-[10px] text-gray-400">
-            该成员的角色：{{ simResult.roles.map((r: any) => r.name || r.code).join('、') }}
-          </p>
-        </div>
-      </template>
     </div>
 
     <!-- 抽屉：新增 / 编辑 -->
@@ -1207,6 +1261,251 @@ const subjectBadgeClass = (kind: SubjectKind) =>
                 @click="submitDrawer"
               >{{ saving ? '保存中…' : editingKey ? '保存修改' : '确认授权' }}</button>
             </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+    <!-- 三层门禁说明：卡片上的数字看不出「这层到底管什么」 -->
+    <Teleport to="body">
+      <div
+        v-if="scopeHelp"
+        class="fixed inset-0 z-[110] flex items-start justify-center overflow-y-auto bg-black/40 p-4 backdrop-blur-sm sm:p-8"
+        @click.self="scopeHelpKey = null"
+      >
+        <div class="my-auto w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="flex items-start justify-between border-b border-gray-100 bg-gray-50/60 px-5 py-3.5">
+            <div>
+              <h3 class="text-sm font-bold text-gray-800">{{ scopeHelp.title }}</h3>
+              <p class="mt-0.5 text-[11px] text-gray-400">{{ scopeHelp.subtitle }}</p>
+            </div>
+            <button
+              type="button"
+              class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-gray-700"
+              @click="scopeHelpKey = null"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="max-h-[70vh] space-y-4 overflow-y-auto px-5 py-4">
+            <div>
+              <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-emerald-600">影响什么</p>
+              <ul class="space-y-1.5">
+                <li
+                  v-for="(item, idx) in scopeHelp.impact"
+                  :key="`impact-${idx}`"
+                  class="flex gap-2 text-[12px] leading-relaxed text-gray-600"
+                >
+                  <span class="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-emerald-400"></span>
+                  <span>{{ item }}</span>
+                </li>
+              </ul>
+            </div>
+            <div>
+              <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-sky-600">什么原理</p>
+              <ul class="space-y-1.5">
+                <li
+                  v-for="(item, idx) in scopeHelp.principle"
+                  :key="`principle-${idx}`"
+                  class="flex gap-2 text-[12px] leading-relaxed text-gray-600"
+                >
+                  <span class="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-sky-400"></span>
+                  <span>{{ item }}</span>
+                </li>
+              </ul>
+            </div>
+            <div class="rounded-xl border border-amber-200 bg-amber-50/70 px-3.5 py-2.5">
+              <p class="text-[11px] font-bold text-amber-800">容易踩的坑</p>
+              <p class="mt-1 text-[11.5px] leading-relaxed text-amber-900">{{ scopeHelp.pitfall }}</p>
+            </div>
+          </div>
+          <div class="flex items-center justify-between border-t border-gray-100 bg-gray-50/60 px-5 py-3">
+            <span class="text-[10.5px] text-gray-400">三层是逐层收窄：能进 → 能查哪些表 → 能看哪些行</span>
+            <button
+              class="rounded-xl bg-gray-900 px-4 py-2 text-xs font-semibold text-white transition-all hover:bg-gray-800"
+              @click="scopeHelpKey = null"
+            >知道了</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 权限模拟（弹框）：查一个具体成员在这个数据集里最终能看到什么 -->
+    <Teleport to="body">
+      <div
+        v-if="simModalOpen"
+        class="fixed inset-0 z-[110] flex items-start justify-center overflow-y-auto bg-black/40 p-4 backdrop-blur-sm sm:p-8"
+        @click.self="closeSimModal"
+      >
+        <div class="my-auto w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="flex items-center justify-between border-b border-gray-100 bg-gray-50/60 px-5 py-3.5">
+            <div>
+              <h3 class="text-sm font-bold text-gray-800">权限模拟</h3>
+              <p class="mt-0.5 text-[11px] text-gray-400">
+                选一个成员，看他在这个数据集里最终能看到哪些表、哪些行，以及命中了哪些授权。
+              </p>
+            </div>
+            <button
+              type="button"
+              class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-gray-700"
+              @click="closeSimModal"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="max-h-[70vh] space-y-3 overflow-y-auto p-4">
+      <div class="flex flex-wrap items-end gap-2 rounded-xl border border-gray-100 bg-gray-50/50 p-3">
+        <div class="min-w-[16rem] flex-1">
+          <label class="mb-1 block text-[11px] font-semibold text-gray-500">选择成员</label>
+          <div class="relative" @click.stop>
+            <button
+              type="button"
+              class="flex w-full items-center justify-between gap-2 rounded-xl border bg-white px-3 py-2 text-left text-xs transition-colors"
+              :class="simOpen ? 'border-emerald-300 ring-2 ring-emerald-100' : 'border-gray-200 hover:border-gray-300'"
+              @click="toggleSimOpen"
+            >
+              <span class="truncate" :class="simSelectedLabel ? 'text-gray-800' : 'text-gray-400'">
+                {{ simSelectedLabel || '请选择要模拟的成员' }}
+              </span>
+              <svg
+                class="h-4 w-4 shrink-0 text-gray-400 transition-transform"
+                :class="simOpen ? 'rotate-180' : ''"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            <div
+              v-if="simOpen"
+              class="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-gray-100 bg-white shadow-xl"
+            >
+              <div class="border-b border-gray-100 p-2">
+                <input
+                  ref="simSearchRef"
+                  v-model="simQuery"
+                  type="text"
+                  placeholder="搜索姓名或账号"
+                  class="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs focus:border-emerald-300 focus:outline-none"
+                  @keydown.esc.stop="closeSimPicker"
+                  @keydown.enter.prevent="simFilteredUsers.length && pickSimUser(simFilteredUsers[0])"
+                />
+              </div>
+              <div class="max-h-64 overflow-y-auto py-1">
+                <button
+                  v-for="u in simFilteredUsers"
+                  :key="u.id"
+                  type="button"
+                  class="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-gray-50"
+                  :class="Number(u.id) === simUserId ? 'font-semibold text-emerald-700' : 'text-gray-700'"
+                  @click="pickSimUser(u)"
+                >
+                  <span class="truncate">{{ u.real_name || u.user_name }}</span>
+                  <span
+                    v-if="u.real_name && u.real_name !== u.user_name"
+                    class="shrink-0 text-[10px] text-gray-400"
+                  >{{ u.user_name }}</span>
+                </button>
+                <p v-if="!simFilteredUsers.length" class="px-3 py-4 text-center text-[11px] text-gray-400">
+                  没有匹配的成员
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button
+          class="rounded-xl bg-gray-900 px-4 py-2 text-xs font-semibold text-white transition-all hover:bg-gray-800 disabled:opacity-40"
+          :disabled="!simUserId || simLoading"
+          @click="runSimulate"
+        >{{ simLoading ? '计算中…' : '开始模拟' }}</button>
+        <p class="text-[11px] text-gray-400">模拟结果由后端按真实判定链计算，与 ChatBI 执行时一致。</p>
+      </div>
+
+      <div v-if="!simResult" class="rounded-xl border border-dashed border-gray-200 bg-gray-50/30 py-8 text-center text-[11px] text-gray-400">
+        选一个成员，看他在这个数据集里最终能看到哪些表、哪些行，以及命中了哪些授权。
+      </div>
+
+      <template v-else>
+        <div class="rounded-xl border p-3.5" :class="simResult.has_access ? 'border-emerald-200 bg-emerald-50/40' : 'border-red-200 bg-red-50/40'">
+          <p class="text-xs font-bold" :class="simResult.has_access ? 'text-emerald-800' : 'text-red-800'">
+            {{ simResult.has_access ? '① 数据集级：可以进入' : '① 数据集级：被拒绝' }}
+          </p>
+          <p class="mt-1 text-[11px]" :class="simResult.has_access ? 'text-emerald-700' : 'text-red-700'">
+            <template v-if="simResult.has_access">
+              命中授权来源：{{ (simResult.scope?.sources || []).map((s: string) => s === 'user' ? '用户级' : s === 'role' ? '角色级' : '全员基线').join(' + ') || '—' }}
+            </template>
+            <template v-else>该成员没有任何命中该数据集的授权，ChatBI 不会返回这个数据集的任何内容。</template>
+          </p>
+        </div>
+
+        <div class="rounded-xl border border-gray-100 p-3.5">
+          <p class="text-xs font-bold text-gray-800">
+            ② 表级：{{ simVisibleTables.length }} / {{ simResult.total_tables }} 张表可见
+            <span v-if="simResult.scope?.mode === 'all'" class="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">范围=全部表</span>
+            <span v-else class="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">范围=指定表</span>
+          </p>
+          <div class="mt-2 flex flex-wrap gap-1">
+            <span
+              v-for="t in simVisibleTables"
+              :key="t.id"
+              class="rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] text-emerald-700"
+            >{{ t.physical_name }}</span>
+          </div>
+          <div v-if="simExcludedTables.length" class="mt-2.5">
+            <p class="text-[10px] font-semibold text-gray-400">被表级白名单排除（查询会返回 Permission Denied）</p>
+            <div class="mt-1 flex flex-wrap gap-1">
+              <span
+                v-for="t in simExcludedTables"
+                :key="t.id"
+                class="rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-mono text-[10px] text-gray-500 line-through"
+              >{{ t.physical_name }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-gray-100 p-3.5">
+          <p class="text-xs font-bold text-gray-800">③ 行级：{{ rowPolicyText(simResult.row_policy) }}</p>
+          <p v-if="simResult.row_policy === 'custom' && simResult.row_condition" class="mt-1 font-mono text-[11px] text-indigo-700">
+            {{ simResult.row_condition }}
+          </p>
+          <p v-else-if="simResult.row_policy === 'none'" class="mt-1 text-[11px] text-amber-700">
+            该成员的授权显式跳过了行级过滤，能看到可见表的所有行。
+          </p>
+          <p v-else class="mt-1 text-[11px] text-gray-500">
+            按数据集自身行级配置重写 WHERE（用户例外 → 角色策略 → 默认策略）。
+          </p>
+        </div>
+
+        <div class="rounded-xl border border-gray-100 p-3.5">
+          <p class="text-xs font-bold text-gray-800">命中的授权条目</p>
+          <div v-if="simGrantRows.length" class="mt-2 space-y-1.5">
+            <div
+              v-for="g in simGrantRows"
+              :key="g.permission_id"
+              class="flex flex-wrap items-center gap-2 rounded-lg border border-gray-100 bg-gray-50/50 px-2.5 py-1.5 text-[11px]"
+            >
+              <span class="rounded border px-1.5 py-0.5 text-[10px] font-semibold" :class="subjectBadgeClass(g.subject)">
+                {{ g.subject === 'all' ? '全员基线' : g.subject === 'role' ? '角色' : '用户' }}
+              </span>
+              <span class="font-semibold text-gray-700">{{ g.subject === 'role' ? (g.subject_name || '角色') : g.subject === 'all' ? '所有成员' : '本人' }}</span>
+              <span class="text-gray-500">{{ g.mode === 'all' ? '全部表' : `${g.table_ids.length} 张表` }}</span>
+              <span class="text-gray-500">{{ rowPolicyText(g.row_policy) }}</span>
+              <code v-if="g.row_condition" class="font-mono text-[10px] text-gray-500">{{ g.row_condition }}</code>
+            </div>
+          </div>
+          <p v-else class="mt-1 text-[11px] text-gray-400">没有命中任何授权行。</p>
+          <p v-if="simResult.roles?.length" class="mt-2 text-[10px] text-gray-400">
+            该成员的角色：{{ simResult.roles.map((r: any) => r.name || r.code).join('、') }}
+          </p>
+        </div>
+      </template>
+          </div>
+          <div class="flex items-center justify-end gap-2 border-t border-gray-100 bg-gray-50/60 px-5 py-3">
+            <button class="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 transition-colors hover:bg-white" @click="closeSimModal">关闭</button>
           </div>
         </div>
       </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from '../utils/axios'
 import { metadataApi } from '../api/metadata'
@@ -210,7 +210,25 @@ const filteredTables = computed(() => {
 })
 
 // Tabs
-const activeTab = ref('tables')
+// 支持从外部带 ?tab= 直接落到某个页签（数据集卡片的「权限管理」就靠它直达）
+const VALID_TABS = ['tables', 'metrics', 'relationships', 'visualization', 'changelog', 'permissions']
+const resolveTabFromRoute = () => {
+  const tab = String(route.query.tab || '').trim()
+  return VALID_TABS.includes(tab) ? tab : 'tables'
+}
+const activeTab = ref(resolveTabFromRoute())
+// 权限管理下的子视图（按主体 / 按表 / 数据行策略），供「数据行策略」菜单直达
+const PERM_VIEWS = ['subjects', 'tables', 'rows']
+const initialPermView = computed(() => {
+  const view = String(route.query.permView || '').trim()
+  return PERM_VIEWS.includes(view) ? (view as 'subjects' | 'tables' | 'rows') : undefined
+})
+watch(
+  () => route.query.tab,
+  () => {
+    activeTab.value = resolveTabFromRoute()
+  },
+)
 
 // Edit Mode
 const editingTable = ref<Table | null>(null)
@@ -1187,6 +1205,7 @@ defineExpose({ fetchMetrics })
         :can-edit="hasEditPermission"
         :row-filter-enabled="rowFilterEnabled"
         :row-filter-config="rowFilterConfig"
+        :initial-view="initialPermView"
         @changed="fetchDatasetPermissions"
       />
     </div>

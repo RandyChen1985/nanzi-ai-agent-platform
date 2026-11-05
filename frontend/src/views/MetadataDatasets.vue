@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { metadataApi } from '../api/metadata'
 import type { Dataset } from '../api/metadata'
@@ -559,7 +559,7 @@ const hydrateBuilderFromConditions = () => {
   if (hydratedCount > 0) visualRules.value = { ...visualRules.value }
 }
 
-const openPermConfigModal = async (ds: any) => {
+const openPermConfigModal = async (ds: any, focusRowPolicy = false) => {
   const datasetId = ds?.id
   configuringDataset.value = JSON.parse(JSON.stringify(ds))
   // Initialize default if missing
@@ -577,7 +577,13 @@ const openPermConfigModal = async (ds: any) => {
   activePolicyTab.value = 'user' // 默认打开用户Tab
   closeMenus() // Reset any open selectors
   showPermConfigModal.value = true
-  
+
+  // 「数据行策略」入口直接落到策略区，省掉一次手滚
+  if (focusRowPolicy) {
+    await nextTick()
+    rowPolicySectionRef.value?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }
+
   // Load data for selectors
   fetchRoles()
   fetchUsers()
@@ -647,6 +653,7 @@ watch(viewMode, (newMode) => {
 
 // Search and Filter
 const searchQuery = ref('')
+const rowPolicySectionRef = ref<HTMLElement | null>(null)
 type StatusFilter = 'all' | 'active' | 'inactive'
 type DatasetSortField = 'display_name' | 'status' | 'table_count' | 'quality_score' | 'rag_sync_status' | 'updated_at'
 type SortDirection = 'asc' | 'desc'
@@ -852,6 +859,8 @@ const fetchDatasets = async () => {
   try {
     const res = await metadataApi.getDatasets()
     datasets.value = res.data
+    // 卡片要显示「这个数据集授给了谁」，跟着列表一起刷，避免多一次手动刷新
+    void fetchPermissionSummary()
   } catch (e: any) {
     console.error('Failed to fetch datasets', e)
     const errorMessage = e.response?.data?.detail || e.message || '获取数据集列表失败'
@@ -860,6 +869,56 @@ const fetchDatasets = async () => {
   } finally {
     loading.value = false
   }
+}
+
+// 卡片上的授权摘要：只给能改权限的人看（授权对象名单本身也是管理信息）。
+const permissionSummary = ref<Record<string, any>>({})
+const canSeePermissionSummary = computed(
+  () => isAdmin.value || hasPermission('element:metadata:edit'),
+)
+const fetchPermissionSummary = async () => {
+  if (!canSeePermissionSummary.value) return
+  const ids = datasets.value.map((d) => d.id).filter((id) => Boolean(id))
+  if (!ids.length) {
+    permissionSummary.value = {}
+    return
+  }
+  try {
+    const res = await axios.get('/api/portal/metadata/datasets/permission-summary', {
+      params: { ids: ids.join(',') },
+    })
+    permissionSummary.value = res.data?.data || {}
+  } catch (e) {
+    console.error('获取数据集授权摘要失败', e)
+  }
+}
+const permissionItem = (ds: Dataset) => permissionSummary.value?.[String(ds.id)] || null
+const permissionText = (ds: Dataset) => {
+  const item = permissionItem(ds)
+  if (!item || !item.total) return '未授权'
+  const parts: string[] = []
+  if (item.all) parts.push('全员')
+  if (item.roles) parts.push(`${item.roles}角色`)
+  if (item.users) parts.push(`${item.users}用户`)
+  return parts.join('+') || `${item.total} 条`
+}
+const permissionToneClass = (ds: Dataset) => {
+  const item = permissionItem(ds)
+  if (!item || !item.total) return 'bg-gray-50 text-gray-500 border-gray-200'
+  if (item.all) return 'bg-emerald-50 text-emerald-700 border-emerald-100'
+  return 'bg-sky-50 text-sky-700 border-sky-100'
+}
+const permissionTooltip = (ds: Dataset) => {
+  const item = permissionItem(ds)
+  if (!item || !item.total) {
+    return '这个数据集还没有配授权，成员进不来'
+  }
+  const lines = [`共 ${item.total} 条授权：${permissionText(ds)}`]
+  if (item.narrowed) lines.push(`${item.narrowed} 条只授权了部分表`)
+  if (item.row_custom) lines.push(`${item.row_custom} 条带自定义行级条件`)
+  if (item.row_none) lines.push(`${item.row_none} 条不做行级过滤`)
+  lines.push('点开卡片 → 权限管理 查看明细')
+  return lines.join('\n')
 }
 
 const handleCreate = async () => {
@@ -1105,6 +1164,86 @@ const confirmSync = async () => {
   }
 }
 
+// 卡片底部操作收进「更多」菜单：一行并排 6 个图标命中区太小，也看不出各自含义。
+const openCardMenuId = ref<number | null>(null)
+const toggleCardMenu = (datasetId: number, e?: Event) => {
+  e?.stopPropagation()
+  closeRowMenu()
+  openCardMenuId.value = openCardMenuId.value === datasetId ? null : datasetId
+}
+const closeCardMenus = () => {
+  openCardMenuId.value = null
+  showCreateMenu.value = false
+}
+const handleCardMenuEnter = (datasetId: number, e?: Event) => {
+  e?.stopPropagation()
+  openCardMenuId.value = null
+  goToTables(datasetId)
+}
+const openPermissionOverview = () => {
+  showCreateMenu.value = false
+  router.push('/dashboard/metadata-permissions')
+}
+// 列表视图的「…」菜单：表格容器是 overflow-x-auto，绝对定位会被裁掉，
+// 所以整块 Teleport 到 body 并按按钮位置摆（fixed），滚动或点外部即关闭。
+const openRowMenuId = ref<number | null>(null)
+const rowMenuDataset = ref<Dataset | null>(null)
+const rowMenuPos = ref<{ top: number; left: number }>({ top: 0, left: 0 })
+const ROW_MENU_WIDTH = 208
+const ROW_MENU_HEIGHT = 330
+
+const closeRowMenu = () => {
+  openRowMenuId.value = null
+  rowMenuDataset.value = null
+}
+
+const formatUpdatedAt = (value: string | null | undefined) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+const toggleRowMenu = (ds: Dataset, event: MouseEvent) => {
+  event.stopPropagation()
+  openCardMenuId.value = null
+  if (openRowMenuId.value === ds.id) {
+    closeRowMenu()
+    return
+  }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const left = Math.max(8, Math.min(rect.right - ROW_MENU_WIDTH, window.innerWidth - ROW_MENU_WIDTH - 8))
+  // 下方放不下就往上弹（列表最后一行很常见）
+  const spaceBelow = window.innerHeight - rect.bottom
+  const top =
+    spaceBelow > ROW_MENU_HEIGHT
+      ? rect.bottom + 6
+      : Math.max(8, rect.top - ROW_MENU_HEIGHT - 6)
+  rowMenuPos.value = { top, left }
+  openRowMenuId.value = ds.id
+  rowMenuDataset.value = ds
+}
+
+const withRowMenu = (action: (ds: Dataset) => void) => {
+  const target = rowMenuDataset.value
+  closeRowMenu()
+  if (target) action(target)
+}
+
+const openPermissionTab = (datasetId: number, view?: 'rows') => {
+  closeCardMenus()
+  router.push({
+    path: `/dashboard/metadata/${datasetId}`,
+    query: view ? { tab: 'permissions', permView: view } : { tab: 'permissions' },
+  })
+}
+const openSyncFromMenu = (ds: Dataset) => {
+  if (!isEngineReady.value || ds.status !== 1 || isLocalMode.value) return
+  closeCardMenus()
+  openSyncModal(ds)
+}
+
 onUnmounted(() => syncLogAbortController?.abort())
 
 const handleTestRetrieval = async () => {
@@ -1235,7 +1374,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-5" @click="showCreateMenu = false">
+  <div class="space-y-5" @click="closeCardMenus">
     <!-- Header：窄屏压缩工具栏；列表视图移动端可横滑查看。卡片底部是字段矩阵剪影 -->
     <div class="hero-surface flex flex-col gap-3 rounded-2xl border border-gray-200/80 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between lg:p-5">
       <HeroSilhouette variant="fields" :height="40" />
@@ -1266,7 +1405,7 @@ onMounted(async () => {
       </div>
 
       <div class="relative z-10 flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
-        <div class="relative w-full sm:w-72">
+        <div class="relative w-full shrink-0 sm:w-72">
           <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1274,10 +1413,23 @@ onMounted(async () => {
           </span>
           <input
             v-model="searchQuery"
-            type="search"
+            type="text"
             placeholder="搜索数据集名称、ID或描述..."
-            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-4 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-8 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+          <!-- 自绘清空按钮：type="search" 的原生 ✕ 会挤掉右侧文字区，
+               这里右边恒定留 pr-8，有没有按钮都不影响排版 -->
+          <button
+            v-if="searchQuery"
+            type="button"
+            class="absolute inset-y-0 right-0 flex items-center pr-2.5 text-gray-400 transition-colors hover:text-gray-600"
+            title="清空搜索"
+            @click="searchQuery = ''"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2L10 10m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </button>
         </div>
 
         <div class="flex items-center gap-2">
@@ -1440,6 +1592,17 @@ onMounted(async () => {
             </button>
             <div class="my-1 border-t border-gray-100 dark:border-gray-700"></div>
             <button
+              v-if="hasPermission('element:metadata:edit')"
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+              @click="openPermissionOverview()"
+            >
+              <svg class="h-4 w-4 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              <span>权限总览</span>
+            </button>
+            <button
               type="button"
               class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
               @click="showCreateMenu = false; openGlobalDriftDrawer()"
@@ -1582,7 +1745,7 @@ onMounted(async () => {
       <div 
         v-for="ds in visibleDatasets" 
         :key="ds.id"
-        class="bg-white rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-200 cursor-pointer group overflow-hidden flex flex-col relative"
+        class="bg-white rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-200 cursor-pointer group flex flex-col relative"
         @click="goToTables(ds.id)"
       >
         <!-- RAG Sync Badge -->
@@ -1652,6 +1815,15 @@ onMounted(async () => {
               质量分 <b>{{ ds.quality_score ?? '—' }}</b>
               <span v-if="ds.quality_breakdown?.degraded" class="text-amber-500" title="本次巡检未完整比对，分数仅供参考">⚠</span>
             </span>
+            <span
+              v-if="canSeePermissionSummary"
+              class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-medium"
+              :class="permissionToneClass(ds)"
+              :title="permissionTooltip(ds)"
+            >
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+              权限 <b>{{ permissionText(ds) }}</b>
+            </span>
           </div>
 
           <p class="mt-2.5 text-xs text-gray-500 line-clamp-2 leading-relaxed min-h-[2.5rem]">
@@ -1661,7 +1833,7 @@ onMounted(async () => {
           <div class="mt-2.5 flex items-center justify-between gap-2 text-[10px] text-gray-400">
             <span v-if="ds.updated_at" class="inline-flex items-center gap-1 truncate">
               <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-              {{ new Date(ds.updated_at).toLocaleString() }}
+              {{ formatUpdatedAt(ds.updated_at) }}
             </span>
             <span v-else />
             <div v-if="ds.tags?.length" class="flex flex-wrap justify-end gap-1 min-w-0">
@@ -1682,7 +1854,7 @@ onMounted(async () => {
           </div>
         </div>
         
-        <div class="px-4 py-2.5 border-t border-gray-100 flex justify-between items-center bg-gray-50/60">
+        <div class="px-4 py-2.5 border-t border-gray-100 flex justify-between items-center bg-gray-50/60 rounded-b-xl">
           <div 
             class="flex items-center gap-2" 
             :class="isAdmin || hasPermission('element:metadata:sync') ? 'cursor-pointer' : 'cursor-default opacity-80'"
@@ -1701,59 +1873,105 @@ onMounted(async () => {
               {{ ds.status === 1 ? '已启用' : '已禁用' }}
             </span>
           </div>
-          <div class="flex items-center gap-0.5" @click.stop>
-            <button 
+          <!-- 底部操作收进「更多」菜单：一行挤 6 个图标会让命中区只有 24px，
+               也看不出每个图标干什么。菜单样式对齐智能体中心（图标 + 中文）。 -->
+          <div class="relative" @click.stop>
+            <button
               type="button"
-              @click.stop="openDriftAlerts(ds)"
-              class="transition-colors p-1.5 rounded-md text-gray-400 hover:text-amber-600 hover:bg-white relative cursor-pointer"
-              :class="{ 'text-amber-500': driftSummary[ds.id] }"
-              :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
+              @click="toggleCardMenu(ds.id, $event)"
+              class="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white border border-transparent hover:border-gray-200 transition-colors cursor-pointer"
+              title="更多操作"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
-              <span v-if="driftSummary[ds.id]" class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-2 ring-white"></span>
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
             </button>
-            <button 
-              v-if="hasPermission('element:metadata:sync')"
-              @click.stop="isEngineReady && ds.status === 1 && !isLocalMode && openSyncModal(ds)" 
-              class="transition-colors p-1.5 rounded-md"
-              :class="{ 
-                 'text-gray-400 hover:text-indigo-500 hover:bg-white': ds.status === 1 && isEngineReady && !isLocalMode,
-                 'text-gray-300 cursor-not-allowed opacity-50': ds.status !== 1 || !isEngineReady || isLocalMode,
-                 'pointer-events-none': syncingId === ds.id || ds.rag_sync_status === 1 
-              }"
-              :disabled="!isEngineReady || ds.status !== 1 || isLocalMode"
-              :title="isLocalMode ? '本地向量模式下已自动同步，无需手动上传' : (!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步到 RAGFlow' : '数据集已禁用，无法同步'))"
+            <div
+              v-if="openCardMenuId === ds.id"
+              class="absolute right-0 bottom-full z-30 mb-1 w-52 max-h-[19rem] overflow-y-auto rounded-xl border border-gray-100 bg-white py-1 shadow-xl"
             >
-              <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="w-4 h-4 animate-spin text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-              <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>
-            </button>
-            <button 
-              v-if="hasPermission('element:metadata:edit')"
-              @click.stop="openPermConfigModal(ds)" 
-              class="text-gray-400 hover:text-emerald-500 transition-colors p-1.5 hover:bg-white rounded-md"
-              title="数据权限配置"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-            </button>
-            <button 
-              v-if="hasPermission('element:metadata:edit')"
-              @click.stop="openEditDatasetModal(ds)" 
-              class="text-gray-400 hover:text-blue-500 transition-colors p-1.5 hover:bg-white rounded-md"
-              title="编辑数据集"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-            </button>
-            <button 
-              v-if="hasPermission('element:metadata:delete')"
-              @click.stop="openDeleteModal(ds)" 
-              class="text-gray-400 hover:text-red-500 transition-colors p-1.5 hover:bg-white rounded-md"
-              title="删除数据集"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            </button>
-            <span class="text-blue-600 text-[11px] font-medium flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5">
-              进入 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            </span>
+              <button
+                type="button"
+                @click="handleCardMenuEnter(ds.id, $event)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+              >
+                <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+                进入数据集
+              </button>
+              <button
+                type="button"
+                @click="closeCardMenus(); openDriftAlerts(ds)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-50 cursor-pointer"
+                :class="driftSummary[ds.id] ? 'text-amber-700' : 'text-gray-700'"
+                :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
+              >
+                <svg class="h-4 w-4" :class="driftSummary[ds.id] ? 'text-amber-500' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
+                Schema 巡检
+                <span v-if="driftSummary[ds.id]" class="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"></span>
+              </button>
+              <button
+                v-if="hasPermission('element:metadata:sync')"
+                type="button"
+                @click="openSyncFromMenu(ds)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                :class="(ds.status === 1 && isEngineReady && !isLocalMode) ? 'text-gray-700 cursor-pointer' : 'text-gray-300'"
+                :disabled="!isEngineReady || ds.status !== 1 || isLocalMode || syncingId === ds.id || ds.rag_sync_status === 1"
+                :title="isLocalMode ? '本地向量模式下已自动同步，无需手动上传' : (!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步到 RAGFlow' : '数据集已禁用，无法同步'))"
+              >
+                <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="h-4 w-4 animate-spin text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>
+                {{ (syncingId === ds.id || ds.rag_sync_status === 1) ? '同步中…' : '同步到 RAGFlow' }}
+              </button>
+              <button
+                v-if="hasPermission('element:metadata:edit')"
+                type="button"
+                title="元数据管理 → 数据权限配置"
+                @click="closeCardMenus(); openPermConfigModal(ds)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+              >
+                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+                数据权限配置
+              </button>
+              <button
+                v-if="hasPermission('element:metadata:edit')"
+                type="button"
+                @click="openPermissionTab(ds.id)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+              >
+                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                权限管理
+              </button>
+              <button
+                v-if="hasPermission('element:metadata:edit')"
+                type="button"
+                title="元数据管理 → 数据行策略"
+                @click="closeCardMenus(); openPermConfigModal(ds, true)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+              >
+                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10"/></svg>
+                数据行策略
+              </button>
+              <button
+                v-if="hasPermission('element:metadata:edit')"
+                type="button"
+                @click="closeCardMenus(); openEditDatasetModal(ds)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+              >
+                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                编辑数据集
+              </button>
+              <template v-if="hasPermission('element:metadata:delete')">
+                <div class="my-1 border-t border-gray-100"></div>
+                <button
+                  type="button"
+                  @click="closeCardMenus(); openDeleteModal(ds)"
+                  class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-red-600 transition-colors hover:bg-red-50 cursor-pointer"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                  删除数据集
+                </button>
+              </template>
+            </div>
           </div>
         </div>
       </div>
@@ -1798,14 +2016,14 @@ onMounted(async () => {
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-          <button type="button" class="col-span-1 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('updated_at')">
+          <button type="button" class="col-span-2 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('updated_at')">
             <span>更新时间</span>
             <svg v-if="sortField === 'updated_at'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-          <div class="col-span-2 text-right">操作</div>
+          <div class="col-span-1 text-right">操作</div>
        </div>
        <div class="divide-y divide-gray-100">
           <div 
@@ -1901,71 +2119,123 @@ onMounted(async () => {
                 <span v-else class="text-[10px] text-gray-300">-</span>
              </div>
 
-             <!-- Updated -->
-             <div class="col-span-1 text-[10px] text-gray-400 font-mono">
-                {{ ds.updated_at ? new Date(ds.updated_at).toLocaleDateString() : '-' }}
+             <!-- Updated：精确到秒，排查「谁在什么时候改的」时日期不够用 -->
+             <div class="col-span-2 text-[10px] text-gray-400 font-mono">
+                {{ formatUpdatedAt(ds.updated_at) }}
              </div>
 
-             <!-- Actions -->
-             <div class="col-span-2 flex justify-end items-center gap-1.5">
-                <!-- Action Buttons: Admin or specific permission -->
-                 <button 
-                    type="button"
-                    @click.stop="openDriftAlerts(ds)" 
-                    class="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors relative cursor-pointer"
-                    :class="{ 'text-amber-500': driftSummary[ds.id] }"
-                    :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
-                 >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
-                    <span v-if="driftSummary[ds.id]" class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-2 ring-white"></span>
-                 </button>
-                 <button 
-                    v-if="hasPermission('element:metadata:sync')"
-                    @click.stop="isEngineReady && ds.status === 1 && !isLocalMode && openSyncModal(ds)" 
-                    class="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-                    :class="{ 
-                      'opacity-30 cursor-not-allowed': ds.status !== 1 || !isEngineReady || isLocalMode,
-                      'pointer-events-none': syncingId === ds.id || ds.rag_sync_status === 1
-                    }"
-                    :disabled="!isEngineReady || ds.status !== 1 || isLocalMode"
-                    :title="isLocalMode ? '本地向量模式下已自动同步，无需手动上传' : (!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步 RAG' : '已禁用一线'))"
-                 >
-                    <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="w-4 h-4 animate-spin text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-                    <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>
-                 </button>
-                <button 
-                   v-if="hasPermission('element:metadata:edit')"
-                   @click.stop="openPermConfigModal(ds)" 
-                   class="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
-                   title="数据权限"
+             <!-- Actions：与卡片一致，收进「…」，靠最右 -->
+             <div class="col-span-1 flex justify-end items-center">
+                <button
+                   type="button"
+                   class="inline-flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                   :class="{ 'bg-gray-100 text-gray-700': openRowMenuId === ds.id }"
+                   title="更多操作"
+                   @click.stop="toggleRowMenu(ds, $event)"
                 >
-                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                   <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
+                   </svg>
                 </button>
-                <button 
-                   v-if="hasPermission('element:metadata:edit')"
-                   @click.stop="openEditDatasetModal(ds)" 
-                   class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                   title="编辑"
-                >
-                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                </button>
-                <button 
-                   v-if="hasPermission('element:metadata:delete')"
-                   @click.stop="openDeleteModal(ds)" 
-                   class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                   title="删除"
-                >
-                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                </button>
-                
-                <span class="text-gray-400 text-sm font-medium flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  查看 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                </span>
              </div>
           </div>
        </div>
        </div>
     </div>
+
+    <!-- 列表视图的「…」菜单：表格容器是 overflow-x-auto，绝对定位会被裁，这里 Teleport 到 body -->
+    <Teleport to="body">
+      <div
+        v-if="rowMenuDataset"
+        class="fixed inset-0 z-[80]"
+        @click="closeRowMenu"
+        @wheel.passive="closeRowMenu"
+        @touchmove.passive="closeRowMenu"
+      >
+        <div
+          class="absolute w-52 max-h-[19rem] overflow-y-auto rounded-xl border border-gray-100 bg-white py-1 shadow-xl"
+          :style="{ top: `${rowMenuPos.top}px`, left: `${rowMenuPos.left}px` }"
+          @click.stop
+        >
+          <button
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            @click="withRowMenu((d) => goToTables(d.id))"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+            进入数据集
+          </button>
+          <button
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            @click="withRowMenu((d) => openDriftAlerts(d))"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
+            Schema 巡检
+          </button>
+          <button
+            v-if="hasPermission('element:metadata:sync')"
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            :class="(rowMenuDataset.status === 1 && isEngineReady && !isLocalMode) ? 'text-gray-700' : 'text-gray-300'"
+            :disabled="!isEngineReady || rowMenuDataset.status !== 1 || isLocalMode || syncingId === rowMenuDataset.id"
+            @click="withRowMenu((d) => openSyncFromMenu(d))"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z" /></svg>
+            同步到 RAGFlow
+          </button>
+          <button
+            v-if="hasPermission('element:metadata:edit')"
+            type="button"
+            title="元数据管理 → 数据权限配置"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            @click="withRowMenu((d) => openPermConfigModal(d))"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
+            数据权限配置
+          </button>
+          <button
+            v-if="hasPermission('element:metadata:edit')"
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            @click="withRowMenu((d) => openPermissionTab(d.id))"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+            权限管理
+          </button>
+          <button
+            v-if="hasPermission('element:metadata:edit')"
+            type="button"
+            title="元数据管理 → 数据行策略"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            @click="withRowMenu((d) => openPermConfigModal(d, true))"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10" /></svg>
+            数据行策略
+          </button>
+          <button
+            v-if="hasPermission('element:metadata:edit')"
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            @click="withRowMenu((d) => openEditDatasetModal(d))"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+            编辑数据集
+          </button>
+          <template v-if="hasPermission('element:metadata:delete')">
+            <div class="my-1 border-t border-gray-100"></div>
+            <button
+              type="button"
+              class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-red-600 transition-colors hover:bg-red-50"
+              @click="withRowMenu((d) => openDeleteModal(d))"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              删除数据集
+            </button>
+          </template>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 分批渲染：避免数据量大时一次挂载全部卡片造成卡顿 -->
     <div v-if="!loading && hasMoreDatasets" class="flex flex-col items-center gap-1.5 pt-2">
@@ -2774,7 +3044,7 @@ onMounted(async () => {
 
           <!-- Body -->
           <div class="p-8 space-y-6 max-h-[75vh] overflow-y-auto custom-scrollbar" @click="closeMenus">
-             <div class="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
+             <div ref="rowPolicySectionRef" class="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
                <div>
                  <h4 class="text-sm font-bold text-gray-900">启用精细化权限校验</h4>
                  <p class="text-xs text-gray-500 mt-0.5">

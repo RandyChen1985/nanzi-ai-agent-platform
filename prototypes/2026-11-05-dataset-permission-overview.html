@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="只读视图原型">
+<title>数据集权限总览 · 全局查看授权分配（管理员只读）</title>
+<style>
+  :root{
+    --bg:#f2f3f5; --panel:#fff; --line:#e8eaed; --line2:#dfe3e8;
+    --text:#1f2329; --text2:#5c6370; --text3:#8f959e;
+    --emerald:#0f8a4d; --emerald-soft:#e9f8f0; --emerald-line:#bfe8d2;
+    --amber:#b26a00; --amber-soft:#fff7e8; --amber-line:#f3ddb4;
+    --red:#c8372d; --red-soft:#fdecea; --red-line:#f5c6c1;
+    --blue:#1f63d6; --blue-soft:#eaf2ff; --blue-line:#cfe0fb;
+    --violet:#6b46c1; --violet-soft:#f3eefe;
+    --slate:#475569; --slate-soft:#f1f5f9;
+    --shadow:0 1px 2px rgba(16,24,40,.05),0 14px 34px rgba(16,24,40,.12);
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-size:13px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1240px;margin:0 auto;padding:26px 22px 70px;}
+  h1{font-size:19px;margin:0 0 6px;letter-spacing:-.2px;display:flex;align-items:center;gap:9px;flex-wrap:wrap;}
+  .sub{color:var(--text2);line-height:1.8;margin:0 0 16px;max-width:960px;}
+  .sub code{background:#fff;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:12px;}
+  .only-admin{font-size:10.5px;font-weight:700;color:var(--violet);background:var(--violet-soft);
+    border:1px solid #ddd2f7;border-radius:999px;padding:2px 9px;letter-spacing:.02em;}
+
+  .decisions{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 18px;}
+  @media (max-width:1020px){.decisions{grid-template-columns:repeat(2,1fr);}}
+  .d-card{background:#fff;border:1px solid var(--line);border-radius:11px;padding:12px 13px;}
+  .d-card b{display:block;font-size:12px;margin-bottom:4px;}
+  .d-card span{font-size:11px;color:var(--text2);line-height:1.75;display:block;}
+  .d-card .n{display:inline-flex;width:16px;height:16px;border-radius:5px;background:var(--emerald-soft);
+    color:var(--emerald);font-size:10px;font-weight:700;align-items:center;justify-content:center;margin-right:5px;}
+
+  .stage{background:#e7e9ec;border:1px solid #dcdfe4;border-radius:14px;padding:14px;}
+  .surface{background:var(--panel);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;}
+
+  /* ---------- 头部 ---------- */
+  .ov-head{padding:16px 20px 14px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap;}
+  .ov-head h2{margin:0;font-size:15px;}
+  .ov-head p{margin:5px 0 0;font-size:11.5px;color:var(--text2);line-height:1.7;max-width:620px;}
+  .viewer{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text2);}
+  .seg{display:inline-flex;border:1px solid var(--line2);border-radius:9px;overflow:hidden;background:#f7f8fa;}
+  .seg button{border:0;background:transparent;font:inherit;font-size:11.5px;font-weight:600;color:var(--text2);
+    padding:5px 11px;cursor:pointer;}
+  .seg button.on{background:#fff;color:var(--text);box-shadow:0 1px 2px rgba(16,24,40,.08);}
+
+  /* ---------- 统计 ---------- */
+  .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:0;border-bottom:1px solid var(--line);}
+  @media (max-width:1020px){.stats{grid-template-columns:repeat(3,1fr);}}
+  .stat{padding:13px 16px;border-right:1px solid var(--line);}
+  .stat:last-child{border-right:0;}
+  .stat .k{font-size:10.5px;font-weight:700;color:var(--text3);letter-spacing:.04em;text-transform:uppercase;}
+  .stat .v{font-size:20px;font-weight:700;letter-spacing:-.5px;margin-top:3px;line-height:1;}
+  .stat .h{font-size:10.5px;color:var(--text3);margin-top:4px;}
+  .stat.warn .v{color:var(--amber);}
+  .stat.bad .v{color:var(--red);}
+  .stat.good .v{color:var(--emerald);}
+
+  /* ---------- 工具栏 ---------- */
+  .toolbar{display:flex;align-items:center;gap:10px;padding:12px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+  .search{display:flex;align-items:center;gap:6px;border:1px solid var(--line2);border-radius:9px;background:#fbfbfc;
+    padding:6px 10px;min-width:230px;color:var(--text3);}
+  .search input{border:0;outline:0;background:transparent;font:inherit;font-size:12px;color:var(--text);width:100%;}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;}
+  .chip{border:1px solid var(--line2);background:#fff;color:var(--text2);font:inherit;font-size:11.5px;font-weight:600;
+    padding:5px 10px;border-radius:999px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;}
+  .chip .c{font-size:10px;color:var(--text3);font-weight:700;}
+  .chip.on{background:var(--text);border-color:var(--text);color:#fff;}
+  .chip.on .c{color:rgba(255,255,255,.72);}
+
+  /* ---------- 表格 ---------- */
+  table{width:100%;border-collapse:separate;border-spacing:0;}
+  thead th{font-size:10.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;
+    text-align:left;padding:9px 14px;background:#fafbfc;border-bottom:1px solid var(--line);white-space:nowrap;}
+  tbody td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:12px;}
+  tbody tr.row{cursor:pointer;}
+  tbody tr.row:hover td{background:#fafbfc;}
+  tbody tr.row.open td{background:#f7f9fb;}
+  tbody tr.row.unauth td{background:#fefaf9;}
+  tbody tr.row.unauth:hover td{background:#fdf3f1;}
+
+  .ds{display:flex;align-items:center;gap:9px;min-width:0;}
+  .ds .ico{width:28px;height:28px;border-radius:8px;background:var(--blue-soft);border:1px solid var(--blue-line);
+    display:grid;place-items:center;color:var(--blue);flex:0 0 auto;}
+  .ds .nm{font-weight:700;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px;}
+  .ds .meta{font-size:10.5px;color:var(--text3);margin-top:1px;display:flex;gap:6px;align-items:center;}
+  .mono{font-family:ui-monospace,Menlo,monospace;}
+
+  .badge{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;
+    border:1px solid;border-radius:6px;padding:1px 6px;white-space:nowrap;}
+  .b-all{background:var(--emerald-soft);border-color:var(--emerald-line);color:var(--emerald);}
+  .b-role{background:var(--blue-soft);border-color:var(--blue-line);color:var(--blue);}
+  .b-user{background:var(--violet-soft);border-color:#ddd2f7;color:var(--violet);}
+  .b-none{background:var(--red-soft);border-color:var(--red-line);color:var(--red);}
+  .b-narrow{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber);}
+  .b-plain{background:var(--slate-soft);border-color:var(--line2);color:var(--slate);}
+  .b-expire{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber);}
+  .b-dead{background:#f2f3f5;border-color:var(--line2);color:var(--text3);text-decoration:line-through;}
+  .b-stale{background:#f2f3f5;border-color:var(--line2);color:var(--slate);}
+
+  .cell-stack{display:flex;flex-direction:column;gap:3px;align-items:flex-start;}
+  .muted{color:var(--text3);font-size:11px;}
+  .warn-text{color:var(--red);font-size:11px;font-weight:600;}
+  .amber-text{color:var(--amber);font-size:11px;font-weight:600;}
+
+  .caret{display:inline-block;transition:transform .15s;color:var(--text3);}
+  tr.row.open .caret{transform:rotate(90deg);}
+
+  /* ---------- 展开明细 ---------- */
+  tr.detail td{padding:0;background:#f7f9fb;border-bottom:1px solid var(--line);}
+  .detail-box{padding:12px 16px 14px 52px;}
+  .detail-box h4{margin:0 0 8px;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;}
+  .grant{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--line);border-radius:9px;
+    padding:8px 11px;margin-bottom:6px;flex-wrap:wrap;}
+  .grant .who{font-weight:700;font-size:12px;min-width:120px;}
+  .grant .kv{font-size:11px;color:var(--text2);}
+  .grant .kv b{color:var(--text);font-weight:600;}
+  .grant .right{margin-left:auto;display:flex;gap:6px;align-items:center;}
+  .detail-empty{font-size:11.5px;color:var(--text3);}
+
+  /* ---------- 无权限态 ---------- */
+  .denied{display:none;padding:64px 24px;text-align:center;}
+  .denied .lock{width:44px;height:44px;border-radius:12px;background:var(--slate-soft);border:1px solid var(--line2);
+    display:grid;place-items:center;margin:0 auto 12px;color:var(--text3);}
+  .denied b{display:block;font-size:13.5px;margin-bottom:5px;}
+  .denied p{margin:0;font-size:11.5px;color:var(--text2);line-height:1.8;}
+  body.member .audit{display:none;}
+  body.member .denied{display:block;}
+
+  /* ---------- 口径说明 ---------- */
+  .notes{margin-top:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+  @media (max-width:1020px){.notes{grid-template-columns:1fr;}}
+  .note{background:#fff;border:1px solid var(--line);border-radius:11px;padding:12px 13px;}
+  .note b{display:block;font-size:11.5px;margin-bottom:4px;}
+  .note p{margin:0;font-size:11px;color:var(--text2);line-height:1.75;}
+  .empty-row td{padding:40px 0;text-align:center;color:var(--text3);font-size:12px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>
+    数据集权限总览
+    <span class="only-admin">仅管理员 · 只读</span>
+  </h1>
+  <p class="sub">
+    一屏看清「哪些数据集配了授权、授给了谁、有没有收窄到表、有没有到期」。
+    这里是<strong>只读视图</strong>：能看到问题和分布，改权限仍然回到各个数据集的「权限管理」页签，
+    避免在一个列表里就能改全平台授权（那样一次误操作的影响面太大）。
+  </p>
+
+  <div class="decisions">
+    <div class="d-card"><b><span class="n">1</span>只读，不带编辑</b><span>所有列都不可直接改。行尾只有一个「去配置」入口，跳到对应数据集的权限页签。</span></div>
+    <div class="d-card"><b><span class="n">2</span>默认按风险排序</b><span>未授权（谁都进不来）→ 即将过期 → 有收窄 → 其余。管理员打开先看到需要处理的。</span></div>
+    <div class="d-card"><b><span class="n">3</span>口径与判定链一致</b><span>数字来自同一套解析：全员基线、角色/用户、过期忽略、表级收窄，和 ChatBI 实际执行时一致。</span></div>
+    <div class="d-card"><b><span class="n">4</span>只给管理员</b><span>入口挂 <code>element:metadata:edit</code>；普通成员看不到菜单，也拿不到接口数据。</span></div>
+  </div>
+
+  <div class="stage">
+    <div class="surface">
+      <div class="ov-head">
+        <div>
+          <h2>授权分配总览</h2>
+          <p>点任意一行展开该数据集的授权明细（谁、能看哪些表、行级怎么限制、什么时候到期）。</p>
+        </div>
+        <div class="viewer audit">
+          <span>视角</span>
+          <div class="seg">
+            <button id="as-admin" class="on">管理员</button>
+            <button id="as-member">普通成员</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="audit">
+        <div class="stats" id="stats"></div>
+
+        <div class="toolbar">
+          <label class="search">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+            <input id="q" placeholder="搜索数据集名称 / 标识 / 授权对象">
+          </label>
+          <div class="chips" id="chips"></div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width:26%">数据集</th>
+              <th style="width:22%">授权主体</th>
+              <th style="width:15%">表范围</th>
+              <th style="width:15%">行级</th>
+              <th style="width:12%">有效期</th>
+              <th style="width:10%">最近变更</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+
+      <div class="denied">
+        <div class="lock">
+          <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+        </div>
+        <b>这个页面只有管理员能看</b>
+        <p>
+          授权对象名单本身就是管理信息：知道「谁能进哪个数据集」等于知道组织的数据边界。<br>
+          普通成员只能在自己有权限的数据集里看数据，看不到这张总表。
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note">
+      <b>「未授权」＝谁都进不来</b>
+      <p>不是「还没配」这么轻：这个数据集在 ChatBI 里检索不到、也查不了。数据同步进来但没授权，等于白导。</p>
+    </div>
+    <div class="note">
+      <b>「收窄」按条计</b>
+      <p>一条授权收窄到指定表就记一次。同一个数据集里既有全员基线（全部表）又有个人收窄时，两边分别计数，不会互相抵消。</p>
+    </div>
+    <div class="note">
+      <b>过期不等于删除</b>
+      <p>到期后该条授权不再参与判定，但记录保留——续期时改个日期即可，不用重配表范围和行级条件。</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const DATA = [
+  {
+    id: 1, name: '电商数据集', code: 'meta_mall_ds', source: 'mysql_malltest', tables: 5,
+    grants: [
+      { subject: 'all', who: '所有成员（全员基线）', scope: 'list', tables: 2, row: 'custom', cond: "fact_order.dept_code = 'FIN'", expire: null },
+      { subject: 'role', who: '角色 · 电商运营', scope: 'all', tables: 5, row: 'inherit', expire: null },
+      { subject: 'role', who: '角色 · 数据分析师', scope: 'list', tables: 3, row: 'inherit', expire: '2026-11-12' },
+      { subject: 'user', who: '张三（zhangsan）', scope: 'all', tables: 5, row: 'inherit', expire: null },
+      { subject: 'user', who: '李四（lisi）', scope: 'list', tables: 1, row: 'none', expire: null },
+      { subject: 'user', who: '王五（wangwu）', scope: 'all', tables: 5, row: 'inherit', expire: '2026-11-08' }
+    ],
+    updated: '2026/11/5 20:14'
+  },
+  {
+    id: 2, name: '订单宽表', code: 'order_wide', source: 'clickhouse', tables: 12,
+    grants: [
+      { subject: 'all', who: '所有成员（全员基线）', scope: 'all', tables: 12, row: 'custom', cond: "dw_order.region = {user.region}", expire: null },
+      { subject: 'role', who: '角色 · 财务', scope: 'all', tables: 12, row: 'inherit', expire: null }
+    ],
+    updated: '2026/11/4 18:02'
+  },
+  {
+    id: 3, name: '机密数据集', code: 'secret_fin', source: 'mysql_fin', tables: 4,
+    grants: [
+      { subject: 'role', who: '角色 · 财务总监', scope: 'all', tables: 4, row: 'custom', cond: "fin_voucher.org_path LIKE 'HQ/FIN%'", expire: null },
+      { subject: 'role', who: '角色 · 审计', scope: 'list', tables: 2, row: 'inherit', expire: null },
+      { subject: 'user', who: '陈总（chenzong）', scope: 'list', tables: 2, row: 'inherit', expire: '2026-11-06' }
+    ],
+    updated: '2026/11/5 09:31'
+  },
+  {
+    id: 4, name: 'Sync Test', code: 'sync_test_387745', source: 'clickhouse', tables: 1,
+    grants: [], updated: '2026/11/5 21:24'
+  },
+  {
+    id: 5, name: 'Fail Test', code: 'fail_test', source: 'mysql_test', tables: 6,
+    grants: [
+      { subject: 'user', who: '测试员（test11）', scope: 'all', tables: 6, row: 'none', expire: null }
+    ],
+    updated: '2026/11/3 11:07'
+  },
+  {
+    id: 6, name: 'Test Sync', code: 'test_sync', source: 'mysql_test', tables: 8,
+    grants: [
+      { subject: 'user', who: '测试员（test11）', scope: 'list', tables: 1, row: 'inherit', expire: null },
+      { subject: 'user', who: '开发（dev01）', scope: 'list', tables: 3, row: 'inherit', expire: null }
+    ],
+    updated: '2026/11/2 15:40'
+  },
+  {
+    id: 7, name: '用户行为日志', code: 'user_behavior', source: 'clickhouse', tables: 3,
+    grants: [
+      { subject: 'role', who: '角色 · 数据分析师', scope: 'all', tables: 3, row: 'inherit', expire: '2026-10-30' }
+    ],
+    updated: '2026/10/30 10:00'
+  }
+];
+
+const TODAY = new Date('2026-11-05T00:00:00');
+const dayDiff = (d) => {
+  if (!d) return null;
+  const [y, m, dd] = d.split('-').map(Number);
+  return Math.round((new Date(y, m - 1, dd) - TODAY) / 86400000);
+};
+
+function summarize(ds) {
+  const alive = ds.grants.filter((g) => { const n = dayDiff(g.expire); return n === null || n >= 0; });
+  const dead = ds.grants.filter((g) => { const n = dayDiff(g.expire); return n !== null && n < 0; });
+  return {
+    total: ds.grants.length,
+    alive: alive.length,
+    dead: dead.length,
+    hasAll: alive.some((g) => g.subject === 'all'),
+    roles: alive.filter((g) => g.subject === 'role').length,
+    users: alive.filter((g) => g.subject === 'user').length,
+    narrowed: alive.filter((g) => g.scope === 'list').length,
+    custom: alive.filter((g) => g.row === 'custom').length,
+    noRow: alive.filter((g) => g.row === 'none').length,
+    soon: alive.filter((g) => { const n = dayDiff(g.expire); return n !== null && n <= 7; }).length,
+    soonMin: Math.min(...alive.map((g) => { const n = dayDiff(g.expire); return n === null ? Infinity : n; }))
+  };
+}
+
+const FILTERS = [
+  { key: 'all', label: '全部', test: () => true },
+  { key: 'unauth', label: '无人可访问', test: (s) => s.alive === 0 },
+  { key: 'soon', label: '有到期', test: (s) => s.soon > 0 || s.dead > 0 },
+  { key: 'narrow', label: '有收窄', test: (s) => s.narrowed > 0 },
+  { key: 'rowlevel', label: '有行级', test: (s) => s.custom > 0 || s.noRow > 0 },
+  { key: 'allbase', label: '有全员', test: (s) => s.hasAll }
+];
+
+let activeFilter = 'all';
+let keyword = '';
+let openId = null;
+const items = DATA.map((ds) => ({ ...ds, s: summarize(ds) }));
+
+function riskRank(ds) {
+  if (ds.s.alive === 0) return 0;
+  if (ds.s.soon > 0 || ds.s.dead > 0) return 1;
+  if (ds.s.narrowed > 0) return 2;
+  return 3;
+}
+items.sort((a, b) => riskRank(a) - riskRank(b) || a.id - b.id);
+
+function renderStats() {
+  const total = items.length;
+  const unauth = items.filter((d) => d.s.alive === 0 && d.s.total === 0).length;
+  const stale = items.filter((d) => d.s.alive === 0 && d.s.total > 0).length;
+  const nobody = unauth + stale;
+  const soon = items.filter((d) => d.s.soon > 0).length;
+  const narrow = items.filter((d) => d.s.narrowed > 0).length;
+  const rowlevel = items.filter((d) => d.s.custom > 0 || d.s.noRow > 0).length;
+  const covered = total - unauth;
+  const cards = [
+    { k: '数据集', v: total, h: '全部数据集', cls: '' },
+    { k: '已授权', v: covered, h: `覆盖 ${total ? Math.round((covered / total) * 100) : 0}%`, cls: 'good' },
+    { k: '无人可访问', v: nobody, h: `未配置 ${unauth} · 已过期 ${stale}`, cls: 'bad' },
+    { k: '7 天内到期', v: soon, h: '需要续期', cls: 'warn' },
+    { k: '有表级收窄', v: narrow, h: '只授权了部分表', cls: 'warn' },
+    { k: '有行级限制', v: rowlevel, h: '自定义条件或不过滤', cls: '' }
+  ];
+  document.getElementById('stats').innerHTML = cards
+    .map((c) => `<div class="stat ${c.cls}"><div class="k">${c.k}</div><div class="v">${c.v}</div><div class="h">${c.h}</div></div>`)
+    .join('');
+}
+
+function renderChips() {
+  const counts = Object.fromEntries(FILTERS.map((f) => [f.key, items.filter((d) => f.test(d.s)).length]));
+  document.getElementById('chips').innerHTML = FILTERS
+    .map((f) => `<button class="chip ${activeFilter === f.key ? 'on' : ''}" data-key="${f.key}">${f.label}<span class="c">${counts[f.key]}</span></button>`)
+    .join('');
+  document.querySelectorAll('.chip').forEach((el) => {
+    el.onclick = () => { activeFilter = el.dataset.key; renderChips(); renderRows(); };
+  });
+}
+
+function subjectCell(ds) {
+  if (ds.s.alive === 0) {
+    if (ds.s.total > 0) {
+      return `<div class="cell-stack"><span class="badge b-stale">${ds.s.total} 条已全部过期</span><span class="warn-text">当前没人能访问这个数据集</span></div>`;
+    }
+    return `<div class="cell-stack"><span class="badge b-none">未授权</span><span class="warn-text">任何人进不来这个数据集</span></div>`;
+  }
+  const parts = [];
+  if (ds.s.hasAll) parts.push('<span class="badge b-all">全员基线</span>');
+  if (ds.s.roles) parts.push(`<span class="badge b-role">${ds.s.roles} 角色</span>`);
+  if (ds.s.users) parts.push(`<span class="badge b-user">${ds.s.users} 用户</span>`);
+  const dead = ds.s.dead ? `<span class="muted">（${ds.s.dead} 条已过期，不再生效）</span>` : '';
+  return `<div class="cell-stack"><div style="display:flex;gap:4px;flex-wrap:wrap">${parts.join('')}</div>${dead}</div>`;
+}
+
+function scopeCell(ds) {
+  if (ds.s.alive === 0) return '<span class="muted">—</span>';
+  if (!ds.s.narrowed) return '<span class="badge b-plain">全部表</span>';
+  const widest = ds.s.hasAll ? '全员仍可见全部表' : '最窄的只给了部分表';
+  return `<div class="cell-stack"><span class="badge b-narrow">${ds.s.narrowed} 条收窄</span><span class="muted">${widest}</span></div>`;
+}
+
+function rowCell(ds) {
+  if (ds.s.alive === 0) return '<span class="muted">—</span>';
+  const parts = [];
+  if (ds.s.custom) parts.push(`<span class="badge b-role">自定义 ${ds.s.custom}</span>`);
+  if (ds.s.noRow) parts.push(`<span class="badge b-narrow">不过滤 ${ds.s.noRow}</span>`);
+  if (!parts.length) parts.push('<span class="badge b-plain">继承数据集策略</span>');
+  return `<div style="display:flex;gap:4px;flex-wrap:wrap">${parts.join('')}</div>`;
+}
+
+function expireCell(ds) {
+  if (ds.s.alive === 0) return '<span class="muted">—</span>';
+  if (ds.s.dead) return `<div class="cell-stack"><span class="badge b-dead">${ds.s.dead} 条已过期</span></div>`;
+  if (ds.s.soon) return `<span class="badge b-expire">${ds.s.soonMin} 天后到期</span>`;
+  return '<span class="badge b-plain">长期</span>';
+}
+
+function detailHtml(ds) {
+  if (!ds.grants.length) {
+    return `<div class="detail-box"><div class="detail-empty">还没有配置任何授权。数据已经同步进来，但在 ChatBI 里检索不到、也查不了。</div></div>`;
+  }
+  const aliveCount = ds.s.alive;
+  const head = aliveCount === 0
+    ? `<div class="detail-empty" style="color:var(--red);font-weight:600;margin-bottom:8px">下面 ${ds.grants.length} 条授权都已过期，当前没有任何人能用这个数据集；续期其中任意一条即可恢复。</div>`
+    : '';
+  const rows = ds.grants.map((g) => {
+    const n = dayDiff(g.expire);
+    const expired = n !== null && n < 0;
+    const cls = { all: 'b-all', role: 'b-role', user: 'b-user' }[g.subject];
+    const label = { all: '全员基线', role: '角色', user: '用户' }[g.subject];
+    const scope = g.scope === 'all' ? '全部表' : `指定 ${g.tables} 张表`;
+    const row = g.row === 'inherit' ? '继承数据集策略'
+      : g.row === 'none' ? '不做行级过滤'
+      : `自定义：<code class="mono">${g.cond}</code>`;
+    const expire = g.expire ? (expired ? `<span class="badge b-dead">${g.expire} 已过期</span>` : `<span class="badge b-expire">${g.expire} 到期</span>`) : '<span class="muted">长期</span>';
+    return `<div class="grant" style="${expired ? 'opacity:.62' : ''}">
+      <span class="badge ${cls}">${label}</span>
+      <span class="who">${g.who}</span>
+      <span class="kv">表：<b>${scope}</b></span>
+      <span class="kv">行级：<b>${row}</b></span>
+      <span class="right">${expire}</span>
+    </div>`;
+  }).join('');
+  return `<div class="detail-box"><h4>授权明细 · ${ds.grants.length} 条</h4>${head}${rows}</div>`;
+}
+
+function renderRows() {
+  const body = document.getElementById('rows');
+  const filter = FILTERS.find((f) => f.key === activeFilter);
+  const kw = keyword.trim().toLowerCase();
+  const list = items.filter((ds) => {
+    if (!filter.test(ds.s)) return false;
+    if (!kw) return true;
+    const hay = [ds.name, ds.code, ds.source, ...ds.grants.map((g) => g.who)].join(' ').toLowerCase();
+    return hay.includes(kw);
+  });
+
+  if (!list.length) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="6">没有符合条件的数据集</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = list.map((ds) => {
+    const open = openId === ds.id;
+    const unauth = ds.s.alive === 0;
+    return `<tr class="row ${open ? 'open' : ''} ${unauth ? 'unauth' : ''}" data-id="${ds.id}">
+      <td>
+        <div class="ds">
+          <span class="ico">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+          </span>
+          <div style="min-width:0">
+            <div class="nm">${ds.name}</div>
+            <div class="meta"><span class="mono">#${ds.code}</span><span>·</span><span>${ds.source}</span><span>·</span><span>${ds.tables} 表</span></div>
+          </div>
+          <span class="caret">›</span>
+        </div>
+      </td>
+      <td>${subjectCell(ds)}</td>
+      <td>${scopeCell(ds)}</td>
+      <td>${rowCell(ds)}</td>
+      <td>${expireCell(ds)}</td>
+      <td><span class="muted">${ds.updated}</span></td>
+    </tr>
+    ${open ? `<tr class="detail"><td colspan="6">${detailHtml(ds)}</td></tr>` : ''}`;
+  }).join('');
+
+  body.querySelectorAll('tr.row').forEach((tr) => {
+    tr.onclick = () => {
+      const id = Number(tr.dataset.id);
+      openId = openId === id ? null : id;
+      renderRows();
+    };
+  });
+}
+
+document.getElementById('q').oninput = (e) => { keyword = e.target.value; renderRows(); };
+document.getElementById('as-admin').onclick = () => {
+  document.body.classList.remove('member');
+  document.getElementById('as-admin').classList.add('on');
+  document.getElementById('as-member').classList.remove('on');
+};
+document.getElementById('as-member').onclick = () => {
+  document.body.classList.add('member');
+  document.getElementById('as-member').classList.add('on');
+  document.getElementById('as-admin').classList.remove('on');
+};
+
+renderStats();
+renderChips();
+renderRows();
+</script>
+</body>
+</html>

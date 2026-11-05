@@ -315,6 +315,118 @@ async def list_datasets(
     return datasets
 
 
+@router.get(
+    "/dataset-permission-overview",
+    dependencies=[Depends(require_permission("element", "element:metadata:edit"))],
+)
+async def get_dataset_permission_overview(
+    keyword: str = Query("", description="按名称/标识/数据源/授权对象搜索"),
+    filter_key: str = Query("all", alias="filter", description="all/unauthorized/soon/narrowed/rowlevel/all_baseline"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    sort: str = Query("risk", description="risk/name/updated"),
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """全局视角的数据集授权总览（只读）。
+
+    一屏看清哪些数据集没人能访问、哪些快到期、哪些收窄到表、哪些有行级限制。
+    只读：改权限仍然回各数据集的「权限管理」页签。
+    """
+    from app.services.dataset_permission_overview_service import (
+        build_dataset_permission_overview,
+    )
+
+    data = await build_dataset_permission_overview(
+        conn,
+        keyword=keyword,
+        filter_key=filter_key,
+        page=page,
+        page_size=page_size,
+        sort=sort,
+    )
+    return {"code": 0, "data": data}
+
+
+@router.get(
+    "/datasets/permission-summary",
+    dependencies=[Depends(require_permission("element", "element:metadata:edit"))],
+)
+async def get_dataset_permission_summaries(
+    ids: str = Query("", description="逗号分隔的 dataset_id；留空返回全部"),
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """数据集卡片用的授权摘要：一眼看出有没有配、授给了谁、有没有收窄。
+
+    只回统计，不回主体名称——卡片位置有限，明细留给数据集详情的权限控制台。
+    """
+    from sqlalchemy import select
+
+    from app.models.permission import ResourcePermission
+    from app.services.dataset_scope_service import (
+        _parse_row_policy,
+        _parse_scope,
+        _subject_of,
+        grant_extended_fields,
+    )
+
+    stmt = select(
+        ResourcePermission.id,
+        ResourcePermission.resource_id,
+        ResourcePermission.user_id,
+        ResourcePermission.role_id,
+    ).where(
+        ResourcePermission.resource_type == "metadata",
+        ResourcePermission.enabled == True,  # noqa: E712 - 与既有查询口径一致
+    )
+    wanted = [item.strip() for item in (ids or "").split(",") if item.strip()]
+    if wanted:
+        stmt = stmt.where(ResourcePermission.resource_id.in_(wanted))
+
+    rows = (await conn.execute(stmt)).all()
+    if not rows:
+        return {"code": 0, "data": {}}
+
+    extended = await grant_extended_fields(conn, [int(row[0]) for row in rows])
+
+    summary: dict[str, dict[str, Any]] = {}
+    for permission_id, resource_id, row_user_id, row_role_id in rows:
+        if resource_id is None:
+            continue
+        info = extended.get(int(permission_id), {})
+        subject = _subject_of(row_user_id, row_role_id, info.get("subject_type"))
+        if subject is None:
+            continue
+        item = summary.setdefault(
+            str(resource_id),
+            {
+                "total": 0,
+                "all": False,
+                "roles": 0,
+                "users": 0,
+                "narrowed": 0,
+                "row_custom": 0,
+                "row_none": 0,
+            },
+        )
+        item["total"] += 1
+        if subject == "all":
+            item["all"] = True
+        elif subject == "role":
+            item["roles"] += 1
+        elif subject == "user":
+            item["users"] += 1
+        mode, _table_ids = _parse_scope(info.get("scope"))
+        if mode == "list":
+            item["narrowed"] += 1
+        policy = _parse_row_policy(info.get("row_policy"))
+        if policy == "custom":
+            item["row_custom"] += 1
+        elif policy == "none":
+            item["row_none"] += 1
+
+    return {"code": 0, "data": summary}
+
+
 @router.get("/datasets/accessible", response_model=List[DatasetOptionResponse])
 async def list_accessible_datasets(
     conn: AsyncSession = Depends(get_db_session),
