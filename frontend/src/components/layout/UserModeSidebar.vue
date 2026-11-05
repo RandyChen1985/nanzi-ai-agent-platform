@@ -1232,13 +1232,33 @@ const onFilterPanelClose = () => {
   if (filterPanelOpen.value) filterPanelOpen.value = false
 }
 
+/**
+ * 点外部收起筛选浮层。
+ *
+ * 判定必须挂在**捕获阶段**：侧栏里的筛选 chips、会话行的「⋯」按钮都带
+ * `@click.stop`（点它们本来就不该触发外层动作），冒泡阶段的 click 到不了
+ * document，浮层就会一直悬在页面上——看起来像「点了外面没反应」。
+ * 捕获阶段先于这些元素的处理器执行，`stopPropagation` 拦不住它。
+ *
+ * 用 pointerdown 而不是 click：按下即收起，不必等抬手。
+ */
+const onFilterPanelOutsidePointerDown = (event: PointerEvent) => {
+  if (!filterPanelOpen.value) return
+  const target = event.target
+  if (!(target instanceof Node)) return
+  const element = target instanceof Element ? target : null
+  const insidePanel = Boolean(element?.closest("[data-conversation-filter-panel]"))
+  const insideButton = Boolean(filterButtonRef.value?.contains(target))
+  if (!insidePanel && !insideButton) filterPanelOpen.value = false
+}
+
+/** Esc 收起浮层：和聊天页历史面板的行为保持一致 */
+const onDocumentKeydown = (event: KeyboardEvent) => {
+  if (event.key !== "Escape") return
+  if (filterPanelOpen.value) filterPanelOpen.value = false
+}
+
 const onDocumentClick = (event: MouseEvent) => {
-  if (filterPanelOpen.value) {
-    const target = event.target as HTMLElement | null
-    const insidePanel = Boolean(target?.closest("[data-conversation-filter-panel]"))
-    const insideButton = Boolean(filterButtonRef.value?.contains(target as Node))
-    if (!insidePanel && !insideButton) filterPanelOpen.value = false
-  }
   if (!menuTaskKey.value) return
   const target = event.target as HTMLElement | null
   if (target?.closest("[data-task-menu]")) return
@@ -1327,6 +1347,8 @@ const roleLabel = computed(() =>
 onMounted(() => {
   window.addEventListener("scroll", onFilterPanelClose, true)
   pageSize.value = computeUserModeTaskPageSize(window.innerHeight)
+  document.addEventListener("pointerdown", onFilterPanelOutsidePointerDown, true)
+  document.addEventListener("keydown", onDocumentKeydown)
   document.addEventListener("click", onDocumentClick)
   window.addEventListener("resize", handleResize)
   window.addEventListener("nanzi:conversation-active", onConversationActive)
@@ -1335,6 +1357,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener("pointerdown", onFilterPanelOutsidePointerDown, true)
+  document.removeEventListener("keydown", onDocumentKeydown)
   document.removeEventListener("click", onDocumentClick)
   window.removeEventListener("resize", handleResize)
   window.removeEventListener("nanzi:conversation-active", onConversationActive)
@@ -1354,6 +1378,8 @@ onUnmounted(() => {
 
 // 从聊天页回到列表时刷新一次：刚发起的会话可能才刚写进历史
 watch(() => route.path, (path) => {
+  // 换页时浮层必须收起来：它挂在 body 上，不属于任何路由，留着会飘在新页面上
+  if (filterPanelOpen.value) filterPanelOpen.value = false
   if (path === "/dashboard/chat") void loadTasks()
 })
 </script>

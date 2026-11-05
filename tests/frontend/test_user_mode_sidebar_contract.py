@@ -824,3 +824,30 @@ def test_conversation_list_supports_filters(sidebar: str) -> None:
     assert "data-conversation-filter-panel" in sidebar
     # 智能体列表懒加载，拉不到也不影响其它条件
     assert "agentApi.listAllowedAgents()" in sidebar
+
+
+def test_filter_panel_closes_on_outside_pointer_down(sidebar: str) -> None:
+    """点外部必须能收起筛选浮层。
+
+    判定挂在**捕获阶段**：侧栏里的筛选 chips、会话行的「⋯」都带 `@click.stop`
+    （点它们不该触发外层动作），冒泡阶段的 click 根本到不了 document，
+    浮层就会一直悬在页面上——表现就是「点了别处没反应」。
+    """
+    assert 'document.addEventListener("pointerdown", onFilterPanelOutsidePointerDown, true)' in sidebar
+    assert 'document.removeEventListener("pointerdown", onFilterPanelOutsidePointerDown, true)' in sidebar
+    # 面板与漏斗按钮内部不关（按钮的 click 还要负责开合）
+    assert 'closest("[data-conversation-filter-panel]")' in sidebar
+    assert "filterButtonRef.value?.contains(target)" in sidebar
+    # target 可能是 document / window（点滚动条、点 html 外沿），不能直接调 closest
+    assert "target instanceof Node" in sidebar
+    assert "target instanceof Element" in sidebar
+    # 关闭判定不能再依赖冒泡阶段的 click
+    click_handler = sidebar.split("const onDocumentClick = (event: MouseEvent) => {", 1)[1].split("}", 1)[0]
+    assert "filterPanelOpen" not in click_handler
+
+
+def test_filter_panel_closes_on_escape_and_route_change(sidebar: str) -> None:
+    """Esc 与换页都要收起浮层：它 teleport 在 body 上，不属于任何路由。"""
+    assert 'event.key !== "Escape"' in sidebar
+    route_watch = sidebar.split("watch(() => route.path", 1)[1].split("})", 1)[0]
+    assert "filterPanelOpen.value = false" in route_watch
