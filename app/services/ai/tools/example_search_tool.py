@@ -37,6 +37,21 @@ async def search_qa_examples(query: str, top_k: Optional[int] = 5) -> str:
             require_sql=False,
         )
         
+        # 经验库跨用户共享：先剔除引用了当前用户不可见表的案例，
+        # 否则表名会通过历史 SQL 泄露，模型还会照着生成注定被拒的 SQL。
+        try:
+            from app.core.context import get_current_agent_context
+            from app.services.dataset_scope_service import filter_examples_by_table_scope
+
+            ctx = get_current_agent_context()
+            examples = await filter_examples_by_table_scope(
+                examples,
+                user_id=getattr(ctx, "user_id", None),
+                is_admin=bool(getattr(ctx, "is_admin", False)),
+            )
+        except Exception as exc:  # noqa: BLE001 - 过滤失败不阻断检索
+            logger.warning("[ExampleSearchTool] 表级权限过滤失败: %s", exc)
+
         if not examples:
             return json.dumps({
                 "status": "empty",

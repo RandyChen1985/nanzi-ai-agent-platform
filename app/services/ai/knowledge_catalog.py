@@ -40,6 +40,10 @@ class AuthorizedKnowledgeCatalog:
     status: CatalogStatus
     items: tuple[KnowledgeBaseCatalogItem, ...] = ()
     error: Optional[str] = None
+    #: 内容级可写（能改文档）的 dataset id。``items`` 只按"可访问"过滤，
+    #: 里面混着只读库；工具要用它标出 can_edit / can_upload，且不该为此
+    #: 再算一遍权限（同一份 access 已经在下面查过了）。
+    content_writable_ids: frozenset[str] = frozenset()
 
     @property
     def has_effective_scope(self) -> bool:
@@ -301,9 +305,15 @@ async def fetch_authorized_knowledge_catalog(
         ]
 
     items = tuple(item for row in rows if (item := _to_item(row)) is not None)
+    content_writable = {
+        str(value).strip()
+        for value in (access.get("content_writable_ids") or ())
+        if str(value).strip()
+    }
     return AuthorizedKnowledgeCatalog(
         status="available" if items else "empty",
         items=items,
+        content_writable_ids=frozenset(content_writable),
     )
 
 

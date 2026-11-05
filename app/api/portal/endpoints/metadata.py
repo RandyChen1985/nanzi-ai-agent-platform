@@ -4,8 +4,8 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import AsyncGenerator, Awaitable, Callable, List, Any, Dict, Optional
-from pydantic import BaseModel
+from typing import AsyncGenerator, Awaitable, Callable, List, Any, Dict, Optional, Literal
+from pydantic import BaseModel, Field
 import logging
 
 logger = logging.getLogger(__name__)
@@ -394,57 +394,162 @@ async def get_dataset(
     return ds
 
 
+class PermissionScopePayload(BaseModel):
+    mode: Literal["all", "list"] = "all"
+    tables: List[int] = Field(default_factory=list)
+
+
+class PermissionSubjectPayload(BaseModel):
+    target_type: Literal["user", "role", "all"]
+    target_id: Optional[int] = None
+    scope: PermissionScopePayload = Field(default_factory=PermissionScopePayload)
+    row_policy: Literal["inherit", "none", "custom"] = "inherit"
+    row_condition: Optional[str] = None
+    expire_at: Optional[datetime] = None
+
+
+class AddPermissionsRequest(BaseModel):
+    """新增/更新授权。
+
+    - 新前端走 ``subjects``：一次提交多个主体，每个主体带自己的表范围、行级策略与有效期；
+    - 历史调用仍可用 ``target_type`` + ``target_ids``：等价于「全部表 + 继承行级 + 长期」。
+    """
+
+    subjects: Optional[List[PermissionSubjectPayload]] = None
+    target_type: Optional[str] = None
+    target_ids: List[int] = Field(default_factory=list)
+
+
+class DeletePermissionRequest(BaseModel):
+    target_type: Literal["user", "role", "all"]
+    # user / role 必须带 target_id：否则 ``user_id == None`` 会生成 ``user_id IS NULL``，
+    # 正好命中「全员」行（role_id 也没限定），一次误传就把公共基线删了。
+    target_id: Optional[int] = None
+
+
+def _serialize_grant_extended(info: dict[str, Any]) -> dict[str, Any]:
+    from app.services.dataset_scope_service import _is_expired, _parse_row_policy, _parse_scope
+
+    mode, table_ids = _parse_scope(info.get("scope"))
+    expire_at = info.get("expire_at")
+    return {
+        "scope": {"mode": mode, "tables": sorted(int(item) for item in table_ids)},
+        "row_policy": _parse_row_policy(info.get("row_policy")),
+        "row_condition": str(info.get("row_condition") or "").strip() or None,
+        "expire_at": expire_at.isoformat() if hasattr(expire_at, "isoformat") else expire_at,
+        "status": "expired" if _is_expired(expire_at) else "active",
+    }
+
+
 @router.get("/datasets/{dataset_id}/permissions")
 async def get_metadata_dataset_permissions(
     dataset_id: int,
     conn: AsyncSession = Depends(get_db_session),
     user: dict = Depends(require_permission("element", "element:metadata:edit")),
 ):
-    """获取元数据数据集授权的所有角色和用户列表"""
-    from app.models.permission import ResourcePermission, Role
+    """获取数据集的授权主体（角色 / 用户 / 全员）及其表级、行级配置。"""
+    from app.models.permission import ResourcePermission
     from app.models.user import User
     from sqlalchemy import select
+    from app.services.dataset_scope_service import grant_extended_fields, supports_table_scope
 
     stmt = select(ResourcePermission).where(
         ResourcePermission.resource_type == "metadata",
         ResourcePermission.resource_id == str(dataset_id),
-        ResourcePermission.enabled == True
+        ResourcePermission.enabled == True,
+        # 与 POST/DELETE 同口径：只展示全局行，智能体级授权不在这个控制台里管。
+        *(await PermissionService(conn)._agent_scope_filters(None)),
     )
-    result = await conn.execute(stmt)
-    perms = result.scalars().all()
+    perms = (await conn.execute(stmt)).scalars().all()
+    extended = await grant_extended_fields(conn, [int(p.id) for p in perms if p.id is not None])
 
     user_ids = [p.user_id for p in perms if p.user_id is not None]
     role_ids = [p.role_id for p in perms if p.role_id is not None]
 
-    granted_users = []
-    granted_roles = []
-
+    user_meta: dict[int, Any] = {}
     if user_ids:
-        user_stmt = select(User.id, User.user_name, User.real_name).where(User.id.in_(user_ids), User.status == 1)
-        user_res = await conn.execute(user_stmt)
-        granted_users = [{"id": u.id, "user_name": u.user_name, "real_name": u.real_name} for u in user_res.all()]
+        rows = await conn.execute(
+            select(User.id, User.user_name, User.real_name).where(
+                User.id.in_(user_ids), User.status == 1
+            )
+        )
+        user_meta = {int(row.id): row for row in rows.all()}
 
+    role_meta: dict[int, Any] = {}
     if role_ids:
-        role_stmt = select(Role.id, Role.code, Role.name).where(Role.id.in_(role_ids))
-        role_res = await conn.execute(role_stmt)
-        granted_roles = [{"id": r.id, "code": r.code, "name": r.name} for r in role_res.all()]
+        rows = await conn.execute(
+            select(Role.id, Role.code, Role.name).where(Role.id.in_(role_ids))
+        )
+        role_meta = {int(row.id): row for row in rows.all()}
+
+    granted_users: list[dict[str, Any]] = []
+    granted_roles: list[dict[str, Any]] = []
+    all_members: Optional[dict[str, Any]] = None
+
+    for perm in perms:
+        info = extended.get(int(perm.id), {})
+        payload = _serialize_grant_extended(info)
+        if perm.user_id is None and perm.role_id is None:
+            all_members = {"id": int(perm.id), **payload}
+        elif perm.user_id is not None:
+            meta = user_meta.get(int(perm.user_id))
+            granted_users.append(
+                {
+                    "id": int(perm.user_id),
+                    "user_name": getattr(meta, "user_name", None) or f"user-{perm.user_id}",
+                    "real_name": getattr(meta, "real_name", None),
+                    "permission_id": int(perm.id),
+                    **payload,
+                }
+            )
+        elif perm.role_id is not None:
+            meta = role_meta.get(int(perm.role_id))
+            granted_roles.append(
+                {
+                    "id": int(perm.role_id),
+                    "code": getattr(meta, "code", None) or f"role-{perm.role_id}",
+                    "name": getattr(meta, "name", None) or getattr(meta, "code", None) or f"role-{perm.role_id}",
+                    "permission_id": int(perm.id),
+                    **payload,
+                }
+            )
+
+    tables: list[dict[str, Any]] = []
+    try:
+        dataset = await MetadataService.get_dataset_by_id(conn, dataset_id, is_admin=True)
+        if dataset:
+            tables = [
+                {"id": int(t.id), "physical_name": t.physical_name, "term": t.term}
+                for t in sorted(dataset.tables, key=lambda item: item.physical_name)
+                if getattr(t, "status", 1) == 1
+            ]
+    except Exception as exc:  # noqa: BLE001 - 表清单失败不影响授权回显
+        logger.warning("[Metadata] 读取数据集表清单失败: %s", exc)
 
     return {
         "code": 0,
         "data": {
             "users": granted_users,
-            "roles": granted_roles
-        }
+            "roles": granted_roles,
+            "all_members": all_members,
+            "tables": tables,
+            "scope_supported": await supports_table_scope(conn),
+        },
     }
 
 
-class AddPermissionsRequest(BaseModel):
-    target_type: str  # "user" 或 "role"
-    target_ids: List[int]
+@router.get("/datasets/{dataset_id}/permissions/simulate")
+async def simulate_metadata_dataset_permission(
+    dataset_id: int,
+    user_id: int = Query(..., description="要模拟的平台成员 user_id"),
+    conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(require_permission("element", "element:metadata:edit")),
+):
+    """权限模拟：某成员在该数据集最终能看到哪些表、哪些行，命中了哪些授权。"""
+    from app.services.dataset_scope_service import dataset_permission_snapshot
 
-class DeletePermissionRequest(BaseModel):
-    target_type: str  # "user" 或 "role"
-    target_id: int
+    snapshot = await dataset_permission_snapshot(conn, user_id, dataset_id)
+    return {"code": 0, "data": snapshot}
 
 
 @router.get("/candidates")
@@ -519,59 +624,149 @@ async def add_metadata_dataset_permissions(
     dataset_id: int,
     payload: AddPermissionsRequest,
     conn: AsyncSession = Depends(get_db_session),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
 ):
-    """添加元数据数据集的授权角色或用户 (需数据集编辑权限)"""
+    """新增 / 更新数据集授权（支持表级范围、行级策略、有效期）。"""
     from app.models.permission import ResourcePermission, UserRoleRelation
     from sqlalchemy import select
-    
-    perm_service = PermissionService(conn)
-    affected_user_ids = set()
+    from app.services.dataset_scope_service import update_grant_scope
 
-    for tid in payload.target_ids:
-        # 查询是否已经有对应记录了
+    dataset = await MetadataService.get_dataset_by_id(conn, dataset_id, is_admin=True)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    valid_table_ids = {
+        int(table.id) for table in dataset.tables if getattr(table, "status", 1) == 1
+    }
+
+    subjects: list[PermissionSubjectPayload] = list(payload.subjects or [])
+    if not subjects:
+        # 历史 payload 兼容：等价于「全部表 + 继承行级 + 长期」。
+        legacy_type = str(payload.target_type or "").strip().lower()
+        if legacy_type not in ("user", "role"):
+            raise HTTPException(status_code=400, detail="缺少授权主体")
+        for target_id in payload.target_ids:
+            subjects.append(
+                PermissionSubjectPayload(target_type=legacy_type, target_id=int(target_id))
+            )
+
+    if not subjects:
+        raise HTTPException(status_code=400, detail="缺少授权主体")
+
+    for subject in subjects:
+        if subject.target_type in ("user", "role") and subject.target_id is None:
+            raise HTTPException(status_code=400, detail="用户/角色授权缺少 target_id")
+        if subject.scope.mode == "list":
+            wanted = {int(item) for item in subject.scope.tables}
+            invalid = wanted - valid_table_ids
+            if invalid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"表 {sorted(invalid)} 不属于该数据集，或已停用",
+                )
+            if not wanted:
+                raise HTTPException(
+                    status_code=400,
+                    detail="「指定表」至少要勾选一张表；如需全部表请选择「全部表」",
+                )
+        if subject.row_policy == "custom":
+            if subject.target_type == "all":
+                raise HTTPException(
+                    status_code=400, detail="「全员」授权不支持自定义行级条件，请用数据集行级策略"
+                )
+            condition = str(subject.row_condition or "").strip()
+            if not condition:
+                raise HTTPException(status_code=400, detail="自定义行级策略缺少条件")
+            if len(condition) > 500:
+                raise HTTPException(status_code=400, detail="行级条件过长（最多 500 字符）")
+            if ";" in condition or "--" in condition or "/*" in condition:
+                raise HTTPException(status_code=400, detail="行级条件不允许包含分号或注释")
+
+    perm_service = PermissionService(conn)
+    affected_user_ids: set[int] = set()
+    scope_supported = True
+
+    for subject in subjects:
         stmt = select(ResourcePermission).where(
             ResourcePermission.resource_type == "metadata",
-            ResourcePermission.resource_id == str(dataset_id)
+            ResourcePermission.resource_id == str(dataset_id),
+            # 同上：只认全局行，避免把扩展配置写到某个智能体级授权上。
+            *(await perm_service._agent_scope_filters(None)),
         )
-        if payload.target_type == "user":
-            stmt = stmt.where(ResourcePermission.user_id == tid)
-            affected_user_ids.add(tid)
+        if subject.target_type == "user":
+            stmt = stmt.where(ResourcePermission.user_id == int(subject.target_id))
+            affected_user_ids.add(int(subject.target_id))
+        elif subject.target_type == "role":
+            stmt = stmt.where(ResourcePermission.role_id == int(subject.target_id))
+            rows = await conn.execute(
+                select(UserRoleRelation.user_id).where(
+                    UserRoleRelation.role_id == int(subject.target_id)
+                )
+            )
+            affected_user_ids.update(int(uid) for uid in rows.scalars().all() if uid is not None)
         else:
-            stmt = stmt.where(ResourcePermission.role_id == tid)
-            # 获取该角色下的所有关联用户
-            r_users_stmt = select(UserRoleRelation.user_id).where(UserRoleRelation.role_id == tid)
-            r_users_res = await conn.execute(r_users_stmt)
-            for uid in r_users_res.scalars().all():
-                affected_user_ids.add(uid)
+            stmt = stmt.where(
+                ResourcePermission.user_id.is_(None),
+                ResourcePermission.role_id.is_(None),
+            )
+            # 全员基线对所有登录成员生效：改完必须全量清权限缓存，否则 1 小时缓存内不生效。
+            rows = await conn.execute(select(User.id).where(User.status == 1))
+            affected_user_ids.update(int(uid) for uid in rows.scalars().all() if uid is not None)
 
-        result = await conn.execute(stmt)
-        record = result.scalar_one_or_none()
-
-        if record:
+        record = (await conn.execute(stmt)).scalars().first()
+        if record is not None:
             record.enabled = True
         else:
-            new_perm = ResourcePermission(
+            record = ResourcePermission(
                 resource_type="metadata",
                 resource_id=str(dataset_id),
-                enabled=True
+                enabled=True,
             )
-            if payload.target_type == "user":
-                new_perm.user_id = tid
-            else:
-                new_perm.role_id = tid
-            conn.add(new_perm)
+            if subject.target_type == "user":
+                record.user_id = int(subject.target_id)
+            elif subject.target_type == "role":
+                record.role_id = int(subject.target_id)
+            conn.add(record)
+        await conn.flush()
+
+        wrote_extended = await update_grant_scope(
+            conn,
+            int(record.id),
+            subject_type=subject.target_type,
+            scope={
+                "mode": subject.scope.mode,
+                "tables": [int(item) for item in subject.scope.tables] if subject.scope.mode == "list" else [],
+            },
+            row_policy=subject.row_policy,
+            row_condition=subject.row_condition,
+            expire_at=subject.expire_at,
+        )
+        scope_supported = scope_supported and wrote_extended
 
     await conn.flush()
 
-    # 清理受影响用户的缓存，使其变更即刻生效
     if affected_user_ids:
         await perm_service.invalidate_cached_permissions_for_users(affected_user_ids)
         from app.services.ai.config import AgentConfigProvider
-        for uid in affected_user_ids:
-            await AgentConfigProvider.invalidate_dataset_menu_cache(user_id=uid)
 
-    return {"code": 0, "message": "权限配置已成功添加"}
+        # 「全员」授权影响所有启用用户，逐用户串行清会拖到几十秒：分批并发。
+        ordered = sorted(affected_user_ids)
+        for start in range(0, len(ordered), 50):
+            await asyncio.gather(
+                *(
+                    AgentConfigProvider.invalidate_dataset_menu_cache(user_id=uid)
+                    for uid in ordered[start : start + 50]
+                ),
+                return_exceptions=True,
+            )
+
+    response = {"code": 0, "message": "权限配置已成功添加", "scope_supported": scope_supported}
+    if not scope_supported:
+        response["warning"] = (
+            "表级/行级授权字段尚未生效：请先执行 db-prod/V205 与 db-prod-pg/V105 迁移，"
+            "当前保存的行为等价于「数据集内全部表」。"
+        )
+    return response
 
 
 @router.delete("/datasets/{dataset_id}/permissions", dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
@@ -579,43 +774,65 @@ async def delete_metadata_dataset_permission(
     dataset_id: int,
     payload: DeletePermissionRequest,
     conn: AsyncSession = Depends(get_db_session),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
 ):
-    """移除元数据数据集关联的某个角色或用户授权 (需数据集编辑权限)"""
+    """移除某个角色 / 用户 / 全员在该数据集上的授权（需数据集编辑权限）"""
     from app.models.permission import ResourcePermission, UserRoleRelation
+    from app.models.user import User
     from sqlalchemy import select, delete
 
+    if payload.target_type in ("user", "role") and payload.target_id is None:
+        raise HTTPException(status_code=400, detail="用户/角色授权缺少 target_id")
+
     perm_service = PermissionService(conn)
-    affected_user_ids = set()
+    affected_user_ids: set[int] = set()
 
-    # 查出受影响的用户列表以作缓存清理
-    if payload.target_type == "user":
-        affected_user_ids.add(payload.target_id)
-    else:
-        r_users_stmt = select(UserRoleRelation.user_id).where(UserRoleRelation.role_id == payload.target_id)
-        r_users_res = await conn.execute(r_users_stmt)
-        for uid in r_users_res.scalars().all():
-            affected_user_ids.add(uid)
+    if payload.target_type == "user" and payload.target_id is not None:
+        affected_user_ids.add(int(payload.target_id))
+    elif payload.target_type == "role" and payload.target_id is not None:
+        rows = await conn.execute(
+            select(UserRoleRelation.user_id).where(
+                UserRoleRelation.role_id == int(payload.target_id)
+            )
+        )
+        affected_user_ids.update(int(uid) for uid in rows.scalars().all() if uid is not None)
+    elif payload.target_type == "all":
+        # 全员授权影响所有启用用户，按全量清缓存。
+        rows = await conn.execute(select(User.id).where(User.status == 1))
+        affected_user_ids.update(int(uid) for uid in rows.scalars().all() if uid is not None)
 
-    # 物理清除
     stmt = delete(ResourcePermission).where(
         ResourcePermission.resource_type == "metadata",
-        ResourcePermission.resource_id == str(dataset_id)
+        ResourcePermission.resource_id == str(dataset_id),
+        # 只删全局行：智能体级授权是另一层作用域，不能被这里连带删掉。
+        *(await perm_service._agent_scope_filters(None)),
     )
     if payload.target_type == "user":
         stmt = stmt.where(ResourcePermission.user_id == payload.target_id)
-    else:
+    elif payload.target_type == "role":
         stmt = stmt.where(ResourcePermission.role_id == payload.target_id)
+    else:
+        stmt = stmt.where(
+            ResourcePermission.user_id.is_(None), ResourcePermission.role_id.is_(None)
+        )
 
     await conn.execute(stmt)
     await conn.flush()
 
-    # 清理权限缓存
     if affected_user_ids:
         await perm_service.invalidate_cached_permissions_for_users(affected_user_ids)
         from app.services.ai.config import AgentConfigProvider
-        for uid in affected_user_ids:
-            await AgentConfigProvider.invalidate_dataset_menu_cache(user_id=uid)
+
+        # 「全员」授权影响所有启用用户，逐用户串行清会拖到几十秒：分批并发。
+        ordered = sorted(affected_user_ids)
+        for start in range(0, len(ordered), 50):
+            await asyncio.gather(
+                *(
+                    AgentConfigProvider.invalidate_dataset_menu_cache(user_id=uid)
+                    for uid in ordered[start : start + 50]
+                ),
+                return_exceptions=True,
+            )
 
     return {"code": 0, "message": "权限配置已成功移除"}
 

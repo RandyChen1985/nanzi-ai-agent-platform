@@ -27,8 +27,13 @@ def _dataset_item(row: Any) -> dict[str, Any]:
     }
 
 
-def _knowledge_item(row: Any) -> dict[str, Any]:
-    return {
+def _knowledge_item(
+    row: Any,
+    *,
+    can_edit: Optional[bool] = None,
+    can_upload: Optional[bool] = None,
+) -> dict[str, Any]:
+    item = {
         "ragflow_dataset_id": getattr(row, "ragflow_dataset_id", None) or "",
         "name": getattr(row, "name", None) or "",
         "description": getattr(row, "description", None) or "",
@@ -36,6 +41,11 @@ def _knowledge_item(row: Any) -> dict[str, Any]:
         "visibility": getattr(row, "visibility", None) or "",
         "owner": getattr(row, "owner", None) or "",
     }
+    if can_edit is not None:
+        item["can_edit"] = bool(can_edit)
+    if can_upload is not None:
+        item["can_upload"] = bool(can_upload)
+    return item
 
 
 @tool
@@ -68,11 +78,16 @@ async def list_accessible_datasets() -> str:
 
 @tool
 async def list_accessible_knowledge_bases() -> str:
-    """列出当前用户有权限的知识库轻量目录（id/名称/备注等，不含文档正文）。
+    """列出当前用户有权限的知识库轻量目录（id/名称/备注/能力标记，不含文档正文）。
 
     使用规则：
     - 当用户问「我有哪些知识库」「能检索哪些文档库」「知识库列表」时调用。
     - 仅返回目录级信息，不含文档正文；本工具不承担正文检索。
+    - 每条带两个能力标记，**按需过滤后再问用户**：
+      ``can_edit`` 为 true 表示能改这个库的文档（改动上传/删除/重命名），
+      ``can_upload`` 为 true 表示不仅能改、且当前账号有「上传文档」的功能权限。
+      要把文件传进某个库时只看 ``can_upload=true`` 的；一个都没有就直说
+      「你目前没有可上传的知识库」，不要拿只读库去试。
     """
     ctx = get_current_agent_context()
     if not ctx or not ctx.user_id:
@@ -88,7 +103,26 @@ async def list_accessible_knowledge_bases() -> str:
                 is_admin=bool(ctx.is_admin),
                 permission_service=PermissionService(db),
             )
-            items = [_knowledge_item(row) for row in catalog.items]
+            is_admin = bool(getattr(ctx, "is_admin", False))
+            # "能编辑"和"能上传"不是一回事：上传还要求角色具备
+            # element:knowledge:upload_document。只标 can_edit 会让模型对着
+            # 一个缺元素权限的账号反复尝试上传，最后拿一句 forbidden 收场。
+            can_upload_role = is_admin or bool(
+                await PermissionService(db).check_permission(
+                    int(ctx.user_id), "element", "element:knowledge:upload_document"
+                )
+            )
+            items = []
+            for row in catalog.items:
+                dataset_id = str(getattr(row, "ragflow_dataset_id", None) or "")
+                can_edit = is_admin or dataset_id in catalog.content_writable_ids
+                items.append(
+                    _knowledge_item(
+                        row,
+                        can_edit=can_edit,
+                        can_upload=bool(can_edit and can_upload_role),
+                    )
+                )
             items.sort(key=lambda x: x.get("ragflow_dataset_id") or "")
             return json.dumps({"items": items, "count": len(items)}, ensure_ascii=False)
     except Exception as e:

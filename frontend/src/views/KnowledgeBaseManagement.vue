@@ -15,7 +15,6 @@ import { useToast } from '../composables/useToast'
 import { ragflowApi } from '../api/ragflow'
 import { useUser } from '../composables/useUser'
 import { formatDate } from '../utils/date'
-import { copyToClipboard as copyText } from '../utils/clipboard'
 import DocumentViewer from '@/components/embed/DocumentViewer.vue'
 import {
   canPreviewWithDocumentViewer,
@@ -317,8 +316,7 @@ const form = ref({
   ownerText: '',
   visibility: 'private',
   tags: [] as string[],
-  notes: '',
-  extraConfigText: '{}'
+  notes: ''
 })
 
 const canCreate = computed(() => hasPermission('element:knowledge:create'))
@@ -344,11 +342,6 @@ const detailTab = ref<'settings' | 'audit' | 'references'>('settings')
 // 右侧抽屉：文档详情与库信息共用一个容器，避免主区被挤来挤去
 const drawerOpen = ref(false)
 const drawerMode = ref<'doc' | 'lib'>('doc')
-// 「高级设置」默认收起：绝大多数人不需要碰 JSON，展开就先把代价讲清楚
-const advancedConfigOpen = ref(false)
-const createAdvancedConfigOpen = ref(false)
-// 详情页底部那块只读 JSON 同理，默认收起
-const detailConfigOpen = ref(false)
 const auditLogs = ref<any[]>([])
 const auditTotal = ref(0)
 const auditPage = ref(1)
@@ -551,7 +544,6 @@ watch(
     auditTotal.value = 0
     auditPage.value = 1
     auditAction.value = ''
-    detailConfigOpen.value = false
     agentRefs.value = []
     void loadDatasetQuota()
     if (detailTab.value === 'audit') loadAuditLogs(true)
@@ -824,15 +816,6 @@ const apiData = (response: any) => response?.data?.data ?? response?.data ?? []
 const normalizeTags = (text: string) =>
   text.split(/[,，\n]/).map(t => t.trim()).filter(Boolean)
 
-const parseExtraConfig = () => {
-  if (!form.value.extraConfigText.trim()) return {}
-  try {
-    return JSON.parse(form.value.extraConfigText)
-  } catch {
-    throw new Error('扩展配置必须是合法 JSON')
-  }
-}
-
 const resetForm = () => {
   form.value = {
     name: '',
@@ -842,8 +825,7 @@ const resetForm = () => {
     ownerText: '',
     visibility: 'private',
     tags: [] as string[],
-    notes: '',
-    extraConfigText: '{}'
+    notes: ''
   }
 }
 
@@ -887,11 +869,8 @@ const openEdit = (dataset: KnowledgeBase) => {
     // 名称保存就把它静默改成 private，其他被授权的人瞬间失去访问。
     visibility: visibilityOf(dataset),
     tags: [...(dataset.tags || [])],
-    notes: dataset.notes || '',
-    extraConfigText: JSON.stringify(dataset.local_metadata?.extra_config || {}, null, 2)
+    notes: dataset.notes || ''
   }
-
-  advancedConfigOpen.value = false
 
   customQuestions.value = []
   const localExtra = dataset.local_metadata?.extra_config || {}
@@ -2090,8 +2069,7 @@ const createDataset = async () => {
       owner_dept_id: form.value.ownerDeptId || null,
       visibility: form.value.visibility,
       tags: form.value.tags,
-      notes: form.value.notes,
-      extra_config: parseExtraConfig()
+      notes: form.value.notes
     })
     showToast('知识库创建成功', 'success')
     showCreateModal.value = false
@@ -2128,8 +2106,11 @@ const updateMetadata = async () => {
   if (savingMetadata.value) return
   savingMetadata.value = true
   try {
-    const extraConfig = parseExtraConfig()
-    extraConfig.custom_questions = customQuestions.value.filter(q => q.label.trim() && q.query.trim())
+    // 只提交 custom_questions 这一个键。extra_config 里还躺着 folder_structure，
+    // 而这里手里只有打开弹窗时的快照 —— 整份回写会把别人（或自己另一个标签页）
+    // 刚做的目录调整一起回滚，就是典型的 lost update。
+    const customQuestionsPayload = customQuestions.value
+      .filter(q => q.label.trim() && q.query.trim())
 
     const payload: Record<string, unknown> = {
       name: form.value.name,
@@ -2139,7 +2120,7 @@ const updateMetadata = async () => {
       visibility: form.value.visibility,
       tags: form.value.tags,
       notes: form.value.notes,
-      extra_config: extraConfig
+      custom_questions: customQuestionsPayload
     }
     // 未关联部门时，历史自由文本由前端决定保留还是清除；选了部门则由后端按部门名回填
     if (!form.value.ownerDeptId) {
@@ -2754,15 +2735,6 @@ const parseSingleDocument = async (docId: string) => {
     delete nextParsing[docId]
     parsingDocIds.value = nextParsing
     showToast(extractError(err), 'error')
-  }
-}
-
-const copyToClipboard = async (text: string) => {
-  const ok = await copyText(text)
-  if (ok) {
-    showToast('已复制到剪贴板', 'success')
-  } else {
-    showToast('复制失败，请手动复制', 'error')
   }
 }
 
@@ -5628,45 +5600,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 </div>
             </section>
 
-
-            <!--
-              Extended config JSON：与编辑弹窗的「高级设置」同一口径——默认收起。
-              这坨 JSON 只有 folder_structure / custom_questions 两个键有消费者，
-              平时挂在详情页最底部纯属视觉噪音，还把左右分栏的高度全吃掉了。
-            -->
-            <div class="flex flex-col shrink-0 border-t border-gray-200 pt-5 mt-5">
-              <div class="flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  class="flex items-center gap-1.5 text-left text-[12.5px] font-semibold text-gray-800 transition-colors hover:text-primary"
-                  :aria-expanded="detailConfigOpen"
-                  @click="detailConfigOpen = !detailConfigOpen"
-                >
-                  <svg
-                    class="h-3 w-3 shrink-0 transition-transform duration-200"
-                    :class="{ 'rotate-90': detailConfigOpen }"
-                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                  >
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                  </svg>
-                  业务元数据扩展配置 (JSON)
-                </button>
-                <div class="flex shrink-0 items-center gap-2">
-                  <button
-                    v-if="detailConfigOpen"
-                    class="text-xs font-semibold text-primary hover:underline"
-                    @click="copyToClipboard(JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2))"
-                  >
-                    复制配置
-                  </button>
-                  <span class="text-[10px] text-gray-300 select-none">{{ detailConfigOpen ? '收起' : '展开' }}</span>
-                </div>
-              </div>
-              <pre
-                v-show="detailConfigOpen"
-                class="mt-2 max-h-[280px] overflow-auto rounded-xl bg-gray-900 p-4 font-mono text-xs leading-relaxed text-emerald-400 shadow-inner"
-              >{{ JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2) }}</pre>
-            </div>
             </template>
 
             <!-- 操作日志：谁在什么时候对这个库做了什么 -->
@@ -6118,44 +6051,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <label class="block text-xs font-semibold text-gray-400 mb-1.5">平台备注</label>
           <textarea v-model="form.notes" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" rows="2" placeholder="请输入备注"></textarea>
         </div>
-        <div class="overflow-hidden rounded-xl border border-gray-200">
-          <button
-            type="button"
-            class="flex w-full items-center justify-between bg-gray-50/60 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
-            :aria-expanded="createAdvancedConfigOpen"
-            @click="createAdvancedConfigOpen = !createAdvancedConfigOpen"
-          >
-            <span class="flex items-center gap-1.5">
-              <svg
-                class="h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform duration-200"
-                :class="{ 'rotate-90': createAdvancedConfigOpen }"
-                fill="none" stroke="currentColor" viewBox="0 0 24 24"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-              </svg>
-              <span class="text-xs font-semibold text-gray-500">高级设置</span>
-              <span class="text-[11px] text-gray-400">· 业务扩展配置 JSON</span>
-            </span>
-            <span class="shrink-0 text-[10px] text-gray-400">{{ createAdvancedConfigOpen ? '收起' : '展开' }}</span>
-          </button>
-
-          <div v-show="createAdvancedConfigOpen" class="space-y-2 border-t border-gray-100 px-3 pb-3 pt-2.5">
-            <div class="space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
-              <p><b>保存是整份覆盖。</b>删掉 <code class="font-mono">folder_structure</code> 会让所有文档掉回「未分类」，虚拟文件夹丢失且无法撤销。</p>
-              <p>只有下面两个键会被读取，其余键写了也不会生效：</p>
-              <ul class="list-disc space-y-0.5 pl-4">
-                <li><code class="font-mono">folder_structure</code>：虚拟文件夹映射，由「新建文件夹 / 移动文档」自动维护，一般无需手改。</li>
-                <li><code class="font-mono">custom_questions</code>：知识库门户的快捷提问，形如 <code class="font-mono">[{label:'总结核心内容', query:'请帮我梳理要点'}]</code>。</li>
-              </ul>
-            </div>
-            <textarea
-              v-model="form.extraConfigText"
-              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
-              rows="4"
-              placeholder="{}"
-            ></textarea>
-          </div>
-        </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showCreateModal = false">取消</button>
           <button class="px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-50" :disabled="!isEngineReady || creatingDataset" @click="createDataset">{{ creatingDataset ? '创建中…' : '确定创建' }}</button>
@@ -6382,50 +6277,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
         </div>
 
-        <!--
-          额外扩展配置：本质是开发者的逃生舱口，不该摆在一级表单里。
-          只有 folder_structure 与 custom_questions 会被读取，其余键写了没人用；
-          而保存是整份覆盖——手滑删掉 folder_structure，所有文档会掉回「未分类」且无法撤销。
-          因此折叠起来 + 把代价写在脸上。
-        -->
-        <div class="overflow-hidden rounded-xl border border-gray-200">
-          <button
-            type="button"
-            class="flex w-full items-center justify-between bg-gray-50/60 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
-            :aria-expanded="advancedConfigOpen"
-            @click="advancedConfigOpen = !advancedConfigOpen"
-          >
-            <span class="flex items-center gap-1.5">
-              <svg
-                class="h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform duration-200"
-                :class="{ 'rotate-90': advancedConfigOpen }"
-                fill="none" stroke="currentColor" viewBox="0 0 24 24"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-              </svg>
-              <span class="text-xs font-semibold text-gray-500">高级设置</span>
-              <span class="text-[11px] text-gray-400">· 额外扩展配置 JSON</span>
-            </span>
-            <span class="shrink-0 text-[10px] text-gray-400">{{ advancedConfigOpen ? '收起' : '展开' }}</span>
-          </button>
-
-          <div v-show="advancedConfigOpen" class="space-y-2 border-t border-gray-100 px-3 pb-3 pt-2.5">
-            <div class="space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
-              <p><b>保存是整份覆盖。</b>删掉 <code class="font-mono">folder_structure</code> 会让所有文档掉回「未分类」，虚拟文件夹丢失且无法撤销。</p>
-              <p>只有下面两个键会被读取，其余键写了也不会生效：</p>
-              <ul class="list-disc space-y-0.5 pl-4">
-                <li><code class="font-mono">folder_structure</code>：虚拟文件夹映射，由「新建文件夹 / 移动文档」自动维护，一般无需手改。</li>
-                <li><code class="font-mono">custom_questions</code>：知识库门户的快捷提问，形如 <code class="font-mono">[{label:'总结核心内容', query:'请帮我梳理要点'}]</code>。</li>
-              </ul>
-            </div>
-            <textarea
-              v-model="form.extraConfigText"
-              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
-              rows="4"
-              placeholder="{}"
-            ></textarea>
-          </div>
-        </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showEditModal = false">取消</button>
           <button class="px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-50" :disabled="!isEngineReady || savingMetadata" @click="updateMetadata">{{ savingMetadata ? '保存中…' : '保存' }}</button>

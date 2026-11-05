@@ -103,6 +103,12 @@ async def test_dataset_table_consistency_validation_failed(monkeypatch):
         "app.services.ai.chatbi_sql_query_binding.enforce_physical_table_permissions",
         fake_enforce,
     )
+    # 表级授权门禁会额外查库，本用例只验证「数据集归属一致性」，表级白名单在
+    # tests/services/test_dataset_scope_permissions.py 与门禁用例里单独覆盖。
+    monkeypatch.setattr(
+        "app.services.dataset_scope_service.enforce_table_scope_for_refs",
+        fake_enforce,
+    )
 
     from unittest.mock import MagicMock
     mock_session = AsyncMock()
@@ -243,6 +249,18 @@ async def test_execute_sql_query_core_marks_permission_notice_when_row_filter_re
         "app.services.ai.chatbi_sql_query_binding.build_data_perm_table_metadata",
         lambda _binding, _dataset_name: {"orders": {"dept_code"}},
     )
+    # 行级策略解析需要查库（授权行上的 row_policy），这里固定走 inherit。
+    async def fake_row_policy(_session, _user_id, _dataset_id):
+        return ("inherit", None)
+
+    monkeypatch.setattr(
+        "app.services.dataset_scope_service.resolve_effective_row_policy",
+        fake_row_policy,
+    )
+    monkeypatch.setattr(
+        "app.services.dataset_scope_service.enforce_table_scope_for_refs",
+        fake_enforce,
+    )
     monkeypatch.setattr(
         "app.services.ai.sql_sandbox_gate.SQLSandboxGate.verify_and_optimize",
         fake_sandbox_verify,
@@ -269,3 +287,68 @@ async def test_execute_sql_query_core_marks_permission_notice_when_row_filter_re
     assert permission_notice["message"] == "已按你的数据权限自动过滤结果"
     assert "dept_code" in str(permission_notice.get("executed_sql") or "")
     assert "D001" in str(permission_notice.get("executed_sql") or "")
+
+
+@pytest.mark.asyncio
+async def test_custom_row_policy_rejects_when_condition_does_not_apply(monkeypatch):
+    """custom 行级条件引用的表不在本次查询里时必须拒绝，不能静默放行全表。
+
+    重写器对「条件与查询表不匹配」是静默返回原 SQL 的（对 inherit 是既有语义，
+    因为数据集策略按表生效）；但 custom 是这条授权独立的行级限制，
+    静默放行 = 配了限制却查到全表，属于权限放大。
+    """
+    fake_ds = SimpleNamespace(
+        id=1, name="sales_dataset", enable_data_perm=False, row_filter_config={}
+    )
+
+    async def fake_get_dataset_by_name(_session, name):
+        return fake_ds if name == "sales_dataset" else None
+
+    async def fake_enforce(*args, **kwargs):
+        return None
+
+    async def fake_row_policy(_session, _user_id, _dataset_id):
+        return ("custom", "fact_a.dept_code = 'FIN'")
+
+    async def fake_sandbox_verify(_session, *, sql, data_source, dialect):
+        return SimpleNamespace(allowed=True, optimized_sql=sql, message="")
+
+    monkeypatch.setattr(
+        sql_service.MetadataService, "get_dataset_by_name", fake_get_dataset_by_name
+    )
+    monkeypatch.setattr(
+        "app.services.ai.chatbi_sql_query_binding.enforce_physical_table_permissions",
+        fake_enforce,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.chatbi_sql_query_binding.enforce_dataset_table_scope",
+        fake_enforce,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.chatbi_sql_query_binding.build_data_perm_table_metadata",
+        lambda _binding, _dataset_name: {"fact_b": {"dept_code"}},
+    )
+    monkeypatch.setattr(
+        "app.services.dataset_scope_service.resolve_effective_row_policy", fake_row_policy
+    )
+    monkeypatch.setattr(
+        "app.services.dataset_scope_service.enforce_table_scope_for_refs", fake_enforce
+    )
+    monkeypatch.setattr(
+        "app.services.ai.sql_sandbox_gate.SQLSandboxGate.verify_and_optimize",
+        fake_sandbox_verify,
+    )
+
+    result = await sql_service.execute_sql_query_core(
+        session=None,
+        sql="SELECT * FROM fact_b",
+        data_source="mysql_oa",
+        dataset_name="sales_dataset",
+        user_id=4,
+        user_dimensions={"user_name": "chenxiaolong", "dept_code": "FIN"},
+        dry_run=False,
+        is_admin=False,
+    )
+
+    assert "[Permission Denied]" in result
+    assert "自定义行级条件未生效" in result

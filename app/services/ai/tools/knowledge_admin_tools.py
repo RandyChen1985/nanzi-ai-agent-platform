@@ -343,7 +343,9 @@ async def upload_document_to_knowledge_base(
       列出候选，再向用户确认；错误返回里的 ``candidates`` 也可以直接拿来问。
 
     Args:
-        dataset_id: 目标知识库的 32 位 dataset ID（可用 list_accessible_knowledge_bases 查）。
+        dataset_id: 目标知识库的 dataset ID（32 位）。
+            先用 list_accessible_knowledge_bases 查，并且**只从 can_upload=true 的库里选**；
+            有多个可上传的库、而用户没指定时，直接把名字列出来问用户。
         file_path: 文件路径。本次对话的附件在 data/uploads/<原始文件名>，
             也可以只传文件名（如 manual.pdf），系统会按附件名匹配；
             不确定文件名时先用 session_status 查看 attachments.filenames。

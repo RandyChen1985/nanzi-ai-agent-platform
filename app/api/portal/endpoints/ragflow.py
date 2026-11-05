@@ -152,7 +152,13 @@ class UpdateDatasetMetadataRequest(BaseModel):
     visibility: Optional[str] = None
     tags: Optional[List[str]] = None
     notes: Optional[str] = None
+    #: 整份覆盖 ``extra_config``。**保留仅为兼容旧调用方**——不要在新代码里用它：
+    #: 调用方手里往往只有打开页面时的快照，整份回写会把并发方改过的
+    #: ``folder_structure`` 悄悄冲掉（同一个库两个人操作 = lost update）。
+    #: 需要改快捷提问请用下面的 ``custom_questions``。
     extra_config: Optional[Dict[str, Any]] = None
+    #: 只更新 ``extra_config.custom_questions``，其余键保持数据库里的现值。
+    custom_questions: Optional[List[Dict[str, Any]]] = None
 
 
 class UpdateEditPolicyRequest(BaseModel):
@@ -1536,6 +1542,19 @@ async def update_dataset_metadata(
     )
     if not record:
         raise HTTPException(status_code=404, detail="Knowledge base metadata not found")
+
+    # 快捷提问走键级写：``extra_config`` 里还躺着 folder_structure，而保存元数据的人
+    # 手里只有打开弹窗时的快照——整份回写会把别人刚做的目录调整一并回滚。
+    # 判断依据是「请求体里真的出现了这个字段」，不是「值非空」：清空快捷提问也是合法操作。
+    if "custom_questions" in payload.model_fields_set:
+        updated = await metadata_service.update_extra_config_key(
+            dataset_id,
+            key="custom_questions",
+            value=payload.custom_questions or [],
+            user_name=user.get("user_name"),
+        )
+        if updated:
+            record = updated
     # 改可见范围会直接改变「谁能访问」：从 public 改 private 是撤权，反向是扩权，
     # 都必须留痕，否则事后无法解释"某个库怎么突然多/少了一批访问者"。
     clear_dataset_list_cache()

@@ -58,6 +58,44 @@ def filter_schema_hits_to_scope(
     return accepted
 
 
+def _filter_hits_by_table_scope(
+    items: list[dict[str, Any]],
+    *,
+    authorized_datasets: list[Any],
+    allowed_table_names_by_dataset: dict[int, set[str] | None],
+) -> list[dict[str, Any]]:
+    """在数据集级过滤之后，再按表级白名单剔除命中的 schema 块。
+
+    指标块（无 ``table_name``）不按表过滤：它只描述口径，不暴露表结构；
+    表块则必须命中白名单，否则模型会看到并尝试查询被收窄掉的表。
+    """
+    hit_list = list(items)
+    if not allowed_table_names_by_dataset:
+        return hit_list
+
+    from app.services.schema_chunk_format import infer_schema_chunk_meta
+
+    accepted: list[dict[str, Any]] = []
+    for hit in hit_list:
+        dataset_id = _metadata_dataset_id_from_hit(hit, authorized_datasets)
+        allowed: set[str] | None = None
+        if dataset_id:
+            try:
+                allowed = allowed_table_names_by_dataset.get(int(dataset_id))
+            except (TypeError, ValueError):
+                allowed = None
+        if allowed is None:
+            accepted.append(hit)
+            continue
+        _, table_name, _ = infer_schema_chunk_meta(
+            str(hit.get("content") or ""), str(hit.get("doc_name") or "")
+        )
+        if table_name and table_name.lower() not in allowed:
+            continue
+        accepted.append(hit)
+    return accepted
+
+
 def _metadata_dataset_id_from_hit(hit: dict[str, Any], authorized_datasets: list[Any]) -> str | None:
     """把 local/RAG 命中的来源 ID 统一映射为 MetaDataset.id。"""
     metadata_id = str(hit.get("metadata_dataset_id") or hit.get("dataset_id") or "").strip()
@@ -149,9 +187,22 @@ async def fetch_dataset_schema_core(
         return f"[Tool Error] Failed to retrieve metadata: {str(e)}"
 
 
-async def _format_fallback_dataset_chunks(session: AsyncSession, dataset_id: int, start_index: int) -> tuple[list[str], int]:
-    """MySQL 兜底：导出与向量索引一致的单表/指标 YAML 块。"""
-    raw_chunks = await MetadataService.build_dataset_schema_chunk_contents(session, dataset_id)
+async def _format_fallback_dataset_chunks(
+    session: AsyncSession,
+    dataset_id: int,
+    start_index: int,
+    *,
+    allowed_table_names: set[str] | None = None,
+) -> tuple[list[str], int]:
+    """MySQL 兜底：导出与向量索引一致的单表/指标 YAML 块。
+
+    ``allowed_table_names`` 为 ``None`` 表示不限表；空集合表示该数据集一张表都不可见
+    （必须显式传空列表，不能让 ``build_dataset_schema_chunk_contents`` 回退成不过滤）。
+    """
+    table_names = None if allowed_table_names is None else sorted(allowed_table_names)
+    raw_chunks = await MetadataService.build_dataset_schema_chunk_contents(
+        session, dataset_id, table_names=table_names
+    )
     formatted: list[str] = []
     index = start_index
     for content in raw_chunks:
@@ -223,6 +274,22 @@ async def _fetch_dataset_schema_impl(
     )
     logger.info("[fetch_dataset_schema_core] provider=%s", str(provider).upper())
 
+    # 表级授权：把每个数据集的白名单翻译成物理表名（lower）。
+    # None = 不限表（历史行为）；空集合 = 数据集内一张表都不可见（fail-closed）。
+    allowed_table_names_by_dataset: dict[int, set[str] | None] = {}
+    if not is_admin_eff and user_id_eff is not None:
+        try:
+            from app.services.dataset_scope_service import (
+                allowed_table_names_by_dataset as _resolve_allowed_table_names,
+                resolve_user_dataset_scopes,
+            )
+
+            dataset_scope_map = await resolve_user_dataset_scopes(session, user_id_eff)
+            allowed_table_names_by_dataset = await _resolve_allowed_table_names(session, dataset_scope_map)
+        except Exception as ex:  # noqa: BLE001 - 表级解析失败时退回数据集级，避免整页不可用
+            logger.warning("[fetch_dataset_schema_core] 解析表级授权失败，退回数据集级: %s", ex)
+            allowed_table_names_by_dataset = {}
+
     allowed_metadata_ids = {str(getattr(ds, "id", "")).strip() for ds in authorized_datasets}
     allowed_dataset_names = {
         str(getattr(ds, "name", "") or getattr(ds, "dataset_name", "")).strip().casefold()
@@ -280,11 +347,15 @@ async def _fetch_dataset_schema_impl(
             return f"No relevant schema info found for '{query}'.\nDebug Logs: {'; '.join(trace_logs)}"
 
         filtered_hits = []
-        for chunk in filter_schema_hits_to_scope(
-            chunks,
-            allowed_metadata_ids=allowed_metadata_ids,
-            allowed_dataset_names=allowed_dataset_names,
-            allowed_rag_ids=allowed_rag_ids,
+        for chunk in _filter_hits_by_table_scope(
+            filter_schema_hits_to_scope(
+                chunks,
+                allowed_metadata_ids=allowed_metadata_ids,
+                allowed_dataset_names=allowed_dataset_names,
+                allowed_rag_ids=allowed_rag_ids,
+            ),
+            authorized_datasets=authorized_datasets,
+            allowed_table_names_by_dataset=allowed_table_names_by_dataset,
         ):
             try:
                 similarity = float(chunk.get("similarity", 0.0) or 0.0)
@@ -317,6 +388,7 @@ async def _fetch_dataset_schema_impl(
                 user_id=user_id_eff,
                 is_admin=is_admin_eff,
                 authorized_dataset_ids=authorized_dataset_ids,
+                allowed_table_names_by_dataset=allowed_table_names_by_dataset,
             )
             return schema_text
         return f"No relevant schema info found for '{query}'.\nDebug Logs: {'; '.join(trace_logs)}"
@@ -346,11 +418,15 @@ async def _fetch_dataset_schema_impl(
             )
 
             filtered_hits = []
-            for item in filter_schema_hits_to_scope(
-                redis_results,
-                allowed_metadata_ids=allowed_metadata_ids,
-                allowed_dataset_names=allowed_dataset_names,
-                allowed_rag_ids=allowed_rag_ids,
+            for item in _filter_hits_by_table_scope(
+                filter_schema_hits_to_scope(
+                    redis_results,
+                    allowed_metadata_ids=allowed_metadata_ids,
+                    allowed_dataset_names=allowed_dataset_names,
+                    allowed_rag_ids=allowed_rag_ids,
+                ),
+                authorized_datasets=authorized_datasets,
+                allowed_table_names_by_dataset=allowed_table_names_by_dataset,
             ):
                 try:
                     similarity = float(item.get("similarity", 0.0) or 0.0)
@@ -415,7 +491,12 @@ async def _fetch_dataset_schema_impl(
         results: list[str] = []
         next_index = 1
         for ds in found_datasets:
-            chunks, next_index = await _format_fallback_dataset_chunks(session, ds.id, next_index)
+            chunks, next_index = await _format_fallback_dataset_chunks(
+                session,
+                ds.id,
+                next_index,
+                allowed_table_names=allowed_table_names_by_dataset.get(int(ds.id)),
+            )
             results.extend(chunks)
 
         schema_text = "\n\n".join(results)
@@ -427,6 +508,7 @@ async def _fetch_dataset_schema_impl(
         user_id=user_id_eff,
         is_admin=is_admin_eff,
         authorized_dataset_ids=authorized_dataset_ids,
+        allowed_table_names_by_dataset=allowed_table_names_by_dataset,
     )
 
     return schema_text
@@ -552,6 +634,7 @@ async def _enrich_with_cross_dataset_schema(
     user_id: Optional[int] = None,
     is_admin: bool = False,
     authorized_dataset_ids: Optional[list[int]] = None,
+    allowed_table_names_by_dataset: Optional[dict[int, set[str] | None]] = None,
 ) -> str:
     """从 schema 文本中解析 table_name，查询其跨数据集关联表，追加对应 schema chunk。
 
@@ -609,6 +692,21 @@ async def _enrich_with_cross_dataset_schema(
     )
     if not cross_tables:
         return schema_text
+
+    # 表级白名单：跨数据集补全同样不能泄露被收窄掉的表。
+    if allowed_table_names_by_dataset:
+        scoped_tables = []
+        for table in cross_tables:
+            try:
+                dataset_id = int(getattr(table, "dataset_id", 0) or 0)
+            except (TypeError, ValueError):
+                dataset_id = 0
+            allowed = allowed_table_names_by_dataset.get(dataset_id)
+            if allowed is None or str(getattr(table, "physical_name", "") or "").lower() in allowed:
+                scoped_tables.append(table)
+        cross_tables = scoped_tables
+        if not cross_tables:
+            return schema_text
 
     # 4. 对这些跨数据集表生成 schema chunk 并追加
     ds_source_default = await ConfigService.get("external_sql_data_source", default="default_clickhouse")

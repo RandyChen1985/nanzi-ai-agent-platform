@@ -147,8 +147,11 @@ async def test_list_accessible_knowledge_bases_filters_by_access():
             "is_admin": False,
             "accessible_ids": {"kb-1"},
             "writable_ids": set(),
+            "content_writable_ids": {"kb-1"},
         }
     )
+    # 有编辑权、但没有「上传文档」的元素权限 —— 两种能力必须分开标
+    perm.check_permission = AsyncMock(return_value=False)
 
     with patch(
         "app.services.ai.tools.resource_catalog_tools.get_current_agent_context",
@@ -172,9 +175,14 @@ async def test_list_accessible_knowledge_bases_filters_by_access():
             "notes": "内部备注",
             "visibility": "team",
             "owner": "ops",
+            "can_edit": True,
+            "can_upload": False,
         }
     ]
     perm.get_knowledge_base_access.assert_awaited_once_with(7, "alice")
+    perm.check_permission.assert_awaited_once_with(
+        7, "element", "element:knowledge:upload_document"
+    )
 
 
 @pytest.mark.asyncio
@@ -503,3 +511,109 @@ async def test_list_available_agents_treats_main_assistant_as_delegation_capable
     payload = json.loads(result)
     assert payload["delegation_available"] is True
     assert payload["delegable_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_accessible_knowledge_bases_marks_can_upload_when_role_allows():
+    """can_edit 是数据级、can_upload 还要元素级：两者都满足才为 true。"""
+    from app.services.ai.tools.resource_catalog_tools import list_accessible_knowledge_bases
+
+    ctx = MagicMock()
+    ctx.user_id = 7
+    ctx.is_admin = False
+    ctx.user_dimensions = {"user_name": "alice"}
+
+    kb = SimpleNamespace(
+        ragflow_dataset_id="kb-1",
+        name="运维手册",
+        description="",
+        notes="",
+        visibility="team",
+        owner="ops",
+    )
+    db = AsyncMock()
+    db_cm = MagicMock()
+    db_cm.__aenter__ = AsyncMock(return_value=db)
+    db_cm.__aexit__ = AsyncMock(return_value=None)
+    execute_result = MagicMock()
+    execute_result.scalars.return_value.all.return_value = [kb]
+    db.execute = AsyncMock(return_value=execute_result)
+
+    perm = MagicMock()
+    perm.get_knowledge_base_access = AsyncMock(
+        return_value={
+            "is_admin": False,
+            "accessible_ids": {"kb-1"},
+            "content_writable_ids": {"kb-1"},
+        }
+    )
+    perm.check_permission = AsyncMock(return_value=True)
+
+    with patch(
+        "app.services.ai.tools.resource_catalog_tools.get_current_agent_context",
+        return_value=ctx,
+    ), patch(
+        "app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal",
+        return_value=db_cm,
+    ), patch(
+        "app.services.ai.tools.resource_catalog_tools.PermissionService",
+        return_value=perm,
+    ):
+        payload = json.loads(await list_accessible_knowledge_bases.ainvoke({}))
+
+    item = payload["items"][0]
+    assert item["can_edit"] is True
+    assert item["can_upload"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_accessible_knowledge_bases_marks_readonly_library():
+    """能看见但不在 content_writable_ids 里：两个标记都必须为 false。"""
+    from app.services.ai.tools.resource_catalog_tools import list_accessible_knowledge_bases
+
+    ctx = MagicMock()
+    ctx.user_id = 7
+    ctx.is_admin = False
+    ctx.user_dimensions = {"user_name": "alice"}
+
+    kb = SimpleNamespace(
+        ragflow_dataset_id="kb-9",
+        name="别人的库",
+        description="",
+        notes="",
+        visibility="public",
+        owner="someone",
+    )
+    db = AsyncMock()
+    db_cm = MagicMock()
+    db_cm.__aenter__ = AsyncMock(return_value=db)
+    db_cm.__aexit__ = AsyncMock(return_value=None)
+    execute_result = MagicMock()
+    execute_result.scalars.return_value.all.return_value = [kb]
+    db.execute = AsyncMock(return_value=execute_result)
+
+    perm = MagicMock()
+    perm.get_knowledge_base_access = AsyncMock(
+        return_value={
+            "is_admin": False,
+            "accessible_ids": {"kb-9"},
+            "content_writable_ids": set(),
+        }
+    )
+    perm.check_permission = AsyncMock(return_value=True)
+
+    with patch(
+        "app.services.ai.tools.resource_catalog_tools.get_current_agent_context",
+        return_value=ctx,
+    ), patch(
+        "app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal",
+        return_value=db_cm,
+    ), patch(
+        "app.services.ai.tools.resource_catalog_tools.PermissionService",
+        return_value=perm,
+    ):
+        payload = json.loads(await list_accessible_knowledge_bases.ainvoke({}))
+
+    item = payload["items"][0]
+    assert item["can_edit"] is False
+    assert item["can_upload"] is False

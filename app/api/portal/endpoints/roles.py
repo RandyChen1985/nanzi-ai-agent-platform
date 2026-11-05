@@ -8,7 +8,7 @@ from app.core.orm import get_db_session
 from app.models.user import User
 from app.models.permission import Role, ResourcePermission, UserRoleRelation
 from app.schemas.permission import PermissionUpdate
-from app.services.permission_service import PermissionService
+from app.services.permission_service import PermissionService, PermissionVersionConflict
 
 router = APIRouter()
 
@@ -522,5 +522,16 @@ async def update_role_resources(
     permissions.apis = normalize_api_permission_ids(request.app, permissions.apis or [])
         
     service = PermissionService(db)
-    await service.update_role_permissions(role_id, permissions)
-    return {"message": "Role permissions updated successfully"}
+    try:
+        await service.update_role_permissions(role_id, permissions)
+    except PermissionVersionConflict as err:
+        # 与用户侧同因：全量重建会把并发期间别人给这个角色新加的授权（如知识库分配）删掉
+        raise HTTPException(
+            status_code=409,
+            detail="该角色的权限刚被其他人修改，已取消本次保存。请关闭后重新打开以加载最新配置。",
+        ) from err
+    # 同用户侧：带回新版本，避免"自己刚保存过"被误判成冲突
+    return {
+        "message": "Role permissions updated successfully",
+        "permissions_version": await service.get_permission_version(role_id=role_id),
+    }

@@ -1,0 +1,1329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="交互原型">
+<title>数据集权限管理 · 数据集/表/行三层门禁重构原型</title>
+<style>
+  :root{
+    --bg:#f2f3f5; --panel:#fff; --line:#e8eaed; --line2:#dfe3e8;
+    --text:#1f2329; --text2:#5c6370; --text3:#8f959e;
+    --emerald:#0f8a4d; --emerald-soft:#e9f8f0; --emerald-line:#bfe8d2;
+    --amber:#b26a00; --amber-soft:#fff7e8; --amber-line:#f3ddb4;
+    --red:#c8372d; --red-soft:#fdecea;
+    --blue:#1f63d6; --blue-soft:#eaf2ff;
+    --shadow:0 1px 2px rgba(16,24,40,.05),0 14px 34px rgba(16,24,40,.12);
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-size:13px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 22px 70px;}
+  h1{font-size:19px;margin:0 0 6px;letter-spacing:-.2px;}
+  .sub{color:var(--text2);line-height:1.75;margin:0 0 16px;max-width:900px;}
+  .sub code{background:#fff;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:12px;}
+
+  /* ---------- 设计决策 ---------- */
+  .decisions{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 18px;}
+  @media (max-width:1000px){.decisions{grid-template-columns:repeat(2,1fr);}}
+  .d-card{background:#fff;border:1px solid var(--line);border-radius:11px;padding:12px 13px;}
+  .d-card b{display:block;font-size:12px;margin-bottom:4px;}
+  .d-card span{font-size:11px;color:var(--text2);line-height:1.75;display:block;}
+  .d-card .n{display:inline-flex;width:16px;height:16px;border-radius:5px;background:var(--emerald-soft);
+    color:var(--emerald);font-size:10px;font-weight:700;align-items:center;justify-content:center;margin-right:5px;}
+
+  /* ---------- 载体 ---------- */
+  .stage{background:#e7e9ec;border:1px solid #dcdfe4;border-radius:14px;padding:14px;}
+  .surface{background:var(--panel);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;}
+
+  .ds-head{display:flex;align-items:center;gap:12px;padding:16px 20px 12px;border-bottom:1px solid var(--line);}
+  .ds-icon{width:38px;height:38px;border-radius:10px;background:var(--emerald-soft);border:1px solid var(--emerald-line);
+    display:grid;place-items:center;color:var(--emerald);flex:0 0 auto;}
+  .ds-title{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px;}
+  .ds-title .id{font-size:11px;font-weight:500;color:var(--text3);font-family:ui-monospace,Menlo,monospace;
+    background:#f6f7f9;border:1px solid var(--line);border-radius:6px;padding:1px 7px;}
+  .ds-title .src{font-size:11px;font-weight:500;color:var(--text2);background:#f6f7f9;border:1px solid var(--line);
+    border-radius:6px;padding:1px 7px;display:inline-flex;gap:4px;align-items:center;}
+  .ds-actions{margin-left:auto;display:flex;gap:7px;}
+
+  .btn{border:1px solid var(--line);background:#fff;color:var(--text2);font:inherit;font-size:11.5px;font-weight:600;
+    padding:6px 11px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
+  .btn:hover{border-color:#d5d9df;color:var(--text);}
+  .btn.primary{background:var(--emerald);border-color:var(--emerald);color:#fff;}
+  .btn.primary:hover{background:#0c7a44;color:#fff;}
+  .btn.ghost{border-color:transparent;background:transparent;}
+  .btn.sm{padding:4px 8px;font-size:11px;}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+
+  .tabs{display:flex;gap:22px;border-bottom:1px solid var(--line);padding:0 20px;}
+  .tabs .tab{padding:11px 0;font-size:12.5px;color:var(--text2);border-bottom:2px solid transparent;
+    display:inline-flex;align-items:center;gap:6px;cursor:default;}
+  .tabs .tab .c{font-size:10px;font-weight:700;background:#f1f3f5;color:var(--text3);border-radius:999px;
+    padding:1px 6px;min-width:17px;text-align:center;}
+  .tabs .tab.on{color:var(--emerald);font-weight:600;border-color:var(--emerald);}
+  .tabs .tab.on .c{background:var(--emerald-soft);color:var(--emerald);}
+
+  .body{padding:16px 20px 20px;}
+
+  /* ---------- 三层摘要 ---------- */
+  .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;}
+  @media (max-width:860px){.summary{grid-template-columns:1fr;}}
+  .s-card{border:1px solid var(--line);border-radius:11px;padding:11px 13px;position:relative;
+    background:linear-gradient(180deg,#fff, #fbfcfd);}
+  .s-card .k{font-size:10.5px;font-weight:700;letter-spacing:.04em;color:var(--text3);text-transform:uppercase;
+    display:flex;align-items:center;gap:5px;}
+  .s-card .v{font-size:16px;font-weight:700;margin-top:5px;display:flex;align-items:baseline;gap:6px;}
+  .s-card .v em{font-style:normal;font-size:11px;font-weight:600;color:var(--text3);}
+  .s-card .d{font-size:11px;color:var(--text2);margin-top:3px;line-height:1.6;}
+  .s-card .arrow{position:absolute;right:10px;top:10px;font-size:10px;color:#cfd4da;}
+
+  /* ---------- 提示条 ---------- */
+  .alert{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--amber-line);background:var(--amber-soft);
+    border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:11.5px;color:#7a4a00;line-height:1.7;}
+  .alert b{color:#5e3a00;}
+  .alert .x{margin-left:auto;border:0;background:transparent;color:#a9762a;cursor:pointer;font-size:14px;line-height:1;padding:0 2px;}
+  .alert .btn{padding:2px 8px;font-size:11px;border-color:#e5cfa4;color:#7a4a00;background:#fffdf8;}
+
+  /* ---------- 内层视图切换 ---------- */
+  .seg{display:inline-flex;background:#f2f4f6;border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px;}
+  .seg button{border:0;background:transparent;color:var(--text2);font:inherit;font-size:11.5px;font-weight:500;
+    padding:6px 12px;border-radius:7px;cursor:pointer;}
+  .seg button[aria-selected="true"]{background:#fff;color:var(--text);font-weight:700;box-shadow:0 1px 2px rgba(16,24,40,.08);}
+  .viewbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+  .viewbar .right{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text3);font-size:11px;}
+
+  .view{display:none;}
+  .view.on{display:block;}
+
+  /* ---------- 授权表格 ---------- */
+  table.tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;}
+  .tbl thead th{text-align:left;font-size:10.5px;font-weight:700;color:var(--text3);letter-spacing:.03em;
+    text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--line);background:#fafbfc;white-space:nowrap;}
+  .tbl thead th:first-child{border-top-left-radius:9px;}
+  .tbl thead th:last-child{border-top-right-radius:9px;}
+  .tbl tbody td{padding:10px;border-bottom:1px solid #f1f3f5;vertical-align:middle;}
+  .tbl tbody tr:hover td{background:#fcfdfd;}
+  .tbl-wrap{border:1px solid var(--line);border-radius:10px;overflow:hidden;}
+
+  .who{display:flex;align-items:center;gap:9px;cursor:pointer;}
+  .av{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:11px;font-weight:700;flex:0 0 auto;}
+  .av.role{background:#eef0ff;color:#4b4fd6;}
+  .av.user{background:var(--emerald-soft);color:var(--emerald);}
+  .av.all{background:#f1f3f5;color:#5c6370;}
+  .who .nm{font-weight:600;font-size:12.5px;display:flex;align-items:center;gap:6px;}
+  .who .ac{font-size:10.5px;color:var(--text3);font-family:ui-monospace,Menlo,monospace;margin-top:1px;}
+
+  .tag{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;border-radius:6px;
+    padding:2px 7px;border:1px solid transparent;white-space:nowrap;}
+  .tag.all{background:var(--emerald-soft);color:#0b6b3c;border-color:var(--emerald-line);}
+  .tag.list{background:#f4f5f7;color:var(--text2);border-color:var(--line);}
+  .tag.warn{background:var(--amber-soft);color:var(--amber);border-color:var(--amber-line);}
+  .tag.mute{background:#f6f7f9;color:var(--text3);border-color:var(--line);}
+  .tag.red{background:var(--red-soft);color:var(--red);border-color:#f6cfcb;}
+  .tag.blue{background:var(--blue-soft);color:var(--blue);border-color:#cfe0ff;}
+
+  .range{display:flex;flex-direction:column;gap:3px;align-items:flex-start;}
+  .range .chips{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px;}
+  .chips code{font-size:10px;font-family:ui-monospace,Menlo,monospace;background:#f8f9fa;border:1px solid var(--line);
+    border-radius:5px;padding:1px 5px;color:var(--text2);}
+  .link{color:var(--emerald);font-weight:600;cursor:pointer;font-size:11px;}
+  .link:hover{text-decoration:underline;}
+  .rowdetail td{background:#fbfcfd;padding:0;border-bottom:1px solid #eef0f2;}
+  .rowdetail .inner{padding:11px 14px;font-size:11.5px;color:var(--text2);line-height:1.8;}
+  .rowdetail .inner b{color:var(--text);}
+
+  .muted{color:var(--text3);font-size:11px;}
+  .ops{display:flex;gap:2px;justify-content:flex-end;}
+
+  .footnote{margin-top:10px;font-size:11px;color:var(--text3);line-height:1.8;}
+  .footnote b{color:var(--text2);}
+
+  /* ---------- 矩阵 ---------- */
+  .matrix{border:1px solid var(--line);border-radius:10px;overflow:auto;max-height:520px;}
+  .matrix table{border-collapse:separate;border-spacing:0;width:100%;font-size:11.5px;}
+  .matrix th,.matrix td{padding:7px 9px;border-bottom:1px solid #f1f3f5;text-align:center;white-space:nowrap;}
+  .matrix thead th{position:sticky;top:0;background:#fafbfc;z-index:2;font-size:10.5px;color:var(--text3);
+    font-weight:700;letter-spacing:.02em;text-transform:uppercase;}
+  .matrix thead th:first-child{left:0;z-index:3;text-align:left;}
+  .matrix tbody td:first-child{position:sticky;left:0;background:#fff;text-align:left;z-index:1;
+    border-right:1px solid #f1f3f5;}
+  .matrix tbody tr:hover td:first-child{background:#fcfdfd;}
+  .matrix .tname{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--text);}
+  .matrix .tterm{font-size:10px;color:var(--text3);margin-left:5px;}
+  .cell{display:inline-flex;width:22px;height:22px;border-radius:6px;align-items:center;justify-content:center;
+    cursor:pointer;border:1px solid transparent;font-size:12px;line-height:1;}
+  .cell.yes{background:var(--emerald-soft);color:var(--emerald);border-color:var(--emerald-line);}
+  .cell.no{background:#f6f7f9;color:#c3c8ce;}
+  .cell.yes:hover{border-color:var(--emerald);}
+  .cell.no:hover{border-color:#c3c8ce;color:var(--text2);}
+  .matrix .count{font-variant-numeric:tabular-nums;font-weight:700;color:var(--text2);}
+  .legend{display:flex;gap:14px;align-items:center;margin-top:9px;font-size:11px;color:var(--text3);flex-wrap:wrap;}
+  .legend .li{display:inline-flex;align-items:center;gap:5px;}
+
+  /* ---------- 行级 ---------- */
+  .rowgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+  @media (max-width:900px){.rowgrid{grid-template-columns:1fr;}}
+  .rcard{border:1px solid var(--line);border-radius:11px;padding:12px;background:#fff;}
+  .rcard.user{border-color:var(--amber-line);background:linear-gradient(180deg,#fffdf8,#fff);}
+  .rcard.role{border-color:var(--emerald-line);background:linear-gradient(180deg,#f8fdfa,#fff);}
+  .rcard.def{border-color:var(--line2);background:linear-gradient(180deg,#fafbfc,#fff);}
+  .rcard .hd{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;}
+  .rcard.user .hd{color:#8a5300;}
+  .rcard.role .hd{color:#0b6b3c;}
+  .rcard.def .hd{color:var(--text2);}
+  .rcard .pri{font-size:10px;color:var(--text3);font-weight:500;margin-left:auto;}
+  .rcard .desc{font-size:10.5px;color:var(--text3);margin-top:4px;line-height:1.65;}
+  .rules{margin-top:9px;display:flex;flex-direction:column;gap:7px;}
+  .rule{border:1px solid var(--line);border-radius:8px;padding:7px 8px;background:#fff;}
+  .rule .who2{font-size:10.5px;font-weight:600;color:var(--text2);display:flex;align-items:center;gap:5px;}
+  .rule code{display:block;margin-top:4px;font-size:10.5px;font-family:ui-monospace,Menlo,monospace;
+    color:#374151;word-break:break-all;background:#fbfcfd;border:1px solid #f1f3f5;border-radius:5px;padding:4px 6px;}
+  .empty{font-size:11px;color:var(--text3);font-style:italic;padding:10px 0;text-align:center;}
+  .rcard .addrow{margin-top:9px;width:100%;border:1px dashed var(--line2);background:transparent;color:var(--text2);
+    font:inherit;font-size:11px;font-weight:600;padding:6px;border-radius:8px;cursor:pointer;}
+  .rcard .addrow:hover{border-color:var(--emerald);color:var(--emerald);background:#fbfefc;}
+
+  /* ---------- 模拟器 ---------- */
+  .sim{display:grid;grid-template-columns:290px 1fr;gap:12px;align-items:start;}
+  @media (max-width:900px){.sim{grid-template-columns:1fr;}}
+  .panel{border:1px solid var(--line);border-radius:11px;padding:13px;background:#fff;}
+  .panel h4{margin:0 0 8px;font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:6px;}
+  .panel h4 .n{margin-left:auto;font-size:10px;color:var(--text3);font-weight:500;}
+  .field{margin-bottom:9px;}
+  .field label{display:block;font-size:10.5px;font-weight:600;color:var(--text3);margin-bottom:4px;}
+  select,input[type="date"],input[type="text"]{width:100%;border:1px solid var(--line);border-radius:8px;
+    padding:6px 8px;font:inherit;font-size:11.5px;color:var(--text);background:#fff;}
+  select:focus,input:focus{outline:none;border-color:var(--emerald);box-shadow:0 0 0 3px rgba(15,138,77,.08);}
+  .kv{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;padding:5px 0;border-bottom:1px dashed #f1f3f5;}
+  .kv:last-child{border-bottom:0;}
+  .kv .k{color:var(--text3);}
+  .kv .v{font-weight:600;text-align:right;}
+  .chain{display:flex;flex-direction:column;gap:7px;}
+  .chain .step{display:flex;gap:8px;align-items:flex-start;font-size:11.5px;line-height:1.7;}
+  .chain .dot{width:16px;height:16px;border-radius:999px;background:var(--emerald-soft);color:var(--emerald);
+    font-size:9px;font-weight:700;display:grid;place-items:center;flex:0 0 auto;margin-top:1px;}
+  .chain .step b{font-weight:700;}
+  .chain .step .src{font-size:10px;color:var(--text3);margin-left:4px;}
+
+  /* ---------- 抽屉 ---------- */
+  .mask{position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:60;display:none;}
+  .mask.on{display:block;}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:580px;max-width:96vw;background:#fff;z-index:61;
+    box-shadow:-18px 0 40px rgba(16,24,40,.16);display:none;flex-direction:column;}
+  .drawer.on{display:flex;}
+  .drawer header{padding:15px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:9px;}
+  .drawer header h3{margin:0;font-size:14px;}
+  .drawer header .x{margin-left:auto;border:0;background:transparent;color:var(--text3);font-size:17px;cursor:pointer;line-height:1;}
+  .drawer .db{flex:1;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px;}
+  .drawer footer{padding:12px 18px;border-top:1px solid var(--line);display:flex;align-items:center;gap:9px;background:#fafbfc;}
+  .drawer footer .impact{font-size:11px;color:var(--text3);line-height:1.5;}
+  .drawer footer .impact b{color:var(--text);}
+  .drawer footer .sp{margin-left:auto;display:flex;gap:8px;}
+
+  .sec{border:1px solid var(--line);border-radius:11px;padding:12px 13px;}
+  .sec .st{display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;margin-bottom:2px;}
+  .sec .st .i{width:17px;height:17px;border-radius:5px;background:var(--emerald-soft);color:var(--emerald);
+    font-size:10px;font-weight:700;display:grid;place-items:center;}
+  .sec .sd{font-size:10.5px;color:var(--text3);line-height:1.65;margin:0 0 9px 24px;}
+
+  .opt{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);border-radius:9px;padding:9px 10px;
+    cursor:pointer;margin-bottom:7px;background:#fff;}
+  .opt:hover{border-color:#d5d9df;}
+  .opt.sel{border-color:var(--emerald);background:#fbfefc;box-shadow:0 0 0 3px rgba(15,138,77,.06);}
+  .opt input{margin-top:2px;accent-color:var(--emerald);}
+  .opt .ot{font-size:11.5px;font-weight:700;}
+  .opt .od{font-size:10.5px;color:var(--text3);line-height:1.6;margin-top:2px;}
+
+  .picklist{border:1px solid var(--line);border-radius:9px;max-height:190px;overflow:auto;}
+  .picklist .pi{display:flex;align-items:center;gap:8px;padding:7px 9px;border-bottom:1px solid #f4f5f7;cursor:pointer;font-size:11.5px;}
+  .picklist .pi:last-child{border-bottom:0;}
+  .picklist .pi:hover{background:#fbfcfd;}
+  .picklist .pi input{accent-color:var(--emerald);}
+  .picklist .pi .nm{font-weight:600;}
+  .picklist .pi .meta{margin-left:auto;font-size:10.5px;color:var(--text3);}
+
+  .tbgrid{border:1px solid var(--line);border-radius:9px;max-height:230px;overflow:auto;}
+  .tbrow{display:flex;align-items:center;gap:8px;padding:6px 9px;border-bottom:1px solid #f4f5f7;font-size:11.5px;}
+  .tbrow:last-child{border-bottom:0;}
+  .tbrow:hover{background:#fbfcfd;}
+  .tbrow input{accent-color:var(--emerald);}
+  .tbrow .nm{font-family:ui-monospace,Menlo,monospace;font-size:11px;}
+  .tbrow .term{color:var(--text3);font-size:10.5px;}
+  .tbrow .cols{margin-left:auto;color:var(--text3);font-size:10.5px;}
+  .tbrow .sens{font-size:9.5px;color:var(--red);border:1px solid #f6cfcb;background:var(--red-soft);
+    border-radius:4px;padding:0 4px;font-weight:600;}
+
+  .note{font-size:10.5px;color:var(--text3);line-height:1.7;background:#fafbfc;border:1px dashed var(--line2);
+    border-radius:8px;padding:8px 10px;}
+  .note b{color:var(--text2);}
+  .warnline{border:1px solid var(--amber-line);background:var(--amber-soft);border-radius:9px;padding:8px 10px;
+    font-size:11px;color:#7a4a00;line-height:1.7;}
+
+  /* ---------- toast ---------- */
+  .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);background:#1f2329;color:#fff;
+    font-size:12px;padding:9px 15px;border-radius:9px;opacity:0;pointer-events:none;transition:.18s;z-index:80;
+    box-shadow:0 8px 24px rgba(16,24,40,.24);max-width:80vw;}
+  .toast.on{opacity:1;transform:translate(-50%,0);}
+
+  /* ---------- 页底说明 ---------- */
+  .notes{margin-top:20px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 17px;}
+  .notes h2{font-size:13px;margin:0 0 8px;}
+  .notes h2:not(:first-child){margin-top:16px;}
+  .notes p{font-size:11.5px;color:var(--text2);line-height:1.85;margin:0 0 6px;}
+  .notes code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f6f7f9;border:1px solid var(--line);
+    border-radius:5px;padding:1px 5px;}
+  .notes ul{margin:4px 0 0;padding-left:18px;}
+  .notes li{font-size:11.5px;color:var(--text2);line-height:1.85;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>数据集权限管理 · 数据集 / 表 / 行 三层门禁</h1>
+  <p class="sub">
+    现状：一个数据集权限 = 数据集里所有表；行级配置在另一个页面；范围、有效期、模拟都无法表达。
+    这一版把三层收进同一个入口：<b>数据集级</b>决定进不进得来，<b>表级</b>决定进来能看哪几张表，<b>行级</b>决定每张表能看哪些行。
+  </p>
+
+  <div class="decisions">
+    <div class="d-card"><b><span class="n">1</span>三层是一条门禁链，不是三个并列 Tab</b>
+      <span>表范围是「授权条目」上的一个字段（全部 / 指定），不是独立实体；先有数据集权限，表级才有意义。页面用「按主体 / 按表 / 行级 / 模拟」四种视角看同一条链。</span></div>
+    <div class="d-card"><b><span class="n">2</span>范围只做「全部 / 指定」，不做「排除」</b>
+      <span>黑名单与新增表天然冲突：新表默认可见就会静默扩大授权。白名单（指定）天然 fail-closed，等于「全部减去 N 张」也能表达。</span></div>
+    <div class="d-card"><b><span class="n">3</span>用户级条目可显式收窄，覆盖角色</b>
+      <span>角色授权取并集；但同一个人一旦有用户级条目，就以用户级为准。否则「给某人缩小权限」永远只能删角色——会误伤同角色其他人。</span></div>
+    <div class="d-card"><b><span class="n">4</span>新增表默认继承「全部」，但必须待确认</b>
+      <span>页头常驻「N 张新表已继承 M 条全部范围授权」。默认不打断使用，但绝不静默——审阅前可先挂起新表。</span></div>
+  </div>
+
+  <div class="stage">
+    <div class="surface">
+      <!-- 数据集头 -->
+      <div class="ds-head">
+        <div class="ds-icon">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse>
+            <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"></path></svg>
+        </div>
+        <div>
+          <div class="ds-title">Sync Test
+            <span class="id">#sync_test_09c016</span>
+            <span class="src">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M8 4v16"/></svg>
+              clickhouse
+            </span>
+          </div>
+          <div class="muted" style="margin-top:3px">同步运行数据 · 12 张表 · 最近更新 2026-11-04 17:20</div>
+        </div>
+        <div class="ds-actions">
+          <button class="btn">巡检与治理</button>
+          <button class="btn">AI 补全描述</button>
+          <button class="btn">查看&amp;导出 AI YAML</button>
+          <button class="btn primary">导入 DDL</button>
+        </div>
+      </div>
+
+      <!-- 页签 -->
+      <div class="tabs">
+        <div class="tab">数据表 <span class="c">12</span></div>
+        <div class="tab">业务指标 <span class="c">4</span></div>
+        <div class="tab">实体关系 <span class="c">2</span></div>
+        <div class="tab">可视化</div>
+        <div class="tab">变更日志</div>
+        <div class="tab on">权限管理 <span class="c" id="tabPermCount">5</span></div>
+      </div>
+
+      <div class="body">
+        <!-- 三层摘要 -->
+        <div class="summary">
+          <div class="s-card">
+            <div class="k">数据集级 · 谁能进</div>
+            <div class="v"><span id="sumSubjects">5</span> <em>个主体</em></div>
+            <div class="d" id="sumSubjectsDesc">2 个角色 · 3 个用户 · 1 条全员；共 6 条，1 条已过期</div>
+          </div>
+          <div class="s-card">
+            <div class="k">表级 · 能看哪几张</div>
+            <div class="v">12 <em>张中 3 张被收窄</em></div>
+            <div class="d">2 条「指定表」授权；ods_crm_* / tmp_* 未进全员范围</div>
+          </div>
+          <div class="s-card">
+            <div class="k">行级 · 能看哪些行</div>
+            <div class="v">已启用 <em>2 条角色策略</em></div>
+            <div class="d">1 条用户例外 · 1 条默认规则；命中即生效，不叠加</div>
+          </div>
+        </div>
+
+        <!-- 新表待确认 -->
+        <div class="alert" id="newTableAlert">
+          <span style="font-size:14px;line-height:1.2">⚠</span>
+          <div>
+            <b>2 张新表已自动继承「全部表」范围</b>：<code style="font-family:ui-monospace,Menlo,monospace">meta_sync_log</code>、
+            <code style="font-family:ui-monospace,Menlo,monospace">ods_crm_contract</code>。
+            它们会立即对 2 个「全部」主体可见，其中 1 张含客户敏感字段。
+          </div>
+          <button class="btn sm" onclick="toast('已打开新表审阅：可逐表挂起或加入白名单')">审阅新表</button>
+          <button class="x" onclick="document.getElementById('newTableAlert').style.display='none'" title="本次忽略">×</button>
+        </div>
+
+        <div class="viewbar">
+          <div class="seg" role="tablist">
+            <button role="tab" aria-selected="true" onclick="switchView('subjects', this)">按主体</button>
+            <button role="tab" aria-selected="false" onclick="switchView('tables', this)">按表</button>
+            <button role="tab" aria-selected="false" onclick="switchView('rows', this)">行级策略</button>
+            <button role="tab" aria-selected="false" onclick="switchView('sim', this)">权限模拟</button>
+          </div>
+          <div class="right">
+            <span id="viewHint">授权条目 = 主体 × 数据范围 × 行级策略</span>
+            <button class="btn primary" onclick="openDrawer()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              添加授权
+            </button>
+          </div>
+        </div>
+
+        <!-- ============ 视图 1：按主体 ============ -->
+        <div class="view on" id="view-subjects">
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th style="width:236px">主体</th>
+                  <th style="width:196px">数据范围（表级）</th>
+                  <th style="width:170px">行级策略</th>
+                  <th style="width:104px">有效期</th>
+                  <th style="width:82px">状态</th>
+                  <th style="width:120px;text-align:right">操作</th>
+                </tr>
+              </thead>
+              <tbody id="grantBody"></tbody>
+            </table>
+          </div>
+          <div class="footnote">
+            <b>合并规则：</b>同一人的可见表 = 用户级条目 ∪ 角色条目 ∪ 全员条目；<b>但用户级条目存在时以用户级为准（可收窄）</b>。
+            行级按「用户例外 → 角色策略（OR）→ 默认规则」命中，命中即生效、不叠加。
+          </div>
+        </div>
+
+        <!-- ============ 视图 2：按表 ============ -->
+        <div class="view" id="view-tables">
+          <div class="viewbar" style="margin-bottom:9px">
+            <label class="muted" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="onlyRestricted" onchange="renderMatrix()" style="accent-color:var(--emerald)">
+              只看受限表（3）
+            </label>
+            <span class="muted" style="margin-left:auto">单元格 = 该主体是否可见；最后一列 = 8 名成员中实际可见人数</span>
+          </div>
+          <div class="matrix">
+            <table id="matrixTable"></table>
+          </div>
+          <div class="legend">
+            <span class="li"><span class="cell yes" style="cursor:default">✓</span> 可见</span>
+            <span class="li"><span class="cell no" style="cursor:default">·</span> 不可见</span>
+            <span class="li">「已过期」列不参与判定，但保留在列表里便于续期</span>
+            <span class="li">用户级条目存在时，其列按用户级口径计算（王敏：角色可看 12 张，用户级收窄为 5 张，再并入全员基线 4 张 = 7 张）</span>
+          </div>
+        </div>
+
+        <!-- ============ 视图 3：行级 ============ -->
+        <div class="view" id="view-rows">
+          <div class="rowgrid">
+            <div class="rcard user">
+              <div class="hd">用户例外 <span class="pri">优先级 1 · 命中即生效</span></div>
+              <div class="desc">按 user_id 精确指定；命中后不再叠加角色策略与默认规则。</div>
+              <div class="rules" id="ruleUser"></div>
+              <button class="addrow" onclick="openRule('user')">+ 添加用户例外</button>
+            </div>
+            <div class="rcard role">
+              <div class="hd">角色策略 <span class="pri">优先级 2 · 多角色 OR</span></div>
+              <div class="desc">同一用户命中多个角色时，条件之间是 OR；与表范围叠加生效。</div>
+              <div class="rules" id="ruleRole"></div>
+              <button class="addrow" onclick="openRule('role')">+ 添加角色策略</button>
+            </div>
+            <div class="rcard def">
+              <div class="hd">默认规则 <span class="pri">优先级 3 · 兜底</span></div>
+              <div class="desc">用户例外与角色策略都没命中时生效；留空＝不过滤（仅在全量授权主体下安全）。</div>
+              <div class="rules" id="ruleDefault"></div>
+              <button class="addrow" onclick="openRule('default')">+ 添加默认规则</button>
+            </div>
+          </div>
+          <div class="note" style="margin-top:10px">
+            <b>语义不变，只换位置：</b>这三栏就是 <code>meta_datasets.row_filter_config</code> 现有的
+            <code>user_overrides</code> / <code>role_policies</code> / <code>default_policy</code>，
+            后端 <code>SQLRewriter.resolve_strategy()</code> 与 <code>*_rewriter</code> 的按表过滤逻辑不用动，只把编辑入口从「元数据管理 → 数据权限配置」收回到这里。
+          </div>
+        </div>
+
+        <!-- ============ 视图 4：权限模拟 ============ -->
+        <div class="view" id="view-sim">
+          <div class="sim">
+            <div class="panel">
+              <h4>选择成员</h4>
+              <div class="field">
+                <label>平台成员</label>
+                <select id="simUser" onchange="renderSim()"></select>
+              </div>
+              <div id="simPerson" class="muted" style="line-height:1.8"></div>
+              <div class="note" style="margin-top:10px">
+                模拟结果按当前保存的授权计算，不受「未保存编辑」影响。
+              </div>
+            </div>
+            <div class="panel">
+              <h4>最终生效结果 <span class="n" id="simSummary"></span></h4>
+              <div id="simResult"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 页底说明：实现映射 -->
+  <div class="notes">
+    <h2>这套 UI 落到现有代码上，改哪里</h2>
+    <ul>
+      <li><b>数据模型</b>：沿用 <code>ai_agent_resource_permissions</code>（<code>resource_type='metadata'</code>），
+        新增 <code>scope</code> JSON 列：<code>{"mode":"all"|"list","tables":[id...]}</code>；
+        行级继续放 <code>meta_datasets.row_filter_config</code>，不新建策略表。</li>
+      <li><b>权限判定</b>：<code>enforce_dataset_table_permissions()</code> 在现有
+        <code>enforce_physical_table_permissions()</code> 的 <code>has_dataset_permission()</code> 分支之后加一层表级判定：
+        命中用户级条目 → 用用户级 scope；否则用角色 ∪ 全体 scope；<code>list</code> 模式下不在白名单即拒。</li>
+      <li><b>Schema 输出</b>：<code>fetch_dataset_schema_core()</code> 按同一 scope 过滤表，否则模型会看到并尝试查询被禁表。</li>
+      <li><b>接口</b>：<code>GET/POST/DELETE /api/portal/metadata/datasets/{id}/permissions</code> 增加
+        <code>scope</code>、<code>expire_at</code>、<code>row_policy</code> 三个字段；新增
+        <code>GET .../permissions/simulate?user_id=</code> 供模拟器使用。</li>
+      <li><b>兼容</b>：历史授权没有 <code>scope</code> 时按 <code>{"mode":"all"}</code> 处理，行为与现在完全一致（数据集内全表可见）。</li>
+    </ul>
+    <h2>四个待你确认的取舍</h2>
+    <ul>
+      <li><b>要不要「排除表」模式？</b>我倾向于不做。若业务确实要「全部减 3 张」，用「指定」勾选其余表即可；黑名单会让新增表默认可见，风险更高。</li>
+      <li><b>行级策略要不要变成可复用对象？</b>这版没有：行级仍是数据集内配置、按主体命中。好处是零迁移、与现有 SQL 重写完全兼容；代价是跨数据集复用同一套「按部门过滤」要复制一份。</li>
+      <li><b>用户级「覆盖」还是「并集」？</b>这版给的是「用户级存在即覆盖」。如果你们更希望权限只增不减（并集），页面上就要去掉「收窄」语义，这条要定。</li>
+      <li><b>「全员」条目能不能被个人条目收窄？</b>这版<b>不能</b>：全员范围是公共基线，任何人只要进了这个数据集就至少能看这几张表。所以王敏被收窄到 5 张后，实际可见是 5 ∪ 全员 4 = 7 张。如果业务要求「收窄到 5 张就真的只有 5 张」，全员条目就得改成「默认基线、可被覆盖」。</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ================= 添加 / 编辑授权抽屉 ================= -->
+<div class="mask" id="mask" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer" role="dialog" aria-modal="true">
+  <header>
+    <h3 id="drawerTitle">添加授权</h3>
+    <span class="tag blue" id="drawerMode" style="display:none">编辑</span>
+    <button class="x" onclick="closeDrawer()" title="关闭">×</button>
+  </header>
+  <div class="db">
+    <!-- 1. 主体 -->
+    <div class="sec">
+      <div class="st"><span class="i">1</span>授权给谁</div>
+      <div class="sd">一个条目对应一个主体类型；同一主体重复添加会被合并。</div>
+
+      <label class="opt sel" id="optAll" onclick="pickKind('all')">
+        <input type="radio" name="kind" checked>
+        <div>
+          <div class="ot">全部成员</div>
+          <div class="od">平台内所有启用账号（当前 8 人）。适合「全员只读几张公共维表」。</div>
+        </div>
+      </label>
+      <label class="opt" id="optRole" onclick="pickKind('role')">
+        <input type="radio" name="kind">
+        <div>
+          <div class="ot">按角色</div>
+          <div class="od">角色成员变动自动跟随；当前 3 个角色。</div>
+        </div>
+      </label>
+      <label class="opt" id="optUser" onclick="pickKind('user')">
+        <input type="radio" name="kind">
+        <div>
+          <div class="ot">按成员</div>
+          <div class="od">用于精确授权，或对某人在角色之外<b>单独收窄</b>。</div>
+        </div>
+      </label>
+
+      <div id="kindPick" style="display:none;margin-top:8px"></div>
+    </div>
+
+    <!-- 2. 表范围 -->
+    <div class="sec">
+      <div class="st"><span class="i">2</span>能看哪几张表</div>
+      <div class="sd">先给数据集访问权，再收窄到具体表。默认「全部表」。</div>
+
+      <label class="opt sel" id="optScopeAll" onclick="pickScope('all')">
+        <input type="radio" name="scope" checked>
+        <div>
+          <div class="ot">全部表（12 张）</div>
+          <div class="od">包含数据集后续新增的表；新增时进入页头「待确认」清单。</div>
+        </div>
+      </label>
+      <label class="opt" id="optScopeList" onclick="pickScope('list')">
+        <input type="radio" name="scope">
+        <div>
+          <div class="ot">指定表</div>
+          <div class="od">白名单，未勾选的表不可见、不可查；新增表默认不包含（fail-closed）。</div>
+        </div>
+      </label>
+
+      <div id="tablePick" style="display:none;margin-top:8px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <input type="text" id="tableSearch" placeholder="搜索表名或业务术语…" oninput="renderTablePick()" style="flex:1">
+          <button class="btn sm" onclick="toggleAllTables()" id="toggleAllBtn">全选</button>
+        </div>
+        <div class="tbgrid" id="tbGrid"></div>
+        <div class="muted" style="margin-top:5px" id="tbCount"></div>
+      </div>
+    </div>
+
+    <!-- 3. 行级 -->
+    <div class="sec">
+      <div class="st"><span class="i">3</span>能看哪些行</div>
+      <div class="sd">作用在表范围之上；同一主体只命中一条策略。</div>
+
+      <label class="opt sel" id="optPolicyInherit" onclick="pickPolicy('inherit')">
+        <input type="radio" name="policy" checked>
+        <div>
+          <div class="ot">继承数据集策略（推荐）</div>
+          <div class="od">按「用户例外 → 角色策略 → 默认规则」自动命中，与其它主体一致。</div>
+        </div>
+      </label>
+      <label class="opt" id="optPolicyNone" onclick="pickPolicy('none')">
+        <input type="radio" name="policy">
+        <div>
+          <div class="ot">不受行级限制</div>
+          <div class="od">跳过所有行过滤。仅建议给运维/审计类个人授权，页面上会标黄。</div>
+        </div>
+      </label>
+      <label class="opt" id="optPolicyCustom" onclick="pickPolicy('custom')">
+        <input type="radio" name="policy">
+        <div>
+          <div class="ot">指定规则</div>
+          <div class="od">为该主体单独写条件，写入 <code style="font-family:ui-monospace,Menlo,monospace">user_overrides</code>；会覆盖角色策略。</div>
+        </div>
+      </label>
+      <div id="policyCustomBox" style="display:none;margin-top:8px">
+        <div class="field"><label>条件（表.字段 运算符 值）</label>
+          <input type="text" id="customCond" placeholder="fact_sync_task.dept_code = 'FIN'"></div>
+      </div>
+    </div>
+
+    <!-- 4. 有效期 + 冲突 -->
+    <div class="sec">
+      <div class="st"><span class="i">4</span>有效期</div>
+      <div class="sd">到期自动失效并写审计日志；过期条目保留可续期。</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <label class="opt sel" id="optExpireForever" onclick="pickExpire('forever')" style="margin:0">
+          <input type="radio" name="expire" checked>
+          <div><div class="ot">长期有效</div><div class="od">直到手动移除</div></div>
+        </label>
+        <label class="opt" id="optExpireDate" onclick="pickExpire('date')" style="margin:0">
+          <input type="radio" name="expire">
+          <div><div class="ot">指定到期日</div><div class="od">适合临时项目</div></div>
+        </label>
+      </div>
+      <div id="expireDateBox" style="display:none;margin-top:8px">
+        <input type="date" id="expireDate" value="2026-12-31">
+      </div>
+      <div class="warnline" id="conflictBox" style="display:none;margin-top:9px"></div>
+    </div>
+  </div>
+  <footer>
+    <div class="impact" id="impactText">选择主体后显示影响范围</div>
+    <div class="sp">
+      <button class="btn" onclick="closeDrawer()">取消</button>
+      <button class="btn primary" onclick="saveGrant()">保存授权</button>
+    </div>
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ======================= 数据 ======================= */
+const TABLES = [
+  {name:'dim_org',              term:'组织架构维表',   cols:10, rows:'1.2k'},
+  {name:'dim_user',             term:'用户维表',       cols:14, rows:'3.8k'},
+  {name:'dim_product',          term:'产品维表',       cols:12, rows:'426'},
+  {name:'agg_sync_daily',       term:'同步日汇总',     cols:9,  rows:'91'},
+  {name:'agg_sync_org_daily',   term:'组织同步日汇总', cols:11, rows:'2.7k'},
+  {name:'fact_sync_task',       term:'同步任务事实表', cols:18, rows:'1.4M'},
+  {name:'fact_sync_duration',   term:'同步耗时事实表', cols:15, rows:'1.4M'},
+  {name:'fact_sync_error',      term:'同步错误明细',   cols:20, rows:'28.6k'},
+  {name:'meta_sync_log',        term:'同步运行日志',   cols:8,  rows:'5.1k', isNew:true},
+  {name:'ods_crm_customer',     term:'CRM 客户原始表', cols:26, rows:'86k', sensitive:true},
+  {name:'ods_crm_contract',     term:'CRM 合同原始表', cols:31, rows:'41k', sensitive:true, isNew:true},
+  {name:'tmp_sync_debug',       term:'临时调试表',     cols:6,  rows:'12', sensitive:true},
+];
+const TABLE_MAP = Object.fromEntries(TABLES.map(t => [t.name, t]));
+
+const ROLES = [
+  {code:'finance_analyst', name:'财务分析师', members:4},
+  {code:'biz_analysis',    name:'经营分析组', members:2},
+  {code:'cs_agent',        name:'客服专员',   members:1},
+];
+const ROLE_MAP = Object.fromEntries(ROLES.map(r => [r.code, r]));
+
+const PEOPLE = [
+  {id:4,  name:'陈晓龙', account:'chenxiaolong', dept:'数据平台',   roles:[]},
+  {id:7,  name:'王敏',   account:'wangmin',      dept:'财务部',     roles:['finance_analyst']},
+  {id:9,  name:'李志',   account:'lizhi',        dept:'内审部',     roles:['finance_analyst']},
+  {id:11, name:'张伟',   account:'zhangwei',     dept:'经营分析部', roles:['biz_analysis']},
+  {id:12, name:'刘洋',   account:'liuyang',      dept:'经营分析部', roles:['biz_analysis']},
+  {id:15, name:'吴迪',   account:'wudi',         dept:'财务部',     roles:['finance_analyst']},
+  {id:21, name:'孙倩',   account:'sunqian',      dept:'客服中心',   roles:['cs_agent']},
+  {id:22, name:'周涛',   account:'zhoutao',      dept:'客服中心',   roles:[]},
+];
+const PERSON_MAP = Object.fromEntries(PEOPLE.map(p => [p.id, p]));
+
+/* 授权条目：scope.mode = all | list；scope.tables 存表名（原型用名，实现里存 MetaTable.id） */
+let GRANTS = [
+  {id:'g1', kind:'all',  name:'全部成员', desc:'平台内所有启用账号',
+   scope:{mode:'list', tables:['dim_org','dim_user','dim_product','agg_sync_daily']},
+   policy:'inherit', expire:null, status:'active', updated:'2026-10-28 14:02', by:'陈晓龙'},
+
+  {id:'g2', kind:'role', code:'finance_analyst', name:'财务分析师',
+   scope:{mode:'all', tables:[]}, policy:'inherit', expire:null, status:'active',
+   updated:'2026-11-01 09:15', by:'陈晓龙'},
+
+  {id:'g3', kind:'role', code:'biz_analysis', name:'经营分析组',
+   scope:{mode:'list', tables:['dim_org','dim_user','dim_product','agg_sync_daily','agg_sync_org_daily',
+                               'fact_sync_task','fact_sync_duration','fact_sync_error']},
+   policy:'inherit', expire:null, status:'active', updated:'2026-11-02 16:40', by:'王敏'},
+
+  {id:'g4', kind:'user', userId:4, name:'陈晓龙', account:'chenxiaolong',
+   scope:{mode:'all', tables:[]}, policy:'none', expire:null, status:'active',
+   updated:'2026-09-12 11:03', by:'陈晓龙'},
+
+  {id:'g5', kind:'user', userId:7, name:'王敏', account:'wangmin',
+   scope:{mode:'list', tables:['dim_org','dim_product','fact_sync_task','fact_sync_duration','fact_sync_error']},
+   policy:'custom', expire:'2026-12-31', status:'active', updated:'2026-11-03 10:22', by:'陈晓龙'},
+
+  {id:'g6', kind:'user', userId:9, name:'李志', account:'lizhi',
+   scope:{mode:'list', tables:['dim_org','dim_user','dim_product','agg_sync_daily']},
+   policy:'inherit', expire:'2026-10-31', status:'expired', updated:'2026-09-20 15:11', by:'王敏'},
+];
+
+/* 行级：与 meta_datasets.row_filter_config 同构 */
+let ROW = {
+  user_overrides: {
+    '7': [{condition:"fact_sync_error.dept_code = 'FIN'", table:'fact_sync_error'}],
+  },
+  role_policies: {
+    finance_analyst: [
+      {condition:"fact_sync_task.dept_code = 'FIN'", table:'fact_sync_task'},
+      {condition:"fact_sync_error.dept_code = 'FIN'", table:'fact_sync_error'},
+    ],
+    biz_analysis: [
+      {condition:"fact_sync_task.biz_line IN ('retail','wholesale')", table:'fact_sync_task'},
+    ],
+  },
+  default_policy: [
+    {condition:"fact_sync_task.status != 'DELETED'", table:'fact_sync_task'},
+  ],
+};
+let ROW_ENABLED = true;
+
+/* ======================= 工具 ======================= */
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function tableNameList(g){ return g.scope.mode === 'all' ? TABLES.map(t => t.name) : g.scope.tables.slice(); }
+function unionCount(gs){
+  const s = new Set();
+  gs.forEach(g => tableNameList(g).forEach(n => s.add(n)));
+  return s.size;
+}
+function scopeCovers(g, tableName){
+  return g.scope.mode === 'all' || g.scope.tables.includes(tableName);
+}
+function activeGrants(){ return GRANTS.filter(g => g.status === 'active'); }
+
+function avatarClass(g){ return g.kind === 'role' ? 'role' : g.kind === 'user' ? 'user' : 'all'; }
+function avatarText(g){ return g.kind === 'role' ? 'R' : g.kind === 'user' ? 'U' : '全'; }
+
+/* 某人最终可见表：用户级条目存在时覆盖角色 */
+function effectiveFor(person){
+  const gs = activeGrants();
+  const own  = gs.filter(g => g.kind === 'user' && g.userId === person.id);
+  const role = gs.filter(g => g.kind === 'role' && person.roles.includes(g.code));
+  const all  = gs.filter(g => g.kind === 'all');
+  const base = own.length ? own : role;
+  const out = new Set();
+  [...base, ...all].forEach(g => tableNameList(g).forEach(n => out.add(n)));
+  return { own, role, all, base, overridden: own.length > 0 && role.length > 0, tables: out };
+}
+
+/* 行级命中：用户例外 → 角色策略(OR) → 默认；policy=none 则不受限 */
+function rowPolicyFor(person){
+  const eff = effectiveFor(person);
+  const ownGrant = eff.own[0];
+  if (ownGrant && ownGrant.policy === 'none') return {mode:'none', rules:[]};
+  const uid = String(person.id);
+  if (ROW_ENABLED && ROW.user_overrides[uid]) {
+    return {mode:'user', rules: ROW.user_overrides[uid]};
+  }
+  if (ownGrant && ownGrant.policy === 'custom') {
+    const cond = (document.getElementById('customCond') || {}).value || '';
+    return {mode:'custom', rules: cond ? [{condition: cond}] : []};
+  }
+  if (ROW_ENABLED) {
+    const merged = [];
+    person.roles.forEach(code => { if (ROW.role_policies[code]) merged.push(...ROW.role_policies[code]); });
+    if (merged.length) return {mode:'role', rules: merged};
+    if (ROW.default_policy.length) return {mode:'default', rules: ROW.default_policy};
+  }
+  return {mode:'open', rules:[]};
+}
+
+/* ======================= 按主体视图 ======================= */
+function renderGrants(){
+  const body = document.getElementById('grantBody');
+  body.innerHTML = GRANTS.map(g => {
+    const expired = g.status === 'expired';
+    const range = g.scope.mode === 'all'
+      ? `<span class="tag all">全部 ${TABLES.length} 张</span>`
+      : `<span class="tag list">指定 ${g.scope.tables.length} 张</span>`;
+    const chips = g.scope.mode === 'list'
+      ? `<div class="chips">${g.scope.tables.slice(0,3).map(n => `<code>${esc(n)}</code>`).join('')}
+         ${g.scope.tables.length > 3 ? `<code title="另有 ${g.scope.tables.length - 3} 张未展开">+${g.scope.tables.length - 3}</code>` : ''}</div>`
+      : '';
+
+    const policy = g.policy === 'none'
+      ? `<span class="tag warn">不受行级限制</span>`
+      : g.policy === 'custom'
+        ? `<span class="tag blue">指定规则</span>`
+        : `<span class="tag mute">继承数据集策略</span>`;
+
+    const expire = g.expire
+      ? (expired ? `<span class="tag red">已于 ${esc(g.expire)} 过期</span>` : `<span class="muted">至 ${esc(g.expire)}</span>`)
+      : `<span class="muted">长期</span>`;
+
+    const status = expired
+      ? `<span class="tag red">已失效</span>`
+      : `<span class="tag" style="background:var(--emerald-soft);color:#0b6b3c;border-color:var(--emerald-line)">生效中</span>`;
+
+    const nameHtml = g.kind === 'all'
+      ? `<div class="nm">全部成员 <span class="tag mute">平台 8 人</span></div><div class="ac">all_members</div>`
+      : g.kind === 'role'
+        ? `<div class="nm">${esc(g.name)} <span class="tag mute">角色</span></div><div class="ac">${esc(g.code)} · ${ROLE_MAP[g.code] ? ROLE_MAP[g.code].members : 0} 人</div>`
+        : `<div class="nm">${esc(g.name)} <span class="tag mute">成员</span></div><div class="ac">${esc(g.account)} · ${esc((PERSON_MAP[g.userId]||{}).dept||'')}</div>`;
+
+    return `
+      <tr>
+        <td>
+          <div class="who" onclick="toggleDetail('${g.id}')">
+            <div class="av ${avatarClass(g)}">${avatarText(g)}</div>
+            <div>${nameHtml}</div>
+          </div>
+        </td>
+        <td><div class="range">${range}${chips}</div></td>
+        <td>${policy}</td>
+        <td>${expire}</td>
+        <td>${status}</td>
+        <td>
+          <div class="ops">
+            <button class="btn sm ghost" onclick="editGrant('${g.id}')">编辑</button>
+            <button class="btn sm ghost" style="color:var(--red)" onclick="removeGrant('${g.id}')">移除</button>
+          </div>
+        </td>
+      </tr>
+      <tr class="rowdetail" id="detail-${g.id}" style="display:none">
+        <td colspan="6"><div class="inner">
+          <b>可见表（${tableNameList(g).length}）</b>：${tableNameList(g).map(n => `<code style="font-family:ui-monospace,Menlo,monospace">${esc(n)}</code>`).join('、')}<br>
+          <b>行级</b>：${g.policy === 'none' ? '不受行级限制（跳过所有行过滤）' : g.policy === 'custom' ? '使用用户例外条件（覆盖角色策略）' : '按数据集策略命中：用户例外 → 角色策略 → 默认'}　
+          <b>最近变更</b>：${esc(g.updated)} · ${esc(g.by)}
+        </div></td>
+      </tr>`;
+  }).join('');
+}
+
+function toggleDetail(id){
+  const tr = document.getElementById('detail-' + id);
+  if (!tr) return;
+  tr.style.display = tr.style.display === 'none' ? 'table-row' : 'none';
+}
+
+/* ======================= 按表视图 ======================= */
+function matrixSubjects(){
+  return GRANTS.map(g => ({
+    key: g.id,
+    label: g.kind === 'all' ? '全部成员' : g.kind === 'role' ? g.name : g.name,
+    sub: g.kind === 'all' ? 'all' : g.kind === 'role' ? 'role' : 'user',
+    grant: g, expired: g.status === 'expired',
+  }));
+}
+
+function renderMatrix(){
+  const only = document.getElementById('onlyRestricted').checked;
+  const subs = matrixSubjects();
+  const rows = TABLES.filter(t => !only || t.sensitive);
+
+  const head = `<thead><tr>
+      <th style="text-align:left;min-width:250px">物理表</th>
+      ${subs.map(s => `<th title="${esc(s.label)}">${esc(s.label)}${s.expired ? '<br><span style="font-weight:400;color:#c8372d">已过期</span>' : ''}</th>`).join('')}
+      <th>可见人数</th>
+    </tr></thead>`;
+
+  const body = rows.map(t => {
+    const cells = subs.map(s => {
+      if (s.expired) return `<td><span class="cell no" style="cursor:not-allowed" title="授权已过期">·</span></td>`;
+      const ok = scopeCovers(s.grant, t.name);
+      return `<td>
+        <span class="cell ${ok ? 'yes' : 'no'}"
+          title="${ok ? '可见 · 来自 ' + esc(s.label) : '不可见 · 未被 ' + esc(s.label) + ' 覆盖'}"
+          onclick="cellClick('${esc(s.label)}','${esc(t.name)}',${ok})">${ok ? '✓' : '·'}</span>
+      </td>`;
+    }).join('');
+
+    const count = PEOPLE.filter(p => effectiveFor(p).tables.has(t.name)).length;
+    const nameCell = `<td>
+        <span class="tname">${esc(t.name)}</span><span class="tterm">${esc(t.term)}</span>
+        ${t.sensitive ? '<span class="sens" style="margin-left:5px;font-size:9.5px;color:#c8372d;border:1px solid #f6cfcb;background:#fdecea;border-radius:4px;padding:0 4px;font-weight:600">敏感</span>' : ''}
+      </td>`;
+    return `<tr>${nameCell}${cells}<td class="count">${count}/8</td></tr>`;
+  }).join('');
+
+  document.getElementById('matrixTable').innerHTML = head + '<tbody>' + body + '</tbody>';
+}
+
+function cellClick(label, table, ok){
+  const t = TABLE_MAP[table];
+  toast(ok
+    ? `${label} 可见 ${table}（${t.term}）· 点「编辑」可收窄`
+    : `${label} 不可见 ${table}（${t.term}）· 需在授权条目里追加`);
+}
+
+/* ======================= 行级视图 ======================= */
+function ruleHtml(ownerLabel, rule, kind, key){
+  return `<div class="rule">
+    <div class="who2">${esc(ownerLabel)}
+      <span class="tag mute" style="margin-left:auto;font-size:9.5px">${esc(rule.table || '多表')}</span>
+    </div>
+    <code>${esc(rule.condition)}</code>
+  </div>`;
+}
+
+function renderRules(){
+  const u = Object.entries(ROW.user_overrides).map(([uid, rules]) => {
+    const p = PERSON_MAP[uid];
+    return rules.map((r, i) => ruleHtml(p ? p.name + ' · ' + p.dept : '用户 #' + uid, r, 'user', uid)).join('');
+  }).join('');
+  document.getElementById('ruleUser').innerHTML = u || `<div class="empty">暂无用户例外</div>`;
+
+  const ro = Object.entries(ROW.role_policies).map(([code, rules]) => {
+    const r0 = ROLE_MAP[code];
+    return rules.map(r => ruleHtml(r0 ? r0.name : code, r, 'role', code)).join('');
+  }).join('');
+  document.getElementById('ruleRole').innerHTML = ro || `<div class="empty">暂无角色策略</div>`;
+
+  const df = ROW.default_policy.map(r => ruleHtml('默认规则', r, 'default', 'default')).join('');
+  document.getElementById('ruleDefault').innerHTML = df || `<div class="empty">直接放行（不过滤）</div>`;
+}
+
+/* 简化版规则添加：只演示交互，不做完整构建器 */
+function openRule(kind){
+  const table = prompt('目标表（物理表名，例如 fact_sync_task）', 'fact_sync_task');
+  if (!table) return;
+  if (!TABLE_MAP[table]) { toast('表不存在：' + table); return; }
+  const cond = prompt('条件（表.字段 运算符 值）', `${table}.dept_code = 'FIN'`);
+  if (!cond) return;
+
+  if (kind === 'default') {
+    ROW.default_policy.push({condition: cond, table});
+  } else if (kind === 'user') {
+    const uid = prompt('用户 ID（当前 4/7/9/11/12/15/21/22）', '7');
+    if (!uid) return;
+    (ROW.user_overrides[uid] = ROW.user_overrides[uid] || []).push({condition: cond, table});
+  } else {
+    const code = prompt('角色 code（finance_analyst / biz_analysis / cs_agent）', 'biz_analysis');
+    if (!code) return;
+    (ROW.role_policies[code] = ROW.role_policies[code] || []).push({condition: cond, table});
+  }
+  renderRules();
+  toast('已添加规则（保存后生效）');
+}
+
+/* ======================= 模拟器 ======================= */
+function initSim(){
+  const sel = document.getElementById('simUser');
+  sel.innerHTML = PEOPLE.map(p =>
+    `<option value="${p.id}">${esc(p.name)} · ${esc(p.account)}${p.roles.length ? ' · ' + p.roles.map(c => ROLE_MAP[c] ? ROLE_MAP[c].name : c).join('/') : ' · 无角色'}</option>`
+  ).join('');
+  renderSim();
+}
+
+function renderSim(){
+  const pid = Number(document.getElementById('simUser').value);
+  const person = PERSON_MAP[pid];
+  if (!person) return;
+  const eff = effectiveFor(person);
+  const rp = rowPolicyFor(person);
+
+  document.getElementById('simPerson').innerHTML = `
+    <div class="kv"><span class="k">部门</span><span class="v">${esc(person.dept)}</span></div>
+    <div class="kv"><span class="k">角色</span><span class="v">${person.roles.length ? person.roles.map(c => esc(ROLE_MAP[c] ? ROLE_MAP[c].name : c)).join('、') : '无'}</span></div>
+    <div class="kv"><span class="k">用户级条目</span><span class="v">${eff.own.length ? eff.own.length + ' 条' : '无'}</span></div>
+    <div class="kv"><span class="k">是否覆盖角色</span><span class="v">${eff.overridden ? '是（收窄）' : '否'}</span></div>`;
+
+  const tbl = [...eff.tables].sort((a,b) => TABLES.findIndex(t=>t.name===a) - TABLES.findIndex(t=>t.name===b));
+  document.getElementById('simSummary').textContent = `可见 ${tbl.length} / ${TABLES.length} 张表`;
+
+  const policyText = rp.mode === 'none' ? '不受行级限制（授权例外）'
+    : rp.mode === 'user' ? '命中用户例外'
+    : rp.mode === 'role' ? '命中角色策略'
+    : rp.mode === 'default' ? '命中默认规则' : '无行级过滤';
+  const policyTag = rp.mode === 'none' ? 'warn' : rp.mode === 'user' ? 'blue' : 'mute';
+
+  const rulesHtml = rp.rules.length
+    ? rp.rules.map(r => `<div class="rule"><div class="who2">${esc(r.table || '多表')}</div><code>${esc(r.condition)}</code></div>`).join('')
+    : `<div class="empty" style="padding:6px 0">无行级条件</div>`;
+
+  document.getElementById('simResult').innerHTML = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      <span class="tag ${tbl.length ? 'all' : 'red'}">数据集：${tbl.length ? '可访问' : '不可访问'}</span>
+      <span class="tag list">表：${tbl.length} / ${TABLES.length}</span>
+      <span class="tag ${policyTag}">行级：${policyText}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div>
+        <h4 style="margin:0 0 6px;font-size:11px;color:var(--text3)">可见表</h4>
+        <div style="display:flex;flex-wrap:wrap;gap:3px">
+          ${tbl.map(n => `<code style="font-family:ui-monospace,Menlo,monospace;font-size:10px;background:#fafbfc;border:1px solid var(--line);border-radius:5px;padding:1px 5px">${esc(n)}</code>`).join('')}
+        </div>
+      </div>
+      <div>
+        <h4 style="margin:0 0 6px;font-size:11px;color:var(--text3)">行级条件</h4>
+        ${rulesHtml}
+      </div>
+    </div>
+    <h4 style="margin:12px 0 6px;font-size:11px;color:var(--text3)">判定链</h4>
+    <div class="chain">
+      <div class="step"><span class="dot">1</span><div><b>数据集级</b>：命中 ${eff.own.length ? '用户级条目' : eff.role.length ? '角色条目' : '全员条目'}
+        <span class="src">${eff.own.length
+          ? esc(eff.own[0].name + (eff.overridden ? '（用户级，覆盖角色）' : '（用户级）'))
+          : eff.role.length ? eff.role.map(g => esc(g.name)).join('、') : '全部成员'}</span></div></div>
+      <div class="step"><span class="dot">2</span><div><b>表级</b>：${eff.base[0] ? (eff.base[0].scope.mode === 'all' ? '全部表' : '白名单 ' + eff.base[0].scope.tables.length + ' 张') : '无个人/角色范围'}
+        ${eff.all.length ? ' ∪ 全员基线 ' + unionCount(eff.all) + ' 张' : ''} → 最终 <b>${tbl.length} 张</b>
+        ${eff.overridden ? '<span class="src">用户级收窄了角色范围（角色不再生效），但全员基线不可收窄</span>' : ''}</div></div>
+      <div class="step"><span class="dot">3</span><div><b>行级</b>：${policyText}<span class="src">${rp.mode === 'user' ? '用户例外优先级最高，命中即不叠加' : rp.mode === 'role' ? '多角色条件 OR 合并' : ''}</span></div></div>
+    </div>`;
+}
+
+/* ======================= 视图切换 ======================= */
+function switchView(name, btn){
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('on'));
+  document.getElementById('view-' + name).classList.add('on');
+  document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-selected', 'false'));
+  btn.setAttribute('aria-selected', 'true');
+
+  const hints = {
+    subjects:'授权条目 = 主体 × 数据范围 × 行级策略',
+    tables:'同一份授权，从「表」这一侧反查谁能看到',
+    rows:'三类行级规则，按优先级命中',
+    sim:'挑一个人，看最终能看到什么、为什么',
+  };
+  document.getElementById('viewHint').textContent = hints[name] || '';
+  if (name === 'tables') renderMatrix();
+  if (name === 'rows') renderRules();
+  if (name === 'sim') renderSim();
+}
+
+/* ======================= 抽屉 ======================= */
+let drawerState = { kind:'all', pickedIds:[], scope:'all', tables:[], policy:'inherit', expire:'forever', editId:null };
+
+function setRadio(groupSel, onSel){
+  document.querySelectorAll(groupSel).forEach(el => el.classList.remove('sel'));
+  const el = document.querySelector(onSel);
+  if (el) { el.classList.add('sel'); const i = el.querySelector('input'); if (i) i.checked = true; }
+}
+
+function pickKind(kind){
+  drawerState.kind = kind;
+  drawerState.pickedIds = [];
+  setRadio('#optAll, #optRole, #optUser', '#opt' + kind.charAt(0).toUpperCase() + kind.slice(1));
+  renderKindPick();
+  updateConflict();
+  updateImpact();
+}
+
+function renderKindPick(){
+  const box = document.getElementById('kindPick');
+  if (drawerState.kind === 'all') { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'block';
+
+  if (drawerState.kind === 'role') {
+    box.innerHTML = `
+      <div class="picklist" id="pickList">
+        ${ROLES.map(r => `
+          <label class="pi">
+            <input type="checkbox" value="${esc(r.code)}" ${drawerState.pickedIds.includes(r.code) ? 'checked' : ''} onchange="togglePick(this)">
+            <span class="nm">${esc(r.name)}</span>
+            <span class="meta">${esc(r.code)} · ${r.members} 人</span>
+          </label>`).join('')}
+      </div>
+      <div class="muted" style="margin-top:5px">角色成员变动时自动跟随，不需要重新授权。</div>`;
+  } else {
+    box.innerHTML = `
+      <div class="picklist" id="pickList">
+        ${PEOPLE.map(p => `
+          <label class="pi">
+            <input type="checkbox" value="${p.id}" ${drawerState.pickedIds.map(String).includes(String(p.id)) ? 'checked' : ''} onchange="togglePick(this)">
+            <span class="nm">${esc(p.name)}</span>
+            <span class="meta">${esc(p.account)} · ${esc(p.dept)}</span>
+          </label>`).join('')}
+      </div>
+      <div class="muted" style="margin-top:5px">成员级条目会<b>覆盖</b>其角色范围（可收窄，也可放宽）。</div>`;
+  }
+}
+
+function togglePick(input){
+  const v = input.value;
+  if (input.checked) drawerState.pickedIds.push(v);
+  else drawerState.pickedIds = drawerState.pickedIds.filter(x => x !== v);
+  updateConflict();
+  updateImpact();
+}
+
+function pickScope(mode){
+  drawerState.scope = mode;
+  setRadio('#optScopeAll, #optScopeList', mode === 'all' ? '#optScopeAll' : '#optScopeList');
+  const box = document.getElementById('tablePick');
+  box.style.display = mode === 'list' ? 'block' : 'none';
+  if (mode === 'list') renderTablePick();
+  updateConflict();
+  updateImpact();
+}
+
+function renderTablePick(){
+  const q = (document.getElementById('tableSearch').value || '').trim().toLowerCase();
+  const list = TABLES.filter(t => !q || t.name.toLowerCase().includes(q) || (t.term || '').toLowerCase().includes(q));
+  document.getElementById('tbGrid').innerHTML = list.map(t => `
+    <label class="tbrow">
+      <input type="checkbox" value="${esc(t.name)}" ${drawerState.tables.includes(t.name) ? 'checked' : ''} onchange="toggleTable(this)">
+      <span class="nm">${esc(t.name)}</span>
+      <span class="term">${esc(t.term)}</span>
+      ${t.sensitive ? '<span class="sens">敏感</span>' : ''}
+      ${t.isNew ? '<span class="sens" style="color:#b26a00;border-color:#f3ddb4;background:#fff7e8">新表</span>' : ''}
+      <span class="cols">${t.cols} 列</span>
+    </label>`).join('') || `<div class="empty">没有匹配的表</div>`;
+
+  document.getElementById('tbCount').textContent =
+    `已选 ${drawerState.tables.length} / ${TABLES.length} 张`;
+  const allOn = drawerState.tables.length === TABLES.length;
+  document.getElementById('toggleAllBtn').textContent = allOn ? '全不选' : '全选';
+}
+
+function toggleTable(input){
+  const v = input.value;
+  if (input.checked) { if (!drawerState.tables.includes(v)) drawerState.tables.push(v); }
+  else drawerState.tables = drawerState.tables.filter(x => x !== v);
+  document.getElementById('tbCount').textContent = `已选 ${drawerState.tables.length} / ${TABLES.length} 张`;
+  document.getElementById('toggleAllBtn').textContent = drawerState.tables.length === TABLES.length ? '全不选' : '全选';
+  updateImpact();
+}
+
+function toggleAllTables(){
+  drawerState.tables = drawerState.tables.length === TABLES.length ? [] : TABLES.map(t => t.name);
+  renderTablePick();
+  updateImpact();
+}
+
+function pickPolicy(p){
+  drawerState.policy = p;
+  setRadio('#optPolicyInherit, #optPolicyNone, #optPolicyCustom',
+    p === 'inherit' ? '#optPolicyInherit' : p === 'none' ? '#optPolicyNone' : '#optPolicyCustom');
+  document.getElementById('policyCustomBox').style.display = p === 'custom' ? 'block' : 'none';
+}
+
+function pickExpire(e){
+  drawerState.expire = e;
+  setRadio('#optExpireForever, #optExpireDate', e === 'forever' ? '#optExpireForever' : '#optExpireDate');
+  document.getElementById('expireDateBox').style.display = e === 'date' ? 'block' : 'none';
+}
+
+function updateConflict(){
+  const box = document.getElementById('conflictBox');
+  if (!drawerState.pickedIds.length) { box.style.display = 'none'; return; }
+
+  let existing = null;
+  if (drawerState.kind === 'role') existing = GRANTS.find(g => g.kind === 'role' && drawerState.pickedIds.includes(g.code));
+  if (drawerState.kind === 'user') existing = GRANTS.find(g => g.kind === 'user' && drawerState.pickedIds.map(String).includes(String(g.userId)));
+  if (drawerState.kind === 'all') existing = GRANTS.find(g => g.kind === 'all');
+
+  if (existing) {
+    box.style.display = 'block';
+    box.innerHTML = `<b>该主体已有授权</b>（${esc(existing.name)}，范围：${existing.scope.mode === 'all' ? '全部表' : '指定 ' + existing.scope.tables.length + ' 张'}）。
+      保存后将<b>替换</b>原条目，而不是叠加——避免出现两条互相矛盾的范围内存。变更会记入审计日志。`;
+  } else {
+    box.style.display = 'none';
+  }
+}
+
+function updateImpact(){
+  const el = document.getElementById('impactText');
+  let people = 0;
+  if (drawerState.kind === 'all') people = PEOPLE.length;
+  else if (drawerState.kind === 'role') {
+    people = PEOPLE.filter(p => p.roles.some(r => drawerState.pickedIds.includes(r))).length;
+  } else {
+    people = drawerState.pickedIds.length;
+  }
+  const range = drawerState.scope === 'all' ? '全部表' : `指定 ${drawerState.tables.length} 张表`;
+  el.innerHTML = drawerState.pickedIds.length || drawerState.kind === 'all'
+    ? `预计影响：<b>${people} 人</b> · ${range}`
+    : '选择主体后显示影响范围';
+}
+
+function openDrawer(editId){
+  drawerState = { kind:'all', pickedIds:[], scope:'all', tables:[], policy:'inherit', expire:'forever', editId: editId || null };
+  document.getElementById('mask').classList.add('on');
+  document.getElementById('drawer').classList.add('on');
+  document.getElementById('drawerTitle').textContent = editId ? '编辑授权' : '添加授权';
+  document.getElementById('drawerMode').style.display = editId ? 'inline-flex' : 'none';
+
+  setRadio('#optAll, #optRole, #optUser', '#optAll');
+  setRadio('#optScopeAll, #optScopeList', '#optScopeAll');
+  setRadio('#optPolicyInherit, #optPolicyNone, #optPolicyCustom', '#optPolicyInherit');
+  setRadio('#optExpireForever, #optExpireDate', '#optExpireForever');
+  document.getElementById('kindPick').style.display = 'none';
+  document.getElementById('tablePick').style.display = 'none';
+  document.getElementById('policyCustomBox').style.display = 'none';
+  document.getElementById('expireDateBox').style.display = 'none';
+  document.getElementById('tbGrid').innerHTML = '';
+  document.getElementById('conflictBox').style.display = 'none';
+  updateImpact();
+
+  if (editId) {
+    const g = GRANTS.find(x => x.id === editId);
+    if (g) {
+      pickKind(g.kind);
+      if (g.kind === 'role') { drawerState.pickedIds = [g.code]; renderKindPick(); }
+      if (g.kind === 'user') { drawerState.pickedIds = [String(g.userId)]; renderKindPick(); }
+      if (g.scope.mode === 'list') { drawerState.tables = g.scope.tables.slice(); pickScope('list'); }
+      pickPolicy(g.policy);
+      if (g.expire) { pickExpire('date'); document.getElementById('expireDate').value = g.expire; }
+      updateConflict();
+      updateImpact();
+    }
+  }
+}
+
+function closeDrawer(){
+  document.getElementById('mask').classList.remove('on');
+  document.getElementById('drawer').classList.remove('on');
+}
+
+function saveGrant(){
+  if (drawerState.kind !== 'all' && !drawerState.pickedIds.length) { toast('请先选择授权主体'); return; }
+  if (drawerState.scope === 'list' && !drawerState.tables.length) { toast('「指定表」至少要勾选一张表'); return; }
+
+  const scope = drawerState.scope === 'all'
+    ? {mode:'all', tables:[]}
+    : {mode:'list', tables: drawerState.tables.slice()};
+  const policy = drawerState.policy;
+  const expire = drawerState.expire === 'date' ? (document.getElementById('expireDate').value || null) : null;
+  const today = '2026-11-05';
+  const status = expire && expire < today ? 'expired' : 'active';
+  const stamp = '2026-11-05 19:58';
+
+  /* 解析出本次要落的目标主体（支持多选角色/多选成员） */
+  const targets = [];
+  if (drawerState.kind === 'all') {
+    targets.push({kind:'all', name:'全部成员', desc:'平台内所有启用账号'});
+  } else if (drawerState.kind === 'role') {
+    drawerState.pickedIds.forEach(code => {
+      targets.push({kind:'role', code, name:(ROLE_MAP[code] || {}).name || code});
+    });
+  } else {
+    drawerState.pickedIds.forEach(id => {
+      const p = PERSON_MAP[Number(id)];
+      targets.push({kind:'user', userId:Number(id), name:p ? p.name : '用户 ' + id, account:p ? p.account : String(id)});
+    });
+  }
+
+  /* 编辑：先在原条目上就地更新，避免"删了又加"产生新 id / 丢审计起点 */
+  const subjectCount = targets.length;
+  if (drawerState.editId && targets.length) {
+    const g = GRANTS.find(x => x.id === drawerState.editId);
+    const t = targets.shift();
+    if (g) {
+      Object.assign(g, t, {scope, policy, expire, status, updated:stamp, by:'陈晓龙'});
+    }
+  }
+
+  targets.forEach(t => {
+    let existing = null;
+    if (t.kind === 'all') existing = GRANTS.find(g => g.kind === 'all');
+    if (t.kind === 'role') existing = GRANTS.find(g => g.kind === 'role' && g.code === t.code);
+    if (t.kind === 'user') existing = GRANTS.find(g => g.kind === 'user' && g.userId === t.userId);
+
+    if (existing) {
+      Object.assign(existing, {scope, policy, expire, status, updated:stamp, by:'陈晓龙'});
+    } else {
+      GRANTS.push({
+        id: 'g' + Math.random().toString(36).slice(2, 7),
+        ...t, scope, policy, expire, status, updated:stamp, by:'陈晓龙',
+      });
+    }
+  });
+
+  /* 行级「指定规则」：写入 user_overrides，让行级视图与模拟器联动 */
+  const customCond = (document.getElementById('customCond').value || '').trim();
+  if (policy === 'custom' && customCond && drawerState.kind === 'user') {
+    drawerState.pickedIds.forEach(id => {
+      const table = customCond.split('.')[0].trim();
+      ROW.user_overrides[String(id)] = [{condition: customCond, table}];
+    });
+  }
+
+  toast('已保存（原型内生效）：' + subjectCount + ' 个主体 · ' +
+    (scope.mode === 'all' ? '全部表' : '指定 ' + scope.tables.length + ' 张表'));
+  closeDrawer();
+  renderGrants();
+  renderMatrix();
+  renderRules();
+  renderSim();
+  updateSummary();
+}
+
+function updateSummary(){
+  const n = document.getElementById('sumSubjects');
+  const d = document.getElementById('sumSubjectsDesc');
+  const c = document.getElementById('tabPermCount');
+  if (!n) return;
+  const roles = GRANTS.filter(g => g.kind === 'role').length;
+  const users = GRANTS.filter(g => g.kind === 'user').length;
+  const all = GRANTS.filter(g => g.kind === 'all').length;
+  const expired = GRANTS.filter(g => g.status === 'expired').length;
+  const active = GRANTS.filter(g => g.status === 'active').length;
+  n.textContent = active;
+  d.textContent = `${roles} 个角色 · ${users} 个用户 · ${all} 条全员；共 ${GRANTS.length} 条`
+    + (expired ? `，${expired} 条已过期` : '');
+  if (c) c.textContent = GRANTS.length;
+}
+
+function editGrant(id){ openDrawer(id); }
+
+function removeGrant(id){
+  const g = GRANTS.find(x => x.id === id);
+  if (!g) return;
+  GRANTS = GRANTS.filter(x => x.id !== id);
+  renderGrants();
+  renderMatrix();
+  toast(`已移除「${g.name}」的授权（原型演示，未落库）`);
+}
+
+/* ======================= toast ======================= */
+let toastTimer = null;
+function toast(msg){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('on'), 2400);
+}
+
+/* ======================= 初始化 ======================= */
+renderGrants();
+renderMatrix();
+renderRules();
+initSim();
+updateSummary();
+</script>
+</body>
+</html>

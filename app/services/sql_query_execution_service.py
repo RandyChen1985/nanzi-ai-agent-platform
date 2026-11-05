@@ -274,13 +274,14 @@ async def _fetch_all_registered_physical_lowers(session: AsyncSession) -> set[st
 
 
 async def _fetch_allowed_physical_lowers_for_user(session: AsyncSession, user_id: int) -> set[str]:
-    datasets = await MetadataService.search_datasets(session, status=1, user_id=user_id, is_admin=False)
-    allowed: set[str] = set()
-    for d in datasets:
-        for tb in d.tables:
-            if tb.status == 1:
-                allowed.add(tb.physical_name.lower())
-    return allowed
+    """用户最终可见的物理表（lower）。
+
+    从「数据集权限 ⇒ 数据集内全部表」升级为「数据集权限 ∩ 表级白名单」：
+    没有表级授权（历史数据 scope 为空）时结果与旧实现完全一致。
+    """
+    from app.services.dataset_scope_service import allowed_physical_names_for_user
+
+    return await allowed_physical_names_for_user(session, user_id)
 
 
 async def check_physical_table_refs_permission(
@@ -415,6 +416,11 @@ async def execute_sql_query_core(
         prepare_binding_for_execution,
         validate_sql_columns_with_binding,
     )
+    from app.services.dataset_scope_service import (
+        ROW_POLICY_CUSTOM,
+        ROW_POLICY_INHERIT,
+        ROW_POLICY_NONE,
+    )
 
     binding = sql_query_binding or get_current_sql_query_binding()
     user_id_eff = user_id
@@ -539,12 +545,43 @@ async def execute_sql_query_core(
         )
         if perm_err:
             return perm_err
+
+        from app.services.dataset_scope_service import enforce_table_scope_for_refs
+
+        table_scope_err = await enforce_table_scope_for_refs(
+            session,
+            refs=refs,
+            user_id=user_id_eff,
+            is_admin=is_admin_eff,
+            user_identity_label=user_identity_label,
+        )
+        if table_scope_err:
+            return table_scope_err
     elif binding is not None:
         column_err = validate_sql_columns_with_binding(sql, binding)
         if column_err:
             return column_err
 
-    if ds and ds.enable_data_perm:
+    # 行级策略：授权行上的 row_policy 优先于数据集级 enable_data_perm。
+    #   - none   ：显式跳过行级隔离（仅给运维/审计类个人授权）；
+    #   - custom ：使用授权行上的独立条件，不再走数据集的三层策略；
+    #   - inherit：沿用 meta_datasets.row_filter_config（历史行为）。
+    row_policy = ROW_POLICY_INHERIT
+    row_condition: Optional[str] = None
+    if ds and user_id_eff is not None and not is_admin_eff:
+        try:
+            from app.services.dataset_scope_service import resolve_effective_row_policy
+
+            row_policy, row_condition = await resolve_effective_row_policy(
+                session, user_id_eff, int(ds.id)
+            )
+        except Exception as exc:  # noqa: BLE001 - 解析失败按 inherit，避免误跳过隔离
+            logger.warning("[DataPerm] 解析行级策略失败，按 inherit 处理: %s", exc)
+
+    custom_row_filter = row_policy == ROW_POLICY_CUSTOM and bool(row_condition)
+    inherit_row_filter = row_policy == ROW_POLICY_INHERIT and bool(ds and ds.enable_data_perm)
+
+    if ds and row_policy != ROW_POLICY_NONE and (custom_row_filter or inherit_row_filter):
         _append_trace(
             agent_context,
             trace_logs,
@@ -558,7 +595,7 @@ async def execute_sql_query_core(
             rewriter_dialect = dialect
 
             table_metadata: Dict[str, Any] = build_data_perm_table_metadata(binding, str(dataset_name or "")) or {}
-            if ds.enable_data_perm and not table_metadata:
+            if not table_metadata:
                 try:
                     # 一次性 join 查询拿到该数据集全部 表->列 映射，避免逐表查询的 N+1 开销。
                     cols_stmt = (
@@ -588,16 +625,21 @@ async def execute_sql_query_core(
 
             rewriter = SQLRewriter(dialect=rewriter_dialect, table_metadata=table_metadata)
 
-            user_roles: List[Any] = []
-            if user_id_eff:
-                try:
-                    ps = PermissionService(session)
-                    perm_data = await ps.get_user_permissions(user_id_eff)
-                    user_roles = getattr(perm_data, "roles", [])
-                except Exception as e:
-                    logger.error("[DataPerm] Failed to fetch roles for user %s: %s", user_id_eff, e)
+            if custom_row_filter:
+                # 授权行上的独立条件：不再叠加数据集的三层策略。
+                user_roles = []
+                filters = [{"condition": str(row_condition)}]
+            else:
+                user_roles: List[Any] = []
+                if user_id_eff:
+                    try:
+                        ps = PermissionService(session)
+                        perm_data = await ps.get_user_permissions(user_id_eff)
+                        user_roles = getattr(perm_data, "roles", [])
+                    except Exception as e:
+                        logger.error("[DataPerm] Failed to fetch roles for user %s: %s", user_id_eff, e)
 
-            filters = rewriter.resolve_strategy(user_id_eff, user_roles, ds.row_filter_config)
+                filters = rewriter.resolve_strategy(user_id_eff, user_roles, ds.row_filter_config)
 
             if filters:
                 user_dims = _user_dims_for_rewrite(agent_context, user_dimensions)
@@ -606,6 +648,16 @@ async def execute_sql_query_core(
                 sql = rewriter.rewrite(sql, filters, user_dims, rewrite_stats=rewrite_stats)
                 rewrite_applied = sql != original_sql
                 applied_rule_count = int(rewrite_stats.get("applied_rule_count") or 0)
+                if custom_row_filter and not rewrite_applied:
+                    # 重写器对「条件引用的表不在本次查询里」是静默返回原 SQL 的。
+                    # 对 inherit 这是既有语义（条件按表生效），但对 custom 授权等于
+                    # 「配了行级限制却查到了全表」——属于权限放大，必须拒绝而不是放行。
+                    return (
+                        f"[Permission Denied] {user_identity_label or 'user_id=' + str(user_id_eff)} "
+                        "配置的自定义行级条件未生效：它引用的表不在本次查询里，"
+                        "为避免越权已拒绝执行。请联系数据集管理员把行级条件改成覆盖所查表的字段，"
+                        "或改用「不做行级过滤」授权。"
+                    )
                 logger.info(
                     "[DataPerm] SQL Rewritten for user %s. Applied %s/%s filter conditions.",
                     user_id_eff,

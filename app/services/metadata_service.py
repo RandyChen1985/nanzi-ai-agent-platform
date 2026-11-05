@@ -1,6 +1,6 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, update, or_, cast, String, Integer, func
+from sqlalchemy import select, delete, update, or_, String, func
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -69,6 +69,33 @@ class MetadataService:
         return datasets
 
     @staticmethod
+    async def accessible_dataset_ids(
+        db: AsyncSession,
+        *,
+        user_id: Optional[int],
+        is_admin: bool = False,
+    ) -> Optional[set[int]]:
+        """非管理员可访问的数据集 id 集合（``None`` = 不限制）。
+
+        统一走 :mod:`app.services.dataset_scope_service` 解析，而不是各处手写
+        `ResourcePermission` 子查询——否则「全员基线」「授权过期」「表级收窄」
+        这三件事会在不同入口出现不同的口径（有的认全员、有的不认）。
+        """
+        if is_admin:
+            return None
+        if user_id is None:
+            return set()
+        try:
+            parsed_user_id = int(user_id)
+        except (TypeError, ValueError):
+            return set()
+
+        from app.services.dataset_scope_service import resolve_user_dataset_scopes
+
+        scopes = await resolve_user_dataset_scopes(db, parsed_user_id)
+        return set(scopes)
+
+    @staticmethod
     async def list_accessible_dataset_options(
         db: AsyncSession,
         *,
@@ -80,26 +107,12 @@ class MetadataService:
         stmt = select(MetaDataset).where(MetaDataset.status == status)
 
         if not is_admin:
-            if user_id is None:
-                return []
-            try:
-                parsed_user_id = int(user_id)
-            except (TypeError, ValueError):
-                return []
-            from app.models.permission import ResourcePermission, UserRoleRelation
-
-            user_roles_stmt = select(UserRoleRelation.role_id).where(
-                UserRoleRelation.user_id == parsed_user_id
+            allowed_ids = await MetadataService.accessible_dataset_ids(
+                db, user_id=user_id, is_admin=is_admin
             )
-            permitted_ids_stmt = select(cast(ResourcePermission.resource_id, Integer)).where(
-                ResourcePermission.resource_type == "metadata",
-                ResourcePermission.enabled == True,
-                or_(
-                    ResourcePermission.user_id == parsed_user_id,
-                    ResourcePermission.role_id.in_(user_roles_stmt),
-                ),
-            )
-            stmt = stmt.where(MetaDataset.id.in_(permitted_ids_stmt))
+            if not allowed_ids:
+                return []
+            stmt = stmt.where(MetaDataset.id.in_(sorted(allowed_ids)))
 
         stmt = stmt.order_by(MetaDataset.id.asc())
         result = await db.execute(stmt)
@@ -116,29 +129,11 @@ class MetadataService:
 
         # 1. Permission Filtering (if not admin)
         if not is_admin and user_id is not None:
-            try:
-                parsed_user_id = int(user_id)
-            except (TypeError, ValueError):
-                parsed_user_id = user_id
-            from app.models.permission import ResourcePermission, UserRoleRelation
-            
-            # Subquery to find role IDs for the user
-            user_roles_stmt = select(UserRoleRelation.role_id).where(UserRoleRelation.user_id == parsed_user_id)
-            
-            # Subquery to check if user/role has permission for this specific dataset
-            # resource_type='metadata' is used for datasets
-            permitted_stmt = select(ResourcePermission.id).where(
-                ResourcePermission.resource_type == 'metadata',
-                ResourcePermission.resource_id == str(dataset_id),
-                ResourcePermission.enabled == True,
-                or_(
-                    ResourcePermission.user_id == parsed_user_id,
-                    ResourcePermission.role_id.in_(user_roles_stmt)
-                )
+            allowed_ids = await MetadataService.accessible_dataset_ids(
+                db, user_id=user_id, is_admin=is_admin
             )
-            
-            # Apply filter
-            stmt = stmt.where(permitted_stmt.exists())
+            if not allowed_ids or int(dataset_id) not in allowed_ids:
+                return None
 
         result = await db.execute(
             stmt.options(
@@ -174,31 +169,12 @@ class MetadataService:
         
         # 1. Permission Filtering (if not admin)
         if not is_admin and user_id is not None:
-            try:
-                parsed_user_id = int(user_id)
-            except (TypeError, ValueError):
-                parsed_user_id = user_id
-            from app.models.permission import ResourcePermission, UserRoleRelation
-            
-            # Subquery to find all resource_ids (dataset ids) this user has access to
-            # via direct permission OR via role permission
-            
-            # 1. Get User's Role IDs
-            user_roles_stmt = select(UserRoleRelation.role_id).where(UserRoleRelation.user_id == parsed_user_id)
-            
-            # 2. Get Permitted Resource IDs (Union of User-based and Role-based)
-            # We match resource_type='metadata' (as established for datasets in this context)
-            permitted_ids_stmt = select(cast(ResourcePermission.resource_id, Integer)).where(
-                ResourcePermission.resource_type == 'metadata',
-                ResourcePermission.enabled == True,
-                or_(
-                    ResourcePermission.user_id == parsed_user_id,
-                    ResourcePermission.role_id.in_(user_roles_stmt)
-                )
+            allowed_ids = await MetadataService.accessible_dataset_ids(
+                db, user_id=user_id, is_admin=is_admin
             )
-            
-            # 3. Apply Filter
-            stmt = stmt.where(MetaDataset.id.in_(permitted_ids_stmt))
+            if not allowed_ids:
+                return []
+            stmt = stmt.where(MetaDataset.id.in_(sorted(allowed_ids)))
             
         # 2. Search Query Filtering
         if query:
@@ -1368,7 +1344,9 @@ class MetadataService:
             ds_source = await ConfigService.get("external_sql_data_source", default="default_clickhouse")
 
         relationships = await MetadataService.get_relationships_by_dataset(db, dataset_id)
-        selected_table_set = set(table_names) if table_names else None
+        # 显式区分「不传」与「传空」：空列表表示一张表都不可见（fail-closed），
+        # 不能因为 `if table_names` 为假就退回「不过滤」——那会把表级收窄变成放行。
+        selected_table_set = set(table_names) if table_names is not None else None
 
         chunks: List[str] = []
         for table in dataset.tables:
