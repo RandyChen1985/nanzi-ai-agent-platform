@@ -1,10 +1,50 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 from app.services.metadata_service import MetadataService
 from app.models.metadata import MetaDataset, MetaTable, MetaColumn
 from app.models.user import User
 from app.models.permission import ResourcePermission
+
+
+@pytest.fixture(autouse=True)
+async def _cleanup_generated_datasets(db_session: AsyncSession):
+    """测试直接 commit 到开发库，用例结束后必须清掉，否则会堆积到数据门户。
+
+    除了 ``test_sync_ds_*`` / ``secret_ds_*`` 数据集，本模块还会创建
+    ``unauth_user_*`` 用户与对应的 metadata 资源权限；这些记录没有外键级联，
+    需要显式删除。
+    """
+    yield
+    # 测试可能留下未提交事务或失败事务，先回滚再复用同一个 session 清理。
+    await db_session.rollback()
+    dataset_ids = list(
+        (
+            await db_session.execute(
+                select(MetaDataset.id).where(
+                    MetaDataset.name.like("test_sync_ds_%")
+                    | MetaDataset.name.like("secret_ds_%")
+                )
+            )
+        ).scalars()
+    )
+    if dataset_ids:
+        await db_session.execute(
+            delete(ResourcePermission).where(
+                ResourcePermission.resource_type == "metadata",
+                ResourcePermission.resource_id.in_(
+                    [str(dataset_id) for dataset_id in dataset_ids]
+                ),
+            )
+        )
+        await db_session.execute(
+            delete(MetaDataset).where(MetaDataset.id.in_(dataset_ids))
+        )
+    await db_session.execute(
+        delete(User).where(User.user_name.like("unauth_user_%"))
+    )
+    await db_session.commit()
+
 
 @pytest.mark.asyncio
 async def test_table_sync_removes_stale_columns(db_session: AsyncSession):

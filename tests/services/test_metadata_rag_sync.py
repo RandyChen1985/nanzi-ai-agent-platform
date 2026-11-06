@@ -1,9 +1,30 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.metadata_rag_service import MetadataRagService
 from app.models.metadata import MetaDataset, MetaTable, MetaColumn
 from app.services.ai.ragflow_client import RagFlowClient
+
+
+@pytest.fixture(autouse=True)
+async def _cleanup_generated_datasets(db_session: AsyncSession):
+    """测试直接 commit 到开发库，用例结束后必须清掉，否则会堆积到数据门户。
+
+    本模块生成的名称固定为 ``sync_test_*`` / ``fail_test_*`` / ``del_test_*``，
+    这里按前缀在 teardown 统一删除；orphan 的 table/column 由数据库外键级联处理。
+    """
+    yield
+    # 测试可能留下未提交事务或失败事务，先回滚再复用同一个 session 清理。
+    await db_session.rollback()
+    await db_session.execute(
+        delete(MetaDataset).where(
+            MetaDataset.name.like("sync_test_%")
+            | MetaDataset.name.like("fail_test_%")
+            | MetaDataset.name.like("del_test_%")
+        )
+    )
+    await db_session.commit()
 
 
 class FakeSyncLogPublisher:
