@@ -8,6 +8,7 @@ import {
   describeExpiry,
   formatRemaining,
   generateShareSecret,
+  isExpiryPresetActive,
   resolveExpiry,
 } from '../../frontend/src/utils/shareExpiry.ts'
 
@@ -34,6 +35,31 @@ assert.equal(
 assert.equal(describeExpiry({ mode: 'preset', preset: '7d' }), '7 天后失效')
 assert.equal(describeExpiry({ mode: 'permanent' }), '永久有效')
 assert.equal(describeExpiry({ mode: 'custom', value: 3, unit: 'day' }), '3 天后失效')
+
+// 选中态：「永久」用 mode='permanent' 表达，按钮高亮必须认这个模式，
+// 否则点完 5 个按钮全灰，用户以为「永久」点不动。
+assert.equal(isExpiryPresetActive({ mode: 'permanent' }, 'permanent'), true)
+assert.equal(isExpiryPresetActive({ mode: 'permanent' }, '7d'), false)
+assert.equal(isExpiryPresetActive({ mode: 'preset', preset: '7d' }, '7d'), true)
+assert.equal(isExpiryPresetActive({ mode: 'preset', preset: '7d' }, '30d'), false)
+assert.equal(isExpiryPresetActive({ mode: 'preset', preset: '7d' }, 'permanent'), false)
+// 缺省 preset 时按默认 7 天兜底，与 resolveExpiry 的兜底保持一致
+assert.equal(isExpiryPresetActive({ mode: 'preset' }, '7d'), true)
+// 自定义模式下不该有任何预设按钮高亮（焦点在自定义输入框上）
+assert.equal(isExpiryPresetActive({ mode: 'custom', value: 3, unit: 'day' }, '7d'), false)
+assert.equal(isExpiryPresetActive({ mode: 'custom', value: 3, unit: 'day' }, 'permanent'), false)
+
+// 每一个可提交的预设/永久选择都必须恰好点亮一个按钮：0 个会让人以为没选上，2 个更糟
+for (const choice of [
+  { mode: 'preset', preset: '1h' },
+  { mode: 'preset', preset: '24h' },
+  { mode: 'preset', preset: '7d' },
+  { mode: 'preset', preset: '30d' },
+  { mode: 'permanent' },
+]) {
+  const active = EXPIRY_PRESETS.filter((p) => isExpiryPresetActive(choice, p.value))
+  assert.equal(active.length, 1, JSON.stringify(choice))
+}
 
 // 密码：8 位、去掉易混字符、每次不同
 const seen = new Set()
