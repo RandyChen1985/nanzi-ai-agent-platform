@@ -31,19 +31,20 @@ def test_personal_resources_modal_shell_and_tabs():
     assert "我的站内消息" not in modal
 
 
-def test_welcome_dashboard_renders_personal_resources_before_capabilities():
+def test_welcome_dashboard_renders_action_cards_before_personal_resources():
     dashboard = _source("frontend/src/components/embed/WelcomeDashboard.vue")
     assert "WorkbenchPersonalResources" in dashboard
     assert "open-personal-resources" in dashboard
     assert "refresh-personal-resources" in dashboard
     assert "刷新我的资源" in dashboard
     assert "personalResourcesRefreshing" in dashboard
-    assert "快捷入口" in dashboard
-    resources_pos = dashboard.find("open-personal-resources")
-    quick_entry_pos = dashboard.find("快捷入口")
-    caps_pos = dashboard.find("grid-cols-1 sm:grid-cols-3")
-    assert resources_pos != -1 and caps_pos != -1 and quick_entry_pos != -1
-    assert resources_pos < quick_entry_pos < caps_pos
+    assert "开始一件事" in dashboard
+    # 方案 A：先给“下一步能做什么”，再把资源状态作为第二层信息。
+    actions_pos = dashboard.find("开始一件事")
+    resources_pos = dashboard.find("刷新我的资源")
+    grid_pos = dashboard.find("grid-cols-1 sm:grid-cols-3")
+    assert actions_pos != -1 and resources_pos != -1 and grid_pos != -1
+    assert actions_pos < grid_pos < resources_pos
 
 
 def test_embed_chat_wires_personal_resources_refresh():

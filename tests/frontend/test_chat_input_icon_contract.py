@@ -79,7 +79,8 @@ def test_welcome_entry_cards_render_svg_icons() -> None:
     source = WELCOME_DASHBOARD.read_text(encoding="utf-8")
 
     assert "<component :is=\"welcomeCardIcon(card.icon)\"" in source
-    assert "<component :is=\"welcomeCardIcon(cap.icon)\"" in source
+    # 方案 A 把能力卡和推荐卡收敛成同一套 actionCards，图标统一走 welcomeCardIcon。
+    assert "kind: 'capability'" in source
     for emoji in ("📊", "📚", "💻", "📄", "⚠️", "💬"):
         assert emoji not in source
 
