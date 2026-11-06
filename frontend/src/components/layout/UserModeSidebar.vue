@@ -543,6 +543,19 @@
     />
     <!-- 会话筛选浮层：fixed + teleport，避免被侧栏的滚动容器裁剪；移动端降级为底部抽屉 -->
   <Teleport to="body">
+    <!--
+      透明遮罩：光靠 document 上的判定兜不住「点主工作区」。
+      用户模式右侧是全屏 iframe（Chat.vue），点它时指针事件发生在 iframe 自己的
+      文档里，主文档收不到 pointerdown，浮层就一直挂着——这正是「点别处没反应」。
+      遮罩铺满视口、层级压在面板下面，点哪都能收起（第一次点击只关浮层，
+      不会穿透到下面的按钮，这也是浮层的常规行为）。
+    -->
+    <div
+      v-if="filterPanelOpen"
+      data-conversation-filter-backdrop
+      class="fixed inset-0 z-[75]"
+      @pointerdown="closeFilterPanel"
+    ></div>
     <div
       v-if="filterPanelOpen"
       ref="filterPanelRef"
@@ -1207,9 +1220,14 @@ const toggleTaskMenu = (item: ChatHistoryItem) => {
   menuTaskKey.value = menuTaskKey.value === key ? "" : key
 }
 
+/** 收起筛选浮层：遮罩、Esc、换页、按钮二次点击都走这里 */
+const closeFilterPanel = () => {
+  if (filterPanelOpen.value) filterPanelOpen.value = false
+}
+
 /** 浮层是 fixed 定位，列表一滚就与按钮脱开：直接关掉，比让它飘着更符合直觉 */
 const onFilterPanelClose = () => {
-  if (filterPanelOpen.value) filterPanelOpen.value = false
+  closeFilterPanel()
 }
 
 /**
