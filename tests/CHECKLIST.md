@@ -1323,3 +1323,9 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 | 交互与回退 | `frontend/src/components/embed/WelcomeDashboard.vue`、`frontend/src/views/EmbedChat.vue` | 推荐卡点击只填入输入框（`fill-question`），不直接发送；配置的欢迎卡保持原「点击即提问」行为；固定能力卡保留打开门户/知识库/工作空间；资源刷新仍走 `refresh-personal-resources`；无近 3 天会话或模型失败时回退默认卡，且不弹 toast。 | 推荐卡 `emit('fill-question', card.prompt)`、配置卡 `emit('quick-question', card.prompt)`、`@generate-recommendations` 接线均有前端契约锁定。 |
 
 **未做**：未跑 `./dev.sh`，未实机验收；真实模型生成的推荐文案质量与延迟需在控制台启动后观察。`git commit` 未执行。
+
+## 2026-11-06 知识库管理页头部引擎状态收成圆点
+
+| 项 | 主要文件 | 说明 | 验证 |
+|---|---|---|---|
+| 引擎状态移出操作区 | `frontend/src/views/KnowledgeBaseManagement.vue`、`tests/frontend/test_knowledge_header_mobile_contract.py` | 正常连接时标题行只留绿点，检测中/断连/功能关闭才显示短文案；地址与 API Key 收进 hover tooltip，圆点补带主语的 `aria-label`。窄屏操作区不再被引擎状态占位，刷新 / 新建保持单行图标。 | `test_knowledge_header_mobile_contract.py` 5 passed；`vue-tsc --noEmit` 通过；SFC 编译 313 个 0 problem。 |
