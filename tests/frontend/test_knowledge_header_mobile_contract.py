@@ -1,10 +1,12 @@
-"""知识库管理页顶部操作区的移动端布局契约。
+"""知识库管理页顶部标题行 / 操作区的移动端布局契约。
 
-「引擎状态 / 刷新 / 新建知识库」在窄屏并排会把中文挤成两三行、
-高度参差；排成两行又白占一行竖向空间。最终口径是：窄屏一行图标（引擎状态压成
-圆点 + 短文案），lg 起恢复文字按钮。
+「刷新 / 新建知识库」在窄屏并排会把中文挤成两三行、高度参差；排成两行又白占
+一行竖向空间。最终口径是：窄屏一行图标，lg 起恢复文字按钮。
 
 断点用 lg 而不是 md/sm：768~1023 区间左侧导航已经占掉宽度，多个文字按钮放不下。
+
+引擎状态不参与这条行的并排计算：它挂在标题行末尾，正常态只是一个圆点
+（hover 出地址 / Key），检测中 / 断连 / 功能关闭才补两三个字。
 """
 
 from __future__ import annotations
@@ -24,6 +26,12 @@ def _source() -> str:
 def _actions_block(source: str) -> str:
     start = source.index("操作区：窄屏一行图标")
     end = source.index("<!-- 知识库 5 步全流程指引横幅 -->", start)
+    return source[start:end]
+
+
+def _title_row_block(source: str) -> str:
+    start = source.index("引擎连接状态：正常态只留一个小圆点")
+    end = source.index("<!-- 折叠按钮独立于整卡点击", start)
     return source[start:end]
 
 
@@ -59,15 +67,39 @@ def test_icon_and_text_variants_toggle_at_lg():
     assert actions.count('class="h-5 w-5 lg:hidden"') == 2
     assert actions.count("hidden whitespace-nowrap text-sm font-medium lg:inline") == 2
 
-    # 引擎状态：窄屏短文案，桌面保留「引擎 + 完整状态」
-    assert "{{ engineStatusShort }}" in actions
-    assert "引擎 {{ engineStatusText }}" in actions
+
+def test_engine_status_is_a_dot_in_the_title_row():
+    """引擎状态已从操作区移到标题行：正常态只留圆点，异常 / 检测中才补短文案。
+
+    圆点不占操作区那一行，窄屏图标按钮不会因为它被挤成两行；
+    反过来，「一个黄点」必须配文字，否则用户不知道是引擎断了还是功能被关了。
+    """
     source = _source()
-    assert "const engineStatusShort = computed(" in source
-    # 短文案不能再套完整状态（「知识库引擎连接中 ...」会把图标行撑宽）
-    short_block = source[source.index("const engineStatusShort"):]
-    short_block = short_block[: short_block.index("const selectedDatasetId")]
-    assert "engineStatusText" not in short_block
+    head = _title_row_block(source)
+
+    # 正常态没有文字：短文案在已连接时返回空串，模板靠 v-if 兜住
+    assert 'v-if="engineStatusHint"' in head
+    # 圆点本身没有文字，无障碍名称必须带主语，不能直接复用短文案
+    assert "engineStatusAriaLabel" in head
+    # 完整配置（地址 / Key）收在 hover tooltip 里
+    assert "知识库引擎信息" in head
+    assert "ragflowApiUrl" in head
+
+    # 反向断言：操作区里不能再出现引擎指示器，防止有人顺手加回来
+    actions = _actions_block(source)
+    assert "知识库引擎信息" not in actions
+    assert "engineStatusHint" not in actions
+
+
+def test_engine_status_hint_stays_short():
+    source = _source()
+    assert "const engineStatusHint = computed(" in source
+    block = source[source.index("const engineStatusHint"):]
+    block = block[: block.index("const engineStatusAriaLabel")]
+    # 短文案不能再套完整描述（「知识库引擎连接中 ...」会把标题行撑宽）
+    assert "知识库引擎" not in block
+    # 已连接时必须留空，不能常驻「已连接」三个字
+    assert "return ''" in block
 
 
 def test_header_stacks_title_and_actions_until_desktop():

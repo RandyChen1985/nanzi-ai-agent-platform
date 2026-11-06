@@ -697,22 +697,28 @@ const canManagePermissions = computed(() => {
 })
 const isKnowledgeEnabled = computed(() => ragflowConfig.value?.knowledge_base_enabled !== false)
 const isEngineReady = computed(() => isKnowledgeEnabled.value && engineStatus.value === 'connected' && !loading.value)
-const engineStatusText = computed(() => {
-  if (!isKnowledgeEnabled.value) return '功能已关闭'
-  if (engineStatus.value === 'checking') return '知识库引擎连接中 ...'
-  if (engineStatus.value === 'connected') return '已连接'
-  return '未连接'
+/**
+ * 引擎连接状态的短文案：挂在标题行的小圆点旁边。
+ *
+ * 已连接时返回空串 —— 正常状态只留一个绿点，不跟主标题抢注意力；
+ * 检测中 / 断连 / 功能关闭才补回两三个字，否则「一个黄点」信息量为零。
+ */
+const engineStatusHint = computed(() => {
+  if (!isKnowledgeEnabled.value) return '功能未开启'
+  if (engineStatus.value === 'checking') return '引擎连接中'
+  if (engineStatus.value === 'connected') return ''
+  return '引擎未连接'
 })
 
 /**
- * 窄屏状态条只放圆点 + 两三个字，完整文案（「知识库引擎连接中 ...」）留给桌面。
- * 直接复用 engineStatusText 会把标题区撑宽，图标按钮那一行又回到换行老问题。
+ * 圆点本身没有文字，屏幕阅读器与 tooltip 需要一句带主语的完整描述，
+ * 不能直接复用上面的短文案（「未连接」单独播报会让人不知道连的是什么）。
  */
-const engineStatusShort = computed(() => {
-  if (!isKnowledgeEnabled.value) return '未开启'
-  if (engineStatus.value === 'checking') return '连接中'
-  if (engineStatus.value === 'connected') return '已连接'
-  return '未连接'
+const engineStatusAriaLabel = computed(() => {
+  if (!isKnowledgeEnabled.value) return '知识库功能未开启'
+  if (engineStatus.value === 'checking') return '知识库引擎连接中'
+  if (engineStatus.value === 'connected') return '知识库引擎已连接'
+  return '知识库引擎未连接'
 })
 
 const selectedDatasetId = computed(() => selectedDataset.value?.ragflow_dataset_id || selectedDataset.value?.id || '')
@@ -3790,6 +3796,44 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           >
             <span class="whitespace-nowrap">显示指引</span>
           </button>
+
+          <!-- 引擎连接状态：正常态只留一个小圆点（hover 出地址 / Key），
+               检测中、断连、功能关闭才补短文案——纯黄点没人知道出了什么事。
+               它属于页面级运行前提，锚在标题行，不再占操作区那一行。 -->
+          <div
+            class="group relative ml-1 flex shrink-0 cursor-help items-center gap-1.5"
+            tabindex="0"
+            role="status"
+            :aria-label="engineStatusAriaLabel"
+          >
+            <span
+              class="inline-block h-2 w-2 shrink-0 rounded-full transition-colors"
+              :class="{
+                'animate-pulse bg-blue-500': isKnowledgeEnabled && engineStatus === 'checking',
+                'bg-emerald-500': isKnowledgeEnabled && engineStatus === 'connected',
+                'bg-amber-500': !isKnowledgeEnabled || engineStatus === 'disconnected'
+              }"
+            />
+            <span
+              v-if="engineStatusHint"
+              class="whitespace-nowrap text-xs font-medium"
+              :class="isKnowledgeEnabled && engineStatus === 'checking' ? 'text-blue-600' : 'text-amber-600'"
+            >
+              {{ engineStatusHint }}
+            </span>
+
+            <!-- 悬浮 Tooltip 提示引擎详细配置：正常态标题行只留点，完整信息放这里。
+                 窄屏居中对齐，否则从标题右侧向右铺 224px 会顶出屏幕。 -->
+            <span class="pointer-events-none absolute left-1/2 top-full z-50 mt-2 hidden w-56 -translate-x-1/2 rounded-lg bg-slate-900 p-2.5 text-left font-sans text-xs font-normal text-white shadow-xl group-hover:block group-focus-within:block sm:left-0 sm:translate-x-0">
+              <div class="mb-1 border-b border-white/10 pb-1 font-medium">知识库引擎信息</div>
+              <div class="break-all opacity-80">地址: {{ ragflowApiUrl }}</div>
+              <div class="mt-1 opacity-80">
+                API Key:
+                <span v-if="ragflowConfig?.api_key_configured" class="text-emerald-400">已配置</span>
+                <span v-else class="text-amber-400">未配置</span>
+              </div>
+            </span>
+          </div>
           <!-- 折叠按钮独立于整卡点击：卡里有四个可点控件，整卡可点会互相抢事件 -->
           <button
             type="button"
@@ -3811,42 +3855,12 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       </div>
       <!--
         操作区：窄屏一行图标，lg 起恢复文字按钮。
-        三个文字按钮并排会把中文挤成两三行，两行又占竖向空间，所以窄屏只留图标；
-        顺序是 引擎状态 → 刷新 → 新建，图标按钮用 aria-label 保留语义。
-        同步按钮不在这里：概览面板右上角已有同一个入口，两处并排纯属重复。
+        文字按钮并排会把中文挤成两三行，两行又占竖向空间，所以窄屏只留图标；
+        图标按钮用 aria-label 保留语义。
+        引擎状态已经移到标题行（正常态只留一个圆点），不在这里占位；
+        同步按钮也不在这里：概览面板右上角已有同一个入口，两处并排纯属重复。
       -->
       <div class="relative z-10 flex shrink-0 items-center gap-2 lg:gap-3">
-        <!-- 引擎连接指示器 -->
-        <div
-          class="flex h-10 min-w-0 items-center gap-2 rounded-xl border px-2.5 text-xs transition-colors group relative cursor-pointer lg:h-auto lg:px-3 lg:py-1.5"
-          :class="{
-            'border-blue-200 bg-blue-50/50 text-blue-700': isKnowledgeEnabled && engineStatus === 'checking',
-            'border-emerald-200 bg-emerald-50/50 text-emerald-700': isKnowledgeEnabled && engineStatus === 'connected',
-            'border-amber-200 bg-amber-50/50 text-amber-700': !isKnowledgeEnabled || engineStatus === 'disconnected'
-          }"
-        >
-          <span
-            class="inline-block h-2 w-2 shrink-0 rounded-full"
-            :class="{
-              'bg-blue-500 animate-pulse': engineStatus === 'checking',
-              'bg-emerald-500': engineStatus === 'connected',
-              'bg-amber-500': engineStatus === 'disconnected'
-            }"
-          ></span>
-          <span class="whitespace-nowrap font-medium lg:hidden">{{ engineStatusShort }}</span>
-          <span class="hidden whitespace-nowrap font-medium lg:inline">引擎 {{ engineStatusText }}</span>
-
-          <!-- 悬浮 Tooltip 提示引擎详细配置 -->
-          <span class="absolute top-full right-0 mt-2 hidden group-hover:block bg-slate-900 text-white text-xs p-2.5 rounded-lg shadow-xl z-50 text-left font-sans font-normal pointer-events-none">
-            <div class="font-medium mb-1 border-b border-white/10 pb-1">知识库引擎信息</div>
-            <div class="opacity-80">地址: {{ ragflowApiUrl }}</div>
-            <div class="opacity-80 mt-1">
-              API Key: 
-              <span v-if="ragflowConfig?.api_key_configured" class="text-emerald-400">已配置</span>
-              <span v-else class="text-amber-400">未配置</span>
-            </div>
-          </span>
-        </div>
         <button
           type="button"
           class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50 lg:h-auto lg:w-auto lg:px-4 lg:py-2"
