@@ -635,64 +635,35 @@ const menu = computed<ResolvedUserModeItem[]>(() =>
   }),
 )
 
-/** 展开状态：默认「专家·技能·连接器」和「更多」都收起，只展开当前所在的那组 */
-const EXPANDED_CACHE_PREFIX = "nanzi_user_mode_expanded"
-/** 按 user_id 分键：换号登录不能继承上一个账号展开着哪些组 */
-const expandedCacheKey = (userId: string) =>
-  `${EXPANDED_CACHE_PREFIX}:${userId || "anon"}`
-
-function readExpandedCache(): Record<string, boolean> {
-  try {
-    const raw = localStorage.getItem(expandedCacheKey(props.userId))
-    const parsed = raw ? JSON.parse(raw) : null
-    return parsed && typeof parsed === "object" ? parsed : {}
-  } catch {
-    return {}
-  }
-}
-
+/**
+ * 分组展开状态：**只由「当前路由是否在该组内」决定**，外加用户点父项时的临时切换。
+ *
+ * 这里曾经把展开状态写进 localStorage、并在首帧优先恢复它（当时的说法是「切模式
+ * 回来还展开着」）。副作用很明确：某个组只要被展开过一次（去过专家页、或点过父项），
+ * 之后在**任何页面**刷新都会把它撑开——用户在聊天页刷新，看到「专家·技能·连接器」
+ * 自动展开，第一反应就是「我没点它」。展开状态本来只回答一个问题：我在哪一组。
+ * 盘里的历史状态回答不了这个问题，所以不再持久化。
+ */
 const expanded = reactive<Record<string, boolean>>({
   experts: false,
   more: false,
-  ...readExpandedCache(),
 })
 
-const persistExpandedState = () => {
-  try {
-    localStorage.setItem(
-      expandedCacheKey(props.userId),
-      JSON.stringify({ ...expanded }),
-    )
-  } catch {
-    /* 隐私模式等写不进去，忽略：只是少一层「切模式回来还展开着」 */
-  }
-}
-
 /**
- * 路由变化时，只让「当前所在的那一组」保持展开，其余收起。
+ * 路由变化时，只让「当前所在的那一组」展开，其余收起。
  *
  * 之前只写 `expanded[key] = true`、从不置回 false：点开过「更多」之后，
  * 再去点定时任务/知识库，那一组会一直挂在下面，看起来像「点别的菜单把更多也展开了」。
  * 手动点父项展开不受这里影响——那条路径不改路由。
- *
- * 首次同步（含从专业模式切回用户模式、侧栏重新挂载）保留上次手动展开的组：
- * 否则每次切模式回来，用户展开的「更多」都会被收起。
  */
-let firstRouteSync = true
 watch(
   () => route.path,
   (path) => {
     for (const item of menu.value) {
       if (item.kind !== "group" || !item.children) continue
       const containsCurrent = item.children.some((child) => pathMatches(path, child.path))
-      if (firstRouteSync && expanded[item.key]) {
-        expanded[item.key] = true
-        continue
-      }
       expanded[item.key] = containsCurrent
     }
-    firstRouteSync = false
-    persistExpandedState()
   },
   { immediate: true },
 )
@@ -740,13 +711,11 @@ const toggleGroup = (item: ResolvedUserModeItem) => {
   // 第一个子项（专家），而不是先展开、再让用户点一次子项。
   if (item.expandOpensFirst && !isChildActive(item)) {
     expanded[item.key] = true
-    persistExpandedState()
     const first = (item.children || []).find((child) => !child.locked)
     if (first) emit("navigate", first.path)
     return
   }
   expanded[item.key] = !isOpen
-  persistExpandedState()
 }
 
 const navItemClass = (item: ResolvedUserModeItem, active: boolean): string => {
