@@ -93,6 +93,20 @@ def _clear_runtime_tool_cache() -> None:
 
     ToolRegistry.clear_db_tool_cache()
 
+def _normalize_mcp_server_name(value: Any) -> str:
+    """校验并返回展示名。
+
+    工具标识是 ``server_name:tool_name``，服务名本身带冒号会让运行时按第一个冒号
+    拆分时取错远端工具名。
+    """
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("服务显示名称不能为空")
+    if ":" in text:
+        raise ValueError("服务显示名称不能包含冒号（:）")
+    return text
+
+
 class McpServerBase(BaseModel):
     server_name: str = Field(..., max_length=100)
     sse_url: str = Field(..., max_length=2048)
@@ -109,14 +123,7 @@ class McpServerBase(BaseModel):
     @field_validator("server_name")
     @classmethod
     def validate_server_name(cls, value: str) -> str:
-        text = str(value or "").strip()
-        if not text:
-            raise ValueError("服务显示名称不能为空")
-        # 工具标识是 ``server_name:tool_name``，服务名本身带冒号会让运行时按第一个
-        # 冒号拆分时取错远端工具名。
-        if ":" in text:
-            raise ValueError("服务显示名称不能包含冒号（:）")
-        return text
+        return _normalize_mcp_server_name(value)
 
     @field_validator("sse_url")
     @classmethod
@@ -157,9 +164,25 @@ class McpServerWrite(McpServerBase):
 
 
 class McpVerifyRequest(McpServerWrite):
-    """连接测试请求；编辑态携带 server_id，用于复用已保存的凭据。"""
+    """连接测试请求；编辑态携带 server_id，用于复用已保存的凭据。
+
+    探测不落库，展示名与探测结果无关：新建向导第 1 步还没有名字输入框（它在验证
+    成功后的第 2 步），早期版本却沿用保存期的必填规则，导致「手动填地址 → 点连接
+    并发现工具」100% 被全局 RequestValidationError 处理器翻成 400「参数校验失败」，
+    连出站请求都没发出。这里把空串/空白视为"未填"；填了就照常校验，命名问题仍在
+    第 1 步暴露，不必拖到第 2 步保存才报错。
+    """
 
     server_id: Optional[str] = None
+    server_name: Optional[str] = Field(default=None, max_length=100)
+
+    @field_validator("server_name")
+    @classmethod
+    def validate_server_name(cls, value: Optional[str]) -> Optional[str]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        return _normalize_mcp_server_name(text)
 
 
 def _normalized_remark(value: Optional[str]) -> Optional[str]:

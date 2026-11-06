@@ -1142,6 +1142,11 @@ const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
     return
   }
   
+  // 第 1 步没有名字输入框（展示名在验证成功后的第 2 步才渲染），但探测请求需要它：
+  // 新建态先按地址推导默认后缀，避免「连接并发现工具」被后端判成参数校验失败。
+  // 编辑态绝不参与推导——无前缀的历史服务名（如平台 Echo）会被重拼成当前前缀，等于静默改名。
+  if (!isEditing.value && !newServer.value.server_name) ensureServerNameSuffixFromUrl()
+
   verifying.value = true
   try {
     const payload = buildServerPayload(newServer.value)
