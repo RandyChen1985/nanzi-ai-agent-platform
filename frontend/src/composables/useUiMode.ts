@@ -8,6 +8,7 @@
  */
 import { computed, ref } from "vue"
 import axios from "@/utils/axios"
+import { persistUserInfo } from "@/utils/userSession"
 import { useAppTheme } from "./useAppTheme"
 
 export type UiMode = "user" | "pro"
@@ -27,6 +28,47 @@ function readCurrentUser(): { id: string; role: string } {
   } catch {
     return { id: "", role: "" }
   }
+}
+
+/** 读完整登录快照：黑名单相关字段只在 user_info 里，守卫要同步读。 */
+function readUserInfoSnapshot(): Record<string, any> | null {
+  try {
+    const raw = localStorage.getItem("user_info")
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 把服务端刚下发的模式策略写回登录快照。
+ *
+ * 路由守卫必须同步返回（不请求接口），读的就是这份快照；不回写的话，
+ * 本次刷新后守卫仍按登录时的旧值判断，直到下一次登录才生效。
+ */
+function patchUserInfoSnapshot(patch: Record<string, unknown>): void {
+  const snapshot = readUserInfoSnapshot()
+  if (!snapshot) return
+  persistUserInfo({ ...snapshot, ...patch })
+}
+
+function isUiMode(value: unknown): value is UiMode {
+  return value === "user" || value === "pro"
+}
+
+/** 从登录快照读黑名单（同步），供守卫与首屏判断使用 */
+function readCachedBlockedModes(): UiMode[] {
+  const raw = readUserInfoSnapshot()?.blocked_ui_modes
+  return Array.isArray(raw) ? raw.filter(isUiMode) : []
+}
+
+function readCachedBlockedBy(): string[] {
+  const raw = readUserInfoSnapshot()?.ui_mode_blocked_by
+  return Array.isArray(raw) ? raw.filter((item: unknown) => typeof item === "string" && item) : []
+}
+
+function allowedOf(blocked: readonly UiMode[]): UiMode[] {
+  return VALID_MODES.filter((mode) => !blocked.includes(mode))
 }
 
 function cacheKey(userId: string): string {
@@ -121,17 +163,37 @@ export function getCachedUiMode(): UiMode | null {
 }
 
 /**
+ * 同步读取「被角色禁用」的界面模式。
+ *
+ * 路由守卫用它拦手敲地址栏 / 旧收藏：被禁用专业模式的账号只能走用户模式能到的页面。
+ * 读的是登录快照——守卫不能等接口。
+ */
+export function getCachedUiModeBlocked(): UiMode[] {
+  return readCachedBlockedModes()
+}
+
+/**
  * 登录瞬间用的模式判断：先看本机缓存（同一个人上次选过什么），否则按角色给默认。
  *
  * 登录页还没拉 `/portal-prefs`，等接口回来再决定落地页会闪一下，
  * 所以这里只做同步判断；真正的权威值随后由 `ensureUiMode()` 覆盖。
  */
 export function resolveInitialUiMode(role?: string): UiMode {
-  return readCachedMode() || defaultUiMode(role ?? readCurrentUser().role)
+  const allowed = allowedOf(readCachedBlockedModes())
+  const cached = readCachedMode()
+  // 缓存可能还是「切模式被禁之前」的值：落在黑名单里就当没选过
+  if (cached && allowed.includes(cached)) return cached
+  if (allowed.length === 1 && allowed[0]) return allowed[0]
+  return defaultUiMode(role ?? readCurrentUser().role)
 }
 
 // 单例：侧栏、个人中心、路由守卫看到的是同一份状态
-const uiMode = ref<UiMode>(readCachedMode() || defaultUiMode())
+const uiMode = ref<UiMode>(resolveInitialUiMode())
+// 角色级黑名单：初始化时先用登录快照，接口回来后以服务端为准
+const blockedModes = ref<UiMode[]>(readCachedBlockedModes())
+const blockedBy = ref<string[]>(readCachedBlockedBy())
+const allowedModes = computed<UiMode[]>(() => allowedOf(blockedModes.value))
+const canSwitchMode = computed(() => allowedModes.value.length > 1)
 const ready = ref(false)
 let loadedForUserId = ""
 let inflight: Promise<void> | null = null
@@ -139,10 +201,33 @@ let inflight: Promise<void> | null = null
 async function loadFromServer(): Promise<void> {
   try {
     const res = await axios.get("/api/portal/portal-prefs")
-    const server = res?.data?.data?.ui_mode
+    const payload = res?.data?.data || {}
+    const server = payload.ui_mode
     if (server === "user" || server === "pro") {
       uiMode.value = server
       persistCachedMode(server)
+    }
+
+    // 黑名单：服务端已夹逼过 ui_mode，这里同步状态并回写登录快照，
+    // 让守卫在本次会话后续跳转里就能用上新规则（不用等下次登录）。
+    // 只在响应真的带这个字段时才回写：前后端版本不一致时，
+    // 老后端不该把登录快照里的值抹成「都不禁用」。
+    if (Array.isArray(payload.blocked_ui_modes)) {
+      const blocked = payload.blocked_ui_modes.filter(isUiMode)
+      const source = Array.isArray(payload.ui_mode_blocked_by)
+        ? payload.ui_mode_blocked_by.filter(
+            (item: unknown) => typeof item === "string" && item,
+          )
+        : []
+      blockedModes.value = blocked
+      blockedBy.value = source
+      patchUserInfoSnapshot({
+        blocked_ui_modes: blocked,
+        ui_mode_allowed: Array.isArray(payload.ui_mode_allowed)
+          ? payload.ui_mode_allowed
+          : allowedOf(blocked),
+        ui_mode_blocked_by: source,
+      })
     }
   } catch {
     // 接口失败就用缓存 / 角色默认值，不阻断页面渲染
@@ -160,7 +245,9 @@ export function ensureUiMode(): Promise<void> {
   if (loadedForUserId !== id) {
     loadedForUserId = id
     ready.value = false
-    uiMode.value = readCachedMode() || defaultUiMode()
+    blockedModes.value = readCachedBlockedModes()
+    blockedBy.value = readCachedBlockedBy()
+    uiMode.value = resolveInitialUiMode()
     inflight = loadFromServer()
   }
   return inflight ?? Promise.resolve()
@@ -169,6 +256,8 @@ export function ensureUiMode(): Promise<void> {
 /** 切换模式。返回是否保存成功——失败时由调用方提示，并把状态回滚。 */
 export async function setUiMode(mode: UiMode): Promise<boolean> {
   if (!VALID_MODES.includes(mode)) return false
+  // 被角色禁用的模式：不写接口（后端也会 403），直接按失败处理
+  if (blockedModes.value.includes(mode)) return false
   const previous = uiMode.value
   // 已经是这个模式：不重复写接口，也不要把当前主题重置成该模式的默认值
   if (previous === mode) return true
@@ -197,6 +286,10 @@ export function useUiMode() {
     ready,
     isUserMode,
     isProMode,
+    blockedModes,
+    blockedBy,
+    allowedModes,
+    canSwitchMode,
     ensureUiMode,
     setUiMode,
   }
@@ -207,5 +300,7 @@ export function resetUiModeState(): void {
   loadedForUserId = ""
   inflight = null
   ready.value = false
+  blockedModes.value = []
+  blockedBy.value = []
   uiMode.value = defaultUiMode()
 }

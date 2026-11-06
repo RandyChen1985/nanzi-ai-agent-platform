@@ -210,8 +210,26 @@ const closeToast = () => {
  * 偏好存在账号级 Redis，切换后侧栏立即换排布；不做系统配置项，
  * 默认值由后端按角色给（管理员 pro、其他 user）。
  */
-const { uiMode, setUiMode } = useUiMode()
+const {
+  uiMode,
+  setUiMode,
+  blockedModes: uiModeBlockedModes,
+  blockedBy: uiModeBlockedBy,
+} = useUiMode()
 const switchingUiMode = ref(false)
+
+/**
+ * 角色级黑名单：被禁的模式置灰并写明来源，而不是直接消失。
+ * 直接隐藏会让用户以为「平台没有这个功能」，也找不到该找谁。
+ */
+const isUiModeBlocked = (mode: 'user' | 'pro') => uiModeBlockedModes.value.includes(mode)
+const uiModeBlockedReason = (mode: 'user' | 'pro') => {
+  if (!isUiModeBlocked(mode)) return ''
+  const who = uiModeBlockedBy.value.length
+    ? `角色「${uiModeBlockedBy.value[0]}」`
+    : '管理员统一设置'
+  return `由${who}关闭，需要恢复请联系管理员`
+}
 
 const uiModeOptions: Array<{ value: 'user' | 'pro'; label: string; desc: string }> = [
   {
@@ -1728,20 +1746,36 @@ onMounted(() => {
                             :key="option.value"
                             type="button"
                             class="rounded-xl border p-4 text-left transition-all"
-                            :class="uiMode === option.value
-                                ? 'border-blue-500 bg-blue-50/40 shadow-[0_0_0_3px_rgba(22,119,255,0.09)]'
-                                : 'border-gray-200 bg-white hover:border-gray-300'"
-                            :disabled="switchingUiMode"
+                            :class="isUiModeBlocked(option.value)
+                                ? 'border-dashed border-gray-200 bg-gray-50/60'
+                                : uiMode === option.value
+                                    ? 'border-blue-500 bg-blue-50/40 shadow-[0_0_0_3px_rgba(22,119,255,0.09)]'
+                                    : 'border-gray-200 bg-white hover:border-gray-300'"
+                            :disabled="switchingUiMode || isUiModeBlocked(option.value)"
                             @click="handleSwitchUiMode(option.value)"
                         >
                             <div class="flex items-center gap-2">
-                                <span class="text-sm font-semibold text-gray-900">{{ option.label }}</span>
                                 <span
-                                    v-if="uiMode === option.value"
+                                    class="text-sm font-semibold"
+                                    :class="isUiModeBlocked(option.value) ? 'text-gray-400' : 'text-gray-900'"
+                                >{{ option.label }}</span>
+                                <span
+                                    v-if="isUiModeBlocked(option.value)"
+                                    class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500"
+                                >管理员已禁用</span>
+                                <span
+                                    v-else-if="uiMode === option.value"
                                     class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700"
                                 >当前</span>
                             </div>
-                            <p class="mt-1.5 text-xs leading-relaxed text-gray-500">{{ option.desc }}</p>
+                            <p
+                                class="mt-1.5 text-xs leading-relaxed"
+                                :class="isUiModeBlocked(option.value) ? 'text-gray-400' : 'text-gray-500'"
+                            >{{ option.desc }}</p>
+                            <p
+                                v-if="isUiModeBlocked(option.value)"
+                                class="mt-1 text-[11px] leading-relaxed text-amber-600"
+                            >{{ uiModeBlockedReason(option.value) }}</p>
                         </button>
                     </div>
 

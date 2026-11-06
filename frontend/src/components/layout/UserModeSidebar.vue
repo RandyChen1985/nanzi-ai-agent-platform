@@ -127,18 +127,6 @@
                   />
                   <span class="truncate">{{ child.label }}</span>
                 </button>
-                <!-- 「更多」末尾的快捷切换：个人中心是正式入口，这里只是少点一次 -->
-                <button
-                  v-if="item.key === 'more'"
-                  type="button"
-                  class="mt-1 flex h-[34px] w-full items-center gap-2 rounded-[9px] px-2 text-left text-[13px] text-primary transition-colors hover:bg-primary/5"
-                  @click="emit('switch-mode', 'pro')"
-                >
-                  <svg class="h-[15px] w-[15px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M8 7h8l-3-3M16 17H8l3 3" />
-                  </svg>
-                  <span class="truncate">切换到专业模式</span>
-                </button>
               </div>
             </template>
           </template>
@@ -285,7 +273,12 @@
 
       <template v-else>
         <div v-for="section in taskSections" :key="section.key">
-          <p class="px-2.5 pb-1 pt-2 text-[11px] font-medium text-gray-400">{{ section.title }}</p>
+          <!-- 分组标题当「标签」用：字号更小、字距放开、色值压到分组层级，
+               不和会话标题抢同一档亮度 -->
+          <p
+            class="px-2.5 pb-1 pt-2 text-[10.5px] font-semibold tracking-[0.02em]"
+            :class="lightTheme ? 'text-slate-500' : 'text-[#5b6472]'"
+          >{{ section.title }}</p>
           <ul class="flex flex-col gap-0.5">
             <li v-for="item in section.items" :key="taskKeyOf(item)">
               <div class="group/item relative">
@@ -295,11 +288,11 @@
                   :class="
                     isConversationActive(item)
                       ? lightTheme
-                        ? 'bg-primary/10 font-semibold text-primary'
-                        : 'bg-primary/15 font-semibold text-primary'
+                        ? 'bg-[linear-gradient(90deg,rgba(22,119,255,.12),rgba(22,119,255,.03))] font-semibold text-[#0958d9] shadow-[inset_2px_0_0_0_#1677ff]'
+                        : 'bg-[linear-gradient(90deg,rgba(22,119,255,.22),rgba(22,119,255,.05))] font-semibold text-white shadow-[inset_2px_0_0_0_#1677ff]'
                       : lightTheme
-                        ? 'text-gray-700 hover:bg-gray-100'
-                        : 'text-slate-300 hover:bg-white/[0.06]'
+                        ? 'text-slate-700 hover:bg-[#f4f7fb] hover:text-slate-900'
+                        : 'text-[#8b95a7] hover:bg-white/[0.06] hover:text-[#eef2f7]'
                   "
                   :title="itemTitle(item)"
                   @click="openConversation(item)"
@@ -317,7 +310,12 @@
                   <span class="min-w-0 flex-1 truncate">{{ itemTitle(item) }}</span>
                   <!-- 时间贴右边缘；鼠标移上来时淡出，把位置让给操作按钮。用透明度而不是
                        条件渲染：占位不变，标题宽度不会跟着跳。 -->
-                  <span class="flex-shrink-0 text-[11px] text-gray-400 transition-opacity duration-150 sm:group-hover/item:opacity-0">{{ formatTaskTime(item.created_at) }}</span>
+                  <span
+                    class="flex-shrink-0 text-[11px] transition-opacity duration-150 sm:group-hover/item:opacity-0"
+                    :class="isConversationActive(item)
+                      ? (lightTheme ? 'text-[#4a86df]' : 'text-[#93b8ff]')
+                      : (lightTheme ? 'text-slate-400' : 'text-[#4f5867]')"
+                  >{{ formatTaskTime(item.created_at) }}</span>
                 </button>
                 <!-- 操作按钮不能嵌在行按钮里（HTML 不允许 button 套 button），改成同层绝对定位：
                      不占宽度，时间才能真正贴到右边缘 -->
@@ -382,10 +380,23 @@
         </div>
 
         <p v-if="loadingMore" class="px-2.5 py-2 text-center text-xs text-gray-400">正在加载…</p>
-        <p
+        <!-- 到底提示不再独占一行「结论」，改成一条带渐隐线的分隔：先表达「列表到此为止」，
+             文字只是注脚 -->
+        <div
           v-else-if="tasks.length && !hasMoreTasks && !taskKeyword.trim()"
-          class="px-2.5 py-2 text-center text-xs text-gray-300 dark:text-gray-600"
-        >已加载全部会话</p>
+          class="flex items-center gap-2 px-2.5 py-2 text-[10.5px] tracking-[0.08em]"
+          :class="lightTheme ? 'text-[#a3adb9]' : 'text-[#3f4756]'"
+        >
+          <span
+            class="h-px flex-1"
+            :class="lightTheme ? 'bg-gradient-to-r from-transparent to-[#e3e9f1]' : 'bg-gradient-to-r from-transparent to-white/[0.07]'"
+          ></span>
+          <span class="flex-shrink-0">已加载全部会话</span>
+          <span
+            class="h-px flex-1"
+            :class="lightTheme ? 'bg-gradient-to-l from-transparent to-[#e3e9f1]' : 'bg-gradient-to-l from-transparent to-white/[0.07]'"
+          ></span>
+        </div>
 
         <!-- 已有列表时刷新失败：保留旧数据，只在底部提示并提供重试 -->
         <div

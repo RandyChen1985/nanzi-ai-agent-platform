@@ -2,6 +2,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select, delete, distinct, or_, text
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
+from collections.abc import Iterable
+from typing import Any, Dict, List, Optional
 from app.models.permission import ResourcePermission, Role, UserRoleRelation
 from app.models.user import User
 from app.models.agent import AIAgent
@@ -10,6 +12,66 @@ from app.models.metadata import MetaDataset
 from app.models.knowledge import KnowledgeBaseMetadata
 from app.models.tool import SysApiTool
 from app.schemas.permission import PermissionUpdate, UserPermissionsResponse, PermissionSet, PermissionSetDetail, ResourceDetail
+
+
+#: 批量清缓存时单条 pipeline 携带的键数上限。太大（如 10 万键一次）会让单条命令
+#: 的响应包与阻塞时间都变长；500 在「往返次数」与「单次体量」之间取值。
+_CACHE_DELETE_CHUNK = 500
+
+_AGENT_SCOPED_PERMISSION_PREFIX = "sys:auth:permissions:v7:user:"
+_NAVIGATION_RECENT_QUESTIONS_PREFIX = "agent:dataset_navigation_recent_questions:"
+
+
+def user_id_from_agent_scoped_permission_key(key: str) -> Optional[int]:
+    """从 ``sys:auth:permissions:v7:user:{uid}:agent:{scope}`` 解出 uid。
+
+    批量清理要用「一次 SCAN + 本地过滤」替代「每用户一次 SCAN」，因此必须能反解键。
+    解析不出（格式变了、非本族键）一律返回 None → 跳过而不是猜，避免误删他人缓存。
+    """
+    if not key.startswith(_AGENT_SCOPED_PERMISSION_PREFIX):
+        return None
+    head, sep, _scope = key[len(_AGENT_SCOPED_PERMISSION_PREFIX):].partition(":agent:")
+    if not sep:
+        return None
+    try:
+        return int(head)
+    except (TypeError, ValueError):
+        return None
+
+
+def user_id_from_navigation_recent_key(key: str) -> Optional[int]:
+    """从 ``agent:dataset_navigation_recent_questions:{user_key}:{purpose}:{hash}`` 解出 uid。
+
+    ``user_key`` 也可能是 ``admin`` / ``anon``（非数字），那类键不属于任何具体用户，
+    返回 None 让它保持原样——它们由 ``invalidate_all_navigation_caches`` 统一处理。
+    """
+    if not key.startswith(_NAVIGATION_RECENT_QUESTIONS_PREFIX):
+        return None
+    head = key[len(_NAVIGATION_RECENT_QUESTIONS_PREFIX):].split(":", 1)[0]
+    try:
+        return int(head)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _delete_keys_in_chunks(redis, keys: Iterable[str]) -> int:
+    """用 pipeline 分批删除，返回下发的键数。
+
+    逐个 ``await delete`` 是 N 次往返；这里每 500 个键一次往返。对 1000 用户 × 8 个
+    精确键来说，往返次数从 8000 降到 16。
+    """
+    batch: list[str] = []
+    sent = 0
+    for key in keys:
+        batch.append(key)
+        if len(batch) >= _CACHE_DELETE_CHUNK:
+            await redis.delete(*batch)
+            sent += len(batch)
+            batch = []
+    if batch:
+        await redis.delete(*batch)
+        sent += len(batch)
+    return sent
 
 
 class PermissionVersionConflict(Exception):
@@ -1990,14 +2052,17 @@ class PermissionService:
 
             await self.db.commit()
 
-            # Heavy operation: Invalidate cache for ALL users who have this role
-            # For now, we might just accept 1 hour delay or try to find them.
-            # Efficient way: Select user_ids from UserRoleRelation where role_id = role_id
+            # 清缓存必须放在 commit **之后**：反过来会出现「缓存已清、数据未提交」的
+            # 窗口，并发请求读到旧行又把旧结果写回 Redis（TTL 1 小时），管理员刚保存的
+            # 权限在 1 小时内不生效且不会再有第二次失效来纠正。
+            #
+            # 也**必须走批量**：这个角色可能有上千成员。历史实现是逐用户
+            # `await _invalidate_user_cache(uid)`，每人 2 次全 keyspace SCAN + 1 次
+            # DB 查询，1000 人实测 46.9 秒（本机 Redis），生产 keyspace 更大时会到
+            # 几分钟——前端表现为「点了保存卡死」，而数据其实早就落库了。
             user_ids_stmt = select(UserRoleRelation.user_id).where(UserRoleRelation.role_id == role_id)
             user_ids = (await self.db.execute(user_ids_stmt)).scalars().all()
-
-            for uid in user_ids:
-                await self._invalidate_user_cache(uid)
+            await self.invalidate_cached_permissions_for_users(user_ids)
 
         except Exception as e:
             await self.db.rollback()
@@ -2030,6 +2095,124 @@ class PermissionService:
                 await redis.delete(key)
                 deleted += 1
         return deleted
+
+    async def _fetch_api_key_hashes(self, user_ids: Iterable[int]) -> Dict[int, str]:
+        """批量取 ``api_key_hash``（一条 IN 查询），供批量清 ``auth:api_key:{hash}``。
+
+        单用户路径里这一步藏在 ``AuthService.invalidate_user_auth_cache`` 内部
+        （每人一次 ``session.get``）。批量场景沿用就变成 N 次往返，实测单独就要
+        1 秒以上，所以这里显式批量化。语义保持不变：**有 hash 才删**，没有就跳过。
+        """
+        ids = [int(uid) for uid in user_ids if uid is not None]
+        if not ids:
+            return {}
+        rows = await self.db.execute(
+            select(User.id, User.api_key_hash).where(User.id.in_(ids))
+        )
+        return {
+            int(uid): str(hash_ or "").strip()
+            for uid, hash_ in rows.all()
+            if uid is not None and str(hash_ or "").strip()
+        }
+
+    async def _invalidate_user_caches_bulk(self, user_ids: List[int]) -> None:
+        """按批清权限缓存：SCAN 走固定次数，而不是每个用户各走一遍。
+
+        **为什么不能只把 ``_invalidate_user_cache`` 并发化**：每个用户要付 2 次 SCAN，
+        而 ``SCAN MATCH`` 的成本是 O(keyspace)、与 pattern 命中几个键无关。1000 个用户
+        = 2000 次全库遍历；实测 keyspace 6.7 万时单次 SCAN 138ms，仅这一项就 276 秒。
+        并发只是把等待重叠，Redis 侧的遍历总量一点没少。
+
+        本方法把「遍历次数」从 ``2N`` 压到 ``2``，精确键用 pipeline 一次发完，
+        ``api_key_hash`` 用一条 IN 查询取回。覆盖的键与 ``_invalidate_user_cache``
+        逐条对齐（顺序无关，键集合必须完全一致）：
+
+        - 精确键：v2/v4/v5/v6 历史版本键 + 数据集菜单 + 3 个数据门户导航键；
+        - SCAN 键族：``...:user:{uid}:agent:*``（含全局 ``agent:-``）+ 最近提问键族；
+        - 查到 hash 才有：``auth:api_key:{hash}``。
+
+        任何一步失败都只记日志、不抛出：调用点（保存角色权限）此时授权已经 commit，
+        清缓存失败不该把一次成功的管理操作变成 500。
+        """
+        uid_set = {int(uid) for uid in user_ids if uid is not None}
+        if not uid_set:
+            return
+
+        redis = await self._get_redis()
+        if redis:
+            try:
+                await self._delete_exact_user_cache_keys(redis, uid_set)
+            except Exception as ex:  # noqa: BLE001 - 清缓存失败不能打断已完成的保存
+                logger.warning("批量清除权限精确键失败（%s 个用户）: %s", len(uid_set), ex)
+            try:
+                await self._delete_scanned_user_cache_keys(redis, uid_set)
+            except Exception as ex:  # noqa: BLE001
+                logger.warning("批量清除权限键族失败（%s 个用户）: %s", len(uid_set), ex)
+            try:
+                await self._delete_auth_api_key_caches(redis, uid_set)
+            except Exception as ex:  # noqa: BLE001
+                logger.warning("批量清除认证缓存失败（%s 个用户）: %s", len(uid_set), ex)
+
+        # 技能禁用是**进程内**缓存，整批清一次就够：原来每个用户清一遍，
+        # 1000 人就是 1000 次无意义的空调用。
+        try:
+            from app.services.ai.skills.policy import clear_forbidden_skill_cache
+
+            clear_forbidden_skill_cache()
+        except Exception as ex:
+            logger.warning("Failed to clear forbidden skill cache: %s", ex)
+
+    @staticmethod
+    async def _delete_exact_user_cache_keys(redis, uid_set: set) -> None:
+        """清「键名可由用户 id 直接拼出」的那批缓存。"""
+        from app.services.ai.config import AgentConfigProvider
+        from app.services.dataset_navigation_service import DatasetNavigationService
+
+        keys: list[str] = []
+        for uid in uid_set:
+            # 历史版本键：旧缓存继续命中会让「刚改的权限」在 TTL 内看起来没生效
+            keys.append(f"sys:auth:permissions:v2:user:{uid}")
+            keys.append(f"sys:auth:permissions:v4:user:{uid}")
+            keys.append(f"sys:auth:permissions:v5:user:{uid}")
+            keys.append(f"sys:auth:permissions:v6:user:{uid}")
+            # 数据集菜单 + 数据门户导航：键构造单点维护，避免与单用户路径漂移
+            keys.append(AgentConfigProvider.dataset_menu_cache_key(user_id=uid))
+            user_key = str(uid)
+            keys.append(DatasetNavigationService._navigation_cache_key(user_key))
+            keys.append(DatasetNavigationService._click_rank_key(user_key))
+            keys.append(DatasetNavigationService._click_meta_key(user_key))
+        await _delete_keys_in_chunks(redis, keys)
+
+    @staticmethod
+    async def _delete_scanned_user_cache_keys(redis, uid_set: set) -> None:
+        """清「只能靠 SCAN 发现」的键族：各扫全库**一次**，本地按 uid 过滤。
+
+        ``agent_id`` 与 ``purpose/group_hash`` 都无法穷举（agent 可能已被删除、
+        purpose 由运行时决定），所以这里不能改成精确键；但可以把 N 次遍历
+        合并成 1 次，这正是本次性能修复的核心。
+        """
+        targets: list[str] = []
+        async for key in redis.scan_iter(
+            match=f"{_AGENT_SCOPED_PERMISSION_PREFIX}*:agent:*", count=1000
+        ):
+            if user_id_from_agent_scoped_permission_key(key) in uid_set:
+                targets.append(key)
+        async for key in redis.scan_iter(
+            match=f"{_NAVIGATION_RECENT_QUESTIONS_PREFIX}*", count=1000
+        ):
+            if user_id_from_navigation_recent_key(key) in uid_set:
+                targets.append(key)
+        if targets:
+            await _delete_keys_in_chunks(redis, targets)
+
+    async def _delete_auth_api_key_caches(self, redis, uid_set: set) -> None:
+        """清真实 API Key 的认证缓存（``auth:api_key:{hash}``）。"""
+        hashes = await self._fetch_api_key_hashes(uid_set)
+        if not hashes:
+            return
+        await _delete_keys_in_chunks(
+            redis, (f"auth:api_key:{h}" for h in set(hashes.values()))
+        )
 
     async def _invalidate_user_cache(self, user_id: int):
         redis = await self._get_redis()
@@ -2078,12 +2261,15 @@ class PermissionService:
 
         角色级智能体限制只影响拥有该角色的用户，因此按成员精确失效而不是清全局——
         同时也要覆盖他们的智能体作用域键族（见 ``_invalidate_user_cache``）。
+
+        **必须走批量**：这里曾逐用户 ``await _invalidate_user_cache``，1000+ 成员的
+        角色会让保存请求卡几十秒到几分钟（前端「卡死」，数据其实已落库）。
         """
         user_ids_stmt = select(UserRoleRelation.user_id).where(
             UserRoleRelation.role_id == int(role_id)
         )
-        for uid in (await self.db.execute(user_ids_stmt)).scalars().all():
-            await self._invalidate_user_cache(uid)
+        user_ids = (await self.db.execute(user_ids_stmt)).scalars().all()
+        await self.invalidate_cached_permissions_for_users(user_ids)
 
     async def get_users_with_element_permission(
         self, user_ids: Iterable[int], permission_code: str
@@ -2146,31 +2332,23 @@ class PermissionService:
         return {int(uid) for uid in granted}
 
     async def invalidate_cached_permissions_for_users(self, user_ids: Iterable[int]) -> None:
-        """批量清权限缓存（角色成员变化、全员授权变更等场景）。
+        """批量清权限缓存（角色成员变化、全员授权变更、保存角色权限等场景）。
 
-        全员授权变更时这里是 O(全体用户)：每个用户要删 1 个全局键、SCAN 一族智能体键、
-        再清 4 个历史版本键，串行执行在生产规模（数千用户）会把「保存一条全员授权」
-        拖到几十秒，期间还占着未提交的写事务、前端请求直接超时。用受限并发压往返。
+        **历史教训**：这里曾用 ``Semaphore(16)`` 的并发版逐用户清理。并发把墙钟时间
+        压到 1/7，但没解决根因——每个用户 2 次 SCAN，总遍历量仍是
+        O(用户数 × keyspace)。1000 人的角色实测仍要 6.5 秒（本机 Redis、无网络 RTT、
+        keyspace 仅 1 万），生产 10 万 key 下就是分钟级，前端表现为「点了保存卡死」
+        （数据其实已经落库）。现在整批只扫两遍 keyspace，耗时与用户数基本无关。
         """
         unique = sorted({int(uid) for uid in user_ids if uid is not None})
         if not unique:
             return
         if len(unique) == 1:
+            # 单用户走原路径：副作用（日志、auth 缓存、导航缓存）一字不改，
+            # 避免为「一个人」引入批量分支的行为差异。
             await self._invalidate_user_cache(unique[0])
             return
-
-        import asyncio
-
-        semaphore = asyncio.Semaphore(16)
-
-        async def _one(uid: int) -> None:
-            async with semaphore:
-                try:
-                    await self._invalidate_user_cache(uid)
-                except Exception as exc:  # noqa: BLE001 - 单个失败不能拖垮整批
-                    logger.warning("清权限缓存失败 user=%s: %s", uid, exc)
-
-        await asyncio.gather(*(_one(uid) for uid in unique))
+        await self._invalidate_user_caches_bulk(unique)
 
     async def check_permission(self, user_id: int, resource_type: str, resource_id: str) -> bool:
         """

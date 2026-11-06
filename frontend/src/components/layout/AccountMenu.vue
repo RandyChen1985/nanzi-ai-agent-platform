@@ -69,14 +69,11 @@
           </span>
         </button>
 
-        <!-- 界面模式：两枚胶囊，选中态打勾；这是本菜单的核心，放第一屏 -->
+        <!-- 界面模式：两枚胶囊常显。被角色禁用的那枚置灰不可点——直接藏起来会让用户
+             以为平台没有这个模式，也找不到该找谁。 -->
         <div class="px-1 pb-1 pt-0.5">
-          <div class="flex items-center justify-between px-1.5 pb-1.5">
+          <div class="flex items-center px-1.5 pb-1.5">
             <span class="text-[10.5px] font-medium tracking-wide" :class="mutedClass">界面模式</span>
-            <span
-              class="rounded-full px-1.5 py-0.5 text-[9.5px] font-semibold"
-              :class="lightTheme ? 'bg-primary/10 text-primary' : 'bg-primary/20 text-blue-300'"
-            >一步切换</span>
           </div>
           <div class="grid grid-cols-2 gap-1.5">
             <button
@@ -85,16 +82,11 @@
               type="button"
               role="menuitemradio"
               :aria-checked="mode === option.value"
-              class="relative flex flex-col gap-0.5 rounded-[11px] border px-2.5 py-2 text-left transition-colors"
-              :class="[
-                mode === option.value
-                  ? lightTheme
-                    ? 'border-primary/40 bg-primary/[0.08]'
-                    : 'border-primary/45 bg-primary/15'
-                  : lightTheme
-                    ? 'border-gray-200 hover:bg-gray-50'
-                    : 'border-white/10 hover:bg-white/[0.05]',
-              ]"
+              :aria-disabled="isModeAllowed(option.value) ? undefined : 'true'"
+              :disabled="!isModeAllowed(option.value)"
+              :title="isModeAllowed(option.value) ? undefined : modeBlockedReason"
+              class="relative"
+              :class="modeCardClass(option.value)"
               @click="emit('switch-mode', option.value)"
             >
               <span class="flex items-center gap-1.5 text-[12.5px] font-semibold" :class="lightTheme ? 'text-gray-900' : 'text-slate-100'">
@@ -104,13 +96,25 @@
                 {{ option.label }}
               </span>
               <span class="text-[10.5px] leading-tight" :class="mutedClass">{{ option.desc }}</span>
+              <!-- 当前模式：打勾；被禁用：挂锁，鼠标悬停看原因 -->
               <span
-                v-if="mode === option.value"
+                v-if="mode === option.value && isModeAllowed(option.value)"
                 class="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-white"
                 aria-hidden="true"
               >
                 <svg class="h-2 w-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M20 6L9 17l-5-5" />
+                </svg>
+              </span>
+              <span
+                v-else-if="!isModeAllowed(option.value)"
+                class="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center"
+                :class="lightTheme ? 'text-gray-400' : 'text-slate-500'"
+                aria-hidden="true"
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="4" y="10" width="16" height="10" rx="2" />
+                  <path d="M8 10V7a4 4 0 018 0v3" />
                 </svg>
               </span>
             </button>
@@ -256,9 +260,15 @@ const props = withDefaults(defineProps<{
   version: string
   repoUrl?: string
   mobile?: boolean
+  // 角色级黑名单：被禁用的模式进不来。默认两种都能用
+  allowedModes?: Array<"user" | "pro">
+  // 禁用来源角色名，用于说明「是谁固定的」
+  blockedBy?: string[]
 }>(), {
   repoUrl: "",
   mobile: false,
+  allowedModes: () => ["user", "pro"],
+  blockedBy: () => [],
 })
 
 const emit = defineEmits<{
@@ -279,6 +289,12 @@ const roleLabel = computed(() =>
   String(props.role || "").toLowerCase() === "admin" ? "管理员" : "普通用户",
 )
 
+/** 当前账号能用的模式；字段缺失时按「两种都能用」兜底（旧登录快照） */
+const usableModes = computed<Array<"user" | "pro">>(() =>
+  props.allowedModes.length > 0 ? props.allowedModes : ["user", "pro"],
+)
+const isModeAllowed = (value: "user" | "pro") => usableModes.value.includes(value)
+
 const modeOptions: Array<{ value: "user" | "pro"; label: string; desc: string; icon: string[] }> = [
   {
     value: "user",
@@ -298,6 +314,30 @@ const modeOptions: Array<{ value: "user" | "pro"; label: string; desc: string; i
     icon: ["M3 5h18v14H3z", "M3 9.5h18", "M9 9.5V19"],
   },
 ]
+
+/** 被禁用时的悬停说明：讲清「谁关的、找谁开」，不占菜单版面 */
+const modeBlockedReason = computed(() => {
+  const who = props.blockedBy.length ? `角色「${props.blockedBy[0]}」` : "管理员统一设置"
+  return `由${who}关闭，需要恢复请联系管理员`
+})
+
+/** 卡片三态：可用 / 当前选中 / 被禁用；禁用态用虚线框 + 降透明，且不再响应 hover */
+const modeCardClass = (value: "user" | "pro"): string => {
+  const base = "flex flex-col gap-0.5 rounded-[11px] border px-2.5 py-2 text-left transition-colors"
+  if (!isModeAllowed(value)) {
+    return `${base} cursor-not-allowed border-dashed opacity-[0.55] ${
+      props.lightTheme ? "border-gray-200 bg-gray-50/60" : "border-white/[0.08] bg-white/[0.02]"
+    }`
+  }
+  if (props.mode === value) {
+    return `${base} ${
+      props.lightTheme ? "border-primary/40 bg-primary/[0.08]" : "border-primary/45 bg-primary/15"
+    }`
+  }
+  return `${base} ${
+    props.lightTheme ? "border-gray-200 hover:bg-gray-50" : "border-white/10 hover:bg-white/[0.05]"
+  }`
+}
 
 const themeOptions: Array<{ value: "light" | "dark"; label: string; icon: string[] }> = [
   {

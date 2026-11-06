@@ -191,6 +191,11 @@
                           v-if="isSystemRole(role)"
                           class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full bg-slate-100 text-slate-600"
                         >系统</span>
+                        <span
+                          v-if="uiModeBadge(role)"
+                          class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full"
+                          :class="uiModeBadge(role)?.cls"
+                        >{{ uiModeBadge(role)?.label }}</span>
                       </div>
                       <div class="mt-0.5 flex items-center gap-1.5 text-xs text-gray-400">
                         <span class="font-mono bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-[10px]">{{ role.code }}</span>
@@ -324,6 +329,11 @@
                     v-if="isSystemRole(role)"
                     class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full bg-slate-100 text-slate-600"
                   >系统</span>
+                  <span
+                    v-if="uiModeBadge(role)"
+                    class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full"
+                    :class="uiModeBadge(role)?.cls"
+                  >{{ uiModeBadge(role)?.label }}</span>
                 </div>
                 <p class="text-xs font-mono text-gray-500 mt-0.5">{{ role.code }}</p>
               </div>
@@ -421,6 +431,54 @@
                     class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     placeholder="角色职责描述..."
                   ></textarea>
+              </div>
+
+              <div v-if="showEditDialog" class="rounded-xl border border-dashed border-gray-200 bg-gray-50/70 p-3">
+                  <div class="flex items-center justify-between">
+                      <span class="text-xs font-bold text-gray-700">界面模式</span>
+                      <span class="text-[10px] text-gray-400">默认两种都可用</span>
+                  </div>
+                  <p class="mt-1 mb-2 text-[10px] leading-relaxed text-gray-500">
+                      关掉一种后，该角色下所有成员只能用剩下的那种。用户级别没有覆盖入口，改这里就是唯一开关。
+                  </p>
+                  <div class="space-y-1.5">
+                      <button
+                        v-for="option in uiModeSwitchOptions"
+                        :key="option.value"
+                        type="button"
+                        role="switch"
+                        :aria-checked="uiModeSwitches[option.value]"
+                        :disabled="isEditingAdminRole"
+                        class="flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors"
+                        :class="[
+                          uiModeSwitches[option.value]
+                            ? 'border-gray-200 bg-white'
+                            : 'border-dashed border-gray-300 bg-gray-50',
+                          isEditingAdminRole ? 'cursor-not-allowed opacity-60' : 'hover:border-gray-300',
+                        ]"
+                        @click="toggleUiMode(option.value)"
+                      >
+                          <span class="min-w-0 flex-1">
+                              <span
+                                class="block text-xs font-semibold"
+                                :class="uiModeSwitches[option.value] ? 'text-gray-800' : 'text-gray-400'"
+                              >{{ option.label }}</span>
+                              <span class="block text-[10px] leading-snug text-gray-400">{{ option.desc }}</span>
+                          </span>
+                          <span
+                            class="relative h-5 w-9 flex-shrink-0 rounded-full transition-colors"
+                            :class="uiModeSwitches[option.value] ? 'bg-blue-600' : 'bg-gray-300'"
+                          >
+                              <span
+                                class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all"
+                                :class="uiModeSwitches[option.value] ? 'left-[18px]' : 'left-0.5'"
+                              ></span>
+                          </span>
+                      </button>
+                  </div>
+                  <p v-if="isEditingAdminRole" class="mt-2 text-[10px] text-amber-600">
+                      管理员角色不允许禁用任何界面模式：禁了专业模式等于把人锁在管理台外面。
+                  </p>
               </div>
 
               <div v-if="error" class="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 animate-shake">
@@ -1408,7 +1466,9 @@ const currentRole = ref<any>(null)
 const formData = ref({
     code: '',
     name: '',
-    description: ''
+    description: '',
+    // 角色级界面模式黑名单（'' / 'user' / 'pro'），与后端 blocked_ui_modes 同口径
+    blocked_ui_modes: ''
 })
 const editingRoleId = ref<number | null>(null)
 const submitting = ref(false)
@@ -2632,7 +2692,7 @@ const resetFilters = () => {
 }
 
 const openCreateDialog = () => {
-    formData.value = { code: '', name: '', description: '' }
+    formData.value = { code: '', name: '', description: '', blocked_ui_modes: '' }
     showCreateDialog.value = true
 }
 
@@ -2641,14 +2701,67 @@ const editRole = (role: any) => {
     formData.value = {
         code: role.code,
         name: role.name,
-        description: role.description
+        description: role.description,
+        blocked_ui_modes: role.blocked_ui_modes || ''
     }
     showEditDialog.value = true
+}
+
+/** 列表徽标：一眼看出哪些角色被限制了模式，不用点开弹窗 */
+const uiModeBadge = (role: any): { label: string; cls: string } | null => {
+    const blocked = String(role?.blocked_ui_modes || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    if (!blocked.length || blocked.length > 1) return null
+    const onlyPro = blocked.includes('user')
+    return {
+        label: onlyPro ? '仅专业模式' : '仅用户模式',
+        cls: onlyPro ? 'bg-violet-50 text-violet-700' : 'bg-amber-50 text-amber-700',
+    }
+}
+
+const uiModeSwitchOptions: Array<{ value: 'user' | 'pro'; label: string; desc: string }> = [
+    { value: 'user', label: '用户模式', desc: '简化侧栏：新建会话 / 专家技能 / 定时任务 / 知识库 / 工作空间' },
+    { value: 'pro', label: '专业模式', desc: '完整工作台：按 menu:* 权限展示全部入口' },
+]
+
+/** 两个开关的开关态由 blocked_ui_modes 派生：列表里开着 = 没被禁 */
+const uiModeSwitches = computed(() => {
+    const blocked = String(formData.value.blocked_ui_modes || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    return { user: !blocked.includes('user'), pro: !blocked.includes('pro') }
+})
+
+/** admin 是保留角色：两个开关都锁死（后端也会拒绝非空值） */
+const isEditingAdminRole = computed(
+    () => String(formData.value.code || '').trim().toLowerCase() === 'admin',
+)
+
+const toggleUiMode = (mode: 'user' | 'pro') => {
+    if (isEditingAdminRole.value) return
+    const next = { ...uiModeSwitches.value, [mode]: !uiModeSwitches.value[mode] }
+    if (!next.user && !next.pro) {
+        // 两个都关等于把角色下的人锁死，挡在保存之前，别等 400
+        error.value = '用户模式与专业模式至少保留一种，不能同时禁用'
+        return
+    }
+    error.value = ''
+    formData.value.blocked_ui_modes = [
+        next.user ? '' : 'user',
+        next.pro ? '' : 'pro',
+    ].filter(Boolean).join(',')
 }
 
 const saveRole = async () => {
     if (!formData.value.code || !formData.value.name) {
         error.value = '代码和名称必填'
+        return
+    }
+    if (!uiModeSwitches.value.user && !uiModeSwitches.value.pro) {
+        error.value = '用户模式与专业模式至少保留一种，不能同时禁用'
         return
     }
     submitting.value = true
@@ -2659,7 +2772,9 @@ const saveRole = async () => {
             await axios.put(`/api/portal/roles/${editingRoleId.value}`, formData.value)
             showToast('更新成功', 'success')
         } else {
-            await axios.post('/api/portal/roles', formData.value)
+            // 新角色一律默认「两种模式都可用」，创建接口不接受该字段
+            const { blocked_ui_modes: _ignored, ...createPayload } = formData.value
+            await axios.post('/api/portal/roles', createPayload)
             showToast('创建成功', 'success')
         }
         closeDialogs()

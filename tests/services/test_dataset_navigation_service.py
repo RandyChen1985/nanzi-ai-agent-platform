@@ -638,6 +638,11 @@ async def test_refresh_group_followups_success():
     ), patch(
         "app.services.dataset_navigation_service.chat_client_from_handle",
         return_value=mock_client,
+    ), patch(
+        # 不碰真实 Redis：上一轮写下的「最近提问」会把本轮生成的问题当成已排除过滤掉，
+        # 于是同一份代码第二遍跑必红（读/写逻辑已由 FakeRedis 用例单独覆盖）。
+        "app.services.dataset_navigation_service.get_redis",
+        AsyncMock(return_value=None),
     ):
         followups = await DatasetNavigationService.refresh_group_followups(
             mock_db,
@@ -679,6 +684,10 @@ async def test_refresh_group_questions_success():
     ), patch(
         "app.services.dataset_navigation_service.chat_client_from_handle",
         return_value=mock_client,
+    ), patch(
+        # 同上：这两条用例只验证解析与过滤，不该读写共享 Redis。
+        "app.services.dataset_navigation_service.get_redis",
+        AsyncMock(return_value=None),
     ):
         questions = await DatasetNavigationService.refresh_group_questions(
             mock_db,
@@ -933,3 +942,40 @@ async def test_enrich_groups_marks_disabled_dataset_even_without_updated_at():
     assert "updated_at" not in groups[0]
     assert groups[1]["enabled"] is True
     assert groups[1]["related_data"][0]["enabled"] is True
+
+
+# --- 测试隔离守护 ---------------------------------------------------------
+# ``refresh_group_questions/followups`` 会把本轮生成的问题写进共享 Redis
+# （``agent:dataset_navigation_recent_questions:{user_key}:{purpose}:{hash}``，TTL 300s）。
+# 用例若不屏蔽 Redis，第二轮跑就会读回上一轮写下的问题、把它们当成「已排除」过滤掉，
+# 返回 0 条：同一份代码第一遍 38 passed、第二遍 2 failed，排查时极易误判成实现回归。
+# 读写逻辑本身由 ``test_recent_refresh_questions_are_stored_with_short_ttl`` 等
+# FakeRedis 用例覆盖，因此屏蔽 Redis 不损失任何覆盖。
+_REDIS_SENSITIVE_REFRESH_TESTS = (
+    "test_refresh_group_followups_success",
+    "test_refresh_group_questions_success",
+)
+
+
+def _test_body(source: str, name: str) -> str:
+    start = source.index(f"async def {name}")
+    tail = source[start:]
+    cuts = [
+        idx
+        for marker in ("\n@pytest.mark", "\n\nasync def ", "\n\ndef ", "\n\n# --- ")
+        if (idx := tail.find(marker, 1)) != -1
+    ]
+    return tail[: min(cuts)] if cuts else tail
+
+
+@pytest.mark.parametrize("test_name", _REDIS_SENSITIVE_REFRESH_TESTS)
+def test_refresh_group_cases_do_not_touch_shared_redis(test_name):
+    """守护：这两条用例必须屏蔽 ``get_redis``，否则结果取决于 Redis 里有没有上一轮的残留。"""
+    from pathlib import Path
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    body = _test_body(source, test_name)
+    assert "app.services.dataset_navigation_service.get_redis" in body, (
+        f"{test_name} 没有屏蔽 get_redis：它会往共享 Redis 写最近提问，"
+        "导致同一份代码第二遍跑必红"
+    )

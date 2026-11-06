@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { getSnapshotLandingPath } from '../composables/useNavigation'
-import { getCachedUiMode, resolveInitialUiMode } from '../composables/useUiMode'
+import { getCachedUiMode, getCachedUiModeBlocked, resolveInitialUiMode } from '../composables/useUiMode'
+import { isUserModeReachable } from '../constants/userModeMenu'
 
 // 这四个页面此前是**静态** import，等于把整套管理后台（Dashboard 及其依赖）打进
 // 首屏主包——第三方站点嵌入的 `/embed/*` 挂件也得先下载它。改成路由级懒加载后，
@@ -341,6 +342,20 @@ router.beforeEach((to: any, _from: any, next: any) => {
       // Admin bypass
       if (userInfo.role === 'admin') {
         next()
+        return
+      }
+
+      // 界面模式黑名单：被角色禁用「专业模式」的账号，只能走用户模式能到的页面。
+      // 放在权限判断之前——否则手敲地址栏会先按 menu:* 放行、渲染出页面，
+      // 再被下面的模式判断踢走，看起来像「页面坏了又好了」。
+      //
+      // 只拦「禁用专业模式」：禁用用户模式不改变可达页面集合（两种模式复用同一批
+      // 页面，用户模式只是简化排布），只需要换侧栏。
+      if (
+        getCachedUiModeBlocked().includes('pro') &&
+        !isUserModeReachable(to.path)
+      ) {
+        next('/dashboard/chat')
         return
       }
 
