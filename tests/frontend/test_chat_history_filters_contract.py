@@ -102,3 +102,22 @@ def test_backend_endpoint_uses_shared_query_builder():
     assert "from app.services.ai.history_query import build_history_query" in chat
     assert "build_history_query(" in chat
     assert "scope: Optional[str] = None" in chat
+
+
+def test_filter_panel_closes_on_outside_pointer_down():
+    """点外部收起筛选面板：判定必须挂在捕获阶段。
+
+    侧栏里置顶 / 导出 / 分享 / 删除这些按钮都带 `@click.stop`（点它们不该
+    触发外层动作），冒泡阶段的 click 到不了 document，面板就一直挂在页面上
+    ——用户模式侧栏踩过同一个坑，两处要一致。
+    """
+    sidebar = _read("frontend/src/components/ChatHistorySidebar.vue")
+    assert 'document.addEventListener("pointerdown", handleOutsidePointerDown, true)' in sidebar
+    assert 'document.removeEventListener("pointerdown", handleOutsidePointerDown, true)' in sidebar
+    # 面板与漏斗按钮内部不关（按钮的 click 还要负责开合）
+    assert "filterPanelRef.value?.contains(target)" in sidebar
+    assert "filterButtonRef.value?.contains(target)" in sidebar
+    # target 可能是 document（点滚动条 / html 外沿），closest 不存在会抛错跳过关闭
+    assert "target instanceof Node" in sidebar
+    # 关闭判定不能再依赖冒泡阶段的 click
+    assert 'document.addEventListener("click", handleDocumentClick)' not in sidebar
