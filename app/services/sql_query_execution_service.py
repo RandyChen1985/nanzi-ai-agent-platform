@@ -388,16 +388,77 @@ _CLAUSE_LABELS = {
 }
 
 
+def _resolve_column_owner(
+    table_hint: str,
+    column: str,
+    *,
+    alias_to_physical: Dict[str, str],
+    full_columns: Optional[Dict[str, set]],
+    single_table: bool,
+    ambiguous_aliases: Optional[set] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """把列引用落到具体物理表。
+
+    返回 ``(physical, reason)``：``reason`` 为 ``None`` 表示归属确定；
+    否则是 ``"ambiguous"``（多张表都有同名列，SQL 本身也会歧义）或 ``"unknown"``
+    （列清单里找不到，无法判断归属）。
+
+    多表查询里未加表前缀的列不能再默认放行（历史实现直接当「无权字段」或「全放」
+    两种极端处理）：必须按列清单判定归属，判不出来时由调用方 fail-closed。
+    """
+    hint = str(table_hint or "").strip().lower()
+    if hint:
+        if ambiguous_aliases and hint in ambiguous_aliases:
+            # CTE / 派生表由多张物理表 UNION/JOIN 而来，单个别名无法归属到具体表的字段规则
+            return None, "ambiguous"
+        return alias_to_physical.get(hint, hint), None
+    if single_table:
+        return next(iter(alias_to_physical.values()), None), None
+
+    column_lower = str(column or "").strip().lower()
+    if not column_lower:
+        return None, "unknown"
+    owners = [
+        physical
+        for physical in dict.fromkeys(alias_to_physical.values())
+        if column_lower in (full_columns or {}).get(physical, set())
+    ]
+    if len(owners) == 1:
+        return owners[0], None
+    return None, "ambiguous" if len(owners) > 1 else "unknown"
+
+
+def _column_permitted(
+    physical: Optional[str],
+    column: str,
+    allowed_columns: Dict[str, Optional[set]],
+) -> bool:
+    """``physical`` 已确定归属时的字段判定；``None`` = 该表不受字段限制。"""
+    if physical is None:
+        return False
+    if physical not in allowed_columns:
+        # 不在候选表里的列由表级门禁兜底，这里不额外收窄（保持既有口径）
+        return True
+    allowed = allowed_columns.get(physical)
+    if allowed is None:
+        return True
+    return str(column or "").strip().lower() in allowed
+
+
 async def _load_allowed_columns_by_table(
     session: AsyncSession,
     *,
     scopes: Any,
     candidates: Any,
-) -> Tuple[Dict[str, Optional[set]], Dict[str, set]]:
+) -> Tuple[Dict[str, Optional[set]], Dict[str, set], set[str]]:
     """算出每张表对该用户「允许的列」。``None`` = 不受限（全部列可见）。
 
     与表级 allowed_by_any 同口径：同一张物理表注册在多个数据集时，只要有一条路径
     不受字段限制，这张表就算全开，避免用别处的收窄误伤。
+
+    第三个返回值是「配了字段规则、但读不到列清单」的表：这种表无法判定列归属，
+    调用方必须 fail-closed 拒绝查询 —— 历史实现按「全开」处理，等于配置了字段级
+    限制却因为元数据没同步而静默失效。
     """
     from app.models.metadata import MetaColumn
 
@@ -423,8 +484,14 @@ async def _load_allowed_columns_by_table(
 
     allowed: Dict[str, Optional[set]] = {}
     full_columns: Dict[str, set] = {}
+    unavailable: set[str] = set()
     for physical, rows in (candidates or {}).items():
         allowed[physical] = None  # 默认全开，下面逐条收窄
+        table_columns: set = set()
+        for table_id, _dataset_id, _dataset_name in rows:
+            table_columns |= columns_by_table.get(int(table_id), set())
+        # 全列清单供「多表未限定列」判定归属；没有规则的路径也要有
+        full_columns[physical] = table_columns
         for table_id, dataset_id, _dataset_name in rows:
             scope = scopes.get(dataset_id)
             if scope is None:
@@ -436,16 +503,21 @@ async def _load_allowed_columns_by_table(
                 break
             all_cols = columns_by_table.get(int(table_id), set())
             if not all_cols:
-                # 拿不到列清单就无法判断，保守地按「全开」处理（表级仍然生效）
-                allowed[physical] = None
+                # 配了字段规则却拿不到列清单：无法判定可见列，必须拒绝（fail-closed）
+                logger.warning(
+                    "[ColumnScope] 表 %s (id=%s) 配了字段级规则但读不到列清单，拒绝执行",
+                    physical,
+                    table_id,
+                )
+                unavailable.add(physical)
+                allowed[physical] = set()
                 break
             visible = set(all_cols)
             for rule in rules:
                 visible = rule.apply(visible)
             current = allowed[physical]
             allowed[physical] = visible if current is None else (current & visible)
-            full_columns.setdefault(physical, set()).update(all_cols)
-    return allowed, full_columns
+    return allowed, full_columns, unavailable
 
 
 def _is_wildcard_projection(projection: Any) -> bool:
@@ -484,6 +556,7 @@ def _rewrite_select_projections(
     allowed_columns: Dict[str, Optional[set]],
     full_columns: Optional[Dict[str, set]] = None,
     single_table: bool = True,
+    ambiguous_aliases: Optional[set] = None,
 ) -> Tuple[list, list, Optional[str]]:
     """把 SELECT 里引用了无权字段的投影项剔掉。
 
@@ -501,16 +574,19 @@ def _rewrite_select_projections(
         return None
 
     def _column_allowed(table_hint: str, column: str) -> bool:
-        physical = _physical_of(table_hint)
-        if physical is None:
-            # 无限定列 + 多表：无法归属到具体表，保守按无权处理
+        physical, reason = _resolve_column_owner(
+            table_hint,
+            column,
+            alias_to_physical=alias_to_physical,
+            full_columns=full_columns,
+            single_table=single_table,
+            ambiguous_aliases=ambiguous_aliases,
+        )
+        # 归属判不出来（多表同名列 / 列清单缺失）时保守按无权处理：
+        # 投影剔掉比把受限列原样返回安全。
+        if reason is not None:
             return False
-        allowed = allowed_columns.get(physical)
-        if allowed is None and physical not in allowed_columns:
-            return True
-        if allowed is None:
-            return True
-        return column.lower() in allowed
+        return _column_permitted(physical, column, allowed_columns)
 
     for projection in expression.selects:
         # 只认**整个投影就是通配符**的两种形态：`*`（投影节点是 Star）与 `t.*`（Column 的 this 是 Star）。
@@ -557,6 +633,7 @@ async def apply_column_scope_to_select_sql(
     is_admin_eff: bool = False,
     restrict_dataset_ids: Optional[set[int]] = None,
     user_identity_label: Optional[str] = None,
+    scopes: Any = None,
 ) -> Tuple[str, List[str], Optional[str]]:
     """字段级权限：**能剔的剔掉，不能剔的才拒绝**。
 
@@ -595,11 +672,20 @@ async def apply_column_scope_to_select_sql(
     from app.models.metadata import MetaDataset
 
     try:
-        scopes = await resolve_user_dataset_scopes(session, user_id_eff)
+        if callable(scopes):
+            scopes = await scopes()
+        if scopes is None:
+            scopes = await resolve_user_dataset_scopes(session, user_id_eff)
         rules_by_table = await column_rules_by_table_name(session, scopes)
-    except Exception as ex:  # noqa: BLE001 - 字段级解析失败不阻断查询，表级门禁仍然生效
-        logger.warning("[ColumnScope] 解析字段级授权失败，跳过字段级门禁: %s", ex)
-        return original, [], None
+    except Exception as ex:  # noqa: BLE001
+        # 字段级是安全边界：解析失败必须 fail-closed，不能退化成「字段全可见」
+        logger.error(
+            "[ColumnScope] 解析字段级授权失败，按 fail-closed 拒绝: %s", ex, exc_info=True
+        )
+        return original, [], (
+            f"[Permission Denied] {user_identity_label or ''}"
+            "无法解析字段级权限（授权服务暂时不可用），为避免越权本次查询已拒绝。请稍后重试。"
+        )
     if not rules_by_table:
         return original, [], None
 
@@ -613,6 +699,40 @@ async def apply_column_scope_to_select_sql(
         tables_in_sql.add(physical)
         alias = str(table.alias or "").strip().lower()
         alias_to_physical[alias or physical] = physical
+
+    # CTE / 派生表别名不是物理表：`WITH t AS (SELECT * FROM orders) SELECT t.secret FROM t`
+    # 里的 `t` 必须还原到 `orders` 才能套用字段规则，否则光改个别名就能绕过字段级。
+    # 单数据源还原到那张表；多数据源（UNION/JOIN）无法归属，记为歧义 → fail-closed。
+    ambiguous_aliases: set[str] = set()
+    for node in [*expression.find_all(exp.CTE), *expression.find_all(exp.Subquery)]:
+        alias = str(getattr(node, "alias", "") or "").strip().lower()
+        body = getattr(node, "this", None)
+        if not alias or body is None:
+            continue
+        sources = {
+            frag.lower()
+            for table in body.find_all(exp.Table)
+            if (frag := _physical_fragment_from_table(table))
+        }
+        if len(sources) == 1:
+            alias_to_physical[alias] = next(iter(sources))
+        elif len(sources) > 1:
+            ambiguous_aliases.add(alias)
+
+    # 链式 CTE（`b AS (SELECT * FROM a)`，`a` 又是 CTE）要一路还原到物理表，
+    # 只还原一层仍然会被 `b.secret` 绕过。
+    for alias in list(alias_to_physical):
+        value = alias_to_physical[alias]
+        seen: set[str] = set()
+        while (
+            value in alias_to_physical
+            and alias_to_physical[value] != value
+            and value not in seen
+        ):
+            seen.add(value)
+            value = alias_to_physical[value]
+        alias_to_physical[alias] = value
+
     if not tables_in_sql:
         return original, [], None
 
@@ -630,8 +750,11 @@ async def apply_column_scope_to_select_sql(
             )
         ).all()
     except Exception as ex:  # noqa: BLE001
-        logger.warning("[ColumnScope] 查询表归属失败，跳过字段级门禁: %s", ex)
-        return original, [], None
+        logger.error("[ColumnScope] 查询表归属失败，按 fail-closed 拒绝: %s", ex, exc_info=True)
+        return original, [], (
+            f"[Permission Denied] {user_identity_label or ''}"
+            "无法确认 SQL 引用的表归属，字段级权限无法校验，本次查询已拒绝。请稍后重试。"
+        )
     if not rows:
         return original, [], None
 
@@ -656,55 +779,136 @@ async def apply_column_scope_to_select_sql(
                 )
         candidates = {key: value for key, value in candidates.items() if value}
 
-    allowed_columns, full_columns = await _load_allowed_columns_by_table(
+    allowed_columns, full_columns, unavailable_tables = await _load_allowed_columns_by_table(
         session,
         scopes=scopes,
         candidates=candidates,
     )
+    subject = f"{user_identity_label} " if user_identity_label else ""
+    single_table = len(alias_to_physical) == 1
+
+    def _select_of(node: Any) -> Any:
+        current = node
+        while current is not None and not isinstance(current, exp.Select):
+            current = current.parent
+        return current
+
+    def _owner(column: Any) -> Tuple[Optional[str], Optional[str]]:
+        return _resolve_column_owner(
+            str(column.table or "").strip().lower(),
+            str(column.name or ""),
+            alias_to_physical=alias_to_physical,
+            full_columns=full_columns,
+            single_table=single_table,
+            ambiguous_aliases=ambiguous_aliases,
+        )
+
+    # ORDER BY / GROUP BY / HAVING 里引用的 SELECT 别名不是物理列：
+    # `SELECT SUM(amount) AS total ... ORDER BY total` 不能因为表里恰好没有
+    # `total` 这一列就被判成越权。别名是否安全取决于它背后的投影项：
+    # 投影项引用了被隐藏字段 → 该别名会被剔除，引用它就是悬空，必须拒绝。
+    alias_states: Dict[int, Dict[str, str]] = {}
+    for select_node in expression.find_all(exp.Select):
+        states: Dict[str, str] = {}
+        for projection in select_node.selects:
+            alias = (
+                str(projection.alias or "").strip().lower()
+                if isinstance(projection, exp.Alias)
+                else ""
+            )
+            if not alias:
+                continue
+            blocked = False
+            for col in projection.find_all(exp.Column):
+                physical, reason = _owner(col)
+                if reason is not None or not _column_permitted(
+                    physical, str(col.name or ""), allowed_columns
+                ):
+                    blocked = True
+                    break
+            states[alias] = "blocked" if blocked else "safe"
+        alias_states[id(select_node)] = states
+
+    if unavailable_tables:
+        return original, [], (
+            f"[Permission Denied] {subject}字段元数据读取失败（表："
+            + "、".join(f"'{name}'" for name in sorted(unavailable_tables)[:5])
+            + "），无法校验字段级权限，本次查询已拒绝。"
+            "请联系管理员重新同步这些表的元数据后再试。"
+        )
     # 没有任何收窄 → 直接走原 SQL
     if all(value is None for value in allowed_columns.values()):
         return original, [], None
 
-    subject = f"{user_identity_label} " if user_identity_label else ""
-    single_table = len(alias_to_physical) == 1
-
-    def _resolve_physical(table_hint: str) -> Optional[str]:
-        if table_hint:
-            return alias_to_physical.get(table_hint, table_hint)
-        if single_table:
-            return next(iter(alias_to_physical.values()), None)
-        return None
-
-    def _allowed(physical: Optional[str], column: str) -> bool:
-        if physical is None:
-            return True
-        allowed = allowed_columns.get(physical)
-        if allowed is None:
-            return True
-        return column.lower() in allowed
-
     # ---- 1. 非投影区的无权列：只能拒绝 ----
+    def _format_sites(sites: Dict[str, List[str]]) -> str:
+        parts = []
+        for site, names in sites.items():
+            uniq = sorted({name for name in names if name}, key=str.lower)
+            sample = "、".join(f"'{name}'" for name in uniq[:5])
+            more = f" 等 {len(uniq)} 个" if len(uniq) > 5 else ""
+            parts.append(f"{site} 里用到了 {sample}{more}")
+        return "；".join(parts)
+
     bad_sites: Dict[str, List[str]] = {}
+    unresolved_sites: Dict[str, List[str]] = {}
+    blocked_alias_sites: Dict[str, List[str]] = {}
+    misplaced_alias_sites: Dict[str, List[str]] = {}
     for column in expression.find_all(exp.Column):
         clause = _column_clause(column)
         if clause == "projection":
             continue
-        physical = _resolve_physical(str(column.table or "").strip().lower())
-        if _allowed(physical, str(column.name or "")):
+        name = str(column.name or "")
+        hint = str(column.table or "").strip().lower()
+        label = _CLAUSE_LABELS.get(clause, clause)
+        if not hint and clause in ("order", "group", "having"):
+            state = alias_states.get(id(_select_of(column)), {}).get(name.strip().lower())
+            if state == "safe":
+                continue
+            if state == "blocked":
+                blocked_alias_sites.setdefault(label, []).append(name)
+                continue
+        elif not hint:
+            # WHERE / JOIN ON 引用了 SELECT 别名：SQL 本身不合法，也容易让人误以为
+            # 「别名豁免」到处都生效。单独提示，别混进「字段无权」。
+            state = alias_states.get(id(_select_of(column)), {}).get(name.strip().lower())
+            if state is not None:
+                misplaced_alias_sites.setdefault(label, []).append(name)
+                continue
+        physical, reason = _owner(column)
+        if reason is not None:
+            # 多表查询里没写表前缀、列清单又判不出归属：不能默认放行
+            unresolved_sites.setdefault(label, []).append(name)
             continue
-        bad_sites.setdefault(_CLAUSE_LABELS.get(clause, clause), []).append(str(column.name))
+        if _column_permitted(physical, name, allowed_columns):
+            continue
+        bad_sites.setdefault(label, []).append(name)
 
+    if blocked_alias_sites:
+        return original, [], (
+            f"[Permission Denied] {subject}排序/分组/聚合后筛选引用了「将被隐藏字段」的别名："
+            + _format_sites(blocked_alias_sites)
+            + "。这些别名依赖你无权访问的字段，会被一并剔除，请改用有权限的字段重新提问。"
+        )
+    if misplaced_alias_sites:
+        return original, [], (
+            f"[Permission Denied] {subject}筛选/关联条件里引用了 SELECT 别名："
+            + _format_sites(misplaced_alias_sites)
+            + "。WHERE / JOIN ON 不能引用 SELECT 里的别名，请直接写聚合表达式，"
+            "或把条件放到 HAVING / ORDER BY / GROUP BY 里。"
+        )
+    if unresolved_sites:
+        return original, [], (
+            f"[Permission Denied] {subject}有字段无法判定属于哪张表，字段级权限无法校验："
+            + _format_sites(unresolved_sites)
+            + "。多表查询请给字段加表名/别名（例如 t.字段名）；"
+            "WHERE / JOIN ON 不能引用 SELECT 里的别名。"
+        )
     if bad_sites:
-        parts = []
-        for site, names in bad_sites.items():
-            uniq = sorted(set(names))
-            sample = "、".join(f"'{name}'" for name in uniq[:5])
-            more = f" 等 {len(uniq)} 个" if len(uniq) > 5 else ""
-            parts.append(f"{site} 里用到了 {sample}{more}")
         return original, [], (
             f"[Permission Denied] {subject}这些字段不在你的授权范围内，"
             "且它们出现在筛选/分组/排序条件里，删掉会改变结果口径，因此本次查询已终止："
-            + "；".join(parts)
+            + _format_sites(bad_sites)
             + "。请换用你有权限的字段重新提问。"
         )
 
@@ -714,9 +918,19 @@ async def apply_column_scope_to_select_sql(
         # 子查询 / UNION：改投影会连带影响外层结构，退化成拒绝（安全优先）
         denied = []
         for column in expression.find_all(exp.Column):
-            physical = _resolve_physical(str(column.table or "").strip().lower())
-            if not _allowed(physical, str(column.name or "")):
-                denied.append(str(column.name))
+            name = str(column.name or "")
+            hint = str(column.table or "").strip().lower()
+            clause = _column_clause(column)
+            if not hint and clause in ("order", "group", "having"):
+                state = alias_states.get(id(_select_of(column)), {}).get(name.strip().lower())
+                if state == "safe":
+                    continue
+                if state == "blocked":
+                    denied.append(name)
+                    continue
+            physical, reason = _owner(column)
+            if reason is not None or not _column_permitted(physical, name, allowed_columns):
+                denied.append(name)
         if denied:
             uniq = sorted(set(denied))
             return original, [], (
@@ -749,6 +963,7 @@ async def apply_column_scope_to_select_sql(
         allowed_columns=allowed_columns,
         full_columns=full_columns,
         single_table=single_table,
+        ambiguous_aliases=ambiguous_aliases,
     )
     if blocked == "multi_table_star":
         return original, [], (
@@ -788,7 +1003,12 @@ async def _fetch_all_registered_physical_lowers(session: AsyncSession) -> set[st
     return {str(x).lower() for x in r.scalars().all() if x}
 
 
-async def _fetch_allowed_physical_lowers_for_user(session: AsyncSession, user_id: int) -> set[str]:
+async def _fetch_allowed_physical_lowers_for_user(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    scopes: Any = None,
+) -> set[str]:
     """用户最终可见的物理表（lower）。
 
     从「数据集权限 ⇒ 数据集内全部表」升级为「数据集权限 ∩ 表级白名单」：
@@ -796,7 +1016,11 @@ async def _fetch_allowed_physical_lowers_for_user(session: AsyncSession, user_id
     """
     from app.services.dataset_scope_service import allowed_physical_names_for_user
 
-    return await allowed_physical_names_for_user(session, user_id)
+    if callable(scopes):
+        scopes = await scopes()
+    if scopes is None:
+        return await allowed_physical_names_for_user(session, user_id)
+    return await allowed_physical_names_for_user(session, user_id, scopes=scopes)
 
 
 async def check_physical_table_refs_permission(
@@ -995,6 +1219,47 @@ async def execute_sql_query_core(
             "请确认调用方已注入 user_id 或有效 api_key，并重新登录后重试。"
         )
 
+    # 数据集授权在本次执行里只解析一次，供后面四道门禁（物理表 / 表范围 / 字段级 /
+    # 行级）复用。原来每次门禁各查一遍：同一个事务里 4 次
+    # resolve_user_dataset_scopes（每次 2~3 条 SQL），单次查询光权限就要十几条查询。
+    #
+    # 用「懒加载 callable」而不是立即解析：内部调用（bypass_table_auth 且无数据集）
+    # 和只走语法校验的链路不需要它；门禁被替换/短路时也不会白查一次库。
+    # 解析失败必须 fail-closed —— 拿不到授权就无从判断能否放行。
+    _scopes_cache: Dict[str, Any] = {}
+
+    async def _load_dataset_scopes() -> dict[int, Any]:
+        if "value" not in _scopes_cache:
+            from app.services.dataset_scope_service import (
+                DatasetScopeResolutionError,
+                resolve_user_dataset_scopes,
+            )
+
+            try:
+                _scopes_cache["value"] = await resolve_user_dataset_scopes(
+                    session, user_id_eff
+                )
+            except DatasetScopeResolutionError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "[SQL Auth] 解析数据集授权失败，按 fail-closed 拒绝 (user=%s, dataset=%s): %s",
+                    user_id_eff,
+                    dataset_name or "-",
+                    exc,
+                    exc_info=True,
+                )
+                raise DatasetScopeResolutionError(str(exc)) from exc
+        return _scopes_cache["value"]
+
+    _scopes_provider: Any = None
+    if (
+        user_id_eff is not None
+        and not is_admin_eff
+        and (not bypass_table_auth or bool(dataset_name))
+    ):
+        _scopes_provider = _load_dataset_scopes
+
     ds = None
     if dataset_name:
         ds = await MetadataService.get_dataset_by_name(session, dataset_name)
@@ -1030,6 +1295,14 @@ async def execute_sql_query_core(
         )
 
     if not bypass_table_auth:
+        from app.services.dataset_scope_service import DatasetScopeResolutionError
+
+        def _scope_denied() -> str:
+            return (
+                "[Permission Denied] 无法解析你的数据集权限（授权服务暂时不可用），"
+                "为避免越权本次查询已拒绝。请稍后重试或联系管理员。"
+            )
+
         err_ref, refs = extract_physical_table_refs_from_select_sql(sql, dialect)
         if err_ref:
             return f"[Validation Failed] {err_ref}"
@@ -1058,15 +1331,19 @@ async def execute_sql_query_core(
             if scope_err:
                 return scope_err
 
-        perm_err = await enforce_physical_table_permissions(
-            session,
-            refs=refs,
-            dialect=dialect,
-            user_id_eff=user_id_eff,
-            is_admin_eff=is_admin_eff,
-            user_identity_label=user_identity_label,
-            binding=binding,
-        )
+        try:
+            perm_err = await enforce_physical_table_permissions(
+                session,
+                refs=refs,
+                dialect=dialect,
+                user_id_eff=user_id_eff,
+                is_admin_eff=is_admin_eff,
+                user_identity_label=user_identity_label,
+                binding=binding,
+                scopes=_scopes_provider,
+            )
+        except DatasetScopeResolutionError:
+            return _scope_denied()
         if perm_err:
             return perm_err
 
@@ -1078,14 +1355,18 @@ async def execute_sql_query_core(
         # 却能经 ds9/ds54 的 all 授权查到 ai_agent_users）。
         restrict_ids = await resolve_mounted_dataset_id_set(session)
 
-        table_scope_err = await enforce_table_scope_for_refs(
-            session,
-            refs=refs,
-            user_id=user_id_eff,
-            is_admin=is_admin_eff,
-            user_identity_label=user_identity_label,
-            restrict_dataset_ids=restrict_ids,
-        )
+        try:
+            table_scope_err = await enforce_table_scope_for_refs(
+                session,
+                refs=refs,
+                user_id=user_id_eff,
+                is_admin=is_admin_eff,
+                user_identity_label=user_identity_label,
+                restrict_dataset_ids=restrict_ids,
+                scopes=_scopes_provider,
+            )
+        except DatasetScopeResolutionError:
+            return _scope_denied()
         if table_scope_err:
             return table_scope_err
 
@@ -1099,6 +1380,7 @@ async def execute_sql_query_core(
             is_admin_eff=is_admin_eff,
             restrict_dataset_ids=restrict_ids,
             user_identity_label=user_identity_label,
+            scopes=_scopes_provider,
         )
         if column_scope_err:
             return column_scope_err
@@ -1121,10 +1403,18 @@ async def execute_sql_query_core(
     row_condition: Optional[str] = None
     if ds and user_id_eff is not None and not is_admin_eff:
         try:
-            from app.services.dataset_scope_service import resolve_effective_row_policy
+            from app.services.dataset_scope_service import (
+                DatasetScopeResolutionError,
+                resolve_effective_row_policy,
+            )
 
             row_policy, row_condition = await resolve_effective_row_policy(
-                session, user_id_eff, int(ds.id)
+                session, user_id_eff, int(ds.id), scopes=_scopes_provider
+            )
+        except DatasetScopeResolutionError:
+            return (
+                "[Permission Denied] 无法解析你的行级数据权限（授权服务暂时不可用），"
+                "为避免越权本次查询已拒绝。请稍后重试或联系管理员。"
             )
         except Exception as exc:  # noqa: BLE001 - 解析失败按 inherit，避免误跳过隔离
             logger.warning("[DataPerm] 解析行级策略失败，按 inherit 处理: %s", exc)
@@ -1140,7 +1430,7 @@ async def execute_sql_query_core(
         )
         _append_trace(agent_context, trace_logs, "🔍 正在构建数据权限隔离条件...")
 
-        from app.services.ai.rewriters.sql_rewriter import SQLRewriter
+        from app.services.ai.rewriters.sql_rewriter import SQLPermissionError, SQLRewriter
 
         try:
             rewriter_dialect = dialect
@@ -1233,6 +1523,11 @@ async def execute_sql_query_core(
                     trace_logs,
                     "ℹ️ 数据权限校验: 开启了校验但未命中任何过滤规则。",
                 )
+        except SQLPermissionError as perm_exc:
+            # 行级条件无法覆盖整条 SQL（如 UNION 有分支未过滤）：原样返回权限文案，
+            # 不能落到下面的「语法错误」分支。
+            logger.warning("[DataPerm] 行级权限无法安全覆盖查询: %s", perm_exc)
+            return str(perm_exc)
         except Exception as e:
             logger.error("[DataPerm] SQL Rewrite failed: %s", e, exc_info=True)
             error_str = str(e)

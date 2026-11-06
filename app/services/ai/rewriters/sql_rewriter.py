@@ -10,6 +10,15 @@ class SQLRewriteError(Exception):
     """Exception raised when SQL rewriting fails."""
     pass
 
+
+class SQLPermissionError(SQLRewriteError):
+    """权限条件无法安全覆盖整条 SQL（例如 UNION 有分支未过滤），调用方必须拒绝执行。
+
+    与普通 ``SQLRewriteError`` 区分开：上层对语法类失败返回 ``[Validation Failed]``，
+    对这类失败必须原样返回 ``[Permission Denied]`` 文案，不能降级成「语法错误」。
+    """
+    pass
+
 class SQLRewriter:
     """
     优化版SQL重写引擎，支持字段存在性检查和智能表匹配
@@ -51,6 +60,7 @@ class SQLRewriter:
                 return sql
             
             applied_count = 0
+            applied_scope_ids: Set[int] = set()
             cte_aliases = self._collect_cte_aliases(expression)
 
             # 3. 按 SELECT 作用域应用条件到 AST。先收集节点，避免 transform 返回新节点后剪枝子查询。
@@ -71,6 +81,7 @@ class SQLRewriter:
                 for cond in processed_conditions:
                     select_node.where(cond, append=True, copy=False)
                 applied_count += len(processed_conditions)
+                applied_scope_ids.add(id(select_node))
             if applied_count == 0:
                 logger.info(f"[SQLRewriter] No scoped filters applied for tables: {query_tables}")
                 if rewrite_stats is not None:
@@ -79,6 +90,29 @@ class SQLRewriter:
 
             if rewrite_stats is not None:
                 rewrite_stats["applied_rule_count"] = applied_count
+
+            # UNION / INTERSECT / EXCEPT：只要有一个顶层分支没被注入条件，
+            # 该分支就是「未过滤」的。历史实现只给命中的分支加 WHERE 就返回，
+            # 于是 `orders UNION orders_archive` 的第二支原样放行（FAQ 已知限制 #2）。
+            # 这里改成 fail-closed：无法保证每个分支都受同一权限约束时，拒绝执行。
+            unfiltered: List[exp.Select] = []
+            seen_branches: Set[int] = set()
+            for set_op in expression.find_all(exp.Union, exp.Intersect, exp.Except):
+                for branch in self._set_operation_branches(set_op):
+                    if id(branch) in seen_branches or id(branch) in applied_scope_ids:
+                        continue
+                    seen_branches.add(id(branch))
+                    # 只读 CTE / 子查询的顶层分支本身不直接接触物理表，
+                    # 它的数据来源已经在内部被约束，不算「未过滤分支」。
+                    if self._branch_reads_physical_table(branch, cte_aliases):
+                        unfiltered.append(branch)
+            if applied_count and unfiltered:
+                raise SQLPermissionError(
+                    "[Permission Denied] 行级权限无法安全覆盖整条 SQL："
+                    f"UNION/集合查询中有 {len(unfiltered)} 个分支没有应用任何行级过滤条件，"
+                    "直接执行会绕过数据权限。请拆成单分支查询后重试；"
+                    "若确有联合查询需求，请让管理员把行级条件配置到每个分支涉及的表上。"
+                )
 
             # 4. 生成最终SQL
             result_sql = expression.sql(dialect=self.dialect)
@@ -89,6 +123,8 @@ class SQLRewriter:
             
             return result_sql
             
+        except SQLPermissionError:
+            raise
         except Exception as e:
             logger.error(f"[SQLRewriter] Failed to rewrite SQL: {e}", exc_info=True)
             raise SQLRewriteError(f"SQL transformation failed: {str(e)}")
@@ -118,6 +154,47 @@ class SQLRewriter:
             str(table_name).lower(): {str(field) for field in fields}
             for table_name, fields in (table_metadata or {}).items()
         }
+
+    @staticmethod
+    def _set_operation_branches(node: Any) -> List[exp.Select]:
+        """展开一个 UNION / INTERSECT / EXCEPT 的叶子分支（括号/嵌套集合运算都会拆开）。"""
+        if node is None:
+            return []
+        if isinstance(node, exp.Subquery):
+            return SQLRewriter._set_operation_branches(node.this)
+        if isinstance(node, (exp.Union, exp.Intersect, exp.Except)):
+            branches: List[exp.Select] = []
+            for key in ("this", "expression"):
+                branches.extend(SQLRewriter._set_operation_branches(node.args.get(key)))
+            return branches
+        if isinstance(node, exp.Select):
+            return [node]
+        return []
+
+    @staticmethod
+    def _direct_source_names(select: exp.Select) -> Set[str]:
+        """SELECT 直接 FROM/JOIN 的数据源名（不含子查询内部的表）。"""
+        names: Set[str] = set()
+        # sqlglot 不同版本内部 key 有 "from" / "from_" 两种写法
+        from_clause = select.args.get("from") or select.args.get("from_")
+        if from_clause is not None:
+            name = str(getattr(from_clause.this, "name", "") or "").strip().lower()
+            if name:
+                names.add(name)
+        for join in select.args.get("joins") or []:
+            name = str(getattr(join.this, "name", "") or "").strip().lower()
+            if name:
+                names.add(name)
+        return names
+
+    @classmethod
+    def _branch_reads_physical_table(
+        cls, select: exp.Select, cte_aliases: Set[str]
+    ) -> bool:
+        for name in cls._direct_source_names(select):
+            if name not in cte_aliases:
+                return True
+        return False
 
     @staticmethod
     def _expression_depth(node: exp.Expression) -> int:

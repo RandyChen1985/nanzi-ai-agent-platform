@@ -61,6 +61,15 @@ ROW_POLICY_CUSTOM = "custom"
 COL_INCLUDE = "include"
 COL_EXCLUDE = "exclude"
 
+
+class DatasetScopeResolutionError(RuntimeError):
+    """解析用户数据集授权失败（数据库不可用 / 表结构异常）。
+
+    调用方必须 fail-closed：拿不到授权就无从判断能否放行，不能退回「不过滤」。
+    单独定义异常是为了让执行链能把「授权服务故障」与「权限拒绝」区分开，
+    前者给出「请稍后重试」而不是误导性的「无权访问」。
+    """
+
 SUBJECT_USER = "user"
 SUBJECT_ROLE = "role"
 SUBJECT_ALL = "all"
@@ -584,8 +593,16 @@ async def resolve_user_dataset_scopes(
 
 
 async def resolve_dataset_scope(
-    session: AsyncSession, user_id: int, dataset_id: int
-) -> Optional[DatasetScope]:
+    session: AsyncSession,
+    user_id: int,
+    dataset_id: int,
+    *,
+    scopes: Any = None,
+) -> Optional["DatasetScope"]:
+    if callable(scopes):
+        scopes = await scopes()
+    if scopes is not None:
+        return scopes.get(int(dataset_id))
     scopes = await resolve_user_dataset_scopes(
         session, user_id, dataset_ids=[int(dataset_id)]
     )
@@ -593,10 +610,14 @@ async def resolve_dataset_scope(
 
 
 async def resolve_effective_row_policy(
-    session: AsyncSession, user_id: int, dataset_id: int
+    session: AsyncSession,
+    user_id: int,
+    dataset_id: int,
+    *,
+    scopes: Any = None,
 ) -> tuple[str, Optional[str]]:
     """返回 (row_policy, row_condition)；无授权行时按 ``inherit``。"""
-    scope = await resolve_dataset_scope(session, user_id, dataset_id)
+    scope = await resolve_dataset_scope(session, user_id, dataset_id, scopes=scopes)
     if scope is None:
         return ROW_POLICY_INHERIT, None
     if scope.row_policy == ROW_POLICY_CUSTOM and not scope.row_condition:
@@ -618,6 +639,7 @@ async def enforce_table_scope_for_refs(
     is_admin: bool = False,
     user_identity_label: Optional[str] = None,
     restrict_dataset_ids: Optional[set[int]] = None,
+    scopes: Any = None,
 ) -> Optional[str]:
     """表级门禁：SQL 引用的每一张已注册表都必须落在该用户的表授权范围内。
 
@@ -660,11 +682,14 @@ async def enforce_table_scope_for_refs(
     if not owners:
         return None
 
-    scopes = await resolve_user_dataset_scopes(
-        session,
-        user_id,
-        dataset_ids=[int(row[2]) for row in rows if row[2] is not None],
-    )
+    if callable(scopes):
+        scopes = await scopes()
+    if scopes is None:
+        scopes = await resolve_user_dataset_scopes(
+            session,
+            user_id,
+            dataset_ids=[int(row[2]) for row in rows if row[2] is not None],
+        )
     if not scopes:
         # 走到这里说明「物理表校验已放行、但实时解析不出任何范围」——通常是权限缓存
         # 与实时授权短暂不一致（角色刚被移除）。放行不会越权（前置校验已经通过），
@@ -815,13 +840,23 @@ async def table_names_by_dataset(
     return result
 
 
-async def allowed_physical_names_for_user(session: AsyncSession, user_id: int) -> set[str]:
+async def allowed_physical_names_for_user(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    scopes: Any = None,
+) -> set[str]:
     """用户最终可见的物理表名（lower）集合：数据集权限 ∩ 表级白名单。
 
     这是 ``enforce_physical_table_permissions`` 的兜底口径——即使拿不到 SQL 与数据集的
     绑定关系，也不会把「数据集内被收窄掉的表」放行。一次查询完成，避免逐数据集 N+1。
+
+    ``scopes`` 可由调用方在一次查询生命周期内复用，避免同一次 ChatBI 执行里重复解析。
     """
-    scopes = await resolve_user_dataset_scopes(session, user_id)
+    if callable(scopes):
+        scopes = await scopes()
+    if scopes is None:
+        scopes = await resolve_user_dataset_scopes(session, user_id)
     if not scopes:
         return set()
 

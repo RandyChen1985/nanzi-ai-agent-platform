@@ -33,6 +33,10 @@ class AgentContext(BaseModel):
         default_factory=list,
         description="本轮生效的 MetaDataset ID（已合并本轮优先/会话回退）",
     )
+    bound_metadata_dataset_ids: List[str] = Field(
+        default_factory=list,
+        description="智能体工具级绑定的 MetaDataset ID（优先于本轮手选；schema 检索与 SQL 执行同口径）",
+    )
     metadata_dataset_scope_debug: Dict[str, Any] = Field(
         default_factory=dict,
         description="Schema 工具日志用的数据集范围诊断信息",

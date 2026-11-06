@@ -669,7 +669,7 @@ def test_load_allowed_columns_handles_dict_candidates(monkeypatch) -> None:
         table_ids=frozenset(),
         column_rules={92: (ColumnRule(COL_EXCLUDE, frozenset({"secret"})),)},
     )
-    allowed, full = asyncio.get_event_loop().run_until_complete(
+    allowed, full, unavailable = asyncio.get_event_loop().run_until_complete(
         _load_allowed_columns_by_table(
             _FakeSession(),
             scopes={1: scope},
@@ -678,3 +678,4 @@ def test_load_allowed_columns_handles_dict_candidates(monkeypatch) -> None:
     )
     assert allowed["ai_agent_access_logs"] == {"id"}
     assert full["ai_agent_access_logs"] == {"id", "secret"}
+    assert unavailable == set()

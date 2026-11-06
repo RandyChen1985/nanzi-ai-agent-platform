@@ -12,13 +12,18 @@ _REPO = pathlib.Path(__file__).resolve().parents[2]
 _ASSEMBLE = (_REPO / "app/services/ai/pipeline/steps/assemble_step.py").read_text(encoding="utf-8")
 _EXECUTION = (_REPO / "app/services/ai/pipeline/steps/execution_step.py").read_text(encoding="utf-8")
 _EMBED_CHAT = (_REPO / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+_SCOPE_MODULE = (_REPO / "app/services/ai/metadata_dataset_scope.py").read_text(
+    encoding="utf-8"
+)
 
 
 def test_assemble_step_detects_override() -> None:
     """装配阶段读工具级绑定，与手选范围比对后写入 shared_state。"""
     assert 'shared_state["metadata_scope_override"]' in _ASSEMBLE
-    assert '"get_dataset_schema"' in _ASSEMBLE
-    assert "normalize_bound_dataset_ids" in _ASSEMBLE
+    # 绑定读取统一收敛到 extract_bound_metadata_dataset_ids（dict / ToolConfigItem 都认），
+    # 这里锁装配阶段确实调用了它，再锁工具名判断仍在唯一实现里。
+    assert "extract_bound_metadata_dataset_ids" in _ASSEMBLE
+    assert '"get_dataset_schema"' in _SCOPE_MODULE
     # 只在两边都有值且不一致时才提示（绑定优先是既有语义，不改行为）
     assert "set(_bound_metadata_ids) != set(_mounted_metadata_ids)" in _ASSEMBLE
 

@@ -1426,6 +1426,19 @@ async def sub_agent_call(
         started_at=lifecycle_started_at,
     )
 
+    # 数据集范围：子智能体自己的工具级绑定优先；没有绑定就继承主上下文。
+    # 必须与 schema 检索、执行门禁同一口径，否则委派链路会再次出现
+    # 「schema 给 A、执行按主上下文手选的 B 判定」的互斥。
+    from app.services.ai.metadata_dataset_scope import (
+        extract_bound_metadata_dataset_ids,
+    )
+
+    sub_bound_metadata_ids = extract_bound_metadata_dataset_ids(
+        getattr(target_config, "tools", None)
+    )
+    if not sub_bound_metadata_ids:
+        sub_bound_metadata_ids = list(main_ctx.bound_metadata_dataset_ids or [])
+
     # 创建一个专属子上下文，隔离历史，但保留用户信息和 API Key 供子工具鉴权
     sub_ctx = AgentContext(
         agent_id=str(target_config.agent_id),
@@ -1441,6 +1454,7 @@ async def sub_agent_call(
         # 不显式继承就等于「主助手选了数据集、委派出去的专家不受限」，
         # 而 ChatBI 恰好几乎总是通过委派执行。
         metadata_dataset_ids=list(main_ctx.metadata_dataset_ids or []),
+        bound_metadata_dataset_ids=sub_bound_metadata_ids,
         conversation_id=child_session_id,
         parent_conversation_id=main_ctx.conversation_id,
         child_session_id=child_session_id,

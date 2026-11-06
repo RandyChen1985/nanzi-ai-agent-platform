@@ -447,11 +447,23 @@ class MetadataService:
         result = await db.execute(select(MetaDataset.rag_dataset_id).where(MetaDataset.id == dataset_id))
         rag_kb_id = result.scalar_one_or_none()
 
-        # 3. Delete Local
+        # 3. 清理该数据集的多态权限行：ai_agent_resource_permissions 与 MetaDataset
+        # 之间没有外键级联，不删除就会留下孤儿授权（权限总览按数据集列表渲染，看不见；
+        # 一旦出现 ID 复用还会变成「幽灵授权」）。同一事务内完成，避免半删状态。
+        from app.models.permission import ResourcePermission
+
+        await db.execute(
+            delete(ResourcePermission).where(
+                ResourcePermission.resource_type == "metadata",
+                ResourcePermission.resource_id == str(dataset_id),
+            )
+        )
+
+        # 4. Delete Local
         query = delete(MetaDataset).where(MetaDataset.id == dataset_id)
         await db.execute(query)
         
-        # 4. Record changelog before commit
+        # 5. Record changelog before commit
         if old_data:
             await ChangelogService.log_change(
                 db=db,
@@ -475,7 +487,7 @@ class MetadataService:
         except Exception as ex:
             logger.warning("[Local Redis Sync] Failed to delete dataset vectors: %s", ex)
 
-        # 5. Cascade Delete RAGFlow KB (Background or Fire-and-forget)
+        # 6. Cascade Delete RAGFlow KB (Background or Fire-and-forget)
         if rag_kb_id:
             from app.services.metadata_rag_service import MetadataRagService
             # We don't await this to keep the API responsive, or handle it in BackgroundTasks.

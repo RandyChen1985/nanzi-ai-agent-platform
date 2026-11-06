@@ -70,10 +70,34 @@ def normalize_bound_dataset_ids(raw: Any) -> list[str]:
     return [value for value in _normalize_id_list(raw) if value.isdigit()]
 
 
-def resolve_mounted_dataset_scope_ids() -> list[str]:
-    """本轮真正生效的数据集范围：AgentContext 优先，其次 execution_options；空列表表示「未限定」。
+def extract_bound_metadata_dataset_ids(tools: Any) -> list[str]:
+    """从智能体工具配置里取出 ``get_dataset_schema`` 的绑定数据集。
 
-    两条渠道都要读，因为它们在不同链路里生效：
+    工具配置在这次运行里可能是 dict（前端/DB 原样 JSON），也可能是
+    ``ToolConfigItem`` 这类对象，两种都要认；只取第一个同名工具，与 registry
+    ``_configure_runtime_tool_spec`` 的「一个工具一份绑定」保持一致。
+    """
+    for item in tools or []:
+        if isinstance(item, dict):
+            name = item.get("name")
+            raw = item.get("metadata_dataset_ids")
+        else:
+            name = getattr(item, "name", None)
+            raw = getattr(item, "metadata_dataset_ids", None)
+        if str(name or "").strip() != "get_dataset_schema":
+            continue
+        return [str(value) for value in normalize_bound_dataset_ids(raw or [])]
+    return []
+
+
+def resolve_mounted_dataset_scope_ids() -> list[str]:
+    """本轮真正生效的数据集范围：智能体绑定 > AgentContext > execution_options。
+
+    空列表表示「未限定」。三条渠道都要读，因为它们在不同链路里生效：
+      * ``AgentContext.bound_metadata_dataset_ids`` —— 智能体工具级绑定
+        （``get_dataset_schema.metadata_dataset_ids``）。它与 registry 的
+        schema 检索优先级一致，必须排在最前：绑定生效时模型只拿得到绑定数据集的
+        schema，执行端若还按用户手选范围判定，会把自己系统生成的 SQL 拒掉；
       * ``AgentContext.metadata_dataset_ids`` —— pipeline 初始化时由
         ``agent_service`` 用 ``effective_metadata_dataset_ids``（已合并本轮请求 +
         会话固定）写入，工具执行期最可靠；
@@ -97,6 +121,12 @@ def resolve_mounted_dataset_scope_ids() -> list[str]:
     ids: list[str] = []
     ctx = get_current_agent_context()
     if ctx is not None:
+        bound: list[str] = []
+        collect(getattr(ctx, "bound_metadata_dataset_ids", None), bound)
+        if bound:
+            # 绑定优先：与 registry 的 get_dataset_schema 同口径，避免「schema 给 A、
+            # 执行门禁按用户手选的 B 判定」导致整套 ChatBI 互相打架。
+            return bound
         collect(getattr(ctx, "metadata_dataset_ids", None), ids)
     if ids:
         return ids

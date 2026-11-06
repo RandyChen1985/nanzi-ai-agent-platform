@@ -6,6 +6,18 @@ import pytest
 from app.services import sql_query_execution_service as sql_service
 
 
+@pytest.fixture(autouse=True)
+def _empty_dataset_scopes(monkeypatch):
+    """本模块只验证提示文案，授权解析固定为空：字段级/行级门禁直接短路，
+    不依赖真实数据库。"""
+    async def fake_resolve(_session, _user_id, **_kwargs):
+        return {}
+
+    monkeypatch.setattr(
+        "app.services.dataset_scope_service.resolve_user_dataset_scopes", fake_resolve
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
 async def test_table_permission_denied_message_includes_user_identity(monkeypatch):
@@ -250,7 +262,7 @@ async def test_execute_sql_query_core_marks_permission_notice_when_row_filter_re
         lambda _binding, _dataset_name: {"orders": {"dept_code"}},
     )
     # 行级策略解析需要查库（授权行上的 row_policy），这里固定走 inherit。
-    async def fake_row_policy(_session, _user_id, _dataset_id):
+    async def fake_row_policy(_session, _user_id, _dataset_id, **_kwargs):
         return ("inherit", None)
 
     monkeypatch.setattr(
@@ -307,7 +319,7 @@ async def test_custom_row_policy_rejects_when_condition_does_not_apply(monkeypat
     async def fake_enforce(*args, **kwargs):
         return None
 
-    async def fake_row_policy(_session, _user_id, _dataset_id):
+    async def fake_row_policy(_session, _user_id, _dataset_id, **_kwargs):
         return ("custom", "fact_a.dept_code = 'FIN'")
 
     async def fake_sandbox_verify(_session, *, sql, data_source, dialect):
