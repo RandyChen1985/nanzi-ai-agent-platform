@@ -307,6 +307,33 @@ class AgentSystemPublicationService:
         )
 
     @staticmethod
+    async def _invalidate_access_caches(
+        session: AsyncSession, user_ids: Any = ()
+    ) -> None:
+        """提交后失效权限与路由缓存。
+
+        权限缓存默认 1 小时，路由缓存 60 秒。审批/上架/转交都会改变「谁能看到
+        这个系统级智能体」，不在这里主动清，申请人要等最长 1 小时才能从
+        ``/allowed`` 里看到它，期间直接对话会被 403。
+
+        操作已经提交，缓存清理失败不能反过来把成功请求变成 500，因此只记日志。
+        """
+        ids = [uid for uid in user_ids if uid is not None]
+        if ids:
+            try:
+                from app.services.permission_service import PermissionService
+
+                await PermissionService(session).invalidate_cached_permissions_for_users(ids)
+            except Exception as exc:  # pragma: no cover - 缓存故障不阻断主流程
+                logger.warning(f"清理用户权限缓存失败：{exc}")
+        try:
+            from app.services.ai.router_service import router_service
+
+            router_service.invalidate_cache()
+        except Exception as exc:  # pragma: no cover - 缓存故障不阻断主流程
+            logger.warning(f"清理路由缓存失败：{exc}")
+
+    @staticmethod
     async def _pending_request(
         session: AsyncSession, agent_id: str
     ) -> Optional[AgentSystemRequest]:
@@ -481,6 +508,24 @@ class AgentSystemPublicationService:
         if str(version.status) != "DRAFT":
             raise HTTPException(status_code=409, detail="只有草稿版本可以申请上线")
 
+        # 与「发布版本」共用同一套就绪规则：申请阶段就拦下缺工具/缺知识库的草稿，
+        # 不要等管理员点通过时才在发布路径报错——那时申请单和冻结状态都已产生。
+        from app.services.ai.agent_manager import AgentNotReadyError
+        from app.services.ai.agent_readiness import evaluate_agent_readiness
+        from app.services.ai.knowledge_utils import load_system_default_dataset_ids
+
+        readiness = evaluate_agent_readiness(
+            agent_type=agent.agent_type or "GENERAL",
+            capabilities=agent.capabilities,
+            engine_config=agent.engine_config,
+            tools=version.tools,
+            # 审批通过后这个版本就是线上版本。
+            has_published_version=True,
+            default_dataset_ids=await load_system_default_dataset_ids(),
+        )
+        if not readiness.ready:
+            raise AgentNotReadyError(readiness.missing)
+
         snapshot = AgentSystemPublicationService.build_snapshot(agent, version)
         text = (comment or "").strip()[:REQUEST_COMMENT_MAX] or None
         request = AgentSystemRequest(
@@ -559,12 +604,15 @@ class AgentSystemPublicationService:
                 session,
                 agent.id,
                 version.id,
-                user={"role": "admin", "user_name": actor_name},
+                user={"role": "admin", "user_name": actor_name, "user_id": actor_id},
             )
         except AgentNotReadyError as exc:
             raise HTTPException(
                 status_code=409,
-                detail=f"该版本还不满足上线条件：{'、'.join(exc.missing or [])}",
+                detail={
+                    "code": "AGENT_NOT_READY",
+                    "missing": list(exc.missing or []),
+                },
             ) from exc
 
         if not published:
@@ -712,6 +760,11 @@ class AgentSystemPublicationService:
             review_comment=request.review_comment,
         )
         await session.commit()
+        # 授权刚写进 ResourcePermission，必须清掉申请人的权限缓存，
+        # 否则 /allowed 最长 1 小时里仍然看不到刚通过的系统级智能体。
+        await AgentSystemPublicationService._invalidate_access_caches(
+            session, [request.requested_by]
+        )
         return agent
 
     # ------------------------------------------------------------------
@@ -773,6 +826,7 @@ class AgentSystemPublicationService:
         if int(getattr(new_owner_row, "status", 1) or 0) != 1:
             raise HTTPException(status_code=409, detail="目标用户已停用，不能作为权属人")
 
+        new_owner_user_id = getattr(new_owner_row, "id", None)
         agent.created_by = target
         await session.flush()
 
@@ -791,7 +845,7 @@ class AgentSystemPublicationService:
         # 靠的是 ResourcePermission。不补的话新所有者「看得到、用不了」。
         if bool(agent.is_system):
             await AgentSystemPublicationService.grant_agent_to_user(
-                session, agent.id, getattr(new_owner_row, "id", None)
+                session, agent.id, new_owner_user_id
             )
 
         await AgentSystemNotifier.notify_owner_transferred(
@@ -799,7 +853,7 @@ class AgentSystemPublicationService:
             agent_id=agent.id,
             display_name=agent.display_name,
             previous_owner_user_name=previous_owner,
-            new_owner_user_id=getattr(new_owner_row, "id", None),
+            new_owner_user_id=new_owner_user_id,
             actor_name=actor_name,
         )
         await session.commit()
@@ -819,8 +873,8 @@ class AgentSystemPublicationService:
             new_owner_ctx = {
                 "role": getattr(new_owner_row, "role", "user") or "user",
                 "user_name": target,
-                "user_id": getattr(new_owner_row, "id", None),
-                "id": getattr(new_owner_row, "id", None),
+                "user_id": new_owner_user_id,
+                "id": new_owner_user_id,
             }
             _, dropped = await AgentManagerService.drop_inaccessible_mcp_tools(
                 session, current_version.tools, new_owner_ctx
@@ -840,6 +894,10 @@ class AgentSystemPublicationService:
                 )
                 await session.commit()
 
+        # 系统级转交补了 ResourcePermission，且权属人变了，权限与路由缓存都要失效。
+        await AgentSystemPublicationService._invalidate_access_caches(
+            session, [new_owner_user_id]
+        )
         return agent
 
     @staticmethod
@@ -962,6 +1020,10 @@ class AgentSystemPublicationService:
                 )
 
         await session.commit()
+        # 上架时给所有者补了 ResourcePermission，权限缓存同样要立即失效。
+        await AgentSystemPublicationService._invalidate_access_caches(
+            session, [owner_uid]
+        )
         return agent
 
     @staticmethod
@@ -1072,6 +1134,9 @@ class AgentSystemPublicationService:
             notified_count += sent
 
         await session.commit()
+        # is_system 变了，路由候选缓存必须立刻失效；否则最长 60 秒内仍会把
+        # 已下架的智能体当作系统级候选。
+        await AgentSystemPublicationService._invalidate_access_caches(session)
         return {
             "agent_id": agent.id,
             "affected_user_count": affected,
@@ -1195,6 +1260,20 @@ class AgentSystemPublicationService:
         if request.reviewed_by is not None:
             reviewer = await session.get(User, int(request.reviewed_by))
 
+        # 列表接口一直返回这两个字段，详情漏掉会让前端 isVersionRelease 恒为 false，
+        # 把「版本上线」当成「发布为系统级」展示。版本号优先按快照版本现查，
+        # 版本已被删除时回退到快照里存的值。
+        version_number = None
+        if request.snapshot_version_id:
+            version_row = await session.execute(
+                select(AIAgentVersion.version_number).where(
+                    AIAgentVersion.id == request.snapshot_version_id
+                )
+            )
+            version_number = version_row.scalars().first()
+        if version_number is None and snapshot:
+            version_number = (snapshot.get("version") or {}).get("version_number")
+
         return {
             "id": request.id,
             "agent_id": request.agent_id,
@@ -1204,6 +1283,8 @@ class AgentSystemPublicationService:
             "agent_identifier": agent.name if agent else None,
             "engine_type": agent.engine_type if agent else None,
             "agent_missing": agent is None,
+            "request_type": getattr(request, "request_type", None) or REQUEST_TYPE_SYSTEM,
+            "version_number": version_number,
             "status": request.status,
             "snapshot": snapshot,
             "request_comment": request.request_comment,

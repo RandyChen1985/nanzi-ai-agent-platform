@@ -300,8 +300,9 @@ def test_create_agent_info_step_matches_the_edit_modal_layout():
     assert "grid grid-cols-1 gap-4 sm:grid-cols-2" in drawer  # 仍保留其它成对字段的行
     assert "rounded-xl border border-gray-200 bg-gray-50/70 p-3" in field
 
-    # ③ 「智能体信息」步骤确实只在新建时出现（这正是当初入口不可达的原因）
-    assert "isCreatingAgent.value ? [{ id: 'agent' as const" in mgmt
+    # ③ 「智能体信息」步骤在新建与「继续向导」都要出现：
+    # 接受分享后的副本需要在这里改名/换头像，不能只给新建流程。
+    assert "isCreatingAgent.value || isOnboardingFlow.value" in mgmt
 
 
 def test_new_agent_avatar_uploads_before_the_agent_exists():
@@ -377,7 +378,8 @@ def test_agent_name_is_prechecked_for_duplicates_before_submit():
 
     # ④ 提交前兜底：两条创建路径都要拦截（弹窗 saveAgent + 抽屉/引导 persistNewAgentDraft）
     assert "ensureAgentNameUsable" in mgmt
-    assert mgmt.count("await ensureAgentNameUsable()") == 2
+    # 新建弹窗、抽屉创建、继续向导三条路径都要在提交前兜底
+    assert mgmt.count("await ensureAgentNameUsable()") == 3
     assert "physicalName" not in mgmt  # 防止误用未定义变量
 
     # ⑤ 打开界面时清空上一次结论，避免残留红字

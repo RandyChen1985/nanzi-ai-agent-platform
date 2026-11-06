@@ -193,6 +193,33 @@ def adopt_pending_avatar(
     return f"{AGENT_AVATAR_URL}/{target_name}"
 
 
+def delete_agent_avatars(
+    agent_id: Optional[str],
+    directory: Optional[str] = None,
+) -> int:
+    """删除某个智能体的正式头像文件，返回删除数量。
+
+    只认 ``{agent_id}_*``，且用 ``glob.escape`` 锁死前缀，绝不能误伤
+    ``agent-1`` 之外的 ``agent-10_*``，也不能碰 ``pending_*``。
+    删除智能体后调用；数据库提交失败时不要调用，避免文件没了、记录还在。
+    """
+    key = sanitize_asset_key(agent_id) if str(agent_id or "").strip() else ""
+    if not key:
+        return 0
+    directory = directory or AGENT_AVATAR_DIR
+    removed = 0
+    pattern = os.path.join(directory, f"{glob.escape(key)}_*")
+    for path in glob.glob(pattern):
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+
 # ---------------------------------------------------------------------------
 # 用户头像（个人中心）：每个用户一个子目录，清理范围严格限定在自己目录内
 # ---------------------------------------------------------------------------

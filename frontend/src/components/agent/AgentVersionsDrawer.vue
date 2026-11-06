@@ -42,7 +42,24 @@ const requestRelease = async (version: AIAgentVersion) => {
     emit('update');
     await loadVersions();
   } catch (e: any) {
-    showToast(e?.response?.data?.detail || '提交上线申请失败', 'error');
+    // 全局异常处理器把结构化 detail 放在 data 里，detail 只剩业务码字符串。
+    const payload = e?.response?.data;
+    const readiness = payload?.data;
+    const missing = Array.isArray(readiness?.missing) ? readiness.missing : [];
+    const labels: Record<string, string> = {
+      published_version: '发布版本',
+      primary_capability: '主类型能力',
+      dataset_binding: '数据集绑定',
+      data_query_tool: '查数工具',
+      knowledge_base_binding: '知识库绑定',
+      knowledge_base_tool: '知识库检索工具',
+    };
+    showToast(
+      readiness?.code === 'AGENT_NOT_READY'
+        ? `尚未就绪：${missing.map((item: string) => labels[item] || item).join('、')}`
+        : (typeof payload?.detail === 'string' ? payload.detail : '提交上线申请失败'),
+      'error',
+    );
   } finally {
     submittingRelease.value = null;
   }
@@ -118,14 +135,18 @@ const requestDeleteVersion = (version: AIAgentVersion) => {
 
 const confirmDeleteVersion = async () => {
     if (!props.agent || !versionToDelete.value) return;
+    const deletedNumber = versionToDelete.value.version_number;
     deleteLoading.value = true;
     try {
         await agentApi.deleteVersion(props.agent.id, versionToDelete.value.id);
         showDeleteConfirm.value = false;
         versionToDelete.value = null;
-        loadVersions(); // Refresh list
-    } catch (error) {
+        showToast(`版本 V${deletedNumber} 已删除`, 'success');
+        emit('update');
+        await loadVersions(); // Refresh list
+    } catch (error: any) {
         console.error("Failed to delete version", error);
+        showToast(error?.response?.data?.detail || "删除版本失败", 'error');
     } finally {
         deleteLoading.value = false;
     }

@@ -1,3 +1,4 @@
+import copy
 import logging
 import uuid
 from typing import Optional, List, Dict, Any, Tuple
@@ -294,11 +295,16 @@ class AgentManagerService:
                     dropped_tool_refs=(),
                 )
 
-        conflict = await AgentManagerService.find_agent_name_conflict(session, data.name)
+        AgentManagerService._validate_engine_config(data.engine_type, data.engine_config)
+        normalized_name = AgentManagerService.normalize_agent_name(data.name)
+        if not normalized_name:
+            raise ValueError("物理标识符不能为空")
+
+        conflict = await AgentManagerService.find_agent_name_conflict(session, normalized_name)
         if conflict:
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(data.name))
+            raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(normalized_name))
 
         template = await AgentManagerService._resolve_onboarding_template(
             session, data.agent_type, user
@@ -312,8 +318,8 @@ class AgentManagerService:
         new_agent_id = str(uuid.uuid4())
         agent = AIAgent(
             id=new_agent_id,
-            name=data.name,
-            display_name=data.display_name,
+            name=normalized_name,
+            display_name=str(data.display_name or "").strip(),
             description=data.description,
             # 新建流程先传头像再建智能体，这里把待绑定文件转正，避免被 TTL 回收
             avatar_url=adopt_pending_avatar(data.avatar_url, new_agent_id),
@@ -1288,13 +1294,16 @@ class AgentManagerService:
             is_admin = user and getattr(user, 'role', '') == 'admin'
 
         AgentManagerService._validate_engine_config(data.engine_type, data.engine_config)
-        
+        normalized_name = AgentManagerService.normalize_agent_name(data.name)
+        if not normalized_name:
+            raise ValueError("物理标识符不能为空")
+
         # 物理标识符在 ai_agents.name 上全局唯一，命中时给出中文可操作提示
-        conflict = await AgentManagerService.find_agent_name_conflict(session, data.name)
+        conflict = await AgentManagerService.find_agent_name_conflict(session, normalized_name)
         if conflict:
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(data.name))
+            raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(normalized_name))
 
         from app.services.ai.agent_types import (
             normalize_agent_capabilities_for_agent,
@@ -1305,8 +1314,8 @@ class AgentManagerService:
         new_agent_id = str(uuid.uuid4())
         agent = AIAgent(
             id=new_agent_id,
-            name=data.name,
-            display_name=data.display_name,
+            name=normalized_name,
+            display_name=str(data.display_name or "").strip(),
             description=data.description,
             # 新建流程先传头像再建智能体，这里把待绑定文件转正，避免被 TTL 回收
             avatar_url=adopt_pending_avatar(data.avatar_url, new_agent_id),
@@ -1318,6 +1327,12 @@ class AgentManagerService:
             agent_type=resolved_agent_type.value,
             # 系统级只能通过「发布为系统级」获得（有事件、有流程），新建表单不再接受该字段
             is_system=False,
+            # 主助手是系统兜底入口，不允许被设成专家团主专家（与 onboarding 同一口径）
+            is_expert_team_lead=(
+                bool(data.is_expert_team_lead)
+                and str(normalized_name).lower() not in MAIN_GENERAL_AGENT_NAMES
+            ),
+            team_profile=data.team_profile,
             sort_order=data.sort_order if data.sort_order is not None else 0,
             is_enabled=data.is_enabled if data.is_enabled is not None else True,
             created_by=created_by,
@@ -1624,15 +1639,22 @@ class AgentManagerService:
             if requested_engine_type != original_engine_type:
                 raise ValueError("执行引擎创建后不可修改；请新建智能体以使用其他引擎")
 
+        if data.engine_config is not None:
+            AgentManagerService._validate_engine_config(agent.engine_type, data.engine_config)
+
+        normalized_name = AgentManagerService.normalize_agent_name(data.name)
+        if not normalized_name:
+            raise ValueError("物理标识符不能为空")
+
         # 改名前先校验唯一性（排除自己），否则唯一索引会抛 IntegrityError 变成 500
-        if AgentManagerService.normalize_agent_name(data.name) != AgentManagerService.normalize_agent_name(agent.name):
+        if normalized_name != AgentManagerService.normalize_agent_name(agent.name):
             conflict = await AgentManagerService.find_agent_name_conflict(
-                session, data.name, exclude_agent_id=agent.id
+                session, normalized_name, exclude_agent_id=agent.id
             )
             if conflict:
                 from fastapi import HTTPException
 
-                raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(data.name))
+                raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(normalized_name))
 
         _before_meta = {
             "name": agent.name,
@@ -1641,10 +1663,13 @@ class AgentManagerService:
             "avatar_url": agent.avatar_url,
             "capabilities": agent.capabilities,
             "sort_order": agent.sort_order,
+            "engine_config": copy.deepcopy(agent.engine_config),
+            "is_expert_team_lead": bool(agent.is_expert_team_lead),
+            "team_profile": copy.deepcopy(agent.team_profile),
         }
 
-        agent.name = data.name
-        agent.display_name = data.display_name
+        agent.name = normalized_name
+        agent.display_name = str(data.display_name or "").strip()
         agent.description = data.description
         # 专家团字段是局部更新：编辑页的其他表单不会带这两项，无条件赋值会把开关和
         # 团名悄悄清空，所以只在 model_fields_set 里出现时才落库。
@@ -1726,13 +1751,61 @@ class AgentManagerService:
         # 待审期间不能删：申请单还指着一个不存在的智能体，审核页会打不开
         await AgentSystemPublicationService.assert_not_frozen(session, agent, user)
 
+        # 申请单/事件/授权/待处理分享都没有物理外键，按模型约定由应用层清理。
+        # 不清理的话：待审列表永远有孤儿单、授权表留下指向不存在资源的脏行、
+        # 收件箱里还能接受一个源已删除的分享。
+        from app.models.agent_share import AgentShareRequest, STATUS_PENDING
+        from app.models.agent_system import AgentSystemEvent, AgentSystemRequest
+        from app.models.permission import ResourcePermission
+        from app.services.ai.agent_share_service import AgentShareService
+        from app.services.ai.agent_system_columns import supports_system_status
+
+        granted_rows = await session.execute(
+            select(ResourcePermission.user_id).where(
+                ResourcePermission.resource_type == "agent",
+                ResourcePermission.resource_id == str(agent.id),
+            )
+        )
+        granted_user_ids = [row[0] for row in granted_rows.all() if row[0] is not None]
+
+        await session.execute(
+            delete(ResourcePermission).where(
+                ResourcePermission.resource_type == "agent",
+                ResourcePermission.resource_id == str(agent.id),
+            )
+        )
+
+        if await supports_system_status(session):
+            await session.execute(
+                delete(AgentSystemEvent).where(
+                    AgentSystemEvent.agent_id == str(agent.id)
+                )
+            )
+            await session.execute(
+                delete(AgentSystemRequest).where(
+                    AgentSystemRequest.agent_id == str(agent.id)
+                )
+            )
+
+        if await AgentShareService.supports_share(session):
+            await session.execute(
+                delete(AgentShareRequest).where(
+                    AgentShareRequest.agent_id == str(agent.id),
+                    AgentShareRequest.status == STATUS_PENDING,
+                )
+            )
+
         await session.delete(agent)
         await session.commit()
-        
-        # Invalidate Router Cache
-        from app.services.ai.router_service import router_service
-        router_service.invalidate_cache()
-        
+
+        # 文件与缓存都放在提交成功之后：数据库失败时不能先把头像删了。
+        from app.core.avatar_assets import delete_agent_avatars
+
+        delete_agent_avatars(str(agent_id))
+        await AgentSystemPublicationService._invalidate_access_caches(
+            session, granted_user_ids
+        )
+
         return True
 
     @staticmethod
@@ -2063,6 +2136,51 @@ class AgentManagerService:
         )
         agent.onboarding_step = "COMPLETE"
 
+        _, actor_name, actor_id = AgentSystemPublicationService.resolve_actor(user)
+
+        # 管理员绕过审核直接发布系统级版本时，必须把待审的 VERSION_RELEASE 申请单
+        # 一起收尾：否则它会一直挂在待审列表，点通过时又因版本已不是 DRAFT 而 409。
+        # 发布的就是申请的那个版本 -> 视为自动通过；发布的是别的版本 -> 驳回并说明。
+        if bool(agent.is_system):
+            from datetime import datetime
+
+            from app.services.ai.agent_system_columns import (
+                SYSTEM_STATUS_NONE,
+                supports_system_status,
+                write_system_status,
+            )
+            from app.services.ai.agent_system_publication_service import (
+                REQUEST_TYPE_RELEASE,
+                STATUS_APPROVED,
+                STATUS_REJECTED,
+            )
+
+            if await supports_system_status(session):
+                pending = await AgentSystemPublicationService._pending_request(
+                    session, agent.id
+                )
+                if pending is not None and (
+                    getattr(pending, "request_type", None) or ""
+                ) == REQUEST_TYPE_RELEASE:
+                    same_version = str(pending.snapshot_version_id or "") == str(
+                        version.id
+                    )
+                    pending.status = STATUS_APPROVED if same_version else STATUS_REJECTED
+                    pending.reviewed_at = datetime.now()
+                    if actor_id is not None:
+                        pending.reviewed_by = actor_id
+                    pending.review_comment = (
+                        "管理员直接发布了该版本，申请自动通过"
+                        if same_version
+                        else "管理员已直接发布其他版本，本次上线申请自动关闭"
+                    )
+                    await write_system_status(
+                        session,
+                        agent.id,
+                        status=SYSTEM_STATUS_NONE,
+                        pending_request_id=None,
+                    )
+
         # 「发布新版本」换掉的是线上基线，不管是不是系统级都必须留痕：
         # 否则发布历史里版本号变了，却查不到是谁在什么时候换的。
         # 普通智能体尤其需要——它没有审核环节，发布完全由所有者自行决定。
@@ -2070,7 +2188,6 @@ class AgentManagerService:
             ACTION_BASELINE_PUBLISH,
         )
 
-        _, actor_name, actor_id = AgentSystemPublicationService.resolve_actor(user)
         await AgentSystemPublicationService.record_event(
             session,
             agent=agent,

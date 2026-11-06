@@ -261,7 +261,12 @@ const handleAgentNameReset = () => {
 /** 提交前兜底：明确撞名则拦截；无法判定（接口异常）时放行，交由后端权威裁决。 */
 const ensureAgentNameUsable = async (): Promise<string | null> => {
   if (isEditingAgent.value) return null;
-  const { ok, message } = await ensureAgentNameAvailable(agentForm.value.name);
+  // 继续向导改的是已有副本，校验时必须排除它自己，否则原名永远撞自己。
+  const excludeAgentId = isOnboardingFlow.value ? selectedAgent.value?.id : undefined;
+  const { ok, message } = await ensureAgentNameAvailable(
+    agentForm.value.name,
+    excludeAgentId,
+  );
   return ok ? null : message || "物理标识符已被占用，请换一个";
 };
 
@@ -1470,9 +1475,7 @@ const filteredAgents = computed(() => {
   // 2. Filter by Status
   if (statusFilter.value !== "all") {
     const isEnabled = statusFilter.value === "enabled";
-    result = result.filter((a) => a.is_enabled === isEnabled); // Handles undefined as false in strict check, but usually true. Check default.
-    // Actually is_enabled defaults to true if missing in some legacy checks, but API returns boolean.
-    // Let's assume boolean.
+    // 只跑一次：先按 `===` 过滤会把 undefined 丢掉，后面再 `?? true` 也救不回来。
     result = result.filter((a) => (a.is_enabled ?? true) === isEnabled);
   }
 
@@ -2166,7 +2169,9 @@ const versionConfigSteps = computed<{ id: VersionConfigStep; label: string }[]>(
     return [{ id: 'agent', label: '智能体信息' }];
   }
   return [
-    ...(isCreatingAgent.value ? [{ id: 'agent' as const, label: '智能体信息' }] : []),
+    ...(isCreatingAgent.value || isOnboardingFlow.value
+      ? [{ id: 'agent' as const, label: '智能体信息' }]
+      : []),
     { id: 'model', label: '模型策略' },
     { id: 'tools', label: '工具能力' },
     { id: 'prompt', label: '系统提示词' },
@@ -2949,7 +2954,9 @@ const openAgentModal = (agent?: AIAgent) => {
       },
     };
     selectedMarkdownTheme.value = agent.engine_config?.default_markdown_theme || "default";
-    hideMessageBorder.value = agent.engine_config?.hide_message_border === true;
+    // 缺省即开启（与 EmbedChat 的 ?? true 对齐）；只有显式 false 才关闭，
+    // 否则打开历史数据再保存会把「显示外框」悄悄翻成关闭。
+    hideMessageBorder.value = agent.engine_config?.hide_message_border !== false;
     if (isExternalEngine(agentForm.value.engine_type)) {
       agentForm.value.agent_type = "GENERAL";
     }
@@ -3256,9 +3263,25 @@ const publishOnboarding = async () => {
     showAgentModal.value = false;
     fetchAgents();
   } catch (error: any) {
-    const detail = error.response?.data?.detail;
-    const missing = Array.isArray(detail?.missing) ? detail.missing.join("、") : "";
-    showToast(missing ? `尚未就绪：${missing}` : "发布失败", "error");
+    const payload = error.response?.data;
+    const readiness = payload?.data;
+    const labels: Record<string, string> = {
+      published_version: "发布版本",
+      primary_capability: "主类型能力",
+      dataset_binding: "数据集绑定",
+      data_query_tool: "查数工具",
+      knowledge_base_binding: "知识库绑定",
+      knowledge_base_tool: "知识库检索工具",
+    };
+    const missing = Array.isArray(readiness?.missing)
+      ? readiness.missing.map((item: string) => labels[item] || item).join("、")
+      : "";
+    showToast(
+      readiness?.code === "AGENT_NOT_READY"
+        ? `尚未就绪：${missing}`
+        : (typeof payload?.detail === "string" ? payload.detail : "发布失败"),
+      "error",
+    );
   }
 };
 
@@ -3294,7 +3317,9 @@ const continueAgentOnboarding = async (agent: AIAgent) => {
     resetAgentNameCheckState();
     fetchTools();
     toolSearchQuery.value = "";
-    versionConfigStep.value = "model";
+    // BASIC 副本要先改名/换头像，直接落到「智能体信息」；
+    // 已经到 VERSION/RESOURCE 的继续从模型策略往下走。
+    versionConfigStep.value = agent.onboarding_step === "BASIC" ? "agent" : "model";
     showVersionModal.value = true;
   } catch (error) {
     showToast("加载未完成配置失败", "error");
@@ -3313,6 +3338,8 @@ const openVersionModal = (
   isClone: boolean = false
 ) => {
   isCreatingAgent.value = false;
+  // 从「继续向导」退出后再走普通建版本，不能把 onboarding 的步骤条带进来。
+  isOnboardingFlow.value = false;
   fetchTools();
   // This might be called from Drawer emit
   if (version) {
@@ -3385,15 +3412,21 @@ const handleDrawerPublishVersion = (version: AIAgentVersion) => {
         if (selectedAgent.value) {
           await agentApi.publishVersion(selectedAgent.value.id, version.id);
           showToast("版本发布成功", "success");
-          // Refresh drawer list
+          // Drawer 只刷新自己的版本列表；卡片上的已发布版本号/就绪状态
+          // 来自 fetchAgents，不刷新就会一直显示发布前的数据。
+          await fetchAgents();
+          const updatedAgent = agents.value.find((item) => item.id === selectedAgent.value?.id);
+          if (updatedAgent) selectedAgent.value = updatedAgent;
           if (versionsDrawerRef.value && versionsDrawerRef.value.refresh) {
             versionsDrawerRef.value.refresh();
           }
         }
       } catch (e) {
         const error = e as any;
-        const detail = error?.response?.data?.detail;
-        const missing = Array.isArray(detail?.missing) ? detail.missing : [];
+        // 全局异常处理器把结构化 detail 放在 data 里，detail 只剩业务码字符串。
+        const payload = error?.response?.data;
+        const readiness = payload?.data;
+        const missing = Array.isArray(readiness?.missing) ? readiness.missing : [];
         const labels: Record<string, string> = {
           published_version: "发布版本",
           primary_capability: "主类型能力",
@@ -3403,9 +3436,9 @@ const handleDrawerPublishVersion = (version: AIAgentVersion) => {
           knowledge_base_tool: "知识库检索工具",
         };
         showToast(
-          detail?.code === "AGENT_NOT_READY"
+          readiness?.code === "AGENT_NOT_READY"
             ? `尚未就绪：${missing.map((item: string) => labels[item] || item).join("、")}`
-            : "发布失败",
+            : (typeof payload?.detail === "string" ? payload.detail : "发布失败"),
           "error",
         );
         console.error(e);
@@ -3526,12 +3559,25 @@ const persistNewAgentDraft = async (closeAfterSave: boolean) => {
   const rawDatasetIds = agentForm.value.engine_config?.dataset_ids ?? engineConfigUI.value.dataset_ids;
   const datasetIds = (Array.isArray(rawDatasetIds) ? rawDatasetIds : String(rawDatasetIds || '').split(','))
     .map((value) => String(value).trim()).filter(Boolean);
+  // 新向导第 1 步直接改的是 agentForm.engine_config；父组件这两个 ref 只是
+  // 编辑弹窗的镜像。保存时必须让用户在新向导里选的值优先，否则会被初始
+  // 的 default/true 覆盖，表现就是「选了主题，保存后全丢」。
+  const currentEngineConfig = agentForm.value.engine_config || {};
+  const resolvedTheme = typeof currentEngineConfig.default_markdown_theme === 'string'
+    && currentEngineConfig.default_markdown_theme
+    ? currentEngineConfig.default_markdown_theme
+    : selectedMarkdownTheme.value;
+  const resolvedHideBorder = typeof currentEngineConfig.hide_message_border === 'boolean'
+    ? currentEngineConfig.hide_message_border
+    : hideMessageBorder.value;
   agentForm.value.engine_config = {
     ...(agentForm.value.engine_config || {}),
     dataset_ids: datasetIds,
-    default_markdown_theme: selectedMarkdownTheme.value,
-    hide_message_border: hideMessageBorder.value,
+    default_markdown_theme: resolvedTheme,
+    hide_message_border: resolvedHideBorder,
   };
+  selectedMarkdownTheme.value = resolvedTheme;
+  hideMessageBorder.value = resolvedHideBorder;
   isPersistingNewAgent.value = true;
   try {
     if (!isLocalCreationEngine.value) {
@@ -3587,6 +3633,9 @@ const handleVersionEditorClose = async () => {
     return;
   }
   showVersionModal.value = false;
+  if (isOnboardingFlow.value) {
+    await fetchAgents();
+  }
 };
 
 /**
@@ -3626,6 +3675,52 @@ const syncAgentEngineConfigFromForm = async () => {
   }
 };
 
+/**
+ * 「继续向导」时第 1 步改的是 agentForm，但版本保存接口只提交 versionForm。
+ * 不在这里把元数据同步回 ai_agents，用户改的名字、头像、描述会在保存后全部丢失。
+ */
+const syncOnboardingAgentMeta = async (): Promise<boolean> => {
+  if (!isOnboardingFlow.value || isCreatingAgent.value) return true;
+  const agent = selectedAgent.value;
+  if (!agent) return true;
+  if (!agentForm.value.name || !agentForm.value.display_name) {
+    showToast("请完善智能体标识和名称", "warning");
+    versionConfigStep.value = "agent";
+    return false;
+  }
+  const nameConflict = await ensureAgentNameUsable();
+  if (nameConflict) {
+    showToast(nameConflict, "warning");
+    versionConfigStep.value = "agent";
+    return false;
+  }
+  try {
+    const response = await agentApi.updateAgent(agent.id, {
+      ...agent,
+      name: agentForm.value.name,
+      display_name: agentForm.value.display_name,
+      description: agentForm.value.description,
+      avatar_url: agentForm.value.avatar_url,
+      capabilities: agentForm.value.capabilities,
+      agent_type: agentForm.value.agent_type,
+      sort_order: agentForm.value.sort_order,
+      is_enabled: agentForm.value.is_enabled,
+      is_expert_team_lead: agentForm.value.is_expert_team_lead,
+      team_profile: agentForm.value.team_profile,
+      engine_type: agentForm.value.engine_type,
+      engine_config: agentForm.value.engine_config,
+      is_system: agent.is_system,
+    } as any);
+    selectedAgent.value = response.data;
+    onboardingAgent.value = response.data;
+    return true;
+  } catch (error: any) {
+    showToast(error.response?.data?.detail || "智能体信息保存失败", "error");
+    versionConfigStep.value = "agent";
+    return false;
+  }
+};
+
 const saveVersion = async () => {
   if (isCreatingAgent.value) {
     await persistNewAgentDraft(isLocalCreationEngine.value);
@@ -3644,6 +3739,8 @@ const saveVersion = async () => {
     toolTab.value = 'skills';
     return;
   }
+
+  if (!(await syncOnboardingAgentMeta())) return;
 
   const payload = {
     ...versionForm.value,
@@ -3667,14 +3764,8 @@ const saveVersion = async () => {
     }
     await syncAgentEngineConfigFromForm();
     showVersionModal.value = false;
-    showVersionModal.value = false;
-    // Notify Drawer to update if open?
-    // We can rely on refetching versions in drawer if we pass a signal or just refetch agent list?
-    // Actually the drawer handles its own data loading. We can just force it to reload via a ref or key.
-    // For now, let's just show toast. The drawer needs a refresh method. Or we can just close modal.
-    // Ideally use event bus or provide/inject.
-    // Let's assume we re-open drawer logic or use a ref on the component.
-    // For simplicity:
+    // 卡片上的版本号/就绪状态来自 fetchAgents；只刷新抽屉的话列表会停在旧数据。
+    await fetchAgents();
     if (versionsDrawerRef.value) {
       versionsDrawerRef.value.refresh();
     }
@@ -3709,6 +3800,7 @@ const publishVersionFromEditor = async () => {
       if (!saved) return;
     } else {
       if (!selectedAgent.value) return;
+      if (!(await syncOnboardingAgentMeta())) return;
       const payload = {
         ...versionForm.value,
         tools: normalizeDelegationToolsForSubmit(versionForm.value.tools || []),
@@ -3741,18 +3833,26 @@ const publishVersionFromEditor = async () => {
     await fetchAgents();
     if (versionsDrawerRef.value) versionsDrawerRef.value.refresh();
   } catch (error: any) {
-    const detail = error.response?.data?.detail;
+    const payload = error.response?.data;
+    const readiness = payload?.data;
     const labels: Record<string, string> = {
       published_version: "可发布版本",
+      primary_capability: "主类型能力",
+      dataset_binding: "数据集绑定",
       data_query_tool: "查数工具",
       knowledge_base_tool: "知识库检索工具",
       knowledge_base_binding: "知识库绑定",
       knowledge_base: "知识库",
     };
-    const missing = Array.isArray(detail?.missing)
-      ? detail.missing.map((item: string) => labels[item] || item).join("、")
+    const missing = Array.isArray(readiness?.missing)
+      ? readiness.missing.map((item: string) => labels[item] || item).join("、")
       : "";
-    showToast(missing ? `尚未就绪：缺少${missing}` : (detail?.message || detail || "发布失败"), "error");
+    showToast(
+      readiness?.code === "AGENT_NOT_READY"
+        ? `尚未就绪：缺少${missing}`
+        : (typeof payload?.detail === "string" ? payload.detail : "发布失败"),
+      "error",
+    );
   }
 };
 
@@ -5459,6 +5559,30 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               </span>
             </div>
 
+            <div class="flex items-center justify-between gap-2 text-gray-700">
+              <div class="flex items-center gap-1.5">
+                <span :class="agent.readiness_missing?.includes('primary_capability') ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'">
+                  {{ agent.readiness_missing?.includes('primary_capability') ? '⚠️' : '✓' }}
+                </span>
+                <span class="font-medium text-gray-900">核心能力</span>
+              </div>
+              <span :class="agent.readiness_missing?.includes('primary_capability') ? 'text-amber-700 font-medium' : 'text-emerald-600'">
+                {{ agent.readiness_missing?.includes('primary_capability') ? '缺少主类型能力' : '已就绪' }}
+              </span>
+            </div>
+
+            <div v-if="agent.agent_type === 'CHATBI'" class="flex items-center justify-between gap-2 text-gray-700">
+              <div class="flex items-center gap-1.5">
+                <span :class="agent.readiness_missing?.includes('data_query_tool') ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'">
+                  {{ agent.readiness_missing?.includes('data_query_tool') ? '⚠️' : '✓' }}
+                </span>
+                <span class="font-medium text-gray-900">查数工具</span>
+              </div>
+              <span :class="agent.readiness_missing?.includes('data_query_tool') ? 'text-amber-700 font-medium' : 'text-emerald-600'">
+                {{ agent.readiness_missing?.includes('data_query_tool') ? '缺少查数工具' : '已就绪' }}
+              </span>
+            </div>
+
             <div v-if="agent.agent_type === 'KNOWLEDGE_BASE'" class="flex items-center justify-between gap-2 text-gray-700">
               <div class="flex items-center gap-1.5">
                 <span :class="agent.readiness_missing?.includes('knowledge_base_binding') ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'">
@@ -5471,15 +5595,27 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               </span>
             </div>
 
+            <div v-if="agent.agent_type === 'KNOWLEDGE_BASE'" class="flex items-center justify-between gap-2 text-gray-700">
+              <div class="flex items-center gap-1.5">
+                <span :class="agent.readiness_missing?.includes('knowledge_base_tool') ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'">
+                  {{ agent.readiness_missing?.includes('knowledge_base_tool') ? '⚠️' : '✓' }}
+                </span>
+                <span class="font-medium text-gray-900">知识库检索工具</span>
+              </div>
+              <span :class="agent.readiness_missing?.includes('knowledge_base_tool') ? 'text-amber-700 font-medium' : 'text-emerald-600'">
+                {{ agent.readiness_missing?.includes('knowledge_base_tool') ? '缺少检索工具' : '已就绪' }}
+              </span>
+            </div>
+
             <div class="flex items-center justify-between gap-2 text-gray-700">
               <div class="flex items-center gap-1.5">
-                <span :class="agent.readiness_missing?.includes('published_version_missing') ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'">
-                  {{ agent.readiness_missing?.includes('published_version_missing') ? '⚠️' : '✓' }}
+                <span :class="agent.readiness_missing?.includes('published_version') ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'">
+                  {{ agent.readiness_missing?.includes('published_version') ? '⚠️' : '✓' }}
                 </span>
                 <span class="font-medium text-gray-900">版本发布状态</span>
               </div>
-              <span :class="agent.readiness_missing?.includes('published_version_missing') ? 'text-amber-700 font-medium' : 'text-emerald-600'">
-                {{ agent.readiness_missing?.includes('published_version_missing') ? '尚未发布版本' : '已发布激活' }}
+              <span :class="agent.readiness_missing?.includes('published_version') ? 'text-amber-700 font-medium' : 'text-emerald-600'">
+                {{ agent.readiness_missing?.includes('published_version') ? '尚未发布版本' : '已发布激活' }}
               </span>
             </div>
           </div>
@@ -5871,6 +6007,11 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   <div class="flex flex-col">
                     <span class="text-sm font-bold text-gray-900 group-hover:text-primary transition-colors">
                       {{ agent.display_name }}
+                      <span
+                        v-if="agent.is_expert_team_lead && !isMainAgent(agent)"
+                        class="ml-1.5 inline-flex shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-700"
+                        :title="`专家团主专家：${resolveTeamName(agent)} · ${resolveTeamMembersLabel(agent)}`"
+                      >👥 专家团</span>
                       <button
                         v-if="subAgentBadge(agent)"
                         type="button"

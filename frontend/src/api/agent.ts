@@ -110,7 +110,7 @@ export interface AIAgent {
    * 或该智能体还没有已发布版本（由 readiness 覆盖）。
    */
   tool_issue?: AgentToolIssue | null
-  onboarding_step?: 'VERSION' | 'RESOURCE' | 'COMPLETE'
+  onboarding_step?: 'BASIC' | 'VERSION' | 'RESOURCE' | 'COMPLETE'
   /** 已发布版本是否允许在输入框手动切换模型；null/undefined 表示无发布版或未配置，前端按允许处理 */
   allow_model_switch?: boolean | null
 }
@@ -217,8 +217,9 @@ export const agentApi = {
     axios.post<{
       agent: AIAgent
       version: AIAgentVersion
-      onboarding_step: 'VERSION' | 'RESOURCE' | 'COMPLETE'
+      onboarding_step: 'BASIC' | 'VERSION' | 'RESOURCE' | 'COMPLETE'
       template_fallback: boolean
+      dropped_tool_refs: Array<{ name: string; reason_label?: string }>
     }>('/api/portal/agents/onboarding', data),
   
   // Update agent
@@ -525,7 +526,12 @@ export const agentSystemApi = {
 
   /** 侧边菜单角标：待接受 / 待对方处理 / 我发出的总数。 */
   shareCounts: () =>
-    axios.get<{ received_pending: number; sent_pending: number; sent_total: number }>(
+    axios.get<{
+      received_pending: number
+      received_total: number
+      sent_pending: number
+      sent_total: number
+    }>(
       '/api/portal/agents/shares/counts',
     ),
 
@@ -534,7 +540,7 @@ export const agentSystemApi = {
     axios.get<AgentShareRecord[]>('/api/portal/agents/shares/received', { params }),
 
   /** 接受分享：按快照生成一份属于我的副本，停在向导第一步。 */
-  acceptShare: (shareId: string, data: { name: string; display_name?: string }) =>
+  acceptShare: (shareId: string, data: { name?: string; display_name?: string }) =>
     axios.post<AIAgent>(`/api/portal/agents/shares/${shareId}/accept`, data),
 
   rejectShare: (shareId: string) =>

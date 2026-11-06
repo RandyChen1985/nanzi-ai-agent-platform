@@ -46,7 +46,7 @@ const visible = computed(() => {
   const kw = (props.keyword || '').trim().toLowerCase()
   if (!kw) return items.value
   return items.value.filter((item) =>
-    [item.agent_name, item.agent_display_name, item.recipient_user_name]
+    [item.agent_name, item.agent_display_name, item.recipient_user_name, item.share_message]
       .filter(Boolean)
       .some((field) => String(field).toLowerCase().includes(kw)),
   )

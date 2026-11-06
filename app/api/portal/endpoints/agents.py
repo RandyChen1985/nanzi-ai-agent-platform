@@ -982,9 +982,18 @@ async def submit_version_release_request(
     所有者改完草稿后走这条通道，管理员审核通过即发布该版本，
     不必线下沟通「你去点一下 V3」。
     """
-    request = await AgentSystemPublicationService.submit_release_request(
-        session, agent_id, data.version_id, user, comment=data.comment
-    )
+    from app.services.ai.agent_manager import AgentNotReadyError
+
+    try:
+        request = await AgentSystemPublicationService.submit_release_request(
+            session, agent_id, data.version_id, user, comment=data.comment
+        )
+    except AgentNotReadyError as exc:
+        # 前端按 code 把 missing 翻成中文清单；不要把 ValueError 漏成 500。
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "AGENT_NOT_READY", "missing": list(exc.missing)},
+        ) from exc
     return {"request_id": request.id, "status": request.status}
 
 

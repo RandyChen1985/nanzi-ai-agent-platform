@@ -15,6 +15,7 @@ from app.models.agent import AIAgent, AIAgentVersion
 from app.models.agent_system import AgentSystemEvent, AgentSystemRequest
 from app.models.permission import ResourcePermission
 from app.models.portal_notification import PortalNotification
+from app.services.ai.agent_system_publication_service import AgentSystemPublicationService
 from app.services.auth_service import AuthService
 
 
@@ -349,3 +350,35 @@ async def test_transfer_owner_candidates_requires_management_permission(db_sessi
             headers={"X-API-Key": user_key},
         )
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_release_request_maps_readiness_error_to_409(db_session, monkeypatch):
+    """就绪检查失败要返回结构化 409，前端才能把 missing 翻成中文清单。"""
+    from app.services.ai.agent_manager import AgentNotReadyError
+
+    async def boom(*args, **kwargs):
+        raise AgentNotReadyError(("data_query_tool",))
+
+    monkeypatch.setattr(
+        AgentSystemPublicationService, "submit_release_request", boom
+    )
+    admin_key = await AuthService.generate_api_key(
+        f"sys_ready_{_uid()}", role="admin", db=db_session
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/portal/agents/not-exist/system/release-requests",
+            json={"version_id": "v1"},
+            headers={"X-API-Key": admin_key},
+        )
+
+    assert resp.status_code == 409, resp.text
+    payload = resp.json()
+    # 全局异常处理器把结构化 detail 收进 data，detail 是给旧调用点的业务码字符串。
+    assert payload["detail"] == "AGENT_NOT_READY"
+    assert payload["data"] == {
+        "code": "AGENT_NOT_READY",
+        "missing": ["data_query_tool"],
+    }
