@@ -20,6 +20,27 @@ DOC_NAMES_REDIS_KEY = "kb:citation:doc_names"
 DOC_DATASETS_REDIS_KEY = "kb:citation:doc_datasets"
 SYNC_LOCK_KEY = "kb:citation:stats_sync_lock"
 SYNC_LOCK_TTL_SECONDS = 120
+#: 同步入库成功后，把「这次读到的量」从 Redis 计数里原子扣减。
+#:
+#: 以前这里直接 ``DEL`` 整键：hgetall 与 commit 之间隔着网络往返和事务时间，
+#: 期间用户检索打进来的 hincrby 会跟着 key 一起消失，表现为「明明搜过，报表少一次」。
+#: 扣减后归零的字段一并 HDEL，key 空了才 DEL，这样既不会残留空 hash，也不会吃掉增量。
+_DEDUCT_SYNCED_COUNTS_SCRIPT = """
+local key = KEYS[1]
+for i = 1, #ARGV, 2 do
+  redis.call('HINCRBY', key, ARGV[i], -tonumber(ARGV[i + 1]))
+end
+for _, field in ipairs(redis.call('HKEYS', key)) do
+  if tonumber(redis.call('HGET', key, field)) <= 0 then
+    redis.call('HDEL', key, field)
+  end
+end
+if redis.call('HLEN', key) == 0 then
+  redis.call('DEL', key)
+end
+return 1
+"""
+
 BATCH_UPSERT_CHUNK_SIZE = 500
 MAX_RANGE_DAYS = 366
 
@@ -399,6 +420,9 @@ class KnowledgeMetricsService:
         dataset_names = cls._decode_redis_hash(await redis.hgetall(DATASET_NAMES_REDIS_KEY))
         doc_datasets = cls._decode_redis_hash(await redis.hgetall(DOC_DATASETS_REDIS_KEY))
 
+        # 记录「这次从每个 key 读到多少」，入库成功后按它扣减
+        synced_counts: Dict[str, Dict[str, int]] = {}
+
         for key_bytes in keys:
             key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else key_bytes
             parts = key.split(":")
@@ -413,6 +437,11 @@ class KnowledgeMetricsService:
             hash_data = await redis.hgetall(key)
             if not hash_data:
                 continue
+
+            synced_counts[key] = {
+                (t_id.decode("utf-8") if isinstance(t_id, bytes) else t_id): int(val or 0)
+                for t_id, val in hash_data.items()
+            }
 
             if date_str not in metrics_map:
                 metrics_map[date_str] = {}
@@ -499,9 +528,22 @@ class KnowledgeMetricsService:
                     len(keys),
                 )
 
-                # Delete successfully processed keys from Redis
-                for key_bytes in keys:
-                    await redis.delete(key_bytes)
+                # 扣减已入库的数量（不是删键）：这样 read 与 commit 之间新写入的
+                # hincrby 会留下来，下一轮同步继续累加
+                for key, counts in synced_counts.items():
+                    if not counts:
+                        continue
+                    args: List[Any] = []
+                    for field, count in counts.items():
+                        args.extend([field, str(count)])
+                    try:
+                        await redis.eval(_DEDUCT_SYNCED_COUNTS_SCRIPT, 1, key, *args)
+                    except Exception as deduct_err:  # noqa: BLE001
+                        # 扣减失败不清键：宁可下一轮重复累加，也不能把增量丢掉
+                        logger.warning(
+                            "[KnowledgeMetricsService] 扣减已同步计数失败（保留 key 待重试）: %s",
+                            deduct_err,
+                        )
 
             except Exception as db_err:
                 await session.rollback()

@@ -3925,7 +3925,9 @@ const handleManualRefreshDocs = async () => {
   if (!dsId) return
   refreshingDocs.value = true
   try {
-    await fetchDocumentsForDataset(dsId)
+    // 必须回源：文档全量列表在后端有 60s 缓存，不带 refresh 时点「同步」
+    // 拿到的还是同一份旧快照，用户会以为按钮没反应
+    await fetchDocumentsForDataset(dsId, { refresh: true })
     showToast('已刷新当前文档列表及状态', 'success')
   } catch (err) {
     showToast(extractError(err), 'error')

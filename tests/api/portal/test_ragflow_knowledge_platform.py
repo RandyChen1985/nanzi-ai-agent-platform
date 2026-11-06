@@ -303,9 +303,13 @@ async def test_document_file_requires_dataset_access(monkeypatch):
         raise ragflow.HTTPException(status_code=403, detail="blocked")
 
     class FakeRagFlowClient:
-        async def download_document(self, *args, **kwargs):
+        async def open_document_stream(self, *args, **kwargs):
             calls["client_called"] = True
-            return b"pdf", "test.pdf", "application/pdf"
+
+            async def _gen():
+                yield b"pdf"
+
+            return _gen(), "test.pdf", "application/pdf"
 
     monkeypatch.setattr(ragflow, "require_dataset_access", fake_require_dataset_access)
     monkeypatch.setattr(ragflow, "RagFlowClient", FakeRagFlowClient)
@@ -334,10 +338,14 @@ async def test_document_file_passes_dataset_id_to_ragflow_client(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        async def download_document(self, document_id, *, dataset_id=None):
+        async def open_document_stream(self, document_id, *, dataset_id=None):
             calls["document_id"] = document_id
             calls["dataset_id"] = dataset_id
-            return b"pdf", "test.pdf", "application/pdf"
+
+            async def _gen():
+                yield b"pdf"
+
+            return _gen(), "test.pdf", "application/pdf"
 
     monkeypatch.setattr(ragflow, "require_dataset_access", fake_require_dataset_access)
     monkeypatch.setattr(ragflow, "RagFlowClient", FakeRagFlowClient)
@@ -352,7 +360,11 @@ async def test_document_file_passes_dataset_id_to_ragflow_client(monkeypatch):
     assert calls["dataset_ids"] == ["ds-allowed"]
     assert calls["document_id"] == "doc-1"
     assert calls["dataset_id"] == "ds-allowed"
-    assert response.body == b"pdf"
+    # 改成流式转发后没有 .body，要从 body_iterator 收一遍才能验内容
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk)
+    assert b"".join(chunks) == b"pdf"
 
     calls = {}
 

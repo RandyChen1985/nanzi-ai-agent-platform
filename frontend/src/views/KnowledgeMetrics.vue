@@ -24,7 +24,7 @@
             :aria-busy="loading"
             :disabled="loading"
             class="inline-flex h-9 min-w-[38px] items-center justify-center px-2.5 sm:px-4 border border-gray-200 rounded-xl shadow-sm text-sm font-bold text-gray-700 bg-white hover:bg-gray-50 active:scale-95 transition-all disabled:opacity-50"
-            @click="fetchMetrics({ notify: true })"
+            @click="refreshAllMetrics"
           >
             <svg
               class="h-5 w-5 text-primary"
@@ -71,7 +71,7 @@
       <button
         type="button"
         class="px-3 py-1.5 rounded-lg border border-rose-300 bg-white text-sm font-bold text-rose-700 hover:bg-rose-50 active:scale-95 transition-all"
-        @click="fetchMetrics({ notify: true })"
+        @click="refreshAllMetrics"
       >
         重试
       </button>
@@ -579,6 +579,18 @@ const fetchMetrics = async (options: { notify?: boolean } = {}) => {
   } finally {
     if (seq === requestSeq) loading.value = false
   }
+}
+
+/**
+ * 顶部刷新：三块数据一起刷。
+ *
+ * 只刷 fetchMetrics 会留下「指标动了、检索质量和治理巡检还是旧数」的半截状态，
+ * 而切区间时反而是全刷的——同一个按钮两种行为，用户没法预期。
+ */
+const refreshAllMetrics = () => {
+  fetchMetrics({ notify: true })
+  void loadRetrievalStats()
+  void loadHealthSummary()
 }
 
 /** 区间一变，主报表和检索质量都要重取：两块卡片必须同一个时间口径 */

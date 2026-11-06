@@ -22,6 +22,23 @@ STAT_CARD = "frontend/src/components/knowledge/KnowledgeMetricStatCard.vue"
 EMPTY_STATE = "frontend/src/components/knowledge/KnowledgeMetricsEmptyState.vue"
 
 
+def test_refresh_button_refreshes_every_card():
+    """顶部刷新要刷三块：指标趋势、检索质量、治理巡检。
+
+    只刷 fetchMetrics 时，用户点了刷新，下面两块卡片还是旧数；
+    而切时间区间走的是 onRangeChange，反而是全刷的——同一个页面两种行为。
+    """
+    view = _source(VIEW)
+    assert "const refreshAllMetrics = " in view
+    block = view.split("const refreshAllMetrics = ", 1)[1].split("const onRangeChange", 1)[0]
+    assert "fetchMetrics({ notify: true })" in block
+    assert "loadRetrievalStats()" in block
+    assert "loadHealthSummary()" in block
+    # 按钮不能再直接绑单个请求
+    assert '@click="refreshAllMetrics"' in view
+    assert 'fetchMetrics({ notify: true })"' not in view
+
+
 def test_metrics_view_loads_and_error_states_are_visible_not_only_toasts():
     view = _source(VIEW)
 

@@ -28,6 +28,7 @@ from app.services.ai.ragflow_client import RagFlowClient, clear_dataset_list_cac
 from app.services.knowledge_base_service import KnowledgeBaseMetadataService
 from app.services.knowledge_access_request_service import (
     STATUS_APPROVED,
+    STATUS_CANCELLED,
     STATUS_PENDING,
     STATUS_REJECTED,
     AccessRequestError,
@@ -1916,8 +1917,11 @@ async def update_folder_structure(
     一起回写，两个人同时操作就是 lost update，最坏情况是把公开库改成私有。
     """
     started = time.time()
+    # 归类是「内容层面」的事，与上传/删除文档同级：部门成员能整理本部门的资料，
+    # 却因为管理级门禁连一个文件夹都拖不进去，这条限制比它要保护的东西更碍事。
+    # 元素权限仍要 edit——可见范围、归属这些治理字段还是管理级才动得了。
     await require_element_permission(user, db, "element:knowledge:edit")
-    await require_dataset_write_access(user, db, [dataset_id])
+    await require_dataset_content_write_access(user, db, [dataset_id])
 
     record = await KnowledgeBaseMetadataService(db).update_extra_config_key(
         dataset_id,
@@ -1964,8 +1968,11 @@ async def delete_ragflow_datasets(
         # 获取当前 RAGFlow 侧的所有有效数据集，以防删除已不存在的知识库时报错
         try:
             # 必须拿全集：漏掉的库会被判成「RAGFlow 侧已不存在」而跳过删除，
-            # 于是只删了本地元数据、RAGFlow 里留下不再受管的孤儿库
-            ragflow_datasets = await client.list_datasets(page=1, page_size=1000)
+            # 于是只删了本地元数据、RAGFlow 里留下不再受管的孤儿库。
+            # 以前这里写的是 list_datasets(page_size=1000)——注释要全集，代码却只要 10 页，
+            # 数据集超过 1000 个之后排在后面的库就再也删不掉了。
+            # refresh=True 是刻意的：刚建完就删的库不能在 60s 缓存里缺席。
+            ragflow_datasets = await client.list_all_datasets_cached(refresh=True)
             existing_ids = {str(ds.get("id")) for ds in ragflow_datasets if ds.get("id")}
         except Exception:
             # 列表获取失败时的安全降级兜底：假设所有传入 ID 都在 RAGFlow 侧存在
@@ -1987,6 +1994,28 @@ async def delete_ragflow_datasets(
         )
         if affected_user_ids:
             await PermissionService(db).invalidate_cached_permissions_for_users(affected_user_ids)
+
+        # 收藏与「待审批」申请都挂在 dataset_id 上，库没了不清理就是脏数据：
+        # 收藏表留下无效 id；待审批列表则永远挂着一条记录——管理员点「通过」会被
+        # _ensure_resource_available 拒掉（库已不存在），只能手动驳回。
+        from app.models.knowledge import KnowledgeAccessRequest, KnowledgeBaseFavorite
+        from sqlalchemy import update as sa_update
+
+        await db.execute(
+            delete(KnowledgeBaseFavorite).where(KnowledgeBaseFavorite.dataset_id.in_(payload.ids))
+        )
+        await db.execute(
+            sa_update(KnowledgeAccessRequest)
+            .where(
+                KnowledgeAccessRequest.dataset_id.in_(payload.ids),
+                KnowledgeAccessRequest.status == STATUS_PENDING,
+            )
+            .values(
+                status=STATUS_CANCELLED,
+                review_comment="知识库已删除，申请自动作废",
+                reviewed_at=datetime.datetime.now(),
+            )
+        )
 
         await metadata_service.mark_deleted(payload.ids, user_name=user.get("user_name"))
         clear_dataset_list_cache()
@@ -2013,6 +2042,23 @@ async def delete_ragflow_datasets(
 DOC_STATUS_KEYS = ("parsed", "parsing", "unparsed", "failed")
 #: 未归入任何虚拟文件夹的「伪文件夹」路径
 UNCLASSIFIED_FOLDER = "__unclassified__"
+
+
+def _as_text(value: Any) -> str:
+    """把大模型返回的字段收敛成字符串。
+
+    prompt 里要求 tags 是逗号分隔的字符串，但模型偶尔会输出 JSON 数组
+    （``"tags": ["ERP", "手册"]``）——直接 ``.strip()`` 会 AttributeError，
+    用户看到的是 500「AI 分析失败: 'list' object has no attribute 'strip'」。
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple, set)):
+        parts = [str(item).strip() for item in value]
+        return ",".join(part for part in parts if part)
+    return str(value).strip()
 
 
 def _doc_status_of(doc: Any) -> str:
@@ -2061,6 +2107,49 @@ def _split_folder_path(path: Any) -> List[str]:
 
 def _normalize_folder_path(path: Any) -> str:
     return "/".join(_split_folder_path(path))
+
+
+async def _prune_folder_structure(
+    db: AsyncSession,
+    dataset_id: str,
+    removed_ids: List[str],
+    user_name: Optional[str] = None,
+) -> None:
+    """把已删除的文档从虚拟文件夹里摘掉。
+
+    不清理的话 ``extra_config.folder_structure`` 只会增不会减：列表查询有
+    「按真实 docId 取交集」的保护，界面上看不出来，但这份 JSON 会一直膨胀，
+    前端每次读写的都是几十个失效 id。
+    """
+    if not removed_ids:
+        return
+    try:
+        service = KnowledgeBaseMetadataService(db)
+        record = await service.get_by_dataset_id(dataset_id)
+        extra_config = getattr(record, "extra_config", None) if record else None
+        structure = extra_config.get("folder_structure") if isinstance(extra_config, dict) else None
+        if not isinstance(structure, dict) or not structure:
+            return
+
+        wanted = {str(item) for item in removed_ids}
+        pruned: Dict[str, List[str]] = {}
+        changed = False
+        for path, doc_ids in structure.items():
+            kept = [str(doc_id) for doc_id in (doc_ids or []) if str(doc_id) not in wanted]
+            if len(kept) != len(doc_ids or []):
+                changed = True
+            pruned[path] = kept
+        if not changed:
+            return
+
+        await service.update_extra_config_key(
+            dataset_id,
+            key="folder_structure",
+            value=pruned,
+            user_name=user_name,
+        )
+    except Exception as exc:  # noqa: BLE001 - 清理是旁路，不能挡住删除本身
+        logger.warning("[Knowledge] 删除文档后清理文件夹映射失败: %s", exc)
 
 
 def _build_folder_nodes(structure: Any) -> Dict[str, List[str]]:
@@ -2808,6 +2897,7 @@ async def delete_dataset_documents(
         await client.delete_documents(dataset_id, payload.ids)
         for name in names_by_id.values():
             image_service.delete_source_for_markdown(dataset_id, name)
+        await _prune_folder_structure(db, dataset_id, payload.ids, user.get("user_name"))
         await record_knowledge_audit(request, user, "documents:delete", 200, {
             "action": "delete_document",
             "dataset_id": dataset_id,
@@ -3227,10 +3317,11 @@ async def get_ragflow_metrics_summary(
 
 
 async def _build_ragflow_document_file_response(document_id: str, *, dataset_id: str | None = None):
-    from fastapi.responses import Response
+    from fastapi.responses import StreamingResponse
     client = RagFlowClient(config_prefix="knowledge_ragflow")
     try:
-        content, filename, content_type = await client.download_document(
+        # 流式转发：预览大文件时不再把整份字节读进内存再吐出去
+        chunks, filename, content_type = await client.open_document_stream(
             document_id,
             dataset_id=dataset_id,
         )
@@ -3248,7 +3339,7 @@ async def _build_ragflow_document_file_response(document_id: str, *, dataset_id:
         headers = {
             "Content-Disposition": f'inline; filename="{encoded_filename}"; filename*=UTF-8\'\'{encoded_filename}'
         }
-        return Response(content=content, media_type=content_type, headers=headers)
+        return StreamingResponse(chunks, media_type=content_type, headers=headers)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch document file: {str(e)}")
 
@@ -3541,6 +3632,9 @@ async def analyze_dataset_metadata(
     """
     基于知识库里的文档文件名，调用大模型生成描述说明、标签和备注信息。
     """
+    # 与其它编辑类端点保持一致：能写这个库，还要有「编辑知识库」的元素权限。
+    # 只有数据级门禁时，一个没有编辑权限的角色照样能调这个接口拿 AI 生成的治理建议。
+    await require_element_permission(user, db, "element:knowledge:edit")
     await require_dataset_write_access(user, db, [dataset_id])
 
     client = RagFlowClient(config_prefix="knowledge_ragflow")
@@ -3610,9 +3704,9 @@ async def analyze_dataset_metadata(
             return {
                 "code": 0,
                 "data": {
-                    "description": parsed_data.get("description", "").strip(),
-                    "tags": parsed_data.get("tags", "").strip(),
-                    "notes": parsed_data.get("notes", "").strip()
+                    "description": _as_text(parsed_data.get("description")),
+                    "tags": _as_text(parsed_data.get("tags")),
+                    "notes": _as_text(parsed_data.get("notes"))
                 }
             }
         else:

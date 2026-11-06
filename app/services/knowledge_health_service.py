@@ -109,7 +109,10 @@ class KnowledgeHealthService:
             if not is_missing:
                 async with semaphore:
                     try:
-                        docs = await client.list_documents(dataset_id, page_size=100)
+                        # 必须拿全量：以前固定 page_size=100，超过 100 篇的库
+                        # 快照里文档数最多只记 100，排在后面的解析失败文档也扫不出来（漏报）。
+                        # 走 60s 缓存版，避免巡检把整个引擎的文档列表重复拉一遍。
+                        docs = await client.list_all_documents_cached(dataset_id)
                         stats = summarize_documents(docs)
                     except Exception as exc:
                         logger.debug("[Knowledge] 巡检读取 %s 文档失败: %s", dataset_id, exc)

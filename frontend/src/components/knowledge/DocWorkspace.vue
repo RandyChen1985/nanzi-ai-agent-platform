@@ -159,7 +159,7 @@
       </button>
 
       <!-- 文件夹自身的管理：树行没了，操作挂到「当前打开的文件夹」上 -->
-      <span v-if="folder && folder !== UNCLASSIFIED && canManage" class="flex items-center gap-0.5">
+      <span v-if="folder && folder !== UNCLASSIFIED && canArrangeDocs" class="flex items-center gap-0.5">
         <button
           type="button"
           class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
@@ -193,7 +193,7 @@
       </span>
 
       <button
-        v-if="canManage && !creating"
+        v-if="canArrangeDocs && !creating"
         type="button"
         class="rounded-full border border-dashed border-gray-300 px-2.5 py-1 text-[11px] text-gray-400 transition-colors hover:border-primary hover:text-primary"
         @click="startCreate(folder === UNCLASSIFIED ? '' : folder)"
@@ -308,7 +308,7 @@
         <div class="sticky top-0 z-10 grid items-center gap-2 border-b border-gray-100 bg-white px-4 py-2 text-[11px] font-medium text-gray-400" :class="GRID_COLS">
           <span class="flex items-center justify-center">
             <input
-              v-if="canManage"
+              v-if="canSelectDocs"
               type="checkbox"
               class="h-3 w-3 cursor-pointer rounded border-gray-300 text-primary focus:ring-primary"
               :checked="allVisibleSelected"
@@ -333,14 +333,14 @@
             'cursor-pointer hover:bg-blue-50/40',
             activeId === doc.id ? 'bg-blue-50/60' : '',
           ]"
-          :draggable="canManage"
+          :draggable="canArrangeDocs"
           @click="emit('open-doc', doc)"
           @dragstart="onDragStart(doc)"
         >
           <!-- 勾选 -->
           <span class="flex items-center justify-center" @click.stop>
             <input
-              v-if="canManage"
+              v-if="canSelectDocs"
               type="checkbox"
               class="h-3 w-3 cursor-pointer rounded border-gray-300 text-primary focus:ring-primary"
               :checked="selectedIds.includes(doc.id)"
@@ -392,7 +392,7 @@
               </svg>
             </button>
 
-            <div v-if="canManage" class="relative">
+            <div v-if="canArrangeDocs" class="relative">
               <button
                 type="button"
                 class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-primary"
@@ -995,6 +995,23 @@ function commitRename() {
   if (name.includes('/')) return
   emit('rename-folder', { path: draft.path, name })
 }
+
+/**
+ * 能不能整理目录：新建 / 重命名 / 删除文件夹、把文档拖进文件夹。
+ *
+ * 后端 ``PUT /folder-structure`` 已放宽到内容级写权限，前端若还按管理级卡着，
+ * 部门成员照样一个文件夹都建不了、也拖不动——前后端口径必须一致。
+ */
+const canArrangeDocs = computed(() => props.canManage || props.canDeleteDoc)
+
+/**
+ * 勾选框的可见条件必须跟后端的写权限对齐。
+ *
+ * 后端「批量解析」「批量删除」只要求元素权限（element:knowledge:parse_document /
+ * delete_document）+ 内容级写权限，不要求是库的创建人。这里原先写死 canManage，
+ * 结果部门协作成员看得到按钮、却选不中任何文档，批量操作等于摆设。
+ */
+const canSelectDocs = computed(() => props.canManage || props.canDeleteDoc || props.canParse)
 
 /**
  * 当前文件夹被删掉（或改名）后回到根。

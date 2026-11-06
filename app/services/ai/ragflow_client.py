@@ -1,4 +1,5 @@
 import asyncio
+from collections import OrderedDict
 import json
 import logging
 import time
@@ -40,8 +41,23 @@ _datasets_cache_locks: Dict[str, asyncio.Lock] = {}
 # 就重打一遍 RAGFlow（250 个文档 = 3 个请求，翻页时会被放大成几十次）。
 # 键是 ``base_url|dataset_id``：不同知识库、不同引擎地址互不干扰。
 DOCUMENT_LIST_TTL = 60.0
-_documents_cache: Dict[str, "tuple[float, List[Dict[str, Any]]]"] = {}
+#: 缓存条目上限。每个库一份全量文档列表（大库几千条），只靠 TTL 惰性过期时，
+#: 一个小时内被翻过的库会一直占着内存。超限按 LRU 挤掉最久没访问的。
+DOCUMENTS_CACHE_MAX_ENTRIES = 200
+_documents_cache: "OrderedDict[str, tuple[float, List[Dict[str, Any]]]]" = OrderedDict()
 _documents_cache_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _remember_documents(key: str, items: List[Dict[str, Any]]) -> None:
+    """写入缓存并维持 LRU 上限。
+
+    ``OrderedDict`` 保证「最近读过的排到最后」，超限时从头部淘汰。
+    用普通 dict 的话 popitem 淘汰的是最早**写入**的，热门库反而可能被挤掉。
+    """
+    _documents_cache[key] = (time.monotonic(), [dict(item) for item in items])
+    _documents_cache.move_to_end(key)
+    while len(_documents_cache) > DOCUMENTS_CACHE_MAX_ENTRIES:
+        _documents_cache.popitem(last=False)
 
 
 def clear_dataset_list_cache() -> None:
@@ -817,6 +833,7 @@ class RagFlowClient:
         if not refresh:
             cached = _documents_cache.get(key)
             if cached and time.monotonic() - cached[0] < DOCUMENT_LIST_TTL:
+                _documents_cache.move_to_end(key)
                 return [dict(item) for item in cached[1]]
 
         lock = _documents_cache_locks.setdefault(key, asyncio.Lock())
@@ -824,9 +841,10 @@ class RagFlowClient:
             if not refresh:
                 cached = _documents_cache.get(key)
                 if cached and time.monotonic() - cached[0] < DOCUMENT_LIST_TTL:
+                    _documents_cache.move_to_end(key)
                     return [dict(item) for item in cached[1]]
             items = await self._list_all_documents(dataset_id)
-            _documents_cache[key] = (time.monotonic(), [dict(item) for item in items])
+            _remember_documents(key, items)
             # 浅拷贝：调用方（端点会做过滤/排序）改到 dict 也不该污染缓存
             return [dict(item) for item in items]
 
@@ -1376,6 +1394,82 @@ class RagFlowClient:
                 f"使用默认值 {DEFAULT_RETRIEVE_TIMEOUT:g}s: {type(e).__name__}: {e!r}"
             )
         return DEFAULT_RETRIEVE_TIMEOUT
+
+    async def open_document_stream(
+        self,
+        document_id: str,
+        *,
+        dataset_id: str | None = None,
+    ):
+        """流式下载文档，返回 ``(chunks, filename, content_type)``。
+
+        预览/下载以前是 ``resp.content`` 整块读进内存：上传上限 256MB，
+        几个人同时预览大文件就够把进程内存推上去。改成边读边发之后，
+        响应体多大都不再等于内存占用。
+
+        错误必须在返回前判掉（JSON 体说明是业务错误），否则浏览器会「下载」
+        到一个写着报错的 JSON 文件。流中途断开只能让浏览器拿到截断文件——
+        这是流式传输的固有代价，比整块 OOM 划算。
+        """
+        await self._ensure_config()
+        if dataset_id:
+            url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}"
+        else:
+            url = f"{self.base_url}/api/v1/document/get/{document_id}"
+
+        client = httpx.AsyncClient(timeout=60.0)
+        try:
+            request = client.build_request("GET", url, headers=self._get_headers())
+            response = await client.send(request, stream=True)
+        except Exception:
+            await client.aclose()
+            raise
+
+        try:
+            if response.status_code != 200:
+                body = (await response.aread()).decode("utf-8", "replace")
+                hint = ""
+                if not dataset_id and response.status_code == 404:
+                    hint = (
+                        "（RAGFlow 1.0 已移除 /api/v1/document/get，"
+                        "请提供 dataset_id 走数据集作用域下载接口）"
+                    )
+                raise Exception(
+                    f"RAGFlow document download failed ({response.status_code}): {body}{hint}"
+                )
+
+            content_type = response.headers.get("content-type", "application/octet-stream")
+            # 数据集下载正常返回原始字节；返回 JSON 说明是业务错误
+            if "application/json" in content_type.lower():
+                body = (await response.aread()).decode("utf-8", "replace")
+                try:
+                    payload = json.loads(body)
+                except Exception:
+                    payload = {}
+                message = payload.get("message") if isinstance(payload, dict) else None
+                raise Exception(f"RAGFlow document download failed: {message or body[:200]}")
+
+            content_disposition = response.headers.get("content-disposition", "")
+            filename = "document"
+            if "filename=" in content_disposition:
+                import urllib.parse
+
+                raw_fn = content_disposition.split("filename=")[-1].strip('"')
+                filename = urllib.parse.unquote(raw_fn)
+        except Exception:
+            await response.aclose()
+            await client.aclose()
+            raise
+
+        async def _iterate():
+            try:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            finally:
+                await response.aclose()
+                await client.aclose()
+
+        return _iterate(), filename, content_type
 
     async def download_document(
         self,
