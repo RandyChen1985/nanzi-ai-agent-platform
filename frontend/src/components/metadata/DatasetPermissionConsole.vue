@@ -22,6 +22,16 @@ interface TableMeta {
   id: number
   physical_name: string
   term?: string | null
+  /** 该表的列清单（后端 /permissions 一并返回，字段级配置用） */
+  columns?: string[]
+}
+
+type ColumnMode = 'include' | 'exclude'
+
+/** 单张表的字段级约束：include = 只保留名单内；exclude = 剔除名单内 */
+interface ColumnRule {
+  mode: ColumnMode
+  names: string[]
 }
 
 interface Grant {
@@ -32,6 +42,7 @@ interface Grant {
   sub?: string
   mode: ScopeMode
   tables: number[]
+  columns: Record<number, ColumnRule>
   rowPolicy: RowPolicy
   rowCondition?: string | null
   expireAt?: string | null
@@ -47,7 +58,7 @@ const props = defineProps<{
   /** 数据集自身的行级配置（读 dataset.row_filter_config） */
   rowFilterConfig?: Record<string, any>
   /** 从外部直达某个子视图（数据行策略），值来自路由的 permView */
-  initialView?: 'subjects' | 'tables' | 'rows'
+  initialView?: 'subjects' | 'tables' | 'columns' | 'rows'
 }>()
 
 const emit = defineEmits<{ (e: 'changed'): void }>()
@@ -61,9 +72,12 @@ const grants = ref<Grant[]>([])
 const tables = ref<TableMeta[]>([])
 const candidates = ref<{ roles: any[]; users: any[] }>({ roles: [], users: [] })
 
-const resolveInitialView = (): 'subjects' | 'tables' | 'rows' =>
-  props.initialView === 'tables' || props.initialView === 'rows' ? props.initialView : 'subjects'
-const view = ref<'subjects' | 'tables' | 'rows'>(resolveInitialView())
+type ViewKey = 'subjects' | 'tables' | 'columns' | 'rows'
+const resolveInitialView = (): ViewKey =>
+  props.initialView === 'tables' || props.initialView === 'columns' || props.initialView === 'rows'
+    ? props.initialView
+    : 'subjects'
+const view = ref<ViewKey>(resolveInitialView())
 
 const allMembersGrant = computed(() => grants.value.find((g) => g.kind === 'all') || null)
 const roleGrants = computed(() => grants.value.filter((g) => g.kind === 'role'))
@@ -144,6 +158,15 @@ const load = async () => {
             : '所有能进入该数据集的成员',
       mode: raw?.scope?.mode === 'list' ? 'list' : 'all',
       tables: Array.isArray(raw?.scope?.tables) ? raw.scope.tables.map((n: any) => Number(n)) : [],
+      columns: Object.fromEntries(
+        Object.entries(raw?.scope?.columns || {}).map(([tid, rule]: [string, any]) => [
+          Number(tid),
+          {
+            mode: rule?.mode === 'exclude' ? 'exclude' : 'include',
+            names: Array.isArray(rule?.names) ? rule.names.map((n: any) => String(n)) : [],
+          },
+        ]),
+      ) as Record<number, ColumnRule>,
       rowPolicy: (['inherit', 'none', 'custom'] as RowPolicy[]).includes(raw?.row_policy)
         ? (raw.row_policy as RowPolicy)
         : 'inherit',
@@ -205,17 +228,92 @@ const draft = reactive({
   userIds: [] as number[],
   scopeMode: 'all' as ScopeMode,
   tableIds: [] as number[],
+  columns: {} as Record<number, ColumnRule>,
   rowPolicy: 'inherit' as RowPolicy,
   rowCondition: '',
   expiryMode: 'never' as 'never' | 'date',
   expireAt: '',
 })
 
+// ---------------------------------------------------------------------------
+// 字段级（列级）权限
+// ---------------------------------------------------------------------------
+const colDetailTableId = ref<number | null>(null)
+const colMode = ref<ColumnMode>('include')
+
+/** 抽屉里「当前生效的表」：全部表 = 数据集全部；指定表 = 勾选的那些 */
+const draftActiveTables = computed<TableMeta[]>(() =>
+  draft.scopeMode === 'all'
+    ? tables.value
+    : tables.value.filter((t) => draft.tableIds.includes(t.id)),
+)
+
+const colRuleOf = (tableId: number) => draft.columns[tableId] || null
+
+const colModeText = (tableId: number) => {
+  const rule = colRuleOf(tableId)
+  if (!rule) return '全部字段'
+  return rule.mode === 'include' ? `限定 ${rule.names.length} 个` : `排除 ${rule.names.length} 个`
+}
+
+const colDetailTable = computed(
+  () => tables.value.find((t) => t.id === colDetailTableId.value) || null,
+)
+
+/** 打开某张表的字段面板：沿用已有规则的模式，新配置默认「限定」（新列 fail-closed） */
+const openColDetail = (tableId: number) => {
+  colDetailTableId.value = tableId
+  colMode.value = draft.columns[tableId]?.mode || 'include'
+}
+
+const setColMode = (mode: ColumnMode) => {
+  if (colDetailTableId.value === null) return
+  colMode.value = mode
+  const rule = draft.columns[colDetailTableId.value]
+  if (rule) draft.columns[colDetailTableId.value] = { mode, names: [...rule.names] }
+}
+
+const toggleCol = (name: string) => {
+  const tableId = colDetailTableId.value
+  if (tableId === null) return
+  const rule = draft.columns[tableId]
+  const names = rule ? [...rule.names] : []
+  const idx = names.indexOf(name)
+  if (idx >= 0) names.splice(idx, 1)
+  else names.push(name)
+  if (!names.length) delete draft.columns[tableId]
+  else draft.columns[tableId] = { mode: rule?.mode || colMode.value, names }
+}
+
+const clearColRule = (tableId: number) => {
+  delete draft.columns[tableId]
+  if (colDetailTableId.value === tableId) colDetailTableId.value = null
+}
+
+/** 切换表范围后，把不在范围内的字段配置一并丢掉，避免存下悬空规则 */
+const pruneColRules = () => {
+  const alive = new Set(draftActiveTables.value.map((t) => t.id))
+  Object.keys(draft.columns).forEach((key) => {
+    if (!alive.has(Number(key))) delete draft.columns[key]
+  })
+  if (colDetailTableId.value !== null && !alive.has(colDetailTableId.value)) {
+    colDetailTableId.value = null
+  }
+}
+
+// 表范围一变，字段配置的可选表就变了：立刻清掉不在范围内的，避免存下悬空规则
+watch(
+  () => [draft.scopeMode, draft.tableIds.join(',')],
+  () => pruneColRules(),
+)
+
 const resetDraft = () => {
   drawerStep.value = 0
   editingKey.value = null
   subjectSearch.value = ''
   tableSearch.value = ''
+  colDetailTableId.value = null
+  draft.columns = {}
   draft.kind = 'role'
   draft.roleIds = []
   draft.userIds = []
@@ -240,6 +338,7 @@ const openEdit = (grant: Grant) => {
   if (grant.kind === 'user' && grant.id != null) draft.userIds = [grant.id]
   draft.scopeMode = grant.mode
   draft.tableIds = [...grant.tables]
+  draft.columns = JSON.parse(JSON.stringify(grant.columns || {}))
   draft.rowPolicy = grant.rowPolicy
   draft.rowCondition = grant.rowCondition || ''
   draft.expiryMode = grant.expireAt ? 'date' : 'never'
@@ -323,12 +422,53 @@ const draftSubjects = computed(() => {
 const canNext = computed(() => {
   if (drawerStep.value === 0) return draftSubjects.value.length > 0
   if (drawerStep.value === 1) return draft.scopeMode === 'all' || draft.tableIds.length > 0
-  if (drawerStep.value === 2) {
+  // 字段范围是纯可选项：不配就是全部字段，永远可以「下一步」
+  if (drawerStep.value === 2) return true
+  if (drawerStep.value === 3) {
     if (draft.rowPolicy !== 'custom') return true
     return draft.rowCondition.trim().length > 0
   }
-  if (drawerStep.value === 3) return draft.expiryMode === 'never' || !!draft.expireAt
+  if (drawerStep.value === 4) return draft.expiryMode === 'never' || !!draft.expireAt
   return true
+})
+
+// 「到期 = 这条授权消失」，判定时整行被跳过（dataset_scope_service 的 _is_expired）。
+// 于是到期后真正生效的，是这个用户在**没有这条授权**时的范围 —— 如果那更宽，
+// 管理员设「到期时间」以为在收回权限，实际是在给自己挖坑。
+// 这里在配置阶段就把这件事说出来，不阻断保存，只让结果可预期。
+const expiryFallback = computed(() => {
+  if (draft.expiryMode !== 'date' || !draft.expireAt) return null
+  // 角色/全员本来就是这个数据集最宽的层，只有「按人收窄」才会出现回落变宽的错觉。
+  if (!draft.userIds.length) return null
+
+  const liveBase = allMembersGrant.value?.status === 'expired' ? null : allMembersGrant.value
+  const roles = roleGrants.value.filter((g) => g.status !== 'expired')
+  if (!liveBase && !roles.length) return null
+
+  // 全员基线对**所有人**生效 → 回落目标确定；角色授权要求该用户属于那个角色 →
+  // 前端不知道成员关系，只能提示「可能」。
+  let certain: string | null = null
+  if (liveBase && draft.scopeMode === 'list') {
+    if (liveBase.mode === 'all') certain = '全员授权（全部表）'
+    else if (liveBase.tables.length > draft.tableIds.length) {
+      certain = `全员授权（${liveBase.tables.length} 张表）`
+    }
+  }
+
+  const fallbackPolicy = liveBase?.rowPolicy ?? roles[0]?.rowPolicy ?? 'inherit'
+  // 表范围变宽、行级条件失效，是两类独立风险，任一命中都要提示。
+  const tableWider = !!certain
+  const rowWider = draft.rowPolicy === 'custom' && fallbackPolicy !== 'custom'
+  if (!tableWider && !rowWider) return null
+
+  return {
+    certain,
+    definite: !!liveBase,
+    fallback: liveBase ? '全员授权' : '角色授权',
+    tableCount: draft.tableIds.length,
+    tableWider,
+    rowWider,
+  }
 })
 
 const draftSummary = computed(() => {
@@ -341,17 +481,28 @@ const draftSummary = computed(() => {
         ? '不做行级过滤'
         : '自定义行级条件'
   const expiryText = draft.expiryMode === 'never' ? '长期有效' : `到期 ${draft.expireAt}`
-  return `${draftSubjects.value.length} 个主体 · ${scopeText} · ${policyText} · ${expiryText}`
+  const colCount = Object.keys(draft.columns || {}).length
+  const colText = colCount ? ` · ${colCount} 张表收窄字段` : ''
+  return `${draftSubjects.value.length} 个主体 · ${scopeText}${colText} · ${policyText} · ${expiryText}`
 })
 
 const submitDrawer = async () => {
   if (!canNext.value) return
   saving.value = true
   try {
+    // 字段级：只提交「表范围里真正生效」的规则；空对象不传，后端按「全部字段」处理
+    const aliveTables = new Set(draftActiveTables.value.map((t) => t.id))
+    const columns: Record<number, ColumnRule> = {}
+    Object.entries(draft.columns).forEach(([tid, rule]) => {
+      const tableId = Number(tid)
+      if (!aliveTables.has(tableId) || !rule.names.length) return
+      columns[tableId] = { mode: rule.mode, names: [...rule.names] }
+    })
     const base = {
       scope: {
         mode: draft.scopeMode,
         tables: draft.scopeMode === 'list' ? [...draft.tableIds] : [],
+        columns,
       },
       row_policy: draft.rowPolicy,
       row_condition: draft.rowPolicy === 'custom' ? draft.rowCondition.trim() : null,
@@ -553,9 +704,46 @@ const userExceptionCount = (userId?: number) =>
 const rolePolicyCount = (roleCode?: string) =>
   roleCode ? extractConditions(rowFilterCfg.value.role_policies?.[roleCode]).length : 0
 
+// ---- 字段范围视图 ----
+/** 该授权条目在这张表上能看到多少列；null = 表本身不可见 */
+const visibleColCount = (grant: Grant, table: TableMeta): number | null => {
+  if (grant.mode === 'list' && !grant.tables.includes(table.id)) return null
+  const total = (table.columns || []).length
+  const rule = grant.columns[table.id]
+  if (!rule) return total
+  return rule.mode === 'include'
+    ? Math.min(rule.names.length, total)
+    : Math.max(0, total - rule.names.length)
+}
+
+const colNarrowedTables = computed(() =>
+  tables.value.filter((t) =>
+    grants.value.some((g) => {
+      if (g.status === 'expired') return false
+      const seen = visibleColCount(g, t)
+      return seen !== null && seen < (t.columns || []).length
+    }),
+  ),
+)
+
+const onlyColNarrowed = ref(false)
+
+const columnMatrixRows = computed(() =>
+  (onlyColNarrowed.value ? colNarrowedTables.value : tables.value).map((t) => {
+    const total = (t.columns || []).length
+    const cells = grants.value.map((g) => ({
+      grant: g,
+      visible: g.status === 'expired' ? null : visibleColCount(g, t),
+      total,
+    }))
+    return { table: t, cells, narrowedBy: cells.filter((c) => c.visible !== null && c.visible < total).length }
+  }),
+)
+
 const allViewTabs = [
   { key: 'subjects', label: '按主体' },
   { key: 'tables', label: '按表' },
+  { key: 'columns', label: '字段范围' },
   { key: 'rows', label: '数据行策略' },
 ] as const
 
@@ -944,6 +1132,62 @@ const subjectBadgeClass = (kind: SubjectKind) =>
     </div>
 
     <!-- 视图 3：数据行策略 -->
+    <!-- 字段范围：行 = 表，列 = 授权主体，单元格 = 可见字段 / 总字段 -->
+    <div v-else-if="view === 'columns'" class="space-y-3">
+      <div class="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
+        <label class="flex cursor-pointer items-center gap-1.5 text-[11px] text-slate-600">
+          <input v-model="onlyColNarrowed" type="checkbox" class="accent-emerald-600">
+          只看做了字段收窄的表（{{ colNarrowedTables.length }}）
+        </label>
+        <span class="ml-auto text-[10.5px] text-slate-500">
+          同一张表，不同主体可见的字段可以不同；<b>·</b> = 该主体看不到这张表
+        </span>
+      </div>
+
+      <div v-if="!grants.length" class="rounded-xl border border-dashed border-gray-200 py-8 text-center text-xs text-gray-400">
+        还没有任何授权条目
+      </div>
+      <div v-else class="overflow-x-auto rounded-xl border border-gray-200">
+        <table class="w-full text-[11px]">
+          <thead class="bg-gray-50/80">
+            <tr>
+              <th class="whitespace-nowrap px-3 py-2 text-left font-semibold text-gray-600">物理表</th>
+              <th v-for="g in grants" :key="g.key" class="whitespace-nowrap px-3 py-2 text-center font-semibold text-gray-600">
+                {{ g.label }}
+                <span v-if="g.status === 'expired'" class="block text-[9.5px] font-normal text-red-500">已过期</span>
+              </th>
+              <th class="whitespace-nowrap px-3 py-2 text-center font-semibold text-gray-600">被收窄主体</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in columnMatrixRows" :key="row.table.id" class="border-t border-gray-100">
+              <td class="px-3 py-1.5">
+                <span class="font-mono text-gray-700">{{ row.table.physical_name }}</span>
+                <span class="ml-1.5 text-[10px] text-gray-400">{{ row.table.term || '' }}</span>
+              </td>
+              <td v-for="cell in row.cells" :key="cell.grant.key" class="px-3 py-1.5 text-center">
+                <span v-if="cell.visible === null" class="text-gray-300">·</span>
+                <span
+                  v-else
+                  class="inline-flex min-w-[42px] justify-center rounded-md border px-1.5 py-0.5 font-mono tabular-nums"
+                  :class="cell.visible < cell.total
+                    ? 'border-amber-300 bg-amber-50 font-semibold text-amber-700'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-700'"
+                >{{ cell.visible }}/{{ cell.total }}</span>
+              </td>
+              <td class="px-3 py-1.5 text-center text-gray-500">{{ row.narrowedBy || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-[10.5px] leading-relaxed text-slate-600">
+        <b>合并规则</b>：字段级取<b>交集</b> —— 用户级 / 角色级 / 全员任何一层排除了某个字段，这个字段就不可见。
+        方向与表级相反是有意的：表级「全员基线不可收窄」保证不能凭空少给权限；字段级反过来，
+        全员排除掉的敏感字段不能被个人配置重新放开，而个人对某张表的收窄也必须生效。
+      </p>
+    </div>
+
     <div v-else-if="view === 'rows'" class="space-y-3">
       <div class="rounded-xl border border-gray-100 bg-white p-3.5">
         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -1056,7 +1300,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
           <!-- 步骤条 -->
           <div class="flex items-center gap-1 border-b border-gray-100 px-5 py-2.5">
             <div
-              v-for="(label, idx) in ['主体', '表范围', '行级', '有效期']"
+              v-for="(label, idx) in ['主体', '表范围', '字段', '行级', '有效期']"
               :key="label"
               class="flex items-center gap-1.5"
             >
@@ -1070,7 +1314,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
                 @click="drawerStep = idx"
               >{{ idx + 1 }}</button>
               <span class="text-[11px]" :class="drawerStep === idx ? 'font-semibold text-gray-800' : 'text-gray-400'">{{ label }}</span>
-              <span v-if="idx < 3" class="mx-0.5 text-gray-300">›</span>
+              <span v-if="idx < 4" class="mx-0.5 text-gray-300">›</span>
             </div>
           </div>
 
@@ -1196,8 +1440,87 @@ const subjectBadgeClass = (kind: SubjectKind) =>
               </template>
             </div>
 
-            <!-- Step 3 行级 -->
+            <!-- Step 3 字段范围 -->
             <div v-else-if="drawerStep === 2" class="space-y-2">
+              <p class="rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+                作用在表范围之上，逐表设置。<b>没配置的表 = 全部字段</b>，只有你要收窄的表才需要动。
+                字段收窄是 fail-closed 的：被排除的字段不会出现在 AI 可见的表结构里，查询里引用了会被拒绝。
+              </p>
+
+              <div class="max-h-56 overflow-y-auto rounded-xl border border-gray-200">
+                <div
+                  v-for="t in draftActiveTables"
+                  :key="t.id"
+                  class="flex items-center gap-2 border-b border-gray-50 px-3 py-1.5 text-[11px] last:border-b-0"
+                >
+                  <span class="font-mono" :class="colRuleOf(t.id) ? 'font-semibold text-amber-700' : 'text-gray-700'">{{ t.physical_name }}</span>
+                  <span class="truncate text-[10px] text-gray-400">{{ t.term || '' }}</span>
+                  <span class="ml-auto" :class="colRuleOf(t.id) ? 'font-semibold text-amber-700' : 'text-gray-400'">{{ colModeText(t.id) }}</span>
+                  <button class="text-[11px] font-medium text-gray-500 hover:text-gray-800" @click="openColDetail(t.id)">
+                    {{ colRuleOf(t.id) ? '调整' : '设置' }}
+                  </button>
+                  <button
+                    v-if="colRuleOf(t.id)"
+                    class="text-[11px] text-gray-400 hover:text-gray-600"
+                    @click="clearColRule(t.id)"
+                  >还原</button>
+                </div>
+                <p v-if="!draftActiveTables.length" class="px-3 py-3 text-center text-[11px] text-gray-400">
+                  {{ draft.scopeMode === 'list' ? '请先在上一步勾选要授权的表' : '该数据集暂无可用表' }}
+                </p>
+              </div>
+
+              <!-- 字段勾选面板 -->
+              <div v-if="colDetailTable" class="rounded-xl border border-gray-200 p-3">
+                <div class="mb-2 flex flex-wrap items-center gap-2">
+                  <span class="text-xs font-semibold text-gray-800">{{ colDetailTable.physical_name }}</span>
+                  <span class="text-[10px] text-gray-500">
+                    <template v-if="colRuleOf(colDetailTable.id)">
+                      {{ colRuleOf(colDetailTable.id)!.mode === 'include' ? '限定' : '排除' }}
+                      {{ colRuleOf(colDetailTable.id)!.names.length }} 个
+                    </template>
+                    <template v-else>全部字段 · 勾选任意字段开始收窄</template>
+                  </span>
+                  <div class="ml-auto flex items-center gap-1">
+                    <button
+                      class="rounded-md px-2 py-1 text-[10.5px] font-medium transition-colors"
+                      :class="colMode === 'include' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600'"
+                      @click="setColMode('include')"
+                    >限定字段</button>
+                    <button
+                      class="rounded-md px-2 py-1 text-[10.5px] font-medium transition-colors"
+                      :class="colMode === 'exclude' ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-600'"
+                      @click="setColMode('exclude')"
+                    >排除字段</button>
+                    <button class="ml-1 text-[11px] text-gray-400 hover:text-gray-600" @click="colDetailTableId = null">收起</button>
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-1.5">
+                  <button
+                    v-for="name in colDetailTable.columns || []"
+                    :key="name"
+                    class="rounded-full border px-2 py-0.5 font-mono text-[10.5px] transition-colors"
+                    :class="
+                      colRuleOf(colDetailTable.id)?.names.includes(name)
+                        ? colMode === 'exclude'
+                          ? 'border-amber-300 bg-amber-50 text-amber-700 line-through'
+                          : 'border-emerald-300 bg-emerald-50 font-semibold text-emerald-700'
+                        : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                    "
+                    @click="toggleCol(name)"
+                  >{{ name }}</button>
+                </div>
+                <p v-if="colMode === 'exclude'" class="mt-2 text-[10px] text-amber-700">
+                  勾选的字段<b>不可见</b>。全员/角色层排除掉的敏感字段，个人配置不能重新放开。
+                </p>
+                <p v-else class="mt-2 text-[10px] text-gray-500">
+                  勾选的字段<b>可见</b>，其余全部隐藏。以后新增的列默认不可见（fail-closed）。
+                </p>
+              </div>
+            </div>
+
+            <!-- Step 4 行级 -->
+            <div v-else-if="drawerStep === 3" class="space-y-2">
               <button
                 v-for="opt in rowPolicyOptions"
                 :key="opt.key"
@@ -1226,7 +1549,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
               </p>
             </div>
 
-            <!-- Step 4 有效期 -->
+            <!-- Step 5 有效期 -->
             <div v-else class="space-y-2">
               <button
                 class="w-full rounded-xl border px-3 py-2 text-left transition-all"
@@ -1250,6 +1573,35 @@ const subjectBadgeClass = (kind: SubjectKind) =>
                 type="date"
                 class="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs"
               />
+              <div
+                v-if="expiryFallback"
+                class="flex items-start gap-1.5 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-[11px] leading-relaxed text-amber-800"
+              >
+                <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M4.515 19h14.97a1 1 0 00.864-1.503l-7.485-12.97a1 1 0 00-1.728 0L3.651 17.497A1 1 0 004.515 19z" />
+                </svg>
+                <div>
+                  <p class="font-semibold">到期后这条授权整行失效，权限会变大</p>
+                  <p class="mt-0.5">
+                    <template v-if="expiryFallback.definite">
+                      届时改由<strong>{{ expiryFallback.fallback }}</strong>接管 ——
+                      <template v-if="expiryFallback.tableWider">
+                        现在是 {{ expiryFallback.tableCount }} 张表，到期后是<strong>{{ expiryFallback.certain.replace('全员授权', '') }}</strong>。
+                      </template>
+                      <template v-if="expiryFallback.rowWider">
+                        现在配的自定义行级条件也会失效，回落到接管方的行级策略。
+                      </template>
+                    </template>
+                    <template v-else>
+                      若该用户还属于本数据集上已授权的角色，届时将改由<strong>角色授权</strong>接管，
+                      实际权限可能比现在更大。请确认角色授权是否也该一并收窄。
+                    </template>
+                  </p>
+                  <p class="mt-1 text-[10px] text-amber-700/80">
+                    若要「到期即彻底收回」，请选「长期有效」后手动移除，或同时收窄上述授权。
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1262,7 +1614,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
             <div class="flex items-center gap-2">
               <button class="rounded-xl px-3 py-2 text-xs font-semibold text-gray-500 hover:text-gray-700" @click="closeDrawer">取消</button>
               <button
-                v-if="drawerStep < 3"
+                v-if="drawerStep < 4"
                 class="rounded-xl bg-gray-900 px-4 py-2 text-xs font-semibold text-white transition-all hover:bg-gray-800 disabled:opacity-40"
                 :disabled="!canNext"
                 @click="drawerStep += 1"

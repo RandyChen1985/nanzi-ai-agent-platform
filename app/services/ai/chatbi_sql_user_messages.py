@@ -155,6 +155,24 @@ def _map_permission_denied(text: str) -> SqlUserErrorPresentation:
             ),
         )
 
+    # 字段级拒绝要排在表级之前：文案是「无权访问表 'X' 的字段 'y'」，
+    # 表级正则会先命中并说成「没有这张表的权限」—— 用户明明能看这张表，只是看不到某几列。
+    column_match = re.search(r"无权访问表\s*'([^']+)'\s*的字段\s*'([^']+)'", text)
+    if column_match:
+        table_name, column_name = column_match.group(1), column_match.group(2)
+        more = re.search(r"等\s*(\d+)\s*个", text)
+        suffix = f" 等 {more.group(1)} 个字段" if more else ""
+        return SqlUserErrorPresentation(
+            title="无权访问部分字段",
+            content=(
+                f"⚠️ 您可以查询数据表「{table_name}」，但没有字段「{column_name}」{suffix}的访问权限，"
+                "本次查数已终止。\n\n"
+                "建议：\n"
+                "1. 换一个不涉及该字段的问法（例如只看汇总或其它列）；\n"
+                "2. 联系管理员在「权限管理」里把该字段加入您的授权范围。"
+            ),
+        )
+
     table_match = re.search(r"无权访问表\s*'([^']+)'", text)
     if table_match:
         table_name = table_match.group(1)
@@ -165,6 +183,33 @@ def _map_permission_denied(text: str) -> SqlUserErrorPresentation:
                 "建议：\n"
                 "1. 确认是否选对了数据集；\n"
                 "2. 联系管理员申请该表的访问权限后重试。"
+            ),
+        )
+
+    # 字段级：无权字段出现在 WHERE / GROUP BY / ORDER BY 里。删掉会改变口径，
+    # 所以只能拒绝 —— 文案要说明「为什么这次不能像少一列那样直接省略」。
+    if "筛选/分组/排序条件里" in text or "出现在筛选" in text:
+        missing = re.findall(r"'([^']+)'", text)
+        names = "、".join(f"「{n}」" for n in missing[:3]) or "部分字段"
+        return SqlUserErrorPresentation(
+            title="查询条件用到了无权字段",
+            content=(
+                f"⚠️ 本次查询的筛选/分组/排序条件里用到了你没有权限的字段{names}。\n"
+                "这类条件没法像返回列那样直接省略（删掉会改变统计口径），因此本次查数已终止。\n\n"
+                "建议：换用你有权限的字段作为筛选条件，或联系管理员开通该字段。"
+            ),
+        )
+
+    # 字段级：用户要的列全都没权限
+    if "没有任何可返回的字段" in text or "都不在你的授权范围内" in text:
+        missing = re.findall(r"'([^']+)'", text)
+        names = "、".join(f"「{n}」" for n in missing[:5])
+        return SqlUserErrorPresentation(
+            title="无权访问请求的字段",
+            content=(
+                f"⚠️ 你请求的字段{(' ' + names) if names else ''}都不在你的数据权限范围内，"
+                "本次查数没有可返回的内容。\n\n"
+                "建议：换一个不涉及这些字段的问法，或联系管理员在「权限管理」里放开。"
             ),
         )
 

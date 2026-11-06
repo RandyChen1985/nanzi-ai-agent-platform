@@ -12,6 +12,7 @@ import MetadataFlowGuideBanner from '../components/metadata/MetadataFlowGuideBan
 import HeroSilhouette from '../components/common/HeroSilhouette.vue'
 import MetadataDriftAlertsDrawer from '../components/metadata/MetadataDriftAlertsDrawer.vue'
 import MetadataCronInspectionModal from '../components/metadata/MetadataCronInspectionModal.vue'
+import CopyDatasetWizard from '../components/metadata/CopyDatasetWizard.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
@@ -39,6 +40,9 @@ const loading = ref(true)
 const showCreateModal = ref(false)
 const showCreateMenu = ref(false)
 const showImportModal = ref(false)
+// 复制新建：向导里自己拉详情，这里只记住源数据集
+const showCopyWizard = ref(false)
+const copySourceDataset = ref<Dataset | null>(null)
 const showSpecModal = ref(false)
 const showDeleteModal = ref(false)
 const showSyncConfirmModal = ref(false)
@@ -1023,6 +1027,18 @@ const toggleStatus = async (ds: any) => {
   }
 }
 
+// 复制新建：把源数据集交给向导，向导内部拉详情、做草稿，最后一次性提交
+const openCopyWizard = (ds: Dataset) => {
+  copySourceDataset.value = ds
+  showCopyWizard.value = true
+}
+
+const handleDatasetCopied = (ds: Dataset) => {
+  // 只刷新列表 + 提示，不关闭向导：成功页要留着让用户看结果、点「查看变更日志」
+  showToast(`已复制新建数据集「${ds.display_name || ds.name}」`, 'success')
+  void fetchDatasets()
+}
+
 // Smart Import logic migrated to SmartImportWizard
 
 const addTag = (target: any) => {
@@ -1962,6 +1978,15 @@ onMounted(async () => {
                 <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                 编辑数据集
               </button>
+              <button
+                v-if="hasPermission('element:metadata:edit')"
+                type="button"
+                @click="closeCardMenus(); openCopyWizard(ds)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 cursor-pointer"
+              >
+                <svg class="h-4 w-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V5a2 2 0 012-2h6a2 2 0 012 2v10a2 2 0 01-2 2h-2M8 9h6a2 2 0 012 2v10a2 2 0 01-2 2H8a2 2 0 01-2-2V11a2 2 0 012-2z"/></svg>
+                复制新建
+              </button>
               <template v-if="hasPermission('element:metadata:delete')">
                 <div class="my-1 border-t border-gray-100"></div>
                 <button
@@ -2223,6 +2248,15 @@ onMounted(async () => {
           >
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
             编辑数据集
+          </button>
+          <button
+            v-if="hasPermission('element:metadata:edit')"
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50"
+            @click="withRowMenu((d) => openCopyWizard(d))"
+          >
+            <svg class="h-4 w-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V5a2 2 0 012-2h6a2 2 0 012 2v10a2 2 0 01-2 2h-2M8 9h6a2 2 0 012 2v10a2 2 0 01-2 2H8a2 2 0 01-2-2V11a2 2 0 012-2z" /></svg>
+            复制新建
           </button>
           <template v-if="hasPermission('element:metadata:delete')">
             <div class="my-1 border-t border-gray-100"></div>
@@ -2922,6 +2956,14 @@ onMounted(async () => {
       :show="showImportModal" 
       @close="showImportModal = false"
       @saved="fetchDatasets"
+    />
+
+    <!-- 复制新建向导：改 ID / 名称（实时查重）、逐张核对表与字段、关系、指标，最后一步才落库 -->
+    <CopyDatasetWizard
+      :show="showCopyWizard"
+      :dataset="copySourceDataset"
+      @close="showCopyWizard = false"
+      @created="handleDatasetCopied"
     />
 
     <!-- Edit Dataset Modal -->

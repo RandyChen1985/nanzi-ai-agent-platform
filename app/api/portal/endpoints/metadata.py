@@ -22,6 +22,7 @@ from app.schemas.metadata import (
     CronInspectionConfigResponse, CronInspectionConfigRequest,
     AnalyzeColumnRequest, AnalyzeColumnResponse, AnalyzeUpdateCommentResponse,
     RecommendColumnSemanticRequest, RecommendColumnSemanticResponse,
+    CloneDatasetRequest,
 )
 from app.models.user import User
 from app.models.permission import Role
@@ -415,7 +416,7 @@ async def get_dataset_permission_summaries(
             item["roles"] += 1
         elif subject == "user":
             item["users"] += 1
-        mode, _table_ids = _parse_scope(info.get("scope"))
+        mode, _table_ids, _col_rules = _parse_scope(info.get("scope"))
         if mode == "list":
             item["narrowed"] += 1
         policy = _parse_row_policy(info.get("row_policy"))
@@ -476,6 +477,70 @@ async def create_dataset(
 
 
 @router.get(
+    "/datasets/check-unique",
+    dependencies=[Depends(require_permission("element", "element:metadata:edit"))],
+)
+async def check_dataset_unique(
+    name: str = Query("", description="元数据 ID"),
+    display_name: str = Query("", description="显示名称"),
+    exclude_id: Optional[int] = Query(None, description="编辑场景排除自己；复制新建不需要"),
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """复制/新建数据集时的实时查重（只读预检）。
+
+    ``name`` 与 ``display_name`` 都是全平台唯一：前端的输入防抖直接打这里，
+    不必等到提交才拿到 400。判定与 ``clone`` / ``create`` 共用同一套查询口径。
+    """
+    from app.services.dataset_clone_service import DatasetCloneService
+
+    data = await DatasetCloneService.check_unique(
+        conn, name=name, display_name=display_name, exclude_id=exclude_id
+    )
+    return {"code": 0, "data": data}
+
+
+@router.post(
+    "/datasets/{source_id}/clone",
+    dependencies=[Depends(require_permission("element", "element:metadata:edit"))],
+)
+async def clone_dataset(
+    source_id: int,
+    payload: CloneDatasetRequest,
+    conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(get_current_user),
+):
+    """按向导草稿复制新建一个数据集（单事务）。
+
+    body 里的表/关系/指标是用户确认过的**最终内容**，不是「复制哪些 id」：
+    中间步骤允许改术语、删表、删关系，服务端以草稿为准。
+    """
+    from app.schemas.metadata import DatasetResponse
+    from app.services.dataset_clone_service import CloneValidationError, DatasetCloneService
+
+    try:
+        result = await DatasetCloneService.clone_dataset(
+            conn,
+            source_id,
+            payload,
+            user_id=int(user.get("user_id") or 0),
+            user_name=user.get("user_name"),
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="源数据集不存在")
+    except CloneValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    dataset = result["dataset"]
+    return {
+        "code": 200,
+        "data": {
+            "dataset": DatasetResponse.model_validate(dataset).model_dump(),
+            "summary": result["summary"],
+        },
+    }
+
+
+@router.get(
     "/datasets/drift-summary",
     response_model=DriftSummaryResponse,
     dependencies=[Depends(require_permission("menu", "menu:metadata"))],
@@ -506,9 +571,18 @@ async def get_dataset(
     return ds
 
 
+class ColumnRulePayload(BaseModel):
+    """单张表的字段级约束。``include`` = 只保留名单内；``exclude`` = 剔除名单内。"""
+
+    mode: Literal["include", "exclude"]
+    names: List[str] = Field(default_factory=list)
+
+
 class PermissionScopePayload(BaseModel):
     mode: Literal["all", "list"] = "all"
     tables: List[int] = Field(default_factory=list)
+    # table_id -> 字段规则；没写的表 = 全部字段（历史行为）
+    columns: Dict[int, ColumnRulePayload] = Field(default_factory=dict)
 
 
 class PermissionSubjectPayload(BaseModel):
@@ -542,10 +616,17 @@ class DeletePermissionRequest(BaseModel):
 def _serialize_grant_extended(info: dict[str, Any]) -> dict[str, Any]:
     from app.services.dataset_scope_service import _is_expired, _parse_row_policy, _parse_scope
 
-    mode, table_ids = _parse_scope(info.get("scope"))
+    mode, table_ids, column_rules = _parse_scope(info.get("scope"))
     expire_at = info.get("expire_at")
     return {
-        "scope": {"mode": mode, "tables": sorted(int(item) for item in table_ids)},
+        "scope": {
+            "mode": mode,
+            "tables": sorted(int(item) for item in table_ids),
+            "columns": {
+                int(table_id): {"mode": rule.mode, "names": sorted(rule.names)}
+                for table_id, rule in column_rules.items()
+            },
+        },
         "row_policy": _parse_row_policy(info.get("row_policy")),
         "row_condition": str(info.get("row_condition") or "").strip() or None,
         "expire_at": expire_at.isoformat() if hasattr(expire_at, "isoformat") else expire_at,
@@ -631,7 +712,18 @@ async def get_metadata_dataset_permissions(
         dataset = await MetadataService.get_dataset_by_id(conn, dataset_id, is_admin=True)
         if dataset:
             tables = [
-                {"id": int(t.id), "physical_name": t.physical_name, "term": t.term}
+                {
+                    "id": int(t.id),
+                    "physical_name": t.physical_name,
+                    "term": t.term,
+                    # 字段级配置需要列清单；敏感列名本身不出圈——能进这个接口的
+                    # 都是有 element:metadata:edit 的管理员。
+                    "columns": [
+                        str(col.physical_name)
+                        for col in (getattr(t, "columns", None) or [])
+                        if str(getattr(col, "physical_name", "") or "").strip()
+                    ],
+                }
                 for t in sorted(dataset.tables, key=lambda item: item.physical_name)
                 if getattr(t, "status", 1) == 1
             ]
@@ -750,6 +842,16 @@ async def add_metadata_dataset_permissions(
     valid_table_ids = {
         int(table.id) for table in dataset.tables if getattr(table, "status", 1) == 1
     }
+    # 字段级校验用：table_id -> 该表实际列名（lower）
+    table_columns: dict[int, set[str]] = {
+        int(table.id): {
+            str(col.physical_name or "").strip().lower()
+            for col in (getattr(table, "columns", None) or [])
+            if str(col.physical_name or "").strip()
+        }
+        for table in dataset.tables
+        if getattr(table, "status", 1) == 1
+    }
 
     subjects: list[PermissionSubjectPayload] = list(payload.subjects or [])
     if not subjects:
@@ -781,6 +883,37 @@ async def add_metadata_dataset_permissions(
                     status_code=400,
                     detail="「指定表」至少要勾选一张表；如需全部表请选择「全部表」",
                 )
+
+        # 字段级：表必须在数据集内；「指定表」模式下还得在本次白名单里，
+        # 否则会存下一条「对看不到的表做字段限制」的悬空配置（不报错但永远不生效）。
+        column_scope = subject.scope.columns or {}
+        if column_scope:
+            unknown_tables = {int(tid) for tid in column_scope} - valid_table_ids
+            if unknown_tables:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"表 {sorted(unknown_tables)} 不属于该数据集，或已停用",
+                )
+            if subject.scope.mode == "list":
+                outside = {int(tid) for tid in column_scope} - {int(item) for item in subject.scope.tables}
+                if outside:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"表 {sorted(outside)} 不在本次勾选的表范围内，无法单独限制其字段",
+                    )
+            for table_id, rule in column_scope.items():
+                names = {str(name or "").strip().lower() for name in rule.names if str(name or "").strip()}
+                if rule.mode == "include" and not names:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"表 {int(table_id)} 的「限定字段」至少要勾选一个字段",
+                    )
+                unknown_columns = names - table_columns.get(int(table_id), set())
+                if unknown_columns:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"表 {int(table_id)} 中不存在字段 {sorted(unknown_columns)}",
+                    )
         if subject.row_policy == "custom":
             if subject.target_type == "all":
                 raise HTTPException(
@@ -848,6 +981,17 @@ async def add_metadata_dataset_permissions(
             scope={
                 "mode": subject.scope.mode,
                 "tables": [int(item) for item in subject.scope.tables] if subject.scope.mode == "list" else [],
+                # 字段级：只落「模式合法且名单非空」的规则；exclude 空名单等价于没配
+                "columns": {
+                    str(int(table_id)): {
+                        "mode": rule.mode,
+                        "names": sorted(
+                            {str(name or "").strip().lower() for name in rule.names if str(name or "").strip()}
+                        ),
+                    }
+                    for table_id, rule in (subject.scope.columns or {}).items()
+                    if rule.mode == "include" or rule.names
+                },
             },
             row_policy=subject.row_policy,
             row_condition=subject.row_condition,
@@ -949,6 +1093,40 @@ async def delete_metadata_dataset_permission(
     return {"code": 0, "message": "权限配置已成功移除"}
 
 
+def _reject_unusable_row_filter_config(payload) -> None:
+    """启用行级策略却没配任何规则 → 直接拒绝保存。
+
+    运行期的默认兜底是 ``1=0``（fail-closed）：开了数据权限但三层规则全空，
+    结果是**所有用户都查不到数据**。这个组合以前被当成「不过滤」，现在按文档口径
+    变成「全部拒绝」——保存时不拦，管理员会以为功能坏了。
+    """
+    if not isinstance(payload, dict):
+        return
+    if payload.get("enable_data_perm") is not True:
+        return
+    config = payload.get("row_filter_config")
+    if not isinstance(config, dict):
+        return  # 只改 enable_data_perm、不带 config 时由运行期按 1=0 兜底
+
+    def _has_rules(value) -> bool:
+        if isinstance(value, list):
+            return any(str((item or {}).get("condition") or "").strip() for item in value if isinstance(item, dict))
+        if isinstance(value, dict):
+            return any(_has_rules(item) for item in value.values())
+        return False
+
+    if _has_rules(config):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "启用数据权限时必须至少配置一条行级规则（默认 / 角色 / 用户任一层）。"
+            "否则默认兜底是 1=0，所有用户都查不到任何数据。"
+            "如果确实要放开所有人，请关闭「启用数据权限」，或改用授权行的 row_policy=none。"
+        ),
+    )
+
+
 @router.put("/datasets/{dataset_id}", response_model=DatasetResponse, dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
 async def update_dataset(
     dataset_id: int, 
@@ -957,6 +1135,7 @@ async def update_dataset(
     user: dict = Depends(get_current_user)
 ):
     """更新数据集 (管理员或具有编辑权限的用户)"""
+    _reject_unusable_row_filter_config(dataset.model_dump(exclude_unset=True))
     updated = await MetadataService.update_dataset(
         conn, 
         dataset_id, 

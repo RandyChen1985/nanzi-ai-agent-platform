@@ -222,7 +222,7 @@ async def build_dataset_permission_overview(
         subject = _subject_of(row_user_id, row_role_id, info.get("subject_type"))
         if subject is None:
             continue
-        scope_mode, table_ids = _parse_scope(info.get("scope"))
+        scope_mode, table_ids, _col_rules = _parse_scope(info.get("scope"))
         expire_at = info.get("expire_at")
         parsed.append(
             {

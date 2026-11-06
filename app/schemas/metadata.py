@@ -329,3 +329,32 @@ class RecommendColumnSemanticResponse(BaseModel):
     sibling_terms: List[str] = Field(default_factory=list)
 
 
+
+
+# --- Dataset Clone Schemas ---
+#
+# 「复制新建」提交的是用户在向导里改完的**整份草稿**，不是「复制哪些 id」：
+# 中间步骤允许改术语/描述、删表、删关系、改指标，保存时以草稿为准。
+# 关系用物理表名做引用（表 id 会重新生成），join_condition 原样保留。
+
+class CloneRelationshipPayload(BaseModel):
+    source_table: str
+    target_table: str
+    join_condition: str = ""
+    join_type: str = "LEFT"
+    description: Optional[str] = None
+
+
+class CloneDatasetRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    display_name: Optional[str] = Field(default=None, max_length=100)
+    description: Optional[str] = None
+    tags: Optional[List[str]] = []
+    data_source: Optional[str] = Field(default=None, max_length=50)
+    tables: List[TableCreate] = []
+    relationships: List[CloneRelationshipPayload] = []
+    metrics: List[MetricSchema] = []
+    # 行级策略属于「数据集自身配置」，默认不继承（绑了具体部门/人，复制易越权）
+    copy_permissions: bool = False
+    # detail: 数据集 1 条 + 每张表/关系/指标各 1 条；summary: 只写 1 条汇总
+    log_mode: Literal["detail", "summary"] = "detail"

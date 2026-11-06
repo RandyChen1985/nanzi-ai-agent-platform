@@ -575,7 +575,7 @@ class PermissionService:
         for resource_id, subject_type, scope, row_policy, row_condition, expire_at in rows:
             if scope is None and not row_policy and row_condition is None and expire_at is None:
                 continue
-            mode, tables = _parse_scope(scope)
+            mode, tables, _col_rules = _parse_scope(scope)
             snapshot[str(resource_id).strip()] = {
                 "subject_type": (str(subject_type).strip() or None) if subject_type is not None else None,
                 "scope": {"mode": mode, "tables": sorted(tables)},

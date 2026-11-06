@@ -1011,6 +1011,18 @@
                 </button>
                                                                 <AgentHandoffNotice v-if="msg.agentHandoff" :handoff="msg.agentHandoff" />
                                                                 <div
+                                                                  v-if="msg.omittedColumns?.length"
+                                                                  class="mb-2 inline-flex max-w-full items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50/80 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
+                                                                >
+                                                                  <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                                  </svg>
+                                                                  <span>
+                                                                    以下字段你没有查看权限，结果中已省略：
+                                                                    <b class="font-mono">{{ msg.omittedColumns.join('、') }}</b>
+                                                                  </span>
+                                                                </div>
+                                                                <div
                                                                   v-if="msg.metadataScopeNotice"
                                                                   class="mb-2 inline-flex max-w-full items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50/80 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
                                                                 >
@@ -3149,6 +3161,8 @@ interface Message {
   toolResultData?: Record<string, Array<{ block_id?: string; media_type?: string; data?: unknown; url?: string | null }>>;
   datasetNavigation?: DatasetNavigationPayload;
   permissionNotice?: PermissionNotice;
+  /** 字段级权限：SELECT 里被剔除的字段（后端 permission_notice.omitted_columns）。 */
+  omittedColumns?: string[];
   /** 用户手选的数据集被智能体绑定覆盖时的提示（后端 meta 事件下发）。 */
   metadataScopeNotice?: {
     mounted: string[];
@@ -12152,7 +12166,12 @@ const applyPermissionStreamEvent = (
     if (data.prompt_tokens !== undefined) msg.prompt_tokens = data.prompt_tokens;
     if (data.completion_tokens !== undefined) msg.completion_tokens = data.completion_tokens;
     if (data.has_data_output) msg.hasDataOutput = true;
-    if (data.permission_notice) msg.permissionNotice = data.permission_notice;
+    if (data.permission_notice) {
+      msg.permissionNotice = data.permission_notice;
+      if (Array.isArray(data.permission_notice?.omitted_columns)) {
+        msg.omittedColumns = data.permission_notice.omitted_columns;
+      }
+    }
     if (data.metadata_scope_notice) msg.metadataScopeNotice = data.metadata_scope_notice;
   } else if (data.type === "error") {
     if (msg.pendingPermission) msg.pendingPermission.status = "error";

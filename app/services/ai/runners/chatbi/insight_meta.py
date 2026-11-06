@@ -320,7 +320,14 @@ def build_chatbi_insight_meta(
     notice = parsed.get("permission_notice") if isinstance(parsed, dict) else None
     safe_notice = {
         key: notice.get(key)
-        for key in ("row_filter_applied", "dataset_name", "rule_count", "message")
+        for key in (
+            "row_filter_applied",
+            "dataset_name",
+            "rule_count",
+            "message",
+            # 字段级权限：列被剔掉时告诉前端哪些字段没返回，避免用户以为查询漏了数据
+            "omitted_columns",
+        )
         if isinstance(notice, dict) and notice.get(key) is not None
     }
     raw_sql = str(state.last_successful_sql_args.get("sql") or state.last_successful_sql_args.get("query") or "").strip()

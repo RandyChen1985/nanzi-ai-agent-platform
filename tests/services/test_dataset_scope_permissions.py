@@ -50,33 +50,33 @@ def _item(
 class TestParseScope:
     def test_missing_scope_is_all_for_legacy_rows(self):
         # 历史授权行没有 scope 列（或值为 NULL）：语义必须是「数据集内全部表」。
-        assert _parse_scope(None) == (MODE_ALL, frozenset())
+        assert _parse_scope(None)[:2] == (MODE_ALL, frozenset())
 
     def test_json_string_from_mysql(self):
-        assert _parse_scope('{"mode":"list","tables":[3,5]}') == (MODE_LIST, frozenset({3, 5}))
+        assert _parse_scope('{"mode":"list","tables":[3,5]}')[:2] == (MODE_LIST, frozenset({3, 5}))
 
     def test_dict_from_postgres(self):
-        assert _parse_scope({"mode": "list", "tables": [7]}) == (MODE_LIST, frozenset({7}))
+        assert _parse_scope({"mode": "list", "tables": [7]})[:2] == (MODE_LIST, frozenset({7}))
 
     def test_string_table_ids_are_cast_to_int(self):
-        assert _parse_scope({"mode": "list", "tables": ["9", "11", "oops"]}) == (
+        assert _parse_scope({"mode": "list", "tables": ["9", "11", "oops"]})[:2] == (
             MODE_LIST,
             frozenset({9, 11}),
         )
 
     def test_empty_list_is_fail_closed(self):
         # 空白名单不能退化成 all，否则「一张表都不给」会变成「全部给」。
-        assert _parse_scope({"mode": "list", "tables": []}) == (MODE_LIST, frozenset())
+        assert _parse_scope({"mode": "list", "tables": []})[:2] == (MODE_LIST, frozenset())
 
     def test_unknown_mode_falls_back_to_all(self):
-        assert _parse_scope({"mode": "whatever", "tables": [1]}) == (MODE_ALL, frozenset())
+        assert _parse_scope({"mode": "whatever", "tables": [1]})[:2] == (MODE_ALL, frozenset())
 
     def test_malformed_json_falls_back_to_all(self):
-        assert _parse_scope("{not json") == (MODE_ALL, frozenset())
+        assert _parse_scope("{not json")[:2] == (MODE_ALL, frozenset())
 
     def test_bytes_payload(self):
         payload = json.dumps({"mode": "list", "tables": [2]}).encode()
-        assert _parse_scope(payload) == (MODE_LIST, frozenset({2}))
+        assert _parse_scope(payload)[:2] == (MODE_LIST, frozenset({2}))
 
 
 class TestParseRowPolicy:

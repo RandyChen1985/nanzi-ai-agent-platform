@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="prototype-kind" content="交互原型">
-<title>数据集权限管理 · 数据集/表/行三层门禁重构原型</title>
+<title>数据集权限管理 · 数据集/表/字段/行四层门禁重构原型</title>
 <style>
   :root{
     --bg:#f2f3f5; --panel:#fff; --line:#e8eaed; --line2:#dfe3e8;
@@ -67,7 +67,7 @@
   .body{padding:16px 20px 20px;}
 
   /* ---------- 三层摘要 ---------- */
-  .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;}
+  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;}
   @media (max-width:860px){.summary{grid-template-columns:1fr;}}
   .s-card{border:1px solid var(--line);border-radius:11px;padding:11px 13px;position:relative;
     background:linear-gradient(180deg,#fff, #fbfcfd);}
@@ -90,6 +90,8 @@
   .seg button{border:0;background:transparent;color:var(--text2);font:inherit;font-size:11.5px;font-weight:500;
     padding:6px 12px;border-radius:7px;cursor:pointer;}
   .seg button[aria-selected="true"]{background:#fff;color:var(--text);font-weight:700;box-shadow:0 1px 2px rgba(16,24,40,.08);}
+  .seg.sm{padding:2px;border-radius:8px;}
+  .seg.sm button{font-size:10.5px;padding:3px 8px;border-radius:6px;}
   .viewbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
   .viewbar .right{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text3);font-size:11px;}
 
@@ -157,6 +159,18 @@
   .cell.no{background:#f6f7f9;color:#c3c8ce;}
   .cell.yes:hover{border-color:var(--emerald);}
   .cell.no:hover{border-color:#c3c8ce;color:var(--text2);}
+  /* 字段视图：单元格里放 "9/16" 这类计数，需要更宽的胶囊 */
+  .cell.wide{width:auto;min-width:38px;padding:0 6px;font-size:10.5px;font-variant-numeric:tabular-nums;}
+  /* 字段勾选 chips */
+  .colchip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--line);
+    border-radius:999px;font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:var(--text2);
+    background:#fff;cursor:pointer;user-select:none;transition:all .12s;}
+  .colchip:hover{border-color:#c9ced4;}
+  .colchip.on{background:var(--emerald-soft);border-color:var(--emerald-line);color:var(--emerald);font-weight:600;}
+  /* 排除模式下「勾选 = 不可见」，用琥珀 + 删除线，别和「允许」撞色 */
+  .colchip.ex{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber);font-weight:600;text-decoration:line-through;}
+  .colchip .ck{font-size:9px;width:9px;display:inline-block;}
+  .cell.warn{background:var(--amber-soft,#fff7e6);color:var(--amber,#b4690e);border-color:#f5d9a8;}
   .matrix .count{font-variant-numeric:tabular-nums;font-weight:700;color:var(--text2);}
   .legend{display:flex;gap:14px;align-items:center;margin-top:9px;font-size:11px;color:var(--text3);flex-wrap:wrap;}
   .legend .li{display:inline-flex;align-items:center;gap:5px;}
@@ -279,17 +293,20 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>数据集权限管理 · 数据集 / 表 / 行 三层门禁</h1>
+  <h1>数据集权限管理 · 数据集 / 表 / 字段 / 行 四层门禁</h1>
   <p class="sub">
-    现状：一个数据集权限 = 数据集里所有表；行级配置在另一个页面；范围、有效期、模拟都无法表达。
-    这一版把三层收进同一个入口：<b>数据集级</b>决定进不进得来，<b>表级</b>决定进来能看哪几张表，<b>行级</b>决定每张表能看哪些行。
+    现状：一个数据集权限 = 数据集里所有表、所有字段；行级配置在另一个页面；范围、有效期、模拟都无法表达。
+    这一版把四层收进同一个入口：<b>数据集级</b>决定进不进得来，<b>表级</b>决定进来能看哪几张表，
+    <b>字段级</b>决定每张表能看哪几列，<b>行级</b>决定每张表能看哪些行。
   </p>
 
   <div class="decisions">
-    <div class="d-card"><b><span class="n">1</span>三层是一条门禁链，不是三个并列 Tab</b>
-      <span>表范围是「授权条目」上的一个字段（全部 / 指定），不是独立实体；先有数据集权限，表级才有意义。页面用「按主体 / 按表 / 行级 / 模拟」四种视角看同一条链。</span></div>
-    <div class="d-card"><b><span class="n">2</span>范围只做「全部 / 指定」，不做「排除」</b>
-      <span>黑名单与新增表天然冲突：新表默认可见就会静默扩大授权。白名单（指定）天然 fail-closed，等于「全部减去 N 张」也能表达。</span></div>
+    <div class="d-card"><b><span class="n">1</span>四层是一条门禁链，不是四个并列 Tab</b>
+      <span>表范围和字段范围都是「授权条目」上的字段，不是独立实体；先有数据集权限，表级才有意义；先能看到表，字段级才有意义。页面用「按主体 / 按表 / 字段范围 / 行级 / 模拟」五种视角看同一条链。</span></div>
+    <div class="d-card"><b><span class="n">2</span>表级只做「全部 / 指定」；字段级额外给「排除」</b>
+      <span>表级黑名单与新增表天然冲突：新表默认可见就会静默扩大授权，所以表级只留白名单（fail-closed）。
+        <b>字段级相反</b>——业务刚需是「整张表放开、只挖掉 id_card 这类列」，所以字段级给「限定 / 排除」两种；
+        新增列时按「排除」以外的方式默认可见，会在页头提示复审。</span></div>
     <div class="d-card"><b><span class="n">3</span>用户级条目可显式收窄，覆盖角色</b>
       <span>角色授权取并集；但同一个人一旦有用户级条目，就以用户级为准。否则「给某人缩小权限」永远只能删角色——会误伤同角色其他人。</span></div>
     <div class="d-card"><b><span class="n">4</span>新增表默认继承「全部」，但必须待确认</b>
@@ -313,7 +330,9 @@
               clickhouse
             </span>
           </div>
-          <div class="muted" style="margin-top:3px">同步运行数据 · 12 张表 · 最近更新 2026-11-04 17:20</div>
+          <div class="muted" style="margin-top:3px">同步运行数据 · 12 张表 · 最近更新 2026-11-04 17:20
+            <span class="src" style="margin-left:6px;font-size:10px;color:#b4690e;border:1px solid #f5d9a8;background:#fff7e6;border-radius:4px;padding:0 4px;font-weight:600">本次新增字段级</span>
+          </div>
         </div>
         <div class="ds-actions">
           <button class="btn">巡检与治理</button>
@@ -347,6 +366,11 @@
             <div class="d">2 条「指定表」授权；ods_crm_* / tmp_* 未进全员范围</div>
           </div>
           <div class="s-card">
+            <div class="k">字段级 · 能看哪些字段</div>
+            <div class="v"><span id="sumColTables">2</span> <em>张表做了字段收窄</em></div>
+            <div class="d">id_card / mobile / error_msg 等敏感字段已排除；未配置 = 全部字段</div>
+          </div>
+          <div class="s-card">
             <div class="k">行级 · 能看哪些行</div>
             <div class="v">已启用 <em>2 条角色策略</em></div>
             <div class="d">1 条用户例外 · 1 条默认规则；命中即生效，不叠加</div>
@@ -369,6 +393,7 @@
           <div class="seg" role="tablist">
             <button role="tab" aria-selected="true" onclick="switchView('subjects', this)">按主体</button>
             <button role="tab" aria-selected="false" onclick="switchView('tables', this)">按表</button>
+            <button role="tab" aria-selected="false" onclick="switchView('cols', this)">字段范围</button>
             <button role="tab" aria-selected="false" onclick="switchView('rows', this)">行级策略</button>
             <button role="tab" aria-selected="false" onclick="switchView('sim', this)">权限模拟</button>
           </div>
@@ -421,6 +446,26 @@
             <span class="li"><span class="cell no" style="cursor:default">·</span> 不可见</span>
             <span class="li">「已过期」列不参与判定，但保留在列表里便于续期</span>
             <span class="li">用户级条目存在时，其列按用户级口径计算（王敏：角色可看 12 张，用户级收窄为 5 张，再并入全员基线 4 张 = 7 张）</span>
+          </div>
+        </div>
+
+        <!-- ============ 视图 3：字段范围 ============ -->
+        <div class="view" id="view-cols">
+          <div class="viewbar" style="margin-bottom:9px">
+            <label class="muted" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="onlyColRestricted" onchange="renderColMatrix()" style="accent-color:var(--emerald)">
+              只看做了字段收窄的表（2）
+            </label>
+            <span class="muted" style="margin-left:auto">单元格 = 该主体可见字段 / 总字段；<b>·</b> = 该主体看不到这张表</span>
+          </div>
+          <div class="matrix">
+            <table id="colMatrixTable"></table>
+          </div>
+          <div class="legend">
+            <span class="li"><span class="cell yes wide" style="cursor:default">16/16</span> 全部字段</span>
+            <span class="li"><span class="cell warn wide" style="cursor:default">9/16</span> 有字段收窄</span>
+            <span class="li"><span class="cell no wide" style="cursor:default">·</span> 表本身不可见</span>
+            <span class="li">字段收窄只在「表可见」的前提下生效；表不可见时字段配置不生效也不报错</span>
           </div>
         </div>
 
@@ -483,11 +528,20 @@
     <ul>
       <li><b>数据模型</b>：沿用 <code>ai_agent_resource_permissions</code>（<code>resource_type='metadata'</code>），
         新增 <code>scope</code> JSON 列：<code>{"mode":"all"|"list","tables":[id...]}</code>；
+        <b>字段级</b>复用同一列，在 <code>scope</code> 里追加 <code>columns</code>：
+        <code>{"mode":"list","tables":[12,15],"columns":{"12":{"mode":"exclude","names":["id_card","mobile"]},
+        "15":{"mode":"include","names":["task_id","status"]}}}</code>。
+        没写 <code>columns</code> 的表 = 全部字段，老数据零迁移。
         行级继续放 <code>meta_datasets.row_filter_config</code>，不新建策略表。</li>
       <li><b>权限判定</b>：<code>enforce_dataset_table_permissions()</code> 在现有
         <code>enforce_physical_table_permissions()</code> 的 <code>has_dataset_permission()</code> 分支之后加一层表级判定：
         命中用户级条目 → 用用户级 scope；否则用角色 ∪ 全体 scope；<code>list</code> 模式下不在白名单即拒。</li>
-      <li><b>Schema 输出</b>：<code>fetch_dataset_schema_core()</code> 按同一 scope 过滤表，否则模型会看到并尝试查询被禁表。</li>
+      <li><b>Schema 输出</b>：<code>fetch_dataset_schema_core()</code> 按同一 scope 过滤表，否则模型会看到并尝试查询被禁表。
+        <b>字段级同理</b>：表 YAML 里的 <code>columns</code> 只输出可见列——模型看不到被排除的字段，也就不会去 SELECT 它们。</li>
+      <li><b>字段级执行兜底</b>：只过滤 schema 不够（模型可能凭上下文写 <code>SELECT id_card</code>）。
+        执行期在 <code>enforce_table_scope_for_refs</code> 之后加一层列校验：解析 SELECT 的列引用，
+        命中被排除的字段即 <code>[Permission Denied]</code>；<code>SELECT *</code> 在有列收窄的表上直接拒绝，
+        要求模型写显式列名。这条是「两道防线」在字段维度的延续。</li>
       <li><b>接口</b>：<code>GET/POST/DELETE /api/portal/metadata/datasets/{id}/permissions</code> 增加
         <code>scope</code>、<code>expire_at</code>、<code>row_policy</code> 三个字段；新增
         <code>GET .../permissions/simulate?user_id=</code> 供模拟器使用。</li>
@@ -498,6 +552,13 @@
       <li><b>要不要「排除表」模式？</b>我倾向于不做。若业务确实要「全部减 3 张」，用「指定」勾选其余表即可；黑名单会让新增表默认可见，风险更高。</li>
       <li><b>行级策略要不要变成可复用对象？</b>这版没有：行级仍是数据集内配置、按主体命中。好处是零迁移、与现有 SQL 重写完全兼容；代价是跨数据集复用同一套「按部门过滤」要复制一份。</li>
       <li><b>用户级「覆盖」还是「并集」？</b>这版给的是「用户级存在即覆盖」。如果你们更希望权限只增不减（并集），页面上就要去掉「收窄」语义，这条要定。</li>
+      <li><b>字段级取交集还是并集？</b>这版给的是<b>交集</b>：同一张表，任何一层排除了某个字段，这个字段就不可见。
+        方向与表级相反，是有意的 —— 表级「全员基线不可收窄」是说不能凭空少给；字段级反过来，
+        全员排除掉的敏感字段（id_card / mobile）不能被个人或角色配置重新放开，而个人对某张表的收窄也必须生效。
+        代价是「个人想临时放开一个敏感字段」做不到，只能改全员或角色配置。</li>
+      <li><b>「全部表」模式下要不要逐表配字段？</b>这版<b>要</b>：新增表默认全部字段，但敏感字段常常是
+        「先全表放开、再挖掉两列」，所以「全部表 + 逐表排除」必须允许。代价是表多时面板会长，
+        所以列表默认折叠、只显示摘要，点「设置」才展开字段勾选。</li>
       <li><b>「全员」条目能不能被个人条目收窄？</b>这版<b>不能</b>：全员范围是公共基线，任何人只要进了这个数据集就至少能看这几张表。所以王敏被收窄到 5 张后，实际可见是 5 ∪ 全员 4 = 7 张。如果业务要求「收窄到 5 张就真的只有 5 张」，全员条目就得改成「默认基线、可被覆盖」。</li>
     </ul>
   </div>
@@ -572,9 +633,36 @@
       </div>
     </div>
 
-    <!-- 3. 行级 -->
+    <!-- 3. 字段范围 -->
     <div class="sec">
-      <div class="st"><span class="i">3</span>能看哪些行</div>
+      <div class="st"><span class="i">3</span>能看哪些字段</div>
+      <div class="sd">作用在表范围之上，逐表设置。<b>未配置的表默认全部字段</b>，只有你要收窄的表才需要动。</div>
+
+      <div class="tbgrid" id="colGrid" style="max-height:200px"></div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+        <input type="text" id="colSearch" placeholder="搜索表名…" oninput="renderColPick()" style="flex:1">
+        <span class="muted" id="colCount" style="font-size:10.5px"></span>
+      </div>
+
+      <!-- 字段勾选面板：点某张表的「全部/限定/排除」后展开 -->
+      <div id="colDetail" style="display:none;margin-top:8px;border:1px solid var(--line);border-radius:9px;padding:9px 11px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap">
+          <b id="colDetailTitle" style="font-size:11.5px"></b>
+          <span class="muted" id="colDetailMode" style="font-size:10.5px;flex:1;min-width:150px"></span>
+          <div class="seg sm" role="tablist" style="padding:2px">
+            <button role="tab" id="colModeInclude" aria-selected="true" onclick="setColMode('include')">限定字段</button>
+            <button role="tab" id="colModeExclude" aria-selected="false" onclick="setColMode('exclude')">排除字段</button>
+          </div>
+          <button class="btn sm" onclick="toggleAllCols()" id="colAllBtn">全选</button>
+          <button class="btn sm ghost" onclick="closeColDetail()">收起</button>
+        </div>
+        <div id="colChips" style="display:flex;flex-wrap:wrap;gap:5px"></div>
+      </div>
+    </div>
+
+    <!-- 4. 行级 -->
+    <div class="sec">
+      <div class="st"><span class="i">4</span>能看哪些行</div>
       <div class="sd">作用在表范围之上；同一主体只命中一条策略。</div>
 
       <label class="opt sel" id="optPolicyInherit" onclick="pickPolicy('inherit')">
@@ -606,7 +694,7 @@
 
     <!-- 4. 有效期 + 冲突 -->
     <div class="sec">
-      <div class="st"><span class="i">4</span>有效期</div>
+      <div class="st"><span class="i">5</span>有效期</div>
       <div class="sd">到期自动失效并写审计日志；过期条目保留可续期。</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <label class="opt sel" id="optExpireForever" onclick="pickExpire('forever')" style="margin:0">
@@ -638,18 +726,30 @@
 <script>
 /* ======================= 数据 ======================= */
 const TABLES = [
-  {name:'dim_org',              term:'组织架构维表',   cols:10, rows:'1.2k'},
-  {name:'dim_user',             term:'用户维表',       cols:14, rows:'3.8k'},
-  {name:'dim_product',          term:'产品维表',       cols:12, rows:'426'},
-  {name:'agg_sync_daily',       term:'同步日汇总',     cols:9,  rows:'91'},
-  {name:'agg_sync_org_daily',   term:'组织同步日汇总', cols:11, rows:'2.7k'},
-  {name:'fact_sync_task',       term:'同步任务事实表', cols:18, rows:'1.4M'},
-  {name:'fact_sync_duration',   term:'同步耗时事实表', cols:15, rows:'1.4M'},
-  {name:'fact_sync_error',      term:'同步错误明细',   cols:20, rows:'28.6k'},
-  {name:'meta_sync_log',        term:'同步运行日志',   cols:8,  rows:'5.1k', isNew:true},
-  {name:'ods_crm_customer',     term:'CRM 客户原始表', cols:26, rows:'86k', sensitive:true},
-  {name:'ods_crm_contract',     term:'CRM 合同原始表', cols:31, rows:'41k', sensitive:true, isNew:true},
-  {name:'tmp_sync_debug',       term:'临时调试表',     cols:6,  rows:'12', sensitive:true},
+  {name:'dim_org',            term:'组织架构维表',   rows:'1.2k',
+   colList:['org_id','org_name','org_code','parent_id','level','org_type','region','manager_id','status','created_at']},
+  {name:'dim_user',           term:'用户维表',       rows:'3.8k',
+   colList:['user_id','user_name','real_name','dept_code','email','mobile','id_card','role_code','status','hire_date','leave_date','created_at']},
+  {name:'dim_product',        term:'产品维表',       rows:'426',
+   colList:['product_id','product_name','product_code','category','brand','unit_price','cost_price','tax_rate','status','launch_date']},
+  {name:'agg_sync_daily',     term:'同步日汇总',     rows:'91',
+   colList:['stat_date','total_count','success_count','fail_count','avg_duration','max_duration','org_count','created_at']},
+  {name:'agg_sync_org_daily', term:'组织同步日汇总', rows:'2.7k',
+   colList:['stat_date','org_id','org_name','total_count','success_count','fail_count','avg_duration','batch_no','created_at']},
+  {name:'fact_sync_task',     term:'同步任务事实表', rows:'1.4M',
+   colList:['task_id','task_name','task_type','org_id','dept_code','product_id','source_type','start_time','end_time','duration_ms','status','error_code','error_msg','row_count','created_by','created_at']},
+  {name:'fact_sync_duration', term:'同步耗时事实表', rows:'1.4M',
+   colList:['task_id','stage_name','start_time','end_time','duration_ms','org_id','dept_code','product_id','status','retry_count','host','node','trace_id','created_at']},
+  {name:'fact_sync_error',    term:'同步错误明细',   rows:'28.6k',
+   colList:['error_id','task_id','error_code','error_msg','error_stage','org_id','dept_code','product_id','source_table','target_table','error_time','retry_count','status','host','node','trace_id','created_at']},
+  {name:'meta_sync_log',      term:'同步运行日志',   rows:'5.1k', isNew:true,
+   colList:['log_id','task_id','log_level','log_msg','operator','trace_id','created_at']},
+  {name:'ods_crm_customer',   term:'CRM 客户原始表', rows:'86k', sensitive:true,
+   colList:['customer_id','customer_name','mobile','phone','id_card','email','address','company','industry','level','source','owner_id','created_at']},
+  {name:'ods_crm_contract',   term:'CRM 合同原始表', rows:'41k', sensitive:true, isNew:true,
+   colList:['contract_id','customer_id','contract_no','amount','sign_date','start_date','end_date','salesman','dept_code','status','created_at']},
+  {name:'tmp_sync_debug',     term:'临时调试表',     rows:'12', sensitive:true,
+   colList:['id','payload','host','remark','created_at']},
 ];
 const TABLE_MAP = Object.fromEntries(TABLES.map(t => [t.name, t]));
 
@@ -676,6 +776,8 @@ const PERSON_MAP = Object.fromEntries(PEOPLE.map(p => [p.id, p]));
 let GRANTS = [
   {id:'g1', kind:'all',  name:'全部成员', desc:'平台内所有启用账号',
    scope:{mode:'list', tables:['dim_org','dim_user','dim_product','agg_sync_daily']},
+   /* 字段级：挂在 scope 里，按表配置；没配置的表 = 全部字段（老数据天然兼容） */
+   columns:{'dim_user':{mode:'exclude', names:['id_card','mobile']}},
    policy:'inherit', expire:null, status:'active', updated:'2026-10-28 14:02', by:'陈晓龙'},
 
   {id:'g2', kind:'role', code:'finance_analyst', name:'财务分析师',
@@ -693,6 +795,8 @@ let GRANTS = [
 
   {id:'g5', kind:'user', userId:7, name:'王敏', account:'wangmin',
    scope:{mode:'list', tables:['dim_org','dim_product','fact_sync_task','fact_sync_duration','fact_sync_error']},
+   columns:{'fact_sync_task':{mode:'include', names:['task_id','task_name','task_type','org_id','dept_code','start_time','end_time','duration_ms','status']},
+            'fact_sync_error':{mode:'exclude', names:['error_msg','trace_id']}},
    policy:'custom', expire:'2026-12-31', status:'active', updated:'2026-11-03 10:22', by:'陈晓龙'},
 
   {id:'g6', kind:'user', userId:9, name:'李志', account:'lizhi',
@@ -745,7 +849,28 @@ function effectiveFor(person){
   const base = own.length ? own : role;
   const out = new Set();
   [...base, ...all].forEach(g => tableNameList(g).forEach(n => out.add(n)));
-  return { own, role, all, base, overridden: own.length > 0 && role.length > 0, tables: out };
+
+  /* 字段级取**交集**：任何一层排除了某个字段，这个字段就不可见。
+     方向与表级相反是有意的 —— 表级「全员基线不可收窄」意味着不能凭空少给权限；
+     字段级反过来，全员排除掉的敏感字段（id_card 之类）不能被个人/角色配置重新放开，
+     而个人对某张表的字段收窄也必须生效。两层都往「更严」的方向合并。 */
+  const cols = {};
+  out.forEach(name => { cols[name] = null; });
+  [...base, ...all].forEach(g => {
+    tableNameList(g).forEach(name => {
+      if (!(name in cols)) return;
+      const allCols = (TABLE_MAP[name] || {}).colList || [];
+      const rule = (g.columns || {})[name];
+      const seen = !rule ? allCols
+        : rule.mode === 'include' ? allCols.filter(c => rule.names.includes(c))
+        : allCols.filter(c => !rule.names.includes(c));
+      cols[name] = cols[name] === null
+        ? new Set(seen)
+        : new Set([...cols[name]].filter(c => seen.includes(c)));
+    });
+  });
+  Object.keys(cols).forEach(n => { if (cols[n] === null) cols[n] = new Set((TABLE_MAP[n] || {}).colList || []); });
+  return { own, role, all, base, overridden: own.length > 0 && role.length > 0, tables: out, cols };
 }
 
 /* 行级命中：用户例外 → 角色策略(OR) → 默认；policy=none 则不受限 */
@@ -825,6 +950,11 @@ function renderGrants(){
       <tr class="rowdetail" id="detail-${g.id}" style="display:none">
         <td colspan="6"><div class="inner">
           <b>可见表（${tableNameList(g).length}）</b>：${tableNameList(g).map(n => `<code style="font-family:ui-monospace,Menlo,monospace">${esc(n)}</code>`).join('、')}<br>
+          <b>字段</b>：${(() => {
+            const rules = Object.entries(g.columns || {});
+            if (!rules.length) return '全部字段（未做字段级收窄）';
+            return rules.map(([tb, r]) => `${tb} ${r.mode === 'include' ? '限定' : '排除'} ${r.names.length} 个`).join('、');
+          })()}　<br>
           <b>行级</b>：${g.policy === 'none' ? '不受行级限制（跳过所有行过滤）' : g.policy === 'custom' ? '使用用户例外条件（覆盖角色策略）' : '按数据集策略命中：用户例外 → 角色策略 → 默认'}　
           <b>最近变更</b>：${esc(g.updated)} · ${esc(g.by)}
         </div></td>
@@ -886,6 +1016,89 @@ function cellClick(label, table, ok){
   toast(ok
     ? `${label} 可见 ${table}（${t.term}）· 点「编辑」可收窄`
     : `${label} 不可见 ${table}（${t.term}）· 需在授权条目里追加`);
+}
+
+/* ======================= 字段范围视图 ======================= */
+/* 字段配置挂在授权条目上：{表名: {mode:'include'|'exclude', names:[...]}}。
+   没配置 = 全部字段（历史数据零迁移）。 */
+function colRuleOf(grant, tableName){
+  const rules = grant.columns || {};
+  return rules[tableName] || null;
+}
+
+/* 该条目在这张表上实际能看到的字段。表不可见时返回 null（字段配置不生效）。 */
+function visibleColsOf(grant, tableName){
+  if (!scopeCovers(grant, tableName)) return null;
+  const all = (TABLE_MAP[tableName] || {}).colList || [];
+  const rule = colRuleOf(grant, tableName);
+  if (!rule) return all.slice();
+  if (rule.mode === 'include') return all.filter(c => rule.names.includes(c));
+  return all.filter(c => !rule.names.includes(c));
+}
+
+function renderColMatrix(){
+  const only = document.getElementById('onlyColRestricted').checked;
+  const subs = matrixSubjects();
+  const rows = TABLES.filter(t => !only || hasColNarrowing(t.name));
+
+  const head = `<thead><tr>
+      <th style="text-align:left;min-width:230px">物理表</th>
+      ${subs.map(s => `<th title="${esc(s.label)}">${esc(s.label)}${s.expired ? '<br><span style="font-weight:400;color:#c8372d">已过期</span>' : ''}</th>`).join('')}
+      <th>被收窄主体</th>
+    </tr></thead>`;
+
+  const body = rows.map(t => {
+    const total = (t.colList || []).length;
+    const cells = subs.map(s => {
+      if (s.expired) return `<td><span class="cell no wide" style="cursor:not-allowed" title="授权已过期">·</span></td>`;
+      const cols = visibleColsOf(s.grant, t.name);
+      if (cols === null) {
+        return `<td><span class="cell no wide" title="该主体看不到这张表，字段配置不生效">·</span></td>`;
+      }
+      const n = cols.length;
+      const narrowed = n < total;
+      return `<td><span class="cell ${narrowed ? 'warn' : 'yes'} wide"
+        title="${esc(s.label)} 可见 ${n}/${total} 字段${narrowed ? '：' + esc(cols.join(', ')) : ''}"
+        onclick="colCellClick('${esc(s.label)}','${esc(t.name)}')">${n}/${total}</span></td>`;
+    }).join('');
+
+    const narrowedBy = subs.filter(s => {
+      if (s.expired) return false;
+      const cols = visibleColsOf(s.grant, t.name);
+      return cols !== null && cols.length < total;
+    }).length;
+
+    const nameCell = `<td>
+        <span class="tname">${esc(t.name)}</span><span class="tterm">${esc(t.term)}</span>
+        ${t.sensitive ? '<span class="sens" style="margin-left:5px;font-size:9.5px;color:#c8372d;border:1px solid #f6cfcb;background:#fdecea;border-radius:4px;padding:0 4px;font-weight:600">敏感</span>' : ''}
+      </td>`;
+    return `<tr>${nameCell}${cells}<td class="count">${narrowedBy || '—'}</td></tr>`;
+  }).join('');
+
+  document.getElementById('colMatrixTable').innerHTML = head + '<tbody>' + body + '</tbody>';
+}
+
+/* 「只看收窄表」用的判定：只要有任一未过期条目把这张表的字段收窄了，就算收窄表 */
+function hasColNarrowing(tableName){
+  const total = ((TABLE_MAP[tableName] || {}).colList || []).length;
+  return GRANTS.some(g => {
+    if (g.status === 'expired') return false;
+    const seen = visibleColsOf(g, tableName);
+    return seen !== null && seen.length < total;
+  });
+}
+
+function colCellClick(label, table){
+  const t = TABLE_MAP[table];
+  const g = GRANTS.find(x => (x.kind === 'all' ? '全部成员' : x.name) === label);
+  if (!g) return;
+  const cols = visibleColsOf(g, table);
+  if (cols === null) { toast(`${label} 看不到 ${table}，字段配置不生效`); return; }
+  const rule = colRuleOf(g, table);
+  const hidden = (t.colList || []).filter(c => !cols.includes(c));
+  if (!rule) { toast(`${label} 在 ${table} 上可见全部 ${cols.length} 个字段`); return; }
+  toast(`${label} 在 ${table} 上可见 ${cols.length}/${t.colList.length} 个字段` +
+        (hidden.length ? ` · 隐藏：${hidden.join(', ')}` : ''));
 }
 
 /* ======================= 行级视图 ======================= */
@@ -978,12 +1191,24 @@ function renderSim(){
       <span class="tag ${tbl.length ? 'all' : 'red'}">数据集：${tbl.length ? '可访问' : '不可访问'}</span>
       <span class="tag list">表：${tbl.length} / ${TABLES.length}</span>
       <span class="tag ${policyTag}">行级：${policyText}</span>
+      ${(() => {
+        const narrowed = tbl.filter(n => (eff.cols[n] || new Set()).size < ((TABLE_MAP[n] || {}).colList || []).length);
+        return `<span class="tag ${narrowed.length ? 'warn' : 'mute'}">字段：${narrowed.length ? narrowed.length + ' 张表被收窄' : '全部字段'}</span>`;
+      })()}
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div>
         <h4 style="margin:0 0 6px;font-size:11px;color:var(--text3)">可见表</h4>
         <div style="display:flex;flex-wrap:wrap;gap:3px">
-          ${tbl.map(n => `<code style="font-family:ui-monospace,Menlo,monospace;font-size:10px;background:#fafbfc;border:1px solid var(--line);border-radius:5px;padding:1px 5px">${esc(n)}</code>`).join('')}
+          ${tbl.map(n => {
+            const total = ((TABLE_MAP[n] || {}).colList || []).length;
+            const seen = (eff.cols[n] || new Set()).size;
+            const narrowed = seen < total;
+            return `<code title="${narrowed ? '可见 ' + seen + '/' + total + ' 字段' : '全部字段'}"
+              style="font-family:ui-monospace,Menlo,monospace;font-size:10px;background:${narrowed ? '#fff7e6' : '#fafbfc'};
+              border:1px solid ${narrowed ? '#f5d9a8' : 'var(--line)'};border-radius:5px;padding:1px 5px;
+              color:${narrowed ? '#b4690e' : 'inherit'}">${esc(n)}${narrowed ? ' ' + seen + '/' + total : ''}</code>`;
+          }).join('')}
         </div>
       </div>
       <div>
@@ -1000,7 +1225,13 @@ function renderSim(){
       <div class="step"><span class="dot">2</span><div><b>表级</b>：${eff.base[0] ? (eff.base[0].scope.mode === 'all' ? '全部表' : '白名单 ' + eff.base[0].scope.tables.length + ' 张') : '无个人/角色范围'}
         ${eff.all.length ? ' ∪ 全员基线 ' + unionCount(eff.all) + ' 张' : ''} → 最终 <b>${tbl.length} 张</b>
         ${eff.overridden ? '<span class="src">用户级收窄了角色范围（角色不再生效），但全员基线不可收窄</span>' : ''}</div></div>
-      <div class="step"><span class="dot">3</span><div><b>行级</b>：${policyText}<span class="src">${rp.mode === 'user' ? '用户例外优先级最高，命中即不叠加' : rp.mode === 'role' ? '多角色条件 OR 合并' : ''}</span></div></div>
+      <div class="step"><span class="dot">3</span><div><b>字段级</b>：${(() => {
+        const narrowed = tbl.filter(n => (eff.cols[n] || new Set()).size < ((TABLE_MAP[n] || {}).colList || []).length);
+        if (!narrowed.length) return '全部字段<span class="src">没有任何来源对该用户收窄字段</span>';
+        return narrowed.map(n => `${n} <b>${(eff.cols[n] || new Set()).size}/${((TABLE_MAP[n] || {}).colList || []).length}</b>`).join('、')
+          + '<span class="src">多来源取交集：任何一层排除该字段即不可见（全员排除的敏感字段不能被个人放开）</span>';
+      })()}</div></div>
+      <div class="step"><span class="dot">4</span><div><b>行级</b>：${policyText}<span class="src">${rp.mode === 'user' ? '用户例外优先级最高，命中即不叠加' : rp.mode === 'role' ? '多角色条件 OR 合并' : ''}</span></div></div>
     </div>`;
 }
 
@@ -1014,11 +1245,13 @@ function switchView(name, btn){
   const hints = {
     subjects:'授权条目 = 主体 × 数据范围 × 行级策略',
     tables:'同一份授权，从「表」这一侧反查谁能看到',
+    cols:'表之上再收一层：同一张表，不同主体可见的字段可以不同',
     rows:'三类行级规则，按优先级命中',
     sim:'挑一个人，看最终能看到什么、为什么',
   };
   document.getElementById('viewHint').textContent = hints[name] || '';
   if (name === 'tables') renderMatrix();
+  if (name === 'cols') renderColMatrix();
   if (name === 'rows') renderRules();
   if (name === 'sim') renderSim();
 }
@@ -1085,8 +1318,20 @@ function pickScope(mode){
   const box = document.getElementById('tablePick');
   box.style.display = mode === 'list' ? 'block' : 'none';
   if (mode === 'list') renderTablePick();
+  // 表范围变了 → 字段面板里可配置的表也变了；已经不在范围内的字段配置一并丢掉
+  pruneColRules();
+  renderColPick();
   updateConflict();
   updateImpact();
+}
+
+/* 切到「指定表」后，原来给不在范围的表配的字段规则要清掉，否则会静默残留 */
+function pruneColRules(){
+  const alive = new Set(activeTablesForDrawer());
+  Object.keys(drawerState.columns || {}).forEach(name => {
+    if (!alive.has(name)) delete drawerState.columns[name];
+  });
+  if (colDetailTable && !alive.has(colDetailTable)) closeColDetail();
 }
 
 function renderTablePick(){
@@ -1099,7 +1344,7 @@ function renderTablePick(){
       <span class="term">${esc(t.term)}</span>
       ${t.sensitive ? '<span class="sens">敏感</span>' : ''}
       ${t.isNew ? '<span class="sens" style="color:#b26a00;border-color:#f3ddb4;background:#fff7e8">新表</span>' : ''}
-      <span class="cols">${t.cols} 列</span>
+      <span class="cols">${t.colList.length} 列</span>
     </label>`).join('') || `<div class="empty">没有匹配的表</div>`;
 
   document.getElementById('tbCount').textContent =
@@ -1114,13 +1359,150 @@ function toggleTable(input){
   else drawerState.tables = drawerState.tables.filter(x => x !== v);
   document.getElementById('tbCount').textContent = `已选 ${drawerState.tables.length} / ${TABLES.length} 张`;
   document.getElementById('toggleAllBtn').textContent = drawerState.tables.length === TABLES.length ? '全不选' : '全选';
+  pruneColRules();
+  renderColPick();
   updateImpact();
 }
 
 function toggleAllTables(){
   drawerState.tables = drawerState.tables.length === TABLES.length ? [] : TABLES.map(t => t.name);
   renderTablePick();
+  pruneColRules();
+  renderColPick();
   updateImpact();
+}
+
+/* ---------- 字段范围 ---------- */
+/* drawerState.columns = {表名: {mode:'include'|'exclude', names:[...]}} */
+let colDetailTable = null;
+
+/* 当前表范围里真正会生效的表（「全部表」= 12 张；「指定表」= 勾选的那些） */
+function activeTablesForDrawer(){
+  return drawerState.scope === 'all'
+    ? TABLES.map(t => t.name)
+    : drawerState.tables.slice();
+}
+
+function colModeText(rule, total){
+  if (!rule) return '全部字段';
+  if (rule.mode === 'include') return `限定 ${rule.names.length}/${total}`;
+  return `排除 ${rule.names.length}/${total}`;
+}
+
+function renderColPick(){
+  const grid = document.getElementById('colGrid');
+  if (!grid) return;
+  const kw = (document.getElementById('colSearch').value || '').trim().toLowerCase();
+  const names = activeTablesForDrawer().filter(n => !kw || n.includes(kw));
+
+  grid.innerHTML = names.map(name => {
+    const t = TABLE_MAP[name] || {};
+    const total = (t.colList || []).length;
+    const rule = (drawerState.columns || {})[name];
+    const narrowed = !!rule;
+    return `<div class="tbrow">
+      <span class="nm" style="${narrowed ? 'color:#b4690e;font-weight:600' : ''}">${esc(name)}</span>
+      <span class="term">${esc(t.term || '')}</span>
+      <span class="cols" style="${narrowed ? 'color:#b4690e;font-weight:600' : ''}">${colModeText(rule, total)}</span>
+      <button class="btn sm ghost" onclick="openColDetail('${esc(name)}')">${narrowed ? '调整' : '设置'}</button>
+      ${narrowed ? `<button class="btn sm ghost" style="color:var(--text3)" onclick="clearColRule('${esc(name)}')">还原</button>` : ''}
+    </div>`;
+  }).join('') || '<div class="tbrow"><span class="term">没有匹配的表</span></div>';
+
+  const narrowedCount = Object.keys(drawerState.columns || {}).length;
+  document.getElementById('colCount').textContent =
+    `${names.length} 张表 · ${narrowedCount} 张做了字段收窄`;
+}
+
+function openColDetail(tableName){
+  colDetailTable = tableName;
+  const rule = (drawerState.columns || {})[tableName];
+  window.__colMode = rule ? rule.mode : 'include';
+  const box = document.getElementById('colDetail');
+  box.style.display = 'block';
+  document.getElementById('colDetailTitle').textContent = tableName;
+  renderColChips();
+}
+
+/* 限定 / 排除 切换：只改语义，已勾选的字段保留 */
+function setColMode(mode){
+  if (!colDetailTable) return;
+  // 记住用户选的语义，哪怕此刻还没勾任何字段（否则第一次勾选会退回 include）
+  window.__colMode = mode;
+  const cur = (drawerState.columns || {})[colDetailTable];
+  if (cur && cur.names.length) {
+    drawerState.columns[colDetailTable] = {mode, names: cur.names.slice()};
+  }
+  renderColChips();
+  renderColPick();
+  updateImpact();
+}
+
+function renderColChips(){
+  const t = TABLE_MAP[colDetailTable] || {};
+  const rule = (drawerState.columns || {})[colDetailTable];
+  const picked = rule ? rule.names : [];
+  const mode = rule ? rule.mode : (window.__colMode || 'include');
+  const total = (t.colList || []).length;
+  const visible = mode === 'include' ? picked.length : total - picked.length;
+
+  document.getElementById('colChips').innerHTML = (t.colList || []).map(c => {
+    const pickedOn = picked.includes(c);
+    const cls = mode === 'exclude' ? (pickedOn ? 'ex' : '') : (pickedOn ? 'on' : '');
+    const mark = pickedOn ? (mode === 'exclude' ? '✕' : '✓') : '';
+    return `<label class="colchip ${cls}" title="${mode === 'exclude' ? '点击切换「排除」' : '点击切换「允许」'}"
+      onclick="toggleCol('${esc(c)}')"><span class="ck">${mark}</span>${esc(c)}</label>`;
+  }).join('');
+
+  document.getElementById('colModeInclude').setAttribute('aria-selected', String(mode === 'include'));
+  document.getElementById('colModeExclude').setAttribute('aria-selected', String(mode === 'exclude'));
+  document.getElementById('colDetailMode').textContent = picked.length
+    ? `${mode === 'include' ? '限定' : '排除'} ${picked.length} 个 → 可见 ${visible}/${total}`
+    : `全部字段（可见 ${total}/${total}）· 勾选任意字段开始收窄`;
+  document.getElementById('colAllBtn').textContent = picked.length === total ? '清空' : '全选';
+}
+
+function toggleCol(col){
+  const cur = (drawerState.columns || {})[colDetailTable];
+  let mode = cur ? cur.mode : (window.__colMode || 'include');
+  let names = cur ? cur.names.slice() : [];
+  if (names.includes(col)) names = names.filter(c => c !== col);
+  else names.push(col);
+  if (!names.length) {
+    delete drawerState.columns[colDetailTable];
+    colDetailTable = colDetailTable;  // 保持面板不跳
+  } else {
+    drawerState.columns[colDetailTable] = {mode, names};
+  }
+  renderColChips();
+  renderColPick();
+  updateImpact();
+}
+
+function toggleAllCols(){
+  const t = TABLE_MAP[colDetailTable] || {};
+  const cur = (drawerState.columns || {})[colDetailTable];
+  const all = t.colList || [];
+  if (cur && cur.names.length === all.length) {
+    delete drawerState.columns[colDetailTable];
+  } else {
+    drawerState.columns[colDetailTable] = {mode: cur ? cur.mode : 'include', names: all.slice()};
+  }
+  renderColChips();
+  renderColPick();
+  updateImpact();
+}
+
+function clearColRule(tableName){
+  delete drawerState.columns[tableName];
+  if (colDetailTable === tableName) closeColDetail();
+  renderColPick();
+  updateImpact();
+}
+
+function closeColDetail(){
+  colDetailTable = null;
+  document.getElementById('colDetail').style.display = 'none';
 }
 
 function pickPolicy(p){
@@ -1164,13 +1546,15 @@ function updateImpact(){
     people = drawerState.pickedIds.length;
   }
   const range = drawerState.scope === 'all' ? '全部表' : `指定 ${drawerState.tables.length} 张表`;
+  const colN = Object.keys(drawerState.columns || {}).length;
+  const colText = colN ? ` · <b>${colN} 张表收窄字段</b>` : ' · 全部字段';
   el.innerHTML = drawerState.pickedIds.length || drawerState.kind === 'all'
-    ? `预计影响：<b>${people} 人</b> · ${range}`
+    ? `预计影响：<b>${people} 人</b> · ${range}${colText}`
     : '选择主体后显示影响范围';
 }
 
 function openDrawer(editId){
-  drawerState = { kind:'all', pickedIds:[], scope:'all', tables:[], policy:'inherit', expire:'forever', editId: editId || null };
+  drawerState = { kind:'all', pickedIds:[], scope:'all', tables:[], columns:{}, policy:'inherit', expire:'forever', editId: editId || null };
   document.getElementById('mask').classList.add('on');
   document.getElementById('drawer').classList.add('on');
   document.getElementById('drawerTitle').textContent = editId ? '编辑授权' : '添加授权';
@@ -1185,6 +1569,9 @@ function openDrawer(editId){
   document.getElementById('policyCustomBox').style.display = 'none';
   document.getElementById('expireDateBox').style.display = 'none';
   document.getElementById('tbGrid').innerHTML = '';
+  document.getElementById('colSearch').value = '';
+  closeColDetail();
+  renderColPick();
   document.getElementById('conflictBox').style.display = 'none';
   updateImpact();
 
@@ -1195,6 +1582,8 @@ function openDrawer(editId){
       if (g.kind === 'role') { drawerState.pickedIds = [g.code]; renderKindPick(); }
       if (g.kind === 'user') { drawerState.pickedIds = [String(g.userId)]; renderKindPick(); }
       if (g.scope.mode === 'list') { drawerState.tables = g.scope.tables.slice(); pickScope('list'); }
+      drawerState.columns = JSON.parse(JSON.stringify(g.columns || {}));
+      renderColPick();
       pickPolicy(g.policy);
       if (g.expire) { pickExpire('date'); document.getElementById('expireDate').value = g.expire; }
       updateConflict();
@@ -1215,6 +1604,15 @@ function saveGrant(){
   const scope = drawerState.scope === 'all'
     ? {mode:'all', tables:[]}
     : {mode:'list', tables: drawerState.tables.slice()};
+  /* 字段级：只保留「表范围里真正生效」的那些配置，空对象直接落 null（= 全部字段） */
+  const aliveTables = new Set(activeTablesForDrawer());
+  const columns = {};
+  Object.entries(drawerState.columns || {}).forEach(([name, rule]) => {
+    if (aliveTables.has(name) && rule && rule.names && rule.names.length) {
+      columns[name] = {mode: rule.mode, names: rule.names.slice()};
+    }
+  });
+  const columnsPayload = Object.keys(columns).length ? columns : null;
   const policy = drawerState.policy;
   const expire = drawerState.expire === 'date' ? (document.getElementById('expireDate').value || null) : null;
   const today = '2026-11-05';
@@ -1242,7 +1640,7 @@ function saveGrant(){
     const g = GRANTS.find(x => x.id === drawerState.editId);
     const t = targets.shift();
     if (g) {
-      Object.assign(g, t, {scope, policy, expire, status, updated:stamp, by:'陈晓龙'});
+      Object.assign(g, t, {scope, columns: columnsPayload, policy, expire, status, updated:stamp, by:'陈晓龙'});
     }
   }
 
@@ -1253,11 +1651,11 @@ function saveGrant(){
     if (t.kind === 'user') existing = GRANTS.find(g => g.kind === 'user' && g.userId === t.userId);
 
     if (existing) {
-      Object.assign(existing, {scope, policy, expire, status, updated:stamp, by:'陈晓龙'});
+      Object.assign(existing, {scope, columns: columnsPayload, policy, expire, status, updated:stamp, by:'陈晓龙'});
     } else {
       GRANTS.push({
         id: 'g' + Math.random().toString(36).slice(2, 7),
-        ...t, scope, policy, expire, status, updated:stamp, by:'陈晓龙',
+        ...t, scope, columns: columnsPayload, policy, expire, status, updated:stamp, by:'陈晓龙',
       });
     }
   });
@@ -1271,8 +1669,10 @@ function saveGrant(){
     });
   }
 
+  const colN2 = columnsPayload ? Object.keys(columnsPayload).length : 0;
   toast('已保存（原型内生效）：' + subjectCount + ' 个主体 · ' +
-    (scope.mode === 'all' ? '全部表' : '指定 ' + scope.tables.length + ' 张表'));
+    (scope.mode === 'all' ? '全部表' : '指定 ' + scope.tables.length + ' 张表') +
+    (colN2 ? ' · ' + colN2 + ' 张表收窄字段' : ''));
   closeDrawer();
   renderGrants();
   renderMatrix();
@@ -1295,6 +1695,14 @@ function updateSummary(){
   d.textContent = `${roles} 个角色 · ${users} 个用户 · ${all} 条全员；共 ${GRANTS.length} 条`
     + (expired ? `，${expired} 条已过期` : '');
   if (c) c.textContent = GRANTS.length;
+  const colEl = document.getElementById('sumColTables');
+  if (colEl) {
+    const tables = new Set();
+    GRANTS.filter(g => g.status === 'active').forEach(g => {
+      Object.keys(g.columns || {}).forEach(tb => tables.add(tb));
+    });
+    colEl.textContent = tables.size;
+  }
 }
 
 function editGrant(id){ openDrawer(id); }

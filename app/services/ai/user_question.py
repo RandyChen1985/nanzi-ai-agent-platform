@@ -7,6 +7,8 @@ from typing import Any
 USER_QUESTION_TOOL_NAME = "ask_user_question"
 USER_QUESTION_MESSAGE_PREFIX = "【用户回答】"
 CHATBI_DATASET_SELECTION_PURPOSE = "chatbi_dataset_selection"
+# 提问登记时顺手记下当轮生效的数据集范围，回答回执轮据此恢复（见 persist_user_question_event）。
+USER_QUESTION_DATASET_IDS_KEY = "metadata_dataset_ids"
 
 
 def _as_dict(value: Any) -> dict[str, Any] | None:
@@ -64,14 +66,30 @@ def build_user_question_sse(
     }
 
 
-def metadata_dataset_ids_from_user_question_record(record: Any) -> list[str] | None:
-    """只从服务端已校验的数据集选择卡回执恢复 metadata scope。"""
-    if not isinstance(record, dict):
+def _canonical_dataset_ids(raw: Any) -> list[str] | None:
+    """把候选范围规整成正整数 ID（去重保序）；出现非法值整条不认。
+
+    提问记录里的范围必须是「能被服务端当数据集 ID 用」的值：名称在运行时会被
+    静默丢弃（见 ``normalize_bound_dataset_ids``），混进来只会让日志说「限定了」
+    而实际没约束，所以这里直接 fail-closed。
+    """
+    if isinstance(raw, (str, int)):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple, set)):
         return None
-    if record.get("status") != "submitted":
-        return None
-    if str(record.get("purpose") or "").strip() != CHATBI_DATASET_SELECTION_PURPOSE:
-        return None
+    normalized: list[str] = []
+    for item in raw:
+        text = str(item or "").strip()
+        if not text.isdigit() or int(text) <= 0:
+            return None
+        canonical = str(int(text))
+        if canonical not in normalized:
+            normalized.append(canonical)
+    return normalized or None
+
+
+def _dataset_ids_from_selection(record: dict[str, Any]) -> list[str] | None:
+    """数据集选择卡：只认服务端下发的选项集合里的数字 ID。"""
     selected = record.get("selected_option_ids")
     options = record.get("options")
     if not isinstance(selected, list) or not isinstance(options, list) or not selected:
@@ -81,15 +99,34 @@ def metadata_dataset_ids_from_user_question_record(record: Any) -> list[str] | N
         for option in options
         if isinstance(option, dict) and str(option.get("id") or "").strip()
     }
-    normalized: list[str] = []
-    for item in selected:
-        value = str(item or "").strip()
-        if value not in allowed or not value.isdigit() or int(value) <= 0:
-            return None
-        canonical = str(int(value))
-        if canonical not in normalized:
-            normalized.append(canonical)
-    return normalized or None
+    if any(str(item or "").strip() not in allowed for item in selected):
+        return None
+    return _canonical_dataset_ids(selected)
+
+
+def _dataset_ids_from_record_scope(record: dict[str, Any]) -> list[str] | None:
+    """普通提问：用登记时写下的当轮范围快照。"""
+    return _canonical_dataset_ids(record.get(USER_QUESTION_DATASET_IDS_KEY))
+
+
+def metadata_dataset_ids_from_user_question_record(record: Any) -> list[str] | None:
+    """从服务端提问记录恢复回答轮应继承的 metadata scope。
+
+    两条来源，口径不同：
+      * ``purpose=chatbi_dataset_selection`` —— 用户在卡片里现选的数据集，以选项为准；
+      * 其余提问 —— 用 ``persist_user_question_event`` 在提问那一刻写下的范围快照。
+
+    第二条是必需的：本轮手选的数据集只挂在「发送那一刻」的请求体 / 最后一条 user
+    消息的 ``metadata_dataset`` 附件上，而【用户回答】回执是一条全新的用户消息，
+    两者都没有。不恢复，答完追问这一轮就退回「用户可访问的全部数据集」，
+    委派出去的 ChatBI 拿到的自然是空范围。记录由服务端写入、前端只能回传
+    question_id 与选项，所以恢复值不可伪造。
+    """
+    if not isinstance(record, dict) or record.get("status") != "submitted":
+        return None
+    if str(record.get("purpose") or "").strip() == CHATBI_DATASET_SELECTION_PURPOSE:
+        return _dataset_ids_from_selection(record)
+    return _dataset_ids_from_record_scope(record)
 
 
 def build_user_question_receipt(
@@ -190,6 +227,17 @@ def build_user_question_fallback_content(timeline: Any) -> str:
     return f"我需要你补充确认：{question}"
 
 
+def current_turn_dataset_scope_ids() -> list[str]:
+    """提问那一刻生效的数据集范围（本轮手选优先，其次会话固定）。"""
+    try:
+        from app.services.ai.metadata_dataset_scope import resolve_mounted_dataset_scope_ids
+
+        raw = resolve_mounted_dataset_scope_ids()
+    except Exception:  # noqa: BLE001 - 取不到上下文只是不写快照，不能挡住提问
+        return []
+    return _canonical_dataset_ids(list(raw)) or []
+
+
 async def persist_user_question_event(
     *,
     event: dict[str, Any],
@@ -202,17 +250,23 @@ async def persist_user_question_event(
     if not str(conversation_id or "").strip():
         raise ValueError("主动提问必须绑定会话")
     store = await UserQuestionStore.from_runtime()
+    payload = {
+        "question": str(event.get("question") or ""),
+        "options": event.get("options") or [],
+        "is_multi_select": bool(event.get("is_multi_select", False)),
+        "allow_custom_input": bool(event.get("allow_custom_input", True)),
+        "context": str(event.get("context") or ""),
+        "purpose": str(event.get("purpose") or ""),
+        "tool_call_id": str(event.get("tool_call_id") or ""),
+    }
+    # 本轮挂载的数据集只在「提问这一次请求」里，回答回执是全新的一条用户消息。
+    # 这里把范围随问题一起登记，回执轮才能原样恢复（见 preflight_step）。
+    scope_ids = current_turn_dataset_scope_ids()
+    if scope_ids:
+        payload[USER_QUESTION_DATASET_IDS_KEY] = scope_ids
     return await store.create_pending(
         user_id=user_id,
         conversation_id=conversation_id,
         question_id=str(event["question_id"]),
-        payload={
-            "question": str(event.get("question") or ""),
-            "options": event.get("options") or [],
-            "is_multi_select": bool(event.get("is_multi_select", False)),
-            "allow_custom_input": bool(event.get("allow_custom_input", True)),
-            "context": str(event.get("context") or ""),
-            "purpose": str(event.get("purpose") or ""),
-            "tool_call_id": str(event.get("tool_call_id") or ""),
-        },
+        payload=payload,
     )

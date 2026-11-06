@@ -58,6 +58,9 @@ ROW_POLICY_INHERIT = "inherit"
 ROW_POLICY_NONE = "none"
 ROW_POLICY_CUSTOM = "custom"
 
+COL_INCLUDE = "include"
+COL_EXCLUDE = "exclude"
+
 SUBJECT_USER = "user"
 SUBJECT_ROLE = "role"
 SUBJECT_ALL = "all"
@@ -65,6 +68,25 @@ SUBJECT_ALL = "all"
 _EXTENDED_COLUMNS = ("subject_type", "scope", "row_policy", "row_condition", "expire_at")
 _column_cache: Optional[frozenset[str]] = None
 _agent_column_cache: Optional[bool] = None
+
+
+@dataclass(frozen=True)
+class ColumnRule:
+    """一条授权条目对某张表的字段约束。
+
+    ``include`` = 只保留名单内的列；``exclude`` = 剔除名单内的列。
+    列名一律小写存储，判定时与 ``MetaTable.columns[].name`` 同口径比较。
+    """
+
+    mode: str
+    names: frozenset[str]
+
+    def apply(self, columns: Iterable[str]) -> set[str]:
+        """把这条规则作用到「全部列」上，返回可见列（lower）。"""
+        visible = {str(item).lower() for item in columns}
+        if self.mode == COL_INCLUDE:
+            return visible & set(self.names)
+        return visible - set(self.names)
 
 
 @dataclass(frozen=True)
@@ -77,6 +99,8 @@ class DatasetScope:
     row_policy: str = ROW_POLICY_INHERIT
     row_condition: Optional[str] = None
     sources: tuple[str, ...] = ()
+    # table_id -> 该表上所有生效来源的列规则（按来源顺序）。空 = 全部字段。
+    column_rules: dict[int, tuple[ColumnRule, ...]] = None  # type: ignore[assignment]
 
     @property
     def allows_all_tables(self) -> bool:
@@ -84,6 +108,21 @@ class DatasetScope:
 
     def allows_table(self, table_id: int) -> bool:
         return self.mode == MODE_ALL or int(table_id) in self.table_ids
+
+    def visible_columns(self, table_id: int, columns: Iterable[str]) -> Optional[set[str]]:
+        """该用户在这张表上可见的列；``None`` 表示不受字段级限制（全部可见）。
+
+        多条来源取**交集**语义：任何一个来源排除了某列，这列就不可见。
+        方向与表级相反是有意的 —— 表级「全员基线不可收窄」保证不能凭空少给权限；
+        字段级反过来，全员排除掉的敏感列不能被个人或角色配置重新放开。
+        """
+        rules = (self.column_rules or {}).get(int(table_id)) or ()
+        if not rules:
+            return None
+        visible = {str(item).lower() for item in columns}
+        for rule in rules:
+            visible = rule.apply(visible)
+        return visible
 
 
 # ---------------------------------------------------------------------------
@@ -216,23 +255,57 @@ async def _load_extended_rows(
 # ---------------------------------------------------------------------------
 
 
-def _parse_scope(raw: Any) -> tuple[str, frozenset[int]]:
+def _parse_columns(raw: Any) -> dict[int, ColumnRule]:
+    """解析 ``scope.columns``：``{table_id: {"mode": "include"|"exclude", "names": [...]}}``。
+
+    没写 = 全部字段（历史行为）。形态不合法就**忽略这条配置**而不是当成「排除全部」：
+    配置写坏了顶多是没生效，不能反过来把整张表的字段全禁掉。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    rules: dict[int, ColumnRule] = {}
+    for key, value in raw.items():
+        try:
+            table_id = int(key)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(value, dict):
+            continue
+        mode = str(value.get("mode") or "").strip().lower()
+        if mode not in (COL_INCLUDE, COL_EXCLUDE):
+            continue
+        names = set()
+        for name in value.get("names") or []:
+            text = str(name or "").strip().lower()
+            if text:
+                names.add(text)
+        # include 空白名单 = 一个字段都不许（fail-closed），这是有意义的配置，要保留；
+        # exclude 空白名单 = 什么都没排除，等价于不配，直接丢掉避免无意义规则堆积。
+        if mode == COL_EXCLUDE and not names:
+            continue
+        rules[table_id] = ColumnRule(mode=mode, names=frozenset(names))
+    return rules
+
+
+def _parse_scope(raw: Any) -> tuple[str, frozenset[int], dict[int, ColumnRule]]:
     """解析 `scope` JSON；任何异常形态都回退到 ``all``（历史行为）。"""
     data: Any = raw
     if data is None:
-        return MODE_ALL, frozenset()
+        return MODE_ALL, frozenset(), {}
     if isinstance(data, (bytes, bytearray)):
         data = data.decode("utf-8", "ignore")
     if isinstance(data, str):
         text_value = data.strip()
         if not text_value:
-            return MODE_ALL, frozenset()
+            return MODE_ALL, frozenset(), {}
         try:
             data = json.loads(text_value)
         except (TypeError, ValueError):
-            return MODE_ALL, frozenset()
+            return MODE_ALL, frozenset(), {}
     if not isinstance(data, dict):
-        return MODE_ALL, frozenset()
+        return MODE_ALL, frozenset(), {}
+
+    columns = _parse_columns(data.get("columns"))
 
     mode = str(data.get("mode") or MODE_ALL).strip().lower()
     if mode not in (MODE_ALL, MODE_LIST):
@@ -246,9 +319,10 @@ def _parse_scope(raw: Any) -> tuple[str, frozenset[int]]:
             continue
     if mode == MODE_ALL:
         # all 模式下列白名单没有意义，统一清空，避免脏数据影响后续并集判断。
-        return MODE_ALL, frozenset()
+        # 但字段级配置要保留：常见的正是「全部表 + 挖掉几列敏感字段」。
+        return MODE_ALL, frozenset(), columns
     # list 模式且白名单为空 = 一张表都不允许（fail-closed），不回落成 all。
-    return MODE_LIST, frozenset(table_ids)
+    return MODE_LIST, frozenset(table_ids), columns
 
 
 def _parse_row_policy(raw: Any) -> str:
@@ -330,6 +404,22 @@ def build_dataset_scope(dataset_id: int, items: Iterable[dict[str, Any]]) -> Dat
     else:
         row_policy, row_condition = ROW_POLICY_INHERIT, None
 
+    # 字段级：把各来源的列规则按表汇总，运行时逐条作用（交集语义）。
+    #
+    # 注意这里用的是 **全部来源**（own + role + public），不是表级那个 `base`：
+    # 表级是「用户级覆盖角色级」，那是为了允许按人收窄；字段级方向相反，
+    # 任何一个来源排除掉的列都不能被别的来源重新放开 —— 否则「角色层排除 id_card、
+    # 再给某人加一条个人授权」就把角色的排除抹掉了。两处口径不同是有意的。
+    #
+    # 只有「该来源确实覆盖这张表」时才计入 —— 一个来源配了它自己都看不到的表的字段规则，
+    # 属于配置残留，不应该影响真正能看到这张表的其他来源。
+    merged_columns: dict[int, list[ColumnRule]] = {}
+    for item in [*own, *role, *public]:
+        for table_id, rule in (item.get("column_rules") or {}).items():
+            key = int(table_id)
+            if item["mode"] == MODE_ALL or key in item["table_ids"]:
+                merged_columns.setdefault(key, []).append(rule)
+
     sources = tuple(dict.fromkeys(str(item["subject"]) for item in [*base, *public]))
     return DatasetScope(
         dataset_id=int(dataset_id),
@@ -338,6 +428,7 @@ def build_dataset_scope(dataset_id: int, items: Iterable[dict[str, Any]]) -> Dat
         row_policy=row_policy,
         row_condition=row_condition,
         sources=sources,
+        column_rules={tid: tuple(rules) for tid, rules in merged_columns.items()},
     )
 
 
@@ -439,12 +530,13 @@ async def resolve_user_dataset_scopes(
         except (TypeError, ValueError):
             continue
 
-        mode, table_ids = _parse_scope(info.get("scope"))
+        mode, table_ids, column_rules = _parse_scope(info.get("scope"))
         grouped.setdefault(dataset_id, []).append(
             {
                 "subject": subject,
                 "mode": mode,
                 "table_ids": table_ids,
+                "column_rules": column_rules,
                 "row_policy": _parse_row_policy(info.get("row_policy")),
                 "row_condition": str(info.get("row_condition") or "").strip() or None,
             }
@@ -589,6 +681,43 @@ async def enforce_table_scope_for_refs(
             "请联系数据集管理员在「权限管理」里把该表加入你的授权范围。"
         )
     return None
+
+
+async def column_rules_by_table_name(
+    session: AsyncSession, scopes: dict[int, DatasetScope]
+) -> dict[tuple[int, str], tuple[ColumnRule, ...]]:
+    """把 ``table_id -> 列规则`` 翻译成 ``(dataset_id, 物理表名 lower) -> 列规则``。
+
+    Schema 输出的 chunk 与 SQL 里都只有物理表名，没有 ``MetaTable.id``；与其让调用方
+    反查两次，不如在这里一次查完。只查真正配了字段级规则的表，绝大多数用户是空查询。
+    """
+    table_ids = {
+        int(table_id)
+        for scope in scopes.values()
+        for table_id in (scope.column_rules or {})
+    }
+    if not table_ids:
+        return {}
+
+    rows = (
+        await session.execute(
+            select(MetaTable.id, MetaTable.dataset_id, MetaTable.physical_name).where(
+                MetaTable.id.in_(sorted(table_ids))
+            )
+        )
+    ).all()
+
+    result: dict[tuple[int, str], tuple[ColumnRule, ...]] = {}
+    for table_id, dataset_id, physical_name in rows:
+        if not physical_name:
+            continue
+        scope = scopes.get(int(dataset_id))
+        if scope is None:
+            continue
+        rules = (scope.column_rules or {}).get(int(table_id))
+        if rules:
+            result[(int(dataset_id), str(physical_name).lower())] = tuple(rules)
+    return result
 
 
 async def allowed_table_names_by_dataset(
@@ -813,7 +942,7 @@ async def dataset_permission_snapshot(
             continue
         if _is_expired(info.get("expire_at"), now):
             continue
-        mode, table_ids = _parse_scope(info.get("scope"))
+        mode, table_ids, _column_rules = _parse_scope(info.get("scope"))
         matched.append(
             {
                 "permission_id": int(permission_id),
@@ -893,6 +1022,46 @@ def _example_table_names(example: "dict[str, Any]") -> set[str] | None:
     return set(refs.keys())
 
 
+def _example_hits_blocked_columns(
+    example: "dict[str, Any]",
+    rules_by_physical: "dict[str, tuple[ColumnRule, ...]]",
+) -> bool:
+    """示例 SQL 是否引用了被字段级权限挡住的列。
+
+    与表级过滤同理：few-shot 里的 SQL 带真实字段名，命中别人的历史 SQL 会把
+    被收窄的字段名带进提示词，模型还会照着写一条注定被拦的 SQL。
+    """
+    if not rules_by_physical:
+        return False
+    sql = str(example.get("sql") or "").strip()
+    if not sql:
+        return False
+    try:
+        from app.services.chatbi_dataset_schema_service import _metric_sql_columns
+
+        parsed = _metric_sql_columns(sql)
+    except Exception:  # noqa: BLE001
+        return False
+    if parsed is None:
+        return False
+    qualified, unqualified = parsed
+    for physical, rules in rules_by_physical.items():
+        if not rules:
+            continue
+        columns = set(qualified.get(physical) or ())
+        if not columns and not unqualified:
+            continue
+        if physical not in qualified and not unqualified:
+            continue
+        columns |= unqualified
+        for rule in rules:
+            if rule.mode == COL_INCLUDE and (columns - set(rule.names)):
+                return True
+            if rule.mode == COL_EXCLUDE and (columns & set(rule.names)):
+                return True
+    return False
+
+
 async def filter_examples_by_table_scope(
     examples: "list[dict[str, Any]]",
     *,
@@ -911,6 +1080,8 @@ async def filter_examples_by_table_scope(
     if not examples or not user_id or is_admin:
         return examples
 
+    # 字段级规则单独 try：它失败不能连带把表级过滤也一起废掉（表级过滤是更硬的边界）。
+    rules_by_physical: dict[str, tuple[ColumnRule, ...]] = {}
     try:
         from app.core.orm import AsyncSessionLocal
 
@@ -919,6 +1090,23 @@ async def filter_examples_by_table_scope(
     except Exception as exc:  # noqa: BLE001 - 过滤失败不应影响主流程
         logger.warning("[FewShot] 解析可见表白名单失败，跳过表级过滤: %s", exc)
         return examples
+
+    try:
+        from app.core.orm import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            scopes = await resolve_user_dataset_scopes(session, int(user_id))
+            # 字段级：同一张物理表在多个数据集里可能各有一套规则，这里合起来用
+            # （只要在任一数据集里被收窄，就按收窄判定）。few-shot 少给几条的代价
+            # 远小于把敏感字段名塞进提示词。
+            for (_dataset_id, physical), rules in (
+                await column_rules_by_table_name(session, scopes)
+            ).items():
+                existing = rules_by_physical.get(physical) or ()
+                rules_by_physical[physical] = (*existing, *rules)
+    except Exception as exc:  # noqa: BLE001 - 字段级解析失败只跳过字段级过滤
+        logger.warning("[FewShot] 解析字段级授权失败，跳过字段级过滤: %s", exc)
+        rules_by_physical = {}
 
     if not allowed:
         # 用户没有任何数据集授权记录：此时不误杀（执行层仍然会拒绝）。
@@ -932,10 +1120,13 @@ async def filter_examples_by_table_scope(
             kept.append(example)
             continue
         bare = {name.split(".")[-1] for name in names}
-        if bare.issubset(allowed) or names.issubset(allowed):
-            kept.append(example)
-        else:
+        if not (bare.issubset(allowed) or names.issubset(allowed)):
             dropped += 1
+            continue
+        if _example_hits_blocked_columns(example, rules_by_physical):
+            dropped += 1
+            continue
+        kept.append(example)
 
     if dropped:
         logger.info(

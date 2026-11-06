@@ -160,9 +160,12 @@ def format_tool_details(
                 ]
                 return "、".join(values) or "无"
 
-            source_label = {"turn": "本轮限定", "session": "会话限定", "user": "用户可访问范围"}.get(
-                scope_debug.get("source"), "用户可访问范围"
-            )
+            source_label = {
+                "turn": "本轮限定",
+                "session": "会话限定",
+                "user_question": "提问轮继承",
+                "user": "用户可访问范围",
+            }.get(scope_debug.get("source"), "用户可访问范围")
             actual_names = extract_schema_dataset_names(str(output or ""))
             actual_names.update(
                 match.strip()

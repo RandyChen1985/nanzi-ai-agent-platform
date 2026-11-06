@@ -1,0 +1,1774 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>元数据管理 · 数据集复制新建向导</title>
+<meta name="prototype-kind" content="交互原型">
+<style>
+  :root{
+    --bg:#f2f3f5; --panel:#fff; --line:#e8eaed; --line2:#f1f3f5;
+    --text:#1f2329; --text2:#5c6370; --text3:#8f959e;
+    --blue:#1677ff; --blue-soft:#eaf2ff; --blue-line:#bcd6ff;
+    --green:#0f8a4d; --green-soft:#e8f8f0; --green-line:#bfe8d2;
+    --red:#d4380d; --red-soft:#fff1ec; --red-line:#ffcfc2;
+    --amber:#b26a00; --amber-soft:#fff6e6; --amber-line:#f3ddb3;
+    --purple:#6b46c1; --purple-soft:#f3efff;
+    --shadow:0 1px 2px rgba(16,24,40,.05), 0 12px 32px rgba(16,24,40,.12);
+    --shadow-lg:0 24px 64px rgba(16,24,40,.22);
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-size:13px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  button{font:inherit;}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;}
+
+  .wrap{max-width:1140px;margin:0 auto;padding:26px 22px 70px;}
+  h1{font-size:19px;margin:0 0 6px;letter-spacing:-.2px;}
+  .sub{color:var(--text2);line-height:1.8;margin:0 0 4px;}
+  .sub code{background:#fff;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:12px;}
+  .toolbar{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin:16px 0 12px;}
+  .seg{display:inline-flex;background:#fff;border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px;}
+  .seg button{border:0;background:transparent;color:var(--text2);font-size:12px;font-weight:500;padding:6px 12px;border-radius:7px;cursor:pointer;}
+  .seg button[aria-selected="true"]{background:var(--blue);color:#fff;font-weight:600;}
+  .ghost-btn{border:1px solid var(--line);background:#fff;color:var(--text2);font-size:12px;font-weight:600;
+    padding:7px 12px;border-radius:9px;cursor:pointer;}
+  .ghost-btn:hover{border-color:#d5d9df;color:var(--text);}
+  .hint{margin-left:auto;color:var(--text3);font-size:12px;}
+
+  .stage{background:#e6e8ec;border:1px solid #dcdfe4;border-radius:14px;padding:14px;}
+  .surface{background:var(--panel);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;}
+  .page-head{padding:16px 20px 12px;border-bottom:1px solid var(--line);}
+  .page-head .crumbs{font-size:11.5px;color:var(--text3);margin-bottom:6px;}
+  .page-head .row1{display:flex;align-items:center;gap:10px;}
+  .page-head h2{font-size:16px;margin:0;}
+  .page-head .p{font-size:11.5px;color:var(--text3);margin:5px 0 0;}
+  .badge{font-size:10px;font-weight:700;border-radius:999px;padding:2px 8px;border:1px solid;}
+  .badge.on{color:var(--green);background:var(--green-soft);border-color:var(--green-line);}
+  .badge.off{color:var(--text3);background:#f6f7f9;border-color:var(--line);}
+  .badge.new{color:#fff;background:var(--blue);border-color:var(--blue);}
+
+  /* ---------- 数据集卡片 ---------- */
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(318px,1fr));gap:12px;padding:16px 20px 20px;}
+  .ds-card{position:relative;border:1px solid var(--line);border-radius:12px;padding:13px 14px;background:#fff;}
+  .ds-card:hover{border-color:#d6dbe2;box-shadow:0 6px 18px rgba(16,24,40,.06);}
+  .ds-top{display:flex;align-items:flex-start;gap:9px;}
+  .ds-ico{width:30px;height:30px;border-radius:8px;background:var(--blue-soft);color:var(--blue);
+    display:grid;place-items:center;font-size:14px;flex-shrink:0;border:1px solid #dbe8ff;}
+  .ds-name{min-width:0;flex:1;}
+  .ds-name h3{font-size:13.5px;margin:1px 0 2px;font-weight:600;}
+  .ds-name code{font-size:11px;color:var(--text3);}
+  .ds-desc{font-size:11.5px;color:var(--text2);line-height:1.7;margin:9px 0 0;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:39px;}
+  .ds-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px;}
+  .ds-tags span{font-size:10.5px;background:#f6f7f9;border:1px solid var(--line);border-radius:6px;padding:1px 7px;color:var(--text2);}
+  .ds-stats{display:flex;gap:16px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--line);}
+  .ds-stats div{display:flex;align-items:baseline;gap:4px;}
+  .ds-stats b{font-size:14px;}
+  .ds-stats span{font-size:10.5px;color:var(--text3);}
+  .ds-foot{display:flex;align-items:center;justify-content:space-between;margin-top:9px;font-size:10.5px;color:var(--text3);}
+  .more{width:24px;height:24px;border:1px solid transparent;background:transparent;color:var(--text3);
+    border-radius:7px;cursor:pointer;font-size:15px;line-height:1;}
+  .more:hover{background:#f4f6f8;border-color:var(--line);color:var(--text);}
+  .menu-wrap{position:relative;}
+
+  .menu{position:absolute;right:0;top:28px;z-index:40;width:186px;background:#fff;border:1px solid var(--line);
+    border-radius:10px;box-shadow:var(--shadow);padding:5px;font-size:12px;}
+  .menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:transparent;
+    color:var(--text2);padding:7px 9px;border-radius:7px;cursor:pointer;}
+  .menu button:hover{background:#f4f6f8;color:var(--text);}
+  .menu .sep{height:1px;background:var(--line);margin:4px 2px;}
+  .menu .danger{color:var(--red);}
+  .menu .danger:hover{background:var(--red-soft);}
+  .menu .hl{background:linear-gradient(90deg,var(--blue-soft),#fff);color:#1f63d6;font-weight:600;}
+  .menu .hl:hover{background:var(--blue-soft);}
+  .menu .hl .tagnew{margin-left:auto;font-size:9px;font-weight:800;color:#fff;background:var(--blue);
+    border-radius:999px;padding:1px 5px;letter-spacing:.4px;}
+
+  /* ---------- 列表视图 ---------- */
+  .list{padding:0 20px 20px;}
+  table.ds-table{width:100%;border-collapse:collapse;font-size:12px;}
+  table.ds-table th{text-align:left;font-size:10.5px;color:var(--text3);font-weight:600;padding:9px 8px;
+    border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.4px;}
+  table.ds-table td{padding:9px 8px;border-bottom:1px solid var(--line2);vertical-align:middle;}
+  table.ds-table tr:hover td{background:#fafbfc;}
+
+  /* ---------- 向导遮罩 ---------- */
+  .overlay{position:fixed;inset:0;z-index:100;background:rgba(15,23,42,.42);backdrop-filter:blur(3px);
+    display:flex;align-items:center;justify-content:center;padding:22px;}
+  .overlay[hidden]{display:none;}
+  .wz{position:relative;width:min(1140px,96vw);height:min(860px,92vh);background:#fff;border-radius:16px;
+    box-shadow:var(--shadow-lg);overflow:hidden;display:flex;flex-direction:column;}
+  .wz-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px 13px 18px;
+    border-bottom:1px solid var(--line);flex-shrink:0;}
+  .wz-head .lft{display:flex;align-items:center;gap:10px;}
+  .wz-head .ico{width:32px;height:32px;border-radius:9px;background:var(--blue-soft);color:var(--blue);
+    display:grid;place-items:center;font-size:15px;border:1px solid #dbe8ff;}
+  .wz-head h2{font-size:14.5px;margin:0;font-weight:600;}
+  .wz-head p{margin:2px 0 0;font-size:11.5px;color:var(--text3);}
+  .wz-head .rgt{display:flex;align-items:center;gap:10px;}
+  .draft-badge{font-size:11px;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber-line);
+    border-radius:999px;padding:3px 9px;font-weight:600;}
+  .icon-btn{width:28px;height:28px;border-radius:8px;border:1px solid transparent;background:transparent;
+    color:var(--text3);cursor:pointer;font-size:13px;}
+  .icon-btn:hover{background:#f4f6f8;border-color:var(--line);color:var(--text);}
+
+  .wz-main{flex:1;display:flex;min-height:0;position:relative;}
+
+  /* 步骤条 */
+  .steps{width:218px;flex-shrink:0;border-right:1px solid var(--line);background:#fbfcfd;padding:14px 10px;overflow-y:auto;}
+  .step{display:flex;gap:9px;padding:9px 9px 9px 8px;border-radius:9px;cursor:pointer;position:relative;}
+  .step:hover{background:#f2f5f9;}
+  .step .num{width:20px;height:20px;border-radius:50%;border:1.5px solid #cfd5de;color:var(--text3);font-size:10.5px;
+    font-weight:700;display:grid;place-items:center;flex-shrink:0;background:#fff;margin-top:1px;}
+  .step .t{font-size:12.5px;font-weight:600;color:var(--text2);white-space:nowrap;}
+  .step .d{font-size:10.5px;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .step.active{background:var(--blue-soft);}
+  .step.active .num{background:var(--blue);border-color:var(--blue);color:#fff;}
+  .step.active .t{color:#1f63d6;}
+  .step.is-done .num{background:var(--green-soft);border-color:var(--green-line);color:var(--green);}
+  .step.locked{cursor:not-allowed;opacity:.55;}
+  .step.locked:hover{background:transparent;}
+
+  /* 面板 */
+  .pane{flex:1;overflow-y:auto;padding:16px 20px 22px;min-width:0;}
+  .pane-head h3{font-size:14px;margin:0;}
+  .pane-head p{font-size:11.5px;color:var(--text3);margin:4px 0 0;}
+  .banner{display:flex;align-items:center;gap:10px;background:#f7faff;border:1px solid var(--blue-line);
+    border-radius:10px;padding:10px 12px;margin:13px 0 15px;}
+  .banner .b-ico{width:28px;height:28px;border-radius:8px;background:#fff;border:1px solid var(--blue-line);
+    display:grid;place-items:center;color:var(--blue);flex-shrink:0;}
+  .banner b{font-size:12.5px;}
+  .banner .muted{color:var(--text3);font-size:11px;margin-left:8px;}
+  .banner .draft-tag{margin-left:auto;font-size:10px;font-weight:800;color:var(--blue);border:1px dashed var(--blue-line);
+    border-radius:999px;padding:2px 8px;background:#fff;}
+
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px 16px;}
+  .field{display:flex;flex-direction:column;gap:5px;min-width:0;}
+  .field.full{grid-column:1 / -1;}
+  .field label{font-size:11.5px;font-weight:600;color:var(--text2);display:flex;align-items:center;gap:4px;}
+  .field label .req{color:var(--red);font-size:13px;font-weight:800;line-height:1;}
+  .field .tip{font-size:10.5px;color:var(--text3);line-height:1.6;}
+  .field input[type=text],.field textarea,.field select{border:1px solid #dfe3e8;border-radius:8px;padding:8px 10px;
+    font:inherit;font-size:12.5px;color:var(--text);background:#fff;outline:none;width:100%;}
+  .field input[type=text]:focus,.field textarea:focus,.field select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(22,119,255,.12);}
+  .field textarea{resize:vertical;min-height:64px;line-height:1.65;}
+  .inp-row{display:flex;gap:7px;}
+  .inp-row input{flex:1;}
+  .mini-btn{border:1px solid #dfe3e8;background:#fff;border-radius:8px;padding:0 10px;color:var(--text2);
+    font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap;}
+  .mini-btn:hover{border-color:var(--blue);color:var(--blue);}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;background:var(--blue-soft);color:#1f63d6;
+    border:1px solid #d6e6ff;border-radius:999px;padding:2px 8px;}
+  .chip button{border:0;background:transparent;color:#7aa8f0;cursor:pointer;font-size:12px;line-height:1;padding:0;}
+  .chip button:hover{color:var(--red);}
+
+  /* 数据源下拉 */
+  .ds-wrap{position:relative;}
+  .ds-btn{display:flex;align-items:center;gap:8px;width:100%;border:1px solid #dfe3e8;border-radius:8px;background:#fff;
+    padding:8px 10px;cursor:pointer;font:inherit;font-size:12.5px;color:var(--text);text-align:left;}
+  .ds-btn:hover{border-color:#cfd5de;}
+  .ds-btn .caret{margin-left:auto;color:var(--text3);font-size:10px;}
+  .ds-badge{font-size:9.5px;font-weight:800;letter-spacing:.3px;border-radius:5px;padding:1px 6px;border:1px solid;white-space:nowrap;}
+  .ds-badge.ch{color:#8a5200;background:var(--amber-soft);border-color:var(--amber-line);}
+  .ds-badge.my{color:#1f63d6;background:var(--blue-soft);border-color:#d6e6ff;}
+  .ds-badge.pg{color:#0f6b8a;background:#e6f6fb;border-color:#bfe6f2;}
+  .ds-menu{position:absolute;left:0;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--line);
+    border-radius:10px;box-shadow:var(--shadow);padding:5px;z-index:70;max-height:264px;overflow-y:auto;}
+  .ds-item{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:transparent;
+    border-radius:8px;padding:7px 8px;cursor:pointer;font:inherit;}
+  .ds-item:hover{background:#f6f8fa;}
+  .ds-item.selected{background:var(--blue-soft);}
+  .ds-item[disabled]{opacity:.45;cursor:not-allowed;}
+  .ds-item[disabled]:hover{background:transparent;}
+  .ds-item .ds-main{flex:1;min-width:0;}
+  .ds-item .ds-main b{display:block;font-size:12px;font-family:ui-monospace,Menlo,monospace;color:var(--text);}
+  .ds-item .ds-main small{display:block;font-size:10.5px;color:var(--text3);margin-top:1px;}
+  .ds-item .tick{color:var(--blue);font-weight:800;font-size:11px;}
+  .ds-note{margin-top:6px;font-size:10.5px;line-height:1.6;color:var(--amber);background:var(--amber-soft);
+    border:1px solid var(--amber-line);border-radius:7px;padding:6px 8px;}
+
+  /* 校验状态 */
+  .state{display:flex;align-items:flex-start;gap:6px;font-size:11px;line-height:1.55;border-radius:7px;padding:5px 8px;margin-top:1px;}
+  .state .dot{width:6px;height:6px;border-radius:50%;margin-top:5px;flex-shrink:0;}
+  .state.ok{color:var(--green);background:var(--green-soft);border:1px solid var(--green-line);}
+  .state.ok .dot{background:var(--green);}
+  .state.taken,.state.bad{color:var(--red);background:var(--red-soft);border:1px solid var(--red-line);}
+  .state.taken .dot,.state.bad .dot{background:var(--red);}
+  .state.checking{color:var(--text2);background:#f6f7f9;border:1px solid var(--line);}
+  .state.checking .dot{background:var(--text3);animation:blink .9s infinite;}
+  .state .api{font-size:10px;color:var(--text3);font-family:ui-monospace,Menlo,monospace;margin-left:auto;white-space:nowrap;}
+  .state .fix{border:0;background:transparent;color:var(--blue);font-size:11px;font-weight:700;cursor:pointer;
+    padding:0 0 0 6px;text-decoration:underline;}
+  @keyframes blink{0%,100%{opacity:.25}50%{opacity:1}}
+  .spin{display:inline-block;width:10px;height:10px;border:1.5px solid #c9ced6;border-top-color:var(--blue);
+    border-radius:50%;animation:sp .7s linear infinite;}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* 工具条 */
+  .toolbar2{display:flex;align-items:center;gap:8px;margin:14px 0 10px;flex-wrap:wrap;}
+  .search{display:flex;align-items:center;gap:6px;border:1px solid #dfe3e8;border-radius:8px;padding:5px 9px;background:#fff;width:250px;}
+  .search input{border:0;outline:none;font:inherit;font-size:12px;width:100%;background:transparent;}
+  .search span{color:var(--text3);font-size:12px;}
+  .stat-line{font-size:11.5px;color:var(--text3);margin-left:auto;}
+  .stat-line b{color:var(--text);}
+
+  /* 表卡片 */
+  .tbl{border:1px solid var(--line);border-radius:11px;margin-bottom:9px;overflow:hidden;background:#fff;}
+  .tbl.invalid{border-color:var(--red-line);background:#fffdfc;}
+  .tbl-head{display:flex;align-items:center;gap:9px;padding:9px 11px;}
+  .tbl-head .caret{width:18px;height:18px;border:0;background:transparent;color:var(--text3);cursor:pointer;
+    font-size:10px;transition:transform .15s;}
+  .tbl-head .caret.open{transform:rotate(90deg);}
+  .tbl-head .pname{font-size:12.5px;font-weight:600;font-family:ui-monospace,Menlo,monospace;}
+  .tbl-head .term{font-size:12px;color:var(--text2);}
+  .tbl-head .cnt{font-size:10.5px;color:var(--text3);background:#f6f7f9;border:1px solid var(--line);
+    border-radius:999px;padding:1px 7px;}
+  .tbl-head .ops{margin-left:auto;display:flex;gap:4px;}
+  .link-btn{border:0;background:transparent;color:var(--text2);font-size:11.5px;padding:3px 6px;border-radius:6px;cursor:pointer;white-space:nowrap;}
+  .link-btn:hover{background:#f4f6f8;color:var(--blue);}
+  .link-btn.del:hover{color:var(--red);background:var(--red-soft);}
+  .tbl-edit{padding:10px 11px;background:#fbfcfd;border-top:1px solid var(--line);display:grid;
+    grid-template-columns:1fr 1.6fr;gap:10px;}
+  .tbl-edit .f{display:flex;flex-direction:column;gap:4px;}
+  .tbl-edit label{font-size:10.5px;color:var(--text3);font-weight:600;}
+  .tbl-edit input{width:100%;}
+  .tbl-edit .act{grid-column:1/-1;display:flex;justify-content:flex-end;gap:7px;}
+
+  .col-table{width:100%;border-collapse:collapse;font-size:11.5px;border-top:1px solid var(--line);table-layout:fixed;}
+  .col-table th{text-align:left;font-size:10px;color:var(--text3);font-weight:600;padding:6px 10px;
+    background:#fafbfc;border-bottom:1px solid var(--line2);letter-spacing:.3px;}
+  .col-table td{padding:6px 10px;border-bottom:1px solid #f6f7f9;color:var(--text2);vertical-align:top;}
+  .col-table tr:last-child td{border-bottom:0;}
+  .col-table tr:hover td{background:#fcfdfe;}
+  .col-table .pk{font-size:9px;font-weight:800;color:var(--amber);background:var(--amber-soft);
+    border:1px solid var(--amber-line);border-radius:4px;padding:0 4px;margin-left:5px;}
+  .col-table .role{font-size:10px;color:var(--text3);background:#f6f7f9;border-radius:5px;padding:1px 5px;}
+
+  /* 关系 */
+  .rel{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff;}
+  .rel.invalid{border-color:var(--red-line);background:#fff8f6;}
+  .rel-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .rel .node{font-size:11.5px;font-family:ui-monospace,Menlo,monospace;background:#f6f7f9;border:1px solid var(--line);
+    border-radius:6px;padding:2px 7px;}
+  .rel .arrow{color:var(--text3);font-size:11px;}
+  .rel .jt{font-size:10px;font-weight:700;color:var(--purple);background:var(--purple-soft);border-radius:5px;padding:1px 6px;}
+  .rel .bad{font-size:10px;font-weight:700;color:var(--red);background:var(--red-soft);border:1px solid var(--red-line);
+    border-radius:5px;padding:1px 6px;}
+  .rel .ok{font-size:10px;color:var(--green);background:var(--green-soft);border:1px solid var(--green-line);
+    border-radius:5px;padding:1px 6px;}
+  .rel .ops{margin-left:auto;display:flex;gap:2px;}
+  .rel-edit{display:grid;grid-template-columns:110px 1fr auto;gap:8px;margin-top:8px;align-items:center;}
+  .rel-edit select,.rel-edit input{border:1px solid #dfe3e8;border-radius:7px;padding:5px 8px;font:inherit;font-size:11.5px;outline:none;}
+  .rel-edit input:focus,.rel-edit select:focus{border-color:var(--blue);}
+
+  /* 指标 */
+  .metric{border:1px solid var(--line);border-radius:10px;padding:11px 12px;margin-bottom:8px;background:#fff;}
+  .metric .m-top{display:flex;align-items:center;gap:8px;}
+  .metric .m-name{font-size:12.5px;font-weight:600;font-family:ui-monospace,Menlo,monospace;}
+  .metric .m-disp{font-size:11.5px;color:var(--text2);}
+  .metric .m-desc{font-size:11px;color:var(--text3);margin:6px 0 0;line-height:1.65;}
+  .metric .m-logic{font-size:11px;font-family:ui-monospace,Menlo,monospace;background:#fbfaf5;border:1px solid #efe9d8;
+    color:#6b5b2e;border-radius:6px;padding:5px 8px;margin-top:7px;overflow-x:auto;white-space:nowrap;}
+  .metric .m-foot{display:flex;align-items:center;gap:8px;margin-top:7px;font-size:10.5px;color:var(--text3);}
+
+  /* 选项 */
+  .opt-group{border:1px solid var(--line);border-radius:11px;margin-bottom:11px;overflow:hidden;}
+  .opt-group > h4{margin:0;font-size:12px;padding:9px 12px;background:#fafbfc;border-bottom:1px solid var(--line);color:var(--text2);}
+  .opt{padding:10px 12px;border-bottom:1px solid var(--line2);display:flex;gap:10px;align-items:flex-start;}
+  .opt:last-child{border-bottom:0;}
+  .opt .switch{position:relative;width:32px;height:18px;border-radius:999px;background:#d9dde3;flex-shrink:0;cursor:pointer;
+    transition:background .15s;margin-top:1px;border:0;padding:0;}
+  .opt .switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.15);}
+  .opt .switch.on{background:var(--green);}
+  .opt .switch.on::after{left:16px;}
+  .opt .switch.fixed{background:#b9e3cd;cursor:default;}
+  .opt .o-t{font-size:12px;font-weight:600;}
+  .opt .o-d{font-size:11px;color:var(--text3);line-height:1.6;margin-top:2px;}
+  .opt .o-d code{background:#f6f7f9;border-radius:4px;padding:0 4px;font-size:10.5px;}
+  .radio-row{display:flex;gap:8px;}
+  .radio{border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:11.5px;cursor:pointer;color:var(--text2);}
+  .radio.on{border-color:var(--blue);background:var(--blue-soft);color:#1f63d6;font-weight:600;}
+
+  /* 日志预览 */
+  .logbox{border:1px solid var(--line);border-radius:11px;overflow:hidden;}
+  .logbox .lg-head{display:flex;align-items:center;gap:8px;padding:8px 11px;background:#fafbfc;border-bottom:1px solid var(--line);font-size:11.5px;color:var(--text2);}
+  .logbox .lg-head b{color:var(--text);}
+  .lg{max-height:210px;overflow-y:auto;padding:8px 11px;background:#fff;}
+  .lg-item{display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px dashed var(--line2);font-size:11px;}
+  .lg-item:last-child{border-bottom:0;}
+  .lg-item .op{font-size:9px;font-weight:800;letter-spacing:.4px;border-radius:4px;padding:1px 5px;white-space:nowrap;
+    font-family:ui-monospace,Menlo,monospace;}
+  .op.clone{color:#1f63d6;background:var(--blue-soft);}
+  .op.create{color:var(--green);background:var(--green-soft);}
+  .lg-item .res{font-family:ui-monospace,Menlo,monospace;color:var(--text);white-space:nowrap;}
+  .lg-item .txt{color:var(--text3);line-height:1.55;}
+
+  /* 确认页 */
+  .sum-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px;}
+  .sum-card{border:1px solid var(--line);border-radius:11px;padding:12px 13px;}
+  .sum-card h4{margin:0 0 9px;font-size:11.5px;color:var(--text3);font-weight:600;letter-spacing:.3px;}
+  .kv{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;padding:3px 0;}
+  .kv .k{color:var(--text3);}
+  .kv .v{color:var(--text);text-align:right;word-break:break-all;}
+  .kv .v.mono{font-family:ui-monospace,Menlo,monospace;}
+  .metric-big{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin:12px 0;}
+  .mb{border:1px solid var(--line);border-radius:10px;padding:10px 11px;background:#fcfdfe;}
+  .mb b{display:block;font-size:19px;line-height:1.2;}
+  .mb span{font-size:10.5px;color:var(--text3);}
+  .warn{background:var(--amber-soft);border:1px solid var(--amber-line);color:var(--amber);font-size:11.5px;
+    border-radius:9px;padding:9px 11px;line-height:1.7;margin-top:10px;}
+  .warn b{color:#8a5200;}
+
+  /* 底部 */
+  .wz-foot{display:flex;align-items:center;gap:10px;padding:11px 16px;border-top:1px solid var(--line);
+    background:#fbfcfd;flex-shrink:0;}
+  .foot-stat{font-size:11.5px;color:var(--text3);}
+  .foot-stat b{color:var(--text);}
+  .foot-right{margin-left:auto;display:flex;gap:8px;align-items:center;}
+  .btn{border:1px solid #dfe3e8;background:#fff;color:var(--text2);font-size:12px;font-weight:600;
+    padding:7px 14px;border-radius:8px;cursor:pointer;}
+  .btn:hover{border-color:#cfd5de;color:var(--text);}
+  .btn:disabled{opacity:.45;cursor:not-allowed;}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff;}
+  .btn.primary:hover{background:#0f66e0;}
+  .btn.success{background:var(--green);border-color:var(--green);color:#fff;}
+  .btn.success:hover{background:#0b7442;}
+
+  /* 抽屉 */
+  .drawer{position:absolute;top:0;right:0;bottom:0;width:424px;background:#fff;border-left:1px solid var(--line);
+    box-shadow:-14px 0 32px rgba(16,24,40,.09);display:flex;flex-direction:column;z-index:60;}
+  .drawer[hidden]{display:none;}
+  .drawer .d-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);}
+  .drawer .d-head h4{margin:0;font-size:13px;}
+  .drawer .d-head .x{margin-left:auto;border:0;background:transparent;color:var(--text3);cursor:pointer;font-size:14px;}
+  .drawer .d-body{flex:1;overflow-y:auto;padding:13px 14px;display:flex;flex-direction:column;gap:11px;}
+  .drawer .d-foot{padding:10px 14px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;background:#fbfcfd;}
+  .drawer .ro{background:#f6f7f9;border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12px;
+    font-family:ui-monospace,Menlo,monospace;color:var(--text2);}
+  .drawer .field label{font-size:11px;}
+  .drawer .lg-item{display:block;padding:7px 0;}
+  .drawer .lg-item .op{margin-right:7px;}
+  .drawer .lg-item .res{font-size:10.5px;margin-left:7px;}
+  .drawer .lg-item .txt{display:block;margin-top:3px;white-space:normal;line-height:1.6;}
+
+  /* 保存进度 */
+  .saving{padding:26px 26px 10px;display:flex;flex-direction:column;}
+  .saving h3{font-size:15px;margin:0 0 4px;}
+  .saving p{font-size:11.5px;color:var(--text3);margin:0 0 18px;}
+  .s-step{position:relative;box-sizing:border-box;height:40px;line-height:38px;padding:0 92px 0 38px;
+    border:1px solid var(--line);border-radius:9px;margin-bottom:7px;font-size:12px;color:var(--text3);background:#fff;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .s-step .ic{position:absolute;left:11px;top:10px;width:17px;height:17px;line-height:1;border-radius:50%;
+    border:1.5px solid #d5d9df;display:grid;place-items:center;font-size:9px;color:#fff;}
+  .s-step.active{border-color:var(--blue-line);background:#f7faff;color:var(--text);}
+  .s-step.active .ic{border-color:var(--blue);}
+  .s-step.is-done{color:var(--text2);}
+  .s-step.is-done .ic{background:var(--green);border-color:var(--green);}
+  .s-step .sub{position:absolute;right:12px;top:0;font-size:10.5px;color:var(--text3);}
+  .s-step.active .sub{color:var(--blue);}
+
+  /* 成功页 */
+  .done{padding:44px 30px;text-align:center;}
+  .done .big{width:58px;height:58px;border-radius:50%;background:var(--green-soft);border:1px solid var(--green-line);
+    color:var(--green);font-size:26px;display:grid;place-items:center;margin:0 auto 14px;}
+  .done h3{font-size:17px;margin:0 0 6px;}
+  .done p{font-size:12px;color:var(--text2);margin:0 0 18px;line-height:1.8;}
+  .done .res-box{display:inline-flex;flex-direction:column;gap:5px;text-align:left;border:1px solid var(--line);
+    border-radius:11px;padding:12px 16px;background:#fbfcfd;margin-bottom:18px;}
+  .done .res-box .r{font-size:12px;color:var(--text2);}
+  .done .res-box .r b{color:var(--text);font-size:13px;}
+  .done .res-box code{font-size:12px;color:#1f63d6;background:var(--blue-soft);border-radius:5px;padding:1px 6px;}
+  .done .acts{display:flex;gap:9px;justify-content:center;}
+
+  /* Toast */
+  .toast-wrap{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:300;display:flex;flex-direction:column;gap:7px;align-items:center;}
+  .toast{background:#1f2329;color:#fff;font-size:12px;border-radius:9px;padding:9px 14px;box-shadow:var(--shadow);
+    display:flex;align-items:center;gap:10px;animation:up .18s ease-out;}
+  .toast button{border:0;background:transparent;color:#7fb3ff;font-size:12px;font-weight:700;cursor:pointer;}
+  @keyframes up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  /* 实现说明 */
+  .docs{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px;}
+  .doc{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 15px;}
+  .doc h4{margin:0 0 8px;font-size:12.5px;display:flex;align-items:center;gap:6px;}
+  .doc h4 .n{width:17px;height:17px;border-radius:5px;background:var(--blue-soft);color:var(--blue);font-size:10px;
+    display:grid;place-items:center;font-weight:800;}
+  .doc ul{margin:0;padding-left:16px;color:var(--text2);font-size:11.5px;line-height:1.85;}
+  .doc code{background:#f6f7f9;border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10.5px;}
+  .doc .k{color:var(--text);font-weight:600;}
+  .sec-title{font-size:13px;margin:26px 0 10px;color:var(--text2);font-weight:600;}
+
+  @media (max-width:900px){
+    .docs{grid-template-columns:1fr;}
+    .form-grid{grid-template-columns:1fr;}
+    .sum-grid{grid-template-columns:1fr;}
+    .steps{width:170px;}
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <h1>元数据管理 · 数据集「复制新建」</h1>
+  <p class="sub">在数据集卡片的 <b>⋯ 更多操作</b> 里新增「复制新建」，点开后是一个 6 步向导：改 ID / 名称（<b>实时查重</b>）、数据源（<b>只能从已配置连接里选</b>）→ 看表与字段 → 看关系 → 看指标 → 选复制项 → 最后一步才落库，并写入初始化变更日志。中间所有编辑都只在草稿里，关掉不产生任何数据。</p>
+
+  <div class="toolbar">
+    <div class="seg" role="tablist">
+      <button role="tab" aria-selected="true" data-view="grid">卡片视图</button>
+      <button role="tab" aria-selected="false" data-view="list">列表视图</button>
+    </div>
+    <button class="ghost-btn" id="btn-direct">直接打开向导 ↦</button>
+    <span class="hint">点击卡片 / 行右侧的 ⋯ 可以看到「复制新建」入口</span>
+  </div>
+
+  <div class="stage">
+    <div class="surface">
+      <div class="page-head">
+        <div class="crumbs">数据资产 &nbsp;/&nbsp; 元数据管理</div>
+        <div class="row1">
+          <h2>元数据管理</h2>
+          <span class="badge on">3 个数据集</span>
+        </div>
+        <p class="p">维护 ChatBI 查数依赖的表结构语义、表关系与指标口径；支持从已有数据集复制新建。</p>
+      </div>
+      <div id="ds-view"></div>
+    </div>
+  </div>
+
+  <div class="sec-title">保存时怎么写「初始化变更日志」，以及接口怎么设计</div>
+  <div class="docs">
+    <div class="doc">
+      <h4><span class="n">1</span>前端落点</h4>
+      <ul>
+        <li><span class="k">入口</span>：<code>MetadataDatasets.vue</code> 卡片菜单与列表菜单各加一项，权限 <code>element:metadata:edit</code>。</li>
+        <li><span class="k">组件</span>：新增 <code>CopyDatasetWizard.vue</code>，草稿态在组件内维护，关闭即丢弃。</li>
+        <li><span class="k">查重</span>：输入防抖 350ms 调 <code>check-unique</code>，返回前显示「校验中」，冲突时给推荐 ID 一键替换。</li>
+        <li><span class="k">数据源</span>：下拉数据来自 <code>GET /metadata/db-connections</code>，只传 name，不提供自由输入；不可用的连接置灰。</li>
+        <li><span class="k">保存</span>：只在第 6 步发一次 <code>clone</code> 请求，进度按后端返回的阶段推进。</li>
+      </ul>
+    </div>
+    <div class="doc">
+      <h4><span class="n">2</span>后端契约</h4>
+      <ul>
+        <li><code>GET /metadata/datasets/check-unique?name=&amp;display_name=</code> → <code>{name:{available,reason}, display_name:{…}}</code></li>
+        <li><code>POST /metadata/datasets/{source_id}/clone</code>，body 带 <code>name / display_name / copy_options / overrides</code>。</li>
+        <li><code>data_source</code> 必须是 <code>db_connection_configs.name</code> 里的值（不存在 → 400），不信任前端传任意字符串。</li>
+        <li>单事务：唯一校验(409) → 建数据集 → 批量插表与字段 → 按 <code>旧表ID→新表ID</code> 映射重写关系 → 插指标 → 写日志 → 提交。</li>
+        <li>服务层放 <code>metadata_clone_service.py</code>；冲突返回 409，其余异常整体回滚，不留半成品数据集。</li>
+      </ul>
+    </div>
+    <div class="doc">
+      <h4><span class="n">3</span>关键取舍</h4>
+      <ul>
+        <li><span class="k">权限策略默认不复制</span>：行级过滤常绑定具体人员/部门，复制后容易越权，改为可选并给出警示。</li>
+        <li><span class="k">质量分不复制</span>：属于源数据集的巡检结果，新数据集置空，等下一轮巡检重新打分。</li>
+        <li><span class="k">RAG 状态重置</span>：新数据集 <code>rag_sync_status=0</code>，不影响源数据集的同步状态。</li>
+        <li><span class="k">日志粒度可选</span>：默认「汇总+明细」共 N 条，表特别多时可切成只写 1 条汇总，避免日志被刷屏。</li>
+        <li><span class="k">规模上限</span>：超过 200 张表建议走异步任务，同步接口先返回任务 ID。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 向导 ================= -->
+<div class="overlay" id="wizard" hidden>
+  <div class="wz">
+    <header class="wz-head">
+      <div class="lft">
+        <div class="ico">⧉</div>
+        <div>
+          <h2>复制新建数据集</h2>
+          <p>源数据集：<b id="src-title"></b> · <span id="src-counts"></span></p>
+        </div>
+      </div>
+      <div class="rgt">
+        <span class="draft-badge">草稿 · 未写入任何数据</span>
+        <button class="icon-btn" id="btn-close" title="关闭（草稿会被丢弃）">✕</button>
+      </div>
+    </header>
+
+    <div class="wz-main">
+      <aside class="steps" id="steps"></aside>
+      <main class="pane" id="pane"></main>
+      <aside class="drawer" id="drawer" hidden></aside>
+    </div>
+
+    <footer class="wz-foot">
+      <div class="foot-stat" id="foot-stat"></div>
+      <div class="foot-right" id="foot-right"></div>
+    </footer>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+(function(){
+'use strict';
+
+/* =========================================================
+   0. 小工具
+   ========================================================= */
+const $ = (s, r) => (r || document).querySelector(s);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const cols = (t) => (t.columns || []).length;
+
+function toast(msg, actionLabel, actionFn){
+  const box = $('#toasts');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = '<span>' + esc(msg) + '</span>';
+  if (actionLabel){
+    const b = document.createElement('button');
+    b.textContent = actionLabel;
+    b.addEventListener('click', () => { actionFn && actionFn(); el.remove(); });
+    el.appendChild(b);
+  }
+  box.appendChild(el);
+  setTimeout(() => { if (el.parentNode) el.remove(); }, actionLabel ? 5200 : 2600);
+}
+
+/* =========================================================
+   1. 数据集列表（入口页面）
+   ========================================================= */
+const DATASETS = [
+  {
+    name: 'nanzi_resources', display: '资源数据集', status: 1, quality: 86,
+    desc: '平台资源中心主数据集，覆盖资源目录、使用行为与组织归属，供 ChatBI 资源分析场景使用。',
+    tags: ['资源中心', '核心数据集', 'ChatBI'],
+    tables: 4, metrics: 3, rels: 3, updated: '11-05 18:20'
+  },
+  {
+    name: 'crm_customer_360', display: '客户 360 数据集', status: 1, quality: 78,
+    desc: '打通 CRM 客户主档、商机、合同与回款，给销售分析提供统一的客户视图。',
+    tags: ['CRM', '销售分析'],
+    tables: 9, metrics: 12, rels: 15, updated: '11-04 09:12'
+  },
+  {
+    name: 'finance_ledger', display: '财务总账数据集', status: 0, quality: 91,
+    desc: '总账凭证、科目余额与辅助核算维度，面向财务月结与成本分析。',
+    tags: ['财务', '受限'],
+    tables: 6, metrics: 8, rels: 5, updated: '10-29 15:40'
+  }
+];
+
+const MENU_ITEMS = [
+  { act: 'enter', label: '进入数据集', icon: '→' },
+  { act: 'drift', label: 'Schema 巡检', icon: '≈' },
+  { act: 'sync', label: '同步到 RAGFlow', icon: '↑' },
+  { act: 'perm', label: '数据权限配置', icon: '⚿' },
+  { act: 'edit', label: '编辑数据集', icon: '✎' },
+  { act: 'clone', label: '复制新建', icon: '⧉', hl: true, tag: 'NEW' },
+  { act: 'delete', label: '删除数据集', icon: '⌫', danger: true, sep: true }
+];
+
+let dsView = 'grid';
+let openMenuFor = null;
+
+function positionMenu(){
+  const menu = document.querySelector('.menu');
+  if (!menu || !openMenuFor) return;
+  const btn = document.querySelector('.more[data-k="' + openMenuFor + '"]');
+  if (!btn) return;
+  const r = btn.getBoundingClientRect();
+  const h = menu.offsetHeight;
+  menu.style.position = 'fixed';
+  menu.style.top = Math.min(r.bottom + 4, Math.max(8, window.innerHeight - h - 12)) + 'px';
+  menu.style.right = (window.innerWidth - r.right - 2) + 'px';
+  menu.style.left = 'auto';
+}
+
+function menuHtml(ds){
+  if (openMenuFor !== ds.name) return '';
+  return '<div class="menu" data-menu="' + ds.name + '">' +
+    MENU_ITEMS.map(function(m){
+      return (m.sep ? '<div class="sep"></div>' : '') +
+        '<button type="button" class="' + (m.hl ? 'hl' : '') + (m.danger ? ' danger' : '') +
+        '" data-act="' + m.act + '" data-k="' + ds.name + '">' +
+        '<span style="width:14px;text-align:center;opacity:.75">' + m.icon + '</span>' +
+        '<span>' + m.label + '</span>' +
+        (m.tag ? '<span class="tagnew">' + m.tag + '</span>' : '') +
+        '</button>';
+    }).join('') + '</div>';
+}
+
+function renderDatasets(){
+  const host = $('#ds-view');
+  if (dsView === 'grid'){
+    host.innerHTML = '<div class="cards">' + DATASETS.map(function(ds){
+      return '<article class="ds-card">' +
+        '<div class="ds-top">' +
+          '<div class="ds-ico">▤</div>' +
+          '<div class="ds-name"><h3>' + esc(ds.display) + '</h3><code>' + esc(ds.name) + '</code></div>' +
+          '<span class="badge ' + (ds.status ? 'on' : 'off') + '">' + (ds.status ? '启用' : '停用') + '</span>' +
+          '<div class="menu-wrap">' +
+            '<button class="more" data-act="menu" data-k="' + ds.name + '" title="更多操作">⋯</button>' +
+            menuHtml(ds) +
+          '</div>' +
+        '</div>' +
+        '<p class="ds-desc">' + esc(ds.desc) + '</p>' +
+        '<div class="ds-tags">' + ds.tags.map(t => '<span>' + esc(t) + '</span>').join('') + '</div>' +
+        '<div class="ds-stats">' +
+          '<div><b>' + ds.tables + '</b><span>表</span></div>' +
+          '<div><b>' + ds.metrics + '</b><span>指标</span></div>' +
+          '<div><b>' + ds.rels + '</b><span>关系</span></div>' +
+          '<div><b>' + ds.quality + '</b><span>质量分</span></div>' +
+        '</div>' +
+        '<div class="ds-foot"><span>更新于 ' + ds.updated + '</span><span>ChatBI</span></div>' +
+      '</article>';
+    }).join('') + '</div>';
+  } else {
+    host.innerHTML = '<div class="list"><table class="ds-table"><thead><tr>' +
+      '<th style="width:32%">数据集</th><th>状态</th><th>统计</th><th>质量分</th><th>更新时间</th><th style="width:60px"></th>' +
+      '</tr></thead><tbody>' + DATASETS.map(function(ds){
+        return '<tr>' +
+          '<td><div style="font-weight:600">' + esc(ds.display) + '</div><code style="font-size:11px;color:var(--text3)">' + esc(ds.name) + '</code></td>' +
+          '<td><span class="badge ' + (ds.status ? 'on' : 'off') + '">' + (ds.status ? '启用' : '停用') + '</span></td>' +
+          '<td style="color:var(--text2)">' + ds.tables + ' 表 · ' + ds.metrics + ' 指标 · ' + ds.rels + ' 关系</td>' +
+          '<td>' + ds.quality + '</td>' +
+          '<td style="color:var(--text3)">' + ds.updated + '</td>' +
+          '<td><div class="menu-wrap"><button class="more" data-act="menu" data-k="' + ds.name + '">⋯</button>' + menuHtml(ds) + '</div></td>' +
+        '</tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+  positionMenu();
+}
+
+document.addEventListener('click', function(e){
+  const menuBtn = e.target.closest('[data-act="menu"]');
+  if (menuBtn){
+    const k = menuBtn.getAttribute('data-k');
+    openMenuFor = (openMenuFor === k) ? null : k;
+    renderDatasets();
+    e.stopPropagation();
+    return;
+  }
+  const item = e.target.closest('.menu [data-act]');
+  if (item){
+    const act = item.getAttribute('data-act');
+    const k = item.getAttribute('data-k');
+    openMenuFor = null;
+    renderDatasets();
+    if (act === 'clone'){
+      openWizard(k);
+    } else if (act === 'delete'){
+      toast('删除是危险操作，这里不演示');
+    } else {
+      toast('原型未实现「' + item.textContent.trim() + '」，重点看「复制新建」');
+    }
+    e.stopPropagation();
+    return;
+  }
+  if (openMenuFor){
+    openMenuFor = null;
+    renderDatasets();
+  }
+});
+
+document.querySelectorAll('[data-view]').forEach(function(b){
+  b.addEventListener('click', function(){
+    dsView = b.getAttribute('data-view');
+    document.querySelectorAll('[data-view]').forEach(x => x.setAttribute('aria-selected', String(x === b)));
+    openMenuFor = null;
+    renderDatasets();
+  });
+});
+
+/* =========================================================
+   2. 源数据集样本（复制的内容）
+   ========================================================= */
+const SOURCE = {
+  name: 'nanzi_resources',
+  display: '资源数据集',
+  description: '平台资源中心主数据集，覆盖资源目录、使用行为与组织归属，供 ChatBI 资源分析场景使用。',
+  tags: ['资源中心', '核心数据集', 'ChatBI'],
+  data_source: 'nanzi_clickhouse',
+  quality: 86,
+  tables: [
+    { key: 't1', physics: 'dim_resource', term: '资源维表', desc: '平台资源主数据，一行一个资源条目', columns: [
+      { physics: 'resource_id', term: '资源ID', type: 'String', desc: '资源唯一标识，与资源中心主键一致', role: 'identifier', pk: true, enums: [] },
+      { physics: 'resource_name', term: '资源名称', type: 'String', desc: '资源的展示名称', role: 'none', pk: false, enums: [] },
+      { physics: 'resource_type', term: '资源类型', type: 'String', desc: '资源分类', role: 'category', pk: false, enums: ['agent', 'tool', 'knowledge', 'api', 'model'] },
+      { physics: 'category_id', term: '分类ID', type: 'String', desc: '资源一级分类 ID', role: 'category', pk: false, enums: [] },
+      { physics: 'owner_dept', term: '归属部门', type: 'String', desc: '资源归属部门编码', role: 'none', pk: false, enums: [] },
+      { physics: 'status', term: '资源状态', type: 'Int8', desc: '1 启用 / 0 停用', role: 'none', pk: false, enums: [] },
+      { physics: 'created_at', term: '创建时间', type: 'DateTime', desc: '资源创建时间', role: 'time', pk: false, enums: [] }
+    ]},
+    { key: 't2', physics: 'fact_resource_usage', term: '资源使用事实表', desc: '资源使用行为明细，按天记录访问与时长', columns: [
+      { physics: 'usage_id', term: '使用记录ID', type: 'UInt64', desc: '行为流水号', role: 'identifier', pk: true, enums: [] },
+      { physics: 'resource_id', term: '资源ID', type: 'String', desc: '关联 dim_resource.resource_id', role: 'identifier', pk: false, enums: [] },
+      { physics: 'user_id', term: '用户ID', type: 'String', desc: '操作人账号 ID', role: 'identifier', pk: false, enums: [] },
+      { physics: 'usage_date', term: '使用日期', type: 'Date', desc: '行为发生日期', role: 'time', pk: false, enums: [] },
+      { physics: 'usage_count', term: '访问次数', type: 'UInt32', desc: '当日访问次数', role: 'none', pk: false, enums: [] },
+      { physics: 'duration_sec', term: '使用时长', type: 'UInt32', desc: '当日累计使用秒数', role: 'none', pk: false, enums: [] }
+    ]},
+    { key: 't3', physics: 'dim_organization', term: '组织架构维表', desc: '部门与层级关系，自关联树结构', columns: [
+      { physics: 'org_id', term: '组织ID', type: 'String', desc: '组织唯一标识', role: 'identifier', pk: true, enums: [] },
+      { physics: 'org_name', term: '组织名称', type: 'String', desc: '部门名称', role: 'none', pk: false, enums: [] },
+      { physics: 'parent_id', term: '上级组织', type: 'String', desc: '父级组织 ID，顶级为空', role: 'identifier', pk: false, enums: [] },
+      { physics: 'org_level', term: '组织层级', type: 'Int8', desc: '1 集团 / 2 中心 / 3 部门', role: 'none', pk: false, enums: [] }
+    ]},
+    { key: 't4', physics: 'agg_resource_daily', term: '资源日汇总表', desc: '资源维度的日粒度汇总，供看板直查', columns: [
+      { physics: 'stat_date', term: '统计日期', type: 'Date', desc: '汇总统计日期', role: 'time', pk: true, enums: [] },
+      { physics: 'resource_id', term: '资源ID', type: 'String', desc: '关联 dim_resource.resource_id', role: 'identifier', pk: true, enums: [] },
+      { physics: 'pv', term: '浏览量', type: 'UInt64', desc: '当日浏览量', role: 'none', pk: false, enums: [] },
+      { physics: 'uv', term: '访客数', type: 'UInt64', desc: '当日去重访客数', role: 'none', pk: false, enums: [] }
+    ]}
+  ],
+  rels: [
+    { key: 'r1', from: 't2', fromCol: 'resource_id', to: 't1', toCol: 'resource_id', join: 'LEFT', desc: '使用行为关联资源维表' },
+    { key: 'r2', from: 't4', fromCol: 'resource_id', to: 't1', toCol: 'resource_id', join: 'LEFT', desc: '日汇总关联资源维表' },
+    { key: 'r3', from: 't3', fromCol: 'parent_id', to: 't3', toCol: 'org_id', join: 'LEFT', desc: '组织自关联，构建层级树' }
+  ],
+  metrics: [
+    { key: 'm1', name: 'resource_pv', display: '资源访问量', desc: '统计周期内资源被访问的总次数', logic: 'SUM(fact_resource_usage.usage_count)', unit: '次', tags: ['流量'] },
+    { key: 'm2', name: 'resource_uv', display: '资源使用人数', desc: '统计周期内使用过该资源的去重人数', logic: 'COUNT(DISTINCT fact_resource_usage.user_id)', unit: '人', tags: ['流量', '用户'] },
+    { key: 'm3', name: 'avg_duration', display: '平均使用时长', desc: '单次访问的平均停留时长', logic: 'AVG(fact_resource_usage.duration_sec)', unit: '秒', tags: ['体验'] }
+  ],
+  perm: '按 owner_dept 做行级隔离（3 条部门规则 + 2 个用户例外）'
+};
+
+const DATA_SOURCES = [
+  { name: 'nanzi_clickhouse', type: 'ClickHouse', tag: 'ch', label: '平台主仓', desc: '资源中心 / 元数据主库，源数据集当前绑定', ok: true },
+  { name: 'mysql_crm_01', type: 'MySQL', tag: 'my', label: 'CRM 业务库', desc: '客户、商机、合同、回款', ok: true },
+  { name: 'pg_finance', type: 'PostgreSQL', tag: 'pg', label: '财务分析库', desc: '总账凭证、科目余额、辅助核算', ok: true },
+  { name: 'ch_log_archive', type: 'ClickHouse', tag: 'ch', label: '行为日志归档', desc: '最近一次连通性测试失败，暂不可选', ok: false }
+];
+
+const EXISTING_NAMES = ['nanzi_resources', 'crm_customer_360', 'finance_ledger', 'mysql_crm_01', 'knowledge_base_ops', 'marketing_campaign'];
+const EXISTING_DISPLAY = ['资源数据集', '客户 360 数据集', '财务总账数据集', 'CRM 业务库', '知识库运营数据集', '营销活动数据集'];
+
+/* =========================================================
+   3. 向导状态
+   ========================================================= */
+const STEPS = [
+  { n: 1, t: '基本信息', d: 'ID / 名称 / 描述' },
+  { n: 2, t: '数据表与字段', d: '核对 · 可改可删' },
+  { n: 3, t: '表关系', d: '自动重映射' },
+  { n: 4, t: '指标口径', d: '可改可删可加' },
+  { n: 5, t: '复制选项', d: '权限 / 日志' },
+  { n: 6, t: '确认保存', d: '最后一步落库' }
+];
+
+const ID_RE = /^[a-z][a-z0-9_]{3,63}$/;
+
+let draft = null;
+let ui = {
+  step: 1, maxStep: 1, phase: 'wizard',
+  tableQuery: '', expanded: {},
+  editingTable: null, editBuf: null,
+  drawer: null,
+  idState: 'ok', idMsg: '', nameState: 'ok', nameMsg: '', dsOpen: false,
+  timers: {},
+  saveIndex: 0,
+  sourceKey: 'nanzi_resources'
+};
+
+function deepCopy(o){ return JSON.parse(JSON.stringify(o)); }
+
+function recommendId(base){
+  let cand = base + '_copy';
+  let i = 2;
+  while (EXISTING_NAMES.indexOf(cand) >= 0){ cand = base + '_copy' + i; i++; }
+  return cand;
+}
+
+function recommendDisplay(base){
+  let cand = base + '（副本）';
+  let i = 2;
+  while (EXISTING_DISPLAY.indexOf(cand) >= 0){ cand = base + '（副本 ' + i + '）'; i++; }
+  return cand;
+}
+
+function buildDraft(){
+  const d = deepCopy(SOURCE);
+  d.name = recommendId(SOURCE.name);
+  d.display_name = recommendDisplay(SOURCE.display);
+  d.opts = {
+    copyDesc: true, copyTags: true,
+    copyPerm: false, copyQuality: false,
+    logMode: 'detail', jump: true
+  };
+  return d;
+}
+
+/* =========================================================
+   4. 校验
+   ========================================================= */
+function validateId(v){
+  if (!v) return { s: 'bad', msg: '请填写元数据 ID' };
+  if (v === SOURCE.name) return { s: 'bad', msg: '与原数据集 ID 相同，复制后无法区分，请换一个' };
+  if (!ID_RE.test(v)) return { s: 'bad', msg: '需小写字母开头，只含 a-z、0-9、_，长度 4–64 位' };
+  if (EXISTING_NAMES.indexOf(v) >= 0) return { s: 'taken', msg: '该 ID 已被其他数据集占用' };
+  return { s: 'ok', msg: '可用，全平台唯一' };
+}
+
+function validateName(v){
+  if (!v || !v.trim()) return { s: 'bad', msg: '请填写显示名称' };
+  if (v.trim().length > 100) return { s: 'bad', msg: '名称最长 100 个字符' };
+  if (EXISTING_DISPLAY.indexOf(v.trim()) >= 0 && v.trim() !== SOURCE.display) {
+    return { s: 'taken', msg: '该名称已被其他数据集占用' };
+  }
+  if (v.trim() === SOURCE.display) return { s: 'bad', msg: '与原数据集同名，容易在列表中混淆' };
+  return { s: 'ok', msg: '可用，全平台唯一' };
+}
+
+function scheduleCheck(field){
+  clearTimeout(ui.timers[field]);
+  if (field === 'name'){ ui.idState = 'checking'; ui.idMsg = ''; } else { ui.nameState = 'checking'; ui.nameMsg = ''; }
+  renderCheck(field, 'checking');
+  ui.timers[field] = setTimeout(function(){
+    const v = field === 'name' ? draft.name : draft.display_name;
+    const r = field === 'name' ? validateId(v) : validateName(v);
+    if (field === 'name'){ ui.idState = r.s; ui.idMsg = r.msg; }
+    else { ui.nameState = r.s; ui.nameMsg = r.msg; }
+    renderCheck(field, r.s, r.msg, v);
+    renderFoot();
+  }, 360);
+}
+
+function checkHtml(kind, msg, value, field){
+  const dot = kind === 'checking' ? '<span class="spin"></span>' : '<span class="dot"></span>';
+  const api = '<span class="api">GET /check-unique</span>';
+  let extra = '';
+  if (kind === 'taken' && field === 'name'){
+    const rec = recommendId(SOURCE.name);
+    extra = '<button class="fix" data-act="use-recommend-id" data-v="' + esc(rec) + '">用 ' + esc(rec) + '</button>';
+  }
+  if (kind === 'taken' && field === 'display'){
+    const rec = recommendDisplay(SOURCE.display);
+    extra = '<button class="fix" data-act="use-recommend-name" data-v="' + esc(rec) + '">用「' + esc(rec) + '」</button>';
+  }
+  return '<div class="state ' + kind + '" data-check="' + field + '">' + dot +
+    '<span>' + esc(msg || '正在校验是否重复…') + extra + '</span>' + api + '</div>';
+}
+
+function renderCheck(field, kind, msg, value){
+  const host = document.querySelector('[data-check="' + field + '"]');
+  if (!host) return;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = checkHtml(kind, msg, value, field);
+  host.replaceWith(wrap.firstChild);
+  renderFoot();
+}
+
+document.addEventListener('click', function(e){
+  const b = e.target.closest('[data-act="use-recommend-id"],[data-act="use-recommend-name"]');
+  if (!b) return;
+  if (b.getAttribute('data-act') === 'use-recommend-id'){
+    draft.name = b.getAttribute('data-v');
+    const inp = $('#f-name'); if (inp) inp.value = draft.name;
+    ui.idState = 'ok'; ui.idMsg = '可用，全平台唯一';
+    renderCheck('name', 'ok', ui.idMsg, draft.name);
+  } else {
+    draft.display_name = b.getAttribute('data-v');
+    const inp = $('#f-display'); if (inp) inp.value = draft.display_name;
+    ui.nameState = 'ok'; ui.nameMsg = '可用，全平台唯一';
+    renderCheck('display', 'ok', ui.nameMsg, draft.display_name);
+  }
+  renderFoot();
+});
+
+/* =========================================================
+   5. 统计
+   ========================================================= */
+function stat(){
+  const tableKeys = {};
+  draft.tables.forEach(t => tableKeys[t.key] = 1);
+  const validRels = draft.rels.filter(r => tableKeys[r.from] && tableKeys[r.to]);
+  const columnCount = draft.tables.reduce((n, t) => n + t.columns.length, 0);
+  return {
+    tables: draft.tables.length,
+    columns: columnCount,
+    rels: validRels.length,
+    relsAll: draft.rels.length,
+    broken: draft.rels.length - validRels.length,
+    metrics: draft.metrics.length
+  };
+}
+
+/* =========================================================
+   6. 向导渲染
+   ========================================================= */
+function openWizard(dsName){
+  if (dsName && dsName !== 'nanzi_resources'){
+    toast('原型只给「资源数据集」准备了样本数据，这里仍以它演示');
+  }
+  ui.sourceKey = dsName || 'nanzi_resources';
+  draft = buildDraft();
+  ui.step = 1; ui.maxStep = 1; ui.phase = 'wizard';
+  ui.tableQuery = ''; ui.expanded = { t1: true };
+  ui.editingTable = null; ui.editBuf = null; ui.drawer = null; ui.dsOpen = false;
+  ui.idState = 'ok'; ui.idMsg = '可用，全平台唯一';
+  ui.nameState = 'ok'; ui.nameMsg = '可用，全平台唯一';
+  $('#drawer').hidden = true;
+  $('#src-title').textContent = SOURCE.display + '（' + SOURCE.name + '）';
+  $('#src-counts').textContent = '4 张表 · 21 个字段 · 3 条关系 · 3 个指标';
+  $('#wizard').hidden = false;
+  renderWizard();
+}
+
+function closeWizard(){
+  $('#wizard').hidden = true;
+  ui.drawer = null;
+  $('#drawer').hidden = true;
+}
+
+function renderWizard(){ renderSteps(); renderPane(); renderFoot(); }
+
+function renderSteps(){
+  const s = stat();
+  const counts = { 1: '', 2: s.tables + ' 张', 3: s.rels + ' 条', 4: s.metrics + ' 个', 5: '', 6: '' };
+  const finished = ui.phase !== 'wizard';
+  $('#steps').innerHTML = STEPS.map(function(st){
+    let cls = 'step';
+    if (finished) cls += (ui.phase === 'saving' && st.n === 6) ? ' active' : ' is-done';
+    else if (ui.step === st.n) cls += ' active';
+    else if (st.n < ui.step) cls += ' is-done';
+    if (st.n > ui.maxStep && !finished) cls += ' locked';
+    const done = (finished && !(ui.phase === 'saving' && st.n === 6)) || st.n < ui.step;
+    const badge = (st.n === 2 || st.n === 3 || st.n === 4)
+      ? '<span style="margin-left:auto;font-size:10.5px;color:var(--text3)">' + counts[st.n] + '</span>' : '';
+    return '<div class="' + cls + '" data-step="' + st.n + '">' +
+      '<span class="num">' + (done ? '✓' : st.n) + '</span>' +
+      '<div style="flex:1;min-width:0"><div class="t">' + st.t + '</div><div class="d">' + st.d + '</div></div>' +
+      badge + '</div>';
+  }).join('');
+}
+
+function renderPane(){
+  const pane = $('#pane');
+  if (ui.phase === 'saving'){ pane.innerHTML = renderSaving(); return; }
+  if (ui.phase === 'done'){ pane.innerHTML = renderDone(); return; }
+  if (ui.step === 1) pane.innerHTML = renderStep1();
+  if (ui.step === 2) pane.innerHTML = renderStep2();
+  if (ui.step === 3) pane.innerHTML = renderStep3();
+  if (ui.step === 4) pane.innerHTML = renderStep4();
+  if (ui.step === 5) pane.innerHTML = renderStep5();
+  if (ui.step === 6) pane.innerHTML = renderStep6();
+  if (ui.step === 2) refreshTableList();
+  pane.scrollTop = 0;
+}
+
+function renderFoot(){
+  const s = stat();
+  const host = $('#foot-stat');
+  const right = $('#foot-right');
+  if (ui.phase === 'saving'){
+    host.innerHTML = '正在保存，请勿关闭窗口…';
+    right.innerHTML = '<button class="btn" disabled>上一步</button><button class="btn primary" disabled>保存中…</button>';
+    return;
+  }
+  if (ui.phase === 'done'){
+    host.innerHTML = '初始化变更日志已写入';
+    right.innerHTML = '<button class="btn" data-act="close-wizard">关闭</button>' +
+      '<button class="btn primary" data-act="open-dataset">打开新数据集</button>';
+    return;
+  }
+  host.innerHTML = '将复制 <b>' + s.tables + '</b> 张表 · <b>' + s.columns + '</b> 个字段 · <b>' + s.rels +
+    '</b> 条关系 · <b>' + s.metrics + '</b> 个指标' + (s.broken ? ' · <span style="color:var(--red)">' + s.broken + ' 条关系失效</span>' : '');
+  const prev = ui.step > 1 ? '<button class="btn" data-act="prev">上一步</button>' : '';
+  let next = '';
+  if (ui.step < 6){
+    next = '<button class="btn primary" data-act="next" ' + (canNext() ? '' : 'disabled') + '>下一步</button>';
+  } else {
+    next = '<button class="btn success" data-act="save" ' + (canNext() ? '' : 'disabled') + '>确认保存并复制</button>';
+  }
+  right.innerHTML = prev + next;
+}
+
+function canNext(){
+  if (ui.phase !== 'wizard') return false;
+  if (ui.step === 1) return ui.idState === 'ok' && ui.nameState === 'ok';
+  if (ui.step === 2) return draft.tables.length > 0;
+  if (ui.step === 6) return draft.tables.length > 0 && ui.idState === 'ok' && ui.nameState === 'ok';
+  return true;
+}
+
+/* ---------- 第 1 步 ---------- */
+function dsBadge(d){
+  return '<span class="ds-badge ' + d.tag + '">' + d.type + '</span>';
+}
+
+function dsMenuHtml(){
+  return '<div class="ds-menu">' + DATA_SOURCES.map(function(d){
+    const sel = d.name === draft.data_source;
+    return '<button type="button" class="ds-item' + (sel ? ' selected' : '') + '" data-act="pick-ds" data-v="' + esc(d.name) + '"' +
+      (d.ok ? '' : ' disabled') + '>' + dsBadge(d) +
+      '<span class="ds-main"><b>' + esc(d.name) + '</b><small>' + esc(d.label) + ' · ' + esc(d.desc) + '</small></span>' +
+      (sel ? '<span class="tick">✓</span>' : '') + '</button>';
+  }).join('') + '</div>';
+}
+
+function dsFieldHtml(){
+  const cur = DATA_SOURCES.find(d => d.name === draft.data_source) || DATA_SOURCES[0];
+  const changed = draft.data_source !== SOURCE.data_source;
+  return '<label>数据源 <span class="req">*</span></label>' +
+    '<div class="ds-wrap">' +
+      '<button type="button" class="ds-btn" data-act="toggle-ds">' + dsBadge(cur) +
+        '<span class="mono" style="font-size:12px">' + esc(cur.name) + '</span>' +
+        '<span class="caret">▾</span></button>' +
+      (ui.dsOpen ? dsMenuHtml() : '') +
+    '</div>' +
+    '<div class="tip">只能从「数据源管理」里已配置的连接中选择，不支持手填。</div>' +
+    (changed ? '<div class="ds-note">已更换数据源：表 / 字段定义仍复制自源数据集，物理表在新库中可能不存在，保存后建议先跑一次 Schema 巡检。</div>' : '');
+}
+
+function renderDsField(){
+  const host = $('#ds-field');
+  if (host) host.innerHTML = dsFieldHtml();
+}
+
+function renderStep1(){
+  return '<div class="pane-head"><h3>第 1 步 · 基本信息</h3>' +
+    '<p>给新数据集起一个不重复的 ID 和名称。改名只影响副本，源数据集保持原样。</p></div>' +
+    '<div class="banner"><div class="b-ico">⧉</div><div>' +
+      '<b>正在复制「' + esc(SOURCE.display) + '」</b>' +
+      '<span class="muted">' + esc(SOURCE.name) + ' · 4 张表 · 21 个字段 · 3 条关系 · 3 个指标</span>' +
+    '</div><span class="draft-tag">草稿</span></div>' +
+
+    '<div class="form-grid">' +
+      '<div class="field">' +
+        '<label>元数据 ID <span class="req">*</span></label>' +
+        '<div class="inp-row"><input id="f-name" type="text" data-field="name" value="' + esc(draft.name) + '" autocomplete="off" spellcheck="false">' +
+          '<button class="mini-btn" data-act="rand-id">换一个</button></div>' +
+        checkHtml(ui.idState, ui.idMsg, draft.name, 'name') +
+        '<div class="tip">小写字母开头，允许 a-z、0-9、_，4–64 位；用于接口与 RAG 同步时的唯一标识。</div>' +
+      '</div>' +
+      '<div class="field">' +
+        '<label>显示名称 <span class="req">*</span></label>' +
+        '<div class="inp-row"><input id="f-display" type="text" data-field="display" value="' + esc(draft.display_name) + '" autocomplete="off">' +
+          '<button class="mini-btn" data-act="rand-display">换一个</button></div>' +
+        checkHtml(ui.nameState, ui.nameMsg, draft.display_name, 'display') +
+        '<div class="tip">给业务同事看的名称，会出现在数据集列表与 ChatBI 选择器里。</div>' +
+      '</div>' +
+
+      '<div class="field" id="ds-field">' + dsFieldHtml() + '</div>' +
+
+      '<div class="field">' +
+        '<label>标签</label>' +
+        '<div class="chips" id="tag-chips">' + draft.tags.map((t, i) =>
+          '<span class="chip">' + esc(t) + '<button data-act="del-tag" data-i="' + i + '" title="移除">✕</button></span>').join('') +
+        '</div>' +
+        '<div class="inp-row" style="margin-top:6px"><input id="f-tag" type="text" placeholder="输入标签后回车，如：资源中心"><button class="mini-btn" data-act="add-tag">添加</button></div>' +
+      '</div>' +
+
+      '<div class="field full">' +
+        '<label>描述</label>' +
+        '<textarea data-field="desc" rows="3">' + esc(draft.description) + '</textarea>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="warn" style="margin-top:16px"><b>提示：</b>复制只会带走<b>元数据定义</b>（表、字段、关系、指标），不会复制底层数据、不会复制 RAGFlow 里的数据集，也不会复制质量分。新数据集保存后是<b>未同步</b>状态。</div>';
+}
+
+/* ---------- 第 2 步 ---------- */
+function renderStep2(){
+  return '<div class="pane-head"><h3>第 2 步 · 数据表与字段</h3>' +
+    '<p>逐张核对要带过去的内容。改术语、改描述、删整张表都在草稿里完成，右侧统计会实时更新。</p></div>' +
+    '<div class="toolbar2">' +
+      '<div class="search"><span>⌕</span><input id="f-search" data-field="search" type="text" placeholder="搜索表名 / 字段名 / 术语" value="' + esc(ui.tableQuery) + '"></div>' +
+      '<button class="mini-btn" data-act="expand-all">展开全部字段</button>' +
+      '<button class="mini-btn" data-act="collapse-all">收起</button>' +
+      '<span class="stat-line" id="tbl-stat"></span>' +
+    '</div>' +
+    '<div id="table-list">' + tableListHtml() + '</div>' +
+    (draft.tables.length === 0
+      ? '<div class="warn">已经没有任何表了。复制一个空数据集没有意义，请至少保留一张表。</div>'
+      : '');
+}
+
+function tableListHtml(){
+  const q = ui.tableQuery.trim().toLowerCase();
+  const list = draft.tables.filter(function(t){
+    if (!q) return true;
+    if (t.physics.toLowerCase().indexOf(q) >= 0) return true;
+    if ((t.term || '').toLowerCase().indexOf(q) >= 0) return true;
+    return t.columns.some(c => c.physics.toLowerCase().indexOf(q) >= 0 || (c.term || '').toLowerCase().indexOf(q) >= 0);
+  });
+  $('#tbl-stat') && ($('#tbl-stat').innerHTML = '共 <b>' + draft.tables.length + '</b> 张表，当前显示 <b>' + list.length + '</b> 张');
+  if (!list.length){
+    return '<div class="warn">没有匹配「' + esc(ui.tableQuery) + '」的表或字段。</div>';
+  }
+  return list.map(tableCardHtml).join('');
+}
+
+function tableCardHtml(t){
+  const open = !!ui.expanded[t.key];
+  const editing = ui.editingTable === t.key;
+  let html = '<section class="tbl">' +
+    '<div class="tbl-head">' +
+      '<button class="caret ' + (open ? 'open' : '') + '" data-act="toggle-table" data-k="' + t.key + '">▶</button>' +
+      '<span class="pname">' + esc(t.physics) + '</span>' +
+      '<span class="term">' + esc(t.term) + '</span>' +
+      '<span class="cnt">' + t.columns.length + ' 字段</span>' +
+      '<span class="ops">' +
+        '<button class="link-btn" data-act="edit-table" data-k="' + t.key + '">' + (editing ? '取消编辑' : '编辑') + '</button>' +
+        '<button class="link-btn del" data-act="del-table" data-k="' + t.key + '">删除</button>' +
+      '</span>' +
+    '</div>';
+  if (editing){
+    const b = ui.editBuf;
+    html += '<div class="tbl-edit">' +
+      '<div class="f"><label>业务术语</label><input type="text" data-field="edit-term" value="' + esc(b.term) + '"></div>' +
+      '<div class="f"><label>表描述</label><input type="text" data-field="edit-desc" value="' + esc(b.desc) + '"></div>' +
+      '<div class="act"><button class="mini-btn" data-act="cancel-edit-table">取消</button>' +
+      '<button class="mini-btn" style="border-color:var(--blue);color:var(--blue)" data-act="save-edit-table">保存修改</button></div>' +
+    '</div>';
+  }
+  if (open){
+    html += '<table class="col-table"><thead><tr>' +
+      '<th style="width:150px">物理字段</th><th style="width:120px">业务术语</th><th style="width:80px">类型</th>' +
+      '<th>描述</th><th style="width:92px">维度角色</th><th style="width:52px"></th>' +
+      '</tr></thead><tbody>' + t.columns.map(function(c, i){
+        return '<tr>' +
+          '<td class="mono" style="color:var(--text)">' + esc(c.physics) + (c.pk ? '<span class="pk">PK</span>' : '') + '</td>' +
+          '<td>' + esc(c.term) + '</td>' +
+          '<td class="mono" style="color:var(--text3)">' + esc(c.type) + '</td>' +
+          '<td>' + esc(c.desc) + '</td>' +
+          '<td>' + (c.role !== 'none' ? '<span class="role">' + esc(c.role) + '</span>' : '<span style="color:#c3c8d0">—</span>') + '</td>' +
+          '<td><button class="link-btn" data-act="edit-col" data-k="' + t.key + '" data-i="' + i + '">编辑</button></td>' +
+        '</tr>';
+      }).join('') + '</tbody></table>';
+  }
+  return html + '</section>';
+}
+
+function refreshTableList(){
+  const host = $('#table-list');
+  if (host) host.innerHTML = tableListHtml();
+}
+
+/* ---------- 第 3 步 ---------- */
+function renderStep3(){
+  const map = {};
+  draft.tables.forEach(t => map[t.key] = t);
+  const s = stat();
+  return '<div class="pane-head"><h3>第 3 步 · 表关系</h3>' +
+    '<p>关系会在保存时<b>自动按新表 ID 重映射</b>，不需要手工重建。若某张表被删掉，引用它的关系会标红。</p></div>' +
+    (s.broken
+      ? '<div class="warn">有 <b>' + s.broken + '</b> 条关系依赖的表已经在第 2 步被移除，保存时会被跳过。' +
+        '<button class="mini-btn" style="margin-left:10px" data-act="clean-broken">清理失效关系</button></div>'
+      : '') +
+    '<div class="toolbar2"><span class="stat-line" style="margin-left:0">有效关系 <b>' + s.rels + '</b> / 共 ' + s.relsAll + ' 条</span></div>' +
+    '<div id="rel-list">' + relListHtml() + '</div>';
+}
+
+function relListHtml(){
+  const map = {};
+  draft.tables.forEach(t => map[t.key] = t);
+  if (!draft.rels.length) return '<div class="warn">没有表关系。跨表分析时模型会拿不到 JOIN 依据，建议至少保留一条。</div>';
+  return draft.rels.map(function(r){
+    const a = map[r.from], b = map[r.to];
+    const valid = !!(a && b);
+    return '<div class="rel ' + (valid ? '' : 'invalid') + '">' +
+      '<div class="rel-top">' +
+        '<span class="node">' + esc(a ? a.physics : '?') + '.' + esc(r.fromCol) + '</span>' +
+        '<span class="arrow">⟶</span>' +
+        '<span class="node">' + esc(b ? b.physics : '?') + '.' + esc(r.toCol) + '</span>' +
+        '<span class="jt">' + esc(r.join) + ' JOIN</span>' +
+        (valid ? '<span class="ok">✓ 有效</span>' : '<span class="bad">依赖表已移除</span>') +
+        '<span class="ops"><button class="link-btn del" data-act="del-rel" data-k="' + r.key + '">移除</button></span>' +
+      '</div>' +
+      '<div class="rel-edit">' +
+        '<select data-field="rel-join" data-k="' + r.key + '">' +
+          ['LEFT', 'INNER', 'RIGHT'].map(j => '<option value="' + j + '"' + (r.join === j ? ' selected' : '') + '>' + j + ' JOIN</option>').join('') +
+        '</select>' +
+        '<input type="text" data-field="rel-desc" data-k="' + r.key + '" value="' + esc(r.desc) + '" placeholder="关系说明，如：按客户 ID 关联主档">' +
+        '<span style="font-size:10.5px;color:var(--text3)">' + (valid ? '保存时重映射' : '将被跳过') + '</span>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+/* ---------- 第 4 步 ---------- */
+function renderStep4(){
+  return '<div class="pane-head"><h3>第 4 步 · 指标口径</h3>' +
+    '<p>指标的计算表达式按物理表名书写，复制后保持不变；如果第 2 步改了表名，记得回来同步改表达式。</p></div>' +
+    '<div class="toolbar2">' +
+      '<button class="mini-btn" data-act="add-metric">＋ 新增指标</button>' +
+      '<span class="stat-line">共 <b>' + draft.metrics.length + '</b> 个指标</span>' +
+    '</div>' +
+    '<div>' + draft.metrics.map(function(m){
+      return '<div class="metric">' +
+        '<div class="m-top">' +
+          '<span class="m-name">' + esc(m.name) + '</span>' +
+          '<span class="m-disp">' + esc(m.display) + '</span>' +
+          '<span class="ops" style="margin-left:auto;display:flex;gap:2px">' +
+            '<button class="link-btn" data-act="edit-metric" data-k="' + m.key + '">编辑</button>' +
+            '<button class="link-btn del" data-act="del-metric" data-k="' + m.key + '">删除</button>' +
+          '</span>' +
+        '</div>' +
+        '<p class="m-desc">' + esc(m.desc) + '</p>' +
+        '<div class="m-logic">' + esc(m.logic) + '</div>' +
+        '<div class="m-foot"><span>单位：' + esc(m.unit || '—') + '</span>' +
+          (m.tags || []).map(t => '<span class="chip" style="font-size:10px">' + esc(t) + '</span>').join('') +
+        '</div>' +
+      '</div>';
+    }).join('') + '</div>';
+}
+
+/* ---------- 第 5 步 ---------- */
+function renderStep5(){
+  const s = stat();
+  const o = draft.opts;
+  return '<div class="pane-head"><h3>第 5 步 · 复制选项</h3>' +
+    '<p>决定副本继承哪些属性。默认只继承内容与描述，权限和质量分需要显式打开。</p></div>' +
+
+    '<div class="opt-group"><h4>内容（第 2–4 步已确定）</h4>' +
+      '<div class="opt"><button class="switch fixed on"></button><div><div class="o-t">表与字段 · ' + s.tables + ' 张 / ' + s.columns + ' 个</div>' +
+        '<div class="o-d">复制物理名、术语、类型、描述、枚举、维度角色；字段 ID 会重新生成。</div></div></div>' +
+      '<div class="opt"><button class="switch fixed on"></button><div><div class="o-t">表关系 · ' + s.rels + ' 条</div>' +
+        '<div class="o-d">保存时按「旧表 ID → 新表 ID」映射重写 source / target，JOIN 条件原样保留。</div></div></div>' +
+      '<div class="opt"><button class="switch fixed on"></button><div><div class="o-t">指标 · ' + s.metrics + ' 个</div>' +
+        '<div class="o-d">名称、显示名、口径、表达式、单位、标签整体复制。</div></div></div>' +
+    '</div>' +
+
+    '<div class="opt-group"><h4>对象属性</h4>' +
+      optRow('copyDesc', '复制描述', '把源数据集的描述带过来，方便区分副本用途。') +
+      optRow('copyTags', '复制标签', '保留源数据集的标签，可在第 1 步增删。') +
+      '<div class="opt"><span class="switch fixed on" style="background:#b9e3cd"></span><div style="flex:1">' +
+        '<div class="o-t">数据源 · <span class="mono">' + esc(draft.data_source) + '</span></div>' +
+        '<div class="o-d">来自「数据源管理」中已配置的连接，' + (draft.data_source === SOURCE.data_source ? '当前沿用源数据集的绑定。' : '当前<b>已与源数据集不同</b>，副本的表结构需要在新库重新核对。') +
+        ' 如需更换，回到第 1 步从下拉里重选（不支持手填）。</div>' +
+      '</div></div>' +
+    '</div>' +
+
+    '<div class="opt-group"><h4>权限与状态</h4>' +
+      optRow('copyPerm', '复制数据权限配置', '包含 <b>' + esc(SOURCE.perm) + '</b>。默认关闭：行级规则常绑定具体人员，直接复制容易造成越权或误拦。', true) +
+      optRow('copyQuality', '复制质量分（' + SOURCE.quality + '）', '质量分是源数据集巡检的结果，新数据集应置空，等下一轮巡检重新打分。', true) +
+      '<div class="opt"><button class="switch fixed" style="background:#d9dde3"></button><div><div class="o-t">RAGFlow 同步状态</div>' +
+        '<div class="o-d">强制重置为 <code>rag_sync_status = 0</code>（未同步），不复制源数据集的 <code>rag_dataset_id</code>。</div></div></div>' +
+    '</div>' +
+
+    '<div class="opt-group"><h4>初始化变更日志</h4>' +
+      '<div class="opt"><div style="flex:1"><div class="o-t">写入粒度</div>' +
+        '<div class="o-d">选择复制动作在 <code>change_logs</code> 里留下多少条记录。明细便于逐个资源追溯来源，汇总则更清爽。</div>' +
+        '<div class="radio-row" style="margin-top:8px">' +
+          '<button class="radio ' + (o.logMode === 'detail' ? 'on' : '') + '" data-act="log-mode" data-v="detail">汇总 1 条 + 明细 ' + (s.tables + s.rels + s.metrics) + ' 条</button>' +
+          '<button class="radio ' + (o.logMode === 'summary' ? 'on' : '') + '" data-act="log-mode" data-v="summary">仅 1 条汇总</button>' +
+        '</div></div></div>' +
+    '</div>' +
+
+    '<div class="logbox"><div class="lg-head">日志预览 <b>' + buildLogs().length + '</b> 条 · 保存成功后写入 <code style="font-size:10px">change_logs</code></div>' +
+      '<div class="lg">' + buildLogs().map(logItemHtml).join('') + '</div></div>';
+}
+
+function optRow(key, title, desc, caution){
+  const on = !!draft.opts[key];
+  return '<div class="opt"><button class="switch ' + (on ? 'on' : '') + '" data-act="toggle-opt" data-k="' + key + '"></button><div style="flex:1">' +
+    '<div class="o-t">' + esc(title) + (caution ? ' <span style="font-size:9.5px;font-weight:700;color:var(--amber)">谨慎</span>' : '') + '</div>' +
+    '<div class="o-d">' + desc + '</div></div></div>';
+}
+
+function buildLogs(){
+  const s = stat();
+  const t = '2026-11-06 14:32:08';
+  const logs = [{
+    op: 'CLONE', res: 'meta_dataset#' + draft.name,
+    txt: '由「' + SOURCE.display + '(' + SOURCE.name + ')」复制新建 · ' + s.tables + ' 表 / ' + s.columns + ' 字段 / ' + s.rels + ' 关系 / ' + s.metrics + ' 指标 · 数据源 ' + draft.data_source
+  }];
+  if (draft.opts.logMode === 'detail'){
+    draft.tables.forEach(function(tb){
+      logs.push({ op: 'CREATE', res: 'meta_table#' + tb.physics, txt: '随数据集复制创建 · ' + tb.columns.length + ' 个字段 · 源表 ' + tb.physics });
+    });
+    const map = {}; draft.tables.forEach(x => map[x.key] = x);
+    draft.rels.forEach(function(r){
+      if (!map[r.from] || !map[r.to]) return;
+      logs.push({ op: 'CREATE', res: 'meta_relationship#' + r.key, txt: map[r.from].physics + '.' + r.fromCol + ' → ' + map[r.to].physics + '.' + r.toCol });
+    });
+    draft.metrics.forEach(function(m){
+      logs.push({ op: 'CREATE', res: 'meta_metric#' + m.name, txt: m.display + ' · ' + m.logic });
+    });
+  }
+  return logs;
+}
+
+function logItemHtml(l, i){
+  return '<div class="lg-item"><span class="op ' + (l.op === 'CLONE' ? 'clone' : 'create') + '">' + l.op + '</span>' +
+    '<span class="res">' + esc(l.res) + '</span>' +
+    '<span class="txt">' + esc(l.txt) + '</span></div>';
+}
+
+/* ---------- 第 6 步 ---------- */
+function renderStep6(){
+  const s = stat();
+  const o = draft.opts;
+  return '<div class="pane-head"><h3>第 6 步 · 确认保存</h3>' +
+    '<p>这是唯一会写数据库的一步。确认后会以单事务创建数据集及其全部子资源。</p></div>' +
+
+    '<div class="metric-big">' +
+      '<div class="mb"><b>' + s.tables + '</b><span>数据表</span></div>' +
+      '<div class="mb"><b>' + s.columns + '</b><span>字段</span></div>' +
+      '<div class="mb"><b>' + s.rels + '</b><span>表关系</span></div>' +
+      '<div class="mb"><b>' + s.metrics + '</b><span>指标</span></div>' +
+    '</div>' +
+
+    '<div class="sum-grid">' +
+      '<div class="sum-card"><h4>新数据集</h4>' +
+        '<div class="kv"><span class="k">元数据 ID</span><span class="v mono">' + esc(draft.name) + '</span></div>' +
+        '<div class="kv"><span class="k">显示名称</span><span class="v">' + esc(draft.display_name) + '</span></div>' +
+        '<div class="kv"><span class="k">数据源</span><span class="v mono">' + esc(draft.data_source) + '</span></div>' +
+        '<div class="kv"><span class="k">状态</span><span class="v">启用</span></div>' +
+        '<div class="kv"><span class="k">质量分</span><span class="v">' + (o.copyQuality ? SOURCE.quality + '（继承）' : '空 · 待巡检') + '</span></div>' +
+      '</div>' +
+      '<div class="sum-card"><h4>复制范围</h4>' +
+        '<div class="kv"><span class="k">标签</span><span class="v">' + (o.copyTags ? (draft.tags.join('、') || '—') : '不复制') + '</span></div>' +
+        '<div class="kv"><span class="k">描述</span><span class="v">' + (o.copyDesc ? '继承源描述' : '清空') + '</span></div>' +
+        '<div class="kv"><span class="k">数据权限</span><span class="v">' + (o.copyPerm ? '继承 ' + SOURCE.perm : '不复制 · 默认关闭') + '</span></div>' +
+        '<div class="kv"><span class="k">RAG 同步</span><span class="v">未同步（保存后手动同步）</span></div>' +
+        '<div class="kv"><span class="k">初始化日志</span><span class="v">' + buildLogs().length + ' 条</span></div>' +
+      '</div>' +
+    '</div>' +
+
+    (s.broken ? '<div class="warn"><b>注意：</b>' + s.broken + ' 条关系依赖的表已被移除，保存时会跳过，不会报错。</div>' : '') +
+    (draft.data_source !== SOURCE.data_source
+      ? '<div class="warn"><b>数据源已更换：</b>' + esc(SOURCE.data_source) + ' → <b>' + esc(draft.data_source) +
+        '</b>。副本的表 / 字段定义仍来自源数据集，新库里不一定存在同名物理表，建议保存后先跑一次 Schema 巡检。</div>'
+      : '') +
+    (!o.copyPerm ? '<div class="warn"><b>权限提示：</b>源数据集启用了行级隔离（' + esc(SOURCE.perm) + '）。副本不会继承，保存后如果直接开放查询，会变成<b>无行级过滤</b>，请记得重新配置。</div>' : '') +
+
+    '<div class="logbox" style="margin-top:12px"><div class="lg-head">保存后写入的变更日志（' + buildLogs().length + ' 条）</div>' +
+      '<div class="lg">' + buildLogs().map(logItemHtml).join('') + '</div></div>' +
+
+    '<label style="display:flex;align-items:center;gap:7px;margin-top:14px;font-size:12px;color:var(--text2);cursor:pointer">' +
+      '<input type="checkbox" id="f-jump" ' + (o.jump ? 'checked' : '') + '> 保存成功后自动打开新数据集' +
+    '</label>';
+}
+
+/* ---------- 保存 / 成功 ---------- */
+function saveSpec(){
+  const s = stat();
+  return [
+    '校验 ID / 名称唯一性',
+    '创建数据集 ' + draft.name,
+    '写入 ' + s.tables + ' 张表、' + s.columns + ' 个字段',
+    '重映射并写入 ' + s.rels + ' 条表关系',
+    '写入 ' + s.metrics + ' 个指标',
+    '写入初始化变更日志 ' + buildLogs().length + ' 条'
+  ];
+}
+
+function renderSaving(){
+  const steps = saveSpec();
+  return '<div class="saving"><h3>正在创建副本…</h3>' +
+    '<p>单事务执行：任何一步失败都会整体回滚，不会留下半个数据集。</p>' +
+    steps.map(function(s, i){
+      const cls = i < ui.saveIndex ? 'is-done' : (i === ui.saveIndex ? 'active' : '');
+      const ic = i < ui.saveIndex ? '✓' : (i === ui.saveIndex ? '<span class="spin" style="border-top-color:var(--blue)"></span>' : '');
+      return '<div class="s-step ' + cls + '"><span class="ic">' + ic + '</span><span class="txt">' + esc(s) + '</span>' +
+        '<span class="sub">' + (i < ui.saveIndex ? '完成' : (i === ui.saveIndex ? '执行中' : '等待')) + '</span></div>';
+    }).join('') + '</div>';
+}
+
+function renderDone(){
+  const s = stat();
+  return '<div class="done">' +
+    '<div class="big">✓</div>' +
+    '<h3>复制新建成功</h3>' +
+    '<p>副本已创建，初始化变更日志已写入。</p>' +
+    '<div class="res-box">' +
+      '<div class="r">新数据集：<b>' + esc(draft.display_name) + '</b></div>' +
+      '<div class="r">元数据 ID：<code>' + esc(draft.name) + '</code></div>' +
+      '<div class="r">已写入 ' + s.tables + ' 张表 · ' + s.columns + ' 个字段 · ' + s.rels + ' 条关系 · ' + s.metrics + ' 个指标 · ' + buildLogs().length + ' 条初始化日志</div>' +
+      '<div class="r" style="color:var(--text3);font-size:11px">RAG 同步状态：未同步 · 质量分：待巡检</div>' +
+    '</div>' +
+    '<div class="acts">' +
+      '<button class="btn" data-act="view-logs">查看初始化变更日志</button>' +
+      '<button class="btn primary" data-act="open-dataset">打开数据集</button>' +
+    '</div>' +
+  '</div>';
+}
+
+/* =========================================================
+   7. 交互
+   ========================================================= */
+const pane = $('#pane');
+
+pane.addEventListener('input', function(e){
+  const t = e.target;
+  const f = t.getAttribute('data-field');
+  if (!f) return;
+
+  if (f === 'name'){ draft.name = t.value; scheduleCheck('name'); }
+  else if (f === 'display'){ draft.display_name = t.value; scheduleCheck('display'); }
+  else if (f === 'desc'){ draft.description = t.value; }
+  else if (f === 'search'){ ui.tableQuery = t.value; refreshTableList(); }
+  else if (f === 'edit-term'){ ui.editBuf.term = t.value; }
+  else if (f === 'edit-desc'){ ui.editBuf.desc = t.value; }
+  else if (f === 'rel-desc'){ const r = draft.rels.find(x => x.key === t.getAttribute('data-k')); if (r) r.desc = t.value; }
+});
+
+pane.addEventListener('change', function(e){
+  const t = e.target;
+  const f = t.getAttribute('data-field');
+  if (f === 'rel-join'){
+    const r = draft.rels.find(x => x.key === t.getAttribute('data-k'));
+    if (r){
+      r.join = t.value;
+      const badge = t.closest('.rel').querySelector('.jt');
+      if (badge) badge.textContent = t.value + ' JOIN';
+    }
+  }
+  if (t.id === 'f-jump'){ draft.opts.jump = t.checked; }
+});
+
+function onAction(e){
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const act = b.getAttribute('data-act');
+  const k = b.getAttribute('data-k');
+
+  if (act === 'next'){
+    if (!canNext()) return;
+    ui.step = Math.min(6, ui.step + 1);
+    ui.maxStep = Math.max(ui.maxStep, ui.step);
+    renderWizard();
+    return;
+  }
+  if (act === 'prev'){ ui.step = Math.max(1, ui.step - 1); renderWizard(); return; }
+  if (act === 'save'){ startSave(); return; }
+  if (act === 'close-wizard'){ closeWizard(); return; }
+  if (act === 'open-dataset'){
+    toast('已创建：' + draft.name + '（原型不跳转）');
+    closeWizard();
+    return;
+  }
+  if (act === 'view-logs'){ openLogDrawer(); return; }
+
+  if (act === 'toggle-ds'){ ui.dsOpen = !ui.dsOpen; renderDsField(); return; }
+  if (act === 'pick-ds'){
+    draft.data_source = b.getAttribute('data-v');
+    ui.dsOpen = false;
+    renderDsField(); renderFoot();
+    return;
+  }
+  if (act === 'rand-id'){
+    const cands = [SOURCE.name + '_copy', SOURCE.name + '_v2', SOURCE.name + '_bak', SOURCE.name + '_2026'];
+    let next = cands.find(x => x !== draft.name && EXISTING_NAMES.indexOf(x) < 0) || (SOURCE.name + '_copy' + Date.now() % 100);
+    draft.name = next;
+    $('#f-name').value = next;
+    ui.idState = 'ok'; ui.idMsg = '可用，全平台唯一';
+    renderCheck('name', 'ok', ui.idMsg, next); renderFoot(); return;
+  }
+  if (act === 'rand-display'){
+    const cands = [SOURCE.display + '（副本）', SOURCE.display + '（副本 2）', SOURCE.display + '（镜像）', SOURCE.display + '（测试）'];
+    const next = cands.find(x => x !== draft.display_name && EXISTING_DISPLAY.indexOf(x) < 0) || cands[0];
+    draft.display_name = next;
+    $('#f-display').value = next;
+    ui.nameState = 'ok'; ui.nameMsg = '可用，全平台唯一';
+    renderCheck('display', 'ok', ui.nameMsg, next); renderFoot(); return;
+  }
+
+  if (act === 'add-tag'){
+    const inp = $('#f-tag');
+    const v = (inp.value || '').trim();
+    if (!v) return;
+    if (draft.tags.indexOf(v) < 0) draft.tags.push(v);
+    inp.value = '';
+    renderPane();
+    return;
+  }
+  if (act === 'del-tag'){
+    draft.tags.splice(Number(b.getAttribute('data-i')), 1);
+    renderPane();
+    return;
+  }
+
+  if (act === 'toggle-table'){
+    ui.expanded[k] = !ui.expanded[k];
+    refreshTableList();
+    return;
+  }
+  if (act === 'expand-all'){
+    draft.tables.forEach(t => ui.expanded[t.key] = true);
+    refreshTableList();
+    return;
+  }
+  if (act === 'collapse-all'){ ui.expanded = {}; refreshTableList(); return; }
+
+  if (act === 'edit-table'){
+    if (ui.editingTable === k){ ui.editingTable = null; ui.editBuf = null; }
+    else {
+      const t = draft.tables.find(x => x.key === k);
+      ui.editingTable = k;
+      ui.editBuf = { term: t.term, desc: t.desc || '' };
+    }
+    refreshTableList();
+    return;
+  }
+  if (act === 'save-edit-table'){
+    const t = draft.tables.find(x => x.key === ui.editingTable);
+    if (t){ t.term = ui.editBuf.term; t.desc = ui.editBuf.desc; }
+    ui.editingTable = null; ui.editBuf = null;
+    refreshTableList();
+    toast('表「' + (t ? t.physics : '') + '」已更新（草稿）');
+    return;
+  }
+  if (act === 'cancel-edit-table'){ ui.editingTable = null; ui.editBuf = null; refreshTableList(); return; }
+
+  if (act === 'del-table'){
+    const idx = draft.tables.findIndex(x => x.key === k);
+    if (idx < 0) return;
+    const removed = draft.tables.splice(idx, 1)[0];
+    refreshTableList(); renderFoot(); renderSteps();
+    toast('已从副本移除表「' + removed.physics + '」', '撤销', function(){
+      draft.tables.splice(Math.min(idx, draft.tables.length), 0, removed);
+      refreshTableList(); renderFoot(); renderSteps();
+      toast('已恢复表「' + removed.physics + '」');
+    });
+    return;
+  }
+
+  if (act === 'edit-col'){
+    const t = draft.tables.find(x => x.key === k);
+    openColumnDrawer(t, Number(b.getAttribute('data-i')));
+    return;
+  }
+
+  if (act === 'del-rel'){
+    draft.rels = draft.rels.filter(x => x.key !== k);
+    $('#rel-list') && ($('#rel-list').innerHTML = relListHtml());
+    renderFoot(); renderSteps();
+    toast('已移除该关系');
+    return;
+  }
+  if (act === 'clean-broken'){
+    const map = {}; draft.tables.forEach(t => map[t.key] = 1);
+    const before = draft.rels.length;
+    draft.rels = draft.rels.filter(r => map[r.from] && map[r.to]);
+    renderPane(); renderFoot(); renderSteps();
+    toast('已清理 ' + (before - draft.rels.length) + ' 条失效关系');
+    return;
+  }
+
+  if (act === 'edit-metric'){
+    const m = draft.metrics.find(x => x.key === k);
+    openMetricDrawer(m);
+    return;
+  }
+  if (act === 'add-metric'){
+    openMetricDrawer(null);
+    return;
+  }
+  if (act === 'del-metric'){
+    const idx = draft.metrics.findIndex(x => x.key === k);
+    if (idx < 0) return;
+    const removed = draft.metrics.splice(idx, 1)[0];
+    renderPane(); renderFoot(); renderSteps();
+    toast('已删除指标「' + removed.display + '」', '撤销', function(){
+      draft.metrics.splice(idx, 0, removed);
+      renderPane(); renderFoot(); renderSteps();
+    });
+    return;
+  }
+
+  if (act === 'toggle-opt'){
+    draft.opts[k] = !draft.opts[k];
+    renderPane(); renderFoot();
+    return;
+  }
+  if (act === 'log-mode'){
+    draft.opts.logMode = b.getAttribute('data-v');
+    renderPane();
+    return;
+  }
+}
+
+pane.addEventListener('click', onAction);
+$('#foot-right').addEventListener('click', onAction);
+
+$('#steps').addEventListener('click', function(e){
+  const el = e.target.closest('[data-step]');
+  if (!el) return;
+  const n = Number(el.getAttribute('data-step'));
+  if (n > ui.maxStep){ toast('先完成前面的步骤'); return; }
+  if (ui.phase !== 'wizard') return;
+  ui.step = n;
+  renderWizard();
+});
+
+$('#btn-close').addEventListener('click', function(){
+  if (ui.phase === 'saving') return;
+  closeWizard();
+});
+
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape' && !$('#wizard').hidden && ui.phase !== 'saving') closeWizard();
+});
+
+/* ---------- 抽屉：字段编辑 ---------- */
+function openColumnDrawer(table, index){
+  ui.drawer = { type: 'column', tableKey: table.key, index: index };
+  const d = $('#drawer');
+  d.hidden = false;
+  renderDrawer();
+}
+
+function renderDrawer(){
+  const d = $('#drawer');
+  if (!ui.drawer){ d.hidden = true; return; }
+  if (ui.drawer.type === 'column'){
+    const t = draft.tables.find(x => x.key === ui.drawer.tableKey);
+    const c = t.columns[ui.drawer.index];
+    d.innerHTML = '<div class="d-head"><h4>编辑字段</h4><span style="font-size:11px;color:var(--text3)">' +
+      esc(t.physics) + ' · 第 ' + (ui.drawer.index + 1) + ' 列</span><button class="x" data-act="drawer-close">✕</button></div>' +
+      '<div class="d-body">' +
+        '<div class="field"><label>物理字段名</label><div class="ro">' + esc(c.physics) + '</div></div>' +
+        '<div class="field"><label>业务术语 <span class="req">*</span></label><input type="text" data-field="col-term" value="' + esc(c.term) + '"></div>' +
+        '<div class="field"><label>描述</label><textarea data-field="col-desc" rows="3">' + esc(c.desc) + '</textarea></div>' +
+        '<div class="field"><label>字段类型</label><div class="ro">' + esc(c.type) + '</div></div>' +
+        '<div class="field"><label>维度角色</label><select data-field="col-role">' +
+          [['none', '无'], ['time', '时间'], ['geo', '地理'], ['category', '分类'], ['identifier', '标识']].map(function(o){
+            return '<option value="' + o[0] + '"' + (c.role === o[0] ? ' selected' : '') + '>' + o[1] + '（' + o[0] + '）</option>';
+          }).join('') + '</select></div>' +
+        '<div class="field"><label>枚举值（逗号分隔）</label><input type="text" data-field="col-enums" value="' + esc((c.enums || []).join(', ')) + '"></div>' +
+        '<div class="field"><label>主键</label><select data-field="col-pk"><option value="0"' + (!c.pk ? ' selected' : '') + '>否</option><option value="1"' + (c.pk ? ' selected' : '') + '>是</option></select></div>' +
+      '</div>' +
+      '<div class="d-foot"><button class="btn" data-act="drawer-close">取消</button>' +
+        '<button class="btn primary" data-act="drawer-save-col">保存</button></div>';
+  } else {
+    const m = ui.drawer.metric;
+    const isNew = !m.key;
+    d.innerHTML = '<div class="d-head"><h4>' + (isNew ? '新增指标' : '编辑指标') + '</h4><button class="x" data-act="drawer-close">✕</button></div>' +
+      '<div class="d-body">' +
+        '<div class="field"><label>指标标识 <span class="req">*</span></label><input type="text" data-field="m-name" value="' + esc(m.name) + '" placeholder="如 resource_pv"></div>' +
+        '<div class="field"><label>显示名称 <span class="req">*</span></label><input type="text" data-field="m-display" value="' + esc(m.display) + '" placeholder="如 资源访问量"></div>' +
+        '<div class="field"><label>业务描述</label><textarea data-field="m-desc" rows="2">' + esc(m.desc) + '</textarea></div>' +
+        '<div class="field"><label>计算逻辑 <span class="req">*</span></label><textarea data-field="m-logic" rows="3" placeholder="SUM(fact_resource_usage.usage_count)">' + esc(m.logic) + '</textarea></div>' +
+        '<div class="field"><label>单位</label><input type="text" data-field="m-unit" value="' + esc(m.unit || '') + '" placeholder="次 / 人 / 秒"></div>' +
+        '<div class="field"><label>标签（逗号分隔）</label><input type="text" data-field="m-tags" value="' + esc((m.tags || []).join(', ')) + '"></div>' +
+      '</div>' +
+      '<div class="d-foot"><button class="btn" data-act="drawer-close">取消</button>' +
+        '<button class="btn primary" data-act="drawer-save-metric">' + (isNew ? '添加' : '保存') + '</button></div>';
+  }
+}
+
+function openMetricDrawer(m){
+  ui.drawer = { type: 'metric', metric: m ? deepCopy(m) : { key: '', name: '', display: '', desc: '', logic: '', unit: '', tags: [] } };
+  $('#drawer').hidden = false;
+  renderDrawer();
+}
+
+$('#drawer').addEventListener('input', function(e){
+  const t = e.target;
+  const f = t.getAttribute('data-field');
+  if (!f || !ui.drawer) return;
+  if (ui.drawer.type === 'column'){
+    const tab = draft.tables.find(x => x.key === ui.drawer.tableKey);
+    const c = tab.columns[ui.drawer.index];
+    if (f === 'col-term') c.term = t.value;
+    if (f === 'col-desc') c.desc = t.value;
+    if (f === 'col-enums') c.enums = t.value.split(',').map(s => s.trim()).filter(Boolean);
+  } else if (ui.drawer.type === 'metric') {
+    const m = ui.drawer.metric;
+    if (f === 'm-name') m.name = t.value;
+    if (f === 'm-display') m.display = t.value;
+    if (f === 'm-desc') m.desc = t.value;
+    if (f === 'm-logic') m.logic = t.value;
+    if (f === 'm-unit') m.unit = t.value;
+    if (f === 'm-tags') m.tags = t.value.split(',').map(s => s.trim()).filter(Boolean);
+  }
+});
+
+$('#drawer').addEventListener('change', function(e){
+  const t = e.target;
+  const f = t.getAttribute('data-field');
+  if (!f || !ui.drawer || ui.drawer.type !== 'column') return;
+  const tab = draft.tables.find(x => x.key === ui.drawer.tableKey);
+  const c = tab.columns[ui.drawer.index];
+  if (f === 'col-role') c.role = t.value;
+  if (f === 'col-pk') c.pk = t.value === '1';
+});
+
+$('#drawer').addEventListener('click', function(e){
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const act = b.getAttribute('data-act');
+  if (act === 'drawer-close'){ ui.drawer = null; $('#drawer').hidden = true; return; }
+  if (act === 'drawer-save-col'){
+    ui.drawer = null; $('#drawer').hidden = true;
+    refreshTableList();
+    toast('字段已更新（草稿）');
+    return;
+  }
+  if (act === 'drawer-save-metric'){
+    const m = ui.drawer.metric;
+    if (!m.name.trim() || !m.display.trim() || !m.logic.trim()){
+      toast('指标标识、显示名称、计算逻辑不能为空');
+      return;
+    }
+    if (m.key){
+      const i = draft.metrics.findIndex(x => x.key === m.key);
+      if (i >= 0) draft.metrics[i] = m;
+    } else {
+      m.key = 'm' + Date.now();
+      draft.metrics.push(m);
+    }
+    ui.drawer = null; $('#drawer').hidden = true;
+    renderPane(); renderFoot(); renderSteps();
+    toast('指标已保存（草稿）');
+  }
+});
+
+/* ---------- 日志抽屉 ---------- */
+function openLogDrawer(){
+  const d = $('#drawer');
+  d.hidden = false;
+  ui.drawer = { type: 'logs' };
+  d.innerHTML = '<div class="d-head"><h4>初始化变更日志</h4><button class="x" data-act="drawer-close">✕</button></div>' +
+    '<div class="d-body">' +
+      '<div style="font-size:11.5px;color:var(--text3);line-height:1.7">以下记录写入 <code>change_logs</code>，' +
+      '<code>metadata_dataset_id</code> 指向新数据集，操作人取自当前登录账号。</div>' +
+      '<div class="logbox"><div class="lg" style="max-height:none">' + buildLogs().map(logItemHtml).join('') + '</div></div>' +
+    '</div>' +
+    '<div class="d-foot"><button class="btn primary" data-act="drawer-close">知道了</button></div>';
+}
+
+/* =========================================================
+   8. 保存流程
+   ========================================================= */
+function startSave(){
+  if (!canNext()) return;
+  ui.phase = 'saving';
+  ui.saveIndex = 0;
+  renderSteps(); renderPane(); renderFoot();
+  const steps = saveSpec();
+  let i = 0;
+  const timer = setInterval(function(){
+    i++;
+    ui.saveIndex = i;
+    if (i >= steps.length){
+      clearInterval(timer);
+      setTimeout(function(){
+        ui.phase = 'done';
+        ui.saveIndex = steps.length;
+        renderSteps(); renderPane(); renderFoot();
+      }, 420);
+      return;
+    }
+    renderPane(); renderFoot();
+  }, 900);
+}
+
+/* =========================================================
+   9. 启动
+   ========================================================= */
+document.addEventListener('click', function(e){
+  if (!ui.dsOpen) return;
+  if (e.target.closest && e.target.closest('.ds-wrap')) return;
+  ui.dsOpen = false;
+  if (ui.phase === 'wizard' && ui.step === 1) renderDsField();
+});
+
+renderDatasets();
+$('#btn-direct').addEventListener('click', function(){ openWizard('nanzi_resources'); });
+
+})();
+</script>
+</body>
+</html>

@@ -76,7 +76,86 @@ def _metric_physical_names(metric: "dict[str, Any]") -> Optional[set[str]]:
     return set(refs.keys())
 
 
-def _filter_metrics_chunk_by_table_scope(content: str, allowed: set[str]) -> Optional[str]:
+def _metric_sql_columns(sql: str) -> "tuple[dict[str, set[str]], set[str]] | None":
+    """指标 SQL 里引用的列：``(限定表→列名, 未限定列名)``，全部小写。
+
+    解析失败返回 ``None``（保守保留，交给执行层兜底）。
+    """
+    text = str(sql or "").strip()
+    if not text:
+        return None
+    try:
+        import sqlglot
+        from sqlglot import exp
+
+        from app.services.sql_query_execution_service import _physical_fragment_from_table
+
+        expression = sqlglot.parse_one(text, read="mysql")
+    except Exception:  # noqa: BLE001
+        return None
+
+    alias_to_physical: dict[str, str] = {}
+    for table in expression.find_all(exp.Table):
+        physical = _physical_fragment_from_table(table)
+        if not physical:
+            continue
+        key = str(table.alias or "").strip().lower() or physical.lower()
+        alias_to_physical[key] = physical.lower()
+
+    qualified: dict[str, set[str]] = {}
+    unqualified: set[str] = set()
+    for column in expression.find_all(exp.Column):
+        name = str(column.name or "").strip().lower()
+        if not name:
+            continue
+        hint = str(column.table or "").strip().lower()
+        if hint:
+            physical = alias_to_physical.get(hint, hint)
+            qualified.setdefault(physical, set()).add(name)
+        else:
+            unqualified.add(name)
+    return qualified, unqualified
+
+
+def _metric_violates_column_scope(
+    metric: "dict[str, Any]",
+    column_rules_by_physical: "dict[str, tuple[Any, ...]]",
+) -> bool:
+    """指标 SQL 是否用到了被字段级权限挡住的列。
+
+    指标块的 ``sql`` 带真实字段名，原样给模型等于把「这个敏感字段叫什么、口径怎么算」
+    一起交出去；模型随后照着写注定被拦的 SQL，白跑一轮。
+    """
+    if not column_rules_by_physical:
+        return False
+    parsed = _metric_sql_columns(str((metric or {}).get("sql") or ""))
+    if parsed is None:
+        return False
+    qualified, unqualified = parsed
+    for physical, rules in column_rules_by_physical.items():
+        if not rules:
+            continue
+        columns = set(qualified.get(physical) or ())
+        # 未限定列名的归属无法确定：只要该表在指标里出现过，就按可能命中处理（保守剔除）。
+        appears = physical in qualified or bool(unqualified)
+        if not appears:
+            continue
+        columns |= unqualified
+        for rule in rules:
+            mode = str(getattr(rule, "mode", "") or "")
+            names = set(getattr(rule, "names", ()) or ())
+            if mode == "include" and (columns - names):
+                return True
+            if mode == "exclude" and (columns & names):
+                return True
+    return False
+
+
+def _filter_metrics_chunk_by_table_scope(
+    content: str,
+    allowed: "set[str] | None",
+    column_rules_by_physical: "dict[str, tuple[Any, ...]] | None" = None,
+) -> Optional[str]:
     """按表级白名单过滤指标块，逐指标判定。
 
     指标块的 ``sql`` 字段是**完整 SQL**（`SELECT count(*) ... FROM ai_agent_users`），
@@ -106,8 +185,13 @@ def _filter_metrics_chunk_by_table_scope(content: str, allowed: set[str]) -> Opt
             kept.append(metric)
             continue
         names = _metric_physical_names(metric)
-        if names is None or names.issubset(allowed):
-            kept.append(metric)
+        # allowed 为 None = 不限表（只有字段级收窄时是这种形态）
+        if names is not None and allowed is not None and not names.issubset(allowed):
+            continue
+        # 表可见 ≠ 字段可见：指标 SQL 里引用了被挡住的列也要整条剔除
+        if _metric_violates_column_scope(metric, column_rules_by_physical or {}):
+            continue
+        kept.append(metric)
 
     if len(kept) == len(metrics):
         return content
@@ -121,12 +205,82 @@ def _filter_metrics_chunk_by_table_scope(content: str, allowed: set[str]) -> Opt
     return ("\n".join(header) + "\n" + body) if header else body
 
 
+def _chunk_table_name(content: str) -> Optional[str]:
+    """从表 chunk 的 YAML 里取物理表名（lower）；指标块没有 table_name，返回 None。"""
+    import re
+
+    match = re.search(r"^table_name:\s*['\"]?([A-Za-z0-9_.$]+)", str(content or ""), re.MULTILINE)
+    return match.group(1).lower() if match else None
+
+
+def _append_column_scope_notice(schema_text: str, hidden_count: int) -> str:
+    """字段级收窄的说明：只给数量，不给被隐藏的列名（列名本身也是敏感信息）。"""
+    if hidden_count <= 0:
+        return schema_text
+    notice = (
+        f"\n\n# 提示：另有 {hidden_count} 个字段不在你的授权范围内，已从上述表结构中省略。\n"
+        "# 你只能查询这里列出的字段；引用未列出的字段会被权限门禁拒绝，\n"
+        "# 也不要猜测字段名或改用 SELECT * 绕过。\n"
+    )
+    return f"{schema_text}{notice}"
+
+
+def _trim_chunk_columns(
+    content: str,
+    rules: "tuple[Any, ...]",
+) -> tuple[str, list[str]]:
+    """按字段级授权裁剪表 chunk 的 ``columns``。
+
+    只删「不可见的列」，其余结构原样保留（comments/relationships 都不动）——
+    模型看到的就是它能查的，不会去 SELECT 一个被排除的字段再被门禁拒掉。
+    返回 (新内容, 被隐藏的列名)：列名只用于计数，不回传给模型。
+    """
+    text = str(content or "")
+    if not text.strip() or not rules:
+        return text, []
+
+    import yaml
+
+    try:
+        data = yaml.safe_load(text)
+    except Exception:  # noqa: BLE001 - YAML 解析失败就不裁剪，交给执行层兜底
+        return text, []
+    if not isinstance(data, dict) or not isinstance(data.get("columns"), list):
+        return text, []
+
+    all_names = [
+        str(col.get("name") or "").lower()
+        for col in data["columns"]
+        if isinstance(col, dict) and col.get("name")
+    ]
+    visible = set(all_names)
+    for rule in rules:
+        visible = rule.apply(visible)
+
+    kept = [
+        col
+        for col in data["columns"]
+        if not isinstance(col, dict)
+        or not col.get("name")
+        or str(col.get("name")).lower() in visible
+    ]
+    hidden = [name for name in all_names if name not in visible]
+    if not hidden:
+        return text, []
+
+    data["columns"] = kept
+    header = [line for line in text.splitlines() if line.startswith("#")]
+    body = yaml.dump(data, allow_unicode=True, sort_keys=False)
+    return ("\n".join(header) + "\n" + body) if header else body, hidden
+
+
 def _filter_hits_by_table_scope(
     items: list[dict[str, Any]],
     *,
     authorized_datasets: list[Any],
     allowed_table_names_by_dataset: dict[int, set[str] | None],
     dropped_out: list[str] | None = None,
+    column_rules_by_table: "dict[tuple[int, str], tuple[Any, ...]] | None" = None,
 ) -> list[dict[str, Any]]:
     """在数据集级过滤之后，再按表级白名单剔除命中的 schema 块。
 
@@ -172,9 +326,14 @@ def _filter_hits_by_table_scope(
                 dropped_out.append(str(table_name))
             continue
         if not table_name:
-            # 指标块：没有 table_name，但它的 sql 字段是完整 SQL，同样会泄露表名。
+            # 指标块：没有 table_name，但它的 sql 字段是完整 SQL，同样会泄露表名与字段名。
+            dataset_rules = {
+                physical: rules
+                for (rule_dataset_id, physical), rules in (column_rules_by_table or {}).items()
+                if dataset_id and int(rule_dataset_id) == int(dataset_id)
+            }
             filtered_content = _filter_metrics_chunk_by_table_scope(
-                str(hit.get("content") or ""), allowed
+                str(hit.get("content") or ""), allowed, dataset_rules
             )
             if filtered_content is None:
                 if dropped_out is not None:
@@ -299,11 +458,14 @@ async def _format_fallback_dataset_chunks(
     start_index: int,
     *,
     allowed_table_names: set[str] | None = None,
+    column_rules_by_table: "dict[tuple[int, str], tuple[Any, ...]] | None" = None,
+    hidden_columns_out: "list[str] | None" = None,
 ) -> tuple[list[str], int]:
     """MySQL 兜底：导出与向量索引一致的单表/指标 YAML 块。
 
     ``allowed_table_names`` 为 ``None`` 表示不限表；空集合表示该数据集一张表都不可见
     （必须显式传空列表，不能让 ``build_dataset_schema_chunk_contents`` 回退成不过滤）。
+    ``column_rules_by_table`` 非空时按字段级授权裁剪每张表的 ``columns``。
     """
     table_names = None if allowed_table_names is None else sorted(allowed_table_names)
     raw_chunks = await MetadataService.build_dataset_schema_chunk_contents(
@@ -311,13 +473,30 @@ async def _format_fallback_dataset_chunks(
     )
     formatted: list[str] = []
     index = start_index
+    # 本数据集的「物理表名 → 列规则」，供指标块逐条判定（表可见 ≠ 字段可见）
+    dataset_column_rules = {
+        physical: rules
+        for (rule_dataset_id, physical), rules in (column_rules_by_table or {}).items()
+        if int(rule_dataset_id) == int(dataset_id)
+    }
     for content in raw_chunks:
-        if allowed_table_names is not None and "metrics_scope:" in str(content):
-            # 兜底路径的指标块也是完整 YAML（含每条指标的 sql），同样按白名单逐条过滤
-            filtered = _filter_metrics_chunk_by_table_scope(content, allowed_table_names)
+        if "metrics_scope:" in str(content):
+            # 兜底路径的指标块也是完整 YAML（含每条指标的 sql），表级与字段级都要逐条过滤
+            filtered = _filter_metrics_chunk_by_table_scope(
+                content,
+                set(allowed_table_names) if allowed_table_names is not None else None,
+                dataset_column_rules,
+            )
             if filtered is None:
                 continue
             content = filtered
+        elif column_rules_by_table:
+            table_name = _chunk_table_name(content)
+            rules = column_rules_by_table.get((int(dataset_id), table_name)) if table_name else None
+            if rules:
+                content, hidden = _trim_chunk_columns(content, rules)
+                if hidden and hidden_columns_out is not None:
+                    hidden_columns_out.extend(hidden)
         piece = format_schema_chunk(index, content, dataset_id=dataset_id)
         if piece:
             formatted.append(piece)
@@ -402,18 +581,23 @@ async def _fetch_dataset_schema_impl(
     # 表级授权：把每个数据集的白名单翻译成物理表名（lower）。
     # None = 不限表（历史行为）；空集合 = 数据集内一张表都不可见（fail-closed）。
     allowed_table_names_by_dataset: dict[int, set[str] | None] = {}
+    # 字段级授权：(dataset_id, 物理表名 lower) -> 列规则。空 = 没有字段级收窄。
+    column_rules_by_table: dict[tuple[int, str], tuple[Any, ...]] = {}
     if not is_admin_eff and user_id_eff is not None:
         try:
             from app.services.dataset_scope_service import (
                 allowed_table_names_by_dataset as _resolve_allowed_table_names,
+                column_rules_by_table_name as _resolve_column_rules,
                 resolve_user_dataset_scopes,
             )
 
             dataset_scope_map = await resolve_user_dataset_scopes(session, user_id_eff)
             allowed_table_names_by_dataset = await _resolve_allowed_table_names(session, dataset_scope_map)
+            column_rules_by_table = await _resolve_column_rules(session, dataset_scope_map)
         except Exception as ex:  # noqa: BLE001 - 表级解析失败时退回数据集级，避免整页不可用
             logger.warning("[fetch_dataset_schema_core] 解析表级授权失败，退回数据集级: %s", ex)
             allowed_table_names_by_dataset = {}
+            column_rules_by_table = {}
 
     allowed_metadata_ids = {str(getattr(ds, "id", "")).strip() for ds in authorized_datasets}
     allowed_dataset_names = {
@@ -472,6 +656,7 @@ async def _fetch_dataset_schema_impl(
             return f"No relevant schema info found for '{query}'.\nDebug Logs: {'; '.join(trace_logs)}"
 
         dropped_table_hits = []
+        hidden_column_hits: list[str] = []
         filtered_hits = []
         for chunk in _filter_hits_by_table_scope(
             filter_schema_hits_to_scope(
@@ -483,6 +668,7 @@ async def _fetch_dataset_schema_impl(
             authorized_datasets=authorized_datasets,
             allowed_table_names_by_dataset=allowed_table_names_by_dataset,
             dropped_out=dropped_table_hits,
+            column_rules_by_table=column_rules_by_table,
         ):
             try:
                 similarity = float(chunk.get("similarity", 0.0) or 0.0)
@@ -493,13 +679,20 @@ async def _fetch_dataset_schema_impl(
             content = str(chunk.get("content") or "").strip()
             if not content:
                 continue
+            _hit_dataset_id = _metadata_dataset_id_from_hit(chunk, authorized_datasets)
+            if column_rules_by_table:
+                _tbl = _chunk_table_name(content)
+                if _tbl and _hit_dataset_id:
+                    _rules = column_rules_by_table.get((int(_hit_dataset_id), _tbl))
+                    if _rules:
+                        content, _hidden = _trim_chunk_columns(content, _rules)
+                        if _hidden:
+                            hidden_column_hits.extend(_hidden)
             filtered_hits.append({
                 "content": content,
                 "similarity": similarity,
                 "doc_name": chunk.get("doc_name", "unknown"),
-                "metadata_dataset_id": (
-                    _metadata_dataset_id_from_hit(chunk, authorized_datasets)
-                ),
+                "metadata_dataset_id": _hit_dataset_id,
                 "rag_dataset_id": (
                     chunk.get("rag_dataset_id")
                     or chunk.get("ragflow_dataset_id")
@@ -517,6 +710,7 @@ async def _fetch_dataset_schema_impl(
                 authorized_dataset_ids=authorized_dataset_ids,
                 allowed_table_names_by_dataset=allowed_table_names_by_dataset,
             )
+            schema_text = _append_column_scope_notice(schema_text, len(set(hidden_column_hits)))
             return _append_table_scope_notice(schema_text, len(dropped_table_hits))
         return f"No relevant schema info found for '{query}'.\nDebug Logs: {'; '.join(trace_logs)}"
 
@@ -632,16 +826,20 @@ async def _fetch_dataset_schema_impl(
                 .where(MetaTable.dataset_id == int(_ds.id), MetaTable.status == 1)
             )
             dropped_table_hits.extend(["_"] * max(0, int(_total or 0) - len(_allowed)))
+        hidden_column_hits = []
         for ds in found_datasets:
             chunks, next_index = await _format_fallback_dataset_chunks(
                 session,
                 ds.id,
                 next_index,
                 allowed_table_names=allowed_table_names_by_dataset.get(int(ds.id)),
+                column_rules_by_table=column_rules_by_table,
+                hidden_columns_out=hidden_column_hits,
             )
             results.extend(chunks)
 
         schema_text = "\n\n".join(results)
+        schema_text = _append_column_scope_notice(schema_text, len(set(hidden_column_hits)))
 
     # 跨数据集关联补全：在已有 schema 结果基础上，追加跨数据集关联表的 schema chunk
     schema_text = await _enrich_with_cross_dataset_schema(
