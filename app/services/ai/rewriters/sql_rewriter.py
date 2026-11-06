@@ -1,7 +1,7 @@
 import logging
 import sqlglot
 from sqlglot import exp, parse_one
-from typing import Optional, Dict, List, Any, Set
+from typing import Any, Optional, Dict, List, Any, Set
 import re
 
 logger = logging.getLogger(__name__)
@@ -206,26 +206,39 @@ class SQLRewriter:
         
         return relevant_filters
 
-    def _extract_unqualified_columns(self, condition: str) -> Set[str]:
-        """从条件字符串中提取未带表前缀的字段名。"""
-        clean_condition = re.sub(r"\{user\.\w+\}", "", condition)
-        without_qualified = re.sub(
-            r'(?:["`\[])?[a-zA-Z_][a-zA-Z0-9_]*(?:["`\]])?\.[a-zA-Z_][a-zA-Z0-9_]*',
-            "",
-            clean_condition,
-        )
-        reserved = {
-            "and", "or", "not", "in", "is", "like", "null", "true", "false",
-            "between", "exists", "case", "when", "then", "else", "end",
-        }
+    def _parse_condition_expression(self, condition: str) -> Any:
+        """把行级条件解析成 AST；解析不了返回 ``None``（调用方走保守回退）。
+
+        **不能用正则从字符串里猜列名**：字面量里的字母会被当成标识符，
+        ``status = 'ADMIN'`` 里的 ``ADMIN`` 会命中 ``IN`` 关键字、拆出一个伪列 ``adm``，
+        条件归属判定随之失败、整条行级条件被静默丢弃 —— 用户直接看到全表。
+        走 AST 就没有这个问题：字面量是 ``exp.Literal``，不会被当成列。
+        """
+        text = str(condition or "").strip()
+        if not text:
+            return None
+        # {user.x} 变量此时还是占位符，替换成 NULL 只是为了让语法成立
+        text = re.sub(r"\{user\.\w+\}", "NULL", text)
+        try:
+            import sqlglot
+
+            return sqlglot.parse_one(text, read="mysql")
+        except Exception:  # noqa: BLE001 - 解析失败按未知处理
+            return None
+
+    def _extract_unqualified_columns(self, condition: str) -> Optional[Set[str]]:
+        """条件里未带表前缀的字段名；无法解析时返回 ``None``（未知）。"""
+        expression = self._parse_condition_expression(condition)
+        if expression is None:
+            return None
+        from sqlglot import exp
+
         columns: Set[str] = set()
-        for match in re.finditer(
-            r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:=|<>|!=|<|>|<=|>=|IN\b|LIKE\b|IS\b|BETWEEN\b)",
-            without_qualified,
-            flags=re.IGNORECASE,
-        ):
-            name = str(match.group(1) or "").lower()
-            if name and name not in reserved:
+        for column in expression.find_all(exp.Column):
+            if str(getattr(column, "table", "") or "").strip():
+                continue
+            name = str(column.name or "").strip().lower()
+            if name:
                 columns.add(name)
         return columns
 
@@ -239,6 +252,7 @@ class SQLRewriter:
             return set()
         unqualified_columns = self._extract_unqualified_columns(condition)
         if not unqualified_columns:
+            # None（解析不了）与空集都退回「单表才应用」，不猜多表归属
             return local_tables if len(local_tables) == 1 else set()
         if not self.table_metadata:
             return local_tables if len(local_tables) == 1 else set()
@@ -283,19 +297,17 @@ class SQLRewriter:
         return relevant_filters
 
     def _extract_tables_from_condition(self, condition: str) -> Set[str]:
-        """从条件字符串中提取表名"""
-        tables = set()
-        
-        # 1. 首先移除所有 {user.xxx} 占位符，防止误匹配
-        clean_condition = re.sub(r'\{user\.\w+\}', '', condition)
-        
-        # 2. 匹配 tablename.fieldname 或 "tablename".fieldname 或 [tablename].fieldname 模式
-        table_field_pattern = r'(?:["`\[])?([a-zA-Z_][a-zA-Z0-9_]*)(?:["`\]])?\.[a-zA-Z_][a-zA-Z0-9_]*'
-        matches = re.findall(table_field_pattern, clean_condition)
-        
-        for m in matches:
-            tables.add(m.lower())
-        
+        """条件里显式带表前缀的表名（lower）；无法解析时返回空集（按无前缀处理）。"""
+        expression = self._parse_condition_expression(condition)
+        if expression is None:
+            return set()
+        from sqlglot import exp
+
+        tables: Set[str] = set()
+        for column in expression.find_all(exp.Column):
+            hint = str(getattr(column, "table", "") or "").strip().strip('"`[]').lower()
+            if hint:
+                tables.add(hint)
         return tables
 
     def _prepare_conditions(self, filters: List[Dict[str, Any]], context: Dict[str, Any]) -> List[exp.Expression]:
@@ -428,33 +440,37 @@ class SQLRewriter:
         return str(value).replace("'", "''")
 
     def _validate_condition_fields(self, condition: str, query_tables: Set[str]) -> bool:
-        """验证条件中的字段是否在查询表中存在"""
-        if not self.table_metadata:
-            # 如果没有元数据，跳过验证
-            return True
-        
-        # 提取条件中的所有字段引用
-        field_pattern = r'([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)'
-        matches = re.findall(field_pattern, condition)
-        
-        if not matches:
-            # 如果没有明确的表.字段格式，可能是无表前缀的字段，暂时允许通过
-            return True
-        
-        for table_name, field_name in matches:
-            table_key = str(table_name).lower()
-            field_key = str(field_name)
-            # 检查表是否在查询中
-            if table_key not in query_tables:
-                logger.debug(f"[SQLRewriter] Field {table_name}.{field_name} references table not in query: {query_tables}")
-                return False
+        """条件里带表前缀的字段，其表必须在当前作用域内、字段必须真实存在。
 
-            # 检查字段是否在表中存在
-            if table_key in self.table_metadata:
-                if field_key not in self.table_metadata[table_key]:
-                    logger.debug(f"[SQLRewriter] Field {field_name} not found in table {table_name}")
+        用 AST 而不是正则：正则会把字面量里的 ``boss@corp.com`` 拆成表 ``corp`` /
+        字段 ``com``，于是这类完全合法的条件被判成「引用不可用的字段」而整条查询被拒。
+        """
+        if not self.table_metadata:
+            return True
+        expression = self._parse_condition_expression(condition)
+        if expression is None:
+            # 解析不了就交给后面的 parse 报错，别在这里误判
+            return True
+        from sqlglot import exp
+
+        lowered_tables = {str(item).lower() for item in (query_tables or set())}
+        for column in expression.find_all(exp.Column):
+            hint = str(getattr(column, "table", "") or "").strip().strip('"`[]').lower()
+            if not hint:
+                continue
+            if hint not in lowered_tables:
+                logger.debug(
+                    "[SQLRewriter] Field %s references table not in query: %s", hint, lowered_tables
+                )
+                return False
+            columns = self.table_metadata.get(hint)
+            if columns:
+                normalized = {str(item).lower() for item in columns}
+                if str(column.name or "").strip().lower() not in normalized:
+                    logger.debug(
+                        "[SQLRewriter] Field %s not found in table %s", column.name, hint
+                    )
                     return False
-        
         return True
 
     @staticmethod
@@ -467,33 +483,44 @@ class SQLRewriter:
         default_policy 允许被配置成空列表（语义是「不过滤」），于是身份缺失反而变成
         「无行级过滤」。这里显式返回拒绝条件，避免该配置组合下被越权读取。
         """
+        # 「开了数据权限但这一层没配规则」一律按 ``1=0`` 处理（fail-closed）。
+        # 空列表不再表示「不过滤」：那样「勾了启用、没填规则」就等于把整表放开，
+        # 与产品承诺的默认兜底 1=0 相反。真要放开请关掉数据权限或改授权行 row_policy=none。
+        DENY: List[Dict[str, Any]] = [{"condition": "1=0"}]
+
         if not config:
-            return []
+            return DENY
 
         if user_id is None:
-            return [{"condition": "1=0"}]
+            return DENY
 
         # 1. 用户例外策略（最高优先级）
         user_overrides = config.get("user_overrides", {})
         if str(user_id) in user_overrides:
-            return user_overrides[str(user_id)]
+            return list(user_overrides[str(user_id)] or DENY)
 
-        # 2. 角色策略（多角色UNION）
+        # 2. 角色策略（多角色 UNION）
         role_policies = config.get("role_policies", {})
-        active_rules = []
+        active_rules: List[Dict[str, Any]] = []
         matched_any = False
-        
+
         for r in roles:
-            if r in role_policies:
-                matched_any = True
-                rules = role_policies[r]
-                # 如果任何角色是admin或有空规则（完全访问），返回空
-                if not rules:
-                    return []
-                active_rules.extend(rules)
-        
-        if matched_any:
+            if r not in role_policies:
+                continue
+            matched_any = True
+            rules = role_policies[r] or []
+            # 关键：**跳过**空规则角色，而不是直接 return []。
+            # 原来的写法里，只要用户多挂一个「没配规则」的角色，
+            # 另一个角色配得好好的行级限制就会被整体抹掉。
+            if not rules:
+                continue
+            active_rules.extend(rules)
+
+        if active_rules:
             return active_rules
+        if matched_any:
+            # 命中的角色全是空规则 = 没有任何有效限制，按拒绝处理
+            return DENY
 
         # 3. 默认策略（兜底）
-        return config.get("default_policy", [{"condition": "1=0"}])
+        return list(config.get("default_policy") or DENY)

@@ -1836,6 +1836,16 @@ const availableTools: Array<{ name: string; description: string; isSystem: boole
     isSystem: true,
   },
   {
+    name: "create_knowledge_base",
+    description: "创建个人私有知识库（仅创建者可见；工具不支持建 TEAM 级或公开库）",
+    isSystem: true,
+  },
+  {
+    name: "upload_document_to_knowledge_base",
+    description: "把本次对话附件或工作区文件上传到指定知识库，默认随后自动解析",
+    isSystem: true,
+  },
+  {
     name: "excel_document_read",
     description: "读取 Excel 工作簿结构或指定单元格区域",
     isSystem: true,

@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import sqlglot
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlglot import exp
 from sqlglot.errors import ParseError
@@ -85,11 +85,24 @@ def _mark_row_filter_notice(
     permission_notice.update(payload)
 
 
+def _has_permission_notice(permission_notice: Optional[Dict[str, Any]]) -> bool:
+    """这份提示里有没有值得告诉前端/模型的内容。
+
+    不能只认 ``row_filter_applied``：**只发生了字段级剔除、没有行级过滤**是最常见的情况，
+    按行级过滤做唯一判据会让「某某字段没权限」这条提示静默消失，用户以为查询本身少查了东西。
+    """
+    if not isinstance(permission_notice, dict) or not permission_notice:
+        return False
+    return permission_notice.get("row_filter_applied") is True or bool(
+        permission_notice.get("omitted_columns")
+    )
+
+
 def attach_permission_notice_to_payload(
     payload: Dict[str, Any],
     permission_notice: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    if permission_notice and permission_notice.get("row_filter_applied") is True:
+    if _has_permission_notice(permission_notice):
         payload["permission_notice"] = dict(permission_notice)
     return payload
 
@@ -98,7 +111,7 @@ def attach_permission_notice_to_json_result(
     result_str: str,
     permission_notice: Optional[Dict[str, Any]],
 ) -> str:
-    if not permission_notice or permission_notice.get("row_filter_applied") is not True:
+    if not _has_permission_notice(permission_notice):
         return result_str
     raw = result_str.strip()
     if not raw or raw.startswith("["):
@@ -268,19 +281,522 @@ def extract_physical_table_refs_from_select_sql(sql: str, dialect: str) -> Tuple
     return None, refs
 
 
+def _is_table_free_read(sql: str, dialect: str) -> bool:
+    """这条只读语句是否**完全不碰任何表**（``SELECT 1`` / ``SELECT now()``）。
+
+    用来给「refs 为空」兜底：``SHOW TABLES``、``SHOW CREATE TABLE x`` 这类命令
+    解析不出表引用，却能把整库表结构列出来 —— 四道表级门禁全都因为 ``refs`` 为空而跳过，
+    等于一条绕开数据集/表授权的信息泄露通道。这里只放行真正不需要表就能算出的语句。
+    """
+    try:
+        expression = sqlglot.parse_one(str(sql or "").strip(), read=to_sqlglot_dialect(dialect))
+    except Exception:  # noqa: BLE001 - 解析不了就按不放行处理
+        return False
+    if not isinstance(expression, exp.Select):
+        return False
+    if expression.find(exp.Table) is not None:
+        return False
+    return True
+
+
+def _collect_sql_column_usage(
+    expression: Any,
+) -> Tuple[Dict[str, set], set, Optional[set]]:
+    """从已解析的单条 SELECT 里收集列引用。
+
+    返回 ``(qualified, unqualified, star_tables)``：
+    - ``qualified``：``物理表名 lower -> {列名 lower}``（按表别名解析回物理表）；
+    - ``unqualified``：没有表限定的列名（``WHERE id = 1`` 这种）；
+    - ``star_tables``：用了 ``*`` 的表集合；``None`` 表示**无表限定**的 ``SELECT *``
+      （等于对所有参与表生效）。``COUNT(*)`` 不算通配。
+    """
+    alias_to_physical: Dict[str, str] = {}
+    for table in expression.find_all(exp.Table):
+        frag = _physical_fragment_from_table(table)
+        if not frag:
+            continue
+        physical = frag.lower()
+        alias = str(table.alias or "").strip().lower()
+        alias_to_physical[alias or physical] = physical
+
+    qualified: Dict[str, set] = {}
+    unqualified: set = set()
+    star_tables: set = set()
+    star_all = False
+
+    for column in expression.find_all(exp.Column):
+        name = str(column.name or "").strip()
+        if not name:
+            continue
+        table_hint = str(column.table or "").strip().lower()
+        if name == "*":
+            physical = alias_to_physical.get(table_hint)
+            if physical:
+                star_tables.add(physical)
+            else:
+                star_all = True
+            continue
+        if table_hint:
+            physical = alias_to_physical.get(table_hint, table_hint)
+            qualified.setdefault(physical, set()).add(name.lower())
+        else:
+            unqualified.add(name.lower())
+
+    for star in expression.find_all(exp.Star):
+        # COUNT(*) / COUNT(t.*) 里的星号不展开任何列，不能算通配
+        if isinstance(star.parent, exp.Count):
+            continue
+        # 带表限定的 `t.*` 已在 Column 分支处理
+        if isinstance(star.parent, exp.Column):
+            continue
+        star_all = True
+
+    return qualified, unqualified, (None if star_all else star_tables)
+
+
+def _column_clause(column: Any) -> str:
+    """判断一个列引用出现在哪个子句里。
+
+    ``projection`` = 直接挂在 SELECT 上（可以安全剔除）；其余位置一旦剔掉就会
+    改变筛选/分组/排序语义，只能拒绝。
+    """
+    node = column.parent
+    while node is not None and not isinstance(node, exp.Select):
+        for node_type, name in (
+            (exp.Where, "where"),
+            (exp.Having, "having"),
+            (exp.Group, "group"),
+            (exp.Order, "order"),
+            (exp.Join, "join"),
+            (exp.Window, "window"),
+            (exp.Qualify, "qualify"),
+        ):
+            if isinstance(node, node_type):
+                return name
+        node = node.parent
+    return "projection"
+
+
+_CLAUSE_LABELS = {
+    "where": "筛选条件（WHERE）",
+    "having": "聚合后筛选（HAVING）",
+    "group": "分组（GROUP BY）",
+    "order": "排序（ORDER BY）",
+    "join": "关联条件（JOIN ON）",
+    "window": "窗口函数分区/排序",
+    "qualify": "窗口筛选（QUALIFY）",
+}
+
+
+async def _load_allowed_columns_by_table(
+    session: AsyncSession,
+    *,
+    scopes: Any,
+    candidates: Any,
+) -> Tuple[Dict[str, Optional[set]], Dict[str, set]]:
+    """算出每张表对该用户「允许的列」。``None`` = 不受限（全部列可见）。
+
+    与表级 allowed_by_any 同口径：同一张物理表注册在多个数据集时，只要有一条路径
+    不受字段限制，这张表就算全开，避免用别处的收窄误伤。
+    """
+    from app.models.metadata import MetaColumn
+
+    # candidates 是 {物理表名: [(table_id, dataset_id, dataset_name), ...]}，
+    # 别直接迭代 dict（拿到的是字符串 key，int(key[0]) 会抛 ValueError）。
+    table_ids = [int(row[0]) for rows in candidates.values() for row in rows]
+    columns_by_table: Dict[int, set] = {}
+    if table_ids:
+        try:
+            column_rows = (
+                await session.execute(
+                    select(MetaColumn.table_id, MetaColumn.physical_name).where(
+                        MetaColumn.table_id.in_(table_ids)
+                    )
+                )
+            ).all()
+            for table_id, physical_name in column_rows:
+                name = str(physical_name or "").strip().lower()
+                if name:
+                    columns_by_table.setdefault(int(table_id), set()).add(name)
+        except Exception as ex:  # noqa: BLE001
+            logger.warning("[ColumnScope] 读取列清单失败: %s", ex)
+
+    allowed: Dict[str, Optional[set]] = {}
+    full_columns: Dict[str, set] = {}
+    for physical, rows in (candidates or {}).items():
+        allowed[physical] = None  # 默认全开，下面逐条收窄
+        for table_id, dataset_id, _dataset_name in rows:
+            scope = scopes.get(dataset_id)
+            if scope is None:
+                # 这个数据集没有授权行，不算一条路径
+                continue
+            rules = (scope.column_rules or {}).get(int(table_id))
+            if not rules:
+                allowed[physical] = None
+                break
+            all_cols = columns_by_table.get(int(table_id), set())
+            if not all_cols:
+                # 拿不到列清单就无法判断，保守地按「全开」处理（表级仍然生效）
+                allowed[physical] = None
+                break
+            visible = set(all_cols)
+            for rule in rules:
+                visible = rule.apply(visible)
+            current = allowed[physical]
+            allowed[physical] = visible if current is None else (current & visible)
+            full_columns.setdefault(physical, set()).update(all_cols)
+    return allowed, full_columns
+
+
+def _is_wildcard_projection(projection: Any) -> bool:
+    """这个投影项是不是「整个通配符」：``*`` 或 ``t.*``。
+
+    ``COUNT(*)`` / ``COUNT(t.*)`` **不算** —— 它们的通配符在聚合函数内部，
+    展开成列清单会彻底改变语义（计数变成明细）。
+    """
+    if isinstance(projection, exp.Star):
+        return True
+    return isinstance(projection, exp.Column) and isinstance(projection.this, exp.Star)
+
+
+def _has_positional_ordering(expression: Any) -> bool:
+    """ORDER BY / GROUP BY 里是否有 `ORDER BY 2` 这种按**序号**排序/分组。
+
+    这是改写投影的硬约束：删掉一列后所有位置参数都会指向别的列，
+    轻则报错，重则静默换了一列去排序。有它就只能拒绝，不能改写。
+    """
+    for node_type in (exp.Order, exp.Group):
+        for node in expression.find_all(node_type):
+            for ordered in node.find_all(exp.Ordered):
+                if isinstance(ordered.this, exp.Literal) and ordered.this.is_int:
+                    return True
+            # GROUP BY 直接挂字面量（不带 Ordered）
+            for item in node.expressions:
+                if isinstance(item, exp.Literal) and item.is_int:
+                    return True
+    return False
+
+
+def _rewrite_select_projections(
+    expression: Any,
+    *,
+    alias_to_physical: Dict[str, str],
+    allowed_columns: Dict[str, Optional[set]],
+    full_columns: Optional[Dict[str, set]] = None,
+    single_table: bool = True,
+) -> Tuple[list, list, Optional[str]]:
+    """把 SELECT 里引用了无权字段的投影项剔掉。
+
+    返回 ``(保留的投影, 被剔除的列名, 无法改写的理由)``。第三个值非空表示**不能改写**
+    （改名会改变语义），调用方必须改为拒绝，绝不能退回原始 SQL 执行。
+    """
+    kept: list = []
+    dropped: list = []
+
+    def _physical_of(table_hint: str) -> Optional[str]:
+        if table_hint:
+            return alias_to_physical.get(table_hint, table_hint)
+        if single_table:
+            return next(iter(alias_to_physical.values()), None)
+        return None
+
+    def _column_allowed(table_hint: str, column: str) -> bool:
+        physical = _physical_of(table_hint)
+        if physical is None:
+            # 无限定列 + 多表：无法归属到具体表，保守按无权处理
+            return False
+        allowed = allowed_columns.get(physical)
+        if allowed is None and physical not in allowed_columns:
+            return True
+        if allowed is None:
+            return True
+        return column.lower() in allowed
+
+    for projection in expression.selects:
+        # 只认**整个投影就是通配符**的两种形态：`*`（投影节点是 Star）与 `t.*`（Column 的 this 是 Star）。
+        # 不能用 find(exp.Star)：`COUNT(*)` 的 this 同样是 Star，会被误判成通配符，
+        # 于是 `SELECT COUNT(*)` 被改写成 `SELECT col1, col2` —— 统计查询变成全量明细导出。
+        if _is_wildcard_projection(projection):
+            hint = str(getattr(projection, "table", "") or "").strip().lower()
+            physical = _physical_of(hint)
+            if physical is None:
+                # 多表 JOIN + 不带表名的 `*`：展开成谁在前谁在后都不确定，
+                # 改名会改变结果列序甚至重名列，只能让模型显式列字段。
+                return [], [], "multi_table_star"
+            allowed = allowed_columns.get(physical)
+            if allowed is None:
+                kept.append(projection)
+                continue
+            # 展开了就得真的用改写后的 SQL：否则 dropped 为空，调用方会退回原始
+            # `SELECT *`，把被隐藏的列原样返回（字段级权限对 * 查询完全失效）。
+            dropped.extend(sorted((full_columns or {}).get(physical, set()) - allowed))
+            for name in sorted(allowed):
+                kept.append(exp.column(name, table=hint or None))
+            continue
+
+        referenced = list(projection.find_all(exp.Column))
+        blocked = [
+            str(col.name)
+            for col in referenced
+            if not _column_allowed(str(col.table or "").strip().lower(), str(col.name or ""))
+        ]
+        if blocked:
+            dropped.extend(blocked)
+            continue
+        kept.append(projection)
+
+    return kept, dropped, None
+
+
+async def apply_column_scope_to_select_sql(
+    session: AsyncSession,
+    *,
+    sql: str,
+    dialect: str,
+    user_id_eff: Optional[int],
+    is_admin_eff: bool = False,
+    restrict_dataset_ids: Optional[set[int]] = None,
+    user_identity_label: Optional[str] = None,
+) -> Tuple[str, List[str], Optional[str]]:
+    """字段级权限：**能剔的剔掉，不能剔的才拒绝**。
+
+    与表级的关键区别：表看不到 = 这次查询没意义，只能拒绝；字段看不到 = 少一列而已，
+    把这一列从结果里拿掉、其余照常返回，再明确告诉用户「某某字段没有权限」更好用。
+
+    但「剔掉」只在 **SELECT 投影** 里安全。同一个列如果出现在
+
+        WHERE / HAVING / GROUP BY / ORDER BY / JOIN ON / 窗口分区
+
+    就不能删 —— 删掉会让条件失效（``WHERE id_card LIKE '110%'`` 一删就从「北京客户」
+    变成「全部客户」），保留则是拿无权字段做筛选，等于泄露该字段的取值分布。
+    这些位置一律拒绝。
+
+    返回 ``(可能要执行的 sql, 被剔除的列名, 拒绝原因)``：
+    - ``拒绝原因`` 非空 → 上层直接返回该错误，不改写、不执行；
+    - 否则用返回的 sql 执行；``被剔除的列名`` 用于向用户和模型说明。
+    """
+    original = str(sql or "")
+    if is_admin_eff or user_id_eff is None or not original.strip():
+        return original, [], None
+
+    try:
+        parsed = sqlglot.parse(original, read=to_sqlglot_dialect(dialect))
+    except Exception:  # noqa: BLE001 - 解析失败交给上游语法校验
+        return original, [], None
+    if len(parsed) != 1:
+        return original, [], None
+    expression = parsed[0]
+
+    from app.services.dataset_scope_service import (
+        column_rules_by_table_name,
+        resolve_user_dataset_scopes,
+    )
+
+    from app.models.metadata import MetaDataset
+
+    try:
+        scopes = await resolve_user_dataset_scopes(session, user_id_eff)
+        rules_by_table = await column_rules_by_table_name(session, scopes)
+    except Exception as ex:  # noqa: BLE001 - 字段级解析失败不阻断查询，表级门禁仍然生效
+        logger.warning("[ColumnScope] 解析字段级授权失败，跳过字段级门禁: %s", ex)
+        return original, [], None
+    if not rules_by_table:
+        return original, [], None
+
+    alias_to_physical: Dict[str, str] = {}
+    tables_in_sql: set = set()
+    for table in expression.find_all(exp.Table):
+        frag = _physical_fragment_from_table(table)
+        if not frag:
+            continue
+        physical = frag.lower()
+        tables_in_sql.add(physical)
+        alias = str(table.alias or "").strip().lower()
+        alias_to_physical[alias or physical] = physical
+    if not tables_in_sql:
+        return original, [], None
+
+    try:
+        rows = (
+            await session.execute(
+                select(
+                    MetaTable.id,
+                    MetaTable.physical_name,
+                    MetaTable.dataset_id,
+                    MetaDataset.name,
+                )
+                .join(MetaDataset, MetaDataset.id == MetaTable.dataset_id)
+                .where(func.lower(MetaTable.physical_name).in_(sorted(tables_in_sql)))
+            )
+        ).all()
+    except Exception as ex:  # noqa: BLE001
+        logger.warning("[ColumnScope] 查询表归属失败，跳过字段级门禁: %s", ex)
+        return original, [], None
+    if not rows:
+        return original, [], None
+
+    candidates: Dict[str, list] = {}
+    for table_id, physical_name, dataset_id, dataset_name in rows:
+        if not physical_name:
+            continue
+        candidates.setdefault(str(physical_name).lower(), []).append(
+            (int(table_id), int(dataset_id), str(dataset_name or ""))
+        )
+
+    # 本轮限定了数据集时只看限定范围内的那张表（与表级门禁同一口径）
+    if restrict_dataset_ids is not None:
+        for physical in list(candidates):
+            restricted = [row for row in candidates[physical] if row[1] in restrict_dataset_ids]
+            if restricted:
+                candidates[physical] = restricted
+            elif not restrict_dataset_ids:
+                return original, [], (
+                    f"[Permission Denied] {user_identity_label or ''}本次会话限定的数据集已不存在，"
+                    "无法校验字段级权限，请重新选择数据集后再试。"
+                )
+        candidates = {key: value for key, value in candidates.items() if value}
+
+    allowed_columns, full_columns = await _load_allowed_columns_by_table(
+        session,
+        scopes=scopes,
+        candidates=candidates,
+    )
+    # 没有任何收窄 → 直接走原 SQL
+    if all(value is None for value in allowed_columns.values()):
+        return original, [], None
+
+    subject = f"{user_identity_label} " if user_identity_label else ""
+    single_table = len(alias_to_physical) == 1
+
+    def _resolve_physical(table_hint: str) -> Optional[str]:
+        if table_hint:
+            return alias_to_physical.get(table_hint, table_hint)
+        if single_table:
+            return next(iter(alias_to_physical.values()), None)
+        return None
+
+    def _allowed(physical: Optional[str], column: str) -> bool:
+        if physical is None:
+            return True
+        allowed = allowed_columns.get(physical)
+        if allowed is None:
+            return True
+        return column.lower() in allowed
+
+    # ---- 1. 非投影区的无权列：只能拒绝 ----
+    bad_sites: Dict[str, List[str]] = {}
+    for column in expression.find_all(exp.Column):
+        clause = _column_clause(column)
+        if clause == "projection":
+            continue
+        physical = _resolve_physical(str(column.table or "").strip().lower())
+        if _allowed(physical, str(column.name or "")):
+            continue
+        bad_sites.setdefault(_CLAUSE_LABELS.get(clause, clause), []).append(str(column.name))
+
+    if bad_sites:
+        parts = []
+        for site, names in bad_sites.items():
+            uniq = sorted(set(names))
+            sample = "、".join(f"'{name}'" for name in uniq[:5])
+            more = f" 等 {len(uniq)} 个" if len(uniq) > 5 else ""
+            parts.append(f"{site} 里用到了 {sample}{more}")
+        return original, [], (
+            f"[Permission Denied] {subject}这些字段不在你的授权范围内，"
+            "且它们出现在筛选/分组/排序条件里，删掉会改变结果口径，因此本次查询已终止："
+            + "；".join(parts)
+            + "。请换用你有权限的字段重新提问。"
+        )
+
+    # ---- 2. 投影区：能剔就剔 ----
+    selects = list(expression.find_all(exp.Select))
+    if len(selects) > 1:
+        # 子查询 / UNION：改投影会连带影响外层结构，退化成拒绝（安全优先）
+        denied = []
+        for column in expression.find_all(exp.Column):
+            physical = _resolve_physical(str(column.table or "").strip().lower())
+            if not _allowed(physical, str(column.name or "")):
+                denied.append(str(column.name))
+        if denied:
+            uniq = sorted(set(denied))
+            return original, [], (
+                f"[Permission Denied] {subject}无权访问字段 "
+                + "、".join(f"'{name}'" for name in uniq[:5])
+                + (" 等" if len(uniq) > 5 else "")
+                + "。当前 SQL 含子查询或 UNION，无法安全改写，请改写成单表简单查询后重试。"
+            )
+        return original, [], None
+
+    # 改写投影会动列的位置与行去重口径，这两种写法下只能拒绝：
+    #   * `ORDER BY 2` / `GROUP BY 2` 按序号引用列，删一列后序号全错位；
+    #   * `SELECT DISTINCT` 的列变少 → 去重粒度变粗，行数会变多。
+    if _has_positional_ordering(expression):
+        return original, [], (
+            f"[Permission Denied] {subject}查询里有你无权访问的字段，且 SQL 使用了"
+            "按序号排序/分组（ORDER BY 2 / GROUP BY 1）。删列会让序号错位，"
+            "因此本次查询已终止。请把序号改成字段名后重试。"
+        )
+    if expression.args.get("distinct"):
+        return original, [], (
+            f"[Permission Denied] {subject}查询里有你无权访问的字段，且 SQL 使用了 DISTINCT。"
+            "删列会改变去重口径（同样的数据会多出行），因此本次查询已终止。"
+            "请显式列出你有权限的字段后重试。"
+        )
+
+    kept, dropped, blocked = _rewrite_select_projections(
+        expression,
+        alias_to_physical=alias_to_physical,
+        allowed_columns=allowed_columns,
+        full_columns=full_columns,
+        single_table=single_table,
+    )
+    if blocked == "multi_table_star":
+        return original, [], (
+            f"[Permission Denied] {subject}多表 JOIN 时不能用不带表名的 SELECT *（部分表有字段级限制，"
+            "展开后列序不确定）。请显式列出你需要的字段，例如 SELECT t1.a, t2.b。"
+        )
+    if not dropped:
+        return original, [], None
+    if not kept:
+        uniq = sorted(set(dropped), key=str.lower)
+        return original, [], (
+            f"[Permission Denied] {subject}你请求的字段 "
+            + "、".join(f"'{name}'" for name in uniq[:5])
+            + (" 等" if len(uniq) > 5 else "")
+            + " 都不在你的授权范围内，没有任何可返回的字段。请换一个问法。"
+        )
+
+    expression.set("expressions", kept)
+    try:
+        rewritten = expression.sql(dialect=to_sqlglot_dialect(dialect))
+    except Exception as ex:  # noqa: BLE001 - 改写失败退回拒绝，绝不执行原 SQL
+        logger.warning("[ColumnScope] SQL 改写失败: %s", ex)
+        return original, [], (
+            f"[Permission Denied] {subject}查询涉及你无权访问的字段（"
+            + "、".join(sorted(set(dropped))[:5])
+            + "），且系统无法安全改写该查询。请换用你有权限的字段。"
+        )
+
+    logger.info(
+        "[ColumnScope] 字段级权限：从投影中剔除 %s，改写后执行", sorted(set(dropped))
+    )
+    return rewritten, sorted(set(dropped), key=str.lower), None
+
+
 async def _fetch_all_registered_physical_lowers(session: AsyncSession) -> set[str]:
     r = await session.execute(select(MetaTable.physical_name).where(MetaTable.status == 1))
     return {str(x).lower() for x in r.scalars().all() if x}
 
 
 async def _fetch_allowed_physical_lowers_for_user(session: AsyncSession, user_id: int) -> set[str]:
-    datasets = await MetadataService.search_datasets(session, status=1, user_id=user_id, is_admin=False)
-    allowed: set[str] = set()
-    for d in datasets:
-        for tb in d.tables:
-            if tb.status == 1:
-                allowed.add(tb.physical_name.lower())
-    return allowed
+    """用户最终可见的物理表（lower）。
+
+    从「数据集权限 ⇒ 数据集内全部表」升级为「数据集权限 ∩ 表级白名单」：
+    没有表级授权（历史数据 scope 为空）时结果与旧实现完全一致。
+    """
+    from app.services.dataset_scope_service import allowed_physical_names_for_user
+
+    return await allowed_physical_names_for_user(session, user_id)
 
 
 async def check_physical_table_refs_permission(
@@ -415,6 +931,11 @@ async def execute_sql_query_core(
         prepare_binding_for_execution,
         validate_sql_columns_with_binding,
     )
+    from app.services.dataset_scope_service import (
+        ROW_POLICY_CUSTOM,
+        ROW_POLICY_INHERIT,
+        ROW_POLICY_NONE,
+    )
 
     binding = sql_query_binding or get_current_sql_query_binding()
     user_id_eff = user_id
@@ -513,6 +1034,15 @@ async def execute_sql_query_core(
         if err_ref:
             return f"[Validation Failed] {err_ref}"
 
+        # refs 为空是「无法归属到任何表」的信号，不是「没有表」。SHOW / DESCRIBE 这类
+        # 命令会走到这里，而它们能列出整库表结构；只放行真正不需要表的常量查询。
+        if not refs and not _is_table_free_read(sql, dialect):
+            return (
+                "[Permission Denied] 本次查询无法确定实际访问的表，数据权限无法校验，已拒绝执行。"
+                "请使用标准 SELECT 语句并写明表名；查看表结构请使用数据集 Schema 工具，"
+                "不要用 SHOW / DESCRIBE 直接查库。"
+            )
+
         column_err = validate_sql_columns_with_binding(sql, binding)
         if column_err:
             return column_err
@@ -539,12 +1069,70 @@ async def execute_sql_query_core(
         )
         if perm_err:
             return perm_err
+
+        from app.services.dataset_scope_service import enforce_table_scope_for_refs
+        from app.services.ai.metadata_dataset_scope import resolve_mounted_dataset_id_set
+
+        # 本轮限定了数据集时，表级门禁要按「限定范围」判定：否则同一张表在别的
+        # 数据集里被全开，就会把本次收窄整个抹掉（实测 ds1 只给 1 张表，
+        # 却能经 ds9/ds54 的 all 授权查到 ai_agent_users）。
+        restrict_ids = await resolve_mounted_dataset_id_set(session)
+
+        table_scope_err = await enforce_table_scope_for_refs(
+            session,
+            refs=refs,
+            user_id=user_id_eff,
+            is_admin=is_admin_eff,
+            user_identity_label=user_identity_label,
+            restrict_dataset_ids=restrict_ids,
+        )
+        if table_scope_err:
+            return table_scope_err
+
+        # 字段级：能剔的剔掉（SELECT 投影），不能剔的才拒绝（筛选/分组/排序）。
+        # 放在表级之后 —— 表本身都无权时，报「表无权」比报「列无权」更准确。
+        sql, dropped_columns, column_scope_err = await apply_column_scope_to_select_sql(
+            session,
+            sql=sql,
+            dialect=dialect,
+            user_id_eff=user_id_eff,
+            is_admin_eff=is_admin_eff,
+            restrict_dataset_ids=restrict_ids,
+            user_identity_label=user_identity_label,
+        )
+        if column_scope_err:
+            return column_scope_err
+        if dropped_columns and permission_notice is not None:
+            # 让结果里带上「哪几列被权限拿掉了」，否则模型会以为自己少查了东西
+            permission_notice.setdefault("omitted_columns", [])
+            permission_notice["omitted_columns"] = sorted(
+                set(permission_notice.get("omitted_columns") or []) | set(dropped_columns)
+            )
     elif binding is not None:
         column_err = validate_sql_columns_with_binding(sql, binding)
         if column_err:
             return column_err
 
-    if ds and ds.enable_data_perm:
+    # 行级策略：授权行上的 row_policy 优先于数据集级 enable_data_perm。
+    #   - none   ：显式跳过行级隔离（仅给运维/审计类个人授权）；
+    #   - custom ：使用授权行上的独立条件，不再走数据集的三层策略；
+    #   - inherit：沿用 meta_datasets.row_filter_config（历史行为）。
+    row_policy = ROW_POLICY_INHERIT
+    row_condition: Optional[str] = None
+    if ds and user_id_eff is not None and not is_admin_eff:
+        try:
+            from app.services.dataset_scope_service import resolve_effective_row_policy
+
+            row_policy, row_condition = await resolve_effective_row_policy(
+                session, user_id_eff, int(ds.id)
+            )
+        except Exception as exc:  # noqa: BLE001 - 解析失败按 inherit，避免误跳过隔离
+            logger.warning("[DataPerm] 解析行级策略失败，按 inherit 处理: %s", exc)
+
+    custom_row_filter = row_policy == ROW_POLICY_CUSTOM and bool(row_condition)
+    inherit_row_filter = row_policy == ROW_POLICY_INHERIT and bool(ds and ds.enable_data_perm)
+
+    if ds and row_policy != ROW_POLICY_NONE and (custom_row_filter or inherit_row_filter):
         _append_trace(
             agent_context,
             trace_logs,
@@ -558,7 +1146,7 @@ async def execute_sql_query_core(
             rewriter_dialect = dialect
 
             table_metadata: Dict[str, Any] = build_data_perm_table_metadata(binding, str(dataset_name or "")) or {}
-            if ds.enable_data_perm and not table_metadata:
+            if not table_metadata:
                 try:
                     # 一次性 join 查询拿到该数据集全部 表->列 映射，避免逐表查询的 N+1 开销。
                     cols_stmt = (
@@ -588,16 +1176,21 @@ async def execute_sql_query_core(
 
             rewriter = SQLRewriter(dialect=rewriter_dialect, table_metadata=table_metadata)
 
-            user_roles: List[Any] = []
-            if user_id_eff:
-                try:
-                    ps = PermissionService(session)
-                    perm_data = await ps.get_user_permissions(user_id_eff)
-                    user_roles = getattr(perm_data, "roles", [])
-                except Exception as e:
-                    logger.error("[DataPerm] Failed to fetch roles for user %s: %s", user_id_eff, e)
+            if custom_row_filter:
+                # 授权行上的独立条件：不再叠加数据集的三层策略。
+                user_roles = []
+                filters = [{"condition": str(row_condition)}]
+            else:
+                user_roles: List[Any] = []
+                if user_id_eff:
+                    try:
+                        ps = PermissionService(session)
+                        perm_data = await ps.get_user_permissions(user_id_eff)
+                        user_roles = getattr(perm_data, "roles", [])
+                    except Exception as e:
+                        logger.error("[DataPerm] Failed to fetch roles for user %s: %s", user_id_eff, e)
 
-            filters = rewriter.resolve_strategy(user_id_eff, user_roles, ds.row_filter_config)
+                filters = rewriter.resolve_strategy(user_id_eff, user_roles, ds.row_filter_config)
 
             if filters:
                 user_dims = _user_dims_for_rewrite(agent_context, user_dimensions)
@@ -606,6 +1199,16 @@ async def execute_sql_query_core(
                 sql = rewriter.rewrite(sql, filters, user_dims, rewrite_stats=rewrite_stats)
                 rewrite_applied = sql != original_sql
                 applied_rule_count = int(rewrite_stats.get("applied_rule_count") or 0)
+                if custom_row_filter and not rewrite_applied:
+                    # 重写器对「条件引用的表不在本次查询里」是静默返回原 SQL 的。
+                    # 对 inherit 这是既有语义（条件按表生效），但对 custom 授权等于
+                    # 「配了行级限制却查到了全表」——属于权限放大，必须拒绝而不是放行。
+                    return (
+                        f"[Permission Denied] {user_identity_label or 'user_id=' + str(user_id_eff)} "
+                        "配置的自定义行级条件未生效：它引用的表不在本次查询里，"
+                        "为避免越权已拒绝执行。请联系数据集管理员把行级条件改成覆盖所查表的字段，"
+                        "或改用「不做行级过滤」授权。"
+                    )
                 logger.info(
                     "[DataPerm] SQL Rewritten for user %s. Applied %s/%s filter conditions.",
                     user_id_eff,

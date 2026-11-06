@@ -20,7 +20,10 @@ SOURCE = (Path(__file__).resolve().parents[3] / "app/services/ai/tools/agent_del
 
 def test_delegation_marks_sub_agent_as_non_interactive():
     """子代理必须带上委派标记，否则判定不出「没有可回传的交互通道」。"""
-    assert 'execution_options={"delegated_sub_agent": True}' in SOURCE
+    assert 'sub_execution_options: Dict[str, Any] = {"delegated_sub_agent": True}' in SOURCE
+    # 标记之外还要透传数据集范围：子 setup_context 会整体覆盖 execution_options，
+    # 只带标记等于让委派出去的专家不受本轮范围限制。
+    assert 'sub_execution_options["metadata_dataset_scope"] = parent_scope' in SOURCE
 
 
 def test_delegation_saves_execution_options_before_switching_context():

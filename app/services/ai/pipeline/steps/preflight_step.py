@@ -24,6 +24,15 @@ from app.services.quota_service import QuotaService
 logger = logging.getLogger(__name__)
 
 
+def _current_turn_metadata_scope(context: PipelineContext) -> list[str]:
+    """本轮请求 / 会话固定已经生效的数据集范围（空表示没有任何约束）。"""
+    return [
+        str(item).strip()
+        for item in (context.metadata_dataset_ids or [])
+        if str(item).strip()
+    ]
+
+
 class PreflightStep(BasePipelineStep):
     """Executes preflight validations before agent orchestration."""
 
@@ -164,11 +173,15 @@ class PreflightStep(BasePipelineStep):
                 restored_dataset_ids = metadata_dataset_ids_from_user_question_record(
                     submitted_question
                 )
-                if restored_dataset_ids:
+                # 本轮请求 / 会话固定已经带了范围时，以它们为准；两者都空才按提问记录
+                # 恢复——否则「答完追问」这一轮会退回用户可访问的全部数据集，
+                # 委派出去的子代理拿到的也是空范围（本轮手选只在提问那一轮有效）。
+                if restored_dataset_ids and not _current_turn_metadata_scope(context):
                     context.metadata_dataset_ids = restored_dataset_ids
                     context.execution_options["metadata_dataset_scope"] = {
                         "source": "user_question",
                         "request_ids": restored_dataset_ids,
+                        "session": [],
                     }
             except (PermissionError, ValueError) as exc:
                 yield {

@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PARAM_EDITOR = ROOT / "frontend/src/components/system/ToolParamEditor.vue"
-METADATA_PAGE = ROOT / "frontend/src/views/MetadataDatasets.vue"
+METADATA_PAGE = ROOT / "frontend/src/components/metadata/RowPolicyConfigModal.vue"
 USER_VARIABLES = ROOT / "frontend/src/utils/userVariables.ts"
 API_TOOL = ROOT / "frontend/src/api/tool.ts"
 API_TOOL_TESTER = ROOT / "frontend/src/components/system/ApiToolTester.vue"

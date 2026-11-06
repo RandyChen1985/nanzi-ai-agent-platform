@@ -347,6 +347,12 @@ export const metadataApi = {
   updateDataset: (id: number, data: Partial<Dataset>) =>
     axios.put<Dataset>(`${API_BASE}/datasets/${id}`, data),
   deleteDataset: (id: number) => axios.delete(`${API_BASE}/datasets/${id}`),
+  // 列表视图批量删除：逐条复用后端的单条删除逻辑，返回 deleted / missing / failed
+  batchDeleteDatasets: (ids: number[]) =>
+    axios.post<{ code: number; data: { deleted: number[]; missing: number[]; failed: Array<{ id: number; error: string }> } }>(
+      `${API_BASE}/datasets/batch-delete`,
+      { ids },
+    ),
   syncToRag: (id: number) =>
     axios.post<MetadataSyncStartResponse>(`${API_BASE}/datasets/${id}/rag/sync`),
   getDatasetYaml: (id: number) =>
@@ -477,6 +483,14 @@ export const metadataApi = {
     axios.post(`${API_BASE}/db/ddl`, { config, tables }),
 
   // DB Connection Configs
+  // 复制新建：实时查重（name + display_name 全平台唯一）
+  checkDatasetUnique: (params: { name: string; display_name?: string; exclude_id?: number }) =>
+    axios.get<{ code: number; data: CloneUniqueResult }>(`${API_BASE}/datasets/check-unique`, { params }),
+
+  // 复制新建：按向导草稿一次性建出数据集与全部子资源（单事务）
+  cloneDataset: (sourceId: number, payload: CloneDatasetPayload) =>
+    axios.post<{ code: number; data: CloneDatasetResult }>(`${API_BASE}/datasets/${sourceId}/clone`, payload),
+
   listDbConnectionConfigs: () =>
     axios.get<{ code: number; data: DbConnectionConfig[] }>(`${API_BASE}/db/connection-configs`),
   saveDbConnectionConfig: (data: {
@@ -720,4 +734,82 @@ export interface RecommendColumnSemanticResult {
   llm_succeeded: boolean;
   error_message?: string | null;
   sibling_terms?: string[];
+}
+
+// --- 数据集复制新建 ---
+// 提交的是向导里改完的整份草稿（表/关系/指标都可改可删），不是「复制哪些 id」
+
+export interface CloneColumnInput {
+  physical_name: string;
+  term: string;
+  type?: string;
+  description?: string;
+  enums?: any[];
+  synonyms?: string[];
+  is_primary?: boolean;
+  dimension_role?: string;
+  hierarchy_group?: string | null;
+  hierarchy_order?: number | null;
+}
+
+export interface CloneTableInput {
+  physical_name: string;
+  term: string;
+  description?: string;
+  synonyms?: string[];
+  partition_fields?: string[];
+  index_fields?: string[];
+  columns: CloneColumnInput[];
+}
+
+export interface CloneRelationshipInput {
+  source_table: string;
+  target_table: string;
+  join_condition: string;
+  join_type: string;
+  description?: string;
+}
+
+export interface CloneMetricInput {
+  name: string;
+  display_name: string;
+  description?: string;
+  calculation_logic: string;
+  unit?: string;
+  tags?: string[];
+}
+
+export interface CloneDatasetPayload {
+  name: string;
+  display_name?: string;
+  description?: string;
+  tags?: string[];
+  data_source?: string;
+  tables: CloneTableInput[];
+  relationships: CloneRelationshipInput[];
+  metrics: CloneMetricInput[];
+  copy_permissions: boolean;
+  log_mode: 'detail' | 'summary';
+}
+
+export interface CloneUniqueField {
+  available: boolean;
+  reason: 'ok' | 'empty' | 'invalid_format' | 'too_long' | 'taken' | string;
+  message: string;
+}
+
+export interface CloneUniqueResult {
+  name: CloneUniqueField;
+  display_name: CloneUniqueField;
+}
+
+export interface CloneDatasetResult {
+  dataset: Dataset;
+  summary: {
+    tables: number;
+    columns: number;
+    relationships: number;
+    metrics: number;
+    skipped_relationships: number;
+  };
 }

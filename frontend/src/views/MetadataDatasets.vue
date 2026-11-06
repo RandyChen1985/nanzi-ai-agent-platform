@@ -3,31 +3,22 @@ import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { metadataApi } from '../api/metadata'
 import type { Dataset } from '../api/metadata'
-import { portalApi, type User, type Role } from '../api/portal'
 import axios from '@/utils/axios'
 import SmartImportWizard from '../components/metadata/SmartImportWizard.vue'
-import RowFilterOptionSelect from '../components/metadata/RowFilterOptionSelect.vue'
-import PermissionVariableMenu from '../components/metadata/PermissionVariableMenu.vue'
 import MetadataFlowGuideBanner from '../components/metadata/MetadataFlowGuideBanner.vue'
 import HeroSilhouette from '../components/common/HeroSilhouette.vue'
 import MetadataDriftAlertsDrawer from '../components/metadata/MetadataDriftAlertsDrawer.vue'
 import MetadataCronInspectionModal from '../components/metadata/MetadataCronInspectionModal.vue'
+import CopyDatasetWizard from '../components/metadata/CopyDatasetWizard.vue'
+import RowPolicyConfigModal from '../components/metadata/RowPolicyConfigModal.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
-import { copyToClipboard } from '../utils/clipboard'
 import { createSseLineParser } from '../utils/chartRenderer'
-import { BUILTIN_USER_VARIABLES, collectExtraDataVariables } from '../utils/userVariables'
-import { parseRowFilterCondition } from '../utils/rowFilterCondition'
 import {
   CircleStackIcon,
   CpuChipIcon,
-  ExclamationTriangleIcon,
   FolderIcon,
-  InformationCircleIcon,
-  LockOpenIcon,
-  MagnifyingGlassIcon,
   SparklesIcon,
-  UserIcon,
 } from '@heroicons/vue/24/outline'
 
 const { isAdmin, hasPermission } = useUser()
@@ -39,14 +30,26 @@ const loading = ref(true)
 const showCreateModal = ref(false)
 const showCreateMenu = ref(false)
 const showImportModal = ref(false)
+// 复制新建：向导里自己拉详情，这里只记住源数据集
+const showCopyWizard = ref(false)
+const copySourceDataset = ref<Dataset | null>(null)
 const showSpecModal = ref(false)
 const showDeleteModal = ref(false)
 const showSyncConfirmModal = ref(false)
 const showTestModal = ref(false) 
 const showEditDatasetModal = ref(false)
 const showPermConfigModal = ref(false)
-const showPermHelpModal = ref(false)
-const showUserSelectorModal = ref(false)
+// 弹窗的编辑逻辑在 RowPolicyConfigModal 里，父页面只负责「配置哪个数据集」
+const rowPolicyDataset = ref<any>(null)
+const openRowPolicyModal = (ds: any) => {
+  rowPolicyDataset.value = ds ? JSON.parse(JSON.stringify(ds)) : null
+  showPermConfigModal.value = true
+}
+const handleRowPolicySaved = () => {
+  showPermConfigModal.value = false
+  rowPolicyDataset.value = null
+  fetchDatasets()
+}
 
 // Schema 巡检与漂移告警状态
 const driftSummary = ref<Record<number, number>>({})
@@ -144,66 +147,12 @@ const handleFlowGuideAction = (type: 'datasource' | 'import' | 'create') => {
     showCreateModal.value = true
   }
 }
-const showRoleSelectorModal = ref(false)
-const userSearchQuery = ref('')
-const roleSearchQuery = ref('')
 const activeSpecTab = ref('concept')
 const deletingDataset = ref<{id: number, name: string} | null>(null)
 const syncingDataset = ref<any>(null)
 const editingDataset = ref<any>(null)
-const configuringDataset = ref<any>(null)
-const activePolicyTab = ref<'visual' | 'user' | 'role' | 'default' | 'json'>('user')
-const allRoles = ref<Role[]>([])
-const allUsers = ref<User[]>([])
-const datasetColumns = ref<{physical_name: string, term: string}[]>([])
-const datasetTables = ref<any[]>([])
-const activeMenuPath = ref<string | null>(null) // Tracks 'role-idx-type', e.g., 'role-0-fields'
 
-// 过滤计算属性
-const filteredUsers = computed(() => {
-  if (!userSearchQuery.value) return allUsers.value
-  const query = userSearchQuery.value.toLowerCase()
-  return allUsers.value.filter(user => 
-    (user.real_name && user.real_name.toLowerCase().includes(query)) ||
-    (user.user_name && user.user_name.toLowerCase().includes(query)) ||
-    user.id.toString().includes(query)
-  )
-})
 
-const filteredRoles = computed(() => {
-  if (!roleSearchQuery.value) return allRoles.value
-  const query = roleSearchQuery.value.toLowerCase()
-  return allRoles.value.filter(role => 
-    (role.name && role.name.toLowerCase().includes(query)) ||
-    (role.code && role.code.toLowerCase().includes(query))
-  )
-})
-
-const toggleMenu = (path: string) => {
-  if (activeMenuPath.value === path) activeMenuPath.value = null
-  else activeMenuPath.value = path
-}
-
-const closeMenus = () => {
-  activeMenuPath.value = null
-}
-
-const visualRules = ref({
-  user_overrides: {} as any,
-  role_policies: {} as any,
-  default_policy: [] as any[]
-})
-
-const OPERATORS = [
-  { label: '等于 (=)', value: '=' },
-  { label: '不等于 (!=)', value: '!=' },
-  { label: '包含 (IN)', value: 'IN' },
-  { label: '模糊匹配 (LIKE)', value: 'LIKE' },
-  { label: '大于 (>)', value: '>' },
-  { label: '小于 (<)', value: '<' }
-]
-
-const EXTRA_DATA_USER_VARIABLES = computed(() => collectExtraDataVariables(allUsers.value))
 const syncingId = ref<number | null>(null)
 const syncLogOpen = ref(false)
 const syncLogDataset = ref<Dataset | null>(null)
@@ -222,424 +171,14 @@ const defaultDataSource = ref('default_clickhouse')
 const viewMode = ref<'grid' | 'list'>(localStorage.getItem('metadata_view_mode') as 'grid' | 'list' || 'grid')
 const { showToast } = useToast()
 
-// JSON视图相关变量
-const jsonEditorContent = ref('')
-const jsonParseError = ref('')
-const parsedJSON = ref<any>(null)
-const validationResult = ref<any>(null)
-
-// JSON编辑器变化处理
-const onJSONEditorChange = () => {
-  try {
-    parsedJSON.value = JSON.parse(jsonEditorContent.value)
-    jsonParseError.value = ''
-  } catch (e: any) {
-    jsonParseError.value = e.message
-    parsedJSON.value = null
-  }
-}
-
-// 将 JSON 转换为可视化结构
-const syncJsonToVisual = (json: any) => {
-  visualRules.value = {
-    user_overrides: json?.user_overrides || {},
-    role_policies: json?.role_policies || {},
-    default_policy: json?.default_policy || []
-  }
-}
-
-// 将可视化结构转回 JSON
-const syncVisualToJson = () => {
-  const cleanObj = (obj: any): any => {
-    if (Array.isArray(obj)) {
-      return obj.map(cleanObj)
-    } else if (obj !== null && typeof obj === 'object') {
-      const newObj: any = {}
-      for (const key in obj) {
-        if (!key.startsWith('_')) {
-          newObj[key] = cleanObj(obj[key])
-        }
-      }
-      return newObj
-    }
-    return obj
-  }
-  return cleanObj(JSON.parse(JSON.stringify(visualRules.value)))
-}
-
-// 复制JSON到剪贴板
-const copyJSON = async () => {
-  const ok = await copyToClipboard(jsonEditorContent.value)
-  if (ok) {
-    showToast('JSON配置已复制到剪贴板', 'success')
-  } else {
-    showToast('复制失败，请手动复制', 'error')
-  }
-}
-
-// 从可视化同步到JSON编辑器
-const syncFromVisual = (silent = false) => {
-  const jsonData = syncVisualToJson()
-  jsonEditorContent.value = JSON.stringify(jsonData, null, 2)
-  onJSONEditorChange()
-  if (!silent) showToast('已从可视化编辑器同步配置', 'success')
-}
-
-const tableSelectOptions = computed(() =>
-  datasetTables.value.map((table: any) => ({
-    value: table.physical_name,
-    label: table.physical_name,
-    remark: table.term || table.description || '',
-  })),
-)
-
-const getColumnSelectOptions = (tableName: string) => {
-  const table = datasetTables.value.find((item: any) => item.physical_name === tableName)
-  return (table?.columns || []).map((column: any) => ({
-    value: column.physical_name,
-    label: column.physical_name,
-    remark: column.term || column.description || '',
-  }))
-}
-
-// 规则校验功能
-const validateRules = async () => {
-  try {
-    const config = syncVisualToJson()
-    
-    // 模拟后端校验逻辑
-    const validation = await validatePermissionConfig(config)
-    
-    validationResult.value = validation
-    
-    if (validation.isValid) {
-      showToast('规则校验通过！', 'success')
-    } else {
-      showToast('规则校验失败，请查看详细信息', 'error')
-    }
-  } catch (e: any) {
-    validationResult.value = {
-      isValid: false,
-      message: '校验过程中发生错误',
-      details: [{ type: 'error', message: e.message }]
-    }
-    showToast('校验失败', 'error')
-  }
-}
-
-// 追加构建器条件
-const appendBuilderCondition = (rule: any) => {
-  if (!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val) {
-    showToast('请先完整填写规则构建器的所有字段', 'warning')
-    return
-  }
-  
-  const condition = `${rule._builder_table}.${rule._builder_field} ${rule._builder_op} ${rule._builder_val}`
-  // 构建器里的是打开配置时从已有 condition 回填来的：再点 + 应当替换原条件，
-  // 否则会拼出 `A = 1 AND A = 1` 这种重复片段。
-  const replacing = Boolean(rule._builder_from_condition && rule.condition && rule.condition.trim())
-  
-  if (replacing) {
-    rule.condition = condition
-  } else if (rule.condition) {
-    rule.condition = `${rule.condition} AND ${condition}`
-  } else {
-    rule.condition = condition
-  }
-  
-  // 清空构建器字段
-  rule._builder_table = ''
-  rule._builder_field = ''
-  rule._builder_op = ''
-  rule._builder_val = ''
-  rule._builder_from_condition = false
-  
-  showToast(replacing ? '已用编辑框内容替换原条件' : '条件已追加到规则中', 'success')
-}
-
-// 模拟后端校验API（实际中应该调用真实API）
-const validatePermissionConfig = async (config: any) => {
-  // 这里模拟后端的校验逻辑
-  const details: any[] = []
-  let isValid = true
-  
-  // 1. 检查JSON结构
-  if (!config || typeof config !== 'object') {
-    isValid = false
-    details.push({ type: 'error', message: '配置必须是一个有效的JSON对象' })
-    return { isValid, message: '配置结构错误', details }
-  }
-  
-  // 2. 检查各个策略类型
-  const checkRules = (rules: any[], type: string) => {
-    if (!Array.isArray(rules)) {
-      isValid = false
-      details.push({ type: 'error', message: `${type}策略必须是一个数组` })
-      return
-    }
-    
-    rules.forEach((rule, idx) => {
-      if (!rule.condition || typeof rule.condition !== 'string') {
-        isValid = false
-        details.push({ type: 'error', message: `${type}策略第${idx + 1}条规则缺少condition字段` })
-      } else {
-        // 检查condition语法
-        try {
-          // 简单的语法检查
-          if (rule.condition.includes('{user.') && !rule.condition.includes('}')) {
-            details.push({ type: 'warning', message: `${type}策略第${idx + 1}条规则的变量占位符可能不完整` })
-          }
-          
-          // 检查SQL注入风险
-          if (rule.condition.toLowerCase().includes('drop ') || 
-              rule.condition.toLowerCase().includes('delete ') ||
-              rule.condition.toLowerCase().includes('truncate ')) {
-            isValid = false
-            details.push({ type: 'error', message: `${type}策略第${idx + 1}条规则包含不安全的SQL操作` })
-          }
-        } catch (e) {
-          details.push({ type: 'warning', message: `${type}策略第${idx + 1}条规则可能存在语法问题` })
-        }
-      }
-    })
-  }
-  
-  // 检查用户例外策略
-  if (config.user_overrides) {
-    Object.entries(config.user_overrides).forEach(([userId, rules]: [string, any]) => {
-      if (!/^\d+$/.test(userId)) {
-        details.push({ type: 'warning', message: `用户ID "${userId}" 不是有效的数字格式` })
-      }
-      checkRules(rules, `用户${userId}`)
-    })
-  }
-  
-  // 检查角色策略
-  if (config.role_policies) {
-    Object.entries(config.role_policies).forEach(([roleName, rules]: [string, any]) => {
-      checkRules(rules, `角色${roleName}`)
-    })
-  }
-  
-  // 检查默认策略
-  if (config.default_policy) {
-    checkRules(config.default_policy, '默认')
-  }
-  
-  return {
-    isValid,
-    message: isValid ? '配置校验通过，符合优化版SQL重写引擎要求' : '配置存在问题，请根据提示修正',
-    details
-  }
-}
 
 
 
-const fetchRoles = async () => {
-  try {
-    const res = await portalApi.getRoles({ size: 1000 })
-    // Flexible parsing for StandardResponse or direct items
-    allRoles.value = (res.data as any)?.data?.items || (res.data as any)?.items || []
-  } catch (e) {
-    console.error('Failed to fetch roles', e)
-  }
-}
-
-const fetchUsers = async () => {
-  try {
-    const res = await portalApi.getUsers({ size: 1000 })
-    // Flexible parsing for StandardResponse or direct items
-    allUsers.value = (res.data as any)?.data?.items || (res.data as any)?.items || []
-  } catch (e) {
-    console.error('Failed to fetch users', e)
-  }
-}
-
-const fetchDatasetColumns = async (id: number) => {
-  try {
-    const res = await metadataApi.getDataset(id)
-    datasetTables.value = res.data.tables || []
-    const cols: {physical_name: string, term: string}[] = []
-    res.data.tables?.forEach(table => {
-      table.columns.forEach(col => {
-        cols.push({ physical_name: col.physical_name, term: col.term })
-      })
-    })
-    // Unique by name
-    const uniqueCols = cols.filter((v, i, a) => a.findIndex(t => t.physical_name === v.physical_name) === i)
-    datasetColumns.value = uniqueCols
-  } catch (e) {
-    console.error('Failed to fetch dataset columns', e)
-  }
-}
-
-const addNewRolePolicyDirect = () => {
-  showRoleSelectorModal.value = true
-}
-
-const addNewUserOverrideDirect = () => {
-  showUserSelectorModal.value = true
-}
-
-const selectRoleFromModal = (role: any) => {
-  if (!visualRules.value.role_policies[role.code]) {
-    visualRules.value.role_policies = {
-      ...visualRules.value.role_policies,
-      [role.code]: [{ condition: '' }]
-    }
-  }
-  showRoleSelectorModal.value = false
-  roleSearchQuery.value = '' // 清空搜索
-  visualRules.value = { ...visualRules.value }
-}
-
-const selectUserFromModal = (user: any) => {
-  if (!visualRules.value.user_overrides[user.id]) {
-    visualRules.value.user_overrides = {
-      ...visualRules.value.user_overrides,
-      [user.id]: [{ condition: '' }]
-    }
-  }
-  showUserSelectorModal.value = false
-  userSearchQuery.value = '' // 清空搜索
-  visualRules.value = { ...visualRules.value }
-}
 
 
-/**
- * 把已有规则的 condition 反向解析回「目标表 / 字段 / 操作符 / 过滤值」四个框。
- *
- * 依赖 datasetTables：下拉组件的 modelValue 只要在 options 里找不到就渲染成占位符，
- * 所以表名或字段不在当前数据集内的条件一律跳过，否则会变成「看着是空白、其实是脏值」。
- * 已经手动填过构建器的规则也不覆盖。
- */
-const hydrateBuilderFromConditions = () => {
-  const tables = datasetTables.value || []
-  if (!tables.length) return
 
-  const columnIndex = new Map<string, Set<string>>()
-  tables.forEach((table: any) => {
-    const tableName = String(table?.physical_name || '')
-    if (!tableName) return
-    const columns = (table.columns || []).map((column: any) => String(column?.physical_name || ''))
-    columnIndex.set(tableName, new Set(columns))
-  })
 
-  let hydratedCount = 0
-  const applyRule = (rule: any) => {
-    if (!rule || typeof rule !== 'object') return
-    if (rule._builder_table || rule._builder_field || rule._builder_op || rule._builder_val) return
 
-    const parts = parseRowFilterCondition(rule.condition)
-    if (!parts) return
-    const columns = columnIndex.get(parts.table)
-    if (!columns || !columns.has(parts.field)) return
-
-    rule._builder_table = parts.table
-    rule._builder_field = parts.field
-    rule._builder_op = parts.op
-    rule._builder_val = parts.value
-    rule._builder_from_condition = true
-    hydratedCount += 1
-  }
-
-  const walkPolicyMap = (bucket: any) => {
-    if (!bucket || typeof bucket !== 'object') return
-    Object.values(bucket).forEach((rules: any) => {
-      if (Array.isArray(rules)) rules.forEach(applyRule)
-    })
-  }
-
-  walkPolicyMap(visualRules.value.user_overrides)
-  walkPolicyMap(visualRules.value.role_policies)
-  if (Array.isArray(visualRules.value.default_policy)) {
-    visualRules.value.default_policy.forEach(applyRule)
-  }
-
-  if (hydratedCount > 0) visualRules.value = { ...visualRules.value }
-}
-
-const openPermConfigModal = async (ds: any) => {
-  const datasetId = ds?.id
-  configuringDataset.value = JSON.parse(JSON.stringify(ds))
-  // Initialize default if missing
-  if (!configuringDataset.value.row_filter_config) {
-    configuringDataset.value.row_filter_config = {
-      user_overrides: {},
-      role_policies: {},
-      default_policy: []
-    }
-  }
-  syncJsonToVisual(configuringDataset.value.row_filter_config)
-  // 初始化JSON编辑器内容
-  jsonEditorContent.value = JSON.stringify(configuringDataset.value.row_filter_config, null, 2)
-  onJSONEditorChange()
-  activePolicyTab.value = 'user' // 默认打开用户Tab
-  closeMenus() // Reset any open selectors
-  showPermConfigModal.value = true
-  
-  // Load data for selectors
-  fetchRoles()
-  fetchUsers()
-  await fetchDatasetColumns(ds.id)
-
-  // 回填依赖 datasetTables，必须等表结构到位；期间用户关掉或切了别的数据集就不再回填
-  if (configuringDataset.value?.id !== datasetId) return
-  hydrateBuilderFromConditions()
-}
-
-const handleSavePermConfig = async () => {
-  if (!configuringDataset.value) return
-  
-  let config = {}
-  
-  // 只有在启用权限时才进行规则同步和校验
-  if (configuringDataset.value.enable_data_perm) {
-    config = syncVisualToJson()
-    
-    // 检查是否存在空 condition
-    const checkEmptyConditions = (rules: any[]): boolean => {
-      if (!Array.isArray(rules)) return false
-      return rules.some(r => !r.condition || r.condition.trim() === '')
-    }
-
-    let hasEmpty = false
-    if ((config as any).user_overrides) {
-      for (const rules of Object.values((config as any).user_overrides)) {
-        if (checkEmptyConditions(rules as any[])) { hasEmpty = true; break; }
-      }
-    }
-    if (!hasEmpty && (config as any).role_policies) {
-      for (const rules of Object.values((config as any).role_policies)) {
-        if (checkEmptyConditions(rules as any[])) { hasEmpty = true; break; }
-      }
-    }
-    if (!hasEmpty && (config as any).default_policy) {
-      if (checkEmptyConditions((config as any).default_policy)) hasEmpty = true
-    }
-
-    if (hasEmpty) {
-      showToast('保存失败：发现无效规则，所有规则的条件(Condition)均不能为空', 'warning')
-      return
-    }
-  }
-
-  try {
-    configuringDataset.value.row_filter_config = config
-
-    await metadataApi.updateDataset(configuringDataset.value.id, {
-      enable_data_perm: configuringDataset.value.enable_data_perm,
-      row_filter_config: configuringDataset.value.row_filter_config
-    })
-    showPermConfigModal.value = false
-    configuringDataset.value = null
-    fetchDatasets()
-    showToast('权限配置已保存', 'success')
-  } catch (e) {
-    console.error('Save permissions failed', e)
-    showToast('保存权限配置失败', 'error')
-  }
-}
 
 watch(viewMode, (newMode) => {
   localStorage.setItem('metadata_view_mode', newMode)
@@ -760,9 +299,92 @@ const loadMoreDatasets = () => {
   visibleCount.value += PAGE_SIZE
 }
 
+// ---------------------------------------------------------------------------
+// 批量选择（列表视图）
+// ---------------------------------------------------------------------------
+// 只有能删的人才给复选框：没权限时列表保持原样，不制造「选了删不了」的困惑
+const canBatchDelete = computed(() => hasPermission('element:metadata:delete'))
+const selectedDatasetIds = ref<number[]>([])
+const selectAllRef = ref<HTMLInputElement | null>(null)
+const showBatchDeleteModal = ref(false)
+const batchDeleting = ref(false)
+
+const selectedCount = computed(() => selectedDatasetIds.value.length)
+
+const selectedDatasetsPreview = computed(() =>
+  datasets.value.filter((ds) => selectedDatasetIds.value.includes(ds.id)).slice(0, 6),
+)
+
+const allVisibleSelected = computed(
+  () =>
+    canBatchDelete.value &&
+    visibleDatasets.value.length > 0 &&
+    visibleDatasets.value.every((ds) => selectedDatasetIds.value.includes(ds.id)),
+)
+
+const someVisibleSelected = computed(() =>
+  visibleDatasets.value.some((ds) => selectedDatasetIds.value.includes(ds.id)),
+)
+
+const isSelected = (id: number) => selectedDatasetIds.value.includes(id)
+
+const toggleSelect = (id: number) => {
+  const index = selectedDatasetIds.value.indexOf(id)
+  if (index >= 0) selectedDatasetIds.value.splice(index, 1)
+  else selectedDatasetIds.value.push(id)
+}
+
+const toggleSelectAllVisible = () => {
+  const visibleIds = visibleDatasets.value.map((ds) => ds.id)
+  if (allVisibleSelected.value) {
+    selectedDatasetIds.value = selectedDatasetIds.value.filter((id) => !visibleIds.includes(id))
+    return
+  }
+  selectedDatasetIds.value = Array.from(new Set([...selectedDatasetIds.value, ...visibleIds]))
+}
+
+const clearSelection = () => {
+  selectedDatasetIds.value = []
+}
+
+const openBatchDelete = () => {
+  if (!selectedCount.value) return
+  showBatchDeleteModal.value = true
+}
+
+const confirmBatchDelete = async () => {
+  if (!selectedCount.value || batchDeleting.value) return
+  batchDeleting.value = true
+  try {
+    const res = await metadataApi.batchDeleteDatasets([...selectedDatasetIds.value])
+    const data = res.data?.data || { deleted: [], missing: [], failed: [] }
+    const deletedCount = data.deleted?.length || 0
+    const failedCount = data.failed?.length || 0
+    if (deletedCount) showToast(`已删除 ${deletedCount} 个数据集`, 'success')
+    if (failedCount) showToast(`${failedCount} 个数据集删除失败，请稍后重试`, 'error')
+    if (data.missing?.length) showToast(`${data.missing.length} 个数据集已不存在`, 'info')
+    showBatchDeleteModal.value = false
+    clearSelection()
+    await fetchDatasets()
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || e?.message || '批量删除失败', 'error')
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
+// 半选状态是 DOM property，只能手动同步
+watch([allVisibleSelected, someVisibleSelected], () => {
+  if (selectAllRef.value) {
+    selectAllRef.value.indeterminate = someVisibleSelected.value && !allVisibleSelected.value
+  }
+})
+
 // 筛选 / 排序变化后回到第一屏，避免停在旧的「加载更多」位置
 watch([searchQuery, statusFilter, sortField, sortDirection], () => {
   visibleCount.value = PAGE_SIZE
+  // 列表内容变了，之前勾的项可能已不可见，直接清掉避免误删
+  clearSelection()
 })
 
 // Test Retrieval State
@@ -852,6 +474,13 @@ const fetchDatasets = async () => {
   try {
     const res = await metadataApi.getDatasets()
     datasets.value = res.data
+    // 列表刷新后把已经不存在的 id 从选中集合里摘掉
+    if (selectedDatasetIds.value.length) {
+      const alive = new Set(datasets.value.map((item) => item.id))
+      selectedDatasetIds.value = selectedDatasetIds.value.filter((id) => alive.has(id))
+    }
+    // 卡片要显示「这个数据集授给了谁」，跟着列表一起刷，避免多一次手动刷新
+    void fetchPermissionSummary()
   } catch (e: any) {
     console.error('Failed to fetch datasets', e)
     const errorMessage = e.response?.data?.detail || e.message || '获取数据集列表失败'
@@ -860,6 +489,63 @@ const fetchDatasets = async () => {
   } finally {
     loading.value = false
   }
+}
+
+// 卡片上的授权摘要：只给能改权限的人看（授权对象名单本身也是管理信息）。
+const permissionSummary = ref<Record<string, any>>({})
+const canSeePermissionSummary = computed(
+  () => isAdmin.value || hasPermission('element:metadata:edit'),
+)
+const fetchPermissionSummary = async () => {
+  if (!canSeePermissionSummary.value) return
+  const ids = datasets.value.map((d) => d.id).filter((id) => Boolean(id))
+  if (!ids.length) {
+    permissionSummary.value = {}
+    return
+  }
+  try {
+    const res = await axios.get('/api/portal/metadata/datasets/permission-summary', {
+      params: { ids: ids.join(',') },
+    })
+    permissionSummary.value = res.data?.data || {}
+  } catch (e) {
+    console.error('获取数据集授权摘要失败', e)
+  }
+}
+const permissionItem = (ds: Dataset) => permissionSummary.value?.[String(ds.id)] || null
+const permissionText = (ds: Dataset) => {
+  const item = permissionItem(ds)
+  if (!item || !item.total) return '未授权'
+  const parts: string[] = []
+  if (item.all) parts.push('全员')
+  if (item.roles) parts.push(`${item.roles}角色`)
+  if (item.users) parts.push(`${item.users}用户`)
+  return parts.join('+') || `${item.total} 条`
+}
+const permissionToneClass = (ds: Dataset) => {
+  const item = permissionItem(ds)
+  if (!item || !item.total) return 'bg-gray-50 text-gray-500 border-gray-200'
+  if (item.all) return 'bg-emerald-50 text-emerald-700 border-emerald-100'
+  return 'bg-sky-50 text-sky-700 border-sky-100'
+}
+const permissionTooltip = (ds: Dataset) => {
+  const item = permissionItem(ds)
+  if (!item || !item.total) {
+    return '这个数据集还没有配授权，成员进不来'
+  }
+  const lines = [`共 ${item.total} 条授权：${permissionText(ds)}`]
+  if (item.narrowed) lines.push(`${item.narrowed} 条只授权了部分表`)
+  if (item.row_custom) lines.push(`${item.row_custom} 条带自定义行级条件`)
+  if (item.row_none) lines.push(`${item.row_none} 条不做行级过滤`)
+  lines.push('点开卡片 → 权限管理 查看明细')
+  return lines.join('\n')
+}
+// 字段级徽标：只在真的有字段规则时出现，没配的数据集不占卡片位置
+const columnScopeTooltip = (ds: Dataset) => {
+  const item = permissionItem(ds)
+  if (!item?.column_rules) return ''
+  const tables = item.column_tables || 0
+  return `${item.column_rules} 条授权带字段级限制，覆盖 ${tables} 张表；点开卡片 → 权限管理 → 字段范围 看明细`
 }
 
 const handleCreate = async () => {
@@ -962,6 +648,18 @@ const toggleStatus = async (ds: any) => {
     ds.status = ds.status === 1 ? 0 : 1
     showToast('状态更新失败', 'error')
   }
+}
+
+// 复制新建：把源数据集交给向导，向导内部拉详情、做草稿，最后一次性提交
+const openCopyWizard = (ds: Dataset) => {
+  copySourceDataset.value = ds
+  showCopyWizard.value = true
+}
+
+const handleDatasetCopied = (ds: Dataset) => {
+  // 只刷新列表 + 提示，不关闭向导：成功页要留着让用户看结果、点「查看变更日志」
+  showToast(`已复制新建数据集「${ds.display_name || ds.name}」`, 'success')
+  void fetchDatasets()
 }
 
 // Smart Import logic migrated to SmartImportWizard
@@ -1105,6 +803,86 @@ const confirmSync = async () => {
   }
 }
 
+// 卡片底部操作收进「更多」菜单：一行并排 6 个图标命中区太小，也看不出各自含义。
+const openCardMenuId = ref<number | null>(null)
+const toggleCardMenu = (datasetId: number, e?: Event) => {
+  e?.stopPropagation()
+  closeRowMenu()
+  openCardMenuId.value = openCardMenuId.value === datasetId ? null : datasetId
+}
+const closeCardMenus = () => {
+  openCardMenuId.value = null
+  showCreateMenu.value = false
+}
+const handleCardMenuEnter = (datasetId: number, e?: Event) => {
+  e?.stopPropagation()
+  openCardMenuId.value = null
+  goToTables(datasetId)
+}
+const openPermissionOverview = () => {
+  showCreateMenu.value = false
+  router.push('/dashboard/metadata-permissions')
+}
+// 列表视图的「…」菜单：表格容器是 overflow-x-auto，绝对定位会被裁掉，
+// 所以整块 Teleport 到 body 并按按钮位置摆（fixed），滚动或点外部即关闭。
+const openRowMenuId = ref<number | null>(null)
+const rowMenuDataset = ref<Dataset | null>(null)
+const rowMenuPos = ref<{ top: number; left: number }>({ top: 0, left: 0 })
+const ROW_MENU_WIDTH = 208
+const ROW_MENU_HEIGHT = 330
+
+const closeRowMenu = () => {
+  openRowMenuId.value = null
+  rowMenuDataset.value = null
+}
+
+const formatUpdatedAt = (value: string | null | undefined) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+const toggleRowMenu = (ds: Dataset, event: MouseEvent) => {
+  event.stopPropagation()
+  openCardMenuId.value = null
+  if (openRowMenuId.value === ds.id) {
+    closeRowMenu()
+    return
+  }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const left = Math.max(8, Math.min(rect.right - ROW_MENU_WIDTH, window.innerWidth - ROW_MENU_WIDTH - 8))
+  // 下方放不下就往上弹（列表最后一行很常见）
+  const spaceBelow = window.innerHeight - rect.bottom
+  const top =
+    spaceBelow > ROW_MENU_HEIGHT
+      ? rect.bottom + 6
+      : Math.max(8, rect.top - ROW_MENU_HEIGHT - 6)
+  rowMenuPos.value = { top, left }
+  openRowMenuId.value = ds.id
+  rowMenuDataset.value = ds
+}
+
+const withRowMenu = (action: (ds: Dataset) => void) => {
+  const target = rowMenuDataset.value
+  closeRowMenu()
+  if (target) action(target)
+}
+
+const openPermissionTab = (datasetId: number, view?: 'rows') => {
+  closeCardMenus()
+  router.push({
+    path: `/dashboard/metadata/${datasetId}`,
+    query: view ? { tab: 'permissions', permView: view } : { tab: 'permissions' },
+  })
+}
+const openSyncFromMenu = (ds: Dataset) => {
+  if (!isEngineReady.value || ds.status !== 1 || isLocalMode.value) return
+  closeCardMenus()
+  openSyncModal(ds)
+}
+
 onUnmounted(() => syncLogAbortController?.abort())
 
 const handleTestRetrieval = async () => {
@@ -1235,7 +1013,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-5" @click="showCreateMenu = false">
+  <div class="space-y-5" @click="closeCardMenus">
     <!-- Header：窄屏压缩工具栏；列表视图移动端可横滑查看。卡片底部是字段矩阵剪影 -->
     <div class="hero-surface flex flex-col gap-3 rounded-2xl border border-gray-200/80 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between lg:p-5">
       <HeroSilhouette variant="fields" :height="40" />
@@ -1266,7 +1044,22 @@ onMounted(async () => {
       </div>
 
       <div class="relative z-10 flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
-        <div class="relative w-full sm:w-72">
+        <!-- 结果计数放在工具栏最前并固定宽度：搜索条件一变数字就变，
+             如果跟着一起挤，搜索框会左右跳。没有筛选时显示总数，避免整块出现/消失。 -->
+        <div
+          class="hidden w-24 shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-gray-400 sm:block"
+          :title="hasActiveFilters ? '当前筛选结果 / 全部数据集' : '全部数据集'"
+        >
+          <template v-if="hasActiveFilters">
+            <span class="font-semibold text-gray-700">{{ displayDatasets.length }}</span>
+            <span class="text-gray-400"> / {{ datasets.length }}</span>
+          </template>
+          <template v-else>
+            共 <span class="font-semibold text-gray-700">{{ datasets.length }}</span> 个
+          </template>
+        </div>
+
+        <div class="relative w-full shrink-0 sm:w-72">
           <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1274,10 +1067,24 @@ onMounted(async () => {
           </span>
           <input
             v-model="searchQuery"
-            type="search"
+            type="text"
+            data-search-no-clear
             placeholder="搜索数据集名称、ID或描述..."
-            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-4 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-8 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+          <!-- 自绘清空按钮：type="search" 的原生 ✕ 会挤掉右侧文字区，
+               这里右边恒定留 pr-8，有没有按钮都不影响排版 -->
+          <button
+            v-if="searchQuery"
+            type="button"
+            class="absolute inset-y-0 right-0 flex items-center pr-2.5 text-gray-400 transition-colors hover:text-gray-600"
+            title="清空搜索"
+            @click="searchQuery = ''"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2L10 10m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </button>
         </div>
 
         <div class="flex items-center gap-2">
@@ -1325,12 +1132,6 @@ onMounted(async () => {
             </span>
           </div>
 
-          <div
-            v-if="hasActiveFilters"
-            class="hidden shrink-0 whitespace-nowrap px-1 text-xs text-gray-400 sm:block"
-          >
-            {{ displayDatasets.length }} / {{ datasets.length }}
-          </div>
         </div>
 
         <div class="flex items-center gap-2">
@@ -1437,6 +1238,18 @@ onMounted(async () => {
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               智能导入 (DDL)
+            </button>
+            <div class="my-1 border-t border-gray-100 dark:border-gray-700"></div>
+            <button
+              v-if="hasPermission('element:metadata:edit')"
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+              @click="openPermissionOverview()"
+            >
+              <svg class="h-4 w-4 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              <span>权限总览</span>
             </button>
             <div class="my-1 border-t border-gray-100 dark:border-gray-700"></div>
             <button
@@ -1582,7 +1395,7 @@ onMounted(async () => {
       <div 
         v-for="ds in visibleDatasets" 
         :key="ds.id"
-        class="bg-white rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-200 cursor-pointer group overflow-hidden flex flex-col relative"
+        class="bg-white rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-200 cursor-pointer group flex flex-col relative"
         @click="goToTables(ds.id)"
       >
         <!-- RAG Sync Badge -->
@@ -1652,6 +1465,23 @@ onMounted(async () => {
               质量分 <b>{{ ds.quality_score ?? '—' }}</b>
               <span v-if="ds.quality_breakdown?.degraded" class="text-amber-500" title="本次巡检未完整比对，分数仅供参考">⚠</span>
             </span>
+            <span
+              v-if="canSeePermissionSummary"
+              class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-medium"
+              :class="permissionToneClass(ds)"
+              :title="permissionTooltip(ds)"
+            >
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+              权限 <b>{{ permissionText(ds) }}</b>
+            </span>
+            <span
+              v-if="canSeePermissionSummary && permissionItem(ds)?.column_rules"
+              class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-100 font-medium"
+              :title="columnScopeTooltip(ds)"
+            >
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/></svg>
+              字段 <b>{{ permissionItem(ds)?.column_tables }}</b> 表
+            </span>
           </div>
 
           <p class="mt-2.5 text-xs text-gray-500 line-clamp-2 leading-relaxed min-h-[2.5rem]">
@@ -1661,7 +1491,7 @@ onMounted(async () => {
           <div class="mt-2.5 flex items-center justify-between gap-2 text-[10px] text-gray-400">
             <span v-if="ds.updated_at" class="inline-flex items-center gap-1 truncate">
               <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-              {{ new Date(ds.updated_at).toLocaleString() }}
+              {{ formatUpdatedAt(ds.updated_at) }}
             </span>
             <span v-else />
             <div v-if="ds.tags?.length" class="flex flex-wrap justify-end gap-1 min-w-0">
@@ -1682,7 +1512,7 @@ onMounted(async () => {
           </div>
         </div>
         
-        <div class="px-4 py-2.5 border-t border-gray-100 flex justify-between items-center bg-gray-50/60">
+        <div class="px-4 py-2.5 border-t border-gray-100 flex justify-between items-center bg-gray-50/60 rounded-b-xl">
           <div 
             class="flex items-center gap-2" 
             :class="isAdmin || hasPermission('element:metadata:sync') ? 'cursor-pointer' : 'cursor-default opacity-80'"
@@ -1701,59 +1531,104 @@ onMounted(async () => {
               {{ ds.status === 1 ? '已启用' : '已禁用' }}
             </span>
           </div>
-          <div class="flex items-center gap-0.5" @click.stop>
-            <button 
+          <!-- 底部操作收进「更多」菜单：一行挤 6 个图标会让命中区只有 24px，
+               也看不出每个图标干什么。菜单样式对齐智能体中心（图标 + 中文）。 -->
+          <div class="relative" @click.stop>
+            <button
               type="button"
-              @click.stop="openDriftAlerts(ds)"
-              class="transition-colors p-1.5 rounded-md text-gray-400 hover:text-amber-600 hover:bg-white relative cursor-pointer"
-              :class="{ 'text-amber-500': driftSummary[ds.id] }"
-              :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
+              @click="toggleCardMenu(ds.id, $event)"
+              class="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white border border-transparent hover:border-gray-200 transition-colors cursor-pointer"
+              title="更多操作"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
-              <span v-if="driftSummary[ds.id]" class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-2 ring-white"></span>
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
             </button>
-            <button 
-              v-if="hasPermission('element:metadata:sync')"
-              @click.stop="isEngineReady && ds.status === 1 && !isLocalMode && openSyncModal(ds)" 
-              class="transition-colors p-1.5 rounded-md"
-              :class="{ 
-                 'text-gray-400 hover:text-indigo-500 hover:bg-white': ds.status === 1 && isEngineReady && !isLocalMode,
-                 'text-gray-300 cursor-not-allowed opacity-50': ds.status !== 1 || !isEngineReady || isLocalMode,
-                 'pointer-events-none': syncingId === ds.id || ds.rag_sync_status === 1 
-              }"
-              :disabled="!isEngineReady || ds.status !== 1 || isLocalMode"
-              :title="isLocalMode ? '本地向量模式下已自动同步，无需手动上传' : (!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步到 RAGFlow' : '数据集已禁用，无法同步'))"
+            <div
+              v-if="openCardMenuId === ds.id"
+              class="absolute right-0 bottom-full z-30 mb-1 w-52 max-h-[19rem] overflow-y-auto rounded-xl border border-gray-100 bg-white py-1 shadow-xl"
             >
-              <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="w-4 h-4 animate-spin text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-              <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>
-            </button>
-            <button 
-              v-if="hasPermission('element:metadata:edit')"
-              @click.stop="openPermConfigModal(ds)" 
-              class="text-gray-400 hover:text-emerald-500 transition-colors p-1.5 hover:bg-white rounded-md"
-              title="数据权限配置"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-            </button>
-            <button 
-              v-if="hasPermission('element:metadata:edit')"
-              @click.stop="openEditDatasetModal(ds)" 
-              class="text-gray-400 hover:text-blue-500 transition-colors p-1.5 hover:bg-white rounded-md"
-              title="编辑数据集"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-            </button>
-            <button 
-              v-if="hasPermission('element:metadata:delete')"
-              @click.stop="openDeleteModal(ds)" 
-              class="text-gray-400 hover:text-red-500 transition-colors p-1.5 hover:bg-white rounded-md"
-              title="删除数据集"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            </button>
-            <span class="text-blue-600 text-[11px] font-medium flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5">
-              进入 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            </span>
+              <button
+                type="button"
+                @click="handleCardMenuEnter(ds.id, $event)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+              >
+                <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+                进入数据集
+              </button>
+              <button
+                type="button"
+                @click="closeCardMenus(); openDriftAlerts(ds)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-50 cursor-pointer"
+                :class="driftSummary[ds.id] ? 'text-amber-700' : 'text-gray-700'"
+                :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
+              >
+                <svg class="h-4 w-4" :class="driftSummary[ds.id] ? 'text-amber-500' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
+                Schema 巡检
+                <span v-if="driftSummary[ds.id]" class="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"></span>
+              </button>
+              <button
+                v-if="hasPermission('element:metadata:sync')"
+                type="button"
+                @click="openSyncFromMenu(ds)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                :class="(ds.status === 1 && isEngineReady && !isLocalMode) ? 'text-gray-700 cursor-pointer' : 'text-gray-300'"
+                :disabled="!isEngineReady || ds.status !== 1 || isLocalMode || syncingId === ds.id || ds.rag_sync_status === 1"
+                :title="isLocalMode ? '本地向量模式下已自动同步，无需手动上传' : (!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步到 RAGFlow' : '数据集已禁用，无法同步'))"
+              >
+                <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="h-4 w-4 animate-spin text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>
+                {{ (syncingId === ds.id || ds.rag_sync_status === 1) ? '同步中…' : '同步到 RAGFlow' }}
+              </button>
+              <button
+                v-if="hasPermission('element:metadata:edit')"
+                type="button"
+                @click="openPermissionTab(ds.id)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+              >
+                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                权限管理
+              </button>
+              <button
+                v-if="hasPermission('element:metadata:edit')"
+                type="button"
+                title="元数据管理 → 数据行策略"
+                @click="closeCardMenus(); openRowPolicyModal(ds)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+              >
+                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10"/></svg>
+                数据行策略
+              </button>
+              <button
+                v-if="hasPermission('element:metadata:edit')"
+                type="button"
+                @click="closeCardMenus(); openEditDatasetModal(ds)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+              >
+                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                编辑数据集
+              </button>
+              <button
+                v-if="hasPermission('element:metadata:edit')"
+                type="button"
+                @click="closeCardMenus(); openCopyWizard(ds)"
+                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 cursor-pointer"
+              >
+                <svg class="h-4 w-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V5a2 2 0 012-2h6a2 2 0 012 2v10a2 2 0 01-2 2h-2M8 9h6a2 2 0 012 2v10a2 2 0 01-2 2H8a2 2 0 01-2-2V11a2 2 0 012-2z"/></svg>
+                复制新建
+              </button>
+              <template v-if="hasPermission('element:metadata:delete')">
+                <div class="my-1 border-t border-gray-100"></div>
+                <button
+                  type="button"
+                  @click="closeCardMenus(); openDeleteModal(ds)"
+                  class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-red-600 transition-colors hover:bg-red-50 cursor-pointer"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                  删除数据集
+                </button>
+              </template>
+            </div>
           </div>
         </div>
       </div>
@@ -1762,14 +1637,42 @@ onMounted(async () => {
     <!-- List View：窄屏允许横滑，避免 overflow-hidden 裁切列内容 -->
     <div v-else class="overflow-x-auto rounded-xl border border-gray-100 bg-white shadow-sm" style="-webkit-overflow-scrolling: touch;">
        <div class="min-w-[720px]">
+       <!-- 批量操作条：选中才出现，避免常态占用高度 -->
+       <div
+         v-if="selectedCount"
+         class="flex flex-wrap items-center gap-3 border-b border-blue-100 bg-blue-50/70 px-6 py-2"
+       >
+         <span class="text-xs font-medium text-blue-700">已选 <b>{{ selectedCount }}</b> 个数据集</span>
+         <button type="button" class="text-xs text-blue-600 hover:underline" @click="clearSelection">取消选择</button>
+         <button
+           type="button"
+           class="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-60"
+           :disabled="batchDeleting"
+           @click="openBatchDelete"
+         >
+           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+           批量删除
+         </button>
+       </div>
        <div class="grid grid-cols-12 gap-4 border-b border-gray-100 bg-gray-50 px-6 py-3 text-xs font-bold uppercase tracking-wider text-gray-500">
-          <button type="button" class="col-span-3 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('display_name')">
+          <div class="col-span-3 flex items-center gap-3">
+          <input
+            v-if="canBatchDelete"
+            ref="selectAllRef"
+            type="checkbox"
+            class="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            title="全选当前列表"
+            :checked="allVisibleSelected"
+            @change="toggleSelectAllVisible"
+          />
+          <button type="button" class="inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('display_name')">
             <span>数据集 (Dataset)</span>
             <svg v-if="sortField === 'display_name'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
             </svg>
           </button>
+          </div>
           <button type="button" class="col-span-2 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('status')">
             <span>状态 (Status)</span>
             <svg v-if="sortField === 'status'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1798,24 +1701,34 @@ onMounted(async () => {
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-          <button type="button" class="col-span-1 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('updated_at')">
+          <button type="button" class="col-span-2 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('updated_at')">
             <span>更新时间</span>
             <svg v-if="sortField === 'updated_at'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-          <div class="col-span-2 text-right">操作</div>
+          <div class="col-span-1 text-right">操作</div>
        </div>
        <div class="divide-y divide-gray-100">
           <div 
              v-for="ds in visibleDatasets" 
              :key="ds.id" 
-             class="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-gray-50 transition-colors cursor-pointer group"
+             class="grid grid-cols-12 gap-4 px-6 py-4 items-center transition-colors cursor-pointer group"
+             :class="isSelected(ds.id) ? 'bg-blue-50/50' : 'hover:bg-gray-50'"
              @click="goToTables(ds.id)"
           >
              <!-- Name & Meta -->
              <div class="col-span-3 flex items-center gap-3">
+                <input
+                   v-if="canBatchDelete"
+                   type="checkbox"
+                   class="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                   :checked="isSelected(ds.id)"
+                   :aria-label="`选择数据集 ${ds.display_name}`"
+                   @click.stop
+                   @change="toggleSelect(ds.id)"
+                />
                 <div class="w-10 h-10 rounded-lg bg-gray-50 flex-shrink-0 flex items-center justify-center text-xl border border-gray-100">
                    <component :is="getDatasetIcon(ds.name)" class="w-5 h-5 text-blue-600" />
                 </div>
@@ -1901,71 +1814,122 @@ onMounted(async () => {
                 <span v-else class="text-[10px] text-gray-300">-</span>
              </div>
 
-             <!-- Updated -->
-             <div class="col-span-1 text-[10px] text-gray-400 font-mono">
-                {{ ds.updated_at ? new Date(ds.updated_at).toLocaleDateString() : '-' }}
+             <!-- Updated：精确到秒，排查「谁在什么时候改的」时日期不够用 -->
+             <div class="col-span-2 text-[10px] text-gray-400 font-mono">
+                {{ formatUpdatedAt(ds.updated_at) }}
              </div>
 
-             <!-- Actions -->
-             <div class="col-span-2 flex justify-end items-center gap-1.5">
-                <!-- Action Buttons: Admin or specific permission -->
-                 <button 
-                    type="button"
-                    @click.stop="openDriftAlerts(ds)" 
-                    class="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors relative cursor-pointer"
-                    :class="{ 'text-amber-500': driftSummary[ds.id] }"
-                    :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
-                 >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
-                    <span v-if="driftSummary[ds.id]" class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-2 ring-white"></span>
-                 </button>
-                 <button 
-                    v-if="hasPermission('element:metadata:sync')"
-                    @click.stop="isEngineReady && ds.status === 1 && !isLocalMode && openSyncModal(ds)" 
-                    class="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-                    :class="{ 
-                      'opacity-30 cursor-not-allowed': ds.status !== 1 || !isEngineReady || isLocalMode,
-                      'pointer-events-none': syncingId === ds.id || ds.rag_sync_status === 1
-                    }"
-                    :disabled="!isEngineReady || ds.status !== 1 || isLocalMode"
-                    :title="isLocalMode ? '本地向量模式下已自动同步，无需手动上传' : (!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步 RAG' : '已禁用一线'))"
-                 >
-                    <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="w-4 h-4 animate-spin text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-                    <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>
-                 </button>
-                <button 
-                   v-if="hasPermission('element:metadata:edit')"
-                   @click.stop="openPermConfigModal(ds)" 
-                   class="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
-                   title="数据权限"
+             <!-- Actions：与卡片一致，收进「…」，靠最右 -->
+             <div class="col-span-1 flex justify-end items-center">
+                <button
+                   type="button"
+                   class="inline-flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                   :class="{ 'bg-gray-100 text-gray-700': openRowMenuId === ds.id }"
+                   title="更多操作"
+                   @click.stop="toggleRowMenu(ds, $event)"
                 >
-                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                   <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
+                   </svg>
                 </button>
-                <button 
-                   v-if="hasPermission('element:metadata:edit')"
-                   @click.stop="openEditDatasetModal(ds)" 
-                   class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                   title="编辑"
-                >
-                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                </button>
-                <button 
-                   v-if="hasPermission('element:metadata:delete')"
-                   @click.stop="openDeleteModal(ds)" 
-                   class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                   title="删除"
-                >
-                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                </button>
-                
-                <span class="text-gray-400 text-sm font-medium flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  查看 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                </span>
              </div>
           </div>
        </div>
        </div>
     </div>
+
+    <!-- 列表视图的「…」菜单：表格容器是 overflow-x-auto，绝对定位会被裁，这里 Teleport 到 body -->
+    <Teleport to="body">
+      <div
+        v-if="rowMenuDataset"
+        class="fixed inset-0 z-[80]"
+        @click="closeRowMenu"
+        @wheel.passive="closeRowMenu"
+        @touchmove.passive="closeRowMenu"
+      >
+        <div
+          class="absolute w-52 max-h-[19rem] overflow-y-auto rounded-xl border border-gray-100 bg-white py-1 shadow-xl"
+          :style="{ top: `${rowMenuPos.top}px`, left: `${rowMenuPos.left}px` }"
+          @click.stop
+        >
+          <button
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            @click="withRowMenu((d) => goToTables(d.id))"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+            进入数据集
+          </button>
+          <button
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            @click="withRowMenu((d) => openDriftAlerts(d))"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
+            Schema 巡检
+          </button>
+          <button
+            v-if="hasPermission('element:metadata:sync')"
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            :class="(rowMenuDataset.status === 1 && isEngineReady && !isLocalMode) ? 'text-gray-700' : 'text-gray-300'"
+            :disabled="!isEngineReady || rowMenuDataset.status !== 1 || isLocalMode || syncingId === rowMenuDataset.id"
+            @click="withRowMenu((d) => openSyncFromMenu(d))"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z" /></svg>
+            同步到 RAGFlow
+          </button>
+          <button
+            v-if="hasPermission('element:metadata:edit')"
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            @click="withRowMenu((d) => openPermissionTab(d.id))"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+            权限管理
+          </button>
+          <button
+            v-if="hasPermission('element:metadata:edit')"
+            type="button"
+            title="元数据管理 → 数据行策略"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            @click="withRowMenu((d) => openRowPolicyModal(d))"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10" /></svg>
+            数据行策略
+          </button>
+          <button
+            v-if="hasPermission('element:metadata:edit')"
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            @click="withRowMenu((d) => openEditDatasetModal(d))"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+            编辑数据集
+          </button>
+          <button
+            v-if="hasPermission('element:metadata:edit')"
+            type="button"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50"
+            @click="withRowMenu((d) => openCopyWizard(d))"
+          >
+            <svg class="h-4 w-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V5a2 2 0 012-2h6a2 2 0 012 2v10a2 2 0 01-2 2h-2M8 9h6a2 2 0 012 2v10a2 2 0 01-2 2H8a2 2 0 01-2-2V11a2 2 0 012-2z" /></svg>
+            复制新建
+          </button>
+          <template v-if="hasPermission('element:metadata:delete')">
+            <div class="my-1 border-t border-gray-100"></div>
+            <button
+              type="button"
+              class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-red-600 transition-colors hover:bg-red-50"
+              @click="withRowMenu((d) => openDeleteModal(d))"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              删除数据集
+            </button>
+          </template>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 分批渲染：避免数据量大时一次挂载全部卡片造成卡顿 -->
     <div v-if="!loading && hasMoreDatasets" class="flex flex-col items-center gap-1.5 pt-2">
@@ -1978,6 +1942,54 @@ onMounted(async () => {
       </button>
       <span class="text-[10px] text-gray-400">列表分批渲染，避免数据量大时卡顿</span>
     </div>
+
+    <!-- Batch Delete Confirmation Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showBatchDeleteModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+        @click.self="!batchDeleting && (showBatchDeleteModal = false)"
+      >
+        <div class="w-full max-w-md overflow-hidden rounded-xl border border-gray-100 bg-white shadow-2xl">
+          <div class="p-6">
+            <div class="mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-red-100 bg-red-50">
+              <svg class="h-7 w-7 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </div>
+            <h3 class="text-lg font-bold text-gray-900">批量删除 {{ selectedCount }} 个数据集</h3>
+            <p class="mt-2 text-sm leading-relaxed text-gray-500">
+              将连同其表、字段、关系、指标一起删除，RAGFlow 侧的关联数据集也会同步清理。
+              <b class="text-red-600">此操作不可恢复。</b>
+            </p>
+            <div class="mt-3 max-h-32 space-y-1 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50/60 px-3 py-2 text-xs text-gray-600">
+              <div v-for="ds in selectedDatasetsPreview" :key="ds.id" class="truncate">
+                · {{ ds.display_name }} <span class="text-gray-400">#{{ ds.name }}</span>
+              </div>
+              <div v-if="selectedCount > selectedDatasetsPreview.length" class="text-gray-400">
+                … 等共 {{ selectedCount }} 个
+              </div>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 bg-gray-50 px-6 py-4">
+            <button
+              type="button"
+              class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+              :disabled="batchDeleting"
+              @click="showBatchDeleteModal = false"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              class="rounded-lg bg-red-600 px-5 py-2 text-sm font-medium text-white shadow-md shadow-red-500/30 transition-colors hover:bg-red-700 disabled:opacity-60"
+              :disabled="batchDeleting"
+              @click="confirmBatchDelete"
+            >
+              {{ batchDeleting ? '删除中…' : '确认删除' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Delete Confirmation Modal -->
     <Teleport to="body">
@@ -2652,6 +2664,14 @@ onMounted(async () => {
       @saved="fetchDatasets"
     />
 
+    <!-- 复制新建向导：改 ID / 名称（实时查重）、逐张核对表与字段、关系、指标，最后一步才落库 -->
+    <CopyDatasetWizard
+      :show="showCopyWizard"
+      :dataset="copySourceDataset"
+      @close="showCopyWizard = false"
+      @created="handleDatasetCopied"
+    />
+
     <!-- Edit Dataset Modal -->
     <Teleport to="body">
       <div v-if="showEditDatasetModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -2752,842 +2772,14 @@ onMounted(async () => {
       </button>
     </div>
 
-    <!-- Data Permission Configuration Modal -->
-    <Teleport to="body">
-      <div v-if="showPermConfigModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showPermConfigModal = false">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
-          <!-- Header -->
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50/30">
-            <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center border border-emerald-200">
-                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-               </div>
-               <div>
-                 <h2 class="text-xl font-bold text-gray-900">数据权限配置</h2>
-                 <p class="text-xs text-gray-500 font-medium">管理数据集 <b>{{ configuringDataset?.display_name }}</b> 的行级隔离策略。</p>
-               </div>
-            </div>
-            <button @click="showPermConfigModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-
-          <!-- Body -->
-          <div class="p-8 space-y-6 max-h-[75vh] overflow-y-auto custom-scrollbar" @click="closeMenus">
-             <div class="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
-               <div>
-                 <h4 class="text-sm font-bold text-gray-900">启用精细化权限校验</h4>
-                 <p class="text-xs text-gray-500 mt-0.5">
-                   开启后，系统将强制执行下方定义的 SQL 过滤规则。
-                   <button @click.prevent="showPermHelpModal = true" class="text-blue-600 hover:text-blue-700 hover:underline font-medium ml-1">帮助指引</button>
-                 </p>
-               </div>
-               <label class="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" v-model="configuringDataset.enable_data_perm" class="sr-only peer">
-                  <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-                </label>
-             </div>
-
-             <div v-if="configuringDataset.enable_data_perm" class="space-y-4">
-               <!-- Strategy Tabs -->
-               <div class="flex items-center justify-between border-b border-gray-100 pb-2">
-                 <div class="flex p-1 bg-gray-100 rounded-xl w-fit">
-                   <button 
-                     @click.stop.prevent="activePolicyTab = (activePolicyTab === 'json' ? 'user' : activePolicyTab)"
-                     class="px-5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2"
-                     :class="activePolicyTab !== 'json' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
-                   >
-                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                     可视化编辑
-                   </button>
-                   <button 
-                     @click.stop.prevent="activePolicyTab = 'json'; syncFromVisual(true)"
-                     class="px-5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2"
-                     :class="activePolicyTab === 'json' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
-                   >
-                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
-                     JSON 视图
-                   </button>
-                 </div>
-
-                 <!-- Sub Strategy Tabs (L2, Only for Visual Mode) -->
-                 <div v-if="activePolicyTab !== 'json'" class="flex p-1 bg-white border border-gray-100 rounded-xl w-fit shadow-sm">
-                   <button 
-                     @click.stop.prevent="activePolicyTab = 'user'"
-                     class="px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1"
-                     :class="activePolicyTab === 'user' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-400 hover:text-gray-600'"
-                   >
-                     用户例外
-                     <span class="text-[10px] opacity-60" v-if="Object.keys(visualRules.user_overrides).length > 0">
-                       ({{ Object.keys(visualRules.user_overrides).length }})
-                     </span>
-                   </button>
-                   <button 
-                     @click.stop.prevent="activePolicyTab = 'role'"
-                     class="px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1"
-                     :class="activePolicyTab === 'role' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-400 hover:text-gray-600'"
-                   >
-                     角色策略
-                     <span class="text-[10px] opacity-60" v-if="Object.keys(visualRules.role_policies).length > 0">
-                       ({{ Object.keys(visualRules.role_policies).length }})
-                     </span>
-                   </button>
-                   <button 
-                     @click.stop.prevent="activePolicyTab = 'default'"
-                     class="px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1"
-                     :class="activePolicyTab === 'default' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-400 hover:text-gray-600'"
-                   >
-                     默认规则
-                     <span class="text-[10px] opacity-60" v-if="visualRules.default_policy.length > 0">
-                       ({{ visualRules.default_policy.length }})
-                     </span>
-                   </button>
-                 </div>
-               </div>
-
-               <!-- Tab Content: Visual Editor -->
-               <div v-if="activePolicyTab === 'visual'" class="space-y-4 min-h-[350px]">
-                  <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">可视化规则编辑器</h5>
-                
-                  <!-- Rule Builder Section -->
-                  <div class="space-y-4">
-                    <!-- User Overrides -->
-                    <div class="bg-amber-50/30 rounded-xl border border-amber-100 p-4">
-                      <h6 class="text-sm font-bold text-amber-700 mb-3">用户例外策略</h6>
-                      <div v-if="Object.keys(visualRules.user_overrides).length > 0" class="space-y-3">
-                        <div v-for="(rules, userId) in visualRules.user_overrides" :key="userId" class="bg-white rounded-lg p-3 border border-amber-200">
-                          <div class="flex items-center justify-between mb-2">
-                            <span class="text-sm font-medium text-gray-700">用户ID: {{ userId }}</span>
-                            <button @click="delete visualRules.user_overrides[userId]; visualRules = {...visualRules}" class="text-red-500 hover:text-red-700">
-                              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                            </button>
-                          </div>
-                          <div v-for="(rule, idx) in rules" :key="idx" class="mb-2">
-                            <div class="flex items-end gap-3 p-3 bg-amber-50/80 rounded-xl border border-amber-200">
-                              <div class="flex-1 space-y-1">
-                                <label class="block text-[10px] text-amber-600 font-bold ml-1">目标表</label>
-                                <RowFilterOptionSelect
-                                  v-model="rule._builder_table"
-                                  :options="tableSelectOptions"
-                                  placeholder="选择表..."
-                                  button-class="border-amber-300 focus:ring-amber-500"
-                                  menu-class="hover:bg-amber-50"
-                                />
-                              </div>
-                              <div class="flex-1 space-y-1">
-                                <label class="block text-[10px] text-amber-600 font-bold ml-1">字段</label>
-                                <RowFilterOptionSelect
-                                  v-model="rule._builder_field"
-                                  :options="getColumnSelectOptions(rule._builder_table)"
-                                  placeholder="选择字段..."
-                                  :disabled="!rule._builder_table"
-                                  button-class="border-amber-300 focus:ring-amber-500"
-                                  menu-class="hover:bg-amber-50"
-                                />
-                              </div>
-                              <div class="flex-1 space-y-1">
-                                <label class="block text-[10px] text-amber-600 font-bold ml-1">操作符</label>
-                                <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-28 shadow-sm">
-                                  <option value="" disabled selected>操作符...</option>
-                                  <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
-                                </select>
-                              </div>
-                              <div class="flex-1 space-y-1">
-                                <label class="block text-[10px] text-amber-600 font-bold ml-1">过滤值/变量</label>
-                                <div class="relative flex items-center gap-1">
-                                  <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
-                                  <button @click.stop="toggleMenu(`visual-user-${userId}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors border border-amber-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
-                                    { }
-                                  </button>
-                                  <PermissionVariableMenu
-                                    v-if="activeMenuPath === `visual-user-${userId}-${idx}-vars`"
-                                    :builtin-variables="[...BUILTIN_USER_VARIABLES]"
-                                    :extra-data-variables="EXTRA_DATA_USER_VARIABLES"
-                                    accent="amber"
-                                    @select="(v) => { rule._builder_val = v; closeMenus() }"
-                                  />
-                                </div>
-                              </div>
-                              <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" :title="rule._builder_from_condition ? '用编辑框内容替换上方条件' : '追加条件'">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0h6"/></svg>
-                              </button>
-                              <button @click="rules.splice(idx, 1)" class="text-red-500 hover:text-red-700">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <div v-else class="text-center py-8">
-                        <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
-                        <p class="text-gray-500 font-medium">暂无用户例外策略</p>
-                        <button @click="visualRules.user_overrides['new_user'] = [{ condition: '', _builder_table: '', _builder_field: '', _builder_op: '', _builder_val: '' }]; visualRules = {...visualRules}" class="text-amber-600 hover:text-amber-700 font-medium mt-2">
-                          + 添加用户例外
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                
-                  <!-- Validation Section -->
-                  <div class="bg-blue-50 rounded-xl border border-blue-200 p-4">
-                    <h6 class="text-sm font-bold text-blue-700 mb-3">规则校验</h6>
-                    <div class="space-y-3">
-                      <div class="flex items-center justify-between">
-                        <span class="text-sm text-gray-700">校验当前配置</span>
-                        <button @click="validateRules" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-md">
-                          <MagnifyingGlassIcon class="w-4 h-4 inline-block mr-1" /> 校验规则
-                        </button>
-                      </div>
-                      <div v-if="validationResult" class="mt-3 p-3 rounded-lg" :class="validationResult.isValid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'">
-                        <div class="flex items-center gap-2 mb-2">
-                          <div class="w-6 h-6 rounded-full flex items-center justify-center" :class="validationResult.isValid ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'">
-                            {{ validationResult.isValid ? '✓' : '✗' }}
-                          </div>
-                          <span class="font-medium" :class="validationResult.isValid ? 'text-green-700' : 'text-red-700'">
-                            {{ validationResult.isValid ? '校验通过' : '校验失败' }}
-                          </span>
-                        </div>
-                        <div class="text-sm" :class="validationResult.isValid ? 'text-green-600' : 'text-red-600'">
-                          {{ validationResult.message }}
-                        </div>
-                        <div v-if="validationResult.details && validationResult.details.length > 0" class="mt-2">
-                          <div class="text-xs text-gray-500 mb-1">详细信息:</div>
-                          <div class="space-y-1">
-                            <div v-for="(detail, idx) in validationResult.details" :key="idx" class="flex items-center gap-2 text-xs p-2 bg-gray-50 rounded">
-                              <span :class="detail.type === 'error' ? 'text-red-600' : detail.type === 'warning' ? 'text-yellow-600' : 'text-blue-600'">
-                                <ExclamationTriangleIcon v-if="detail.type === 'error' || detail.type === 'warning'" class="w-4 h-4" />
-                                <InformationCircleIcon v-else class="w-4 h-4" />
-                              </span>
-                              <span class="flex-1">{{ detail.message }}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-               </div>
-               <div v-if="activePolicyTab === 'role'" class="space-y-4 min-h-[350px]">
-                  <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">按角色配置策略</h5>
-                
-                  <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar pb-32">
-                    <div v-if="Object.keys(visualRules.role_policies).length > 0">
-                      <div v-for="(rules, roleName) in visualRules.role_policies" :key="roleName" class="space-y-4">
-                        <div class="p-4 bg-gray-50 rounded-xl border border-gray-200 relative group">
-                          <div class="flex items-center gap-2 mb-3">
-                            <div class="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded uppercase">角色</div>
-                            <span class="text-sm font-bold text-gray-700">{{ roleName }}</span>
-                            <span class="text-[10px] text-gray-400">({{ allRoles.find(r => r.code === roleName)?.name || '未找到角色名' }})</span>
-                            <button @click="delete (visualRules.role_policies as any)[roleName]; visualRules = {...visualRules}" class="ml-auto text-gray-300 hover:text-red-500 transition-colors">
-                              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                            </button>
-                          </div>
-                        
-                          <div v-for="(rule, idx) in rules" :key="idx" class="space-y-2 mb-2">
-                            <div class="flex flex-col gap-2">
-                              <div class="flex items-center gap-2">
-                                <input v-model="rule.condition" class="flex-1 text-xs font-mono border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="e.g. dept_code = {user.dept_code}">
-                                <button @click="rules.splice(idx, 1); if(rules.length===0) delete (visualRules.role_policies as any)[roleName]; visualRules = {...visualRules}" class="text-gray-300 hover:text-red-500">
-                                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                                </button>
-                              </div>
-                            
-                              <!-- Rule Builder for Role Policy -->
-                              <div class="flex items-end gap-3 p-3 bg-emerald-50/80 rounded-xl border border-emerald-200">
-                                <div class="space-y-1">
-                                  <label class="block text-[10px] text-emerald-600 font-bold ml-1">目标表</label>
-                                  <RowFilterOptionSelect
-                                    v-model="rule._builder_table"
-                                    :options="tableSelectOptions"
-                                    placeholder="选择数据表..."
-                                    button-class="border-emerald-300 focus:ring-emerald-500"
-                                    menu-class="hover:bg-emerald-50"
-                                  />
-                                </div>
-                              
-                                <div class="space-y-1">
-                                  <label class="block text-[10px] text-emerald-600 font-bold ml-1">选择字段</label>
-                                  <RowFilterOptionSelect
-                                    v-model="rule._builder_field"
-                                    :options="getColumnSelectOptions(rule._builder_table)"
-                                    placeholder="选择字段..."
-                                    :disabled="!rule._builder_table"
-                                    button-class="border-emerald-300 focus:ring-emerald-500"
-                                    menu-class="hover:bg-emerald-50"
-                                  />
-                                </div>
-
-                                <div class="space-y-1">
-                                  <label class="block text-[10px] text-emerald-600 font-bold ml-1">操作符</label>
-                                  <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-emerald-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none w-28 shadow-sm">
-                                    <option value="" disabled selected>操作符...</option>
-                                    <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
-                                  </select>
-                                </div>
-                              
-                                <div class="flex-1 space-y-1">
-                                  <label class="block text-[10px] text-emerald-600 font-bold ml-1">过滤值/变量</label>
-                                  <div class="relative flex items-center gap-1">
-                                    <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-emerald-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
-                                    <!-- System variable dropdown trigger -->
-                                    <button @click.stop="toggleMenu(`role-${roleName}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors border border-emerald-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
-                                      { }
-                                    </button>
-                                    <PermissionVariableMenu
-                                      v-if="activeMenuPath === `role-${roleName}-${idx}-vars`"
-                                      :builtin-variables="[...BUILTIN_USER_VARIABLES]"
-                                      :extra-data-variables="EXTRA_DATA_USER_VARIABLES"
-                                      accent="emerald"
-                                      @select="(v) => { rule._builder_val = v; closeMenus() }"
-                                    />
-                                  </div>
-                                </div>
-                              
-                                <button @click="appendBuilderCondition(rule)" class="bg-emerald-700 hover:bg-emerald-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" :title="rule._builder_from_condition ? '用编辑框内容替换上方条件' : '追加条件'">
-                                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
-                                </button>
-                              </div>
-
-                              <button @click="rules.push({condition: ''})" class="text-[9px] text-emerald-600 font-bold hover:underline ml-auto">+ 追加条件 (AND)</button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="pt-2 flex justify-center">
-                        <button @click="addNewRolePolicyDirect" class="text-[10px] text-emerald-600 font-bold flex items-center gap-1.5 hover:bg-emerald-50 px-4 py-2 rounded-lg transition-all border border-emerald-100 bg-white shadow-sm">
-                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                          添加新角色策略
-                        </button>
-                      </div>
-                    </div>
-                    <div v-else class="text-center py-8">
-                      <div class="w-full py-4 border-2 border-dashed border-emerald-200 rounded-xl text-emerald-400 hover:text-emerald-600 transition-all flex items-center justify-center gap-2 font-medium cursor-pointer" @click="addNewRolePolicyDirect">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                        添加角色策略
-                      </div>
-                    </div>
-                  </div>
-               </div>
-
-               <!-- Tab Content: User Overrides -->
-               <div v-if="activePolicyTab === 'user'" class="space-y-4 min-h-[350px]">
-                  <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">特定用户例外 (优先级最高)</h5>
-                  <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar pb-32">
-                    <div v-if="Object.keys(visualRules.user_overrides).length > 0">
-                      <div v-for="(rules, uid) in visualRules.user_overrides" :key="uid" class="space-y-4">
-                        <div class="p-4 bg-amber-50/30 rounded-xl border border-amber-100 relative group">
-                          <div class="flex items-center gap-2 mb-3">
-                            <div class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded uppercase">用户</div>
-                            <span class="text-xs font-bold text-amber-800">{{ allUsers.find(u => u.id === Number(uid))?.real_name || uid }} ({{ allUsers.find(u => u.id === Number(uid))?.user_name || 'ID: ' + uid }})</span>
-                            <button @click="delete (visualRules.user_overrides as any)[uid]; visualRules = {...visualRules}" class="ml-auto text-gray-300 hover:text-red-500 transition-colors">
-                              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                            </button>
-                          </div>
-                        
-                          <div v-for="(rule, idx) in rules" :key="idx" class="space-y-2 mb-2">
-                             <div class="flex flex-col gap-2">
-                                <div class="flex items-center gap-2">
-                                  <input v-model="rule.condition" class="flex-1 text-xs font-mono border border-amber-200 rounded-lg px-3 py-2 bg-white" placeholder="e.g. 1=1">
-                                  <button @click="rules.splice(idx, 1); if(rules.length===0) delete (visualRules.user_overrides as any)[uid]; visualRules = {...visualRules}" class="text-gray-300 hover:text-red-500">
-                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                                  </button>
-                                </div>
-                              
-                                <!-- Rule Builder for User Override -->
-                                <div class="flex items-end gap-3 p-3 bg-amber-50/80 rounded-xl border border-amber-200">
-                                  <div class="space-y-1">
-                                    <label class="block text-[10px] text-amber-600 font-bold ml-1">目标表</label>
-                                    <RowFilterOptionSelect
-                                      v-model="rule._builder_table"
-                                      :options="tableSelectOptions"
-                                      placeholder="选择数据表..."
-                                      button-class="border-amber-300 focus:ring-amber-500"
-                                      menu-class="hover:bg-amber-50"
-                                    />
-                                  </div>
-                                
-                                  <div class="space-y-1">
-                                    <label class="block text-[10px] text-amber-600 font-bold ml-1">选择字段</label>
-                                    <RowFilterOptionSelect
-                                      v-model="rule._builder_field"
-                                      :options="getColumnSelectOptions(rule._builder_table)"
-                                      placeholder="选择字段..."
-                                      :disabled="!rule._builder_table"
-                                      button-class="border-amber-300 focus:ring-amber-500"
-                                      menu-class="hover:bg-amber-50"
-                                    />
-                                  </div>
-
-                                  <div class="space-y-1">
-                                    <label class="block text-[10px] text-amber-600 font-bold ml-1">操作符</label>
-                                    <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-28 shadow-sm">
-                                      <option value="" disabled selected>操作符...</option>
-                                      <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
-                                    </select>
-                                  </div>
-                                
-                                  <div class="flex-1 space-y-1">
-                                    <label class="block text-[10px] text-amber-600 font-bold ml-1">过滤值/变量</label>
-                                    <div class="relative flex items-center gap-1">
-                                      <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
-                                      <!-- System variable dropdown trigger -->
-                                      <button @click.stop="toggleMenu(`user-${uid}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors border border-amber-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
-                                        { }
-                                      </button>
-                                      <PermissionVariableMenu
-                                        v-if="activeMenuPath === `user-${uid}-${idx}-vars`"
-                                        :builtin-variables="[...BUILTIN_USER_VARIABLES]"
-                                        :extra-data-variables="EXTRA_DATA_USER_VARIABLES"
-                                        accent="amber"
-                                        @select="(v) => { rule._builder_val = v; closeMenus() }"
-                                      />
-                                    </div>
-                                  </div>
-                                
-                                  <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" :title="rule._builder_from_condition ? '用编辑框内容替换上方条件' : '追加条件'">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
-                                  </button>
-                                </div>
-
-                                <button @click="rules.push({condition: ''})" class="text-[9px] text-amber-600 font-bold hover:underline ml-auto">+ 追加条件</button>
-                             </div>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="pt-2 flex justify-center">
-                        <button @click="addNewUserOverrideDirect" class="text-[10px] text-amber-600 font-bold flex items-center gap-1.5 hover:bg-amber-50 px-4 py-2 rounded-lg transition-all border border-amber-100 bg-white shadow-sm">
-                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                          添加用户例外
-                        </button>
-                      </div>
-                    </div>
-                    <div v-else class="text-center py-8">
-                      <div class="w-full py-4 border-2 border-dashed border-amber-200 rounded-xl text-amber-400 hover:text-amber-600 transition-all flex items-center justify-center gap-2 font-medium cursor-pointer" @click="addNewUserOverrideDirect">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                        添加用户例外
-                      </div>
-                    </div>
-                  </div>
-               </div>
-
-               <!-- Tab Content: Default Policy -->
-               <div v-if="activePolicyTab === 'default'" class="space-y-4 min-h-[350px]">
-                  <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">兜底策略 (无匹配时生效)</h5>
-                  <div class="p-6 bg-slate-50 rounded-xl border border-slate-200">
-                     <p class="text-xs text-slate-500 mb-4">当请求用户不满足任何“用户例外”或“角色策略”时，将强制执行此过滤条件。推荐设为 <code class="bg-slate-200 px-1 rounded">1=0</code> (全部拒绝)。</p>
-                     <div v-if="visualRules.default_policy.length > 0" class="space-y-4">
-                        <div v-for="(rule, idx) in visualRules.default_policy" :key="idx" class="flex flex-col gap-2 p-3 bg-white rounded-lg border border-slate-200 shadow-sm">
-                           <div class="flex items-center gap-2">
-                              <input v-model="rule.condition" class="flex-1 text-sm font-mono border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-slate-500 outline-none" placeholder="e.g. 1=0">
-                              <button @click="visualRules.default_policy.splice(idx, 1); visualRules = {...visualRules}" class="text-slate-400 hover:text-red-500 transition-colors">
-                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                              </button>
-                           </div>
-                         
-                           <!-- New single-row builder -->
-                           <div class="flex items-end gap-3 p-3 bg-slate-50/80 rounded-xl border border-slate-200">
-                             <div class="space-y-1">
-                               <label class="block text-[10px] text-slate-400 font-bold ml-1">目标表</label>
-                               <RowFilterOptionSelect
-                                 v-model="rule._builder_table"
-                                 :options="tableSelectOptions"
-                                 placeholder="选择数据表..."
-                                 button-class="border-slate-300 focus:ring-slate-500"
-                                 menu-class="hover:bg-slate-50"
-                               />
-                             </div>
-                           
-                             <div class="space-y-1">
-                               <label class="block text-[10px] text-slate-400 font-bold ml-1">选择字段</label>
-                               <RowFilterOptionSelect
-                                 v-model="rule._builder_field"
-                                 :options="getColumnSelectOptions(rule._builder_table)"
-                                 placeholder="选择字段..."
-                                 :disabled="!rule._builder_table"
-                                 button-class="border-slate-300 focus:ring-slate-500"
-                                 menu-class="hover:bg-slate-50"
-                               />
-                             </div>
-
-                             <div class="space-y-1">
-                               <label class="block text-[10px] text-slate-400 font-bold ml-1">操作符</label>
-                               <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-slate-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-slate-500 outline-none w-28 shadow-sm">
-                                  <option value="" disabled selected>操作符...</option>
-                                  <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
-                               </select>
-                             </div>
-                           
-                             <div class="flex-1 space-y-1">
-                               <label class="block text-[10px] text-slate-400 font-bold ml-1">过滤值/变量</label>
-                               <div class="relative flex items-center gap-1">
-                                 <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-slate-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-slate-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
-                                 <!-- System variable dropdown trigger -->
-                                 <button @click.stop="toggleMenu(`default-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors border border-emerald-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
-                                   { }
-                                 </button>
-                                 <PermissionVariableMenu
-                                   v-if="activeMenuPath === `default-${idx}-vars`"
-                                   :builtin-variables="[...BUILTIN_USER_VARIABLES]"
-                                   :extra-data-variables="EXTRA_DATA_USER_VARIABLES"
-                                   accent="slate"
-                                   @select="(v) => { rule._builder_val = v; closeMenus() }"
-                                 />
-                               </div>
-                             </div>
-                           
-                             <button @click="appendBuilderCondition(rule)" class="bg-slate-700 hover:bg-slate-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" :title="rule._builder_from_condition ? '用编辑框内容替换上方条件' : '追加条件'">
-                               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
-                             </button>
-                           </div>
-                        </div>
-                        <div class="pt-2 flex justify-center">
-                           <button @click="visualRules.default_policy.push({condition: ''}); visualRules = {...visualRules}" class="text-[10px] text-blue-600 font-bold flex items-center gap-1.5 hover:bg-blue-50 px-4 py-2 rounded-lg transition-all border border-blue-100 bg-white shadow-sm">
-                              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                              追加一组策略 (OR)
-                           </button>
-                        </div>
-                     </div>
-                     <button v-else @click="visualRules.default_policy = [{condition: '1=0'}]; visualRules = {...visualRules}" class="w-full py-4 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 hover:text-slate-600 transition-all flex items-center justify-center gap-2 font-medium">
-                        启用默认策略
-                     </button>
-                  </div>
-               </div>
-
-               <!-- Tab Content: JSON View -->
-               <div v-if="activePolicyTab === 'json'" class="space-y-4 min-h-[350px]">
-                  <div class="flex items-center justify-between">
-                    <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">JSON 配置视图 (只读)</h5>
-                    <button @click="copyJSON()" class="text-[10px] bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1 rounded-lg transition-colors flex items-center gap-1.5 font-bold">
-                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                      复制 JSON
-                    </button>
-                  </div>
-                
-                  <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700 relative">
-                    <div class="absolute top-3 right-4 flex gap-2">
-                      <div class="w-2.5 h-2.5 rounded-full bg-red-500/50"></div>
-                      <div class="w-2.5 h-2.5 rounded-full bg-amber-500/50"></div>
-                      <div class="w-2.5 h-2.5 rounded-full bg-emerald-500/50"></div>
-                    </div>
-                    <pre class="p-6 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-[400px] custom-scrollbar leading-relaxed">{{ jsonEditorContent }}</pre>
-                  </div>
-                  <p class="text-[10px] text-gray-400 italic">此视图实时展示可视化编辑器的配置结果，不可直接编辑。</p>
-               </div>
-             </div>
-           
-             <div v-else class="py-12 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                <LockOpenIcon class="w-8 h-8 mx-auto mb-2 text-gray-300" />
-                <p class="text-sm text-gray-400 font-medium">当前数据集未启用权限校验，所有授权用户可查询全量数据。</p>
-             </div>
-          </div>
-
-          <!-- Footer -->
-          <div class="bg-gray-50 px-8 py-4 flex justify-end gap-3 border-t border-gray-100">
-            <button @click="showPermConfigModal = false" class="px-5 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">取消</button>
-            <button @click="handleSavePermConfig" class="px-8 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-lg shadow-emerald-200 transition-all active:scale-95">
-              保存配置
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- Permission Help Modal -->
-    <Teleport to="body">
-      <div v-if="showPermHelpModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showPermHelpModal = false">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-          <!-- Header -->
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
-            <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center border border-blue-200">
-                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-               </div>
-               <div>
-                 <h2 class="text-xl font-bold text-gray-900">数据权限配置指南</h2>
-                 <p class="text-xs text-gray-500 font-medium">配置行级过滤策略 (Row-Level Security)。</p>
-               </div>
-            </div>
-            <button @click="showPermHelpModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-
-          <!-- Content -->
-          <div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-             <section class="space-y-2">
-               <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-                 <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
-                 匹配优先级
-               </h3>
-               <p class="text-xs text-gray-600 leading-relaxed pl-3 border-l-2 border-gray-100 ml-0.5">
-                 系统按以下顺序解析规则，匹配到即停止：<br>
-                 <b class="text-blue-600">1. 用户例外 (user_overrides)</b> &gt; 
-                 <b class="text-blue-600">2. 角色策略 (role_policies)</b> &gt; 
-                 <b class="text-blue-600">3. 默认策略 (default_policy)</b>
-               </p>
-             </section>
-
-             <section class="space-y-2">
-               <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-                 <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
-                 支持的动态变量
-               </h3>
-               <div class="grid grid-cols-2 gap-2 text-[10px]">
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.id}</span> 用户唯一ID</div>
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.user_name}</span> 登录账号</div>
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.real_name}</span> 真实姓名</div>
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.dept_code}</span> 部门代码</div>
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.org_path}</span> 组织全路径</div>
-                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.role}</span> 系统角色</div>
-               </div>
-               <p class="text-[10px] text-gray-500 mt-2">以上 6 项为<strong>内置用户属性</strong>，所有用户均可用。</p>
-             </section>
-
-             <section class="space-y-2">
-               <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-                 <span class="w-1 h-4 bg-violet-500 rounded-full"></span>
-                 extra_data 扩展字段
-               </h3>
-               <p class="text-[10px] text-gray-600 leading-relaxed">
-                 来自用户 <code class="text-violet-600 bg-violet-50 px-1 rounded">extra_data</code> JSON 的键，运行时摊平为
-                 <code class="font-mono text-violet-600">{user.键名}</code>。下拉列表从平台用户聚合展示，并标注「扩展」与内置变量区分。
-               </p>
-               <div v-if="EXTRA_DATA_USER_VARIABLES.length" class="grid grid-cols-1 gap-1.5 text-[10px] max-h-32 overflow-y-auto">
-                 <div
-                   v-for="v in EXTRA_DATA_USER_VARIABLES"
-                   :key="v.value"
-                   class="p-2 bg-violet-50 rounded border border-violet-100 font-mono flex items-center justify-between gap-2"
-                 >
-                   <span><span class="text-violet-700 font-bold">{{ v.value }}</span> {{ v.label }}</span>
-                   <span class="text-[8px] px-1 py-0.5 rounded bg-violet-100 text-violet-600 font-bold shrink-0">扩展</span>
-                 </div>
-               </div>
-               <p v-else class="text-[10px] text-gray-400">当前暂无 extra_data 扩展字段，可在用户管理或第三方用户同步中配置。</p>
-             </section>
-
-             <section class="space-y-4">
-               <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-                 <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
-                 配置示例
-               </h3>
-             
-               <div class="space-y-2">
-                 <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">示例 1: 按所属部门过滤 (最常用)</p>
-                 <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
-                   <pre class="p-4 text-[11px] font-mono text-emerald-400 overflow-x-auto">{
-    "role_policies": {
-      "viewer": [
-        { "condition": "dept_code = {user.dept_code}" }
-      ]
-    }
-  }</pre>
-                 </div>
-               </div>
-
-               <div class="space-y-2">
-                 <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">示例 2: 组织架构模糊匹配 (树形结构)</p>
-                 <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
-                   <pre class="p-4 text-[11px] font-mono text-emerald-400 overflow-x-auto">{
-    "role_policies": {
-      "regional_viewer": [
-        { "condition": "org_path LIKE '{user.org_path}%'" }
-      ]
-    }
-  }</pre>
-                 </div>
-               </div>
-
-               <div class="space-y-2">
-                 <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">示例 3: 复杂 OR 逻辑 (多维度权限并集)</p>
-                 <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
-                   <pre class="p-4 text-[11px] font-mono text-emerald-400 overflow-x-auto">{
-    "role_policies": {
-      "manager": [
-        { "condition": "dept_code = {user.dept_code}" },
-        { "condition": "region_code = 'SH'" }
-      ]
-    }
-  }</pre>
-                   <div class="bg-slate-800 px-4 py-2 text-[10px] text-slate-400 border-t border-slate-700 italic">
-                     提示：数组内的多条规则将被注入为 (cond1 AND cond2)。若需 OR，请写在一条 condition 内。
-                   </div>
-                 </div>
-               </div>
-             </section>
-          </div>
-
-          <!-- Footer -->
-          <div class="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
-            <button @click="showPermHelpModal = false" class="px-8 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all text-sm">
-              明白了
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- Role Selector Modal -->
-    <Teleport to="body">
-      <div v-if="showRoleSelectorModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showRoleSelectorModal = false">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-          <!-- Header -->
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50/30">
-            <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center border border-emerald-200">
-                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-               </div>
-               <div>
-                 <h2 class="text-xl font-bold text-gray-900">选择角色</h2>
-                 <p class="text-xs text-gray-500 font-medium">为特定角色配置数据访问权限策略。</p>
-               </div>
-            </div>
-            <button @click="showRoleSelectorModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-
-          <!-- Content -->
-          <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
-            <!-- Search Filter -->
-            <div class="mb-4">
-              <div class="relative">
-                <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                </span>
-                <input 
-                  v-model="roleSearchQuery" 
-                  type="search"
-                  class="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg leading-5 bg-gray-50 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white sm:text-sm transition-all" 
-                  placeholder="搜索角色名称或代码..."
-                >
-              </div>
-            </div>
-
-            <div v-if="filteredRoles.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button 
-                v-for="role in filteredRoles" 
-                :key="role.code"
-                @click="selectRoleFromModal(role)"
-                class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 transition-all text-left group"
-                :disabled="visualRules.role_policies[role.code] !== undefined"
-              >
-                <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold text-sm border border-emerald-200">
-                  {{ (role.name || role.code || 'R').charAt(0).toUpperCase() }}
-                </div>
-                <div class="flex-1 min-w-0">
-                  <div class="font-medium text-gray-900 text-sm truncate">{{ role.name || '未知角色' }}</div>
-                  <div class="text-xs text-gray-500 truncate font-mono">{{ role.code }}</div>
-                </div>
-                <div class="text-xs text-gray-400">
-                  CODE: {{ role.code }}
-                </div>
-                <div v-if="visualRules.role_policies[role.code] !== undefined" class="px-2 py-1 bg-green-100 text-green-700 text-[10px] rounded-full font-medium">
-                  已添加
-                </div>
-              </button>
-            </div>
-            <div v-else-if="roleSearchQuery && filteredRoles.length === 0" class="text-center py-12">
-              <MagnifyingGlassIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
-              <p class="text-gray-500 font-medium">未找到匹配的角色</p>
-              <p class="text-gray-400 text-sm mt-1">尝试调整搜索关键词</p>
-            </div>
-            <div v-else class="text-center py-12">
-              <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
-              <p class="text-gray-500 font-medium">暂无角色数据</p>
-              <p class="text-gray-400 text-sm mt-1">请先在系统中添加角色</p>
-            </div>
-          </div>
-
-          <!-- Footer -->
-          <div class="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
-            <button @click="showRoleSelectorModal = false" class="px-6 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">
-              取消
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- User Selector Modal -->
-    <Teleport to="body">
-      <div v-if="showUserSelectorModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showUserSelectorModal = false">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-          <!-- Header -->
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-amber-50/30">
-            <div class="flex items-center gap-3">
-               <div class="w-10 h-10 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center border border-amber-200">
-                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-               </div>
-               <div>
-                 <h2 class="text-xl font-bold text-gray-900">选择用户</h2>
-                 <p class="text-xs text-gray-500 font-medium">为特定用户配置数据访问权限例外。</p>
-               </div>
-            </div>
-            <button @click="showUserSelectorModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-
-          <!-- Content -->
-          <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
-            <!-- Search Filter -->
-            <div class="mb-4">
-              <div class="relative">
-                <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                </span>
-                <input 
-                  v-model="userSearchQuery" 
-                  type="search"
-                  class="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg leading-5 bg-gray-50 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white sm:text-sm transition-all" 
-                  placeholder="搜索用户姓名、用户名或ID..."
-                >
-              </div>
-            </div>
-
-            <div v-if="filteredUsers.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button 
-                v-for="user in filteredUsers" 
-                :key="user.id"
-                @click="selectUserFromModal(user)"
-                class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-amber-300 hover:bg-amber-50 transition-all text-left group"
-                :disabled="visualRules.user_overrides[user.id] !== undefined"
-              >
-                <div class="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center font-bold text-sm border border-amber-200">
-                  {{ (user.real_name || user.user_name || 'U').charAt(0).toUpperCase() }}
-                </div>
-                <div class="flex-1 min-w-0">
-                  <div class="font-medium text-gray-900 text-sm truncate">{{ user.real_name || '未知用户' }}</div>
-                  <div class="text-xs text-gray-500 truncate">{{ user.user_name }}</div>
-                </div>
-                <div class="text-xs text-gray-400">
-                  ID: {{ user.id }}
-                </div>
-                <div v-if="visualRules.user_overrides[user.id] !== undefined" class="px-2 py-1 bg-green-100 text-green-700 text-[10px] rounded-full font-medium">
-                  已添加
-                </div>
-              </button>
-            </div>
-            <div v-else-if="userSearchQuery && filteredUsers.length === 0" class="text-center py-12">
-              <MagnifyingGlassIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
-              <p class="text-gray-500 font-medium">未找到匹配的用户</p>
-              <p class="text-gray-400 text-sm mt-1">尝试调整搜索关键词</p>
-            </div>
-            <div v-else class="text-center py-12">
-              <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
-              <p class="text-gray-500 font-medium">暂无用户数据</p>
-              <p class="text-gray-400 text-sm mt-1">请先在系统中添加用户</p>
-            </div>
-          </div>
-
-          <!-- Footer -->
-          <div class="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
-            <button @click="showUserSelectorModal = false" class="px-6 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">
-              取消
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <!-- 行级隔离策略弹窗：和数据集详情页的「编辑行级策略」是同一个组件 -->
+    <RowPolicyConfigModal
+      :show="showPermConfigModal"
+      :dataset="rowPolicyDataset"
+      focus-row-policy
+      @close="showPermConfigModal = false"
+      @saved="handleRowPolicySaved"
+    />
 
     <!-- 当前元数据同步实时日志 -->
     <Transition name="sync-log-drawer">

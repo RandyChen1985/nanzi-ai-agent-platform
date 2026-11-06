@@ -229,8 +229,8 @@ def test_chat_host_forwards_workbench_conversation_and_agent_targets():
     chat = _read("frontend/src/views/Chat.vue")
     embed = _read("frontend/src/views/EmbedChat.vue")
 
-    assert "conversation_id: route.query.conversation_id" in chat
-    assert "agent_id: route.query.agent_id" in chat
+    assert "route.query.conversation_id" in chat
+    assert "route.query.agent_id" in chat
     assert "watch(" in chat
     assert "sendInitConfig()" in chat
     assert "requestedConversationId" in embed

@@ -15,7 +15,7 @@ def _read(path: Path) -> str:
 
 def test_workspace_tabs_scroll_horizontally_on_mobile():
     source = _read(SKILLS_VIEW)
-    tab_block = source.split("<!-- Scope Tab 切换 -->", 1)[1].split("<!-- 已发布 / 下架管理面板", 1)[0]
+    tab_block = source.split("<!-- Scope Tab 切换", 1)[1].split("<!-- 已发布 / 下架管理面板", 1)[0]
     assert "overflow-x-auto" in tab_block, "tab 容器必须可横向滚动"
     assert "whitespace-nowrap" in tab_block, "tab 文字不允许逐字换行"
     # 四个 tab 按钮都要 shrink-0，否则仍会被压缩换行

@@ -63,11 +63,20 @@ def test_grant_counts_default_to_zero_for_empty_input(source: str) -> None:
 
 
 def test_list_columns_show_reference_and_grant(page: str) -> None:
-    """列表表头与行都要有这两列，且空值显示为「—」而不是 0。"""
+    """列表表头与行都要有这几列，且空值显示为「—」而不是 0。
+
+    列宽串会随后续加列（如「编辑权限」78px）而变，断言用「表头与行必须一致」
+    这个不变式，而不是把某一版列宽写死——写死只会让每次加列都假失败，
+    从而被顺手改成两个不同的串。
+    """
     assert "<span>引用</span>" in page
     assert "<span>授权</span>" in page
-    for cols in ("_88px_48px_52px_62px_72px_88px_",):
-        assert page.count(cols) == 2, "表头与行的列宽必须一致"
+
+    import re
+
+    patterns = re.findall(r"grid-cols-\[18px_[^\]]+\]", page)
+    assert len(patterns) >= 2, "列表表头与行都应使用同一套列宽"
+    assert len(set(patterns)) == 1, f"表头与行列宽不一致：{sorted(set(patterns))}"
 
 
 def test_grant_text_and_hints_explain_the_numbers(page: str) -> None:

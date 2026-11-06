@@ -664,6 +664,18 @@ async def get_dataset_schema(keywords: Optional[str] = None, metadata_dataset_id
         is_admin = ctx.is_admin if ctx else False
         api_key = ctx.api_key if ctx else None
         authorized_dataset_ids = _normalize_metadata_dataset_ids(metadata_dataset_ids)
+        if authorized_dataset_ids is None and metadata_dataset_ids:
+            # 本轮手选可能以数据集名称/名称列表传入，纯数字归一化会把它们全部丢掉，
+            # 于是范围又变回「全部有权限的数据集」。下游 fetch_dataset_schema_core
+            # 支持 id / name / display_name / rag_dataset_id 多字段匹配，这里原样透传。
+            raw_items = (
+                metadata_dataset_ids
+                if isinstance(metadata_dataset_ids, (list, tuple, set))
+                else [metadata_dataset_ids]
+            )
+            authorized_dataset_ids = [
+                str(item).strip() for item in raw_items if str(item).strip()
+            ] or None
 
         trace_buffer = ctx.trace_buffer if ctx else None
         if trace_buffer is not None:
@@ -701,6 +713,68 @@ async def get_dataset_schema(keywords: Optional[str] = None, metadata_dataset_id
         logger.error(f"[Tool Error] Schema Retrieval Failed: {e}", exc_info=True)
         return f"[Tool Error] Failed to retrieve metadata: {str(e)}"
 
+async def _ensure_dataset_in_mounted_scope(
+    session: Any,
+    *,
+    dataset_name: str,
+    mounted: list[str],
+) -> Optional[str]:
+    """本轮手选了数据集时，只允许查这些数据集。
+
+    ``mounted`` 里可能是 ID，也可能是名称（前端两种都传过），所以要先把 ID 解析成名称
+    再比对；没有挂载（用户没选）时不做限制，保持历史行为。
+    """
+    if not mounted:
+        return None
+
+    from sqlalchemy import func, or_, select
+
+    from app.models.metadata import MetaDataset
+
+    wanted_ids: list[int] = []
+    wanted_names: set[str] = set()
+    for item in mounted:
+        text_value = str(item).strip()
+        if not text_value:
+            continue
+        if text_value.isdigit():
+            wanted_ids.append(int(text_value))
+        else:
+            wanted_names.add(text_value.lower())
+    if not wanted_ids and not wanted_names:
+        return None
+
+    conditions = []
+    if wanted_ids:
+        conditions.append(MetaDataset.id.in_(wanted_ids))
+    if wanted_names:
+        conditions.append(func.lower(MetaDataset.name).in_(sorted(wanted_names)))
+    rows = (
+        await session.execute(
+            select(MetaDataset.id, MetaDataset.name, MetaDataset.display_name).where(or_(*conditions))
+        )
+    ).all()
+    if not rows:
+        # 挂载的 ID 解析不出数据集：多半是刚被删除，按不放行处理更安全
+        return (
+            "[Permission Denied] 本次会话限定的数据集已不存在，无法执行查询。"
+            "请重新选择数据集后再试。"
+        )
+
+    allowed = {str(row[1]).lower() for row in rows if row[1]}
+    allowed |= {str(row[2]).lower() for row in rows if row[2]}
+    if str(dataset_name).strip().lower() in allowed:
+        return None
+
+    readable = "、".join(
+        sorted({str(row[2] or row[1]) for row in rows if (row[2] or row[1])})
+    )
+    return (
+        f"[Permission Denied] 本次会话已限定数据集范围（{readable}），"
+        f"不能查询数据集 '{dataset_name}'。请让用户在该范围内重新选择数据集。"
+    )
+
+
 @tool
 async def execute_sql_query(sql: str, data_source: str, dataset_name: str) -> str:
     """
@@ -722,8 +796,19 @@ async def execute_sql_query(sql: str, data_source: str, dataset_name: str) -> st
     user_id = ctx.user_id if ctx else None
     is_admin = bool(ctx and getattr(ctx, "is_admin", False))
     permission_notice: dict[str, Any] = {}
+    from app.services.ai.metadata_dataset_scope import resolve_mounted_dataset_scope_ids
+
+    mounted_dataset_ids = resolve_mounted_dataset_scope_ids()
 
     async def _run_query(session):
+        # 检索阶段被限定住还不够：模型凭记忆写下别的 dataset_name 时照样能过，
+        # 而那张表可能恰好注册在另一个「用户有权限」的数据集里，等于绕开手选。
+        scope_err = await _ensure_dataset_in_mounted_scope(
+            session, dataset_name=dataset_name, mounted=mounted_dataset_ids
+        )
+        if scope_err:
+            return scope_err
+
         res = await execute_sql_query_core(
             session,
             sql=sql,

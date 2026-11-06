@@ -87,6 +87,17 @@ async def inject_few_shot_examples(
             history=runtime_messages,
             stats_dump=search_stats,
         )
+        try:
+            scope_user_id = getattr(runner, "_runtime_user_id", lambda: None)()
+        except Exception:  # noqa: BLE001 - 拿不到用户身份就不做表级过滤
+            scope_user_id = None
+        from app.services.dataset_scope_service import filter_examples_by_table_scope
+
+        examples = await filter_examples_by_table_scope(
+            examples,
+            user_id=scope_user_id,
+            is_admin=bool((runner.user_info or {}).get("is_admin")),
+        )
         runner._fewshot_examples = examples or []
         if not examples:
             elapsed_ms = (time.time() - search_start) * 1000

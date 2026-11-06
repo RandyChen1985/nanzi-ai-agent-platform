@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识库编辑权限范围 · 让「能看的人」可选是否也能改</title>
+<style>
+  :root {
+    --bg:#f2f3f5; --panel:#fff; --line:#e8eaed; --text:#1f2329; --text2:#5c6370; --text3:#8f959e;
+    --blue:#1677ff; --blue-soft:#eaf2ff; --green:#0f8a4d; --green-soft:#e8f8f0;
+    --amber:#b26a00; --amber-soft:#fff6e6; --shadow:0 1px 2px rgba(16,24,40,.05),0 12px 32px rgba(16,24,40,.12);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-size:13px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1080px; margin:0 auto; padding:26px 22px 60px; }
+  h1 { font-size:19px; margin:0 0 6px; letter-spacing:-.2px; }
+  .sub { color:var(--text2); line-height:1.75; margin:0 0 14px; }
+  .sub code { background:#fff; border:1px solid var(--line); border-radius:5px; padding:1px 5px; font-size:12px; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:9px; align-items:center; margin:14px 0 12px; }
+  .seg { display:inline-flex; background:#fff; border:1px solid var(--line); border-radius:9px; padding:3px; gap:2px; }
+  .seg button { border:0; background:transparent; color:var(--text2); font:inherit; font-size:12px; font-weight:500;
+    padding:6px 11px; border-radius:7px; cursor:pointer; }
+  .seg button[aria-selected="true"] { background:var(--blue); color:#fff; font-weight:600; }
+  .hint { color:var(--text3); font-size:12px; margin-left:auto; }
+
+  .stage { background:#e6e8ec; border:1px solid #dcdfe4; border-radius:14px; padding:16px; }
+  .surface { background:var(--panel); border-radius:12px; box-shadow:var(--shadow); overflow:hidden; }
+
+  .tabs { display:flex; gap:18px; border-bottom:1px solid var(--line); padding:0 18px; }
+  .tabs .tab { padding:11px 0; font-size:12.5px; color:var(--text2); border-bottom:2px solid transparent; }
+  .tabs .tab.on { color:var(--blue); font-weight:600; border-color:var(--blue); }
+  .head { display:flex; align-items:center; gap:10px; padding:14px 18px 0; }
+  .head h2 { font-size:15px; margin:0; }
+  .pill { font-size:10px; font-weight:700; border-radius:999px; padding:2px 8px; border:1px solid; }
+  .pill.pub { color:var(--green); background:var(--green-soft); border-color:#bfe8d2; }
+  .pill.priv { color:var(--text3); background:#f6f7f9; border-color:var(--line); }
+  .body { padding:14px 18px 18px; display:flex; flex-direction:column; gap:12px; }
+  .card { border:1px solid var(--line); border-radius:12px; padding:13px 14px; }
+  .card h3 { margin:0; font-size:13px; display:flex; align-items:center; gap:6px; }
+  .card h3 .n { font-size:11px; font-weight:400; color:var(--text3); }
+  .card p { margin:5px 0 0; font-size:11.5px; color:var(--text2); line-height:1.7; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .btn { border:1px solid var(--line); background:#fff; color:var(--text2); font:inherit; font-size:11.5px; font-weight:600;
+    padding:5px 10px; border-radius:8px; cursor:pointer; }
+  .btn:hover { border-color:#d5d9df; color:var(--text); }
+  .btn.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
+  .btn.green { background:var(--green); border-color:var(--green); color:#fff; }
+  .tag { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:600; border-radius:6px; padding:2px 7px; }
+  .tag.read { background:#f4f5f7; color:var(--text2); }
+  .tag.edit { background:var(--blue-soft); color:#1f63d6; }
+  .tag.manage { background:var(--amber-soft); color:var(--amber); }
+  .who { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+  .who span { font-size:11px; background:#f6f7f9; border:1px solid var(--line); border-radius:999px; padding:2px 8px; }
+
+  /* 弹窗 */
+  .mask { position:fixed; inset:0; background:rgba(15,23,42,.35); display:grid; place-items:center; z-index:50; }
+  .modal { width:520px; background:#fff; border-radius:14px; box-shadow:var(--shadow); overflow:hidden; }
+  .modal header { padding:14px 16px; border-bottom:1px solid var(--line); font-weight:600; font-size:14px; }
+  .modal .content { padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+  .modal footer { padding:11px 16px; border-top:1px solid var(--line); display:flex; justify-content:flex-end; gap:8px; background:#fbfcfd; }
+  .mode { display:flex; gap:9px; align-items:flex-start; border:1px solid var(--line); border-radius:10px; padding:10px 12px; cursor:pointer; }
+  .mode.on { border-color:#bcd6ff; background:#f7faff; }
+  .dot { width:14px; height:14px; border-radius:50%; border:2px solid #cfd5de; margin-top:2px; flex-shrink:0; }
+  .mode.on .dot { border-color:var(--blue); background:var(--blue); box-shadow:inset 0 0 0 3px #fff; }
+  .mode b { font-size:12.5px; }
+  .mode small { display:block; color:var(--text2); font-size:11px; margin-top:2px; line-height:1.6; }
+  .warn { background:var(--amber-soft); border:1px solid #f3ddb3; color:var(--amber); font-size:11px;
+    border-radius:9px; padding:8px 10px; line-height:1.65; }
+
+  /* 列表方案 */
+  .table { width:100%; border-collapse:collapse; font-size:12px; }
+  .table th { text-align:left; color:var(--text3); font-weight:600; font-size:11px; padding:9px 12px; border-bottom:1px solid var(--line); }
+  .table td { padding:10px 12px; border-bottom:1px solid #f3f4f6; }
+  .table tr:hover td { background:#fafbfc; }
+  .menu { position:absolute; background:#fff; border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow); padding:5px; width:170px; font-size:12px; }
+  .menu div { padding:6px 9px; border-radius:7px; color:var(--text2); }
+  .menu div:hover { background:#f4f6f8; color:var(--text); }
+
+  .matrix { width:100%; border-collapse:collapse; font-size:12px; }
+  .matrix th, .matrix td { padding:8px 10px; border-bottom:1px solid #f1f3f5; text-align:center; }
+  .matrix th:first-child, .matrix td:first-child { text-align:left; color:var(--text2); }
+  .matrix thead th { font-size:11px; color:var(--text3); }
+  .yes { color:var(--green); font-weight:700; }
+  .no { color:#c3c8d0; }
+
+  .notes { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
+  .note { background:#fff; border:1px solid var(--line); border-radius:12px; padding:13px 15px; }
+  .note h4 { margin:0 0 7px; font-size:12.5px; }
+  .note ul { margin:0; padding-left:16px; }
+  .note li { color:var(--text2); font-size:12px; line-height:1.8; }
+  .note code { background:#f6f7f9; border-radius:4px; padding:1px 4px; font-size:11px; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>知识库编辑权限范围 · 让「能看的人」可选是否也能改</h1>
+  <p class="sub">
+    现在的口径分两种：<strong>授权成员恒为只读</strong>（两级写权限都不含他们），而 <strong>TEAM 库的归属部门成员本来就能改文档</strong>
+    （<code>resolve_knowledge_dataset_access</code> 里已经在 <code>content_writable_ids</code> 里）。所以要做的不是「新开一层权限」，而是
+    <strong>把这份编辑权交给库的管理者按库配置</strong>：public 库可选「谁能编辑」，TEAM 库可选「部门成员能不能编辑（默认能）」。
+    策略存进 <code>knowledge_base_metadata.extra_config</code>，按钮前置条件是 <code>element:knowledge:edit</code>。
+  </p>
+
+  <div class="toolbar">
+    <div class="seg" role="tablist" aria-label="方案">
+      <button role="tab" aria-selected="true" data-plan="a">方案 A · 详情页新模块</button>
+      <button role="tab" aria-selected="false" data-plan="b">方案 B · 列表行菜单</button>
+      <button role="tab" aria-selected="false" data-plan="c">方案 C · 独立权限页</button>
+    </div>
+    <div class="seg" role="tablist" aria-label="身份">
+      <button role="tab" aria-selected="true" data-role="admin">管理员</button>
+      <button role="tab" aria-selected="false" data-role="owner">创建者</button>
+      <button role="tab" aria-selected="false" data-role="grantee">被授权者</button>
+    </div>
+    <div class="seg" role="tablist" aria-label="可见范围">
+      <button role="tab" aria-selected="true" data-vis="public">授权可见</button>
+      <button role="tab" aria-selected="false" data-vis="team">TEAM 级</button>
+    </div>
+    <div class="seg" role="tablist" aria-label="全局权限">
+      <button role="tab" aria-selected="true" data-perm="1">有 knowledge:edit</button>
+      <button role="tab" aria-selected="false" data-perm="0">无 knowledge:edit</button>
+    </div>
+    <span class="hint" id="hint"></span>
+  </div>
+
+  <div class="stage" id="stage"></div>
+
+  <div class="notes">
+    <div class="note">
+      <h4>权限矩阵（加完这块之后）</h4>
+      <table class="matrix">
+        <thead><tr><th>能力</th><th>管理员</th><th>归属人</th><th>被授权（只读）</th><th>被授权（可编辑）</th></tr></thead>
+        <tbody>
+          <tr><td>查看 / 检索</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><td>改文档内容（上传/删除/解析）</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td><td class="yes">✓</td></tr>
+          <tr><td>改库设置 / 可见范围</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
+          <tr><td>分配授权成员</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
+          <tr><td>删库 / 转移归属</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
+        </tbody>
+      </table>
+      <p style="color:var(--text2);font-size:11.5px;line-height:1.75;margin:8px 0 0">
+        关键边界：<strong>编辑权 ≠ 管理权</strong>。开了「可编辑」的人能改文档，但不能改这个库归谁看、谁被授权——否则他可以把库改成公开再拉人进来。
+      </p>
+    </div>
+
+    <div class="note">
+      <h4>数据落点</h4>
+      <ul>
+        <li><code>knowledge_base_metadata.extra_config</code> 里加一段命名空间，不动表结构、不加迁移：</li>
+      </ul>
+      <pre style="background:#f6f7f9;border-radius:8px;padding:9px 11px;font-size:11px;line-height:1.7;margin:6px 0 0;overflow:auto">{
+  "edit_policy": {
+    // public 库：readonly（默认）| granted | all_viewers | selected
+    // team  库：readonly | team_members（默认，= 现状）| selected
+    "mode": "readonly",
+    "editors": [                 // mode=selected 时生效，只支持具体用户
+      { "user_id": 178, "user_name": "chenxiaolong", "real_name": "陈小龙" }
+    ],
+    "updated_by": "chenxiaolong",
+    "updated_at": "2026-11-05T17:05:00+08:00"
+  }
+}</pre>
+      <ul style="margin-top:8px">
+        <li>读取侧只认 <code>extra_config.edit_policy</code>，缺失/非法值一律按 <code>readonly</code> 兜底 —— 老库不需要数据回填。</li>
+        <li>判定仍在 <code>resolve_knowledge_dataset_access</code> 一处收口：把策略并进 <code>content_writable_ids</code>，不新增第三套集合。</li>
+      </ul>
+    </div>
+
+    <div class="note">
+      <h4>几个必须先定死的语义</h4>
+      <ul>
+        <li><strong>TEAM 库现在就是「部门成员可编辑」</strong>：判定函数里部门成员（含下级）本来就在 <code>content_writable_ids</code> 里。所以部门级这个开关是<strong>允许收回去</strong>，不是新开权限——默认值必须保持 <code>team_members</code>，上线当天行为才不会变。</li>
+        <li><strong>public 库默认 <code>readonly</code></strong>：被授权成员现状是只读，默认值必须对齐。</li>
+        <li><strong>granted 与 all_viewers 的差别只在「默认库」</strong>：<code>accessible_ids</code> 有两个来源——显式授权与系统默认库。<code>granted</code> 只给前者编辑权，<code>all_viewers</code> 连默认库带来的全员可见者也给。没有这个差别，两档就是同一个东西。</li>
+        <li><strong>不支持角色</strong>：<code>selected</code> 只选具体的人。角色授权是另一条链（<code>granted</code> 已经按角色生效），编辑权不跟角色走，避免「角色成员一变动，编辑权悄悄扩散」。</li>
+        <li><strong>private 库不显示这个设置</strong>，也不支持 <code>selected</code>。</li>
+        <li><strong>不做申请编辑权</strong>：<code>KnowledgeAccessRequest</code> 只处理访问申请，不扩展。</li>
+        <li><strong>收窄立即生效</strong>：判定是每次请求现算的，从 <code>all_viewers</code> 改回 <code>readonly</code> 后，下一个写请求就被拒。</li>
+      </ul>
+    </div>
+
+    <div class="note">
+      <h4>接口改动（最小集）</h4>
+      <ul>
+        <li><code>PUT /api/portal/knowledge/datasets/{id}/edit-policy</code>：body 为 <code>{mode, editors}</code>，后端校验「管理员或归属人」，写进 <code>extra_config</code>，落一条 <code>KnowledgeAuditLog</code>。</li>
+        <li><code>GET</code> 侧直接复用现有数据集详情返回，把 <code>edit_policy</code> 一起带出来，前端不用多打一次请求。</li>
+        <li>写操作端点（上传/删除/解析文档）已经是 <code>require_dataset_write_access</code>，不需要逐个改——判定函数扩展后自动生效。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+const stage = document.getElementById('stage');
+const hint = document.getElementById('hint');
+let plan = 'a', role = 'admin', hasPerm = true, modalOpen = false;
+let vis = 'public';
+// 默认值与现状严格对齐：public 库默认只读，TEAM 库默认部门成员可编辑（这是现在的行为）
+let selectedMode = 'granted';
+const defaultModeFor = (v) => (v === 'team' ? 'team_members' : 'readonly');
+selectedMode = defaultModeFor(vis);
+
+const canManage = () => role === 'admin' || role === 'owner';
+const canSeeEntry = () => hasPerm && canManage();
+
+function render() {
+  hint.textContent = !hasPerm
+    ? '无 element:knowledge:edit：入口不出现（连只读展示也没有）'
+    : !canManage()
+      ? '有 element:knowledge:edit 但不是管理员/归属人：入口同样不出现'
+      : '有权限且是管理员/归属人：入口出现';
+
+  if (plan === 'a') stage.innerHTML = planA();
+  if (plan === 'b') stage.innerHTML = planB();
+  if (plan === 'c') stage.innerHTML = planC();
+
+  document.querySelectorAll('[data-open-modal]').forEach((b) => b.addEventListener('click', () => {
+    modalOpen = true; render();
+  }));
+  if (modalOpen) {
+    const mask = document.createElement('div');
+    mask.className = 'mask';
+    mask.innerHTML = modal();
+    document.body.appendChild(mask);
+    mask.querySelectorAll('[data-mode]').forEach((m) => m.addEventListener('click', () => {
+      selectedMode = m.dataset.mode; mask.remove(); render();
+    }));
+    mask.addEventListener('click', (e) => { if (e.target === mask) { modalOpen = false; mask.remove(); } });
+    const close = mask.querySelector('[data-close]');
+    if (close) close.addEventListener('click', () => { modalOpen = false; mask.remove(); });
+    const save = mask.querySelector('[data-save]');
+    if (save) save.addEventListener('click', () => { modalOpen = false; mask.remove(); });
+  }
+}
+
+function policyRow() {
+  if (!canSeeEntry()) {
+    return `<div class="card">
+      <h3>编辑权限范围</h3>
+      <p style="color:var(--text3)">当前身份看不到这个设置。</p>
+    </div>`;
+  }
+  return `<div class="card" style="border-color:#bcd6ff;background:#f8fbff">
+    <div class="row">
+      <h3>编辑权限范围 <span class="n">谁能改这个库里的文档</span></h3>
+      <button class="btn primary" data-open-modal>设置编辑范围</button>
+    </div>
+    <p>${vis === 'team'
+      ? '当前策略：<span class="tag edit">本部门成员可编辑</span> —— 归属部门（含下级）的成员除了查看，也能上传、删除、解析文档。'
+      : '当前策略：<span class="tag edit">仅被授权的人可编辑</span> —— 在「授权访问」里被显式加入的人除了查看，也能上传、删除、解析文档。'}</p>
+    <p style="color:var(--text3)">管理权不变：改库设置、分配授权、删库仍然只有归属人与管理员能做。</p>
+  </div>`;
+}
+
+function planA() {
+  return `<div class="surface">
+    <div class="head"><h2>产品知识库</h2><span class="pill ${vis === 'team' ? 'priv' : 'pub'}">${vis === 'team' ? 'TEAM 级' : '授权可见'}</span></div>
+    <div class="tabs">
+      <div class="tab">库设置</div><div class="tab">操作日志</div><div class="tab on">引用与授权</div>
+    </div>
+    <div class="body">
+      <div class="card">
+        <h3>智能体引用 <span class="n">2 个</span></h3>
+        <p>这些智能体在「知识库绑定」里选中了本库。</p>
+      </div>
+      <div class="card">
+        <div class="row">
+          <h3>授权访问 <span class="n">3 个</span></h3>
+          <button class="btn green">+ 分配授权成员</button>
+        </div>
+        <p>被授权的人能打开本库、检索里面的内容。</p>
+        <div class="who"><span>张三</span><span>李四</span><span>@数据工程师</span></div>
+      </div>
+      ${policyRow()}
+    </div>
+  </div>`;
+}
+
+function planB() {
+  const rows = [
+    ['产品知识库', '授权可见', '有访问权即可编辑', true],
+    ['客服 FAQ', 'TEAM 级', '只读', false],
+    ['个人笔记', '个人私有', '—', false],
+  ];
+  return `<div class="surface">
+    <div class="head"><h2>知识库</h2></div>
+    <div class="body" style="padding-top:10px">
+      <table class="table">
+        <thead><tr><th>名称</th><th>可见范围</th><th>编辑权限</th><th style="width:60px"></th></tr></thead>
+        <tbody>
+          ${rows.map(([n, v, p, open]) => `<tr>
+            <td>${n}</td>
+            <td><span class="pill ${v === '授权可见' ? 'pub' : 'priv'}">${v}</span></td>
+            <td>${p === '—' ? '<span style="color:#b9bec7">—</span>' : `<span class="tag ${p === '只读' ? 'read' : 'edit'}">${p}</span>`}</td>
+            <td style="position:relative">
+              ${open && canSeeEntry() ? `<button class="btn" data-open-modal>更多 ⋯</button>` : '<span style="color:#ccd1d9">⋯</span>'}
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      <p style="color:var(--text2);font-size:11.5px;line-height:1.75;margin:6px 0 0">
+        列表行只给「编辑权限」徽标 + 「更多」里的快捷入口；完整设置（含成员选择）仍然回到详情页，
+        避免在列表里做二次确认弹窗。
+      </p>
+    </div>
+  </div>`;
+}
+
+function planC() {
+  return `<div class="surface">
+    <div class="head"><h2>知识库权限总览</h2><span class="pill priv">管理员视图</span></div>
+    <div class="body">
+      <table class="table">
+        <thead><tr><th>知识库</th><th>可见范围</th><th>被授权</th><th>编辑范围</th><th>编辑者</th></tr></thead>
+        <tbody>
+          <tr><td>产品知识库</td><td><span class="pill pub">授权可见</span></td><td>3</td><td><span class="tag edit">有访问权即可编辑</span></td><td>张三、李四、@数据工程师</td></tr>
+          <tr><td>客服 FAQ</td><td><span class="pill priv">TEAM 级</span></td><td>—</td><td><span class="tag read">只读</span></td><td>—</td></tr>
+          <tr><td>合同库</td><td><span class="pill pub">授权可见</span></td><td>8</td><td><span class="tag edit">指定成员</span></td><td>王五</td></tr>
+        </tbody>
+      </table>
+      <p style="color:var(--text2);font-size:11.5px;line-height:1.75;margin:6px 0 0">
+        适合「我要一次性看所有库谁有编辑权」的审计场景，但不解决单库配置 —— 如果只做一个方案，不建议从这个开始。
+      </p>
+    </div>
+  </div>`;
+}
+
+function modal() {
+  const modes = vis === 'team'
+    ? [
+        ['readonly', '只读', '部门成员只能查看和检索。只有归属人与管理员能改文档。'],
+        ['team_members', '本部门成员可编辑（当前默认）', '归属部门及其下级部门的成员可以上传、删除、解析文档。拿不到库设置、授权、删库。'],
+        ['selected', '指定成员可编辑', '只有下面选中的人可以编辑；部门成员回到只读。'],
+      ]
+    : [
+        ['readonly', '只读（当前默认）', '被授权的人只能查看和检索，不能上传或删除文档。'],
+        ['granted', '仅被授权的人可编辑', '在「授权访问」里被显式加进来的人可以编辑。不包含「系统默认库」带来的全员可见者。'],
+        ['all_viewers', '所有可见者都可编辑', '凡是能打开本库的人都能编辑，含系统默认库带来的全员可见者。可见范围越宽，能改的人越多。'],
+        ['selected', '指定成员可编辑', '只有下面选中的人可以编辑，其他人仍然只读。'],
+      ];
+  const mode = (key, title, desc) => `
+    <div class="mode ${selectedMode === key ? 'on' : ''}" data-mode="${key}">
+      <span class="dot"></span>
+      <div><b>${title}</b><small>${desc}</small></div>
+    </div>`;
+  return `<div class="modal">
+    <header>设置编辑权限范围${vis === 'team' ? ' · TEAM 级' : ' · 授权可见'}</header>
+    <div class="content">
+      <div style="font-size:11.5px;color:var(--text2);line-height:1.7">
+        控制<strong>能打开这个库的人</strong>是否也能改里面的文档。改库设置、分配授权、删库仍然只有归属人与管理员能做。
+      </div>
+      ${modes.map(([k, t, d]) => mode(k, t, d)).join('')}
+      <div class="${selectedMode === 'selected' ? '' : 'hidden'}" style="border:1px dashed var(--line);border-radius:10px;padding:10px 12px">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:6px">可编辑的成员（只支持选具体的人，不支持角色）</div>
+        <div class="who" style="margin:0 0 8px"><span>张三</span><span>李四</span></div>
+        <button class="btn">+ 添加成员</button>
+      </div>
+      <div class="warn">${vis === 'team'
+        ? '部门成员现在本来就能改文档（含下级部门）。选「只读」是把这层权限收回去，不是新开权限。'
+        : '开启后，能改文档的人会跟着可见范围走。可见范围是「授权可见」时，只影响被授权的人；如果这个库还被配进了系统默认库，选「所有可见者」等于对全平台开放编辑。'}</div>
+    </div>
+    <footer>
+      <button class="btn" data-close>取消</button>
+      <button class="btn primary" data-save>保存</button>
+    </footer>
+  </div>`;
+}
+
+document.querySelectorAll('[data-plan]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-plan]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+  plan = b.dataset.plan; render();
+}));
+document.querySelectorAll('[data-role]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-role]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+  role = b.dataset.role; render();
+}));
+document.querySelectorAll('[data-vis]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-vis]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+  vis = b.dataset.vis; selectedMode = defaultModeFor(vis); render();
+}));
+document.querySelectorAll('[data-perm]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-perm]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+  hasPerm = b.dataset.perm === '1'; render();
+}));
+
+render();
+</script>
+</body>
+</html>

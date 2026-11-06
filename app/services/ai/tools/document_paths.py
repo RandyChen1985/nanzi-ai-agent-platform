@@ -138,13 +138,19 @@ async def resolve_document_input_path(
     conversation_id: str | None,
     allowed_extensions: Iterable[str],
     user_name: str | None = None,
+    max_bytes: int = MAX_DOCUMENT_BYTES,
 ) -> Path:
-    """Resolve one existing document, limited to this request's attachments or workspace."""
+    """Resolve one existing document, limited to this request's attachments or workspace.
+
+    ``max_bytes`` 默认 20MB（Office 工具的解析内存上限）。知识库上传允许 256MB，
+    由调用方显式传自己的上限——上限是业务口径，不该由「路径校验」替他决定。
+    """
     candidate = _normalize_platform_path(path)
     if not candidate.is_file():
         raise DocumentPathError("文件不存在或不可访问")
-    if candidate.stat().st_size > MAX_DOCUMENT_BYTES:
-        raise DocumentPathError("文件大小超出 20MB 限制")
+    if candidate.stat().st_size > max_bytes:
+        limit_mb = max(1, max_bytes // (1024 * 1024))
+        raise DocumentPathError(f"文件大小超出 {limit_mb}MB 限制")
     _validate_extension(candidate, allowed_extensions)
 
     allowed_resolved = {_normalize_platform_path(item) for item in allowed_attachment_paths}

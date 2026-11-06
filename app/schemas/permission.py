@@ -82,7 +82,23 @@ class UserPermissionsResponse(BaseModel):
             "用户级记录，导致角色侧取消后用户仍被禁（黑名单收不回来）。"
         ),
     )
+    permissions_version: Optional[str] = Field(
+        default=None,
+        description=(
+            "当前授权行的版本指纹（条数 + 最大 id + 最大 updated_at）。PUT 时带回，"
+            "用于发现「保存期间别人改过权限」，避免整份重建把并发写入覆盖掉。"
+        ),
+    )
 
 class PermissionUpdate(PermissionSet):
-    """Payload for updating user permissions"""
-    pass
+    """Payload for updating user permissions
+
+    ``permissions_version`` 是乐观锁：GET 时拿到、PUT 时带回。服务端比对不符就
+    返回 409，而不是照旧"整份删+重建"——那种写法会把并发期间别处新增的授权
+    （知识库页面的分配、访问申请审批通过）一起删掉，且审计里看不出来。
+    留空表示不校验（兼容旧前端与脚本调用）。
+    """
+    permissions_version: Optional[str] = Field(
+        default=None,
+        description="提交前读取到的权限版本；与当前版本不符则拒绝写入",
+    )

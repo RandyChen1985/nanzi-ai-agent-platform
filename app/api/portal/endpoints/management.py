@@ -14,7 +14,7 @@ from app.models.user import (
     User,
 )
 from app.schemas.permission import UserPermissionsResponse, PermissionUpdate
-from app.services.permission_service import PermissionService
+from app.services.permission_service import PermissionService, PermissionVersionConflict
 from app.models.agent import AIAgent
 from app.models.permission import ResourcePermission, Role, UserRoleRelation
 from app.models.wechat_binding import WechatBinding
@@ -398,7 +398,8 @@ async def get_user_permissions(
         raise HTTPException(status_code=404, detail="User not found")
         
     service = PermissionService(db)
-    response = await service.get_user_permissions(user_id)
+    # 权限管理页要把版本带回给前端做乐观锁，其它调用方（登录/刷新）不需要
+    response = await service.get_user_permissions(user_id, with_version=True)
     response.permissions.apis = normalize_api_permission_ids(
         request.app,
         response.permissions.apis or [],
@@ -432,8 +433,21 @@ async def update_user_permissions(
     permissions.apis = normalize_api_permission_ids(request.app, permissions.apis or [])
 
     service = PermissionService(db)
-    await service.update_user_permissions(user_id, permissions)
-    return {"message": "Permissions updated successfully"}
+    try:
+        await service.update_user_permissions(user_id, permissions)
+    except PermissionVersionConflict as err:
+        # 409 而不是 200：这次提交的内容基于过期快照，照写会删掉并发期间新增的
+        # 授权（例如知识库页面的分配、访问申请审批通过）。让管理员刷新后重做。
+        raise HTTPException(
+            status_code=409,
+            detail="该用户的权限刚被其他人修改，已取消本次保存。请关闭后重新打开以加载最新配置。",
+        ) from err
+    # 带回新版本：弹窗可能不关（例如随后的资料保存失败），此时若前端还拿着旧版本，
+    # 下一次点保存会被自己的上一次提交判成"已被他人修改"。
+    return {
+        "message": "Permissions updated successfully",
+        "permissions_version": await service.get_permission_version(user_id=user_id),
+    }
 
 @router.get("/users")
 async def list_users(

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, computed } from "vue";
 import SharedLinksPanel from "@/components/SharedLinksPanel.vue";
+import ConversationFilterPanel from "@/components/chat/ConversationFilterPanel.vue";
 import type {
   AgentOption,
   ChatHistoryFilters,
@@ -125,26 +126,6 @@ onUnmounted(() => {
 const filterPanelOpen = ref(false);
 const filterPanelRef = ref<HTMLElement | null>(null);
 const filterButtonRef = ref<HTMLElement | null>(null);
-
-const scopeOptions: Array<{ value: ChatHistoryFilters["scope"]; label: string }> = [
-  { value: "all", label: "全部" },
-  { value: "task", label: "任务会话" },
-  { value: "chat", label: "普通对话" },
-];
-
-const statusOptions: Array<{ value: ChatHistoryFilters["status"]; label: string }> = [
-  { value: "", label: "全部" },
-  { value: "success", label: "成功" },
-  { value: "failed", label: "失败" },
-];
-
-const timeOptions: Array<{ value: ChatHistoryFilters["timeRange"]; label: string }> = [
-  { value: "", label: "全部" },
-  { value: "today", label: "今天" },
-  { value: "7d", label: "近 7 天" },
-  { value: "30d", label: "近 30 天" },
-  { value: "custom", label: "自定义" },
-];
 
 const currentFilters = computed<ChatHistoryFilters>(() => ({
   scope: props.filters?.scope ?? "all",
@@ -541,110 +522,20 @@ defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
           </button>
         </div>
 
-        <!-- 筛选面板：桌面端浮层，移动端内联展开 -->
+        <!-- 筛选面板：桌面端浮层，移动端内联展开。内容与用户模式侧栏共用同一组件 -->
         <div
           v-if="filterPanelOpen"
           ref="filterPanelRef"
-          class="rounded-2xl border border-gray-200/80 dark:border-gray-700/80 bg-white dark:bg-gray-900 shadow-lg p-3 space-y-3 z-30"
+          class="z-30 rounded-2xl border border-gray-200/80 bg-white p-3 shadow-lg dark:border-gray-700/80 dark:bg-gray-900"
           :class="isMobile ? 'mt-2' : 'absolute left-3 right-3 top-full mt-1'"
         >
-          <div>
-            <div class="text-[10px] font-bold text-gray-400 mb-1.5">会话来源</div>
-            <div class="grid grid-cols-3 gap-1">
-              <button
-                v-for="opt in scopeOptions"
-                :key="opt.value"
-                type="button"
-                @click="emitFilters({ scope: opt.value })"
-                class="px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors border"
-                :class="
-                  currentFilters.scope === opt.value
-                    ? 'bg-primary/10 text-primary border-primary/30'
-                    : 'text-gray-500 dark:text-gray-400 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'
-                "
-              >
-                {{ opt.label }}
-              </button>
-            </div>
-          </div>
-
-          <div v-if="showAgentFilter">
-            <div class="text-[10px] font-bold text-gray-400 mb-1.5">智能体</div>
-            <select
-              :value="currentFilters.agentId"
-              @change="emitFilters({ agentId: ($event.target as HTMLSelectElement).value })"
-              class="w-full px-2 py-1 text-[11px] bg-gray-50/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-700 dark:text-gray-200"
-            >
-              <option value="">全部智能体</option>
-              <option v-for="agent in availableAgents" :key="agent.id" :value="agent.id">
-                {{ agent.display_name }}
-              </option>
-            </select>
-          </div>
-
-          <div>
-            <div class="text-[10px] font-bold text-gray-400 mb-1.5">执行状态</div>
-            <div class="grid grid-cols-3 gap-1">
-              <button
-                v-for="opt in statusOptions"
-                :key="opt.value"
-                type="button"
-                @click="emitFilters({ status: opt.value })"
-                class="px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors border"
-                :class="
-                  currentFilters.status === opt.value
-                    ? 'bg-primary/10 text-primary border-primary/30'
-                    : 'text-gray-500 dark:text-gray-400 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'
-                "
-              >
-                {{ opt.label }}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <div class="text-[10px] font-bold text-gray-400 mb-1.5">时间范围</div>
-            <div class="grid grid-cols-3 gap-1">
-              <button
-                v-for="opt in timeOptions"
-                :key="opt.value"
-                type="button"
-                @click="emitFilters({ timeRange: opt.value })"
-                class="px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors border"
-                :class="
-                  currentFilters.timeRange === opt.value
-                    ? 'bg-primary/10 text-primary border-primary/30'
-                    : 'text-gray-500 dark:text-gray-400 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'
-                "
-              >
-                {{ opt.label }}
-              </button>
-            </div>
-            <div v-if="currentFilters.timeRange === 'custom'" class="mt-2 grid grid-cols-2 gap-1.5">
-              <input
-                type="date"
-                :value="currentFilters.startDate"
-                @change="emitFilters({ startDate: ($event.target as HTMLInputElement).value })"
-                class="px-2 py-1 text-[11px] bg-gray-50/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 rounded-lg text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/20"
-              />
-              <input
-                type="date"
-                :value="currentFilters.endDate"
-                @change="emitFilters({ endDate: ($event.target as HTMLInputElement).value })"
-                class="px-2 py-1 text-[11px] bg-gray-50/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 rounded-lg text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
-          </div>
-
-          <div class="pt-1 border-t border-gray-100 dark:border-gray-800 flex justify-end">
-            <button
-              type="button"
-              @click="resetFilters"
-              class="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-            >
-              重置筛选
-            </button>
-          </div>
+          <ConversationFilterPanel
+            :filters="currentFilters"
+            :agents="availableAgents"
+            :hide-agent="Boolean(pinnedAgentName) || !showAgentFilter"
+            @update:filters="emitFilters"
+            @reset="resetFilters"
+          />
         </div>
       </div>
 

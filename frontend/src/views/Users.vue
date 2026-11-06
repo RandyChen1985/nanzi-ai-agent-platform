@@ -3761,6 +3761,12 @@ const resourceTabCount = (type: string) =>
 const permissionSubjectRole = ref("");
 /** 权限是否已成功加载：没加载成功就禁止提交，否则一次网络抖动会把真实配置整体清掉。 */
 const permissionsLoaded = ref(false);
+/**
+ * 这次回显对应的权限版本（后端按「行数 + 最大 id + 最大 updated_at」算的指纹）。
+ * 保存时原样带回：期间若有人在知识库页面给该用户授过权、或有申请被审批通过，
+ * 版本会变，后端拒绝这次全量重建返回 409 —— 否则那些新增授权会被静默删掉。
+ */
+const permissionsVersion = ref("");
 /** 权限树来自接口（菜单已入库）；加载失败时禁止提交，避免空树把用户权限清空 */
 const permissionTree = ref<PermissionNode[]>([]);
 
@@ -3797,6 +3803,8 @@ const resetPermissionBuffers = () => {
   forbiddenCommandsText.value = "";
   permissionsLoaded.value = false;
   permissionsLoadError.value = "";
+  // 版本也属于「这个用户」：留着上一个用户的指纹，下一次保存会以错误的基准做校验
+  permissionsVersion.value = "";
   // 智能体级「功能限定」的计数与弹框目标也属于**这个用户**：不复位会让上一个用户的
   // 角标残留（获取逻辑对已有键会跳过请求，于是直接显示别人的数字）。
   agentRestrictionCounts.value = {};
@@ -4421,6 +4429,9 @@ const fetchUserPermissions = async (userId: number) => {
     // 回显取「直配」，并集（permissions）只用来算角色来源项。
     // 直接拿并集回显再整份 PUT，会把角色级禁用固化成用户级记录：角色页之后取消禁用，
     // 该用户仍被禁；反方向在用户页取消角色级禁用也无效，却提示成功。
+    permissionsVersion.value = String(
+      (response.data as any)?.permissions_version || "",
+    );
     const state = resolveUserPermissionEditState(response.data);
     // 只剔除私有库（授权对它无效）；失联库保留勾选状态，
     // 让用户一眼看到「这个库我之前授权过，现在失联了」
@@ -4492,18 +4503,23 @@ const saveUser = async () => {
           forbiddenCommandsText.value,
         );
         // payload 只由直配缓冲构建：角色来源的禁用项没有任何进 payload 的通道。
-        const permissionPayload = buildUserPermissionPayload(
-          permissionData.value,
-          {
+        const permissionPayload = {
+          ...buildUserPermissionPayload(permissionData.value, {
             // 私有库授权不生效：别再把它写回数据库。
             // 失联库的授权必须原样提交，否则一次保存就把它丢了。
             excludedDatasetIds: Array.from(collectPrivateDatasetIds()),
-          },
-        );
+          }),
+          permissions_version: permissionsVersion.value || undefined,
+        };
         try {
-          await axios.put(
+          const permRes = await axios.put(
             `/api/portal/management/users/${editingUserId.value}/permissions`,
             permissionPayload,
+          );
+          // 采纳服务端回的新版本：弹窗此时可能不关（后面的资料保存可能失败），
+          // 继续用旧版本会让下一次保存被自己的这次提交判成冲突。
+          permissionsVersion.value = String(
+            (permRes.data as any)?.permissions_version || "",
           );
         } catch (permError: any) {
           // 权限没保存成功就不动资料，避免「提示失败但资料已改」。
@@ -4511,6 +4527,14 @@ const saveUser = async () => {
             permError?.response?.data,
             "操作失败",
           );
+          if (permError?.response?.status === 409) {
+            // 版本过期：这次提交基于旧快照，后端拒绝写入以免删掉并发新增的授权。
+            // 直接把最新配置拉回来，管理员看到的就是"当前真实状态"，改完再存即可。
+            error.value = reason;
+            showToast(reason, "warning");
+            await fetchUserPermissions(editingUserId.value);
+            return;
+          }
           error.value = reason;
           showToast(`权限保存失败：${reason}`, "error");
           return;

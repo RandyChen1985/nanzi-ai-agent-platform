@@ -15,7 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import get_db_session
 from app.services.config_service import ConfigService
 from app.core.dependencies import require_admin, get_current_user, require_permission
-from app.services.permission_service import VISIBILITY_PRIVATE, PermissionService
+from app.services.permission_service import (
+    ALLOWED_EDIT_POLICY_MODES,
+    EDIT_POLICY_SELECTED,
+    VISIBILITY_PRIVATE,
+    PermissionService,
+    normalize_edit_policy_mode,
+    normalize_knowledge_visibility,
+    resolve_edit_policy_from_config,
+)
 from app.services.ai.ragflow_client import RagFlowClient, clear_dataset_list_cache
 from app.services.knowledge_base_service import KnowledgeBaseMetadataService
 from app.services.knowledge_access_request_service import (
@@ -144,7 +152,25 @@ class UpdateDatasetMetadataRequest(BaseModel):
     visibility: Optional[str] = None
     tags: Optional[List[str]] = None
     notes: Optional[str] = None
+    #: 整份覆盖 ``extra_config``。**保留仅为兼容旧调用方**——不要在新代码里用它：
+    #: 调用方手里往往只有打开页面时的快照，整份回写会把并发方改过的
+    #: ``folder_structure`` 悄悄冲掉（同一个库两个人操作 = lost update）。
+    #: 需要改快捷提问请用下面的 ``custom_questions``。
     extra_config: Optional[Dict[str, Any]] = None
+    #: 只更新 ``extra_config.custom_questions``，其余键保持数据库里的现值。
+    custom_questions: Optional[List[Dict[str, Any]]] = None
+
+
+class UpdateEditPolicyRequest(BaseModel):
+    """知识库编辑权限范围。
+
+    ``mode`` 的合法值取决于库的可见范围（见 permission_service 的
+    ALLOWED_EDIT_POLICY_MODES）：public 支持只读/被授权者可编辑/所有可见者/指定成员，
+    team 支持只读/部门成员/指定成员。``editors`` 只在 selected 时生效，且只认具体用户。
+    """
+
+    mode: str
+    editors: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class DeleteDatasetsRequest(BaseModel):
@@ -313,6 +339,19 @@ def _apply_knowledge_permission_flags(
 ) -> None:
     for item in items:
         ds_id = str(item.get("ragflow_dataset_id") or item.get("id") or "")
+        # 编辑策略随列表一起返回：前端不必为每个库单独请求一次，也能直接显示
+        # 「这个库谁能改文档」。缺失/非法值由 resolve_edit_policy_from_config 兜底。
+        #
+        # 注意取值路径：merge_with_ragflow 把本地元数据整体挂在 local_metadata 下
+        # （不平铺 extra_config）。早先这里直接读 item["extra_config"] 永远是 None，
+        # 于是列表永远显示默认策略 —— 表现为「保存成功了，刷新又还原」。
+        local_meta = item.get("local_metadata")
+        extra_config = item.get("extra_config")
+        if extra_config is None and isinstance(local_meta, dict):
+            extra_config = local_meta.get("extra_config")
+        item["edit_policy"] = resolve_edit_policy_from_config(
+            extra_config, item.get("visibility")
+        )
         if access.get("is_admin"):
             item["can_write"] = True
             item["can_manage"] = True
@@ -1503,6 +1542,19 @@ async def update_dataset_metadata(
     )
     if not record:
         raise HTTPException(status_code=404, detail="Knowledge base metadata not found")
+
+    # 快捷提问走键级写：``extra_config`` 里还躺着 folder_structure，而保存元数据的人
+    # 手里只有打开弹窗时的快照——整份回写会把别人刚做的目录调整一并回滚。
+    # 判断依据是「请求体里真的出现了这个字段」，不是「值非空」：清空快捷提问也是合法操作。
+    if "custom_questions" in payload.model_fields_set:
+        updated = await metadata_service.update_extra_config_key(
+            dataset_id,
+            key="custom_questions",
+            value=payload.custom_questions or [],
+            user_name=user.get("user_name"),
+        )
+        if updated:
+            record = updated
     # 改可见范围会直接改变「谁能访问」：从 public 改 private 是撤权，反向是扩权，
     # 都必须留痕，否则事后无法解释"某个库怎么突然多/少了一批访问者"。
     clear_dataset_list_cache()
@@ -1514,6 +1566,159 @@ async def update_dataset_metadata(
     }, started_at=started)
     return {"code": 0, "data": metadata_service._serialize_metadata(record)}
 
+
+
+@router.get("/datasets/{dataset_id}/edit-policy/candidates")
+async def get_edit_policy_candidates(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """「指定成员可编辑」的候选用户。
+
+    不能复用 ``/api/portal/metadata/candidates``：那个接口只认
+    ``element:metadata:edit`` 或 ``element:user:edit``，而能配置编辑策略的人只需要
+    ``element:knowledge:edit`` + 库的管理权。复用会让这类管理员打开弹窗时看到
+    「没有可添加的用户」，看起来像功能坏了。
+    """
+    await require_element_permission(user, db, "element:knowledge:edit")
+    await require_dataset_write_access(user, db, [dataset_id])
+
+    from app.models.department import DEPARTMENT_STATUS_ENABLED, Department, UserDepartment
+    from app.models.user import User
+    from sqlalchemy import select
+
+    user_rows = (
+        await db.execute(
+            select(User.id, User.user_name, User.real_name).where(User.status == 1)
+        )
+    ).all()
+    dept_rows = (
+        await db.execute(
+            select(UserDepartment.user_id, Department.id, Department.name)
+            .join(Department, Department.id == UserDepartment.dept_id)
+            .where(Department.status == DEPARTMENT_STATUS_ENABLED)
+            .order_by(Department.path)
+        )
+    ).all()
+    depts_by_user: Dict[int, List[Dict[str, Any]]] = {}
+    for uid, dept_id, dept_name in dept_rows:
+        depts_by_user.setdefault(int(uid), []).append(
+            {"id": int(dept_id), "name": str(dept_name or "")}
+        )
+    return {
+        "code": 0,
+        "data": {
+            "users": [
+                {
+                    "id": row.id,
+                    "user_name": row.user_name,
+                    "real_name": row.real_name,
+                    "departments": depts_by_user.get(int(row.id), []),
+                }
+                for row in user_rows
+            ]
+        },
+    }
+
+
+@router.put("/datasets/{dataset_id}/edit-policy")
+async def update_dataset_edit_policy(
+    dataset_id: str,
+    payload: UpdateEditPolicyRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """设置「能打开这个库的人是否也能改文档」。
+
+    权限：全局 ``element:knowledge:edit`` + 管理级写权限（管理员或归属人）。
+    编辑权 ≠ 管理权：拿到编辑权的人改不了可见范围、授权名单，也删不了库。
+
+    策略写进 ``extra_config.edit_policy``（只替换这一个子键），并由判定函数
+    ``resolve_knowledge_dataset_access`` 在每次请求时现算，所以收窄策略立即生效。
+    """
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:edit")
+    await require_dataset_write_access(user, db, [dataset_id])
+
+    metadata_service = KnowledgeBaseMetadataService(db)
+    record = await metadata_service.get_by_dataset_id(dataset_id)
+    if not record or record.status == "deleted":
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    visibility = normalize_knowledge_visibility(record.visibility)
+    if visibility == VISIBILITY_PRIVATE:
+        raise HTTPException(
+            status_code=400,
+            detail="个人私有库只有归属人可见，不支持设置编辑权限范围",
+        )
+
+    requested_mode = str(payload.mode or "").strip().lower()
+    allowed = ALLOWED_EDIT_POLICY_MODES.get(visibility, ())
+    if requested_mode not in allowed:
+        raise HTTPException(
+            status_code=422,
+            detail="该可见范围不支持的编辑策略: %s（可选: %s）"
+            % (requested_mode or "空", " / ".join(allowed)),
+        )
+
+    editors: List[Dict[str, Any]] = []
+    if requested_mode == EDIT_POLICY_SELECTED:
+        # 只认具体用户：类型不是 user 或缺少 ID 的一律拒掉，别静默丢弃 ——
+        # 前端以为存上了「可编辑成员」，实际一个都没存是最糟的结果。
+        seen: set[int] = set()
+        for item in payload.editors:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "user").strip().lower() != "user":
+                raise HTTPException(status_code=422, detail="编辑成员只支持具体用户，不支持角色")
+            try:
+                user_id = int(item.get("user_id"))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail="编辑成员缺少有效的 user_id")
+            if user_id in seen:
+                continue
+            seen.add(user_id)
+            editors.append(
+                {
+                    "type": "user",
+                    "user_id": user_id,
+                    "user_name": str(item.get("user_name") or ""),
+                    "real_name": str(item.get("real_name") or ""),
+                }
+            )
+        if not editors:
+            raise HTTPException(status_code=422, detail="指定成员可编辑时至少要选一个成员")
+
+    policy = {
+        "mode": requested_mode,
+        "editors": editors,
+        "updated_by": str(user.get("user_name") or ""),
+        "updated_at": datetime.datetime.now().isoformat(),
+    }
+    await metadata_service.update_extra_config_key(
+        dataset_id,
+        key="edit_policy",
+        value=policy,
+        user_name=user.get("user_name"),
+    )
+    clear_dataset_list_cache()
+
+    await record_knowledge_audit(
+        request,
+        user,
+        "datasets:update",
+        200,
+        {
+            "action": "update_edit_policy",
+            "dataset_id": dataset_id,
+            "mode": requested_mode,
+            "editors": [item["user_id"] for item in editors],
+        },
+        started_at=started,
+    )
+    return {"code": 0, "data": {"edit_policy": resolve_edit_policy_from_config({"edit_policy": policy}, visibility)}}
 
 @router.put("/datasets/{dataset_id}/folder-structure")
 async def update_folder_structure(

@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import axios from '../utils/axios'
 import Modal from '../components/Modal.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import KnowledgeEditPolicyDialog from '../components/knowledge/KnowledgeEditPolicyDialog.vue'
 import KnowledgeFlowGuideBanner from '../components/knowledge/KnowledgeFlowGuideBanner.vue'
 import DocWorkspace from '../components/knowledge/DocWorkspace.vue'
 import ImageToMarkdownUploader from '../components/knowledge/ImageToMarkdownUploader.vue'
@@ -14,7 +15,6 @@ import { useToast } from '../composables/useToast'
 import { ragflowApi } from '../api/ragflow'
 import { useUser } from '../composables/useUser'
 import { formatDate } from '../utils/date'
-import { copyToClipboard as copyText } from '../utils/clipboard'
 import DocumentViewer from '@/components/embed/DocumentViewer.vue'
 import {
   canPreviewWithDocumentViewer,
@@ -316,8 +316,7 @@ const form = ref({
   ownerText: '',
   visibility: 'private',
   tags: [] as string[],
-  notes: '',
-  extraConfigText: '{}'
+  notes: ''
 })
 
 const canCreate = computed(() => hasPermission('element:knowledge:create'))
@@ -343,11 +342,6 @@ const detailTab = ref<'settings' | 'audit' | 'references'>('settings')
 // 右侧抽屉：文档详情与库信息共用一个容器，避免主区被挤来挤去
 const drawerOpen = ref(false)
 const drawerMode = ref<'doc' | 'lib'>('doc')
-// 「高级设置」默认收起：绝大多数人不需要碰 JSON，展开就先把代价讲清楚
-const advancedConfigOpen = ref(false)
-const createAdvancedConfigOpen = ref(false)
-// 详情页底部那块只读 JSON 同理，默认收起
-const detailConfigOpen = ref(false)
 const auditLogs = ref<any[]>([])
 const auditTotal = ref(0)
 const auditPage = ref(1)
@@ -550,7 +544,6 @@ watch(
     auditTotal.value = 0
     auditPage.value = 1
     auditAction.value = ''
-    detailConfigOpen.value = false
     agentRefs.value = []
     void loadDatasetQuota()
     if (detailTab.value === 'audit') loadAuditLogs(true)
@@ -823,15 +816,6 @@ const apiData = (response: any) => response?.data?.data ?? response?.data ?? []
 const normalizeTags = (text: string) =>
   text.split(/[,，\n]/).map(t => t.trim()).filter(Boolean)
 
-const parseExtraConfig = () => {
-  if (!form.value.extraConfigText.trim()) return {}
-  try {
-    return JSON.parse(form.value.extraConfigText)
-  } catch {
-    throw new Error('扩展配置必须是合法 JSON')
-  }
-}
-
 const resetForm = () => {
   form.value = {
     name: '',
@@ -841,8 +825,7 @@ const resetForm = () => {
     ownerText: '',
     visibility: 'private',
     tags: [] as string[],
-    notes: '',
-    extraConfigText: '{}'
+    notes: ''
   }
 }
 
@@ -886,11 +869,8 @@ const openEdit = (dataset: KnowledgeBase) => {
     // 名称保存就把它静默改成 private，其他被授权的人瞬间失去访问。
     visibility: visibilityOf(dataset),
     tags: [...(dataset.tags || [])],
-    notes: dataset.notes || '',
-    extraConfigText: JSON.stringify(dataset.local_metadata?.extra_config || {}, null, 2)
+    notes: dataset.notes || ''
   }
-
-  advancedConfigOpen.value = false
 
   customQuestions.value = []
   const localExtra = dataset.local_metadata?.extra_config || {}
@@ -2089,8 +2069,7 @@ const createDataset = async () => {
       owner_dept_id: form.value.ownerDeptId || null,
       visibility: form.value.visibility,
       tags: form.value.tags,
-      notes: form.value.notes,
-      extra_config: parseExtraConfig()
+      notes: form.value.notes
     })
     showToast('知识库创建成功', 'success')
     showCreateModal.value = false
@@ -2127,8 +2106,11 @@ const updateMetadata = async () => {
   if (savingMetadata.value) return
   savingMetadata.value = true
   try {
-    const extraConfig = parseExtraConfig()
-    extraConfig.custom_questions = customQuestions.value.filter(q => q.label.trim() && q.query.trim())
+    // 只提交 custom_questions 这一个键。extra_config 里还躺着 folder_structure，
+    // 而这里手里只有打开弹窗时的快照 —— 整份回写会把别人（或自己另一个标签页）
+    // 刚做的目录调整一起回滚，就是典型的 lost update。
+    const customQuestionsPayload = customQuestions.value
+      .filter(q => q.label.trim() && q.query.trim())
 
     const payload: Record<string, unknown> = {
       name: form.value.name,
@@ -2138,7 +2120,7 @@ const updateMetadata = async () => {
       visibility: form.value.visibility,
       tags: form.value.tags,
       notes: form.value.notes,
-      extra_config: extraConfig
+      custom_questions: customQuestionsPayload
     }
     // 未关联部门时，历史自由文本由前端决定保留还是清除；选了部门则由后端按部门名回填
     if (!form.value.ownerDeptId) {
@@ -2756,15 +2738,6 @@ const parseSingleDocument = async (docId: string) => {
   }
 }
 
-const copyToClipboard = async (text: string) => {
-  const ok = await copyText(text)
-  if (ok) {
-    showToast('已复制到剪贴板', 'success')
-  } else {
-    showToast('复制失败，请手动复制', 'error')
-  }
-}
-
 const formatTime = (value?: string) => value ? new Date(value).toLocaleString() : '-'
 const formatSize = (value?: number) => {
   if (!value) return '-'
@@ -2954,6 +2927,88 @@ const bulkDeleteDocuments = async () => {
 /** 当前详情页的库是否可写：只读成员只能看内容，不能改元数据/上传/授权 */
 const selectedDatasetWritable = computed(() => canManageDataset(selectedDataset.value))
 
+/** 我能不能改这个库的文档（数据层）：与「编辑权限范围」策略无关，是策略算到我头上的结果 */
+const selectedDatasetContentWritable = computed(
+  () => Boolean(selectedDataset.value) && !isReadOnlyDataset(selectedDataset.value),
+)
+
+/**
+ * 头部「可编辑 / 只读」标签的悬浮说明。
+ *
+ * 只读有两种完全不同的原因，混成一句「无权限」会让人排查错方向：
+ * ① 数据层没给我写权限（编辑策略/授权没覆盖到我）；
+ * ② 数据层给了，但我的角色没有上传/删除/解析这些功能权限。
+ */
+const contentWritableHint = computed(() => {
+  if (!selectedDataset.value) return ''
+  if (selectedDatasetContentWritable.value) {
+    return `你可以编辑「${selectedDataset.value.platform_name || selectedDataset.value.name || ''}」的文档（上传 / 删除 / 解析）`
+  }
+  if (!canUpload.value && !canDeleteDocument.value && !canParse.value) {
+    return '只读：当前角色没有知识库的上传/删除/解析功能权限，即使库允许编辑也无法操作'
+  }
+  return '只读：本库的编辑权限范围没有覆盖到你，请联系库的归属人或管理员'
+})
+
+/* ---------------- 编辑权限范围（谁能改库里的文档） ---------------- */
+const showEditPolicyDialog = ref(false)
+const editPolicyTarget = ref<any>(null)
+
+/**
+ * 入口可见性：全局 element:knowledge:edit 是前置，再叠加管理级权限
+ * （管理员或归属人）。两者缺一，入口整个不渲染 —— 置灰会让人以为「再找找就能点」。
+ */
+const canConfigureEditPolicy = (dataset: any) => canEdit.value && canManageDataset(dataset)
+
+const EDIT_POLICY_LABELS: Record<string, string> = {
+  readonly: '只读',
+  granted: '被授权者可编辑',
+  all_viewers: '所有可见者可编辑',
+  team_members: '部门成员可编辑',
+  selected: '指定成员可编辑',
+}
+
+/** 当前库的编辑策略；老库没有这个字段时按可见范围的默认值显示 */
+const editPolicyOf = (dataset: any) => {
+  const policy = dataset?.edit_policy || {}
+  const visibility = visibilityOf(dataset)
+  if (visibility === 'private') return { mode: '', editors: [] as any[] }
+  const fallback = visibility === 'team' ? 'team_members' : 'readonly'
+  return {
+    mode: String(policy.mode || fallback),
+    editors: Array.isArray(policy.editors) ? policy.editors : [],
+  }
+}
+
+const editPolicyLabel = (dataset: any) => {
+  const mode = editPolicyOf(dataset).mode
+  return mode ? EDIT_POLICY_LABELS[mode] || mode : '—'
+}
+
+const editPolicyHint = (dataset: any) => {
+  const policy = editPolicyOf(dataset)
+  if (!policy.mode) return '个人私有库不支持设置编辑权限范围'
+  if (policy.mode === 'selected') {
+    const names = policy.editors.map((item: any) => item.real_name || item.user_name).filter(Boolean)
+    return names.length ? `可编辑：${names.join('、')}` : '可编辑：指定成员'
+  }
+  return `编辑权限：${EDIT_POLICY_LABELS[policy.mode] || policy.mode}（管理权不受影响）`
+}
+
+const openEditPolicyDialog = (dataset: any) => {
+  if (!canConfigureEditPolicy(dataset)) return
+  editPolicyTarget.value = dataset
+  showEditPolicyDialog.value = true
+  // 候选用户由弹窗自己按「知识库编辑权限」口径拉取，不依赖元数据管理的接口
+}
+
+/** 保存后先就地更新，再拉一次列表：徽标要立刻变，不能等下次进详情 */
+const onEditPolicySaved = (policy: any) => {
+  const target = editPolicyTarget.value
+  if (target) target.edit_policy = policy
+  void fetchDatasets(true)
+}
+
 // ==================== 引用与授权（影响面） ====================
 // 两件事必须分开看：
 // - 智能体引用 = 智能体 engine_config.dataset_ids 里选中了本库，删库会让它检索不到内容；
@@ -2990,6 +3045,17 @@ const loadDatasetReferences = async () => {
 /** 「更多」菜单里的「引用与授权」：直接打开库信息抽屉并落到授权页 */
 const openDatasetReferences = () => {
   if (!selectedDataset.value) return
+  openLibDrawer('references')
+  void loadDatasetReferences()
+}
+
+/**
+ * 列表里点「授权」列：选中该库并直接打开抽屉的「引用与授权」页。
+ * 原来要先点进详情、再切 Tab 才能分配授权，列表上多这一步没有意义。
+ */
+const openDatasetReferencesFor = (dataset: any) => {
+  if (!canManageDataset(dataset)) return
+  selectDatasetNode(dataset)
   openLibDrawer('references')
   void loadDatasetReferences()
 }
@@ -4268,6 +4334,14 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   :class="visibilityBadgeClass(selectedDataset)"
                   :title="visibilityHint(selectedDataset)"
                 >{{ visibilityLabel(selectedDataset) }}</span>
+                <!-- 我的编辑权限：用户最关心的其实是「我能不能改」，不是策略本身 -->
+                <span
+                  class="shrink-0 cursor-default rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-normal"
+                  :class="selectedDatasetContentWritable
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                    : 'border-gray-200 bg-gray-50 text-gray-500'"
+                  :title="contentWritableHint"
+                >{{ selectedDatasetContentWritable ? '可编辑' : '只读' }}</span>
                 <HoverTip
                   v-if="selectedDataset.is_missing_in_ragflow"
                   :text="MISSING_DATASET_HINT"
@@ -4534,7 +4608,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
 
           <div v-else-if="libraryView === 'list'" class="mt-3 flex-1 overflow-y-auto">
-            <div class="grid h-8 grid-cols-[18px_24px_minmax(0,1fr)_88px_48px_52px_62px_72px_88px_16px] items-center gap-x-2.5 rounded-lg bg-gray-50 px-3 text-[11px] font-semibold text-gray-400">
+            <div class="grid h-8 grid-cols-[18px_24px_minmax(0,1fr)_88px_48px_52px_62px_78px_72px_88px_16px] items-center gap-x-2.5 rounded-lg bg-gray-50 px-3 text-[11px] font-semibold text-gray-400">
               <input
                 type="checkbox"
                 class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary/30"
@@ -4549,13 +4623,14 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <span>文档</span>
               <span>引用</span>
               <span>授权</span>
+              <span>编辑权限</span>
               <span>负责人</span>
               <span>更新时间</span>
             </div>
             <div
               v-for="ds in libraryListRows"
               :key="ds.ragflow_dataset_id || ds.id"
-              class="grid w-full cursor-pointer grid-cols-[18px_24px_minmax(0,1fr)_88px_48px_52px_62px_72px_88px_16px] items-center gap-x-2.5 border-b border-gray-100 px-3 h-11 text-left transition-colors hover:bg-gray-50"
+              class="grid w-full cursor-pointer grid-cols-[18px_24px_minmax(0,1fr)_88px_48px_52px_62px_78px_72px_88px_16px] items-center gap-x-2.5 border-b border-gray-100 px-3 h-11 text-left transition-colors hover:bg-gray-50"
               @click="selectDatasetNode(ds)"
             >
               <input
@@ -4593,9 +4668,51 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <span class="text-[11px] tabular-nums" :class="(ds.agent_ref_count ?? 0) ? 'text-gray-500' : 'text-gray-300'" :title="libraryRefHint(ds)">
                 {{ (ds.agent_ref_count ?? 0) || '—' }}
               </span>
-              <span class="truncate text-[11px] tabular-nums" :class="(ds.grant_user_count ?? 0) || (ds.grant_role_count ?? 0) ? 'text-gray-500' : 'text-gray-300'" :title="libraryGrantHint(ds)">
-                {{ libraryGrantText(ds) }}
-              </span>
+              <button
+                v-if="canManageDataset(ds)"
+                type="button"
+                class="group/auth inline-flex max-w-full items-center gap-0.5 rounded px-1 py-0.5 text-[11px] tabular-nums transition-colors hover:bg-primary/5 hover:text-primary"
+                :class="(ds.grant_user_count ?? 0) || (ds.grant_role_count ?? 0) ? 'text-gray-500' : 'text-gray-300'"
+                :title="`${libraryGrantHint(ds)}；点击分配授权成员`"
+                @click.stop="openDatasetReferencesFor(ds)"
+              >
+                <span class="truncate">{{ libraryGrantText(ds) }}</span>
+                <svg class="h-2.5 w-2.5 shrink-0 opacity-0 transition-opacity group-hover/auth:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" stroke-linecap="round" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M19 8v6M22 11h-6" stroke-linecap="round" />
+                </svg>
+              </button>
+              <span
+                v-else
+                class="truncate text-[11px] tabular-nums"
+                :class="(ds.grant_user_count ?? 0) || (ds.grant_role_count ?? 0) ? 'text-gray-500' : 'text-gray-300'"
+                :title="libraryGrantHint(ds)"
+              >{{ libraryGrantText(ds) }}</span>
+              <button
+                type="button"
+                class="group/edit inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition-colors disabled:cursor-default"
+                :class="[
+                  editPolicyOf(ds).mode === 'readonly'
+                    ? 'border-gray-200 bg-white text-gray-500'
+                    : 'border-primary/30 bg-primary/10 text-primary',
+                  canConfigureEditPolicy(ds) ? 'hover:border-primary/50 hover:bg-primary/5' : '',
+                ]"
+                :disabled="!canConfigureEditPolicy(ds)"
+                :title="canConfigureEditPolicy(ds) ? '点击设置编辑权限范围' : editPolicyHint(ds)"
+                @click.stop="canConfigureEditPolicy(ds) ? openEditPolicyDialog(ds) : undefined"
+              >
+                <span class="truncate">{{ editPolicyLabel(ds) }}</span>
+                <!-- 只有有权限时才显示笔图标：它是「这里可以点」的信号，不是装饰 -->
+                <svg
+                  v-if="canConfigureEditPolicy(ds)"
+                  class="h-2.5 w-2.5 shrink-0 opacity-0 transition-opacity group-hover/edit:opacity-100 group-hover/edit:text-primary"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                >
+                  <path d="M12 20h9" stroke-linecap="round" />
+                  <path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
               <span class="truncate text-[11px] text-gray-500">{{ libraryOwnerOf(ds) }}</span>
               <span class="text-[11px] text-gray-500 tabular-nums">{{ libraryUpdatedAtOf(ds) }}</span>
               <svg class="h-3 w-3 text-gray-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -4637,7 +4754,27 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400">
                 <span><b class="font-semibold text-gray-600 tabular-nums">{{ docCountOf(ds) }}</b> 文档</span>
                 <span :title="libraryRefHint(ds)"><b class="font-semibold text-gray-600 tabular-nums">{{ (ds.agent_ref_count ?? 0) || '—' }}</b> 引用</span>
-                <span :title="libraryGrantHint(ds)"><b class="font-semibold text-gray-600 tabular-nums">{{ libraryGrantText(ds) }}</b> 授权</span>
+                <span
+                  :title="canManageDataset(ds) ? `${libraryGrantHint(ds)}；点击分配授权成员` : libraryGrantHint(ds)"
+                  :class="canManageDataset(ds) ? 'cursor-pointer underline decoration-dotted underline-offset-2 hover:text-primary' : ''"
+                  :role="canManageDataset(ds) ? 'button' : undefined"
+                  :tabindex="canManageDataset(ds) ? 0 : undefined"
+                  @click.stop="openDatasetReferencesFor(ds)"
+                  @keydown.enter.stop="openDatasetReferencesFor(ds)"
+                ><b class="font-semibold text-gray-600 tabular-nums">{{ libraryGrantText(ds) }}</b> 授权</span>
+                <!-- 卡片本身是 <button>，这里只能用 span：HTML 不允许 button 套 button。
+                     有权限时给下划线 + hover 变蓝，和行视图的笔图标表达同一件事 -->
+                <span
+                  role="button"
+                  tabindex="0"
+                  class="inline-flex items-center gap-0.5"
+                  :class="canConfigureEditPolicy(ds)
+                    ? 'cursor-pointer underline decoration-dotted underline-offset-2 hover:text-primary'
+                    : ''"
+                  :title="canConfigureEditPolicy(ds) ? '点击设置编辑权限范围' : editPolicyHint(ds)"
+                  @click.stop="canConfigureEditPolicy(ds) ? openEditPolicyDialog(ds) : undefined"
+                  @keydown.enter.stop="canConfigureEditPolicy(ds) ? openEditPolicyDialog(ds) : undefined"
+                >{{ editPolicyLabel(ds) }}</span>
               </div>
               <div class="mt-2 flex items-center gap-1.5 border-t border-dashed border-gray-100 pt-2 text-[10.5px] text-gray-400">
                 <span class="truncate">{{ libraryOwnerOf(ds) }}</span>
@@ -5463,45 +5600,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 </div>
             </section>
 
-
-            <!--
-              Extended config JSON：与编辑弹窗的「高级设置」同一口径——默认收起。
-              这坨 JSON 只有 folder_structure / custom_questions 两个键有消费者，
-              平时挂在详情页最底部纯属视觉噪音，还把左右分栏的高度全吃掉了。
-            -->
-            <div class="flex flex-col shrink-0 border-t border-gray-200 pt-5 mt-5">
-              <div class="flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  class="flex items-center gap-1.5 text-left text-[12.5px] font-semibold text-gray-800 transition-colors hover:text-primary"
-                  :aria-expanded="detailConfigOpen"
-                  @click="detailConfigOpen = !detailConfigOpen"
-                >
-                  <svg
-                    class="h-3 w-3 shrink-0 transition-transform duration-200"
-                    :class="{ 'rotate-90': detailConfigOpen }"
-                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                  >
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                  </svg>
-                  业务元数据扩展配置 (JSON)
-                </button>
-                <div class="flex shrink-0 items-center gap-2">
-                  <button
-                    v-if="detailConfigOpen"
-                    class="text-xs font-semibold text-primary hover:underline"
-                    @click="copyToClipboard(JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2))"
-                  >
-                    复制配置
-                  </button>
-                  <span class="text-[10px] text-gray-300 select-none">{{ detailConfigOpen ? '收起' : '展开' }}</span>
-                </div>
-              </div>
-              <pre
-                v-show="detailConfigOpen"
-                class="mt-2 max-h-[280px] overflow-auto rounded-xl bg-gray-900 p-4 font-mono text-xs leading-relaxed text-emerald-400 shadow-inner"
-              >{{ JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2) }}</pre>
-            </div>
             </template>
 
             <!-- 操作日志：谁在什么时候对这个库做了什么 -->
@@ -5569,6 +5667,38 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
             <!-- 引用与授权：智能体绑定了本库 / 谁被授权访问本库 -->
             <div v-if="detailTab === 'references'" class="flex-1 space-y-4 pt-2 min-h-0 overflow-y-auto">
+              <!-- 编辑权限范围：谁能改这个库里的文档（不含库设置） -->
+              <section
+                v-if="visibilityOf(selectedDataset) !== 'private'"
+                class="rounded-xl border p-4"
+                :class="canConfigureEditPolicy(selectedDataset) ? 'border-primary/30 bg-primary/[0.03]' : 'border-gray-200 bg-white'"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <h3 class="text-sm font-semibold text-gray-800">
+                    编辑权限范围
+                    <span class="ml-1 text-xs font-normal text-gray-400">谁能改这个库的文档</span>
+                  </h3>
+                  <button
+                    v-if="canConfigureEditPolicy(selectedDataset)"
+                    type="button"
+                    class="rounded-lg bg-primary px-2.5 py-1 text-[11px] font-bold text-white shadow-sm transition-colors hover:bg-primary/90"
+                    @click="openEditPolicyDialog(selectedDataset)"
+                  >设置编辑范围</button>
+                </div>
+                <p class="mt-1 text-[11px] leading-relaxed text-gray-500">
+                  当前策略：
+                  <span class="ml-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold"
+                    :class="editPolicyOf(selectedDataset).mode === 'readonly' ? 'bg-gray-100 text-gray-500' : 'bg-primary/10 text-primary'"
+                  >{{ editPolicyLabel(selectedDataset) }}</span>
+                  <span v-if="editPolicyOf(selectedDataset).mode === 'selected'" class="ml-1">
+                    {{ editPolicyHint(selectedDataset) }}
+                  </span>
+                </p>
+                <p class="mt-1 text-[11px] leading-relaxed text-gray-400">
+                  编辑权 ≠ 管理权：能改文档的人改不了可见范围、授权名单，也删不了库。收窄策略立即生效。
+                </p>
+              </section>
+
               <section class="rounded-xl border border-gray-200 bg-white p-4">
                 <div class="flex items-center justify-between gap-2">
                   <h3 class="text-sm font-semibold text-gray-800">
@@ -5921,44 +6051,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <label class="block text-xs font-semibold text-gray-400 mb-1.5">平台备注</label>
           <textarea v-model="form.notes" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" rows="2" placeholder="请输入备注"></textarea>
         </div>
-        <div class="overflow-hidden rounded-xl border border-gray-200">
-          <button
-            type="button"
-            class="flex w-full items-center justify-between bg-gray-50/60 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
-            :aria-expanded="createAdvancedConfigOpen"
-            @click="createAdvancedConfigOpen = !createAdvancedConfigOpen"
-          >
-            <span class="flex items-center gap-1.5">
-              <svg
-                class="h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform duration-200"
-                :class="{ 'rotate-90': createAdvancedConfigOpen }"
-                fill="none" stroke="currentColor" viewBox="0 0 24 24"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-              </svg>
-              <span class="text-xs font-semibold text-gray-500">高级设置</span>
-              <span class="text-[11px] text-gray-400">· 业务扩展配置 JSON</span>
-            </span>
-            <span class="shrink-0 text-[10px] text-gray-400">{{ createAdvancedConfigOpen ? '收起' : '展开' }}</span>
-          </button>
-
-          <div v-show="createAdvancedConfigOpen" class="space-y-2 border-t border-gray-100 px-3 pb-3 pt-2.5">
-            <div class="space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
-              <p><b>保存是整份覆盖。</b>删掉 <code class="font-mono">folder_structure</code> 会让所有文档掉回「未分类」，虚拟文件夹丢失且无法撤销。</p>
-              <p>只有下面两个键会被读取，其余键写了也不会生效：</p>
-              <ul class="list-disc space-y-0.5 pl-4">
-                <li><code class="font-mono">folder_structure</code>：虚拟文件夹映射，由「新建文件夹 / 移动文档」自动维护，一般无需手改。</li>
-                <li><code class="font-mono">custom_questions</code>：知识库门户的快捷提问，形如 <code class="font-mono">[{label:'总结核心内容', query:'请帮我梳理要点'}]</code>。</li>
-              </ul>
-            </div>
-            <textarea
-              v-model="form.extraConfigText"
-              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
-              rows="4"
-              placeholder="{}"
-            ></textarea>
-          </div>
-        </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showCreateModal = false">取消</button>
           <button class="px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-50" :disabled="!isEngineReady || creatingDataset" @click="createDataset">{{ creatingDataset ? '创建中…' : '确定创建' }}</button>
@@ -6185,50 +6277,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
         </div>
 
-        <!--
-          额外扩展配置：本质是开发者的逃生舱口，不该摆在一级表单里。
-          只有 folder_structure 与 custom_questions 会被读取，其余键写了没人用；
-          而保存是整份覆盖——手滑删掉 folder_structure，所有文档会掉回「未分类」且无法撤销。
-          因此折叠起来 + 把代价写在脸上。
-        -->
-        <div class="overflow-hidden rounded-xl border border-gray-200">
-          <button
-            type="button"
-            class="flex w-full items-center justify-between bg-gray-50/60 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
-            :aria-expanded="advancedConfigOpen"
-            @click="advancedConfigOpen = !advancedConfigOpen"
-          >
-            <span class="flex items-center gap-1.5">
-              <svg
-                class="h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform duration-200"
-                :class="{ 'rotate-90': advancedConfigOpen }"
-                fill="none" stroke="currentColor" viewBox="0 0 24 24"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-              </svg>
-              <span class="text-xs font-semibold text-gray-500">高级设置</span>
-              <span class="text-[11px] text-gray-400">· 额外扩展配置 JSON</span>
-            </span>
-            <span class="shrink-0 text-[10px] text-gray-400">{{ advancedConfigOpen ? '收起' : '展开' }}</span>
-          </button>
-
-          <div v-show="advancedConfigOpen" class="space-y-2 border-t border-gray-100 px-3 pb-3 pt-2.5">
-            <div class="space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
-              <p><b>保存是整份覆盖。</b>删掉 <code class="font-mono">folder_structure</code> 会让所有文档掉回「未分类」，虚拟文件夹丢失且无法撤销。</p>
-              <p>只有下面两个键会被读取，其余键写了也不会生效：</p>
-              <ul class="list-disc space-y-0.5 pl-4">
-                <li><code class="font-mono">folder_structure</code>：虚拟文件夹映射，由「新建文件夹 / 移动文档」自动维护，一般无需手改。</li>
-                <li><code class="font-mono">custom_questions</code>：知识库门户的快捷提问，形如 <code class="font-mono">[{label:'总结核心内容', query:'请帮我梳理要点'}]</code>。</li>
-              </ul>
-            </div>
-            <textarea
-              v-model="form.extraConfigText"
-              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
-              rows="4"
-              placeholder="{}"
-            ></textarea>
-          </div>
-        </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showEditModal = false">取消</button>
           <button class="px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-50" :disabled="!isEngineReady || savingMetadata" @click="updateMetadata">{{ savingMetadata ? '保存中…' : '保存' }}</button>
@@ -7170,8 +7218,17 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
              </div>
           </div>
         </div>
-      </div>
+</div>
     </Teleport>
+
+  <!-- 编辑权限范围设置：详情页与列表页共用同一个弹窗。
+       必须挂在根级：放进帮助面板/抽屉的分支里，分支不渲染时点按钮就没反应。 -->
+  <KnowledgeEditPolicyDialog
+    :show="showEditPolicyDialog"
+    :dataset="editPolicyTarget"
+    @close="showEditPolicyDialog = false"
+    @saved="onEditPolicySaved"
+  />
 </template>
 
 <style scoped>

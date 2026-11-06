@@ -86,13 +86,16 @@ def test_management_write_is_still_creator_only():
     但不能改这个库归谁看。两者必须分开，否则部门成员能把团队的库改成私有独占。
     """
     service = _service()
-    body = service.split("def resolve_knowledge_dataset_access(", 1)[1][:4000]
+    body = service.split("def resolve_knowledge_dataset_access(", 1)[1][:12000]
     # 按整行比对：`content_writable.add(...)` 会把 `writable.add(...)` 误判成子串
     body_lines = [line.strip() for line in body.split("\n")]
     assert body_lines.count("writable.add(dataset_id)") == 1
-    # 部门匹配分支只加内容级，不加管理级
-    team_branch = body.split("if visibility == VISIBILITY_TEAM", 1)[1][:400]
+    # 部门匹配分支只加内容级，不加管理级。
+    # 内容级现在受「编辑权限范围」策略控制：默认 team_members（= 改造前行为）才加，
+    # 管理者把策略改成 readonly 时这行不会执行 —— 所以断言要连条件一起看。
+    team_branch = body.split("if visibility == VISIBILITY_TEAM", 1)[1][:1200]
     team_lines = [line.strip() for line in team_branch.split("\n")]
+    assert "if policy_mode == EDIT_POLICY_TEAM_MEMBERS:" in team_lines
     assert "content_writable.add(dataset_id)" in team_lines
     assert "writable.add(dataset_id)" not in team_lines
 

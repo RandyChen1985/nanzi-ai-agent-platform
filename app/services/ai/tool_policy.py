@@ -131,6 +131,25 @@ _KNOWN_TOOL_METADATA: Mapping[str, ToolMetadata] = {
         idempotent="yes",
         nudge_mode="evidence",
     ),
+    # 知识库写操作：不可逆，且会改变别人能检索到什么 —— confirmation=ask
+    "create_knowledge_base": ToolMetadata(
+        capability="knowledge_management",
+        source="platform_control",
+        freshness="realtime",
+        side_effect="write",
+        confirmation="ask",
+        idempotent="no",
+        nudge_mode="explicit",
+    ),
+    "upload_document_to_knowledge_base": ToolMetadata(
+        capability="knowledge_management",
+        source="platform_control",
+        freshness="realtime",
+        side_effect="write",
+        confirmation="ask",
+        idempotent="no",
+        nudge_mode="explicit",
+    ),
     "create_recurring_task": ToolMetadata(
         capability="task_management",
         source="platform_control",

@@ -187,6 +187,12 @@ const router = createRouter({
           meta: { perm: 'menu:metadata', title: '表详情' }
         },
         {
+          path: 'metadata-permissions',
+          name: 'MetadataPermissionOverview',
+          component: () => import('../views/MetadataPermissionOverview.vue'),
+          meta: { perm: 'menu:metadata', title: '权限总览' }
+        },
+        {
           path: 'data-sources',
           name: 'DataSourceManagement',
           component: () => import('../views/DataSourceManagement.vue'),

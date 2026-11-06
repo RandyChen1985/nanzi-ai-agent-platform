@@ -20,7 +20,6 @@ from app.core.dependencies import require_api_key
 from app.core.orm import get_db_session
 from app.models.knowledge import KnowledgeAccessRequest, KnowledgeBaseMetadata
 from app.models.metadata import MetaColumn, MetaDataset, MetaMetric, MetaRelationship, MetaTable
-from app.models.permission import ResourcePermission, UserRoleRelation
 from app.schemas.response import StandardResponse
 from app.services.knowledge_dataset_filters import is_internal_dataset_name
 from app.services.permission_service import PermissionService
@@ -105,24 +104,16 @@ async def _knowledge_engine_stats(dataset_ids: List[str]) -> Dict[str, Dict[str,
         return {}
 
 
-def _metadata_permission_condition(user_id: int, role_ids: List[int]):
-    condition = ResourcePermission.user_id == int(user_id)
-    if role_ids:
-        condition = condition | ResourcePermission.role_id.in_(role_ids)
-    return condition
-
-
 async def _permitted_metadata_ids(db: AsyncSession, user_id: int) -> set[str]:
-    role_ids = (
-        await db.execute(
-            select(UserRoleRelation.role_id).where(UserRoleRelation.user_id == int(user_id))
-        )
-    ).scalars().all()
-    stmt = select(ResourcePermission.resource_id).where(
-        ResourcePermission.resource_type == "metadata",
-        ResourcePermission.enabled.is_(True),
-    ).where(_metadata_permission_condition(int(user_id), list(role_ids)))
-    return {str(value) for value in (await db.execute(stmt)).scalars().all()}
+    """该成员可访问的数据集 id（字符串，与调用方的比较口径一致）。
+
+    统一走 ``MetadataService.accessible_dataset_ids``，与数据集列表 / ChatBI 执行链
+    共用同一套解析：全员基线、授权过期、按人收窄才不会在这里出现第二套口径。
+    """
+    from app.services.metadata_service import MetadataService
+
+    allowed = await MetadataService.accessible_dataset_ids(db, user_id=int(user_id))
+    return {str(value) for value in (allowed or set())}
 
 
 def _state_matches(
@@ -397,19 +388,12 @@ async def _require_metadata_access(
     if str(user.get("role") or "") == "admin":
         return dataset
 
-    role_ids = (
-        await db.execute(
-            select(UserRoleRelation.role_id).where(
-                UserRoleRelation.user_id == int(user["user_id"])
-            )
-        )
-    ).scalars().all()
-    stmt = select(ResourcePermission).where(
-        ResourcePermission.resource_type == "metadata",
-        ResourcePermission.resource_id == str(dataset_id),
-        ResourcePermission.enabled.is_(True),
-    ).where(_metadata_permission_condition(int(user["user_id"]), list(role_ids)))
-    if not (await db.execute(stmt.limit(1))).scalars().first():
+    from app.services.metadata_service import MetadataService
+
+    allowed_ids = await MetadataService.accessible_dataset_ids(
+        db, user_id=int(user["user_id"])
+    )
+    if not allowed_ids or int(dataset_id) not in allowed_ids:
         raise HTTPException(status_code=403, detail="你还没有这个数据集的访问权限")
     return dataset
 

@@ -2791,9 +2791,16 @@ const fetchResources = async () => {
     }
 }
 
+/**
+ * 这次回显对应的权限版本。保存时原样带回：期间若有人在知识库页面给这个角色授过权，
+ * 版本会变，后端拒绝这次全量重建返回 409 —— 否则那些新增授权会被静默删掉。
+ */
+const permissionsVersion = ref('')
+
 const fetchRolePermissions = async (roleId: number) => {
      try {
         const response = await axios.get(`/api/portal/roles/${roleId}/permissions`)
+        permissionsVersion.value = String((response.data as any)?.permissions_version || '')
         const perms = response.data.permissions
         // 只剔除私有库（授权对它无效）；失联库保留勾选状态，
         // 让用户一眼看到「这个库之前授权过，现在失联了」
@@ -2813,6 +2820,8 @@ const fetchRolePermissions = async (roleId: number) => {
         forbiddenCommandsText.value = (perms.forbidden_commands || []).join(", ")
     } catch (e) {
         console.error('Fetch Permissions Failed', e)
+        // 拉取失败不能留着旧指纹：拿它去保存只会换来一个 409
+        permissionsVersion.value = ''
         permissionData.value = {
             agents: [],
             datasets: [],
@@ -2849,10 +2858,15 @@ const savePermissions = async () => {
             models: [...(permissionData.value.models || [])],
             // 技能是勾选式数组：显式带上，字段名与后端 PermissionUpdate.forbidden_skills 一致
             forbidden_skills: [...(permissionData.value.forbidden_skills || [])],
+            permissions_version: permissionsVersion.value || undefined,
         }
-        await axios.put(
+        const permRes = await axios.put(
             `/api/portal/roles/${currentRole.value.id}/permissions`,
             payload
+        )
+        // 采纳服务端回的新版本，避免下次保存被自己的上一次提交判成冲突
+        permissionsVersion.value = String(
+            (permRes.data as any)?.permissions_version || ''
         )
         showToast('权限保存成功', 'success')
         closePermissionDialog()
@@ -2860,6 +2874,13 @@ const savePermissions = async () => {
         // 原先只说「保存权限失败」：管理员既不知道坏在哪一项，也不知道是不是自己的输入问题。
         // 422 的 detail 是数组，经提取函数拼成一句人话（例如「禁用技能长度不能超过 255 个字符」）。
         const reason = extractApiErrorDetail(e?.response?.data, '操作失败')
+        if (e?.response?.status === 409) {
+            // 版本过期：这次提交基于旧快照，后端拒绝写入以免删掉并发新增的授权。
+            // 拉回最新配置，管理员看到的就是"当前真实状态"，改完再存即可。
+            showToast(reason, 'warning')
+            if (currentRole.value) await fetchRolePermissions(currentRole.value.id)
+            return
+        }
         showToast(`权限保存失败：${reason}`, 'error')
     } finally {
         submittingPerms.value = false

@@ -209,6 +209,65 @@ def test_dataset_question_record_can_restore_only_validated_numeric_ids():
     assert metadata_dataset_ids_from_user_question_record({**record, "status": "cancelled"}) is None
 
 
+def test_plain_question_record_restores_mounted_scope_snapshot():
+    """普通澄清卡也要能恢复当轮范围：回答回执不带附件，不恢复就等于范围失效。"""
+    record = {
+        "status": "submitted",
+        "purpose": "",
+        "selected_option_ids": ["all_users"],
+        "options": [{"id": "all_users", "label": "全部用户清单"}],
+        "metadata_dataset_ids": ["53"],
+    }
+    assert metadata_dataset_ids_from_user_question_record(record) == ["53"]
+    # 规整：去空格、去重、前导零按整数规范化
+    assert metadata_dataset_ids_from_user_question_record(
+        {**record, "metadata_dataset_ids": [" 053 ", "53", "7"]}
+    ) == ["53", "7"]
+    # 快照里混进非数字就整条不认，避免「日志说限定了、实际没约束」
+    assert metadata_dataset_ids_from_user_question_record(
+        {**record, "metadata_dataset_ids": ["53", "数据集名称"]}
+    ) is None
+    assert metadata_dataset_ids_from_user_question_record(
+        {**record, "metadata_dataset_ids": ["0", "53"]}
+    ) is None
+
+
+def test_plain_question_record_without_scope_keeps_legacy_behavior():
+    """老记录（上线前提的问）没有快照字段，恢复必须返回 None，不能凭空收紧范围。"""
+    for record in (
+        {"status": "submitted", "purpose": ""},
+        {"status": "submitted", "purpose": "", "metadata_dataset_ids": []},
+        {"status": "cancelled", "purpose": "", "metadata_dataset_ids": ["53"]},
+        {"status": "pending", "purpose": "", "metadata_dataset_ids": ["53"]},
+    ):
+        assert metadata_dataset_ids_from_user_question_record(record) is None
+
+
+def test_question_scope_snapshot_comes_from_current_turn_context():
+    """提问登记时按当轮生效范围写快照，且不写入非数字值。"""
+    from unittest.mock import patch
+
+    from app.services.ai import user_question
+
+    with patch(
+        "app.services.ai.metadata_dataset_scope.resolve_mounted_dataset_scope_ids",
+        return_value=["53", "053", "name"],
+    ):
+        assert user_question.current_turn_dataset_scope_ids() == []
+
+    with patch(
+        "app.services.ai.metadata_dataset_scope.resolve_mounted_dataset_scope_ids",
+        return_value=["53"],
+    ):
+        assert user_question.current_turn_dataset_scope_ids() == ["53"]
+
+    with patch(
+        "app.services.ai.metadata_dataset_scope.resolve_mounted_dataset_scope_ids",
+        side_effect=RuntimeError("no context"),
+    ):
+        assert user_question.current_turn_dataset_scope_ids() == []
+
+
 def test_question_fallback_content_uses_latest_question_in_nested_timeline():
     """补全正文必须取最近一条提问卡，且能穿透子代理的嵌套步骤。"""
     from app.services.ai.user_question import build_user_question_fallback_content

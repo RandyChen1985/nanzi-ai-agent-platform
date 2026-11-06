@@ -161,16 +161,25 @@ def test_resolve_strategy_denies_missing_identity_even_with_empty_default_policy
     assert SQLRewriter.resolve_strategy(None, [], config) == [{"condition": "1=0"}]
 
 
-def test_resolve_strategy_keeps_default_policy_for_real_user():
+def test_resolve_strategy_denies_when_default_policy_is_empty_for_real_user():
+    """开了数据权限却没配默认规则 → 拒绝，不是放行。
+
+    前端面板的 `default_policy` 默认值就是 `[]`，把它当「不过滤」等于
+    「勾了启用、没填规则 = 看全表」，与产品承诺的 `1=0` 兜底相反。
+    `resolve_strategy` 只在 `enable_data_perm=True` 时被调用
+    （`inherit_row_filter = row_policy == inherit and ds.enable_data_perm`），
+    所以这里拒绝不会误伤「没开数据权限」的数据集。
+    """
     config = {"default_policy": []}
 
-    assert SQLRewriter.resolve_strategy(7, [], config) == []
+    assert SQLRewriter.resolve_strategy(7, [], config) == [{"condition": "1=0"}]
 
 
-def test_resolve_strategy_without_config_stays_passthrough():
-    """数据集没配行级策略时不应被身份门禁误伤成「全拒」。"""
+def test_resolve_strategy_denies_when_config_is_missing():
+    """配置缺失同样按拒绝处理；「不过滤」只能通过关掉数据权限或 row_policy=none 表达。"""
 
-    assert SQLRewriter.resolve_strategy(None, [], {}) == []
+    assert SQLRewriter.resolve_strategy(None, [], {}) == [{"condition": "1=0"}]
+    assert SQLRewriter.resolve_strategy(7, [], {}) == [{"condition": "1=0"}]
 
 
 # ---------------------------------------------------------------------------

@@ -782,3 +782,72 @@ def test_group_header_does_not_highlight_with_active_child(sidebar: str) -> None
     assert "navItemClass(item, isChildActive(item))" not in sidebar
     # 子项选中仍要高亮
     assert "navSubClass(isActive(child.path), child.locked)" in sidebar
+
+
+def test_conversation_list_has_manual_refresh(sidebar: str) -> None:
+    """会话列表要能手动刷新：用户想「看看有没有新会话」时不必刷新整页。"""
+    assert 'aria-label="刷新会话列表"' in sidebar
+    assert '@click="refreshTasks"' in sidebar
+    # 刷新期间按钮禁用 + 图标旋转，避免重复点击与「点了没反应」
+    assert ':disabled="refreshingTasks"' in sidebar
+    assert "refreshingTasks ? 'animate-spin' : ''" in sidebar
+    # 任务列表与置顶一起刷新，否则置顶块会停在旧数据
+    assert "await Promise.all([loadTasks(), pinnedApi.load()])" in sidebar
+    # 内网请求太快时也要有可见反馈
+    assert "const remain = 500 - (Date.now() - startedAt)" in sidebar
+
+
+def test_task_row_time_hugs_right_and_yields_to_actions(sidebar: str) -> None:
+    """时间贴右边缘，鼠标移上来淡出把位置让给操作按钮。"""
+    # hover 时时间淡出（仅 sm+，移动端没有 hover，时间保持可见）
+    assert "sm:group-hover/item:opacity-0" in sidebar
+    # 操作按钮改成同层绝对定位：不再占宽度，时间才贴得到右边缘
+    assert 'class="absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2' in sidebar
+    # 行容器需要 relative 才能挂住绝对定位按钮
+    assert 'class="group/item relative"' in sidebar
+    # 小屏按钮常显，行按钮留出位置，文字不被压到按钮下面
+    assert "px-2.5 pr-7 text-left text-sm transition-colors sm:pr-2.5" in sidebar
+
+
+def test_conversation_list_supports_filters(sidebar: str) -> None:
+    """会话列表支持来源 / 智能体 / 状态 / 时间筛选，面板与聊天页共用同一组件。"""
+    # 面板复用的是历史页那套组件，条件不会两边漂移
+    assert "ConversationFilterPanel" in sidebar
+    # 筛选参数由公共工具生成，后端 /history 已支持这些字段
+    assert "buildHistoryFilterParams(taskFilters.value)" in sidebar
+    # 触发按钮与激活条件回显：筛完要看得见自己筛了什么
+    assert 'aria-label="筛选会话"' in sidebar
+    assert "activeFilterChips" in sidebar
+    assert "@click.stop=\"removeTaskFilter(chip.key)\"" in sidebar
+    # 浮层用 teleport + fixed，避免被侧栏滚动容器裁剪
+    assert "<Teleport to=\"body\">" in sidebar
+    assert "data-conversation-filter-panel" in sidebar
+    # 智能体列表懒加载，拉不到也不影响其它条件
+    assert "agentApi.listAllowedAgents()" in sidebar
+
+
+def test_filter_panel_closes_on_outside_pointer_down(sidebar: str) -> None:
+    """点外部必须能收起筛选浮层。
+
+    判定挂在**捕获阶段**：侧栏里的筛选 chips、会话行的「⋯」都带 `@click.stop`
+    （点它们不该触发外层动作），冒泡阶段的 click 根本到不了 document，
+    浮层就会一直悬在页面上——表现就是「点了别处没反应」。
+    """
+    assert 'document.addEventListener("pointerdown", onFilterPanelOutsidePointerDown, true)' in sidebar
+    assert 'document.removeEventListener("pointerdown", onFilterPanelOutsidePointerDown, true)' in sidebar
+    # 面板与漏斗按钮内部不关（按钮的 click 还要负责开合）
+    assert 'closest("[data-conversation-filter-panel]")' in sidebar
+    assert "filterButtonRef.value?.contains(target)" in sidebar
+    # target 可能是 document / window（点滚动条、点 html 外沿），不能直接调 closest
+    assert "target instanceof Node" in sidebar
+    assert "target instanceof Element" in sidebar
+    # 关闭判定不能再依赖冒泡阶段的 click
+    click_handler = sidebar.split("const onDocumentClick = (event: MouseEvent) => {", 1)[1].split("}", 1)[0]
+    assert "filterPanelOpen" not in click_handler
+
+
+def test_filter_panel_closes_on_escape_and_route_change(sidebar: str) -> None:
+    """Esc 与换页都要收起浮层：它 teleport 在 body 上，不属于任何路由。"""
+    assert 'event.key !== "Escape"' in sidebar
+    route_watch = sidebar.split("watch(() => route.path", 1)[1].split("})", 1)[0]
+    assert "filterPanelOpen.value = false" in route_watch
