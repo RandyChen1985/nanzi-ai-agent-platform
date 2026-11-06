@@ -11,7 +11,7 @@
  * - 页码算法（≤7 全显示、否则 1 … 当前±1 … 末页）在 `utils/paginationWindow.ts`；
  * - 跳页输入复用 `parsePageInput`（空值/乱输/越界都不炸）。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { parsePageInput } from '@/utils/pagination'
 import {
   buildPageWindow,
@@ -81,11 +81,25 @@ function onJumpKeydown(event: KeyboardEvent) {
   }
 }
 
-function onSizeChange(event: Event) {
-  const value = Number((event.target as HTMLSelectElement).value)
+// 每页条数改成自绘下拉：原生 select 控件的文字排版由浏览器决定，
+// 固定高度时「20/100」会被裁掉上下沿（WebKit 上尤其明显）。
+const sizeMenuOpen = ref(false)
+const sizeMenuRef = ref<HTMLElement | null>(null)
+
+function pickSize(value: number) {
+  sizeMenuOpen.value = false
   if (!Number.isFinite(value) || value <= 0 || value === props.pageSize) return
   emit('update:pageSize', value)
 }
+
+function closeSizeMenuOnOutsideClick(event: MouseEvent) {
+  if (!sizeMenuOpen.value) return
+  const host = sizeMenuRef.value
+  if (host && !host.contains(event.target as Node)) sizeMenuOpen.value = false
+}
+
+onMounted(() => document.addEventListener('click', closeSizeMenuOnOutsideClick))
+onUnmounted(() => document.removeEventListener('click', closeSizeMenuOnOutsideClick))
 </script>
 
 <template>
@@ -159,28 +173,64 @@ function onSizeChange(event: Event) {
     >
       每页
       <!--
-        原生 select 的箭头会占掉右侧固定宽度，配上 px-1 的窄内边距时三位数（100）
-        会被裁成「5O」。改成 appearance-none + 自绘箭头，宽度按内容留足。
+        不用原生 select 控件：文字排版和内边距由浏览器决定，固定高度时
+        「20 / 100」会被裁掉上下沿（WebKit 上最明显），改宽度只能治一半。
+        按钮 + 自绘列表的宽高与文字位置全由样式控制，各浏览器一致。
       -->
-      <span class="relative inline-flex items-center">
-        <select
-          class="h-7 min-w-[64px] cursor-pointer appearance-none rounded-md border border-gray-200 bg-white pl-2 pr-6 text-[11px] tabular-nums text-gray-600 outline-none transition-colors hover:border-primary/60 focus:border-primary dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
-          :value="pageSize"
+      <div ref="sizeMenuRef" class="relative" @keydown.esc="sizeMenuOpen = false">
+        <button
+          type="button"
+          class="flex h-7 min-w-[64px] cursor-pointer items-center justify-between gap-1.5 rounded-md border border-gray-200 bg-white pl-2 pr-1.5 text-[11px] leading-none tabular-nums text-gray-600 transition-colors hover:border-primary/60 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+          aria-haspopup="listbox"
+          :aria-expanded="sizeMenuOpen"
           aria-label="每页条数"
-          @change="onSizeChange"
+          @click.stop="sizeMenuOpen = !sizeMenuOpen"
         >
-          <option v-for="size in pageSizes" :key="size" :value="size">{{ size }}</option>
-        </select>
-        <svg
-          class="pointer-events-none absolute right-1.5 h-2.5 w-2.5 text-gray-400"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.4"
-          viewBox="0 0 24 24"
+          {{ pageSize }}
+          <svg
+            class="h-2.5 w-2.5 shrink-0 text-gray-400 transition-transform"
+            :class="sizeMenuOpen ? 'rotate-180' : ''"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.6"
+            viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
+
+        <ul
+          v-if="sizeMenuOpen"
+          role="listbox"
+          aria-label="每页条数"
+          class="absolute bottom-full left-0 z-30 mb-1 min-w-full overflow-hidden rounded-md border border-gray-200 bg-white py-0.5 shadow-lg dark:border-gray-700 dark:bg-gray-900"
         >
-          <path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6" />
-        </svg>
-      </span>
+          <li v-for="size in pageSizes" :key="size" role="none">
+            <button
+              type="button"
+              role="option"
+              :aria-selected="size === pageSize"
+              class="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-[11px] leading-none tabular-nums transition-colors"
+              :class="size === pageSize
+                ? 'bg-primary/10 font-semibold text-primary'
+                : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800'"
+              @click.stop="pickSize(size)"
+            >
+              {{ size }}
+              <svg
+                v-if="size === pageSize"
+                class="h-2.5 w-2.5 shrink-0"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="3"
+                viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 12l5 5L20 6" />
+              </svg>
+            </button>
+          </li>
+        </ul>
+      </div>
       条
     </label>
 
@@ -199,7 +249,7 @@ function onSizeChange(event: Event) {
         v-model="jumpInput"
         type="text"
         inputmode="numeric"
-        class="h-7 w-12 rounded-md border border-gray-200 bg-white text-center text-[11px] tabular-nums text-gray-700 outline-none transition-colors hover:border-primary/60 focus:border-primary dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+        class="h-7 w-12 rounded-md border border-gray-200 bg-white text-center text-[11px] leading-none tabular-nums text-gray-700 outline-none transition-colors hover:border-primary/60 focus:border-primary dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
         aria-label="跳转到第几页"
         @keydown="onJumpKeydown"
         @blur="commitJump"

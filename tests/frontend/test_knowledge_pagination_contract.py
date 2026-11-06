@@ -213,6 +213,10 @@ def test_pagination_bar_delegates_page_math():
     assert "Math.ceil" not in bar
     assert "emit('update:page', next)" in bar
     assert "emit('update:pageSize', value)" in bar
+    # 原生 <select> 的文字排版由浏览器控件决定，固定高度时「20/100」会被裁掉上下沿，
+    # 各浏览器表现还不一样——每页条数用自绘下拉，别再退回原生控件
+    assert "<select" not in bar
+    assert "pickSize" in bar
 
 
 def test_page_window_helpers_live_in_one_place():
