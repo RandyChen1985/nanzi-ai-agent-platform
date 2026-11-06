@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DATASETS = ROOT / "frontend/src/views/MetadataDatasets.vue"
 TABLES = ROOT / "frontend/src/views/MetadataTables.vue"
+PERM_CONSOLE = ROOT / "frontend/src/components/metadata/DatasetPermissionConsole.vue"
 
 
 def _datasets() -> str:
@@ -42,16 +43,22 @@ def test_menu_has_permission_management_entry_jumping_to_tab() -> None:
     assert "tab: 'permissions'" in page
 
 
-def test_menu_keeps_data_permission_config_entry() -> None:
-    """「数据权限配置」（成员授权弹窗）不能被「权限管理」挤掉。
+def test_menu_drops_redundant_data_permission_entry() -> None:
+    """「数据权限配置」菜单项已按用户要求去掉，只留「权限管理」和「数据行策略」。
 
-    两个入口分工不同：弹窗是快速给角色/用户授权，权限管理页是三层的完整视角。
-    用户路径是「元数据管理 → 数据权限配置」，删掉它等于把老入口藏了。
+    用户原话：「数据权限配置 多余了，去掉」。三者原来两两重叠：
+    「数据权限配置」和「数据行策略」打开的是同一个行级策略弹窗（后者只多滚一下），
+    「权限管理」则是三层（表/字段/行）的完整视角。去掉后入口不再重复。
     """
     page = _datasets()
-    assert "数据权限配置" in page
-    assert '"元数据管理 → 数据权限配置"' in page
-    assert "openPermConfigModal(ds)" in page
+    # 菜单里不能再有这一项（弹窗标题仍叫「数据权限配置」，所以只查菜单专属的 title）
+    assert 'title="元数据管理 → 数据权限配置"' not in page
+    assert "openPermConfigModal(ds)" not in page
+    assert "withRowMenu((d) => openPermConfigModal(d))" not in page
+    # 另两个入口必须还在，否则行级策略就无处可改
+    assert "权限管理" in page
+    assert "数据行策略" in page
+    assert "openPermConfigModal(ds, true)" in page
 
 
 def test_menu_has_data_row_policy_entry_opening_the_config_modal() -> None:
@@ -106,7 +113,7 @@ def test_list_view_actions_also_collapsed_into_menu() -> None:
 def test_both_menus_carry_the_same_entries() -> None:
     """卡片菜单和列表菜单的条目必须一致，否则同一操作两个入口两种能力。"""
     page = _datasets()
-    labels = ["进入数据集", "Schema 巡检", "同步到 RAGFlow", "数据权限配置", "权限管理", "数据行策略", "编辑数据集", "删除数据集"]
+    labels = ["进入数据集", "Schema 巡检", "同步到 RAGFlow", "权限管理", "数据行策略", "编辑数据集", "删除数据集"]
     for label in labels:
         assert page.count(label) >= 2, f"「{label}」应该同时出现在卡片菜单和列表菜单里"
 
@@ -140,3 +147,56 @@ def test_list_has_no_extra_view_affordance() -> None:
     assert "查看 <svg" not in row_actions
     # 「…」是操作列最后一个元素
     assert row_actions.index("toggleRowMenu") < row_actions.index("</div>")
+
+
+def test_permission_console_exposes_edit_row_policy_entry() -> None:
+    """详情页「数据行策略」那块是只读的，但得给一个能去改的入口。
+
+    用户诉求：「加一个 行级策略的入口」。原来只写了句「编辑入口在元数据管理 →
+    数据行策略」，要用户自己回忆路径再一层层点。现在卡片右上角直接给按钮。
+    """
+    console = PERM_CONSOLE.read_text(encoding="utf-8")
+    assert "编辑行级策略" in console
+    assert "(e: 'edit-row-policy'): void" in console
+    assert "emit('edit-row-policy')" in console
+    # 没编辑权限不给入口，避免点了撞 403
+    assert 'v-if="canEdit"' in console[console.index("编辑行级策略") - 900 : console.index("编辑行级策略")]
+
+
+def test_row_policy_entry_jumps_to_the_list_page_modal() -> None:
+    """行级编辑器只在列表页弹窗里，所以按钮带 dataset_id 跳过去。"""
+    tables = _tables()
+    assert "@edit-row-policy=\"goEditRowPolicy\"" in tables
+    start = tables.index("const goEditRowPolicy")
+    block = tables[start : start + 400]
+    assert "path: '/dashboard/metadata'" in block
+    assert "open_row_policy: String(datasetId.value)" in block
+    # 详情页本身没有编辑器，不能误跳本页的只读视图
+    assert "permView" not in block
+
+
+def test_list_page_consumes_open_row_policy_and_clears_it() -> None:
+    page = _datasets()
+    start = page.index("const rowPolicyTarget")
+    block = page[start : start + 700]
+    # 必须等列表到位再按 id 找，否则拿不到 dataset 对象
+    assert "await datasetsReady" in block
+    assert "await openPermConfigModal(target, true)" in block
+    # 第二个参数 true 才会滚到策略区
+    assert "showToast('该数据集不存在或已被删除', 'warning')" in block
+    # 用完即弃：刷新页面不该反复弹窗
+    assert "delete rest.open_row_policy" in block
+    assert "router.replace" in block
+
+
+def test_detail_header_does_not_repeat_granted_subjects() -> None:
+    """头部不再重复展示「授权角色 / 授权用户」，权限管理页签里已经有了。
+
+    用户诉求：「取消显示 授权用户这行信息，权限管理 tab 里面已经有了，避免重复」。
+    页签上还留着计数徽标做概览，所以 datasetPermissions 不能被删成死代码。
+    """
+    tables = _tables()
+    assert "授权用户:" not in tables
+    assert "授权角色:" not in tables
+    # 权限管理页签的计数徽标还在，说明「有多少条授权」这个概览没丢
+    assert "datasetPermissions.users.length + datasetPermissions.roles.length" in tables

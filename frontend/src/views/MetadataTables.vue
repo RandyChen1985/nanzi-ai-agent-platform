@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import axios from '../utils/axios'
 import { metadataApi } from '../api/metadata'
 import type { Dataset, Table, RecommendColumnSemanticResult } from '../api/metadata'
@@ -25,6 +25,7 @@ const { isAdmin: _isAdmin, hasPermission } = useUser()
 const { showToast } = useToast()
 
 const route = useRoute()
+const router = useRouter()
 const datasetId = Number(route.params.id)
 
 const dataset = ref<Dataset | null>(null)
@@ -223,6 +224,18 @@ const initialPermView = computed(() => {
   const view = String(route.query.permView || '').trim()
   return PERM_VIEWS.includes(view) ? (view as 'subjects' | 'tables' | 'rows') : undefined
 })
+
+/**
+ * 行级策略的编辑器只在元数据管理列表页的弹窗里（详情页这块是只读的）。
+ * 带 dataset_id 过去，那边加载完列表会自动打开并滚到策略区。
+ */
+const goEditRowPolicy = () => {
+  if (!hasEditPermission.value) return
+  router.push({
+    path: '/dashboard/metadata',
+    query: { open_row_policy: String(datasetId.value) },
+  })
+}
 watch(
   () => route.query.tab,
   () => {
@@ -857,35 +870,9 @@ defineExpose({ fetchMetrics })
               </span>
             </div>
 
-            <!-- Permissions Info -->
-            <div v-if="datasetPermissions?.users?.length || datasetPermissions?.roles?.length" class="mt-2.5 pt-2 border-t border-gray-100 flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
-              <div v-if="datasetPermissions.roles.length" class="flex items-center gap-1.5">
-                <span class="text-gray-400 font-medium select-none">授权角色:</span>
-                <div class="flex flex-wrap gap-1">
-                  <span 
-                    v-for="r in datasetPermissions.roles" 
-                    :key="r.code"
-                    class="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold border border-indigo-100/50 flex items-center gap-1 select-none"
-                  >
-                    {{ r.name }}
-                  </span>
-                </div>
-              </div>
-              
-              <div v-if="datasetPermissions.users.length" class="flex items-center gap-1.5">
-                <span class="text-gray-400 font-medium select-none">授权用户:</span>
-                <div class="flex flex-wrap gap-1">
-                  <span 
-                    v-for="u in datasetPermissions.users" 
-                    :key="u.user_name"
-                    class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold border border-emerald-100/50 flex items-center gap-1 select-none"
-                  >
-                    {{ u.real_name || u.user_name }}
-                  </span>
-                </div>
-              </div>
-            </div>
           </div>
+          <!-- 授权对象（角色 / 用户）不在这里重复展示：
+               「权限管理」页签里有完整的三层视图，页签上的计数徽标也够做概览。 -->
         </div>
         
         <div class="flex items-center gap-2.5 shrink-0 self-start lg:self-auto">
@@ -1207,6 +1194,7 @@ defineExpose({ fetchMetrics })
         :row-filter-config="rowFilterConfig"
         :initial-view="initialPermView"
         @changed="fetchDatasetPermissions"
+        @edit-row-policy="goEditRowPolicy"
       />
     </div>
 

@@ -1462,7 +1462,8 @@ const checkRagFlowConnectivity = async () => {
 
 onMounted(async () => {
     fetchSystemConfig()
-    fetchDatasets()
+    // 先起请求、稍后再 await：这里要等列表到位才能按 id 找数据集，但不该串行拖慢其它初始化
+    const datasetsReady = fetchDatasets()
     fetchDbConnections()
     fetchDriftSummary()
     await fetchRagFlowConfig()
@@ -1473,6 +1474,22 @@ onMounted(async () => {
     }
     if ((route.query.open_cron_inspection === '1' || route.query.open_cron_inspection === 'true') && isAdmin.value) {
         showCronInspectionModal.value = true
+    }
+
+    // 数据集详情页「编辑行级策略」跳过来：行级策略的编辑器只在这个弹窗里
+    const rowPolicyTarget = Number(route.query.open_row_policy)
+    if (Number.isFinite(rowPolicyTarget) && rowPolicyTarget > 0) {
+        await datasetsReady
+        const target = datasets.value.find((item) => item.id === rowPolicyTarget)
+        if (target) {
+            await openPermConfigModal(target, true)
+        } else {
+            showToast('该数据集不存在或已被删除', 'warning')
+        }
+        // 参数用完即弃，刷新页面不该反复弹窗
+        const rest = { ...route.query }
+        delete rest.open_row_policy
+        router.replace({ path: route.path, query: rest })
     }
 })
 </script>
@@ -2040,16 +2057,6 @@ onMounted(async () => {
               <button
                 v-if="hasPermission('element:metadata:edit')"
                 type="button"
-                title="元数据管理 → 数据权限配置"
-                @click="closeCardMenus(); openPermConfigModal(ds)"
-                class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
-              >
-                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
-                数据权限配置
-              </button>
-              <button
-                v-if="hasPermission('element:metadata:edit')"
-                type="button"
                 @click="openPermissionTab(ds.id)"
                 class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
               >
@@ -2345,16 +2352,6 @@ onMounted(async () => {
           >
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z" /></svg>
             同步到 RAGFlow
-          </button>
-          <button
-            v-if="hasPermission('element:metadata:edit')"
-            type="button"
-            title="元数据管理 → 数据权限配置"
-            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
-            @click="withRowMenu((d) => openPermConfigModal(d))"
-          >
-            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
-            数据权限配置
           </button>
           <button
             v-if="hasPermission('element:metadata:edit')"

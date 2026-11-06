@@ -61,7 +61,11 @@ const props = defineProps<{
   initialView?: 'subjects' | 'tables' | 'columns' | 'rows'
 }>()
 
-const emit = defineEmits<{ (e: 'changed'): void }>()
+const emit = defineEmits<{
+  (e: 'changed'): void
+  /** 去元数据管理编辑该数据集的行级策略：详情页只读，编辑入口在列表页的弹窗里 */
+  (e: 'edit-row-policy'): void
+}>()
 
 const { showToast } = useToast()
 
@@ -666,7 +670,7 @@ const extractConditions = (rules: any): string[] => {
     .filter(Boolean)
 }
 
-/** 数据集自身策略：用户例外 / 角色策略 / 默认规则（只读，编辑入口在「数据权限配置」） */
+/** 数据集自身策略：用户例外 / 角色策略 / 默认规则（只读，编辑入口在「数据行策略」） */
 const datasetUserExceptions = computed(() => {
   const bucket = rowFilterCfg.value.user_overrides
   if (!bucket || typeof bucket !== 'object') return []
@@ -1195,17 +1199,31 @@ const subjectBadgeClass = (kind: SubjectKind) =>
             数据集自身数据行策略
             <span class="ml-1 rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">只读</span>
           </h3>
-          <span
-            class="inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[10px] font-semibold"
-            :class="rowFilterEnabled ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-gray-200 bg-gray-50 text-gray-500'"
-          >
-            <span class="h-1.5 w-1.5 rounded-full" :class="rowFilterEnabled ? 'bg-amber-500' : 'bg-gray-300'"></span>
-            {{ rowFilterEnabled ? `已启用校验 · ${datasetRowRuleCount} 条规则` : '未启用精细化权限校验' }}
-          </span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span
+              class="inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[10px] font-semibold"
+              :class="rowFilterEnabled ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-gray-200 bg-gray-50 text-gray-500'"
+            >
+              <span class="h-1.5 w-1.5 rounded-full" :class="rowFilterEnabled ? 'bg-amber-500' : 'bg-gray-300'"></span>
+              {{ rowFilterEnabled ? `已启用校验 · ${datasetRowRuleCount} 条规则` : '未启用精细化权限校验' }}
+            </span>
+            <!-- 这一块是只读展示，真正能改的是元数据管理里的行级策略弹窗。
+                 没权限的人不给入口，避免点了撞 403。 -->
+            <button
+              v-if="canEdit"
+              type="button"
+              class="inline-flex items-center gap-1 rounded-lg border border-emerald-600 bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-emerald-700"
+              title="去元数据管理编辑该数据集的行级策略"
+              @click="emit('edit-row-policy')"
+            >
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+              编辑行级策略
+            </button>
+          </div>
         </div>
         <p class="mt-1 text-[11px] text-gray-400">
           选「继承数据集策略」的授权会走这里的规则：用户例外 → 角色策略 → 默认规则。
-          编辑入口在「元数据管理 → 数据权限配置」，这里只读展示，避免和「按人覆盖」混淆。
+          这里只读展示，避免和「按人覆盖」混淆；要改规则点右上角「编辑行级策略」。
         </p>
         <div v-if="!rowFilterEnabled" class="mt-2 rounded-lg border border-gray-200 bg-gray-50/60 px-2.5 py-1.5 text-[11px] text-gray-500">
           未启用精细化权限校验：继承策略的授权可以看到所授权表的<b>全部数据行</b>。
@@ -1243,7 +1261,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
       <div class="rounded-xl border border-gray-100 bg-white p-3.5">
         <h3 class="text-xs font-bold text-gray-700">三种数据行策略</h3>
         <ul class="mt-2 space-y-1.5 text-[11px] text-gray-600">
-          <li><span class="font-semibold text-gray-700">继承数据集策略</span>（默认）：走数据集自身的行级配置（用户例外 → 角色策略 → 默认策略），在「数据权限配置」里维护，改动对所有继承的人生效。</li>
+          <li><span class="font-semibold text-gray-700">继承数据集策略</span>（默认）：走数据集自身的行级配置（用户例外 → 角色策略 → 默认策略），在「数据行策略」里维护，改动对所有继承的人生效。</li>
           <li><span class="font-semibold text-amber-700">不做行级过滤</span>：跳过重写。只应给审计、运维这类需要看全量的个人授权，属于高风险选项。</li>
           <li><span class="font-semibold text-indigo-700">自定义条件</span>：这条授权独立生效，不再叠加数据集策略。条件语法与行级配置一致，例如 <code class="font-mono">fact_task.dept_code = 'FIN'</code>。</li>
         </ul>
