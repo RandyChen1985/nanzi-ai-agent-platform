@@ -216,3 +216,76 @@ def test_is_personal_skill_attachment_reads_both_layers():
     # （drop_forbidden_skill_items 与 sanitize_forbidden_skill_context 都是这么用的）。
     assert is_personal_skill_attachment({"type": "file", "url": "a", "scope": "personal"})
 
+
+
+def test_parse_skill_frontmatter_accepts_closing_delimiter_at_eof(tmp_path):
+    """闭合 ``---`` 就是文件结尾（没有换行）也算 frontmatter。
+
+    这是手写 SKILL.md 的常见形态：旧口径认不出来，于是技能按 ``enabled: true`` 显示、
+    点「禁用」却因为「没有 frontmatter」返回 400，永远禁不掉。
+    """
+    path = tmp_path / "SKILL.md"
+    path.write_text("---\nname: 收尾无换行\ndescription: 说明\n---", encoding="utf-8")
+
+    meta = parse_skill_frontmatter("no-newline", str(path))
+
+    assert meta["name"] == "收尾无换行"
+    assert meta["description"] == "说明"
+
+
+def test_parse_skill_frontmatter_text_shares_one_rule():
+    """文本入口与文件入口必须同一口径（预铺/收录检查/发布预览都改用它）。"""
+    from app.utils.skill_metadata import parse_skill_frontmatter_text
+
+    for content in ("---\nname: 甲\n---\n正文", "---\nname: 甲\n---"):
+        assert parse_skill_frontmatter_text("s", content)["name"] == "甲"
+
+
+def test_toggle_skill_enabled_inserts_frontmatter_when_missing(tmp_path):
+    """没有 frontmatter 的纯 Markdown 技能：补一份最小 frontmatter，而不是返回失败。
+
+    旧实现 return False → 端点 400「缺少可识别的 YAML frontmatter」，而这种技能在列表里
+    就是启用状态（解析缺省 true），等于**永远禁不掉**，也没有别的入口能改。
+    """
+    from app.utils.skill_metadata import is_skill_enabled, toggle_skill_enabled_in_file
+
+    path = tmp_path / "SKILL.md"
+    path.write_text("# 我的技能\n\n照这个流程做。\n", encoding="utf-8")
+
+    assert toggle_skill_enabled_in_file(str(path), False) is True
+
+    written = path.read_text(encoding="utf-8")
+    assert written.startswith("---\nenabled: false\n---\n")
+    assert "照这个流程做。" in written  # 正文原样保留
+    assert is_skill_enabled(parse_skill_frontmatter("plain", str(path))) is False
+
+
+def test_toggle_skill_enabled_handles_closing_delimiter_at_eof(tmp_path):
+    from app.utils.skill_metadata import is_skill_enabled, toggle_skill_enabled_in_file
+
+    path = tmp_path / "SKILL.md"
+    path.write_text("---\nname: x\ndescription: y\n---", encoding="utf-8")
+
+    assert toggle_skill_enabled_in_file(str(path), False) is True
+
+    written = path.read_text(encoding="utf-8")
+    assert written.count("---") == 2  # 没有补出第二个 frontmatter 块
+    assert "name: x" in written
+    assert is_skill_enabled(parse_skill_frontmatter("x", str(path))) is False
+
+
+def test_toggle_skill_enabled_replaces_existing_flag_only(tmp_path):
+    from app.utils.skill_metadata import is_skill_enabled, toggle_skill_enabled_in_file
+
+    path = tmp_path / "SKILL.md"
+    path.write_text(
+        "---\nname: x\ndescription: 说明\nEnabled: true\n---\n\n正文\n", encoding="utf-8"
+    )
+
+    assert toggle_skill_enabled_in_file(str(path), False) is True
+
+    written = path.read_text(encoding="utf-8")
+    assert written.count("enabled: false") == 1
+    assert written.count("Enabled: true") == 0
+    assert "description: 说明" in written
+    assert is_skill_enabled(parse_skill_frontmatter("x", str(path))) is False

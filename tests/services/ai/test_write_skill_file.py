@@ -243,7 +243,69 @@ def test_global_scope_requires_admin(personal_root):
     result = _write(scope="global")
 
     assert "错误" in result
-    assert "管理员" in result
+    # 口径已统一到 element:skills:admin（与 create_skills / import_skill_from_sandbox 一致），
+    # 不再只看 role 字符串。
+    assert "element:skills:admin" in result
+    assert not (personal_root / "demo-skill" / "scripts" / "build.py").exists()
+
+
+def test_global_scope_rejects_when_identity_missing(tmp_path, monkeypatch):
+    """无身份调用必须 fail-closed。
+
+    此前这里是 ``if user_info:``：身份缺失就整段跳过，于是没有上下文的调用可以直接把文件
+    写进平台公共技能库。
+    """
+    platform_root = tmp_path / "platform-skills"
+    skill_dir = platform_root / "shared-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(SKILL_MD, encoding="utf-8")
+
+    monkeypatch.setattr(exec_tools, "validate_safe_path", lambda path: path)
+    from app.core.config import Settings
+
+    monkeypatch.setattr(Settings, "SKILLS_DIR", property(lambda self: str(platform_root)))
+    monkeypatch.setattr("app.utils.context.current_user_info", _ContextStub(None))
+
+    result = _write(skill_id="shared-skill", path="references/rules.md", scope="global")
+
+    assert "错误" in result
+    assert "element:skills:admin" in result
+    assert not (skill_dir / "references" / "rules.md").exists()
+
+
+def test_global_scope_allows_granted_permission_without_admin_role(tmp_path, monkeypatch):
+    """被单独授予 ``element:skills:admin`` 的用户（无 admin 角色）应当放行。
+
+    旧口径只看 role 字符串：这种用户在管理页面看得见按钮，在对话里却被拒。
+    """
+    from app.services.ai.skills.platform_admin import (
+        clear_platform_skill_admin_cache,
+        remember_platform_skill_admin,
+    )
+
+    platform_root = tmp_path / "platform-skills"
+    skill_dir = platform_root / "shared-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(SKILL_MD, encoding="utf-8")
+
+    monkeypatch.setattr(exec_tools, "validate_safe_path", lambda path: path)
+    from app.core.config import Settings
+
+    monkeypatch.setattr(Settings, "SKILLS_DIR", property(lambda self: str(platform_root)))
+    monkeypatch.setattr(
+        "app.utils.context.current_user_info",
+        _ContextStub({"id": 7, "name": "granted", "role": "user"}),
+    )
+    remember_platform_skill_admin(7, True)
+    try:
+        result = _write(
+            skill_id="shared-skill", path="references/rules.md", content="# 规则\n", scope="global"
+        )
+    finally:
+        clear_platform_skill_admin_cache()
+
+    assert "NANZI_SKILL_FILE_WRITTEN:" in result
+    assert (skill_dir / "references" / "rules.md").read_text(encoding="utf-8") == "# 规则\n"
 
 
 def test_global_scope_writes_when_admin(tmp_path, monkeypatch):

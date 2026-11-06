@@ -35,12 +35,18 @@ from app.services.conversation_resource_service import ConversationResourceServi
 
 logger = logging.getLogger(__name__)
 
+#: 技能 ID 长度上限，对齐 ``skill_publications.source_personal_skill_id`` 的 VARCHAR(128)。
+#: 单独抽成常量是因为「自动加后缀」的调用方（如分享落地）必须按它截断，不能再写一份 128。
+SKILL_ID_MAX_LENGTH = 128
+
 #: 技能 ID 白名单（与运行时 skill_resolver、发布服务同一口径）
-SKILL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+SKILL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,%d}$" % SKILL_ID_MAX_LENGTH)
 
 #: 与 /skills 下更早注册的字面路由同名的 ID 会被遮蔽（``GET /skills/stats`` 命中统计接口，
 #: 技能详情永远打不开），因此禁止创建/重命名/导入。``publications`` 是下架列表接口占用的
-#: 字面路由，``export``/``import`` 与文件级路由同名。
+#: 字面路由，``export``/``import`` 与文件级路由同名；``share-targets`` 是个人技能下
+#: 「搜索可接收分享的用户」的字面路由（/personal-skills/share-targets 注册在 /{skill_id}
+#: 之前，同 ID 的技能详情页永远打不开）。
 RESERVED_SKILL_IDS = frozenset(
     {
         "personal",
@@ -48,6 +54,7 @@ RESERVED_SKILL_IDS = frozenset(
         "bindings",
         "publication-requests",
         "publications",
+        "share-targets",
         "import",
         "export",
     }

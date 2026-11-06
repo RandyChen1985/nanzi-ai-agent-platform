@@ -1136,37 +1136,35 @@ def _preseed_session_skills(
             logger.warning("[workspace] Pre-seed skip unreadable skill %s: %s", skill_path, exc)
             continue
 
-        # parse name/description
+        # 来源 id：清理被禁技能时要按 id 复核（否则"逐字节复制平台技能"的个人技能会因为
+        # 哈希相同被一起删掉），同源改版时也靠它找到旧目录做就地替换。
+        skill_id = os.path.basename(os.path.normpath(skill_path))
+
+        # 名字：先生效 AgentScope 自己的 frontmatter 解析（seed 目录名要与它一致），
+        # 解析不出再走平台唯一口径——此前这里自带一份更严格的正则，同一条 SKILL.md
+        # 在技能列表里正常、在预铺里被判「缺 frontmatter」而丢弃。
         name: str | None = None
         if frontmatter is not None:
             try:
                 parsed = frontmatter.loads(content_str)
                 name = str(parsed.get("name") or "") or None
-                description = str(parsed.get("description") or "") or None
             except Exception:
                 name = None
-                description = None
-        else:
-            # Fallback: minimal line-based frontmatter parse for name only.
-            description = None
-            match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content_str, re.DOTALL)
-            if match:
-                for line in match.group(1).splitlines():
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        if key.strip().lower() == "name":
-                            name = value.strip().strip('"').strip("'")
-        if not name or not description:
-            logger.warning(
-                "[workspace] Pre-seed skip %s: SKILL.md missing name/description",
-                skill_path,
-            )
+        if not name:
+            from app.utils.skill_metadata import parse_skill_frontmatter_text
+
+            name = str(parse_skill_frontmatter_text(skill_id, content_str).get("name") or "") or None
+
+        # name 是唯一硬要求（决定 seed 目录名与面向模型的名字），且可用来源 ID 兜底。
+        # description 只用于展示，此前它也是硬要求，于是「第三方导入 / 手写、没写 description」
+        # 的技能被静默跳过——而 seed 一旦非空 AgentScope 就不再自己复制，这些技能在沙箱里
+        # 彻底不存在，提示词却仍告诉模型它有这么个技能。
+        name = name or skill_id
+        if not name:
+            logger.warning("[workspace] Pre-seed skip %s: SKILL.md has no usable name", skill_path)
             continue
 
         skill_hash = hashlib.sha256(content_str.encode("utf-8")).hexdigest()
-        # 来源 id：清理被禁技能时要按 id 复核（否则"逐字节复制平台技能"的个人技能会因为
-        # 哈希相同被一起删掉），同源改版时也靠它找到旧目录做就地替换。
-        skill_id = os.path.basename(os.path.normpath(skill_path))
         origin_dir = _same_origin_skill_dir(existing, skill_id)
 
         if skill_hash in existing_hashes:

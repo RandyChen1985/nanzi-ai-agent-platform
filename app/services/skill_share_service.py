@@ -37,7 +37,11 @@ from app.services.skill_publication_service import (
     copy_tree_contents,
     validate_snapshot_tree,
 )
-from app.services.skill_rename_service import SkillRenameError, validate_skill_id
+from app.services.skill_rename_service import (
+    SKILL_ID_MAX_LENGTH,
+    SkillRenameError,
+    validate_skill_id,
+)
 from app.utils.skill_metadata import parse_skill_frontmatter
 
 MAX_SHARE_TARGETS = 50
@@ -166,14 +170,41 @@ def _prepare_skill_id(value: str) -> str:
 
 
 def resolve_target_skill_id(skills_root: str, preferred_skill_id: str) -> str:
-    """选出接收人技能库里未被占用的 ID：原名 → ``-2`` → ``-3`` …"""
+    """选出接收人技能库里未被占用的 ID：原名 → ``-2`` → ``-3`` …
+
+    两个坑都在这一个函数里：
+
+    * **占用判定要按个人技能口径**（平铺优先、``.seed`` 回退）。只看平铺目录时，接收人
+      技能若在 ``.seed`` 布局下（AgentScope 迁移过的历史数据），会被判成「空闲」，于是
+      在平铺位置造出第二份同 ID 副本，把存量那份遮蔽掉——这正是
+      :func:`resolve_personal_skill_dir` 文档里要求读/写端点一律经它定位的原因。
+    * **加后缀不能突破 ID 长度上限**。``validate_skill_id`` 允许到 128 字符，直接拼
+      ``-2`` 会得到 129/130 字符：目录能建出来，但 ``accepted_skill_id`` 是
+      ``VARCHAR(128)``，入库失败后留下一个「列表看得见、详情/删除全 400」的孤儿目录。
+      因此带后缀的候选统一截断到上限内。
+    """
 
     base = _prepare_skill_id(preferred_skill_id)
-    candidates = [base] + [f"{base}-{index}" for index in range(2, MAX_TARGET_ID_ATTEMPTS + 1)]
-    for candidate in candidates:
-        if not os.path.exists(os.path.join(skills_root, candidate)):
+    if not _is_skill_id_taken(skills_root, base):
+        return base
+
+    # 预留最长的后缀（``-{MAX_TARGET_ID_ATTEMPTS}``）后再截断，保证每个候选都 ≤ 上限。
+    suffix_budget = len(str(MAX_TARGET_ID_ATTEMPTS)) + 1
+    stem = base[: max(1, SKILL_ID_MAX_LENGTH - suffix_budget)]
+    for index in range(2, MAX_TARGET_ID_ATTEMPTS + 1):
+        candidate = f"{stem}-{index}"
+        if not _is_skill_id_taken(skills_root, candidate):
             return candidate
     raise ValueError("target skill id is exhausted")
+
+
+def _is_skill_id_taken(skills_root: str, skill_id: str) -> bool:
+    """该 ID 在接收人技能库里是否已被占用（平铺与 ``.seed`` 都算）。"""
+    if os.path.exists(os.path.join(skills_root, skill_id)):
+        return True
+    # 平铺不存在时再看 .seed：platform 副本被 resolve_personal_skill_dir 视为不存在，
+    # 与「个人技能列表里看不到它」保持一致，不会把公共技能名让给个人。
+    return resolve_personal_skill_dir(skills_root, skill_id) is not None
 
 
 def materialize_share_snapshot(

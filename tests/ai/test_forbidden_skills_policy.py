@@ -343,3 +343,39 @@ def test_prune_also_drops_stale_partitions(tmp_path, skills_env):
     _preseed_session_skills(workdir, [alpha], forbidden_skill_ids={"beta"})
 
     assert not partition.exists(), "过期分区必须一起失效，否则被禁技能副本仍可读"
+
+
+def test_preseed_keeps_skill_without_description(tmp_path):
+    """缺 ``description`` 的技能不能被预铺跳过。
+
+    此前预铺要求 name 与 description **都**有，缺失就 ``continue``；而 seed 一旦非空，
+    AgentScope 就不再自己复制 skill_paths，于是「第三方导入 / 手写、没写 description」的
+    技能在沙箱里彻底不存在——提示词却仍告诉模型它有这么个技能。AgentScope 自己的播种
+    只要求 SKILL.md 存在，平台这里没有理由更严格。
+    """
+    from app.services.ai.runtime.agentscope.workspace import _preseed_session_skills
+
+    root = tmp_path / "personal"
+    no_desc = root / "nodesc"
+    no_desc.mkdir(parents=True)
+    (no_desc / "SKILL.md").write_text("---\nname: 没有描述\n---\n\n正文\n", encoding="utf-8")
+
+    workdir = tmp_path / "session"
+    _preseed_session_skills(workdir, [str(no_desc)])
+
+    assert _seeded_dirs(workdir) == {"没有描述"}
+
+
+def test_preseed_falls_back_to_skill_id_when_name_missing(tmp_path):
+    """完全没有 frontmatter 的纯 Markdown 技能也要铺进去，名字用来源目录名兜底。"""
+    from app.services.ai.runtime.agentscope.workspace import _preseed_session_skills
+
+    root = tmp_path / "personal"
+    plain = root / "plain-skill"
+    plain.mkdir(parents=True)
+    (plain / "SKILL.md").write_text("# 纯 Markdown\n\n没有 frontmatter\n", encoding="utf-8")
+
+    workdir = tmp_path / "session"
+    _preseed_session_skills(workdir, [str(plain)])
+
+    assert _seeded_dirs(workdir) == {"plain-skill"}

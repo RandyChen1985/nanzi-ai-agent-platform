@@ -36,64 +36,106 @@ def is_skill_enabled(meta: Optional[Dict[str, Any]], default: bool = True) -> bo
     return str(raw).strip().lower() in _TRUTHY_FLAGS
 
 
-def parse_skill_frontmatter(skill_id: str, skill_md_path: str) -> Dict[str, str]:
-    """从 SKILL.md 顶部 YAML Frontmatter 提取 name / description 等元数据。"""
-    meta: Dict[str, str] = {"id": skill_id, "name": skill_id, "description": "", "enabled": "true"}
-    if not os.path.exists(skill_md_path):
-        return meta
-    try:
-        with open(skill_md_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read(8192)
-        # 容忍 UTF-8 BOM：zip 导入不会剥掉它，而 ^--- 匹配不到 BOM 开头的文件，会让
-        # enabled 静默回落成 "true"（技能永远显示启用）。
-        content = content.lstrip("\ufeff")
-        match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
-        if match:
-            for line in match.group(1).splitlines():
-                if ":" in line:
-                    key, value = line.split(":", 1)
-                    meta[key.strip().lower()] = value.strip().strip('"').strip("'")
-    except Exception:
-        pass
+#: SKILL.md 顶部 YAML Frontmatter 的**唯一**匹配口径（解析与改写共用）。
+#:
+#: 必须容忍两种尾部写法，否则「文件看起来有 frontmatter，但平台认不出来」：
+#:
+#: * 闭合分隔符后还有正文（常规写法）；
+#: * 闭合分隔符就是文件结尾、后面没有换行——手写 SKILL.md 的常见形态。旧正则要求
+#:   闭合符后必须跟着换行，于是这类文件被当成「没有 frontmatter」：列表里按
+#:   ``enabled: true`` 显示、点「禁用」却返回 400，永远禁不掉。
+_FRONTMATTER_RE = re.compile(
+    r"^---[ \t]*\r?\n(.*?)(?:\r?\n)?---[ \t]*(?:\r?\n|$)",
+    re.DOTALL,
+)
+
+#: 需要对 frontmatter **原文/偏移量**做改写（而不是只读字段）的调用方复用它，
+#: 别各自再抄一份正则——抄出来的每一份都曾把「闭合符在文件末尾」判成「没有 frontmatter」。
+SKILL_FRONTMATTER_PATTERN = _FRONTMATTER_RE
+
+
+def parse_skill_frontmatter_text(skill_id: str, content: str) -> Dict[str, str]:
+    """从 SKILL.md **文本**解析 frontmatter（与 :func:`parse_skill_frontmatter` 同一口径）。
+
+    单独暴露出来是给「内容已读进内存」的调用方用（沙箱预铺、收录前检查、发布快照预览）：
+    它们此前各自复制了一份更严格的正则，于是同一条 SKILL.md 在平台解析里「有 frontmatter」、
+    在预铺里却「缺 name/description」被丢弃。
+    """
+    meta: Dict[str, str] = {
+        "id": skill_id,
+        "name": skill_id,
+        "description": "",
+        "enabled": "true",
+    }
+    text = str(content or "").lstrip("\ufeff")
+    match = _FRONTMATTER_RE.match(text)
+    if match:
+        for line in match.group(1).splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                meta[key.strip().lower()] = value.strip().strip('"').strip("'")
     if "enabled" not in meta:
         meta["enabled"] = "true"
     return meta
 
 
+def parse_skill_frontmatter(skill_id: str, skill_md_path: str) -> Dict[str, str]:
+    """从 SKILL.md 顶部 YAML Frontmatter 提取 name / description 等元数据。"""
+    if not os.path.exists(skill_md_path):
+        return parse_skill_frontmatter_text(skill_id, "")
+    try:
+        with open(skill_md_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read(8192)
+        return parse_skill_frontmatter_text(skill_id, content)
+    except Exception:
+        return parse_skill_frontmatter_text(skill_id, "")
+
+
 def toggle_skill_enabled_in_file(skill_md_path: str, enabled: bool) -> bool:
-    """在 SKILL.md 的 YAML Frontmatter 中修改或插入 enabled 状态。"""
+    """在 SKILL.md 的 YAML Frontmatter 中修改或插入 enabled 状态。
+
+    没有 frontmatter 时**补一份**而不是失败：``parse_skill_frontmatter`` 在所有情况下
+    都给出 ``enabled``（缺省 ``"true"``），也就是说第三方导入 / 手写的纯 Markdown 技能
+    在列表里就是「已启用」。旧实现在这里返回 ``False``，调用方只能报 400，于是那种技能
+    **永远禁不掉**——列表说启用、按钮点不动，且没有任何别的入口能改。
+    """
     if not os.path.exists(skill_md_path):
         return False
     try:
         with open(skill_md_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
-        # 与 parse_skill_frontmatter 同样的 BOM 容忍：这里若匹配不到 frontmatter 会
-        # 直接 return False，调用方（toggle 端点）就把「禁不掉」报成 500。
+        # 与 parse_skill_frontmatter 同样的 BOM 容忍：BOM 留在原处会让 ^--- 匹配失败，
+        # 从而把「有 frontmatter」误判成「没有」并再补一份重复的块。
         content = content.lstrip("\ufeff")
+        enabled_line = f"enabled: {str(bool(enabled)).lower()}"
 
-        match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
+        match = _FRONTMATTER_RE.match(content)
         if match:
             yaml_block = match.group(1)
             rest_content = content[match.end():]
-            
+
             new_lines = []
             has_enabled = False
             for line in yaml_block.splitlines():
                 if line.strip().lower().startswith("enabled:"):
-                    new_lines.append(f"enabled: {str(enabled).lower()}")
+                    new_lines.append(enabled_line)
                     has_enabled = True
                 else:
                     new_lines.append(line)
-            
+
             if not has_enabled:
-                new_lines.append(f"enabled: {str(enabled).lower()}")
-                
+                new_lines.append(enabled_line)
+
             new_yaml_block = "\n".join(new_lines)
             new_content = f"---\n{new_yaml_block}\n---\n{rest_content}"
-            
-            with open(skill_md_path, "w", encoding="utf-8") as f:
-                f.write(new_content)
-            return True
+        else:
+            # 纯 Markdown / 无 frontmatter：整份正文原样保留，只补一个最小 frontmatter。
+            body = content.lstrip("\n")
+            new_content = f"---\n{enabled_line}\n---\n\n{body}"
+
+        with open(skill_md_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        return True
     except Exception:
         pass
     return False

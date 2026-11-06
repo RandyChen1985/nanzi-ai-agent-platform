@@ -676,3 +676,24 @@ async def test_personal_rename_does_not_touch_global_forbidden_rows(skill_tree, 
     )
 
     assert called == []
+
+
+def test_reserved_ids_cover_every_single_segment_literal_route():
+    """个人技能下所有「单段字面路由」都必须是保留字。
+
+    这些路由注册在 ``/{skill_id}`` **之前**（FastAPI 按注册顺序匹配），同 ID 的技能详情页
+    会被它们顶掉。``share-targets`` 就是这么漏的：路由存在、保留字集合里却没有它，
+    于是可以创建一个永远打不开的技能。
+    """
+    from app.api.portal.endpoints import personal_skills, skills
+
+    for module, label in ((personal_skills, "个人技能"), (skills, "平台技能")):
+        for route in module.router.routes:
+            path = str(getattr(route, "path", ""))
+            segments = [seg for seg in path.strip("/").split("/") if seg]
+            # 只关心会与 /{skill_id} 直接冲突的单段字面路径
+            if len(segments) != 1 or segments[0].startswith("{"):
+                continue
+            assert segments[0] in svc.RESERVED_SKILL_IDS, (
+                f"{label}字面路由 /{segments[0]} 未登记为保留字，同名技能详情页会被遮蔽"
+            )

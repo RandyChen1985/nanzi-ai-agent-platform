@@ -367,8 +367,22 @@ class SkillInjector:
                     )
 
                 skill_md_path = next(
-                    (p for p in candidate_paths if os.path.exists(p)), candidate_paths[-1]
+                    (p for p in candidate_paths if os.path.exists(p)),
+                    candidate_paths[-1] if candidate_paths else None,
                 )
+                if skill_md_path is None:
+                    # 个人技能但解析不出个人目录（无身份 / 工作区根解析异常）且没有显式
+                    # 路径时，候选链是空的：此前 `candidate_paths[-1]` 直接 IndexError，
+                    # 而这个异常会把本轮**所有**技能（含公共与自动匹配）一起带走。
+                    # 只跳过这一条，剩下的技能照常注入。
+                    logger.warning(
+                        "[Skills] Skip mounted skill %s: personal skills dir unresolved "
+                        "(scope=%s, has_user_info=%s)",
+                        skill_id,
+                        skill_scope,
+                        bool(user_info),
+                    )
+                    continue
                 if not (meta_override and isinstance(meta_override, dict)) and os.path.exists(
                     skill_md_path
                 ):
