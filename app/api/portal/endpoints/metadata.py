@@ -1008,19 +1008,13 @@ async def add_metadata_dataset_permissions(
     await conn.flush()
 
     if affected_user_ids:
+        # 一次批量清完即可：``invalidate_cached_permissions_for_users`` 覆盖的键
+        # 已经包含 agent:dataset_menu:{uid} 与全部数据门户导航键（见
+        # PermissionService._delete_exact_user_cache_keys）。这里原本还按 50 并发
+        # 逐用户再清一遍菜单缓存——删的是同一批键，代价却是每人一次全库 SCAN：
+        # 全员授权时 1000 用户 = 1000 次 SCAN，Redis 服务端照样串行处理几十秒
+        # （并发只让客户端等待重叠，遍历总量不变），表现为保存卡死。
         await perm_service.invalidate_cached_permissions_for_users(affected_user_ids)
-        from app.services.ai.config import AgentConfigProvider
-
-        # 「全员」授权影响所有启用用户，逐用户串行清会拖到几十秒：分批并发。
-        ordered = sorted(affected_user_ids)
-        for start in range(0, len(ordered), 50):
-            await asyncio.gather(
-                *(
-                    AgentConfigProvider.invalidate_dataset_menu_cache(user_id=uid)
-                    for uid in ordered[start : start + 50]
-                ),
-                return_exceptions=True,
-            )
 
     response = {"code": 0, "message": "权限配置已成功添加", "scope_supported": scope_supported}
     if not scope_supported:
@@ -1082,19 +1076,13 @@ async def delete_metadata_dataset_permission(
     await conn.flush()
 
     if affected_user_ids:
+        # 一次批量清完即可：``invalidate_cached_permissions_for_users`` 覆盖的键
+        # 已经包含 agent:dataset_menu:{uid} 与全部数据门户导航键（见
+        # PermissionService._delete_exact_user_cache_keys）。这里原本还按 50 并发
+        # 逐用户再清一遍菜单缓存——删的是同一批键，代价却是每人一次全库 SCAN：
+        # 全员授权时 1000 用户 = 1000 次 SCAN，Redis 服务端照样串行处理几十秒
+        # （并发只让客户端等待重叠，遍历总量不变），表现为保存卡死。
         await perm_service.invalidate_cached_permissions_for_users(affected_user_ids)
-        from app.services.ai.config import AgentConfigProvider
-
-        # 「全员」授权影响所有启用用户，逐用户串行清会拖到几十秒：分批并发。
-        ordered = sorted(affected_user_ids)
-        for start in range(0, len(ordered), 50):
-            await asyncio.gather(
-                *(
-                    AgentConfigProvider.invalidate_dataset_menu_cache(user_id=uid)
-                    for uid in ordered[start : start + 50]
-                ),
-                return_exceptions=True,
-            )
 
     return {"code": 0, "message": "权限配置已成功移除"}
 

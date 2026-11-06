@@ -522,6 +522,17 @@ class AgentConfigProvider:
             logger.error(f"Failed to refresh dataset menu cache: {e}")
 
     @staticmethod
+    def dataset_menu_cache_key(user_id: Optional[int] = None, is_admin: bool = False) -> str:
+        """数据集菜单缓存键的唯一构造入口。
+
+        批量清权限缓存（``PermissionService._invalidate_user_caches_bulk``）需要**直接构造**
+        这个键来做 pipeline 删除——不能再逐用户调 ``invalidate_dataset_menu_cache``，那条路
+        每用户还要额外付一次全库 SCAN。键格式因此必须单点维护：这里改了，批量侧自动跟随，
+        不会出现「单用户清了、批量没清」的静默不一致（表现为改完权限 1 小时内不生效）。
+        """
+        return f"agent:dataset_menu:{'admin' if is_admin else user_id or 'anon'}"
+
+    @staticmethod
     async def invalidate_dataset_menu_cache(user_id: Optional[int] = None, is_admin: bool = False):
         """
         Invalidate dataset menu cache for a specific user.
@@ -530,7 +541,9 @@ class AgentConfigProvider:
         try:
             redis = await get_redis()
             if redis:
-                cache_key = f"agent:dataset_menu:{'admin' if is_admin else user_id or 'anon'}"
+                cache_key = AgentConfigProvider.dataset_menu_cache_key(
+                    user_id=user_id, is_admin=is_admin
+                )
                 await redis.delete(cache_key)
                 logger.info(f"Dataset menu cache invalidated for key: {cache_key}")
             from app.services.dataset_navigation_service import DatasetNavigationService
