@@ -22,7 +22,7 @@ from app.schemas.metadata import (
     CronInspectionConfigResponse, CronInspectionConfigRequest,
     AnalyzeColumnRequest, AnalyzeColumnResponse, AnalyzeUpdateCommentResponse,
     RecommendColumnSemanticRequest, RecommendColumnSemanticResponse,
-    CloneDatasetRequest,
+    CloneDatasetRequest, BatchDeleteDatasetsRequest,
 )
 from app.models.user import User
 from app.models.permission import Role
@@ -1163,6 +1163,75 @@ async def delete_dataset(
         reason="删除数据集"
     )
     return {"message": "Deleted successfully"}
+
+@router.post(
+    "/datasets/batch-delete",
+    dependencies=[
+        Depends(
+            require_any_permission(
+                ("element", "element:metadata:edit"),
+                ("element", "element:metadata:delete"),
+            )
+        )
+    ],
+)
+async def batch_delete_datasets(
+    payload: BatchDeleteDatasetsRequest,
+    conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(get_current_user),
+):
+    """批量删除数据集（连同表/字段/关系/指标一起）。
+
+    逐条复用 ``MetadataService.delete_dataset``：它负责变更日志、菜单缓存、
+    本地向量与 RAGFlow 侧的清理。单条失败只回滚该条并把原因带回前端，
+    不做「一个失败全都不删」——列表里点名删除的语义更接近逐条操作。
+    """
+    unique_ids = list(dict.fromkeys(int(item) for item in (payload.ids or [])))
+    if not unique_ids:
+        raise HTTPException(status_code=400, detail="请先选择要删除的数据集")
+    if len(unique_ids) > 100:
+        raise HTTPException(status_code=400, detail="单次最多删除 100 个数据集，请分批操作")
+
+    from app.models.metadata import MetaDataset as _MetaDataset
+
+    existing = set(
+        (
+            await conn.execute(select(_MetaDataset.id).where(_MetaDataset.id.in_(unique_ids)))
+        )
+        .scalars()
+        .all()
+    )
+
+    deleted: List[int] = []
+    missing: List[int] = []
+    failed: List[Dict[str, Any]] = []
+    for dataset_id in unique_ids:
+        if dataset_id not in existing:
+            missing.append(dataset_id)
+            continue
+        try:
+            await MetadataService.delete_dataset(
+                conn,
+                dataset_id,
+                user_id=int(user.get("user_id") or 0),
+                user_name=user.get("user_name"),
+                reason="批量删除数据集",
+            )
+            deleted.append(dataset_id)
+        except Exception as exc:  # noqa: BLE001 - 单条失败不影响其余条目
+            logger.warning("[Batch Delete] dataset %s failed: %s", dataset_id, exc)
+            await conn.rollback()
+            failed.append({"id": dataset_id, "error": str(exc)[:200]})
+
+    return {
+        "code": 0,
+        "data": {
+            "deleted": deleted,
+            "missing": missing,
+            "failed": failed,
+        },
+    }
+
 
 @router.get("/datasets/{dataset_id}/yaml", dependencies=[Depends(require_permission("element", "element:metadata:view_yaml"))])
 async def get_dataset_yaml(dataset_id: int, conn: AsyncSession = Depends(get_db_session)):

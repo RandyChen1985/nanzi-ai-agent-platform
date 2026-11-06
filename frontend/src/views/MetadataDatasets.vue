@@ -771,9 +771,92 @@ const loadMoreDatasets = () => {
   visibleCount.value += PAGE_SIZE
 }
 
+// ---------------------------------------------------------------------------
+// 批量选择（列表视图）
+// ---------------------------------------------------------------------------
+// 只有能删的人才给复选框：没权限时列表保持原样，不制造「选了删不了」的困惑
+const canBatchDelete = computed(() => hasPermission('element:metadata:delete'))
+const selectedDatasetIds = ref<number[]>([])
+const selectAllRef = ref<HTMLInputElement | null>(null)
+const showBatchDeleteModal = ref(false)
+const batchDeleting = ref(false)
+
+const selectedCount = computed(() => selectedDatasetIds.value.length)
+
+const selectedDatasetsPreview = computed(() =>
+  datasets.value.filter((ds) => selectedDatasetIds.value.includes(ds.id)).slice(0, 6),
+)
+
+const allVisibleSelected = computed(
+  () =>
+    canBatchDelete.value &&
+    visibleDatasets.value.length > 0 &&
+    visibleDatasets.value.every((ds) => selectedDatasetIds.value.includes(ds.id)),
+)
+
+const someVisibleSelected = computed(() =>
+  visibleDatasets.value.some((ds) => selectedDatasetIds.value.includes(ds.id)),
+)
+
+const isSelected = (id: number) => selectedDatasetIds.value.includes(id)
+
+const toggleSelect = (id: number) => {
+  const index = selectedDatasetIds.value.indexOf(id)
+  if (index >= 0) selectedDatasetIds.value.splice(index, 1)
+  else selectedDatasetIds.value.push(id)
+}
+
+const toggleSelectAllVisible = () => {
+  const visibleIds = visibleDatasets.value.map((ds) => ds.id)
+  if (allVisibleSelected.value) {
+    selectedDatasetIds.value = selectedDatasetIds.value.filter((id) => !visibleIds.includes(id))
+    return
+  }
+  selectedDatasetIds.value = Array.from(new Set([...selectedDatasetIds.value, ...visibleIds]))
+}
+
+const clearSelection = () => {
+  selectedDatasetIds.value = []
+}
+
+const openBatchDelete = () => {
+  if (!selectedCount.value) return
+  showBatchDeleteModal.value = true
+}
+
+const confirmBatchDelete = async () => {
+  if (!selectedCount.value || batchDeleting.value) return
+  batchDeleting.value = true
+  try {
+    const res = await metadataApi.batchDeleteDatasets([...selectedDatasetIds.value])
+    const data = res.data?.data || { deleted: [], missing: [], failed: [] }
+    const deletedCount = data.deleted?.length || 0
+    const failedCount = data.failed?.length || 0
+    if (deletedCount) showToast(`已删除 ${deletedCount} 个数据集`, 'success')
+    if (failedCount) showToast(`${failedCount} 个数据集删除失败，请稍后重试`, 'error')
+    if (data.missing?.length) showToast(`${data.missing.length} 个数据集已不存在`, 'info')
+    showBatchDeleteModal.value = false
+    clearSelection()
+    await fetchDatasets()
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || e?.message || '批量删除失败', 'error')
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
+// 半选状态是 DOM property，只能手动同步
+watch([allVisibleSelected, someVisibleSelected], () => {
+  if (selectAllRef.value) {
+    selectAllRef.value.indeterminate = someVisibleSelected.value && !allVisibleSelected.value
+  }
+})
+
 // 筛选 / 排序变化后回到第一屏，避免停在旧的「加载更多」位置
 watch([searchQuery, statusFilter, sortField, sortDirection], () => {
   visibleCount.value = PAGE_SIZE
+  // 列表内容变了，之前勾的项可能已不可见，直接清掉避免误删
+  clearSelection()
 })
 
 // Test Retrieval State
@@ -863,6 +946,11 @@ const fetchDatasets = async () => {
   try {
     const res = await metadataApi.getDatasets()
     datasets.value = res.data
+    // 列表刷新后把已经不存在的 id 从选中集合里摘掉
+    if (selectedDatasetIds.value.length) {
+      const alive = new Set(datasets.value.map((item) => item.id))
+      selectedDatasetIds.value = selectedDatasetIds.value.filter((id) => alive.has(id))
+    }
     // 卡片要显示「这个数据集授给了谁」，跟着列表一起刷，避免多一次手动刷新
     void fetchPermissionSummary()
   } catch (e: any) {
@@ -1421,6 +1509,21 @@ onMounted(async () => {
       </div>
 
       <div class="relative z-10 flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
+        <!-- 结果计数放在工具栏最前并固定宽度：搜索条件一变数字就变，
+             如果跟着一起挤，搜索框会左右跳。没有筛选时显示总数，避免整块出现/消失。 -->
+        <div
+          class="hidden w-24 shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-gray-400 sm:block"
+          :title="hasActiveFilters ? '当前筛选结果 / 全部数据集' : '全部数据集'"
+        >
+          <template v-if="hasActiveFilters">
+            <span class="font-semibold text-gray-700">{{ displayDatasets.length }}</span>
+            <span class="text-gray-400"> / {{ datasets.length }}</span>
+          </template>
+          <template v-else>
+            共 <span class="font-semibold text-gray-700">{{ datasets.length }}</span> 个
+          </template>
+        </div>
+
         <div class="relative w-full shrink-0 sm:w-72">
           <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1494,12 +1597,6 @@ onMounted(async () => {
             </span>
           </div>
 
-          <div
-            v-if="hasActiveFilters"
-            class="hidden shrink-0 whitespace-nowrap px-1 text-xs text-gray-400 sm:block"
-          >
-            {{ displayDatasets.length }} / {{ datasets.length }}
-          </div>
         </div>
 
         <div class="flex items-center gap-2">
@@ -2007,14 +2104,42 @@ onMounted(async () => {
     <!-- List View：窄屏允许横滑，避免 overflow-hidden 裁切列内容 -->
     <div v-else class="overflow-x-auto rounded-xl border border-gray-100 bg-white shadow-sm" style="-webkit-overflow-scrolling: touch;">
        <div class="min-w-[720px]">
+       <!-- 批量操作条：选中才出现，避免常态占用高度 -->
+       <div
+         v-if="selectedCount"
+         class="flex flex-wrap items-center gap-3 border-b border-blue-100 bg-blue-50/70 px-6 py-2"
+       >
+         <span class="text-xs font-medium text-blue-700">已选 <b>{{ selectedCount }}</b> 个数据集</span>
+         <button type="button" class="text-xs text-blue-600 hover:underline" @click="clearSelection">取消选择</button>
+         <button
+           type="button"
+           class="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-60"
+           :disabled="batchDeleting"
+           @click="openBatchDelete"
+         >
+           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+           批量删除
+         </button>
+       </div>
        <div class="grid grid-cols-12 gap-4 border-b border-gray-100 bg-gray-50 px-6 py-3 text-xs font-bold uppercase tracking-wider text-gray-500">
-          <button type="button" class="col-span-3 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('display_name')">
+          <div class="col-span-3 flex items-center gap-3">
+          <input
+            v-if="canBatchDelete"
+            ref="selectAllRef"
+            type="checkbox"
+            class="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            title="全选当前列表"
+            :checked="allVisibleSelected"
+            @change="toggleSelectAllVisible"
+          />
+          <button type="button" class="inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('display_name')">
             <span>数据集 (Dataset)</span>
             <svg v-if="sortField === 'display_name'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
             </svg>
           </button>
+          </div>
           <button type="button" class="col-span-2 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('status')">
             <span>状态 (Status)</span>
             <svg v-if="sortField === 'status'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2056,11 +2181,21 @@ onMounted(async () => {
           <div 
              v-for="ds in visibleDatasets" 
              :key="ds.id" 
-             class="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-gray-50 transition-colors cursor-pointer group"
+             class="grid grid-cols-12 gap-4 px-6 py-4 items-center transition-colors cursor-pointer group"
+             :class="isSelected(ds.id) ? 'bg-blue-50/50' : 'hover:bg-gray-50'"
              @click="goToTables(ds.id)"
           >
              <!-- Name & Meta -->
              <div class="col-span-3 flex items-center gap-3">
+                <input
+                   v-if="canBatchDelete"
+                   type="checkbox"
+                   class="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                   :checked="isSelected(ds.id)"
+                   :aria-label="`选择数据集 ${ds.display_name}`"
+                   @click.stop
+                   @change="toggleSelect(ds.id)"
+                />
                 <div class="w-10 h-10 rounded-lg bg-gray-50 flex-shrink-0 flex items-center justify-center text-xl border border-gray-100">
                    <component :is="getDatasetIcon(ds.name)" class="w-5 h-5 text-blue-600" />
                 </div>
@@ -2284,6 +2419,54 @@ onMounted(async () => {
       </button>
       <span class="text-[10px] text-gray-400">列表分批渲染，避免数据量大时卡顿</span>
     </div>
+
+    <!-- Batch Delete Confirmation Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showBatchDeleteModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+        @click.self="!batchDeleting && (showBatchDeleteModal = false)"
+      >
+        <div class="w-full max-w-md overflow-hidden rounded-xl border border-gray-100 bg-white shadow-2xl">
+          <div class="p-6">
+            <div class="mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-red-100 bg-red-50">
+              <svg class="h-7 w-7 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </div>
+            <h3 class="text-lg font-bold text-gray-900">批量删除 {{ selectedCount }} 个数据集</h3>
+            <p class="mt-2 text-sm leading-relaxed text-gray-500">
+              将连同其表、字段、关系、指标一起删除，RAGFlow 侧的关联数据集也会同步清理。
+              <b class="text-red-600">此操作不可恢复。</b>
+            </p>
+            <div class="mt-3 max-h-32 space-y-1 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50/60 px-3 py-2 text-xs text-gray-600">
+              <div v-for="ds in selectedDatasetsPreview" :key="ds.id" class="truncate">
+                · {{ ds.display_name }} <span class="text-gray-400">#{{ ds.name }}</span>
+              </div>
+              <div v-if="selectedCount > selectedDatasetsPreview.length" class="text-gray-400">
+                … 等共 {{ selectedCount }} 个
+              </div>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 bg-gray-50 px-6 py-4">
+            <button
+              type="button"
+              class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+              :disabled="batchDeleting"
+              @click="showBatchDeleteModal = false"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              class="rounded-lg bg-red-600 px-5 py-2 text-sm font-medium text-white shadow-md shadow-red-500/30 transition-colors hover:bg-red-700 disabled:opacity-60"
+              :disabled="batchDeleting"
+              @click="confirmBatchDelete"
+            >
+              {{ batchDeleting ? '删除中…' : '确认删除' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Delete Confirmation Modal -->
     <Teleport to="body">

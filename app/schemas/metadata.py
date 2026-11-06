@@ -358,3 +358,9 @@ class CloneDatasetRequest(BaseModel):
     copy_permissions: bool = False
     # detail: 数据集 1 条 + 每张表/关系/指标各 1 条；summary: 只写 1 条汇总
     log_mode: Literal["detail", "summary"] = "detail"
+
+
+class BatchDeleteDatasetsRequest(BaseModel):
+    """批量删除数据集：一次最多 100 个，重复 id 自动去重。"""
+
+    ids: List[int] = Field(default_factory=list)

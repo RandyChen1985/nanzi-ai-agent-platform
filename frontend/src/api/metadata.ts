@@ -347,6 +347,12 @@ export const metadataApi = {
   updateDataset: (id: number, data: Partial<Dataset>) =>
     axios.put<Dataset>(`${API_BASE}/datasets/${id}`, data),
   deleteDataset: (id: number) => axios.delete(`${API_BASE}/datasets/${id}`),
+  // 列表视图批量删除：逐条复用后端的单条删除逻辑，返回 deleted / missing / failed
+  batchDeleteDatasets: (ids: number[]) =>
+    axios.post<{ code: number; data: { deleted: number[]; missing: number[]; failed: Array<{ id: number; error: string }> } }>(
+      `${API_BASE}/datasets/batch-delete`,
+      { ids },
+    ),
   syncToRag: (id: number) =>
     axios.post<MetadataSyncStartResponse>(`${API_BASE}/datasets/${id}/rag/sync`),
   getDatasetYaml: (id: number) =>
