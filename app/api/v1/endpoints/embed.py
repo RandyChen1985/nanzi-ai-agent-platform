@@ -73,6 +73,15 @@ class TicketResponseData(BaseModel):
 
 class ExchangeTicketRequest(BaseModel):
     ticket: str = Field(..., description="一次性短时 Ticket 字符串", json_schema_extra={"example": "emt_..."})
+    host_origin: Optional[str] = Field(
+        None,
+        description=(
+            "前端 iframe 传入的宿主真实来源（来自 document.referrer 或 postMessage event.origin）。"
+            "当 iframe 同源调用接口时，HTTP Origin 标头为平台自身，此时以后端接收到的"
+            "宿主来源进行白名单校验。"
+        ),
+        json_schema_extra={"example": "https://crm.example.com"},
+    )
 
 
 class SessionTokenResponseData(BaseModel):
@@ -258,7 +267,11 @@ async def exchange_embed_ticket(
     response: Response,
     payload: ExchangeTicketRequest,
 ):
-    origin = request.headers.get("Origin") or request.headers.get("Referer")
+    origin = (
+        (payload.host_origin or "").strip()
+        or request.headers.get("Origin")
+        or request.headers.get("Referer")
+    )
     try:
         data = await EmbedService.exchange_ticket(
             ticket=payload.ticket,

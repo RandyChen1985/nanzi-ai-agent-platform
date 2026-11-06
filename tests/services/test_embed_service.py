@@ -307,6 +307,19 @@ async def test_exchange_requires_origin_when_whitelist_configured(fake_redis):
         await EmbedService.exchange_ticket(ticket=ticket, origin=None)
 
 
+async def test_exchange_allowed_origins_unset_or_wildcard(fake_redis):
+    """验证 allowed_origins 为空或含 * 时，任意来源甚至无来源均可兑换。"""
+    # 1. 未配置白名单 (allowed_origins=None / [])
+    ticket_empty = _seed_ticket(fake_redis, allowed_origins=None)
+    data_empty = await EmbedService.exchange_ticket(ticket=ticket_empty, origin=None)
+    assert data_empty["session_token"]
+
+    # 2. 通配符 *
+    ticket_wild = _seed_ticket(fake_redis, allowed_origins=json.dumps(["*"]))
+    data_wild = await EmbedService.exchange_ticket(ticket=ticket_wild, origin="https://random-origin.com")
+    assert data_wild["session_token"]
+
+
 async def test_exchange_accepts_referer_with_path(fake_redis):
     """`Referer` 是带路径的完整 URL，白名单比较必须归一化后再比。"""
     ticket = _seed_ticket(fake_redis, allowed_origins=json.dumps(["https://crm.example.com"]))
