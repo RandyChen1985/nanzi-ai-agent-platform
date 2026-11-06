@@ -550,12 +550,20 @@
         :welcome-cards="welcomeCards"
         :personal-resources="welcomePersonalResources"
         :personal-resources-refreshing="workbenchHomeRefreshing"
+        :recent-conversations="welcomeRecentConversations"
+        :recommendations="welcomeRecommendations"
+        :recommendations-loading="welcomeRecommendationsLoading"
+        :recommendation-source="welcomeRecommendationSource"
+        :recommendations-error="welcomeRecommendationsError"
         @quick-question="handleQuickQuestion"
+        @fill-question="handleQuickQuestion($event, 'fill')"
         @open-data-portal="openPortalDrawer"
         @open-personal-resources="openPersonalResources"
         @refresh-personal-resources="refreshWelcomePersonalResources"
         @select-knowledge-base="openKnowledgePortal"
         @open-workspace="openWorkspaceDrawer"
+        @generate-recommendations="generateWelcomeRecommendations"
+        @open-recent-conversation="openWelcomeRecentConversation"
       />
       <!-- 小程序宿主：已授权智能体为空时的兜底（浏览器/iframe 既有行为不受影响） -->
       <p
@@ -4490,6 +4498,25 @@ const thinkingEnableOverride = ref<boolean | null>(null);
 const reasoningEffortOverride = ref<ReasoningEffort | null>(null);
 const temperatureOverride = ref<number | null>(null);
 const welcomeCards = ref<Array<{ icon: string; title: string; subtitle: string; prompt: string }>>([]);
+interface WelcomeRecentConversation {
+  conversation_id: string;
+  title: string;
+  subtitle?: string;
+  occurred_at?: string;
+  agent_id?: string;
+}
+interface WelcomeRecommendationCard {
+  icon: string;
+  title: string;
+  subtitle: string;
+  prompt: string;
+  source?: string;
+}
+const welcomeRecentConversations = ref<WelcomeRecentConversation[]>([]);
+const welcomeRecommendations = ref<WelcomeRecommendationCard[]>([]);
+const welcomeRecommendationsLoading = ref(false);
+const welcomeRecommendationSource = ref("");
+const welcomeRecommendationsError = ref("");
 const showPersonalResources = ref(false);
 const personalResourcesTab = ref<PersonalResourceTab>("tokens");
 const portalInboxRef = ref<{ open: () => void | Promise<void> } | null>(null);
@@ -4554,8 +4581,76 @@ const handlePersonalResourceOpenQuestion = (payload: {
   void handleQuickQuestion(payload?.query, payload?.action === "fill" ? "fill" : "send");
 };
 
+const resetWelcomeRecommendations = () => {
+  welcomeRecommendations.value = [];
+  welcomeRecommendationSource.value = "";
+  welcomeRecommendationsError.value = "";
+};
+
+// `config.token` 在 setup 早期就可能到位，而 `embedAuthHeaders` 声明得更靠后；
+// 欢迎页上下文 watch 的 immediate 调用不能碰后者，否则会踩 TDZ。
+const welcomeApiHeaders = (): Record<string, string> | undefined => {
+  if (!config.token) return undefined;
+  return {
+    Authorization: `Bearer ${config.token}`,
+    "X-API-Key": config.token,
+  };
+};
+
+const loadWelcomeHomeContext = async () => {
+  try {
+    const response = await axios.get('/api/v1/chat/home-context', {
+      params: { limit: 1 },
+      headers: welcomeApiHeaders(),
+    });
+    const items = response.data?.items;
+    welcomeRecentConversations.value = Array.isArray(items)
+      ? items.filter((item: any) => item?.conversation_id && item?.title).slice(0, 1)
+      : [];
+  } catch (error) {
+    // 欢迎页的“继续”是增强信息，失败时静默隐藏，不阻断首屏。
+    console.warn('Failed to load welcome recent conversations', error);
+    welcomeRecentConversations.value = [];
+  }
+};
+
+const generateWelcomeRecommendations = async () => {
+  if (welcomeRecommendationsLoading.value) return;
+  welcomeRecommendationsLoading.value = true;
+  welcomeRecommendationsError.value = "";
+  try {
+    const response = await axios.post('/api/v1/chat/home-recommendations', {
+      variation: String(Date.now()),
+      days: 3,
+    }, { headers: welcomeApiHeaders() });
+    const cards = response.data?.cards;
+    const normalized = Array.isArray(cards)
+      ? cards.filter((card: any) => card?.title && card?.subtitle && card?.prompt).slice(0, 3)
+      : [];
+    if (normalized.length !== 3) {
+      resetWelcomeRecommendations();
+      welcomeRecommendationsError.value = "最近 3 天还没有可参考的会话";
+      return;
+    }
+    welcomeRecommendations.value = normalized;
+    welcomeRecommendationSource.value = `已读取近 3 天 · ${Number(response.data?.source_count || 0)} 段会话`;
+  } catch (error: any) {
+    // 生成失败只在卡片下方就地提示，不弹 toast，避免打断首页浏览。
+    welcomeRecommendationsError.value = String(error?.response?.data?.detail || "生成推荐失败，请稍后重试");
+  } finally {
+    welcomeRecommendationsLoading.value = false;
+  }
+};
+
+const openWelcomeRecentConversation = (conversationId: string) => {
+  if (!conversationId) return;
+  void handleHistoryClick({ conversation_id: conversationId });
+};
+
 const loadWelcomeCards = async (agentId?: string) => {
   const id = String(agentId || '').trim();
+  resetWelcomeRecommendations();
+  void loadWelcomeHomeContext();
   if (!id) {
     welcomeCards.value = [];
     return;
@@ -7279,9 +7374,10 @@ watch(() => config.token, (newToken) => {
 
 // 非 URL 深链的专家切换也需要同步刷新版本级欢迎卡片。
 watch(effectiveEmbedChatAgentId, (agentId) => {
-    if (config.token) {
-        void loadWelcomeCards(agentId);
-    }
+    // 门户 iframe 走 Cookie 时 config.token 可能为空；欢迎页的“继续”和
+    // 版本欢迎卡不能只等 token 分支，否则会一直不加载。无鉴权时请求会失败，
+    // 后续 token 到位仍会由上面的 token watch 再补一次。
+    void loadWelcomeCards(agentId);
 }, { immediate: true });
 
 // 监听当前激活的智能体变更，自动应用其配置的推荐排版风格

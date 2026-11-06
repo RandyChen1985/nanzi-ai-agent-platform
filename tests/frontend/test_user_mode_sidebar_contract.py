@@ -851,3 +851,20 @@ def test_filter_panel_closes_on_escape_and_route_change(sidebar: str) -> None:
     assert 'event.key !== "Escape"' in sidebar
     route_watch = sidebar.split("watch(() => route.path", 1)[1].split("})", 1)[0]
     assert "filterPanelOpen.value = false" in route_watch
+
+
+def test_filter_panel_has_backdrop_so_iframe_clicks_close_it(sidebar: str) -> None:
+    """点外部要真的生效，必须有一层遮罩。
+
+    用户模式的主工作区是全屏 `<iframe>`（Chat.vue）。点进去时主文档收不到
+    pointerdown / keydown，`document` 上的判定形同虚设——浮层会一直挂着，
+    或者在 iframe 上点哪都没反应。遮罩铺满视口、层级压在面板下面，
+    点它（包括 iframe 覆盖的区域）就能收起。
+    """
+    assert "data-conversation-filter-backdrop" in sidebar
+    # 遮罩必须在面板(z-[80])之下，否则会挡住面板里的筛选操作
+    assert 'z-[75]' in sidebar
+    # 遮罩与面板同一开关：不能出现「有面板没遮罩」或反之
+    assert sidebar.count('v-if="filterPanelOpen"') >= 2
+    backdrop = sidebar.split("data-conversation-filter-backdrop", 1)[1].split("/>", 1)[0]
+    assert "pointerdown" in backdrop

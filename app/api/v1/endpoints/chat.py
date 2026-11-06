@@ -2899,6 +2899,77 @@ async def _build_chat_history_response(
     ))
 
 
+class HomeRecommendationRequest(BaseModel):
+    """首页推荐生成参数；variation 只用于“换一批”时换角度。"""
+
+    variation: str = Field(default="", max_length=64)
+    days: int = Field(default=3, ge=1, le=7)
+
+
+@router.get(
+    "/home-context",
+    summary="获取欢迎页最近会话上下文",
+    description="当前用户最近 N 天的普通会话，仅返回标题、智能体与时间，不触发模型调用；days=0 表示不限时间，只取最近一条。",
+)
+async def get_home_context(
+    days: int = Query(0, ge=0, le=365),
+    limit: int = Query(1, ge=1, le=5),
+    request: Request = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_info = getattr(request.state, "user", None) if request else None
+    user_id = _require_numeric_chat_user_id(user_info)
+    from app.services.workbench_conversation_service import list_recent_conversations
+
+    # days=0 表示“只要最近一条”，不受时间窗限制；继续入口用这个口径。
+    since = datetime.now() - timedelta(days=days) if days > 0 else None
+    rows = await list_recent_conversations(db, user_id=user_id, limit=limit, since=since)
+    items = []
+    for row in rows:
+        target = row.get("target") or {}
+        items.append({
+            "conversation_id": target.get("conversation_id") or "",
+            "title": row.get("title") or "未命名会话",
+            "subtitle": row.get("subtitle") or "",
+            "agent_id": target.get("agent_id") or "",
+            "occurred_at": row.get("occurred_at") or "",
+        })
+    return {"items": items, "count": len(items)}
+
+
+@router.post(
+    "/home-recommendations",
+    summary="生成欢迎页行动推荐",
+    description="基于当前用户最近 N 天会话生成 3 张可执行卡片；无上下文时返回空列表。",
+)
+async def generate_home_recommendations_endpoint(
+    payload: Optional[HomeRecommendationRequest] = None,
+    request: Request = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_info = getattr(request.state, "user", None) if request else None
+    user_id = _require_chat_user_id(user_info)
+    from app.services.ai.home_recommendation_service import (
+        generate_home_recommendations,
+        load_recent_conversation_context,
+    )
+
+    days = payload.days if payload else 3
+    context = await load_recent_conversation_context(db, user_id=user_id, days=days, limit=5)
+    if not context:
+        return {"cards": [], "source_count": 0}
+    try:
+        cards = await generate_home_recommendations(
+            context,
+            variation_seed=payload.variation if payload else "",
+            days=days,
+        )
+    except Exception as exc:
+        logger.warning("Failed to generate home recommendations: %s", exc)
+        raise HTTPException(status_code=503, detail="生成推荐失败，请稍后重试") from exc
+    return {"cards": cards, "source_count": len(context)}
+
+
 @router.get("/history", 
     response_model=StandardResponse[AgentExecutionHistoryListResponse],
     summary="查询历史记录",

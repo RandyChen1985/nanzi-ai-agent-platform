@@ -87,79 +87,83 @@ const getResourceStyle = (key: string) => {
     v-if="items.length"
     class="grid"
     :class="compact
-      ? 'grid-cols-2 gap-2 sm:grid-cols-5 lg:gap-3'
+      ? 'grid-cols-2 gap-0 overflow-hidden rounded-xl border border-gray-100 bg-gray-50/60 sm:grid-cols-5 dark:border-gray-700/70 dark:bg-gray-800/40'
       : 'grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4'"
   >
     <button
       v-for="item in items"
       :key="item.key"
       type="button"
-      class="group relative overflow-hidden border bg-white text-left shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:bg-gray-800/80 dark:border-gray-700/80"
+      class="group relative text-left transition-all duration-200"
       :class="[
         compact
-          ? 'rounded-xl p-2.5 sm:rounded-xl sm:p-2 lg:p-3'
-          : 'rounded-2xl p-3.5',
+          ? 'border-r border-b border-gray-100 bg-transparent p-2.5 hover:bg-white/80 last:border-r-0 sm:border-b-0 dark:border-gray-700/60 dark:hover:bg-gray-800/70'
+          : 'overflow-hidden rounded-2xl border bg-white p-3.5 shadow-xs hover:-translate-y-0.5 hover:shadow-md dark:bg-gray-800/80 dark:border-gray-700/80',
         item.status === 'error'
-          ? 'border-amber-200 dark:border-amber-700/60 hover:border-amber-300'
-          : [getResourceStyle(item.key).hoverBorder, 'border-gray-100/90 dark:border-gray-700/70'],
+          ? compact
+            ? 'bg-amber-50/40 dark:bg-amber-950/20'
+            : 'border-amber-200 dark:border-amber-700/60 hover:border-amber-300'
+          : compact
+            ? ''
+            : [getResourceStyle(item.key).hoverBorder, 'border-gray-100/90 dark:border-gray-700/70'],
       ]"
       @click="emit('select', item)"
     >
       <div class="flex items-center gap-2.5 lg:gap-3">
         <span
           class="flex shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-110"
-          :class="compact ? 'h-9 w-9 rounded-[10px] lg:h-10 lg:w-10 lg:rounded-xl' : 'h-10 w-10 rounded-xl', getResourceStyle(item.key).iconBg"
+          :class="compact ? 'h-8 w-8 rounded-lg lg:h-9 lg:w-9' : 'h-10 w-10 rounded-xl', getResourceStyle(item.key).iconBg"
         >
           <!-- knowledge：书本，与「知识库」页的语义一致 -->
-          <svg v-if="item.key === 'knowledge'" :class="compact ? 'h-5 w-5 lg:h-[22px] lg:w-[22px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-if="item.key === 'knowledge'" :class="compact ? 'h-4 w-4 lg:h-[18px] lg:w-[18px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 7v14" />
             <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
           </svg>
           <!-- datasets：表格，与「数据门户」的圆柱区分开 -->
-          <svg v-else-if="item.key === 'datasets'" :class="compact ? 'h-5 w-5 lg:h-[22px] lg:w-[22px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else-if="item.key === 'datasets'" :class="compact ? 'h-4 w-4 lg:h-[18px] lg:w-[18px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <path d="M3 9h18" /><path d="M3 15h18" /><path d="M9 3v18" />
           </svg>
           <!-- memory -->
-          <svg v-else-if="item.key === 'memory'" :class="compact ? 'h-5 w-5 lg:h-[22px] lg:w-[22px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else-if="item.key === 'memory'" :class="compact ? 'h-4 w-4 lg:h-[18px] lg:w-[18px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
             <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
             <path d="M12 5v13" />
           </svg>
           <!-- tokens -->
-          <svg v-else-if="item.key === 'tokens'" :class="compact ? 'h-5 w-5 lg:h-[22px] lg:w-[22px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else-if="item.key === 'tokens'" :class="compact ? 'h-4 w-4 lg:h-[18px] lg:w-[18px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
           </svg>
           <!-- data -->
-          <svg v-else-if="item.key === 'data'" :class="compact ? 'h-5 w-5 lg:h-[22px] lg:w-[22px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else-if="item.key === 'data'" :class="compact ? 'h-4 w-4 lg:h-[18px] lg:w-[18px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <ellipse cx="12" cy="5" rx="9" ry="3" />
             <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
             <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
           </svg>
           <!-- skills -->
-          <svg v-else-if="item.key === 'skills'" :class="compact ? 'h-5 w-5 lg:h-[22px] lg:w-[22px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else-if="item.key === 'skills'" :class="compact ? 'h-4 w-4 lg:h-[18px] lg:w-[18px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="m12 3 1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z" />
             <path d="M18 15.5 18.9 18l2.5.9-2.5.9-.9 2.5-.9-2.5-2.5-.9 2.5-.9.9-2.5Z" />
           </svg>
           <!-- mcp -->
-          <svg v-else-if="item.key === 'mcp'" :class="compact ? 'h-5 w-5 lg:h-[22px] lg:w-[22px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else-if="item.key === 'mcp'" :class="compact ? 'h-4 w-4 lg:h-[18px] lg:w-[18px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 22v-5" />
             <path d="M9 8V2" /><path d="M15 8V2" />
             <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
           </svg>
           <!-- tasks -->
-          <svg v-else-if="item.key === 'tasks'" :class="compact ? 'h-5 w-5 lg:h-[22px] lg:w-[22px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else-if="item.key === 'tasks'" :class="compact ? 'h-4 w-4 lg:h-[18px] lg:w-[18px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="8" y="2" width="8" height="4" rx="1" />
             <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
             <path d="m9 14 2 2 4-4" />
           </svg>
           <!-- inbox -->
-          <svg v-else-if="item.key === 'inbox'" :class="compact ? 'h-5 w-5 lg:h-[22px] lg:w-[22px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else-if="item.key === 'inbox'" :class="compact ? 'h-4 w-4 lg:h-[18px] lg:w-[18px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
             <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
           </svg>
           <!-- default -->
-          <svg v-else :class="compact ? 'h-5 w-5 lg:h-[22px] lg:w-[22px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else :class="compact ? 'h-4 w-4 lg:h-[18px] lg:w-[18px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" />
             <path d="M12 8v4" /><path d="M12 16h.01" />
           </svg>
@@ -167,7 +171,7 @@ const getResourceStyle = (key: string) => {
         <div class="min-w-0 flex-1">
           <p
             class="truncate font-medium text-gray-500 dark:text-gray-400"
-            :class="compact ? 'text-[11px] lg:text-[12.5px] leading-tight' : 'text-[11px]'"
+            :class="compact ? 'text-[10px] leading-tight' : 'text-[11px]'"
           >
             {{ item.label }}
           </p>
@@ -175,7 +179,7 @@ const getResourceStyle = (key: string) => {
           <div class="mt-0.5 flex items-baseline gap-1">
             <span
               class="truncate font-bold tracking-tight text-gray-900 tabular-nums dark:text-gray-100"
-              :class="compact ? 'text-lg sm:text-base lg:text-xl' : 'text-xl'"
+              :class="compact ? 'text-[15px] sm:text-[14px] lg:text-[16px]' : 'text-xl'"
             >
               {{ displayValue(item) }}
             </span>
@@ -186,11 +190,11 @@ const getResourceStyle = (key: string) => {
             <span
               v-else
               class="truncate text-[11px] text-gray-400 dark:text-gray-500"
-              :class="compact ? 'text-[10px] sm:text-[9px] lg:text-[11px]' : 'text-[11px]'"
+              :class="compact ? 'text-[9px]' : 'text-[11px]'"
             >{{ item.unit }}</span>
           </div>
         </div>
-        <svg class="h-3 w-3 shrink-0 -translate-x-1 text-gray-400 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg v-if="!compact" class="h-3 w-3 shrink-0 -translate-x-1 text-gray-400 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="9 18 15 12 9 6" />
         </svg>
       </div>

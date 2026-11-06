@@ -112,13 +112,13 @@ const handleResize = () => {
 
 onMounted(() => {
   window.addEventListener("resize", handleResize);
-  document.addEventListener("click", handleDocumentClick);
+  document.addEventListener("pointerdown", handleOutsidePointerDown, true);
   document.addEventListener("keydown", handleEscape);
 });
 
 onUnmounted(() => {
   window.removeEventListener("resize", handleResize);
-  document.removeEventListener("click", handleDocumentClick);
+  document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
   document.removeEventListener("keydown", handleEscape);
 });
 
@@ -182,9 +182,20 @@ const toggleFilterPanel = () => {
   filterPanelOpen.value = !filterPanelOpen.value;
 };
 
-const handleDocumentClick = (event: MouseEvent) => {
+/**
+ * 点外部收起筛选面板。
+ *
+ * 判定必须挂在**捕获阶段**：侧栏里置顶 / 导出 / 分享 / 删除这些按钮都带
+ * `@click.stop`（点它们不该触发外层动作），冒泡阶段的 click 到不了
+ * document，面板就一直挂在页面上——看起来像「点了别处没反应」。
+ * 捕获阶段先于这些元素的处理器执行，`stopPropagation` 拦不住它。
+ *
+ * 用 pointerdown 而不是 click：按下即收起，不必等抬手。
+ */
+const handleOutsidePointerDown = (event: PointerEvent) => {
   if (!filterPanelOpen.value) return;
-  const target = event.target as Node;
+  const target = event.target;
+  if (!(target instanceof Node)) return;
   if (filterPanelRef.value?.contains(target)) return;
   if (filterButtonRef.value?.contains(target)) return;
   filterPanelOpen.value = false;

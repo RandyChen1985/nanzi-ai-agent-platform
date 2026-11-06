@@ -123,6 +123,7 @@ async def list_recent_conversations(
     *,
     user_id: int,
     limit: int = RECENT_CONVERSATION_QUERY_LIMIT,
+    since: Optional[datetime] = None,
 ) -> List[Dict[str, Any]]:
     """当前用户与全部智能体的最近会话（排除定时任务会话）。"""
     filters = [
@@ -132,6 +133,8 @@ async def list_recent_conversations(
         # 再在 Python 里被 strip 掉，等于白丢一条最近会话。
         func.trim(History.conversation_id) != "",
     ]
+    if since is not None:
+        filters.append(History.created_at >= since)
     source_scope = scope_condition("chat")
     if source_scope is not None:
         filters.append(source_scope)
