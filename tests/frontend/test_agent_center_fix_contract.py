@@ -108,3 +108,21 @@ def test_readiness_error_reads_structured_payload():
         source = _read(path)
         assert "readiness" in source, path
         assert "AGENT_NOT_READY" in source, path
+
+
+def test_onboarding_sync_merges_dataset_ids_and_locks_engine_switch():
+    """继续向导保存元数据时要合并 dataset_ids，且不允许切换已落库副本的执行引擎。"""
+    mgmt = _read("frontend/src/views/AgentManagement.vue")
+    sync_block = _block(mgmt, "const syncOnboardingAgentMeta")
+    assert "engineConfigUI.value.dataset_ids" in sync_block
+    assert "dataset_ids: datasetIds" in sync_block
+
+    continue_block = _block(mgmt, "const continueAgentOnboarding")
+    assert "dataset_ids: Array.isArray" in continue_block, (
+        "继续向导必须把 dataset_ids 数组也复制出来，避免编辑器原地修改污染列表数据"
+    )
+
+    drawer = _read("frontend/src/components/agent/AgentVersionEditorDrawer.vue")
+    engine_block = _block(drawer, "const selectEngine")
+    assert "if (!props.isCreatingAgent) return;" in engine_block
+    assert "执行引擎在创建后不可修改" in drawer

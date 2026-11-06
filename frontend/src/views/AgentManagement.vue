@@ -3301,7 +3301,20 @@ const continueAgentOnboarding = async (agent: AIAgent) => {
     onboardingAgent.value = agent;
     onboardingVersion.value = draft;
     selectedAgent.value = agent;
-    agentForm.value = { ...agent };
+    // 深拷贝可变嵌套对象，避免继续向导里改了一半未保存直接关闭时污染列表里的原卡片数据
+    agentForm.value = {
+      ...agent,
+      capabilities: [...(agent.capabilities || [])],
+      engine_config: agent.engine_config
+        ? {
+            ...agent.engine_config,
+            dataset_ids: Array.isArray(agent.engine_config.dataset_ids)
+              ? [...agent.engine_config.dataset_ids]
+              : agent.engine_config.dataset_ids,
+          }
+        : {},
+      team_profile: agent.team_profile ? { ...agent.team_profile } : { name: "", intro: "" },
+    };
     versionForm.value = { ...draft };
     engineConfigUI.value.dataset_ids = Array.isArray(agent.engine_config?.dataset_ids)
       ? agent.engine_config.dataset_ids.join(",")
@@ -3556,7 +3569,10 @@ const persistNewAgentDraft = async (closeAfterSave: boolean) => {
   }
 
   const desiredVersion = { ...versionForm.value };
-  const rawDatasetIds = agentForm.value.engine_config?.dataset_ids ?? engineConfigUI.value.dataset_ids;
+  const rawDatasetIds =
+    agentForm.value.engine_config?.dataset_ids !== undefined
+      ? agentForm.value.engine_config.dataset_ids
+      : engineConfigUI.value.dataset_ids;
   const datasetIds = (Array.isArray(rawDatasetIds) ? rawDatasetIds : String(rawDatasetIds || '').split(','))
     .map((value) => String(value).trim()).filter(Boolean);
   // 新向导第 1 步直接改的是 agentForm.engine_config；父组件这两个 ref 只是
@@ -3694,6 +3710,22 @@ const syncOnboardingAgentMeta = async (): Promise<boolean> => {
     versionConfigStep.value = "agent";
     return false;
   }
+  // 继续向导第 3 步绑定知识库写的是 engineConfigUI.dataset_ids（或手动输入逗号串），
+  // 必须与 persistNewAgentDraft 一样归一成 string[] 写进 engine_config.dataset_ids。
+  const rawDatasetIds =
+    agentForm.value.engine_config?.dataset_ids !== undefined
+      ? agentForm.value.engine_config.dataset_ids
+      : engineConfigUI.value.dataset_ids;
+  const datasetIds = (
+    Array.isArray(rawDatasetIds) ? rawDatasetIds : String(rawDatasetIds || "").split(",")
+  )
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  const nextEngineConfig = {
+    ...(agentForm.value.engine_config || {}),
+    dataset_ids: datasetIds,
+  };
+  agentForm.value.engine_config = nextEngineConfig;
   try {
     const response = await agentApi.updateAgent(agent.id, {
       ...agent,
@@ -3708,7 +3740,7 @@ const syncOnboardingAgentMeta = async (): Promise<boolean> => {
       is_expert_team_lead: agentForm.value.is_expert_team_lead,
       team_profile: agentForm.value.team_profile,
       engine_type: agentForm.value.engine_type,
-      engine_config: agentForm.value.engine_config,
+      engine_config: nextEngineConfig,
       is_system: agent.is_system,
     } as any);
     selectedAgent.value = response.data;
