@@ -35,10 +35,15 @@ def test_view_switch_has_two_options(page: str) -> None:
 
 
 def test_views_share_the_same_rows(page: str) -> None:
-    """两种视图读同一份数据，切换不该触发请求。"""
-    assert 'v-for="ds in libraryListRows"' in page
-    # 列表分支与卡片分支都从 libraryListRows 取数
-    assert page.count('v-for="ds in libraryListRows"') >= 2
+    """两种视图读同一份数据，切换不该触发请求。
+
+    数据源从本地过滤的 libraryListRows 换成服务端分页的 libraryRows，
+    「同一个数组」这条约束不变——否则切视图会丢掉当前页。
+    """
+    assert 'v-for="ds in libraryRows"' in page
+    # 列表分支与卡片分支都从 libraryRows 取数
+    assert page.count('v-for="ds in libraryRows"') >= 2
+    assert "libraryListRows" not in page
 
 
 def test_card_click_uses_the_same_entry_as_row(page: str) -> None:

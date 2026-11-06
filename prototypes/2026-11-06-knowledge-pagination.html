@@ -1,0 +1,1474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="prototype-kind" content="方案对比" />
+<title>知识库 · 大数据量分页方案原型</title>
+<style>
+  :root{
+    --gray-50:#f9fafb; --gray-100:#f3f4f6; --gray-200:#e5e7eb; --gray-300:#d1d5db;
+    --gray-400:#9ca3af; --gray-500:#6b7280; --gray-600:#4b5563; --gray-700:#374151;
+    --gray-800:#1f2937; --gray-900:#111827;
+    --primary:#1677ff; --primary-50:#eff6ff; --primary-100:#dbeafe; --primary-600:#0d5fd6;
+    --emerald-50:#ecfdf5; --emerald-200:#a7f3d0; --emerald-600:#059669; --emerald-500:#10b981;
+    --amber-50:#fffbeb; --amber-100:#fef3c7; --amber-600:#d97706; --amber-700:#b45309;
+    --red-50:#fef2f2; --red-200:#fecaca; --red-600:#dc2626; --red-500:#ef4444;
+    --violet-50:#f5f3ff; --violet-200:#ddd6fe; --violet-600:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+    background:#eef1f5;color:var(--gray-800);-webkit-font-smoothing:antialiased;
+    padding:26px 20px 64px;
+  }
+  .page{max-width:1180px;margin:0 auto}
+  .page-title{font-size:21px;font-weight:800;letter-spacing:-.01em;margin:0 0 6px}
+  .page-sub{font-size:12.5px;color:var(--gray-500);margin:0 0 18px;line-height:1.8;max-width:900px}
+  .page-sub b{color:var(--gray-700)}
+
+  /* ---------- 现状核实卡片 ---------- */
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:10px;margin-bottom:18px}
+  .fact{background:#fff;border:1px solid var(--gray-200);border-radius:11px;padding:11px 13px}
+  .fact-k{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:var(--gray-500);letter-spacing:.02em}
+  .fact-k .dot{width:6px;height:6px;border-radius:50%;background:var(--amber-500,#f59e0b)}
+  .fact-k .dot.bad{background:var(--red-500)}
+  .fact-v{margin-top:5px;font-size:12px;line-height:1.7;color:var(--gray-700)}
+  .fact-v code{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+    background:var(--gray-100);border-radius:4px;padding:1px 4px;color:var(--gray-800);
+  }
+  .fact-v .num{font-weight:800;color:var(--gray-900);font-variant-numeric:tabular-nums}
+
+  /* ---------- 页签 ---------- */
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .tab{
+    border:1px solid var(--gray-200);background:#fff;color:var(--gray-600);
+    font-size:12px;font-weight:600;padding:7px 13px;border-radius:9px;cursor:pointer;
+    font-family:inherit;transition:all .15s;display:flex;align-items:center;gap:6px;
+  }
+  .tab:hover{border-color:var(--gray-300);color:var(--gray-800)}
+  .tab.on{background:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 2px 8px -3px rgba(22,119,255,.6)}
+  .tab .idx{
+    font-size:10px;font-weight:800;background:var(--gray-100);color:var(--gray-500);
+    border-radius:4px;padding:1px 4px;
+  }
+  .tab.on .idx{background:rgba(255,255,255,.22);color:#fff}
+
+  .view{display:none}
+  .view.on{display:block}
+
+  .card{
+    background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(16,24,40,.04),0 10px 30px -24px rgba(16,24,40,.3);
+    margin-bottom:14px;
+  }
+  .card-head{
+    display:flex;align-items:center;gap:9px;padding:11px 16px;
+    border-bottom:1px solid var(--gray-100);background:var(--gray-50);
+  }
+  .card-head h3{margin:0;font-size:13px;font-weight:800}
+  .card-head .note{margin-left:auto;font-size:11px;color:var(--gray-500);text-align:right;line-height:1.5}
+
+  /* ---------- 应用外壳 ---------- */
+  .app{display:flex;height:600px;background:#fff}
+  .app.slim{height:560px}
+  .app-side{
+    width:292px;flex-shrink:0;border-right:1px solid var(--gray-200);
+    display:flex;flex-direction:column;background:#fff;
+  }
+  .app-main{flex:1;min-width:0;display:flex;flex-direction:column}
+
+  /* 侧栏头 */
+  .side-head{padding:11px 12px 8px;border-bottom:1px solid var(--gray-100)}
+  .side-title{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:800}
+  .side-title .badge{margin-left:auto;font-size:10px;font-weight:700;color:var(--gray-400);font-variant-numeric:tabular-nums}
+  .side-search{position:relative;margin-top:8px}
+  .side-search input{
+    width:100%;height:30px;border:1px solid var(--gray-200);border-radius:8px;background:var(--gray-50);
+    padding:0 8px 0 27px;font-size:11.5px;font-family:inherit;outline:none;color:var(--gray-800);
+  }
+  .side-search input:focus{border-color:var(--primary);background:#fff;box-shadow:0 0 0 2px rgba(22,119,255,.12)}
+  .side-search svg{position:absolute;left:8px;top:50%;transform:translateY(-50%);width:13px;height:13px;color:var(--gray-400)}
+  .side-tree{flex:1;overflow-y:auto;padding:6px 8px 8px}
+  .side-foot{
+    border-top:1px solid var(--gray-100);padding:8px 12px;font-size:11px;color:var(--gray-500);
+    display:flex;align-items:center;gap:8px;background:#fff;
+  }
+  .side-foot b{color:var(--gray-800);font-variant-numeric:tabular-nums}
+
+  .dept{
+    display:flex;align-items:center;gap:6px;height:27px;border-radius:6px;padding:0 5px;
+    cursor:pointer;color:var(--gray-600);font-size:11.5px;font-weight:700;user-select:none;
+  }
+  .dept:hover{background:var(--gray-50)}
+  .dept .caret{width:9px;height:9px;color:var(--gray-400);transition:transform .16s;flex-shrink:0}
+  .dept.closed .caret{transform:rotate(-90deg)}
+  .dept .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dept .cnt{font-size:10px;font-weight:700;color:var(--primary);font-variant-numeric:tabular-nums}
+
+  .kb{
+    display:flex;align-items:center;gap:6px;height:28px;border-radius:6px;padding:0 5px 0 15px;
+    font-size:12px;color:var(--gray-700);cursor:pointer;
+  }
+  .kb:hover{background:var(--gray-50)}
+  .kb.on{background:var(--primary-50);color:var(--primary-600);font-weight:700}
+  .kb .ico{width:13px;height:13px;flex-shrink:0;color:var(--primary)}
+  .kb .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kb .n{font-size:10px;color:var(--gray-400);font-variant-numeric:tabular-nums}
+
+  .more{
+    display:flex;align-items:center;gap:5px;margin:2px 0 6px 15px;
+    border:1px dashed var(--gray-200);background:#fff;border-radius:6px;
+    padding:3px 8px;font-size:10.5px;font-weight:600;color:var(--gray-500);
+    cursor:pointer;font-family:inherit;
+  }
+  .more:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-50)}
+
+  /* 主区工具条 */
+  .main-head{padding:11px 16px;border-bottom:1px solid var(--gray-100)}
+  .main-head h2{margin:0;font-size:15px;font-weight:800}
+  .main-head p{margin:3px 0 0;font-size:11px;color:var(--gray-500)}
+  .toolbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:9px}
+  .field{
+    height:29px;border:1px solid var(--gray-200);border-radius:8px;background:#fff;
+    font-size:11.5px;font-family:inherit;color:var(--gray-700);padding:0 8px;outline:none;
+  }
+  .field:focus{border-color:var(--primary);box-shadow:0 0 0 2px rgba(22,119,255,.12)}
+  .search-wrap{position:relative;flex:1;min-width:170px}
+  .search-wrap input{width:100%;height:29px;border:1px solid var(--gray-200);border-radius:8px;padding:0 8px 0 26px;font-size:11.5px;font-family:inherit;outline:none}
+  .search-wrap input:focus{border-color:var(--primary);box-shadow:0 0 0 2px rgba(22,119,255,.12)}
+  .search-wrap svg{position:absolute;left:8px;top:50%;transform:translateY(-50%);width:12px;height:12px;color:var(--gray-400)}
+  .seg{display:flex;background:var(--gray-100);border-radius:8px;padding:2px;gap:2px}
+  .seg button{
+    border:none;background:transparent;border-radius:6px;padding:4px 9px;font-size:11px;font-weight:600;
+    color:var(--gray-500);cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:4px;
+  }
+  .seg button.on{background:#fff;color:var(--primary);box-shadow:0 1px 2px rgba(16,24,40,.1)}
+  .selected-bar{
+    display:none;align-items:center;gap:8px;margin-top:8px;padding:6px 9px;
+    background:var(--primary-50);border:1px solid var(--primary-100);border-radius:8px;font-size:11px;color:var(--primary-600);
+  }
+  .selected-bar.on{display:flex}
+  .selected-bar b{font-variant-numeric:tabular-nums}
+  .selected-bar button{
+    margin-left:auto;border:none;background:transparent;color:var(--primary-600);
+    font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:underline;
+  }
+
+  /* 列表 */
+  .table-wrap{flex:1;overflow-y:auto;min-height:0}
+  .rowgrid{
+    display:grid;align-items:center;gap:8px;padding:0 16px;
+    grid-template-columns:16px minmax(0,1fr) 74px 52px 82px 84px;
+  }
+  .thead{
+    position:sticky;top:0;z-index:2;height:30px;background:var(--gray-50);
+    font-size:10.5px;font-weight:700;color:var(--gray-400);
+    border-bottom:1px solid var(--gray-100);
+  }
+  .trow{height:42px;border-bottom:1px solid var(--gray-100);font-size:12px;cursor:pointer}
+  .trow:hover{background:var(--gray-50)}
+  .trow .nm{display:flex;align-items:center;gap:6px;min-width:0}
+  .trow .nm span.trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gray-800);font-weight:500}
+  .trow .num{font-size:11px;color:var(--gray-500);font-variant-numeric:tabular-nums}
+  .tag{display:inline-flex;align-items:center;border-radius:4px;padding:1px 5px;font-size:9.5px;font-weight:700;white-space:nowrap}
+  .tag.pub{background:var(--primary-50);color:var(--primary-600)}
+  .tag.team{background:var(--violet-50);color:var(--violet-600)}
+  .tag.priv{background:var(--gray-100);color:var(--gray-500)}
+  .tag.miss{background:var(--amber-100);color:var(--amber-700)}
+  .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--gray-400);font-size:12px}
+
+  /* 分页条 */
+  .pager{
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    border-top:1px solid var(--gray-200);padding:9px 16px;background:#fff;flex-shrink:0;
+  }
+  .pager .sum{font-size:11px;color:var(--gray-500);white-space:nowrap}
+  .pager .sum b{color:var(--gray-800);font-variant-numeric:tabular-nums}
+  .pager .spacer{flex:1}
+  .pages{display:flex;align-items:center;gap:3px}
+  .pg{
+    min-width:27px;height:27px;border:1px solid var(--gray-200);border-radius:7px;background:#fff;
+    font-size:11.5px;font-family:inherit;color:var(--gray-600);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;padding:0 6px;
+    font-variant-numeric:tabular-nums;
+  }
+  .pg:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
+  .pg.on{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:700}
+  .pg:disabled{opacity:.38;cursor:not-allowed}
+  .pg.dots{border:none;cursor:default;color:var(--gray-400);background:transparent}
+  .pg.dots:hover{border:none;color:var(--gray-400)}
+  .pg svg{width:11px;height:11px}
+  .jump{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--gray-500);white-space:nowrap}
+  .jump input{
+    width:44px;height:27px;border:1px solid var(--gray-200);border-radius:7px;
+    text-align:center;font-size:11.5px;font-family:inherit;outline:none;font-variant-numeric:tabular-nums;
+  }
+  .jump input:focus{border-color:var(--primary)}
+  .size-sel{height:27px;border:1px solid var(--gray-200);border-radius:7px;font-size:11px;font-family:inherit;color:var(--gray-600);padding:0 4px;background:#fff;outline:none}
+  .pager .only-more{display:none;font-size:11px;color:var(--gray-500);align-items:center;gap:6px}
+
+  /* 文件视图 */
+  .crumbs{display:flex;align-items:center;gap:5px;padding:7px 16px;border-bottom:1px solid var(--gray-100);font-size:11px;color:var(--gray-500);flex-wrap:wrap}
+  .crumbs button{border:none;background:transparent;font-family:inherit;font-size:11px;color:var(--gray-500);cursor:pointer;padding:2px 4px;border-radius:5px}
+  .crumbs button:hover{background:var(--gray-100);color:var(--gray-700)}
+  .crumbs .sep{color:var(--gray-300)}
+  .crumbs .hint{margin-left:auto;color:var(--gray-400)}
+  .chips{display:flex;gap:5px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--gray-100)}
+  .chip{
+    border:1px solid var(--gray-200);background:#fff;border-radius:999px;padding:3px 9px;
+    font-size:10.5px;font-family:inherit;color:var(--gray-600);cursor:pointer;display:flex;align-items:center;gap:4px;
+  }
+  .chip:hover{border-color:var(--gray-300)}
+  .chip.on{border-color:var(--primary);background:var(--primary-50);color:var(--primary-600);font-weight:700}
+  .chip .n{font-variant-numeric:tabular-nums;opacity:.75}
+
+  .docgrid{
+    display:grid;align-items:center;gap:8px;padding:0 16px;
+    grid-template-columns:16px minmax(0,1fr) 86px 48px 64px 76px 20px;
+  }
+  .docrow{height:40px;border-bottom:1px solid var(--gray-100);font-size:12px;cursor:pointer}
+  .docrow:hover{background:#f7fbff}
+  .docrow .nm{display:flex;align-items:center;gap:6px;min-width:0}
+  .docrow .nm .trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gray-700)}
+  .kind{width:22px;height:15px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:7.5px;font-weight:800;flex-shrink:0}
+  .kind.pdf{background:#fef2f2;color:#dc2626}
+  .kind.doc{background:var(--primary-50);color:var(--primary-600)}
+  .kind.xls{background:var(--emerald-50);color:var(--emerald-600)}
+  .kind.ppt{background:#fff7ed;color:#ea580c}
+  .kind.md{background:#f5f3ff;color:#7c3aed}
+  .st{display:flex;align-items:center;gap:4px;font-size:10.5px;white-space:nowrap}
+  .st .d{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+  .st.ok{color:var(--emerald-600)} .st.ok .d{background:var(--emerald-500)}
+  .st.run{color:var(--amber-600)} .st.run .d{background:#f59e0b}
+  .st.fail{color:var(--red-600)} .st.fail .d{background:var(--red-500)}
+  .st.none{color:var(--gray-500)} .st.none .d{background:var(--gray-300)}
+
+  /* 网格视图 */
+  .gridview{
+    flex:1;overflow-y:auto;min-height:0;padding:12px 16px 4px;
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:9px;align-content:start;
+  }
+  .gcard{border:1px solid var(--gray-200);border-radius:10px;padding:9px 10px;cursor:pointer;background:#fff}
+  .gcard:hover{border-color:var(--primary);box-shadow:0 2px 10px -6px rgba(22,119,255,.5)}
+  .gcard .top{display:flex;align-items:center;gap:5px}
+  .gcard .nm{margin-top:6px;font-size:11.5px;color:var(--gray-800);line-height:1.45;height:33px;overflow:hidden}
+  .gcard .meta{margin-top:6px;display:flex;align-items:center;gap:6px;font-size:10px;color:var(--gray-400);font-variant-numeric:tabular-nums}
+
+  /* 看板 */
+  .kanban{flex:1;overflow-y:auto;min-height:0;padding:12px 16px 4px;display:flex;gap:9px;align-items:flex-start}
+  .col{flex:1;min-width:0;background:var(--gray-50);border-radius:10px;padding:8px}
+  .col-head{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--gray-600);padding:1px 3px 7px}
+  .col-head .d{width:6px;height:6px;border-radius:50%}
+  .col-head .n{margin-left:auto;font-size:10px;color:var(--gray-400);font-variant-numeric:tabular-nums}
+  .kcard{background:#fff;border:1px solid var(--gray-200);border-radius:8px;padding:7px 8px;margin-bottom:6px;font-size:11px;color:var(--gray-700);cursor:pointer}
+  .kcard:hover{border-color:var(--primary)}
+  .kcard .nm{line-height:1.4;height:31px;overflow:hidden}
+  .kcard .m{margin-top:4px;font-size:9.5px;color:var(--gray-400);display:flex;gap:5px;font-variant-numeric:tabular-nums}
+  .col-more{
+    width:100%;border:1px dashed var(--gray-200);background:#fff;border-radius:7px;
+    padding:4px;font-size:10px;color:var(--gray-500);cursor:pointer;font-family:inherit;
+  }
+  .col-more:hover{border-color:var(--primary);color:var(--primary)}
+
+  /* 树演示区 */
+  .tree-demo{flex:1;display:flex;flex-direction:column;justify-content:center;gap:12px;background:#fafbfc;padding:26px 30px}
+  .tree-demo-head b{font-size:13px;color:var(--gray-800)}
+  .tree-demo-head span{margin-left:7px;font-size:11px;color:var(--gray-400)}
+  .tree-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+  .ts{background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:10px 12px}
+  .ts-k{font-size:10.5px;font-weight:700;color:var(--gray-500)}
+  .ts-v{font-size:19px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums;color:var(--gray-800)}
+  .ts-v.bad{color:var(--red-600)} .ts-v.ok{color:var(--emerald-600)}
+  .ts-d{margin-top:4px;font-size:10.5px;line-height:1.55;color:var(--gray-400)}
+  .tree-demo-tip{background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:10px 12px;font-size:11.5px;line-height:1.8;color:var(--gray-600)}
+  .tree-demo-tip.muted{color:var(--gray-500);background:var(--gray-50)}
+  .tree-demo-tip code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;background:var(--gray-100);border-radius:4px;padding:1px 4px}
+
+  /* 说明区 */
+  .notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px;margin-top:14px}
+  .note-box{background:#fff;border:1px solid var(--gray-200);border-radius:11px;padding:12px 14px}
+  .note-box h4{margin:0 0 7px;font-size:12px;font-weight:800;display:flex;align-items:center;gap:6px}
+  .note-box h4 .pill{font-size:9.5px;font-weight:800;padding:1px 6px;border-radius:999px;background:var(--gray-100);color:var(--gray-500)}
+  .note-box h4 .pill.rec{background:var(--emerald-50);color:var(--emerald-600)}
+  .note-box h4 .pill.no{background:var(--red-50);color:var(--red-600)}
+  .note-box ul{margin:0;padding-left:16px;font-size:11.5px;line-height:1.85;color:var(--gray-600)}
+  .note-box li b{color:var(--gray-800)}
+  .note-box p{margin:0;font-size:11.5px;line-height:1.8;color:var(--gray-600)}
+  .note-box code{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;
+    background:var(--gray-100);border-radius:4px;padding:1px 4px;color:var(--gray-700);
+  }
+  .diff{
+    display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;
+    padding:1px 6px;border-radius:999px;background:var(--amber-50);color:var(--amber-700);
+  }
+
+  /* 契约表 */
+  .ctable{width:100%;border-collapse:collapse;font-size:11.5px}
+  .ctable th,.ctable td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--gray-100);vertical-align:top;line-height:1.6}
+  .ctable th{background:var(--gray-50);font-size:10.5px;color:var(--gray-500);font-weight:700;white-space:nowrap}
+  .ctable td code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;background:var(--gray-100);border-radius:4px;padding:1px 4px}
+  .ctable tr:last-child td{border-bottom:none}
+  .ok{color:var(--emerald-600);font-weight:700}
+  .bad{color:var(--red-600);font-weight:700}
+  .warn{color:var(--amber-700);font-weight:700}
+
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media (max-width:900px){.two-col{grid-template-columns:1fr}}
+  .codebox{
+    background:#0f172a;color:#cbd5e1;border-radius:10px;padding:11px 13px;font-size:11px;line-height:1.75;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-x:auto;margin:0;
+  }
+  .codebox .k{color:#93c5fd} .codebox .s{color:#86efac} .codebox .c{color:#64748b}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1 class="page-title">知识库 · 大数据量下的分页方案</h1>
+  <p class="page-sub">
+    覆盖三处入口：<b>全部知识库列表</b>、<b>左侧导航树</b>、<b>库内文件列表</b>（含文件树与文档表格）。
+    每个场景下面的控件都可以点，数据是按真实规模造的（860 个库 / 单库 1286 份文档），用来判断"翻页、搜索、勾选、文件夹"这几件事撞在一起会不会乱。
+  </p>
+
+  <!-- ===== 现状核实 ===== -->
+  <div class="facts">
+    <div class="fact">
+      <div class="fact-k"><span class="dot bad"></span>现状 · 库列表</div>
+      <div class="fact-v">
+        前端一次要 <code>page_size=5000</code>，后端再按 <code>page</code>/<code>page_size</code> 切窗口；
+        树和列表都是<b>全量渲染</b>，没有分页。
+      </div>
+    </div>
+    <div class="fact">
+      <div class="fact-k"><span class="dot bad"></span>现状 · 库内文档</div>
+      <div class="fact-v">
+        一次要 <code>page_size=1000</code>（RAGFlow 侧 100/页循环拉），
+        超过 1000 份文档会<b>被静默截断</b>，文档数也跟着少算。
+      </div>
+    </div>
+    <div class="fact">
+      <div class="fact-k"><span class="dot bad"></span>后端缺口</div>
+      <div class="fact-v">
+        <code>GET /datasets/{id}/documents</code> 返回的 <code>total</code> 是<b>当前页条数</b>（<code>len(docs)</code>），
+        不是真实总数，前端拿它算不出总页数。
+      </div>
+    </div>
+    <div class="fact">
+      <div class="fact-k"><span class="dot"></span>后端缺口</div>
+      <div class="fact-v">
+        <code>GET /datasets</code> 没有 <code>keyword</code>/<code>dept</code>/<code>visibility</code> 参数：
+        搜索、部门分组、可见范围筛选<b>全在前端内存里做</b>，分页后这些必须一起下沉。
+      </div>
+    </div>
+    <div class="fact">
+      <div class="fact-k"><span class="dot bad"></span>现状 · "树里的文件"</div>
+      <div class="fact-v">
+        左树展开箭头其实只做<b>选中</b>，树里<b>没有文件子节点</b>；文件列表全在右侧
+        <code>DocWorkspace</code>（文件夹树形表格 + 列表/网格/看板三视图）。
+      </div>
+    </div>
+    <div class="fact">
+      <div class="fact-k"><span class="dot bad"></span>现状 · 聊天资源抽屉</div>
+      <div class="fact-v">
+        <code>useKnowledgePortal.ts</code> 每个库固定拉
+        <code>page=1, page_size=100</code>，第 101 份起<b>直接看不到</b>，也没有"加载更多"。
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 页签 ===== -->
+  <div class="tabs" role="tablist">
+    <button class="tab on" data-view="view-list"><span class="idx">01</span>全部知识库列表</button>
+    <button class="tab" data-view="view-tree"><span class="idx">02</span>左侧导航树</button>
+    <button class="tab" data-view="view-docs"><span class="idx">03</span>库内文件列表</button>
+    <button class="tab" data-view="view-contract"><span class="idx">04</span>接口契约与落地</button>
+  </div>
+
+  <!-- ================= 01 列表 ================= -->
+  <section class="view on" id="view-list">
+    <div class="card">
+      <div class="card-head">
+        <h3>全部知识库 · 服务端分页 + 底部常驻分页条</h3>
+        <div class="note">搜索/筛选一改动就回第 1 页 · 勾选跨页保留 · 每页 20/50/100</div>
+      </div>
+      <div class="app">
+        <aside class="app-side">
+          <div class="side-head">
+            <div class="side-title">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1677ff" stroke-width="1.7"><ellipse cx="12" cy="6.2" rx="7.6" ry="3"/><path d="M4.4 6.2v11.6c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3V6.2"/><path d="M4.4 12c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3"/></svg>
+              知识库
+              <span class="badge">860 个</span>
+            </div>
+            <div class="side-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+              <input id="l-tree-search" type="search" placeholder="搜索知识库 / 负责人 / ID" />
+            </div>
+          </div>
+          <div class="side-tree" id="l-tree"></div>
+          <div class="side-foot" id="l-tree-foot">已显示 <b>0</b> / 860 个</div>
+        </aside>
+        <div class="app-main">
+          <div class="main-head">
+            <h2>全部知识库</h2>
+            <p id="l-sub">860 个知识库</p>
+            <div class="toolbar">
+              <div class="search-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+                <input id="l-q" type="search" placeholder="搜索名称 / 负责人 / ID（服务端 keyword）" />
+              </div>
+              <select class="field" id="l-scope">
+                <option value="all">全部范围</option>
+                <option value="public">授权可见</option>
+                <option value="team">TEAM 级</option>
+                <option value="private">个人私有</option>
+                <option value="missing">仅失联库</option>
+              </select>
+              <select class="field" id="l-sort">
+                <option value="updated">最近更新</option>
+                <option value="name">名称</option>
+                <option value="docs">文档数</option>
+              </select>
+              <div class="seg">
+                <button class="on" data-lview="list">列表</button>
+                <button data-lview="card">卡片</button>
+              </div>
+            </div>
+            <div class="selected-bar" id="l-tip" style="background:var(--gray-50);border-color:var(--gray-200);color:var(--gray-600)"></div>
+            <div class="selected-bar" id="l-selbar">
+              已选 <b id="l-selcount">0</b> 个（跨页保留）
+              <button id="l-selclear">清空选择</button>
+            </div>
+          </div>
+          <div id="l-body" style="flex:1;min-height:0;display:flex;flex-direction:column">
+            <div class="table-wrap" id="l-tablewrap">
+              <div class="rowgrid thead">
+                <span><input type="checkbox" id="l-checkall" /></span>
+                <span>名称</span><span>可见范围</span><span>文档</span><span>负责人</span><span>更新时间</span>
+              </div>
+              <div id="l-rows"></div>
+            </div>
+            <div class="gridview" id="l-cards" style="display:none"></div>
+          </div>
+          <div class="pager" id="l-pager"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note-box">
+        <h4>为什么是服务端分页 <span class="pill rec">推荐</span></h4>
+        <ul>
+          <li>库数量上限在 RAGFlow 侧，几百到几千都正常；前端全量分页只是少渲染，<b>内存和首屏请求</b>没省。</li>
+          <li>后端已经有 <code>page</code>/<code>page_size</code> 和全量 <code>total</code>，只差把 <b>过滤条件也下沉</b>。</li>
+          <li>列表页的 <b>「全部选中」必须明确是"当前页"还是"全部结果"</b>：这里按当前页全选，跨页勾选保留，避免一次误删 860 个库。</li>
+        </ul>
+      </div>
+      <div class="note-box">
+        <h4>交互细节（都在原型里可点）</h4>
+        <ul>
+          <li>每页条数改变 → 回到第 1 页，而不是停在越界的页码。</li>
+          <li>搜索/筛选/排序改变 → 回第 1 页，并<b>清掉"当前页全选"</b>，勾选保留。</li>
+          <li>总页数 ≤ 7 显示全部；否则 <code>1 … 当前±1 … 末页</code>。</li>
+          <li>底部条常驻（列表内部滚动），不随表头粘顶跑掉。</li>
+        </ul>
+      </div>
+      <div class="note-box">
+        <h4>待确认 <span class="pill no">风险</span></h4>
+        <ul>
+          <li><b>"全部知识库"计数</b>：<code>total</code> 要在过滤后计算，否则分页条写"共 860 个"、列表里却只有 12 个。</li>
+          <li>批量删库的"全选"语义要在文案里写死，不能只靠复选框。</li>
+          <li>后端每次仍会全量拉 RAGFlow（60s 缓存）：分页解决的是渲染，<b>不是回源成本</b>。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 02 树 ================= -->
+  <section class="view" id="view-tree">
+    <div class="card">
+      <div class="card-head">
+        <h3>左侧导航树 · 分组内增量渲染（不做页码）</h3>
+        <div class="note">每组默认 6 条 →「再显示 10 个」 · 分组折叠 · 树尾汇总 · 搜索走服务端</div>
+      </div>
+      <div class="app slim">
+        <aside class="app-side" style="width:330px">
+          <div class="side-head">
+            <div class="side-title">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1677ff" stroke-width="1.7"><ellipse cx="12" cy="6.2" rx="7.6" ry="3"/><path d="M4.4 6.2v11.6c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3V6.2"/><path d="M4.4 12c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3"/></svg>
+              知识库
+              <span class="badge">860 个</span>
+            </div>
+            <div class="side-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+              <input id="t-search" type="search" placeholder="搜索知识库 / 负责人 / 文档名" />
+            </div>
+            <div style="display:flex;gap:3px;margin-top:7px;font-size:10.5px;color:var(--gray-400);font-weight:700">
+              <span style="color:var(--primary);border-bottom:2px solid var(--primary);padding-bottom:2px">授权可见 512</span>
+              <span style="padding:0 6px">TEAM 级 268</span>
+              <span style="padding:0 6px">个人私有 80</span>
+            </div>
+          </div>
+          <div class="side-tree" id="t-tree"></div>
+          <div class="side-foot" id="t-foot"></div>
+        </aside>
+        <div class="app-main" style="padding:0">
+          <div class="tree-demo">
+            <div class="tree-demo-head">
+              <b>增量渲染前后</b>
+              <span>同一棵树，DOM 节点数差 10 倍以上</span>
+            </div>
+            <div class="tree-stats">
+              <div class="ts">
+                <div class="ts-k">全量渲染</div>
+                <div class="ts-v bad">≈ 870</div>
+                <div class="ts-d">860 个库 + 10 个分组，首屏全部建节点</div>
+              </div>
+              <div class="ts">
+                <div class="ts-k">增量渲染（默认）</div>
+                <div class="ts-v ok">≈ 70</div>
+                <div class="ts-d">每组 6 条 + 分组头，其余按需 append</div>
+              </div>
+              <div class="ts">
+                <div class="ts-k">翻页节点</div>
+                <div class="ts-v">0</div>
+                <div class="ts-d">树里没有页码，不破坏位置记忆</div>
+              </div>
+            </div>
+            <div class="tree-demo-tip">
+              点左侧任意分组的「再显示 10 个」，只有那一组追加节点；
+              树底那行「已显示 60 / 860」会跟着变，用户始终知道还有多少没展开。
+            </div>
+            <div class="tree-demo-tip muted">
+              单组超过约 800 条时，再把滚动容器换成虚拟滚动（节点固定 28px 高）。
+              这次不必做，先留着可升级的口子。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note-box">
+        <h4>树为什么不做页码 <span class="pill rec">结论</span></h4>
+        <ul>
+          <li>树是<b>空间记忆</b>：用户靠"在哪个部门下面"找东西，翻页会破坏位置感。</li>
+          <li>展开状态、当前选中、右键菜单都挂在节点上，翻页后这些状态要么丢、要么对不上。</li>
+          <li>树天然有<b>分组</b>这个维度，用"分组折叠 + 组内增量"已经能控制住 DOM 数量。</li>
+        </ul>
+      </div>
+      <div class="note-box">
+        <h4>落地要点</h4>
+        <ul>
+          <li>每组默认渲染 6 条，点一次 +10，<b>只在需要时 append</b>，不重排全树。</li>
+          <li>分组头显示的是<b>该组真实总数</b>（含未渲染的），不是已渲染条数。</li>
+          <li>树底固定一行"已显示 120 / 860 · 加载更多"，让人知道还没到底。</li>
+          <li>搜索时切<b>平坦结果列表</b>（带部门路径后缀），不再套部门层级，避免"命中项藏在折叠组里找不到"。</li>
+        </ul>
+      </div>
+      <div class="note-box">
+        <h4>搜索必须下沉 <span class="pill no">依赖后端</span></h4>
+        <ul>
+          <li>现在树搜索会<b>预加载所有库的文档列表</b>来比对文档名（并发 4 + 300ms 防抖），库一多就是一串 RAGFlow 请求。</li>
+          <li>分页之后"本地全量过滤"直接失效：搜索必须变成服务端 keyword，并返回命中总数。</li>
+          <li>文档名搜索要么后端跨库检索，要么明确降级为"仅按库名/负责人/ID 搜"。</li>
+        </ul>
+      </div>
+      <div class="note-box">
+        <h4>顺带：聊天资源抽屉 <span class="pill no">另一处</span></h4>
+        <ul>
+          <li>抽屉里"库 → 文件"是<b>第二份</b>文件列表（<code>KnowledgePortalDrawer</code>），每库固定拉 100 条。</li>
+          <li>它适合<b>「还有 N 份 · 加载更多」</b>而不是页码：抽屉本身是窄的滚动容器。</li>
+          <li>如果先做库页面的分页，记得把这个调用点一起收口，否则 100 条以上仍然静默丢失。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 03 文件 ================= -->
+  <section class="view" id="view-docs">
+    <div class="card">
+      <div class="card-head">
+        <h3>库内文件 · 服务端分页 + 文件夹变成"筛选维度"</h3>
+        <div class="note">列表/网格共用分页 · 看板按状态各列取前 N · 文件夹不再做树内展开</div>
+      </div>
+      <div class="app">
+        <div class="app-main" style="border:none">
+          <div class="main-head">
+            <h2>客户服务话术库 <span style="font-size:10px;font-weight:600;color:var(--gray-400)">· 客户成功中心</span></h2>
+            <p>1,286 份文档 · 22 个文件夹 · 8,940 个切片 · 更新于 10 分钟前</p>
+            <div class="toolbar">
+              <div class="seg" id="d-view">
+                <button class="on" data-dview="list">列表</button>
+                <button data-dview="grid">网格</button>
+                <button data-dview="kanban">解析看板</button>
+              </div>
+              <div class="search-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+                <input id="d-q" type="search" placeholder="在 1286 份文档中搜索（服务端 name 参数）" />
+              </div>
+              <select class="field" id="d-status">
+                <option value="">全部状态</option>
+                <option value="parsed">已完成</option>
+                <option value="parsing">解析中</option>
+                <option value="failed">解析失败</option>
+                <option value="unparsed">未解析</option>
+              </select>
+              <select class="field" id="d-sort">
+                <option value="updated">最近更新</option>
+                <option value="name">名称</option>
+                <option value="size">文件大小</option>
+                <option value="chunks">切片数</option>
+              </select>
+            </div>
+          </div>
+          <div class="crumbs" id="d-crumbs"></div>
+          <div class="chips" id="d-chips"></div>
+          <div id="d-body" style="flex:1;min-height:0;display:flex;flex-direction:column">
+            <div class="table-wrap" id="d-tablewrap">
+              <div class="docgrid thead">
+                <span><input type="checkbox" id="d-checkall" /></span>
+                <span>名称</span><span>解析状态</span><span style="text-align:right">切片</span><span style="text-align:right">大小</span><span style="text-align:right">更新时间</span><span></span>
+              </div>
+              <div id="d-rows"></div>
+            </div>
+            <div class="gridview" id="d-grid" style="display:none"></div>
+            <div class="kanban" id="d-kanban" style="display:none"></div>
+          </div>
+          <div class="pager" id="d-pager"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note-box">
+        <h4>关键取舍：文件夹 vs 分页 <span class="pill rec">建议</span></h4>
+        <ul>
+          <li>现在的表格是<b>树形展开</b>（文件夹行 + 子层缩进 + 拖拽移动）。树形 + 页码 = 翻页后展开状态对不上、文件夹可能被切到两页。</li>
+          <li>建议改成<b>「进入文件夹」导航</b>：点文件夹 = 按路径过滤，面包屑回退，分页只作用在<b>当前过滤结果</b>上。</li>
+          <li>文件夹本身不占分页行数，用顶部文件夹 chips 承载；文档总数与分页条始终一致。</li>
+          <li>拖拽移动保留：拖到 chip 上即移动（原型里没做拖拽，视觉上留了位置）。</li>
+        </ul>
+      </div>
+      <div class="note-box">
+        <h4>三种视图怎么分页</h4>
+        <ul>
+          <li><b>列表 / 网格</b>：共用同一个 <code>page/page_size</code>，切换视图不重置页码。</li>
+          <li><b>解析看板</b>：按状态分列，每列只取<b>前 8 条</b> + 「该状态共 N 份 → 切到列表筛选」，不参与分页。</li>
+          <li>看板不翻页是刻意的：它的用途是"看哪堆积压"，不是逐条读。</li>
+          <li>搜索/状态筛选变化 → 回第 1 页；清空后回到原页码会让人困惑，所以统一回 1。</li>
+        </ul>
+      </div>
+      <div class="note-box">
+        <h4>必须先修的后端 <span class="pill no">阻塞</span></h4>
+        <ul>
+          <li><code>total</code> 改成 RAGFlow 返回的真实总数（响应里本来就有，<code>_extract_documents</code> 把它丢了）。</li>
+          <li><code>sort</code> 落到服务端：否则"第 2 页"是本地排序后的切片，翻页顺序不稳定。</li>
+          <li>轮询/上传后刷新要<b>只刷当前页</b>，不能回第 1 页，否则解析中的文档会跳走。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 04 契约 ================= -->
+  <section class="view" id="view-contract">
+    <div class="card">
+      <div class="card-head"><h3>接口契约：现有能力 / 缺口 / 要加的参数</h3></div>
+      <table class="ctable">
+        <thead>
+          <tr><th>接口</th><th>现状</th><th>分页所需</th><th>结论</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>GET /api/portal/ragflow/datasets</code></td>
+            <td>支持 <code>page</code>/<code>page_size</code>，<code>total</code> 是全量真实值；但没有 keyword / 部门 / 可见范围 / 排序参数，过滤都在前端。</td>
+            <td>加 <code>keyword</code>、<code>visibility</code>、<code>dept_id</code>、<code>sort</code>，并在过滤后再算 <code>total</code>。</td>
+            <td class="warn">改后端</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/portal/ragflow/datasets/{id}/documents</code></td>
+            <td>支持 <code>page</code>/<code>page_size</code>/<code>name</code>，但 <code>total</code> 返回的是当前页条数。</td>
+            <td>返回真实 <code>total</code>；补 <code>sort</code>、<code>status</code>、<code>folder</code> 过滤。</td>
+            <td class="bad">阻塞</td>
+          </tr>
+          <tr>
+            <td><code>list_documents()</code>（RagFlowClient）</td>
+            <td>只回 <code>docs</code> 数组，<code>total</code> 在 <code>_extract_documents</code> 里被丢掉；&gt;100 条时循环拉多页。</td>
+            <td>返回值带上 total，并支持按 total 精确分页。</td>
+            <td class="bad">阻塞</td>
+          </tr>
+          <tr>
+            <td><code>useKnowledgePortal.ts</code>（聊天资源抽屉）</td>
+            <td>每库固定 <code>page_size=100</code>，只拉第一页；抽屉里是滚动容器 + 最大高度，看不出"还有多少"。卡片头部展开即请求。</td>
+            <td>首屏只取前 20 条 + 「还有 N 份 · 加载更多」；或直接复用 PaginationBar（抽屉里用"加载更多"更合适）。</td>
+            <td class="warn">改前端</td>
+          </tr>
+          <tr>
+            <td>列表缓存</td>
+            <td>datasets 有 60s TTL + 单飞锁；documents 无缓存。</td>
+            <td>分页后每页一次请求，缓存窗口够用；翻页命中缓存才不会卡。</td>
+            <td class="ok">够用</td>
+          </tr>
+          <tr>
+            <td>前端分页组件</td>
+            <td>没有统一组件：Users.vue / AuditLogs.vue 各写一套，样式不一致；只有 <code>parsePageInput</code> 是共用的。</td>
+            <td>抽 <code>usePagination</code> + <code>PaginationBar.vue</code>（总数/页码/每页条数/跳页）。</td>
+            <td class="warn">补组件</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="two-col">
+      <div class="note-box">
+        <h4>方案对比 <span class="pill">三选一</span></h4>
+        <ul>
+          <li><b>A 服务端分页</b>（推荐）：列表页页码、文件列表页码、树增量。<br>
+            <span style="color:var(--gray-500)">优点：规模无上限、首屏快、内存稳。<br>代价：后端要补参数，搜索/排序必须下沉。</span></li>
+          <li><b>B 前端全量分页</b>：仍拉全量，只在内存里切。<br>
+            <span style="color:var(--gray-500)">优点：改动最小，一天能上。<br>代价：860 个库、1286 份文档时首屏照样慢，只是 DOM 少了 —— 治标。</span></li>
+          <li><b>C 虚拟滚动</b>：不翻页，滚到哪渲染到哪。<br>
+            <span style="color:var(--gray-500)">适合树和看板；表格里"共 N 条 / 跳到第几页"的诉求还得靠 A。</span></li>
+          <li><b>建议组合</b>：列表 + 文件表格走 A；树走 A（增量）+ C（虚拟滚动，可选）；看板走"每列前 N"。</li>
+        </ul>
+      </div>
+      <div class="note-box">
+        <h4>改动清单（确认后按此实现）</h4>
+        <ul>
+          <li><b>后端</b>：<code>list_documents</code> 返回 total；<code>/datasets</code> 补 keyword/visibility/dept/sort；文档接口补 sort/status/folder。</li>
+          <li><b>前端</b>：新建 <code>PaginationBar.vue</code> + <code>usePagination.ts</code>；<code>KnowledgeBaseManagement</code> 的列表页与树改接分页数据源。</li>
+          <li><b>DocWorkspace</b>：树形表格 → 文件夹筛选 + 面包屑；列表/网格共用 page；看板每列前 8。</li>
+          <li><b>状态</b>：搜索/筛选/排序变更统一回第 1 页；轮询只刷当前页；每页条数写进 localStorage。</li>
+          <li><b>边界</b>：跨页勾选保留且提示；批量操作只作用于已勾选；翻页时保留滚动位置。</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:10px">
+      <div class="card-head"><h3>建议的统一分页条（一份实现，三处复用）</h3></div>
+      <div style="padding:12px 16px">
+        <pre class="codebox"><span class="c">// components/common/PaginationBar.vue —— 列表页 / 文件表格 / 抽屉共用</span>
+props: {
+  <span class="k">total</span>: number,        <span class="c">// 过滤后的真实总数（不是当前页条数）</span>
+  <span class="k">page</span>: number,
+  <span class="k">pageSize</span>: number,     <span class="c">// 20 / 50 / 100，localStorage 记忆</span>
+  <span class="k">pageSizes</span>?: number[],
+  <span class="k">showJump</span>?: boolean,
+}
+emits: <span class="s">'update:page'</span>, <span class="s">'update:pageSize'</span>
+
+<span class="c">// 页码算法：总页数 ≤ 7 全显示，否则 1 … 当前±1 … 末页</span>
+<span class="c">// 跳页复用 utils/pagination.ts 的 parsePageInput（越界/乱输都兜住）</span></pre>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ================= 造数据 ================= */
+  const DEPTS = [
+    { name: '客户成功中心', n: 148 },
+    { name: '财务共享中心', n: 132 },
+    { name: '产品研发中心', n: 126 },
+    { name: '供应链与采购部', n: 98 },
+    { name: '人力与行政部', n: 86 },
+    { name: '市场品牌部', n: 74 },
+    { name: '法务与合规部', n: 62 },
+    { name: '渠道与销售部', n: 58 },
+    { name: '数据智能部', n: 42 },
+    { name: '安全与运维部', n: 34 },
+  ];
+  const TOPICS = [
+    '制度汇编', '操作手册', '交付规范', '话术库', '培训课件', 'FAQ 知识库',
+    '合同模板', '项目复盘', '故障处置预案', '指标口径说明', '合规检查清单', '客户案例库',
+  ];
+  const OWNERS = [
+    '陈晓龙', '李文博', '周宁', '高子昂', '赵可欣', '孙嘉成', '林骁', '吴思远',
+    '郑雅雯', '何嘉豪', '钱屿', '马晓彤', '徐立', '胡静', '朱峻',
+  ];
+  const SCOPES = ['public', 'public', 'public', 'team', 'team', 'private'];
+  const SCOPE_LABEL = { public: '授权可见', team: 'TEAM 级', private: '个人私有' };
+
+  // 稳定伪随机：同样的种子永远同样的数据，翻页不会变
+  function seeded(seed) {
+    let s = seed % 2147483647;
+    if (s <= 0) s += 2147483646;
+    return function () {
+      s = (s * 16807) % 2147483647;
+      return (s - 1) / 2147483646;
+    };
+  }
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+  const KBS = [];
+  let kbSeq = 0;
+  DEPTS.forEach(function (dept, di) {
+    const rnd = seeded(1000 + di * 37);
+    for (let i = 0; i < dept.n; i++) {
+      const topic = TOPICS[Math.floor(rnd() * TOPICS.length)];
+      const suffix = i < TOPICS.length ? '' : '·' + (Math.floor(i / TOPICS.length) + 1) + '期';
+      const scope = SCOPES[Math.floor(rnd() * SCOPES.length)];
+      const docs = Math.floor(rnd() * 900) + (rnd() > 0.86 ? 300 : 0);
+      const month = Math.floor(rnd() * 10) + 1;
+      const day = Math.floor(rnd() * 27) + 1;
+      const hour = Math.floor(rnd() * 20) + 1;
+      KBS.push({
+        id: 'kb' + (++kbSeq),
+        name: dept.name.slice(0, 2) + topic + suffix,
+        dept: dept.name,
+        deptIdx: di,
+        scope: scope,
+        docs: docs,
+        owner: OWNERS[Math.floor(rnd() * OWNERS.length)],
+        missing: rnd() > 0.965,
+        updated: '2026-' + pad(month) + '-' + pad(day) + ' ' + pad(hour) + ':' + pad(Math.floor(rnd() * 60)),
+        ts: new Date(2026, month - 1, day, hour, Math.floor(rnd() * 60)).getTime(),
+        rid: 'ds_' + Math.random().toString(36).slice(2, 8) + Math.floor(rnd() * 1e6),
+      });
+    }
+  });
+  // 排序：默认最近更新
+  KBS.sort(function (a, b) { return b.ts - a.ts; });
+
+  /* ================= 通用工具 ================= */
+  function el(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function pageList(current, total) {
+    if (total <= 7) {
+      const all = [];
+      for (let i = 1; i <= total; i++) all.push(i);
+      return all;
+    }
+    const set = { 1: 1, [total]: 1 };
+    for (let i = current - 1; i <= current + 1; i++) if (i >= 1 && i <= total) set[i] = 1;
+    const nums = Object.keys(set).map(Number).sort(function (a, b) { return a - b; });
+    const out = [];
+    nums.forEach(function (n, i) {
+      if (i > 0 && n - nums[i - 1] > 1) out.push('…');
+      out.push(n);
+    });
+    return out;
+  }
+  function renderPager(host, opt) {
+    // opt: {total,page,pageSize,onPage,onSize,sizes,extraNote}
+    const sizes = opt.sizes || [20, 50, 100];
+    const totalPages = Math.max(1, Math.ceil(opt.total / opt.pageSize));
+    const page = Math.min(Math.max(1, opt.page), totalPages);
+    const from = opt.total === 0 ? 0 : (page - 1) * opt.pageSize + 1;
+    const to = Math.min(opt.total, page * opt.pageSize);
+    const nums = pageList(page, totalPages);
+
+    let html = '';
+    html += '<span class="sum">共 <b>' + opt.total.toLocaleString() + '</b> 项' +
+      (opt.total ? ' · 当前 <b>' + from.toLocaleString() + '-' + to.toLocaleString() + '</b>' : '') +
+      ' · 第 <b>' + page + '</b>/' + totalPages + ' 页</span>';
+    html += '<span class="spacer"></span><span class="pages">';
+    html += '<button class="pg" data-pg="' + (page - 1) + '" ' + (page <= 1 ? 'disabled' : '') + ' aria-label="上一页">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 5l-7 7 7 7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
+    nums.forEach(function (n) {
+      if (n === '…') { html += '<span class="pg dots">…</span>'; return; }
+      html += '<button class="pg' + (n === page ? ' on' : '') + '" data-pg="' + n + '">' + n + '</button>';
+    });
+    html += '<button class="pg" data-pg="' + (page + 1) + '" ' + (page >= totalPages ? 'disabled' : '') + ' aria-label="下一页">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
+    html += '</span>';
+    html += '<span class="jump">每页 <select class="size-sel" data-size>' +
+      sizes.map(function (s) { return '<option value="' + s + '"' + (s === opt.pageSize ? ' selected' : '') + '>' + s + '</option>'; }).join('') +
+      '</select> 条</span>';
+    html += '<span class="jump">跳至 <input data-jump type="text" value="" aria-label="跳转到第几页" /> 页</span>';
+
+    host.innerHTML = html;
+
+    host.querySelectorAll('[data-pg]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const target = Number(btn.getAttribute('data-pg'));
+        if (target >= 1 && target <= totalPages) opt.onPage(target);
+      });
+    });
+    const sizeSel = host.querySelector('[data-size]');
+    if (sizeSel) sizeSel.addEventListener('change', function () { opt.onSize(Number(sizeSel.value)); });
+    const jump = host.querySelector('[data-jump]');
+    if (jump) {
+      function doJump() {
+        const m = String(jump.value || '').trim().match(/^-?\d+/);
+        if (!m) { jump.value = ''; return; }
+        const n = Math.min(Math.max(1, Number(m[0])), totalPages);
+        jump.value = '';
+        if (n !== page) opt.onPage(n);
+      }
+      jump.addEventListener('keydown', function (e) { if (e.key === 'Enter') doJump(); });
+      jump.addEventListener('blur', doJump);
+    }
+  }
+
+  /* ================= 01 列表 ================= */
+  const L = {
+    page: 1, size: 20, q: '', scope: 'all', sort: 'updated',
+    view: 'list', selected: new Set(), treeShown: {}, tMore: 30,
+    treeQuery: '',
+  };
+
+  function lFiltered() {
+    let list = KBS.slice();
+    if (L.scope === 'missing') list = list.filter(function (k) { return k.missing; });
+    else if (L.scope !== 'all') list = list.filter(function (k) { return k.scope === L.scope; });
+    const q = L.q.trim().toLowerCase();
+    if (q) {
+      list = list.filter(function (k) {
+        return (k.name + k.owner + k.rid + k.dept).toLowerCase().indexOf(q) >= 0;
+      });
+    }
+    if (L.sort === 'name') list.sort(function (a, b) { return a.name.localeCompare(b.name, 'zh-Hans-CN'); });
+    else if (L.sort === 'docs') list.sort(function (a, b) { return b.docs - a.docs; });
+    else list.sort(function (a, b) { return b.ts - a.ts; });
+    return list;
+  }
+
+  function renderLTree() {
+    const host = el('l-tree');
+    const q = L.treeQuery.trim().toLowerCase();
+    let html = '';
+
+    if (q) {
+      const hits = KBS.filter(function (k) {
+        return (k.name + k.owner + k.dept).toLowerCase().indexOf(q) >= 0;
+      }).slice(0, 24);
+      html += '<div style="padding:4px 6px 6px;font-size:10px;color:var(--gray-400)">命中 ' + hits.length + ' 个（服务端 keyword，仅显示前 24 条）</div>';
+      hits.forEach(function (k) {
+        html += '<div class="kb" data-kb="' + k.id + '"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6.2" rx="7.6" ry="3"/><path d="M4.4 6.2v11.6c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3V6.2"/></svg>' +
+          '<span class="nm">' + esc(k.name) + '</span><span class="n" style="font-size:9px;color:var(--gray-400)">' + esc(k.dept.slice(0, 4)) + '</span></div>';
+      });
+      el('l-tree-foot').innerHTML = '搜索「' + esc(L.treeQuery) + '」· 命中 <b>' + hits.length + '</b> 个';
+    } else {
+      DEPTS.forEach(function (d, di) {
+        const items = KBS.filter(function (k) { return k.deptIdx === di; });
+        html += '<div class="dept" data-dept="' + di + '">' +
+          '<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+          '<span class="name">' + esc(d.name) + '</span><span class="cnt">' + items.length + '</span></div>';
+        if (!collapsed['l' + di]) {
+          const shownN = L.treeShown[di] || 6;
+          items.slice(0, shownN).forEach(function (k) {
+            html += '<div class="kb" data-kb="' + k.id + '"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6.2" rx="7.6" ry="3"/><path d="M4.4 6.2v11.6c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3V6.2"/></svg>' +
+              '<span class="nm">' + esc(k.name) + '</span><span class="n">' + k.docs + '</span></div>';
+          });
+          if (items.length > shownN) {
+            html += '<button class="more" data-more="' + di + '">再显示 ' + Math.min(10, items.length - shownN) + ' 个（共 ' + items.length + '）</button>';
+          }
+        }
+      });
+      const shown = DEPTS.reduce(function (sum, d, di) {
+        return sum + (collapsed['l' + di] ? 0 : Math.min(DEPTS[di].n, L.treeShown[di] || 6));
+      }, 0);
+      el('l-tree-foot').innerHTML = '已显示 <b>' + shown.toLocaleString() + '</b> / 860 个 · 分组内增量加载';
+    }
+    host.innerHTML = html;
+
+    host.querySelectorAll('.dept').forEach(function (node) {
+      node.addEventListener('click', function () {
+        const di = node.getAttribute('data-dept');
+        collapsed['l' + di] = !collapsed['l' + di];
+        renderLTree();
+      });
+    });
+    host.querySelectorAll('[data-more]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const di = btn.getAttribute('data-more');
+        L.treeShown[di] = (L.treeShown[di] || 6) + 10;
+        renderLTree();
+      });
+    });
+    host.querySelectorAll('.kb').forEach(function (node) {
+      node.addEventListener('click', function () {
+        host.querySelectorAll('.kb').forEach(function (n) { n.classList.remove('on'); });
+        node.classList.add('on');
+      });
+    });
+  }
+
+  function renderLList() {
+    const list = lFiltered();
+    const total = list.length;
+    const totalPages = Math.max(1, Math.ceil(total / L.size));
+    if (L.page > totalPages) L.page = totalPages;
+    const rows = list.slice((L.page - 1) * L.size, L.page * L.size);
+
+    // 翻页/筛选后上一次的"进库"提示就过期了，别留着误导
+    const tipEl = el('l-tip');
+    if (tipEl) { tipEl.classList.remove('on'); tipEl.innerHTML = ''; }
+
+    el('l-sub').textContent = total.toLocaleString() + ' 个知识库' +
+      (L.scope === 'all' && !L.q ? '（已全部纳入统计）' : '（按当前筛选条件）');
+
+    const body = el('l-rows');
+    const wrap = el('l-tablewrap');
+    const cards = el('l-cards');
+    if (L.view === 'list') {
+      wrap.style.display = '';
+      body.style.display = '';
+      cards.style.display = 'none';
+      let html = '';
+      rows.forEach(function (k) {
+        const checked = L.selected.has(k.id) ? ' checked' : '';
+        html += '<div class="rowgrid trow" data-row="' + k.id + '">' +
+          '<span><input type="checkbox" data-check="' + k.id + '"' + checked + ' /></span>' +
+          '<span class="nm"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1677ff" stroke-width="1.7" style="flex-shrink:0"><ellipse cx="12" cy="6.2" rx="7.6" ry="3"/><path d="M4.4 6.2v11.6c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3V6.2"/><path d="M4.4 12c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3"/></svg>' +
+          '<span class="trunc">' + esc(k.name) + '</span>' +
+          (k.missing ? '<span class="tag miss" title="RAGFlow 侧已失联">失联</span>' : '') +
+          '</span>' +
+          '<span><span class="tag ' + (k.scope === 'public' ? 'pub' : k.scope === 'team' ? 'team' : 'priv') + '">' + SCOPE_LABEL[k.scope] + '</span></span>' +
+          '<span class="num">' + k.docs + '</span>' +
+          '<span class="num" style="color:var(--gray-600)">' + esc(k.owner) + '</span>' +
+          '<span class="num">' + esc(k.updated) + '</span>' +
+        '</div>';
+      });
+      if (!rows.length) {
+        html = '<div class="empty" style="padding:60px 0"><span>没有匹配的知识库</span><span style="font-size:11px">换个关键词，或调整可见范围筛选</span></div>';
+      }
+      body.innerHTML = html;
+    } else {
+      wrap.style.display = 'none';
+      cards.style.display = '';
+      let html = '';
+      rows.forEach(function (k) {
+        html += '<div class="gcard" data-row="' + k.id + '">' +
+          '<div class="top"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1677ff" stroke-width="1.7"><ellipse cx="12" cy="6.2" rx="7.6" ry="3"/><path d="M4.4 6.2v11.6c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3V6.2"/></svg>' +
+          '<span class="tag ' + (k.scope === 'public' ? 'pub' : k.scope === 'team' ? 'team' : 'priv') + '" style="margin-left:auto">' + SCOPE_LABEL[k.scope] + '</span></div>' +
+          '<div class="nm">' + esc(k.name) + (k.missing ? ' <span class="tag miss">失联</span>' : '') + '</div>' +
+          '<div class="meta"><span>' + k.docs + ' 文档</span><span>·</span><span>' + esc(k.owner) + '</span></div></div>';
+      });
+      if (!rows.length) html = '<div class="empty" style="grid-column:1/-1;padding:60px 0">没有匹配的知识库</div>';
+      cards.innerHTML = html;
+    }
+
+    // 勾选
+    body.querySelectorAll('[data-check]').forEach(function (box) {
+      box.addEventListener('click', function (e) { e.stopPropagation(); });
+      box.addEventListener('change', function () {
+        const id = box.getAttribute('data-check');
+        if (box.checked) L.selected.add(id); else L.selected.delete(id);
+        renderLSel();
+      });
+    });
+    // 点行在真实页面里是「进库工作台」，这里只给提示，避免被误读成"点行=勾选"
+    body.querySelectorAll('[data-row]').forEach(function (row) {
+      row.addEventListener('click', function () {
+        const hit = KBS.filter(function (k) { return k.id === row.getAttribute('data-row'); })[0];
+        const tip = el('l-tip');
+        if (!hit) return;
+        tip.innerHTML = '（原型）点击这一行 <b>会进入「' + esc(hit.name) + '」</b> 的工作台，也就是第 03 页的文件列表；勾选请点左侧复选框。';
+        tip.classList.add('on');
+      });
+    });
+
+    // 全选当前页
+    const checkAll = el('l-checkall');
+    const pageIds = rows.map(function (k) { return k.id; });
+    const allChecked = pageIds.length > 0 && pageIds.every(function (id) { return L.selected.has(id); });
+    checkAll.checked = allChecked;
+    checkAll.onchange = function () {
+      if (allChecked) pageIds.forEach(function (id) { L.selected.delete(id); });
+      else pageIds.forEach(function (id) { L.selected.add(id); });
+      renderLList();
+      renderLSel();
+    };
+
+    renderPager(el('l-pager'), {
+      total: total, page: L.page, pageSize: L.size,
+      onPage: function (p) { L.page = p; renderLList(); },
+      onSize: function (s) { L.size = s; L.page = 1; renderLList(); },
+    });
+  }
+
+  function renderLSel() {
+    const bar = el('l-selbar');
+    el('l-selcount').textContent = L.selected.size;
+    bar.classList.toggle('on', L.selected.size > 0);
+  }
+
+  const collapsed = {};
+
+  function bindL() {
+    el('l-q').addEventListener('input', function (e) { L.q = e.target.value; L.page = 1; renderLList(); });
+    el('l-scope').addEventListener('change', function (e) { L.scope = e.target.value; L.page = 1; renderLList(); });
+    el('l-sort').addEventListener('change', function (e) { L.sort = e.target.value; L.page = 1; renderLList(); });
+    el('l-tree-search').addEventListener('input', function (e) { L.treeQuery = e.target.value; renderLTree(); });
+    el('l-selclear').addEventListener('click', function () { L.selected.clear(); renderLList(); renderLSel(); });
+    document.querySelectorAll('[data-lview]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('[data-lview]').forEach(function (b) { b.classList.remove('on'); });
+        btn.classList.add('on');
+        L.view = btn.getAttribute('data-lview');
+        renderLList();
+      });
+    });
+    renderLTree();
+    renderLList();
+    renderLSel();
+  }
+
+  /* ================= 02 树 ================= */
+  const T = { shown: {}, query: '', selected: null, more: 30 };
+
+  function renderTTree() {
+    const host = el('t-tree');
+    const q = T.query.trim().toLowerCase();
+    let html = '';
+
+    if (q) {
+      const hits = KBS.filter(function (k) {
+        return (k.name + k.owner + k.dept).toLowerCase().indexOf(q) >= 0;
+      });
+      html += '<div style="padding:4px 6px 7px;font-size:10px;color:var(--gray-400)">命中 <b style="color:var(--gray-700)">' + hits.length + '</b> 个 · 平坦结果（带部门后缀）</div>';
+      hits.slice(0, T.more).forEach(function (k) {
+        html += '<div class="kb" data-tkb="' + k.id + '"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6.2" rx="7.6" ry="3"/><path d="M4.4 6.2v11.6c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3V6.2"/></svg>' +
+          '<span class="nm">' + esc(k.name) + '</span><span class="n" style="font-size:9px;max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(k.dept.slice(0, 5)) + '</span></div>';
+      });
+      if (hits.length > T.more) {
+        html += '<button class="more" data-tmore>再显示 30 个（共 ' + hits.length + '）</button>';
+      }
+      el('t-foot').innerHTML = '搜索命中 <b>' + hits.length + '</b> 个，当前渲染前 ' + Math.min(T.more, hits.length) + ' 个';
+    } else {
+      DEPTS.forEach(function (d, di) {
+        const items = KBS.filter(function (k) { return k.deptIdx === di; });
+        html += '<div class="dept" data-tdept="' + di + '">' +
+          '<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+          '<span class="name">' + esc(d.name) + '</span><span class="cnt">' + items.length + '</span></div>';
+        if (!collapsed['t' + di]) {
+          const shownN = T.shown[di] || 6;
+          items.slice(0, shownN).forEach(function (k) {
+            html += '<div class="kb' + (T.selected === k.id ? ' on' : '') + '" data-tkb="' + k.id + '">' +
+              '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6.2" rx="7.6" ry="3"/><path d="M4.4 6.2v11.6c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3V6.2"/></svg>' +
+              '<span class="nm">' + esc(k.name) + '</span><span class="n">' + k.docs + '</span></div>';
+          });
+          if (items.length > shownN) {
+            html += '<button class="more" data-tgmore="' + di + '">再显示 ' + Math.min(10, items.length - shownN) + ' 个（共 ' + items.length + '）</button>';
+          }
+        }
+      });
+      let shown = 0;
+      DEPTS.forEach(function (d, di) { if (!collapsed['t' + di]) shown += Math.min(d.n, T.shown[di] || 6); });
+      el('t-foot').innerHTML = '已显示 <b>' + shown.toLocaleString() + '</b> / 860 个' +
+        '<span style="margin-left:auto;color:var(--gray-400);font-size:10px">DOM 节点 ' + (shown + DEPTS.length) + ' 个</span>';
+    }
+    host.innerHTML = html;
+
+    host.querySelectorAll('[data-tdept]').forEach(function (node) {
+      node.addEventListener('click', function () {
+        const di = node.getAttribute('data-tdept');
+        collapsed['t' + di] = !collapsed['t' + di];
+        renderTTree();
+      });
+    });
+    host.querySelectorAll('[data-tgmore]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const di = btn.getAttribute('data-tgmore');
+        T.shown[di] = (T.shown[di] || 6) + 10;
+        renderTTree();
+      });
+    });
+    host.querySelectorAll('[data-tmore]').forEach(function (btn) {
+      btn.addEventListener('click', function () { T.more += 30; renderTTree(); });
+    });
+    host.querySelectorAll('[data-tkb]').forEach(function (node) {
+      node.addEventListener('click', function () { T.selected = node.getAttribute('data-tkb'); renderTTree(); });
+    });
+  }
+
+  function bindT() {
+    el('t-search').addEventListener('input', function (e) { T.query = e.target.value; renderTTree(); });
+    renderTTree();
+  }
+
+  /* ================= 03 文件 ================= */
+  const FOLDERS = [
+    '01 新人培训', '02 售前话术', '03 售后话术', '04 投诉处理', '05 产品FAQ',
+    '06 竞品对比', '07 客户案例', '08 服务SOP', '09 质检规范', '10 临时归档',
+  ];
+  const DOC_NAMES = [
+    '客户服务标准话术手册-v4.2', '2026Q3 投诉处理复盘纪要', '售前常见异议应答清单',
+    '产品功能FAQ-企业版', '大客户接入SOP（含回滚）', '服务质检评分细则',
+    '竞品对比矩阵-2026H2', '一线坐席培训课件-第三讲', '工单升级判定标准',
+    '客户满意度回访脚本', '退订与挽留话术', '渠道伙伴服务规范',
+    'SLA 承诺与赔付口径', '知识库维护责任矩阵', '异常工单处置预案',
+  ];
+  const EXTS = ['pdf', 'docx', 'xlsx', 'pptx', 'md'];
+
+  const DOCS = [];
+  (function buildDocs() {
+    const rnd = seeded(20261106);
+    for (let i = 0; i < 1286; i++) {
+      const base = DOC_NAMES[Math.floor(rnd() * DOC_NAMES.length)];
+      const ext = EXTS[Math.floor(rnd() * EXTS.length)];
+      const folder = i < 120 ? '' : FOLDERS[Math.floor(rnd() * FOLDERS.length)];
+      const statusRnd = rnd();
+      const status = statusRnd > 0.93 ? 'failed' : statusRnd > 0.86 ? 'parsing' : statusRnd > 0.80 ? 'unparsed' : 'parsed';
+      const month = Math.floor(rnd() * 10) + 1;
+      const day = Math.floor(rnd() * 27) + 1;
+      // 同名不同版在真实知识库里很常见：用版本/日期后缀，而不是堆 "（49）" 这种编号
+      const VARIANTS = ['', '', '', '', 'v2', 'v3', '终版', '修订版', '2026-05', '2026-08'];
+      const dup = VARIANTS[Math.floor(rnd() * VARIANTS.length)];
+      const dupPart = dup ? '（' + dup + '）' : '';
+      DOCS.push({
+        id: 'doc' + i,
+        name: base + dupPart + '.' + ext,
+        ext: ext,
+        folder: folder,
+        status: status,
+        chunks: status === 'parsed' ? Math.floor(rnd() * 180) + 3 : 0,
+        size: Math.floor(rnd() * 8 * 1024 * 1024) + 22 * 1024,
+        updated: '2026-' + pad(month) + '-' + pad(day),
+        ts: new Date(2026, month - 1, day).getTime(),
+        progress: status === 'parsing' ? Math.floor(rnd() * 80) + 8 : 0,
+      });
+    }
+  })();
+
+  const D = {
+    page: 1, size: 50, q: '', status: '', sort: 'updated',
+    view: 'list', folder: '', selected: new Set(), kanbanShown: 8,
+  };
+
+  function dFiltered() {
+    let list = DOCS.slice();
+    if (D.folder) list = list.filter(function (d) { return d.folder === D.folder; });
+    const q = D.q.trim().toLowerCase();
+    if (q) list = list.filter(function (d) { return d.name.toLowerCase().indexOf(q) >= 0; });
+    if (D.status) list = list.filter(function (d) { return d.status === D.status; });
+    if (D.sort === 'name') list.sort(function (a, b) { return a.name.localeCompare(b.name, 'zh-Hans-CN'); });
+    else if (D.sort === 'size') list.sort(function (a, b) { return b.size - a.size; });
+    else if (D.sort === 'chunks') list.sort(function (a, b) { return b.chunks - a.chunks; });
+    else list.sort(function (a, b) { return b.ts - a.ts; });
+    return list;
+  }
+
+  const STATUS_META = {
+    parsed: { cls: 'ok', label: '已完成' },
+    parsing: { cls: 'run', label: '解析中' },
+    failed: { cls: 'fail', label: '解析失败' },
+    unparsed: { cls: 'none', label: '未解析' },
+  };
+  const KIND_MAP = { pdf: ['PDF', 'pdf'], docx: ['DOC', 'doc'], xlsx: ['XLS', 'xls'], pptx: ['PPT', 'ppt'], md: ['MD', 'md'] };
+
+  function fmtSize(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return Math.round(b / 1024) + ' KB';
+    return (b / 1048576).toFixed(1) + ' MB';
+  }
+
+  function renderDChips() {
+    const host = el('d-chips');
+    let html = '<button class="chip' + (D.folder === '' ? ' on' : '') + '" data-folder="">全部文件夹<span class="n">' + DOCS.length + '</span></button>';
+    FOLDERS.forEach(function (f) {
+      const n = DOCS.filter(function (d) { return d.folder === f; }).length;
+      html += '<button class="chip' + (D.folder === f ? ' on' : '') + '" data-folder="' + esc(f) + '">' +
+        '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="color:#d97706"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>' +
+        esc(f.replace(/^\d+\s*/, '')) + '<span class="n">' + n + '</span></button>';
+    });
+    host.innerHTML = html;
+    host.querySelectorAll('[data-folder]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        D.folder = btn.getAttribute('data-folder');
+        D.page = 1;
+        D.selected.clear();
+        renderDocs();
+      });
+    });
+  }
+
+  function renderDCrumbs() {
+    const host = el('d-crumbs');
+    let html = '<button data-crumb="">全部文件</button>';
+    if (D.folder) {
+      html += '<span class="sep">/</span><button data-crumb="' + esc(D.folder) + '" style="color:var(--gray-700);font-weight:700">' + esc(D.folder) + '</button>';
+    }
+    html += '<span class="hint">文件夹已从"树形展开"改为"过滤维度"</span>';
+    host.innerHTML = html;
+    host.querySelectorAll('[data-crumb]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        D.folder = btn.getAttribute('data-crumb');
+        D.page = 1;
+        renderDocs();
+      });
+    });
+  }
+
+  function renderDocs() {
+    const list = dFiltered();
+    const total = list.length;
+    const totalPages = Math.max(1, Math.ceil(total / D.size));
+    if (D.page > totalPages) D.page = totalPages;
+    const rows = list.slice((D.page - 1) * D.size, D.page * D.size);
+
+    renderDCrumbs();
+    renderDChips();
+
+    const tablewrap = el('d-tablewrap');
+    const rowshost = el('d-rows');
+    const grid = el('d-grid');
+    const kanban = el('d-kanban');
+
+    tablewrap.style.display = 'none';
+    grid.style.display = 'none';
+    kanban.style.display = 'none';
+    // 三个视图互斥：切走后把隐藏的 host 清空，别让旧 DOM 留在页面里
+    rowshost.innerHTML = '';
+    grid.innerHTML = '';
+    kanban.innerHTML = '';
+
+    if (D.view === 'list') {
+      tablewrap.style.display = '';
+      let html = '';
+      rows.forEach(function (d) {
+        const st = STATUS_META[d.status];
+        const kind = KIND_MAP[d.ext] || ['FILE', 'doc'];
+        const checked = D.selected.has(d.id) ? ' checked' : '';
+        html += '<div class="docgrid docrow" data-docrow="' + d.id + '">' +
+          '<span><input type="checkbox" data-dcheck="' + d.id + '"' + checked + ' /></span>' +
+          '<span class="nm"><span class="kind ' + kind[1] + '">' + kind[0] + '</span>' +
+          '<span class="trunc">' + esc(d.name) + '</span></span>' +
+          '<span class="st ' + st.cls + '"><span class="d"></span>' + st.label +
+          (d.progress ? ' <span style="color:var(--gray-400);font-size:9.5px">' + d.progress + '%</span>' : '') + '</span>' +
+          '<span class="num" style="text-align:right;">' + (d.chunks || '—') + '</span>' +
+          '<span class="num" style="text-align:right;">' + fmtSize(d.size) + '</span>' +
+          '<span class="num" style="text-align:right;">' + d.updated + '</span>' +
+          '<span style="color:var(--gray-300);text-align:center">⋯</span>' +
+        '</div>';
+      });
+      if (!rows.length) {
+        html = '<div class="empty" style="padding:56px 0"><span>没有匹配的文档</span><span style="font-size:11px">换个关键词，或清掉状态筛选</span></div>';
+      }
+      rowshost.innerHTML = html;
+
+      rowshost.querySelectorAll('[data-dcheck]').forEach(function (box) {
+        box.addEventListener('click', function (e) { e.stopPropagation(); });
+        box.addEventListener('change', function () {
+          const id = box.getAttribute('data-dcheck');
+          if (box.checked) D.selected.add(id); else D.selected.delete(id);
+        });
+      });
+      const checkAll = el('d-checkall');
+      const pageIds = rows.map(function (d) { return d.id; });
+      const all = pageIds.length > 0 && pageIds.every(function (id) { return D.selected.has(id); });
+      checkAll.checked = all;
+      checkAll.onchange = function () {
+        if (all) pageIds.forEach(function (id) { D.selected.delete(id); });
+        else pageIds.forEach(function (id) { D.selected.add(id); });
+        renderDocs();
+      };
+    } else if (D.view === 'grid') {
+      grid.style.display = '';
+      let html = '';
+      rows.forEach(function (d) {
+        const st = STATUS_META[d.status];
+        const kind = KIND_MAP[d.ext] || ['FILE', 'doc'];
+        html += '<div class="gcard" data-docrow="' + d.id + '">' +
+          '<div class="top"><span class="kind ' + kind[1] + '">' + kind[0] + '</span>' +
+          '<span class="st ' + st.cls + '" style="margin-left:auto"><span class="d"></span>' + st.label + '</span></div>' +
+          '<div class="nm">' + esc(d.name) + '</div>' +
+          '<div class="meta"><span>' + fmtSize(d.size) + '</span><span>·</span><span>' + (d.chunks ? d.chunks + ' 切片' : '未切') + '</span></div></div>';
+      });
+      if (!rows.length) html = '<div class="empty" style="grid-column:1/-1;padding:56px 0">没有匹配的文档</div>';
+      grid.innerHTML = html;
+    } else {
+      kanban.style.display = '';
+      const buckets = { failed: [], parsing: [], unparsed: [], parsed: [] };
+      list.forEach(function (d) { buckets[d.status].push(d); });
+      const order = [
+        { key: 'failed', label: '解析失败', color: '#ef4444' },
+        { key: 'parsing', label: '解析中', color: '#f59e0b' },
+        { key: 'unparsed', label: '未解析', color: '#d1d5db' },
+        { key: 'parsed', label: '已完成', color: '#10b981' },
+      ];
+      let html = '';
+      order.forEach(function (o) {
+        const arr = buckets[o.key];
+        html += '<div class="col"><div class="col-head"><span class="d" style="background:' + o.color + '"></span>' +
+          o.label + '<span class="n">' + arr.length + '</span></div>';
+        arr.slice(0, D.kanbanShown).forEach(function (d) {
+          html += '<div class="kcard"><div class="nm">' + esc(d.name) + '</div>' +
+            '<div class="m"><span>' + fmtSize(d.size) + '</span><span>' + (d.chunks ? d.chunks + ' 切片' : '未切') + '</span></div></div>';
+        });
+        if (arr.length > D.kanbanShown) {
+          html += '<button class="col-more" data-kanban="' + o.key + '">还有 ' + (arr.length - D.kanbanShown) + ' 份 · 展开更多</button>';
+        }
+        html += '</div>';
+      });
+      kanban.innerHTML = html;
+      kanban.querySelectorAll('[data-kanban]').forEach(function (btn) {
+        btn.addEventListener('click', function () { D.kanbanShown += 8; renderDocs(); });
+      });
+    }
+
+    // 分页条：看板视图换成"随看板滚、不分页"的说明
+    const pagerHost = el('d-pager');
+    if (D.view === 'kanban') {
+      pagerHost.innerHTML =
+        '<span class="sum">看板按解析状态分列，每列只展示前 <b>' + D.kanbanShown + '</b> 份</span>' +
+        '<span class="spacer"></span>' +
+        '<span class="sum" style="color:var(--gray-400)">要逐条翻页请切到「列表」或「网格」</span>' +
+        '<button class="chip" data-to-list style="margin-left:8px">切到列表看全部 ' + total.toLocaleString() + ' 份</button>';
+      pagerHost.querySelector('[data-to-list]').addEventListener('click', function () {
+        D.view = 'list';
+        document.querySelectorAll('[data-dview]').forEach(function (b) {
+          b.classList.toggle('on', b.getAttribute('data-dview') === 'list');
+        });
+        renderDocs();
+      });
+      return;
+    }
+
+    renderPager(pagerHost, {
+      total: total, page: D.page, pageSize: D.size,
+      sizes: [20, 50, 100],
+      onPage: function (p) { D.page = p; renderDocs(); },
+      onSize: function (s) { D.size = s; D.page = 1; renderDocs(); },
+    });
+  }
+
+  function bindD() {
+    el('d-q').addEventListener('input', function (e) { D.q = e.target.value; D.page = 1; renderDocs(); });
+    el('d-status').addEventListener('change', function (e) { D.status = e.target.value; D.page = 1; renderDocs(); });
+    el('d-sort').addEventListener('change', function (e) { D.sort = e.target.value; D.page = 1; renderDocs(); });
+    document.querySelectorAll('[data-dview]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('[data-dview]').forEach(function (b) { b.classList.remove('on'); });
+        btn.classList.add('on');
+        D.view = btn.getAttribute('data-dview');
+        renderDocs();
+      });
+    });
+    renderDocs();
+  }
+
+  /* ================= 页签 ================= */
+  function bindTabs() {
+    document.querySelectorAll('.tab').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('on'); });
+        document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('on'); });
+        tab.classList.add('on');
+        el(tab.getAttribute('data-view')).classList.add('on');
+      });
+    });
+  }
+
+  bindTabs();
+  bindL();
+  bindT();
+  bindD();
+})();
+</script>
+</body>
+</html>

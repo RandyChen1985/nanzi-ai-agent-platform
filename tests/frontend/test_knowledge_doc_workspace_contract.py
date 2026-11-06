@@ -125,15 +125,23 @@ def rendered() -> dict:
     return json.loads(proc.stdout)
 
 
-def test_nested_folders_render_with_top_level_expanded(rendered):
-    """顶层文件夹默认展开、子文件夹默认收起——否则一进页面就是几十行文档。"""
+def test_folder_chips_replace_the_expandable_tree(rendered):
+    """文件夹从「树内可展开的行」改成筛选 chip。
+
+    树形展开 + 页码会互相打架：展开态跨页丢失、同一个文件夹被切到两页。
+    改成「点文件夹 = 按路径过滤」之后，分页只作用在过滤结果上。
+    根层只列一级文件夹，子文件夹要进到父层才看得到。
+    """
     nested = rendered["nested"]
-    assert nested["hasTopFolder"] is True
-    assert nested["hasChildFolder"] is True
-    assert nested["hasSiblingFolder"] is True
-    assert nested["showsDocInExpandedTop"] is True
-    assert nested["hidesDocInCollapsedChild"] is True
-    assert nested["showsUnclassified"] is True
+    assert nested["hasTopFolderChip"] is True
+    assert nested["hasSiblingFolderChip"] is True
+    assert nested["hidesChildFolderAtRoot"] is True
+    assert nested["folderCountIsOne"] is True
+
+
+def test_docs_render_flat_instead_of_a_tree(rendered):
+    """文档平铺展示：层级不再决定「看不看得见」，过滤词才决定。"""
+    assert rendered["nested"]["showsAllDocsAtRoot"] is True
 
 
 def test_status_reflects_props(rendered):
@@ -153,7 +161,7 @@ def test_upload_cta_lives_in_the_library_header():
 def test_flat_structure_still_renders(rendered):
     """老数据（单层结构）与「文档全未分类」都必须照常显示。"""
     assert rendered["flat"]["showsUnclassifiedDoc"] is True
-    assert rendered["flat"]["noFolderRow"] is True
+    assert rendered["flat"]["noFolderChip"] is True
 
 
 def test_empty_and_loading_states(rendered):
@@ -192,7 +200,8 @@ def test_library_list_view_opens_and_rows_enter_dataset():
     page = _page()
     assert 'v-else-if="listScope"' in page
     assert '@click="selectDatasetNode(ds)"' in page
-    assert 'libraryListRows' in page
+    # 列表页数据源改成服务端分页的 libraryRows（libraryListRows 已随本地过滤一起移除）
+    assert 'const libraryRows = ref<KnowledgeBase[]>([])' in page
     assert '图书馆' not in page
 
 

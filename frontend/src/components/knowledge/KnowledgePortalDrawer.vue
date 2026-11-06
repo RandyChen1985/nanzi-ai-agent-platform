@@ -783,6 +783,22 @@
                               </div>
                             </transition>
                           </div>
+                          <!--
+                            原来固定只取前 100 份，多出来的既不显示也不提示。
+                            给一句「还有 N 份」+ 加载更多，至少不会让人以为库里只有 100 份。
+                          -->
+                          <button
+                            v-if="(datasetDocuments[ds.id]?.docs?.length || 0) < (datasetDocuments[ds.id]?.total || 0)"
+                            type="button"
+                            class="w-full rounded-md border border-dashed border-gray-200 py-1 text-[10px] text-gray-500 transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-400 dark:hover:border-green-500/60 dark:hover:text-green-400"
+                            :disabled="datasetDocuments[ds.id]?.loadingMore"
+                            @click.stop="emit('load-more-documents', ds.id)"
+                          >
+                            <template v-if="datasetDocuments[ds.id]?.loadingMore">加载中…</template>
+                            <template v-else>
+                              还有 {{ (datasetDocuments[ds.id]?.total || 0) - (datasetDocuments[ds.id]?.docs?.length || 0) }} 份 · 加载更多
+                            </template>
+                          </button>
                         </template>
                         <div v-else class="text-[10px] text-gray-400 text-center py-3 select-none">
                           暂无文档记录
@@ -1027,7 +1043,7 @@ const props = defineProps<{
   activeDatasetIds: string[];
   pinnedDatasetIds: string[];
   recommendations: Record<string, { questions: any[]; custom_questions?: any[]; loading?: boolean }>;
-  datasetDocuments: Record<string, { docs: any[]; loading?: boolean }>;
+  datasetDocuments: Record<string, { docs: any[]; loading?: boolean; total?: number; loadingMore?: boolean }>;
   documentRecommendations: Record<string, { questions: any[]; loading?: boolean }>;
   loading?: boolean;
   loadError?: boolean;
@@ -1043,6 +1059,7 @@ const emit = defineEmits<{
   (e: "refresh"): void;
   (e: "toggle-pin", id: string): void;
   (e: "load-documents", id: string): void;
+  (e: "load-more-documents", id: string): void;
   (e: "load-document-recommendations", datasetId: string, documentId: string): void;
 }>();
 

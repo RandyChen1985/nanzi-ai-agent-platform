@@ -26,9 +26,15 @@ def workspace() -> str:
 
 
 def test_doc_selection_requires_manage(workspace: str) -> None:
-    """文档勾选必须跟管理权绑定：只读库能勾上就等于能批量删。"""
-    assert 'v-if="canManage"' in workspace          # 表头全选
-    assert '''v-if="row.kind === 'doc' && canManage"''' in workspace
+    """文档勾选必须跟管理权绑定：只读库能勾上就等于能批量删。
+
+    文件夹从「树内一行」改成「筛选标签」后，列表里只剩文档行，
+    勾选框不再靠 `row.kind === 'doc'` 区分，而是表头全选与行内勾选各自判 canManage。
+    """
+    # 表头全选 + 行内勾选：两处都必须有权限判断，漏掉一处就能勾只读库的文档
+    assert workspace.count('v-if="canManage"') >= 2
+    # 行内勾选框绑定的是当前页选中的 docId
+    assert ':checked="selectedIds.includes(doc.id)"' in workspace
 
 
 def test_bulk_bar_buttons_follow_their_own_permission(workspace: str) -> None:

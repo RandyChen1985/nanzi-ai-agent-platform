@@ -3078,6 +3078,7 @@ const {
   documentRecommendations,
   toggleDatasetPinned,
   fetchDatasetDocuments,
+  loadMoreDatasetDocuments,
   fetchDocumentRecommendations,
   fetchDatasets,
   fetchRecommendations,
@@ -5764,6 +5765,7 @@ onUnmounted(() => {
     @refresh="fetchDatasets"
     @toggle-pin="toggleDatasetPinned"
     @load-documents="fetchDatasetDocuments"
+    @load-more-documents="loadMoreDatasetDocuments"
     @load-document-recommendations="fetchDocumentRecommendations"
   />
 
