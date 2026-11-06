@@ -938,6 +938,10 @@ const engineStatusText = computed(() => {
   if (engineStatus.value === 'connected') return '已连接'
   return '未连接'
 })
+/** 只有断连时那个小圆点才可点重试：正常/检测中点击没有意义，别让它变成可点控件 */
+const canRetryEngine = computed(
+  () => !isLocalMode.value && engineStatus.value === 'disconnected'
+)
 
 /** 元数据侧的 RAGFlow 地址：来自 `ragflow_api_url`，不是知识库那套 `knowledge_ragflow_api_url` */
 const metadataRagflowApiUrl = ref('')
@@ -1039,6 +1043,53 @@ onMounted(async () => {
           >
             <span class="whitespace-nowrap">显示指引</span>
           </button>
+
+          <!-- 引擎连接状态：正常态只留一个小圆点（hover 出地址 / Key），
+               检测中和断连才补文字，否则「一个黄点」信息量为零。
+               它属于页面级运行前提，锚在标题行 —— 放工具栏里会随筛选条件左右漂移。 -->
+          <div
+            class="group relative flex shrink-0 items-center gap-1.5"
+            :class="[canRetryEngine ? 'cursor-pointer' : 'cursor-help', { 'ml-2': !showFlowGuide }]"
+            tabindex="0"
+            role="status"
+            :aria-label="`引擎${engineStatusText}`"
+            @click="canRetryEngine && checkRagFlowConnectivity()"
+          >
+            <span
+              class="inline-block h-2 w-2 shrink-0 rounded-full transition-colors"
+              :class="{
+                'animate-pulse bg-blue-500': !isLocalMode && engineStatus === 'checking',
+                'bg-emerald-500': isLocalMode || engineStatus === 'connected',
+                'bg-amber-500': !isLocalMode && engineStatus === 'disconnected'
+              }"
+            />
+            <span
+              v-if="!isLocalMode && engineStatus !== 'connected'"
+              class="whitespace-nowrap text-xs font-medium"
+              :class="engineStatus === 'checking' ? 'text-blue-600' : 'text-amber-600'"
+            >
+              引擎{{ engineStatusText }}
+            </span>
+
+            <!-- 悬浮 Tooltip：完整配置信息只在这里出现，正常态不在标题行占字。
+                 窄屏居中对齐，否则从标题左侧向右铺 224px 会顶出屏幕。 -->
+            <span class="pointer-events-none absolute left-1/2 top-full z-50 mt-2 hidden w-56 -translate-x-1/2 rounded-lg bg-slate-900 p-2.5 text-left font-sans text-xs font-normal text-white shadow-xl group-hover:block group-focus-within:block sm:left-0 sm:translate-x-0">
+              <div class="mb-1 border-b border-white/10 pb-1 font-medium">元数据引擎信息</div>
+              <template v-if="isLocalMode">
+                <div class="opacity-80">运行模式: 本地 Redis 向量检索</div>
+                <div class="mt-0.5 font-medium text-emerald-400 opacity-80">无需连接外部 RAGFlow</div>
+              </template>
+              <template v-else>
+                <div class="break-all opacity-80">地址: {{ ragflowApiUrl }}</div>
+                <div class="mt-1 opacity-80">
+                  API Key:
+                  <span v-if="ragflowConfig?.api_key_configured" class="text-emerald-400">已配置</span>
+                  <span v-else class="text-amber-400">未配置</span>
+                </div>
+              </template>
+              <div v-if="canRetryEngine" class="mt-1.5 border-t border-white/10 pt-1.5 text-amber-300">点击圆点重新检测</div>
+            </span>
+          </div>
         </div>
         <p class="mt-0.5 truncate text-sm text-gray-500">管理业务数据集及其表结构语义</p>
       </div>
@@ -1087,52 +1138,14 @@ onMounted(async () => {
           </button>
         </div>
 
-        <div class="flex items-center gap-2">
-          <select
-            v-model="statusFilter"
-            class="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 sm:w-auto sm:flex-none"
-          >
-            <option value="all">状态：全部</option>
-            <option value="active">已启用</option>
-            <option value="inactive">已禁用</option>
-          </select>
-
-          <div
-            tabindex="0"
-            class="relative flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5 text-xs shadow-sm transition-colors group"
-            :class="{
-              'border-blue-200 text-blue-700': !isLocalMode && engineStatus === 'checking',
-              'border-emerald-200 text-emerald-700': isLocalMode || engineStatus === 'connected',
-              'border-amber-200 text-amber-700': !isLocalMode && engineStatus === 'disconnected'
-            }"
-          >
-            <span
-              class="inline-block h-2 w-2 rounded-full"
-              :class="{
-                'animate-pulse bg-blue-500': !isLocalMode && engineStatus === 'checking',
-                'bg-emerald-500': isLocalMode || engineStatus === 'connected',
-                'bg-amber-500': !isLocalMode && engineStatus === 'disconnected'
-              }"
-            />
-            <span class="whitespace-nowrap font-medium">引擎 {{ engineStatusText }}</span>
-            <span class="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden w-56 rounded-lg bg-slate-900 p-2.5 text-left font-sans text-xs font-normal text-white shadow-xl group-hover:block group-focus-within:block">
-              <div class="mb-1 border-b border-white/10 pb-1 font-medium">知识库引擎信息</div>
-              <template v-if="isLocalMode">
-                <div class="opacity-80">运行模式: 本地 Redis 向量检索</div>
-                <div class="mt-0.5 font-medium text-emerald-400 opacity-80">无需连接外部 RAGFlow</div>
-              </template>
-              <template v-else>
-                <div class="break-all opacity-80">地址: {{ ragflowApiUrl }}</div>
-                <div class="mt-1 opacity-80">
-                  API Key:
-                  <span v-if="ragflowConfig?.api_key_configured" class="text-emerald-400">已配置</span>
-                  <span v-else class="text-amber-400">未配置</span>
-                </div>
-              </template>
-            </span>
-          </div>
-
-        </div>
+        <select
+          v-model="statusFilter"
+          class="w-full shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 sm:w-auto"
+        >
+          <option value="all">状态：全部</option>
+          <option value="active">已启用</option>
+          <option value="inactive">已禁用</option>
+        </select>
 
         <div class="flex items-center gap-2">
           <div class="flex shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
@@ -1182,12 +1195,13 @@ onMounted(async () => {
               v-if="hasPermission('element:metadata:edit')"
               type="button"
               class="flex flex-1 items-center justify-center gap-2 bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 active:scale-[0.98] sm:flex-none"
+              title="新建数据集"
               @click="showCreateModal = true; showCreateMenu = false"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
               </svg>
-              新建数据集
+              新建
             </button>
             <button
               v-else
