@@ -99,6 +99,8 @@ class DatasetScope:
     row_policy: str = ROW_POLICY_INHERIT
     row_condition: Optional[str] = None
     sources: tuple[str, ...] = ()
+    # 所有生效来源里最近的一个到期时间（None = 全部长期有效）
+    expires_at: Optional[datetime] = None
     # table_id -> 该表上所有生效来源的列规则（按来源顺序）。空 = 全部字段。
     column_rules: dict[int, tuple[ColumnRule, ...]] = None  # type: ignore[assignment]
 
@@ -376,6 +378,36 @@ def _merge_scope(items: Iterable[dict[str, Any]]) -> tuple[str, frozenset[int]]:
     return MODE_LIST, frozenset(table_ids)
 
 
+def _earliest_expiry(items: Iterable[dict[str, Any]]) -> Optional[datetime]:
+    """多条授权里最近的一个到期时间；全部为长期有效时返回 ``None``。
+
+    目录里如实标注到期时间，是因为「到期后回落到更宽的角色基线」这件事在
+    运行时看起来像权限突然变多/变少，目录里不写清楚，排查时只能靠猜。
+    """
+    moments: list[datetime] = []
+    for item in items:
+        moment = _coerce_datetime(item.get("expire_at"))
+        if moment is not None:
+            moments.append(moment)
+    return min(moments) if moments else None
+
+
+def _coerce_datetime(value: Any) -> Optional[datetime]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        moment = value
+    else:
+        raw = str(value).strip().replace("Z", "").split("+")[0].replace("T", " ")
+        try:
+            moment = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+    if moment.tzinfo is not None:
+        moment = moment.replace(tzinfo=None)
+    return moment
+
+
 # ---------------------------------------------------------------------------
 # 解析入口
 # ---------------------------------------------------------------------------
@@ -421,6 +453,7 @@ def build_dataset_scope(dataset_id: int, items: Iterable[dict[str, Any]]) -> Dat
                 merged_columns.setdefault(key, []).append(rule)
 
     sources = tuple(dict.fromkeys(str(item["subject"]) for item in [*base, *public]))
+    expires_at = _earliest_expiry([*base, *public])
     return DatasetScope(
         dataset_id=int(dataset_id),
         mode=mode,
@@ -428,6 +461,7 @@ def build_dataset_scope(dataset_id: int, items: Iterable[dict[str, Any]]) -> Dat
         row_policy=row_policy,
         row_condition=row_condition,
         sources=sources,
+        expires_at=expires_at,
         column_rules={tid: tuple(rules) for tid, rules in merged_columns.items()},
     )
 
@@ -539,6 +573,7 @@ async def resolve_user_dataset_scopes(
                 "column_rules": column_rules,
                 "row_policy": _parse_row_policy(info.get("row_policy")),
                 "row_condition": str(info.get("row_condition") or "").strip() or None,
+                "expire_at": info.get("expire_at"),
             }
         )
 
@@ -1133,3 +1168,177 @@ async def filter_examples_by_table_scope(
             "[FewShot] 表级权限过滤：丢弃 %d 条引用了用户不可见表的案例", dropped
         )
     return kept
+
+
+# ---------------------------------------------------------------------------
+# 目录级权限摘要（给 list_accessible_datasets 这类"我有哪些数据集"用）
+# ---------------------------------------------------------------------------
+
+ROW_STATE_CUSTOM = "custom"
+ROW_STATE_NONE = "none"
+ROW_STATE_FILTERED = "filtered"
+ROW_STATE_DENY_ALL = "deny_all"
+
+#: 可见表数量不超过这个值时才在摘要里给出表名（其余只给计数，省 token）
+_SCOPE_NAME_LIMIT = 8
+
+_DENY_CONDITIONS = frozenset({"1=0", "0=1", "false"})
+
+
+def _is_deny_condition(raw: Any) -> bool:
+    text = str(raw or "").strip().replace(" ", "").lower()
+    return text in _DENY_CONDITIONS
+
+
+def describe_row_state(
+    scope: Optional[DatasetScope],
+    *,
+    enable_data_perm: bool = False,
+    row_filter_config: Optional[dict[str, Any]] = None,
+    user_roles: Iterable[str] = (),
+    user_id: Optional[int] = None,
+) -> Optional[str]:
+    """这份授权最终的**行级效果**；``None`` = 没有任何行级限制。
+
+    比"授权行上写的 row_policy"更有用：``inherit`` 只是"用数据集策略"，
+    而数据集策略可能对这个角色一条都没配 —— 运行期就是 ``1=0``，
+    目录里如果仍显示"有权限"，模型会让用户白问一轮再回来说查不到数据。
+    """
+    if scope is None:
+        return None
+    if scope.row_policy == ROW_POLICY_NONE:
+        return ROW_STATE_NONE
+    if scope.row_policy == ROW_POLICY_CUSTOM and scope.row_condition:
+        return ROW_STATE_CUSTOM
+    if not enable_data_perm:
+        return None
+    try:
+        from app.services.ai.rewriters.sql_rewriter import SQLRewriter
+
+        filters = SQLRewriter.resolve_strategy(
+            user_id, [str(item) for item in (user_roles or ())], row_filter_config
+        )
+    except Exception as exc:  # noqa: BLE001 - 摘要失败不能反过来影响目录
+        logger.warning("[DataPerm] 行级效果判定失败，按有过滤处理: %s", exc)
+        return ROW_STATE_FILTERED
+    if not filters or all(_is_deny_condition(item.get("condition")) for item in filters):
+        return ROW_STATE_DENY_ALL
+    return ROW_STATE_FILTERED
+
+
+async def summarize_dataset_scopes(
+    session: AsyncSession,
+    scopes: dict[int, DatasetScope],
+    *,
+    dataset_rows: Iterable[Any] = (),
+    user_roles: Iterable[str] = (),
+    user_id: Optional[int] = None,
+    name_limit: int = _SCOPE_NAME_LIMIT,
+) -> dict[int, dict[str, Any]]:
+    """把已解析的 ``DatasetScope`` 压成"权限摘要"，只给**收窄与风险**，不给规则原文。
+
+    返回值只包含**存在限制或风险**的数据集：``mode=all`` + 无字段限制 + 无行级限制 +
+    无到期时间的条目直接省略，调用方据此决定是否输出 ``permission`` 字段。
+    行级条件原文（``dept_code='FIN'``）永远不出口，只给效果档位。
+    """
+    if not scopes:
+        return {}
+
+    ids = sorted(int(item) for item in scopes)
+    dataset_by_id = {int(getattr(row, "id", 0)): row for row in (dataset_rows or ())}
+
+    total_by_dataset: dict[int, int] = {}
+    try:
+        rows = (
+            await session.execute(
+                select(MetaTable.dataset_id, func.count())
+                .where(MetaTable.dataset_id.in_(ids), MetaTable.status == 1)
+                .group_by(MetaTable.dataset_id)
+            )
+        ).all()
+        total_by_dataset = {int(row[0]): int(row[1]) for row in rows}
+    except Exception as exc:  # noqa: BLE001 - 摘要失败不能影响目录本身
+        logger.warning("[DataPerm] 统计数据集表数失败: %s", exc)
+
+    # 只给「收窄后可见表不多」的数据集补表名，避免把 38 张表全塞进上下文
+    name_ids: list[int] = []
+    for dataset_id, scope in scopes.items():
+        if scope.mode == MODE_LIST and 0 < len(scope.table_ids) <= name_limit:
+            name_ids.extend(int(item) for item in scope.table_ids)
+    name_by_id: dict[int, str] = {}
+    if name_ids:
+        try:
+            name_rows = (
+                await session.execute(
+                    select(MetaTable.id, MetaTable.physical_name).where(
+                        MetaTable.id.in_(sorted(set(name_ids)))
+                    )
+                )
+            ).all()
+            name_by_id = {int(row[0]): str(row[1]) for row in name_rows}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[DataPerm] 加载可见表名失败: %s", exc)
+
+    summaries: dict[int, dict[str, Any]] = {}
+    for dataset_id in ids:
+        scope = scopes[dataset_id]
+        row = dataset_by_id.get(dataset_id)
+        total = total_by_dataset.get(dataset_id, 0)
+        # mode=list 时以授权里的表数为准：表可能已被删除，total 只用于展示比例
+        visible = total if scope.mode == MODE_ALL else len(scope.table_ids)
+
+        tables: Optional[dict[str, Any]] = None
+        if scope.mode != MODE_ALL:
+            names = [
+                name_by_id[int(item)]
+                for item in sorted(int(x) for x in scope.table_ids)
+                if int(item) in name_by_id
+            ]
+            tables = {
+                "mode": MODE_LIST,
+                "visible": visible,
+                "total": total,
+                "names": names if names and len(names) <= name_limit else None,
+            }
+
+        columns: Optional[dict[str, Any]] = None
+        excluded = 0
+        whitelisted = 0
+        for rules in (scope.column_rules or {}).values():
+            for rule in rules:
+                if rule.mode == COL_INCLUDE:
+                    whitelisted += 1
+                else:
+                    excluded = max(excluded, len(rule.names))
+        if scope.column_rules:
+            columns = {
+                "restricted_tables": len(scope.column_rules),
+                "excluded": excluded,
+                "whitelisted_tables": whitelisted,
+            }
+
+        row_state = describe_row_state(
+            scope,
+            enable_data_perm=bool(getattr(row, "enable_data_perm", False)),
+            row_filter_config=getattr(row, "row_filter_config", None),
+            user_roles=user_roles,
+            user_id=user_id,
+        )
+
+        expires_at = scope.expires_at
+        if not (tables or columns or row_state or expires_at):
+            continue
+        summary: dict[str, Any] = {}
+        if tables:
+            summary["tables"] = tables
+        if columns:
+            summary["columns"] = columns
+        if row_state:
+            summary["row"] = row_state
+        if scope.sources:
+            summary["sources"] = list(scope.sources)
+        if expires_at is not None:
+            summary["expires_at"] = expires_at.strftime("%Y-%m-%d %H:%M")
+        summaries[dataset_id] = summary
+
+    return summaries

@@ -83,13 +83,25 @@ async def test_list_accessible_datasets_returns_lightweight_fields():
         "app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal",
         return_value=db_cm,
     ), patch(
-        "app.services.ai.tools.resource_catalog_tools.MetadataService.list_accessible_dataset_options",
-        AsyncMock(return_value=[row]),
+        "app.services.ai.tools.resource_catalog_tools.MetadataService.list_accessible_dataset_entries",
+        AsyncMock(
+            return_value=[
+                {
+                    "id": 11,
+                    "name": "orders",
+                    "display_name": "客户订单",
+                    "description": "订单主数据备注",
+                    "status": 1,
+                    "permission": None,
+                }
+            ]
+        ),
     ) as mock_list:
         result = await list_accessible_datasets.ainvoke({})
 
     payload = json.loads(result)
     assert payload["count"] == 1
+    # 无收窄时**不带** permission 字段，保持条目轻量
     assert payload["items"] == [
         {
             "id": 11,
@@ -104,6 +116,56 @@ async def test_list_accessible_datasets_returns_lightweight_fields():
     assert kwargs["user_id"] == 7
     assert kwargs["is_admin"] is False
     assert kwargs["status"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_accessible_datasets_includes_permission_summary():
+    """有表级/行级收窄时把 permission 带上，模型据此判断"要不要查、查得到吗"。"""
+    from app.services.ai.tools.resource_catalog_tools import list_accessible_datasets
+
+    ctx = MagicMock()
+    ctx.user_id = 7
+    ctx.is_admin = False
+
+    db = AsyncMock()
+    db_cm = MagicMock()
+    db_cm.__aenter__ = AsyncMock(return_value=db)
+    db_cm.__aexit__ = AsyncMock(return_value=None)
+
+    permission = {
+        "tables": {"mode": "list", "visible": 1, "total": 31, "names": ["ai_agent_access_logs"]},
+        "columns": {"restricted_tables": 1, "excluded": 2, "whitelisted_tables": 0},
+        "row": "deny_all",
+        "sources": ["user"],
+        "expires_at": "2026-12-31 23:59",
+    }
+
+    with patch(
+        "app.services.ai.tools.resource_catalog_tools.get_current_agent_context",
+        return_value=ctx,
+    ), patch(
+        "app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal",
+        return_value=db_cm,
+    ), patch(
+        "app.services.ai.tools.resource_catalog_tools.MetadataService.list_accessible_dataset_entries",
+        AsyncMock(
+            return_value=[
+                {
+                    "id": 1,
+                    "name": "ai_agent_meta",
+                    "display_name": "智能体元数据库",
+                    "description": "",
+                    "status": 1,
+                    "permission": permission,
+                }
+            ]
+        ),
+    ):
+        result = await list_accessible_datasets.ainvoke({})
+
+    payload = json.loads(result)
+    assert payload["items"][0]["permission"] == permission
+    assert payload["items"][0]["permission"]["row"] == "deny_all"
 
 
 @pytest.mark.asyncio

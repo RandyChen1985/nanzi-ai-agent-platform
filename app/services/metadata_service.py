@@ -119,6 +119,89 @@ class MetadataService:
         return list(result.scalars().all())
 
     @staticmethod
+    async def list_accessible_dataset_entries(
+        db: AsyncSession,
+        *,
+        user_id: Optional[int] = None,
+        is_admin: bool = False,
+        status: int = 1,
+    ) -> List[dict]:
+        """可访问数据集目录 + **权限摘要**（表/字段/行级收窄与到期时间）。
+
+        与 :meth:`list_accessible_dataset_options` 的区别：那个只回答"能不能看见这个
+        数据集"，这个还回答"在里面能看见什么、什么时候失效"。摘要只在存在收窄或风险
+        时才出现（``permission`` 为 ``None`` = 全部表、全部字段、无行级限制），
+        避免把完整 Schema 或授权规则原文塞进模型上下文。
+        """
+        if is_admin:
+            rows = await MetadataService.list_accessible_dataset_options(
+                db, user_id=user_id, is_admin=True, status=status
+            )
+            return [
+                {
+                    "id": int(row.id),
+                    "name": row.name or "",
+                    "display_name": row.display_name or "",
+                    "description": row.description or "",
+                    "status": row.status,
+                    "permission": None,
+                }
+                for row in rows
+            ]
+
+        try:
+            uid = int(user_id) if user_id is not None else None
+        except (TypeError, ValueError):
+            uid = None
+        if uid is None:
+            return []
+
+        from app.services.dataset_scope_service import (
+            resolve_user_dataset_scopes,
+            summarize_dataset_scopes,
+        )
+
+        scopes = await resolve_user_dataset_scopes(db, uid)
+        if not scopes:
+            return []
+
+        stmt = (
+            select(MetaDataset)
+            .where(MetaDataset.status == status, MetaDataset.id.in_(sorted(scopes)))
+            .order_by(MetaDataset.id.asc())
+        )
+        rows = list((await db.execute(stmt)).scalars().all())
+
+        roles: List[str] = []
+        try:
+            from app.services.permission_service import PermissionService
+
+            perm = await PermissionService(db).get_user_permissions(uid)
+            roles = [str(item) for item in (getattr(perm, "roles", None) or [])]
+        except Exception as exc:  # noqa: BLE001 - 角色取不到只影响行级档位，不影响目录
+            logger.warning("[Metadata] 读取用户角色失败，行级档位可能不准: %s", exc)
+
+        summaries = await summarize_dataset_scopes(
+            db,
+            scopes,
+            dataset_rows=rows,
+            user_roles=roles,
+            user_id=uid,
+        )
+
+        return [
+            {
+                "id": int(row.id),
+                "name": row.name or "",
+                "display_name": row.display_name or "",
+                "description": row.description or "",
+                "status": row.status,
+                "permission": summaries.get(int(row.id)),
+            }
+            for row in rows
+        ]
+
+    @staticmethod
     async def get_dataset_by_id(
         db: AsyncSession, 
         dataset_id: int,

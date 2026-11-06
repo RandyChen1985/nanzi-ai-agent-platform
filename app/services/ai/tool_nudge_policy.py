@@ -1187,9 +1187,11 @@ def _resolve_resource_catalog_nudge(query: str, tools: List[Any]) -> Optional[To
         score=0.98,
         message=(
             f"【本轮工具优先】用户在询问{label}。"
-            f"必须先调用 {tool_name} 获取权限内轻量目录（id/名称/备注），"
+            f"必须先调用 {tool_name} 获取权限内轻量目录（id/名称/备注/权限摘要），"
             "严禁调用 search_knowledge_base 做正文检索，也严禁编造权限清单。"
             "若工具返回为空，如实说明当前无可访问资源。"
+            "若条目带 permission 且 tables.visible=0 或 row=deny_all，"
+            "直接说明「该数据集下没有你能查询的数据」及原因，不要让用户白问一轮。"
         ),
         force_first_call=True,
     )

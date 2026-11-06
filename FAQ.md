@@ -84,6 +84,7 @@
       - [4.2.11.4 执行期在 ChatBI 的哪一步判](#42114-执行期在-chatbi-的哪一步判顺序很重要)
       - [4.2.11.5 字段级：哪些情况剔列、哪些情况直接拒绝](#42115-字段级哪些情况剔列哪些情况直接拒绝)
       - [4.2.11.8 已知限制与坑](#42118-已知限制与坑当前版本真实存在)
+      - [4.2.11.10 数据集目录里的权限摘要](#421110-数据集目录里的权限摘要list_accessible_datasets)
     - [4.2.12 权限总览与权限模拟](#4212-权限总览与权限模拟)
   - [4.3 案例集管理与 Few-Shot 向量匹配 (Examples Management)](#43-案例集管理与-few-shot-向量匹配-examples-management)
     - [4.3.1 什么是 Few-Shot 案例集？为什么它不可或缺？](#431-什么是-few-shot-案例集为什么它不可或缺)
@@ -2624,6 +2625,53 @@ SELECT * FROM ai_agent_invitations;
 - [ ] 行级：`enable_data_perm=true` 时 `row_filter_config` **至少有一条规则**（三层全空会被拒绝保存，默认兜底 `1=0`）
 - [ ] 行级：`none` 只给运维/审计类**个人**授权，不要给角色
 - [ ] 生效验证：用「权限模拟」按真实用户跑一遍，确认表数、列数、行数三项都对
+
+##### 4.2.11.10 数据集目录里的权限摘要（`list_accessible_datasets`）
+
+用户问「我有哪些数据集」时，`list_accessible_datasets` 不只给目录，还给一份**权限摘要**——
+只回答"能看几张表、字段有没有被裁、这次查询到底查不查得到数据"，不含表结构和行级条件原文。
+
+```jsonc
+{
+  "id": 1, "name": "ai_agent_meta", "display_name": "智能体数据集", "status": 1,
+  "permission": {                                   // 没有这个字段 = 无任何收窄
+    "tables":  {"mode": "list", "visible": 1, "total": 31, "names": ["ai_agent_access_logs"]},
+    "columns": {"restricted_tables": 1, "excluded": 2, "whitelisted_tables": 0},
+    "row":     "deny_all",
+    "sources": ["user"],
+    "expires_at": "2026-12-31 23:59"
+  }
+}
+```
+
+| 字段 | 取值 | 含义 |
+| --- | --- | --- |
+| （整个 `permission` 字段缺失） | — | 全部表、全部字段、无行级限制、长期有效 |
+| `tables.mode` | `all` / `list` | `list` 表示只授权了其中几张表 |
+| `tables.visible` / `total` | 数字 | 可见表数 / 数据集总表数；`visible=0` = 该库没有你能查的表 |
+| `tables.names` | 数组或 `null` | 可见表 ≤ 8 张时给表名，否则只给计数（省上下文） |
+| `columns` | 对象 | 有字段级限制的表数与规模；**不给被隐藏的列名** |
+| `row` | `custom` / `filtered` / `deny_all` / `none` | 行级**最终效果**，不是授权行上写的 `row_policy` |
+| `sources` | `user` / `role` / `all` | 这份权限来自哪一层 |
+| `expires_at` | `YYYY-MM-DD HH:mm` | 最近到期时间；到期后回落到角色基线，权限可能变宽也可能变窄 |
+
+`row` 的四档是**算出来的**，不是照抄配置：
+
+- `custom`：授权行上写了自定义条件；
+- `filtered`：走数据集策略，且按你的角色能匹配到规则；
+- `deny_all`：数据集开了数据权限，但一层规则都没匹配到你 → 运行期 `1=0`，**一条数据都查不到**；
+- `none`：授权行明确写了不做行级过滤。
+
+> ⚠️ `deny_all` 是最容易踩的一档：目录里"有权限"、实际查不到。真实例子——数据集
+> `znt2_test_ds`（id=54）配了 `row_filter_config = {"role_policies": {}, "default_policy": [],
+> "user_overrides": {"62017": [...]}}`，除 62017 外的所有人都会落到空 `default_policy`，
+> 也就是 `1=0`。历史语义曾把空 `default_policy` 当"不过滤"，这与文档承诺的 fail-closed 相反，
+> 现在已按 `1=0` 处理，并在目录摘要里显式标成 `deny_all`。
+> 如果本意是"其余人看全部"，请把 `default_policy` 设成 `[{"condition": "1=1"}]`。
+
+设计约束（都是有意的）：行级条件原文**永不出口**（`dept_code='FIN'` 属于授权规则细节），
+被隐藏的列**只给计数不给列名**（列名本身就是信息面），表名超过 8 张只给计数。
+查询成本上只多一次 `GROUP BY dataset_id` 的表计数聚合，不额外解析数据集。
 
 #### 4.2.12 权限总览与权限模拟
 

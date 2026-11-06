@@ -18,6 +18,19 @@ logger = logging.getLogger(__name__)
 
 
 def _dataset_item(row: Any) -> dict[str, Any]:
+    """目录条目：兼容 ORM 行（老调用方）与已组装好的 dict（带权限摘要的新路径）。"""
+    if isinstance(row, dict):
+        item: dict[str, Any] = {
+            "id": row.get("id"),
+            "name": row.get("name") or "",
+            "display_name": row.get("display_name") or "",
+            "description": row.get("description") or "",
+            "status": row.get("status"),
+        }
+        permission = row.get("permission")
+        if permission:
+            item["permission"] = permission
+        return item
     return {
         "id": getattr(row, "id", None),
         "name": getattr(row, "name", None) or "",
@@ -50,12 +63,19 @@ def _knowledge_item(
 
 @tool
 async def list_accessible_datasets() -> str:
-    """列出当前用户有权限且已启用的 ChatBI 数据集轻量目录（id/名称/备注/状态等，不含表字段指标）。
+    """列出当前用户有权限且已启用的 ChatBI 数据集目录（id/名称/备注/权限摘要，不含表结构）。
 
     使用规则：
     - 当用户问「我有哪些数据集」「能查哪些数据」「数据集列表」时调用。
     - 仅返回 status=1（启用）的目录级信息；未启用的数据集不会出现。
-    - 不要据此编造表结构或查询结果。
+    - 条目里**没有** ``permission`` 字段 = 该数据集对你没有表/字段/行级收窄。
+    - ``permission.tables.visible`` 与 ``total`` 不一致 = 只授权了其中几张表；
+      ``visible=0`` 表示这个数据集下你没有可查询的表，不要再去取 Schema。
+    - ``permission.row``：``deny_all`` 表示数据集开了行级策略但没匹配到你的规则，
+      运行时一律 1=0，**实际查不到任何数据**，要先向用户说明原因；
+      ``custom``/``filtered`` 表示结果会被行级条件收窄；``none`` 表示明确不做行级过滤。
+    - ``permission.expires_at`` 是最近到期时间：到期后会回落到角色基线，权限可能变化。
+    - 这里只有目录级信息，**不要据此编造表结构或查询结果**；要具体表/字段时，用当前可用的 Schema/取数工具再查一次。
     """
     ctx = get_current_agent_context()
     if not ctx or not ctx.user_id:
@@ -63,13 +83,13 @@ async def list_accessible_datasets() -> str:
 
     try:
         async with AsyncSessionLocal() as db:
-            rows = await MetadataService.list_accessible_dataset_options(
+            entries = await MetadataService.list_accessible_dataset_entries(
                 db,
                 user_id=ctx.user_id,
                 is_admin=bool(ctx.is_admin),
                 status=1,
             )
-            items = [_dataset_item(row) for row in rows]
+            items = [_dataset_item(entry) for entry in entries]
             return json.dumps({"items": items, "count": len(items)}, ensure_ascii=False)
     except Exception as e:
         logger.error("[list_accessible_datasets] failed: %s", e, exc_info=True)
