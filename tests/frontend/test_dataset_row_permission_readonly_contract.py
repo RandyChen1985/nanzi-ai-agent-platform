@@ -1,7 +1,7 @@
 """契约测试：权限控制台里的「数据集自身行级策略」保持只读展示。
 
-需求演进：数据集详情页的权限管理从「成员授权列表 + 行级只读展示」重构为三层权限控制台
-（数据集级 / 表级 / 行级，见 prototypes/2026-11-05-dataset-permission-console.html）。
+需求演进：数据集详情页的权限管理从「成员授权列表 + 行级只读展示」重构为四层权限控制台
+（数据集级 / 表级 / 字段级 / 行级，见 prototypes/2026-11-05-dataset-permission-console.html）。
 行级信息拆成两部分，本文件锁住其中「只读」的那一半：
 
 - 数据集自身的行级配置（用户例外 / 角色策略 / 默认规则）仍来自数据集详情的
@@ -75,10 +75,16 @@ def test_badges_only_shown_when_enforcement_enabled():
     assert 'v-else-if="grant.kind === \'role\' && rowFilterEnabled && rolePolicyCount(grant.sub)"' in source
 
 
-def test_readonly_section_has_no_edit_action():
-    """只读区不能又长出编辑入口：区块内不允许出现任何点击动作或保存按钮。"""
+def test_readonly_section_keeps_only_the_edit_handoff():
+    """只读区只能有一个「去别处编辑」的入口，不能长出就地编辑/保存动作。
+
+    「编辑行级策略」按钮只是把用户送到元数据管理的同一个弹窗（受 ``canEdit``
+    约束），不是就地改配置——就地改会让人以为「改一条授权就改了全数据集」。
+    """
     section = _readonly_section()
-    assert "@click" not in section
+    assert section.count("@click") == 1
+    assert "emit('edit-row-policy')" in section
+    assert 'v-if="canEdit"' in section
     assert "submitDrawer" not in section
     assert "removeGrant" not in section
     assert "只读" in section
@@ -103,21 +109,21 @@ def test_simulate_picker_is_searchable_not_a_native_select() -> None:
 
 
 def test_each_layer_card_explains_itself() -> None:
-    """三张概览卡各带一个「?」，点开讲清「影响什么 / 什么原理 / 容易踩的坑」。
+    """四张概览卡各带一个「?」，点开讲清「影响什么 / 什么原理 / 容易踩的坑」。
 
-    这三个数字放在一起很容易被误读：有人以为数据集级有 5 条授权就等于 5 张表可见。
+    这些数字放在一起很容易被误读：有人以为数据集级有 5 条授权就等于 5 张表可见。
     配错层的代价不同（数据集级配宽 = 全表可见），所以每层都要能就地解释自己。
     """
     console = _console()
 
-    for key in ("dataset", "table", "row"):
+    for key in ("dataset", "table", "column", "row"):
         assert f"@click.stop=\"scopeHelpKey = '{key}'\"" in console, f"{key} 卡片缺「?」"
 
     for section in ("影响什么", "什么原理", "容易踩的坑"):
         assert section in console
 
-    # 三层都要有内容，不能只给一层写（数的是赋值形式，类型声明里那个 "pitfall:" 不算）
-    assert console.count("pitfall: '") == 3
-    assert console.count("principle: [") == 3
+    # 四层都要有内容，不能只给一层写（数的是赋值形式，类型声明里那个 "pitfall:" 不算）
+    assert console.count("pitfall: '") == 4
+    assert console.count("principle: [") == 4
     # Esc 也能收起，和权限模拟弹框一致
     assert "scopeHelpKey.value = null" in console

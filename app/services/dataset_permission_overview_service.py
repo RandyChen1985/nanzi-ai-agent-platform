@@ -18,6 +18,7 @@ from app.models.metadata import MetaDataset, MetaTable
 from app.models.permission import ResourcePermission, Role
 from app.models.user import User
 from app.services.dataset_scope_service import (
+    COL_INCLUDE,
     MODE_LIST,
     ROW_POLICY_CUSTOM,
     ROW_POLICY_NONE,
@@ -35,7 +36,9 @@ SOON_WINDOW_DAYS = 7
 _SUBJECT_ORDER = {SUBJECT_ALL: 0, SUBJECT_ROLE: 1, "user": 2}
 
 #: 列表筛选口径，和前端 tab 一一对应
-VALID_FILTERS = {"all", "unauthorized", "soon", "narrowed", "rowlevel", "all_baseline"}
+VALID_FILTERS = {
+    "all", "unauthorized", "soon", "narrowed", "columns", "rowlevel", "all_baseline"
+}
 VALID_SORTS = {"risk", "name", "updated"}
 
 
@@ -45,7 +48,7 @@ def _risk_rank(dataset: dict[str, Any]) -> int:
         return 0
     if dataset["soon"] > 0 or dataset["dead"] > 0:
         return 1
-    if dataset["narrowed"] > 0:
+    if dataset["narrowed"] > 0 or dataset["column_narrowed"] > 0:
         return 2
     return 3
 
@@ -57,6 +60,8 @@ def _match_filter(dataset: dict[str, Any], filter_key: str) -> bool:
         return dataset["soon"] > 0 or dataset["dead"] > 0
     if filter_key == "narrowed":
         return dataset["narrowed"] > 0
+    if filter_key == "columns":
+        return dataset["column_narrowed"] > 0
     if filter_key == "rowlevel":
         return dataset["custom_row"] > 0 or dataset["no_row"] > 0
     if filter_key == "all_baseline":
@@ -123,6 +128,7 @@ def _empty_bucket() -> dict[str, Any]:
         "roles": 0,
         "users": 0,
         "narrowed": 0,
+        "column_narrowed": 0,
         "custom_row": 0,
         "no_row": 0,
         "soon": 0,
@@ -131,7 +137,8 @@ def _empty_bucket() -> dict[str, Any]:
 
 
 def _tick_bucket(bucket: dict[str, Any], subject: str, scope_mode: str,
-                 row_policy: str, days_left: int | None) -> None:
+                 row_policy: str, days_left: int | None,
+                 column_tables: int = 0) -> None:
     bucket["total"] += 1
     if days_left is not None and days_left < 0:
         bucket["dead"] += 1
@@ -145,6 +152,8 @@ def _tick_bucket(bucket: dict[str, Any], subject: str, scope_mode: str,
         bucket["users"] += 1
     if scope_mode == MODE_LIST:
         bucket["narrowed"] += 1
+    if column_tables:
+        bucket["column_narrowed"] += 1
     if row_policy == ROW_POLICY_CUSTOM:
         bucket["custom_row"] += 1
     elif row_policy == ROW_POLICY_NONE:
@@ -222,7 +231,7 @@ async def build_dataset_permission_overview(
         subject = _subject_of(row_user_id, row_role_id, info.get("subject_type"))
         if subject is None:
             continue
-        scope_mode, table_ids, _col_rules = _parse_scope(info.get("scope"))
+        scope_mode, table_ids, col_rules = _parse_scope(info.get("scope"))
         expire_at = info.get("expire_at")
         parsed.append(
             {
@@ -232,6 +241,24 @@ async def build_dataset_permission_overview(
                 "role_id": int(row_role_id) if row_role_id is not None else None,
                 "scope_mode": scope_mode,
                 "table_count": len(table_ids),
+                "column_table_ids": {int(tid) for tid in (col_rules or {})},
+                # 黑名单是「排除几列」，白名单是「只留几列」——两个数语义不同，分开记
+                "column_hidden": max(
+                    [
+                        len(rule.names)
+                        for rule in (col_rules or {}).values()
+                        if rule.mode != COL_INCLUDE
+                    ]
+                    or [0]
+                ),
+                "column_limited": max(
+                    [
+                        len(rule.names)
+                        for rule in (col_rules or {}).values()
+                        if rule.mode == COL_INCLUDE
+                    ]
+                    or [0]
+                ),
                 "row_policy": _parse_row_policy(info.get("row_policy")),
                 "row_condition": info.get("row_condition"),
                 "expire_at": expire_at,
@@ -249,7 +276,14 @@ async def build_dataset_permission_overview(
     details: dict[int, list[dict[str, Any]]] = {}
     for item in parsed:
         bucket = buckets.setdefault(item["dataset_id"], _empty_bucket())
-        _tick_bucket(bucket, item["subject"], item["scope_mode"], item["row_policy"], item["days_left"])
+        _tick_bucket(
+            bucket,
+            item["subject"],
+            item["scope_mode"],
+            item["row_policy"],
+            item["days_left"],
+            column_tables=len(item["column_table_ids"]),
+        )
         if item["subject"] == SUBJECT_ALL:
             who = "所有成员（全员基线）"
         elif item["subject"] == SUBJECT_ROLE:
@@ -263,12 +297,34 @@ async def build_dataset_permission_overview(
                 "who": who,
                 "scope": item["scope_mode"],
                 "table_count": item["table_count"],
+                "column_tables": len(item["column_table_ids"]),
+                "column_hidden": item["column_hidden"],
+                "column_limited": item["column_limited"],
                 "row_policy": item["row_policy"],
                 "row_condition": item["row_condition"],
                 "expire_at": _format_expire(item["expire_at"]),
                 "days_left": item["days_left"],
                 "expired": bool(item["days_left"] is not None and item["days_left"] < 0),
             }
+        )
+
+    # 数据集层面的「字段受限表数」要跨授权取并集：两条授权各限制 3 张表可能重叠
+    column_ids_by_dataset: dict[int, set[int]] = {}
+    column_hidden_by_dataset: dict[int, int] = {}
+    column_limited_by_dataset: dict[int, int] = {}
+    for item in parsed:
+        if item["days_left"] is not None and item["days_left"] < 0:
+            continue
+        if not item["column_table_ids"]:
+            continue
+        column_ids_by_dataset.setdefault(item["dataset_id"], set()).update(
+            item["column_table_ids"]
+        )
+        column_hidden_by_dataset[item["dataset_id"]] = max(
+            column_hidden_by_dataset.get(item["dataset_id"], 0), item["column_hidden"]
+        )
+        column_limited_by_dataset[item["dataset_id"]] = max(
+            column_limited_by_dataset.get(item["dataset_id"], 0), item["column_limited"]
         )
 
     datasets: list[dict[str, Any]] = []
@@ -289,6 +345,9 @@ async def build_dataset_permission_overview(
                 "display_name": display_name or name,
                 "data_source": data_source,
                 "table_count": int(table_counts.get(int(ds_id), 0)),
+                "column_tables": len(column_ids_by_dataset.get(int(ds_id), ())),
+                "column_hidden": column_hidden_by_dataset.get(int(ds_id), 0),
+                "column_limited": column_limited_by_dataset.get(int(ds_id), 0),
                 "updated_at": updated_at.strftime("%Y-%m-%d %H:%M") if isinstance(updated_at, datetime) else None,
                 "_updated_raw": updated_at,
                 **bucket,
@@ -307,6 +366,7 @@ async def build_dataset_permission_overview(
         "nobody": unauthorized + stale,
         "soon": sum(1 for d in datasets if d["soon"] > 0),
         "narrowed": sum(1 for d in datasets if d["narrowed"] > 0),
+        "columns": sum(1 for d in datasets if d["column_narrowed"] > 0),
         "rowlevel": sum(1 for d in datasets if d["custom_row"] > 0 or d["no_row"] > 0),
         "all_baseline": sum(1 for d in datasets if d["has_all"]),
     }

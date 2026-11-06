@@ -1,18 +1,22 @@
-"""契约测试：数据权限弹窗打开后，已有条件必须回填到规则构建器。
+"""契约测试：数据行策略弹窗打开后，已有条件必须回填到规则构建器。
 
 行为断言在 `row_filter_condition.mjs` 里（真跑解析函数，能拆的拆对、拆不了返回 null）；
 这里锁住接线，避免以后被顺手改回「只单向拼接」：
 
-1. 页面确实引用了解析器；
+1. 组件确实引用了解析器；
 2. 回填发生在 `fetchDatasetColumns` await 之后——下拉框的值只要在 options 里找不到
    就渲染成占位符，表结构没到位时回填等于没回填；
 3. 回填态再点「+」走替换而不是追加，否则会拼出 `A = 1 AND A = 1`。
+
+注：这套逻辑随「权限入口收敛」从 `views/MetadataDatasets.vue` 抽到了
+`components/metadata/RowPolicyConfigModal.vue`，契约目标同步迁移——抽组件时漏掉
+`parseRowFilterCondition` 的 import 正是这条契约抓出来的（运行时 ReferenceError）。
 """
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VIEW = "frontend/src/views/MetadataDatasets.vue"
+VIEW = "frontend/src/components/metadata/RowPolicyConfigModal.vue"
 
 
 def _source() -> str:
@@ -31,12 +35,12 @@ def test_condition_parser_behaviour_via_node():
 
 
 def test_view_imports_condition_parser():
-    assert "import { parseRowFilterCondition } from '../utils/rowFilterCondition'" in _source()
+    assert "import { parseRowFilterCondition } from '../../utils/rowFilterCondition'" in _source()
 
 
 def test_hydration_runs_after_dataset_columns_loaded():
     source = _source()
-    await_index = source.index("await fetchDatasetColumns(ds.id)")
+    await_index = source.index("await fetchDatasetColumns(datasetId)")
     hydrate_index = source.index("hydrateBuilderFromConditions()", await_index)
     assert await_index < hydrate_index
 

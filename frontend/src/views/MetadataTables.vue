@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import axios from '../utils/axios'
 import { metadataApi } from '../api/metadata'
 import type { Dataset, Table, RecommendColumnSemanticResult } from '../api/metadata'
@@ -13,6 +13,7 @@ import SmartMetricModal from '../components/metadata/SmartMetricModal.vue'
 import SchemaGraph from '../components/metadata/SchemaGraph.vue'
 import ChangelogList from '../components/metadata/ChangelogList.vue'
 import DatasetPermissionConsole from '../components/metadata/DatasetPermissionConsole.vue'
+import RowPolicyConfigModal from '../components/metadata/RowPolicyConfigModal.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import MetadataDriftAlertsDrawer from '../components/metadata/MetadataDriftAlertsDrawer.vue'
 import { useUser } from '../composables/useUser'
@@ -25,7 +26,6 @@ const { isAdmin: _isAdmin, hasPermission } = useUser()
 const { showToast } = useToast()
 
 const route = useRoute()
-const router = useRouter()
 const datasetId = Number(route.params.id)
 
 const dataset = ref<Dataset | null>(null)
@@ -225,16 +225,18 @@ const initialPermView = computed(() => {
   return PERM_VIEWS.includes(view) ? (view as 'subjects' | 'tables' | 'rows') : undefined
 })
 
-/**
- * 行级策略的编辑器只在元数据管理列表页的弹窗里（详情页这块是只读的）。
- * 带 dataset_id 过去，那边加载完列表会自动打开并滚到策略区。
- */
-const goEditRowPolicy = () => {
-  if (!hasEditPermission.value) return
-  router.push({
-    path: '/dashboard/metadata',
-    query: { open_row_policy: String(datasetId.value) },
-  })
+// 行级隔离策略弹窗：和元数据管理列表页的「数据行策略」菜单用的是同一个组件，
+// 所以在详情页直接弹，不用跳回列表页再点菜单。
+const showRowPolicyModal = ref(false)
+const openRowPolicyModal = () => {
+  if (!hasEditPermission.value || !dataset.value) return
+  showRowPolicyModal.value = true
+}
+const handleRowPolicySaved = () => {
+  showRowPolicyModal.value = false
+  // enable_data_perm 变了要重拉详情，否则上面的「已启用校验」徽标还是旧状态；
+  // 授权的行级策略摘要也在权限控制台里，一并刷新
+  fetchDatasetInfo()
 }
 watch(
   () => route.query.tab,
@@ -1194,9 +1196,18 @@ defineExpose({ fetchMetrics })
         :row-filter-config="rowFilterConfig"
         :initial-view="initialPermView"
         @changed="fetchDatasetPermissions"
-        @edit-row-policy="goEditRowPolicy"
+        @edit-row-policy="openRowPolicyModal"
       />
     </div>
+
+    <!-- 行级隔离策略弹窗 -->
+    <RowPolicyConfigModal
+      :show="showRowPolicyModal"
+      :dataset="dataset"
+      focus-row-policy
+      @close="showRowPolicyModal = false"
+      @saved="handleRowPolicySaved"
+    />
 
     <!-- Edit Table Modal -->
     <Teleport to="body">

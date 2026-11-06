@@ -407,6 +407,9 @@ async def get_dataset_permission_summaries(
                 "narrowed": 0,
                 "row_custom": 0,
                 "row_none": 0,
+                # 字段级：有字段规则（白名单/排除）的授权条数与覆盖表数
+                "column_rules": 0,
+                "column_tables": 0,
             },
         )
         item["total"] += 1
@@ -416,9 +419,12 @@ async def get_dataset_permission_summaries(
             item["roles"] += 1
         elif subject == "user":
             item["users"] += 1
-        mode, _table_ids, _col_rules = _parse_scope(info.get("scope"))
+        mode, _table_ids, col_rules = _parse_scope(info.get("scope"))
         if mode == "list":
             item["narrowed"] += 1
+        if col_rules:
+            item["column_rules"] += 1
+            item["column_tables"] += len(col_rules)
         policy = _parse_row_policy(info.get("row_policy"))
         if policy == "custom":
             item["row_custom"] += 1

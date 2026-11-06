@@ -33,6 +33,7 @@ const filters = [
   { key: 'unauthorized', label: '无人可访问' },
   { key: 'soon', label: '有到期' },
   { key: 'narrowed', label: '有收窄' },
+  { key: 'columns', label: '有字段' },
   { key: 'rowlevel', label: '有行级' },
   { key: 'all_baseline', label: '有全员' },
 ]
@@ -42,6 +43,7 @@ const filterCount = (key: string) => {
   if (key === 'unauthorized') return s.nobody ?? 0
   if (key === 'soon') return s.soon ?? 0
   if (key === 'narrowed') return s.narrowed ?? 0
+  if (key === 'columns') return s.columns ?? 0
   if (key === 'rowlevel') return s.rowlevel ?? 0
   if (key === 'all_baseline') return s.all_baseline ?? 0
   return s.datasets ?? 0
@@ -130,6 +132,21 @@ const scopeText = (ds: any) => {
   return `${ds.narrowed} 条收窄`
 }
 
+const columnText = (ds: any) => {
+  if (ds.alive === 0) return '—'
+  if (!ds.column_narrowed) return '全部字段'
+  const tables = ds.column_tables ? `${ds.column_tables} 张表` : `${ds.column_narrowed} 条`
+  return `${tables}限字段`
+}
+
+/** 字段收窄的两种方向：黑名单是「排除几列」，白名单是「只留几列」。 */
+const grantColumnText = (grant: any) => {
+  if (!grant.column_tables) return '全部字段'
+  if (grant.column_hidden) return `${grant.column_tables} 张表排除 ${grant.column_hidden} 列`
+  if (grant.column_limited) return `${grant.column_tables} 张表只留 ${grant.column_limited} 列`
+  return `${grant.column_tables} 张表受限`
+}
+
 const rowPolicyText = (policy: string) => {
   if (policy === 'none') return '不做行级过滤'
   if (policy === 'custom') return '自定义条件'
@@ -209,7 +226,7 @@ onMounted(() => {
 
     <template v-else>
       <!-- 统计条 -->
-      <div class="grid grid-cols-2 divide-gray-100 overflow-hidden rounded-xl border border-gray-200 bg-white sm:grid-cols-3 lg:grid-cols-6 lg:divide-x">
+      <div class="grid grid-cols-2 divide-gray-100 overflow-hidden rounded-xl border border-gray-200 bg-white sm:grid-cols-3 lg:grid-cols-7 lg:divide-x">
         <div class="border-b border-gray-100 px-4 py-3 lg:border-b-0">
           <p class="text-[10px] font-bold uppercase tracking-wide text-gray-400">数据集</p>
           <p class="mt-1 text-xl font-bold leading-none text-gray-900">{{ summary.datasets ?? 0 }}</p>
@@ -239,7 +256,12 @@ onMounted(() => {
           <p class="mt-1 text-xl font-bold leading-none text-amber-600">{{ summary.narrowed ?? 0 }}</p>
           <p class="mt-1 text-[10px] text-gray-400">只授权了部分表</p>
         </div>
-        <div class="px-4 py-3">
+        <div class="border-b border-gray-100 px-4 py-3 lg:border-b-0">
+          <p class="text-[10px] font-bold uppercase tracking-wide text-gray-400">有字段收窄</p>
+          <p class="mt-1 text-xl font-bold leading-none text-fuchsia-600">{{ summary.columns ?? 0 }}</p>
+          <p class="mt-1 text-[10px] text-gray-400">只授权了部分字段</p>
+        </div>
+        <div class="px-4 py-3 lg:border-b-0">
           <p class="text-[10px] font-bold uppercase tracking-wide text-gray-400">有行级限制</p>
           <p class="mt-1 text-xl font-bold leading-none text-gray-900">{{ summary.rowlevel ?? 0 }}</p>
           <p class="mt-1 text-[10px] text-gray-400">自定义条件或不过滤</p>
@@ -297,6 +319,7 @@ onMounted(() => {
                 <th class="px-4 py-2.5 text-left font-bold">数据集</th>
                 <th class="px-4 py-2.5 text-left font-bold">授权主体</th>
                 <th class="px-4 py-2.5 text-left font-bold">表范围</th>
+                <th class="px-4 py-2.5 text-left font-bold">字段范围</th>
                 <th class="px-4 py-2.5 text-left font-bold">行级</th>
                 <th class="px-4 py-2.5 text-left font-bold">有效期</th>
                 <th class="px-4 py-2.5 text-left font-bold">最近变更</th>
@@ -377,6 +400,16 @@ onMounted(() => {
                     </div>
                   </td>
                   <td class="px-4 py-2.5">
+                    <div class="flex flex-col gap-0.5">
+                      <span
+                        class="inline-flex w-fit items-center rounded-md border px-1.5 py-0.5 text-[10px] font-bold"
+                        :class="ds.column_narrowed ? 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700' : 'border-gray-200 bg-slate-50 text-slate-600'"
+                      >{{ columnText(ds) }}</span>
+                      <span v-if="ds.column_hidden" class="text-[10px] text-gray-400">排除 {{ ds.column_hidden }} 列</span>
+                      <span v-else-if="ds.column_limited" class="text-[10px] text-gray-400">只留 {{ ds.column_limited }} 列</span>
+                    </div>
+                  </td>
+                  <td class="px-4 py-2.5">
                     <div class="flex flex-wrap gap-1">
                       <span
                         v-if="ds.custom_row"
@@ -414,7 +447,7 @@ onMounted(() => {
 
                 <!-- 展开：授权明细 -->
                 <tr v-if="openId === ds.id" class="border-b border-gray-100 bg-gray-50/40">
-                  <td colspan="7" class="px-4 py-3">
+                  <td colspan="8" class="px-4 py-3">
                     <p class="mb-2 text-[10px] font-bold uppercase tracking-wide text-gray-400">
                       授权明细 · {{ ds.total }} 条
                     </p>
@@ -441,6 +474,7 @@ onMounted(() => {
                       >{{ g.subject === 'all' ? '全员基线' : g.subject === 'role' ? '角色' : '用户' }}</span>
                       <span class="min-w-[8rem] text-[11.5px] font-semibold text-gray-800">{{ g.who }}</span>
                       <span class="text-[11px] text-gray-500">表：<b class="font-semibold text-gray-700">{{ grantScopeText(ds, g) }}</b></span>
+                      <span class="text-[11px] text-gray-500">字段：<b class="font-semibold text-gray-700">{{ grantColumnText(g) }}</b></span>
                       <span class="text-[11px] text-gray-500">
                         行级：<b class="font-semibold text-gray-700">{{ rowPolicyText(g.row_policy) }}</b>
                         <code v-if="g.row_policy === 'custom' && g.row_condition" class="ml-1 rounded bg-indigo-50 px-1 py-0.5 font-mono text-[10px] text-indigo-700">
@@ -466,7 +500,7 @@ onMounted(() => {
               </template>
 
               <tr v-if="!datasets.length">
-                <td colspan="7" class="px-4 py-16 text-center text-xs text-gray-400">
+                <td colspan="8" class="px-4 py-16 text-center text-xs text-gray-400">
                   没有符合条件的数据集
                 </td>
               </tr>
@@ -498,7 +532,7 @@ onMounted(() => {
       </div>
 
       <!-- 口径说明 -->
-      <div class="grid gap-2.5 md:grid-cols-3">
+      <div class="grid gap-2.5 md:grid-cols-2 lg:grid-cols-4">
         <div class="rounded-xl border border-gray-200 bg-white px-3.5 py-3">
           <p class="text-[11.5px] font-bold text-gray-800">「无人可访问」＝谁都进不来</p>
           <p class="mt-1 text-[11px] leading-relaxed text-gray-500">
@@ -509,6 +543,12 @@ onMounted(() => {
           <p class="text-[11.5px] font-bold text-gray-800">「收窄」按条计</p>
           <p class="mt-1 text-[11px] leading-relaxed text-gray-500">
             一条授权收窄到指定表就记一次。同一个数据集里既有全员基线（全部表）又有个人收窄时，两边分别计数，不会互相抵消。
+          </p>
+        </div>
+        <div class="rounded-xl border border-gray-200 bg-white px-3.5 py-3">
+          <p class="text-[11.5px] font-bold text-gray-800">字段收窄只改返回值</p>
+          <p class="mt-1 text-[11px] leading-relaxed text-gray-500">
+            被排除的列从结果里剔掉、上方横幅提示，查询照常返回其他列；只有筛选/分组/排序/关联用到被排除的列时才会整条拒绝——那几种情况剔列会改变语义。
           </p>
         </div>
         <div class="rounded-xl border border-gray-200 bg-white px-3.5 py-3">

@@ -71,3 +71,41 @@ def test_backend_summary_is_independent_of_filter() -> None:
     summary_at = service.index('"summary": summary')
     filter_at = service.index("filtered = []")
     assert filter_at < summary_at, "summary 要按全量算，不能跟着筛选变"
+
+
+# ---------------------------------------------------------------------------
+# 字段级（第四层）必须出现在总览里
+# ---------------------------------------------------------------------------
+
+
+def test_view_shows_column_scope() -> None:
+    """总览原来只有表级/行级，字段级是漏的——管理员看不到"谁被裁了列"。"""
+    view = _read(VIEW)
+    assert "字段范围" in view
+    assert "有字段收窄" in view
+    assert "columnText(ds)" in view
+    assert "grantColumnText(g)" in view
+
+
+def test_view_column_filter_tab() -> None:
+    view = _read(VIEW)
+    assert "{ key: 'columns', label: '有字段' }" in view
+    assert "if (key === 'columns') return s.columns ?? 0" in view
+
+
+def test_view_distinguishes_exclude_and_include_direction() -> None:
+    """黑名单是「排除几列」、白名单是「只留几列」，不能混成一个数。"""
+    view = _read(VIEW)
+    assert "ds.column_hidden" in view and "ds.column_limited" in view
+    assert "排除 {{ ds.column_hidden }} 列" in view
+    assert "只留 {{ ds.column_limited }} 列" in view
+
+
+def test_backend_counts_column_scope() -> None:
+    service = _read(ROOT / "app/services/dataset_permission_overview_service.py")
+    assert '"column_narrowed"' in service
+    assert 'column_tables=len(item["column_table_ids"])' in service
+    assert '"columns": sum(1 for d in datasets if d["column_narrowed"] > 0)' in service
+    assert 'if filter_key == "columns"' in service
+    # 数据集层的字段受限表数要跨授权并集，不能把每条授权的表数相加
+    assert "column_ids_by_dataset.setdefault" in service

@@ -58,7 +58,7 @@ def test_menu_drops_redundant_data_permission_entry() -> None:
     # 另两个入口必须还在，否则行级策略就无处可改
     assert "权限管理" in page
     assert "数据行策略" in page
-    assert "openPermConfigModal(ds, true)" in page
+    assert "openRowPolicyModal(ds)" in page
 
 
 def test_menu_has_data_row_policy_entry_opening_the_config_modal() -> None:
@@ -70,11 +70,15 @@ def test_menu_has_data_row_policy_entry_opening_the_config_modal() -> None:
     page = _datasets()
     assert "数据行策略" in page
     assert '"元数据管理 → 数据行策略"' in page
-    assert "openPermConfigModal(ds, true)" in page
-    assert "openPermConfigModal(d, true)" in page
-    # 弹窗打开后要自动滚到策略区，否则用户还得自己找
-    assert "rowPolicySectionRef" in page
-    assert "scrollIntoView" in page
+    assert "openRowPolicyModal(ds)" in page
+    assert "withRowMenu((d) => openRowPolicyModal(d))" in page
+    # 弹窗实现已抽到共享组件里，列表页只传 show / dataset
+    assert "<RowPolicyConfigModal" in page
+    assert "focus-row-policy" in page
+    # 打开后要自动滚到策略区，否则用户还得自己找
+    console = PERM_CONSOLE.parent.joinpath("RowPolicyConfigModal.vue").read_text(encoding="utf-8")
+    assert "rowPolicySectionRef" in console
+    assert "scrollIntoView" in console
 
 
 def test_search_box_does_not_reflow_while_typing() -> None:
@@ -163,40 +167,42 @@ def test_permission_console_exposes_edit_row_policy_entry() -> None:
     assert 'v-if="canEdit"' in console[console.index("编辑行级策略") - 900 : console.index("编辑行级策略")]
 
 
-def test_row_policy_entry_jumps_to_the_list_page_modal() -> None:
-    """行级编辑器只在列表页弹窗里，所以按钮带 dataset_id 跳过去。"""
-    tables = _tables()
-    assert "@edit-row-policy=\"goEditRowPolicy\"" in tables
-    start = tables.index("const goEditRowPolicy")
-    block = tables[start : start + 400]
-    assert "path: '/dashboard/metadata'" in block
-    assert "open_row_policy: String(datasetId.value)" in block
-    # 详情页本身没有编辑器，不能误跳本页的只读视图
-    assert "permView" not in block
+def test_row_policy_entry_opens_the_modal_in_place() -> None:
+    """详情页点「编辑行级策略」直接弹窗，不再跳回列表页。
 
-
-def test_list_page_consumes_open_row_policy_and_clears_it() -> None:
-    page = _datasets()
-    start = page.index("const rowPolicyTarget")
-    block = page[start : start + 700]
-    # 必须等列表到位再按 id 找，否则拿不到 dataset 对象
-    assert "await datasetsReady" in block
-    assert "await openPermConfigModal(target, true)" in block
-    # 第二个参数 true 才会滚到策略区
-    assert "showToast('该数据集不存在或已被删除', 'warning')" in block
-    # 用完即弃：刷新页面不该反复弹窗
-    assert "delete rest.open_row_policy" in block
-    assert "router.replace" in block
-
-
-def test_detail_header_does_not_repeat_granted_subjects() -> None:
-    """头部不再重复展示「授权角色 / 授权用户」，权限管理页签里已经有了。
-
-    用户诉求：「取消显示 授权用户这行信息，权限管理 tab 里面已经有了，避免重复」。
-    页签上还留着计数徽标做概览，所以 datasetPermissions 不能被删成死代码。
+    用户原话：「应该跟这个一样的啊，打开弹框」——菜单里的「数据行策略」是原地弹窗，
+    详情页这个按钮也必须一样，跳转属于绕路。
     """
     tables = _tables()
-    assert "授权用户:" not in tables
-    assert "授权角色:" not in tables
-    # 权限管理页签的计数徽标还在，说明「有多少条授权」这个概览没丢
-    assert "datasetPermissions.users.length + datasetPermissions.roles.length" in tables
+    assert "@edit-row-policy=\"openRowPolicyModal\"" in tables
+    start = tables.index("const openRowPolicyModal")
+    block = tables[start : start + 300]
+    assert "showRowPolicyModal.value = true" in block
+    # 不再有任何跨页跳转
+    assert "router.push" not in tables
+    assert "open_row_policy" not in tables
+    # 挂的是共享组件，且打开后滚到策略区
+    assert "<RowPolicyConfigModal" in tables
+    assert 'focus-row-policy' in tables
+    # 保存后要重拉详情：enable_data_perm 变了，上面的「已启用校验」徽标要跟着变
+    assert "handleRowPolicySaved" in tables
+    saved_block = tables[tables.index("const handleRowPolicySaved"):][:300]
+    assert "fetchDatasetInfo()" in saved_block
+
+
+def test_row_policy_modal_is_shared_by_both_pages() -> None:
+    """两个入口共用一个组件，避免两处实现漂移。
+
+    原来弹窗内联在列表页里，详情页想改只能跳转；抽成组件后两边是同一份 UI 与逻辑。
+    组件内部必须自己管打开时机（watch show），并把保存结果交回父页面。
+    """
+    console = PERM_CONSOLE.parent.joinpath("RowPolicyConfigModal.vue").read_text(encoding="utf-8")
+    assert "defineProps<{" in console
+    assert "show: boolean" in console
+    assert "dataset: any | null" in console
+    assert "(e: 'saved'): void" in console
+    # 打开时复制一份副本，取消不会改脏父页面
+    assert "JSON.parse(JSON.stringify(ds))" in console
+    # 保存成功后不再自己刷新列表，交给父页面
+    assert "emit('saved')" in console
+    assert "fetchDatasets" not in console

@@ -730,6 +730,33 @@ const colNarrowedTables = computed(() =>
   ),
 )
 
+// 字段级概览：被字段规则实际收窄的表、以及白名单/排除两种模式各用了多少张
+const columnScopeStats = computed(() => {
+  const tableIds = new Set<number>()
+  let includeTables = 0
+  let excludeTables = 0
+  let grantsWithRules = 0
+  for (const grant of grants.value) {
+    if (grant.status === 'expired') continue
+    const rules = grant.columns || {}
+    const keys = Object.keys(rules)
+    if (!keys.length) continue
+    grantsWithRules += 1
+    for (const key of keys) {
+      tableIds.add(Number(key))
+      if (rules[Number(key)].mode === 'include') includeTables += 1
+      else excludeTables += 1
+    }
+  }
+  return {
+    tables: tableIds.size,
+    narrowed: colNarrowedTables.value.length,
+    includeTables,
+    excludeTables,
+    grantsWithRules,
+  }
+})
+
 const onlyColNarrowed = ref(false)
 
 const columnMatrixRows = computed(() =>
@@ -751,7 +778,7 @@ const allViewTabs = [
   { key: 'rows', label: '数据行策略' },
 ] as const
 
-type ScopeHelpKey = 'dataset' | 'table' | 'row'
+type ScopeHelpKey = 'dataset' | 'table' | 'column' | 'row'
 
 const scopeHelpKey = ref<ScopeHelpKey | null>(null)
 
@@ -796,6 +823,21 @@ const SCOPE_HELP: Record<ScopeHelpKey, {
       '执行时按每张表自己的归属数据集校验，跨数据集 join 的附表同样拦得住。',
     ],
     pitfall: '数据集级有权限、表级又收窄了白名单，最终只能查白名单里的表——两层的交集，不是并集。',
+  },
+  column: {
+    title: '字段级 · 能看哪些字段',
+    subtitle: '决定「同一张表里，能看到哪些列」',
+    impact: [
+      '被排除的列在 SQL 里不可用：查询、导出、看板都拿不到这些列的数据。',
+      '列名本身也是信息面：看不到某列的人，连「存在这个字段」都不知道。',
+    ],
+    principle: [
+      '每条授权可以给单张表单独配字段规则，两种模式：白名单（只保留名单内）或排除（剔除名单内）。',
+      '字段级取交集：用户级 / 角色级 / 全员任何一层排除了某列，这列就不可见。',
+      '方向和表级相反是有意的：表级是并集（角色越多看得越多），字段级必须能收窄，否则敏感列会被个人配置重新放开。',
+      '没配字段规则的表，等于这条授权能看到它的全部列。',
+    ],
+    pitfall: '字段级只能收窄、不能放宽：授权本身没有这张表的访问权时，配什么字段规则都没用。',
   },
   row: {
     title: '行级 · 能看哪些行',
@@ -893,7 +935,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
     </div>
 
     <!-- 概览 -->
-    <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+    <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
       <div class="rounded-xl border border-gray-100 bg-gradient-to-br from-white to-slate-50/60 p-3.5">
         <p class="flex items-center gap-1.5 text-[11px] font-semibold text-gray-400 select-none">
           数据集级 · 谁能进
@@ -929,6 +971,25 @@ const subjectBadgeClass = (kind: SubjectKind) =>
         </p>
         <p class="mt-1 text-[11px] text-gray-500">
           限定范围 {{ tableScopeStats.listCount }} 条 · 全部表 {{ tableScopeStats.allCount }} 条
+        </p>
+      </div>
+      <div class="rounded-xl border border-gray-100 bg-gradient-to-br from-white to-violet-50/40 p-3.5">
+        <p class="flex items-center gap-1.5 text-[11px] font-semibold text-gray-400 select-none">
+          字段级 · 能看哪些字段
+          <button
+            type="button"
+            class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-gray-300 text-[9px] font-bold leading-none text-gray-400 transition-colors hover:border-emerald-400 hover:text-emerald-600"
+            title="这一层管什么、怎么判定"
+            @click.stop="scopeHelpKey = 'column'"
+          >?</button>
+        </p>
+        <p class="mt-1.5 text-xl font-bold text-gray-900">
+          {{ columnScopeStats.narrowed }}
+          <span class="text-xs font-medium text-gray-400">/ {{ tables.length }} 张有字段收窄</span>
+        </p>
+        <p class="mt-1 text-[11px] text-gray-500">
+          白名单 {{ columnScopeStats.includeTables }} 张 · 排除 {{ columnScopeStats.excludeTables }} 张 ·
+          {{ columnScopeStats.grantsWithRules }} 条授权带规则
         </p>
       </div>
       <div class="rounded-xl border border-gray-100 bg-gradient-to-br from-white to-amber-50/40 p-3.5">

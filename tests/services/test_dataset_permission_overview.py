@@ -120,11 +120,29 @@ class TestTickBucket:
             "roles": 1,
             "users": 0,
             "narrowed": 1,
+            "column_narrowed": 0,
             "custom_row": 1,
             "no_row": 0,
             "soon": 1,
             "soon_min_days": 3,
         }
+
+    def test_column_rules_mark_row_as_column_narrowed(self):
+        """字段级是第四层：这条授权限制了字段，就要在「有字段」里计一次。"""
+        bucket = overview._empty_bucket()
+        overview._tick_bucket(
+            bucket, dss.SUBJECT_USER, dss.MODE_LIST, dss.ROW_POLICY_INHERIT, None, column_tables=2
+        )
+        assert bucket["column_narrowed"] == 1
+        assert bucket["narrowed"] == 1
+
+    def test_expired_row_does_not_count_column_narrowing(self):
+        """过期授权不参与判定，也不该让总览的「有字段」计数虚高。"""
+        bucket = overview._empty_bucket()
+        overview._tick_bucket(
+            bucket, dss.SUBJECT_USER, dss.MODE_ALL, dss.ROW_POLICY_INHERIT, -1, column_tables=3
+        )
+        assert bucket["column_narrowed"] == 0
 
     def test_soon_keeps_the_nearest_deadline(self):
         bucket = overview._empty_bucket()
@@ -248,5 +266,88 @@ async def test_overview_keyword_searches_grant_subject(db_session):
             db_session, keyword=str(TEST_USER_ID), page_size=50
         )
         assert any(d["id"] == dataset_id for d in result["datasets"])
+    finally:
+        await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_overview_shows_column_scope_across_grants(db_session):
+    """字段级是第四层，总览必须能看到「谁被裁了列」。
+
+    两条授权各自限制的表会重叠：数据集层要取**并集**（1、2、3 三张表），
+    而不是把每条授权的表数相加（2 + 2 = 4）。
+    """
+    dataset_id = 900_000_000 + random.randint(1, 999_999)
+    suffix = str(dataset_id)
+    _register_dataset(db_session, dataset_id)
+    rows = [
+        ResourcePermission(
+            resource_type="metadata",
+            resource_id=suffix,
+            user_id=TEST_USER_ID,
+            enabled=True,
+        ),
+        ResourcePermission(
+            resource_type="metadata",
+            resource_id=suffix,
+            user_id=TEST_USER_ID + 1,
+            enabled=True,
+        ),
+    ]
+    db_session.add_all(rows)
+    await db_session.flush()
+
+    # 用户 A：1、2 两张表，分别排除 2 列 / 1 列
+    await dss.update_grant_scope(
+        db_session,
+        rows[0].id,
+        scope={
+            "mode": dss.MODE_ALL,
+            "columns": {
+                "1": {"mode": "exclude", "names": ["phone", "id_card"]},
+                "2": {"mode": "exclude", "names": ["remark"]},
+            },
+        },
+        row_policy=dss.ROW_POLICY_INHERIT,
+        row_condition=None,
+        expire_at=None,
+        subject_type=dss.SUBJECT_USER,
+    )
+    # 用户 B：2 重复、3 是白名单三列
+    await dss.update_grant_scope(
+        db_session,
+        rows[1].id,
+        scope={
+            "mode": dss.MODE_ALL,
+            "columns": {
+                "2": {"mode": "exclude", "names": ["remark"]},
+                "3": {"mode": "include", "names": ["id", "name", "amount"]},
+            },
+        },
+        row_policy=dss.ROW_POLICY_INHERIT,
+        row_condition=None,
+        expire_at=None,
+        subject_type=dss.SUBJECT_USER,
+    )
+    await db_session.flush()
+
+    try:
+        result = await overview.build_dataset_permission_overview(
+            db_session, keyword=f"perm_overview_test_{dataset_id}", page_size=200
+        )
+        target = next((d for d in result["datasets"] if d["id"] == dataset_id), None)
+        assert target is not None
+        assert target["column_narrowed"] == 2, "两条授权都限了字段"
+        assert target["column_tables"] == 3, "数据集层按并集算：表 1、2、3"
+        assert target["column_hidden"] == 2, "黑名单取各表最大值（排除 2 列）"
+        assert target["column_limited"] == 3, "白名单取各表最大值（只留 3 列）"
+        assert {g["column_tables"] for g in target["grants"]} == {2}
+
+        # 列表筛选也要支持「有字段」
+        filtered = await overview.build_dataset_permission_overview(
+            db_session, keyword=f"perm_overview_test_{dataset_id}", filter_key="columns", page_size=200
+        )
+        assert any(d["id"] == dataset_id for d in filtered["datasets"])
+        assert filtered["summary"]["columns"] >= 1
     finally:
         await db_session.rollback()
