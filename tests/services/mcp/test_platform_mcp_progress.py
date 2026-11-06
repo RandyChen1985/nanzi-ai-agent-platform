@@ -151,6 +151,8 @@ async def test_knowledge_search_reports_stages(monkeypatch):
 
     monkeypatch.setattr(platform_mcp, "_principal_from_context", _principal)
     monkeypatch.setattr(platform_mcp, "_require_scope", lambda *a, **k: None)
+    # knowledge_search 现在与其余平台工具同一道闸门，也会过限流
+    monkeypatch.setattr(platform_mcp, "check_platform_mcp_rate_limit", _noop)
     monkeypatch.setattr(platform_mcp, "is_platform_mcp_enabled", _true)
     monkeypatch.setattr(platform_mcp, "is_platform_mcp_capability_enabled", _true)
     monkeypatch.setattr(platform_mcp, "is_knowledge_base_enabled", _true)

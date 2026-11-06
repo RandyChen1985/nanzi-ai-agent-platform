@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 import base64
@@ -10,22 +11,29 @@ from typing import Any, Mapping
 
 import jwt
 
+logger = logging.getLogger(__name__)
+
 MAX_CUSTOM_ATTRIBUTES_BYTES = 8 * 1024
 DEFAULT_ISSUER = "nanzi-platform"
 DEFAULT_LIFETIME_SECONDS = 60
 
 _USER_CONTEXT_FIELDS = ("user_id", "user_name", "real_name", "dept_code", "org_path")
-_SENSITIVE_KEY_NAMES = {
+#: 键名**包含**这些片段就视为凭据（与 user_extra_data.REDACTED_KEY_PARTS 同一口径）。
+#: 必须是子串匹配：``access_token`` / ``client_secret`` / ``refresh_token`` 这类
+#: 复合名不会等于集合里的任何一项，精确匹配等于把它们原样塞进下发给第三方的 JWT。
+_SENSITIVE_KEY_PARTS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
     "api_key",
     "apikey",
     "authorization",
-    "cookie",
-    "password",
+    "credential",
     "private_key",
-    "secret",
-    "session_token",
-    "token",
-}
+    "cookie",
+    "session",
+)
 _RESERVED_KEY_NAMES = {
     "agent_id",
     "agent_name",
@@ -46,8 +54,10 @@ _RESERVED_KEY_NAMES = {
 
 
 def _key_is_blocked(key: str) -> bool:
-    normalized = key.strip().casefold()
-    return normalized in _SENSITIVE_KEY_NAMES or normalized in _RESERVED_KEY_NAMES
+    normalized = key.strip().casefold().replace("-", "_")
+    if normalized in _RESERVED_KEY_NAMES:
+        return True
+    return any(part in normalized for part in _SENSITIVE_KEY_PARTS)
 
 
 def _filter_custom_value(value: Any) -> Any:
@@ -64,6 +74,10 @@ def _filter_custom_value(value: Any) -> Any:
     return str(value)
 
 
+class MalformedExtraData(ValueError):
+    """``extra_data`` 不是合法 JSON 对象（可降级，区别于「超限」这类硬错误）。"""
+
+
 def _parse_extra_data(raw: Any, allowed_keys: set[str] | None = None) -> dict[str, Any]:
     if raw in (None, ""):
         return {}
@@ -72,9 +86,9 @@ def _parse_extra_data(raw: Any, allowed_keys: set[str] | None = None) -> dict[st
         try:
             value = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise ValueError("extra_data must be a JSON object") from exc
+            raise MalformedExtraData("extra_data must be a JSON object") from exc
     if not isinstance(value, Mapping):
-        raise ValueError("extra_data must be a JSON object")
+        raise MalformedExtraData("extra_data must be a JSON object")
     filtered = _filter_custom_value(value)
     if allowed_keys is not None:
         filtered = {
@@ -86,6 +100,22 @@ def _parse_extra_data(raw: Any, allowed_keys: set[str] | None = None) -> dict[st
     if len(serialized.encode("utf-8")) > MAX_CUSTOM_ATTRIBUTES_BYTES:
         raise ValueError("custom_attributes exceeds the maximum size")
     return filtered
+
+
+def _safe_custom_attributes(
+    raw: Any,
+    allowed_keys: set[str] | None = None,
+) -> dict[str, Any]:
+    """取自定义属性；``extra_data`` 不是合法 JSON 时降级为空并记日志。
+
+    ``custom_attributes`` 只是「附带上下文」，格式坏了不该让已认证用户的 MCP 调用
+    直接失败——与 ``sanitize_user_extra_data`` 的容错口径保持一致。
+    """
+    try:
+        return _parse_extra_data(raw, allowed_keys=allowed_keys)
+    except MalformedExtraData as exc:
+        logger.warning("[MCP] 忽略无法解析的用户 extra_data: %s", exc)
+        return {}
 
 
 def sanitize_user_extra_data(raw: Any) -> dict[str, Any]:
@@ -147,7 +177,7 @@ def issue_user_assertion(
         "aud": audience,
         "sub": f"nanzi:user:{user_id}",
         "user_context": user_context,
-        "custom_attributes": _parse_extra_data(
+        "custom_attributes": _safe_custom_attributes(
             user_info.get("extra_data"),
             allowed_keys=custom_attribute_keys,
         ),

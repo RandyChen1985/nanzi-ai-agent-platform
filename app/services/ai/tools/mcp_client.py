@@ -8,6 +8,7 @@ from typing import AsyncIterator, Awaitable, Callable, Dict, Any, List, Optional
 from urllib.parse import urlparse
 import httpx
 import httpx2
+import anyio
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
@@ -30,6 +31,67 @@ _AUDIT_TASKS: set[asyncio.Task] = set()
 # anyio 取消宿主 task 时写进 CancelledError 文案的固定片段（见 mcp 2.x
 # ``streamable_http_client`` 内的 ``anyio.create_task_group``）。
 _ANYIO_SCOPE_CANCEL_MARKER = "cancel scope"
+
+
+class McpToolCallTimeout(TimeoutError):
+    """单次 ``tools/call`` 等不到结果（远端业务执行太慢），**不是**传输断开。
+
+    仍继承 ``TimeoutError``，对外语义不变（调用方按超时处理）；但从其中派生出来
+    是为了让 ``_is_transport_error`` 能先把它摘出去——``TimeoutError`` 是 ``OSError``
+    的子类，落在「断连重连」的判定里会把一次超时的写操作重发一遍（远端执行两次、
+    总耗时翻倍）。
+    """
+
+
+#: 传输层断开的异常类型。mcp 2.x 的客户端传输跑在 **httpx2** + anyio 之上：
+#: ``httpx2.HTTPError`` 与 ``httpx.HTTPError`` 没有继承关系（两个独立包），
+#: anyio 的资源关闭异常、以及 task group 抛出的 ``ExceptionGroup`` 也都不在
+#: ``OSError`` 体系里。漏判的后果是远端重启后自愈失效——每个调用都失败且每次都
+#: 刷新会话活跃时间，只要还有流量就一直好不了。
+_TRANSPORT_ERROR_TYPES: tuple = (
+    ConnectionError,
+    EOFError,
+    OSError,  # 含内置 TimeoutError（3.10 起是其子类）与 socket.timeout
+    httpx.HTTPError,
+    httpx2.HTTPError,
+    anyio.ClosedResourceError,
+    anyio.BrokenResourceError,
+    anyio.EndOfStream,
+)
+
+
+#: 平台私有 JSON-Schema 扩展前缀。这些字段决定「证据类型 / 证据策略」等调用门禁，
+#: 只能由平台自己写；远端服务在 inputSchema 里自带同名键时必须剥掉，否则等于让远端
+#: 改写平台的调用策略。
+_PLATFORM_SCHEMA_EXTENSION_PREFIX = "x-nanzi-"
+
+
+def _strip_platform_schema_extensions(value: Any) -> Any:
+    """递归移除远端 schema 里的平台私有扩展键（``x-nanzi-*``）。"""
+    if isinstance(value, dict):
+        return {
+            key: _strip_platform_schema_extensions(item)
+            for key, item in value.items()
+            if not (isinstance(key, str) and key.strip().casefold().startswith(_PLATFORM_SCHEMA_EXTENSION_PREFIX))
+        }
+    if isinstance(value, list):
+        return [_strip_platform_schema_extensions(item) for item in value]
+    return value
+
+
+def _is_transport_error(err: BaseException) -> bool:
+    """判断异常是否属于「传输断开」，需要重连后重试。
+
+    ``ExceptionGroup``（anyio task group 会把并发子任务的异常打包抛出）按成员递归
+    判断：只要有一个成员是传输异常，整体就按传输断开处理。
+    """
+    if isinstance(err, McpToolCallTimeout):
+        return False
+    if isinstance(err, _TRANSPORT_ERROR_TYPES):
+        return True
+    if isinstance(err, BaseExceptionGroup):
+        return any(_is_transport_error(item) for item in err.exceptions)
+    return False
 
 
 def _is_anyio_scope_cancellation(err: BaseException) -> bool:
@@ -123,8 +185,8 @@ async def _call_tool_with_progress(
     ``params._meta.progressToken``，随后把远端 ``notifications/progress`` 路由给回调；
     不传则请求与升级前逐字节一致（远端不会被告知要发进度）。
 
-    超时仍用 ``asyncio.wait_for`` 包住，保持 ``TimeoutError`` 语义不变 ——
-    ``call_remote_tool`` 的重连判定依赖这个异常类型。
+    超时仍用 ``asyncio.wait_for`` 包住，但转换成本模块的 ``McpToolCallTimeout``：
+    它不参与「断连重连」的判定，避免把一次超时的写操作当成断线又重发一遍。
     """
     kwargs: Dict[str, Any] = {}
     if progress_callback is not None:
@@ -135,10 +197,15 @@ async def _call_tool_with_progress(
         if timeout_seconds and timeout_seconds > 0
         else DEFAULT_MCP_TOOL_CALL_TIMEOUT
     )
-    return await asyncio.wait_for(
-        session.call_tool(tool_name, arguments, **kwargs),
-        timeout=timeout,
-    )
+    try:
+        return await asyncio.wait_for(
+            session.call_tool(tool_name, arguments, **kwargs),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError as exc:
+        raise McpToolCallTimeout(
+            f"MCP tool '{tool_name}' timed out after {timeout:g}s"
+        ) from exc
 
 
 class McpSseSession:
@@ -155,6 +222,13 @@ class McpSseSession:
         self.is_direct_http = False 
         self.mcp_session_id: Optional[str] = None
         self.mcp_protocol_version: Optional[str] = None
+        # 传输已确定可用（含无状态 Direct HTTP：那条路径不会有 session/session_id）。
+        # 没有这个状态位时 connect() 的幂等短路对无状态网关永远不成立，每次调用都会
+        # 重跑「TCP 预检 + Streamable 10s + SSE 探测 5s」全套探测。
+        self._transport_ready = False
+        # Direct HTTP 的 initialize 握手只做一次；无状态网关不返回 session-id，
+        # 原来每次调用都会重发 initialize + notifications/initialized。
+        self._direct_initialized = False
         self._rpc_id_counter = 1
         self._http_client: Optional[httpx.AsyncClient] = None
         self._active_requests: int = 0
@@ -269,6 +343,8 @@ class McpSseSession:
         吞掉并重置栈即可；否则降级分支会被清理异常打断。
         """
         stack, self._exit_stack = self._exit_stack, AsyncExitStack()
+        self._transport_ready = False
+        self._direct_initialized = False
         if stack is None:
             return
         try:
@@ -288,7 +364,7 @@ class McpSseSession:
     async def connect(self):
         """Initialize a transport; publish SSE state only after its handshake succeeds."""
         async with self._lock:
-            if self.session or self.mcp_session_id:
+            if self.session or self.mcp_session_id or self._transport_ready:
                 return
 
             # Debug: Log header keys (redacted)
@@ -311,6 +387,7 @@ class McpSseSession:
                     # TCP 都建不起来时，SSE 探测与握手必然同样失败，直接降级，
                     # 不再白等 10 秒握手超时。
                     self.is_direct_http = True
+                    self._transport_ready = True
                     self.last_used_at = time.time()
                     logger.info(
                         "[MCP] Switched to Direct HTTP mode for %s (endpoint unreachable)",
@@ -327,6 +404,7 @@ class McpSseSession:
                         await self._connect_streamable_http()
                     self.last_used_at = time.time()
                     self.is_direct_http = False
+                    self._transport_ready = True
                     logger.info(f"[MCP] Streamable HTTP initialized for {self.server_id}")
                     return
                 except BaseException as stream_err:  # noqa: BLE001 - 见下方分类处理
@@ -373,12 +451,18 @@ class McpSseSession:
                             await sse_session.initialize()
                             self.session = sse_session
 
-                        # 独立任务受 10 秒 wait_for 约束；超时取消握手并进入 Direct HTTP 回退。
-                        connect_task = asyncio.create_task(_connect_sse())
-                        await asyncio.wait_for(connect_task, timeout=10.0)
-                        
+                        # 与上面 Streamable HTTP 同一口径：必须**在当前 task 内**建链。
+                        # 之前是 create_task + wait_for，握手在子 task 里把 sse_client 的
+                        # anyio cancel scope 压进宿主 self._exit_stack，之后在别的 task 里
+                        # aclose() 会抛 "Attempted to exit cancel scope in a different
+                        # task than it was entered in"，而 close() 只是把它记成 warning，
+                        # 结果底层 sse_client 泄漏。
+                        async with asyncio.timeout(10.0):
+                            await _connect_sse()
+
                         self.last_used_at = time.time()
                         self.is_direct_http = False
+                        self._transport_ready = True
                         logger.info(f"[MCP] Standard SSE initialized for {self.server_id}")
                         return
                     except Exception as sse_err:
@@ -396,6 +480,7 @@ class McpSseSession:
 
                 # 2. Fallback: Direct HTTP Gateway
                 self.is_direct_http = True
+                self._transport_ready = True
                 logger.info(f"[MCP] Switched to Direct HTTP mode for {self.server_id}")
                 self.last_used_at = time.time()
                 
@@ -410,6 +495,8 @@ class McpSseSession:
             self._exit_stack = None
             self.session = None
             self.mcp_session_id = None
+            self._transport_ready = False
+            self._direct_initialized = False
             http_client = self._http_client
             self._http_client = None
             if http_client and not http_client.is_closed:
@@ -670,13 +757,19 @@ class McpClientService:
 
     @classmethod
     async def _ensure_direct_http_initialized(cls, session_mgr: McpSseSession) -> None:
-        """并发安全的 Direct HTTP 初始化（带双重检查锁）"""
-        if session_mgr.mcp_session_id:
+        """并发安全的 Direct HTTP 初始化（带双重检查锁）。
+
+        无状态网关不返回 ``mcp-session-id``，原来只认 ``mcp_session_id`` 的短路
+        永远不成立，于是**每次调用**都要重发 ``initialize`` +
+        ``notifications/initialized``。这里改用独立的握手标记。
+        """
+        if session_mgr.mcp_session_id or getattr(session_mgr, "_direct_initialized", False):
             return
         async with session_mgr._init_lock:
-            if session_mgr.mcp_session_id:
+            if session_mgr.mcp_session_id or getattr(session_mgr, "_direct_initialized", False):
                 return
             await cls._initialize_direct_http(session_mgr)
+            session_mgr._direct_initialized = True
 
     @classmethod
     async def _initialize_direct_http(cls, session_mgr: McpSseSession) -> None:
@@ -707,7 +800,10 @@ class McpClientService:
             ):
                 return
             session_mgr.mcp_session_id = None
+            # 会话被判失效时要真的重新握手，不能被「只初始化一次」的标记挡住。
+            session_mgr._direct_initialized = False
             await cls._initialize_direct_http(session_mgr)
+            session_mgr._direct_initialized = True
 
     @classmethod
     async def call_remote_tool(
@@ -796,9 +892,7 @@ class McpClientService:
                     return call_result
                 except Exception as e:
                     transport_broken = False
-                    if not transport_retry and isinstance(
-                        e, (ConnectionError, TimeoutError, EOFError, OSError, httpx.HTTPError)
-                    ):
+                    if not transport_retry and _is_transport_error(e):
                         transport_retry = True
                         transport_broken = True
                         original_error = e
@@ -873,6 +967,10 @@ class McpClientService:
                     timeout_seconds=timeout_seconds,
                 )
                 return call_result
+        except asyncio.CancelledError:
+            call_status = "failed"
+            call_error = "MCP tool call cancelled"
+            raise
         except Exception as call_exc:
             call_status = "failed"
             call_error = str(call_exc)
@@ -1191,7 +1289,11 @@ class McpClientService:
                 t_schema = _tool_input_schema(t)
                 if hasattr(t_schema, "model_dump"):
                     t_schema = t_schema.model_dump(mode="json")
-                schema_payload = dict(t_schema or {}) if isinstance(t_schema, dict) else {}
+                schema_payload = (
+                    _strip_platform_schema_extensions(t_schema)
+                    if isinstance(t_schema, dict)
+                    else {}
+                )
                 annotations = getattr(t, "annotations", None)
                 if annotations is None and isinstance(t, dict):
                     annotations = t.get("annotations")
@@ -1270,7 +1372,12 @@ class McpClientService:
             now = time.time()
             expired_keys = []
             for sid, session in list(cls._sessions.items()):
-                if (session.session or session.mcp_session_id) and (now - session.last_used_at > 300):
+                # 不能再用「有没有 session/session_id」当条件：无状态 Direct HTTP
+                # 网关两者都为空，那样这条会话永远不会被回收。进行中的请求仍然跳过，
+                # 否则会把正在用的传输关掉。
+                if getattr(session, "_active_requests", 0) > 0:
+                    continue
+                if now - session.last_used_at > 300:
                     await session.close()
                     expired_keys.append(sid)
             for sid in expired_keys:

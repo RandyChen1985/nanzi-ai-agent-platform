@@ -6530,8 +6530,8 @@ async def resolve_sandbox_bash_tool(sandbox_ws: Any) -> Any | None:
     real_ws = sandbox_ws
     if isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
         real_ws = await sandbox_ws.ensure_ready()
-    list_mcps = getattr(real_ws, "list_mcps", None)
-    return await _sandbox_bash_tool_from_mcps(list_mcps() if callable(list_mcps) else None)
+    tool, _ = await _resolve_sandbox_bash_tool(real_ws)
+    return tool
 
 
 def _normalize_docker_mount_mappings(

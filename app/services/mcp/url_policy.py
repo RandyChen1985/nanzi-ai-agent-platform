@@ -59,6 +59,24 @@ def _has_control_or_ambiguous_chars(value: str) -> bool:
     return False
 
 
+def _ip_is_blocked(ip: "ipaddress._BaseAddress") -> bool:
+    """判断地址是否命中「元数据 / link-local / 组播 / 未指定」。
+
+    必须同时检查 IPv4-mapped IPv6：``ipaddress`` 对 ``::ffff:169.254.169.254`` 的
+    ``is_link_local`` 会跟着映射地址走（这一条不用额外处理），但 ``in
+    IPv4Network(...)`` 因为版本不同恒为 False——所以只靠网段判断的条目
+    （阿里云 ``100.100.100.200``、Azure ``168.63.129.16``）会被 ``::ffff:`` 写法绕过。
+    """
+    if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+        return True
+    if any(ip in network for network in _BLOCKED_IP_NETWORKS):
+        return True
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None and mapped != ip:
+        return _ip_is_blocked(mapped)
+    return False
+
+
 def validate_mcp_outbound_url(value: str) -> str:
     """校验并返回规范化后的 MCP 地址；不合法时抛 ``McpUrlPolicyError``。"""
     raw = str(value or "").strip()
@@ -98,10 +116,7 @@ def validate_mcp_outbound_url(value: str) -> str:
         ip = ipaddress.ip_address(hostname)
     except ValueError:
         ip = None
-    if ip is not None:
-        if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
-            raise McpUrlPolicyError("MCP 服务地址不能指向 link-local / 组播 / 未指定地址")
-        if any(ip in network for network in _BLOCKED_IP_NETWORKS):
-            raise McpUrlPolicyError("MCP 服务地址不能指向云元数据或不可用地址")
+    if ip is not None and _ip_is_blocked(ip):
+        raise McpUrlPolicyError("MCP 服务地址不能指向云元数据或不可用地址")
 
     return raw

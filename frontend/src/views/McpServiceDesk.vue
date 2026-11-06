@@ -205,6 +205,9 @@ const auditLoading = ref(false)
 const showAuditFilters = ref(false)
 const auditStartAt = ref('')
 const auditEndAt = ref('')
+const securityAuditPage = ref(1)
+const securityAuditPageSize = 20
+const securityAuditTotal = ref(0)
 const securityAuditLogs = ref<SecurityAuditLog[]>([])
 const securityAlert = ref<{ alert: boolean; message?: string | null; recent_failure_count: number; rate_limited_count: number }>({ alert: false, recent_failure_count: 0, rate_limited_count: 0 })
 const auditTrend = ref<Array<{ at: string; total: number; completed: number; failed: number; denied: number }>>([])
@@ -1103,11 +1106,15 @@ const loadAudit = async () => {
 
 const loadSecurityAudit = async () => {
   if (!canReadAudit.value) return
-  const params: Record<string, string | number> = { page: 1, page_size: 20 }
+  const params: Record<string, string | number> = {
+    page: securityAuditPage.value,
+    page_size: securityAuditPageSize,
+  }
   if (auditStartAt.value) params.start_at = auditStartAt.value
   if (auditEndAt.value) params.end_at = auditEndAt.value
   const response = await api.get('/api/portal/mcp-service/audit/security', { params })
   securityAuditLogs.value = response.data?.items || []
+  securityAuditTotal.value = Number(response.data?.total || 0)
   securityAlert.value = (await api.get('/api/portal/mcp-service/audit/security/alerts')).data || securityAlert.value
 }
 
@@ -1121,7 +1128,19 @@ const loadAuditTrend = async () => {
 
 const applyAuditFilters = async () => {
   auditPage.value = 1
+  securityAuditPage.value = 1
   await Promise.all([loadAudit(), loadSecurityAudit()])
+}
+
+const securityAuditPageCount = computed(() =>
+  Math.max(1, Math.ceil(securityAuditTotal.value / securityAuditPageSize)),
+)
+
+const changeSecurityAuditPage = async (delta: number) => {
+  const next = securityAuditPage.value + delta
+  if (next < 1 || next > securityAuditPageCount.value) return
+  securityAuditPage.value = next
+  await loadSecurityAudit()
 }
 
 const resetAuditFilters = async () => {
@@ -1474,6 +1493,8 @@ const createClient = async () => {
     form.redirect_uris = ''
     form.allowed_grant_types = ['authorization_code']
     form.allowed_scopes = ['knowledge:search']
+    // 不重置的话，下一次创建会静默继承上一次的「共享给他人」勾选
+    form.is_shared = false
     await loadClients()
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'Client 创建失败'
@@ -1901,7 +1922,7 @@ onUnmounted(() => {
               <h2 class="text-lg font-black">MCP 调用概览</h2>
               <p class="mt-1 text-sm text-slate-500">基于你有权限查看的审计日志统计。</p>
             </div>
-            <select v-model="auditSummaryRange" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600" aria-label="审计统计周期" :disabled="auditSummaryLoading" @change="loadAuditSummary">
+            <select v-model="auditSummaryRange" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600" aria-label="审计统计周期" :disabled="auditSummaryLoading" @change="handleAuditSummaryRangeChange">
               <option value="24h">近 24 小时</option>
               <option value="7d">近 7 天</option>
               <option value="30d">近 30 天</option>
@@ -2728,7 +2749,7 @@ onUnmounted(() => {
               <span>OAuth 安全事件</span>
               <span class="flex items-center gap-2 text-xs font-normal text-slate-500">
                 <span v-if="securityAlert.alert" class="rounded-full bg-rose-100 px-2 py-0.5 font-bold text-rose-700">有安全告警</span>
-                <span>共 {{ securityAuditLogs.length }} 条</span>
+                <span>共 {{ securityAuditTotal }} 条</span>
                 <span aria-hidden="true" class="text-xs text-slate-400">{{ showSecurityAudit ? '⌃' : '⌄' }}</span>
               </span>
             </button>
@@ -2741,6 +2762,13 @@ onUnmounted(() => {
                 <thead class="border-b border-amber-100 text-slate-500"><tr><th class="p-2">时间</th><th class="p-2">事件</th><th class="p-2">Client</th><th class="p-2">用户</th><th class="p-2">结果</th></tr></thead>
                 <tbody><tr v-for="log in securityAuditLogs" :key="log.id" class="border-b border-amber-100/60 last:border-0"><td class="whitespace-nowrap p-2 text-slate-500">{{ formatAuditTime(log.created_at) }}</td><td class="p-2 font-mono text-indigo-700">{{ log.event_type }}</td><td class="p-2 font-mono">{{ log.client_id || '—' }}</td><td class="p-2">{{ log.user_id || log.actor_user_id || '—' }}</td><td class="p-2">{{ log.result_status }}</td></tr></tbody>
               </table>
+              <div class="mt-2 flex items-center justify-between text-xs text-slate-500">
+                <span>第 {{ securityAuditPage }} / {{ securityAuditPageCount }} 页</span>
+                <div class="flex items-center gap-2">
+                  <button type="button" class="rounded-md border border-slate-200 bg-white px-2 py-1 font-bold disabled:opacity-40" :disabled="securityAuditPage <= 1" @click="changeSecurityAuditPage(-1)">上一页</button>
+                  <button type="button" class="rounded-md border border-slate-200 bg-white px-2 py-1 font-bold disabled:opacity-40" :disabled="securityAuditPage >= securityAuditPageCount" @click="changeSecurityAuditPage(1)">下一页</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
