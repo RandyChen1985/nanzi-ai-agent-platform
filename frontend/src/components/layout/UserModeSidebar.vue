@@ -299,7 +299,7 @@
                         : 'bg-primary/15 font-semibold text-primary'
                       : lightTheme
                         ? 'text-gray-700 hover:bg-gray-100'
-                        : 'text-slate-200 hover:bg-white/[0.06]'
+                        : 'text-slate-300 hover:bg-white/[0.06]'
                   "
                   :title="itemTitle(item)"
                   @click="openConversation(item)"
