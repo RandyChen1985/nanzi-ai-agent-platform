@@ -9,6 +9,12 @@ from app.models.user import User
 from app.models.permission import Role, ResourcePermission, UserRoleRelation
 from app.schemas.permission import PermissionUpdate
 from app.services.permission_service import PermissionService, PermissionVersionConflict
+from app.services.ui_mode_policy import (
+    blocked_map_for_roles,
+    parse_blocked,
+    set_role_blocked,
+    validate_blocked,
+)
 
 router = APIRouter()
 
@@ -38,6 +44,9 @@ class CreateRoleRequest(BaseModel):
 class UpdateRoleRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    # 角色级界面模式黑名单（逗号分隔：user/pro，空串=都不禁）。
+    # None = 本次不改；显式空串 = 恢复成两种模式都可用。
+    blocked_ui_modes: Optional[str] = None
 
 class RoleResponse(BaseModel):
     id: int
@@ -46,6 +55,8 @@ class RoleResponse(BaseModel):
     description: Optional[str]
     created_at: Optional[str]
     user_count: int = 0
+    # 界面模式黑名单（'' / 'user' / 'pro'）。迁移未执行时恒为 ''
+    blocked_ui_modes: str = ""
 
 class RoleListResponse(BaseModel):
     total: int
@@ -127,6 +138,10 @@ async def list_roles(
     )
     rows = (await db.execute(stmt)).all()
 
+    # 黑名单单独批量取（一次 IN 查询）：该列不在 ORM 映射里，没法并进上面的 select；
+    # 迁移未执行时返回空字典，列表照常可用。
+    blocked_map = await blocked_map_for_roles(db, [role.id for role, _ in rows])
+
     items = [
         {
             "id": role.id,
@@ -135,6 +150,7 @@ async def list_roles(
             "description": role.description,
             "created_at": role.created_at.isoformat() if role.created_at else None,
             "user_count": int(user_count or 0),
+            "blocked_ui_modes": blocked_map.get(role.id, ""),
         }
         for role, user_count in rows
     ]
@@ -201,7 +217,9 @@ async def create_role(
         "code": new_role.code,
         "name": new_role.name,
         "description": new_role.description,
-        "created_at": new_role.created_at.isoformat()
+        "created_at": new_role.created_at.isoformat(),
+        # 新角色默认两种模式都可用；黑名单只在编辑里配置
+        "blocked_ui_modes": "",
     }
 
 @router.put("/{role_id}")
@@ -222,7 +240,19 @@ async def update_role(
         role.name = request.name
     if request.description is not None:
         role.description = request.description
-        
+
+    # 界面模式黑名单：None = 本次不改，显式传值才写。
+    # 校验放在写库之前——「两个都禁」「admin 角色被禁」都必须整单拒绝，
+    # 不能先改了 name/description 再 400。
+    blocked_value = (await blocked_map_for_roles(db, [role_id])).get(role_id, "")
+    if request.blocked_ui_modes is not None:
+        blocked = parse_blocked(request.blocked_ui_modes)
+        try:
+            validate_blocked(blocked, role.code)
+            blocked_value = await set_role_blocked(db, role.id, blocked)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
     await db.commit()
     await db.refresh(role)
     return {
@@ -230,7 +260,8 @@ async def update_role(
         "code": role.code,
         "name": role.name,
         "description": role.description,
-        "created_at": role.created_at.isoformat()
+        "created_at": role.created_at.isoformat(),
+        "blocked_ui_modes": blocked_value,
     }
 
 @router.delete("/{role_id}")

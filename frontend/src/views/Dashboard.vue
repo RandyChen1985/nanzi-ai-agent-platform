@@ -621,7 +621,7 @@ const retryNavigation = () => {
 
 // ---------------- 界面模式：用户模式 / 专业模式 ----------------
 // 偏好存 Redis（账号级），这里只负责渲染分支与切换。
-const { isUserMode, setUiMode, ensureUiMode } = useUiMode();
+const { isUserMode, setUiMode, ensureUiMode, allowedModes, blockedBy } = useUiMode();
 /** 用户模式「新建任务」时自增，用来强制重挂载聊天页（换掉 key 即丢掉当前 iframe 会话） */
 const pageReloadToken = ref(0);
 
@@ -1052,6 +1052,8 @@ onMounted(() => {
         :real-name="userInfo.real_name || userInfo.user_name"
         :avatar-url="userInfo.avatar_url || ''"
         :role="String(userInfo.role || '')"
+        :allowed-modes="allowedModes"
+        :blocked-by="blockedBy"
         :version="displayVersion"
         :repo-url="repoUrl"
         :mobile="isMobile"

@@ -1,0 +1,974 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="方案对比">
+<title>界面模式 · 角色级黑名单与 URL 拦截</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-dark:#0958d9; --primary-soft:#eaf2ff;
+    --ink:#0f172a; --ink-2:#334155; --muted:#64748b; --faint:#94a3b8;
+    --line:#e6ebf2; --line-soft:#eef2f7; --bg:#f4f6fa; --card:#fff;
+    --ok:#12b76a; --ok-soft:#e7f8f0; --warn:#e8890c; --warn-soft:#fff7e8;
+    --danger:#e5484d; --danger-soft:#fef2f2; --purple:#7c3aed;
+    --r:14px; --shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -18px rgba(15,23,42,.25);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:#e9edf4; color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+  h1,h2,h3,h4,p,ol,ul{margin:0}
+  ol,ul{padding:0;list-style:none}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+
+  /* ===== 原型外壳 ===== */
+  .shell-bar{
+    position:sticky; top:0; z-index:60;
+    display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    padding:10px 20px; background:#0b0f19; color:#fff;
+    box-shadow:0 1px 0 rgba(255,255,255,.06),0 10px 30px -20px rgba(0,0,0,.9);
+  }
+  .sb-title{display:flex;align-items:center;gap:10px;min-width:0}
+  .sb-mark{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:#1677ff;font-weight:800;font-size:13px}
+  .sb-title b{display:block;font-size:13px;line-height:1.3}
+  .sb-title small{display:block;color:#94a3b8;font-size:11px;line-height:1.4}
+  .sb-tabs{display:flex;gap:4px;background:rgba(255,255,255,.06);padding:3px;border-radius:10px;flex-wrap:wrap}
+  .sb-tabs button{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;font-size:12.5px;color:#cbd5e1;transition:.15s}
+  .sb-tabs button:hover{color:#fff;background:rgba(255,255,255,.06)}
+  .sb-tabs button.on{background:#fff;color:#0b0f19;font-weight:600}
+
+  .stage{max-width:1440px;margin:0 auto;padding:18px 20px 70px}
+  .pane{display:none}
+  .pane.on{display:block;animation:fade .18s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  /* ===== 通用块 ===== */
+  .lead{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px;padding:14px 16px;background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+  .lead-no{flex-shrink:0;padding:3px 9px;border-radius:8px;background:var(--primary-soft);color:var(--primary-dark);font-size:11.5px;font-weight:700}
+  .lead h2{font-size:15px;font-weight:700;letter-spacing:-.2px}
+  .lead p{margin-top:3px;font-size:12.5px;color:var(--muted);line-height:1.6}
+  .lead p b{color:var(--ink-2)}
+
+  .split{display:grid;grid-template-columns:360px minmax(0,1fr);gap:16px;align-items:start}
+  .left-col{display:grid;gap:12px}
+  .legend{display:grid;gap:8px;padding:12px 14px}
+  .legend-row{display:flex;align-items:flex-start;gap:8px;font-size:11px;line-height:1.6;color:var(--ink-2)}
+  .legend-row .badge{margin-top:1px}
+  @media (max-width:1080px){.split{grid-template-columns:1fr}}
+
+  .panel{background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line-soft);font-size:12.5px;font-weight:700;color:var(--ink-2);background:#fbfcfe}
+  .panel-head .muted{font-weight:500;color:var(--faint);font-size:11.5px}
+  .chip-new{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;background:#f3e8ff;color:#7c3aed;font-size:10px;font-weight:700;letter-spacing:.3px}
+  .muted{color:var(--muted)}
+
+  /* ===== 角色列表 ===== */
+  .list{padding:6px}
+  .row{display:flex;align-items:center;gap:10px;padding:10px 10px;border-radius:10px;transition:.15s}
+  .row + .row{margin-top:2px}
+  .row.is-editing{background:var(--primary-soft);box-shadow:inset 0 0 0 1px rgba(22,119,255,.25)}
+  .row:hover:not(.is-editing){background:#f7f9fc}
+  .row-main{min-width:0;flex:1}
+  .row-title{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;line-height:1.4}
+  .row-title code{color:var(--faint);font-weight:500;background:#f1f5f9;padding:0 4px;border-radius:4px}
+  .row-sub{margin-top:1px;font-size:11px;color:var(--faint);line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .badge{flex-shrink:0;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:700;white-space:nowrap}
+  .badge.ok{background:#f1f5f9;color:#64748b}
+  .badge.warn{background:var(--warn-soft);color:#b45309;box-shadow:inset 0 0 0 1px #fde68a}
+  .side-foot{padding:10px 14px;border-top:1px solid var(--line-soft);font-size:11px;color:var(--faint);background:#fbfcfe}
+
+  /* ===== 弹窗（预览态） ===== */
+  .main-panel .dialog{max-width:560px;margin:16px auto 0;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 46px -26px rgba(15,23,42,.45)}
+  .dlg-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 10px}
+  .dlg-head h3{font-size:16px;font-weight:700;letter-spacing:-.2px}
+  .dlg-head .x{color:var(--faint);font-size:14px}
+  .dlg-body{padding:2px 18px 6px;display:flex;flex-direction:column;gap:12px}
+  .dlg-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid var(--line-soft);margin-top:12px}
+  .field{display:block}
+  .field > span{display:block;font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-bottom:4px}
+  .field em{display:block;margin-top:4px;font-size:10.5px;font-style:normal;color:var(--faint);line-height:1.5}
+  .input{display:block;width:100%;padding:8px 11px;border:1px solid #d5dbe5;border-radius:9px;font:inherit;font-size:13px;color:var(--ink);background:#fff;resize:vertical}
+  .input:disabled{background:#f5f7fa;color:#94a3b8}
+  .btn{padding:8px 14px;border-radius:9px;border:1px solid #d5dbe5;background:#fff;font-size:13px;font-weight:600;color:var(--ink-2)}
+  .btn:hover{background:#f7f9fc}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 6px 14px -8px rgba(22,119,255,.9)}
+  .btn.primary:hover{background:var(--primary-dark)}
+  .btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+
+  /* ===== 新增区块 ===== */
+  .new-sec{margin-top:4px;padding:12px;border:1px dashed rgba(124,58,237,.45);border-radius:12px;background:linear-gradient(180deg,#fcfaff,#fff)}
+  .sec-head{display:flex;align-items:center;gap:8px}
+  .sec-title{font-size:12.5px;font-weight:800;letter-spacing:.01em}
+  .sec-desc{margin-top:3px;font-size:11.5px;color:var(--muted);line-height:1.6}
+  .sec-note{margin-top:9px;font-size:11px;line-height:1.5;padding:7px 9px;border-radius:8px;background:#f7f9fc;color:var(--muted);border:1px solid var(--line-soft)}
+  .sec-note.warn{background:var(--warn-soft);color:#92400e;border-color:#fde68a}
+  .sec-note.danger{background:var(--danger-soft);color:#b91c1c;border-color:#fecaca}
+
+  .mode-row{display:flex;align-items:center;gap:10px;margin-top:8px;padding:10px 11px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;transition:.15s}
+  .mode-row:hover{border-color:#cfd8e6}
+  .mode-row.off{background:#f8fafc;border-style:dashed;border-color:#dbe3ee}
+  .mode-row.off .mt b{color:#94a3b8}
+  .mode-row.locked{cursor:default;background:#f8fafc}
+  .mode-row.locked:hover{border-color:var(--line)}
+  .mi{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:#f1f5f9;color:#64748b;flex-shrink:0}
+  .mode-row.off .mi{opacity:.6}
+  .mt{min-width:0;flex:1}
+  .mt b{display:block;font-size:12.5px;font-weight:700;line-height:1.4}
+  .mt small{display:block;margin-top:1px;font-size:10.5px;color:var(--faint);line-height:1.45}
+  .switch{position:relative;width:38px;height:22px;border-radius:999px;background:#d5dbe5;flex-shrink:0;transition:.18s;padding:0}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.28);transition:.18s}
+  .switch.on{background:var(--primary)}
+  .switch.on::after{transform:translateX(16px)}
+  .switch.locked{opacity:.45;cursor:not-allowed}
+
+  .sub-note{margin:16px auto 0;max-width:560px;padding:10px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;font-size:11.5px;color:var(--muted);line-height:1.65}
+  .sub-note b{color:var(--ink-2)}
+  .mini-dialog{max-width:560px;margin:12px auto 18px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .mini-head{font-size:11.5px;font-weight:700;color:var(--ink-2);margin-bottom:6px}
+  .mini-head code{color:var(--faint);font-weight:500}
+
+  /* ===== 端上效果 ===== */
+  .scenario{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding:11px 14px;background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);font-size:12.5px}
+  .scenario label{font-weight:700;color:var(--ink-2);margin-right:2px}
+  .sc{padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:#fff;font-size:12px;font-weight:600;color:var(--muted)}
+  .sc.on{background:var(--primary-soft);border-color:rgba(22,119,255,.35);color:var(--primary-dark)}
+  .scenario .hint{margin-left:auto;font-size:11px;color:var(--faint)}
+
+  .triple{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
+  @media (max-width:1180px){.triple{grid-template-columns:1fr}}
+  .preview{padding:14px}
+  .cap{padding:0 14px 13px;font-size:11px;color:var(--muted);line-height:1.65}
+  .cap b{color:var(--ink-2)}
+
+  /* 账户菜单 */
+  .acct{width:100%;max-width:320px;margin:0 auto;background:#fff;border:1px solid #e6ebf2;border-radius:16px;padding:10px;box-shadow:0 12px 30px -22px rgba(15,23,42,.55)}
+  .acct-user{display:flex;align-items:center;gap:9px;padding:6px 6px 8px}
+  .avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(140deg,#34d399,#059669);color:#fff;display:grid;place-items:center;font-size:13px;font-weight:700;flex-shrink:0}
+  .acct-user b{display:block;font-size:12.5px;line-height:1.3}
+  .acct-user small{display:block;font-size:10.5px;color:var(--faint);line-height:1.4}
+  .acct-sec{border-top:1px solid #f1f5f9;padding-top:8px}
+  .acct-label{display:flex;align-items:center;justify-content:space-between;padding:0 3px 6px;font-size:10.5px;color:var(--faint);font-weight:600}
+  .acct-label .pill{padding:1px 6px;border-radius:999px;background:var(--primary-soft);color:var(--primary-dark);font-size:9.5px;font-weight:700}
+  .acct-grid{display:grid;gap:6px}
+  .acct-grid.two{grid-template-columns:1fr 1fr}
+  .acct-card{display:flex;flex-direction:column;gap:1px;padding:8px 9px;border-radius:10px;border:1px solid #e6ebf2;background:#fff;position:relative}
+  .acct-card.sel{border-color:rgba(22,119,255,.45);background:#f7fbff;box-shadow:0 0 0 2px rgba(22,119,255,.07)}
+  .acct-card.off{border-style:dashed;background:#fbfcfe}
+  .acct-card b{font-size:11.5px;font-weight:700;color:#475569;display:flex;align-items:center;gap:5px;line-height:1.35}
+  .acct-card small{font-size:9.5px;color:var(--faint);line-height:1.35}
+  .acct-card.on-card b{color:var(--ink)}
+  .lock{position:absolute;right:7px;top:7px;color:#94a3b8}
+  .acct-note{margin-top:7px;padding:6px 8px;border-radius:8px;background:#f8fafc;font-size:10px;line-height:1.55;color:var(--muted)}
+
+  /* 个人中心 */
+  .pref{display:grid;gap:8px}
+  .pref-card{padding:10px 11px;border:1px solid var(--line);border-radius:11px;background:#fff}
+  .pref-card.on{border-color:rgba(22,119,255,.45);background:#f7fbff;box-shadow:0 0 0 3px rgba(22,119,255,.07)}
+  .pref-card.off{background:#fafbfd;border-style:dashed}
+  .pref-top{display:flex;align-items:center;gap:6px}
+  .pref-top b{font-size:12.5px;font-weight:700}
+  .pref-card.off .pref-top b{color:#94a3b8}
+  .pref-tag{padding:1px 6px;border-radius:999px;font-size:9.5px;font-weight:700;background:var(--primary-soft);color:var(--primary-dark)}
+  .pref-tag.lock{background:#f1f5f9;color:#64748b;position:static}
+  .pref-card p{margin-top:3px;font-size:10.5px;line-height:1.5;color:var(--faint)}
+  .pref-card.off p.lockreason{color:#b45309}
+
+  /* 登录落地 */
+  .flow{counter-reset:s;display:grid;gap:7px}
+  .flow li{position:relative;padding:8px 10px 8px 28px;border:1px solid var(--line);border-radius:9px;background:#fff;font-size:11.5px;line-height:1.55;color:var(--ink-2)}
+  .flow li::before{counter-increment:s;content:counter(s);position:absolute;left:9px;top:8px;width:14px;height:14px;border-radius:50%;background:var(--primary-soft);color:var(--primary-dark);font-size:9.5px;font-weight:800;display:grid;place-items:center}
+  .flow li.bad{background:#fff7f7;border-color:#fecaca;color:#b91c1c}
+  .flow li.bad::before{background:#fee2e2;color:#b91c1c}
+  .flow li code{background:#f1f5f9;padding:0 3px;border-radius:3px;color:#475569}
+
+  /* ===== URL 拦截 ===== */
+  .url-panel{margin-top:16px}
+  .url-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:0}
+  @media (max-width:1080px){.url-grid{grid-template-columns:1fr}}
+  .url-left{padding:16px 16px 18px;border-right:1px solid var(--line-soft)}
+  @media (max-width:1080px){.url-left{border-right:0;border-bottom:1px solid var(--line-soft)}}
+  .url-right{padding:14px 16px 18px;background:#fbfcfe}
+
+  .urlbar{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid #d5dbe5;border-radius:11px;background:#fff;box-shadow:inset 0 1px 2px rgba(15,23,42,.03)}
+  .urlbar .dots{display:flex;gap:3px;margin-right:2px}
+  .urlbar .dots i{width:7px;height:7px;border-radius:50%;background:#e2e8f0}
+  .urlbar .host{font-size:11.5px;color:var(--faint);white-space:nowrap}
+  .urlbar input{flex:1;min-width:0;border:0;outline:0;font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--ink);background:transparent}
+  .urlbar .go{padding:4px 10px;border-radius:7px;background:var(--primary);color:#fff;font-size:11.5px;font-weight:700}
+  .quick{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .quick button{padding:3px 8px;border-radius:6px;border:1px solid var(--line);background:#fff;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#475569}
+  .quick button:hover{border-color:#cfd8e6;background:#f8fafc}
+  .quick span{font-size:10.5px;color:var(--faint);align-self:center;margin-right:2px}
+
+  .verdict{display:flex;gap:10px;margin-top:12px;padding:11px 12px;border-radius:11px;border:1px solid var(--line);background:#f8fafc}
+  .verdict.ok{background:var(--ok-soft);border-color:#bbf7d0}
+  .verdict.redirect{background:var(--warn-soft);border-color:#fde68a}
+  .verdict.na{background:#eff6ff;border-color:#bfdbfe}
+  .vi{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;flex-shrink:0;font-size:14px;font-weight:800;background:#fff;border:1px solid rgba(15,23,42,.06)}
+  .verdict.ok .vi{color:#15803d}
+  .verdict.redirect .vi{color:#b45309}
+  .verdict.na .vi{color:var(--primary-dark)}
+  .vt{min-width:0}
+  .vt b{display:block;font-size:12.5px;font-weight:800;line-height:1.4}
+  .verdict.ok .vt b{color:#15803d}
+  .verdict.redirect .vt b{color:#b45309}
+  .verdict.na .vt b{color:var(--primary-dark)}
+  .vt p{margin-top:2px;font-size:11px;line-height:1.6;color:var(--muted)}
+  .vt code{background:rgba(15,23,42,.05);padding:0 3px;border-radius:3px}
+
+  .allow-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .allow-head b{font-size:11.5px;font-weight:800;color:var(--ink-2)}
+  .allow-head span{font-size:10.5px;color:var(--faint)}
+  .allow-list{display:grid;gap:4px;padding-right:2px}
+  .allow-item{display:flex;align-items:center;gap:7px;padding:4px 7px;border-radius:6px;background:#fff;border:1px solid var(--line-soft);font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#475569}
+  .allow-item .src{margin-left:auto;font-family:inherit;font-size:9.5px;color:var(--faint);white-space:nowrap}
+  .allow-item.extra{border-style:dashed;border-color:#c7d2fe;background:#f8faff}
+  .allow-item.extra:before{content:"+";color:#6366f1;font-weight:800}
+  .allow-note{margin-top:9px;font-size:10.5px;line-height:1.6;color:var(--muted);padding:7px 9px;border-radius:8px;background:#fff;border:1px solid var(--line-soft)}
+
+  .guard-order{margin-top:12px;padding:10px 11px;border:1px solid var(--line-soft);border-radius:10px;background:#fbfcfe}
+  .go-head{font-size:10.5px;font-weight:800;color:var(--faint);letter-spacing:.03em;margin-bottom:7px}
+  .guard-order ol{counter-reset:g;display:grid;gap:4px}
+  .guard-order li{position:relative;padding:4px 6px 4px 22px;border-radius:6px;font-size:11px;line-height:1.5;color:var(--ink-2)}
+  .guard-order li::before{counter-increment:g;content:counter(g);position:absolute;left:6px;top:5px;width:13px;height:13px;border-radius:50%;background:#e6ebf2;color:#64748b;font-size:9px;font-weight:800;display:grid;place-items:center}
+  .guard-order li.hl{background:#fff7e8;color:#92400e}
+  .guard-order li.hl::before{background:#fde68a;color:#92400e}
+  .guard-order code{background:rgba(15,23,42,.05);padding:0 3px;border-radius:3px;color:#475569}
+
+  /* ===== 规则与落点 ===== */
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  @media (max-width:1080px){.cols{grid-template-columns:1fr}}
+  .card-body{padding:14px}
+
+  .union{display:grid;gap:8px}
+  .union-row{display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:12px}
+  .union-row .src{width:74px;flex-shrink:0;font-size:10.5px;font-weight:800;color:var(--faint);letter-spacing:.03em}
+  .union-row .op{margin-left:auto;color:var(--faint);font-size:11px;font-weight:700;flex-shrink:0}
+  .arrow-down{display:grid;place-items:center;color:var(--faint);font-size:12px}
+  .union-final{border:1px solid #bfdbfe;background:#f0f7ff}
+  .union-final .src{color:var(--primary-dark)}
+  .union-final b{color:var(--primary-dark)}
+
+  .rules{display:grid;gap:9px;margin-top:14px}
+  .rule{display:flex;gap:9px;font-size:12px;line-height:1.65;color:var(--ink-2)}
+  .rule i{flex-shrink:0;width:17px;height:17px;border-radius:50%;background:#eef4ff;color:var(--primary-dark);font-style:normal;font-size:10px;font-weight:800;display:grid;place-items:center;margin-top:1px}
+  .rule b{font-weight:700}
+
+  table.t{width:100%;border-collapse:collapse;font-size:11.5px}
+  table.t th{text-align:left;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);font-weight:800;padding:8px 10px;border-bottom:1px solid var(--line);background:#fbfcfe;white-space:nowrap}
+  table.t td{padding:9px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top;line-height:1.6;color:var(--ink-2)}
+  table.t tr:last-child td{border-bottom:0}
+  table.t td b{color:var(--ink)}
+  table.t .pick{background:#f7fbff}
+  table.t code{background:#f1f5f9;padding:0 3px;border-radius:3px;color:#475569;line-height:1.7;white-space:nowrap}
+
+  .sql{margin:0;padding:12px 13px;border-radius:10px;background:#0b1220;color:#cbd5e1;font:11.5px/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow:auto}
+  .sql .c{color:#64748b}
+  .sql .k{color:#7dd3fc}
+
+  .todo{margin-top:16px;padding:14px 16px;background:#fff;border:1px solid #fde68a;border-radius:var(--r);box-shadow:var(--shadow)}
+  .todo h3{font-size:13px;font-weight:800;color:#92400e;display:flex;align-items:center;gap:6px}
+  .todo ol{margin-top:9px;display:grid;gap:8px;counter-reset:q}
+  .todo li{position:relative;padding-left:22px;font-size:12px;line-height:1.65;color:var(--ink-2)}
+  .todo li::before{counter-increment:q;content:"Q" counter(q);position:absolute;left:0;top:1px;font-size:10px;font-weight:800;color:#b45309}
+  .todo li b{color:var(--ink)}
+
+  .foot{margin-top:20px;text-align:center;font-size:11px;color:var(--faint);line-height:1.8}
+</style>
+</head>
+<body>
+
+<header class="shell-bar">
+  <div class="sb-title">
+    <div class="sb-mark">界</div>
+    <div>
+      <b>界面模式黑名单 · 只按角色控制</b>
+      <small>默认两种都可用；角色禁掉一种后，连手动改地址栏也进不去</small>
+    </div>
+  </div>
+  <nav class="sb-tabs" aria-label="原型方案切换">
+    <button class="on" data-tab="role">① 角色维度</button>
+    <button data-tab="effect">② 端上效果</button>
+    <button data-tab="rule">③ 规则与代码落点</button>
+  </nav>
+</header>
+
+<main class="stage">
+
+  <!-- ================= ① 角色维度 ================= -->
+  <section class="pane on" data-pane="role">
+    <div class="lead">
+      <span class="lead-no">唯一入口</span>
+      <div>
+        <h2>只做角色级：就在「编辑角色」弹窗里加一块「界面模式」</h2>
+        <p>用户层不提供配置——这个人能不能切模式，完全由他身上的角色决定（多角色取并集）。默认两个开关全开；必须保留至少一种，两个都关保存会被拒。下面可以直接点开关，左边徽标会跟着变。</p>
+      </div>
+    </div>
+
+    <div class="split">
+      <div class="left-col">
+        <div class="panel">
+          <div class="panel-head"><span>角色管理</span><span class="muted">4 个角色</span></div>
+          <div class="list">
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">平台管理员 <code>admin</code></div>
+                <div class="row-sub">3 人 · 内置角色，不可删除</div>
+              </div>
+              <span class="badge ok" data-badge="admin">两种模式</span>
+            </div>
+            <div class="row is-editing">
+              <div class="row-main">
+                <div class="row-title">一线客服 <code>cs_agent</code></div>
+                <div class="row-sub">18 人 · 只处理工单与知识库</div>
+              </div>
+              <span class="badge ok" data-badge="cs">两种模式</span>
+            </div>
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">数据分析师 <code>data_analyst</code></div>
+                <div class="row-sub">6 人 · 元数据中心 + 取数</div>
+              </div>
+              <span class="badge ok" data-badge="da">两种模式</span>
+            </div>
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">财务经理 <code>finance_manager</code></div>
+                <div class="row-sub">4 人 · 报表与额度</div>
+              </div>
+              <span class="badge ok" data-badge="fin">两种模式</span>
+            </div>
+          </div>
+          <div class="side-foot">列表徽标取该角色当前设置，管理员不用点开就知道谁被限制了</div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><span>徽标怎么算</span><span class="muted">看角色设置</span></div>
+          <div class="legend">
+            <div class="legend-row"><span class="badge ok">两种模式</span><span>两个开关都开，成员自由切换。</span></div>
+            <div class="legend-row"><span class="badge warn">仅用户模式</span><span>禁用专业模式，账户菜单只剩用户模式，专业页面地址一律重定向。</span></div>
+            <div class="legend-row"><span class="badge warn">仅专业模式</span><span>禁用用户模式，只能用完整工作台；页面集合不变。</span></div>
+            <div class="legend-row" style="color:var(--muted);border-top:1px solid var(--line-soft);padding-top:8px">用户身上有多个角色时取并集：任一角色禁掉，这个人就没有这个模式。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel main-panel">
+        <div class="panel-head">
+          <span>实际位置：角色管理 → 行内「编辑」→ 弹窗</span>
+          <span class="chip-new">本次新增</span>
+        </div>
+
+        <div class="dialog">
+          <div class="dlg-head">
+            <h3>编辑角色</h3>
+            <span class="x">✕</span>
+          </div>
+          <div class="dlg-body">
+            <label class="field">
+              <span>角色代码</span>
+              <input class="input" value="cs_agent" disabled>
+              <em>唯一标识符，创建后不可修改</em>
+            </label>
+            <label class="field">
+              <span>角色名称</span>
+              <input class="input" value="一线客服">
+            </label>
+            <label class="field">
+              <span>描述</span>
+              <textarea class="input" rows="2">只处理工单与知识库检索，不需要平台配置能力</textarea>
+            </label>
+
+            <div class="new-sec">
+              <div class="sec-head">
+                <span class="sec-title">界面模式</span>
+                <span class="chip-new">新增</span>
+              </div>
+              <p class="sec-desc">默认两种都可用。关掉一种之后，角色下的 18 位成员只能用剩下的那种；用户级别没有覆盖入口，改这里就是唯一开关。</p>
+
+              <div class="mode-row" data-role-mode="user">
+                <span class="mi">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5h6v6H4zM14 5.5h6v6h-6zM4 14.5h6v6H4zM14 14.5h6v6h-6z"/></svg>
+                </span>
+                <span class="mt">
+                  <b>用户模式</b>
+                  <small>简化侧栏：新建会话 / 专家技能 / 定时任务 / 知识库 / 工作空间</small>
+                </span>
+                <button type="button" class="switch on" role="switch" aria-checked="true" aria-label="允许用户模式"></button>
+              </div>
+
+              <div class="mode-row" data-role-mode="pro">
+                <span class="mi">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5h18v14H3zM3 9.5h18M9 9.5V19"/></svg>
+                </span>
+                <span class="mt">
+                  <b>专业模式</b>
+                  <small>完整工作台：按 menu:* 权限展示全部入口</small>
+                </span>
+                <button type="button" class="switch on" role="switch" aria-checked="true" aria-label="允许专业模式"></button>
+              </div>
+
+              <p class="sec-note" data-role-note>两种模式都可用，成员可以自由切换。</p>
+            </div>
+          </div>
+          <div class="dlg-foot">
+            <button class="btn">取消</button>
+            <button class="btn primary" data-role-save>保存更新</button>
+          </div>
+        </div>
+
+        <div class="sub-note">
+          <b>admin 角色例外：</b>「平台管理员」两个开关恒为开、点了不生效。管理员必须两种都能用——禁了专业模式等于把人锁在管理台外面，只能改库恢复。
+        </div>
+
+        <div class="mini-dialog">
+          <div class="mini-head">平台管理员 <code>admin</code> · 同款区块的只读态（两个都锁）</div>
+          <div class="mode-row locked">
+            <span class="mi">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5h6v6H4zM14 5.5h6v6h-6zM4 14.5h6v6H4zM14 14.5h6v6h-6z"/></svg>
+            </span>
+            <span class="mt"><b>用户模式</b><small>管理员两种模式都要保留</small></span>
+            <span class="switch on locked" role="switch" aria-disabled="true" aria-checked="true"></span>
+          </div>
+          <div class="mode-row locked">
+            <span class="mi">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5h18v14H3zM3 9.5h18M9 9.5V19"/></svg>
+            </span>
+            <span class="mt"><b>专业模式</b><small>管理员两种模式都要保留</small></span>
+            <span class="switch on locked" role="switch" aria-disabled="true" aria-checked="true"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ② 端上效果 ================= -->
+  <section class="pane" data-pane="effect">
+    <div class="lead">
+      <span class="lead-no">端上效果</span>
+      <div>
+        <h2>被限制的人看到什么：只剩一种 + 说清原因，改地址栏也进不去</h2>
+        <p>账户菜单、个人中心、登录落地三处收敛入口；<b>第四处是守卫</b>——手动敲地址栏会被重定向回当前模式能到的页面。切下面三个角色看差异，再在最下面模拟改地址。</p>
+      </div>
+    </div>
+
+    <div class="scenario">
+      <label>模拟角色</label>
+      <button class="sc on" data-sc="cs">一线客服 · 禁用专业模式</button>
+      <button class="sc" data-sc="fin">财务经理 · 禁用用户模式</button>
+      <button class="sc" data-sc="da">数据分析师 · 不禁用</button>
+      <span class="hint">页面权限不变，只是不能再切形态、也进不了被禁形态的页面</span>
+    </div>
+
+    <div class="triple">
+      <div class="panel">
+        <div class="panel-head"><span>① 账户菜单 · 模式胶囊</span><span class="muted">AccountMenu.vue</span></div>
+        <div class="preview">
+          <div class="acct">
+            <div class="acct-user">
+              <div class="avatar" data-acct-avatar>倩</div>
+              <div style="min-width:0">
+                <b data-acct-name>林倩</b>
+                <small data-acct-id>@lin.qian · 普通用户</small>
+              </div>
+            </div>
+            <div class="acct-sec">
+              <div class="acct-label"><span>界面模式</span><span class="pill" data-acct-pill>已固定</span></div>
+              <div class="acct-grid two" data-acct-grid></div>
+              <p class="acct-note" data-acct-note></p>
+            </div>
+          </div>
+        </div>
+        <p class="cap"><b>只剩一种时不渲染可点的胶囊：</b>换成只读卡片 + 锁 + 原因。两枚胶囊只剩一枚，会被误当成「切换坏了」。</p>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><span>② 个人中心 · 界面偏好</span><span class="muted">PersonalCenter.vue</span></div>
+        <div class="preview">
+          <div class="pref" data-pref-list></div>
+        </div>
+        <p class="cap"><b>置灰 + 写清来源：</b>只写「不可用」会被反复来问。这里写明来自哪个角色，用户知道该找谁。</p>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><span>③ 登录落地</span><span class="muted">Login.vue</span></div>
+        <div class="preview">
+          <ol class="flow" data-flow></ol>
+        </div>
+        <p class="cap"><b>别省这一步：</b>登录响应不带 <code>ui_mode</code>，就会先按本机缓存跳一次、再被纠正一次，每次登录闪一下。</p>
+      </div>
+    </div>
+
+    <!-- URL 拦截 -->
+    <div class="panel url-panel">
+      <div class="panel-head">
+        <span>④ 手动改地址栏 / 收藏夹旧链接</span>
+        <span class="muted">router.beforeEach · 只对「禁用专业模式」生效</span>
+      </div>
+      <div class="url-grid">
+        <div class="url-left">
+          <div class="urlbar">
+            <span class="dots"><i></i><i></i><i></i></span>
+            <span class="host">platform.example.com</span>
+            <input data-url-input value="/dashboard/users" aria-label="模拟地址栏" spellcheck="false">
+            <button class="go" data-url-go>访问</button>
+          </div>
+          <div class="quick">
+            <span>快捷：</span>
+            <button data-path="/dashboard/users">/dashboard/users</button>
+            <button data-path="/dashboard/personal">/dashboard/personal</button>
+            <button data-path="/dashboard/knowledge-bases">/dashboard/knowledge-bases</button>
+            <button data-path="/dashboard">/dashboard</button>
+          </div>
+
+          <div class="verdict" data-verdict>
+            <span class="vi" data-vi>✓</span>
+            <div class="vt">
+              <b data-vt-title>放行</b>
+              <p data-vt-desc></p>
+            </div>
+          </div>
+
+          <div class="guard-order">
+            <div class="go-head">守卫里的插入位置（顺序不能反）</div>
+            <ol>
+              <li><code>meta.public</code> / 未登录 → 交给原逻辑</li>
+              <li>admin → 直接 <code>next()</code>，不看黑名单</li>
+              <li class="hl">禁 pro 且不在可达集合 → <code>next('/dashboard/chat')</code></li>
+              <li>原有 <code>meta.perm</code> 权限判断</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="url-right">
+          <div class="allow-head">
+            <b>用户模式可达集合（白名单来源）</b>
+            <span>禁专业模式时用它判定</span>
+          </div>
+          <div class="allow-list" data-allow-list></div>
+          <p class="allow-note">
+            <b>注意那条虚线的：</b>用户模式菜单里没有它，但账户菜单要能点到。
+            白名单必须是「菜单路径 ∪ 账户菜单能到的页面」，直接照抄 <code>collectUserModePaths()</code> 会把「个人中心」挡在外面。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ③ 规则与落点 ================= -->
+  <section class="pane" data-pane="rule">
+    <div class="lead">
+      <span class="lead-no">设计说明</span>
+      <div>
+        <h2>生效规则、数据放哪、代码改哪</h2>
+        <p>核心口径：<b>只按角色控制、并集 deny wins、必须二选一、管理员不禁</b>。黑名单只锁「界面形态 + 该形态能到的页面」，数据权限照旧由 <code>menu:*</code> / <code>element:*</code> 决定。</p>
+      </div>
+    </div>
+
+    <div class="cols">
+      <div class="panel">
+        <div class="panel-head"><span>生效规则</span><span class="muted">并集，不可抵消</span></div>
+        <div class="card-body">
+          <div class="union">
+            <div class="union-row">
+              <span class="src">角色</span>
+              <span>一线客服 <code>cs_agent</code>：禁用专业模式</span>
+              <span class="op">{ pro }</span>
+            </div>
+            <div class="union-row">
+              <span class="src">角色</span>
+              <span>数据分析师 <code>data_analyst</code>：不禁用</span>
+              <span class="op">{ }</span>
+            </div>
+            <div class="arrow-down">↓ 多角色求并集</div>
+            <div class="union-row union-final">
+              <span class="src">最终</span>
+              <span><b>禁用 { pro }</b> → 只能用「用户模式」，专业页面重定向</span>
+              <span class="op">✓</span>
+            </div>
+          </div>
+
+          <div class="rules">
+            <div class="rule"><i>1</i><span><b>默认全放行：</b>列默认空串 = 两种都能用。存量角色、存量用户零迁移零感知。</span></div>
+            <div class="rule"><i>2</i><span><b>只按角色：</b>用户表不加字段，用户编辑弹窗不加页签。多角色取并集，任一角色禁掉就没有该模式。</span></div>
+            <div class="rule"><i>3</i><span><b>必须二选一：</b><code>blocked = 'user,pro'</code> 直接非法。前端拦截 + 后端 400，两道。</span></div>
+            <div class="rule"><i>4</i><span><b>管理员不禁：</b>服务层判「<code>users.role='admin'</code> 或持有 <code>code='admin'</code> 的业务角色」→ 有效黑名单恒为空；角色页也不允许给 admin 配非空值。守卫不用单独判，拿到的本来就是空集。</span></div>
+            <div class="rule"><i>5</i><span><b>服务端说了算：</b>前端只做「不展示 + 重定向」；<code>PUT /ui-mode</code> 必须再校验一次并返回 403，改请求体绕不过去。</span></div>
+            <div class="rule"><i>6</i><span><b>只锁形态，不当权限：</b>禁 pro 的人仍受原 <code>menu:*</code> 约束；这里只是把「能到的页面」收窄到用户模式那一层，不放宽任何权限。</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><span>数据放哪：只给角色加一列</span><span class="muted">用户表不动</span></div>
+        <div class="card-body">
+          <pre class="sql"><span class="c">-- MySQL: db-prod/V207-add-role-ui-mode-blacklist.sql
+</span><span class="c">-- PostgreSQL: db-prod-pg/V107-add-role-ui-mode-blacklist.sql
+</span><span class="k">ALTER TABLE</span> ai_agent_roles
+  <span class="k">ADD COLUMN</span> blocked_ui_modes <span class="k">VARCHAR</span>(32) <span class="k">NOT NULL DEFAULT</span> <span style="color:#86efac">''</span>
+  <span class="c">-- ''=都不禁；'pro'=只许用户模式；'user'=只许专业模式</span>
+  <span class="c">-- 'user,pro' 非法：写入层直接拒绝（必须二选一）</span>
+  <span class="k">COMMENT</span> <span style="color:#86efac">'禁用的界面模式（黑名单，逗号分隔）'</span>;</pre>
+          <div class="rules" style="margin-top:12px">
+            <div class="rule"><i>1</i><span>只有两种取值，单列足够；比新建 <code>scope_type/scope_id</code> 策略表少一次 join、少一处孤儿清理。</span></div>
+            <div class="rule"><i>2</i><span>用户层不做，所以 <code>ai_agent_users</code> 完全不动——鉴权热路径上的大表不加列。</span></div>
+            <div class="rule"><i>3</i><span>管理员保护落在写入层（角色 code=admin 时强制置空），不靠 UI 拦。</span></div>
+            <div class="rule"><i>4</i><span>将来若要按部门/租户控制，再升级成策略表，读接口不用改（都从服务层拿 <code>effective_blocked</code>）。</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><span>代码落点</span><span class="muted">按现有分层对着改</span></div>
+      <div style="overflow-x:auto">
+        <table class="t">
+          <thead>
+            <tr><th style="width:88px">层</th><th style="width:310px">文件</th><th>改什么</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><b>迁移</b></td><td><code>db-prod/V207-*</code><br><code>db-prod-pg/V107-*</code></td><td>只给 <code>ai_agent_roles</code> 加一列，默认空串；不写业务数据。</td></tr>
+            <tr><td><b>模型</b></td><td><code>app/models/permission.py</code></td><td><code>Role.blocked_ui_modes = Column(String(32), default="")</code>。</td></tr>
+            <tr><td><b>服务</b></td><td><code>app/services/ui_mode_policy.py</code>（新增）</td><td><code>parse_blocked()</code> / <code>effective_blocked(db, user_id)</code> / <code>validate(blocked, role_code)</code> / <code>clamp_mode(value, blocked, role)</code>。<code>effective_blocked</code> 里对管理员直接短路返回空集（系统身份或 admin 业务角色）。所有接口只调这里，避免读写各算一套。</td></tr>
+            <tr class="pick"><td><b>读取</b></td><td><code>app/api/portal/endpoints/portal_prefs.py</code></td><td><code>_resolve_ui_mode()</code> 现在只看角色给默认值；改为<b>先算黑名单再夹逼</b>。GET 返回新增 <code>blocked_ui_modes</code>。</td></tr>
+            <tr class="pick"><td><b>写入</b></td><td>同上 · <code>PUT /ui-mode</code></td><td>目标模式在并集里 → <code>403</code> + 中文 detail（前端直接展示）。</td></tr>
+            <tr><td><b>登录</b></td><td><code>app/api/portal/endpoints/auth.py</code></td><td>登录响应补 <code>ui_mode</code>（夹逼后）与 <code>blocked_ui_modes</code>（已含管理员豁免），供落地页与守卫同步读取。</td></tr>
+            <tr><td><b>管理端</b></td><td><code>app/api/portal/endpoints/roles.py</code></td><td>Create/Update 请求体加 <code>blocked_ui_modes</code>，保存前走 <code>validate()</code>；<code>RoleResponse</code> 返回该字段。改完清受影响用户的权限 / 导航缓存。</td></tr>
+            <tr><td><b>前端状态</b></td><td><code>frontend/src/composables/useUiMode.ts</code></td><td>新增 <code>blockedModes</code> / <code>allowedModes</code> / <code>canSwitch</code>；<code>ensureUiMode()</code> 拉到服务端值后回写 <code>user_info</code>（守卫读的是这份同步快照）。</td></tr>
+            <tr><td><b>路由守卫</b></td><td><code>frontend/src/router/index.ts</code></td><td>在权限判断前插入：禁 pro 且目标路径不在用户模式可达集合 → <code>next('/dashboard/chat')</code>。admin 已提前 <code>next()</code> 返回，天然不受影响。</td></tr>
+            <tr><td><b>可达集合</b></td><td><code>frontend/src/constants/userModeMenu.ts</code></td><td>新增 <code>collectUserModeReachablePaths()</code> = <code>collectUserModePaths()</code> ∪ <code>['/dashboard/personal']</code>（账户菜单入口）。单一来源，菜单改了白名单跟着改。</td></tr>
+            <tr><td><b>前端 UI</b></td><td><code>AccountMenu.vue</code><br><code>PersonalCenter.vue</code><br><code>Login.vue</code></td><td>只剩一项时换只读卡片；偏好页禁用的那张置灰 + 来源；登录按响应里的 <code>ui_mode</code> 落地。</td></tr>
+            <tr><td><b>管理 UI</b></td><td><code>frontend/src/views/Roles.vue</code></td><td>角色弹窗加「界面模式」区块；admin 行两个开关锁死；双禁时禁用保存并提示。</td></tr>
+            <tr><td><b>测试</b></td><td><code>tests/api/</code> · <code>tests/frontend/</code></td><td>后端：并集、双禁 400、admin 置空、PUT 403。前端：契约断言「禁 pro 时 <code>/dashboard/users</code> 被重定向、<code>/dashboard/personal</code> 放行」。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><span>「禁用用户模式」为什么不改 URL</span><span class="muted">避免过度设计</span></div>
+      <div class="card-body">
+        <div class="rules" style="margin-top:0">
+          <div class="rule"><i>1</i><span>用户模式不是一个独立的页面集合，只是同一批页面的简化排布——专业模式能到的页面<b>包含</b>用户模式能到的页面。</span></div>
+          <div class="rule"><i>2</i><span>所以禁 user 只需：不渲染简化侧栏、切换入口只留专业模式、登录直接落工作台。<b>页面集合不变，不需要白名单。</b></span></div>
+          <div class="rule"><i>3</i><span>真正需要拦的是反方向：禁 pro 之后，专业模式独有的页面（用户管理、系统配置、调试台…）不能再靠敲地址进去。</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="todo">
+      <h3>两个实现细节需要你知道</h3>
+      <ol>
+        <li><b>已登录用户的 URL 拦截什么时候生效？</b>守卫读的是登录快照（同步、零请求），所以管理员改完角色后，受影响的用户要<b>刷新或下次登录</b>才拿到新的拦截规则；但「切模式」接口是实时的，他一按就被 403 顶回来。如果要做到秒级，得让守卫异步拉一次 <code>/portal-prefs</code>——代价是每次首屏多一个请求，不建议。</li>
+        <li><b>用户模式里「更多 → 系统概览」(<code>/dashboard</code>) 要放行吗？</b>现在按「菜单里有的就放行」处理，所以有 <code>menu:dashboard</code> 的受限用户仍能进概览。如果你们认为概览属于专业模式专属，把它从白名单里摘掉即可（一条常量的差别）。</li>
+      </ol>
+    </div>
+
+    <p class="foot">原型仅用于确认交互与落点 · 未改动任何实现代码 · 确认后按「迁移 → 服务 → 接口 → 守卫 → 前端」顺序落地</p>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
+
+  /* ---------- 页签 ---------- */
+  $$('.sb-tabs button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      $$('.sb-tabs button').forEach(function (b) { b.classList.toggle('on', b === btn); });
+      $$('.pane').forEach(function (p) { p.classList.toggle('on', p.dataset.pane === btn.dataset.tab); });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  });
+
+  /* ---------- ① 角色维度 ---------- */
+  var roleState = { user: true, pro: true };
+  var roleNote = document.querySelector('[data-role-note]');
+  var csBadge = document.querySelector('[data-badge="cs"]');
+
+  function renderRole() {
+    $$('[data-role-mode]').forEach(function (row) {
+      var key = row.dataset.roleMode;
+      var sw = row.querySelector('.switch');
+      var on = roleState[key];
+      sw.classList.toggle('on', on);
+      sw.setAttribute('aria-checked', String(on));
+      row.classList.toggle('off', !on);
+    });
+
+    var allowUser = roleState.user;
+    var allowPro = roleState.pro;
+
+    if (allowUser && allowPro) {
+      roleNote.className = 'sec-note';
+      roleNote.textContent = '两种模式都可用，成员可以自由切换。';
+      csBadge.className = 'badge ok';
+      csBadge.textContent = '两种模式';
+    } else if (allowUser) {
+      roleNote.className = 'sec-note warn';
+      roleNote.textContent = '已禁用专业模式：18 位成员只能用用户模式，专业页面地址会被重定向回「新建会话」。';
+      csBadge.className = 'badge warn';
+      csBadge.textContent = '仅用户模式';
+    } else {
+      roleNote.className = 'sec-note warn';
+      roleNote.textContent = '已禁用用户模式：18 位成员只能用完整工作台，登录直接落到工作台，页面集合不变。';
+      csBadge.className = 'badge warn';
+      csBadge.textContent = '仅专业模式';
+    }
+  }
+
+  $$('[data-role-mode]').forEach(function (row) {
+    row.addEventListener('click', function () {
+      var key = row.dataset.roleMode;
+      var next = Object.assign({}, roleState);
+      next[key] = !next[key];
+      if (!next.user && !next.pro) {
+        roleNote.className = 'sec-note danger';
+        roleNote.textContent = '必须二选一：两个都关等于把角色下的人锁死，后端会以 400 拒绝这次保存。';
+        return;
+      }
+      roleState = next;
+      renderRole();
+    });
+  });
+
+  document.querySelector('[data-role-save]').addEventListener('click', function () {
+    var msg = (roleState.user && roleState.pro)
+      ? '已保存：一线客服可使用两种模式'
+      : '已保存：一线客服仅可使用' + (roleState.user ? '用户模式' : '专业模式');
+    roleNote.className = 'sec-note';
+    roleNote.textContent = msg + '（18 位成员刷新后生效）';
+  });
+
+  /* ---------- ② 端上效果 ---------- */
+  var MODE = {
+    user: { label: '用户模式', desc: '只留任务与知识库', icon: 'M4 5.5h6v6H4zM14 5.5h6v6h-6zM4 14.5h6v6H4zM14 14.5h6v6h-6z', long: '简化后的侧栏与任务流，适合日常开聊。' },
+    pro: { label: '专业模式', desc: '完整工作台与权限', icon: 'M3 5h18v14H3zM3 9.5h18M9 9.5V19', long: '完整工作台，按权限展示全部入口。' }
+  };
+
+  var scenarios = {
+    cs: {
+      person: { name: '林倩', initial: '倩', id: '@lin.qian · 普通用户' },
+      roleName: '一线客服',
+      blocked: ['pro'],
+      current: 'user',
+      landing: '/dashboard/chat',
+      landingText: '用户模式 → 新建会话'
+    },
+    fin: {
+      person: { name: '吴桐', initial: '桐', id: '@wu.tong · 普通用户' },
+      roleName: '财务经理',
+      blocked: ['user'],
+      current: 'pro',
+      landing: '/dashboard/workbench',
+      landingText: '专业模式 → 我的工作台'
+    },
+    da: {
+      person: { name: '周明', initial: '明', id: '@zhou.ming · 普通用户' },
+      roleName: '数据分析师',
+      blocked: [],
+      current: 'user',
+      landing: '—',
+      landingText: '按上次缓存 / 角色默认'
+    }
+  };
+
+  var ICON = function (key, size) {
+    return '<svg width="' + (size || 13) + '" height="' + (size || 13) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="' + MODE[key].icon + '"/></svg>';
+  };
+
+  function renderScenario(key) {
+    var sc = scenarios[key];
+    $$('.sc').forEach(function (b) { b.classList.toggle('on', b.dataset.sc === key); });
+
+    // 账户菜单
+    document.querySelector('[data-acct-avatar]').textContent = sc.person.initial;
+    document.querySelector('[data-acct-name]').textContent = sc.person.name;
+    document.querySelector('[data-acct-id]').textContent = sc.person.id;
+
+    var grid = document.querySelector('[data-acct-grid]');
+    var note = document.querySelector('[data-acct-note]');
+    var pill = document.querySelector('[data-acct-pill]');
+
+    if (sc.blocked.length === 0) {
+      pill.textContent = '可切换';
+      grid.className = 'acct-grid two';
+      grid.innerHTML = ['user', 'pro'].map(function (k) {
+        var sel = k === sc.current;
+        return '<div class="acct-card ' + (sel ? 'sel on-card' : '') + '">' +
+          '<b>' + ICON(k) + MODE[k].label + '</b>' +
+          '<small>' + MODE[k].desc + '</small>' +
+          (sel ? '<span class="lock" style="color:var(--primary)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span>' : '') +
+        '</div>';
+      }).join('');
+      note.textContent = '两种模式都能用，点哪张切哪张。';
+    } else {
+      var only = sc.current;
+      pill.textContent = '已固定';
+      grid.className = 'acct-grid';
+      grid.innerHTML =
+        '<div class="acct-card off">' +
+          '<b>' + ICON(only) + MODE[only].label + '</b>' +
+          '<small>' + MODE[only].desc + '</small>' +
+          '<span class="lock"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 10V8a6 6 0 1112 0v2"/><rect x="4" y="10" width="16" height="10" rx="2"/></svg></span>' +
+        '</div>';
+      note.textContent = '你的账号由角色「' + sc.roleName + '」固定为「' + MODE[only].label + '」。需要切换请联系管理员。';
+    }
+
+    // 个人中心
+    var list = document.querySelector('[data-pref-list]');
+    list.innerHTML = ['user', 'pro'].map(function (k) {
+      var blocked = sc.blocked.indexOf(k) >= 0;
+      if (blocked) {
+        return '<div class="pref-card off">' +
+          '<div class="pref-top"><b>' + MODE[k].label + '</b><span class="pref-tag lock">管理员已禁用</span></div>' +
+          '<p class="lockreason">来源：角色「' + sc.roleName + '」</p>' +
+        '</div>';
+      }
+      var isCurrent = k === sc.current;
+      return '<div class="pref-card' + (isCurrent ? ' on' : '') + '">' +
+        '<div class="pref-top"><b>' + MODE[k].label + '</b>' + (isCurrent ? '<span class="pref-tag">当前</span>' : '') + '</div>' +
+        '<p>' + MODE[k].long + '</p>' +
+      '</div>';
+    }).join('');
+
+    // 登录落地
+    var flow = document.querySelector('[data-flow]');
+    if (sc.blocked.length === 0) {
+      flow.innerHTML =
+        '<li>登录响应带 <code>ui_mode</code> 与 <code>blocked_ui_modes: []</code></li>' +
+        '<li>按上次选过的模式落地：<code>' + sc.landing + '</code> 之外，仍可自由切换</li>' +
+        '<li>两种模式都可用，没有额外拦截</li>';
+    } else {
+      flow.innerHTML =
+        '<li>登录响应带 <code>ui_mode: "' + sc.current + '"</code> 与 <code>blocked_ui_modes: ["' + sc.blocked[0] + '"]</code></li>' +
+        '<li>直接落到 <code>' + sc.landing + '</code>（' + sc.landingText + '）</li>' +
+        (sc.blocked[0] === 'pro'
+          ? '<li class="bad">旧逻辑：先按本机缓存进 <code>/dashboard</code>，等 /portal-prefs 回来再被踢回 <code>/dashboard/chat</code></li>'
+          : '<li>页面集合不变，只是侧栏固定为完整工作台；切换入口只留专业模式</li>');
+    }
+
+    renderUrl(sc);
+  }
+
+  /* ---------- URL 拦截模拟 ---------- */
+  // 与 collectUserModeReachablePaths() 对齐：菜单路径 + 账户菜单能到的页面
+  var ALLOW = [
+    { p: '/dashboard/chat', src: '新建会话' },
+    { p: '/dashboard/agent-management', src: '专家' },
+    { p: '/dashboard/skills', src: '技能' },
+    { p: '/dashboard/mcp', src: '连接器' },
+    { p: '/dashboard/my-tasks', src: '定时任务' },
+    { p: '/dashboard/knowledge-bases', src: '知识库' },
+    { p: '/dashboard/workspace', src: '工作空间' },
+    { p: '/dashboard/workbench', src: '更多 · 工作台' },
+    { p: '/dashboard/token-stats', src: '更多 · Token' },
+    { p: '/dashboard', src: '更多 · 概览' },
+    { p: '/dashboard/personal', src: '账户菜单', extra: true }
+  ];
+
+  var allowListEl = document.querySelector('[data-allow-list]');
+  allowListEl.innerHTML = ALLOW.map(function (item) {
+    return '<div class="allow-item' + (item.extra ? ' extra' : '') + '">' + item.p + '<span class="src">' + item.src + '</span></div>';
+  }).join('');
+
+  var verdictEl = document.querySelector('[data-verdict]');
+  var viEl = document.querySelector('[data-vi]');
+  var vtTitle = document.querySelector('[data-vt-title]');
+  var vtDesc = document.querySelector('[data-vt-desc]');
+  var urlInput = document.querySelector('[data-url-input]');
+
+  function normalize(path) {
+    var p = String(path || '').trim();
+    if (!p) return '/';
+    if (p.charAt(0) !== '/') p = '/' + p;
+    p = p.split('?')[0].split('#')[0];
+    if (p.length > 1 && p.charAt(p.length - 1) === '/') p = p.slice(0, -1);
+    return p;
+  }
+
+  function matchAllow(path) {
+    for (var i = 0; i < ALLOW.length; i++) {
+      var p = ALLOW[i].p;
+      if (path === p) return ALLOW[i];
+      // /dashboard（概览）只按精确匹配：否则 /dashboard/users 会被当成 /dashboard 的前缀放过去
+      if (p !== '/' && p !== '/dashboard' && path.indexOf(p + '/') === 0) return ALLOW[i];
+    }
+    return null;
+  }
+
+  function renderUrl(sc) {
+    var path = normalize(urlInput.value);
+    var blockedPro = sc.blocked.indexOf('pro') >= 0;
+    var blockedUser = sc.blocked.indexOf('user') >= 0;
+
+    verdictEl.className = 'verdict';
+    if (!blockedPro && !blockedUser) {
+      verdictEl.classList.add('ok');
+      viEl.textContent = '✓';
+      vtTitle.textContent = '放行';
+      vtDesc.innerHTML = '该角色两种模式都可用，<code>' + path + '</code> 不受界面模式限制（仍受 <code>menu:*</code> 权限约束）。';
+      return;
+    }
+
+    if (blockedUser) {
+      verdictEl.classList.add('na');
+      viEl.textContent = 'i';
+      vtTitle.textContent = '不受影响：禁用的是「用户模式」';
+      vtDesc.innerHTML = '页面集合不变，<code>' + path + '</code> 照常访问；只是侧栏固定为完整工作台，不能再切回简化界面。';
+      return;
+    }
+
+    // blockedPro
+    var hit = matchAllow(path);
+    if (hit) {
+      verdictEl.classList.add('ok');
+      viEl.textContent = '✓';
+      vtTitle.textContent = '放行';
+      vtDesc.innerHTML = '<code>' + path + '</code> 在用户模式可达集合内（来源：' + hit.src + '）。' +
+        (hit.extra ? '它是账户菜单入口，不在侧栏菜单里——漏了，点个人中心就会被踢回聊天页。' : '');
+      return;
+    }
+
+    verdictEl.classList.add('redirect');
+    viEl.textContent = '↩';
+    vtTitle.textContent = '重定向 → /dashboard/chat';
+    vtDesc.innerHTML = '<code>' + path + '</code> 只属于专业模式，该角色已禁用专业模式。守卫在权限判断前就把它送回「新建会话」，不会先渲染再消失。';
+  }
+
+  $$('.quick button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      urlInput.value = b.dataset.path;
+      renderUrl(scenarios[document.querySelector('.sc.on').dataset.sc]);
+    });
+  });
+  document.querySelector('[data-url-go]').addEventListener('click', function () {
+    renderUrl(scenarios[document.querySelector('.sc.on').dataset.sc]);
+  });
+  urlInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      renderUrl(scenarios[document.querySelector('.sc.on').dataset.sc]);
+    }
+  });
+  urlInput.addEventListener('input', function () {
+    renderUrl(scenarios[document.querySelector('.sc.on').dataset.sc]);
+  });
+
+  $$('.sc').forEach(function (btn) {
+    btn.addEventListener('click', function () { renderScenario(btn.dataset.sc); });
+  });
+
+  /* ---------- 初始化 ---------- */
+  renderRole();
+  renderScenario('cs');
+})();
+</script>
+</body>
+</html>

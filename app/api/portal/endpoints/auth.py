@@ -342,6 +342,28 @@ async def register(
 
     return {"status": "success", "message": REGISTER_SUCCESS_MESSAGE}
 
+async def _ui_mode_payload(db: AsyncSession, user_id: int) -> dict:
+    """登录 / me 响应里的界面模式字段。
+
+    路由守卫与登录落地页读的是 localStorage 里的登录快照（同步、零请求），
+    所以「被禁的模式 / 还能用的模式 / 是谁禁的」必须跟登录结果一起下发——
+    否则被禁用专业模式的账号会先按本机缓存闪一次专业页面，再被纠正回来。
+    """
+    from app.services.ui_mode_policy import UI_MODES, UiModePolicy, effective_policy
+
+    try:
+        policy = await effective_policy(db, int(user_id))
+    except Exception as e:  # noqa: BLE001 - 登录不能因为策略解析失败而失败
+        logger.warning("Failed to resolve ui mode policy for user %s: %s", user_id, e)
+        policy = UiModePolicy()
+
+    return {
+        "blocked_ui_modes": [mode for mode in UI_MODES if mode in policy.blocked],
+        "ui_mode_allowed": [mode for mode in UI_MODES if mode not in policy.blocked],
+        "ui_mode_blocked_by": policy.blocked_by,
+    }
+
+
 @router.post("/sso/login", summary="SSO 用户登录")
 async def sso_login(
     http_request: Request,
@@ -395,7 +417,8 @@ async def sso_login(
             "status": "success",
             "data": {
                 **user,
-                "permissions": perms_response.permissions.model_dump()
+                "permissions": perms_response.permissions.model_dump(),
+                **await _ui_mode_payload(db, user_id),
             }
         }
     elif result["status"] == "error_not_found":
@@ -523,7 +546,8 @@ async def login(
         "status": "success",
         "data": {
             **user,
-            "permissions": perms_response.permissions.model_dump()
+            "permissions": perms_response.permissions.model_dump(),
+            **await _ui_mode_payload(db, user_id_int),
         }
     }
 
@@ -573,7 +597,8 @@ async def two_factor_login(
         "status": "success",
         "data": {
             **user,
-            "permissions": perms_response.permissions.model_dump()
+            "permissions": perms_response.permissions.model_dump(),
+            **await _ui_mode_payload(db, user_id),
         }
     }
 
@@ -893,6 +918,7 @@ async def get_current_user_info(
                 "is_expired": is_expired,
             },
             "permissions": perms_response.permissions.model_dump(),
+            **await _ui_mode_payload(db, user_id),
             "watermark": {
                 "enabled": watermark_enabled,
                 "style": watermark_style,

@@ -82,11 +82,13 @@ def test_menu_items_point_at_existing_personal_tabs(menu: str) -> None:
 
 
 def test_mode_switch_is_a_first_class_action(menu: str) -> None:
-    """模式切换放在第一屏，用两枚胶囊表达当前态。"""
+    """模式切换放在第一屏，用两枚胶囊表达当前态；没权限的那枚置灰而不是消失。"""
     assert 'role="menuitemradio"' in menu
     assert ':aria-checked="mode === option.value"' in menu
     assert "emit('switch-mode', option.value)" in menu
-    assert "一步切换" in menu
+    # 两枚胶囊都渲染出来，被角色禁用的那枚是真 disabled
+    assert 'v-for="option in modeOptions"' in menu
+    assert ':disabled="!isModeAllowed(option.value)"' in menu
 
 
 def test_mode_switch_lands_on_mode_home(dashboard: str) -> None:

@@ -25,6 +25,12 @@ from app.core.dependencies import require_api_key
 from app.core.orm import get_db_session
 from app.core.redis import get_redis
 from app.services.ai.agent_manager import AgentManagerService
+from app.services.ui_mode_policy import (
+    UI_MODES,
+    UiModePolicy,
+    clamp_mode,
+    effective_policy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +41,8 @@ MAX_PINNED_CONVERSATIONS = 20  # 最多允许置顶的会话数，防止置顶�
 MAX_CARD_ORDER = 200   # 最多记录排序的卡片数
 MAX_QUESTION_CLICKS = 500  # 最多记录的问题点击 key 数
 GLOBAL_AGENT_AVATAR_KEY = "agent:branding:default_agent_avatar"
+# 给用户看的模式名称：403 的 detail 直接展示在前端 toast 里
+UI_MODE_LABELS = {"user": "用户模式", "pro": "专业模式"}
 
 
 def _redis_key(user_id: int) -> str:
@@ -153,15 +161,39 @@ class LeftSidebarPreferenceUpdate(BaseModel):
     collapsed: bool
 
 
-def _resolve_ui_mode(value: Any, role: Any) -> str:
-    """界面模式兜底：用户没选过时按角色给默认值。
+def _resolve_ui_mode(value: Any, role: Any, blocked: Any = None) -> str:
+    """界面模式兜底 + 夹逼：用户没选过时按角色给默认值。
 
     管理员默认专业模式（要用完整菜单做配置），其他账号默认用户模式。
     只认 user / pro 两个值，脏数据一律回落默认，避免前端拿到未知值。
+    ``blocked`` 是角色级黑名单：偏好被禁时自动落到剩下的那一种。
     """
-    if value in ("user", "pro"):
-        return str(value)
-    return "pro" if str(role or "").strip().lower() == "admin" else "user"
+    return clamp_mode(value, blocked or (), role)
+
+
+async def _load_ui_mode_policy(
+    db: Optional[AsyncSession], user_info: Dict[str, Any]
+) -> UiModePolicy:
+    """解析当前账号生效的界面模式策略。
+
+    读失败一律降级为「都不禁用」：黑名单读不到时把人锁成单模式，比放宽更糟。
+    """
+    if db is None:
+        return UiModePolicy()
+    try:
+        return await effective_policy(db, int(user_info["user_id"]))
+    except Exception as e:  # noqa: BLE001 - 偏好接口不能因为策略解析失败而 5xx
+        logger.warning("Failed to resolve ui mode policy: %s", e)
+        return UiModePolicy()
+
+
+def _ui_mode_fields(policy: UiModePolicy) -> Dict[str, Any]:
+    """一起下发给前端：被禁的模式、还可用的模式、是谁禁的。"""
+    return {
+        "blocked_ui_modes": [mode for mode in UI_MODES if mode in policy.blocked],
+        "ui_mode_allowed": [mode for mode in UI_MODES if mode not in policy.blocked],
+        "ui_mode_blocked_by": policy.blocked_by,
+    }
 
 
 def _parse_portal_prefs(raw: Any) -> PortalPrefs:
@@ -218,11 +250,18 @@ def _normalize_pinned_conversations(
 )
 async def get_portal_prefs(
     user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
 ):
+    # 角色级黑名单先算出来：下面三条返回路径（Redis 不可用 / 读失败 / 正常）
+    # 都必须带上，否则前端会按「两种都能用」渲染，用户点进去才发现被禁。
+    policy = await _load_ui_mode_policy(db, user_info)
+    mode_fields = _ui_mode_fields(policy)
+
     redis = await get_redis()
     if not redis:
         fallback = PortalPrefs().model_dump()
-        fallback["ui_mode"] = _resolve_ui_mode("", user_info.get("role"))
+        fallback["ui_mode"] = _resolve_ui_mode("", user_info.get("role"), policy.blocked)
+        fallback.update(mode_fields)
         return {"code": 0, "data": fallback}
 
     user_id = int(user_info["user_id"])
@@ -232,7 +271,8 @@ async def get_portal_prefs(
     except Exception as e:
         logger.error("Failed to get portal prefs from Redis: %s", e)
         fallback = PortalPrefs().model_dump()
-        fallback["ui_mode"] = _resolve_ui_mode("", user_info.get("role"))
+        fallback["ui_mode"] = _resolve_ui_mode("", user_info.get("role"), policy.blocked)
+        fallback.update(mode_fields)
         return {"code": 0, "data": fallback}
 
     prefs = PortalPrefs()
@@ -244,9 +284,10 @@ async def get_portal_prefs(
             logger.warning("Failed to parse portal prefs JSON: %s", e)
 
     data = prefs.model_dump()
-    # 用户没选过界面模式时按角色给默认值：前端拿到的一定是 user / pro，
-    # 不需要再自己判断角色，避免多端默认值判断不一致。
-    data["ui_mode"] = _resolve_ui_mode(prefs.ui_mode, user_info.get("role"))
+    # 用户没选过界面模式时按角色给默认值，再按角色黑名单夹逼：
+    # 前端拿到的一定是「当前确实可用的那一模式」，不需要再自己判断角色与黑名单。
+    data["ui_mode"] = _resolve_ui_mode(prefs.ui_mode, user_info.get("role"), policy.blocked)
+    data.update(mode_fields)
     try:
         # 全局键是 AI 头像的唯一权威源：命中则以它为准，未配置则强制置空为默认形象，
         # 杜绝用户个人偏好里的历史头像（或旧页面写回的陈旧副本）倒灌。
@@ -701,12 +742,27 @@ async def update_routing_prefs(
 async def update_ui_mode(
     body: UiModeUpdate,
     user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """只改 ui_mode，其余偏好原样保留。
 
-    不做权限校验：两种模式都只是侧栏的两种排布，能看到的页面仍由各自的
-    menu:* 权限决定，切换本身不会放大权限。
+    这里必须做模式黑名单校验（这是本接口唯一需要「权限」的地方）：
+    只看 menu:* 权限的话，被角色禁用专业模式的账号直接 PUT 一次就能绕过去。
+    但校验的也只是「形态」——页面能看什么仍由各自的 menu:* 决定。
     """
+    policy = await _load_ui_mode_policy(db, user_info)
+    if body.ui_mode in policy.blocked:
+        label = UI_MODE_LABELS.get(body.ui_mode, body.ui_mode)
+        source = (
+            f"角色「{policy.blocked_by[0]}」"
+            if policy.blocked_by
+            else "管理员配置"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"当前账号已被{source}禁用{label}，无法切换到该模式",
+        )
+
     redis = await get_redis()
     if not redis:
         raise HTTPException(

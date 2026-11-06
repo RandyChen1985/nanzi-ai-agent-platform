@@ -253,3 +253,53 @@ export function collectUserModePaths(menu: readonly UserModeMenuItem[] = USER_MO
   }
   return paths
 }
+
+
+/**
+ * 账户菜单 / 全站导航里能到、但**不在侧栏菜单**里的页面。
+ *
+ * 用户模式侧栏没有「个人中心」入口，但账号菜单里有。禁用专业模式后要靠下面
+ * 这份清单判断可达性——漏了它，用户点头像进个人中心会被守卫踢回聊天页。
+ */
+export const USER_MODE_EXTRA_REACHABLE_PATHS: readonly string[] = ["/dashboard/personal"]
+
+/**
+ * 禁用专业模式时仍可到达的路径 = 用户模式菜单 ∪ 账户菜单入口。
+ *
+ * 单一来源：菜单改了这里跟着变，不用维护第二份白名单。
+ */
+export function collectUserModeReachablePaths(
+  menu: readonly UserModeMenuItem[] = USER_MODE_MENU,
+): string[] {
+  const paths = collectUserModePaths(menu)
+  for (const path of USER_MODE_EXTRA_REACHABLE_PATHS) {
+    if (!paths.includes(path)) paths.push(path)
+  }
+  return paths
+}
+
+/** 去掉查询串 / hash / 末尾斜杠，便于与白名单比较 */
+function normalizeReachablePath(path: string): string {
+  const [withoutQuery = ""] = String(path || "").split("?")
+  const [target = ""] = withoutQuery.split("#")
+  if (!target) return "/"
+  const trimmed = target.length > 1 ? target.replace(/\/+$/, "") : target
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`
+}
+
+/**
+ * 某路径在「禁用专业模式」时是否仍可访问。
+ *
+ * `/dashboard`（系统概览）**只做精确匹配**：它本身是用户模式「更多」里的入口，
+ * 但如果按前缀匹配，`/dashboard/users`、`/dashboard/system` 这些专业模式页面
+ * 会被当成它的子路径一起放行——等于白禁。
+ */
+export function isUserModeReachable(path: string): boolean {
+  const target = normalizeReachablePath(path)
+  for (const allowed of collectUserModeReachablePaths()) {
+    const base = normalizeReachablePath(allowed)
+    if (target === base) return true
+    if (base !== "/dashboard" && target.startsWith(`${base}/`)) return true
+  }
+  return false
+}
