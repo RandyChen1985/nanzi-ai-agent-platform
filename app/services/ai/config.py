@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 # 线性膨胀的部分；表术语列表仍保留，细节交给 get_dataset_schema 按需拉取。
 _DATASET_MENU_DETAIL_BUDGET = 12000
 
+# 目录提示词版本。目录在 Redis 里缓存 90 天，改动 header / 字段说明这类**文案**后，
+# 旧缓存会让新文案整整 90 天不生效（改代码、重启都看不出来）。改文案时递增这里，
+# 缓存 key 随之变化，下一次请求重新生成。
+_DATASET_MENU_CACHE_VERSION = "v2"
+
 
 @dataclass(frozen=True)
 class RuntimeModelInfo:
@@ -330,9 +335,10 @@ class AgentConfigProvider:
     def _dataset_menu_header(count: int, *, include_table_details: bool = True) -> str:
         """目录开头的引导语。
 
-        模型需要两件它自己推不出来的事：这是「按当前账号权限过滤后」的完整范围，
-        以及越界（列出未出现的数据集/表）是违规的。缺了这两句，模型容易把目录当成
-        「平台支持的全部数据」或凭空猜测未授权的表名。
+        模型需要三件它自己推不出来的事：这是「按当前账号权限过滤后」的完整范围、
+        越界（列出未出现的数据集/表）是违规的，以及**表名出现不等于这张表可查**。
+        缺了第三句，目录会把数据集下的全部表平铺出来（``search_datasets`` 只按
+        数据集级授权过滤），模型就照着全部表写 SQL，直到执行时被表级门禁拦下。
 
         降级时字段说明要跟着变，否则会告诉模型一个正文里并不存在的字段。
         """
@@ -348,7 +354,12 @@ class AgentConfigProvider:
         detail_hint = "" if include_table_details else "表结构细节请调用 get_dataset_schema 获取。\n"
         return (
             f"【当前用户有权访问的数据集】共 {count} 个，已按当前账号的数据权限过滤，是本轮可查询的完整范围。\n"
-            "只能使用这里列出的数据集与表：未列出的数据集一律视为无权访问，不要假设其存在，也不要编造表名或指标名。\n"
+            "只能使用这里列出的数据集：未列出的数据集一律视为无权访问，不要假设其存在，也不要编造表名或指标名。\n"
+            "注意 Includes Tables / Table Details 列出的是数据集内的全部表，不代表每一张都对当前账号开放"
+            "——表级、字段级授权收窄不体现在本目录里。用户问「我能查哪些表/字段」「我有没有某个数据集的权限」，"
+            "或准备查询但不确定范围时，要调用 list_accessible_datasets（可带 keyword 或 dataset_id）查看 permission 摘要，"
+            "并如实转述 tables.visible/total、columns、row、expires_at 与 note；"
+            "不能因为表名出现在目录里就承诺可以查询。\n"
             f"{fields}{detail_hint}"
         )
 
@@ -517,7 +528,8 @@ class AgentConfigProvider:
         redis = await get_redis()
         
         # 1. Try Cache (按用户隔离，admin 共享一个 key)
-        cache_key = f"agent:dataset_menu:{'admin' if is_admin else user_id or 'anon'}"
+        scope_key = 'admin' if is_admin else user_id or 'anon'
+        cache_key = f"agent:dataset_menu:{_DATASET_MENU_CACHE_VERSION}:{scope_key}"
         if not force_refresh:
             try:
                 if redis:

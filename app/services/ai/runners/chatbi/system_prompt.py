@@ -32,8 +32,11 @@ async def _load_dataset_menu(runner: Any, *, has_placeholder: bool) -> str:
         from app.core.context import get_current_agent_context
         from app.services.ai.runners.chatbi.schema_prefetch import (
             _collect_session_scope_tokens,
+            _dataset_names_in_menu,
             apply_session_resource_scope,
+            build_dataset_permission_block,
             expand_scope_tokens_with_names,
+            user_is_admin,
         )
 
         ctx = get_current_agent_context()
@@ -48,14 +51,22 @@ async def _load_dataset_menu(runner: Any, *, has_placeholder: bool) -> str:
         if bound_ids and not has_placeholder:
             return ""
         user_info = getattr(runner, "user_info", None) or {}
+        is_admin = user_is_admin(user_info)
         raw_menu = await AgentConfigProvider.get_dataset_menu(
             user_id=user_info.get("user_id"),
-            is_admin=user_info.get("role") == "admin",
+            is_admin=is_admin,
         )
         scope_tokens = _collect_session_scope_tokens(getattr(runner, "execution_options", None))
         # 范围里可能是 id，目录里是 name：不先解析过来，裁剪会静默失效
         scope_tokens = await expand_scope_tokens_with_names(scope_tokens)
-        return apply_session_resource_scope(raw_menu, tokens=scope_tokens)
+        menu = apply_session_resource_scope(raw_menu, tokens=scope_tokens)
+        # 权限段在裁剪之后追加：被裁掉的数据集不该继续出现在权限清单里
+        permission_block = await build_dataset_permission_block(
+            user_info.get("user_id"),
+            is_admin,
+            visible_names=_dataset_names_in_menu(menu),
+        )
+        return f"{menu}{permission_block}" if permission_block else menu
     except Exception as exc:  # noqa: BLE001 - 增强信息失败一律降级，不影响主流程
         # 目录取不到不该阻断本轮，但也不能完全静默：用固定前缀方便告警规则匹配
         logger.warning("[dataset_menu] 加载失败，本轮按无目录处理：%s", exc)

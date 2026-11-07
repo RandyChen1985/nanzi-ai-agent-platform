@@ -186,6 +186,117 @@ def apply_session_resource_scope(
 _apply_session_resource_scope = apply_session_resource_scope
 
 
+def user_is_admin(user_info: Any) -> bool:
+    """统一的「是否管理员」判定。
+
+    同一个 ``user_info`` 在两处被读成两种结果：目录链路看 ``role == "admin"``，
+    澄清链路看 ``is_admin`` 字段。字段缺失时会出现「目录按管理员生成、权限段按普通
+    用户生成」的分裂，所以收敛成一个判定。
+    """
+    info = user_info if isinstance(user_info, dict) else {}
+    if bool(info.get("is_admin")):
+        return True
+    return str(info.get("role") or "").strip().lower() == "admin"
+
+
+def _dataset_names_in_menu(menu_text: str) -> set[str]:
+    """目录里实际出现的数据集标识（小写），用于过滤权限段。"""
+    return {
+        match.group(1).strip().casefold()
+        for match in re.finditer(r"^- Dataset:\s*([^\s\[]+)", str(menu_text or ""), flags=re.MULTILINE)
+    }
+
+
+_ROW_STATE_LABELS = {
+    "custom": "行级过滤（自定义条件）",
+    "filtered": "行级过滤（按角色策略）",
+    "deny_all": "行级条件导致实际查不到数据",
+}
+
+
+def _format_permission_row(entry: dict[str, Any], permission: dict[str, Any]) -> str:
+    label = str(entry.get("display_name") or entry.get("name") or entry.get("id") or "?")
+    parts: list[str] = []
+
+    tables = permission.get("tables") or {}
+    if tables.get("mode") == "list":
+        names = [str(name) for name in (tables.get("names") or []) if str(name).strip()]
+        shown = "、".join(names) if names else "详见权限页"
+        parts.append(f"只能访问 {tables.get('visible', 0)}/{tables.get('total', 0)} 张表：{shown}")
+
+    columns = permission.get("columns") or {}
+    column_details = [
+        f"{item.get('table') or item.get('table_id')}: {'/'.join(item.get('names') or [])}"
+        for item in (columns.get("tables") or [])
+        if item.get("names")
+    ]
+    if column_details:
+        parts.append("字段白名单 " + "；".join(column_details))
+    elif columns.get("restricted_tables"):
+        parts.append(f"{columns.get('restricted_tables')} 张表的字段受限（列名不公开）")
+
+    row_state = str(permission.get("row") or "")
+    if row_state in _ROW_STATE_LABELS:
+        parts.append(_ROW_STATE_LABELS[row_state])
+
+    if permission.get("expires_at"):
+        parts.append(f"{permission['expires_at']} 到期")
+
+    return f"- {label}：{'；'.join(parts)}" if parts else f"- {label}：无收窄"
+
+
+async def build_dataset_permission_block(
+    user_id: Any,
+    is_admin: bool,
+    *,
+    visible_names: set[str] | None = None,
+    max_items: int = 8,
+) -> str:
+    """目录尾部的**实时**权限段：只列存在收窄的数据集。
+
+    为什么不写进目录本体、跟着 90 天缓存一起存：权限比数据集变更频繁得多，写进缓存
+    等于把过期权限固化三个月——模型会照着旧范围承诺查询。所以目录仍走缓存，这一段
+    每次请求现算（与 ``list_accessible_dataset_entries`` / 目录工具同一口径）。
+
+    ``visible_names`` 用于对齐「本轮挂载裁剪后」的目录：被裁掉的数据集不该在权限段里
+    继续出现，否则模型会以为它还可用。
+    """
+    if is_admin or not user_id:
+        return ""
+    try:
+        from app.core.orm import AsyncSessionLocal
+        from app.services.metadata_service import MetadataService
+
+        async with AsyncSessionLocal() as session:
+            entries = await MetadataService.list_accessible_dataset_entries(
+                session,
+                user_id=int(user_id),
+                is_admin=False,
+                status=1,
+            )
+    except Exception as exc:  # noqa: BLE001 - 权限段是增强信息，失败不能阻断目录
+        logger.warning("[dataset_menu] 生成实时权限范围失败: %s", exc)
+        return ""
+
+    rows: list[str] = []
+    for entry in entries or ():
+        permission = entry.get("permission") or {}
+        if not permission:
+            continue
+        name = str(entry.get("name") or "").strip().casefold()
+        if visible_names is not None and name not in visible_names:
+            continue
+        rows.append(_format_permission_row(entry, permission))
+    if not rows:
+        return ""
+
+    lines = ["", "本轮数据集权限范围（实时）：", *rows[:max_items]]
+    if len(rows) > max_items:
+        lines.append(f"（另有 {len(rows) - max_items} 个数据集有收窄，未列出。）")
+    lines.append("（未列出的数据集没有授权收窄，可访问其中全部表与字段。）")
+    return "\n".join(lines) + "\n"
+
+
 def compact_dataset_menu_in_system_content(system_content: str) -> str:
     """预取 Schema 成功后，剥离 system_content 中 dataset_menu 的 Table Details 明细行以减少 ReAct 循环 Token。"""
     if not system_content or "  Table Details:\n" not in system_content:

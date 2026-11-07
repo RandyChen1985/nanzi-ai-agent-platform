@@ -394,3 +394,142 @@ async def test_expand_scope_tokens_maps_dataset_ids_to_names(monkeypatch):
     assert "54" in expanded
     # 没有数字 id 时不查库，原样返回
     assert await expand_scope_tokens_with_names({"sales"}) == {"sales"}
+
+
+# --------------------------------------------------------------------------
+# 目录尾部的实时权限段（治本：让目录自己说明收窄，而不是只靠模型去查工具）
+# --------------------------------------------------------------------------
+
+
+def _patch_entries(monkeypatch, entries):
+    once = {"calls": 0}
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    async def _fake_entries(_session, **_kwargs):
+        once["calls"] += 1
+        return entries
+
+    monkeypatch.setattr("app.core.orm.AsyncSessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(
+        "app.services.metadata_service.MetadataService.list_accessible_dataset_entries",
+        _fake_entries,
+    )
+    return once
+
+
+@pytest.mark.asyncio
+async def test_permission_block_lists_narrowed_dataset(monkeypatch):
+    """有表级/字段级收窄的数据集要直接写进目录尾巴，模型不必再调工具才知道。"""
+    from app.services.ai.runners.chatbi.schema_prefetch import build_dataset_permission_block
+
+    _patch_entries(
+        monkeypatch,
+        [
+            {
+                "id": 54,
+                "name": "znt2_test_ds",
+                "display_name": "智能体2",
+                "permission": {
+                    "tables": {"mode": "list", "visible": 1, "total": 38, "names": ["ai_agent_users"]},
+                    "columns": {
+                        "restricted_tables": 1,
+                        "whitelisted_tables": 1,
+                        "tables": [
+                            {
+                                "table_id": 112,
+                                "table": "ai_agent_users",
+                                "mode": "include",
+                                "names": ["id", "real_name"],
+                            }
+                        ],
+                    },
+                },
+            },
+            {"id": 53, "name": "plain_ds", "display_name": "普通集", "permission": None},
+        ],
+    )
+
+    block = await build_dataset_permission_block(178, False)
+
+    assert "本轮数据集权限范围" in block
+    assert "只能访问 1/38 张表" in block
+    assert "ai_agent_users" in block
+    assert "字段白名单 ai_agent_users: id/real_name" in block
+    # 没有收窄的数据集不占行，用一句话整体说明
+    assert "普通集" not in block
+    assert "没有授权收窄" in block
+
+
+@pytest.mark.asyncio
+async def test_permission_block_skips_admin_without_querying(monkeypatch):
+    """管理员没有授权收窄的概念，连库都不该查。"""
+    from app.services.ai.runners.chatbi.schema_prefetch import build_dataset_permission_block
+
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("管理员路径不应查库")
+
+    monkeypatch.setattr("app.core.orm.AsyncSessionLocal", _explode)
+
+    assert await build_dataset_permission_block(1, True) == ""
+
+
+@pytest.mark.asyncio
+async def test_permission_block_respects_visible_names(monkeypatch):
+    """被挂载裁剪掉的目录不该在权限段里继续出现。"""
+    from app.services.ai.runners.chatbi.schema_prefetch import build_dataset_permission_block
+
+    _patch_entries(
+        monkeypatch,
+        [
+            {
+                "id": 54,
+                "name": "cut_ds",
+                "display_name": "被裁掉的",
+                "permission": {"tables": {"mode": "list", "visible": 1, "total": 5, "names": ["t"]}},
+            }
+        ],
+    )
+
+    assert await build_dataset_permission_block(178, False, visible_names={"other_ds"}) == ""
+    assert "被裁掉的" in await build_dataset_permission_block(178, False, visible_names={"cut_ds"})
+
+
+@pytest.mark.asyncio
+async def test_permission_block_surfaces_deny_all_and_expiry(monkeypatch):
+    """行级 deny_all 与到期时间必须直接写出来，模型否则会先查一轮再解释。"""
+    from app.services.ai.runners.chatbi.schema_prefetch import build_dataset_permission_block
+
+    _patch_entries(
+        monkeypatch,
+        [
+            {
+                "id": 7,
+                "name": "locked_ds",
+                "display_name": "受限集",
+                "permission": {"row": "deny_all", "expires_at": "2026-12-31 23:59"},
+            }
+        ],
+    )
+
+    block = await build_dataset_permission_block(178, False)
+
+    assert "实际查不到数据" in block
+    assert "2026-12-31 23:59 到期" in block
+
+
+def test_user_is_admin_accepts_both_field_shapes():
+    """目录链路看 role、澄清链路看 is_admin，任一为真都算管理员。"""
+    from app.services.ai.runners.chatbi.schema_prefetch import user_is_admin
+
+    assert user_is_admin({"role": "admin"}) is True
+    assert user_is_admin({"is_admin": True}) is True
+    assert user_is_admin({"role": "ADMIN"}) is True
+    assert user_is_admin({"role": "user"}) is False
+    assert user_is_admin({}) is False
+    assert user_is_admin(None) is False
