@@ -139,10 +139,12 @@
               <button
                 v-for="preset in EXPIRY_PRESETS"
                 :key="preset.value"
+                type="button"
                 class="h-[30px] rounded-lg border px-2.5 text-[12px] font-semibold"
                 :class="isPresetActive(preset.value)
                   ? 'border-primary bg-primary text-white'
                   : 'border-gray-200 text-gray-700 hover:border-gray-300'"
+                :aria-pressed="isPresetActive(preset.value)"
                 @click="selectPreset(preset.value)"
               >
                 {{ preset.label }}
@@ -230,6 +232,7 @@ import {
   EXPIRY_PRESETS,
   describeExpiry,
   generateShareSecret,
+  isExpiryPresetActive,
   resolveExpiry,
   type ExpiryChoice,
   type ExpiryPresetValue,
@@ -301,7 +304,7 @@ const expiryHint = computed(() => {
 })
 
 function isPresetActive(value: ExpiryPresetValue): boolean {
-  return expiryMode.value === 'preset' && presetValue.value === value
+  return isExpiryPresetActive(expiryChoice.value, value)
 }
 
 function selectPreset(value: ExpiryPresetValue): void {
@@ -391,12 +394,9 @@ async function submit(): Promise<void> {
     return
   }
 
-  const expiry: ShareExpiryPayload =
-    expiryMode.value === 'preset'
-      ? { mode: 'preset', preset: presetValue.value }
-      : expiryMode.value === 'permanent'
-        ? { mode: 'permanent' }
-        : { mode: 'custom', value: Number(customValue.value), unit: customUnit.value }
+  // 提交的 expiry 与弹窗展示的 expiry 必须是同一份数据，否则会出现
+  // 「底部写永久有效、实际创建了 7 天」这种只有用户过几天才发现的偏差。
+  const expiry: ShareExpiryPayload = { ...expiryChoice.value }
 
   submitting.value = true
   errorMessage.value = ''

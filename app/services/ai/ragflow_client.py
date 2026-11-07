@@ -1,4 +1,5 @@
 import asyncio
+from collections import OrderedDict
 import json
 import logging
 import time
@@ -36,9 +37,45 @@ _datasets_cache: Dict[str, "tuple[float, List[Dict[str, Any]]]"] = {}
 _datasets_cache_locks: Dict[str, asyncio.Lock] = {}
 
 
+# 文档列表同理：知识库工作区要一次拿全量做内存过滤/排序/分页，不可能每翻一页
+# 就重打一遍 RAGFlow（250 个文档 = 3 个请求，翻页时会被放大成几十次）。
+# 键是 ``base_url|dataset_id``：不同知识库、不同引擎地址互不干扰。
+DOCUMENT_LIST_TTL = 60.0
+#: 缓存条目上限。每个库一份全量文档列表（大库几千条），只靠 TTL 惰性过期时，
+#: 一个小时内被翻过的库会一直占着内存。超限按 LRU 挤掉最久没访问的。
+DOCUMENTS_CACHE_MAX_ENTRIES = 200
+_documents_cache: "OrderedDict[str, tuple[float, List[Dict[str, Any]]]]" = OrderedDict()
+_documents_cache_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _remember_documents(key: str, items: List[Dict[str, Any]]) -> None:
+    """写入缓存并维持 LRU 上限。
+
+    ``OrderedDict`` 保证「最近读过的排到最后」，超限时从头部淘汰。
+    用普通 dict 的话 popitem 淘汰的是最早**写入**的，热门库反而可能被挤掉。
+    """
+    _documents_cache[key] = (time.monotonic(), [dict(item) for item in items])
+    _documents_cache.move_to_end(key)
+    while len(_documents_cache) > DOCUMENTS_CACHE_MAX_ENTRIES:
+        _documents_cache.popitem(last=False)
+
+
 def clear_dataset_list_cache() -> None:
     """建库 / 删库 / 同步后调用：否则用户会看到 60 秒前的旧列表。"""
     _datasets_cache.clear()
+
+
+def clear_document_list_cache(dataset_id: Optional[str] = None) -> None:
+    """上传 / 删除 / 改名 / 触发解析后调用，避免列表在 60s 内看不到变化。
+
+    不传 ``dataset_id`` 时清空全部（跨库移动文档之类的场景）。
+    """
+    if not dataset_id:
+        _documents_cache.clear()
+        return
+    suffix = f"|{dataset_id}"
+    for key in [k for k in _documents_cache if k.endswith(suffix)]:
+        _documents_cache.pop(key, None)
 
 
 def _wrap_transport_error(
@@ -202,6 +239,21 @@ class RagFlowClient:
         if isinstance(data, dict):
             return data.get("docs") or data.get("documents") or data.get("data") or []
         return []
+
+    @classmethod
+    def _extract_documents_page(
+        cls, data: Any
+    ) -> "tuple[List[Dict[str, Any]], Optional[int]]":
+        """文档列表的「当页 + 总数」：RAGFlow 把 total 放在 data 里，各版本层级不同。"""
+        docs = cls._extract_documents(data)
+        total: Optional[int] = None
+        if isinstance(data, dict):
+            raw_total = data.get("total")
+            try:
+                total = int(raw_total) if raw_total is not None else None
+            except (TypeError, ValueError):
+                total = None
+        return (docs if isinstance(docs, list) else []), total
 
     @classmethod
     def _normalize_document(cls, document: Any) -> Any:
@@ -651,6 +703,161 @@ class RagFlowClient:
                 for d in documents[slice_start:slice_end]
             ]
 
+    async def list_documents_page(
+        self,
+        dataset_id: str,
+        page: int = 1,
+        page_size: int = 100,
+        name: Optional[str] = None,
+    ) -> "tuple[List[Dict[str, Any]], Optional[int]]":
+        """和 ``list_documents`` 一样取一页，但额外把 RAGFlow 的 total 带回来。
+
+        老接口只回 ``List[dict]`` 且调用方众多（system / resource_square /
+        metadata_rag / knowledge_health），改返回类型等于全线改动；这里单开一个
+        方法给需要「真实总数」的分页调用方用。
+
+        ``page_size > 100`` 时沿用 ``list_documents`` 的多页拼接逻辑（RAGFlow 单页
+        上限 100），total 取**第一次响应**里的值——拼接过程中不会再拿一次 total，
+        免得翻页途中有人上传导致分子分母对不上。
+        """
+        await self._ensure_config()
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents"
+
+        if page_size <= 100:
+            params: Dict[str, Any] = {"page": page, "page_size": page_size}
+            if name:
+                params["name"] = name
+
+            async with httpx.AsyncClient(timeout=DEFAULT_METADATA_TIMEOUT) as client:
+                resp = await client.get(url, headers=self._get_headers(), params=params)
+                data = await self._handle_response(resp, "List Documents")
+            docs, total = self._extract_documents_page(data)
+            return [self._normalize_document(d) for d in docs], total
+
+        documents: List[Dict[str, Any]] = []
+        start_offset = (page - 1) * page_size
+        end_offset = start_offset + page_size
+
+        ragflow_page_size = 100
+        start_page = (start_offset // ragflow_page_size) + 1
+        end_page = ((end_offset - 1) // ragflow_page_size) + 1
+        total: Optional[int] = None
+
+        async with httpx.AsyncClient(timeout=DEFAULT_METADATA_TIMEOUT) as client:
+            for p in range(start_page, end_page + 1):
+                params = {"page": p, "page_size": ragflow_page_size}
+                if name:
+                    params["name"] = name
+                resp = await client.get(url, headers=self._get_headers(), params=params)
+                data = await self._handle_response(resp, f"List Documents Page {p}")
+                page_data, page_total = self._extract_documents_page(data)
+                if p == start_page:
+                    total = page_total
+
+                if not page_data:
+                    break
+                documents.extend(page_data)
+                if len(page_data) < ragflow_page_size:
+                    break
+
+        slice_start = start_offset - (start_page - 1) * ragflow_page_size
+        slice_end = slice_start + page_size
+        return (
+            [self._normalize_document(d) for d in documents[slice_start:slice_end]],
+            total,
+        )
+
+    async def _list_all_documents(
+        self,
+        dataset_id: str,
+        concurrency: int = 4,
+        max_pages: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """按 total 翻完某个库的所有文档，按 id 去重保序。
+
+        与 ``list_all_datasets`` 同一套策略：先取第一页拿 total，再并发取剩余页。
+        拿不到 total 时顺序翻到「不足一页」为止，用 ``max_pages`` 兜住死循环。
+        """
+        await self._ensure_config()
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents"
+        page_size = 100
+        semaphore = asyncio.Semaphore(max(1, concurrency))
+
+        async with httpx.AsyncClient(timeout=DEFAULT_METADATA_TIMEOUT) as http:
+            async def fetch(page: int) -> "tuple[List[Dict[str, Any]], Optional[int]]":
+                async with semaphore:
+                    resp = await http.get(
+                        url,
+                        headers=self._get_headers(),
+                        params={"page": page, "page_size": page_size},
+                    )
+                    data = await self._handle_response(
+                        resp, f"List Documents Page {page}"
+                    )
+                    return self._extract_documents_page(data)
+
+            first_items, total = await fetch(1)
+            items = list(first_items)
+
+            if total is None:
+                page_no = 2
+                while len(first_items) == page_size and page_no <= max_pages:
+                    first_items, _ = await fetch(page_no)
+                    items.extend(first_items)
+                    page_no += 1
+            elif total > len(first_items):
+                page_count = min(max_pages, -(-total // page_size))
+                rest = await asyncio.gather(
+                    *(fetch(p) for p in range(2, page_count + 1))
+                )
+                for page_items, _ in rest:
+                    items.extend(page_items)
+
+        seen: set[str] = set()
+        unique: List[Dict[str, Any]] = []
+        for item in items:
+            key = str(item.get("id") or "")
+            if key and key in seen:
+                continue
+            seen.add(key)
+            unique.append(self._normalize_document(item))
+        return unique
+
+    async def list_all_documents_cached(
+        self, dataset_id: str, *, refresh: bool = False
+    ) -> List[Dict[str, Any]]:
+        """带 60s TTL 与单飞锁的全量文档列表：并发请求只让一个真去打 RAGFlow。"""
+        # 缓存键含 base_url，而它要等 _ensure_config 之后才有值
+        await self._ensure_config()
+        key = f"{self.base_url or ''}|{dataset_id}"
+        if not refresh:
+            cached = _documents_cache.get(key)
+            if cached and time.monotonic() - cached[0] < DOCUMENT_LIST_TTL:
+                _documents_cache.move_to_end(key)
+                return [dict(item) for item in cached[1]]
+
+        lock = _documents_cache_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            if not refresh:
+                cached = _documents_cache.get(key)
+                if cached and time.monotonic() - cached[0] < DOCUMENT_LIST_TTL:
+                    _documents_cache.move_to_end(key)
+                    return [dict(item) for item in cached[1]]
+            items = await self._list_all_documents(dataset_id)
+            _remember_documents(key, items)
+            # 浅拷贝：调用方（端点会做过滤/排序）改到 dict 也不该污染缓存
+            return [dict(item) for item in items]
+
+    @classmethod
+    def cached_documents_snapshot(
+        cls, base_url: Optional[str], dataset_id: str
+    ) -> Optional[List[Dict[str, Any]]]:
+        """降级用：不看 TTL，返回上次成功拉到的该库文档快照。"""
+        cached = _documents_cache.get(f"{base_url or ''}|{dataset_id}")
+        if not cached:
+            return None
+        return [dict(item) for item in cached[1]]
+
     async def upload_document(
         self,
         dataset_id: str,
@@ -670,6 +877,7 @@ class RagFlowClient:
             resp = await client.post(url, headers=headers, files=files)
             # Returns a list of uploaded docs in data
             data = await self._handle_response(resp, "Upload Document")
+            clear_document_list_cache(dataset_id)
             return data[0] if isinstance(data, list) and len(data) > 0 else data
 
     async def delete_documents(self, dataset_id: str, document_ids: List[str]):
@@ -689,6 +897,7 @@ class RagFlowClient:
             headers=self._get_headers(),
             json=payload,
         )
+        clear_document_list_cache(dataset_id)
 
     async def update_document(
         self,
@@ -727,6 +936,7 @@ class RagFlowClient:
             headers=self._get_headers(),
             json=payload,
         )
+        clear_document_list_cache(dataset_id)
         return data if isinstance(data, dict) else {}
 
     async def parse_documents(self, dataset_id: str, document_ids: List[str]):
@@ -743,6 +953,7 @@ class RagFlowClient:
             headers=self._get_headers(),
             json=payload,
         )
+        clear_document_list_cache(dataset_id)
 
     async def create_chunk(
         self,
@@ -1183,6 +1394,82 @@ class RagFlowClient:
                 f"使用默认值 {DEFAULT_RETRIEVE_TIMEOUT:g}s: {type(e).__name__}: {e!r}"
             )
         return DEFAULT_RETRIEVE_TIMEOUT
+
+    async def open_document_stream(
+        self,
+        document_id: str,
+        *,
+        dataset_id: str | None = None,
+    ):
+        """流式下载文档，返回 ``(chunks, filename, content_type)``。
+
+        预览/下载以前是 ``resp.content`` 整块读进内存：上传上限 256MB，
+        几个人同时预览大文件就够把进程内存推上去。改成边读边发之后，
+        响应体多大都不再等于内存占用。
+
+        错误必须在返回前判掉（JSON 体说明是业务错误），否则浏览器会「下载」
+        到一个写着报错的 JSON 文件。流中途断开只能让浏览器拿到截断文件——
+        这是流式传输的固有代价，比整块 OOM 划算。
+        """
+        await self._ensure_config()
+        if dataset_id:
+            url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}"
+        else:
+            url = f"{self.base_url}/api/v1/document/get/{document_id}"
+
+        client = httpx.AsyncClient(timeout=60.0)
+        try:
+            request = client.build_request("GET", url, headers=self._get_headers())
+            response = await client.send(request, stream=True)
+        except Exception:
+            await client.aclose()
+            raise
+
+        try:
+            if response.status_code != 200:
+                body = (await response.aread()).decode("utf-8", "replace")
+                hint = ""
+                if not dataset_id and response.status_code == 404:
+                    hint = (
+                        "（RAGFlow 1.0 已移除 /api/v1/document/get，"
+                        "请提供 dataset_id 走数据集作用域下载接口）"
+                    )
+                raise Exception(
+                    f"RAGFlow document download failed ({response.status_code}): {body}{hint}"
+                )
+
+            content_type = response.headers.get("content-type", "application/octet-stream")
+            # 数据集下载正常返回原始字节；返回 JSON 说明是业务错误
+            if "application/json" in content_type.lower():
+                body = (await response.aread()).decode("utf-8", "replace")
+                try:
+                    payload = json.loads(body)
+                except Exception:
+                    payload = {}
+                message = payload.get("message") if isinstance(payload, dict) else None
+                raise Exception(f"RAGFlow document download failed: {message or body[:200]}")
+
+            content_disposition = response.headers.get("content-disposition", "")
+            filename = "document"
+            if "filename=" in content_disposition:
+                import urllib.parse
+
+                raw_fn = content_disposition.split("filename=")[-1].strip('"')
+                filename = urllib.parse.unquote(raw_fn)
+        except Exception:
+            await response.aclose()
+            await client.aclose()
+            raise
+
+        async def _iterate():
+            try:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            finally:
+                await response.aclose()
+                await client.aclose()
+
+        return _iterate(), filename, content_type
 
     async def download_document(
         self,

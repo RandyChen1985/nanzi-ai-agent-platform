@@ -35,12 +35,18 @@ from app.services.conversation_resource_service import ConversationResourceServi
 
 logger = logging.getLogger(__name__)
 
+#: 技能 ID 长度上限，对齐 ``skill_publications.source_personal_skill_id`` 的 VARCHAR(128)。
+#: 单独抽成常量是因为「自动加后缀」的调用方（如分享落地）必须按它截断，不能再写一份 128。
+SKILL_ID_MAX_LENGTH = 128
+
 #: 技能 ID 白名单（与运行时 skill_resolver、发布服务同一口径）
-SKILL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+SKILL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,%d}$" % SKILL_ID_MAX_LENGTH)
 
 #: 与 /skills 下更早注册的字面路由同名的 ID 会被遮蔽（``GET /skills/stats`` 命中统计接口，
 #: 技能详情永远打不开），因此禁止创建/重命名/导入。``publications`` 是下架列表接口占用的
-#: 字面路由，``export``/``import`` 与文件级路由同名。
+#: 字面路由，``export``/``import`` 与文件级路由同名；``share-targets`` 是个人技能下
+#: 「搜索可接收分享的用户」的字面路由（/personal-skills/share-targets 注册在 /{skill_id}
+#: 之前，同 ID 的技能详情页永远打不开）。
 RESERVED_SKILL_IDS = frozenset(
     {
         "personal",
@@ -48,6 +54,7 @@ RESERVED_SKILL_IDS = frozenset(
         "bindings",
         "publication-requests",
         "publications",
+        "share-targets",
         "import",
         "export",
     }
@@ -103,10 +110,12 @@ async def sync_publication_lineage(
     old_skill_id: str,
     new_skill_id: str,
     scope: str = "personal",
+    owner_id: Any = None,
 ) -> int:
     """把发布谱系里的技能 ID 改为新 ID，返回受影响记录数。
 
-    * ``scope="personal"``：改来源个人技能 ID（``source_personal_skill_id``）；
+    * ``scope="personal"``：改来源个人技能 ID（``source_personal_skill_id``），
+      **必须同时按 ``source_user_id`` 限定作者**（见下方注释）；
     * ``scope="global"``：改**平台技能 ID**（``platform_skill_id``，即公共技能库目录名），
       同时把已物化版本记录的 ``materialized_path`` 目录名一起改掉。
 
@@ -139,9 +148,21 @@ async def sync_publication_lineage(
         await session.commit()
         return len(publications)
 
+    # 个人技能 ID 只是用户自己的命名空间：用户 A 与用户 B 都可能有 ``demo``，
+    # 只按 source_personal_skill_id 全表改名会把 B 的发布记录改成 A 的新 ID
+    # （B 的技能实际还叫旧名），两边谱系一起断。拿不到作者时宁可不改——
+    # 全表改名是跨用户数据污染，比「这一处没同步」严重得多。
+    owner_user_id = _coerce_user_id(owner_id)
+    if owner_user_id is None:
+        logger.warning(
+            "[SkillRename] 个人技能谱系同步缺少 owner_id，已跳过（skill=%s）", old_skill_id
+        )
+        return 0
+
     result = await session.execute(
         select(SkillPublication).where(
-            SkillPublication.source_personal_skill_id == old_skill_id
+            SkillPublication.source_personal_skill_id == old_skill_id,
+            SkillPublication.source_user_id == owner_user_id,
         )
     )
     publications = list(result.scalars().all())
@@ -310,14 +331,19 @@ async def remove_conversation_mounts(
     )
 
 
+def _coerce_user_id(value: Any) -> int | None:
+    """把用户 ID 归一成 int；空值/脏值返回 None（调用方据此判断「拿不到作者」）。"""
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _actor_user_id(actor: Any) -> int | None:
     raw = None
     if isinstance(actor, dict):
         raw = actor.get("user_id") or actor.get("id")
-    try:
-        return int(raw) if raw is not None else None
-    except (TypeError, ValueError):
-        return None
+    return _coerce_user_id(raw)
 
 
 async def remove_skill_references(
@@ -458,7 +484,12 @@ async def rename_skill(
 
     try:
         report["synced"]["publications"] = await sync_publication_lineage(
-            session, old_skill_id=old_skill_id, new_skill_id=new_skill_id, scope=scope
+            session,
+            old_skill_id=old_skill_id,
+            new_skill_id=new_skill_id,
+            scope=scope,
+            # 个人技能只改自己的发布记录；平台技能必须扫全库（所有用户的谱系都指向它）。
+            owner_id=_actor_user_id(actor) if scope == "personal" else None,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[SkillRename] 发布谱系同步失败: %s", exc)

@@ -1130,7 +1130,7 @@ onMounted(async () => {
 
             <!-- 手动触发记忆降噪按钮 -->
             <button
-              v-if="dataView === 'session' && canIndex"
+              v-if="dataView === 'session' && canDelete"
               type="button"
               class="w-full sm:w-auto px-3.5 py-2 text-sm font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50"
               :disabled="consolidating"
@@ -1244,7 +1244,7 @@ onMounted(async () => {
                       详情
                     </button>
                     <button
-                      v-if="canIndex"
+                      v-if="canDelete"
                       type="button"
                       class="text-amber-600 text-xs mr-3 hover:underline"
                       @click="rebuildDaily(row)"

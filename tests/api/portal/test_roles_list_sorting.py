@@ -53,7 +53,14 @@ class _Session:
         ]
         self.executed: list = []
 
-    async def execute(self, stmt):
+    async def execute(self, stmt, *args, **kwargs):
+        # list_roles 除了「计数 + 分页列表」两条 Select，还会查一次角色黑名单
+        # （blocked_map_for_roles 用 text() SQL + 参数）。那条不属于本测试关心的
+        # select 序列，返回空结果即可；但必须接受第二个参数，否则在「列已迁移」时
+        # 走到真查询就会 TypeError——而「是否已迁移」是模块级缓存，全套跑时会被
+        # 前面的真实 DB 用例填成 True，于是这里单跑过、全套挂。
+        if not isinstance(stmt, Select):
+            return _Result([])
         self.executed.append(stmt)
         return self._responses.pop(0)
 

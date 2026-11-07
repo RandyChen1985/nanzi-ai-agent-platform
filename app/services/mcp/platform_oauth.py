@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import secrets
 import uuid
 from dataclasses import dataclass, field
@@ -30,6 +31,8 @@ from app.models.platform_mcp import (
 )
 from app.models.user import User
 
+
+logger = logging.getLogger(__name__)
 
 MCP_RESOURCE = "mcp:nanzi-platform"
 MCP_RESOURCE_URI_SUFFIX = "/mcp/platform"
@@ -318,6 +321,9 @@ class PlatformMcpOAuthService:
             "token_type": "Bearer",
             "expires_in": access_token_ttl,
             "scope": " ".join(scopes),
+            # 内部字段（下划线前缀），供 security audit 记录「谁换到了 token」；
+            # 出口 _oauth_response 会剥掉，不会进 OAuth 响应体。
+            "_user_id": str(user_id),
         }
         if refresh_token:
             response.update(
@@ -511,6 +517,27 @@ class PlatformMcpOAuthService:
         )
 
     @staticmethod
+    async def _touch_grant_last_used(db: AsyncSession, grant: Any) -> None:
+        """刷新「最近使用」时间，供外部 Client 列表展示。
+
+        每个 Bearer 请求都会走这里，所以按 60s 节流：一次 MCP 会话里的连续调用
+        只产生一次 UPDATE。失败不影响鉴权（展示字段，不该阻断请求）。
+        """
+        now = utcnow()
+        last = getattr(grant, "last_used_at", None)
+        if last is not None:
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if (now - last).total_seconds() < 60:
+                return
+        try:
+            grant.last_used_at = now
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001
+            await db.rollback()
+            logger.debug("[MCP] 更新 grant.last_used_at 失败（忽略）: %s", exc)
+
+    @staticmethod
     async def load_access_token(db: AsyncSession, token: str) -> AccessToken | None:
         token_hash = hash_secret(token)
         row = (
@@ -533,6 +560,7 @@ class PlatformMcpOAuthService:
             grant = await db.get(McpOAuthGrant, row.grant_id)
             if grant is None or grant.status != "active":
                 return None
+            await PlatformMcpOAuthService._touch_grant_last_used(db, grant)
 
         try:
             user = await db.get(User, int(row.user_id))
@@ -559,13 +587,32 @@ class PlatformMcpOAuthService:
 
 
 class PlatformMcpTokenVerifier:
-    """FastMCP Resource Server 使用的 Bearer TokenVerifier。"""
+    """FastMCP Resource Server 使用的 Bearer TokenVerifier。
+
+    resource 绑定在这里校验：``AccessToken.resource`` 必须是**当前**公网地址对应的
+    资源 URI。不能交给 ``AuthSettings.validate_token_resource``——那个对象在导入期
+    构造，公网地址却是运行期从系统配置读的，冻结后一改地址就全员 401。
+    """
 
     async def verify_token(self, token: str) -> AccessToken | None:
         if not token or len(token) > 512:
             return None
         async with AsyncSessionLocal() as db:
-            return await PlatformMcpOAuthService.load_access_token(db, token)
+            access_token = await PlatformMcpOAuthService.load_access_token(db, token)
+        if access_token is None:
+            return None
+        # 局部导入：platform_mcp 模块级依赖本模块，反向导入会成环。
+        from app.services.mcp.platform_mcp import platform_mcp_resource_url
+
+        expected = platform_mcp_resource_url()
+        if str(access_token.resource or "").removesuffix("/") != expected.removesuffix("/"):
+            logger.warning(
+                "[MCP] Access Token 的 resource=%s 与当前 Platform MCP 资源 %s 不一致，拒绝",
+                access_token.resource,
+                expected,
+            )
+            return None
+        return access_token
 
 
 __all__ = [

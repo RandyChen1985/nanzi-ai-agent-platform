@@ -303,9 +303,13 @@ async def test_document_file_requires_dataset_access(monkeypatch):
         raise ragflow.HTTPException(status_code=403, detail="blocked")
 
     class FakeRagFlowClient:
-        async def download_document(self, *args, **kwargs):
+        async def open_document_stream(self, *args, **kwargs):
             calls["client_called"] = True
-            return b"pdf", "test.pdf", "application/pdf"
+
+            async def _gen():
+                yield b"pdf"
+
+            return _gen(), "test.pdf", "application/pdf"
 
     monkeypatch.setattr(ragflow, "require_dataset_access", fake_require_dataset_access)
     monkeypatch.setattr(ragflow, "RagFlowClient", FakeRagFlowClient)
@@ -334,10 +338,14 @@ async def test_document_file_passes_dataset_id_to_ragflow_client(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        async def download_document(self, document_id, *, dataset_id=None):
+        async def open_document_stream(self, document_id, *, dataset_id=None):
             calls["document_id"] = document_id
             calls["dataset_id"] = dataset_id
-            return b"pdf", "test.pdf", "application/pdf"
+
+            async def _gen():
+                yield b"pdf"
+
+            return _gen(), "test.pdf", "application/pdf"
 
     monkeypatch.setattr(ragflow, "require_dataset_access", fake_require_dataset_access)
     monkeypatch.setattr(ragflow, "RagFlowClient", FakeRagFlowClient)
@@ -352,7 +360,11 @@ async def test_document_file_passes_dataset_id_to_ragflow_client(monkeypatch):
     assert calls["dataset_ids"] == ["ds-allowed"]
     assert calls["document_id"] == "doc-1"
     assert calls["dataset_id"] == "ds-allowed"
-    assert response.body == b"pdf"
+    # 改成流式转发后没有 .body，要从 body_iterator 收一遍才能验内容
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk)
+    assert b"".join(chunks) == b"pdf"
 
     calls = {}
 
@@ -360,8 +372,9 @@ async def test_document_file_passes_dataset_id_to_ragflow_client(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        async def list_datasets(self, page=1, page_size=500):
-            calls["page_size"] = page_size
+        async def list_all_datasets(self):
+            # 同步必须取全集：单页 page_size=500 会漏掉第 501 个之后的库
+            calls["full_list_called"] = True
             return [{"id": "ds-1", "name": "知识库", "description": "描述"}]
 
     class FakeMetadataService:
@@ -399,7 +412,7 @@ async def test_document_file_passes_dataset_id_to_ragflow_client(monkeypatch):
 
     assert result["code"] == 0
     assert result["data"] == {"created": 1, "updated": 0, "skipped": 0}
-    assert calls["page_size"] == 500
+    assert calls["full_list_called"] is True
     assert calls["datasets"][0]["id"] == "ds-1"
     assert calls["user_name"] == "tester"
     assert calls["permission_id"] == "element:knowledge:edit"
@@ -970,6 +983,11 @@ async def test_create_dataset_rejects_duplicate_platform_name(monkeypatch):
         def __init__(self, **kwargs):
             pass
 
+        # 存活/重名校验现在走 list_all_datasets（取全集），见 knowledge_utils
+        # .load_all_ragflow_datasets；重名场景下不应走到建库。
+        async def list_all_datasets(self):
+            return [{"id": "ds-a", "name": "制度库"}]
+
         async def create_dataset(self, **kwargs):  # pragma: no cover - 不应走到
             raise AssertionError("重名时不应调用 RAGFlow 建库")
 
@@ -1016,6 +1034,9 @@ async def test_create_dataset_does_not_guess_id_when_names_ambiguous(monkeypatch
 
         async def list_datasets(self, **kwargs):
             return [{"id": "ds-a", "name": "制度库"}, {"id": "ds-b", "name": "制度库"}]
+
+        async def list_all_datasets(self):
+            return await self.list_datasets()
 
     async def _allow(*args, **kwargs):
         return None

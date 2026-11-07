@@ -1586,8 +1586,14 @@ thought 不超过 40 个汉字。只返回下列 JSON，不要 Markdown 或额�
         user_id: Optional[int],
         is_admin: bool = False,
     ) -> List[dict]:
-        if is_admin or not user_id:
+        if is_admin:
             return agents
+
+        if not user_id:
+            # 未识别用户不能退化成“全量可路由”：那会让匿名/缺失上下文的调用拿到全部业务专家。
+            # 只放行通用兜底助手，保持对话可用同时收敛授权范围。
+            logger.warning("Route agent filtering skipped: no user_id, fallback to general agent only")
+            return self._fallback_agents_only(agents)
 
         try:
             from app.core.orm import AsyncSessionLocal
@@ -1599,8 +1605,9 @@ thought 不超过 40 个汉字。只返回下列 JSON，不要 Markdown 或额�
                     return agents
                 allowed_agent_ids = set(getattr(perms.permissions, "agents", []) or [])
         except Exception as e:
+            # 鉴权查询失败必须 fail-closed，但不能冒泡成 500：降级到通用兜底助手继续服务。
             logger.warning("Failed to filter route agents for user %s: %s", user_id, e)
-            return agents
+            return self._fallback_agents_only(agents)
 
         return [agent for agent in agents if agent.get("id") in allowed_agent_ids]
 
@@ -1616,6 +1623,11 @@ thought 不超过 40 个汉字。只返回下列 JSON，不要 Markdown 或额�
             agents_str += f"  Description: {agent['description']}\n"
             agents_str += f"  Capabilities: {agent['capabilities']}\n\n"
         return agents_str
+
+    def _fallback_agents_only(self, agents: List[dict]) -> List[dict]:
+        """鉴权不可用时唯一的可路由集合：通用兜底助手；找不到则返回空集交给上层降级。"""
+        fallback_agent = self._find_fallback_agent(agents)
+        return [fallback_agent] if fallback_agent else []
 
     @classmethod
     def _find_fallback_agent(cls, agents: List[dict]) -> Optional[dict]:

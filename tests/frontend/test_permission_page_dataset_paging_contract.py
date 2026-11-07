@@ -41,14 +41,33 @@ def sources() -> dict[str, str]:
     return out
 
 
+def _dataset_list_page_sizes(src: str) -> list:
+    """抓「拉 /datasets 列表」请求里的 page_size 字面量。
+
+    只认 ``/api/portal/ragflow/datasets`` 结尾（后面不再跟 ``/xxx``）那一层的
+    params 块：``/datasets/{id}/documents`` 的 ``page_size: 1`` 是「按名字搜文档」
+    的探测请求，与知识库列表的失联判定无关，算进来会误报。
+    """
+    import re
+
+    sizes = []
+    for match in re.finditer(r"/api/portal/ragflow/datasets['\"`]", src):
+        # 取请求块的一小段：够覆盖 params 里的几个字段，又不会跨到下一个请求
+        window = src[match.end(): match.end() + 400].split("})", 1)[0]
+        sizes.extend(int(value) for value in re.findall(r"page_size:\s*(\d+)", window))
+    return sizes
+
+
 @pytest.mark.parametrize("name", sorted(DATASET_LIST_CALLERS))
 def test_dataset_list_requests_are_not_capped_at_one_page(name, sources):
     src = sources[name]
-    # 出现过的 page_size 值都必须 > 100，否则只拿到第一页
-    import re
-
-    values = [int(v) for v in re.findall(r"page_size:\s*(\d+)", src)]
-    assert values, f"{name} 里没有找到 page_size 参数"
+    values = _dataset_list_page_sizes(src)
+    # 知识库管理页的列表请求已改成服务端分页（page_size 传变量，不是字面量），
+    # 它依赖后端「先聚合全量再切片」，所以允许没有字面量；
+    # 但只要写了字面量，就必须是全量（>100），否则又会退回「第一页被 meta-* 占满」。
+    if not values:
+        assert name == "KnowledgeBaseManagement.vue", f"{name} 里没有找到 page_size 参数"
+        return
     too_small = [v for v in values if v <= 100]
     assert not too_small, (
         f"{name} 的知识库列表请求用了 {too_small}，<=100 只会拿到第一页，"

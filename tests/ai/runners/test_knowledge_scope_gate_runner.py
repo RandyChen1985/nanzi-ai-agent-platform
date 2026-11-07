@@ -5,6 +5,8 @@
 """
 from types import SimpleNamespace
 
+import pytest
+
 from app.services.ai.knowledge_catalog import (
     AuthorizedKnowledgeCatalog,
     KnowledgeBaseCatalogItem,
@@ -17,6 +19,9 @@ from app.services.ai.knowledge_scope_gate import (
     build_scope_options,
 )
 from app.services.ai.runners import knowledge_agent_runner as mod
+
+# 本文件全部用 mock 替代会话与权限服务，不需要连平台主库 / Redis。
+pytestmark = pytest.mark.no_infrastructure
 
 
 def _runner() -> mod.KnowledgeAgentRunner:
@@ -617,3 +622,175 @@ async def test_scope_gate_chunk_carries_open_dataset_picker_action(monkeypatch):
     assert pick_option["action"] == "open_dataset_picker"
     all_option = next(item for item in chunk["options"] if item["id"] == SCOPE_ALL)
     assert "action" not in all_option or all_option["action"] is None
+
+
+# ---------------------------------------------------------------------------
+# 恢复分支（用户点了范围卡）的范围复核与写回
+# ---------------------------------------------------------------------------
+class _FakeAsyncSessionCtx:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+
+def _install_authorize_fakes(monkeypatch, *, allowed, private_not_owned=()):
+    """替换权限服务与会话，供 ``_authorize_restored_scope`` 单测使用。"""
+
+    class _FakePermissionService:
+        def __init__(self, session):
+            self.session = session
+
+        async def find_private_datasets_not_owned(self, dataset_ids, user_name, user_id=None):
+            return set(private_not_owned)
+
+        async def filter_knowledge_dataset_ids(self, user_id, user_name, dataset_ids):
+            return [item for item in dataset_ids if item in allowed]
+
+    monkeypatch.setattr(
+        "app.services.permission_service.PermissionService", _FakePermissionService
+    )
+    monkeypatch.setattr("app.core.orm.AsyncSessionLocal", lambda: _FakeAsyncSessionCtx())
+
+
+def _agent_ctx(*, dataset_ids, agent_dataset_ids=(), user_id="7", is_admin=False):
+    from app.core.context import AgentContext
+
+    return AgentContext(
+        agent_id="agent_kb",
+        agent_name="知识库助手",
+        dataset_ids=list(dataset_ids),
+        agent_dataset_ids=list(agent_dataset_ids),
+        user_id=user_id,
+        is_admin=is_admin,
+        user_dimensions={"user_name": "tester"},
+    )
+
+
+def _install_alive_identity(monkeypatch):
+    async def _alive(dataset_ids):
+        return list(dataset_ids)
+
+    monkeypatch.setattr(
+        "app.services.ai.knowledge_utils.filter_alive_knowledge_dataset_ids", _alive
+    )
+
+
+async def test_restored_scope_drops_datasets_without_permission(monkeypatch):
+    """★ 回执还原出的 ID 必须按当前权限复核。
+
+    卡片弹出到用户点下去之间可能隔很久（快照随会话保留），期间授权被收回也不会
+    自动反映到快照里；不复核就是把「当时可访问」当成「现在可访问」。
+    """
+    from app.core.context import agent_context
+
+    _install_authorize_fakes(monkeypatch, allowed={"ds_a"})
+    _install_alive_identity(monkeypatch)
+    token = agent_context.set(
+        _agent_ctx(dataset_ids=["ds_a", "ds_b"], agent_dataset_ids=["ds_bound"])
+    )
+    try:
+        kept = await _runner()._authorize_restored_scope(["ds_a", "ds_b", "ds_bound"])
+    finally:
+        agent_context.reset(token)
+
+    # 无权限库剔除；智能体绑定库对使用者放行；保持原顺序
+    assert kept == ["ds_a", "ds_bound"]
+
+
+async def test_restored_scope_rejects_bound_private_dataset_of_others(monkeypatch):
+    """智能体绑定不能把「别人的个人私有库」代理放行给使用者（与工具层同口径）。"""
+    from app.core.context import agent_context
+
+    _install_authorize_fakes(
+        monkeypatch,
+        allowed=set(),
+        private_not_owned={"ds_private_other"},
+    )
+    _install_alive_identity(monkeypatch)
+    token = agent_context.set(
+        _agent_ctx(dataset_ids=["ds_private_other"], agent_dataset_ids=["ds_private_other"])
+    )
+    try:
+        kept = await _runner()._authorize_restored_scope(["ds_private_other"])
+    finally:
+        agent_context.reset(token)
+
+    assert kept == [], "别人的 private 库不能因为智能体绑定就对使用者放行"
+
+
+async def test_restored_scope_skips_check_for_admin(monkeypatch):
+    """管理员本来就不受逐库权限限制，不该多付一次权限判定。"""
+    from app.core.context import agent_context
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("管理员路径不该走逐库权限判定")
+
+    _install_alive_identity(monkeypatch)
+    monkeypatch.setattr("app.services.permission_service.PermissionService", _boom)
+    token = agent_context.set(_agent_ctx(dataset_ids=["ds_a"], is_admin=True))
+    try:
+        kept = await _runner()._authorize_restored_scope(["ds_a", "ds_b"])
+    finally:
+        agent_context.reset(token)
+
+    assert kept == ["ds_a", "ds_b"]
+
+
+async def test_restored_scope_fails_open_when_permission_check_errors(monkeypatch):
+    """权限查询失败不等于没权限：整段丢弃会让用户的选择变成「什么都搜不到」。
+
+    工具层 ``search_knowledge_base`` 还会再过滤一次，放行不比现有行为更危险。
+    """
+    from app.core.context import agent_context
+
+    class _BrokenPermissionService:
+        def __init__(self, session):
+            self.session = session
+
+        async def find_private_datasets_not_owned(self, *args, **kwargs):
+            raise RuntimeError("db down")
+
+        async def filter_knowledge_dataset_ids(self, *args, **kwargs):
+            raise RuntimeError("db down")
+
+    _install_alive_identity(monkeypatch)
+    monkeypatch.setattr(
+        "app.services.permission_service.PermissionService", _BrokenPermissionService
+    )
+    monkeypatch.setattr("app.core.orm.AsyncSessionLocal", lambda: _FakeAsyncSessionCtx())
+    token = agent_context.set(_agent_ctx(dataset_ids=["ds_a"]))
+    try:
+        kept = await _runner()._authorize_restored_scope(["ds_a", "ds_b"])
+    finally:
+        agent_context.reset(token)
+
+    assert kept == ["ds_a", "ds_b"]
+
+
+def test_scope_write_back_covers_restored_branch():
+    """★ 恢复分支同样要把范围写回 ctx，写回点必须在 if/else 之外。
+
+    只在 else 里写回时，用户点了范围卡后的**预检索**是收窄过的，但 ReAct 里模型
+    二次调用 ``search_knowledge_base`` 仍读 ``ctx.dataset_ids``（全量），门禁只兑现一半。
+    """
+    import inspect
+
+    lines = inspect.getsource(mod.KnowledgeAgentRunner).splitlines()
+    restore_line = next(
+        index
+        for index, line in enumerate(lines)
+        if "restored_dataset_ids = await self._restore_scope_from_reply()" in line
+    )
+    write_line = next(
+        index
+        for index, line in enumerate(lines[restore_line:], start=restore_line)
+        if "self._apply_scope_to_context(" in line
+    )
+    assert write_line > restore_line
+    restore_indent = len(lines[restore_line]) - len(lines[restore_line].lstrip())
+    write_indent = len(lines[write_line]) - len(lines[write_line].lstrip())
+    assert write_indent == restore_indent, (
+        "范围写回不能只留在 else 分支里：恢复分支（用户刚点范围卡）同样要写回"
+    )

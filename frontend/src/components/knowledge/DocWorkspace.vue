@@ -30,11 +30,16 @@
         >
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z" />
         </svg>
+        <!--
+          搜索走服务端 name 参数：本地只持有当前页，过滤当前页会把「第 2 页的命中」
+          直接漏掉。输入防抖在页面层做，这里只上报原始值。
+        -->
         <input
-          v-model="query"
+          :value="keyword"
           type="search"
-          :placeholder="`在 ${docs.length} 份文档中搜索`"
+          :placeholder="`在 ${allTotal} 份文档中搜索`"
           class="w-full rounded-lg border border-gray-200 py-1.5 pl-8 pr-2 text-xs text-gray-700 outline-none transition-colors placeholder:text-gray-400 focus:border-primary"
+          @input="onKeywordInput"
         />
       </div>
 
@@ -44,10 +49,11 @@
           :key="chip.key"
           type="button"
           class="flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors"
-          :class="statusFilter === chip.key
+          :class="status === chip.key
             ? 'border-primary bg-primary/5 text-primary'
             : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'"
-          @click="statusFilter = statusFilter === chip.key ? '' : chip.key"
+          :title="chip.title"
+          @click="toggleStatus(chip.key)"
         >
           <span class="h-1.5 w-1.5 rounded-full" :class="chip.dot" />
           {{ chip.label }}
@@ -56,20 +62,28 @@
       </div>
 
       <select
-        v-model="sortKey"
+        :value="sort"
         class="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-[11px] text-gray-600 outline-none focus:border-primary"
         aria-label="排序方式"
+        @change="onSortChange"
       >
         <option v-for="option in SORT_OPTIONS" :key="option.key" :value="option.key">{{ option.label }}</option>
       </select>
-
-      <!-- 上传入口在库头：工具条这一排加上它会挤到折行 -->
-
     </div>
 
-    <!-- ── 面包屑 ─────────────────────────────────────────────────────── -->
-    <div class="flex items-center gap-1 border-b border-gray-100 px-4 py-1.5 text-[11px] text-gray-500">
-      <button type="button" class="rounded px-1 py-0.5 hover:bg-gray-100 hover:text-gray-700" @click="goRoot">
+    <!--
+      ── 面包屑 + 文件夹筛选 ────────────────────────────────────────────
+      文件夹从「树内展开的行」改成过滤维度：树形展开 + 页码会互相打架
+      （展开态跨页丢失、一个文件夹被切到两页），而点文件夹=按路径过滤后，
+      分页只作用在过滤结果上，页码与总数始终自洽。
+    -->
+    <div class="flex flex-wrap items-center gap-1 border-b border-gray-100 px-4 py-1.5 text-[11px] text-gray-500">
+      <button
+        type="button"
+        class="rounded px-1 py-0.5 hover:bg-gray-100 hover:text-gray-700"
+        :class="!folder ? 'font-semibold text-gray-700' : ''"
+        @click="openFolder('')"
+      >
         全部文件
       </button>
       <template v-for="(item, index) in breadcrumb" :key="item.path">
@@ -78,14 +92,145 @@
           type="button"
           class="max-w-[180px] truncate rounded px-1 py-0.5"
           :class="index === breadcrumb.length - 1 ? 'font-semibold text-gray-700' : 'hover:bg-gray-100 hover:text-gray-700'"
-          @click="enterFolder(item.path)"
+          @click="openFolder(item.path)"
         >
           {{ item.name }}
         </button>
       </template>
       <span class="ml-auto hidden shrink-0 text-gray-400 sm:inline">
-        拖文件到文件夹行即可移动
+        拖文件到下方文件夹标签即可移动
       </span>
+    </div>
+
+    <div v-if="folder || subFolders.length || canManage" class="flex flex-wrap items-center gap-1.5 border-b border-gray-100 px-4 py-2">
+      <button
+        v-if="folder"
+        type="button"
+        class="flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-500 transition-colors hover:border-primary hover:text-primary"
+        @click="openFolder(parentPath)"
+      >
+        <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+        </svg>
+        上一级
+      </button>
+      <button
+        v-if="folder"
+        type="button"
+        class="rounded-full border px-2.5 py-1 text-[11px] transition-colors"
+        :class="folder === '__unclassified__'
+          ? 'border-primary bg-primary/5 font-semibold text-primary'
+          : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'"
+        @click="openFolder('')"
+      >
+        全部文件夹
+        <span class="ml-0.5 tabular-nums opacity-70">{{ allTotal }}</span>
+      </button>
+
+      <button
+        v-for="node in subFolders"
+        :key="node.path"
+        type="button"
+        class="flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-600 transition-colors hover:border-primary hover:text-primary"
+        :class="dragOverPath === node.path ? 'border-primary bg-primary/5 text-primary' : ''"
+        :title="folderCountHint(node.path)"
+        :data-folder-path="node.path"
+        :data-count="countOf(node.path)"
+        @click="openFolder(node.path)"
+        @dragover.prevent="dragOverPath = node.path"
+        @dragleave="dragOverPath = null"
+        @drop.prevent="onFolderChipDrop(node.path)"
+      >
+        <svg class="h-3 w-3 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+        </svg>
+        <span class="max-w-[140px] truncate">{{ node.name }}</span>
+        <span class="tabular-nums opacity-60">{{ countOf(node.path) }}</span>
+      </button>
+
+      <button
+        v-if="!folder && unclassifiedCount > 0"
+        type="button"
+        class="flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-500 transition-colors hover:border-primary hover:text-primary"
+        @click="openFolder(UNCLASSIFIED)"
+      >
+        未分类
+        <span class="tabular-nums opacity-60">{{ unclassifiedCount }}</span>
+      </button>
+
+      <!-- 文件夹自身的管理：树行没了，操作挂到「当前打开的文件夹」上 -->
+      <span v-if="folder && folder !== UNCLASSIFIED && canArrangeDocs" class="flex items-center gap-0.5">
+        <button
+          type="button"
+          class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          title="在此文件夹下新建子文件夹"
+          @click="startCreate(folder)"
+        >
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          title="重命名当前文件夹"
+          @click="startRenamePath(folder)"
+        >
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
+          title="删除当前文件夹"
+          @click="emit('delete-folder', folder)"
+        >
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
+      </span>
+
+      <button
+        v-if="canArrangeDocs && !creating"
+        type="button"
+        class="rounded-full border border-dashed border-gray-300 px-2.5 py-1 text-[11px] text-gray-400 transition-colors hover:border-primary hover:text-primary"
+        @click="startCreate(folder === UNCLASSIFIED ? '' : folder)"
+      >
+        + 新建文件夹
+      </button>
+    </div>
+
+    <!-- 新建 / 重命名文件夹的内联输入 -->
+    <div v-if="creating" class="flex flex-wrap items-center gap-2 border-b border-gray-100 bg-gray-50/60 px-4 py-2 text-xs">
+      <svg class="h-3.5 w-3.5 text-amber-500" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+      </svg>
+      <input
+        ref="createInput"
+        v-model="creating.value"
+        :placeholder="creating.parentPath ? `在「${creating.parentPath}」下新建` : '新文件夹名称'"
+        class="w-56 rounded border border-primary px-1.5 py-1 text-xs outline-none"
+        @keydown.enter.prevent="commitCreate"
+        @keydown.esc.prevent="creating = null"
+      />
+      <button type="button" class="rounded px-2 py-1 text-primary hover:bg-primary/5" @click="commitCreate">确定</button>
+      <button type="button" class="rounded px-2 py-1 text-gray-400 hover:bg-gray-100" @click="creating = null">取消</button>
+      <span class="text-[10px] text-gray-400">用 / 分隔可以建多级，例如 制度文件/2025 年度</span>
+    </div>
+
+    <div v-if="renaming" class="flex flex-wrap items-center gap-2 border-b border-gray-100 bg-gray-50/60 px-4 py-2 text-xs">
+      <span class="text-[11px] text-gray-500">重命名「{{ renaming.path }}」：</span>
+      <input
+        ref="renameInput"
+        v-model="renaming.value"
+        class="w-56 rounded border border-primary px-1.5 py-1 text-xs outline-none"
+        @keydown.enter.prevent="commitRename"
+        @keydown.esc.prevent="renaming = null"
+      />
+      <button type="button" class="rounded px-2 py-1 text-primary hover:bg-primary/5" @click="commitRename">确定</button>
+      <button type="button" class="rounded px-2 py-1 text-gray-400 hover:bg-gray-100" @click="renaming = null">取消</button>
     </div>
 
     <!-- ── 批量操作条 ─────────────────────────────────────────────────── -->
@@ -143,14 +288,14 @@
     <div class="min-h-0 flex-1 overflow-auto" @click="closeRowMenu">
       <div v-if="loading" class="px-4 py-16 text-center text-xs text-gray-400">正在读取文档…</div>
 
-      <div v-else-if="!docs.length" class="px-6 py-16 text-center">
+      <div v-else-if="!allTotal && !docs.length" class="px-6 py-16 text-center">
         <p class="text-sm font-medium text-gray-700">这个知识库还没有文档</p>
         <p class="mt-1 text-xs text-gray-400">上传之后，解析完成的文档会被智能体检索到。</p>
       </div>
 
-      <div v-else-if="!visibleRows.length" class="px-6 py-16 text-center">
+      <div v-else-if="!docs.length" class="px-6 py-16 text-center">
         <p class="text-sm font-medium text-gray-700">
-          {{ isFiltering ? '没有匹配的文档' : '这个文件夹还是空的' }}
+          {{ isFiltering ? '没有匹配的文档' : (folder ? '这个文件夹还是空的' : '这一页没有文档') }}
         </p>
         <p class="mt-1 text-xs text-gray-400">
           {{ isFiltering ? '换个关键词，或清掉上方的状态筛选。' : '把文件拖进来，或上传后选择归入此文件夹。' }}
@@ -163,11 +308,11 @@
         <div class="sticky top-0 z-10 grid items-center gap-2 border-b border-gray-100 bg-white px-4 py-2 text-[11px] font-medium text-gray-400" :class="GRID_COLS">
           <span class="flex items-center justify-center">
             <input
-              v-if="canManage"
+              v-if="canSelectDocs"
               type="checkbox"
               class="h-3 w-3 cursor-pointer rounded border-gray-300 text-primary focus:ring-primary"
               :checked="allVisibleSelected"
-              :aria-label="allVisibleSelected ? '取消全选' : '全选当前列表'"
+              :aria-label="allVisibleSelected ? '取消全选' : '全选当前页'"
               @change="toggleSelectAll"
             />
           </span>
@@ -180,194 +325,124 @@
         </div>
 
         <div
-          v-for="row in visibleRows"
-          :key="rowKey(row)"
+          v-for="doc in docs"
+          :key="doc.id"
           class="group grid items-center gap-2 border-b border-gray-50 px-4 py-2 text-xs transition-colors"
           :class="[
             GRID_COLS,
-            row.kind === 'folder' ? 'cursor-pointer hover:bg-gray-50' : 'hover:bg-blue-50/40',
-            isDragOver(row) ? 'bg-primary/10 ring-1 ring-inset ring-primary/30' : '',
-            row.kind === 'doc' && activeId === row.doc.id ? 'bg-blue-50/60' : '',
+            'cursor-pointer hover:bg-blue-50/40',
+            activeId === doc.id ? 'bg-blue-50/60' : '',
           ]"
-          :draggable="row.kind === 'doc' && canManage"
-          @click="onRowClick(row)"
-          @dragstart="row.kind === 'doc' ? onDragStart(row.doc) : undefined"
-          @dragover.prevent="onFolderDragOver(row)"
-          @dragleave="onFolderDragLeave(row)"
-          @drop.prevent="onFolderDrop(row)"
+          :draggable="canArrangeDocs"
+          @click="emit('open-doc', doc)"
+          @dragstart="onDragStart(doc)"
         >
-          <!-- 勾选 / 缩进箭头 -->
+          <!-- 勾选 -->
           <span class="flex items-center justify-center" @click.stop>
             <input
-              v-if="row.kind === 'doc' && canManage"
+              v-if="canSelectDocs"
               type="checkbox"
               class="h-3 w-3 cursor-pointer rounded border-gray-300 text-primary focus:ring-primary"
-              :checked="selectedIds.includes(row.doc.id)"
-              :aria-label="`选择文档 ${row.doc.name || row.doc.id}`"
-              @change="toggleSelect(row.doc.id)"
+              :checked="selectedIds.includes(doc.id)"
+              :aria-label="`选择文档 ${doc.name || doc.id}`"
+              @change="toggleSelect(doc.id)"
             />
-            <svg v-else-if="row.kind === 'folder'" class="h-3 w-3 text-gray-400 transition-transform" :class="isExpanded(row.node.path) ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" @click.stop="toggleExpand(row.node.path)">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-            </svg>
           </span>
 
           <!-- 名称 -->
-          <div class="flex min-w-0 items-center gap-1.5" :style="{ paddingLeft: `${row.depth * 16}px` }">
-            <template v-if="row.kind === 'folder'">
-              <svg class="h-3.5 w-3.5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-              </svg>
-              <input
-                v-if="renaming?.path === row.node.path"
-                ref="renameInput"
-                v-model="renaming.value"
-                class="w-40 rounded border border-primary px-1 py-0.5 text-xs outline-none"
-                @keydown.enter.prevent="commitRename(row.node)"
-                @keydown.esc.prevent="renaming = null"
-                @blur="commitRename(row.node)"
-              />
-              <span v-else class="truncate font-medium text-gray-700">{{ row.node.name }}</span>
-              <span class="shrink-0 text-[10px] text-gray-400">{{ row.node.totalDocCount }} 份</span>
-            </template>
-            <template v-else>
-              <span class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[8px] font-bold" :class="fileKindOf(row.doc).className">
-                {{ fileKindOf(row.doc).label }}
-              </span>
-              <span class="truncate" :class="isDocEnabled(row.doc) ? 'text-gray-700' : 'text-gray-400 line-through'">
-                {{ row.doc.name || row.doc.id }}
-              </span>
-              <span v-if="!isDocEnabled(row.doc)" class="shrink-0 rounded bg-amber-100 px-1 text-[9px] font-semibold text-amber-700">已停用</span>
-              <span v-if="isFiltering && row.folderPath" class="shrink-0 truncate text-[10px] text-gray-400">
-                {{ row.folderPath }}
-              </span>
-            </template>
+          <div class="flex min-w-0 items-center gap-1.5">
+            <span class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[8px] font-bold" :class="fileKindOf(doc).className">
+              {{ fileKindOf(doc).label }}
+            </span>
+            <span class="truncate" :class="isDocEnabled(doc) ? 'text-gray-700' : 'text-gray-400 line-through'">
+              {{ doc.name || doc.id }}
+            </span>
+            <span v-if="!isDocEnabled(doc)" class="shrink-0 rounded bg-amber-100 px-1 text-[9px] font-semibold text-amber-700">已停用</span>
+            <!-- 没有进入文件夹时补一个路径后缀，否则同名文件分不清在哪层 -->
+            <span v-if="!folder && pathOfDoc(doc.id)" class="shrink-0 truncate text-[10px] text-gray-400">
+              {{ pathOfDoc(doc.id) }}
+            </span>
           </div>
 
           <!-- 状态 -->
-          <span v-if="row.kind === 'doc'" class="flex items-center gap-1 whitespace-nowrap text-[11px]" :class="statusMeta(row.doc).textClass">
-            <span class="h-1.5 w-1.5 shrink-0 rounded-full" :class="statusMeta(row.doc).dotClass" />
-            {{ statusMeta(row.doc).label }}
-            <span v-if="progressLabel(row.doc)" class="shrink-0 tabular-nums text-[10px] text-gray-400">
-              {{ progressLabel(row.doc) }}
+          <span class="flex items-center gap-1 whitespace-nowrap text-[11px]" :class="statusMeta(doc).textClass">
+            <span class="h-1.5 w-1.5 shrink-0 rounded-full" :class="statusMeta(doc).dotClass" />
+            {{ statusMeta(doc).label }}
+            <span v-if="progressLabel(doc)" class="shrink-0 tabular-nums text-[10px] text-gray-400">
+              {{ progressLabel(doc) }}
             </span>
           </span>
-          <span v-else class="text-[10px] text-gray-400">{{ row.node.children.length ? `${row.node.children.length} 个子文件夹` : '' }}</span>
 
-          <span class="text-right text-[11px] text-gray-500">{{ row.kind === 'doc' ? (row.doc.chunk_count ?? '—') : '' }}</span>
-          <span class="text-right text-[11px] text-gray-500">{{ row.kind === 'doc' ? formatSize(row.doc.size) : '' }}</span>
-          <span class="text-right text-[11px] text-gray-400">{{ row.kind === 'doc' ? formatTime(row.doc.update_time || row.doc.created_at) : '' }}</span>
+          <span class="text-right text-[11px] text-gray-500">{{ doc.chunk_count ?? '—' }}</span>
+          <span class="text-right text-[11px] text-gray-500">{{ formatSize(doc.size) }}</span>
+          <span class="text-right text-[11px] text-gray-400">{{ formatTime(doc.update_time || doc.created_at) }}</span>
 
           <!-- 行操作 -->
           <span class="flex items-center justify-end gap-0.5" @click.stop>
-            <template v-if="row.kind === 'folder' && canManage">
-              <button type="button" class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600" title="在此文件夹下新建子文件夹" @click="startCreate(row.node.path)">
-                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" d="M12 5v14M5 12h14" />
-                </svg>
-              </button>
-              <button type="button" class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600" title="重命名" @click="startRename(row.node)">
-                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              </button>
-              <button type="button" class="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600" title="删除文件夹" @click="emit('delete-folder', row.node.path)">
-                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
-            </template>
+            <button
+              v-if="canParse && statusOf(doc) !== 'parsed'"
+              type="button"
+              class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-primary"
+              :title="statusOf(doc) === 'failed' ? '重试解析' : '开始解析'"
+              @click="emit('parse-doc', doc)"
+            >
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
 
-            <template v-if="row.kind === 'doc'">
+            <div v-if="canArrangeDocs" class="relative">
               <button
-                v-if="canParse && statusOf(row.doc) !== 'parsed'"
                 type="button"
                 class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-primary"
-                :title="statusOf(row.doc) === 'failed' ? '重试解析' : '开始解析'"
-                @click="emit('parse-doc', row.doc)"
+                title="移动到文件夹"
+                @click.stop="rowMenuId = rowMenuId === doc.id ? null : doc.id"
               >
                 <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
               </button>
-
-              <div v-if="canManage" class="relative">
+              <div
+                v-if="rowMenuId === doc.id"
+                class="absolute right-0 top-full z-30 mt-1 max-h-64 w-48 overflow-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+                @click.stop
+              >
+                <p class="px-2 py-1 text-[10px] font-semibold text-gray-400">移动到</p>
                 <button
+                  v-for="folderPath in allFolderPaths"
+                  :key="folderPath"
                   type="button"
-                  class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-primary"
-                  title="移动到文件夹"
-                  @click.stop="rowMenuId = rowMenuId === row.doc.id ? null : row.doc.id"
+                  class="block w-full truncate px-3 py-1.5 text-left text-[11px] text-gray-700 hover:bg-gray-50"
+                  :disabled="folderPath === pathOfDoc(doc.id)"
+                  :class="folderPath === pathOfDoc(doc.id) ? 'opacity-40' : ''"
+                  @click="moveDoc(doc, folderPath)"
                 >
-                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-                  </svg>
+                  {{ folderPath }}
                 </button>
-                <div
-                  v-if="rowMenuId === row.doc.id"
-                  class="absolute right-0 top-full z-30 mt-1 max-h-64 w-48 overflow-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
-                  @click.stop
+                <button
+                  v-if="pathOfDoc(doc.id)"
+                  type="button"
+                  class="block w-full px-3 py-1.5 text-left text-[11px] text-red-600 hover:bg-red-50"
+                  @click="moveDoc(doc, '')"
                 >
-                  <p class="px-2 py-1 text-[10px] font-semibold text-gray-400">移动到</p>
-                  <button
-                    v-for="folderPath in allFolderPaths"
-                    :key="folderPath"
-                    type="button"
-                    class="block w-full truncate px-3 py-1.5 text-left text-[11px] text-gray-700 hover:bg-gray-50"
-                    :disabled="folderPath === row.folderPath"
-                    :class="folderPath === row.folderPath ? 'opacity-40' : ''"
-                    @click="moveDoc(row.doc, folderPath)"
-                  >
-                    {{ folderPath }}
-                  </button>
-                  <button
-                    v-if="row.folderPath"
-                    type="button"
-                    class="block w-full px-3 py-1.5 text-left text-[11px] text-red-600 hover:bg-red-50"
-                    @click="moveDoc(row.doc, '')"
-                  >
-                    移出文件夹
-                  </button>
-                </div>
+                  移出文件夹
+                </button>
               </div>
+            </div>
 
-              <button
-                v-if="canDeleteDoc"
-                type="button"
-                class="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
-                title="删除文档"
-                @click="emit('delete-doc', row.doc)"
-              >
-                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
-            </template>
+            <button
+              v-if="canDeleteDoc"
+              type="button"
+              class="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
+              title="删除文档"
+              @click="emit('delete-doc', doc)"
+            >
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
           </span>
-        </div>
-
-        <!-- 新建文件夹的内联输入 -->
-        <div v-if="creating" class="flex items-center gap-2 border-b border-gray-50 px-4 py-2 text-xs">
-          <span class="w-[30px]" />
-          <svg class="h-3.5 w-3.5 text-amber-500" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-          </svg>
-          <input
-            ref="createInput"
-            v-model="creating.value"
-            :placeholder="creating.parentPath ? `在「${creating.parentPath}」下新建` : '新文件夹名称'"
-            class="w-56 rounded border border-primary px-1.5 py-1 text-xs outline-none"
-            @keydown.enter.prevent="commitCreate"
-            @keydown.esc.prevent="creating = null"
-          />
-          <button type="button" class="rounded px-2 py-1 text-primary hover:bg-primary/5" @click="commitCreate">确定</button>
-          <button type="button" class="rounded px-2 py-1 text-gray-400 hover:bg-gray-100" @click="creating = null">取消</button>
-          <span class="text-[10px] text-gray-400">用 / 分隔可以建多级，例如 制度文件/2025 年度</span>
-        </div>
-
-        <div v-if="canManage && !creating" class="px-4 py-2">
-          <button type="button" class="text-[11px] text-gray-400 hover:text-primary" @click="startCreate(currentPath)">
-            + 新建文件夹
-          </button>
         </div>
         </div>
       </template>
@@ -375,43 +450,25 @@
       <!-- 网格视图 -->
       <div v-else-if="viewMode === 'grid'" class="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-4">
         <button
-          v-for="row in visibleRows"
-          :key="rowKey(row)"
+          v-for="doc in docs"
+          :key="doc.id"
           type="button"
-          class="group flex h-[104px] flex-col rounded-xl border p-3 text-left transition-all"
-          :class="[
-            row.kind === 'folder' ? 'border-dashed border-amber-200 bg-amber-50/40 hover:border-amber-300' : 'border-gray-200 bg-white hover:border-primary/40 hover:shadow-sm',
-            isDragOver(row) ? 'ring-2 ring-primary/40' : '',
-          ]"
-          :draggable="false"
-          @click="onRowClick(row)"
-          @dragover.prevent="onFolderDragOver(row)"
-          @dragleave="onFolderDragLeave(row)"
-          @drop.prevent="onFolderDrop(row)"
+          class="group flex h-[104px] flex-col rounded-xl border border-gray-200 bg-white p-3 text-left transition-all hover:border-primary/40 hover:shadow-sm"
+          :class="activeId === doc.id ? 'border-primary/50 bg-blue-50/40' : ''"
+          @click="emit('open-doc', doc)"
         >
           <div class="flex min-w-0 items-start gap-2">
-            <svg v-if="row.kind === 'folder'" class="mt-0.5 h-4 w-4 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-            </svg>
-            <span v-else class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-[8px] font-bold" :class="fileKindOf(row.doc).className">
-              {{ fileKindOf(row.doc).label }}
+            <span class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-[8px] font-bold" :class="fileKindOf(doc).className">
+              {{ fileKindOf(doc).label }}
             </span>
-            <span class="line-clamp-2 text-xs font-medium text-gray-700">
-              {{ row.kind === 'folder' ? row.node.name : (row.doc.name || row.doc.id) }}
-            </span>
+            <span class="line-clamp-2 text-xs font-medium text-gray-700">{{ doc.name || doc.id }}</span>
           </div>
           <div class="mt-auto flex items-center justify-between text-[10px] text-gray-400">
-            <template v-if="row.kind === 'folder'">
-              <span>{{ row.node.totalDocCount }} 份文档</span>
-              <span>打开 →</span>
-            </template>
-            <template v-else>
-              <span class="flex items-center gap-1" :class="statusMeta(row.doc).textClass">
-                <span class="h-1.5 w-1.5 rounded-full" :class="statusMeta(row.doc).dotClass" />
-                {{ statusMeta(row.doc).label }}
-              </span>
-              <span>{{ formatSize(row.doc.size) }}</span>
-            </template>
+            <span class="flex items-center gap-1" :class="statusMeta(doc).textClass">
+              <span class="h-1.5 w-1.5 rounded-full" :class="statusMeta(doc).dotClass" />
+              {{ statusMeta(doc).label }}
+            </span>
+            <span>{{ formatSize(doc.size) }}</span>
           </div>
         </button>
       </div>
@@ -422,7 +479,7 @@
           <header class="flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-600">
             <span class="h-1.5 w-1.5 rounded-full" :class="column.dotClass" />
             {{ column.label }}
-            <span class="ml-auto text-[11px] text-gray-400">{{ column.docs.length }}</span>
+            <span class="ml-auto text-[11px] text-gray-400">{{ column.total }}</span>
           </header>
           <div class="min-h-0 flex-1 space-y-2 overflow-auto px-2 pb-2">
             <button
@@ -450,9 +507,40 @@
               </p>
             </button>
             <p v-if="!column.docs.length" class="px-1 py-6 text-center text-[10px] text-gray-300">暂无</p>
+            <button
+              v-if="column.total > column.docs.length"
+              type="button"
+              class="w-full rounded-md border border-dashed border-gray-300 bg-white px-2 py-1 text-[10px] text-gray-500 hover:border-primary hover:text-primary"
+              @click="switchToList"
+            >
+              还有 {{ column.total - column.docs.length }} 份 · 切到列表看全部
+            </button>
           </div>
         </section>
       </div>
+    </div>
+
+    <!--
+      分页条：列表/网格共用同一套 page/pageSize（切视图不重置页码）。
+      看板不参与分页——它是「看哪堆积压」的视图，逐份翻页请回列表。
+    -->
+    <PaginationBar
+      v-if="viewMode !== 'kanban'"
+      :total="total"
+      :page="page"
+      :page-size="pageSize"
+      :page-sizes="pageSizes"
+      unit="份文档"
+      :note="selectedIds.length ? `已选 ${selectedIds.length} 份（跨页保留）` : ''"
+      @update:page="emit('update:page', $event)"
+      @update:page-size="emit('update:pageSize', $event)"
+    />
+    <div v-else class="flex flex-wrap items-center gap-2 border-t border-gray-200 px-3 py-2 text-[11px] text-gray-500">
+      <span>看板展示<b class="mx-0.5 font-semibold text-gray-700">当前页</b>的解析状态分布，每列最多 {{ KANBAN_LIMIT }} 份</span>
+      <span class="flex-1" />
+      <button type="button" class="text-[11px] font-medium text-primary hover:underline" @click="switchToList">
+        切到列表看全部 {{ total.toLocaleString() }} 份
+      </button>
     </div>
   </section>
 </template>
@@ -461,12 +549,14 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import {
   buildFolderIndex,
-  canMoveFolderInto,
+  folderNameOf,
   joinFolderPath,
+  parentFolderPath,
   splitFolderPath,
   type FolderNode,
 } from '@/utils/knowledgeFolders'
 import { docStatusOf, isDocEnabled, type DocStatus } from '@/utils/knowledgeDocStatus'
+import PaginationBar from '@/components/common/PaginationBar.vue'
 
 /**
  * 文档工作区：把「浏览 / 排序 / 筛选 / 多选 / 移动」这些高频操作从左侧树里搬出来。
@@ -474,6 +564,9 @@ import { docStatusOf, isDocEnabled, type DocStatus } from '@/utils/knowledgeDocS
  * 这一层刻意不碰接口：所有写操作都 emit 给页面，由页面复用既有的 API 调用
  * （移动走 folder-structure、解析走 RAGFlow run、删除走原弹窗），避免同一条链路
  * 出现两套实现。
+ *
+ * 分页之后，**筛选/排序/翻页状态也归页面**（受控组件）：数据只有当前页，
+ * 本地再过滤一次会漏掉其他页的命中，也会让「共 N 份」与页码对不上。
  */
 
 type WorkspaceDoc = {
@@ -490,17 +583,18 @@ type WorkspaceDoc = {
   enabled?: boolean | number
 }
 
-type Row =
-  | { kind: 'folder'; node: FolderNode; depth: number }
-  | { kind: 'doc'; doc: WorkspaceDoc; depth: number; folderPath: string }
+/** 未分类的哨兵值：与后端 folder 参数约定一致 */
+const UNCLASSIFIED = '__unclassified__'
+/** 看板每列最多渲染的卡片数 */
+const KANBAN_LIMIT = 8
 
 const props = withDefaults(
   defineProps<{
+    /** 当前页文档（服务端已按 keyword/status/sort/folder 过滤） */
     docs: WorkspaceDoc[]
     folderStructure?: Record<string, string[]>
     loading?: boolean
     canManage?: boolean
-    canUpload?: boolean
     bulkEnabledBusy?: boolean
     canParse?: boolean
     canDeleteDoc?: boolean
@@ -508,18 +602,43 @@ const props = withDefaults(
     activeId?: string | null
     /** 受控的当前文件夹路径，页面切换知识库时用来复位 */
     rootKey?: string
+    /** 服务端过滤后的总数 */
+    total?: number
+    /** 全库文档总数（未过滤），用于「共 N 份」与空态判断 */
+    allTotal?: number
+    page?: number
+    pageSize?: number
+    pageSizes?: number[]
+    keyword?: string
+    status?: string
+    sort?: string
+    folder?: string
+    /** 后端给的各解析状态计数（基于 folder+keyword 过滤后） */
+    statusCounts?: Record<string, number>
+    /** 后端给的各文件夹文档数（含子路径），键为路径或 UNCLASSIFIED */
+    folderCounts?: Record<string, number>
   }>(),
   {
     folderStructure: () => ({}),
     loading: false,
     canManage: false,
-    canUpload: false,
     bulkEnabledBusy: false,
     canParse: false,
     canDeleteDoc: false,
     selectedIds: () => [],
     activeId: null,
     rootKey: '',
+    total: 0,
+    allTotal: 0,
+    page: 1,
+    pageSize: 50,
+    pageSizes: () => [20, 50, 100],
+    keyword: '',
+    status: '',
+    sort: 'updated',
+    folder: '',
+    statusCounts: () => ({}),
+    folderCounts: () => ({}),
   },
 )
 
@@ -532,7 +651,12 @@ const emit = defineEmits<{
   (event: 'rename-folder', payload: { path: string; name: string }): void
   (event: 'delete-folder', path: string): void
   (event: 'update:selectedIds', ids: string[]): void
-  (event: 'upload'): void
+  (event: 'update:page', page: number): void
+  (event: 'update:pageSize', size: number): void
+  (event: 'update:keyword', keyword: string): void
+  (event: 'update:status', status: string): void
+  (event: 'update:sort', sort: string): void
+  (event: 'update:folder', folder: string): void
   (event: 'bulk-parse', ids: string[]): void
   (event: 'bulk-delete', ids: string[]): void
   (event: 'bulk-move'): void
@@ -548,7 +672,6 @@ const VIEW_OPTIONS = [
 const SORT_OPTIONS = [
   { key: 'updated' as const, label: '最近更新' },
   { key: 'name' as const, label: '名称' },
-  { key: 'status' as const, label: '解析状态' },
   { key: 'size' as const, label: '文件大小' },
   { key: 'chunks' as const, label: '切片数' },
 ]
@@ -557,23 +680,16 @@ const SORT_OPTIONS = [
 const GRID_COLS = 'grid-cols-[30px_minmax(180px,1fr)_96px_56px_72px_88px_88px]'
 
 const viewMode = ref<'list' | 'grid' | 'kanban'>('list')
-const sortKey = ref<'updated' | 'name' | 'status' | 'size' | 'chunks'>('updated')
-const query = ref('')
-const statusFilter = ref<'' | DocStatus>('')
-const currentPath = ref('')
-const expanded = ref<string[]>([])
-const dragOverPath = ref<string | null>(null)
 const rowMenuId = ref<string | null>(null)
 const renaming = ref<{ path: string; value: string } | null>(null)
 const creating = ref<{ parentPath: string; value: string } | null>(null)
 const renameInput = ref<HTMLInputElement | null>(null)
 const createInput = ref<HTMLInputElement | null>(null)
+const dragOverPath = ref<string | null>(null)
 let draggingId = ''
 
 const index = computed(() => buildFolderIndex(props.folderStructure))
-const docById = computed(() => new Map(props.docs.map((doc) => [doc.id, doc])))
-
-/** 文档 → 所属文件夹路径（用于搜索结果的路径后缀、看板卡片） */
+/** 文档 → 所属文件夹路径（用于行尾路径后缀与移动菜单的当前值） */
 const docFolderMap = computed(() => {
   const map = new Map<string, string>()
   for (const node of index.value.byPath.values()) {
@@ -583,13 +699,48 @@ const docFolderMap = computed(() => {
 })
 
 const pathOfDoc = (docId: string) => docFolderMap.value.get(docId) ?? ''
+const allFolderPaths = computed(() => [...index.value.byPath.keys()].sort())
 
-/** 没有被任何文件夹收进来的文档：根目录平铺显示 */
-const unclassified = computed(() =>
-  props.docs.filter((doc) => !index.value.assigned.has(doc.id)),
+const currentFolder = computed(() =>
+  props.folder && props.folder !== UNCLASSIFIED ? props.folder : '',
 )
 
-const isFiltering = computed(() => !!query.value.trim() || !!statusFilter.value)
+const breadcrumb = computed(() => {
+  const segments = splitFolderPath(currentFolder.value)
+  return segments.map((name, i) => ({ name, path: joinFolderPath(segments.slice(0, i + 1)) }))
+})
+
+/** 当前路径的直接子文件夹（根层 = 顶层文件夹） */
+const subFolders = computed<FolderNode[]>(() => {
+  if (props.folder === UNCLASSIFIED) return []
+  const node = currentFolder.value ? index.value.byPath.get(currentFolder.value) : null
+  const paths = node ? node.children : index.value.topLevel
+  return paths
+    .map((path) => index.value.byPath.get(path))
+    .filter((item): item is FolderNode => Boolean(item))
+})
+
+const parentPath = computed(() => parentFolderPath(currentFolder.value))
+
+/**
+ * 文件夹计数优先用后端返回值（只统计真实存在的文档）；
+ * 拿不到时退回结构里的 docId 数——可能含已删文档，但比不显示强。
+ */
+const countOf = (path: string): number => {
+  const fromServer = props.folderCounts?.[path]
+  if (typeof fromServer === 'number') return fromServer
+  return index.value.byPath.get(path)?.totalDocCount ?? 0
+}
+
+const unclassifiedCount = computed(() => {
+  const fromServer = props.folderCounts?.[UNCLASSIFIED]
+  if (typeof fromServer === 'number') return fromServer
+  return 0
+})
+
+const folderCountHint = (path: string) => `打开「${path}」（含子文件夹共 ${countOf(path)} 份）`
+
+const isFiltering = computed(() => !!props.keyword.trim() || !!props.status)
 
 /**
  * RAGFlow 的 progress 两套口径都出现过：0~1 的小数与 0~100 的百分数。
@@ -610,12 +761,36 @@ const progressLabel = (doc: WorkspaceDoc): string => {
 const statusOf = (doc: WorkspaceDoc): DocStatus => docStatusOf(doc)
 
 const statusChips = computed(() => {
-  const counts = { failed: 0, parsing: 0, unparsed: 0, parsed: 0 }
-  for (const doc of props.docs) counts[statusOf(doc)] += 1
+  const counts = props.statusCounts || {}
+  const hasServerCounts = Object.keys(counts).length > 0
+  const local = { failed: 0, parsing: 0, unparsed: 0, parsed: 0 }
+  if (!hasServerCounts) {
+    for (const doc of props.docs) local[statusOf(doc)] += 1
+  }
+  const pick = (key: DocStatus) =>
+    hasServerCounts ? Number(counts[key] ?? 0) : local[key]
   return [
-    { key: 'failed' as const, label: '解析失败', count: counts.failed, dot: 'bg-red-500' },
-    { key: 'parsing' as const, label: '解析中', count: counts.parsing, dot: 'bg-amber-500' },
-    { key: 'unparsed' as const, label: '未解析', count: counts.unparsed, dot: 'bg-gray-300' },
+    {
+      key: 'failed' as const,
+      label: '解析失败',
+      count: pick('failed'),
+      dot: 'bg-red-500',
+      title: '只看解析失败的文档',
+    },
+    {
+      key: 'parsing' as const,
+      label: '解析中',
+      count: pick('parsing'),
+      dot: 'bg-amber-500',
+      title: '只看正在解析的文档',
+    },
+    {
+      key: 'unparsed' as const,
+      label: '未解析',
+      count: pick('unparsed'),
+      dot: 'bg-gray-300',
+      title: '只看还没开始解析的文档',
+    },
   ]
 })
 
@@ -695,133 +870,31 @@ function formatTime(raw?: string | number): string {
   return `${date.getFullYear()}-${month}-${day}`
 }
 
-/** 当前层的文档过滤 + 排序 */
-function sortDocs(list: WorkspaceDoc[]): WorkspaceDoc[] {
-  const sorted = [...list]
-  sorted.sort((a, b) => {
-    switch (sortKey.value) {
-      case 'name':
-        return String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN')
-      case 'size':
-        return (b.size ?? 0) - (a.size ?? 0)
-      case 'chunks':
-        return (b.chunk_count ?? 0) - (a.chunk_count ?? 0)
-      case 'status': {
-        const rank = { failed: 0, parsing: 1, unparsed: 2, parsed: 3 }
-        return rank[statusOf(a)] - rank[statusOf(b)]
-      }
-      default:
-        return timestampOf(b.update_time || b.created_at) - timestampOf(a.update_time || a.created_at)
-    }
-  })
-  return sorted
-}
-
-function matches(doc: WorkspaceDoc): boolean {
-  const keyword = query.value.trim().toLowerCase()
-  if (keyword && !String(doc.name || '').toLowerCase().includes(keyword)) return false
-  if (statusFilter.value && statusOf(doc) !== statusFilter.value) return false
-  return true
-}
-
-/**
- * 搜索/筛选时平铺显示（忽略层级，带路径后缀）；
- * 否则按「当前层 → 展开的子层」递归展开，和文件管理器一致。
- */
-const visibleRows = computed<Row[]>(() => {
-  if (isFiltering.value) {
-    return sortDocs(props.docs.filter(matches)).map((doc) => ({
-      kind: 'doc' as const,
-      doc,
-      depth: 0,
-      folderPath: pathOfDoc(doc.id),
-    }))
-  }
-
-  const rows: Row[] = []
-  const pushDocs = (docIds: string[], depth: number, folderPath: string) => {
-    const list = docIds
-      .map((id) => docById.value.get(id))
-      .filter((doc): doc is WorkspaceDoc => !!doc)
-    for (const doc of sortDocs(list)) rows.push({ kind: 'doc', doc, depth, folderPath })
-  }
-  const walk = (path: string, depth: number) => {
-    const node = index.value.byPath.get(path)
-    if (!node) return
-    rows.push({ kind: 'folder', node, depth })
-    if (!expanded.value.includes(path)) return
-    for (const childPath of node.children) walk(childPath, depth + 1)
-    pushDocs(node.docIds, depth + 1, path)
-  }
-
-  if (currentPath.value) {
-    const node = index.value.byPath.get(currentPath.value)
-    if (node) {
-      for (const childPath of node.children) walk(childPath, 0)
-      pushDocs(node.docIds, 0, node.path)
-    }
-  } else {
-    for (const path of index.value.topLevel) walk(path, 0)
-    pushDocs(unclassified.value.map((doc) => doc.id), 0, '')
-  }
-  return rows
-})
-
-const allFolderPaths = computed(() => [...index.value.byPath.keys()].sort())
-
-const breadcrumb = computed(() => {
-  const segments = splitFolderPath(currentPath.value)
-  return segments.map((name, i) => ({ name, path: joinFolderPath(segments.slice(0, i + 1)) }))
-})
-
+/** 当前页内按状态分列；看板只做「哪堆积压」的判断，不承担逐条翻阅 */
 const kanbanColumns = computed(() => {
   const buckets: Record<DocStatus, WorkspaceDoc[]> = { failed: [], parsing: [], unparsed: [], parsed: [] }
-  for (const doc of props.docs.filter(matches)) buckets[statusOf(doc)].push(doc)
-  return [
-    { status: 'failed' as DocStatus, label: '解析失败', dotClass: 'bg-red-500', docs: sortDocs(buckets.failed) },
-    { status: 'parsing' as DocStatus, label: '解析中', dotClass: 'bg-amber-500', docs: sortDocs(buckets.parsing) },
-    { status: 'unparsed' as DocStatus, label: '未解析', dotClass: 'bg-gray-300', docs: sortDocs(buckets.unparsed) },
-    { status: 'parsed' as DocStatus, label: '已完成', dotClass: 'bg-emerald-500', docs: sortDocs(buckets.parsed) },
+  for (const doc of props.docs) buckets[statusOf(doc)].push(doc)
+  const order: Array<{ status: DocStatus; label: string; dotClass: string }> = [
+    { status: 'failed', label: '解析失败', dotClass: 'bg-red-500' },
+    { status: 'parsing', label: '解析中', dotClass: 'bg-amber-500' },
+    { status: 'unparsed', label: '未解析', dotClass: 'bg-gray-300' },
+    { status: 'parsed', label: '已完成', dotClass: 'bg-emerald-500' },
   ]
+  return order.map((item) => {
+    const list = buckets[item.status]
+    return {
+      ...item,
+      total: list.length,
+      docs: list.slice(0, KANBAN_LIMIT),
+    }
+  })
 })
 
-/** 当前可见的待选文档（全选只作用于列表里看得见的那些） */
-const visibleDocIds = computed(() =>
-  visibleRows.value.filter((row): row is Extract<Row, { kind: 'doc' }> => row.kind === 'doc').map((row) => row.doc.id),
-)
+/** 当前页可见的待选文档（全选只作用于这一页，跨页勾选由页面保留） */
+const visibleDocIds = computed(() => props.docs.map((doc) => doc.id))
 const allVisibleSelected = computed(
   () => visibleDocIds.value.length > 0 && visibleDocIds.value.every((id) => props.selectedIds.includes(id)),
 )
-
-const rowKey = (row: Row) => (row.kind === 'folder' ? `folder:${row.node.path}` : `doc:${row.doc.id}`)
-
-const isExpanded = (path: string) => expanded.value.includes(path)
-
-function toggleExpand(path: string) {
-  expanded.value = isExpanded(path) ? expanded.value.filter((item) => item !== path) : [...expanded.value, path]
-}
-
-function enterFolder(path: string) {
-  currentPath.value = path
-  if (path && !isExpanded(path)) expanded.value = [...expanded.value, path]
-}
-
-function goRoot() {
-  currentPath.value = ''
-}
-
-function onRowClick(row: Row) {
-  closeRowMenu()
-  if (row.kind === 'folder') {
-    enterFolder(row.node.path)
-    return
-  }
-  emit('open-doc', row.doc)
-}
-
-function closeRowMenu() {
-  rowMenuId.value = null
-}
 
 function toggleSelect(docId: string) {
   const next = props.selectedIds.includes(docId)
@@ -835,12 +908,52 @@ function toggleSelectAll() {
     emit('update:selectedIds', props.selectedIds.filter((id) => !visibleDocIds.value.includes(id)))
     return
   }
-  const merged = new Set([...props.selectedIds, ...visibleDocIds.value])
-  emit('update:selectedIds', [...merged])
+  emit('update:selectedIds', [...new Set([...props.selectedIds, ...visibleDocIds.value])])
 }
 
 function clearSelection() {
   emit('update:selectedIds', [])
+}
+
+/* ── 受控筛选/排序/文件夹 ───────────────────────────────────────────── */
+
+function onKeywordInput(event: Event) {
+  emit('update:keyword', (event.target as HTMLInputElement).value)
+}
+
+function onSortChange(event: Event) {
+  emit('update:sort', (event.target as HTMLSelectElement).value)
+}
+
+function toggleStatus(key: DocStatus) {
+  emit('update:status', props.status === key ? '' : key)
+}
+
+function openFolder(path: string) {
+  emit('update:folder', path === UNCLASSIFIED ? UNCLASSIFIED : path)
+}
+
+function switchToList() {
+  viewMode.value = 'list'
+}
+
+function closeRowMenu() {
+  rowMenuId.value = null
+}
+
+/* ── 拖拽移动 ───────────────────────────────────────────────────────── */
+
+function onDragStart(doc: WorkspaceDoc) {
+  draggingId = doc.id
+}
+
+function onFolderChipDrop(path: string) {
+  dragOverPath.value = null
+  const docId = draggingId
+  draggingId = ''
+  if (!docId) return
+  if (pathOfDoc(docId) === path) return
+  emit('move-doc', { docId, folderPath: path })
 }
 
 function moveDoc(doc: WorkspaceDoc, folderPath: string) {
@@ -848,41 +961,10 @@ function moveDoc(doc: WorkspaceDoc, folderPath: string) {
   emit('move-doc', { docId: doc.id, folderPath })
 }
 
-function onDragStart(doc: WorkspaceDoc) {
-  draggingId = doc.id
-}
+/* ── 文件夹新建 / 重命名 ────────────────────────────────────────────── */
 
-function isDragOver(row: Row): boolean {
-  return row.kind === 'folder' && dragOverPath.value === row.node.path
-}
-
-function onFolderDragOver(row: Row) {
-  if (row.kind !== 'folder') return
-  dragOverPath.value = row.node.path
-}
-
-function onFolderDragLeave(row: Row) {
-  if (row.kind !== 'folder') return
-  dragOverPath.value = null
-}
-
-function onFolderDrop(row: Row) {
-  if (row.kind !== 'folder') return
-  onDropToFolder(row.node.path)
-}
-
-function onDropToFolder(folderPath: string) {
-  dragOverPath.value = null
-  if (!draggingId) return
-  const docId = draggingId
-  draggingId = ''
-  if (pathOfDoc(docId) === folderPath) return
-  emit('move-doc', { docId, folderPath })
-}
-
-function startCreate(parentPath: string) {
-  if (parentPath && !isExpanded(parentPath)) toggleExpand(parentPath)
-  creating.value = { parentPath, value: '' }
+function startCreate(parentPathValue: string) {
+  creating.value = { parentPath: parentPathValue, value: '' }
   void nextTick(() => createInput.value?.focus())
 }
 
@@ -890,65 +972,83 @@ function commitCreate() {
   const draft = creating.value
   if (!draft) return
   const name = draft.value.trim()
-  if (!name) {
-    creating.value = null
-    return
-  }
   creating.value = null
+  if (!name) return
   emit('create-folder', { parentPath: draft.parentPath, name })
 }
 
-function startRename(node: FolderNode) {
-  renaming.value = { path: node.path, value: node.name }
+function startRenamePath(path: string) {
+  renaming.value = { path, value: folderNameOf(path) }
   void nextTick(() => {
-    const input = Array.isArray(renameInput.value) ? renameInput.value[0] : renameInput.value
-    input?.focus()
-    input?.select()
+    renameInput.value?.focus()
+    renameInput.value?.select()
   })
 }
 
-function commitRename(node: FolderNode) {
+function commitRename() {
   const draft = renaming.value
-  if (!draft || draft.path !== node.path) return
+  if (!draft) return
   const name = draft.value.trim()
   renaming.value = null
-  if (!name || name === node.name) return
+  if (!name || name === folderNameOf(draft.path)) return
+  // 路径分隔符由 / 承担，名字里再出现会建出意料之外的层级
   if (name.includes('/')) return
-  emit('rename-folder', { path: node.path, name })
+  emit('rename-folder', { path: draft.path, name })
 }
 
-// 拖拽只允许「文档 → 文件夹」；文件夹自身的移动依赖菜单，避免误拖成环
-const canDropInto = (sourcePath: string, targetPath: string) => canMoveFolderInto(sourcePath, targetPath)
-void canDropInto
+/**
+ * 能不能整理目录：新建 / 重命名 / 删除文件夹、把文档拖进文件夹。
+ *
+ * 后端 ``PUT /folder-structure`` 已放宽到内容级写权限，前端若还按管理级卡着，
+ * 部门成员照样一个文件夹都建不了、也拖不动——前后端口径必须一致。
+ */
+const canArrangeDocs = computed(() => props.canManage || props.canDeleteDoc)
 
-// 切换知识库时复位浏览位置，避免停在上一个库的某个子文件夹里
+/**
+ * 勾选框的可见条件必须跟后端的写权限对齐。
+ *
+ * 后端「批量解析」「批量删除」只要求元素权限（element:knowledge:parse_document /
+ * delete_document）+ 内容级写权限，不要求是库的创建人。这里原先写死 canManage，
+ * 结果部门协作成员看得到按钮、却选不中任何文档，批量操作等于摆设。
+ */
+const canSelectDocs = computed(() => props.canManage || props.canDeleteDoc || props.canParse)
+
+/**
+ * 当前文件夹被删掉（或改名）后回到根。
+ *
+ * 不兜这一步，页面会拿着一个不存在的路径继续请求，后端按前缀过滤返回空列表，
+ * 界面表现为「这个文件夹里突然一份文档都没有」，而且面包屑还指着一个不存在的目录。
+ */
+watch(
+  () => [props.folder, index.value.byPath.size] as const,
+  ([folder]) => {
+    if (!folder || folder === UNCLASSIFIED) return
+    if (!index.value.byPath.has(folder)) emit('update:folder', '')
+  },
+)
+
+/**
+ * 切换知识库时复位浏览位置：文件夹回到根、搜索与状态清空。
+ * 这些状态现在归页面所有，所以只能 emit 出去，不能只改本地 ref
+ * （否则页面还拿着上一个库的 folder 值继续请求）。
+ */
 watch(
   () => props.rootKey,
   () => {
-    currentPath.value = ''
-    query.value = ''
-    statusFilter.value = ''
     renaming.value = null
     creating.value = null
     rowMenuId.value = null
-    const topLevel = [...index.value.topLevel]
-    expanded.value = topLevel
+    dragOverPath.value = null
+    viewMode.value = 'list'
+    emit('update:keyword', '')
+    emit('update:status', '')
+    emit('update:folder', '')
+    emit('update:page', 1)
   },
   { immediate: true },
 )
 
-// 文件夹结构变化（新建/重命名/删除）后，顶层默认展开到可见
-watch(
-  () => index.value.topLevel.join('|'),
-  (next) => {
-    if (!next) return
-    const known = new Set(expanded.value)
-    for (const path of next.split('|')) known.add(path)
-    expanded.value = [...known]
-  },
-)
-
 // 左侧树/快捷键等外部入口需要让工作区进入「新建文件夹」状态
-const startCreateAtRoot = () => startCreate(currentPath.value)
+const startCreateAtRoot = () => startCreate(currentFolder.value)
 defineExpose({ startCreateAtRoot })
 </script>

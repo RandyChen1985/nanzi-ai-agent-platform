@@ -417,9 +417,10 @@ async def preview_script_tool(
     db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(require_permission("element", "element:system:config_save")),
 ):
-    """试运行：走与真实调用完全相同的执行器，但落在预览目录、不进沙箱。
+    """试运行：走与真实调用相同的执行器，但落在预览目录。
 
-    试跑不写库；``tool_id`` 存在时用库里的代码，允许用提交的字段覆盖。
+    ``tool_id`` 存在时用库里的代码，允许用提交的字段覆盖。非 ``local`` 策略下
+    直接拒绝：试运行没有会话工作区，容器沙箱起不来，放行就等于在宿主机上跑。
     """
     from dataclasses import replace as dataclass_replace
 
@@ -464,9 +465,27 @@ async def preview_script_tool(
     if overrides:
         config = dataclass_replace(config, **overrides)
 
-    workdir = await _preview_workdir(user)
-    runner = ScriptToolRunner(config, workdir=workdir, sandbox_ws=None, sandbox_root=None, user_info=user)
     policy = await current_sandbox_policy()
+    # 试运行没有会话 ID：docker/k8s 起不了会话沙箱，e2b/ssh 没有「会话工作区 →
+    # 沙箱路径」的映射。除 local 外的策略在这里唯一「能跑」的就是后端进程的宿主机
+    # 权限——任意代码与 pip install 都会提到平台权限下，响应却仍报 sandbox_policy=docker。
+    # 宁可拒绝，也不静默降级。
+    if policy != "local":
+        return SysScriptToolPreviewResponse(
+            ok=False,
+            sandbox_policy=policy,
+            message=(
+                f"当前沙箱策略（{policy}）下无法试运行：试运行没有会话工作区，"
+                "容器沙箱无法启动，已拒绝执行，不会退回平台后端进程运行。"
+                "请保存后在智能体会话中调用该工具验证；只有 local 策略才可直接试运行"
+                "（脚本以平台后端权限运行，不是安全边界）。"
+            ),
+        )
+
+    workdir = await _preview_workdir(user)
+    # local 策略就是后端进程执行，这里不传 sandbox_ws 即代表本地通道；上面的
+    # 策略判断已经挡住了所有本应进容器的场景。
+    runner = ScriptToolRunner(config, workdir=workdir, user_info=user)
 
     try:
         result = await runner.run(payload.params or {})

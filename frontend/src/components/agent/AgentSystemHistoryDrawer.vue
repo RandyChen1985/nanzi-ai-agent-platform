@@ -123,11 +123,12 @@ watch(
             还没有发布记录。该智能体被设为系统级后，这里会记录每次申请、审核、上架、下架与配置变更。
           </p>
 
-          <p v-if="totalCount > entries.length" class="mb-2 text-[11px] text-slate-400">
-            仅显示最近 {{ entries.length }} 条（共 {{ totalCount }} 条）
-          </p>
-          <ol v-else class="relative space-y-4 border-l border-slate-200 pl-5">
-            <li v-for="entry in entries" :key="`${entry.kind}-${entry.id}`" class="relative">
+          <div v-else>
+            <p v-if="totalCount > entries.length" class="mb-2 text-[11px] text-slate-400">
+              仅显示最近 {{ entries.length }} 条（共 {{ totalCount }} 条）
+            </p>
+            <ol class="relative space-y-4 border-l border-slate-200 pl-5">
+              <li v-for="entry in entries" :key="`${entry.kind}-${entry.id}`" class="relative">
               <span
                 class="absolute -left-[23px] top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-white"
                 :class="eventTone(entry).dot"
@@ -207,6 +208,7 @@ watch(
               </div>
             </li>
           </ol>
+          </div>
         </div>
       </div>
     </div>

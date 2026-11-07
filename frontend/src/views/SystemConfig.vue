@@ -2642,6 +2642,9 @@ const configShortDescriptions: Record<string, string> = {
   agent_context_llm_summary_enabled: '是否用当前会话模型对历史做语义摘要，失败或超时会自动降级为确定性摘录。',
   sandbox_policy: '安全沙箱执行策略。local 表示在宿主机扩展进程内直接执行（当前默认）；docker 表示在自动构建的 Docker 容器内执行；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。',
   sandbox_docker_base_image: 'docker 策略使用的容器基础镜像（留空默认使用官方标准镜像 python:3.11-slim）。',
+  sandbox_docker_memory_limit_mb: 'docker 策略沙箱容器的内存上限（整数 MB，默认 2048；填 0 表示不限）。同时把 swap 上限压到与内存一致，避免内存打满后继续吃宿主机 swap。改完只对新容器生效。',
+  sandbox_docker_cpu_limit: 'docker 策略沙箱容器的 CPU 上限（核数，可填小数如 1.5，默认 2；填 0 表示不限）。防止单个死循环打满宿主机 CPU。改完只对新容器生效。',
+  sandbox_docker_pids_limit: 'docker 策略沙箱容器内的进程数上限（默认 512；填 0 表示不限）。用于阻断 fork bomb，同时给 pip/uv 并发编译留足余量。改完只对新容器生效。',
   sandbox_k8s_namespace: 'k8s 策略沙箱 Pod 运行的命名空间（默认与平台同命名空间 nanzi-ai-agent；留空表示自动跟随平台命名空间）。注意：只有与平台同命名空间，沙箱才能通过 sandbox_k8s_existing_pvc 共享用户工作区（PVC 为命名空间级资源）。',
   sandbox_k8s_image: 'k8s 策略沙箱容器运行的基础镜像（默认 python:3.11-slim）。可填自动构建的“网关预置镜像” nanzi-sandbox-k8s:<版本> 加速冷启动（构建方式见下方提示）。',
   sandbox_k8s_existing_pvc: 'k8s 策略的共享数据卷：留空则自动探测平台自身数据卷并共享用户工作区（推荐，零配置，与 Docker 沙箱一致）；填 none 强制使用每工作区独立空卷（沙箱内看不到用户工作区）；填具体 PVC 名则显式指向该共享卷（须与平台同命名空间）。',
@@ -2830,7 +2833,10 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     // 按当前 sandbox 策略动态过滤：仅展示与该策略相关的配置项
     const policy = targetSandboxPolicy()
     const policyKeySets: Record<string, string[]> = {
-      docker: ['sandbox_docker_base_image'],
+      docker: [
+        'sandbox_docker_base_image',
+        'sandbox_docker_memory_limit_mb', 'sandbox_docker_cpu_limit', 'sandbox_docker_pids_limit'
+      ],
       k8s: [
         'sandbox_k8s_namespace', 'sandbox_k8s_image', 'sandbox_k8s_existing_pvc',
         'sandbox_k8s_storage_class', 'sandbox_k8s_storage_size',

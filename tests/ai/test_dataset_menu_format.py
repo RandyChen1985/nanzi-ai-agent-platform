@@ -123,3 +123,92 @@ def test_normalize_bound_dataset_ids_matches_runtime_filter():
     assert normalize_bound_dataset_ids(["销售数据集"]) == []
     assert normalize_bound_dataset_ids(None) == []
     assert normalize_bound_dataset_ids(["11", "11"]) == ["11"]
+
+
+@pytest.mark.asyncio
+async def test_medium_oversized_menu_uses_progressive_truncation(monkeypatch):
+    """略超预算时优先走第一级渐进截断（保留 Table Details 结构但裁剪长表描述与指标数）。"""
+    datasets = [
+        SimpleNamespace(
+            name=f"ds{index}",
+            display_name=f"ds{index}中文",
+            description="用途说明",
+            tags=["核心"],
+            tables=[
+                SimpleNamespace(
+                    term=f"表{index}_{n}",
+                    description="单表超长描述内容" * 40,
+                    status=1,
+                )
+                for n in range(5)
+            ],
+            metrics=[
+                SimpleNamespace(display_name=f"指标{m}", name=f"m{m}")
+                for m in range(25)
+            ],
+        )
+        for index in range(8)
+    ]
+
+    full_menu = AgentConfigProvider._format_dataset_menu(datasets)
+    assert len(full_menu) > _DATASET_MENU_DETAIL_BUDGET
+
+    menu = await _run_generate(monkeypatch, datasets)
+
+    assert len(menu) <= _DATASET_MENU_DETAIL_BUDGET
+    assert "  Table Details:" in menu
+    assert "…" in menu
+    assert "(共25项)" in menu
+
+
+def test_dataset_menu_header_states_tables_are_not_all_queryable():
+    """目录列出的是数据集下全部表，必须明说「不代表每一张都能查」并给出查权限的工具。
+
+    `search_datasets` 只按数据集级授权过滤，目录会把表全平铺出来（实测某用户 38 张表里
+    只有 1 张有授权）。header 原先写「只能使用这里列出的数据集与表」，等于反过来
+    告诉模型这 38 张都能用，模型据此刻写 SQL、执行时才被表级门禁拦下。
+    """
+    header = AgentConfigProvider._dataset_menu_header(2)
+
+    assert "不代表每一张都对当前账号开放" in header
+    assert "list_accessible_datasets" in header
+    # 降级模式（没有 Table Details）同样可能误导：Includes Tables 仍会平铺表名
+    assert "list_accessible_datasets" in AgentConfigProvider._dataset_menu_header(
+        2, include_table_details=False
+    )
+    # 数据集级约束不能丢
+    assert "未列出的数据集一律视为无权访问" in header
+
+
+def test_dataset_menu_cache_key_carries_prompt_version(monkeypatch):
+    """目录文案改动要靠版本号让 90 天缓存失效，否则重启后看到的还是旧目录。"""
+    import app.services.ai.config as config_module
+
+    calls: list[str] = []
+
+    class _FakeRedis:
+        async def get(self, key):
+            calls.append(key)
+            return None
+
+        async def set(self, key, value, ex=None):
+            calls.append(key)
+
+    async def _fake_get_redis():
+        return _FakeRedis()
+
+    async def _fake_generate(_user_id, _is_admin):
+        return "【当前用户有权访问的数据集】"
+
+    monkeypatch.setattr("app.core.redis.get_redis", _fake_get_redis)
+    monkeypatch.setattr(AgentConfigProvider, "_generate_dataset_menu_content", staticmethod(_fake_generate))
+
+    import asyncio
+
+    asyncio.run(AgentConfigProvider.get_dataset_menu(user_id=178, is_admin=False))
+
+    assert calls, "未访问缓存"
+    assert all(config_module._DATASET_MENU_CACHE_VERSION in key for key in calls)
+    # 权限变更走 invalidate_dataset_menu_cache（内部就是 dataset_menu_cache_key），
+    # 它必须和 get_dataset_menu 用的是同一个键，否则删的是历史键、新键活满 90 天
+    assert AgentConfigProvider.dataset_menu_cache_key(user_id=178) in calls

@@ -210,6 +210,40 @@ async def test_resolve_knowledge_dataset_ids_blocks_without_explicit_dataset():
 
 
 @pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_load_alive_dataset_ids_covers_datasets_beyond_first_500(monkeypatch):
+    """存活集合必须翻完所有页。
+
+    旧实现取 list_datasets(page=1, page_size=500)，RAGFlow 单页上限 100，实际只拿
+    前 500 个（含自动生成的 meta-* 库）；库超过 500 个后，排在后面的正常库会被判成
+    「在 RAGFlow 侧已失联」，问答被直接阻断。
+    """
+    from app.services.ai import knowledge_utils
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def list_all_datasets(self):
+            return [{"id": f"{i:032x}"} for i in range(600)]
+
+    async def _no_redis():
+        return None
+
+    monkeypatch.setattr(
+        "app.services.ai.ragflow_client.RagFlowClient",
+        _FakeClient,
+    )
+    monkeypatch.setattr("app.core.redis.get_redis", _no_redis)
+
+    alive = await knowledge_utils._load_ragflow_alive_dataset_ids()
+
+    assert alive is not None
+    assert len(alive) == 600
+    assert f"{599:032x}" in alive
+
+
+@pytest.mark.asyncio
 async def test_filter_alive_knowledge_dataset_ids_drops_missing():
     from unittest.mock import AsyncMock, patch
 

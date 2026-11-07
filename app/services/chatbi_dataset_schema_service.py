@@ -213,6 +213,23 @@ def _chunk_table_name(content: str) -> Optional[str]:
     return match.group(1).lower() if match else None
 
 
+def trim_chunk_columns(
+    content: str,
+    rules: "tuple[Any, ...]",
+) -> tuple[str, list[str]]:
+    """公开入口：按字段级授权裁剪 chunk 的 columns（供 schema 检索等其它入口复用）。
+
+    字段级规则挂在 ``scope`` JSON 上，任何「把 schema 交给模型/用户看」的入口都必须
+    过这一道，否则收窄只在主链路生效、旁路仍然全列可见。
+    """
+    return _trim_chunk_columns(content, rules)
+
+
+def chunk_table_name(content: str) -> Optional[str]:
+    """公开入口：从表 chunk 的 YAML 里取物理表名（lower）。"""
+    return _chunk_table_name(content)
+
+
 def _append_column_scope_notice(schema_text: str, hidden_count: int) -> str:
     """字段级收窄的说明：只给数量，不给被隐藏的列名（列名本身也是敏感信息）。"""
     if hidden_count <= 0:
@@ -709,6 +726,7 @@ async def _fetch_dataset_schema_impl(
                 is_admin=is_admin_eff,
                 authorized_dataset_ids=authorized_dataset_ids,
                 allowed_table_names_by_dataset=allowed_table_names_by_dataset,
+                column_rules_by_table=column_rules_by_table,
             )
             schema_text = _append_column_scope_notice(schema_text, len(set(hidden_column_hits)))
             return _append_table_scope_notice(schema_text, len(dropped_table_hits))
@@ -733,6 +751,10 @@ async def _fetch_dataset_schema_impl(
                 else None
             )
             dropped_table_hits = []
+            # 字段级裁剪与 RAGFlow 分支共用同一份 column_rules_by_table：Local 向量
+            # 检索此前只做了表级收窄，受限列的列名/注释/采样值会随 chunk 原文返回给
+            # 模型，等于字段级权限在默认（Local）模式下整体失效。
+            hidden_column_hits: list[str] = []
             query_embedding = await EmbeddingClient.embed_text(query, use_global=True)
             redis_results = await MetadataIndexService.search_knn(
                 query_embedding=query_embedding,
@@ -751,6 +773,7 @@ async def _fetch_dataset_schema_impl(
                 authorized_datasets=authorized_datasets,
                 allowed_table_names_by_dataset=allowed_table_names_by_dataset,
                 dropped_out=dropped_table_hits,
+                column_rules_by_table=column_rules_by_table,
             ):
                 try:
                     similarity = float(item.get("similarity", 0.0) or 0.0)
@@ -761,6 +784,15 @@ async def _fetch_dataset_schema_impl(
                 content = str(item.get("content") or "").strip()
                 if not content:
                     continue
+                _hit_dataset_id = _metadata_dataset_id_from_hit(item, authorized_datasets)
+                if column_rules_by_table:
+                    _tbl = _chunk_table_name(content)
+                    if _tbl and _hit_dataset_id:
+                        _rules = column_rules_by_table.get((int(_hit_dataset_id), _tbl))
+                        if _rules:
+                            content, _hidden = _trim_chunk_columns(content, _rules)
+                            if _hidden:
+                                hidden_column_hits.extend(_hidden)
                 filtered_hits.append({
                     "content": content,
                     "similarity": similarity,
@@ -776,6 +808,7 @@ async def _fetch_dataset_schema_impl(
 
             if filtered_hits:
                 schema_text = format_schema_hits(filtered_hits)
+                schema_text = _append_column_scope_notice(schema_text, len(set(hidden_column_hits)))
             else:
                 return (
                     f"No relevant schema info found for '{query}'.\n"
@@ -849,6 +882,7 @@ async def _fetch_dataset_schema_impl(
         is_admin=is_admin_eff,
         authorized_dataset_ids=authorized_dataset_ids,
         allowed_table_names_by_dataset=allowed_table_names_by_dataset,
+        column_rules_by_table=column_rules_by_table,
     )
 
     return _append_table_scope_notice(schema_text, len(dropped_table_hits))
@@ -975,6 +1009,7 @@ async def _enrich_with_cross_dataset_schema(
     is_admin: bool = False,
     authorized_dataset_ids: Optional[list[int]] = None,
     allowed_table_names_by_dataset: Optional[dict[int, set[str] | None]] = None,
+    column_rules_by_table: Optional["dict[tuple[int, str], tuple[Any, ...]]"] = None,
 ) -> str:
     """从 schema 文本中解析 table_name，查询其跨数据集关联表，追加对应 schema chunk。
 
@@ -1067,6 +1102,14 @@ async def _enrich_with_cross_dataset_schema(
             yaml_chunk = MetadataRagService.render_table_schema_yaml(
                 dataset, table, [], data_source=ds_source
             )
+            # 字段级授权：补全 chunk 同样是交给模型看的 schema，不能因为「来自关联
+            # 补全」就跳过裁剪，否则受限列的列名/注释照样泄给模型。
+            if column_rules_by_table:
+                _rules = column_rules_by_table.get(
+                    (int(getattr(dataset, "id", 0) or 0), str(table.physical_name or "").lower())
+                )
+                if _rules:
+                    yaml_chunk, _ = _trim_chunk_columns(yaml_chunk, _rules)
             formatted = format_schema_chunk(
                 chunk_index,
                 yaml_chunk,

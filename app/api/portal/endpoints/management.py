@@ -1453,6 +1453,20 @@ async def delete_user(
         .values(revoked_by=None)
     )
 
+    # 报表运行记录与门户通知：user_id 外键在迁移里没有级联——portal_saved_report_runs
+    # 两库都缺 ON DELETE CASCADE，portal_notifications 的 PG baseline 也缺；只要该用户
+    # 被这两张表引用，DELETE ai_agent_users 就会直接撞外键 500。runs 还可能指向别人
+    # 分享给该用户的报表（report_id 属于他人），不会随 owner 级联删除，必须按 user_id 清。
+    from app.models.portal_notification import PortalNotification
+    from app.models.saved_report import PortalSavedReportRun
+
+    await db.execute(
+        delete(PortalSavedReportRun).where(PortalSavedReportRun.user_id == user_id)
+    )
+    await db.execute(
+        delete(PortalNotification).where(PortalNotification.user_id == user_id)
+    )
+
     # 3. Finally delete the user
     await db.delete(user)
     await db.commit()

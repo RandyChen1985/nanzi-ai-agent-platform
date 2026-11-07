@@ -6,6 +6,7 @@ import RetrievalParamGroup from '../components/knowledge/RetrievalParamGroup.vue
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { copyToClipboard } from '../utils/clipboard'
+import { sanitizeRenderedHtml } from '../utils/sanitizeHtml'
 
 type RetrievalChunk = {
   id?: string
@@ -355,41 +356,11 @@ const formatScore = (chunk: RetrievalChunk) => {
 
 // RAGFlow 返回的分块正文可能带 HTML（表格等），本页又用 v-html 渲染，
 // 因此按白名单清洗：只保留排版类标签，移除脚本标签与所有事件属性
-const ALLOWED_HTML_TAGS = new Set([
-  'P', 'BR', 'DIV', 'SPAN', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'SUB', 'SUP',
-  'CODE', 'PRE', 'BLOCKQUOTE', 'MARK', 'HR', 'UL', 'OL', 'LI', 'DL', 'DT', 'DD',
-  'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-  'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD', 'CAPTION', 'COLGROUP', 'COL'
-])
-
-const sanitizeHtml = (html: string) => {
-  const doc = new DOMParser().parseFromString(html, 'text/html')
-  const clean = (parent: Element) => {
-    for (const child of Array.from(parent.children)) {
-      if (!ALLOWED_HTML_TAGS.has(child.tagName)) {
-        // 不在白名单：拆掉标签本身、保留其内容，并继续清洗被提升上来的节点
-        const promoted = Array.from(child.childNodes)
-        child.replaceWith(...promoted)
-        for (const node of promoted) {
-          if (node.nodeType === 1) clean(node as Element)
-        }
-        continue
-      }
-      for (const attr of Array.from(child.attributes)) {
-        const name = attr.name.toLowerCase()
-        const value = attr.value.trim().toLowerCase()
-        const isDangerousUrl = (name === 'href' || name === 'src' || name === 'xlink:href') &&
-          (value.startsWith('javascript:') || value.startsWith('data:'))
-        if (name.startsWith('on') || name === 'style' || name === 'srcdoc' || isDangerousUrl) {
-          child.removeAttribute(attr.name)
-        }
-      }
-      clean(child)
-    }
-  }
-  clean(doc.body)
-  return doc.body.innerHTML
-}
+// 手写白名单清洗器有一个结构性漏洞：非白名单标签被“拆标签保内容”提升到父节点后，
+// 只对提升上来的子节点递归（clean(node) 遍历的是 node.children），被提升节点**自身**
+// 的标签与属性再没被校验过——`<x><img src=x onerror=alert(1)></x>` 能原样输出。
+// 统一复用项目里基于 DOMPurify 的实现（utils/sanitizeHtml），不在页面里维护第二套。
+const sanitizeHtml = (html: string): string => sanitizeRenderedHtml(html)
 
 const highlightContent = (content?: string, q?: string) => {
   const text = content || ''
@@ -398,7 +369,9 @@ const highlightContent = (content?: string, q?: string) => {
   if (!search.trim()) return sanitizeHtml(text)
 
   const keywords = search.trim().split(/[\s,，.。;；!！?？|]+/).filter(x => x.length > 0)
-  if (keywords.length === 0) return text
+  // 纯标点（??? / ...）会被全部分隔符吃掉，keywords 为空时没有高亮可加；
+  // 但正文仍要进 v-html，必须和正常分支一样先清洗，不能直接返回原文。
+  if (keywords.length === 0) return sanitizeHtml(text)
 
   let highlighted = text
   try {

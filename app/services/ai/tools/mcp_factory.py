@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+import keyword
 import logging
 import re
 import time
@@ -222,6 +223,26 @@ def _schema_allows_null(param_def: dict[str, Any]) -> bool:
     return isinstance(raw_type, list) and "null" in raw_type
 
 
+def _safe_field_name(param_name: str) -> str:
+    """把远端参数名映射成 Pydantic 能接受的字段名。
+
+    ``create_model`` 对字段名有硬约束：不能以下划线开头（``_id`` 会直接抛
+    ``NameError: Fields must not use names with leading underscores``）、必须是
+    合法标识符、不能是 Python 关键字。远端 schema 里 ``_id`` / ``$ref`` / ``2fa``
+    这类名字并不罕见，一个参数名就足以让整条工具创建失败。
+    """
+    candidate = re.sub(r"[^0-9a-zA-Z_]+", "_", str(param_name or "")).strip("_")
+    if not candidate:
+        candidate = "value"
+    if candidate[0].isdigit():
+        candidate = f"field_{candidate}"
+    if keyword.iskeyword(candidate):
+        candidate = f"{candidate}_"
+    if candidate.startswith("model_"):
+        candidate = f"field_{candidate}"
+    return candidate
+
+
 class McpToolFactory:
     @staticmethod
     def create_tool(tool_record: McpToolCache) -> StructuredTool:
@@ -235,6 +256,9 @@ class McpToolFactory:
         required_fields = set(schema_def.get("required", []))
 
         fields = {}
+        # 远端参数名 → 本地字段别名（执行时再映射回去）。只在不合法时才换名，
+        # 合法的参数名保持逐字节一致，历史行为不变。
+        alias_to_param: Dict[str, str] = {}
         for param_name, param_def in properties.items():
             if not isinstance(param_def, dict):
                 param_def = {}
@@ -249,7 +273,16 @@ class McpToolFactory:
                 p_default = param_def.get("default", None)
                 field_type = Optional[mapped_type]
 
-            fields[param_name] = (field_type, Field(default=p_default, description=p_desc))
+            alias = _safe_field_name(param_name)
+            base_alias = alias
+            suffix = 2
+            while alias in fields:
+                alias = f"{base_alias}_{suffix}"
+                suffix += 1
+            if alias != param_name:
+                alias_to_param[alias] = param_name
+
+            fields[alias] = (field_type, Field(default=p_default, description=p_desc))
         
         # Create dynamic Pydantic model for args
         clean_name = re.sub(r"[^a-zA-Z0-9_]+", "_", str(tool_record.tool_name)).strip("_") or "Tool"
@@ -257,6 +290,13 @@ class McpToolFactory:
         
         # 2. Define execution logic
         async def _execute(**kwargs) -> Any:
+            # 字段别名 → 远端原始参数名（只有不合法名字才会出现在映射里）
+            if alias_to_param:
+                kwargs = {
+                    alias_to_param.get(key, key): value
+                    for key, value in kwargs.items()
+                }
+
             # Extract raw tool name (remove our prefix)
             # Full name: "server_name:raw_tool_name"
             if ":" in tool_record.tool_name:

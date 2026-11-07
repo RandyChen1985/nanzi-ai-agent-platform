@@ -284,3 +284,80 @@ def test_oracle_rewrite():
     # sqlglot might normalize output, but it should contain the injected condition
     assert "DEPT_ID = 500" in rewritten
     assert "WHERE" in rewritten
+
+
+# ---------------------------------------------------------------------------
+# 行级条件在多表作用域里的归属判定：归属不明必须拒绝执行，不能静默丢弃
+# ---------------------------------------------------------------------------
+
+
+def test_unqualified_row_filter_ambiguous_across_tables_is_rejected():
+    """两张表都含 dept_code 时无前缀条件无法归属，必须拒绝而不是丢掉条件放行。
+
+    丢掉条件的后果是 SQL 原样执行并返回未隔离的全量数据——行级权限彻底失效，
+    而且不报错，调用方完全无感。
+    """
+    from app.services.ai.rewriters.sql_rewriter import SQLPermissionError
+
+    rewriter = SQLRewriter(
+        dialect="mysql",
+        table_metadata={
+            "orders": {"dept_code", "amount"},
+            "depts": {"dept_code", "dept_name"},
+        },
+    )
+    sql = "SELECT o.amount FROM orders o JOIN depts d ON o.dept_code = d.dept_code"
+    filters = [{"condition": "dept_code = {user.dept_code}"}]
+
+    with pytest.raises(SQLPermissionError):
+        rewriter.rewrite(sql, filters, {"dept_code": "FIN"})
+
+
+def test_unqualified_row_filter_unique_owner_still_applies():
+    """只有一张表含该列时归属明确，条件照常注入（不能因为收紧而误伤合法查询）。"""
+    rewriter = SQLRewriter(
+        dialect="mysql",
+        table_metadata={
+            "orders": {"dept_code", "amount"},
+            "depts": {"dept_name"},
+        },
+    )
+    sql = "SELECT o.amount FROM orders o JOIN depts d ON o.dept_code = d.dept_code"
+    filters = [{"condition": "dept_code = {user.dept_code}"}]
+
+    rewritten = rewriter.rewrite(sql, filters, {"dept_code": "FIN"})
+
+    assert "dept_code = 'FIN'" in rewritten
+
+
+def test_unqualified_row_filter_without_metadata_is_rejected_on_multi_table():
+    """没有表元数据时多表下无从判定归属，只能拒绝——否则就是静默放行。"""
+    from app.services.ai.rewriters.sql_rewriter import SQLPermissionError
+
+    rewriter = SQLRewriter(dialect="mysql")
+    sql = "SELECT o.amount FROM orders o JOIN depts d ON o.dept_code = d.dept_code"
+    filters = [{"condition": "dept_code = {user.dept_code}"}]
+
+    with pytest.raises(SQLPermissionError):
+        rewriter.rewrite(sql, filters, {"dept_code": "FIN"})
+
+
+def test_unqualified_row_filter_ignores_dimension_subquery_without_column():
+    """维度表子查询里没有该列时不能拒绝整条查询。
+
+    子作用域独立判定，若把「本作用域无此列」当成归属歧义，任何带维度表子查询的
+    合法报表都会被拒——比原来的静默放行更糟。
+    """
+    rewriter = SQLRewriter(
+        dialect="mysql",
+        table_metadata={
+            "fact_sales": {"dept_code", "amount"},
+            "dim_date": {"cal_date"},
+        },
+    )
+    sql = "SELECT * FROM fact_sales f JOIN (SELECT cal_date FROM dim_date) d ON 1 = 1"
+    filters = [{"condition": "dept_code = {user.dept_code}"}]
+
+    rewritten = rewriter.rewrite(sql, filters, {"dept_code": "FIN"})
+
+    assert "dept_code = 'FIN'" in rewritten

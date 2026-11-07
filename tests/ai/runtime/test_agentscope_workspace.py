@@ -1878,6 +1878,129 @@ async def test_docker_workspace_adapter_adds_child_bind_mounts(tmp_path):
     ]
 
 
+@pytest.mark.asyncio
+async def test_docker_workspace_adapter_applies_cgroup_limits(tmp_path):
+    """沙箱容器必须带 cgroups 上限：不设限时一次死循环/内存爆破就能拖垮宿主机。"""
+    from app.services.ai.runtime.agentscope.docker_workspace import (
+        build_docker_workspace_with_extra_binds,
+    )
+
+    captured: dict[str, object] = {}
+
+    class FakeContainer:
+        async def start(self):
+            return None
+
+    class FakeContainers:
+        async def create_or_replace(self, *, name, config):
+            captured["config"] = config
+            return FakeContainer()
+
+    class FakeClient:
+        containers = FakeContainers()
+
+    class FakeDockerWorkspace:
+        def __init__(self, **kwargs):
+            self._client = FakeClient()
+            self._image_tag = "python:3.11-slim"
+            self.workspace_id = kwargs["workspace_id"]
+            self.host_workdir = kwargs["host_workdir"]
+            self.env = {}
+
+    workspace = build_docker_workspace_with_extra_binds(
+        FakeDockerWorkspace,
+        workspace_id="alice__1",
+        host_workdir=str(tmp_path / "alice__1"),
+        extra_bind_mounts=[],
+        resource_limits={
+            "memory_bytes": 2 * 1024 * 1024 * 1024,
+            "nano_cpus": 2 * 10**9,
+            "pids_limit": 512,
+        },
+    )
+
+    await workspace._create_and_start_container()
+
+    host_config = captured["config"]["HostConfig"]
+    assert host_config["Memory"] == 2 * 1024 * 1024 * 1024
+    # swap 上限与内存一致：否则内存打满后会继续吃宿主机 swap，整机卡死。
+    assert host_config["MemorySwap"] == 2 * 1024 * 1024 * 1024
+    assert host_config["NanoCPUs"] == 2 * 10**9
+    assert host_config["PidsLimit"] == 512
+
+
+@pytest.mark.asyncio
+async def test_docker_workspace_adapter_omits_zero_limits(tmp_path):
+    """填 0 = 该维度显式不限制：不下发对应 HostConfig 键。"""
+    from app.services.ai.runtime.agentscope.docker_workspace import (
+        build_docker_workspace_with_extra_binds,
+    )
+
+    captured: dict[str, object] = {}
+
+    class FakeContainer:
+        async def start(self):
+            return None
+
+    class FakeContainers:
+        async def create_or_replace(self, *, name, config):
+            captured["config"] = config
+            return FakeContainer()
+
+    class FakeClient:
+        containers = FakeContainers()
+
+    class FakeDockerWorkspace:
+        def __init__(self, **kwargs):
+            self._client = FakeClient()
+            self._image_tag = "python:3.11-slim"
+            self.workspace_id = kwargs["workspace_id"]
+            self.host_workdir = kwargs["host_workdir"]
+            self.env = {}
+
+    workspace = build_docker_workspace_with_extra_binds(
+        FakeDockerWorkspace,
+        workspace_id="alice__1",
+        host_workdir=str(tmp_path / "alice__1"),
+        extra_bind_mounts=[],
+        resource_limits={"memory_bytes": 0, "nano_cpus": 0, "pids_limit": 0},
+    )
+
+    await workspace._create_and_start_container()
+
+    host_config = captured["config"]["HostConfig"]
+    assert "Memory" not in host_config
+    assert "MemorySwap" not in host_config
+    assert "NanoCPUs" not in host_config
+    assert "PidsLimit" not in host_config
+
+
+@pytest.mark.asyncio
+async def test_docker_sandbox_resource_limits_parse_config(monkeypatch):
+    """配置解析：空 → 默认值；0 → 该维度不限；非法 → 回退默认。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    async def _config_get(key, default=None):
+        return {
+            "sandbox_docker_memory_limit_mb": "",
+            "sandbox_docker_cpu_limit": "0",
+            "sandbox_docker_pids_limit": "not-a-number",
+        }.get(key, default)
+
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get", _config_get
+    )
+
+    limits = await workspace_module._resolve_docker_sandbox_resource_limits()
+
+    # 空 = 沿用默认（2048MB），绝不能读成「不限」
+    assert limits["memory_bytes"] == 2048 * 1024 * 1024
+    # 0 = 显式放开该维度
+    assert "nano_cpus" not in limits
+    # 非法值 = 回退默认（512），而不是悄悄关掉保护
+    assert limits["pids_limit"] == 512
+
+
 def test_container_tool_mcp_uses_logical_workspace_path():
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
         K8S_GATEWAY_VENV_PYTHON,

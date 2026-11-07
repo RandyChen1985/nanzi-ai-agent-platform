@@ -853,3 +853,62 @@ def test_state_transitions_take_row_locks():
             and node.func.attr == "with_for_update"
         ]
         assert calls, f"{name} 缺少行锁（with_for_update）"
+
+
+class _RecordingSession(_FakeDbSession):
+    """记录下发给 DB 的语句：假 session 不执行 SQL，只能靠编译后的语句校验过滤条件。"""
+
+    def __init__(self, *results):
+        super().__init__(*results)
+        self.statements = []
+
+    async def execute(self, *args, **kwargs):
+        if args:
+            self.statements.append(args[0])
+        return await super().execute(*args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_revoke_query_covers_legacy_pending_status_with_live_version(tmp_path):
+    """``status="PENDING"`` 但仍有 ``current_version`` 的谱系同样是「在线」，必须一起下架。
+
+    这条状态是历史实现留下的：作者又提交了一版就把汇总状态改写成 PENDING，而线上那版
+    仍在生效。删除平台技能目录时若只按 ``status == "PUBLISHED"`` 过滤，会漏掉它——目录
+    已删、库里仍写着在线已发布，重新提交也拿不回同一个 platform_skill_id。
+    （``list_published_publications`` / ``_assert_current_published`` 早就改成了同一判据。）
+    """
+    publication, version, _skill_dir, _snapshot = _pair(tmp_path)
+    publication.status = "PENDING"  # 又被提交了一版，汇总状态被改写
+    assert publication.current_version == 1
+    session = _RecordingSession(_FakeResult([publication]), _FakeResult([version]))
+
+    count = await mark_platform_skill_publications_revoked(
+        session, platform_skill_id=PLATFORM_SKILL_ID, actor_user_id=1
+    )
+
+    sql = str(session.statements[0])
+    assert "current_version IS NOT NULL" in sql, "过滤条件必须按版本事实，而不是只看汇总状态"
+    assert count == 1
+    assert publication.status == "UNPUBLISHED"
+    assert publication.current_version is None
+    assert version.status == "REVOKED"
+
+
+@pytest.mark.asyncio
+async def test_revoke_leaves_never_published_lineage_untouched(tmp_path):
+    """从未通过审核（无 current_version）的谱系不该被「删除技能」顺手改状态。"""
+    publication, version, _skill_dir, _snapshot = _pair(tmp_path)
+    publication.status = "PENDING"
+    publication.current_version = None
+    version.status = "PENDING"
+    session = _RecordingSession(_FakeResult([]), _FakeResult([]))
+
+    count = await mark_platform_skill_publications_revoked(
+        session, platform_skill_id=PLATFORM_SKILL_ID, actor_user_id=1
+    )
+
+    sql = str(session.statements[0])
+    assert "current_version IS NOT NULL" in sql  # 空结果来自 DB 过滤，不是靠函数早退
+    assert count == 0
+    assert publication.status == "PENDING"
+    assert version.status == "PENDING"

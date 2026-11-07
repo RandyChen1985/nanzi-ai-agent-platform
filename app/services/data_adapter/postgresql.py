@@ -7,28 +7,13 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from jinja2 import BaseLoader, Environment, Undefined
 from psycopg import sql
 
 from .base import DataSourceAdapter, SQLSafetyError, standardize_items
 from .models import LogicalQuery, ResultSet
+from .sql_template import render_sql_template
 
 
-class SqlLabUndefined(Undefined):
-    def __str__(self):
-        return "NULL"
-
-    def __html__(self):
-        return "NULL"
-
-    def __iter__(self):
-        return iter([])
-
-    def __bool__(self):
-        return False
-
-
-SQL_LAB_ENV = Environment(loader=BaseLoader(), undefined=SqlLabUndefined)
 POSTGRESQL_TYPES = ("postgres", "postgresql", "pg")
 logger = logging.getLogger(__name__)
 
@@ -549,12 +534,23 @@ class PostgreSQLAdapter(DataSourceAdapter):
         if custom_sql:
             raw_sql = custom_sql.strip().rstrip(";")
             try:
-                raw_sql = SQL_LAB_ENV.from_string(raw_sql).render(**(params or {}))
+                # custom_sql 来自外部输入，历史上既没有沙箱渲染也没有安全校验：
+                # 统一入口先沙箱渲染，再对最终 SQL 执行 _validate_sql_safety。
+                raw_sql = render_sql_template(raw_sql, params, self._validate_sql_safety)
+            except SQLSafetyError as exc:
+                raise ValueError(str(exc)) from exc
             except Exception:
+                # 保持既有容错：模板语法错误时退回原始 SQL，由数据库给出具体错误。
                 pass
             # 字段探测也必须使用与正式执行相同的方言转换，避免保存前探测成功、预览时失败。
             raw_sql = normalize_postgresql_sql(raw_sql)
             final_sql = f"SELECT * FROM ({raw_sql}) AS _pg_columns LIMIT 0"
+            # 真正执行的是包裹后的 final_sql，需要再校验一次，避免“子查询看着只读、
+            # 拼上外层后形态变化”导致校验漏判。
+            try:
+                self._validate_sql_safety(final_sql)
+            except SQLSafetyError as exc:
+                raise ValueError(str(exc)) from exc
             async with pool.connection() as connection:
                 async with connection.cursor() as cursor:
                     await cursor.execute(final_sql)
@@ -590,6 +586,11 @@ class PostgreSQLAdapter(DataSourceAdapter):
 
         # 直接执行入口覆盖历史指标 SQL，兼容 ClickHouse 日期函数和反引号标识符。
         sql_text = normalize_postgresql_sql(sql_text)
+        # 物理执行入口守住只读契约：校验的是方言归一化后真正发给数据库的 SQL。
+        try:
+            self._validate_sql_safety(sql_text)
+        except SQLSafetyError as exc:
+            raise ValueError(str(exc)) from exc
         pool = await DataSourcePoolManager.get_pool(self.source_id)
         async with pool.connection() as connection:
             async with connection.cursor() as cursor:
@@ -611,20 +612,21 @@ class PostgreSQLAdapter(DataSourceAdapter):
     ) -> Dict[str, Any]:
         params = params or {}
         limit = min(max(int(limit or 100), 1), 1000)
+        # 1. 模板本身先做一次只读校验：明显违规的输入（如 UPDATE）尽早拒绝。
         try:
             self._validate_sql_safety(sql_text)
         except SQLSafetyError as exc:
             raise ValueError(str(exc)) from exc
 
-        rendered_sql = sql_text
-        if "{{" in sql_text or "{%" in sql_text:
-            try:
-                rendered_sql = SQL_LAB_ENV.from_string(sql_text).render(**params)
-                self._validate_sql_safety(rendered_sql)
-            except SQLSafetyError as exc:
-                raise ValueError(str(exc)) from exc
-            except Exception as exc:
-                raise ValueError(f"Jinja2 模板渲染失败: {exc}") from exc
+        # 2. 沙箱渲染 + 渲染后再次校验。
+        #    只读校验必须落在最终要执行的 SQL 上：模板 `SELECT ... {{ x }}` 本身是
+        #    只读的，但 x 可以渲染出 `1; DROP TABLE ...`，只校验模板会漏掉这类注入。
+        try:
+            rendered_sql = render_sql_template(sql_text, params, self._validate_sql_safety)
+        except SQLSafetyError as exc:
+            raise ValueError(str(exc)) from exc
+        except Exception as exc:
+            raise ValueError(f"Jinja2 模板渲染失败: {exc}") from exc
 
         # 预览的 COUNT 包装与实际查询必须共享同一份已转换 SQL，否则 include_total 会单独报错。
         clean_sql = normalize_postgresql_sql(rendered_sql.strip().rstrip(";"))

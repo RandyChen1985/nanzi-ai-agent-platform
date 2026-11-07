@@ -185,7 +185,7 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import axios from "../utils/axios";
-import { evaluateHostMessageTrust, resolveHostTargetOrigin } from "@/utils/embedHostTrust";
+import { evaluateHostMessageTrust, resolveHostTargetOrigin, parseOrigin } from "@/utils/embedHostTrust";
 import PersonalCenter from "./PersonalCenter.vue";
 
 /**
@@ -513,10 +513,35 @@ const maybeStripUrlAfterSessionReady = () => {
 
 // --- ticket 兑换 ---
 
-const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
+const lastHostMessageOrigin = ref("");
+
+/** 解析当前挂件的真实宿主来源，用于 Ticket 兑换时进行白名单防盗链校验。 */
+const resolveCurrentHostOrigin = (explicitOrigin?: string): string => {
+  const explicit = parseOrigin(explicitOrigin || "");
+  if (explicit) return explicit;
+  if (lastHostMessageOrigin.value) {
+    const fromMsg = parseOrigin(lastHostMessageOrigin.value);
+    if (fromMsg) return fromMsg;
+  }
+  if (typeof document !== "undefined" && document.referrer) {
+    const fromReferrer = parseOrigin(document.referrer);
+    if (fromReferrer) return fromReferrer;
+  }
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return parseOrigin(window.location.origin);
+  }
+  return "";
+};
+
+const exchangeTicketAndApply = async (ticket: string, hostOrigin?: string): Promise<boolean> => {
   ticketFailureReason.value = "";
   try {
-    const res = await axios.post("/api/v1/embed/tickets/exchange", { ticket: ticket.trim() });
+    const resolvedOrigin = resolveCurrentHostOrigin(hostOrigin);
+    const payload: { ticket: string; host_origin?: string } = { ticket: ticket.trim() };
+    if (resolvedOrigin) {
+      payload.host_origin = resolvedOrigin;
+    }
+    const res = await axios.post("/api/v1/embed/tickets/exchange", payload);
     if (res.data && res.data.code === 200 && res.data.data?.session_token) {
       applySessionToken(String(res.data.data.session_token));
       lastSessionCookieIssued.value = Boolean(res.data.data.session_cookie_issued);
@@ -547,14 +572,14 @@ const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
 const inflightTicketExchanges = new Map<string, Promise<boolean>>();
 const consumedTicketValues = new Set<string>();
 
-const exchangeTicketOnce = (ticket: string): Promise<boolean> => {
+const exchangeTicketOnce = (ticket: string, hostOrigin?: string): Promise<boolean> => {
   const key = (ticket || "").trim();
   if (!key) return Promise.resolve(false);
   if (consumedTicketValues.has(key)) return Promise.resolve(true);
   const existing = inflightTicketExchanges.get(key);
   if (existing) return existing;
 
-  const pending = exchangeTicketAndApply(key)
+  const pending = exchangeTicketAndApply(key, hostOrigin)
     .then((ok) => {
       if (ok) consumedTicketValues.add(key);
       return ok;
@@ -569,7 +594,7 @@ const exchangeTicketOnce = (ticket: string): Promise<boolean> => {
 /** 以 ticket 换取会话并重新核验；失败时如实上报具体原因。 */
 const applyTicketFromHost = async (ticket: string) => {
   if (gateState.value !== "granted") gateState.value = "checking";
-  const ok = await exchangeTicketOnce(ticket);
+  const ok = await exchangeTicketOnce(ticket, lastHostMessageOrigin.value);
   if (!ok) {
     authFailureReason.value = resolveTicketFailureReason();
     gateState.value = "unauthorized";
@@ -617,6 +642,9 @@ const isTrustedHostMessage = (event: MessageEvent): boolean => {
 
 const handleHostMessage = (event: MessageEvent) => {
   if (!isTrustedHostMessage(event)) return;
+  if (event.origin) {
+    lastHostMessageOrigin.value = event.origin;
+  }
 
   const data = event.data;
   if (!data || typeof data !== "object") return;

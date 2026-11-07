@@ -669,7 +669,7 @@ def test_load_allowed_columns_handles_dict_candidates(monkeypatch) -> None:
         table_ids=frozenset(),
         column_rules={92: (ColumnRule(COL_EXCLUDE, frozenset({"secret"})),)},
     )
-    allowed, full = asyncio.get_event_loop().run_until_complete(
+    allowed, full, unavailable = asyncio.get_event_loop().run_until_complete(
         _load_allowed_columns_by_table(
             _FakeSession(),
             scopes={1: scope},
@@ -678,3 +678,40 @@ def test_load_allowed_columns_handles_dict_candidates(monkeypatch) -> None:
     )
     assert allowed["ai_agent_access_logs"] == {"id"}
     assert full["ai_agent_access_logs"] == {"id", "secret"}
+    assert unavailable == set()
+
+
+# ---------------------------------------------------------------------------
+# 各检索分支都要做字段级裁剪
+# ---------------------------------------------------------------------------
+
+
+def test_local_vector_branch_applies_column_scope() -> None:
+    """Local（默认）向量分支必须与 RAGFlow 分支一样裁剪受限列。
+
+    表级白名单两条分支都做了，字段级只有 RAGFlow 分支做了；Local 是默认 provider，
+    漏掉它等于字段级权限在默认模式下整体失效——受限列的列名、注释、采样值会随
+    chunk 原文进到模型上下文。
+    """
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2].joinpath(
+        "app/services/chatbi_dataset_schema_service.py"
+    ).read_text(encoding="utf-8")
+    local_branch = src.split("# --- Local Mode (Default) ---", 1)[1].split("if schema_text is None:", 1)[0]
+
+    assert "column_rules_by_table=column_rules_by_table" in local_branch
+    assert "_trim_chunk_columns(content, _rules)" in local_branch
+    assert "_append_column_scope_notice" in local_branch
+
+
+def test_cross_dataset_enrich_applies_column_scope() -> None:
+    """跨数据集关联补全的 chunk 也要裁剪：它同样是喂给模型的 schema。"""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2].joinpath(
+        "app/services/chatbi_dataset_schema_service.py"
+    ).read_text(encoding="utf-8")
+    enrich = src.split("async def _enrich_with_cross_dataset_schema(", 1)[1]
+
+    assert "column_rules_by_table" in enrich.split("yaml_chunk = MetadataRagService.render_table_schema_yaml", 1)[1][:600]

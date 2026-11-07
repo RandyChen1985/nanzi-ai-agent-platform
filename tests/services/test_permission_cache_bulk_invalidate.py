@@ -30,6 +30,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.services.ai.config import AgentConfigProvider
+
 from app.services.permission_service import PermissionService
 
 
@@ -75,8 +77,8 @@ def _all_keys_for(uid: int) -> list[str]:
         f"sys:auth:permissions:v4:user:{uid}",
         f"sys:auth:permissions:v5:user:{uid}",
         f"sys:auth:permissions:v6:user:{uid}",
-        # 数据集菜单 + 数据门户导航
-        f"agent:dataset_menu:{uid}",
+        # 数据集菜单 + 数据门户导航（键名走单点构造，避免加版本号后测试跟着漂移）
+        AgentConfigProvider.dataset_menu_cache_key(user_id=uid),
         f"agent:dataset_navigation:{uid}",
         f"agent:dataset_navigation_click_rank:{uid}",
         f"agent:dataset_navigation_click_meta:{uid}",

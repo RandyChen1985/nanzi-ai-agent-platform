@@ -1715,6 +1715,7 @@
       @refresh="fetchDatasets"
       @toggle-pin="toggleDatasetPinned"
       @load-documents="fetchDatasetDocuments"
+      @load-more-documents="loadMoreDatasetDocuments"
       @load-document-recommendations="fetchDocumentRecommendations"
     />
 
@@ -2723,6 +2724,7 @@ import { isSkillEnabled } from '@/utils/skillEnabled'
 import {
   evaluateHostMessageTrust,
   resolveHostTargetOrigin,
+  parseOrigin,
 } from '@/utils/embedHostTrust'
 
 // 已加载失败的候选头像地址，避免「全局形象也坏了」时在两层兜底之间来回触发 error 死循环。
@@ -9816,6 +9818,25 @@ const applyInitConfigPayload = (data: Record<string, any>) => {
  * 直接把排查方向带偏。
  */
 const ticketExchangeFailureReason = ref<"" | "origin_not_allowed" | "ticket_invalid">("");
+const lastHostMessageOrigin = ref("");
+
+/** 解析当前挂件的真实宿主来源，用于 Ticket 兑换时进行白名单防盗链校验。 */
+const resolveCurrentHostOrigin = (explicitOrigin?: string): string => {
+  const explicit = parseOrigin(explicitOrigin || "");
+  if (explicit) return explicit;
+  if (lastHostMessageOrigin.value) {
+    const fromMsg = parseOrigin(lastHostMessageOrigin.value);
+    if (fromMsg) return fromMsg;
+  }
+  if (typeof document !== "undefined" && document.referrer) {
+    const fromReferrer = parseOrigin(document.referrer);
+    if (fromReferrer) return fromReferrer;
+  }
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return parseOrigin(window.location.origin);
+  }
+  return "";
+};
 
 /** 把 ticket 兑换的失败原因映射为界面/宿主可区分的失败原因。
  *
@@ -9826,10 +9847,15 @@ const resolveTicketFailureReason = (): AuthFailureReason =>
     ? "origin_not_allowed"
     : "invalid_ticket";
 
-const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
+const exchangeTicketAndApply = async (ticket: string, hostOrigin?: string): Promise<boolean> => {
   ticketExchangeFailureReason.value = "";
   try {
-    const res = await axios.post("/api/v1/embed/tickets/exchange", { ticket: ticket.trim() });
+    const resolvedOrigin = resolveCurrentHostOrigin(hostOrigin);
+    const payload: { ticket: string; host_origin?: string } = { ticket: ticket.trim() };
+    if (resolvedOrigin) {
+      payload.host_origin = resolvedOrigin;
+    }
+    const res = await axios.post("/api/v1/embed/tickets/exchange", payload);
     if (res.data && res.data.code === 200 && res.data.data?.session_token) {
       const sessionData = res.data.data;
       // 走统一入口：既设置内存中的 config.token 与 axios 默认头，也把会话令牌持久化到
@@ -9873,14 +9899,14 @@ const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
  */
 const inflightTicketExchanges = new Map<string, Promise<boolean>>();
 const consumedTicketValues = new Set<string>();
-const exchangeTicketOnce = (ticket: string): Promise<boolean> => {
+const exchangeTicketOnce = (ticket: string, hostOrigin?: string): Promise<boolean> => {
   const key = (ticket || "").trim();
   if (!key) return Promise.resolve(false);
   if (consumedTicketValues.has(key)) return Promise.resolve(true);
   const existing = inflightTicketExchanges.get(key);
   if (existing) return existing;
 
-  const pending = exchangeTicketAndApply(key)
+  const pending = exchangeTicketAndApply(key, hostOrigin)
     .then((ok) => {
       if (ok) consumedTicketValues.add(key);
       return ok;
@@ -9944,7 +9970,7 @@ const applyHostInitConfig = async (data: Record<string, any>) => {
 
   // 1. 优先使用临时 Ticket 换票
   if (data.ticket) {
-    const ticketOk = await exchangeTicketOnce(String(data.ticket));
+    const ticketOk = await exchangeTicketOnce(String(data.ticket), lastHostMessageOrigin.value);
     if (!ticketOk) {
       authFailureReason.value = resolveTicketFailureReason();
       hasPermission.value = false;
@@ -10002,13 +10028,16 @@ const applyHostInitConfig = async (data: Record<string, any>) => {
   hasPermission.value = true;
   applyInitConfigPayload(data);
   postInitSuccess();
-  initChat();
+  await initChat();
 };
 const handlePostMessage = (event: MessageEvent) => {
   // 来源校验必须早于任何字段读取：这条消息可能带着 token / ticket / business_context。
   if (!isTrustedHostMessage(event)) {
     console.warn("[Embed] 已忽略不可信来源的 postMessage:", event.origin);
     return;
+  }
+  if (event.origin) {
+    lastHostMessageOrigin.value = event.origin;
   }
   const data = event.data;
   if (!data || typeof data !== "object") return;
@@ -10107,7 +10136,7 @@ const resetSession = async (newToken?: string, ticket?: string) => {
   config.enableGrounding = false; // 新会话恢复默认关闭
   generateNewConversation();
   if (ticket) {
-    const ticketOk = await exchangeTicketOnce(ticket);
+    const ticketOk = await exchangeTicketOnce(ticket, lastHostMessageOrigin.value);
     if (!ticketOk) {
       authFailureReason.value = resolveTicketFailureReason();
       hasPermission.value = false;
@@ -11761,6 +11790,7 @@ const {
   documentRecommendations,
   toggleDatasetPinned,
   fetchDatasetDocuments,
+  loadMoreDatasetDocuments,
   fetchDocumentRecommendations,
   fetchDatasets,
   fetchRecommendations,

@@ -50,14 +50,19 @@ const loadPreview = async () => {
     // 点确认就会给所有已分配用户群发一封站内信
     notify.value = false
   } finally {
-    loadingPreview.value = false
+    if (seq === previewSeq) loadingPreview.value = false
   }
 }
 
 watch(
   () => props.isOpen,
   (open) => {
-    if (!open) return
+    if (!open) {
+      // 关闭后让在途请求失效，避免 A 的预览后到覆盖下一次打开的 B。
+      previewSeq += 1
+      loadingPreview.value = false
+      return
+    }
     reason.value = ''
     notify.value = true
     errorMessage.value = ''

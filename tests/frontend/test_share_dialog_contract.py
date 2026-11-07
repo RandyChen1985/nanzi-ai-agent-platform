@@ -11,10 +11,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.no_infrastructure
 SOURCE = "frontend/src/components/ShareConversationDialog.vue"
+UTIL = "frontend/src/utils/shareExpiry.ts"
 
 
 def _source() -> str:
     return (ROOT / SOURCE).read_text(encoding="utf-8")
+
+
+def _read(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
 
 
 def test_uses_shared_expiry_helpers_instead_of_inline_math():
@@ -38,6 +43,22 @@ def test_result_state_exposes_link_and_secret_separately():
     # 一键复制分享信息 + 二维码（只编码链接）
     assert "buildShareCopyText" in source and "复制分享信息" in source
     assert "loadQrCode(created.url)" in source and "generateQRCodeDataUrl(url)" in source
+
+
+def test_permanent_option_keeps_a_visible_selected_state():
+    """「永久」必须点亮自己：走 mode='permanent'，不能靠 preset 字段判断。
+
+    曾经 `isPresetActive` 只认 `expiryMode === 'preset'`，点「永久」后 5 个按钮
+    全灰、只有底部文案变成「永久有效」，用户会以为按钮点不动。
+    """
+    source = _source()
+    util = _read(UTIL)
+    assert "isExpiryPresetActive" in util
+    assert "isExpiryPresetActive(expiryChoice.value, value)" in source
+    assert "expiryMode.value === 'preset' && presetValue.value === value" not in source
+    # 提交的 expiry 与展示的 expiry 同源，避免「写永久、建出 7 天」
+    assert "{ ...expiryChoice.value }" in source
+    assert "aria-pressed" in source
 
 
 def test_props_and_emits_match_plan_contract():

@@ -518,3 +518,53 @@ async def test_list_received_shares_respects_custom_limit_and_caps_it():
     limit_clause = getattr(statements[0], "_limit_clause", None)
     assert limit_clause is not None
     assert limit_clause.value == skill_share_service.MAX_LIST_LIMIT
+
+
+def test_resolve_target_skill_id_avoids_seed_layout_occupancy(tmp_path):
+    """占用判定要覆盖 ``.seed`` 布局，否则会在平铺位置造出第二份同 ID 副本。
+
+    AgentScope 迁移过的历史数据里，个人技能被搬进 ``<root>/.seed/<id>/``；只看平铺目录
+    会把它判成「空闲」，落地后平铺那份遮蔽存量，用户以为自己的技能被换掉了。
+    """
+    root = Path(tmp_path) / "skills"
+    seed = root / ".seed"
+    seed.mkdir(parents=True)
+    (seed / "summarizer").mkdir()
+    (seed / "summarizer" / "SKILL.md").write_text("---\nname: 旧版\n---\n", encoding="utf-8")
+
+    picked = skill_share_service.resolve_target_skill_id(str(root), "summarizer")
+
+    assert picked == "summarizer-2"
+    assert not (root / "summarizer").exists()
+
+
+def test_resolve_target_skill_id_truncates_suffix_within_id_limit(tmp_path):
+    """128 字符的合法 ID 加后缀会变 130 字符：目录建得出来，入库 VARCHAR(128) 却失败。
+
+    失败发生在目录已经落地之后，于是留下一个「列表看得见、详情/删除全 400」的孤儿目录。
+    带后缀的候选必须截断到上限内。
+    """
+    from app.services.skill_rename_service import SKILL_ID_MAX_LENGTH, validate_skill_id
+
+    root = Path(tmp_path) / "skills"
+    root.mkdir(parents=True)
+    long_id = "a" * SKILL_ID_MAX_LENGTH
+    (root / long_id).mkdir()
+    (root / long_id / "SKILL.md").write_text("---\nname: 长名字\n---\n", encoding="utf-8")
+
+    picked = skill_share_service.resolve_target_skill_id(str(root), long_id)
+
+    assert picked != long_id
+    assert len(picked) <= SKILL_ID_MAX_LENGTH
+    assert validate_skill_id(picked) == picked  # 仍能通过平台唯一口径
+    assert picked.startswith("a" * (SKILL_ID_MAX_LENGTH - 3))
+
+
+def test_resolve_target_skill_id_keeps_original_when_free(tmp_path):
+    from app.services.skill_rename_service import SKILL_ID_MAX_LENGTH
+
+    root = Path(tmp_path) / "skills"
+    root.mkdir(parents=True)
+    long_id = "b" * SKILL_ID_MAX_LENGTH
+
+    assert skill_share_service.resolve_target_skill_id(str(root), long_id) == long_id

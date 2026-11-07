@@ -556,8 +556,13 @@ async def accept_share(
     不传才走「默认名 + 自动加后缀」。
     """
     user_id = _user_id(user)
+    # 行锁：双击「接受」是两个并发请求，都读到 PENDING 就会装出两份副本。
     row = (
-        await session.execute(select(McpServerShare).where(McpServerShare.id == share_id))
+        await session.execute(
+            select(McpServerShare)
+            .where(McpServerShare.id == share_id)
+            .with_for_update()
+        )
     ).scalar_one_or_none()
     if row is None:
         raise McpShareNotFoundError("分享记录不存在")
@@ -580,6 +585,9 @@ async def accept_share(
         requested = (server_name or "").strip()[:MAX_SERVER_NAME_LENGTH]
         if not requested:
             raise McpShareConflictError("服务名不能为空")
+        if ":" in requested:
+            # 工具标识是 ``server_name:tool``，名字里带冒号会让命名空间解析出错
+            raise McpShareConflictError("服务名不能包含冒号（:），它会破坏「服务:工具」命名")
         if await _server_name_taken(session, requested):
             raise McpShareConflictError(f"服务名「{requested}」已存在，请换一个")
         final_name = requested

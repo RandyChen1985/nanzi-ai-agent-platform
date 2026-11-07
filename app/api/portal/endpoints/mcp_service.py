@@ -1541,7 +1541,7 @@ async def delete_client_tokens(
         db,
         event_type="oauth_access_token_deleted",
         client_id=client_id,
-        user_id=None,
+        user_id=current_user_id,
         actor_user_id=current_user_id,
         details={
             "token_ids": [token.id for token in tokens],
@@ -2042,6 +2042,16 @@ class McpPlaygroundTestRequest(BaseModel):
     token: str | None = None
 
 
+def _platform_probe_base_url() -> str:
+    """ASGI 内自调用的基址：优先公网地址（= 传输安全白名单里的 Host）。"""
+    from app.services.mcp.public_url import get_cached_public_url
+
+    cached = str(get_cached_public_url() or "").strip().rstrip("/")
+    if cached:
+        return cached
+    return "http://localhost:8001"
+
+
 @router.post("/playground/test")
 async def test_playground_method(
     payload: McpPlaygroundTestRequest,
@@ -2075,7 +2085,10 @@ async def test_playground_method(
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=mcp_app),
-            base_url="http://localhost:8001",
+            # 走 ASGITransport 时 base_url 只决定 Host 头。硬编码 localhost 会在配置了
+            # 公网地址后被 TransportSecurityMiddleware 的 Host 白名单拦掉（白名单里
+            # 只剩公网 host），在线调试必然失败。
+            base_url=_platform_probe_base_url(),
             headers={
                 "Authorization": f"Bearer {token_to_use}",
                 "Accept": "application/json, text/event-stream",

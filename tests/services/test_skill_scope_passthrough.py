@@ -393,3 +393,58 @@ def test_scope_loss_would_silently_drop_the_personal_skill():
     assert drop_forbidden_skill_items([lossy_file], {"alpha"}) == [], (
         "没有 scope 时下游只能当公共技能处理——这正是修复前个人技能被静默丢弃的原因"
     )
+
+
+@pytest.mark.asyncio
+async def test_inject_skills_survives_unresolvable_personal_dir(monkeypatch, caplog):
+    """个人目录解析失败时只跳过这一条，不能让整轮注入崩掉。
+
+    旧实现用 ``candidate_paths[-1]`` 取兜底路径：当挂载项是个人技能、但解析不出个人目录
+    （无身份 / 工作区根异常）且没有显式路径时，候选链是空列表 → ``IndexError``。而该异常
+    会把本轮**所有**技能（含公共技能与自动匹配）一起带走，只剩一条 warning。
+    """
+    from app.services.ai.skills.injector import SkillInjector
+
+    monkeypatch.setattr(
+        "app.services.ai.skill_resolver.get_user_personal_skills_dir",
+        lambda user_info: None,
+    )
+
+    messages = [
+        {
+            "role": "user",
+            "content": "",
+            "files": [
+                {
+                    "type": "skill",
+                    "url": "ghost",
+                    "filename": "幽灵技能 (技能)",
+                    "size": 0,
+                    "ext": "skill",
+                    "scope": "personal",
+                }
+            ],
+        }
+    ]
+
+    with patch.object(
+        SkillInjector,
+        "resolve_skill_full_load_policy",
+        AsyncMock(return_value={"enabled": False, "min_score": 0.75, "max_count": 0, "max_bytes": 1024}),
+    ), patch(
+        "app.services.ai.skills_stats_service.skills_stats_service.record_activations",
+        AsyncMock(),
+    ), patch(
+        "app.services.ai.skills.policy.get_forbidden_skill_ids",
+        AsyncMock(return_value=set()),
+    ):
+        injection = await SkillInjector.inject_skills(
+            messages=messages,
+            user_query="",
+            agent_config=SimpleNamespace(agent_id=1),
+            user_info=None,
+        )
+
+    assert isinstance(injection, list)  # 不抛 IndexError
+    # 确认真的走到了那一道守卫（否则用例会因为前置早退而「空过」）
+    assert any("personal skills dir unresolved" in r.getMessage() for r in caplog.records)

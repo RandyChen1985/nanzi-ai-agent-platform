@@ -208,11 +208,20 @@ const handleCopyResult = async () => {
   }, 1500)
 }
 
-/** 只带上已填的标量参数：复杂类型要用户自己拼 JSON，避免这里给出半成品请求体。 */
+/** 带上表单里已填的全部参数；复杂类型复用执行时填的 JSON（解析不了就跳过该参数）。 */
 const curlArguments = computed(() => {
   const collected: Record<string, any> = {}
   for (const [key, prop] of Object.entries(properties.value as Record<string, any>)) {
-    if (isComplexType(prop)) continue
+    if (isComplexType(prop)) {
+      const raw = (rawJsonArgs.value[key] ?? '').trim()
+      if (!raw) continue
+      try {
+        collected[key] = JSON.parse(raw)
+      } catch {
+        // 与 executeTool 一致：非法 JSON 不参与请求，避免生成半成品 curl
+      }
+      continue
+    }
     const value = args.value[key]
     if (value !== undefined && value !== '') collected[key] = value
   }

@@ -11,6 +11,7 @@ import KnowledgeFlowGuideBanner from '../components/knowledge/KnowledgeFlowGuide
 import DocWorkspace from '../components/knowledge/DocWorkspace.vue'
 import ImageToMarkdownUploader from '../components/knowledge/ImageToMarkdownUploader.vue'
 import HeroSilhouette from '../components/common/HeroSilhouette.vue'
+import PaginationBar from '../components/common/PaginationBar.vue'
 import { useToast } from '../composables/useToast'
 import { ragflowApi } from '../api/ragflow'
 import { useUser } from '../composables/useUser'
@@ -964,6 +965,9 @@ const fetchDatasets = async (force = false) => {
     engineStatus.value = 'connected'
     void loadOwnedDatasetQuota()
     void loadRecentVisits()
+    // 列表页的数据源与 datasets 分开（服务端分页）：刷新数据后同步当前页，
+    // 否则刚改完可见范围/删完库，列表还停在旧数据上
+    if (listScope.value) void fetchLibraryList()
     
     // 进页面落在「概览」，不再默认选中第一个库。原先的默认选中必须顺手改
     // activeVisibility 去对齐 tab，否则左侧「授权可见 0 个」右侧却显示一个
@@ -1010,8 +1014,9 @@ const toggleDatasetExpand = async (dataset: KnowledgeBase, forceExpand = false) 
     expandedDatasetIds.value[dsId] = !expandedDatasetIds.value[dsId]
   }
 
-  // 展开且未加载过文档时，懒加载
-  if (expandedDatasetIds.value[dsId] && !documentsMap.value[dsId] && !dataset.is_missing_in_ragflow) {
+  // 展开即拉当前页：文档列表现在只有一页数据，缓存整份没有意义，
+  // 而沿用旧页会导致「页码回到 1、内容还是上次翻到的那页」
+  if (expandedDatasetIds.value[dsId] && !dataset.is_missing_in_ragflow) {
     await fetchDocumentsForDataset(dsId)
   }
 }
@@ -1034,25 +1039,94 @@ const onUploaderNotify = (payload: { message: string; type: 'success' | 'error' 
 /** 上传入口分两档：文档走 RAGFlow 直接解析，图片先转 md 再入库 */
 const uploadTab = ref<'doc' | 'img'>('doc')
 
-const fetchDocumentsForDataset = async (dsId: string, options: { silent?: boolean } = {}) => {
+/**
+ * 文档列表的浏览状态（分页 + 筛选 + 排序）。
+ *
+ * 为什么全部交给服务端：一个库可能有几千份文档，原来前端一次拉 1000 条、
+ * 再在本地过滤/排序，超过 1000 份会**静默截断**（列表和文档数一起少算），
+ * 而且「共 N 份」与实际条数对不上。现在只拉当前页，过滤/排序/总数都由后端算。
+ */
+const docPage = ref(1)
+const docPageSize = ref(50)
+const docKeyword = ref('')
+const docStatus = ref('')
+const docSort = ref('updated')
+const docFolder = ref('')
+const docTotal = ref(0)
+const docAllTotal = ref(0)
+const docStatusCounts = ref<Record<string, number>>({})
+const docFolderCounts = ref<Record<string, number>>({})
+const DOC_PAGE_SIZES = [20, 50, 100]
+let docSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+const resetDocBrowsing = () => {
+  docPage.value = 1
+  docKeyword.value = ''
+  docStatus.value = ''
+  docSort.value = 'updated'
+  docFolder.value = ''
+  docTotal.value = 0
+  docAllTotal.value = 0
+  docStatusCounts.value = {}
+  docFolderCounts.value = {}
+  if (docSearchTimer) {
+    clearTimeout(docSearchTimer)
+    docSearchTimer = null
+  }
+}
+
+const fetchDocumentsForDataset = async (
+  dsId: string,
+  options: { silent?: boolean; refresh?: boolean } = {},
+) => {
   const seq = (documentsReqSeq[dsId] = (documentsReqSeq[dsId] || 0) + 1)
   documentsLoadingMap.value[dsId] = true
   try {
-    // 后端默认 page_size=100，且客户端仅在 page_size>100 时才自动翻页，
-    // 不显式放大时文档超过 100 个会被静默截断，列表与文档数都会少算
-    const response = await axios.get(`/api/portal/ragflow/datasets/${dsId}/documents`, {
-      params: { page_size: 1000 }
-    })
+    // 页码/关键字/状态/排序/文件夹全部下发给后端：本地只剩当前页，
+    // 再过滤一次会漏掉其他页的命中，也会让分页总数与实际条数打架。
+    const params: Record<string, string | number> = {
+      page: docPage.value,
+      page_size: docPageSize.value,
+      sort: docSort.value,
+    }
+    const keyword = docKeyword.value.trim()
+    if (keyword) params.name = keyword
+    if (docStatus.value) params.status = docStatus.value
+    if (docFolder.value) params.folder = docFolder.value
+    // 解析中的状态只能靠回源看到：后端对文档全量做了 60s 缓存，
+    // 轮询不带 refresh 的话进度条会卡一分钟不动
+    if (options.refresh) params.refresh = 1
+
+    const response = await axios.get(`/api/portal/ragflow/datasets/${dsId}/documents`, { params })
     if (seq !== documentsReqSeq[dsId]) return
-    const docs = apiData(response)
+    const docs = apiData(response) as KnowledgeDocument[]
     documentsMap.value[dsId] = docs
     documentsErrorMap.value[dsId] = false
 
-    // 更新对应知识库的文档数量计数
+    // 真实总数与全库总数分开记：「共 N 份」用过滤后的 total，
+    // 空态判断（这个库到底有没有文档）用 all_total
+    const total = Number(response.data?.total)
+    const allTotal = Number(response.data?.all_total)
+    docTotal.value = Number.isFinite(total) ? total : docs.length
+    docAllTotal.value = Number.isFinite(allTotal) ? allTotal : docs.length
+    docStatusCounts.value = (response.data?.status_counts || {}) as Record<string, number>
+    docFolderCounts.value = (response.data?.folders || {}) as Record<string, number>
+
+    // 页码越界（删除/筛选变化后）回退到最后一页，别让界面停在空白页
+    const maxPage = Math.max(1, Math.ceil(docTotal.value / docPageSize.value))
+    if (docPage.value > maxPage) {
+      docPage.value = maxPage
+      if (seq === documentsReqSeq[dsId]) {
+        void fetchDocumentsForDataset(dsId, options)
+      }
+      return
+    }
+
+    // 更新对应知识库的文档数量计数：用全库总数，不是当前页条数
     const dataset = datasets.value.find(d => (d.ragflow_dataset_id || d.id) === dsId)
     if (dataset) {
-      dataset.doc_count = docs.length
-      dataset.document_count = docs.length
+      dataset.doc_count = docAllTotal.value
+      dataset.document_count = docAllTotal.value
     }
 
     // 自动更新并同步清理 parsingDocIds
@@ -1320,34 +1394,109 @@ const libraryScope = ref<'all' | 'missing' | VisibilityScope>('all')
 
 const libraryRowId = (dataset: KnowledgeBase) => dataset.ragflow_dataset_id || dataset.id || ''
 
-/** 库列表行：只有「全部」有数据源，收藏/最近等后端接口 */
-const libraryListRows = computed<KnowledgeBase[]>(() => {
-  let list = datasets.value
-  if (listScope.value === 'recent') {
-    // 顺序由后端 ZSET 决定：按 id 映射回库对象，找不到的（已失权/已删）自然跳过
-    const byId = new Map(datasets.value.map(item => [libraryRowId(item), item]))
-    list = recentIds.value.map(id => byId.get(id)).filter((item): item is KnowledgeBase => Boolean(item))
+/**
+ * 库列表改成**服务端分页**。
+ *
+ * 左树仍然需要完整的部门结构（datasets 全量），但列表页是「浏览 + 批量操作」：
+ * 上千个库一次全渲染既拖首屏也拖滚动；更关键的是搜索/可见范围过滤必须和分页
+ * 落在同一个数据源上，否则「第 2 页」只是本地过滤后的切片，页码与总数对不上。
+ */
+const libraryRows = ref<KnowledgeBase[]>([])
+const libraryTotal = ref(0)
+const libraryPage = ref(1)
+const libraryPageSize = ref(20)
+const libraryLoading = ref(false)
+const librarySort = ref<'updated' | 'name' | 'docs'>('updated')
+let libraryRequestSeq = 0
+let librarySearchTimer: ReturnType<typeof setTimeout> | null = null
+
+const LIBRARY_PAGE_SIZES = [20, 50, 100]
+const LIBRARY_SORT_OPTIONS = [
+  { key: 'updated' as const, label: '最近更新' },
+  { key: 'name' as const, label: '名称' },
+  { key: 'docs' as const, label: '文档数' },
+] as const
+
+const fetchLibraryList = async () => {
+  if (!listScope.value) return
+  const seq = (libraryRequestSeq += 1)
+  libraryLoading.value = true
+  try {
+    const params: Record<string, string | number> = {
+      page: libraryPage.value,
+      page_size: libraryPageSize.value,
+      sort: librarySort.value,
+    }
+    const keyword = libraryQuery.value.trim()
+    if (keyword) params.keyword = keyword
+    if (libraryScope.value === 'missing') params.missing = 1
+    else if (libraryScope.value !== 'all') params.visibility = libraryScope.value
+    if (listScope.value === 'favorite') params.favorite = 1
+    if (listScope.value === 'recent') {
+      // 最近访问按 ZSET 顺序取；没有记录就不要发请求（空 ids 会被后端当成「不过滤」）
+      if (!recentIds.value.length) {
+        libraryRows.value = []
+        libraryTotal.value = 0
+        return
+      }
+      params.ids = recentIds.value.join(',')
+    }
+
+    const response = await axios.get('/api/portal/ragflow/datasets', { params })
+    if (seq !== libraryRequestSeq) return
+    libraryRows.value = apiData(response) as KnowledgeBase[]
+    const total = Number(response.data?.total)
+    libraryTotal.value = Number.isFinite(total) ? total : libraryRows.value.length
+
+    // 删库/筛选变化后当前页可能越界：退到最后一页，别让界面停在一张空白页上
+    const maxPage = Math.max(1, Math.ceil(libraryTotal.value / libraryPageSize.value))
+    if (libraryPage.value > maxPage) {
+      libraryPage.value = maxPage
+      if (seq === libraryRequestSeq) void fetchLibraryList()
+    }
+  } catch (err) {
+    if (seq !== libraryRequestSeq) return
+    libraryRows.value = []
+    libraryTotal.value = 0
+    showToast(extractError(err) || '知识库列表加载失败', 'error')
+  } finally {
+    if (seq === libraryRequestSeq) libraryLoading.value = false
   }
-  if (listScope.value === 'favorite') {
-    list = list.filter(dataset => dataset.is_favorited)
-  }
-  if (libraryScope.value === 'missing') {
-    list = list.filter(dataset => dataset.is_missing_in_ragflow)
-  } else if (libraryScope.value !== 'all') {
-    list = list.filter(dataset => visibilityOf(dataset) === libraryScope.value)
-  }
-  const keyword = libraryQuery.value.trim().toLowerCase()
-  if (keyword) {
-    list = list.filter(dataset =>
-      [dataset.platform_name, dataset.name, libraryRowId(dataset), libraryOwnerOf(dataset)]
-        .some(value => String(value || '').toLowerCase().includes(keyword))
-    )
-  }
-  return list
-})
+}
+
+/** 搜索框：300ms 防抖后回第 1 页再请求（每敲一个字就打一次引擎会把列表拖到没法用） */
+const onLibraryQueryInput = (value: string) => {
+  libraryQuery.value = value
+  libraryPage.value = 1
+  if (librarySearchTimer) clearTimeout(librarySearchTimer)
+  librarySearchTimer = setTimeout(() => { void fetchLibraryList() }, 300)
+}
+
+const onLibraryScopeChange = (event: Event) => {
+  libraryScope.value = (event.target as HTMLSelectElement).value as 'all' | 'missing' | VisibilityScope
+  libraryPage.value = 1
+  void fetchLibraryList()
+}
+
+const onLibrarySortChange = (event: Event) => {
+  librarySort.value = (event.target as HTMLSelectElement).value as 'updated' | 'name' | 'docs'
+  libraryPage.value = 1
+  void fetchLibraryList()
+}
+
+const onLibraryPageChange = (page: number) => {
+  libraryPage.value = page
+  void fetchLibraryList()
+}
+
+const onLibraryPageSizeChange = (size: number) => {
+  libraryPageSize.value = size
+  libraryPage.value = 1
+  void fetchLibraryList()
+}
 
 /** 能勾选的只有能管理的库：没权限的勾上也删不掉，不如直接置灰 */
-const librarySelectableRows = computed(() => libraryListRows.value.filter(canManageDataset))
+const librarySelectableRows = computed(() => libraryRows.value.filter(canManageDataset))
 
 const librarySelectedCount = computed(() =>
   librarySelectableRows.value.filter(dataset => selectedDatasetIds.value.includes(libraryRowId(dataset))).length
@@ -1360,6 +1509,8 @@ const libraryAllSelected = computed(() =>
 
 const toggleLibrarySelectAll = () => {
   const ids = librarySelectableRows.value.map(libraryRowId)
+  // 全选只作用于当前页：跨页全选等于「一键勾上 860 个库」，配合批量删除是灾难。
+  // 已勾选的跨页保留，并在分页条上写明数量。
   selectedDatasetIds.value = libraryAllSelected.value
     ? selectedDatasetIds.value.filter(id => !ids.includes(id))
     : Array.from(new Set([...selectedDatasetIds.value, ...ids]))
@@ -1372,9 +1523,9 @@ const libraryListTitle = computed(() => {
 })
 
 const libraryListSubtitle = computed(() => {
-  if (listScope.value === 'favorite') return `${favoriteCount.value} 个已收藏的知识库`
+  if (listScope.value === 'favorite') return `${libraryTotal.value} 个已收藏的知识库`
   if (listScope.value === 'recent') return `${recentIds.value.length} 个最近打开过的知识库（保留 30 天）`
-  return `${datasets.value.length} 个知识库`
+  return `${libraryTotal.value} 个知识库`
 })
 
 const libraryListEmpty = computed(() => {
@@ -1427,7 +1578,13 @@ const libraryUpdatedAtOf = (dataset: KnowledgeBase) => {
 }
 
 /** 切到库列表：不选具体库，抽屉也收起，避免列表被详情挤走 */
-const openLibraryList = (scope: 'all' | 'favorite' | 'recent') => {
+/**
+ * 切到库列表：不选具体库，抽屉也收起，避免列表被详情挤走。
+ *
+ * 列表数据独立于左树的 datasets（服务端分页），所以要显式请求一次；
+ * 「最近访问」的顺序来自 Redis，得先把它取回来，否则 ids 为空会退化成空列表。
+ */
+const openLibraryList = async (scope: 'all' | 'favorite' | 'recent') => {
   listScope.value = scope
   selectedDatasetIds.value = []
   selectedType.value = null
@@ -1435,6 +1592,11 @@ const openLibraryList = (scope: 'all' | 'favorite' | 'recent') => {
   selectedDataset.value = null
   selectedDocument.value = null
   drawerOpen.value = false
+  libraryPage.value = 1
+  libraryRows.value = []
+  libraryTotal.value = 0
+  if (scope === 'recent') await loadRecentVisits()
+  await fetchLibraryList()
 }
 
 const showOverview = () => {
@@ -1483,6 +1645,9 @@ const selectDatasetNode = (dataset: KnowledgeBase) => {
   selectedDataset.value = dataset
   selectedDocument.value = null
   drawerOpen.value = false
+  // 换库复位浏览状态：文件夹、搜索、状态筛选、页码都属于上一个库，
+  // 不清掉会出现「在 A 库筛了失败状态，切到 B 库还是失败状态」
+  resetDocBrowsing()
   toggleDatasetExpand(dataset, true)
   // 换库要清空上一批勾选：批量解析/删除以 bulkDocDatasetId 为准，
   // 把 A 库的 docId 发到 B 库会删错东西
@@ -1828,6 +1993,12 @@ const emptyVisibilityText = computed(() => {
   return '还没有可访问的公共知识库'
 })
 
+/**
+ * 「这个库里有名字命中的文档」的探测结果，键是 dataset id。
+ * 搜索文档名走它，不再把每个库的文档列表整包拉下来比对。
+ */
+const docNameHits = ref<Record<string, boolean>>({})
+
 const filteredDatasets = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
   if (!query) return visibilityScopeDatasets.value
@@ -1849,40 +2020,59 @@ const filteredDatasets = computed(() => {
     // 用 includes 而不是精确比较，方便只粘前缀（排障时拿到的往往是被截断的 ID）。
     const idMatch = !!dsId && dsId.toLowerCase().includes(query)
 
-    const subDocs = documentsMap.value[dsId] || []
-    const docMatch = subDocs.some(doc => (doc.name || '').toLowerCase().includes(query))
+    // 文档名命中由后端探测（见 ensureDocumentsForSearch）：本地只有当前页，
+    // 拿它来搜等于只搜「已经翻到的那一页」。
+    const docMatch = docNameHits.value[dsId] === true
 
     return nameMatch || descMatch || ownerMatch || tagsMatch || idMatch || docMatch
   })
 })
 
 /**
- * 搜索文档名时按需加载文档列表。
+ * 搜索文档名时按需探测命中。
  *
- * 文档是「展开才懒加载」的，但搜索框承诺能搜文档名：不补这一步，
- * 没展开过的库里的文档永远搜不到，用户会以为文档不存在。
- * 并发上限 4，避免一次打爆 RAGFlow；300ms 防抖避免连续输入触发请求风暴。
+ * 原来的做法是把每个库的文档列表整包拉下来再比对（并发 4）：库一多就是几百次
+ * RAGFlow 请求，而且每次都拉上千条。现在只问「这个库里有没有名字匹配的文档」，
+ * 请求降到 page_size=1 —— 传输量与耗时都小了几个数量级。
+ *
+ * 并发上限 4 避免打爆引擎；300ms 防抖避免连续输入触发请求风暴。
  */
 const SEARCH_DOC_CONCURRENCY = 4
 const SEARCH_DOC_DEBOUNCE_MS = 300
 const searchDocLoading = ref(false)
 let searchDocTimer: ReturnType<typeof setTimeout> | null = null
 
+const probeDocNameMatch = async (dsId: string, keyword: string): Promise<boolean> => {
+  try {
+    const response = await axios.get(`/api/portal/ragflow/datasets/${dsId}/documents`, {
+      params: { page: 1, page_size: 1, name: keyword },
+    })
+    return Number(response.data?.total) > 0
+  } catch {
+    // 探测失败按「没命中」处理：搜索只是辅助，不能因为某个库抖动就整页报错
+    return false
+  }
+}
+
 const ensureDocumentsForSearch = async () => {
+  const keyword = searchQuery.value.trim()
+  if (!keyword) return
   const targets = visibilityScopeDatasets.value
     .filter((dataset) => !dataset.is_missing_in_ragflow)
     .map((dataset) => dataset.ragflow_dataset_id || dataset.id)
-    .filter((id) => id && !documentsMap.value[id] && !documentsLoadingMap.value[id])
+    .filter((id): id is string => Boolean(id))
   if (!targets.length) return
   searchDocLoading.value = true
+  const next: Record<string, boolean> = {}
   try {
     for (let i = 0; i < targets.length; i += SEARCH_DOC_CONCURRENCY) {
-      await Promise.all(
-        targets
-          .slice(i, i + SEARCH_DOC_CONCURRENCY)
-          .map((id) => fetchDocumentsForDataset(id, { silent: true })),
-      )
+      const chunk = targets.slice(i, i + SEARCH_DOC_CONCURRENCY)
+      const results = await Promise.all(chunk.map((id) => probeDocNameMatch(id, keyword)))
+      chunk.forEach((id, idx) => { next[id] = results[idx] === true })
+      // 用户已经改了关键词：这批结果作废，别把旧命中写回去
+      if (searchQuery.value.trim() !== keyword) return
     }
+    docNameHits.value = next
   } finally {
     searchDocLoading.value = false
   }
@@ -1891,7 +2081,11 @@ const ensureDocumentsForSearch = async () => {
 watch(searchQuery, (value) => {
   if (searchDocTimer) clearTimeout(searchDocTimer)
   const query = value.trim().toLowerCase()
-  if (!query) return
+  if (!query) {
+    docNameHits.value = {}
+    searchDocLoading.value = false
+    return
+  }
   // 只在「搜到的是 ID」这件事上短路文档预加载：粘贴 32 位 Dataset ID 时用户显然在找库，
   // 没必要为此把所有库的文档列表都拉一遍（库一多就是一串串行 RAGFlow 请求）。
   // 加 8 位长度阈值，避免 "test" 这类短词恰好是某个 ID 的子串就把文档搜索整段跳过。
@@ -1903,6 +2097,7 @@ watch(searchQuery, (value) => {
   ) {
     return
   }
+  docNameHits.value = {}
   searchDocTimer = setTimeout(() => {
     void ensureDocumentsForSearch()
   }, SEARCH_DOC_DEBOUNCE_MS)
@@ -1998,6 +2193,33 @@ const deptDatasetGroups = computed<DeptDatasetGroup[]>(() => {
 
 const isDeptGroupCollapsed = (group: DeptDatasetGroup): boolean =>
   !!collapsedDeptGroups.value[group.key]
+
+/**
+ * 树里每个部门分组默认先渲染 6 个，点「再显示」每次加 10 个。
+ *
+ * 树不做页码：页码 + 部门层级 + 折叠态三者叠加，用户根本记不住自己在第几页。
+ * 增量渲染只解决「DOM 太多」，排序与分组仍是一次算好的完整结果。
+ */
+const TREE_GROUP_PAGE = 6
+const TREE_GROUP_STEP = 10
+const treeGroupShown = ref<Record<string, number>>({})
+
+const visibleGroupDatasets = (group: DeptDatasetGroup): KnowledgeBase[] => {
+  // 搜索时不再截断：命中结果已经是用户主动缩小的集合，再藏起来只会像「搜不到」
+  if (searchQuery.value.trim()) return group.datasets
+  const limit = treeGroupShown.value[group.key] ?? TREE_GROUP_PAGE
+  return group.datasets.slice(0, limit)
+}
+
+const treeGroupRemaining = (group: DeptDatasetGroup): number => {
+  if (searchQuery.value.trim()) return 0
+  return Math.max(0, group.datasets.length - visibleGroupDatasets(group).length)
+}
+
+const expandTreeGroup = (group: DeptDatasetGroup) => {
+  const current = treeGroupShown.value[group.key] ?? TREE_GROUP_PAGE
+  treeGroupShown.value = { ...treeGroupShown.value, [group.key]: current + TREE_GROUP_STEP }
+}
 
 const toggleDeptGroup = (group: DeptDatasetGroup) => {
   collapsedDeptGroups.value = {
@@ -2243,6 +2465,8 @@ const saveFolderStructure = async (
     ...(dataset.local_metadata.extra_config || {}),
     folder_structure: saved,
   }
+  // 当前视图可能正按文件夹过滤：结构一变，计数与命中集合都变了，必须重取当前页
+  if (datasetId === workspaceDatasetId.value) refreshWorkspaceDocs()
 }
 
 /** 文档被删除后清理目录里的悬空引用，避免树里出现点不开的条目。 */
@@ -2417,12 +2641,16 @@ const onFileChange = (event: Event) => {
 const uploadConflicts = ref<{ file: File; oldDocumentId: string; oldName: string }[]>([])
 const pendingUploadClean = ref<File[]>([])
 
-/** 查重用：优先用已加载的列表，避免每个文件都打一次接口 */
+/**
+ * 查重用：单独取一页足够大的列表。
+ *
+ * 不能复用工作区缓存——那份只有当前页（默认 50 条），拿它查重会漏掉后面几页的
+ * 同名文档，用户点了「保留两者」才发现库里早就有一份。后端对全量文档做了
+ * 60s 缓存，这里多要 1000 条只是一次切片，成本可以接受。
+ */
 const fetchDatasetDocumentsForUpload = async (dsId: string): Promise<KnowledgeDocument[]> => {
-  const cached = documentsMap.value[dsId]
-  if (cached?.length) return cached
   const response = await axios.get(`/api/portal/ragflow/datasets/${dsId}/documents`, {
-    params: { page_size: 1000 },
+    params: { page: 1, page_size: 1000 },
   })
   return (apiData(response) || []) as KnowledgeDocument[]
 }
@@ -2650,7 +2878,7 @@ const startDatasetStatusPolling = (dsId: string) => {
     datasetPollCounts.set(dsId, count)
     
     try {
-      await fetchDocumentsForDataset(dsId)
+      await fetchDocumentsForDataset(dsId, { silent: true, refresh: true })
       if (isUnmounted) return
       
       // 同步当前选中的文档详情信息
@@ -3561,6 +3789,61 @@ const openLibDrawer = (tab: 'settings' | 'audit' | 'references' = 'settings') =>
   drawerOpen.value = true
 }
 
+/**
+ * 工作区的翻页/筛选/排序都回到这里发请求。
+ *
+ * 每个 handler 先判「值真的变了没」：DocWorkspace 在切库时会主动把
+ * keyword/status/folder/page 复位并 emit 一遍，不复判就会在切库瞬间多打一次
+ * 完全相同的请求。
+ */
+const refreshWorkspaceDocs = () => {
+  const dsId = workspaceDatasetId.value
+  if (!dsId) return
+  void fetchDocumentsForDataset(dsId, { silent: true })
+}
+
+const onDocPageChange = (page: number) => {
+  if (page === docPage.value) return
+  docPage.value = page
+  refreshWorkspaceDocs()
+}
+
+const onDocPageSizeChange = (size: number) => {
+  if (size === docPageSize.value) return
+  docPageSize.value = size
+  docPage.value = 1
+  refreshWorkspaceDocs()
+}
+
+const onDocKeywordInput = (keyword: string) => {
+  if (keyword === docKeyword.value) return
+  docKeyword.value = keyword
+  docPage.value = 1
+  if (docSearchTimer) clearTimeout(docSearchTimer)
+  docSearchTimer = setTimeout(refreshWorkspaceDocs, 300)
+}
+
+const onDocStatusChange = (status: string) => {
+  if (status === docStatus.value) return
+  docStatus.value = status
+  docPage.value = 1
+  refreshWorkspaceDocs()
+}
+
+const onDocSortChange = (sort: string) => {
+  if (sort === docSort.value) return
+  docSort.value = sort
+  docPage.value = 1
+  refreshWorkspaceDocs()
+}
+
+const onDocFolderChange = (folder: string) => {
+  if (folder === docFolder.value) return
+  docFolder.value = folder
+  docPage.value = 1
+  refreshWorkspaceDocs()
+}
+
 const workspaceUpdateSelection = (ids: string[]) => {
   selectedDocIds.value = ids
   // 批量接口读的是 bulkDocDatasetId，不同步就会「点了删除但什么都没发生」
@@ -3642,7 +3925,9 @@ const handleManualRefreshDocs = async () => {
   if (!dsId) return
   refreshingDocs.value = true
   try {
-    await fetchDocumentsForDataset(dsId)
+    // 必须回源：文档全量列表在后端有 60s 缓存，不带 refresh 时点「同步」
+    // 拿到的还是同一份旧快照，用户会以为按钮没反应
+    await fetchDocumentsForDataset(dsId, { refresh: true })
     showToast('已刷新当前文档列表及状态', 'success')
   } catch (err) {
     showToast(extractError(err), 'error')
@@ -4207,7 +4492,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 class="space-y-0.5"
                 :class="group.isFlat ? '' : 'ml-1.5 border-l border-gray-100 pl-2.5'"
               >
-                <div v-for="dataset in group.datasets" :key="dataset.ragflow_dataset_id || dataset.id">
+                <div v-for="dataset in visibleGroupDatasets(group)" :key="dataset.ragflow_dataset_id || dataset.id">
               
               <!-- Dataset Node (Parent) -->
               <div
@@ -4262,6 +4547,24 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
 
                 </div>
+
+                <!--
+                  分组内增量渲染：一个部门下有几百个库时，全渲染会把 DOM 撑到上千个节点。
+                  树不做页码（翻页找部门很反直觉），而是「先给 6 个，再看 10 个」，
+                  搜索时直接展开全部命中——那时列表已经足够短。
+                -->
+                <button
+                  v-if="treeGroupRemaining(group) > 0"
+                  type="button"
+                  class="ml-1 flex h-6 w-full items-center gap-1 rounded-md px-2 text-[11px] text-gray-400 transition-colors hover:bg-gray-50 hover:text-primary"
+                  @click="expandTreeGroup(group)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" />
+                  </svg>
+                  再显示 {{ Math.min(10, treeGroupRemaining(group)) }} 个
+                  <span class="text-gray-300">（还剩 {{ treeGroupRemaining(group) }} 个）</span>
+                </button>
               </div>
             </div>
           </div>
@@ -4530,6 +4833,17 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               :selected-ids="selectedDocIds"
               :active-id="selectedDocument?.id ?? null"
               :root-key="workspaceDatasetId"
+              :total="docTotal"
+              :all-total="docAllTotal"
+              :page="docPage"
+              :page-size="docPageSize"
+              :page-sizes="DOC_PAGE_SIZES"
+              :keyword="docKeyword"
+              :status="docStatus"
+              :sort="docSort"
+              :folder="docFolder"
+              :status-counts="docStatusCounts"
+              :folder-counts="docFolderCounts"
               @open-doc="workspaceOpenDoc"
               @parse-doc="workspaceParseDoc"
               @delete-doc="deletingDocument = $event"
@@ -4538,10 +4852,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               @rename-folder="workspaceRenameFolder"
               @delete-folder="workspaceDeleteFolder"
               @update:selected-ids="workspaceUpdateSelection"
-              @upload="openLibDrawer('settings')"
+              @update:page="onDocPageChange"
+              @update:page-size="onDocPageSizeChange"
+              @update:keyword="onDocKeywordInput"
+              @update:status="onDocStatusChange"
+              @update:sort="onDocSortChange"
+              @update:folder="onDocFolderChange"
               @bulk-parse="bulkParseDocuments()"
               @bulk-delete="bulkDeleteDocuments()"
-              @bulk-move="showToast('拖动文件到文件夹行即可批量移动', 'warning')"
+              @bulk-move="showToast('拖动文件到下方文件夹标签即可批量移动', 'warning')"
               :bulk-enabled-busy="bulkEnabledBusy"
               @bulk-toggle-enabled="bulkToggleDocEnabled"
             />
@@ -4564,22 +4883,33 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <div class="mt-3 flex flex-wrap items-center gap-2">
             <div class="relative min-w-[180px] flex-1">
               <input
-                v-model="libraryQuery"
+                :value="libraryQuery"
                 type="search"
-                placeholder="搜索知识库名称 / 负责人"
+                placeholder="搜索知识库名称 / 负责人 / ID"
                 class="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-3 text-[12px] placeholder-gray-400 transition-all focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                @input="onLibraryQueryInput(($event.target as HTMLInputElement).value)"
               />
               <svg class="absolute left-2.5 top-2 h-3.5 w-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
             </div>
             <select
-              v-model="libraryScope"
+              :value="libraryScope"
               class="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-[12px] text-gray-600 focus:border-primary focus:outline-none"
+              aria-label="可见范围"
+              @change="onLibraryScopeChange"
             >
               <option value="all">全部范围</option>
               <option v-for="tab in VISIBILITY_TABS" :key="tab.key" :value="tab.key">{{ tab.label }}</option>
               <option value="missing">仅失联库</option>
+            </select>
+            <select
+              :value="librarySort"
+              class="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-[12px] text-gray-600 focus:border-primary focus:outline-none"
+              aria-label="排序方式"
+              @change="onLibrarySortChange"
+            >
+              <option v-for="option in LIBRARY_SORT_OPTIONS" :key="option.key" :value="option.key">{{ option.label }}</option>
             </select>
             <div class="flex shrink-0 items-center rounded-lg bg-gray-100 p-0.5" role="tablist" aria-label="视图切换">
               <button
@@ -4614,11 +4944,18 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
 
           <div
-            v-if="!libraryListRows.length"
+            v-if="libraryLoading && !libraryRows.length"
+            class="flex flex-1 items-center justify-center text-sm text-gray-400"
+          >正在加载知识库列表…</div>
+
+          <div
+            v-else-if="!libraryRows.length"
             class="flex flex-1 flex-col items-center justify-center gap-1.5 text-center"
           >
             <p class="text-sm text-gray-400">{{ libraryListEmpty }}</p>
-            <p v-if="listScope !== 'all'" class="text-xs text-gray-300">接口就绪后这里会自动有内容</p>
+            <p v-if="libraryQuery.trim() || libraryScope !== 'all'" class="text-xs text-gray-300">
+              换个关键词，或把可见范围切回「全部范围」
+            </p>
           </div>
 
           <div v-else-if="libraryView === 'list'" class="mt-3 flex-1 overflow-y-auto">
@@ -4628,7 +4965,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary/30"
                 :checked="libraryAllSelected"
                 :disabled="!librarySelectableRows.length"
-                :title="libraryAllSelected ? '取消全选' : '全选当前列表'"
+                :title="libraryAllSelected ? '取消全选（当前页）' : `全选当前页 ${librarySelectableRows.length} 个可管理的库`"
                 @change="toggleLibrarySelectAll"
               />
               <span></span>
@@ -4642,7 +4979,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <span>更新时间</span>
             </div>
             <div
-              v-for="ds in libraryListRows"
+              v-for="ds in libraryRows"
               :key="ds.ragflow_dataset_id || ds.id"
               class="grid w-full cursor-pointer grid-cols-[18px_24px_minmax(0,1fr)_88px_48px_52px_62px_78px_72px_88px_16px] items-center gap-x-2.5 border-b border-gray-100 px-3 h-11 text-left transition-colors hover:bg-gray-50"
               @click="selectDatasetNode(ds)"
@@ -4738,7 +5075,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <!-- 卡片视图：同样的数据换一种扫读方式，点卡片等价于点行 -->
           <div v-else class="mt-3 grid flex-1 content-start gap-3 overflow-y-auto pb-2 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             <button
-              v-for="ds in libraryListRows"
+              v-for="ds in libraryRows"
               :key="libraryRowId(ds)"
               type="button"
               class="group flex flex-col rounded-xl border border-gray-200 bg-white p-3 text-left transition-all hover:border-primary/40 hover:shadow-sm"
@@ -4797,6 +5134,22 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               </div>
             </button>
           </div>
+
+          <!--
+            分页条常驻底部：翻页要能随时点，不该跟着列表一起滚走。
+            「全选」只作用于当前页，跨页勾选保留并在右侧写明数量。
+          -->
+          <PaginationBar
+            v-if="libraryRows.length"
+            :total="libraryTotal"
+            :page="libraryPage"
+            :page-size="libraryPageSize"
+            :page-sizes="LIBRARY_PAGE_SIZES"
+            unit="个知识库"
+            :note="librarySelectedCount ? `已选 ${librarySelectedCount} 个（跨页保留）` : ''"
+            @update:page="onLibraryPageChange"
+            @update:page-size="onLibraryPageSizeChange"
+          />
         </div>
 
         <!--

@@ -4,31 +4,13 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
-from jinja2 import BaseLoader, Environment, Undefined
-
 from app.services.ai.sql_dialect_limit import apply_dialect_row_limit
 
 from .base import DataSourceAdapter, SQLSafetyError, standardize_items
 from .models import LogicalQuery, ResultSet
+from .sql_template import render_sql_template
 
 logger = logging.getLogger(__name__)
-
-
-class SqlLabUndefined(Undefined):
-    def __str__(self):
-        return "NULL"
-
-    def __html__(self):
-        return "NULL"
-
-    def __iter__(self):
-        return iter([])
-
-    def __bool__(self):
-        return False
-
-
-SQL_LAB_ENV = Environment(loader=BaseLoader(), undefined=SqlLabUndefined)
 
 
 def build_sqlserver_odbc_dsn(config: Dict[str, Any]) -> str:
@@ -108,7 +90,11 @@ class SQLServerAdapter(DataSourceAdapter):
         if custom_sql:
             raw_sql = custom_sql.strip().rstrip(";")
             try:
-                sql = SQL_LAB_ENV.from_string(raw_sql).render(**(params or {}))
+                # custom_sql 来自外部输入，历史上既没有沙箱渲染也没有安全校验：
+                # 统一入口先沙箱渲染，再对最终 SQL 执行 _validate_sql_safety。
+                sql = render_sql_template(raw_sql, params, self._validate_sql_safety)
+            except SQLSafetyError as e:
+                raise ValueError(str(e))
             except Exception as e:
                 logger.warning(f"Jinja2 模板渲染异常，回退使用原始 SQL: {e}")
                 sql = raw_sql
@@ -119,6 +105,12 @@ class SQLServerAdapter(DataSourceAdapter):
                 max_limit=1000,
                 min_limit=0,
             )
+            # apply_dialect_row_limit 会重写 SELECT/TOP，最终真正执行的是 final_sql，
+            # 必须对它再校验一次（例如带 TOP 重写后仍可能拼出第二条语句）。
+            try:
+                self._validate_sql_safety(final_sql)
+            except SQLSafetyError as e:
+                raise ValueError(str(e))
         elif table_name:
             meta_sql = """
                 SELECT
@@ -161,6 +153,12 @@ class SQLServerAdapter(DataSourceAdapter):
 
     async def execute_sql(self, sql: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """执行物理只读 SQL 并返回统一的结果格式。"""
+        # 物理执行入口守住只读契约，避免内部调用链绕过上层 validate_sql。
+        try:
+            self._validate_sql_safety(sql)
+        except SQLSafetyError as e:
+            raise ValueError(str(e))
+
         from app.services.pool_manager import DataSourcePoolManager
 
         if params is not None and not params:
@@ -193,20 +191,21 @@ class SQLServerAdapter(DataSourceAdapter):
         params = params or {}
         limit = min(max(int(limit or 100), 1), 1000)
 
+        # 1. 模板本身先做一次只读校验：明显违规的输入（如 UPDATE）尽早拒绝。
         try:
             self._validate_sql_safety(sql)
         except SQLSafetyError as e:
             raise ValueError(str(e))
 
-        rendered_sql = sql
-        if "{{" in sql or "{%" in sql:
-            try:
-                rendered_sql = SQL_LAB_ENV.from_string(sql).render(**params)
-                self._validate_sql_safety(rendered_sql)
-            except SQLSafetyError as e:
-                raise ValueError(str(e))
-            except Exception as e:
-                raise ValueError(f"Jinja2 模板渲染失败: {str(e)}")
+        # 2. 沙箱渲染 + 渲染后再次校验。
+        #    只读校验必须落在最终要执行的 SQL 上：模板 `SELECT ... {{ x }}` 本身是
+        #    只读的，但 x 可以渲染出 `1; DROP TABLE ...`，只校验模板会漏掉这类注入。
+        try:
+            rendered_sql = render_sql_template(sql, params, self._validate_sql_safety)
+        except SQLSafetyError as e:
+            raise ValueError(str(e))
+        except Exception as e:
+            raise ValueError(f"Jinja2 模板渲染失败: {str(e)}")
 
         clean_sql = rendered_sql.strip().rstrip(";")
         top_match = re.search(r"\bTOP\s+(\d+)", clean_sql, re.IGNORECASE)

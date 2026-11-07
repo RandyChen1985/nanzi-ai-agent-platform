@@ -381,7 +381,11 @@ async def test_chatbi_execute_local_success(client: AsyncClient, admin_api_key: 
         body = response.json()
         assert body["code"] == 200
         assert body["data"]["items"] == [[1, "Alice"]]
-        assert "SELECT * FROM (SELECT id, name FROM users) AS _sub LIMIT 1000" in mock_adapter.execute_sql.call_args[0][0]
+        # 只校验"原查询 + 1000 行封顶"这个不变量：包装成子查询的写法已被去掉
+        # （末尾 `--` 注释会吞掉包装的右括号），改成直接在语句末尾追加 LIMIT。
+        executed_sql = mock_adapter.execute_sql.call_args[0][0]
+        assert "SELECT id, name FROM users" in executed_sql
+        assert executed_sql.rstrip().endswith("LIMIT 1000")
 
 
 @pytest.mark.asyncio
@@ -505,3 +509,60 @@ async def test_chatbi_execute_response_contains_execution_mode(client: AsyncClie
         body_fail = response_fail.json()
         assert "execution_mode" in body_fail
         assert body_fail["execution_mode"] == "local"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_chatbi_execute_switches_is_admin_to_session_user(monkeypatch):
+    """OpenClaw 用管理员 API Key 携带普通用户会话时，执行身份必须整体切换。
+
+    只切 user_id 不切 is_admin，管理员身份会继续作用于普通用户会话，
+    跳过字段级裁剪与行级 ``custom`` 过滤——SELECT * 就能拿到全部受限列。
+    """
+    body = ChatBiSqlExecuteRequest.model_validate({
+        "sql": "SELECT * FROM ai_agent_users",
+        "data_source": "mysql_test",
+        "dataset_name": "sales_dataset",
+        "sessionid": "openclaw-session-1",
+    })
+    caller_admin = {
+        "user_id": "1",
+        "user_name": "openclaw",
+        "real_name": "OpenClaw",
+        "role": "admin",
+        "dept_code": "D000",
+        "org_path": "/D000",
+        "extra_data": "",
+    }
+    session_user = {
+        "user_id": 178,
+        "user_name": "bob",
+        "real_name": "Bob",
+        "role": "user",
+        "dept_code": "D001",
+        "org_path": "/D001",
+        "extra_data": "",
+    }
+    captured = {}
+
+    async def fake_session_auth(_db, _body):
+        return session_user
+
+    async def fake_execute_sql_query_core(*args, **kwargs):
+        captured.update(kwargs)
+        return json.dumps({"columns": [], "items": []})
+
+    monkeypatch.setattr(chatbi, "_enforce_openclaw_session_sql_auth", fake_session_auth)
+    monkeypatch.setattr(chatbi, "execute_sql_query_core", fake_execute_sql_query_core)
+    monkeypatch.setattr(
+        chatbi, "_resolve_direct_sql_dataset_name", AsyncMock(return_value="sales_dataset")
+    )
+    monkeypatch.setattr(
+        chatbi, "build_sql_user_dimensions", AsyncMock(return_value={"dept_code": "D001"})
+    )
+
+    with patch.dict("os.environ", {"SQL_EXECUTION_MODE": "local"}):
+        await chatbi.chatbi_sql_execute(body, user_info=caller_admin, db=AsyncMock())
+
+    assert captured["user_id"] == 178
+    assert captured["is_admin"] is False

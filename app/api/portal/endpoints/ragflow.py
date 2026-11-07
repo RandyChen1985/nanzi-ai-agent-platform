@@ -28,6 +28,7 @@ from app.services.ai.ragflow_client import RagFlowClient, clear_dataset_list_cac
 from app.services.knowledge_base_service import KnowledgeBaseMetadataService
 from app.services.knowledge_access_request_service import (
     STATUS_APPROVED,
+    STATUS_CANCELLED,
     STATUS_PENDING,
     STATUS_REJECTED,
     AccessRequestError,
@@ -680,6 +681,113 @@ async def list_ragflow_agents(
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail=f"Failed to connect to RAGFlow: {str(e)}")
 
+#: ``/datasets`` 允许的可见范围取值。非法值/空串一律当「没传」——直接把拼错的值
+#: 当过滤条件会返回空列表，前端看到的却是「我的知识库全没了」。
+_KNOWLEDGE_VISIBILITY_VALUES = {"public", "team", "private"}
+
+
+def _dataset_id_of(item: Dict[str, Any]) -> str:
+    return str(item.get("ragflow_dataset_id") or item.get("id") or "")
+
+
+def _to_epoch_seconds(value: Any) -> Optional[float]:
+    """把 RAGFlow / 本地元数据里的时间归一成秒级时间戳。
+
+    同一个列表里可能出现三种形态：RAGFlow 的毫秒时间戳（字符串或数字）、
+    本地元数据的 ISO 字符串（``updated_at``）。归一不了就返回 None，
+    由调用方按「没有时间」处理（排最后），不能当成 0 参与排序。
+    """
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    number: Optional[float] = None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            number = float(text)
+        except ValueError:
+            try:
+                parsed = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return parsed.timestamp()
+    # RAGFlow 用毫秒，本地元数据用秒；1e11 秒已经是公元 5000 年了，够区分
+    return number / 1000.0 if number > 1e11 else number
+
+
+def _dataset_updated_at(item: Dict[str, Any]) -> Optional[float]:
+    for key in ("update_time", "updated_at"):
+        ts = _to_epoch_seconds(item.get(key))
+        if ts is not None:
+            return ts
+    return None
+
+
+def _numeric_field(item: Dict[str, Any], *keys: str) -> float:
+    for key in keys:
+        value = item.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
+def _dataset_keyword_blob(item: Dict[str, Any]) -> str:
+    """keyword 的匹配面：库名 / 引擎名 / ID / 负责人 / 描述 / 标签。
+
+    ``owner`` 是本地元数据里的归属人字符串，``owner_user_name`` 是本次请求
+    补出来的显示名——两者都要能搜，否则搜「张三」搜不到他名下的库。
+    """
+    parts: List[Any] = [
+        item.get("platform_name"),
+        item.get("name"),
+        item.get("ragflow_dataset_id") or item.get("id"),
+        item.get("owner"),
+        item.get("owner_user_name"),
+        item.get("platform_description") or item.get("description"),
+    ]
+    tags = item.get("tags")
+    if isinstance(tags, (list, tuple, set)):
+        parts.extend(tags)
+    elif tags:
+        parts.append(tags)
+    return "\n".join(str(part) for part in parts if part).lower()
+
+
+def _sort_knowledge_datasets(
+    items: List[Dict[str, Any]], sort: Optional[str]
+) -> List[Dict[str, Any]]:
+    """updated（默认）/ name / docs 三种排序，同值一律按 id 兜底保持稳定。"""
+    mode = (sort or "updated").strip().lower()
+    # 先按 id 排一遍做稳定基准：同值时顺序不随输入顺序抖动
+    ordered = sorted(items, key=_dataset_id_of)
+    if mode == "name":
+        ordered.sort(
+            key=lambda item: str(item.get("platform_name") or item.get("name") or "")
+        )
+        return ordered
+    if mode == "docs":
+        ordered.sort(
+            key=lambda item: _numeric_field(item, "doc_count", "document_count"),
+            reverse=True,
+        )
+        return ordered
+
+    def _updated_key(item: Dict[str, Any]) -> float:
+        ts = _dataset_updated_at(item)
+        # 没有时间的排最后（reverse=True 下 -inf 自然沉底）
+        return float("-inf") if ts is None else ts
+
+    ordered.sort(key=_updated_key, reverse=True)
+    return ordered
+
+
 @router.get("/datasets")
 async def list_ragflow_datasets(
     page: int = 1, 
@@ -693,11 +801,22 @@ async def list_ragflow_datasets(
     override_url: Optional[str] = None,
     override_key: Optional[str] = None,
     include_missing: bool = True,
+    # --- 列表过滤 / 排序（全部在 total 之前生效）---
+    keyword: Optional[str] = None,
+    visibility: Optional[str] = None,
+    dept_id: Optional[int] = None,
+    missing: Optional[int] = None,
+    sort: Optional[str] = None,
+    favorite: int = 0,
+    ids: Optional[str] = None,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session)
 ):
-    """
-    Proxy to list RAGFlow datasets (knowledge bases) with permission filtering.
+    """Proxy to list RAGFlow datasets (knowledge bases) with permission filtering.
+
+    过滤顺序不能乱：``keyword`` 要能搜到负责人显示名、``favorite`` 依赖
+    ``is_favorited``，所以先补齐各类附加字段（权限位 / 负责人 / 引用 / 授权数 /
+    收藏），再过滤，再排序，最后才是分页切片；``total`` 是**过滤后**的条数。
     """
     service = PermissionService(db)
     access = await service.get_knowledge_base_access(
@@ -758,9 +877,73 @@ async def list_ragflow_datasets(
         await _attach_agent_refs(db, merged)
         await _attach_grant_counts(db, merged)
         await _attach_favorites(db, merged, int(user["user_id"]))
+
+        # --- 过滤 ---
+        keyword_text = (keyword or "").strip().lower()
+        if keyword_text:
+            merged = [
+                item for item in merged if keyword_text in _dataset_keyword_blob(item)
+            ]
+
+        visibility_value = (visibility or "").strip().lower() or None
+        if visibility_value in _KNOWLEDGE_VISIBILITY_VALUES:
+            merged = [
+                item
+                for item in merged
+                if str(item.get("visibility") or "").strip().lower() == visibility_value
+            ]
+        # visibility 非法（拼错 / 空串）时忽略，不当作「筛出空列表」
+
+        if dept_id is not None:
+            try:
+                dept_value = int(dept_id)
+            except (TypeError, ValueError):
+                dept_value = None
+            if dept_value == -1:
+                # -1 = 未关联部门：本地元数据缺失的库 owner_dept_id 也是 None，
+                # 与前端「未分配」分组的口径保持一致
+                merged = [item for item in merged if item.get("owner_dept_id") in (None, "")]
+            elif dept_value is not None:
+                merged = [
+                    item
+                    for item in merged
+                    if str(item.get("owner_dept_id")) == str(dept_value)
+                ]
+
+        if missing is not None:
+            try:
+                missing_value = int(missing)
+            except (TypeError, ValueError):
+                missing_value = None
+            if missing_value == 1:
+                merged = [item for item in merged if item.get("is_missing_in_ragflow") is True]
+
+        if favorite is not None:
+            try:
+                favorite_value = int(favorite)
+            except (TypeError, ValueError):
+                favorite_value = 0
+            if favorite_value == 1:
+                merged = [item for item in merged if item.get("is_favorited") is True]
+
+        # --- 排序 ---
+        merged = _sort_knowledge_datasets(merged, sort)
+
+        # --- 「最近访问」：按传入顺序返回，不在本次可见范围内的直接忽略 ---
+        if ids:
+            wanted: List[str] = []
+            for segment in str(ids).split(","):
+                dataset_id = segment.strip()
+                if dataset_id and dataset_id not in wanted:
+                    wanted.append(dataset_id)
+            if wanted:
+                by_id = {_dataset_id_of(item): item for item in merged}
+                merged = [by_id[dataset_id] for dataset_id in wanted if dataset_id in by_id]
+
         total = len(merged)
         if page_size and page_size > 0:
-            start = max(0, (page - 1) * page_size)
+            current_page = page if page and page > 0 else 1
+            start = max(0, (current_page - 1) * page_size)
             merged = merged[start:start + page_size]
         return {"code": 0, "data": merged, "total": total, "stale": stale}
     except httpx.RequestError as e:
@@ -1371,7 +1554,10 @@ async def sync_ragflow_datasets(
     client = RagFlowClient(config_prefix="knowledge_ragflow")
     metadata_service = KnowledgeBaseMetadataService(db)
     try:
-        datasets = await client.list_datasets(page=1, page_size=500)
+        # 必须取全集：只拉前 500 个时，排在后面的库永远同步不到元数据表
+        from app.services.ai.knowledge_utils import load_all_ragflow_datasets
+
+        datasets = await load_all_ragflow_datasets(client)
         result = await metadata_service.sync_from_ragflow_datasets(
             datasets,
             user_name=user.get("user_name"),
@@ -1734,8 +1920,11 @@ async def update_folder_structure(
     一起回写，两个人同时操作就是 lost update，最坏情况是把公开库改成私有。
     """
     started = time.time()
+    # 归类是「内容层面」的事，与上传/删除文档同级：部门成员能整理本部门的资料，
+    # 却因为管理级门禁连一个文件夹都拖不进去，这条限制比它要保护的东西更碍事。
+    # 元素权限仍要 edit——可见范围、归属这些治理字段还是管理级才动得了。
     await require_element_permission(user, db, "element:knowledge:edit")
-    await require_dataset_write_access(user, db, [dataset_id])
+    await require_dataset_content_write_access(user, db, [dataset_id])
 
     record = await KnowledgeBaseMetadataService(db).update_extra_config_key(
         dataset_id,
@@ -1782,8 +1971,11 @@ async def delete_ragflow_datasets(
         # 获取当前 RAGFlow 侧的所有有效数据集，以防删除已不存在的知识库时报错
         try:
             # 必须拿全集：漏掉的库会被判成「RAGFlow 侧已不存在」而跳过删除，
-            # 于是只删了本地元数据、RAGFlow 里留下不再受管的孤儿库
-            ragflow_datasets = await client.list_datasets(page=1, page_size=1000)
+            # 于是只删了本地元数据、RAGFlow 里留下不再受管的孤儿库。
+            # 以前这里写的是 list_datasets(page_size=1000)——注释要全集，代码却只要 10 页，
+            # 数据集超过 1000 个之后排在后面的库就再也删不掉了。
+            # refresh=True 是刻意的：刚建完就删的库不能在 60s 缓存里缺席。
+            ragflow_datasets = await client.list_all_datasets_cached(refresh=True)
             existing_ids = {str(ds.get("id")) for ds in ragflow_datasets if ds.get("id")}
         except Exception:
             # 列表获取失败时的安全降级兜底：假设所有传入 ID 都在 RAGFlow 侧存在
@@ -1806,6 +1998,28 @@ async def delete_ragflow_datasets(
         if affected_user_ids:
             await PermissionService(db).invalidate_cached_permissions_for_users(affected_user_ids)
 
+        # 收藏与「待审批」申请都挂在 dataset_id 上，库没了不清理就是脏数据：
+        # 收藏表留下无效 id；待审批列表则永远挂着一条记录——管理员点「通过」会被
+        # _ensure_resource_available 拒掉（库已不存在），只能手动驳回。
+        from app.models.knowledge import KnowledgeAccessRequest, KnowledgeBaseFavorite
+        from sqlalchemy import update as sa_update
+
+        await db.execute(
+            delete(KnowledgeBaseFavorite).where(KnowledgeBaseFavorite.dataset_id.in_(payload.ids))
+        )
+        await db.execute(
+            sa_update(KnowledgeAccessRequest)
+            .where(
+                KnowledgeAccessRequest.dataset_id.in_(payload.ids),
+                KnowledgeAccessRequest.status == STATUS_PENDING,
+            )
+            .values(
+                status=STATUS_CANCELLED,
+                review_comment="知识库已删除，申请自动作废",
+                reviewed_at=datetime.datetime.now(),
+            )
+        )
+
         await metadata_service.mark_deleted(payload.ids, user_name=user.get("user_name"))
         clear_dataset_list_cache()
         # 原图与 md 快照是本地文件，RAGFlow 删库不会带它们走。
@@ -1825,20 +2039,325 @@ async def delete_ragflow_datasets(
         raise
 
 
+# --- 文档工作区：状态判定 / 虚拟文件夹 / 排序 ---
+
+#: status_counts 的固定键集合（前端 chips 顺序依赖它，不能随数据多退少补）
+DOC_STATUS_KEYS = ("parsed", "parsing", "unparsed", "failed")
+#: 未归入任何虚拟文件夹的「伪文件夹」路径
+UNCLASSIFIED_FOLDER = "__unclassified__"
+
+
+def _as_text(value: Any) -> str:
+    """把大模型返回的字段收敛成字符串。
+
+    prompt 里要求 tags 是逗号分隔的字符串，但模型偶尔会输出 JSON 数组
+    （``"tags": ["ERP", "手册"]``）——直接 ``.strip()`` 会 AttributeError，
+    用户看到的是 500「AI 分析失败: 'list' object has no attribute 'strip'」。
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple, set)):
+        parts = [str(item).strip() for item in value]
+        return ",".join(part for part in parts if part)
+    return str(value).strip()
+
+
+def _doc_status_of(doc: Any) -> str:
+    """文档解析状态的唯一后端口径。
+
+    必须与前端 ``frontend/src/utils/knowledgeDocStatus.ts`` 的 ``docStatusOf``
+    完全一致，否则同一个文件在列表 chip 上「解析失败」、按 chip 过滤后却消失。
+    RAGFlow 把状态放在 ``run``：0/UNSTART 未解析、1/DONE 完成、2/RUNNING 解析中、
+    3/FAIL 失败；只有 ``run`` 完全缺失时才回落 ``status``——``status`` 里的
+    0/1 表示启用/停用，当解析状态用会把「停用的文档」误判成「未解析」。
+    """
+    if not isinstance(doc, dict):
+        return "unparsed"
+
+    run = str(doc.get("run") if doc.get("run") is not None else "").upper()
+    if run in ("RUNNING", "2"):
+        return "parsing"
+    if run in ("DONE", "1"):
+        return "parsed"
+    if run in ("FAIL", "3"):
+        return "failed"
+    if run in ("UNSTART", "0"):
+        return "unparsed"
+
+    if doc.get("run") is None:
+        status = str(doc.get("status") if doc.get("status") is not None else "").upper()
+        if status in ("COMPLETED", "PARSED"):
+            return "parsed"
+        if status in ("RUNNING", "PARSING"):
+            return "parsing"
+        if status == "FAILED":
+            return "failed"
+    return "unparsed"
+
+
+def _doc_id_of(doc: Any) -> str:
+    if not isinstance(doc, dict):
+        return ""
+    return str(doc.get("id") or doc.get("doc_id") or "")
+
+
+def _split_folder_path(path: Any) -> List[str]:
+    """`` a / b `` → ``["a", "b"]``，与前端 splitFolderPath 一致。"""
+    return [segment.strip() for segment in str(path or "").split("/") if segment.strip()]
+
+
+def _normalize_folder_path(path: Any) -> str:
+    return "/".join(_split_folder_path(path))
+
+
+async def _prune_folder_structure(
+    db: AsyncSession,
+    dataset_id: str,
+    removed_ids: List[str],
+    user_name: Optional[str] = None,
+) -> None:
+    """把已删除的文档从虚拟文件夹里摘掉。
+
+    不清理的话 ``extra_config.folder_structure`` 只会增不会减：列表查询有
+    「按真实 docId 取交集」的保护，界面上看不出来，但这份 JSON 会一直膨胀，
+    前端每次读写的都是几十个失效 id。
+    """
+    if not removed_ids:
+        return
+    try:
+        service = KnowledgeBaseMetadataService(db)
+        record = await service.get_by_dataset_id(dataset_id)
+        extra_config = getattr(record, "extra_config", None) if record else None
+        structure = extra_config.get("folder_structure") if isinstance(extra_config, dict) else None
+        if not isinstance(structure, dict) or not structure:
+            return
+
+        wanted = {str(item) for item in removed_ids}
+        pruned: Dict[str, List[str]] = {}
+        changed = False
+        for path, doc_ids in structure.items():
+            kept = [str(doc_id) for doc_id in (doc_ids or []) if str(doc_id) not in wanted]
+            if len(kept) != len(doc_ids or []):
+                changed = True
+            pruned[path] = kept
+        if not changed:
+            return
+
+        await service.update_extra_config_key(
+            dataset_id,
+            key="folder_structure",
+            value=pruned,
+            user_name=user_name,
+        )
+    except Exception as exc:  # noqa: BLE001 - 清理是旁路，不能挡住删除本身
+        logger.warning("[Knowledge] 删除文档后清理文件夹映射失败: %s", exc)
+
+
+def _build_folder_nodes(structure: Any) -> Dict[str, List[str]]:
+    """把扁平的 ``folder_structure`` 展开成节点表（含按需补出的祖先路径）。
+
+    与前端 ``buildFolderIndex`` 一致：key 里出现 ``A/B`` 时即使没有 ``A`` 这个
+    key，也要补出 ``A`` 节点，否则二层文件夹会挂在一个不存在的父节点上。
+    节点里的 docId 可能是已删除的残留，由调用方按实际文档过滤。
+    """
+    nodes: Dict[str, List[str]] = {}
+    if not isinstance(structure, dict):
+        return nodes
+
+    for raw_path in structure:
+        cursor = ""
+        for segment in _split_folder_path(raw_path):
+            cursor = f"{cursor}/{segment}" if cursor else segment
+            nodes.setdefault(cursor, [])
+
+    for raw_path, doc_ids in structure.items():
+        path = _normalize_folder_path(raw_path)
+        if not path:
+            continue
+        bucket = nodes.setdefault(path, [])
+        if not isinstance(doc_ids, (list, tuple, set)):
+            continue
+        for doc_id in doc_ids:
+            if doc_id:
+                bucket.append(str(doc_id))
+    return nodes
+
+
+def _folder_scope_doc_ids(nodes: Dict[str, List[str]], path: str) -> set:
+    """folder 的语义：路径等于它，或以 ``path + '/'`` 为前缀。
+
+    所以选中 ``A`` 会命中放在 ``A/B`` 里的文档，这正是前端树形结构的含义。
+    """
+    prefix = f"{path}/"
+    scoped: set = set()
+    for node_path, doc_ids in nodes.items():
+        if node_path == path or node_path.startswith(prefix):
+            scoped.update(doc_ids)
+    return scoped
+
+
+def _all_folder_doc_ids(nodes: Dict[str, List[str]]) -> set:
+    assigned: set = set()
+    for doc_ids in nodes.values():
+        assigned.update(doc_ids)
+    return assigned
+
+
+def _folder_counts(nodes: Dict[str, List[str]], existing_ids: set) -> Dict[str, int]:
+    """每个目录（含子目录）下真实存在的文档数 + 未分类数量。"""
+    counts: Dict[str, int] = {}
+    for path in nodes:
+        scoped = _folder_scope_doc_ids(nodes, path)
+        counts[path] = len(scoped & existing_ids)
+    counts[UNCLASSIFIED_FOLDER] = len(existing_ids - _all_folder_doc_ids(nodes))
+    return counts
+
+
+async def _load_folder_structure(db: AsyncSession, dataset_id: str) -> Dict[str, Any]:
+    """读本地元数据里的 ``extra_config.folder_structure``。
+
+    文件夹只是平台侧的组织视图（RAGFlow 不认识它），读失败就按「没有文件夹」
+    处理——不能因为一个装饰性字段让整个文档列表 500。
+    """
+    try:
+        record = await KnowledgeBaseMetadataService(db).get_by_dataset_id(dataset_id)
+    except Exception as exc:  # noqa: BLE001 - 仅用于降级，记录后继续
+        logger.warning("[Knowledge] 读取文件夹结构失败，按无文件夹处理: %s", exc)
+        return {}
+    extra_config = getattr(record, "extra_config", None) if record else None
+    if not isinstance(extra_config, dict):
+        return {}
+    structure = extra_config.get("folder_structure")
+    return structure if isinstance(structure, dict) else {}
+
+
+def _doc_updated_at(doc: Dict[str, Any]) -> Optional[float]:
+    for key in ("update_time", "create_time", "created_at"):
+        ts = _to_epoch_seconds(doc.get(key))
+        if ts is not None:
+            return ts
+    return None
+
+
+def _sort_documents(
+    docs: List[Dict[str, Any]], sort: Optional[str]
+) -> List[Dict[str, Any]]:
+    """updated（默认）/ name / size / chunks 排序。
+
+    先按 id 排一遍做稳定基准：同值时顺序固定，否则跨页会出现「第 2 页又看到
+    第 1 页的文档、还有几条永远翻不到」。
+    """
+    mode = (sort or "updated").strip().lower()
+    ordered = sorted(docs, key=_doc_id_of)
+    if mode == "name":
+        ordered.sort(key=lambda doc: str(doc.get("name") or ""))
+        return ordered
+    if mode == "size":
+        ordered.sort(key=lambda doc: _numeric_field(doc, "size"), reverse=True)
+        return ordered
+    if mode == "chunks":
+        ordered.sort(
+            key=lambda doc: _numeric_field(doc, "chunk_count", "chunks"), reverse=True
+        )
+        return ordered
+
+    def _updated_key(doc: Dict[str, Any]) -> float:
+        ts = _doc_updated_at(doc)
+        # 缺时间的排最后：-inf 在 reverse=True 下自然沉底
+        return float("-inf") if ts is None else ts
+
+    ordered.sort(key=_updated_key, reverse=True)
+    return ordered
+
+
 @router.get("/datasets/{dataset_id}/documents")
 async def list_dataset_documents(
     dataset_id: str,
     page: int = 1,
     page_size: int = 100,
     name: Optional[str] = None,
+    status: Optional[str] = None,
+    sort: Optional[str] = None,
+    folder: Optional[str] = None,
+    refresh: int = 0,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
+    """文档列表：一次全量（60s 缓存）+ 内存过滤 / 排序 / 分页。
+
+    RAGFlow 只支持 page/page_size 分页，过滤与排序都得由平台做；原来按页透传时
+    ``total`` 恒等于「当前页条数」，跨页排序也不可能正确。现在改成全量拉取后
+    在内存里处理，``total`` 是**过滤后**的真实总数，另带 ``all_total`` /
+    ``status_counts`` / ``folders`` 供前端渲染 chips 与分页器。
+    """
     await require_dataset_access(user, db, [dataset_id])
     client = RagFlowClient(config_prefix="knowledge_ragflow")
+    current_page = page if page and page > 0 else 1
     try:
-        docs = await client.list_documents(dataset_id, name=name, page=page, page_size=page_size)
-        return {"code": 0, "data": docs, "total": len(docs)}
+        docs = await client.list_all_documents_cached(dataset_id, refresh=bool(refresh))
+        all_total = len(docs)
+
+        # folder_structure 只在平台侧：RAGFlow 不认识虚拟文件夹
+        folder_structure = await _load_folder_structure(db, dataset_id)
+        folder_nodes = _build_folder_nodes(folder_structure)
+
+        working = list(docs)
+
+        # 1) folder（路径前缀语义 / __unclassified__）
+        normalized_folder = _normalize_folder_path(folder)
+        if normalized_folder == UNCLASSIFIED_FOLDER:
+            assigned_ids = _all_folder_doc_ids(folder_nodes)
+            working = [doc for doc in working if _doc_id_of(doc) not in assigned_ids]
+        elif normalized_folder:
+            wanted_ids = _folder_scope_doc_ids(folder_nodes, normalized_folder)
+            working = [doc for doc in working if _doc_id_of(doc) in wanted_ids]
+
+        # 2) name
+        name_text = (name or "").strip().lower()
+        if name_text:
+            working = [
+                doc for doc in working if name_text in str(doc.get("name") or "").lower()
+            ]
+
+        # 3) status_counts：在 folder + name 之后、status 之前统计，
+        #    否则选了「解析失败」后其它状态 chip 的计数会自己缩水到 0
+        status_counts = {key: 0 for key in DOC_STATUS_KEYS}
+        for doc in working:
+            doc_status = _doc_status_of(doc)
+            status_counts[doc_status] = status_counts.get(doc_status, 0) + 1
+
+        # 4) status（非法值忽略）
+        status_value = (status or "").strip().lower() or None
+        if status_value in status_counts:
+            working = [doc for doc in working if _doc_status_of(doc) == status_value]
+
+        filtered = _sort_documents(working, sort)
+
+        # folders：只统计当前全量里真实存在的 docId，folder_structure 为空时返回 {}
+        folder_counts: Dict[str, int] = {}
+        if folder_nodes:
+            existing_ids = {_doc_id_of(doc) for doc in docs if _doc_id_of(doc)}
+            folder_counts = _folder_counts(folder_nodes, existing_ids)
+
+        total = len(filtered)
+        if page_size and page_size > 0:
+            start = (current_page - 1) * page_size
+            page_docs = filtered[start:start + page_size]
+        else:
+            page_docs = filtered
+
+        return {
+            "code": 0,
+            "data": page_docs,
+            "total": total,
+            "all_total": all_total,
+            "status_counts": status_counts,
+            "page": current_page,
+            "page_size": page_size,
+            "folders": folder_counts,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -2381,6 +2900,7 @@ async def delete_dataset_documents(
         await client.delete_documents(dataset_id, payload.ids)
         for name in names_by_id.values():
             image_service.delete_source_for_markdown(dataset_id, name)
+        await _prune_folder_structure(db, dataset_id, payload.ids, user.get("user_name"))
         await record_knowledge_audit(request, user, "documents:delete", 200, {
             "action": "delete_document",
             "dataset_id": dataset_id,
@@ -2800,10 +3320,11 @@ async def get_ragflow_metrics_summary(
 
 
 async def _build_ragflow_document_file_response(document_id: str, *, dataset_id: str | None = None):
-    from fastapi.responses import Response
+    from fastapi.responses import StreamingResponse
     client = RagFlowClient(config_prefix="knowledge_ragflow")
     try:
-        content, filename, content_type = await client.download_document(
+        # 流式转发：预览大文件时不再把整份字节读进内存再吐出去
+        chunks, filename, content_type = await client.open_document_stream(
             document_id,
             dataset_id=dataset_id,
         )
@@ -2821,7 +3342,7 @@ async def _build_ragflow_document_file_response(document_id: str, *, dataset_id:
         headers = {
             "Content-Disposition": f'inline; filename="{encoded_filename}"; filename*=UTF-8\'\'{encoded_filename}'
         }
-        return Response(content=content, media_type=content_type, headers=headers)
+        return StreamingResponse(chunks, media_type=content_type, headers=headers)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch document file: {str(e)}")
 
@@ -3114,6 +3635,9 @@ async def analyze_dataset_metadata(
     """
     基于知识库里的文档文件名，调用大模型生成描述说明、标签和备注信息。
     """
+    # 与其它编辑类端点保持一致：能写这个库，还要有「编辑知识库」的元素权限。
+    # 只有数据级门禁时，一个没有编辑权限的角色照样能调这个接口拿 AI 生成的治理建议。
+    await require_element_permission(user, db, "element:knowledge:edit")
     await require_dataset_write_access(user, db, [dataset_id])
 
     client = RagFlowClient(config_prefix="knowledge_ragflow")
@@ -3183,9 +3707,9 @@ async def analyze_dataset_metadata(
             return {
                 "code": 0,
                 "data": {
-                    "description": parsed_data.get("description", "").strip(),
-                    "tags": parsed_data.get("tags", "").strip(),
-                    "notes": parsed_data.get("notes", "").strip()
+                    "description": _as_text(parsed_data.get("description")),
+                    "tags": _as_text(parsed_data.get("tags")),
+                    "notes": _as_text(parsed_data.get("notes"))
                 }
             }
         else:

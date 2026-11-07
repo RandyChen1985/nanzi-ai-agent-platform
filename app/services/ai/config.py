@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 # 线性膨胀的部分；表术语列表仍保留，细节交给 get_dataset_schema 按需拉取。
 _DATASET_MENU_DETAIL_BUDGET = 12000
 
+# 目录提示词版本。目录在 Redis 里缓存 90 天，改动 header / 字段说明这类**文案**后，
+# 旧缓存会让新文案整整 90 天不生效（改代码、重启都看不出来）。改文案时递增这里，
+# 缓存 key 随之变化，下一次请求重新生成。
+_DATASET_MENU_CACHE_VERSION = "v2"
+
 
 @dataclass(frozen=True)
 class RuntimeModelInfo:
@@ -327,13 +332,13 @@ class AgentConfigProvider:
             return None
 
     @staticmethod
-    @staticmethod
     def _dataset_menu_header(count: int, *, include_table_details: bool = True) -> str:
         """目录开头的引导语。
 
-        模型需要两件它自己推不出来的事：这是「按当前账号权限过滤后」的完整范围，
-        以及越界（列出未出现的数据集/表）是违规的。缺了这两句，模型容易把目录当成
-        「平台支持的全部数据」或凭空猜测未授权的表名。
+        模型需要三件它自己推不出来的事：这是「按当前账号权限过滤后」的完整范围、
+        越界（列出未出现的数据集/表）是违规的，以及**表名出现不等于这张表可查**。
+        缺了第三句，目录会把数据集下的全部表平铺出来（``search_datasets`` 只按
+        数据集级授权过滤），模型就照着全部表写 SQL，直到执行时被表级门禁拦下。
 
         降级时字段说明要跟着变，否则会告诉模型一个正文里并不存在的字段。
         """
@@ -349,16 +354,29 @@ class AgentConfigProvider:
         detail_hint = "" if include_table_details else "表结构细节请调用 get_dataset_schema 获取。\n"
         return (
             f"【当前用户有权访问的数据集】共 {count} 个，已按当前账号的数据权限过滤，是本轮可查询的完整范围。\n"
-            "只能使用这里列出的数据集与表：未列出的数据集一律视为无权访问，不要假设其存在，也不要编造表名或指标名。\n"
+            "只能使用这里列出的数据集：未列出的数据集一律视为无权访问，不要假设其存在，也不要编造表名或指标名。\n"
+            "注意 Includes Tables / Table Details 列出的是数据集内的全部表，不代表每一张都对当前账号开放"
+            "——表级、字段级授权收窄不体现在本目录里。用户问「我能查哪些表/字段」「我有没有某个数据集的权限」，"
+            "或准备查询但不确定范围时，要调用 list_accessible_datasets（可带 keyword 或 dataset_id）查看 permission 摘要，"
+            "并如实转述 tables.visible/total、columns、row、expires_at 与 note；"
+            "不能因为表名出现在目录里就承诺可以查询。\n"
             f"{fields}{detail_hint}"
         )
 
     @staticmethod
-    def _format_dataset_menu(datasets: list, *, include_table_details: bool = True) -> str:
+    def _format_dataset_menu(
+        datasets: list,
+        *,
+        include_table_details: bool = True,
+        max_table_desc_len: Optional[int] = None,
+        max_metrics_per_dataset: Optional[int] = None,
+    ) -> str:
         """把授权数据集渲染成目录文本。
 
-        ``include_table_details=False`` 用于体积超预算时降级：省掉表描述明细，
-        但保留表术语列表，模型仍能选中数据集、把表名当检索线索。
+        - ``max_table_desc_len`` / ``max_metrics_per_dataset`` 用于第一级渐进裁剪：
+          保留 ``Table Details`` 结构，但裁剪过长的单表描述和单数据集指标数；
+        - ``include_table_details=False`` 用于极端体积超预算时兜底降级：省掉表描述明细，
+          但保留表术语列表，模型仍能选中数据集、把表名当检索线索。
         """
         menu = AgentConfigProvider._dataset_menu_header(
             len(datasets), include_table_details=include_table_details
@@ -404,6 +422,13 @@ class AgentConfigProvider:
                             " ",
                             str(getattr(tbl, "description", "") or "").strip(),
                         )
+                        if (
+                            table_desc
+                            and max_table_desc_len is not None
+                            and max_table_desc_len > 0
+                            and len(table_desc) > max_table_desc_len
+                        ):
+                            table_desc = table_desc[:max_table_desc_len] + "…"
                         if table_desc:
                             menu += f"    - {term}: {table_desc}\n"
                         else:
@@ -420,7 +445,16 @@ class AgentConfigProvider:
                 ]
                 metric_labels = [label for label in metric_labels if label]
                 if metric_labels:
-                    menu += f"  Metrics: {', '.join(metric_labels)}\n"
+                    if (
+                        max_metrics_per_dataset is not None
+                        and max_metrics_per_dataset > 0
+                        and len(metric_labels) > max_metrics_per_dataset
+                    ):
+                        total_metrics = len(metric_labels)
+                        shown = ", ".join(metric_labels[:max_metrics_per_dataset])
+                        menu += f"  Metrics: {shown} (共{total_metrics}项)\n"
+                    else:
+                        menu += f"  Metrics: {', '.join(metric_labels)}\n"
 
             menu += "\n"
         return menu
@@ -444,12 +478,30 @@ class AgentConfigProvider:
                     status=1 # 仅限启用状态
                 )
 
-            full_menu = AgentConfigProvider._format_dataset_menu(list(datasets or []))
+            dataset_list = list(datasets or [])
+            full_menu = AgentConfigProvider._format_dataset_menu(dataset_list)
             if len(full_menu) <= _DATASET_MENU_DETAIL_BUDGET:
                 return full_menu
 
+            trimmed_menu = AgentConfigProvider._format_dataset_menu(
+                dataset_list,
+                include_table_details=True,
+                max_table_desc_len=60,
+                max_metrics_per_dataset=15,
+            )
+            if len(trimmed_menu) <= _DATASET_MENU_DETAIL_BUDGET:
+                logger.info(
+                    "[dataset_menu] 目录 %s 字符超过预算 %s，已渐进截断单表描述与指标数"
+                    "（压缩后 %s 字符，数据集 %s 个）",
+                    len(full_menu),
+                    _DATASET_MENU_DETAIL_BUDGET,
+                    len(trimmed_menu),
+                    len(dataset_list),
+                )
+                return trimmed_menu
+
             compact_menu = AgentConfigProvider._format_dataset_menu(
-                list(datasets or []), include_table_details=False
+                dataset_list, include_table_details=False
             )
             logger.warning(
                 "[dataset_menu] 目录 %s 字符超过预算 %s，已省略 Table Details 明细"
@@ -457,7 +509,7 @@ class AgentConfigProvider:
                 len(full_menu),
                 _DATASET_MENU_DETAIL_BUDGET,
                 len(compact_menu),
-                len(datasets or []),
+                len(dataset_list),
             )
             return compact_menu
         except Exception as e:
@@ -476,7 +528,10 @@ class AgentConfigProvider:
         redis = await get_redis()
         
         # 1. Try Cache (按用户隔离，admin 共享一个 key)
-        cache_key = f"agent:dataset_menu:{'admin' if is_admin else user_id or 'anon'}"
+        # 键必须走 dataset_menu_cache_key：权限失效侧也用它，两处自己拼就会漂移
+        cache_key = AgentConfigProvider.dataset_menu_cache_key(
+            user_id=user_id, is_admin=is_admin
+        )
         if not force_refresh:
             try:
                 if redis:
@@ -530,7 +585,8 @@ class AgentConfigProvider:
         每用户还要额外付一次全库 SCAN。键格式因此必须单点维护：这里改了，批量侧自动跟随，
         不会出现「单用户清了、批量没清」的静默不一致（表现为改完权限 1 小时内不生效）。
         """
-        return f"agent:dataset_menu:{'admin' if is_admin else user_id or 'anon'}"
+        scope_key = "admin" if is_admin else user_id or "anon"
+        return f"agent:dataset_menu:{_DATASET_MENU_CACHE_VERSION}:{scope_key}"
 
     @staticmethod
     async def invalidate_dataset_menu_cache(user_id: Optional[int] = None, is_admin: bool = False):

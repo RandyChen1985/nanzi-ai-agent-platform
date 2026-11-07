@@ -3307,14 +3307,22 @@ async def get_admin_trace_logs(
 async def create_agent_chat(
     agent_id: str, 
     completion_request: ChatCompletionRequest,
-    request: Request
+    request: Request,
+    # 与 create_chat_completion 保持同一套鉴权与 session 生命周期：这里只是换了个
+    # RESTful 入口，鉴权强度不能跟着入口变。
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session, scope="function"),
 ):
     """
     RESTful endpoint for agent-specific chat.
     Overrides agent_id in request body if provided.
     """
     completion_request.agent_id = agent_id
-    return await create_chat_completion(completion_request, request)
+    # create_chat_completion 是 FastAPI 路径函数，user_info/db 的默认值只是 Depends
+    # 占位对象，直调时不会被解析（进函数取 user_id 就会 401）。必须由本端点声明后显式透传。
+    return await create_chat_completion(
+        completion_request, request, user_info=user_info, db=db
+    )
 
 @router.get("/export/data/{trace_id}",
     summary="导出查询数据",

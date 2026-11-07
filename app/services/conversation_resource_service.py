@@ -408,6 +408,84 @@ class ConversationResourceService:
         return updated
 
     @classmethod
+    async def remove_mcp_tools(
+        cls,
+        *,
+        owner_id: Any,
+        tool_ids: Iterable[str],
+        max_sessions: int = MAX_MOUNT_REWRITE,
+    ) -> int:
+        """把已下线的 MCP 工具从会话资源里摘掉，返回改动过的会话数。
+
+        删除服务 / 清理失效工具只清库是不够的：会话里挂着的工具清单仍在 Redis 中，
+        模型看得见、调用时又注册不到（``rewrite_mcp_tool_name`` 解决改名，这里解决
+        消失）。按**工具缓存 id** 精确删除，绝不按名字批量删——同名平台工具有自己的 id。
+        """
+        targets = {str(item).strip() for item in tool_ids if str(item or "").strip()}
+        if not targets:
+            return 0
+
+        try:
+            redis = await get_redis()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[ConversationResource] Redis 不可用，跳过 MCP 工具摘除: %s", exc)
+            return 0
+        if not redis:
+            return 0
+
+        if owner_id is None:
+            pattern = f"{cls.KEY_PREFIX}:*:*:{cls.SUFFIX}"
+        else:
+            try:
+                owner_segment = require_user_id(owner_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[ConversationResource] 无法确定 MCP 工具摘除的用户边界: %s", exc)
+                return 0
+            pattern = f"{cls.KEY_PREFIX}:{owner_segment}:*:{cls.SUFFIX}"
+
+        updated = 0
+        cursor = 0
+        try:
+            while True:
+                cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=200)
+                for key in keys:
+                    raw = await redis.get(key)
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8")
+                    try:
+                        value = json.loads(raw or "{}")
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(value, dict):
+                        continue
+                    items = value.get("mcp_tools")
+                    if not isinstance(items, list):
+                        continue
+                    remaining = [
+                        item
+                        for item in items
+                        if not (isinstance(item, dict) and str(item.get("id") or "") in targets)
+                    ]
+                    if len(remaining) == len(items):
+                        continue
+                    value["mcp_tools"] = remaining
+                    await redis.set(
+                        key,
+                        json.dumps(value, ensure_ascii=False),
+                        ex=cls.TTL_SECONDS,
+                    )
+                    updated += 1
+                    if updated >= max_sessions:
+                        return updated
+                if cursor == 0:
+                    break
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[ConversationResource] MCP 工具摘除中断（已处理 %s 个会话）: %s", updated, exc
+            )
+        return updated
+
+    @classmethod
     async def delete(cls, user_id: Any, conversation_id: str) -> None:
         try:
             redis = await get_redis()

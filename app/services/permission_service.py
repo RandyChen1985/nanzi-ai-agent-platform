@@ -637,10 +637,22 @@ class PermissionService:
         for resource_id, subject_type, scope, row_policy, row_condition, expire_at in rows:
             if scope is None and not row_policy and row_condition is None and expire_at is None:
                 continue
-            mode, tables, _col_rules = _parse_scope(scope)
+            mode, tables, col_rules = _parse_scope(scope)
+            # 字段级规则也在 scope JSON 里，回填时把 scope 整份覆盖写回——漏掉 columns
+            # 等于管理员在用户管理页勾一次数据集，就把别人配好的「只给这几列」静默放大
+            # 成全列可见。表级收窄当初就是因为同样的重建语义丢过，这里一并保住。
+            saved_scope: dict = {"mode": mode, "tables": sorted(tables)}
+            if col_rules:
+                saved_scope["columns"] = {
+                    str(table_id): {
+                        "mode": rule.mode,
+                        "names": sorted(rule.names),
+                    }
+                    for table_id, rule in col_rules.items()
+                }
             snapshot[str(resource_id).strip()] = {
                 "subject_type": (str(subject_type).strip() or None) if subject_type is not None else None,
-                "scope": {"mode": mode, "tables": sorted(tables)},
+                "scope": saved_scope,
                 "row_policy": (str(row_policy).strip() or None) if row_policy is not None else None,
                 "row_condition": row_condition,
                 "expire_at": expire_at,

@@ -467,6 +467,8 @@ const removeCapability = (value: string) => {
   props.agentForm.capabilities = (props.agentForm.capabilities || []).filter((item) => item !== value);
 };
 const selectEngine = (value: 'LOCAL' | 'RAGFLOW' | 'OPENCLAW') => {
+  // 执行引擎仅在首次创建时可选；继续向导面对的是已落库副本，后端 update_agent 禁止修改引擎
+  if (!props.isCreatingAgent) return;
   props.agentForm.engine_type = value;
   if (value !== 'LOCAL') {
     props.agentForm.agent_type = 'GENERAL';
@@ -600,7 +602,11 @@ const externalCreationMissingFields = computed(() => {
                   系统级
                 </span>
               </div>
-              <p class="mt-1 text-sm text-gray-500">先选择执行引擎并配置智能体属性，页面会自动调整所需配置和后续流程。</p>
+              <p class="mt-1 text-sm text-gray-500">
+                {{ isCreatingAgent
+                  ? '先选择执行引擎并配置智能体属性，页面会自动调整所需配置和后续流程。'
+                  : '执行引擎在创建后不可修改；可继续配置智能体属性与后续流程。' }}
+              </p>
             </div>
 
             <div class="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
@@ -615,7 +621,7 @@ const externalCreationMissingFields = computed(() => {
                 >?</button>
               </div>
               <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <button v-for="engine in [{ value: 'LOCAL', label: 'NanZi Engine', icon: '🧠', note: '平台原生编排' }, { value: 'RAGFLOW', label: 'RAGFlow', icon: '🌊', note: '外部智能体' }, { value: 'OPENCLAW', label: 'OpenClaw', icon: '🦞', note: '外部任务机器人' }]" :key="engine.value" type="button" @click="selectEngine(engine.value as any)" class="rounded-xl border-2 bg-white p-4 text-left transition-all" :class="agentForm.engine_type === engine.value ? 'border-primary shadow-sm ring-1 ring-primary/10' : 'border-white hover:border-blue-200'">
+                <button v-for="engine in [{ value: 'LOCAL', label: 'NanZi Engine', icon: '🧠', note: '平台原生编排' }, { value: 'RAGFLOW', label: 'RAGFlow', icon: '🌊', note: '外部智能体' }, { value: 'OPENCLAW', label: 'OpenClaw', icon: '🦞', note: '外部任务机器人' }]" :key="engine.value" type="button" :disabled="!isCreatingAgent" :title="!isCreatingAgent ? '执行引擎创建后不可修改' : undefined" @click="selectEngine(engine.value as any)" class="rounded-xl border-2 bg-white p-4 text-left transition-all" :class="[agentForm.engine_type === engine.value ? 'border-primary shadow-sm ring-1 ring-primary/10' : 'border-white hover:border-blue-200', !isCreatingAgent ? 'cursor-not-allowed' : '', !isCreatingAgent && agentForm.engine_type !== engine.value ? 'opacity-50' : '']">
                   <div class="flex items-center gap-2"><span class="text-xl">{{ engine.icon }}</span><span class="text-sm font-bold text-gray-800">{{ engine.label }}</span></div><div class="mt-2 text-[11px] text-gray-500">{{ engine.note }}</div>
                 </button>
               </div>

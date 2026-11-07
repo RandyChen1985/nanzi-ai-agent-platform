@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import asyncio
 from .base import DataSourceAdapter, SQLSafetyError, materialize_db_value, standardize_items
 from .models import LogicalQuery, ResultSet
+from .sql_template import render_sql_template
 import logging
 import inspect
 try:
@@ -11,17 +12,8 @@ except ImportError:
 
 import re
 import time
-from jinja2 import Environment, BaseLoader, Undefined
 
 logger = logging.getLogger(__name__)
-
-class SqlLabUndefined(Undefined):
-    def __str__(self): return "NULL"
-    def __html__(self): return "NULL"
-    def __iter__(self): return iter([])
-    def __bool__(self): return False
-
-SQL_LAB_ENV = Environment(loader=BaseLoader(), undefined=SqlLabUndefined)
 
 class OracleAdapter(DataSourceAdapter):
     """Oracle 数据库适配器：封装基于 oracledb 连接池的物理查询、结构探测和安全限制，兼容 Thin (Async) 和 Thick (Sync) 模式"""
@@ -98,11 +90,19 @@ class OracleAdapter(DataSourceAdapter):
         if custom_sql:
             raw_sql = custom_sql.strip().rstrip(";")
             try:
-                env = SQL_LAB_ENV
-                sql = env.from_string(raw_sql).render(**(params or {}))
-            except:
+                # custom_sql 来自外部输入：必须沙箱渲染，渲染后的最终 SQL 由统一
+                # 入口交给 _validate_sql_safety 校验（该入口此前完全没有校验）。
+                sql = render_sql_template(raw_sql, params, self._validate_sql_safety)
+            except SQLSafetyError as e:
+                raise ValueError(str(e))
+            except Exception:
                 sql = raw_sql
             final_sql = f"SELECT * FROM ({sql}) \"t\" WHERE ROWNUM <= 0"
+            # 包裹后的 final_sql 才是真正执行的语句，需要再校验一次。
+            try:
+                self._validate_sql_safety(final_sql)
+            except SQLSafetyError as e:
+                raise ValueError(str(e))
             _, description = await self._run_query_internal(final_sql)
             return [{"name": desc[0], "type": str(desc[1]), "comment": ""} for desc in (description or [])]
         else:
@@ -121,6 +121,12 @@ class OracleAdapter(DataSourceAdapter):
         """
         执行物理只读 SQL 并返回统一结果格式。
         """
+        # 物理执行入口守住只读契约，避免内部调用链绕过上层 validate_sql。
+        try:
+            self._validate_sql_safety(sql)
+        except SQLSafetyError as e:
+            raise ValueError(str(e))
+
         rows, description = await self._run_query_internal(sql, params)
         columns = [{"name": desc[0], "type": str(desc[1])} for desc in description] if description else []
         return {"columns": columns, "items": standardize_items([list(row) for row in rows])}
@@ -139,20 +145,21 @@ class OracleAdapter(DataSourceAdapter):
         params = params or {}
         limit = min(max(int(limit or 100), 1), 1000)
         
-        # 1. 安全过滤检查
+        # 1. 模板本身先做一次只读校验：明显违规的输入（如 UPDATE）尽早拒绝。
         try:
             self._validate_sql_safety(sql)
         except SQLSafetyError as e:
             raise ValueError(str(e))
-        
-        # 2. Jinja2 渲染处理
-        rendered_sql = sql
-        if "{{" in sql or "{%" in sql:
-            try:
-                rendered_sql = SQL_LAB_ENV.from_string(sql).render(**params)
-                self._validate_sql_safety(rendered_sql)
-            except Exception as e:
-                raise ValueError(f"Jinja2 模板渲染失败: {e}")
+
+        # 2. 沙箱渲染 + 渲染后再次校验。
+        #    只读校验必须落在最终要执行的 SQL 上：模板 `SELECT ... {{ x }}` 本身是
+        #    只读的，但 x 可以渲染出 `1; DROP TABLE ...`，只校验模板会漏掉这类注入。
+        try:
+            rendered_sql = render_sql_template(sql, params, self._validate_sql_safety)
+        except SQLSafetyError as e:
+            raise ValueError(str(e))
+        except Exception as e:
+            raise ValueError(f"Jinja2 模板渲染失败: {e}")
 
         # 3. 强制行数保护 (Oracle 11g 兼容模式)
         clean_sql = rendered_sql.strip().rstrip(";")

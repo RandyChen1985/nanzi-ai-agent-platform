@@ -66,6 +66,12 @@ def _current_uid(user: Dict) -> int:
     return int(user.get("user_id") or user.get("id"))
 
 
+# 记忆工作台里「跨用户定位」与「改写数据」是两个独立功能点：
+# view_all_users 的语义是"按任意用户筛选"（只读），delete 才是真正动数据的写权限。
+_MEMORY_VIEW_ALL_ELEMENT = "element:memory:view_all_users"
+_MEMORY_WRITE_ELEMENT = "element:memory:delete"
+
+
 async def _can_view_user(requester: Dict, target_user_id: int) -> bool:
     if requester.get("role") == "admin":
         return True
@@ -77,8 +83,38 @@ async def _can_view_user(requester: Dict, target_user_id: int) -> bool:
     async with AsyncSessionLocal() as session:
         svc = PermissionService(session)
         return await svc.check_permission(
-            _current_uid(requester), "element", "element:memory:view_all_users"
+            _current_uid(requester), "element", _MEMORY_VIEW_ALL_ELEMENT
         )
+
+
+async def _can_manage_user_memory(requester: Dict, target_user_id: int) -> bool:
+    """能否写入/删除指定用户的记忆（读以外的所有动作）。
+
+    为什么不能继续复用 _can_view_user：那是只读判定，改造前 rebuild / delete /
+    consolidate 都拿它做鉴权，于是只持有 ``element:memory:view_all_users``（只读）
+    的人就能删除、归并全平台任意用户的记忆。跨用户写入必须同时具备"写记忆"与
+    "跨用户定位"两项能力，缺一即拒绝（fail-closed，权限查询异常也按拒绝处理）。
+
+    注意：平台目前没有 ``element:memory:manage_all_users`` 这类语义精确的写权限点，
+    这里复用既有 ``element:memory:delete``（记忆工作台-删除记忆）作为写权限。
+    """
+    if requester.get("role") == "admin":
+        return True
+    if target_user_id == _current_uid(requester):
+        return True
+
+    from app.core.orm import AsyncSessionLocal
+    from app.services.permission_service import PermissionService
+
+    try:
+        async with AsyncSessionLocal() as session:
+            svc = PermissionService(session)
+            perms = await svc.get_user_permissions(_current_uid(requester))
+        granted = set(perms.permissions.elements or [])
+    except Exception:  # noqa: BLE001 - 权限查询失败时不能放行
+        logger.warning("校验记忆写权限失败，按无权限处理", exc_info=True)
+        return False
+    return {_MEMORY_VIEW_ALL_ELEMENT, _MEMORY_WRITE_ELEMENT} <= granted
 
 
 async def _resolve_target_user_id(
@@ -99,7 +135,7 @@ async def _can_view_all_users(user: Dict) -> bool:
     async with AsyncSessionLocal() as session:
         svc = PermissionService(session)
         return await svc.check_permission(
-            _current_uid(user), "element", "element:memory:view_all_users"
+            _current_uid(user), "element", _MEMORY_VIEW_ALL_ELEMENT
         )
 
 
@@ -509,8 +545,10 @@ async def rebuild_daily_summary(
     user: Dict = Depends(require_permission("element", "element:memory:config_index")),
     _health: Dict = Depends(require_memory_vector_ready),
 ):
-    if not await _can_view_user(user, target_user_id):
-        raise HTTPException(status_code=403, detail="无权重建")
+    if not await _can_manage_user_memory(user, target_user_id):
+        raise HTTPException(
+            status_code=403, detail="无权重建该用户的记忆：不能操作其他用户的记忆数据"
+        )
     result = await DailySummaryService.refresh_for_date(str(target_user_id), day)
     return {"status": "success", "data": result}
 
@@ -522,8 +560,10 @@ async def delete_daily_summary(
     user: Dict = Depends(require_permission("element", "element:memory:delete")),
     _health: Dict = Depends(require_memory_vector_ready),
 ):
-    if not await _can_view_user(user, target_user_id):
-        raise HTTPException(status_code=403, detail="无权删除")
+    if not await _can_manage_user_memory(user, target_user_id):
+        raise HTTPException(
+            status_code=403, detail="无权删除该用户的记忆：不能操作其他用户的记忆数据"
+        )
     await DailySummaryService.delete_daily_summary(str(target_user_id), day)
     return {"status": "success", "message": "已删除每日摘要"}
 
@@ -564,8 +604,10 @@ async def delete_summary(
     user: Dict = Depends(require_permission("element", "element:memory:delete")),
     _health: Dict = Depends(require_memory_vector_ready),
 ):
-    if not await _can_view_user(user, target_user_id):
-        raise HTTPException(status_code=403, detail="无权删除")
+    if not await _can_manage_user_memory(user, target_user_id):
+        raise HTTPException(
+            status_code=403, detail="无权删除该用户的记忆：不能操作其他用户的记忆数据"
+        )
     uid = str(target_user_id)
     await MemoryIndexService.delete_summary(uid, conversation_id)
     return {"status": "success", "message": "已删除摘要"}
@@ -577,8 +619,10 @@ async def delete_user_memory(
     user: Dict = Depends(require_permission("element", "element:memory:delete")),
     _health: Dict = Depends(require_memory_vector_ready),
 ):
-    if not await _can_view_user(user, target_user_id):
-        raise HTTPException(status_code=403, detail="无权清空")
+    if not await _can_manage_user_memory(user, target_user_id):
+        raise HTTPException(
+            status_code=403, detail="无权清空该用户的记忆：不能操作其他用户的记忆数据"
+        )
     uid = str(target_user_id)
     from app.core.redis import get_redis
 
@@ -869,19 +913,26 @@ class ConsolidateRequest(BaseModel):
 @router.post("/consolidate")
 async def consolidate_memories(
     req: ConsolidateRequest,
-    current_user: Dict = Depends(require_api_key),
+    current_user: Dict = Depends(
+        require_permission("element", _MEMORY_WRITE_ELEMENT)
+    ),
     _health: Dict = Depends(require_memory_vector_ready),
 ):
-    """手动触发记忆整理降噪接口（支持管理员指定用户或全部用户）"""
+    """手动触发记忆整理降噪接口（支持管理员指定用户或全部用户）。
+
+    归并会重写用户的摘要数据，属于写操作：入口要求写权限，跨用户再叠加
+    _can_manage_user_memory 的双权限校验（改造前只校验了只读的 view_all_users，
+    只读用户因此能归并任意用户的历史记忆）。
+    """
     # 鉴权
     is_admin = current_user.get("role") == "admin"
-    if not is_admin:
-        # 校验是否有 element:memory:view_all_users 权限
-        has_all_perm = await _can_view_all_users(current_user)
-        if not has_all_perm:
-            # 普通用户，只能整理自己本人的
-            if req.user_id is not None and req.user_id != _current_uid(current_user):
-                raise HTTPException(status_code=403, detail="无权为其他用户执行记忆整理")
+    if req.user_id is not None and not await _can_manage_user_memory(
+        current_user, int(req.user_id)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="无权为其他用户执行记忆整理：需要同时具备「删除记忆」与「按任意用户筛选」权限",
+        )
     
     from app.core.orm import AsyncSessionLocal
     from app.models.user import User

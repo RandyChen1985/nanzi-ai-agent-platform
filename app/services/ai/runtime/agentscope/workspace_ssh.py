@@ -1254,8 +1254,9 @@ def _remote_python_command(source, *args):
 
 
 def _abspath(path):
-    p = os.path.abspath(os.path.join(_ROOT, os.path.expanduser(path)))
-    if not p.startswith(_ROOT):
+    root = os.path.abspath(_ROOT)
+    p = os.path.abspath(os.path.join(root, os.path.expanduser(path)))
+    if os.path.commonpath([root, p]) != root:
         raise ValueError("path escapes workspace: " + path)
     return p
 
@@ -1377,6 +1378,9 @@ def glob(pattern: str, cwd: str = ".") -> str:
     \"\"\"
     try:
         base = _ROOT if cwd in ("", ".") else _abspath(cwd)
+        if ".." in str(pattern or "").replace("\\\\", "/").split("/"):
+            raise ValueError("path escapes workspace: " + str(pattern))
+        _abspath(os.path.join(base, str(pattern or "")))
     except ValueError as e:
         return json.dumps({"ok": False, "error": str(e)})
     py = (

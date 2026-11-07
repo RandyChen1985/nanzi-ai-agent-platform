@@ -33,7 +33,8 @@ def test_sql_has_string_literal_filters_ignores_numeric_filter():
 
 def test_build_distinct_diagnostic_sql():
     sql = build_distinct_diagnostic_sql(table="zf_view_resroom", column="gxqy")
-    assert "SELECT DISTINCT gxqy FROM zf_view_resroom LIMIT 20" == sql
+    # 行数上限改成换行后追加（否则末尾行注释会把 LIMIT 吞掉），这里按空白归一比对
+    assert " ".join(sql.split()) == "SELECT DISTINCT gxqy FROM zf_view_resroom LIMIT 20"
 
 
 def test_suggest_close_values_for_partial_region_name():

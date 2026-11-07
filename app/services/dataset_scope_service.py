@@ -61,6 +61,15 @@ ROW_POLICY_CUSTOM = "custom"
 COL_INCLUDE = "include"
 COL_EXCLUDE = "exclude"
 
+
+class DatasetScopeResolutionError(RuntimeError):
+    """解析用户数据集授权失败（数据库不可用 / 表结构异常）。
+
+    调用方必须 fail-closed：拿不到授权就无从判断能否放行，不能退回「不过滤」。
+    单独定义异常是为了让执行链能把「授权服务故障」与「权限拒绝」区分开，
+    前者给出「请稍后重试」而不是误导性的「无权访问」。
+    """
+
 SUBJECT_USER = "user"
 SUBJECT_ROLE = "role"
 SUBJECT_ALL = "all"
@@ -584,8 +593,16 @@ async def resolve_user_dataset_scopes(
 
 
 async def resolve_dataset_scope(
-    session: AsyncSession, user_id: int, dataset_id: int
-) -> Optional[DatasetScope]:
+    session: AsyncSession,
+    user_id: int,
+    dataset_id: int,
+    *,
+    scopes: Any = None,
+) -> Optional["DatasetScope"]:
+    if callable(scopes):
+        scopes = await scopes()
+    if scopes is not None:
+        return scopes.get(int(dataset_id))
     scopes = await resolve_user_dataset_scopes(
         session, user_id, dataset_ids=[int(dataset_id)]
     )
@@ -593,10 +610,14 @@ async def resolve_dataset_scope(
 
 
 async def resolve_effective_row_policy(
-    session: AsyncSession, user_id: int, dataset_id: int
+    session: AsyncSession,
+    user_id: int,
+    dataset_id: int,
+    *,
+    scopes: Any = None,
 ) -> tuple[str, Optional[str]]:
     """返回 (row_policy, row_condition)；无授权行时按 ``inherit``。"""
-    scope = await resolve_dataset_scope(session, user_id, dataset_id)
+    scope = await resolve_dataset_scope(session, user_id, dataset_id, scopes=scopes)
     if scope is None:
         return ROW_POLICY_INHERIT, None
     if scope.row_policy == ROW_POLICY_CUSTOM and not scope.row_condition:
@@ -618,6 +639,7 @@ async def enforce_table_scope_for_refs(
     is_admin: bool = False,
     user_identity_label: Optional[str] = None,
     restrict_dataset_ids: Optional[set[int]] = None,
+    scopes: Any = None,
 ) -> Optional[str]:
     """表级门禁：SQL 引用的每一张已注册表都必须落在该用户的表授权范围内。
 
@@ -660,11 +682,14 @@ async def enforce_table_scope_for_refs(
     if not owners:
         return None
 
-    scopes = await resolve_user_dataset_scopes(
-        session,
-        user_id,
-        dataset_ids=[int(row[2]) for row in rows if row[2] is not None],
-    )
+    if callable(scopes):
+        scopes = await scopes()
+    if scopes is None:
+        scopes = await resolve_user_dataset_scopes(
+            session,
+            user_id,
+            dataset_ids=[int(row[2]) for row in rows if row[2] is not None],
+        )
     if not scopes:
         # 走到这里说明「物理表校验已放行、但实时解析不出任何范围」——通常是权限缓存
         # 与实时授权短暂不一致（角色刚被移除）。放行不会越权（前置校验已经通过），
@@ -815,13 +840,23 @@ async def table_names_by_dataset(
     return result
 
 
-async def allowed_physical_names_for_user(session: AsyncSession, user_id: int) -> set[str]:
+async def allowed_physical_names_for_user(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    scopes: Any = None,
+) -> set[str]:
     """用户最终可见的物理表名（lower）集合：数据集权限 ∩ 表级白名单。
 
     这是 ``enforce_physical_table_permissions`` 的兜底口径——即使拿不到 SQL 与数据集的
     绑定关系，也不会把「数据集内被收窄掉的表」放行。一次查询完成，避免逐数据集 N+1。
+
+    ``scopes`` 可由调用方在一次查询生命周期内复用，避免同一次 ChatBI 执行里重复解析。
     """
-    scopes = await resolve_user_dataset_scopes(session, user_id)
+    if callable(scopes):
+        scopes = await scopes()
+    if scopes is None:
+        scopes = await resolve_user_dataset_scopes(session, user_id)
     if not scopes:
         return set()
 
@@ -1182,6 +1217,10 @@ ROW_STATE_DENY_ALL = "deny_all"
 #: 可见表数量不超过这个值时才在摘要里给出表名（其余只给计数，省 token）
 _SCOPE_NAME_LIMIT = 8
 
+#: 字段级明细的规模上限：超了就只给计数，避免「几十张表 × 几十列」的名单塞进上下文
+_COLUMN_DETAIL_TABLE_LIMIT = 5
+_COLUMN_DETAIL_NAME_LIMIT = 20
+
 _DENY_CONDITIONS = frozenset({"1=0", "0=1", "false"})
 
 
@@ -1226,6 +1265,54 @@ def describe_row_state(
     return ROW_STATE_FILTERED
 
 
+def _column_scope_details(
+    scope: "DatasetScope",
+    name_by_id: dict[int, str],
+) -> Optional[list[dict[str, Any]]]:
+    """把字段规则压成「哪张表、什么模式、哪些字段」。
+
+    只给计数根本回答不了用户真正会问的那句「我到底看不到哪些字段」：``include``
+    模式下 ``excluded`` 恒为 0，容易被读成「没有字段限制」，而真相是**只能看白名单
+    里那几列**。
+
+    但两种模式的信息含义相反，出口也不同：
+
+    - ``include``（白名单）：列出这些列**是安全的**——它们本来就是用户能看见的，
+      不说反而让人不知道自己能查什么；
+    - ``exclude``（黑名单）：**不列具体列名**。说「你不能看 salary」等于告诉调用方
+      「库里有一列叫 salary」，属于用拒绝清单反推表结构；只给表名与计数。
+
+    规模超限（表太多或字段太多）返回 ``None``，调用方保留计数——宁可少给明细，
+    也不能把几十张表的字段名单塞进模型上下文。
+    """
+    rules_by_table = scope.column_rules or {}
+    if not rules_by_table or len(rules_by_table) > _COLUMN_DETAIL_TABLE_LIMIT:
+        return None
+
+    details: list[dict[str, Any]] = []
+    for table_id in sorted(int(item) for item in rules_by_table):
+        names: list[str] = []
+        modes: list[str] = []
+        for rule in rules_by_table[table_id]:
+            if rule.mode not in modes:
+                modes.append(rule.mode)
+            names.extend(sorted(rule.names))
+        if len(names) > _COLUMN_DETAIL_NAME_LIMIT:
+            return None
+        # include + exclude 同时存在时说 mixed，别让调用方以为只有一种语义
+        mode = modes[0] if len(modes) == 1 else "mixed"
+        details.append(
+            {
+                "table_id": table_id,
+                "table": name_by_id.get(table_id),
+                "mode": mode,
+                # 只要沾了 exclude 就不公开列名（见上方 docstring）
+                "names": None if COL_EXCLUDE in modes else names,
+            }
+        )
+    return details
+
+
 async def summarize_dataset_scopes(
     session: AsyncSession,
     scopes: dict[int, DatasetScope],
@@ -1265,6 +1352,11 @@ async def summarize_dataset_scopes(
     for dataset_id, scope in scopes.items():
         if scope.mode == MODE_LIST and 0 < len(scope.table_ids) <= name_limit:
             name_ids.extend(int(item) for item in scope.table_ids)
+        # 字段规则涉及的表名也要查：否则摘要只能说「1 张表做了字段限制」，
+        # 却说不出是哪张表、限制的是哪些列。
+        restricted_tables = scope.column_rules or {}
+        if 0 < len(restricted_tables) <= _COLUMN_DETAIL_TABLE_LIMIT:
+            name_ids.extend(int(item) for item in restricted_tables)
     name_by_id: dict[int, str] = {}
     if name_ids:
         try:
@@ -1316,6 +1408,10 @@ async def summarize_dataset_scopes(
                 "excluded": excluded,
                 "whitelisted_tables": whitelisted,
             }
+            # 计数回答不了「哪些字段看不到」；规模允许时补上具体表/模式/字段名。
+            details = _column_scope_details(scope, name_by_id)
+            if details is not None:
+                columns["tables"] = details
 
         row_state = describe_row_state(
             scope,

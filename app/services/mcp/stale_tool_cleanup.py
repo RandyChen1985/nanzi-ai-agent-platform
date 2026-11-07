@@ -17,12 +17,15 @@
 ``sys_mcp_outbound_audit_logs``（调用审计）、``mcp_server_shares``（分享记录）。
 删服务会因外键 ``ondelete=CASCADE`` 连带清空审计日志，代价远大于清缓存。
 """
+import logging
 from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import AIAgentVersion
+
+logger = logging.getLogger(__name__)
 from app.models.mcp import McpToolCache
 
 
@@ -83,8 +86,17 @@ async def prune_agent_versions_by_names(db: AsyncSession, dead_names: Set[str]) 
     return affected_versions
 
 
-async def cleanup_stale_tools(db: AsyncSession, server_id: str) -> Dict[str, Any]:
-    """删除 ``server_id`` 下所有远端已不存在的工具缓存，并清理版本死引用。"""
+async def cleanup_stale_tools(
+    db: AsyncSession,
+    server_id: str,
+    *,
+    owner_id: Any = None,
+) -> Dict[str, Any]:
+    """删除 ``server_id`` 下所有远端已不存在的工具缓存，并清理会话与版本引用。
+
+    ``owner_id`` 传个人服务属主、平台服务传 ``None``（扫全库）：会话资源在 Redis 里
+    按运行时注入，只清库会留下「清单里有、调用时未注册」的幽灵工具。
+    """
     stale_result = await db.execute(
         select(McpToolCache).where(
             McpToolCache.server_id == server_id,
@@ -101,6 +113,15 @@ async def cleanup_stale_tools(db: AsyncSession, server_id: str) -> Dict[str, Any
 
     affected_versions = await prune_agent_versions_by_names(db, dead_names)
     await db.commit()
+    try:
+        from app.services.conversation_resource_service import ConversationResourceService
+
+        await ConversationResourceService.remove_mcp_tools(
+            owner_id=owner_id,
+            tool_ids=stale_ids,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[MCP] 摘除会话里的失效工具失败（忽略）: %s", exc)
     return {
         "removed_count": len(stale_ids),
         "affected_agent_versions": affected_versions,

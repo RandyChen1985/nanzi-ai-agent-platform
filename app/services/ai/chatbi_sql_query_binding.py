@@ -637,6 +637,7 @@ async def enforce_physical_table_permissions(
     is_admin_eff: bool,
     user_identity_label: str | None = None,
     binding: SqlQueryBinding | None = None,
+    scopes: Any | None = None,
 ) -> str | None:
     from app.services.metadata_service import MetadataService
     from app.services.permission_service import PermissionService
@@ -685,7 +686,12 @@ async def enforce_physical_table_permissions(
                 continue
 
         if allowed_lower is None:
-            allowed_lower = await _fetch_allowed_physical_lowers_for_user(session, user_id_eff)
+            if scopes is None:
+                allowed_lower = await _fetch_allowed_physical_lowers_for_user(session, user_id_eff)
+            else:
+                allowed_lower = await _fetch_allowed_physical_lowers_for_user(
+                    session, user_id_eff, scopes=scopes
+                )
         if lk in allowed_lower:
             continue
 

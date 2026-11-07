@@ -324,6 +324,71 @@ async def test_nanzi_k8s_adapter_create_pod_spec_structure(tmp_path):
     env_map = {e.name: e.value for e in (container.env or [])}
     assert env_map.get("UV_VENV_CLEAR") == "1"
 
+    # 沙箱里跑的是不可信代码，绝不能挂载 ServiceAccount Token：拿到它就能访问
+    # kubernetes.default.svc（集群探测，且会被任何 RBAC 放宽放大成横向提权）。
+    assert spec.automount_service_account_token is False
+
+
+@pytest.mark.asyncio
+async def test_nanzi_k8s_adapter_isolated_pvc_pod_disables_sa_token():
+    """独立空 PVC 路径走基类构造，同样必须摘掉 SA Token 自动挂载。"""
+    from kubernetes_asyncio import client as k8s_client
+
+    from app.services.ai.runtime.agentscope.k8s_workspace import (
+        build_k8s_workspace_with_nanzi_adapter,
+    )
+
+    created: list[tuple[str, object]] = []
+
+    class DummyBaseWithOwnPodSpec:
+        def __init__(self, **kwargs):
+            self._pod_name = "test-pod"
+            self._namespace = "agent-sandboxes"
+            self._image = "python:3.11-slim"
+            self._image_pull_policy = "IfNotPresent"
+            self.gateway_port = 5600
+            self.env = {}
+            self._resources = None
+            self._node_selector = None
+            self._tolerations = None
+            self._service_account = None
+            self._image_pull_secrets = None
+            self._delete_pvc_on_close = False
+            self.workspace_id = "test-ws-id"
+            self._api_client = MagicMock()
+
+            async def mock_create_namespaced_pod(namespace, body, **kwargs):
+                created.append((namespace, body))
+
+            self._v1 = MagicMock()
+            self._v1.create_namespaced_pod = mock_create_namespaced_pod
+
+        async def _create_pod(self):
+            pod = k8s_client.V1Pod(
+                metadata=k8s_client.V1ObjectMeta(name=self._pod_name),
+                spec=k8s_client.V1PodSpec(
+                    restart_policy="OnFailure",
+                    containers=[
+                        k8s_client.V1Container(name="workspace", image=self._image)
+                    ],
+                ),
+            )
+            await self._v1.create_namespaced_pod(self._namespace, pod)
+
+    ws = build_k8s_workspace_with_nanzi_adapter(
+        DummyBaseWithOwnPodSpec,
+        existing_pvc=None,
+        sandbox_user_key="u_test_123",
+    )
+
+    await ws._create_pod()
+
+    assert len(created) == 1
+    namespace, pod = created[0]
+    # 包装只为加固：命名空间与调用约定不能被改掉
+    assert namespace == "agent-sandboxes"
+    assert pod.spec.automount_service_account_token is False
+
 
 @pytest.mark.asyncio
 async def test_nanzi_k8s_adapter_ensure_namespace_graceful_403():

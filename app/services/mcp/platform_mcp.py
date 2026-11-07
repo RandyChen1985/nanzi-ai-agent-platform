@@ -262,9 +262,12 @@ platform_mcp = PlatformMCPServer(
         # 不能把所有方法 Scope 配成全局 required_scopes，否则任何 token 都会被
         # 当成必须同时拥有全部能力而拒绝。
         required_scopes=[],
-        # 显式声明：2.2 起不配会出 DeprecationWarning（测试把 warning 当错误），
-        # 3.0 起该字段默认值即将翻转。
-        validate_token_resource=True,
+        # resource 绑定改为**运行时**校验，不再交给 AuthSettings：
+        # 这个对象在模块导入期构造，而公网地址来自运行期（系统配置 app_public_url）；
+        # 交给它校验等于把 resource_server_url 永久冻结在导入那一刻——只配了数据库
+        # 公网地址、没设 APP_PUBLIC_URL 的部署会全员 401。现在由
+        # PlatformMcpTokenVerifier 用动态地址校验，_principal_from_context 还会再查一次。
+        validate_token_resource=False,
     ),
 )
 
@@ -1500,6 +1503,9 @@ async def knowledge_search(
     principal = _principal_from_context()
     request_id = str(principal.claims.get("request_id") or uuid.uuid4())
     try:
+        # 与其余 8 个工具同一道闸门：这个工具手写校验时漏了限流，
+        # 外部 Client 可以无限制地把请求打到 RAGFlow。
+        await check_platform_mcp_rate_limit(principal)
         _require_scope(principal, PLATFORM_MCP_SCOPE)
         if not await is_platform_mcp_enabled():
             raise RuntimeError("MCP_PLATFORM_DISABLED")

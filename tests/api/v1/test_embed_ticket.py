@@ -269,3 +269,88 @@ async def test_origin_mismatch_does_not_consume_ticket(client: AsyncClient, db_s
     )
     assert replay.status_code == 400
 
+
+@pytest.mark.asyncio
+async def test_exchange_with_host_origin_payload(client: AsyncClient, db_session):
+    """前端 iframe 经 host_origin 字段上报宿主来源时的兑换校验。
+
+    在真实浏览器跨域 iframe 场景中，浏览器网络栈自动填充的 Origin 为平台自身
+    （如 https://ai.example.com），真实的宿主域名由前端从 document.referrer 或
+    postMessage event.origin 提取后传入 host_origin。
+    """
+    suffix = uuid.uuid4().hex[:8]
+    admin_key = await AuthService.generate_api_key(
+        user_name=f"ticket_ho_adm_{suffix}", role="admin", db=db_session
+    )
+    target_name = f"ticket_ho_user_{suffix}"
+    await AuthService.generate_api_key(
+        user_name=target_name, role="user", db=db_session
+    )
+
+    resp = await client.post(
+        "/api/v1/embed/tickets",
+        json={
+            "username": target_name,
+            "allowed_origins": ["https://crm.example.com"],
+            "expires_in": 300,
+        },
+        headers={"X-API-Key": admin_key},
+    )
+    assert resp.status_code == 200
+    ticket = resp.json()["data"]["ticket"]
+
+    # 1. 模拟跨域 iframe：HTTP Origin 是平台自身，但 host_origin 命中白名单 -> 放行
+    resp_exchange = await client.post(
+        "/api/v1/embed/tickets/exchange",
+        json={"ticket": ticket, "host_origin": "https://crm.example.com/some/path"},
+        headers={"Origin": "https://ai.example.com"},
+    )
+    assert resp_exchange.status_code == 200
+    assert resp_exchange.json()["data"]["session_token"].startswith("emb_ses_")
+
+
+@pytest.mark.asyncio
+async def test_exchange_allowed_origins_unset_and_wildcard(client: AsyncClient, db_session):
+    """验证 allowed_origins 未设（None/空列表）或含通配符 '*' 时，允许任意来源兑换。"""
+    suffix = uuid.uuid4().hex[:8]
+    admin_key = await AuthService.generate_api_key(
+        user_name=f"ticket_none_adm_{suffix}", role="admin", db=db_session
+    )
+    target_name = f"ticket_none_user_{suffix}"
+    await AuthService.generate_api_key(
+        user_name=target_name, role="user", db=db_session
+    )
+
+    # 1. 未配置白名单 (allowed_origins=None / []) -> 无论有无 Origin/host_origin 均放行
+    resp1 = await client.post(
+        "/api/v1/embed/tickets",
+        json={"username": target_name, "expires_in": 300},
+        headers={"X-API-Key": admin_key},
+    )
+    assert resp1.status_code == 200
+    ticket1 = resp1.json()["data"]["ticket"]
+
+    good1 = await client.post(
+        "/api/v1/embed/tickets/exchange",
+        json={"ticket": ticket1},
+    )
+    assert good1.status_code == 200
+    assert good1.json()["data"]["session_token"].startswith("emb_ses_")
+
+    # 2. 白名单含 '*' -> 任意来源放行
+    resp2 = await client.post(
+        "/api/v1/embed/tickets",
+        json={"username": target_name, "allowed_origins": ["*"], "expires_in": 300},
+        headers={"X-API-Key": admin_key},
+    )
+    assert resp2.status_code == 200
+    ticket2 = resp2.json()["data"]["ticket"]
+
+    good2 = await client.post(
+        "/api/v1/embed/tickets/exchange",
+        json={"ticket": ticket2, "host_origin": "https://any.external-site.com"},
+    )
+    assert good2.status_code == 200
+    assert good2.json()["data"]["session_token"].startswith("emb_ses_")
+
+

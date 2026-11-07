@@ -1,8 +1,10 @@
 """RediSearch-backed metadata index service for local vector search."""
+import asyncio
+import hashlib
 import logging
 import struct
 import time
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 from app.core.redis import get_redis, get_redis_binary
 from app.services.ai.embedding_client import EmbeddingClient
 from app.services.ai.redis_index_utils import ensure_vector_index
@@ -153,7 +155,62 @@ def _tag_escape(value: str) -> str:
         .replace(" ", "\\ ")
     )
 
+
+class _DebounceHandle:
+    def __init__(self, task: Optional[asyncio.Task] = None):
+        self.task = task
+        self.started_execution: bool = False
+
+
+def _is_task_done(task: Any) -> bool:
+    if task is None:
+        return True
+    done_fn = getattr(task, "done", None)
+    if callable(done_fn):
+        try:
+            return bool(done_fn())
+        except Exception:
+            return False
+    return False
+
+
+def _cancel_task(task: Any) -> None:
+    if task is None:
+        return
+    cancel_fn = getattr(task, "cancel", None)
+    if callable(cancel_fn):
+        try:
+            cancel_fn()
+        except Exception:
+            pass
+
+
 class MetadataIndexService:
+    # 同步协调器状态（单数据集防抖合并、并发锁与 dirty 追赶）
+    _dataset_locks: Dict[int, asyncio.Lock] = {}
+    _dataset_dirty: Set[int] = set()
+    _dataset_debounce_handles: Dict[int, _DebounceHandle] = {}
+    _coordinator_lock: asyncio.Lock = asyncio.Lock()
+    DEFAULT_DEBOUNCE_SECONDS: float = 0.5
+
+    @classmethod
+    async def _get_dataset_lock(cls, dataset_id: int) -> asyncio.Lock:
+        async with cls._coordinator_lock:
+            if dataset_id not in cls._dataset_locks:
+                cls._dataset_locks[dataset_id] = asyncio.Lock()
+            return cls._dataset_locks[dataset_id]
+
+    @classmethod
+    async def reset_sync_coordinator_state(cls) -> None:
+        """重置同步协调器内部状态，供单元测试用例隔离使用。"""
+        async with cls._coordinator_lock:
+            for handle in list(cls._dataset_debounce_handles.values()):
+                if handle and handle.task:
+                    _cancel_task(handle.task)
+            cls._dataset_debounce_handles.clear()
+            cls._dataset_locks.clear()
+            cls._dataset_dirty.clear()
+
     @staticmethod
     async def index_name() -> str:
         return METADATA_INDEX_NAME
@@ -368,7 +425,9 @@ class MetadataIndexService:
         dataset_id: int,
         doc_name: str,
         content: str,
-        embedding: List[float]
+        embedding: List[float],
+        content_hash: Optional[str] = None,
+        skip_ensure_index: bool = False,
     ) -> None:
         """
         Upsert a metadata document (table or metrics) with embedding into Redis HASH.
@@ -388,21 +447,33 @@ class MetadataIndexService:
                 table_name = table_name[:-4]
             key = f"{METADATA_KEY_PREFIX}{dataset_id}:table:{table_name}"
 
+        if not content_hash:
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
         mapping = {
             b"dataset_id": str(dataset_id).encode("utf-8"),
             b"doc_name": doc_name.encode("utf-8"),
             b"content": content.encode("utf-8"),
+            b"content_hash": content_hash.encode("utf-8"),
             b"embedding": _vector_to_bytes(embedding),
         }
         await redis.hset(key, mapping=mapping)
         logger.info("[MetadataIndex] Upserted vector for key %s", key)
-        await MetadataIndexService.ensure_index()
+        if not skip_ensure_index:
+            await MetadataIndexService.ensure_index()
 
-    @staticmethod
-    async def delete_dataset_vectors(dataset_id: int) -> None:
+    @classmethod
+    async def delete_dataset_vectors(cls, dataset_id: int) -> None:
         """
         Cascade delete all keys under prefix metadata:dataset:<dataset_id>:
         """
+        async with cls._coordinator_lock:
+            handle = cls._dataset_debounce_handles.pop(dataset_id, None)
+            if handle:
+                _cancel_task(handle.task)
+            cls._dataset_dirty.discard(dataset_id)
+            cls._dataset_locks.pop(dataset_id, None)
+
         redis = await get_redis()
         if not redis:
             return
@@ -421,24 +492,41 @@ class MetadataIndexService:
             await redis.delete(*keys_to_delete)
             logger.info("[MetadataIndex] Deleted %d keys for dataset_id %d", len(keys_to_delete), dataset_id)
 
-    @staticmethod
-    async def sync_local_redis_vector(
+    @classmethod
+    async def _run_sync_with_dirty_loop(
+        cls,
         dataset_id: int,
-        *,
         progress_cb: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
-        wait: bool = False,
     ) -> bool:
-        """Synchronize a dataset's metadata to local Redis vectors.
+        """在持有数据集互斥锁时执行同步，若同步期间产生 dirty 标记则循环追赶最新 DB 状态。"""
+        last_success = False
+        while True:
+            async with cls._coordinator_lock:
+                cls._dataset_dirty.discard(dataset_id)
 
-        ``wait=False``（默认）保持历史行为：把真正的同步甩到后台任务后立刻返回。
-        ``wait=True`` 则直接 await 完成并返回是否成功，供「重构本地向量数据」这类
-        需要真实进度与汇总的编排使用。``progress_cb`` 按文档级与数据集级回调。
-        """
+            last_success = await cls._do_sync_dataset(dataset_id, progress_cb=progress_cb)
+
+            async with cls._coordinator_lock:
+                if dataset_id in cls._dataset_dirty:
+                    logger.info(
+                        "[Local Redis Sync] Dataset %d was marked dirty during sync, running follow-up sync",
+                        dataset_id,
+                    )
+                    continue
+                break
+        return last_success
+
+    @classmethod
+    async def _do_sync_dataset(
+        cls,
+        dataset_id: int,
+        progress_cb: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    ) -> bool:
+        """执行单次数据集元数据到本地 Redis 向量的同步。"""
         from app.core.orm import AsyncSessionLocal
         from app.services.metadata_service import MetadataService
         from app.services.ai.embedding_client import EmbeddingClient
         from app.services.metadata_rag_service import MetadataRagService
-        import asyncio
 
         async def _notify(payload: Dict[str, Any]) -> None:
             if progress_cb is None:
@@ -448,101 +536,112 @@ class MetadataIndexService:
             except Exception as cb_err:
                 logger.warning("[Local Redis Sync] progress callback failed: %s", cb_err)
 
-        async def _run_sync() -> bool:
-            dataset_name = f"#{dataset_id}"
-            table_count = 0
-            metric_count = 0
-            doc_failed = 0
-            started = time.monotonic()
-            try:
-                async with AsyncSessionLocal() as db:
-                    # 1. Load Dataset Detail (Admin mode)
-                    dataset = await MetadataService.get_dataset_by_id(db, dataset_id, is_admin=True)
-                    if not dataset:
-                        logger.error(f"[Local Redis Sync] Dataset {dataset_id} not found.")
-                        await _notify(
-                            {
-                                "phase": "dataset_failed",
-                                "dataset_id": dataset_id,
-                                "dataset_name": dataset_name,
-                                "error": "数据集不存在",
-                            }
-                        )
-                        return False
+        dataset_name = f"#{dataset_id}"
+        table_count = 0
+        metric_count = 0
+        doc_failed = 0
+        doc_skipped = 0
+        started = time.monotonic()
+        try:
+            async with AsyncSessionLocal() as db:
+                # 1. Load Dataset Detail (Admin mode)
+                dataset = await MetadataService.get_dataset_by_id(db, dataset_id, is_admin=True)
+                if not dataset:
+                    logger.error(f"[Local Redis Sync] Dataset {dataset_id} not found.")
+                    await _notify(
+                        {
+                            "phase": "dataset_failed",
+                            "dataset_id": dataset_id,
+                            "dataset_name": dataset_name,
+                            "error": "数据集不存在",
+                        }
+                    )
+                    return False
 
-                    dataset_name = dataset.display_name or dataset.name or dataset_name
-                    logger.info(f"[Local Redis Sync] Starting sync for dataset: {dataset.name} (ID: {dataset_id})")
+                dataset_name = dataset.display_name or dataset.name or dataset_name
+                logger.info(f"[Local Redis Sync] Starting sync for dataset: {dataset.name} (ID: {dataset_id})")
 
-                    # Check prefix/index existence first
-                    await MetadataIndexService.ensure_index()
+                # Check prefix/index existence first
+                await MetadataIndexService.ensure_index()
 
-                    expected_docs = {}
-                    relationships = dataset.relationships or []
-                    
-                    for table in dataset.tables:
-                        if hasattr(table, "status") and table.status != 1:
+                expected_docs: Dict[str, str] = {}
+                relationships = dataset.relationships or []
+
+                for table in dataset.tables:
+                    if hasattr(table, "status") and table.status != 1:
+                        continue
+                    file_name = f"{table.physical_name}.txt"
+                    content = MetadataRagService.generate_table_content(dataset, table, relationships)
+                    expected_docs[file_name] = content
+                table_count = len(expected_docs)
+
+                if dataset.metrics:
+                    metrics_content = MetadataRagService.generate_metrics_content(dataset)
+                    if metrics_content:
+                        expected_docs["_metrics.txt"] = metrics_content
+                        metric_count = 1
+
+                # 2. Get existing keys and their content hashes from Redis for this dataset
+                redis = await get_redis()
+                if not redis:
+                    logger.warning("[Local Redis Sync] Redis not available, skipping.")
+                    await _notify(
+                        {
+                            "phase": "dataset_failed",
+                            "dataset_id": dataset_id,
+                            "dataset_name": dataset_name,
+                            "error": "Redis 不可用",
+                        }
+                    )
+                    return False
+
+                prefix = f"{METADATA_KEY_PREFIX}{dataset_id}:"
+                cursor = 0
+                existing_keys = []
+                while True:
+                    cursor, keys = await redis.scan(cursor, match=f"{prefix}*", count=100)
+                    if keys:
+                        existing_keys.extend(keys)
+                    if cursor == 0:
+                        break
+
+                # 批量管道读取已存在的 doc_name 与 content_hash，避免串行网络往返
+                existing_doc_map: Dict[str, tuple[str, Optional[str]]] = {}
+                if existing_keys:
+                    pipe = redis.pipeline()
+                    for k in existing_keys:
+                        pipe.hmget(k, ["doc_name", "content_hash"])
+                    raw_res = await pipe.execute()
+                    for k, item in zip(existing_keys, raw_res):
+                        if not item or not isinstance(item, (list, tuple)) or not item[0]:
                             continue
-                        file_name = f"{table.physical_name}.txt"
-                        content = MetadataRagService.generate_table_content(dataset, table, relationships)
-                        expected_docs[file_name] = content
-                    table_count = len(expected_docs)
+                        d_name = _decode_key(item[0])
+                        c_hash = _decode_key(item[1]) if len(item) > 1 and item[1] is not None else None
+                        existing_doc_map[d_name] = (k, c_hash)
 
-                    if dataset.metrics:
-                        metrics_content = MetadataRagService.generate_metrics_content(dataset)
-                        if metrics_content:
-                            expected_docs["_metrics.txt"] = metrics_content
-                            metric_count = 1
+                # 3. Delete keys that are no longer expected
+                stale_keys = [
+                    info[0]
+                    for name, info in existing_doc_map.items()
+                    if name not in expected_docs
+                ]
+                if stale_keys:
+                    logger.info(f"[Local Redis Sync] Deleting {len(stale_keys)} stale keys from Redis")
+                    await redis.delete(*stale_keys)
 
-                    # 2. Get existing keys from Redis for this dataset
-                    redis = await get_redis()
-                    if not redis:
-                        logger.warning("[Local Redis Sync] Redis not available, skipping.")
-                        await _notify(
-                            {
-                                "phase": "dataset_failed",
-                                "dataset_id": dataset_id,
-                                "dataset_name": dataset_name,
-                                "error": "Redis 不可用",
-                            }
+                # 4. Upsert/Update keys that are expected (增量哈希比对)
+                doc_total = len(expected_docs)
+                for index, (doc_name, content) in enumerate(expected_docs.items(), start=1):
+                    current_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                    existing_entry = existing_doc_map.get(doc_name)
+
+                    # 若文档存在且 content_hash 匹配，跳过 Embedding 计算与写操作
+                    if existing_entry and existing_entry[1] == current_hash:
+                        doc_skipped += 1
+                        logger.debug(
+                            "[Local Redis Sync] Doc %s (dataset_id=%d) hash unchanged (%s), skipping embedding",
+                            doc_name, dataset_id, current_hash[:10]
                         )
-                        return False
-                    
-                    prefix = f"metadata:dataset:{dataset_id}:"
-                    cursor = 0
-                    existing_keys = []
-                    while True:
-                        cursor, keys = await redis.scan(cursor, match=f"{prefix}*", count=100)
-                        if keys:
-                            existing_keys.extend(keys)
-                        if cursor == 0:
-                            break
-                    
-                    existing_doc_map = {}
-                    for key in existing_keys:
-                        doc_name = await redis.hget(key, "doc_name")
-                        if doc_name:
-                            existing_doc_map[doc_name] = key
-
-                    # 3. Delete keys that are no longer expected
-                    stale_keys = [key for name, key in existing_doc_map.items() if name not in expected_docs]
-                    if stale_keys:
-                        logger.info(f"[Local Redis Sync] Deleting {len(stale_keys)} stale keys from Redis")
-                        await redis.delete(*stale_keys)
-
-                    # 4. Upsert/Update keys that are expected
-                    doc_total = len(expected_docs)
-                    for index, (doc_name, content) in enumerate(expected_docs.items(), start=1):
-                        try:
-                            embedding = await EmbeddingClient.embed_text(content, use_global=True)
-                            await MetadataIndexService.upsert_vector(
-                                dataset_id=dataset_id,
-                                doc_name=doc_name,
-                                content=content,
-                                embedding=embedding
-                            )
-                        except Exception as emb_err:
-                            doc_failed += 1
-                            logger.error(f"[Local Redis Sync] Embedding failed for doc {doc_name}: {emb_err}")
                         await _notify(
                             {
                                 "phase": "doc",
@@ -552,60 +651,154 @@ class MetadataIndexService:
                                 "done": index,
                                 "total": doc_total,
                                 "failed": doc_failed,
+                                "skipped": True,
                             }
                         )
+                        continue
 
-                    logger.info(f"[Local Redis Sync] Completed sync for dataset: {dataset.name}")
-
-                    from datetime import datetime
-                    from sqlalchemy import update
-                    from app.models.metadata import MetaDataset
-
-                    await db.execute(
-                        update(MetaDataset)
-                        .where(MetaDataset.id == dataset_id)
-                        .values(
-                            rag_sync_status=2,
-                            rag_sync_notes="local-redis synced",
-                            rag_synced_at=datetime.now(),
+                    try:
+                        embedding = await EmbeddingClient.embed_text(content, use_global=True)
+                        await MetadataIndexService.upsert_vector(
+                            dataset_id=dataset_id,
+                            doc_name=doc_name,
+                            content=content,
+                            embedding=embedding,
+                            content_hash=current_hash,
+                            skip_ensure_index=True,
                         )
+                    except Exception as emb_err:
+                        doc_failed += 1
+                        logger.error(f"[Local Redis Sync] Embedding failed for doc {doc_name}: {emb_err}")
+
+                    await _notify(
+                        {
+                            "phase": "doc",
+                            "dataset_id": dataset_id,
+                            "dataset_name": dataset_name,
+                            "doc_name": doc_name,
+                            "done": index,
+                            "total": doc_total,
+                            "failed": doc_failed,
+                            "skipped": False,
+                        }
                     )
-                    await db.commit()
 
-                await _notify(
-                    {
-                        "phase": "dataset_done",
-                        "dataset_id": dataset_id,
-                        "dataset_name": dataset_name,
-                        "tables": table_count,
-                        "metrics": metric_count,
-                        "failed": doc_failed,
-                        "elapsed_ms": int((time.monotonic() - started) * 1000),
-                    }
+                logger.info(
+                    "[Local Redis Sync] Completed sync for dataset: %s (total: %d, skipped: %d, failed: %d)",
+                    dataset.name, doc_total, doc_skipped, doc_failed
                 )
-                return True
-            except Exception as e:
-                logger.error(f"[Local Redis Sync] Background task failed for dataset {dataset_id}: {e}", exc_info=True)
-                await _notify(
-                    {
-                        "phase": "dataset_failed",
-                        "dataset_id": dataset_id,
-                        "dataset_name": dataset_name,
-                        "elapsed_ms": int((time.monotonic() - started) * 1000),
-                        "error": str(e),
-                    }
+
+                from datetime import datetime
+                from sqlalchemy import update
+                from app.models.metadata import MetaDataset
+
+                await db.execute(
+                    update(MetaDataset)
+                    .where(MetaDataset.id == dataset_id)
+                    .values(
+                        rag_sync_status=2,
+                        rag_sync_notes="local-redis synced",
+                        rag_synced_at=datetime.now(),
+                    )
                 )
-                return False
+                await db.commit()
 
-        if wait:
-            return await _run_sync()
-
-        try:
-            asyncio.create_task(_run_sync())
+            await _notify(
+                {
+                    "phase": "dataset_done",
+                    "dataset_id": dataset_id,
+                    "dataset_name": dataset_name,
+                    "tables": table_count,
+                    "metrics": metric_count,
+                    "failed": doc_failed,
+                    "skipped": doc_skipped,
+                    "elapsed_ms": int((time.monotonic() - started) * 1000),
+                }
+            )
             return True
         except Exception as e:
-            logger.warning(f"[Local Redis Sync] Failed to trigger background sync: {e}")
+            logger.error(f"[Local Redis Sync] Sync failed for dataset {dataset_id}: {e}", exc_info=True)
+            await _notify(
+                {
+                    "phase": "dataset_failed",
+                    "dataset_id": dataset_id,
+                    "dataset_name": dataset_name,
+                    "elapsed_ms": int((time.monotonic() - started) * 1000),
+                    "error": str(e),
+                }
+            )
             return False
+
+    @classmethod
+    async def sync_local_redis_vector(
+        cls,
+        dataset_id: int,
+        *,
+        progress_cb: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        wait: bool = False,
+        debounce_seconds: Optional[float] = None,
+    ) -> bool:
+        """Synchronize a dataset's metadata to local Redis vectors.
+
+        - ``wait=False``（默认）：启用单数据集防抖（Debounce）合并与后台执行。短时间内连续调用
+          将合并为一次执行；执行期间到达的新请求将标记 dirty 并在当期完成后自动追赶一轮最新 DB 数据。
+        - ``wait=True``：取消当前挂起的防抖任务，独占等待互斥锁并阻塞完成同步后返回结果，
+          供「重构本地向量数据」等管理编排使用。
+        """
+        if debounce_seconds is None:
+            debounce_seconds = cls.DEFAULT_DEBOUNCE_SECONDS
+
+        if wait:
+            # 阻塞模式：取消尚未进入执行的防抖任务
+            async with cls._coordinator_lock:
+                handle = cls._dataset_debounce_handles.pop(dataset_id, None)
+                if handle and not handle.started_execution:
+                    _cancel_task(handle.task)
+                cls._dataset_dirty.add(dataset_id)
+
+            lock = await cls._get_dataset_lock(dataset_id)
+            async with lock:
+                return await cls._run_sync_with_dirty_loop(dataset_id, progress_cb=progress_cb)
+
+        # 非阻塞模式（wait=False）：防抖合并调度
+        async with cls._coordinator_lock:
+            cls._dataset_dirty.add(dataset_id)
+            handle = cls._dataset_debounce_handles.get(dataset_id)
+
+            # 如果已有 handle 且尚未开始执行，取消以重置计时器
+            if handle and not handle.started_execution and not _is_task_done(handle.task):
+                _cancel_task(handle.task)
+                handle = None
+
+            # 若没有任务，或任务已结束，启动新的防抖任务
+            if handle is None or _is_task_done(handle.task):
+                new_handle = _DebounceHandle()
+
+                async def _debounced_worker() -> None:
+                    try:
+                        if debounce_seconds > 0:
+                            await asyncio.sleep(debounce_seconds)
+                        new_handle.started_execution = True
+                        lock = await cls._get_dataset_lock(dataset_id)
+                        async with lock:
+                            await cls._run_sync_with_dirty_loop(dataset_id, progress_cb=progress_cb)
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as e:
+                        logger.error(
+                            "[Local Redis Sync] Debounced sync worker failed for dataset %d: %s",
+                            dataset_id, e
+                        )
+                    finally:
+                        async with cls._coordinator_lock:
+                            if cls._dataset_debounce_handles.get(dataset_id) is new_handle:
+                                cls._dataset_debounce_handles.pop(dataset_id, None)
+
+                worker_task = asyncio.create_task(_debounced_worker())
+                new_handle.task = worker_task
+                cls._dataset_debounce_handles[dataset_id] = new_handle
+
+            return True
 
     @staticmethod
     async def _execute_ft_search(

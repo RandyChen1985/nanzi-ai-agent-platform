@@ -105,12 +105,23 @@ def _clamp_select_row_limit(sql: str, *, dialect: str, max_rows: int) -> str:
     远程模式此前只在导出时加 LIMIT，AI 分析可拉全表；用 AST 而不是正则，
     避免注释或子查询里的 LIMIT 顶掉外层上限。
     """
+    from app.services.ai.sql_dialect_limit import strip_trailing_comment_and_terminator
     from app.services.sql_query_execution_service import to_sqlglot_dialect
 
     read_dialect = to_sqlglot_dialect(dialect)
-    expression = sqlglot.parse_one(sql.strip().rstrip(";"), read=read_dialect)
+    # 末尾为 `; -- 注释` 时 sqlglot 会解析成 Block（多语句容器），此前会落到
+    # 「不是 SELECT 就原样返回」的分支 —— 等于一条行数上限都没加。先剥掉再解析。
+    expression = sqlglot.parse_one(
+        strip_trailing_comment_and_terminator(sql), read=read_dialect
+    )
     set_operation = getattr(exp, "SetOperation", None)
     limited_types = (exp.Select,) + ((set_operation,) if isinstance(set_operation, type) else ())
+    block_type = getattr(exp, "Block", None)
+    if isinstance(block_type, type) and isinstance(expression, block_type):
+        statements = [stmt for stmt in expression.expressions if isinstance(stmt, limited_types)]
+        if len(statements) != 1:
+            return sql
+        expression = statements[0]
     if not isinstance(expression, limited_types):
         return sql
     limit_node = expression.args.get("limit")
@@ -316,46 +327,38 @@ async def call_external_sql_api(
 
         # 强制行数限制：AI 分析口径 1000 行；完整导出口径放宽到 10 万行。
         # 根据数据库类型转换方言。
-        from app.services.ai.sql_dialect_limit import apply_dialect_row_limit
+        from app.services.ai.sql_dialect_limit import (
+            apply_dialect_row_limit,
+            strip_trailing_comment_and_terminator,
+        )
         from app.services.data_adapter.oracle import OracleAdapter
         from app.services.data_adapter.sqlserver import SQLServerAdapter
 
         row_limit = MAX_EXPORT_SQL_ROWS if for_export else MAX_LOCAL_SQL_ROWS
 
         if isinstance(adapter, OracleAdapter):
-            clean_sql = sql.strip().rstrip(";")
-            sql_upper = clean_sql.upper()
-
-            rownum_match = re.search(r"\bROWNUM\s*(<=|<)\s*(\d+)", sql_upper)
-            fetch_match = re.search(r"\bFETCH\s+FIRST\s+(\d+)\s+ROWS", sql_upper)
-
-            if rownum_match:
-                limit_val = int(rownum_match.group(2))
-                if limit_val > row_limit:
-                    sql_limited = clean_sql[:rownum_match.start(2)] + str(row_limit) + clean_sql[rownum_match.end(2):]
-                else:
-                    sql_limited = clean_sql
-            elif fetch_match:
-                limit_val = int(fetch_match.group(1))
-                if limit_val > row_limit:
-                    sql_limited = clean_sql[:fetch_match.start(1)] + str(row_limit) + clean_sql[fetch_match.end(1):]
-                else:
-                    sql_limited = clean_sql
-            else:
-                sql_limited = f"SELECT * FROM ({clean_sql}) WHERE ROWNUM <= {row_limit}"
-        elif isinstance(adapter, SQLServerAdapter):
-            clean_sql = sql.strip().rstrip(";")
+            # 统一交给 apply_dialect_row_limit：它一律在外层套 ROWNUM，内层子查询里
+            # 的 ROWNUM/FETCH 不会再被当成外层上限，从而整条跳过封顶（那会退化成
+            # 全表拉取）；末尾 `--` 注释也会先剥掉，避免包装的 `)` 被注释吞掉。
             sql_limited = apply_dialect_row_limit(
-                clean_sql,
+                sql,
+                dialect="oracle",
+                limit=row_limit,
+                max_limit=row_limit,
+            )
+        elif isinstance(adapter, SQLServerAdapter):
+            sql_limited = apply_dialect_row_limit(
+                sql,
                 dialect="tsql",
                 limit=row_limit,
                 max_limit=row_limit,
             )
         else:
             # MySQL / ClickHouse 使用 LIMIT。
-            # 不能再用正则找第一个 LIMIT：注释/字符串/子查询里的 LIMIT 会顶掉
-            # 外层上限，导致 AI 分析实际拉到全表。这里只认 AST 顶层 LIMIT。
-            clean_sql = sql.strip().rstrip(";")
+            # 统一交给 apply_dialect_row_limit：它只认 AST 最外层 LIMIT（注释/字符串/
+            # 子查询里的 LIMIT 不再顶掉外层上限），并且会先剥掉末尾行注释、
+            # 换行后再拼 LIMIT，避免被注释吞掉。
+            clean_sql = strip_trailing_comment_and_terminator(sql)
             dialect_name = dialect_from_data_source(data_source)
             try:
                 parsed_sql = sqlglot.parse_one(
@@ -364,16 +367,15 @@ async def call_external_sql_api(
                 )
             except Exception:
                 parsed_sql = None
-            if isinstance(parsed_sql, exp.Select) and parsed_sql.args.get("limit") is not None:
-                sql_limited = _clamp_select_row_limit(
-                    clean_sql,
-                    dialect=dialect_name,
-                    max_rows=row_limit,
-                )
-            elif isinstance(parsed_sql, exp.Select) or isinstance(
+            if isinstance(parsed_sql, exp.Select) or isinstance(
                 parsed_sql, getattr(exp, "SetOperation", ())
             ):
-                sql_limited = f"SELECT * FROM ({clean_sql}) AS _sub LIMIT {row_limit}"
+                sql_limited = apply_dialect_row_limit(
+                    clean_sql,
+                    dialect=dialect_name,
+                    limit=row_limit,
+                    max_limit=row_limit,
+                )
             else:
                 # SHOW / DESCRIBE 等元数据语句没有行集可包，保持原样。
                 sql_limited = clean_sql

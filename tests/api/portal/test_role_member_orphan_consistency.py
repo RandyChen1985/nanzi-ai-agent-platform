@@ -58,7 +58,13 @@ class _RecordingSession:
     async def get(self, model, pk):
         return self._role
 
-    async def execute(self, stmt):
+    async def execute(self, stmt, *args, **kwargs):
+        # 角色列表还会查一次黑名单（blocked_map_for_roles，text() SQL + 参数）。
+        # 那条不是本测试关心的 select 序列，返回空结果；但必须接受第二个参数——
+        # 「列是否已迁移」是模块级缓存，全套跑时会被真实 DB 用例填成 True，
+        # 于是这里单跑过、全套挂。
+        if not isinstance(stmt, Select):
+            return _Result([])
         self.executed.append(stmt)
         if not self._responses:
             raise AssertionError(f"意料之外的额外查询：{stmt}")

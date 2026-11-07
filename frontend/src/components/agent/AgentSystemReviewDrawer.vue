@@ -39,7 +39,8 @@ const visibleItems = computed(() => {
     list = list.filter(
       (item) =>
         (item.agent_name || '').toLowerCase().includes(text) ||
-        (item.agent_identifier || '').toLowerCase().includes(text),
+        (item.agent_identifier || '').toLowerCase().includes(text) ||
+        (item.requested_by_name || '').toLowerCase().includes(text),
     )
   }
   if (sortMode.value === 'newest') {
@@ -75,7 +76,8 @@ const loadList = async () => {
     items.value = res.data || []
     if (items.value.length) {
       const stillThere = items.value.some((item) => item.id === selectedId.value)
-      if (!stillThere) await select(items.value[0].id)
+      const firstId = items.value[0]?.id
+      if (!stillThere && firstId) await select(firstId)
     } else {
       selectedId.value = ''
       detail.value = null
@@ -138,6 +140,24 @@ const approveHint = computed(() =>
 )
 const approveButtonLabel = computed(() => (isVersionRelease.value ? '通过并上线' : '通过并发布'))
 
+const formatReviewError = (error: any, fallback: string) => {
+  const payload = error?.response?.data
+  const readiness = payload?.data
+  if (readiness?.code === 'AGENT_NOT_READY') {
+    const labels: Record<string, string> = {
+      published_version: '发布版本',
+      primary_capability: '主类型能力',
+      dataset_binding: '数据集绑定',
+      data_query_tool: '查数工具',
+      knowledge_base_binding: '知识库绑定',
+      knowledge_base_tool: '知识库检索工具',
+    }
+    const missing = Array.isArray(readiness.missing) ? readiness.missing : []
+    return `尚未就绪：${missing.map((item: string) => labels[item] || item).join('、')}`
+  }
+  return typeof payload?.detail === 'string' ? payload.detail : fallback
+}
+
 const approve = async () => {
   if (!detail.value || submitting.value) return
   submitting.value = true
@@ -151,7 +171,7 @@ const approve = async () => {
     emit('changed')
     await loadList()
   } catch (error: any) {
-    errorMessage.value = error?.response?.data?.detail || '审核失败，请稍后重试'
+    errorMessage.value = formatReviewError(error, '审核失败，请稍后重试')
   } finally {
     submitting.value = false
   }

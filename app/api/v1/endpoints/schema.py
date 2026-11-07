@@ -195,6 +195,27 @@ async def get_database_schema(
         is_admin=is_admin
     )
     authorized_ids = None if is_admin else [ds.id for ds in authorized_datasets]
+
+    # 表级 / 字段级授权：数据集级放行只是第一层。用户在同一数据集里可能只能看部分表、
+    # 部分列，主链路（chatbi 取 schema）已经按这两层裁剪，这个检索调试入口如果不过同一道
+    # 关，被收窄的表名/列名照样会从这里漏出去。
+    allowed_table_names_by_dataset: dict[int, set[str] | None] = {}
+    column_rules_by_table: dict[tuple[int, str], tuple] = {}
+    if not is_admin and user_id is not None:
+        try:
+            from app.services.dataset_scope_service import (
+                allowed_table_names_by_dataset as _resolve_allowed_tables,
+                column_rules_by_table_name as _resolve_column_rules,
+                resolve_user_dataset_scopes,
+            )
+
+            _scope_map = await resolve_user_dataset_scopes(conn, user_id)
+            allowed_table_names_by_dataset = await _resolve_allowed_tables(conn, _scope_map)
+            column_rules_by_table = await _resolve_column_rules(conn, _scope_map)
+        except Exception as ex:  # noqa: BLE001 - 解析失败退回数据集级，不阻断调试
+            trace_logs.append(f"[WARN] 表级/字段级授权解析失败，退回数据集级: {ex}")
+            allowed_table_names_by_dataset = {}
+            column_rules_by_table = {}
     
     if is_admin:
         trace_logs.append(
@@ -303,7 +324,36 @@ async def get_database_schema(
                 
             content = item.get("content", "")
             ds_id = int(item.get("dataset_id", 0))
-            
+
+            # 表级白名单：值 None = 不限表；集合 = 只允许这些表；缺 key = 不在本轮范围
+            _allowed_tables = allowed_table_names_by_dataset.get(ds_id)
+            if _allowed_tables is not None:
+                from app.services.chatbi_dataset_schema_service import chunk_table_name
+
+                _table = chunk_table_name(content)
+                if _table and _table not in _allowed_tables:
+                    trace_logs.append(
+                        f"Filtered out {doc_name}: 表 {_table} 不在授权范围内"
+                    )
+                    continue
+
+            # 字段级：受限列不能从调试入口露给用户
+            if column_rules_by_table and ds_id:
+                from app.services.chatbi_dataset_schema_service import (
+                    chunk_table_name,
+                    trim_chunk_columns,
+                )
+
+                _table = chunk_table_name(content)
+                if _table:
+                    _rules = column_rules_by_table.get((ds_id, _table))
+                    if _rules:
+                        content, _hidden = trim_chunk_columns(content, _rules)
+                        if _hidden:
+                            trace_logs.append(
+                                f"Trimmed {len(_hidden)} hidden column(s) from {doc_name}"
+                            )
+
             trace_logs.append(f"Accepted hit: {doc_name} (Sim: {sim:.4f}, dataset_id={ds_id})")
             filtered_hits.append({
                 "content": content,

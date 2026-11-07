@@ -65,6 +65,19 @@ export function resolveExpiry(choice: ExpiryChoice, now: Date = new Date()): Dat
   return delta ? new Date(now.getTime() + delta) : null;
 }
 
+/**
+ * 判断某个有效期预设按钮是否处于选中态。
+ *
+ * 「永久」不是普通预设：它用 `mode: 'permanent'` 表达，`preset` 字段保持旧值。
+ * 早期实现只比较 `mode === 'preset' && preset === value`，于是点了「永久」后
+ * 按钮不高亮、其它按钮也不高亮，用户以为没点上（底部提示其实已变成「永久有效」）。
+ */
+export function isExpiryPresetActive(choice: ExpiryChoice, value: ExpiryPresetValue): boolean {
+  if (value === 'permanent') return choice.mode === 'permanent';
+  if (choice.mode !== 'preset') return false;
+  return (choice.preset || '7d') === value;
+}
+
 /** 给人看的有效期文案，如「7 天后失效」「永久有效」。 */
 export function describeExpiry(choice: ExpiryChoice): string {
   if (choice.mode === 'permanent') return '永久有效';

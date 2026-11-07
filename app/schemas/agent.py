@@ -126,8 +126,10 @@ class AIAgentVersionResponse(AIAgentVersionBase):
     model_config = ConfigDict(from_attributes=True)
 
 class AIAgentBase(BaseModel):
-    name: str
-    display_name: str
+    # 与 ai_agents.name / display_name 的 String(100) 对齐，超长在入参阶段就拦，
+    # 不要等 DB 抛 DataError 再变成 500。
+    name: str = Field(..., max_length=100)
+    display_name: str = Field(..., max_length=100)
     description: Optional[str] = None
     avatar_url: Optional[str] = None
     capabilities: Optional[List[str]] = []

@@ -425,6 +425,21 @@ def ensure_k8s_public_data_subdirs() -> str:
     return data_root
 
 
+def _harden_sandbox_pod(pod: Any) -> None:
+    """在提交 Pod 之前补上平台级安全默认值（幂等，可重复调用）。
+
+    目前只做一件事：关闭 ServiceAccount Token 自动挂载。Kubernetes 默认会把所在
+    命名空间的 SA 凭据挂到 ``/var/run/secrets/kubernetes.io/serviceaccount/token``，
+    沙箱里跑的是不可信代码，拿到这张 token 就能访问 ``kubernetes.default.svc``
+    （集群版本 / API 资源探测，且可被后续任何 RBAC 放宽放大成真正的横向提权）。
+    沙箱内的网关只是本地 FastMCP 服务，不需要任何集群凭据，所以直接摘掉。
+    """
+    spec = getattr(pod, "spec", None)
+    if spec is None:
+        return
+    spec.automount_service_account_token = False
+
+
 def build_k8s_workspace_with_nanzi_adapter(
     base_workspace_class: type[Any],
     *,
@@ -510,8 +525,23 @@ def build_k8s_workspace_with_nanzi_adapter(
         async def _create_pod(self) -> None:
             """Create the workspace Pod with optional subPath and public docs mounts."""
             if not self._nanzi_existing_pvc:
-                # Default isolated dynamic PVC path
-                return await super()._create_pod()
+                # 独立空 PVC 路径直接复用基类构造。基类没有 PodSpec 钩子，只能在
+                # 「提交前」拦一次：临时包住 create 调用补上安全默认值再原样转发，
+                # 这样升级 AgentScope 时不必复制整段 Pod 组装逻辑。
+                original_create = self._v1.create_namespaced_pod
+
+                async def _create_hardened(*args: Any, **kwargs: Any) -> Any:
+                    pod = kwargs.get("body")
+                    if pod is None and len(args) > 1:
+                        pod = args[1]
+                    _harden_sandbox_pod(pod)
+                    return await original_create(*args, **kwargs)
+
+                self._v1.create_namespaced_pod = _create_hardened
+                try:
+                    return await super()._create_pod()
+                finally:
+                    self._v1.create_namespaced_pod = original_create
 
             # Security Guard: shared PVC mode MUST have an authenticated user identity
             if not self._nanzi_sandbox_user_key:
@@ -663,6 +693,8 @@ def build_k8s_workspace_with_nanzi_adapter(
                 ),
                 spec=k8s_client.V1PodSpec(**spec_kwargs),
             )
+            # 与独立 PVC 路径同一套安全默认值（见 _harden_sandbox_pod）。
+            _harden_sandbox_pod(pod)
             try:
                 await self._v1.create_namespaced_pod(self._namespace, pod)
             except Exception as exc:  # noqa: BLE001

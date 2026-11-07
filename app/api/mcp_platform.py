@@ -6,7 +6,7 @@ import base64
 import html
 from datetime import datetime
 from typing import Any
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, urlsplit, urlencode
 
 from fastapi import APIRouter, Cookie, Depends, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -38,6 +38,8 @@ router = APIRouter()
 
 
 def _oauth_response(payload: dict[str, Any], status_code: int = 400) -> JSONResponse:
+    # 下划线开头的键是服务端内部字段（如 _user_id 供审计用），不能进 OAuth 响应体。
+    payload = {key: value for key, value in payload.items() if not str(key).startswith("_")}
     return JSONResponse(
         payload,
         status_code=status_code,
@@ -89,6 +91,29 @@ def _form_from_body(body: bytes) -> dict[str, str]:
 
 async def _read_form(request: Request) -> dict[str, str]:
     return _form_from_body(await request.body())
+
+
+def _same_site_submission(request: Request) -> bool:
+    """授权确认是「带着用户登录态的一次写操作」，必须来自本站页面。
+
+    整个仓库没有 CSRF token 机制，登录态 cookie 又是 ``SameSite=Lax``：跨站表单
+    POST 默认不带 cookie（挡住主要攻击链），但浏览器对「2 分钟内新写入的 Lax
+    cookie」有 Lax+POST 例外，那段时间里仍可能被跨站自动提交。这里补一道同源判断：
+    只要请求带了 Origin/Referer，就必须与当前 issuer 同源。
+    """
+    base = _base_url()
+    expected_netloc = urlsplit(base).netloc
+    candidates = [request.headers.get("origin"), request.headers.get("referer")]
+    for value in candidates:
+        if not value:
+            continue
+        try:
+            netloc = urlsplit(str(value)).netloc
+        except ValueError:
+            return False
+        if not netloc or netloc != expected_netloc:
+            return False
+    return True
 
 
 def _basic_credentials(request: Request) -> tuple[str | None, str | None]:
@@ -245,6 +270,8 @@ async def authorize_post(
     portal_session: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_db_session),
 ):
+    if not _same_site_submission(request):
+        return _oauth_error("invalid_request", "授权确认必须来自本站页面", 403)
     form = await _read_form(request)
     required = ("client_id", "redirect_uri", "code_challenge", "code_challenge_method")
     if any(not form.get(key) for key in required):
@@ -335,16 +362,38 @@ async def token(request: Request, db: AsyncSession = Depends(get_db_session)):
     form = await _read_form(request)
     client = await _authenticate_client(request, form, db)
     if client is None:
-        await _record_oauth_failure(db, error_code="invalid_client", client_id=form.get("client_id"))
+        raw_client_id = form.get("client_id")
+        owner_user_id: str | None = None
+        if raw_client_id:
+            target_client = await PlatformMcpOAuthService.get_client(db, str(raw_client_id))
+            if target_client is not None and target_client.created_by:
+                owner_user_id = str(target_client.created_by)
+        await _record_oauth_failure(
+            db,
+            error_code="invalid_client",
+            client_id=raw_client_id,
+            user_id=owner_user_id,
+        )
         return _oauth_error("invalid_client", "Client 认证失败", 401)
+    client_owner_id = str(client.created_by or "") or None
     grant_type = form.get("grant_type", "")
     if grant_type not in normalize_scopes(client.allowed_grant_types):
-        await _record_oauth_failure(db, error_code="unauthorized_client", client_id=client.client_id)
+        await _record_oauth_failure(
+            db,
+            error_code="unauthorized_client",
+            client_id=client.client_id,
+            user_id=client_owner_id,
+        )
         return _oauth_error("unauthorized_client", "Client 未启用该 grant_type", 403)
     try:
         resource_value = _platform_resource(form.get("resource"))
     except ValueError as exc:
-        await _record_oauth_failure(db, error_code="invalid_target", client_id=client.client_id)
+        await _record_oauth_failure(
+            db,
+            error_code="invalid_target",
+            client_id=client.client_id,
+            user_id=client_owner_id,
+        )
         return _oauth_error("invalid_target", str(exc))
     try:
         if grant_type == "authorization_code":
@@ -370,7 +419,9 @@ async def token(request: Request, db: AsyncSession = Depends(get_db_session)):
             db,
             event_type=f"oauth_token_{grant_type}",
             client_id=client.client_id,
-            user_id=str(result.get("user_id") or "") or None,
+            # issue_tokens 的返回体是 OAuth 标准字段，user_id 只能走内部键，
+            # 否则要么进响应（泄给客户端）、要么审计永远拿不到人（告警恒 0）。
+            user_id=str(result.get("_user_id") or "") or client_owner_id,
         )
         await db.commit()
         return _oauth_response(result, 200)
@@ -380,6 +431,7 @@ async def token(request: Request, db: AsyncSession = Depends(get_db_session)):
             db,
             event_type=f"oauth_token_{grant_type}",
             client_id=client.client_id,
+            user_id=client_owner_id,
             result_status="failed",
             error_code="invalid_grant",
         )

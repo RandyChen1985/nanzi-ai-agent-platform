@@ -721,6 +721,78 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             logger.warning("[KnowledgeAgentRunner] Restore scope from reply failed: %s", exc)
             return []
 
+    async def _authorize_restored_scope(self, dataset_ids: List[str]) -> List[str]:
+        """复核门禁回执还原出的范围：权限（与 ``search_knowledge_base`` 同口径）+ 存活。
+
+        ``pending_scope_gate`` 是服务端写进会话快照的（不是前端回传的 ID 列表），
+        但卡片弹出到用户点下去之间可能隔很久（快照随会话保留）：期间库被删除、
+        授权被收回都不会自动反映到快照里。不复核就等于把「当时可访问」当成
+        「现在可访问」。
+        """
+        if not dataset_ids:
+            return []
+        from app.core.context import get_current_agent_context
+        from app.core.orm import AsyncSessionLocal
+        from app.services.ai.knowledge_utils import filter_alive_knowledge_dataset_ids
+        from app.services.permission_service import PermissionService
+
+        authorized = list(dataset_ids)
+        ctx = get_current_agent_context() or self._ensure_agent_context()
+        if (
+            ctx is not None
+            and getattr(ctx, "user_id", None)
+            and not getattr(ctx, "is_admin", False)
+        ):
+            user_name = (ctx.user_dimensions or {}).get("user_name")
+            try:
+                user_id = int(ctx.user_id)
+                async with AsyncSessionLocal() as session:
+                    perm = PermissionService(session)
+                    # 与 search_knowledge_base 的判定逐字同源：智能体绑定的库对使用者
+                    # 放行（作者已决定其知识范围），但「个人私有且非本人」不跟代理放行，
+                    # 其余回落到用户自身权限——两边口径一旦分叉，就会出现
+                    # 「门禁放行、工具拒绝」的自相矛盾。
+                    agent_granted = set(ctx.agent_dataset_ids or [])
+                    agent_granted -= await perm.find_private_datasets_not_owned(
+                        agent_granted,
+                        user_name,
+                        user_id=user_id,
+                    )
+                    restricted = [
+                        dataset_id
+                        for dataset_id in dataset_ids
+                        if dataset_id not in agent_granted
+                    ]
+                    allowed_restricted = set(
+                        await perm.filter_knowledge_dataset_ids(
+                            user_id, user_name, restricted
+                        )
+                    )
+                kept = [
+                    dataset_id
+                    for dataset_id in dataset_ids
+                    if dataset_id in agent_granted or dataset_id in allowed_restricted
+                ]
+                dropped = [
+                    dataset_id
+                    for dataset_id in dataset_ids
+                    if dataset_id not in agent_granted
+                    and dataset_id not in allowed_restricted
+                ]
+                if dropped:
+                    logger.warning(
+                        "[KnowledgeAgentRunner] Dropped restored datasets without permission: %s",
+                        dropped,
+                    )
+                authorized = kept
+            except Exception as exc:  # noqa: BLE001 - 复核失败不收缩范围
+                # 权限查询失败不等于没权限：此时整段丢弃会让用户的选择变成「什么都搜不到」，
+                # 而工具层还会再过滤一次，放行不比现有行为更危险。
+                logger.warning(
+                    "[KnowledgeAgentRunner] Restored scope permission check failed: %s", exc
+                )
+        return await filter_alive_knowledge_dataset_ids(authorized)
+
     async def _auto_invoke_search_knowledge_base(
         self,
         *,
@@ -1212,17 +1284,15 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             # 再判断本轮的检索范围是否需要用户先确认。
             restored_dataset_ids = await self._restore_scope_from_reply()
             if restored_dataset_ids:
-                # 卡片弹出到用户点下去之间库可能已被删除或收回，这里要跟正常路径
-                # 一样做存活校验，否则会拿着死 ID 去打 RAGFlow。
-                from app.services.ai.knowledge_utils import filter_alive_knowledge_dataset_ids
-
-                resolved_dataset_ids = await filter_alive_knowledge_dataset_ids(
+                # 卡片弹出到用户点下去之间库可能已被删除、收回权限或授权变更，
+                # 这里跟正常路径一样做「权限 + 存活」复核，不能整体信任会话里的快照。
+                resolved_dataset_ids = await self._authorize_restored_scope(
                     list(restored_dataset_ids)
                 )
                 dataset_error = (
                     None
                     if resolved_dataset_ids
-                    else "⚠️ 已确认的知识库在 RAGFlow 侧已失联或不存在，本次知识库问答已终止。"
+                    else "⚠️ 已确认的知识库在 RAGFlow 侧已失联、不存在或已无权访问，本次知识库问答已终止。"
                 )
                 # 回执轮的检索词不能是【用户回答】全文，换回触发门禁的原始提问。
                 user_question = self._original_query_before_receipt(history) or user_question
@@ -1263,10 +1333,12 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                         dataset_ids=list(resolved_dataset_ids or []),
                         ctx=get_current_agent_context() or self._ensure_agent_context(),
                     )
-                # 最终范围必须写回上下文：模型随后自己调用 search_knowledge_base 时
-                # 走 resolve_bound_dataset_ids(ctx.dataset_ids)，不写回就变成
-                # 「预检索收窄了、二次检索仍全量」，用户确认的范围只兑现一半。
-                self._apply_scope_to_context(list(resolved_dataset_ids or []))
+            # 最终范围必须写回上下文：模型随后自己调用 search_knowledge_base 时
+            # 走 resolve_bound_dataset_ids(ctx.dataset_ids)，不写回就变成
+            # 「预检索收窄了、二次检索仍全量」，用户确认的范围只兑现一半。
+            # 放在 if/else 之外：恢复分支（用户刚点了范围卡）同样要写回，
+            # 否则门禁只对预检索生效，ReAct 里的二次检索又回到全量。
+            self._apply_scope_to_context(list(resolved_dataset_ids or []))
             if dataset_error and not resolved_dataset_ids:
                 async for chunk in self._yield_knowledge_no_dataset_abort():
                     yield chunk

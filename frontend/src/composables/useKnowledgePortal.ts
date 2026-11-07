@@ -239,28 +239,70 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
   };
 
   // 关联文档数据管理
-  const datasetDocuments = ref<Record<string, { docs: any[]; loading: boolean }>>({});
+  // 原来固定只取前 100 份且没有「加载更多」：文档超过 100 个时，用户永远看不到第 101 份，
+  // 也没有任何提示说明被截断了。现在记 total 并支持分页追加。
+  const DOC_PAGE_SIZE = 100;
+  const datasetDocuments = ref<
+    Record<string, { docs: any[]; loading: boolean; total: number; page: number; loadingMore: boolean }>
+  >({});
 
   const fetchDatasetDocuments = async (datasetId: string) => {
     if (!datasetId) return;
     if ((datasetDocuments.value[datasetId]?.docs || []).length > 0) return;
 
-    datasetDocuments.value[datasetId] = { docs: [], loading: true };
+    datasetDocuments.value[datasetId] = { docs: [], loading: true, total: 0, page: 1, loadingMore: false };
     try {
       const response = await axios.get(`/api/portal/ragflow/datasets/${datasetId}/documents`, {
-        params: { page: 1, page_size: 100 }
+        params: { page: 1, page_size: DOC_PAGE_SIZE }
       });
       if (response.data && response.data.code === 0) {
+        const docs = response.data.data || [];
+        const total = Number(response.data.total);
         datasetDocuments.value[datasetId] = {
-          docs: response.data.data || [],
-          loading: false
+          docs,
+          loading: false,
+          total: Number.isFinite(total) ? total : docs.length,
+          page: 1,
+          loadingMore: false
         };
       } else {
-        datasetDocuments.value[datasetId] = { docs: [], loading: false };
+        datasetDocuments.value[datasetId] = { docs: [], loading: false, total: 0, page: 1, loadingMore: false };
       }
     } catch (error) {
       console.error("Failed to load dataset documents", error);
-      datasetDocuments.value[datasetId] = { docs: [], loading: false };
+      datasetDocuments.value[datasetId] = { docs: [], loading: false, total: 0, page: 1, loadingMore: false };
+    }
+  };
+
+  /** 抽屉里的「加载更多」：追加下一页，重复 id 丢掉（翻页期间有删除时会重叠） */
+  const loadMoreDatasetDocuments = async (datasetId: string) => {
+    const entry = datasetDocuments.value[datasetId];
+    if (!datasetId || !entry || entry.loadingMore) return;
+    if (entry.docs.length >= entry.total) return;
+
+    entry.loadingMore = true;
+    try {
+      const nextPage = entry.page + 1;
+      const response = await axios.get(`/api/portal/ragflow/datasets/${datasetId}/documents`, {
+        params: { page: nextPage, page_size: DOC_PAGE_SIZE }
+      });
+      const current = datasetDocuments.value[datasetId];
+      if (!current || response.data?.code !== 0) return;
+      const seen = new Set(current.docs.map((doc: any) => doc.id));
+      const extra = (response.data.data || []).filter((doc: any) => !seen.has(doc.id));
+      const total = Number(response.data.total);
+      datasetDocuments.value[datasetId] = {
+        docs: [...current.docs, ...extra],
+        loading: false,
+        total: Number.isFinite(total) ? total : current.total,
+        page: nextPage,
+        loadingMore: false
+      };
+    } catch (error) {
+      console.error("Failed to load more dataset documents", error);
+      if (datasetDocuments.value[datasetId]) {
+        datasetDocuments.value[datasetId].loadingMore = false;
+      }
     }
   };
 
@@ -319,6 +361,7 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
     documentRecommendations,
     toggleDatasetPinned,
     fetchDatasetDocuments,
+    loadMoreDatasetDocuments,
     fetchDocumentRecommendations,
     fetchDatasets,
     fetchRecommendations,

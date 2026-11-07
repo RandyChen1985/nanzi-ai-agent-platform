@@ -248,7 +248,12 @@ def _write_platform_metadata(
     ]
     if publication_id:
         metadata.append(f"publication_id: {publication_id}")
-    match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
+    # 与技能列表/预铺同一口径：自带的严格正则把「闭合 --- 在文件末尾」当成没有
+    # frontmatter，于是走 else 分支**再补一份**，发布出来的 SKILL.md 会出现两个 frontmatter
+    # 块，第二块（真正的 name/description）被当成正文，技能名退化回目录名。
+    from app.utils.skill_metadata import SKILL_FRONTMATTER_PATTERN
+
+    match = SKILL_FRONTMATTER_PATTERN.match(content)
     if match:
         frontmatter = [
             line
@@ -990,7 +995,7 @@ async def mark_platform_skill_publications_revoked(
     actor_user_id: int | None = None,
     comment: str | None = None,
 ) -> int:
-    """把某个平台技能名下**仍处于 PUBLISHED** 的发布谱系标记为 REVOKED，返回条数。
+    """把某个平台技能名下**仍在线**的发布谱系标记为下架（UNPUBLISHED），返回条数。
 
     删除平台技能目录时复用下架语义，而不是物理删发布记录：
 
@@ -1000,12 +1005,19 @@ async def mark_platform_skill_publications_revoked(
     * 保留 ``platform_skill_id`` + ``snapshot_path``，删除后重新提交并通过审核即可复用同一
       ID 重新物化——「技能没了但发布能力还在」正是下架的定义。
 
-    非 PUBLISHED（PENDING/UNPUBLISHED/REVOKED）的谱系一律不动。
+    **判据是版本事实（``current_version`` 非空），不是汇总状态 ``status``**：那条状态会被
+    「作者又提交了一版」改写，老数据里已经存在 ``status="PENDING"`` 但仍有 ``current_version``
+    的谱系（同一判据见 :func:`list_published_publications` 与 ``_assert_current_published``）。
+    只看 ``status == "PUBLISHED"`` 会把它们漏掉，于是目录已删、库里仍写着「在线已发布」，
+    重新提交也拿不回同一个 ID。真正没有在线版本的谱系（从未通过审核 / 已下架）一律不动。
     """
     result = await session.execute(
         select(SkillPublication).where(
             SkillPublication.platform_skill_id == platform_skill_id,
-            SkillPublication.status == "PUBLISHED",
+            or_(
+                SkillPublication.status == "PUBLISHED",
+                SkillPublication.current_version.isnot(None),
+            ),
         )
     )
     publications = list(result.scalars().all())

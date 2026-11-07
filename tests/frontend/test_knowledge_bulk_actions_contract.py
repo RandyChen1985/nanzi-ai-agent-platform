@@ -49,10 +49,22 @@ def test_bulk_selection_supports_select_all(page: str) -> None:
 
 
 def test_select_all_is_scoped_to_current_tab_and_search(page: str) -> None:
-    """全选不能跨 tab / 跨搜索：把看不见的库也选上，等于给自己埋雷。"""
-    # 全选范围 = 列表页当前过滤结果（搜索 + 可见范围），看不见的库不会被选上
-    block = page.split("const libraryListRows = computed", 1)[1].split("const librarySelectedCount", 1)[0]
-    assert "libraryQuery" in block
-    assert "libraryScope" in block
+    """全选不能跨 tab / 跨搜索 / 跨页：把看不见的库也选上，等于给自己埋雷。
+
+    列表页改成服务端分页后，「可见范围」由后端按 keyword/visibility 过滤后返回，
+    前端只持有当前页；全选的作用域因此收敛为「当前页里能管理的行」。
+    """
+    # 分页参数与过滤条件必须一起下发给后端（本地再过滤会漏掉其他页的命中）
+    assert "const fetchLibraryList = async" in page
+    fetch_block = page.split("const fetchLibraryList = async", 1)[1].split("let librarySearchTimer", 1)[0]
+    assert "page:" in fetch_block and "page_size:" in fetch_block
+    assert "keyword" in fetch_block and "visibility" in fetch_block
+
+    # 全选只落在当前页的可管理行上：不能直接用 datasets（全量）做笛卡尔积
+    block = page.split("const toggleLibrarySelectAll = ", 1)[1].split("const libraryListTitle", 1)[0]
+    assert "librarySelectableRows" in block
+    assert "datasets.value" not in block
+
     block2 = page.split("const librarySelectableRows = computed(", 1)[1].split("\n)", 1)[0]
     assert "canManageDataset" in block2
+    assert "libraryRows" in block2

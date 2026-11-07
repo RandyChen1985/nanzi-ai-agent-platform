@@ -55,7 +55,11 @@ function buildComponent(source) {
     platform: "node",
     target: "node18",
     external: ["vue"],
-    alias: { "@": path.resolve("src") },
+    alias: {
+      "@": path.resolve("src"),
+      // 子组件换成空壳：buildSync 不能带插件，见 ssr_child_stub.mjs 的说明
+      "@/components/common/PaginationBar.vue": path.resolve("../tests/frontend/ssr_child_stub.mjs"),
+    },
     logLevel: "silent",
   });
 
@@ -92,16 +96,17 @@ const structure = {
 const docs = [doc("d1", "员工手册.pdf"), doc("d2", "新员工入职培训.pptx"), doc("d3", "组织架构图.png", { run: "FAIL" })];
 
 const summary = (html) => ({
-  hasTopFolder: html.includes("制度文件"),
-  hasChildFolder: html.includes("2025 年度"),
-  hasSiblingFolder: html.includes("培训资料"),
-  // 顶层文件夹默认展开：直接挂在「培训资料」下的 d2 应当可见
-  showsDocInExpandedTop: html.includes("新员工入职培训.pptx"),
-  // 子文件夹默认收起：d1 不应出现
-  hidesDocInCollapsedChild: !html.includes("员工手册.pdf"),
-  // 未分类文档（不在任何文件夹）永远可见
-  showsUnclassified: html.includes("组织架构图.png"),
-  folderCountBadge: html.includes("1 份"),
+  // 文件夹作为「筛选维度」：根层只列一级文件夹的 chip
+  hasTopFolderChip: html.includes('data-folder-path="制度文件"'),
+  hasSiblingFolderChip: html.includes('data-folder-path="培训资料"'),
+  // 子文件夹要进到父层才看得到，根层不该出现
+  hidesChildFolderAtRoot: !html.includes('data-folder-path="制度文件/2025 年度"'),
+  // chip 上的计数：制度文件挂 1 份（d1）
+  folderCountIsOne: html.includes('data-count="1"'),
+  // 文档平铺：不再靠「展开/收起」控制可见性，当前页的三份都要出现
+  showsAllDocsAtRoot: ["员工手册.pdf", "新员工入职培训.pptx", "组织架构图.png"].every((name) =>
+    html.includes(name),
+  ),
   hasParseFailed: html.includes("解析失败"),
   hasUploadCta: html.includes("上传文档"),
 });
@@ -114,25 +119,34 @@ const summary = (html) => ({
       await render(source, {
         docs,
         folderStructure: structure,
-        canUpload: true,
         canManage: true,
+        // 分页之后「有没有文档」看 allTotal，不是当前页条数
+        total: docs.length,
+        allTotal: docs.length,
       }),
     ),
     flat: await (async () => {
       const html = await render(source, {
         docs: [doc("x1", "未归类一.docx")],
         folderStructure: {},
-        canUpload: true,
+        total: 1,
+        allTotal: 1,
       });
       return {
         showsUnclassifiedDoc: html.includes("未归类一.docx"),
-        // 没有文件夹时不该出现文件夹行
-        noFolderRow: !html.includes("个子文件夹"),
+        // 没有文件夹时不该出现任何文件夹 chip
+        noFolderChip: !html.includes("data-folder-path="),
       };
     })(),
-    empty: (await render(source, { docs: [], folderStructure: {} })).includes("这个知识库还没有文档"),
-    loading: (await render(source, { docs: [], loading: true })).includes("正在读取文档"),
-    readOnly: !(await render(source, { docs, folderStructure: structure })).includes("上传文档"),
+    empty: (
+      await render(source, { docs: [], folderStructure: {}, total: 0, allTotal: 0 })
+    ).includes("这个知识库还没有文档"),
+    loading: (
+      await render(source, { docs: [], folderStructure: {}, total: 0, allTotal: 0, loading: true })
+    ).includes("正在读取文档"),
+    readOnly: !(
+      await render(source, { docs, folderStructure: structure, total: docs.length, allTotal: docs.length })
+    ).includes("上传文档"),
   };
 
   process.stdout.write(JSON.stringify(out, null, 2));

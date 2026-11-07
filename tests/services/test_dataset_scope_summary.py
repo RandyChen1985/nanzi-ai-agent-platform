@@ -1,8 +1,14 @@
 """数据集目录的「权限摘要」：`list_accessible_datasets` 返回什么、为什么这么给。
 
-摘要只回答三件模型真的会用来做决策的事：**能看几张表、字段有没有被裁、这次查询
-到底查不查得到数据**，外加到期时间。刻意**不**返回的东西：行级条件原文
-（`dept_code='FIN'` 属于授权规则细节）、被隐藏的列名、完整表结构。
+摘要回答四件模型真的会用来做决策的事：**能看几张表、字段有没有被裁、被裁的是哪些
+（白名单）/ 裁在哪张表（黑名单）、这次查询到底查不查得到数据**，外加到期时间。
+
+刻意**不**返回的东西：行级条件原文（`dept_code='FIN'` 属于授权规则细节）、
+黑名单里被屏蔽的具体列名（说「你不能看 salary」等于承认库里有一列叫 salary，
+可以用拒绝清单反推表结构）、完整表结构。
+
+白名单（`include`）是例外：它列出的正是用户看得见的列，不给反而让人不知道自己
+能查什么——而且只给计数时 `excluded` 恒为 0，很容易被读成「没有字段限制」。
 """
 from __future__ import annotations
 
@@ -130,6 +136,16 @@ async def test_summary_reports_table_scope_and_column_scope():
         "restricted_tables": 1,
         "excluded": 2,
         "whitelisted_tables": 0,
+        # 计数之外还要给出「哪张表、什么模式、哪些字段」，否则用户问「哪些字段看不到」答不出来
+        # 黑名单只给表名：具体屏蔽了哪些列不出口
+        "tables": [
+            {
+                "table_id": 92,
+                "table": "ai_agent_access_logs",
+                "mode": "exclude",
+                "names": None,
+            }
+        ],
     }
     assert summary["sources"] == ["user"]
     assert summary["expires_at"] == "2026-12-31 23:59"
@@ -192,6 +208,10 @@ async def test_include_mode_reports_whitelist_not_excluded():
         "restricted_tables": 1,
         "excluded": 0,
         "whitelisted_tables": 1,
+        # include 模式尤其需要字段名：excluded=0 会被读成「没有字段限制」
+        "tables": [
+            {"table_id": 5, "table": None, "mode": "include", "names": ["a", "b"]},
+        ],
     }
 
 
@@ -211,3 +231,102 @@ async def test_summary_survives_count_query_failure():
 @pytest.mark.asyncio
 async def test_empty_scopes_returns_empty_map():
     assert await summarize_dataset_scopes(AsyncMock(), {}, dataset_rows=[], user_roles=[], user_id=7) == {}
+
+
+# ---------------------------------------------------------------------------
+# 字段级明细：白名单给列名、黑名单只给表名、规模超限退回计数
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_exclude_rules_never_leak_blocked_column_names():
+    """黑名单只报「哪张表有屏蔽」，不报屏蔽了哪几列。"""
+    db = _fake_session([(1, 10)], [(5, "employees")])
+    scopes = {
+        1: _scope(
+            column_rules={5: (ColumnRule("exclude", {"salary", "id_card"}),)},
+        )
+    }
+
+    out = await summarize_dataset_scopes(db, scopes, dataset_rows=[], user_roles=[], user_id=7)
+
+    detail = out[1]["columns"]["tables"][0]
+    assert detail["table"] == "employees"
+    assert detail["mode"] == "exclude"
+    assert detail["names"] is None
+    assert "salary" not in str(out)
+    assert "id_card" not in str(out)
+    # 计数仍在，用来表达「几张表被裁了字段」
+    assert out[1]["columns"]["excluded"] == 2
+
+
+@pytest.mark.asyncio
+async def test_mixed_modes_report_mixed_and_hide_names():
+    """同一张表既有白名单又有黑名单：说明语义是 mixed，列名仍不出口。"""
+    db = _fake_session([(1, 10)], [(5, "employees")])
+    scopes = {
+        1: _scope(
+            column_rules={
+                5: (
+                    ColumnRule("include", {"a", "b", "c"}),
+                    ColumnRule("exclude", {"c"}),
+                )
+            },
+        )
+    }
+
+    out = await summarize_dataset_scopes(db, scopes, dataset_rows=[], user_roles=[], user_id=7)
+
+    detail = out[1]["columns"]["tables"][0]
+    assert detail["mode"] == "mixed"
+    assert detail["names"] is None
+
+
+@pytest.mark.asyncio
+async def test_column_details_omitted_when_too_many_tables():
+    """超过明细表数上限时只保留计数，不把十几张表的字段名单塞进上下文。"""
+    db = _fake_session([(1, 40)])
+    column_rules = {
+        table_id: (ColumnRule("include", {"a"}),) for table_id in range(10, 17)
+    }
+    scopes = {1: _scope(column_rules=column_rules)}
+
+    out = await summarize_dataset_scopes(db, scopes, dataset_rows=[], user_roles=[], user_id=7)
+
+    assert "tables" not in out[1]["columns"]
+    assert out[1]["columns"]["restricted_tables"] == 7
+
+
+@pytest.mark.asyncio
+async def test_column_details_omitted_when_too_many_fields():
+    """单表字段白名单过长时同样退回计数。"""
+    db = _fake_session([(1, 10)], [(5, "wide_table")])
+    wide = {f"col_{index}" for index in range(25)}
+    scopes = {1: _scope(column_rules={5: (ColumnRule("include", wide),)})}
+
+    out = await summarize_dataset_scopes(db, scopes, dataset_rows=[], user_roles=[], user_id=7)
+
+    assert "tables" not in out[1]["columns"]
+    assert out[1]["columns"]["whitelisted_tables"] == 1
+
+
+@pytest.mark.asyncio
+async def test_include_details_give_table_name_and_columns():
+    """include 白名单：给表名 + 具体列名，模型才能回答「我能查哪些字段」。"""
+    db = _fake_session([(1, 10)], [(112, "ai_agent_users")])
+    scopes = {
+        1: _scope(
+            column_rules={112: (ColumnRule("include", {"id", "real_name", "user_name"}),)},
+        )
+    }
+
+    out = await summarize_dataset_scopes(db, scopes, dataset_rows=[], user_roles=[], user_id=7)
+
+    assert out[1]["columns"]["tables"] == [
+        {
+            "table_id": 112,
+            "table": "ai_agent_users",
+            "mode": "include",
+            "names": ["id", "real_name", "user_name"],
+        }
+    ]

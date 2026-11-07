@@ -17,6 +17,11 @@ def _scalars_all(rows):
     return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
 
 
+def _rows_all(rows):
+    """新版按 (id, tools) 两列取，结果直接 .all() 出元组。"""
+    return SimpleNamespace(all=lambda: rows)
+
+
 def _tool(tool_name: str = "old-name:echo") -> McpToolCache:
     return McpToolCache(
         id="tool-1",
@@ -34,7 +39,7 @@ async def test_rename_reports_tool_ids_so_conversation_mounts_can_follow():
     """改名只改库不够：会话资源里存的旧工具名要拿 id 去纠。"""
     tool = _tool()
     db = MagicMock()
-    db.execute = AsyncMock(side_effect=[_scalars_all([tool]), _scalars_all([])])
+    db.execute = AsyncMock(side_effect=[_scalars_all([tool]), _rows_all([])])
 
     renamed = await mcp._migrate_server_name_references(
         db, "srv-1", "old-name", "new-name"

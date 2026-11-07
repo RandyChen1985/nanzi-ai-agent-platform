@@ -32,9 +32,13 @@ def _auth_headers(server: Any) -> tuple[List[str], List[str]]:
     headers: List[str] = []
     notes: List[str] = []
 
-    has_static_auth = bool(getattr(server, "auth_headers", None)) or str(
-        getattr(server, "credential_mode", "") or ""
-    ) in {"static", "fixed_token"}
+    # credential_mode 的取值是 static / fixed_token_signed_user（见 McpServerWrite）；
+    # 旧判断里的 "fixed_token" 从不是合法值，会导致「只有固定 Token、没配 Header」的服务
+    # 在片段里完全没有 Authorization 行。
+    has_static_auth = bool(getattr(server, "auth_headers", None)) or (
+        str(getattr(server, "credential_mode", "") or "")
+        in {"static", "fixed_token", "fixed_token_signed_user"}
+    )
     if has_static_auth:
         headers.append(f"  -H 'Authorization: Bearer {PLACEHOLDER_TOKEN}' \\")
         notes.append(
@@ -42,8 +46,11 @@ def _auth_headers(server: Any) -> tuple[List[str], List[str]]:
         )
 
     if bool(getattr(server, "user_assertion_enabled", False)):
-        header_name = getattr(server, "user_assertion_header", None) or DEFAULT_ASSERTION_HEADER
-        headers.append(f"  -H '{header_name}: {PLACEHOLDER_ASSERTION}' \\")
+        header_name = str(
+            getattr(server, "user_assertion_header", None) or DEFAULT_ASSERTION_HEADER
+        )
+        # Header 名来自用户配置，必须走同一套单引号转义，否则片段会被 shell 截断
+        headers.append(f"  -H {_shell_quote(f'{header_name}: {PLACEHOLDER_ASSERTION}')} \\")
         notes.append(
             f"{header_name} 由平台按用户实时签发，值里含 exp 与随机数，"
             "不能用固定串复现；要发真实请求请用下方「运行测试」，它会在服务端完成签名。"

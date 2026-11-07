@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import re
+
 import pytest
 
 pytestmark = pytest.mark.no_infrastructure
@@ -204,9 +206,21 @@ def test_user_mode_lands_on_new_task_after_login() -> None:
 
     assert "resolveInitialUiMode" in login
     assert "query: { new: '1' }" in login
-    # 根路径与守卫兜底同样按模式分流
+    # 根路径同样按模式分流
     assert "getCachedUiMode() === 'user' ? '/dashboard/chat' : '/dashboard'" in router_source
-    assert "if (getCachedUiMode() === 'user') return '/dashboard/chat'" in router_source
+    # 守卫兜底必须按菜单快照判断：写死回 chat 时，缺 menu:ai_chat 的账号会自指 NoPermission
+    assert "if (getCachedUiMode() === 'user') return resolveUserModeHomePath(menus)" in router_source
+
+
+def test_user_mode_fallback_does_not_strand_users_without_ai_chat() -> None:
+    """没有 menu:ai_chat 的用户模式账号要退到无权限要求的工作台，不能死锁在 NoPermission。"""
+    router_source = _read("frontend/src/router/index.ts")
+
+    assert "menus.includes('menu:ai_chat') ? '/dashboard/chat' : '/dashboard/workbench'" in router_source
+    # 工作台在路由表里不能带权限码，否则兜底页自身进不去（路由挂在 /dashboard 下，是相对路径）
+    workbench = re.search(r"path:\s*'workbench'.{0,300}?\}", router_source, re.S)
+    assert workbench, "未找到 /dashboard/workbench 路由定义"
+    assert "perm:" not in workbench.group(0)
 
 
 def test_user_mode_hides_the_top_header_and_moves_actions_to_sidebar() -> None:

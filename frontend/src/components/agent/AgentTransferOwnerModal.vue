@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { AIAgent } from '../../api/agent'
 import { agentSystemApi } from '../../api/agent'
 
@@ -59,9 +59,24 @@ watch(
     if (visible) {
       reset()
       void loadUsers()
+    } else {
+      // 组件常驻，关闭后防抖计时器仍可能触发一次请求；同时让在途响应失效。
+      if (searchTimer) {
+        clearTimeout(searchTimer)
+        searchTimer = null
+      }
+      loadUsersSeq += 1
+      loadingUsers.value = false
     }
   },
 )
+
+onBeforeUnmount(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = null
+  // 卸载后不再让在途响应写回已销毁的组件状态。
+  loadUsersSeq += 1
+})
 
 // 输入快时旧请求可能后到，把候选人列表覆盖成上一次搜索的结果
 let loadUsersSeq = 0
@@ -87,7 +102,7 @@ const loadUsers = async () => {
     errorMessage.value =
       error.response?.data?.detail || '候选人加载失败，请稍后重试'
   } finally {
-    loadingUsers.value = false
+    if (seq === loadUsersSeq) loadingUsers.value = false
   }
 }
 

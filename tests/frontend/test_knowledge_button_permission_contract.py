@@ -25,10 +25,22 @@ def workspace() -> str:
     return WORKSPACE.read_text(encoding="utf-8")
 
 
-def test_doc_selection_requires_manage(workspace: str) -> None:
-    """文档勾选必须跟管理权绑定：只读库能勾上就等于能批量删。"""
-    assert 'v-if="canManage"' in workspace          # 表头全选
-    assert '''v-if="row.kind === 'doc' && canManage"''' in workspace
+def test_doc_selection_follows_bulk_action_permissions(workspace: str) -> None:
+    """勾选框跟「能不能批量操作」对齐，而不是跟「能不能管这个库」对齐。
+
+    后端 `parse` / `DELETE documents` 只要元素权限（parse_document /
+    delete_document）+ 内容级写权限，不要求是库创建人。这里原先写死 canManage，
+    部门协作成员于是看得到批量按钮、却选不中任何文档，功能等于摆设。
+    反过来只读库仍然安全：两个能力点都不满足时 canSelectDocs 为 false。
+    """
+    # 表头全选 + 行内勾选：两处都必须跟着同一个条件
+    assert workspace.count('v-if="canSelectDocs"') >= 2
+    assert "const canSelectDocs = computed(" in workspace
+    assert "props.canManage || props.canDeleteDoc || props.canParse" in workspace
+    # 行内勾选框绑定的是当前页选中的 docId
+    assert ':checked="selectedIds.includes(doc.id)"' in workspace
+    # 只读库（三者全 false）依然没有勾选框
+    assert 'v-if="canManage"' in workspace
 
 
 def test_bulk_bar_buttons_follow_their_own_permission(workspace: str) -> None:

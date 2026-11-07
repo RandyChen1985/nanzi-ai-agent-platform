@@ -282,11 +282,15 @@ async def chatbi_sql_execute(
 
     user_id = int(user_info["user_id"])
     user_dimensions = await build_sql_user_dimensions(db, user_info, user_id)
+    is_admin = user_info.get("role") == "admin"
 
     session_user_info = await _enforce_openclaw_session_sql_auth(db, body)
     if session_user_info:
         user_id = int(session_user_info["user_id"])
         user_dimensions = await build_sql_user_dimensions(db, session_user_info, user_id)
+        # 身份必须整体切换到会话用户：只换 user_id 而不换 is_admin，会让管理员
+        # API Key 的 is_admin 继续作用于普通用户会话，跳过字段级裁剪与行级过滤
+        is_admin = session_user_info.get("role") == "admin"
 
     # 表级门禁不能由调用方传入的 sessionid 决定：OpenClaw 会话在上一行已经
     # 按会话用户做过一次等价校验，非 OpenClaw 调用方也必须走完整的表权限校验。
@@ -309,7 +313,7 @@ async def chatbi_sql_execute(
         api_key=None,
         agent_context=None,
         dry_run=False,
-        is_admin=user_info.get("role") == "admin",
+        is_admin=is_admin,
         bypass_table_auth=False,
         permission_notice=permission_notice,
     )

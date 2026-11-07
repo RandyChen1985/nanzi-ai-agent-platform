@@ -171,7 +171,8 @@ async def test_echo_creation_reuses_existing_credentials_and_tool():
         side_effect=[
             SimpleNamespace(scalar_one_or_none=lambda: server),
             SimpleNamespace(scalar_one_or_none=lambda: tool),
-            # 第三次查询是平台 Echo 的进度测试工具（echo_slow）：尚未注册 → 走插入。
+            # 平台 Echo 的进度测试工具（echo_slow）：按名查不到，再按固定 tool_id 兜底也没命中 → 插入。
+            SimpleNamespace(scalar_one_or_none=lambda: None),
             SimpleNamespace(scalar_one_or_none=lambda: None),
         ]
     )
@@ -299,7 +300,8 @@ async def test_personal_echo_migrates_legacy_shared_tool_name():
             SimpleNamespace(scalar_one_or_none=lambda: server),
             SimpleNamespace(scalar_one_or_none=lambda: None),
             SimpleNamespace(scalar_one_or_none=lambda: legacy),
-            # 进度验收工具：尚未注册 → 走插入（允许，且只允许这一行）
+            # 进度验收工具：按名 + 按 tool_id 都查不到 → 走插入（允许，且只允许这一行）
+            SimpleNamespace(scalar_one_or_none=lambda: None),
             SimpleNamespace(scalar_one_or_none=lambda: None),
         ]
     )

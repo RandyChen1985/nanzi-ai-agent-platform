@@ -162,8 +162,9 @@ def _dependency_hints(command, stdout, stderr, exit_code):
 
 
 def _abspath(path: str) -> str:
-    p = os.path.abspath(os.path.join(_ROOT, os.path.expanduser(path)))
-    if not p.startswith(_ROOT):
+    root = os.path.abspath(_ROOT)
+    p = os.path.abspath(os.path.join(root, os.path.expanduser(path)))
+    if os.path.commonpath([root, p]) != root:
         raise ValueError("path escapes workspace: " + path)
     return p
 
@@ -257,6 +258,9 @@ def glob(pattern: str, cwd: str = ".") -> str:
     import glob as _glob
 
     base = _ROOT if cwd in ("", ".") else _abspath(cwd)
+    if ".." in str(pattern or "").replace("\\\\", "/").split("/"):
+        raise ValueError("path escapes workspace: " + str(pattern))
+    _abspath(os.path.join(base, str(pattern or "")))
     matches = _glob.glob(pattern, root_dir=base, recursive=True)
     return json.dumps({"ok": True, "files": sorted(matches)[:500]})
 

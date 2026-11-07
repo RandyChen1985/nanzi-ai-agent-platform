@@ -1136,37 +1136,35 @@ def _preseed_session_skills(
             logger.warning("[workspace] Pre-seed skip unreadable skill %s: %s", skill_path, exc)
             continue
 
-        # parse name/description
+        # 来源 id：清理被禁技能时要按 id 复核（否则"逐字节复制平台技能"的个人技能会因为
+        # 哈希相同被一起删掉），同源改版时也靠它找到旧目录做就地替换。
+        skill_id = os.path.basename(os.path.normpath(skill_path))
+
+        # 名字：先生效 AgentScope 自己的 frontmatter 解析（seed 目录名要与它一致），
+        # 解析不出再走平台唯一口径——此前这里自带一份更严格的正则，同一条 SKILL.md
+        # 在技能列表里正常、在预铺里被判「缺 frontmatter」而丢弃。
         name: str | None = None
         if frontmatter is not None:
             try:
                 parsed = frontmatter.loads(content_str)
                 name = str(parsed.get("name") or "") or None
-                description = str(parsed.get("description") or "") or None
             except Exception:
                 name = None
-                description = None
-        else:
-            # Fallback: minimal line-based frontmatter parse for name only.
-            description = None
-            match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content_str, re.DOTALL)
-            if match:
-                for line in match.group(1).splitlines():
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        if key.strip().lower() == "name":
-                            name = value.strip().strip('"').strip("'")
-        if not name or not description:
-            logger.warning(
-                "[workspace] Pre-seed skip %s: SKILL.md missing name/description",
-                skill_path,
-            )
+        if not name:
+            from app.utils.skill_metadata import parse_skill_frontmatter_text
+
+            name = str(parse_skill_frontmatter_text(skill_id, content_str).get("name") or "") or None
+
+        # name 是唯一硬要求（决定 seed 目录名与面向模型的名字），且可用来源 ID 兜底。
+        # description 只用于展示，此前它也是硬要求，于是「第三方导入 / 手写、没写 description」
+        # 的技能被静默跳过——而 seed 一旦非空 AgentScope 就不再自己复制，这些技能在沙箱里
+        # 彻底不存在，提示词却仍告诉模型它有这么个技能。
+        name = name or skill_id
+        if not name:
+            logger.warning("[workspace] Pre-seed skip %s: SKILL.md has no usable name", skill_path)
             continue
 
         skill_hash = hashlib.sha256(content_str.encode("utf-8")).hexdigest()
-        # 来源 id：清理被禁技能时要按 id 复核（否则"逐字节复制平台技能"的个人技能会因为
-        # 哈希相同被一起删掉），同源改版时也靠它找到旧目录做就地替换。
-        skill_id = os.path.basename(os.path.normpath(skill_path))
         origin_dir = _same_origin_skill_dir(existing, skill_id)
 
         if skill_hash in existing_hashes:
@@ -1332,6 +1330,17 @@ DOCKER_WORKSPACE_IDLE_SECONDS = 15 * 60
 #: 把容器一直留到进程重启（那才是真的泄漏）。
 DOCKER_WORKSPACE_REFERENCED_IDLE_MULTIPLIER = 4.0
 DOCKER_WORKSPACE_REAPER_INTERVAL_SECONDS = 60
+#: Docker 沙箱 cgroups 上限的默认值（配置项留空时生效）。DooD 部署下沙箱是宿主机上
+#: 与平台平级的兄弟容器，不设限时一次内存爆破或 fork bomb 会把整台宿主机（含平台
+#: 进程、MySQL、Redis）打进 OOM；这几个默认值要「够日常 pip/uv 构建用，又挡得住
+#: 打满整机」。配置项填 0 表示该维度显式不限制。
+DOCKER_SANDBOX_DEFAULT_MEMORY_MB = 2048
+DOCKER_SANDBOX_DEFAULT_CPU_CORES = 2
+DOCKER_SANDBOX_DEFAULT_PIDS_LIMIT = 512
+#: 三个上限对应的系统配置键（category=sandbox，管理台可见可改）。
+DOCKER_SANDBOX_MEMORY_LIMIT_KEY = "sandbox_docker_memory_limit_mb"
+DOCKER_SANDBOX_CPU_LIMIT_KEY = "sandbox_docker_cpu_limit"
+DOCKER_SANDBOX_PIDS_LIMIT_KEY = "sandbox_docker_pids_limit"
 KNOWN_SANDBOX_POLICIES = frozenset(
     {
         SANDBOX_POLICY_LOCAL,
@@ -1427,6 +1436,70 @@ async def resolve_sandbox_logical_root(
         return remote or DOCKER_WORKSPACE_LOGICAL_ROOT
     return SANDBOX_POLICY_LOGICAL_ROOTS.get(normalized)
 
+
+def _sandbox_limit_number(raw: str | None, default: float) -> float:
+    """解析一个非负数值型上限配置：空/非法 → 回退默认，0 → 显式不限制。
+
+    「空」必须回退默认而不是当成不限制：管理台清空输入框是很常见的误操作，
+    把它读成「不限」等于悄悄关掉整台宿主机的保护。
+    """
+    text = str(raw if raw is not None else "").strip()
+    if not text:
+        return float(default)
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        logger.warning(
+            "[workspace] 沙箱资源上限配置 %r 不是数字，回退默认值 %s", text, default
+        )
+        return float(default)
+    if value <= 0:
+        return 0.0
+    return value
+
+
+async def _resolve_docker_sandbox_resource_limits(
+    config_overrides: Mapping[str, Any] | None = None,
+) -> dict[str, int]:
+    """读出 Docker 沙箱的 cgroups 上限，折算成 ``HostConfig`` 需要的整数。
+
+    返回的键是 ``memory_bytes`` / ``nano_cpus`` / ``pids_limit``；值为 0 的维度
+    不下发（保持 Docker 默认的不限制），便于运维按部署规格调整或临时放开。
+    """
+    memory_mb = _sandbox_limit_number(
+        await _sandbox_config_value(
+            DOCKER_SANDBOX_MEMORY_LIMIT_KEY,
+            str(DOCKER_SANDBOX_DEFAULT_MEMORY_MB),
+            config_overrides,
+        ),
+        DOCKER_SANDBOX_DEFAULT_MEMORY_MB,
+    )
+    cpu_cores = _sandbox_limit_number(
+        await _sandbox_config_value(
+            DOCKER_SANDBOX_CPU_LIMIT_KEY,
+            str(DOCKER_SANDBOX_DEFAULT_CPU_CORES),
+            config_overrides,
+        ),
+        DOCKER_SANDBOX_DEFAULT_CPU_CORES,
+    )
+    pids_limit = _sandbox_limit_number(
+        await _sandbox_config_value(
+            DOCKER_SANDBOX_PIDS_LIMIT_KEY,
+            str(DOCKER_SANDBOX_DEFAULT_PIDS_LIMIT),
+            config_overrides,
+        ),
+        DOCKER_SANDBOX_DEFAULT_PIDS_LIMIT,
+    )
+
+    limits: dict[str, int] = {}
+    if memory_mb:
+        # 1MiB = 1024*1024：配置按 MB 填，下发按字节。
+        limits["memory_bytes"] = int(memory_mb * 1024 * 1024)
+    if cpu_cores:
+        limits["nano_cpus"] = int(cpu_cores * 1_000_000_000)
+    if pids_limit:
+        limits["pids_limit"] = int(pids_limit)
+    return limits
 
 
 def _resolve_docker_sandbox_host_workdir(
@@ -2350,6 +2423,9 @@ async def _policy_docker_workspace(
         workspace_root=workspace_root,
         sandbox_user_key=sandbox_user_key,
     )
+    # cgroups 上限必须在创建容器时下发（改完只对新容器生效）：已有容器按空闲回收
+    # 重建后才带上新值。
+    resource_limits = await _resolve_docker_sandbox_resource_limits()
 
     extra_bind_mounts: list[tuple[str, str, str]] = []
     public_docs_source: str | None = None
@@ -2413,6 +2489,7 @@ async def _policy_docker_workspace(
         workspace = build_docker_workspace_with_extra_binds(
             DockerWorkspace,
             extra_bind_mounts=extra_bind_mounts,
+            resource_limits=resource_limits,
             **kwargs,
         )
         try:
@@ -6453,8 +6530,8 @@ async def resolve_sandbox_bash_tool(sandbox_ws: Any) -> Any | None:
     real_ws = sandbox_ws
     if isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
         real_ws = await sandbox_ws.ensure_ready()
-    list_mcps = getattr(real_ws, "list_mcps", None)
-    return await _sandbox_bash_tool_from_mcps(list_mcps() if callable(list_mcps) else None)
+    tool, _ = await _resolve_sandbox_bash_tool(real_ws)
+    return tool
 
 
 def _normalize_docker_mount_mappings(

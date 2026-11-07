@@ -18,7 +18,11 @@ from app.core.context import (
     set_execution_options_context,
 )
 from app.core.orm import AsyncSessionLocal
-from app.services.ai.agent_manager import AgentManagerService
+from app.services.ai.agent_manager import (
+    MAIN_GENERAL_AGENT_ID,
+    MAIN_GENERAL_AGENT_NAMES,
+    AgentManagerService,
+)
 from app.services.permission_service import PermissionService
 from app.services.ai.subagent_protocol import (
     EMPTY_SUB_AGENT_RESULT_MESSAGE,
@@ -452,6 +456,47 @@ async def load_delegable_system_agent_candidates(session: Any) -> List[Any]:
 DELEGATION_TOOL_NAME = "sub_agent_call"
 DELEGATION_BATCH_TOOL_NAME = "sub_agent_batch_call"
 
+
+def is_main_general_agent_target(agent: Any) -> bool:
+    """该智能体是否是主助手（系统兜底入口）——它**不能**作为委派目标。
+
+    为什么必须排除：
+
+    1. 主助手是 ``AssistantAgentRunner`` 的兜底入口，tools 里通常没有 ``sub_agent_call``，
+       靠 ``has_delegation_tool`` 的 ``is_main_general_agent`` 特判**隐式挂载**委派工具。
+       别的智能体把它当子专家委派进来时，它的执行深度已经是 1（``MAX_DELEGATION_DEPTH``），
+       一旦按自身能力再委派只会撞 ``depth_exceeded``，白跑一轮。
+    2. 语义上它是「无法明确分类的请求」的落点，把它当子专家等于让专家把问题再丢回万金油，
+       既拿不到更专的答案，又白白多一轮上下文。
+
+    判定同时认固定 ID 与兼容 slug：主助手被改名、或被历史数据记为 ``assistant`` /
+    ``general-chat`` 时同样挡得住（与 ``AgentManagerService._is_main_general_agent_record``
+    以及运行时 ``is_main_general_agent`` 同一份口径）。
+    """
+    if agent is None:
+        return False
+    agent_id = str(getattr(agent, "id", "") or "").strip()
+    name = str(getattr(agent, "name", "") or "").strip().lower()
+    return agent_id == MAIN_GENERAL_AGENT_ID or name in MAIN_GENERAL_AGENT_NAMES
+
+
+#: 调用参数命中这些键（名字归一化后）即视为主助手：``main`` / ``assistant`` /
+#: ``general-chat`` 与固定 ID。归一化与 ``_normalize_agent_name`` 同口径（小写、连字符转下划线）。
+_MAIN_AGENT_NAME_KEYS = frozenset(
+    {str(name or "").strip().lower().replace("-", "_") for name in MAIN_GENERAL_AGENT_NAMES}
+    | {MAIN_GENERAL_AGENT_ID.strip().lower().replace("-", "_")}
+)
+
+
+def requested_agent_is_main(agent_name: Any) -> bool:
+    """按调用参数判断目标是不是主助手——不依赖候选池，名字本身就是身份。
+
+    候选池已由 ``filter_delegable_agents`` 剔掉 main，若只靠候选匹配，模型点名 ``main``
+    时会被兜底成「未找到该智能体」或「不在名单内」，用户看不懂真正原因。
+    """
+    return str(agent_name or "").strip().lower().replace("-", "_") in _MAIN_AGENT_NAME_KEYS
+
+
 # 名单只有一份（见 ``resolve_delegation_allowlist``），批量委派内部复用
 # ``sub_agent_call`` 时不再需要「当前是谁在调」的 ContextVar——那套机制存在的前提
 # 是两个工具各有一份名单，现在前提没了，留着只会让后来者以为还能分开配。
@@ -646,10 +691,18 @@ async def filter_delegable_agents(
     深度改口为「只能用个人能力」，不会推它去撞 depth_exceeded。因此**别在这里补一道
     排除**：那会把「未配置白名单 = 系统级全量」和「显式白名单」两个口径同时改窄，
     且没有任何界面提示。
+
+    但**主助手（main）必须排除**，这与团主专家完全相反：它不是「另一个专家」，而是
+    整个系统的兜底入口，被委派进来时深度已是 1、自身又被隐式挂了委派工具，只会撞
+    ``depth_exceeded``；语义上也只是把问题丢回万金油。见 ``is_main_general_agent_target``。
+    排除放在权限层（而不是候选加载处），是为了让「未配置白名单」和「白名单里写了 main」
+    两条路径都收敛到同一结果。
     """
     delegable: List[Any] = []
     for agent in agents or []:
         if not getattr(agent, "is_enabled", False):
+            continue
+        if is_main_general_agent_target(agent):
             continue
         is_system = bool(getattr(agent, "is_system", False))
         if not is_system and not allow_personal:
@@ -1217,6 +1270,23 @@ async def sub_agent_call(
                 error_code="self_delegation",
             ).to_tool_text()
 
+        # 主助手是系统兜底入口，不能作为委派目标（候选池已在权限层剔除，这里给出准确原因）。
+        # 放在 self 判定之后：main 自己调自己仍然先报 self_delegation。
+        if requested_agent_is_main(agent_name):
+            return SubAgentResult(
+                status=SubAgentResultStatus.FAILED,
+                target_agent_name=(agent_name or "").strip() or None,
+                content=(
+                    "错误：`main`（主助手）是系统兜底入口，不能作为委派目标。"
+                    "请从当前可委派的专家智能体中选择；若只是需要通用对话，直接回答用户即可，"
+                    "不必委派。"
+                ),
+                run_id=run_id,
+                parent_trace_id=parent_trace_id,
+                parent_conversation_id=main_ctx.conversation_id,
+                error_code="main_agent_not_delegable",
+            ).to_tool_text()
+
         # 三层结果都要：可委派的、通过权限但未就绪的、连权限都没过的，分别对应三种错误。
         candidate_agents, permitted_agents, delegable_agents = await resolve_delegable_agent_stages(
             session,
@@ -1426,6 +1496,19 @@ async def sub_agent_call(
         started_at=lifecycle_started_at,
     )
 
+    # 数据集范围：子智能体自己的工具级绑定优先；没有绑定就继承主上下文。
+    # 必须与 schema 检索、执行门禁同一口径，否则委派链路会再次出现
+    # 「schema 给 A、执行按主上下文手选的 B 判定」的互斥。
+    from app.services.ai.metadata_dataset_scope import (
+        extract_bound_metadata_dataset_ids,
+    )
+
+    sub_bound_metadata_ids = extract_bound_metadata_dataset_ids(
+        getattr(target_config, "tools", None)
+    )
+    if not sub_bound_metadata_ids:
+        sub_bound_metadata_ids = list(main_ctx.bound_metadata_dataset_ids or [])
+
     # 创建一个专属子上下文，隔离历史，但保留用户信息和 API Key 供子工具鉴权
     sub_ctx = AgentContext(
         agent_id=str(target_config.agent_id),
@@ -1441,6 +1524,7 @@ async def sub_agent_call(
         # 不显式继承就等于「主助手选了数据集、委派出去的专家不受限」，
         # 而 ChatBI 恰好几乎总是通过委派执行。
         metadata_dataset_ids=list(main_ctx.metadata_dataset_ids or []),
+        bound_metadata_dataset_ids=sub_bound_metadata_ids,
         conversation_id=child_session_id,
         parent_conversation_id=main_ctx.conversation_id,
         child_session_id=child_session_id,

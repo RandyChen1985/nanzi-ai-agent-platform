@@ -329,11 +329,16 @@ async def _migrate_server_name_references(
         cached_by_name[renamed_name] = tool
         renamed_cache.append((tool.id, renamed_name))
 
-    version_result = await db.execute(select(AIAgentVersion))
-    for version in version_result.scalars().all():
-        renamed_version_tools = _rename_tool_reference(version.tools, old_name, new_name)
-        if renamed_version_tools != version.tools:
-            version.tools = renamed_version_tools
+    # 只取 (id, tools)：全字段加载会把每个版本的提示词/模型配置都读进内存。
+    version_result = await db.execute(select(AIAgentVersion.id, AIAgentVersion.tools))
+    for version_id, tools_config in version_result.all():
+        renamed_version_tools = _rename_tool_reference(tools_config, old_name, new_name)
+        if renamed_version_tools != tools_config:
+            await db.execute(
+                update(AIAgentVersion)
+                .where(AIAgentVersion.id == version_id)
+                .values(tools=renamed_version_tools)
+            )
     return renamed_cache
 
 
@@ -482,14 +487,41 @@ async def _load_verify_saved_server(
     return server
 
 
+def _url_origin(value: Optional[str]) -> str:
+    """取 URL 的 scheme://host:port，用于判断「是不是同一个后端」。"""
+    from urllib.parse import urlsplit
+
+    try:
+        parsed = urlsplit(str(value or "").strip())
+    except ValueError:
+        return ""
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+
 def _build_verify_auth_headers(
     server: Optional[McpServer],
     data: McpVerifyRequest,
 ) -> Dict[str, str]:
-    """构造探测请求的出站 Header；编辑态未改动的凭据沿用已保存配置。"""
+    """构造探测请求的出站 Header；编辑态未改动的凭据沿用已保存配置。
+
+    注意这是**刻意**的设计（见 tests/api/test_mcp_verify_saved_credentials.py）：
+    改地址后仍复用已保存 Token，避免用户每次调地址都要重填凭据。代价是「地址写错一个
+    字符，探测就会把 Token 发到别的服务器」——分享安装侧的口径相反（换源即丢凭据）。
+    这里只补一条告警日志，方便排查「凭据被发到了哪里」，不改变产品行为。
+    """
     if server is None:
         headers = _parse_auth_headers(data.auth_headers)
     else:
+        submitted_origin = _url_origin(getattr(data, "sse_url", None))
+        saved_origin = _url_origin(server.sse_url)
+        if submitted_origin and submitted_origin != saved_origin:
+            logger.info(
+                "[MCP] Verify 目标源已变更（%s → %s），仍复用已保存凭据（产品口径）",
+                saved_origin or "-",
+                submitted_origin,
+            )
         headers = resolve_mcp_auth_headers(server)
         if "auth_headers" in data.model_fields_set and data.auth_headers:
             headers.update(_parse_auth_headers(data.auth_headers))
@@ -525,6 +557,7 @@ def _build_verify_user_assertion_headers(
             status_code=400,
             detail="开启用户身份传递后需先保存 MCP 生成签名密钥，保存后再测试连接",
         )
+
     try:
         return build_mcp_user_assertion_headers(
             server,
@@ -939,6 +972,20 @@ async def create_echo_test_mcp(
             )
         ).scalar_one_or_none()
         if slow_tool is None:
+            # 与 echo 同一处理：服务被改过名之后，工具行还挂在固定主键上、名字是旧的。
+            # 只按名字查不到就新增，会撞主键直接 500。先按 tool_id 认领回来改名。
+            slow_stale = (
+                await db.execute(
+                    select(McpToolCache).where(
+                        McpToolCache.server_id == server_id,
+                        McpToolCache.id == slow_tool_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if slow_stale is not None:
+                slow_stale.tool_name = slow_tool_name
+                slow_tool = slow_stale
+        if slow_tool is None:
             db.add(
                 McpToolCache(
                     id=slow_tool_id,
@@ -1090,13 +1137,11 @@ async def update_mcp_server(
     if duplicate_name:
         raise HTTPException(status_code=400, detail=f"服务显示名称 '{server_name}' 已存在，请修改名称后保存")
 
+    renamed_tools: list[tuple[str, str]] = []
+    rename_owner_id = server.user_id if server.scope == "personal" else None
     if server.server_name != server_name:
         renamed_tools = await _migrate_server_name_references(
             db, server_id, server.server_name, server_name
-        )
-        await _sync_renamed_tools_to_conversations(
-            renamed_tools,
-            owner_id=server.user_id if server.scope == "personal" else None,
         )
     server.server_name = server_name
     server.sse_url = data.sse_url
@@ -1129,6 +1174,17 @@ async def update_mcp_server(
         server.remark = _normalized_remark(data.remark)
     await db.commit()
     _clear_runtime_tool_cache()
+
+    # 会话挂载（Redis）必须在 commit 之后同步：先改 Redis 再提交，一旦提交失败就会出现
+    # 「库里还是旧名、会话里已经是新名」的错位，且刷新页面也无法自愈。
+    if renamed_tools:
+        try:
+            await _sync_renamed_tools_to_conversations(
+                renamed_tools,
+                owner_id=rename_owner_id,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Syncing renamed tools to conversations failed for {server_id}: {e}")
 
     # 会话在建立时缓存了 sse_url 与解密后的 Header，唯一兜底是 300s 空闲回收；
     # 改了地址 / Token / 断言配置后必须先淘汰，否则接下来的同步与调用还在用旧连接。
@@ -1195,17 +1251,18 @@ async def delete_mcp_server(
     if server.scope == "personal" and server.user_id != _get_user_id(user):
         raise HTTPException(status_code=403, detail="无法删除其他用户的私有 MCP 服务")
 
-    # 先把该服务的工具名留下来：缓存行删除后，智能体版本里的旧引用就成了
-    # 「运行时解析不到、UI 里也看不到」的幽灵配置，用户连取消勾选的入口都没有。
-    tool_names = {
-        row[0]
-        for row in (
-            await db.execute(
-                select(McpToolCache.tool_name).where(McpToolCache.server_id == server_id)
+    # 先把该服务的工具名/工具 id 留下来：缓存行删除后，智能体版本里的旧引用就成了
+    # 「运行时解析不到、UI 里也看不到」的幽灵配置，用户连取消勾选的入口都没有；
+    # 会话资源里挂着的清单同理（Redis 侧，必须按 id 单独摘）。
+    cached_rows = (
+        await db.execute(
+            select(McpToolCache.id, McpToolCache.tool_name).where(
+                McpToolCache.server_id == server_id
             )
-        ).all()
-        if row[0]
-    }
+        )
+    ).all()
+    tool_names = {row[1] for row in cached_rows if row[1]}
+    tool_ids = [row[0] for row in cached_rows if row[0]]
 
     # 1. Cascade delete associated tools first
     await db.execute(delete(McpToolCache).where(McpToolCache.server_id == server_id))
@@ -1223,6 +1280,19 @@ async def delete_mcp_server(
         await McpClientService.evict_session(server_id)
     except Exception as e:
         logger.warning(f"Evicting session failed during delete for server {server_id}: {e}")
+
+    # Redis 侧的会话挂载放在 commit 之后：库已经落定，摘除失败也只是「残留可重试」，
+    # 提前摘除则可能在提交失败时把用户的挂载白丢一次。
+    try:
+        from app.services.conversation_resource_service import ConversationResourceService
+
+        await ConversationResourceService.remove_mcp_tools(
+            owner_id=server.user_id if server.scope == "personal" else None,
+            tool_ids=tool_ids,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Purge conversation mounts failed for server {server_id}: {e}")
+
     return {
         "message": "Server and associated tools deleted",
         "removed_tool_names": sorted(tool_names),
@@ -1250,7 +1320,11 @@ async def cleanup_mcp_server_stale_tools(
         raise HTTPException(status_code=404, detail="Server not found")
     _ensure_server_control_access(server, user)
 
-    result = await cleanup_stale_tools(db, server_id)
+    result = await cleanup_stale_tools(
+        db,
+        server_id,
+        owner_id=server.user_id if server.scope == "personal" else None,
+    )
     if result["removed_count"] == 0:
         return {
             "status": "success",
@@ -1619,7 +1693,9 @@ async def get_mcp_server_outbound_logs(
         McpOutboundAuditLog.created_at >= start_time,
     ]
     if tool_name:
-        filters.append(McpOutboundAuditLog.tool_name == tool_name)
+        # 与全平台日志同一口径：库里存的是裸工具名，但用户常按片段搜索，
+        # 精确匹配会让「输一半」看起来像没日志。
+        filters.append(McpOutboundAuditLog.tool_name.ilike(f"%{tool_name}%"))
     if status and status != "all":
         filters.append(McpOutboundAuditLog.status == status)
 

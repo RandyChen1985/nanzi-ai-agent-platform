@@ -47,6 +47,16 @@ from app.models.agent_share import (
     AgentShareRequest,
 )
 
+# ai_agents.name 是 String(100)，分享副本自动生成的名字必须自己收口，
+# 否则 100 字符的源名拼上 -copy 就是 105，插入时直接 DataError。
+AGENT_NAME_MAX_LENGTH = 100
+
+
+def _fit_agent_name(base: str, suffix: str = "") -> str:
+    budget = max(1, AGENT_NAME_MAX_LENGTH - len(suffix))
+    return f"{base[:budget]}{suffix}"
+
+
 SNAPSHOT_VERSION = 1
 SHARE_MESSAGE_MAX = 500
 
@@ -675,7 +685,9 @@ class AgentShareService:
         """
         from app.services.ai.agent_manager import AgentManagerService
 
-        normalized = AgentManagerService.normalize_agent_name(base)
+        normalized = AgentManagerService.normalize_agent_name(base)[
+            :AGENT_NAME_MAX_LENGTH
+        ]
         if not normalized:
             normalized = "agent"
 
@@ -683,22 +695,24 @@ class AgentShareService:
             if not await AgentManagerService.find_agent_name_conflict(session, normalized):
                 return normalized
             for index in range(2, 100):
-                candidate = f"{normalized}-{index}"
+                candidate = _fit_agent_name(normalized, f"-{index}")
                 if not await AgentManagerService.find_agent_name_conflict(session, candidate):
                     return candidate
-            return f"{normalized}-{uuid.uuid4().hex[:6]}"
+            return _fit_agent_name(normalized, f"-{uuid.uuid4().hex[:6]}")
 
         # 去掉可能已经带的 -copy / -copy-N，避免出现 xxx-copy-copy
-        stripped = re.sub(r"-copy(-\d+)?$", "", normalized) or "agent"
+        stripped = re.sub(r"-copy(-\d+)?$", "", normalized)[
+            :AGENT_NAME_MAX_LENGTH
+        ] or "agent"
 
-        candidate = f"{stripped}-copy"
+        candidate = _fit_agent_name(stripped, "-copy")
         if not await AgentManagerService.find_agent_name_conflict(session, candidate):
             return candidate
         for index in range(2, 100):
-            candidate = f"{stripped}-copy-{index}"
+            candidate = _fit_agent_name(stripped, f"-copy-{index}")
             if not await AgentManagerService.find_agent_name_conflict(session, candidate):
                 return candidate
-        return f"{stripped}-{uuid.uuid4().hex[:6]}"
+        return _fit_agent_name(stripped, f"-{uuid.uuid4().hex[:6]}")
 
     @staticmethod
     async def _drop_forbidden_skills(
@@ -823,7 +837,7 @@ class AgentShareService:
         ``total`` 两个数是给智能体中心的 tab 数字用的——那里每个 tab 的角标都是
         「这个视图里有多少条」，混进「待处理」会让人以为收到了 2 个智能体。
         """
-        from sqlalchemy import func
+        from sqlalchemy import case, func, or_, update
 
         _, _, user_id = AgentShareService.resolve_actor(user)
         if user_id is None:
@@ -835,27 +849,50 @@ class AgentShareService:
             }
 
         # 过期的要先落状态，否则角标会把已经失效的记录也算进去。
-        # 上面两个方法已经各自 commit 过，这里不用再处理。
-        await AgentShareService.list_received(session, user, only_pending=True)
-        await AgentShareService.list_sent_shares(session, user)
-
-        async def _count(*conditions) -> int:
-            result = await session.execute(
-                select(func.count()).select_from(AgentShareRequest).where(*conditions)
+        # 不能为了判定过期把整行 ORM 实体读出来——``snapshot`` 是 LONGTEXT，
+        # 一次菜单刷新会把所有分享快照都搬进内存。这里只更新状态。
+        now = datetime.now()
+        await session.execute(
+            update(AgentShareRequest)
+            .where(
+                AgentShareRequest.status == STATUS_PENDING,
+                AgentShareRequest.expires_at.is_not(None),
+                AgentShareRequest.expires_at <= now,
+                or_(
+                    AgentShareRequest.recipient_user_id == user_id,
+                    AgentShareRequest.owner_user_id == user_id,
+                ),
             )
-            return int(result.scalar() or 0)
+            .values(status=STATUS_EXPIRED, responded_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        # 与原实现一致：无论是否真的过期，都结束这次写事务，避免把
+        # 过期状态留在未提交事务里随连接归还而回滚。
+        await session.commit()
 
+        # 四个角标一次聚合，避免 4 条 count + 2 次全行读取。
+        received = AgentShareRequest.recipient_user_id == user_id
+        sent = AgentShareRequest.owner_user_id == user_id
+        pending = AgentShareRequest.status == STATUS_PENDING
+        row = (
+            await session.execute(
+                select(
+                    func.coalesce(
+                        func.sum(case((received & pending, 1), else_=0)), 0
+                    ),
+                    func.coalesce(func.sum(case((received, 1), else_=0)), 0),
+                    func.coalesce(
+                        func.sum(case((sent & pending, 1), else_=0)), 0
+                    ),
+                    func.coalesce(func.sum(case((sent, 1), else_=0)), 0),
+                ).where(or_(received, sent))
+            )
+        ).one()
         return {
-            "received_pending": await _count(
-                AgentShareRequest.recipient_user_id == user_id,
-                AgentShareRequest.status == STATUS_PENDING,
-            ),
-            "sent_pending": await _count(
-                AgentShareRequest.owner_user_id == user_id,
-                AgentShareRequest.status == STATUS_PENDING,
-            ),
-            "received_total": await _count(AgentShareRequest.recipient_user_id == user_id),
-            "sent_total": await _count(AgentShareRequest.owner_user_id == user_id),
+            "received_pending": int(row[0] or 0),
+            "received_total": int(row[1] or 0),
+            "sent_pending": int(row[2] or 0),
+            "sent_total": int(row[3] or 0),
         }
 
     # ------------------------------------------------------------------ 作废

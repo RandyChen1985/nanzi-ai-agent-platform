@@ -159,7 +159,7 @@ async def test_router_emits_safe_progress_stages_without_raw_reasoning():
             return_value=object(),
         ), \
         patch("app.services.ai.router_service.chat_client_from_handle", return_value=mock_chat):
-        result = await router.route_query("帮我写一段说明", on_progress=on_progress)
+        result = await router.route_query("帮我写一段说明", on_progress=on_progress, is_admin=True)
 
     assert result is not None
     assert [event["id"] for event in events] == [
@@ -288,7 +288,7 @@ async def test_router_context_awareness():
             user_input = "Show me the trend for it." # 'it' refers to IDC Room 1 temperature
             
             # We want to see if the system prompt contains the history
-            await router.route_query(user_input, history=history)
+            await router.route_query(user_input, history=history, is_admin=True)
             
             # Check the call to LLM
             called_messages = mock_chat.generate_text.call_args[0][0]
@@ -329,7 +329,7 @@ async def test_router_heuristic_bypass_history():
         # This input previously triggered heuristic
         user_input = "查一下机房温度" 
         
-        result = await router.route_query(user_input, history=[{"role": "user", "content": "hello"}])
+        result = await router.route_query(user_input, history=[{"role": "user", "content": "hello"}], is_admin=True)
         
         assert result is not None
         assert result.agent_id == "1"

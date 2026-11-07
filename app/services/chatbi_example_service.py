@@ -624,7 +624,7 @@ class ExampleService:
                         return filtered_examples
                     
                     logger.info("[ExampleSearch] Local Redis search returned empty or no valid SQL examples passed threshold. Falling back to MySQL LIKE search.")
-                    fb = await ExampleService._search_mysql_fallback(search_query, dataset_id, top_k)
+                    fb = await ExampleService._search_mysql_fallback(search_query, dataset_id, top_k, require_sql=require_sql)
                     _apply_stats({
                         "mysql_fallback_hits": len(fb),
                         "mysql_keywords": search_query.split(),
@@ -632,7 +632,7 @@ class ExampleService:
                     return fb
                 except Exception as local_err:
                     logger.warning(f"[ExampleSearch] Local Redis search failed: {local_err}. Falling back to MySQL LIKE search.")
-                    fb = await ExampleService._search_mysql_fallback(search_query, dataset_id, top_k)
+                    fb = await ExampleService._search_mysql_fallback(search_query, dataset_id, top_k, require_sql=require_sql)
                     _apply_stats({
                         "mysql_fallback_hits": len(fb),
                         "mysql_keywords": search_query.split(),
@@ -728,7 +728,7 @@ class ExampleService:
             return []
 
     @staticmethod
-    async def _search_mysql_fallback(query: str, dataset_id: int = None, top_k: int = 5) -> List[Dict[str, Any]]:
+    async def _search_mysql_fallback(query: str, dataset_id: int = None, top_k: int = 5, require_sql: bool = True) -> List[Dict[str, Any]]:
         """
         MySQL keyword search fallback for ChatBI examples.
         """

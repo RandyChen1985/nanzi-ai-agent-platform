@@ -119,8 +119,10 @@ const filteredServers = computed(() => {
   if (!query) return sortServers(base)
   return sortServers(base.filter((s: any) => {
     const nameMatch = (s.server_name || '').toLowerCase().includes(query)
-    const descMatch = (s.description || '').toLowerCase().includes(query)
-    const urlMatch = (s.url || '').toLowerCase().includes(query)
+    // 接口字段是 remark / sse_url（McpServerResponse）；早先这里写成 description / url，
+    // 两个都不存在，按备注或地址搜索一律 0 结果。
+    const descMatch = (s.remark || '').toLowerCase().includes(query)
+    const urlMatch = (s.sse_url || '').toLowerCase().includes(query)
     const toolMatch = Array.isArray(s.tools) && s.tools.some((t: any) =>
       (t.name || '').toLowerCase().includes(query) || (t.description || '').toLowerCase().includes(query)
     )
@@ -2489,7 +2491,7 @@ onMounted(fetchServers)
                   :readonly="isEditing && !authorizationEditing"
                   placeholder="请输入 Token"
                   aria-label="Authorization Token"
-                  class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primar read-only:bg-gray-100y"
+                  class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary read-only:bg-gray-100"
                   @input="handleAuthorizationInput"
                 />
                 <button
@@ -2527,8 +2529,8 @@ onMounted(fetchServers)
                 <div class="max-h-[180px] space-y-2 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 p-3 custom-scrollbar">
                   <div v-for="(pair, index) in headerPairs" :key="index" class="flex items-center gap-2">
                     <template v-if="pair.existing && !pair.editing && !pair.removed">
-                      <input :value="pair.key" readonly class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-non read-only:bg-gray-100e" />
-                      <input :value="pair.maskedValue || '********'" readonly type="password" class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-non read-only:bg-gray-100e" />
+                      <input :value="pair.key" readonly class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-none read-only:bg-gray-100" />
+                      <input :value="pair.maskedValue || '********'" readonly type="password" class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-none read-only:bg-gray-100" />
                       <button type="button" class="shrink-0 rounded border border-indigo-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50" @click="editHeaderPair(index)">编辑</button>
                       <button type="button" class="shrink-0 p-1.5 text-gray-400 hover:text-red-500" aria-label="删除 Header" @click="removeHeaderPair(index)">
                         <TrashIcon class="h-4 w-4" />
@@ -2540,7 +2542,7 @@ onMounted(fetchServers)
                       <button type="button" class="shrink-0 text-[10px] font-semibold text-indigo-700 hover:underline" @click="restoreHeaderPair(index)">撤销</button>
                     </template>
                     <template v-else>
-                      <input v-model="pair.key" :readonly="pair.existing" placeholder="名称（如 X-Tenant）" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primar read-only:bg-gray-100y" @input="pair.changed = true; authHeadersTouched = true" />
+                      <input v-model="pair.key" :readonly="pair.existing" placeholder="名称（如 X-Tenant）" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary read-only:bg-gray-100" @input="pair.changed = true; authHeadersTouched = true" />
                       <input v-model="pair.value" :type="pair.existing ? 'password' : 'text'" :placeholder="pair.existing ? '请输入新值' : '内容（Value）'" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary" @input="pair.changed = true; authHeadersTouched = true" />
                       <button v-if="pair.existing" type="button" class="shrink-0 rounded border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-gray-600 hover:bg-gray-50" @click="cancelHeaderPairEdit(index)">取消</button>
                       <button v-else type="button" class="shrink-0 p-1.5 text-gray-400 hover:text-red-500" aria-label="删除 Header" @click="removeHeaderPair(index)">
