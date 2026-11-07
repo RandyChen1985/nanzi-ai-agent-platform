@@ -1554,7 +1554,10 @@ async def sync_ragflow_datasets(
     client = RagFlowClient(config_prefix="knowledge_ragflow")
     metadata_service = KnowledgeBaseMetadataService(db)
     try:
-        datasets = await client.list_datasets(page=1, page_size=500)
+        # 必须取全集：只拉前 500 个时，排在后面的库永远同步不到元数据表
+        from app.services.ai.knowledge_utils import load_all_ragflow_datasets
+
+        datasets = await load_all_ragflow_datasets(client)
         result = await metadata_service.sync_from_ragflow_datasets(
             datasets,
             user_name=user.get("user_name"),

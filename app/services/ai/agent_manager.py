@@ -585,9 +585,19 @@ class AgentManagerService:
             if agent_id:
                 stmt = stmt.where(or_(AIAgent.id == agent_id, AIAgent.name == agent_id))
             elif agent_name:
-                stmt = stmt.where(AIAgent.name == agent_name)
+                # name 在 schema 上有唯一约束，但历史库/绕过约束写入可能存在同名记录；显式让
+                # 系统智能体优先并只取 1 行，避免 scalar_one_or_none 因多行抛 MultipleResultsFound 变成 500。
+                stmt = (
+                    stmt.where(AIAgent.name == agent_name)
+                    .order_by(AIAgent.is_system.desc(), AIAgent.is_enabled.desc())
+                    .limit(1)
+                )
             else:
-                stmt = stmt.where(AIAgent.name == 'chat-bi')
+                stmt = (
+                    stmt.where(AIAgent.name == 'chat-bi')
+                    .order_by(AIAgent.is_system.desc(), AIAgent.is_enabled.desc())
+                    .limit(1)
+                )
             
             result = await session.execute(stmt)
             agent = result.scalar_one_or_none()

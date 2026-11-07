@@ -329,6 +329,7 @@ async def test_rename_skill_syncs_personal_publications(skill_tree, monkeypatch)
         old_skill_id="old-skill",
         new_skill_id="new-skill",
         scope="personal",
+        actor={"user_id": 7},
     )
 
     assert report["skill_id"] == "new-skill"
@@ -338,6 +339,8 @@ async def test_rename_skill_syncs_personal_publications(skill_tree, monkeypatch)
     assert report["warnings"] == []
     assert (skill_tree / "new-skill" / "SKILL.md").is_file()
     lineage.assert_awaited_once()
+    # 个人技能只改自己的发布谱系：作者边界必须一路传到 SQL 层
+    assert lineage.await_args.kwargs["owner_id"] == 7
     # 个人技能不该去动智能体白名单（个人技能不参与公共技能白名单）
     assert "agents" not in report["synced"]
 
@@ -460,12 +463,77 @@ async def test_sync_publication_lineage_only_touches_source_for_personal():
     session = _FakeDbSession(_FakeResult([publication]))
 
     count = await svc.sync_publication_lineage(
-        session, old_skill_id="old-skill", new_skill_id="new-skill", scope="personal"
+        session,
+        old_skill_id="old-skill",
+        new_skill_id="new-skill",
+        scope="personal",
+        owner_id=7,
     )
 
     assert count == 1
     assert publication.source_personal_skill_id == "new-skill"
     assert publication.platform_skill_id == "public-demo-12345678"
+
+
+class _StatementCaptureSession(_FakeDbSession):
+    """记录 execute 收到的语句，用来断言 SQL 里真的带了作者边界。"""
+
+    def __init__(self, *results):
+        super().__init__(*results)
+        self.statements = []
+
+    async def execute(self, statement, *args, **kwargs):
+        self.statements.append(statement)
+        return await super().execute(statement, *args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_sync_publication_lineage_scopes_personal_query_to_owner():
+    """★ 个人技能谱系同步必须带 ``source_user_id`` 边界。
+
+    个人技能 ID 只是用户自己的命名空间：用户 A 与 B 都可能有 ``demo``。只按
+    ``source_personal_skill_id`` 全表改名时，A 重命名自己的技能会把 B 的发布记录
+    改成 A 的新 ID（B 的技能实际还叫旧名），B 的谱系随之中断。
+    """
+    from app.models.skill_publication import SkillPublication
+
+    publication = SkillPublication(
+        id="publication-1",
+        platform_skill_id="public-demo-12345678",
+        source_user_id=7,
+        source_personal_skill_id="old-skill",
+        name="demo",
+        status="PUBLISHED",
+    )
+    session = _StatementCaptureSession(_FakeResult([publication]))
+
+    count = await svc.sync_publication_lineage(
+        session,
+        old_skill_id="old-skill",
+        new_skill_id="new-skill",
+        scope="personal",
+        owner_id="7",
+    )
+
+    assert count == 1
+    sql = str(session.statements[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "source_personal_skill_id" in sql
+    assert "source_user_id" in sql, f"个人谱系查询缺少作者边界：{sql}"
+    assert "= 7" in sql
+
+
+@pytest.mark.asyncio
+async def test_sync_publication_lineage_without_owner_touches_nothing():
+    """拿不到作者时宁可不改：全表改名是跨用户数据污染，比一处未同步严重得多。"""
+    session = _StatementCaptureSession(_FakeResult([]))
+
+    count = await svc.sync_publication_lineage(
+        session, old_skill_id="old-skill", new_skill_id="new-skill", scope="personal"
+    )
+
+    assert count == 0
+    assert session.statements == [], "没有作者边界就不能发查询"
+    assert session.commits == 0
 
 
 # ---------------------------------------------------------------------------

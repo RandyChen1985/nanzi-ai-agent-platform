@@ -146,7 +146,7 @@ async def test_route_query_high_confidence(mock_agents_metadata):
         mock_chat_factory.return_value = mock_chat
         mock_config.return_value = "System Prompt"
         
-        result = await service.route_query("Show me user count")
+        result = await service.route_query("Show me user count", is_admin=True)
         
         assert isinstance(result, TurnDecision)
         assert result.agent_id == "agent-chatbi"
@@ -242,7 +242,7 @@ async def test_route_query_retry_recovers_business_data_intent(mock_agents_metad
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("列出某个系统中的全部记录")
+        result = await service.route_query("列出某个系统中的全部记录", is_admin=True)
 
     assert result.agent_id == "agent-chatbi"
     assert result.semantic_intent == IntentType.DATA_QUERY.value
@@ -282,7 +282,7 @@ async def test_route_query_retry_placeholder_general_does_not_block_chatbi(mock_
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("列出某个系统中的全部记录")
+        result = await service.route_query("列出某个系统中的全部记录", is_admin=True)
 
     assert result.agent_id == "agent-chatbi"
     assert result.semantic_intent is None
@@ -315,7 +315,7 @@ async def test_route_query_placeholder_general_fails_closed_for_ambiguous_query(
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("帮我看看这个")
+        result = await service.route_query("帮我看看这个", is_admin=True)
 
     assert result.agent_id == "agent-general"
     assert result.semantic_intent is None
@@ -345,7 +345,7 @@ async def test_route_query_filters_data_secondary_for_public_web_request(mock_ag
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("查一下有孚网络公司信息")
+        result = await service.route_query("查一下有孚网络公司信息", is_admin=True)
 
     assert result.agent_id == "agent-general"
     assert result.secondary_agents == []
@@ -384,7 +384,7 @@ async def test_route_query_returns_generic_turn_hints(mock_agents_metadata):
         mock_get_llm.return_value = mock_llm
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("把上面的结果画成柱状图", last_agent_name="ChatBI")
+        result = await service.route_query("把上面的结果画成柱状图", last_agent_name="ChatBI", is_admin=True)
 
     assert result.agent_id == "agent-chatbi"
     assert result.turn_labels == ["continuation_followup", "business_related", "same_topic"]
@@ -420,7 +420,7 @@ async def test_route_prompt_guides_local_machine_load_to_general(mock_agents_met
         mock_get_llm.return_value = mock_llm
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("看看我机器的负载情况")
+        result = await service.route_query("看看我机器的负载情况", is_admin=True)
 
     assert result.agent_id == "agent-general"
     assert result.confidence == 0.93
@@ -455,7 +455,7 @@ async def test_route_query_local_file_domain_blocks_chatbi_even_when_llm_selects
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("统计一下我机器的文件数")
+        result = await service.route_query("统计一下我机器的文件数", is_admin=True)
 
     assert result.agent_id == "agent-general"
     assert result.chatbi_mode == "deny"
@@ -498,7 +498,7 @@ async def test_route_query_business_load_metric_still_uses_llm(mock_agents_metad
         mock_get_llm.return_value = mock_llm
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("查询上海机房负载趋势")
+        result = await service.route_query("查询上海机房负载趋势", is_admin=True)
 
     assert result.agent_id == "agent-chatbi"
     assert result.confidence == 0.91
@@ -530,7 +530,7 @@ async def test_route_query_low_confidence_fallback(mock_agents_metadata):
         mock_chat_factory.return_value = mock_chat
         mock_config.return_value = "System Prompt"
         
-        result = await service.route_query("嗯，随便聊聊")
+        result = await service.route_query("嗯，随便聊聊", is_admin=True)
         
         # Should fallback to general-chat
         assert result.agent_id == "agent-general"
@@ -568,7 +568,7 @@ async def test_fallback_matches_multiple_general_agent_slugs(fallback_name, expe
         mock_get_llm.return_value = mock_llm
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("嗯，随便聊聊")
+        result = await service.route_query("嗯，随便聊聊", is_admin=True)
 
         assert result.agent_id == expected_id
     assert "Low confidence" in result.reasoning
@@ -599,7 +599,7 @@ async def test_fallback_prefers_assistant_over_general_chat():
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("Hi")
+        result = await service.route_query("Hi", is_admin=True)
 
     assert result.agent_id == "agent-assistant"
 
@@ -628,7 +628,7 @@ async def test_route_query_unknown_agent_fallback(mock_agents_metadata):
         mock_chat_factory.return_value = mock_chat
         mock_config.return_value = "System Prompt"
         
-        result = await service.route_query("Do magic")
+        result = await service.route_query("Do magic", is_admin=True)
         
         assert result.agent_id == "agent-general"
         assert "unknown agent" in result.reasoning
@@ -652,18 +652,18 @@ async def test_router_caching(mock_agents_metadata):
         mock_config.return_value = ""
 
         # First call: fetch from DB
-        await service.route_query("Q1")
+        await service.route_query("Q1", is_admin=True)
         assert mock_fetch.call_count == 1
         
         # Second call (immediate): use cache
-        await service.route_query("Q2")
+        await service.route_query("Q2", is_admin=True)
         assert mock_fetch.call_count == 1 # Should not increment
         
         # Invalidate cache
         service.invalidate_cache()
         
         # Third call: fetch again
-        await service.route_query("Q3")
+        await service.route_query("Q3", is_admin=True)
         assert mock_fetch.call_count == 2
 
 
@@ -707,6 +707,40 @@ async def test_route_query_filters_candidates_by_user_permission(mock_agents_met
 
 
 @pytest.mark.asyncio
+async def test_filter_agents_fails_closed_without_user_id(mock_agents_metadata):
+    """无用户上下文时必须收敛到通用兜底助手，不能返回全量候选。"""
+    service = RouterService()
+
+    filtered = await service._filter_agents_for_user(
+        mock_agents_metadata, user_id=None, is_admin=False
+    )
+    assert [agent["name"] for agent in filtered] == ["general-chat"]
+
+    # 候选里没有兜底助手时返回空集，由 route_query 返回 None 交上层降级
+    filtered = await service._filter_agents_for_user(
+        mock_agents_metadata[:2], user_id=None, is_admin=False
+    )
+    assert filtered == []
+
+
+@pytest.mark.asyncio
+async def test_filter_agents_fails_closed_on_permission_error(mock_agents_metadata):
+    """权限查询异常时降级到兜底助手：既不返回全量，也不把异常冒泡成 500。"""
+    service = RouterService()
+
+    with patch(
+        "app.services.permission_service.PermissionService.get_user_permissions",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("db down"),
+    ):
+        filtered = await service._filter_agents_for_user(
+            mock_agents_metadata, user_id=1001, is_admin=False
+        )
+
+    assert [agent["name"] for agent in filtered] == ["general-chat"]
+
+
+@pytest.mark.asyncio
 async def test_route_query_datacenter_list_uses_chatbi(mock_agents_metadata):
     """查询机房列表或基础数据列表，应路由给 ChatBI 智能体进行 SQL 数据查询，而不是误判为知识库检索。"""
     service = RouterService()
@@ -737,7 +771,7 @@ async def test_route_query_datacenter_list_uses_chatbi(mock_agents_metadata):
         mock_get_llm.return_value = mock_llm
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("查一下所有机房的列表")
+        result = await service.route_query("查一下所有机房的列表", is_admin=True)
 
     assert result.agent_id == "agent-chatbi"
     assert result.confidence == 0.95
@@ -778,7 +812,7 @@ async def test_route_query_constrains_candidates_for_high_confidence_data_intent
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("列出某个系统中的全部记录")
+        result = await service.route_query("列出某个系统中的全部记录", is_admin=True)
 
     assert result.agent_id == "agent-chatbi"
     assert result.semantic_intent == IntentType.DATA_QUERY.value
@@ -811,7 +845,7 @@ async def test_route_query_public_company_lookup_not_forced_to_data_agent(mock_a
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("查一下有孚网络公司信息")
+        result = await service.route_query("查一下有孚网络公司信息", is_admin=True)
 
     assert result.agent_id == "agent-general"
     assert result.semantic_intent == IntentType.DATA_QUERY.value
@@ -846,7 +880,7 @@ async def test_route_query_data_evidence_survives_invalid_constrained_route(mock
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("列出某个系统中的全部记录")
+        result = await service.route_query("列出某个系统中的全部记录", is_admin=True)
 
     assert result.agent_id == "agent-general"
     assert result.semantic_intent == IntentType.DATA_QUERY.value
@@ -875,7 +909,7 @@ async def test_route_query_greeting_shortcut_skips_llm(mock_agents_metadata):
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("你好")
+        result = await service.route_query("你好", is_admin=True)
 
     assert result is not None
     assert result.agent_id == "agent-general"
@@ -918,7 +952,7 @@ async def test_route_query_business_confirmation_receipt_sticky_skips_llm(
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query(query, last_agent_name="general-chat")
+        result = await service.route_query(query, last_agent_name="general-chat", is_admin=True)
 
     assert result is not None
     assert result.agent_id == "agent-general"
@@ -955,6 +989,7 @@ async def test_route_query_user_question_receipt_sticky_skips_llm(mock_agents_me
             "【用户回答】\ninteraction_type: question\nquestion_id: uq_1\n"
             'selected_option_ids: ["monthly"]\ncustom_input: 排除退款',
             last_agent_name="ChatBI",
+            is_admin=True,
         )
 
     assert result is not None
@@ -999,6 +1034,7 @@ async def test_route_query_business_confirmation_receipt_without_last_agent_stil
         result = await service.route_query(
             "【业务确认】用户已确定\nconfirmation_id: bc_1",
             last_agent_name=None,
+            is_admin=True,
         )
 
     assert result is not None
@@ -1029,7 +1065,7 @@ async def test_route_query_sole_candidate_after_permission_skips_all_llms():
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("供应商名称:测试 我要录入")
+        result = await service.route_query("供应商名称:测试 我要录入", is_admin=True)
 
     assert result is not None
     assert result.agent_id == "agent-general"
@@ -1056,7 +1092,7 @@ async def test_route_query_sole_candidate_after_constrain_skips_route_llm(mock_a
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("列出某个系统中的全部记录")
+        result = await service.route_query("列出某个系统中的全部记录", is_admin=True)
 
     assert result is not None
     assert result.agent_id == "agent-chatbi"
@@ -1095,7 +1131,7 @@ async def test_route_query_resource_catalog_shortcut_skips_llm(mock_agents_metad
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query(query)
+        result = await service.route_query(query, is_admin=True)
 
     assert result is not None
     assert result.agent_id == "agent-general"
@@ -1146,7 +1182,7 @@ async def test_route_query_resource_catalog_shortcut_does_not_steal_data_queries
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query(query)
+        result = await service.route_query(query, is_admin=True)
 
     assert result.agent_id == "agent-chatbi"
     mock_get_llm.assert_called()
@@ -1201,6 +1237,7 @@ async def test_route_query_uncertain_topic_after_chatbi_reaches_semantic_router(
         result = await service.route_query(
             "看看我开源项目，小星星情况",
             last_agent_name="ChatBI",
+            is_admin=True,
         )
 
     assert result is not None
@@ -1242,6 +1279,7 @@ async def test_route_query_data_followup_after_chatbi_reuses_sticky_agent_withou
         result = await service.route_query(
             "把上面的结果画成柱状图",
             last_agent_name="ChatBI",
+            is_admin=True,
         )
 
     assert result.agent_id == "agent-chatbi"
@@ -1281,7 +1319,7 @@ async def test_route_query_greeting_compound_still_calls_llm(mock_agents_metadat
         mock_get_llm.return_value = object()
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("你好，查一下所有机房的列表")
+        result = await service.route_query("你好，查一下所有机房的列表", is_admin=True)
 
     assert result.agent_id == "agent-chatbi"
     mock_chat.generate_text.assert_called_once()
@@ -1308,7 +1346,7 @@ async def test_route_query_uses_bounded_output_and_compact_router_prompt(mock_ag
         mock_fetch.return_value = mock_agents_metadata
         mock_get_llm.return_value = object()
 
-        result = await service.route_query("请解释自动路由和指定专家的执行差异")
+        result = await service.route_query("请解释自动路由和指定专家的执行差异", is_admin=True)
 
     assert result is not None
     mock_get_llm.assert_awaited_once_with(
@@ -1356,7 +1394,7 @@ async def test_route_query_does_not_add_text_call_when_structured_output_fails(
         mock_fetch.return_value = mock_agents_metadata
         mock_get_llm.return_value = object()
 
-        result = await service.route_query("请解释自动路由的执行逻辑")
+        result = await service.route_query("请解释自动路由的执行逻辑", is_admin=True)
 
     assert result is not None
     assert client.text_calls == 0
@@ -1378,7 +1416,7 @@ async def test_route_query_timeout_falls_back_to_general(mock_agents_metadata):
         mock_fetch.return_value = mock_agents_metadata
         mock_get_llm.return_value = object()
 
-        result = await service.route_query("请统计本周各智能体的Token消耗总量并排名")
+        result = await service.route_query("请统计本周各智能体的Token消耗总量并排名", is_admin=True)
 
     assert result is not None
     assert result.agent_id == "agent-general"

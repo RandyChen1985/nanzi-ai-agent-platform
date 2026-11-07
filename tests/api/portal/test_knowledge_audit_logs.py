@@ -228,6 +228,10 @@ async def test_sync_writes_audit_for_touched_datasets(monkeypatch):
         async def list_datasets(self, **kwargs):
             return [{"id": "ds-new", "name": "新库"}]
 
+        # sync 端点现在取全集（load_all_ragflow_datasets），不再拉固定页
+        async def list_all_datasets(self):
+            return await self.list_datasets()
+
     async def fake_record(request, user, action, status_code, payload, error_message=None, started_at=None):
         captured["action"] = action
         captured["dataset_ids"] = payload.get("dataset_ids")

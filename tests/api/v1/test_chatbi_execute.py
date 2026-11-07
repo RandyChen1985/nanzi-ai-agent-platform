@@ -381,7 +381,11 @@ async def test_chatbi_execute_local_success(client: AsyncClient, admin_api_key: 
         body = response.json()
         assert body["code"] == 200
         assert body["data"]["items"] == [[1, "Alice"]]
-        assert "SELECT * FROM (SELECT id, name FROM users) AS _sub LIMIT 1000" in mock_adapter.execute_sql.call_args[0][0]
+        # 只校验"原查询 + 1000 行封顶"这个不变量：包装成子查询的写法已被去掉
+        # （末尾 `--` 注释会吞掉包装的右括号），改成直接在语句末尾追加 LIMIT。
+        executed_sql = mock_adapter.execute_sql.call_args[0][0]
+        assert "SELECT id, name FROM users" in executed_sql
+        assert executed_sql.rstrip().endswith("LIMIT 1000")
 
 
 @pytest.mark.asyncio

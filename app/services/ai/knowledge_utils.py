@@ -446,6 +446,26 @@ def resolve_bound_dataset_ids(
     )
 
 
+async def load_all_ragflow_datasets(
+    client: Any = None,
+    *,
+    config_prefix: str = "knowledge_ragflow",
+) -> List[Dict[str, Any]]:
+    """取 RAGFlow 侧的全量数据集（跨页），供存活检测/同步/命名补全共用。
+
+    RAGFlow 单页上限是 100，`list_datasets(page=1, page_size=500)` 实际只拿到
+    前 500 个（含自动生成的 meta-* 库）；库一旦超过 500 个，排在后面的正常知识库
+    会被存活检测判成「在 RAGFlow 侧已失联」，直接阻断问答，同步也会漏库。
+    这里刻意不用 list_all_datasets_cached：调用方要的就是"现在"的全集，
+    60s 缓存会让刚建好的库短暂被判失联。
+    """
+    if client is None:
+        from app.services.ai.ragflow_client import RagFlowClient
+
+        client = RagFlowClient(config_prefix=config_prefix)
+    return await client.list_all_datasets()
+
+
 async def _load_ragflow_alive_dataset_ids() -> Optional[Set[str]]:
     """
     读取 RAGFlow 现网存在的 dataset id 集合。
@@ -471,7 +491,7 @@ async def _load_ragflow_alive_dataset_ids() -> Optional[Set[str]]:
         from app.services.ai.ragflow_client import RagFlowClient
 
         client = RagFlowClient(config_prefix="knowledge_ragflow")
-        items = await client.list_datasets(page=1, page_size=500)
+        items = await load_all_ragflow_datasets(client)
         alive = {
             str(item.get("id") or "").strip()
             for item in (items or [])

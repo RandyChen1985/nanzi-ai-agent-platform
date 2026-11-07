@@ -341,10 +341,12 @@ class KnowledgeMetricsService:
         missing = [ds_id for ds_id in ids if ds_id not in resolved]
         if missing:
             try:
+                from app.services.ai.knowledge_utils import load_all_ragflow_datasets
                 from app.services.ai.ragflow_client import RagFlowClient
 
                 client = RagFlowClient(config_prefix="knowledge_ragflow")
-                ragflow_datasets = await client.list_datasets(page_size=500)
+                # 取全集：只拉前 500 个时，排在后面的库解析不到中文名
+                ragflow_datasets = await load_all_ragflow_datasets(client)
                 missing_set = set(missing)
                 for ds in ragflow_datasets:
                     ds_id = str(ds.get("id") or "").strip()
