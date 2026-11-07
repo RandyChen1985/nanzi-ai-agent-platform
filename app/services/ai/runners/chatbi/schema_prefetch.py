@@ -38,28 +38,169 @@ from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 logger = logging.getLogger(__name__)
 
 
-def _apply_session_resource_scope(dataset_menu: str, execution_options: dict[str, Any] | None) -> str:
-    """项目会话有手动挂载数据集时，只把挂载的数据集注入本轮 Schema 上下文。"""
-    scope = (execution_options or {}).get("resource_scope") or {}
-    mounted = {
-        str(item.get("dataset_name") or item.get("name") or item.get("id") or "").strip().casefold()
-        for item in scope.get("datasets", [])
-        if isinstance(item, dict)
-    }
-    mounted.discard("")
+def _normalize_scope_token(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _collect_session_scope_tokens(execution_options: dict[str, Any] | None) -> set[str]:
+    """本轮限定范围的标识集合（``name`` / ``display_name`` / ``id`` 都可能出现）。
+
+    两个来源都读、取并集，而不是择一：
+
+    * :func:`resolve_mounted_dataset_scope_ids` —— 与 ``execute_sql_query`` 的表级
+      门禁同源（智能体绑定 > AgentContext > execution_options），判「能不能查」以它为准；
+    * ``runner.execution_options`` 里的 ``resource_scope.datasets`` /
+      ``metadata_dataset_scope.session`` —— 项目会话手动挂载的旧链路键，有些入口
+      只写这里、写不到 AgentContext。
+
+    并集是**保守**方向：宁可多留一个目录块，也不要因为两处范围取值不一致，把用户
+    本来能查的数据集从提示词里删掉。
+    """
+    tokens: set[str] = set()
+    try:
+        from app.services.ai.metadata_dataset_scope import resolve_mounted_dataset_scope_ids
+
+        for item in resolve_mounted_dataset_scope_ids() or []:
+            token = _normalize_scope_token(item)
+            if token:
+                tokens.add(token)
+    except Exception as exc:  # noqa: BLE001 - 范围读不到不能反过来影响目录
+        logger.debug("[dataset_menu] 读取运行期范围失败，仅使用执行参数: %s", exc)
+
+    opts = execution_options if isinstance(execution_options, dict) else {}
+    scope = opts.get("resource_scope") if isinstance(opts.get("resource_scope"), dict) else {}
+    meta_scope = (
+        opts.get("metadata_dataset_scope")
+        if isinstance(opts.get("metadata_dataset_scope"), dict)
+        else {}
+    )
+    raw_items = list(scope.get("datasets") or []) + list(meta_scope.get("session") or [])
+    for item in raw_items:
+        if isinstance(item, dict):
+            for key in ("dataset_name", "name", "display_name", "id"):
+                token = _normalize_scope_token(item.get(key))
+                if token:
+                    tokens.add(token)
+        elif isinstance(item, (str, int)):
+            token = _normalize_scope_token(item)
+            if token:
+                tokens.add(token)
+    tokens.discard("")
+    return tokens
+
+
+async def expand_scope_tokens_with_names(tokens: set[str]) -> set[str]:
+    """把纯数字 id 补成数据集 name。
+
+    运行期范围（``ctx.metadata_dataset_ids`` / 智能体绑定）存的是 **id**，而目录文本里
+    只有 ``- Dataset: <name> [tags]``，不比对这一步就永远匹配不上——裁剪会静默失效
+    （或更糟，按「一个都没匹配到」把目录清空）。只在确实含数字 id 时查一次库。
+    """
+    numeric = {token for token in tokens if token.isdigit()}
+    if not numeric:
+        return tokens
+    try:
+        from sqlalchemy import select
+
+        from app.core.orm import AsyncSessionLocal
+        from app.models.metadata import MetaDataset
+
+        async with AsyncSessionLocal() as session:
+            rows = (
+                await session.execute(
+                    select(MetaDataset.id, MetaDataset.name).where(
+                        MetaDataset.id.in_(sorted({int(token) for token in numeric}))
+                    )
+                )
+            ).all()
+    except Exception as exc:  # noqa: BLE001 - 解析失败只是少一层收窄，不能阻断
+        logger.warning("[dataset_menu] 把范围 id 解析成名称失败: %s", exc)
+        return tokens
+    expanded = set(tokens)
+    for row in rows:
+        name = _normalize_scope_token(row[1])
+        if name:
+            expanded.add(name)
+    return expanded
+
+
+def apply_session_resource_scope(
+    dataset_menu: str,
+    execution_options: dict[str, Any] | None = None,
+    *,
+    tokens: set[str] | None = None,
+) -> str:
+    """项目会话有手动挂载数据集时，只把挂载的数据集注入本轮上下文。
+
+    匹配不上时**保留原目录**（fail-open）。范围标识与目录里 ``- Dataset:`` 用名
+    不同源（传的是 id 或别名）是常态，据此清空目录会让模型直接答「你没有数据集」，
+    比「看得见但执行时被拦」更糟；多留几个块最多是被门禁拦下，模型仍能据目录
+    解释范围。真正的「能不能查」由 ``execute_sql_query`` 判定，不靠提示词自觉。
+
+    ``tokens`` 用于传入**已经解析过**的范围标识（例如把 id 换成 name 后的结果），
+    给了就不再从 ``execution_options`` 里重新收集。
+    """
+    menu_text = str(dataset_menu or "")
+    mounted = tokens if tokens is not None else _collect_session_scope_tokens(execution_options)
     if not mounted:
-        return dataset_menu
-    blocks = re.split(r"(?=^- Dataset:)", str(dataset_menu or ""), flags=re.MULTILINE)
-    filtered: list[str] = []
+        return menu_text
+    blocks = re.split(r"(?=^- Dataset:)", menu_text, flags=re.MULTILINE)
+    header_blocks: list[str] = []
+    matched_blocks: list[str] = []
     for block in blocks:
         first_line = block.splitlines()[0] if block.splitlines() else ""
         if not first_line.lstrip().startswith("- Dataset:"):
-            filtered.append(block)
+            header_blocks.append(block)
             continue
-        dataset_name = first_line.split(":", 1)[1].strip().casefold()
-        if dataset_name in mounted:
-            filtered.append(block)
-    return "".join(filtered)
+        raw_after_colon = first_line.split(":", 1)[1].strip().casefold()
+        name_match = re.search(r"^- Dataset:\s*([^\s\[]+)", first_line)
+        pure_name = name_match.group(1).strip().casefold() if name_match else raw_after_colon
+        display_match = re.search(r"^\s*Display Name:\s*(.+)$", block, flags=re.MULTILINE)
+        display_name = display_match.group(1).strip().casefold() if display_match else ""
+        if (
+            pure_name in mounted
+            or raw_after_colon in mounted
+            or (display_name and display_name in mounted)
+        ):
+            matched_blocks.append(block)
+    if matched_blocks:
+        updated_headers = [
+            re.sub(
+                r"(【当前用户有权访问的数据集】共\s*)\d+(\s*个)",
+                rf"\g<1>{len(matched_blocks)}\g<2>",
+                h,
+            )
+            for h in header_blocks
+        ]
+        return "".join(updated_headers + matched_blocks)
+    logger.warning(
+        "[dataset_menu] 会话范围 %s 没匹配到任何目录条目（目录共 %s 个），按原样保留；"
+        "范围标识与目录名可能不同源（id / 别名）",
+        sorted(mounted)[:5],
+        menu_text.count("- Dataset:"),
+    )
+    return menu_text
+
+
+# 兼容旧引用：模块内与既有测试按私有名导入，改名不破坏调用点
+_apply_session_resource_scope = apply_session_resource_scope
+
+
+def compact_dataset_menu_in_system_content(system_content: str) -> str:
+    """预取 Schema 成功后，剥离 system_content 中 dataset_menu 的 Table Details 明细行以减少 ReAct 循环 Token。"""
+    if not system_content or "  Table Details:\n" not in system_content:
+        return system_content
+    compacted = re.sub(
+        r"^  Table Details:\n(?:    - [^\n]*\n?)+",
+        "",
+        system_content,
+        flags=re.MULTILINE,
+    )
+    compacted = compacted.replace(
+        "Includes Tables=表术语，Table Details=表描述，Metrics=指标名。",
+        "Includes Tables=表术语，Metrics=指标名。",
+    )
+    return compacted
 
 
 @dataclass
@@ -539,6 +680,8 @@ async def yield_fresh_data_schema_setup(
             yield chunk
         outcome.stop_execution = True
         return
+
+    outcome.system_content = compact_dataset_menu_in_system_content(outcome.system_content)
 
     datasets = sorted(extract_schema_dataset_names(prefetched_schema_output))
     classified_as_federated = (

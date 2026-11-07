@@ -1217,6 +1217,10 @@ ROW_STATE_DENY_ALL = "deny_all"
 #: 可见表数量不超过这个值时才在摘要里给出表名（其余只给计数，省 token）
 _SCOPE_NAME_LIMIT = 8
 
+#: 字段级明细的规模上限：超了就只给计数，避免「几十张表 × 几十列」的名单塞进上下文
+_COLUMN_DETAIL_TABLE_LIMIT = 5
+_COLUMN_DETAIL_NAME_LIMIT = 20
+
 _DENY_CONDITIONS = frozenset({"1=0", "0=1", "false"})
 
 
@@ -1261,6 +1265,54 @@ def describe_row_state(
     return ROW_STATE_FILTERED
 
 
+def _column_scope_details(
+    scope: "DatasetScope",
+    name_by_id: dict[int, str],
+) -> Optional[list[dict[str, Any]]]:
+    """把字段规则压成「哪张表、什么模式、哪些字段」。
+
+    只给计数根本回答不了用户真正会问的那句「我到底看不到哪些字段」：``include``
+    模式下 ``excluded`` 恒为 0，容易被读成「没有字段限制」，而真相是**只能看白名单
+    里那几列**。
+
+    但两种模式的信息含义相反，出口也不同：
+
+    - ``include``（白名单）：列出这些列**是安全的**——它们本来就是用户能看见的，
+      不说反而让人不知道自己能查什么；
+    - ``exclude``（黑名单）：**不列具体列名**。说「你不能看 salary」等于告诉调用方
+      「库里有一列叫 salary」，属于用拒绝清单反推表结构；只给表名与计数。
+
+    规模超限（表太多或字段太多）返回 ``None``，调用方保留计数——宁可少给明细，
+    也不能把几十张表的字段名单塞进模型上下文。
+    """
+    rules_by_table = scope.column_rules or {}
+    if not rules_by_table or len(rules_by_table) > _COLUMN_DETAIL_TABLE_LIMIT:
+        return None
+
+    details: list[dict[str, Any]] = []
+    for table_id in sorted(int(item) for item in rules_by_table):
+        names: list[str] = []
+        modes: list[str] = []
+        for rule in rules_by_table[table_id]:
+            if rule.mode not in modes:
+                modes.append(rule.mode)
+            names.extend(sorted(rule.names))
+        if len(names) > _COLUMN_DETAIL_NAME_LIMIT:
+            return None
+        # include + exclude 同时存在时说 mixed，别让调用方以为只有一种语义
+        mode = modes[0] if len(modes) == 1 else "mixed"
+        details.append(
+            {
+                "table_id": table_id,
+                "table": name_by_id.get(table_id),
+                "mode": mode,
+                # 只要沾了 exclude 就不公开列名（见上方 docstring）
+                "names": None if COL_EXCLUDE in modes else names,
+            }
+        )
+    return details
+
+
 async def summarize_dataset_scopes(
     session: AsyncSession,
     scopes: dict[int, DatasetScope],
@@ -1300,6 +1352,11 @@ async def summarize_dataset_scopes(
     for dataset_id, scope in scopes.items():
         if scope.mode == MODE_LIST and 0 < len(scope.table_ids) <= name_limit:
             name_ids.extend(int(item) for item in scope.table_ids)
+        # 字段规则涉及的表名也要查：否则摘要只能说「1 张表做了字段限制」，
+        # 却说不出是哪张表、限制的是哪些列。
+        restricted_tables = scope.column_rules or {}
+        if 0 < len(restricted_tables) <= _COLUMN_DETAIL_TABLE_LIMIT:
+            name_ids.extend(int(item) for item in restricted_tables)
     name_by_id: dict[int, str] = {}
     if name_ids:
         try:
@@ -1351,6 +1408,10 @@ async def summarize_dataset_scopes(
                 "excluded": excluded,
                 "whitelisted_tables": whitelisted,
             }
+            # 计数回答不了「哪些字段看不到」；规模允许时补上具体表/模式/字段名。
+            details = _column_scope_details(scope, name_by_id)
+            if details is not None:
+                columns["tables"] = details
 
         row_state = describe_row_state(
             scope,

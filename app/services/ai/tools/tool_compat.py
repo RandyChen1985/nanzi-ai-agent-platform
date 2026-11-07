@@ -1,17 +1,36 @@
 from __future__ import annotations
 
-import inspect
 import asyncio
+import inspect
+import typing
 from typing import Any, Callable, Type
 
 from pydantic import BaseModel, Field, create_model
 
 
 def _schema_from_signature(func: Callable[..., Any]) -> Type[BaseModel]:
+    """从函数签名生成参数模型。
+
+    ``from __future__ import annotations`` 会让 ``inspect.signature`` 拿到**字符串**
+    注解（``"Optional[str]"``）。直接交给 ``create_model`` 时，pydantic 只在
+    tool_compat 这个模块的命名空间里找 ``Optional``，找不到就留下一个「未定义」的
+    前向引用，等到 ``model_json_schema()`` 才抛 ``PydanticUserError`` —— 表现为该工具
+    在给模型生成工具清单时整体失效，而错误信息完全指不到源头。
+
+    所以先用 ``get_type_hints`` 在**函数自己的模块**里解析注解；解析不出来的（真正的
+    前向引用）退回 ``str``，宁可丢类型也不能让 schema 变成不可生成的坏模型。
+    """
+    try:
+        hints = typing.get_type_hints(func)
+    except Exception:  # noqa: BLE001 - 注解解析失败不能影响工具注册
+        hints = {}
+
     fields: dict[str, tuple[type[Any], Any]] = {}
     signature = inspect.signature(func)
     for name, param in signature.parameters.items():
-        annotation = param.annotation if param.annotation is not inspect._empty else str
+        annotation = hints.get(name, param.annotation)
+        if annotation is inspect._empty or isinstance(annotation, str):
+            annotation = str
         default = param.default if param.default is not inspect._empty else ...
         fields[name] = (annotation, Field(default=default))
     return create_model(f"{func.__name__}Args", **fields)

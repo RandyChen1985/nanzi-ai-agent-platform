@@ -123,3 +123,39 @@ def test_normalize_bound_dataset_ids_matches_runtime_filter():
     assert normalize_bound_dataset_ids(["销售数据集"]) == []
     assert normalize_bound_dataset_ids(None) == []
     assert normalize_bound_dataset_ids(["11", "11"]) == ["11"]
+
+
+@pytest.mark.asyncio
+async def test_medium_oversized_menu_uses_progressive_truncation(monkeypatch):
+    """略超预算时优先走第一级渐进截断（保留 Table Details 结构但裁剪长表描述与指标数）。"""
+    datasets = [
+        SimpleNamespace(
+            name=f"ds{index}",
+            display_name=f"ds{index}中文",
+            description="用途说明",
+            tags=["核心"],
+            tables=[
+                SimpleNamespace(
+                    term=f"表{index}_{n}",
+                    description="单表超长描述内容" * 40,
+                    status=1,
+                )
+                for n in range(5)
+            ],
+            metrics=[
+                SimpleNamespace(display_name=f"指标{m}", name=f"m{m}")
+                for m in range(25)
+            ],
+        )
+        for index in range(8)
+    ]
+
+    full_menu = AgentConfigProvider._format_dataset_menu(datasets)
+    assert len(full_menu) > _DATASET_MENU_DETAIL_BUDGET
+
+    menu = await _run_generate(monkeypatch, datasets)
+
+    assert len(menu) <= _DATASET_MENU_DETAIL_BUDGET
+    assert "  Table Details:" in menu
+    assert "…" in menu
+    assert "(共25项)" in menu

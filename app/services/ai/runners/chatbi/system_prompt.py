@@ -20,30 +20,42 @@ async def _load_dataset_menu(runner: Any, *, has_placeholder: bool) -> str:
     历史模板里的占位符仍然保留「原位替换」能力，两种方式不会叠加出两份目录。
 
     以下两种情况跳过注入：
-    - 没有占位符、但本轮已经挂载了数据集（``ctx.metadata_dataset_ids``，来自请求参数
-      或消息附件）：用户已经圈定范围，再塞全量目录会诱导模型跨范围查询。注意这条只
-      作用于静默注入——显式写了占位符的存量提示词保持原行为，避免改动悄悄改变既有
-      输出。
-      这**不包含**智能体工具配置里的 ``get_dataset_schema.metadata_dataset_ids``：
-      那层只收窄 schema 工具，拿不到这里，所以绑定了工具的智能体目录仍会是全量；
+    - 没有占位符、但本轮已经挂载了数据集（``ctx.metadata_dataset_ids`` 来自请求参数
+      或消息附件，``ctx.bound_metadata_dataset_ids`` 来自智能体工具的
+      ``get_dataset_schema.metadata_dataset_ids``）：用户/智能体已经圈定范围，再塞
+      全量目录会诱导模型跨范围查询。注意这条只作用于静默注入——显式写了占位符的
+      存量提示词保持「原位替换」，此时目录仍会给出，但会按
+      :func:`apply_session_resource_scope` 裁剪到本轮范围内；
     - 取目录失败（Redis / DB 异常）：目录只是增强信息，不能因此阻断本轮执行。
     """
     try:
         from app.core.context import get_current_agent_context
+        from app.services.ai.runners.chatbi.schema_prefetch import (
+            _collect_session_scope_tokens,
+            apply_session_resource_scope,
+            expand_scope_tokens_with_names,
+        )
 
         ctx = get_current_agent_context()
         bound_ids = [
             str(dataset_id).strip()
-            for dataset_id in (getattr(ctx, "metadata_dataset_ids", None) or [])
+            for dataset_id in (
+                list(getattr(ctx, "metadata_dataset_ids", None) or [])
+                + list(getattr(ctx, "bound_metadata_dataset_ids", None) or [])
+            )
             if str(dataset_id).strip()
         ]
         if bound_ids and not has_placeholder:
             return ""
         user_info = getattr(runner, "user_info", None) or {}
-        return await AgentConfigProvider.get_dataset_menu(
+        raw_menu = await AgentConfigProvider.get_dataset_menu(
             user_id=user_info.get("user_id"),
             is_admin=user_info.get("role") == "admin",
         )
+        scope_tokens = _collect_session_scope_tokens(getattr(runner, "execution_options", None))
+        # 范围里可能是 id，目录里是 name：不先解析过来，裁剪会静默失效
+        scope_tokens = await expand_scope_tokens_with_names(scope_tokens)
+        return apply_session_resource_scope(raw_menu, tokens=scope_tokens)
     except Exception as exc:  # noqa: BLE001 - 增强信息失败一律降级，不影响主流程
         # 目录取不到不该阻断本轮，但也不能完全静默：用固定前缀方便告警规则匹配
         logger.warning("[dataset_menu] 加载失败，本轮按无目录处理：%s", exc)
@@ -147,8 +159,16 @@ async def build_system_content(
     system_prompt = runner.config.system_prompt or ""
     use_cache_layout = await _runner_uses_cache_layout(runner)
     has_menu_placeholder = "{dataset_menu}" in system_prompt
-    # 有没有占位符都取目录：没占位符时由平台静默拼在用户内容最前，用户无需知道这套机制。
-    raw_dataset_menu = await _load_dataset_menu(runner, has_placeholder=has_menu_placeholder)
+    requires_fresh_data = bool(getattr(runner, "_requires_fresh_data", True))
+    reusable_result = bool(context_action_result) and not requires_fresh_data
+    is_reuse_turn = reusable_result or include_context_action
+    if is_reuse_turn:
+        raw_dataset_menu = (
+            DataQueryPrompts.REUSE_DATASET_MENU_PLACEHOLDER if has_menu_placeholder else ""
+        )
+    else:
+        # 有没有占位符都取目录：没占位符时由平台静默拼在用户内容最前，用户无需知道这套机制。
+        raw_dataset_menu = await _load_dataset_menu(runner, has_placeholder=has_menu_placeholder)
     dataset_menu = raw_dataset_menu.strip()
     context_action_prompt = DataQueryPrompts.context_action_guide() if include_context_action else ""
     time_anchor = build_data_query_time_anchor_block().strip()

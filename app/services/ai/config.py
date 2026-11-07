@@ -327,7 +327,6 @@ class AgentConfigProvider:
             return None
 
     @staticmethod
-    @staticmethod
     def _dataset_menu_header(count: int, *, include_table_details: bool = True) -> str:
         """目录开头的引导语。
 
@@ -354,11 +353,19 @@ class AgentConfigProvider:
         )
 
     @staticmethod
-    def _format_dataset_menu(datasets: list, *, include_table_details: bool = True) -> str:
+    def _format_dataset_menu(
+        datasets: list,
+        *,
+        include_table_details: bool = True,
+        max_table_desc_len: Optional[int] = None,
+        max_metrics_per_dataset: Optional[int] = None,
+    ) -> str:
         """把授权数据集渲染成目录文本。
 
-        ``include_table_details=False`` 用于体积超预算时降级：省掉表描述明细，
-        但保留表术语列表，模型仍能选中数据集、把表名当检索线索。
+        - ``max_table_desc_len`` / ``max_metrics_per_dataset`` 用于第一级渐进裁剪：
+          保留 ``Table Details`` 结构，但裁剪过长的单表描述和单数据集指标数；
+        - ``include_table_details=False`` 用于极端体积超预算时兜底降级：省掉表描述明细，
+          但保留表术语列表，模型仍能选中数据集、把表名当检索线索。
         """
         menu = AgentConfigProvider._dataset_menu_header(
             len(datasets), include_table_details=include_table_details
@@ -404,6 +411,13 @@ class AgentConfigProvider:
                             " ",
                             str(getattr(tbl, "description", "") or "").strip(),
                         )
+                        if (
+                            table_desc
+                            and max_table_desc_len is not None
+                            and max_table_desc_len > 0
+                            and len(table_desc) > max_table_desc_len
+                        ):
+                            table_desc = table_desc[:max_table_desc_len] + "…"
                         if table_desc:
                             menu += f"    - {term}: {table_desc}\n"
                         else:
@@ -420,7 +434,16 @@ class AgentConfigProvider:
                 ]
                 metric_labels = [label for label in metric_labels if label]
                 if metric_labels:
-                    menu += f"  Metrics: {', '.join(metric_labels)}\n"
+                    if (
+                        max_metrics_per_dataset is not None
+                        and max_metrics_per_dataset > 0
+                        and len(metric_labels) > max_metrics_per_dataset
+                    ):
+                        total_metrics = len(metric_labels)
+                        shown = ", ".join(metric_labels[:max_metrics_per_dataset])
+                        menu += f"  Metrics: {shown} (共{total_metrics}项)\n"
+                    else:
+                        menu += f"  Metrics: {', '.join(metric_labels)}\n"
 
             menu += "\n"
         return menu
@@ -444,12 +467,30 @@ class AgentConfigProvider:
                     status=1 # 仅限启用状态
                 )
 
-            full_menu = AgentConfigProvider._format_dataset_menu(list(datasets or []))
+            dataset_list = list(datasets or [])
+            full_menu = AgentConfigProvider._format_dataset_menu(dataset_list)
             if len(full_menu) <= _DATASET_MENU_DETAIL_BUDGET:
                 return full_menu
 
+            trimmed_menu = AgentConfigProvider._format_dataset_menu(
+                dataset_list,
+                include_table_details=True,
+                max_table_desc_len=60,
+                max_metrics_per_dataset=15,
+            )
+            if len(trimmed_menu) <= _DATASET_MENU_DETAIL_BUDGET:
+                logger.info(
+                    "[dataset_menu] 目录 %s 字符超过预算 %s，已渐进截断单表描述与指标数"
+                    "（压缩后 %s 字符，数据集 %s 个）",
+                    len(full_menu),
+                    _DATASET_MENU_DETAIL_BUDGET,
+                    len(trimmed_menu),
+                    len(dataset_list),
+                )
+                return trimmed_menu
+
             compact_menu = AgentConfigProvider._format_dataset_menu(
-                list(datasets or []), include_table_details=False
+                dataset_list, include_table_details=False
             )
             logger.warning(
                 "[dataset_menu] 目录 %s 字符超过预算 %s，已省略 Table Details 明细"
@@ -457,7 +498,7 @@ class AgentConfigProvider:
                 len(full_menu),
                 _DATASET_MENU_DETAIL_BUDGET,
                 len(compact_menu),
-                len(datasets or []),
+                len(dataset_list),
             )
             return compact_menu
         except Exception as e:

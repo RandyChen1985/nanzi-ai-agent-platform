@@ -61,12 +61,88 @@ def _knowledge_item(
     return item
 
 
+#: 单条 description 的返回上限。整段业务介绍对「挑数据集」没有帮助，却能把上下文
+#: 撑爆：实测一个数据集的介绍 80+ 字，50 个数据集就是 4000+ token。要看完整介绍，
+#: 用 keyword 精确命中那一条即可。
+_DATASET_DESCRIPTION_LIMIT = 80
+_DATASET_LIMIT_DEFAULT = 30
+_DATASET_LIMIT_MAX = 100
+
+
+def _coerce_positive_int(raw: Any, *, maximum: Optional[int] = None) -> Optional[int]:
+    """把模型传来的「数字或数字字符串」转成正整数；非法值返回 None。
+
+    模型经常把 id/limit 写成字符串（``"54"``）或带空格，硬转 int 会直接抛异常把
+    整次调用变成错误返回，所以这里统一容错。
+    """
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return min(value, maximum) if maximum else value
+
+
+def _clip_dataset_description(text: str) -> tuple[str, bool]:
+    """裁剪数据集介绍，返回 ``(文本, 是否被裁剪)``。"""
+    value = str(text or "").strip()
+    if len(value) <= _DATASET_DESCRIPTION_LIMIT:
+        return value, False
+    return value[:_DATASET_DESCRIPTION_LIMIT].rstrip() + "…", True
+
+
+async def _describe_missing_dataset(db: Any, dataset_id: int) -> Optional[str]:
+    """指定 id 没进可访问目录时，尽量说清是哪一种「没有」。
+
+    三种情况的处置完全不同，混成一句「你没有这个数据集」会把用户带偏：
+
+    - ``missing``：数据集不存在（多半已删除）→ 数据资产问题；
+    - ``disabled``：存在但已停用 → 配置问题，启用即可；
+    - ``no_grant``：存在且启用，但当前账号没被授权 → 权限问题，要找管理员。
+
+    查询失败返回 ``None``，调用方退回模糊文案（少一句提示不算事故）。
+    """
+    try:
+        from sqlalchemy import select
+
+        from app.models.metadata import MetaDataset
+
+        row = (
+            await db.execute(
+                select(MetaDataset.id, MetaDataset.status).where(
+                    MetaDataset.id == int(dataset_id)
+                )
+            )
+        ).first()
+    except Exception as exc:  # noqa: BLE001 - 状态查询失败不影响主流程
+        logger.warning("[list_accessible_datasets] 数据集状态查询失败: %s", exc)
+        return None
+    if row is None:
+        return "missing"
+    if int(row[1] or 0) != 1:
+        return "disabled"
+    return "no_grant"
+
+
 @tool
-async def list_accessible_datasets() -> str:
+async def list_accessible_datasets(
+    keyword: Optional[str] = None,
+    dataset_id: Optional[int] = None,
+    limit: Optional[int] = _DATASET_LIMIT_DEFAULT,
+) -> str:
     """列出当前用户有权限且已启用的 ChatBI 数据集目录（id/名称/备注/权限摘要，不含表结构）。
 
     使用规则：
     - 当用户问「我有哪些数据集」「能查哪些数据」「数据集列表」时调用。
+    - 数据集多时用 ``keyword`` 收窄（匹配名称/展示名/备注），已知 id 时直接给
+      ``dataset_id`` —— 不要为了找一个数据集把整份目录拉进上下文。
+    - 用户问「我对某个数据集有没有权限」时用 ``dataset_id`` 精确查：查不到时 ``note``
+      会区分「不存在」「已停用」「存在但未授权」三种原因，按实际原因回答，不要说成
+      「没有数据集」或「没有权限」。
+    - 默认最多返回 30 条（上限 100）；``truncated=true`` 表示还有未展示的条目。
     - 仅返回 status=1（启用）的目录级信息；未启用的数据集不会出现。
     - 条目里**没有** ``permission`` 字段 = 该数据集对你没有表/字段/行级收窄。
     - ``permission.tables.visible`` 与 ``total`` 不一致 = 只授权了其中几张表；
@@ -75,12 +151,52 @@ async def list_accessible_datasets() -> str:
       运行时一律 1=0，**实际查不到任何数据**，要先向用户说明原因；
       ``custom``/``filtered`` 表示结果会被行级条件收窄；``none`` 表示明确不做行级过滤。
     - ``permission.expires_at`` 是最近到期时间：到期后会回落到角色基线，权限可能变化。
+    - ``permission.columns``：``restricted_tables`` 是有字段规则的表数，
+      ``excluded`` 是单表**最多**被排除的字段数（不是总和），``whitelisted_tables``
+      是用字段白名单的表数。``columns.tables`` 给明细：``mode=include`` 时 ``names``
+      是**你能查的字段**（可以直接告诉用户「只能查 id/real_name/user_name」）；
+      ``mode=exclude`` 或 ``mixed`` 时 ``names`` 恒为 null（屏蔽清单不公开），
+      这时只能说「这张表有字段被屏蔽」，**不要**猜测或编造是哪几列。
+    - ``permission.sources`` 是授权来源：``user``=用户直授、``role``=角色继承、
+      ``all``=全员基线。
+    - ``note`` 里会点出展示名重复的数据集：条目的 ``id`` 各不相同，回答时用 id
+      区分，不要只报展示名。
+    - ``note`` 是对空结果/截断/失效授权的解释，**必须**转述给用户：
+      它区分了「没有授权」「授权指向的数据集已删除或停用」「关键字没匹配到」——
+      这三种情况都不要笼统说成「你没有数据集」。
+    - ``note`` 里还可能出现「本轮只挂载了…」：条目 ``mounted=true`` 表示它在本轮可查范围内。
+      其余数据集虽在账号权限内，本轮也**查不了**，回答「我能查什么」时以挂载范围为准，
+      不要承诺去查未挂载的数据集。
+    - ``description_truncated=true`` 表示介绍被截断，需要全文时用 keyword 精确查该条。
     - 这里只有目录级信息，**不要据此编造表结构或查询结果**；要具体表/字段时，用当前可用的 Schema/取数工具再查一次。
+
+    Args:
+        keyword: 可选。按数据集 name / display_name / description 模糊匹配，不区分大小写。
+        dataset_id: 可选。精确查某一个数据集（传正整数 id），用于回答「我对它有没有权限」；
+            与 keyword 同时给时两者都要满足。
+        limit: 可选。本次最多返回多少条，默认 30，最大 100。
     """
     ctx = get_current_agent_context()
     if not ctx or not ctx.user_id:
         return "无法识别当前用户，拒绝列出数据集。"
 
+    wanted_id = _coerce_positive_int(dataset_id)
+    if dataset_id is not None and wanted_id is None:
+        return json.dumps(
+            {
+                "items": [],
+                "count": 0,
+                "total": 0,
+                "note": f"dataset_id={dataset_id!r} 不是合法的数据集 ID，应传正整数 id。",
+            },
+            ensure_ascii=False,
+        )
+
+    needle = str(keyword or "").strip().lower()
+    page_size = _coerce_positive_int(limit, maximum=_DATASET_LIMIT_MAX) or _DATASET_LIMIT_DEFAULT
+
+    target_state: Optional[str] = None
+    mounted_ids: Optional[set[int]] = None
     try:
         async with AsyncSessionLocal() as db:
             entries = await MetadataService.list_accessible_dataset_entries(
@@ -89,11 +205,161 @@ async def list_accessible_datasets() -> str:
                 is_admin=bool(ctx.is_admin),
                 status=1,
             )
-            items = [_dataset_item(entry) for entry in entries]
-            return json.dumps({"items": items, "count": len(items)}, ensure_ascii=False)
+            # 授权 id 集合与「目录里真实存在的数据集」是两件事：授权行可能指向已删除
+            # 或已停用的数据集，那样用户在权限页看得到授权、模型却说没有这个数据集。
+            # 这一步失败只是少一条提示，不能把整份目录打成错误返回。
+            try:
+                granted_ids = await MetadataService.accessible_dataset_ids(
+                    db, user_id=ctx.user_id, is_admin=bool(ctx.is_admin)
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[list_accessible_datasets] 读取授权集合失败，跳过失效授权提示: %s", exc
+                )
+                granted_ids = None
+            # 账号级权限 ≠ 本轮可查范围：ChatBI 执行 SQL 时还会按挂载范围再拦一次
+            # （``execute_sql_query`` 的 mounted 门禁）。不把这件事说清，模型就会
+            # 据「账号里有 B」承诺去查 B，然后被运行期拒绝。
+            try:
+                from app.services.ai.metadata_dataset_scope import (
+                    resolve_mounted_dataset_id_set,
+                )
+
+                mounted_ids = await resolve_mounted_dataset_id_set(db)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[list_accessible_datasets] 读取本轮挂载范围失败，跳过该提示: %s", exc
+                )
+            if wanted_id is not None and not any(
+                int(entry.get("id") or 0) == wanted_id for entry in entries
+            ):
+                target_state = await _describe_missing_dataset(db, wanted_id)
     except Exception as e:
         logger.error("[list_accessible_datasets] failed: %s", e, exc_info=True)
         return f"列出可访问数据集失败: {e}"
+
+    matched: list[dict[str, Any]] = []
+    for entry in entries:
+        item = _dataset_item(entry)
+        if wanted_id is not None and int(item.get("id") or 0) != wanted_id:
+            continue
+        if needle:
+            haystack = " ".join(
+                str(item.get(key) or "") for key in ("name", "display_name", "description")
+            ).lower()
+            if needle not in haystack:
+                continue
+        matched.append(item)
+
+    # 展示名重复曾经靠给每条加 label 解决，但那是在**每一轮**都付固定 token 成本，
+    # 目录越大越亏（实测 13 条目录里 11 条重名，label 就占 300+ 字符）。改成在 note
+    # 里点一句「用 id 区分」：id 本来就在每个条目里，模型完全能指代。
+    name_counts: dict[str, int] = {}
+    for item in matched:
+        key = str(item.get("display_name") or item.get("name") or "")
+        name_counts[key] = name_counts.get(key, 0) + 1
+
+    total = len(matched)
+    page = matched[:page_size]
+    items: list[dict[str, Any]] = []
+    mounted_labels: list[str] = []
+    for item in page:
+        clipped, was_truncated = _clip_dataset_description(item.get("description") or "")
+        item["description"] = clipped
+        if was_truncated:
+            item["description_truncated"] = True
+        if mounted_ids is not None and int(item.get("id") or 0) in mounted_ids:
+            item["mounted"] = True
+            mounted_labels.append(str(item.get("display_name") or item.get("name") or item["id"]))
+        items.append(item)
+
+    notes: list[str] = []
+    if mounted_ids is not None:
+        if mounted_labels:
+            notes.append(
+                f"本轮只挂载了「{'、'.join(mounted_labels)}」（标了 mounted=true）；"
+                "其余数据集虽在你的账号权限内，但本轮 SQL 只能查挂载的这些。"
+            )
+        elif not mounted_ids:
+            notes.append(
+                "本轮挂载的数据集已无法解析（可能已删除），本轮 SQL 可能查不到任何数据。"
+            )
+        else:
+            notes.append(
+                "本轮挂载的数据集不在本次结果里（可能被筛选条件排除、已停用或不在你的权限内）；"
+                "本轮 SQL 只能查挂载范围内的数据集。"
+            )
+    if wanted_id is not None and not items:
+        if target_state == "missing":
+            notes.append(
+                f"数据集 id={wanted_id} 不存在（可能已被删除）；这是数据资产问题，不是权限问题。"
+            )
+        elif target_state == "disabled":
+            notes.append(
+                f"数据集 id={wanted_id} 存在但已停用，因此不在可访问目录里；"
+                "启用后即可查询，这是数据集状态问题。"
+            )
+        elif target_state == "no_grant":
+            notes.append(
+                f"数据集 id={wanted_id} 存在且已启用，但当前账号没有被授权访问它；"
+                "这是权限问题，需要管理员在数据集权限里授权。"
+            )
+        else:
+            notes.append(
+                f"数据集 id={wanted_id} 不在可访问目录里（无权限 / 已删除 / 已停用）；"
+                "可去掉 dataset_id 再查一次确认。"
+            )
+    elif not matched:
+        if not entries:
+            grant_count = len(granted_ids) if granted_ids is not None else 0
+            if grant_count:
+                notes.append(
+                    f"该用户有 {grant_count} 条授权，但对应数据集都已删除或停用，目录才为空——"
+                    "这是数据集状态问题，不是权限问题。"
+                )
+            else:
+                notes.append("该账号没有任何启用的数据集授权，请如实告知用户，不要编造数据集名称。")
+        else:
+            sample = "、".join(
+                str(entry.get("display_name") or entry.get("name")) for entry in entries[:5]
+            )
+            notes.append(
+                f"关键字「{keyword}」没匹配到数据集。可访问的有：{sample}"
+                + ("……" if len(entries) > 5 else "")
+                + "。"
+            )
+    elif total > len(items):
+        notes.append(
+            f"共命中 {total} 个，只返回前 {len(items)} 个；可用 keyword 收窄或调大 limit（≤100）。"
+        )
+
+    duplicate_groups = [name for name, count in name_counts.items() if count > 1]
+    if duplicate_groups and items:
+        notes.append(
+            f"有 {len(duplicate_groups)} 组数据集展示名重复（如「{duplicate_groups[0]}」），"
+            "id 各不相同，回答时用 id 区分。"
+        )
+
+    if granted_ids is not None and wanted_id is None:
+        present_ids = {int(item["id"]) for item in entries if item.get("id") is not None}
+        missing = sorted(
+            int(grant_id) for grant_id in granted_ids if int(grant_id) not in present_ids
+        )
+        if missing:
+            shown = "、".join(str(value) for value in missing[:5]) + (
+                "……" if len(missing) > 5 else ""
+            )
+            notes.append(
+                f"另有 {len(missing)} 条授权指向已删除或已停用的数据集（id: {shown}），"
+                "它们不在列表里；这不属于权限问题。"
+            )
+
+    payload: dict[str, Any] = {"items": items, "count": len(items), "total": total}
+    if total > len(items):
+        payload["truncated"] = True
+    if notes:
+        payload["note"] = " ".join(notes)
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @tool

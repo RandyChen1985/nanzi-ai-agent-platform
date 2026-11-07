@@ -88,6 +88,11 @@ async def generate_clarification_content(
             from app.services.ai.runners.chatbi.metadata_guide import (
                 build_grounded_clarification_queries,
             )
+            from app.services.ai.runners.chatbi.schema_prefetch import (
+                _collect_session_scope_tokens,
+                apply_session_resource_scope,
+                expand_scope_tokens_with_names,
+            )
 
             runtime_user_id = runner._runtime_user_id()
             is_admin = bool((runner.user_info or {}).get("is_admin"))
@@ -95,6 +100,11 @@ async def generate_clarification_content(
                 user_id=int(runtime_user_id) if str(runtime_user_id).isdigit() else None,
                 is_admin=is_admin,
             )
+            scope_tokens = _collect_session_scope_tokens(
+                getattr(runner, "execution_options", None)
+            )
+            scope_tokens = await expand_scope_tokens_with_names(scope_tokens)
+            dataset_menu = apply_session_resource_scope(dataset_menu, tokens=scope_tokens)
             suggested_queries = build_grounded_clarification_queries(
                 dataset_menu,
                 missing_fields,

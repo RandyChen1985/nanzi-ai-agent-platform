@@ -61,11 +61,62 @@ def _recent_human_messages(runtime_messages: List[Any]) -> List[Any]:
     ]
 
 
+_DATASET_MENU_MARKER = "【当前用户有权访问的数据集】"
+
+
+def _strip_rendered_dataset_menu(text: str) -> str:
+    """把已渲染的目录段整段换成复用占位符（够不到目录时原样返回）。
+
+    不能按「匹配到下一个 ``#`` 标题」来定边界：目录后面跟的是智能体自己的提示词，
+    多数是纯中文段落、没有 markdown 标题，正则会一路吃到结尾，把角色设定与规则
+    全部删掉——合成阶段就只剩一句占位符。这里按目录的真实结构逐行判定：
+
+    ``header`` → 引导行（不缩进、也不是 ``- Dataset:``）→ 若干 ``- Dataset:`` 块
+    （块内是缩进行，块间可能是空行）→ 遇到「不缩进且不是 ``- Dataset:``」的行即结束。
+    """
+    start = text.find(_DATASET_MENU_MARKER)
+    if start < 0:
+        return text
+
+    tail_text = text[start:]
+    lines = tail_text.splitlines(keepends=True)
+    consumed = len(lines[0]) if lines else 0
+    in_blocks = False
+    for line in lines[1:]:
+        body = line.rstrip("\n")
+        if not body.strip():  # 块间空行
+            consumed += len(line)
+            continue
+        if body.startswith("- Dataset:"):
+            in_blocks = True
+            consumed += len(line)
+            continue
+        if body.startswith((" ", "\t")):
+            consumed += len(line)
+            continue
+        if not in_blocks:  # header 之后的引导行（「只能使用这里列出的…」等）
+            consumed += len(line)
+            continue
+        break
+
+    body_text = tail_text[:consumed]
+    remainder = tail_text[consumed:].lstrip("\n")
+    replacement = DataQueryPrompts.REUSE_DATASET_MENU_PLACEHOLDER
+    if remainder.strip():
+        replacement = f"{replacement}\n\n{remainder}"
+    return text[:start] + replacement
+
+
 def _prompt_without_dataset_menu(system_prompt: str) -> str:
-    return (system_prompt or "").replace(
-        "{dataset_menu}",
-        DataQueryPrompts.REUSE_DATASET_MENU_PLACEHOLDER,
-    )
+    text = str(system_prompt or "")
+    if "{dataset_menu}" in text:
+        return text.replace(
+            "{dataset_menu}",
+            DataQueryPrompts.REUSE_DATASET_MENU_PLACEHOLDER,
+        )
+    if _DATASET_MENU_MARKER in text:
+        return _strip_rendered_dataset_menu(text)
+    return text
 
 
 def _append_synthesis_trace(
