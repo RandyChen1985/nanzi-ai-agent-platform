@@ -346,3 +346,68 @@ async def test_pure_dataset_grant_is_not_snapshotted(db_session):
         assert snapshot == {}
     finally:
         await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_rebuild_keeps_column_scope_for_user(db_session):
+    """整份重建时字段级（列）收窄也要回填。
+
+    ``columns`` 和 ``tables`` 同在 ``scope`` JSON 里，回填是整个 scope 覆盖写回；
+    快照只留 ``{mode, tables}`` 的话，管理员在用户管理页勾一次数据集，就把别人配好的
+    「只给这几列 / 排除 id_card」静默放大成全列可见——与表级收窄当初丢配置同一类问题。
+    """
+    if not await dss.supports_table_scope(db_session):
+        pytest.skip("库结构尚未执行 V205/V105 迁移")
+
+    from sqlalchemy import delete
+
+    from app.services.permission_service import PermissionService
+
+    dataset_id = _new_dataset_id()
+    table_id = 500_000 + random.randint(1, 9999)
+    perm = await _add_grant(db_session, dataset_id, user_id=TEST_USER_ID)
+    await dss.update_grant_scope(
+        db_session,
+        int(perm.id),
+        subject_type=dss.SUBJECT_USER,
+        scope={
+            "mode": "all",
+            "tables": [],
+            "columns": {str(table_id): {"mode": "exclude", "names": ["ID_Card"]}},
+        },
+        row_policy=dss.ROW_POLICY_NONE,
+        row_condition=None,
+        expire_at=None,
+    )
+    await db_session.flush()
+
+    service = PermissionService(db_session)
+    snapshot = await service._snapshot_metadata_scopes("user_id", TEST_USER_ID)
+    saved = snapshot[str(dataset_id)]["scope"]
+    assert saved.get("columns"), "快照必须带上字段级规则，否则回填时会被整份覆盖成空"
+
+    # 模拟用户管理页的「整份重建」
+    await db_session.execute(
+        delete(ResourcePermission).where(
+            ResourcePermission.user_id == TEST_USER_ID,
+            ResourcePermission.resource_type == "metadata",
+        )
+    )
+    await db_session.flush()
+    db_session.add(
+        ResourcePermission(
+            resource_type="metadata", resource_id=str(dataset_id), user_id=TEST_USER_ID
+        )
+    )
+    await db_session.flush()
+
+    try:
+        await service._restore_metadata_scopes("user_id", TEST_USER_ID, snapshot)
+        await db_session.flush()
+
+        after = await service._snapshot_metadata_scopes("user_id", TEST_USER_ID)
+        restored = after[str(dataset_id)]["scope"]["columns"][str(table_id)]
+        assert restored["mode"] == "exclude"
+        assert [name.lower() for name in restored["names"]] == ["id_card"]
+    finally:
+        await db_session.rollback()
