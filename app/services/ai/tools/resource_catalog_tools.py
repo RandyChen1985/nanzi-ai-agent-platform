@@ -582,7 +582,6 @@ async def list_available_agents() -> str:
                         "blocked 中列出的是你本人有访问权限的智能体。"
                     )
             return json.dumps(payload, ensure_ascii=False)
-            return json.dumps(payload, ensure_ascii=False)
     except Exception as e:
         logger.error("[list_available_agents] failed: %s", e, exc_info=True)
         return f"列出可用智能体失败: {e}"

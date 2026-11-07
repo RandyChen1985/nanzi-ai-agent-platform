@@ -1,6 +1,7 @@
 import os
 import os.path
 import logging
+import re
 import sqlite3
 import pandas as pd
 import json
@@ -34,23 +35,204 @@ def _resolve_sqlite_scratchpad_dir() -> str:
     return _LEGACY_SANDBOX_DIR
 
 
+# 会话 id 只允许这四类字符：路径分隔符、"."、".." 全被排除，从源头断掉目录穿越。
+_SQLITE_SESSION_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
+_SQLITE_SESSION_ID_MAX_LEN = 64
+
+# ATTACH 能把任意 .db 文件（含平台其它用户的记忆只读副本）挂进当前连接，
+# DETACH 则允许「挂上来读一把再卸掉」的绕过手法，两者一起拒绝。
+_DENIED_SQLITE_ACTIONS = frozenset({sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH})
+
+
+def _authorize_sqlite_action(action, arg1, arg2, db_name, trigger) -> int:
+    """SQLite 授权回调：只拦截跨库挂载，常规表读写全部放行。"""
+    if action in _DENIED_SQLITE_ACTIONS:
+        return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
+
+
+def _skip_spaces(sql: str, index: int) -> int:
+    while index < len(sql) and sql[index].isspace():
+        index += 1
+    return index
+
+
+def _match_keyword(sql: str, index: int, keyword: str) -> bool:
+    """按词边界匹配关键字，避免 "recursivefoo" 被当成 "recursive"。"""
+    if not sql.startswith(keyword, index):
+        return False
+    end = index + len(keyword)
+    if end < len(sql) and (sql[end].isalnum() or sql[end] in "_$"):
+        return False
+    return True
+
+
+def _skip_quoted(sql: str, index: int) -> int:
+    """跳过一个 '...' / "..." / `...` / [...] 字面量，返回其后的下标。"""
+    quote = sql[index]
+    closer = "]" if quote == "[" else quote
+    index += 1
+    while index < len(sql):
+        if sql[index] == closer:
+            # SQL 中两个连续引号表示转义（'' / "" / ``），不结束字面量
+            if quote != "[" and index + 1 < len(sql) and sql[index + 1] == closer:
+                index += 2
+                continue
+            return index + 1
+        index += 1
+    return len(sql)
+
+
+def _skip_paren_group(sql: str, index: int) -> int:
+    """index 指向 '('，返回配对 ')' 之后的下标；不配对返回 -1。"""
+    depth = 0
+    while index < len(sql):
+        ch = sql[index]
+        if ch in "'\"`[":
+            index = _skip_quoted(sql, index)
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return -1
+
+
+def _skip_cte_prefix(sql: str) -> int:
+    """跳过 ``WITH [RECURSIVE] name [(cols)] AS [NOT] [MATERIALIZED] (...) [, ...]``。
+
+    返回 CTE 定义之后主语句的起始下标；结构不合法时返回 -1。
+    """
+    index = _skip_spaces(sql, len("with"))
+    if _match_keyword(sql, index, "recursive"):
+        index = _skip_spaces(sql, index + len("recursive"))
+    while True:
+        if index < len(sql) and sql[index] in "\"`[":
+            index = _skip_quoted(sql, index)
+        else:
+            start = index
+            while index < len(sql) and (sql[index].isalnum() or sql[index] in "_$"):
+                index += 1
+            if start == index:
+                return -1
+        index = _skip_spaces(sql, index)
+        # 可选的列名清单：name(a, b) AS (...)
+        if index < len(sql) and sql[index] == "(":
+            index = _skip_paren_group(sql, index)
+            if index < 0:
+                return -1
+            index = _skip_spaces(sql, index)
+        if not _match_keyword(sql, index, "as"):
+            return -1
+        index = _skip_spaces(sql, index + len("as"))
+        if _match_keyword(sql, index, "not"):
+            index = _skip_spaces(sql, index + len("not"))
+        if _match_keyword(sql, index, "materialized"):
+            index = _skip_spaces(sql, index + len("materialized"))
+        if index >= len(sql) or sql[index] != "(":
+            return -1
+        index = _skip_paren_group(sql, index)
+        if index < 0:
+            return -1
+        index = _skip_spaces(sql, index)
+        if index < len(sql) and sql[index] == ",":
+            index = _skip_spaces(sql, index + 1)
+            continue
+        return index
+
+
+def _strip_sql_comments(sql: str) -> str:
+    """去掉 SQL 注释后再做只读判定。
+
+    注释可以出现在语句最前面（如 "-- 查一下\\nSELECT ..."），不剥掉就会把纯查询
+    误判成写操作。扫描时跳过带引号的字面量，避免把 ``'a--b'`` 这类字符串内容当成
+    注释删掉、破坏 CTE 括号配对。
+    """
+    sql = sql or ""
+    out: List[str] = []
+    index = 0
+    while index < len(sql):
+        ch = sql[index]
+        if ch in "'\"`[":
+            end = _skip_quoted(sql, index)
+            out.append(sql[index:end])
+            index = end
+            continue
+        if sql.startswith("--", index):
+            newline = sql.find("\n", index)
+            index = len(sql) if newline < 0 else newline
+            out.append(" ")
+            continue
+        if sql.startswith("/*", index):
+            end = sql.find("*/", index + 2)
+            index = len(sql) if end < 0 else end + 2
+            out.append(" ")
+            continue
+        out.append(ch)
+        index += 1
+    return "".join(out)
+
+
+def _is_read_only_sql(sql: str) -> bool:
+    """判定一条 SQL 是否会返回结果集（SELECT，或 WITH ... SELECT 形式的 CTE 查询）。
+
+    旧实现用 ``sql.strip().upper().startswith("SELECT")``，导致 ``WITH ... SELECT``
+    被当成写操作：既拿不到查询结果，还会多一次 conn.commit()。这里改为剥注释后按
+    关键字判定，并显式跳过 CTE 定义部分，确认主语句确实是 SELECT（``WITH ... DELETE``
+    这类写语句仍然判为写）。
+    """
+    body = _strip_sql_comments(sql).strip().lower()
+    if not body:
+        return False
+    if re.match(r"select\b", body):
+        return True
+    if not re.match(r"with\b", body):
+        return False
+    main_index = _skip_cte_prefix(body)
+    if main_index < 0:
+        return False
+    return bool(re.match(r"select\b", body[main_index:]))
+
+
 @tool
 def sqlite_scratchpad(sql: str, session_id: str, import_data: str = None) -> str:
     """
     会话隔离的轻量 SQLite 数据分析临时沙箱，用于执行数据清洗、多维 SQL 分析等，主库无污染。
     
     Args:
-        sql: 要在 SQLite 中执行的 SQL 语句。
-        session_id: 隔离会话的标识符 (如 123)。
+        sql: 要在 SQLite 中执行的 SQL 语句（SELECT / WITH ... SELECT 会返回结果表格）。
+        session_id: 隔离会话的标识符，只允许字母、数字、下划线和短横线 (如 123、conv_abc-1)。
         import_data: 可选的 JSON 序列化数据（字典格式）。键为临时表名，值为字典列表（数据行）。
     """
-    db_dir = _resolve_sqlite_scratchpad_dir()
+    raw_session_id = str(session_id or "")
+    safe_session_id = _SQLITE_SESSION_ID_RE.sub("", raw_session_id)
+    # 为什么"清洗后与原值不一致就拒绝"而不是静默替换成安全值：'a/b' 与 'ab' 会落到
+    # 同一个 db 文件，模型会误以为自己换到了另一个会话，既掩盖了越权尝试又制造串会话脏数据。
+    if (
+        not safe_session_id
+        or safe_session_id != raw_session_id
+        or len(safe_session_id) > _SQLITE_SESSION_ID_MAX_LEN
+    ):
+        return (
+            "session_id 非法：只允许字母、数字、下划线和短横线，长度不超过 "
+            f"{_SQLITE_SESSION_ID_MAX_LEN}。"
+        )
+
+    db_dir = os.path.realpath(_resolve_sqlite_scratchpad_dir())
     os.makedirs(db_dir, exist_ok=True)
-    db_path = os.path.join(db_dir, f"sess_{session_id}.db")
-    
+    db_path = os.path.realpath(os.path.join(db_dir, f"sess_{safe_session_id}.db"))
+    # 纵深防御：即使白名单将来被放宽，最终落盘路径也不允许逃出用户沙箱目录。
+    if os.path.dirname(db_path) != db_dir:
+        return "拒绝访问：SQLite 会话文件必须位于当前用户的沙箱目录内。"
+
     conn = None
     try:
         conn = sqlite3.connect(db_path)
+        # 建连后立刻装授权回调，后续所有语句（含 import_data 触发的 SQL）都受它约束。
+        conn.set_authorizer(_authorize_sqlite_action)
         
         # 1. 检查并导入临时数据
         if import_data:
@@ -65,8 +247,7 @@ def sqlite_scratchpad(sql: str, session_id: str, import_data: str = None) -> str
                 return f"导入临时数据失败: {str(import_err)}"
                 
         # 2. 执行 SQL 语句
-        sql_stripped = sql.strip().upper()
-        if sql_stripped.startswith("SELECT"):
+        if _is_read_only_sql(sql):
             df_res = pd.read_sql_query(sql, conn)
             if df_res.empty:
                 return "执行成功，查询结果为空。"

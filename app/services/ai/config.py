@@ -528,8 +528,10 @@ class AgentConfigProvider:
         redis = await get_redis()
         
         # 1. Try Cache (按用户隔离，admin 共享一个 key)
-        scope_key = 'admin' if is_admin else user_id or 'anon'
-        cache_key = f"agent:dataset_menu:{_DATASET_MENU_CACHE_VERSION}:{scope_key}"
+        # 键必须走 dataset_menu_cache_key：权限失效侧也用它，两处自己拼就会漂移
+        cache_key = AgentConfigProvider.dataset_menu_cache_key(
+            user_id=user_id, is_admin=is_admin
+        )
         if not force_refresh:
             try:
                 if redis:
@@ -583,7 +585,8 @@ class AgentConfigProvider:
         每用户还要额外付一次全库 SCAN。键格式因此必须单点维护：这里改了，批量侧自动跟随，
         不会出现「单用户清了、批量没清」的静默不一致（表现为改完权限 1 小时内不生效）。
         """
-        return f"agent:dataset_menu:{'admin' if is_admin else user_id or 'anon'}"
+        scope_key = "admin" if is_admin else user_id or "anon"
+        return f"agent:dataset_menu:{_DATASET_MENU_CACHE_VERSION}:{scope_key}"
 
     @staticmethod
     async def invalidate_dataset_menu_cache(user_id: Optional[int] = None, is_admin: bool = False):

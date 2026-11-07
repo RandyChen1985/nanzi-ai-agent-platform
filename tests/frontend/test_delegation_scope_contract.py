@@ -176,7 +176,9 @@ def test_team_lead_can_be_selected_as_a_sub_expert():
     这条锁的是「不许因为深度限制就一刀切禁止」——不少智能体本身就带一个团，
     同时又是别处需要的专才，「当子专家用」和「当团用」只是两种取用方式。
     """
-    assert "const isSelectable = (agent: DelegationScopeAgent) => isAuthorized(agent);" in MODAL
+    assert "const isSelectable = (agent: DelegationScopeAgent) =>" in MODAL
+    # 唯一被排除的是 main（主助手），团主不在排除项里
+    assert "isAuthorized(agent) && !isMainAgent(agent);" in MODAL
     # 反向：不能再出现「授权 + 非团主」的组合式禁止
     assert "isAuthorized(agent) && !isTeamLead(agent)" not in MODAL
 

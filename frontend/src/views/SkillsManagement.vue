@@ -11,6 +11,7 @@ import { useToast } from '../composables/useToast'
 import SkillFileTree from '../components/SkillFileTree.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import MarkdownIt from 'markdown-it'
+import { sanitizeRenderedHtml } from '../utils/sanitizeHtml'
 import { copyToClipboard } from '../utils/clipboard'
 import { useUser } from '../composables/useUser'
 import InputModal from '../components/InputModal.vue'
@@ -1482,9 +1483,12 @@ const isMarkdownFile = computed(() => {
 const renderedMarkdown = computed(() => {
   if (!editingContent.value) return '<p class="preview-empty">暂无内容，请先在编辑视图中编写</p>'
   try {
-    return mdParser.render(editingContent.value)
+    // 技能可能来自他人分享 / 导入包，SKILL.md 里的原始 HTML 会被 `html: true` 原样保留；
+    // 预览直接走 v-html，不消毒等于让分享者在查看者浏览器里执行脚本（如 <img onerror>）。
+    return sanitizeRenderedHtml(mdParser.render(editingContent.value))
   } catch (e) {
-    return `<p class="text-red-400 p-4">渲染解析 Markdown 时遇到错误: ${e}</p>`
+    // 异常文案同样会进 v-html：先转义，避免其中的尖括号被当成标签解析
+    return `<p class="text-red-400 p-4">渲染解析 Markdown 时遇到错误: ${mdParser.utils.escapeHtml(String(e))}</p>`
   }
 })
 

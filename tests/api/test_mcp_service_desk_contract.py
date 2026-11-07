@@ -435,6 +435,18 @@ def test_client_security_changes_revoke_existing_grants_and_tokens():
     assert "revoked_at" in source
 
 
+def test_playground_route_is_bound_to_the_real_endpoint():
+    """装饰器必须挂在端点上：挂错会让 /playground/test 匿名返回内部基址。"""
+    route = next(
+        item
+        for item in mcp_service.router.routes
+        if getattr(item, "path", "") == "/playground/test"
+    )
+    assert route.endpoint.__name__ == "test_playground_method"
+    # 在线调试必须带权限依赖，不能匿名可达
+    assert route.dependant.dependencies
+
+
 def test_playground_does_not_return_complete_access_token():
     source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
     playground = source.split('@router.post("/playground/test")', 1)[1]

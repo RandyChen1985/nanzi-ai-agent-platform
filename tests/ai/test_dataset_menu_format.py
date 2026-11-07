@@ -209,3 +209,6 @@ def test_dataset_menu_cache_key_carries_prompt_version(monkeypatch):
 
     assert calls, "未访问缓存"
     assert all(config_module._DATASET_MENU_CACHE_VERSION in key for key in calls)
+    # 权限变更走 invalidate_dataset_menu_cache（内部就是 dataset_menu_cache_key），
+    # 它必须和 get_dataset_menu 用的是同一个键，否则删的是历史键、新键活满 90 天
+    assert AgentConfigProvider.dataset_menu_cache_key(user_id=178) in calls

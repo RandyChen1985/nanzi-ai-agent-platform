@@ -1,23 +1,13 @@
 from typing import Any, Dict, List, Optional
 from .base import DataSourceAdapter, SQLSafetyError, standardize_items
 from .models import LogicalQuery, ResultSet
+from .sql_template import render_sql_template
 import aiomysql
 import logging
 import time
 import re
 
 logger = logging.getLogger(__name__)
-
-# --- Jinja2 Environment for preview and column fetching ---
-from jinja2 import Environment, BaseLoader, Undefined
-
-class SqlLabUndefined(Undefined):
-    def __str__(self): return "NULL"
-    def __html__(self): return "NULL"
-    def __iter__(self): return iter([])
-    def __bool__(self): return False
-
-SQL_LAB_ENV = Environment(loader=BaseLoader(), undefined=SqlLabUndefined)
 
 class MySQLAdapter(DataSourceAdapter):
     """MySQL 数据库适配器：封装基于 aiomysql 连接池的物理查询、结构探测和安全限制"""
@@ -68,15 +58,23 @@ class MySQLAdapter(DataSourceAdapter):
                 raw_sql = raw_sql[:-1]
                 
             try:
-                env = SQL_LAB_ENV
-                template = env.from_string(raw_sql)
-                render_ctx = params if params is not None else {}
-                sql = template.render(**render_ctx)
+                # custom_sql 来自外部输入，这里历史上既没有走沙箱渲染、也没有调用
+                # _validate_sql_safety：模板可执行任意 Python 表达式，且写操作能借
+                # 渲染绕过只读限制。统一入口会先沙箱渲染，再校验最终 SQL。
+                sql = render_sql_template(raw_sql, params, self._validate_sql_safety)
+            except SQLSafetyError as e:
+                raise ValueError(str(e))
             except Exception as e:
                 logger.warning(f"Jinja2 模板渲染异常，回退使用原始 SQL: {e}")
                 sql = raw_sql
-                
+
             final_sql = f"SELECT * FROM ({sql}) as t LIMIT 0"
+            # 外层包裹会改变 sqlparse 看到的语句形态（括号内的分号不会被拆成多条），
+            # 因此真正要执行的 final_sql 必须再校验一次，不能只信渲染出来的子查询。
+            try:
+                self._validate_sql_safety(final_sql)
+            except SQLSafetyError as e:
+                raise ValueError(str(e))
         elif table_name:
             async with pool.acquire() as conn:
                 async with conn.cursor() as cursor:
@@ -112,6 +110,13 @@ class MySQLAdapter(DataSourceAdapter):
         """
         执行物理只读 SQL 并返回统一的结果格式。
         """
+        # 物理执行入口必须守住只读契约：上层 validate_sql 通常会先校验，但适配器
+        # 也会被内部服务直接调用，入口处再校验一次，避免某条调用链漏掉校验。
+        try:
+            self._validate_sql_safety(sql)
+        except SQLSafetyError as e:
+            raise ValueError(str(e))
+
         from app.services.pool_manager import DataSourcePoolManager
         
         if params is not None and not params:
@@ -152,23 +157,23 @@ class MySQLAdapter(DataSourceAdapter):
         params = params or {}
         limit = min(max(int(limit or 100), 1), 1000)
         
-        # 1. 安全过滤检查
+        # 1. 模板本身先做一次只读校验：明显违规的输入（如 UPDATE）尽早拒绝，
+        #    报错信息也更贴近用户实际提交的语句。
         try:
             self._validate_sql_safety(sql)
         except SQLSafetyError as e:
             raise ValueError(str(e))
-            
-        # 2. Jinja2 渲染处理
-        rendered_sql = sql
-        if "{{" in sql or "{%" in sql:
-            try:
-                template = SQL_LAB_ENV.from_string(sql)
-                rendered_sql = template.render(**params)
-                self._validate_sql_safety(rendered_sql)
-            except SQLSafetyError as e:
-                raise ValueError(str(e))
-            except Exception as e:
-                raise ValueError(f"Jinja2 模板渲染失败: {str(e)}")
+
+        # 2. 沙箱渲染 + 渲染后再次校验。
+        #    只读校验必须落在最终要执行的 SQL 上：模板 `SELECT ... {{ x }}` 本身是
+        #    只读的，但 x 可以渲染出 `1; DROP TABLE ...`，只校验模板等于校验了一份
+        #    不会真正执行的字符串，写操作能借渲染绕过只读闸门。
+        try:
+            rendered_sql = render_sql_template(sql, params, self._validate_sql_safety)
+        except SQLSafetyError as e:
+            raise ValueError(str(e))
+        except Exception as e:
+            raise ValueError(f"Jinja2 模板渲染失败: {str(e)}")
 
         # 3. 强制行数保护
         clean_sql = rendered_sql.strip().rstrip(";")

@@ -52,7 +52,7 @@
 
 ### 3.2 数据集菜单缓存 (Dataset Menu)
 *   **业务场景**: 缓存所有可用数据集及其 Schema 的文本描述，作为 Context 提供给 Agent，帮助其选择数据集。
-*   **Key 模式**: `agent:dataset_menu:{user_id_or_admin_or_anon}`
+*   **Key 模式**: `agent:dataset_menu:v2:{user_id_or_admin_or_anon}`（`v2` 为提示词版本，改动目录文案时递增，否则旧缓存会让新文案 90 天不生效）
 *   **数据结构**: `String` (Plain Text)
 *   **过期时间 (TTL)**: 10 分钟 (600s)
 *   **代码位置**: `app/services/ai/config.py`
@@ -71,5 +71,5 @@
 | **Auth** | `auth:api_key:*` | 1 hour | Hash | API Key 校验缓存 |
 | **Auth** | `sys:auth:permissions:v3:user:*` | 1 hour | String (JSON) | 完整权限集 |
 | **AI** | `conversation:*:history` | 7 days | List | 对话上下文 |
-| **AI** | `agent:dataset_menu:*` | 10 mins | String | 数据集 Schema 描述 |
+| **AI** | `agent:dataset_menu:v*:*` | 90 days | String | 数据集 Schema 描述（按数据集/表变更失效） |
 

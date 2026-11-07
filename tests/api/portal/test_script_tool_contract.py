@@ -702,3 +702,56 @@ def test_missing_row_is_marked_fallback():
     )
     response = _response_from_effective(item, set())
     assert response.is_fallback is True
+
+
+# --------------------------------------------------------------------------- #
+# 试运行不能绕过容器沙箱
+# --------------------------------------------------------------------------- #
+async def test_preview_refuses_host_execution_under_container_policy(tmp_path, monkeypatch):
+    """docker/k8s 下试运行没有会话工作区，必须直接拒绝而不是在宿主机上跑。"""
+    from app.api.portal.endpoints import script_tools as endpoints
+
+    async def fake_policy() -> str:
+        return "docker"
+
+    async def fake_workdir(_user):
+        return tmp_path
+
+    monkeypatch.setattr(endpoints, "current_sandbox_policy", fake_policy)
+    monkeypatch.setattr(endpoints, "_preview_workdir", fake_workdir)
+
+    result = await endpoints.preview_script_tool(
+        SysScriptToolPreviewRequest(code="print('should-not-run')"),
+        db=None,
+        user={"user_id": "u1"},
+    )
+
+    assert result.ok is False
+    assert result.sandbox_policy == "docker"
+    assert "不会退回平台后端进程" in result.message
+    # 脚本目录都没建，说明根本没进入执行器
+    assert not (tmp_path / ".script_tools").exists()
+
+
+async def test_preview_still_runs_under_local_policy(tmp_path, monkeypatch):
+    """local 策略本来就是后端进程执行，不能被上面的拒绝逻辑连坐。"""
+    from app.api.portal.endpoints import script_tools as endpoints
+
+    async def fake_policy() -> str:
+        return "local"
+
+    async def fake_workdir(_user):
+        return tmp_path
+
+    monkeypatch.setattr(endpoints, "current_sandbox_policy", fake_policy)
+    monkeypatch.setattr(endpoints, "_preview_workdir", fake_workdir)
+
+    result = await endpoints.preview_script_tool(
+        SysScriptToolPreviewRequest(code="print('hello-preview')"),
+        db=None,
+        user={"user_id": "u1"},
+    )
+
+    assert result.ok, result.stderr
+    assert "hello-preview" in result.stdout
+    assert result.sandbox_policy == "local"

@@ -323,23 +323,38 @@ class SQLRewriter:
         self,
         condition: str,
         local_tables: Set[str],
-    ) -> Set[str]:
-        """判定无表前缀条件在当前 SELECT 作用域内可安全应用的物理表。"""
+    ) -> Optional[Set[str]]:
+        """判定无表前缀条件在当前 SELECT 作用域内可安全应用的物理表。
+
+        返回值三态，调用方必须区分：
+        - ``None``：**归属歧义**（多张表都含该列，或解析不了又有多张表）→ 必须拒绝执行；
+        - 空集：本作用域里没有表含该列 → 这条规则与本作用域无关，跳过即可
+          （子查询常是维度表，不含业务过滤列，不能因此拒掉整条查询）；
+        - 非空：可安全应用的表集合（带外层的唯一归属判定，至多一张）。
+        """
         if not local_tables:
             return set()
         unqualified_columns = self._extract_unqualified_columns(condition)
         if not unqualified_columns:
             # None（解析不了）与空集都退回「单表才应用」，不猜多表归属
-            return local_tables if len(local_tables) == 1 else set()
+            if len(local_tables) == 1:
+                return local_tables
+            return None
         if not self.table_metadata:
-            return local_tables if len(local_tables) == 1 else set()
+            if len(local_tables) == 1:
+                return local_tables
+            return None
 
         matching_tables = {
             table_name
             for table_name in local_tables
             if unqualified_columns.issubset(self.table_metadata.get(table_name, set()))
         }
-        return matching_tables if len(matching_tables) == 1 else set()
+        if len(matching_tables) == 1:
+            return matching_tables
+        if not matching_tables:
+            return set()
+        return None
 
     def _filter_relevant_conditions_for_scope(
         self,
@@ -366,8 +381,23 @@ class SQLRewriter:
                     if target_table in local_tables:
                         relevant_filters.append(f)
                     continue
-                if self._local_tables_for_unqualified_condition(condition, local_tables):
-                    relevant_filters.append(f)
+                matched_tables = self._local_tables_for_unqualified_condition(
+                    condition, local_tables
+                )
+                if matched_tables is None:
+                    # 归属歧义（多张表都含该列）：条件无处安放等于权限失效，
+                    # 必须拒绝，不能像历史实现那样丢弃后原样执行。
+                    raise SQLPermissionError(
+                        f"行级过滤条件「{condition}」无法归属到查询中的单一数据表"
+                        f"（当前作用域：{', '.join(sorted(local_tables)) or '空'}），已拒绝执行。"
+                        "请在行级权限规则中为该条件写明表前缀。"
+                    )
+                if not matched_tables:
+                    # 本作用域没有表含该列（典型是维度表子查询）：与本规则无关，跳过。
+                    # 上层 applied_count 为 0 时仍会保留历史行为（原样返回），
+                    # 但不会因为子作用域不匹配而误拒整条查询。
+                    continue
+                relevant_filters.append(f)
                 continue
             relevant_filters.append(f)
 

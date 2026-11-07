@@ -276,4 +276,4 @@ async def test_chatbi_example_search_local_fallback_mysql():
         assert len(results) == 1
         assert results[0]["id"] == 99
         assert results[0]["question"] == "mysql fallback"
-        mock_mysql_search.assert_called_once_with("total sales", 42, 5)
+        mock_mysql_search.assert_called_once_with("total sales", 42, 5, require_sql=True)

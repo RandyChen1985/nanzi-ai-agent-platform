@@ -2042,7 +2042,6 @@ class McpPlaygroundTestRequest(BaseModel):
     token: str | None = None
 
 
-@router.post("/playground/test")
 def _platform_probe_base_url() -> str:
     """ASGI 内自调用的基址：优先公网地址（= 传输安全白名单里的 Host）。"""
     from app.services.mcp.public_url import get_cached_public_url
@@ -2053,6 +2052,7 @@ def _platform_probe_base_url() -> str:
     return "http://localhost:8001"
 
 
+@router.post("/playground/test")
 async def test_playground_method(
     payload: McpPlaygroundTestRequest,
     user: dict = Depends(require_mcp_service_permission("element:mcp_service:capability:read")),
