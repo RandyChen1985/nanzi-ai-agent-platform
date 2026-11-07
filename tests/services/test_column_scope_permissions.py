@@ -669,7 +669,9 @@ def test_load_allowed_columns_handles_dict_candidates(monkeypatch) -> None:
         table_ids=frozenset(),
         column_rules={92: (ColumnRule(COL_EXCLUDE, frozenset({"secret"})),)},
     )
-    allowed, full, unavailable = asyncio.get_event_loop().run_until_complete(
+    # asyncio.run 而不是 get_event_loop().run_until_complete：pytest 会话共用
+    # 一个 event loop 后，同步用例里那个 loop 可能正被占用/已关闭。
+    allowed, full, unavailable = asyncio.run(
         _load_allowed_columns_by_table(
             _FakeSession(),
             scopes={1: scope},
