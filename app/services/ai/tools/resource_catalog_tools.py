@@ -175,7 +175,7 @@ async def list_available_agents() -> str:
     - 在需要委派子任务前，若需查询或确认可委派的智能体标识 (agent_name) 与核心能力，可调用此工具。
     - 返回体分两段：`items` 是**当前可直接调用**的可委派智能体，委派工具只能调用其中出现的标识；
       `blocked` 是用户本人有访问权限、但当前调不了的（附 blocked_reason：no_tool / self /
-      not_in_allowlist / not_ready）。
+      main_agent / not_in_allowlist / not_ready）。
     - 「我有那些智能体权限」看 `accessible_count` 与 `blocked`；「我能委派哪些」只看 `items`
       与 `delegable_count`。两个问题不要混着答。
     - 平台系统级智能体需要在角色权限里被授予访问权才会出现；用户自建智能体**默认不可委派**，
@@ -200,6 +200,7 @@ async def list_available_agents() -> str:
         )
         from app.services.ai.tools.agent_delegate_tool import (
             has_delegation_tool,
+            is_main_general_agent_target,
             resolve_delegation_allowlist,
         )
 
@@ -265,6 +266,11 @@ async def list_available_agents() -> str:
                     reason, explain = "no_tool", "本智能体未启用委派工具，暂时无法委派"
                 elif current_agent_id and agent_id == str(current_agent_id):
                     reason, explain = "self", "就是当前对话的智能体本身，不能委派给自己"
+                elif is_main_general_agent_target(agent):
+                    reason, explain = (
+                        "main_agent",
+                        "主助手是系统兜底入口，不能作为委派目标（候选池与运行时调用都已排除）",
+                    )
                 elif allowlist_configured and agent_id not in allowlist_ids:
                     reason, explain = "not_in_allowlist", "不在本智能体的「调度范围」内"
                 else:

@@ -1804,6 +1804,19 @@ const versionForm = ref<Partial<AIAgentVersion>>({
   skills: [],
   comment: "",
 });
+/**
+ * 新建向导里「用户是否亲手动过工具选择」。
+ *
+ * 新建时后端先按模板（main / chat-bi / knowledge-base）把 V1 草稿整份建出来，模板里的
+ * 工具也随之落库。保存时若把「模板工具 + 用户勾选」取并集，用户在向导里取消掉的工具
+ * 会被模板原样塞回来——表现就是「我只选了系统自治工具，保存后多出二十多个」。
+ * 工具是用户显式决定的集合：动过就以用户选择为准；完全没进工具步骤时才沿用模板，
+ * 保留「套模板」的初始可用能力。
+ */
+const toolSelectionTouched = ref(false);
+const markToolSelectionTouched = () => {
+  toolSelectionTouched.value = true;
+};
 type OnboardingStep = "BASIC" | "VERSION" | "RESOURCE";
 const isOnboardingFlow = ref(false);
 const onboardingStep = ref<OnboardingStep>("BASIC");
@@ -2421,6 +2434,7 @@ const toggleSelectAllStatic = (label: string) => {
   if (!canEditVersion.value) return;
   const tools = getStaticGroupTools(label);
   if (tools.length === 0) return;
+  markToolSelectionTouched();
 
   const currentTools = [...(versionForm.value.tools || [])];
   if (isAllStaticGroupSelected(label)) {
@@ -2576,6 +2590,8 @@ const removeStaleToolRefs = (names: string[]) => {
   });
   const removed = before - (versionForm.value.tools || []).length;
   if (removed > 0) {
+    // 用户主动清理了失效引用，同样算「动过工具选择」：保存时不得再把模板工具带回来。
+    markToolSelectionTouched();
     versionToolHealth.value = versionToolHealth.value.filter((item) => !targets.has(item.name));
     showToast(`已移除 ${removed} 项失效引用，保存版本后生效`, 'success');
   }
@@ -2903,6 +2919,8 @@ const startAgentCreation = () => {
   };
   selectedMarkdownTheme.value = "default";
   hideMessageBorder.value = true;
+  // 新一轮新建从「没动过工具」开始：只有用户真的勾选/取消过，才按用户选择提交。
+  toolSelectionTouched.value = false;
   versionForm.value = {
     model_name: "",
     temperature: globalModelTemperature.value,
@@ -3609,11 +3627,25 @@ const persistNewAgentDraft = async (closeAfterSave: boolean) => {
     selectedAgent.value = created.data.agent;
 
     const toolName = (item: any) => typeof item === 'string' ? item : item?.name;
-    const mergedToolMap = new Map<string, any>();
-    for (const item of [...(created.data.version.tools || []), ...(desiredVersion.tools || [])]) {
-      const name = toolName(item);
-      if (name) mergedToolMap.set(name, item);
-    }
+    const normalizeToolList = (items: any[]) => {
+      // 按工具名去重、保序：模板里的对象配置与用户的选择可能同名，后者覆盖前者。
+      const map = new Map<string, any>();
+      for (const item of items || []) {
+        const name = toolName(item);
+        if (name) map.set(name, item);
+      }
+      return [...map.values()];
+    };
+    /**
+     * 工具按「用户选择即权威」提交。
+     *
+     * 动过工具选择就只提交用户勾中的那一份——与模板取并集会让模板里的工具永远删不掉，
+     * 用户明明只选了系统自治工具，保存后却带回模板的整份工具列表。
+     * 完全没进工具步骤时才并入模板工具，保留新建时「开箱可用」的初始能力。
+     */
+    const submittedTools = toolSelectionTouched.value
+      ? normalizeToolList(desiredVersion.tools || [])
+      : normalizeToolList([...(created.data.version.tools || []), ...(desiredVersion.tools || [])]);
     const updated = await agentApi.updateVersion(
       created.data.agent.id,
       created.data.version.id,
@@ -3621,7 +3653,7 @@ const persistNewAgentDraft = async (closeAfterSave: boolean) => {
         ...created.data.version,
         ...desiredVersion,
         model_name: desiredVersion.model_name || created.data.version.model_name,
-        tools: [...mergedToolMap.values()],
+        tools: submittedTools,
         system_prompt: desiredVersion.system_prompt?.trim() || created.data.version.system_prompt,
         skills_custom: !!desiredVersion.skills_custom,
         skills: desiredVersion.skills_custom ? (desiredVersion.skills || []) : [],
@@ -4006,6 +4038,7 @@ const normalizeDelegationToolsForSubmit = (tools: any[]): any[] => {
 
 const toggleTool = (toolName: string) => {
   if (!canEditVersion.value) return;
+  markToolSelectionTouched();
   const tools = [...(versionForm.value.tools || [])];
 
   // 两个委派工具共用一个开关：开启时成对写入（否则模型没有并行委派入口），
@@ -4100,6 +4133,7 @@ const isAllMcpSelected = (_serverName: string, tools: any[]) => {
 
 const toggleSelectAllMcp = (serverName: string, tools: any[]) => {
   if (!canEditVersion.value) return;
+  markToolSelectionTouched();
   const currentTools = [...(versionForm.value.tools || [])];
   const allSelected = isAllMcpSelected(serverName, tools);
 
@@ -4252,6 +4286,9 @@ const delegationScopeAgents = computed(() =>
     // 列出来只会让人误以为勾上就生效。
     .filter(a => String(a.id) !== String((selectedAgent.value as any)?.id ?? ""))
     .filter(a => (a as any).is_enabled !== false)
+    // 主助手（main）不在这里过滤：它由弹窗置灰并给出「不可委派」提示，
+    // 同时用于识别存量名单里的 main 并引导清理。若在这层剔掉，老配置里的 main
+    // 会既看不见也删不掉，只能手改数据库。
     .map(a => ({
       id: String(a.id),
       name: a.name,

@@ -452,6 +452,10 @@ class AgentManagerService:
         名单只有一份（``sub_agent_call`` 为准，batch 上的历史字段兜底），与运行时
         ``sub_agent_call`` / ``sub_agent_batch_call`` 的校验口径完全同源——这里若
         再单独回落一次 batch，就会出现「卡片显示有成员、委派时却读不到」的分叉。
+
+        主助手（``MAIN_GENERAL_AGENT_ID``）要从成员里剔掉：权限层
+        （``filter_delegable_agents``）与运行时调用都已拒绝把它当委派目标，
+        卡片若还把它算成成员，就会出现「团显示 5 人、实际只能调 4 人」。
         """
         if published_version is None:
             return None
@@ -461,7 +465,12 @@ class AgentManagerService:
         configured, ids = resolve_delegation_allowlist(tools)
         if not configured:
             return None
-        return [str(item) for item in (ids or []) if str(item or "").strip()]
+        return [
+            str(item)
+            for item in (ids or [])
+            if str(item or "").strip()
+            and str(item).strip() != MAIN_GENERAL_AGENT_ID
+        ]
 
     @staticmethod
     def _count_team_members(published_version: Any) -> Optional[int]:
