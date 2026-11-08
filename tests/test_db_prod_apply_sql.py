@@ -117,6 +117,72 @@ def test_v71_uses_conditional_same_session_blocks_for_each_schema_change():
     assert "INSERT IGNORE INTO `system_configs`" in statements[-1]
 
 
+def test_split_sql_ignores_semicolons_inside_line_comments():
+    """注释里的分号不能截断语句——V208 的 fork bomb 示例曾因此报 1064。"""
+    module = load_apply_sql_module()
+
+    statements = module.split_sql_statements(
+        """
+        -- fork bomb（:(){ :|:& };:）会把宿主机打进 OOM，这行注释里的分号不算分隔符
+        INSERT IGNORE INTO `system_configs` (`key`, `value`) VALUES ('a', 'b');
+        -- 行尾带分号的注释同样不产生空语句;;
+        SELECT 1;
+        """
+    )
+
+    assert len(statements) == 2
+    assert statements[0].startswith("INSERT IGNORE INTO `system_configs`")
+    assert statements[1] == "SELECT 1"
+
+
+def test_split_sql_ignores_semicolons_inside_block_and_hash_comments():
+    module = load_apply_sql_module()
+
+    statements = module.split_sql_statements(
+        """
+        /* 块注释里的分号; 也不拆分 */
+        SELECT 1;
+        # 井号注释里的分号; 同样不拆分
+        SELECT 2;
+        """
+    )
+
+    assert len(statements) == 2
+    # 块注释跟随其所在语句保留（MySQL 允许语句内出现 /* */），关键是没被分号拆开
+    assert statements[0].endswith("SELECT 1")
+    assert "块注释里的分号; 也不拆分" in statements[0]
+    assert statements[1] == "SELECT 2"
+
+
+def test_split_sql_keeps_string_semicolons():
+    module = load_apply_sql_module()
+
+    statements = module.split_sql_statements(
+        "INSERT INTO t (v) VALUES ('a;b'); UPDATE t SET v = \"c;d\";"
+    )
+
+    assert len(statements) == 2
+    assert statements[0] == "INSERT INTO t (v) VALUES ('a;b')"
+    assert statements[1] == 'UPDATE t SET v = "c;d"'
+
+
+def test_v208_sandbox_resource_limits_is_single_statement():
+    module = load_apply_sql_module()
+    sql_path = (
+        Path(__file__).resolve().parents[1]
+        / "db-prod"
+        / "V208-add-sandbox-docker-resource-limits.sql"
+    )
+
+    statements = module.split_sql_statements(sql_path.read_text(encoding="utf-8"))
+
+    assert len(statements) == 1
+    assert statements[0].startswith("INSERT IGNORE INTO `system_configs`")
+    assert "sandbox_docker_memory_limit_mb" in statements[0]
+    assert "sandbox_docker_cpu_limit" in statements[0]
+    assert "sandbox_docker_pids_limit" in statements[0]
+
+
 def test_confirmation_rejects_non_yes(monkeypatch, capsys):
     module = load_apply_sql_module()
     config = module.DbConfig(

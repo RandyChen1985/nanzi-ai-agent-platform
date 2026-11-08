@@ -2,8 +2,8 @@
 --
 -- 背景：docker 策略的沙箱容器此前只下发 Binds，完全没有 Memory / NanoCPUs /
 -- PidsLimit。DooD 部署下沙箱是宿主机上与平台平级的兄弟容器，一次内存爆破
--- （a = ' ' * 10**10）或 fork bomb（:(){ :|:& };:）就会把整台宿主机打进 OOM，
--- 由内核随机挑选牺牲品——可能是平台进程、MySQL 或 Redis。
+-- （例如把 100 亿字符的字符串读进内存）或一次 fork bomb 类的进程爆炸，就会
+-- 把整台宿主机打进 OOM，由内核随机挑选牺牲品——可能是平台进程、MySQL 或 Redis。
 --
 -- 语义（与 app/services/ai/runtime/agentscope/workspace.py 的
 -- DOCKER_SANDBOX_* 常量、_resolve_docker_sandbox_resource_limits 一一对应）：

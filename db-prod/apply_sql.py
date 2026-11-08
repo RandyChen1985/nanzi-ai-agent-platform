@@ -110,36 +110,97 @@ def build_config(args):
     )
 
 
+def _is_at_line_start(content, position):
+    """判断 position 之前（同一行）是否只有空白，用于识别行首注释。"""
+    cursor = position - 1
+    while cursor >= 0 and content[cursor] in " \t":
+        cursor -= 1
+    return cursor < 0 or content[cursor] in "\r\n"
+
+
 def split_sql_statements(sql_content):
     statements = []
     current_statement = []
     in_string = False
     escape = False
     quote_char = None
-    
-    # 逐字扫描，维护字符串状态，避开字符串内的分号
-    for char in sql_content:
+    in_line_comment = False
+    in_block_comment = False
+
+    # 逐字扫描，维护字符串与注释状态：字符串内、注释内的分号都不是语句分隔符。
+    # 只判断字符串曾经漏掉注释——注释里出现分号（例如 fork bomb 示例）会把一条语句
+    # 拦腰截断，后半段被当成 SQL 发给 MySQL 并报 1064，这类报错极难定位。
+    index = 0
+    total = len(sql_content)
+    while index < total:
+        char = sql_content[index]
+        next_char = sql_content[index + 1] if index + 1 < total else ""
+
         current_statement.append(char)
-        
+
+        if in_block_comment:
+            if char == "*" and next_char == "/":
+                current_statement.append(next_char)
+                in_block_comment = False
+                index += 2
+                continue
+            index += 1
+            continue
+
+        if in_line_comment:
+            if char in "\r\n":
+                in_line_comment = False
+            index += 1
+            continue
+
         if escape:
             escape = False
+            index += 1
             continue
-            
-        if char == '\\':
+
+        if char == "\\":
             escape = True
+            index += 1
             continue
-            
-        if char in ("'", '"', '`'):
-            if not in_string:
-                in_string = True
-                quote_char = char
-            elif char == quote_char:
-                # 闭合字符串
+
+        if in_string:
+            if char == quote_char:
                 in_string = False
                 quote_char = None
-                
-        elif char == ';' and not in_string:
-            # 遇到不在字符串内的分号，拆分出一条 SQL
+            index += 1
+            continue
+
+        # MySQL 的 `--` 注释要求后面跟空白；行首写法（--注释）同样按注释处理，
+        # 避免中文注释紧贴 `--` 时被当成运算符。
+        if char == "-" and next_char == "-" and (
+            index + 2 >= total
+            or sql_content[index + 2] in " \t\r\n"
+            or _is_at_line_start(sql_content, index)
+        ):
+            current_statement.append(next_char)
+            in_line_comment = True
+            index += 2
+            continue
+
+        if char == "#":
+            in_line_comment = True
+            index += 1
+            continue
+
+        if char == "/" and next_char == "*":
+            current_statement.append(next_char)
+            in_block_comment = True
+            index += 2
+            continue
+
+        if char in ("'", '"', "`"):
+            in_string = True
+            quote_char = char
+            index += 1
+            continue
+
+        if char == ";":
+            # 遇到不在字符串、注释内的分号，拆分出一条 SQL
             stmt = "".join(current_statement).strip()
             # 过滤注释行
             lines = []
@@ -148,18 +209,22 @@ def split_sql_statements(sql_content):
                 if not clean_line.startswith("--") and not clean_line.startswith("#"):
                     lines.append(line)
             clean_stmt = "\n".join(lines).strip()
-            
+
             # 去除末尾分号
-            if clean_stmt.endswith(';'):
+            if clean_stmt.endswith(";"):
                 clean_stmt = clean_stmt[:-1].strip()
-                
+
             if clean_stmt:
                 if DATABASE_SWITCH_RE.match(clean_stmt):
                     print(f"⚠️  Skipping database-switching statement: {clean_stmt.splitlines()[0]}")
                 else:
                     statements.append(clean_stmt)
             current_statement = []
-            
+            index += 1
+            continue
+
+        index += 1
+
     # 处理最后一个没有分号结尾的语句
     if current_statement:
         stmt = "".join(current_statement).strip()
@@ -169,7 +234,7 @@ def split_sql_statements(sql_content):
             if not clean_line.startswith("--") and not clean_line.startswith("#"):
                 lines.append(line)
         clean_stmt = "\n".join(lines).strip()
-        if clean_stmt.endswith(';'):
+        if clean_stmt.endswith(";"):
             clean_stmt = clean_stmt[:-1].strip()
         if clean_stmt:
             if not DATABASE_SWITCH_RE.match(clean_stmt):
