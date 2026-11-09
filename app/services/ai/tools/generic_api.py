@@ -9,7 +9,7 @@ from app.services.ai.tools.request_signing import (
     sign_request,
     validate_no_reserved_signing_headers,
 )
-from app.services.ai.tools.system_params import apply_system_params
+from app.services.ai.tools.system_params import apply_system_params, credential_param_names
 from app.services.ai.tools.tool_compat import StructuredTool
 from app.services.ai.tools.user_placeholders import (
     contains_user_placeholder,
@@ -25,7 +25,7 @@ from app.services.ai.tools.parameter_schema import (
     parse_parameter_schema as _parse_parameter_schema,
 )
 from app.services.ai.tools.tool_credentials import unresolved_credential_headers
-from app.services.secrets.injection import apply_api_tool_bindings
+from app.services.secrets.injection import apply_api_tool_bindings, apply_api_tool_param_bindings
 
 logger = logging.getLogger(__name__)
 
@@ -70,14 +70,30 @@ class UnresolvedCredentialError(Exception):
     「接口变了」。
     """
 
-    def __init__(self, tool_name: str, headers: list[str]):
+    def __init__(self, tool_name: str, headers: list[str], denials: dict[str, str] | None = None):
         self.tool_name = tool_name
         self.headers = list(headers)
-        names = "、".join(self.headers)
-        super().__init__(
-            f"工具 {tool_name} 的请求凭据还没填：{names}。"
-            "请在「工具管理」里把 header 值改成真实凭据后再调用"
-        )
+        # 有拒绝原因时要说清是「过期了」还是「被停用了」——这两种情况用户要做的事
+        # 完全不同（轮换 vs 找管理员恢复），都笼统说成「还没填」等于没说。
+        reasons = {
+            name: (denials or {}).get(f"header:{name}") or (denials or {}).get(name)
+            for name in self.headers
+        }
+        reasons = {name: text for name, text in reasons.items() if text}
+        if reasons:
+            detail = "；".join(f"{name}（{text}）" for name, text in reasons.items())
+            self.reasons = reasons
+            super().__init__(
+                f"工具 {tool_name} 的请求凭据没有注入：{detail}。"
+                "请到「个人中心 → 我的凭据」检查这条凭据的状态，或在工具里改用固定值"
+            )
+        else:
+            self.reasons = {}
+            names = "、".join(self.headers)
+            super().__init__(
+                f"工具 {tool_name} 的请求凭据还没填：{names}。"
+                "请在「工具管理」里把 header 值改成真实凭据后再调用"
+            )
 
 
 class GenericApiToolFactory:
@@ -253,16 +269,33 @@ class GenericApiToolFactory:
             # 凭据中心：只补「本来就没填」的 header，手填的真实值一律不动。
             # 必须在 unresolved_credential_headers 之前——否则占位符会先被判为
             # 「未填」而抛错，绑定过的凭据根本没机会生效。
-            headers = await apply_api_tool_bindings(config, headers, user_info=user_info)
+            auth_denials: dict[str, str] = {}
+            headers = await apply_api_tool_bindings(
+                config, headers, user_info=user_info, denials=auth_denials
+            )
             pending = unresolved_credential_headers(headers)
             if pending:
                 # 导入工具默认没有凭据；发出去只会换来对方的 401，不如在这里说清楚
-                raise UnresolvedCredentialError(config.name, pending)
+                raise UnresolvedCredentialError(config.name, pending, auth_denials)
 
         # 3. Request
         method = config.method.upper()
         if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
             raise UnsupportedMethodError(method)
+
+        # 声明为「来自凭据」的参数：按 query / body 槽位补值。
+        # 必须在 method 定下来之后——同一个参数名在 GET 里是 query、在 POST 里是 body，
+        # 槽位前缀错了就永远匹配不到绑定。
+        credential_params = credential_param_names(getattr(config, "parameter_schema", None))
+        if credential_params:
+            param_denials: dict[str, str] = {}
+            remaining_params = await apply_api_tool_param_bindings(
+                config, remaining_params, method=method, user_info=user_info, denials=param_denials
+            )
+            unresolved_params = [name for name in credential_params if name not in remaining_params]
+            if unresolved_params:
+                # 和 header 一样的口径：宁可在这里说清楚，也不要发出去换一个 401
+                raise UnresolvedCredentialError(config.name, unresolved_params, param_denials)
 
         signing = parse_signing_config(config)
         if signing.enabled:

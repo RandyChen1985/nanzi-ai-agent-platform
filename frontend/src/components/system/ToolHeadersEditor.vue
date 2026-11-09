@@ -23,10 +23,16 @@ const props = withDefaults(defineProps<{
   consumerType?: string
   /** 工具 id；为空表示还没保存，凭据绑定不可用 */
   consumerId?: string
+  /** 声明为「来自凭据」的参数名；这些参数按 HTTP 方法落到 query / body 槽位 */
+  credentialParams?: string[]
+  /** HTTP 方法：决定槽位前缀（GET → query，其余 → body） */
+  method?: string
 }>(), {
   error: '',
   consumerType: 'api_tool',
   consumerId: '',
+  credentialParams: () => [],
+  method: 'GET',
 })
 
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
@@ -141,6 +147,12 @@ const canBind = computed(() => !!props.consumerId)
 /** 取某个 header 的绑定；模板里不能靠三元表达式跨分支收窄类型，所以走函数。 */
 const bindingOf = (key: string): BindingInfo | null =>
   bindings.value[`header:${key.trim()}`] || null
+
+// 参数位和 header 用同一张绑定表，只是槽位前缀不同：GET 的参数在 URL 上（query），
+// 其余方法在 JSON body 里。前缀错了就永远匹配不到绑定，而且不会有任何报错。
+const paramSlotPrefix = computed(() => (props.method || 'GET').toUpperCase() === 'GET' ? 'query' : 'body')
+const paramBindingOf = (name: string): BindingInfo | null =>
+  bindings.value[`${paramSlotPrefix.value}:${name}`] || null
 const bindingSlotName = computed(() => (bindingSlot.value || '').replace(/^header:/, ''))
 const currentBinding = computed(() =>
   bindingSlot.value ? bindings.value[bindingSlot.value] || null : null,
@@ -169,6 +181,18 @@ async function loadBindings() {
     // 绑定信息拿不到不该挡住编辑 Headers，按「没绑」显示即可
     bindings.value = {}
   }
+}
+
+function openParamBinding(name: string) {
+  if (!canBind.value) return
+  const slot = `${paramSlotPrefix.value}:${name}`
+  bindingSlot.value = slot
+  const existing = bindings.value[slot]
+  bindingSecretId.value = existing?.secret_id || null
+  pickedItem.value = existing
+    ? { id: existing.secret_id, secret_key: existing.secret_key }
+    : null
+  bindingError.value = ''
 }
 
 function openBinding(row: HeaderRow) {
@@ -204,10 +228,12 @@ async function submitBinding() {
         },
       })
       delete bindings.value[slot]
-      const row = rows.value.find((r) => r.key.trim() === headerName)
-      if (row) {
-        row.value = ''
-        emitFromRows()
+      if (slot.startsWith('header:')) {
+        const row = rows.value.find((r) => r.key.trim() === headerName)
+        if (row) {
+          row.value = ''
+          emitFromRows()
+        }
       }
     } else {
       await axios.post('/api/portal/secrets/bindings', {
@@ -221,10 +247,14 @@ async function submitBinding() {
         secret_key: picked.secret_key,
         secret_name: '',
       }
-      const row = rows.value.find((r) => r.key.trim() === headerName)
-      if (row) {
-        row.value = `\${CREDENTIAL:${picked.secret_key}}`
-        emitFromRows()
+      // 只有 header 槽位要把占位符写回配置行；参数位的值不落在 schema 里，
+      // 运行时由注入层按槽位取，所以这里什么都不用改。
+      if (slot.startsWith('header:')) {
+        const row = rows.value.find((r) => r.key.trim() === headerName)
+        if (row) {
+          row.value = `\${CREDENTIAL:${picked.secret_key}}`
+          emitFromRows()
+        }
       }
     }
     bindingSlot.value = null
@@ -341,6 +371,41 @@ watch(
         class="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
         @click="addRow"
       >+ 添加 Header</button>
+
+      <!-- 参数位：声明为「来自凭据」的参数，按方法落到 query / body -->
+      <div v-if="credentialParams.length" class="mt-3 rounded-lg border border-violet-200 bg-violet-50/50 p-2.5">
+        <p class="text-[11px] font-semibold text-violet-900">
+          参数位（{{ paramSlotPrefix === 'query' ? 'query' : 'body' }}）
+        </p>
+        <p class="mt-0.5 text-[11px] leading-relaxed text-violet-700">
+          这些参数在「参数定义」里被标成了「来自凭据」，模型看不到也改不了；
+          在这里选一条凭据，调用时按当前用户解析。
+        </p>
+        <div
+          v-for="name in credentialParams"
+          :key="name"
+          class="mt-1.5 flex flex-wrap items-center gap-2 rounded-md bg-white px-2 py-1.5 shadow-sm"
+        >
+          <code class="text-xs font-mono text-gray-800">{{ name }}</code>
+          <span
+            v-if="paramBindingOf(name)"
+            class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700"
+          >已绑定 {{ paramBindingOf(name)?.secret_key }}</span>
+          <span v-else class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+            未绑定 —— 调用会失败
+          </span>
+          <button
+            type="button"
+            :disabled="!canBind"
+            class="ml-auto flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            :title="canBind ? '选择凭据' : '保存工具后才能绑定'"
+            @click="openParamBinding(name)"
+          >
+            <KeyIcon class="h-3.5 w-3.5" />
+            {{ paramBindingOf(name) ? '更换' : '选择凭据' }}
+          </button>
+        </div>
+      </div>
     </template>
 
     <textarea
@@ -352,6 +417,13 @@ watch(
       aria-label="Headers JSON"
       @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
     ></textarea>
+
+    <!-- 平台工具：绑定只属于当前用户，别说成「给全平台配好了」 -->
+    <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-800">
+      <b>这是平台工具，所有人共用同一份配置。</b>你绑的凭据只对<strong>你自己</strong>的调用生效，
+      其他人不会用到，他们仍用这里手填的值、或各自去「个人中心 → 我的 MCP → 平台服务」绑自己的。
+      想让<strong>所有人</strong>共用一个 Token，请直接把手填值写在这里——注入层对手填值是「只补空位」，不会被覆盖。
+    </div>
 
     <p v-if="displayError" class="text-[11px] text-red-600">{{ displayError }}</p>
     <p v-else class="text-[11px] text-gray-400">
@@ -367,11 +439,17 @@ watch(
       >
         <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
           <h3 class="text-base font-semibold text-gray-900">
-            为 <code class="rounded bg-gray-100 px-1.5 py-0.5 text-sm">{{ bindingSlotName }}</code> 绑定凭据
+            为 <code class="rounded bg-gray-100 px-1.5 py-0.5 text-sm">{{ bindingSlot }}</code> 绑定凭据
           </h3>
           <p class="mt-1 text-xs leading-relaxed text-gray-500">
-            选中后这一行的值会变成 <code>${CREDENTIAL:标识}</code> 占位符。真实值不写进工具配置，
-            调用时由注入层现取——所以工具被导出、复制、进审计都不会带走密钥。
+            <template v-if="bindingSlot?.startsWith('header:')">
+              选中后这一行的值会变成 <code>${CREDENTIAL:标识}</code> 占位符。真实值不写进工具配置，
+              调用时由注入层现取——所以工具被导出、复制、进审计都不会带走密钥。
+            </template>
+            <template v-else>
+              这是参数位：值不进工具配置，只在调用时按当前用户解析并填进
+              {{ paramSlotPrefix === 'query' ? 'URL 查询参数' : 'JSON 请求体' }}。
+            </template>
           </p>
 
           <div class="mt-3">

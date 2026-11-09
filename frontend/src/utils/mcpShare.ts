@@ -1,5 +1,5 @@
 /** 个人 MCP 分享的共享类型与文案映射。 */
-export type McpPersonalMenuKey = 'mine' | 'received' | 'sent'
+export type McpPersonalMenuKey = 'mine' | 'received' | 'sent' | 'platform'
 
 /** 「我分享出去的」与「我收到的」共用同一份字段（后端 _share_payload）。 */
 export interface McpShareItem {

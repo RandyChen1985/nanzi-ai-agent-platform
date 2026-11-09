@@ -15,7 +15,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PERSONAL_CENTER = ROOT / "frontend/src/views/PersonalCenter.vue"
+ACCOUNT_MENU = ROOT / "frontend/src/components/layout/AccountMenu.vue"
 SECRET_CENTER = ROOT / "frontend/src/views/SecretCenter.vue"
+ADMIN_CENTER = ROOT / "frontend/src/views/AdminSecretCenter.vue"
+USER_DEPT_PICKER = ROOT / "frontend/src/components/common/UserDeptPicker.vue"
 ADMIN_SECRET_CENTER = ROOT / "frontend/src/views/AdminSecretCenter.vue"
 PICKER = ROOT / "frontend/src/components/secrets/CredentialPicker.vue"
 ROUTER = ROOT / "frontend/src/router/index.ts"
@@ -36,13 +39,22 @@ class TestPersonalTab:
         # 深链 ?tab=secrets 要能直达：数组里没有它就会被回落到 info
         assert "'mcp', 'secrets', 'tasks'" in source
 
-    def test_tab_button_sits_right_after_mcp(self):
+    def test_tab_button_sits_right_after_permissions(self):
+        """凭据紧跟在「我的权限」后面。
+
+        它原本挂在「我的 MCP」之后——那是按实现顺序排的，不是按用户找东西的顺序。
+        凭据是「我手上有什么钥匙」，和权限是同一类问题，挨着放才找得到。
+        """
         source = _read(PERSONAL_CENTER)
 
-        mcp_button = source.index("我的 MCP")
-        secrets_button = source.index("我的凭据")
-        tasks_button = source.index("我的任务", secrets_button)
-        assert mcp_button < secrets_button < tasks_button
+        nav_start = source.index('<nav class="-mb-px')
+        nav = source[nav_start:source.index("</nav>", nav_start)]
+        permissions = nav.index("我的权限")
+        secrets = nav.index("我的凭据")
+        memory = nav.index("我的记忆")
+        assert permissions < secrets < memory
+        # 别又滑回 MCP 后面
+        assert nav.index("我的 MCP") > secrets
 
     def test_component_is_mounted(self):
         source = _read(PERSONAL_CENTER)
@@ -50,6 +62,253 @@ class TestPersonalTab:
         assert "import SecretCenter from './SecretCenter.vue'" in source
         assert "activeTab === 'secrets'" in source
         assert "<SecretCenter />" in source
+
+
+class TestCenterUiShape:
+    def test_usage_log_is_a_modal_not_an_inline_block(self):
+        """使用记录是弹框，不是页面底部的折叠区。
+
+        内嵌折叠会把整页撑长，而且要滚到底才看得见——「谁用过我的凭据」是想起来
+        才查一次的事，弹出来看完就关更合适。
+        """
+        source = _read(SECRET_CENTER)
+
+        assert "usageOpen" in source
+        # 折叠区那套「收起 / 展开」的文案不该留
+        assert "usageOpen ? '收起' : '展开'" not in source
+        # 弹框必须是 Teleport + z-[100]，否则会被侧边栏/遮罩层压住
+        usage_block = source[source.index("<!-- 使用记录弹框 -->"):]
+        assert '<Teleport to="body">' in usage_block[:400]
+        assert "z-[100]" in usage_block[:400]
+
+    def test_create_flow_is_a_three_step_wizard(self):
+        source = _read(SECRET_CENTER)
+
+        assert "createStep" in source
+        assert "nextCreateStep" in source
+        assert "prevCreateStep" in source
+        for label in ("基本信息", "注入范围", "确认"):
+            assert label in source
+
+    def test_scheduled_task_scene_is_selectable_again(self):
+        """定时任务后端补了门禁，前端要能勾。
+
+        之前标成 wired:false 是因为只有常量没有注入代码；现在 `runs_unattended`
+        会在判定层要求显式勾选，勾了就是真的生效，不该再禁着。
+        """
+        source = _read(SECRET_CENTER)
+
+        line = next(
+            ln for ln in source.splitlines() if "'scheduled_task'" in ln and "wired" in ln
+        )
+        assert "wired: true" in line
+        assert "暂未接入" not in line
+
+
+class TestAdminCreateWizard:
+    def test_admin_create_uses_same_three_step_wizard(self):
+        """管理端和个人中心必须是同一套步骤模式。
+
+        个人中心改了三步、管理端还是单页，管理员建系统级凭据时要面对一屏十几个
+        字段——和自己刚在个人中心用过的那套完全不同，也更容易漏勾场景。
+        """
+        source = _read(ADMIN_CENTER)
+
+        assert "createStep" in source
+        assert "nextCreateStep" in source
+        assert "prevCreateStep" in source
+        for label in ("基本信息", "注入范围", "确认"):
+            assert label in source
+
+    def test_admin_scene_list_matches_backend_reality(self):
+        """定时任务已接通，不该再显示「暂未接入」；`agent` 才没有注入点。"""
+        source = _read(ADMIN_CENTER)
+
+        assert "定时任务 / 智能体暂未接入" not in source
+        scenes = source[source.index("CREATE_SCENES"):]
+        scenes = scenes[: scenes.index("]")]
+        assert "'scheduled_task'" in scenes and "wired: true" in scenes
+        agent_line = next(ln for ln in scenes.splitlines() if "'agent'" in ln)
+        assert "wired: false" in agent_line
+
+
+class TestPlatformMcpCredentialEntry:
+    """普通用户给平台 MCP 服务绑自己凭据的入口。
+
+    平台 MCP 列表接口只给管理员，普通用户在「我的 MCP」里根本看不到这些服务，
+    所以「每人用自己的 Token」曾经只有管理员用得上——而管理员恰恰配的就是
+    服务级固定 Token，最不需要它。
+    """
+
+    PANEL = ROOT / "frontend/src/components/mcp/PlatformMcpCredentialPanel.vue"
+
+    def test_panel_lists_platform_targets_and_binds(self):
+        source = _read(self.PANEL)
+
+        assert "/api/portal/secrets/platform-targets" in source
+        assert "'mcp_server'" in source and "'api_tool'" in source
+
+    def test_tool_binding_only_offers_bindable_slots(self):
+        """API 工具只把「留空/占位」的头列为可绑，且按槽位逐个绑。
+
+        注入层对工具是只补空位：手填了真实值的 header 绑了也不生效。所以面板
+        直接消费后端算好的 ``bindable_slots``，不在前端自己猜哪些头像凭据。
+        """
+        source = _read(self.PANEL)
+
+        assert "bindable_slots" in source
+        assert "openBindTool" in source
+        # 槽位前缀由后端给（header:/query:/body:），前端不再自己拼
+        assert "return editing.value.slot" in source
+
+    def test_mcp_with_multiple_auth_headers_binds_per_slot(self):
+        """服务配了多个认证头时，每个槽位各自绑，不是一个按钮全包。"""
+        source = _read(self.PANEL)
+
+        assert "openBindMcp(item, slot)" in source
+        assert "item.bindable_slots.length > 1" in source
+
+    def test_tool_editor_warns_binding_is_per_user(self):
+        """平台工具里绑凭据只对自己生效，界面必须说清，并给出「共用就写死值」。"""
+        source = _read(ROOT / "frontend/src/components/system/ToolHeadersEditor.vue")
+
+        assert "只对" in source and "你自己" in source
+        assert "只补空位" in source
+
+    def test_panel_is_link_level_only(self):
+        """只做绑定：不给地址、不给改服务，用户的权限刚好够用。"""
+        source = _read(self.PANEL)
+        view = _read(ROOT / "frontend/src/views/McpManagement.vue")
+
+        assert "platform" in view and "PlatformMcpCredentialPanel" in view
+        assert "sse_url" not in source
+
+    def test_menu_has_platform_entry(self):
+        menu = _read(ROOT / "frontend/src/components/mcp/McpPersonalMenu.vue")
+        types = _read(ROOT / "frontend/src/utils/mcpShare.ts")
+
+        assert "'platform'" in menu
+        assert "平台服务" in menu
+        assert "'platform'" in types
+
+
+class TestSecretRecordTabs:
+    """「谁用了」和「谁改了」是两个问题，必须分开查。"""
+
+    def test_personal_center_has_audit_tab(self):
+        source = _read(SECRET_CENTER)
+
+        assert "recordTab" in source
+        assert "/api/portal/secrets/audit" in source
+        assert "变更记录" in source
+
+    def test_admin_center_has_audit_entry(self):
+        source = _read(ADMIN_CENTER)
+
+        assert "openAudit" in source
+        assert "/api/portal/secrets/audit" in source
+        assert "变更记录" in source
+
+    def test_actions_are_shown_in_chinese(self):
+        """审计里的 action 是内部常量，不能原样抛给用户。"""
+        for path in (SECRET_CENTER, ADMIN_CENTER):
+            source = _read(path)
+            assert "ACTION_LABEL" in source
+            assert "rotate: '轮换'" in source
+
+
+class TestDismissibleHints:
+    """提示条可以关掉，且关掉后记得住。
+
+    这类提示是给第一次进来的人看的（「凭据建完即不可读」「建完不等于能用」），
+    老用户每进一次就被挡一次，久了只会被无视——比不显示更糟。
+    """
+
+    DISMISSIBLE = ROOT / "frontend/src/utils/dismissible.ts"
+
+    def test_helper_persists_to_local_storage(self):
+        source = _read(self.DISMISSIBLE)
+
+        assert "localStorage" in source
+        # 读不到 localStorage（隐私模式）时不能抛出去，否则整页白屏
+        assert "catch" in source
+
+    def test_both_centers_use_it(self):
+        for path in (SECRET_CENTER, ADMIN_CENTER):
+            source = _read(path)
+            assert "useDismissible" in source, path
+
+    def test_personal_center_hints_are_dismissible(self):
+        source = _read(SECRET_CENTER)
+
+        # 两条都要能关：安全说明 + 未绑定提醒
+        assert "dismissSecurityHint" in source
+        assert "dismissUnboundHint" in source
+        assert 'v-if="showSecurityHint"' in source
+        assert "showUnboundHint" in source
+
+    def test_admin_center_hints_are_dismissible(self):
+        source = _read(ADMIN_CENTER)
+
+        assert "dismissNoGrantHint" in source
+        assert "dismissPlaintextHint" in source
+        # 未授权那条是复合条件（stats.noGrant && showNoGrantHint），单独看变量
+        assert "stats.noGrant && showNoGrantHint" in source
+        assert 'v-if="showPlaintextHint"' in source
+
+
+class TestGrantDialogUsesRealData:
+    def test_grantee_picker_is_not_a_manual_id_input(self):
+        """授权对象从真实数据里选，不是手填 ID。
+
+        手填 ID 要求管理员先去别处查到「7」是谁、部门的编码是什么，输错了还会
+        安静地授权给一个不存在的对象——被授权者永远看不到，管理员以为授权好了。
+        """
+        source = _read(ADMIN_CENTER)
+        picker = _read(USER_DEPT_PICKER)
+
+        assert "grantForm" not in source
+        assert "UserDeptPicker" in source
+        # 数据源在公共组件里，不在页面里各写一份
+        assert "/api/portal/management/users" in picker
+        assert "/api/portal/departments/tree" in picker
+        assert "/api/portal/management/users" not in source
+
+    def test_already_granted_is_marked_and_not_selectable(self):
+        """已经授权的对象要标出来并且不可再选，否则会重复授权、界面看不出结果。"""
+        source = _read(ADMIN_CENTER)
+        picker = _read(USER_DEPT_PICKER)
+
+        assert "grantedKeys" in source
+        assert "disabledKeys" in picker
+        assert "isDisabled" in picker
+
+    def test_picker_clears_selection_when_switching_type(self):
+        """切「用户/部门」必须清空已选。
+
+        提交时只能有一个 grantee_type，混着 'user:7' 和 'dept:3' 会一半失败，
+        而失败的又只是被计入 failed——用户看到「已授权 3 个」其实只成了 1 个。
+        """
+        picker = _read(USER_DEPT_PICKER)
+        body = picker[picker.index("function switchType"):]
+        body = body[: body.index("function toggle")]
+
+        assert "emit('update:modelValue', [])" in body
+
+
+class TestAccountMenuEntry:
+    def test_account_menu_links_to_secret_tab(self):
+        """头像卡片里的入口必须和 tab 指向同一个深链。
+
+        个人中心 tab 改了位置、卡片里却没有入口，用户还是只能先点进个人中心
+        再找——卡片存在的意义就是省掉这一步。
+        """
+        source = _read(ACCOUNT_MENU)
+
+        assert "/dashboard/personal?tab=secrets" in source
+        assert "我的凭据" in source
+        group = source[source.index('aria-label="账户"'):source.index('aria-label="设置"')]
+        assert group.index("我的权限") < group.index("我的凭据") < group.index("Token 用量")
 
 
 class TestAdminEntry:
@@ -199,7 +458,9 @@ class TestMcpBindingEntry:
         source = _read(self.MCP_REGISTRY)
 
         assert "consumer_type: 'mcp_server'" in source
-        assert "slot: 'header:Authorization'" in source
+        # 槽位现在由调用点拼：Authorization 一处、「其他 Header」按名字一处
+        assert "'header:Authorization'" in source
+        assert "`header:${headerBindSlot.value}`" in source
 
     def test_only_available_when_editing(self):
         source = _read(self.MCP_REGISTRY)
@@ -208,10 +469,35 @@ class TestMcpBindingEntry:
         assert 'v-if="isEditing"' in source
         assert "editingId.value" in source
 
-    def test_ui_states_binding_wins_over_fixed_token(self):
+    def test_ui_makes_token_and_credential_mutually_exclusive(self):
+        """固定 Token 和凭据必须二选一，而不是并排两块。
+
+        并排时用户会以为「填了 Token 又绑了凭据 = 两个都用」，实际是绑定单方面
+        盖过 Token（``apply_mcp_bindings`` 覆盖写法）。二选一之后若仍有绑定残留，
+        界面必须明确说出「实际走的不是你看到的那个」。
+        """
         source = _read(self.MCP_REGISTRY)
 
-        assert "绑定优先于上面的固定 Token" in source
+        assert "authSource" in source
+        assert "'token'" in source and "'credential'" in source
+        # 二选一后不许再出现「上面那块 Token 被下面覆盖」这种并排语义
+        assert "绑定优先于上面的固定 Token" not in source
+        # 选回固定 Token 但绑定还在时，要如实警告
+        assert "调用时会用它盖过这里的固定 Token" in source
+
+    def test_every_mcp_header_can_bind_credential(self):
+        """「其他 Header」也要能来自凭据，和 API 工具一致。
+
+        槽位是 ``header:<名称>``，后端 ``apply_mcp_bindings`` 本来就遍历所有
+        header，只给 Authorization 开按钮是把已有能力藏起来了。
+        """
+        source = _read(self.MCP_REGISTRY)
+
+        assert "openHeaderBind" in source
+        assert "bindingOfHeader" in source
+        assert "headerBindSlot" in source
+        # 绑定后的行不能继续显示掩码值——值根本不在服务配置里
+        assert "值根本不在服务配置里" in source
 
     def test_backend_overrides_static_token_for_mcp(self):
         source = _read(self.INJECTION)

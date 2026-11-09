@@ -517,3 +517,22 @@ class TestScriptEnvInjection:
         # 别人的个人绑定不该出现在我的槽位列表里
         assert await list_bound_slots("script_tool", "script-2", prefix="env:", user_id=USER_ID) == []
         assert await list_bound_slots("script_tool", "script-2", prefix="env:", user_id="42") == ["env:OTHER_SECRET"]
+
+
+class TestScriptRuntimeWiring:
+    """运行时要真的把执行身份传下去。
+
+    单测直接调 `apply_script_env_bindings(tool, user_info=...)` 永远是通过的，
+    接线处漏掉 `user_info` 却没人发现——`_current_user(None)` 返回空 user_id，
+    函数安静地返回 `{}`，脚本里那些变量就一直是空的，不报错也不告警。
+    """
+
+    def test_runner_passes_user_info_into_env_binding(self):
+        import inspect
+
+        from app.services.ai.tools import script_tool_runtime
+
+        source = inspect.getsource(script_tool_runtime)
+        call = source[source.index("apply_script_env_bindings("):]
+        call = call[: call.index(")") + 1]
+        assert "user_info=self.user_info" in call

@@ -37,6 +37,38 @@ logger = logging.getLogger(__name__)
 #: 这些值等于「这里还没填」，值得去解析绑定的凭据来补。
 _EMPTY_MARKERS = frozenset({"", "****", "******", "••••••••••••"})
 
+#: 拒绝原因 → 给人看的一句话。
+#:
+#: 光在日志里记一笔是不够的：调用方拿到的是对方的 401，看不出是自己那条凭据
+#: **过期了**还是**被停用了**。所以注入层要把原因带回去，拼进最终错误信息。
+DENIAL_REASONS = {
+    "disabled": "凭据已停用",
+    "expired": "凭据已过期",
+    "denied_by_scenario": "这条凭据没有授权给当前场景",
+    "denied_by_host": "目标域名不在白名单里",
+    "denied_by_grant": "凭据还没有授权给你",
+    "denied_by_script_policy": "平台或你的偏好关闭了脚本环境变量注入",
+    "denied_by_binding": "没有找到绑定",
+}
+
+
+def denial_text(reason: str | None) -> str:
+    if not reason:
+        return "未绑定凭据"
+    return DENIAL_REASONS.get(reason, reason)
+
+
+def _record(denials: dict[str, str] | None, slot: str, reason: str | None) -> None:
+    """把「这个槽位为什么没注入」记下来，由调用方决定怎么报。
+
+    **不记「没有绑定」**：那是常态（绝大多数 header 本来就不绑凭据），记下来会
+    让调用方误以为出了问题。调用方关心的是「绑了却用不了」——停用、过期、
+    场景不符、域名不在白名单。
+    """
+    if denials is None or reason in (None, "denied_by_binding"):
+        return
+    denials[slot] = denial_text(reason)
+
 
 def _looks_unfilled(value: Any) -> bool:
     """判断一个 header 值是不是「待填」。"""
@@ -116,6 +148,17 @@ def _current_trace_id() -> str | None:
         return None
 
 
+def _runs_unattended(user_info: Mapping[str, Any] | None) -> bool:
+    """本次调用是不是定时任务发起的。
+
+    ``scheduler_service`` 在构造执行身份时就会带上 ``is_scheduled_task``，
+    所以这里不需要额外的上下文变量——信号本来就在，只是以前没人用它。
+    """
+    if not isinstance(user_info, Mapping):
+        return False
+    return bool(user_info.get("is_scheduled_task"))
+
+
 async def _max_inject_per_call() -> int:
     """单次调用最多注入几条凭据（平台策略 ``secret_policy_max_inject_per_call``）。
 
@@ -138,6 +181,7 @@ async def apply_api_tool_bindings(
     headers: dict[str, str],
     *,
     user_info: Mapping[str, Any] | None = None,
+    denials: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """把绑定的凭据填进 API 工具的请求头。
 
@@ -178,6 +222,7 @@ async def apply_api_tool_bindings(
                 target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
+                runs_unattended=_runs_unattended(user_info),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] API 工具 %s 的 %s 解析失败: %s", getattr(config, "name", "?"), name, exc)
@@ -186,15 +231,94 @@ async def apply_api_tool_bindings(
         if result.ok and result.value is not None:
             resolved[name] = result.value.reveal()
             injected += 1
-        elif result.denial not in (None, "denied_by_binding"):
+        else:
             # 「没有绑定」是常态，不必刷日志；其它拒绝原因值得记一笔，
             # 否则用户只会看到「凭据没填」，完全不知道是域名/场景/授权拦下的。
-            logger.info(
-                "[SecretInject] API 工具 %s 的 %s 被拒绝: %s",
-                getattr(config, "name", "?"),
-                name,
-                result.denial,
+            if result.denial not in (None, "denied_by_binding"):
+                logger.info(
+                    "[SecretInject] API 工具 %s 的 %s 被拒绝: %s",
+                    getattr(config, "name", "?"),
+                    name,
+                    result.denial,
+                )
+            # 原因要带回调用层：停用/过期和「没绑」看起来都是「值是空的」，
+            # 但用户要做的动作完全不同。
+            _record(denials, f"header:{name}", result.denial)
+
+    return resolved
+
+
+async def apply_api_tool_param_bindings(
+    config: Any,
+    params: dict[str, Any],
+    *,
+    method: str,
+    user_info: Mapping[str, Any] | None = None,
+    denials: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """把「声明为来自凭据」的参数补上值。
+
+    header 是配置里的固定行，绑定天然；参数不行——它的值由模型运行时填，
+    平台分不清「模型没填」和「模型编了一个值」。所以只有那些在
+    ``x-nanzi-system-params`` 里标了 ``source: credential`` 的参数才走这里，
+    它们同时已从模型可见的 properties 里消失，模型既看不到也改不了。
+
+    槽位按 HTTP 语义落成 ``query:名字``（GET）或 ``body:名字``（其它方法），
+    和绑定表里存的一致。
+    """
+    from app.services.ai.tools.system_params import credential_param_names
+
+    names = credential_param_names(getattr(config, "parameter_schema", None))
+    if not names:
+        return params
+
+    user_id, dept_code = _current_user(user_info)
+    if not user_id:
+        return params
+
+    prefix = "query" if (method or "GET").upper() == "GET" else "body"
+    target = host_of(getattr(config, "url_template", None))
+    trace_id = _current_trace_id()
+    resolved = dict(params)
+    limit = await _max_inject_per_call()
+    injected = 0
+
+    for name in names:
+        if injected >= limit:
+            logger.warning(
+                "[SecretInject] API 工具 %s 命中注入上限 %s 条，参数 %s 未注入",
+                getattr(config, "name", "?"), limit, name,
             )
+            break
+        try:
+            result = await secret_resolver.resolve(
+                user_id=user_id,
+                scene=SCENE_API_TOOL,
+                consumer_type=CONSUMER_API_TOOL,
+                consumer_id=str(getattr(config, "id", "") or ""),
+                slot=f"{prefix}:{name}",
+                target_host=target,
+                trace_id=trace_id,
+                dept_code=dept_code,
+                runs_unattended=_runs_unattended(user_info),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[SecretInject] API 工具 %s 的参数 %s 解析失败: %s",
+                getattr(config, "name", "?"), name, exc,
+            )
+            continue
+
+        if result.ok and result.value is not None:
+            resolved[name] = result.value.reveal()
+            injected += 1
+        else:
+            if result.denial not in (None, "denied_by_binding"):
+                logger.info(
+                    "[SecretInject] API 工具 %s 的参数 %s 被拒绝: %s",
+                    getattr(config, "name", "?"), name, result.denial,
+                )
+            _record(denials, f"{prefix}:{name}", result.denial)
 
     return resolved
 
@@ -204,6 +328,7 @@ async def apply_mcp_bindings(
     headers: dict[str, str],
     *,
     user_info: Mapping[str, Any] | None = None,
+    denials: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """把绑定的凭据填进 MCP 出站请求头。
 
@@ -251,6 +376,7 @@ async def apply_mcp_bindings(
                 target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
+                runs_unattended=_runs_unattended(user_info),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] MCP %s 的 %s 解析失败: %s", getattr(server, "id", "?"), name, exc)
@@ -259,6 +385,8 @@ async def apply_mcp_bindings(
         if result.ok and result.value is not None:
             resolved[name] = result.value.reveal()
             injected += 1
+        else:
+            _record(denials, f"header:{name}", result.denial)
 
     return resolved
 
@@ -346,6 +474,7 @@ async def apply_script_env_bindings(
     tool_config: Any,
     *,
     user_info: Mapping[str, Any] | None = None,
+    denials: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """解析脚本工具要注入的环境变量，返回 ``{变量名: 值}``。
 
@@ -399,10 +528,13 @@ async def apply_script_env_bindings(
                 slot=slot,
                 trace_id=trace_id,
                 dept_code=dept_code,
+                runs_unattended=_runs_unattended(user_info),
             )
         except Exception:  # noqa: BLE001
             logger.warning("[SecretInject] 脚本 %s 的 %s 解析失败", tool_id, slot, exc_info=True)
             continue
         if result.ok and result.value is not None:
             resolved[name] = result.value.reveal()
+        else:
+            _record(denials, slot, result.denial)
     return resolved

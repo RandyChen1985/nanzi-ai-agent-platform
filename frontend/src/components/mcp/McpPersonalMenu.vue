@@ -37,6 +37,12 @@ const items = computed(() => [
     path: 'M12 19l9 2-9-18-9 18 9-2zm0 0v-8',
     badge: props.counts?.sent_pending || null,
   },
+  {
+    key: 'platform' as const,
+    label: '平台服务',
+    path: 'M3 7h18M3 12h18M3 17h18',
+    badge: null as number | null,
+  },
 ])
 
 const badgeText = (value: number | null): string =>

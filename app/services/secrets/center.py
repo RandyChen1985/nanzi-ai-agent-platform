@@ -47,6 +47,62 @@ VALID_SCOPES = frozenset({SCOPE_USER, SCOPE_SYSTEM})
 VALID_TYPES = frozenset({TYPE_CREDENTIAL, TYPE_VARIABLE})
 VALID_CONSUMER_TYPES = frozenset({"mcp_server", "api_tool", "script_tool", "agent"})
 
+#: 每种消费者**实际会被注入**的槽位前缀。
+#
+# 注入层只认这些前缀（``injection.py``）：MCP 只看 ``header:``，API 工具看
+# ``header:`` / ``query:`` / ``body:``，脚本只看 ``env:``。表外的组合能绑成功，
+# 但运行时永远不会被读到——用户以为配好了，调用时才发现没生效，而且没有任何报错。
+async def _audit(
+    *,
+    action: str,
+    secret,
+    actor_id: str | None,
+    actor_name: str | None = None,
+    detail: dict | None = None,
+) -> None:
+    """记一条变更审计，**用独立的 session 和事务**。
+
+    为什么不挂在业务事务上：审计表是本次新增的（V211 / V111），而代码可以先于
+    迁移上线。如果共用一个事务，表没建的那一天，用户的建凭据、轮换、授权会
+    统统失败——为了一个附属记录把主功能拖垮，不划算。
+
+    代价是极端情况下「操作成功、审计没写」。这是有意的取舍：审计的价值在于
+    **事后可查**，不在于强一致；而主功能的可用性是当场就要的。
+
+    任何异常都被吞掉，只记日志。
+    """
+    import json as _json
+    import uuid as _uuid
+
+    from app.core.orm import AsyncSessionLocal
+    from app.models.secret import SecretAuditLog
+
+    try:
+        async with AsyncSessionLocal() as audit_session:
+            audit_session.add(
+                SecretAuditLog(
+                    id=str(_uuid.uuid4()),
+                    secret_id=getattr(secret, "id", None),
+                    secret_key_snapshot=getattr(secret, "secret_key", None),
+                    owner_scope=getattr(secret, "owner_scope", None),
+                    actor_id=actor_id,
+                    actor_name=actor_name,
+                    action=action,
+                    detail=_json.dumps(detail, ensure_ascii=False) if detail else None,
+                )
+            )
+            await audit_session.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("[SecretAudit] 写审计失败: action=%s", action, exc_info=True)
+
+
+ALLOWED_SLOT_PREFIXES = {
+    "mcp_server": frozenset({"header"}),
+    "api_tool": frozenset({"header", "query", "body"}),
+    "script_tool": frozenset({"env"}),
+    "agent": frozenset({"header", "query", "body"}),
+}
+
 
 class SecretValidationError(ValueError):
     """入参不合法。消息会直接回给前端，所以要说清「哪里不对」。"""
@@ -161,6 +217,16 @@ async def create_secret(
         created_by=created_by or owner_id or None,
     )
     session.add(row)
+    await _audit(
+        action="create",
+        secret=row,
+        actor_id=created_by or owner_id or None,
+        detail={
+            "secret_type": secret_type,
+            "allowed_scenarios": list(row.allowed_scenarios or []),
+            "allowed_hosts": list(row.allowed_hosts or []),
+        },
+    )
     await session.commit()
 
     # 新值必须立刻进入落库扫描的快照，否则最长 60 秒内它仍会明文进审计。
@@ -203,6 +269,15 @@ async def rotate_secret(
     row.value_preview = new_value[:8] if row.secret_type == TYPE_VARIABLE else None
     row.last_rotated_at = now
     row.expires_at = expires_at if expires_at is not None else row.expires_at
+    await _audit(
+        action="rotate",
+        secret=row,
+        actor_id=rotated_by,
+        detail={
+            "previous_expires_at": row.previous_expires_at.isoformat(timespec="seconds"),
+            "overlap_days": overlap_days,
+        },
+    )
     await session.commit()
 
     secret_registry.invalidate()
@@ -234,6 +309,12 @@ async def bind_secret(
     if not prefix or not slot_name:
         raise SecretValidationError(
             "槽位格式应为 header:名称 / query:参数名 / body:字段 / env:变量名"
+        )
+    allowed = ALLOWED_SLOT_PREFIXES.get(consumer_type, frozenset())
+    if prefix not in allowed:
+        raise SecretValidationError(
+            f"{consumer_type} 不支持 {prefix}: 槽位，可用的前缀："
+            + " / ".join(sorted(allowed))
         )
 
     secret = await session.get(UserSecret, secret_id)
@@ -277,6 +358,18 @@ async def bind_secret(
         bound_by_user_id=bound_by_user_id,
     )
     session.add(binding)
+    await _audit(
+        action="bind",
+        secret=secret,
+        actor_id=bound_by_user_id,
+        detail={
+            "consumer_type": consumer_type,
+            "consumer_id": consumer_id,
+            "slot": slot,
+            # 为空表示管理员全局绑定；有值就是「只对这个人生效」
+            "global": bound_by_user_id is None,
+        },
+    )
     await session.commit()
     return binding
 
@@ -290,6 +383,19 @@ async def unbind_slot(
     bound_by_user_id: str | None,
 ) -> int:
     """解绑。返回删除条数（0 表示本来就没绑）。"""
+    # 先取 secret_id：删完就查不到了，而审计里「解绑的是哪条凭据」正是要查的
+    target = await session.execute(
+        select(SecretBinding.secret_id).where(
+            SecretBinding.consumer_type == consumer_type,
+            SecretBinding.consumer_id == consumer_id,
+            SecretBinding.slot == slot,
+            SecretBinding.bound_by_user_id == bound_by_user_id
+            if bound_by_user_id is not None
+            else SecretBinding.bound_by_user_id.is_(None),
+        )
+    )
+    secret_id = target.scalars().first()
+
     result = await session.execute(
         delete(SecretBinding).where(
             SecretBinding.consumer_type == consumer_type,
@@ -300,6 +406,20 @@ async def unbind_slot(
             else SecretBinding.bound_by_user_id.is_(None),
         )
     )
+    if secret_id:
+        secret = await session.get(UserSecret, secret_id)
+        if secret is not None:
+            await _audit(
+                action="unbind",
+                secret=secret,
+                actor_id=bound_by_user_id,
+                detail={
+                    "consumer_type": consumer_type,
+                    "consumer_id": consumer_id,
+                    "slot": slot,
+                    "removed": result.rowcount or 0,
+                },
+            )
     await session.commit()
     return result.rowcount or 0
 
@@ -344,6 +464,16 @@ async def grant_secret(
         expires_at=expires_at,
     )
     session.add(grant)
+    await _audit(
+        action="grant",
+        secret=secret,
+        actor_id=granted_by,
+        detail={
+            "grantee_type": grantee_type,
+            "grantee_id": grantee_id,
+            "expires_at": expires_at.isoformat(timespec="seconds") if expires_at else None,
+        },
+    )
     await session.commit()
     return grant
 
@@ -357,6 +487,18 @@ async def revoke_grant(session, *, secret_id: str, grantee_type: str, grantee_id
             SecretGrant.grantee_id == grantee_id,
         )
     )
+    secret = await session.get(UserSecret, secret_id)
+    if secret is not None:
+        await _audit(
+            action="revoke",
+            secret=secret,
+            actor_id=None,
+            detail={
+                "grantee_type": grantee_type,
+                "grantee_id": grantee_id,
+                "removed": result.rowcount or 0,
+            },
+        )
     await session.commit()
     return result.rowcount or 0
 
@@ -421,6 +563,14 @@ async def delete_secret(
     if row.owner_scope == SCOPE_SYSTEM and not actor_is_admin:
         raise SecretPermissionError("系统级凭据由管理员维护")
 
+    # 审计写在删除**之前**：删完 secret 行就取不到 key 快照了，
+    # 而「这条凭据被谁删了」恰恰是事后最需要能查到的一条。
+    await _audit(
+        action="delete",
+        secret=row,
+        actor_id=actor_id,
+        detail={"by_admin": actor_is_admin},
+    )
     await session.execute(sa_delete(SecretGrant).where(SecretGrant.secret_id == secret_id))
     await session.execute(sa_delete(SecretBinding).where(SecretBinding.secret_id == secret_id))
     await session.delete(row)
@@ -467,6 +617,18 @@ async def update_secret(
     if expires_at is not None:
         row.expires_at = expires_at
 
+    await _audit(
+        action="update",
+        secret=row,
+        actor_id=actor_id,
+        detail={
+            "name": name,
+            "category": category,
+            "allowed_scenarios": list(row.allowed_scenarios or []),
+            "allowed_hosts": list(row.allowed_hosts or []),
+            "expires_at": row.expires_at.isoformat(timespec="seconds") if row.expires_at else None,
+        },
+    )
     await session.commit()
     return row
 
@@ -488,11 +650,35 @@ async def set_secret_status(
         raise SecretValidationError("不能操作他人的凭据")
 
     row.status = status_value
+    await _audit(
+        action="enable" if status_value == "active" else "disable",
+        secret=row,
+        actor_id=actor_id,
+        detail={"status": status_value},
+    )
     await session.commit()
     logger.warning(
         "[SecretCenter] 凭据 %s 被置为 %s（操作人 %s）", row.secret_key, status_value, actor_id or "-"
     )
     return row
+
+
+async def list_audit(
+    session,
+    *,
+    secret_id: str | None = None,
+    actor_id: str | None = None,
+    limit: int = 100,
+) -> Sequence:
+    """变更审计。管理员传 ``actor_id=None`` 且 ``secret_id=None`` 看全局。"""
+    from app.models.secret import SecretAuditLog
+
+    stmt = select(SecretAuditLog).order_by(SecretAuditLog.created_at.desc()).limit(limit)
+    if secret_id:
+        stmt = stmt.where(SecretAuditLog.secret_id == secret_id)
+    if actor_id:
+        stmt = stmt.where(SecretAuditLog.actor_id == actor_id)
+    return (await session.execute(stmt)).scalars().all()
 
 
 async def list_bindings(session, *, secret_id: str) -> Sequence[SecretBinding]:

@@ -209,6 +209,9 @@ class ScriptToolRunner:
         self.sandbox_root = sandbox_root
         self.user_info = dict(user_info or {})
         self.conversation_id = conversation_id
+        # 上次解析凭据环境变量时被拒绝的原因（停用/过期/开关没开）；
+        # 只在返回 None 之后有意义，供调用方在错误信息里带出去。
+        self._credential_denials: str = ""
 
     # ------------------------------------------------------------------ 路径
 
@@ -314,10 +317,24 @@ class ScriptToolRunner:
         解析失败只降级不中断：凭据取不到时脚本照常跑，只是少了那几个变量。
         """
         try:
-            env = await apply_script_env_bindings(self.config)
+            # 必须带上执行身份：解析要按用户过滤绑定、按用户查脚本开关，
+            # 少了它 `_current_user` 拿到空 user_id 会直接返回 {} —— 注入静默失效，
+            # 脚本里那些变量永远是空的，而且不报任何错。
+            script_denials: dict[str, str] = {}
+            env = await apply_script_env_bindings(
+                self.config, user_info=self.user_info, denials=script_denials
+            )
         except Exception:  # noqa: BLE001
             logger.warning("[ScriptTool] 解析凭据环境变量失败: %s", self.config.name, exc_info=True)
             return None
+        if script_denials:
+            # 脚本里读到空值和读不到变量是两种崩法，但用户看到的都是「脚本报错了」。
+            # 把原因写进日志和结果，至少能查到是凭据过期还是开关没开。
+            detail = "；".join(f"{slot}（{why}）" for slot, why in script_denials.items())
+            logger.warning(
+                "[ScriptTool] %s 的凭据环境变量没有注入：%s", self.config.name, detail
+            )
+            self._credential_denials = detail
         if not env:
             return None
 

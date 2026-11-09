@@ -21,6 +21,22 @@ from sqlalchemy import select, update
 
 logger = logging.getLogger(__name__)
 
+
+class McpCredentialDeniedError(Exception):
+    """绑定的凭据用不了（停用 / 过期 / 场景不符 / 域名不在白名单）。
+
+    和「没有绑定」区分开：没绑时退回 ``fixed_token`` 是设计好的默认行为；绑了却
+    用不了还退回，就是用户以为在用自己账号、实际在用管理员的账号。
+    """
+
+    def __init__(self, server_name: str, detail: str):
+        self.server_name = server_name
+        self.detail = detail
+        super().__init__(
+            f"MCP 服务 {server_name} 的凭据没有注入：{detail}。"
+            "请到「个人中心 → 我的凭据」检查这条凭据的状态，或解除绑定改用服务级 Token"
+        )
+
 # tools/list 是分页接口；只取第一页会把后续工具当成“远端已删除”误下线。
 # 上限用于防御异常远端返回无限 cursor。
 MAX_REMOTE_TOOL_PAGES = 100
@@ -842,9 +858,18 @@ class McpClientService:
             # 凭据中心：**绑定优先，会覆盖固定的 Token**。MCP 的 fixed_token 是
             # 服务级单值（全平台共用），属于「没人绑时的默认值」；用户显式绑了
             # 自己的凭据就必须盖过它，否则绑定永远不会生效。
+            mcp_denials: dict[str, str] = {}
             auth_headers = await apply_mcp_bindings(
-                server, auth_headers, user_info=user_info
+                server, auth_headers, user_info=user_info, denials=mcp_denials
             )
+            if mcp_denials:
+                # 用户绑了凭据却用不了（停用/过期/场景不符）时**必须失败**，不能
+                # 悄悄退回服务级 fixed_token：那样请求会成功，用户以为用的是自己的
+                # 账号，实际用的是管理员的——权限边界和审计都错位了。
+                detail = "；".join(f"{slot}（{why}）" for slot, why in mcp_denials.items())
+                raise McpCredentialDeniedError(
+                    str(getattr(server, "server_name", "") or server_id), detail
+                )
             session_key = server_id
             if signed_user_enabled:
                 user_id = str((user_info or {}).get("user_id") or "").strip()

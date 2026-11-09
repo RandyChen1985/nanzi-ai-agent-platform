@@ -10,6 +10,7 @@ import McpPersonalMenu from '../components/mcp/McpPersonalMenu.vue'
 import McpShareDialog from '../components/mcp/McpShareDialog.vue'
 import ReceivedMcpSharesPanel from '../components/mcp/ReceivedMcpSharesPanel.vue'
 import SentMcpSharesPanel from '../components/mcp/SentMcpSharesPanel.vue'
+import PlatformMcpCredentialPanel from '../components/mcp/PlatformMcpCredentialPanel.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import type { McpPersonalMenuKey } from '../utils/mcpShare'
@@ -31,7 +32,7 @@ const { showToast } = useToast()
 
 // 「我的 MCP」里的二级菜单：我的 MCP / 收到的分享 / 我的分享
 const normalizePersonalMenu = (value?: string): McpPersonalMenuKey =>
-  value === 'received' || value === 'sent' ? value : 'mine'
+  value === 'received' || value === 'sent' || value === 'platform' ? value : 'mine'
 const resolvePersonalMenu = (): McpPersonalMenuKey =>
   normalizePersonalMenu(String(route.query.mcp_tab || '') || props.initialPersonalMenu)
 const mcpMenu = ref<McpPersonalMenuKey>(resolvePersonalMenu())
@@ -337,6 +338,8 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
             @updated="handleShareUpdated"
             @open-mine="mcpMenu = 'mine'"
           />
+          <!-- 平台服务：普通用户在别处看不到它们，这里给他们绑自己凭据的地方 -->
+          <PlatformMcpCredentialPanel v-else-if="mcpMenu === 'platform'" />
         </div>
       </div>
 

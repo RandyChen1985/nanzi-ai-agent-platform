@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import PermissionVariableMenu from '../metadata/PermissionVariableMenu.vue'
-import { SYSTEM_PARAM_TYPES, type SystemParam } from '../../utils/toolSchema'
+import { SYSTEM_PARAM_SOURCES, SYSTEM_PARAM_TYPES, type SystemParam } from '../../utils/toolSchema'
 import type { UserVariable } from '../../utils/userVariables'
 
 const props = defineProps<{
@@ -23,7 +23,7 @@ const update = (index: number, patch: Partial<SystemParam>) => {
 const addParam = () => {
   emit('update:modelValue', [
     ...props.modelValue,
-    { name: '', type: 'string', value: '', description: '' },
+    { name: '', type: 'string', value: '', description: '', source: 'literal' },
   ])
 }
 
@@ -87,7 +87,19 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
       >
         <option v-for="option in SYSTEM_PARAM_TYPES" :key="option" :value="option">{{ option }}</option>
       </select>
-      <div class="relative flex items-center gap-1">
+      <select
+        v-model="p.source"
+        class="w-28 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+        :title="'值的来源：固定值，或按当前用户从凭据中心解析'"
+      >
+        <option v-for="option in SYSTEM_PARAM_SOURCES" :key="option" :value="option">
+          {{ option === 'credential' ? '来自凭据' : '固定值' }}
+        </option>
+      </select>
+      <div v-if="p.source === 'credential'" class="w-[13.5rem] rounded-md border border-dashed border-violet-300 bg-violet-50 px-2 py-1.5 text-[11px] leading-snug text-violet-700">
+        值由凭据中心按当前用户注入；保存到工具后，在下方「参数位」里选具体凭据。
+      </div>
+      <div v-else class="relative flex items-center gap-1">
         <input
           v-model="p.value"
           class="w-40 rounded-md border-gray-300 text-xs font-mono shadow-sm focus:border-indigo-500 focus:ring-indigo-500"

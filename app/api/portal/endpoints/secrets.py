@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -25,6 +26,7 @@ from app.core.dependencies import require_admin, require_api_key
 from app.core.orm import get_db_session
 from app.models.secret import SecretUserPref
 from app.services.secrets import center
+from app.services.secrets.injection import denial_text
 from app.services.secrets.center import SecretPermissionError, SecretValidationError
 from app.services.secrets.policy import (
     ALL_SCENES,
@@ -242,6 +244,44 @@ async def list_usage(
     }
 
 
+@router.get("/audit", summary="凭据变更记录（谁在什么时候改了什么）")
+async def list_audit(
+    secret_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """与 ``/usage`` 分开：一个记「谁用了」，一个记「谁改了」。
+
+    普通用户只看自己动过的；管理员不带 ``secret_id`` 时看全局。
+    """
+    user_id, _ = _user_ctx(user_info)
+    is_admin = str(user_info.get("role") or "") == "admin"
+    rows = await center.list_audit(
+        db,
+        secret_id=secret_id,
+        actor_id=None if is_admin else user_id,
+        limit=limit,
+    )
+    return {
+        "code": 0,
+        "data": [
+            {
+                "id": r.id,
+                "secret_id": r.secret_id,
+                "secret_key": r.secret_key_snapshot,
+                "owner_scope": r.owner_scope,
+                "actor_id": r.actor_id,
+                "actor_name": r.actor_name,
+                "action": r.action,
+                "detail": r.detail,
+                "created_at": _iso(r.created_at),
+            }
+            for r in rows
+        ],
+    }
+
+
 @router.get("/picker", summary="凭据选择器数据（供绑定入口使用）")
 async def picker(
     user_info: Dict[str, Any] = Depends(require_api_key),
@@ -435,6 +475,231 @@ async def get_bindings(
             if binding.bound_by_user_id in (None, user_id)
         ],
     }
+
+
+class CheckBindingRequest(BaseModel):
+    consumer_type: str
+    consumer_id: str
+    slot: str
+    scene: str = "mcp"
+    target_host: str | None = None
+
+
+@router.post("/check-binding", summary="现在这个槽位能取到凭据吗（只校验，不出站）")
+async def check_binding(
+    payload: CheckBindingRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """把「调用时才会发现」的问题提前到配置时。
+
+    刻意**不发任何出站请求**：只走一遍解析链路，回答「此刻这里取得到值吗、取不到
+    是被哪道闸门拦的」。真实探测会把平台变成一个可以打任意内网地址的跳板，
+    而 90% 的配置错误（过期、停用、场景不符、域名不在白名单、没授权）在这里就暴露了。
+
+    返回值里**没有明文**，也没有脱敏值——只说能取到还是不能。
+    """
+    from app.services.secrets.resolver import secret_resolver
+
+    user_id, dept_code = _user_ctx(user_info)
+    result = await secret_resolver.resolve(
+        user_id=user_id,
+        scene=payload.scene,
+        consumer_type=payload.consumer_type,
+        consumer_id=payload.consumer_id,
+        slot=payload.slot,
+        target_host=payload.target_host,
+        dept_code=dept_code,
+    )
+    return {
+        "code": 0,
+        "data": {
+            "ok": result.ok,
+            "denial": result.denial,
+            "reason": None if result.ok else denial_text(result.denial),
+            "secret_key": result.secret_key,
+        },
+    }
+
+
+@router.get("/platform-targets", summary="我可以给哪些平台资源绑自己的凭据")
+async def list_platform_credential_targets(
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+    kind: str = Query("all", pattern="^(all|mcp|tool)$"),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """「我的 MCP → 平台服务」的完整数据源：平台 MCP 服务 + 平台 API 工具。
+
+    普通用户看不到平台侧的任何管理界面（MCP 列表和工具列表都是管理员接口），
+    所以「每个人用自己的 Token」这件事，用户没有任何入口。这条接口补上它，
+    而且只给够用的字段：名称 + 我能绑的槽位 + 我已绑的状态。
+    """
+    from sqlalchemy import select
+
+    from app.models.mcp import McpServer
+    from app.models.secret import SecretBinding, UserSecret
+    from app.models.tool import SysApiTool
+    from app.services.ai.tools.system_params import credential_param_names
+    from app.services.ai.tools.tool_credentials import is_credential_placeholder
+
+    user_id, _ = _user_ctx(user_info)
+
+    # 分页：工具数量可能上百，一次全量返回既慢又白渲染。两类各自分页，
+    # ``kind`` 让「我的 MCP」只取 MCP 那部分时不必白拉一遍工具。
+    from sqlalchemy import func
+
+    offset = (page - 1) * size
+    servers: list[Any] = []
+    server_total = 0
+    tool_total = 0
+    tools: list[Any] = []
+
+    if kind in ("all", "mcp"):
+        server_total = int(
+            (await db.execute(
+                select(func.count()).select_from(McpServer).where(McpServer.scope == "global")
+            )).scalar() or 0
+        )
+        servers = list((await db.execute(
+            select(McpServer)
+            .where(McpServer.scope == "global")
+            .order_by(McpServer.server_name)
+            .offset(offset)
+            .limit(size)
+        )).scalars().all())
+
+    if kind in ("all", "tool"):
+        tool_total = int(
+            (await db.execute(
+                select(func.count()).select_from(SysApiTool).where(SysApiTool.is_active.is_(True))
+            )).scalar() or 0
+        )
+        tools = list((await db.execute(
+            select(SysApiTool)
+            .where(SysApiTool.is_active.is_(True))
+            .order_by(SysApiTool.name)
+            .offset(offset)
+            .limit(size)
+        )).scalars().all())
+
+    rows = (
+        await db.execute(
+            select(SecretBinding, UserSecret).join(UserSecret, UserSecret.id == SecretBinding.secret_id)
+        )
+    ).all()
+    bindings: Dict[str, Dict[str, Any]] = {}
+    for binding, secret in rows:
+        # 别人的个人绑定与我无关；系统级绑定（bound_by_user_id 为空）要显示
+        if binding.bound_by_user_id not in (None, user_id):
+            continue
+        bindings[f"{binding.consumer_type}:{binding.consumer_id}:{binding.slot}"] = {
+            "secret_id": secret.id,
+            "secret_key": secret.secret_key,
+            "secret_name": secret.name,
+            "owner_scope": secret.owner_scope,
+            "bound_by_me": binding.bound_by_user_id == user_id,
+        }
+
+    def _binding(consumer_type: str, consumer_id: str, slot: str):
+        return bindings.get(f"{consumer_type}:{consumer_id}:{slot}")
+
+    from app.services.mcp.mcp_auth_policy import resolve_mcp_auth_headers
+
+    mcp_items = []
+    for server in servers:
+        # 可绑槽位 = Authorization + 服务上已配置的其他认证头。
+        # 只给 Authorization 的话，管理员给某个服务配了 X-API-Key 之后，用户
+        # 在面板里根本看不到那个槽位，也就绑不了自己的值。
+        try:
+            header_names = [str(name) for name in resolve_mcp_auth_headers(server)]
+        except Exception:
+            # 解密失败不该让整页打不开；至少 Authorization 还能绑
+            logger.warning("MCP 服务 %s 的认证头解析失败", server.id)
+            header_names = []
+        slots = ["header:Authorization"] + [
+            f"header:{name}" for name in header_names if name.lower() != "authorization"
+        ]
+        mcp_items.append({
+            "id": server.id,
+            "server_name": server.server_name,
+            "remark": getattr(server, "remark", None),
+            # 字段叫 fixed_token_encrypted：只判有没有配，不解密
+            "has_fixed_token": bool(getattr(server, "fixed_token_encrypted", None)),
+            "bindable_slots": slots,
+            "bindings": {slot: _binding("mcp_server", str(server.id), slot) for slot in slots},
+            # 兼容旧字段：绑定面板最早只认单个 Authorization
+            "binding": _binding("mcp_server", str(server.id), "header:Authorization"),
+        })
+
+    tool_items = []
+    for tool in tools:
+        try:
+            headers = json.loads(tool.headers or "{}")
+        except Exception:
+            headers = {}
+        if not isinstance(headers, dict):
+            headers = {}
+        # 只把「留空」或「还是占位符」的头列为可绑：手填了真实值的头，
+        # 注入层是**只补空位**，绑了也不会生效，列出来就是骗人。
+        bindable = [
+            name
+            for name, value in headers.items()
+            if not str(value or "").strip() or is_credential_placeholder(value)
+        ]
+        # 参数位：参数定义里标了 source=credential 的，按 HTTP 方法落到 query / body。
+        # 这些槽位和 header 一样能被个人绑定，漏掉它们的话用户在面板里看不到、
+        # 也就绑不了——工具会一直报「凭据未填」。
+        param_prefix = "query" if str(tool.method or "GET").upper() == "GET" else "body"
+        try:
+            param_names = credential_param_names(tool.parameter_schema)
+        except Exception:
+            # 一条工具的参数定义是坏 JSON，不该让整个「平台服务」页打不开
+            logger.warning("工具 %s 的参数定义无法解析，跳过参数位", tool.id)
+            param_names = []
+        param_slots = [f"{param_prefix}:{name}" for name in param_names]
+        slots = [f"header:{name}" for name in bindable] + param_slots
+        tool_items.append({
+            "id": tool.id,
+            "name": tool.name,
+            "description": tool.description,
+            "bindable_slots": slots,
+            "bindings": {
+                slot: _binding("api_tool", str(tool.id), slot)
+                for slot in slots
+            },
+        })
+
+    return {
+        "code": 0,
+        "data": {
+            "mcp_servers": mcp_items,
+            "api_tools": tool_items,
+            "page": page,
+            "size": size,
+            "total": {"mcp_servers": server_total, "api_tools": tool_total},
+            "has_more": {
+                "mcp_servers": offset + len(mcp_items) < server_total,
+                "api_tools": offset + len(tool_items) < tool_total,
+            },
+        },
+    }
+
+
+@router.get("/mcp-targets", summary="我可以给哪些平台 MCP 服务绑自己的凭据")
+async def list_mcp_credential_targets(
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """只取 MCP 那部分的窄接口，``/platform-targets`` 的旧形态。
+
+    保留它是因为「我的 MCP」页只想显示 MCP，拿一份包含 API 工具的响应再筛一遍
+    没有意义；两份实现的绑定查询都收敛在 ``/platform-targets`` 里，这里只做投影。
+    """
+    payload = await list_platform_credential_targets(
+        page=1, size=200, kind="mcp", user_info=user_info, db=db
+    )
+    return {"code": 0, "data": payload["data"]["mcp_servers"]}
 
 
 @router.post("/bindings", summary="把一个槽位绑到凭据上")

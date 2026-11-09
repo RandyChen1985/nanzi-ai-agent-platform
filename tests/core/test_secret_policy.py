@@ -19,6 +19,7 @@ from app.services.secrets.policy import (
     DENY_SCRIPT_POLICY,
     SCENE_API_TOOL,
     SCENE_MCP,
+    SCENE_SCHEDULED_TASK,
     SCENE_SCRIPT_ENV,
     SecretContext,
     SecretLeakAttempt,
@@ -136,6 +137,32 @@ class TestEvaluateSecret:
             evaluate_secret(secret, make_context(scene=SCENE_API_TOOL), now=NOW)
             == DENY_SCENARIO
         )
+
+    def test_unattended_call_needs_scheduled_task_scenario(self):
+        """定时任务（无人值守）用凭据，要额外勾一次 scheduled_task。
+
+        交互式对话里用得好好的凭据，不该默认在半夜三点自动生效——那时没有人
+        在屏幕前，出错了也没人发现。所以这是一条要显式打破的白名单。
+        """
+        secret = make_secret(allowed_scenarios=frozenset({SCENE_MCP}))
+        assert (
+            evaluate_secret(secret, make_context(scene=SCENE_MCP, runs_unattended=True), now=NOW)
+            == DENY_SCENARIO
+        )
+
+    def test_unattended_call_passes_when_scenario_explicitly_granted(self):
+        secret = make_secret(
+            allowed_scenarios=frozenset({SCENE_MCP, SCENE_SCHEDULED_TASK})
+        )
+        assert (
+            evaluate_secret(secret, make_context(scene=SCENE_MCP, runs_unattended=True), now=NOW)
+            is None
+        )
+
+    def test_interactive_call_is_not_affected(self):
+        """收紧的只有无人值守这一条路，日常对话不能跟着变严。"""
+        secret = make_secret(allowed_scenarios=frozenset({SCENE_MCP}))
+        assert evaluate_secret(secret, make_context(scene=SCENE_MCP), now=NOW) is None
 
     def test_script_env_denied_by_policy_switch(self):
         secret = make_secret(allowed_scenarios=frozenset({SCENE_SCRIPT_ENV}))

@@ -12,6 +12,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from '../utils/axios'
+import { useDismissible } from '../utils/dismissible'
 
 interface SecretItem {
   id: string
@@ -50,14 +51,14 @@ interface UsageRow {
   created_at: string | null
 }
 
-// `wired` 表示这条链路上真的有注入代码。定时任务和智能体目前只有常量，
+// `wired` 表示这条链路上真的有注入代码。`agent` 目前只有常量，
 // 勾了也不会发生任何事——界面上必须把这件事说出来，否则用户会以为配好了。
 const SCENES = [
-  { key: 'mcp', label: 'MCP 服务', hint: '出站请求头', wired: true },
-  { key: 'api_tool', label: 'API 工具', hint: '请求头 / 参数', wired: true },
-  { key: 'script_env', label: '脚本环境变量', hint: '默认关，需平台 + 个人都开', wired: true },
-  { key: 'scheduled_task', label: '定时任务', hint: '暂未接入，勾了也不会注入', wired: false },
-  { key: 'agent', label: '智能体', hint: '暂未接入，勾了也不会注入', wired: false },
+  { key: 'mcp', label: 'MCP 服务', hint: '出站请求头', desc: '作为连接头的值，在建立 MCP 连接时注入', wired: true },
+  { key: 'api_tool', label: 'API 工具', hint: '请求头 / 参数', desc: '填进工具的请求头，只补没填的位置；手填了真实值的不覆盖', wired: true },
+  { key: 'script_env', label: '脚本环境变量', hint: '默认关，需平台 + 个人都开', desc: '以环境变量形式进子进程，脚本里可直接读；stdout 会被指纹扫描', wired: true },
+  { key: 'scheduled_task', label: '定时任务', hint: '无人值守执行，需单独勾选', desc: '按任务创建者的身份解析 —— 无人值守时出错没人当场发现，所以要单独授权', wired: true },
+  { key: 'agent', label: '智能体', hint: '暂未接入，勾了也不会注入', desc: '暂未接入，勾了也不会注入', wired: false },
 ]
 
 const RESULT_LABEL: Record<string, string> = {
@@ -70,6 +71,10 @@ const RESULT_LABEL: Record<string, string> = {
   expired: '已过期',
   disabled: '已停用',
 }
+
+// 两条提示都是一次性说明：看完可以关掉，关掉后记住
+const { visible: showSecurityHint, dismiss: dismissSecurityHint } = useDismissible('secret-center:security')
+const { visible: showUnboundHint, dismiss: dismissUnboundHint } = useDismissible('secret-center:unbound')
 
 const scope = ref<'mine' | 'shared'>('mine')
 const keyword = ref('')
@@ -182,6 +187,9 @@ async function load() {
 
 // ── 创建 ──────────────────────────────────────────────────────────────
 const showCreate = ref(false)
+// 新建向导的三步：说清楚是什么 → 划清楚能去哪 → 确认不可逆的部分。
+// 做成一步会变成一屏十几个字段，用户填到一半就忘了自己在建什么。
+const createStep = ref(1)
 const createBusy = ref(false)
 const form = ref({
   secret_key: '',
@@ -205,7 +213,21 @@ function openCreate() {
     category: '',
     remark: '',
   }
+  createStep.value = 1
   showCreate.value = true
+}
+
+const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && form.value.value)
+
+function nextCreateStep() {
+  if (createStep.value === 1 && !canLeaveStep1()) {
+    return showToast('标识和凭据值是必填的', 'err')
+  }
+  if (createStep.value < 3) createStep.value += 1
+}
+
+function prevCreateStep() {
+  if (createStep.value > 1) createStep.value -= 1
 }
 
 function toggleScene(key: string) {
@@ -338,22 +360,62 @@ const CONSUMER_LABEL: Record<string, string> = {
 }
 
 // ── 使用记录 ──────────────────────────────────────────────────────────
+// 弹框，不是页面底部的折叠区：那一块要滚到底才看得见，而且会随列表长度把整页
+// 撑长；「谁什么时候用了我的凭据」是想起来才查一次的事，弹出来看完就关更合适。
 const usageOpen = ref(false)
 const usageLoading = ref(false)
 const usageRows = ref<UsageRow[]>([])
 
-async function toggleUsage() {
-  usageOpen.value = !usageOpen.value
-  if (!usageOpen.value || usageRows.value.length) return
+// 「谁用了」和「谁改了」是两个问题，放两个 tab。合成一张表的话，查轮换记录
+// 得在几万条调用里翻。
+type RecordTab = 'usage' | 'audit'
+const recordTab = ref<RecordTab>('usage')
+type AuditRow = {
+  id: string
+  secret_key: string | null
+  action: string
+  actor_id: string | null
+  detail: string | null
+  created_at: string
+}
+const auditRows = ref<AuditRow[]>([])
+
+const ACTION_LABEL: Record<string, string> = {
+  create: '创建',
+  update: '修改',
+  rotate: '轮换',
+  delete: '删除',
+  disable: '停用',
+  enable: '启用',
+  grant: '授权',
+  revoke: '撤销授权',
+  bind: '绑定',
+  unbind: '解绑',
+}
+
+async function loadRecords(tab: RecordTab) {
   usageLoading.value = true
   try {
-    const res = await axios.get('/api/portal/secrets/usage', { params: { limit: 50 } })
-    usageRows.value = res.data?.data || []
+    const url = tab === 'usage' ? '/api/portal/secrets/usage' : '/api/portal/secrets/audit'
+    const res = await axios.get(url, { params: { limit: 50 } })
+    if (tab === 'usage') usageRows.value = res.data?.data || []
+    else auditRows.value = res.data?.data || []
   } catch (e: any) {
-    showToast(e?.response?.data?.detail || '加载使用记录失败', 'err')
+    showToast(e?.response?.data?.detail || '加载记录失败', 'err')
   } finally {
     usageLoading.value = false
   }
+}
+
+async function openUsage() {
+  usageOpen.value = true
+  recordTab.value = 'usage'
+  await loadRecords('usage')
+}
+
+async function switchRecordTab(tab: RecordTab) {
+  recordTab.value = tab
+  await loadRecords(tab)
 }
 
 // ── 注入策略 ──────────────────────────────────────────────────────────
@@ -394,6 +456,8 @@ async function savePrefs(value: boolean) {
     policyBusy.value = false
   }
 }
+
+const sceneLabelOf = (key: string) => SCENES.find((scene) => scene.key === key)?.label || key
 
 function scenarioLabels(item: SecretItem): string[] {
   return item.allowed_scenarios.map((key) => {
@@ -544,21 +608,48 @@ onMounted(load)
     </div>
 
     <!-- 安全提示 -->
-    <div class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">
-      <strong>凭据建完即不可读。</strong>
-      值和变量都加密保存，创建后任何人（包括管理员）都无法再查看明文——只能轮换或停用。
-      想让某个 MCP / 工具用上，还需要在它那一侧<strong>显式绑定</strong>；建完不等于能用。
+    <div
+      v-if="showSecurityHint"
+      class="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800"
+    >
+      <p class="min-w-0 flex-1">
+        <strong>凭据建完即不可读。</strong>
+        值和变量都加密保存，创建后任何人（包括管理员）都无法再查看明文——只能轮换或停用。
+        想让某个 MCP / 工具用上，还需要在它那一侧<strong>显式绑定</strong>；建完不等于能用。
+      </p>
+      <button
+        type="button"
+        class="shrink-0 rounded p-0.5 text-amber-500 hover:bg-amber-100 hover:text-amber-800"
+        title="关闭提示（不再显示）"
+        aria-label="关闭安全提示"
+        @click="dismissSecurityHint"
+      >
+        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
     </div>
 
     <!-- 有待绑定的凭据：建完不绑等于没建，这条比任何说明都值得先说 -->
     <div
-      v-if="unboundCount > 0 && !loading"
+      v-if="unboundCount > 0 && !loading && showUnboundHint"
       class="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800"
     >
       <span class="font-semibold">{{ unboundCount }} 条凭据还没绑定到任何地方。</span>
       <span>凭据建完不等于能用——要去 API 工具的请求头、MCP 服务的认证区，或脚本的环境变量里显式绑上它。</span>
       <button type="button" class="ml-auto shrink-0 font-medium text-amber-900 underline" @click="filterKind = 'unbound'">
         只看这些 →
+      </button>
+      <button
+        type="button"
+        class="shrink-0 rounded p-0.5 text-amber-500 hover:bg-amber-100 hover:text-amber-800"
+        title="关闭提示（不再显示）"
+        aria-label="关闭未绑定提示"
+        @click="dismissUnboundHint"
+      >
+        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
       </button>
     </div>
 
@@ -849,9 +940,14 @@ onMounted(load)
             @click="toggleStatus(selected)"
           >{{ isDisabled(selected) ? '启用' : '停用' }}</button>
           <button
+            type="button"
+            class="rounded-lg border border-gray-300 px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
+            @click="openUsage"
+          >使用记录</button>
+          <button
             v-if="selected.owner_scope === 'user'"
             type="button"
-            class="rounded-lg border border-rose-200 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
+            class="ml-auto rounded-lg border border-rose-200 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
             @click="deleteTarget = selected"
           >删除</button>
           <span v-else class="text-[10px] text-gray-400">系统级凭据由管理员维护</span>
@@ -859,42 +955,98 @@ onMounted(load)
       </aside>
     </div>
 
-    <!-- 使用记录 -->
-    <div class="rounded-xl border border-gray-200">
-      <button
-        type="button"
-        class="flex w-full items-center justify-between px-4 py-3 text-left"
-        @click="toggleUsage"
+    <!-- 使用记录弹框 -->
+    <Teleport to="body">
+      <div
+        v-if="usageOpen"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+        @click.self="usageOpen = false"
       >
-        <span class="text-sm font-medium text-gray-800">使用记录</span>
-        <span class="text-xs text-gray-400">{{ usageOpen ? '收起' : '展开' }}</span>
-      </button>
+        <div class="flex max-h-[calc(100vh-120px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="flex items-start justify-between border-b border-gray-100 px-5 py-3">
+            <div>
+              <h3 class="text-base font-semibold text-gray-900">{{ recordTab === 'usage' ? '使用记录' : '变更记录' }}</h3>
+              <p class="mt-0.5 text-xs text-gray-500">
+                {{ recordTab === 'usage'
+                  ? '谁在什么时候、用在哪条链路上。只记结果不记值——值从不落日志。'
+                  : '谁在什么时候对哪条凭据做了什么。凭据删除后记录仍保留。' }}
+              </p>
+            </div>
+            <button
+              type="button"
+              class="rounded-lg px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              @click="usageOpen = false"
+            >✕</button>
+          </div>
 
-      <div v-if="usageOpen" class="border-t border-gray-100 px-4 py-3">
-        <p v-if="usageLoading" class="py-4 text-center text-xs text-gray-400">加载中…</p>
-        <p v-else-if="!usageRows.length" class="py-4 text-center text-xs text-gray-400">
-          还没有使用记录
-        </p>
-        <div v-else class="max-h-80 space-y-1.5 overflow-y-auto">
-          <div
-            v-for="row in usageRows"
-            :key="row.id"
-            class="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600"
-          >
-            <code class="text-gray-800">{{ row.secret_key || '已删除' }}</code>
-            <span class="rounded bg-white px-1.5 py-0.5">{{ row.scene }}</span>
-            <span
-              class="rounded px-1.5 py-0.5 font-medium"
-              :class="row.result === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'"
-            >
-              {{ RESULT_LABEL[row.result] || row.result }}
-            </span>
-            <span v-if="row.target_host" class="text-gray-400">{{ row.target_host }}</span>
-            <span class="ml-auto text-gray-400">{{ row.created_at }}</span>
+          <div class="flex items-center gap-1 border-b border-gray-100 px-5">
+            <button
+              v-for="tab in (['usage', 'audit'] as const)"
+              :key="tab"
+              type="button"
+              class="-mb-px border-b-2 px-2 py-2 text-xs font-medium transition"
+              :class="recordTab === tab
+                ? 'border-emerald-500 text-emerald-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700'"
+              @click="switchRecordTab(tab)"
+            >{{ tab === 'usage' ? '使用记录' : '变更记录' }}</button>
+          </div>
+
+          <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+            <p v-if="usageLoading" class="py-8 text-center text-xs text-gray-400">加载中…</p>
+
+            <template v-else-if="recordTab === 'audit'">
+              <p v-if="!auditRows.length" class="py-8 text-center text-xs text-gray-400">
+                还没有变更记录
+              </p>
+              <div v-else class="space-y-1.5">
+                <div
+                  v-for="row in auditRows"
+                  :key="row.id"
+                  class="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600"
+                >
+                  <code class="text-gray-800">{{ row.secret_key || '已删除' }}</code>
+                  <span class="rounded bg-white px-1.5 py-0.5 font-medium text-gray-700">
+                    {{ ACTION_LABEL[row.action] || row.action }}
+                  </span>
+                  <span class="ml-auto text-gray-400">{{ row.created_at }}</span>
+                </div>
+              </div>
+            </template>
+
+            <p v-else-if="!usageRows.length" class="py-8 text-center text-xs text-gray-400">
+              还没有使用记录
+            </p>
+            <div v-else class="space-y-1.5">
+              <div
+                v-for="row in usageRows"
+                :key="row.id"
+                class="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600"
+              >
+                <code class="text-gray-800">{{ row.secret_key || '已删除' }}</code>
+                <span class="rounded bg-white px-1.5 py-0.5">{{ row.scene }}</span>
+                <span
+                  class="rounded px-1.5 py-0.5 font-medium"
+                  :class="row.result === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'"
+                >
+                  {{ RESULT_LABEL[row.result] || row.result }}
+                </span>
+                <span v-if="row.target_host" class="text-gray-400">{{ row.target_host }}</span>
+                <span class="ml-auto text-gray-400">{{ row.created_at }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end border-t border-gray-100 px-5 py-3">
+            <button
+              type="button"
+              class="rounded-lg btn-ghost px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+              @click="usageOpen = false"
+            >关闭</button>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 注入策略 -->
     <div class="rounded-xl border border-gray-200">
@@ -958,150 +1110,258 @@ onMounted(load)
       </div>
     </div>
 
-    <!-- 创建弹窗 -->
+    <!-- 创建弹窗：三步向导 -->
     <Teleport to="body">
-          <div
-            v-if="showCreate"
-            class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
-            @click.self="showCreate = false"
-          >
-            <div class="flex max-h-[calc(100vh-120px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-              <div class="border-b border-gray-100 px-5 py-3">
-                <h3 class="text-base font-semibold text-gray-900">新建凭据</h3>
-                <p class="mt-0.5 text-xs text-gray-500">值提交后不可再查看，请确认无误</p>
+      <div
+        v-if="showCreate"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+        @click.self="showCreate = false"
+      >
+        <div class="flex max-h-[calc(100vh-120px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="border-b border-gray-100 px-5 py-3">
+            <h3 class="flex items-center gap-1.5 text-base font-semibold text-gray-900">
+              <span class="text-blue-600">+</span> 新建凭据
+            </h3>
+            <p class="mt-0.5 text-xs text-gray-500">三步：说清楚是什么 → 划清楚能去哪 → 确认不可逆的部分</p>
+          </div>
+
+          <!-- 步骤条 -->
+          <div class="flex items-center gap-0 bg-gray-50 px-5 py-2.5">
+            <template v-for="(label, index) in ['基本信息', '注入范围', '确认']" :key="label">
+              <div
+                class="flex items-center gap-1.5 text-[11.5px] font-semibold"
+                :class="createStep === index + 1 ? 'text-blue-700' : (createStep > index + 1 ? 'text-emerald-700' : 'text-gray-400')"
+              >
+                <span
+                  class="flex h-[19px] w-[19px] items-center justify-center rounded-full text-[10px]"
+                  :class="createStep === index + 1 ? 'bg-blue-600 text-white' : (createStep > index + 1 ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500')"
+                >{{ createStep > index + 1 ? '✓' : index + 1 }}</span>
+                {{ label }}
+              </div>
+              <span
+                v-if="index < 2"
+                class="mx-2.5 h-0.5 w-6 rounded bg-gray-300"
+                :class="createStep > index + 1 ? 'bg-emerald-500' : ''"
+              />
+            </template>
+          </div>
+
+          <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            <!-- 步骤 1：基本信息 -->
+            <div v-if="createStep === 1" class="space-y-3">
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">凭据标识 <span class="text-rose-500">*</span></span>
+                <input
+                  v-model="form.secret_key"
+                  placeholder="jira.prod.token"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
+                />
+                <span class="mt-1 block text-[11px] text-gray-400">
+                  小写字母、数字、点、下划线、连字符；会被拼进 <code>${secret:标识}</code>
+                </span>
+              </label>
+
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">名称</span>
+                <input
+                  v-model="form.name"
+                  placeholder="留空则用标识"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </label>
+
+              <div>
+                <span class="text-xs font-medium text-gray-700">类型</span>
+                <div class="mt-1 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    class="rounded-lg border px-3 py-2 text-left text-xs"
+                    :class="form.secret_type === 'credential' ? 'border-violet-400 bg-violet-50' : 'border-gray-200'"
+                    @click="form.secret_type = 'credential'"
+                  >
+                    <span class="block font-medium text-gray-900">凭证</span>
+                    <span class="text-[11px] text-gray-500">Token / 密码，建完不可读</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-lg border px-3 py-2 text-left text-xs"
+                    :class="form.secret_type === 'variable' ? 'border-sky-400 bg-sky-50' : 'border-gray-200'"
+                    @click="form.secret_type = 'variable'"
+                  >
+                    <span class="block font-medium text-gray-900">变量</span>
+                    <span class="text-[11px] text-gray-500">租户号 / 地址，可复制</span>
+                  </button>
+                </div>
               </div>
 
-              <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
-                <label class="block">
-                  <span class="text-xs font-medium text-gray-700">凭据标识</span>
-                  <input
-                    v-model="form.secret_key"
-                    placeholder="jira.prod.token"
-                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                  <span class="mt-1 block text-[11px] text-gray-400">
-                    小写字母、数字、点、下划线、连字符；会被拼进 <code>${secret:标识}</code>
-                  </span>
-                </label>
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">分类</span>
+                <input
+                  v-model="form.category"
+                  list="secret-category-options"
+                  placeholder="第三方 API / 数据库 / 平台内部……"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                />
+                <datalist id="secret-category-options">
+                  <option v-for="group in categoryGroups" :key="group.name" :value="group.name" />
+                </datalist>
+                <span class="mt-1 block text-[11px] text-gray-500">左侧筛选栏就是按这个分组的，留空归到「未分类」。</span>
+              </label>
 
-                <label class="block">
-                  <span class="text-xs font-medium text-gray-700">名称</span>
-                  <input
-                    v-model="form.name"
-                    placeholder="留空则用标识"
-                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </label>
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">凭据值 <span class="text-rose-500">*</span></span>
+                <input
+                  v-model="form.value"
+                  type="password"
+                  autocomplete="new-password"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
+                />
+                <span class="mt-1 block text-[11px] text-amber-600">提交后不可再查看，只能轮换或停用。</span>
+              </label>
 
-                <div class="block">
-                  <span class="text-xs font-medium text-gray-700">类型</span>
-                  <div class="mt-1 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      class="rounded-lg border px-3 py-2 text-left text-xs"
-                      :class="form.secret_type === 'credential' ? 'border-violet-400 bg-violet-50' : 'border-gray-200'"
-                      @click="form.secret_type = 'credential'"
-                    >
-                      <span class="block font-medium text-gray-900">凭证</span>
-                      <span class="text-[11px] text-gray-500">Token / 密码，建完不可读</span>
-                    </button>
-                    <button
-                      type="button"
-                      class="rounded-lg border px-3 py-2 text-left text-xs"
-                      :class="form.secret_type === 'variable' ? 'border-sky-400 bg-sky-50' : 'border-gray-200'"
-                      @click="form.secret_type = 'variable'"
-                    >
-                      <span class="block font-medium text-gray-900">变量</span>
-                      <span class="text-[11px] text-gray-500">租户号 / 地址，可复制</span>
-                    </button>
-                  </div>
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">备注</span>
+                <input
+                  v-model="form.remark"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </label>
+            </div>
+
+            <!-- 步骤 2：注入范围 -->
+            <div v-else-if="createStep === 2" class="space-y-3">
+              <div>
+                <span class="text-xs font-medium text-gray-700">允许注入到哪些场景 <span class="text-rose-500">*</span></span>
+                <div class="mt-1 space-y-1.5">
+                  <button
+                    v-for="scene in SCENES"
+                    :key="scene.key"
+                    type="button"
+                    :disabled="!scene.wired"
+                    class="flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors"
+                    :class="scene.wired
+                      ? (form.allowed_scenarios.includes(scene.key) ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-gray-300')
+                      : 'cursor-not-allowed border-dashed border-gray-200 bg-gray-50 opacity-70'"
+                    @click="scene.wired && toggleScene(scene.key)"
+                  >
+                    <span
+                      class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] text-white"
+                      :class="form.allowed_scenarios.includes(scene.key) ? 'border-blue-600 bg-blue-600' : 'border-gray-300 bg-white'"
+                    >{{ form.allowed_scenarios.includes(scene.key) ? '✓' : '' }}</span>
+                    <span class="min-w-0">
+                      <span class="block text-xs font-medium" :class="scene.wired ? 'text-gray-900' : 'text-gray-400'">
+                        {{ scene.label }}
+                        <span
+                          v-if="!scene.wired"
+                          class="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-normal text-amber-700"
+                        >暂未接入</span>
+                      </span>
+                      <span class="mt-0.5 block text-[11px] leading-snug" :class="scene.wired ? 'text-gray-500' : 'text-amber-600'">
+                        {{ scene.desc }}
+                      </span>
+                    </span>
+                  </button>
                 </div>
-
-                <label class="block">
-                  <span class="text-xs font-medium text-gray-700">分类</span>
-                  <input
-                    v-model="form.category"
-                    list="secret-category-options"
-                    placeholder="第三方 API / 数据库 / 平台内部……"
-                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                  <datalist id="secret-category-options">
-                    <option v-for="group in categoryGroups" :key="group.name" :value="group.name" />
-                  </datalist>
-                  <span class="mt-1 block text-[11px] text-gray-500">
-                    左侧筛选栏就是按这个分组的。留空归到「未分类」。
-                  </span>
-                </label>
-
-                <label class="block">
-                  <span class="text-xs font-medium text-gray-700">凭据值</span>
-                  <input
-                    v-model="form.value"
-                    type="password"
-                    autocomplete="new-password"
-                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </label>
-
-                <div class="block">
-                  <span class="text-xs font-medium text-gray-700">允许注入的场景</span>
-                  <div class="mt-1 space-y-1.5">
-                    <button
-                      v-for="scene in SCENES"
-                      :key="scene.key"
-                      type="button"
-                      :disabled="!scene.wired"
-                      class="flex w-full items-center justify-between rounded-lg border px-3 py-1.5 text-left text-xs"
-                      :class="scene.wired
-                        ? (form.allowed_scenarios.includes(scene.key) ? 'border-blue-400 bg-blue-50' : 'border-gray-200')
-                        : 'cursor-not-allowed border-dashed border-gray-200 bg-gray-50 opacity-70'"
-                      @click="scene.wired && toggleScene(scene.key)"
-                    >
-                      <span class="font-medium" :class="scene.wired ? 'text-gray-800' : 'text-gray-400'">{{ scene.label }}</span>
-                      <span class="text-[11px]" :class="scene.wired ? 'text-gray-500' : 'text-amber-600'">{{ scene.hint }}</span>
-                    </button>
-                  </div>
-                  <p v-if="!form.allowed_scenarios.length" class="mt-1 text-[11px] text-amber-600">
-                    一个都没勾：这条凭据建完也不能被任何地方注入
-                  </p>
-                </div>
-
-                <label class="block">
-                  <span class="text-xs font-medium text-gray-700">域名白名单</span>
-                  <input
-                    v-model="form.allowed_hosts"
-                    placeholder="api.example.com, *.atlassian.net"
-                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                  <span class="mt-1 block text-[11px] text-gray-400">
-                    留空 = 只允许平台内部目标。填了之后，这条凭据不会在「没有目标域名」的调用里被注入。
-                  </span>
-                </label>
-
-                <label class="block">
-                  <span class="text-xs font-medium text-gray-700">备注</span>
-                  <input
-                    v-model="form.remark"
-                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </label>
               </div>
 
-              <div class="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
-                <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100" @click="showCreate = false">
-                  取消
-                </button>
-                <button
-                  type="button"
-                  :disabled="createBusy"
-                  class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-                  @click="submitCreate"
-                >
-                  {{ createBusy ? '创建中…' : '确认创建' }}
-                </button>
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">允许发往的域名 <span class="text-rose-500">*</span></span>
+                <input
+                  v-model="form.allowed_hosts"
+                  placeholder="api.example.com, *.atlassian.net"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
+                />
+                <span class="mt-1 block text-[11px] text-gray-400">
+                  逗号分隔，支持 <code>*.</code> 通配子域。留空 = 只允许平台内部目标。这条是防「凭据被拼进任意 URL 带走」的闸门。
+                </span>
+              </label>
+
+              <div class="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 text-[11px] leading-relaxed text-blue-800">
+                <b>不勾任何场景</b> = 这条凭据建完只是个仓库条目，任何工具都取不到。
+                绑定是白名单，不是黑名单。
+              </div>
+            </div>
+
+            <!-- 步骤 3：确认 -->
+            <div v-else class="space-y-3">
+              <dl class="divide-y divide-gray-100 rounded-lg border border-gray-200 text-xs">
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">标识</dt>
+                  <dd class="font-mono text-gray-900">{{ form.secret_key || '—' }}</dd>
+                </div>
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">名称</dt>
+                  <dd class="text-gray-900">{{ form.name || form.secret_key || '—' }}</dd>
+                </div>
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">类型</dt>
+                  <dd class="text-gray-900">{{ form.secret_type === 'credential' ? '凭证（建完不可读）' : '变量（可复制）' }}</dd>
+                </div>
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">分类</dt>
+                  <dd class="text-gray-900">{{ form.category || '未分类' }}</dd>
+                </div>
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">场景</dt>
+                  <dd class="flex flex-wrap gap-1">
+                    <template v-if="form.allowed_scenarios.length">
+                      <span
+                        v-for="key in form.allowed_scenarios"
+                        :key="key"
+                        class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700"
+                      >{{ sceneLabelOf(key) }}</span>
+                    </template>
+                    <span v-else class="text-amber-600">一个都没勾 —— 建完也取不到</span>
+                  </dd>
+                </div>
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">域名</dt>
+                  <dd class="font-mono text-gray-900">{{ form.allowed_hosts || '仅平台内部' }}</dd>
+                </div>
+              </dl>
+
+              <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+                <b>点了创建就回不去了</b>：值会被加密保存，你和管理员都再看不到明文，
+                唯一的后续手段是轮换（旧值保留 7 天过渡）或停用。
               </div>
             </div>
           </div>
+
+          <div class="flex items-center gap-2 border-t border-gray-100 px-5 py-3">
+            <span class="text-[11px] text-gray-400">
+              <template v-if="createStep === 1">下一步会让你确认「创建后不可查看明文」</template>
+              <template v-else-if="createStep === 2">还剩一步：确认</template>
+              <template v-else>确认后立即生效</template>
+            </span>
+            <div class="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+                @click="showCreate = false"
+              >取消</button>
+              <button
+                v-if="createStep > 1"
+                type="button"
+                class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                @click="prevCreateStep"
+              >上一步</button>
+              <button
+                v-if="createStep < 3"
+                type="button"
+                class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+                @click="nextCreateStep"
+              >下一步</button>
+              <button
+                v-else
+                type="button"
+                :disabled="createBusy"
+                class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                @click="submitCreate"
+              >{{ createBusy ? '创建中…' : '确认创建' }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </Teleport>
 
     <!-- 轮换弹窗 -->

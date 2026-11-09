@@ -44,6 +44,19 @@ const showDiscardConfirm = ref(false)
 const saving = ref(false)
 const formError = ref('')
 const fieldErrors = ref<Partial<Record<'name' | 'url_template' | 'headers_str' | 'parameter_schema_str' | 'signing', string>>>({})
+
+/**
+ * 参数定义里声明了 `source: credential` 的参数名。
+ *
+ * 只认声明过的：普通参数的值由模型填，平台不该去猜哪个「看起来像密钥」。
+ */
+const credentialParams = computed<string[]>(() => {
+  const parsed = parseToolSchema(toolForm.value.parameter_schema_str)
+  return (parsed?.systemParams || [])
+    .filter((param) => param.source === 'credential')
+    .map((param) => param.name.trim())
+    .filter(Boolean)
+})
 const suppressFormWatch = ref(false)
 const wizardDirty = ref(false)
 const initialFormSnapshot = ref('')
@@ -1281,6 +1294,8 @@ onBeforeUnmount(() => {
                                     v-model="toolForm.headers_str"
                                     :error="fieldErrors.headers_str"
                                     :consumer-id="isEditing && toolForm.id ? String(toolForm.id) : ''"
+                                    :credential-params="credentialParams"
+                                    :method="toolForm.method"
                                 />
                             </div>
 

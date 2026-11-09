@@ -111,6 +111,30 @@ class SecretUsageLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class SecretAuditLog(Base):
+    """变更审计。与使用流水分开：一个记「谁改了配置」，一个记「谁用了凭据」。
+
+    合成一张表会让两类查询互相拖累——排查「这条 token 谁轮换过」时，得在几万条
+    调用记录里翻。刻意不设外键，删凭据不删审计，否则出事后最该看的东西没了。
+    """
+
+    __tablename__ = "sys_secret_audit_logs"
+
+    id = Column(String(36), primary_key=True)
+    secret_id = Column(String(36), nullable=True)
+    #: 凭据被删后仍可溯源
+    secret_key_snapshot = Column(String(128), nullable=True)
+    owner_scope = Column(String(16), nullable=True)
+    actor_id = Column(String(64), nullable=True)
+    #: 操作者当时的显示名，避免用户改名后审计失去可读性
+    actor_name = Column(String(128), nullable=True)
+    #: create / update / rotate / delete / disable / enable / grant / revoke / bind / unbind
+    action = Column(String(24), nullable=False)
+    #: 补充信息（授权的对象、绑定的槽位、轮换的生效时间等），JSON 字符串
+    detail = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class SecretUserPref(Base):
     """用户级注入偏好（三层开关的第 ② 层）。只做收紧。"""
 

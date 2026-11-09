@@ -24,12 +24,26 @@ export const SYSTEM_PARAMS_KEY = 'x-nanzi-system-params'
 export const SYSTEM_PARAM_TYPES = ['string', 'integer', 'number', 'boolean'] as const
 export type SystemParamType = typeof SYSTEM_PARAM_TYPES[number]
 
-/** 系统级参数：模型不可见，调用前由平台强制注入。 */
+export const SYSTEM_PARAM_SOURCES = ['literal', 'credential'] as const
+export type SystemParamSource = typeof SYSTEM_PARAM_SOURCES[number]
+
+/**
+ * 系统级参数：模型不可见，调用前由平台强制注入。
+ *
+ * ``source`` 决定值从哪来：
+ * - ``literal``：平台写死一个值（可含 ``{user.user_name}`` 这类变量）
+ * - ``credential``：来自凭据中心，按当前用户解析；``value`` 恒为空
+ *
+ * 参数为什么不能像 header 那样直接在配置行上选凭据：header 是配置里的固定行，
+ * 而参数值由模型运行时填，平台分不清「模型没填」和「模型编了一个值」。所以必须
+ * 先在这里声明来源，它才会从模型可见的 properties 里消失。
+ */
 export type SystemParam = {
     name: string
     type: SystemParamType
     value: string
     description: string
+    source: SystemParamSource
 }
 
 /** 可视化编辑器里的一行参数（与 ``key`` 无关的纯数据部分）。 */
@@ -99,6 +113,7 @@ export const parseToolSchema = (jsonText: string): ParsedToolSchema | null => {
             type: SYSTEM_PARAM_TYPES.includes(entry?.type) ? entry.type : 'string',
             value: typeof entry?.value === 'string' ? entry.value : '',
             description: typeof entry?.description === 'string' ? entry.description : '',
+            source: SYSTEM_PARAM_SOURCES.includes(entry?.source) ? entry.source : 'literal',
         }))
         : []
 
@@ -177,7 +192,9 @@ export const serializeToolSchema = (schema: ParsedToolSchema): string => {
         Object.assign(payload, properties)
     }
     if (schema.systemParams.length > 0) {
-        payload[SYSTEM_PARAMS_KEY] = schema.systemParams
+        payload[SYSTEM_PARAMS_KEY] = schema.systemParams.map((param) => (
+            param.source === 'credential' ? param : { ...param, source: undefined }
+        ))
     }
     return JSON.stringify(payload, null, 2)
 }
@@ -206,7 +223,12 @@ export const validateSystemParams = (
         if (!SYSTEM_PARAM_TYPES.includes(param.type)) {
             errors.push(`系统级参数 ${name || index + 1} 的类型不支持：${param.type}`)
         }
-        if (!param.value.trim()) {
+        if (param.source === 'credential') {
+            // 值运行时才取；类型必须是 string，否则注入进来没法转
+            if (param.type !== 'string') {
+                errors.push(`系统级参数 ${name || index + 1} 来自凭据，类型只能是 string`)
+            }
+        } else if (!param.value.trim()) {
             errors.push(`系统级参数 ${name || index + 1} 缺少固定值`)
         }
     })

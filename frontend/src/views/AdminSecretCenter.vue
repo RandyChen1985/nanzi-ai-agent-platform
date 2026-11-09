@@ -11,6 +11,8 @@
  * - 不能停用个人凭据（那是用户自己的资产）。
  */
 import { computed, onMounted, ref } from 'vue'
+import UserDeptPicker from '../components/common/UserDeptPicker.vue'
+import { useDismissible } from '../utils/dismissible'
 import axios from '../utils/axios'
 
 interface Grant {
@@ -41,6 +43,21 @@ const SCENE_LABEL: Record<string, string> = {
   scheduled_task: '定时任务',
   agent: '智能体',
 }
+
+// 与个人中心同一套口径：真接通的才能勾，`agent` 没有注入点。
+const CREATE_SCENES = [
+  { key: 'mcp', label: 'MCP 服务', desc: '作为连接头的值，在建立 MCP 连接时注入', wired: true },
+  { key: 'api_tool', label: 'API 工具', desc: '填进工具的请求头，或声明为「来自凭据」的参数位', wired: true },
+  { key: 'script_env', label: '脚本环境变量', desc: '以环境变量形式进子进程；平台与个人两层开关都开才生效', wired: true },
+  { key: 'scheduled_task', label: '定时任务', desc: '无人值守执行，需单独授权；只勾 MCP 不等于允许半夜自动跑', wired: true },
+  { key: 'agent', label: '智能体', desc: '暂未接入，勾了也不会注入', wired: false },
+]
+
+const sceneDescOf = (key: string) => CREATE_SCENES.find((scene) => scene.key === key)?.desc || ''
+
+// 一次性说明，关掉后记住
+const { visible: showNoGrantHint, dismiss: dismissNoGrantHint } = useDismissible('admin-secrets:no-grant')
+const { visible: showPlaintextHint, dismiss: dismissPlaintextHint } = useDismissible('admin-secrets:plaintext')
 
 const loading = ref(false)
 const items = ref<SystemSecret[]>([])
@@ -83,6 +100,7 @@ async function load() {
 
 // ── 新建系统级凭据 ────────────────────────────────────────────────────
 const showCreate = ref(false)
+const createStep = ref(1)
 const createBusy = ref(false)
 const form = ref({
   secret_key: '',
@@ -93,6 +111,47 @@ const form = ref({
   allowed_hosts: '',
 })
 
+// ── 变更记录（管理员看全局） ──────────────────────────────────────────
+// 与「使用记录」分开：一个记「谁用了」，一个记「谁改了」。管理员最常问的后一个
+// 问题——「这条 token 谁轮换过」——以前一条都答不上。
+const auditOpen = ref(false)
+const auditLoading = ref(false)
+type AuditRow = {
+  id: string
+  secret_key: string | null
+  action: string
+  actor_id: string | null
+  detail: string | null
+  created_at: string
+}
+const auditRows = ref<AuditRow[]>([])
+
+const ACTION_LABEL: Record<string, string> = {
+  create: '创建',
+  update: '修改',
+  rotate: '轮换',
+  delete: '删除',
+  disable: '停用',
+  enable: '启用',
+  grant: '授权',
+  revoke: '撤销授权',
+  bind: '绑定',
+  unbind: '解绑',
+}
+
+async function openAudit() {
+  auditOpen.value = true
+  auditLoading.value = true
+  try {
+    const res = await axios.get('/api/portal/secrets/audit', { params: { limit: 100 } })
+    auditRows.value = res.data?.data || []
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || '加载变更记录失败', 'err')
+  } finally {
+    auditLoading.value = false
+  }
+}
+
 function openCreate() {
   form.value = {
     secret_key: '',
@@ -102,7 +161,21 @@ function openCreate() {
     allowed_scenarios: ['mcp'],
     allowed_hosts: '',
   }
+  createStep.value = 1
   showCreate.value = true
+}
+
+const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && form.value.value)
+
+function nextCreateStep() {
+  if (createStep.value === 1 && !canLeaveStep1()) {
+    return showToast('标识和凭据值是必填的', 'err')
+  }
+  if (createStep.value < 3) createStep.value += 1
+}
+
+function prevCreateStep() {
+  if (createStep.value > 1) createStep.value -= 1
 }
 
 function toggleScene(key: string) {
@@ -140,26 +213,41 @@ async function submitCreate() {
 // ── 授权 / 撤销 ───────────────────────────────────────────────────────
 const grantTarget = ref<SystemSecret | null>(null)
 const grantBusy = ref(false)
-const grantForm = ref({ grantee_type: 'user' as 'user' | 'dept', grantee_id: '' })
+// 'user:7' / 'dept:3' —— 类型和 id 一起传，提交时不用再单独维护 grantee_type
+const grantSelected = ref<string[]>([])
+
+const grantedKeys = computed(() =>
+  (grantTarget.value?.grants || []).map((g) => `${g.grantee_type}:${g.grantee_id}`),
+)
 
 function openGrant(item: SystemSecret) {
   grantTarget.value = item
-  grantForm.value = { grantee_type: 'user', grantee_id: '' }
+  grantSelected.value = []
 }
 
 async function submitGrant() {
-  if (!grantTarget.value || !grantForm.value.grantee_id.trim()) return
+  if (!grantTarget.value || !grantSelected.value.length) return
   grantBusy.value = true
   try {
-    await axios.post(`/api/portal/secrets/admin/${grantTarget.value.id}/grants`, {
-      grantee_type: grantForm.value.grantee_type,
-      grantee_id: grantForm.value.grantee_id.trim(),
-    })
+    // 后端一次授权一个对象；批量授权在前端串起来，失败的那些要如实报出来，
+    // 不能笼统说「已授权」——管理员会以为全都成了。
+    const failed: string[] = []
+    for (const key of grantSelected.value) {
+      const [granteeType, granteeId] = key.split(':', 2)
+      if (!granteeType || !granteeId) continue
+      try {
+        await axios.post(`/api/portal/secrets/admin/${grantTarget.value.id}/grants`, {
+          grantee_type: granteeType,
+          grantee_id: granteeId,
+        })
+      } catch {
+        failed.push(key)
+      }
+    }
     grantTarget.value = null
-    showToast('已授权')
+    if (failed.length) showToast(`${failed.length} 个对象授权失败，其余已授权`, 'err')
+    else showToast(`已授权 ${grantSelected.value.length} 个对象`)
     await load()
-  } catch (e: any) {
-    showToast(e?.response?.data?.detail || '授权失败', 'err')
   } finally {
     grantBusy.value = false
   }
@@ -223,8 +311,24 @@ onMounted(load)
       </div>
     </div>
 
-    <div v-if="stats.noGrant" class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
-      有 <strong>{{ stats.noGrant }}</strong> 条系统级凭据处于「生效中但没有任何授权」。它们对除管理员外的所有人不可见，也不会有任何调用能用到它们。
+    <div
+      v-if="stats.noGrant && showNoGrantHint"
+      class="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800"
+    >
+      <p class="min-w-0 flex-1">
+        有 <strong>{{ stats.noGrant }}</strong> 条系统级凭据处于「生效中但没有任何授权」。它们对除管理员外的所有人不可见，也不会有任何调用能用到它们。
+      </p>
+      <button
+        type="button"
+        class="shrink-0 rounded p-0.5 text-amber-500 hover:bg-amber-100 hover:text-amber-800"
+        title="关闭提示（不再显示）"
+        aria-label="关闭未授权提示"
+        @click="dismissNoGrantHint"
+      >
+        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
     </div>
 
     <!-- 工具栏 -->
@@ -239,6 +343,13 @@ onMounted(load)
           placeholder="搜索"
           class="w-40 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none sm:w-52"
         />
+        <button
+          type="button"
+          class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+          @click="openAudit"
+        >
+          变更记录
+        </button>
         <button
           type="button"
           class="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
@@ -332,139 +443,281 @@ onMounted(load)
       </div>
     </div>
 
-    <p class="text-[11px] leading-relaxed text-gray-400">
-      管理员也读不到凭据明文——这不是权限设置，是平台没有这个能力。要更换值只能让创建者轮换，或停用后重建。
-    </p>
+    <div v-if="showPlaintextHint" class="flex items-start gap-2">
+      <p class="min-w-0 flex-1 text-[11px] leading-relaxed text-gray-400">
+        管理员也读不到凭据明文——这不是权限设置，是平台没有这个能力。要更换值只能让创建者轮换，或停用后重建。
+      </p>
+      <button
+        type="button"
+        class="shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        title="关闭提示（不再显示）"
+        aria-label="关闭明文说明"
+        @click="dismissPlaintextHint"
+      >
+        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
 
-    <!-- 新建 -->
+    <!-- 新建：三步向导（与个人中心同一套结构） -->
     <Teleport to="body">
-          <div
-            v-if="showCreate"
-            class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
-            @click.self="showCreate = false"
-          >
-            <div class="flex max-h-[calc(100vh-120px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-              <div class="border-b border-gray-100 px-5 py-3">
-                <h3 class="text-base font-semibold text-gray-900">新建系统级凭据</h3>
-                <p class="mt-0.5 text-xs text-gray-500">创建后需要单独授权，否则没有人能用</p>
+      <div
+        v-if="showCreate"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+        @click.self="showCreate = false"
+      >
+        <div class="flex max-h-[calc(100vh-120px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="border-b border-gray-100 px-5 py-3">
+            <h3 class="flex items-center gap-1.5 text-base font-semibold text-gray-900">
+              <span class="text-slate-900">+</span> 新建系统级凭据
+            </h3>
+            <p class="mt-0.5 text-xs text-gray-500">
+              三步：说清楚是什么 → 划清楚能去哪 → 确认；建完还要授权，否则没有人能用
+            </p>
+          </div>
+
+          <div class="flex items-center gap-0 bg-gray-50 px-5 py-2.5">
+            <template v-for="(label, index) in ['基本信息', '注入范围', '确认']" :key="label">
+              <div
+                class="flex items-center gap-1.5 text-[11.5px] font-semibold"
+                :class="createStep === index + 1 ? 'text-slate-900' : (createStep > index + 1 ? 'text-emerald-700' : 'text-gray-400')"
+              >
+                <span
+                  class="flex h-[19px] w-[19px] items-center justify-center rounded-full text-[10px]"
+                  :class="createStep === index + 1 ? 'bg-slate-900 text-white' : (createStep > index + 1 ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500')"
+                >{{ createStep > index + 1 ? '✓' : index + 1 }}</span>
+                {{ label }}
               </div>
-              <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
-                <label class="block">
-                  <span class="text-xs font-medium text-gray-700">凭据标识</span>
-                  <input
-                    v-model="form.secret_key"
-                    placeholder="corp.wecom.secret"
-                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </label>
-                <label class="block">
-                  <span class="text-xs font-medium text-gray-700">名称</span>
-                  <input
-                    v-model="form.name"
-                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </label>
-                <label class="block">
-                  <span class="text-xs font-medium text-gray-700">凭据值</span>
-                  <input
-                    v-model="form.value"
-                    type="password"
-                    autocomplete="new-password"
-                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </label>
-                <div>
-                  <span class="text-xs font-medium text-gray-700">允许注入的场景</span>
-                  <div class="mt-1 flex flex-wrap gap-1.5">
-                    <!-- 只列已接通的链路：定时任务/智能体还没有注入代码，勾了是空承诺 -->
-                    <button
-                      v-for="key in ['mcp', 'api_tool', 'script_env']"
-                      :key="key"
-                      type="button"
-                      class="rounded-lg border px-2.5 py-1 text-xs"
-                      :class="form.allowed_scenarios.includes(key) ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'"
-                      @click="toggleScene(key)"
-                    >
-                      {{ SCENE_LABEL[key] }}
-                    </button>
-                    <span class="self-center text-[11px] text-gray-400">定时任务 / 智能体暂未接入</span>
-                  </div>
+              <span
+                v-if="index < 2"
+                class="mx-2.5 h-0.5 w-6 rounded"
+                :class="createStep > index + 1 ? 'bg-emerald-500' : 'bg-gray-300'"
+              />
+            </template>
+          </div>
+
+          <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            <!-- 步骤 1 -->
+            <div v-if="createStep === 1" class="space-y-3">
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">凭据标识 <span class="text-rose-500">*</span></span>
+                <input
+                  v-model="form.secret_key"
+                  placeholder="corp.wecom.secret"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-slate-500 focus:outline-none"
+                />
+                <span class="mt-1 block text-[11px] text-gray-400">
+                  授权对象看到的就是这个标识；小写字母、数字、点、下划线、连字符
+                </span>
+              </label>
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">名称</span>
+                <input
+                  v-model="form.name"
+                  placeholder="留空则用标识"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                />
+              </label>
+              <div>
+                <span class="text-xs font-medium text-gray-700">类型</span>
+                <div class="mt-1 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    class="rounded-lg border px-3 py-2 text-left text-xs"
+                    :class="form.secret_type === 'credential' ? 'border-violet-400 bg-violet-50' : 'border-gray-200'"
+                    @click="form.secret_type = 'credential'"
+                  >
+                    <span class="block font-medium text-gray-900">凭证</span>
+                    <span class="text-[11px] text-gray-500">Token / 密码，建完不可读</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-lg border px-3 py-2 text-left text-xs"
+                    :class="form.secret_type === 'variable' ? 'border-sky-400 bg-sky-50' : 'border-gray-200'"
+                    @click="form.secret_type = 'variable'"
+                  >
+                    <span class="block font-medium text-gray-900">变量</span>
+                    <span class="text-[11px] text-gray-500">租户号 / 地址，被授权者可复制</span>
+                  </button>
                 </div>
-                <label class="block">
-                  <span class="text-xs font-medium text-gray-700">域名白名单</span>
-                  <input
-                    v-model="form.allowed_hosts"
-                    placeholder="qyapi.weixin.qq.com"
-                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </label>
               </div>
-              <div class="flex justify-end gap-2 border-t border-gray-100 px-5 py-3">
-                <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100" @click="showCreate = false">
-                  取消
-                </button>
-                <button
-                  type="button"
-                  :disabled="createBusy"
-                  class="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-                  @click="submitCreate"
-                >
-                  {{ createBusy ? '创建中…' : '确认创建' }}
-                </button>
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">凭据值 <span class="text-rose-500">*</span></span>
+                <input
+                  v-model="form.value"
+                  type="password"
+                  autocomplete="new-password"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-slate-500 focus:outline-none"
+                />
+                <span class="mt-1 block text-[11px] text-amber-600">
+                  提交后任何人（包括你）都无法再查看明文，只能停用后重建。
+                </span>
+              </label>
+            </div>
+
+            <!-- 步骤 2 -->
+            <div v-else-if="createStep === 2" class="space-y-3">
+              <div>
+                <span class="text-xs font-medium text-gray-700">允许注入到哪些场景 <span class="text-rose-500">*</span></span>
+                <div class="mt-1 space-y-1.5">
+                  <button
+                    v-for="scene in CREATE_SCENES"
+                    :key="scene.key"
+                    type="button"
+                    :disabled="!scene.wired"
+                    class="flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors"
+                    :class="scene.wired
+                      ? (form.allowed_scenarios.includes(scene.key) ? 'border-slate-400 bg-slate-50' : 'border-gray-200 hover:border-gray-300')
+                      : 'cursor-not-allowed border-dashed border-gray-200 bg-gray-50 opacity-70'"
+                    @click="scene.wired && toggleScene(scene.key)"
+                  >
+                    <span
+                      class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] text-white"
+                      :class="form.allowed_scenarios.includes(scene.key) ? 'border-slate-900 bg-slate-900' : 'border-gray-300 bg-white'"
+                    >{{ form.allowed_scenarios.includes(scene.key) ? '✓' : '' }}</span>
+                    <span class="min-w-0">
+                      <span class="block text-xs font-medium" :class="scene.wired ? 'text-gray-900' : 'text-gray-400'">
+                        {{ scene.label }}
+                        <span v-if="!scene.wired" class="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-normal text-amber-700">暂未接入</span>
+                      </span>
+                      <span class="mt-0.5 block text-[11px] leading-snug" :class="scene.wired ? 'text-gray-500' : 'text-amber-600'">
+                        {{ scene.desc }}
+                      </span>
+                    </span>
+                  </button>
+                </div>
+              </div>
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">域名白名单</span>
+                <input
+                  v-model="form.allowed_hosts"
+                  placeholder="qyapi.weixin.qq.com"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-slate-500 focus:outline-none"
+                />
+                <span class="mt-1 block text-[11px] text-gray-400">
+                  逗号分隔，支持 <code>*.</code> 通配子域。留空 = 只允许平台内部目标。
+                </span>
+              </label>
+              <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+                <b>建完不等于能用</b>：系统级凭据还要在列表里单独授权给用户或部门，否则没有任何人能取到它。
+              </div>
+            </div>
+
+            <!-- 步骤 3 -->
+            <div v-else class="space-y-3">
+              <dl class="divide-y divide-gray-100 rounded-lg border border-gray-200 text-xs">
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">标识</dt>
+                  <dd class="font-mono text-gray-900">{{ form.secret_key || '—' }}</dd>
+                </div>
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">名称</dt>
+                  <dd class="text-gray-900">{{ form.name || form.secret_key || '—' }}</dd>
+                </div>
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">类型</dt>
+                  <dd class="text-gray-900">{{ form.secret_type === 'credential' ? '凭证（建完不可读）' : '变量（被授权者可复制）' }}</dd>
+                </div>
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">场景</dt>
+                  <dd class="flex flex-wrap gap-1">
+                    <template v-if="form.allowed_scenarios.length">
+                      <span
+                        v-for="key in form.allowed_scenarios"
+                        :key="key"
+                        class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700"
+                        :title="sceneDescOf(key)"
+                      >{{ SCENE_LABEL[key] || key }}</span>
+                    </template>
+                    <span v-else class="text-amber-600">一个都没勾 —— 建完也取不到</span>
+                  </dd>
+                </div>
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">域名</dt>
+                  <dd class="font-mono text-gray-900">{{ form.allowed_hosts || '仅平台内部' }}</dd>
+                </div>
+              </dl>
+              <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+                <b>点创建就回不去了</b>：值会被加密保存，你和其他管理员都再看不到明文。
+                创建后还要在列表里把这条凭据授权给具体的人或部门。
               </div>
             </div>
           </div>
+
+          <div class="flex items-center gap-2 border-t border-gray-100 px-5 py-3">
+            <span class="text-[11px] text-gray-400">
+              <template v-if="createStep === 1">下一步配置注入范围</template>
+              <template v-else-if="createStep === 2">还剩一步：确认</template>
+              <template v-else>创建后记得授权</template>
+            </span>
+            <div class="ml-auto flex items-center gap-2">
+              <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100" @click="showCreate = false">
+                取消
+              </button>
+              <button
+                v-if="createStep > 1"
+                type="button"
+                class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                @click="prevCreateStep"
+              >上一步</button>
+              <button
+                v-if="createStep < 3"
+                type="button"
+                class="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
+                @click="nextCreateStep"
+              >下一步</button>
+              <button
+                v-else
+                type="button"
+                :disabled="createBusy"
+                class="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+                @click="submitCreate"
+              >{{ createBusy ? '创建中…' : '确认创建' }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </Teleport>
 
-    <!-- 授权 -->
+<!-- 授权 -->
     <Teleport to="body">
           <div
             v-if="grantTarget"
             class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
             @click.self="grantTarget = null"
           >
-            <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <div class="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl">
               <h3 class="text-base font-semibold text-gray-900">授权凭据</h3>
               <p class="mt-1 text-xs text-gray-500">
                 <code>{{ grantTarget.secret_key }}</code> 授权给谁。被授权的人才能看见并使用它。
               </p>
-              <div class="mt-3 space-y-2">
-                <div class="inline-flex rounded-lg bg-gray-100 p-1">
-                  <button
-                    type="button"
-                    class="rounded-md px-2.5 py-1 text-xs"
-                    :class="grantForm.grantee_type === 'user' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'"
-                    @click="grantForm.grantee_type = 'user'"
-                  >
-                    用户
-                  </button>
-                  <button
-                    type="button"
-                    class="rounded-md px-2.5 py-1 text-xs"
-                    :class="grantForm.grantee_type === 'dept' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'"
-                    @click="grantForm.grantee_type = 'dept'"
-                  >
-                    部门
-                  </button>
-                </div>
-                <input
-                  v-model="grantForm.grantee_id"
-                  :placeholder="grantForm.grantee_type === 'user' ? '用户 ID' : '部门编码'"
-                  class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              <div class="mt-3">
+                <UserDeptPicker
+                  v-model="grantSelected"
+                  :mode="'both'"
+                  :disabled-keys="grantedKeys"
                 />
               </div>
-              <div class="mt-4 flex justify-end gap-2">
+
+              <div class="mt-4 flex items-center gap-2">
+                <span class="text-[11px] text-gray-400">
+                  <template v-if="grantSelected.length">已选 {{ grantSelected.length }} 个</template>
+                  <template v-else>授权给部门后，部门内所有成员都能用</template>
+                </span>
+                <div class="ml-auto flex items-center gap-2">
                 <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100" @click="grantTarget = null">
                   取消
                 </button>
                 <button
                   type="button"
-                  :disabled="grantBusy"
+                  :disabled="grantBusy || !grantSelected.length"
                   class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
                   @click="submitGrant"
                 >
                   {{ grantBusy ? '授权中…' : '确认授权' }}
                 </button>
+                </div>
               </div>
             </div>
           </div>
@@ -498,6 +751,60 @@ onMounted(load)
               </div>
             </div>
           </div>
+    </Teleport>
+
+    <!-- 变更记录弹框 -->
+    <Teleport to="body">
+      <div
+        v-if="auditOpen"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+        @click.self="auditOpen = false"
+      >
+        <div class="flex max-h-[calc(100vh-120px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="flex items-start justify-between border-b border-gray-100 px-5 py-3">
+            <div>
+              <h3 class="text-base font-semibold text-gray-900">变更记录</h3>
+              <p class="mt-0.5 text-xs text-gray-500">
+                谁在什么时候对哪条凭据做了什么。不记值——凭据删除后记录仍保留。
+              </p>
+            </div>
+            <button
+              type="button"
+              class="rounded-lg px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              @click="auditOpen = false"
+            >✕</button>
+          </div>
+
+          <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+            <p v-if="auditLoading" class="py-8 text-center text-xs text-gray-400">加载中…</p>
+            <p v-else-if="!auditRows.length" class="py-8 text-center text-xs text-gray-400">
+              还没有变更记录
+            </p>
+            <div v-else class="space-y-1.5">
+              <div
+                v-for="row in auditRows"
+                :key="row.id"
+                class="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600"
+              >
+                <code class="text-gray-800">{{ row.secret_key || '已删除' }}</code>
+                <span class="rounded bg-white px-1.5 py-0.5 font-medium text-gray-700">
+                  {{ ACTION_LABEL[row.action] || row.action }}
+                </span>
+                <span v-if="row.actor_id" class="text-gray-400">{{ row.actor_id }}</span>
+                <span class="ml-auto text-gray-400">{{ row.created_at }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end border-t border-gray-100 px-5 py-3">
+            <button
+              type="button"
+              class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+              @click="auditOpen = false"
+            >关闭</button>
+          </div>
+        </div>
+      </div>
     </Teleport>
 
     <div v-if="toast" class="pointer-events-none fixed bottom-6 left-1/2 z-[60] -translate-x-1/2">
