@@ -34,6 +34,11 @@ import {
 import { copyToClipboard } from '@/utils/clipboard'
 import ContextCompactionTimeline from '@/components/chat/ContextCompactionTimeline.vue'
 import UserQuestionCard from '@/components/UserQuestionCard.vue'
+// AI 回复必须与聊天页走同一个渲染器，否则 ```chart / ```mermaid / <sql_plan> 会退化成
+// 裸代码块（日志里只剩一坨 JSON）。只读模式：不接引用面板、产物下载按钮与画布。
+import MessageRenderer from '@/components/MessageRenderer.vue'
+// 该渲染器的排版样式一直由宿主提供，抽成一份共用，避免日志页再手抄一遍。
+import '@/styles/messageMarkdownHost.css'
 import {
   applyUserQuestionReceipts,
   parseUserQuestionReceipt,
@@ -147,16 +152,6 @@ const activeTurn = computed(() => {
 const getTurnReplyMode = (id: string | number) => turnReplyModes.value[id] || 'render'
 const setTurnReplyMode = (id: string | number, mode: 'render' | 'source') => {
   turnReplyModes.value[id] = mode
-}
-
-const renderTurnReply = (text?: string) => {
-  if (!text) return ''
-  try {
-    return renderMarkdown(text)
-  } catch (e) {
-    console.error('Markdown render failed', e)
-    return `<p class="text-red-500">Markdown 渲染失败</p>`
-  }
 }
 
 /** 无回复轮次的说明文案。
@@ -1316,9 +1311,15 @@ onMounted(() => {
                 </div>
                 <div
                   v-if="turn.summary && getTurnReplyMode(turn.id) === 'render'"
-                  class="markdown-body prose prose-sm max-w-none text-gray-800 break-words"
-                  v-html="renderTurnReply(turn.summary)"
-                />
+                  class="message-host max-w-none text-gray-800 break-words"
+                >
+                  <MessageRenderer
+                    :content="turn.summary"
+                    theme="default"
+                    hide-quick-buttons
+                    readonly
+                  />
+                </div>
                 <pre
                   v-else-if="turn.summary"
                   class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed font-mono bg-white/60 border border-blue-100/80 rounded-lg p-3 overflow-x-auto"
@@ -1526,7 +1527,7 @@ onMounted(() => {
 
                       <div
                         v-if="getStepViewMode(`input-${idx}`) === 'render' && payloadView(step.tool_input).textContent"
-                        class="markdown-body prose prose-sm max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
+                        class="payload-markdown prose prose-sm max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
                         v-html="payloadView(step.tool_input).markdownHtml"
                       />
                       <pre
@@ -1580,7 +1581,7 @@ onMounted(() => {
 
                       <div
                         v-if="getStepViewMode(`output-${idx}`) === 'render' && payloadView(step.tool_output).textContent"
-                        class="markdown-body prose prose-sm max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
+                        class="payload-markdown prose prose-sm max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
                         v-html="payloadView(step.tool_output).markdownHtml"
                       />
                       <pre
@@ -1641,43 +1642,43 @@ onMounted(() => {
   overflow: hidden;
 }
 
-.markdown-body {
+.payload-markdown {
   font-size: 14px;
   line-height: 1.65;
   overflow-wrap: break-word;
 }
-.markdown-body :deep(p) { margin-bottom: 0.85em; }
-.markdown-body :deep(p:last-child) { margin-bottom: 0; }
-.markdown-body :deep(h1),
-.markdown-body :deep(h2),
-.markdown-body :deep(h3),
-.markdown-body :deep(h4) {
+.payload-markdown :deep(p) { margin-bottom: 0.85em; }
+.payload-markdown :deep(p:last-child) { margin-bottom: 0; }
+.payload-markdown :deep(h1),
+.payload-markdown :deep(h2),
+.payload-markdown :deep(h3),
+.payload-markdown :deep(h4) {
   font-weight: 700;
   color: #111827;
   margin-top: 1.1em;
   margin-bottom: 0.5em;
   line-height: 1.35;
 }
-.markdown-body :deep(h1) { font-size: 1.35em; }
-.markdown-body :deep(h2) { font-size: 1.2em; }
-.markdown-body :deep(h3) { font-size: 1.05em; }
-.markdown-body :deep(h1:first-child),
-.markdown-body :deep(h2:first-child),
-.markdown-body :deep(h3:first-child) { margin-top: 0; }
-.markdown-body :deep(ul) {
+.payload-markdown :deep(h1) { font-size: 1.35em; }
+.payload-markdown :deep(h2) { font-size: 1.2em; }
+.payload-markdown :deep(h3) { font-size: 1.05em; }
+.payload-markdown :deep(h1:first-child),
+.payload-markdown :deep(h2:first-child),
+.payload-markdown :deep(h3:first-child) { margin-top: 0; }
+.payload-markdown :deep(ul) {
   list-style-type: disc;
   padding-left: 1.4em;
   margin-bottom: 0.85em;
 }
-.markdown-body :deep(ol) {
+.payload-markdown :deep(ol) {
   list-style-type: decimal;
   padding-left: 1.4em;
   margin-bottom: 0.85em;
 }
-.markdown-body :deep(li) { margin-bottom: 0.35em; }
-.markdown-body :deep(strong) { font-weight: 700; color: #111827; }
-.markdown-body :deep(a) { color: #2563eb; text-decoration: underline; }
-.markdown-body :deep(code) {
+.payload-markdown :deep(li) { margin-bottom: 0.35em; }
+.payload-markdown :deep(strong) { font-weight: 700; color: #111827; }
+.payload-markdown :deep(a) { color: #2563eb; text-decoration: underline; }
+.payload-markdown :deep(code) {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   background-color: rgba(175, 184, 193, 0.22);
   padding: 0.15em 0.35em;
@@ -1685,37 +1686,37 @@ onMounted(() => {
   font-size: 85%;
   color: #b91c1c;
 }
-.markdown-body :deep(pre) {
+.payload-markdown :deep(pre) {
   margin: 0.85em 0;
   padding: 0.85em 1em;
   background-color: #1e293b;
   border-radius: 8px;
   overflow: auto;
 }
-.markdown-body :deep(pre code) {
+.payload-markdown :deep(pre code) {
   background: transparent;
   color: #e2e8f0;
   padding: 0;
   font-size: 12.5px;
 }
-.markdown-body :deep(blockquote) {
+.payload-markdown :deep(blockquote) {
   border-left: 3px solid #93c5fd;
   padding-left: 0.85em;
   color: #4b5563;
   margin: 0.85em 0;
 }
-.markdown-body :deep(table) {
+.payload-markdown :deep(table) {
   width: 100%;
   border-collapse: collapse;
   margin: 0.85em 0;
   font-size: 13px;
 }
-.markdown-body :deep(th),
-.markdown-body :deep(td) {
+.payload-markdown :deep(th),
+.payload-markdown :deep(td) {
   border: 1px solid #e5e7eb;
   padding: 0.4em 0.6em;
 }
-.markdown-body :deep(th) {
+.payload-markdown :deep(th) {
   background: #f8fafc;
   font-weight: 600;
 }

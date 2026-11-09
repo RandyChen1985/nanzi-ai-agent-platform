@@ -660,7 +660,9 @@ const segments = computed<ContentSegment[]>(() => {
       </div>
       <div v-if="segment.type === 'text'" class="markdown-body" v-html="segment.content"></div>
       <div v-else-if="segment.type === 'mermaid'" class="w-full my-4 relative group/mermaid">
+        <!-- 只读快照没有画布宿主，按钮点了不会有反应：干脆不渲染 -->
         <button
+          v-if="!readonly"
           @click="emit('open-canvas', { type: 'mermaid', title: '架构流程图预览', content: segment.content })"
           class="absolute top-2 right-2 p-1.5 bg-white/90 dark:bg-gray-800/90 text-gray-500 hover:text-primary rounded-lg shadow border border-gray-200 dark:border-gray-700 opacity-0 group-hover/mermaid:opacity-100 transition-all z-10 text-xs flex items-center space-x-1"
           title="在画布中放大缩小平移"

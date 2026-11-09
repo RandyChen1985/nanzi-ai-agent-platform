@@ -4,8 +4,11 @@ import Modal from '../Modal.vue'
 import { agentApi, type AIAgent, type AgentExecutionHistory } from '../../api/agent'
 import { useToast } from '@/composables/useToast'
 import { useUser } from '@/composables/useUser'
-import { renderMarkdown } from '@/utils/markdown'
 import { copyToClipboard } from '@/utils/clipboard'
+// 与聊天页共用一个渲染器：历史回复里的 ```chart / ```mermaid / <sql_plan> 才能渲染成
+// 图表、流程图和计划卡，而不是裸代码块。只读模式不接引用面板与产物下载。
+import MessageRenderer from '@/components/MessageRenderer.vue'
+import '@/styles/messageMarkdownHost.css'
 
 const props = defineProps<{
   show: boolean
@@ -48,17 +51,6 @@ const selectedItem = computed(
 const title = computed(
   () => `对话历史 - ${props.agent?.display_name || props.agent?.name || ''}`,
 )
-
-const replyHtml = computed(() => {
-  const text = selectedItem.value?.summary
-  if (!text) return ''
-  try {
-    return renderMarkdown(text)
-  } catch (e) {
-    console.error('Markdown render failed', e)
-    return `<p class="text-red-500">Markdown 渲染失败</p>`
-  }
-})
 
 const truncateQuery = (text?: string, max = 72) => {
   const value = (text || '').replace(/\s+/g, ' ').trim()
@@ -362,9 +354,15 @@ watch(selectedId, () => {
                 >(无响应内容)</div>
                 <div
                   v-else-if="replyViewMode === 'render'"
-                  class="markdown-body prose prose-sm max-w-none text-gray-800 break-words"
-                  v-html="replyHtml"
-                />
+                  class="message-host max-w-none text-gray-800 break-words"
+                >
+                  <MessageRenderer
+                    :content="selectedItem.summary"
+                    theme="default"
+                    hide-quick-buttons
+                    readonly
+                  />
+                </div>
                 <pre
                   v-else
                   class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed font-mono bg-white/60 border border-blue-100/80 rounded-lg p-3 overflow-x-auto"
@@ -397,98 +395,3 @@ watch(selectedId, () => {
     </div>
   </Modal>
 </template>
-
-<style scoped>
-.markdown-body {
-  font-size: 14px;
-  line-height: 1.65;
-  overflow-wrap: break-word;
-}
-.markdown-body :deep(p) {
-  margin-bottom: 0.85em;
-}
-.markdown-body :deep(p:last-child) {
-  margin-bottom: 0;
-}
-.markdown-body :deep(h1),
-.markdown-body :deep(h2),
-.markdown-body :deep(h3),
-.markdown-body :deep(h4) {
-  font-weight: 700;
-  color: #111827;
-  margin-top: 1.1em;
-  margin-bottom: 0.5em;
-  line-height: 1.35;
-}
-.markdown-body :deep(h1) { font-size: 1.35em; }
-.markdown-body :deep(h2) { font-size: 1.2em; }
-.markdown-body :deep(h3) { font-size: 1.05em; }
-.markdown-body :deep(h1:first-child),
-.markdown-body :deep(h2:first-child),
-.markdown-body :deep(h3:first-child) {
-  margin-top: 0;
-}
-.markdown-body :deep(ul) {
-  list-style-type: disc;
-  padding-left: 1.4em;
-  margin-bottom: 0.85em;
-}
-.markdown-body :deep(ol) {
-  list-style-type: decimal;
-  padding-left: 1.4em;
-  margin-bottom: 0.85em;
-}
-.markdown-body :deep(li) {
-  margin-bottom: 0.35em;
-}
-.markdown-body :deep(strong) {
-  font-weight: 700;
-  color: #111827;
-}
-.markdown-body :deep(a) {
-  color: #2563eb;
-  text-decoration: underline;
-}
-.markdown-body :deep(code) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  background-color: rgba(175, 184, 193, 0.22);
-  padding: 0.15em 0.35em;
-  border-radius: 4px;
-  font-size: 85%;
-  color: #b91c1c;
-}
-.markdown-body :deep(pre) {
-  margin: 0.85em 0;
-  padding: 0.85em 1em;
-  background-color: #1e293b;
-  border-radius: 8px;
-  overflow: auto;
-}
-.markdown-body :deep(pre code) {
-  background: transparent;
-  color: #e2e8f0;
-  padding: 0;
-  font-size: 12.5px;
-}
-.markdown-body :deep(blockquote) {
-  border-left: 3px solid #93c5fd;
-  padding-left: 0.85em;
-  color: #4b5563;
-  margin: 0.85em 0;
-}
-.markdown-body :deep(table) {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 0.85em 0;
-  font-size: 13px;
-}
-.markdown-body :deep(th),
-.markdown-body :deep(td) {
-  border: 1px solid #e5e7eb;
-  padding: 0.4em 0.6em;
-}
-.markdown-body :deep(th) {
-  background: #f8fafc;
-  font-weight: 600;
-}
-</style>
