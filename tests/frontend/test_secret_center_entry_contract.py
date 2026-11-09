@@ -678,11 +678,14 @@ class TestAdminSecretCenterUsage:
         assert "/api/portal/secrets/audit" in source
 
     def test_denial_reasons_are_translated(self):
-        """`result` 落库是 `denied_by_*`，直接摊给用户等于没说。"""
-        source = _read(ROOT / self.ADMIN)
-        assert "RESULT_LABEL" in source
-        assert "denied_by_grant" in source and "未授权" in source
-        assert "resultLabel" in source
+        """`result` 落库是 `denied_by_*`，直接摊给用户等于没说。
+
+        映射本身收敛在 `utils/secretLabels.ts`，两个页面都从那儿取。
+        """
+        labels = _read(ROOT / "frontend/src/utils/secretLabels.ts")
+        assert "denied_by_grant" in labels and "未授权" in labels
+        admin = _read(ROOT / self.ADMIN)
+        assert "resultLabel" in admin
 
     def test_cards_render_two_per_row(self):
         source = _read(ROOT / self.ADMIN)
@@ -741,6 +744,161 @@ class TestInjectionHelpStaysAccurate:
         start = source.find("API 工具 · 参数位")
         body = source[start:start + 900]
         assert "由工具的 URL 和方法决定" in body
+
+
+class TestUsageStatsAndFilter:
+    """使用记录要能「按凭据查」和「看趋势」，只有一个全局明细列表不够。"""
+
+    ADMIN = "frontend/src/views/AdminSecretCenter.vue"
+
+    def test_dialog_has_detail_and_stats_tabs(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "switchUsageTab" in source
+        assert "usageTab === 'detail'" in source
+        assert "usageTab === 'stats'" in source
+
+    def test_secret_filter_is_wired(self):
+        """`/usage` 早就支持 secret_id，前端一直没接。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "usageSecretId" in source
+        assert "secret_id: usageSecretId.value" in source
+        assert "全部凭据" in source
+
+    def test_card_can_open_its_own_usage(self):
+        """卡片上的入口要带上自己那条的 id，而不是又打开全局列表。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "@click=\"openUsage(item.id)\"" in source
+
+    def test_stats_panel_shows_the_three_dimensions(self):
+        # 渲染在共用组件里，管理端只负责挂上去
+        source = _read(ROOT / "frontend/src/components/secrets/SecretUsageStats.vue")
+        assert "按凭据" in source
+        assert "按结果" in source
+        assert "按天" in source
+
+    def test_stats_uses_the_aggregate_endpoint(self):
+        source = _read(ROOT / "frontend/src/components/secrets/SecretUsageStats.vue")
+        assert "/api/portal/secrets/usage/stats" in source
+
+
+class TestBindingIsIdentifiable:
+    """卡片上的绑定要能认出「哪个服务、谁绑的」。
+
+    原来只有 `MCP 服务 · arg:echo:api_key`——服务是 uuid 推出来的标签，槽位是内部
+    编码，看了等于没看。
+    """
+
+    ADMIN = "frontend/src/views/AdminSecretCenter.vue"
+
+    def test_shows_consumer_name_not_uuid(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "binding.consumer_name || binding.consumer_id" in source
+
+    def test_shows_who_bound_it(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "binding.bound_by_name || binding.bound_by_user_id" in source
+
+    def test_global_binding_is_labelled(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "binding.is_global ? '全局'" in source
+
+    def test_slot_is_humanised(self):
+        """`arg:echo:api_key` → `echo.api_key`；`header:X-Key` → `X-Key`。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "function slotLabel(" in source
+        assert "parts[1]}.${parts.slice(2).join(':')}" in source
+
+    def test_raw_slot_is_still_available_on_hover(self):
+        """排查时还是需要原始槽位，但不能铺在正文里。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "槽位：${binding.slot}" in source
+
+
+class TestUsageStatsShared:
+    """统计面板两边共用同一个组件。
+
+    抽出来的直接原因：两份 `RESULT_LABEL` 已经分叉了——同一个
+    `denied_by_scenario`，个人端写「场景未启用」、管理端写「场景不符」，
+    个人端还漏了 `denied_disabled`。纯展示口径没有分叉的理由。
+    """
+
+    STATS = "frontend/src/components/secrets/SecretUsageStats.vue"
+
+    def test_labels_have_a_single_source(self):
+        """三处曾经各写一份，导致同一结果三种说法。"""
+        source = _read(ROOT / "frontend/src/utils/secretLabels.ts")
+        assert "denied_by_scenario" in source
+        assert "denied_disabled" in source
+
+        # 谁也不许再自己定义
+        for path in (
+            "frontend/src/views/SecretCenter.vue",
+            "frontend/src/views/AdminSecretCenter.vue",
+            "frontend/src/components/secrets/SecretUsageStats.vue",
+        ):
+            view = _read(ROOT / path)
+            assert "const RESULT_LABEL" not in view, path
+            assert "secretLabels" in view, path
+
+    def test_both_pages_use_it(self):
+        for path in (
+            "frontend/src/views/SecretCenter.vue",
+            "frontend/src/views/AdminSecretCenter.vue",
+        ):
+            source = _read(ROOT / path)
+            assert "SecretUsageStats" in source, path
+
+    def test_admin_has_no_private_copy_left(self):
+        """管理端原来那份内联渲染要删干净，否则两套样式会各自演化。"""
+        source = _read(ROOT / "frontend/src/views/AdminSecretCenter.vue")
+        assert "statsMaxSecret" not in source
+        assert "barWidth" not in source
+
+    def test_personal_center_has_a_stats_tab(self):
+        source = _read(ROOT / "frontend/src/views/SecretCenter.vue")
+        assert "['usage', 'stats', 'audit']" in source
+        assert "'统计'" in source
+
+    def test_personal_stats_follow_the_selection(self):
+        """个人端没有「全部凭据」视角，统计跟着左栏选中项走。"""
+        source = _read(ROOT / "frontend/src/views/SecretCenter.vue")
+        assert ':secret-id="selectedId || null"' in source
+
+
+class TestBindingsGroupedByType:
+    """绑定要按「MCP / API 工具 / 脚本」分开显示。
+
+    平铺在一起时看不出这条凭据被哪几类地方用，只能逐个 hover。
+    """
+
+    ADMIN = "frontend/src/views/AdminSecretCenter.vue"
+
+    def test_groups_by_consumer_type(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "function groupBindings(" in source
+        assert "groupBindings(item.bindings)" in source
+
+    def test_group_order_is_stable(self):
+        """按创建顺序跳来跳去，每次看都要重新找。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "BINDING_TYPE_ORDER" in source
+        assert "'mcp_server', 'api_tool', 'script_tool'" in source
+
+    def test_each_type_has_its_own_colour(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "BINDING_TYPE_STYLE" in source
+        for cls in ("bg-violet-50", "bg-sky-50", "bg-amber-50"):
+            assert cls in source, cls
+
+    def test_script_tool_label_is_correct(self):
+        """真实类名是 `SysScriptTool`，消费者类型是 `script_tool`；
+        只写 `script` 会让脚本工具显示成原始英文。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "script_tool: '脚本工具'" in source
+
+    def test_hover_still_carries_the_raw_slot(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "槽位：${binding.slot}" in source
 
 
 class TestGrantAllUsers:

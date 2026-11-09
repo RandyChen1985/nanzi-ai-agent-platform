@@ -814,6 +814,104 @@ async def list_usage(
     return (await session.execute(stmt.limit(max(1, min(limit, 500))))).scalars().all()
 
 
+async def usage_stats(
+    session,
+    *,
+    user_id: str | None = None,
+    secret_id: str | None = None,
+    days: int = 7,
+) -> dict:
+    """用量的聚合视图。明细回答「刚才那次为什么失败」，统计回答「这周正常吗」。
+
+    只做 `COUNT(*) GROUP BY`，不逐条捞——流水表会越积越大，明细有上限、统计没有。
+    被拒绝的记录也算进去：`denied_by_*` 的次数本身就是「配了但用不了」的信号，
+    只看 success 会让最该发现的问题消失。
+    """
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import func, select
+
+    from app.models.secret import SecretUsageLog
+
+    window = max(1, min(int(days or 7), 90))
+    since = datetime.utcnow() - timedelta(days=window)
+
+    conditions = [SecretUsageLog.created_at >= since]
+    if user_id:
+        conditions.append(SecretUsageLog.user_id == user_id)
+    if secret_id:
+        conditions.append(SecretUsageLog.secret_id == secret_id)
+
+    by_result = (
+        await session.execute(
+            select(SecretUsageLog.result, func.count())
+            .where(*conditions)
+            .group_by(SecretUsageLog.result)
+        )
+    ).all()
+
+    by_secret = (
+        await session.execute(
+            select(SecretUsageLog.secret_key_snapshot, SecretUsageLog.result, func.count())
+            .where(*conditions)
+            .group_by(SecretUsageLog.secret_key_snapshot, SecretUsageLog.result)
+        )
+    ).all()
+
+    by_scene = (
+        await session.execute(
+            select(SecretUsageLog.scene, func.count())
+            .where(*conditions)
+            .group_by(SecretUsageLog.scene)
+        )
+    ).all()
+
+    by_day = (
+        await session.execute(
+            select(func.date(SecretUsageLog.created_at), SecretUsageLog.result, func.count())
+            .where(*conditions)
+            .group_by(func.date(SecretUsageLog.created_at), SecretUsageLog.result)
+        )
+    ).all()
+
+    # 把 result 聚到「凭据」这一维：同一凭据的成功与拒绝要放在一起看
+    secrets: dict[str, dict] = {}
+    for key, result, count in by_secret:
+        name = key or '（已删除）'
+        item = secrets.setdefault(name, {"secret_key": name, "total": 0, "failed": 0})
+        item["total"] += count
+        if result != "success":
+            item["failed"] += count
+
+    days_map: dict[str, dict] = {}
+    for day, result, count in by_day:
+        label = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        item = days_map.setdefault(label, {"date": label, "total": 0, "failed": 0})
+        item["total"] += count
+        if result != "success":
+            item["failed"] += count
+
+    total = sum(count for _, count in by_result)
+    failed = sum(count for result, count in by_result if result != "success")
+
+    return {
+        "days": window,
+        "total": total,
+        "success": total - failed,
+        "failed": failed,
+        "by_result": [
+            {"result": result, "count": count}
+            for result, count in sorted(by_result, key=lambda row: -row[1])
+        ],
+        "by_secret": sorted(secrets.values(), key=lambda item: -item["total"]),
+        "by_scene": [
+            {"scene": scene, "count": count}
+            for scene, count in sorted(by_scene, key=lambda row: -row[1])
+        ],
+        "by_day": sorted(days_map.values(), key=lambda item: item["date"]),
+    }
+
+
 async def read_variable_value(
     session,
     *,

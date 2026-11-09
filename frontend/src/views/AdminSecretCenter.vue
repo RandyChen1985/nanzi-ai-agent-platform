@@ -11,6 +11,8 @@
  * - 不能停用个人凭据（那是用户自己的资产）。
  */
 import { computed, onMounted, ref } from 'vue'
+import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
+import { resultLabel } from '../utils/secretLabels'
 import UserDeptPicker from '../components/common/UserDeptPicker.vue'
 import { useDismissible } from '../utils/dismissible'
 import axios from '../utils/axios'
@@ -28,7 +30,14 @@ interface SecretBindingRef {
   slot: string
   consumer_type: string
   consumer_id: string
+  /** 后端解析好的目标名；目标已删除时退回 id */
+  consumer_name?: string
   bound_by_user_id: string | null
+  /** 绑定者的显示名；全局绑定为空 */
+  bound_by_name?: string | null
+  is_global?: boolean
+  /** MCP 参数槽位里的工具短名 */
+  tool_name?: string | null
 }
 
 interface SystemSecret {
@@ -64,12 +73,72 @@ const SCENE_LABEL: Record<string, string> = {
 
 // 已废弃的场景：后端常量还留着（历史数据里有这个取值），但代码里早就不参与
 // 任何判定。继续显示会让人以为「勾了就生效」，展示层统一过滤掉。
+/**
+ * 槽位转成人话。
+ *
+ * `arg:echo:api_key` 对使用者没有意义，他要看的是「这个服务的哪个参数」；
+ * `header:X-Key` 同理——去掉前缀只留名字就够了。
+ */
+function slotLabel(binding: SecretBindingRef): string {
+  const slot = String(binding.slot || '')
+  if (slot.startsWith('arg:')) {
+    const parts = slot.split(':')
+    // arg:<短工具名>:<参数名>
+    return parts.length >= 3 ? `${parts[1]}.${parts.slice(2).join(':')}` : slot.slice(4)
+  }
+  const idx = slot.indexOf(':')
+  return idx === -1 ? slot : slot.slice(idx + 1)
+}
+
 /** 绑定槽位挂在谁身上——光看 slot 不知道是 MCP 服务还是脚本 */
 const BINDING_CONSUMER_LABEL: Record<string, string> = {
   mcp_server: 'MCP 服务',
   api_tool: 'API 工具',
+  script_tool: '脚本工具',
+  // 历史数据里出现过这两个取值
   script: '脚本',
   script_env: '脚本',
+}
+
+/** 分组顺序固定：MCP → API 工具 → 脚本 → 其它，不随绑定创建时间跳动。 */
+const BINDING_TYPE_ORDER = ['mcp_server', 'api_tool', 'script_tool', 'script', 'script_env']
+
+/** 每类一个配色，扫一眼就知道「这条凭据被哪些地方用」 */
+const BINDING_TYPE_STYLE: Record<string, string> = {
+  mcp_server: 'bg-violet-50 text-violet-700',
+  api_tool: 'bg-sky-50 text-sky-700',
+  script_tool: 'bg-amber-50 text-amber-700',
+  script: 'bg-amber-50 text-amber-700',
+  script_env: 'bg-amber-50 text-amber-700',
+}
+
+interface BindingGroup {
+  type: string
+  label: string
+  style: string
+  items: SecretBindingRef[]
+}
+
+/** 把绑定按消费者类型分组；混在一起看不出「被哪几类地方用」。 */
+function groupBindings(bindings: SecretBindingRef[]): BindingGroup[] {
+  const buckets = new Map<string, SecretBindingRef[]>()
+  for (const binding of bindings) {
+    const key = String(binding.consumer_type || 'other')
+    if (!buckets.has(key)) buckets.set(key, [])
+    buckets.get(key)!.push(binding)
+  }
+  const rank = (type: string) => {
+    const idx = BINDING_TYPE_ORDER.indexOf(type)
+    return idx === -1 ? BINDING_TYPE_ORDER.length : idx
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => rank(a[0]) - rank(b[0]))
+    .map(([type, items]) => ({
+      type,
+      label: BINDING_CONSUMER_LABEL[type] || type,
+      style: BINDING_TYPE_STYLE[type] || 'bg-gray-100 text-gray-600',
+      items,
+    }))
 }
 
 const DEPRECATED_SCENES = new Set(['scheduled_task'])
@@ -174,34 +243,43 @@ type UsageRow = {
 }
 const usageRows = ref<UsageRow[]>([])
 
-/** `result` 落库是 `success` 或 `denied_by_*`；把后者翻成人话。 */
-const RESULT_LABEL: Record<string, string> = {
-  success: '成功',
-  denied_by_binding: '未绑定',
-  denied_by_grant: '未授权',
-  denied_by_host: '域名不符',
-  denied_by_scenario: '场景不符',
-  denied_by_script_policy: '脚本注入已关',
-  denied_by_user_pref: '用户已关闭',
-  denied_by_platform_policy: '平台已关闭',
-  denied_disabled: '已停用',
-  denied_expired: '已过期',
-}
+/** `null` = 全部凭据；传 id 就是只看这一条 */
+const usageSecretId = ref<string | null>(null)
+const usageTab = ref<'detail' | 'stats'>('detail')
 
-const resultLabel = (result: string): string =>
-  RESULT_LABEL[result] || result.replace(/^denied_by_/, '') || result
-
-async function openUsage() {
-  usageOpen.value = true
+async function loadUsageDetail() {
   usageLoading.value = true
   try {
-    const res = await axios.get('/api/portal/secrets/usage', { params: { limit: 100 } })
+    const res = await axios.get('/api/portal/secrets/usage', {
+      params: {
+        limit: 100,
+        ...(usageSecretId.value ? { secret_id: usageSecretId.value } : {}),
+      },
+    })
     usageRows.value = res.data?.data || []
   } catch (e: any) {
     showToast(e?.response?.data?.detail || '加载使用记录失败', 'err')
   } finally {
     usageLoading.value = false
   }
+}
+
+function switchUsageTab(tab: 'detail' | 'stats') {
+  usageTab.value = tab
+  // 统计面板自己拉数据（`:secret-id` 变了会重新加载），这里只管明细
+  if (tab === 'detail') void loadUsageDetail()
+}
+
+function changeUsageSecret() {
+  if (usageTab.value === 'detail') void loadUsageDetail()
+}
+
+/** 不传 id 就是全局；卡片上的「使用记录」会传自己那条 */
+async function openUsage(secretId: string | null = null) {
+  usageOpen.value = true
+  usageSecretId.value = secretId
+  usageTab.value = 'detail'
+  await loadUsageDetail()
 }
 
 const ACTION_LABEL: Record<string, string> = {
@@ -460,7 +538,7 @@ onMounted(load)
         <button
           type="button"
           class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-          @click="openUsage"
+          @click="openUsage()"
         >
           使用记录
         </button>
@@ -522,6 +600,14 @@ onMounted(load)
             <button
               type="button"
               class="rounded-md px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
+              title="只看这条凭据的使用记录"
+              @click="openUsage(item.id)"
+            >
+              使用记录
+            </button>
+            <button
+              type="button"
+              class="rounded-md px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
               @click="openGrant(item)"
             >
               授权
@@ -561,6 +647,33 @@ onMounted(load)
           </span>
         </div>
 
+        <!-- 绑定目标：按消费者类型分组——
+             混在一起看不出「这条凭据被哪几类地方用」，uuid 和原始槽位也对使用者没意义 -->
+        <div v-if="item.bindings.length" class="mt-2 space-y-1">
+          <div
+            v-for="group in groupBindings(item.bindings)"
+            :key="group.type"
+            class="flex flex-wrap items-center gap-1"
+          >
+            <span
+              class="w-16 shrink-0 rounded px-1 py-0.5 text-[10px] font-medium"
+              :class="group.style"
+            >{{ group.label }}</span>
+            <span
+              v-for="binding in group.items"
+              :key="binding.id"
+              class="inline-flex items-center gap-1 rounded bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-700"
+              :title="`${group.label}：${binding.consumer_name || binding.consumer_id}\n槽位：${binding.slot}\n绑定者：${binding.is_global ? '全局' : (binding.bound_by_name || binding.bound_by_user_id)}`"
+            >
+              <span class="font-medium">{{ binding.consumer_name || binding.consumer_id }}</span>
+              <code class="font-mono text-gray-500">{{ slotLabel(binding) }}</code>
+              <span class="rounded bg-white px-1 text-[10px] text-gray-500">
+                {{ binding.is_global ? '全局' : (binding.bound_by_name || binding.bound_by_user_id) }}
+              </span>
+            </span>
+          </div>
+        </div>
+
         <!-- 绑定与使用：建完不等于在用，这两行就是「在跑还是摆着」 -->
         <div
           class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-gray-100 pt-2.5 text-[11px] text-gray-500"
@@ -577,16 +690,6 @@ onMounted(load)
           </span>
           <span v-if="item.failed_7d" class="text-amber-600">其中失败 {{ item.failed_7d }} 次</span>
           <span>最近一次 {{ shortTime(item.last_used_at) }}</span>
-        </div>
-        <div v-if="item.bindings.length" class="mt-1.5 flex flex-wrap gap-1">
-          <span
-            v-for="binding in item.bindings"
-            :key="binding.id"
-            class="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700"
-          >
-            {{ BINDING_CONSUMER_LABEL[binding.consumer_type] || binding.consumer_type }} ·
-            <code class="font-mono">{{ binding.slot }}</code>
-          </span>
         </div>
       </div>
     </div>
@@ -1018,8 +1121,41 @@ onMounted(load)
             >✕</button>
           </div>
 
+          <div class="flex flex-wrap items-center gap-2 border-b border-gray-100 px-5 py-2">
+            <div class="flex rounded-lg bg-gray-100 p-0.5">
+              <button
+                type="button"
+                class="rounded-md px-3 py-1 text-xs font-medium transition-colors"
+                :class="usageTab === 'detail' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                @click="switchUsageTab('detail')"
+              >明细</button>
+              <button
+                type="button"
+                class="rounded-md px-3 py-1 text-xs font-medium transition-colors"
+                :class="usageTab === 'stats' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                @click="switchUsageTab('stats')"
+              >统计</button>
+            </div>
+            <select
+              v-model="usageSecretId"
+              class="rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary"
+              @change="changeUsageSecret"
+            >
+              <option :value="null">全部凭据</option>
+              <option v-for="item in items" :key="item.id" :value="item.id">{{ item.name }}</option>
+            </select>
+            <span v-if="usageTab === 'stats'" class="text-[11px] text-gray-400">近 7 天</span>
+          </div>
+
           <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
             <p v-if="usageLoading" class="py-8 text-center text-xs text-gray-400">加载中…</p>
+
+            <!-- 统计：与管理端/个人端共用同一个组件，避免两边口径分叉 -->
+            <SecretUsageStats
+              v-else-if="usageTab === 'stats'"
+              :secret-id="usageSecretId"
+            />
+
             <p v-else-if="!usageRows.length" class="py-8 text-center text-xs text-gray-400">
               还没有使用记录
             </p>

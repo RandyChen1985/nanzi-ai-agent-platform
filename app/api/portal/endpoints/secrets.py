@@ -279,6 +279,28 @@ async def list_usage(
     }
 
 
+@router.get("/usage/stats", summary="使用记录统计（按凭据 / 场景 / 结果 / 天）")
+async def get_usage_stats(
+    secret_id: Optional[str] = Query(default=None),
+    days: int = Query(default=7, ge=1, le=90),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """明细回答「刚才那次为什么失败」，统计回答「这周正常吗」。
+
+    管理员看全局，普通用户只看自己——与 ``/usage`` 同口径。
+    """
+    user_id, _ = _user_ctx(user_info)
+    is_admin = str(user_info.get("role") or "") == "admin"
+    data = await center.usage_stats(
+        db,
+        user_id=None if is_admin else user_id,
+        secret_id=secret_id,
+        days=days,
+    )
+    return {"code": 0, "data": data}
+
+
 @router.get("/audit", summary="凭据变更记录（谁在什么时候改了什么）")
 async def list_audit(
     secret_id: Optional[str] = Query(default=None),
@@ -935,6 +957,50 @@ async def admin_list(
     for binding in bindings:
         by_binding.setdefault(binding.secret_id, []).append(binding)
 
+    # consumer_id 是 uuid，直接摊在界面上等于没说「绑到哪了」。
+    # 三类消费者各查一次名字，绑定者同样解析成用户名——这里只有管理员能看，
+    # 展示真实身份不构成越权。
+    names: Dict[tuple[str, str], str] = {}
+    user_names: Dict[str, str] = {}
+    if bindings:
+        ids_by_type: Dict[str, set[str]] = {}
+        for b in bindings:
+            ids_by_type.setdefault(b.consumer_type, set()).add(str(b.consumer_id))
+        owners = {str(b.bound_by_user_id) for b in bindings if b.bound_by_user_id}
+
+        from app.models.mcp import McpServer
+        from app.models.script_tool import SysScriptTool
+        from app.models.tool import SysApiTool
+        from app.models.user import User
+
+        lookups = (
+            ("mcp_server", McpServer, "server_name"),
+            ("api_tool", SysApiTool, "name"),
+            ("script_tool", SysScriptTool, "name"),
+        )
+        for consumer_type, model, name_column in lookups:
+            wanted = ids_by_type.get(consumer_type) or set()
+            if not wanted:
+                continue
+            rows_named = (
+                await db.execute(
+                    select(model.id, getattr(model, name_column)).where(model.id.in_(wanted))
+                )
+            ).all()
+            for row_id, row_name in rows_named:
+                names[(consumer_type, str(row_id))] = str(row_name or "")
+
+        if owners:
+            user_rows = (
+                await db.execute(
+                    select(User.id, User.user_name, User.real_name).where(
+                        User.id.in_(owners)
+                    )
+                )
+            ).all()
+            for user_id, user_name, real_name in user_rows:
+                user_names[str(user_id)] = real_name or user_name or str(user_id)
+
     return {
         "code": 0,
         "data": [
@@ -947,7 +1013,27 @@ async def admin_list(
                         "slot": b.slot,
                         "consumer_type": b.consumer_type,
                         "consumer_id": b.consumer_id,
+                        # 查不到名字时退回 id，至少还能定位（目标可能已被删除）
+                        "consumer_name": names.get(
+                            (b.consumer_type, str(b.consumer_id))
+                        )
+                        or str(b.consumer_id),
                         "bound_by_user_id": b.bound_by_user_id,
+                        "bound_by_name": (
+                            user_names.get(str(b.bound_by_user_id))
+                            if b.bound_by_user_id
+                            else None
+                        ),
+                        "is_global": not b.bound_by_user_id,
+                        # MCP 的参数槽位是 `arg:<短工具名>:<参数名>`，
+                        # 服务名之外再带上工具名才够定位
+                        "tool_name": (
+                            b.slot.split(":")[1]
+                            if b.consumer_type == "mcp_server"
+                            and str(b.slot).startswith("arg:")
+                            and len(str(b.slot).split(":")) > 2
+                            else None
+                        ),
                     }
                     for b in by_binding.get(row.id, [])
                 ],

@@ -14,6 +14,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import axios from '../utils/axios'
 import { useDismissible } from '../utils/dismissible'
 import { shortTime } from '../utils/date'
+import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
+import { RESULT_LABEL } from '../utils/secretLabels'
 
 interface SecretItem {
   id: string
@@ -65,16 +67,6 @@ const SCENES = [
 // 判断了。继续显示会让人以为「勾了就生效」——所以展示层统一过滤掉。
 const DEPRECATED_SCENES = new Set(['scheduled_task'])
 
-const RESULT_LABEL: Record<string, string> = {
-  success: '成功',
-  denied_by_binding: '未绑定',
-  denied_by_grant: '未授权',
-  denied_by_host: '域名不符',
-  denied_by_scenario: '场景未启用',
-  denied_by_script_policy: '脚本注入被关',
-  expired: '已过期',
-  disabled: '已停用',
-}
 
 // 两条提示都是一次性说明：看完可以关掉，关掉后记住
 const { visible: showSecurityHint, dismiss: dismissSecurityHint } = useDismissible('secret-center:security')
@@ -388,7 +380,7 @@ const usageRows = ref<UsageRow[]>([])
 
 // 「谁用了」和「谁改了」是两个问题，放两个 tab。合成一张表的话，查轮换记录
 // 得在几万条调用里翻。
-type RecordTab = 'usage' | 'audit'
+type RecordTab = 'usage' | 'stats' | 'audit'
 const recordTab = ref<RecordTab>('usage')
 type AuditRow = {
   id: string
@@ -414,6 +406,8 @@ const ACTION_LABEL: Record<string, string> = {
 }
 
 async function loadRecords(tab: RecordTab) {
+  // 统计面板自己拉数据（`:secret-id` 变了会重新加载），这里不代劳
+  if (tab === 'stats') return
   usageLoading.value = true
   try {
     const url = tab === 'usage' ? '/api/portal/secrets/usage' : '/api/portal/secrets/audit'
@@ -1113,11 +1107,15 @@ onMounted(load)
         <div class="flex max-h-[calc(100vh-120px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
           <div class="flex items-start justify-between border-b border-gray-100 px-5 py-3">
             <div>
-              <h3 class="text-base font-semibold text-gray-900">{{ recordTab === 'usage' ? '使用记录' : '变更记录' }}</h3>
+              <h3 class="text-base font-semibold text-gray-900">
+                {{ recordTab === 'usage' ? '使用记录' : recordTab === 'stats' ? '使用统计' : '变更记录' }}
+              </h3>
               <p class="mt-0.5 text-xs text-gray-500">
                 {{ recordTab === 'usage'
                   ? '谁在什么时候、用在哪条链路上。只记结果不记值——值从不落日志。'
-                  : '谁在什么时候对哪条凭据做了什么。凭据删除后记录仍保留。' }}
+                  : recordTab === 'stats'
+                    ? '近 7 天的调用量、成功与被拒绝的次数。被拒绝的也算进来——「配了但用不了」更值得看。'
+                    : '谁在什么时候对哪条凭据做了什么。凭据删除后记录仍保留。' }}
               </p>
             </div>
             <button
@@ -1129,7 +1127,7 @@ onMounted(load)
 
           <div class="flex items-center gap-1 border-b border-gray-100 px-5">
             <button
-              v-for="tab in (['usage', 'audit'] as const)"
+              v-for="tab in (['usage', 'stats', 'audit'] as const)"
               :key="tab"
               type="button"
               class="-mb-px border-b-2 px-2 py-2 text-xs font-medium transition"
@@ -1137,11 +1135,19 @@ onMounted(load)
                 ? 'border-emerald-500 text-emerald-700'
                 : 'border-transparent text-gray-500 hover:text-gray-700'"
               @click="switchRecordTab(tab)"
-            >{{ tab === 'usage' ? '使用记录' : '变更记录' }}</button>
+            >{{ tab === 'usage' ? '使用记录' : tab === 'stats' ? '统计' : '变更记录' }}</button>
           </div>
 
           <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-            <p v-if="usageLoading" class="py-8 text-center text-xs text-gray-400">加载中…</p>
+            <!-- 统计面板自己管加载态，不受明细的 usageLoading 影响 -->
+            <!-- 个人端没有「全部凭据」这个视角：统计跟着左栏选中的那条走，
+                 没选中时就是我这全部凭据的合计 -->
+            <SecretUsageStats
+              v-if="recordTab === 'stats'"
+              :secret-id="selectedId || null"
+            />
+
+            <p v-else-if="usageLoading" class="py-8 text-center text-xs text-gray-400">加载中…</p>
 
             <template v-else-if="recordTab === 'audit'">
               <p v-if="!auditRows.length" class="py-8 text-center text-xs text-gray-400">
