@@ -136,6 +136,12 @@
             <span class="ml-auto text-[11px]" :class="mutedClass">菜单与功能</span>
             <Chevron />
           </button>
+          <button type="button" role="menuitem" class="account-menu-item" :class="itemClass" @click="go('/dashboard/personal?tab=secrets')">
+            <svg class="h-[17px] w-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" :class="iconClass"><rect x="4" y="10.5" width="16" height="9.5" rx="2.2" /><path d="M8 10.5V7.2a4 4 0 018 0v3.3" /><path d="M12 14.4v2.2" /></svg>
+            我的凭据
+            <span class="ml-auto text-[11px]" :class="mutedClass">密钥与令牌</span>
+            <Chevron />
+          </button>
           <button type="button" role="menuitem" class="account-menu-item" :class="itemClass" @click="go('/dashboard/personal?tab=tokens')">
             <svg class="h-[17px] w-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" :class="iconClass"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2" /></svg>
             Token 用量
