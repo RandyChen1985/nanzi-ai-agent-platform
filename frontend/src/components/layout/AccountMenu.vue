@@ -214,7 +214,17 @@
               class="mt-0.5 inline-block font-medium underline underline-offset-2"
               :class="lightTheme ? 'text-primary' : 'text-blue-300'"
             >代码仓库</a>
-            <p class="mt-0.5 opacity-80">更新日志：后续版本提供。</p>
+            <p v-if="repoUrl" class="mt-0.5">
+              <a
+                v-if="changelogUrl"
+                :href="changelogUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="font-medium underline underline-offset-2"
+                :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+              >更新日志：{{ versionLabel }} ↗</a>
+              <span v-else class="opacity-80">更新日志：后续版本提供。</span>
+            </p>
           </div>
         </div>
 
@@ -288,6 +298,28 @@ const initial = computed(() => Array.from(displayName.value).slice(-1).join(""))
 const roleLabel = computed(() =>
   String(props.role || "").toLowerCase() === "admin" ? "管理员" : "普通用户",
 )
+
+/**
+ * 「更新日志」指向 GitHub Releases tag。
+ *
+ * 版本号是四段（1.0.22.0），最后一段是构建号，而 Release tag 只到三段（1.0.22）——
+ * 取错段会拼出 /releases/tag/1.0 这种必然 404 的地址。开发版本与残缺版本号不外链。
+ * 用 repoUrl 拼接而不是硬编码 GitHub 前缀：白标部署换了仓库地址也能跟着走。
+ */
+const changelogTag = computed(() => {
+  const raw = String(props.version || "").trim().replace(/^v/i, "")
+  if (!raw || /^dev/i.test(raw)) return ""
+  const parts = raw.split(".")
+  if (parts.length < 2) return ""
+  const core = parts.length > 3 ? parts.slice(0, 3) : parts
+  if (!core.every((part) => /^\d+$/.test(part))) return ""
+  return core.join(".")
+})
+const versionLabel = computed(() => (changelogTag.value ? `v${changelogTag.value}` : ""))
+const changelogUrl = computed(() => {
+  if (!changelogTag.value || !props.repoUrl) return ""
+  return `${props.repoUrl.replace(/\/+$/, "")}/releases/tag/${changelogTag.value}`
+})
 
 /** 当前账号能用的模式；字段缺失时按「两种都能用」兜底（旧登录快照） */
 const usableModes = computed<Array<"user" | "pro">>(() =>

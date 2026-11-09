@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>关于面板更新日志入口 · 四种方案与链接规则</title>
+<style>
+  :root {
+    --bg: #0b0f19;
+    --bg-soft: #111827;
+    --panel: #1b2333;
+    --panel-2: rgba(255, 255, 255, 0.04);
+    --fg: #e2e8f0;
+    --fg-strong: #f8fafc;
+    --muted: #8b9bb4;
+    --muted-2: #64748b;
+    --link: #93c5fd;
+    --border: rgba(255, 255, 255, 0.09);
+    --hover: rgba(255, 255, 255, 0.07);
+    --accent: #1677ff;
+    --accent-soft: rgba(22, 119, 255, 0.14);
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  }
+  [data-theme="light"] {
+    --bg: #eef2f7;
+    --bg-soft: #f8fafc;
+    --panel: #ffffff;
+    --panel-2: #f8fafc;
+    --fg: #1e293b;
+    --fg-strong: #0f172a;
+    --muted: #64748b;
+    --muted-2: #94a3b8;
+    --link: #1677ff;
+    --border: rgba(15, 23, 42, 0.1);
+    --hover: rgba(15, 23, 42, 0.05);
+    --accent: #1677ff;
+    --accent-soft: rgba(22, 119, 255, 0.08);
+    --ok: #16a34a;
+    --warn: #b45309;
+    --shadow: 0 14px 32px rgba(15, 23, 42, 0.12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 40px 24px 72px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    transition: background .2s ease, color .2s ease;
+  }
+  .page { max-width: 1180px; margin: 0 auto; }
+
+  /* ---------- 头部 ---------- */
+  .hero {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 24px; margin-bottom: 34px; flex-wrap: wrap;
+  }
+  .hero h1 { margin: 0 0 6px; font-size: 23px; letter-spacing: -.3px; color: var(--fg-strong); }
+  .hero .sub { margin: 0; color: var(--muted); font-size: 13.5px; max-width: 760px; }
+  .hero .sub code { white-space: nowrap; }
+  .theme-btn {
+    flex: none; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg-soft); color: var(--fg);
+    border-radius: 8px; padding: 7px 13px; font-size: 12.5px;
+    display: inline-flex; align-items: center; gap: 7px;
+    transition: background .15s, border-color .15s;
+  }
+  .theme-btn:hover { background: var(--hover); border-color: var(--muted-2); }
+
+  /* ---------- 章节 ---------- */
+  section { margin-bottom: 42px; }
+  .sec-title {
+    display: flex; align-items: baseline; gap: 10px;
+    margin: 0 0 16px; font-size: 15px; color: var(--fg-strong); letter-spacing: -.1px;
+  }
+  .sec-title .num {
+    font-size: 11px; font-weight: 700; letter-spacing: .08em;
+    color: var(--accent); background: var(--accent-soft);
+    padding: 2px 7px; border-radius: 5px;
+  }
+  .sec-title .hint { font-size: 12px; color: var(--muted); font-weight: 400; }
+
+  /* ---------- 规则演示 ---------- */
+  .rule-card {
+    border: 1px solid var(--border); background: var(--panel);
+    border-radius: 14px; padding: 20px 22px; box-shadow: var(--shadow);
+  }
+  .formula { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; font-size: 13px; }
+  .chip {
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 12px; padding: 4px 9px; border-radius: 6px;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--fg);
+  }
+  .chip.link { color: var(--link); border-color: color-mix(in srgb, var(--link) 35%, transparent); }
+  .formula .op { color: var(--muted-2); font-size: 13px; }
+  .formula .tag { color: var(--accent); font-size: 12px; font-weight: 600; }
+
+  .play-row { display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+  .play-row label { font-size: 12px; color: var(--muted); }
+  #verInput {
+    width: 168px; padding: 7px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--bg-soft); color: var(--fg);
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px;
+    outline: none;
+  }
+  #verInput:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .presets button {
+    cursor: pointer; font-size: 11.5px; padding: 4px 9px; border-radius: 6px;
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    transition: all .15s;
+  }
+  .presets button:hover { color: var(--fg); border-color: var(--muted-2); background: var(--hover); }
+
+  .url-out {
+    margin-top: 14px; padding: 11px 14px; border-radius: 9px;
+    background: var(--bg-soft); border: 1px dashed var(--border);
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 12.5px; word-break: break-all; color: var(--link);
+    min-height: 42px; line-height: 1.6;
+  }
+  .url-out .tag-badge { vertical-align: 1px; margin-right: 6px; }
+  .url-out.empty { color: var(--warn); }
+  .url-out .tag-badge {
+    flex: none; font-size: 10.5px; padding: 2px 6px; border-radius: 4px;
+    background: var(--accent-soft); color: var(--accent); font-family: inherit;
+  }
+
+  /* ---------- 方案网格 ---------- */
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  .plan {
+    border: 1px solid var(--border); border-radius: 14px; background: var(--panel);
+    padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 14px;
+    box-shadow: var(--shadow);
+  }
+  .plan-head { display: flex; align-items: center; gap: 9px; }
+  .badge {
+    flex: none; width: 21px; height: 21px; border-radius: 6px;
+    display: grid; place-items: center; font-size: 11.5px; font-weight: 700;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .plan-head h3 { margin: 0; font-size: 14px; color: var(--fg-strong); font-weight: 600; }
+  .plan-head .mark {
+    margin-left: auto; font-size: 10.5px; padding: 2px 7px; border-radius: 20px;
+    border: 1px solid var(--border); color: var(--muted);
+  }
+  .plan-head .mark.rec { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+
+  /* 面板模拟 */
+  .panel-wrap {
+    display: flex; justify-content: center; padding: 16px 0 6px;
+    border-radius: 11px;
+    background:
+      repeating-linear-gradient(45deg, transparent 0 10px, rgba(127,127,127,.035) 10px 20px),
+      var(--bg-soft);
+  }
+  .panel {
+    width: 272px; border-radius: 12px; background: var(--panel);
+    border: 1px solid var(--border); box-shadow: var(--shadow);
+    overflow: hidden; font-size: 12.5px;
+  }
+  .panel-row {
+    display: flex; align-items: center; gap: 9px;
+    padding: 9px 11px; color: var(--fg);
+  }
+  .panel-row .ico { width: 16px; height: 16px; flex: none; opacity: .85; }
+  .panel-row .ver {
+    margin-left: auto; font-size: 11px; color: var(--muted);
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  .panel-body {
+    margin: 0 8px 8px; padding: 9px 10px; border-radius: 8px;
+    background: var(--panel-2); color: var(--muted);
+    font-size: 11px; line-height: 1.65;
+  }
+  .panel-body p { margin: 0; }
+  .panel-body p + p { margin-top: 2px; }
+  .panel-body .verline { color: var(--muted); }
+  .panel-body .verline b {
+    color: var(--fg); font-weight: 500;
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px;
+  }
+  .panel-body a {
+    color: var(--link); text-decoration: underline; text-underline-offset: 2px;
+    font-weight: 500;
+  }
+  .panel-body a:hover { opacity: .8; }
+
+  /* 方案 A */
+  .a-inline { color: var(--muted); }
+  .a-inline a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; font-weight: 500; }
+  .a-inline .arrow { font-size: 10px; }
+
+  /* 方案 B */
+  .b-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .b-row .sep { color: var(--muted-2); opacity: .6; }
+
+  /* 方案 C */
+  .c-list { display: flex; flex-direction: column; gap: 1px; }
+  .c-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 7px; border-radius: 6px; color: var(--fg);
+    text-decoration: none; transition: background .14s;
+  }
+  .c-item:hover { background: var(--hover); }
+  .c-item .ico { width: 14px; height: 14px; flex: none; opacity: .8; }
+  .c-item .label { font-size: 11.5px; }
+  .c-item .tail {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10px; color: var(--muted-2);
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  .c-item:hover .tail { color: var(--link); }
+
+  /* 方案 D */
+  .d-btn {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 8px 9px; border-radius: 7px;
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+    color: var(--link); text-decoration: none; font-size: 11.5px; font-weight: 500;
+    transition: background .15s, border-color .15s, transform .15s;
+  }
+  .d-btn:hover {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  }
+  .d-btn .ico { width: 14px; height: 14px; flex: none; }
+  .d-btn .tag {
+    margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: .02em;
+    padding: 1px 6px; border-radius: 4px;
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+  .d-btn .ext { width: 11px; height: 11px; flex: none; opacity: .75; }
+
+  /* 说明区 */
+  .plan-note { font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .plan-note .line { display: flex; gap: 7px; }
+  .plan-note .line + .line { margin-top: 3px; }
+  .plan-note .k { flex: none; }
+  .plan-note code {
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 11px; padding: 1px 5px; border-radius: 4px;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--fg);
+  }
+
+  details {
+    border-top: 1px dashed var(--border); padding-top: 10px; margin-top: auto;
+  }
+  summary {
+    cursor: pointer; font-size: 11.5px; color: var(--muted); list-style: none;
+    display: flex; align-items: center; gap: 6px; user-select: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before {
+    content: "›"; display: inline-block; transition: transform .15s; font-size: 14px; line-height: 1;
+  }
+  details[open] summary::before { transform: rotate(90deg); }
+  summary:hover { color: var(--fg); }
+  pre {
+    margin: 10px 0 0; padding: 11px 12px; border-radius: 8px;
+    background: var(--bg-soft); border: 1px solid var(--border);
+    overflow-x: auto; font-size: 11px; line-height: 1.65;
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    color: var(--fg);
+  }
+  pre .cm { color: var(--muted-2); }
+  pre .kw { color: #c084fc; }
+  pre .str { color: #86efac; }
+  [data-theme="light"] pre .kw { color: #9333ea; }
+  [data-theme="light"] pre .str { color: #15803d; }
+
+  /* ---------- 边界表 ---------- */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 11.5px; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
+  td code {
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 11.5px; padding: 1px 6px; border-radius: 4px;
+    background: var(--panel-2); border: 1px solid var(--border);
+  }
+  td .yes { color: var(--ok); }
+  td .no { color: var(--warn); }
+  .table-card {
+    border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+    background: var(--panel); box-shadow: var(--shadow);
+  }
+  .table-card tr:last-child td { border-bottom: none; }
+
+  footer {
+    margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--muted-2); display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="hero">
+    <div>
+      <h1>关于面板 · 更新日志入口</h1>
+      <p class="sub">
+        把「更新日志：后续版本提供。」换成真实链接。规则：版本号去掉 <code style="font-size:11px">v</code> 前缀，四段的 <code style="font-size:11px">1.0.22.0</code> 去掉最后一段构建号得到 <code style="font-size:11px">1.0.22</code>，再拼到 Releases tag 地址上。
+        下面四种入口形态，都是这块面板内可直接落地的写法。
+      </p>
+    </div>
+    <button class="theme-btn" id="themeToggle" type="button">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      切换主题
+    </button>
+  </header>
+
+  <!-- 01 规则 -->
+  <section>
+    <h2 class="sec-title"><span class="num">01</span>链接规则<span class="hint">四段去掉构建号，三段原样</span></h2>
+    <div class="rule-card">
+      <div class="formula">
+        <span class="chip">v1.0.22.0</span>
+        <span class="op">— 去掉 v 与最后一段构建号 →</span>
+        <span class="chip">1.0.22</span>
+        <span class="op">+</span>
+        <span class="chip">…/releases/tag/</span>
+        <span class="op">=</span>
+        <span class="chip link">…/releases/tag/1.0.22</span>
+      </div>
+
+      <div class="play-row">
+        <label for="verInput">试一个版本号</label>
+        <input id="verInput" value="v1.0.22.0" spellcheck="false" autocomplete="off">
+        <div class="presets">
+          <button type="button" data-ver="v1.0.22.0">v1.0.22.0</button>
+          <button type="button" data-ver="1.0.22">1.0.22</button>
+          <button type="button" data-ver="v1.0.21.0">v1.0.21.0</button>
+          <button type="button" data-ver="dev">dev</button>
+        </div>
+      </div>
+
+      <div class="url-out" id="urlOut"><span class="tag-badge">tag</span><span id="urlText">https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.22</span></div>
+    </div>
+  </section>
+
+  <!-- 02 方案 -->
+  <section>
+    <h2 class="sec-title"><span class="num">02</span>四种入口形态<span class="hint">面板内可直接落地，hover 可交互</span></h2>
+    <div class="grid">
+
+      <!-- A -->
+      <article class="plan">
+        <div class="plan-head">
+          <span class="badge">A</span>
+          <h3>行内文字链</h3>
+          <span class="mark rec">改动最小</span>
+        </div>
+        <div class="panel-wrap">
+          <div class="panel">
+            <div class="panel-row">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.8" r="0.7" fill="currentColor" stroke="none"/></svg>
+              关于
+              <span class="ver">v1.0.22.0</span>
+              <svg class="ico" style="width:12px;height:12px;opacity:.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <div class="panel-body">
+              <p class="verline">当前版本 <b>v1.0.22.0</b></p>
+              <p><a href="#">代码仓库</a></p>
+              <p class="a-inline">更新日志：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.22" target="_blank" rel="noopener noreferrer">v1.0.22 <span class="arrow">↗</span></a></p>
+            </div>
+          </div>
+        </div>
+        <div class="plan-note">
+          <div class="line"><span class="k">✅</span><span>只换最后一行，与上面「代码仓库」的链接样式自然成对，视觉不变。</span></div>
+          <div class="line"><span class="k">⚠️</span><span>链接文字里带版本号会略长，英文界面下要确认不换行。</span></div>
+        </div>
+        <details>
+          <summary>看 Vue 写法</summary>
+<pre><span class="cm">&lt;!-- AccountMenu.vue：替换现有最后一行的 &lt;p&gt; --&gt;</span>
+&lt;p <span class="kw">class</span>=<span class="str">"mt-0.5"</span>&gt;
+  更新日志：
+  &lt;a <span class="kw">v-if</span>=<span class="str">"changelogUrl"</span>
+     :href=<span class="str">"changelogUrl"</span> target=<span class="str">"_blank"</span> rel=<span class="str">"noopener noreferrer"</span>
+     <span class="kw">class</span>=<span class="str">"font-medium underline underline-offset-2"</span>
+     :class=<span class="str">"lightTheme ? 'text-primary' : 'text-blue-300'"</span>
+  &gt;{{ changelogTag }} ↗&lt;/a&gt;
+  &lt;span <span class="kw">v-else</span> <span class="kw">class</span>=<span class="str">"opacity-80"</span>&gt;后续版本提供。&lt;/span&gt;
+&lt;/p&gt;
+
+<span class="cm">// 两个 computed，四种形态共用</span>
+<span class="kw">const</span> changelogTag = computed(() =&gt; {
+  <span class="kw">const</span> raw = props.version.replace(<span class="str">/^v/i</span>, <span class="str">''</span>).trim()
+  <span class="kw">if</span> (!raw || <span class="str">/^dev/i</span>.test(raw)) <span class="kw">return</span> <span class="str">''</span>
+  <span class="kw">const</span> parts = raw.split(<span class="str">'.'</span>)
+  <span class="kw">if</span> (parts.length &lt; 2) <span class="kw">return</span> <span class="str">''</span>
+  <span class="cm">// 1.0.22.0 的第 4 段是构建号，tag 只到三段</span>
+  <span class="kw">return</span> (parts.length &gt; 3 ? parts.slice(0, 3) : parts).join(<span class="str">'.'</span>)
+})
+<span class="kw">const</span> changelogUrl = computed(() =&gt;
+  changelogTag.value &amp;&amp; props.repoUrl
+    ? <span class="str">`${props.repoUrl.replace(/\/$/, '')}/releases/tag/${changelogTag.value}`</span>
+    : <span class="str">''</span>
+)</pre>
+        </details>
+      </article>
+
+      <!-- B -->
+      <article class="plan">
+        <div class="plan-head">
+          <span class="badge">B</span>
+          <h3>一行两个入口</h3>
+          <span class="mark">省一行高度</span>
+        </div>
+        <div class="panel-wrap">
+          <div class="panel">
+            <div class="panel-row">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.8" r="0.7" fill="currentColor" stroke="none"/></svg>
+              关于
+              <span class="ver">v1.0.22.0</span>
+              <svg class="ico" style="width:12px;height:12px;opacity:.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <div class="panel-body">
+              <p class="verline">当前版本 <b>v1.0.22.0</b></p>
+              <p class="b-row">
+                <a href="#">代码仓库</a>
+                <span class="sep">·</span>
+                <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.22" target="_blank" rel="noopener noreferrer">更新日志 ↗</a>
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="plan-note">
+          <div class="line"><span class="k">✅</span><span>面板最紧凑，两个外链并排，适合「面板已经很长」的场景。</span></div>
+          <div class="line"><span class="k">⚠️</span><span>链接里不显示版本号，用户点之前不知道对应哪个版本。</span></div>
+        </div>
+        <details>
+          <summary>看 Vue 写法</summary>
+<pre>&lt;p <span class="kw">class</span>=<span class="str">"mt-0.5 flex items-center gap-2"</span>&gt;
+  &lt;a <span class="kw">v-if</span>=<span class="str">"repoUrl"</span> :href=<span class="str">"repoUrl"</span> target=<span class="str">"_blank"</span>
+     rel=<span class="str">"noopener noreferrer"</span> <span class="kw">class</span>=<span class="str">"font-medium underline underline-offset-2"</span>&gt;代码仓库&lt;/a&gt;
+  &lt;span <span class="kw">v-if</span>=<span class="str">"repoUrl &amp;&amp; changelogUrl"</span> <span class="kw">class</span>=<span class="str">"opacity-40"</span>&gt;·&lt;/span&gt;
+  &lt;a <span class="kw">v-if</span>=<span class="str">"changelogUrl"</span> :href=<span class="str">"changelogUrl"</span> target=<span class="str">"_blank"</span>
+     rel=<span class="str">"noopener noreferrer"</span> <span class="kw">class</span>=<span class="str">"font-medium underline underline-offset-2"</span>&gt;更新日志 ↗&lt;/a&gt;
+&lt;/p&gt;</pre>
+        </details>
+      </article>
+
+      <!-- C -->
+      <article class="plan">
+        <div class="plan-head">
+          <span class="badge">C</span>
+          <h3>图标列表行</h3>
+          <span class="mark">最像菜单项</span>
+        </div>
+        <div class="panel-wrap">
+          <div class="panel">
+            <div class="panel-row">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.8" r="0.7" fill="currentColor" stroke="none"/></svg>
+              关于
+              <span class="ver">v1.0.22.0</span>
+              <svg class="ico" style="width:12px;height:12px;opacity:.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <div class="panel-body">
+              <p class="verline" style="margin-bottom:5px">当前版本 <b>v1.0.22.0</b></p>
+              <div class="c-list">
+                <a class="c-item" href="#">
+                  <svg class="ico" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.58 2 12.26c0 4.5 2.87 8.31 6.84 9.66.5.1.68-.22.68-.49l-.01-1.72c-2.78.62-3.37-1.37-3.37-1.37-.46-1.18-1.11-1.5-1.11-1.5-.91-.63.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.9 1.57 2.34 1.12 2.91.86.09-.67.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.4 9.4 0 015 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.8-4.57 5.06.36.32.68.94.68 1.9l-.01 2.82c0 .27.18.6.69.49A10.02 10.02 0 0022 12.26C22 6.58 17.52 2 12 2z"/></svg>
+                  <span class="label">代码仓库</span>
+                  <span class="tail">GitHub ↗</span>
+                </a>
+                <a class="c-item" href="https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.22" target="_blank" rel="noopener noreferrer">
+                  <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg>
+                  <span class="label">更新日志</span>
+                  <span class="tail">1.0.22 ↗</span>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="plan-note">
+          <div class="line"><span class="k">✅</span><span>两行对齐成列表，右侧带版本号与箭头，和菜单项风格一致，点击区域大。</span></div>
+          <div class="line"><span class="k">⚠️</span><span>要多两枚图标；面板体高度增加约 20px。</span></div>
+        </div>
+        <details>
+          <summary>看 Vue 写法</summary>
+<pre>&lt;a :href=<span class="str">"changelogUrl"</span> target=<span class="str">"_blank"</span> rel=<span class="str">"noopener noreferrer"</span>
+   <span class="kw">class</span>=<span class="str">"flex items-center gap-2 rounded-md px-1.5 py-1"</span>
+   :class=<span class="str">"lightTheme ? 'hover:bg-gray-100' : 'hover:bg-white/5'"</span>&gt;
+  &lt;svg <span class="kw">class</span>=<span class="str">"h-3.5 w-3.5"</span> ...&gt;&lt;!-- 文档图标 --&gt;&lt;/svg&gt;
+  &lt;span&gt;更新日志&lt;/span&gt;
+  &lt;span <span class="kw">class</span>=<span class="str">"ml-auto text-[10px] opacity-60"</span>&gt;{{ changelogTag }} ↗&lt;/span&gt;
+&lt;/a&gt;</pre>
+        </details>
+      </article>
+
+      <!-- D -->
+      <article class="plan">
+        <div class="plan-head">
+          <span class="badge">D</span>
+          <h3>底部强调按钮</h3>
+          <span class="mark">最显眼</span>
+        </div>
+        <div class="panel-wrap">
+          <div class="panel">
+            <div class="panel-row">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.8" r="0.7" fill="currentColor" stroke="none"/></svg>
+              关于
+              <span class="ver">v1.0.22.0</span>
+              <svg class="ico" style="width:12px;height:12px;opacity:.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <div class="panel-body">
+              <p class="verline" style="margin-bottom:5px">当前版本 <b>v1.0.22.0</b></p>
+              <p><a href="#" style="text-decoration:none">代码仓库 ↗</a></p>
+              <a class="d-btn" href="https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.22" target="_blank" rel="noopener noreferrer" style="margin-top:6px">
+                <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v8M8 12h8"/><circle cx="12" cy="12" r="9"/></svg>
+                <span>查看本版更新日志</span>
+                <span class="tag">1.0.22</span>
+                <svg class="ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M17 7H9M17 7v8"/></svg>
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="plan-note">
+          <div class="line"><span class="k">✅</span><span>带底色的一整行按钮，用户一眼看到「这里有新东西」，点击率最高。</span></div>
+          <div class="line"><span class="k">⚠️</span><span>视觉权重高，升级后用户会以为「必看」；只有真发布了 Release 才应显示。</span></div>
+        </div>
+        <details>
+          <summary>看 Vue 写法</summary>
+<pre>&lt;a <span class="kw">v-if</span>=<span class="str">"changelogUrl"</span> :href=<span class="str">"changelogUrl"</span>
+   target=<span class="str">"_blank"</span> rel=<span class="str">"noopener noreferrer"</span>
+   <span class="kw">class</span>=<span class="str">"mt-1.5 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium"</span>
+   :class=<span class="str">"lightTheme ? 'bg-primary/8 text-primary' : 'bg-blue-400/12 text-blue-300'"</span>&gt;
+  &lt;span&gt;查看本版更新日志&lt;/span&gt;
+  &lt;span <span class="kw">class</span>=<span class="str">"ml-auto font-mono text-[10px] opacity-75"</span>&gt;{{ changelogTag }}&lt;/span&gt;
+  &lt;svg <span class="kw">class</span>=<span class="str">"h-2.5 w-2.5"</span> ...&gt;&lt;!-- 外链箭头 --&gt;&lt;/svg&gt;
+&lt;/a&gt;</pre>
+        </details>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- 03 边界 -->
+  <section>
+    <h2 class="sec-title"><span class="num">03</span>边界情况<span class="hint">这些输入都会遇到</span></h2>
+    <div class="table-card">
+      <table>
+        <thead>
+          <tr><th style="width:150px">版本号输入</th><th style="width:120px">推导 tag</th><th>行为</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>v1.0.22.0</code></td><td><code>1.0.22</code></td><td><span class="yes">显示链接</span> —— 常规发版，四段去掉构建号 <code>.0</code></td></tr>
+          <tr><td><code>1.0.22</code></td><td><code>1.0.22</code></td><td><span class="yes">显示链接</span> —— 本来就是三段，原样用</td></tr>
+          <tr><td><code>v1.0.21.0</code></td><td><code>1.0.21</code></td><td><span class="yes">显示链接</span> —— 历史版本同样成立</td></tr>
+          <tr><td><code>v1.0.22.3</code>（hotfix）</td><td><code>1.0.22</code></td><td><span class="yes">显示链接</span> —— 构建号变化不影响 tag</td></tr>
+          <tr><td><code>dev</code> / <code>dev build</code></td><td>—</td><td><span class="no">不显示链接</span> —— 回退为「开发版本，无更新日志」</td></tr>
+          <tr><td><code>v1.0</code>（只有两段）</td><td><code>1.0</code></td><td><span class="yes">显示链接</span> —— 段数不足三段时原样拼</td></tr>
+          <tr><td>空字符串 / 单段 <code>7</code></td><td>—</td><td><span class="no">不显示链接</span> —— 段数不足，安全回退</td></tr>
+          <tr><td>品牌定制 <code>hide_version_link</code></td><td>—</td><td><span class="no">整块隐藏</span> —— 与「代码仓库」一致，白标部署时不外链</td></tr>
+          <tr><td>tag 未发布（404）</td><td><code>1.0.22</code></td><td><span class="no">链接照旧显示</span> —— 打开是 GitHub 404 页，发版前可接受</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <span>原型 · 2026-11-09 · 关于面板更新日志入口</span>
+    <span>用 <code style="font-size:11px">changelogTag</code> + <code style="font-size:11px">changelogUrl</code> 两个 computed 就能覆盖全部形态</span>
+  </footer>
+</div>
+
+<script>
+  const REPO = 'https://github.com/RandyChen1985/nanzi-ai-agent-platform';
+
+  // tag 是「主.次.补丁」三段；1.0.22.0 的最后一段是构建号，要去掉
+  function deriveTag(raw) {
+    const v = String(raw || '').trim().replace(/^v/i, '');
+    if (!v || /^dev/i.test(v)) return '';
+    const parts = v.split('.');
+    if (parts.length < 2) return '';
+    const core = parts.length > 3 ? parts.slice(0, 3) : parts;
+    if (!core.every((p) => /^\d+$/.test(p))) return '';
+    return core.join('.');
+  }
+
+  const input = document.getElementById('verInput');
+  const urlOut = document.getElementById('urlOut');
+
+  function render() {
+    const tag = deriveTag(input.value);
+    if (tag) {
+      urlOut.classList.remove('empty');
+      urlOut.innerHTML = '<span class="tag-badge">tag</span><span>' + REPO + '/releases/tag/' + tag + '</span>';
+    } else {
+      urlOut.classList.add('empty');
+      const reason = /^dev/i.test(input.value.trim()) ? '开发版本不提供更新日志链接' : '版本号段数不足，链接不显示';
+      urlOut.innerHTML = '<span class="tag-badge" style="background:rgba(251,191,36,.15);color:inherit">—</span><span>' + reason + '</span>';
+    }
+  }
+
+  input.addEventListener('input', render);
+  document.querySelectorAll('.presets button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      input.value = btn.dataset.ver;
+      render();
+    });
+  });
+  render();
+
+  const root = document.documentElement;
+  document.getElementById('themeToggle').addEventListener('click', () => {
+    root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  });
+</script>
+</body>
+</html>

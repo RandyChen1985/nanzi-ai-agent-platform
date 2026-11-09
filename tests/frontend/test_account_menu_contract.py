@@ -104,12 +104,28 @@ def test_theme_can_be_switched_inline(menu: str) -> None:
     assert "themeOptions" in menu
 
 
-def test_about_shows_version_and_reserves_changelog(menu: str, dashboard: str) -> None:
-    """关于先展示版本；更新日志先留占位，后续再补数据源。"""
+def test_about_shows_version_and_links_changelog(menu: str, dashboard: str) -> None:
+    """关于先展示版本；更新日志直链 GitHub Releases，取不到时回退为占位文案。"""
     assert "{{ version }}" in menu
     assert "更新日志：后续版本提供。" in menu
     assert ':version="displayVersion"' in dashboard
     assert ':repo-url="repoUrl"' in dashboard
+    # 有可用 tag 时给真实链接，否则保留占位说明
+    assert ':href="changelogUrl"' in menu
+    assert "releases/tag/${changelogTag.value}" in menu
+    assert 'rel="noopener noreferrer"' in menu
+
+
+def test_changelog_tag_uses_three_segments(menu: str) -> None:
+    """1.0.22.0 的第 4 段是构建号，Release tag 只到三段。
+
+    取前两段会拼出 /releases/tag/1.0，是必然 404 的地址；这里钉住分段规则与
+    开发版的回退，避免以后有人「简化」成正则或前两段。
+    """
+    assert "parts.length > 3 ? parts.slice(0, 3) : parts" in menu
+    assert "/^dev/i.test(raw)" in menu
+    # 用 repoUrl 拼而不是硬编码 GitHub 前缀，白标部署换仓库地址时才能跟着走
+    assert 'props.repoUrl.replace(/\\/+$/, "")' in menu
 
 
 def test_menu_closes_on_outside_click_and_escape(menu: str) -> None:
