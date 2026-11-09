@@ -317,7 +317,7 @@
 
   <!-- 01 规则 -->
   <section>
-    <h2 class="sec-title"><span class="num">01</span>链接规则<span class="hint">四段去掉构建号，三段原样</span></h2>
+    <h2 class="sec-title"><span class="num">01</span>链接规则<span class="hint">四段去掉构建号；定位不到时落到列表页</span></h2>
     <div class="rule-card">
       <div class="formula">
         <span class="chip">v1.0.22.0</span>
@@ -374,6 +374,7 @@
         <div class="plan-note">
           <div class="line"><span class="k">✅</span><span>只换最后一行，与上面「代码仓库」的链接样式自然成对，视觉不变。</span></div>
           <div class="line"><span class="k">⚠️</span><span>链接文字里带版本号会略长，英文界面下要确认不换行。</span></div>
+          <div class="line"><span class="k">💡</span><span>dev 环境解析不出 tag，文案自动变「查看全部版本」并指向 Releases 列表页。</span></div>
         </div>
         <details>
           <summary>看 Vue 写法</summary>
@@ -554,9 +555,9 @@
           <tr><td><code>1.0.22</code></td><td><code>1.0.22</code></td><td><span class="yes">显示链接</span> —— 本来就是三段，原样用</td></tr>
           <tr><td><code>v1.0.21.0</code></td><td><code>1.0.21</code></td><td><span class="yes">显示链接</span> —— 历史版本同样成立</td></tr>
           <tr><td><code>v1.0.22.3</code>（hotfix）</td><td><code>1.0.22</code></td><td><span class="yes">显示链接</span> —— 构建号变化不影响 tag</td></tr>
-          <tr><td><code>dev</code> / <code>dev build</code></td><td>—</td><td><span class="no">不显示链接</span> —— 回退为「开发版本，无更新日志」</td></tr>
+          <tr><td><code>dev</code> / <code>dev build</code></td><td>—</td><td><span class="yes">落到列表页</span> —— 文案变「查看全部版本」，入口不消失</td></tr>
           <tr><td><code>v1.0</code>（只有两段）</td><td><code>1.0</code></td><td><span class="yes">显示链接</span> —— 段数不足三段时原样拼</td></tr>
-          <tr><td>空字符串 / 单段 <code>7</code></td><td>—</td><td><span class="no">不显示链接</span> —— 段数不足，安全回退</td></tr>
+          <tr><td>空字符串 / 单段 <code>7</code></td><td>—</td><td><span class="yes">落到列表页</span> —— 解析不出 tag 时同样给入口</td></tr>
           <tr><td>品牌定制 <code>hide_version_link</code></td><td>—</td><td><span class="no">整块隐藏</span> —— 与「代码仓库」一致，白标部署时不外链</td></tr>
           <tr><td>tag 未发布（404）</td><td><code>1.0.22</code></td><td><span class="no">链接照旧显示</span> —— 打开是 GitHub 404 页，发版前可接受</td></tr>
         </tbody>
@@ -593,9 +594,9 @@
       urlOut.classList.remove('empty');
       urlOut.innerHTML = '<span class="tag-badge">tag</span><span>' + REPO + '/releases/tag/' + tag + '</span>';
     } else {
-      urlOut.classList.add('empty');
-      const reason = /^dev/i.test(input.value.trim()) ? '开发版本不提供更新日志链接' : '版本号段数不足，链接不显示';
-      urlOut.innerHTML = '<span class="tag-badge" style="background:rgba(251,191,36,.15);color:inherit">—</span><span>' + reason + '</span>';
+      // 定位不到 tag（dev / 版本号残缺）时不隐藏入口，落到 Releases 列表页
+      urlOut.classList.remove('empty');
+      urlOut.innerHTML = '<span class="tag-badge" style="background:rgba(74,222,128,.15);color:var(--ok)">list</span><span>' + REPO + '/releases</span>';
     }
   }
 

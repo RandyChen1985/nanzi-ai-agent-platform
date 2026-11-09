@@ -216,14 +216,12 @@
             >代码仓库</a>
             <p v-if="repoUrl" class="mt-0.5">
               <a
-                v-if="changelogUrl"
                 :href="changelogUrl"
                 target="_blank"
                 rel="noopener noreferrer"
                 class="font-medium underline underline-offset-2"
                 :class="lightTheme ? 'text-primary' : 'text-blue-300'"
-              >更新日志：{{ versionLabel }} ↗</a>
-              <span v-else class="opacity-80">更新日志：后续版本提供。</span>
+              >更新日志：{{ changelogLabel }} ↗</a>
             </p>
           </div>
         </div>
@@ -300,11 +298,14 @@ const roleLabel = computed(() =>
 )
 
 /**
- * 「更新日志」指向 GitHub Releases tag。
+ * 「更新日志」指向 GitHub Releases。
  *
  * 版本号是四段（1.0.22.0），最后一段是构建号，而 Release tag 只到三段（1.0.22）——
- * 取错段会拼出 /releases/tag/1.0 这种必然 404 的地址。开发版本与残缺版本号不外链。
- * 用 repoUrl 拼接而不是硬编码 GitHub 前缀：白标部署换了仓库地址也能跟着走。
+ * 取错段会拼出 /releases/tag/1.0 这种必然 404 的地址。
+ *
+ * 开发版（dev）与残缺版本号没有对应的 tag，但不该因此把入口藏起来：落到 Releases
+ * 列表页，想看日志的人照样能找到路。用 repoUrl 拼接而不是硬编码 GitHub 前缀，
+ * 白标部署换了仓库地址也能跟着走。
  */
 const changelogTag = computed(() => {
   const raw = String(props.version || "").trim().replace(/^v/i, "")
@@ -315,10 +316,11 @@ const changelogTag = computed(() => {
   if (!core.every((part) => /^\d+$/.test(part))) return ""
   return core.join(".")
 })
-const versionLabel = computed(() => (changelogTag.value ? `v${changelogTag.value}` : ""))
+const changelogLabel = computed(() => (changelogTag.value ? `v${changelogTag.value}` : "查看全部版本"))
 const changelogUrl = computed(() => {
-  if (!changelogTag.value || !props.repoUrl) return ""
-  return `${props.repoUrl.replace(/\/+$/, "")}/releases/tag/${changelogTag.value}`
+  if (!props.repoUrl) return ""
+  const base = props.repoUrl.replace(/\/+$/, "")
+  return changelogTag.value ? `${base}/releases/tag/${changelogTag.value}` : `${base}/releases`
 })
 
 /** 当前账号能用的模式；字段缺失时按「两种都能用」兜底（旧登录快照） */
