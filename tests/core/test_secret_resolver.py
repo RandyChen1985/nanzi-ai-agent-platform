@@ -44,22 +44,35 @@ SECRET_TABLES = [
     UserSecret.__table__,
 ]
 
-USER_ID = "7"
-OTHER_USER = "8"
+USER_ID = "pytest-7"
+OTHER_USER = "pytest-8"
 DEPT_CODE = "DEPT-DATA"
 PLAINTEXT = "P@ssw0rd!2024"
 
 
 @pytest.fixture
 async def clean_tables():
-    """每个用例前清空，避免用例之间互相看到对方的绑定。"""
-    from sqlalchemy import delete
+    """只清理本用例建的凭据，避免用例之间互相看到对方的绑定。
+
+    原来这里是 ``DELETE FROM sys_secrets`` 全表清空——这直接删掉过开发者自己
+    建的凭据。测试没有权利假设整张表都是它建的。
+    """
+    from tests.secret_test_guard import (
+        purge_created_after,
+        snapshot_secret_ids,
+        snapshot_user_prefs,
+    )
 
     async with AsyncSessionLocal() as session:
-        for table in SECRET_TABLES:
-            await session.execute(delete(table))
-        await session.commit()
-    yield
+        keep = await snapshot_secret_ids(session)
+        keep_users = await snapshot_user_prefs(session)
+    try:
+        yield
+    finally:
+        async with AsyncSessionLocal() as session:
+            await purge_created_after(
+                session, keep_secret_ids=keep, keep_user_ids=keep_users
+            )
 
 
 @pytest.fixture

@@ -38,19 +38,29 @@ SECRET_TABLES = [
     UserSecret.__table__,
 ]
 
-USER_ID = "7"
+USER_ID = "pytest-7"
 PLAINTEXT = "tok-real-value-123"
 
 
 @pytest.fixture(autouse=True)
 async def _clean():
-    from sqlalchemy import delete
+    # 只清理本用例建的凭据，绝不清表：这里连的是开发库。
+    from tests.secret_test_guard import (
+        purge_created_after,
+        snapshot_secret_ids,
+        snapshot_user_prefs,
+    )
 
     async with AsyncSessionLocal() as session:
-        for table in SECRET_TABLES:
-            await session.execute(delete(table))
-        await session.commit()
-    yield
+        keep = await snapshot_secret_ids(session)
+        keep_users = await snapshot_user_prefs(session)
+    try:
+        yield
+    finally:
+        async with AsyncSessionLocal() as session:
+            await purge_created_after(
+                session, keep_secret_ids=keep, keep_user_ids=keep_users
+            )
 
 
 async def _seed_api_tool_binding(*, hosts=None, scenarios=None, tool_id="tool-1", slot="header:Authorization"):

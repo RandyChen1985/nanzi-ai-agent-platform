@@ -36,18 +36,26 @@ SECRET_TABLES = [
     UserSecret.__table__,
 ]
 
-USER_ID = "7"
+USER_ID = "pytest-7"
 
 
 @pytest.fixture
 async def session():
-    from sqlalchemy import delete
+    # 只清理本用例建的凭据，绝不清表：这四个测试连的是开发库，
+    # 清表会把开发者自己的凭据一起删掉（已发生过一次）。
+    from tests.secret_test_guard import (
+        purge_created_after,
+        snapshot_secret_ids,
+        snapshot_user_prefs,
+    )
 
     async with AsyncSessionLocal() as s:
-        for table in SECRET_TABLES:
-            await s.execute(delete(table))
-        await s.commit()
-        yield s
+        keep = await snapshot_secret_ids(s)
+        keep_users = await snapshot_user_prefs(s)
+        try:
+            yield s
+        finally:
+            await purge_created_after(s, keep_secret_ids=keep, keep_user_ids=keep_users)
 
 
 async def _make(session, **overrides) -> UserSecret:
@@ -104,8 +112,8 @@ class TestCreateSecret:
 
     async def test_allows_same_key_for_different_owner(self, session):
         await _make(session)
-        other = await _make(session, owner_id="8")
-        assert other.owner_id == "8"
+        other = await _make(session, owner_id="pytest-8")
+        assert other.owner_id == "pytest-8"
 
     async def test_rejects_empty_value(self, session):
         with pytest.raises(center.SecretValidationError, match="不能为空"):
@@ -245,7 +253,7 @@ class TestBindSecret:
         assert binding.bound_by_user_id == USER_ID
 
     async def test_cannot_bind_someone_elses_secret(self, session):
-        row = await _make(session, owner_id="8")
+        row = await _make(session, owner_id="pytest-8")
 
         with pytest.raises(center.SecretValidationError, match="他人"):
             await center.bind_secret(
@@ -377,7 +385,7 @@ class TestGrants:
 class TestVisibility:
     async def test_sees_own_secrets_only(self, session):
         await _make(session, secret_key="mine.token")
-        await _make(session, secret_key="theirs.token", owner_id="8")
+        await _make(session, secret_key="theirs.token", owner_id="pytest-8")
 
         rows = await center.list_visible_secrets(session, user_id=USER_ID)
 
@@ -430,7 +438,7 @@ class TestDelete:
         assert await session.get(UserSecret, row.id) is None
 
     async def test_cannot_delete_someone_elses(self, session):
-        row = await _make(session, owner_id="8")
+        row = await _make(session, owner_id="pytest-8")
         with pytest.raises(center.SecretValidationError, match="他人"):
             await center.delete_secret(session, secret_id=row.id, actor_id=USER_ID)
 
