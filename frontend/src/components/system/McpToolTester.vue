@@ -59,8 +59,29 @@ const schema = computed(() => {
   }
 })
 
-const properties = computed(() => schema.value.properties || {})
-const requiredFields = computed(() => schema.value.required || [])
+/** 声明为「来自凭据」的参数：模型看不到，测试台也不该让人填。 */
+const credentialParams = computed<string[]>(() => {
+  try {
+    const parsed = JSON.parse((props.tool as any).credential_params || '[]')
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    return []
+  }
+})
+
+const properties = computed(() => {
+  const all = schema.value.properties || {}
+  if (!credentialParams.value.length) return all
+  // 这些参数的值由平台在调用时注入，人工填什么都会被覆盖——不如不给填
+  const out: Record<string, any> = {}
+  for (const [key, prop] of Object.entries(all)) {
+    if (!credentialParams.value.includes(key)) out[key] = prop
+  }
+  return out
+})
+const requiredFields = computed(() => (schema.value.required || []).filter(
+  (name: string) => !credentialParams.value.includes(name),
+))
 
 const getScalarType = (prop: any): string => {
   if (!prop) return ''
@@ -423,6 +444,13 @@ const executeTool = async () => {
         <!-- Input Form -->
         <div v-if="activeTab === 'input'" class="space-y-4">
           <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider">参数输入</h4>
+          <div
+            v-if="credentialParams.length"
+            class="rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2 text-[11px] leading-relaxed text-violet-800"
+          >
+            <b>{{ credentialParams.length }} 个参数由凭据提供</b>（{{ credentialParams.join('、') }}），
+            这里不提供输入框——运行测试时由平台按当前用户注入。
+          </div>
           <div v-if="Object.keys(properties).length === 0" class="text-xs text-gray-400 italic">
             此工具无需参数
           </div>

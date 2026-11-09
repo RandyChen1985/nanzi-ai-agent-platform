@@ -45,6 +45,14 @@ const shared = ref<PickerItem[]>([])
 const all = computed(() => [...mine.value, ...shared.value])
 const selected = computed(() => all.value.find((item) => item.id === props.modelValue) || null)
 
+/**
+ * 已绑定，但这条凭据**不在可选项里**了：被停用、被撤销授权、或已删除。
+ *
+ * 这种情况最需要「清除绑定」——留着一条永远取不到值的绑定，界面还显示
+ * 「已绑定」，用户既用不了也不知道为什么。
+ */
+const orphaned = computed(() => !!props.modelValue && !selected.value)
+
 function matches(item: PickerItem): boolean {
   if (!props.scene) return true
   return item.allowed_scenarios.includes(props.scene)
@@ -148,8 +156,12 @@ defineExpose({ reload: load })
           没有可选的凭据。先到「个人中心 → 我的凭据」建一条。
         </p>
 
+        <p v-if="orphaned" class="px-2 py-1.5 text-[11px] leading-relaxed text-amber-700">
+          当前绑定（{{ modelValue }}）已不在可选列表里——可能被停用、撤销授权或删除。
+          用它调用会失败，建议解除绑定后重选。
+        </p>
         <button
-          v-if="selected"
+          v-if="selected || orphaned"
           type="button"
           class="mt-1 w-full rounded-lg px-2 py-1.5 text-left text-xs text-rose-600 hover:bg-rose-50"
           @click="choose(null)"

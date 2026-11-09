@@ -213,7 +213,12 @@ const form = ref({
   remark: '',
 })
 
+//: 凭据值默认掩码。JSON / 证书这类多行值需要看清结构，所以要能临时显形。
+const revealValue = ref(false)
+const revealRotateValue = ref(false)
+
 function openCreate() {
+  revealValue.value = false
   form.value = {
     secret_key: '',
     name: '',
@@ -228,7 +233,8 @@ function openCreate() {
   showCreate.value = true
 }
 
-const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && form.value.value)
+// 纯空白不算填了；但保存时用的仍是原值，不 trim —— JSON / PEM 的缩进要保住
+const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && form.value.value.trim())
 
 function nextCreateStep() {
   if (createStep.value === 1 && !canLeaveStep1()) {
@@ -250,7 +256,7 @@ function toggleScene(key: string) {
 
 async function submitCreate() {
   if (!form.value.secret_key.trim()) return showToast('请填写凭据标识', 'err')
-  if (!form.value.value) return showToast('请填写凭据值', 'err')
+  if (!form.value.value.trim()) return showToast('请填写凭据值', 'err')
   createBusy.value = true
   try {
     await axios.post('/api/portal/secrets', {
@@ -284,6 +290,7 @@ const rotateBusy = ref(false)
 function openRotate(item: SecretItem) {
   rotateTarget.value = item
   rotateValue.value = ''
+  revealRotateValue.value = false
 }
 
 async function submitRotate() {
@@ -1002,7 +1009,7 @@ onMounted(load)
           <div class="flex items-start justify-between border-b border-gray-100 px-5 py-3">
             <div>
               <h3 class="text-base font-semibold text-gray-900">这些凭据会被用在哪里</h3>
-              <p class="mt-0.5 text-xs text-gray-500">只有下面四处会真的读到凭据的值；其余位置即使勾了也不会生效。</p>
+              <p class="mt-0.5 text-xs text-gray-500">只有下面五处会真的读到凭据的值；其余位置即使勾了也不会生效。</p>
             </div>
             <button
               type="button"
@@ -1017,10 +1024,20 @@ onMounted(load)
               <div class="space-y-2">
                 <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
                   <div class="flex items-baseline justify-between gap-2">
-                    <span class="font-medium text-gray-800">MCP 服务</span>
-                    <code class="text-[11px] text-gray-500">请求头，任意头名</code>
+                    <span class="font-medium text-gray-800">MCP 服务 · 请求头</span>
+                    <code class="text-[11px] text-gray-500">header:</code>
                   </div>
                   <p class="mt-1 text-xs leading-relaxed text-gray-500">绑定盖过固定 Token。绑定失效时直接报错，不会退回固定 Token——那等于用别人的账号，还查不出来。</p>
+                </div>
+                <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <span class="font-medium text-gray-800">MCP 服务 · 工具参数</span>
+                    <code class="text-[11px] text-gray-500">arg:</code>
+                  </div>
+                  <p class="mt-1 text-xs leading-relaxed text-gray-500">
+                    工具端把某个入参（例如 <code>api_key</code>）标成「来自凭据」后，该参数从模型可见的定义里消失，调用时由平台补进 <code>tools/call</code>。
+                    这类参数没有兜底值：没绑定或绑定的凭据不可用，这次调用直接失败并说明缺哪个。
+                  </p>
                 </div>
                 <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
                   <div class="flex items-baseline justify-between gap-2">
@@ -1032,9 +1049,12 @@ onMounted(load)
                 <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
                   <div class="flex items-baseline justify-between gap-2">
                     <span class="font-medium text-gray-800">API 工具 · 参数位</span>
-                    <code class="text-[11px] text-gray-500">query: / body:</code>
+                    <code class="text-[11px] text-gray-500">path: / query: / body:</code>
                   </div>
-                  <p class="mt-1 text-xs leading-relaxed text-gray-500">只有参数显式声明 <code>source: credential</code> 才走凭据，这些参数对模型不可见。</p>
+                  <p class="mt-1 text-xs leading-relaxed text-gray-500">
+                    只有参数显式声明 <code>source: credential</code> 才走凭据，这些参数对模型不可见。
+                    具体落到 path 还是 query / body，由工具的 URL 和方法决定（URL 里有 <code>{"{参数名}"}</code> 就是 path，否则 GET 走 query、其余方法走 body），改配置时会跟着迁移。
+                  </p>
                 </div>
                 <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
                   <div class="flex items-baseline justify-between gap-2">
@@ -1337,14 +1357,28 @@ onMounted(load)
               </label>
 
               <label class="block">
-                <span class="text-xs font-medium text-gray-700">凭据值 <span class="text-rose-500">*</span></span>
-                <input
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-medium text-gray-700">凭据值 <span class="text-rose-500">*</span></span>
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                    @click="revealValue = !revealValue"
+                  >
+                    {{ revealValue ? '隐藏' : '显示' }}
+                  </button>
+                </div>
+                <textarea
                   v-model="form.value"
-                  type="password"
-                  autocomplete="new-password"
-                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
-                />
-                <span class="mt-1 block text-[11px] text-amber-600">提交后不可再查看，只能轮换或停用。</span>
+                  :rows="4"
+                  spellcheck="false"
+                  autocomplete="off"
+                  placeholder="短 token 直接粘贴；JSON / PEM 这类多行值可以整段贴进来"
+                  class="mt-1 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm leading-relaxed focus:border-blue-500 focus:outline-none"
+                  :class="{ 'masked-value': !revealValue }"
+                ></textarea>
+                <span class="mt-1 block text-[11px] text-amber-600">
+                  提交后不可再查看，只能轮换或停用。多行内容会原样保存，不会被 trim。
+                </span>
               </label>
 
               <label class="block">
@@ -1504,19 +1538,28 @@ onMounted(load)
               <p class="mt-1 text-xs text-gray-500">
                 <code>{{ rotateTarget.secret_key }}</code> 的新值。旧值会保留 7 天，正在运行的任务不会中断。
               </p>
-              <input
+              <div class="mt-3 flex items-center justify-end">
+                <button
+                  type="button"
+                  class="rounded px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                  @click="revealRotateValue = !revealRotateValue"
+                >{{ revealRotateValue ? '隐藏' : '显示' }}</button>
+              </div>
+              <textarea
                 v-model="rotateValue"
-                type="password"
-                autocomplete="new-password"
-                class="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
-              />
+                :rows="3"
+                spellcheck="false"
+                autocomplete="off"
+                class="mt-1 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm leading-relaxed focus:border-blue-500 focus:outline-none"
+                :class="{ 'masked-value': !revealRotateValue }"
+              ></textarea>
               <div class="mt-4 flex justify-end gap-2">
                 <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100" @click="rotateTarget = null">
                   取消
                 </button>
                 <button
                   type="button"
-                  :disabled="rotateBusy || !rotateValue"
+                  :disabled="rotateBusy || !rotateValue.trim()"
                   class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
                   @click="submitRotate"
                 >
@@ -1607,3 +1650,11 @@ onMounted(load)
     </div>
   </div>
 </template>
+
+<style scoped>
+/* textarea 没有 type="password"，掩码只能靠这个；Firefox 不支持，
+   那里会退化成明文——所以「提交后不可再查看」这条提示不能省。 */
+.masked-value {
+  -webkit-text-security: disc;
+}
+</style>

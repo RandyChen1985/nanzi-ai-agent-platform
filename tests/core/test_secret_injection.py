@@ -22,6 +22,7 @@ from app.models.secret import (
 from app.services.secrets import center
 from app.services.secrets.injection import (
     apply_api_tool_bindings,
+    apply_mcp_arg_bindings,
     apply_mcp_bindings,
     apply_script_env_bindings,
     host_of,
@@ -466,6 +467,149 @@ class TestMcpInjection:
         )
 
         assert not used.get("slots")
+
+
+class TestMcpArgInjection:
+    """MCP 工具参数级注入：声明过的参数从 schema 剔除，运行时按 arg: 槽位补。
+
+    和 Header 那条链路的根本区别：Header 有「配置里的默认值」可以退回，
+    这里没有——模型看不到这个参数，凭据是唯一来源，取不到就是缺参数。
+    """
+
+    #: 区分「没传」和「显式传 None」——两者含义完全相反
+    _UNSET = object()
+
+    def _tool(self, tool_name: str = "server:query-customer", params=_UNSET):
+        return SimpleNamespace(
+            id="tool-1",
+            server_id="server-1",
+            tool_name=tool_name,
+            credential_params='["api_key"]' if params is TestMcpArgInjection._UNSET else params,
+        )
+
+    def test_slot_uses_short_tool_name(self):
+        """槽位用 ``:`` 后的短名——服务已由 consumer_id 限定，再带一遍就重复了。"""
+        from app.services.secrets.injection import mcp_arg_slots
+
+        pairs = mcp_arg_slots(self._tool())
+
+        assert pairs == [("api_key", "arg:query-customer:api_key")]
+
+    def test_broken_json_declares_nothing(self):
+        """存储写坏了按「没声明」处理：宁可多一个参数，也不能让工具整个不可用。"""
+        from app.services.secrets.injection import mcp_arg_slots
+
+        assert mcp_arg_slots(self._tool(params="{oops")) == []
+
+    def test_no_declaration_is_noop(self):
+        from app.services.secrets.injection import mcp_arg_slots
+
+        assert mcp_arg_slots(self._tool(params=None)) == []
+
+    async def test_value_filled_from_binding(self):
+        async with AsyncSessionLocal() as session:
+            secret = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="crm.tenant",
+                name="CRM 租户令牌",
+                value=PLAINTEXT,
+                allowed_scenarios=[SCENE_MCP],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="server-1",
+                slot="arg:query-customer:api_key",
+                bound_by_user_id=USER_ID,
+            )
+
+        result = await apply_mcp_arg_bindings(
+            self._tool(), {"keyword": "13800138000"}, user_info=USER
+        )
+
+        assert result["api_key"] == PLAINTEXT
+        # 普通业务参数原样透传
+        assert result["keyword"] == "13800138000"
+
+    async def test_missing_binding_is_recorded(self):
+        """没绑要记进 denials——调用方据此报错，而不是带着空值发出去等 401。"""
+        denials: dict[str, str] = {}
+
+        result = await apply_mcp_arg_bindings(
+            self._tool(), {"keyword": "x"}, user_info=USER, denials=denials
+        )
+
+        assert "api_key" not in result
+        assert denials.get("arg:query-customer:api_key") is not None
+
+    async def test_model_supplied_value_is_overridden(self):
+        """模型若从上下文猜出值传了进来，凭据仍然优先——它是唯一可信来源。"""
+        async with AsyncSessionLocal() as session:
+            secret = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="crm.tenant2",
+                name="CRM 租户令牌 2",
+                value=PLAINTEXT,
+                allowed_scenarios=[SCENE_MCP],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="server-1",
+                slot="arg:query-customer:api_key",
+                bound_by_user_id=USER_ID,
+            )
+
+        result = await apply_mcp_arg_bindings(
+            self._tool(), {"api_key": "guessed-by-model"}, user_info=USER
+        )
+
+        assert result["api_key"] == PLAINTEXT
+
+    async def test_undeclared_tool_is_untouched(self):
+        result = await apply_mcp_arg_bindings(
+            self._tool(params="[]"), {"api_key": "whatever"}, user_info=USER
+        )
+
+        assert result["api_key"] == "whatever"
+
+
+class TestMcpFactoryDropsCredentialParams:
+    """工厂侧：声明过的参数不能出现在模型可见的 args_schema 里。"""
+
+    def _record(self, params):
+        return SimpleNamespace(
+            id="tool-1",
+            server_id="server-1",
+            tool_name="server:query-customer",
+            tool_description="查客户",
+            credential_params=params,
+            parameter_schema=(
+                '{"type":"object","properties":{'
+                '"keyword":{"type":"string"},"api_key":{"type":"string"}},'
+                '"required":["keyword","api_key"]}'
+            ),
+        )
+
+    def test_credential_param_removed_from_schema(self):
+        from app.services.ai.tools.mcp_factory import McpToolFactory
+
+        tool = McpToolFactory.create_tool(self._record('["api_key"]'))
+
+        fields = set(tool.args_schema.model_fields.keys())
+        assert "keyword" in fields
+        assert "api_key" not in fields
+
+    def test_without_declaration_nothing_is_dropped(self):
+        from app.services.ai.tools.mcp_factory import McpToolFactory
+
+        tool = McpToolFactory.create_tool(self._record(None))
+
+        assert "api_key" in set(tool.args_schema.model_fields.keys())
 
 
 class TestCurrentUserResolution:

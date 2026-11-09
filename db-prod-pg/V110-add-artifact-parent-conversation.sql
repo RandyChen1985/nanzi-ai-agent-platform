@@ -1,5 +1,5 @@
--- V112: 产物支持「父会话归属」（PostgreSQL）。
--- 与 MySQL 侧 db-prod/V212-add-artifact-parent-conversation.sql 保持同一结构：
+-- V110: 产物支持「父会话归属」（PostgreSQL）。
+-- 与 MySQL 侧 db-prod/V210-add-artifact-parent-conversation.sql 保持同一结构：
 -- conversation_id 仍是产物实际产生的子会话（审计用），parent_conversation_id /
 -- parent_trace_id 让主会话的产物列表与消息角标能聚合到这次委派。
 ALTER TABLE "ai_artifacts"

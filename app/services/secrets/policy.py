@@ -57,6 +57,49 @@ TYPE_VARIABLE = "variable"
 SCOPE_USER = "user"
 SCOPE_SYSTEM = "system"
 
+# ── 授权对象类型 ────────────────────────────────────────────────────────
+GRANTEE_USER = "user"
+GRANTEE_DEPT = "dept"
+#: 全体用户。``grantee_id`` 固定为空串——它不指向任何实体，只表示「不限范围」。
+#: 没有这一档时，平台级共享凭据只能逐部门授权，新增部门必然漏掉。
+GRANTEE_ALL = "all"
+
+GRANTEE_TYPES = frozenset({GRANTEE_USER, GRANTEE_DEPT, GRANTEE_ALL})
+
+
+# ── API 工具的槽位推算 ──────────────────────────────────────────────────
+#: 参数在 URL 的 ``{param}`` 占位里，注入时要替换 URL
+SLOT_PATH = "path"
+#: GET 的其余参数走查询串
+SLOT_QUERY = "query"
+#: 其它方法的其余参数走 JSON body
+SLOT_BODY = "body"
+
+
+def resolve_api_tool_slot(
+    *,
+    name: str,
+    method: str | None = None,
+    url_template: str | None = None,
+) -> str:
+    """算出参数落在哪个槽位：``path:`` / ``query:`` / ``body:``。
+
+    绑定 API 现在只收参数名，由这里推槽位——前端不该关心「GET 走 query、
+    POST 走 body」这种 HTTP 语义，那是实现细节。
+
+    判断顺序不能反：**先看 URL 占位**。``POST /refund/{applicant}`` 里的
+    ``applicant`` 是 path 参数，不是 body 字段；只看 method 会绑到错的槽位上，
+    记录写进去了、面板显示「已绑定」，运行时永远匹配不到。
+    """
+    clean = str(name or "").strip()
+    if not clean:
+        return ""
+    if url_template and f"{{{clean}}}" in str(url_template):
+        return f"{SLOT_PATH}:{clean}"
+    if (method or "GET").upper() == "GET":
+        return f"{SLOT_QUERY}:{clean}"
+    return f"{SLOT_BODY}:{clean}"
+
 
 class SecretLeakAttempt(RuntimeError):
     """有人试图把明文当普通字符串用（f-string、print、json.dumps）。"""

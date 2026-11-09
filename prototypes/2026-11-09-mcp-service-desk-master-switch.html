@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MCP 服务台 · 总开关关闭时能力组开关的表达对比</title>
+<meta name="prototype-kind" content="方案对比">
+<style>
+  :root{
+    --ink:#0f172a; --ink-2:#334155; --ink-3:#64748b; --ink-4:#94a3b8;
+    --line:#e2e8f0; --line-2:#eef1f5; --bg:#f7f8fa; --card:#fff;
+    --green:#10b981; --green-2:#059669; --green-soft:#ecfdf5; --green-line:#a7f3d0; --green-ink:#047857;
+    --amber:#b45309; --amber-bg:#fffbeb; --amber-line:#fcd34d;
+    --indigo:#6366f1; --indigo-soft:#eef2ff; --indigo-ink:#4f46e5;
+    --red:#dc2626; --red-bg:#fef2f2; --red-line:#fecaca;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:13px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page{max-width:1180px;margin:0 auto;padding:30px 24px 64px}
+
+  /* ---------- 评审说明 ---------- */
+  .eyebrow{font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--indigo-ink);margin-bottom:8px}
+  .lead{margin:0 0 20px;color:var(--ink-3);font-size:13px;line-height:1.8;max-width:920px}
+  .lead b{color:var(--ink-2)}
+
+  /* ---------- 复刻页面头 ---------- */
+  .hero{background:var(--card);border:1px solid var(--line-2);border-radius:16px;padding:18px 22px 0;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .hero-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .hero h1{font-size:23px;font-weight:900;letter-spacing:-.6px;margin:0;line-height:1.2}
+  .pill{background:var(--indigo-soft);color:var(--indigo-ink);font-size:10.5px;font-weight:800;padding:5px 11px;border-radius:99px;white-space:nowrap}
+  .refresh{margin-left:auto;color:var(--ink-3);font-size:12px;display:flex;align-items:center;gap:5px}
+  .hero-sub{margin:9px 0 0;font-size:12px;color:var(--ink-3)}
+  .tabs{display:flex;gap:26px;margin-top:15px;font-size:12.5px;font-weight:700;color:var(--ink-3);overflow-x:auto;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs span{padding-bottom:10px;border-bottom:2px solid transparent;white-space:nowrap}
+  .tabs span.active{color:var(--indigo-ink);border-bottom-color:var(--indigo)}
+  .tabs b{font-weight:800;color:var(--ink-2);margin-left:4px;font-variant-numeric:tabular-nums}
+
+  /* ---------- 视图切换 ---------- */
+  .seg{display:flex;gap:4px;background:#eaedf2;padding:4px;border-radius:12px;margin:20px 0 16px;width:fit-content;max-width:100%;overflow-x:auto;scrollbar-width:none}
+  .seg::-webkit-scrollbar{display:none}
+  .seg button{border:0;background:transparent;padding:7px 14px;border-radius:9px;font:inherit;font-size:12px;font-weight:700;color:var(--ink-3);cursor:pointer;white-space:nowrap;transition:background .15s,color .15s}
+  .seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(15,23,42,.09)}
+  .view[hidden]{display:none}
+  .view-note{font-size:11.5px;color:var(--ink-3);line-height:1.75;margin:0 0 10px 2px;padding-left:10px;border-left:2px solid var(--indigo)}
+  .view-note b{color:var(--ink-2)}
+
+  /* ---------- 服务配置卡片 ---------- */
+  .module{background:var(--card);border:1px solid var(--line-2);border-radius:16px;padding:20px 22px 22px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .module-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .module-head h2{font-size:16px;font-weight:900;margin:0;letter-spacing:-.2px}
+  .module-head p{margin:6px 0 0;font-size:11.5px;color:var(--ink-3)}
+  .chain{background:#f1f5f9;color:var(--ink-3);font-size:10px;font-weight:800;padding:5px 10px;border-radius:99px;white-space:nowrap;letter-spacing:.02em}
+
+  .switches{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-top:16px}
+
+  .cap{
+    position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;
+    padding:13px 14px;border-radius:12px;border:1px solid var(--green-line);background:var(--green-soft);
+    text-align:left;cursor:pointer;font:inherit;color:inherit;
+    transition:border-color .18s,background .18s,opacity .18s,filter .18s,box-shadow .18s;
+  }
+  .cap:hover{border-color:#6ee7b7;box-shadow:0 2px 6px rgba(16,185,129,.08)}
+  .cap:focus-visible{outline:2px solid #6ee7b7;outline-offset:2px}
+  .cap-left{display:flex;flex-direction:column;min-width:0}
+  .cap-top{display:flex;align-items:center;gap:8px;min-width:0}
+  .cap-ico{width:26px;height:26px;border-radius:8px;background:#d1fae5;color:var(--green-2);display:flex;align-items:center;justify-content:center;flex:0 0 26px;transition:background .18s,color .18s}
+  .cap-ico svg{width:15px;height:15px;display:block}
+  .cap-name{font-size:12.5px;font-weight:800;color:var(--ink);line-height:1.35}
+  .cap-state{display:block;margin-top:9px;font-size:10.5px;font-weight:800;color:var(--green-ink);line-height:1.4}
+  .cap-note{display:block;margin-top:2px;font-size:10px;color:#5f7183;font-weight:400;line-height:1.45}
+  .cap-tog{width:38px;height:21px;border-radius:99px;background:var(--green);position:relative;flex:0 0 38px;margin-top:7px;transition:background .18s}
+  .cap-tog .knob{position:absolute;top:2px;left:19px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.16);transition:left .18s}
+
+  .s-off,.s-paused,.s-config,.n-off{display:none}
+
+  /* 总开关卡：关闭态 */
+  .view.is-off .cap.master{background:#f8fafc;border-color:var(--line)}
+  .view.is-off .cap.master:hover{border-color:#cbd5e1;box-shadow:none}
+  .view.is-off .cap.master .cap-tog{background:#cbd5e1}
+  .view.is-off .cap.master .cap-tog .knob{left:2px}
+  .view.is-off .cap.master .cap-ico{background:#e2e8f0;color:#94a3b8}
+  .view.is-off .cap.master .cap-state{color:#94a3b8}
+  .view.is-off .cap.master .s-on{display:none}
+  .view.is-off .cap.master .s-off{display:inline}
+  .view.is-off .cap.master .n-on{display:none}
+  .view.is-off .cap.master .n-off{display:block}
+
+  /* 方案 A：能力组压暗 + 暂停文案，但配置状态保留 */
+  .view[data-view="a"].is-off .cap:not(.master){
+    background:#f6f8fa;border-color:#e2e8f0;filter:grayscale(.35);cursor:pointer;
+  }
+  .view[data-view="a"].is-off .cap:not(.master):hover{border-color:#cbd5e1;box-shadow:none}
+  .view[data-view="a"].is-off .cap:not(.master) .cap-tog{background:#cbd5e1}
+  .view[data-view="a"].is-off .cap:not(.master) .cap-tog .knob{left:2px}
+  .view[data-view="a"].is-off .cap:not(.master) .cap-ico{background:#e2e8f0;color:#94a3b8}
+  .view[data-view="a"].is-off .cap:not(.master) .cap-name{color:#475569}
+  .view[data-view="a"].is-off .cap:not(.master) .cap-state{color:#475569}
+  .view[data-view="a"].is-off .cap:not(.master) .s-on{display:none}
+  .view[data-view="a"].is-off .cap:not(.master) .s-paused{display:inline}
+  .view[data-view="a"].is-off .cap:not(.master) .s-config{display:block;font-size:9.5px;font-weight:500;color:#94a3b8;margin-top:1px}
+  .view[data-view="a"].is-off .cap:not(.master) .n-on{display:none}
+
+  .paused-banner{
+    display:none;align-items:flex-start;gap:9px;margin-top:16px;padding:10px 14px;border-radius:10px;
+    background:var(--amber-bg);border:1px solid var(--amber-line);color:#92400e;font-size:11.5px;line-height:1.7;
+  }
+  .paused-banner.show{display:flex}
+  .paused-banner svg{width:15px;height:15px;flex:0 0 15px;margin-top:2px}
+  .paused-banner b{color:#78350f}
+  .paused-banner code,.problem-note code{font:10.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;background:rgba(255,255,255,.7);padding:1px 4px;border-radius:3px}
+
+  /* 方案 B：汇总折叠 */
+  .b-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,4fr);gap:12px;margin-top:16px;align-items:start}
+  .b-caps{min-width:0}
+  .b-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  .b-summary{display:none;align-items:center;gap:10px;min-height:78px;padding:14px 18px;border-radius:12px;border:1px dashed #cbd5e1;background:#f8fafc}
+  .view[data-view="b"].is-off .b-summary{display:flex}
+  .view[data-view="b"].is-off .b-cards{display:none}
+  .view[data-view="b"].is-off .b-caps.expanded .b-cards{display:grid}
+  .view[data-view="b"].is-off .b-caps.expanded .b-summary{margin-bottom:10px}
+  .b-summary .dot{width:8px;height:8px;border-radius:50%;background:#94a3b8;flex:0 0 8px}
+  .b-sum-title{font-size:12.5px;font-weight:800;color:#475569;white-space:nowrap}
+  .b-sum-names{font-size:10.5px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .summary-toggle{margin-left:auto;border:1px solid var(--line);background:#fff;border-radius:8px;padding:5px 10px;font:inherit;font-size:10.5px;font-weight:800;color:var(--ink-3);cursor:pointer;white-space:nowrap}
+  .summary-toggle:hover{border-color:#cbd5e1;color:var(--ink-2)}
+  .view[data-view="b"].is-off .b-cards .cap:not(.master){
+    background:#f6f8fa;border:1px dashed #cbd5e1;filter:grayscale(.35);
+  }
+  .view[data-view="b"].is-off .b-cards .cap:not(.master) .cap-tog{background:#cbd5e1}
+  .view[data-view="b"].is-off .b-cards .cap:not(.master) .cap-tog .knob{left:2px}
+  .view[data-view="b"].is-off .b-cards .cap:not(.master) .cap-ico{background:#e2e8f0;color:#94a3b8}
+  .view[data-view="b"].is-off .b-cards .cap:not(.master) .cap-name{color:#475569}
+  .view[data-view="b"].is-off .b-cards .cap:not(.master) .cap-state{color:#475569}
+  .view[data-view="b"].is-off .b-cards .cap:not(.master) .s-on{display:none}
+  .view[data-view="b"].is-off .b-cards .cap:not(.master) .s-paused{display:inline}
+  .view[data-view="b"].is-off .b-cards .cap:not(.master) .s-config{display:block;font-size:9.5px;font-weight:500;color:#94a3b8;margin-top:1px}
+  .view[data-view="b"].is-off .b-cards .cap:not(.master) .n-on{display:none}
+
+  /* 方案 C：层级依赖 */
+  .c-master{display:flex;align-items:center;gap:14px;padding:14px 18px;margin-top:16px;width:100%;min-height:80px}
+  .c-master .cap-state{margin-top:0;margin-left:2px}
+  .c-master-hint{margin-left:auto;font-size:10.5px;color:var(--ink-4);font-weight:500;white-space:nowrap}
+  .c-master .cap-tog{margin-top:0;flex:0 0 38px}
+  .fork{position:relative;height:26px}
+  .fork .stem{position:absolute;top:0;left:50%;height:14px;width:0;border-left:1px solid #94a3b8}
+  .fork .bar{position:absolute;top:14px;left:12.5%;width:75%;height:0;border-top:1px solid #94a3b8}
+  .fork .drop{position:absolute;top:14px;height:12px;width:0;border-left:1px solid #94a3b8}
+  .view[data-view="c"]:not(.is-off) .fork .stem,
+  .view[data-view="c"]:not(.is-off) .fork .drop{border-left-color:#10b981}
+  .view[data-view="c"]:not(.is-off) .fork .bar{border-top-color:#10b981}
+  .view[data-view="c"].is-off .fork .stem,
+  .view[data-view="c"].is-off .fork .drop{border-left:1px dashed #94a3b8}
+  .view[data-view="c"].is-off .fork .bar{border-top:1px dashed #94a3b8}
+  .c-caps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  .view[data-view="c"].is-off .c-caps .cap:not(.master){
+    background:#f8fafc;border:1px dashed #cbd5e1;cursor:not-allowed;
+  }
+  .view[data-view="c"].is-off .c-caps .cap:not(.master):hover{box-shadow:none;border-color:#cbd5e1}
+  .view[data-view="c"].is-off .c-caps .cap:not(.master) .cap-tog{background:#e2e8f0}
+  .view[data-view="c"].is-off .c-caps .cap:not(.master) .cap-tog .knob{left:2px}
+  .view[data-view="c"].is-off .c-caps .cap:not(.master) .cap-ico{background:#e2e8f0;color:#94a3b8}
+  .view[data-view="c"].is-off .c-caps .cap:not(.master) .cap-name{color:#475569}
+  .view[data-view="c"].is-off .c-caps .cap:not(.master) .cap-state{color:#475569}
+  .view[data-view="c"].is-off .c-caps .cap:not(.master) .s-on{display:none}
+  .view[data-view="c"].is-off .c-caps .cap:not(.master) .s-paused{display:inline}
+  .view[data-view="c"].is-off .c-caps .cap:not(.master) .s-config{display:block;font-size:9.5px;font-weight:500;color:#94a3b8;margin-top:1px}
+  .view[data-view="c"].is-off .c-caps .cap:not(.master) .n-on{display:none}
+
+  /* 现状批注 */
+  .problem-note{
+    display:flex;align-items:flex-start;gap:9px;margin-top:16px;padding:10px 14px;border-radius:10px;
+    background:var(--red-bg);border:1px solid var(--red-line);color:#991b1b;font-size:11.5px;line-height:1.7;
+  }
+  .problem-note svg{width:15px;height:15px;flex:0 0 15px;margin-top:2px}
+  .problem-note b{color:#7f1d1d}
+
+  /* ---------- 对比表 ---------- */
+  .compare{margin-top:28px;background:var(--card);border:1px solid var(--line-2);border-radius:16px;padding:22px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .compare h2{font-size:15px;font-weight:900;margin:0 0 4px}
+  .compare .sub{margin:0 0 16px;font-size:11.5px;color:var(--ink-3)}
+  table{width:100%;border-collapse:collapse;font-size:11.5px;line-height:1.65}
+  th,td{padding:9px 10px;border-bottom:1px solid var(--line-2);text-align:left;vertical-align:top}
+  th{font-size:10.5px;font-weight:800;color:var(--ink-4);letter-spacing:.02em;background:#fafbfc}
+  th:first-child,td:first-child{width:108px;color:var(--ink-3);font-weight:700;white-space:nowrap}
+  tr:last-child td{border-bottom:0}
+  td.a-rec{background:#f0fdf4}
+  .rec{display:inline-flex;align-items:center;gap:4px;background:#dcfce7;color:#15803d;font-size:9.5px;font-weight:800;padding:1px 7px;border-radius:99px;margin-left:5px;vertical-align:1px}
+  .muted{color:var(--ink-4)}
+
+  .verdict{display:flex;gap:10px;margin-top:16px;padding:12px 14px;border-radius:10px;background:#f0fdf4;border:1px solid #bbf7d0;font-size:11.5px;line-height:1.75;color:#166534}
+  .verdict svg{width:16px;height:16px;flex:0 0 16px;margin-top:1px}
+  .verdict b{color:#14532d}
+
+  .foot{margin-top:26px;padding-top:14px;border-top:1px dashed var(--line);font-size:11px;color:var(--ink-4);line-height:1.9}
+  .foot code{font:10.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;background:#f1f5f9;padding:1px 4px;border-radius:3px;color:#475569}
+
+  /* ---------- toast ---------- */
+  #toast{
+    position:fixed;left:50%;bottom:28px;transform:translate(-50%,14px);opacity:0;pointer-events:none;
+    background:#0f172a;color:#fff;font-size:12px;font-weight:600;padding:9px 16px;border-radius:10px;
+    box-shadow:0 8px 24px rgba(15,23,42,.24);transition:opacity .2s,transform .2s;z-index:50;max-width:86vw;text-align:center;
+  }
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+
+  @media (max-width:1050px){
+    .switches{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .c-caps{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .b-grid{grid-template-columns:1fr}
+    .b-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .fork{display:none}
+  }
+  @media (max-width:680px){
+    .switches{grid-template-columns:1fr 1fr}
+    .c-caps,.b-cards{grid-template-columns:1fr}
+    .page{padding:22px 14px 48px}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="eyebrow">原型 · 方案对比</div>
+  <p class="lead">
+    总开关关闭时，后面四个能力组开关该怎么显示？三套改法都作用在同一块「Platform MCP 服务配置」区域上。
+    每套里的总开关都能点，<b>关闭 / 开启</b>两种状态可以现场对比；能力组在这三套里配置都是「已开启」，没有任何方案会自动改写它们。
+  </p>
+
+  <!-- 复刻真实页面头 -->
+  <header class="hero">
+    <div class="hero-row">
+      <h1>MCP 服务台</h1>
+      <span class="pill">NanZi Platform MCP</span>
+      <span class="refresh">↻ 刷新</span>
+    </div>
+    <p class="hero-sub">支持人工生成当前用户 Token，也支持外部系统通过 OAuth2 调用 NanZi 平台能力。</p>
+    <nav class="tabs">
+      <span>服务总览</span>
+      <span class="active">服务配置</span>
+      <span>外部 Client <b>1</b></span>
+      <span>能力与 Scope <b>9</b></span>
+      <span>审计日志</span>
+      <span>使用指南</span>
+    </nav>
+  </header>
+
+  <div class="seg" role="tablist" aria-label="方案切换">
+    <button type="button" data-view="now">现状（问题）</button>
+    <button type="button" data-view="a" class="on">方案 A · 压暗 + 暂停文案</button>
+    <button type="button" data-view="b">方案 B · 汇总折叠</button>
+    <button type="button" data-view="c">方案 C · 画层级依赖</button>
+  </div>
+
+  <!-- 现状 -->
+  <section class="view is-off" data-view="now" hidden>
+    <div class="view-note"><b>现状：</b>总开关关闭后，四个能力组仍然整片绿色、写着「已开启」、也还能点。配置本身没错，但页面读不出「现在不生效」。</div>
+    <div class="module">
+      <div class="module-head">
+        <div>
+          <h2>Platform MCP 服务配置</h2>
+          <p>这些开关只属于 NanZi Platform MCP，不影响「MCP 工具集」中的出站 MCP 服务。</p>
+        </div>
+        <span class="chain">总开关 → 能力组 → Client</span>
+      </div>
+      <div class="switches" data-caps="now"></div>
+      <div class="problem-note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span><b>外部实际已经全停：</b>总开关关闭后 <code>tools/list</code> 返回空列表，任何 <code>tools/call</code> 都会报 <code>MCP_PLATFORM_DISABLED</code>。但页面上这四个「已开启」看起来像还能用，排障时容易被带偏。</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 方案 A -->
+  <section class="view is-off" data-view="a">
+    <div class="view-note"><b>方案 A（推荐）：</b>保留四张卡片的完整信息，把「当前不生效」画出来——整体压暗、状态改「已暂停」、下面补一行「配置保持：已开启」，上方加一条服务暂停提示。开关仍可点。</div>
+    <div class="module">
+      <div class="module-head">
+        <div>
+          <h2>Platform MCP 服务配置</h2>
+          <p>这些开关只属于 NanZi Platform MCP，不影响「MCP 工具集」中的出站 MCP 服务。</p>
+        </div>
+        <span class="chain">总开关 → 能力组 → Client</span>
+      </div>
+      <div class="paused-banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span><b>Platform MCP 服务已暂停。</b>当前不会向任何 Client 发布工具，所有调用都会返回 <code>MCP_PLATFORM_DISABLED</code>；恢复总开关后按原配置立即生效。</span>
+      </div>
+      <div class="switches" data-caps="a"></div>
+    </div>
+  </section>
+
+  <!-- 方案 B -->
+  <section class="view is-off" data-view="b" hidden>
+    <div class="view-note"><b>方案 B：</b>总开关关闭时，四个能力组折叠成一条「4 个能力组已暂停」的汇总行，只保留总开关卡片；需要看/改配置时点「展开配置」。</div>
+    <div class="module">
+      <div class="module-head">
+        <div>
+          <h2>Platform MCP 服务配置</h2>
+          <p>这些开关只属于 NanZi Platform MCP，不影响「MCP 工具集」中的出站 MCP 服务。</p>
+        </div>
+        <span class="chain">总开关 → 能力组 → Client</span>
+      </div>
+      <div class="b-grid">
+        <div data-master="b"></div>
+        <div class="b-caps">
+          <div class="b-summary">
+            <span class="dot"></span>
+            <span class="b-sum-title">4 个能力组已暂停</span>
+            <span class="b-sum-names">智能体 · 会话 · 知识库 · 元数据</span>
+            <button type="button" class="summary-toggle">展开配置 ▾</button>
+          </div>
+          <div class="b-cards" data-caps="b"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 方案 C -->
+  <section class="view is-off" data-view="c" hidden>
+    <div class="view-note"><b>方案 C：</b>把「总开关 → 能力组」的从属关系直接画出来（分叉连线）。总开关关闭时连线变虚线、能力组卡片虚线灰化、开关禁用，点能力组会提示先开总开关。</div>
+    <div class="module">
+      <div class="module-head">
+        <div>
+          <h2>Platform MCP 服务配置</h2>
+          <p>这些开关只属于 NanZi Platform MCP，不影响「MCP 工具集」中的出站 MCP 服务。</p>
+        </div>
+        <span class="chain">总开关 → 能力组 → Client</span>
+      </div>
+      <div data-master="c"></div>
+      <div class="fork" aria-hidden="true">
+        <span class="stem"></span>
+        <span class="bar"></span>
+        <span class="drop" style="left:12.5%"></span>
+        <span class="drop" style="left:37.5%"></span>
+        <span class="drop" style="left:62.5%"></span>
+        <span class="drop" style="left:87.5%"></span>
+      </div>
+      <div class="c-caps" data-caps="c"></div>
+    </div>
+  </section>
+
+  <!-- 对比 -->
+  <section class="compare">
+    <h2>三套改法怎么选</h2>
+    <p class="sub">同一份状态、同一套后端校验，差别只在「关闭时怎么表达」和「要不要多一次交互」。</p>
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>现状</th>
+          <th>方案 A <span class="rec">推荐</span></th>
+          <th>方案 B</th>
+          <th>方案 C</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>改动量</td>
+          <td class="muted">—</td>
+          <td class="a-rec">小：卡片多一个条件 class + 状态文案 + 一条提示，约 20 行模板</td>
+          <td>中：多一份折叠状态和汇总条，展开/收起要处理点击</td>
+          <td>大：总开关改横排、加连线、能力组卡片禁用并拦截点击</td>
+        </tr>
+        <tr>
+          <td>关闭时看起来</td>
+          <td>和开启完全一样，<b>看不出停摆</b></td>
+          <td class="a-rec">一眼看出暂停，且「配置还是开启」不丢</td>
+          <td>最强调整体停摆，但能力组配置被收起，要先展开</td>
+          <td>层级关系最直观，暂停感最强</td>
+        </tr>
+        <tr>
+          <td>重新开启后</td>
+          <td class="muted">—</td>
+          <td class="a-rec">四张卡直接恢复，原状态立即可见</td>
+          <td>需要展开一次才能确认谁被恢复</td>
+          <td>四张卡直接恢复，连线变回实线</td>
+        </tr>
+        <tr>
+          <td>主要风险</td>
+          <td>误以为能力还在跑，排障被误导</td>
+          <td class="a-rec">有人误读成「能力组被关掉了」——已用「配置保持：已开启」这行规避</td>
+          <td>恢复前容易忘了展开看一眼</td>
+          <td>改能力组多一步（要先开总开关），小屏下连线会隐藏</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="verdict">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      <span><b>建议落 A：</b>改动最小、不动操作路径、关闭态信息最完整，正好补上现在缺的那句「不生效」。如果觉得提示条太吵，A 的压暗 + 「已暂停」文案本身已经足够，提示条可以单独去掉。</span>
+    </div>
+  </section>
+
+  <p class="foot">
+    三套方案都不需要改后端：总开关优先、能力组其次的校验顺序已在 <code>app/services/mcp/platform_mcp.py</code>（<code>list_tools</code> 与 <code>_validate_platform_method</code>）实现，本轮只调整前端表达。
+    能力组开关状态独立持久化，关闭总开关不会改写它们；恢复总开关后按原状态生效，因此不存在「需要同步关闭」的问题。
+  </p>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  var GROUPS = [
+    { key: 'agent', title: '智能体', note: '控制对应能力组', icon: 'bot' },
+    { key: 'conversation', title: '会话', note: '控制对应能力组', icon: 'chat' },
+    { key: 'knowledge', title: '知识库', note: '控制对应能力组', icon: 'book' },
+    { key: 'metadata', title: '元数据', note: '控制对应能力组', icon: 'db' }
+  ];
+  var MASTER = { key: 'platform', title: 'Platform MCP', note: '控制整个服务', icon: 'server' };
+
+  var ICONS = {
+    server: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>',
+    bot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="16" y1="16" x2="16.01" y2="16"/></svg>',
+    chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+    book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+    db: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>'
+  };
+
+  function card(g, opts) {
+    opts = opts || {};
+    var master = !!opts.master;
+    var offNote = master ? '<span class="n-off">关闭后全部能力组暂停发布</span>' : '';
+    return '<button type="button" role="switch" aria-checked="true" class="cap' + (master ? ' master' : '') + '">' +
+      '<span class="cap-left">' +
+        '<span class="cap-top"><span class="cap-ico">' + ICONS[g.icon] + '</span><span class="cap-name">' + g.title + '</span></span>' +
+        '<span class="cap-state">' +
+          '<span class="s-on">已开启</span>' +
+          '<span class="s-off">已关闭</span>' +
+          '<span class="s-paused">已暂停</span>' +
+          '<span class="s-config">配置保持：已开启</span>' +
+        '</span>' +
+        '<span class="cap-note"><span class="n-on">' + g.note + '</span>' + offNote + '</span>' +
+      '</span>' +
+      '<span class="cap-tog"><span class="knob"></span></span>' +
+    '</button>';
+  }
+
+  function masterWide() {
+    return '<button type="button" role="switch" aria-checked="true" class="cap master c-master">' +
+      '<span class="cap-top"><span class="cap-ico">' + ICONS.server + '</span><span class="cap-name">Platform MCP 总服务</span></span>' +
+      '<span class="cap-state"><span class="s-on">已开启</span><span class="s-off">已关闭</span></span>' +
+      '<span class="c-master-hint">关闭后，下方 4 个能力组全部暂停发布</span>' +
+      '<span class="cap-tog"><span class="knob"></span></span>' +
+    '</button>';
+  }
+
+  function fill(sel, html) {
+    var el = document.querySelector(sel);
+    if (el) el.innerHTML = html;
+  }
+
+  fill('[data-caps="now"]', [MASTER].concat(GROUPS).map(function (g, i) { return card(g, { master: i === 0 }); }).join(''));
+  fill('[data-caps="a"]', [MASTER].concat(GROUPS).map(function (g, i) { return card(g, { master: i === 0 }); }).join(''));
+  fill('[data-master="b"]', card(MASTER, { master: true }));
+  fill('[data-caps="b"]', GROUPS.map(function (g) { return card(g); }).join(''));
+  fill('[data-master="c"]', masterWide());
+  fill('[data-caps="c"]', GROUPS.map(function (g) { return card(g); }).join(''));
+
+  // 方案 A 的提示条随总开关状态出现/消失
+  var banner = document.querySelector('.paused-banner');
+  function syncBanner() {
+    if (!banner) return;
+    var view = banner.closest('.view');
+    banner.classList.toggle('show', view.classList.contains('is-off'));
+  }
+  syncBanner();
+
+  // 总开关点击
+  document.querySelectorAll('.view').forEach(function (view) {
+    view.addEventListener('click', function (e) {
+      var cap = e.target.closest('.cap');
+      if (!cap) return;
+      if (cap.classList.contains('master')) {
+        var off = view.classList.toggle('is-off');
+        cap.setAttribute('aria-checked', String(!off));
+        syncBanner();
+        if (view.dataset.view === 'a' || view.dataset.view === 'b' || view.dataset.view === 'c') {
+          toast(off ? '总开关已关闭：四个能力组暂停发布工具（配置未改动）' : '总开关已开启：四个能力组按原配置立即恢复');
+        }
+        return;
+      }
+      if (view.classList.contains('is-off')) {
+        if (view.dataset.view === 'c') {
+          toast('总开关已关闭，请先开启 Platform MCP 总开关');
+        } else if (view.dataset.view === 'now') {
+          toast('开关能点，但当前不会生效——这正是现状要修的地方');
+        } else {
+          toast('能力组开关可以改；服务暂停期间修改会在恢复总开关后生效');
+        }
+      }
+    });
+  });
+
+  // 方案 B 展开/收起
+  document.querySelectorAll('.summary-toggle').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var caps = btn.closest('.b-caps');
+      var expanded = caps.classList.toggle('expanded');
+      btn.textContent = expanded ? '收起 ▴' : '展开配置 ▾';
+    });
+  });
+
+  // 方案切换
+  var seg = document.querySelector('.seg');
+  seg.addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-view]');
+    if (!btn) return;
+    seg.querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b === btn); });
+    document.querySelectorAll('.view').forEach(function (v) {
+      v.hidden = v.dataset.view !== btn.dataset.view;
+    });
+    syncBanner();
+  });
+
+  // 初始：总开关都是关闭态
+  document.querySelectorAll('.view').forEach(function (view) {
+    view.querySelectorAll('.cap.master').forEach(function (m) {
+      m.setAttribute('aria-checked', String(!view.classList.contains('is-off')));
+    });
+  });
+
+  var toastEl = document.getElementById('toast');
+  var timer;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(timer);
+    timer = setTimeout(function () { toastEl.classList.remove('show'); }, 2400);
+  }
+})();
+</script>
+</body>
+</html>

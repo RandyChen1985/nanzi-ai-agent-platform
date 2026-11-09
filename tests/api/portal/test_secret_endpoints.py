@@ -158,7 +158,9 @@ class TestPicker:
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["counts"]["mine"] == 1
-        assert data["counts"]["shared"] == 0
+        # shared 不断言总数：共享库里可能已经有被「授权给全体用户」的真实凭据，
+        # 那不是本用例造的，数量不归它管。分组对不对看 mine 这一侧。
+        assert all("tok-abcdefgh-123456" not in item["secret_key"] for item in data["groups"]["mine"])
         assert "tok-abcdefgh-123456" not in resp.text
 
 
@@ -431,7 +433,10 @@ class TestAdminSurface:
         resp = await client.get(PREFIX, headers=_user_headers(valid_api_key))
 
         assert resp.status_code == 200
-        assert resp.json()["data"]["total"] == 0
+        # 不能断言 total == 0：库里可能有别人造的、被授权给全体用户的凭据。
+        # 这条用例要守的是「**这一条**未授权的看不见」，按 key 判断才守得住。
+        keys = [item["secret_key"] for item in resp.json()["data"].get("items", [])]
+        assert "sap.prod.api_key" not in keys
         assert "sap.prod.api_key" not in resp.text
 
     async def test_admin_cannot_disable_personal_secret(

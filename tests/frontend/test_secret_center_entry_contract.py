@@ -304,6 +304,489 @@ class TestMcpWizardPendingBindings:
         assert "pendingBindings.value = {}" in segment
 
 
+class TestMcpToolParamCredential:
+    """MCP 工具参数级凭据：参数 chip 可点、标记后从模型 schema 剔除。
+
+    影响面是「所有调用者」（模型再也看不到这个参数），所以点一下只开确认弹层，
+    不直接落库。
+    """
+
+    REGISTRY = ROOT / "frontend/src/components/system/McpServerRegistry.vue"
+    FACTORY = ROOT / "app/services/ai/tools/mcp_factory.py"
+    INJECTION = ROOT / "app/services/secrets/injection.py"
+
+    def test_opens_param_settings_table(self):
+        """一张表里逐个选，和工具参数编辑器一个交互模型。"""
+        source = _read(self.REGISTRY)
+        assert "openParamMark(tool, paramName)" in source
+        assert "async function submitParamMark()" in source
+        # 草稿式：改完一次性提交，不是逐条落库
+        assert "paramDraft" in source
+        assert "const draftCredentialCount" in source
+
+    def test_param_settings_lists_every_param(self):
+        """弹窗里要能一次看到所有参数，而不是只处理被点中的那个。"""
+        source = _read(self.REGISTRY)
+        assert 'v-for="name in toolParamNames(paramMarkTarget.tool)"' in source
+        assert "模型填写" in source
+        assert "来自凭据" in source
+
+    def test_admin_can_bind_secret_for_param(self):
+        """管理员要能在参数上直接选凭据（全平台共用那条），不能只让用户各自绑。"""
+        source = _read(self.REGISTRY)
+        assert "function openParamBind(" in source
+        assert "saveParamBind" in source
+        # 槽位归到工具所属服务，不是「正在编辑的服务」——从工具卡片进来时后者可能是空
+        assert "ctx.tool?.server_id" in source
+        assert "选凭据" in source and "换凭据" in source
+
+    def test_binding_reload_does_not_depend_on_editing_id(self):
+        """读取绑定不能用 `loadMcpBinding`——它认 `editingId`，而参数设置
+        弹窗是从工具卡片直接打开的，那里 `editingId` 是空的。
+
+        症状：绑定成功了（toast 也弹了），但界面一直显示「未选」，重开也不变。
+        """
+        source = _read(self.REGISTRY)
+        assert "async function loadBindingsFor(" in source
+        start = source.find("async function saveParamBind(")
+        end = source.find("function openParamMark(", start)
+        body = source[start:end]
+        assert "loadBindingsFor" in body
+        # 只看调用；注释里会解释「为什么不能用 loadMcpBinding」
+        assert "await loadMcpBinding(" not in body
+        # 打开弹窗时就要把已绑的拉回来
+        assert "void loadBindingsFor(" in source
+
+    def test_two_actions_are_labelled_separately(self):
+        """选凭据和保存来源是两次落库，界面要说清楚。"""
+        source = _read(self.REGISTRY)
+        assert "选凭据即刻生效，来源改动需点「保存」" in source
+
+    def test_save_blocked_until_every_marked_param_is_bound(self):
+        """标了「来自凭据」却没选凭据 = 调用必然失败，但界面看着是配好的。"""
+        source = _read(self.REGISTRY)
+        assert "const draftUnboundNames = computed(" in source
+        # 按钮禁用
+        assert "paramMarkBusy || draftUnboundNames.length > 0" in source
+        # 函数里再兜一次，绕过 disabled 也挡得住
+        start = source.find("async function submitParamMark(")
+        body = source[start:source.find("\n}", start)]
+        assert "draftUnboundNames.value.length" in body
+
+    def test_unbound_names_are_listed_not_just_counted(self):
+        """只说「有个没选」没用，得说清楚是哪个。"""
+        source = _read(self.REGISTRY)
+        assert "还没选凭据" in source
+        assert "draftUnboundNames.join('、')" in source
+
+    def test_unbound_param_says_users_can_bind(self):
+        """没选凭据时要讲清楚：这条路走的是「用户各自绑」。"""
+        source = _read(self.REGISTRY)
+        assert "每个标记的参数都必须先选好凭据才能保存" in source
+
+    def test_user_panel_labels_arg_slots(self):
+        """`arg:工具:参数` 直接摊给用户只会让人猜。"""
+        source = _read(ROOT / "frontend/src/components/mcp/PlatformMcpCredentialPanel.vue")
+        assert "function slotLabel(" in source
+        assert "参数 · " in source
+
+    def test_card_has_params_entry_button(self):
+        source = _read(self.REGISTRY)
+        assert "参数设置" in source
+        assert 'openParamMark(tool)"' in source
+
+    def test_slot_format_uses_short_tool_name(self):
+        """槽位 `arg:<短工具名>:<参数名>`：服务已由 consumer_id 限定。"""
+        source = _read(self.REGISTRY)
+        assert "`arg:${shortToolName(tool)}:${name}`" in source
+        assert "function shortToolName" in source
+
+    def test_slot_detail_is_not_forced_on_user(self):
+        """槽位是「写到哪里 + 叫什么」的实现概念，默认摊出来只会让人问「这是啥」。
+
+        排查时还是要有，所以留在 title 里，而不是删掉。
+        """
+        source = _read(self.REGISTRY)
+        assert "绑定位置：" in source
+        # 参数表里不再直接把 `arg:xxx:yyy` 铺在正文
+        start = source.find('v-for="name in toolParamNames(paramMarkTarget.tool)"')
+        end = source.find("</table>", start)
+        body = source[start:end]
+        assert "{{ paramSlot(" not in body
+
+    def test_marked_param_is_visually_marked(self):
+        source = _read(self.REGISTRY)
+        assert "isCredentialParam(tool, paramName)" in source
+        assert "KeyIcon" in source
+
+    def test_dialog_warns_about_global_effect(self):
+        """标记是工具级的：所有人都得绑，不能让人以为只影响自己。"""
+        source = _read(self.REGISTRY)
+        assert "所有调用者" in source
+        assert "我的 MCP → 平台服务" in source
+        # 提示只在真的标了参数时出现，全是「模型填写」时不吓人
+        assert "v-if=\"draftCredentialCount\"" in source
+
+    def test_factory_drops_declared_params(self):
+        source = _read(self.FACTORY)
+        assert "credential_param_names(tool_record)" in source
+        assert "properties.pop(_name, None)" in source
+        assert "required_fields.discard(_name)" in source
+
+    def test_factory_injects_before_call(self):
+        source = _read(self.FACTORY)
+        assert "apply_mcp_arg_bindings(" in source
+        # 取不到必须报错，不能带空值发出去等远端 401
+        assert "凭据参数缺失" in source
+
+    def test_injection_does_not_reuse_header_denial_helper(self):
+        """`_record` 会跳过「没绑定」，但参数级里没绑定就是缺参数。"""
+        source = _read(self.INJECTION)
+        start = source.find("async def apply_mcp_arg_bindings(")
+        end = source.find("def shell_quote(", start)
+        body = source[start:end]
+        assert "_record(" not in body
+        assert "denials[slot] = denial_text" in body
+
+    def test_slot_prefix_registered(self):
+        from app.services.secrets.center import ALLOWED_SLOT_PREFIXES
+
+        assert "arg" in ALLOWED_SLOT_PREFIXES["mcp_server"]
+
+    def test_backend_rejects_unknown_param(self):
+        source = _read(ROOT / "app/api/portal/endpoints/mcp.py")
+        assert "/credential-params" in source
+        assert "不在这个工具的参数定义里" in source
+
+    def test_backend_rejects_non_string_param(self):
+        """凭据值永远是字符串。整数参数注入进去会破坏远端类型校验。
+
+        用户很容易在参数表里顺手把 `steps` 标成凭据——它在界面上和 `api_key`
+        长得一模一样，但语义上根本不能这么用。
+        """
+        source = _read(ROOT / "app/api/portal/endpoints/mcp.py")
+        assert "_accepts_string" in source
+        assert "的类型不是字符串，不能由凭据提供" in source
+        # `type` 可能是 ["string","null"] 这种联合类型，要认出来
+        assert "isinstance(declared, list)" in source
+
+
+class TestApiToolSystemParamCredential:
+    """API 工具的系统级参数：选凭据就在参数行里，不再跳去「高级请求配置」。
+
+    之前把选择器放在折叠块里、参数行只给个跳转按钮，用户得先知道有那个折叠块、
+    再滚过去才能选——多两层认知成本，换来的只是「前端不用算槽位」。而槽位现在
+    由后端按 URL 和方法推，这个理由也不成立了。
+    """
+
+    def test_credential_picker_lives_in_the_param_row(self):
+        source = _read(ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue")
+        assert "CredentialPicker" in source
+        assert "openPicker(" in source
+        # 不再往别处跳
+        assert "locate-credential" not in source
+
+    def test_binding_sends_name_not_slot(self):
+        """只传参数名：path/query/body 由后端按工具配置算。"""
+        source = _read(ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue")
+        assert "name," in source
+        assert "query:" not in source and "body:" not in source
+
+    def test_unbound_blocks_saving_the_tool(self):
+        source = _read(ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue")
+        assert "unbound-changed" in source
+        assert "未选，保存会被拦住" in source
+
+        registry = _read(ROOT / "frontend/src/components/system/ToolRegistry.vue")
+        assert "saving || paramUnboundNames.length > 0" in registry
+
+    def test_new_tool_records_binding_then_flushes(self):
+        """新建态没有工具 id，先记账，保存拿到 id 后补写。"""
+        source = _read(ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue")
+        assert "async function flushPending(consumerId: string)" in source
+        assert "保存后生效" in source
+
+        registry = _read(ROOT / "frontend/src/components/system/ToolRegistry.vue")
+        assert "paramEditorRef.value.flushPending(newId)" in registry
+
+
+class TestToolTesterHidesCredentialParams:
+    """测试台不该给「由凭据提供」的参数留输入框。
+
+    这些参数值由平台注入，人工填什么都会被覆盖；留着输入框只会让人以为
+    「我填了就该生效」，然后对着空的 arguments 发懵。
+    """
+
+    def test_tester_filters_credential_params(self):
+        source = _read(ROOT / "frontend/src/components/system/McpToolTester.vue")
+        assert "credentialParams" in source
+        assert "!credentialParams.value.includes(key)" in source
+        # required 也要滤，否则会被标成必填却填不了
+        assert "!credentialParams.value.includes(name)" in source
+
+    def test_tester_says_who_provides_them(self):
+        source = _read(ROOT / "frontend/src/components/system/McpToolTester.vue")
+        assert "个参数由凭据提供" in source
+        assert "由平台按当前用户注入" in source
+
+    def test_unbinding_clears_local_state(self):
+        """「提示已解除，界面还显示着那个凭据」是合并式加载造成的。
+
+        服务端删掉之后，再拉回来的 map 里没有这一条；如果用 `{...old, ...map}`
+        合并，旧 key 会原地留着，界面就一直显示已绑定。
+        """
+        source = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
+        # 以服务端为准
+        assert "headerBindings.value = { ...headerBindings.value, ...map }" not in source
+        assert "headerBindings.value = map" in source
+        # 解绑时本地立刻清，不等加载
+        start = source.find("async function saveParamBind(")
+        body = source[start:source.find("\n}", start)]
+        assert "delete headerBindings.value[slot]" in body
+        assert "delete pendingBindings.value[slot]" in body
+
+    def test_api_tool_unbind_clears_both_maps(self):
+        source = _read(ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue")
+        start = source.find("async function confirmPick(")
+        body = source[start:source.find("\n}\n", start)]
+        assert "delete bindings.value[name]" in body
+        assert "delete pending.value[name]" in body
+
+    def test_saving_marks_refreshes_the_list(self):
+        """保存后要重新拉列表：本地改的是对象引用，别处一刷就被旧数据盖回去。"""
+        source = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
+        start = source.find("async function submitParamMark(")
+        body = source[start:source.find("\n}", start)]
+        assert "await fetchServers()" in body
+        # 用后端回的真实值，而不是本地草稿
+        assert "Array.isArray(saved) ? saved : next" in body
+
+
+class TestBindingEdgeCases:
+    """绑定链路的边界情况。每一条都对应一个真实会发生的场景。"""
+
+    def test_picker_can_still_unbind_a_dead_secret(self):
+        """绑过一条后来被停用/撤销授权的凭据，必须还能解绑。
+
+        `/picker` 现在只列启用的凭据（`only_active=True`），所以这条绑定查不到
+        对应的 item——如果「清除绑定」按钮靠 `selected` 判断，按钮就消失了，
+        用户被永久卡在一条取不到值的绑定上。
+        """
+        source = _read(ROOT / "frontend/src/components/secrets/CredentialPicker.vue")
+        assert "const orphaned = computed(" in source
+        assert "v-if=\"selected || orphaned\"" in source
+        assert "已不在可选列表里" in source
+
+    def test_close_after_save_flushes_pending_first(self):
+        """`closeAfterSave` 分支必须先把暂存绑定补写掉再关向导。
+
+        `closeWizard()` → `resetWizard()` 会 `pendingBindings.value = {}`，
+        先关就再也找不到用户选过哪几条凭据了。
+        """
+        source = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
+        start = source.find("if (options?.closeAfterSave) {")
+        body = source[start:source.find("return true", start)]
+        flush_at = body.find("flushPendingBindings(")
+        # rfind：上面那段注释里也提到 closeWizard()，取真正调用的那次
+        close_at = body.rfind("closeWizard()")
+        assert flush_at != -1, "closeAfterSave 分支没有补写暂存绑定"
+        assert flush_at < close_at, "补写必须在 closeWizard 之前"
+
+    def test_new_wizard_does_not_inherit_previous_bindings(self):
+        """从「编辑 A」跳到「添加」，新向导不能显示 A 的 header 绑定。"""
+        source = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
+        start = source.find("async function loadMcpBinding(")
+        body = source[start:source.find("\n}", start)]
+        head = body[:body.find("if (!editingId.value)")]
+        assert "headerBindings.value = {}" in body[body.find("if (!editingId.value)"):][:200]
+
+    def test_failed_flush_keeps_pending_for_retry(self):
+        """补写失败要留在暂存里，否则只能到编辑态重新选一遍。"""
+        source = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
+        start = source.find("async function flushPendingBindings(")
+        body = source[start:source.find("\n}", start)]
+        assert "const keep: Record<string, HeaderBinding> = {}" in body
+        assert "keep[slot] = binding" in body
+        assert "pendingBindings.value = keep" in body
+
+    def test_reset_wizard_clears_header_bind_state(self):
+        source = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
+        start = source.find("const resetWizard = ")
+        if start == -1:
+            start = source.find("function resetWizard()")
+        body = source[start:source.find("\n}", start)]
+        for name in ("headerBindSlot", "headerBindSecretId", "headerBindPicked"):
+            assert f"{name}.value = null" in body, name
+
+    def test_stale_binding_response_is_discarded(self):
+        """并发加载要丢掉晚到的旧响应，否则参数设置里会显示别的服务的绑定。"""
+        source = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
+        assert "if (paramMarkTarget.value?.tool?.server_id !== serverId) return" in source
+        assert "if (editingId.value !== requestedId) return" in source
+
+
+class TestDeadSecretIsVisible:
+    """绑定的凭据被停用后，界面必须标出来。
+
+    「已绑定」三个字骗过很多人：绑定记录还在，凭据却用不了，调用直接
+    DENY_DISABLED。没有标记的话，用户只能去翻日志才知道是凭据的问题。
+    """
+
+    def test_three_editors_mark_the_issue(self):
+        for path in (
+            "frontend/src/components/system/ToolHeadersEditor.vue",
+            "frontend/src/components/system/ToolSystemParamEditor.vue",
+            "frontend/src/components/system/McpServerRegistry.vue",
+        ):
+            source = _read(ROOT / path)
+            # 声明形式不限（const 箭头 / function 都有）
+            assert "bindingIssue" in source, path
+            assert "凭据已停用" in source, path
+
+    def test_user_side_panel_also_marks_it(self):
+        source = _read(ROOT / "frontend/src/components/mcp/PlatformMcpCredentialPanel.vue")
+        assert "bindingIssue" in source
+        assert "调用会失败" in source
+
+    def test_active_secret_shows_nothing(self):
+        """启用的凭据不显示任何告警——标记只在真有问题时出现。"""
+        source = _read(ROOT / "frontend/src/components/system/ToolHeadersEditor.vue")
+        start = source.find("function bindingIssue(")
+        body = source[start:source.find("\n}\n", start)]
+        assert "secret_status === 'active') return ''" in body
+
+
+class TestAdminSecretCenterUsage:
+    """管理端要能查「谁在用、用成了没有」。
+
+    卡片上只有「近 7 天调用 N 次」这一个数字，用户报「我用不了」时答不上来：
+    是谁、哪个场景、还是根本没匹配上绑定。
+    """
+
+    ADMIN = "frontend/src/views/AdminSecretCenter.vue"
+
+    def test_usage_has_its_own_entry(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "使用记录" in source
+        assert "openUsage" in source
+        assert "/api/portal/secrets/usage" in source
+
+    def test_usage_and_audit_stay_separate(self):
+        """一个记「谁用了」，一个记「谁改了」，混在一起两边都答不清。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "/api/portal/secrets/usage" in source
+        assert "/api/portal/secrets/audit" in source
+
+    def test_denial_reasons_are_translated(self):
+        """`result` 落库是 `denied_by_*`，直接摊给用户等于没说。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "RESULT_LABEL" in source
+        assert "denied_by_grant" in source and "未授权" in source
+        assert "resultLabel" in source
+
+    def test_cards_render_two_per_row(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "grid gap-3 lg:grid-cols-2" in source
+
+    def test_status_is_visible_at_a_glance(self):
+        """两列之后卡片挨得近，靠文字读状态太慢，左边给一道色条。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "border-l-4 border-l-emerald-400" in source
+
+    def test_usage_dialog_is_teleported(self):
+        """Tailwind 覆盖层契约：fixed inset-0 必须 Teleport + z-[100]。"""
+        source = _read(ROOT / self.ADMIN)
+        start = source.find("使用记录弹框")
+        assert start != -1
+        body = source[start:start + 600]
+        assert "Teleport to=\"body\"" in body
+        assert "z-[100]" in body
+
+
+class TestInjectionHelpStaysAccurate:
+    """「这些凭据会被用在哪里」是用户唯一能看到的全貌，过时比没有更糟。
+
+    它列的是「真的会读到值的五个位置」。功能新增了却没同步，用户按它配完
+    发现不生效，比没有这个弹窗还迷惑。
+    """
+
+    CENTER = "frontend/src/views/SecretCenter.vue"
+
+    def test_lists_five_injection_points(self):
+        source = _read(ROOT / self.CENTER)
+        assert "只有下面五处会真的读到凭据的值" in source
+
+    def test_every_slot_prefix_is_documented(self):
+        """六个槽位前缀都要在弹窗里出现，缺一个就是少说了一种用法。"""
+        source = _read(ROOT / self.CENTER)
+        for slot in ("header:", "arg:", "path:", "query:", "body:", "env:"):
+            assert slot in source, slot
+
+    def test_mcp_arg_is_its_own_entry(self):
+        """MCP 的 header 和工具参数是两条不同的链路（一个有兜底、一个没有）。"""
+        source = _read(ROOT / self.CENTER)
+        assert "MCP 服务 · 请求头" in source
+        assert "MCP 服务 · 工具参数" in source
+
+    def test_arg_says_it_has_no_fallback(self):
+        """arg 没有 fixed_token 那样的兜底，缺失就是失败——这点必须写清楚。"""
+        source = _read(ROOT / self.CENTER)
+        start = source.find("MCP 服务 · 工具参数")
+        body = source[start:start + 900]
+        assert "没有兜底" in body
+
+    def test_api_param_mentions_slot_is_derived(self):
+        """槽位由后端推，用户不该以为要自己选 query 还是 body。"""
+        source = _read(ROOT / self.CENTER)
+        start = source.find("API 工具 · 参数位")
+        body = source[start:start + 900]
+        assert "由工具的 URL 和方法决定" in body
+
+
+class TestGrantAllUsers:
+    """系统级凭据要能给「全体用户」授权。
+
+    没有这一档时，平台统一采购的账号只能逐部门授权——新增部门必然漏；
+    按人授权更糟，新人入职必然漏。
+    """
+
+    ADMIN = ROOT / "frontend/src/views/AdminSecretCenter.vue"
+
+    def test_grant_dialog_offers_everyone(self):
+        source = _read(self.ADMIN)
+        assert "grantToAll" in source
+        assert "授权给全体用户" in source
+
+    def test_everyone_grant_has_no_grantee_id(self):
+        """`all` 不指向任何实体，grantee_id 必须是空串。"""
+        source = _read(self.ADMIN)
+        assert "grantee_type: 'all'" in source
+        assert "grantee_id: ''" in source
+
+    def test_granted_all_is_listed_and_locked(self):
+        source = _read(self.ADMIN)
+        # 已经授权给全体时，选择器锁住，避免重复挑人
+        assert "grantedToAll" in source
+        assert "全体用户" in source
+
+    def test_submit_allows_all_without_picks(self):
+        source = _read(self.ADMIN)
+        assert "(!grantSelected.length && !grantToAll)" in source
+
+    def test_backend_accepts_all(self):
+        from app.services.secrets.policy import GRANTEE_ALL, GRANTEE_TYPES
+
+        assert GRANTEE_ALL == "all"
+        assert GRANTEE_ALL in GRANTEE_TYPES
+        source = _read(ROOT / "app/services/secrets/resolver.py")
+        # 全体授权不比对 grantee_id
+        assert "SecretGrant.grantee_type == GRANTEE_ALL" in source
+
+    def test_center_normalizes_all_grantee_id(self):
+        source = _read(ROOT / "app/services/secrets/center.py")
+        assert "grantee_id = \"\"" in source
+
+
 class TestCreatingBindingsForTools:
     """API 工具与脚本工具的新建态也要能先选凭据。
 
@@ -327,6 +810,20 @@ class TestCreatingBindingsForTools:
         source = _read(self.HEADERS)
         assert "if (!bindingSlot.value || !props.consumerId) return" not in source
         assert "if (!bindingSlot.value) return" in source
+
+    def test_headers_editor_has_no_param_slot_logic(self):
+        """参数位已砍掉：凭据只在这里给 header 绑，参数绑定在参数定义那边。
+
+        同一个能力有两个入口时，用户得判断「我该在哪改」，而两边行为稍有不一致
+        就是 bug。所以留一个。
+        """
+        source = _read(self.HEADERS)
+        assert "paramSlotPrefix" not in source
+        assert "PARAM_SLOT_PREFIXES" not in source
+        assert "data-credential-param" not in source
+        # 只做 header
+        assert "slot.startsWith('header:')" not in source
+        assert "bindingSlotName" in source
 
     def test_tool_headers_failed_bindings_survive(self):
         """补写失败要留在暂存里，否则「哪些没绑上」查不到也重试不了。"""
@@ -541,8 +1038,27 @@ class TestNoPlaintextOnScreen:
 
             assert "/value" not in template, f"{path.name} 不该调用读明文的接口"
             assert "clipboard" not in source.lower() or "copyToClipboard" not in source
-            # 值输入框必须是 password，且从不绑定已保存的值
-            assert 'type="password"' in template or path is ADMIN_SECRET_CENTER
+            # 值输入框默认掩码，且从不绑定已保存的值。
+            # textarea 没有 type="password"，靠 .masked-value（-webkit-text-security）
+            # 遮住；「显示」只影响**正在输入的**内容，不会回显已保存的值。
+            assert "masked-value" in template or path is ADMIN_SECRET_CENTER
+
+    def test_reveal_only_affects_typing(self):
+        """「显示」按钮只切换掩码样式，不读也不回填任何已保存的值。"""
+        for path in (SECRET_CENTER, ADMIN_SECRET_CENTER):
+            source = _read(path)
+            template = source[source.index("<template>") :]
+            assert "revealValue" in source
+            # 显形只改 class，不能顺手去取明文
+            assert ":class=\"{ 'masked-value': !revealValue }\"" in template
+            assert "/value" not in template
+
+    def test_long_values_are_not_trimmed(self):
+        """JSON / PEM 的缩进要保住：只判空白，保存用原值。"""
+        for path in (SECRET_CENTER, ADMIN_SECRET_CENTER):
+            source = _read(path)
+            assert "form.value.value.trim()" in source
+            assert "value: form.value.value," in source
 
     def test_admin_page_states_that_admin_cannot_read(self):
         source = _read(ADMIN_SECRET_CENTER)

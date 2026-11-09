@@ -922,3 +922,22 @@ def test_list_view_actions_use_icon_buttons():
     # 图标按钮必须保留无障碍名与悬停说明
     assert list_actions.count("aria-label") >= 3
     assert list_actions.count("v-tooltip") >= 3
+
+
+def test_service_desk_marks_capability_groups_paused_while_master_switch_is_off():
+    """总开关关闭时服务侧已不再发布工具，能力组不能继续显示成「已开启」。"""
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "const isPlatformPaused = computed(() => config.value.platform_enabled === false)" in view
+    assert "const isCapabilityPaused = (key: string) => isPlatformPaused.value && key !== 'platform_enabled'" in view
+    # 暂停态文案与配置状态并列，避免「已暂停」被读成「能力组被关掉了」
+    assert "isCapabilityPaused(item[0]) ? '已暂停'" in view
+    assert "配置保持：{{ config[item[0]] ? '已开启' : '已关闭' }}" in view
+    # 顶部服务暂停提示只依赖总开关，能力组自身的开/关仍照常保留
+    assert 'v-if="isPlatformPaused"' in view
+    assert "Platform MCP 服务已暂停。" in view
+    assert "MCP_PLATFORM_DISABLED" in view
+    assert "关闭后全部能力组暂停发布" in view
+    # 暂停期间仍允许改能力组配置，保存后提示「恢复总开关后生效」
+    assert "服务暂停期间修改，会在恢复总开关后生效" in view
+    assert ':disabled="(item[0] === \'platform_enabled\' ? !canEditConfig : !canManageCapability) || saving"' in view

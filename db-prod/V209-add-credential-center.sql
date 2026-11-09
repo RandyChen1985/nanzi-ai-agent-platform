@@ -1,27 +1,27 @@
--- V209: 用户级凭据中心四张表（MySQL 方言）
+-- =====================================================================
+-- 凭据中心：一次建完（表 / 菜单 / 审计 / 工具参数标记 / 绑定唯一性）
+-- 创建时间：2026-11-09
+-- 注意事项：该脚本仅做生成，不得由 Agent 自动执行，由用户手动导入更新到数据库。
+-- =====================================================================
 --
--- ⚠️ 本脚本**不指定库名**（没有 USE，也不带库名前缀），在哪个库执行就建在哪个库。
---    执行前先确认 `SELECT DATABASE();` 返回的是应用配置里 MYSQL_DB 的那个库，
---    否则会出现「表建好了但接口报 Table 'xxx.sys_secrets' doesn't exist」——
---    两个库各自都对，只是不是同一个。
+-- 为什么是一个文件而不是五个：这些改动从未发布过（没有 PR、没有生产环境），
+-- 拆成五个只会在别人的环境里制造五道顺序依赖。合并后整份脚本**完全幂等**，
+-- 重复执行无副作用：
+--   * CREATE TABLE IF NOT EXISTS
+--   * 菜单用 INSERT ... WHERE NOT EXISTS
+--   * ADD COLUMN 重复时报 1060，apply_sql.py 已列入可忽略错误码
+--   * UPDATE ... WHERE IS NULL 与 MODIFY COLUMN 本身幂等
 --
--- 背景：平台当前有四套互不相通的「凭据」机制——system_configs.is_secret（明文、
--- 全局唯一、无归属）、{user.xxx} 占位符（只有身份字段，没有密码）、
--- ${CREDENTIAL:header}（只是「未填」标记）、MCP auth_headers（只服务 MCP）。
--- 同一条 token 要在三处各存一份，轮换必漏。
+-- 因此**已经在本地跑过旧版 V209-V214 的库，直接重跑本文件即可**：
+-- 已经生效的部分会被跳过，只有没跑过的那部分（当前是绑定唯一性那段）真正执行。
 --
--- 本次只**新增**表，不改动任何既有表：存量 system_configs.is_secret 与 MCP
--- auth_headers 保持原样，凭据中心是新路径。代码可以先于本迁移上线——
--- 查表失败时 SecretResolver 按「无凭据」处理，MCP/工具行为退回现状。
---
--- 五条设计约束（改动前请先读 docs/superpowers/specs/2026-11-09-user-credential-center-design.md）：
---   1. 绑定是白名单，默认零授权：建完凭据不等于能用；
---   2. 模型永远不能读值，只能触发已绑定槽位；
---   3. 凭据建完即不可读——包括创建者和管理员，没有任何接口返回明文；
---   4. 脱敏靠 value_fingerprint（sha256 前 16 位），不靠猜键名；
---   5. 域名白名单把「自动注入」关进笼子。
+-- 不含本主题的迁移仍独立存在（V210 产物父会话），不要并进来。
 
--- ── 凭据本体 ───────────────────────────────────────────────────────────
+
+-- =======================================================================
+-- 一、凭据中心四张表 + 注入策略默认值
+-- =======================================================================
+
 CREATE TABLE IF NOT EXISTS `sys_secrets` (
   `id` VARCHAR(36) NOT NULL,
   `owner_scope` VARCHAR(16) NOT NULL DEFAULT 'user'
@@ -180,3 +180,69 @@ ON DUPLICATE KEY UPDATE
   `category` = VALUES(`category`),
   `is_secret` = VALUES(`is_secret`),
   `updated_at` = NOW(6);
+
+
+-- =======================================================================
+-- 二、菜单与功能点（由 menu_seed.py 生成，勿手改）
+-- =======================================================================
+
+-- >>> gen_menu_seed_sql:credential-center START（本段由脚本生成，勿手改）>>>
+-- ========== 菜单与权限节点 seed（2 条）==========
+-- 顺序即同级排序；分组先于其子项，页面先于其功能点，因此逐条插入不需要额外的拓扑排序。
+
+INSERT INTO ai_agent_menus
+    (parent_id, node_type, code, permission_code, label, icon, path, active_route_names, url, open_mode, sort_order, enabled, desktop_only, is_landing, builtin, description, created_at, updated_at)
+SELECT (SELECT p.id FROM ai_agent_menus p WHERE p.code = 'group:system'), 'page', 'menu:system:credentials', 'menu:system:credentials', '凭据中心', 'key', '/dashboard/secrets', 'AdminSecretCenter', NULL, NULL, 60, 1, 0, 0, 1, '系统级凭据的创建、授权与停用', NOW(), NOW()
+WHERE NOT EXISTS (SELECT 1 FROM ai_agent_menus m WHERE m.code = 'menu:system:credentials');
+
+INSERT INTO ai_agent_menus
+    (parent_id, node_type, code, permission_code, label, icon, path, active_route_names, url, open_mode, sort_order, enabled, desktop_only, is_landing, builtin, description, created_at, updated_at)
+SELECT (SELECT p.id FROM ai_agent_menus p WHERE p.code = 'menu:system:credentials'), 'element', 'element:system:credentials_manage', NULL, '管理系统凭据（授权 / 强制停用）', NULL, NULL, NULL, NULL, NULL, 10, 1, 0, 0, 1, NULL, NOW(), NOW()
+WHERE NOT EXISTS (SELECT 1 FROM ai_agent_menus m WHERE m.code = 'element:system:credentials_manage');
+-- <<< gen_menu_seed_sql:credential-center END <<<
+
+
+-- =======================================================================
+-- 三、凭据变更审计表
+-- =======================================================================
+
+CREATE TABLE IF NOT EXISTS `sys_secret_audit_logs` (
+  `id` VARCHAR(36) NOT NULL,
+  `secret_id` VARCHAR(36) NULL COMMENT '凭据删除后置空也不影响，靠 snapshot 溯源',
+  `secret_key_snapshot` VARCHAR(128) NULL COMMENT '操作当时的 secret_key',
+  `owner_scope` VARCHAR(16) NULL COMMENT 'user / system',
+  `actor_id` VARCHAR(64) NULL COMMENT '操作者 user_id；系统自动动作为空',
+  `actor_name` VARCHAR(128) NULL COMMENT '操作者当时的显示名快照',
+  `action` VARCHAR(24) NOT NULL
+    COMMENT 'create / update / rotate / delete / disable / enable / grant / revoke / bind / unbind',
+  `detail` TEXT NULL COMMENT '补充信息，JSON 字符串',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  -- 主查询：某条凭据的完整历史，倒序翻页
+  KEY `ix_secret_audit_secret_created` (`secret_id`, `created_at`),
+  -- 次查询：某人最近动了什么
+  KEY `ix_secret_audit_actor_created` (`actor_id`, `created_at`),
+  KEY `ix_secret_audit_action` (`action`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  COMMENT='凭据变更审计：谁在什么时候对哪条凭据做了什么';
+
+
+-- =======================================================================
+-- 四、MCP 工具：声明哪些参数的值由凭据中心提供
+-- =======================================================================
+
+ALTER TABLE sys_mcp_tool_cache
+    ADD COLUMN credential_params TEXT NULL
+    COMMENT '值由凭据中心提供的参数名，JSON 数组'
+    AFTER parameter_schema;
+
+
+-- =======================================================================
+-- 五、绑定唯一性：全局绑定改用空串，让唯一索引真正生效
+-- =======================================================================
+
+UPDATE sys_secret_bindings SET bound_by_user_id = '' WHERE bound_by_user_id IS NULL;
+
+ALTER TABLE sys_secret_bindings
+    MODIFY COLUMN bound_by_user_id varchar(64) NOT NULL DEFAULT ''
+    COMMENT '空串=管理员全局绑定；有值=只对该用户生效';

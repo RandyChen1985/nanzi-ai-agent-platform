@@ -252,6 +252,52 @@ class TestBindSecret:
         assert binding.secret_id == row.id
         assert binding.bound_by_user_id == USER_ID
 
+    async def test_global_binding_is_unique_and_uses_empty_string(self, session):
+        """管理员全局绑定用空串表示，唯一索引才真正生效。
+
+        `bound_by_user_id` 曾经用 NULL 表示全局，而唯一索引
+        `uk_binding_slot(consumer_type, consumer_id, slot, bound_by_user_id)`
+        **不约束 NULL**——多行 NULL 在 MySQL/PG 里都视为互不相等。于是两个请求
+        同时绑同一槽位时，各自 DELETE（都删 0 行，对方未提交）再 INSERT，
+        结果留下两条，解析时取到哪条不确定。
+        """
+        from sqlalchemy import func, select
+
+        from app.models.secret import SecretBinding
+
+        # 全局绑定只能绑系统级凭据（普通用户绑别人的会被拒）
+        first = await _make(session, secret_key="g.a", owner_scope="system", owner_id="")
+        second = await _make(session, secret_key="g.b", owner_scope="system", owner_id="")
+
+        await center.bind_secret(
+            session,
+            secret_id=first.id,
+            consumer_type="api_tool",
+            consumer_id="pytest-global-unique",
+            slot="header:X-Key",
+            bound_by_user_id=None,
+        )
+        binding = await center.bind_secret(
+            session,
+            secret_id=second.id,
+            consumer_type="api_tool",
+            consumer_id="pytest-global-unique",
+            slot="header:X-Key",
+            bound_by_user_id=None,
+        )
+
+        # 落库是空串，不是 NULL
+        assert binding.bound_by_user_id == ""
+
+        count = (await session.execute(
+            select(func.count()).select_from(SecretBinding).where(
+                SecretBinding.consumer_type == "api_tool",
+                SecretBinding.consumer_id == "pytest-global-unique",
+                SecretBinding.slot == "header:X-Key",
+            )
+        )).scalar()
+        assert count == 1, "全局绑定留下了多条，唯一索引没有生效"
+
     async def test_cannot_bind_someone_elses_secret(self, session):
         row = await _make(session, owner_id="pytest-8")
 
@@ -395,18 +441,22 @@ class TestVisibility:
 
         rows = await center.list_visible_secrets(session, user_id=USER_ID)
 
-        assert [r.secret_key for r in rows] == ["mine.token"]
+        # 只看用户级：system 级那边可能混着真实数据（owner_id 必须是空串，
+        # 没法加 pytest- 前缀来隔离）
+        mine = [r.secret_key for r in rows if r.owner_scope == "user"]
+        assert mine == ["mine.token"]
 
     async def test_sees_granted_system_secrets(self, session):
         granted = await _make(session, owner_scope="system", secret_key="corp.wecom.secret")
-        await _make(session, owner_scope="system", secret_key="sap.prod.api_key")
+        not_granted = await _make(session, owner_scope="system", secret_key="sap.prod.api_key")
         await center.grant_secret(
             session, secret_id=granted.id, grantee_type="user", grantee_id=USER_ID
         )
 
-        rows = await center.list_visible_secrets(session, user_id=USER_ID)
+        visible = {r.id for r in await center.list_visible_secrets(session, user_id=USER_ID)}
 
-        assert [r.secret_key for r in rows] == ["corp.wecom.secret"]
+        assert granted.id in visible
+        assert not_granted.id not in visible
 
     async def test_dept_grant_extends_visibility(self, session):
         row = await _make(session, owner_scope="system", secret_key="bi.gateway.url")
@@ -414,15 +464,60 @@ class TestVisibility:
             session, secret_id=row.id, grantee_type="dept", grantee_id="DEPT-DATA"
         )
 
-        visible = await center.list_visible_secrets(
-            session, user_id=USER_ID, dept_code="DEPT-DATA"
-        )
-        hidden = await center.list_visible_secrets(
-            session, user_id=USER_ID, dept_code="DEPT-OTHER"
-        )
+        visible = {
+            r.id
+            for r in await center.list_visible_secrets(
+                session, user_id=USER_ID, dept_code="DEPT-DATA"
+            )
+        }
+        hidden = {
+            r.id
+            for r in await center.list_visible_secrets(
+                session, user_id=USER_ID, dept_code="DEPT-OTHER"
+            )
+        }
 
-        assert [r.secret_key for r in visible] == ["bi.gateway.url"]
-        assert hidden == []
+        assert row.id in visible
+        assert row.id not in hidden
+
+    async def test_all_grant_is_visible_to_everyone(self, session):
+        """「授权给全体用户」必须在选择器里也生效。
+
+        之前 `_has_grant` 放行、`list_visible_secrets` 却没这条分支，症状是
+        「调用真的能成功，但绑定的时候在下拉里找不到这条凭据」——而且管理员
+        最容易撞上：他没被单独授权，只能靠这条全员授权。
+        """
+        row = await _make(session, owner_scope="system", secret_key="corp.play.version")
+        await center.grant_secret(session, secret_id=row.id, grantee_type="all", grantee_id="")
+
+        for uid in (USER_ID, "pytest-stranger", "pytest-someone-else"):
+            visible = {r.id for r in await center.list_visible_secrets(session, user_id=uid)}
+            assert row.id in visible, uid
+
+    async def test_all_grant_still_needs_active_status(self, session):
+        """全员授权不是万能钥匙：停用的凭据照样看不见。"""
+        row = await _make(session, owner_scope="system", secret_key="corp.off")
+        await center.grant_secret(session, secret_id=row.id, grantee_type="all", grantee_id="")
+
+        # 选择器视角（only_active）：停用后立刻消失
+        assert row.id in {
+            r.id
+            for r in await center.list_visible_secrets(
+                session, user_id=USER_ID, only_active=True
+            )
+        }
+
+        await center.set_secret_status(session, secret_id=row.id, status_value="disabled")
+        assert row.id not in {
+            r.id
+            for r in await center.list_visible_secrets(
+                session, user_id=USER_ID, only_active=True
+            )
+        }
+        # 凭据管理页仍要看得见，否则没法重新启用
+        assert row.id in {
+            r.id for r in await center.list_visible_secrets(session, user_id=USER_ID)
+        }
 
     async def test_expired_grant_hides_secret(self, session):
         row = await _make(session, owner_scope="system")
@@ -434,7 +529,9 @@ class TestVisibility:
             expires_at=datetime.now() - timedelta(days=1),
         )
 
-        assert await center.list_visible_secrets(session, user_id=USER_ID) == []
+        assert row.id not in {
+            r.id for r in await center.list_visible_secrets(session, user_id=USER_ID)
+        }
 
 
 class TestDelete:

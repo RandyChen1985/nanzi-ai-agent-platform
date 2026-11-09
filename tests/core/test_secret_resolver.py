@@ -260,6 +260,74 @@ class TestBindingGate:
         assert result.secret_key == "mine.token"
 
 
+class TestHostGate:
+    """域名白名单。MCP 这条链路之前一条测试都没有。
+
+    `apply_mcp_bindings` 用 `server.sse_url` 取目标域名——它是 MCP 服务唯一的
+    URL 字段，`nullable=False`，所以正常情况下一定有值。这里锁住两侧：
+    白名单命中就放行，不命中就拒绝，且「无目标域名 + 有白名单」必须拒绝
+    （否则「先注入、再拼 URL」的绕过路径就成立了）。
+    """
+
+    def test_exact_host_match_allowed(self):
+        from app.services.secrets.policy import host_allowed
+
+        assert host_allowed("mcp.example.com", ["mcp.example.com"]) is True
+
+    def test_other_host_rejected(self):
+        from app.services.secrets.policy import host_allowed
+
+        assert host_allowed("evil.example.com", ["mcp.example.com"]) is False
+
+    def test_wildcard_subdomain_does_not_match_the_apex(self):
+        """`*.example.com` 不该匹配 `example.com` 本身。"""
+        from app.services.secrets.policy import host_allowed
+
+        assert host_allowed("a.example.com", ["*.example.com"]) is True
+        assert host_allowed("example.com", ["*.example.com"]) is False
+
+    def test_empty_list_only_allows_internal_targets(self):
+        from app.services.secrets.policy import host_allowed
+
+        assert host_allowed(None, []) is True
+        assert host_allowed("127.0.0.1", []) is True
+        assert host_allowed("mcp.example.com", []) is False
+
+    def test_missing_target_is_rejected_when_allowlist_declared(self):
+        """有白名单却没有目标域名 → 拒绝，别当成「平台内部调用」放行。"""
+        from app.services.secrets.policy import host_allowed
+
+        assert host_allowed(None, ["mcp.example.com"]) is False
+
+    async def test_mcp_scene_hits_host_gate(self, clean_tables, resolver):
+        """端到端：白名单不匹配时 MCP 场景必须 DENY_HOST 而不是放行。"""
+        from app.services.secrets import policy
+
+        secret_id = await _create_secret(
+            owner_scope="user",
+            owner_id="pytest-alice",
+            scenarios=[policy.SCENE_MCP],
+            hosts=["mcp.example.com"],
+        )
+        await _bind(secret_id, bound_by="pytest-alice")
+
+        denied = await _resolve(
+            resolver,
+            user_id="pytest-alice",
+            scene=policy.SCENE_MCP,
+            target_host="evil.example.com",
+        )
+        assert denied.denial == policy.DENY_HOST
+
+        allowed = await _resolve(
+            resolver,
+            user_id="pytest-alice",
+            scene=policy.SCENE_MCP,
+            target_host="mcp.example.com",
+        )
+        assert allowed.ok is True
+
+
 class TestGrantGate:
     async def test_system_secret_without_grant_is_denied(self, clean_tables, resolver):
         secret_id = await _create_secret(owner_scope="system", owner_id="")
@@ -286,6 +354,54 @@ class TestGrantGate:
         result = await _resolve(resolver, dept_code="DEPT-OTHER")
 
         assert result.denial == DENY_GRANT
+
+    async def test_personal_grant_matches(self, clean_tables, resolver):
+        """授权给**具体某个人**：只有她能取到，别人不行。
+
+        「看得见」和「取得到」是两条独立路径（`list_visible_secrets` 走 SQL，
+        `_has_grant` 走 Python），之前 `all` 那条只在可见性侧漏了，表现就是
+        「全员可见但选不到」。反过来漏 `user` 就是「看得见但用不了」。
+        """
+        secret_id = await _create_secret(owner_scope="system", owner_id="")
+        await _bind(secret_id, bound_by=None)
+        await _grant(secret_id, "user", "pytest-alice")
+
+        granted = await _resolve(resolver, user_id="pytest-alice")
+        assert granted.ok is True
+
+        other = await _resolve(resolver, user_id="pytest-bob")
+        assert other.denial == DENY_GRANT
+
+    async def test_personal_grant_is_case_sensitive(self, clean_tables, resolver):
+        """授权对象按 id 精确比对，不能因为大小写/空格就放行。"""
+        secret_id = await _create_secret(owner_scope="system", owner_id="")
+        await _bind(secret_id, bound_by=None)
+        await _grant(secret_id, "user", "pytest-alice")
+
+        result = await _resolve(resolver, user_id="pytest-alice ")
+
+        assert result.denial == DENY_GRANT
+
+    async def test_all_grant_covers_everyone(self, clean_tables, resolver):
+        """``all`` 不比对 grantee_id：它不指向任何实体，只表示不限范围。"""
+        secret_id = await _create_secret(owner_scope="system", owner_id="")
+        await _bind(secret_id, bound_by=None)
+        await _grant(secret_id, "all", "")
+
+        # 三个互不相干的用户都要能取到，包括没有部门的
+        for uid, dept in (("pytest-alice", "DEPT-A"), ("pytest-bob", "DEPT-B"), ("pytest-carol", None)):
+            result = await _resolve(resolver, user_id=uid, dept_code=dept)
+            assert result.ok is True, uid
+
+    async def test_all_grant_does_not_bypass_other_gates(self, clean_tables, resolver):
+        """全体授权只解决「给谁」，不解决「能不能用」——场景/状态照旧拦。"""
+        secret_id = await _create_secret(owner_scope="system", owner_id="", scenarios=[SCENE_API_TOOL])
+        await _bind(secret_id, bound_by=None)
+        await _grant(secret_id, "all", "")
+
+        result = await _resolve(resolver)  # 默认按 mcp 场景取
+
+        assert result.denial == DENY_SCENARIO
 
     async def test_expired_grant_does_not_count(self, clean_tables, resolver):
         secret_id = await _create_secret(owner_scope="system", owner_id="")

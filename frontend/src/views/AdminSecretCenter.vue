@@ -18,7 +18,7 @@ import { shortTime } from '../utils/date'
 
 interface Grant {
   id: string
-  grantee_type: 'user' | 'dept'
+  grantee_type: 'user' | 'dept' | 'all'
   grantee_id: string
   expires_at: string | null
 }
@@ -58,6 +58,8 @@ const SCENE_LABEL: Record<string, string> = {
   // 历史数据里可能还有这个取值，标签留着才能正常显示老记录
   scheduled_task: '定时任务（历史）',
   agent: '智能体',
+  // 只在「使用记录」里出现的场景：读变量类凭据的明文
+  variable_read: '读取变量',
 }
 
 // 已废弃的场景：后端常量还留着（历史数据里有这个取值），但代码里早就不参与
@@ -154,6 +156,54 @@ type AuditRow = {
 }
 const auditRows = ref<AuditRow[]>([])
 
+// ── 使用记录（管理员看全局） ──────────────────────────────────────────
+// 「近 7 天调用 N 次」只给了个数字，查不到是谁、在哪个场景、成没成功。
+// 排查「某个用户说用不了」时，这两个问题才是关键。
+const usageOpen = ref(false)
+const usageLoading = ref(false)
+type UsageRow = {
+  id: string
+  secret_key: string | null
+  user_id: string | null
+  scene: string
+  consumer_type: string | null
+  slot: string | null
+  target_host: string | null
+  result: string
+  created_at: string
+}
+const usageRows = ref<UsageRow[]>([])
+
+/** `result` 落库是 `success` 或 `denied_by_*`；把后者翻成人话。 */
+const RESULT_LABEL: Record<string, string> = {
+  success: '成功',
+  denied_by_binding: '未绑定',
+  denied_by_grant: '未授权',
+  denied_by_host: '域名不符',
+  denied_by_scenario: '场景不符',
+  denied_by_script_policy: '脚本注入已关',
+  denied_by_user_pref: '用户已关闭',
+  denied_by_platform_policy: '平台已关闭',
+  denied_disabled: '已停用',
+  denied_expired: '已过期',
+}
+
+const resultLabel = (result: string): string =>
+  RESULT_LABEL[result] || result.replace(/^denied_by_/, '') || result
+
+async function openUsage() {
+  usageOpen.value = true
+  usageLoading.value = true
+  try {
+    const res = await axios.get('/api/portal/secrets/usage', { params: { limit: 100 } })
+    usageRows.value = res.data?.data || []
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || '加载使用记录失败', 'err')
+  } finally {
+    usageLoading.value = false
+  }
+}
+
 const ACTION_LABEL: Record<string, string> = {
   create: '创建',
   update: '修改',
@@ -180,7 +230,11 @@ async function openAudit() {
   }
 }
 
+//: 凭据值默认掩码。JSON / 证书这类多行值需要看清结构，所以要能临时显形。
+const revealValue = ref(false)
+
 function openCreate() {
+  revealValue.value = false
   form.value = {
     secret_key: '',
     name: '',
@@ -193,7 +247,8 @@ function openCreate() {
   showCreate.value = true
 }
 
-const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && form.value.value)
+// 纯空白不算填了；但保存时用的仍是原值，不 trim —— JSON / PEM 的缩进要保住
+const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && form.value.value.trim())
 
 function nextCreateStep() {
   if (createStep.value === 1 && !canLeaveStep1()) {
@@ -214,7 +269,7 @@ function toggleScene(key: string) {
 
 async function submitCreate() {
   if (!form.value.secret_key.trim()) return showToast('请填写凭据标识', 'err')
-  if (!form.value.value) return showToast('请填写凭据值', 'err')
+  if (!form.value.value.trim()) return showToast('请填写凭据值', 'err')
   createBusy.value = true
   try {
     await axios.post('/api/portal/secrets/admin', {
@@ -243,23 +298,46 @@ const grantTarget = ref<SystemSecret | null>(null)
 const grantBusy = ref(false)
 // 'user:7' / 'dept:3' —— 类型和 id 一起传，提交时不用再单独维护 grantee_type
 const grantSelected = ref<string[]>([])
+/**
+ * 「授权给全体用户」。放在选择器外面而不是塞进 ``grantSelected``：
+ * ``UserDeptPicker`` 是通用组件，``user:7`` / ``dept:3`` 的键格式到处在用，
+ * 为这一个特例改它的键格式会牵连别的调用方。
+ */
+const grantToAll = ref(false)
 
 const grantedKeys = computed(() =>
   (grantTarget.value?.grants || []).map((g) => `${g.grantee_type}:${g.grantee_id}`),
 )
 
+/** 已经授权给全体了，就不用再逐个挑人 */
+const grantedToAll = computed(() =>
+  (grantTarget.value?.grants || []).some((g) => g.grantee_type === 'all'),
+)
+
 function openGrant(item: SystemSecret) {
   grantTarget.value = item
   grantSelected.value = []
+  grantToAll.value = false
 }
 
 async function submitGrant() {
-  if (!grantTarget.value || !grantSelected.value.length) return
+  if (!grantTarget.value) return
+  if (!grantSelected.value.length && !grantToAll.value) return
   grantBusy.value = true
   try {
     // 后端一次授权一个对象；批量授权在前端串起来，失败的那些要如实报出来，
     // 不能笼统说「已授权」——管理员会以为全都成了。
     const failed: string[] = []
+    if (grantToAll.value) {
+      try {
+        await axios.post(`/api/portal/secrets/admin/${grantTarget.value.id}/grants`, {
+          grantee_type: 'all',
+          grantee_id: '',
+        })
+      } catch {
+        failed.push('全体用户')
+      }
+    }
     for (const key of grantSelected.value) {
       const [granteeType, granteeId] = key.split(':', 2)
       if (!granteeType || !granteeId) continue
@@ -272,9 +350,10 @@ async function submitGrant() {
         failed.push(key)
       }
     }
+    const count = grantSelected.value.length + (grantToAll.value ? 1 : 0)
     grantTarget.value = null
     if (failed.length) showToast(`${failed.length} 个对象授权失败，其余已授权`, 'err')
-    else showToast(`已授权 ${grantSelected.value.length} 个对象`)
+    else showToast(`已授权 ${count} 个对象`)
     await load()
   } finally {
     grantBusy.value = false
@@ -380,6 +459,13 @@ onMounted(load)
         </button>
         <button
           type="button"
+          class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+          @click="openUsage"
+        >
+          使用记录
+        </button>
+        <button
+          type="button"
           class="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
           @click="openCreate"
         >
@@ -396,11 +482,14 @@ onMounted(load)
     >
       还没有系统级凭据
     </div>
-    <div v-else class="space-y-2">
+    <div v-else class="grid gap-3 lg:grid-cols-2">
       <div
         v-for="item in filtered"
         :key="item.id"
-        class="rounded-xl border border-gray-200 bg-white p-3.5"
+        class="rounded-xl border border-gray-200 bg-white p-3.5 transition-shadow hover:shadow-md"
+        :class="item.status === 'active'
+          ? 'border-l-4 border-l-emerald-400'
+          : 'border-l-4 border-l-gray-300'"
       >
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="min-w-0">
@@ -457,7 +546,10 @@ onMounted(load)
             :key="grant.id"
             class="inline-flex items-center gap-1 rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-700"
           >
-            {{ grant.grantee_type === 'dept' ? '部门' : '用户' }} · {{ grant.grantee_id }}
+            <template v-if="grant.grantee_type === 'all'">全体用户</template>
+            <template v-else>
+              {{ grant.grantee_type === 'dept' ? '部门' : '用户' }} · {{ grant.grantee_id }}
+            </template>
             <button
               type="button"
               class="text-gray-400 hover:text-rose-600"
@@ -599,15 +691,27 @@ onMounted(load)
                 </div>
               </div>
               <label class="block">
-                <span class="text-xs font-medium text-gray-700">凭据值 <span class="text-rose-500">*</span></span>
-                <input
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-medium text-gray-700">凭据值 <span class="text-rose-500">*</span></span>
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                    @click="revealValue = !revealValue"
+                  >
+                    {{ revealValue ? '隐藏' : '显示' }}
+                  </button>
+                </div>
+                <textarea
                   v-model="form.value"
-                  type="password"
-                  autocomplete="new-password"
-                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-slate-500 focus:outline-none"
-                />
+                  :rows="4"
+                  spellcheck="false"
+                  autocomplete="off"
+                  placeholder="短 token 直接粘贴；JSON / PEM 这类多行值可以整段贴进来"
+                  class="mt-1 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm leading-relaxed focus:border-slate-500 focus:outline-none"
+                  :class="{ 'masked-value': !revealValue }"
+                ></textarea>
                 <span class="mt-1 block text-[11px] text-amber-600">
-                  提交后任何人（包括你）都无法再查看明文，只能停用后重建。
+                  提交后任何人（包括你）都无法再查看明文，只能停用后重建。多行内容会原样保存，不会被 trim。
                 </span>
               </label>
             </div>
@@ -748,7 +852,35 @@ onMounted(load)
               <p class="mt-1 text-xs text-gray-500">
                 <code>{{ grantTarget.secret_key }}</code> 授权给谁。被授权的人才能看见并使用它。
               </p>
-              <div class="mt-3">
+              <label
+                class="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 transition-colors"
+                :class="grantedToAll
+                  ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
+                  : grantToAll
+                    ? 'border-blue-300 bg-blue-50'
+                    : 'border-gray-200 bg-white hover:bg-gray-50'"
+              >
+                <input
+                  v-model="grantToAll"
+                  type="checkbox"
+                  :disabled="grantedToAll"
+                  class="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                />
+                <span class="min-w-0">
+                  <span class="block text-sm font-medium text-gray-800">授权给全体用户</span>
+                  <span class="mt-0.5 block text-[11px] leading-relaxed text-gray-500">
+                    <template v-if="grantedToAll">
+                      这条凭据已经对全体开放了。
+                    </template>
+                    <template v-else>
+                      包括现在和以后新增的所有部门与成员。适合平台统一采购、人人共用的账号；
+                      按人计费的服务不要用它。
+                    </template>
+                  </span>
+                </span>
+              </label>
+
+              <div class="mt-3" :class="grantToAll || grantedToAll ? 'opacity-50 pointer-events-none' : ''">
                 <UserDeptPicker
                   v-model="grantSelected"
                   :mode="'both'"
@@ -758,7 +890,8 @@ onMounted(load)
 
               <div class="mt-4 flex items-center gap-2">
                 <span class="text-[11px] text-gray-400">
-                  <template v-if="grantSelected.length">已选 {{ grantSelected.length }} 个</template>
+                  <template v-if="grantToAll">已选：全体用户</template>
+                  <template v-else-if="grantSelected.length">已选 {{ grantSelected.length }} 个</template>
                   <template v-else>授权给部门后，部门内所有成员都能用</template>
                 </span>
                 <div class="ml-auto flex items-center gap-2">
@@ -767,7 +900,7 @@ onMounted(load)
                 </button>
                 <button
                   type="button"
-                  :disabled="grantBusy || !grantSelected.length"
+                  :disabled="grantBusy || (!grantSelected.length && !grantToAll)"
                   class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
                   @click="submitGrant"
                 >
@@ -863,6 +996,70 @@ onMounted(load)
       </div>
     </Teleport>
 
+    <!-- 使用记录弹框 -->
+    <Teleport to="body">
+      <div
+        v-if="usageOpen"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+        @click.self="usageOpen = false"
+      >
+        <div class="flex max-h-[calc(100vh-120px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="flex items-start justify-between border-b border-gray-100 px-5 py-3">
+            <div>
+              <h3 class="text-base font-semibold text-gray-900">使用记录</h3>
+              <p class="mt-0.5 text-xs text-gray-500">
+                每次取值的实际结果，含被拒绝的和没匹配上绑定的——只记「谁要取什么」，不记值本身。
+              </p>
+            </div>
+            <button
+              type="button"
+              class="rounded-lg px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              @click="usageOpen = false"
+            >✕</button>
+          </div>
+
+          <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+            <p v-if="usageLoading" class="py-8 text-center text-xs text-gray-400">加载中…</p>
+            <p v-else-if="!usageRows.length" class="py-8 text-center text-xs text-gray-400">
+              还没有使用记录
+            </p>
+            <div v-else class="space-y-1.5">
+              <div
+                v-for="row in usageRows"
+                :key="row.id"
+                class="rounded-lg bg-gray-50 px-2.5 py-2 text-[11px] text-gray-600"
+              >
+                <div class="flex flex-wrap items-center gap-2">
+                  <code class="text-gray-800">{{ row.secret_key || '已删除' }}</code>
+                  <span
+                    class="rounded px-1.5 py-0.5 font-medium"
+                    :class="row.result === 'success'
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'bg-amber-50 text-amber-700'"
+                  >{{ resultLabel(row.result) }}</span>
+                  <span class="text-gray-400">{{ SCENE_LABEL[row.scene] || row.scene }}</span>
+                  <span v-if="row.user_id" class="text-gray-500">用户 {{ row.user_id }}</span>
+                  <span class="ml-auto shrink-0 text-gray-400">{{ shortTime(row.created_at) }}</span>
+                </div>
+                <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[10px] text-gray-400">
+                  <span v-if="row.slot">{{ row.slot }}</span>
+                  <span v-if="row.target_host">{{ row.target_host }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end border-t border-gray-100 px-5 py-3">
+            <button
+              type="button"
+              class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+              @click="usageOpen = false"
+            >关闭</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <div v-if="toast" class="pointer-events-none fixed bottom-6 left-1/2 z-[60] -translate-x-1/2">
       <div
         class="rounded-xl px-4 py-2 text-sm text-white shadow-lg"
@@ -873,3 +1070,11 @@ onMounted(load)
     </div>
   </div>
 </template>
+
+<style scoped>
+/* textarea 没有 type="password"，掩码只能靠这个；Firefox 不支持，
+   那里会退化成明文——所以「提交后不可再查看」这条提示不能省。 */
+.masked-value {
+  -webkit-text-security: disc;
+}
+</style>

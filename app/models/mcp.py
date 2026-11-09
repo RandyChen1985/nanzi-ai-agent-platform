@@ -38,6 +38,10 @@ class McpToolCache(Base):
     tool_name = Column(String(255), nullable=False)
     tool_description = Column(Text, nullable=True)
     parameter_schema = Column(Text, nullable=True) # JSON Schema string
+    #: 值由凭据中心提供的参数名，JSON 数组。声明过的参数从模型可见的 schema 里
+    #: 剔除，运行时按 ``arg:<短工具名>:<参数名>`` 槽位注入。
+    #: 不塞进 ``parameter_schema``：同步时整体覆盖，且 ``x-nanzi-*`` 会被剥掉。
+    credential_params = Column(Text, nullable=True)
     is_published = Column(Boolean, default=False)
     is_available = Column(Boolean, nullable=False, default=True)
     

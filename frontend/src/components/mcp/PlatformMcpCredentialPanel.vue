@@ -14,7 +14,21 @@ import { computed, onMounted, ref } from 'vue'
 import axios from '../../utils/axios'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
 
-type Binding = { secret_id: string; secret_key: string; secret_name: string }
+type Binding = {
+  secret_id: string
+  secret_key: string
+  secret_name: string
+  /** 绑定还在，但凭据可能已被停用/过期 */
+  secret_status?: string
+}
+
+/** 绑了却用不了，比没绑更该提示——否则用户只会看到调用失败。 */
+const bindingIssue = (binding?: Binding | null): string => {
+  if (!binding || !binding.secret_status || binding.secret_status === 'active') return ''
+  if (binding.secret_status === 'disabled') return '已停用'
+  if (binding.secret_status === 'expired') return '已过期'
+  return '不可用'
+}
 
 type McpTarget = {
   id: string
@@ -91,6 +105,18 @@ function loadMore() {
 /** 「试一次」的结果：只回答能不能取到，不发任何出站请求。 */
 const checking = ref(false)
 const checkResult = ref<{ ok: boolean; reason: string | null } | null>(null)
+
+/** 槽位给人看的名字。`arg:工具:参数` 直接摊给用户只会让人猜。 */
+function slotLabel(slot: string): string {
+  const [prefix, ...rest] = slot.split(':')
+  const tail = rest.join(':')
+  if (prefix === 'header') return `请求头 · ${tail}`
+  if (prefix === 'arg') return `参数 · ${tail}`
+  if (prefix === 'query') return `查询参数 · ${tail}`
+  if (prefix === 'body') return `请求体 · ${tail}`
+  if (prefix === 'env') return `环境变量 · ${tail}`
+  return slot
+}
 
 function openBindMcp(target: McpTarget, slot = 'header:Authorization') {
   const existing = target.bindings?.[slot] || target.binding || null
@@ -235,11 +261,16 @@ onMounted(load)
                 :key="slot"
                 class="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-2 py-1.5"
               >
-                <code class="text-[11px] font-mono text-gray-700">{{ slot }}</code>
+                <code class="text-[11px] text-gray-700" :title="slot">{{ slotLabel(slot) }}</code>
                 <span
                   v-if="item.bindings?.[slot]"
-                  class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700"
-                >我的凭据：{{ item.bindings[slot]?.secret_key }}</span>
+                  class="rounded px-1.5 py-0.5 text-[10px]"
+                  :class="bindingIssue(item.bindings[slot])
+                    ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'"
+                >我的凭据：{{ item.bindings[slot]?.secret_key
+                  }}<template v-if="bindingIssue(item.bindings[slot])">
+                    （{{ bindingIssue(item.bindings[slot]) }}，调用会失败）
+                  </template></span>
                 <span v-else class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">未绑</span>
                 <button
                   type="button"
@@ -282,7 +313,7 @@ onMounted(load)
                 :key="slot"
                 class="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-2 py-1.5"
               >
-                <code class="text-[11px] font-mono text-gray-700">{{ slot }}</code>
+                <code class="text-[11px] text-gray-700" :title="slot">{{ slotLabel(slot) }}</code>
                 <span
                   v-if="tool.bindings?.[slot]"
                   class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700"

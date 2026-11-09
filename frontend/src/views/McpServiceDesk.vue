@@ -135,6 +135,11 @@ const saving = ref(false)
 const error = ref('')
 const overview = ref<Record<string, any>>({})
 const config = ref<Record<string, boolean | string | number>>({})
+// 总开关关闭时，能力组开关的“配置”仍是开启，但当前不会发布任何工具。
+// 两者分开表达：状态显示「已暂停」，副行保留「配置保持：已开启」，
+// 避免页面读起来像能力还在生效，也不至于让人误以为能力组被关掉了。
+const isPlatformPaused = computed(() => config.value.platform_enabled === false)
+const isCapabilityPaused = (key: string) => isPlatformPaused.value && key !== 'platform_enabled'
 const clients = ref<Client[]>([])
 const clientPage = ref(1)
 const clientTotal = ref(0)
@@ -1233,6 +1238,9 @@ const toggleConfig = async (key: string) => {
     const response = await api.patch('/api/portal/mcp-service/config', { [key]: !config.value[key] })
     config.value = response.data
     await loadOverview()
+    if (key !== 'platform_enabled' && isPlatformPaused.value) {
+      showToast('能力组开关已保存；服务暂停期间修改，会在恢复总开关后生效', 'info')
+    }
   } catch (err: any) {
     error.value = err?.response?.data?.detail || '开关保存失败'
   } finally {
@@ -2122,6 +2130,21 @@ onUnmounted(() => {
             <div><h2 class="text-lg font-black">Platform MCP 服务配置</h2><p class="mt-1 text-sm text-slate-500">这些开关只属于 NanZi Platform MCP，不影响「MCP 工具集」中的出站 MCP 服务。</p></div>
             <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-500">总开关 → 能力组 → Client</span>
           </div>
+          <div
+            v-if="isPlatformPaused"
+            role="status"
+            class="mt-4 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-900"
+          >
+            <svg class="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <span>
+              <b class="font-black">Platform MCP 服务已暂停。</b>当前不会向任何 Client 发布工具，所有调用都会返回
+              <code class="rounded bg-white/70 px-1 py-0.5 font-mono text-[11px]">MCP_PLATFORM_DISABLED</code>；恢复总开关后按原配置立即生效。
+            </span>
+          </div>
           <div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <button
               v-for="item in ([['platform_enabled', 'Platform MCP'], ['agent_enabled', '智能体'], ['conversation_enabled', '会话'], ['knowledge_enabled', '知识库'], ['metadata_enabled', '元数据']] as const)"
@@ -2131,7 +2154,7 @@ onUnmounted(() => {
               :aria-checked="config[item[0]] === true"
               :aria-label="`${item[1]}开关`"
               class="group flex cursor-pointer items-center justify-between gap-4 rounded-xl border p-4 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 disabled:cursor-not-allowed disabled:opacity-75 hover:shadow-xs"
-              :class="config[item[0]] === true ? 'border-emerald-200 bg-emerald-50/70 hover:border-emerald-300' : 'border-slate-200 bg-slate-50/70 hover:border-slate-300'"
+              :class="isCapabilityPaused(item[0]) ? 'border-slate-200 bg-slate-50/80 hover:border-slate-300' : (config[item[0]] === true ? 'border-emerald-200 bg-emerald-50/70 hover:border-emerald-300' : 'border-slate-200 bg-slate-50/70 hover:border-slate-300')"
               :disabled="(item[0] === 'platform_enabled' ? !canEditConfig : !canManageCapability) || saving"
               @click="toggleConfig(item[0])"
             >
@@ -2139,7 +2162,7 @@ onUnmounted(() => {
                 <span class="flex items-center gap-2">
                   <span
                     class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors"
-                    :class="config[item[0]] === true ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'"
+                    :class="isCapabilityPaused(item[0]) ? 'bg-slate-200 text-slate-500' : (config[item[0]] === true ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500')"
                   >
                     <!-- Platform MCP: Server -->
                     <svg v-if="item[0] === 'platform_enabled'" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2172,23 +2195,32 @@ onUnmounted(() => {
                       <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
                     </svg>
                   </span>
-                  <span class="block text-sm font-bold text-slate-800">{{ item[1] }}</span>
+                  <span class="block text-sm font-bold" :class="isCapabilityPaused(item[0]) ? 'text-slate-600' : 'text-slate-800'">{{ item[1] }}</span>
                 </span>
-                <span class="mt-2 block text-xs font-bold" :class="config[item[0]] === true ? 'text-emerald-700' : 'text-slate-500'">
-                  {{ config[item[0]] ? '已开启' : '已关闭' }}
+                <span
+                  class="mt-2 block text-xs font-bold"
+                  :class="isCapabilityPaused(item[0]) ? 'text-slate-600' : (config[item[0]] === true ? 'text-emerald-700' : 'text-slate-500')"
+                >
+                  {{ isCapabilityPaused(item[0]) ? '已暂停' : (config[item[0]] ? '已开启' : '已关闭') }}
                 </span>
-                <span class="mt-1 block text-xs font-normal text-slate-500">
+                <span v-if="isCapabilityPaused(item[0])" class="mt-0.5 block text-[11px] font-normal text-slate-400">
+                  配置保持：{{ config[item[0]] ? '已开启' : '已关闭' }}
+                </span>
+                <span v-else-if="item[0] === 'platform_enabled' && isPlatformPaused" class="mt-1 block text-xs font-normal text-slate-500">
+                  关闭后全部能力组暂停发布
+                </span>
+                <span v-else class="mt-1 block text-xs font-normal text-slate-500">
                   {{ item[0] === 'platform_enabled' ? '控制整个服务' : '控制对应能力组' }}
                 </span>
               </span>
               <span
                 class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors duration-200"
-                :class="config[item[0]] === true ? 'bg-emerald-500' : 'bg-slate-300'"
+                :class="isCapabilityPaused(item[0]) ? 'bg-slate-300' : (config[item[0]] === true ? 'bg-emerald-500' : 'bg-slate-300')"
                 aria-hidden="true"
               >
                 <span
                   class="pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow transition-transform duration-200"
-                  :class="config[item[0]] === true ? 'translate-x-5' : 'translate-x-0'"
+                  :class="isCapabilityPaused(item[0]) ? 'translate-x-0' : (config[item[0]] === true ? 'translate-x-5' : 'translate-x-0')"
                 />
               </span>
             </button>
@@ -2246,7 +2278,7 @@ onUnmounted(() => {
             </span>
             <h2 class="text-lg font-black text-slate-800">生效规则</h2>
           </div>
-          <p class="mt-3">Platform MCP 总开关开启后，只有已开启的能力组才会发布到 MCP 工具列表；具体调用仍需通过 Client 的 Scope、用户授权和资源权限校验。</p>
+          <p class="mt-3">Platform MCP 总开关开启后，只有已开启的能力组才会发布到 MCP 工具列表；具体调用仍需通过 Client 的 Scope、用户授权和资源权限校验。总开关关闭时，所有能力组一起暂停发布（各自配置保持不变），已签发的 Access Token 仍能通过认证，但任何调用都会返回 <code class="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px]">MCP_PLATFORM_DISABLED</code>。</p>
         </div>
       </section>
 

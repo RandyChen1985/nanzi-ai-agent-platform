@@ -40,15 +40,34 @@ const props = withDefaults(defineProps<{
      * 也没有「系统级参数」——脚本运行时不注入它们，配了也不会生效。
      */
     scope?: 'api' | 'script'
+    /** 工具 id；为空表示新建，凭据绑定先记账、保存后补写 */
+    consumerId?: string
+    consumerType?: string
 }>(), {
     mode: 'full',
     locations: () => ({}),
     method: 'GET',
     urlTemplate: '',
     scope: 'api',
+    consumerId: '',
+    consumerType: 'api_tool',
 })
 
-const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: string): void
+  (e: 'unbound-changed', names: string[]): void
+}>()
+
+const systemParamRef = ref<{
+  flushPending: (consumerId: string) => Promise<string[]>
+  hasPending: () => boolean
+} | null>(null)
+
+/** 保存工具后补写新建态暂存的凭据绑定。 */
+const flushPending = (consumerId: string) =>
+  systemParamRef.value?.flushPending(consumerId) ?? Promise.resolve([] as string[])
+
+defineExpose({ flushPending })
 
 type VisualParam = SchemaParam & { key: string }
 
@@ -275,9 +294,13 @@ const locationLabel = (name: string): string => {
       <!-- 系统级参数优先级高于普通参数：它们由平台强制注入、模型不可见，放在最前面让配置者先看到。 -->
       <ToolSystemParamEditor
         v-if="scope !== 'script'"
+        ref="systemParamRef"
         v-model="systemParams"
         :builtin-variables="BUILTIN_USER_VARIABLES"
         :extra-data-variables="extraDataVariables"
+        :consumer-id="consumerId"
+        :consumer-type="consumerType"
+        @unbound-changed="emit('unbound-changed', $event)"
       />
       <p v-if="systemParamErrors.length" class="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">
         {{ systemParamErrors[0] }}

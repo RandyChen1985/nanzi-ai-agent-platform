@@ -240,6 +240,24 @@ class GenericApiToolFactory:
         params = _apply_user_placeholders(config, params, variables)
         params = apply_system_params(config.parameter_schema, params, variables)
 
+        method = config.method.upper()
+        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+            raise UnsupportedMethodError(method)
+
+        # 凭据参数必须**先于**路径替换注入：`apply_system_params` 会把声明为
+        # 「来自凭据」的参数摘掉（它不能塞空串），URL 里 `{applicant}` 就再也
+        # 拿不到值，字面量会被原样发出去。
+        credential_params = credential_param_names(getattr(config, "parameter_schema", None))
+        if credential_params:
+            param_denials: dict[str, str] = {}
+            params = await apply_api_tool_param_bindings(
+                config, params, method=method, user_info=user_info, denials=param_denials
+            )
+            unresolved_params = [name for name in credential_params if name not in params]
+            if unresolved_params:
+                # 和 header 一样的口径：宁可在这里说清楚，也不要发出去换一个 401
+                raise UnresolvedCredentialError(config.name, unresolved_params, param_denials)
+
         url = config.url_template
 
         # 1. Path Substitution
@@ -279,24 +297,6 @@ class GenericApiToolFactory:
                 raise UnresolvedCredentialError(config.name, pending, auth_denials)
 
         # 3. Request
-        method = config.method.upper()
-        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
-            raise UnsupportedMethodError(method)
-
-        # 声明为「来自凭据」的参数：按 query / body 槽位补值。
-        # 必须在 method 定下来之后——同一个参数名在 GET 里是 query、在 POST 里是 body，
-        # 槽位前缀错了就永远匹配不到绑定。
-        credential_params = credential_param_names(getattr(config, "parameter_schema", None))
-        if credential_params:
-            param_denials: dict[str, str] = {}
-            remaining_params = await apply_api_tool_param_bindings(
-                config, remaining_params, method=method, user_info=user_info, denials=param_denials
-            )
-            unresolved_params = [name for name in credential_params if name not in remaining_params]
-            if unresolved_params:
-                # 和 header 一样的口径：宁可在这里说清楚，也不要发出去换一个 401
-                raise UnresolvedCredentialError(config.name, unresolved_params, param_denials)
-
         signing = parse_signing_config(config)
         if signing.enabled:
             validate_no_reserved_signing_headers(headers)

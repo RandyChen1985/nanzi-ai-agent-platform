@@ -16,6 +16,7 @@ from app.services.ai.runtime.agentscope.tool_timeout import (
 )
 from app.services.ai.grounding.models import EvidenceType
 from app.core.context import get_current_agent_context
+from app.services.secrets.injection import apply_mcp_arg_bindings, denial_text
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +244,28 @@ def _safe_field_name(param_name: str) -> str:
     return candidate
 
 
+def credential_param_names(tool_record: Any) -> list[str]:
+    """工具上声明「值由凭据中心提供」的参数名。
+
+    解析失败按「没声明」处理：宁可让模型看到一个多余的参数，也不能因为存储里
+    半截 JSON 就把工具定义整个搞坏——那会让这个工具彻底不可用。
+    """
+    raw = getattr(tool_record, "credential_params", None)
+    if not raw:
+        return []
+    try:
+        names = json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        logger.warning(
+            "[McpFactory] 工具 %s 的 credential_params 不是合法 JSON，忽略",
+            getattr(tool_record, "tool_name", "?"),
+        )
+        return []
+    if not isinstance(names, list):
+        return []
+    return [n for n in names if isinstance(n, str) and n.strip()]
+
+
 class McpToolFactory:
     @staticmethod
     def create_tool(tool_record: McpToolCache) -> StructuredTool:
@@ -254,6 +277,14 @@ class McpToolFactory:
         schema_def = json.loads(tool_record.parameter_schema or "{}")
         properties = schema_def.get("properties", {})
         required_fields = set(schema_def.get("required", []))
+
+        # 声明过「值由凭据提供」的参数从模型可见的参数里剔除：留着的话模型会
+        # 自己编一个值填进去，而平台随后又要用凭据覆盖它，等于骗了模型一次，
+        # 日志里也看不出这个值到底是谁给的。
+        _credential_args = credential_param_names(tool_record)
+        for _name in _credential_args:
+            properties.pop(_name, None)
+            required_fields.discard(_name)
 
         fields = {}
         # 远端参数名 → 本地字段别名（执行时再映射回去）。只在不合法时才换名，
@@ -306,6 +337,25 @@ class McpToolFactory:
 
             user_info, agent_info = current_mcp_agent_identity()
             context = get_current_agent_context()
+
+            # 凭据参数在模型侧没有值，这里补上。注入点在别名映射之后——槽位存的
+            # 是远端原始参数名，不是本地安全别名。
+            if _credential_args:
+                arg_denials: Dict[str, str] = {}
+                kwargs = await apply_mcp_arg_bindings(
+                    tool_record, kwargs, user_info=user_info, denials=arg_denials
+                )
+                if arg_denials:
+                    # 声明了却取不到，就是缺必需参数。必须报错，不能带着空值发出去：
+                    # 远端只会回一个 401，用户看不懂缺的是哪个绑定。
+                    detail = "；".join(
+                        f"{slot}（{denial_text(why)}）" for slot, why in arg_denials.items()
+                    )
+                    raise ValueError(
+                        f"MCP 工具 {tool_record.tool_name} 的凭据参数缺失：{detail}。"
+                        "请到「我的 MCP → 平台服务」绑定对应凭据。"
+                    )
+
             identity_kwargs: Dict[str, Any] = {}
             if user_info:
                 identity_kwargs["user_info"] = user_info

@@ -27,6 +27,9 @@ from app.models.secret import SecretBinding, SecretGrant, SecretUsageLog, Secret
 from app.services.secrets.policy import (
     DENY_BINDING,
     DENY_GRANT,
+    GRANTEE_ALL,
+    GRANTEE_DEPT,
+    GRANTEE_USER,
     SecretContext,
     SecretRecord,
     SensitiveValue,
@@ -254,13 +257,22 @@ class SecretResolver:
                 SecretBinding.consumer_id == consumer_id,
                 SecretBinding.slot == slot,
                 or_(
+                    # 全局绑定：迁移后用空串，迁移前是 NULL，两种都要认。
+                    # 必须分开写 or_：`IN (NULL, '')` 对 NULL 求值结果是 NULL
+                    # 而不是 TRUE，匹配不到 `x IS NULL` 的行。
                     SecretBinding.bound_by_user_id.is_(None),
+                    SecretBinding.bound_by_user_id == "",
                     SecretBinding.bound_by_user_id == user_id,
                 ),
             )
             # 个人绑定排前面：同一槽位既被管理员全局绑定、又被本人绑定过时，
             # 应以本人的为准（否则用户改了等于没改）。
-            .order_by(SecretBinding.bound_by_user_id.isnot(None).desc())
+            .order_by(
+                and_(
+                    SecretBinding.bound_by_user_id.isnot(None),
+                    SecretBinding.bound_by_user_id != "",
+                ).desc()
+            )
             .limit(1)
         )
         return (await session.execute(stmt)).scalars().first()
@@ -275,11 +287,13 @@ class SecretResolver:
     ) -> bool:
         """系统级凭据是否授权给了这个用户。"""
         conditions = [
-            and_(SecretGrant.grantee_type == "user", SecretGrant.grantee_id == user_id)
+            and_(SecretGrant.grantee_type == GRANTEE_USER, SecretGrant.grantee_id == user_id),
+            # 全体授权不比对 grantee_id：它不指向任何实体
+            SecretGrant.grantee_type == GRANTEE_ALL,
         ]
         if dept_code:
             conditions.append(
-                and_(SecretGrant.grantee_type == "dept", SecretGrant.grantee_id == dept_code)
+                and_(SecretGrant.grantee_type == GRANTEE_DEPT, SecretGrant.grantee_id == dept_code)
             )
         stmt = (
             select(SecretGrant.id)

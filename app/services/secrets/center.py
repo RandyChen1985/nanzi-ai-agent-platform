@@ -18,7 +18,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timedelta
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 from sqlalchemy import and_, delete, or_, select
 
@@ -26,6 +26,11 @@ from app.models.secret import SecretBinding, SecretGrant, UserSecret
 from app.services.secrets.fingerprint import secret_fingerprint
 from app.services.secrets.policy import (
     ALL_SCENES,
+    CONSUMER_API_TOOL,
+    GRANTEE_ALL,
+    GRANTEE_DEPT,
+    GRANTEE_TYPES,
+    GRANTEE_USER,
     SCOPE_SYSTEM,
     SCOPE_USER,
     TYPE_CREDENTIAL,
@@ -62,7 +67,7 @@ async def _audit(
 ) -> None:
     """记一条变更审计，**用独立的 session 和事务**。
 
-    为什么不挂在业务事务上：审计表是本次新增的（V211 / V111），而代码可以先于
+    为什么不挂在业务事务上：审计表是本次新增的（V209 / V109 第三节），而代码可以先于
     迁移上线。如果共用一个事务，表没建的那一天，用户的建凭据、轮换、授权会
     统统失败——为了一个附属记录把主功能拖垮，不划算。
 
@@ -97,8 +102,12 @@ async def _audit(
 
 
 ALLOWED_SLOT_PREFIXES = {
-    "mcp_server": frozenset({"header"}),
-    "api_tool": frozenset({"header", "query", "body"}),
+    # arg: —— 工具方法的入参。MCP 工具声明 credential_params 后，值按
+    # ``arg:<短工具名>:<参数名>`` 注入 ``tools/call`` 的 arguments。
+    "mcp_server": frozenset({"header", "arg"}),
+    # path: —— URL 占位 `{param}`。不能只认 query/body：`POST /refund/{applicant}`
+    # 里的 applicant 是 path 参数，绑到 body 上永远不会生效。
+    "api_tool": frozenset({"header", "path", "query", "body"}),
     "script_tool": frozenset({"env"}),
     "agent": frozenset({"header", "query", "body"}),
 }
@@ -332,10 +341,18 @@ async def bind_secret(
         # `GET /bindings?secret_id=` 会把这个系统的 secret_key / name 回给她，
         # 「未授权的连名字都不出现」就被绕开了。
         visible = await list_visible_secrets(
-            session, user_id=str(bound_by_user_id or ""), dept_code=dept_code
+            session,
+            user_id=str(bound_by_user_id or ""),
+            dept_code=dept_code,
+            only_active=True,
         )
         if secret.id not in {item.id for item in visible}:
             raise SecretPermissionError("凭据不存在")
+
+    # 「全局绑定」用空串表示，不用 NULL：唯一索引 uk_binding_slot 含这一列，
+    # 而 NULL 在唯一索引里互不相等（多行 NULL 允许共存），等于没有约束。
+    # 空串让索引真正生效，两个请求同时绑也只能留下一条。
+    owner_key = bound_by_user_id or ""
 
     # 同一槽位同一绑定者只保留一条：先删后插，避免唯一索引冲突
     await session.execute(
@@ -343,9 +360,14 @@ async def bind_secret(
             SecretBinding.consumer_type == consumer_type,
             SecretBinding.consumer_id == consumer_id,
             SecretBinding.slot == slot,
-            SecretBinding.bound_by_user_id == bound_by_user_id
-            if bound_by_user_id is not None
-            else SecretBinding.bound_by_user_id.is_(None),
+            # 兼容迁移前遗留的 NULL 行。不能写 in_([None, ''])：SQL 里
+            # `x IN (NULL, '')` 对 NULL 求值是 NULL，永远匹配不到。
+            or_(
+                SecretBinding.bound_by_user_id.is_(None),
+                SecretBinding.bound_by_user_id == "",
+            )
+            if not owner_key
+            else SecretBinding.bound_by_user_id == owner_key,
         )
     )
 
@@ -355,7 +377,7 @@ async def bind_secret(
         consumer_type=consumer_type,
         consumer_id=consumer_id,
         slot=slot,
-        bound_by_user_id=bound_by_user_id,
+        bound_by_user_id=owner_key,
     )
     session.add(binding)
     await _audit(
@@ -367,11 +389,67 @@ async def bind_secret(
             "consumer_id": consumer_id,
             "slot": slot,
             # 为空表示管理员全局绑定；有值就是「只对这个人生效」
-            "global": bound_by_user_id is None,
+            "global": not owner_key,
         },
     )
     await session.commit()
     return binding
+
+
+async def migrate_api_tool_param_slots(session, tool: Any) -> int:
+    """URL 或 HTTP 方法改了之后，把参数绑定的槽位重算一遍。返回改动的条数。
+
+    槽位编码的是「这个参数落在哪」：``POST /refund/{applicant}`` 是 ``path:``、
+    ``GET /refund?applicant=`` 是 ``query:``、其余方法是 ``body:``。改配置后旧槽位
+    就变成孤儿——**界面还显示「已绑定」**（前端按参数名查，三个前缀都试），
+    运行时按新槽位查不到绑定，于是报「未绑定」。
+
+    冲突处理：新槽位已有同一绑定者的记录，说明用户已经重绑过，旧的那条是本该被
+    删掉的孤儿，直接删除而不是覆盖。
+    """
+    from app.services.ai.tools.system_params import credential_param_names
+    from app.services.secrets.policy import resolve_api_tool_slot
+
+    names = set(credential_param_names(getattr(tool, "parameter_schema", None)))
+    if not names:
+        return 0
+
+    tool_id = str(getattr(tool, "id", "") or "")
+    if not tool_id:
+        return 0
+
+    rows = (await session.execute(
+        select(SecretBinding).where(
+            SecretBinding.consumer_type == CONSUMER_API_TOOL,
+            SecretBinding.consumer_id == tool_id,
+        )
+    )).scalars().all()
+
+    existing = {(row.slot, row.bound_by_user_id) for row in rows}
+    moved = 0
+    for row in rows:
+        prefix, _, name = str(row.slot).partition(":")
+        if prefix not in {"path", "query", "body"} or name not in names:
+            continue
+        target = resolve_api_tool_slot(
+            name=name,
+            method=getattr(tool, "method", None),
+            url_template=getattr(tool, "url_template", None),
+        )
+        if not target or target == row.slot:
+            continue
+        if (target, row.bound_by_user_id) in existing:
+            # 新槽位已经有人绑了：这条是历史残留，删掉
+            await session.delete(row)
+        else:
+            row.slot = target
+            existing.add((target, row.bound_by_user_id))
+        existing.discard((row.slot, row.bound_by_user_id))
+        moved += 1
+
+    if moved:
+        await session.commit()
+    return moved
 
 
 async def unbind_slot(
@@ -383,15 +461,26 @@ async def unbind_slot(
     bound_by_user_id: str | None,
 ) -> int:
     """解绑。返回删除条数（0 表示本来就没绑）。"""
+    # 全局绑定用空串表示（见 bind_secret 的说明）；这里同时认迁移前的 NULL，
+    # 否则升级前建的全局绑定会解不掉。
+    owner_key = bound_by_user_id or ""
+    owner_clause = (
+        SecretBinding.bound_by_user_id == owner_key
+        if owner_key
+        else or_(
+            # 同上：IN 包含 NULL 时匹配不到 NULL 行
+            SecretBinding.bound_by_user_id.is_(None),
+            SecretBinding.bound_by_user_id == "",
+        )
+    )
+
     # 先取 secret_id：删完就查不到了，而审计里「解绑的是哪条凭据」正是要查的
     target = await session.execute(
         select(SecretBinding.secret_id).where(
             SecretBinding.consumer_type == consumer_type,
             SecretBinding.consumer_id == consumer_id,
             SecretBinding.slot == slot,
-            SecretBinding.bound_by_user_id == bound_by_user_id
-            if bound_by_user_id is not None
-            else SecretBinding.bound_by_user_id.is_(None),
+            owner_clause,
         )
     )
     secret_id = target.scalars().first()
@@ -401,9 +490,7 @@ async def unbind_slot(
             SecretBinding.consumer_type == consumer_type,
             SecretBinding.consumer_id == consumer_id,
             SecretBinding.slot == slot,
-            SecretBinding.bound_by_user_id == bound_by_user_id
-            if bound_by_user_id is not None
-            else SecretBinding.bound_by_user_id.is_(None),
+            owner_clause,
         )
     )
     if secret_id:
@@ -433,10 +520,17 @@ async def grant_secret(
     granted_by: str | None = None,
     expires_at: datetime | None = None,
 ) -> SecretGrant:
-    """把系统级凭据授权给一个用户或部门。"""
-    if grantee_type not in {"user", "dept"}:
+    """把系统级凭据授权给一个用户、一个部门，或全体用户。
+
+    ``all`` 的 ``grantee_id`` 归一成空串：它不指向任何实体，只是「不限范围」。
+    没有这一档时，平台统一采购的账号只能逐部门授权，新增部门必然漏掉；
+    而按人授权更糟——新人入职必然漏。
+    """
+    if grantee_type not in GRANTEE_TYPES:
         raise SecretValidationError(f"未知的授权对象类型: {grantee_type}")
-    if not grantee_id:
+    if grantee_type == GRANTEE_ALL:
+        grantee_id = ""
+    elif not grantee_id:
         raise SecretValidationError("授权对象不能为空")
 
     secret = await session.get(UserSecret, secret_id)
@@ -509,21 +603,29 @@ async def list_visible_secrets(
     user_id: str,
     dept_code: str | None = None,
     include_system: bool = True,
+    only_active: bool = False,
 ) -> Sequence[UserSecret]:
     """列出用户能「看见」的凭据：自己的 + 被授权的系统级。
 
     未授权的系统级凭据**连名称都不返回**——凭据名本身也是情报。
+
+    ``only_active``：只看能用的。**给选择器和绑定校验用**——停用的凭据摆进下拉，
+    用户选中、保存成功，等到调用时才发现被拒，等于白配一次。
+    凭据管理页要能看见停用的（否则没法重新启用），所以默认不筛。
     """
     conditions = [
         and_(UserSecret.owner_scope == SCOPE_USER, UserSecret.owner_id == user_id)
     ]
     if include_system:
         grant_conditions = [
-            and_(SecretGrant.grantee_type == "user", SecretGrant.grantee_id == user_id)
+            and_(SecretGrant.grantee_type == GRANTEE_USER, SecretGrant.grantee_id == user_id),
+            # 「授权给全体用户」。少了这条，`_has_grant` 放行、这里却看不见——
+            # 表现就是「调用真的能成功，但选择器里找不到这条凭据」。
+            SecretGrant.grantee_type == GRANTEE_ALL,
         ]
         if dept_code:
             grant_conditions.append(
-                and_(SecretGrant.grantee_type == "dept", SecretGrant.grantee_id == dept_code)
+                and_(SecretGrant.grantee_type == GRANTEE_DEPT, SecretGrant.grantee_id == dept_code)
             )
         granted_ids = select(SecretGrant.secret_id).where(
             or_(*grant_conditions),
@@ -533,9 +635,13 @@ async def list_visible_secrets(
             and_(UserSecret.owner_scope == SCOPE_SYSTEM, UserSecret.id.in_(granted_ids))
         )
 
+    # 注意：`conditions` 最终要进 `or_()`，往里追加等于「只要 active 就可见」。
+    # 附加过滤必须走 AND。
+    extra = [UserSecret.status == "active"] if only_active else []
+
     stmt = (
         select(UserSecret)
-        .where(or_(*conditions))
+        .where(or_(*conditions), *extra)
         .order_by(UserSecret.owner_scope.desc(), UserSecret.secret_key)
     )
     return (await session.execute(stmt)).scalars().all()
@@ -737,7 +843,9 @@ async def read_variable_value(
     if row.owner_scope == SCOPE_USER and row.owner_id != actor_id:
         raise SecretPermissionError("不能读取他人的凭据")
     if row.owner_scope == SCOPE_SYSTEM:
-        visible = await list_visible_secrets(session, user_id=actor_id, dept_code=dept_code)
+        visible = await list_visible_secrets(
+            session, user_id=actor_id, dept_code=dept_code, only_active=True
+        )
         if row.id not in {item.id for item in visible}:
             # 未授权就当它不存在，和列表页一个口径
             raise SecretPermissionError("不能读取他人的凭据")

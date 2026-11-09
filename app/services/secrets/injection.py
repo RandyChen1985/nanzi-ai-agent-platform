@@ -25,8 +25,10 @@ from urllib.parse import urlparse
 from app.services.secrets.policy import (
     CONSUMER_API_TOOL,
     CONSUMER_MCP,
+    DENY_BINDING,
     SCENE_API_TOOL,
     SCENE_MCP,
+    resolve_api_tool_slot,
 )
 from app.services.secrets.resolver import secret_resolver
 from app.services.ai.tools.tool_credentials import CREDENTIAL_PLACEHOLDER_PREFIX
@@ -263,14 +265,15 @@ async def apply_api_tool_param_bindings(
     if not user_id:
         return params
 
-    prefix = "query" if (method or "GET").upper() == "GET" else "body"
-    target = host_of(getattr(config, "url_template", None))
+    url_template = getattr(config, "url_template", None)
+    target = host_of(url_template)
     trace_id = _current_trace_id()
     resolved = dict(params)
     limit = await _max_inject_per_call()
     injected = 0
 
     for name in names:
+        slot = resolve_api_tool_slot(name=name, method=method, url_template=url_template)
         if injected >= limit:
             logger.warning(
                 "[SecretInject] API 工具 %s 命中注入上限 %s 条，参数 %s 未注入",
@@ -283,7 +286,9 @@ async def apply_api_tool_param_bindings(
                 scene=SCENE_API_TOOL,
                 consumer_type=CONSUMER_API_TOOL,
                 consumer_id=str(getattr(config, "id", "") or ""),
-                slot=f"{prefix}:{name}",
+                # 槽位由这里推，不写死前缀：POST /refund/{applicant} 里的
+                # applicant 是 path 参数，不是 body 字段。
+                slot=slot,
                 target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
@@ -304,7 +309,7 @@ async def apply_api_tool_param_bindings(
                     "[SecretInject] API 工具 %s 的参数 %s 被拒绝: %s",
                     getattr(config, "name", "?"), name, result.denial,
                 )
-            _record(denials, f"{prefix}:{name}", result.denial)
+            _record(denials, slot, result.denial)
 
     return resolved
 
@@ -410,6 +415,111 @@ async def apply_mcp_bindings(
     return resolved
 
 
+def mcp_arg_slots(tool_record: Any) -> list[tuple[str, str]]:
+    """工具声明过的凭据参数 → ``[(参数名, 槽位), ...]``。
+
+    槽位是 ``arg:<短工具名>:<参数名>``。带工具名是因为同一服务下多个工具可能都有
+    ``api_key``，光靠参数名会互相覆盖；用 ``:`` 后的短名即可，服务已经由
+    ``consumer_id`` 限定。
+    """
+    import json as _json
+
+    raw = getattr(tool_record, "credential_params", None)
+    if not raw:
+        return []
+    try:
+        names = _json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        # 字段写坏了按「没有声明」处理：宁可什么都不注入，也不能拿半截数据去猜
+        logger.warning(
+            "[SecretInject] 工具 %s 的 credential_params 不是合法 JSON，跳过",
+            getattr(tool_record, "tool_name", "?"),
+        )
+        return []
+    if not isinstance(names, list):
+        return []
+
+    full_name = str(getattr(tool_record, "tool_name", "") or "")
+    short = full_name.split(":", 1)[1] if ":" in full_name else full_name
+    if not short:
+        return []
+    return [
+        (name, f"arg:{short}:{name}")
+        for name in names
+        if isinstance(name, str) and name.strip()
+    ]
+
+
+async def apply_mcp_arg_bindings(
+    tool_record: Any,
+    arguments: dict[str, Any],
+    *,
+    user_info: Mapping[str, Any] | None = None,
+    denials: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """把凭据填进 MCP 工具调用的 ``arguments``。
+
+    只处理工具上**声明过**的 ``credential_params``——声明过的参数已经不在模型
+    可见的 schema 里，模型不会给值，这里填的就是唯一来源。没声明的参数原样透传。
+
+    与 Header 那条链路的区别：Header 是「没人绑时的默认值」，所以绑定优先覆盖；
+    这里没有「默认值」可言（模型看不到它），取不到就是取不到，由调用方报错。
+    """
+    pairs = mcp_arg_slots(tool_record)
+    if not pairs:
+        return arguments
+
+    user_id, dept_code = _current_user(user_info)
+    if not user_id:
+        return arguments
+
+    server_id = str(getattr(tool_record, "server_id", "") or "")
+    if not server_id:
+        return arguments
+
+    trace_id = _current_trace_id()
+    resolved = dict(arguments)
+    limit = await _max_inject_per_call()
+
+    for index, (name, slot) in enumerate(pairs):
+        if index >= limit:
+            logger.warning(
+                "[SecretInject] 工具 %s 声明了 %s 个凭据参数，超过单次注入上限 %s，其余不再注入",
+                getattr(tool_record, "tool_name", "?"), len(pairs), limit,
+            )
+            break
+        try:
+            result = await secret_resolver.resolve(
+                user_id=user_id,
+                scene=SCENE_MCP,
+                consumer_type=CONSUMER_MCP,
+                consumer_id=server_id,
+                slot=slot,
+                trace_id=trace_id,
+                dept_code=dept_code,
+            )
+        except Exception as exc:  # noqa: BLE001 - 凭据中心挂了不该炸掉工具调用
+            logger.warning(
+                "[SecretInject] 工具 %s 的参数 %s 解析失败: %s",
+                getattr(tool_record, "tool_name", "?"), name, exc,
+            )
+            if denials is not None:
+                denials[slot] = denial_text(None)
+            continue
+
+        if result.ok and result.value is not None:
+            # 无条件覆盖：模型理论上不会给这个参数值（schema 里已剔除），
+            # 但如果它从上下文里猜出来传了，凭据才是唯一可信来源。
+            resolved[name] = result.value.reveal()
+        else:
+            # **不能复用 `_record`**：它特意跳过「没有绑定」，因为对 Header 而言
+            # 那是常态。参数级正相反——声明过就必须有值，没绑同样是缺参数。
+            if denials is not None:
+                denials[slot] = denial_text(result.denial)
+
+    return resolved
+
+
 def shell_quote(value: str) -> str:
     """把一个值渲染成 POSIX shell 单引号字面量。
 
@@ -481,7 +591,8 @@ async def list_bound_slots(
 
     slots: list[str] = []
     for row in rows:
-        if row.bound_by_user_id not in (None, user_id):
+        # 空串与 NULL 都表示全局绑定
+        if row.bound_by_user_id and row.bound_by_user_id != user_id:
             continue
         if not str(row.slot or "").startswith(prefix):
             continue

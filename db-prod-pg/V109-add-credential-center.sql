@@ -1,20 +1,28 @@
--- V109: 用户级凭据中心四张表（PostgreSQL 方言）
+-- =====================================================================
+-- 凭据中心：一次建完（PostgreSQL 方言）
+-- 创建时间：2026-11-09
+-- 注意事项：该脚本仅做生成，不得由 Agent 自动执行，由用户手动导入更新到数据库。
+-- =====================================================================
 --
--- ⚠️ 本脚本不指定 schema（没有 SET search_path），在哪个 schema 执行就建在哪个 schema。
---    执行前先确认 `SELECT current_schema();` 与连接串里的一致，否则会出现
---    「表建好了但接口报 relation \"sys_secrets\" does not exist」。
+-- 与 db-prod/V209 同内容、同顺序，只是方言不同。两套必须一起改，
+-- 只改一套的话另一种数据库的用户升级后会遇到「接口报不存在」。
+--
+-- 整份脚本完全幂等，重复执行无副作用：
+--   * CREATE TABLE IF NOT EXISTS
+--   * 菜单用 INSERT ... WHERE NOT EXISTS
+--   * ADD COLUMN IF NOT EXISTS
+--   * UPDATE ... WHERE IS NULL 与 ALTER COLUMN SET NOT NULL 本身幂等
+--
+-- PostgreSQL 的唯一索引同样把 NULL 视为互不相等，所以第五节的空串改造
+-- 在两种数据库上都是必须的。
+--
+-- 不含本主题的迁移仍独立存在（V110 产物父会话），不要并进来。
 
---
--- 与 MySQL db-prod/V209-add-credential-center.sql 保持同一口径，字段语义、
--- 约束、默认值一一对应。差异只在方言层：
---   * JSON          → JSONB（可索引、去重键）
---   * DATETIME(6)   → TIMESTAMP(6) / TIMESTAMPTZ
---   * 空串默认      → 同样用 '' 而非 NULL，理由见 MySQL 版本注释
---   * 内联 COMMENT  → COMMENT ON COLUMN
---
--- 本次只新增表，不改动任何既有表。
 
--- ── 凭据本体 ───────────────────────────────────────────────────────────
+-- =======================================================================
+-- 一、凭据中心四张表 + 注入策略默认值
+-- =======================================================================
+
 CREATE TABLE IF NOT EXISTS "sys_secrets" (
   "id" VARCHAR(36) NOT NULL,
   "owner_scope" VARCHAR(16) NOT NULL DEFAULT 'user',
@@ -175,3 +183,73 @@ SET
     "category" = EXCLUDED."category",
     "is_secret" = EXCLUDED."is_secret",
     "updated_at" = CURRENT_TIMESTAMP;
+
+
+-- =======================================================================
+-- 二、菜单与功能点（由 menu_seed.py 生成，勿手改）
+-- =======================================================================
+
+-- >>> gen_menu_seed_sql:credential-center START（本段由脚本生成，勿手改）>>>
+-- ========== 菜单与权限节点 seed（2 条）==========
+-- 顺序即同级排序；分组先于其子项，页面先于其功能点，因此逐条插入不需要额外的拓扑排序。
+
+INSERT INTO "ai_agent_menus"
+    ("parent_id", "node_type", "code", "permission_code", "label", "icon", "path", "active_route_names", "url", "open_mode", "sort_order", "enabled", "desktop_only", "is_landing", "builtin", "description", "created_at", "updated_at")
+SELECT (SELECT p.id FROM "ai_agent_menus" p WHERE p.code = 'group:system'), 'page', 'menu:system:credentials', 'menu:system:credentials', '凭据中心', 'key', '/dashboard/secrets', 'AdminSecretCenter', NULL, NULL, 60, TRUE, FALSE, FALSE, TRUE, '系统级凭据的创建、授权与停用', NOW(), NOW()
+WHERE NOT EXISTS (SELECT 1 FROM "ai_agent_menus" m WHERE m.code = 'menu:system:credentials');
+
+INSERT INTO "ai_agent_menus"
+    ("parent_id", "node_type", "code", "permission_code", "label", "icon", "path", "active_route_names", "url", "open_mode", "sort_order", "enabled", "desktop_only", "is_landing", "builtin", "description", "created_at", "updated_at")
+SELECT (SELECT p.id FROM "ai_agent_menus" p WHERE p.code = 'menu:system:credentials'), 'element', 'element:system:credentials_manage', NULL, '管理系统凭据（授权 / 强制停用）', NULL, NULL, NULL, NULL, NULL, 10, TRUE, FALSE, FALSE, TRUE, NULL, NOW(), NOW()
+WHERE NOT EXISTS (SELECT 1 FROM "ai_agent_menus" m WHERE m.code = 'element:system:credentials_manage');
+-- <<< gen_menu_seed_sql:credential-center END <<<
+
+
+-- =======================================================================
+-- 三、凭据变更审计表
+-- =======================================================================
+
+CREATE TABLE IF NOT EXISTS sys_secret_audit_logs (
+  id VARCHAR(36) PRIMARY KEY,
+  secret_id VARCHAR(36) NULL,
+  secret_key_snapshot VARCHAR(128) NULL,
+  owner_scope VARCHAR(16) NULL,
+  actor_id VARCHAR(64) NULL,
+  actor_name VARCHAR(128) NULL,
+  action VARCHAR(24) NOT NULL,
+  detail TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_secret_audit_secret_created
+  ON sys_secret_audit_logs (secret_id, created_at);
+CREATE INDEX IF NOT EXISTS ix_secret_audit_actor_created
+  ON sys_secret_audit_logs (actor_id, created_at);
+CREATE INDEX IF NOT EXISTS ix_secret_audit_action
+  ON sys_secret_audit_logs (action);
+
+COMMENT ON TABLE sys_secret_audit_logs IS '凭据变更审计：谁在什么时候对哪条凭据做了什么';
+
+
+-- =======================================================================
+-- 四、MCP 工具：声明哪些参数的值由凭据中心提供
+-- =======================================================================
+
+ALTER TABLE sys_mcp_tool_cache
+    ADD COLUMN IF NOT EXISTS credential_params TEXT NULL;
+
+COMMENT ON COLUMN sys_mcp_tool_cache.credential_params
+    IS '值由凭据中心提供的参数名，JSON 数组';
+
+
+-- =======================================================================
+-- 五、绑定唯一性：全局绑定改用空串，让唯一索引真正生效
+-- =======================================================================
+
+UPDATE sys_secret_bindings SET bound_by_user_id = '' WHERE bound_by_user_id IS NULL;
+
+ALTER TABLE sys_secret_bindings
+    ALTER COLUMN bound_by_user_id SET DEFAULT '',
+    ALTER COLUMN bound_by_user_id SET NOT NULL;
+
+COMMENT ON COLUMN sys_secret_bindings.bound_by_user_id IS '空串=管理员全局绑定；有值=只对该用户生效';

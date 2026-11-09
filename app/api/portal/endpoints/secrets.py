@@ -30,10 +30,13 @@ from app.services.secrets.injection import denial_text
 from app.services.secrets.center import SecretPermissionError, SecretValidationError
 from app.services.secrets.policy import (
     ALL_SCENES,
+    CONSUMER_API_TOOL,
+    CONSUMER_MCP,
     SCOPE_SYSTEM,
     SCOPE_USER,
     TYPE_CREDENTIAL,
     TYPE_VARIABLE,
+    resolve_api_tool_slot,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,13 +80,18 @@ class BindRequest(BaseModel):
     secret_id: str
     consumer_type: str
     consumer_id: str
-    slot: str
+    #: 直接指定槽位（``header:Authorization`` / ``env:VAR`` …）
+    slot: str = ""
+    #: 参数级绑定时只给参数名，槽位由后端按消费方推算。
+    #: 前端不该关心「GET 走 query、POST 走 body、URL 占位走 path」。
+    name: str = ""
 
 
 class UnbindRequest(BaseModel):
     consumer_type: str
     consumer_id: str
-    slot: str
+    slot: str = ""
+    name: str = ""
 
 
 class PrefsRequest(BaseModel):
@@ -101,8 +109,9 @@ class StatusRequest(BaseModel):
 
 
 class GrantRequest(BaseModel):
-    grantee_type: str = Field(..., description="user / dept")
-    grantee_id: str
+    grantee_type: str = Field(..., description="user / dept / all")
+    #: ``all`` 时留空——它不指向任何实体
+    grantee_id: str = ""
     expires_at: Optional[datetime] = None
 
 
@@ -318,7 +327,10 @@ async def picker(
     系统级只返回被授权的那几条——未授权的连名字都不出现。
     """
     user_id, dept_code = _user_ctx(user_info)
-    rows = await center.list_visible_secrets(db, user_id=user_id, dept_code=dept_code)
+    # 选择器只列能用的：停用的摆进来，用户选中、绑定成功，调用时才发现被拒
+    rows = await center.list_visible_secrets(
+        db, user_id=user_id, dept_code=dept_code, only_active=True
+    )
 
     grouped: Dict[str, List[Dict[str, Any]]] = {"mine": [], "shared": []}
     for row in rows:
@@ -492,13 +504,20 @@ async def get_bindings(
                 "secret_key": secret.secret_key,
                 "secret_name": secret.name,
                 "owner_scope": secret.owner_scope,
+                # 绑定还在，但凭据可能已被停用/过期——界面要能标出来，
+                # 否则用户看到「已绑定」却调不通，只能去翻日志
+                "secret_status": secret.status,
+                "secret_expires_at": (
+                    secret.expires_at.isoformat() if secret.expires_at else None
+                ),
                 "consumer_type": binding.consumer_type,
                 "consumer_id": binding.consumer_id,
                 # 别人做的个人绑定不该被看见
                 "bound_by_me": binding.bound_by_user_id == user_id,
             }
             for binding, secret in rows
-            if binding.bound_by_user_id in (None, user_id)
+            # 全局绑定迁移后是空串，迁移前是 NULL，两种都算「可见」
+            if not binding.bound_by_user_id or binding.bound_by_user_id == user_id
         ],
     }
 
@@ -563,7 +582,7 @@ async def list_platform_credential_targets(
     """
     from sqlalchemy import select
 
-    from app.models.mcp import McpServer
+    from app.models.mcp import McpServer, McpToolCache
     from app.models.secret import SecretBinding, UserSecret
     from app.models.tool import SysApiTool
     from app.services.ai.tools.system_params import credential_param_names
@@ -617,13 +636,18 @@ async def list_platform_credential_targets(
     bindings: Dict[str, Dict[str, Any]] = {}
     for binding, secret in rows:
         # 别人的个人绑定与我无关；系统级绑定（bound_by_user_id 为空）要显示
-        if binding.bound_by_user_id not in (None, user_id):
+        # 空串与 NULL 都表示全局绑定
+        if binding.bound_by_user_id and binding.bound_by_user_id != user_id:
             continue
         bindings[f"{binding.consumer_type}:{binding.consumer_id}:{binding.slot}"] = {
             "secret_id": secret.id,
             "secret_key": secret.secret_key,
             "secret_name": secret.name,
             "owner_scope": secret.owner_scope,
+            "secret_status": secret.status,
+            "secret_expires_at": (
+                secret.expires_at.isoformat() if secret.expires_at else None
+            ),
             "bound_by_me": binding.bound_by_user_id == user_id,
         }
 
@@ -631,6 +655,7 @@ async def list_platform_credential_targets(
         return bindings.get(f"{consumer_type}:{consumer_id}:{slot}")
 
     from app.services.mcp.mcp_auth_policy import resolve_mcp_auth_headers
+    from app.services.secrets.injection import mcp_arg_slots
 
     mcp_items = []
     for server in servers:
@@ -646,6 +671,21 @@ async def list_platform_credential_targets(
         slots = ["header:Authorization"] + [
             f"header:{name}" for name in header_names if name.lower() != "authorization"
         ]
+
+        # 参数级槽位：工具上声明了「值由凭据提供」的参数。漏掉它们的话用户在面板
+        # 里看不到、也就绑不了，而模型侧这些参数已被剔除，工具会一直报缺参数。
+        try:
+            tool_rows = list((await db.execute(
+                select(McpToolCache).where(McpToolCache.server_id == server.id)
+            )).scalars().all())
+        except Exception:
+            logger.warning("MCP 服务 %s 的工具列表读取失败", server.id)
+            tool_rows = []
+        for tool_row in tool_rows:
+            for name, slot in mcp_arg_slots(tool_row):
+                if slot not in slots:
+                    slots.append(slot)
+
         mcp_items.append({
             "id": server.id,
             "server_name": server.server_name,
@@ -728,6 +768,44 @@ async def list_mcp_credential_targets(
     return {"code": 0, "data": payload["data"]["mcp_servers"]}
 
 
+async def _resolve_slot(
+    db: AsyncSession, *, consumer_type: str, consumer_id: str, slot: str, name: str
+) -> str:
+    """槽位：给了就用，没给就按消费方推算。
+
+    参数级绑定只需要参数名——前端算不准，而且不该算：`POST /refund/{applicant}`
+    里的 `applicant` 是 path 参数、`GET` 的同名参数在 query、其它方法在 body，
+    这三者都取决于工具自己的配置。
+    """
+    if slot:
+        return slot
+    clean = str(name or "").strip()
+    if not clean:
+        raise HTTPException(status_code=400, detail="slot 和 name 至少要给一个")
+
+    if consumer_type == CONSUMER_API_TOOL:
+        from app.models.tool import SysApiTool
+
+        tool = await db.get(SysApiTool, consumer_id)
+        if tool is None:
+            raise HTTPException(status_code=404, detail="工具不存在")
+        return resolve_api_tool_slot(
+            name=clean,
+            method=getattr(tool, "method", None),
+            url_template=getattr(tool, "url_template", None),
+        )
+
+    if consumer_type == CONSUMER_MCP:
+        # MCP 的参数槽位带工具短名，光有参数名推不出来——前端本来就知道自己在
+        # 哪个工具里，直接给完整槽位更省事。
+        raise HTTPException(
+            status_code=400,
+            detail="MCP 参数请直接给槽位（arg:<短工具名>:<参数名>）",
+        )
+
+    raise HTTPException(status_code=400, detail=f"{consumer_type} 不支持按参数名绑定")
+
+
 @router.post("/bindings", summary="把一个槽位绑到凭据上")
 async def create_binding(
     payload: BindRequest,
@@ -735,13 +813,20 @@ async def create_binding(
     db: AsyncSession = Depends(get_db_session),
 ):
     user_id, dept_code = _user_ctx(user_info)
+    slot = await _resolve_slot(
+        db,
+        consumer_type=payload.consumer_type,
+        consumer_id=payload.consumer_id,
+        slot=payload.slot,
+        name=payload.name,
+    )
     try:
         binding = await center.bind_secret(
             db,
             secret_id=payload.secret_id,
             consumer_type=payload.consumer_type,
             consumer_id=payload.consumer_id,
-            slot=payload.slot,
+            slot=slot,
             bound_by_user_id=user_id,
             dept_code=dept_code,
         )
@@ -759,11 +844,18 @@ async def delete_binding(
     db: AsyncSession = Depends(get_db_session),
 ):
     user_id, _ = _user_ctx(user_info)
-    removed = await center.unbind_slot(
+    slot = await _resolve_slot(
         db,
         consumer_type=payload.consumer_type,
         consumer_id=payload.consumer_id,
         slot=payload.slot,
+        name=payload.name,
+    )
+    removed = await center.unbind_slot(
+        db,
+        consumer_type=payload.consumer_type,
+        consumer_id=payload.consumer_id,
+        slot=slot,
         bound_by_user_id=user_id,
     )
     return {"code": 0, "message": "已解绑", "data": {"removed": removed}}
@@ -900,7 +992,8 @@ async def admin_grant(
 async def admin_revoke(
     secret_id: str,
     grantee_type: str = Query(...),
-    grantee_id: str = Query(...),
+    #: ``all`` 时传空串
+    grantee_id: str = Query(""),
     admin: Dict[str, Any] = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):

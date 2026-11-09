@@ -40,7 +40,10 @@ def test_only_global_mcp_servers_are_listed():
 
 def test_other_users_personal_bindings_are_filtered():
     # 系统级绑定（bound_by_user_id 为空）要显示，别人的个人绑定不能显示
-    assert "binding.bound_by_user_id not in (None, user_id)" in _targets_source()
+    # 全局绑定迁移后用空串表示（NULL 在唯一索引里互不相等，等于没约束），
+    # 所以判断从 `not in (None, user_id)` 改成了「真值且不是我」
+    source = _targets_source()
+    assert "binding.bound_by_user_id and binding.bound_by_user_id != user_id" in source
 
 
 def test_fixed_token_flag_uses_the_real_column():
