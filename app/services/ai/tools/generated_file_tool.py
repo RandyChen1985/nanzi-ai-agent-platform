@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
 from app.core.context import get_current_agent_context
-from app.services.ai.tools.generated_file_service import register_artifact
+from app.services.ai.tools.generated_file_service import (
+    register_artifact,
+    resolve_delegation_parent_scope,
+)
 from app.services.ai.tools.tool_compat import tool
 
+logger = logging.getLogger(__name__)
+
 _DOCKER_WORKSPACE_ROOT = "/workspace"
+# 子代理产物在父会话工作区里的共享目录：主代理可直接读取，无需二次发布。
+_DELIVERABLES_DIR_NAME = "deliverables"
 
 _EXTENSION_ARTIFACT_TYPES = {
     ".md": "markdown",
@@ -108,6 +117,75 @@ def _workspace_user_key(context: Any) -> str:
     )
 
 
+def _delegation_parent_context(context: Any) -> tuple[str | None, str | None, str | None]:
+    """返回委派父归属 ``(parent_conversation_id, parent_trace_id, run_id)``。
+
+    非委派场景（``delegation_depth <= 0``）三项均为 None：产物按当前会话登记。
+    口径统一在 ``generated_file_service.resolve_delegation_parent_scope``，与
+    Office 写工具等其它登记入口保持一致。
+    """
+    return resolve_delegation_parent_scope(context)
+
+
+async def _mirror_to_parent_session(
+    source: Path,
+    *,
+    context: Any,
+    filename: str,
+    parent_conversation_id: str,
+    run_id: str | None,
+) -> tuple[Path, str] | None:
+    """把子代理产物复制到父会话 ``deliverables/<run>/``，供主代理直接读取。
+
+    返回 ``(副本绝对路径, 相对父会话工作区的路径)``；复制失败只告警并返回 None，
+    回退到原路径登记 —— 发布下载地址不能因为镜像失败而失败。
+    """
+    from app.services.ai.runtime.agentscope.workspace import (
+        resolve_session_workdir,
+        resolve_user_workspace_root,
+        resolve_workspace_root,
+    )
+
+    try:
+        root = Path(await resolve_workspace_root()).resolve()
+        user_name = _user_name(context)
+        user_root = Path(
+            resolve_user_workspace_root(
+                root=str(root),
+                user_id=context.user_id,
+                user_name=user_name,
+            )
+        ).resolve()
+        parent_workdir = Path(
+            resolve_session_workdir(
+                root=str(root),
+                user_id=context.user_id,
+                user_name=user_name,
+                conversation_id=parent_conversation_id,
+            )
+        ).resolve()
+        target_dir = parent_workdir / _DELIVERABLES_DIR_NAME / (run_id or "subagent")
+        if not _path_under(target_dir, user_root):
+            logger.warning(
+                "[publish_generated_file] refusing to mirror outside user workspace: %s",
+                target_dir,
+            )
+            return None
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / filename
+        if target.resolve() != source:
+            shutil.copy2(source, target)
+        return target, str(target.relative_to(parent_workdir))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[publish_generated_file] failed to mirror %s to parent session %s: %s",
+            source,
+            parent_conversation_id,
+            exc,
+        )
+        return None
+
+
 @tool
 async def publish_generated_file(
     path: str,
@@ -121,6 +199,13 @@ async def publish_generated_file(
     final response; never replace it with a physical path or an invented URL.
     Supports local workspace paths, session-relative paths, and Docker
     ``/workspace/...`` paths. It never creates or modifies the source file.
+
+    In a delegated subagent turn the artifact is additionally registered against
+    the parent conversation and mirrored to ``deliverables/<run>/`` inside the
+    parent session workspace, returned as ``parent_workspace_path``; the parent
+    agent can read that relative path directly and must not publish it again.
+    When publishing as a delegated subagent, mention ``parent_workspace_path``
+    in your final answer so the parent can reuse the file without guessing.
     """
     context = get_current_agent_context()
     if context is None:
@@ -131,26 +216,47 @@ async def publish_generated_file(
     if not display_filename or display_filename in {".", ".."}:
         raise ValueError("下载文件名无效")
 
+    parent_conversation_id, parent_trace_id, delegation_run_id = _delegation_parent_context(
+        context
+    )
+    publish_source = source
+    parent_workspace_path: str | None = None
+    if parent_conversation_id:
+        mirrored = await _mirror_to_parent_session(
+            source,
+            context=context,
+            filename=display_filename,
+            parent_conversation_id=parent_conversation_id,
+            run_id=delegation_run_id,
+        )
+        if mirrored is not None:
+            publish_source, parent_workspace_path = mirrored
+
     try:
         artifact = await register_artifact(
-            source_path=source,
+            source_path=publish_source,
             filename=display_filename,
             owner_user_id=context.user_id,
-            artifact_type=_artifact_type(source, artifact_type),
+            artifact_type=_artifact_type(publish_source, artifact_type),
             conversation_id=context.conversation_id,
+            parent_conversation_id=parent_conversation_id,
             trace_id=context.trace_id,
+            parent_trace_id=parent_trace_id,
         )
     except Exception as exc:  # noqa: BLE001
         raise ValueError(f"文件已存在，但下载地址登记失败：{exc}") from exc
 
     payload = artifact.to_tool_payload()
-    return {
+    result: dict[str, Any] = {
         "status": "ok",
         "summary": "已生成文件下载地址",
-        "artifact_type": _artifact_type(source, artifact_type),
+        "artifact_type": _artifact_type(publish_source, artifact_type),
         "filename": payload["filename"],
         "mime_type": payload["mime_type"],
         "size": payload["size"],
         "download_url": payload["download_url"],
         "expires_at": artifact.expires_at.isoformat(),
     }
+    if parent_workspace_path:
+        result["parent_workspace_path"] = parent_workspace_path
+    return result

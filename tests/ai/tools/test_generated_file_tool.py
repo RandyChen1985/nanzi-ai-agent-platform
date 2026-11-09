@@ -134,3 +134,70 @@ def test_publish_generated_file_is_system_implicit():
 
     assert "publish_generated_file" in names
     assert ToolRegistry._registry["publish_generated_file"].name == "publish_generated_file"
+
+
+@pytest.mark.asyncio
+async def test_publish_generated_file_registers_parent_conversation_for_subagent(
+    publish_env,
+    monkeypatch,
+):
+    """子代理发布产物：登记父会话归属，并把文件镜像到父会话 deliverables/。
+
+    回归背景：子代理跑在 child_session_* 独立会话上，产物只登记到子会话时，
+    主会话的产物列表/角标看不到，只能让主智能体再发布一次。
+    """
+    from app.services.ai.tools import generated_file_service
+    from app.services.ai.tools.generated_file_tool import publish_generated_file
+
+    root, docs_dir = publish_env
+    source = docs_dir / "report.md"
+    source.write_text("# report", encoding="utf-8")
+
+    fake_session = _FakeArtifactSession()
+    monkeypatch.setattr(generated_file_service, "AsyncSessionLocal", lambda: fake_session)
+
+    set_agent_context(
+        AgentContext(
+            agent_id="sub",
+            agent_name="SubAgent",
+            user_id=7,
+            conversation_id="child_session_subrun_1",
+            parent_conversation_id="conv-1",
+            trace_id="child_trace",
+            parent_trace_id="trace-1",
+            delegation_depth=1,
+            delegation_run_id="subrun_1",
+        )
+    )
+
+    result = await publish_generated_file.ainvoke({"path": str(source)})
+
+    assert result["status"] == "ok"
+    assert result["parent_workspace_path"] == "deliverables/subrun_1/report.md"
+
+    mirrored = (
+        root / "7" / "sessions" / "conv-1" / "deliverables" / "subrun_1" / "report.md"
+    )
+    assert mirrored.read_text(encoding="utf-8") == "# report"
+
+    artifact = fake_session.added[-1]
+    assert artifact.conversation_id == "child_session_subrun_1"
+    assert artifact.parent_conversation_id == "conv-1"
+    assert artifact.trace_id == "child_trace"
+    assert artifact.parent_trace_id == "trace-1"
+    assert artifact.storage_path == str(mirrored.resolve())
+
+
+@pytest.mark.asyncio
+async def test_publish_generated_file_without_delegation_has_no_parent_fields(publish_env):
+    """非委派发布保持原有归属，不产生 parent_* 字段。"""
+    from app.services.ai.tools.generated_file_tool import publish_generated_file
+
+    _, docs_dir = publish_env
+    source = docs_dir / "plain.md"
+    source.write_text("# plain", encoding="utf-8")
+
+    result = await publish_generated_file.ainvoke({"path": str(source)})
+
+    assert result["status"] == "ok"
+    assert "parent_workspace_path" not in result

@@ -345,3 +345,81 @@ async def test_list_artifacts_backfills_missing_expiry_with_utc(monkeypatch):
     # 返回的下载地址同样要由这个值派生出来
     token = resp.json()["data"]["items"][0]["download_url"].split("token=")[1]
     assert token == generated_file_service.build_artifact_token(row.id, row.expires_at)
+
+
+@pytest.mark.asyncio
+async def test_artifacts_list_query_aggregates_child_session_artifacts():
+    """子代理委派产物按 parent_conversation_id 聚合到父会话查询。
+
+    回归背景：子代理跑在 child_session_* 独立会话，产物只登记到子会话时，
+    主会话的产物面板/消息角标都看不到，只能让主智能体再发布一次。
+    """
+    from sqlalchemy.dialects import mysql
+
+    captured = []
+
+    class _RecordingSession:
+        async def scalar(self, stmt):
+            captured.append(stmt)
+            return 0
+
+        async def scalars(self, stmt):
+            return _FakeScalars([])
+
+        async def commit(self):
+            return None
+
+    app.dependency_overrides[chat_endpoint.require_api_key] = _fake_require_api_key(
+        {"user_id": "7", "role": "user"}
+    )
+    app.dependency_overrides[get_db_session] = _db_override(_RecordingSession())
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(
+                "/api/v1/chat/artifacts",
+                params={"conversation_id": "conv-1"},
+                headers={"X-API-Key": "test-key"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    sql = str(captured[0].compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "ai_artifacts.conversation_id = 'conv-1'" in sql
+    assert "ai_artifacts.parent_conversation_id = 'conv-1'" in sql
+
+
+@pytest.mark.asyncio
+async def test_artifacts_counts_group_child_artifacts_by_parent_trace():
+    """counts 按 coalesce(parent_trace_id, trace_id) 把子代理产物归到父消息。"""
+    from sqlalchemy.dialects import mysql
+
+    captured = []
+
+    class _Result:
+        def all(self):
+            return []
+
+    class _RecordingSession:
+        async def execute(self, stmt):
+            captured.append(stmt)
+            return _Result()
+
+    app.dependency_overrides[chat_endpoint.require_api_key] = _fake_require_api_key(
+        {"user_id": "7", "role": "user"}
+    )
+    app.dependency_overrides[get_db_session] = _db_override(_RecordingSession())
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(
+                "/api/v1/chat/artifacts/counts",
+                params={"conversation_id": "conv-1"},
+                headers={"X-API-Key": "test-key"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    sql = str(captured[0].compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "coalesce(ai_artifacts.parent_trace_id, ai_artifacts.trace_id)" in sql
+    assert "ai_artifacts.parent_conversation_id = 'conv-1'" in sql

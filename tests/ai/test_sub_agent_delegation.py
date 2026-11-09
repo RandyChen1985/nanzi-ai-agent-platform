@@ -350,6 +350,36 @@ async def test_consume_sub_agent_stream_legacy_promote_still_counts_as_answer():
     assert interrupt is None
 
 
+@pytest.mark.asyncio
+async def test_consume_sub_agent_stream_drops_reasoning_frames():
+    """子代理思考流不得进入委派工具结果，也不得转发到主聊天。
+
+    回归背景：THINKING_BLOCK_DELTA 被翻译成 ``{"type": "reasoning_content",
+    "content": delta}``，而 ``_extract_delegation_text`` 对任何带 content 的
+    chunk 都当正文，导致父智能体收到的工具结果被子代理的完整思考过程占满，
+    最终正文反而在 64KB 截断时被丢掉。
+    """
+    from app.services.ai.tools.agent_delegate_tool import _consume_sub_agent_stream
+
+    async def sub_stream():
+        yield {"type": "thinking", "status": "continuing"}
+        yield {"type": "reasoning_content", "content": "先分析用户意图，"}
+        yield {"type": "reasoning_content", "content": "再决定查哪张表。"}
+        yield {"content": "最终结论：销售额为 42。"}
+
+    eq = asyncio.Queue()
+    ctx = AgentContext(agent_id="main", agent_name="MainAgent", event_queue=eq)
+    full_output, interrupt = await _consume_sub_agent_stream(
+        sub_stream(),
+        main_ctx=ctx,
+        sub_display_name="数据分析师",
+    )
+
+    assert full_output == "最终结论：销售额为 42。"
+    assert interrupt is None
+    assert eq.empty(), "思考帧不应转发给主聊天"
+
+
 def test_finalize_delegation_output_empty():
     assert finalize_delegation_output("") == EMPTY_DELEGATION_RESULT_MESSAGE
     assert finalize_delegation_output("   ") == EMPTY_DELEGATION_RESULT_MESSAGE

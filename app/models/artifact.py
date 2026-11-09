@@ -18,7 +18,11 @@ class AiArtifact(Base):
     id = Column(String(32), primary_key=True)
     owner_user_id = Column(BigInteger, ForeignKey("ai_agent_users.id"), nullable=False, index=True)
     conversation_id = Column(String(128), nullable=True, index=True)
+    # 子代理委派产生的产物：conversation_id 仍是子会话（审计），父会话归属单独记录，
+    # 主会话的产物列表/消息角标据此聚合，避免要求主智能体二次发布。
+    parent_conversation_id = Column(String(128), nullable=True, index=True)
     trace_id = Column(String(64), nullable=True, index=True)
+    parent_trace_id = Column(String(64), nullable=True, index=True)
     # 产物类型：word | excel | export
     artifact_type = Column(String(32), nullable=False)
     filename = Column(String(255), nullable=False)

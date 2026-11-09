@@ -9,7 +9,11 @@ export interface ArtifactListItem {
   mime_type?: string | null
   size: number
   conversation_id?: string | null
+  /** 子代理委派产物可见的父会话 ID；非委派产物为空 */
+  parent_conversation_id?: string | null
   trace_id?: string | null
+  /** 子代理委派产物挂靠的父会话 trace_id；非委派产物为空 */
+  parent_trace_id?: string | null
   created_at?: string | null
   expires_at?: string | null
   /** 相对下载地址：/api/v1/chat/generated-files/{id}?token={token} */
