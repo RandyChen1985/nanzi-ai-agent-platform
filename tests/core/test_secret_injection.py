@@ -200,11 +200,16 @@ class TestApiToolInjection:
     async def test_usage_log_is_written(self):
         from sqlalchemy import select
 
-        await _seed_api_tool_binding()
+        secret = await _seed_api_tool_binding()
         await apply_api_tool_bindings(_config(), {"Authorization": ""}, user_info=USER)
 
         async with AsyncSessionLocal() as session:
-            rows = (await session.execute(select(SecretUsageLog))).scalars().all()
+            # 只看这条凭据的流水：共享库里还有别的用例和真实调用留下的记录
+            rows = (
+                await session.execute(
+                    select(SecretUsageLog).where(SecretUsageLog.secret_id == secret.id)
+                )
+            ).scalars().all()
 
         assert len(rows) == 1
         assert rows[0].scene == SCENE_API_TOOL
@@ -290,6 +295,177 @@ class TestMcpInjection:
         )
 
         assert result["Accept"] == "application/json"
+
+    async def test_empty_valued_header_is_filled_from_binding(self):
+        """「其他 Header」只绑凭据、值留空时，运行时必须把值补上。
+
+        前端 ``planMcpAuthHeaders`` 会把「绑了凭据但没填值」的行写成
+        ``{"X-Tenant": ""}``——这是刻意的，因为注入循环只遍历配置里已存在的
+        Header 名。这条契约能不能通，全看空值是否仍被认成「待填」：一旦
+        ``_looks_unfilled("")`` 不再是真，绑定就永远查不到，而界面上还写着
+        「来自凭据」。
+        """
+        async with AsyncSessionLocal() as session:
+            secret = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mcp.tenant",
+                name="租户标识",
+                value=PLAINTEXT,
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=["mcp.atlassian.net"],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="server-tenant",
+                slot="header:X-Tenant",
+                bound_by_user_id=USER_ID,
+            )
+
+        server = SimpleNamespace(id="server-tenant", sse_url="https://mcp.atlassian.net/sse")
+        result = await apply_mcp_bindings(server, {"X-Tenant": ""}, user_info=USER)
+
+        assert result["X-Tenant"] == PLAINTEXT
+
+
+    async def test_bound_header_overrides_existing_value(self):
+        """绑了凭据的 Header 必须**无条件**覆盖配置里的旧值。
+
+        旧实现只处理「值是空的 / 是占位符」或「名字像凭据头」两种 Header，于是
+        ``X-Tenant`` 这种带旧值、名字又不含 token/key/auth 的行被直接 ``continue``
+        —— 连数据库都不查，使用记录里一条都没有，用户只看到「绑了但没生效」。
+        前端绑定后值输入框被隐藏，用户也无法把旧值清空，等于死锁。
+        """
+        async with AsyncSessionLocal() as session:
+            secret = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mcp.tenant-override",
+                name="租户标识",
+                value=PLAINTEXT,
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=["mcp.atlassian.net"],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="server-headers",
+                slot="header:X-Tenant",
+                bound_by_user_id=USER_ID,
+            )
+
+        server = SimpleNamespace(id="server-headers", sse_url="https://mcp.atlassian.net/sse")
+        result = await apply_mcp_bindings(
+            server, {"X-Tenant": "old-configured-value"}, user_info=USER
+        )
+
+        assert result["X-Tenant"] == PLAINTEXT
+
+    async def test_bound_header_is_added_when_absent_from_config(self):
+        """配置里没有这个 Header、但槽位有绑定 —— 要补上，绑定就是显式意图。"""
+        async with AsyncSessionLocal() as session:
+            secret = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mcp.extra-header",
+                name="额外 Header",
+                value=PLAINTEXT,
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=["mcp.atlassian.net"],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="server-absent",
+                slot="header:X-Api-Key",
+                bound_by_user_id=USER_ID,
+            )
+
+        server = SimpleNamespace(id="server-absent", sse_url="https://mcp.atlassian.net/sse")
+        result = await apply_mcp_bindings(
+            server, {"Accept": "application/json"}, user_info=USER
+        )
+
+        assert result["X-Api-Key"] == PLAINTEXT
+        assert result["Accept"] == "application/json", "无关 Header 不受影响"
+
+    async def test_bound_slot_name_matches_header_case_insensitively(self):
+        """槽位名与配置里的 Header 大小写不同时，要覆盖原 key，而不是多出一个。"""
+        async with AsyncSessionLocal() as session:
+            secret = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mcp.case-fold",
+                name="大小写",
+                value=PLAINTEXT,
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=["mcp.atlassian.net"],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="server-case",
+                slot="header:x-tenant",
+                bound_by_user_id=USER_ID,
+            )
+
+        server = SimpleNamespace(id="server-case", sse_url="https://mcp.atlassian.net/sse")
+        result = await apply_mcp_bindings(
+            server, {"X-Tenant": "old", "Accept": "application/json"}, user_info=USER
+        )
+
+        assert result["X-Tenant"] == PLAINTEXT
+        assert "x-tenant" not in result, "不能因为大小写不同就多发一个 Header"
+
+
+    async def test_reports_bound_slots_for_session_isolation(self):
+        """把「这个用户在这个服务上有绑定」回传给调用方。
+
+        调用方（``call_remote_tool``）据此决定出站连接能否跨用户复用：SSE 的
+        Header 在建连时冻结，共用会话就是把先建连那个人的凭据发给所有人。
+        """
+        async with AsyncSessionLocal() as session:
+            secret = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mcp.report-used",
+                name="会话隔离",
+                value=PLAINTEXT,
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=["mcp.atlassian.net"],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="server-used",
+                slot="header:X-Tenant",
+                bound_by_user_id=USER_ID,
+            )
+
+        server = SimpleNamespace(id="server-used", sse_url="https://mcp.atlassian.net/sse")
+        used: dict = {}
+        await apply_mcp_bindings(
+            server, {"Accept": "application/json"}, user_info=USER, used=used
+        )
+
+        assert used["user_id"] == USER_ID
+        assert used["slots"] == ["header:X-Tenant"]
+
+    async def test_reports_nothing_when_service_has_no_binding(self):
+        """没绑定的服务不能被打上「需要隔离」的标记，否则连接复用白白丢掉。"""
+        server = SimpleNamespace(id="server-none", sse_url="https://mcp.atlassian.net/sse")
+        used: dict = {}
+        await apply_mcp_bindings(
+            server, {"Accept": "application/json"}, user_info=USER, used=used
+        )
+
+        assert not used.get("slots")
 
 
 class TestCurrentUserResolution:

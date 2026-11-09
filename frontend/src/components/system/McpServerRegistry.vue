@@ -45,6 +45,7 @@ import {
 } from '@heroicons/vue/24/outline'
 import McpServerLogModal from './McpServerLogModal.vue'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
+import { isAuthorizationHeader, planMcpAuthHeaders } from '@/utils/mcpAuthHeaders'
 import McpServerAgentsDrawer from './McpServerAgentsDrawer.vue'
 import { buildJavaMcpSample, buildPythonMcpSample } from './mcpCodeSamples'
 
@@ -400,8 +401,6 @@ const verifyAddressChanged = computed(() => (
   && newServer.value.sse_url.trim() !== savedSseUrl.value
 ))
 
-const isAuthorizationHeader = (key: string) => key.trim().toLowerCase() === 'authorization'
-
 const updateAuthorizationEnabled = (enabled: boolean) => {
   authorizationEnabled.value = enabled
   if (enabled) {
@@ -575,7 +574,12 @@ async function saveMcpBinding() {
 
 function openHeaderBind(key: string) {
   const name = key.trim()
-  if (!name) return
+  if (!name) {
+    // 槽位是「header:<名称>」，没有名称就没有可绑的对象。以前这里直接 return，
+    // 点了钥匙什么都不发生，看起来像按钮坏了。
+    showToast('先填写这个 Header 的名称，再绑定凭据', 'warning')
+    return
+  }
   headerBindSlot.value = name
   const existing = bindingOfHeader(name)
   headerBindSecretId.value = existing?.secret_id || null
@@ -713,29 +717,19 @@ const buildServerPayload = (server: any) => {
       payload.fixed_token = authorizationToken.value.trim()
     }
 
+    // 「其他 Header」统一走纯函数：新建态取 headers，编辑态取 patch。
+    const authPlan = planMcpAuthHeaders(
+      headerPairs.value,
+      (name) => Boolean(bindingOfHeader(name)),
+    )
+
     if (isEditing.value) {
       delete payload.auth_headers
-      const patch: Record<string, string | null> = {}
-      headerPairs.value.forEach((pair) => {
-        const key = pair.key.trim()
-        if (!key || isAuthorizationHeader(key)) return
-        if (pair.existing) {
-          if (pair.removed && pair.changed) patch[key] = null
-          else if (pair.changed && pair.value.trim()) patch[key] = pair.value.trim()
-        } else if (pair.value.trim()) {
-          patch[key] = pair.value.trim()
-        }
-      })
-      if (Object.keys(patch).length) payload.auth_headers_patch = patch
+      // 只绑凭据、不填值的行也会出现在 patch 里（值为空串）：运行时注入循环
+      // 只遍历服务配置中已存在的 Header 名，名字不在配置里绑定就永远查不到。
+      if (Object.keys(authPlan.patch).length) payload.auth_headers_patch = authPlan.patch
     } else if (headerMode.value === 'simple') {
-      const dynamicHeaders: Record<string, string> = {}
-      headerPairs.value.forEach((pair) => {
-        const key = pair.key.trim()
-        if (key && !isAuthorizationHeader(key) && pair.value.trim()) {
-          dynamicHeaders[key] = pair.value.trim()
-        }
-      })
-      payload.auth_headers = JSON.stringify(dynamicHeaders, null, 2)
+      payload.auth_headers = JSON.stringify(authPlan.headers, null, 2)
     } else {
       try {
         const advancedHeaders = JSON.parse(newServer.value.auth_headers || '{}')

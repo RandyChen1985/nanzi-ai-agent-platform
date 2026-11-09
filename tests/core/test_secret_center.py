@@ -286,9 +286,15 @@ class TestBindSecret:
             bound_by_user_id=USER_ID,
         )
 
+        # 只断言本用例这两条凭据的绑定：开发库里可能还有别人经 UI 建的真实绑定，
+        # 全表断言在共享库上必然随机失败，和被测行为无关。
         bindings = (
-            (await session.execute(select(SecretBinding))).scalars().all()
-        )
+            await session.execute(
+                select(SecretBinding).where(
+                    SecretBinding.secret_id.in_([first.id, second.id])
+                )
+            )
+        ).scalars().all()
         assert len(bindings) == 1
         assert bindings[0].secret_id == second.id
 
@@ -520,7 +526,12 @@ class TestDetachConsumer:
         )
         assert removed == 1
 
-        left = (await session.execute(select(SecretBinding))).scalars().all()
+        # 同上：只看这条凭据的绑定，别把共享库里别人的真实绑定算进来
+        left = (
+            await session.execute(
+                select(SecretBinding).where(SecretBinding.secret_id == row.id)
+            )
+        ).scalars().all()
         assert [b.consumer_id for b in left] == ["mcp-1"]
 
     async def test_missing_consumer_type_is_noop(self, session):

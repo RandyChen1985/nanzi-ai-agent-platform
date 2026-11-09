@@ -98,6 +98,28 @@ class TestHostAllowed:
         # 否则「先注入、再拼 URL」就绕过去了。
         assert host_allowed(None, ("api.github.com",)) is False
 
+    def test_star_allows_any_external_host(self):
+        """`*` 是用户表达「不限域名」的自然写法，必须按字面意思工作。
+
+        以前只支持精确匹配与 `*.example.com`，写 `*` 的结果是**任何外部域名都被
+        拒绝**——用户看着白名单里填了东西，实际一条都发不出去，还找不到原因。
+        """
+        assert host_allowed("mcp.api-inference.modelscope.net", ("*",)) is True
+        assert host_allowed("api.github.com", ("*",)) is True
+
+    def test_star_still_rejects_hostless_call(self):
+        """`*` 放宽的是「哪个域名」，不是「有没有域名」。
+
+        无目标域名的调用（内部拼接场景）在声明了白名单后仍然拒绝，
+        这条边界和 `*.example.com` 一致，不能因为写了 `*` 就放开。
+        """
+        assert host_allowed(None, ("*",)) is False
+
+    def test_star_works_alongside_other_patterns(self):
+        """混着写时 `*` 直接短路，其余模式不影响结果。"""
+        assert host_allowed("a.example.com", ("api.github.com", "*")) is True
+        assert host_allowed("b.example.com", ("api.github.com",)) is False
+
 
 class TestEvaluateSecret:
     def test_passes_when_everything_lines_up(self):

@@ -176,10 +176,19 @@ async def _resolve(resolver, **overrides):
     return await resolver.resolve(**kwargs)
 
 
-async def _usage_rows() -> list[SecretUsageLog]:
+async def _usage_rows(secret_id: str) -> list[SecretUsageLog]:
+    """只取这条凭据的流水。
+
+    开发库是共享的：别处（别的用例、手动验证、真实聊天）写的流水都会留在表里，
+    全表断言 ``len(rows) == 1`` 必然随机失败，且失败原因与当前断言的行为无关。
+    """
     async with AsyncSessionLocal() as session:
         return list(
-            (await session.execute(select(SecretUsageLog))).scalars().all()
+            (
+                await session.execute(
+                    select(SecretUsageLog).where(SecretUsageLog.secret_id == secret_id)
+                )
+            ).scalars().all()
         )
 
 
@@ -203,7 +212,7 @@ class TestResolveHappyPath:
 
         await _resolve(resolver)
 
-        rows = await _usage_rows()
+        rows = await _usage_rows(secret_id)
         assert len(rows) == 1
         assert rows[0].result == "success"
         assert rows[0].secret_key_snapshot == "jira.prod.token"

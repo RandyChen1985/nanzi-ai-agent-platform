@@ -148,6 +148,7 @@ void load()
       </div>
       <input
         v-model="keyword"
+        type="search"
         :placeholder="activeType === 'user' ? '搜索姓名 / 账号 / 邮箱' : '搜索部门名称'"
         class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
         @input="onInput"

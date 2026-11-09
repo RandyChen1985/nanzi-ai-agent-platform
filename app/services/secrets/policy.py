@@ -176,6 +176,7 @@ def host_allowed(target_host: str | None, allowed_hosts: Iterable[str]) -> bool:
     """目标域名是否落在白名单内。
 
     * 白名单为空 → 只允许平台内部目标（无域名 / localhost / 内网后缀）；
+    * ``*`` → 任意域名（但仍要求**有**目标域名，见下）；
     * 支持 ``*.example.com`` 通配子域（**不**匹配 ``example.com`` 本身）；
     * 精确匹配，大小写不敏感。
     """
@@ -191,6 +192,10 @@ def host_allowed(target_host: str | None, allowed_hosts: Iterable[str]) -> bool:
         return False
 
     for pattern in patterns:
+        # `*` = 不限域名（用户最自然的写法）。没有它的话，白名单里填了东西
+        # 反而把所有外部域名都拒掉，且拒绝理由只有一句「域名不在白名单里」。
+        if pattern == "*":
+            return True
         if pattern == target:
             return True
         if pattern.startswith("*.") and fnmatch.fnmatchcase(target, pattern):

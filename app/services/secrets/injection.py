@@ -30,7 +30,6 @@ from app.services.secrets.policy import (
 )
 from app.services.secrets.resolver import secret_resolver
 from app.services.ai.tools.tool_credentials import CREDENTIAL_PLACEHOLDER_PREFIX
-from app.services.mcp.mcp_auth_policy import looks_like_credential_header
 
 logger = logging.getLogger(__name__)
 
@@ -310,24 +309,42 @@ async def apply_api_tool_param_bindings(
     return resolved
 
 
+def _set_case_insensitive(headers: dict[str, str], name: str, value: str) -> None:
+    """按大小写不敏感写入：命中已有 key 就覆盖它，否则新增。
+
+    槽位名来自绑定表、Header 名来自服务配置，两者大小写不保证一致
+    （``header:x-tenant`` vs ``X-Tenant``）。不一致时若直接 ``headers[name] = value``，
+    对端会收到两个名字只差大小写的 Header，值是哪个全看它怎么解析。
+    """
+    for existing in list(headers):
+        if existing.casefold() == name.casefold():
+            headers[existing] = value
+            return
+    headers[name] = value
+
+
 async def apply_mcp_bindings(
     server: Any,
     headers: dict[str, str],
     *,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    used: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """把绑定的凭据填进 MCP 出站请求头。
 
-    **这里的规则和 API 工具不同：绑定优先，不是只补空位。**
+    **绑定优先，且无条件覆盖。** MCP 的 ``fixed_token`` 和「其他 Header」的值都
+    只是「没人绑时的默认值」：用户一旦显式绑定，就必须盖过它们，否则绑定永远
+    不会生效。
 
-    MCP 的 ``fixed_token`` 是**服务级单值**——管理员配一个 Bearer Token，全平台
-    所有调用方共用。它不是「用户手填的值」，而是「没人绑时的默认值」。所以用户
-    一旦显式绑定，就必须盖过它，否则绑定永远不会生效（``resolve_mcp_auth_headers``
-    在 ``fixed_token`` 存在时会无条件写 ``Authorization``）。
+    为什么不能沿用「只补空位」或「只认像凭据头的名字」的过滤：绑定是用户明确
+    表达的意图，而配置里的旧值往往正是他要替换的东西。旧实现遇到「值非空 +
+    名字不含 token/key/auth」的 Header 会直接跳过——连库都不查，使用记录里一条
+    都没有，用户只看到「绑了但没生效」。更糟的是前端绑定后值输入框被隐藏，
+    他没法自己把旧值清空，等于死锁。
 
-    API 工具那边正相反：header 值是用户在工具配置里手写的，覆盖它等于悄悄改掉
-    用户写的东西，所以那边只补空位。
+    遍历的是**绑定槽位**而不是 headers：绑定表才是「谁要用凭据」的唯一事实
+    来源，配置里有没有这个 Header 与此无关（没有就补上）。
     """
     if not headers:
         return headers
@@ -336,43 +353,59 @@ async def apply_mcp_bindings(
     if not user_id:
         return headers
 
+    server_id = str(getattr(server, "id", "") or "")
+    if not server_id:
+        return headers
+
+    slots = await list_bound_slots(
+        CONSUMER_MCP, server_id, prefix="header:", user_id=user_id
+    )
+    if not slots:
+        return headers
+
+    # 回传给调用方：这个服务对这个用户**有**绑定，出站连接就不能跨用户复用。
+    # SSE 的 Header 在建连时冻结，共用会话等于把先建连那个人的凭据发给所有人。
+    if used is not None:
+        used["user_id"] = user_id
+        used["slots"] = list(slots)
+
     target = host_of(getattr(server, "sse_url", None))
     trace_id = _current_trace_id()
     resolved = dict(headers)
     limit = await _max_inject_per_call()
     injected = 0
 
-    for name in list(resolved):
+    for slot in slots:
         if injected >= limit:
             logger.warning(
-                "[SecretInject] MCP 服务 %s 命中注入上限 %s 条，其余 header 不再注入",
-                getattr(server, "name", "?"),
+                "[SecretInject] MCP 服务 %s 命中注入上限 %s 条，其余槽位不再注入",
+                getattr(server, "server_name", None) or server_id,
                 limit,
             )
             break
-        if not _looks_unfilled(resolved.get(name)) and not looks_like_credential_header(name):
-            # 既不是空位、又不像是凭据头（Accept / Content-Type 之类），没必要查库。
+        name = slot.partition(":")[2]
+        if not name:
             continue
         try:
             result = await secret_resolver.resolve(
                 user_id=user_id,
                 scene=SCENE_MCP,
                 consumer_type=CONSUMER_MCP,
-                consumer_id=str(getattr(server, "id", "") or ""),
-                slot=f"header:{name}",
+                consumer_id=server_id,
+                slot=slot,
                 target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[SecretInject] MCP %s 的 %s 解析失败: %s", getattr(server, "id", "?"), name, exc)
+            logger.warning("[SecretInject] MCP %s 的 %s 解析失败: %s", server_id, slot, exc)
             continue
 
         if result.ok and result.value is not None:
-            resolved[name] = result.value.reveal()
+            _set_case_insensitive(resolved, name, result.value.reveal())
             injected += 1
         else:
-            _record(denials, f"header:{name}", result.denial)
+            _record(denials, slot, result.denial)
 
     return resolved
 

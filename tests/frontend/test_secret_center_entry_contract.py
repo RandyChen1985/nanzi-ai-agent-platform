@@ -100,7 +100,14 @@ class TestCenterUiShape:
         """
         source = _read(SECRET_CENTER)
 
-        assert "'scheduled_task'" not in source
+        # 可勾选的场景列表里不能有它
+        idx = source.find("const SCENES = [")
+        assert idx > 0, "找不到 SCENES 定义"
+        block = source[idx:source.find("]", idx)]
+        assert "scheduled_task" not in block, "scheduled_task 不该出现在可勾选场景里"
+
+        # 但它必须被登记成「已废弃」，否则历史数据会原样露在界面上
+        assert "DEPRECATED_SCENES = new Set(['scheduled_task'])" in source
 
 
 class TestAdminCreateWizard:
@@ -635,8 +642,13 @@ class TestMcpBindingEntry:
         source = _read(self.INJECTION)
 
         # API 工具只补空位，MCP 覆盖——两条规则必须同时留在代码里
-        assert "looks_like_credential_header" in source
-        assert "绑定优先，不是只补空位" in source
+        assert "_looks_unfilled" in source, "API 工具仍然只补空位"
+        # MCP 改成「绑定槽位驱动」：遍历绑定表而不是遍历 headers，也不再靠
+        # 「名字像不像凭据头」来猜。否则 X-Tenant 这类带旧值的 Header 会在
+        # 循环里被 continue 掉——连库都不查，用户只看到「绑了但没生效」。
+        assert "绑定优先，且无条件覆盖" in source
+        assert "list_bound_slots(" in source
+        assert "_set_case_insensitive" in source
 
 
 class TestScriptEnvBindingEntry:
@@ -725,3 +737,116 @@ class TestValueRevealAndBindingsOverview:
 
         # 复制能力只允许出现在 reveal 弹窗里（且只对 variable）；列表行不能有
         assert "copyRevealed" in source
+
+
+class TestDeprecatedScenarioDisplay:
+    """`scheduled_task` 已废弃：后端常量还在（历史数据里有），但代码不认它。
+
+    旧实现把它当普通取值渲染——个人中心连标签都没有，直接露出英文 key，
+    用户勾了以为生效，实际永远不会被注入，而且查不出原因。
+    """
+
+    def test_personal_view_filters_deprecated_scenes(self):
+        source = _read(SECRET_CENTER)
+
+        assert "DEPRECATED_SCENES" in source
+        # 列表徽章与表单预览两条路径都要过一遍过滤
+        assert "DEPRECATED_SCENES.has" in source
+        assert "visibleFormScenarios" in source
+        assert 'v-for="key in visibleFormScenarios"' in source
+
+    def test_admin_view_filters_deprecated_scenes(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "DEPRECATED_SCENES" in source
+        assert "visibleScenarios(" in source
+        # 不能再直接遍历原始数组
+        assert 'v-for="scene in item.allowed_scenarios"' not in source
+        assert 'v-for="key in form.allowed_scenarios"' not in source
+
+
+class TestFilterEmptyState:
+    """筛选结果为空时，左侧筛选栏必须还在。
+
+    原来的模板把「一条凭据都没有」和「筛选后没有匹配」合并成一个分支，且这个
+    分支写在三栏布局**外面**：
+
+        <div v-else-if="filtered.length === 0">还没有凭据</div>
+        <div v-else class="grid ...">   ← 左筛选 / 中列表 / 右详情
+
+    于是点一下「未绑定」这种必然为 0 的筛选，整个左侧栏连同分页一起消失，
+    只剩一句「还没有凭据」——用户会以为自己的凭据丢了，而且**没有退路**：
+    分类按钮就在刚消失的那一栏里。
+
+    正确的边界是：只有 ``scopedItems``（去掉筛选后的全集）为空才算「真的没有
+    凭据」；筛选为空只是中间那一列的事，左栏要一直在，并给出清除筛选的入口。
+    """
+
+    def test_whole_page_empty_state_only_for_empty_scope(self):
+        source = _read(SECRET_CENTER)
+
+        assert 'v-else-if="filtered.length === 0"' not in source, (
+            "整体空态不能用「筛选后为空」判断，那会连左栏一起藏掉"
+        )
+        assert 'v-else-if="scopedItems.length === 0"' in source
+
+    def test_filtered_empty_state_lives_inside_the_list_column(self):
+        source = _read(SECRET_CENTER)
+
+        assert 'v-if="filtered.length === 0"' in source
+        assert "没有符合" in source, "筛选为空要和「还没有凭据」用不同的话"
+
+    def test_empty_filter_offers_a_way_back(self):
+        source = _read(SECRET_CENTER)
+
+        assert "function resetFilters" in source
+        assert "resetFilters()" in source or "@click=\"resetFilters\"" in source
+
+
+class TestDetailColumnCollapse:
+    """右侧详情不显示时，中间列表要把那 330px 收回来。
+
+    三栏是写死的 ``grid-cols-[176px_minmax(0,1fr)_330px]``。筛选为空时
+    ``selected`` 变成 null，右栏 ``v-if`` 不渲染——但栅格模板仍然是三列，
+    于是列表右边空出一整块 330px 的空白，看着像页面没加载完。
+    """
+
+    def test_grid_columns_follow_detail_visibility(self):
+        source = _read(SECRET_CENTER)
+
+        assert "lg:grid-cols-[176px_minmax(0,1fr)_330px]" in source, "选中时仍是三栏"
+        assert "lg:grid-cols-[176px_minmax(0,1fr)]" in source, "没选中时该收成两栏"
+        assert ":class=\"selected" in source or "selected\n" in source
+
+
+class TestAdminCardShowsBindingAndUsage:
+    """管理端的系统凭据卡片要回答「它在跑，还是摆着」。
+
+    个人中心有右侧详情：绑定到哪、近 7 天调了几次、最近一次什么时候。管理端
+    原来只有「授权范围」——管理员建完一条系统凭据，既看不出它绑在哪些 MCP
+    服务 / API 工具 / 脚本上，也看不出有没有被真正用过。
+
+    管理端是扫读场景（一次看很多条），所以不照搬三栏，直接把这两行并进卡片。
+    """
+
+    def test_card_renders_binding_count_and_usage(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "binding_count" in source
+        assert "usage_7d" in source
+        assert "last_used_at" in source
+        assert "近 7 天调用" in source, "要用中文说清楚，别只丢个数字"
+        assert "最近一次" in source
+
+    def test_card_lists_actual_binding_targets(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "item.bindings" in source, "只给数量没用，要能看到绑到哪个槽位"
+        assert "BINDING_CONSUMER_LABEL" in source
+
+    def test_type_covers_new_fields(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "bindings: SecretBindingRef[]" in source
+        assert "usage_7d: number" in source
+        assert "failed_7d: number" in source

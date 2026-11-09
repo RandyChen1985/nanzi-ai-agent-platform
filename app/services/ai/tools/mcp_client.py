@@ -859,8 +859,13 @@ class McpClientService:
             # 服务级单值（全平台共用），属于「没人绑时的默认值」；用户显式绑了
             # 自己的凭据就必须盖过它，否则绑定永远不会生效。
             mcp_denials: dict[str, str] = {}
+            mcp_used: dict[str, Any] = {}
             auth_headers = await apply_mcp_bindings(
-                server, auth_headers, user_info=user_info, denials=mcp_denials
+                server,
+                auth_headers,
+                user_info=user_info,
+                denials=mcp_denials,
+                used=mcp_used,
             )
             if mcp_denials:
                 # 用户绑了凭据却用不了（停用/过期/场景不符）时**必须失败**，不能
@@ -879,6 +884,19 @@ class McpClientService:
                 # assertion is per-call, so never reuse a session carrying an
                 # older assertion or jti (for either SSE or direct HTTP).
                 session_key = f"{server_id}:user:{user_id}:call:{uuid.uuid4().hex}"
+                ephemeral_session = True
+            elif mcp_used.get("slots"):
+                # 用户绑了自己的凭据：**绝不能跨用户复用连接**。
+                # 原因同上面那条，只是触发点不同——用户凭据是每次请求现解析的，
+                # 而 SSE 的 Header 在建连那一刻就冻住了，`get_session` 命中缓存
+                # 时直接忽略新传入的 auth_headers。共用 session_key 的结果就是
+                # 第一个人的凭据被后面所有人用着；而回收只在空闲 300 秒后触发，
+                # 只要调用不断，串号根本没有时间上限。
+                #
+                # 同一用户也按次隔离：他换过凭据值之后，旧连接不能再顶着他的
+                # 身份继续发请求。
+                bound_user = str(mcp_used.get("user_id") or "").strip() or "unknown"
+                session_key = f"{server_id}:user:{bound_user}:bind:{uuid.uuid4().hex}"
                 ephemeral_session = True
             session_kwargs = {"session_key": session_key, "auth_headers": auth_headers}
 

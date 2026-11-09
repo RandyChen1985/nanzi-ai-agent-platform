@@ -176,9 +176,14 @@ def test_toggle_enabled_tolerates_utf8_bom(tmp_path):
     assert is_skill_enabled(parse_skill_frontmatter("bom-skill", str(md))) is True
 
 
-def test_toggle_writes_nothing_for_missing_frontmatter(tmp_path):
-    """没有 frontmatter 的文件无法切换，应如实返回 False（由端点转成 400）。"""
+def test_toggle_inserts_frontmatter_for_missing_frontmatter(tmp_path):
+    """没有 frontmatter 的文件补一份最小 frontmatter 并保留正文，而不是返回失败。
+
+    列表解析对这类纯 Markdown 技能缺省 ``enabled=true``；若 toggle 返回 False（端点 400），
+    它们就永远禁不掉、也没有别的入口能改。因此旧契约「如实返回 False」已改为补 frontmatter。
+    """
     md = tmp_path / "SKILL.md"
     md.write_text("没有任何 frontmatter 的正文", encoding="utf-8")
-    assert toggle_skill_enabled_in_file(str(md), False) is False
-    assert md.read_text(encoding="utf-8") == "没有任何 frontmatter 的正文"
+    assert toggle_skill_enabled_in_file(str(md), False) is True
+    written = md.read_text(encoding="utf-8")
+    assert written.startswith("---\nenabled: false\n---\n\n没有任何 frontmatter 的正文")

@@ -13,6 +13,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from '../utils/axios'
 import { useDismissible } from '../utils/dismissible'
+import { shortTime } from '../utils/date'
 
 interface SecretItem {
   id: string
@@ -59,6 +60,10 @@ const SCENES = [
   { key: 'script_env', label: '脚本环境变量', hint: '默认关，需平台 + 个人都开', desc: '以环境变量形式进子进程，脚本里可直接读；stdout 会被指纹扫描', wired: true },
   { key: 'agent', label: '智能体', hint: '暂未接入，勾了也不会注入', desc: '暂未接入，勾了也不会注入', wired: false },
 ]
+
+// 已废弃的场景：后端常量还留着（历史数据里有这个值），但代码里早就不参与任何
+// 判断了。继续显示会让人以为「勾了就生效」——所以展示层统一过滤掉。
+const DEPRECATED_SCENES = new Set(['scheduled_task'])
 
 const RESULT_LABEL: Record<string, string> = {
   success: '成功',
@@ -135,6 +140,13 @@ const categoryGroups = computed(() => {
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
 })
+
+/** 清除全部筛选条件。筛选为空时这是唯一的退路——别让用户卡在一个空列表里。 */
+function resetFilters() {
+  filterKind.value = 'all'
+  activeCategory.value = ''
+  keyword.value = ''
+}
 
 const filtered = computed(() => {
   let source = scopedItems.value
@@ -460,12 +472,19 @@ async function savePrefs(value: boolean) {
 
 const sceneLabelOf = (key: string) => SCENES.find((scene) => scene.key === key)?.label || key
 
+/** 表单预览里要显示的场景：过滤掉已废弃的那些。 */
+const visibleFormScenarios = computed(() =>
+  form.value.allowed_scenarios.filter((key) => !DEPRECATED_SCENES.has(key)),
+)
+
 function scenarioLabels(item: SecretItem): string[] {
-  return item.allowed_scenarios.map((key) => {
-    const scene = SCENES.find((s) => s.key === key)
-    if (!scene) return key
-    return scene.wired ? scene.label : `${scene.label}（未接入）`
-  })
+  return item.allowed_scenarios
+    .filter((key) => !DEPRECATED_SCENES.has(key))
+    .map((key) => {
+      const scene = SCENES.find((s) => s.key === key)
+      if (!scene) return key
+      return scene.wired ? scene.label : `${scene.label}（未接入）`
+    })
 }
 
 function statusTone(item: SecretItem): string {
@@ -483,20 +502,6 @@ function statusText(item: SecretItem): string {
 }
 
 /** 「今天 10:32」「昨天 22:03」「11-06 08:00」——列表里只需要相对粗粒度 */
-function shortTime(value: string | null | undefined): string {
-  if (!value) return '从未'
-  const date = new Date(value.replace(' ', 'T'))
-  if (Number.isNaN(date.getTime())) return '—'
-  const now = new Date()
-  const sameDay = date.toDateString() === now.toDateString()
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  const hh = String(date.getHours()).padStart(2, '0')
-  const mm = String(date.getMinutes()).padStart(2, '0')
-  if (sameDay) return `今天 ${hh}:${mm}`
-  if (date.toDateString() === yesterday.toDateString()) return `昨天 ${hh}:${mm}`
-  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${hh}:${mm}`
-}
 
 function categoryOf(item: SecretItem): string {
   return (item.category || '').trim() || '未分类'
@@ -663,8 +668,10 @@ onMounted(load)
 
     <div v-if="loading" class="py-12 text-center text-sm text-gray-400">加载中…</div>
 
+    <!-- 只有「这个 scope 下一条都没有」才算整体空态。
+         筛选后为空不是这种情况：左栏必须还在，否则用户连返回的入口都没有。 -->
     <div
-      v-else-if="filtered.length === 0"
+      v-else-if="scopedItems.length === 0"
       class="rounded-xl border border-dashed border-gray-300 py-14 text-center"
     >
       <p class="text-sm text-gray-500">
@@ -675,8 +682,16 @@ onMounted(load)
       </p>
     </div>
 
-    <!-- 三栏：左筛选 / 中列表 / 右详情 -->
-    <div v-else class="grid grid-cols-1 gap-3 lg:grid-cols-[176px_minmax(0,1fr)_330px]">
+    <!-- 三栏：左筛选 / 中列表 / 右详情。
+         右栏 v-if="selected"，没选中时它不渲染；栅格列必须跟着收成两栏，
+         否则列表右边会剩下一整块 330px 的空白。 -->
+    <div
+      v-else
+      class="grid grid-cols-1 gap-3"
+      :class="selected
+        ? 'lg:grid-cols-[176px_minmax(0,1fr)_330px]'
+        : 'lg:grid-cols-[176px_minmax(0,1fr)]'"
+    >
       <!-- 左：筛选 -->
       <aside class="rounded-xl border border-gray-200 p-2">
         <p class="px-2 py-1 text-[11px] font-semibold text-gray-400">全部</p>
@@ -759,14 +774,26 @@ onMounted(load)
           <span class="text-right">最近使用</span>
         </div>
 
-        <button
-          v-for="item in filtered"
-          :key="item.id"
-          type="button"
-          class="grid w-full grid-cols-[minmax(0,1fr)_84px_56px_84px] items-center gap-2 border-b border-gray-50 px-3 py-2.5 text-left transition-colors last:border-b-0"
-          :class="selected?.id === item.id ? 'bg-blue-50/60' : 'hover:bg-gray-50'"
-          @click="selectSecret(item)"
-        >
+        <div v-if="filtered.length === 0" class="px-3 py-12 text-center">
+          <p class="text-xs text-gray-500">没有符合当前筛选的凭据</p>
+          <button
+            type="button"
+            class="mt-2 text-xs text-blue-600 underline hover:text-blue-700"
+            @click="resetFilters"
+          >
+            清除筛选
+          </button>
+        </div>
+
+        <template v-else>
+          <button
+            v-for="item in filtered"
+            :key="item.id"
+            type="button"
+            class="grid w-full grid-cols-[minmax(0,1fr)_84px_56px_84px] items-center gap-2 border-b border-gray-50 px-3 py-2.5 text-left transition-colors last:border-b-0"
+            :class="selected?.id === item.id ? 'bg-blue-50/60' : 'hover:bg-gray-50'"
+            @click="selectSecret(item)"
+          >
           <div class="flex min-w-0 items-center gap-2">
             <span
               class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold"
@@ -792,7 +819,8 @@ onMounted(load)
             {{ item.binding_count || 0 }}
           </span>
           <span class="text-right text-[11px] text-gray-400">{{ shortTime(item.last_used_at) }}</span>
-        </button>
+          </button>
+        </template>
       </div>
 
       <!-- 右：详情 -->
@@ -1109,7 +1137,7 @@ onMounted(load)
                   <span class="rounded bg-white px-1.5 py-0.5 font-medium text-gray-700">
                     {{ ACTION_LABEL[row.action] || row.action }}
                   </span>
-                  <span class="ml-auto text-gray-400">{{ row.created_at }}</span>
+                  <span class="ml-auto text-gray-400">{{ shortTime(row.created_at) }}</span>
                 </div>
               </div>
             </template>
@@ -1132,7 +1160,7 @@ onMounted(load)
                   {{ RESULT_LABEL[row.result] || row.result }}
                 </span>
                 <span v-if="row.target_host" class="text-gray-400">{{ row.target_host }}</span>
-                <span class="ml-auto text-gray-400">{{ row.created_at }}</span>
+                <span class="ml-auto text-gray-400">{{ shortTime(row.created_at) }}</span>
               </div>
             </div>
           </div>
@@ -1404,9 +1432,9 @@ onMounted(load)
                 <div class="flex items-start gap-3 px-3 py-2">
                   <dt class="w-20 shrink-0 text-gray-500">场景</dt>
                   <dd class="flex flex-wrap gap-1">
-                    <template v-if="form.allowed_scenarios.length">
+                    <template v-if="visibleFormScenarios.length">
                       <span
-                        v-for="key in form.allowed_scenarios"
+                        v-for="key in visibleFormScenarios"
                         :key="key"
                         class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700"
                       >{{ sceneLabelOf(key) }}</span>

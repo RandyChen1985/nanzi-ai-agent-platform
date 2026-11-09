@@ -14,12 +14,21 @@ import { computed, onMounted, ref } from 'vue'
 import UserDeptPicker from '../components/common/UserDeptPicker.vue'
 import { useDismissible } from '../utils/dismissible'
 import axios from '../utils/axios'
+import { shortTime } from '../utils/date'
 
 interface Grant {
   id: string
   grantee_type: 'user' | 'dept'
   grantee_id: string
   expires_at: string | null
+}
+
+interface SecretBindingRef {
+  id: string
+  slot: string
+  consumer_type: string
+  consumer_id: string
+  bound_by_user_id: string | null
 }
 
 interface SystemSecret {
@@ -34,6 +43,12 @@ interface SystemSecret {
   grants: Grant[]
   grant_count: number
   last_rotated_at: string | null
+  // 后端 admin_list 一次带出来的聚合：绑到哪、用过没有
+  bindings: SecretBindingRef[]
+  binding_count: number
+  usage_7d: number
+  failed_7d: number
+  last_used_at: string | null
 }
 
 const SCENE_LABEL: Record<string, string> = {
@@ -44,6 +59,19 @@ const SCENE_LABEL: Record<string, string> = {
   scheduled_task: '定时任务（历史）',
   agent: '智能体',
 }
+
+// 已废弃的场景：后端常量还留着（历史数据里有这个取值），但代码里早就不参与
+// 任何判定。继续显示会让人以为「勾了就生效」，展示层统一过滤掉。
+/** 绑定槽位挂在谁身上——光看 slot 不知道是 MCP 服务还是脚本 */
+const BINDING_CONSUMER_LABEL: Record<string, string> = {
+  mcp_server: 'MCP 服务',
+  api_tool: 'API 工具',
+  script: '脚本',
+  script_env: '脚本',
+}
+
+const DEPRECATED_SCENES = new Set(['scheduled_task'])
+const visibleScenarios = (keys: string[]) => keys.filter((key) => !DEPRECATED_SCENES.has(key))
 
 // 与个人中心同一套口径：真接通的才能勾，`agent` 没有注入点。
 const CREATE_SCENES = [
@@ -389,7 +417,7 @@ onMounted(load)
             <p class="mt-1 font-mono text-[11px] text-gray-400">{{ item.value_masked }}</p>
             <div class="mt-1.5 flex flex-wrap gap-1">
               <span
-                v-for="scene in item.allowed_scenarios"
+                v-for="scene in visibleScenarios(item.allowed_scenarios)"
                 :key="scene"
                 class="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600"
               >
@@ -438,6 +466,34 @@ onMounted(load)
             >
               ×
             </button>
+          </span>
+        </div>
+
+        <!-- 绑定与使用：建完不等于在用，这两行就是「在跑还是摆着」 -->
+        <div
+          class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-gray-100 pt-2.5 text-[11px] text-gray-500"
+        >
+          <span>
+            已绑定
+            <b class="font-medium" :class="(item.binding_count || 0) ? 'text-gray-700' : 'text-amber-600'">
+              {{ item.binding_count || 0 }}
+            </b>
+            处
+          </span>
+          <span>
+            近 7 天调用 <b class="font-medium text-gray-700">{{ item.usage_7d || 0 }}</b> 次
+          </span>
+          <span v-if="item.failed_7d" class="text-amber-600">其中失败 {{ item.failed_7d }} 次</span>
+          <span>最近一次 {{ shortTime(item.last_used_at) }}</span>
+        </div>
+        <div v-if="item.bindings.length" class="mt-1.5 flex flex-wrap gap-1">
+          <span
+            v-for="binding in item.bindings"
+            :key="binding.id"
+            class="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700"
+          >
+            {{ BINDING_CONSUMER_LABEL[binding.consumer_type] || binding.consumer_type }} ·
+            <code class="font-mono">{{ binding.slot }}</code>
           </span>
         </div>
       </div>
@@ -622,9 +678,9 @@ onMounted(load)
                 <div class="flex items-start gap-3 px-3 py-2">
                   <dt class="w-20 shrink-0 text-gray-500">场景</dt>
                   <dd class="flex flex-wrap gap-1">
-                    <template v-if="form.allowed_scenarios.length">
+                    <template v-if="visibleScenarios(form.allowed_scenarios).length">
                       <span
-                        v-for="key in form.allowed_scenarios"
+                        v-for="key in visibleScenarios(form.allowed_scenarios)"
                         :key="key"
                         class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700"
                         :title="sceneDescOf(key)"
@@ -791,7 +847,7 @@ onMounted(load)
                   {{ ACTION_LABEL[row.action] || row.action }}
                 </span>
                 <span v-if="row.actor_id" class="text-gray-400">{{ row.actor_id }}</span>
-                <span class="ml-auto text-gray-400">{{ row.created_at }}</span>
+                <span class="ml-auto text-gray-400">{{ shortTime(row.created_at) }}</span>
               </div>
             </div>
           </div>

@@ -512,3 +512,85 @@ class TestRotation:
             f"{PREFIX}/{created['id']}", headers=_user_headers(valid_api_key)
         )
         assert gone.status_code == 404
+
+
+class TestAdminListVisibility:
+    """管理端的系统凭据列表要能看出「绑到哪了、用过没有」。
+
+    个人中心有右侧详情（绑定 + 使用概览），管理端原来只有 ``grants``：管理员
+    看到一条系统凭据，既不知道它被绑在哪些 MCP 服务 / API 工具 / 脚本上，也
+    不知道它到底有没有被用过。凭据「生效还是摆着」正是这里最该回答的问题。
+
+    后端必须一次把 ``bindings`` 和统计带出来——列表页逐行再查就是 N+1。
+    """
+
+    async def test_admin_list_reports_bindings_and_usage(
+        self, client, clean_secrets, admin_api_key
+    ):
+        created = (
+            await client.post(
+                PREFIX + "/admin",
+                json=_payload(secret_key=f"corp.observed.{uuid.uuid4().hex[:8]}"),
+                headers=_admin_headers(admin_api_key),
+            )
+        ).json()["data"]
+
+        from app.core.orm import AsyncSessionLocal
+        from app.models.secret import SecretBinding, SecretUsageLog
+
+        async with AsyncSessionLocal() as session:
+            session.add(
+                SecretBinding(
+                    id=uuid.uuid4().hex,
+                    secret_id=created["id"],
+                    consumer_type="mcp_server",
+                    consumer_id="srv-admin-list",
+                    slot="header:Authorization",
+                    bound_by_user_id=None,
+                )
+            )
+            session.add(
+                SecretUsageLog(
+                    id=uuid.uuid4().hex,
+                    secret_id=created["id"],
+                    secret_key_snapshot=created["secret_key"],
+                    owner_scope="system",
+                    scene="mcp",
+                    consumer_type="mcp_server",
+                    consumer_id="srv-admin-list",
+                    slot="header:Authorization",
+                    target_host="example.com",
+                    result="success",
+                )
+            )
+            await session.commit()
+
+        resp = await client.get(PREFIX + "/admin", headers=_admin_headers(admin_api_key))
+        item = next(i for i in resp.json()["data"] if i["id"] == created["id"])
+
+        assert item["binding_count"] == 1
+        assert len(item["bindings"]) == 1
+        assert item["bindings"][0]["slot"] == "header:Authorization"
+        assert item["bindings"][0]["consumer_type"] == "mcp_server"
+        assert item["usage_7d"] == 1
+        assert item["failed_7d"] == 0
+        assert item["last_used_at"], "有流水就必须有「最近一次」"
+
+    async def test_admin_list_reports_zero_for_unused_secret(
+        self, client, clean_secrets, admin_api_key
+    ):
+        created = (
+            await client.post(
+                PREFIX + "/admin",
+                json=_payload(secret_key=f"corp.unused.{uuid.uuid4().hex[:8]}"),
+                headers=_admin_headers(admin_api_key),
+            )
+        ).json()["data"]
+
+        resp = await client.get(PREFIX + "/admin", headers=_admin_headers(admin_api_key))
+        item = next(i for i in resp.json()["data"] if i["id"] == created["id"])
+
+        assert item["binding_count"] == 0
+        assert item["bindings"] == []
+        assert item["usage_7d"] == 0
+        assert item["last_used_at"] is None

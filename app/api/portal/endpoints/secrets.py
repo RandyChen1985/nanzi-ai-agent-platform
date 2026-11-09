@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -107,7 +107,18 @@ class GrantRequest(BaseModel):
 
 
 def _iso(value: datetime | None) -> str | None:
-    return value.strftime("%Y-%m-%d %H:%M:%S") if value else None
+    """统一成带 UTC 标记的 ISO 8601。
+
+    库里所有 datetime 都是 ``datetime.utcnow()`` 写的 **naive UTC**。原来输出
+    ``"%Y-%m-%d %H:%M:%S"`` 把时区信息抹掉了，前端 ``new Date("2026-11-09T11:47:14")``
+    会按**本地时区**解析——UTC+8 下每个时间都早 8 小时。用户 19:47 用过的凭据
+    显示成「今天 11:47」，看着像另一件事。
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
 
 
 def serialize_secret(row) -> Dict[str, Any]:
@@ -147,7 +158,7 @@ async def _usage_stats(db: AsyncSession, secret_ids: list[str]) -> Dict[str, Dic
     """
     from datetime import datetime, timedelta
 
-    from sqlalchemy import func, select
+    from sqlalchemy import and_, case, func, select
 
     from app.models.secret import SecretBinding, SecretUsageLog
 
@@ -169,15 +180,23 @@ async def _usage_stats(db: AsyncSession, secret_ids: list[str]) -> Dict[str, Dic
         for secret_id, count in binding_rows:
             stats[secret_id]["binding_count"] = int(count or 0)
 
-        since = datetime.now() - timedelta(days=7)
+        # 库里一律是 naive UTC（模型 default=datetime.utcnow），窗口也必须按 UTC
+        # 算，否则「近 7 天」在 UTC+8 下整体偏移 8 小时。
+        since = datetime.utcnow() - timedelta(days=7)
+        in_window = SecretUsageLog.created_at >= since
         usage_rows = (
             await db.execute(
                 select(
                     SecretUsageLog.secret_id,
+                    # 「最近一次」是全量口径：两个月没用过也是“用过”。
+                    # 只把下面两个计数扣在 7 天窗口内。
                     func.max(SecretUsageLog.created_at),
-                    func.count(SecretUsageLog.id),
+                    func.sum(case((in_window, 1), else_=0)),
                     func.sum(
-                        func.case((SecretUsageLog.result == "success", 0), else_=1)
+                        case(
+                            (and_(in_window, SecretUsageLog.result != "success"), 1),
+                            else_=0,
+                        )
                     ),
                 )
                 .where(SecretUsageLog.secret_id.in_(secret_ids))
@@ -189,7 +208,14 @@ async def _usage_stats(db: AsyncSession, secret_ids: list[str]) -> Dict[str, Dic
             stats[secret_id]["usage_7d"] = int(total or 0)
             stats[secret_id]["failed_7d"] = int(failed or 0)
     except Exception:  # noqa: BLE001 - 统计失败不影响列表
-        logger.debug("[Secrets] 聚合使用统计失败", exc_info=True)
+        # 这里曾经是 debug 级别。结果 ``func.case`` 这个非法写法在构造语句时就抛
+        # TypeError，异常被静默吞掉，统计永远停在初始值，界面上所有凭据都显示
+        # 「从未使用 / 0 次」——而使用记录里明明有几十条。用 warning 打出来，
+        # 下次同样的坏写法至少能看见。
+        logger.warning(
+            "[Secrets] 聚合使用统计失败：列表仍可显示，但「最近使用」会不准确",
+            exc_info=True,
+        )
     return stats
 
 
@@ -780,7 +806,7 @@ async def admin_list(
 ):
     from sqlalchemy import select
 
-    from app.models.secret import SecretGrant, UserSecret
+    from app.models.secret import SecretBinding, SecretGrant, UserSecret
 
     rows = (
         (
@@ -798,11 +824,41 @@ async def admin_list(
     for grant in grants:
         by_secret.setdefault(grant.secret_id, []).append(grant)
 
+    # 管理员要能判断这条凭据「到底在跑还是摆着」：绑到哪了、用过没有。
+    # 和个人列表共用同一套聚合，避免列表页逐行回查变成 N+1。
+    secret_ids = [row.id for row in rows]
+    stats = await _usage_stats(db, secret_ids)
+    bindings = (
+        (
+            await db.execute(
+                select(SecretBinding).where(SecretBinding.secret_id.in_(secret_ids))
+            )
+        )
+        .scalars()
+        .all()
+        if secret_ids
+        else []
+    )
+    by_binding: Dict[str, List[SecretBinding]] = {}
+    for binding in bindings:
+        by_binding.setdefault(binding.secret_id, []).append(binding)
+
     return {
         "code": 0,
         "data": [
             {
                 **serialize_secret(row),
+                **stats.get(row.id, {}),
+                "bindings": [
+                    {
+                        "id": b.id,
+                        "slot": b.slot,
+                        "consumer_type": b.consumer_type,
+                        "consumer_id": b.consumer_id,
+                        "bound_by_user_id": b.bound_by_user_id,
+                    }
+                    for b in by_binding.get(row.id, [])
+                ],
                 "grants": [
                     {
                         "id": g.id,
