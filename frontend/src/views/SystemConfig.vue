@@ -1679,6 +1679,40 @@ const toggleFlag = (item: ConfigItem) => {
   item.value = isFlagOn(item) ? '0' : '1'
 }
 
+/**
+ * 单次注入上限：只允许 1-50 的整数。
+ *
+ * 它原来是一个普通文本框，中文也能打进去、存库也不报错，读取侧再退回默认值——
+ * 「改了但没生效」是最难查的一类问题。这里换成加减器，输入框也限成 number，
+ * 失焦时纠正到合法区间。后端 `validate_config_update` 是硬闸门，前端只负责别
+ * 让人先输错再吃一个 400。
+ */
+const SECRET_MAX_INJECT_KEY = 'secret_policy_max_inject_per_call'
+const SECRET_MAX_INJECT_RANGE = [1, 50] as const
+
+const isSecretMaxInject = (item: ConfigItem) => item.key === SECRET_MAX_INJECT_KEY
+
+const clampLimit = (item: ConfigItem) => {
+  const raw = Number(String(item.value ?? '').trim())
+  const [low, high] = SECRET_MAX_INJECT_RANGE
+  const next = Number.isFinite(raw) ? Math.round(raw) : low
+  item.value = String(Math.min(high, Math.max(low, next)))
+}
+
+const nudgeLimit = (item: ConfigItem, delta: number) => {
+  const raw = Number(String(item.value ?? '').trim())
+  const [low, high] = SECRET_MAX_INJECT_RANGE
+  const next = (Number.isFinite(raw) ? raw : low) + delta
+  item.value = String(Math.min(high, Math.max(low, Math.round(next))))
+}
+
+const canNudge = (item: ConfigItem, delta: number) => {
+  const raw = Number(String(item.value ?? '').trim())
+  const [low, high] = SECRET_MAX_INJECT_RANGE
+  const base = Number.isFinite(raw) ? raw : low
+  return delta > 0 ? base < high : base > low
+}
+
 const isLongText = (item: ConfigItem) => {
   if (item.key === 'sandbox_docker_base_image') return false
   if (item.key.toLowerCase().includes('prompt')) return true
@@ -4623,6 +4657,36 @@ onUnmounted(() => {
                               >
                                 {{ isFlagOn(item) ? '允许' : '不允许' }}
                               </span>
+                            </div>
+                          </div>
+                          <div v-else-if="isSecretMaxInject(item)">
+                            <div class="flex items-center gap-2">
+                              <button
+                                type="button"
+                                :disabled="isConfigItemDisabled(String(category), item) || !canNudge(item, -1)"
+                                :aria-label="'减少一条'"
+                                class="flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                @click="nudgeLimit(item, -1)"
+                              >−</button>
+                              <input
+                                v-model="item.value"
+                                type="number"
+                                min="1"
+                                max="50"
+                                step="1"
+                                inputmode="numeric"
+                                :disabled="isConfigItemDisabled(String(category), item)"
+                                class="h-9 w-20 rounded-md border border-gray-300 bg-white text-center text-sm tabular-nums focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:bg-gray-100 disabled:opacity-70"
+                                @blur="clampLimit(item)"
+                              />
+                              <button
+                                type="button"
+                                :disabled="isConfigItemDisabled(String(category), item) || !canNudge(item, 1)"
+                                aria-label="增加一条"
+                                class="flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                @click="nudgeLimit(item, 1)"
+                              >+</button>
+                              <span class="text-xs text-gray-500">条（1-50）</span>
                             </div>
                           </div>
                           <div v-else-if="item.key === 'agent_graceful_finish_enabled'">
