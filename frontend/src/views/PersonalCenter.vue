@@ -825,13 +825,14 @@ import NotificationConfigs from '../components/personal/NotificationConfigs.vue'
 import DataPortalHome from './DataPortalHome.vue'
 import SkillsManagement from './SkillsManagement.vue'
 import McpManagement from './McpManagement.vue'
+import SecretCenter from './SecretCenter.vue'
 import TaskCenter from './TaskCenter.vue'
 import { useRoute, useRouter } from 'vue-router'
 
-type PersonalTab = 'info' | 'permissions' | 'memory' | 'tokens' | 'notifications' | 'data' | 'skills' | 'mcp' | 'tasks'
+type PersonalTab = 'info' | 'permissions' | 'memory' | 'tokens' | 'notifications' | 'data' | 'skills' | 'mcp' | 'secrets' | 'tasks'
 const route = useRoute()
 const router = useRouter()
-const personalTabs: PersonalTab[] = ['info', 'permissions', 'memory', 'tokens', 'notifications', 'data', 'skills', 'mcp', 'tasks']
+const personalTabs: PersonalTab[] = ['info', 'permissions', 'memory', 'tokens', 'notifications', 'data', 'skills', 'mcp', 'secrets', 'tasks']
 /** 申请并进「我的权限」后，旧深链 ?tab=requests 仍然要能用 */
 const wantsRequestView =
     route.query.tab === 'requests' || route.query.subtab === 'requests'
@@ -1165,6 +1166,17 @@ onMounted(() => {
                     我的 MCP
                 </button>
                 <button
+                    @click="activeTab = 'secrets'"
+                    :class="[
+                        activeTab === 'secrets'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
+                        'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
+                    ]"
+                >
+                    我的凭据
+                </button>
+                <button
                     @click="activeTab = 'tasks'"
                     :class="[
                         activeTab === 'tasks'
@@ -1189,7 +1201,7 @@ onMounted(() => {
             </nav>
         </div>
 
-        <div :class="(activeTab === 'data' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'tasks' || activeTab === 'info') ? 'pt-4 sm:pt-5' : 'px-4 pt-4 pb-4 sm:px-6 sm:pt-5 sm:pb-6'">
+        <div :class="(activeTab === 'data' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'secrets' || activeTab === 'tasks' || activeTab === 'info') ? 'pt-4 sm:pt-5' : 'px-4 pt-4 pb-4 sm:px-6 sm:pt-5 sm:pb-6'">
         <!-- Info Tab (类似我的数据门户：左侧子菜单 + 右侧主内容) -->
         <div v-if="activeTab === 'info'" class="grid grid-cols-1 overflow-hidden bg-white md:grid-cols-[200px_minmax(0,1fr)] min-h-[560px]">
             <!-- 左侧 Aside 垂直导航栏 -->
@@ -2114,6 +2126,10 @@ onMounted(() => {
 
         <div v-else-if="activeTab === 'mcp'" class="px-3 pb-4 sm:px-6 sm:pb-6 min-h-[28rem]">
             <McpManagement personal-only :initial-personal-menu="mcpInitialMenu" />
+        </div>
+
+        <div v-else-if="activeTab === 'secrets'" class="px-3 pb-4 sm:px-6 sm:pb-6 min-h-[28rem]">
+            <SecretCenter />
         </div>
 
         <div v-else-if="activeTab === 'tasks'" class="px-4 pb-4 sm:px-6 sm:pb-6 min-h-[32rem]">

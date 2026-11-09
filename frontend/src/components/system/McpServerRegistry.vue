@@ -43,6 +43,7 @@ import {
   EllipsisHorizontalIcon,
 } from '@heroicons/vue/24/outline'
 import McpServerLogModal from './McpServerLogModal.vue'
+import CredentialPicker from '../secrets/CredentialPicker.vue'
 import McpServerAgentsDrawer from './McpServerAgentsDrawer.vue'
 import { buildJavaMcpSample, buildPythonMcpSample } from './mcpCodeSamples'
 
@@ -423,6 +424,83 @@ const cancelAuthorizationEdit = () => {
 const handleAuthorizationInput = (event: Event) => {
   authorizationToken.value = (event.target as HTMLInputElement).value
 }
+
+// ── 凭据中心的凭据（覆盖固定 Token）────────────────────────────────────
+//
+// MCP 的 `fixed_token` 是服务级单值：管理员配一个，全平台共用。这里让每个用户
+// 绑自己的——**绑定优先于 fixed_token**（`apply_mcp_bindings` 里覆盖，不是只补空位）。
+//
+// 保存绑定是独立动作，不跟着表单提交：绑定的消费者是 `mcp_server` + 服务 id，
+// 服务还没入库就没有可绑的对象，所以只在编辑态出现。
+const mcpBindingSecretId = ref<string | null>(null)
+const mcpBinding = ref<{ secret_key: string; secret_name: string } | null>(null)
+const mcpBindingBusy = ref(false)
+const mcpBindingError = ref('')
+const mcpBindingPicked = ref<{ id: string; secret_key: string } | null>(null)
+
+async function loadMcpBinding() {
+  mcpBindingSecretId.value = null
+  mcpBinding.value = null
+  mcpBindingPicked.value = null
+  mcpBindingError.value = ''
+  if (!editingId.value) return
+  try {
+    const res = await axios.get('/api/portal/secrets/bindings', {
+      params: { consumer_type: 'mcp_server', consumer_id: editingId.value },
+    })
+    const hit = (res.data?.data || []).find(
+      (row: any) => row.slot === 'header:Authorization' && (row.bound_by_me || row.owner_scope === 'system'),
+    )
+    if (hit) {
+      mcpBindingSecretId.value = hit.secret_id
+      mcpBinding.value = { secret_key: hit.secret_key, secret_name: hit.secret_name }
+      mcpBindingPicked.value = { id: hit.secret_id, secret_key: hit.secret_key }
+    }
+  } catch {
+    // 拿不到绑定不该挡住编辑 MCP 服务，按「没绑」显示
+  }
+}
+
+async function saveMcpBinding() {
+  if (!editingId.value) return
+  mcpBindingBusy.value = true
+  mcpBindingError.value = ''
+  try {
+    if (!mcpBindingSecretId.value) {
+      await axios.delete('/api/portal/secrets/bindings', {
+        data: {
+          consumer_type: 'mcp_server',
+          consumer_id: editingId.value,
+          slot: 'header:Authorization',
+        },
+      })
+      mcpBinding.value = null
+      mcpBindingPicked.value = null
+      showToast('已解除凭据绑定', 'success')
+    } else {
+      const picked = mcpBindingPicked.value
+      if (!picked) throw new Error('请选择凭据')
+      await axios.post('/api/portal/secrets/bindings', {
+        secret_id: picked.id,
+        consumer_type: 'mcp_server',
+        consumer_id: editingId.value,
+        slot: 'header:Authorization',
+      })
+      showToast('已绑定，调用将使用这条凭据', 'success')
+    }
+    await loadMcpBinding()
+  } catch (e: any) {
+    mcpBindingError.value = e?.response?.data?.detail || e?.message || '保存绑定失败'
+  } finally {
+    mcpBindingBusy.value = false
+  }
+}
+
+function onMcpBindingPicked(item: { id: string; secret_key: string } | null) {
+  mcpBindingPicked.value = item
+}
+
+watch(editingId, () => void loadMcpBinding(), { immediate: true })
 
 const addHeaderPair = () => {
   headerPairs.value.push({ key: '', value: '' })
@@ -2510,6 +2588,51 @@ onMounted(fetchServers)
               <p v-if="isEditing && authorizationEnabled" class="mt-2 text-[10px] leading-relaxed text-amber-600">已配置 Token 不会回显；点击“编辑”后填写新 Token，保存后才会替换。</p>
               <p v-if="verifyReusesSavedAuth && authorizationEnabled && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">“连接并发现工具”与保存都会沿用已保存的 Token。</p>
               <p v-if="verifyAddressChanged && authorizationEnabled && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">地址已变更，测试与保存会继续沿用已保存的 Token；如需更换请点击“编辑”。</p>
+            </div>
+
+            <!-- Credential Center binding -->
+            <div v-if="isEditing" class="order-2 rounded-lg border border-emerald-100 bg-emerald-50/50 p-3">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <label class="block text-xs font-bold text-gray-700">用凭据中心的凭据</label>
+                  <p class="mt-1 text-[10px] leading-relaxed text-gray-500">
+                    绑自己的 Token 调用这个服务。<strong>绑定优先于上面的固定 Token</strong>——
+                    固定 Token 是管理员配的服务级默认值，全平台共用；绑定之后只对你自己生效。
+                  </p>
+                </div>
+                <span
+                  v-if="mcpBinding"
+                  class="shrink-0 rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700"
+                >已绑定</span>
+              </div>
+
+              <div class="mt-2 flex items-center gap-2">
+                <div class="min-w-0 flex-1">
+                  <CredentialPicker
+                    v-model="mcpBindingSecretId"
+                    scene="mcp"
+                    placeholder="未绑定，使用上面的固定 Token"
+                    @picked="onMcpBindingPicked"
+                  />
+                </div>
+                <button
+                  type="button"
+                  :disabled="mcpBindingBusy"
+                  class="shrink-0 rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                  @click="saveMcpBinding"
+                >
+                  {{ mcpBindingBusy ? '保存中…' : mcpBindingSecretId ? '保存绑定' : '解除绑定' }}
+                </button>
+              </div>
+
+              <p v-if="mcpBindingError" class="mt-1.5 text-[10px] text-red-600">{{ mcpBindingError }}</p>
+              <p v-else-if="mcpBinding" class="mt-1.5 text-[10px] text-emerald-700">
+                当前生效：<code>{{ mcpBinding.secret_key }}</code>
+                <template v-if="authorizationEnabled">，上面的固定 Token 会被它覆盖</template>
+              </p>
+              <p v-else class="mt-1.5 text-[10px] text-gray-400">
+                需要先到「个人中心 → 我的凭据」建一条允许 MCP 场景的凭据。
+              </p>
             </div>
 
             <!-- Dynamic Headers Editor -->

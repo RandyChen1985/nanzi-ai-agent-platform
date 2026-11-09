@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, script_tools, tool_bundles, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, skill_gallery, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview, access_requests, resource_square, chat_shares
+from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, script_tools, tool_bundles, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, skill_gallery, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview, access_requests, resource_square, chat_shares, secrets
 
 portal_router = APIRouter()
 
@@ -82,6 +82,12 @@ portal_router.include_router(ragflow.router, prefix="/ragflow", tags=["RAGFlow�
 # 15. MCP 管理 (MCP Management)
 portal_router.include_router(mcp.router, prefix="/mcp", tags=["MCP管理"], dependencies=[Depends(require_api_key)])
 portal_router.include_router(mcp_service.router, prefix="/mcp-service", tags=["MCP服务台"], dependencies=[Depends(require_api_key)])
+
+# 15.1 凭据中心 (Credential Center)
+#      用户侧 `/secrets`（个人凭据 + 被授权的系统级），管理员侧 `/secrets/admin`。
+#      任何一条路径都不返回凭据明文：credential 类型建完即不可读，
+#      唯一的值出口 `/secrets/{id}/value` 只对 variable（租户号/接口地址）开放。
+portal_router.include_router(secrets.router, prefix="/secrets", tags=["凭据中心"], dependencies=[Depends(require_api_key)])
 
 # 16. 变更日志 (Changelog)
 portal_router.include_router(changelog.router, prefix="/changelog", tags=["变更日志"], dependencies=[Depends(require_api_key)])

@@ -1270,6 +1270,13 @@ async def delete_mcp_server(
     # 2. Delete the server itself
     await db.execute(delete(McpServer).where(McpServer.id == server_id))
 
+    # 2.1 凭据绑定是外部表、无外键，必须显式清（与工具/脚本删除同一口径）
+    from app.services.secrets import center as secret_center
+
+    await secret_center.detach_consumer(
+        db, consumer_type="mcp_server", consumer_id=server_id
+    )
+
     # 3. 同步剔除智能体版本里的死引用：与「清理远端已删除工具」同一口径，
     #    放在同一事务里，避免出现「服务没了、引用还在」的半成品状态。
     affected_agent_versions = await prune_agent_versions_by_names(db, tool_names)

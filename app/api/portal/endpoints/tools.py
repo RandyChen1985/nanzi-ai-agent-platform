@@ -516,6 +516,11 @@ async def delete_tool(
     
     await db.delete(tool)
     await db.commit()
+    # 表间没有外键，孤儿绑定没人替我们清：不清的话「这条凭据被绑到哪了」
+    # 会一直显示一个已经删掉的工具。
+    from app.services.secrets import center as secret_center
+
+    await secret_center.detach_consumer(db, consumer_type="api_tool", consumer_id=tool_id)
     return {"status": "success", "message": "Tool deleted"}
 
 

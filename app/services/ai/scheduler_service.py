@@ -647,6 +647,10 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                 "user_name": user.user_name,
                 "real_name": user.real_name,
                 "role": user.role,
+                # 部门要带上：凭据中心的授权可以是「部门级」（grantee_type='dept'）。
+                # 少了这一项，管理员授给部门的系统凭据在定时任务里会全部判成
+                # `denied_by_grant`——而同样的任务手动点一次却是正常的，很难查。
+                "dept_code": getattr(user, "dept_code", None),
                 "is_scheduled_task": True,
                 "quick_suggestions_forbidden": True,
                 "task_name": task_name,

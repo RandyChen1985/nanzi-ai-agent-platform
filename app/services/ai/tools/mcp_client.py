@@ -15,6 +15,7 @@ from mcp.client.streamable_http import streamable_http_client
 from app.core.orm import AsyncSessionLocal
 from app.models.mcp import McpServer, McpToolCache
 from app.services.mcp.mcp_auth_policy import build_mcp_headers, resolve_mcp_auth_headers
+from app.services.secrets.injection import apply_mcp_bindings
 from app.services.mcp.outbound_audit import record_outbound_audit_log
 from sqlalchemy import select, update
 
@@ -837,6 +838,12 @@ class McpClientService:
                 agent_info=agent_info,
                 request_id=request_id,
                 private_key=private_key,
+            )
+            # 凭据中心：**绑定优先，会覆盖固定的 Token**。MCP 的 fixed_token 是
+            # 服务级单值（全平台共用），属于「没人绑时的默认值」；用户显式绑了
+            # 自己的凭据就必须盖过它，否则绑定永远不会生效。
+            auth_headers = await apply_mcp_bindings(
+                server, auth_headers, user_info=user_info
             )
             session_key = server_id
             if signed_user_enabled:

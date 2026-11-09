@@ -17,6 +17,9 @@ import ToolParamEditor from './ToolParamEditor.vue'
 import CodeEditor from '../CodeEditor.vue'
 import GroupSelect from './GroupSelect.vue'
 import ConfirmModal from '../ConfirmModal.vue'
+import CredentialPicker from '../secrets/CredentialPicker.vue'
+import axios from '@/utils/axios'
+import { useToast } from '@/composables/useToast'
 
 /** 与后端 ``sys_script_tools`` 一致；parameter_schema 兼容「对象」与「JSON 文本」两种来源 */
 interface ScriptTool {
@@ -106,6 +109,124 @@ const title = computed(() => {
 /** 内置脚本可以改（用户选择「可编辑内置」），但名称锁死：改名会失去与内置版本的对应关系 */
 const nameReadonly = computed(() => isBuiltin.value)
 
+// ── 环境变量凭据 ──────────────────────────────────────────────────────
+//
+// 与 API 工具/MCP 不同，这里的槽位**不是预定义的**：用户在脚本里写
+// `os.environ["DB_PASSWORD"]`，就得在这里绑一个同名变量。所以是「变量名 + 凭据」
+// 一行一条，而不是固定的 Authorization。
+//
+// 绑定的消费者是 script_tool + 工具 id，新建时还没有 id，因此只在编辑态出现。
+const { showToast } = useToast()
+
+interface EnvBinding {
+  slot: string
+  variable: string
+  secret_id: string
+  secret_key: string
+  secret_name: string
+}
+
+const envBindings = ref<EnvBinding[]>([])
+const envBindingsBusy = ref(false)
+const envDialogOpen = ref(false)
+const envVariable = ref('')
+const envSecretId = ref<string | null>(null)
+const envPickedSecret = ref<{ id: string; secret_key: string } | null>(null)
+const envError = ref('')
+
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+async function loadEnvBindings() {
+  envBindings.value = []
+  if (!props.tool?.id) return
+  try {
+    const res = await axios.get('/api/portal/secrets/bindings', {
+      params: { consumer_type: 'script_tool', consumer_id: props.tool.id },
+    })
+    const rows = (res.data?.data || []) as any[]
+    envBindings.value = rows
+      .filter((row) => String(row.slot || '').startsWith('env:'))
+      // 别人的个人绑定不会出现在这里（后端已按 bound_by_me 过滤），
+      // 但管理员做的全局绑定要能看到，否则「为什么这个变量有值」查不清
+      .map((row) => ({
+        slot: row.slot,
+        variable: String(row.slot).slice(4),
+        secret_id: row.secret_id,
+        secret_key: row.secret_key,
+        secret_name: row.secret_name,
+      }))
+  } catch {
+    // 读不到绑定不该挡住编辑脚本
+  }
+}
+
+function openEnvDialog() {
+  envVariable.value = ''
+  envSecretId.value = null
+  envPickedSecret.value = null
+  envError.value = ''
+  envDialogOpen.value = true
+}
+
+function onEnvSecretPicked(item: { id: string; secret_key: string } | null) {
+  envPickedSecret.value = item
+}
+
+async function saveEnvBinding() {
+  const variable = envVariable.value.trim()
+  if (!ENV_NAME_RE.test(variable)) {
+    envError.value = '变量名只能用字母、数字、下划线，且不能以数字开头'
+    return
+  }
+  if (!envPickedSecret.value) {
+    envError.value = '请选择凭据'
+    return
+  }
+  if (envBindings.value.some((row) => row.variable === variable)) {
+    envError.value = `变量 ${variable} 已经绑定过了`
+    return
+  }
+  if (!props.tool?.id) return
+
+  envBindingsBusy.value = true
+  envError.value = ''
+  try {
+    await axios.post('/api/portal/secrets/bindings', {
+      secret_id: envPickedSecret.value.id,
+      consumer_type: 'script_tool',
+      consumer_id: props.tool.id,
+      slot: `env:${variable}`,
+    })
+    envDialogOpen.value = false
+    await loadEnvBindings()
+    showToast(`已绑定 ${variable}`, 'success')
+  } catch (e: any) {
+    envError.value = e?.response?.data?.detail || e?.message || '保存绑定失败'
+  } finally {
+    envBindingsBusy.value = false
+  }
+}
+
+async function removeEnvBinding(row: EnvBinding) {
+  if (!props.tool?.id) return
+  envBindingsBusy.value = true
+  try {
+    await axios.delete('/api/portal/secrets/bindings', {
+      data: {
+        consumer_type: 'script_tool',
+        consumer_id: props.tool.id,
+        slot: row.slot,
+      },
+    })
+    await loadEnvBindings()
+    showToast(`已解除 ${row.variable}`, 'success')
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || '解除绑定失败', 'error')
+  } finally {
+    envBindingsBusy.value = false
+  }
+}
+
 const schemaToText = (value: ScriptTool['parameter_schema']): string => {
   if (!value) return ''
   if (typeof value === 'string') return value
@@ -131,6 +252,7 @@ const resetForm = () => {
   requirements.value = (tool?.requirements || [])
     .filter((item) => String(item || '').trim())
     .map((item) => ({ key: nextRequirementKey(), value: String(item).trim() }))
+  void loadEnvBindings()
 }
 
 watch(
@@ -651,6 +773,58 @@ const primaryLabel = computed(() => {
           </p>
         </div>
 
+        <!-- 环境变量：绑了凭据的变量由平台在执行前注入，没绑的不注入 -->
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p class="text-sm font-medium text-gray-700">环境变量</p>
+              <p class="mt-0.5 text-xs text-gray-500">
+                绑上凭据后，平台在执行前把值写进环境变量，脚本里用
+                <code class="font-mono">os.environ["变量名"]</code> 读。值不会出现在命令行里。
+              </p>
+            </div>
+            <button
+              type="button"
+              :disabled="!isEditing || envBindingsBusy"
+              class="shrink-0 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              :title="isEditing ? '' : '先保存脚本，再回来绑定'"
+              @click="openEnvDialog"
+            >+ 绑定环境变量</button>
+          </div>
+
+          <p v-if="!isEditing" class="mt-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+            新建脚本时还不能绑定——绑定要挂在工具 id 上，先保存，再回来配。
+          </p>
+
+          <p v-else-if="envBindings.length === 0" class="mt-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+            暂无绑定。脚本不需要外部凭据时留空即可。
+          </p>
+
+          <div v-else class="mt-2 space-y-2">
+            <div
+              v-for="row in envBindings"
+              :key="row.slot"
+              class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white p-2 shadow-sm"
+            >
+              <code class="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-800">{{ row.variable }}</code>
+              <span class="text-gray-300">←</span>
+              <span class="min-w-0 flex-1 truncate text-xs text-gray-700">{{ row.secret_name }}</span>
+              <code class="hidden shrink-0 font-mono text-[10px] text-gray-400 sm:inline">{{ row.secret_key }}</code>
+              <button
+                type="button"
+                :disabled="envBindingsBusy"
+                class="rounded-md p-1 text-gray-400 transition-colors hover:text-red-600 disabled:opacity-50"
+                :title="`解除 ${row.variable}`"
+                @click="removeEnvBinding(row)"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label class="block text-sm font-medium text-gray-700">超时（秒）</label>
@@ -724,6 +898,62 @@ const primaryLabel = computed(() => {
             >{{ saving ? '保存中…' : primaryLabel }}</button>
           </div>
         </div>
+      </div>
+    </template>
+  </Modal>
+
+  <!-- 绑定环境变量：变量名由用户在脚本里自己定，所以要先问名字再选凭据 -->
+  <Modal
+    :title="'绑定环境变量'"
+    :show="envDialogOpen"
+    size="max-w-md"
+    :z-index="12500"
+    @close="envDialogOpen = false"
+  >
+    <div class="space-y-4">
+      <div>
+        <label class="block text-xs font-medium text-gray-700">变量名</label>
+        <input
+          v-model="envVariable"
+          class="mt-1 block w-full rounded-md border-gray-300 font-mono text-sm shadow-sm focus:border-primary focus:ring-2 focus:ring-primary/20"
+          placeholder="DB_PASSWORD"
+          @keyup.enter="saveEnvBinding"
+        />
+        <p class="mt-1 text-[11px] text-gray-500">
+          要和脚本里的 <code class="font-mono">os.environ["..."]</code> 完全一致，区分大小写。
+        </p>
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-gray-700">凭据</label>
+        <div class="mt-1">
+          <CredentialPicker
+            v-model="envSecretId"
+            scene="script_env"
+            placeholder="选择一条允许「脚本环境变量」场景的凭据"
+            @picked="onEnvSecretPicked"
+          />
+        </div>
+      </div>
+
+      <p v-if="envError" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+        {{ envError }}
+      </p>
+    </div>
+
+    <template #footer>
+      <div class="flex justify-end gap-2">
+        <button
+          type="button"
+          class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          @click="envDialogOpen = false"
+        >取消</button>
+        <button
+          type="button"
+          :disabled="envBindingsBusy"
+          class="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-dark disabled:opacity-60"
+          @click="saveEnvBinding"
+        >{{ envBindingsBusy ? '保存中…' : '绑定' }}</button>
       </div>
     </template>
   </Modal>

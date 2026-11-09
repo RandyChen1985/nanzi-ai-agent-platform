@@ -25,6 +25,7 @@ from app.services.ai.tools.parameter_schema import (
     parse_parameter_schema as _parse_parameter_schema,
 )
 from app.services.ai.tools.tool_credentials import unresolved_credential_headers
+from app.services.secrets.injection import apply_api_tool_bindings
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +250,10 @@ class GenericApiToolFactory:
                 headers.update(h_config)
         if headers:
             headers = replace_headers_user_placeholders(headers, variables)
+            # 凭据中心：只补「本来就没填」的 header，手填的真实值一律不动。
+            # 必须在 unresolved_credential_headers 之前——否则占位符会先被判为
+            # 「未填」而抛错，绑定过的凭据根本没机会生效。
+            headers = await apply_api_tool_bindings(config, headers, user_info=user_info)
             pending = unresolved_credential_headers(headers)
             if pending:
                 # 导入工具默认没有凭据；发出去只会换来对方的 401，不如在这里说清楚

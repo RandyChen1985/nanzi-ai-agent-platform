@@ -1280,6 +1280,7 @@ onBeforeUnmount(() => {
                                 <ToolHeadersEditor
                                     v-model="toolForm.headers_str"
                                     :error="fieldErrors.headers_str"
+                                    :consumer-id="isEditing && toolForm.id ? String(toolForm.id) : ''"
                                 />
                             </div>
 

@@ -10,6 +10,7 @@ from app.services.ai.audit_payload import (
     bound_audit_payload,
     truncate_text_bytes,
 )
+from app.services.secrets.guard import build_storage_scanner
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,10 @@ class AuditManager:
         """
         if not logs:
             return
-        
+
+        # 一次快照、全程复用：循环里每条都重建扫描器会把排序/去重白做一遍。
+        scanner = await build_storage_scanner()
+
         try:
             async with AsyncSessionLocal() as session:
                 orm_objects = []
@@ -175,13 +179,17 @@ class AuditManager:
                         event_type=log.event_type,
                         agent_name=log.agent_name,
                         tool_name=log.tool_name,
-                        # Bound only the audit copy. AgentScope has already
-                        # consumed the original result and keeps using it.
-                        tool_input=bound_audit_payload(log.tool_input),
-                        tool_output=bound_audit_payload(log.tool_output),
+                        # 先擦凭据、再截断：顺序反了会把密钥切成两半，
+                        # 半截值既匹配不上指纹、又仍然泄露关键片段。
+                        tool_input=bound_audit_payload(scanner.mask_data(log.tool_input)),
+                        tool_output=bound_audit_payload(scanner.mask_data(log.tool_output)),
                         execution_time_ms=log.execution_time_ms,
                         status=log.status,
-                        error_message=log.error_message,
+                        # 错误信息是最容易夹带连接串/密钥的地方（"Access denied for ..."），
+                        # 之前只靠键名规则过滤，用户名密码写进 message 就会漏。
+                        error_message=scanner.mask_text(log.error_message)
+                        if isinstance(log.error_message, str)
+                        else log.error_message,
                         model=log.model,
                         temperature=log.temperature,
                         prompt_tokens=getattr(log, 'prompt_tokens', 0) or 0,
@@ -189,7 +197,7 @@ class AuditManager:
                         total_tokens=getattr(log, 'total_tokens', 0) or 0,
                         span_id=getattr(log, 'span_id', None),
                         parent_span_id=getattr(log, 'parent_span_id', None),
-                        meta_info=getattr(log, 'meta_info', None),
+                        meta_info=scanner.mask_data(getattr(log, 'meta_info', None)),
                         created_at=log.timestamp
                     ))
                 session.add_all(orm_objects)
@@ -243,14 +251,26 @@ class AuditManager:
 
         username = user_info.get("user_name") if user_info else None
 
+        # 脱敏必须发生在截断之前：先截断会把密钥切成半截，半截值既匹配不上
+        # 已知凭据、又照样把关键片段留在库里。
+        scanner = await build_storage_scanner()
+        safe_query = scanner.mask_text(query) if isinstance(query, str) else query
+        safe_summary = scanner.mask_text(summary) if isinstance(summary, str) else summary
+        safe_reasoning = (
+            scanner.mask_text(reasoning_content)
+            if isinstance(reasoning_content, str)
+            else reasoning_content
+        )
+        safe_timeline = scanner.mask_data(process_timeline)
+
         bounded_query, query_bytes = truncate_text_bytes(
-            query, max_bytes=MAX_HISTORY_TEXT_BYTES
+            safe_query, max_bytes=MAX_HISTORY_TEXT_BYTES
         )
         bounded_summary, summary_bytes = truncate_text_bytes(
-            summary, max_bytes=MAX_HISTORY_TEXT_BYTES
+            safe_summary, max_bytes=MAX_HISTORY_TEXT_BYTES
         )
         bounded_reasoning, reasoning_bytes = truncate_text_bytes(
-            reasoning_content, max_bytes=MAX_HISTORY_TEXT_BYTES
+            safe_reasoning, max_bytes=MAX_HISTORY_TEXT_BYTES
         )
 
         size_log = (
@@ -282,7 +302,7 @@ class AuditManager:
                     query=query_value,
                     summary=summary_value,
                     reasoning_content=reasoning_value,
-                    process_timeline=process_timeline,
+                    process_timeline=safe_timeline,
                     status=status,
                     execution_time_ms=execution_time_ms,
                     agent_version=agent_version,
@@ -316,10 +336,10 @@ class AuditManager:
                 f"retry_budget={retry_max_bytes}B error={first_error}"
             )
 
-        retry_query, _ = truncate_text_bytes(query, max_bytes=retry_max_bytes)
-        retry_summary, _ = truncate_text_bytes(summary, max_bytes=retry_max_bytes)
+        retry_query, _ = truncate_text_bytes(safe_query, max_bytes=retry_max_bytes)
+        retry_summary, _ = truncate_text_bytes(safe_summary, max_bytes=retry_max_bytes)
         retry_reasoning, _ = truncate_text_bytes(
-            reasoning_content, max_bytes=retry_max_bytes
+            safe_reasoning, max_bytes=retry_max_bytes
         )
 
         try:

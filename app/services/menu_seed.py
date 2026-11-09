@@ -129,6 +129,7 @@ ALLOWED_PAGE_PATHS = (
     "/dashboard/roles",
     "/dashboard/system",
     "/dashboard/menus",
+    "/dashboard/secrets",
     "/dashboard/departments",
 )
 
@@ -471,9 +472,26 @@ _RAW_SEED: List[BuiltinMenuNode] = [
         active_route_names="MenuManagement",
         description="菜单与权限树的配置入口",
     ),
+    BuiltinMenuNode(
+        code="menu:system:credentials",
+        node_type=NODE_PAGE,
+        label="凭据中心",
+        parent_code="group:system",
+        permission_code="menu:system:credentials",
+        icon="key",
+        path="/dashboard/secrets",
+        active_route_names="AdminSecretCenter",
+        description="系统级凭据的创建、授权与停用",
+    ),
     # ==================== 功能点（element，只读）====================
     # 归属与中文名原先写在 MENU_TREE，入库后由权限树接口返回。
     # 这些码由后端 require_permission("element", ...) 校验，因此不可在后台增删或禁用。
+    BuiltinMenuNode(
+        code="element:system:credentials_manage",
+        node_type=NODE_ELEMENT,
+        label="管理系统凭据（授权 / 强制停用）",
+        parent_code="menu:system:credentials",
+    ),
     BuiltinMenuNode(
         code="element:data_sources:edit",
         node_type=NODE_ELEMENT,

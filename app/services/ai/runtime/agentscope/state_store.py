@@ -8,6 +8,7 @@ from typing import Any
 
 from app.services.ai.memory_service import memory_service
 from app.services.ai.conversation_identity import require_user_id
+from app.services.secrets.guard import sanitize_for_storage
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,9 @@ class AgentStateStore:
             "tools_fingerprint": tools_fingerprint,
             "model_name": model_name,
             "updated_at": datetime.now(timezone.utc).isoformat(),
-            "state": serialized_state,
+            # 运行态默认存 30 天，里面装着本轮的上下文与工具结果。不擦一遍就等于把
+            # 凭据明文放进 Redis——它既不在数据库的备份范围里，也没有审计留痕。
+            "state": await sanitize_for_storage(serialized_state, field="agent_state"),
         }
         try:
             await redis.set(
