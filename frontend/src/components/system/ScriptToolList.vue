@@ -280,6 +280,14 @@ function openCopy(tool: ScriptTool) {
   wizardVisible.value = true
 }
 
+/**
+ * 向导里新建态选的变量绑定先暂存在它内部，保存拿到脚本 id 后要它补写。
+ * 不补写的话界面显示「已绑定」，运行时 `os.environ["X"]` 却是空的。
+ */
+const wizardRef = ref<{
+  flushPendingEnvBindings: (toolId: string) => Promise<string[]>
+} | null>(null)
+
 async function handleSubmit(payload: ScriptToolPayload) {
   wizardSaving.value = true
   try {
@@ -287,7 +295,17 @@ async function handleSubmit(payload: ScriptToolPayload) {
     if (editingId) {
       await scriptToolApi.update(editingId, payload)
     } else {
-      await scriptToolApi.create(payload)
+      const created = await scriptToolApi.create(payload)
+      const newId = String(created?.data?.id || '')
+      if (newId && wizardRef.value) {
+        const failed = await wizardRef.value.flushPendingEnvBindings(newId)
+        if (failed.length) {
+          reportError(
+            '脚本已创建，但部分凭据绑定失败',
+            new Error(`${failed.join('、')} 没能绑上，请到编辑态重新绑定`),
+          )
+        }
+      }
     }
     wizardVisible.value = false
     await load()
@@ -798,6 +816,7 @@ onBeforeUnmount(() => {
     </table>
 
     <ScriptToolWizard
+      ref="wizardRef"
       :show="wizardVisible"
       :group-options="groupCounts"
       :tool="wizardTool"

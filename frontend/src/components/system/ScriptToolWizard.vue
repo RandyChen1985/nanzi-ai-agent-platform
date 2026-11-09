@@ -115,7 +115,9 @@ const nameReadonly = computed(() => isBuiltin.value)
 // `os.environ["DB_PASSWORD"]`，就得在这里绑一个同名变量。所以是「变量名 + 凭据」
 // 一行一条，而不是固定的 Authorization。
 //
-// 绑定的消费者是 script_tool + 工具 id，新建时还没有 id，因此只在编辑态出现。
+// 绑定的消费者是 script_tool + 工具 id。新建时还没有 id，先记在
+// ``pendingEnvBindings`` 里，保存拿到 id 后由父组件调 ``flushPendingEnvBindings()``
+// 补写——否则用户得先存一遍空配置、再回来配一次。
 const { showToast } = useToast()
 
 interface EnvBinding {
@@ -127,6 +129,10 @@ interface EnvBinding {
 }
 
 const envBindings = ref<EnvBinding[]>([])
+/** 新建态选的变量；槽位能提前算出来（``env:<名字>``），补写时直接用。 */
+const pendingEnvBindings = ref<EnvBinding[]>([])
+/** 展示用：已落库的 + 还没保存的 */
+const allEnvBindings = computed(() => [...envBindings.value, ...pendingEnvBindings.value])
 const envBindingsBusy = ref(false)
 const envDialogOpen = ref(false)
 const envVariable = ref('')
@@ -182,11 +188,24 @@ async function saveEnvBinding() {
     envError.value = '请选择凭据'
     return
   }
-  if (envBindings.value.some((row) => row.variable === variable)) {
+  if (allEnvBindings.value.some((row) => row.variable === variable)) {
     envError.value = `变量 ${variable} 已经绑定过了`
     return
   }
-  if (!props.tool?.id) return
+
+  // 新建态：脚本还没有 id，先记着，保存后补写
+  if (!props.tool?.id) {
+    pendingEnvBindings.value.push({
+      slot: `env:${variable}`,
+      variable,
+      secret_id: envPickedSecret.value.id,
+      secret_key: envPickedSecret.value.secret_key,
+      secret_name: envPickedSecret.value.secret_key,
+    })
+    envDialogOpen.value = false
+    showToast(`已选中 ${variable}，保存脚本后生效`, 'success')
+    return
+  }
 
   envBindingsBusy.value = true
   envError.value = ''
@@ -208,7 +227,11 @@ async function saveEnvBinding() {
 }
 
 async function removeEnvBinding(row: EnvBinding) {
-  if (!props.tool?.id) return
+  if (!props.tool?.id) {
+    pendingEnvBindings.value = pendingEnvBindings.value.filter((it) => it.slot !== row.slot)
+    showToast(`已取消 ${row.variable}`, 'success')
+    return
+  }
   envBindingsBusy.value = true
   try {
     await axios.delete('/api/portal/secrets/bindings', {
@@ -226,6 +249,40 @@ async function removeEnvBinding(row: EnvBinding) {
     envBindingsBusy.value = false
   }
 }
+
+/**
+ * 保存脚本后用真实 id 补写暂存的变量绑定，返回失败的变量名。
+ *
+ * 脚本已经建好了，绑定失败不该让它回滚——但必须说出来，否则界面显示「已绑定」，
+ * 运行时 `os.environ["X"]` 却是空的。
+ */
+async function flushPendingEnvBindings(toolId: string) {
+  const entries = [...pendingEnvBindings.value]
+  if (!entries.length) return [] as string[]
+  const failed: string[] = []
+  const keep: EnvBinding[] = []
+  for (const row of entries) {
+    try {
+      await axios.post('/api/portal/secrets/bindings', {
+        secret_id: row.secret_id,
+        consumer_type: 'script_tool',
+        consumer_id: toolId,
+        slot: row.slot,
+      })
+    } catch {
+      failed.push(row.variable)
+      keep.push(row)
+    }
+  }
+  // 失败的留在列表里：清掉的话用户看不到「哪些没绑上」，也没法重试
+  pendingEnvBindings.value = keep
+  return failed
+}
+
+defineExpose({
+  flushPendingEnvBindings,
+  hasPendingEnvBindings: () => pendingEnvBindings.value.length > 0,
+})
 
 const schemaToText = (value: ScriptTool['parameter_schema']): string => {
   if (!value) return ''
@@ -785,24 +842,24 @@ const primaryLabel = computed(() => {
             </div>
             <button
               type="button"
-              :disabled="!isEditing || envBindingsBusy"
+              :disabled="envBindingsBusy"
               class="shrink-0 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-              :title="isEditing ? '' : '先保存脚本，再回来绑定'"
+              title="绑定一个环境变量"
               @click="openEnvDialog"
             >+ 绑定环境变量</button>
           </div>
 
-          <p v-if="!isEditing" class="mt-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
-            新建脚本时还不能绑定——绑定要挂在工具 id 上，先保存，再回来配。
+          <p v-if="!isEditing && pendingEnvBindings.length > 0" class="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+            有 {{ pendingEnvBindings.length }} 个变量已选中凭据，保存脚本后自动绑定。
           </p>
 
-          <p v-else-if="envBindings.length === 0" class="mt-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+          <p v-else-if="allEnvBindings.length === 0" class="mt-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
             暂无绑定。脚本不需要外部凭据时留空即可。
           </p>
 
           <div v-else class="mt-2 space-y-2">
             <div
-              v-for="row in envBindings"
+              v-for="row in allEnvBindings"
               :key="row.slot"
               class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white p-2 shadow-sm"
             >

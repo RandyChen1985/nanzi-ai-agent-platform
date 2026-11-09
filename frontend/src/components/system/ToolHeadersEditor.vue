@@ -9,7 +9,9 @@
  * ``${CREDENTIAL:<标识>}`` 占位符，同时写一条 ``sys_secret_bindings`` 记录
  * （槽位 ``header:<名称>``）。占位符是给人看的标记，运行时的真实值由注入层补。
  *
- * **新建工具时按钮不可用**：绑定的消费者是工具 id，工具还没入库就没有可绑的对象。
+ * **新建工具时也能先选**：绑定的消费者是工具 id，工具还没入库时先记在
+ * ``pendingBindings`` 里，保存拿到 id 后由父组件调用 ``flushPending()`` 补写。
+ * 否则用户得先存一遍空配置、再回来改——和之前 MCP 那边一样的坑。
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import { KeyIcon, TrashIcon } from '@heroicons/vue/24/outline'
@@ -142,17 +144,25 @@ const pickedItem = ref<{ id: string; secret_key: string } | null>(null)
 const bindingBusy = ref(false)
 const bindingError = ref('')
 
-const canBind = computed(() => !!props.consumerId)
+/**
+ * 新建态选的绑定。键是完整槽位（``header:X-Tenant`` / ``query:api_key``），
+ * 值和落库后的形状一致，补写时直接用。
+ */
+const pendingBindings = ref<Record<string, BindingInfo>>({})
 
 /** 取某个 header 的绑定；模板里不能靠三元表达式跨分支收窄类型，所以走函数。 */
-const bindingOf = (key: string): BindingInfo | null =>
-  bindings.value[`header:${key.trim()}`] || null
+const bindingOf = (key: string): BindingInfo | null => {
+  const slot = `header:${key.trim()}`
+  return bindings.value[slot] || pendingBindings.value[slot] || null
+}
 
 // 参数位和 header 用同一张绑定表，只是槽位前缀不同：GET 的参数在 URL 上（query），
 // 其余方法在 JSON body 里。前缀错了就永远匹配不到绑定，而且不会有任何报错。
 const paramSlotPrefix = computed(() => (props.method || 'GET').toUpperCase() === 'GET' ? 'query' : 'body')
-const paramBindingOf = (name: string): BindingInfo | null =>
-  bindings.value[`${paramSlotPrefix.value}:${name}`] || null
+const paramBindingOf = (name: string): BindingInfo | null => {
+  const slot = `${paramSlotPrefix.value}:${name}`
+  return bindings.value[slot] || pendingBindings.value[slot] || null
+}
 const bindingSlotName = computed(() => (bindingSlot.value || '').replace(/^header:/, ''))
 const currentBinding = computed(() =>
   bindingSlot.value ? bindings.value[bindingSlot.value] || null : null,
@@ -184,10 +194,10 @@ async function loadBindings() {
 }
 
 function openParamBinding(name: string) {
-  if (!canBind.value) return
+  if (!name) return
   const slot = `${paramSlotPrefix.value}:${name}`
   bindingSlot.value = slot
-  const existing = bindings.value[slot]
+  const existing = bindings.value[slot] || pendingBindings.value[slot]
   bindingSecretId.value = existing?.secret_id || null
   pickedItem.value = existing
     ? { id: existing.secret_id, secret_key: existing.secret_key }
@@ -197,9 +207,9 @@ function openParamBinding(name: string) {
 
 function openBinding(row: HeaderRow) {
   const key = row.key.trim()
-  if (!canBind.value || !key) return
+  if (!key) return
   bindingSlot.value = `header:${key}`
-  const existing = bindings.value[bindingSlot.value]
+  const existing = bindings.value[bindingSlot.value] || pendingBindings.value[bindingSlot.value]
   bindingSecretId.value = existing?.secret_id || null
   pickedItem.value = existing
     ? { id: existing.secret_id, secret_key: existing.secret_key }
@@ -212,12 +222,40 @@ function onPicked(item: { id: string; secret_key: string } | null) {
 }
 
 async function submitBinding() {
-  if (!bindingSlot.value || !props.consumerId) return
+  if (!bindingSlot.value) return
   const picked = bindingSecretId.value ? pickedItem.value : null
   bindingBusy.value = true
   bindingError.value = ''
   const slot = bindingSlot.value
   const headerName = bindingSlotName.value
+
+  // 新建态：工具还没有 id，先记下来，保存后由父组件调 flushPending() 补写
+  if (!props.consumerId) {
+    if (picked) {
+      pendingBindings.value[slot] = {
+        secret_id: picked.id,
+        secret_key: picked.secret_key,
+        secret_name: '',
+      }
+    } else {
+      delete pendingBindings.value[slot]
+    }
+    if (slot.startsWith('header:')) {
+      const row = rows.value.find((r) => r.key.trim() === headerName)
+      if (row) {
+        // 选凭据就写占位符、取消就清空：占位符让配置里留着一个「这里由凭据填」
+        // 的名字，注入层才找得到这个 header；取消时清空才回到「没配」。
+        row.value = picked ? `\${CREDENTIAL:${picked.secret_key}}` : ''
+        emitFromRows()
+      }
+    }
+    // 参数位的值不落在 schema 里，运行时按槽位取，配置无需改动
+    bindingSlot.value = null
+    bindingSecretId.value = null
+    bindingBusy.value = false
+    return
+  }
+
   try {
     if (!picked) {
       await axios.delete('/api/portal/secrets/bindings', {
@@ -266,6 +304,41 @@ async function submitBinding() {
     bindingBusy.value = false
   }
 }
+
+
+/**
+ * 保存工具后用真实 id 补写暂存的绑定，返回失败的槽位（调用方决定怎么提示）。
+ *
+ * 工具已经建好了，绑定失败不该让它回滚——但必须说出来，否则界面显示「已绑定」，
+ * 实际调用拿不到值。
+ */
+async function flushPending(consumerId: string) {
+  const entries = Object.entries(pendingBindings.value)
+  if (!entries.length) return [] as string[]
+  const failed: string[] = []
+  const keep: Record<string, BindingInfo> = {}
+  for (const [slot, binding] of entries) {
+    try {
+      await axios.post('/api/portal/secrets/bindings', {
+        secret_id: binding.secret_id,
+        consumer_type: props.consumerType,
+        consumer_id: consumerId,
+        slot,
+      })
+    } catch {
+      failed.push(slot)
+      keep[slot] = binding
+    }
+  }
+  // 失败的留在暂存里：清掉的话「哪些没绑上」就查不到了
+  pendingBindings.value = keep
+  return failed
+}
+
+defineExpose({
+  flushPending,
+  hasPendingBindings: () => Object.keys(pendingBindings.value).length > 0,
+})
 
 watch(
   () => [props.consumerId, props.consumerType],
@@ -345,10 +418,10 @@ watch(
         />
         <button
           type="button"
-          :disabled="!canBind || !row.key.trim()"
+          :disabled="!row.key.trim()"
           class="col-span-2 justify-self-start rounded-md p-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-30 sm:col-span-1 sm:justify-self-center"
           :class="bindingOf(row.key) ? 'text-emerald-600 hover:text-emerald-700' : 'text-gray-400 hover:text-primary'"
-          :title="!canBind ? '保存工具后可绑定凭据' : bindingOf(row.key) ? `已绑定 ${bindingOf(row.key)?.secret_key}` : '绑定凭据中心的凭据'"
+          :title="!row.key.trim() ? '先填 Header 名称' : bindingOf(row.key) ? `已绑定 ${bindingOf(row.key)?.secret_key}` : '绑定凭据中心的凭据'"
           :aria-label="`为 Header ${row.key || '未命名'} 绑定凭据`"
           @click="openBinding(row)"
         >
@@ -396,9 +469,8 @@ watch(
           </span>
           <button
             type="button"
-            :disabled="!canBind"
-            class="ml-auto flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-            :title="canBind ? '选择凭据' : '保存工具后才能绑定'"
+            class="ml-auto flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
+            title="选择凭据"
             @click="openParamBinding(name)"
           >
             <KeyIcon class="h-3.5 w-3.5" />
@@ -427,7 +499,7 @@ watch(
 
     <p v-if="displayError" class="text-[11px] text-red-600">{{ displayError }}</p>
     <p v-else class="text-[11px] text-gray-400">
-      敏感值建议用变量占位；保存后仍会按原值写入工具配置。<template v-if="canBind">点右侧钥匙图标可改用凭据中心里的凭据，值会变成 <code>${CREDENTIAL:标识}</code>，不会写入工具配置。</template><template v-else>保存后可点右侧钥匙图标绑定凭据中心的凭据。</template>
+      敏感值建议用变量占位；保存后仍会按原值写入工具配置。点右侧钥匙图标可改用凭据中心里的凭据，值会变成 <code>${CREDENTIAL:标识}</code>，不会写入工具配置。
     </p>
   </div>
   <!-- 绑定凭据 -->

@@ -46,6 +46,14 @@ const formError = ref('')
 const fieldErrors = ref<Partial<Record<'name' | 'url_template' | 'headers_str' | 'parameter_schema_str' | 'signing', string>>>({})
 
 /**
+ * Headers 编辑器：新建时选的凭据先暂存在它内部，保存拿到工具 id 后要它补写。
+ * 不补写的话界面显示「已绑定」，实际一条绑定都没有。
+ */
+const headersEditorRef = ref<{
+  flushPending: (consumerId: string) => Promise<string[]>
+} | null>(null)
+
+/**
  * 参数定义里声明了 `source: credential` 的参数名。
  *
  * 只认声明过的：普通参数的值由模型填，平台不该去猜哪个「看起来像密钥」。
@@ -675,8 +683,20 @@ const saveTool = async () => {
             await toolApi.update(toolForm.value.id, payload)
             showToast('更新成功', 'success')
         } else {
-            await toolApi.create(payload)
+            const created = await toolApi.create(payload)
             showToast('创建成功', 'success')
+            // 新建时选的凭据此时才有工具 id 可挂：补写失败要说出来，不能让它
+            // 静默变成「界面显示已绑定、实际没有」
+            const newId = String(created?.data?.id || '')
+            if (newId && headersEditorRef.value) {
+                const failed = await headersEditorRef.value.flushPending(newId)
+                if (failed.length) {
+                    showToast(
+                        `工具已创建，但 ${failed.map((s) => s.replace(/^(header|query|body):/, '')).join('、')} 的凭据绑定失败，请重新绑定`,
+                        'error',
+                    )
+                }
+            }
         }
         // 密钥已经交给服务端加密保存，前端不再保留明文
         toolForm.value.signing_secret = ''
@@ -1291,6 +1311,7 @@ onBeforeUnmount(() => {
                         <div class="space-y-4 border-t border-gray-200 px-3 py-3">
                             <div data-tool-field="headers_str" class="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30" tabindex="-1">
                                 <ToolHeadersEditor
+                                    ref="headersEditorRef"
                                     v-model="toolForm.headers_str"
                                     :error="fieldErrors.headers_str"
                                     :consumer-id="isEditing && toolForm.id ? String(toolForm.id) : ''"

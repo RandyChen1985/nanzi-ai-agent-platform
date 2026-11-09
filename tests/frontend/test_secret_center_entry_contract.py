@@ -304,6 +304,58 @@ class TestMcpWizardPendingBindings:
         assert "pendingBindings.value = {}" in segment
 
 
+class TestCreatingBindingsForTools:
+    """API 工具与脚本工具的新建态也要能先选凭据。
+
+    MCP 那侧已经改成「先记着、保存后补写」。另外两个消费者如果还要求先存一遍
+    空配置再回来配，同一件事就有三种操作路径，用户永远记不住。
+    """
+
+    HEADERS = ROOT / "frontend/src/components/system/ToolHeadersEditor.vue"
+    REGISTRY = ROOT / "frontend/src/components/system/ToolRegistry.vue"
+    SCRIPT_WIZARD = ROOT / "frontend/src/components/system/ScriptToolWizard.vue"
+    SCRIPT_LIST = ROOT / "frontend/src/components/system/ScriptToolList.vue"
+
+    def test_tool_headers_editor_stores_pending(self):
+        source = _read(self.HEADERS)
+        assert "pendingBindings" in source
+        assert "async function flushPending(consumerId: string)" in source
+        assert "defineExpose" in source
+
+    def test_tool_headers_no_longer_requires_consumer_id(self):
+        """旧实现里 `if (!bindingSlot.value || !props.consumerId) return` 直接堵死新建态。"""
+        source = _read(self.HEADERS)
+        assert "if (!bindingSlot.value || !props.consumerId) return" not in source
+        assert "if (!bindingSlot.value) return" in source
+
+    def test_tool_headers_failed_bindings_survive(self):
+        """补写失败要留在暂存里，否则「哪些没绑上」查不到也重试不了。"""
+        source = _read(self.HEADERS)
+        assert "pendingBindings.value = keep" in source
+
+    def test_tool_registry_flushes_after_create(self):
+        source = _read(self.REGISTRY)
+        assert "headersEditorRef" in source
+        assert "flushPending(newId)" in source
+
+    def test_script_wizard_stores_pending(self):
+        source = _read(self.SCRIPT_WIZARD)
+        assert "pendingEnvBindings" in source
+        assert "flushPendingEnvBindings" in source
+        # 变量名能提前算槽位，所以新建时就能选
+        assert "slot: `env:${variable}`" in source
+
+    def test_script_wizard_allows_binding_while_creating(self):
+        source = _read(self.SCRIPT_WIZARD)
+        assert ':disabled="!isEditing || envBindingsBusy"' not in source
+        assert "新建脚本时还不能绑定" not in source
+
+    def test_script_list_flushes_after_create(self):
+        source = _read(self.SCRIPT_LIST)
+        assert "wizardRef" in source
+        assert "flushPendingEnvBindings(newId)" in source
+
+
 class TestMcpWizardSectionDividers:
     """三步向导第 1 步的三个分区要有视觉分界。
 
@@ -558,11 +610,12 @@ class TestHeaderBindingEntry:
         # generic_api 用 CREDENTIAL_PLACEHOLDER_PREFIX 判断「还没填」
         assert "CREDENTIAL:" in source
 
-    def test_binding_requires_saved_tool(self):
+    def test_binding_works_before_saving(self):
+        """新建时也能先选，保存后补写——不再要求先存一遍空配置。"""
         source = _read(self.HEADERS)
 
-        assert "canBind" in source
-        assert "保存工具后可绑定凭据" in source
+        assert "canBind" not in source
+        assert "保存工具后可绑定凭据" not in source
 
     def test_registry_passes_consumer_id(self):
         source = _read(self.REGISTRY)
@@ -601,12 +654,12 @@ class TestMcpBindingEntry:
         assert "'header:Authorization'" in source
         assert "`header:${headerBindSlot.value}`" in source
 
-    def test_only_available_when_editing(self):
+    def test_available_while_creating_too(self):
         source = _read(self.MCP_REGISTRY)
 
-        # 绑定的消费者是 mcp_server + 服务 id，新建时还没有 id
-        assert 'v-if="isEditing"' in source
-        assert "editingId.value" in source
+        # 新建时先记在 pendingBindings，保存后补写
+        assert "pendingBindings" in source
+        assert "flushPendingBindings" in source
 
     def test_ui_makes_token_and_credential_mutually_exclusive(self):
         """固定 Token 和凭据必须二选一，而不是并排两块。
@@ -681,11 +734,12 @@ class TestScriptEnvBindingEntry:
         assert "ENV_NAME_RE" in source
         assert "envVariable" in source
 
-    def test_only_available_when_editing(self):
+    def test_available_while_creating_too(self):
         source = _read(self.WIZARD)
 
-        assert 'v-if="!isEditing"' in source
-        assert "先保存，再回来配" in source
+        # 变量名能提前算槽位（env:<名字>），所以新建时就能选
+        assert "pendingEnvBindings" in source
+        assert "先保存，再回来配" not in source
 
     def test_env_file_is_shell_quoted(self):
         from app.services.secrets.injection import build_env_file_content
