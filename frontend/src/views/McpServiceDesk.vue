@@ -1329,42 +1329,104 @@ const openEndpointHelp = (key: EndpointHelpKey) => {
   showEndpointHelp.value = true
 }
 const authorizationCodeCurl = computed(() => [
-  '# 适用：需要代表具体用户的 CRM/门户系统',
-  `NANZI_BASE_URL="${oauthBaseUrl.value}"`,
-  `NANZI_MCP_ENDPOINT="${mcpEndpoint.value}"`,
-  `NANZI_RESOURCE="${mcpResource.value}"`,
-  'NANZI_CLIENT_ID="从 MCP 服务台复制的 client_id"',
-  'NANZI_CLIENT_SECRET="创建 Client 时只显示一次的 client_secret"',
+  '# 适用：需要代表具体用户的 CRM/门户系统（Authorization Code + PKCE）',
+  `export NANZI_BASE_URL="${oauthBaseUrl.value}"`,
+  `export NANZI_MCP_ENDPOINT="${mcpEndpoint.value}"`,
+  `export NANZI_RESOURCE="${mcpResource.value}"`,
+  'export NANZI_CLIENT_ID="从 MCP 服务台复制的 client_id"',
+  'export NANZI_CLIENT_SECRET="创建 Client 时只显示一次的 client_secret"',
+  'export NANZI_REDIRECT_URI="https://你的业务系统/oauth/callback"   # 必须与服务台登记的回调地址完全一致',
+  'export NANZI_SCOPE="agent:invoke"',
+  '',
+  '# ── 第 1 步：业务后端生成 PKCE verifier / state，并拼出授权地址 ──',
+  '# code_verifier 是自己生成的随机串，NanZi 只保存它的 SHA256 challenge，永远拿不到原文。',
+  'PKCE_CODE_VERIFIER=$(python3 -c \'import secrets;print(secrets.token_urlsafe(64))\')',
+  'CODE_CHALLENGE=$(python3 -c \'import base64,hashlib,sys;print(base64.urlsafe_b64encode(hashlib.sha256(sys.argv[1].encode()).digest()).rstrip(b"=").decode())\' "$PKCE_CODE_VERIFIER")',
+  'OAUTH_STATE=$(python3 -c \'import secrets;print(secrets.token_urlsafe(16))\')',
+  'export CODE_CHALLENGE OAUTH_STATE   # 下面这行在子进程里读它们',
+  'python3 -c \'import os,urllib.parse as u;print(os.environ["NANZI_BASE_URL"]+"/oauth/authorize?"+u.urlencode({"response_type":"code","client_id":os.environ["NANZI_CLIENT_ID"],"redirect_uri":os.environ["NANZI_REDIRECT_URI"],"scope":os.environ["NANZI_SCOPE"],"state":os.environ["OAUTH_STATE"],"code_challenge":os.environ["CODE_CHALLENGE"],"code_challenge_method":"S256","resource":os.environ["NANZI_RESOURCE"]}))\'',
+  '',
+  '# 浏览器打开上一步打印的地址 → 登录 NanZi → 点「同意并继续」',
+  '# NanZi 随即 302 到：$NANZI_REDIRECT_URI?code=<CALLBACK_CODE>&state=<OAUTH_STATE>',
+  '# 正式实现里，PKCE_CODE_VERIFIER 和 OAUTH_STATE 必须先存进当前登录会话，再跳转。',
+  '',
+  '# ── 第 2 步：回调里取 code（并校验 state 与保存值一致）──',
   'CALLBACK_CODE="授权回调中的 code"',
-  'PKCE_CODE_VERIFIER="发起授权时生成并保存的 code_verifier"',
+  '',
+  '# ── 第 3 步：用 client_secret + code + verifier 换绑定该用户的 Access Token ──',
   'TOKEN_RESPONSE=$(curl --request POST "$NANZI_BASE_URL/oauth/token" --user "$NANZI_CLIENT_ID:$NANZI_CLIENT_SECRET" --header "Content-Type: application/x-www-form-urlencoded" --data-urlencode "grant_type=authorization_code" --data-urlencode "code=$CALLBACK_CODE" --data-urlencode "redirect_uri=$NANZI_REDIRECT_URI" --data-urlencode "code_verifier=$PKCE_CODE_VERIFIER" --data-urlencode "resource=$NANZI_RESOURCE")',
   'ACCESS_TOKEN=$(printf "%s" "$TOKEN_RESPONSE" | jq -r ".access_token")',
+  '',
+  '# ── 第 4 步：调用 MCP，只带 Bearer Token ──',
   'curl --request POST "$NANZI_MCP_ENDPOINT" --header "Authorization: Bearer $ACCESS_TOKEN" --header "Content-Type: application/json" --data \'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\'',
 ].join('\n'))
-const authorizationCodePython = computed(() => `# 适用：需要代表具体用户的 CRM/门户系统
-# 用户先在浏览器完成 NanZi 登录和授权；下面代码运行在业务方后端回调中。
+const authorizationCodePython = computed(() => `# 适用：需要代表具体用户的 CRM/门户系统（Authorization Code + PKCE）
+# 完整可运行版本（含本地回调服务器）：scripts/examples/mcp_oauth_client_example.py
+import base64
+import hashlib
 import os
-import requests
+import secrets
+import urllib.parse as urlparse
 
-base_url = os.environ.get("NANZI_BASE_URL", "${oauthBaseUrl.value}").rstrip("/")
-token_response = requests.post(
-    f"{base_url}/oauth/token",
-    auth=(os.environ["NANZI_CLIENT_ID"], os.environ["NANZI_CLIENT_SECRET"]),
+import httpx
+
+BASE_URL = os.environ.get("NANZI_BASE_URL", "${oauthBaseUrl.value}").rstrip("/")
+CLIENT_ID = os.environ["NANZI_CLIENT_ID"]
+CLIENT_SECRET = os.environ["NANZI_CLIENT_SECRET"]
+REDIRECT_URI = os.environ["NANZI_REDIRECT_URI"]  # 必须与服务台登记的回调地址完全一致
+RESOURCE = os.environ.get("NANZI_RESOURCE", f"{BASE_URL}/mcp/platform")
+SCOPES = ["agent:invoke"]
+
+# ── 第 1 步：发起授权（业务方后端）──
+# code_verifier 由自己生成：43~128 个字符，只用 A-Z a-z 0-9 - . _ ~；
+# NanZi 只保存它的 SHA256 challenge，永远拿不到原文。
+code_verifier = secrets.token_urlsafe(64)
+digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+state = secrets.token_urlsafe(16)
+# 先把 (state, code_verifier) 存进当前登录会话，再让浏览器打开下面这个地址
+authorize_url = f"{BASE_URL}/oauth/authorize?" + urlparse.urlencode({
+    "response_type": "code",
+    "client_id": CLIENT_ID,
+    "redirect_uri": REDIRECT_URI,
+    "scope": " ".join(SCOPES),
+    "state": state,
+    "code_challenge": code_challenge,
+    "code_challenge_method": "S256",
+    "resource": RESOURCE,
+})
+
+# ── 第 2 步：回调收 code（业务方后端回调路由，以 Flask 为例）──
+# NanZi 会 302 到 REDIRECT_URI?code=...&state=...
+callback_code = request.args["code"]
+if request.args.get("state") != session["oauth_state"]:
+    raise ValueError("state 不匹配，中止授权")
+
+# ── 第 3 步：用 Client Secret + code + verifier 换用户 Access Token ──
+token_response = httpx.post(
+    f"{BASE_URL}/oauth/token",
+    auth=(CLIENT_ID, CLIENT_SECRET),
     data={
         "grant_type": "authorization_code",
         "code": callback_code,
-        "redirect_uri": os.environ["NANZI_REDIRECT_URI"],
-        "code_verifier": pkce_code_verifier,
-        "resource": "${mcpResource.value}",
+        "redirect_uri": REDIRECT_URI,
+        "code_verifier": code_verifier,  # 就是第 1 步保存的那个
+        "resource": RESOURCE,
     },
     timeout=15,
 )
 token_response.raise_for_status()
-access_token = token_response.json()["access_token"]
-# 此 Access Token 已绑定用户；后续调用仍只携带 Bearer Token。
-mcp_response = requests.post(
-    "${mcpEndpoint.value}",
-    headers={"Authorization": f"Bearer {access_token}"},
+token = token_response.json()
+access_token = token["access_token"]  # 有效期 3600 秒
+# token["refresh_token"] 有效期 30 天，只存在业务方后端，用于续期同一用户
+
+# ── 第 4 步：调用 MCP，只携带 Bearer Token ──
+mcp_response = httpx.post(
+    RESOURCE,
+    headers={
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json, text/event-stream",
+    },
     json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
     timeout=30,
 )
@@ -1879,8 +1941,8 @@ onUnmounted(() => {
         <div class="rounded-2xl bg-white p-6 shadow-sm">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 class="text-lg font-black">示例一：用户授权后用 Client Secret 换 Token</h2>
-              <p class="mt-1 text-sm text-slate-500">用户完成 NanZi 登录和授权后，业务方后端使用回调 code、PKCE verifier 和 Client Secret 换取用户 Token。</p>
+              <h2 class="text-lg font-black">示例一：发起授权 → 换 Token → 调用 MCP（curl）</h2>
+              <p class="mt-1 text-sm text-slate-500">第 1 步生成 PKCE verifier 和 state 并打印授权地址；用户在浏览器同意后，回调里的 code 配合 verifier 与 Client Secret 换取用户 Token。</p>
             </div>
             <button type="button" class="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50" @click="copyValue('authorization-code-curl', authorizationCodeCurl)">{{ copied === 'authorization-code-curl' ? '已复制' : '复制 curl 示例' }}</button>
           </div>
@@ -1890,8 +1952,8 @@ onUnmounted(() => {
         <div class="rounded-2xl bg-white p-6 shadow-sm">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 class="text-lg font-black">示例二：Python（requests）实现用户授权换 Token</h2>
-              <p class="mt-1 text-sm text-slate-500">用户先打开 NanZi 授权页并登录；授权回调后，下面的换 Token 代码必须运行在业务方后端，不能放在浏览器前端。</p>
+              <h2 class="text-lg font-black">示例二：Python（httpx）完整授权流程</h2>
+              <p class="mt-1 text-sm text-slate-500">从生成 PKCE 参数、拼授权地址，到回调换 Token、调用 MCP 的完整链路；所有步骤都运行在业务方后端，不能放在浏览器前端。</p>
             </div>
             <button type="button" class="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50" @click="copyValue('authorization-code-python', authorizationCodePython)">{{ copied === 'authorization-code-python' ? '已复制' : '复制 Python 示例' }}</button>
           </div>
@@ -3709,13 +3771,25 @@ onUnmounted(() => {
                   </section>
                   <section class="rounded-xl border border-slate-200 p-4">
                     <h3 class="font-black text-slate-900">方式二：程序化用户授权（OAuth2）</h3>
-                    <p class="mt-1">CRM 或门户系统先引导用户打开 NanZi 授权页并登录；回调拿到 code 后，业务方后端使用 Client ID、Client Secret 和 PKCE verifier 换取绑定该用户的 Access Token，然后使用 Bearer Header 调用 MCP。</p>
-                    <pre class="mt-3 overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-100"><code>POST {{ overview.authorization_server || '/oauth' }}/oauth/token
+                    <p class="mt-1">CRM 或门户系统先引导用户打开 NanZi 授权页并登录。下面两个变量不是服务台生成的，而是你自己的授权流程产生的：<code class="rounded bg-slate-100 px-1">code_verifier</code> 是你在跳转前生成的随机串（只存业务后端），<code class="rounded bg-slate-100 px-1">code</code> 是用户点同意后 NanZi 302 回你登记的回调地址时带回来的。</p>
+                    <p class="mt-2 font-bold text-slate-800">第一步：把用户跳到授权页（PKCE 必填）</p>
+                    <pre class="mt-2 overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-100"><code>GET {{ overview.authorization_server || '/oauth' }}/oauth/authorize
+  ?response_type=code
+  &amp;client_id=&lt;client_id&gt;
+  &amp;redirect_uri=&lt;registered_redirect_uri&gt;
+  &amp;scope=agent:invoke
+  &amp;state=&lt;随机 state，回调时校验&gt;
+  &amp;code_challenge=&lt;BASE64URL(SHA256(code_verifier)) 去掉 = 填充&gt;
+  &amp;code_challenge_method=S256
+  &amp;resource={{ overview.resource || '/mcp/platform' }}</code></pre>
+                    <p class="mt-2 text-xs text-slate-500">权限通过后，NanZi 会 302 到 <code class="rounded bg-slate-100 px-1">&lt;redirect_uri&gt;?code=...&amp;state=...</code>；业务后端校验 state 后取出 code。</p>
+                    <p class="mt-3 font-bold text-slate-800">第二步：回调里用 code 换用户 Access Token</p>
+                    <pre class="mt-2 overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-100"><code>POST {{ overview.authorization_server || '/oauth' }}/oauth/token
   Authorization: Basic &lt;client_id:client_secret&gt;
   Content-Type: application/x-www-form-urlencoded
 
-  grant_type=authorization_code&amp;code=&lt;callback_code&gt;&amp;redirect_uri=&lt;registered_redirect_uri&gt;&amp;code_verifier=&lt;pkce_code_verifier&gt;&amp;resource={{ overview.resource || '/mcp/platform' }}</code></pre>
-                    <p class="mt-2 text-xs text-slate-500">程序化场景不要把用户在浏览器里的登录 Cookie 或 NanZi 用户 API Key 传给第三方；Authorization Code + PKCE 会通过 NanZi 授权页建立 user_id 关联。Client Secret 只在后端 Token Endpoint 使用。</p>
+  grant_type=authorization_code&amp;code=&lt;callback_code&gt;&amp;redirect_uri=&lt;registered_redirect_uri&gt;&amp;code_verifier=&lt;code_verifier&gt;&amp;resource={{ overview.resource || '/mcp/platform' }}</code></pre>
+                    <p class="mt-2 text-xs text-slate-500">程序化场景不要把用户在浏览器里的登录 Cookie 或 NanZi 用户 API Key 传给第三方；Authorization Code + PKCE 会通过 NanZi 授权页建立 user_id 关联。Client Secret 只在后端 Token Endpoint 使用。完整可运行示例：<code class="rounded bg-slate-100 px-1">scripts/examples/mcp_oauth_client_example.py</code>。</p>
                   </section>
                   <section class="rounded-xl border border-amber-100 bg-amber-50 p-4 text-xs text-amber-900">
                     <span class="font-bold">安全提示：</span>Client Secret 和 Access Token 都是敏感凭证。Secret 只用于获取 Token，Access Token 只用于调用 MCP；不要提交到代码仓库，泄露后请停用 Client 或重置 Secret。

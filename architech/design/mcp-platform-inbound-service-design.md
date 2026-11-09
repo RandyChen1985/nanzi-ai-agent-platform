@@ -1856,6 +1856,8 @@ Content-Type: application/json
 
 业务系统必须先引导具体用户完成 NanZi 登录和授权，再由后端使用 `client_id + client_secret + code + code_verifier` 换取用户 Access Token。Client Secret 只保存在业务方后端，浏览器、Cursor 或 MCP JSON 中只使用最终的 Bearer Access Token。
 
+`pkce_code_verifier` 由业务后端在跳转前用 `secrets.token_urlsafe(64)` 生成并暂存于当前登录会话，`/oauth/authorize` 只接收它的 `BASE64URL(SHA256(verifier))` 摘要；`callback_code` 是用户同意授权后 NanZi 302 回 `redirect_uri?code=...&state=...` 时带回的一次性授权码。完整可运行链路（含本地回调服务器、state 校验、tools/list 验证）见 [`scripts/examples/mcp_oauth_client_example.py`](../../scripts/examples/mcp_oauth_client_example.py)。
+
 ```python
 # 运行在业务方后端 OAuth 回调中；callback_code 和 pkce_code_verifier
 # 来自前面的授权跳转与 PKCE 流程。

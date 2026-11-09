@@ -446,9 +446,27 @@ def test_service_desk_guide_explains_client_secret_scenarios_and_sample_code():
     assert "client_credentials" not in view
     assert "Client Credentials" not in view
     assert "curl" in view
-    assert "requests.post" in view
+    # 指南必须给出能直接复制的示例代码；示例统一用项目已有的 httpx 依赖。
+    assert "httpx.post" in view
     assert "Authorization: Bearer" in view
     assert "不要把 Client Secret 放进 Cursor" in view
+
+
+def test_service_desk_guide_shows_where_pkce_verifier_and_code_come_from():
+    """授权码与 PKCE verifier 不是服务台生成的，指南必须交代来源，否则照做必卡住。"""
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    # 第 1 步：后端生成 verifier 和 challenge，并拼出授权地址
+    assert "token_urlsafe(64)" in view
+    assert "code_challenge_method" in view
+    assert "S256" in view
+    # 回调带回 code，并要校验 state
+    assert "state 不匹配" in view
+    # 换 Token 的四个必需参数都要在示例里出现
+    assert "redirect_uri" in view
+    assert "code_verifier" in view
+    # 曾漏定义的变量必须显式出现，否则复制执行会失败
+    assert "NANZI_REDIRECT_URI" in view
 
 
 def test_service_desk_guide_uses_generic_current_user_identity_wording():
