@@ -19,7 +19,6 @@ from app.services.secrets.policy import (
     DENY_SCRIPT_POLICY,
     SCENE_API_TOOL,
     SCENE_MCP,
-    SCENE_SCHEDULED_TASK,
     SCENE_SCRIPT_ENV,
     SecretContext,
     SecretLeakAttempt,
@@ -138,29 +137,22 @@ class TestEvaluateSecret:
             == DENY_SCENARIO
         )
 
-    def test_unattended_call_needs_scheduled_task_scenario(self):
-        """定时任务（无人值守）用凭据，要额外勾一次 scheduled_task。
+    def test_scheduled_task_uses_the_same_rule_as_manual_call(self):
+        """定时任务不再是一条单独的判定路径。
 
-        交互式对话里用得好好的凭据，不该默认在半夜三点自动生效——那时没有人
-        在屏幕前，出错了也没人发现。所以这是一条要显式打破的白名单。
+        曾经有过一道额外的闸门：无人值守调用必须显式勾 ``scheduled_task``。实际
+        用起来是纯摩擦——定时任务里跑的就是它自己那个 MCP 或工具，用户在对话里
+        刚验证过能用，到了定时任务却要再去勾一次，还看不出来差在哪。
+
+        现在定时任务只是「谁在跑」，不是「走哪条链路」：判定完全按它内部那个
+        工具/MCP 的场景来。
         """
         secret = make_secret(allowed_scenarios=frozenset({SCENE_MCP}))
-        assert (
-            evaluate_secret(secret, make_context(scene=SCENE_MCP, runs_unattended=True), now=NOW)
-            == DENY_SCENARIO
-        )
 
-    def test_unattended_call_passes_when_scenario_explicitly_granted(self):
-        secret = make_secret(
-            allowed_scenarios=frozenset({SCENE_MCP, SCENE_SCHEDULED_TASK})
-        )
-        assert (
-            evaluate_secret(secret, make_context(scene=SCENE_MCP, runs_unattended=True), now=NOW)
-            is None
-        )
+        assert evaluate_secret(secret, make_context(scene=SCENE_MCP), now=NOW) is None
 
     def test_interactive_call_is_not_affected(self):
-        """收紧的只有无人值守这一条路，日常对话不能跟着变严。"""
+        """日常对话不能因为去掉那道闸门而变严。"""
         secret = make_secret(allowed_scenarios=frozenset({SCENE_MCP}))
         assert evaluate_secret(secret, make_context(scene=SCENE_MCP), now=NOW) is None
 

@@ -439,9 +439,19 @@ const authSource = ref<'token' | 'credential'>('token')
 type HeaderBinding = { secret_id: string; secret_key: string; secret_name: string }
 const headerBindings = ref<Record<string, HeaderBinding>>({})
 
-/** 某个 header 名的绑定；槽位约定是 ``header:<名称>``。 */
+/**
+ * 新建态选的凭据。
+ *
+ * 绑定是 ``(consumer_id, slot)`` 维度的，而新建向导里服务还没有 id——以前干脆
+ * 把「来自凭据中心」整个藏掉，只让用固定 Token。这等于逼用户先存一遍空配置再
+ * 回来改。现在把选择先挂在这里，保存拿到 id 后再补写。
+ */
+const pendingBindings = ref<Record<string, HeaderBinding>>({})
+
+/** 某个 header 名的绑定；槽位约定是 ``header:<名称>``。未保存的也算。 */
 const bindingOfHeader = (key: string): HeaderBinding | null =>
-  headerBindings.value[`header:${key.trim()}`] || null
+  headerBindings.value[`header:${key.trim()}`] || pendingBindings.value[`header:${key.trim()}`] || null
+
 
 /** 正在为哪个「其他 Header」挑凭据；非空时显示绑定弹窗。 */
 const headerBindSlot = ref<string | null>(null)
@@ -493,6 +503,7 @@ async function loadMcpBinding() {
 
 /** 写一条绑定（或解除）。两个入口共用，槽位不同。 */
 async function writeBinding(slot: string, secretId: string | null) {
+  // 新建态：还没 id，无法落库。调用方负责写进 pendingBindings。
   if (!editingId.value) return
   if (!secretId) {
     await axios.delete('/api/portal/secrets/bindings', {
@@ -513,9 +524,33 @@ async function writeBinding(slot: string, secretId: string | null) {
 }
 
 async function saveMcpBinding() {
-  if (!editingId.value) return
   mcpBindingBusy.value = true
   mcpBindingError.value = ''
+
+  // 新建态：先记着，等保存服务拿到 id 再补写（见 flushPendingBindings）
+  if (!editingId.value) {
+    const picked = mcpBindingSecretId.value ? mcpBindingPicked.value : null
+    const next = { ...pendingBindings.value }
+    if (picked) {
+      next['header:Authorization'] = {
+        secret_id: picked.id,
+        secret_key: picked.secret_key,
+        secret_name: mcpBinding.value?.secret_name || picked.secret_key,
+      }
+      mcpBinding.value = { secret_key: picked.secret_key, secret_name: picked.secret_key }
+      authSource.value = 'credential'
+      showToast('已选中凭据，保存后会绑定到这条服务', 'success')
+    } else {
+      delete next['header:Authorization']
+      mcpBinding.value = null
+      authSource.value = 'token'
+      showToast('已取消凭据，将使用固定 Token', 'success')
+    }
+    pendingBindings.value = next
+    mcpBindingBusy.value = false
+    return
+  }
+
   try {
     if (!mcpBindingSecretId.value) {
       await writeBinding('header:Authorization', null)
@@ -540,7 +575,7 @@ async function saveMcpBinding() {
 
 function openHeaderBind(key: string) {
   const name = key.trim()
-  if (!name || !editingId.value) return
+  if (!name) return
   headerBindSlot.value = name
   const existing = bindingOfHeader(name)
   headerBindSecretId.value = existing?.secret_id || null
@@ -555,9 +590,28 @@ function onHeaderBindPicked(item: { id: string; secret_key: string } | null) {
 }
 
 async function saveHeaderBind() {
-  if (!headerBindSlot.value || !editingId.value) return
+  if (!headerBindSlot.value) return
   headerBindBusy.value = true
   headerBindError.value = ''
+
+  // 新建态：同样是先记着，保存服务后再补写
+  if (!editingId.value) {
+    const slot = `header:${headerBindSlot.value}`
+    const picked = headerBindSecretId.value ? headerBindPicked.value : null
+    const next = { ...pendingBindings.value }
+    if (picked) {
+      next[slot] = { secret_id: picked.id, secret_key: picked.secret_key, secret_name: picked.secret_key }
+      showToast(`已为 ${headerBindSlot.value} 选中凭据，保存后生效`, 'success')
+    } else {
+      delete next[slot]
+      showToast('已取消该 Header 的凭据', 'success')
+    }
+    pendingBindings.value = next
+    headerBindSlot.value = null
+    headerBindBusy.value = false
+    return
+  }
+
   try {
     const picked = headerBindSecretId.value ? headerBindPicked.value : null
     await writeBinding(`header:${headerBindSlot.value}`, picked?.id || null)
@@ -991,6 +1045,13 @@ const resetWizard = () => {
   authorizationEditing.value = false
   authorizationToken.value = ''
   savedSseUrl.value = ''
+  // 没保存就关掉的向导，选的凭据也不该留着——下次新建时突然冒出一条绑定会很怪
+  pendingBindings.value = {}
+  mcpBindingSecretId.value = null
+  mcpBinding.value = null
+  mcpBindingPicked.value = null
+  mcpBindingError.value = ''
+  authSource.value = 'token'
 }
 
 const closeWizard = () => {
@@ -1390,6 +1451,8 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
       fetchServers()
       return true
     }
+    const newId = res.data?.id
+    if (newId) await flushPendingBindings(newId)
     showToast('添加成功', 'success')
     createdServer.value = res.data
     await fetchServers()
@@ -1402,6 +1465,33 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
     return false
   } finally {
     savingServer.value = false
+  }
+}
+
+/** 保存成功后，把新建态选的凭据真正绑上。 */
+async function flushPendingBindings(serverId: string) {
+  const entries = Object.entries(pendingBindings.value)
+  if (!entries.length) return
+  const failed: string[] = []
+  for (const [slot, binding] of entries) {
+    try {
+      await axios.post('/api/portal/secrets/bindings', {
+        secret_id: binding.secret_id,
+        consumer_type: 'mcp_server',
+        consumer_id: serverId,
+        slot,
+      })
+    } catch {
+      // 服务已经建好了，绑定失败不该让它回滚——但要让人知道，否则界面显示
+      // 「已绑定」，实际调用却拿不到值。
+      failed.push(slot.replace(/^header:/, ''))
+    }
+  }
+  pendingBindings.value = {}
+  if (failed.length) {
+    showToast(`服务已创建，但 ${failed.join('、')} 的凭据绑定失败，请到编辑态重新绑定`, 'error')
+  } else {
+    showToast(`已绑定 ${entries.length} 条凭据`, 'success')
   }
 }
 
@@ -2431,7 +2521,7 @@ onMounted(fetchServers)
         </div>
 
         <!-- Wizard Step 1: Input -->
-        <div v-if="wizardStep === 1" class="flex flex-1 flex-col space-y-5 overflow-y-auto p-4 sm:p-6">
+        <div v-if="wizardStep === 1" class="flex flex-1 flex-col gap-5 overflow-y-auto p-4 sm:p-6">
           <div
             v-if="!isEditing"
             class="flex items-center gap-1 rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5"
@@ -2492,7 +2582,7 @@ onMounted(fetchServers)
             <!-- 分割线：Header 配置和「身份传递」是两件不同的事——前者是服务怎么认
                  我们，后者是我们怎么告诉服务「现在是谁在调」。混在同一段里，容易
                  以为关掉 Header 就一起关掉了身份传递。 -->
-            <div class="order-3 shrink-0 border-t border-gray-200" aria-hidden="true"></div>
+            <div class="order-3 h-px shrink-0 bg-gray-300" aria-hidden="true"></div>
 
             <div class="order-3 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
               <div class="flex items-center justify-between gap-3">
@@ -2644,8 +2734,8 @@ onMounted(fetchServers)
               </div>
 
               <template v-if="authorizationEnabled">
-                <!-- 来源二选一：新建时还没有服务 id，绑不了凭据，只出现固定 Token -->
-                <div v-if="isEditing" class="mt-3 inline-flex rounded-lg bg-white p-0.5 ring-1 ring-indigo-100">
+                <!-- 来源二选一。新建时也能选凭据：先记在 pendingBindings，保存拿到 id 后补写 -->
+                <div class="mt-3 inline-flex rounded-lg bg-white p-0.5 ring-1 ring-indigo-100">
                   <button
                     type="button"
                     class="rounded-md px-2.5 py-1 text-[10px] font-semibold"
@@ -2742,7 +2832,7 @@ onMounted(fetchServers)
 
             <!-- 分割线：Authorization 是「服务怎么认我们」的主入口，其他 Header 是次要补充。
                  不加线的话两块连成一片，看起来像同一个开关的不同部分。 -->
-            <div class="order-2 shrink-0 border-t border-gray-200" aria-hidden="true"></div>
+            <div class="order-2 h-px shrink-0 bg-gray-300" aria-hidden="true"></div>
 
             <!-- Dynamic Headers Editor -->
             <div v-if="connectionInputTab === 'manual' || isEditing" class="order-2">
@@ -2795,7 +2885,26 @@ onMounted(fetchServers)
                     </template>
                     <template v-else>
                       <input v-model="pair.key" :readonly="pair.existing" placeholder="名称（如 X-Tenant）" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary read-only:bg-gray-100" @input="pair.changed = true; authHeadersTouched = true" />
-                      <input v-model="pair.value" :type="pair.existing ? 'password' : 'text'" :placeholder="pair.existing ? '请输入新值' : '内容（Value）'" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary" @input="pair.changed = true; authHeadersTouched = true" />
+                      <template v-if="!pair.existing && bindingOfHeader(pair.key)">
+                        <span class="flex min-w-0 flex-1 items-center gap-1.5 rounded border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[10px] text-emerald-700">
+                          <KeyIcon class="h-3 w-3 shrink-0" />
+                          来自凭据 <code class="truncate">{{ bindingOfHeader(pair.key)?.secret_key }}</code>
+                        </span>
+                      </template>
+                      <input v-else v-model="pair.value" :type="pair.existing ? 'password' : 'text'" :placeholder="pair.existing ? '请输入新值' : '内容（Value）'" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary" @input="pair.changed = true; authHeadersTouched = true" />
+                      <button
+                        v-if="!pair.existing"
+                        type="button"
+                        class="shrink-0 rounded border p-1.5"
+                        :class="bindingOfHeader(pair.key)
+                          ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                          : 'border-gray-200 bg-white text-gray-500 hover:text-emerald-600'"
+                        :title="bindingOfHeader(pair.key) ? `更换 ${pair.key} 的凭据` : `为 ${pair.key} 绑定凭据`"
+                        :aria-label="`为 ${pair.key} 绑定凭据`"
+                        @click="openHeaderBind(pair.key)"
+                      >
+                        <KeyIcon class="h-3.5 w-3.5" />
+                      </button>
                       <button v-if="pair.existing" type="button" class="shrink-0 rounded border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-gray-600 hover:bg-gray-50" @click="cancelHeaderPairEdit(index)">取消</button>
                       <button v-else type="button" class="shrink-0 p-1.5 text-gray-400 hover:text-red-500" aria-label="删除 Header" @click="removeHeaderPair(index)">
                         <TrashIcon class="h-4 w-4" />

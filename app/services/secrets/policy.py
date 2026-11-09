@@ -25,6 +25,9 @@ from typing import Any, Iterable
 SCENE_MCP = "mcp"
 SCENE_API_TOOL = "api_tool"
 SCENE_SCRIPT_ENV = "script_env"
+# 历史遗留：曾经用来给「无人值守调用」单独加一道闸门。现在定时任务和其它调用
+# 走同一套判定，这个场景不再参与任何判断。常量留着只为兼容已存数据里的取值，
+# 不要在新代码里用它做条件。
 SCENE_SCHEDULED_TASK = "scheduled_task"
 SCENE_AGENT = "agent"
 
@@ -152,10 +155,6 @@ class SecretContext:
     dept_code: str | None = None
     allow_script_env: bool = False
     allow_external_host: bool = True
-    # 本次调用是否来自定时任务（无人值守）。定时任务用的是任务创建者的身份，
-    # 出错时没有人在屏幕前发现——所以「允许 MCP 用」不等于「允许半夜三点自动
-    # 用」，要单独勾一次 scheduled_task 才算数。
-    runs_unattended: bool = False
 
 
 def normalize_host(host: str | None) -> str:
@@ -212,11 +211,6 @@ def evaluate_secret(secret: SecretRecord, context: SecretContext, *, now: dateti
         return DENY_EXPIRED
 
     if context.scene not in secret.allowed_scenarios:
-        return DENY_SCENARIO
-
-    # 定时任务再收紧一层：交互式对话里用得好好的凭据，不该默认在无人值守时
-    # 也自动生效。缺省不勾 = 不给定时任务用，这是一条要显式打破的白名单。
-    if context.runs_unattended and SCENE_SCHEDULED_TASK not in secret.allowed_scenarios:
         return DENY_SCENARIO
 
     # 脚本环境变量是所有场景里唯一「值会离开平台」的：脚本能读 os.environ，

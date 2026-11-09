@@ -40,7 +40,8 @@ const SCENE_LABEL: Record<string, string> = {
   mcp: 'MCP',
   api_tool: 'API 工具',
   script_env: '脚本',
-  scheduled_task: '定时任务',
+  // 历史数据里可能还有这个取值，标签留着才能正常显示老记录
+  scheduled_task: '定时任务（历史）',
   agent: '智能体',
 }
 
@@ -49,7 +50,6 @@ const CREATE_SCENES = [
   { key: 'mcp', label: 'MCP 服务', desc: '作为连接头的值，在建立 MCP 连接时注入', wired: true },
   { key: 'api_tool', label: 'API 工具', desc: '填进工具的请求头，或声明为「来自凭据」的参数位', wired: true },
   { key: 'script_env', label: '脚本环境变量', desc: '以环境变量形式进子进程；平台与个人两层开关都开才生效', wired: true },
-  { key: 'scheduled_task', label: '定时任务', desc: '无人值守执行，需单独授权；只勾 MCP 不等于允许半夜自动跑', wired: true },
   { key: 'agent', label: '智能体', desc: '暂未接入，勾了也不会注入', wired: false },
 ]
 

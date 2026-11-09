@@ -57,7 +57,6 @@ const SCENES = [
   { key: 'mcp', label: 'MCP 服务', hint: '出站请求头', desc: '作为连接头的值，在建立 MCP 连接时注入', wired: true },
   { key: 'api_tool', label: 'API 工具', hint: '请求头 / 参数', desc: '填进工具的请求头，只补没填的位置；手填了真实值的不覆盖', wired: true },
   { key: 'script_env', label: '脚本环境变量', hint: '默认关，需平台 + 个人都开', desc: '以环境变量形式进子进程，脚本里可直接读；stdout 会被指纹扫描', wired: true },
-  { key: 'scheduled_task', label: '定时任务', hint: '无人值守执行，需单独勾选', desc: '按任务创建者的身份解析 —— 无人值守时出错没人当场发现，所以要单独授权', wired: true },
   { key: 'agent', label: '智能体', hint: '暂未接入，勾了也不会注入', desc: '暂未接入，勾了也不会注入', wired: false },
 ]
 
@@ -363,6 +362,8 @@ const CONSUMER_LABEL: Record<string, string> = {
 // 弹框，不是页面底部的折叠区：那一块要滚到底才看得见，而且会随列表长度把整页
 // 撑长；「谁什么时候用了我的凭据」是想起来才查一次的事，弹出来看完就关更合适。
 const usageOpen = ref(false)
+/** 「这些凭据会被用在哪里」——这层信息原来只在代码里，界面上看不到 */
+const usageHelpOpen = ref(false)
 const usageLoading = ref(false)
 const usageRows = ref<UsageRow[]>([])
 
@@ -590,6 +591,13 @@ onMounted(load)
       </div>
 
       <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-300 text-sm font-semibold text-gray-500 transition-colors hover:border-blue-400 hover:text-blue-600"
+          title="这些凭据会被用在哪里"
+          aria-label="查看凭据使用范围"
+          @click="usageHelpOpen = true"
+        >?</button>
         <input
           v-model="keyword"
           type="search"
@@ -954,6 +962,98 @@ onMounted(load)
         </div>
       </aside>
     </div>
+
+    <!-- 用在哪里：这层信息原来只写在代码里，界面上完全没有，每次都要口头解释 -->
+    <Teleport to="body">
+      <div
+        v-if="usageHelpOpen"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+        @click.self="usageHelpOpen = false"
+      >
+        <div class="flex max-h-[calc(100vh-120px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="flex items-start justify-between border-b border-gray-100 px-5 py-3">
+            <div>
+              <h3 class="text-base font-semibold text-gray-900">这些凭据会被用在哪里</h3>
+              <p class="mt-0.5 text-xs text-gray-500">只有下面四处会真的读到凭据的值；其余位置即使勾了也不会生效。</p>
+            </div>
+            <button
+              type="button"
+              class="rounded-lg px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              @click="usageHelpOpen = false"
+            >✕</button>
+          </div>
+
+          <div class="flex-1 space-y-4 overflow-y-auto px-5 py-4 text-sm">
+            <div>
+              <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">会注入</p>
+              <div class="space-y-2">
+                <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <span class="font-medium text-gray-800">MCP 服务</span>
+                    <code class="text-[11px] text-gray-500">请求头，任意头名</code>
+                  </div>
+                  <p class="mt-1 text-xs leading-relaxed text-gray-500">绑定盖过固定 Token。绑定失效时直接报错，不会退回固定 Token——那等于用别人的账号，还查不出来。</p>
+                </div>
+                <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <span class="font-medium text-gray-800">API 工具 · 请求头</span>
+                    <code class="text-[11px] text-gray-500">header</code>
+                  </div>
+                  <p class="mt-1 text-xs leading-relaxed text-gray-500">只补空位：工具里手填了值的头不会被覆盖。</p>
+                </div>
+                <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <span class="font-medium text-gray-800">API 工具 · 参数位</span>
+                    <code class="text-[11px] text-gray-500">query: / body:</code>
+                  </div>
+                  <p class="mt-1 text-xs leading-relaxed text-gray-500">只有参数显式声明 <code>source: credential</code> 才走凭据，这些参数对模型不可见。</p>
+                </div>
+                <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <span class="font-medium text-gray-800">脚本工具 · 环境变量</span>
+                    <code class="text-[11px] text-gray-500">env:</code>
+                  </div>
+                  <p class="mt-1 text-xs leading-relaxed text-gray-500">平台和用户两层默认都关，两边都打开才能用。</p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">不会注入</p>
+              <div class="space-y-2">
+                <div class="rounded-lg border border-gray-100 px-3 py-2">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <span class="font-medium text-gray-700">定时任务</span>
+                    <code class="text-[11px] text-gray-400">沿用同一套判定</code>
+                  </div>
+                  <p class="mt-1 text-xs leading-relaxed text-gray-500">不是单独的注入点：定时任务跑起来后，用的就是它里面那个工具或 MCP 的通道，判定和你在对话里手动调用时完全一样。</p>
+                </div>
+                <div class="rounded-lg border border-gray-100 px-3 py-2">
+                  <div class="flex items-baseline justify-between gap-2">
+                    <span class="font-medium text-gray-700">智能体</span>
+                    <code class="text-[11px] text-gray-400">暂未实现</code>
+                  </div>
+                  <p class="mt-1 text-xs leading-relaxed text-gray-500">勾了目前没有任何效果。</p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">三道闸门都要过</p>
+              <ol class="space-y-1 text-xs leading-relaxed text-gray-600">
+                <li><b class="text-gray-800">① 平台策略</b>：是否允许脚本读凭据、是否允许打外部域名、单次最多注入几条。</li>
+                <li><b class="text-gray-800">② 你的偏好</b>：脚本场景需要你在这里单独打开。</li>
+                <li><b class="text-gray-800">③ 这条凭据自己</b>：允许的场景、允许的域名；系统共享的凭据还要被授权给你。</li>
+              </ol>
+            </div>
+
+            <p class="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800">
+              值是加密存的，只在注入那一刻解密，不落日志、不进对话历史。你自己在页面上点「查看」也会留一条读取记录。
+            </p>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 使用记录弹框 -->
     <Teleport to="body">

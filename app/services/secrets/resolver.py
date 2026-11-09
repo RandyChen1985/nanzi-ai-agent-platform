@@ -111,7 +111,6 @@ class SecretResolver:
         trace_id: str | None = None,
         conversation_id: str | None = None,
         dept_code: str | None = None,
-        runs_unattended: bool = False,
     ) -> ResolveResult:
         """解析一个槽位。返回 ``ok=False`` 时调用方应走自己的默认值。"""
         if not user_id or not consumer_type or not consumer_id or not slot:
@@ -170,7 +169,6 @@ class SecretResolver:
                     # 两层都开才允许：平台策略 × 用户偏好，任一为假即拒绝。
                     allow_script_env=platform_script and user_script,
                     allow_external_host=platform_external,
-                    runs_unattended=runs_unattended,
                 )
 
                 denial = evaluate_secret(record, context, now=now)

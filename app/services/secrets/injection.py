@@ -148,17 +148,6 @@ def _current_trace_id() -> str | None:
         return None
 
 
-def _runs_unattended(user_info: Mapping[str, Any] | None) -> bool:
-    """本次调用是不是定时任务发起的。
-
-    ``scheduler_service`` 在构造执行身份时就会带上 ``is_scheduled_task``，
-    所以这里不需要额外的上下文变量——信号本来就在，只是以前没人用它。
-    """
-    if not isinstance(user_info, Mapping):
-        return False
-    return bool(user_info.get("is_scheduled_task"))
-
-
 async def _max_inject_per_call() -> int:
     """单次调用最多注入几条凭据（平台策略 ``secret_policy_max_inject_per_call``）。
 
@@ -222,7 +211,6 @@ async def apply_api_tool_bindings(
                 target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
-                runs_unattended=_runs_unattended(user_info),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] API 工具 %s 的 %s 解析失败: %s", getattr(config, "name", "?"), name, exc)
@@ -300,7 +288,6 @@ async def apply_api_tool_param_bindings(
                 target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
-                runs_unattended=_runs_unattended(user_info),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -376,7 +363,6 @@ async def apply_mcp_bindings(
                 target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
-                runs_unattended=_runs_unattended(user_info),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] MCP %s 的 %s 解析失败: %s", getattr(server, "id", "?"), name, exc)
@@ -528,7 +514,6 @@ async def apply_script_env_bindings(
                 slot=slot,
                 trace_id=trace_id,
                 dept_code=dept_code,
-                runs_unattended=_runs_unattended(user_info),
             )
         except Exception:  # noqa: BLE001
             logger.warning("[SecretInject] 脚本 %s 的 %s 解析失败", tool_id, slot, exc_info=True)

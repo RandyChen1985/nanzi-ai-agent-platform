@@ -90,19 +90,17 @@ class TestCenterUiShape:
         for label in ("基本信息", "注入范围", "确认"):
             assert label in source
 
-    def test_scheduled_task_scene_is_selectable_again(self):
-        """定时任务后端补了门禁，前端要能勾。
+    def test_scheduled_task_is_not_a_selectable_scene(self):
+        """定时任务不再是一个可选场景。
 
-        之前标成 wired:false 是因为只有常量没有注入代码；现在 `runs_unattended`
-        会在判定层要求显式勾选，勾了就是真的生效，不该再禁着。
+        它曾经是：无人值守调用必须显式勾 ``scheduled_task`` 才注入。实际用起来是
+        纯摩擦——定时任务里跑的就是它自己那个 MCP/工具，用户在对话里刚验证过能用，
+        到了定时任务却要再勾一次，还看不出差在哪。现在定时任务只是「谁在跑」，
+        不是「走哪条链路」，判定完全按内部那个工具/MCP 的场景走。
         """
         source = _read(SECRET_CENTER)
 
-        line = next(
-            ln for ln in source.splitlines() if "'scheduled_task'" in ln and "wired" in ln
-        )
-        assert "wired: true" in line
-        assert "暂未接入" not in line
+        assert "'scheduled_task'" not in source
 
 
 class TestAdminCreateWizard:
@@ -121,13 +119,15 @@ class TestAdminCreateWizard:
             assert label in source
 
     def test_admin_scene_list_matches_backend_reality(self):
-        """定时任务已接通，不该再显示「暂未接入」；`agent` 才没有注入点。"""
+        """管理端可选场景必须和后端一致：只有真正有注入点的才列出来。"""
         source = _read(ADMIN_CENTER)
 
-        assert "定时任务 / 智能体暂未接入" not in source
         scenes = source[source.index("CREATE_SCENES"):]
         scenes = scenes[: scenes.index("]")]
-        assert "'scheduled_task'" in scenes and "wired: true" in scenes
+        for key in ("mcp", "api_tool", "script_env"):
+            assert f"'{key}'" in scenes
+        # 定时任务不再是独立场景；agent 没有注入点
+        assert "'scheduled_task'" not in scenes
         agent_line = next(ln for ln in scenes.splitlines() if "'agent'" in ln)
         assert "wired: false" in agent_line
 
@@ -217,6 +217,86 @@ class TestSecretRecordTabs:
             assert "rotate: '轮换'" in source
 
 
+class TestSecretCenterUsageHelp:
+    """凭据中心顶部要能回答「这些凭据到底会被用在哪」。
+
+    这层信息原来只写在代码里：四个真实注入点、两个不注入的勾选项、三道闸门。
+    每次都要口头解释一遍，界面上一个字都没有。
+    """
+
+    CENTER = ROOT / "frontend/src/views/SecretCenter.vue"
+
+    def test_help_button_exists(self):
+        source = _read(self.CENTER)
+        assert "usageHelpOpen = true" in source
+        assert 'aria-label="查看凭据使用范围"' in source
+
+    def test_help_lists_all_four_real_injection_points(self):
+        source = _read(self.CENTER)
+        for anchor in ["MCP 服务", "API 工具 · 请求头", "API 工具 · 参数位", "脚本工具 · 环境变量"]:
+            assert anchor in source, f"弹窗缺少场景：{anchor}"
+
+    def test_help_says_scheduled_task_reuses_the_same_rule(self):
+        """定时任务不是单独的注入点，它跑的就是内部那个工具/MCP 的通道。"""
+        source = _read(self.CENTER)
+        assert "沿用同一套判定" in source
+        assert "暂未实现" in source
+
+    def test_help_overlay_follows_portal_contract(self):
+        """弹层必须是 Teleport + z-[100]，否则会被页面元素盖住。"""
+        source = _read(self.CENTER)
+        marker = "usageHelpOpen"
+        idx = source.find('<div\n        v-if="usageHelpOpen"')
+        assert idx > 0
+        segment = source[max(0, idx - 200):idx + 200]
+        assert 'Teleport to="body"' in source[:idx]
+        assert "fixed inset-0 z-[100]" in segment
+
+
+class TestMcpWizardPendingBindings:
+    """新建 MCP 时就能选凭据，而不是逼用户先存一遍空配置再回来改。
+
+    绑定是 `(consumer_id, slot)` 维度的，而新建向导里服务还没有 id。以前干脆把
+    「来自凭据中心」整个藏起来（`v-if="isEditing"`），只让用固定 Token。
+    """
+
+    REGISTRY = ROOT / "frontend/src/components/system/McpServerRegistry.vue"
+
+    def test_pending_store_exists(self):
+        source = _read(self.REGISTRY)
+        assert "pendingBindings" in source
+        assert "flushPendingBindings" in source
+
+    def test_authorization_credential_tab_shown_while_creating(self):
+        """二选一不能只在编辑态出现。"""
+        source = _read(self.REGISTRY)
+        assert 'v-if="isEditing" class="mt-3 inline-flex rounded-lg bg-white p-0.5 ring-1 ring-indigo-100"' not in source
+        assert 'class="mt-3 inline-flex rounded-lg bg-white p-0.5 ring-1 ring-indigo-100"' in source
+
+    def test_header_bind_does_not_require_saved_server(self):
+        """每行 Header 的钥匙按钮以前只有已保存的行才有。"""
+        source = _read(self.REGISTRY)
+        assert "if (!name || !editingId.value) return" not in source
+        # 新增行也要能挑凭据
+        assert 'v-if="!pair.existing"' in source
+
+    def test_pending_flushed_after_create(self):
+        source = _read(self.REGISTRY)
+        assert "await flushPendingBindings(newId)" in source
+
+    def test_binding_failure_does_not_rollback_server(self):
+        """服务建好了但绑定失败，要明说，不能显示成「已绑定」。"""
+        source = _read(self.REGISTRY)
+        assert "的凭据绑定失败" in source
+
+    def test_reset_clears_pending(self):
+        source = _read(self.REGISTRY)
+        idx = source.find("const resetWizard = () => {")
+        assert idx > 0
+        segment = source[idx:idx + 2000]
+        assert "pendingBindings.value = {}" in segment
+
+
 class TestMcpWizardSectionDividers:
     """三步向导第 1 步的三个分区要有视觉分界。
 
@@ -230,17 +310,30 @@ class TestMcpWizardSectionDividers:
     def test_dividers_exist_between_sections(self):
         source = _read(self.REGISTRY)
 
-        # 用 border-t 而不是 h-px：父容器是 flex-col，h-px 的元素会被 flex-shrink
-        # 压成 0 —— 线还在 DOM 里，但一个字都看不见（踩过一次）。
-        assert source.count("shrink-0 border-t border-gray-200") >= 2
+        # 必须带 shrink-0：父容器是 flex-col，可收缩的 1px 元素会被压成 0——
+        # 线还在 DOM 里，一个字都看不见（踩过两次）。
+        assert source.count("h-px shrink-0 bg-gray-300") >= 2
         # 分割线必须带 aria-hidden：它是纯装饰，读屏不该念出来
-        assert 'border-t border-gray-200" aria-hidden="true"' in source
+        assert 'bg-gray-300" aria-hidden="true"' in source
 
-    def test_divider_is_not_a_sized_div(self):
-        """h-px 在 flex 容器里不可靠，契约钉住不许回退。"""
+    def test_divider_survives_flex_shrink(self):
+        """没有 shrink-0 的 1px 元素在 flex 列里会被压没。"""
         source = _read(self.REGISTRY)
+        lines = [l for l in source.splitlines() if "bg-gray-300" in l and "aria-hidden" in l]
+        assert lines
+        for line in lines:
+            assert "shrink-0" in line
+            assert "h-px" in line
 
-        assert "h-px bg-gray-200" not in source
+    def test_wizard_container_uses_gap_not_space_y(self):
+        """父容器用 gap 而不是 space-y。
+
+        space-y 按 DOM 顺序发 margin，可这几个分区靠 CSS order 重排——margin 会
+        落到错误的元素上，视觉间距和预期对不上。gap 按渲染顺序分配。
+        """
+        source = _read(self.REGISTRY)
+        assert "flex-1 flex-col gap-5 overflow-y-auto" in source
+        assert "flex-1 flex-col space-y-5 overflow-y-auto" not in source
 
     def test_divider_order_matches_render_order(self):
         """分区靠 CSS order 排序，分割线必须用相邻分区的 order 值。
@@ -250,7 +343,7 @@ class TestMcpWizardSectionDividers:
         source = _read(self.REGISTRY)
         lines = source.splitlines()
 
-        dividers = [l for l in lines if "border-t border-gray-200" in l and "aria-hidden" in l]
+        dividers = [l for l in lines if "bg-gray-300" in l and "aria-hidden" in l]
         assert len(dividers) == 2
         assert "order-2" in dividers[0] or "order-2" in dividers[1]
         assert "order-3" in dividers[0] or "order-3" in dividers[1]
