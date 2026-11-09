@@ -2492,7 +2492,7 @@ onMounted(fetchServers)
             <!-- 分割线：Header 配置和「身份传递」是两件不同的事——前者是服务怎么认
                  我们，后者是我们怎么告诉服务「现在是谁在调」。混在同一段里，容易
                  以为关掉 Header 就一起关掉了身份传递。 -->
-            <div class="order-3 h-px bg-gray-200" aria-hidden="true"></div>
+            <div class="order-3 shrink-0 border-t border-gray-200" aria-hidden="true"></div>
 
             <div class="order-3 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
               <div class="flex items-center justify-between gap-3">
@@ -2742,7 +2742,7 @@ onMounted(fetchServers)
 
             <!-- 分割线：Authorization 是「服务怎么认我们」的主入口，其他 Header 是次要补充。
                  不加线的话两块连成一片，看起来像同一个开关的不同部分。 -->
-            <div class="order-2 h-px bg-gray-200" aria-hidden="true"></div>
+            <div class="order-2 shrink-0 border-t border-gray-200" aria-hidden="true"></div>
 
             <!-- Dynamic Headers Editor -->
             <div v-if="connectionInputTab === 'manual' || isEditing" class="order-2">

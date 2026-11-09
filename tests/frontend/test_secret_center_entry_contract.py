@@ -230,9 +230,17 @@ class TestMcpWizardSectionDividers:
     def test_dividers_exist_between_sections(self):
         source = _read(self.REGISTRY)
 
-        assert source.count('h-px bg-gray-200') >= 2
+        # 用 border-t 而不是 h-px：父容器是 flex-col，h-px 的元素会被 flex-shrink
+        # 压成 0 —— 线还在 DOM 里，但一个字都看不见（踩过一次）。
+        assert source.count("shrink-0 border-t border-gray-200") >= 2
         # 分割线必须带 aria-hidden：它是纯装饰，读屏不该念出来
-        assert 'h-px bg-gray-200" aria-hidden="true"' in source
+        assert 'border-t border-gray-200" aria-hidden="true"' in source
+
+    def test_divider_is_not_a_sized_div(self):
+        """h-px 在 flex 容器里不可靠，契约钉住不许回退。"""
+        source = _read(self.REGISTRY)
+
+        assert "h-px bg-gray-200" not in source
 
     def test_divider_order_matches_render_order(self):
         """分区靠 CSS order 排序，分割线必须用相邻分区的 order 值。
@@ -242,7 +250,7 @@ class TestMcpWizardSectionDividers:
         source = _read(self.REGISTRY)
         lines = source.splitlines()
 
-        dividers = [l for l in lines if "h-px bg-gray-200" in l]
+        dividers = [l for l in lines if "border-t border-gray-200" in l and "aria-hidden" in l]
         assert len(dividers) == 2
         assert "order-2" in dividers[0] or "order-2" in dividers[1]
         assert "order-3" in dividers[0] or "order-3" in dividers[1]
