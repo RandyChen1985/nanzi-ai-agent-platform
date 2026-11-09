@@ -34,10 +34,18 @@ from app.services.ai.subagent_protocol import (
     validate_structured_output,
 )
 from app.services.ai.turn_decision import TurnDecision
+from app.services.ai.runtime.agentscope.stream_reconcile import DEFAULT_TOOL_OUTPUT_MAX_LEN
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DELEGATION_RESULT_MAX_CHARS = 8000
+#: 委派结果交给调用方的正文上限（字符）。
+#:
+#: 与工具结果进模型上下文的通用口径 ``DEFAULT_TOOL_OUTPUT_MAX_LEN``（64Ki 字符）
+#: **保持同值**：委派结果本质也是一条工具结果，若这里更小，平台就会先于通用的
+#: 上下文保护把子代理输出切掉——明细表、多段落结论在 8000 字符处被硬切半行，
+#: 调用方拿到「表格断列 + 一句截断提示」，只能重新委派一次（2026-11-09 事故）。
+#: 超大结果交给下游的工具结果截断与上下文压缩处理，委派层不再提前设限。
+DEFAULT_DELEGATION_RESULT_MAX_CHARS = DEFAULT_TOOL_OUTPUT_MAX_LEN
 
 #: 委派上限（系统配置可调，改后无需重启；读不到配置时回退到这些默认值）
 #:
