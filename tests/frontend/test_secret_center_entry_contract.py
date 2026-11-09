@@ -217,6 +217,37 @@ class TestSecretRecordTabs:
             assert "rotate: '轮换'" in source
 
 
+class TestMcpWizardSectionDividers:
+    """三步向导第 1 步的三个分区要有视觉分界。
+
+    Authorization、其他 Header、用户身份传递，看起来都是「鉴权相关」，实际是三件
+    不同的事：服务怎么认我们 / 补充头 / 我们怎么告诉服务现在是谁。混成一片时，
+    用户会以为关掉 Header 就把身份传递一起关了。
+    """
+
+    REGISTRY = ROOT / "frontend/src/components/system/McpServerRegistry.vue"
+
+    def test_dividers_exist_between_sections(self):
+        source = _read(self.REGISTRY)
+
+        assert source.count('h-px bg-gray-200') >= 2
+        # 分割线必须带 aria-hidden：它是纯装饰，读屏不该念出来
+        assert 'h-px bg-gray-200" aria-hidden="true"' in source
+
+    def test_divider_order_matches_render_order(self):
+        """分区靠 CSS order 排序，分割线必须用相邻分区的 order 值。
+
+        用错 order 时线会跑到别的分区之间——DOM 顺序和渲染顺序不是一回事。
+        """
+        source = _read(self.REGISTRY)
+        lines = source.splitlines()
+
+        dividers = [l for l in lines if "h-px bg-gray-200" in l]
+        assert len(dividers) == 2
+        assert "order-2" in dividers[0] or "order-2" in dividers[1]
+        assert "order-3" in dividers[0] or "order-3" in dividers[1]
+
+
 class TestDismissibleHints:
     """提示条可以关掉，且关掉后记得住。
 
