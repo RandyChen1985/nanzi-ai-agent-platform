@@ -21,6 +21,7 @@ ADMIN_CENTER = ROOT / "frontend/src/views/AdminSecretCenter.vue"
 USER_DEPT_PICKER = ROOT / "frontend/src/components/common/UserDeptPicker.vue"
 ADMIN_SECRET_CENTER = ROOT / "frontend/src/views/AdminSecretCenter.vue"
 PICKER = ROOT / "frontend/src/components/secrets/CredentialPicker.vue"
+ROW_ACTIONS = ROOT / "frontend/src/components/secrets/SecretRowActions.vue"
 ROUTER = ROOT / "frontend/src/router/index.ts"
 MENU_SEED = ROOT / "app/services/menu_seed.py"
 
@@ -1727,3 +1728,107 @@ class TestAdminCardShowsBindingAndUsage:
         assert "bindings: SecretBindingRef[]" in source
         assert "usage_7d: number" in source
         assert "failed_7d: number" in source
+
+
+class TestAdminListViewToggle:
+    """管理端的卡片 / 列表双视图。
+
+    卡片适合「一条条看」，列表适合「一堆里扫」。两者要同时存在——管理员排查
+    「哪条凭据没人用」时是扫模式，配一条新凭据时是看模式。
+
+    列表的约束是**操作必须收进 ⋯**：一行里平铺四个文字按钮会把「名称」和
+    「使用情况」挤掉，而这两列才是扫列表时真正要看的东西。
+    """
+
+    def test_both_views_exist_and_toggle(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "viewMode" in source
+        assert "viewMode === 'card'" in source
+        assert "v-else" in source, "列表视图要和卡片视图互斥渲染"
+        assert "setViewMode('card')" in source
+        assert "setViewMode('list')" in source
+
+    def test_view_choice_persists(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        # 纯界面偏好，不值得为它加一次后端请求
+        assert "localStorage" in source
+        assert "dsh:admin-secrets:view" in source
+
+    def test_list_uses_row_actions_menu(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "SecretRowActions" in source
+        # 列表里不能再出现平铺的动作按钮
+        list_section = source.split("<!-- 列表视图")[1]
+        assert "@click=\"openEdit(item)\"" not in list_section
+        assert "@click=\"openRotate(item)\"" not in list_section
+        assert "@usage=\"openUsage(item.id)\"" in list_section
+
+    def test_card_view_keeps_flat_buttons(self):
+        """卡片横向空间够，直点更快——不要顺手把卡片也改成菜单。"""
+        source = _read(ADMIN_SECRET_CENTER)
+        card_section = source.split("<!-- 列表视图")[0]
+
+        assert "@click=\"openEdit(item)\"" in card_section
+        assert "@click=\"openRotate(item)\"" in card_section
+        assert "强制停用" in card_section
+
+    def test_list_columns_cover_triage_questions(self):
+        source = _read(ADMIN_SECRET_CENTER)
+        list_section = source.split("<!-- 列表视图")[1]
+
+        # 扫列表要回答的四件事：是什么、能不能用、谁在用、在跑吗
+        for header in ("名称", "状态", "场景", "授权范围", "绑定", "近 7 天"):
+            assert header in list_section, f"列表缺「{header}」列"
+
+    def test_list_overflow_scrolls_instead_of_squashing(self):
+        source = _read(ADMIN_SECRET_CENTER)
+        list_section = source.split("<!-- 列表视图")[1]
+
+        assert "overflow-x-auto" in list_section
+        assert "min-w-[" in list_section, "窄屏要横向滚动，不能把列压成一条缝"
+
+
+class TestRowActionsMenu:
+    """⋯ 菜单本身的结构性要求。
+
+    这些不是风格问题：位置算错会跑出视口，不做 Teleport 会被表格容器的
+    overflow 裁掉一半，不可键盘关闭对只能用键盘的人是死路。
+    """
+
+    def test_menu_teleports_out_of_scroll_container(self):
+        source = _read(ROW_ACTIONS)
+
+        # 菜单挂在带 overflow-x-auto 的表格里，absolute 定位会被裁
+        assert 'to="body"' in source
+        assert "position: 'fixed'" in source
+
+    def test_menu_overlay_meets_modal_contract(self):
+        source = _read(ROW_ACTIONS)
+
+        # 与 tests/core/test_guide_overlay_contract.py 同一条规则：
+        # 全屏遮罩必须 Teleport + z >= 100，否则会被页面里的层压住
+        assert "fixed inset-0" in source
+        assert "z-[320]" in source
+
+    def test_menu_closes_on_escape_and_outside_click(self):
+        source = _read(ROW_ACTIONS)
+
+        assert "'Escape'" in source
+        assert "addEventListener('keydown'" in source
+        assert "removeEventListener" in source, "监听要摘，否则切页面后还在跑"
+
+    def test_disabled_secret_hides_disable_action(self):
+        source = _read(ROW_ACTIONS)
+
+        # 已经停用的再「强制停用」没有意义
+        assert 'v-if="active"' in source
+
+    def test_menu_does_not_emit_union_type(self):
+        """`emit(action)` 传联合类型过不了 vue-tsc 的重载检查。"""
+        source = _read(ROW_ACTIONS)
+
+        assert "  emit(action)" not in source, "要逐个分发，不能传联合类型"
+        assert "emit('usage')" in source
