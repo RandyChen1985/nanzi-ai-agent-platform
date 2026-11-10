@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1929,3 +1930,21 @@ class TestAuditActionBadges:
             assert "secretActionStyle(row.action)" in source, f"{path.name} 未接入配色"
             assert "secretActionLabel(row.action)" in source
             assert "ACTION_LABEL" not in source, "本地映射应已删除，改由共享模块提供"
+
+    def test_both_centers_import_shared_badge_style(self):
+        """模板里写了不等于能用：`<script setup>` 里没 import 就是 undefined。
+
+        曾经管理端把本地 ACTION_LABEL 换成共享函数时漏了这行 import，静态检查只
+        报一条类型警告，运行时的表现是「点变更记录，弹框一片空白」——渲染列表时
+        调用 undefined 抛错，整棵子树都渲染不出来。
+        """
+        pattern = re.compile(
+            r"import\s*\{([^}]*)\}\s*from\s*['\"]\.\./utils/secretAudit['\"]"
+        )
+        for path in (SECRET_CENTER, ADMIN_SECRET_CENTER):
+            source = _read(path)
+            match = pattern.search(source)
+            assert match, f"{path.name} 没有从 utils/secretAudit 导入「动作」文案与配色"
+            imported = {name.strip() for name in match.group(1).split(",") if name.strip()}
+            for name in ("secretActionLabel", "secretActionStyle"):
+                assert name in imported, f"{path.name} 用了 {name} 却没导入"

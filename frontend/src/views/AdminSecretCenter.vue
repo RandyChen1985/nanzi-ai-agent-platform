@@ -14,6 +14,10 @@ import { computed, onMounted, ref } from 'vue'
 import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
 import SecretRowActions from '../components/secrets/SecretRowActions.vue'
 import { resultLabel } from '../utils/secretLabels'
+// 变更记录的「动作」文案与配色是共享模块提供的：模板里直接用 secretActionLabel /
+// secretActionStyle，漏了这行 import 不会在构建期报错，只会在打开弹框、真的要渲染
+// 列表时抛 undefined is not a function——表现就是「点了没反应 / 弹框空白」。
+import { secretActionLabel, secretActionStyle } from '../utils/secretAudit'
 import UserDeptPicker from '../components/common/UserDeptPicker.vue'
 import { useDismissible } from '../utils/dismissible'
 import axios from '../utils/axios'
