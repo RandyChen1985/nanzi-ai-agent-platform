@@ -43,9 +43,12 @@ function place(rect: DOMRect | undefined, height: number) {
   const anchorBottom = rect?.bottom ?? GAP
   const anchorRight = rect?.right ?? vw - GAP
 
-  // 优先向上展开：列表的最后一行贴着视口底部，向下必然要翻
+  // 默认向下展开，下方放不下且上方够时才翻转。参照实现（SavedReportItemCard）
+  // 是「能向上就向上」，那是给网格卡片的——卡片高度大、菜单 260px，向上更稳；
+  // 表格行只有几十像素高，照搬的话连第一行都会往上弹，正好盖住表头和筛选栏。
+  const spaceBelow = vh - anchorBottom
   const top =
-    anchorTop >= height + GAP
+    spaceBelow < height + GAP && anchorTop >= height + GAP
       ? anchorTop - height - GAP
       : Math.min(vh - height - GAP, anchorBottom + GAP)
   const left = Math.max(GAP, Math.min(anchorRight - MENU_WIDTH, vw - MENU_WIDTH - GAP))
@@ -87,12 +90,38 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') open.value = false
 }
 
-watch(open, (value) => {
-  if (value) window.addEventListener('keydown', onKeydown)
-  else window.removeEventListener('keydown', onKeydown)
-})
+/**
+ * 页面滚动/视口变化时重新贴合按钮。
+ *
+ * 菜单是 fixed 定位，表格又是整页滚动（容器只有 overflow-x-auto），不跟随的话
+ * 滑轮一滚菜单就停在原地、和刚点的按钮错位。按钮被滚出视口时直接收起，
+ * 免得留一个飘在边上的菜单。
+ */
+function reposition() {
+  const rect = triggerRef.value?.getBoundingClientRect()
+  if (!rect || rect.bottom < 0 || rect.top > window.innerHeight) {
+    open.value = false
+    return
+  }
+  place(rect, menuRef.value?.getBoundingClientRect().height || ESTIMATED_HEIGHT)
+}
 
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+function bindWindowListeners(bound: boolean) {
+  if (bound) {
+    window.addEventListener('keydown', onKeydown)
+    // capture：表格若换成内层滚动容器，滚动事件不会冒泡到 window
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+    return
+  }
+  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('scroll', reposition, true)
+  window.removeEventListener('resize', reposition)
+}
+
+watch(open, (value) => bindWindowListeners(value))
+
+onBeforeUnmount(() => bindWindowListeners(false))
 
 const label = computed(() => `更多操作：${props.name}`)
 

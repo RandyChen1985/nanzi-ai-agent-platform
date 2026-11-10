@@ -1832,3 +1832,28 @@ class TestRowActionsMenu:
 
         assert "  emit(action)" not in source, "要逐个分发，不能传联合类型"
         assert "emit('usage')" in source
+
+    def test_menu_opens_downward_and_flips_only_at_viewport_bottom(self):
+        """表格行的菜单默认向下展开，下方放不下才翻转。
+
+        照搬网格卡片（SavedReportItemCard）的「只要上方放得下就向上」会在表格里
+        连第一行都往上弹，正好盖住表头和筛选栏——那是卡片高度与菜单高度都不同的
+        场景，不能直接复用。
+        """
+        source = _read(ROW_ACTIONS)
+
+        assert "const spaceBelow = vh - anchorBottom" in source, "未按下方剩余空间判断"
+        assert "spaceBelow < height + GAP && anchorTop >= height + GAP" in source, (
+            "必须「下方放不下且上方够」才翻转"
+        )
+
+    def test_open_menu_follows_scroll_and_unbinds(self):
+        """菜单是 fixed 定位，表格页整页滚动，不跟随就会与按钮错位。"""
+        source = _read(ROW_ACTIONS)
+
+        assert "addEventListener('scroll', reposition, true)" in source, "滚动时不重算位置"
+        assert "removeEventListener('scroll', reposition, true)" in source, (
+            "监听要摘，否则切页面后还在跑"
+        )
+        assert "addEventListener('resize', reposition)" in source
+        assert "removeEventListener('resize', reposition)" in source
