@@ -3682,7 +3682,7 @@ onMounted(fetchServers)
             class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
             @click.self="paramMarkTarget = null"
           >
-            <div class="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-2xl">
+            <div class="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
               <div class="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
                 <div class="min-w-0">
                   <h3 class="text-base font-semibold text-gray-900">参数设置</h3>
@@ -3700,11 +3700,16 @@ onMounted(fetchServers)
               </div>
 
               <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-                <table class="w-full text-xs">
+                <table class="w-full table-fixed text-xs">
                   <thead>
+                    <!-- 参数名都很短（api_key / tenant_token），来源列却要放下
+                         「选凭据 + 凭据名 + 状态」三样东西。以前参数名按内容吃走
+                         大半宽度、来源列被钉死在 160px，结果凭据名被截成 `xx-p…`、
+                         「未选 · 各人绑自己的」竖排成四行。改成固定列宽：左边只拿
+                         三成，剩下的全给来源列。 -->
                     <tr class="text-left text-[11px] text-gray-400">
-                      <th class="pb-2 font-normal">参数名</th>
-                      <th class="w-40 pb-2 font-normal">值的来源</th>
+                      <th class="w-[30%] pb-2 font-normal">参数名</th>
+                      <th class="pb-2 font-normal">值的来源</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3717,7 +3722,7 @@ onMounted(fetchServers)
                       ]"
                     >
                       <td class="py-2 pr-3">
-                        <code class="font-mono text-xs text-gray-800">{{ name }}</code>
+                        <code class="break-all font-mono text-xs text-gray-800">{{ name }}</code>
                         <!-- 槽位是实现概念（参数「写到哪里 + 叫什么」），
                              摊在界面上只会让人问「这是啥」。hover 才给排查用。 -->
                         <div
@@ -3727,41 +3732,47 @@ onMounted(fetchServers)
                         >由凭据提供</div>
                       </td>
                       <td class="py-2 align-top">
-                        <select
-                          v-model="paramDraft[name]"
-                          class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                        >
-                          <option :value="false">模型填写</option>
-                          <option :value="true">来自凭据</option>
-                        </select>
-                        <div v-if="paramDraft[name]" class="mt-1 flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shadow-sm transition-colors"
-                            :class="bindingOfSlot(paramSlot(paramMarkTarget.tool, name))
-                              ? 'border border-violet-300 bg-white text-violet-700 hover:bg-violet-50'
-                              : 'bg-violet-600 text-white hover:bg-violet-700'"
-                            @click.stop="openParamBind(paramMarkTarget.tool, name)"
+                        <!-- 下拉与凭据控件放在同一行：一格只占一个控件高度，行距更紧，
+                             右侧也才有整列宽度可用 -->
+                        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <select
+                            v-model="paramDraft[name]"
+                            class="w-32 shrink-0 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                           >
-                            <KeyIcon class="h-3 w-3" />
-                            {{ bindingOfSlot(paramSlot(paramMarkTarget.tool, name)) ? '换凭据' : '选凭据' }}
-                          </button>
-                          <span
-                            v-if="bindingOfSlot(paramSlot(paramMarkTarget.tool, name))"
-                            class="truncate text-[10px]"
-                            :class="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))
-                              ? 'text-amber-700' : 'text-emerald-600'"
-                            :title="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))
-                              ? `已绑定 ${bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key}，但${bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))}`
-                              : (bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key || '')"
-                          >{{ bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key }}</span>
-                          <span
-                            v-if="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))"
-                            class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700"
-                          >{{ bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name))) }}</span>
-                          <span v-else class="text-[10px] leading-tight text-gray-400">
-                            {{ isGlobalBinding ? '未选 · 各人绑自己的' : '未选' }}
-                          </span>
+                            <option :value="false">模型填写</option>
+                            <option :value="true">来自凭据</option>
+                          </select>
+                          <template v-if="paramDraft[name]">
+                            <button
+                              type="button"
+                              class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shadow-sm transition-colors"
+                              :class="bindingOfSlot(paramSlot(paramMarkTarget.tool, name))
+                                ? 'border border-violet-300 bg-white text-violet-700 hover:bg-violet-50'
+                                : 'bg-violet-600 text-white hover:bg-violet-700'"
+                              @click.stop="openParamBind(paramMarkTarget.tool, name)"
+                            >
+                              <KeyIcon class="h-3 w-3" />
+                              {{ bindingOfSlot(paramSlot(paramMarkTarget.tool, name)) ? '换凭据' : '选凭据' }}
+                            </button>
+                            <span
+                              v-if="bindingOfSlot(paramSlot(paramMarkTarget.tool, name))"
+                              class="min-w-0 truncate text-[10px]"
+                              :class="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))
+                                ? 'text-amber-700' : 'text-emerald-600'"
+                              :title="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))
+                                ? `已绑定 ${bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key}，但${bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))}`
+                                : (bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key || '')"
+                            >{{ bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key }}</span>
+                            <!-- 未绑才说「未选」：绑了却还挂着这句，比不说更让人糊涂 -->
+                            <span
+                              v-if="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))"
+                              class="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700"
+                            >{{ bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name))) }}</span>
+                            <span
+                              v-else-if="!bindingOfSlot(paramSlot(paramMarkTarget.tool, name))"
+                              class="text-[10px] text-gray-400"
+                            >{{ isGlobalBinding ? '未选 · 各人绑自己的' : '未选' }}</span>
+                          </template>
                         </div>
                       </td>
                     </tr>

@@ -338,6 +338,30 @@ class TestMcpToolParamCredential:
         assert "模型填写" in source
         assert "来自凭据" in source
 
+    def test_param_table_gives_source_column_the_room(self):
+        """「值的来源」那列要塞下拉 + 选凭据 + 凭据名 + 状态，160px 根本放不下。
+
+        原先参数名按内容吃走大半宽度、源列钉死 `w-40`：凭据名被截成 `xx-p…`，
+        「未选 · 各人绑自己的」竖排成四行。改成固定列宽，参数名只占三成。
+        """
+        source = _read(self.REGISTRY)
+        start = source.find('v-for="name in toolParamNames(paramMarkTarget.tool)"')
+        table_head = source[source.rfind("<table", 0, start):start]
+        body = source[start:source.find("</table>", start)]
+
+        assert "table-fixed" in table_head, "不固定列宽的话，宽的永远是参数名列"
+        assert "w-[30%]" in table_head, "参数名只该拿三成，剩下的给来源列"
+        assert "w-40" not in table_head, "来源列不该再钉死 160px"
+        # 下拉与凭据控件同一行：一格只占一个控件高度，右侧才有整列宽度可用
+        assert "flex flex-wrap items-center" in body
+        assert "w-32 shrink-0" in body, "下拉固定宽度，余下的空间留给凭据名与状态"
+
+    def test_unselected_hint_only_when_really_unbound(self):
+        """已经绑上了却还挂一句「未选」，比不写更让人糊涂。"""
+        source = _read(self.REGISTRY)
+
+        assert 'v-else-if="!bindingOfSlot(' in source
+
     def test_admin_can_bind_secret_for_param(self):
         """管理员要能在参数上直接选凭据（全平台共用那条），不能只让用户各自绑。"""
         source = _read(self.REGISTRY)
