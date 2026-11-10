@@ -22,6 +22,7 @@ ADMIN_CENTER = ROOT / "frontend/src/views/AdminSecretCenter.vue"
 USER_DEPT_PICKER = ROOT / "frontend/src/components/common/UserDeptPicker.vue"
 ADMIN_SECRET_CENTER = ROOT / "frontend/src/views/AdminSecretCenter.vue"
 PICKER = ROOT / "frontend/src/components/secrets/CredentialPicker.vue"
+PICKER_FIELDS = ROOT / "frontend/src/utils/credentialPicker.ts"
 ROW_ACTIONS = ROOT / "frontend/src/components/secrets/SecretRowActions.vue"
 ROUTER = ROOT / "frontend/src/router/index.ts"
 MENU_SEED = ROOT / "app/services/menu_seed.py"
@@ -1413,10 +1414,14 @@ class TestPicker:
 
     def test_only_emits_ids(self):
         source = _read(PICKER)
+        fields = _read(PICKER_FIELDS)
 
         # emit 的是 id，不是值；组件内部也不缓存明文
+        assert "emit('update:modelValue', item ? item.id : null)" in source
         assert "item.id" in source
-        assert "value_masked" in source
+        # 值的影子只留在类型定义里（选择器知道它存在，但从不渲染它）
+        assert "value_masked" in fields
+        assert "value_masked" not in source
 
 
 class TestCreateFlow:
