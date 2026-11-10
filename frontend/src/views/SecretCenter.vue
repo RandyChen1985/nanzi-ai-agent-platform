@@ -16,6 +16,10 @@ import { useDismissible } from '../utils/dismissible'
 import { shortTime } from '../utils/date'
 import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
 import { RESULT_LABEL } from '../utils/secretLabels'
+import {
+  secretActionLabel,
+  secretActionStyle,
+} from '../utils/secretAudit'
 
 interface SecretItem {
   id: string
@@ -49,6 +53,9 @@ interface UsageRow {
   scene: string
   result: string
   user_id: string | null
+  user_name: string | null
+  user_real_name: string | null
+  user_email: string | null
   target_host: string | null
   consumer_type: string | null
   created_at: string | null
@@ -450,19 +457,6 @@ type AuditRow = {
   created_at: string
 }
 const auditRows = ref<AuditRow[]>([])
-
-const ACTION_LABEL: Record<string, string> = {
-  create: '创建',
-  update: '修改',
-  rotate: '轮换',
-  delete: '删除',
-  disable: '停用',
-  enable: '启用',
-  grant: '授权',
-  revoke: '撤销授权',
-  bind: '绑定',
-  unbind: '解绑',
-}
 
 async function loadRecords(tab: RecordTab) {
   // 统计面板自己拉数据（`:secret-id` 变了会重新加载），这里不代劳
@@ -1324,9 +1318,10 @@ onMounted(load)
                   class="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600"
                 >
                   <code class="text-gray-800">{{ row.secret_key || '已删除' }}</code>
-                  <span class="rounded bg-white px-1.5 py-0.5 font-medium text-gray-700">
-                    {{ ACTION_LABEL[row.action] || row.action }}
-                  </span>
+                  <span
+                    class="rounded px-1.5 py-0.5 font-medium ring-1 ring-inset"
+                    :class="secretActionStyle(row.action)"
+                  >{{ secretActionLabel(row.action) }}</span>
                   <span class="ml-auto text-gray-400">{{ shortTime(row.created_at) }}</span>
                 </div>
               </div>
@@ -1350,6 +1345,13 @@ onMounted(load)
                   {{ RESULT_LABEL[row.result] || row.result }}
                 </span>
                 <span v-if="row.target_host" class="text-gray-400">{{ row.target_host }}</span>
+                <!-- 个人中心虽然都是自己的记录，但仍显示身份：多账号 / 被授权他人凭据时，
+                     「这条到底是哪个账号在调用」是排查的第一步 -->
+                <span
+                  v-if="row.user_real_name || row.user_name || row.user_id"
+                  class="text-gray-400"
+                  :title="[row.user_email, row.user_id ? `ID: ${row.user_id}` : ''].filter(Boolean).join('\n')"
+                >{{ row.user_real_name || row.user_name || row.user_id }}</span>
                 <span class="ml-auto text-gray-400">{{ shortTime(row.created_at) }}</span>
               </div>
             </div>

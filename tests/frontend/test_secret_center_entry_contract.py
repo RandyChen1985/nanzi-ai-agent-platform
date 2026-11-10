@@ -218,11 +218,16 @@ class TestSecretRecordTabs:
         assert "变更记录" in source
 
     def test_actions_are_shown_in_chinese(self):
-        """审计里的 action 是内部常量，不能原样抛给用户。"""
+        """审计里的 action 是内部常量，不能原样抛给用户。
+
+        文案集中到 `utils/secretAudit.ts`：两处中心各写一份时，加一个动作就得记得
+        改两个地方，漏一个那边就会显示英文常量。
+        """
+        shared = _read(ROOT / "frontend/src/utils/secretAudit.ts")
+        assert "rotate: '轮换'" in shared
         for path in (SECRET_CENTER, ADMIN_CENTER):
             source = _read(path)
-            assert "ACTION_LABEL" in source
-            assert "rotate: '轮换'" in source
+            assert "secretActionLabel(row.action)" in source
 
 
 class TestSecretCenterUsageHelp:
@@ -1857,3 +1862,70 @@ class TestRowActionsMenu:
         )
         assert "addEventListener('resize', reposition)" in source
         assert "removeEventListener('resize', reposition)" in source
+
+
+class TestUsageUserDisplay:
+    """使用记录要能看出「这个人是谁」，并且能按用户筛。
+
+    流水只存 user_id，界面原先直接显示「用户 7」——排查「某用户说用不了」时，
+    运维还得先去用户表反查这个人是谁；记录一多也没法只看某个人的。
+    """
+
+    def test_admin_usage_row_shows_name_email_and_id(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "user_real_name" in source and "user_email" in source
+        # 姓名 > 用户名 > 裸 ID 的兜底顺序：用户被删了也要能显示点东西
+        assert "row.user_real_name || row.user_name || row.user_id" in source
+        assert "usageUserTitle" in source, "悬停要能看到完整身份（ID / 用户名 / 姓名 / 邮箱）"
+
+    def test_admin_usage_search_sends_user_keyword(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "usageUserKeyword" in source
+        assert "user_keyword:" in source, "搜索词要传给后端，不能只在前端过滤当前页"
+        assert "scheduleUsageSearch" in source, "输入即搜必须防抖"
+        assert "clearTimeout(usageSearchTimer)" in source
+
+    def test_personal_usage_also_shows_identity(self):
+        source = _read(SECRET_CENTER)
+
+        assert "user_real_name" in source and "user_email" in source
+
+
+class TestAuditActionBadges:
+    """变更记录的动作要能靠颜色区分，删除必须醒目。
+
+    原先所有动作都是一模一样的灰底白字，一屏十几条扫下来分不出「创建」和「删除」，
+    而「谁把凭据删了」正是审计最常被问的问题。
+    """
+
+    def test_delete_is_red_and_heavier(self):
+        from pathlib import Path as _P
+
+        src = (_P(ROOT) / "frontend/src/utils/secretAudit.ts").read_text(encoding="utf-8")
+        style_section = src.split("SECRET_ACTION_STYLE: Record<string, string> = {", 1)[1]
+        delete_line = next(
+            line for line in style_section.splitlines() if line.strip().startswith("delete:")
+        )
+        assert "rose" in delete_line, "删除要用红色系"
+        assert "font-semibold" in delete_line, "颜色之外还要加粗，扫列表时一眼挑出来"
+
+    def test_every_action_has_distinct_style(self):
+        from pathlib import Path as _P
+
+        src = (_P(ROOT) / "frontend/src/utils/secretAudit.ts").read_text(encoding="utf-8")
+        # 十个动作都要有配色，漏一个就会退回透明底
+        for action in (
+            "create", "update", "rotate", "delete", "disable",
+            "enable", "grant", "revoke", "bind", "unbind",
+        ):
+            assert f"{action}:" in src, f"{action} 缺配色"
+        assert "SECRET_ACTION_FALLBACK_STYLE" in src, "未登记的动作要有兜底配色"
+
+    def test_both_centers_use_shared_badge_style(self):
+        for path in (SECRET_CENTER, ADMIN_SECRET_CENTER):
+            source = _read(path)
+            assert "secretActionStyle(row.action)" in source, f"{path.name} 未接入配色"
+            assert "secretActionLabel(row.action)" in source
+            assert "ACTION_LABEL" not in source, "本地映射应已删除，改由共享模块提供"

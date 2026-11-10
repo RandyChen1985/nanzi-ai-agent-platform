@@ -291,6 +291,9 @@ type UsageRow = {
   id: string
   secret_key: string | null
   user_id: string | null
+  user_name: string | null
+  user_real_name: string | null
+  user_email: string | null
   scene: string
   consumer_type: string | null
   slot: string | null
@@ -299,6 +302,25 @@ type UsageRow = {
   created_at: string
 }
 const usageRows = ref<UsageRow[]>([])
+/** 按用户筛选：ID / 用户名 / 姓名 / 邮箱都能搜，后端做子串匹配 */
+const usageUserKeyword = ref('')
+let usageSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 展示用的「有信息量的那个名字」：姓名 > 用户名 > 裸 ID */
+function usageUserLabel(row: UsageRow): string {
+  return row.user_real_name || row.user_name || row.user_id || '未知用户'
+}
+
+/** 鼠标悬停看完整身份，列表里只放一眼能区分的部分 */
+function usageUserTitle(row: UsageRow): string {
+  const parts = [
+    row.user_id ? `ID: ${row.user_id}` : '',
+    row.user_name ? `用户名: ${row.user_name}` : '',
+    row.user_real_name ? `姓名: ${row.user_real_name}` : '',
+    row.user_email ? `邮箱: ${row.user_email}` : '',
+  ]
+  return parts.filter(Boolean).join('\n')
+}
 
 /** `null` = 全部凭据；传 id 就是只看这一条 */
 const usageSecretId = ref<string | null>(null)
@@ -311,6 +333,9 @@ async function loadUsageDetail() {
       params: {
         limit: 100,
         ...(usageSecretId.value ? { secret_id: usageSecretId.value } : {}),
+        ...(usageUserKeyword.value.trim()
+          ? { user_keyword: usageUserKeyword.value.trim() }
+          : {}),
       },
     })
     usageRows.value = res.data?.data || []
@@ -319,6 +344,15 @@ async function loadUsageDetail() {
   } finally {
     usageLoading.value = false
   }
+}
+
+/** 输入即搜，但要防抖：每敲一个字就发一次请求会把明细接口刷爆 */
+function scheduleUsageSearch() {
+  if (usageSearchTimer) clearTimeout(usageSearchTimer)
+  usageSearchTimer = setTimeout(() => {
+    usageSearchTimer = null
+    void loadUsageDetail()
+  }, 300)
 }
 
 function switchUsageTab(tab: 'detail' | 'stats') {
@@ -435,19 +469,6 @@ async function submitRotate() {
   } finally {
     rotateBusy.value = false
   }
-}
-
-const ACTION_LABEL: Record<string, string> = {
-  create: '创建',
-  update: '修改',
-  rotate: '轮换',
-  delete: '删除',
-  disable: '停用',
-  enable: '启用',
-  grant: '授权',
-  revoke: '撤销授权',
-  bind: '绑定',
-  unbind: '解绑',
 }
 
 async function openAudit() {
@@ -1363,9 +1384,10 @@ onMounted(load)
                 class="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600"
               >
                 <code class="text-gray-800">{{ row.secret_key || '已删除' }}</code>
-                <span class="rounded bg-white px-1.5 py-0.5 font-medium text-gray-700">
-                  {{ ACTION_LABEL[row.action] || row.action }}
-                </span>
+                <span
+                  class="rounded px-1.5 py-0.5 font-medium ring-1 ring-inset"
+                  :class="secretActionStyle(row.action)"
+                >{{ secretActionLabel(row.action) }}</span>
                 <span v-if="row.actor_id" class="text-gray-400">{{ row.actor_id }}</span>
                 <span class="ml-auto text-gray-400">{{ shortTime(row.created_at) }}</span>
               </div>
@@ -1580,6 +1602,14 @@ onMounted(load)
               <option :value="null">全部凭据</option>
               <option v-for="item in items" :key="item.id" :value="item.id">{{ item.name }}</option>
             </select>
+            <input
+              v-if="usageTab === 'detail'"
+              v-model="usageUserKeyword"
+              type="search"
+              placeholder="按用户筛选（ID / 用户名 / 姓名 / 邮箱）"
+              class="w-56 rounded-md border-gray-300 text-xs shadow-sm focus:border-primary focus:ring-primary"
+              @input="scheduleUsageSearch"
+            />
             <span v-if="usageTab === 'stats'" class="text-[11px] text-gray-400">近 7 天</span>
           </div>
 
@@ -1610,7 +1640,17 @@ onMounted(load)
                       : 'bg-amber-50 text-amber-700'"
                   >{{ resultLabel(row.result) }}</span>
                   <span class="text-gray-400">{{ SCENE_LABEL[row.scene] || row.scene }}</span>
-                  <span v-if="row.user_id" class="text-gray-500">用户 {{ row.user_id }}</span>
+                  <span
+                    v-if="row.user_id"
+                    class="text-gray-500"
+                    :title="usageUserTitle(row)"
+                  >{{ usageUserLabel(row) }}<span
+                    v-if="row.user_id"
+                    class="ml-1 font-mono text-[10px] text-gray-400"
+                  >#{{ row.user_id }}</span><span
+                    v-if="row.user_email"
+                    class="ml-1 text-[10px] text-gray-400"
+                  >{{ row.user_email }}</span></span>
                   <span class="ml-auto shrink-0 text-gray-400">{{ shortTime(row.created_at) }}</span>
                 </div>
                 <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[10px] text-gray-400">

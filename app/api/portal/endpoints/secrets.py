@@ -258,6 +258,11 @@ def _fail(exc: SecretValidationError) -> HTTPException:
 @router.get("/usage", summary="凭据使用记录")
 async def list_usage(
     secret_id: Optional[str] = Query(default=None),
+    user_keyword: Optional[str] = Query(
+        default=None,
+        max_length=64,
+        description="按用户筛选：ID、用户名、姓名或邮箱，子串匹配",
+    ),
     limit: int = Query(default=100, ge=1, le=500),
     user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
@@ -268,8 +273,12 @@ async def list_usage(
         db,
         user_id=None if is_admin else user_id,
         secret_id=secret_id,
+        user_keyword=user_keyword,
         limit=limit,
     )
+    # 用户展示信息单独批量取：流水表只存 user_id，界面光显示「用户 7」没法排查
+    # 「某用户说用不了」——对方是谁还得先去用户表反查。
+    users = await center.resolve_usage_users(db, rows)
     return {
         "code": 0,
         "data": [
@@ -279,6 +288,9 @@ async def list_usage(
                 "secret_key": r.secret_key_snapshot,
                 "owner_scope": r.owner_scope,
                 "user_id": r.user_id,
+                "user_name": (users.get(str(r.user_id)) or {}).get("user_name"),
+                "user_real_name": (users.get(str(r.user_id)) or {}).get("real_name"),
+                "user_email": (users.get(str(r.user_id)) or {}).get("email"),
                 "scene": r.scene,
                 "consumer_type": r.consumer_type,
                 "consumer_id": r.consumer_id,

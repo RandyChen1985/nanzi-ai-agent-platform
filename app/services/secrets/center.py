@@ -802,14 +802,69 @@ async def list_bindings(session, *, secret_id: str) -> Sequence[SecretBinding]:
     return (await session.execute(stmt)).scalars().all()
 
 
+async def match_usage_user_ids(session, keyword: str) -> list[str]:
+    """按 ID / 用户名 / 姓名 / 邮箱找人，返回流水表能对上的 ``user_id`` 字符串。
+
+    流水表的 ``user_id`` 是字符串（历史原因，允许存非数字的内部标识），用户表主键是
+    整数，所以这里统一转成字符串再比。匹配不到返回空列表——**不能**返回 None 让调用
+    方跳过过滤，那等于把别人的流水漏出去。
+    """
+    from sqlalchemy import or_
+
+    from app.models.user import User
+
+    kw = str(keyword or "").strip()
+    if not kw:
+        return []
+    like = f"%{kw}%"
+    stmt = select(User.id).where(
+        or_(
+            User.user_name.like(like),
+            User.real_name.like(like),
+            User.email.like(like),
+        )
+    )
+    matched = [int(item) for item in (await session.execute(stmt)).scalars().all()]
+    # 纯数字时也当 ID 精确匹配：运维手上往往只有一个裸 ID。
+    if kw.isdigit() and int(kw) not in matched:
+        matched.append(int(kw))
+    return [str(item) for item in matched]
+
+
+async def resolve_usage_users(session, rows) -> dict[str, dict]:
+    """批量补使用记录里的用户展示信息（用户名 / 姓名 / 邮箱）。
+
+    界面原来只显示「用户 7」，排查「某用户说用不了」时还得先去用户表反查是谁。
+    一次批量查完，不在循环里逐条查（明细最多 500 条）。
+    """
+    from app.models.user import User
+
+    raw_ids = {str(row.user_id) for row in rows if getattr(row, "user_id", None)}
+    numeric_ids = sorted({int(item) for item in raw_ids if item.isdigit()})
+    if not numeric_ids:
+        return {}
+    stmt = select(User.id, User.user_name, User.real_name, User.email).where(
+        User.id.in_(numeric_ids)
+    )
+    return {
+        str(uid): {"user_name": user_name, "real_name": real_name, "email": email}
+        for uid, user_name, real_name, email in (await session.execute(stmt)).all()
+    }
+
+
 async def list_usage(
     session,
     *,
     user_id: str | None = None,
     secret_id: str | None = None,
+    user_keyword: str | None = None,
     limit: int = 100,
 ) -> Sequence:
-    """使用流水。管理员传 ``user_id=None`` 看全局；普通用户只看自己。"""
+    """使用流水。管理员传 ``user_id=None`` 看全局；普通用户只看自己。
+
+    ``user_keyword`` 只**缩小**范围：与 ``user_id`` 是 AND 关系，所以普通用户带上
+    别人的名字也搜不到别人的流水。
+    """
     from app.models.secret import SecretUsageLog
 
     stmt = select(SecretUsageLog).order_by(SecretUsageLog.created_at.desc())
@@ -817,6 +872,11 @@ async def list_usage(
         stmt = stmt.where(SecretUsageLog.user_id == user_id)
     if secret_id:
         stmt = stmt.where(SecretUsageLog.secret_id == secret_id)
+    if user_keyword and str(user_keyword).strip():
+        matched_ids = await match_usage_user_ids(session, str(user_keyword))
+        if not matched_ids:
+            return []
+        stmt = stmt.where(SecretUsageLog.user_id.in_(matched_ids))
     return (await session.execute(stmt.limit(max(1, min(limit, 500))))).scalars().all()
 
 
