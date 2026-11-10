@@ -450,13 +450,15 @@ watch(
          这里只讲清「谁生效、想给所有人用该怎么办」，不指路——这个页面是管理员
          的系统配置页，让人去「个人中心 → 我的 MCP」纯属指错方向。 -->
     <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-800">
-      <b>平台工具，所有人共用这一份配置。</b>你绑的凭据只对<strong>你自己</strong>的调用生效；
-      想让<strong>所有人</strong>共用一个 Token，直接手填——注入层对手填值「只补空位」，不会被覆盖。
+      这是<strong>平台工具</strong>：请求头和签名配置全平台共用，但<strong>凭据绑定是个人级</strong>的——
+      你绑的只对你自己的调用生效。想让所有人共用一个 Token，直接手填（注入层对手填值只补空位）。
     </div>
 
     <p v-if="displayError" class="text-[11px] text-red-600">{{ displayError }}</p>
     <p v-else class="text-[11px] text-gray-400">
-      敏感值建议用变量占位；保存后仍会按原值写入工具配置。点右侧钥匙图标可改用凭据中心里的凭据，值会变成 <code>${CREDENTIAL:标识}</code>，不会写入工具配置。
+      敏感值建议用变量占位（如 <code>{user.user_name}</code>）——调用时才替换；
+      直接填明文会原样写进工具配置。点右侧钥匙图标可改用凭据中心的凭据，
+      值会变成 <code>${CREDENTIAL:标识}</code>，不写入配置。
     </p>
   </div>
   <!-- 绑定凭据 -->

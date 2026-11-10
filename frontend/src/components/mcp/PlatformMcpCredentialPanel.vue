@@ -218,8 +218,9 @@ onMounted(load)
   <div class="min-h-0 flex-1 overflow-y-auto">
     <div class="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-700">
       <b>平台服务由管理员统一配置。</b>这里绑的凭据只对<strong>你自己</strong>的调用生效，
-      会盖过管理员配的固定 Token；其他人不受影响。想让所有人都用同一个 Token，
-      需要找管理员在服务上配固定 Token。
+      会盖过管理员配的固定 Token，其他人不受影响。想让所有人共用一个值，
+      可以请管理员绑一条<strong>系统级凭据</strong>到同一个位置——那样能轮换，
+      比在服务上写死 Token 更好维护。
     </div>
 
     <p v-if="loading" class="py-10 text-center text-sm text-gray-400">加载中…</p>

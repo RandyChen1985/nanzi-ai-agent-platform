@@ -379,10 +379,15 @@ class TestMcpToolParamCredential:
         assert "还没选凭据" in source
         assert "draftUnboundNames.join('、')" in source
 
-    def test_unbound_param_says_users_can_bind(self):
-        """没选凭据时要讲清楚：这条路走的是「用户各自绑」。"""
+    def test_prompt_explains_who_the_binding_serves(self):
+        """这里选的是「全平台共用」还是「各人自绑」，是最容易理解错的一点。
+
+        规则现在是「必须选一条」——保存按钮会拦。所以提示要讲的是这条凭据
+        对谁生效、以及个人能不能覆盖，而不是「可以先不选」。
+        """
         source = _read(self.REGISTRY)
-        assert "每个标记的参数都必须先选好凭据才能保存" in source
+        assert "全平台共用" in source
+        assert "个人绑定优先于这里" in source
 
     def test_user_panel_labels_arg_slots(self):
         """`arg:工具:参数` 直接摊给用户只会让人猜。"""
@@ -446,7 +451,8 @@ class TestMcpToolParamCredential:
         end = source.find("def shell_quote(", start)
         body = source[start:end]
         assert "_record(" not in body
-        assert "denials[slot] = denial_text" in body
+        # 直接存原始 code（不经过 _record，也不提前翻成人话）
+        assert "denials[slot] = result.denial" in body
 
     def test_slot_prefix_registered(self):
         from app.services.secrets.center import ALLOWED_SLOT_PREFIXES
@@ -899,6 +905,149 @@ class TestBindingsGroupedByType:
     def test_hover_still_carries_the_raw_slot(self):
         source = _read(ROOT / self.ADMIN)
         assert "槽位：${binding.slot}" in source
+
+
+class TestCopyMatchesCode:
+    """提示文案要和实现一致。
+
+    这类文字不参与编译也不进类型检查，过时了没有任何东西会红——但它是用户
+    理解这个系统的唯一入口，说错比不说更糟。下面每条都对应一处真实的错。
+    """
+
+    def test_variable_secrets_are_readable(self):
+        """曾经写着「值和变量都无法查看明文」。
+
+        `GET /{id}/value` 只对 variable 开放，credential 才 403。把两者混成
+        一句话，用户会以为建了变量就再也查不回来。
+        """
+        source = _read(ROOT / "frontend/src/views/SecretCenter.vue")
+        assert "「变量」类型可以随时查看" in source
+        assert "值和变量都加密保存" not in source
+
+    def test_unbound_hint_covers_all_five_injection_points(self):
+        """漏掉「MCP 工具参数」等于告诉用户那条路不存在。"""
+        source = _read(ROOT / "frontend/src/views/SecretCenter.vue")
+        start = source.find("凭据建完不等于能用——要去")
+        assert start != -1
+        span = source[start:start + 200]
+        assert "请求头或参数" in span
+        assert "工具参数" in span
+        assert "环境变量" in span
+
+    def test_admin_copy_mentions_every_grant_target(self):
+        """授权档位有三种（用户 / 部门 / 全体），只说两种会漏掉最常用的那个。"""
+        source = _read(ROOT / "frontend/src/views/AdminSecretCenter.vue")
+        assert "授权给用户、部门或全体用户" in source
+        assert "授权给具体的人、部门或全体用户" in source
+
+    def test_user_panel_points_at_the_better_option(self):
+        """「找管理员配固定 Token」过时了：绑一条系统级凭据能轮换，比写死好维护。"""
+        source = _read(ROOT / "frontend/src/components/mcp/PlatformMcpCredentialPanel.vue")
+        assert "系统级凭据" in source
+        assert "比在服务上写死 Token 更好维护" in source
+
+    def test_header_copy_does_not_contradict_itself(self):
+        """原来一句话里既说「所有人共用配置」又说「只对你自己生效」。"""
+        source = _read(ROOT / "frontend/src/components/system/ToolHeadersEditor.vue")
+        assert "凭据绑定是个人级" in source
+        # 「变量占位」和「按原值写入」不能并列在同一句里
+        assert "敏感值建议用变量占位；保存后仍会按原值写入工具配置" not in source
+
+    def test_api_param_help_drops_slot_derivation(self):
+        """槽位怎么推是后端的事，前端不再算，讲它只会让人担心改 URL 会失效。"""
+        source = _read(ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue")
+        assert "GET 走 query" not in source
+        assert "调用时由平台填值" in source
+
+
+class TestEditMetadata:
+    """凭据建好后要能改元数据。
+
+    原来前端只有「删除」。域名白名单配错一个字就得删掉重建——而删除会连带
+    清掉所有绑定和授权，重建后还得一条条重新绑。后端 `PATCH /{id}` 一直支持，
+    只是没有入口。
+    """
+
+    ADMIN = "frontend/src/views/AdminSecretCenter.vue"
+
+    def test_card_has_an_edit_button(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "@click=\"openEdit(item)\"" in source
+        assert ">编辑</button>" in source or "编辑\n" in source
+
+    def test_edit_uses_patch_not_create(self):
+        """PATCH 只改元数据；值必须走轮换，否则没有轮换痕迹。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "axios.patch(`/api/portal/secrets/${target.id}`" in source
+
+    def test_edit_form_covers_the_editable_fields(self):
+        source = _read(ROOT / self.ADMIN)
+        for field in ("name", "allowed_scenarios", "allowed_hosts", "category", "remark"):
+            assert field in source, field
+
+    def test_allowlist_explains_the_empty_case(self):
+        """留空 = 只允许内网，公网地址会被 DENY_HOST——这是最容易踩的一条。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "留空只允许平台内部目标" in source
+        assert "公网地址必须写进来" in source
+
+    def test_edit_says_value_cannot_change(self):
+        for path in ("frontend/src/views/AdminSecretCenter.vue",
+                     "frontend/src/views/SecretCenter.vue"):
+            source = _read(ROOT / path)
+            assert "的值不能改——要换值请用「轮换」" in source, path
+
+    def test_personal_center_also_has_edit(self):
+        """两个入口都要能改，不然用户得先判断自己在哪个页面。"""
+        source = _read(ROOT / "frontend/src/views/SecretCenter.vue")
+        assert "function openEdit()" in source
+        assert "axios.patch(`/api/portal/secrets/${item.id}`" in source
+        assert "@click=\"openEdit\"" in source
+
+    def test_personal_edit_is_owner_only(self):
+        """系统级凭据由管理员维护，个人端不给编辑入口。"""
+        source = _read(ROOT / "frontend/src/views/SecretCenter.vue")
+        start = source.find(">编辑</button>")
+        assert start != -1
+        # 按钮前面最近的 v-if 应该是 owner_scope === 'user'
+        head = source[max(0, start - 400):start]
+        assert "selected.owner_scope === 'user'" in head
+
+
+class TestRotateIsReachable:
+    """「改值走轮换」这句话得有一个真的按钮，否则等于让人去点空气。
+
+    管理端的编辑弹窗写着「要换值请用轮换」，但卡片上原来没有这个入口——
+    而系统级凭据是全平台共用的，不能改值就只能删了重建，连带清掉
+    所有绑定和授权。
+    """
+
+    ADMIN = "frontend/src/views/AdminSecretCenter.vue"
+
+    def test_admin_can_rotate(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "function openRotate(" in source
+        assert "@click=\"openRotate(item)\"" in source
+        assert "`/api/portal/secrets/${target.id}/rotate`" in source
+
+    def test_rotate_explains_the_overlap_window(self):
+        """7 天回退窗口是这个功能最反直觉的地方，必须说清。"""
+        source = _read(ROOT / self.ADMIN)
+        assert "旧值会保留" in source
+        assert "7 天" in source
+        assert "不会立刻失败" in source
+
+    def test_rotate_sends_overlap_days(self):
+        source = _read(ROOT / self.ADMIN)
+        assert "overlap_days: 7" in source
+
+    def test_new_value_is_masked_until_revealed(self):
+        """粘贴 Token 时默认打码，和创建表单一致。"""
+        source = _read(ROOT / self.ADMIN)
+        start = source.find("轮换凭据值")
+        span = source[start:start + 1600]
+        assert "masked-value" in span
+        assert "revealRotateValue" in span
 
 
 class TestGrantAllUsers:

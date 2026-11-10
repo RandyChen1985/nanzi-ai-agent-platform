@@ -250,9 +250,9 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
       <div>
         <p class="text-xs font-semibold text-indigo-900">系统级参数（模型不可见）</p>
         <p class="mt-1 text-[11px] leading-relaxed text-indigo-700">
-          这些参数不会出现在模型工具定义里，调用前由平台强制写入；URL 含
-          <code class="font-mono">{参数名}</code> 走 path，否则 GET 走 query、其他方法走 JSON body；
-          变量取不到时本次调用会明确失败。
+          这些参数不会出现在<strong>模型可见</strong>的工具定义里，调用时由平台填值。
+          「来自凭据」的参数按当前用户从凭据中心取值；固定值可以插
+          <code class="font-mono">{user.user_name}</code> 这类变量。取不到时本次调用会明确失败。
         </p>
       </div>
       <button

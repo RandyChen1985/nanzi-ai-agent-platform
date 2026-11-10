@@ -3756,10 +3756,7 @@ onMounted(fetchServers)
                   class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700"
                 >
                   标为「来自凭据」的参数会从<strong>模型可见的参数</strong>里移除，值由平台在调用时注入。<br />
-                  在这里选的凭据<strong>全平台共用</strong>，标记和绑定重启后都保留；
-                  调用者自己再绑一条会更优先（个人绑定优先于这里）。<br />
-                  <strong>每个标记的参数都必须先选好凭据才能保存</strong>——否则调用必然失败，
-                  而界面上看起来又是配好的。
+                  在这里选的凭据<strong>全平台共用</strong>；调用者自己再绑一条会更优先（个人绑定优先于这里）。
                 </p>
               </div>
 

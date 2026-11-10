@@ -48,6 +48,8 @@ interface SystemSecret {
   status: string
   allowed_scenarios: string[]
   allowed_hosts: string[]
+  category: string | null
+  remark: string | null
   value_masked: string
   grants: Grant[]
   grant_count: number
@@ -280,6 +282,104 @@ async function openUsage(secretId: string | null = null) {
   usageSecretId.value = secretId
   usageTab.value = 'detail'
   await loadUsageDetail()
+}
+
+// ── 编辑元数据 ──────────────────────────────────────────────────────
+// 后端 `PATCH /{id}` 一直支持改名称 / 场景 / 域名白名单 / 分类 / 备注，
+// 但前端没有入口——配错白名单只能删了重建，而删掉会连带清掉所有绑定和授权，
+// 重建后还得重新绑一遍。
+const editOpen = ref(false)
+const editBusy = ref(false)
+const editTarget = ref<SystemSecret | null>(null)
+const editForm = ref({
+  name: '',
+  allowed_scenarios: [] as string[],
+  allowed_hosts: '',
+  category: '',
+  remark: '',
+})
+
+function openEdit(item: SystemSecret) {
+  editTarget.value = item
+  editForm.value = {
+    name: item.name,
+    allowed_scenarios: [...(item.allowed_scenarios || [])],
+    allowed_hosts: (item.allowed_hosts || []).join(', '),
+    category: item.category || '',
+    remark: item.remark || '',
+  }
+  editOpen.value = true
+}
+
+function toggleEditScene(key: string) {
+  const list = editForm.value.allowed_scenarios
+  const idx = list.indexOf(key)
+  if (idx >= 0) list.splice(idx, 1)
+  else list.push(key)
+}
+
+async function saveEdit() {
+  const target = editTarget.value
+  if (!target || editBusy.value) return
+  editBusy.value = true
+  try {
+    const hosts = editForm.value.allowed_hosts
+      .split(/[,，\s]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    await axios.patch(`/api/portal/secrets/${target.id}`, {
+      name: editForm.value.name.trim() || target.name,
+      allowed_scenarios: editForm.value.allowed_scenarios,
+      allowed_hosts: hosts,
+      category: editForm.value.category.trim() || null,
+      remark: editForm.value.remark.trim() || null,
+    })
+    showToast('已保存', 'ok')
+    editOpen.value = false
+    await load()
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || '保存失败', 'err')
+  } finally {
+    editBusy.value = false
+  }
+}
+
+// ── 轮换值 ──────────────────────────────────────────────────────────
+// 编辑弹窗里写着「要换值请用轮换」，但这里原来没有这个按钮——系统级凭据
+// 是全平台共用的，不能改值就只能删了重建，连带清掉所有绑定和授权。
+const rotateOpen = ref(false)
+const rotateBusy = ref(false)
+const rotateTarget = ref<SystemSecret | null>(null)
+const rotateValue = ref('')
+const revealRotateValue = ref(false)
+
+function openRotate(item: SystemSecret) {
+  rotateTarget.value = item
+  rotateValue.value = ''
+  revealRotateValue.value = false
+  rotateOpen.value = true
+}
+
+async function submitRotate() {
+  const target = rotateTarget.value
+  if (!target || !rotateValue.value.trim() || rotateBusy.value) return
+  rotateBusy.value = true
+  try {
+    await axios.post(`/api/portal/secrets/${target.id}/rotate`, {
+      value: rotateValue.value,
+      // 旧值保留 7 天：正在跑的任务不会在下一分钟突然失败
+      overlap_days: 7,
+    })
+    rotateOpen.value = false
+    rotateTarget.value = null
+    rotateValue.value = ''
+    showToast('已轮换。旧值保留 7 天，正在跑的任务不会中断', 'ok')
+    await load()
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || '轮换失败', 'err')
+  } finally {
+    rotateBusy.value = false
+  }
 }
 
 const ACTION_LABEL: Record<string, string> = {
@@ -608,6 +708,22 @@ onMounted(load)
             <button
               type="button"
               class="rounded-md px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
+              title="改名称、场景、域名白名单（值只能轮换）"
+              @click="openEdit(item)"
+            >
+              编辑
+            </button>
+            <button
+              type="button"
+              class="rounded-md px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
+              title="换掉这条凭据的值，旧值保留 7 天"
+              @click="openRotate(item)"
+            >
+              轮换
+            </button>
+            <button
+              type="button"
+              class="rounded-md px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
               @click="openGrant(item)"
             >
               授权
@@ -863,7 +979,7 @@ onMounted(load)
                 </span>
               </label>
               <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
-                <b>建完不等于能用</b>：系统级凭据还要在列表里单独授权给用户或部门，否则没有任何人能取到它。
+                <b>建完不等于能用</b>：系统级凭据还要在列表里单独授权给用户、部门或全体用户，否则没有任何人能取到它。
               </div>
             </div>
 
@@ -903,7 +1019,7 @@ onMounted(load)
               </dl>
               <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
                 <b>点创建就回不去了</b>：值会被加密保存，你和其他管理员都再看不到明文。
-                创建后还要在列表里把这条凭据授权给具体的人或部门。
+                创建后还要在列表里授权给具体的人、部门或全体用户。
               </div>
             </div>
           </div>
@@ -1094,6 +1210,158 @@ onMounted(load)
               class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
               @click="auditOpen = false"
             >关闭</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 轮换值弹框 -->
+    <Teleport to="body">
+      <div
+        v-if="rotateOpen"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+        @click.self="rotateOpen = false"
+      >
+        <div class="flex w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="border-b border-gray-100 px-5 py-3">
+            <h3 class="text-base font-semibold text-gray-900">轮换凭据值</h3>
+            <p class="mt-0.5 text-xs text-gray-500">
+              <code class="rounded bg-gray-100 px-1 py-0.5">{{ rotateTarget?.secret_key }}</code>
+              的所有绑定方会同时用上新值。
+            </p>
+          </div>
+
+          <div class="space-y-2 px-5 py-4">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-gray-700">新值</span>
+              <button
+                type="button"
+                class="text-[11px] text-gray-500 hover:text-gray-800"
+                @click="revealRotateValue = !revealRotateValue"
+              >{{ revealRotateValue ? '隐藏' : '显示' }}</button>
+            </div>
+            <textarea
+              v-model="rotateValue"
+              :rows="3"
+              class="block w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-primary focus:ring-primary"
+              :class="{ 'masked-value': !revealRotateValue }"
+              placeholder="粘贴新的 Token / 密钥"
+            ></textarea>
+            <p class="text-[11px] leading-relaxed text-amber-700">
+              旧值会保留 <b>7 天</b>作为回退窗口——正在跑的任务不会立刻失败；
+              7 天后自动失效。想马上作废旧值，轮换后再点「强制停用」重建。
+            </p>
+          </div>
+
+          <div class="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
+            <button
+              type="button"
+              class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+              @click="rotateOpen = false"
+            >取消</button>
+            <button
+              type="button"
+              :disabled="rotateBusy || !rotateValue.trim()"
+              class="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
+              @click="submitRotate"
+            >{{ rotateBusy ? '提交中…' : '轮换' }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 编辑元数据弹框 -->
+    <Teleport to="body">
+      <div
+        v-if="editOpen"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+        @click.self="editOpen = false"
+      >
+        <div class="flex max-h-[calc(100vh-120px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="border-b border-gray-100 px-5 py-3">
+            <h3 class="text-base font-semibold text-gray-900">编辑凭据</h3>
+            <p class="mt-0.5 text-xs text-gray-500">
+              <code class="rounded bg-gray-100 px-1 py-0.5">{{ editTarget?.secret_key }}</code>
+              的值不能改——要换值请用「轮换」，那样会留下记录。
+            </p>
+          </div>
+
+          <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+            <label class="block">
+              <span class="text-xs font-medium text-gray-700">名称</span>
+              <input
+                v-model="editForm.name"
+                class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-primary focus:ring-primary"
+                placeholder="显示名"
+              />
+            </label>
+
+            <div>
+              <span class="text-xs font-medium text-gray-700">允许的场景</span>
+              <p class="mt-0.5 text-[11px] text-gray-400">
+                一个都不勾等于「哪里都用不了」——注入时会被判为场景不符。
+              </p>
+              <div class="mt-1.5 flex flex-wrap gap-1.5">
+                <button
+                  v-for="scene in CREATE_SCENES"
+                  :key="scene.key"
+                  type="button"
+                  :disabled="!scene.wired"
+                  :title="scene.desc"
+                  class="rounded-md px-2 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                  :class="editForm.allowed_scenarios.includes(scene.key)
+                    ? 'bg-primary text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'"
+                  @click="toggleEditScene(scene.key)"
+                >{{ scene.label }}</button>
+              </div>
+            </div>
+
+            <label class="block">
+              <span class="text-xs font-medium text-gray-700">域名白名单</span>
+              <p class="mt-0.5 text-[11px] text-gray-400">
+                逗号分隔。<b>留空只允许平台内部目标</b>（localhost / 内网），
+                公网地址必须写进来，或用 <code>*</code> 表示不限。
+              </p>
+              <input
+                v-model="editForm.allowed_hosts"
+                class="mt-1 block w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-primary focus:ring-primary"
+                placeholder="api.example.com, *.example.com"
+              />
+            </label>
+
+            <div class="grid grid-cols-2 gap-3">
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">分类</span>
+                <input
+                  v-model="editForm.category"
+                  class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-primary focus:ring-primary"
+                  placeholder="可选"
+                />
+              </label>
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">备注</span>
+                <input
+                  v-model="editForm.remark"
+                  class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-primary focus:ring-primary"
+                  placeholder="可选"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
+            <button
+              type="button"
+              class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+              @click="editOpen = false"
+            >取消</button>
+            <button
+              type="button"
+              :disabled="editBusy"
+              class="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
+              @click="saveEdit"
+            >{{ editBusy ? '保存中…' : '保存' }}</button>
           </div>
         </div>
       </div>
