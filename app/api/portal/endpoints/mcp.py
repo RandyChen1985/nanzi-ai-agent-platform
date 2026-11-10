@@ -1545,16 +1545,33 @@ async def execute_mcp_tool(
         # 凭据参数注入要在**两种分支之前**做：签名模式下走的是
         # `call_remote_tool`，它绕过了 McpToolFactory，不注入的话
         # 声明成凭据的参数永远是空的（测试台会看到 {"arguments": {}}）。
-        from app.services.secrets.injection import apply_mcp_arg_bindings
+        from app.services.secrets.injection import (
+            apply_mcp_arg_bindings,
+            denial_hint,
+            denial_text,
+        )
 
         arguments = dict(req.arguments or {})
-        arg_denials: dict[str, str] = {}
+        arg_denials: dict[str, str | None] = {}
         arguments = await apply_mcp_arg_bindings(
             tool, arguments, user_info=user, denials=arg_denials
         )
         if arg_denials:
-            detail = "；".join(f"{slot.split(':')[-1]}: {why}" for slot, why in arg_denials.items())
-            raise HTTPException(status_code=400, detail=f"凭据参数缺失（{detail}）")
+            # denials 存的是**原始 code**，必须过 denial_text()——直接拼进去
+            # 会把 denied_by_host 这种内部常量抛到界面上。
+            detail = "；".join(
+                f"{slot.split(':')[-1]}（{denial_text(why)}）"
+                for slot, why in arg_denials.items()
+            )
+            hints: list[str] = []
+            for why in arg_denials.values():
+                hint = denial_hint(why)
+                if hint and hint not in hints:
+                    hints.append(hint)
+            message = f"凭据参数缺失（{detail}）"
+            if hints:
+                message += "。" + "；".join(hints)
+            raise HTTPException(status_code=400, detail=message)
 
         signed_user_mode = bool(server.user_assertion_enabled)
         if signed_user_mode:

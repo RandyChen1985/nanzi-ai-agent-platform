@@ -478,6 +478,32 @@ def mcp_arg_slots(tool_record: Any) -> list[tuple[str, str]]:
     ]
 
 
+async def _mcp_server_host(server_id: str) -> str | None:
+    """按 server_id 回查 MCP 服务的出站目标域名。
+
+    Header 那条链路的调用方手里就有 ``server`` 对象，直接 ``host_of(sse_url)``
+    就够了。参数级注入只拿得到 ``tool_record``，只能回查一次。
+
+    **这一步不能省**：``host_allowed`` 在目标域名为空时**先**返回 ``False``，
+    连白名单里的 ``*`` 都走不到。少传 host 的表现就是「明明设了 ``*``，还是
+    denied_by_host」，而凭据页面上看不出任何问题。
+    """
+    from app.core.orm import AsyncSessionLocal
+    from app.models.mcp import McpServer
+
+    try:
+        async with AsyncSessionLocal() as session:
+            server = await session.get(McpServer, server_id)
+    except Exception:  # noqa: BLE001 - 查不到就让白名单按「无目标域名」判定
+        logger.warning(
+            "[SecretInject] 读取 MCP 服务 %s 的地址失败，域名白名单按无目标域名处理",
+            server_id,
+            exc_info=True,
+        )
+        return None
+    return host_of(getattr(server, "sse_url", None))
+
+
 async def apply_mcp_arg_bindings(
     tool_record: Any,
     arguments: dict[str, Any],
@@ -505,6 +531,7 @@ async def apply_mcp_arg_bindings(
     if not server_id:
         return arguments
 
+    target = await _mcp_server_host(server_id)
     trace_id = _current_trace_id()
     resolved = dict(arguments)
     limit = await _max_inject_per_call()
@@ -523,6 +550,7 @@ async def apply_mcp_arg_bindings(
                 consumer_type=CONSUMER_MCP,
                 consumer_id=server_id,
                 slot=slot,
+                target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
             )
