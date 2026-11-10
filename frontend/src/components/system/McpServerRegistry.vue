@@ -78,6 +78,13 @@ const namePrefix = computed(() =>
   buildMcpServerNamePrefix(props.scope, userInfo.value?.user_name),
 )
 
+// 这个组件同时服务两个入口：系统管理的「平台 MCP」（scope=global）和
+// 个人中心的「我的 MCP」（scope=personal）。绑定语义完全不同——
+// 平台服务配一次给所有人用，个人服务只属于建它的那个人。
+// 一律当全局处理的话，个人 MCP 上绑凭据会被后端拒（个人凭据不能全局绑定），
+// 或者更糟：管理员给个人 MCP 配出一条全局绑定。
+const isGlobalBinding = computed(() => props.scope === 'global')
+
 const servers = ref<any[]>([])
 const searchQuery = ref('')
 const showAddDropdown = ref(false)
@@ -496,8 +503,9 @@ async function loadMcpBinding() {
     if (editingId.value !== requestedId) return
     const map: Record<string, HeaderBinding> = {}
     for (const row of res.data?.data || []) {
-      // 系统级的绑定是管理员设的全局值，也要算「已绑定」；别人的个人绑定看不见
-      if (!row.bound_by_me && row.owner_scope !== 'system') continue
+      // 平台 MCP：管理员设的全局绑定要算「已绑定」，别人的个人绑定看不见。
+      // 个人 MCP：只有自己绑的才算——这里的「全局」对它没有意义。
+      if (!row.bound_by_me && !(isGlobalBinding.value && row.is_global)) continue
       map[row.slot] = {
         secret_id: row.secret_id,
         secret_key: row.secret_key,
@@ -530,7 +538,7 @@ async function writeBinding(slot: string, secretId: string | null) {
         consumer_type: 'mcp_server',
         consumer_id: editingId.value,
         slot,
-        is_global: true,
+        is_global: isGlobalBinding.value,
       },
     })
     return
@@ -540,8 +548,7 @@ async function writeBinding(slot: string, secretId: string | null) {
     consumer_type: 'mcp_server',
     consumer_id: editingId.value,
     slot,
-    // 平台服务是所有人共用的：绑定必须是全局的，否则只有管理员自己能用。
-    is_global: true,
+    is_global: isGlobalBinding.value,
   })
 }
 
@@ -1037,8 +1044,8 @@ async function loadBindingsFor(serverId: string) {
     if (paramMarkTarget.value?.tool?.server_id !== serverId) return
     const map: Record<string, HeaderBinding> = {}
     for (const row of res.data?.data || []) {
-      // 别人的个人绑定看不见；系统级的要算进来
-      if (!row.bound_by_me && row.owner_scope !== 'system') continue
+      // 别人的个人绑定看不见；平台 MCP 还要把全局绑定算进来
+      if (!row.bound_by_me && !(isGlobalBinding.value && row.is_global)) continue
       map[row.slot] = {
         secret_id: row.secret_id,
         secret_key: row.secret_key,
@@ -1098,12 +1105,17 @@ async function saveParamBind() {
         consumer_type: 'mcp_server',
         consumer_id: serverId,
         slot,
-        is_global: true,
+        is_global: isGlobalBinding.value,
       })
       showToast(`已为 ${ctx.name} 绑定凭据`, 'success')
     } else {
       await axios.delete('/api/portal/secrets/bindings', {
-        data: { consumer_type: 'mcp_server', consumer_id: serverId, slot, is_global: true },
+        data: {
+          consumer_type: 'mcp_server',
+          consumer_id: serverId,
+          slot,
+          is_global: isGlobalBinding.value,
+        },
       })
       // 立刻清本地，别等 load——万一 load 失败，界面会一直显示已解绑的样子
       delete headerBindings.value[slot]
@@ -1713,8 +1725,7 @@ async function flushPendingBindings(serverId: string) {
         consumer_type: 'mcp_server',
         consumer_id: serverId,
         slot,
-        // 新建服务时暂存的绑定，落库时同样是给全平台用的
-        is_global: true,
+        is_global: isGlobalBinding.value,
       })
     } catch {
       // 服务已经建好了，绑定失败不该让它回滚——但要让人知道，否则界面显示
@@ -3749,7 +3760,7 @@ onMounted(fetchServers)
                             class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700"
                           >{{ bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name))) }}</span>
                           <span v-else class="text-[10px] leading-tight text-gray-400">
-                            未选 · 各人绑自己的
+                            {{ isGlobalBinding ? '未选 · 各人绑自己的' : '未选' }}
                           </span>
                         </div>
                       </td>
@@ -3762,7 +3773,12 @@ onMounted(fetchServers)
                   class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700"
                 >
                   标为「来自凭据」的参数会从<strong>模型可见的参数</strong>里移除，值由平台在调用时注入。<br />
-                  在这里选的凭据<strong>全平台共用</strong>；调用者自己再绑一条会更优先（个人绑定优先于这里）。
+                  <template v-if="isGlobalBinding">
+                    在这里选的凭据<strong>全平台共用</strong>；调用者自己再绑一条会更优先（个人绑定优先于这里）。
+                  </template>
+                  <template v-else>
+                    在这里选的凭据<strong>只对这个服务生效</strong>，别人用自己的账号调不到它。
+                  </template>
                 </p>
               </div>
 
@@ -3815,7 +3831,12 @@ onMounted(fetchServers)
                 为 <code class="rounded bg-gray-100 px-1.5 py-0.5 text-sm">{{ paramBindCtx.name }}</code> 绑定凭据
               </h3>
               <p class="mt-1 text-xs leading-relaxed text-gray-500">
-                选了就是<strong>全平台共用</strong>这一条，所有调用者都不必再配；不选则各人绑自己的。
+                <template v-if="isGlobalBinding">
+                  选了就是<strong>全平台共用</strong>这一条，所有调用者都不必再配；不选则各人绑自己的。
+                </template>
+                <template v-else>
+                  选一条<strong>你自己的凭据</strong>，只对你这个服务生效。
+                </template>
                 留空保存即解除。
               </p>
               <p class="mt-2 text-[11px] leading-relaxed text-gray-400">

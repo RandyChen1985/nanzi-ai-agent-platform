@@ -78,14 +78,13 @@ class TestCenterAcceptsGlobal:
 
 
 class TestAdminComponentsSendGlobal:
-    """管理端的四个组件都必须显式传 is_global。
+    """管理端组件必须显式要求全局绑定。
 
-    这些组件都在系统管理页，绑的是平台共用的服务/工具。不传的话，
-    管理员配完只有他自己能用——正是这个 bug 的表现。
+    `ToolRegistry` / `ScriptToolList` 整棵树只挂在 `SystemConfig.vue`，
+    绑的是平台共用的工具，不传全局就只有管理员自己能用。
     """
 
     ADMIN_FILES = [
-        "frontend/src/components/system/McpServerRegistry.vue",
         "frontend/src/components/system/ToolHeadersEditor.vue",
         "frontend/src/components/system/ToolSystemParamEditor.vue",
         "frontend/src/components/system/ScriptToolWizard.vue",
@@ -97,10 +96,8 @@ class TestAdminComponentsSendGlobal:
 
         root = Path(__file__).resolve().parents[2]
         source = (root / path).read_text(encoding="utf-8")
-        # 只数真正的写调用：GET 也在同一路径上，数它会得出错误的期望值
-        import re
-
-        writes = len(re.findall(
+        imports_re = __import__("re")
+        writes = len(imports_re.findall(
             r"axios\.(?:post|delete)\(\s*['\"]/api/portal/secrets/bindings", source
         ))
         flags = source.count("is_global: true")
@@ -109,3 +106,46 @@ class TestAdminComponentsSendGlobal:
             f"{path}: {writes} 处写入只带了 {flags} 个 is_global —— "
             "漏传的会写成个人绑定，只有管理员自己能用"
         )
+
+
+class TestPersonalScopeStaysPersonal:
+    """`McpServerRegistry` 同时服务「平台 MCP」和「我的 MCP」，不能硬编码全局。
+
+    这个坑真实踩过：批量补 is_global 时把个人入口一起改成了全局，结果在
+    「我的 MCP」里给个人服务的参数选凭据，直接报
+    「只有系统级凭据可以设为全局绑定」——因为个人凭据本来就不该全局。
+
+    更糟的分支是：管理员给自己的个人 MCP 选一条系统级凭据，真能建出一条
+    全局绑定，把私有服务配成了公共配置。
+    """
+
+    PATH = "frontend/src/components/system/McpServerRegistry.vue"
+
+    def _source(self) -> str:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        return (root / self.PATH).read_text(encoding="utf-8")
+
+    def test_does_not_hardcode_global(self):
+        assert "is_global: true" not in self._source(), (
+            "McpServerRegistry 的绑定必须按 scope 决定，不能写死全局"
+        )
+
+    def test_every_write_follows_scope(self):
+        import re
+
+        source = self._source()
+        writes = len(re.findall(
+            r"axios\.(?:post|delete)\(\s*['\"]/api/portal/secrets/bindings", source
+        ))
+        flags = source.count("is_global: isGlobalBinding.value")
+        assert writes > 0
+        assert flags == writes, f"{writes} 处写入只带了 {flags} 个 is_global"
+
+    def test_computed_reads_scope_prop(self):
+        assert "const isGlobalBinding = computed(() => props.scope === 'global')" in self._source()
+
+    def test_personal_scope_ignores_global_rows(self):
+        """个人 scope 下，管理员的全局绑定不该显示成「已绑定」。"""
+        assert "isGlobalBinding.value && row.is_global" in self._source()
