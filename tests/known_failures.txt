@@ -39,7 +39,6 @@ tests/ai/tools/test_data_api.py::test_get_dataset_schema_tool  # A-断言过时:
 tests/ai/tools/test_data_api.py::test_get_dataset_schema_tool_local_falls_back_to_mysql_like_when_vector_fails  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/tools/test_session_status.py::test_session_status_context_usage_estimates_full_history_against_budget  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/portal/test_logs_partitions.py::test_partition_service_prune_expired_logs_partitioned  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/api/portal/test_scenario_templates.py::test_chatbi_scenario_template_precheck_and_install  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/v1/test_chat_context_usage.py::test_context_usage_endpoint_returns_shared_estimate_and_effective_sandbox_runtime  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/v1/test_chatbi_execute.py::test_chatbi_execute_uses_session_user_for_openclaw_sql_execution  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/v1/test_chatbi_execute.py::test_direct_sql_dataset_inference_rejects_when_row_filter_required  # A-断言过时: 断言与当前实现漂移，待逐项复核

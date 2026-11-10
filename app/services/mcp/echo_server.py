@@ -313,13 +313,53 @@ async def echo_mcp_lifespan():
 
 
 @echo_mcp.tool(name="echo", description=ECHO_TOOL_DESCRIPTION)
-async def echo(ctx: Context) -> dict[str, Any]:
-    """返回 Echo 请求的安全认证诊断。"""
+async def echo(
+    ctx: Context,
+    api_key: str | None = None,
+    tenant_token: str | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """返回 Echo 请求的安全认证诊断。
+
+    参数专供**凭据注入验收**：在 MCP 管理页把 ``api_key`` / ``tenant_token``
+    标成「来自凭据」后，模型侧看不到它们，由平台在 ``tools/call`` 里补上。
+    这里回显的是掩码值和长度——能看到「注入了、多长」，但看不到明文。
+    """
     request = getattr(getattr(ctx, "request_context", None), "request", None)
     headers = getattr(request, "headers", {}) if request is not None else {}
     server = await _load_echo_server(echo_server_id_from_headers(headers))
     private_key = load_mcp_private_key(server)
-    return build_echo_diagnostics(headers, server, private_key)
+    result = build_echo_diagnostics(headers, server, private_key)
+    result["received_arguments"] = _describe_arguments(
+        api_key=api_key, tenant_token=tenant_token, note=note
+    )
+    return result
+
+
+def _describe_arguments(
+    *, api_key: str | None, tenant_token: str | None, note: str | None
+) -> dict[str, Any]:
+    """把收到的入参做成可核对的描述，**不含明文**。
+
+    ``note`` 是普通参数（模型填），``api_key`` / ``tenant_token`` 是凭据参数
+    （平台注入）。放在一起就是为了对比：前者随模型措辞变化，后者每次都是
+    你在凭据中心绑的那条。
+    """
+
+    def describe(value: str | None) -> dict[str, Any]:
+        if not value:
+            return {"received": False}
+        return {
+            "received": True,
+            "length": len(value),
+            "masked": _mask_secret(value),
+        }
+
+    return {
+        "api_key": describe(api_key),
+        "tenant_token": describe(tenant_token),
+        "note": note or None,
+    }
 
 
 ECHO_SLOW_TOOL_NAME = "echo_slow"
@@ -403,11 +443,28 @@ def echo_slow_tool_schema() -> str:
 
 
 def echo_tool_schema() -> str:
-    """返回内置 echo 工具的稳定 JSON Schema，供 MCP 管理页缓存。"""
+    """返回内置 echo 工具的稳定 JSON Schema，供 MCP 管理页缓存。
+
+    ``api_key`` / ``tenant_token`` 是给凭据注入验收用的：在管理页把它们标成
+    「来自凭据」后，模型侧就看不到这两个参数了。``note`` 是普通参数，留作对比。
+    """
     return json.dumps(
         {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "api_key": {
+                    "type": "string",
+                    "description": "测试用 API Key。标成「来自凭据」后由平台注入。",
+                },
+                "tenant_token": {
+                    "type": "string",
+                    "description": "测试用租户令牌。标成「来自凭据」后由平台注入。",
+                },
+                "note": {
+                    "type": "string",
+                    "description": "普通参数，模型自己填；用来对比凭据参数与模型参数的区别。",
+                },
+            },
             "additionalProperties": False,
         },
         ensure_ascii=False,

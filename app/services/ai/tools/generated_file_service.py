@@ -243,6 +243,35 @@ async def _workspace_root() -> Path:
     return Path(await resolve_workspace_root())
 
 
+def resolve_delegation_parent_scope(
+    context: Any | None = None,
+) -> tuple[str | None, str | None, str | None]:
+    """推导委派子代理产物的父归属 ``(parent_conversation_id, parent_trace_id, run_id)``。
+
+    非委派场景（无上下文或 ``delegation_depth <= 0``）返回三项 None。所有产物登记
+    入口（publish_generated_file、Office 写工具等）共用这一口径，避免只有一部分
+    工具把子代理产物挂到父会话，导致主会话产物面板出现「有的文件看得到、有的看不到」。
+    """
+    if context is None:
+        from app.core.context import get_current_agent_context
+
+        context = get_current_agent_context()
+    if context is None:
+        return None, None, None
+    try:
+        depth = int(getattr(context, "delegation_depth", 0) or 0)
+    except (TypeError, ValueError):
+        depth = 0
+    if depth <= 0:
+        return None, None, None
+    parent_conversation_id = (
+        str(getattr(context, "parent_conversation_id", "") or "").strip() or None
+    )
+    parent_trace_id = str(getattr(context, "parent_trace_id", "") or "").strip() or None
+    run_id = str(getattr(context, "delegation_run_id", "") or "").strip() or None
+    return parent_conversation_id, parent_trace_id, run_id
+
+
 async def register_artifact(
     *,
     source_path: str | Path,
@@ -250,7 +279,9 @@ async def register_artifact(
     owner_user_id: int | str | None,
     artifact_type: str,
     conversation_id: str | None = None,
+    parent_conversation_id: str | None = None,
     trace_id: str | None = None,
+    parent_trace_id: str | None = None,
     ttl: timedelta = DEFAULT_TTL,
 ) -> PublishedArtifact:
     """登记一个已落在用户工作区内的产物到 ai_artifacts，不复制文件。
@@ -276,6 +307,15 @@ async def register_artifact(
     if owner_user_id is None:
         raise ValueError("登记工作区产物需要 owner_user_id")
 
+    if parent_conversation_id is None and parent_trace_id is None:
+        # 未显式指定父归属时，按当前执行上下文推导：子代理（delegation_depth > 0）
+        # 产出的文件自动登记到父会话，主会话产物面板与消息角标无需二次发布即可见。
+        (
+            parent_conversation_id,
+            parent_trace_id,
+            _delegation_run_id,
+        ) = resolve_delegation_parent_scope()
+
     # 规整到整秒：DB 的 DateTime 列不保存微秒（MySQL DATETIME(0) 还会四舍五入），
     # 而 token 由 expires_at 的秒值派生 —— 不规整就会出现「登记时派生 43 秒、
     # 从库里读回 44 秒」的 1 秒漂移，导致重算出的 token 与登记时不符。
@@ -290,7 +330,9 @@ async def register_artifact(
             id=artifact_id,
             owner_user_id=int(owner_user_id),
             conversation_id=conversation_id or None,
+            parent_conversation_id=parent_conversation_id or None,
             trace_id=trace_id or None,
+            parent_trace_id=parent_trace_id or None,
             artifact_type=artifact_type,
             filename=display_name,
             mime_type=_mime_type_for(display_name),
@@ -323,7 +365,9 @@ async def publish(
     owner_user_id: int | str | None = None,
     user_name: str | None = None,
     conversation_id: str | None = None,
+    parent_conversation_id: str | None = None,
     trace_id: str | None = None,
+    parent_trace_id: str | None = None,
     artifact_type: str = "document",
     ttl: timedelta = DEFAULT_TTL,
 ) -> PublishedArtifact:
@@ -364,7 +408,9 @@ async def publish(
             owner_user_id=owner_user_id,
             artifact_type=artifact_type,
             conversation_id=conversation_id,
+            parent_conversation_id=parent_conversation_id,
             trace_id=trace_id,
+            parent_trace_id=parent_trace_id,
             ttl=ttl,
         )
     except Exception:

@@ -33,6 +33,7 @@ import {
   EyeSlashIcon,
   CpuChipIcon,
   AdjustmentsHorizontalIcon,
+  ShieldCheckIcon,
   SparklesIcon,
   WrenchScrewdriverIcon,
   TrashIcon,
@@ -1627,6 +1628,8 @@ const getCategoryLabel = (cat: string, short = true) => {
     'sandbox':       { short: '安全沙箱',    full: '安全沙箱 (Sandbox)' },
     'other':         { short: '其他参数',    full: '其他参数 (Other Parameters)' },
     'email':         { short: '邮件服务',    full: '邮件服务 (Mail Service)' },
+    // 这个分组里只有 secret_policy_*：既然全是凭据注入的闸门，就叫它凭证策略
+    'security':      { short: '凭证策略',    full: '凭证策略 (Credential Policy)' },
   }
   const entry = map[cat]
   if (!entry) return cat.toUpperCase()
@@ -1653,9 +1656,62 @@ const CATEGORY_ICONS: Record<string, any> = {
   'sandbox':       CommandLineIcon,
   'other':         WrenchScrewdriverIcon,
   'email':         EnvelopeIcon,
+  'security':      ShieldCheckIcon,
 }
 
 const getCategoryIcon = (cat: string) => CATEGORY_ICONS[cat] || CATEGORY_ICONS['general']
+
+/**
+ * 0/1 语义的开关型参数。这些值存的是 '0'/'1' 字符串（种子 SQL 里就是 '0'/'1'），
+ * 让用户在输入框里手打 0 和 1 有两个问题：看不出当前是开还是关，而且打成 '01'、
+ * 'true'、空串都能提交，最后是解析层去兜。这里显式列出，渲染成开关。
+ */
+const BOOLEAN_FLAG_KEYS = new Set([
+  'secret_policy_allow_external_host',
+  'secret_policy_allow_script_env',
+])
+
+const isBooleanFlag = (item: ConfigItem) => BOOLEAN_FLAG_KEYS.has(item.key)
+
+const isFlagOn = (item: ConfigItem) => (item.value ?? '').trim() === '1'
+
+const toggleFlag = (item: ConfigItem) => {
+  item.value = isFlagOn(item) ? '0' : '1'
+}
+
+/**
+ * 单次注入上限：只允许 1-50 的整数。
+ *
+ * 它原来是一个普通文本框，中文也能打进去、存库也不报错，读取侧再退回默认值——
+ * 「改了但没生效」是最难查的一类问题。这里换成加减器，输入框也限成 number，
+ * 失焦时纠正到合法区间。后端 `validate_config_update` 是硬闸门，前端只负责别
+ * 让人先输错再吃一个 400。
+ */
+const SECRET_MAX_INJECT_KEY = 'secret_policy_max_inject_per_call'
+const SECRET_MAX_INJECT_RANGE = [1, 50] as const
+
+const isSecretMaxInject = (item: ConfigItem) => item.key === SECRET_MAX_INJECT_KEY
+
+const clampLimit = (item: ConfigItem) => {
+  const raw = Number(String(item.value ?? '').trim())
+  const [low, high] = SECRET_MAX_INJECT_RANGE
+  const next = Number.isFinite(raw) ? Math.round(raw) : low
+  item.value = String(Math.min(high, Math.max(low, next)))
+}
+
+const nudgeLimit = (item: ConfigItem, delta: number) => {
+  const raw = Number(String(item.value ?? '').trim())
+  const [low, high] = SECRET_MAX_INJECT_RANGE
+  const next = (Number.isFinite(raw) ? raw : low) + delta
+  item.value = String(Math.min(high, Math.max(low, Math.round(next))))
+}
+
+const canNudge = (item: ConfigItem, delta: number) => {
+  const raw = Number(String(item.value ?? '').trim())
+  const [low, high] = SECRET_MAX_INJECT_RANGE
+  const base = Number.isFinite(raw) ? raw : low
+  return delta > 0 ? base < high : base > low
+}
 
 const isLongText = (item: ConfigItem) => {
   if (item.key === 'sandbox_docker_base_image') return false
@@ -4576,6 +4632,62 @@ onUnmounted(() => {
                                  <option value="observe">observe (仅观测：保持传统布局发送，仅统计供应商命中指标)</option>
                                  <option value="enabled">enabled (启用优化：按灰度比例启用稳定层前置缓存布局)</option>
                               </select>
+                          </div>
+                          <div v-else-if="isBooleanFlag(item)">
+                            <div class="flex items-center gap-3">
+                              <button
+                                type="button"
+                                role="switch"
+                                :disabled="isConfigItemDisabled(String(category), item)"
+                                :aria-checked="isFlagOn(item)"
+                                :aria-label="item.key"
+                                @click="toggleFlag(item)"
+                                class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-inner"
+                                :class="isFlagOn(item) ? 'bg-primary' : 'bg-gray-200'"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                                  :class="isFlagOn(item) ? 'translate-x-5' : 'translate-x-0'"
+                                ></span>
+                              </button>
+                              <span
+                                class="text-xs font-medium"
+                                :class="isFlagOn(item) ? 'text-primary font-semibold' : 'text-gray-500'"
+                              >
+                                {{ isFlagOn(item) ? '允许' : '不允许' }}
+                              </span>
+                            </div>
+                          </div>
+                          <div v-else-if="isSecretMaxInject(item)">
+                            <div class="flex items-center gap-2">
+                              <button
+                                type="button"
+                                :disabled="isConfigItemDisabled(String(category), item) || !canNudge(item, -1)"
+                                :aria-label="'减少一条'"
+                                class="flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                @click="nudgeLimit(item, -1)"
+                              >−</button>
+                              <input
+                                v-model="item.value"
+                                type="number"
+                                min="1"
+                                max="50"
+                                step="1"
+                                inputmode="numeric"
+                                :disabled="isConfigItemDisabled(String(category), item)"
+                                class="h-9 w-20 rounded-md border border-gray-300 bg-white text-center text-sm tabular-nums focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:bg-gray-100 disabled:opacity-70"
+                                @blur="clampLimit(item)"
+                              />
+                              <button
+                                type="button"
+                                :disabled="isConfigItemDisabled(String(category), item) || !canNudge(item, 1)"
+                                aria-label="增加一条"
+                                class="flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                @click="nudgeLimit(item, 1)"
+                              >+</button>
+                              <span class="text-xs text-gray-500">条（1-50）</span>
+                            </div>
                           </div>
                           <div v-else-if="item.key === 'agent_graceful_finish_enabled'">
                             <div class="flex items-center gap-3">

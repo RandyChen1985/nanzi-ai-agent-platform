@@ -1,0 +1,490 @@
+/* 历史消息 / 只读消息的渲染宿主样式。
+ *
+ * 为什么单独抽一份：`MessageRenderer` 只负责「结构」——把 ```chart 变成 ECharts 图、
+ * ```mermaid 变成流程图、<sql_plan> 变成计划卡、长代码变成代码卡、表格做移动端卡片化。
+ * 段落、代码块、表格这些排版一直由各宿主页面自己复制一份，于是聊天日志页、智能体
+ * 「对话历史」弹窗和 EmbedChat 三处渲染同一条回复会长得不一样：日志页里 ```chart
+ * 直接显示成 JSON 代码块，就是「没有这层结构 + 各写各的样式」的结果。
+ *
+ * 现在这两处复用同一个 `MessageRenderer`，也复用这份排版。选择器全部限定在
+ * `.message-host` 内，不影响页面里其它 markdown 区域（例如链路里 tool payload 的预览）。
+ * 视觉口径对齐 EmbedChat 默认主题：浅色代码块 + 复制按钮 + 表格横向滚动/移动端卡片化。
+ */
+
+.message-host {
+  /* EmbedChat 的表格配色由 `.markdown-theme-*` 提供；日志页没有主题体系，这里给默认值。 */
+  --md-table-background: #ffffff;
+  --md-table-header: #f8fafc;
+  --md-table-text: #334155;
+  --md-table-border: #e2e8f0;
+  --md-table-cell-border: #eef2f7;
+  --md-table-cell-padding: 10px 14px;
+}
+
+.message-host .markdown-body {
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+.message-host .markdown-body p {
+  margin-bottom: 1em;
+}
+
+.message-host .markdown-body p:last-child,
+.message-host .markdown-body > :last-child,
+.message-host .markdown-body ul:last-child,
+.message-host .markdown-body ol:last-child,
+.message-host .markdown-body blockquote:last-child,
+.message-host .markdown-body pre:last-child,
+.message-host .markdown-body .markdown-table-scroll:last-child {
+  margin-bottom: 0 !important;
+}
+
+.message-host .markdown-body ul:last-child > li:last-child,
+.message-host .markdown-body ol:last-child > li:last-child {
+  margin-bottom: 0 !important;
+}
+
+.message-host .markdown-body h1,
+.message-host .markdown-body h2,
+.message-host .markdown-body h3 {
+  font-weight: 600;
+  color: var(--primary-color, #1677ff);
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  line-height: 1.35;
+}
+
+.message-host .markdown-body h1 {
+  font-size: 1.35em;
+}
+
+.message-host .markdown-body h2 {
+  font-size: 1.2em;
+}
+
+.message-host .markdown-body h3 {
+  font-size: 1.05em;
+}
+
+.message-host .markdown-body h4 {
+  font-size: 1em;
+  font-weight: 700;
+  color: #111827;
+  margin-top: 1.2em;
+  margin-bottom: 0.4em;
+  line-height: 1.4;
+}
+
+.message-host .markdown-body h1:first-child,
+.message-host .markdown-body h2:first-child,
+.message-host .markdown-body h3:first-child,
+.message-host .markdown-body h4:first-child {
+  margin-top: 0;
+}
+
+.message-host .markdown-body strong {
+  font-weight: 700;
+  color: #111827;
+}
+
+.message-host .markdown-body a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+/* 行内代码 */
+.message-host .markdown-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  background-color: rgba(175, 184, 193, 0.2);
+  padding: 0.2em 0.4em;
+  border-radius: 6px;
+  font-size: 85%;
+}
+
+/* 围栏代码块：与 EmbedChat 一致（浅色底 + 顶部三点装饰），
+   深色底会与全局 github.css 的浅色 token 配色打架，这里统一走浅色。 */
+.message-host .markdown-body pre {
+  position: relative;
+  margin: 1em 0;
+  padding: 1.25em 1em 1em 1em;
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre !important;
+  background-color: #f8fafc;
+  color: #0f172a;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.6;
+  -webkit-overflow-scrolling: touch;
+}
+
+.message-host .markdown-body pre::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #ff5f56;
+  box-shadow: 16px 0 0 #ffbd2e, 32px 0 0 #27c93f;
+  z-index: 1;
+}
+
+.message-host .markdown-body pre code {
+  background-color: transparent;
+  padding: 0;
+  color: inherit;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.message-host .markdown-body pre::-webkit-scrollbar,
+.message-host .markdown-body .markdown-table-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.message-host .markdown-body pre::-webkit-scrollbar-thumb,
+.message-host .markdown-body .markdown-table-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 2px;
+}
+
+/* 「复制代码」按钮：行为在 MessageRenderer 里（点击 → 复制 pre 文本），
+   样式一直由宿主提供，缺了就会渲染成一个看不见的空 span。 */
+.message-host .markdown-body .code-block-wrapper {
+  position: relative;
+  margin: 1em 0;
+}
+
+.message-host .markdown-body .code-block-wrapper pre {
+  margin: 0;
+}
+
+.message-host .markdown-body .code-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z'/%3E%3C/svg%3E");
+  background-size: 16px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s;
+  z-index: 10;
+}
+
+.message-host .markdown-body .code-block-wrapper:hover .code-copy-btn {
+  opacity: 1;
+}
+
+.message-host .markdown-body .code-copy-btn:hover {
+  background-color: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.message-host .markdown-body .code-copy-btn.copied {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2310b981'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5 13l4 4L19 7'/%3E%3C/svg%3E");
+  border-color: #10b981;
+}
+
+.message-host .markdown-body ul,
+.message-host .markdown-body ol {
+  padding-left: 1.5em;
+  margin-bottom: 1em;
+}
+
+.message-host .markdown-body ul {
+  list-style-type: disc;
+}
+
+.message-host .markdown-body ol {
+  list-style-type: decimal;
+}
+
+.message-host .markdown-body li {
+  margin-bottom: 0.4em;
+}
+
+.message-host .markdown-body blockquote {
+  border-left: 4px solid #e5e7eb;
+  padding-left: 1rem;
+  color: #6b7280;
+  margin: 1em 0;
+}
+
+/* 表格：外层滚动容器 + 斑马纹，与 EmbedChat 默认主题一致 */
+.message-host .markdown-body .markdown-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--md-table-border);
+  border-radius: 10px;
+  margin: 1em 0;
+  background: var(--md-table-background);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  -webkit-overflow-scrolling: touch;
+}
+
+.message-host .markdown-body .markdown-table-scroll:last-child {
+  margin-bottom: 0 !important;
+}
+
+.message-host .markdown-body table {
+  display: table;
+  width: 100%;
+  min-width: 680px;
+  border: 0;
+  border-spacing: 0;
+  margin: 0;
+  background: var(--md-table-background);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.message-host .markdown-body th {
+  padding: var(--md-table-cell-padding);
+  color: var(--md-table-text);
+  background: var(--md-table-header);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: left !important;
+  white-space: nowrap;
+  border-bottom: 1px solid #dbe3ec;
+}
+
+.message-host .markdown-body td {
+  padding: var(--md-table-cell-padding);
+  color: var(--md-table-text);
+  vertical-align: top;
+  text-align: left !important;
+  border-bottom: 1px solid var(--md-table-cell-border);
+  overflow-wrap: anywhere;
+}
+
+.message-host .markdown-body th + th,
+.message-host .markdown-body td + td {
+  border-left: 1px solid #f1f5f9;
+}
+
+.message-host .markdown-body tbody tr:nth-child(even) {
+  background-color: #fafbfd;
+}
+
+.message-host .markdown-body tbody tr:hover {
+  background-color: #f1f5f9;
+}
+
+.message-host .markdown-body tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.message-host .markdown-body .markdown-table-toolbar {
+  display: none;
+}
+
+/* 窄屏：少列表格取消最小宽度，多列表格按数据行转成信息卡片。
+   结构由 MessageRenderer 通过 `enhanceMarkdownTablesForMobile` 生成。 */
+@media (max-width: 639px) {
+  .message-host .markdown-body .markdown-table-scroll {
+    overflow-x: hidden;
+  }
+
+  .message-host .markdown-body .markdown-table-scroll.markdown-table-view-cards {
+    border: 0 !important;
+    border-radius: 0;
+    background: transparent !important;
+  }
+
+  .message-host .markdown-body .markdown-table-toolbar {
+    display: flex;
+    justify-content: flex-start;
+    padding: 6px 6px 10px;
+  }
+
+  .message-host .markdown-body .markdown-table-view-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 28px;
+    padding: 3px 8px;
+    border: 1px solid var(--md-table-border);
+    color: var(--md-table-text);
+    background: var(--md-table-header);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.35;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .message-host .markdown-body .markdown-table-view-toggle::before {
+    content: '▦';
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  .message-host .markdown-body .markdown-table-view-toggle:hover {
+    border-color: var(--md-table-text);
+    background: var(--md-table-background);
+  }
+
+  .message-host .markdown-body .markdown-table-view-toggle:focus-visible {
+    outline: 2px solid var(--md-table-text);
+    outline-offset: 2px;
+  }
+
+  .message-host .markdown-body .markdown-table-view-toggle:active {
+    transform: scale(0.97);
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-compact {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-compact th,
+  .message-host .markdown-body table.markdown-table-mobile-compact td {
+    padding: 7px 6px !important;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-compact th {
+    font-size: 11px;
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-cards {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    font-size: 12px;
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-cards thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-cards tbody,
+  .message-host .markdown-body table.markdown-table-mobile-cards tr {
+    display: block;
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-cards tr {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--md-table-border) !important;
+    border-radius: 10px;
+    background: var(--md-table-background) !important;
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-cards tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-cards td {
+    display: grid;
+    grid-template-columns: minmax(72px, 34%) minmax(0, 1fr);
+    gap: 8px;
+    padding: 6px 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--md-table-cell-border) !important;
+    color: var(--md-table-text) !important;
+    font-family: inherit;
+    font-size: 12px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-cards td:last-child {
+    border-bottom: 0 !important;
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-cards td::before {
+    content: attr(data-label);
+    color: var(--md-table-text);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .message-host .markdown-body table.markdown-table-mobile-cards tbody tr:nth-child(even) {
+    background: var(--md-table-background) !important;
+  }
+
+  /* 切到「表格」后恢复宽表布局，由外层容器横向滚动 */
+  .message-host .markdown-body .markdown-table-scroll.markdown-table-view-table {
+    overflow-x: auto;
+  }
+
+  .message-host .markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards {
+    display: table;
+    width: 100%;
+    min-width: 680px;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .message-host .markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards thead {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+  }
+
+  .message-host .markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards tbody {
+    display: table-row-group;
+  }
+
+  .message-host .markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards tr {
+    display: table-row;
+    margin: 0;
+    padding: 0;
+    border: 0 !important;
+    border-radius: 0;
+    background: var(--md-table-background) !important;
+  }
+
+  .message-host .markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards td {
+    display: table-cell;
+    grid-template-columns: none;
+    gap: 0;
+    padding: var(--md-table-cell-padding) !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--md-table-cell-border) !important;
+    color: var(--md-table-text) !important;
+    font-family: inherit;
+    font-size: 13px;
+  }
+
+  .message-host .markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards td + td {
+    border-left: 1px solid var(--md-table-cell-border) !important;
+  }
+
+  .message-host .markdown-body .markdown-table-scroll.markdown-table-view-table table.markdown-table-mobile-cards td::before {
+    content: none;
+  }
+}

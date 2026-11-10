@@ -18,10 +18,11 @@ def test_delete_server_collects_tool_names_before_deleting_cache():
     delete_body = MCP_ENDPOINT.split("async def delete_mcp_server", 1)[1].split(
         "@router.delete", 1
     )[0]
-    assert "select(McpToolCache.tool_name)" in delete_body
+    # 实现同时取了 id（Redis 会话清单要按 id 摘），所以匹配到 tool_name 为止
+    assert "McpToolCache.tool_name)" in delete_body
     assert "prune_agent_versions_by_names" in delete_body
     # 名字必须在删缓存前取，否则只剩空集合，清理会变成空操作
-    assert delete_body.index("select(McpToolCache.tool_name)") < delete_body.index(
+    assert delete_body.index("McpToolCache.tool_name)") < delete_body.index(
         "delete(McpToolCache)"
     )
 

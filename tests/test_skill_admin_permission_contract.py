@@ -78,11 +78,17 @@ def test_session_start_primes_platform_skill_admin_cache():
 
 
 def test_skill_tools_use_the_shared_platform_admin_gate():
-    """两个写技能的工具都走同一道闸门，不再各自判 role 字符串。"""
+    """三个写平台技能的工具都走同一道闸门，不再各自判 role 字符串。
+
+    写入平台全局技能库的入口一共三处：``create_skills``、``write_skill_file`` 与
+    ``import_skill_from_sandbox``。逐处按 role 判断时，被单独授予
+    ``element:skills:admin`` 的角色会在页面能点、在对话里被拒；而无身份调用
+    又可能直接落盘，所以三处必须共用 ``can_manage_platform_skills``。
+    """
     source = (ROOT / "app/services/ai/tools/system_executive_tools.py").read_text(
         encoding="utf-8"
     )
 
-    assert source.count("can_manage_platform_skills(user_info)") == 2
+    assert source.count("can_manage_platform_skills(user_info)") == 3
     # 旧口径（role 里含 admin）不该再出现在写平台技能的判定里
     assert 'is_admin = (role == "admin"' not in source

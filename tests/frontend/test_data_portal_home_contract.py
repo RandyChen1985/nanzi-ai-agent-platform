@@ -171,7 +171,10 @@ def test_personal_center_drops_the_dashboard_gutter_without_remounting_tabs():
 
     assert 'class="min-h-full bg-white"' in personal
     assert "rounded-lg shadow-sm border border-gray-200" not in personal
-    assert "activeTab === 'data' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'tasks'" in personal
+    # 这几个 Tab 自己管内边距（不吃外层 gutter）。逐个断言而不是比对整串字面量：
+    # 每加一个 Tab 就改一次期望值，测的其实是「字符串有没有变过」，不是「新 Tab 有没有被漏掉」。
+    for tab in ("data", "skills", "mcp", "secrets", "tasks"):
+        assert f"activeTab === '{tab}'" in personal, tab
     assert "'pt-4 sm:pt-5' : 'px-4 pt-4 pb-4 sm:px-6 sm:pt-5 sm:pb-6'" in personal
     assert "dashboardContentSpacing" in dashboard
     assert 'route.name === "AIChat"' in dashboard

@@ -45,7 +45,9 @@ from app.services.mcp.platform_mcp import platform_mcp_http_app, platform_mcp_li
 from app.api.mcp_platform import router as mcp_platform_router
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
+from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError, ProgrammingError
+
+logger = logging.getLogger(__name__)
 
 
 logging.getLogger('apscheduler').setLevel(logging.DEBUG)
@@ -317,6 +319,61 @@ async def database_connection_exception_handler(request: Request, exc: Exception
         },
         headers={"Retry-After": "30"}
     )
+
+@app.exception_handler(ProgrammingError)
+async def database_schema_exception_handler(request: Request, exc: Exception):
+    """表不存在 / 结构不匹配 —— 几乎总是「迁移没执行」。
+
+    默认行为是把 SQLAlchemy 的原始报错整个吐给前端（一整屏带 SQL 语句的红字），
+    对着那坨文字没人能想到去执行迁移。这里只识别「表/列不存在」这一类，其余
+    ProgrammingError 仍按 500 抛出——真正的 SQL bug 不该被这张网兜住。
+    """
+    trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
+    message = str(exc)
+
+    is_missing_table = (
+        "doesn't exist" in message      # MySQL 1146
+        # PostgreSQL 的措辞是 "relation ... does not exist"，不是 doesn't ——
+        # 少了这一条，PG 部署下缺表会绕过提示直接抛 500
+        or "does not exist" in message
+        or "UndefinedTable" in message  # PostgreSQL（异常类名）
+        or "no such table" in message   # SQLite（测试库）
+    )
+    if not is_missing_table:
+        raise exc
+
+    table = ""
+    for marker in ("Table '", 'relation "', "table "):
+        if marker in message:
+            tail = message.split(marker, 1)[1]
+            table = tail.split("'")[0].split('"')[0].split(" ")[0]
+            break
+    if "." in table:
+        table = table.split(".")[-1]
+
+    hint = (
+        f"数据表 {table} 不存在，数据库迁移还没执行。"
+        if table
+        else "依赖的数据表不存在，数据库迁移还没执行。"
+    )
+    if table.startswith("sys_secret"):
+        hint += "请执行 db-prod/V209-add-credential-center.sql（PostgreSQL 为 db-prod-pg/V109）。"
+    else:
+        hint += "请检查对应版本的迁移脚本是否已执行。"
+
+    logger.error("[Schema] 请求 %s 命中缺失的表 %s", request.url.path, table or "?")
+    return JSONResponse(
+        status_code=503,
+        content={
+            "code": ErrorCode.DATABASE_CONNECTION_FAILED,
+            "message": hint,
+            "detail": message if settings.API_SERVICE_ENV != "production" else hint,
+            "data": None,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "trace_id": trace_id,
+        },
+    )
+
 
 @app.exception_handler(RagFlowError)
 async def ragflow_exception_handler(request: Request, exc: RagFlowError):

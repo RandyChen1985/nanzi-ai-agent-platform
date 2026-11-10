@@ -214,6 +214,9 @@ class McpToolResponse(BaseModel):
     parameter_schema: str
     is_published: bool
     is_available: bool = True
+    #: 值由凭据中心提供的参数名（JSON 数组字符串）。前端据此在参数行上显示
+    #: 「凭据」标记，并把槽位暴露给绑定面板。
+    credential_params: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1270,6 +1273,13 @@ async def delete_mcp_server(
     # 2. Delete the server itself
     await db.execute(delete(McpServer).where(McpServer.id == server_id))
 
+    # 2.1 凭据绑定是外部表、无外键，必须显式清（与工具/脚本删除同一口径）
+    from app.services.secrets import center as secret_center
+
+    await secret_center.detach_consumer(
+        db, consumer_type="mcp_server", consumer_id=server_id
+    )
+
     # 3. 同步剔除智能体版本里的死引用：与「清理远端已删除工具」同一口径，
     #    放在同一事务里，避免出现「服务没了、引用还在」的半成品状态。
     affected_agent_versions = await prune_agent_versions_by_names(db, tool_names)
@@ -1532,6 +1542,37 @@ async def execute_mcp_tool(
         "key_id": None,
     }
     try:
+        # 凭据参数注入要在**两种分支之前**做：签名模式下走的是
+        # `call_remote_tool`，它绕过了 McpToolFactory，不注入的话
+        # 声明成凭据的参数永远是空的（测试台会看到 {"arguments": {}}）。
+        from app.services.secrets.injection import (
+            apply_mcp_arg_bindings,
+            denial_hint,
+            denial_text,
+        )
+
+        arguments = dict(req.arguments or {})
+        arg_denials: dict[str, str | None] = {}
+        arguments = await apply_mcp_arg_bindings(
+            tool, arguments, user_info=user, denials=arg_denials
+        )
+        if arg_denials:
+            # denials 存的是**原始 code**，必须过 denial_text()——直接拼进去
+            # 会把 denied_by_host 这种内部常量抛到界面上。
+            detail = "；".join(
+                f"{slot.split(':')[-1]}（{denial_text(why)}）"
+                for slot, why in arg_denials.items()
+            )
+            hints: list[str] = []
+            for why in arg_denials.values():
+                hint = denial_hint(why)
+                if hint and hint not in hints:
+                    hints.append(hint)
+            message = f"凭据参数缺失（{detail}）"
+            if hints:
+                message += "。" + "；".join(hints)
+            raise HTTPException(status_code=400, detail=message)
+
         signed_user_mode = bool(server.user_assertion_enabled)
         if signed_user_mode:
             test_user_info = {
@@ -1549,7 +1590,7 @@ async def execute_mcp_tool(
             result = await McpClientService.call_remote_tool(
                 server_id=tool.server_id,
                 tool_name=tool.tool_name.split(":", 1)[-1],
-                arguments=req.arguments,
+                arguments=arguments,
                 user_info=test_user_info,
                 agent_info={
                     "agent_id": "mcp-tool-tester",
@@ -1568,9 +1609,12 @@ async def execute_mcp_tool(
         else:
             lc_tool = McpToolFactory.create_tool(tool)
             result = await resolve_tool_invocation_result(
-                await lc_tool.ainvoke(req.arguments)
+                await lc_tool.ainvoke(arguments)
             )
         return {"status": "success", "result": result, "mcp_auth": mcp_auth}
+    except HTTPException:
+        # 凭据缺失之类的 4xx 是**我们**给的结论，别被下面的兜底改成 502
+        raise
     except Exception as e:
         # 远程执行失败必须是错误状态，不能 HTTP 200 返回 status=error：否则监控/调用方
         # 会把失败当成功。详情限长，避免把内部堆栈/地址整段回给前端。
@@ -1630,6 +1674,87 @@ async def get_mcp_tool_curl(
         str(tool.tool_name).split(":", 1)[-1],
         parsed_arguments,
     )
+
+
+class ToolCredentialParamsRequest(BaseModel):
+    """声明工具上哪些参数的值由凭据中心提供。"""
+
+    params: List[str] = Field(default_factory=list)
+
+
+@router.put(
+    "/tools/{tool_id}/credential-params",
+    dependencies=[Depends(require_permission("element", "element:mcp_management:publish"))],
+)
+async def set_tool_credential_params(
+    tool_id: str,
+    payload: ToolCredentialParamsRequest,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+) -> Dict:
+    """标记 / 取消标记「这个参数的值从凭据中心取」。
+
+    标记后该参数从**模型可见**的参数列表里消失，运行时按
+    ``arg:<短工具名>:<参数名>`` 槽位注入。所以只接受 schema 里真实存在的参数名，
+    拼错一个就等于声明了一个永远不会被填的参数。
+    """
+    tool = (
+        await db.execute(select(McpToolCache).where(McpToolCache.id == tool_id))
+    ).scalar_one_or_none()
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+
+    server = (
+        await db.execute(select(McpServer).where(McpServer.id == tool.server_id))
+    ).scalar_one_or_none()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    _ensure_server_control_access(server, user)
+
+    try:
+        schema = json.loads(tool.parameter_schema or "{}")
+    except ValueError:
+        schema = {}
+    props = (schema.get("properties") or {}) if isinstance(schema, dict) else {}
+
+    def _accepts_string(spec: Any) -> bool:
+        """凭据值永远是字符串；声明成整数/布尔/对象的参数注入进去会破坏类型。"""
+        declared = spec.get("type") if isinstance(spec, dict) else None
+        if isinstance(declared, list):
+            return "string" in declared
+        return declared in (None, "string")
+
+    cleaned: List[str] = []
+    for name in payload.params:
+        name = str(name or "").strip()
+        if not name:
+            continue
+        if name not in props:
+            raise HTTPException(
+                status_code=400,
+                detail=f"参数 {name} 不在这个工具的参数定义里（远端可能改了参数名，请先同步工具）",
+            )
+        if not _accepts_string(props[name]):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"参数 {name} 的类型不是字符串，不能由凭据提供。"
+                    "凭据值只能是字符串；数字、布尔、对象这类参数请让模型填，"
+                    "或在 Header 上配凭据。"
+                ),
+            )
+        if name not in cleaned:
+            cleaned.append(name)
+
+    await db.execute(
+        update(McpToolCache)
+        .where(McpToolCache.id == tool_id)
+        .values(credential_params=json.dumps(cleaned, ensure_ascii=False) if cleaned else None)
+    )
+    await db.commit()
+    # 工具定义变了（参数被剔除），运行时的工具缓存必须重建，否则模型还会看到旧 schema
+    _clear_runtime_tool_cache()
+    return {"status": "success", "credential_params": cleaned}
 
 
 @router.put("/tools/{tool_id}/publish", dependencies=[Depends(require_permission("element", "element:mcp_management:publish"))])

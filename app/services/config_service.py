@@ -65,6 +65,16 @@ RESOURCE_SQUARE_SHOW_DATASETS_KEY = "resource_square_show_datasets"
 #: 布尔型开关允许的取值字面量（与前端开关写入的 'true'/'false' 对齐，兼容常见写法）
 _BOOLEAN_LITERALS = ("true", "false", "1", "0", "yes", "no", "on", "off")
 
+# 凭据注入策略：界面上是开关和加减器，但 API 可以被直接 PATCH。
+# 不校验的话，`secret_policy_max_inject_per_call = "gldfjgl"` 会安静地存进去，
+# 读取侧退回默认值——管理员以为改了，实际没生效。
+SECRET_FLAG_KEYS = (
+    "secret_policy_allow_external_host",
+    "secret_policy_allow_script_env",
+)
+SECRET_MAX_INJECT_KEY = "secret_policy_max_inject_per_call"
+SECRET_MAX_INJECT_RANGE = (1, 50)
+
 #: 全平台邮件服务（阶段 B）。总开关关闭时任何邮件都不发送，也不阻塞主流程。
 EMAIL_SERVICE_ENABLED_KEY = "email_service_enabled"
 EMAIL_SMTP_PORT_KEY = "email_smtp_port"
@@ -133,6 +143,19 @@ def validate_config_update(key: str, value: str) -> None:
             int(str(value or "").strip())
         except (TypeError, ValueError) as exc:
             raise ValueError(f"{key} 必须是整数（填 0 表示不限）") from exc
+    elif key in SECRET_FLAG_KEYS:
+        # 只收 0/1：这三个值最终由 _as_bool 解析，收 "yes"/"on" 会让「界面上只有
+        # 开和关」和「库里存了什么」两套口径并存
+        if str(value or "").strip() not in ("0", "1"):
+            raise ValueError(f"{key} 仅允许 0 或 1")
+    elif key == SECRET_MAX_INJECT_KEY:
+        try:
+            limit = int(str(value or "").strip())
+        except (TypeError, ValueError) as exc:
+            raise ValueError("单次注入上限必须是整数（1-50）") from exc
+        low, high = SECRET_MAX_INJECT_RANGE
+        if not (low <= limit <= high):
+            raise ValueError(f"单次注入上限必须在 {low}-{high} 之间")
     elif key == SANDBOX_AUTO_WARM_KEY:
         normalized = str(value or "").strip().lower()
         if normalized not in _BOOLEAN_LITERALS:

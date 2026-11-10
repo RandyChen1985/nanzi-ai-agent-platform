@@ -481,6 +481,17 @@ async def update_tool(
         await db.rollback()
         raise HTTPException(status_code=400, detail="签名 Key-Id 已被其他工具使用") from exc
     await db.refresh(tool)
+
+    # URL / method 决定了参数落在 path、query 还是 body。改了配置之后旧槽位就是
+    # 孤儿——界面按参数名查还显示「已绑定」，运行时按新槽位查却取不到。
+    try:
+        from app.services.secrets.center import migrate_api_tool_param_slots
+
+        await migrate_api_tool_param_slots(db, tool)
+    except Exception:  # noqa: BLE001
+        # 迁移失败不该让「保存工具」整体失败：绑定还在，用户重新选一次即可。
+        logger.warning("迁移 API 工具 %s 的参数绑定槽位失败", tool.id, exc_info=True)
+
     return tool
 
 @router.post("/batch-group")
@@ -516,6 +527,11 @@ async def delete_tool(
     
     await db.delete(tool)
     await db.commit()
+    # 表间没有外键，孤儿绑定没人替我们清：不清的话「这条凭据被绑到哪了」
+    # 会一直显示一个已经删掉的工具。
+    from app.services.secrets import center as secret_center
+
+    await secret_center.detach_consumer(db, consumer_type="api_tool", consumer_id=tool_id)
     return {"status": "success", "message": "Tool deleted"}
 
 
@@ -600,8 +616,11 @@ async def preview_tool(
         )
 
     # 内存草稿：与运行时拿到的 SysApiTool 同形（headers / schema 都是 JSON 字符串）
+    # id 要尽量真：凭据绑定按 consumer_id 查，用假 id 的话标成「来自凭据」
+    # 的参数在试跑时永远解析不到，只会报「未绑定」——而运行时是好用的。
+    # 新建工具还没有 id，那就退回占位符（此时确实没有绑定可查）。
     draft = SysApiTool(
-        id="__preview__",
+        id=str(payload.tool_id or "__preview__"),
         name="__preview__",
         method=method,
         url_template=payload.url_template,

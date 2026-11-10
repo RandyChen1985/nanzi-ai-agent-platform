@@ -60,7 +60,8 @@ const formatTraceId = (traceId?: string | null) => {
   return value.length <= 12 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`
 }
 const artifactTraceLabel = (item: ArtifactListItem) => {
-  const traceId = String(item.trace_id || '').trim()
+  // 子代理委派产物：父消息角标按 parent_trace_id 归并，展示也以它为准。
+  const traceId = String(item.parent_trace_id || item.trace_id || '').trim()
   if (!traceId) return '未关联消息'
   return traceId === props.traceId ? '当前消息' : `来源消息 · ${formatTraceId(traceId)}`
 }
@@ -455,8 +456,8 @@ onUnmounted(() => {
                           <span v-if="formatTime(it.created_at)">{{ formatTime(it.created_at) }}</span>
                           <span
                             class="rounded px-1 py-px text-[10px] font-semibold"
-                            :class="it.trace_id === props.traceId ? 'bg-primary/10 text-primary' : 'bg-gray-100 dark:bg-gray-800'"
-                            :title="artifactTraceTitle(it.trace_id)"
+                            :class="(it.parent_trace_id || it.trace_id) === props.traceId ? 'bg-primary/10 text-primary' : 'bg-gray-100 dark:bg-gray-800'"
+                            :title="artifactTraceTitle(it.parent_trace_id || it.trace_id)"
                           >
                             {{ artifactTraceLabel(it) }}
                           </span>

@@ -44,6 +44,26 @@ const showDiscardConfirm = ref(false)
 const saving = ref(false)
 const formError = ref('')
 const fieldErrors = ref<Partial<Record<'name' | 'url_template' | 'headers_str' | 'parameter_schema_str' | 'signing', string>>>({})
+
+/**
+ * Headers 编辑器：新建时选的凭据先暂存在它内部，保存拿到工具 id 后要它补写。
+ * 不补写的话界面显示「已绑定」，实际一条绑定都没有。
+ */
+const paramEditorRef = ref<{
+    flushPending: (consumerId: string) => Promise<string[]>
+} | null>(null)
+const headersEditorRef = ref<{
+  flushPending: (consumerId: string) => Promise<string[]>
+} | null>(null)
+
+/**
+ * 参数定义里声明了 `source: credential` 的参数名。
+ *
+ * 只认声明过的：普通参数的值由模型填，平台不该去猜哪个「看起来像密钥」。
+ */
+/** 「来自凭据」但还没选凭据的参数名；非空时保存按钮禁用。 */
+const paramUnboundNames = ref<string[]>([])
+
 const suppressFormWatch = ref(false)
 const wizardDirty = ref(false)
 const initialFormSnapshot = ref('')
@@ -662,8 +682,27 @@ const saveTool = async () => {
             await toolApi.update(toolForm.value.id, payload)
             showToast('更新成功', 'success')
         } else {
-            await toolApi.create(payload)
+            const created = await toolApi.create(payload)
             showToast('创建成功', 'success')
+            // 新建时选的凭据此时才有工具 id 可挂：补写失败要说出来，不能让它
+            // 静默变成「界面显示已绑定、实际没有」
+            const newId = String(created?.data?.id || '')
+            if (newId) {
+                const failed: string[] = []
+                if (headersEditorRef.value) {
+                    failed.push(...await headersEditorRef.value.flushPending(newId))
+                }
+                // 参数位的凭据也是新建态先记账，这里一起补写
+                if (paramEditorRef.value) {
+                    failed.push(...await paramEditorRef.value.flushPending(newId))
+                }
+                if (failed.length) {
+                    showToast(
+                        `工具已创建，但 ${failed.map((s) => s.replace(/^(header|query|body|\?param):/, '')).join('、')} 的凭据绑定失败，请重新绑定`,
+                        'error',
+                    )
+                }
+            }
         }
         // 密钥已经交给服务端加密保存，前端不再保留明文
         toolForm.value.signing_secret = ''
@@ -1245,9 +1284,13 @@ onBeforeUnmount(() => {
 
                     <div data-tool-field="parameter_schema_str" class="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30" tabindex="-1">
                         <ToolParamEditor
+                            ref="paramEditorRef"
                             v-model="toolForm.parameter_schema_str"
                             :method="toolForm.method"
                             :url-template="toolForm.url_template"
+                            :consumer-id="isEditing && toolForm.id ? String(toolForm.id) : ''"
+                            :consumer-type="'api_tool'"
+                            @unbound-changed="paramUnboundNames = $event"
                         />
                         <p v-if="fieldErrors.parameter_schema_str" class="mt-1 text-xs text-red-600">{{ fieldErrors.parameter_schema_str }}</p>
                     </div>
@@ -1278,8 +1321,10 @@ onBeforeUnmount(() => {
                         <div class="space-y-4 border-t border-gray-200 px-3 py-3">
                             <div data-tool-field="headers_str" class="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30" tabindex="-1">
                                 <ToolHeadersEditor
+                                    ref="headersEditorRef"
                                     v-model="toolForm.headers_str"
                                     :error="fieldErrors.headers_str"
+                                    :consumer-id="isEditing && toolForm.id ? String(toolForm.id) : ''"
                                 />
                             </div>
 
@@ -1324,7 +1369,10 @@ onBeforeUnmount(() => {
                     >取消</button>
                     <button
                         type="button"
-                        :disabled="saving"
+                        :disabled="saving || paramUnboundNames.length > 0"
+                        :title="paramUnboundNames.length
+                            ? '先给这些参数选凭据：' + paramUnboundNames.join('、')
+                            : ''"
                         class="inline-flex items-center gap-2 px-4 py-2 bg-primary border border-transparent rounded-md text-sm font-medium text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
                         @click="saveTool"
                     >

@@ -27,7 +27,6 @@ import {
   TrashIcon,
   PencilSquareIcon,
   LinkIcon,
-  CloudArrowDownIcon,
   MagnifyingGlassIcon,
   SparklesIcon,
   ShoppingBagIcon,
@@ -41,8 +40,11 @@ import {
   InformationCircleIcon,
   DocumentTextIcon,
   EllipsisHorizontalIcon,
+  KeyIcon,
 } from '@heroicons/vue/24/outline'
 import McpServerLogModal from './McpServerLogModal.vue'
+import CredentialPicker from '../secrets/CredentialPicker.vue'
+import { isAuthorizationHeader, planMcpAuthHeaders } from '@/utils/mcpAuthHeaders'
 import McpServerAgentsDrawer from './McpServerAgentsDrawer.vue'
 import { buildJavaMcpSample, buildPythonMcpSample } from './mcpCodeSamples'
 
@@ -398,8 +400,6 @@ const verifyAddressChanged = computed(() => (
   && newServer.value.sse_url.trim() !== savedSseUrl.value
 ))
 
-const isAuthorizationHeader = (key: string) => key.trim().toLowerCase() === 'authorization'
-
 const updateAuthorizationEnabled = (enabled: boolean) => {
   authorizationEnabled.value = enabled
   if (enabled) {
@@ -423,6 +423,241 @@ const cancelAuthorizationEdit = () => {
 const handleAuthorizationInput = (event: Event) => {
   authorizationToken.value = (event.target as HTMLInputElement).value
 }
+
+// ── 凭据中心的凭据（覆盖固定 Token）────────────────────────────────────
+//
+// MCP 的 `fixed_token` 是服务级单值：管理员配一个，全平台共用。这里让每个用户
+// 绑自己的——**绑定优先于 fixed_token**（`apply_mcp_bindings` 里覆盖，不是只补空位）。
+//
+// 保存绑定是独立动作，不跟着表单提交：绑定的消费者是 `mcp_server` + 服务 id，
+// 服务还没入库就没有可绑的对象，所以只在编辑态出现。
+/** 鉴权来源：固定 Token（服务级默认值）或来自凭据中心（每人用自己的）。 */
+const authSource = ref<'token' | 'credential'>('token')
+
+type HeaderBinding = {
+  secret_id: string
+  secret_key: string
+  secret_name: string
+  /** 绑定还在，但凭据可能已被停用/过期 —— 界面要标出来 */
+  secret_status?: string
+}
+
+const bindingIssue = (binding: HeaderBinding | null): string => {
+  if (!binding || !binding.secret_status || binding.secret_status === 'active') return ''
+  if (binding.secret_status === 'disabled') return '凭据已停用'
+  if (binding.secret_status === 'expired') return '凭据已过期'
+  return '凭据不可用'
+}
+const headerBindings = ref<Record<string, HeaderBinding>>({})
+
+/**
+ * 新建态选的凭据。
+ *
+ * 绑定是 ``(consumer_id, slot)`` 维度的，而新建向导里服务还没有 id——以前干脆
+ * 把「来自凭据中心」整个藏掉，只让用固定 Token。这等于逼用户先存一遍空配置再
+ * 回来改。现在把选择先挂在这里，保存拿到 id 后再补写。
+ */
+const pendingBindings = ref<Record<string, HeaderBinding>>({})
+
+/** 某个 header 名的绑定；槽位约定是 ``header:<名称>``。未保存的也算。 */
+const bindingOfHeader = (key: string): HeaderBinding | null =>
+  headerBindings.value[`header:${key.trim()}`] || pendingBindings.value[`header:${key.trim()}`] || null
+
+
+/** 正在为哪个「其他 Header」挑凭据；非空时显示绑定弹窗。 */
+const headerBindSlot = ref<string | null>(null)
+const headerBindSecretId = ref<string | null>(null)
+const headerBindPicked = ref<{ id: string; secret_key: string } | null>(null)
+const headerBindBusy = ref(false)
+const headerBindError = ref('')
+
+const mcpBindingSecretId = ref<string | null>(null)
+const mcpBinding = ref<{ secret_key: string; secret_name: string } | null>(null)
+const mcpBindingBusy = ref(false)
+const mcpBindingError = ref('')
+const mcpBindingPicked = ref<{ id: string; secret_key: string } | null>(null)
+
+async function loadMcpBinding() {
+  mcpBindingSecretId.value = null
+  mcpBinding.value = null
+  mcpBindingPicked.value = null
+  mcpBindingError.value = ''
+  if (!editingId.value) {
+    // 不清的话，从「编辑服务 A」跳到「添加」时，新向导会显示 A 的 header 绑定
+    headerBindings.value = {}
+    return
+  }
+  try {
+    const requestedId = editingId.value
+    const res = await axios.get('/api/portal/secrets/bindings', {
+      params: { consumer_type: 'mcp_server', consumer_id: requestedId },
+    })
+    // 编辑 A 的过程中切到 B，A 的响应晚到会盖掉 B 的绑定
+    if (editingId.value !== requestedId) return
+    const map: Record<string, HeaderBinding> = {}
+    for (const row of res.data?.data || []) {
+      // 系统级的绑定是管理员设的全局值，也要算「已绑定」；别人的个人绑定看不见
+      if (!row.bound_by_me && row.owner_scope !== 'system') continue
+      map[row.slot] = {
+        secret_id: row.secret_id,
+        secret_key: row.secret_key,
+        secret_name: row.secret_name,
+        secret_status: row.secret_status,
+      }
+    }
+    headerBindings.value = map
+    const hit = map['header:Authorization']
+    if (hit) {
+      mcpBindingSecretId.value = hit.secret_id
+      mcpBinding.value = { secret_key: hit.secret_key, secret_name: hit.secret_name }
+      mcpBindingPicked.value = { id: hit.secret_id, secret_key: hit.secret_key }
+      // 有绑定就默认落在「来自凭据」——否则界面显示的是固定 Token，
+      // 实际调用走的却是绑定，用户看不出当前生效的是哪一个。
+      authSource.value = 'credential'
+    }
+  } catch {
+    // 拿不到绑定不该挡住编辑 MCP 服务，按「没绑」显示
+  }
+}
+
+/** 写一条绑定（或解除）。两个入口共用，槽位不同。 */
+async function writeBinding(slot: string, secretId: string | null) {
+  // 新建态：还没 id，无法落库。调用方负责写进 pendingBindings。
+  if (!editingId.value) return
+  if (!secretId) {
+    await axios.delete('/api/portal/secrets/bindings', {
+      data: {
+        consumer_type: 'mcp_server',
+        consumer_id: editingId.value,
+        slot,
+        is_global: true,
+      },
+    })
+    return
+  }
+  await axios.post('/api/portal/secrets/bindings', {
+    secret_id: secretId,
+    consumer_type: 'mcp_server',
+    consumer_id: editingId.value,
+    slot,
+    // 平台服务是所有人共用的：绑定必须是全局的，否则只有管理员自己能用。
+    is_global: true,
+  })
+}
+
+async function saveMcpBinding() {
+  mcpBindingBusy.value = true
+  mcpBindingError.value = ''
+
+  // 新建态：先记着，等保存服务拿到 id 再补写（见 flushPendingBindings）
+  if (!editingId.value) {
+    const picked = mcpBindingSecretId.value ? mcpBindingPicked.value : null
+    const next = { ...pendingBindings.value }
+    if (picked) {
+      next['header:Authorization'] = {
+        secret_id: picked.id,
+        secret_key: picked.secret_key,
+        secret_name: mcpBinding.value?.secret_name || picked.secret_key,
+      }
+      mcpBinding.value = { secret_key: picked.secret_key, secret_name: picked.secret_key }
+      authSource.value = 'credential'
+      showToast('已选中凭据，保存后会绑定到这条服务', 'success')
+    } else {
+      delete next['header:Authorization']
+      mcpBinding.value = null
+      authSource.value = 'token'
+      showToast('已取消凭据，将使用固定 Token', 'success')
+    }
+    pendingBindings.value = next
+    mcpBindingBusy.value = false
+    return
+  }
+
+  try {
+    if (!mcpBindingSecretId.value) {
+      await writeBinding('header:Authorization', null)
+      mcpBinding.value = null
+      mcpBindingPicked.value = null
+      authSource.value = 'token'
+      showToast('已解除凭据绑定', 'success')
+    } else {
+      const picked = mcpBindingPicked.value
+      if (!picked) throw new Error('请选择凭据')
+      await writeBinding('header:Authorization', picked.id)
+      authSource.value = 'credential'
+      showToast('已绑定，调用将使用这条凭据', 'success')
+    }
+    await loadMcpBinding()
+  } catch (e: any) {
+    mcpBindingError.value = e?.response?.data?.detail || e?.message || '保存绑定失败'
+  } finally {
+    mcpBindingBusy.value = false
+  }
+}
+
+function openHeaderBind(key: string) {
+  const name = key.trim()
+  if (!name) {
+    // 槽位是「header:<名称>」，没有名称就没有可绑的对象。以前这里直接 return，
+    // 点了钥匙什么都不发生，看起来像按钮坏了。
+    showToast('先填写这个 Header 的名称，再绑定凭据', 'warning')
+    return
+  }
+  headerBindSlot.value = name
+  const existing = bindingOfHeader(name)
+  headerBindSecretId.value = existing?.secret_id || null
+  headerBindPicked.value = existing
+    ? { id: existing.secret_id, secret_key: existing.secret_key }
+    : null
+  headerBindError.value = ''
+}
+
+function onHeaderBindPicked(item: { id: string; secret_key: string } | null) {
+  headerBindPicked.value = item
+}
+
+async function saveHeaderBind() {
+  if (!headerBindSlot.value) return
+  headerBindBusy.value = true
+  headerBindError.value = ''
+
+  // 新建态：同样是先记着，保存服务后再补写
+  if (!editingId.value) {
+    const slot = `header:${headerBindSlot.value}`
+    const picked = headerBindSecretId.value ? headerBindPicked.value : null
+    const next = { ...pendingBindings.value }
+    if (picked) {
+      next[slot] = { secret_id: picked.id, secret_key: picked.secret_key, secret_name: picked.secret_key }
+      showToast(`已为 ${headerBindSlot.value} 选中凭据，保存后生效`, 'success')
+    } else {
+      delete next[slot]
+      showToast('已取消该 Header 的凭据', 'success')
+    }
+    pendingBindings.value = next
+    headerBindSlot.value = null
+    headerBindBusy.value = false
+    return
+  }
+
+  try {
+    const picked = headerBindSecretId.value ? headerBindPicked.value : null
+    await writeBinding(`header:${headerBindSlot.value}`, picked?.id || null)
+    if (picked) showToast(`已为 ${headerBindSlot.value} 绑定凭据`, 'success')
+    else showToast('已解除绑定', 'success')
+    headerBindSlot.value = null
+    await loadMcpBinding()
+  } catch (e: any) {
+    headerBindError.value = e?.response?.data?.detail || e?.message || '保存绑定失败'
+  } finally {
+    headerBindBusy.value = false
+  }
+}
+
+function onMcpBindingPicked(item: { id: string; secret_key: string } | null) {
+  mcpBindingPicked.value = item
+}
+
+watch(editingId, () => void loadMcpBinding(), { immediate: true })
 
 const addHeaderPair = () => {
   headerPairs.value.push({ key: '', value: '' })
@@ -505,29 +740,19 @@ const buildServerPayload = (server: any) => {
       payload.fixed_token = authorizationToken.value.trim()
     }
 
+    // 「其他 Header」统一走纯函数：新建态取 headers，编辑态取 patch。
+    const authPlan = planMcpAuthHeaders(
+      headerPairs.value,
+      (name) => Boolean(bindingOfHeader(name)),
+    )
+
     if (isEditing.value) {
       delete payload.auth_headers
-      const patch: Record<string, string | null> = {}
-      headerPairs.value.forEach((pair) => {
-        const key = pair.key.trim()
-        if (!key || isAuthorizationHeader(key)) return
-        if (pair.existing) {
-          if (pair.removed && pair.changed) patch[key] = null
-          else if (pair.changed && pair.value.trim()) patch[key] = pair.value.trim()
-        } else if (pair.value.trim()) {
-          patch[key] = pair.value.trim()
-        }
-      })
-      if (Object.keys(patch).length) payload.auth_headers_patch = patch
+      // 只绑凭据、不填值的行也会出现在 patch 里（值为空串）：运行时注入循环
+      // 只遍历服务配置中已存在的 Header 名，名字不在配置里绑定就永远查不到。
+      if (Object.keys(authPlan.patch).length) payload.auth_headers_patch = authPlan.patch
     } else if (headerMode.value === 'simple') {
-      const dynamicHeaders: Record<string, string> = {}
-      headerPairs.value.forEach((pair) => {
-        const key = pair.key.trim()
-        if (key && !isAuthorizationHeader(key) && pair.value.trim()) {
-          dynamicHeaders[key] = pair.value.trim()
-        }
-      })
-      payload.auth_headers = JSON.stringify(dynamicHeaders, null, 2)
+      payload.auth_headers = JSON.stringify(authPlan.headers, null, 2)
     } else {
       try {
         const advancedHeaders = JSON.parse(newServer.value.auth_headers || '{}')
@@ -740,6 +965,212 @@ function toolParamNames(tool: any): string[] {
   }
 }
 
+// ── 参数级凭据 ────────────────────────────────────────────────────────
+//
+// 标记后这个参数从**模型可见**的 schema 里消失，改由每个调用者绑定凭据。
+// 因为影响的是所有人（不只是操作者），chip 点一下只是打开确认弹层，不直接改。
+
+const paramMarkTarget = ref<{ tool: any } | null>(null)
+/** 弹窗里的草稿：参数名 → 是否「值由凭据提供」。一次改完再提交。 */
+const paramDraft = ref<Record<string, boolean>>({})
+/** 从 chip 点进来时高亮这一行，省得用户在一长串参数里找 */
+const paramFocus = ref('')
+const paramMarkBusy = ref(false)
+
+const draftCredentialCount = computed(
+  () => Object.values(paramDraft.value).filter(Boolean).length,
+)
+
+/**
+ * 标成「来自凭据」但还没选具体凭据的参数。
+ *
+ * 这种状态下调用必然失败（要么报「未绑定」，要么报凭据缺失），而界面看起来
+ * 是配好了的——所以在保存这一步就拦住，别让配置带着空洞流出去。
+ */
+const draftUnboundNames = computed(() => {
+  const target = paramMarkTarget.value
+  if (!target) return [] as string[]
+  return Object.entries(paramDraft.value)
+    .filter(([name, isCred]) => isCred && !bindingOfSlot(paramSlot(target.tool, name)))
+    .map(([name]) => name)
+})
+
+function credentialParamList(tool: any): string[] {
+  const raw = tool?.credential_params
+  if (!raw) return []
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    return []
+  }
+}
+
+const isCredentialParam = (tool: any, name: string) =>
+  credentialParamList(tool).includes(name)
+
+/** 长工具名取 `:` 后的短名——槽位里只用短名，服务已由 consumer_id 限定 */
+function shortToolName(tool: any): string {
+  const full = String(tool?.tool_name || '')
+  return full.includes(':') ? full.split(':').slice(1).join(':') : full
+}
+
+function paramSlot(tool: any, name: string): string {
+  return `arg:${shortToolName(tool)}:${name}`
+}
+
+/**
+ * 只把绑定表拉回来，**不动** Authorization 那几个表单状态。
+ *
+ * `loadMcpBinding()` 开头有 `if (!editingId) return`——它服务于「编辑配置」弹窗，
+ * 那个场景才有 id。参数设置是独立弹窗，从工具卡片直接进，`editingId` 是空的，
+ * 复用它会静默不加载，表现就是「绑成功了但界面还显示未选」。
+ */
+async function loadBindingsFor(serverId: string) {
+  if (!serverId) return
+  try {
+    const res = await axios.get('/api/portal/secrets/bindings', {
+      params: { consumer_type: 'mcp_server', consumer_id: serverId },
+    })
+    // 参数设置弹窗和编辑弹窗会同时发请求（先开 A 再点 B 的工具卡片），
+    // 谁后返回谁覆盖。晚到的旧响应必须丢掉，否则参数设置里会显示别的服务的绑定。
+    if (paramMarkTarget.value?.tool?.server_id !== serverId) return
+    const map: Record<string, HeaderBinding> = {}
+    for (const row of res.data?.data || []) {
+      // 别人的个人绑定看不见；系统级的要算进来
+      if (!row.bound_by_me && row.owner_scope !== 'system') continue
+      map[row.slot] = {
+        secret_id: row.secret_id,
+        secret_key: row.secret_key,
+        secret_name: row.secret_name,
+        secret_status: row.secret_status,
+      }
+    }
+    // 必须以服务端为准：合并的话，服务端已经删掉的绑定在本地还留着——
+    // 表现就是「提示已解除，界面还显示着那个凭据」。
+    // 和 loadMcpBinding 拉的是同一个服务的全部绑定，谁先谁后内容都一致。
+    headerBindings.value = map
+  } catch {
+    // 拉不到就按「未绑」显示，不该挡住参数设置
+  }
+}
+
+/** 任意槽位的绑定（header:/arg: 共用一个 map） */
+const bindingOfSlot = (slot: string): HeaderBinding | null =>
+  headerBindings.value[slot] || pendingBindings.value[slot] || null
+
+/** 正在为哪个参数挑凭据；非空时显示绑定弹窗。和 Header 那个是同一套选择器。 */
+const paramBindCtx = ref<{ tool: any; name: string } | null>(null)
+const paramBindSecretId = ref<string | null>(null)
+const paramBindPicked = ref<{ id: string; secret_key: string } | null>(null)
+const paramBindBusy = ref(false)
+
+function openParamBind(tool: any, name: string) {
+  paramBindCtx.value = { tool, name }
+  const existing = bindingOfSlot(paramSlot(tool, name))
+  paramBindSecretId.value = existing?.secret_id || null
+  paramBindPicked.value = existing
+    ? { id: existing.secret_id, secret_key: existing.secret_key }
+    : null
+}
+
+/**
+ * 写参数槽位的绑定。
+ *
+ * 用工具自己的 ``server_id`` 而不是 ``editingId``：参数设置是从工具卡片进的，
+ * 那里不一定处于「编辑服务」状态，``editingId`` 可能是空的。
+ */
+async function saveParamBind() {
+  const ctx = paramBindCtx.value
+  if (!ctx || paramBindBusy.value) return
+  const serverId = ctx.tool?.server_id
+  if (!serverId) {
+    showToast('这个工具还没有所属服务，无法绑定', 'error')
+    return
+  }
+  const slot = paramSlot(ctx.tool, ctx.name)
+  const secretId = paramBindSecretId.value ? paramBindPicked.value?.id || null : null
+  paramBindBusy.value = true
+  try {
+    if (secretId) {
+      await axios.post('/api/portal/secrets/bindings', {
+        secret_id: secretId,
+        consumer_type: 'mcp_server',
+        consumer_id: serverId,
+        slot,
+        is_global: true,
+      })
+      showToast(`已为 ${ctx.name} 绑定凭据`, 'success')
+    } else {
+      await axios.delete('/api/portal/secrets/bindings', {
+        data: { consumer_type: 'mcp_server', consumer_id: serverId, slot, is_global: true },
+      })
+      // 立刻清本地，别等 load——万一 load 失败，界面会一直显示已解绑的样子
+      delete headerBindings.value[slot]
+      delete pendingBindings.value[slot]
+      showToast(`已解除 ${ctx.name} 的绑定`, 'success')
+    }
+    paramBindCtx.value = null
+    // 按工具所属服务重载，不能用 loadMcpBinding（它认 editingId）
+    await loadBindingsFor(String(serverId))
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || '保存失败', 'error')
+  } finally {
+    paramBindBusy.value = false
+  }
+}
+
+function openParamMark(tool: any, param = '') {
+  if (!canManageTool(tool) || !canPublishMcp) return
+  // 打开就把已绑的拉回来，否则「重新打开看不到之前绑的」
+  void loadBindingsFor(String(tool?.server_id || ''))
+  const marked = new Set(credentialParamList(tool))
+  const draft: Record<string, boolean> = {}
+  for (const name of toolParamNames(tool)) draft[name] = marked.has(name)
+  paramDraft.value = draft
+  paramFocus.value = param
+  paramMarkTarget.value = { tool }
+}
+
+async function submitParamMark() {
+  const target = paramMarkTarget.value
+  if (!target || paramMarkBusy.value) return
+  // 按钮已经禁用了，这里再兜一次：快捷键/程序触发绕过 disabled 时也要挡住
+  if (draftUnboundNames.value.length) {
+    showToast(
+      `请先给这些参数选凭据：${draftUnboundNames.value.join('、')}`,
+      'error',
+    )
+    return
+  }
+  const tool = target.tool
+  const next = Object.entries(paramDraft.value)
+    .filter(([, isCred]) => isCred)
+    .map(([name]) => name)
+  paramMarkBusy.value = true
+  try {
+    const res = await axios.put(`/api/portal/mcp/tools/${tool.id}/credential-params`, {
+      params: next,
+    })
+    // 用后端回的真实值，别拿本地草稿当结果——不一致时界面会一直显示旧状态
+    const saved = res.data?.credential_params
+    tool.credential_params = JSON.stringify(Array.isArray(saved) ? saved : next)
+    showToast(
+      next.length
+        ? `已设置 ${next.length} 个参数由凭据提供，模型不再看到它们`
+        : '已恢复为全部由模型填写',
+      'success',
+    )
+    paramMarkTarget.value = null
+    // 重新拉一遍：本地改的是列表里的对象引用，一旦别处刷新就会被旧数据盖回去
+    await fetchServers()
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || '保存失败', 'error')
+  } finally {
+    paramMarkBusy.value = false
+  }
+}
+
 /** 卡片「⋯」操作菜单：fixed 定位，避免被列表滚动容器裁掉 */
 const actionMenu = ref<{ server: any; x: number; top: number | null; bottom: number | null } | null>(null)
 
@@ -837,6 +1268,18 @@ const resetWizard = () => {
   authorizationEditing.value = false
   authorizationToken.value = ''
   savedSseUrl.value = ''
+  // 没保存就关掉的向导，选的凭据也不该留着——下次新建时突然冒出一条绑定会很怪
+  pendingBindings.value = {}
+  mcpBindingSecretId.value = null
+  mcpBinding.value = null
+  mcpBindingPicked.value = null
+  mcpBindingError.value = ''
+  // Header 凭据弹窗的三个状态也要清：向导关掉时它可能正开着，
+  // 不清的话下次打开向导会直接弹出上一次的半开状态，还带着旧的选中值
+  headerBindSlot.value = null
+  headerBindSecretId.value = null
+  headerBindPicked.value = null
+  authSource.value = 'token'
 }
 
 const closeWizard = () => {
@@ -1226,6 +1669,10 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
     const res = await axios.post('/api/portal/mcp/servers', payload)
     savedUserAssertionEnabled.value = Boolean(payload.user_assertion_enabled)
     if (options?.closeAfterSave) {
+      // 补写必须在 closeWizard() 之前：它 → resetWizard() → 清空 pendingBindings，
+      // 先关就再也找不到「用户在这个向导里选过哪几条凭据」了。
+      const earlyId = res.data?.id
+      if (earlyId) await flushPendingBindings(String(earlyId))
       showToast(
         payload.user_assertion_enabled
           ? '已保存：用户身份传递已开启，签名密钥已生成；可在列表中编辑该服务测试连接'
@@ -1236,6 +1683,8 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
       fetchServers()
       return true
     }
+    const newId = res.data?.id
+    if (newId) await flushPendingBindings(newId)
     showToast('添加成功', 'success')
     createdServer.value = res.data
     await fetchServers()
@@ -1248,6 +1697,38 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
     return false
   } finally {
     savingServer.value = false
+  }
+}
+
+/** 保存成功后，把新建态选的凭据真正绑上。 */
+async function flushPendingBindings(serverId: string) {
+  const entries = Object.entries(pendingBindings.value)
+  if (!entries.length) return
+  const failed: string[] = []
+  const keep: Record<string, HeaderBinding> = {}
+  for (const [slot, binding] of entries) {
+    try {
+      await axios.post('/api/portal/secrets/bindings', {
+        secret_id: binding.secret_id,
+        consumer_type: 'mcp_server',
+        consumer_id: serverId,
+        slot,
+        // 新建服务时暂存的绑定，落库时同样是给全平台用的
+        is_global: true,
+      })
+    } catch {
+      // 服务已经建好了，绑定失败不该让它回滚——但要让人知道，否则界面显示
+      // 「已绑定」，实际调用却拿不到值。
+      failed.push(slot.replace(/^header:/, ''))
+      // 失败的留在暂存里：清掉的话「哪些没绑上」既查不到也重试不了
+      keep[slot] = binding
+    }
+  }
+  pendingBindings.value = keep
+  if (failed.length) {
+    showToast(`服务已创建，但 ${failed.join('、')} 的凭据绑定失败，请到编辑态重新绑定`, 'error')
+  } else {
+    showToast(`已绑定 ${entries.length} 条凭据`, 'success')
   }
 }
 
@@ -2191,12 +2672,42 @@ onMounted(fetchServers)
                   <p class="line-clamp-2 text-xs leading-relaxed text-gray-600 dark:text-gray-400">
                     {{ tool.tool_description || '暂无描述' }}
                   </p>
-                  <div class="mt-2 flex flex-wrap gap-1" v-if="toolParamNames(tool).length">
+                  <div class="mt-2 flex flex-wrap items-center gap-1" v-if="toolParamNames(tool).length">
+                    <button
+                      v-if="canManageTool(tool) && canPublishMcp"
+                      type="button"
+                      class="mr-1 inline-flex shrink-0 items-center gap-0.5 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium text-indigo-600 hover:bg-indigo-100"
+                      v-tooltip="'设置哪些参数的值由凭据中心提供'"
+                      @click.stop="openParamMark(tool)"
+                    >
+                      <KeyIcon class="h-2.5 w-2.5" />
+                      参数设置<span v-if="credentialParamList(tool).length"> {{ credentialParamList(tool).length }}</span>
+                    </button>
                     <code
                       v-for="paramName in toolParamNames(tool)"
                       :key="paramName"
-                      class="rounded border bg-white px-1 text-[9px] text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400"
-                    >{{ paramName }}</code>
+                      role="button"
+                      tabindex="0"
+                      :class="[
+                        'inline-flex items-center gap-0.5 rounded border px-1 text-[9px] transition-colors',
+                        isCredentialParam(tool, paramName)
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : 'bg-white text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400',
+                        canManageTool(tool) && canPublishMcp
+                          ? 'cursor-pointer hover:border-indigo-300 hover:text-indigo-600'
+                          : 'cursor-default',
+                      ]"
+                      v-tooltip="isCredentialParam(tool, paramName)
+                        ? `${paramName} 的值由凭据中心提供，模型看不到它。点击打开参数设置。`
+                        : (canManageTool(tool) && canPublishMcp
+                            ? `点击打开参数设置，可把 ${paramName} 改为由凭据提供`
+                            : `${paramName}`)"
+                      @click.stop="openParamMark(tool, paramName)"
+                      @keydown.enter.stop="openParamMark(tool, paramName)"
+                    >
+                      <KeyIcon v-if="isCredentialParam(tool, paramName)" class="h-2.5 w-2.5" />
+                      {{ paramName }}
+                    </code>
                   </div>
                 </div>
               </div>
@@ -2277,7 +2788,7 @@ onMounted(fetchServers)
         </div>
 
         <!-- Wizard Step 1: Input -->
-        <div v-if="wizardStep === 1" class="flex flex-1 flex-col space-y-5 overflow-y-auto p-4 sm:p-6">
+        <div v-if="wizardStep === 1" class="flex flex-1 flex-col gap-5 overflow-y-auto p-4 sm:p-6">
           <div
             v-if="!isEditing"
             class="flex items-center gap-1 rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5"
@@ -2334,6 +2845,11 @@ onMounted(fetchServers)
               <input v-model="newServer.sse_url" placeholder="https://..." class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono" />
               <p class="text-[10px] text-gray-400 mt-1">支持 MCP SSE 与 streamable HTTP（如 ModelScope）；连接时自动探测协议。</p>
             </div>
+
+            <!-- 分割线：Header 配置和「身份传递」是两件不同的事——前者是服务怎么认
+                 我们，后者是我们怎么告诉服务「现在是谁在调」。混在同一段里，容易
+                 以为关掉 Header 就一起关掉了身份传递。 -->
+            <div class="order-3 h-px shrink-0 bg-gray-300" aria-hidden="true"></div>
 
             <div class="order-3 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
               <div class="flex items-center justify-between gap-3">
@@ -2470,7 +2986,7 @@ onMounted(fetchServers)
               </div>
             </div>
           
-            <!-- Authorization Editor -->
+            <!-- Authorization：固定 Token 与凭据中心二选一 -->
             <div v-if="connectionInputTab === 'manual' || isEditing" class="order-2 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
               <div class="flex items-center justify-between gap-3">
                 <div class="min-w-0">
@@ -2483,34 +2999,107 @@ onMounted(fetchServers)
                   @update:model-value="updateAuthorizationEnabled"
                 />
               </div>
-              <div v-if="authorizationEnabled" class="mt-3 flex items-center gap-2">
-                <span class="shrink-0 rounded border border-indigo-100 bg-white px-2 py-2 font-mono text-xs text-gray-500">Bearer</span>
-                <input
-                  :value="authorizationEditing ? authorizationToken : '********'"
-                  type="password"
-                  :readonly="isEditing && !authorizationEditing"
-                  placeholder="请输入 Token"
-                  aria-label="Authorization Token"
-                  class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary read-only:bg-gray-100"
-                  @input="handleAuthorizationInput"
-                />
-                <button
-                  v-if="isEditing && !authorizationEditing"
-                  type="button"
-                  class="shrink-0 rounded border border-indigo-200 bg-white px-2.5 py-2 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50"
-                  @click="startAuthorizationEdit"
-                >编辑</button>
-                <button
-                  v-else-if="isEditing && authorizationEditing"
-                  type="button"
-                  class="shrink-0 rounded border border-gray-200 bg-white px-2.5 py-2 text-[10px] font-semibold text-gray-600 hover:bg-gray-50"
-                  @click="cancelAuthorizationEdit"
-                >取消</button>
-              </div>
-              <p v-if="isEditing && authorizationEnabled" class="mt-2 text-[10px] leading-relaxed text-amber-600">已配置 Token 不会回显；点击“编辑”后填写新 Token，保存后才会替换。</p>
-              <p v-if="verifyReusesSavedAuth && authorizationEnabled && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">“连接并发现工具”与保存都会沿用已保存的 Token。</p>
-              <p v-if="verifyAddressChanged && authorizationEnabled && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">地址已变更，测试与保存会继续沿用已保存的 Token；如需更换请点击“编辑”。</p>
+
+              <template v-if="authorizationEnabled">
+                <!-- 来源二选一。新建时也能选凭据：先记在 pendingBindings，保存拿到 id 后补写 -->
+                <div class="mt-3 inline-flex rounded-lg bg-white p-0.5 ring-1 ring-indigo-100">
+                  <button
+                    type="button"
+                    class="rounded-md px-2.5 py-1 text-[10px] font-semibold"
+                    :class="authSource === 'token' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'"
+                    @click="authSource = 'token'"
+                  >固定 Token</button>
+                  <button
+                    type="button"
+                    class="rounded-md px-2.5 py-1 text-[10px] font-semibold"
+                    :class="authSource === 'credential' ? 'bg-emerald-600 text-white' : 'text-gray-600 hover:bg-gray-50'"
+                    @click="authSource = 'credential'"
+                  >来自凭据中心</button>
+                </div>
+
+                <!-- 固定 Token：服务级默认值，全平台共用 -->
+                <div v-if="authSource === 'token'" class="mt-3">
+                  <div class="flex items-center gap-2">
+                    <span class="shrink-0 rounded border border-indigo-100 bg-white px-2 py-2 font-mono text-xs text-gray-500">Bearer</span>
+                    <input
+                      :value="authorizationEditing ? authorizationToken : '********'"
+                      type="password"
+                      :readonly="isEditing && !authorizationEditing"
+                      placeholder="请输入 Token"
+                      aria-label="Authorization Token"
+                      class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary read-only:bg-gray-100"
+                      @input="handleAuthorizationInput"
+                    />
+                    <button
+                      v-if="isEditing && !authorizationEditing"
+                      type="button"
+                      class="shrink-0 rounded border border-indigo-200 bg-white px-2.5 py-2 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50"
+                      @click="startAuthorizationEdit"
+                    >编辑</button>
+                    <button
+                      v-else-if="isEditing && authorizationEditing"
+                      type="button"
+                      class="shrink-0 rounded border border-gray-200 bg-white px-2.5 py-2 text-[10px] font-semibold text-gray-600 hover:bg-gray-50"
+                      @click="cancelAuthorizationEdit"
+                    >取消</button>
+                  </div>
+                  <p v-if="isEditing" class="mt-2 text-[10px] leading-relaxed text-amber-600">已配置 Token 不会回显；点击“编辑”后填写新 Token，保存后才会替换。</p>
+                  <p v-if="verifyReusesSavedAuth && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">“连接并发现工具”与保存都会沿用已保存的 Token。</p>
+                  <p v-if="verifyAddressChanged && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">地址已变更，测试与保存会继续沿用已保存的 Token；如需更换请点击“编辑”。</p>
+                  <!-- 二选一必须诚实：还有绑定在，实际走的就不是这个 Token -->
+                  <p v-if="mcpBinding" class="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] leading-relaxed text-amber-800">
+                    你还有一条凭据绑定（<code>{{ mcpBinding.secret_key }}</code>）没解除，调用时会用它盖过这里的固定 Token。要真正走固定 Token，请切到「来自凭据中心」解除绑定。
+                  </p>
+                </div>
+
+                <!-- 来自凭据中心：每人用自己的，盖过固定 Token -->
+                <div v-else class="mt-3">
+                  <div class="flex items-center gap-2">
+                    <div class="min-w-0 flex-1">
+                      <CredentialPicker
+                        v-model="mcpBindingSecretId"
+                        scene="mcp"
+                        placeholder="未绑定 —— 这条服务没有可用的 Authorization"
+                        @picked="onMcpBindingPicked"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      :disabled="mcpBindingBusy"
+                      class="shrink-0 rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                      @click="saveMcpBinding"
+                    >
+                      {{ mcpBindingBusy ? '保存中…' : mcpBindingSecretId ? '保存绑定' : '解除绑定' }}
+                    </button>
+                  </div>
+                  <p v-if="mcpBindingError" class="mt-1.5 text-[10px] text-red-600">{{ mcpBindingError }}</p>
+                  <p v-else-if="mcpBinding" class="mt-1.5 text-[10px] text-emerald-700">
+                    当前生效：<code>{{ mcpBinding.secret_key }}</code>
+                  </p>
+                  <p v-else class="mt-1.5 text-[10px] leading-relaxed text-gray-500">
+                    绑定后只对你自己生效。需要先到「个人中心 → 我的凭据」建一条允许 MCP 场景的凭据。
+                  </p>
+
+                  <!-- 平台服务：这条绑定只属于你自己，别说成「给全平台配好了」 -->
+                  <div v-if="scope === 'global'" class="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-relaxed text-amber-800">
+                    <b>这是平台服务。</b>你绑的凭据只对<strong>你自己</strong>的调用生效，不会分发给其他人；
+                    他们仍会用上面的固定 Token，或者各自去「个人中心 → 我的 MCP → 平台服务」绑自己的。
+                    <template v-if="!authorizationToken && isEditing">
+                      如果你想让<strong>所有人</strong>共用一个 Token，请改用「固定 Token」。
+                    </template>
+                  </div>
+                </div>
+              </template>
+
+              <!-- 关掉 Authorization 却还留着绑定时要提醒：绑定会继续往请求头里塞值 -->
+              <p v-if="!authorizationEnabled && mcpBinding" class="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] leading-relaxed text-amber-800">
+                开关关掉了，但你还绑着 <code>{{ mcpBinding.secret_key }}</code>——它仍会被注入到 Authorization 头。要彻底不用鉴权，请打开开关切到「来自凭据中心」解除绑定。
+              </p>
             </div>
+
+            <!-- 分割线：Authorization 是「服务怎么认我们」的主入口，其他 Header 是次要补充。
+                 不加线的话两块连成一片，看起来像同一个开关的不同部分。 -->
+            <div class="order-2 h-px shrink-0 bg-gray-300" aria-hidden="true"></div>
 
             <!-- Dynamic Headers Editor -->
             <div v-if="connectionInputTab === 'manual' || isEditing" class="order-2">
@@ -2530,7 +3119,27 @@ onMounted(fetchServers)
                   <div v-for="(pair, index) in headerPairs" :key="index" class="flex items-center gap-2">
                     <template v-if="pair.existing && !pair.editing && !pair.removed">
                       <input :value="pair.key" readonly class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-none read-only:bg-gray-100" />
-                      <input :value="pair.maskedValue || '********'" readonly type="password" class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-none read-only:bg-gray-100" />
+                      <!-- 绑了凭据就不显示掩码值：值根本不在服务配置里，显示掩码会让人以为存着明文 -->
+                      <span
+                        v-if="bindingOfHeader(pair.key)"
+                        class="flex min-w-0 flex-1 items-center gap-1.5 rounded border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[10px] text-emerald-700"
+                      >
+                        <KeyIcon class="h-3 w-3 shrink-0" />
+                        来自凭据 <code class="truncate">{{ bindingOfHeader(pair.key)?.secret_key }}</code>
+                      </span>
+                      <input v-else :value="pair.maskedValue || '********'" readonly type="password" class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-none read-only:bg-gray-100" />
+                      <button
+                        type="button"
+                        class="shrink-0 rounded border p-1.5"
+                        :class="bindingOfHeader(pair.key)
+                          ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                          : 'border-gray-200 bg-white text-gray-500 hover:text-emerald-600'"
+                        :title="bindingOfHeader(pair.key) ? `更换 ${pair.key} 的凭据` : `为 ${pair.key} 绑定凭据`"
+                        :aria-label="`为 ${pair.key} 绑定凭据`"
+                        @click="openHeaderBind(pair.key)"
+                      >
+                        <KeyIcon class="h-3.5 w-3.5" />
+                      </button>
                       <button type="button" class="shrink-0 rounded border border-indigo-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50" @click="editHeaderPair(index)">编辑</button>
                       <button type="button" class="shrink-0 p-1.5 text-gray-400 hover:text-red-500" aria-label="删除 Header" @click="removeHeaderPair(index)">
                         <TrashIcon class="h-4 w-4" />
@@ -2543,7 +3152,26 @@ onMounted(fetchServers)
                     </template>
                     <template v-else>
                       <input v-model="pair.key" :readonly="pair.existing" placeholder="名称（如 X-Tenant）" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary read-only:bg-gray-100" @input="pair.changed = true; authHeadersTouched = true" />
-                      <input v-model="pair.value" :type="pair.existing ? 'password' : 'text'" :placeholder="pair.existing ? '请输入新值' : '内容（Value）'" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary" @input="pair.changed = true; authHeadersTouched = true" />
+                      <template v-if="!pair.existing && bindingOfHeader(pair.key)">
+                        <span class="flex min-w-0 flex-1 items-center gap-1.5 rounded border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[10px] text-emerald-700">
+                          <KeyIcon class="h-3 w-3 shrink-0" />
+                          来自凭据 <code class="truncate">{{ bindingOfHeader(pair.key)?.secret_key }}</code>
+                        </span>
+                      </template>
+                      <input v-else v-model="pair.value" :type="pair.existing ? 'password' : 'text'" :placeholder="pair.existing ? '请输入新值' : '内容（Value）'" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary" @input="pair.changed = true; authHeadersTouched = true" />
+                      <button
+                        v-if="!pair.existing"
+                        type="button"
+                        class="shrink-0 rounded border p-1.5"
+                        :class="bindingOfHeader(pair.key)
+                          ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                          : 'border-gray-200 bg-white text-gray-500 hover:text-emerald-600'"
+                        :title="bindingOfHeader(pair.key) ? `更换 ${pair.key} 的凭据` : `为 ${pair.key} 绑定凭据`"
+                        :aria-label="`为 ${pair.key} 绑定凭据`"
+                        @click="openHeaderBind(pair.key)"
+                      >
+                        <KeyIcon class="h-3.5 w-3.5" />
+                      </button>
                       <button v-if="pair.existing" type="button" class="shrink-0 rounded border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-gray-600 hover:bg-gray-50" @click="cancelHeaderPairEdit(index)">取消</button>
                       <button v-else type="button" class="shrink-0 p-1.5 text-gray-400 hover:text-red-500" aria-label="删除 Header" @click="removeHeaderPair(index)">
                         <TrashIcon class="h-4 w-4" />
@@ -3036,6 +3664,229 @@ onMounted(fetchServers)
       @refresh="refreshSelectedServerUsage"
     />
   </div>
+        <!-- 参数级凭据：像工具参数那样一张表里逐个选，一次提交 -->
+        <Teleport to="body">
+          <div
+            v-if="paramMarkTarget"
+            class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+            @click.self="paramMarkTarget = null"
+          >
+            <div class="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-2xl">
+              <div class="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+                <div class="min-w-0">
+                  <h3 class="text-base font-semibold text-gray-900">参数设置</h3>
+                  <p class="mt-0.5 truncate text-xs text-gray-500">
+                    {{ paramMarkTarget.tool.tool_name }}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  @click="paramMarkTarget = null"
+                >
+                  <XMarkIcon class="h-4 w-4" />
+                </button>
+              </div>
+
+              <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+                <table class="w-full text-xs">
+                  <thead>
+                    <tr class="text-left text-[11px] text-gray-400">
+                      <th class="pb-2 font-normal">参数名</th>
+                      <th class="w-40 pb-2 font-normal">值的来源</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="name in toolParamNames(paramMarkTarget.tool)"
+                      :key="name"
+                      :class="[
+                        'border-t border-gray-100',
+                        paramFocus === name ? 'bg-indigo-50/60' : '',
+                      ]"
+                    >
+                      <td class="py-2 pr-3">
+                        <code class="font-mono text-xs text-gray-800">{{ name }}</code>
+                        <!-- 槽位是实现概念（参数「写到哪里 + 叫什么」），
+                             摊在界面上只会让人问「这是啥」。hover 才给排查用。 -->
+                        <div
+                          v-if="paramDraft[name]"
+                          class="mt-0.5 cursor-help break-all font-mono text-[10px] text-gray-400"
+                          :title="`绑定位置：${paramSlot(paramMarkTarget.tool, name)}`"
+                        >由凭据提供</div>
+                      </td>
+                      <td class="py-2 align-top">
+                        <select
+                          v-model="paramDraft[name]"
+                          class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        >
+                          <option :value="false">模型填写</option>
+                          <option :value="true">来自凭据</option>
+                        </select>
+                        <div v-if="paramDraft[name]" class="mt-1 flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shadow-sm transition-colors"
+                            :class="bindingOfSlot(paramSlot(paramMarkTarget.tool, name))
+                              ? 'border border-violet-300 bg-white text-violet-700 hover:bg-violet-50'
+                              : 'bg-violet-600 text-white hover:bg-violet-700'"
+                            @click.stop="openParamBind(paramMarkTarget.tool, name)"
+                          >
+                            <KeyIcon class="h-3 w-3" />
+                            {{ bindingOfSlot(paramSlot(paramMarkTarget.tool, name)) ? '换凭据' : '选凭据' }}
+                          </button>
+                          <span
+                            v-if="bindingOfSlot(paramSlot(paramMarkTarget.tool, name))"
+                            class="truncate text-[10px]"
+                            :class="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))
+                              ? 'text-amber-700' : 'text-emerald-600'"
+                            :title="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))
+                              ? `已绑定 ${bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key}，但${bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))}`
+                              : (bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key || '')"
+                          >{{ bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key }}</span>
+                          <span
+                            v-if="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))"
+                            class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700"
+                          >{{ bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name))) }}</span>
+                          <span v-else class="text-[10px] leading-tight text-gray-400">
+                            未选 · 各人绑自己的
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <p
+                  v-if="draftCredentialCount"
+                  class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700"
+                >
+                  标为「来自凭据」的参数会从<strong>模型可见的参数</strong>里移除，值由平台在调用时注入。<br />
+                  在这里选的凭据<strong>全平台共用</strong>；调用者自己再绑一条会更优先（个人绑定优先于这里）。
+                </p>
+              </div>
+
+              <div class="flex items-center gap-2 border-t border-gray-100 px-5 py-3">
+                <span class="text-[11px] text-gray-400">
+                  <template v-if="draftCredentialCount">
+                    {{ draftCredentialCount }} 个参数由凭据提供
+                  </template>
+                  <template v-else>全部由模型填写</template>
+                  <!-- 两个动作是分开落库的，不讲清楚会以为「选完凭据就好了」 -->
+                  <span class="text-gray-300"> · </span>
+                  <span class="text-gray-400">选凭据即刻生效，来源改动需点「保存」</span>
+                  <span v-if="draftUnboundNames.length" class="text-red-600">
+                    <span class="text-gray-300"> · </span>
+                    {{ draftUnboundNames.join('、') }} 还没选凭据
+                  </span>
+                </span>
+                <div class="ml-auto flex items-center gap-2">
+                  <button
+                    type="button"
+                    class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+                    @click="paramMarkTarget = null"
+                  >取消</button>
+                  <button
+                    type="button"
+                    :disabled="paramMarkBusy || draftUnboundNames.length > 0"
+                    :title="draftUnboundNames.length
+                      ? '先给这些参数选凭据：' + draftUnboundNames.join('、')
+                      : ''"
+                    class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    @click="submitParamMark"
+                  >
+                    {{ paramMarkBusy ? '保存中…' : '保存' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Teleport>
+
+        <!-- 为参数绑定凭据：和 Header 同一个选择器 -->
+        <Teleport to="body">
+          <div
+            v-if="paramBindCtx"
+            class="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 p-4"
+            @click.self="paramBindCtx = null"
+          >
+            <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+              <h3 class="text-base font-semibold text-gray-900">
+                为 <code class="rounded bg-gray-100 px-1.5 py-0.5 text-sm">{{ paramBindCtx.name }}</code> 绑定凭据
+              </h3>
+              <p class="mt-1 text-xs leading-relaxed text-gray-500">
+                选了就是<strong>全平台共用</strong>这一条，所有调用者都不必再配；不选则各人绑自己的。
+                留空保存即解除。
+              </p>
+              <p class="mt-2 text-[11px] leading-relaxed text-gray-400">
+                绑定位置：<code class="font-mono">{{ paramSlot(paramBindCtx.tool, paramBindCtx.name) }}</code>
+              </p>
+
+              <div class="mt-3">
+                <CredentialPicker v-model="paramBindSecretId" scene="mcp" @picked="(item) => (paramBindPicked = item)" />
+              </div>
+
+              <div class="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+                  @click="paramBindCtx = null"
+                >取消</button>
+                <button
+                  type="button"
+                  :disabled="paramBindBusy"
+                  class="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
+                  @click="saveParamBind"
+                >
+                  {{ paramBindBusy ? '保存中…' : paramBindSecretId ? '保存绑定' : '解除绑定' }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Teleport>
+
+        <!-- 为「其他 Header」绑定凭据 -->
+        <Teleport to="body">
+          <div
+            v-if="headerBindSlot"
+            class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+            @click.self="headerBindSlot = null"
+          >
+            <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+              <h3 class="text-base font-semibold text-gray-900">
+                为 <code class="rounded bg-gray-100 px-1.5 py-0.5 text-sm">{{ headerBindSlot }}</code> 绑定凭据
+              </h3>
+              <p class="mt-1 text-xs leading-relaxed text-gray-500">
+                绑定后这个 Header 的值不写进服务配置，调用时按当前用户现取——
+                导出服务配置、复制给别人的时候都不会带走密钥。
+              </p>
+
+              <div class="mt-3">
+                <CredentialPicker v-model="headerBindSecretId" scene="mcp" @picked="onHeaderBindPicked" />
+              </div>
+
+              <p v-if="headerBindError" class="mt-2 text-[11px] text-red-600">{{ headerBindError }}</p>
+              <p v-else-if="headerBindSlot && bindingOfHeader(headerBindSlot)" class="mt-2 text-[11px] text-emerald-600">
+                当前已绑定 {{ bindingOfHeader(headerBindSlot)?.secret_key }}
+              </p>
+
+              <div class="mt-4 flex justify-end gap-2">
+                <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100" @click="headerBindSlot = null">
+                  取消
+                </button>
+                <button
+                  type="button"
+                  :disabled="headerBindBusy"
+                  class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                  @click="saveHeaderBind"
+                >
+                  {{ headerBindBusy ? '保存中…' : headerBindSecretId ? '保存绑定' : '解除绑定' }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Teleport>
+
 </template>
 
 <style scoped>

@@ -391,6 +391,9 @@ async def delete_script_tool(
     await db.delete(row)
     await db.commit()
     ToolRegistry.clear_db_tool_cache()
+    from app.services.secrets import center as secret_center
+
+    await secret_center.detach_consumer(db, consumer_type="script_tool", consumer_id=tool_id)
     return {"ok": True}
 
 

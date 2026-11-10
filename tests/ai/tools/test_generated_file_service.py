@@ -506,3 +506,76 @@ def test_artifact_token_is_second_precision_so_db_roundtrip_is_stable():
     assert generated_file_service.build_artifact_token(
         artifact_id, normalized
     ) == generated_file_service.build_artifact_token(artifact_id, _db_roundtrip(normalized))
+
+
+def test_resolve_delegation_parent_scope_only_for_delegated_child():
+    """父归属只对委派子代理（delegation_depth > 0）生效。"""
+    from app.services.ai.tools.generated_file_service import (
+        resolve_delegation_parent_scope,
+    )
+
+    set_agent_context(
+        AgentContext(
+            agent_id="main",
+            agent_name="Main",
+            user_id=7,
+            conversation_id="conv-1",
+            trace_id="trace-1",
+        )
+    )
+    assert resolve_delegation_parent_scope() == (None, None, None)
+
+    child = AgentContext(
+        agent_id="sub",
+        agent_name="Sub",
+        user_id=7,
+        conversation_id="child_session_1",
+        parent_conversation_id="conv-1",
+        trace_id="child_trace",
+        parent_trace_id="trace-1",
+        delegation_depth=1,
+        delegation_run_id="subrun_1",
+    )
+    assert resolve_delegation_parent_scope(child) == ("conv-1", "trace-1", "subrun_1")
+
+
+@pytest.mark.asyncio
+async def test_register_artifact_inherits_parent_scope_from_delegated_context(
+    unified_publish_env,
+):
+    """未显式传父归属时，register_artifact 从子代理上下文自动推导。"""
+    from app.services.ai.tools import generated_file_service
+
+    workspace_root, session = unified_publish_env
+    source = workspace_root / "7" / "docs" / "child.md"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("# child", encoding="utf-8")
+
+    set_agent_context(
+        AgentContext(
+            agent_id="sub",
+            agent_name="Sub",
+            user_id=7,
+            conversation_id="child_session_1",
+            parent_conversation_id="conv-1",
+            trace_id="child_trace",
+            parent_trace_id="trace-1",
+            delegation_depth=1,
+            delegation_run_id="subrun_1",
+        )
+    )
+
+    await generated_file_service.register_artifact(
+        source_path=source,
+        filename="child.md",
+        owner_user_id=7,
+        artifact_type="markdown",
+        conversation_id="child_session_1",
+        trace_id="child_trace",
+    )
+
+    record = session.record
+    assert record.parent_conversation_id == "conv-1"
+    assert record.parent_trace_id == "trace-1"
+    assert record.conversation_id == "child_session_1"
+    assert record.trace_id == "child_trace"

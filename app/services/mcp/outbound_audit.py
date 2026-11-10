@@ -11,6 +11,7 @@ from app.core.orm import AsyncSessionLocal
 from app.models.mcp import McpOutboundAuditLog, McpServer
 from app.services.ai.audit_payload import bound_audit_payload
 from app.services.ai.user_extra_data import sanitize_extra_data
+from app.services.secrets.guard import build_storage_scanner
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
@@ -46,13 +47,19 @@ async def record_outbound_audit_log(
             agent_name = str((agent_info or {}).get("agent_name") or "").strip() or None
 
             # 工具入参/出参可能带密码、Token；审计只保留打码后的结构。
+            # sanitize_extra_data 只按**键名**打码，配置里那些「长得像普通字符串」的
+            # 密钥（数据库密码、第三方 token）会被它原样放过，所以再过一遍值扫描。
+            scanner = await build_storage_scanner()
             bounded_input = bound_audit_payload(
-                sanitize_extra_data(arguments or {})
+                scanner.mask_data(sanitize_extra_data(arguments or {}))
             )
             bounded_output = (
-                bound_audit_payload(sanitize_extra_data(tool_output))
+                bound_audit_payload(scanner.mask_data(sanitize_extra_data(tool_output)))
                 if tool_output is not None
                 else None
+            )
+            safe_error_message = (
+                scanner.mask_text(str(error_message))[:2000] if error_message else None
             )
 
             log_entry = McpOutboundAuditLog(
@@ -67,7 +74,7 @@ async def record_outbound_audit_log(
                 trace_id=request_id,
                 status=status[:32],
                 latency_ms=latency_ms,
-                error_message=str(error_message)[:2000] if error_message else None,
+                error_message=safe_error_message,
                 tool_input=bounded_input,
                 tool_output=bounded_output,
                 created_at=datetime.utcnow(),

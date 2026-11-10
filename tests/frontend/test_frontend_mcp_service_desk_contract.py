@@ -446,9 +446,27 @@ def test_service_desk_guide_explains_client_secret_scenarios_and_sample_code():
     assert "client_credentials" not in view
     assert "Client Credentials" not in view
     assert "curl" in view
-    assert "requests.post" in view
+    # 指南必须给出能直接复制的示例代码；示例统一用项目已有的 httpx 依赖。
+    assert "httpx.post" in view
     assert "Authorization: Bearer" in view
     assert "不要把 Client Secret 放进 Cursor" in view
+
+
+def test_service_desk_guide_shows_where_pkce_verifier_and_code_come_from():
+    """授权码与 PKCE verifier 不是服务台生成的，指南必须交代来源，否则照做必卡住。"""
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    # 第 1 步：后端生成 verifier 和 challenge，并拼出授权地址
+    assert "token_urlsafe(64)" in view
+    assert "code_challenge_method" in view
+    assert "S256" in view
+    # 回调带回 code，并要校验 state
+    assert "state 不匹配" in view
+    # 换 Token 的四个必需参数都要在示例里出现
+    assert "redirect_uri" in view
+    assert "code_verifier" in view
+    # 曾漏定义的变量必须显式出现，否则复制执行会失败
+    assert "NANZI_REDIRECT_URI" in view
 
 
 def test_service_desk_guide_uses_generic_current_user_identity_wording():
@@ -904,3 +922,22 @@ def test_list_view_actions_use_icon_buttons():
     # 图标按钮必须保留无障碍名与悬停说明
     assert list_actions.count("aria-label") >= 3
     assert list_actions.count("v-tooltip") >= 3
+
+
+def test_service_desk_marks_capability_groups_paused_while_master_switch_is_off():
+    """总开关关闭时服务侧已不再发布工具，能力组不能继续显示成「已开启」。"""
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "const isPlatformPaused = computed(() => config.value.platform_enabled === false)" in view
+    assert "const isCapabilityPaused = (key: string) => isPlatformPaused.value && key !== 'platform_enabled'" in view
+    # 暂停态文案与配置状态并列，避免「已暂停」被读成「能力组被关掉了」
+    assert "isCapabilityPaused(item[0]) ? '已暂停'" in view
+    assert "配置保持：{{ config[item[0]] ? '已开启' : '已关闭' }}" in view
+    # 顶部服务暂停提示只依赖总开关，能力组自身的开/关仍照常保留
+    assert 'v-if="isPlatformPaused"' in view
+    assert "Platform MCP 服务已暂停。" in view
+    assert "MCP_PLATFORM_DISABLED" in view
+    assert "关闭后全部能力组暂停发布" in view
+    # 暂停期间仍允许改能力组配置，保存后提示「恢复总开关后生效」
+    assert "服务暂停期间修改，会在恢复总开关后生效" in view
+    assert ':disabled="(item[0] === \'platform_enabled\' ? !canEditConfig : !canManageCapability) || saving"' in view

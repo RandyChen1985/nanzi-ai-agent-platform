@@ -77,6 +77,22 @@ INCREMENTAL_MIGRATIONS = (
         },
         "codes": ("element:agent:system_publish",),
     },
+    {
+        "key": "credential-center",
+        "title": "凭据中心菜单",
+        "reason": "新增「系统管理 → 凭据中心」页面节点与一个功能点（授权 / 强制停用）。"
+        "个人侧的「我的凭据」是个人中心 tab，不入菜单表。",
+        "spec": "docs/superpowers/specs/2026-11-09-user-credential-center-design.md",
+        # 菜单和建表在同一个文件里（凭据中心是一次建完的），标记块替换第二节。
+        "targets": {
+            "mysql": ROOT / "db-prod" / "V209-add-credential-center.sql",
+            "pg": ROOT / "db-prod-pg" / "V109-add-credential-center.sql",
+        },
+        "codes": (
+            "menu:system:credentials",
+            "element:system:credentials_manage",
+        ),
+    },
 )
 
 TABLE = "ai_agent_menus"

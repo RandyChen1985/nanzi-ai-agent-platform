@@ -1618,11 +1618,29 @@ Client 按创建人隔离；即使是管理员，也只能管理自己创建的 
 
 CRM、OA、后台服务等程序化系统使用 Authorization Code + PKCE：
 
-1. 在服务台创建 Client，并登记业务系统真实的回调地址。
+1. 在服务台创建 Client，勾选 `authorization_code` 授权模式，并登记业务系统真实的回调地址（精确匹配，不支持通配符）。
 2. 外部系统将用户跳转到 `/oauth/authorize`，携带 `client_id`、精确匹配的 `redirect_uri`、请求 Scope、`resource` 和 PKCE S256 参数。
 3. 用户登录 NanZi 并在授权页确认后，外部系统接收授权码。
 4. 外部系统后端使用 `client_id + client_secret + code + code_verifier` 请求 `/oauth/token` 换取 Access Token。
 5. 调用 `https://<NanZi 域名>/mcp/platform` 时，仅携带 `Authorization: Bearer <access_token>`；Client Secret 只能用于 Token Endpoint，不能放入 MCP 请求或前端代码。
+
+其中 `code_verifier` 和 `code` 都不是服务台生成的，而是第 2、3 步由你自己的授权流程产生的：
+
+- `code_verifier`：跳转前业务后端用 `secrets.token_urlsafe(64)` 生成，连同 `state` 一起存进当前登录会话。NanZi 只保存它的 `BASE64URL(SHA256(verifier))` 摘要（`code_challenge`），永远拿不到原文。
+- `code`：用户在授权页点「同意并继续」后，NanZi 302 跳回 `redirect_uri?code=...&state=...`，业务后端从 query 中取出，并校验 `state` 与会话中保存的一致。
+
+```bash
+# 第 1 步：业务后端生成 PKCE 参数，拼出授权地址后让浏览器打开
+PKCE_CODE_VERIFIER=$(python3 -c 'import secrets;print(secrets.token_urlsafe(64))')
+CODE_CHALLENGE=$(python3 -c 'import base64,hashlib,sys;print(base64.urlsafe_b64encode(hashlib.sha256(sys.argv[1].encode()).digest()).rstrip(b"=").decode())' "$PKCE_CODE_VERIFIER")
+OAUTH_STATE=$(python3 -c 'import secrets;print(secrets.token_urlsafe(16))')
+echo "https://nanzi.example.com/oauth/authorize?response_type=code&client_id=$NANZI_CLIENT_ID&redirect_uri=$NANZI_REDIRECT_URI&scope=agent%3Ainvoke&state=$OAUTH_STATE&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&resource=$NANZI_RESOURCE"
+
+# 第 2 步：用户同意后，回调地址会收到 ?code=...&state=...，取出 code
+CALLBACK_CODE="授权回调中的 code"
+```
+
+`resource` 必须写成 `<NanZi 域名>/mcp/platform` 这个规范地址，写成别的值会被以 `invalid_target` 拒绝。
 
 Token Endpoint 支持 `authorization_code` 和 `refresh_token`，但 Platform MCP 不签发无用户身份的 Token。服务端会同时校验 Token、Client、Resource、Scope、用户授权关系以及 NanZi 内部资源权限。
 
@@ -1644,22 +1662,28 @@ Token Endpoint 支持 `authorization_code` 和 `refresh_token`，但 Platform MC
 Client Secret 的使用方式：它只放在业务方后端请求 `/oauth/token` 时，用来证明“这是哪个外部系统”；Access Token 才放在每次 MCP 请求的 `Authorization: Bearer` Header 中。Platform MCP 不签发没有用户身份的 Token，每个 Access Token 都必须绑定完成 NanZi 用户授权的用户：
 
 ```bash
-TOKEN_RESPONSE=$(curl --request POST "https://nanzi.example.com/oauth/token" \
+export NANZI_BASE_URL="https://nanzi.example.com"
+export NANZI_CLIENT_ID="mcp_xxx"
+export NANZI_CLIENT_SECRET="mcp_secret_xxx"
+export NANZI_REDIRECT_URI="https://crm.example.com/oauth/callback"   # 必须与服务台登记的一致
+export NANZI_RESOURCE="$NANZI_BASE_URL/mcp/platform"
+
+TOKEN_RESPONSE=$(curl --request POST "$NANZI_BASE_URL/oauth/token" \
   --user "$NANZI_CLIENT_ID:$NANZI_CLIENT_SECRET" \
   --header "Content-Type: application/x-www-form-urlencoded" \
   --data-urlencode "grant_type=authorization_code" \
-  --data-urlencode "code=$AUTHORIZATION_CODE" \
+  --data-urlencode "code=$CALLBACK_CODE" \
   --data-urlencode "redirect_uri=$NANZI_REDIRECT_URI" \
   --data-urlencode "code_verifier=$PKCE_CODE_VERIFIER" \
-  --data-urlencode "resource=https://nanzi.example.com/mcp/platform")
+  --data-urlencode "resource=$NANZI_RESOURCE")
 ACCESS_TOKEN=$(printf "%s" "$TOKEN_RESPONSE" | jq -r '.access_token')
-curl --request POST "https://nanzi.example.com/mcp/platform" \
+curl --request POST "$NANZI_RESOURCE" \
   --header "Authorization: Bearer $ACCESS_TOKEN" \
   --header "Content-Type: application/json" \
   --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-其中 `$AUTHORIZATION_CODE` 和 `$PKCE_CODE_VERIFIER` 来自同一次用户授权流程；业务方后端使用 `client_id + client_secret + code + code_verifier` 换取的 Access Token 才代表该用户。Client Secret 不应放进 Cursor、浏览器、移动端或 MCP JSON；Cursor 等人工配置场景直接在服务台生成当前用户 Token 即可。完整 curl、Python 和两种场景的向导说明见：[NanZi 平台级 MCP 对外服务技术方案](architech/design/mcp-platform-inbound-service-design.md) 的“外部系统调用示例”章节。
+其中 `$CALLBACK_CODE` 和 `$PKCE_CODE_VERIFIER` 来自同一次用户授权流程（生成方式见上一节）；业务方后端使用 `client_id + client_secret + code + code_verifier` 换取的 Access Token 才代表该用户。Client Secret 不应放进 Cursor、浏览器、移动端或 MCP JSON；Cursor 等人工配置场景直接在服务台生成当前用户 Token 即可。完整可运行示例：[`scripts/examples/mcp_oauth_client_example.py`](scripts/examples/mcp_oauth_client_example.py)；完整 curl、Python 和两种场景的向导说明见：[NanZi 平台级 MCP 对外服务技术方案](architech/design/mcp-platform-inbound-service-design.md) 的“外部系统调用示例”章节。
 
 因此两条链路的定位是：人工联调、Cursor/桌面客户端等使用服务台生成的当前用户个人 Token；CRM、OA、后台任务等程序化集成使用标准 OAuth2 动态获取 Token。服务台个人 Token 不创建 Refresh Token，过期后由当前用户重新登录并生成，不能把 NanZi 登录 Cookie 或用户 API Key 交给第三方。
 

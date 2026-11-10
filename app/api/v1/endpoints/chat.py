@@ -275,7 +275,9 @@ class ArtifactListItem(BaseModel):
     mime_type: Optional[str] = None
     size: int
     conversation_id: Optional[str] = None
+    parent_conversation_id: Optional[str] = None
     trace_id: Optional[str] = None
+    parent_trace_id: Optional[str] = None
     created_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     download_url: str
@@ -305,7 +307,7 @@ async def list_artifacts(
         build_download_url,
     )
     from app.services.app_public_url_service import get_app_public_url
-    from sqlalchemy import func, select
+    from sqlalchemy import func, or_, select
 
     user_id = _require_numeric_chat_user_id(user_info)
 
@@ -313,9 +315,21 @@ async def list_artifacts(
     if artifact_type:
         filters.append(AiArtifact.artifact_type == artifact_type)
     if conversation_id:
-        filters.append(AiArtifact.conversation_id == conversation_id)
+        # 子代理委派产物：conversation_id 仍是实际产生的子会话（审计口径），
+        # parent_conversation_id 指向父会话，主会话的产物面板据此直接聚合。
+        filters.append(
+            or_(
+                AiArtifact.conversation_id == conversation_id,
+                AiArtifact.parent_conversation_id == conversation_id,
+            )
+        )
     if trace_id:
-        filters.append(AiArtifact.trace_id == trace_id)
+        filters.append(
+            or_(
+                AiArtifact.trace_id == trace_id,
+                AiArtifact.parent_trace_id == trace_id,
+            )
+        )
     total = await db.scalar(
         select(func.count())
         .select_from(AiArtifact)
@@ -355,7 +369,9 @@ async def list_artifacts(
                 mime_type=row.mime_type,
                 size=int(row.size or 0),
                 conversation_id=row.conversation_id,
+                parent_conversation_id=row.parent_conversation_id,
                 trace_id=row.trace_id,
+                parent_trace_id=row.parent_trace_id,
                 created_at=row.created_at,
                 expires_at=expires_at,
                 download_url=build_download_url(
@@ -387,7 +403,8 @@ class ArtifactCountsByTrace(BaseModel):
     response_model=StandardResponse[ArtifactCountsByTrace],
     summary="会话内产物数量统计",
     description="按 conversation_id 一次返回当前用户该会话内各 trace_id 的产物数量，"
-    "仅统计 trace_id 非空的产物；不含文件元信息、不签发下载 token，供前端判断某条 AI 消息是否真有产物及显示数量角标。",
+    "子代理委派产物按父 trace 归并到对应 AI 消息；仅统计有效 trace_id 非空的产物；"
+    "不含文件元信息、不签发下载 token，供前端判断某条 AI 消息是否真有产物及显示数量角标。",
 )
 async def count_artifacts_by_trace(
     conversation_id: str = Query(..., description="会话 id"),
@@ -395,19 +412,24 @@ async def count_artifacts_by_trace(
     db: AsyncSession = Depends(get_db_session),
 ):
     from app.models.artifact import AiArtifact
-    from sqlalchemy import func, select
+    from sqlalchemy import func, or_, select
 
     user_id = _require_numeric_chat_user_id(user_info)
 
+    # 子代理产物把 parent_trace_id 归到父消息；没有父归属时退回产物自身 trace。
+    effective_trace_id = func.coalesce(AiArtifact.parent_trace_id, AiArtifact.trace_id)
     rows = (
         await db.execute(
-            select(AiArtifact.trace_id, func.count())
+            select(effective_trace_id, func.count())
             .where(
                 AiArtifact.owner_user_id == user_id,
-                AiArtifact.conversation_id == conversation_id,
-                AiArtifact.trace_id.isnot(None),
+                or_(
+                    AiArtifact.conversation_id == conversation_id,
+                    AiArtifact.parent_conversation_id == conversation_id,
+                ),
+                effective_trace_id.isnot(None),
             )
-            .group_by(AiArtifact.trace_id)
+            .group_by(effective_trace_id)
         )
     ).all()
 

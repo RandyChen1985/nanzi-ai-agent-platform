@@ -786,10 +786,10 @@ class AgentServicePrompts:
                     if "publish_generated_file" in tool_names:
                         if office_write_tools:
                             table_rows.append(
-                                f"| 用户要求保存、交付、导出或下载已生成文件 | 普通文件工具生成文件后才调用 `publish_generated_file(path=...)`；{office_write_label} 的 `*_write` 已经登记 artifact 并返回 `artifact.download_url`，不要再次调用 publish_generated_file；只有拿到真实 `download_url` 才能向用户提供下载地址 |"
+                                f"| 用户要求保存、交付、导出或下载已生成文件 | 普通文件工具生成文件后才调用 `publish_generated_file(path=...)`；{office_write_label} 的 `*_write` 已经登记 artifact 并返回 `artifact.download_url`，不要再次调用 publish_generated_file；子代理委派产生的产物已自动登记到本会话并在 `deliverables/` 留副本，**不要再次发布**；只有拿到真实 `download_url` 才能向用户提供下载地址 |"
                             )
                         else:
-                            table_rows.append("| 用户要求保存、交付、导出或下载已生成文件 | 文件写入/生成完成后必须调用 **publish_generated_file(path=...)**；只有返回 `status=ok` 且包含 `download_url` 才能声称已生成下载地址；最终必须原样复制 `download_url`，不得返回物理路径或臆造链接 |")
+                            table_rows.append("| 用户要求保存、交付、导出或下载已生成文件 | 文件写入/生成完成后必须调用 **publish_generated_file(path=...)**；只有返回 `status=ok` 且包含 `download_url` 才能声称已生成下载地址；子代理返回值里的 `parent_workspace_path` / `download_url` 已经是本会话可见产物，**不要再次发布**；最终必须原样复制 `download_url`，不得返回物理路径或臆造链接 |")
                 elif tools_key == "__fetch__":
                     # fetch：绑定时输出完整行，否则输出兜底行（二选一）。
                     if "fetch_user_long_term_memory" in tool_names:

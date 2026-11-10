@@ -101,6 +101,12 @@ const router = createRouter({
           meta: { perm: 'menu:system:config', title: '系统配置' }
         },
         {
+          path: 'secrets',
+          name: 'AdminSecretCenter',
+          component: () => import('../views/AdminSecretCenter.vue'),
+          meta: { perm: 'menu:system:credentials', title: '凭据中心' }
+        },
+        {
           path: 'menus',
           name: 'MenuManagement',
           component: () => import('../views/MenuManagement.vue'),

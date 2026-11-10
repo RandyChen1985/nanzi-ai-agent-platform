@@ -1126,6 +1126,13 @@ async def _consume_sub_agent_stream(
             if main_ctx.event_queue:
                 await main_ctx.event_queue.put(chunk)
             continue
+        if chunk_type in {"reasoning_content", "thinking"}:
+            # 思考流是子代理自己的会话资产，不是交付正文：
+            # 1) 拼进工具结果会把父智能体的上下文撑满（reasoning 帧逐 token 累积，
+            #    很容易顶到 64KB 上限，真正的结论反而被截掉）；
+            # 2) 转发给主聊天又会让用户在父会话里看到子代理的完整推理。
+            # 两条路都不该走，这里显式丢弃。
+            continue
         if chunk_type in INTERRUPT_SSE_TYPES:
             interrupt_type = chunk_type
             if chunk_type == "error":

@@ -36,6 +36,12 @@ from app.services.ai.tools.parameter_schema import (
     parse_parameter_schema,
 )
 
+from app.services.secrets.injection import (
+    apply_script_env_bindings,
+    build_env_file_content,
+)
+from app.services.secrets.redact import redact_text
+
 logger = logging.getLogger(__name__)
 
 MAX_RESULT_BYTES = 100 * 1024
@@ -204,6 +210,9 @@ class ScriptToolRunner:
         self.sandbox_root = sandbox_root
         self.user_info = dict(user_info or {})
         self.conversation_id = conversation_id
+        # 上次解析凭据环境变量时被拒绝的原因（停用/过期/开关没开）；
+        # 只在返回 None 之后有意义，供调用方在错误信息里带出去。
+        self._credential_denials: str = ""
 
     # ------------------------------------------------------------------ 路径
 
@@ -293,6 +302,50 @@ class ScriptToolRunner:
         if self.config.requirements:
             _write_private(requirements_path, "\n".join(self.config.requirements) + "\n")
         return script_path, params_path, requirements_path
+
+    async def materialize_secret_env(self, stem: str, run_id: str) -> Optional[Path]:
+        """把绑定的凭据写成环境变量文件，返回路径；没有可注入的返回 None。
+
+        三条设计约束：
+
+        1. **值不进命令行**：``NAME=value cmd`` 形式在 ``ps aux`` 和容器进程列表里
+           都看得见，等于把凭据打印到日志里。改成写 0600 文件，命令里只出现路径。
+        2. **用单引号渲染**：shell ``. file`` 会执行命令替换，凭据值里只要出现
+           ``$(...)`` 就是一条任意命令执行通道（见 ``build_env_file_content``）。
+        3. **执行完立即删除**：留在工作区里等于给脚本（和任何能读工作区的工具）
+           一个长期可读的凭据副本。
+
+        解析失败只降级不中断：凭据取不到时脚本照常跑，只是少了那几个变量。
+        """
+        try:
+            # 必须带上执行身份：解析要按用户过滤绑定、按用户查脚本开关，
+            # 少了它 `_current_user` 拿到空 user_id 会直接返回 {} —— 注入静默失效，
+            # 脚本里那些变量永远是空的，而且不报任何错。
+            script_denials: dict[str, str] = {}
+            env = await apply_script_env_bindings(
+                self.config, user_info=self.user_info, denials=script_denials
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("[ScriptTool] 解析凭据环境变量失败: %s", self.config.name, exc_info=True)
+            return None
+        if script_denials:
+            # 脚本里读到空值和读不到变量是两种崩法，但用户看到的都是「脚本报错了」。
+            # 把原因写进日志和结果，至少能查到是凭据过期还是开关没开。
+            detail = "；".join(f"{slot}（{why}）" for slot, why in script_denials.items())
+            logger.warning(
+                "[ScriptTool] %s 的凭据环境变量没有注入：%s", self.config.name, detail
+            )
+            self._credential_denials = detail
+        if not env:
+            return None
+
+        env_path = self.workdir / SCRIPT_DIR_NAME / f"{stem}.{run_id}.env"
+        try:
+            _write_private(env_path, build_env_file_content(env))
+        except OSError:
+            logger.warning("[ScriptTool] 写入凭据环境变量文件失败: %s", env_path, exc_info=True)
+            return None
+        return env_path
 
     # ------------------------------------------------------------------ 依赖
 
@@ -386,14 +439,28 @@ class ScriptToolRunner:
         script_rel = _relative_for_command(script_path, self.workdir)
         params_rel = _relative_for_command(params_path, self.workdir)
 
+        secret_env = await self.materialize_secret_env(stem, run_id)
+        env_prelude = ""
+        if secret_env is not None:
+            env_rel = _relative_for_command(secret_env, self.workdir)
+            # ``set -a`` 让 ``. file`` 设置的变量导出给子进程；没有它，变量只在
+            # 当前 shell 里存在，脚本的 os.environ 里看不到。
+            env_prelude = f'set -a && . "{env_rel}" && set +a && '
+
         run_command = (
-            f"PY=$(command -v python || command -v python3) && "
+            env_prelude
+            + f"PY=$(command -v python || command -v python3) && "
             f'PYTHONPATH={LIBS_DIR_NAME} "$PY" -u {script_rel} < {params_rel}'
         )
         envelope = build_envelope_command(run_command, out_file, err_file)
 
         started = time.monotonic()
-        shell_result = await self._run_shell(envelope, timeout_seconds=timeout)
+        try:
+            shell_result = await self._run_shell(envelope, timeout_seconds=timeout)
+        finally:
+            # 无论成功、失败还是超时，凭据文件都不能留在工作区
+            if secret_env is not None:
+                secret_env.unlink(missing_ok=True)
         duration_ms = int((time.monotonic() - started) * 1000)
 
         if shell_result.timed_out:
@@ -628,7 +695,17 @@ def _truncate(text: str, limit: int = MAX_RESULT_BYTES) -> str:
 
 
 async def render_result_for_model(result: ScriptRunResult, *, workdir: Path) -> str:
-    """把执行结果转成模型可读文本：成功给 stdout，失败给退出码 + stderr。"""
+    """把执行结果转成模型可读文本：成功给 stdout，失败给退出码 + stderr。
+
+    **结果要过脱敏**：脚本 env 一旦注入，``echo $API_KEY`` 就会把明文写进
+    stdout，再随工具结果回到模型上下文。这条路径和外部的远端服务没有区别，
+    都是「工具把收到的值回显出来」。
+    """
+    rendered = await _render_result(result, workdir=workdir)
+    return redact_text(rendered, where="脚本工具输出")
+
+
+async def _render_result(result: ScriptRunResult, *, workdir: Path) -> str:
     if result.timed_out:
         return result.message or "脚本执行超时，已终止"
 
