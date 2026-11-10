@@ -253,6 +253,35 @@ class TestRuleAndFixedCoexist:
         assert "delete slotRules.value[slot]" in body
 
 
+def test_param_mark_waits_for_bindings_before_filling_the_draft():
+    """打开参数设置必须先等绑定回来再算草稿。
+
+    原来是 fire-and-forget（`void loadBindingsFor(...)`）后立刻读
+    `headerBindings` / `slotRules`：第一次打开时它们还是空的（或上一个服务的），
+    `marked.has(name)` 兜底把来源判成「固定凭据」，界面显示「未选」+「mailkey
+    还没选凭据」；关掉再打开（上一次请求已落地）才变成「按规则匹配」。
+    同一个弹窗两次打开显示不同结果——用户会以为自己刚配的规则被覆盖了。
+    """
+    src = REGISTRY.read_text(encoding="utf-8")
+    fn = src[src.index("async function reloadParamMark("):]
+    fn = fn[: fn.index("\n}\n")]
+    # 先挂目标再拉：loadBindingsFor 的守卫要求 paramMarkTarget 已指向这个服务
+    assert fn.index("paramMarkTarget.value = { tool }") < fn.index("await loadBindingsFor")
+    assert "await loadBindingsFor(serverId)" in fn
+    # 草稿只能在拿到绑定之后算
+    assert fn.index("buildParamDraft(tool)") > fn.index("await loadBindingsFor")
+    # 不等的写法不能回来
+    assert "void loadBindingsFor(" not in src
+
+
+def test_saving_is_blocked_until_bindings_are_loaded():
+    """草稿为空时按保存，会把所有来源静默清成「模型填写」。"""
+    src = REGISTRY.read_text(encoding="utf-8")
+    start = src.index("async function submitParamMark(")
+    body = src[start:start + 600]
+    assert "if (paramBindingsLoading.value) return" in body
+
+
 def test_rule_miss_result_is_translated():
     """`rule_miss` 是动态凭据定位最常出现的结果，不能把内部常量摊给用户。"""
     labels = (ROOT / "frontend/src/utils/secretLabels.ts").read_text(encoding="utf-8")

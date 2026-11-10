@@ -390,8 +390,9 @@ class TestMcpToolParamCredential:
         assert "loadBindingsFor" in body
         # 只看调用；注释里会解释「为什么不能用 loadMcpBinding」
         assert "await loadMcpBinding(" not in body
-        # 打开弹窗时就要把已绑的拉回来
-        assert "void loadBindingsFor(" in source
+        # 打开弹窗时就要把已绑的拉回来，并且**等它回来**再算草稿：
+        # fire-and-forget 会让第一次打开读到上一个服务的绑定（详见 locator 契约）
+        assert "await loadBindingsFor(serverId)" in source
 
     def test_two_actions_are_labelled_separately(self):
         """选凭据和保存来源是两次落库，界面要说清楚。"""
@@ -402,8 +403,8 @@ class TestMcpToolParamCredential:
         """标了「来自凭据」却没选凭据 = 调用必然失败，但界面看着是配好的。"""
         source = _read(self.REGISTRY)
         assert "const draftUnboundNames = computed(" in source
-        # 按钮禁用
-        assert "paramMarkBusy || draftUnboundNames.length > 0" in source
+        # 按钮禁用（绑定还没回来时草稿是空的，这时保存会把来源全清成「模型填写」）
+        assert "paramMarkBusy || paramBindingsLoading || draftUnboundNames.length > 0" in source
         # 函数里再兜一次，绕过 disabled 也挡得住
         start = source.find("async function submitParamMark(")
         body = source[start:source.find("\n}", start)]

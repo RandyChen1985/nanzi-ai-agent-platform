@@ -1011,6 +1011,13 @@ function toolParamNames(tool: any): string[] {
 
 const paramMarkTarget = ref<{ tool: any } | null>(null)
 /**
+ * 弹窗是否还在拉绑定。
+ *
+ * 草稿必须等绑定回来才能算（否则回填的是上一个服务的状态），所以打开瞬间
+ * 表格先不渲染：让用户看到「加载中」比看到一份错的来源好。
+ */
+const paramBindingsLoading = ref(false)
+/**
  * 弹窗里的草稿：参数名 → 值的来源。一次改完再提交。
  *
  * ``model`` = 模型自己填；``cred`` = 绑死一条；``rule`` = 按规则动态定位。
@@ -1257,8 +1264,38 @@ function locatorArgOptions(tool: any, self: string): string[] {
 
 function openParamMark(tool: any, param = '') {
   if (!canManageTool(tool) || !canPublishMcp) return
-  // 打开就把已绑的拉回来，否则「重新打开看不到之前绑的」
-  void loadBindingsFor(String(tool?.server_id || ''))
+  void reloadParamMark(tool, param)
+}
+
+/**
+ * 打开参数设置弹窗：**先等绑定拉回来，再算草稿**。
+ *
+ * 不等的话读到的是上一个服务留在 `headerBindings` / `slotRules` 里的状态：
+ * 第一次打开时它们还是空的，`marked.has(name)` 兜底把来源判成「固定凭据」，
+ * 界面就显示「固定凭据 · 未选」「mailkey 还没选凭据」——而规则其实早就配好了；
+ * 关掉再打开（此时上一次的请求已经落地）才变成「按规则匹配」。同一个弹窗两次
+ * 打开显示不同结果，用户只会以为自己刚改的被覆盖了。
+ */
+async function reloadParamMark(tool: any, param = '') {
+  const serverId = String(tool?.server_id || '')
+  // 先挂上目标：`loadBindingsFor` 的守卫要求它已经指向这个服务，晚到的旧响应才会被丢掉
+  paramMarkTarget.value = { tool }
+  paramFocus.value = param
+  paramDraft.value = {}
+  paramRuleDraft.value = {}
+  paramBindingsLoading.value = true
+  try {
+    await loadBindingsFor(serverId)
+  } finally {
+    paramBindingsLoading.value = false
+  }
+  // 拉的过程中用户可能已经关了弹窗、或点了另一个工具的参数设置
+  if (paramMarkTarget.value?.tool !== tool) return
+  buildParamDraft(tool)
+}
+
+/** 按「刚拉回来的绑定」算草稿：有规则就以规则为准，其次固定凭据，最后才是模型填写 */
+function buildParamDraft(tool: any) {
   const marked = new Set(credentialParamList(tool))
   const draft: Record<string, ParamSource> = {}
   const rules: Record<string, LocatorRule | null> = {}
@@ -1277,13 +1314,13 @@ function openParamMark(tool: any, param = '') {
   }
   paramDraft.value = draft
   paramRuleDraft.value = rules
-  paramFocus.value = param
-  paramMarkTarget.value = { tool }
 }
 
 async function submitParamMark() {
   const target = paramMarkTarget.value
   if (!target || paramMarkBusy.value) return
+  // 绑定还没回来时草稿是空的，这时候保存会把所有来源清成「模型填写」
+  if (paramBindingsLoading.value) return
   // 按钮已经禁用了，这里再兜一次：快捷键/程序触发绕过 disabled 时也要挡住
   if (draftUnboundNames.value.length) {
     const parts: string[] = []
@@ -3870,7 +3907,12 @@ onMounted(fetchServers)
               </div>
 
               <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-                <table class="w-full table-fixed text-xs">
+                <!-- 绑定没回来之前不渲染来源下拉：草稿还是空的，画出来就是一堆
+                     「模型填写」，用户会以为之前的规则丢了 -->
+                <p v-if="paramBindingsLoading" class="py-10 text-center text-xs text-gray-400">
+                  加载中…
+                </p>
+                <table v-if="!paramBindingsLoading" class="w-full table-fixed text-xs">
                   <thead>
                     <!-- 参数名都很短（api_key / tenant_token），来源列却要放下
                          「选凭据 + 凭据名 + 状态」三样东西。以前参数名按内容吃走
@@ -4010,7 +4052,7 @@ onMounted(fetchServers)
                   >取消</button>
                   <button
                     type="button"
-                    :disabled="paramMarkBusy || draftUnboundNames.length > 0"
+                    :disabled="paramMarkBusy || paramBindingsLoading || draftUnboundNames.length > 0"
                     :title="draftUnboundNames.length
                       ? [
                           draftMissingCred.length ? draftMissingCred.join('、') + ' 还没选凭据' : '',
