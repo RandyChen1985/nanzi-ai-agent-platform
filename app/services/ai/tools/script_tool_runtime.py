@@ -40,6 +40,7 @@ from app.services.secrets.injection import (
     apply_script_env_bindings,
     build_env_file_content,
 )
+from app.services.secrets.redact import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -694,7 +695,17 @@ def _truncate(text: str, limit: int = MAX_RESULT_BYTES) -> str:
 
 
 async def render_result_for_model(result: ScriptRunResult, *, workdir: Path) -> str:
-    """把执行结果转成模型可读文本：成功给 stdout，失败给退出码 + stderr。"""
+    """把执行结果转成模型可读文本：成功给 stdout，失败给退出码 + stderr。
+
+    **结果要过脱敏**：脚本 env 一旦注入，``echo $API_KEY`` 就会把明文写进
+    stdout，再随工具结果回到模型上下文。这条路径和外部的远端服务没有区别，
+    都是「工具把收到的值回显出来」。
+    """
+    rendered = await _render_result(result, workdir=workdir)
+    return redact_text(rendered, where="脚本工具输出")
+
+
+async def _render_result(result: ScriptRunResult, *, workdir: Path) -> str:
     if result.timed_out:
         return result.message or "脚本执行超时，已终止"
 

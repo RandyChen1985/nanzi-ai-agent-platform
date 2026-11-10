@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.services.secrets.redact import (
@@ -121,3 +123,61 @@ def test_looks_like_leak_is_a_diagnostic():
     register_injected(TOKEN)
     assert looks_like_leak(f"x {TOKEN} y") is True
     assert looks_like_leak("nothing here") is False
+
+
+@pytest.mark.no_infrastructure
+class TestScriptOutputIsScanned:
+    """脚本 stdout 是和其他工具一样的回显面。
+
+    之前故意不扫，理由是「脚本 env 默认关闭」。但默认关闭不等于关着不用——
+    用户一旦开了这个场景，脚本里 `echo $API_KEY` 就会把明文写进 stdout，
+    再随工具结果回到模型上下文。这条路径和远端服务回显没有区别。
+    """
+
+    def test_render_redacts_injected_value(self):
+        from app.services.ai.tools.script_tool_runtime import ScriptRunResult, render_result_for_model
+        from app.services.secrets.redact import register_injected, reset_injected
+
+        reset_injected()
+        token = "sk-script-echo-9f3a2b1c"
+        register_injected(token)
+        try:
+            result = ScriptRunResult(
+                ok=True,
+                exit_code=0,
+                stdout=f'{{"key": "{token}"}}',
+                stderr="",
+                duration_ms=5,
+            )
+            import asyncio
+            rendered = asyncio.run(
+                render_result_for_model(result, workdir=Path("/tmp"))
+            )
+            assert token not in rendered
+            assert "***" in rendered
+        finally:
+            reset_injected()
+
+    def test_failed_run_stderr_is_also_scanned(self):
+        """失败时把 stderr 整段给模型——脚本打印密钥到 stderr 同样会泄。"""
+        from app.services.ai.tools.script_tool_runtime import ScriptRunResult, render_result_for_model
+        from app.services.secrets.redact import register_injected, reset_injected
+
+        reset_injected()
+        token = "sk-stderr-leak-7d1e4f2a"
+        register_injected(token)
+        try:
+            result = ScriptRunResult(
+                ok=False,
+                exit_code=1,
+                stdout="",
+                stderr=f"ValueError: bad key {token}",
+                duration_ms=5,
+            )
+            import asyncio
+            rendered = asyncio.run(
+                render_result_for_model(result, workdir=Path("/tmp"))
+            )
+            assert token not in rendered
+        finally:
+            reset_injected()
