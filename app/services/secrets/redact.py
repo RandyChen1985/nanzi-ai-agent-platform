@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 MIN_LENGTH = 8
 
 #: 一次请求可能连着调好几个工具，值会不断累积。设上限避免扫描线性变慢。
+#:
+#: 超过上限时**淘汰最旧的**，而不是拒绝新的。原来的写法是 `len >= MAX` 就
+#: 直接 return，意味着「第 21 个凭据起完全得不到脱敏」——而那恰恰是当前这次
+#: 调用正在用的值。旧值对应的调用已经结束，结果早就回灌完了；新值才是需要保护的。
 MAX_VALUES = 20
 
 _injected: ContextVar[tuple[str, ...]] = ContextVar(
@@ -42,8 +46,10 @@ def register_injected(value: str) -> None:
     if len(clean) < MIN_LENGTH:
         return
     current = _injected.get()
-    if clean in current or len(current) >= MAX_VALUES:
+    if clean in current:
         return
+    if len(current) >= MAX_VALUES:
+        current = current[-(MAX_VALUES - 1):]
     _injected.set(current + (clean,))
 
 

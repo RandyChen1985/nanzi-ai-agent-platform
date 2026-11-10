@@ -85,6 +85,9 @@ class BindRequest(BaseModel):
     #: 参数级绑定时只给参数名，槽位由后端按消费方推算。
     #: 前端不该关心「GET 走 query、POST 走 body、URL 占位走 path」。
     name: str = ""
+    #: 全局绑定（``bound_by_user_id=''``）＝ 对所有调用者生效。
+    #: 只有管理员能设，且只允许系统级凭据——用它给「全平台共用的服务」配一次即可。
+    is_global: bool = False
 
 
 class UnbindRequest(BaseModel):
@@ -92,6 +95,8 @@ class UnbindRequest(BaseModel):
     consumer_id: str
     slot: str = ""
     name: str = ""
+    #: 解绑的是全局绑定还是我自己的那条。默认解自己的，避免误删管理员配置。
+    is_global: bool = False
 
 
 class PrefsRequest(BaseModel):
@@ -232,6 +237,15 @@ def _user_ctx(user_info: Dict[str, Any]) -> tuple[str, str]:
     return str(user_info.get("user_id") or ""), str(user_info.get("dept_code") or "")
 
 
+def _is_admin(user_info: Dict[str, Any]) -> bool:
+    """管理员判定。
+
+    统一成一个函数：这条判断在本文件里出现了 5 次，散着写迟早会有一处漏掉
+    字段名变化（`role` / `is_admin`），而它决定的是「能不能动系统级凭据」。
+    """
+    return str(user_info.get("role") or "") == "admin"
+
+
 def _fail(exc: SecretValidationError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
@@ -249,7 +263,7 @@ async def list_usage(
     db: AsyncSession = Depends(get_db_session),
 ):
     user_id, _ = _user_ctx(user_info)
-    is_admin = str(user_info.get("role") or "") == "admin"
+    is_admin = _is_admin(user_info)
     rows = await center.list_usage(
         db,
         user_id=None if is_admin else user_id,
@@ -291,7 +305,7 @@ async def get_usage_stats(
     管理员看全局，普通用户只看自己——与 ``/usage`` 同口径。
     """
     user_id, _ = _user_ctx(user_info)
-    is_admin = str(user_info.get("role") or "") == "admin"
+    is_admin = _is_admin(user_info)
     data = await center.usage_stats(
         db,
         user_id=None if is_admin else user_id,
@@ -313,7 +327,7 @@ async def list_audit(
     普通用户只看自己动过的；管理员不带 ``secret_id`` 时看全局。
     """
     user_id, _ = _user_ctx(user_info)
-    is_admin = str(user_info.get("role") or "") == "admin"
+    is_admin = _is_admin(user_info)
     rows = await center.list_audit(
         db,
         secret_id=secret_id,
@@ -842,6 +856,18 @@ async def create_binding(
         slot=payload.slot,
         name=payload.name,
     )
+
+    # 全局绑定的主体是空串（不是 NULL，唯一索引里 NULL 互不相等）。
+    # 这个能力之前是**死代码**：`bind_secret` 只在 bound_by_user_id=None 时走全局
+    # 分支，而唯一的调用点永远传 user_id——于是管理员在「MCP 服务注册」「系统工具」
+    # 里配的公共同步成了他自己的一条私有绑定，普通用户调过去全是「未绑定」。
+    if payload.is_global:
+        if not _is_admin(user_info):
+            raise HTTPException(status_code=403, detail="只有管理员可以设置全局绑定")
+        bound_by: str | None = None
+    else:
+        bound_by = user_id
+
     try:
         binding = await center.bind_secret(
             db,
@@ -849,7 +875,7 @@ async def create_binding(
             consumer_type=payload.consumer_type,
             consumer_id=payload.consumer_id,
             slot=slot,
-            bound_by_user_id=user_id,
+            bound_by_user_id=bound_by,
             dept_code=dept_code,
         )
     except SecretPermissionError:
@@ -873,12 +899,21 @@ async def delete_binding(
         slot=payload.slot,
         name=payload.name,
     )
+    # 默认解「我自己的那条」。全局绑定必须显式指定且需管理员权限，
+    # 否则普通用户一句 DELETE 就能把全平台共用的配置拆掉。
+    if payload.is_global:
+        if not _is_admin(user_info):
+            raise HTTPException(status_code=403, detail="只有管理员可以解除全局绑定")
+        bound_by: str | None = None
+    else:
+        bound_by = user_id
+
     removed = await center.unbind_slot(
         db,
         consumer_type=payload.consumer_type,
         consumer_id=payload.consumer_id,
         slot=slot,
-        bound_by_user_id=user_id,
+        bound_by_user_id=bound_by,
     )
     return {"code": 0, "message": "已解绑", "data": {"removed": removed}}
 
@@ -1225,6 +1260,13 @@ async def get_secret(
         raise HTTPException(status_code=404, detail="凭据不存在")
 
     bindings = await center.list_bindings(db, secret_id=secret_id)
+    # 只回「全局的」和「我自己的」。别人的个人绑定与我无关——它同时泄露了
+    # 「谁在用这条凭据」和「他绑到了哪个工具上」，而列表接口 GET /bindings
+    # 早就这么过滤了，详情这里漏了。管理员例外：他要排查「这条凭据被谁用着」。
+    if not _is_admin(user_info):
+        bindings = [
+            b for b in bindings if not b.bound_by_user_id or b.bound_by_user_id == user_id
+        ]
     return {
         "code": 0,
         "data": {
@@ -1235,6 +1277,7 @@ async def get_secret(
                     "consumer_type": b.consumer_type,
                     "consumer_id": b.consumer_id,
                     "slot": b.slot,
+                    "is_global": not b.bound_by_user_id,
                     "bound_by_me": b.bound_by_user_id == user_id,
                 }
                 for b in bindings
@@ -1262,7 +1305,7 @@ async def update_secret(
             category=payload.category,
             remark=payload.remark,
             expires_at=payload.expires_at,
-            actor_is_admin=str(user_info.get("role") or "") == "admin",
+            actor_is_admin=_is_admin(user_info),
         )
     except SecretPermissionError:
         raise HTTPException(status_code=404, detail="凭据不存在")
@@ -1283,7 +1326,7 @@ async def delete_secret(
             db,
             secret_id=secret_id,
             actor_id=user_id,
-            actor_is_admin=str(user_info.get("role") or "") == "admin",
+            actor_is_admin=_is_admin(user_info),
         )
     except SecretPermissionError:
         # 看不见就是不存在：越权一律 404，别把「这条存在」告诉对方
@@ -1309,7 +1352,7 @@ async def rotate_secret(
             rotated_by=user_id,
             overlap_days=payload.overlap_days,
             expires_at=payload.expires_at,
-            actor_is_admin=str(user_info.get("role") or "") == "admin",
+            actor_is_admin=_is_admin(user_info),
         )
     except SecretPermissionError:
         raise HTTPException(status_code=404, detail="凭据不存在")

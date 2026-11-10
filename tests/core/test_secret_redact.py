@@ -181,3 +181,29 @@ class TestScriptOutputIsScanned:
             assert token not in rendered
         finally:
             reset_injected()
+
+
+@pytest.mark.no_infrastructure
+class TestOldestValuesAreEvicted:
+    """超过上限时淘汰最旧的，而不是拒绝新登记的。
+
+    原来的写法是 `len(current) >= MAX_VALUES` 就 return —— 第 21 个凭据起
+    完全得不到脱敏，而那恰恰是当前这次调用正在用的值。旧值对应的调用早就
+    结束、结果已经回灌完了，它才该被踢出去。
+    """
+
+    def test_newest_value_is_always_protected(self):
+        reset_injected()
+        for index in range(MAX_VALUES + 5):
+            register_injected(f"sk-rolling-{index:04d}-abcdef")
+        assert injected_count() == MAX_VALUES
+        newest = f"sk-rolling-{MAX_VALUES + 4:04d}-abcdef"
+        assert looks_like_leak(f"echo {newest}") is True, "最新登记的值必须受保护"
+        assert newest not in redact_text(f"echo {newest}")
+
+    def test_oldest_is_dropped_first(self):
+        reset_injected()
+        for index in range(MAX_VALUES + 1):
+            register_injected(f"sk-evict-{index:04d}-abcdef")
+        assert not looks_like_leak("sk-evict-0000-abcdef"), "最旧的应该被淘汰"
+        assert looks_like_leak(f"sk-evict-{MAX_VALUES:04d}-abcdef")

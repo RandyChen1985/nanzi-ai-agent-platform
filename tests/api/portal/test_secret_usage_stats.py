@@ -42,7 +42,8 @@ def test_stats_scoped_like_usage_detail():
     from app.api.portal.endpoints import secrets as secrets_endpoints
 
     source = inspect.getsource(secrets_endpoints.get_usage_stats)
-    assert 'user_info.get("role")' in source
+    # 管理员判定统一走 _is_admin（原来散着写 5 次字符串比较）
+    assert "_is_admin(user_info)" in source or 'user_info.get("role")' in source
 
 
 def test_stats_accepts_secret_filter():

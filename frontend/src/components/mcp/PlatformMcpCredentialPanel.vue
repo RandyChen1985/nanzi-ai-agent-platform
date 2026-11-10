@@ -173,7 +173,8 @@ const editingTitle = computed(() => {
   const name = editing.value.kind === 'mcp'
     ? editing.value.target.server_name
     : editing.value.target.name
-  return `${name} · ${editing.value.slot}`
+  // 走 slotLabel：`arg:query:api_key` 这种底层槽位直抛给用户只会让人猜
+  return `${name} · ${slotLabel(editing.value.slot)}`
 })
 
 function onPicked(item: { id: string; secret_key: string } | null) {

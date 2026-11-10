@@ -215,6 +215,9 @@ async function saveEnvBinding() {
       consumer_type: 'script_tool',
       consumer_id: props.tool.id,
       slot: `env:${variable}`,
+      // 系统管理里配的绑定是给全平台用的：不设全局的话，管理员配完
+      // 只有他自己能用，别人的脚本读到的永远是空变量。
+      is_global: true,
     })
     envDialogOpen.value = false
     await loadEnvBindings()
@@ -239,6 +242,7 @@ async function removeEnvBinding(row: EnvBinding) {
         consumer_type: 'script_tool',
         consumer_id: props.tool.id,
         slot: row.slot,
+        is_global: true,
       },
     })
     await loadEnvBindings()
@@ -268,6 +272,7 @@ async function flushPendingEnvBindings(toolId: string) {
         consumer_type: 'script_tool',
         consumer_id: toolId,
         slot: row.slot,
+        is_global: true,
       })
     } catch {
       failed.push(row.variable)

@@ -252,6 +252,7 @@ async function submitBinding() {
           consumer_type: props.consumerType,
           consumer_id: props.consumerId,
           slot,
+          is_global: true,
         },
       })
       delete bindings.value[slot]
@@ -266,6 +267,8 @@ async function submitBinding() {
         consumer_type: props.consumerType,
         consumer_id: props.consumerId,
         slot,
+        // 系统管理里配的绑定给全平台用；不设全局的话只有管理员自己能用。
+        is_global: true,
       })
       bindings.value[slot] = {
         secret_id: picked.id,
@@ -307,6 +310,7 @@ async function flushPending(consumerId: string) {
         consumer_type: props.consumerType,
         consumer_id: consumerId,
         slot,
+        is_global: true,
       })
     } catch {
       failed.push(slot)

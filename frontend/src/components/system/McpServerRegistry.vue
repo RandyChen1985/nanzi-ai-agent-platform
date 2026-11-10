@@ -530,6 +530,7 @@ async function writeBinding(slot: string, secretId: string | null) {
         consumer_type: 'mcp_server',
         consumer_id: editingId.value,
         slot,
+        is_global: true,
       },
     })
     return
@@ -539,6 +540,8 @@ async function writeBinding(slot: string, secretId: string | null) {
     consumer_type: 'mcp_server',
     consumer_id: editingId.value,
     slot,
+    // 平台服务是所有人共用的：绑定必须是全局的，否则只有管理员自己能用。
+    is_global: true,
   })
 }
 
@@ -1095,11 +1098,12 @@ async function saveParamBind() {
         consumer_type: 'mcp_server',
         consumer_id: serverId,
         slot,
+        is_global: true,
       })
       showToast(`已为 ${ctx.name} 绑定凭据`, 'success')
     } else {
       await axios.delete('/api/portal/secrets/bindings', {
-        data: { consumer_type: 'mcp_server', consumer_id: serverId, slot },
+        data: { consumer_type: 'mcp_server', consumer_id: serverId, slot, is_global: true },
       })
       // 立刻清本地，别等 load——万一 load 失败，界面会一直显示已解绑的样子
       delete headerBindings.value[slot]
@@ -1709,6 +1713,8 @@ async function flushPendingBindings(serverId: string) {
         consumer_type: 'mcp_server',
         consumer_id: serverId,
         slot,
+        // 新建服务时暂存的绑定，落库时同样是给全平台用的
+        is_global: true,
       })
     } catch {
       // 服务已经建好了，绑定失败不该让它回滚——但要让人知道，否则界面显示

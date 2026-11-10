@@ -119,7 +119,9 @@ class SecretResolver:
         if not user_id or not consumer_type or not consumer_id or not slot:
             return ResolveResult(ok=False, denial=DENY_BINDING, detail="missing identity")
 
-        now = datetime.now()
+        # naive UTC，与库里所有 datetime 同一口径。用 datetime.now() 的话，
+        # 在东八区机器上 now 比 saved expires_at 快 8 小时，凭据会提前 8 小时失效。
+        now = datetime.utcnow()
 
         try:
             async with AsyncSessionLocal() as session:

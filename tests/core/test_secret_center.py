@@ -161,7 +161,7 @@ class TestRotateSecret:
         )
 
         assert rotated.previous_value_encrypted == old_cipher
-        assert rotated.previous_expires_at > datetime.now()
+        assert rotated.previous_expires_at > datetime.utcnow()
         assert rotated.last_rotated_at is not None
         assert rotated.value_fingerprint != old_fingerprint
 
@@ -223,7 +223,7 @@ class TestRotateSecret:
             overlap_days=1,
             rotated_by=USER_ID,
         )
-        remaining = rotated.previous_expires_at - datetime.now()
+        remaining = rotated.previous_expires_at - datetime.utcnow()
         assert timedelta(hours=23) < remaining < timedelta(days=1, minutes=1)
 
     async def test_rejects_empty_new_value(self, session):
@@ -526,7 +526,7 @@ class TestVisibility:
             secret_id=row.id,
             grantee_type="user",
             grantee_id=USER_ID,
-            expires_at=datetime.now() - timedelta(days=1),
+            expires_at=datetime.utcnow() - timedelta(days=1),
         )
 
         assert row.id not in {

@@ -82,8 +82,11 @@ class SecretBinding(Base):
     consumer_id = Column(String(36), nullable=False)
     #: ``header:X-Api-Key`` / ``query:token`` / ``body:password`` / ``env:DB_PASSWORD``
     slot = Column(String(128), nullable=False)
-    #: None = 管理员全局绑定；否则只对绑定者生效
-    bound_by_user_id = Column(String(64), nullable=True)
+    #: 空串 = 管理员全局绑定（对所有调用者生效）；否则只对绑定者生效。
+    #: 用空串而不用 NULL：唯一索引 uk_binding_slot 含这一列，NULL 在唯一索引里
+    #: 互不相等，多行 NULL 能共存，等于没有约束。物理 DDL 已改成 NOT NULL
+    #: DEFAULT ''（V209 / V109），模型跟着对齐，避免写法上再产生 NULL。
+    bound_by_user_id = Column(String(64), nullable=False, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

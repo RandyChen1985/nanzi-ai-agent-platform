@@ -406,7 +406,7 @@ class TestGrantGate:
     async def test_expired_grant_does_not_count(self, clean_tables, resolver):
         secret_id = await _create_secret(owner_scope="system", owner_id="")
         await _bind(secret_id, bound_by=None)
-        await _grant(secret_id, "user", USER_ID, expires_at=datetime.now() - timedelta(days=1))
+        await _grant(secret_id, "user", USER_ID, expires_at=datetime.utcnow() - timedelta(days=1))
 
         result = await _resolve(resolver)
 
@@ -496,8 +496,8 @@ class TestRotationWindow:
     async def test_expired_value_falls_back_to_previous(self, clean_tables, resolver):
         """新值过期但旧值还在双写窗口 → 用旧值，且不中断调用。"""
         secret_id = await _create_secret(
-            expires_at=datetime.now() - timedelta(hours=1),
-            previous_expires_at=datetime.now() + timedelta(days=6),
+            expires_at=datetime.utcnow() - timedelta(hours=1),
+            previous_expires_at=datetime.utcnow() + timedelta(days=6),
             previous_value="old-value-123",
         )
         await _bind(secret_id)
@@ -509,8 +509,8 @@ class TestRotationWindow:
 
     async def test_both_expired_is_denied(self, clean_tables, resolver):
         secret_id = await _create_secret(
-            expires_at=datetime.now() - timedelta(days=10),
-            previous_expires_at=datetime.now() - timedelta(days=3),
+            expires_at=datetime.utcnow() - timedelta(days=10),
+            previous_expires_at=datetime.utcnow() - timedelta(days=3),
             previous_value="old-value-123",
         )
         await _bind(secret_id)

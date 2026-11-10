@@ -270,7 +270,10 @@ async def rotate_secret(
     if row.secret_type not in VALID_TYPES:
         raise SecretValidationError(f"未知的凭据类型: {row.secret_type}")
 
-    now = datetime.now()
+    # 库里一律是 naive UTC（模型 default=datetime.utcnow，序列化时再补 Z）。
+    # 用 datetime.now() 在 UTC+8 的机器上会写进本地时间：轮换时间凭空快 8 小时，
+    # previous_expires_at 也跟着偏，7 天回退窗口实际只有 6 天 16 小时。
+    now = datetime.utcnow()
     row.previous_value_encrypted = row.value_encrypted
     row.previous_expires_at = now + timedelta(days=overlap_days)
     row.value_encrypted = _encrypt(new_value)
@@ -330,10 +333,13 @@ async def bind_secret(
     if secret is None:
         raise SecretValidationError("凭据不存在")
 
-    # 系统级凭据只能由管理员全局绑定；普通用户绑定系统级时，绑定只对自己生效
-    # （bound_by_user_id 落成自己，解析时按主体过滤）。
-    if secret.owner_scope == SCOPE_SYSTEM and bound_by_user_id is None:
-        pass  # 管理员全局绑定，允许
+    # 全局绑定（bound_by_user_id=None）只对系统级凭据成立：个人凭据是某个人
+    # 自己的东西，「给所有人用」这个语义在它身上没有意义。
+    # 普通用户绑定系统级凭据时，绑定只对自己生效（bound_by_user_id 落成自己，
+    # 解析时按主体过滤），但必须先被授权。
+    if bound_by_user_id is None:
+        if secret.owner_scope != SCOPE_SYSTEM:
+            raise SecretValidationError("只有系统级凭据可以设为全局绑定")
     elif secret.owner_scope == SCOPE_USER and secret.owner_id != bound_by_user_id:
         raise SecretValidationError("不能绑定他人的凭据")
     elif secret.owner_scope == SCOPE_SYSTEM:
@@ -629,7 +635,7 @@ async def list_visible_secrets(
             )
         granted_ids = select(SecretGrant.secret_id).where(
             or_(*grant_conditions),
-            or_(SecretGrant.expires_at.is_(None), SecretGrant.expires_at > datetime.now()),
+            or_(SecretGrant.expires_at.is_(None), SecretGrant.expires_at > datetime.utcnow()),
         )
         conditions.append(
             and_(UserSecret.owner_scope == SCOPE_SYSTEM, UserSecret.id.in_(granted_ids))

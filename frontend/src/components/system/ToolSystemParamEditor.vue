@@ -144,6 +144,7 @@ async function confirmPick() {
           consumer_type: props.consumerType,
           consumer_id: props.consumerId,
           name,
+          is_global: true,
         },
       })
       // 两个 map 都要清：解绑后只要任一还留着 key，界面就还显示「已绑定」
@@ -156,6 +157,8 @@ async function confirmPick() {
         consumer_id: props.consumerId,
         // 只给参数名：槽位（path/query/body）由后端按工具的 URL 和方法算
         name,
+        // 系统管理里配的绑定给全平台用；不设全局的话只有管理员自己能用。
+        is_global: true,
       })
       bindings.value[name] = { secret_id: picked.id, secret_key: picked.secret_key }
       // 已经落库了，待写记录没有意义；留着会在保存时又写一遍
@@ -187,6 +190,7 @@ async function flushPending(consumerId: string) {
         consumer_type: props.consumerType,
         consumer_id: consumerId,
         name,
+        is_global: true,
       })
     } catch {
       failed.push(name)
