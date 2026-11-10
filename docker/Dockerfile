@@ -40,6 +40,10 @@ ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
 ENV PLATFORM_TIMEZONE=Asia/Shanghai
+# 构建版本带进运行时：「系统诊断 → 实例」用它显示节点版本并与前端 __APP_VERSION__ 对齐。
+# 之前 ARG APP_VERSION 只用于前端构建，后端进程读不到，实例页就会一律显示 dev。
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
 
 # 系统依赖：Oracle(libaio)、SQL Server(unixODBC + msodbcsql18)、时区数据
 # openssh-client + sshpass：ssh 沙箱策略（sandbox_policy=ssh）依托平台主机的

@@ -1,0 +1,1161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="prototype-kind" content="交互原型" />
+<title>系统诊断 · 二级左栏与多实例节点总览原型</title>
+<style>
+  :root{
+    --primary:#2563eb;
+    --primary-soft:rgba(37,99,235,.08);
+    --ink:#0f172a;
+    --ink-2:#334155;
+    --ink-3:#64748b;
+    --ink-4:#94a3b8;
+    --line:#e7ebf2;
+    --line-2:#eef2f7;
+    --bg:#f4f6fa;
+    --ok:#059669;
+    --ok-bg:#ecfdf5;
+    --warn:#b45309;
+    --warn-bg:#fffbeb;
+    --bad:#dc2626;
+    --bad-bg:#fef2f2;
+    --gold:#a16207;
+    --gold-bg:#fefce8;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+    font-size:13px;line-height:1.55;-webkit-font-smoothing:antialiased;
+  }
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  input{font-family:inherit}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+
+  /* ---------- 布局骨架 ---------- */
+  .shell{display:flex;min-height:100vh}
+  .apprail{
+    width:54px;flex-shrink:0;background:#fff;border-right:1px solid var(--line);
+    display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0;
+  }
+  .apprail .dot{width:26px;height:26px;border-radius:8px;background:#eef2f7;display:flex;align-items:center;justify-content:center;color:#94a3b8}
+  .apprail .dot.on{background:var(--primary-soft);color:var(--primary)}
+  .apprail .hint{margin-top:auto;font-size:9px;color:#cbd5e1;writing-mode:vertical-rl;letter-spacing:2px}
+  .main{flex:1;min-width:0;padding:22px 26px 40px}
+  .page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+  .page-title{font-size:21px;font-weight:650;letter-spacing:-.2px;margin:0 0 4px}
+  .page-sub{color:var(--ink-3);font-size:12.5px;max-width:940px}
+  .head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+  /* ---------- 一级 tab（简化示意） ---------- */
+  .tabs{display:flex;gap:4px;background:#eaeef5;padding:4px;border-radius:11px;overflow-x:auto;margin-bottom:16px}
+  .tab{
+    display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:8px;
+    font-size:12.5px;color:var(--ink-3);white-space:nowrap;font-weight:500;
+  }
+  .tab.on{background:#fff;color:var(--primary);box-shadow:0 1px 3px rgba(15,23,42,.09);font-weight:600}
+  .tab svg{width:15px;height:15px}
+
+  /* ---------- 二级左栏 ---------- */
+  .workbench{display:flex;gap:16px;align-items:flex-start}
+  .subnav{
+    width:198px;flex-shrink:0;background:#fff;border:1px solid var(--line);border-radius:var(--radius);
+    padding:10px;position:sticky;top:16px;
+  }
+  .subnav-label{font-size:10.5px;font-weight:600;letter-spacing:.6px;color:var(--ink-4);padding:4px 8px 6px}
+  .subnav-item{
+    width:100%;display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:10px;
+    font-size:13px;color:var(--ink-2);text-align:left;transition:background .15s,color .15s;margin-bottom:2px;
+  }
+  .subnav-item:hover{background:#f6f8fc}
+  .subnav-item.on{
+    background:linear-gradient(90deg,rgba(37,99,235,.12),rgba(37,99,235,.03));
+    color:#1d4ed8;font-weight:650;box-shadow:inset 0 0 0 1px rgba(37,99,235,.16);
+  }
+  .subnav-item svg{width:16px;height:16px;flex-shrink:0;opacity:.9}
+  .subnav-item .count{
+    margin-left:auto;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:999px;
+    background:var(--ok-bg);color:var(--ok);border:1px solid rgba(5,150,105,.2);font-variant-numeric:tabular-nums;
+  }
+  .subnav-note{margin-top:8px;padding:8px 9px;border-radius:9px;background:#f8fafc;border:1px dashed #e2e8f0;color:var(--ink-3);font-size:11px;line-height:1.5}
+
+  /* ---------- 通用卡片/按钮 ---------- */
+  .pane{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .card-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line-2)}
+  .card-title{font-size:13.5px;font-weight:650}
+  .card-desc{font-size:11.5px;color:var(--ink-3)}
+  .grow{flex:1}
+  .btn{
+    display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:9px;font-size:12px;font-weight:550;
+    border:1px solid var(--line);background:#fff;color:var(--ink-2);transition:.15s;
+  }
+  .btn:hover{border-color:#d6dde8;background:#fafbfd}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+  .btn.primary:hover{background:#1d4ed8}
+  .btn svg{width:14px;height:14px}
+  .btn.sm{padding:4px 8px;font-size:11.5px;border-radius:7px}
+  .chip{
+    display:inline-flex;align-items:center;gap:4px;padding:1.5px 7px;border-radius:999px;
+    font-size:11px;font-weight:600;border:1px solid transparent;white-space:nowrap;
+  }
+  .chip .d{width:5px;height:5px;border-radius:999px;background:currentColor}
+  .chip.ok{background:var(--ok-bg);color:var(--ok);border-color:rgba(5,150,105,.2)}
+  .chip.warn{background:var(--warn-bg);color:var(--warn);border-color:rgba(180,83,9,.2)}
+  .chip.bad{background:var(--bad-bg);color:var(--bad);border-color:rgba(220,38,38,.2)}
+  .chip.mute{background:#f4f6fa;color:var(--ink-3);border-color:var(--line)}
+  .chip.info{background:#eff6ff;color:#1d4ed8;border-color:rgba(37,99,235,.2)}
+  .chip.gold{background:var(--gold-bg);color:var(--gold);border-color:rgba(161,98,7,.22)}
+  .chip.pulse .d{animation:pulse 1.8s infinite}
+  .chip svg{width:11px;height:11px}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
+
+  /* ---------- 统计条 ---------- */
+  .stat-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  .stat{padding:12px 14px;display:flex;flex-direction:column;gap:2px}
+  .stat .k{font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:5px}
+  .stat .v{font-size:22px;font-weight:680;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+  .stat .v small{font-size:12px;font-weight:600;color:var(--ink-4);letter-spacing:0}
+  .stat .s{font-size:11px;color:var(--ink-4)}
+  .stat.warn .v{color:var(--warn)}
+  .stat.bad .v{color:var(--bad)}
+  .stat.ok .v{color:var(--ok)}
+  .stat.gold .v{color:var(--gold)}
+
+  /* ---------- 工具条 ---------- */
+  .toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px}
+  .search{position:relative;flex:0 0 260px;max-width:100%}
+  .search svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--ink-4)}
+  .search input{
+    width:100%;padding:6px 10px 6px 28px;border:1px solid var(--line);border-radius:9px;background:#fafbfd;
+    font-size:12px;color:var(--ink);outline:none;transition:.15s;
+  }
+  .search input:focus{background:#fff;border-color:rgba(37,99,235,.45);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+  .seg{display:inline-flex;padding:2px;background:#f1f4f9;border-radius:9px;border:1px solid var(--line-2)}
+  .seg button{padding:4px 10px;border-radius:7px;font-size:11.5px;color:var(--ink-3);font-weight:550}
+  .seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(15,23,42,.1);font-weight:650}
+  .filter-chip{
+    padding:4px 10px;border-radius:999px;font-size:11.5px;font-weight:550;color:var(--ink-3);
+    border:1px solid var(--line);background:#fff;
+  }
+  .filter-chip.on{background:var(--primary-soft);border-color:rgba(37,99,235,.3);color:#1d4ed8;font-weight:650}
+
+  .alerts{display:flex;flex-direction:column;gap:8px}
+  .alert{
+    display:flex;gap:9px;align-items:flex-start;padding:10px 13px;border-radius:11px;
+    background:var(--warn-bg);border:1px solid rgba(180,83,9,.18);color:#7c2d12;font-size:12px;
+  }
+  .alert.bad{background:var(--bad-bg);border-color:rgba(220,38,38,.18);color:#7f1d1d}
+  .alert svg{width:15px;height:15px;flex-shrink:0;margin-top:1px}
+  .alert b{font-weight:650}
+
+  /* ---------- 实例卡片 ---------- */
+  .node-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:14px;padding:12px}
+  .node{padding:14px;display:flex;flex-direction:column;gap:11px;cursor:pointer;transition:.16s;position:relative;overflow:hidden}
+  .node:hover{border-color:rgba(37,99,235,.35);box-shadow:0 6px 18px -8px rgba(37,99,235,.28);transform:translateY(-1px)}
+  .node.is-off{background:#fbfcfd;opacity:.92}
+  .node.is-off:hover{transform:none;border-color:var(--line);box-shadow:none}
+  .node.is-alert::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--warn)}
+  .node-top{display:flex;align-items:flex-start;gap:10px}
+  .node-ico{
+    width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+    background:var(--primary-soft);color:var(--primary);border:1px solid rgba(37,99,235,.16);
+  }
+  .node-ico svg{width:17px;height:17px}
+  .node-ico.primary{background:var(--gold-bg);color:var(--gold);border-color:rgba(161,98,7,.2)}
+  .node-ico.off{background:#f1f5f9;color:#94a3b8;border-color:var(--line)}
+  .node-name{font-size:13.5px;font-weight:650;display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+  .node-name .nm{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .node-name .pen{opacity:0;transition:.15s;color:var(--ink-4);display:inline-flex;padding:1px}
+  .node:hover .node-name .pen{opacity:1}
+  .node-name .pen:hover{color:var(--primary)}
+  .node-id{font-size:10.5px;color:var(--ink-4);word-break:break-all}
+  .node-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}
+  .metric-trio{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .mbar{padding:7px 9px;border-radius:9px;background:#fafbfd;border:1px solid var(--line-2)}
+  .mbar .lb{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink-3);margin-bottom:4px}
+  .mbar .lb b{font-variant-numeric:tabular-nums;color:var(--ink-2);font-weight:650}
+  .track{height:4px;border-radius:999px;background:#e9eef6;overflow:hidden}
+  .track span{display:block;height:100%;border-radius:999px;background:var(--primary);transition:width .4s}
+  .track span.warn{background:#f59e0b}
+  .track span.bad{background:#ef4444}
+  .kv-row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .kv{padding:6px 8px;border-radius:8px;background:#fff;border:1px dashed var(--line-2)}
+  .kv .k{font-size:10px;color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kv .v{font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums}
+  .env-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10.5px;color:var(--ink-3)}
+  .env-row .sep{color:#d5dde8}
+  .env-row .tag{display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:6px;background:#f8fafc;border:1px solid var(--line-2)}
+  .env-row .tag b{font-weight:600;color:var(--ink-2)}
+  .env-row .tag svg{width:11px;height:11px;color:var(--ink-4)}
+  .node-foot{display:flex;align-items:center;gap:8px;padding-top:9px;border-top:1px solid var(--line-2);font-size:11px;color:var(--ink-3)}
+  .node-foot .spark{opacity:.9;line-height:0}
+  .node-foot .right{margin-left:auto;display:flex;align-items:center;gap:6px}
+
+  /* ---------- 表格视图 ---------- */
+  .table-wrap{overflow-x:auto}
+  table.grid{width:100%;border-collapse:collapse;font-size:12px;min-width:1180px}
+  table.grid th{
+    text-align:left;font-size:11px;font-weight:600;color:var(--ink-3);padding:9px 12px;
+    background:#f8fafc;border-bottom:1px solid var(--line);white-space:nowrap;
+  }
+  table.grid td{padding:10px 12px;border-bottom:1px solid var(--line-2);vertical-align:middle}
+  table.grid tbody tr{cursor:pointer;transition:background .12s}
+  table.grid tbody tr:hover{background:#f8fbff}
+  table.grid tbody tr:last-child td{border-bottom:none}
+  .cell-name{font-weight:600;display:flex;align-items:center;gap:6px}
+  .cell-sub{font-size:10.5px;color:var(--ink-4)}
+  .num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+
+  /* ---------- 抽屉 ---------- */
+  .mask{position:fixed;inset:0;background:rgba(15,23,42,.32);backdrop-filter:blur(1.5px);opacity:0;pointer-events:none;transition:.2s;z-index:40}
+  .mask.on{opacity:1;pointer-events:auto}
+  .drawer{
+    position:fixed;top:0;right:0;bottom:0;width:min(640px,94vw);background:#fff;z-index:41;
+    transform:translateX(101%);transition:transform .26s cubic-bezier(.3,.8,.3,1);
+    display:flex;flex-direction:column;box-shadow:-20px 0 50px -20px rgba(15,23,42,.35);
+  }
+  .drawer.on{transform:none}
+  .drawer-head{padding:16px 18px;border-bottom:1px solid var(--line-2);display:flex;gap:12px;align-items:flex-start}
+  .drawer-body{flex:1;overflow-y:auto;padding:16px 18px 30px;display:flex;flex-direction:column;gap:16px}
+  .sec-label{font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--ink-4);margin-bottom:8px;display:flex;align-items:center;gap:7px}
+  .sec-label::after{content:"";flex:1;height:1px;background:var(--line-2)}
+  .field-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line-2);border:1px solid var(--line-2);border-radius:10px;overflow:hidden}
+  .field{background:#fff;padding:8px 10px;display:flex;justify-content:space-between;gap:10px;font-size:12px}
+  .field .k{color:var(--ink-3);white-space:nowrap}
+  .field .v{font-weight:600;text-align:right;word-break:break-all;font-variant-numeric:tabular-nums}
+  .dep-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line-2);border-radius:9px;font-size:12px;margin-bottom:6px}
+  .dep-row .lat{margin-left:auto;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mini-table{width:100%;border-collapse:collapse;font-size:11.5px}
+  .mini-table th{text-align:left;color:var(--ink-4);font-weight:600;font-size:10.5px;padding:5px 8px;background:#f8fafc;border-bottom:1px solid var(--line-2)}
+  .mini-table td{padding:5px 8px;border-bottom:1px solid var(--line-2);font-variant-numeric:tabular-nums}
+  .mini-table tr:last-child td{border-bottom:none}
+
+  /* ---------- 别名弹窗 ---------- */
+  .modal-mask{position:fixed;inset:0;background:rgba(15,23,42,.34);z-index:60;display:none;align-items:center;justify-content:center;padding:20px}
+  .modal-mask.on{display:flex}
+  .modal{width:min(440px,100%);background:#fff;border-radius:14px;box-shadow:0 24px 60px -20px rgba(15,23,42,.45);overflow:hidden}
+  .modal-head{padding:14px 16px;border-bottom:1px solid var(--line-2);font-size:13.5px;font-weight:650}
+  .modal-body{padding:16px;display:flex;flex-direction:column;gap:10px}
+  .modal-body label{font-size:11.5px;color:var(--ink-3)}
+  .modal-body input{
+    width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:9px;font-size:13px;outline:none;
+  }
+  .modal-body input:focus{border-color:rgba(37,99,235,.5);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+  .modal-foot{padding:12px 16px;border-top:1px solid var(--line-2);display:flex;justify-content:flex-end;gap:8px}
+
+  /* ---------- 占位：现有诊断内容 ---------- */
+  .pill-row{display:flex;gap:8px;flex-wrap:wrap;padding:11px 14px;align-items:center}
+  .svc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;padding:12px}
+  .svc{padding:13px;display:flex;flex-direction:column;gap:7px}
+  .svc-top{display:flex;align-items:center;gap:9px}
+  .svc-ico{width:30px;height:30px;border-radius:9px;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center}
+  .svc-ico svg{width:16px;height:16px}
+  .svc-name{font-size:13px;font-weight:650}
+  .console{background:#0b1020;border-radius:0 0 var(--radius) var(--radius);padding:14px 16px;min-height:150px;color:#4ade80;font-size:11.5px;line-height:1.7}
+  .console .dim{color:#64748b}
+  .note-dashed{border:1px dashed #cbd5e1;color:var(--ink-3);font-size:11.5px;padding:9px 12px;border-radius:10px;background:#fbfcfe}
+
+  /* ---------- 字段契约 ---------- */
+  .contract{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;padding:12px}
+  .ct-block{border:1px solid var(--line-2);border-radius:10px;padding:11px 12px;background:#fcfdff}
+  .ct-title{font-size:12px;font-weight:650;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+  .ct-title .n{width:16px;height:16px;border-radius:5px;background:var(--primary-soft);color:var(--primary);font-size:10px;display:flex;align-items:center;justify-content:center;font-weight:700}
+  .ct-list{display:flex;flex-wrap:wrap;gap:5px}
+  .ct-list span{font-size:10.5px;padding:2px 6px;border-radius:6px;background:#fff;border:1px solid var(--line-2);color:var(--ink-2)}
+  .redis-key{font-size:11px;padding:7px 9px;border-radius:8px;background:#0b1020;color:#93c5fd;margin-bottom:6px;line-height:1.6}
+  .redis-key b{color:#4ade80;font-weight:600}
+  .redis-key i{color:#94a3b8;font-style:normal}
+
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none!important;animation:none!important}
+  }
+
+  @media (max-width:1180px){
+    .stat-row{grid-template-columns:repeat(2,1fr)}
+    .node-grid{grid-template-columns:1fr}
+  }
+  @media (max-width:900px){
+    .workbench{flex-direction:column}
+    .subnav{width:100%;position:static;display:flex;gap:6px;overflow-x:auto}
+    .subnav-label{display:none}
+    .subnav-note{display:none}
+    .subnav-item{width:auto;flex-shrink:0}
+    .main{padding:14px}
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="apprail">
+    <div class="dot on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="15" height="15"><path d="M4 7h16M4 12h16M4 17h10" stroke-linecap="round"/></svg></div>
+    <div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="15" height="15"><circle cx="12" cy="12" r="8"/></svg></div>
+    <div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="15" height="15"><rect x="4" y="4" width="16" height="16" rx="4"/></svg></div>
+    <div class="hint">应用侧栏</div>
+  </div>
+
+  <div class="main">
+    <div class="page-head">
+      <div>
+        <h1 class="page-title">系统配置与诊断</h1>
+        <div class="page-sub">多实例同构部署 + 负载均衡：实例名默认取 hostname，可在页面上加别名；指标与心跳写入共享 Redis，趋势保留 1 天后自动清理。</div>
+      </div>
+      <div class="head-actions">
+        <span class="chip mute">数据快照 <b id="clock" class="mono" style="margin-left:4px">--:--:--</b></span>
+        <button class="btn" id="btn-toggle-auto">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12a8 8 0 018-8m8 8a8 8 0 01-8 8" stroke-linecap="round"/><path d="M16 4l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="auto-label">自动刷新 15s：开</span>
+        </button>
+        <button class="btn primary" id="btn-refresh">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 11a8 8 0 10-2.4 5.7" stroke-linecap="round"/><path d="M20 5.5V11h-5.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          刷新
+        </button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l1.8 4.4L18 9l-4.2 1.6L12 15l-1.8-4.4L6 9l4.2-1.6z"/></svg>模型管理</button>
+      <button class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14.7 6.3a4 4 0 015 5L9.5 21.5 3 22l.5-6.5z"/></svg>工具管理</button>
+      <button class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/></svg>参数配置</button>
+      <button class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20c3-1 4-6 8-6s5-5 8-5v10z"/></svg>品牌个性化</button>
+      <button class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"/></svg>系统诊断</button>
+      <button class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>日志管理</button>
+    </div>
+
+    <div class="workbench">
+      <nav class="subnav" data-tour="diag-subnav">
+        <div class="subnav-label">系统诊断</div>
+        <button class="subnav-item on" data-view="diag">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h3.5l2.2-5.5 3.1 11 2.3-5.5H21"/></svg>
+          <span>诊断</span>
+        </button>
+        <button class="subnav-item" data-view="instances">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="6.2" rx="2"/><rect x="3.5" y="13.8" width="17" height="6.2" rx="2"/><path d="M7 7.1h.01M7 16.9h.01"/></svg>
+          <span>实例</span>
+          <span class="count" id="nav-count">4/5</span>
+        </button>
+        <div class="subnav-note">横向 tab 只保留一级入口；诊断内部改为左栏，「主 / 从」只影响定时调度（<span class="mono">TASK_SCHEDULER_ENABLED</span>），其他能力每个实例都一样。</div>
+      </nav>
+
+      <!-- 诊断（现有内容占位） -->
+      <section class="pane" id="view-diag">
+        <div class="note-dashed">这里是现有「系统诊断」内容的占位示意：健康检查卡片 + 诊断控制台 / Redis 浏览器。整体左移并收窄以容纳二级左栏，内容本身不变。</div>
+        <div class="card">
+          <div class="pill-row">
+            <span style="font-size:12px;font-weight:650;color:var(--ink-2)">服务概览</span>
+            <span style="width:1px;height:13px;background:var(--line)"></span>
+            <span class="chip ok pulse"><span class="d"></span>Redis 正常</span>
+            <span class="chip ok pulse"><span class="d"></span>向量引擎就绪</span>
+            <span class="chip ok"><span class="d"></span>MySQL 正常</span>
+            <span class="chip mute"><span class="d"></span>RAGFlow 待检测</span>
+            <span class="chip mute"><span class="d"></span>沙箱 待检测</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <div class="card-title">服务连接与组件能力概览</div>
+              <div class="card-desc">原有四张卡片保持不动，宽度自适应</div>
+            </div>
+          </div>
+          <div class="svc-grid">
+            <div class="svc card" style="box-shadow:none">
+              <div class="svc-top">
+                <div class="svc-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="7" ry="2.6"/><path d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6"/></svg></div>
+                <div><div class="svc-name">Redis 服务</div><div class="card-desc">缓存加速、会话维持与限流队列</div></div>
+                <span class="chip mute" style="margin-left:auto"><span class="d"></span>待检测</span>
+              </div>
+            </div>
+            <div class="svc card" style="box-shadow:none">
+              <div class="svc-top">
+                <div class="svc-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3v3M14 3v3M3 10h3M18 10h3"/></svg></div>
+                <div><div class="svc-name">Redis 向量搜索</div><div class="card-desc">会话摘要、长期记忆与经验案例检索</div></div>
+                <span class="chip ok" style="margin-left:auto"><span class="d"></span>就绪</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head" style="gap:0">
+            <div class="seg"><button class="on">诊断控制台</button><button>Redis 浏览器</button></div>
+          </div>
+          <div class="console mono"><div class="dim">等待执行测试... 点击上方「测试连接」或「重新检测」开始输出诊断日志。</div></div>
+        </div>
+      </section>
+
+      <!-- 实例 -->
+      <section class="pane" id="view-instances" style="display:none">
+        <div class="stat-row" id="stat-row"></div>
+        <div class="alerts" id="alerts"></div>
+
+        <div class="card">
+          <div class="toolbar">
+            <div class="search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21" stroke-linecap="round"/></svg>
+              <input id="q" placeholder="搜索别名 / hostname / IP / 版本…" />
+            </div>
+            <button class="filter-chip on" data-node-filter="all">全部</button>
+            <button class="filter-chip" data-node-filter="primary">主节点</button>
+            <button class="filter-chip" data-node-filter="secondary">从节点</button>
+            <div class="grow"></div>
+            <div class="seg" id="viewmode">
+              <button class="on" data-mode="card">卡片</button>
+              <button data-mode="table">表格</button>
+            </div>
+          </div>
+
+          <div id="node-grid" class="node-grid"></div>
+          <div id="node-table" class="table-wrap" style="display:none"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head" style="cursor:pointer" id="contract-toggle">
+            <div>
+              <div class="card-title">采集字段与 Redis 数据契约</div>
+              <div class="card-desc">实现时要落地的字段与键设计；点开可展开</div>
+            </div>
+            <div class="grow"></div>
+            <span class="chip info" id="contract-caret">展开</span>
+          </div>
+          <div id="contract-body" style="display:none">
+            <div class="contract" id="contract-grid"></div>
+            <div style="padding:0 12px 14px">
+              <div class="sec-label">Redis 键设计（各实例共用一个 Redis）</div>
+              <div class="redis-key mono"><b>nanzi:instance:{hostname}</b> <i>HASH，TTL 45s（心跳 15s × 3）——实例自报的完整快照，过期即视为离线</i></div>
+              <div class="redis-key mono"><b>nanzi:instances:index</b> <i>SET&lt;hostname&gt;，启动时 SADD；读取时逐个 HGETALL，按 TTL 剔除已退出节点</i></div>
+              <div class="redis-key mono"><b>nanzi:instance:{hostname}:series</b> <i>ZSET，每分钟 1 个采样点，score=分钟时间戳；每次写入 EXPIRE 86400 → 保留 1 天后由 Redis 自动清理</i></div>
+              <div class="redis-key mono"><b>nanzi:instance:alias:{hostname}</b> <i>STRING，页面编辑的别名；<b>不设 TTL</b>（心跳过期不影响别名，节点回来还能认出来）</i></div>
+              <div class="card-desc" style="margin-top:6px">
+                写：每个实例后台协程每 15s 写自己的 HASH + 每分钟落一个趋势点；优雅退出前主动 <span class="mono">DEL</span>。
+                读：<span class="mono">GET /api/system/instances?range=24h</span> 聚合全部 HASH 与别名。
+                「主 / 从」由环境变量 <span class="mono">TASK_SCHEDULER_ENABLED</span> 决定并原样上报，页面不提供改角色的开关——它必须和进程启动配置一致，否则会出现两个节点同时跑定时任务。
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- 详情抽屉 -->
+<div class="mask" id="mask"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head" id="drawer-head"></div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+
+<!-- 别名编辑 -->
+<div class="modal-mask" id="alias-mask">
+  <div class="modal">
+    <div class="modal-head">编辑实例别名</div>
+    <div class="modal-body">
+      <label>hostname（不可改）</label>
+      <input id="alias-host" disabled class="mono" style="background:#f8fafc;color:var(--ink-3)" />
+      <label>显示别名</label>
+      <input id="alias-input" maxlength="32" placeholder="例如：生产节点 A / 华东接入 01" />
+      <div class="card-desc">别名写入 <span class="mono">nanzi:instance:alias:{hostname}</span>，不随心跳过期；留空则回退显示 hostname。</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="alias-cancel">取消</button>
+      <button class="btn primary" id="alias-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===================== 假数据 ===================== */
+function walk(base, n, amp, trend = 0) {
+  const out = []; let v = base;
+  for (let i = 0; i < n; i++) { v = Math.max(1, v + (Math.random() - 0.5) * amp + trend); out.push(+v.toFixed(1)); }
+  return out;
+}
+const BASE_VERSION = 'v1.0.0-rc.48';
+
+const NODES = [
+  {
+    host: 'nanzi-prod-app-7d9f4c8b5-2xk4l', alias: '',
+    primary: true,                                   // TASK_SCHEDULER_ENABLED=true
+    kind: 'k8s', kindLabel: 'Kubernetes Pod',
+    nodeName: 'k8s-node-a.internal', ip: '10.42.7.31', zone: '生产 / 华东 1 区',
+    version: BASE_VERSION, commit: 'a91f3ce', image: 'nanzi/ai-agent:1.0.0-rc.48', builtAt: '2026-11-03 21:40',
+    startedAt: '2026-11-04 14:30:09', uptimeSec: 364538,
+    lastSeenSec: 3, online: true, draining: false,
+    cpu: 41.2, cores: 8, load: [2.4, 2.1, 1.8],
+    memUsed: 1863, memTotal: 4096, diskUsed: 18.2, diskTotal: 60,
+    proc: { pid: 1, threads: 64, fds: 486, py: '3.11.9', workers: 4 },
+    stack: { db: { type: 'MySQL', version: '8.0.36' }, redis: { version: '7.2.4', mode: 'standalone', flavor: 'Redis Stack' } },
+    deps: {
+      mysql: { ok: true, latency: 2.1, extra: '池 6/20' },
+      redis: { ok: true, latency: 1.3, extra: '内存 1.2 GB · 连接 12' },
+      vector: { ok: true, latency: 3.4, extra: 'HNSW 就绪' },
+      ragflow: { ok: true, latency: 96, extra: '2 个知识库' },
+      sandbox: { ok: true, latency: 41, extra: 'local' }
+    },
+    rt: { sessions: 128, runs: 12, queued: 2, tools: 7, qps: 34.5, reqs1m: 2070, p95: 412, err5xx: 0.12, authFail: 3, jobsNext: '元数据同步 · 17:05（主节点执行）' },
+    series: { cpu: walk(38, 1440, 5), mem: walk(1800, 1440, 24), qps: walk(33, 1440, 6) }
+  },
+  {
+    host: 'nanzi-prod-app-7d9f4c8b5-hz9qp', alias: '生产节点 B',
+    primary: false,
+    kind: 'k8s', kindLabel: 'Kubernetes Pod',
+    nodeName: 'k8s-node-c.internal', ip: '10.42.9.77', zone: '生产 / 华东 1 区',
+    version: BASE_VERSION, commit: 'a91f3ce', image: 'nanzi/ai-agent:1.0.0-rc.48', builtAt: '2026-11-03 21:40',
+    startedAt: '2026-11-05 09:12:44', uptimeSec: 296011,
+    lastSeenSec: 5, online: true, draining: false,
+    cpu: 74.6, cores: 16, load: [11.2, 10.4, 9.1],
+    memUsed: 6520, memTotal: 8192, diskUsed: 41.5, diskTotal: 120,
+    proc: { pid: 1, threads: 212, fds: 1864, py: '3.11.9', workers: 4 },
+    stack: { db: { type: 'MySQL', version: '8.0.36' }, redis: { version: '7.2.4', mode: 'standalone', flavor: 'Redis Stack' } },
+    deps: {
+      mysql: { ok: true, latency: 3.8, extra: '池 14/20' },
+      redis: { ok: true, latency: 1.7, extra: '内存 1.2 GB · 连接 19' },
+      vector: { ok: true, latency: 4.1, extra: 'HNSW 就绪' },
+      ragflow: { ok: true, latency: 132, extra: '2 个知识库' },
+      sandbox: { ok: true, latency: 210, extra: 'e2b' }
+    },
+    rt: { sessions: 96, runs: 31, queued: 8, tools: 24, qps: 12.8, reqs1m: 768, p95: 2480, err5xx: 0.41, authFail: 0, jobsNext: '不执行定时调度（从节点）' },
+    series: { cpu: walk(70, 1440, 9), mem: walk(6400, 1440, 90), qps: walk(13, 1440, 3) }
+  },
+  {
+    host: 'nanzi-prod-app-7d9f4c8b5-qt7rm', alias: '生产节点 C',
+    primary: false,
+    kind: 'k8s', kindLabel: 'Kubernetes Pod',
+    nodeName: 'k8s-node-a.internal', ip: '10.42.7.19', zone: '生产 / 华东 1 区',
+    version: BASE_VERSION, commit: 'a91f3ce', image: 'nanzi/ai-agent:1.0.0-rc.48', builtAt: '2026-11-03 21:40',
+    startedAt: '2026-11-04 14:29:51', uptimeSec: 364556,
+    lastSeenSec: 2, online: true, draining: false,
+    cpu: 22.4, cores: 8, load: [1.6, 1.4, 1.2],
+    memUsed: 2140, memTotal: 4096, diskUsed: 11.4, diskTotal: 60,
+    proc: { pid: 1, threads: 88, fds: 612, py: '3.11.9', workers: 4 },
+    stack: { db: { type: 'PostgreSQL', version: '16.2' }, redis: { version: '7.2.4', mode: 'standalone', flavor: 'Redis Stack' } },
+    deps: {
+      mysql: { ok: true, latency: 2.8, extra: '池 4/20' },
+      redis: { ok: true, latency: 1.1, extra: '内存 1.2 GB · 连接 9' },
+      vector: { ok: true, latency: 2.6, extra: 'HNSW 就绪' },
+      ragflow: { ok: true, latency: 90, extra: '2 个知识库' },
+      sandbox: { ok: true, latency: 88, extra: 'local' }
+    },
+    rt: { sessions: 42, runs: 6, queued: 0, tools: 3, qps: 9.6, reqs1m: 576, p95: 386, err5xx: 0.05, authFail: 1, jobsNext: '不执行定时调度（从节点）' },
+    series: { cpu: walk(21, 1440, 5), mem: walk(2100, 1440, 40), qps: walk(9, 1440, 3) }
+  },
+  {
+    host: 'nanzi-prod-app-7d9f4c8b5-jk8wn', alias: '生产节点 D',
+    primary: false,
+    kind: 'k8s', kindLabel: 'Kubernetes Pod',
+    nodeName: 'k8s-node-b.internal', ip: '10.42.8.52', zone: '生产 / 华东 1 区',
+    version: 'v1.0.0-rc.47', commit: '7c4e1ba', image: 'nanzi/ai-agent:1.0.0-rc.47', builtAt: '2026-10-29 18:22',
+    startedAt: '2026-11-10 08:41:20', uptimeSec: 300000,
+    lastSeenSec: 287, online: false, draining: false,
+    cpu: 0, cores: 8, load: [0, 0, 0],
+    memUsed: 0, memTotal: 4096, diskUsed: 17.9, diskTotal: 60,
+    proc: { pid: 1, threads: 0, fds: 0, py: '3.11.9', workers: 4 },
+    stack: { db: { type: 'MySQL', version: '8.0.36' }, redis: { version: '7.2.4', mode: 'standalone', flavor: 'Redis Stack' } },
+    deps: {
+      mysql: { ok: true, latency: 0, extra: '—' }, redis: { ok: true, latency: 0, extra: '—' },
+      vector: { ok: true, latency: 0, extra: '—' }, ragflow: { ok: true, latency: 0, extra: '—' },
+      sandbox: { ok: true, latency: 0, extra: '—' }
+    },
+    rt: { sessions: 0, runs: 0, queued: 0, tools: 0, qps: 0, reqs1m: 0, p95: 0, err5xx: 0, authFail: 0, jobsNext: '—' },
+    series: { cpu: walk(30, 1440, 5), mem: walk(1700, 1440, 22), qps: walk(20, 1440, 6) }
+  },
+  {
+    host: 'chenxiaolong-mbp.local', alias: '本地开发机',
+    primary: true,
+    kind: 'docker', kindLabel: 'docker-compose',
+    nodeName: 'chenxiaolong-mbp.local', ip: '192.168.31.24', zone: '开发 / 本地',
+    version: BASE_VERSION, commit: 'a91f3ce', image: 'nanzi/ai-agent:dev-local', builtAt: '2026-11-10 16:12',
+    startedAt: '2026-11-10 16:12:38', uptimeSec: 2889,
+    lastSeenSec: 8, online: true, draining: false,
+    cpu: 27.4, cores: 10, load: [1.9, 2.4, 2.2],
+    memUsed: 2140, memTotal: 6144, diskUsed: 12.6, diskTotal: 200,
+    proc: { pid: 1, threads: 74, fds: 512, py: '3.11.9', workers: 2 },
+    stack: { db: { type: 'MySQL', version: '8.0.36' }, redis: { version: '7.2.4', mode: 'standalone', flavor: 'Redis Stack' } },
+    deps: {
+      mysql: { ok: true, latency: 4.4, extra: '池 5/20' },
+      redis: { ok: true, latency: 0.9, extra: '内存 1.2 GB · 连接 4' },
+      vector: { ok: true, latency: 5.2, extra: 'HNSW 就绪' },
+      ragflow: { ok: false, latency: 0, extra: '未配置' },
+      sandbox: { ok: true, latency: 33, extra: 'local' }
+    },
+    rt: { sessions: 3, runs: 1, queued: 0, tools: 2, qps: 2.1, reqs1m: 126, p95: 680, err5xx: 0, authFail: 0, jobsNext: '元数据同步 · 17:05（主节点执行）' },
+    series: { cpu: walk(24, 1440, 6), mem: walk(2050, 1440, 60), qps: walk(2, 1440, 1) }
+  }
+];
+
+/* ===================== 工具函数 ===================== */
+const fmtDur = (s) => {
+  if (s <= 0) return '—';
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d) return `${d}天 ${h}小时`;
+  if (h) return `${h}小时 ${m}分`;
+  return `${m}分 ${s % 60}秒`;
+};
+const fmtAgo = (s) => s < 60 ? `${Math.round(s)} 秒前` : s < 3600 ? `${Math.floor(s / 60)} 分钟前` : `${Math.floor(s / 3600)} 小时前`;
+const fmtNum = (n) => n >= 10000 ? (n / 10000).toFixed(1) + 'w' : n.toLocaleString('en-US');
+const pct = (a, b) => b ? +(a / b * 100).toFixed(1) : 0;
+const lvlClass = (v) => v >= 85 ? 'bad' : v >= 70 ? 'warn' : '';
+const dispName = (n) => n.alias || n.host;
+const subLine = (n) => n.alias ? n.host : n.ip;
+
+function spark(values, color, w = 118, h = 26) {
+  if (!values || values.length < 2) return '';
+  const min = Math.min(...values), max = Math.max(...values);
+  const span = (max - min) || 1;
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w;
+    const y = h - ((v - min) / span) * (h - 5) - 2.5;
+    return [x.toFixed(1), y.toFixed(1)];
+  });
+  const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0] + ' ' + p[1]).join(' ');
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <path d="${d} L${w} ${h} L0 ${h} Z" fill="${color}" opacity="0.10"/>
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
+/* 按小时切一段（series 原始是每分钟 1 点，1440 点 = 24 小时），再降采样到约 120 个点 */
+const sliceHours = (arr, hours) => arr.slice(Math.max(0, arr.length - hours * 60));
+function samplePoints(arr, hours, target = 120) {
+  const seg = sliceHours(arr, hours);
+  const step = Math.max(1, Math.round(seg.length / target));
+  const out = [];
+  for (let i = 0; i < seg.length; i += step) out.push(seg[i]);
+  return out;
+}
+
+const SV = {
+  server: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="6.2" rx="2"/><rect x="3.5" y="13.8" width="17" height="6.2" rx="2"/><path d="M7 7.1h.01M7 16.9h.01"/></svg>',
+  serverOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="6.2" rx="2"/><rect x="3.5" y="13.8" width="17" height="6.2" rx="2"/><path d="M3 3l18 18"/></svg>',
+  crown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17h16M4 17l-1-9 5 3 4-6 4 6 5-3-1 9"/></svg>',
+  pen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 015 5L9.5 21.5 3 22l.5-6.5z"/></svg>',
+  db: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="7" ry="2.6"/><path d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6"/></svg>',
+  cache: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z"/><path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7"/></svg>'
+};
+
+function statusOf(n) {
+  if (!n.online) return { key: 'off', label: '离线', cls: 'mute' };
+  const memP = pct(n.memUsed, n.memTotal);
+  if (n.version !== BASE_VERSION) return { key: 'drift', label: '版本漂移', cls: 'warn' };
+  if (memP >= 78 || n.cpu >= 72) return { key: 'load', label: '负载偏高', cls: 'warn' };
+  return { key: 'online', label: '在线', cls: 'ok' };
+}
+
+/* ===================== 状态 ===================== */
+const state = { view: 'diag', mode: 'card', q: '', filter: 'all', auto: true, selected: null, range: 24, aliasTarget: null };
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
+
+/* ===================== 统计 ===================== */
+function renderStats() {
+  const total = NODES.length;
+  const online = NODES.filter(n => n.online).length;
+  const primaries = NODES.filter(n => n.primary);
+  const off = NODES.filter(n => !n.online).length;
+  const boxes = [
+    { k: '实例总数', v: total, s: '同构部署 · 负载均衡', cls: '' },
+    { k: '在线', v: online, s: '心跳均在 15 秒内', cls: 'ok' },
+    {
+      k: '主节点', v: primaries.length,
+      s: 'TASK_SCHEDULER_ENABLED=true',
+      cls: primaries.length === 1 ? 'gold' : 'bad'
+    },
+    { k: '离线', v: off, s: off ? '心跳已超过 45 秒未更新' : '无', cls: off ? 'bad' : '' }
+  ];
+  $('#stat-row').innerHTML = boxes.map(b => `
+    <div class="card stat ${b.cls}">
+      <div class="k">${b.k}</div>
+      <div class="v">${b.v}${b.k === '主节点' ? ` <small>/ ${total}</small>` : ''}</div>
+      <div class="s">${b.s}</div>
+    </div>`).join('');
+  $('#nav-count').textContent = `${online}/${total}`;
+}
+
+/* ===================== 告警（可多条） ===================== */
+function renderAlerts() {
+  const list = [];
+  const primaries = NODES.filter(n => n.primary);
+  if (primaries.length > 1) {
+    list.push({
+      cls: 'bad',
+      html: `检测到 <b>${primaries.length} 个主节点</b>（${primaries.map(n => dispName(n)).join('、')}）：它们都会执行定时任务与调度，可能出现重复触发。
+             <b>TASK_SCHEDULER_ENABLED=true</b> 只应在生产主节点上开启，本地开发实例建议改回 <b>false</b>。`
+    });
+  }
+  if (primaries.length === 1 && !primaries[0].online) {
+    list.push({ cls: 'bad', html: `主节点 <b>${dispName(primaries[0])}</b> 已离线：定时任务与调度会停摆，请尽快恢复或切换主节点。` });
+  }
+  const drift = NODES.filter(n => n.version !== BASE_VERSION);
+  if (drift.length) {
+    list.push({
+      cls: '',
+      html: `版本与集群基准不一致：${drift.map(n => `<b>${dispName(n)}</b> 为 ${n.version}`).join('、')}，其余节点为 <b>${BASE_VERSION}</b>。建议滚动更新后再观察一次。`
+    });
+  }
+  $('#alerts').innerHTML = list.map(a => `
+    <div class="alert ${a.cls}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 9v4M12 17h.01" stroke-linecap="round"/><path d="M10.3 3.9L2.6 17.4A1.9 1.9 0 004.3 20.3h15.4a1.9 1.9 0 001.7-2.9L13.7 3.9a1.9 1.9 0 00-3.4 0z" stroke-linejoin="round"/></svg>
+      <div>${a.html}</div>
+    </div>`).join('');
+}
+
+/* ===================== 卡片 ===================== */
+function match(n) {
+  if (state.filter === 'primary' && !n.primary) return false;
+  if (state.filter === 'secondary' && n.primary) return false;
+  if (!state.q) return true;
+  const q = state.q.toLowerCase();
+  return [n.alias, n.host, n.ip, n.version, n.kindLabel, n.stack.db.type, n.stack.db.version, n.stack.redis.version]
+    .join(' ').toLowerCase().includes(q);
+}
+
+function roleChip(n) {
+  return n.primary
+    ? `<span class="chip gold">${SV.crown}主节点</span>`
+    : `<span class="chip mute">从节点</span>`;
+}
+
+function envTags(n) {
+  return `<span class="tag">${SV.db}<b>${n.stack.db.type} ${n.stack.db.version}</b></span>
+    <span class="tag">${SV.cache}<b>Redis ${n.stack.redis.version}</b></span>
+    <span class="tag"><b>Python ${n.proc.py}</b></span>
+    <span class="tag">${n.kindLabel}</span>`;
+}
+
+function renderNodes() {
+  const list = NODES.filter(match);
+  const grid = $('#node-grid');
+  if (!list.length) {
+    grid.innerHTML = `<div class="note-dashed" style="grid-column:1/-1">没有匹配的实例。</div>`;
+    return;
+  }
+  grid.innerHTML = list.map(n => {
+    const st = statusOf(n);
+    const memP = pct(n.memUsed, n.memTotal);
+    const diskP = pct(n.diskUsed, n.diskTotal);
+    const icoCls = !n.online ? 'off' : (n.primary ? 'primary' : '');
+    const alertCls = (n.online && st.key !== 'online') ? 'is-alert' : '';
+    return `
+    <div class="card node ${n.online ? '' : 'is-off'} ${alertCls}" data-id="${n.host}">
+      <div class="node-top">
+        <div class="node-ico ${icoCls}">${n.online ? SV.server : SV.serverOff}</div>
+        <div style="min-width:0">
+          <div class="node-name">
+            <span class="nm" title="${dispName(n)}">${dispName(n)}</span>
+            <span class="pen" data-alias="${n.host}" title="编辑别名">${SV.pen}</span>
+            ${roleChip(n)}
+            ${n.draining ? '<span class="chip warn">排空中</span>' : ''}
+          </div>
+          <div class="node-id mono">${subLine(n)}</div>
+          <div class="node-tags">
+            <span class="chip ${st.cls} ${n.online && st.key === 'online' ? 'pulse' : ''}"><span class="d"></span>${st.label}</span>
+            <span class="chip ${n.version === BASE_VERSION ? 'mute' : 'warn'}">${n.version}</span>
+          </div>
+        </div>
+        <div style="margin-left:auto;text-align:right">
+          <div class="card-desc">最后心跳</div>
+          <div data-hb="${n.host}" style="font-size:12px;font-weight:650;color:${n.online ? 'var(--ok)' : 'var(--bad)'}">${fmtAgo(n.lastSeenSec)}</div>
+        </div>
+      </div>
+
+      <div class="metric-trio">
+        <div class="mbar"><div class="lb"><span>CPU</span><b>${n.online ? n.cpu + '%' : '—'}</b></div><div class="track"><span class="${lvlClass(n.cpu)}" style="width:${n.online ? n.cpu : 0}%"></span></div></div>
+        <div class="mbar"><div class="lb"><span>内存</span><b>${n.online ? memP + '%' : '—'}</b></div><div class="track"><span class="${lvlClass(memP)}" style="width:${n.online ? memP : 0}%"></span></div></div>
+        <div class="mbar"><div class="lb"><span>磁盘</span><b>${diskP}%</b></div><div class="track"><span class="${lvlClass(diskP)}" style="width:${diskP}%"></span></div></div>
+      </div>
+
+      <div class="kv-row">
+        <div class="kv"><div class="k">活跃会话</div><div class="v">${n.rt.sessions}</div></div>
+        <div class="kv"><div class="k">执行中轮次</div><div class="v">${n.rt.runs}</div></div>
+        <div class="kv"><div class="k">QPS</div><div class="v">${n.online ? n.rt.qps : '—'}</div></div>
+        <div class="kv"><div class="k">P95</div><div class="v">${n.online ? n.rt.p95 + 'ms' : '—'}</div></div>
+      </div>
+
+      <div class="env-row">${envTags(n)}</div>
+
+      <div class="node-foot">
+        <span class="spark">${spark(sliceHours(n.series.cpu, 1), n.online ? '#2563eb' : '#94a3b8')}</span>
+        <span title="近 1 小时 CPU">${n.online ? '运行 ' + fmtDur(n.uptimeSec) : '进程已退出'}</span>
+        <span class="right">
+          <span class="mono" style="font-size:10.5px;color:var(--ink-4)">${n.ip}</span>
+          <button class="btn sm primary" data-detail="${n.host}">详情</button>
+        </span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ===================== 表格 ===================== */
+function renderTable() {
+  const list = NODES.filter(match);
+  const rows = list.map(n => {
+    const st = statusOf(n);
+    const memP = pct(n.memUsed, n.memTotal);
+    return `<tr data-id="${n.host}">
+      <td>
+        <div class="cell-name">${dispName(n)} ${n.primary ? `<span class="chip gold" style="font-size:9.5px;padding:0 5px">${SV.crown}</span>` : ''}</div>
+        <div class="cell-sub mono">${subLine(n)}</div>
+      </td>
+      <td><span class="chip ${st.cls}"><span class="d"></span>${st.label}</span></td>
+      <td><span class="chip ${n.primary ? 'gold' : 'mute'}">${n.primary ? '主' : '从'}</span></td>
+      <td class="num">${n.online ? n.cpu + '%' : '—'}</td>
+      <td class="num">${n.online ? memP + '%' : '—'}</td>
+      <td>${n.stack.db.type} <span style="color:var(--ink-4)">${n.stack.db.version}</span></td>
+      <td>Redis <span style="color:var(--ink-4)">${n.stack.redis.version}</span></td>
+      <td class="mono" style="font-size:11px">${n.version}</td>
+      <td>${n.kindLabel}</td>
+      <td class="num">${n.rt.sessions}</td>
+      <td class="num">${n.rt.runs}</td>
+      <td class="num">${n.online ? n.rt.qps : '—'}</td>
+      <td class="num">${n.online ? fmtDur(n.uptimeSec) : '已退出'}</td>
+      <td data-hb="${n.host}" style="color:${n.online ? 'var(--ink-3)' : 'var(--bad)'}">${fmtAgo(n.lastSeenSec)}</td>
+      <td><button class="btn sm" data-detail="${n.host}">详情</button></td>
+    </tr>`;
+  }).join('');
+  $('#node-table').innerHTML = `<table class="grid">
+    <thead><tr>
+      <th>实例（别名 / hostname）</th><th>状态</th><th>主从</th>
+      <th style="text-align:right">CPU</th><th style="text-align:right">内存</th>
+      <th>数据库</th><th>缓存</th><th>版本</th><th>运行环境</th>
+      <th style="text-align:right">会话</th><th style="text-align:right">执行中</th>
+      <th style="text-align:right">QPS</th><th style="text-align:right">运行时长</th>
+      <th>最后心跳</th><th>操作</th>
+    </tr></thead>
+    <tbody>${rows || `<tr><td colspan="15" style="padding:26px;text-align:center;color:var(--ink-4)">没有匹配的实例</td></tr>`}</tbody>
+  </table>`;
+}
+
+/* ===================== 抽屉 ===================== */
+function depRow(label, d) {
+  return `<div class="dep-row">
+    <span class="chip ${d.ok ? 'ok' : 'bad'}"><span class="d"></span>${d.ok ? '正常' : '异常'}</span>
+    <span style="font-weight:600">${label}</span>
+    <span class="card-desc">${d.extra}</span>
+    <span class="lat">${d.ok ? d.latency + ' ms' : '—'}</span>
+  </div>`;
+}
+
+function trendBlock(n) {
+  const hours = state.range;
+  const cpu = samplePoints(n.series.cpu, hours);
+  const mem = samplePoints(n.series.mem, hours);
+  const qps = samplePoints(n.series.qps, hours);
+  const label = hours === 24 ? '24 小时' : hours + ' 小时';
+  return `
+    <div class="sec-label">聚合趋势 · 近 ${label}</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+      <div class="mbar"><div class="lb"><span>CPU</span><b>${n.online ? n.cpu + '%' : '—'}</b></div>${spark(cpu, '#2563eb', 180, 40)}</div>
+      <div class="mbar"><div class="lb"><span>内存</span><b>${n.online ? pct(n.memUsed, n.memTotal) + '%' : '—'}</b></div>${spark(mem, '#7c3aed', 180, 40)}</div>
+      <div class="mbar"><div class="lb"><span>QPS</span><b>${n.online ? n.rt.qps : '—'}</b></div>${spark(qps, '#0e7490', 180, 40)}</div>
+    </div>
+    <div class="card-desc" style="margin-top:8px">
+      数据来源 <span class="mono">ZRANGEBYSCORE nanzi:instance:${n.host}:series</span>，写入时 <span class="mono">EXPIRE 86400</span>，超过一天的采样点由 Redis 自动清理，不需要额外的清理任务。
+    </div>`;
+}
+
+function openDrawer(host) {
+  const n = NODES.find(x => x.host === host);
+  if (!n) return;
+  state.selected = host;
+  const st = statusOf(n);
+  const memP = pct(n.memUsed, n.memTotal);
+
+  $('#drawer-head').innerHTML = `
+    <div class="node-ico ${!n.online ? 'off' : (n.primary ? 'primary' : '')}">${n.online ? SV.server : SV.serverOff}</div>
+    <div style="min-width:0;flex:1">
+      <div class="node-name" style="font-size:15px">
+        <span class="nm" style="max-width:340px">${dispName(n)}</span>
+        <span class="pen" id="drawer-alias" style="opacity:1" data-alias="${n.host}" title="编辑别名">${SV.pen}</span>
+        <span class="chip ${st.cls} ${n.online && st.key === 'online' ? 'pulse' : ''}"><span class="d"></span>${st.label}</span>
+        ${roleChip(n)}
+      </div>
+      <div class="node-id mono">${n.host}</div>
+      <div class="node-tags">
+        <span class="chip mute">${n.kindLabel}</span>
+        <span class="chip ${n.version === BASE_VERSION ? 'mute' : 'warn'}">${n.version}</span>
+        <span class="chip mute">${n.zone}</span>
+      </div>
+    </div>
+    <button class="btn sm" id="drawer-close">关闭</button>`;
+
+  $('#drawer-body').innerHTML = `
+    <div>
+      <div class="sec-label">身份与拓扑</div>
+      <div class="field-grid">
+        <div class="field"><span class="k">别名</span><span class="v">${n.alias || '—（未设置，显示 hostname）'}</span></div>
+        <div class="field"><span class="k">hostname（实例 ID）</span><span class="v mono" style="font-size:11px">${n.host}</span></div>
+        <div class="field"><span class="k">主 / 从</span><span class="v">${n.primary ? '主节点（执行定时调度）' : '从节点（不执行调度）'}</span></div>
+        <div class="field"><span class="k">TASK_SCHEDULER_ENABLED</span><span class="v mono">${n.primary}</span></div>
+        <div class="field"><span class="k">K8s Node</span><span class="v">${n.nodeName}</span></div>
+        <div class="field"><span class="k">内网 IP</span><span class="v mono">${n.ip}</span></div>
+        <div class="field"><span class="k">部署形态</span><span class="v">${n.kindLabel}</span></div>
+        <div class="field"><span class="k">区域</span><span class="v">${n.zone}</span></div>
+        <div class="field"><span class="k">版本 / commit</span><span class="v">${n.version} · ${n.commit}</span></div>
+        <div class="field"><span class="k">镜像</span><span class="v mono" style="font-size:11px">${n.image}</span></div>
+        <div class="field"><span class="k">启动时间</span><span class="v">${n.startedAt}</span></div>
+        <div class="field"><span class="k">运行时长</span><span class="v">${n.online ? fmtDur(n.uptimeSec) : '进程已退出'}</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec-label">中间件与运行时</div>
+      <div class="field-grid">
+        <div class="field"><span class="k">数据库类型</span><span class="v">${n.stack.db.type} ${n.stack.db.version}</span></div>
+        <div class="field"><span class="k">Redis</span><span class="v">${n.stack.redis.flavor} ${n.stack.redis.version} · ${n.stack.redis.mode}</span></div>
+        <div class="field"><span class="k">向量索引</span><span class="v">HNSW · FLOAT32</span></div>
+        <div class="field"><span class="k">Python</span><span class="v">${n.proc.py}</span></div>
+        <div class="field"><span class="k">进程 PID / worker</span><span class="v">${n.proc.pid} · ${n.proc.workers}</span></div>
+        <div class="field"><span class="k">构建时间</span><span class="v">${n.builtAt}</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec-label">资源占用</div>
+      <div class="metric-trio" style="margin-bottom:8px">
+        <div class="mbar"><div class="lb"><span>CPU ${n.cores} 核</span><b>${n.online ? n.cpu + '%' : '—'}</b></div><div class="track"><span class="${lvlClass(n.cpu)}" style="width:${n.online ? n.cpu : 0}%"></span></div></div>
+        <div class="mbar"><div class="lb"><span>内存</span><b>${n.online ? memP + '%' : '—'}</b></div><div class="track"><span class="${lvlClass(memP)}" style="width:${n.online ? memP : 0}%"></span></div></div>
+        <div class="mbar"><div class="lb"><span>磁盘</span><b>${pct(n.diskUsed, n.diskTotal)}%</b></div><div class="track"><span class="${lvlClass(pct(n.diskUsed, n.diskTotal))}" style="width:${pct(n.diskUsed, n.diskTotal)}%"></span></div></div>
+      </div>
+      <div class="field-grid">
+        <div class="field"><span class="k">负载 1/5/15</span><span class="v">${n.load.join(' / ')}</span></div>
+        <div class="field"><span class="k">内存 RSS / 上限</span><span class="v">${n.memUsed} / ${n.memTotal} MB</span></div>
+        <div class="field"><span class="k">磁盘占用</span><span class="v">${n.diskUsed} / ${n.diskTotal} GB</span></div>
+        <div class="field"><span class="k">线程 / 打开文件</span><span class="v">${n.proc.threads} / ${n.proc.fds}</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec-label">依赖与外部连接</div>
+      ${depRow(`${n.stack.db.type} ${n.stack.db.version}（主库）`, n.deps.mysql)}
+      ${depRow(`Redis ${n.stack.redis.version}`, n.deps.redis)}
+      ${depRow('向量引擎', n.deps.vector)}
+      ${depRow('RAGFlow', n.deps.ragflow)}
+      ${depRow('沙箱执行', n.deps.sandbox)}
+    </div>
+
+    <div>
+      <div class="sec-label">业务运行态</div>
+      <div class="field-grid">
+        <div class="field"><span class="k">活跃会话</span><span class="v">${n.rt.sessions}</span></div>
+        <div class="field"><span class="k">执行中轮次</span><span class="v">${n.rt.runs}</span></div>
+        <div class="field"><span class="k">排队任务</span><span class="v">${n.rt.queued}</span></div>
+        <div class="field"><span class="k">执行中工具调用</span><span class="v">${n.rt.tools}</span></div>
+        <div class="field"><span class="k">近 1 分钟请求</span><span class="v">${fmtNum(n.rt.reqs1m)}</span></div>
+        <div class="field"><span class="k">QPS</span><span class="v">${n.online ? n.rt.qps : '—'}</span></div>
+        <div class="field"><span class="k">P95 延迟</span><span class="v">${n.online ? n.rt.p95 + ' ms' : '—'}</span></div>
+        <div class="field"><span class="k">5xx 错误率</span><span class="v">${n.rt.err5xx}%</span></div>
+        <div class="field"><span class="k">鉴权失败（5 分钟）</span><span class="v">${n.rt.authFail}</span></div>
+        <div class="field" style="grid-column:1/-1"><span class="k">定时任务</span><span class="v">${n.rt.jobsNext}</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <div class="sec-label" style="margin:0;flex:1">趋势</div>
+        <div class="seg" id="range-seg">
+          <button data-range="1" class="${state.range === 1 ? 'on' : ''}">1h</button>
+          <button data-range="6" class="${state.range === 6 ? 'on' : ''}">6h</button>
+          <button data-range="24" class="${state.range === 24 ? 'on' : ''}">24h</button>
+        </div>
+      </div>
+      ${trendBlock(n)}
+    </div>`;
+
+  $('#mask').classList.add('on');
+  $('#drawer').classList.add('on');
+  $('#drawer').setAttribute('aria-hidden', 'false');
+  $('#drawer-close').onclick = closeDrawer;
+  $$('#range-seg button').forEach(b => b.onclick = () => {
+    state.range = +b.dataset.range;
+    openDrawer(n.host);
+  });
+}
+
+function closeDrawer() {
+  state.selected = null;
+  $('#mask').classList.remove('on');
+  $('#drawer').classList.remove('on');
+  $('#drawer').setAttribute('aria-hidden', 'true');
+}
+
+/* ===================== 别名编辑 ===================== */
+function openAlias(host) {
+  const n = NODES.find(x => x.host === host);
+  if (!n) return;
+  state.aliasTarget = host;
+  $('#alias-host').value = n.host;
+  $('#alias-input').value = n.alias || '';
+  $('#alias-mask').classList.add('on');
+  setTimeout(() => $('#alias-input').focus(), 30);
+}
+function closeAlias() {
+  state.aliasTarget = null;
+  $('#alias-mask').classList.remove('on');
+}
+
+/* ===================== 契约 ===================== */
+const CONTRACT = [
+  { t: '身份与拓扑', f: ['hostname（实例 ID，唯一）', '别名（页面编辑）', 'K8s Pod / Node 名', 'Pod IP / 内网 IP', '部署形态（k8s / compose / systemd）', '区域'] },
+  { t: '主从', f: ['TASK_SCHEDULER_ENABLED → 主 / 从', '是否执行定时调度', '下次调度时间（仅主节点）', '检测到多主 / 主节点离线'] },
+  { t: '版本与构建', f: ['应用版本', 'Git commit', '镜像 tag', '构建时间', '数据库迁移版本', '前端资源指纹'] },
+  { t: '中间件与运行时', f: ['数据库类型（MySQL / PostgreSQL）', '数据库版本', 'Redis 版本与形态（Stack / 集群）', '向量索引类型', 'Python 版本', '进程 PID 与 worker 数'] },
+  { t: '生命周期', f: ['启动时间', '运行时长', '最后心跳', '心跳序号', '排空中标记', '重启次数'] },
+  { t: '资源占用', f: ['CPU 使用率 / 核数', '负载 1/5/15', '内存 RSS / 上限', '磁盘使用', '线程数', '打开文件数'] },
+  { t: '依赖连接', f: ['数据库连接池在用 / 上限', '数据库 ping 延迟', 'Redis 延迟与可写性', '向量引擎健康', 'RAGFlow 可用性', '沙箱驱动'] },
+  { t: '业务运行态', f: ['活跃会话', '执行中轮次', '排队任务', '执行中工具调用', '1 分钟请求数', 'QPS', 'P95 延迟', '5xx 错误率', '鉴权失败数'] }
+];
+function renderContract() {
+  $('#contract-grid').innerHTML = CONTRACT.map((b, i) => `
+    <div class="ct-block">
+      <div class="ct-title"><span class="n">${i + 1}</span>${b.t}</div>
+      <div class="ct-list">${b.f.map(f => `<span>${f}</span>`).join('')}</div>
+    </div>`).join('');
+}
+
+/* ===================== 交互 ===================== */
+function switchView(v) {
+  state.view = v;
+  $$('.subnav-item').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+  $('#view-diag').style.display = v === 'diag' ? 'flex' : 'none';
+  $('#view-instances').style.display = v === 'instances' ? 'flex' : 'none';
+}
+
+function renderAll() { renderStats(); renderAlerts(); renderNodes(); renderTable(); }
+
+document.addEventListener('click', (e) => {
+  const sub = e.target.closest('.subnav-item');
+  if (sub) return switchView(sub.dataset.view);
+
+  const aliasBtn = e.target.closest('[data-alias]');
+  if (aliasBtn) { e.stopPropagation(); openAlias(aliasBtn.dataset.alias); return; }
+
+  const detailBtn = e.target.closest('[data-detail]');
+  if (detailBtn) { e.stopPropagation(); openDrawer(detailBtn.dataset.detail); return; }
+
+  const nodeCard = e.target.closest('.node[data-id]');
+  if (nodeCard) return openDrawer(nodeCard.dataset.id);
+
+  const row = e.target.closest('tr[data-id]');
+  if (row) return openDrawer(row.dataset.id);
+
+  const fchip = e.target.closest('[data-node-filter]');
+  if (fchip) {
+    state.filter = fchip.dataset.nodeFilter;
+    $$('[data-node-filter]').forEach(c => c.classList.toggle('on', c === fchip));
+    renderAll();
+    return;
+  }
+
+  const modeBtn = e.target.closest('#viewmode button');
+  if (modeBtn) {
+    state.mode = modeBtn.dataset.mode;
+    $$('#viewmode button').forEach(b => b.classList.toggle('on', b === modeBtn));
+    $('#node-grid').style.display = state.mode === 'card' ? 'grid' : 'none';
+    $('#node-table').style.display = state.mode === 'table' ? 'block' : 'none';
+    return;
+  }
+
+  if (e.target.closest('#mask')) closeDrawer();
+  if (e.target.closest('#alias-mask') && !e.target.closest('.modal')) closeAlias();
+});
+
+$('#q').addEventListener('input', (e) => { state.q = e.target.value.trim(); renderAll(); });
+
+$('#btn-refresh').addEventListener('click', () => {
+  NODES.forEach(n => { if (n.online) n.lastSeenSec = 1 + Math.random() * 4; });
+  renderAll();
+});
+
+$('#btn-toggle-auto').addEventListener('click', () => {
+  state.auto = !state.auto;
+  $('#auto-label').textContent = state.auto ? '自动刷新 15s：开' : '自动刷新 15s：关';
+});
+
+$('#contract-toggle').addEventListener('click', () => {
+  const body = $('#contract-body');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  $('#contract-caret').textContent = open ? '展开' : '收起';
+});
+
+$('#alias-cancel').addEventListener('click', closeAlias);
+$('#alias-save').addEventListener('click', () => {
+  const n = NODES.find(x => x.host === state.aliasTarget);
+  if (n) n.alias = $('#alias-input').value.trim();
+  const host = state.aliasTarget;
+  closeAlias();
+  renderAll();
+  if (state.selected === host) openDrawer(host);
+});
+$('#alias-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#alias-save').click(); });
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if ($('#alias-mask').classList.contains('on')) return closeAlias();
+  closeDrawer();
+});
+
+/* ===================== 心跳模拟 ===================== */
+function updateHeartbeats() {
+  $$('[data-hb]').forEach(el => {
+    const n = NODES.find(x => x.host === el.dataset.hb);
+    if (!n) return;
+    el.textContent = fmtAgo(n.lastSeenSec);
+    const inCard = !!el.closest('.node');
+    el.style.color = n.online ? (inCard ? 'var(--ok)' : 'var(--ink-3)') : 'var(--bad)';
+  });
+}
+let tick = 0;
+setInterval(() => {
+  tick++;
+  NODES.forEach(n => {
+    n.lastSeenSec += 1;
+    if (n.online) n.uptimeSec += 1;
+    if (!n.online) return;
+    if (state.auto && n.lastSeenSec > 15) n.lastSeenSec = 2 + Math.random() * 3;
+  });
+  $('#clock').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  if (state.view === 'instances') updateHeartbeats();
+  if (tick % 4 === 0) {
+    NODES.forEach(n => {
+      if (!n.online) return;
+      n.cpu = Math.max(2, Math.min(96, +(n.cpu + (Math.random() - 0.5) * 3).toFixed(1)));
+      n.memUsed = Math.max(200, Math.round(n.memUsed + (Math.random() - 0.5) * 12));
+      n.series.cpu.push(n.cpu); n.series.cpu.shift();
+      n.series.mem.push(n.memUsed); n.series.mem.shift();
+    });
+    if (state.view === 'instances' && !state.selected) {
+      renderStats(); renderAlerts();
+      if (state.mode === 'card') renderNodes(); else renderTable();
+    }
+  }
+}, 1000);
+
+/* ===================== 启动 ===================== */
+renderContract();
+renderAll();
+$('#clock').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+
+/* #view=instances&mode=table&node=<hostname>&alias=<hostname>&contract=1 */
+(function bootFromHash() {
+  const p = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if (p.get('view') === 'instances') switchView('instances');
+  if (p.get('mode') === 'table') {
+    state.mode = 'table';
+    $$('#viewmode button').forEach(b => b.classList.toggle('on', b.dataset.mode === 'table'));
+    $('#node-grid').style.display = 'none';
+    $('#node-table').style.display = 'block';
+  }
+  if (p.get('contract') === '1') $('#contract-toggle').click();
+  const node = p.get('node');
+  if (node) setTimeout(() => openDrawer(node), 60);
+  const aliasFor = p.get('alias');
+  if (aliasFor) setTimeout(() => openAlias(aliasFor), 120);
+})();
+</script>
+</body>
+</html>

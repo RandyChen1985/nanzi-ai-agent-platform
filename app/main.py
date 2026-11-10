@@ -68,6 +68,15 @@ async def lifespan(app: FastAPI):
     await database.init_db()
     await redis.init_redis()
     await AuditService.start_worker()
+
+    # 多实例心跳：每 15s 把本节点快照写进共享 Redis，供「系统诊断 → 实例」聚合展示。
+    # Redis 未启用时它自己会跳过，不阻塞启动。
+    try:
+        from app.services.instance_registry import heartbeat_reporter
+
+        await heartbeat_reporter.start()
+    except Exception as exc:  # noqa: BLE001 - 心跳是旁路，不能拖垮启动
+        logging.warning("启动实例心跳上报失败（已忽略）: %s", exc)
     
     # Initialize Oracle Thick Mode if requested
     if os.environ.get("USE_ORACLE_THICK_MODE") == "1":
@@ -182,6 +191,13 @@ async def lifespan(app: FastAPI):
     await browser_runtime.shutdown()
     from app.services.pool_manager import DataSourcePoolManager
     await DataSourcePoolManager.close_all_pools()
+    # 必须早于 redis.close_redis()：清理自己的实例键要用 Redis
+    try:
+        from app.services.instance_registry import heartbeat_reporter
+
+        await heartbeat_reporter.stop()
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("停止实例心跳上报失败（已忽略）: %s", exc)
     await database.close_db()
     await redis.close_redis()
 
@@ -505,6 +521,12 @@ app.add_middleware(
 
 # 安全响应头放在最外层：保证所有响应（含 CORS 预检、异常响应与静态文件）都带上。
 app.add_middleware(SecurityHeadersMiddleware)
+
+# 请求指标（QPS / P95 / 5xx / 并发）：只给「实例」页做本节点口径，不对外暴露。
+# 用纯 ASGI 实现，避免 BaseHTTPMiddleware 缓冲聊天 SSE 的响应体。
+from app.core.request_metrics import RequestMetricsMiddleware  # noqa: E402
+
+app.add_middleware(RequestMetricsMiddleware)
 
 # 内置 Echo MCP：平台实例供所有智能体挂载；个人实例把 server_id 编进路径复用同一端点。
 app.mount("/mcp/echo", EchoServerIdMiddleware(echo_mcp_http_app()))

@@ -12,6 +12,7 @@ import ToolRegistry from '../components/system/ToolRegistry.vue'
 import ChatTour from '../components/embed/ChatTour.vue'
 import { SYSTEM_CONFIG_TOUR_STEPS } from '../components/system/systemConfigTourSteps'
 import { useSystemConfigTour } from '../composables/system/useSystemConfigTour'
+import InstanceNodesPanel from '../components/system/InstanceNodesPanel.vue'
 import LangfuseConfig from '../components/system/LangfuseConfig.vue'
 import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -62,6 +63,13 @@ const canSave = hasPermission('element:system:config_save')
 
 const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'logs' | 'branding' | 'langfuse'>('configs')
 const diagSubTab = ref<'console' | 'redis'>('console')
+// 系统诊断内部的二级左栏：诊断（原有内容）/ 实例（多节点心跳）
+const diagSection = ref<'diag' | 'instances'>('diag')
+const instanceSummary = ref<{ online: number; total: number }>({ online: 0, total: 0 })
+
+function onInstanceSummary(value: { online: number; total: number }) {
+  instanceSummary.value = value
+}
 // 「Redis 向量搜索」的检测详情默认收起，避免顶部操作区占用过多高度
 const vectorHealthExpanded = ref(false)
 // 对外访问地址的使用场景说明较长，默认折叠成一行摘要，点「查看说明」再展开
@@ -3652,7 +3660,42 @@ onUnmounted(() => {
        </div>
 
         <!-- DIAGNOSTICS TAB -->
-        <div v-else-if="activeTab === 'diagnostics'" class="flex flex-col gap-4 h-full min-h-0 pb-6 overflow-y-auto custom-scrollbar">
+        <div v-else-if="activeTab === 'diagnostics'" class="flex gap-4 h-full min-h-0">
+          <!-- 二级左栏：横向一级 tab 只保留入口，诊断内部再分「诊断 / 实例」 -->
+          <aside class="flex w-44 shrink-0">
+            <!-- 通高白卡：左栏只放两个页签，别让下面的版面底色露出来 -->
+            <div class="flex flex-1 flex-col rounded-xl border border-gray-200/80 bg-white p-2 shadow-sm">
+              <div class="px-2 pb-1.5 pt-1 text-[10.5px] font-semibold tracking-wide text-gray-400">系统诊断</div>
+              <button
+                type="button"
+                class="mb-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-colors cursor-pointer"
+                :class="diagSection === 'diag' ? 'bg-primary/10 font-semibold text-primary ring-1 ring-primary/20' : 'text-gray-600 hover:bg-gray-50'"
+                @click="diagSection = 'diag'"
+              >
+                <BoltIcon class="h-4 w-4 shrink-0" />
+                诊断
+              </button>
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-colors cursor-pointer"
+                :class="diagSection === 'instances' ? 'bg-primary/10 font-semibold text-primary ring-1 ring-primary/20' : 'text-gray-600 hover:bg-gray-50'"
+                @click="diagSection = 'instances'"
+              >
+                <ServerStackIcon class="h-4 w-4 shrink-0" />
+                实例
+                <span
+                  v-if="instanceSummary.total"
+                  class="ml-auto rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700"
+                >
+                  {{ instanceSummary.online }}/{{ instanceSummary.total }}
+                </span>
+              </button>
+              <div class="mt-auto rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-2 py-1.5 text-[10.5px] leading-relaxed text-gray-500">
+                主 / 从只影响定时调度，其他能力每个实例都一样。
+              </div>
+            </div>
+          </aside>
+          <div v-show="diagSection === 'diag'" class="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto custom-scrollbar pb-6">
           <!-- 顶部：连接与能力检查区域（支持智能 Mini 摘要条折叠/展开） -->
           <div class="flex-shrink-0 transition-all duration-200">
             <!-- 状态 1：折叠态 Mini 状态胶囊栏 -->
@@ -4173,6 +4216,12 @@ onUnmounted(() => {
                 </div>
               </div>
             </div>
+          </div>
+          </div>
+
+          <!-- 实例：多节点心跳（数据来自共享 Redis，15s 自动刷新） -->
+          <div v-show="diagSection === 'instances'" class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto custom-scrollbar pb-6">
+            <InstanceNodesPanel @summary="onInstanceSummary" />
           </div>
         </div>
 
