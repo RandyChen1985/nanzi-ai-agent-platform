@@ -8,7 +8,7 @@
 
 ### 1. V209 已执行过的话，要单独去外键
 
-凭据中心的五张表**没有外键**（要能单独导出再导入，外键会强制父表先存在，导入顺序一错就整批失败）。如果之前的 V209 已经建好表，那批表上是带外键的，重跑 `CREATE TABLE IF NOT EXISTS` 不会改已有表：
+凭据中心的六张表**没有外键**（要能单独导出再导入，外键会强制父表先存在，导入顺序一错就整批失败）。如果之前的 V209 已经建好表，那批表上是带外键的，重跑 `CREATE TABLE IF NOT EXISTS` 不会改已有表：
 
 ```sql
 -- MySQL
@@ -32,15 +32,16 @@ WHERE constraint_type = 'FOREIGN KEY'
 ### 2. 没执行过的，按顺序跑
 
 ```
-db-prod/V209-add-credential-center.sql        -- 五张表
-db-prod/V210-add-credential-center-menu.sql   -- 系统管理 → 凭据中心菜单
+db-prod/V209-add-credential-center.sql   -- 六张表 + 菜单种子 + 变更审计 + credential_params
 ```
 
-PostgreSQL 对应 `V109` / `V110`。
+PostgreSQL 对应 `V109`。
+
+> 早期版本的菜单种子单独放在 `V210-add-credential-center-menu.sql`，现已合并进 V209 的第二段。仓库里不再有这个文件——如果你在旧文档或笔记里看到它，按 V209 执行即可（`CREATE TABLE IF NOT EXISTS` 与带 `START/END` 标记的菜单段都是可重入的）。
 
 ### 3. 菜单种子已改动
 
-`app/services/menu_seed.py` 里新增了 `menu:system:credentials` 与 `element:system:credentials_manage`。如果你们的部署流程依赖菜单种子自动同步，重启即可；如果是手工导入 `ai_agent_menus`，跑 V210。
+`app/services/menu_seed.py` 里新增了 `menu:system:credentials` 与 `element:system:credentials_manage`。如果你们的部署流程依赖菜单种子自动同步，重启即可；如果是手工导入 `ai_agent_menus`，跑 V209（菜单段在文件中部，带 `START/END` 标记，可单独截取执行）。
 
 ---
 
