@@ -2013,6 +2013,13 @@ async def create_chat_completion(
         effective_execution_options["grounding_action"] = dict(
             completion_request.grounding_action
         )
+    # 无人值守来源（定时 / 订阅任务）必须在 execution_options 里留一个标记：
+    # 工具层只拿得到 execution_options，拿不到 user_info，否则 ask_user_question
+    # 会在没有在线用户的链路里弹出一张永远没人回答的卡。
+    from app.services.ai.tool_nudge_policy import unattended_delivery_marker
+
+    if unattended_delivery_marker(user_info):
+        effective_execution_options["unattended"] = True
     if effective_execution_options:
         set_execution_options_context(effective_execution_options)
     else:

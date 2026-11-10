@@ -96,6 +96,48 @@ class AskUserQuestionArgs(BaseModel):
         return text or None
 
 
+#: 子代理提问的额外上限。父自己的提问不受这些限制。
+#:
+#: 子代理读过网页、上传文档、知识库片段，它的提问内容属于不可信输入：提示词注入
+#: 可以把攻击者的话包装成提问卡显示在主会话里，还带着子智能体的权威感。所以这里
+#: 比 ``AskUserQuestionArgs`` 的通用上限更严，并且额外禁掉 ``action``。
+_DELEGATED_ASK_MAX_QUESTION_CHARS = 200
+_DELEGATED_ASK_MAX_OPTION_LABEL_CHARS = 60
+_DELEGATED_ASK_MAX_OPTIONS = 6
+
+
+def _enabled_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def validate_delegated_ask(args: "AskUserQuestionArgs") -> str | None:
+    """校验子代理提问的内容边界，返回违规原因（None 表示通过）。"""
+    if len(args.question) > _DELEGATED_ASK_MAX_QUESTION_CHARS:
+        return (
+            f"子代理提问的问题不能超过 {_DELEGATED_ASK_MAX_QUESTION_CHARS} 个字符"
+            f"（当前 {len(args.question)}）"
+        )
+    if len(args.options) > _DELEGATED_ASK_MAX_OPTIONS:
+        return (
+            f"子代理提问的选项不能超过 {_DELEGATED_ASK_MAX_OPTIONS} 项"
+            f"（当前 {len(args.options)}）"
+        )
+    for item in args.options:
+        if item.action:
+            return "子代理提问的选项不允许携带 action：页面动作只能由主智能体发起"
+        if len(item.label) > _DELEGATED_ASK_MAX_OPTION_LABEL_CHARS:
+            return (
+                f"子代理提问的选项名称不能超过 {_DELEGATED_ASK_MAX_OPTION_LABEL_CHARS} 个字符"
+                f"（当前 {len(item.label)}）"
+            )
+    for text in (args.context or "", args.purpose or ""):
+        if "http://" in text or "https://" in text:
+            return "子代理提问的背景说明不允许包含链接"
+    return None
+
+
 class AskUserQuestionTool(BaseTool):
     name = "ask_user_question"
     description = (
@@ -104,17 +146,28 @@ class AskUserQuestionTool(BaseTool):
         "‘列出几个问题’属于文字生成，不等同于‘问我几个问题’。"
         "支持单选、多选和补充输入；调用后必须停止当前执行并等待【用户回答】回执。"
         "能够依据上下文安全推断时不要重复提问；每轮最多提出一个问题。"
+        "在委派子任务中同样可以提问：卡片会直达用户，你这一轮停下等回答，"
+        "用户答完后主智能体会带着答案让你继续。委派场景的边界更严：问题不超过 "
+        f"{_DELEGATED_ASK_MAX_QUESTION_CHARS} 字、给 2-4 个选项"
+        f"（最多 {_DELEGATED_ASK_MAX_OPTIONS} 个）、选项名称不超过 "
+        f"{_DELEGATED_ASK_MAX_OPTION_LABEL_CHARS} 字，且不得包含链接或页面动作。"
     )
     args_schema = AskUserQuestionArgs
 
     async def ainvoke(self, arguments: dict[str, Any] | None = None) -> str:
-        # 无人值守上下文（委派、定时任务、订阅任务）没有回传通道：卡片事件会被
-        # agent_delegate_tool 的流白名单吞掉，等待的回执永远不会到，模型只会空等到超时。
-        # 这里直接拒绝并说明原因，让它转成正常回答，而不是发一张没人能看到的卡。
+        # 两种非交互上下文要区别对待：
+        #   * 定时 / 订阅任务——真的没有在线用户，提问只会空等，直接拒绝；
+        #   * 委派子代理——提问卡会由 agent_delegate_tool 转登记到父会话并直达用户，
+        #     父这一轮停下来等回答，所以放行（但要过下面的子代理专用安全边界）。
         from app.core.context import execution_options_context
         from app.services.ai.tool_nudge_policy import is_automatic_delivery_context
 
-        if is_automatic_delivery_context(None, execution_options_context.get()):
+        options = execution_options_context.get() or {}
+        delegated_sub_agent = _enabled_flag(options.get("delegated_sub_agent"))
+        # 定时 / 订阅任务整条链路都没有在线用户，委派出去的子代理同样没有：
+        # 必须无视 delegated_sub_agent 直接拒绝，否则卡片会塞进一个没人消费的队列。
+        unattended = _enabled_flag(options.get("unattended"))
+        if unattended or (is_automatic_delivery_context(None, options) and not delegated_sub_agent):
             return json.dumps(
                 {
                     "status": "error",
@@ -135,10 +188,31 @@ class AskUserQuestionTool(BaseTool):
                 },
                 ensure_ascii=False,
             )
+        if delegated_sub_agent:
+            violation = validate_delegated_ask(args)
+            if violation:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "error": violation,
+                        "hint": "不要在提问里夹带页面动作、链接或长段指令。"
+                        "请把情况写进结论，由主智能体决定是否转问用户。",
+                    },
+                    ensure_ascii=False,
+                )
+        source_agent_name: str | None = None
+        if delegated_sub_agent:
+            from app.core.context import get_current_agent_context
+
+            source_ctx = get_current_agent_context()
+            source_agent_name = (
+                str(getattr(source_ctx, "agent_name", "") or "").strip() or None
+            )
         return json.dumps(
             {
                 "status": "awaiting_user",
                 "interaction_type": "question",
+                "source_agent_name": source_agent_name,
                 "question_id": f"uq_{secrets.token_hex(8)}",
                 "message": "已向用户展示提问卡，请等待用户回答后再继续执行。",
                 "question": args.question,

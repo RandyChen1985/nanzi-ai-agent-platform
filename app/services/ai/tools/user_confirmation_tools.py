@@ -66,13 +66,31 @@ class RequestUserConfirmationTool(BaseTool):
     args_schema = RequestUserConfirmationArgs
 
     async def ainvoke(self, arguments: dict[str, Any] | None = None) -> str:
+        from app.core.context import execution_options_context
         from app.services.ai.business_confirmation import (
             cancel_gate_block_payload,
             is_cancel_confirmation_gate_armed,
         )
+        from app.services.ai.tool_nudge_policy import is_automatic_delivery_context
 
         if is_cancel_confirmation_gate_armed():
             return json.dumps(cancel_gate_block_payload(), ensure_ascii=False)
+
+        # 业务确认卡没有委派透传通道（``business_confirmation`` 不在委派流白名单里）：
+        # 子代理若以为「已展示」，就会原地等一个永远到不了的【业务确认】回执。
+        # 与 ask_user_question 不同，这里连委派也一并拒绝——卡片的回执语义更重，
+        # 未经父确认就代问用户反而容易让用户以为自己在批准一次真实写入。
+        options = execution_options_context.get() or {}
+        if is_automatic_delivery_context(None, options):
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": "当前为无人值守上下文（委派或定时/订阅任务），无法向用户展示确认卡。",
+                    "hint": "不要等待确认回执。请把待确认的字段、你的建议取值和风险写进结论，"
+                    "由主智能体向用户确认后再继续。",
+                },
+                ensure_ascii=False,
+            )
 
         arguments = arguments or {}
         try:

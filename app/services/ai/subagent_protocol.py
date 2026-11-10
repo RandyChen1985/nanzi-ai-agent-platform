@@ -20,6 +20,9 @@ class SubAgentResultStatus(str, Enum):
     PERMISSION_DENIED = "permission_denied"
     DEPTH_EXCEEDED = "depth_exceeded"
     INVALID_OUTPUT = "invalid_output"
+    # 子智能体已在委派中向用户发起提问并停下等回答。它不是「没产出」，
+    # 也不是失败：父这一轮必须停止，等用户回答后再 resume 续聊。
+    NEEDS_USER_INPUT = "needs_user_input"
 
 
 class SubAgentStopReason(str, Enum):
@@ -34,6 +37,7 @@ class SubAgentStopReason(str, Enum):
     INVALID_OUTPUT = "invalid_output"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
+    NEEDS_USER_INPUT = "needs_user_input"
 
 
 _STOP_REASON_BY_STATUS = {
@@ -46,6 +50,7 @@ _STOP_REASON_BY_STATUS = {
     SubAgentResultStatus.INVALID_OUTPUT: SubAgentStopReason.INVALID_OUTPUT,
     SubAgentResultStatus.FAILED: SubAgentStopReason.FAILED,
     SubAgentResultStatus.INTERRUPTED: SubAgentStopReason.INTERRUPTED,
+    SubAgentResultStatus.NEEDS_USER_INPUT: SubAgentStopReason.NEEDS_USER_INPUT,
 }
 
 
@@ -103,6 +108,12 @@ EMPTY_SUB_AGENT_RESULT_MESSAGE = (
     "请勿使用相同参数重复委派；请根据上述情况向用户说明，或建议其直接打开对应子智能体对话。"
 )
 
+NEEDS_USER_INPUT_SUB_AGENT_RESULT_MESSAGE = (
+    "子智能体已向用户发起提问，正在等待用户回答。"
+    "本轮请勿重复提问，也不要替用户作答；用户回答后，用 sub_agent_call(resume=True) "
+    "让同一子智能体接着上次的进度继续。"
+)
+
 
 @dataclass(frozen=True)
 class SubAgentResult:
@@ -138,6 +149,14 @@ class SubAgentResult:
             return self.content
         if self.structured is not None:
             return json.dumps(self.structured, ensure_ascii=False)
+        if self.status is SubAgentResultStatus.NEEDS_USER_INPUT:
+            # 兜底路径也点名子代理：父需要据此决定 resume 谁。
+            if self.target_agent_name:
+                return (
+                    f"{NEEDS_USER_INPUT_SUB_AGENT_RESULT_MESSAGE}"
+                    f"\n发起提问的子智能体：{self.target_agent_name}。"
+                )
+            return NEEDS_USER_INPUT_SUB_AGENT_RESULT_MESSAGE
         if self.status is SubAgentResultStatus.EMPTY:
             return EMPTY_SUB_AGENT_RESULT_MESSAGE
         return "错误：子智能体未产生可交付结果。"
@@ -278,6 +297,7 @@ def validate_structured_schema(schema: Any) -> str | None:
 
 __all__ = [
     "EMPTY_SUB_AGENT_RESULT_MESSAGE",
+    "NEEDS_USER_INPUT_SUB_AGENT_RESULT_MESSAGE",
     "SubAgentRequest",
     "SubAgentResult",
     "SubAgentResultStatus",

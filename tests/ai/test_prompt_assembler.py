@@ -889,3 +889,61 @@ def test_task_constraints_blank_not_injected_for_non_local_engine():
 
     assert "## 任务约束（冲突裁决）" not in assembled.full_text
 
+
+
+@pytest.mark.asyncio
+async def test_effective_prompt_tool_names_keep_delegation_tool_on_receipt_even_if_force_reuse(
+    monkeypatch,
+):
+    """force_reuse 不能绕过「提问回执」判定。
+
+    `resolve_effective_prompt_tool_names_for_turn` 过去写 `if force_reuse or should_inject(...)`，
+    短路让回执判断根本没机会执行；而运行时侧的 `filter_tools_for_reusable_result`
+    是把 force_reuse 传进同一个函数里判的。两边一旦不同步，就会出现「提示词清单
+    里没有 sub_agent_call，运行时其实有」的假拦截。
+    """
+    from app.services.ai import session_tool_artifact as artifact_mod
+
+    receipt = (
+        "【用户回答】\n"
+        "问题: 请问您计划哪一天从上海出发去北京?\n"
+        "所选选项: 今天（2026-11-10） (today)\n"
+        "interaction_type: question\n"
+        "question_id: uq_f28dca64d3f1d785\n"
+        'selected_option_ids: ["today"]\n'
+        "custom_input: \n"
+        "请根据以上用户回答继续处理原问题。"
+    )
+    config = SimpleNamespace(
+        agent_name="TestAgent",
+        tools=["sub_agent_call", "execute_sql_query", "write_file"],
+    )
+    decision = TurnDecision(
+        reusable_result_mode="reuse",
+        reusable_result_id="result-1",
+    )
+    artifact = artifact_mod.build_artifact_payload(
+        tool_name="sub_agent_call",
+        tool_args={"agent_name": "chat-bi"},
+        tool_output="上海到北京的高铁共 42 班。",
+        source_type="system",
+        user_question="查上海到北京的火车票",
+        trace_id="trace-1",
+    )
+
+    async def _fake_load(*args, **kwargs):
+        return artifact
+
+    monkeypatch.setattr(
+        "app.services.ai.session_tool_artifact.load_session_tool_artifact", _fake_load
+    )
+
+    names = await resolve_effective_prompt_tool_names_for_turn(
+        config,
+        current_user_query=receipt,
+        turn_decision=decision,
+    )
+
+    assert "sub_agent_call" in names, (
+        "提问回执轮即便被判为 reuse，也不能把委派工具从提示词清单里删掉"
+    )

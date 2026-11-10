@@ -131,6 +131,30 @@ def test_backend_persists_and_preserves_question_card():
     assert 'copied["user_question"] = item.get("user_question")' in source, "定稿压缩丢弃卡片快照"
 
 
+def test_question_card_snapshot_matches_live_card_shape():
+    """快照与实时卡片必须同形，否则刷新一次就丢字段。
+
+    实时卡片走 ``build_user_question_sse``（含来源徽标、选项置灰与点击动作），
+    历史回放只读 ``_user_question_log_payload`` 产出的快照。少留一个键，用户就会
+    看到「刚问时有『来自：数据查询助手』，刷新后没了」这种前后不一致。
+    """
+    source = _read(SNAPSHOT_PY)
+    start = source.index("def _user_question_log_payload")
+    body = source[start : source.index("def apply_stream_chunk", start)]
+
+    assert '"source_agent_name"' in body, "快照丢来源，回放后徽标消失"
+    assert '"source_agent_display_name"' in body, "快照丢来源展示名，回放后徽标消失"
+    assert 'item["disabled"] = True' in body, "快照丢选项置灰，回放后可点但实际不可用"
+    assert 'item["action"] = action' in body, "快照丢选项动作，回放后点击不触发页面动作"
+
+    ts = _read(PROCESS_TIMELINE_TS)
+    start = ts.index("export type PersistedUserQuestion")
+    type_body = ts[start : ts.index("};", start)]
+    assert "source_agent_name?: string;" in type_body, "前端类型未表达来源字段"
+    assert "source_agent_display_name?: string;" in type_body, "前端类型未表达来源展示名"
+    assert "action?: string" in type_body, "前端类型未表达选项动作"
+
+
 def test_awaiting_user_turn_is_audited_for_history_replay():
     """awaiting_user 没有同轮恢复，必须在本轮落库，否则历史整体缺该轮。"""
     source = _read(FINALIZE_PY)

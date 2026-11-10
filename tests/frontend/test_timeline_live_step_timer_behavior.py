@@ -20,15 +20,9 @@ MODULE = "frontend/src/utils/processTimeline.ts"
 def _run_typescript(expression: str):
     script = f"""
 (async () => {{
-const fs = require('fs');
-const ts = require('./frontend/node_modules/typescript');
-const source = fs.readFileSync({json.dumps(MODULE)}, 'utf8');
-const code = ts.transpileModule(source, {{
-  compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }}
-}}).outputText;
-const moduleRef = {{ exports: {{}} }};
-new Function('module', 'exports', 'require', code)(moduleRef, moduleRef.exports, require);
-const api = moduleRef.exports;
+// 统一走 ts_module_loader：被测模块 import 了运行时依赖时，单文件转译会在 require 处断掉。
+const {{ loadModule }} = require('./tests/frontend/ts_module_loader.cjs');
+const api = loadModule({json.dumps(MODULE)});
 const result = await (async () => {{ {expression} }})();
 process.stdout.write(JSON.stringify(result));
 }})().catch(error => {{ console.error(error); process.exit(1); }});

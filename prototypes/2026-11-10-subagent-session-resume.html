@@ -1,0 +1,1200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>子代理续聊与提问透传 · 追问保留上下文 / 子代理提问直达用户</title>
+<meta name="prototype-kind" content="方案对比">
+<style>
+  :root {
+    --teal: #12b5a5;
+    --teal-soft: #e6f7f5;
+    --teal-line: #9fe0d8;
+    --ink: #111827;
+    --ink-2: #374151;
+    --ink-3: #6b7280;
+    --ink-4: #9ca3af;
+    --line: #e5e7eb;
+    --line-2: #f3f4f6;
+    --bg: #f6f8fa;
+    --card: #ffffff;
+    --blue: #2563eb;
+    --blue-soft: #eff6ff;
+    --amber: #b45309;
+    --amber-soft: #fffbeb;
+    --red: #dc2626;
+    --red-soft: #fef2f2;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1240px; margin: 0 auto; padding: 28px 24px 80px; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* ---------- 页头 ---------- */
+  .head h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: .2px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .head h1 .kicker {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px; font-weight: 600; color: #0f766e;
+    background: var(--teal-soft); border: 1px solid var(--teal-line);
+    padding: 3px 9px; border-radius: 7px;
+  }
+  .head p { margin: 0; color: var(--ink-3); font-size: 13px; max-width: 940px; }
+  .head .tagline { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: #fff; border: 1px solid var(--line); border-radius: 999px;
+    padding: 4px 11px; font-size: 12px; color: var(--ink-2);
+  }
+  .pill b { color: var(--ink); font-weight: 600; }
+  .pill.is-teal { background: var(--teal-soft); border-color: var(--teal-line); color: #0f766e; }
+  .pill.is-teal b { color: #0f766e; }
+  .pill.is-red { background: var(--red-soft); border-color: #fecaca; color: var(--red); }
+
+  /* ---------- Tabs ---------- */
+  .tabs { display: flex; gap: 6px; margin: 26px 0 0; border-bottom: 1px solid var(--line); }
+  .tab {
+    border: 0; background: transparent; cursor: pointer; padding: 10px 15px 12px;
+    font-size: 13.5px; color: var(--ink-3); font-weight: 500;
+    border-bottom: 2px solid transparent; margin-bottom: -1px; border-radius: 8px 8px 0 0;
+  }
+  .tab:hover { color: var(--ink-2); background: #fff; }
+  .tab.is-on { color: #0f766e; border-bottom-color: var(--teal); background: #fff; font-weight: 600; }
+  .panel { display: none; }
+  .panel.is-on { display: block; }
+
+  /* ---------- 工具栏 ---------- */
+  .toolbar { display: flex; align-items: center; gap: 10px; margin: 18px 0 4px; flex-wrap: wrap; }
+  .btn {
+    border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+    padding: 6px 13px; border-radius: 9px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    transition: .15s ease;
+  }
+  .btn:hover { border-color: #d1d5db; background: #fbfdff; }
+  .btn.primary { background: var(--teal); border-color: var(--teal); color: #fff; }
+  .btn.primary:hover { background: #0fa093; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .toolbar .hint { font-size: 12.5px; color: var(--ink-4); }
+
+  /* ---------- 左右对比 ---------- */
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
+  @media (max-width: 980px) { .compare { grid-template-columns: 1fr; } }
+  .col { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .col > header {
+    padding: 13px 17px; font-size: 13.5px; font-weight: 700;
+    display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--line-2);
+  }
+  .col.is-bad > header { background: linear-gradient(180deg, #fff7f7 0%, #fff 100%); color: #991b1b; }
+  .col.is-good > header { background: linear-gradient(180deg, #f2fbfa 0%, #fff 100%); color: #0f766e; }
+  .col > header .sub { font-weight: 500; color: var(--ink-3); font-size: 12px; margin-left: auto; }
+  .steps { list-style: none; margin: 0; padding: 6px 0 10px; }
+  .step {
+    position: relative; padding: 11px 17px 11px 50px; opacity: 0; transform: translateY(5px);
+    transition: opacity .3s ease, transform .3s ease;
+  }
+  .step.is-shown { opacity: 1; transform: none; }
+  .step + .step::before {
+    content: ""; position: absolute; left: 26px; top: 0; bottom: 50%;
+    border-left: 1.5px dashed var(--line); z-index: 0;
+  }
+  .step .idx {
+    position: absolute; left: 15px; top: 11px; width: 22px; height: 22px; border-radius: 7px;
+    display: grid; place-items: center; font-size: 11.5px; font-weight: 700; z-index: 1;
+    background: var(--line-2); color: var(--ink-3); border: 1px solid var(--line);
+  }
+  .is-bad .step .idx { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+  .is-good .step .idx { background: var(--teal-soft); border-color: var(--teal-line); color: #0f766e; }
+  .step .t { font-variant-numeric: tabular-nums; font-size: 11.5px; color: var(--ink-4); float: right; margin-left: 8px; }
+  .step .title { font-size: 13px; font-weight: 600; color: var(--ink); }
+  .step .desc { margin: 4px 0 0; font-size: 12.5px; color: var(--ink-3); }
+  .step .desc code { background: var(--line-2); padding: 1px 5px; border-radius: 5px; font-size: 11.5px; color: var(--ink-2); }
+  .step .sess {
+    display: inline-flex; align-items: center; gap: 5px; margin-top: 6px;
+    font-size: 11.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line);
+    background: #fcfcfd; color: var(--ink-3);
+  }
+  .step .sess.is-new { background: var(--red-soft); border-color: #fecaca; color: #b91c1c; }
+  .step .sess.is-same { background: var(--teal-soft); border-color: var(--teal-line); color: #0f766e; }
+  .step.is-warn .title { color: #b45309; }
+  .step.is-bad2 .title { color: #b91c1c; }
+  .step.is-ok .title { color: #0f766e; }
+  .col > footer {
+    border-top: 1px solid var(--line-2); padding: 12px 17px; background: #fcfcfd;
+    display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3);
+  }
+  .col.is-bad > footer { background: #fffafa; }
+  .col.is-good > footer { background: #f7fdfc; }
+  .col > footer b { font-variant-numeric: tabular-nums; color: var(--ink); }
+  .col > footer .bad { color: #b91c1c; font-weight: 600; }
+  .col > footer .good { color: #0f766e; font-weight: 600; }
+
+  /* ---------- 聊天模拟 ---------- */
+  .chat-stage {
+    margin-top: 16px; background: #fff; border: 1px solid var(--line); border-radius: 18px;
+    overflow: hidden; box-shadow: 0 10px 30px -18px rgba(15, 23, 42, .25);
+  }
+  .chat-bar {
+    padding: 11px 18px; border-bottom: 1px solid var(--line-2); display: flex;
+    align-items: center; gap: 9px; font-size: 12.5px; color: var(--ink-3); background: #fcfdfe;
+  }
+  .chat-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); }
+  .chat-bar b { color: var(--ink-2); }
+  .chat-bar .right { margin-left: auto; font-family: ui-monospace, monospace; font-size: 11.5px; }
+  .chat-body { padding: 22px 26px 26px; display: flex; flex-direction: column; gap: 16px; }
+
+  .msg-user { display: flex; justify-content: flex-end; }
+  .msg-user .bubble {
+    max-width: 68%; background: var(--teal); color: #fff; padding: 11px 15px;
+    border-radius: 14px 14px 4px 14px; font-size: 13.5px; line-height: 1.6;
+  }
+  .msg-ai { display: flex; gap: 10px; align-items: flex-start; }
+  .avatar {
+    width: 28px; height: 28px; border-radius: 9px; flex: none; display: grid; place-items: center;
+    background: linear-gradient(135deg, #12b5a5, #0d9488); color: #fff; font-size: 12px; font-weight: 700;
+  }
+  .ai-main { flex: 1; min-width: 0; }
+
+  .think-card {
+    border: 1px solid var(--line); border-radius: 12px; background: #fcfdfe; overflow: hidden;
+    margin-bottom: 10px;
+  }
+  .think-head {
+    padding: 9px 13px; display: flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 12.5px; color: var(--ink-3); user-select: none;
+  }
+  .think-head .caret { transition: transform .2s ease; color: var(--ink-4); font-size: 10px; }
+  .think-card.is-open .think-head .caret { transform: rotate(90deg); }
+  .think-head b { color: var(--ink-2); }
+  .think-body { display: none; padding: 2px 13px 12px; }
+  .think-card.is-open .think-body { display: block; }
+
+  .deleg {
+    border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 10px 12px;
+    margin-top: 8px;
+  }
+  .deleg .r1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .deleg .card-title { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+  .tag {
+    font-size: 11px; padding: 1px 7px; border-radius: 6px; font-weight: 600;
+    background: var(--line-2); color: var(--ink-3); border: 1px solid var(--line);
+  }
+  .tag.is-teal { background: var(--teal-soft); border-color: var(--teal-line); color: #0f766e; }
+  .tag.is-blue { background: var(--blue-soft); border-color: #bfdbfe; color: var(--blue); }
+  .deleg .time { margin-left: auto; font-size: 11.5px; color: var(--ink-4); font-variant-numeric: tabular-nums; }
+  .deleg .q { margin: 7px 0 0; font-size: 12.5px; color: var(--ink-2); }
+  .deleg .meter { margin-top: 7px; height: 4px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
+  .deleg .meter i { display: block; height: 100%; background: linear-gradient(90deg, #5eead4, #12b5a5); border-radius: 3px; }
+  .deleg.is-second { margin-left: 18px; border-left: 2px solid var(--teal-line); }
+
+  .answer {
+    border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: #fff;
+    font-size: 13.5px; line-height: 1.7;
+  }
+  .answer p { margin: 0 0 10px; }
+  .answer p:last-child { margin-bottom: 0; }
+  .answer table { width: 100%; border-collapse: collapse; margin: 8px 0 10px; font-size: 12.5px; }
+  .answer th, .answer td { border-bottom: 1px solid var(--line-2); padding: 6px 8px; text-align: left; }
+  .answer th { color: var(--ink-3); font-weight: 600; background: #fcfdfe; font-size: 12px; }
+  .answer td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .answer .note { font-size: 12px; color: var(--ink-3); background: var(--line-2); border-radius: 8px; padding: 7px 10px; }
+  .chat-actions { display: flex; gap: 8px; padding: 0 26px 22px; flex-wrap: wrap; }
+  .chat-actions .btn { font-size: 12.5px; }
+
+  /* ---------- 协议 ---------- */
+  h2.sec { font-size: 15px; margin: 30px 0 6px; display: flex; align-items: baseline; gap: 10px; }
+  h2.sec span { font-size: 12.5px; color: var(--ink-3); font-weight: 400; }
+  h2.sec:first-of-type { margin-top: 20px; }
+
+  table.spec { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; font-size: 12.8px; margin-top: 10px; }
+  table.spec th, table.spec td { padding: 9px 13px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-2); }
+  table.spec thead th { background: #fcfdfe; font-size: 12px; color: var(--ink-3); font-weight: 600; }
+  table.spec tr:last-child td { border-bottom: 0; }
+  table.spec code { background: var(--line-2); padding: 1px 5px; border-radius: 5px; font-size: 11.8px; color: var(--ink-2); }
+  table.spec td.c { white-space: nowrap; }
+  table.spec .warn { color: #b45309; font-weight: 600; }
+  table.spec .ok { color: #0f766e; font-weight: 600; }
+
+  .diff {
+    background: #0f172a; color: #e2e8f0; border-radius: var(--radius); padding: 16px 18px; margin-top: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.3px; line-height: 1.65;
+    overflow-x: auto;
+    /* 代码块必须保留源码换行与缩进，否则所有行会被 HTML 折叠成一整段 */
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .diff .f { color: #93c5fd; font-weight: 600; }
+  .diff .add { color: #6ee7b7; }
+  .diff .del { color: #fca5a5; }
+  .diff .cmt { color: #64748b; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+  @media (max-width: 980px) { .grid-2 { grid-template-columns: 1fr; } }
+  .box { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 17px; }
+  .box h3 { margin: 0 0 8px; font-size: 13.5px; display: flex; align-items: center; gap: 7px; }
+  .box ul { margin: 0; padding-left: 18px; font-size: 12.8px; color: var(--ink-2); }
+  .box li { margin-bottom: 6px; }
+  .box li:last-child { margin-bottom: 0; }
+  .box.is-no { border-color: #fecaca; background: #fffafa; }
+  .box.is-no h3 { color: #b91c1c; }
+  .box.is-yes { border-color: var(--teal-line); background: #f7fdfc; }
+  .box.is-yes h3 { color: #0f766e; }
+  .box code { background: var(--line-2); padding: 1px 5px; border-radius: 5px; font-size: 11.8px; }
+  .box.is-yes code { background: #e6f7f5; }
+
+  .verdict {
+    margin-top: 14px; border: 1px solid var(--teal-line); background: var(--teal-soft);
+    border-radius: var(--radius); padding: 14px 17px; font-size: 13px; color: #0f665e;
+  }
+  .verdict b { color: #0f766e; }
+
+  /* ---------- 泳道图（提问透传链路） ---------- */
+  .lanes {
+    margin-top: 14px; background: #fff; border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 0 0 10px; overflow: hidden;
+  }
+  .lane-heads, .lane-row { display: grid; grid-template-columns: 1fr 1.2fr 1.2fr; }
+  .lane-heads { background: #fcfdfe; border-bottom: 1px solid var(--line-2); }
+  .lane-heads > div {
+    padding: 9px 14px; font-size: 12px; font-weight: 700; color: var(--ink-3);
+    border-right: 1px solid var(--line-2);
+  }
+  .lane-heads > div:last-child { border-right: 0; }
+  .lane-row { opacity: 0; transform: translateY(4px); transition: opacity .28s ease, transform .28s ease; }
+  .lane-row.is-shown { opacity: 1; transform: none; }
+  .lane-row .cell { padding: 7px 12px; border-right: 1px dashed var(--line-2); min-height: 8px; }
+  .lane-row .cell:last-child { border-right: 0; }
+  .lane-row:first-of-type .cell { padding-top: 12px; }
+
+  .bub {
+    border-radius: 10px; padding: 8px 11px; font-size: 12.5px; line-height: 1.55;
+    border: 1px solid var(--line); background: #fff; position: relative;
+  }
+  .bub .bt { font-weight: 600; font-size: 12px; display: block; margin-bottom: 3px; }
+  .bub .bd { color: var(--ink-2); font-size: 12.2px; }
+  .bub .bd code { background: var(--line-2); padding: 1px 5px; border-radius: 5px; font-size: 11.3px; }
+  .bub-u { background: var(--teal); border-color: var(--teal); color: #fff; }
+  .bub-u .bt, .bub-u .bd { color: #fff; }
+  .bub-p { background: #eff6ff; border-color: #bfdbfe; }
+  .bub-p .bt { color: var(--blue); }
+  .bub-s { background: #f7fdfc; border-color: var(--teal-line); }
+  .bub-s .bt { color: #0f766e; }
+  .bub-warn { background: var(--red-soft); border-color: #fecaca; }
+  .bub-warn .bt { color: #b91c1c; }
+  .bub-hop { background: #faf5ff; border-color: #e9d5ff; }
+  .bub-hop .bt { color: #7e22ce; }
+
+  .step-tag {
+    display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 6px;
+    border-radius: 5px; margin-right: 5px; vertical-align: 1px;
+    background: var(--line-2); color: var(--ink-3); border: 1px solid var(--line);
+  }
+
+  /* ---------- 提问卡样张 ---------- */
+  .ask-card {
+    border: 1px solid var(--teal-line); border-radius: 14px; background: #fff;
+    box-shadow: 0 8px 24px -16px rgba(15, 23, 42, .3); overflow: hidden; margin-top: 10px;
+  }
+  .ask-head {
+    padding: 11px 14px; background: linear-gradient(180deg, #f2fbfa 0%, #fff 100%);
+    border-bottom: 1px solid var(--teal-line); display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap;
+  }
+  .src-badge {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700;
+    color: #0f766e; background: var(--teal-soft); border: 1px solid var(--teal-line);
+    padding: 2px 8px; border-radius: 999px;
+  }
+  .src-badge .avatar-mini {
+    width: 15px; height: 15px; border-radius: 5px; display: grid; place-items: center;
+    background: linear-gradient(135deg, #12b5a5, #0d9488); color: #fff; font-size: 8px; font-weight: 700;
+  }
+  .ask-head .t { font-size: 12.8px; font-weight: 700; color: var(--ink); }
+  .ask-head .qid {
+    margin-left: auto; font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--ink-4);
+  }
+  .ask-body { padding: 13px 14px 14px; }
+  .ask-q { font-size: 13px; color: var(--ink); margin: 0 0 4px; line-height: 1.6; }
+  .ask-purpose { font-size: 11.8px; color: var(--ink-3); margin: 0 0 11px; }
+  .opt-list { display: flex; flex-direction: column; gap: 7px; }
+  .opt {
+    display: flex; align-items: center; gap: 9px; border: 1px solid var(--line);
+    border-radius: 9px; padding: 8px 11px; font-size: 12.6px; color: var(--ink-2);
+    background: #fff; cursor: pointer; transition: .14s ease;
+  }
+  .opt:hover { border-color: #cbd5e1; background: #fbfdff; }
+  .opt .tick {
+    width: 16px; height: 16px; border-radius: 5px; border: 1.5px solid #cbd5e1; flex: none;
+    display: grid; place-items: center;
+  }
+  .opt.is-on { border-color: var(--teal); background: var(--teal-soft); color: #0f665e; font-weight: 600; }
+  .opt.is-on .tick { background: var(--teal); border-color: var(--teal); }
+  .opt.is-on .tick::after {
+    content: ""; width: 8px; height: 4px; border-left: 2px solid #fff; border-bottom: 2px solid #fff;
+    transform: rotate(-45deg) translate(1px, -1px);
+  }
+  .opt .hintx { margin-left: auto; font-size: 11px; color: var(--ink-4); font-weight: 400; }
+  .custom-input {
+    margin-top: 8px; border: 1px dashed var(--line); border-radius: 9px; padding: 9px 11px;
+    font-size: 12.3px; color: var(--ink-4); background: #fcfcfd;
+  }
+  .ask-foot {
+    padding: 10px 14px; border-top: 1px solid var(--line-2); background: #fcfdfe;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .ask-foot .meta { font-size: 11.5px; color: var(--ink-4); }
+  .btn-sm {
+    border: 1px solid var(--teal); background: var(--teal); color: #fff; border-radius: 8px;
+    padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .btn-sm.ghost { background: #fff; color: var(--ink-3); border-color: var(--line); }
+  .btn-sm:disabled { opacity: .5; cursor: default; }
+
+  /* 无卡片时的现状样张 */
+  .no-card {
+    border: 1px dashed #fecaca; border-radius: 14px; background: #fffafa; padding: 14px 15px; margin-top: 10px;
+  }
+  .no-card .ttl { font-size: 12.5px; font-weight: 700; color: #b91c1c; margin-bottom: 7px; }
+  .no-card .say { font-size: 12.5px; color: var(--ink-2); line-height: 1.65; }
+  .no-card .say em { background: #fff3cd; font-style: normal; padding: 0 3px; border-radius: 3px; }
+
+  .state-chip {
+    display: inline-flex; align-items: center; gap: 5px; font-family: ui-monospace, monospace;
+    font-size: 11px; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line);
+    background: #fcfcfd; color: var(--ink-3);
+  }
+  .state-chip.is-new { background: #f5f3ff; border-color: #ddd6fe; color: #6d28d9; }
+  .state-chip.is-bad { background: var(--red-soft); border-color: #fecaca; color: #b91c1c; }
+  .state-chip.is-ok { background: var(--teal-soft); border-color: var(--teal-line); color: #0f766e; }
+
+  .queue-demo { margin-top: 12px; }
+  .queue-badge {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 700;
+    color: #7e22ce; background: #faf5ff; border: 1px solid #e9d5ff;
+    padding: 3px 9px; border-radius: 999px; margin-bottom: 9px;
+  }
+  .queue-stack { display: flex; flex-direction: column; gap: 8px; }
+  .queue-item {
+    display: flex; align-items: center; gap: 9px; border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 12px; background: #fff; font-size: 12.4px; color: var(--ink-2);
+  }
+  .queue-item.is-current { border-color: var(--teal-line); background: #f7fdfc; }
+  .queue-item .idx {
+    width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center;
+    font-size: 11px; font-weight: 700; background: var(--line-2); color: var(--ink-3); flex: none;
+  }
+  .queue-item.is-current .idx { background: var(--teal); color: #fff; }
+  .queue-item .who { font-size: 11px; color: var(--ink-4); margin-left: auto; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="head">
+    <h1>子代理续聊与提问透传 <span class="kicker">sub_agent_call · resume + ask</span></h1>
+    <p>
+      两件紧耦合的事：<strong>① 续聊</strong>——父对同一子代理追问时复用第一轮上下文，不再从零冷启动；
+      <strong>② 提问透传</strong>——子代理需要用户拍板时，它发出的提问卡直达主会话，用户答完继续（复用续聊保住上下文）。
+      后者是前者的必要配套：没有续聊，子代理问完就忘，答了也接不上。
+    </p>
+    <div class="tagline">
+      <span class="pill is-teal">场景：<b>父追问子代理 / 子代理需要用户拍板</b></span>
+      <span class="pill">改动面：<b>agent_delegate_tool.py + context.py + user_question_store</b></span>
+      <span class="pill">默认关闭：<b>resume=false 时行为完全不变</b></span>
+      <span class="pill is-red">不做：<b>子→父的实时双向通道</b></span>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab is-on" data-tab="compare">① 现状 vs 建议</button>
+    <button class="tab" data-tab="ui">② 对话界面效果</button>
+    <button class="tab" data-tab="ask">③ 子代理提问透传</button>
+    <button class="tab" data-tab="proto">④ 协议与边界</button>
+  </div>
+
+  <!-- ================= ① 对比 ================= -->
+  <section class="panel is-on" id="panel-compare">
+    <div class="toolbar">
+      <button class="btn primary" id="play">▶ 逐步播放</button>
+      <button class="btn" id="reset">重置</button>
+      <span class="hint">左右按同一阶段同步推进，注意第 ⑤⑥⑦ 步的差异</span>
+    </div>
+
+    <div class="compare">
+      <div class="col is-bad">
+        <header>
+          现状 · 失忆式重开
+          <span class="sub">子代理每轮都是新会话</span>
+        </header>
+        <ol class="steps" id="steps-bad"></ol>
+        <footer>
+          <span>总耗时 <b>38s</b></span>
+          <span>schema 检索 <b>2</b> 次</span>
+          <span>SQL <b>2</b> 次</span>
+          <span class="bad">口径漂移，两数对不上</span>
+        </footer>
+      </div>
+
+      <div class="col is-good">
+        <header>
+          建议 · resume 续聊
+          <span class="sub">追问复用同一子会话</span>
+        </header>
+        <ol class="steps" id="steps-good"></ol>
+        <footer>
+          <span>总耗时 <b>31s</b>（-18%）</span>
+          <span>schema 检索 <b>1</b> 次</span>
+          <span>SQL <b>2</b> 次（第二次增量）</span>
+          <span class="good">口径连续，可直接整合</span>
+        </footer>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ② 界面效果 ================= -->
+  <section class="panel" id="panel-ui">
+    <div class="toolbar">
+      <button class="btn" id="toggle-think">展开 / 收起思考过程</button>
+      <button class="btn" id="next-round">模拟第三次追问</button>
+      <span class="hint">思考卡里第二次委派带「续聊 #2」标记，父子关系一眼可见</span>
+    </div>
+
+    <div class="chat-stage">
+      <div class="chat-bar">
+        <span class="dot"></span>
+        <b>经营分析助手</b> · 当前会话
+        <span class="right">trace 3f9c…</span>
+      </div>
+      <div class="chat-body">
+        <div class="msg-user">
+          <div class="bubble">帮我看看 2026 Q3 华东区的销售情况</div>
+        </div>
+
+        <div class="msg-ai">
+          <div class="avatar">AI</div>
+          <div class="ai-main">
+            <div class="think-card is-open" id="think">
+              <div class="think-head">
+                <span class="caret">▶</span>
+                已调用 <b>2</b> 次子代理 · 累计 26s
+                <span class="tag is-teal" style="margin-left:6px">1 次续聊</span>
+              </div>
+              <div class="think-body">
+                <div class="deleg">
+                  <div class="r1">
+                    <span class="card-title">调用子代理: 经营数据助手</span>
+                    <span class="tag is-blue">首次</span>
+                    <span class="time">已完成 · 18s</span>
+                  </div>
+                  <p class="q"><code class="mono">query</code> 统计 2026 Q3 华东区销售额</p>
+                  <div class="meter"><i style="width:100%"></i></div>
+                </div>
+                <div class="deleg is-second">
+                  <div class="r1">
+                    <span class="card-title">调用子代理: 经营数据助手</span>
+                    <span class="tag is-teal">续聊 #2</span>
+                    <span class="time">已完成 · 8s</span>
+                  </div>
+                  <p class="q"><code class="mono">query</code> 按产品线拆分 &nbsp;·&nbsp; <code class="mono">resume=true</code></p>
+                  <div class="meter"><i style="width:42%"></i></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="answer">
+              <p><strong>2026 Q3 华东区销售额 3,842 万元</strong>，同比 +12.4%。按产品线拆分如下（统一为含税口径，与总额口径一致）：</p>
+              <table>
+                <thead>
+                  <tr><th>产品线</th><th class="n">销售额（万元）</th><th class="n">占比</th><th class="n">同比</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>智能硬件 A 系列</td><td class="n">1,502</td><td class="n">39.1%</td><td class="n">+18.2%</td></tr>
+                  <tr><td>行业解决方案 B</td><td class="n">1,180</td><td class="n">30.7%</td><td class="n">+9.6%</td></tr>
+                  <tr><td>配件与服务 C</td><td class="n">1,160</td><td class="n">30.2%</td><td class="n">+6.1%</td></tr>
+                  <tr><td><strong>合计</strong></td><td class="n"><strong>3,842</strong></td><td class="n">100%</td><td class="n">+12.4%</td></tr>
+                </tbody>
+              </table>
+              <div class="note">拆分合计与首轮总额一致，口径未漂移 —— 这是续聊对比「重开一轮」最关键的收益。</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="round-3"></div>
+      </div>
+      <div class="chat-actions">
+        <span class="hint" style="font-size:12px;color:var(--ink-4);align-self:center">
+          追问轮次受「同一子代理每轮最多 N 次」约束（现默认 2），续聊是否单独计数需拍板，见第 ③ 页。
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ③ 子代理提问透传 ================= -->
+  <section class="panel" id="panel-ask">
+    <div class="toolbar">
+      <button class="btn primary" id="play-ask">▶ 播放一次完整提问</button>
+      <button class="btn" id="reset-ask">重置</button>
+      <span class="hint">子代理提问 → 卡片直达主会话 → 用户回答 → resume 续聊，全程父模型不替子代理作答</span>
+    </div>
+
+    <div class="lanes">
+      <div class="lane-heads">
+        <div>用户</div>
+        <div>父智能体（主助手）</div>
+        <div>子代理 · 经营数据助手</div>
+      </div>
+
+      <div class="lane-row" data-astep="0">
+        <div class="cell"><div class="bub bub-u"><span class="bt">提问</span><span class="bd">上个季度华东区卖得怎么样？跟竞品比呢？</span></div></div>
+        <div class="cell"></div>
+        <div class="cell"></div>
+      </div>
+
+      <div class="lane-row" data-astep="1">
+        <div class="cell"></div>
+        <div class="cell"><div class="bub bub-p"><span class="bt">委派</span><span class="bd"><code>sub_agent_call(agent_name="data-agent", query="统计 2026 Q3 华东区销售，并与主要竞品对比")</code></span></div></div>
+        <div class="cell"></div>
+      </div>
+
+      <div class="lane-row" data-astep="2">
+        <div class="cell"></div>
+        <div class="cell"></div>
+        <div class="cell"><div class="bub bub-s"><span class="bt">执行中</span><span class="bd">检索 schema → 执行 SQL，拿到华东区 Q3 销售额。判断：「竞品」未指明是哪几家，无法继续。</span></div></div>
+      </div>
+
+      <div class="lane-row" data-astep="3">
+        <div class="cell"></div>
+        <div class="cell"></div>
+        <div class="cell"><div class="bub bub-s"><span class="bt">调用 ask_user_question <span class="step-tag">不再被拒绝</span></span><span class="bd">发出 <code>user_question</code> 事件 · <code>question_id: uq_7d21c4f0</code></span></div></div>
+      </div>
+
+      <div class="lane-row" data-astep="4">
+        <div class="cell"></div>
+        <div class="cell"><div class="bub bub-hop"><span class="bt">事件穿透 · 关键改造</span><span class="bd">① 委派流白名单放行 <code>user_question</code>；② 以<strong>父会话</strong>为登记主体写 pending（否则用户回答的回执按父会话查不到）</span></div></div>
+        <div class="cell"></div>
+      </div>
+
+      <div class="lane-row" data-astep="5">
+        <div class="cell"></div>
+        <div class="cell"><div class="bub bub-p"><span class="bt">本轮收尾：先说一句，再挂卡</span><span class="bd">输出引导语「经营数据助手在统计华东区 Q3 销售时，需要你先确认对比范围 ↓」，<strong>然后挂卡片并停止</strong>。不猜答案、不重复提问</span></div></div>
+        <div class="cell"><div class="bub bub-s"><span class="bt">本轮结束</span><span class="bd">结果标 <code>needs_user_input</code>，<strong>不写成 empty</strong>（否则父会以为子代理啥也没干）</span></div></div>
+      </div>
+
+      <div class="lane-row" data-astep="6">
+        <div class="cell"><div class="bub bub-u"><span class="bt">看到卡片并作答</span><span class="bd">来源标注「经营数据助手」→ 勾选 A 公司、B 公司 → 提交</span></div></div>
+        <div class="cell"></div>
+        <div class="cell"></div>
+      </div>
+
+      <div class="lane-row" data-astep="7">
+        <div class="cell"></div>
+        <div class="cell"><div class="bub bub-p"><span class="bt">收到回执</span><span class="bd"><code>【用户回答】…question_id: uq_7d21c4f0…</code>（是一条新用户消息，回执校验按父会话通过）</span></div></div>
+        <div class="cell"></div>
+      </div>
+
+      <div class="lane-row" data-astep="8">
+        <div class="cell"></div>
+        <div class="cell"><div class="bub bub-p"><span class="bt">续聊委派</span><span class="bd"><code>sub_agent_call(agent_name="data-agent", query="竞品选定 A、B 公司", resume=true)</code></span></div></div>
+        <div class="cell"></div>
+      </div>
+
+      <div class="lane-row" data-astep="9">
+        <div class="cell"></div>
+        <div class="cell"></div>
+        <div class="cell"><div class="bub bub-s"><span class="bt">接着上次说</span><span class="bd">记得 Q3 / 华东区 / 上一条 SQL 与口径 → 只补竞品维度查询，不重新检索 schema</span></div></div>
+      </div>
+
+      <div class="lane-row" data-astep="10">
+        <div class="cell"></div>
+        <div class="cell"><div class="bub bub-p"><span class="bt">整合答复</span><span class="bd">华东区销售额 + 与 A/B 公司对比 + 口径说明，一次交付</span></div></div>
+        <div class="cell"></div>
+      </div>
+    </div>
+
+    <h2 class="sec">用户到底看到什么 <span>现状没有卡片，模型只能猜，用户不知道它猜了什么</span></h2>
+    <div class="grid-2">
+      <div>
+        <div class="no-card">
+          <div class="ttl">✕ 现状：提问被工具拒绝，模型自行假设</div>
+          <div class="say">
+            子代理调 <code>ask_user_question</code> 时拿到 <code>status=error</code>（「当前为无人值守上下文…」），
+            只能自己挑一个假设继续。
+            <br><br>
+            父最终答：「华东区 Q3 销售额 3,842 万元，同比增长 <em>（竞品按行业口径推断）</em> 领先主要对手…」
+            <br><br>
+            —— 用户从未被问过，也不知道「主要对手」是谁、这个结论建立在什么假设上。
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="bub bub-p" style="margin-bottom:10px">
+          <span class="bt">父智能体 · 收尾引导语</span>
+          <span class="bd">经营数据助手在统计华东区 Q3 销售时，需要你先确认对比范围 ↓</span>
+        </div>
+        <div class="ask-card" id="demo-ask">
+          <div class="ask-head">
+            <span class="src-badge"><span class="avatar-mini">数</span>来自：经营数据助手</span>
+            <span class="t">需要你确认对比范围</span>
+            <span class="qid">uq_7d21c4f0</span>
+          </div>
+          <div class="ask-body">
+            <p class="ask-q">要对比哪几家竞品？</p>
+            <p class="ask-purpose">用于锁定对比口径，选定后我只补竞品维度的查询，已完成的区域统计会复用。</p>
+            <div class="opt-list">
+              <div class="opt" data-opt="a"><span class="tick"></span>A 公司<span class="hintx">同行业，规模接近</span></div>
+              <div class="opt" data-opt="b"><span class="tick"></span>B 公司<span class="hintx">区域直接竞争</span></div>
+              <div class="opt" data-opt="c"><span class="tick"></span>C 公司<span class="hintx">新兴，增速高</span></div>
+            </div>
+            <div class="custom-input">＋ 也可以直接输入其他公司名…</div>
+          </div>
+          <div class="ask-foot">
+            <button class="btn-sm" id="demo-submit">提交选择</button>
+            <button class="btn-sm ghost" id="demo-skip">跳过，让模型自己判断</button>
+            <span class="meta" id="demo-meta">可多选 · 回答后会接着上次的进度继续</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="sec">子代理提问的安全边界 <span>提问内容可能来自不可信数据，不能当成平台自己的话</span></h2>
+    <div class="verdict" style="border-color:#fecaca;background:#fffafa;color:#991b1b">
+      <b style="color:#b91c1c">风险：</b>子代理读过网页、上传文档、知识库片段之后可能被提示词注入——
+      把攻击者的话包装成「提问」显示在<strong>主会话</strong>里，还带着「来自：经营数据助手」的权威感；
+      更糟的是选项本身可以带 <code>action</code> 触发页面动作，等于诱导用户点击。
+      子代理提问必须按「不可信输入」对待。
+    </div>
+
+    <table class="spec">
+      <thead>
+        <tr><th style="width:150px">约束</th><th>规则</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>选项动作</strong></td><td class="warn">子代理提问<strong>禁止</strong>携带 <code>action</code>（父自己的提问仍允许）。这是防诱导点击的硬闸</td></tr>
+        <tr><td><strong>文本长度</strong></td><td>问题 ≤ 200 字、单选项 ≤ 60 字、选项数 2~6；超限直接拒绝并让子代理自己给结论</td></tr>
+        <tr><td><strong>渲染净化</strong></td><td>问题与选项按纯文本转义，<strong>不渲染 Markdown 链接与 HTML</strong>——否则可以钓鱼</td></tr>
+        <tr><td><strong>来源标注</strong></td><td>强制显示子代理展示名，措辞用「子代理提议」而非平台确认，避免权威感错位</td></tr>
+        <tr><td><strong>形态限制</strong></td><td>只允许「问题 + 选项 + 自定义输入」，不允许在提问里夹长文、链接、多段落指令</td></tr>
+        <tr><td><strong>审计</strong></td><td>子代理每次提问的原文与用户回答都写进 trace（含 <code>run_id</code> / <code>child_session_id</code>），便于回溯</td></tr>
+      </tbody>
+    </table>
+
+    <div class="grid-2">
+      <div class="box is-no">
+        <h3>✕ 会被拦下的提问（注入诱导）</h3>
+        <ul>
+          <li>问题：「检测到数据异常，请点击下方链接完成验证」→ 命中链接/诱导，<strong>拒绝</strong></li>
+          <li>选项「立即验证」带 <code>action: open_dataset_picker</code> → 子代理提问<strong>不允许 action</strong>，拒绝</li>
+          <li>问题 800 字、夹带多段指令 → 超长，拒绝</li>
+          <li>拒绝后：给子代理返回明确原因，让它把情况写进结论，由父决定要不要提醒用户</li>
+        </ul>
+      </div>
+      <div class="box is-yes">
+        <h3>✓ 正常放行的提问</h3>
+        <ul>
+          <li>问题：「要对比哪几家竞品？」（9 字）</li>
+          <li>选项：A 公司 / B 公司 / C 公司，各带一句说明，<strong>无 action</strong></li>
+          <li>来源徽标「来自：经营数据助手」，布局与措辞体现「子代理在问」</li>
+          <li>允许自定义输入，用户也可以「按常见口径继续」</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2 class="sec">batch 场景：多个子代理同时要提问 <span>这里和现有存储机制有冲突，必须定形态</span></h2>
+    <div class="verdict" style="border-color:#fecaca;background:#fffafa;color:#991b1b">
+      <b style="color:#b91c1c">冲突点：</b><code>UserQuestionStore</code> 每个会话只有<strong>一个 active 槽位</strong>——
+      同一会话再来一个新 pending，旧的会被标成 <code>superseded</code>。
+      <code>sub_agent_batch_call</code> 并行委派 3 个子代理，若 3 个同时提问，用户只会看到最后一个，前两个被静默吃掉。
+    </div>
+
+    <div class="grid-2">
+      <div class="box is-yes">
+        <h3>✓ 形态 A：排队逐个问（推荐）</h3>
+        <div class="queue-demo">
+          <span class="queue-badge">待确认 1 / 3</span>
+          <div class="queue-stack">
+            <div class="queue-item is-current"><span class="idx">1</span>经营数据助手：对比哪几家竞品？<span class="who">现在</span></div>
+            <div class="queue-item"><span class="idx">2</span>知识库助手：制度按哪个版本口径？<span class="who">排队中</span></div>
+            <div class="queue-item"><span class="idx">3</span>报表助手：导出 Excel 还是 PDF？<span class="who">排队中</span></div>
+          </div>
+        </div>
+        <ul style="margin-top:10px">
+          <li>不需要改 store 的单槽语义，把多张卡按到达顺序排成队列，答完一张上下一张</li>
+          <li>用户一次只需决策一件事，认知负担低</li>
+          <li>代价：3 个问题要连着答 3 次</li>
+        </ul>
+      </div>
+      <div class="box is-no">
+        <h3>✕ 形态 B：一屏多卡同时展示</h3>
+        <ul>
+          <li>需要把 store 的 active 单槽扩成<strong>多 pending 队列</strong>，并让回执能按 <code>question_id</code> 精确匹配到具体那张卡</li>
+          <li>还要定「只答了一部分就先续聊一个子代理」的语义——另外两个子代理还挂着</li>
+          <li>界面上一屏两三张卡容易让用户误以为要一次性全部答完</li>
+          <li>除非以后要做「批量确认中心」，否则不建议现在改</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="verdict">
+      <b>建议：</b>按形态 A 做。提问透传的价值是「别让模型替用户猜」，一张一张问完全够；
+      把 store 改成多槽位会牵动回执匹配、过期清理、并发续聊三处，收益不匹配。
+    </div>
+  </section>
+
+  <!-- ================= ④ 协议与边界 ================= -->
+  <section class="panel" id="panel-proto">
+
+    <h2 class="sec">工具参数 <span>只加一个可选开关，老调用零影响</span></h2>
+    <table class="spec">
+      <thead>
+        <tr><th style="width:130px">参数</th><th style="width:80px">类型</th><th style="width:80px">默认</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="c"><code>agent_name</code></td><td>str</td><td>必填</td><td>不变</td></tr>
+        <tr><td class="c"><code>query</code></td><td>str</td><td>必填</td><td>续聊轮次通常更短，只需说清「补什么」，不必复述上一轮条件</td></tr>
+        <tr>
+          <td class="c"><code>resume</code></td><td>bool</td><td>false</td>
+          <td><span class="ok">新增</span>。true = 复用该子代理在本轮的会话历史；缓存缺失或参数不一致时<strong>自动降级为全新会话</strong>，不报错</td>
+        </tr>
+        <tr><td class="c"><code>tool_filter</code></td><td>list</td><td>null</td><td>续聊时必须与首轮一致，否则降级（能力面变了，历史不可沿用）</td></tr>
+        <tr><td class="c"><code>output_schema</code></td><td>dict</td><td>null</td><td>同上</td></tr>
+        <tr><td class="c"><code>max_depth</code></td><td>int</td><td>null</td><td>不变，仍只能收窄，平台上限仍为 1</td></tr>
+      </tbody>
+    </table>
+
+    <h2 class="sec">上下文状态 <span>进程内缓存，不落 Redis，轮次结束即消失</span></h2>
+    <div class="diff"><span class="f">app/core/context.py</span> · AgentContext
+<span class="cmt"># 已有同类委派状态字段（第 78-81 行附近），风格保持一致</span>
+<span class="add">+    delegation_session_histories: Dict[str, List[Dict[str, str]]] = Field(default_factory=dict)</span>
+<span class="cmt">#   key  = 归一化后的 agent 标识（小写、连字符转下划线）</span>
+<span class="cmt">#   value= [{"role": "user", "content": query}, {"role": "assistant", "content": 终态正文}, ...]</span></div>
+
+    <h2 class="sec">实现改动点 <span>2 个文件 4 处，默认关闭</span></h2>
+    <div class="diff"><span class="f">app/services/ai/tools/agent_delegate_tool.py</span>
+
+<span class="cmt"># ① 入参</span>
+ async def sub_agent_call(
+     agent_name: str,
+     query: str,
+<span class="add">+    resume: bool = False,</span>
+     max_depth: int | None = None,
+     tool_filter: list[str] | None = None,
+     output_schema: dict[str, Any] | None = None,
+ ) -> str:
+
+<span class="cmt"># ② 子会话历史装配（原第 1439 行，硬编码只喂一条 user 消息）</span>
+<span class="del">- sub_history = [{"role": "user", "content": delegation_request.query}]</span>
+<span class="add">+ resume_key = _normalize_agent_name(target_config.agent_name or agent_name)</span>
+<span class="add">+ cached = main_ctx.delegation_session_histories.get(resume_key) if resume else None</span>
+<span class="add">+ sub_history = list(cached or []) + [{"role": "user", "content": delegation_request.query}]</span>
+
+<span class="cmt"># ③ 去重放行（原第 384 行，会挡掉「同一 (agent, query) 再问一次」）</span>
+<span class="del">- if call_counts.get(signature, 0) >= 1:</span>
+<span class="add">+ if not resume and call_counts.get(signature, 0) >= 1:</span>
+
+<span class="cmt"># ④ 执行成功后写回缓存（终态正文落进 subagent_metadata 之前）</span>
+<span class="add">+ if not result.truncated:</span>
+<span class="add">+     main_ctx.delegation_session_histories.setdefault(resume_key, []).extend([</span>
+<span class="add">+         {"role": "user", "content": delegation_request.query},</span>
+<span class="add">+         {"role": "assistant", "content": result.content},</span>
+<span class="add">+     ])</span></div>
+
+    <h2 class="sec">边界条件 <span>决定这个方案能不能上线的细节</span></h2>
+    <table class="spec">
+      <thead>
+        <tr><th style="width:300px">场景</th><th>行为</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>resume=true</code> 但本轮无缓存（首次就续聊）</td><td>降级为全新会话，不报错 —— 模型判断错误不该让整轮失败</td></tr>
+        <tr><td><code>resume=true</code> 但 <code>tool_filter</code> / <code>output_schema</code> 与首轮不同</td><td>降级为全新会话。能力面变了，旧历史会给出错误前提</td></tr>
+        <tr><td>子代理发布版本变化</td><td>缓存按 <code>agent_id + version</code> 打标，版本不同不续聊</td></tr>
+        <tr><td>同一子代理在 <code>sub_agent_batch_call</code> 内并行续聊</td><td class="warn">禁止。batch 内 <code>model_copy(deep=False)</code> 让 dict 共享，并行任务会互相覆盖缓存；建议 batch 内同一 agent 只允许 1 项</td></tr>
+        <tr><td>次数上限 <code>delegation_max_calls_per_agent</code>（默认 2）</td><td class="warn">需拍板：首轮 + 追问正好用满 2 次，第三次追问就没了。建议续聊单独计数，或默认提到 3</td></tr>
+        <tr><td>子代理带写操作 / 生成文件</td><td class="warn">续聊会重复产生副作用。建议 resume 轮次保持 <code>approval_mode=ask</code>，不因续聊放宽</td></tr>
+        <tr><td>上下文膨胀</td><td>缓存只保留最近 3 轮问答，首轮 query 常驻；超限丢最早的一问一答</td></tr>
+        <tr><td>可观测性</td><td>两次 <code>run_id</code> 不同、<code>child_session_id</code> 相同；思考卡标「续聊 #2」，trace 里可区分</td></tr>
+        <tr><td>深度语义</td><td class="ok">不变。子代理仍是 depth=1，续聊仍不能往下委派</td></tr>
+      </tbody>
+    </table>
+
+    <h2 class="sec">提问透传：三处断点与状态语义 <span>方案 2 的实现落点</span></h2>
+    <table class="spec">
+      <thead>
+        <tr><th style="width:200px">断点</th><th style="width:240px">现在</th><th>改法</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>① 工具层硬拒绝</strong><br><code>user_question_tools.py:115</code></td>
+          <td><code>is_automatic_delivery_context</code> 命中委派 → 直接返回 <code>status=error</code>，子代理只能自己猜</td>
+          <td>委派场景放行（返回正常的 <code>awaiting_user</code>）；<strong>定时 / 订阅任务仍然拒绝</strong>——那里是真没人</td>
+        </tr>
+        <tr>
+          <td><strong>② 事件被丢掉</strong><br><code>agent_delegate_tool.py:1105</code></td>
+          <td>委派流白名单只放 <code>log</code> / <code>citation</code> / <code>browser_*</code>，<code>user_question</code> 进不来</td>
+          <td>白名单放行，并在转发的同一处<strong>以父会话重新登记 pending</strong>，然后把委派标记为中断</td>
+        </tr>
+        <tr>
+          <td><strong>③ 回执认不出</strong><br><code>user_question_store.py:60</code></td>
+          <td>pending key 是 <code>user_id + conversation_id + question_id</code>；子代理写在 <code>child_session_*</code> 下，用户回答按父会话查 → 必然失败</td>
+          <td>转登记时用 <code>main_ctx.conversation_id</code>（<code>question_id</code> 保留），回执校验即可通过。<strong>这是方案 2 能成立的关键一步</strong></td>
+        </tr>
+        <tr>
+          <td><strong>④ 内容无安全校验</strong><br><code>AskUserQuestionArgs</code></td>
+          <td>只校验非空与选项数，不区分调用方；选项可带任意 <code>action</code>，问题文本可含链接</td>
+          <td>子代理场景额外校验：<strong>禁 <code>action</code></strong>、长度上限（问题 200 / 选项 60 / 2~6 项）、纯文本转义；不通过则拒绝并要求子代理转成结论</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="diff"><span class="f">app/services/ai/tools/user_question_tools.py</span> · ① 只在委派场景放行
+
+ ctx = get_current_agent_context()
+<span class="add">+delegated = bool((execution_options_context.get() or {}).get("delegated_sub_agent"))</span>
+<span class="del">-if is_automatic_delivery_context(None, execution_options_context.get()):</span>
+<span class="add">+if is_automatic_delivery_context(None, execution_options_context.get()) and not delegated:</span>
+     return json.dumps({"status": "error", "error": "当前为无人值守上下文…"})
+<span class="cmt"># 委派场景继续往下走，正常返回 awaiting_user</span>
+
+<span class="f">app/services/ai/tools/agent_delegate_tool.py</span> · ② 白名单放行 + 转登记父会话
+
+ <span class="cmt"># _consume_sub_agent_stream 内，放在 poll_tool_progress 之后、正文提取之前</span>
+<span class="add">+if chunk_type == "user_question" and main_ctx.event_queue:</span>
+<span class="add">+    await persist_user_question_event(</span>
+<span class="add">+        event=chunk,</span>
+<span class="add">+        user_id=main_ctx.user_id,</span>
+<span class="add">+        conversation_id=main_ctx.conversation_id,   # 父会话，回执才查得到</span>
+<span class="add">+    )</span>
+<span class="add">+    await main_ctx.event_queue.put(chunk)          # 卡片直达主会话</span>
+<span class="add">+    interrupt_type = "user_question"               # 委派以 needs_user_input 收尾</span>
+<span class="add">+    break</span>
+
+<span class="f">app/services/ai/subagent_protocol.py</span> · ③ 新状态，不要落进 EMPTY
+
+ class SubAgentResultStatus(str, Enum):
+     COMPLETED = "completed"
+     EMPTY = "empty"
+<span class="add">+    NEEDS_USER_INPUT = "needs_user_input"   # 子代理已在等用户回答，不是"没产出"</span>
+     ...
+<span class="cmt"># _STOP_REASON_BY_STATUS 同步补一项；finalize_delegation_result 的空正文分支</span>
+<span class="cmt"># 必须在 status == NEEDS_USER_INPUT 时跳过，否则会被覆写成 EMPTY 文案</span></div>
+
+    <h2 class="sec">提问相关的边界条件 <span>不写清楚就会变成新的静默故障</span></h2>
+    <table class="spec">
+      <thead>
+        <tr><th style="width:300px">场景</th><th>行为</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>定时任务 / 订阅任务里子代理要提问</td><td class="ok">仍然拒绝。那些场景没有在线的用户，放行只会白等</td></tr>
+        <tr><td>子代理提问后用户始终不回答</td><td>pending 按现有 TTL 过期，<strong>不自动续跑</strong>；用户下次说话时父重新委派即可</td></tr>
+        <tr><td>父是否会重复问一遍</td><td class="warn">不该发生。子代理已问过、卡片已在用户眼前，父这轮必须直接停。需在提示词里写死「收到 needs_user_input 后禁止再调 ask_user_question」</td></tr>
+        <tr><td>用户点「跳过，让模型自己判断」</td><td>回执写明「未提供，请自行判断并在结论中标注假设」，父 resume 时带上这句，子代理据此继续</td></tr>
+        <tr><td>子代理反复提问</td><td>每次委派最多 1 个提问；同一子代理每轮仍受 <code>delegation_max_calls_per_agent</code> 约束</td></tr>
+        <tr><td>卡片来源标识</td><td class="warn">必须显示子代理展示名。否则用户以为父在问，答完的语义也对不上</td></tr>
+        <tr><td>无 UI 渲染能力的端（纯 API / embed 宿主）</td><td>由 <code>execution_options.client_capabilities</code> 判定：<strong>不含 <code>user_question</code> 即降级为「父转述」</strong>，由父用自己的 <code>ask_user_question</code> 措辞。缺省按「不支持」处理（fail-safe）</td></tr>
+        <tr><td>子代理提问带 <code>action</code> / 超长 / 含链接</td><td class="warn">拒绝，并把原因返回给子代理，让它把情况写进结论。防的是「读了不可信数据后被诱导，把攻击者的话显示到主会话」</td></tr>
+        <tr><td>父这一轮的收尾</td><td>父先输出一句引导语（点明是哪个子代理在问），再挂卡片并停止；<strong>不能只丢一张裸卡</strong>，用户否则不知道上下文</td></tr>
+        <tr><td>batch 内多个子代理同时提问</td><td class="warn">按形态 A 排队。现在 store 单槽会把前几个标成 <code>superseded</code> 并静默丢弃，改动必须先堵这个</td></tr>
+        <tr><td>用户取消 / 关页面</td><td>委派此前已结束（子代理以 <code>needs_user_input</code> 收尾），无悬挂协程；pending 由 TTL 清理</td></tr>
+        <tr><td>父这一轮的超时</td><td class="ok">不受影响。父的 <code>await</code> 在子代理流结束时就返回了，用户思考时间不占用委派超时</td></tr>
+      </tbody>
+    </table>
+
+    <h2 class="sec">方案取舍 <span>续聊这一侧的方案对比</span></h2>
+    <div class="grid-2">
+      <div class="box is-no">
+        <h3>✕ 方案 A：子→父 实时双向通道（不建议）</h3>
+        <ul>
+          <li><strong>架构上不成立</strong>：父模型调用 <code>sub_agent_call</code> 后，推理是停摆的（卡在 <code>await</code> 子代理流）。子代理此刻问父，父没有能力「思考后回答」。</li>
+          <li>能代答的只有程序规则，或「工具返回 → 父推理 → 再调一次工具」——后者本质就是多轮委派，不是双向通信。</li>
+          <li>要落地必须推翻「父阻塞等终态」的执行模型，引入死锁（子等父答、父等子流结束）、取消传播、超时归属。</li>
+          <li>还得打破 <code>MAX_DELEGATION_DEPTH = 1</code>，而它是目前防无限循环的唯一硬闸。</li>
+        </ul>
+      </div>
+      <div class="box is-yes">
+        <h3>✓ 方案 B：进程内会话续聊（本原型）</h3>
+        <ul>
+          <li>父驱动轮次、子代理保记忆 —— 符合 LLM Agent 的真实交互形态，不制造「谁在等谁」。</li>
+          <li>零持久化成本：父子同轮同进程，缓存随 <code>ctx</code> 消失，仍是一次性委派语义。</li>
+          <li>默认 <code>resume=false</code>，老行为完全不变，纯增量。</li>
+          <li>配套 <code>output_schema</code> 约定 <code>{"answer":…, "need_clarification":[…]}</code>，父就能识别「子代理说它缺信息」并自动续聊，无需新代码。</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="verdict">
+      <b>结论：</b>
+      ① <strong>续聊</strong>做方案 B —— 解决「追问要重跑 + 两次独立查询口径打架」，
+      而「子代理主动汇报」的正确形态本来就是父在下一轮读取它的终态结果，不是实时对话。<br>
+      ② <strong>提问透传</strong>做「提问卡直达主会话」（方案 2）—— 四个断点（工具硬拒绝 / 事件被丢 / 回执认不出 / 内容无校验）逐个打通，
+      关键是<strong>以父会话登记 pending</strong>；batch 内多子代理提问按排队形态，先堵住 store 单槽静默丢弃；
+      子代理提问按<strong>不可信输入</strong>处理（禁 action、限长度、纯文本净化），父收尾必须先给一句引导语再挂卡。<br>
+      ③ 两者必须一起上：没有续聊，子代理问完就忘，用户答了也接不上。
+      若真实需求是「长任务后台跑、进度可查、跑完再取」，那是另一个量级的特性（子会话持久化 + 用户可见入口 + 跨轮恢复），应单独立项。
+    </div>
+  </section>
+</div>
+
+<script>
+/* ---------------- Tab 切换 ---------------- */
+const tabs = Array.from(document.querySelectorAll('.tab'));
+tabs.forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    tabs.forEach(function (b) { b.classList.toggle('is-on', b === btn); });
+    document.querySelectorAll('.panel').forEach(function (p) {
+      p.classList.toggle('is-on', p.id === 'panel-' + btn.dataset.tab);
+    });
+  });
+});
+
+/* ---------------- 左右对比数据 ---------------- */
+const STAGES = [
+  {
+    tA: '0s', tB: '0s',
+    a: { title: '用户提问', desc: '「帮我看看 2026 Q3 华东区的销售情况」', kind: '' },
+    b: { title: '用户提问', desc: '「帮我看看 2026 Q3 华东区的销售情况」', kind: '' }
+  },
+  {
+    tA: '0.3s', tB: '0.3s',
+    a: {
+      title: '父发起委派 #1',
+      desc: '<code>sub_agent_call(agent_name="data-agent", query="统计 2026 Q3 华东区销售额")</code>',
+      kind: ''
+    },
+    b: {
+      title: '父发起委派 #1',
+      desc: '<code>sub_agent_call(agent_name="data-agent", query="统计 2026 Q3 华东区销售额")</code>',
+      kind: ''
+    }
+  },
+  {
+    tA: '18s', tB: '18s',
+    a: {
+      title: '子代理首次执行',
+      desc: '冷启动新会话 · 检索 6 张表 · 执行 <code>SUM(amount) WHERE 华东 AND Q3</code> · 返回「3,842 万元，同比 +12.4%」（含税）',
+      sess: 'child_session_7f3a…', sessKind: '', kind: ''
+    },
+    b: {
+      title: '子代理首次执行',
+      desc: '冷启动新会话 · 检索 6 张表 · 执行 <code>SUM(amount) WHERE 华东 AND Q3</code> · 返回「3,842 万元，同比 +12.4%」（含税）',
+      sess: 'child_session_7f3a…', sessKind: 'is-same', kind: ''
+    }
+  },
+  {
+    tA: '22s', tB: '22s',
+    a: { title: '用户追问', desc: '「拆一下产品线呢？」', kind: '' },
+    b: { title: '用户追问', desc: '「拆一下产品线呢？」', kind: '' }
+  },
+  {
+    tA: '22.4s', tB: '22.4s',
+    a: {
+      title: '父第二轮：全新委派',
+      desc: '只能把条件重写一遍 <code>query="统计 2026 Q3 华东区各产品线销售额"</code>，历史为空',
+      sess: 'child_session_5d1e…（新建）', sessKind: 'is-new', kind: 'is-warn'
+    },
+    b: {
+      title: '父第二轮：续聊委派',
+      desc: '<code>sub_agent_call(agent_name="data-agent", query="按产品线拆分", resume=true)</code>',
+      sess: 'child_session_7f3a…（复用）', sessKind: 'is-same', kind: 'is-ok'
+    }
+  },
+  {
+    tA: '36s', tB: '30s',
+    a: {
+      title: '子代理再次冷启动',
+      desc: '不记得刚查过什么 · <strong>重新检索同一批 schema</strong>（4s）· 重新生成并执行 SQL（12s）',
+      kind: 'is-bad2'
+    },
+    b: {
+      title: '子代理沿用上下文',
+      desc: '记得 Q3 / 华东区 / 含税口径 / 已确认的表 · <strong>跳过 schema 检索</strong>，只补 <code>GROUP BY product_line</code>（8s）',
+      kind: 'is-ok'
+    }
+  },
+  {
+    tA: '38s', tB: '31s',
+    a: {
+      title: '父整合结果：对不上账',
+      desc: '首轮 3,842 万（含税）vs 次轮拆分合计 <strong>3,519 万（默认不含税）</strong> — 只能向用户解释「两次口径不同」',
+      kind: 'is-bad2'
+    },
+    b: {
+      title: '父整合结果：可直接交付',
+      desc: 'A 1,502 + B 1,180 + C 1,160 = <strong>3,842 万</strong>，与首轮总额一致，一次答复带口径说明',
+      kind: 'is-ok'
+    }
+  }
+];
+
+const olBad = document.getElementById('steps-bad');
+const olGood = document.getElementById('steps-good');
+
+STAGES.forEach(function (st, i) {
+  [[olBad, st.a, st.tA, 'bad'], [olGood, st.b, st.tB, 'good']].forEach(function (cfg) {
+    const ol = cfg[0], data = cfg[1], time = cfg[2];
+    const li = document.createElement('li');
+    li.className = 'step ' + (data.kind || '');
+    li.dataset.stage = String(i);
+    li.innerHTML =
+      '<span class="idx">' + (i + 1) + '</span>' +
+      '<span class="t">' + time + '</span>' +
+      '<div class="title">' + data.title + '</div>' +
+      '<p class="desc">' + data.desc + '</p>' +
+      (data.sess ? '<span class="sess ' + (data.sessKind || '') + '">' + data.sess + '</span>' : '');
+    ol.appendChild(li);
+  });
+});
+
+/* ---------------- 逐步播放 ---------------- */
+let timer = null;
+const playBtn = document.getElementById('play');
+const resetBtn = document.getElementById('reset');
+
+function clearAll() {
+  if (timer) { clearInterval(timer); timer = null; }
+  document.querySelectorAll('.step').forEach(function (el) { el.classList.remove('is-shown'); });
+}
+
+function play() {
+  clearAll();
+  playBtn.disabled = true;
+  let i = 0;
+  timer = setInterval(function () {
+    if (i >= STAGES.length) {
+      clearInterval(timer);
+      timer = null;
+      playBtn.disabled = false;
+      playBtn.textContent = '▶ 重新播放';
+      return;
+    }
+    document.querySelectorAll('.step[data-stage="' + i + '"]').forEach(function (el) {
+      el.classList.add('is-shown');
+    });
+    i += 1;
+  }, 780);
+}
+
+playBtn.addEventListener('click', play);
+resetBtn.addEventListener('click', function () {
+  clearAll();
+  playBtn.disabled = false;
+  playBtn.textContent = '▶ 逐步播放';
+});
+
+/* ---------------- 界面效果交互 ---------------- */
+document.getElementById('toggle-think').addEventListener('click', function () {
+  // 作用于全部思考卡：第三轮是动态插入的，不能只 toggle 首屏那一张
+  document.querySelectorAll('.think-card').forEach(function (card) {
+    card.classList.toggle('is-open');
+  });
+});
+
+let round3Done = false;
+document.getElementById('next-round').addEventListener('click', function () {
+  if (round3Done) return;
+  round3Done = true;
+  const holder = document.getElementById('round-3');
+  holder.innerHTML =
+    '<div class="msg-user"><div class="bubble">那跟去年同期比呢？</div></div>' +
+    '<div class="msg-ai"><div class="avatar">AI</div><div class="ai-main">' +
+      '<div class="think-card is-open"><div class="think-head"><span class="caret">▶</span>' +
+      '已调用 <b>3</b> 次子代理 · 累计 31s <span class="tag is-teal" style="margin-left:6px">2 次续聊</span></div>' +
+      '<div class="think-body"><div class="deleg is-second"><div class="r1">' +
+      '<span class="card-title">调用子代理: 经营数据助手</span>' +
+      '<span class="tag is-teal">续聊 #3</span><span class="time">已完成 · 5s</span></div>' +
+      '<p class="q"><code class="mono">query</code> 各产品线同比 &nbsp;·&nbsp; <code class="mono">resume=true</code></p>' +
+      '<div class="meter"><i style="width:26%"></i></div></div></div></div>' +
+      '<div class="answer"><p>各产品线同比：A 系列 <strong>+18.2%</strong>、B 方案 <strong>+9.6%</strong>、C 配件与服务 <strong>+6.1%</strong>，' +
+      '合计同比 <strong>+12.4%</strong>，与首轮一致。</p>' +
+      '<div class="note">第三轮只跑了 5s —— 口径、表、SQL 全部沿用，属于纯增量查询。</div></div>' +
+    '</div></div>';
+  this.disabled = true;
+  this.textContent = '已模拟第三轮追问';
+});
+/* ---------------- 子代理提问：泳道播放 ---------------- */
+const askRows = Array.prototype.slice.call(document.querySelectorAll('[data-astep]'));
+const playAskBtn = document.getElementById('play-ask');
+const resetAskBtn = document.getElementById('reset-ask');
+let askTimer = null;
+
+function clearAsk() {
+  if (askTimer) { clearInterval(askTimer); askTimer = null; }
+  askRows.forEach(function (r) { r.classList.remove('is-shown'); });
+}
+
+function playAsk() {
+  clearAsk();
+  playAskBtn.disabled = true;
+  let i = 0;
+  askTimer = setInterval(function () {
+    if (i >= askRows.length) {
+      clearInterval(askTimer);
+      askTimer = null;
+      playAskBtn.disabled = false;
+      playAskBtn.textContent = '▶ 重新播放';
+      return;
+    }
+    askRows[i].classList.add('is-shown');
+    i += 1;
+  }, 640);
+}
+
+playAskBtn.addEventListener('click', playAsk);
+
+/* ---------------- 提问卡样张交互 ---------------- */
+const demoAsk = document.getElementById('demo-ask');
+const demoMeta = document.getElementById('demo-meta');
+const demoSubmit = document.getElementById('demo-submit');
+const demoSkip = document.getElementById('demo-skip');
+const picked = new Set();
+
+function resetDemo() {
+  picked.clear();
+  demoAsk.querySelectorAll('.opt').forEach(function (el) { el.classList.remove('is-on'); });
+  demoSubmit.disabled = false;
+  demoSkip.disabled = false;
+  demoMeta.style.color = '';
+  demoMeta.textContent = '可多选 · 回答后会接着上次的进度继续';
+}
+
+demoAsk.querySelectorAll('.opt').forEach(function (el) {
+  el.addEventListener('click', function () {
+    const key = el.dataset.opt;
+    if (picked.has(key)) { picked.delete(key); el.classList.remove('is-on'); }
+    else { picked.add(key); el.classList.add('is-on'); }
+  });
+});
+
+demoSubmit.addEventListener('click', function () {
+  if (!picked.size) {
+    demoMeta.textContent = '至少选一项，或点「跳过，让模型自己判断」';
+    demoMeta.style.color = '#b91c1c';
+    return;
+  }
+  const names = { a: 'A 公司', b: 'B 公司', c: 'C 公司' };
+  const chosen = Array.from(picked).map(function (k) { return names[k]; }).join('、');
+  demoMeta.style.color = '#0f766e';
+  demoMeta.textContent = '已提交（' + chosen + '）→ 回执发往父会话 → 父以 resume=true 续聊，子代理接着上次进度继续';
+  demoSubmit.disabled = true;
+  demoSkip.disabled = true;
+});
+
+demoSkip.addEventListener('click', function () {
+  demoMeta.style.color = '#b45309';
+  demoMeta.textContent = '已跳过 → 回执写明「未提供，请自行判断并标注假设」→ 父 resume 时带上这句';
+  demoSubmit.disabled = true;
+  demoSkip.disabled = true;
+});
+
+resetAskBtn.addEventListener('click', function () {
+  clearAsk();
+  resetDemo();
+  playAskBtn.disabled = false;
+  playAskBtn.textContent = '▶ 播放一次完整提问';
+});
+</script>
+</body>
+</html>

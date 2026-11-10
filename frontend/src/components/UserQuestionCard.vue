@@ -55,6 +55,12 @@ const locked = computed(
     props.payload.status === "stale",
 );
 
+const sourceLabel = computed(() => {
+  const display = String(props.payload.source_agent_display_name || "").trim();
+  const raw = String(props.payload.source_agent_name || "").trim();
+  return display || raw;
+});
+
 const statusLabel = computed(() => {
   if (props.payload.status === "submitted") return "已提交";
   if (props.payload.status === "cancelled") return "已取消";
@@ -143,6 +149,12 @@ async function cancel() {
         >
           <div class="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
             <span class="font-bold text-violet-900 dark:text-violet-100 text-xs shrink-0">需要你的补充</span>
+            <!-- 子智能体发起的提问：标清来源，否则用户以为父智能体在问 -->
+            <span
+              v-if="sourceLabel"
+              class="shrink-0 rounded-full border border-violet-300/70 bg-violet-100/80 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-700 dark:border-violet-800 dark:bg-violet-900/40 dark:text-violet-300"
+              title="由子智能体发起，回答后会接着它的进度继续"
+            >来自：{{ sourceLabel }}</span>
             <!-- Collapsed summary preview -->
             <span
               v-if="!expanded && payload.question"

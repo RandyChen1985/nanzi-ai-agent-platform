@@ -4,13 +4,19 @@
  * 背景（用户截图）：Bash 行右侧只有一个 33.0s，用户不知道还要等多久才算超时。
  * 分母取本轮工具调用的实际超时（版本级优先、否则全局），由 run_config 下发。
  *
- * 这里直接 `node --experimental-strip-types` 加载真实 processTimeline.ts（不复制逻辑），
+ * 这里通过 ts_module_loader 加载真实 processTimeline.ts（不复制逻辑）。不再用
+ * `node --experimental-strip-types` 直接 import：strip-types 解析不了无扩展名的
+ * 相对依赖（./subagentTrace），会让探针在加载阶段就假失败。
  * 断言两个用户可见的取舍：分母缺失时不编数字、≥90% 才升级成警示色。
  */
-import {
+import { createRequire } from 'node:module';
+
+const { loadModule } = createRequire(import.meta.url)('./ts_module_loader.cjs');
+
+const {
   appendToolTimeoutSuffix,
   isToolTimeoutNearLimit,
-} from '../../frontend/src/utils/processTimeline.ts';
+} = loadModule('frontend/src/utils/processTimeline.ts');
 
 const failures = [];
 const check = (name, condition, detail = '') => {

@@ -174,3 +174,30 @@ async def test_cancel_gate_hard_blocks_tool_and_sse():
     )
     # Clear gate for other tests
     arm_cancel_confirmation_gate("普通用户消息")
+
+
+@pytest.mark.asyncio
+async def test_request_user_confirmation_refuses_in_delegated_context():
+    """委派/定时任务里没有可交互用户：必须明确拒绝，而不是发一张能等却等不到回执的死卡。
+
+    业务确认卡（``business_confirmation``）没有被委派流白名单转发，子代理若以为
+    「已展示」就会原地等一个永远不会到的【业务确认】回执，最后交出一段莫名其妙的结论。
+    """
+    from app.core.context import execution_options_context
+
+    token = execution_options_context.set({"delegated_sub_agent": True})
+    try:
+        result = json.loads(
+            await request_user_confirmation.ainvoke(
+                {
+                    "title": "请确认供应商信息",
+                    "fields": [{"key": "supplier_name", "label": "供应商名称", "value": "A 公司"}],
+                }
+            )
+        )
+    finally:
+        execution_options_context.reset(token)
+
+    assert result["status"] == "error"
+    assert "无人值守" in result["error"]
+    assert "结论" in result["hint"]

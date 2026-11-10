@@ -26,6 +26,7 @@ from app.services.ai.agent_manager import (
 from app.services.permission_service import PermissionService
 from app.services.ai.subagent_protocol import (
     EMPTY_SUB_AGENT_RESULT_MESSAGE,
+    NEEDS_USER_INPUT_SUB_AGENT_RESULT_MESSAGE,
     SubAgentRequest,
     SubAgentResult,
     SubAgentResultStatus,
@@ -34,6 +35,7 @@ from app.services.ai.subagent_protocol import (
     validate_structured_output,
 )
 from app.services.ai.turn_decision import TurnDecision
+from app.services.ai.delegation_session_store import DelegationSessionStore
 from app.services.ai.runtime.agentscope.stream_reconcile import DEFAULT_TOOL_OUTPUT_MAX_LEN
 
 logger = logging.getLogger(__name__)
@@ -69,8 +71,20 @@ MAX_DELEGATION_CALLS_PER_AGENT_LIMIT = 10
 MAX_BATCH_DELEGATION_CALLS = DEFAULT_MAX_BATCH_DELEGATION_CALLS
 MAX_DELEGATION_CALLS_PER_AGENT = DEFAULT_MAX_DELEGATION_CALLS_PER_AGENT
 
+#: 续聊（``resume=true``）单独计数，不挤占上面「同一子代理重查」的额度。
+#: 续聊不是重查：它复用上一轮的子会话上下文，代价与语义都不同，共用一份额度会让
+#: 「先追问两次、再换问题重查」这种正常用法提前撞墙。
+DELEGATION_MAX_RESUME_CALLS_PER_AGENT_KEY = "delegation_max_resume_calls_per_agent"
+DEFAULT_MAX_DELEGATION_RESUME_CALLS_PER_AGENT = 2
+
+#: 每个子代理的会话缓存最多保留几轮（一问一答算一轮）。超出丢弃最早的，
+#: 避免继续追问时把子代理 prompt 撑到失控；丢最早而非拒绝续聊，是因为
+#: 最新几轮才是当前任务的上下文，早期的多半已被结论吸收。
+DELEGATION_SESSION_HISTORY_MAX_ROUNDS = 3
+
 _max_batch_delegation_calls = DEFAULT_MAX_BATCH_DELEGATION_CALLS
 _max_delegation_calls_per_agent = DEFAULT_MAX_DELEGATION_CALLS_PER_AGENT
+_max_delegation_resume_calls_per_agent = DEFAULT_MAX_DELEGATION_RESUME_CALLS_PER_AGENT
 
 
 def validate_max_batch_delegation_calls(value: Any) -> int:
@@ -121,6 +135,34 @@ def get_max_delegation_calls_per_agent() -> int:
     return _max_delegation_calls_per_agent
 
 
+def get_max_delegation_resume_calls_per_agent() -> int:
+    return _max_delegation_resume_calls_per_agent
+
+
+def set_max_delegation_resume_calls_per_agent(value: Any) -> None:
+    """更新续聊上限（配置保存时热更新；非法值抛 ValueError 由调用方转 400）。"""
+    global _max_delegation_resume_calls_per_agent
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{DELEGATION_MAX_RESUME_CALLS_PER_AGENT_KEY} 必须是整数，范围 "
+            f"{MIN_DELEGATION_CALLS_PER_AGENT}-{MAX_DELEGATION_CALLS_PER_AGENT_LIMIT}"
+        )
+    if not (
+        MIN_DELEGATION_CALLS_PER_AGENT
+        <= parsed
+        <= MAX_DELEGATION_CALLS_PER_AGENT_LIMIT
+    ):
+        raise ValueError(
+            f"{DELEGATION_MAX_RESUME_CALLS_PER_AGENT_KEY} 必须在 "
+            f"{MIN_DELEGATION_CALLS_PER_AGENT}-{MAX_DELEGATION_CALLS_PER_AGENT_LIMIT} 之间，"
+            f"当前 {parsed}"
+        )
+    _max_delegation_resume_calls_per_agent = parsed
+    _sync_delegation_tool_texts()
+
+
 def _sync_delegation_tool_texts() -> None:
     """把当前上限写回工具描述，让模型看到的约束与实际校验一致。"""
     batch = _max_batch_delegation_calls
@@ -139,6 +181,9 @@ def _sync_delegation_tool_texts() -> None:
         f"（系统配置 {DELEGATION_MAX_CALLS_PER_AGENT_KEY}）。"
         "仅用于任务之间互不依赖的场景；有先后依赖时逐次调用 sub_agent_call。"
         "结果按 calls 输入顺序返回，单个任务失败不会丢弃其他结果。"
+        "若其中某个子智能体向用户发起提问，只会中断它自己这一路，其余任务照常跑完；"
+        "此时先把已完成部分汇报给用户，等用户回答后再用单次 sub_agent_call(resume=True) "
+        "让那一个子智能体继续——批量入口本身不支持续聊。"
     )
 
 
@@ -167,6 +212,7 @@ async def refresh_delegation_limits_from_config() -> None:
 
         batch_raw = await ConfigService.get(DELEGATION_MAX_BATCH_CALLS_KEY)
         per_agent_raw = await ConfigService.get(DELEGATION_MAX_CALLS_PER_AGENT_KEY)
+        resume_raw = await ConfigService.get(DELEGATION_MAX_RESUME_CALLS_PER_AGENT_KEY)
     except Exception:  # noqa: BLE001 - 配置不可用不应影响委派
         logger.debug("读取委派上限配置失败，沿用当前值", exc_info=True)
         return
@@ -177,6 +223,11 @@ async def refresh_delegation_limits_from_config() -> None:
             per_agent_raw,
             set_max_delegation_calls_per_agent,
             DELEGATION_MAX_CALLS_PER_AGENT_KEY,
+        ),
+        (
+            resume_raw,
+            set_max_delegation_resume_calls_per_agent,
+            DELEGATION_MAX_RESUME_CALLS_PER_AGENT_KEY,
         ),
     ):
         if raw is None:
@@ -198,6 +249,11 @@ def _batch_result_status(content: str) -> str:
         return "failed"
     if normalized.startswith(EMPTY_DELEGATION_RESULT_MESSAGE):
         return "failed"
+    # 「等待用户回答」既不是失败也不是完成：它这一路还在用户手里。
+    # 混成 completed 会让 batch 汇总显示「4 个全部完成」，父直接汇总回复，
+    # 把那张没人回答过的提问卡当成已经办好了。
+    if normalized.startswith(NEEDS_USER_INPUT_SUB_AGENT_RESULT_MESSAGE):
+        return "needs_user_input"
     return "completed"
 
 DELEGATION_INTERRUPT_MESSAGES = {
@@ -381,13 +437,52 @@ def _delegation_signature(agent_name: str | None, query: str | None) -> str:
     return f"{_normalize_agent_name(agent_name)}:{_normalize_delegation_query(query)}"
 
 
+def _rollback_delegation_resume_attempt(
+    ctx: "AgentContext", *, agent_name: str | None
+) -> None:
+    """本次续聊没能成立时退回额度。
+
+    额度是在执行之前扣的（必须在真正调用模型前拦住超额）。如果这一路超时、抛异常或
+    以 error 中断收尾，子代理其实没被续上——不退回的话，两次网关抖动就能把额度耗光，
+    用户第三次追问直接收到「已达上限」，而一次都没真正续聊成功。
+    """
+    key = _normalize_agent_name(agent_name)
+    counts = ctx.delegation_resume_call_counts
+    current = counts.get(key, 0)
+    if current <= 0:
+        return
+    if current == 1:
+        counts.pop(key, None)
+    else:
+        counts[key] = current - 1
+
+
 def _record_delegation_attempt(
     ctx: AgentContext,
     *,
     agent_name: str,
     display_name: str,
     query: str,
+    resume: bool = False,
 ) -> str | None:
+    agent_key = _normalize_agent_name(agent_name)
+
+    if resume:
+        # 续聊单独计数：它复用上一轮子会话，和「换问题重查」是两种操作。
+        # 共用一份额度会让「先追问两次、再换问题重查」这种正常用法提前撞墙。
+        resume_counts = ctx.delegation_resume_call_counts
+        max_resume_calls = get_max_delegation_resume_calls_per_agent()
+        if resume_counts.get(agent_key, 0) >= max_resume_calls:
+            return (
+                f"错误：本轮已对 `{agent_name}`（{display_name}）续聊 "
+                f"{max_resume_calls} 次，已达上限（系统配置 "
+                f"{DELEGATION_MAX_RESUME_CALLS_PER_AGENT_KEY}）。"
+                "请基于已有结果回答，或改用一个全新的 sub_agent_call（不带 resume）。"
+                "若「换问题重查」的额度也已用完，请直接基于已有结果给出结论。"
+            )
+        resume_counts[agent_key] = resume_counts.get(agent_key, 0) + 1
+        return None
+
     signature = _delegation_signature(agent_name, query)
     call_counts = ctx.delegation_call_counts
     if call_counts.get(signature, 0) >= 1:
@@ -410,6 +505,83 @@ def _record_delegation_attempt(
     call_counts[signature] = call_counts.get(signature, 0) + 1
     agent_counts[agent_key] = agent_counts.get(agent_key, 0) + 1
     return None
+
+
+async def _record_sub_session_history(
+    ctx: AgentContext,
+    *,
+    agent_key: str,
+    query: str,
+    answer: str | None,
+    resume: bool = False,
+) -> None:
+    """把本轮委派写进子会话缓存，供后续 ``resume=true`` 复用。
+
+    只写 ``user`` 轮是合法的：子代理提问被中断时（``needs_user_input``）它这一轮
+    没有终态正文，缓存成「问 + 用户后续补充」反而更贴近真实对话。
+
+    ``resume=False`` 表示这是一次**全新会话**，必须从空历史起步（覆盖写）。否则
+    「q1 委派 → q2 换问题重查 → q3 续聊」会把 q1、q2 两份互不相干的会话拼成一份，
+    子代理把无关任务的旧结论当成自己上一轮说过的，沿用错误口径。
+    """
+    history = (
+        list(ctx.delegation_session_histories.get(agent_key) or []) if resume else []
+    )
+    # 与读侧同口径：上一轮只有「问」没有「答」时合并成一条，别在缓存里留下
+    # 连续两条 user（严格校验角色交替的网关会直接 400）。
+    if history and history[-1].get("role") == "user":
+        previous = str(history[-1].get("content") or "")
+        history[-1] = {
+            "role": "user",
+            "content": f"{previous}\n\n{query}".strip(),
+        }
+    else:
+        history.append({"role": "user", "content": query})
+    if answer and answer.strip():
+        history.append({"role": "assistant", "content": answer})
+
+    max_messages = DELEGATION_SESSION_HISTORY_MAX_ROUNDS * 2
+    if len(history) > max_messages:
+        history = history[-max_messages:]
+    # 截断可能让历史以 assistant 开头（正常对话必须从 user 起），丢掉孤儿回复
+    if history and history[0].get("role") == "assistant":
+        history = history[1:]
+
+    ctx.delegation_session_histories[agent_key] = history
+    # 同时落到共享缓存：用户回答提问卡是**新一轮请求**，ctx 会重建，
+    # 只写进程内缓存的话 resume 永远拿不到上一轮，用户得把条件重讲一遍。
+    store = await DelegationSessionStore.from_runtime()
+    # 落库前重新读一次内存：batch 里同一子代理的两路（或模型并行发的两次委派）共享
+    # 同一份内存列表，各自序列化本地快照先后落地时，先完成那一路会把后一路覆盖掉
+    # —— 下一轮 resume 静默丢掉内容，还没有任何日志。
+    await store.save(
+        user_id=ctx.user_id,
+        conversation_id=ctx.conversation_id,
+        agent_key=agent_key,
+        history=list(ctx.delegation_session_histories.get(agent_key) or history),
+    )
+
+
+async def _load_sub_session_history(
+    ctx: AgentContext,
+    *,
+    agent_key: str,
+) -> List[Dict[str, str]]:
+    """取子会话历史：先看本轮内存，没有再回落到跨轮共享缓存。"""
+    cached = list(ctx.delegation_session_histories.get(agent_key) or [])
+    if cached:
+        return cached
+
+    store = await DelegationSessionStore.from_runtime()
+    shared = await store.load(
+        user_id=ctx.user_id,
+        conversation_id=ctx.conversation_id,
+        agent_key=agent_key,
+    )
+    if shared:
+        # 回填内存，避免同轮内再次 resume 又读一次 Redis
+        ctx.delegation_session_histories[agent_key] = list(shared)
+    return shared
 
 
 def _matches_requested_agent(agent: Any, requested_name: str) -> bool:
@@ -1023,12 +1195,28 @@ def finalize_delegation_result(
     child_trace_id: str | None = None,
     child_session_id: str | None = None,
     structured: dict[str, Any] | None = None,
+    status: SubAgentResultStatus | None = None,
 ) -> SubAgentResult:
     """Create a typed result after output cleaning and size limiting."""
     cleaned_output = clean_sub_agent_output(full_output)
     if not cleaned_output.strip():
         if structured is not None:
             cleaned_output = json.dumps(structured, ensure_ascii=False)
+        elif status is SubAgentResultStatus.NEEDS_USER_INPUT:
+            # 子代理在等用户回答：正文为空是正常态，不能写成 EMPTY，
+            # 否则父会以为它没干活，进而重复委派或替用户编答案。
+            return SubAgentResult(
+                status=SubAgentResultStatus.NEEDS_USER_INPUT,
+                target_agent_id=target_agent_id,
+                target_agent_name=target_agent_name,
+                content=NEEDS_USER_INPUT_SUB_AGENT_RESULT_MESSAGE,
+                capability=capability,
+                run_id=run_id,
+                parent_trace_id=parent_trace_id,
+                parent_conversation_id=parent_conversation_id,
+                child_trace_id=child_trace_id,
+                child_session_id=child_session_id,
+            )
         else:
             return SubAgentResult(
                 status=SubAgentResultStatus.EMPTY,
@@ -1102,6 +1290,55 @@ async def _resolve_delegation_result_max_chars() -> int:
         return DEFAULT_DELEGATION_RESULT_MAX_CHARS
 
 
+async def _persist_delegated_user_question(
+    main_ctx: AgentContext,
+    chunk: Dict[str, Any],
+    sub_display_name: str,
+    run_id: str,
+) -> str | None:
+    """把子代理的提问登记到**父会话**，返回错误说明（None 表示成功）。
+
+    子代理跑在 ``child_session_{run_id}`` 上，用户回答的回执是按父会话校验的；
+    若原样登记在子会话下，回执必然查不到、卡片也就永远等不到答案。
+    """
+    conversation_id = str(main_ctx.conversation_id or "").strip()
+    if main_ctx.user_id is None or not conversation_id:
+        return "委派子智能体的提问无法登记到主会话（缺少用户或会话标识）。"
+
+    # UserQuestionStore 每个会话只有一个 active 槽位：batch 里两个子代理同时发卡，
+    # 后登记的会把先登记的标成 superseded，用户只看到最后一张、前面几张被静默吃掉。
+    # 这里用本轮共享标记保证同一时刻只放行一张。
+    pending = main_ctx.delegation_pending_questions
+    existing_run_id = next(iter(pending), None)
+    if existing_run_id and existing_run_id != run_id:
+        logger.info(
+            "[Delegation] 已有委派 %s 占用提问卡，拒绝 %s 的并发提问",
+            existing_run_id,
+            run_id,
+        )
+        return (
+            "本轮已有另一个子智能体在向用户提问，同一时刻只允许一张提问卡。"
+            "请把你要确认的点写进结论，等当前问题答完后再重新委派。"
+        )
+    pending[run_id] = "pending"
+
+    from app.services.ai.user_question import persist_user_question_event
+
+    event = dict(chunk)
+    event["source_agent_display_name"] = sub_display_name
+    try:
+        await persist_user_question_event(
+            event=event,
+            user_id=main_ctx.user_id,
+            conversation_id=conversation_id,
+        )
+    except Exception:  # noqa: BLE001 - 登记失败要显式上报，不能静默丢卡
+        logger.exception("[Delegation] 登记子智能体提问到父会话失败")
+        pending.pop(run_id, None)
+        return "委派子智能体的提问无法登记到主会话，请稍后重试。"
+    return None
+
+
 async def _consume_sub_agent_stream(
     sub_stream: Any,
     *,
@@ -1109,6 +1346,8 @@ async def _consume_sub_agent_stream(
     sub_display_name: str,
     structured_result: Dict[str, Any] | None = None,
     subagent_metadata: Dict[str, Any] | None = None,
+    run_id: str = "",
+    out_state: Dict[str, Any] | None = None,
 ) -> Tuple[str, str | None]:
     """消费子代理流，返回 (正文, 中断类型或 None)。"""
     full_output = ""
@@ -1133,6 +1372,32 @@ async def _consume_sub_agent_stream(
             # 2) 转发给主聊天又会让用户在父会话里看到子代理的完整推理。
             # 两条路都不该走，这里显式丢弃。
             continue
+        if chunk_type == "user_question":
+            # 子代理在委派中向用户提问：先登记到父会话，登记成功才把卡片放到主聊天流。
+            # 先登记后转发是刻意的——登记失败却把卡发出去，用户答了也回不来，
+            # 那是最糟的体验（看着能操作，实际是死的）。
+            persist_error = await _persist_delegated_user_question(
+                main_ctx, chunk, sub_display_name, run_id=run_id or sub_display_name
+            )
+            if persist_error:
+                full_output = persist_error
+                interrupt_type = "error"
+                break
+            # 直接赋值而不是 setdefault：build_user_question_sse 总会输出这个键
+            # （缺值是空串），setdefault 永远不会生效，前端就只能显示英文 slug。
+            chunk["source_agent_display_name"] = sub_display_name
+            if out_state is not None:
+                # 把「它问了什么」带回去写进会话缓存：否则续聊时子代理看不到
+                # 自己问过这句，很可能把同一个问题再问用户一遍。
+                out_state["asked_question"] = str(chunk.get("question") or "").strip()
+            if main_ctx.event_queue:
+                await main_ctx.event_queue.put(chunk)
+            interrupt_type = "user_question"
+            logger.info(
+                "[Delegation] Sub-agent '%s' asked the user a question; pausing delegation",
+                sub_display_name,
+            )
+            break
         if chunk_type in INTERRUPT_SSE_TYPES:
             interrupt_type = chunk_type
             if chunk_type == "error":
@@ -1187,12 +1452,18 @@ async def sub_agent_call(
     max_depth: int | None = None,
     tool_filter: list[str] | None = None,
     output_schema: dict[str, Any] | None = None,
+    resume: bool = False,
 ) -> str:
     """委派其他专有子智能体执行特定任务（如查数、查手册）。禁止未调用本工具就编造数据或流程。
 
     Args:
         agent_name: 目标子智能体的英文名称标识（如 data-agent，knowledge-base）
         query: 委派的具体任务指令或查询词
+        resume: 是否接着该子智能体上一轮的会话继续，默认 false。仅当本轮已经成功委派过
+            同一个 agent_name、且需要补充条件或追问时才设为 true；首次委派、换问题重查
+            都保持 false。无可用会话时会自动降级为全新会话。注意每轮对同一个子智能体的
+            续聊次数有上限（由系统配置决定，通常只有 1-2 次）：达到上限后不要再追问，
+            请基于已有结果直接回答；此时「换问题重查」的额度通常也已用完。
     """
     # 每次委派前同步一次上限配置（ConfigService 自带 Redis + 60s 内存缓存，代价可忽略）。
     # 放在上下文检查之前：纯配置读取，不依赖执行上下文。
@@ -1436,7 +1707,44 @@ async def sub_agent_call(
             ).to_tool_text()
 
     # 4. 构造子代理独立上下文 (Sandbox Isolation)
-    sub_history = [{"role": "user", "content": delegation_request.query}]
+    # 续聊时把上一轮缓存拼在最前面；缓存缺失（首次就问、或已被轮次上限挤掉）时
+    # 自动降级为全新会话——宁可丢上下文，也不能让子代理拿到半截历史。
+    history_cache_key = _normalize_agent_name(
+        target_config.agent_name or delegation_request.target_agent_name
+    )
+    cached_sub_history: List[Dict[str, str]] = []
+    if resume:
+        cached_sub_history = await _load_sub_session_history(
+            main_ctx, agent_key=history_cache_key
+        )
+        if not cached_sub_history:
+            # 降级成事实上的全新会话。必须把 resume 改回 False：否则会白扣一次续聊
+            # 额度（默认只有 2 次）、绕过「相同问题不许重复委派」的签名检查，
+            # 还会在前端时间线上写一个假的「续聊 #N」把排查带偏。
+            resume = False
+            logger.info(
+                "[Delegation] resume=true 但无可用会话缓存，降级为全新会话 target=%s",
+                agent_name,
+            )
+    # 续聊拼接必须保持 user/assistant 交替：缓存末条是 user 时（提问轮没记下
+    # 自己问了什么），直接再追加一条 user 会拼出连续两条 user，部分网关会直接
+    # 400（roles must alternate）。这种情况合并成同一条，语义上也更贴近「一次说清」。
+    sub_history = list(cached_sub_history)
+    if sub_history and sub_history[-1].get("role") == "user":
+        previous_query = str(sub_history[-1].get("content") or "")
+        sub_history[-1] = {
+            "role": "user",
+            "content": f"{previous_query}\n\n{delegation_request.query}".strip(),
+        }
+    else:
+        sub_history.append({"role": "user", "content": delegation_request.query})
+    # 读侧也要裁：写侧把缓存裁到上限后，这里又追加了一条 user，实际交给子代理的
+    # 历史会多出整整一轮（配置说 3 轮，子代理看到 3.5 轮）。
+    max_history_messages = DELEGATION_SESSION_HISTORY_MAX_ROUNDS * 2
+    if len(sub_history) > max_history_messages:
+        sub_history = sub_history[-max_history_messages:]
+        if sub_history and sub_history[0].get("role") == "assistant":
+            sub_history = sub_history[1:]
     sub_display_name = target_config.agent_display_name or target_config.agent_name or agent_name
     from app.services.ai.tools.registry import ToolRegistry
 
@@ -1463,6 +1771,7 @@ async def sub_agent_call(
         agent_name=target_config.agent_name or delegation_request.target_agent_name,
         display_name=sub_display_name,
         query=delegation_request.query,
+        resume=resume,
     )
     if repeat_error:
         return repeat_error
@@ -1501,6 +1810,13 @@ async def sub_agent_call(
         "parent_conversation_id": main_ctx.conversation_id,
         "child_session_id": child_session_id,
         "tool_filter": list(resolved_tool_filter) if resolved_tool_filter is not None else None,
+        # 续聊标记：前端据此显示「续聊 #N」，排查时也能看出这一轮是接上一轮还是重开。
+        "resume": bool(resume),
+        "resume_index": (
+            main_ctx.delegation_resume_call_counts.get(history_cache_key, 0)
+            if resume
+            else 0
+        ),
     }
     _put_subagent_lifecycle_log(
         main_ctx,
@@ -1622,7 +1938,7 @@ async def sub_agent_call(
     # 临时切换到子 Context 运行。execution_options 也要一并保存：
     # 子代理 setup_context 会把它覆盖成 {"delegated_sub_agent": True}，
     # 只恢复 agent_context 会让主智能体在同一 task 的后续轮次被误判成无人值守，
-    # 连它自己的 ask_user_question 都会被拒。
+    # 连它自己的业务确认卡、范围确认卡都会被拒。
     # 注意顺序：必须在 dispatch 之前取，子执行器要拿它把本轮数据集范围带过去。
     original_ctx = get_current_agent_context()
     original_execution_options = dict(execution_options_context.get() or {})
@@ -1644,6 +1960,8 @@ async def sub_agent_call(
 
     full_output = ""
     structured_holder: Dict[str, Any] = {}
+    # 流消费过程中要带回来的附加状态（例如子代理问了什么），随中断结果一起用。
+    consume_state: Dict[str, Any] = {}
     sub_stream = None
     interrupt_type: str | None = None
 
@@ -1658,6 +1976,8 @@ async def sub_agent_call(
                 sub_display_name=sub_display_name,
                 structured_result=structured_holder,
                 subagent_metadata=subagent_metadata,
+                run_id=run_id,
+                out_state=consume_state,
             )
 
         await asyncio.wait_for(consume_stream(), timeout=delegation_timeout)
@@ -1686,6 +2006,11 @@ async def sub_agent_call(
             metadata=subagent_metadata,
             stop_reason=SubAgentStopReason.TIMEOUT.value,
         )
+        if resume:
+            _rollback_delegation_resume_attempt(
+                main_ctx,
+                agent_name=target_config.agent_name or delegation_request.target_agent_name,
+            )
         return SubAgentResult(
             status=SubAgentResultStatus.TIMEOUT,
             target_agent_id=str(target_config.agent_id),
@@ -1731,6 +2056,11 @@ async def sub_agent_call(
             metadata=subagent_metadata,
             stop_reason=SubAgentStopReason.FAILED.value,
         )
+        if resume:
+            _rollback_delegation_resume_attempt(
+                main_ctx,
+                agent_name=target_config.agent_name or delegation_request.target_agent_name,
+            )
         return SubAgentResult(
             status=SubAgentResultStatus.FAILED,
             target_agent_id=str(target_config.agent_id),
@@ -1754,23 +2084,42 @@ async def sub_agent_call(
         set_execution_options_context(original_execution_options)
 
     if interrupt_type:
-        interrupt_status = (
-            SubAgentResultStatus.PERMISSION_DENIED
-            if interrupt_type == "permission_required"
-            else SubAgentResultStatus.INTERRUPTED
-        )
-        interrupt_reason = (
-            SubAgentStopReason.PERMISSION_DENIED
-            if interrupt_type == "permission_required"
-            else SubAgentStopReason.INTERRUPTED
-        )
+        if interrupt_type == "user_question":
+            # 子代理正常停下等用户回答：既不是失败也不是空产出。
+            interrupt_status = SubAgentResultStatus.NEEDS_USER_INPUT
+            interrupt_reason = SubAgentStopReason.NEEDS_USER_INPUT
+        elif interrupt_type == "permission_required":
+            interrupt_status = SubAgentResultStatus.PERMISSION_DENIED
+            interrupt_reason = SubAgentStopReason.PERMISSION_DENIED
+        else:
+            interrupt_status = SubAgentResultStatus.INTERRUPTED
+            interrupt_reason = SubAgentStopReason.INTERRUPTED
         _annotate_subagent_trace(
             main_ctx.trace_buffer or [],
             trace_start_index,
             metadata=subagent_metadata,
             stop_reason=interrupt_reason.value,
         )
-        if interrupt_type == "error" and full_output.strip():
+        if interrupt_type == "user_question":
+            # 文案必须点明「是哪个子代理在等」：父在批量或多子代理场景下要据此决定
+            # resume 谁。指错了对象，那个子代理会把「用户已回答某某」当新任务从零重跑，
+            # 结论跟真正提问的那个毫无关系。前缀保留通用文案，_batch_result_status
+            # 用 startswith 识别它。
+            resume_target = str(target_config.agent_name or agent_name)
+            interrupt_message = (
+                f"{NEEDS_USER_INPUT_SUB_AGENT_RESULT_MESSAGE}"
+                f"\n发起提问的子智能体：{resume_target}（{sub_display_name}）。"
+                f"用户回答后请用 sub_agent_call(agent_name=\"{resume_target}\", resume=True) 继续。"
+            )
+            # 子代理可能是「先写出半份结论、再问一句」。那半份正文不能丢：父要么据此
+            # 先汇报已完成部分（batch 的 hint 就是这么要求的），要么至少知道它已经
+            # 做到哪一步。放在通用文案之后，保住 _batch_result_status 的 startswith 识别。
+            partial_output = str(full_output or "").strip()
+            if partial_output:
+                interrupt_message += (
+                    "\n\n（子智能体本次已完成的部分，可直接采纳）\n" + partial_output
+                )
+        elif interrupt_type == "error" and full_output.strip():
             interrupt_message = full_output.strip()
             if not interrupt_message.startswith(("错误：", "错误:")):
                 interrupt_message = f"错误：{interrupt_message}"
@@ -1779,12 +2128,36 @@ async def sub_agent_call(
                 interrupt_type,
                 f"子智能体执行被中断（{interrupt_type}）。",
             )
+        if interrupt_type == "error" and resume:
+            # 这一路以错误收尾，子代理没被续上，额度要退回（user_question 不退：
+            # 子代理确实跑到了提问点，这一轮是有进展的）。
+            _rollback_delegation_resume_attempt(
+                main_ctx,
+                agent_name=target_config.agent_name or delegation_request.target_agent_name,
+            )
+        if interrupt_type == "user_question":
+            # 停在「等用户回答」这一轮也要缓存它问了什么：用户答完后 resume 续聊，
+            # 子代理才接得上同一件事，而不是把问题当成新任务重做一遍。
+            asked_question = str((consume_state or {}).get("asked_question") or "").strip()
+            await _record_sub_session_history(
+                main_ctx,
+                agent_key=history_cache_key,
+                query=delegation_request.query,
+                answer=f"（向用户确认）{asked_question}" if asked_question else None,
+                resume=resume,
+            )
         _put_subagent_lifecycle_log(
             main_ctx,
             log_id=lifecycle_log_id,
             metadata=subagent_metadata,
-            status="error",
-            details=interrupt_message,
+            status="success" if interrupt_type == "user_question" else "error",
+            # 时间线是给用户看的：interrupt_message 是写给模型的协议指令
+            # （「本轮请勿重复提问…用 resume=True…」），不能原样展示给用户。
+            details=(
+                "已向用户提问，等待回答"
+                if interrupt_type == "user_question"
+                else interrupt_message
+            ),
             started_at=lifecycle_started_at,
         )
         return SubAgentResult(
@@ -1792,7 +2165,11 @@ async def sub_agent_call(
             target_agent_id=str(target_config.agent_id),
             target_agent_name=sub_display_name,
             content=interrupt_message,
-            error_code="stream_error" if interrupt_type == "error" else "interrupted",
+            error_code=(
+                None
+                if interrupt_type == "user_question"
+                else ("stream_error" if interrupt_type == "error" else "interrupted")
+            ),
             interrupt_type=interrupt_type,
             capability=delegation_request.capability,
             run_id=run_id,
@@ -1869,6 +2246,17 @@ async def sub_agent_call(
         started_at=lifecycle_started_at,
         execution_time_ms=int(time.time() * 1000) - lifecycle_started_at,
     )
+    # 5. 写回子会话缓存，供后续 resume 复用。
+    # 只有完成态才走到这里：子代理提问停下时，interrupt 分支已经把「问 + 它问的原话」
+    # 写进缓存并直接返回，不会落到这段代码。
+    if result.status is SubAgentResultStatus.COMPLETED:
+        await _record_sub_session_history(
+            main_ctx,
+            agent_key=history_cache_key,
+            query=delegation_request.query,
+            answer=result.content,
+            resume=resume,
+        )
     logger.info(
         "[Delegation] target=%s status=%s chars=%s truncated=%s",
         sub_display_name,
@@ -1927,6 +2315,9 @@ class BatchSubAgentTool(BaseTool):
         "并行委派 1-4 个彼此独立的子智能体任务。"
         "仅用于任务之间互不依赖的场景；有先后依赖时逐次调用 sub_agent_call。"
         "结果按 calls 输入顺序返回，单个任务失败不会丢弃其他结果。"
+        "若其中某个子智能体向用户发起提问，只会中断它自己这一路，其余任务照常跑完；"
+        "此时先把已完成部分汇报给用户，等用户回答后再用单次 sub_agent_call(resume=True) "
+        "让那一个子智能体继续——批量入口本身不支持续聊。"
     )
     args_schema = BatchSubAgentArgs
 
@@ -2015,16 +2406,24 @@ class BatchSubAgentTool(BaseTool):
             main_ctx.trace_buffer.extend(item.pop("trace_buffer", []))
             results.append(item)
 
-        failed_count = sum(item["status"] != "completed" for item in results)
-        return json.dumps(
-            {
-                "status": "completed",
-                "results": results,
-                "completed_count": len(results) - failed_count,
-                "failed_count": failed_count,
-            },
-            ensure_ascii=False,
-        )
+        failed_count = sum(item["status"] == "failed" for item in results)
+        waiting_count = sum(item["status"] == "needs_user_input" for item in results)
+        payload: dict[str, Any] = {
+            "status": "completed",
+            "results": results,
+            "completed_count": sum(item["status"] == "completed" for item in results),
+            "failed_count": failed_count,
+            "waiting_user_count": waiting_count,
+        }
+        if waiting_count:
+            # 分开计数还不够，得让父知道该怎么收尾：先汇报完成的，再让用户去看卡片。
+            payload["hint"] = (
+                f"本次批量委派有 {waiting_count} 个子智能体已向用户发起提问并停下等待回答。"
+                "请先汇报已完成部分的结果，再明确告诉用户还有提问卡需要回答；"
+                "不要把它们说成已完成，也不要替用户作答。用户回答后用 "
+                "sub_agent_call(resume=True) 让对应子智能体接着做。"
+            )
+        return json.dumps(payload, ensure_ascii=False)
 
 
 sub_agent_batch_call = BatchSubAgentTool()
@@ -2052,6 +2451,10 @@ async def _dispatch_sub_agent_executor(
     parent_scope = (parent_execution_options or {}).get("metadata_dataset_scope")
     if isinstance(parent_scope, dict) and parent_scope:
         sub_execution_options["metadata_dataset_scope"] = parent_scope
+    # 无人值守标记必须透传：定时 / 订阅任务里的子代理同样没有在线用户，
+    # 少了这一项它会把提问卡塞进没人消费的队列（见 is_system_receipt_message 同源判定）。
+    if (parent_execution_options or {}).get("unattended"):
+        sub_execution_options["unattended"] = True
 
     return await AgentDispatcher.dispatch(
         target_config,
@@ -2059,10 +2462,10 @@ async def _dispatch_sub_agent_executor(
         sub_history,
         trace_id=trace_id,
         trace_buffer=trace_buffer,
-        # 委派链没有「向用户提问」的通道：子代理发出的事件只会被
-        # _consume_sub_agent_stream 的白名单过滤掉（user_question 既不在中断类型里，
-        # 也不在转发类型里），而且子代理跑在 child_session_{run_id} 独立会话上，
-        # 就算卡片冒到前端，回执也查不到登记记录。打上标记让下游别再尝试交互。
+        # 委派链只有一种「问用户」的通道：ask_user_question 被放行后，卡片由
+        # _consume_sub_agent_stream 转登记到父会话并直达用户；业务确认卡
+        # （business_confirmation）仍没有透传通道，会被白名单过滤掉且回执查不到。
+        # 打这个标记让下游按非交互处理其余交互类工具。
         execution_options=sub_execution_options,
         permission_options=permission_options,
         user_info=user_info,
