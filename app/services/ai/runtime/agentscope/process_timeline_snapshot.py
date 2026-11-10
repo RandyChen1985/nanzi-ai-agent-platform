@@ -329,6 +329,13 @@ def _user_question_log_payload(chunk: Dict[str, Any]) -> Dict[str, Any] | None:
         description = str(option.get("description") or "").strip()
         if description:
             item["description"] = description
+        # 与实时卡片的 ``UserQuestionOption`` 保持同一口径：回放时卡片若仍在等待
+        # 回答，置灰提示与点击动作必须一起还原，否则刷新后选项看着可选、点了没反应。
+        if option.get("disabled") is True:
+            item["disabled"] = True
+        action = str(option.get("action") or "").strip()
+        if action:
+            item["action"] = action
         options.append(item)
 
     if len(options) < 2:
@@ -346,6 +353,13 @@ def _user_question_log_payload(chunk: Dict[str, Any]) -> Dict[str, Any] | None:
     tool_call_id = str(chunk.get("tool_call_id") or "").strip()
     if tool_call_id:
         payload["tool_call_id"] = tool_call_id
+    # 委派子代理提问时带来源，回放后前端才能继续渲染「来自：xxx」徽标——
+    # 实时 SSE 有这两个字段、历史快照没有，用户刷新一次就看到两种样子。
+    # 父代理自己提问时它们是空串，不写，免得快照里堆一串空键。
+    for source_key in ("source_agent_name", "source_agent_display_name"):
+        source_value = str(chunk.get(source_key) or "").strip()
+        if source_value:
+            payload[source_key] = source_value
     return payload
 
 

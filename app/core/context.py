@@ -79,6 +79,16 @@ class AgentContext(BaseModel):
     delegation_tool_filter: Optional[List[str]] = None
     delegation_call_counts: Dict[str, int] = Field(default_factory=dict)
     delegation_agent_call_counts: Dict[str, int] = Field(default_factory=dict)
+    #: 本轮内每个子代理的子会话历史缓存，键是归一化后的 agent 名。
+    #: 只在 ``resume=true`` 时被读取，值是 ``[{"role": "user"/"assistant", "content": ...}]``；
+    #: 进程内、随本轮上下文销毁，不做持久化——跨轮次的子会话不是这个字段的职责。
+    delegation_session_histories: Dict[str, List[Dict[str, str]]] = Field(default_factory=dict)
+    #: 续聊次数单独计数，不与 ``delegation_agent_call_counts``（重查额度）共用。
+    delegation_resume_call_counts: Dict[str, int] = Field(default_factory=dict)
+    #: 本轮已经占用了提问卡的委派 run_id。``UserQuestionStore`` 每个会话只有一个
+    #: active 槽位，batch 并行时多个子代理同时提问会把先来的标成 superseded 静默吃掉；
+    #: 用这个共享标记保证同一时刻只放行一张卡（deep=False 的 model_copy 共享同一实例）。
+    delegation_pending_questions: Dict[str, str] = Field(default_factory=dict)
 
     # Runtime tool approval (inherited by sub_agent_call delegation)
     permission_options: Dict[str, Any] = Field(default_factory=dict)

@@ -723,3 +723,24 @@ def pytest_collection_modifyitems(config, items):
     known_failures.mark_known_failures(
         items, known, strict=config.getoption("--strict-known-failures")
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_delegation_session_store(monkeypatch):
+    """默认不让单测把子代理会话缓存写进真实 Redis。
+
+    开发机 Redis 与业务共用且默认不 FLUSHDB，而委派用例普遍带 user_id /
+    conversation_id，不隔离就会：① 把测试对话内容写进真实 Redis；
+    ② 不同用例用相同硬编码会话 id 时互相读到彼此的缓存，出现「明明是新 ctx
+    却读到 6 条历史」这种假象。需要真实缓存语义的用例自己 patch ``from_runtime``
+    （参考 tests/ai/tools/test_delegation_session_store.py 里的 FakeRedis）。
+    """
+    from app.services.ai.delegation_session_store import DelegationSessionStore
+
+    async def _no_redis(cls):
+        return cls(None)
+
+    monkeypatch.setattr(
+        DelegationSessionStore, "from_runtime", classmethod(_no_redis)
+    )
+    yield

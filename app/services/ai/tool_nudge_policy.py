@@ -404,6 +404,33 @@ def _resolve_decision_request_nudge(
     )
 
 
+#: 无人值守交付来源的标记键（存在于 user_info 或 execution_options）。
+_UNATTENDED_USER_INFO_KEYS = (
+    "quick_suggestions_forbidden",
+    "is_scheduled_task",
+    "is_subscription_task",
+)
+
+
+def _enabled_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def unattended_delivery_marker(user_info: Optional[Mapping[str, Any]]) -> bool:
+    """user_info 是否表示「没有在线用户」的交付来源（定时 / 订阅任务）。
+
+    这个标记必须被搬进 ``execution_options``：``ask_user_question`` 等工具在子代理
+    里只能拿到 execution_options，拿不到 user_info。少搬这一步，定时任务里的子代理
+    就会以为有人在线，把提问卡塞进一个没有消费者的队列，任务以「等待用户回答」收尾
+    并在 15 分钟后过期——结果永久缺一块。
+    """
+    if not isinstance(user_info, Mapping):
+        return False
+    return any(_enabled_flag(user_info.get(key)) for key in _UNATTENDED_USER_INFO_KEYS)
+
+
 def is_automatic_delivery_context(
     user_info: Optional[Mapping[str, Any]] = None,
     execution_options: Optional[Mapping[str, Any]] = None,
@@ -423,10 +450,15 @@ def is_automatic_delivery_context(
                 "quick_suggestions_forbidden",
                 "is_scheduled_task",
                 "is_subscription_task",
-                # 委派链没有回传通道：子代理发出的 user_question 事件会被
-                # agent_delegate_tool 的流白名单丢掉，而且子代理跑在
-                # child_session_{run_id} 独立会话上，回执校验必然失败。
-                # 判定为非交互后，原生 ask_user_question 与范围确认卡都不会再尝试。
+                # 由 unattended_delivery_marker 从 user_info 搬进 execution_options 的
+                # 统一标记：定时 / 订阅任务整条链路（含委派出去的子代理）都没有在线用户。
+                "unattended",
+                # 委派链整体按非交互对待：业务确认卡（business_confirmation）没有透传通道，
+                # 范围确认卡也不该在子流程里弹。
+                # 特例：``ask_user_question`` 会在工具内部单独判断——交互式会话里的委派被放行，
+                # 由 agent_delegate_tool 把提问卡转登记到父会话并直达用户（见
+                # user_question_tools.validate_delegated_ask 与 _persist_delegated_user_question）；
+                # 但父链路本身是无人值守时仍然拒绝。
                 "delegated_sub_agent",
             )
         ):

@@ -1,3 +1,4 @@
+import { subagentResumeLabel } from "./subagentTrace";
 import type { SubagentTraceMeta } from "./subagentTrace";
 
 export type ProcessTimelineStatus = "pending" | "success" | "error" | "warning" | "interrupted";
@@ -104,12 +105,17 @@ export type ProcessTimelineLogItem = {
 export type PersistedUserQuestion = {
   question_id: string;
   question: string;
-  options: Array<{ id: string; label: string; description?: string }>;
+  /** 与实时卡片的 `UserQuestionOption` 同形：disabled / action 也要回放。 */
+  options: Array<{ id: string; label: string; description?: string; disabled?: boolean; action?: string }>;
   is_multi_select?: boolean;
   allow_custom_input?: boolean;
   context?: string;
   purpose?: string;
   tool_call_id?: string;
+  /** 委派子代理提问时的来源标识；父代理自己提问时不落这两个键。 */
+  source_agent_name?: string;
+  /** 来源的展示名，卡片据此渲染「来自：xxx」徽标。 */
+  source_agent_display_name?: string;
 };
 
 export type ProcessTimelineTodo = {
@@ -1193,19 +1199,21 @@ export function upsertTimelineLog(
 
   if (isIncomingSubagentLifecycle) {
     const targetRunId = data.subagent?.run_id;
+    // 有 run_id 时必须**只**按 run_id 认容器：否则同一轮里的第二次委派会命中
+    // 「任一派发卡」这条兜底，被并进第一个容器——第二个 run 没有独立容器，还会把
+    // 第一个容器的元数据和标题一起覆盖成「续聊 #N」，让首次委派也被标成续聊。
+    const matchesDelegationCard = (c: ProcessTimelineLogItem) => {
+      if (targetRunId) return c.subagent?.run_id === targetRunId;
+      return (
+        c.tool_name === "sub_agent_call" ||
+        c.title.includes("委派智能体") ||
+        c.title.includes("sub_agent_call")
+      );
+    };
     const existingContainer = [...target.processTimeline].reverse().find((item) => {
-      if (item.kind === "log") {
-        if (targetRunId && item.subagent?.run_id === targetRunId) return true;
-        if (item.tool_name === "sub_agent_call" || item.title.includes("委派智能体") || item.title.includes("sub_agent_call")) return true;
-        return false;
-      }
+      if (item.kind === "log") return matchesDelegationCard(item);
       if (item.kind === "text") {
-        return (item.children || []).some((c) =>
-          (targetRunId && c.subagent?.run_id === targetRunId) ||
-          c.tool_name === "sub_agent_call" ||
-          c.title.includes("委派智能体") ||
-          c.title.includes("sub_agent_call")
-        );
+        return (item.children || []).some((c) => matchesDelegationCard(c as ProcessTimelineLogItem));
       }
       return false;
     });
@@ -1215,10 +1223,7 @@ export function upsertTimelineLog(
         containerLog = existingContainer;
       } else if (existingContainer.kind === "text") {
         containerLog = (existingContainer.children || []).find((c: ProcessTimelineLogItem) =>
-          (targetRunId && c.subagent?.run_id === targetRunId) ||
-          c.tool_name === "sub_agent_call" ||
-          c.title.includes("委派智能体") ||
-          c.title.includes("sub_agent_call")
+          matchesDelegationCard(c)
         );
       }
       if (containerLog) {
@@ -1227,8 +1232,17 @@ export function upsertTimelineLog(
         if (data.details) containerLog.details = data.details;
         if (data.subagent) containerLog.subagent = data.subagent;
         const displayName = data.subagent?.display_name || (data.title ? data.title.replace(/^调用子代理[:：]\s*/, "") : "");
-        if (displayName && !containerLog.title.includes(displayName)) {
-          containerLog.title = `委派智能体 · ${displayName}`;
+        // 续聊序号要进标题：同一轮里两次委派同一位子代理，标题一模一样的话
+        // 用户分不清第二次是「接着上次查」还是「重新查了一遍」——后者正是口径打架的来源。
+        // 用容器上已合并的元数据算后缀：有些后续事件不带 subagent，直接用
+        // data.subagent 会把已经写好的「续聊 #N」又抹掉。
+        const mergedSubagent = containerLog.subagent ?? data.subagent;
+        // 与 subagentTrace.ts 的徽标同口径（数字归一化 + 双真值），否则数据源给字符串或
+        // resume: 1 时会出现「标题写了续聊 #abc、徽标却没有」的错位。
+        const resumeSuffix = subagentResumeLabel(mergedSubagent);
+        const desiredTitle = `委派智能体 · ${displayName}${resumeSuffix}`;
+        if (displayName && containerLog.title !== desiredTitle) {
+          containerLog.title = desiredTitle;
         }
         return;
       }

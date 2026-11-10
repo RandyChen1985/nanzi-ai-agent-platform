@@ -12,6 +12,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
+import SecretRowActions from '../components/secrets/SecretRowActions.vue'
 import { resultLabel } from '../utils/secretLabels'
 import UserDeptPicker from '../components/common/UserDeptPicker.vue'
 import { useDismissible } from '../utils/dismissible'
@@ -177,6 +178,60 @@ const filtered = computed(() => {
     (item) => item.name.toLowerCase().includes(q) || item.secret_key.toLowerCase().includes(q),
   )
 })
+
+// ── 视图模式（卡片 / 列表） ────────────────────────────────────────────
+// 存在 localStorage 里：这是个人偏好，不该占一次后端请求；换浏览器回到默认
+// 卡片视图也无所谓（卡片是信息最全的那个）。
+const VIEW_KEY = 'dsh:admin-secrets:view'
+const viewMode = ref<'card' | 'list'>(
+  (() => {
+    try {
+      return window.localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'card'
+    } catch {
+      return 'card'
+    }
+  })(),
+)
+function setViewMode(mode: 'card' | 'list') {
+  viewMode.value = mode
+  try {
+    window.localStorage.setItem(VIEW_KEY, mode)
+  } catch {
+    // 隐私模式下存不下，本次会话内仍然生效
+  }
+}
+
+/** 列表列宽有限，授权范围只给摘要；完整名单挂在 title 里 */
+function grantSummary(item: SystemSecret): string {
+  if (!item.grants.length) return '未授权'
+  if (item.grants.some((grant) => grant.grantee_type === 'all')) return '全体用户'
+  return `${item.grants.length} 个对象`
+}
+
+function grantTitle(item: SystemSecret): string {
+  if (!item.grants.length) return '尚未授权给任何人，除管理员外不可见'
+  return item.grants
+    .map((grant) =>
+      grant.grantee_type === 'all'
+        ? '全体用户'
+        : `${grant.grantee_type === 'dept' ? '部门' : '用户'} · ${grant.grantee_id}`,
+    )
+    .join('\n')
+}
+
+/** 绑定明细在列表里放不下，收进 title —— 但「绑到哪」恰恰是排错第一步 */
+function bindingTitle(item: SystemSecret): string {
+  if (!item.bindings.length) return '还没有绑到任何地方：建了但不会被任何调用用到'
+  return groupBindings(item.bindings)
+    .map(
+      (group) =>
+        `${group.label}：` +
+        group.items
+          .map((binding) => `${binding.consumer_name || binding.consumer_id} → ${slotLabel(binding)}`)
+          .join('、'),
+    )
+    .join('\n')
+}
 
 const stats = computed(() => {
   const active = items.value.filter((i) => i.status === 'active').length
@@ -628,6 +683,35 @@ onMounted(load)
           placeholder="搜索"
           class="w-40 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none sm:w-52"
         />
+        <!-- 视图切换：卡片看得全，列表扫得快 -->
+        <div class="flex items-center rounded-lg border border-gray-300 bg-white p-0.5" role="group" aria-label="视图切换">
+          <button
+            type="button"
+            class="rounded-md p-1.5"
+            :class="viewMode === 'card' ? 'bg-slate-900 text-white' : 'text-gray-400 hover:text-gray-700'"
+            title="卡片视图"
+            aria-label="卡片视图"
+            :aria-pressed="viewMode === 'card'"
+            @click="setViewMode('card')"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5h7v6H4zM13 5h7v6h-7zM4 13h7v6H4zM13 13h7v6h-7z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="rounded-md p-1.5"
+            :class="viewMode === 'list' ? 'bg-slate-900 text-white' : 'text-gray-400 hover:text-gray-700'"
+            title="列表视图"
+            aria-label="列表视图"
+            :aria-pressed="viewMode === 'list'"
+            @click="setViewMode('list')"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        </div>
         <button
           type="button"
           class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
@@ -660,7 +744,8 @@ onMounted(load)
     >
       还没有系统级凭据
     </div>
-    <div v-else class="grid gap-3 lg:grid-cols-2">
+    <template v-else>
+    <div v-if="viewMode === 'card'" class="grid gap-3 lg:grid-cols-2">
       <div
         v-for="item in filtered"
         :key="item.id"
@@ -809,6 +894,89 @@ onMounted(load)
         </div>
       </div>
     </div>
+
+    <!-- 列表视图：一行一条。卡片上平铺的四个动作在这里收进 ⋯，
+         否则「名称」和「使用情况」会被按钮挤掉，而这两列才是扫列表要看的 -->
+    <div v-else class="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <table class="w-full min-w-[920px] border-collapse text-sm">
+        <thead>
+          <tr class="border-b border-gray-100 bg-gray-50/70 text-left text-[11px] font-medium text-gray-500">
+            <th class="px-3 py-2">名称</th>
+            <th class="w-20 px-3 py-2">状态</th>
+            <th class="px-3 py-2">场景</th>
+            <th class="w-28 px-3 py-2">授权范围</th>
+            <th class="w-20 px-3 py-2">绑定</th>
+            <th class="w-36 px-3 py-2">近 7 天</th>
+            <th class="w-12 px-3 py-2 text-right">操作</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <tr v-for="item in filtered" :key="item.id" class="hover:bg-gray-50/70">
+            <td class="px-3 py-2.5">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span class="font-medium text-gray-900">{{ item.name }}</span>
+                <code class="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">{{ item.secret_key }}</code>
+              </div>
+              <p class="mt-0.5 font-mono text-[11px] text-gray-400">{{ item.value_masked }}</p>
+            </td>
+            <td class="px-3 py-2.5">
+              <span
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium"
+                :class="item.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
+              >
+                {{ item.status === 'active' ? '生效中' : '已停用' }}
+              </span>
+            </td>
+            <td class="px-3 py-2.5">
+              <div class="flex flex-wrap gap-1">
+                <span
+                  v-for="scene in visibleScenarios(item.allowed_scenarios)"
+                  :key="scene"
+                  class="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600"
+                >
+                  {{ SCENE_LABEL[scene] || scene }}
+                </span>
+                <span
+                  v-if="!visibleScenarios(item.allowed_scenarios).length"
+                  class="text-[11px] text-amber-600"
+                >无场景</span>
+              </div>
+            </td>
+            <td class="px-3 py-2.5">
+              <span
+                class="text-[11.5px]"
+                :class="item.grant_count ? 'text-gray-700' : 'text-amber-600'"
+                :title="grantTitle(item)"
+              >{{ grantSummary(item) }}</span>
+            </td>
+            <td class="px-3 py-2.5">
+              <span
+                class="text-[11.5px]"
+                :class="item.binding_count ? 'text-gray-700' : 'text-amber-600'"
+                :title="bindingTitle(item)"
+              >{{ item.binding_count || 0 }} 处</span>
+            </td>
+            <td class="px-3 py-2.5 text-[11.5px] text-gray-600">
+              <span>{{ item.usage_7d || 0 }} 次</span>
+              <span v-if="item.failed_7d" class="text-amber-600"> · 失败 {{ item.failed_7d }}</span>
+              <span class="mt-0.5 block text-[11px] text-gray-400">{{ shortTime(item.last_used_at) }}</span>
+            </td>
+            <td class="px-3 py-2.5 text-right">
+              <SecretRowActions
+                :active="item.status === 'active'"
+                :name="item.name"
+                @usage="openUsage(item.id)"
+                @edit="openEdit(item)"
+                @rotate="openRotate(item)"
+                @grant="openGrant(item)"
+                @disable="disableTarget = item"
+              />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    </template>
 
     <div v-if="showPlaintextHint" class="flex items-start gap-2">
       <p class="min-w-0 flex-1 text-[11px] leading-relaxed text-gray-400">

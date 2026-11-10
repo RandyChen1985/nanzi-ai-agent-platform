@@ -20,6 +20,7 @@ import {
   formatSubagentTraceSummary,
   normalizeSubagentTraceMeta,
   subagentDisplayName,
+  subagentResumeLabel,
 } from "@/utils/subagentTrace";
 
 const props = defineProps<{
@@ -467,7 +468,7 @@ const getSubagentMeta = (step: any) =>
                         class="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-indigo-50 text-indigo-600 border-indigo-100"
                         :title="formatSubagentTraceSummary(getSubagentMeta(step))"
                       >
-                        <span>子代理 · {{ subagentDisplayName(getSubagentMeta(step)) }}</span>
+                        <span>子代理 · {{ subagentDisplayName(getSubagentMeta(step)) }}{{ subagentResumeLabel(getSubagentMeta(step)) }}</span>
                       </span>
 
                       <!-- Model Badge -->
@@ -691,7 +692,7 @@ const getSubagentMeta = (step: any) =>
                       class="text-[10px] text-indigo-600 truncate pl-3"
                       :title="formatSubagentTraceSummary(getSubagentMeta(step))"
                     >
-                      子代理 · {{ subagentDisplayName(getSubagentMeta(step)) }}
+                      子代理 · {{ subagentDisplayName(getSubagentMeta(step)) }}{{ subagentResumeLabel(getSubagentMeta(step)) }}
                     </div>
                     <div
                       v-if="formatStepTime(step.timestamp || step.created_at)"

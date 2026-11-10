@@ -21,6 +21,10 @@ export interface UserQuestionState {
   status: "pending" | "submitted" | "cancelled" | "stale";
   selected_option_ids?: string[];
   custom_input?: string;
+  /** 委派子代理提问时的来源标识；父自己提问时为空。 */
+  source_agent_name?: string;
+  /** 来源的展示名，卡片据此渲染「来自：xxx」徽标。 */
+  source_agent_display_name?: string;
 }
 
 export const USER_QUESTION_MESSAGE_PREFIX = "【用户回答】";
@@ -58,6 +62,12 @@ export function parseUserQuestionEvent(
     allow_custom_input: Boolean(data.allow_custom_input),
     context: data.context ? String(data.context) : undefined,
     status: "pending",
+    source_agent_name: data.source_agent_name
+      ? String(data.source_agent_name)
+      : undefined,
+    source_agent_display_name: data.source_agent_display_name
+      ? String(data.source_agent_display_name)
+      : undefined,
   };
 }
 

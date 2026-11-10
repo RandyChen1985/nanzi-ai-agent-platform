@@ -1,12 +1,13 @@
 /**
  * 用 esbuild 把真实的 `processTimeline.ts` 剥成 CJS 跑起来，验证「执行完自动折叠」。
  *
- * 只做最少的脚手架：该模块唯一的 import 是 `import type`（编译期擦除），所以
- * transform 之后可以直接 _compile，不需要打包依赖，也不复制任何业务逻辑。
+ * 只做最少的脚手架：用 esbuild **打包**（bundle）而不是单文件 transform——该模块
+ * 还会 import 运行时的 `./subagentTrace`（续聊文案），单文件转译后 node 到 require
+ * 那一步就找不到模块，探针会在加载阶段假失败，而被测逻辑其实没坏。
+ * 不复制任何业务逻辑。
  *
  * 输出一行 JSON，由 pytest 解析断言。
  */
-const fs = require("fs");
 const path = require("path");
 const Module = require("module");
 
@@ -16,12 +17,16 @@ const esbuild = require(require.resolve("esbuild", { paths: [path.join(ROOT, "fr
 const SRC = path.join(ROOT, "frontend/src/utils/processTimeline.ts");
 
 function load() {
-  const source = fs.readFileSync(SRC, "utf8");
-  const { code } = esbuild.transformSync(source, {
-    loader: "ts",
+  const { outputFiles } = esbuild.buildSync({
+    entryPoints: [SRC],
+    bundle: true,
+    write: false,
     format: "cjs",
+    platform: "node",
     target: "es2020",
+    logLevel: "silent",
   });
+  const code = outputFiles[0].text;
   const mod = new Module(SRC);
   mod.filename = SRC;
   mod.paths = Module._nodeModulePaths(path.dirname(SRC));

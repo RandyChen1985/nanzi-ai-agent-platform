@@ -62,6 +62,12 @@ def build_user_question_sse(
         "allow_custom_input": bool(payload.get("allow_custom_input", True)),
         "context": str(payload.get("context") or ""),
         "purpose": str(payload.get("purpose") or ""),
+        # 委派子代理提问时带上来源，前端据此显示「来自：xxx」徽标；
+        # 父自己提问时为空，前端不渲染徽标。
+        "source_agent_name": str(payload.get("source_agent_name") or ""),
+        "source_agent_display_name": str(
+            payload.get("source_agent_display_name") or ""
+        ),
         "status": "pending",
     }
 
@@ -154,8 +160,63 @@ def build_user_question_receipt(
 
 
 def is_user_question_receipt_message(text: str | None) -> bool:
-    """Return whether text uses the reserved user-question receipt prefix."""
-    return USER_QUESTION_MESSAGE_PREFIX in str(text or "")
+    """Return whether text **starts with** the reserved user-question receipt prefix.
+
+    必须是行首前缀，不能是子串包含：用户随口问「你刚才那条【用户回答】是什么意思？」
+    时，若判成回执，preflight 会因解析失败 yield error 并把执行状态置 error，
+    ContextStep 被跳过——这条发言连库都不落，刷新后凭空消失。
+    """
+    return str(text or "").lstrip().startswith(USER_QUESTION_MESSAGE_PREFIX)
+
+
+#: 回执里「固定字段区」的起点。问题正文与选项名都在它**之前**被原样拼进同一段文本，
+#: 而子代理能控制这两者（读过网页就是不可信输入）。只从锚点往后解析，正文里伪造的
+#: `cancelled: true` / `question_id: ...` 就不会生效。
+_RECEIPT_ANCHOR = "interaction_type: question"
+#: 回执允许的字段。`cancelled` 按前端格式排在 `custom_input` 之后，必须允许。
+_RECEIPT_ALLOWED_KEYS = frozenset(
+    {"interaction_type", "question_id", "selected_option_ids", "custom_input", "cancelled"}
+)
+#: 这些键必须出现在 `custom_input` 之前；之后再出现即为注入（前端顺序是固定的）。
+_RECEIPT_PRE_CUSTOM_KEYS = frozenset(
+    {"interaction_type", "question_id", "selected_option_ids"}
+)
+
+
+def _iter_receipt_fields(raw: str):
+    """只产出锚点之后、且顺序合法的回执字段 (key, value)。"""
+    started = False
+    seen_custom_input = False
+    for line in raw.splitlines():
+        if not started:
+            if line.strip().lower() != _RECEIPT_ANCHOR:
+                continue
+            started = True
+        key, separator, value = line.partition(":")
+        if not separator:
+            continue
+        key = key.strip()
+        if key not in _RECEIPT_ALLOWED_KEYS:
+            continue
+        if seen_custom_input and key in _RECEIPT_PRE_CUSTOM_KEYS:
+            # 补充说明里伪造的 question_id / selected_option_ids：丢掉。
+            continue
+        if key == "custom_input":
+            if seen_custom_input:
+                continue
+            seen_custom_input = True
+        yield key, value.strip()
+
+
+def looks_like_receipt_body(text: str | None) -> bool:
+    """行首前缀之外，还要有回执的固定结构，才算一条真正的回执。
+
+    用户完全可能以「【用户回答】」开头提问（问这个格式本身），那种消息没有
+    ``interaction_type`` 行。把它当回执会让 preflight 报「格式无效」并短路整轮，
+    发言随之丢失。
+    """
+    raw = str(text or "").lower()
+    return _RECEIPT_ANCHOR in raw
 
 
 def parse_user_question_receipt(text: str | None) -> dict[str, Any] | None:
@@ -164,10 +225,8 @@ def parse_user_question_receipt(text: str | None) -> dict[str, Any] | None:
     if not is_user_question_receipt_message(raw):
         return None
     values: dict[str, str] = {}
-    for line in raw.splitlines():
-        key, separator, value = line.partition(":")
-        if separator:
-            values[key.strip()] = value.strip()
+    for key, value in _iter_receipt_fields(raw):
+        values.setdefault(key, value)
     question_id = values.get("question_id", "").strip()
     if not question_id or values.get("interaction_type") != "question":
         return None
@@ -259,6 +318,13 @@ async def persist_user_question_event(
         "purpose": str(event.get("purpose") or ""),
         "tool_call_id": str(event.get("tool_call_id") or ""),
     }
+    # 来源字段与时间线快照同一口径（见 ``_user_question_log_payload``）：pending 记录
+    # 目前只用于回执校验与数据集范围恢复，不参与卡片重建；但两条落库路径留同一份事实，
+    # 以后要从这里补建卡片时不必再回头追一遍字段。
+    for source_key in ("source_agent_name", "source_agent_display_name"):
+        source_value = str(event.get(source_key) or "").strip()
+        if source_value:
+            payload[source_key] = source_value
     # 本轮挂载的数据集只在「提问这一次请求」里，回答回执是全新的一条用户消息。
     # 这里把范围随问题一起登记，回执轮才能原样恢复（见 preflight_step）。
     scope_ids = current_turn_dataset_scope_ids()

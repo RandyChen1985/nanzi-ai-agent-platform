@@ -198,6 +198,7 @@ async def resolve_effective_prompt_tool_names_for_turn(
     names = resolve_effective_prompt_tool_names(agent_config)
     from app.services.ai.session_tool_artifact import (
         REUSABLE_RESULT_ACQUISITION_TOOLS,
+        is_system_receipt_message,
         should_inject_session_artifact,
     )
 
@@ -205,11 +206,21 @@ async def resolve_effective_prompt_tool_names_for_turn(
         str(getattr(turn_decision, "reusable_result_mode", "none") or "none").strip().lower()
         == "reuse"
     )
-    if force_reuse or should_inject_session_artifact(
-        str(current_user_query or ""),
-        session_artifact,
-        force_reuse=force_reuse,
-    ):
+    # 系统回执（提问卡回答、业务确认卡确定或取消）要单独豁免：它是把被暂停的流程
+    # 接着做完，而不是就着上一轮结果追问。判成复用就会让 sub_agent_call 从清单里
+    # 消失，父再也无法 resume 那个停下来的子代理。这里显式豁免（而不是只依赖
+    # should_inject 内部判断），是因为下面的 `force_reuse` 短路会让函数没机会执行。
+    reuse_applies = not is_system_receipt_message(
+        str(current_user_query or "")
+    ) and (
+        force_reuse
+        or should_inject_session_artifact(
+            str(current_user_query or ""),
+            session_artifact,
+            force_reuse=force_reuse,
+        )
+    )
+    if reuse_applies:
         names.difference_update(REUSABLE_RESULT_ACQUISITION_TOOLS)
     return names
 

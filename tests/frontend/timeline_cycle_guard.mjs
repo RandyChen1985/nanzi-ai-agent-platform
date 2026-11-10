@@ -10,10 +10,16 @@
 // 这些函数没有导出，因此用「有环结构调用汇总函数」来间接验证：没有 WeakSet 保护时
 // 这里会栈溢出 / 死循环；有保护时正常返回。
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 
-import {
+// 走 ts_module_loader 而不是 `node --experimental-strip-types` 直接 import：
+// strip-types 解析不了无扩展名的相对依赖（processTimeline.ts 里的 ./subagentTrace），
+// 一加载就 ERR_MODULE_NOT_FOUND，看起来像被测逻辑坏了。
+const { loadModule } = createRequire(import.meta.url)('./ts_module_loader.cjs')
+
+const {
   summarizeToolCalls,
-} from '../../frontend/src/utils/processTimeline.ts'
+} = loadModule('frontend/src/utils/processTimeline.ts')
 
 const log = (id, category = 'tool', children = []) => ({
   kind: 'log',

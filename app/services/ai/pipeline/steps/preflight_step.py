@@ -117,11 +117,17 @@ class PreflightStep(BasePipelineStep):
         )
         from app.services.ai.user_question import (
             is_user_question_receipt_message,
+            looks_like_receipt_body,
             metadata_dataset_ids_from_user_question_record,
             parse_user_question_receipt,
         )
 
-        if is_user_question_receipt_message(incoming_content):
+        # 前缀在行首、且带 interaction_type 结构，才是一条真回执。只是开头提到这个
+        # 前缀的普通提问（「【用户回答】这个前缀是干嘛的」）必须当普通消息处理——
+        # 否则会 yield error 并短路整轮，ContextStep 被跳过，这条发言连库都不落。
+        if is_user_question_receipt_message(
+            incoming_content
+        ) and looks_like_receipt_body(incoming_content):
             receipt = parse_user_question_receipt(incoming_content)
             if not receipt or not context.conversation_id:
                 yield {

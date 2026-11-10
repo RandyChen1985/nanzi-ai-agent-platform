@@ -218,7 +218,14 @@ class AgentContextManager:
         Setup the execution context (execution options + agent config).
         """
         # 1. Set Execution Options Context
-        set_execution_options_context(execution_options)
+        # 无人值守来源（定时 / 订阅任务）的标记要搬进 options：工具层只看得到
+        # execution_options，看不到 user_info，否则委派出去的子代理会以为有人在线。
+        from app.services.ai.tool_nudge_policy import unattended_delivery_marker
+
+        effective_options = dict(execution_options or {})
+        if unattended_delivery_marker(user_info):
+            effective_options["unattended"] = True
+        set_execution_options_context(effective_options)
 
         # 2. Set Agent Context
         u_id_val = None
