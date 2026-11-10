@@ -76,7 +76,8 @@ class SecretBinding(Base):
     # 刻意不声明外键：与 ``sys_secret_usage_logs`` 同理。业务库里这张表要能
     # 单独导出/导入（跨环境搬运时外键会强制父表先存在，导入顺序一错就失败），
     # 级联删除改由 ``center.delete_secret`` 显式清理。
-    secret_id = Column(String(36), nullable=False)
+    #: ``strategy='fixed'`` 时必填；``strategy='rule'`` 时为空——规则落在 rule_json。
+    secret_id = Column(String(36), nullable=True)
     #: ``mcp_server`` / ``api_tool`` / ``script_tool`` / ``agent``
     consumer_type = Column(String(24), nullable=False)
     consumer_id = Column(String(36), nullable=False)
@@ -87,6 +88,10 @@ class SecretBinding(Base):
     #: 互不相等，多行 NULL 能共存，等于没有约束。物理 DDL 已改成 NOT NULL
     #: DEFAULT ''（V209 / V109），模型跟着对齐，避免写法上再产生 NULL。
     bound_by_user_id = Column(String(64), nullable=False, default="")
+    #: ``fixed``（绑一条凭据）/ ``rule``（绑一条定位规则）
+    strategy = Column(String(16), nullable=False, default="fixed", server_default="fixed")
+    #: ``strategy='rule'`` 时的规则 JSON；见 ``app/services/secrets/locator.py``
+    rule_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

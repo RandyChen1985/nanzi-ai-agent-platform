@@ -44,6 +44,7 @@ import {
 } from '@heroicons/vue/24/outline'
 import McpServerLogModal from './McpServerLogModal.vue'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
+import SecretLocatorEditor, { ruleSummary, type LocatorRule } from '../secrets/SecretLocatorEditor.vue'
 import { isAuthorizationHeader, planMcpAuthHeaders } from '@/utils/mcpAuthHeaders'
 import McpServerAgentsDrawer from './McpServerAgentsDrawer.vue'
 import { buildJavaMcpSample, buildPythonMcpSample } from './mcpCodeSamples'
@@ -441,12 +442,22 @@ const handleAuthorizationInput = (event: Event) => {
 /** 鉴权来源：固定 Token（服务级默认值）或来自凭据中心（每人用自己的）。 */
 const authSource = ref<'token' | 'credential'>('token')
 
+/** 一个参数的三种值来源 */
+type ParamSource = 'model' | 'cred' | 'rule'
+
 type HeaderBinding = {
+  /** 规则行没有具体凭据，这里为空串（不是 null：调用方到处要 string） */
   secret_id: string
   secret_key: string
   secret_name: string
   /** 绑定还在，但凭据可能已被停用/过期 —— 界面要标出来 */
   secret_status?: string
+  /** ``fixed``（绑死一条）/ ``rule``（按规则定位）。规则行没有 secret_id */
+  strategy?: string
+  /** 规则原文，编辑时回填 */
+  rule?: LocatorRule | null
+  /** 规则的一句话摘要，列表与 chip 用 */
+  rule_summary?: string | null
 }
 
 const bindingIssue = (binding: HeaderBinding | null): string => {
@@ -456,6 +467,17 @@ const bindingIssue = (binding: HeaderBinding | null): string => {
   return '凭据不可用'
 }
 const headerBindings = ref<Record<string, HeaderBinding>>({})
+
+/**
+ * 同一槽位的**规则**绑定单独存一份。
+ *
+ * 规则与固定凭据是两条独立记录（唯一索引 `uk_binding_slot_strategy` 含
+ * strategy），可以并存：规则负责按入参定位，固定那条是
+ * ``on_miss=fallback_fixed`` 的回退目标。两者都塞进 `headerBindings[slot]`
+ * 的话，后遍历到的那条会盖掉前一条——规则或回退目标必然有一个「消失」，
+ * 表现就是「刚配完，重新打开又变成未配」。
+ */
+const slotRules = ref<Record<string, HeaderBinding>>({})
 
 /**
  * 新建态选的凭据。
@@ -492,6 +514,7 @@ async function loadMcpBinding() {
   if (!editingId.value) {
     // 不清的话，从「编辑服务 A」跳到「添加」时，新向导会显示 A 的 header 绑定
     headerBindings.value = {}
+    slotRules.value = {}
     return
   }
   try {
@@ -502,18 +525,27 @@ async function loadMcpBinding() {
     // 编辑 A 的过程中切到 B，A 的响应晚到会盖掉 B 的绑定
     if (editingId.value !== requestedId) return
     const map: Record<string, HeaderBinding> = {}
+    const rules: Record<string, HeaderBinding> = {}
     for (const row of res.data?.data || []) {
       // 平台 MCP：管理员设的全局绑定要算「已绑定」，别人的个人绑定看不见。
       // 个人 MCP：只有自己绑的才算——这里的「全局」对它没有意义。
       if (!row.bound_by_me && !(isGlobalBinding.value && row.is_global)) continue
-      map[row.slot] = {
-        secret_id: row.secret_id,
-        secret_key: row.secret_key,
-        secret_name: row.secret_name,
+      const entry: HeaderBinding = {
+        secret_id: row.secret_id || '',
+        secret_key: row.secret_key || '',
+        secret_name: row.secret_name || '',
         secret_status: row.secret_status,
+        strategy: row.strategy || 'fixed',
+        rule: row.rule || null,
+        rule_summary: row.rule_summary || null,
       }
+      // 规则行单独放：同槽位还能有一条固定凭据（规则未命中时的回退目标），
+      // 混在一张表里会互相覆盖，见 slotRules 的注释。
+      if ((row.strategy || 'fixed') === 'rule') rules[row.slot] = entry
+      else map[row.slot] = entry
     }
     headerBindings.value = map
+    slotRules.value = rules
     const hit = map['header:Authorization']
     if (hit) {
       mcpBindingSecretId.value = hit.secret_id
@@ -978,14 +1010,35 @@ function toolParamNames(tool: any): string[] {
 // 因为影响的是所有人（不只是操作者），chip 点一下只是打开确认弹层，不直接改。
 
 const paramMarkTarget = ref<{ tool: any } | null>(null)
-/** 弹窗里的草稿：参数名 → 是否「值由凭据提供」。一次改完再提交。 */
-const paramDraft = ref<Record<string, boolean>>({})
+/**
+ * 弹窗里的草稿：参数名 → 值的来源。一次改完再提交。
+ *
+ * ``model`` = 模型自己填；``cred`` = 绑死一条；``rule`` = 按规则动态定位。
+ * 后两者都会从模型可见的参数里移除，区别只在于「谁来选这条凭据」。
+ */
+const paramDraft = ref<Record<string, ParamSource>>({})
+/** 参数名 → 草稿里的规则（只有 ``rule`` 才有值，没填过就是 null） */
+const paramRuleDraft = ref<Record<string, LocatorRule | null>>({})
+/**
+ * 正在编辑规则的参数。
+ *
+ * 只有「工具参数」能做规则定位：Header 的注入链路拿不到这次调用的入参
+ * （``apply_mcp_bindings`` 不传 ``rule_args``），规则只能按身份字段匹配，
+ * 用处有限，所以 Header 保持「固定凭据」一种来源。
+ */
+const locatorTarget = ref<{
+  slot: string
+  title: string
+  args: string[]
+  paramName: string
+  existingRule: LocatorRule | null
+} | null>(null)
 /** 从 chip 点进来时高亮这一行，省得用户在一长串参数里找 */
 const paramFocus = ref('')
 const paramMarkBusy = ref(false)
 
 const draftCredentialCount = computed(
-  () => Object.values(paramDraft.value).filter(Boolean).length,
+  () => Object.values(paramDraft.value).filter((source) => source !== 'model').length,
 )
 
 /**
@@ -994,13 +1047,37 @@ const draftCredentialCount = computed(
  * 这种状态下调用必然失败（要么报「未绑定」，要么报凭据缺失），而界面看起来
  * 是配好了的——所以在保存这一步就拦住，别让配置带着空洞流出去。
  */
-const draftUnboundNames = computed(() => {
+/**
+ * 缺什么就分两组报：绑死凭据缺的是「选凭据」，按规则缺的是「配规则」。
+ * 混成一句「还没选凭据」会让人在规则模式下找不到该点哪里。
+ */
+function splitUnfinished(target: any) {
+  const missingCred: string[] = []
+  const missingRule: string[] = []
+  for (const [name, source] of Object.entries(paramDraft.value)) {
+    const slot = paramSlot(target.tool, name)
+    // 绑死一条：必须真选了凭据
+    if (source === 'cred' && !fixedBindingOfSlot(slot)) missingCred.push(name)
+    // 按规则：必须有规则（规则里没存凭据，所以不检查绑定）
+    if (source === 'rule' && !paramRuleDraft.value[name]) missingRule.push(name)
+  }
+  return { missingCred, missingRule }
+}
+
+const draftMissingCred = computed(() => {
   const target = paramMarkTarget.value
-  if (!target) return [] as string[]
-  return Object.entries(paramDraft.value)
-    .filter(([name, isCred]) => isCred && !bindingOfSlot(paramSlot(target.tool, name)))
-    .map(([name]) => name)
+  return target ? splitUnfinished(target).missingCred : []
 })
+const draftMissingRule = computed(() => {
+  const target = paramMarkTarget.value
+  return target ? splitUnfinished(target).missingRule : []
+})
+
+const draftUnboundNames = computed(() => [
+  ...draftMissingCred.value,
+  ...draftMissingRule.value,
+])
+
 
 function credentialParamList(tool: any): string[] {
   const raw = tool?.credential_params
@@ -1043,28 +1120,47 @@ async function loadBindingsFor(serverId: string) {
     // 谁后返回谁覆盖。晚到的旧响应必须丢掉，否则参数设置里会显示别的服务的绑定。
     if (paramMarkTarget.value?.tool?.server_id !== serverId) return
     const map: Record<string, HeaderBinding> = {}
+    const rules: Record<string, HeaderBinding> = {}
     for (const row of res.data?.data || []) {
       // 别人的个人绑定看不见；平台 MCP 还要把全局绑定算进来
       if (!row.bound_by_me && !(isGlobalBinding.value && row.is_global)) continue
-      map[row.slot] = {
-        secret_id: row.secret_id,
-        secret_key: row.secret_key,
-        secret_name: row.secret_name,
+      const entry: HeaderBinding = {
+        secret_id: row.secret_id || '',
+        secret_key: row.secret_key || '',
+        secret_name: row.secret_name || '',
         secret_status: row.secret_status,
+        strategy: row.strategy || 'fixed',
+        rule: row.rule || null,
+        rule_summary: row.rule_summary || null,
       }
+      if ((row.strategy || 'fixed') === 'rule') rules[row.slot] = entry
+      else map[row.slot] = entry
     }
     // 必须以服务端为准：合并的话，服务端已经删掉的绑定在本地还留着——
     // 表现就是「提示已解除，界面还显示着那个凭据」。
     // 和 loadMcpBinding 拉的是同一个服务的全部绑定，谁先谁后内容都一致。
     headerBindings.value = map
+    slotRules.value = rules
   } catch {
     // 拉不到就按「未绑」显示，不该挡住参数设置
   }
 }
 
-/** 任意槽位的绑定（header:/arg: 共用一个 map） */
+/** 任意槽位的固定绑定（header:/arg: 共用一个 map；规则另有 slotRules） */
 const bindingOfSlot = (slot: string): HeaderBinding | null =>
   headerBindings.value[slot] || pendingBindings.value[slot] || null
+
+/** 同槽位的「规则」绑定。规则与固定绑定是两条独立记录，可以同时存在。 */
+const ruleBindingOfSlot = (slot: string): HeaderBinding | null => {
+  const binding = slotRules.value[slot] || pendingBindings.value[slot] || null
+  return binding && (binding.strategy || 'fixed') === 'rule' ? binding : null
+}
+
+/** 同槽位的「固定凭据」绑定（规则未命中时的回退目标也是它） */
+const fixedBindingOfSlot = (slot: string): HeaderBinding | null => {
+  const binding = headerBindings.value[slot] || pendingBindings.value[slot] || null
+  return binding && (binding.strategy || 'fixed') !== 'rule' ? binding : null
+}
 
 /** 正在为哪个参数挑凭据；非空时显示绑定弹窗。和 Header 那个是同一套选择器。 */
 const paramBindCtx = ref<{ tool: any; name: string } | null>(null)
@@ -1132,14 +1228,55 @@ async function saveParamBind() {
   }
 }
 
+/** 打开规则编辑器。参数必须是「模型可见的普通参数」，凭据参数不能当键。 */
+function openLocator(tool: any, name: string) {
+  locatorTarget.value = {
+    slot: paramSlot(tool, name),
+    title: name,
+    args: locatorArgOptions(tool, name),
+    paramName: name,
+    existingRule: paramRuleDraft.value[name] || null,
+  }
+}
+
+/** 规则编辑器返回：只写回草稿，点弹窗「保存」才真的落库 */
+function applyLocatorRule(rule: LocatorRule) {
+  const target = locatorTarget.value
+  locatorTarget.value = null
+  if (!target) return
+  paramRuleDraft.value[target.paramName] = rule
+  // 选了规则就等于把来源改成了 rule：省得用户还要回头再拨一次下拉
+  paramDraft.value[target.paramName] = 'rule'
+}
+
+/** 该参数可当键的入参名：所有普通参数去掉自己（不能用一个凭据参数当键） */
+function locatorArgOptions(tool: any, self: string): string[] {
+  const marked = new Set(credentialParamList(tool))
+  return toolParamNames(tool).filter((name) => name !== self && !marked.has(name))
+}
+
 function openParamMark(tool: any, param = '') {
   if (!canManageTool(tool) || !canPublishMcp) return
   // 打开就把已绑的拉回来，否则「重新打开看不到之前绑的」
   void loadBindingsFor(String(tool?.server_id || ''))
   const marked = new Set(credentialParamList(tool))
-  const draft: Record<string, boolean> = {}
-  for (const name of toolParamNames(tool)) draft[name] = marked.has(name)
+  const draft: Record<string, ParamSource> = {}
+  const rules: Record<string, LocatorRule | null> = {}
+  for (const name of toolParamNames(tool)) {
+    const slot = paramSlot(tool, name)
+    const rule = ruleBindingOfSlot(slot)?.rule || null
+    if (rule) {
+      // 有规则就以规则为准：它是更能表达意图的那条
+      draft[name] = 'rule'
+      rules[name] = rule as LocatorRule
+    } else if (marked.has(name) || fixedBindingOfSlot(slot)) {
+      draft[name] = 'cred'
+    } else {
+      draft[name] = 'model'
+    }
+  }
   paramDraft.value = draft
+  paramRuleDraft.value = rules
   paramFocus.value = param
   paramMarkTarget.value = { tool }
 }
@@ -1149,18 +1286,51 @@ async function submitParamMark() {
   if (!target || paramMarkBusy.value) return
   // 按钮已经禁用了，这里再兜一次：快捷键/程序触发绕过 disabled 时也要挡住
   if (draftUnboundNames.value.length) {
-    showToast(
-      `请先给这些参数选凭据：${draftUnboundNames.value.join('、')}`,
-      'error',
-    )
+    const parts: string[] = []
+    if (draftMissingCred.value.length) parts.push(`${draftMissingCred.value.join('、')} 还没选凭据`)
+    if (draftMissingRule.value.length) parts.push(`${draftMissingRule.value.join('、')} 还没配规则`)
+    showToast(`请先补全：${parts.join('；')}`, 'error')
     return
   }
   const tool = target.tool
+  const serverId = String(tool?.server_id || '')
   const next = Object.entries(paramDraft.value)
-    .filter(([, isCred]) => isCred)
+    .filter(([, source]) => source !== 'model')
     .map(([name]) => name)
   paramMarkBusy.value = true
   try {
+    // 规则绑定先落库。它和「固定凭据」是两条独立记录，同槽位可以并存
+    // （规则负责定位、固定当 on_miss=fallback_fixed 的回退目标）。
+    for (const [name, source] of Object.entries(paramDraft.value)) {
+      const slot = paramSlot(tool, name)
+      const rule = paramRuleDraft.value[name] || null
+      if (source === 'rule') {
+        if (!rule) continue
+        await axios.post('/api/portal/secrets/bindings', {
+          consumer_type: 'mcp_server',
+          consumer_id: serverId,
+          slot,
+          strategy: 'rule',
+          rule,
+          is_global: isGlobalBinding.value,
+        })
+      } else if (ruleBindingOfSlot(slot)) {
+        // 从规则改成别的来源：把旧规则删掉。留着它不会生效（credential_params
+        // 仍会移除参数），但下次打开弹窗会被回填成「规则」，用户会以为没改成功。
+        await axios.delete('/api/portal/secrets/bindings', {
+          data: {
+            consumer_type: 'mcp_server',
+            consumer_id: serverId,
+            slot,
+            strategy: 'rule',
+            is_global: isGlobalBinding.value,
+          },
+        })
+        // 本地也立刻清：下一步可能因网络失败没跑到 loadBindingsFor，
+        // 而弹窗已经关了，再打开会显示一条其实已经删掉的规则
+        delete slotRules.value[slot]
+      }
+    }
     const res = await axios.put(`/api/portal/mcp/tools/${tool.id}/credential-params`, {
       params: next,
     })
@@ -3726,10 +3896,10 @@ onMounted(fetchServers)
                         <!-- 槽位是实现概念（参数「写到哪里 + 叫什么」），
                              摊在界面上只会让人问「这是啥」。hover 才给排查用。 -->
                         <div
-                          v-if="paramDraft[name]"
+                          v-if="paramDraft[name] !== 'model'"
                           class="mt-0.5 cursor-help break-all font-mono text-[10px] text-gray-400"
                           :title="`绑定位置：${paramSlot(paramMarkTarget.tool, name)}`"
-                        >由凭据提供</div>
+                        >{{ paramDraft[name] === 'rule' ? '按规则定位' : '由凭据提供' }}</div>
                       </td>
                       <td class="py-2 align-top">
                         <!-- 下拉与凭据控件放在同一行：一格只占一个控件高度，行距更紧，
@@ -3739,37 +3909,58 @@ onMounted(fetchServers)
                             v-model="paramDraft[name]"
                             class="w-32 shrink-0 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                           >
-                            <option :value="false">模型填写</option>
-                            <option :value="true">来自凭据</option>
+                            <option value="model">模型填写</option>
+                            <option value="cred">固定凭据</option>
+                            <option value="rule">按规则匹配</option>
                           </select>
-                          <template v-if="paramDraft[name]">
+                          <!-- 按规则匹配：不选具体凭据，只配「怎么找」 -->
+                          <template v-if="paramDraft[name] === 'rule'">
                             <button
                               type="button"
                               class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shadow-sm transition-colors"
-                              :class="bindingOfSlot(paramSlot(paramMarkTarget.tool, name))
+                              :class="paramRuleDraft[name]
+                                ? 'border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50'
+                                : 'bg-emerald-600 text-white hover:bg-emerald-700'"
+                              @click.stop="openLocator(paramMarkTarget.tool, name)"
+                            >
+                              <KeyIcon class="h-3 w-3" />
+                              {{ paramRuleDraft[name] ? '改规则' : '配规则' }}
+                            </button>
+                            <span
+                              v-if="paramRuleDraft[name]"
+                              class="min-w-0 truncate text-[10px] text-emerald-700"
+                              :title="ruleSummary(paramRuleDraft[name])"
+                            >{{ ruleSummary(paramRuleDraft[name]) }}</span>
+                            <span v-else class="text-[10px] text-gray-400">未配</span>
+                          </template>
+                          <template v-else-if="paramDraft[name] === 'cred'">
+                            <button
+                              type="button"
+                              class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shadow-sm transition-colors"
+                              :class="fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name))
                                 ? 'border border-violet-300 bg-white text-violet-700 hover:bg-violet-50'
                                 : 'bg-violet-600 text-white hover:bg-violet-700'"
                               @click.stop="openParamBind(paramMarkTarget.tool, name)"
                             >
                               <KeyIcon class="h-3 w-3" />
-                              {{ bindingOfSlot(paramSlot(paramMarkTarget.tool, name)) ? '换凭据' : '选凭据' }}
+                              {{ fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name)) ? '换凭据' : '选凭据' }}
                             </button>
                             <span
-                              v-if="bindingOfSlot(paramSlot(paramMarkTarget.tool, name))"
+                              v-if="fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name))"
                               class="min-w-0 truncate text-[10px]"
-                              :class="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))
+                              :class="bindingIssue(fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name)))
                                 ? 'text-amber-700' : 'text-emerald-600'"
-                              :title="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))
-                                ? `已绑定 ${bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key}，但${bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))}`
-                                : (bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key || '')"
-                            >{{ bindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key }}</span>
+                              :title="bindingIssue(fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name)))
+                                ? `已绑定 ${fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key}，但${bindingIssue(fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name)))}`
+                                : (fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key || '')"
+                            >{{ fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name))?.secret_key }}</span>
                             <!-- 未绑才说「未选」：绑了却还挂着这句，比不说更让人糊涂 -->
                             <span
-                              v-if="bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name)))"
+                              v-if="bindingIssue(fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name)))"
                               class="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700"
-                            >{{ bindingIssue(bindingOfSlot(paramSlot(paramMarkTarget.tool, name))) }}</span>
+                            >{{ bindingIssue(fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name))) }}</span>
                             <span
-                              v-else-if="!bindingOfSlot(paramSlot(paramMarkTarget.tool, name))"
+                              v-else-if="!fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name))"
                               class="text-[10px] text-gray-400"
                             >{{ isGlobalBinding ? '未选 · 各人绑自己的' : '未选' }}</span>
                           </template>
@@ -3802,9 +3993,13 @@ onMounted(fetchServers)
                   <!-- 两个动作是分开落库的，不讲清楚会以为「选完凭据就好了」 -->
                   <span class="text-gray-300"> · </span>
                   <span class="text-gray-400">选凭据即刻生效，来源改动需点「保存」</span>
-                  <span v-if="draftUnboundNames.length" class="text-red-600">
+                  <span v-if="draftMissingCred.length" class="text-red-600">
                     <span class="text-gray-300"> · </span>
-                    {{ draftUnboundNames.join('、') }} 还没选凭据
+                    {{ draftMissingCred.join('、') }} 还没选凭据
+                  </span>
+                  <span v-if="draftMissingRule.length" class="text-red-600">
+                    <span class="text-gray-300"> · </span>
+                    {{ draftMissingRule.join('、') }} 还没配规则
                   </span>
                 </span>
                 <div class="ml-auto flex items-center gap-2">
@@ -3817,7 +4012,10 @@ onMounted(fetchServers)
                     type="button"
                     :disabled="paramMarkBusy || draftUnboundNames.length > 0"
                     :title="draftUnboundNames.length
-                      ? '先给这些参数选凭据：' + draftUnboundNames.join('、')
+                      ? [
+                          draftMissingCred.length ? draftMissingCred.join('、') + ' 还没选凭据' : '',
+                          draftMissingRule.length ? draftMissingRule.join('、') + ' 还没配规则' : '',
+                        ].filter(Boolean).join('；')
                       : ''"
                     class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                     @click="submitParamMark"
@@ -3919,6 +4117,18 @@ onMounted(fetchServers)
           </div>
         </Teleport>
 
+    <!-- 规则编辑器：与参数设置弹窗并列，自己一层 Teleport。
+         放在最外层是因为它会在参数弹窗之上再弹一层，嵌进去会被自己的
+         overflow 容器裁掉。 -->
+    <SecretLocatorEditor
+      :open="Boolean(locatorTarget)"
+      :rule="locatorTarget ? locatorTarget.existingRule : null"
+      :slot="locatorTarget ? locatorTarget.slot : ''"
+      :arg-options="locatorTarget ? locatorTarget.args : []"
+      :title="locatorTarget ? `凭据匹配规则 · ${locatorTarget.title}` : '凭据匹配规则'"
+      @update:open="(value: boolean) => { if (!value) locatorTarget = null }"
+      @save="applyLocatorRule"
+    />
 </template>
 
 <style scoped>

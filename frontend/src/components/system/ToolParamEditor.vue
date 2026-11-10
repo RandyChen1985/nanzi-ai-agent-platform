@@ -300,6 +300,7 @@ const locationLabel = (name: string): string => {
         :extra-data-variables="extraDataVariables"
         :consumer-id="consumerId"
         :consumer-type="consumerType"
+        :plain-params="visualParams.map((p) => p.name).filter(Boolean)"
         @unbound-changed="emit('unbound-changed', $event)"
       />
       <p v-if="systemParamErrors.length" class="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">

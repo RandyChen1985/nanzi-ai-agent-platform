@@ -24,7 +24,7 @@ export const SYSTEM_PARAMS_KEY = 'x-nanzi-system-params'
 export const SYSTEM_PARAM_TYPES = ['string', 'integer', 'number', 'boolean'] as const
 export type SystemParamType = typeof SYSTEM_PARAM_TYPES[number]
 
-export const SYSTEM_PARAM_SOURCES = ['literal', 'credential'] as const
+export const SYSTEM_PARAM_SOURCES = ['literal', 'credential', 'rule'] as const
 export type SystemParamSource = typeof SYSTEM_PARAM_SOURCES[number]
 
 /**
@@ -32,7 +32,11 @@ export type SystemParamSource = typeof SYSTEM_PARAM_SOURCES[number]
  *
  * ``source`` 决定值从哪来：
  * - ``literal``：平台写死一个值（可含 ``{user.user_name}`` 这类变量）
- * - ``credential``：来自凭据中心，按当前用户解析；``value`` 恒为空
+ * - ``credential``：绑死一条凭据，按当前用户解析；``value`` 恒为空
+ * - ``rule``：按定位规则在当前用户可见的凭据里挑一条；``value`` 恒为空
+ *
+ * ``credential`` 与 ``rule`` 的差别只在「谁来选这条凭据」——前者是配置者绑死，
+ * 后者是运行期按这次调用的入参值去匹配。两者对模型都是不可见的。
  *
  * 参数为什么不能像 header 那样直接在配置行上选凭据：header 是配置里的固定行，
  * 而参数值由模型运行时填，平台分不清「模型没填」和「模型编了一个值」。所以必须
@@ -193,7 +197,8 @@ export const serializeToolSchema = (schema: ParsedToolSchema): string => {
     }
     if (schema.systemParams.length > 0) {
         payload[SYSTEM_PARAMS_KEY] = schema.systemParams.map((param) => (
-            param.source === 'credential' ? param : { ...param, source: undefined }
+            // 只有 literal 需要写 source；其余两种都要落进 schema 才算「声明过」
+            param.source === 'literal' ? { ...param, source: undefined } : param
         ))
     }
     return JSON.stringify(payload, null, 2)
@@ -223,10 +228,10 @@ export const validateSystemParams = (
         if (!SYSTEM_PARAM_TYPES.includes(param.type)) {
             errors.push(`系统级参数 ${name || index + 1} 的类型不支持：${param.type}`)
         }
-        if (param.source === 'credential') {
-            // 值运行时才取；类型必须是 string，否则注入进来没法转
+        if (param.source !== 'literal') {
+            // 值运行时才取（固定凭据或按规则定位）；类型必须是 string，否则注入进来没法转
             if (param.type !== 'string') {
-                errors.push(`系统级参数 ${name || index + 1} 来自凭据，类型只能是 string`)
+                errors.push(`系统级参数 ${name || index + 1} 由凭据提供，类型只能是 string`)
             }
         } else if (!param.value.trim()) {
             errors.push(`系统级参数 ${name || index + 1} 缺少固定值`)

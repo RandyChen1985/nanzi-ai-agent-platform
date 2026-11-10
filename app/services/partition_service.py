@@ -2,7 +2,7 @@ import logging
 import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Tuple
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import AsyncSessionLocal
 from app.core.config import settings
@@ -59,7 +59,12 @@ class PartitionService:
               AND partition_name IS NOT NULL
             ORDER BY table_name, PARTITION_ORDINAL_POSITION
         """
-        res = await db.execute(text(sql), {"tables": PARTITION_TABLES})
+        # ``IN :tables`` 必须用 expanding 绑定：否则 SQLAlchemy 只会渲染出一个
+        # 占位符，把整个 tuple 当成单个标量丢给驱动。asyncmy 之类驱动会直接抛
+        # “tuple can not be used as parameter”，pymysql 则会拼出无引号的 IN
+        # (a, b) 造成语法错误。expanding 会展开成 IN (%s, %s)。
+        stmt = text(sql).bindparams(bindparam("tables", expanding=True))
+        res = await db.execute(stmt, {"tables": list(PARTITION_TABLES)})
         rows = res.fetchall()
 
         result = []

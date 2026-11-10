@@ -2,7 +2,7 @@ import logging
 import time
 import httpx
 import json
-from typing import Dict, Any, Mapping, Type
+from typing import Dict, Any, Mapping, Optional, Type
 from pydantic import create_model, Field
 from app.services.ai.tools.request_signing import (
     parse_signing_config,
@@ -64,23 +64,34 @@ class UnsupportedMethodError(Exception):
 
 
 class UnresolvedCredentialError(Exception):
-    """工具还带着导入时的 ``${CREDENTIAL:<name>}`` 占位符。
+    """工具还带着导入时的 ``${CREDENTIAL:<name>}`` 占位符，或凭据参数没注入成功。
 
     导入的工具默认没有凭据（导出侧永不带走密钥），若使用者启用前没补，这里必须
     明确拦住。把占位符原样发给对方服务只会得到一个莫名其妙的 401，让人以为是
     「接口变了」。
     """
 
-    def __init__(self, tool_name: str, headers: list[str], denials: dict[str, str] | None = None):
+    #: ``denials`` 的 key 是**槽位**（``header:Authorization`` / ``query:token`` /
+    #: ``body:password`` / ``path:applicant``），调用方手里只有名字。
+    #: 不按前缀挨个试，参数级的拒绝原因就永远查不到——表现是「明明是参数缺凭据，
+    #: 却让用户去改 header」，真正的原因（规则未命中 / 过期 / 停用）全被吞掉。
+    SLOT_PREFIXES = ("header:", "query:", "body:", "path:", "")
+
+    def __init__(self, tool_name: str, names: list[str], denials: dict[str, str] | None = None):
         self.tool_name = tool_name
-        self.headers = list(headers)
+        self.names = list(names)
+        #: 兼容旧名：它原本只表示 header 名，现在也可能是凭据参数名
+        self.headers = self.names
         # 有拒绝原因时要说清是「过期了」还是「被停用了」——这两种情况用户要做的事
         # 完全不同（轮换 vs 找管理员恢复），都笼统说成「还没填」等于没说。
-        reasons = {
-            name: (denials or {}).get(f"header:{name}") or (denials or {}).get(name)
-            for name in self.headers
-        }
-        reasons = {name: text for name, text in reasons.items() if text}
+        denials = denials or {}
+        reasons: dict[str, str] = {}
+        for name in self.names:
+            for prefix in self.SLOT_PREFIXES:
+                text = denials.get(f"{prefix}{name}") if prefix else denials.get(name)
+                if text:
+                    reasons[name] = text
+                    break
         if reasons:
             from app.services.secrets.injection import denial_hint, denial_text
 
@@ -101,10 +112,11 @@ class UnresolvedCredentialError(Exception):
             super().__init__(message + "。也可以在工具里改用固定值。")
         else:
             self.reasons = {}
-            names = "、".join(self.headers)
+            names = "、".join(self.names)
+            # 别点名「header」：这里也可能是参数级凭据，指错位置比不指更费时间
             super().__init__(
                 f"工具 {tool_name} 的请求凭据还没填：{names}。"
-                "请在「工具管理」里把 header 值改成真实凭据后再调用"
+                "请在「工具管理」里把这几处改成真实值，或给它绑定一条凭据后再调用"
             )
 
 
@@ -176,6 +188,42 @@ class GenericApiToolFactory:
                 # Simple case assumes required
             
             fields[param_name] = (p_type, Field(default=p_default, description=p_desc))
+
+        # 凭据参数在模型侧没有值可填（值由平台注入），但「规则没匹配上时让模型
+        # 挑一条」需要一条回传通道：给每个凭据参数配一个可选编号字段。
+        # 编号来自 ``list_my_credentials`` 的返回，两边用同一套排序（secret_key → id），
+        # 与 MCP 工具参数那条链路逐位一致。
+        # **不在这里注入候选清单**：工具定义可能被缓存复用，而候选按用户可见范围算。
+        try:
+            _credential_names = credential_param_names(
+                getattr(tool_config, "parameter_schema", None)
+            )
+        except Exception as exc:  # noqa: BLE001 - 坏配置不该让整个工具定义构建失败
+            logger.warning(
+                "[GenericApi] 工具 %s 的系统参数配置不合法，跳过凭据编号字段: %s",
+                getattr(tool_config, "name", "?"),
+                exc,
+            )
+            _credential_names = []
+
+        if _credential_names:
+            from app.services.secrets.locator import choice_field
+
+            for _name in _credential_names:
+                _alias = choice_field(_name)
+                if _alias in fields:
+                    continue
+                fields[_alias] = (
+                    Optional[str],
+                    Field(
+                        default=None,
+                        description=(
+                            f"可选。{_name} 用哪条凭据的编号（例如 c3），编号来自 "
+                            "list_my_credentials 工具的返回。只在平台规则没能自动匹配到"
+                            "凭据时才生效；拿不准就留空，平台会按规则自己去匹配。"
+                        ),
+                    ),
+                )
         
         # Create Pydantic model
         args_schema = create_model(f"{tool_config.name}Args", **fields)
@@ -269,6 +317,13 @@ class GenericApiToolFactory:
             if unresolved_params:
                 # 和 header 一样的口径：宁可在这里说清楚，也不要发出去换一个 401
                 raise UnresolvedCredentialError(config.name, unresolved_params, param_denials)
+            # 编号字段是给平台看的，绝不能进 query/body：远端收到未知参数会报错，
+            # 模型在挑哪条凭据也没有理由告诉对方。必须在上面的注入之后剥——
+            # 注入层正是从这里读模型的选择。
+            from app.services.secrets.locator import choice_field
+
+            for _name in credential_params:
+                params.pop(choice_field(_name), None)
 
         url = config.url_template
 

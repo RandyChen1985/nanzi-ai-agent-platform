@@ -27,6 +27,7 @@ from app.models.secret import SecretBinding, SecretGrant, SecretUsageLog, Secret
 from app.services.secrets.policy import (
     DENY_BINDING,
     DENY_GRANT,
+    DENY_RULE_MISS,
     GRANTEE_ALL,
     GRANTEE_DEPT,
     GRANTEE_USER,
@@ -41,6 +42,10 @@ logger = logging.getLogger(__name__)
 
 #: 单次调用最多注入几条凭据的兜底值（配置项缺失时使用）。
 DEFAULT_MAX_INJECT_PER_CALL = 3
+
+#: 规则未命中、按规则自己声明的策略回退到固定绑定时的流水结果。
+#: 单独一个值是为了事后能查「规则其实一直没命中」。
+RESULT_SUCCESS_FALLBACK = "success_fallback"
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,17 @@ class ResolveResult:
     @property
     def denied(self) -> bool:
         return not self.ok
+
+
+@dataclass
+class Located:
+    """定位结果。``secret_id`` 为空表示没找到可用凭据，``denial`` 说明原因。"""
+
+    secret_id: str | None = None
+    strategy: str = "fixed"
+    fallback_used: bool = False
+    denial: str | None = None
+    detail: str = ""
 
 
 def _as_bool(raw, default: bool = False) -> bool:
@@ -114,6 +130,9 @@ class SecretResolver:
         trace_id: str | None = None,
         conversation_id: str | None = None,
         dept_code: str | None = None,
+        user_attrs: Mapping[str, Any] | None = None,
+        rule_args: Mapping[str, Any] | None = None,
+        preferred_secret_id: str | None = None,
     ) -> ResolveResult:
         """解析一个槽位。返回 ``ok=False`` 时调用方应走自己的默认值。"""
         if not user_id or not consumer_type or not consumer_id or not slot:
@@ -125,14 +144,26 @@ class SecretResolver:
 
         try:
             async with AsyncSessionLocal() as session:
-                binding = await self._pick_binding(
-                    session, consumer_type, consumer_id, slot, user_id
+                located = await self._locate(
+                    session,
+                    consumer_type=consumer_type,
+                    consumer_id=consumer_id,
+                    slot=slot,
+                    user_id=user_id,
+                    dept_code=dept_code,
+                    identity=user_attrs,
+                    args=rule_args,
+                    preferred_secret_id=preferred_secret_id,
                 )
-                if binding is None:
+                if located.denial:
+                    return ResolveResult(
+                        ok=False, denial=located.denial, detail=located.detail
+                    )
+                if not located.secret_id:
                     # 没有绑定 = 零授权。这不是错误，是常态：绝大多数工具本来就不带凭据。
                     return ResolveResult(ok=False, denial=DENY_BINDING)
 
-                row = await session.get(UserSecret, binding.secret_id)
+                row = await session.get(UserSecret, located.secret_id)
                 if row is None:
                     return ResolveResult(
                         ok=False, denial=DENY_BINDING, detail="secret row missing"
@@ -221,7 +252,10 @@ class SecretResolver:
                     target_host=target_host,
                     trace_id=trace_id,
                     conversation_id=conversation_id,
-                    result="success",
+                    # 回退命中单独记一个结果：事后能查出「规则其实一直没命中」。
+                    result=(
+                        RESULT_SUCCESS_FALLBACK if located.fallback_used else "success"
+                    ),
                 )
 
                 return ResolveResult(
@@ -242,6 +276,124 @@ class SecretResolver:
             return ResolveResult(ok=False, denial=DENY_BINDING, detail="resolver error")
 
     # ── 内部 ────────────────────────────────────────────────────────────
+
+    async def _locate(
+        self,
+        session,
+        *,
+        consumer_type: str,
+        consumer_id: str,
+        slot: str,
+        user_id: str,
+        dept_code: str | None,
+        identity: Mapping[str, Any] | None = None,
+        args: Mapping[str, Any] | None = None,
+        preferred_secret_id: str | None = None,
+        rows: Sequence[Any] | None = None,
+        visible: Sequence[Any] | None = None,
+    ) -> Located:
+        """选出这次要用的凭据。**层间**个人优先，**层内**规则优先。
+
+        ``on_miss=fail`` 时绝不继续往下取固定绑定（同层、跨层都不取）——否则
+        「回退」就成了默认行为，配错的规则永远没人发现。
+        """
+        from app.services.secrets.locator import (
+            RuleError,
+            build_candidates,
+            parse_rule,
+            pick_match,
+        )
+
+        if rows is None:
+            rows = await self._bindings_for_slot(
+                session, consumer_type, consumer_id, slot, user_id
+            )
+        if not rows:
+            return Located(denial=None)  # 交给调用方按「无绑定」处理
+
+        layers: list[list[Any]] = []
+        mine = [b for b in rows if (b.bound_by_user_id or "") == user_id]
+        glob = [b for b in rows if (b.bound_by_user_id or "") == ""]
+        if mine:
+            layers.append(mine)
+        if glob:
+            layers.append(glob)
+
+        for layer in layers:
+            rule_binding = next((b for b in layer if (b.strategy or "fixed") == "rule"), None)
+            fixed_binding = next((b for b in layer if (b.strategy or "fixed") != "rule"), None)
+
+            if rule_binding is None:
+                if fixed_binding is not None and fixed_binding.secret_id:
+                    return Located(secret_id=fixed_binding.secret_id, strategy="fixed")
+                continue
+
+            # 坏规则时 spec 为 None，wanted 保持空列表：细节文案要能安全降级
+            spec = None
+            wanted: list[str] = []
+            try:
+                spec = parse_rule(rule_binding.rule_json)
+            except RuleError as exc:
+                # 坏规则按未命中处理：不崩、不静默换人，交由 on_miss 语义
+                logger.warning("[SecretLocator] 规则不合法，按未命中处理: %s", exc)
+
+            if spec is not None:
+                wanted = build_candidates(spec, identity=identity, args=args)
+                if wanted:
+                    if visible is None:
+                        visible = await self._visible_records(session, user_id, dept_code)
+                    hit, used = pick_match(spec, wanted, visible)
+                    if hit is not None:
+                        logger.info(
+                            "[SecretLocator] 规则命中 consumer=%s/%s slot=%s wanted=%s hit=%s",
+                            consumer_type,
+                            consumer_id,
+                            slot,
+                            used,
+                            getattr(hit, "secret_key", "?"),
+                        )
+                        if preferred_secret_id and str(preferred_secret_id) != str(
+                            getattr(hit, "id", "") or ""
+                        ):
+                            # 模型也给了编号，但规则命中优先。以前这里是静默的，
+                            # 结果「模型推错了」永远发现不了：编号被忽略、不报错、
+                            # 也不影响这次的返回值。
+                            logger.info(
+                                "[SecretLocator] 规则命中，忽略模型选择 consumer=%s/%s "
+                                "slot=%s rule=%s model_choice_id=%s",
+                                consumer_type,
+                                consumer_id,
+                                slot,
+                                getattr(hit, "secret_key", "?"),
+                                preferred_secret_id,
+                            )
+                        return Located(secret_id=getattr(hit, "id", None), strategy="rule")
+
+            # —— 未命中：只看规则自己声明的策略，绝不默认回退
+            on_miss = getattr(spec, "on_miss", "fail") if spec is not None else "fail"
+            if on_miss == "fallback_fixed" and fixed_binding is not None and fixed_binding.secret_id:
+                logger.info("[SecretLocator] 规则未命中，回退本层固定绑定 slot=%s", slot)
+                return Located(
+                    secret_id=fixed_binding.secret_id, strategy="fixed", fallback_used=True
+                )
+            if on_miss == "model" and preferred_secret_id:
+                if visible is None:
+                    visible = await self._visible_records(session, user_id, dept_code)
+                if any(getattr(s, "id", None) == preferred_secret_id for s in visible):
+                    return Located(secret_id=preferred_secret_id, strategy="model_choice")
+                logger.warning(
+                    "[SecretLocator] 模型选的凭据不在可见集合内，已拒绝 slot=%s choice=%s",
+                    slot,
+                    preferred_secret_id,
+                )
+
+            target = wanted[0] if wanted else (spec.key_source if spec is not None else "?")
+            return Located(
+                denial=DENY_RULE_MISS,
+                detail=f"规则未命中（要找 {target}），可见候选 {len(visible or [])} 条",
+            )
+
+        return Located(denial=None)
 
     @staticmethod
     async def _pick_binding(
@@ -278,6 +430,46 @@ class SecretResolver:
             .limit(1)
         )
         return (await session.execute(stmt)).scalars().first()
+
+    @staticmethod
+    async def _bindings_for_slot(
+        session,
+        consumer_type: str,
+        consumer_id: str,
+        slot: str,
+        user_id: str,
+    ) -> list[SecretBinding]:
+        """取该槽位的全部候选绑定（本人的 + 全局的），个人优先、规则优先。"""
+        stmt = (
+            select(SecretBinding)
+            .where(
+                SecretBinding.consumer_type == consumer_type,
+                SecretBinding.consumer_id == consumer_id,
+                SecretBinding.slot == slot,
+                or_(
+                    SecretBinding.bound_by_user_id.is_(None),
+                    SecretBinding.bound_by_user_id == "",
+                    SecretBinding.bound_by_user_id == user_id,
+                ),
+            )
+            .order_by(
+                and_(
+                    SecretBinding.bound_by_user_id.isnot(None),
+                    SecretBinding.bound_by_user_id != "",
+                ).desc(),
+                (SecretBinding.strategy == "rule").desc(),
+            )
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    @staticmethod
+    async def _visible_records(session, user_id: str, dept_code: str | None) -> Sequence[Any]:
+        """可见集合：本人的 + 被授权的系统级。规则只在这个集合里匹配。"""
+        from app.services.secrets.center import list_visible_secrets
+
+        return await list_visible_secrets(
+            session, user_id=user_id, dept_code=dept_code, only_active=True
+        )
 
     @staticmethod
     async def _has_grant(

@@ -4,6 +4,7 @@ import { KeyIcon } from '@heroicons/vue/24/outline'
 import axios from '../../utils/axios'
 import PermissionVariableMenu from '../metadata/PermissionVariableMenu.vue'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
+import SecretLocatorEditor, { ruleSummary, type LocatorRule } from '../secrets/SecretLocatorEditor.vue'
 import { SYSTEM_PARAM_SOURCES, SYSTEM_PARAM_TYPES, type SystemParam } from '../../utils/toolSchema'
 import type { UserVariable } from '../../utils/userVariables'
 
@@ -12,6 +13,9 @@ interface BoundSecret {
   secret_key: string
   /** 绑定还在，但凭据可能已被停用/过期 —— 界面要标出来 */
   secret_status?: string
+  /** ``fixed`` / ``rule``：同槽位两条记录，各自独立 */
+  strategy?: string
+  rule?: LocatorRule | null
 }
 
 const bindingIssue = (binding: BoundSecret | null): string => {
@@ -28,9 +32,17 @@ const props = withDefaults(defineProps<{
   /** 工具 id；为空表示还没保存，绑定先记账、保存后补写 */
   consumerId?: string
   consumerType?: string
+  /**
+   * 模型可见的普通参数名。
+   * 规则的入参键只能从这里取——**绝不能取本组件自己的 modelValue**：
+   * 那是系统级参数（本身就是凭据位的），拿它当键会形成「凭据依赖凭据」的环，
+   * 而真正该选的业务入参（`applicant`/`to` 之类）反而选不到。
+   */
+  plainParams?: string[]
 }>(), {
   consumerId: '',
   consumerType: 'api_tool',
+  plainParams: () => [],
 })
 
 const emit = defineEmits<{
@@ -51,11 +63,27 @@ const pickerItem = ref<{ id: string; secret_key: string } | null>(null)
 const pickerBusy = ref(false)
 const pickerError = ref('')
 
+// ── 规则定位（第三种来源）────────────────────────────────────────────
+// 与固定凭据分开存：两者是同槽位的两条独立绑定，共用一个 key 会互相覆盖。
+/** 参数名 → 已保存的规则 */
+const ruleDrafts = ref<Record<string, LocatorRule | null>>({})
+/** 新建态（工具还没有 id）下暂存的规则，保存后补写 */
+const pendingRules = ref<Record<string, LocatorRule>>({})
+/** 正在编辑规则的参数名；非空时显示编辑器 */
+const locatorName = ref<string | null>(null)
+
 const bindingOf = (name: string): BoundSecret | null => {
   const key = String(name || '').trim()
   if (!key) return null
   return bindings.value[key] || pending.value[key] || null
 }
+
+/** 按参数名取「固定凭据」那条：规则行没有 secret_key，混用会显示空白 */
+const fixedBindingOf = (name: string): BoundSecret | null => {
+  const binding = bindingOf(name)
+  return binding && (binding.strategy || 'fixed') !== 'rule' ? binding : null
+}
+
 
 async function loadBindings() {
   if (!props.consumerId) {
@@ -67,21 +95,33 @@ async function loadBindings() {
       params: { consumer_type: props.consumerType, consumer_id: props.consumerId },
     })
     const next: Record<string, BoundSecret> = {}
+    const nextRules: Record<string, LocatorRule | null> = {}
     for (const row of res.data?.data || []) {
       const slot = String(row.slot || '')
       // header:X-Key 属于请求头，不是参数位
       if (!slot || slot.startsWith('header:')) continue
-      if (!row.bound_by_me && row.owner_scope !== 'system') continue
+      // 用 is_global 判「全局」，不能用 owner_scope：规则行没有 secret_id，
+      // outerjoin 之后 owner_scope 是 null，管理员配的全局规则会被这一行整条丢掉，
+      // 表现就是「重新打开工具时规则显示未配」。
+      if (!row.bound_by_me && !row.is_global) continue
       const name = slot.slice(slot.indexOf(':') + 1)
-      if (name) {
-        next[name] = {
-          secret_id: row.secret_id,
-          secret_key: row.secret_key,
-          secret_status: row.secret_status,
-        }
+      if (!name) continue
+      const strategy = row.strategy || 'fixed'
+      // 同槽位的固定与规则是两条记录。固定那条优先占位（老界面只认它），
+      // 规则单独记到 ruleDrafts，避免互相覆盖。
+      if (strategy === 'rule') {
+        nextRules[name] = row.rule || null
+        continue
+      }
+      next[name] = {
+        secret_id: row.secret_id || '',
+        secret_key: row.secret_key || '',
+        secret_status: row.secret_status,
+        strategy,
       }
     }
     bindings.value = next
+    ruleDrafts.value = nextRules
   } catch {
     // 拉不到就按「未绑」显示，别挡住参数编辑
     bindings.value = {}
@@ -198,18 +238,89 @@ async function flushPending(consumerId: string) {
     }
   }
   pending.value = keep
-  return failed
+  // 规则同样补写。失败不阻断工具保存，但要报给调用方
+  const ruleFailed: string[] = []
+  for (const [name, rule] of Object.entries(pendingRules.value)) {
+    try {
+      await axios.post('/api/portal/secrets/bindings', {
+        consumer_type: props.consumerType,
+        consumer_id: consumerId,
+        name,
+        strategy: 'rule',
+        rule,
+        is_global: true,
+      })
+    } catch {
+      ruleFailed.push(name)
+    }
+  }
+  pendingRules.value = {}
+  return [...failed, ...ruleFailed]
+}
+
+function openLocator(name: string) {
+  const key = String(name || '').trim()
+  if (!key) {
+    pickerError.value = '先给这个参数起个名字，再配规则'
+    return
+  }
+  locatorName.value = key
+}
+
+/** 该参数可当键的入参名：模型可见的普通参数，去掉自己 */
+function locatorArgOptions(self: string): string[] {
+  return props.plainParams
+    .map((name) => String(name || '').trim())
+    .filter((name) => name && name !== self)
+}
+
+async function applyRule(rule: LocatorRule) {
+  const name = locatorName.value
+  locatorName.value = null
+  if (!name) return
+  // 还没有 id：先记账，保存工具后由 flushPending 补写
+  if (!props.consumerId) {
+    pendingRules.value[name] = rule
+    ruleDrafts.value[name] = rule
+    return
+  }
+  pickerBusy.value = true
+  pickerError.value = ''
+  try {
+    await axios.post('/api/portal/secrets/bindings', {
+      consumer_type: props.consumerType,
+      consumer_id: props.consumerId,
+      // 只给参数名：槽位（path/query/body）由后端按 URL 与方法推算
+      name,
+      strategy: 'rule',
+      rule,
+      is_global: true,
+    })
+    ruleDrafts.value[name] = rule
+  } catch (e: any) {
+    pickerError.value = e?.response?.data?.detail || '保存规则失败'
+  } finally {
+    pickerBusy.value = false
+  }
 }
 
 const unboundNames = computed(() => props.modelValue
-  .filter((p) => p.source === 'credential' && String(p.name || '').trim() && !bindingOf(p.name))
+  .filter((p) => {
+    const name = String(p.name || '').trim()
+    if (!name) return false
+    if (p.source === 'credential') return !fixedBindingOf(name)
+    // 规则里没有凭据，检查的是「有没有规则」：空的规则跑起来必然未命中
+    if (p.source === 'rule') return !ruleDrafts.value[name] && !pendingRules.value[name]
+    return false
+  })
   .map((p) => String(p.name).trim()))
 
 watch(unboundNames, (names) => emit('unbound-changed', names), { immediate: true })
 
 defineExpose({
   flushPending,
-  hasPending: () => Object.keys(pending.value).length > 0,
+  hasPending: () => Object.keys(pending.value).length > 0
+    || Object.keys(pendingRules.value).length > 0,
 })
 
 // ── 固定值的变量菜单 ────────────────────────────────────────────────
@@ -292,7 +403,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
         :title="'值的来源：固定值，或按当前用户从凭据中心解析'"
       >
         <option v-for="option in SYSTEM_PARAM_SOURCES" :key="option" :value="option">
-          {{ option === 'credential' ? '来自凭据' : '固定值' }}
+          {{ option === 'credential' ? '固定凭据' : option === 'rule' ? '按规则匹配' : '固定值' }}
         </option>
       </select>
 
@@ -301,26 +412,26 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
         <button
           type="button"
           class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium shadow-sm transition-colors"
-          :class="bindingOf(p.name)
+          :class="fixedBindingOf(p.name)
             ? 'border border-violet-300 bg-white text-violet-700 hover:bg-violet-50'
             : 'bg-violet-600 text-white hover:bg-violet-700'"
           @click.stop="openPicker(p.name)"
         >
           <KeyIcon class="h-3 w-3" />
-          {{ bindingOf(p.name) ? '换凭据' : '选凭据' }}
+          {{ fixedBindingOf(p.name) ? '换凭据' : '选凭据' }}
         </button>
         <span
-          v-if="bindingOf(p.name)"
+          v-if="fixedBindingOf(p.name)"
           class="max-w-[12rem] truncate font-mono text-[11px]"
-          :class="bindingIssue(bindingOf(p.name)) ? 'text-amber-700' : 'text-emerald-700'"
-          :title="bindingIssue(bindingOf(p.name))
-            ? `已绑定 ${bindingOf(p.name)?.secret_key}，但${bindingIssue(bindingOf(p.name))}`
+          :class="bindingIssue(fixedBindingOf(p.name)) ? 'text-amber-700' : 'text-emerald-700'"
+          :title="bindingIssue(fixedBindingOf(p.name))
+            ? `已绑定 ${fixedBindingOf(p.name)?.secret_key}，但${bindingIssue(fixedBindingOf(p.name))}`
             : ''"
-        >{{ bindingOf(p.name)?.secret_key }}</span>
+        >{{ fixedBindingOf(p.name)?.secret_key }}</span>
         <span
-          v-if="bindingIssue(bindingOf(p.name))"
+          v-if="bindingIssue(fixedBindingOf(p.name))"
           class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700"
-        >{{ bindingIssue(bindingOf(p.name)) }}</span>
+        >{{ bindingIssue(fixedBindingOf(p.name)) }}</span>
         <span v-else class="text-[11px] text-red-600">未选，保存会被拦住</span>
         <span
           v-if="!consumerId && pending[p.name.trim()]"
@@ -328,7 +439,32 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
         >保存后生效</span>
       </div>
 
-      <div v-else class="relative flex items-center gap-1">
+            <!-- 按规则匹配：不选具体凭据，只配「怎么找」 -->
+      <div v-else-if="p.source === 'rule'" class="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium shadow-sm transition-colors"
+          :class="ruleDrafts[p.name.trim()]
+            ? 'border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50'
+            : 'bg-emerald-600 text-white hover:bg-emerald-700'"
+          @click.stop="openLocator(p.name)"
+        >
+          <KeyIcon class="h-3 w-3" />
+          {{ ruleDrafts[p.name.trim()] ? '改规则' : '配规则' }}
+        </button>
+        <span
+          v-if="ruleDrafts[p.name.trim()]"
+          class="max-w-[16rem] truncate text-[11px] text-emerald-700"
+          :title="ruleDrafts[p.name.trim()]?.key_source"
+        >{{ ruleSummary(ruleDrafts[p.name.trim()]) }}</span>
+        <span v-else class="text-[11px] text-red-600">未配，保存会被拦住</span>
+        <span
+          v-if="!consumerId && pendingRules[p.name.trim()]"
+          class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700"
+        >保存后生效</span>
+      </div>
+
+<div v-else class="relative flex items-center gap-1">
         <input
           v-model="p.value"
           class="w-40 rounded-md border-gray-300 text-xs font-mono shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
@@ -415,4 +551,16 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
       </div>
     </div>
   </Teleport>
+
+  <!-- 规则编辑器必须和「绑定凭据」弹窗平级：嵌进 v-if="pickingName" 里面的话，
+       点「配规则」只设 locatorName、不动 pickingName，整个子树不渲染 → 点了没反应 -->
+  <SecretLocatorEditor
+    :open="Boolean(locatorName)"
+    :rule="locatorName ? (ruleDrafts[locatorName] || null) : null"
+    :slot="locatorName || ''"
+    :arg-options="locatorName ? locatorArgOptions(locatorName) : []"
+    :title="locatorName ? `凭据匹配规则 · ${locatorName}` : '凭据匹配规则'"
+    @update:open="(value: boolean) => { if (!value) locatorName = null }"
+    @save="applyRule"
+  />
 </template>

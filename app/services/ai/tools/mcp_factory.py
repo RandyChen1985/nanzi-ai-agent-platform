@@ -315,6 +315,28 @@ class McpToolFactory:
 
             fields[alias] = (field_type, Field(default=p_default, description=p_desc))
         
+        # 凭据参数被剔除了，但「规则没匹配上时让模型挑一条」需要一条回传通道：
+        # 给每个凭据参数配一个可选的编号字段。**不在这里注入候选清单**——工具定义
+        # 是跨用户缓存的，候选却按用户可见范围算，写死就会串号。
+        # 候选从 ``list_my_credentials`` 拿，两边用同一套编号（排序后的序号）。
+        from app.services.secrets.locator import choice_field
+
+        for _name in _credential_args:
+            _alias = choice_field(_name)
+            if _alias in fields:
+                continue
+            fields[_alias] = (
+                Optional[str],
+                Field(
+                    default=None,
+                    description=(
+                        f"可选。{_name} 用哪条凭据的编号（例如 c3），编号来自 "
+                        "list_my_credentials 工具的返回。只在平台规则没能自动匹配到"
+                        "凭据时才生效；拿不准就留空，平台会按规则自己去匹配。"
+                    ),
+                ),
+            )
+
         # Create dynamic Pydantic model for args
         clean_name = re.sub(r"[^a-zA-Z0-9_]+", "_", str(tool_record.tool_name)).strip("_") or "Tool"
         args_schema = create_model(f"Mcp_{clean_name}Args", **fields)
@@ -345,6 +367,13 @@ class McpToolFactory:
                 kwargs = await apply_mcp_arg_bindings(
                     tool_record, kwargs, user_info=user_info, denials=arg_denials
                 )
+                # 编号字段是给平台看的，绝不能发给远端：远端收到未知参数会报错。
+                # 必须在上面的注入之后剥——注入层要从这里读模型的选择。
+                if _credential_args:
+                    from app.services.secrets.locator import choice_field
+
+                    for _name in _credential_args:
+                        kwargs.pop(choice_field(_name), None)
                 if arg_denials:
                     # 声明了却取不到，就是缺必需参数。必须报错，不能带着空值发出去：
                     # 远端只会回一个 401，用户看不懂缺的是哪个绑定。

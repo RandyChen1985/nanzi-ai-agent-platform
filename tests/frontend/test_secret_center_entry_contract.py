@@ -358,10 +358,14 @@ class TestMcpToolParamCredential:
         assert "w-32 shrink-0" in body, "下拉固定宽度，余下的空间留给凭据名与状态"
 
     def test_unselected_hint_only_when_really_unbound(self):
-        """已经绑上了却还挂一句「未选」，比不写更让人糊涂。"""
+        """已经绑上了却还挂一句「未选」，比不写更让人糊涂。
+
+        判的是**固定凭据**那条（`fixedBindingOfSlot`）：同槽位可以只有一条规则、
+        没有固定凭据，那时「未选」是对的——规则未命中时没有回退目标。
+        """
         source = _read(self.REGISTRY)
 
-        assert 'v-else-if="!bindingOfSlot(' in source
+        assert 'v-else-if="!fixedBindingOfSlot(' in source
 
     def test_admin_can_bind_secret_for_param(self):
         """管理员要能在参数上直接选凭据（全平台共用那条），不能只让用户各自绑。"""
@@ -406,10 +410,16 @@ class TestMcpToolParamCredential:
         assert "draftUnboundNames.value.length" in body
 
     def test_unbound_names_are_listed_not_just_counted(self):
-        """只说「有个没选」没用，得说清楚是哪个。"""
+        """只说「有个没选」没用，得说清楚是哪个、缺的是什么。
+
+        「绑死凭据」和「按规则」缺的东西不一样，混成一句「还没选凭据」会让人
+        在规则模式下找不到该点哪里，所以分成两组列。
+        """
         source = _read(self.REGISTRY)
         assert "还没选凭据" in source
-        assert "draftUnboundNames.join('、')" in source
+        assert "draftMissingCred.value.join('、')" in source
+        assert "draftMissingRule.value.join('、')" in source
+        assert "还没配规则" in source
 
     def test_prompt_explains_who_the_binding_serves(self):
         """这里选的是「全平台共用」还是「各人自绑」，是最容易理解错的一点。
@@ -897,10 +907,50 @@ class TestUsageStatsShared:
         assert "['usage', 'stats', 'audit']" in source
         assert "'统计'" in source
 
-    def test_personal_stats_follow_the_selection(self):
-        """个人端没有「全部凭据」视角，统计跟着左栏选中项走。"""
+    def test_personal_stats_follow_the_scope_switch(self):
+        """统计要跟着弹窗上的范围开关走，而不是左栏的选中项。
+
+        原来统计跟着 `selectedId` 走、明细请求却不带 `secret_id`（拿的是全部），
+        同一个弹窗里两个 tab 各说一套。
+        """
         source = _read(ROOT / "frontend/src/views/SecretCenter.vue")
-        assert ':secret-id="selectedId || null"' in source
+        assert ':secret-id="statsSecretId"' in source
+        assert "const statsSecretId = computed(" in source
+
+
+class TestPersonalUsageScope:
+    """个人端「使用记录」默认只看点进来的那条凭据。
+
+    入口按钮长在单条凭据的卡片上，但请求没带 `secret_id`——点「邮箱名」的使用
+    记录，弹出来的是「a / k」几条凭据混在一起的最近 50 条。用户第一反应是
+    「点错了」或「数据串了」，而不是「这里刚好是全部」。
+    """
+
+    def test_open_usage_locks_the_selected_secret(self):
+        source = _read(SECRET_CENTER)
+        start = source.find("async function openUsage(")
+        body = source[start:source.find("\n}", start)]
+        assert "selected.value?.id" in body
+        assert "usageScope.value" in body
+
+    def test_request_carries_secret_id(self):
+        source = _read(SECRET_CENTER)
+        start = source.find("async function loadRecords(")
+        body = source[start:source.find("\n}", start)]
+        assert "params.secret_id = usageSecretId.value" in body
+
+    def test_dialog_offers_a_way_to_see_everything(self):
+        """想看全貌可以，但必须是显式点一下，不能是「悄悄给全部」。"""
+        source = _read(SECRET_CENTER)
+        assert "查看全部记录" in source
+        assert "setUsageScope('all')" in source
+        assert "setUsageScope('secret')" in source
+
+    def test_current_scope_is_written_on_the_title(self):
+        """两个视角差的就是「谁」，只藏在开关里的话看不出来现在看的是全部。"""
+        source = _read(SECRET_CENTER)
+        assert "usageScopeLabel" in source
+        assert "只看 ${usageScopeLabel}" in source
 
 
 class TestBindingsGroupedByType:

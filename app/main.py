@@ -543,6 +543,14 @@ app.include_router(v1_router, prefix="/api/v1")
 # 挂载流程控制门户路由 (管理控制台)
 app.include_router(portal_router, prefix="/api/portal")
 
+# 内置 HTTP 回显（验收 API 工具的凭据注入用）。只在非生产环境挂载：
+# 生产里多一个能回显请求头的端点没有任何好处。
+if settings.API_SERVICE_ENV != "production":
+    from app.services.mcp.http_echo import echo_router
+
+    app.include_router(echo_router, prefix="/api/test/echo")
+
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
