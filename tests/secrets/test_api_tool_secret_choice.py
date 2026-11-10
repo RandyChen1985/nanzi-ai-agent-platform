@@ -275,3 +275,36 @@ async def test_choice_field_never_leaks_into_query(choice_env, in_process_http):
     assert seen["query_fingerprint"]["mailkey"] == _fp(VALUE_CC)
     assert "secret_choice_mailkey" not in seen["query"]
     assert "secret_choice_mailkey" not in (seen["body"] or {})
+
+
+# ── 闭环：模型实际收到的参数表 ────────────────────────────────────────────
+#
+# MCP 工具曾经栽在这里：`create_tool` 只把编号字段加进 `args_schema`，而真正
+# 送给模型的是 `mcp_input_schema`（远端原始 schema），于是「让模型挑一条」一次
+# 都没生效过，配置页却完全正常。API 工具目前没有 `mcp_input_schema`，走的是
+# args_schema，所以是通的——但没有任何东西阻止将来有人给 GenericApiToolFactory
+# 也挂一份原始 schema。这两条断言就是那道护栏。
+
+
+@pytest.mark.asyncio
+async def test_what_the_model_receives_has_the_choice_field(choice_env):
+    from app.services.ai.runtime.agentscope.chat import legacy_tools_to_openai_schemas
+
+    config = await _load_tool()
+    tool = GenericApiToolFactory.create_tool(config)
+    parameters = legacy_tools_to_openai_schemas([tool])[0]["function"]["parameters"]
+
+    assert "secret_choice_mailkey" in parameters["properties"]
+    assert "mailkey" not in parameters["properties"]
+    # 平台扩展容器不能被当成普通参数漏给模型
+    assert "x-nanzi-system-params" not in parameters["properties"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_spec_carries_the_choice_field(choice_env):
+    from app.services.ai.runtime.agentscope.tools import runtime_tool_spec_from_legacy_tool
+
+    config = await _load_tool()
+    tool = GenericApiToolFactory.create_tool(config)
+    spec = runtime_tool_spec_from_legacy_tool(tool, source_type="generic_api")
+    assert "secret_choice_mailkey" in spec.parameters_schema["properties"]

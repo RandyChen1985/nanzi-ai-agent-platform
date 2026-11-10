@@ -281,10 +281,26 @@ class McpToolFactory:
         # 声明过「值由凭据提供」的参数从模型可见的参数里剔除：留着的话模型会
         # 自己编一个值填进去，而平台随后又要用凭据覆盖它，等于骗了模型一次，
         # 日志里也看不出这个值到底是谁给的。
+        #
+        # 要改的是**两份** schema：
+        #   - ``args_schema``：本地调用校验用；
+        #   - ``schema_def``（→ ``tool.mcp_input_schema``）：这才是真正送给模型的
+        #     参数表——``_schema_from_legacy_tool`` 与 ``legacy_tools_to_openai_schemas``
+        #     两处都优先读它，只在 args_schema 上做改动，模型什么也看不到。
         _credential_args = credential_param_names(tool_record)
         for _name in _credential_args:
             properties.pop(_name, None)
+            if not isinstance(schema_def.get("properties"), dict):
+                # 扁平形态：顶层就是参数表，上面的 pop 改的是新 dict，没回写
+                schema_def.pop(_name, None)
             required_fields.discard(_name)
+        if _credential_args and isinstance(schema_def.get("required"), list):
+            remaining = [n for n in schema_def["required"] if n not in _credential_args]
+            if remaining:
+                schema_def["required"] = remaining
+            else:
+                # 空 required 留着只会让模型以为「必填但没定义」
+                schema_def.pop("required", None)
 
         fields = {}
         # 远端参数名 → 本地字段别名（执行时再映射回去）。只在不合法时才换名，
@@ -325,17 +341,28 @@ class McpToolFactory:
             _alias = choice_field(_name)
             if _alias in fields:
                 continue
+            _choice_desc = (
+                f"可选。{_name} 用哪条凭据的编号（例如 c3），编号来自 "
+                "list_my_credentials 工具的返回。只在平台规则没能自动匹配到"
+                "凭据时才生效；拿不准就留空，平台会按规则自己去匹配。"
+            )
             fields[_alias] = (
                 Optional[str],
-                Field(
-                    default=None,
-                    description=(
-                        f"可选。{_name} 用哪条凭据的编号（例如 c3），编号来自 "
-                        "list_my_credentials 工具的返回。只在平台规则没能自动匹配到"
-                        "凭据时才生效；拿不准就留空，平台会按规则自己去匹配。"
-                    ),
-                ),
+                Field(default=None, description=_choice_desc),
             )
+            # 同一个字段必须也写进 ``mcp_input_schema``。这是模型唯一能看到的
+            # 参数表：只加进 args_schema 的话，``on_miss=model`` 里那句
+            # 「让模型挑一条」永远等不到编号——模型不知道有这个口子，
+            # 只会回一句「凭据参数我看不到、也不能猜」。
+            _schema_props = schema_def.get("properties")
+            if isinstance(_schema_props, dict):
+                _schema_props.setdefault(
+                    _alias, {"type": "string", "description": _choice_desc}
+                )
+            else:
+                schema_def.setdefault(
+                    _alias, {"type": "string", "description": _choice_desc}
+                )
 
         # Create dynamic Pydantic model for args
         clean_name = re.sub(r"[^a-zA-Z0-9_]+", "_", str(tool_record.tool_name)).strip("_") or "Tool"
