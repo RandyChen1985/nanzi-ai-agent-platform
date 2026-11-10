@@ -27,13 +27,20 @@ def test_unbound_is_not_reported():
     "reason",
     ["disabled", "expired", "denied_by_scenario", "denied_by_host", "denied_by_grant"],
 )
-def test_every_denial_has_human_text(reason):
+def test_every_denial_is_recorded_as_a_code(reason):
+    """`denials` 存**原始 code**，不存人话。
+
+    调用方要按原因给不同的修复建议——域名白名单不对和场景没勾，是两件完全不
+    同的事，存成人话就再也分不出来了。展示时统一用 `denial_text()`。
+    """
     denials: dict[str, str] = {}
     _record(denials, "header:Authorization", reason)
 
-    assert denials["header:Authorization"] == DENIAL_REASONS[reason]
-    # 必须是给人看的，不能把内部常量原样抛给用户
-    assert reason not in denials["header:Authorization"]
+    assert denials["header:Authorization"] == reason
+    # 展示时才翻译，且不能把内部常量原样抛给用户
+    text = denial_text(reason)
+    assert text != reason
+    assert reason not in text
 
 
 def test_unknown_reason_falls_back_to_itself():

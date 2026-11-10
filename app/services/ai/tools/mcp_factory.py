@@ -16,7 +16,7 @@ from app.services.ai.runtime.agentscope.tool_timeout import (
 )
 from app.services.ai.grounding.models import EvidenceType
 from app.core.context import get_current_agent_context
-from app.services.secrets.injection import apply_mcp_arg_bindings, denial_text
+from app.services.secrets.injection import apply_mcp_arg_bindings, denial_hint, denial_text
 
 logger = logging.getLogger(__name__)
 
@@ -351,10 +351,19 @@ class McpToolFactory:
                     detail = "；".join(
                         f"{slot}（{denial_text(why)}）" for slot, why in arg_denials.items()
                     )
-                    raise ValueError(
-                        f"MCP 工具 {tool_record.tool_name} 的凭据参数缺失：{detail}。"
-                        "请到「我的 MCP → 平台服务」绑定对应凭据。"
+                    hints: list[str] = []
+                    for reason in arg_denials.values():
+                        hint = denial_hint(reason)
+                        if hint and hint not in hints:
+                            hints.append(hint)
+                    message = (
+                        f"MCP 工具 {tool_record.tool_name} 的凭据参数缺失：{detail}"
                     )
+                    message += ("。" + "；".join(hints)) if hints else ""
+                    # 只有「压根没绑」才该去绑；域名/场景不对时去绑一条也解决不了
+                    if not hints:
+                        message += "。请到「我的 MCP → 平台服务」绑定对应凭据"
+                    raise ValueError(message + "。")
 
             identity_kwargs: Dict[str, Any] = {}
             if user_info:

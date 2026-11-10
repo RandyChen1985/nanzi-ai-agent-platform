@@ -16,6 +16,7 @@ from app.core.orm import AsyncSessionLocal
 from app.models.mcp import McpServer, McpToolCache
 from app.services.mcp.mcp_auth_policy import build_mcp_headers, resolve_mcp_auth_headers
 from app.services.secrets.injection import apply_mcp_bindings
+from app.services.secrets.redact import redact_value
 from app.services.mcp.outbound_audit import record_outbound_audit_log
 from sqlalchemy import select, update
 
@@ -27,15 +28,32 @@ class McpCredentialDeniedError(Exception):
 
     和「没有绑定」区分开：没绑时退回 ``fixed_token`` 是设计好的默认行为；绑了却
     用不了还退回，就是用户以为在用自己账号、实际在用管理员的账号。
+
+    文案按**拒绝原因**给不同的修复动作。原来是一句话兜底「请检查凭据状态」，
+    可域名白名单不对时凭据状态是正常的，按那句话去查永远查不到。
     """
 
-    def __init__(self, server_name: str, detail: str):
+    def __init__(self, server_name: str, denials: dict[str, str | None]):
+        from app.services.secrets.injection import denial_hint, denial_text
+
         self.server_name = server_name
-        self.detail = detail
-        super().__init__(
-            f"MCP 服务 {server_name} 的凭据没有注入：{detail}。"
-            "请到「个人中心 → 我的凭据」检查这条凭据的状态，或解除绑定改用服务级 Token"
-        )
+        self.denials = dict(denials)
+
+        parts = [
+            f"{slot}（{denial_text(reason)}）" for slot, reason in denials.items()
+        ]
+        # 同一种原因只提示一次：多个槽位可能卡在同一道闸门上
+        hints: list[str] = []
+        for reason in denials.values():
+            hint = denial_hint(reason)
+            if hint and hint not in hints:
+                hints.append(hint)
+
+        message = f"MCP 服务 {server_name} 的凭据没有注入：" + "；".join(parts)
+        if hints:
+            message += "。" + "；".join(hints)
+        message += "。也可以解除绑定改用服务级 Token。"
+        super().__init__(message)
 
 # tools/list 是分页接口；只取第一页会把后续工具当成“远端已删除”误下线。
 # 上限用于防御异常远端返回无限 cursor。
@@ -871,9 +889,8 @@ class McpClientService:
                 # 用户绑了凭据却用不了（停用/过期/场景不符）时**必须失败**，不能
                 # 悄悄退回服务级 fixed_token：那样请求会成功，用户以为用的是自己的
                 # 账号，实际用的是管理员的——权限边界和审计都错位了。
-                detail = "；".join(f"{slot}（{why}）" for slot, why in mcp_denials.items())
                 raise McpCredentialDeniedError(
-                    str(getattr(server, "server_name", "") or server_id), detail
+                    str(getattr(server, "server_name", "") or server_id), mcp_denials
                 )
             session_key = server_id
             if signed_user_enabled:
@@ -937,9 +954,9 @@ class McpClientService:
                             "content": text,
                             "structured_content": structured_content,
                         }
-                        return call_result
+                        return redact_value(call_result, where=f"MCP 工具 {tool_name}")
                     call_result = text if text else {"success": True, "content": ""}
-                    return call_result
+                    return redact_value(call_result, where=f"MCP 工具 {tool_name}")
                 except Exception as e:
                     transport_broken = False
                     if not transport_retry and _is_transport_error(e):
@@ -963,7 +980,7 @@ class McpClientService:
                                     arguments,
                                     timeout_seconds=timeout_seconds,
                                 )
-                                return call_result
+                                return redact_value(call_result, where=f"MCP 工具 {tool_name}")
                             session = session_mgr.session
                             if session is None:
                                 await session_mgr.close()
@@ -995,9 +1012,9 @@ class McpClientService:
                                     "content": text,
                                     "structured_content": structured_content,
                                 }
-                                return call_result
+                                return redact_value(call_result, where=f"MCP 工具 {tool_name}")
                             call_result = text if text else {"success": True, "content": ""}
-                            return call_result
+                            return redact_value(call_result, where=f"MCP 工具 {tool_name}")
                         except Exception as retry_error:
                             e = RuntimeError(
                                 f"{original_error}; reconnect retry failed: {retry_error}"
@@ -1016,7 +1033,7 @@ class McpClientService:
                     arguments,
                     timeout_seconds=timeout_seconds,
                 )
-                return call_result
+                return redact_value(call_result, where=f"MCP 工具 {tool_name}")
         except asyncio.CancelledError:
             call_status = "failed"
             call_error = "MCP tool call cancelled"

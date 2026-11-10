@@ -26,6 +26,7 @@ from app.services.ai.tools.parameter_schema import (
 )
 from app.services.ai.tools.tool_credentials import unresolved_credential_headers
 from app.services.secrets.injection import apply_api_tool_bindings, apply_api_tool_param_bindings
+from app.services.secrets.redact import redact_value
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +82,23 @@ class UnresolvedCredentialError(Exception):
         }
         reasons = {name: text for name, text in reasons.items() if text}
         if reasons:
-            detail = "；".join(f"{name}（{text}）" for name, text in reasons.items())
-            self.reasons = reasons
-            super().__init__(
-                f"工具 {tool_name} 的请求凭据没有注入：{detail}。"
-                "请到「个人中心 → 我的凭据」检查这条凭据的状态，或在工具里改用固定值"
+            from app.services.secrets.injection import denial_hint, denial_text
+
+            detail = "；".join(
+                f"{name}（{denial_text(reason)}）" for name, reason in reasons.items()
             )
+            self.reasons = reasons
+            # 按原因给具体的修复动作：域名白名单不对时凭据状态是正常的，
+            # 一句「检查状态」会把人引到错误的页面。
+            hints: list[str] = []
+            for reason in reasons.values():
+                hint = denial_hint(reason)
+                if hint and hint not in hints:
+                    hints.append(hint)
+            message = f"工具 {tool_name} 的请求凭据没有注入：{detail}"
+            if hints:
+                message += "。" + "；".join(hints)
+            super().__init__(message + "。也可以在工具里改用固定值。")
         else:
             self.reasons = {}
             names = "、".join(self.headers)
@@ -401,15 +413,19 @@ class GenericApiToolFactory:
                 config, params
             )
 
+            # 回灌之前掩码：远端把请求参数原样回显是常见操作，而模型不该看到注入的值。
+            where = f"API 工具 {config.name}"
             if response.status_code == 204 or not response.content:
                 return {"success": True, "content": ""}
 
             # Try to format JSON result
             try:
                 resp_json = response.json()
-                return json.dumps(resp_json, ensure_ascii=False)
+                return redact_value(
+                    json.dumps(resp_json, ensure_ascii=False), where=where
+                )
             except Exception:
-                return response.text
+                return redact_value(response.text, where=where)
 
         except UnsupportedMethodError as e:
             # 历史文案：``[Error] Unsupported method: XXX``

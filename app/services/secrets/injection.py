@@ -30,6 +30,7 @@ from app.services.secrets.policy import (
     SCENE_MCP,
     resolve_api_tool_slot,
 )
+from app.services.secrets.redact import register_injected
 from app.services.secrets.resolver import secret_resolver
 from app.services.ai.tools.tool_credentials import CREDENTIAL_PLACEHOLDER_PREFIX
 
@@ -53,10 +54,29 @@ DENIAL_REASONS = {
 }
 
 
+#: 每种拒绝对应要做什么。只写「为什么」没用——用户按「检查状态」去查，
+#: 而真正要改的是域名白名单或场景勾选，两者根本不在同一个页面。
+DENIAL_HINTS = {
+    "denied_by_host": "请编辑这条凭据的「域名白名单」放行目标域名（填 * 表示不限）",
+    "denied_by_scenario": "请在这条凭据上勾选对应的使用场景",
+    "denied_by_grant": "请管理员把这条凭据授权给你（部门或全体）",
+    "disabled": "请到凭据中心把它重新启用",
+    "expired": "请轮换或重新创建这条凭据",
+    "denied_by_script_policy": "请在注入策略里打开脚本环境变量注入",
+}
+
+
 def denial_text(reason: str | None) -> str:
     if not reason:
         return "未绑定凭据"
     return DENIAL_REASONS.get(reason, reason)
+
+
+def denial_hint(reason: str | None) -> str:
+    """这条拒绝该怎么修。认不出的原因返回空串，调用方自行兜底。"""
+    if not reason:
+        return "请先到凭据中心绑定一条凭据"
+    return DENIAL_HINTS.get(reason, "")
 
 
 def _record(denials: dict[str, str] | None, slot: str, reason: str | None) -> None:
@@ -68,7 +88,9 @@ def _record(denials: dict[str, str] | None, slot: str, reason: str | None) -> No
     """
     if denials is None or reason in (None, "denied_by_binding"):
         return
-    denials[slot] = denial_text(reason)
+    # 存**原始 code**：调用方可能想按原因给不同的修复建议（域名白名单 vs 场景勾选），
+    # 存成人话就再也分不出来了。展示时用 denial_text()。
+    denials[slot] = reason
 
 
 def _looks_unfilled(value: Any) -> bool:
@@ -218,7 +240,9 @@ async def apply_api_tool_bindings(
             continue
 
         if result.ok and result.value is not None:
-            resolved[name] = result.value.reveal()
+            plain = result.value.reveal()
+            register_injected(plain)
+            resolved[name] = plain
             injected += 1
         else:
             # 「没有绑定」是常态，不必刷日志；其它拒绝原因值得记一笔，
@@ -301,7 +325,9 @@ async def apply_api_tool_param_bindings(
             continue
 
         if result.ok and result.value is not None:
-            resolved[name] = result.value.reveal()
+            plain = result.value.reveal()
+            register_injected(plain)
+            resolved[name] = plain
             injected += 1
         else:
             if result.denial not in (None, "denied_by_binding"):
@@ -407,7 +433,9 @@ async def apply_mcp_bindings(
             continue
 
         if result.ok and result.value is not None:
-            _set_case_insensitive(resolved, name, result.value.reveal())
+            plain = result.value.reveal()
+            register_injected(plain)
+            _set_case_insensitive(resolved, name, plain)
             injected += 1
         else:
             _record(denials, slot, result.denial)
@@ -504,18 +532,20 @@ async def apply_mcp_arg_bindings(
                 getattr(tool_record, "tool_name", "?"), name, exc,
             )
             if denials is not None:
-                denials[slot] = denial_text(None)
+                denials[slot] = None
             continue
 
         if result.ok and result.value is not None:
             # 无条件覆盖：模型理论上不会给这个参数值（schema 里已剔除），
             # 但如果它从上下文里猜出来传了，凭据才是唯一可信来源。
-            resolved[name] = result.value.reveal()
+            plain = result.value.reveal()
+            register_injected(plain)
+            resolved[name] = plain
         else:
             # **不能复用 `_record`**：它特意跳过「没有绑定」，因为对 Header 而言
             # 那是常态。参数级正相反——声明过就必须有值，没绑同样是缺参数。
             if denials is not None:
-                denials[slot] = denial_text(result.denial)
+                denials[slot] = result.denial
 
     return resolved
 
@@ -663,7 +693,9 @@ async def apply_script_env_bindings(
             logger.warning("[SecretInject] 脚本 %s 的 %s 解析失败", tool_id, slot, exc_info=True)
             continue
         if result.ok and result.value is not None:
-            resolved[name] = result.value.reveal()
+            plain = result.value.reveal()
+            register_injected(plain)
+            resolved[name] = plain
         else:
             _record(denials, slot, result.denial)
     return resolved
