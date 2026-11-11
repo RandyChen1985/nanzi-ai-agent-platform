@@ -292,3 +292,86 @@ async def test_run_multimodal_gate_skips_when_sidecar_already_present(monkeypatc
     events = [chunk async for chunk in run_multimodal_gate(history, "text-model")]
     assert events == []
     describe.assert_not_called()
+
+
+# —— 闸门判据必须覆盖「所有会收到这批图片的模型」 ——
+#
+# 用户报过一次「选了能识图的合成模型，发图却没反应」：闸门只按合成模型判定，
+# 放行后图片被直发给不识图的主链路模型。下面三条锁住新口径。
+
+
+def test_resolve_gate_model_names_includes_primary_and_synthesis():
+    from types import SimpleNamespace
+
+    from app.services.ai.multimodal_support import resolve_gate_model_names
+
+    assert resolve_gate_model_names(
+        SimpleNamespace(model_name="text-primary", synthesis_model_name="vision-synth")
+    ) == ["text-primary", "vision-synth"]
+
+
+def test_resolve_gate_model_names_prefers_session_override_for_primary():
+    from types import SimpleNamespace
+
+    from app.core.context import set_execution_options_context
+    from app.services.ai.multimodal_support import resolve_gate_model_names
+
+    set_execution_options_context({"model": "picked-by-user"})
+    try:
+        names = resolve_gate_model_names(
+            SimpleNamespace(model_name="version-default", synthesis_model_name=None)
+        )
+    finally:
+        set_execution_options_context({})
+
+    assert names == ["picked-by-user"]
+
+
+def test_resolve_gate_model_names_dedupes_and_skips_blank():
+    from types import SimpleNamespace
+
+    from app.services.ai.multimodal_support import resolve_gate_model_names
+
+    assert resolve_gate_model_names(
+        SimpleNamespace(model_name="same", synthesis_model_name=" same ")
+    ) == ["same"]
+    assert resolve_gate_model_names(
+        SimpleNamespace(model_name=None, synthesis_model_name="")
+    ) == []
+
+
+@pytest.mark.asyncio
+async def test_run_multimodal_gate_triggers_when_only_synthesis_model_lacks_vision(monkeypatch):
+    """主链路能识图、合成模型不能：图片仍不能原样发出去（合成阶段会看到它）。"""
+
+    async def fake_supports(name):
+        return name == "vision-primary"
+
+    async def fake_default_vision():
+        return "qwen-vl"
+
+    monkeypatch.setattr(
+        "app.services.ai.multimodal_support.model_supports_multimodal", fake_supports
+    )
+    monkeypatch.setattr(
+        "app.services.ai.multimodal_support.resolve_default_multimodal_model_name",
+        fake_default_vision,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.multimodal_support.describe_images_with_vision_model",
+        AsyncMock(return_value="一张图"),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.multimodal_support._persist_vision_sidecar", AsyncMock()
+    )
+
+    events = [
+        chunk
+        async for chunk in run_multimodal_gate(
+            list(IMAGE_TURN), ["vision-primary", "text-synthesis"]
+        )
+    ]
+
+    assert any("text-synthesis" in str(event.get("details", "")) for event in events), (
+        "应点名不支持识图的那个模型，而不是先撞上的主链路模型"
+    )

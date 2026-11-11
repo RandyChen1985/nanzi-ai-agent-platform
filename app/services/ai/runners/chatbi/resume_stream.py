@@ -30,6 +30,8 @@ async def resolve_pending_runtime(
         streaming=True,
         config=runner.config,
     )
+    # 与首轮一致：恢复后重建的轨迹同样要报真实下发的模型。
+    runner._record_effective_model(native_model_handle)
     native_model = getattr(native_model_handle, "native_model", None)
     if native_model is None:
         raise RuntimeError("当前模型适配器未提供 AgentScope native_model，无法恢复挂起执行。")

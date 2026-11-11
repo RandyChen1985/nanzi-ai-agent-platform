@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from app.schemas.agent import AgentExecutionStep, ChatConfig
+from app.services.ai.model_override import normalize_model_override
 from app.services.ai.temperature import resolve_config_temperature
 
 logger = logging.getLogger(__name__)
@@ -220,6 +221,19 @@ class BaseExecutor(ABC):
                 pass
         self.step_counter += 1
         return self.step_counter
+
+    def _record_effective_model(self, handle: Any) -> None:
+        """记住本轮真正下发的模型名，供工具卡片与审计轨迹复用。
+
+        `get_configured_llm` / `get_synthesis_llm` 已经把工具级、会话级与系统默认
+        的优先级解析完，句柄上的 model 就是这次请求真实使用的模型；不记下来，
+        卡片与轨迹只能回退到版本配置，和真正生效的模型对不上。
+        """
+        recorded = normalize_model_override(
+            getattr(handle, "model", None) or getattr(handle, "model_name", None)
+        )
+        if recorded is not None:
+            self._session_effective_model = recorded
 
     def record_llm_token_usage(
         self,

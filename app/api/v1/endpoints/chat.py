@@ -1462,6 +1462,113 @@ async def get_conversation_history(
     ))
 
 
+async def _load_active_chat_model(db: AsyncSession, model_name: str):
+    """按 `model_id` 取一条启用的模型记录；查不到返回 None。"""
+    from sqlalchemy import select
+
+    from app.models.ai_model import AIModel
+
+    result = await db.execute(
+        select(AIModel).where(
+            AIModel.model_id == model_name,
+            AIModel.is_active.is_(True),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _load_conversation_agent_models(
+    db: AsyncSession, *, conversation_id: str, user_id: Any
+) -> tuple[str, str]:
+    """反查该会话所属智能体的已发布版本模型：返回 (主模型, 合成模型)。
+
+    输入框没有手动选模型时，前端不会传 `model_id`，端点此前只能退回
+    `agent_context_max_tokens`——那是**系统设置里的可配置项**（初始值 64k，见
+    系统设置 · 系统配置，迁移 V126 写入），不是常量；而执行期预算是按版本模型
+    （以及独立配置的合成模型）的真实窗口算的。两者不相等时分母就与实际不符
+    （配置 64k 而模型 128k 时界面显示偏满、模型 32k 时显示偏空——以为还能装，
+    其实已经该压缩了）。注意两种「本来就该用配置值」的情形：模型注册表没配
+    `context_size`，或会话走的是系统默认模型（执行期对这两类不采纳模型窗口）。
+    会话没有独立表，智能体归属取该会话最近一条执行历史。
+    """
+    from sqlalchemy import desc, select
+
+    from app.models.agent import AIAgentVersion
+    from app.models.audit import AgentExecutionHistory
+
+    stmt = (
+        select(AgentExecutionHistory.agent_id)
+        .where(
+            AgentExecutionHistory.conversation_id == conversation_id,
+            AgentExecutionHistory.user_id == str(user_id),
+        )
+        .order_by(desc(AgentExecutionHistory.created_at))
+        .limit(1)
+    )
+    agent_id = (await db.execute(stmt)).scalar_one_or_none()
+    if not agent_id:
+        return "", ""
+    version_stmt = (
+        select(AIAgentVersion.model_name, AIAgentVersion.synthesis_model_name)
+        .where(
+            AIAgentVersion.agent_id == agent_id,
+            AIAgentVersion.status == "PUBLISHED",
+        )
+        .order_by(AIAgentVersion.version_number.desc())
+        .limit(1)
+    )
+    row = (await db.execute(version_stmt)).first()
+    if not row:
+        return "", ""
+    return str(row[0] or "").strip(), str(row[1] or "").strip()
+
+
+def _merge_context_usage_model_names(
+    requested_model_id: Optional[str], agent_models: tuple[str, str]
+) -> tuple[str, str]:
+    """合并「输入框选中的主模型」与「版本配置的主/合成模型」。
+
+    合成模型**永远**来自版本配置，与用户有没有手动选主模型无关：执行期的预算
+    契约是 `min(主模型窗口, 合成模型窗口)`（见 `_runtime_context_metadata`），
+    只要漏掉合成模型，用户选一个大窗口模型时水位线分母就会偏大——界面说还装得下，
+    后端其实已经按合成模型的窗口开始压缩了。
+    """
+    agent_primary, agent_synthesis = agent_models
+    primary = str(requested_model_id or "").strip() or str(agent_primary or "").strip()
+    synthesis = str(agent_synthesis or "").strip()
+    if not synthesis or synthesis == primary:
+        synthesis = ""
+    return primary, synthesis
+
+
+async def _resolve_context_usage_models(
+    db: AsyncSession,
+    *,
+    conversation_id: str,
+    user_id: Any,
+    requested_model_id: Optional[str],
+) -> tuple[Any, Any]:
+    """解析水位线要用的 (主模型行, 合成模型行)；查不到的一侧为 None。
+
+    合成模型**无条件**反查：它只存在于版本配置里，而执行期预算是主模型与合成模型
+    窗口的较小值。曾经只在「没传 model_id」时才反查，用户手动选大窗口模型时合成
+    模型就被丢掉，水位线分母偏大。
+    """
+    primary_name, synthesis_name = _merge_context_usage_model_names(
+        requested_model_id,
+        await _load_conversation_agent_models(
+            db, conversation_id=conversation_id, user_id=user_id
+        ),
+    )
+    primary_row = await _load_active_chat_model(db, primary_name) if primary_name else None
+    synthesis_row = (
+        await _load_active_chat_model(db, synthesis_name)
+        if synthesis_name and synthesis_name != primary_name
+        else None
+    )
+    return primary_row, synthesis_row
+
+
 @router.get(
     "/conversation/{conversation_id}/context-usage",
     response_model=StandardResponse[Dict[str, Any]],
@@ -1477,18 +1584,16 @@ async def get_conversation_context_usage(
     user_id = _require_chat_user_id(user_info)
 
     runtime_model_info: Dict[str, Any] = {}
-    if model_id and db is not None:
-        from sqlalchemy import select
-
-        from app.models.ai_model import AIModel
-
-        result = await db.execute(
-            select(AIModel).where(
-                AIModel.model_id == model_id,
-                AIModel.is_active.is_(True),
-            )
+    # 主模型：显式选中的优先，否则跟随智能体默认（版本配置）。两种情况下都要反查
+    # 版本配置——合成模型只在那里，而执行期预算是主模型与合成模型的较小窗口。
+    requested_model_id = str(model_id or "").strip()
+    if db is not None:
+        model, synthesis_model = await _resolve_context_usage_models(
+            db,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            requested_model_id=requested_model_id,
         )
-        model = result.scalar_one_or_none()
         if model is not None:
             # 复用 post-route 的预算契约（`_runtime_context_metadata`），**不要**在这里
             # 手搓 runtime_model_info：手搓必然漏字段，而 `estimate_context_usage` 是按
@@ -1499,15 +1604,28 @@ async def get_conversation_context_usage(
                 from app.services.ai.agent_service import AgentService
                 from app.services.ai.config import RuntimeModelInfo
 
-                runtime_model_info = await AgentService()._runtime_context_metadata(
-                    RuntimeModelInfo(
-                        configured_model=model.model_id,
-                        effective_model_id=model.model_id,
-                        # 与阶段②采纳模型窗口的判据一致：显式选中的模型才用它的窗口。
-                        source="runtime_override",
-                        context_size=model.context_size,
-                        max_output_tokens=model.max_output_tokens,
+                def _info(row: Any, source: str) -> Any:
+                    return RuntimeModelInfo(
+                        configured_model=row.model_id,
+                        effective_model_id=row.model_id,
+                        source=source,
+                        context_size=row.context_size,
+                        max_output_tokens=row.max_output_tokens,
                     )
+
+                runtime_model_info = await AgentService()._runtime_context_metadata(
+                    _info(
+                        model,
+                        # 与阶段②采纳模型窗口的判据一致：显式选中的模型才用它的窗口。
+                        source="runtime_override" if model_id else "agent_config",
+                    ),
+                    # 执行期预算取主模型与合成模型的较小窗口，这里必须同口径；漏掉
+                    # 合成模型会让分母偏大（合成窗口更小时尤其明显）。
+                    synthesis_runtime_model_info=(
+                        _info(synthesis_model, "agent_config")
+                        if synthesis_model is not None
+                        else None
+                    ),
                 )
             except Exception as exc:
                 # 预算契约不可用时**不要**退回手搓的字段字典：那份字典正是本接口此前

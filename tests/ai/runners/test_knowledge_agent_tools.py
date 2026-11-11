@@ -63,8 +63,10 @@ async def test_knowledge_runner_cleans_clicked_reply_before_multimodal_gate():
         "app.services.ai.runners.knowledge_agent_runner.is_knowledge_base_enabled",
         AsyncMock(return_value=True),
     ), patch(
-        "app.services.ai.multimodal_support.resolve_runtime_model_name",
-        return_value="test",
+        # 闸门入参已从「单个模型名」改为「会收到图片的模型清单」：直接 patch 新的
+        # 契约点，避免依赖 resolve_gate_model_names 内部正好还在调旧函数。
+        "app.services.ai.multimodal_support.resolve_gate_model_names",
+        return_value=["test"],
     ), patch(
         "app.services.ai.multimodal_support.run_multimodal_gate",
         fake_run_multimodal_gate,

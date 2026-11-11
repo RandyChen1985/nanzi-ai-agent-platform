@@ -26,6 +26,10 @@ from app.services.ai.temperature import (
     resolve_effective_temperature,
     session_temperature_override,
 )
+from app.services.ai.model_override import (
+    resolve_effective_model_name,
+    session_model_override,
+)
 from app.services.ai.executors.base import BaseExecutor
 from app.services.ai.grounding.ledger import EvidenceLedger
 from app.services.ai.grounding.models import EvidenceType, FactFreshness
@@ -1604,16 +1608,17 @@ class AssistantAgentRunner(BaseExecutor):
         history: List[Dict[str, str]]
     ) -> AsyncGenerator[Dict[str, Any], None]:
         from app.services.ai.multimodal_support import (
-            resolve_runtime_model_name,
+            resolve_gate_model_names,
             run_multimodal_gate,
         )
 
         user_query = self._current_user_query(history)
 
-        model_name = resolve_runtime_model_name(self.config, prefer_synthesis=True)
+        # 主链路与合成模型都可能收到这批图片，闸门按两者的合集判定。
+        gate_models = resolve_gate_model_names(self.config)
         async for chunk in run_multimodal_gate(
             history,
-            model_name,
+            gate_models,
             user_id=self._runtime_user_id(),
             conversation_id=self.conversation_id,
         ):
@@ -1747,6 +1752,7 @@ class AssistantAgentRunner(BaseExecutor):
             # Use Synthesizer for simple mode
             llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=self.config)
             self._record_effective_temperature(llm)
+            self._record_effective_model(llm)
 
             full_content = ""
             content_emitted = False
@@ -1798,7 +1804,14 @@ class AssistantAgentRunner(BaseExecutor):
                 step_number=self.step_counter,
                 event_type="synthesis",
                 agent_name=self.config.agent_name,
-                model=self.config.model_name,
+                # 合成阶段用的是 get_synthesis_llm 的句柄，它已含会话覆盖与合成覆盖；
+                # 读版本配置会让审计轨迹记成另一个模型。
+                model=resolve_effective_model_name(
+                    recorded_model=getattr(llm, "model", None)
+                    or getattr(llm, "model_name", None),
+                    session_model=session_model_override(),
+                    config_model=self.config.model_name,
+                ),
                 temperature=self._effective_temperature_for_trace(),
                 tool_output={"content": full_content},
                 raw_log=full_content,
@@ -2146,6 +2159,7 @@ class AssistantAgentRunner(BaseExecutor):
         ):
             native_model_handle = await AgentConfigProvider.get_configured_llm(streaming=True, config=self.config)
             self._record_effective_temperature(native_model_handle)
+            self._record_effective_model(native_model_handle)
             native_model = getattr(native_model_handle, "native_model", None)
             if native_model is not None:
                 async for chunk in self._execute_with_agentscope_native_agent(
@@ -3116,6 +3130,7 @@ class AssistantAgentRunner(BaseExecutor):
         try:
             llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=self.config)
             self._record_effective_temperature(llm)
+            self._record_effective_model(llm)
             messages = normalize_messages_for_llm([
                 SystemMessage(content=str(state.get("system_content") or self.config.system_prompt or "")),
                 HumanMessage(
@@ -3205,6 +3220,7 @@ class AssistantAgentRunner(BaseExecutor):
         try:
             llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=self.config)
             self._record_effective_temperature(llm)
+            self._record_effective_model(llm)
             messages = normalize_messages_for_llm([
                 SystemMessage(content=str(state.get("system_content") or self.config.system_prompt or "")),
                 HumanMessage(
@@ -3282,6 +3298,7 @@ class AssistantAgentRunner(BaseExecutor):
             config=self.config,
         )
         self._record_effective_temperature(native_model_handle)
+        self._record_effective_model(native_model_handle)
         native_model = getattr(native_model_handle, "native_model", None)
         if native_model is None:
             raise RuntimeError("当前模型适配器未提供 AgentScope native_model，无法恢复挂起执行。")
@@ -3888,7 +3905,14 @@ class AssistantAgentRunner(BaseExecutor):
             )
 
         runtime_cfg = getattr(target_tool, "_runtime_config", None)
-        t_model = getattr(runtime_cfg, "model_name", self.config.model_name)
+        # 卡片与审计轨迹必须报「真实下发」的模型：工具级覆盖 > 会话覆盖（输入框选的）
+        # > 版本配置。只读版本配置会出现「选了 gpt-oss-120b，卡片仍写 DeepSeek-V4-Flash」。
+        t_model = resolve_effective_model_name(
+            tool_model=getattr(runtime_cfg, "model_name", None),
+            recorded_model=getattr(self, "_session_effective_model", None),
+            session_model=session_model_override(),
+            config_model=getattr(self.config, "model_name", None),
+        )
         # 卡片与审计轨迹必须报「真实下发」的温度：工具级覆盖 > 会话覆盖 > 版本温度。
         recorded_session_temp = coerce_temperature(
             getattr(self, "_session_effective_temperature", None)
@@ -3904,7 +3928,8 @@ class AssistantAgentRunner(BaseExecutor):
         )
 
         # Ensure types for AgentExecutionStep validation (especially when using Mocks in tests)
-        if not isinstance(t_model, str): t_model = str(self.config.model_name)
+        if not isinstance(t_model, str) or not t_model.strip():
+            t_model = str(self.config.model_name or "")
 
         trace_step = AgentExecutionStep(
             step_number=self._increment_step(), event_type="tool_call", agent_name=self.config.agent_name,

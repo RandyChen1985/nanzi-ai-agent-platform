@@ -14,6 +14,23 @@ from app.services.secrets.guard import build_storage_scanner
 
 logger = logging.getLogger(__name__)
 
+
+def resolve_history_model_name(agent_config: Any) -> Optional[str]:
+    """历史行记录的模型名：会话级覆盖（输入框选的）优先于智能体版本配置。
+
+    与 ``app/services/ai/model_override.py`` 共用同一套优先级，避免「实际用了
+    gpt-oss-120b、用量报表却记成版本配置模型」这种对不上账的情况。
+    """
+    from app.services.ai.model_override import (
+        resolve_effective_model_name,
+        session_model_override,
+    )
+
+    return resolve_effective_model_name(
+        session_model=session_model_override(),
+        config_model=getattr(agent_config, "model_name", None),
+    ) or None
+
 # 仅这些步骤类型对应真实的 LLM API 调用；tool_call / router 等不计入 Token。
 # model_call：AgentScope ReAct 每次 MODEL_CALL_END 一条，与前端 SSE 累加口径一致。
 # thought / synthesis：直连 LLM 或总结阶段（无 model_call 时由 synthesis 承载单次调用）。
@@ -105,7 +122,10 @@ class AuditManager:
         # 2. Save History
         if agent_config:
             model_config_id = None
-            model_id_snapshot = agent_config.model_name
+            # 历史行上的「本轮模型」必须是真实生效的那个：用户在输入框换过模型时，
+            # 版本配置的 model_name 只是默认值。用量报表、会话导出都读这一列，
+            # 读错就等于把 A 模型的消耗记到 B 模型头上。
+            model_id_snapshot = resolve_history_model_name(agent_config)
             agent_version = agent_config.agent_version
             agent_id = agent_config.agent_id
 

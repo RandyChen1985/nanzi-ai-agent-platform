@@ -9,9 +9,26 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from app.schemas.agent import AgentExecutionStep
+from app.services.ai.model_override import (
+    resolve_effective_model_name,
+    session_model_override,
+)
 from app.services.ai.temperature import resolve_config_temperature
 
 logger = logging.getLogger(__name__)
+
+
+def _effective_model_name(runner: Any) -> str:
+    """经验库步骤记录的模型：会话覆盖（输入框选的）优先于版本配置。
+
+    与 ``resolve_config_temperature`` 在同一条 trace 上配对使用，两侧口径必须
+    一致——早先模型读版本配置、温度读会话覆盖，判读链路时会自相矛盾。
+    """
+    return resolve_effective_model_name(
+        recorded_model=getattr(runner, "_session_effective_model", None),
+        session_model=session_model_override(),
+        config_model=getattr(runner.config, "model_name", None),
+    )
 
 
 def _format_search_stats_digest(search_stats: Dict[str, Any], elapsed_ms: float) -> str:
@@ -106,7 +123,7 @@ async def inject_few_shot_examples(
                     step_number=runner._increment_step(),
                     event_type="few_shot",
                     agent_name=runner.config.agent_name,
-                    model=str(runner.config.model_name),
+                    model=_effective_model_name(runner),
                     temperature=resolve_config_temperature(runner.config),
                     tool_output={"examples": []},
                     raw_log=f"未命中经验库案例，检索问题：{user_question}",
@@ -140,7 +157,7 @@ async def inject_few_shot_examples(
                 step_number=runner._increment_step(),
                 event_type="few_shot",
                 agent_name=runner.config.agent_name,
-                model=str(runner.config.model_name),
+                model=_effective_model_name(runner),
                 temperature=resolve_config_temperature(runner.config),
                 tool_output={"examples": examples},
                 raw_log="\n".join(hit_titles),
@@ -189,7 +206,7 @@ async def inject_few_shot_examples(
                 step_number=runner._increment_step(),
                 event_type="few_shot",
                 agent_name=runner.config.agent_name,
-                model=str(runner.config.model_name),
+                model=_effective_model_name(runner),
                 temperature=resolve_config_temperature(runner.config),
                 tool_output={"examples": []},
                 raw_log=f"经验库检索不可用，已跳过案例注入：{e}",

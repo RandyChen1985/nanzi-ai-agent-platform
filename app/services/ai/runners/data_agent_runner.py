@@ -29,7 +29,7 @@ from app.services.ai.grounding.policy import (
 )
 from app.services.ai.grounding.service import GroundingAuditResult, GroundingService
 from app.services.ai.time_anchor import TIME_RANGE_GATE_PREFIX, build_data_query_time_anchor_block, build_time_range_gate_message, detect_time_range_mismatch
-from app.services.ai.multimodal_support import resolve_runtime_model_name, run_multimodal_gate
+from app.services.ai.multimodal_support import resolve_gate_model_names, run_multimodal_gate
 from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
 from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage, system_user_prompt_messages
 from app.services.ai.runtime.agentscope.agent_runtime import build_model_config, build_tools_fingerprint, load_context_config
@@ -664,10 +664,10 @@ class DataAgentRunner(BaseExecutor):
             self.current_user_query = cleaned_question
         self._ensure_grounding_ledger()
         self._active_history = list(history or [])
-        model_name = resolve_runtime_model_name(self.config, prefer_synthesis=True)
+        gate_models = resolve_gate_model_names(self.config)
         async for chunk in run_multimodal_gate(
             history,
-            model_name,
+            gate_models,
             user_id=self._runtime_user_id(),
             conversation_id=self.conversation_id,
         ):
@@ -830,6 +830,9 @@ class DataAgentRunner(BaseExecutor):
         if schema_setup.stop_execution:
             return
         llm_handle = await AgentConfigProvider.get_configured_llm(streaming=True, config=self.config)
+        # 真实下发的模型名要记下来：经验库/预取步骤的轨迹与卡片会读它，
+        # 只靠会话别名会与「大模型调用明细」里的注册表 model_id 对不上。
+        self._record_effective_model(llm_handle)
         native_model = getattr(llm_handle, 'native_model', None)
         if native_model is None:
             yield {'type': 'error', 'status': 'error', 'content': '当前模型适配器未提供 AgentScope native_model，无法执行 ChatBI AgentScope 原生工具链。'}

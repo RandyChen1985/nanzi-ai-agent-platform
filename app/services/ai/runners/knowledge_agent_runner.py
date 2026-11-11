@@ -1099,7 +1099,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         if CLICKED_REPLY_MARKER.lower() in raw_current_question.lower():
             self.current_user_query = cleaned_question
         from app.services.ai.multimodal_support import (
-            resolve_runtime_model_name,
+            resolve_gate_model_names,
             run_multimodal_gate,
         )
         from app.services.config_service import ConfigService
@@ -1115,10 +1115,10 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             }
             return
 
-        model_name = resolve_runtime_model_name(self.config, prefer_synthesis=True)
+        gate_models = resolve_gate_model_names(self.config)
         async for chunk in run_multimodal_gate(
             history,
-            model_name,
+            gate_models,
             user_id=self._runtime_user_id(),
             conversation_id=self.conversation_id,
         ):
@@ -1516,6 +1516,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             config=self.config,
         )
         self._record_effective_temperature(native_model_handle)
+        self._record_effective_model(native_model_handle)
         native_model = getattr(native_model_handle, "native_model", None)
         if native_model is None:
             yield {

@@ -34,6 +34,7 @@ from app.services.ai.subagent_protocol import (
     validate_structured_schema,
     validate_structured_output,
 )
+from app.services.ai.model_override import normalize_model_override
 from app.services.ai.turn_decision import TurnDecision
 from app.services.ai.delegation_session_store import DelegationSessionStore
 from app.services.ai.runtime.agentscope.stream_reconcile import DEFAULT_TOOL_OUTPUT_MAX_LEN
@@ -66,6 +67,19 @@ DELEGATION_MAX_CALLS_PER_AGENT_KEY = "delegation_max_calls_per_agent"
 DEFAULT_MAX_DELEGATION_CALLS_PER_AGENT = 2
 MIN_DELEGATION_CALLS_PER_AGENT = 1
 MAX_DELEGATION_CALLS_PER_AGENT_LIMIT = 10
+
+#: 委派时要继承给子代理的「本轮运行参数」。
+#:
+#: 这四个值来自输入框的模型切换面板，语义是「用户为这一轮选定的运行参数」，
+#: 不是某个智能体的版本配置。子代理不继承，就会出现「主链路用 gpt-oss、子代理
+#: 换回自己的默认模型」，用户在卡片与调用明细里看到的是两套东西。
+#: 思考相关的值由子代理模型的真实能力再归一，父模型能思考不代表子代理会被打开。
+_INHERITED_RUNTIME_OPTION_KEYS = (
+    "model",
+    "temperature",
+    "thinking_enable",
+    "reasoning_effort",
+)
 
 #: 兼容旧引用：语义是「默认值」，实际上限请用 getter。
 MAX_BATCH_DELEGATION_CALLS = DEFAULT_MAX_BATCH_DELEGATION_CALLS
@@ -2455,6 +2469,21 @@ async def _dispatch_sub_agent_executor(
     # 少了这一项它会把提问卡塞进没人消费的队列（见 is_system_receipt_message 同源判定）。
     if (parent_execution_options or {}).get("unattended"):
         sub_execution_options["unattended"] = True
+    # 本轮的运行参数（模型 / 温度 / 思考开关 / 推理强度）也要带过去：它们是用户
+    # 在输入框里为「这一轮」选定的，子代理没有理由退回自己的版本配置——否则主链路
+    # 用 gpt-oss、子代理偷偷换回另一个模型，卡片、调用明细与用户预期三边对不上。
+    # 取值一律用 `is not None` 判断：0.0 温度与 False（关思考）都是合法覆盖。
+    # 思考相关的值由子代理模型的真实能力再归一一次（`resolve_reasoning_settings`），
+    # 所以父模型能思考、子代理不能时不会被错误打开。
+    for option_key in _INHERITED_RUNTIME_OPTION_KEYS:
+        if option_key not in (parent_execution_options or {}):
+            continue
+        option_value = (parent_execution_options or {})[option_key]
+        if option_key == "model":
+            option_value = normalize_model_override(option_value)
+        if option_value is None:
+            continue
+        sub_execution_options[option_key] = option_value
 
     return await AgentDispatcher.dispatch(
         target_config,

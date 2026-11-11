@@ -352,6 +352,12 @@ class RouteStep(BasePipelineStep):
                         source="platform",
                         stage="resolved_model",
                         agent_name=getattr(agent_config, "agent_name", None),
-                        model_name=getattr(agent_config, "model_name", None),
+                        # 这一阶段的压缩是按「最终目标模型」的窗口重算的，记录的模型
+                        # 也必须是它：版本配置的 model_name 只是默认值，输入框换过
+                        # 模型就会记错，排查窗口问题时对不上账。
+                        model_name=(
+                            getattr(runtime_model_info, "effective_model_id", None)
+                            or getattr(agent_config, "model_name", None)
+                        ),
                     )
                 yield final_context_event

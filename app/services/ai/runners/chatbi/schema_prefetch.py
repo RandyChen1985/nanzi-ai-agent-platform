@@ -12,6 +12,10 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from app.schemas.agent import AgentExecutionStep
 from app.services.ai.config import AgentConfigProvider
+from app.services.ai.model_override import (
+    resolve_effective_model_name,
+    session_model_override,
+)
 from app.services.ai.temperature import resolve_config_temperature
 from app.services.ai.data_query_semantic_intent import (
     build_semantic_intent_prompt,
@@ -36,6 +40,19 @@ from app.services.ai.runtime.agentscope.stream_reconcile import format_tool_args
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
 logger = logging.getLogger(__name__)
+
+
+def _effective_model_name(runner: Any) -> str:
+    """预取步骤记录的模型：会话覆盖（输入框选的）优先于版本配置。
+
+    预取发生在 native_model 建立之前，拿不到真实句柄，能代表「这次将要用的
+    模型」的就是当前请求的会话覆盖；缺了它，卡片会写成版本配置的模型。
+    """
+    return resolve_effective_model_name(
+        recorded_model=getattr(runner, "_session_effective_model", None),
+        session_model=session_model_override(),
+        config_model=getattr(runner.config, "model_name", None),
+    )
 
 
 def _normalize_scope_token(value: Any) -> str:
@@ -560,7 +577,7 @@ async def auto_invoke_get_dataset_schema(
             step_number=runner.step_counter,
             event_type="tool_call",
             agent_name=runner.config.agent_name,
-            model=runner.config.model_name,
+            model=_effective_model_name(runner),
             temperature=resolve_config_temperature(runner.config),
             tool_name="get_dataset_schema",
             tool_input=invoke_kwargs,

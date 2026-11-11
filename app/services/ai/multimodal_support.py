@@ -4,11 +4,12 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
 
 from sqlalchemy import or_, select
 
 from app.services.ai.agent_prompts import AgentServicePrompts
+from app.services.ai.model_override import normalize_model_override
 from app.services.ai.executors.common import (
     USER_MESSAGE_CONTEXT_DIVIDER,
     _is_image_attachment,
@@ -199,6 +200,32 @@ def resolve_runtime_model_name(
     return getattr(config, "model_name", None)
 
 
+def resolve_gate_model_names(config: Any) -> List[str]:
+    """本轮**会收到这批图片**的模型清单：主链路模型 + 独立配置的合成模型。
+
+    闸门的职责是「这次能不能把图片原样发出去」，判据必须覆盖所有会看到图片的
+    模型。此前只按合成模型（`prefer_synthesis=True`）判，两个方向都会错：
+
+    - 合成模型支持识图、主链路不支持 → 闸门放行，图片被直发给不支持的模型，
+      请求失败（用户看到的是「发图就没反应」）；
+    - 合成模型不支持识图、主链路支持 → 白走一次视觉旁路，多花一次调用。
+
+    真实调用优先级（`get_configured_llm`）：工具级 > 会话级 > 版本 > 系统默认；
+    合成阶段用 `synthesis_model_name` 覆盖（`get_synthesis_llm`），所以两者都要查。
+    工具级覆盖不参与：工具不接收对话历史里的图片。
+    """
+    names: List[str] = []
+    primary = normalize_model_override(
+        resolve_runtime_model_name(config, prefer_synthesis=False)
+    )
+    if primary:
+        names.append(primary)
+    synthesis = normalize_model_override(getattr(config, "synthesis_model_name", None))
+    if synthesis and synthesis not in names:
+        names.append(synthesis)
+    return names
+
+
 def format_vision_sidecar_block(vision_model: str, caption: str) -> str:
     caption = (caption or "").strip()
     return (
@@ -324,30 +351,53 @@ def _vision_log_event(status: str, details: str, log_id: str) -> Dict[str, Any]:
     }
 
 
+def _normalize_gate_models(model_name: Any) -> List[str]:
+    """把闸门入参统一成模型名清单（保持顺序、去重、丢掉空值）。"""
+    if model_name is None:
+        return []
+    raw = [model_name] if isinstance(model_name, str) else list(model_name)
+    names: List[str] = []
+    for item in raw:
+        normalized = normalize_model_override(item)
+        if normalized and normalized not in names:
+            names.append(normalized)
+    return names
+
+
 async def run_multimodal_gate(
     history: List[Dict[str, Any]],
-    model_name: Optional[str],
+    model_name: "str | Sequence[str] | None",
     *,
     user_id: Optional[str] = None,
     conversation_id: Optional[str] = None,
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
-    本轮含图且当前模型不支持多模态时：
+    本轮含图且**任一**会收到这批图片的模型不支持多模态时：
     - 有默认多模态则旁路看图、注入文字、告知用户；
     - 否则 yield status=error 的拦截提示。
     调用方遇到无 type 的 error 事件后应停止本轮执行。
+
+    `model_name` 接受单个模型名或清单（见 :func:`resolve_gate_model_names`）：
+    主链路与合成阶段可能用不同模型，只要有一个不支持，图片就不能原样发出去。
     """
     last_user = get_last_user_message(history)
     if not last_user or not last_user_message_has_images(history):
         return
     if has_vision_sidecar(last_user.get("content")):
         return
-    if not model_name:
+    gate_models = _normalize_gate_models(model_name)
+    if not gate_models:
         return
 
-    supports = await model_supports_multimodal(model_name)
-    if supports is not False:
+    # 逐个模型判定能力：全部「支持 / 未知」才放行，任一明确不支持就走旁路。
+    unsupported: List[str] = []
+    for candidate in gate_models:
+        if await model_supports_multimodal(candidate) is False:
+            unsupported.append(candidate)
+    if not unsupported:
         return
+    # 文案只点名第一个不支持的模型：它就是要被替代掉的「当前模型」。
+    model_name = unsupported[0]
 
     vision_model = await resolve_default_multimodal_model_name()
     if not vision_model:
@@ -360,7 +410,9 @@ async def run_multimodal_gate(
     log_id = f"vision_sidecar_{uuid.uuid4().hex[:8]}"
     yield _vision_log_event(
         "pending",
-        f"当前模型 {model_name} 不支持识图，正在使用系统默认多模态模型 {vision_model} 解析图片。",
+        # 不写「当前模型」：闸门按清单判定后，这里点名的可能是合成模型（用户手动
+        # 选了主模型时它并不是「当前模型」），写「模型 X」才不会让人以为选错了。
+        f"模型 {model_name} 不支持识图，正在使用系统默认多模态模型 {vision_model} 解析图片。",
         log_id,
     )
     try:
