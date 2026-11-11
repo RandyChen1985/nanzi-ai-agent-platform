@@ -37,7 +37,7 @@ vim .env
 
 ```bash
 # 服务配置
-API_SERVICE_ENV=prod                    # 环境: dev/prod
+API_SERVICE_ENV=production              # 生产模式: 隐藏内部错误详情、不挂 /api/test/echo
 API_SERVICE_LOG_LEVEL=INFO              # 日志级别
 
 # 平台公网访问地址（生产部署建议填写，Echo MCP 会用它生成地址并校验 Host）

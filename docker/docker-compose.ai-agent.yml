@@ -23,8 +23,12 @@ services:
 
     environment:
       # Service Config
-      - API_SERVICE_ENV=${API_SERVICE_ENV:-prod}
+      # production = 生产模式（隐藏内部错误详情、不挂 /api/test/echo）
+      - API_SERVICE_ENV=${API_SERVICE_ENV:-production}
       - API_SERVICE_LOG_LEVEL=${API_SERVICE_LOG_LEVEL:-INFO}
+      # 实例 ID：多实例部署时在「系统诊断 → 实例」里区分节点；
+      # 留空回退容器 hostname（随机容器 ID，页面上不易分辨）
+      - NODE_ID=${NODE_ID:-}
       # 平台公网访问地址；Echo MCP 会据此生成访问地址和 Host/Origin 白名单
       - APP_PUBLIC_URL=${APP_PUBLIC_URL:-}
       # 宿主机数据目录真实物理路径（DooD 沙箱容器挂载对齐，留空则自动按容器工作区解析）

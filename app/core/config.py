@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     API_SERVICE_ENV: str = "dev"
     API_SERVICE_PORT: int = 8001
     LOG_LEVEL: str = "INFO"  # Aligned with .env
+    # 实例 ID（多实例部署时用来区分「这条心跳是哪个节点」）。
+    # 留空 = 回退 hostname（容器里通常是随机容器 ID / Pod 名，页面上一堆难分辨的名字）。
+    # 它同时是 Redis 键 nanzi:instance:{id} 的组成部分：改动它等于换一个实例身份，
+    # 旧键会在心跳 TTL（45s）后自然过期，不会残留幽灵节点。
+    # 之所以做成 Settings 字段而不是只读 os.environ：.env 里的值不会进进程环境变量。
+    NODE_ID: Optional[str] = None
     ALLOWED_ORIGINS: List[str] = ["*"]
     APP_PUBLIC_URL: Optional[str] = None
 
@@ -242,6 +248,18 @@ class Settings(BaseSettings):
         if database_type in {"postgres", "postgresql", "pg"}:
             return "postgresql"
         raise ValueError(f"Unsupported DATABASE_TYPE: {self.DATABASE_TYPE}")
+
+    @property
+    def is_production(self) -> bool:
+        """是否生产模式：决定要不要对外隐藏内部错误详情、要不要挂调试端点。
+
+        这里必须做归一化（strip + lower，并接受 ``prod`` / ``prd`` 简写）：
+        判断处原先写的是 ``API_SERVICE_ENV != "production"`` 严格相等，而模板/K8s
+        configmap 里给的是 ``prod``——于是「生产部署实际一直处于调试模式」，
+        500 响应带着异常原文、`/api/test/echo` 也一直挂着。
+        归一只做在读取侧，字段本身保留原值，便于日志与诊断按原样排查。
+        """
+        return self.API_SERVICE_ENV.strip().lower() in {"production", "prod", "prd"}
 
     @property
     def DATABASE_ASYNC_URL(self) -> URL:

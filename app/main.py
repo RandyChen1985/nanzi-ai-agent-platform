@@ -342,7 +342,7 @@ async def database_connection_exception_handler(request: Request, exc: Exception
         content={
             "code": ErrorCode.DATABASE_CONNECTION_FAILED,
             "message": "数据库连接失败",
-            "detail": str(exc) if settings.API_SERVICE_ENV != "production" else "数据库暂时不可用，请稍后重试。",
+            "detail": "数据库暂时不可用，请稍后重试。" if settings.is_production else str(exc),
             "data": None,
             "timestamp": datetime.datetime.now().isoformat(),
             "trace_id": trace_id,
@@ -398,7 +398,7 @@ async def database_schema_exception_handler(request: Request, exc: Exception):
         content={
             "code": ErrorCode.DATABASE_CONNECTION_FAILED,
             "message": hint,
-            "detail": message if settings.API_SERVICE_ENV != "production" else hint,
+            "detail": hint if settings.is_production else message,
             "data": None,
             "timestamp": datetime.datetime.now().isoformat(),
             "trace_id": trace_id,
@@ -514,7 +514,7 @@ async def general_exception_handler(request: Request, exc: Exception):
         content={
             "code": ErrorCode.INTERNAL_SERVER_ERROR,
             "message": "服务器内部错误",
-            "detail": str(exc) if settings.API_SERVICE_ENV != "production" else "系统遇到未预期错误，请联系技术支持。",
+            "detail": "系统遇到未预期错误，请联系技术支持。" if settings.is_production else str(exc),
             "data": None,
             "timestamp": datetime.datetime.now().isoformat(),
             "trace_id": trace_id,
@@ -560,7 +560,7 @@ app.include_router(portal_router, prefix="/api/portal")
 
 # 内置 HTTP 回显（验收 API 工具的凭据注入用）。只在非生产环境挂载：
 # 生产里多一个能回显请求头的端点没有任何好处。
-if settings.API_SERVICE_ENV != "production":
+if not settings.is_production:
     from app.services.mcp.http_echo import echo_router
 
     app.include_router(echo_router, prefix="/api/test/echo")

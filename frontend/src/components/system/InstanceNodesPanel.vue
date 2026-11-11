@@ -12,6 +12,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
+import { useUser } from '@/composables/useUser'
 import {
   ServerStackIcon,
   ServerIcon,
@@ -50,6 +51,11 @@ interface InstanceItem {
   version: { app: string; commit: string; image: string }
   runtime: {
     kind: string
+    // 实例 ID（NODE_ID 优先，未配置时等于 hostname）与真实主机名分开呈现：
+    // 多实例部署时前者是人起的名字，后者是容器/Pod 的真实身份。
+    instance_id?: string
+    node_id?: string
+    hostname?: string
     node_name: string
     pod_ip: string
     python_version: string
@@ -104,6 +110,11 @@ interface SeriesPoint {
 }
 
 const { showToast } = useToast()
+const { hasPermission } = useUser()
+// 读接口要 menu:system:config，别名写接口要 element:system:config_save——
+// 只有菜单权限的账号能看，但改不了名字；没这个 element 码就别露出编辑入口，
+// 否则点开弹窗保存时才 403。
+const canSaveAlias = hasPermission('element:system:config_save')
 
 // 父级左栏要显示「在线 4/5」，这里只播报汇总，不把整个列表提上去
 const emit = defineEmits<{ (event: 'summary', value: { online: number; total: number }): void }>()
@@ -262,6 +273,13 @@ const detailSpark = (values: number[]) => {
   return { line, area: `${line} L${width} ${height} L0 ${height} Z` }
 }
 
+/** 把后端的英文 403 文案换成人能读的提示：这里只剩「权限被收回」这一种场景。 */
+function errorText(error: any, fallback: string) {
+  const status = error?.response?.status
+  if (status === 403) return '当前账号没有该操作的权限（实例页需要系统配置的查看权限）'
+  return error?.response?.data?.detail || fallback
+}
+
 async function loadOverview() {
   try {
     loadError.value = ''
@@ -270,7 +288,7 @@ async function loadOverview() {
     fetchedAt.value = Date.now()
     emit('summary', { online: overview.value.summary.online, total: overview.value.summary.total })
   } catch (error: any) {
-    loadError.value = error?.response?.data?.detail || '实例列表加载失败'
+    loadError.value = errorText(error, '实例列表加载失败')
   } finally {
     loading.value = false
   }
@@ -286,7 +304,7 @@ async function loadDetailSeries() {
     })
     detailSeries.value = (response.data?.points || []) as SeriesPoint[]
   } catch (error: any) {
-    showToast(error?.response?.data?.detail || '读取实例趋势失败', 'error')
+    showToast(errorText(error, '读取实例趋势失败'), 'error')
     detailSeries.value = []
   } finally {
     detailLoading.value = false
@@ -333,7 +351,7 @@ async function saveAlias() {
     closeAlias()
     await loadOverview()
   } catch (error: any) {
-    showToast(error?.response?.data?.detail || '保存别名失败', 'error')
+    showToast(errorText(error, '保存别名失败'), 'error')
   } finally {
     aliasSaving.value = false
   }
@@ -432,7 +450,7 @@ onUnmounted(() => {
           <input
             v-model="keyword"
             type="search"
-            placeholder="搜索别名 / hostname / IP / 版本…"
+            placeholder="搜索别名 / 实例 ID / IP / 版本…"
             class="w-full rounded-lg border border-gray-200 bg-gray-50/70 py-1.5 pl-8 pr-3 text-xs text-gray-700 placeholder-gray-400 outline-none transition focus:border-primary/50 focus:bg-white focus:ring-2 focus:ring-primary/15"
           />
         </div>
@@ -530,6 +548,7 @@ onUnmounted(() => {
                   {{ displayName(item) }}
                 </span>
                 <button
+                  v-if="canSaveAlias"
                   type="button"
                   class="text-gray-300 opacity-0 transition hover:text-primary group-hover:opacity-100"
                   title="编辑别名"
@@ -644,7 +663,7 @@ onUnmounted(() => {
         <table class="w-full min-w-[1120px] border-collapse text-xs">
           <thead>
             <tr class="bg-gray-50/80 text-[11px] text-gray-500">
-              <th class="px-3 py-2 text-left font-semibold">实例（别名 / hostname）</th>
+              <th class="px-3 py-2 text-left font-semibold">实例（别名 / 实例 ID）</th>
               <th class="px-3 py-2 text-left font-semibold">状态</th>
               <th class="px-3 py-2 text-left font-semibold">主从</th>
               <th class="px-3 py-2 text-right font-semibold">CPU</th>
@@ -672,6 +691,7 @@ onUnmounted(() => {
                 <div class="flex items-center gap-1.5 font-semibold text-gray-800">
                   {{ displayName(item) }}
                   <button
+                    v-if="canSaveAlias"
                     type="button"
                     class="text-gray-300 hover:text-primary"
                     title="编辑别名"
@@ -789,7 +809,13 @@ onUnmounted(() => {
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-1.5">
               <span class="truncate text-sm font-semibold text-gray-900">{{ displayName(selectedInstance) }}</span>
-              <button type="button" class="text-gray-300 hover:text-primary" @click="openAlias(selectedInstance)">
+              <button
+                v-if="canSaveAlias"
+                type="button"
+                class="text-gray-300 hover:text-primary"
+                title="编辑别名"
+                @click="openAlias(selectedInstance)"
+              >
                 <PencilSquareIcon class="h-3.5 w-3.5" />
               </button>
               <span class="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold" :class="statusOf(selectedInstance).cls">
@@ -824,10 +850,10 @@ onUnmounted(() => {
             <div class="grid grid-cols-1 overflow-hidden rounded-lg border border-gray-100 sm:grid-cols-2">
               <div
                 v-for="field in [
-                  { k: '别名', v: selectedInstance.alias || '—（未设置，显示 hostname）' },
-                  { k: 'hostname（实例 ID）', v: selectedInstance.host, mono: true },
+                  { k: '别名', v: selectedInstance.alias || '—（未设置，显示实例 ID）' },
+                  { k: '实例 ID', v: `${selectedInstance.host}（${selectedInstance.runtime.node_id ? 'NODE_ID' : 'hostname'}）`, mono: true },
+                  { k: '主机名 / K8s Node', v: selectedInstance.runtime.hostname || selectedInstance.runtime.node_name || '—', mono: true },
                   { k: '主 / 从', v: selectedInstance.primary ? '主节点（执行定时调度）' : '从节点（不执行调度）' },
-                  { k: 'K8s Node', v: selectedInstance.runtime.node_name || '—' },
                   { k: '内网 IP', v: selectedInstance.runtime.pod_ip || '—', mono: true },
                   { k: '部署形态', v: runtimeLabel(selectedInstance.runtime.kind) },
                   { k: '版本 / commit', v: `${selectedInstance.version.app || 'unknown'}${selectedInstance.version.commit ? ' · ' + selectedInstance.version.commit : ''}` },
@@ -1029,7 +1055,7 @@ onUnmounted(() => {
           </div>
           <div class="space-y-2.5 px-4 py-3.5">
             <div>
-              <div class="mb-1 text-[11px] text-gray-500">hostname（不可改）</div>
+              <div class="mb-1 text-[11px] text-gray-500">实例 ID（不可改）</div>
               <div class="truncate rounded-lg border border-gray-100 bg-gray-50 px-2.5 py-1.5 font-mono text-[11.5px] text-gray-500">
                 {{ aliasTarget.host }}
               </div>
@@ -1046,7 +1072,7 @@ onUnmounted(() => {
               />
             </div>
             <div class="text-[10.5px] leading-relaxed text-gray-400">
-              别名写入 <span class="font-mono">nanzi:instance:alias:{host}</span>，不随心跳过期；留空则回退显示 hostname。
+              别名写入 <span class="font-mono">nanzi:instance:alias:{host}</span>，不随心跳过期；留空则回退显示实例 ID。
             </div>
           </div>
           <div class="flex justify-end gap-2 border-t border-gray-100 px-4 py-2.5">

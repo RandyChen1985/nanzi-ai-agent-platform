@@ -6,7 +6,8 @@
 1. **不区分角色**：实例是同构、负载均衡的，唯一区别是「谁跑定时调度」，
    由环境变量 ``TASK_SCHEDULER_ENABLED`` 决定，页面只展示、**不提供在线切换**；
 2. **中间件也要体现**：数据库类型/版本（MySQL 或 PG）、Redis 版本要在列表上可见；
-3. **别名可编辑**：显示名默认 hostname，允许在页面上加别名。
+3. **别名可编辑**：显示名默认实例 ID（``NODE_ID``，未配置时回退 hostname），
+   允许在页面上加别名；实例 ID 与真实主机名要分开显示。
 
 另外钉住「口径不混」：QPS/P95/并发是本节点进程内指标，在线用户数是共享 Redis 的
 全平台值，页面上必须区分标注，否则运维会把集群数当成单机数看。
@@ -58,6 +59,24 @@ def test_switching_sections_keeps_diagnostics_state(system_config):
     """用 v-show 而不是 v-if：切到「实例」再切回来，诊断日志不能丢。"""
     assert "v-show=\"diagSection === 'diag'\"" in system_config
     assert "v-show=\"diagSection === 'instances'\"" in system_config
+
+
+# --------------------------------------------------------------------------- #
+# 实例身份：NODE_ID 与真实 hostname 要能同时看到
+# --------------------------------------------------------------------------- #
+def test_detail_separates_instance_id_from_real_hostname(panel):
+    """多实例部署时 ``NODE_ID`` 是运维起的名字（如 dev-node），真实 hostname 才是
+    容器/Pod 的身份。两者合并显示会导致「配了 NODE_ID 就再也查不到容器叫什么」。
+    """
+    assert "{ k: '实例 ID'" in panel
+    assert "runtime.node_id" in panel
+    assert "runtime.hostname" in panel
+
+
+def test_table_header_no_longer_claims_hostname(panel):
+    """列表列名跟着身份来源走：配了 NODE_ID 时那一列不是 hostname。"""
+    assert "实例（别名 / 实例 ID）" in panel
+    assert "实例（别名 / hostname）" not in panel
 
 
 # --------------------------------------------------------------------------- #
@@ -143,11 +162,31 @@ def test_offline_nodes_stop_counting_uptime(panel):
 # --------------------------------------------------------------------------- #
 # 后端契约
 # --------------------------------------------------------------------------- #
-def test_backend_endpoints_require_admin():
-    """心跳里有内网 IP、镜像 tag、数据库版本，只能是管理员视角。"""
+def test_backend_read_endpoints_use_menu_permission():
+    """读接口跟「系统配置」页同一判据：``menu:system:config``。
+
+    这组端点原先用 ``require_admin``（只认 role == admin），结果「有菜单权限的运维账号
+    能进页面、一点实例就 403 Admin access required」——同页其它接口都按权限码放行，
+    这里不能例外。心跳仍要求鉴权（含内网 IP / 镜像 tag / DB 版本），只是判据换成权限码。
+    """
     source = _read("app/api/portal/endpoints/instances.py")
-    assert source.count("require_admin") >= 3
-    assert "require_permission" not in source
+    assert source.count('require_permission("menu", "menu:system:config")') == 2, "两个读端点都要菜单权限码"
+    # 断言调用形式而不是词：模块 docstring 里会提到 require_admin 这个坑
+    assert "Depends(require_admin" not in source, "不要退回 admin 角色硬编码"
+    assert "import require_admin" not in source
+
+
+def test_backend_alias_write_requires_element_permission():
+    """别名是持久数据，跟「改系统配置」同档：``element:system:config_save``。"""
+    source = _read("app/api/portal/endpoints/instances.py")
+    assert source.count('require_permission("element", "element:system:config_save")') == 1
+
+
+def test_alias_button_hidden_without_element_permission(panel):
+    """只有菜单权限的账号能看实例列表，但不该看到「编辑别名」入口（保存时才会 403）。"""
+    assert "canSaveAlias" in panel
+    assert "hasPermission('element:system:config_save')" in panel
+    assert panel.count('v-if="canSaveAlias"') == 3, "卡片 / 表格 / 详情三处入口都要受控"
 
 
 def test_router_is_registered_under_system():

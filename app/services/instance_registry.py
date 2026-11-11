@@ -3,6 +3,10 @@
 每个实例每 15 秒把自己的快照写进一个带 TTL 的 HASH；诊断页只读这一处聚合结果，
 因此「多个实例」在页面上就是并列的几个心跳，不需要额外的注册中心或数据库表。
 
+实例身份（下文所有 ``{host}``）按 ``NODE_ID`` > ``INSTANCE_NAME`` > hostname 解析：
+容器里 hostname 通常是随机串（``80bb99ffd85a``），多实例部署时靠 ``NODE_ID``
+给每个进程一个稳定可读的名字；真实主机名另存为快照字段 ``hostname``，排查时对照用。
+
 Key 设计（所有实例连的是同一个 Redis）：
 
 ``nanzi:instance:{host}``          HASH，TTL 45s（心跳 15s × 3，过期即判离线）
@@ -67,9 +71,38 @@ _redis_info_cache: Dict[str, Any] = {"ts": 0.0, "value": {}}
 # --------------------------------------------------------------------------- #
 # Key helpers
 # --------------------------------------------------------------------------- #
+def configured_node_id() -> str:
+    """环境变量 / 配置里的实例 ID（``NODE_ID``），未配置时返回空串。"""
+    # settings 已经读过 .env（pydantic-settings 不会把它注入 os.environ，
+    # 所以只读 os.environ 会让 .env 里的 NODE_ID 静默失效）；环境变量兜底留给
+    # 直接注入进程环境的部署方式，以及测试里替换 settings 的场景。
+    return str(getattr(settings, "NODE_ID", "") or os.environ.get("NODE_ID") or "").strip()
+
+
+def real_hostname() -> str:
+    """进程所在主机的真实 hostname（容器里是容器 ID / Pod 名）。
+
+    它与「实例 ID」是两件事：配了 ``NODE_ID`` 之后，实例 ID 是人起的名字，
+    排查时仍需要看真实 hostname 才能对上容器/Pod。
+    """
+    try:
+        return (socket.gethostname() or "").strip() or "unknown"
+    except OSError:  # 极端环境（无 hostname）不该让心跳整体失败
+        return "unknown"
+
+
 def instance_hostname() -> str:
-    """实例 ID 默认就是 hostname；容器里 hostname 是随机串时可用 INSTANCE_NAME 覆盖。"""
-    return (os.environ.get("INSTANCE_NAME") or socket.gethostname() or "unknown").strip()
+    """实例 ID：``NODE_ID`` > ``INSTANCE_NAME``（旧键，保留兼容）> hostname。
+
+    ``NODE_ID`` 用于多实例部署时给每个进程一个稳定、可读的身份（如 ``dev-node``、
+    ``api-1``）；它同时是 Redis 键 ``nanzi:instance:{id}`` 的一部分，也是诊断页
+    卡片标题、别名键、趋势键的取值来源。
+    """
+    for candidate in (configured_node_id(), os.environ.get("INSTANCE_NAME"), real_hostname()):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return "unknown"
 
 
 def _instance_key(host: str) -> str:
@@ -119,14 +152,21 @@ def _detect_runtime_kind() -> str:
     return "host"
 
 
-def _detect_pod_ip(host: str) -> str:
+def _detect_pod_ip() -> str:
+    """实例内网 IP：优先显式注入的 POD_IP / INSTANCE_IP，否则解析真实 hostname。
+
+    注意不能拿「实例 ID」去解析：配了 ``NODE_ID=dev-node`` 之后它只是一个自定义名字，
+    ``/etc/hosts`` 里通常没有，gethostbyname 会失败，页面上的内网 IP 就变成空白。
+    """
     for env_key in ("POD_IP", "INSTANCE_IP"):
         value = (os.environ.get(env_key) or "").strip()
         if value:
             return value
     try:
-        return socket.gethostbyname(host)
+        return socket.gethostbyname(real_hostname())
     except OSError:
+        # 解析不出来就留空：页面上显示「—」比显示 127.0.0.1 更诚实，
+        # 后者会让人误以为节点只绑了回环地址。
         return ""
 
 
@@ -269,10 +309,15 @@ async def _collect_snapshot(client, seq: int) -> Dict[str, str]:
 
     snapshot: Dict[str, Any] = {
         "host": host,
+        # 实例 ID（NODE_ID 优先）与真实主机名分开上报：多实例部署时前者是人起的名字，
+        # 后者是容器/Pod 的真实身份，排查时两者都要能对上。
+        "instance_id": host,
+        "hostname": real_hostname(),
+        "node_id": configured_node_id(),
         "primary": "true" if settings.TASK_SCHEDULER_ENABLED else "false",
         "runtime_kind": _detect_runtime_kind(),
-        "node_name": (os.environ.get("NODE_NAME") or host).strip(),
-        "pod_ip": _detect_pod_ip(host),
+        "node_name": (os.environ.get("NODE_NAME") or real_hostname()).strip(),
+        "pod_ip": _detect_pod_ip(),
         "app_version": (os.environ.get("APP_VERSION") or "dev").strip(),
         "commit": (os.environ.get("GIT_COMMIT") or "").strip(),
         "image": (os.environ.get("IMAGE_TAG") or "").strip(),
@@ -343,7 +388,13 @@ class InstanceHeartbeatReporter:
         except Exception:  # noqa: BLE001
             pass
         self._task = asyncio.create_task(self._run(), name="instance-heartbeat")
-        logger.info("实例心跳上报已启动：host=%s primary=%s", instance_hostname(), settings.TASK_SCHEDULER_ENABLED)
+        logger.info(
+            "实例心跳上报已启动：instance_id=%s hostname=%s source=%s primary=%s",
+            instance_hostname(),
+            real_hostname(),
+            "NODE_ID" if configured_node_id() else ("INSTANCE_NAME" if os.environ.get("INSTANCE_NAME") else "hostname"),
+            settings.TASK_SCHEDULER_ENABLED,
+        )
 
     async def stop(self) -> None:
         task = self._task
@@ -478,6 +529,11 @@ def _parse_instance(host: str, raw: Dict[str, Any], alias: str, series: List[Dic
         },
         "runtime": {
             "kind": data.get("runtime_kind", ""),
+            # 实例 ID 由 key 提供；hostname/node_id 是新增采集项，旧快照里没有时
+            # 回退到 host，保证升级过程中页面不出现空白。
+            "instance_id": data.get("instance_id", "") or host,
+            "node_id": data.get("node_id", ""),
+            "hostname": data.get("hostname", "") or data.get("node_name", "") or host,
             "node_name": data.get("node_name", ""),
             "pod_ip": data.get("pod_ip", ""),
             "python_version": data.get("python_version", ""),

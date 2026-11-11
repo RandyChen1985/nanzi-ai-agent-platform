@@ -7,7 +7,8 @@ metadata:
     app.kubernetes.io/name: nanzi-ai-agent
     app.kubernetes.io/component: api
 data:
-  API_SERVICE_ENV: "prod"
+  # production = 生产模式：500/503 不回显内部异常详情，且不挂载 /api/test/echo。
+  API_SERVICE_ENV: "production"
   API_SERVICE_PORT: "8001"
   API_SERVICE_LOG_LEVEL: "INFO"
   LOG_LEVEL: "INFO"

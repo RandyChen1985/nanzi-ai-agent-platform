@@ -1012,7 +1012,9 @@ metadata:
     app.kubernetes.io/name: nanzi-ai-agent
     app.kubernetes.io/component: api
 data:
-  API_SERVICE_ENV: "prod"
+  # production 是「生产模式」的唯一正式取值：隐藏 500/503 的内部错误详情，
+  # 且不挂载 /api/test/echo 调试端点。
+  API_SERVICE_ENV: "production"
   API_SERVICE_PORT: "8001"
   API_SERVICE_LOG_LEVEL: "INFO"
   LOG_LEVEL: "INFO"
