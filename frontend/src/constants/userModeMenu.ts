@@ -10,7 +10,7 @@
  * - `onDenied: 'lock'`：没权限也保留位置、置灰、点击提示联系管理员。
  *   只给「知识库」用——用户需要知道平台有这个能力，否则会以为资料传不上去。
  * - `onDenied: 'hide'`（默认）：没权限直接不渲染，避免点进去被守卫弹回来。
- * - `adminOnly`：只给管理员看（系统管理）。
+ * - `adminOnly`：只给管理员看（当前只有「更多 → 系统设置」用）。
  *
  * 定时任务刻意不挂权限码：它只列当前用户自己建的任务，走 /dashboard/my-tasks，
  * 属于「人人都有」的能力；而 /dashboard/tasks（任务调度台，能看全平台任务）
@@ -147,6 +147,18 @@ export const USER_MODE_MENU: readonly UserModeMenuItem[] = [
         // 所以按 hide 处理，不在这里露出来。
         path: "/dashboard",
         permission: "menu:dashboard",
+      },
+      {
+        key: "system",
+        label: "系统设置",
+        icon: "system",
+        // 管理员在用户模式下也要能直达系统配置。以前这里没有入口，改一个配置要
+        // 先切到专业模式、再从左侧菜单进——日常维护多绕一步。
+        // 普通用户没有 menu:system:config，露出来只会被守卫踢回落地页，
+        // 所以 adminOnly + 权限码双保险：两个条件都满足才渲染。
+        path: "/dashboard/system",
+        permission: "menu:system:config",
+        adminOnly: true,
       },
     ],
   },
