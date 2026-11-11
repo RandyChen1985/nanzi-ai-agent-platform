@@ -73,9 +73,11 @@ const userAllMenus = resolveUserModeMenu({
     "menu:memory_management",
     "menu:token_stats",
     "menu:dashboard",
-    // 就算真把这个菜单码发给普通用户，adminOnly 也必须把它挡住：
-    // 系统设置是管理员的便捷入口，不是又一个可授权的菜单
+    // 就算真把这些菜单码发给普通用户，adminOnly 也必须把它们挡住：
+    // 用户管理 / 角色管理 / 系统设置是管理员的便捷入口，不是又一次可授权
     "menu:system:config",
+    "menu:system:users",
+    "menu:system:roles",
   ],
   isAdmin: false,
 });
@@ -102,7 +104,7 @@ const expect = {
   nothing: ["experts", "tasks", "library", "workspace", "more"],
   tasksAlwaysVisible: true,
   admin: ["new-chat", "experts", "tasks", "library", "workspace", "more"],
-  adminMore: ["workbench", "token", "overview", "system"],
+  adminMore: ["workbench", "token", "overview", "users", "roles", "system"],
   adminHasSystem: true,
   userAllMenusMore: ["workbench", "token", "overview"],
   userHasSystem: false,

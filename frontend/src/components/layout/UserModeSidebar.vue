@@ -55,8 +55,12 @@
       想换入口得先滚回顶部。菜单内容本身也会随「专家」「更多」展开变长，所以给它
       自己的 52vh 上限与滚动条。
     -->
-    <div class="flex-shrink-0 px-2.5">
-      <div class="max-h-[52vh] overflow-y-auto custom-scrollbar">
+    <div class="relative flex-shrink-0 px-2.5">
+      <div
+        ref="menuScrollRef"
+        class="max-h-[52vh] overflow-y-auto custom-scrollbar"
+        @scroll.passive="updateMenuOverflow"
+      >
         <nav class="flex flex-col gap-0.5" aria-label="用户模式导航">
           <template v-for="item in menu" :key="item.key">
             <!-- 一级项（非分组） -->
@@ -132,6 +136,17 @@
           </template>
         </nav>
       </div>
+      <!--
+        展开「更多」后子项会超出 52vh，滚动条之外的那几项看起来就像不存在——
+        加完「系统设置」后自己都找了两遍才发现在下面。压一层渐隐告诉用户
+        「下面还有」，纯视觉、不拦点击。
+      -->
+      <div
+        v-show="menuOverflowBelow"
+        class="pointer-events-none absolute inset-x-2.5 bottom-0 h-8 bg-gradient-to-t"
+        :class="lightTheme ? 'from-white' : 'from-sidebar'"
+        aria-hidden="true"
+      />
     </div>
 
     <!-- 会话列表（历史会话）：收起侧栏时空间不够，整块隐藏（v-show 保住滚动位置与搜索态） -->
@@ -658,6 +673,26 @@ const menu = computed<ResolvedUserModeItem[]>(() =>
     isAdmin: String(props.role || "").toLowerCase() === "admin",
   }),
 )
+
+/** 菜单滚动容器：用来判断「下面还有没有内容」 */
+const menuScrollRef = ref<HTMLElement | null>(null)
+/**
+ * 滚动区底部是否还有内容。
+ *
+ * 菜单区限高 52vh，「更多」展开后子项会溢出——溢出部分没有任何视觉提示，
+ * 用户会以为菜单就这么多（作者本人就漏看过「系统设置」）。
+ * 留 4px 容差：亚像素缩放时 scrollHeight 常比 clientHeight 大 1 左右，
+ * 不加容差会在本来就没溢出时也闪出渐隐。
+ */
+const menuOverflowBelow = ref(false)
+const updateMenuOverflow = () => {
+  const el = menuScrollRef.value
+  if (!el) return
+  menuOverflowBelow.value = el.scrollHeight - el.scrollTop - el.clientHeight > 4
+}
+
+// 内容变化（展开分组、权限码到位）不会触发 scroll，要用 ResizeObserver 补
+let menuResizeObserver: ResizeObserver | null = null
 
 /**
  * 分组展开状态：**只由「当前路由是否在该组内」决定**，外加用户点父项时的临时切换。
@@ -1350,6 +1385,15 @@ onMounted(() => {
   document.addEventListener("click", onDocumentClick)
   window.addEventListener("resize", handleResize)
   window.addEventListener("nanzi:conversation-active", onConversationActive)
+  void nextTick(updateMenuOverflow)
+  if (typeof ResizeObserver !== "undefined" && menuScrollRef.value) {
+    // 观察 nav 本身：分组展开只改内部高度，容器自身尺寸不变
+    const nav = menuScrollRef.value.firstElementChild
+    if (nav) {
+      menuResizeObserver = new ResizeObserver(() => updateMenuOverflow())
+      menuResizeObserver.observe(nav)
+    }
+  }
   void pinnedApi.load()
   void loadTasks()
 })
@@ -1364,6 +1408,8 @@ onUnmounted(() => {
     clearTimeout(taskRefreshTimer)
     taskRefreshTimer = null
   }
+  menuResizeObserver?.disconnect()
+  menuResizeObserver = null
   if (resizeTimer) clearTimeout(resizeTimer)
   if (taskSearchTimer) clearTimeout(taskSearchTimer)
   if (refreshFlashTimer) {

@@ -308,11 +308,17 @@ def test_more_menu_holds_curated_entries_plus_admin_only_system_config(menu: str
     # 个人中心入口收敛到头像弹层（AccountMenu），侧栏不重复第二份
     assert 'key: "personal"' not in more_block
 
-    system_block = more_block.split('key: "system"', 1)[1].split("},", 1)[0]
-    assert 'label: "系统设置"' in system_block
-    assert 'path: "/dashboard/system"' in system_block
-    assert 'permission: "menu:system:config"' in system_block
-    assert "adminOnly: true" in system_block
+    # 三个后台入口同一套口径：path + 菜单码 + adminOnly，缺一个就会漏给普通用户
+    for key, label, path, perm in (
+        ("users", "用户管理", "/dashboard/users", "menu:system:users"),
+        ("roles", "角色管理", "/dashboard/roles", "menu:system:roles"),
+        ("system", "系统设置", "/dashboard/system", "menu:system:config"),
+    ):
+        block = more_block.split(f'key: "{key}"', 1)[1].split("},", 1)[0]
+        assert f'label: "{label}"' in block
+        assert f'path: "{path}"' in block
+        assert f'permission: "{perm}"' in block
+        assert "adminOnly: true" in block
 
 
 def test_workspace_page_hides_session_mount_action() -> None:
@@ -590,8 +596,9 @@ def test_submenu_items_carry_icons() -> None:
     menu = _read("frontend/src/constants/userModeMenu.ts")
     sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
 
-    # 三个专家子项 + 更多里的四项
-    for key in ('"expert"', '"skill"', '"connector"', '"workbench"', '"token"', '"overview"', '"system"'):
+    # 三个专家子项 + 更多里的六项
+    for key in ('"expert"', '"skill"', '"connector"', '"workbench"', '"token"',
+                '"overview"', '"users"', '"roles"', '"system"'):
         segment = menu.split(f"key: {key}", 1)[1].split("}", 1)[0]
         assert "icon:" in segment, f"{key} 缺少图标"
 
@@ -905,3 +912,29 @@ def test_filter_panel_has_backdrop_so_iframe_clicks_close_it(sidebar: str) -> No
     assert sidebar.count('v-if="filterPanelOpen"') >= 2
     backdrop = sidebar.split("data-conversation-filter-backdrop", 1)[1].split("/>", 1)[0]
     assert "pointerdown" in backdrop
+
+
+def test_menu_scroll_area_signals_more_content_below() -> None:
+    """菜单区限高 52vh，溢出时必须给「下面还有」的提示。
+
+    真实翻车：加了「系统设置」后自己也漏看过——「更多」展开的子项落到滚动条
+    之外，那里没有任何视觉线索，看起来就像菜单只有这么多。所以锁三件事：
+    有渐变提示、只在真有溢出时显示（4px 容差防亚像素误闪）、不拦点击。
+    """
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    # 滚动容器可定位、可观察
+    assert 'ref="menuScrollRef"' in sidebar
+    assert 'class="max-h-[52vh] overflow-y-auto custom-scrollbar"' in sidebar
+    assert '@scroll.passive="updateMenuOverflow"' in sidebar
+
+    # 判据：还有内容在下面才显示
+    assert 'menuOverflowBelow.value = el.scrollHeight - el.scrollTop - el.clientHeight > 4' in sidebar
+    assert 'v-show="menuOverflowBelow"' in sidebar
+    # 纯视觉：不能挡住「更多」组最后一项的点击
+    assert "pointer-events-none absolute inset-x-2.5 bottom-0 h-8 bg-gradient-to-t" in sidebar
+
+    # 展开分组只改内部高度，scroll 事件不会触发，必须用 ResizeObserver 补
+    assert "new ResizeObserver(() => updateMenuOverflow())" in sidebar
+    assert "menuResizeObserver.observe(nav)" in sidebar
+    assert "menuResizeObserver?.disconnect()" in sidebar

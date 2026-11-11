@@ -27,6 +27,8 @@ export type UserModeIconKey =
   | "rectangle_stack"
   | "dashboard"
   | "memory"
+  | "users"
+  | "roles"
   | "token_stats"
   | "user_circle"
   | "system"
@@ -147,6 +149,24 @@ export const USER_MODE_MENU: readonly UserModeMenuItem[] = [
         // 所以按 hide 处理，不在这里露出来。
         path: "/dashboard",
         permission: "menu:dashboard",
+      },
+      {
+        key: "users",
+        label: "用户管理",
+        icon: "users",
+        // 与「系统设置」同一套口径：管理员专用 + 菜单码双保险。
+        // 普通用户既没有 menu:system:users，管理员身份也不成立，两个条件都挡。
+        path: "/dashboard/users",
+        permission: "menu:system:users",
+        adminOnly: true,
+      },
+      {
+        key: "roles",
+        label: "角色管理",
+        icon: "roles",
+        path: "/dashboard/roles",
+        permission: "menu:system:roles",
+        adminOnly: true,
       },
       {
         key: "system",
