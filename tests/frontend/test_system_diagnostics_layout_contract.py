@@ -88,7 +88,7 @@ def test_action_buttons_are_inline_not_a_vertical_full_width_stack():
     for label in ("测试连接", "扫描 Keys", "清理 Keys", "重新检测", "重构本地向量数据"):
         assert label in top, f"{label} 按钮应位于顶部操作区"
 
-    assert "flex-wrap gap-2" in top, "操作按钮应横向排布并可换行"
+    assert "flex-wrap" in top, "操作按钮应横向排布并可换行"
     assert "w-full inline-flex justify-center items-center" not in top, (
         "操作按钮不应再使用整列宽（w-full）的纵向堆叠样式"
     )

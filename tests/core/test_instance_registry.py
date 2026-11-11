@@ -208,6 +208,7 @@ def _snapshot(host: str, *, primary: bool = False, age_seconds: int = 3, **overr
         "error_rate": 0.12,
         "inflight": 7,
         "chat_inflight": 3,
+        "loop_lag_p95_ms": 12.5,
         "heartbeat_at": registry._now_iso(now),
         "heartbeat_epoch": f"{now - age_seconds:.3f}",
         "heartbeat_seq": 9,
@@ -236,6 +237,8 @@ def test_parse_instance_maps_types_and_computes_online(fake_redis):
     }
     assert item["traffic"]["qps"] == 34.5
     assert item["traffic"]["chat_inflight"] == 3
+    # 事件循环延迟：HTTP 指标全绿时它可能是唯一的坏消息，必须一路透传到页面
+    assert item["traffic"]["loop_lag_p95_ms"] == 12.5
 
 
 def test_parse_instance_marks_stale_heartbeat_offline(fake_redis):
@@ -526,7 +529,17 @@ def test_request_metrics_drops_samples_outside_window():
 
 
 def test_classify_path_separates_chat_from_api():
+    """「对话流进行中」只认真正的流式入口。
+
+    这里踩过一个坑：前缀曾写成 ``/api/portal/chat``，而门户对话实际走
+    ``/api/v1/chat/conversation/{id}/stream-events``，于是这个指标恒为 0——
+    页面看着像「没人聊天」，其实一次都没统计到。同前缀下的历史、反馈这类
+    短请求也不该算进「对话流」。
+    """
     from app.core.request_metrics import API_BUCKET, CHAT_BUCKET, classify_path
 
-    assert classify_path("/api/portal/chat/stream") == CHAT_BUCKET
+    assert classify_path("/api/v1/chat/conversation/abc/stream-events") == CHAT_BUCKET
+    assert classify_path("/api/v1/chat/code-executions/stream") == CHAT_BUCKET
+    assert classify_path("/api/v1/chat/history") == API_BUCKET
+    assert classify_path("/api/portal/chat/intent") == API_BUCKET
     assert classify_path("/api/portal/system/instances") == API_BUCKET

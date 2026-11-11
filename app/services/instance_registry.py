@@ -32,7 +32,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.redis import get_redis
-from app.core.request_metrics import metrics
+from app.core.request_metrics import loop_lag, metrics
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +263,8 @@ async def _collect_snapshot(client, seq: int) -> Dict[str, str]:
         online_users = 0
 
     sw_metrics = metrics.snapshot()
+    # 事件循环延迟是「进程视角」：HTTP 指标全好的时候它也可能已经很难看
+    loop_metrics = loop_lag.snapshot()
     proc_metrics = _collect_process_metrics()
 
     snapshot: Dict[str, Any] = {
@@ -305,6 +307,7 @@ async def _collect_snapshot(client, seq: int) -> Dict[str, str]:
         "error_rate": sw_metrics["error_rate"],
         "inflight": sw_metrics["inflight"],
         "chat_inflight": sw_metrics["chat_inflight"],
+        "loop_lag_p95_ms": loop_metrics["loop_lag_p95_ms"],
         "heartbeat_at": _now_iso(now),
         "heartbeat_epoch": f"{now:.3f}",
         "heartbeat_seq": seq,
@@ -511,6 +514,7 @@ def _parse_instance(host: str, raw: Dict[str, Any], alias: str, series: List[Dic
             "error_rate": _to_float(data.get("error_rate")),
             "inflight": _to_int(data.get("inflight")),
             "chat_inflight": _to_int(data.get("chat_inflight")),
+            "loop_lag_p95_ms": _to_float(data.get("loop_lag_p95_ms")),
         },
         "cluster": {"online_users": _to_int(data.get("online_users"))},
         "series": {

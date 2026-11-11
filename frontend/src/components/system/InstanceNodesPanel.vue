@@ -68,6 +68,8 @@ interface InstanceItem {
     error_rate: number
     inflight: number
     chat_inflight: number
+    /** 事件循环延迟（最近 60s P95）：HTTP 指标看不出「进程堵住了」，看这个 */
+    loop_lag_p95_ms: number
   }
   cluster: { online_users: number }
   series: { cpu: number[]; mem: number[]; qps: number[] }
@@ -392,7 +394,7 @@ onUnmounted(() => {
           {{ overview.summary.primary }}
           <span class="text-xs font-medium text-gray-400">/ {{ overview.summary.total }}</span>
         </div>
-        <div class="text-[11px] text-gray-400">TASK_SCHEDULER_ENABLED=true</div>
+        <div class="break-all text-[11px] text-gray-400">TASK_SCHEDULER_ENABLED=true</div>
       </div>
       <div class="rounded-xl border border-gray-200/80 bg-white px-4 py-3 shadow-sm">
         <div class="text-xs text-gray-500">离线</div>
@@ -455,17 +457,17 @@ onUnmounted(() => {
         <div class="ml-auto flex items-center gap-2">
           <button
             type="button"
-            class="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition"
+            class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border px-2 py-1 text-[11px] font-medium transition"
             :class="autoRefresh ? 'border-gray-200 text-gray-600' : 'border-gray-200 text-gray-400'"
             @click="toggleAutoRefresh"
           >
             <ArrowPathIcon class="h-3.5 w-3.5" :class="autoRefresh ? 'animate-none' : ''" />
             自动刷新 15s：{{ autoRefresh ? '开' : '关' }}
           </button>
-          <div class="inline-flex rounded-lg border border-gray-200/70 bg-gray-50 p-0.5">
+          <div class="inline-flex shrink-0 rounded-lg border border-gray-200/70 bg-gray-50 p-0.5">
             <button
               type="button"
-              class="rounded-md px-2.5 py-1 text-[11px] transition"
+              class="whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition"
               :class="viewMode === 'card' ? 'bg-white font-semibold text-gray-900 shadow-sm' : 'text-gray-500'"
               @click="viewMode = 'card'"
             >
@@ -473,7 +475,7 @@ onUnmounted(() => {
             </button>
             <button
               type="button"
-              class="rounded-md px-2.5 py-1 text-[11px] transition"
+              class="whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition"
               :class="viewMode === 'table' ? 'bg-white font-semibold text-gray-900 shadow-sm' : 'text-gray-500'"
               @click="viewMode = 'table'"
             >
@@ -509,7 +511,7 @@ onUnmounted(() => {
           ]"
           @click="openDetail(item)"
         >
-          <div class="flex items-start gap-2.5">
+          <div class="flex flex-wrap items-start gap-2.5">
             <div
               class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border"
               :class="
@@ -524,7 +526,7 @@ onUnmounted(() => {
             </div>
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-1.5">
-                <span class="max-w-[240px] truncate text-sm font-semibold text-gray-900" :title="displayName(item)">
+                <span class="max-w-full truncate text-sm font-semibold text-gray-900 lg:max-w-[240px]" :title="displayName(item)">
                   {{ displayName(item) }}
                 </span>
                 <button
@@ -536,7 +538,7 @@ onUnmounted(() => {
                   <PencilSquareIcon class="h-3.5 w-3.5" />
                 </button>
                 <span
-                  class="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold"
+                  class="inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10px] font-semibold"
                   :class="item.primary ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-gray-200 bg-gray-50 text-gray-500'"
                 >
                   {{ item.primary ? '主节点' : '从节点' }}
@@ -580,7 +582,7 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="mt-2 grid grid-cols-4 gap-1.5">
+          <div class="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
             <div class="rounded-lg border border-dashed border-gray-200 px-2 py-1">
               <div class="text-[10px] text-gray-400">QPS</div>
               <div class="text-xs font-semibold text-gray-800">{{ item.online ? item.traffic.qps : '—' }}</div>
@@ -955,6 +957,7 @@ onUnmounted(() => {
                 { k: '5xx 错误率', v: `${selectedInstance.traffic.error_rate}%` },
                 { k: '处理中请求', v: selectedInstance.traffic.inflight },
                 { k: '对话流进行中', v: selectedInstance.traffic.chat_inflight },
+                { k: '事件循环延迟', v: `${selectedInstance.traffic.loop_lag_p95_ms} ms` },
                 { k: '在线用户（集群）', v: selectedInstance.cluster.online_users }
               ]" :key="metric.k" class="rounded-lg border border-dashed border-gray-200 px-2 py-1.5">
                 <div class="truncate text-[10px] text-gray-400">{{ metric.k }}</div>
@@ -968,7 +971,7 @@ onUnmounted(() => {
             <div class="mb-1.5 flex items-center gap-2 text-[11px] font-semibold text-gray-400">
               趋势
               <span class="h-px flex-1 bg-gray-100" />
-              <div class="inline-flex rounded-lg border border-gray-200/70 bg-gray-50 p-0.5">
+              <div class="inline-flex shrink-0 rounded-lg border border-gray-200/70 bg-gray-50 p-0.5">
                 <button
                   v-for="hours in [1, 6, 24]"
                   :key="hours"

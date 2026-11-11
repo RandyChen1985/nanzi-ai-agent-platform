@@ -3660,37 +3660,41 @@ onUnmounted(() => {
        </div>
 
         <!-- DIAGNOSTICS TAB -->
-        <div v-else-if="activeTab === 'diagnostics'" class="flex gap-4 h-full min-h-0">
-          <!-- 二级左栏：横向一级 tab 只保留入口，诊断内部再分「诊断 / 实例」 -->
-          <aside class="flex w-44 shrink-0">
+        <div v-else-if="activeTab === 'diagnostics'" class="flex h-full min-h-0 flex-col gap-3 lg:flex-row lg:gap-4">
+          <!-- 二级导航：窄屏横排成一行页签，宽屏才恢复左侧栏。
+               固定 176px 的左栏在手机上会把右侧压到 200px 以下：卡片标题、按钮、
+               说明文字全部折成竖排字，按钮还会被裁到屏幕外。 -->
+          <aside class="flex shrink-0 lg:w-44">
             <!-- 通高白卡：左栏只放两个页签，别让下面的版面底色露出来 -->
-            <div class="flex flex-1 flex-col rounded-xl border border-gray-200/80 bg-white p-2 shadow-sm">
-              <div class="px-2 pb-1.5 pt-1 text-[10.5px] font-semibold tracking-wide text-gray-400">系统诊断</div>
-              <button
-                type="button"
-                class="mb-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-colors cursor-pointer"
-                :class="diagSection === 'diag' ? 'bg-primary/10 font-semibold text-primary ring-1 ring-primary/20' : 'text-gray-600 hover:bg-gray-50'"
-                @click="diagSection = 'diag'"
-              >
-                <BoltIcon class="h-4 w-4 shrink-0" />
-                诊断
-              </button>
-              <button
-                type="button"
-                class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-colors cursor-pointer"
-                :class="diagSection === 'instances' ? 'bg-primary/10 font-semibold text-primary ring-1 ring-primary/20' : 'text-gray-600 hover:bg-gray-50'"
-                @click="diagSection = 'instances'"
-              >
-                <ServerStackIcon class="h-4 w-4 shrink-0" />
-                实例
-                <span
-                  v-if="instanceSummary.total"
-                  class="ml-auto rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700"
+            <div class="flex w-full flex-col rounded-xl border border-gray-200/80 bg-white p-2 shadow-sm lg:flex-1">
+              <div class="hidden px-2 pb-1.5 pt-1 text-[10.5px] font-semibold tracking-wide text-gray-400 lg:block">系统诊断</div>
+              <div class="flex items-center gap-1 lg:flex-col lg:items-stretch lg:gap-0">
+                <button
+                  type="button"
+                  class="flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-2 py-1.5 text-[13px] transition-colors cursor-pointer lg:mb-0.5 lg:flex-none lg:justify-start"
+                  :class="diagSection === 'diag' ? 'bg-primary/10 font-semibold text-primary ring-1 ring-primary/20' : 'text-gray-600 hover:bg-gray-50'"
+                  @click="diagSection = 'diag'"
                 >
-                  {{ instanceSummary.online }}/{{ instanceSummary.total }}
-                </span>
-              </button>
-              <div class="mt-auto rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-2 py-1.5 text-[10.5px] leading-relaxed text-gray-500">
+                  <BoltIcon class="h-4 w-4 shrink-0" />
+                  诊断
+                </button>
+                <button
+                  type="button"
+                  class="flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-2 py-1.5 text-[13px] transition-colors cursor-pointer lg:flex-none lg:justify-start"
+                  :class="diagSection === 'instances' ? 'bg-primary/10 font-semibold text-primary ring-1 ring-primary/20' : 'text-gray-600 hover:bg-gray-50'"
+                  @click="diagSection = 'instances'"
+                >
+                  <ServerStackIcon class="h-4 w-4 shrink-0" />
+                  实例
+                  <span
+                    v-if="instanceSummary.total"
+                    class="ml-1 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 lg:ml-auto"
+                  >
+                    {{ instanceSummary.online }}/{{ instanceSummary.total }}
+                  </span>
+                </button>
+                </div>
+              <div class="mt-auto hidden rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-2 py-1.5 text-[10.5px] leading-relaxed text-gray-500 lg:block">
                 主 / 从只影响定时调度，其他能力每个实例都一样。
               </div>
             </div>
@@ -3776,15 +3780,15 @@ onUnmounted(() => {
             <!-- 状态 2：展开态完整双卡片 -->
             <div v-else class="space-y-2">
               <!-- 卡片上方轻量操作栏（放收起按钮） -->
-              <div class="flex items-center justify-between px-1 text-xs text-gray-500">
-                <span class="font-medium text-gray-600 flex items-center gap-1.5">
+              <div class="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-gray-500">
+                <span class="flex items-center gap-1.5 font-medium text-gray-600">
                   <span class="h-1.5 w-1.5 rounded-full bg-primary/80"></span>
                   服务连接与组件能力概览
                 </span>
                 <button
                   @click="toggleDiagnosticsOverview"
                   type="button"
-                  class="inline-flex items-center gap-1 py-1 px-2 rounded-lg text-xs font-medium text-gray-500 hover:text-primary hover:bg-gray-100 transition-colors cursor-pointer"
+                  class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg px-2 py-1 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary cursor-pointer"
                 >
                   <span>收起概览</span>
                   <ChevronUpIcon class="h-3.5 w-3.5" />
@@ -3797,14 +3801,14 @@ onUnmounted(() => {
             <div class="rounded-xl border border-gray-200/80 bg-white shadow-sm hover:shadow-md transition-all duration-200 p-4 sm:p-5 flex flex-col justify-between">
               <div>
                 <!-- 卡片头部与状态徽章 -->
-                <div class="flex items-start justify-between gap-3">
+                <div class="flex flex-wrap items-start justify-between gap-3">
                   <div class="flex items-center gap-3 min-w-0">
                     <div class="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 text-primary shadow-xs">
                       <CircleStackIcon class="h-5 w-5" />
                     </div>
                     <div class="min-w-0">
-                      <div class="flex items-center gap-2">
-                        <h3 class="text-base font-semibold text-gray-900 tracking-tight">Redis 服务</h3>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <h3 class="whitespace-nowrap text-base font-semibold text-gray-900 tracking-tight">Redis 服务</h3>
                         <span class="text-[10px] font-mono text-gray-500 bg-gray-100/90 border border-gray-200/60 px-1.5 py-0.5 rounded">Core Cache</span>
                       </div>
                       <p class="text-xs text-gray-500 mt-0.5 truncate">缓存加速、会话维持与限流队列</p>
@@ -3829,8 +3833,8 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 架构信息条 -->
-                <div class="mt-3.5 mb-3 py-1.5 px-3 rounded-lg bg-gray-50/80 border border-gray-100 text-xs text-gray-500 flex items-center justify-between">
-                  <span class="flex items-center gap-1.5 text-gray-600">
+                <div class="mt-3.5 mb-3 py-1.5 px-3 rounded-lg bg-gray-50/80 border border-gray-100 text-xs text-gray-500 flex flex-wrap items-center justify-between gap-2">
+                  <span class="flex min-w-0 items-center gap-1.5 text-gray-600">
                     <InformationCircleIcon class="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
                     <span>核心组件：分布式缓存与热点数据读写</span>
                   </span>
@@ -3839,8 +3843,8 @@ onUnmounted(() => {
               </div>
 
               <!-- 底部操作按钮组 -->
-              <div class="border-t border-gray-100 pt-3 flex items-center justify-between flex-wrap gap-2">
-                <div class="flex items-center gap-2">
+              <div class="border-t border-gray-100 pt-3 flex flex-wrap items-center justify-between gap-2">
+                <div class="flex flex-wrap items-center gap-2">
                   <!-- 主按钮：测试连接 -->
                   <button
                     @click="testConnection('redis')"
@@ -3881,14 +3885,14 @@ onUnmounted(() => {
             <div class="rounded-xl border border-gray-200/80 bg-white shadow-sm hover:shadow-md transition-all duration-200 p-4 sm:p-5 flex flex-col justify-between">
               <div>
                 <!-- 卡片头部与状态徽章 -->
-                <div class="flex items-start justify-between gap-3">
+                <div class="flex flex-wrap items-start justify-between gap-3">
                   <div class="flex items-center gap-3 min-w-0">
                     <div class="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 text-primary shadow-xs">
                       <CpuChipIcon class="h-5 w-5" />
                     </div>
                     <div class="min-w-0">
-                      <div class="flex items-center gap-2">
-                        <h3 class="text-base font-semibold text-gray-900 tracking-tight">Redis 向量搜索</h3>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <h3 class="whitespace-nowrap text-base font-semibold text-gray-900 tracking-tight">Redis 向量搜索</h3>
                         <span class="text-[10px] font-mono text-gray-500 bg-gray-100/90 border border-gray-200/60 px-1.5 py-0.5 rounded">RediSearch</span>
                       </div>
                       <p class="text-xs text-gray-500 mt-0.5 truncate">检测会话摘要、长期记忆与本地向量引擎能力</p>
@@ -3922,8 +3926,8 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 架构信息条 -->
-                <div class="mt-3.5 mb-3 py-1.5 px-3 rounded-lg bg-gray-50/80 border border-gray-100 text-xs text-gray-500 flex items-center justify-between">
-                  <span class="flex items-center gap-1.5 text-gray-600">
+                <div class="mt-3.5 mb-3 py-1.5 px-3 rounded-lg bg-gray-50/80 border border-gray-100 text-xs text-gray-500 flex flex-wrap items-center justify-between gap-2">
+                  <span class="flex min-w-0 items-center gap-1.5 text-gray-600">
                     <InformationCircleIcon class="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
                     <span>检索算法：HNSW 向量近似邻近索引</span>
                   </span>
@@ -3932,8 +3936,8 @@ onUnmounted(() => {
               </div>
 
               <!-- 底部操作按钮组 -->
-              <div class="border-t border-gray-100 pt-3 flex items-center justify-between flex-wrap gap-2">
-                <div class="flex items-center gap-2">
+              <div class="border-t border-gray-100 pt-3 flex flex-wrap items-center justify-between gap-2">
+                <div class="flex flex-wrap items-center gap-2">
                   <!-- 主按钮：重新检测 -->
                   <button
                     @click="testRedisVectorSearch(true)"
@@ -3999,13 +4003,13 @@ onUnmounted(() => {
 
           <!-- 下方：诊断控制台 / Redis 浏览器（全宽一体化面板） -->
           <div class="flex-1 min-h-[520px] bg-white rounded-xl shadow-sm border border-gray-200/80 flex flex-col overflow-hidden">
-            <div class="px-4 py-2.5 flex justify-between items-center border-b border-gray-100 bg-white/95 flex-shrink-0">
+            <div class="flex flex-shrink-0 flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-white/95 px-4 py-2.5">
               <!-- 分段控制器 Tab -->
               <div class="inline-flex p-0.5 bg-gray-100/90 rounded-lg border border-gray-200/40">
                 <button
                   @click="diagSubTab = 'console'"
                   type="button"
-                  class="px-3.5 py-1.5 rounded-md text-xs transition-all duration-150 flex items-center cursor-pointer"
+                  class="flex cursor-pointer items-center whitespace-nowrap rounded-md px-3.5 py-1.5 text-xs transition-all duration-150"
                   :class="diagSubTab === 'console' ? 'bg-white text-gray-900 shadow-xs font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'"
                 >
                   <CommandLineIcon class="w-3.5 h-3.5 mr-1.5" :class="diagSubTab === 'console' ? 'text-primary' : 'text-gray-400'" />
@@ -4014,7 +4018,7 @@ onUnmounted(() => {
                 <button
                   @click="diagSubTab = 'redis'"
                   type="button"
-                  class="px-3.5 py-1.5 rounded-md text-xs transition-all duration-150 flex items-center cursor-pointer"
+                  class="flex cursor-pointer items-center whitespace-nowrap rounded-md px-3.5 py-1.5 text-xs transition-all duration-150"
                   :class="diagSubTab === 'redis' ? 'bg-white text-gray-900 shadow-xs font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'"
                 >
                   <CircleStackIcon class="w-3.5 h-3.5 mr-1.5" :class="diagSubTab === 'redis' ? 'text-primary' : 'text-gray-400'" />
@@ -4046,9 +4050,9 @@ onUnmounted(() => {
             </div>
 
             <!-- Tab: Redis Browser -->
-            <div v-else-if="diagSubTab === 'redis'" class="flex-1 flex space-x-4 overflow-hidden p-4 bg-gray-50/60">
+            <div v-else-if="diagSubTab === 'redis'" class="flex-1 flex flex-col gap-3 overflow-y-auto p-4 bg-gray-50/60 lg:flex-row lg:gap-0 lg:space-x-4 lg:overflow-hidden">
               <!-- Left Column: Keys list -->
-              <div class="w-2/5 bg-white border border-gray-200/80 rounded-xl p-3 flex flex-col h-full overflow-hidden shadow-xs">
+              <div class="flex max-h-[45vh] min-h-[240px] w-full flex-col overflow-hidden rounded-xl border border-gray-200/80 bg-white p-3 shadow-xs lg:h-full lg:max-h-none lg:w-2/5">
                 <!-- 一体化搜索栏 -->
                 <div class="mb-3 relative flex items-center flex-shrink-0">
                   <div class="pointer-events-none absolute inset-y-0 left-0 pl-3 flex items-center">
@@ -4172,7 +4176,7 @@ onUnmounted(() => {
               </div>
 
               <!-- Right Column: Key detail -->
-              <div class="flex-1 bg-white border border-gray-200 rounded-lg p-4 flex flex-col h-full overflow-hidden">
+              <div class="flex min-h-[240px] flex-1 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white p-4 lg:h-full">
                 <div v-if="redisDetailLoading" class="flex-1 flex flex-col items-center justify-center">
                   <span class="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mb-2"></span>
                   <p class="text-gray-400 text-xs">正在加载详情...</p>

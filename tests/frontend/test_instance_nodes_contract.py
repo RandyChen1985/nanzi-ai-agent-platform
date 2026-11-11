@@ -164,3 +164,49 @@ def test_heartbeat_intervals_match_frontend_copy():
     assert instance_registry.SERIES_SAMPLE_INTERVAL_SECONDS == 60
     assert instance_registry.SERIES_TTL_SECONDS == 24 * 3600
     assert instance_registry.SPARK_POINTS == 60
+
+
+# --------------------------------------------------------------------------- #
+# 流量指标：九宫格必须真的凑满 9 格，且每格都有采集来源
+# --------------------------------------------------------------------------- #
+def test_traffic_grid_has_nine_live_metrics():
+    """详情弹窗「流量与运行态」是 3×3 布局。
+
+    少一格会留个空洞；更糟的是为了凑数摆一个没人写入的字段——上一轮
+    「对话流进行中」就因为前缀写错恒为 0，看着像「没人聊天」。
+    这里锁定九格全在，并且事件循环延迟排在其中。
+    """
+    src = _read("frontend/src/components/system/InstanceNodesPanel.vue")
+
+    start = src.index("流量与运行态（本节点 · 最近 60 秒）")
+    block = src[start:start + 1600]
+    metrics = [
+        "近 1 分钟请求",
+        "QPS",
+        "P95 延迟",
+        "P99 延迟",
+        "5xx 错误率",
+        "处理中请求",
+        "对话流进行中",
+        "事件循环延迟",
+        "在线用户（集群）",
+    ]
+    assert len(metrics) == 9
+    for label in metrics:
+        assert f"k: '{label}'" in block, f"九宫格缺「{label}」"
+    assert "selectedInstance.traffic.loop_lag_p95_ms" in block
+
+
+def test_loop_lag_is_collected_and_reported_by_every_node():
+    """四段齐全，缺一段页面就恒为 0。
+
+    启动 → 采集 → 心跳快照 → 接口读取。采样器忘了 start() 是最隐蔽的失败：
+    代码全在、测试全绿，唯独数字永远是 0。
+    """
+    from app.core import request_metrics
+
+    assert hasattr(request_metrics, "loop_lag"), "没有采样器"
+    assert "loop_lag.start()" in _read("app/main.py"), "采样器没在启动时拉起"
+    snapshot_src = _read("app/services/instance_registry.py")
+    assert '"loop_lag_p95_ms": loop_metrics["loop_lag_p95_ms"]' in snapshot_src
+    assert '"loop_lag_p95_ms": _to_float(data.get("loop_lag_p95_ms"))' in snapshot_src

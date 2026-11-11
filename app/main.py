@@ -77,6 +77,15 @@ async def lifespan(app: FastAPI):
         await heartbeat_reporter.start()
     except Exception as exc:  # noqa: BLE001 - 心跳是旁路，不能拖垮启动
         logging.warning("启动实例心跳上报失败（已忽略）: %s", exc)
+
+    # 事件循环延迟采样：与心跳同属旁路。QPS / P95 只看 HTTP，事件循环被同步
+    # 代码堵住时它们只会说「请求很少但很慢」，这个数能指出「里面堵住了」。
+    try:
+        from app.core.request_metrics import loop_lag
+
+        loop_lag.start()
+    except Exception as exc:  # noqa: BLE001 - 采样是旁路，不能拖垮启动
+        logging.warning("启动事件循环延迟采样失败（已忽略）: %s", exc)
     
     # Initialize Oracle Thick Mode if requested
     if os.environ.get("USE_ORACLE_THICK_MODE") == "1":
@@ -198,6 +207,12 @@ async def lifespan(app: FastAPI):
         await heartbeat_reporter.stop()
     except Exception as exc:  # noqa: BLE001
         logging.warning("停止实例心跳上报失败（已忽略）: %s", exc)
+    try:
+        from app.core.request_metrics import loop_lag
+
+        await loop_lag.stop()
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("停止事件循环延迟采样失败（已忽略）: %s", exc)
     await database.close_db()
     await redis.close_redis()
 
