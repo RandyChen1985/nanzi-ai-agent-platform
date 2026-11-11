@@ -17,6 +17,8 @@ export const RESULT_LABEL: Record<string, string> = {
   denied_by_platform_policy: '平台已关闭该场景',
   denied_disabled: '已停用',
   denied_expired: '已过期',
+  // 规则没匹配上（动态凭据定位）：和「没绑定」是两回事，别混成同一个词
+  rule_miss: '规则未命中',
   // 历史流水里出现过不带前缀的写法，留着才能正常显示老记录
   disabled: '已停用',
   expired: '已过期',

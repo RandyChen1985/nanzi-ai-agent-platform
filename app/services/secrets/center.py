@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import uuid
@@ -366,6 +367,10 @@ async def bind_secret(
             SecretBinding.consumer_type == consumer_type,
             SecretBinding.consumer_id == consumer_id,
             SecretBinding.slot == slot,
+            # 只清「固定绑定」那一行：同一槽位现在还能同时挂一条规则
+            # （rule 负责定位、fixed 作 on_miss=fallback_fixed 的回退目标）。
+            # 不带这个条件，配一次固定凭据就会把规则静默删掉。
+            SecretBinding.strategy == "fixed",
             # 兼容迁移前遗留的 NULL 行。不能写 in_([None, ''])：SQL 里
             # `x IN (NULL, '')` 对 NULL 求值是 NULL，永远匹配不到。
             or_(
@@ -399,6 +404,118 @@ async def bind_secret(
         },
     )
     await session.commit()
+    return binding
+
+
+async def bind_rule(
+    session,
+    *,
+    consumer_type: str,
+    consumer_id: str,
+    slot: str,
+    rule: dict | str | None,
+    bound_by_user_id: str | None,
+) -> SecretBinding:
+    """把一个槽位绑到「一条定位规则」上（``strategy='rule'``，无 ``secret_id``）。
+
+    与 ``bind_secret`` 分开而不是给它加参数：固定绑定要校验凭据归属与授权，
+    规则绑定没有凭据可校验——混在一个函数里会让两条校验路径互相纠缠，也容易在
+    「规则行该不该走授权检查」上出错（答案是不该，它不指向任何凭据）。
+
+    规则里**不能出现 secret_id**：``parse_rule`` 拒绝未知字段，所以改一条规则
+    永远变不成「读别人凭据」的手段。
+    """
+    from app.services.secrets.locator import RuleError, parse_rule
+
+    if consumer_type not in VALID_CONSUMER_TYPES:
+        raise SecretValidationError(f"未知的消费者类型: {consumer_type}")
+    if not consumer_id or not slot:
+        raise SecretValidationError("消费者与槽位不能为空")
+    prefix, _, slot_name = slot.partition(":")
+    if not prefix or not slot_name:
+        raise SecretValidationError(
+            "槽位格式应为 header:名称 / query:参数名 / body:字段 / env:变量名"
+        )
+    allowed = ALLOWED_SLOT_PREFIXES.get(consumer_type, frozenset())
+    if prefix not in allowed:
+        raise SecretValidationError(
+            f"{consumer_type} 不支持 {prefix}: 槽位，可用的前缀："
+            + " / ".join(sorted(allowed))
+        )
+
+    try:
+        spec = parse_rule(rule)
+    except RuleError as exc:
+        raise SecretValidationError(str(exc)) from exc
+
+    # 只落归一号过的字段，不原样存用户传进来的 dict：避免把未知字段
+    # （尤其是 secret_id）持久化下来，将来被读规则的代码误用。
+    payload = json.dumps(
+        {
+            "key_source": spec.key_source,
+            "transforms": list(spec.transforms),
+            "templates": list(spec.templates),
+            "target": spec.target,
+            "match": spec.match,
+            "on_miss": spec.on_miss,
+        },
+        ensure_ascii=False,
+    )
+
+    owner_key = bound_by_user_id or ""
+    existing = (
+        await session.execute(
+            select(SecretBinding).where(
+                SecretBinding.consumer_type == consumer_type,
+                SecretBinding.consumer_id == consumer_id,
+                SecretBinding.slot == slot,
+                SecretBinding.bound_by_user_id == owner_key,
+                SecretBinding.strategy == "rule",
+            )
+        )
+    ).scalars().first()
+
+    audit_detail = {
+        "consumer_type": consumer_type,
+        "consumer_id": consumer_id,
+        "slot": slot,
+        # 为空表示管理员配的全局规则；有值就是「只对这个人生效」
+        "global": not owner_key,
+        # 规则全文进审计：事后要能回答「当时配的是什么」，而不是只知道「配过」
+        "rule": json.loads(payload),
+    }
+
+    if existing is not None:
+        # 同一槽位重配规则 = 改规则，不新增第二条（唯一索引也会拦住）
+        existing.rule_json = payload
+        existing.secret_id = None
+        await session.commit()
+        await _audit(
+            action="bind_rule",
+            secret=None,
+            actor_id=bound_by_user_id,
+            detail={"updated": True, **audit_detail},
+        )
+        return existing
+
+    binding = SecretBinding(
+        id=str(uuid.uuid4()),
+        secret_id=None,
+        consumer_type=consumer_type,
+        consumer_id=consumer_id,
+        slot=slot,
+        bound_by_user_id=owner_key,
+        strategy="rule",
+        rule_json=payload,
+    )
+    session.add(binding)
+    await session.commit()
+    await _audit(
+        action="bind_rule",
+        secret=None,
+        actor_id=bound_by_user_id,
+        detail=audit_detail,
+    )
     return binding
 
 
@@ -465,8 +582,14 @@ async def unbind_slot(
     consumer_id: str,
     slot: str,
     bound_by_user_id: str | None,
+    strategy: str = "fixed",
 ) -> int:
-    """解绑。返回删除条数（0 表示本来就没绑）。"""
+    """解绑。返回删除条数（0 表示本来就没绑）。
+
+    ``strategy`` 默认 ``fixed``：同一槽位现在可以同时挂一条规则和一条固定绑定
+    （规则当定位、固定当回退目标），不区分就会把两条一起删掉。默认值让所有
+    既有调用方的行为保持不变。
+    """
     # 全局绑定用空串表示（见 bind_secret 的说明）；这里同时认迁移前的 NULL，
     # 否则升级前建的全局绑定会解不掉。
     owner_key = bound_by_user_id or ""
@@ -486,6 +609,7 @@ async def unbind_slot(
             SecretBinding.consumer_type == consumer_type,
             SecretBinding.consumer_id == consumer_id,
             SecretBinding.slot == slot,
+            SecretBinding.strategy == strategy,
             owner_clause,
         )
     )
@@ -496,6 +620,7 @@ async def unbind_slot(
             SecretBinding.consumer_type == consumer_type,
             SecretBinding.consumer_id == consumer_id,
             SecretBinding.slot == slot,
+            SecretBinding.strategy == strategy,
             owner_clause,
         )
     )

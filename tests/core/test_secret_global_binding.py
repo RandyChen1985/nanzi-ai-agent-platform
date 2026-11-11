@@ -149,3 +149,42 @@ class TestPersonalScopeStaysPersonal:
     def test_personal_scope_ignores_global_rows(self):
         """个人 scope 下，管理员的全局绑定不该显示成「已绑定」。"""
         assert "isGlobalBinding.value && row.is_global" in self._source()
+
+
+class TestBindingsEndpointReturnsIsGlobal:
+    """`GET /secrets/bindings` 必须回 `is_global`。
+
+    前端靠这个字段区分「全局绑定」和「我绑的」。少了它，`!(isGlobalBinding && 
+    row.is_global)` 恒为真，管理端编辑平台 MCP 时**全局绑定被整行过滤掉**：
+    界面显示「未选」、连「解除绑定」按钮都不出现；而规则绑定（`secret_id` 为空）
+    在这条路上也一样消失。凭据详情接口一直有这个字段，两边口径必须一致。
+    """
+
+    def test_list_endpoint_returns_is_global(self):
+        body = inspect.getsource(endpoint.get_bindings)
+        assert '"is_global": not binding.bound_by_user_id' in body
+
+    def test_same_shape_as_detail_endpoint(self):
+        """同一个字段名、同一个算法，否则前端得写两套判断。"""
+        detail = inspect.getsource(endpoint.get_secret)
+        assert '"is_global": not b.bound_by_user_id' in detail
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "frontend/src/components/system/ToolSystemParamEditor.vue",
+            "frontend/src/components/system/ToolHeadersEditor.vue",
+        ],
+    )
+    def test_components_judge_global_by_is_global(self, path):
+        """不能再用 `owner_scope === 'system'` 代理判断。
+
+        规则行没有 `secret_id`，outerjoin 之后 `owner_scope` 是 null——用它会
+        把管理员配的全局规则整条丢掉，表现是「重新打开工具时规则显示未配」。
+        """
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        source = (root / path).read_text(encoding="utf-8")
+        assert "row.owner_scope !== 'system'" not in source
+        assert "!row.bound_by_me && !row.is_global" in source

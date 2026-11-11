@@ -60,7 +60,7 @@ out.tasksAlwaysVisible = keys(nothing).includes("tasks");
 const admin = resolveUserModeMenu({ menus: [], isAdmin: true });
 out.admin = keys(admin);
 out.adminMore = childKeys(admin.find((i) => i.key === "more") || {});
-out.adminHasSystem = out.adminMore.includes("overview");
+out.adminHasSystem = out.adminMore.includes("system");
 
 // 普通用户即使拿到全部菜单码，也看不到 adminOnly 的系统管理
 const userAllMenus = resolveUserModeMenu({
@@ -72,11 +72,15 @@ const userAllMenus = resolveUserModeMenu({
     "menu:knowledge_management",
     "menu:memory_management",
     "menu:token_stats",
+    "menu:dashboard",
+    // 就算真把这个菜单码发给普通用户，adminOnly 也必须把它挡住：
+    // 系统设置是管理员的便捷入口，不是又一个可授权的菜单
+    "menu:system:config",
   ],
   isAdmin: false,
 });
 out.userAllMenusMore = childKeys(userAllMenus.find((i) => i.key === "more") || {});
-out.userHasSystem = out.userAllMenusMore.includes("overview");
+out.userHasSystem = out.userAllMenusMore.includes("system");
 
 // 专家组：三个子项都没有权限时整组丢弃（不留一个点了没反应的父项）
 const noExperts = resolveUserModeMenu({ menus: ["menu:ai_chat"], isAdmin: false });
@@ -98,9 +102,9 @@ const expect = {
   nothing: ["experts", "tasks", "library", "workspace", "more"],
   tasksAlwaysVisible: true,
   admin: ["new-chat", "experts", "tasks", "library", "workspace", "more"],
-  adminMore: ["workbench", "token", "overview"],
+  adminMore: ["workbench", "token", "overview", "system"],
   adminHasSystem: true,
-  userAllMenusMore: ["workbench", "token"],
+  userAllMenusMore: ["workbench", "token", "overview"],
   userHasSystem: false,
   hasExpertsGroup: true,
   partialExperts: ["expert", "skill", "connector"],

@@ -77,7 +77,8 @@ class RotateRequest(BaseModel):
 
 
 class BindRequest(BaseModel):
-    secret_id: str
+    #: ``strategy=fixed`` 时必填；``strategy=rule`` 时留空（规则不指向具体凭据）
+    secret_id: str = ""
     consumer_type: str
     consumer_id: str
     #: 直接指定槽位（``header:Authorization`` / ``env:VAR`` …）
@@ -88,6 +89,10 @@ class BindRequest(BaseModel):
     #: 全局绑定（``bound_by_user_id=''``）＝ 对所有调用者生效。
     #: 只有管理员能设，且只允许系统级凭据——用它给「全平台共用的服务」配一次即可。
     is_global: bool = False
+    #: ``fixed``（把这个槽位绑到一条凭据）/ ``rule``（绑一条定位规则）
+    strategy: str = "fixed"
+    #: ``strategy=rule`` 时必填，形如 ``{"key_source": "arg:to", "on_miss": "model"}``
+    rule: dict | None = None
 
 
 class UnbindRequest(BaseModel):
@@ -97,6 +102,8 @@ class UnbindRequest(BaseModel):
     name: str = ""
     #: 解绑的是全局绑定还是我自己的那条。默认解自己的，避免误删管理员配置。
     is_global: bool = False
+    #: 解绑哪一条：``fixed`` / ``rule``。默认 fixed —— 存量调用方都不传，行为不变
+    strategy: str = "fixed"
 
 
 class PrefsRequest(BaseModel):
@@ -248,6 +255,43 @@ def _is_admin(user_info: Dict[str, Any]) -> bool:
 
 def _fail(exc: SecretValidationError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+def _rule_payload(binding: Any) -> dict | None:
+    """规则行反序列化。坏 JSON 返回 None，让界面显示「规则不合法」，不抛 500。"""
+    raw = getattr(binding, "rule_json", None)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _rule_summary_of(binding: Any) -> str | None:
+    """给界面的一句话摘要。规则坏了要说「需重新配置」，不能静默空白。"""
+    from app.services.secrets.locator import RuleError, parse_rule, rule_summary
+
+    raw = getattr(binding, "rule_json", None)
+    if not raw:
+        return None
+    try:
+        return rule_summary(parse_rule(raw))
+    except RuleError:
+        return "规则不合法（需重新配置）"
+
+
+def _identity_attrs(user_info: Dict[str, Any]) -> dict[str, str]:
+    """试算用的身份字段：与注入层 ``_current_user_attrs`` 保持同一口径。"""
+    info = user_info or {}
+    attrs: dict[str, str] = {}
+    for key in ("email", "user_name", "username", "real_name", "dept_code", "user_id"):
+        value = info.get(key)
+        if isinstance(value, str) and value:
+            attrs[key] = value
+    if "user_name" not in attrs and "username" in attrs:
+        attrs["user_name"] = attrs["username"]
+    return attrs
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -529,9 +573,11 @@ async def get_bindings(
     if not secret_id and not (consumer_type and consumer_id):
         raise HTTPException(status_code=400, detail="请提供 secret_id，或 consumer_type + consumer_id")
 
+    # 必须 outerjoin：规则绑定（strategy='rule'）的 secret_id 是空的，
+    # INNER JOIN 会让这些行整行消失，界面上表现为「配了规则但列表里没有」。
     stmt = (
         select(SecretBinding, UserSecret)
-        .join(UserSecret, UserSecret.id == SecretBinding.secret_id)
+        .outerjoin(UserSecret, UserSecret.id == SecretBinding.secret_id)
     )
     if secret_id:
         stmt = stmt.where(SecretBinding.secret_id == secret_id)
@@ -548,20 +594,31 @@ async def get_bindings(
             {
                 "id": binding.id,
                 "slot": binding.slot,
+                # fixed / rule：界面据此决定显示「凭据名」还是「规则摘要」
+                "strategy": getattr(binding, "strategy", None) or "fixed",
                 "secret_id": binding.secret_id,
-                "secret_key": secret.secret_key,
-                "secret_name": secret.name,
-                "owner_scope": secret.owner_scope,
+                "secret_key": secret.secret_key if secret else None,
+                "secret_name": secret.name if secret else None,
+                "owner_scope": secret.owner_scope if secret else None,
                 # 绑定还在，但凭据可能已被停用/过期——界面要能标出来，
                 # 否则用户看到「已绑定」却调不通，只能去翻日志
-                "secret_status": secret.status,
+                "secret_status": secret.status if secret else None,
                 "secret_expires_at": (
-                    secret.expires_at.isoformat() if secret.expires_at else None
+                    secret.expires_at.isoformat()
+                    if secret and secret.expires_at
+                    else None
                 ),
+                # 规则行原样回给前端（编辑时要回填），另给一句人话摘要
+                "rule": _rule_payload(binding),
+                "rule_summary": _rule_summary_of(binding),
                 "consumer_type": binding.consumer_type,
                 "consumer_id": binding.consumer_id,
                 # 别人做的个人绑定不该被看见
                 "bound_by_me": binding.bound_by_user_id == user_id,
+                # 和凭据详情（``/{secret_id}``）保持同一个字段名：前端区分「全局绑定」
+                # 与「我绑的」全靠它。少了这个字段时，管理端编辑平台 MCP 服务会把
+                # 全局绑定整行过滤掉——界面显示「未选」，连解绑按钮都不出现。
+                "is_global": not binding.bound_by_user_id,
             }
             for binding, secret in rows
             # 全局绑定迁移后是空串，迁移前是 NULL，两种都算「可见」
@@ -676,18 +733,34 @@ async def list_platform_credential_targets(
             .limit(size)
         )).scalars().all())
 
+    # outerjoin：规则绑定的 secret_id 是空的，INNER JOIN 会把它们整行丢掉，
+    # 表现为「配了规则，个人面板里看不到」。
     rows = (
         await db.execute(
-            select(SecretBinding, UserSecret).join(UserSecret, UserSecret.id == SecretBinding.secret_id)
+            select(SecretBinding, UserSecret).outerjoin(UserSecret, UserSecret.id == SecretBinding.secret_id)
         )
     ).all()
+    # 固定与规则分开两个 map：同一个 key（消费者+槽位）现在可能两条都在，
+    # 塞进同一个 dict 必然互相覆盖。
     bindings: Dict[str, Dict[str, Any]] = {}
+    rules: Dict[str, Dict[str, Any]] = {}
     for binding, secret in rows:
         # 别人的个人绑定与我无关；系统级绑定（bound_by_user_id 为空）要显示
         # 空串与 NULL 都表示全局绑定
         if binding.bound_by_user_id and binding.bound_by_user_id != user_id:
             continue
-        bindings[f"{binding.consumer_type}:{binding.consumer_id}:{binding.slot}"] = {
+        key = f"{binding.consumer_type}:{binding.consumer_id}:{binding.slot}"
+        if (getattr(binding, "strategy", None) or "fixed") == "rule":
+            rules[key] = {
+                "rule": _rule_payload(binding),
+                "rule_summary": _rule_summary_of(binding),
+                "bound_by_me": binding.bound_by_user_id == user_id,
+            }
+            continue
+        if secret is None:
+            # 理论上不会发生（fixed 必填 secret_id），真发生了也别让整页 500
+            continue
+        bindings[key] = {
             "secret_id": secret.id,
             "secret_key": secret.secret_key,
             "secret_name": secret.name,
@@ -701,6 +774,20 @@ async def list_platform_credential_targets(
 
     def _binding(consumer_type: str, consumer_id: str, slot: str):
         return bindings.get(f"{consumer_type}:{consumer_id}:{slot}")
+
+    def _rule(consumer_type: str, consumer_id: str, slot: str):
+        return rules.get(f"{consumer_type}:{consumer_id}:{slot}")
+
+    def _schema_param_names(raw: Any) -> list[str]:
+        """JSON Schema 里的属性名。解析失败返回空——坏 schema 不该让整页打不开。"""
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            return []
+        props = (data or {}).get("properties") if isinstance(data, dict) else None
+        return [str(key) for key in props] if isinstance(props, dict) else []
 
     from app.services.mcp.mcp_auth_policy import resolve_mcp_auth_headers
     from app.services.secrets.injection import mcp_arg_slots
@@ -729,10 +816,21 @@ async def list_platform_credential_targets(
         except Exception:
             logger.warning("MCP 服务 %s 的工具列表读取失败", server.id)
             tool_rows = []
+        arg_options: Dict[str, list[str]] = {}
         for tool_row in tool_rows:
-            for name, slot in mcp_arg_slots(tool_row):
+            pairs = mcp_arg_slots(tool_row)
+            credential_names = {name for name, _ in pairs}
+            plain = [
+                name
+                for name in _schema_param_names(getattr(tool_row, "parameter_schema", None))
+                # 凭据参数自己不能当键：用一条凭据去决定另一条会形成依赖环
+                if name not in credential_names
+            ]
+            for name, slot in pairs:
                 if slot not in slots:
                     slots.append(slot)
+                # 规则的键只能从「这次调用里模型填的其他参数」里选
+                arg_options[slot] = [item for item in plain if item != name]
 
         mcp_items.append({
             "id": server.id,
@@ -742,6 +840,10 @@ async def list_platform_credential_targets(
             "has_fixed_token": bool(getattr(server, "fixed_token_encrypted", None)),
             "bindable_slots": slots,
             "bindings": {slot: _binding("mcp_server", str(server.id), slot) for slot in slots},
+            # 规则单独返回：它没有 secret_id，前端要显示的是「怎么找」而不是「哪条」
+            "rules": {slot: _rule("mcp_server", str(server.id), slot) for slot in slots},
+            # 配规则时可供选择的入参名（按槽位给，各工具的参数不同）
+            "arg_options": arg_options,
             # 兼容旧字段：绑定面板最早只认单个 Authorization
             "binding": _binding("mcp_server", str(server.id), "header:Authorization"),
         })
@@ -761,18 +863,42 @@ async def list_platform_credential_targets(
             for name, value in headers.items()
             if not str(value or "").strip() or is_credential_placeholder(value)
         ]
-        # 参数位：参数定义里标了 source=credential 的，按 HTTP 方法落到 query / body。
+        # 参数位：参数定义里标了 source=credential 的，落到 path / query / body。
         # 这些槽位和 header 一样能被个人绑定，漏掉它们的话用户在面板里看不到、
         # 也就绑不了——工具会一直报「凭据未填」。
-        param_prefix = "query" if str(tool.method or "GET").upper() == "GET" else "body"
+        #
+        # **槽位必须由 resolve_api_tool_slot 推，不能自己按 method 拼**：
+        # ``POST /refund/{applicant}`` 里的 applicant 是 path 参数，只看 method
+        # 会算成 body:applicant，而运行时按 path:applicant 查——绑定写进去了、
+        # 面板还显示「已绑定」，调用时永远匹配不到。
         try:
             param_names = credential_param_names(tool.parameter_schema)
         except Exception:
             # 一条工具的参数定义是坏 JSON，不该让整个「平台服务」页打不开
             logger.warning("工具 %s 的参数定义无法解析，跳过参数位", tool.id)
             param_names = []
-        param_slots = [f"{param_prefix}:{name}" for name in param_names]
+        param_slots = [
+            slot
+            for slot in (
+                resolve_api_tool_slot(
+                    name=name, method=tool.method, url_template=tool.url_template
+                )
+                for name in param_names
+            )
+            if slot
+        ]
         slots = [f"header:{name}" for name in bindable] + param_slots
+        # 规则只能用「这次调用的其他参数」当键；header 位拿不到入参（注入层不传），
+        # 所以只给参数位配 options，header 位留空数组由前端退化成「只用身份字段」
+        normal = [
+            name
+            for name in _schema_param_names(tool.parameter_schema)
+            if name not in set(param_names)
+        ]
+        arg_options = {
+            slot: [item for item in normal if item != slot.split(":", 1)[1]]
+            for slot in param_slots
+        }
         tool_items.append({
             "id": tool.id,
             "name": tool.name,
@@ -782,6 +908,11 @@ async def list_platform_credential_targets(
                 slot: _binding("api_tool", str(tool.id), slot)
                 for slot in slots
             },
+            "rules": {
+                slot: _rule("api_tool", str(tool.id), slot)
+                for slot in slots
+            },
+            "arg_options": arg_options,
         })
 
     return {
@@ -861,6 +992,12 @@ async def create_binding(
     db: AsyncSession = Depends(get_db_session),
 ):
     user_id, dept_code = _user_ctx(user_info)
+    if payload.strategy not in ("fixed", "rule"):
+        raise HTTPException(status_code=400, detail="strategy 只能是 fixed 或 rule")
+    if payload.strategy == "fixed" and not payload.secret_id:
+        raise HTTPException(status_code=400, detail="固定绑定必须指定 secret_id")
+    if payload.strategy == "rule" and payload.rule is None:
+        raise HTTPException(status_code=400, detail="strategy=rule 时必须给出 rule")
     slot = await _resolve_slot(
         db,
         consumer_type=payload.consumer_type,
@@ -879,6 +1016,25 @@ async def create_binding(
         bound_by: str | None = None
     else:
         bound_by = user_id
+
+    # 规则绑定没有凭据可校验，走单独的函数；固定绑定保持原路径
+    if payload.strategy == "rule":
+        try:
+            binding = await center.bind_rule(
+                db,
+                consumer_type=payload.consumer_type,
+                consumer_id=payload.consumer_id,
+                slot=slot,
+                rule=payload.rule,
+                bound_by_user_id=bound_by,
+            )
+        except SecretValidationError as exc:
+            raise _fail(exc)
+        return {
+            "code": 0,
+            "message": "已保存规则",
+            "data": {"id": binding.id, "slot": binding.slot, "strategy": "rule"},
+        }
 
     try:
         binding = await center.bind_secret(
@@ -920,12 +1076,15 @@ async def delete_binding(
     else:
         bound_by = user_id
 
+    if payload.strategy not in ("fixed", "rule"):
+        raise HTTPException(status_code=400, detail="strategy 只能是 fixed 或 rule")
     removed = await center.unbind_slot(
         db,
         consumer_type=payload.consumer_type,
         consumer_id=payload.consumer_id,
         slot=slot,
         bound_by_user_id=bound_by,
+        strategy=payload.strategy,
     )
     return {"code": 0, "message": "已解绑", "data": {"removed": removed}}
 
@@ -1426,3 +1585,105 @@ async def get_value(
     except SecretValidationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     return {"code": 0, "data": {"value": plaintext}}
+
+
+class LocatePreviewRequest(BaseModel):
+    #: 试算所在的位置（仅作上下文，规则本身与槽位无关）
+    consumer_type: str = ""
+    consumer_id: str = ""
+    slot: str = ""
+    #: 待试算的规则，结构与 ``POST /bindings`` 里的一致
+    rule: dict
+    #: 手填的入参样例——试算时不发起真实调用，模型不在场，所以入参要人给
+    sample_args: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/locate-preview", summary="试算规则会命中哪条凭据（不发请求、不解密）")
+async def locate_preview(
+    payload: LocatePreviewRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """只回答「这条规则会命中谁」。
+
+    三条边界：
+
+    1. **身份固定为当前登录人**。试算用的是你自己的可见范围，不代表别人能命中
+       同样的凭据；管理员配全局规则时界面必须写明这一点，否则会把试算结果当成
+       「所有人都能这样」。
+    2. **不解密**：只取 ``secret_key`` / ``name`` 这类元数据，值一个字节都不碰。
+    3. **不写流水**：试算不是一次真实使用，写进使用流水会污染「谁在什么时候用了
+       什么凭据」的审计口径。
+    """
+    from app.services.secrets.locator import (
+        RuleError,
+        build_candidates,
+        parse_rule,
+        pick_match,
+        rule_summary,
+    )
+
+    try:
+        spec = parse_rule(payload.rule)
+    except RuleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    user_id, dept_code = _user_ctx(user_info)
+    identity = _identity_attrs(user_info)
+    wanted = build_candidates(spec, identity=identity, args=payload.sample_args)
+
+    steps: list[dict[str, Any]] = [
+        {
+            "step": "取值",
+            "detail": f"{spec.key_source} → {wanted[0] if wanted else '（空）'}",
+        },
+        {"step": "套模板", "detail": " → ".join(wanted) or "（无）"},
+    ]
+
+    visible = await center.list_visible_secrets(
+        db, user_id=user_id, dept_code=dept_code, only_active=True
+    )
+    steps.append({"step": "可见凭据", "detail": f"{len(visible)} 条"})
+
+    hit, used = pick_match(spec, wanted, visible)
+    if hit is not None:
+        steps.append({"step": "匹配", "detail": f"命中 {hit.secret_key}"})
+        return {
+            "code": 0,
+            "data": {
+                "ok": True,
+                "strategy": "rule",
+                "secret_key": hit.secret_key,
+                "secret_name": hit.name,
+                "on_miss": spec.on_miss,
+                "summary": rule_summary(spec),
+                "candidate_count": len(visible),
+                "steps": steps,
+                "miss_reason": None,
+            },
+        }
+
+    steps.append({"step": "匹配", "detail": "未命中"})
+    return {
+        "code": 0,
+        "data": {
+            "ok": False,
+            "strategy": "rule",
+            "secret_key": None,
+            "secret_name": None,
+            "on_miss": spec.on_miss,
+            "summary": rule_summary(spec),
+            "candidate_count": len(visible),
+            "steps": steps,
+            "miss_reason": (
+                f"没有 {spec.target} = {used} 的凭据"
+                if wanted
+                else f"取不到 {spec.key_source} 的值（这次调用里没这个参数）"
+            ),
+            "miss_behaviour": {
+                "fail": "这次调用会失败",
+                "fallback_fixed": "会回退到同层的固定凭据",
+                "model": "会让模型在可见候选里挑一条",
+            }[spec.on_miss],
+        },
+    }

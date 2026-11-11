@@ -51,6 +51,9 @@ DENIAL_REASONS = {
     "denied_by_grant": "凭据还没有授权给你",
     "denied_by_script_policy": "平台或你的偏好关闭了脚本环境变量注入",
     "denied_by_binding": "没有找到绑定",
+    # 规则没匹配上：这不是「没绑」，也不是「凭据坏了」，而是「按这次的值找不到
+    # 对应的那条」——文案要说清是哪一步，否则用户只会去翻凭据状态。
+    "rule_miss": "匹配规则没有找到对应凭据",
 }
 
 
@@ -63,6 +66,10 @@ DENIAL_HINTS = {
     "disabled": "请到凭据中心把它重新启用",
     "expired": "请轮换或重新创建这条凭据",
     "denied_by_script_policy": "请在注入策略里打开脚本环境变量注入",
+    "rule_miss": (
+        "请检查这条参数的匹配规则：这次入参的值要和某条凭据的 key 一致；"
+        "也可以在规则里把「挑不到时」改成回退固定凭据"
+    ),
 }
 
 
@@ -161,6 +168,24 @@ def _current_user(user_info: Mapping[str, Any] | None) -> tuple[str, str]:
         return "", ""
 
 
+def _current_user_attrs(user_info: Mapping[str, Any] | None) -> dict[str, str]:
+    """身份字段：身份类键来源（``user.email`` 等）从这里取值。
+
+    只挑规则可能用到的几个，不把整个 ``user_info`` 塞进解析器——那会把 token、
+    权限等无关字段一起带进日志上下文。
+    """
+    info = user_info or {}
+    attrs: dict[str, str] = {}
+    for key in ("email", "user_name", "username", "real_name", "dept_code", "user_id"):
+        value = info.get(key)
+        if isinstance(value, str) and value:
+            attrs[key] = value
+    # user_name 与 username 是历史双写，统一成规则里的名字
+    if "user_name" not in attrs and "username" in attrs:
+        attrs["user_name"] = attrs["username"]
+    return attrs
+
+
 def _current_trace_id() -> str | None:
     try:
         from app.core.context import get_current_agent_context
@@ -205,6 +230,7 @@ async def apply_api_tool_bindings(
         return headers
 
     user_id, dept_code = _current_user(user_info)
+    user_attrs = _current_user_attrs(user_info)
     if not user_id:
         return headers
 
@@ -234,6 +260,7 @@ async def apply_api_tool_bindings(
                 target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
+                user_attrs=user_attrs,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] API 工具 %s 的 %s 解析失败: %s", getattr(config, "name", "?"), name, exc)
@@ -280,12 +307,14 @@ async def apply_api_tool_param_bindings(
     和绑定表里存的一致。
     """
     from app.services.ai.tools.system_params import credential_param_names
+    from app.services.secrets.locator import choice_field
 
     names = credential_param_names(getattr(config, "parameter_schema", None))
     if not names:
         return params
 
     user_id, dept_code = _current_user(user_info)
+    user_attrs = _current_user_attrs(user_info)
     if not user_id:
         return params
 
@@ -295,6 +324,24 @@ async def apply_api_tool_param_bindings(
     resolved = dict(params)
     limit = await _max_inject_per_call()
     injected = 0
+
+    # 模型可能通过编号字段指定用哪条（「挑不到时=让模型挑」）。编号由
+    # ``list_my_credentials`` 给出，两边用同一套排序（secret_key → id）。
+    # 只有规则未命中且 ``on_miss=model`` 时解析层才会采纳，规则命中时会被忽略。
+    #
+    # 这段与 MCP 工具参数那条链路（``apply_mcp_arg_bindings``）逐位一致。少了它，
+    # API 工具参数配 ``on_miss=model`` 就是「模型想挑也没有字段可填」，规则一未命中
+    # 必然失败——而界面上看起来这个选项是生效的。
+    choices = {
+        name: str(params.get(choice_field(name)) or "").strip()
+        for name in names
+        if str(params.get(choice_field(name)) or "").strip()
+    }
+    preferred = (
+        await _resolve_choices(choices, user_id=user_id, dept_code=dept_code)
+        if choices
+        else {}
+    )
 
     for name in names:
         slot = resolve_api_tool_slot(name=name, method=method, url_template=url_template)
@@ -316,6 +363,11 @@ async def apply_api_tool_param_bindings(
                 target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
+                # 参数级注入：模型填的其余参数就是规则的匹配来源。
+                # 去掉凭据参数自身——用一条凭据决定另一条会形成依赖环。
+                rule_args={k: v for k, v in params.items() if k != name},
+                user_attrs=user_attrs,
+                preferred_secret_id=preferred.get(name),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -329,6 +381,14 @@ async def apply_api_tool_param_bindings(
             register_injected(plain)
             resolved[name] = plain
             injected += 1
+            if preferred.get(name) and result.secret_id == preferred.get(name):
+                # 采纳了模型的选择。留一条日志才会有「这次到底谁选的凭据」的
+                # 答案——否则规则未命中、模型补位成功时，从外部完全看不出区别。
+                logger.info(
+                    "[SecretInject] API 工具 %s 的参数 %s 采纳模型选择的凭据",
+                    getattr(config, "name", "?"),
+                    name,
+                )
         else:
             if result.denial not in (None, "denied_by_binding"):
                 logger.info(
@@ -381,6 +441,7 @@ async def apply_mcp_bindings(
         return headers
 
     user_id, dept_code = _current_user(user_info)
+    user_attrs = _current_user_attrs(user_info)
     if not user_id:
         return headers
 
@@ -427,6 +488,7 @@ async def apply_mcp_bindings(
                 target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
+                user_attrs=user_attrs,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] MCP %s 的 %s 解析失败: %s", server_id, slot, exc)
@@ -504,6 +566,62 @@ async def _mcp_server_host(server_id: str) -> str | None:
     return host_of(getattr(server, "sse_url", None))
 
 
+async def _resolve_choices(
+    choices: Mapping[str, str],
+    *,
+    user_id: str,
+    dept_code: str | None,
+) -> dict[str, str]:
+    """把模型填的 ``c3`` 换成 secret_id。
+
+    重建候选用的是**和 ``list_my_credentials`` 完全相同的排序**（secret_key → id），
+    所以模型看到第 3 条、回传 ``c3``，这里取到的就是同一条。
+
+    任何一步不成立都返回空 dict（= 当成模型没选）：编号越界、查库失败、凭据已失效。
+    **绝不猜**——猜错会把值注入到错误的凭据上。
+    """
+    from app.core.orm import AsyncSessionLocal
+    from app.services.secrets.center import list_visible_secrets
+    from app.services.secrets.locator import catalog_sort_key, parse_choice
+
+    indexes = {name: parse_choice(text) for name, text in choices.items()}
+    if not any(indexes.values()):
+        # 模型给了编号但一个都解析不出来（比如写成「第 3 条」而不是 c3）。
+        # 以前这里静默返回，事后无法回答「模型到底有没有挑」。
+        logger.info(
+            "[SecretCatalog] 模型填的凭据编号无法解析，按未选择处理: %s",
+            {name: str(text) for name, text in choices.items()},
+        )
+        return {}
+
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = await list_visible_secrets(
+                session, user_id=user_id, dept_code=dept_code, only_active=True
+            )
+    except Exception as exc:  # noqa: BLE001 - 拿不到候选就退回「模型没选」
+        logger.warning("[SecretInject] 解析凭据编号时读取可见凭据失败: %s", exc)
+        return {}
+
+    ordered = sorted(rows, key=catalog_sort_key)
+    resolved: dict[str, str] = {}
+    for name, index in indexes.items():
+        if index and index <= len(ordered):
+            secret_id = str(getattr(ordered[index - 1], "id", "") or "")
+            if secret_id:
+                resolved[name] = secret_id
+        elif index:
+            # 越界：编号指向你根本看不到的那一条。必须留痕——用户看到的是
+            # 「规则未命中」，而真正的原因可能是模型记错了清单长度。
+            logger.info(
+                "[SecretCatalog] 模型编号越界，按未选择处理: 参数=%s 编号=c%s 可见=%s 条",
+                name,
+                index,
+                len(ordered),
+            )
+    return resolved
+
+
 async def apply_mcp_arg_bindings(
     tool_record: Any,
     arguments: dict[str, Any],
@@ -524,6 +642,7 @@ async def apply_mcp_arg_bindings(
         return arguments
 
     user_id, dept_code = _current_user(user_info)
+    user_attrs = _current_user_attrs(user_info)
     if not user_id:
         return arguments
 
@@ -535,6 +654,21 @@ async def apply_mcp_arg_bindings(
     trace_id = _current_trace_id()
     resolved = dict(arguments)
     limit = await _max_inject_per_call()
+
+    # 模型可能通过编号字段指定用哪条；只有规则未命中且开了 on_miss=model 时
+    # 解析层才会采纳它，规则命中时会被忽略（并记「判断不一致」日志）。
+    from app.services.secrets.locator import choice_field
+
+    choices = {
+        name: str(arguments.get(choice_field(name)) or "").strip()
+        for name, _slot in pairs
+        if str(arguments.get(choice_field(name)) or "").strip()
+    }
+    preferred = (
+        await _resolve_choices(choices, user_id=user_id, dept_code=dept_code)
+        if choices
+        else {}
+    )
 
     for index, (name, slot) in enumerate(pairs):
         if index >= limit:
@@ -553,6 +687,11 @@ async def apply_mcp_arg_bindings(
                 target_host=target,
                 trace_id=trace_id,
                 dept_code=dept_code,
+                # 参数级注入：模型填的其余参数就是规则的匹配来源。
+                # 去掉凭据参数自身——用一条凭据决定另一条会形成依赖环。
+                rule_args={k: v for k, v in arguments.items() if k != name},
+                user_attrs=user_attrs,
+                preferred_secret_id=preferred.get(name),
             )
         except Exception as exc:  # noqa: BLE001 - 凭据中心挂了不该炸掉工具调用
             logger.warning(
@@ -677,6 +816,7 @@ async def apply_script_env_bindings(
     from app.services.secrets.policy import CONSUMER_SCRIPT, SCENE_SCRIPT_ENV
 
     user_id, dept_code = _current_user(user_info)
+    user_attrs = _current_user_attrs(user_info)
     if not user_id:
         return {}
 
@@ -716,6 +856,7 @@ async def apply_script_env_bindings(
                 slot=slot,
                 trace_id=trace_id,
                 dept_code=dept_code,
+                user_attrs=user_attrs,
             )
         except Exception:  # noqa: BLE001
             logger.warning("[SecretInject] 脚本 %s 的 %s 解析失败", tool_id, slot, exc_info=True)

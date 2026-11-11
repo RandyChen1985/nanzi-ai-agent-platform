@@ -182,7 +182,10 @@ async function loadBindings() {
     })
     const next: Record<string, BindingInfo> = {}
     for (const row of res.data?.data || []) {
-      if (!row.bound_by_me && row.owner_scope !== 'system') continue
+      // 全局绑定用 is_global 判，不用 owner_scope——后者对没有 secret_id 的行
+      // （规则绑定）是 null，会把这些行静默丢掉。这里现在只有固定绑定，
+      // 但口径要和 ToolSystemParamEditor 一致，免得加规则入口时再踩一次。
+      if (!row.bound_by_me && !row.is_global) continue
       next[row.slot] = {
         secret_id: row.secret_id,
         secret_key: row.secret_key,

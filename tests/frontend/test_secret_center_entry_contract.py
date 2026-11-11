@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +22,7 @@ ADMIN_CENTER = ROOT / "frontend/src/views/AdminSecretCenter.vue"
 USER_DEPT_PICKER = ROOT / "frontend/src/components/common/UserDeptPicker.vue"
 ADMIN_SECRET_CENTER = ROOT / "frontend/src/views/AdminSecretCenter.vue"
 PICKER = ROOT / "frontend/src/components/secrets/CredentialPicker.vue"
+PICKER_FIELDS = ROOT / "frontend/src/utils/credentialPicker.ts"
 ROW_ACTIONS = ROOT / "frontend/src/components/secrets/SecretRowActions.vue"
 ROUTER = ROOT / "frontend/src/router/index.ts"
 MENU_SEED = ROOT / "app/services/menu_seed.py"
@@ -337,6 +339,34 @@ class TestMcpToolParamCredential:
         assert "模型填写" in source
         assert "来自凭据" in source
 
+    def test_param_table_gives_source_column_the_room(self):
+        """「值的来源」那列要塞下拉 + 选凭据 + 凭据名 + 状态，160px 根本放不下。
+
+        原先参数名按内容吃走大半宽度、源列钉死 `w-40`：凭据名被截成 `xx-p…`，
+        「未选 · 各人绑自己的」竖排成四行。改成固定列宽，参数名只占三成。
+        """
+        source = _read(self.REGISTRY)
+        start = source.find('v-for="name in toolParamNames(paramMarkTarget.tool)"')
+        table_head = source[source.rfind("<table", 0, start):start]
+        body = source[start:source.find("</table>", start)]
+
+        assert "table-fixed" in table_head, "不固定列宽的话，宽的永远是参数名列"
+        assert "w-[30%]" in table_head, "参数名只该拿三成，剩下的给来源列"
+        assert "w-40" not in table_head, "来源列不该再钉死 160px"
+        # 下拉与凭据控件同一行：一格只占一个控件高度，右侧才有整列宽度可用
+        assert "flex flex-wrap items-center" in body
+        assert "w-32 shrink-0" in body, "下拉固定宽度，余下的空间留给凭据名与状态"
+
+    def test_unselected_hint_only_when_really_unbound(self):
+        """已经绑上了却还挂一句「未选」，比不写更让人糊涂。
+
+        判的是**固定凭据**那条（`fixedBindingOfSlot`）：同槽位可以只有一条规则、
+        没有固定凭据，那时「未选」是对的——规则未命中时没有回退目标。
+        """
+        source = _read(self.REGISTRY)
+
+        assert 'v-else-if="!fixedBindingOfSlot(' in source
+
     def test_admin_can_bind_secret_for_param(self):
         """管理员要能在参数上直接选凭据（全平台共用那条），不能只让用户各自绑。"""
         source = _read(self.REGISTRY)
@@ -360,8 +390,9 @@ class TestMcpToolParamCredential:
         assert "loadBindingsFor" in body
         # 只看调用；注释里会解释「为什么不能用 loadMcpBinding」
         assert "await loadMcpBinding(" not in body
-        # 打开弹窗时就要把已绑的拉回来
-        assert "void loadBindingsFor(" in source
+        # 打开弹窗时就要把已绑的拉回来，并且**等它回来**再算草稿：
+        # fire-and-forget 会让第一次打开读到上一个服务的绑定（详见 locator 契约）
+        assert "await loadBindingsFor(serverId)" in source
 
     def test_two_actions_are_labelled_separately(self):
         """选凭据和保存来源是两次落库，界面要说清楚。"""
@@ -372,18 +403,24 @@ class TestMcpToolParamCredential:
         """标了「来自凭据」却没选凭据 = 调用必然失败，但界面看着是配好的。"""
         source = _read(self.REGISTRY)
         assert "const draftUnboundNames = computed(" in source
-        # 按钮禁用
-        assert "paramMarkBusy || draftUnboundNames.length > 0" in source
+        # 按钮禁用（绑定还没回来时草稿是空的，这时保存会把来源全清成「模型填写」）
+        assert "paramMarkBusy || paramBindingsLoading || draftUnboundNames.length > 0" in source
         # 函数里再兜一次，绕过 disabled 也挡得住
         start = source.find("async function submitParamMark(")
         body = source[start:source.find("\n}", start)]
         assert "draftUnboundNames.value.length" in body
 
     def test_unbound_names_are_listed_not_just_counted(self):
-        """只说「有个没选」没用，得说清楚是哪个。"""
+        """只说「有个没选」没用，得说清楚是哪个、缺的是什么。
+
+        「绑死凭据」和「按规则」缺的东西不一样，混成一句「还没选凭据」会让人
+        在规则模式下找不到该点哪里，所以分成两组列。
+        """
         source = _read(self.REGISTRY)
         assert "还没选凭据" in source
-        assert "draftUnboundNames.join('、')" in source
+        assert "draftMissingCred.value.join('、')" in source
+        assert "draftMissingRule.value.join('、')" in source
+        assert "还没配规则" in source
 
     def test_prompt_explains_who_the_binding_serves(self):
         """这里选的是「全平台共用」还是「各人自绑」，是最容易理解错的一点。
@@ -871,10 +908,50 @@ class TestUsageStatsShared:
         assert "['usage', 'stats', 'audit']" in source
         assert "'统计'" in source
 
-    def test_personal_stats_follow_the_selection(self):
-        """个人端没有「全部凭据」视角，统计跟着左栏选中项走。"""
+    def test_personal_stats_follow_the_scope_switch(self):
+        """统计要跟着弹窗上的范围开关走，而不是左栏的选中项。
+
+        原来统计跟着 `selectedId` 走、明细请求却不带 `secret_id`（拿的是全部），
+        同一个弹窗里两个 tab 各说一套。
+        """
         source = _read(ROOT / "frontend/src/views/SecretCenter.vue")
-        assert ':secret-id="selectedId || null"' in source
+        assert ':secret-id="statsSecretId"' in source
+        assert "const statsSecretId = computed(" in source
+
+
+class TestPersonalUsageScope:
+    """个人端「使用记录」默认只看点进来的那条凭据。
+
+    入口按钮长在单条凭据的卡片上，但请求没带 `secret_id`——点「邮箱名」的使用
+    记录，弹出来的是「a / k」几条凭据混在一起的最近 50 条。用户第一反应是
+    「点错了」或「数据串了」，而不是「这里刚好是全部」。
+    """
+
+    def test_open_usage_locks_the_selected_secret(self):
+        source = _read(SECRET_CENTER)
+        start = source.find("async function openUsage(")
+        body = source[start:source.find("\n}", start)]
+        assert "selected.value?.id" in body
+        assert "usageScope.value" in body
+
+    def test_request_carries_secret_id(self):
+        source = _read(SECRET_CENTER)
+        start = source.find("async function loadRecords(")
+        body = source[start:source.find("\n}", start)]
+        assert "params.secret_id = usageSecretId.value" in body
+
+    def test_dialog_offers_a_way_to_see_everything(self):
+        """想看全貌可以，但必须是显式点一下，不能是「悄悄给全部」。"""
+        source = _read(SECRET_CENTER)
+        assert "查看全部记录" in source
+        assert "setUsageScope('all')" in source
+        assert "setUsageScope('secret')" in source
+
+    def test_current_scope_is_written_on_the_title(self):
+        """两个视角差的就是「谁」，只藏在开关里的话看不出来现在看的是全部。"""
+        source = _read(SECRET_CENTER)
+        assert "usageScopeLabel" in source
+        assert "只看 ${usageScopeLabel}" in source
 
 
 class TestBindingsGroupedByType:
@@ -1388,10 +1465,14 @@ class TestPicker:
 
     def test_only_emits_ids(self):
         source = _read(PICKER)
+        fields = _read(PICKER_FIELDS)
 
         # emit 的是 id，不是值；组件内部也不缓存明文
+        assert "emit('update:modelValue', item ? item.id : null)" in source
         assert "item.id" in source
-        assert "value_masked" in source
+        # 值的影子只留在类型定义里（选择器知道它存在，但从不渲染它）
+        assert "value_masked" in fields
+        assert "value_masked" not in source
 
 
 class TestCreateFlow:
@@ -1929,3 +2010,21 @@ class TestAuditActionBadges:
             assert "secretActionStyle(row.action)" in source, f"{path.name} 未接入配色"
             assert "secretActionLabel(row.action)" in source
             assert "ACTION_LABEL" not in source, "本地映射应已删除，改由共享模块提供"
+
+    def test_both_centers_import_shared_badge_style(self):
+        """模板里写了不等于能用：`<script setup>` 里没 import 就是 undefined。
+
+        曾经管理端把本地 ACTION_LABEL 换成共享函数时漏了这行 import，静态检查只
+        报一条类型警告，运行时的表现是「点变更记录，弹框一片空白」——渲染列表时
+        调用 undefined 抛错，整棵子树都渲染不出来。
+        """
+        pattern = re.compile(
+            r"import\s*\{([^}]*)\}\s*from\s*['\"]\.\./utils/secretAudit['\"]"
+        )
+        for path in (SECRET_CENTER, ADMIN_SECRET_CENTER):
+            source = _read(path)
+            match = pattern.search(source)
+            assert match, f"{path.name} 没有从 utils/secretAudit 导入「动作」文案与配色"
+            imported = {name.strip() for name in match.group(1).split(",") if name.strip()}
+            for name in ("secretActionLabel", "secretActionStyle"):
+                assert name in imported, f"{path.name} 用了 {name} 却没导入"

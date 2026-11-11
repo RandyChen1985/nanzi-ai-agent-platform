@@ -68,6 +68,38 @@ def test_tool_error_without_reason_keeps_old_wording():
     assert "还没填" in str(error)
 
 
+@pytest.mark.parametrize("slot", ["query:token", "body:password", "path:applicant"])
+def test_param_slot_reason_is_not_swallowed(slot):
+    """参数级凭据被拒时，`denials` 的 key 是**槽位**（`query:` / `body:` / `path:`）。
+
+    以前只认 `header:<name>`，参数级的原因永远查不到，于是：
+    - 真实的 `rule_miss` / `expired` 全被吞掉；
+    - 用户被指去「工具管理里把 header 值改成真实凭据」——而那条根本不存在。
+    """
+    from app.services.ai.tools.generic_api import UnresolvedCredentialError
+
+    name = slot.split(":", 1)[1]
+    error = UnresolvedCredentialError("query_weather", [name], {slot: "rule_miss"})
+
+    message = str(error)
+    assert "匹配规则没有找到对应凭据" in message
+    # 别再把参数级问题说成 header 问题
+    assert "header" not in message
+
+
+def test_every_denial_constant_has_human_text():
+    """新增一个拒绝原因却忘了翻译时，界面上会直接出现内部常量。
+
+    `rule_miss` 就这么漏过一次：使用流水里显示的是英文 code，而它恰恰是动态
+    凭据定位最常出现的结果。
+    """
+    from app.services.secrets import policy
+
+    codes = {v for k, v in vars(policy).items() if k.startswith("DENY_")}
+    missing = sorted(code for code in codes if code not in DENIAL_REASONS)
+    assert not missing, f"这些拒绝原因没有中文文案：{missing}"
+
+
 async def test_mcp_fails_loudly_instead_of_falling_back_to_fixed_token():
     """MCP 绑了却用不了时必须失败。
 

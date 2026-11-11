@@ -1,8 +1,10 @@
 import pytest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime, timedelta
 from fastapi import HTTPException
-from app.services.partition_service import PartitionService
+from sqlalchemy.dialects import mysql
+from app.services.partition_service import PARTITION_TABLES, PartitionService
 from app.api.portal.endpoints.system import (
     get_logs_config,
     update_logs_config,
@@ -53,6 +55,30 @@ async def test_partition_service_get_partition_status():
     assert "2026-06-01" in status[0]["less_than"]
     assert status[0]["table_rows"] == 12000
     assert status[1]["data_range"] == "MAXVALUE (兜底)"
+
+
+@pytest.mark.asyncio
+async def test_partition_status_expands_table_list_in_clause():
+    """``IN :tables`` 必须按 expanding 绑定展开，否则驱动会拿到整只 tuple 当单个参数并直接报错。"""
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.fetchall.return_value = []
+    mock_db.execute.return_value = mock_result
+
+    with patch(
+        "app.services.partition_service.settings",
+        SimpleNamespace(normalized_database_type="mysql"),
+    ):
+        assert await PartitionService.get_partition_status(mock_db) == []
+
+    statement, params = mock_db.execute.await_args.args
+    assert params == {"tables": list(PARTITION_TABLES)}
+
+    rendered = statement.params(**params).compile(
+        dialect=mysql.dialect(), compile_kwargs={"render_postcompile": True}
+    ).string
+    # 展开后每个表名各占一个占位符；只渲染出一个 %s 就说明 tuple 被当成标量传给了驱动
+    assert rendered.count("%s") == len(PARTITION_TABLES)
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@
 import { computed, onMounted, ref } from 'vue'
 import axios from '../../utils/axios'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
+import SecretLocatorEditor, { type LocatorRule } from '../secrets/SecretLocatorEditor.vue'
 
 type Binding = {
   secret_id: string
@@ -30,6 +31,13 @@ const bindingIssue = (binding?: Binding | null): string => {
   return '不可用'
 }
 
+/** 一条定位规则（不属于「绑定到某条凭据」，所以单独一个类型） */
+type BoundRule = {
+  rule: LocatorRule | null
+  rule_summary: string | null
+  bound_by_me: boolean
+}
+
 type McpTarget = {
   id: string
   server_name: string
@@ -37,6 +45,10 @@ type McpTarget = {
   has_fixed_token: boolean
   bindable_slots: string[]
   bindings: Record<string, Binding | null>
+  /** 槽位 → 我配的规则（与固定绑定并存） */
+  rules?: Record<string, BoundRule | null>
+  /** 槽位 → 可当规则键的入参名 */
+  arg_options?: Record<string, string[]>
   /** 旧字段：只有 Authorization 的那一个绑定 */
   binding: Binding | null
 }
@@ -47,6 +59,8 @@ type ToolTarget = {
   description: string | null
   bindable_slots: string[]
   bindings: Record<string, Binding | null>
+  rules?: Record<string, BoundRule | null>
+  arg_options?: Record<string, string[]>
 }
 
 const servers = ref<McpTarget[]>([])
@@ -64,6 +78,84 @@ const picked = ref<{ id: string; secret_key: string } | null>(null)
 const secretId = ref<string | null>(null)
 const busy = ref(false)
 const bindError = ref('')
+
+/** 正在给哪个槽位配规则 */
+const locatorCtx = ref<{
+  kind: 'mcp' | 'tool'
+  consumerType: 'mcp_server' | 'api_tool'
+  consumerId: string
+  title: string
+  slot: string
+  argOptions: string[]
+  /** 已有规则，打开时回填 */
+  existingRule: LocatorRule | null
+} | null>(null)
+const locatorBusy = ref(false)
+const locatorError = ref('')
+
+function openLocatorFor(
+  kind: 'mcp' | 'tool',
+  target: McpTarget | ToolTarget,
+  slot: string,
+) {
+  locatorCtx.value = {
+    kind,
+    consumerType: kind === 'mcp' ? 'mcp_server' : 'api_tool',
+    consumerId: String(target.id),
+    // 两种目标的名称字段不同，这里的 kind 已经决定了实际类型
+    title: kind === 'mcp' ? (target as McpTarget).server_name : (target as ToolTarget).name,
+    slot,
+    argOptions: target.arg_options?.[slot] || [],
+    existingRule: target.rules?.[slot]?.rule || null,
+  }
+  locatorError.value = ''
+}
+
+/** 规则只写个人绑定：个人配的规则只影响自己，不会盖到别人 */
+async function applyRule(rule: LocatorRule) {
+  const ctx = locatorCtx.value
+  locatorCtx.value = null
+  if (!ctx) return
+  locatorBusy.value = true
+  locatorError.value = ''
+  try {
+    await axios.post('/api/portal/secrets/bindings', {
+      consumer_type: ctx.consumerType,
+      consumer_id: ctx.consumerId,
+      slot: ctx.slot,
+      strategy: 'rule',
+      rule,
+      // 不带 is_global：这就是「我自己的那条」
+    })
+    await load()
+  } catch (e: any) {
+    locatorError.value = e?.response?.data?.detail || '保存规则失败'
+  } finally {
+    locatorBusy.value = false
+  }
+}
+
+/** 删除规则：槽位与消费者从当前上下文取，避免模板里再传一遍 */
+async function onRemoveRule() {
+  const ctx = locatorCtx.value
+  if (!ctx) return
+  await clearRuleById(ctx.consumerType, ctx.consumerId, ctx.slot)
+}
+
+async function clearRuleById(consumerType: string, consumerId: string, slot: string) {
+  locatorBusy.value = true
+  locatorError.value = ''
+  try {
+    await axios.delete('/api/portal/secrets/bindings', {
+      data: { consumer_type: consumerType, consumer_id: consumerId, slot, strategy: 'rule' },
+    })
+    await load()
+  } catch (e: any) {
+    locatorError.value = e?.response?.data?.detail || '解除规则失败'
+  } finally {
+    locatorBusy.value = false
+  }
+}
 
 const page = ref(1)
 const size = 50
@@ -279,15 +371,36 @@ onMounted(load)
                   class="ml-auto shrink-0 rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
                   @click="openBindMcp(item, slot)"
                 >{{ item.bindings?.[slot] ? '更换' : '绑定' }}</button>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+                  :class="item.rules?.[slot]
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'"
+                  :title="item.rules?.[slot]?.rule_summary || '配一条规则，按这次调用的入参自动选凭据'"
+                  @click="openLocatorFor('mcp', item, slot)"
+                >{{ item.rules?.[slot] ? '改规则' : '规则' }}</button>
               </div>
             </div>
 
-            <button
-              v-else
-              type="button"
-              class="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50"
-              @click="openBindMcp(item)"
-            >{{ item.binding ? '更换凭据' : '绑定我的凭据' }}</button>
+            <!-- 单槽位（大多数服务只有 Authorization）：两个按钮共用一个 v-else 分支，
+                 给第二个按钮再写一个 v-else 会编译失败（v-else 必须紧邻 v-if/v-else-if） -->
+            <template v-else>
+              <button
+                type="button"
+                class="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                @click="openBindMcp(item)"
+              >{{ item.binding ? '更换凭据' : '绑定我的凭据' }}</button>
+              <button
+                type="button"
+                class="shrink-0 rounded-lg border px-2.5 py-1 text-xs"
+                :class="item.rules?.['header:Authorization']
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                  : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'"
+                :title="item.rules?.['header:Authorization']?.rule_summary || '配一条规则，按你的身份自动选凭据'"
+                @click="openLocatorFor('mcp', item, 'header:Authorization')"
+              >{{ item.rules?.['header:Authorization'] ? '改规则' : '规则' }}</button>
+            </template>
           </li>
         </ul>
       </section>
@@ -326,6 +439,15 @@ onMounted(load)
                   class="ml-auto shrink-0 rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
                   @click="openBindTool(tool, slot)"
                 >{{ tool.bindings?.[slot] ? '更换' : '绑定' }}</button>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+                  :class="tool.rules?.[slot]
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'"
+                  :title="tool.rules?.[slot]?.rule_summary || '配一条规则，按这次调用的入参自动选凭据'"
+                  @click="openLocatorFor('tool', tool, slot)"
+                >{{ tool.rules?.[slot] ? '改规则' : '规则' }}</button>
               </div>
             </div>
           </li>
@@ -393,5 +515,20 @@ onMounted(load)
         </div>
       </div>
     </Teleport>
+
+    <!-- 规则编辑器：必须和「绑定凭据」弹窗**平级**，不能嵌进 v-if="editing" 里面。
+         嵌进去的话，点「规则」只设 locatorCtx、不动 editing，整个子树不渲染，
+         表现就是「点了没反应」。层级也要高于父弹窗（z-[100]/z-[110]）。 -->
+    <SecretLocatorEditor
+      :open="Boolean(locatorCtx)"
+      :rule="locatorCtx ? locatorCtx.existingRule : null"
+      :slot="locatorCtx ? locatorCtx.slot : ''"
+      :arg-options="locatorCtx ? locatorCtx.argOptions : []"
+      :title="locatorCtx ? `凭据匹配规则 · ${locatorCtx.title}` : '凭据匹配规则'"
+      @update:open="(value: boolean) => { if (!value) locatorCtx = null }"
+      removable
+      @save="applyRule"
+      @remove="onRemoveRule"
+    />
   </div>
 </template>

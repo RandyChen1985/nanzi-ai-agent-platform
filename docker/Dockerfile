@@ -40,6 +40,10 @@ ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
 ENV PLATFORM_TIMEZONE=Asia/Shanghai
+# 构建版本带进运行时：「系统诊断 → 实例」用它显示节点版本并与前端 __APP_VERSION__ 对齐。
+# 之前 ARG APP_VERSION 只用于前端构建，后端进程读不到，实例页就会一律显示 dev。
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
 
 # 系统依赖：Oracle(libaio)、SQL Server(unixODBC + msodbcsql18)、时区数据
 # openssh-client + sshpass：ssh 沙箱策略（sandbox_policy=ssh）依托平台主机的
@@ -56,6 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iputils-ping \
     dnsutils \
     procps \
+    libatomic1 \
     git \
     jq \
     unzip \
@@ -89,6 +94,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # 安装 Playwright 浏览器内核及系统依赖（Chromium headless，约 260 MiB）
 # 使用 --with-deps 选项，Playwright 会自动补全当前版本 Chromium 运行所需的全部底层 Linux 系统库，确保绝对完整
+# 注意：playwright 这个 CLI 本身就是用自带 driver node 跑的，它启动需要 libatomic.so.1；
+#       python:3.11-slim 不带该库，而 --with-deps 补的是 Chromium 的库、也压根跑不到那一步
+#       （报错 "libatomic.so.1: cannot open shared object file ... exit code: 127"），
+#       所以 libatomic1 必须在上面的 apt 阶段手动装好。
 RUN playwright install --with-deps chromium
 
 # 复制项目代码

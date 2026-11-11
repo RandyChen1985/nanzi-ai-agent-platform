@@ -48,6 +48,7 @@ from app.services.ai.tools.resource_catalog_tools import (
     list_accessible_knowledge_bases,
     list_available_agents,
 )
+from app.services.ai.tools.credential_catalog_tools import list_my_credentials
 from app.services.ai.tools.user_info_tools import get_myinfo
 from app.services.ai.tools.user_confirmation_tools import request_user_confirmation
 from app.services.ai.tools.user_question_tools import ask_user_question
@@ -165,6 +166,8 @@ TOOL_EVIDENCE_TYPES = {
     "list_accessible_knowledge_bases": frozenset({EvidenceType.INTERNAL_KNOWLEDGE}),
     "list_available_agents": frozenset({EvidenceType.RUNTIME_STATE}),
     "list_accessible_directories": frozenset({EvidenceType.RUNTIME_STATE}),
+    # 凭据清单属于用户自己的配置数据，不是外部事实
+    "list_my_credentials": frozenset({EvidenceType.RUNTIME_STATE}),
     "list_available_skills": frozenset({EvidenceType.RUNTIME_STATE}),
     "read_skill_instruction": frozenset({EvidenceType.RUNTIME_STATE}),
     "publish_generated_file": frozenset({EvidenceType.USER_FILE}),
@@ -182,6 +185,7 @@ TOOL_EVIDENCE_POLICY: dict[str, str] = {
     "list_accessible_knowledge_bases": "allow_empty_success",
     "list_available_agents": "allow_empty_success",
     "list_accessible_directories": "allow_empty_success",
+    "list_my_credentials": "allow_empty_success",
     "list_available_skills": "allow_empty_success",
     "read_skill_instruction": "allow_empty_success",
     # 记忆/知识/文件检索：查无结果 = "未找到"，属于合法事实依据
@@ -362,6 +366,7 @@ class ToolRegistry:
         "list_accessible_directories": list_accessible_directories,
         "list_accessible_knowledge_bases": list_accessible_knowledge_bases,
         "list_available_agents": list_available_agents,
+        "list_my_credentials": list_my_credentials,
         "get_myinfo": get_myinfo,
         "request_user_confirmation": request_user_confirmation,
         "ask_user_question": ask_user_question,
@@ -1019,6 +1024,7 @@ class ToolRegistry:
             list_accessible_directories,
             list_accessible_knowledge_bases,
             list_available_agents,
+            list_my_credentials,
             get_myinfo,
             request_user_confirmation,
             ask_user_question,

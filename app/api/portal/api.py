@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, script_tools, tool_bundles, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, skill_gallery, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview, access_requests, resource_square, chat_shares, secrets
+from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, script_tools, tool_bundles, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, skill_gallery, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview, access_requests, resource_square, chat_shares, secrets, instances
 
 portal_router = APIRouter()
 
@@ -39,6 +39,9 @@ portal_router.include_router(system.router, prefix="/system", tags=["系统配�
 
 # 7.1 LLM 链路追踪配置 (Langfuse) —— 独立表与独立 Tab，权限单独控制
 portal_router.include_router(langfuse.router, prefix="/system/langfuse", tags=["Langfuse串联追踪"], dependencies=[Depends(require_api_key)])
+
+# 7.2 多实例心跳（系统诊断 → 实例）：只读运维信息 + 别名编辑，端点内部要求管理员
+portal_router.include_router(instances.router, prefix="/system/instances", tags=["实例监控"], dependencies=[Depends(require_api_key)])
 
 # 8. API 密钥 (Keys)
 portal_router.include_router(keys.router, prefix="/keys", tags=["API密钥"], dependencies=[Depends(require_api_key)])

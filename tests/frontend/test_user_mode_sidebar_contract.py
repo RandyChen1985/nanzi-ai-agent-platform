@@ -91,9 +91,19 @@ def test_library_is_the_only_locked_entry(menu: str) -> None:
     assert 'permission: "menu:knowledge_management"' in library_block
 
 
-def test_system_menu_is_removed(menu: str) -> None:
-    """「系统管理」已从用户模式移除：管理员要看后台就切专业模式。"""
-    assert 'key: "system"' not in menu
+def test_user_mode_keeps_system_admin_as_one_admin_only_shortcut(menu: str) -> None:
+    """用户模式不放「系统管理」整组，只留一个管理员专用「系统设置」直达。
+
+    历史：这里原来断言 `key: "system" not in menu`，理由是「管理员要看后台就切
+    专业模式」。实际用起来那一步很烦——改一个开关要先切模式、再从左侧菜单找。
+    现在改成：26 个后台入口仍然不进用户模式，但给一个直达入口兜住高频操作，
+    并且 adminOnly + menu:system:config 双保险（见 probe 里的 userHasSystem）。
+    """
+    # system 只作为「更多」的一个子项出现，不能变成多入口的「系统管理」分组
+    assert menu.count('key: "system"') == 1
+    system_block = menu.split('key: "system"', 1)[1].split("},", 1)[0]
+    assert "adminOnly: true" in system_block
+    assert 'path: "/dashboard/system"' in system_block
 
 
 def test_sidebar_renders_locked_hint_instead_of_navigating(sidebar: str) -> None:
@@ -282,14 +292,27 @@ def test_knowledge_and_workspace_are_siblings(menu: str) -> None:
     assert "permission" not in workspace_block
 
 
-def test_more_menu_drops_memory_and_system_adds_overview(menu: str) -> None:
+def test_more_menu_holds_curated_entries_plus_admin_only_system_config(menu: str) -> None:
+    """「更多」收纳不常用入口；其中系统设置只给管理员。
+
+    这里原来断言的是 `key: "system" not in more_block`——那时系统入口只属于
+    专业模式的动态菜单。现在反过来：管理员在用户模式下也要能直接改配置，
+    否则每改一个开关都得先切专业模式、再从左侧菜单进。
+    普通用户没有 menu:system:config，露出来只会被守卫踢回落地页，所以这一项
+    同时挂权限码和 adminOnly，两个条件都满足才渲染。
+    """
     more_block = menu.split('key: "more"', 1)[1]
     assert 'key: "overview"' in more_block
     assert 'path: "/dashboard"' in more_block
     assert 'key: "memory"' not in more_block
-    assert 'key: "system"' not in more_block
     # 个人中心入口收敛到头像弹层（AccountMenu），侧栏不重复第二份
     assert 'key: "personal"' not in more_block
+
+    system_block = more_block.split('key: "system"', 1)[1].split("},", 1)[0]
+    assert 'label: "系统设置"' in system_block
+    assert 'path: "/dashboard/system"' in system_block
+    assert 'permission: "menu:system:config"' in system_block
+    assert "adminOnly: true" in system_block
 
 
 def test_workspace_page_hides_session_mount_action() -> None:
@@ -567,8 +590,8 @@ def test_submenu_items_carry_icons() -> None:
     menu = _read("frontend/src/constants/userModeMenu.ts")
     sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
 
-    # 三个专家子项 + 更多里的三项
-    for key in ('"expert"', '"skill"', '"connector"', '"workbench"', '"token"', '"overview"'):
+    # 三个专家子项 + 更多里的四项
+    for key in ('"expert"', '"skill"', '"connector"', '"workbench"', '"token"', '"overview"', '"system"'):
         segment = menu.split(f"key: {key}", 1)[1].split("}", 1)[0]
         assert "icon:" in segment, f"{key} 缺少图标"
 

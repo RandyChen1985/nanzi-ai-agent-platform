@@ -77,11 +77,17 @@ def test_credential_params_are_offered_as_bindable_slots():
 
     漏掉它们的话，用户在面板里看不到这些槽位，也就绑不了；工具调用时会一直
     报「凭据未填」，而错误信息里没有任何线索指向「这里能绑」。
+
+    槽位必须和运行时用同一个推导函数（`resolve_api_tool_slot`）：`POST
+    /refund/{applicant}` 的 applicant 是 **path** 参数，只看 method 会算成
+    `body:applicant`——绑定写进去了、面板显示「已绑定」，调用时永远匹配不到。
     """
     source = _targets_source()
 
     assert "credential_param_names" in source
-    assert 'param_prefix = "query" if' in source
+    assert "resolve_api_tool_slot(" in source
+    # 自己按 method 拼前缀的老写法不能回来
+    assert 'param_prefix = "query" if' not in source
 
 
 def test_mcp_lists_every_configured_auth_header():

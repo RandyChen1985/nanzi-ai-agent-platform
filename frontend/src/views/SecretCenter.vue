@@ -444,6 +444,28 @@ const usageHelpOpen = ref(false)
 const usageLoading = ref(false)
 const usageRows = ref<UsageRow[]>([])
 
+// 弹窗有两个视角：「只看这条」和「我的全部记录」。
+//
+// 之前只有一个视角——不带 secret_id 请求，拿回来的是**我这个账号所有凭据**的
+// 最近 50 条。而入口按钮长在单条凭据的卡片上，用户点进去看到别人的 key，
+// 第一反应是「点错了 / 数据串了」。默认锁到当前那条，再给一个显式的
+// 「查看全部记录」开关：想看全貌可以，但不能是「悄悄给全部」。
+type RecordScope = 'secret' | 'all'
+const usageScope = ref<RecordScope>('secret')
+const usageSecretId = ref('')
+
+/** 标题上要写清「现在看的是谁」，否则「全部」和「这条」只差在记录多少条，看不出来 */
+const usageScopeLabel = computed(() => {
+  if (usageScope.value === 'all') return '全部凭据'
+  const hit = items.value.find((i) => i.id === usageSecretId.value)
+  return hit?.name || '这条凭据'
+})
+
+/** 统计面板跟着同一个视角走：明细说「只看这条」，统计却在算全部，两个 tab 会互相打脸 */
+const statsSecretId = computed(() =>
+  usageScope.value === 'secret' ? usageSecretId.value || null : null,
+)
+
 // 「谁用了」和「谁改了」是两个问题，放两个 tab。合成一张表的话，查轮换记录
 // 得在几万条调用里翻。
 type RecordTab = 'usage' | 'stats' | 'audit'
@@ -464,7 +486,12 @@ async function loadRecords(tab: RecordTab) {
   usageLoading.value = true
   try {
     const url = tab === 'usage' ? '/api/portal/secrets/usage' : '/api/portal/secrets/audit'
-    const res = await axios.get(url, { params: { limit: 50 } })
+    const params: Record<string, string | number> = { limit: 50 }
+    // 不带 secret_id = 「我的全部凭据」；只有显式切到全部时才走这条路
+    if (usageScope.value === 'secret' && usageSecretId.value) {
+      params.secret_id = usageSecretId.value
+    }
+    const res = await axios.get(url, { params })
     if (tab === 'usage') usageRows.value = res.data?.data || []
     else auditRows.value = res.data?.data || []
   } catch (e: any) {
@@ -475,9 +502,19 @@ async function loadRecords(tab: RecordTab) {
 }
 
 async function openUsage() {
+  // 入口是「这条凭据的使用记录」，就按这条查。左栏没有选中项时才退回全部。
+  usageSecretId.value = selected.value?.id || ''
+  usageScope.value = usageSecretId.value ? 'secret' : 'all'
   usageOpen.value = true
   recordTab.value = 'usage'
   await loadRecords('usage')
+}
+
+async function setUsageScope(scope: RecordScope) {
+  if (usageScope.value === scope) return
+  usageScope.value = scope
+  // 统计 tab 不用重拉：`:secret-id` 变了组件自己会加载
+  await loadRecords(recordTab.value)
 }
 
 async function switchRecordTab(tab: RecordTab) {
@@ -628,7 +665,7 @@ onMounted(load)
 
 <template>
   <div class="space-y-4">
-    <!-- 顶部：scope 切换 + 搜索 + 新建 -->
+    <!-- 工具栏：scope 切换 + 搜索 + 新建 -->
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div class="inline-flex rounded-xl bg-gray-100 p-1">
         <button
@@ -649,10 +686,12 @@ onMounted(load)
         </button>
       </div>
 
-      <div class="flex items-center gap-2">
+      <!-- 窄屏：搜索整行，下一行「?」与「新建」并排。整块用一个不换行的 flex 时，
+           中文按钮会被挤成一列竖排字（跨 360~430px 的机型都会中招）。 -->
+      <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
         <button
           type="button"
-          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-300 text-sm font-semibold text-gray-500 transition-colors hover:border-blue-400 hover:text-blue-600"
+          class="order-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-300 text-sm font-semibold text-gray-500 transition-colors hover:border-blue-400 hover:text-blue-600 sm:order-1"
           title="这些凭据会被用在哪里"
           aria-label="查看凭据使用范围"
           @click="usageHelpOpen = true"
@@ -661,12 +700,12 @@ onMounted(load)
           v-model="keyword"
           type="search"
           placeholder="搜索名称或标识"
-          class="w-44 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none sm:w-56"
+          class="order-1 w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none sm:order-2 sm:w-56"
         />
         <button
           v-if="scope === 'mine'"
           type="button"
-          class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+          class="order-3 flex-1 whitespace-nowrap rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 sm:flex-none"
           @click="openCreate"
         >
           新建凭据
@@ -1265,8 +1304,12 @@ onMounted(load)
         <div class="flex max-h-[calc(100vh-120px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
           <div class="flex items-start justify-between border-b border-gray-100 px-5 py-3">
             <div>
-              <h3 class="text-base font-semibold text-gray-900">
-                {{ recordTab === 'usage' ? '使用记录' : recordTab === 'stats' ? '使用统计' : '变更记录' }}
+              <h3 class="flex flex-wrap items-center gap-2 text-base font-semibold text-gray-900">
+                <span>{{ recordTab === 'usage' ? '使用记录' : recordTab === 'stats' ? '使用统计' : '变更记录' }}</span>
+                <!-- 范围写在标题上：两个视角差的就是「谁」，藏在开关里看不出来 -->
+                <span class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-normal text-gray-600">
+                  {{ usageScope === 'all' ? '全部凭据' : `只看 ${usageScopeLabel}` }}
+                </span>
               </h3>
               <p class="mt-0.5 text-xs text-gray-500">
                 {{ recordTab === 'usage'
@@ -1294,15 +1337,34 @@ onMounted(load)
                 : 'border-transparent text-gray-500 hover:text-gray-700'"
               @click="switchRecordTab(tab)"
             >{{ tab === 'usage' ? '使用记录' : tab === 'stats' ? '统计' : '变更记录' }}</button>
+
+            <!-- 默认只看当前这条；想看全貌得自己点一下 -->
+            <div class="ml-auto flex items-center gap-1 rounded-lg bg-gray-100 p-0.5">
+              <button
+                type="button"
+                class="rounded-md px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-40"
+                :class="usageScope === 'secret' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                :disabled="!usageSecretId"
+                :title="usageSecretId ? '只看当前选中的这条凭据' : '左栏没有选中凭据'"
+                @click="setUsageScope('secret')"
+              >只看这条</button>
+              <button
+                type="button"
+                class="rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+                :class="usageScope === 'all' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                title="我名下所有凭据的记录，按时间倒序"
+                @click="setUsageScope('all')"
+              >查看全部记录</button>
+            </div>
           </div>
 
           <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
             <!-- 统计面板自己管加载态，不受明细的 usageLoading 影响 -->
-            <!-- 个人端没有「全部凭据」这个视角：统计跟着左栏选中的那条走，
-                 没选中时就是我这全部凭据的合计 -->
+            <!-- 统计跟着弹窗上的范围开关走：明细在看「这条」，统计却在算全部，
+                 两个 tab 互相打脸 -->
             <SecretUsageStats
               v-if="recordTab === 'stats'"
-              :secret-id="selectedId || null"
+              :secret-id="statsSecretId"
             />
 
             <p v-else-if="usageLoading" class="py-8 text-center text-xs text-gray-400">加载中…</p>
@@ -1329,6 +1391,13 @@ onMounted(load)
 
             <p v-else-if="!usageRows.length" class="py-8 text-center text-xs text-gray-400">
               还没有使用记录
+              <!-- 单条为空时最容易误解成「一条记录都没有」：给一条通往全部的近路 -->
+              <button
+                v-if="usageScope === 'secret'"
+                type="button"
+                class="ml-1 text-emerald-600 hover:underline"
+                @click="setUsageScope('all')"
+              >看看全部凭据的记录</button>
             </p>
             <div v-else class="space-y-1.5">
               <div

@@ -15,6 +15,11 @@
 类名（`flex flex-wrap gap-2`）断言的用例会误报失败：**文案与局部类名会随视觉迭代漂移，
 但它们不是信息架构**。本文件改为锁定稳定的结构标识——卡片标题、网格类、按钮标签、
 折叠状态位与持久化键——不再锁文案。
+
+2026-11-10 刷新：诊断 tab 内部再分一层，加了二级左栏（`诊断` / `实例`），于是**最外层**
+容器从 `flex flex-col` 变成「左栏 + 内容」的横向两栏。被保护的信息架构没有变：
+诊断内容自身仍是上下排布（操作区置顶 + 全宽控制台），依旧不能回到
+「左操作卡片 + 右控制台」的三列分栏。断言因此下沉到内容容器上。
 """
 
 from pathlib import Path
@@ -36,13 +41,22 @@ def _diagnostics_block(source: str) -> str:
     return source[start:end]
 
 
-def test_diagnostics_uses_vertical_layout_instead_of_side_by_side_columns():
-    """最外层容器必须改为纵向 flex，且不再存在三列分栏。"""
+def test_diagnostics_content_is_vertical_inside_the_secondary_sidebar():
+    """二级左栏只加在 tab 内部；被保护的是「诊断内容上下排布、不并排成三列」。
+
+    外层现在是「左栏 + 内容」的横向两栏（`diagSection` 切换），内容容器仍必须是
+    `flex-col`：操作区在上、控制台全宽在下。
+    """
     block = _diagnostics_block(_source())
     head = block[: block.index("<!-- 顶部：连接与能力检查")]
 
     assert "activeTab === 'diagnostics'" in head
-    assert "flex flex-col" in head, "诊断页外层应为纵向排布"
+    # 二级左栏的两个页签都在内容区之前出现
+    assert "diagSection === 'diag'" in head
+    assert "diagSection === 'instances'" in head
+
+    content = head[head.index("diagSection === 'diag'") :]
+    assert "flex-col" in content, "诊断内容应为纵向排布"
     assert "lg:grid-cols-3" not in head, "不应再使用「左操作 + 右控制台」的三列分栏"
     assert "lg:col-span-1" not in head
 
@@ -74,7 +88,7 @@ def test_action_buttons_are_inline_not_a_vertical_full_width_stack():
     for label in ("测试连接", "扫描 Keys", "清理 Keys", "重新检测", "重构本地向量数据"):
         assert label in top, f"{label} 按钮应位于顶部操作区"
 
-    assert "flex-wrap gap-2" in top, "操作按钮应横向排布并可换行"
+    assert "flex-wrap" in top, "操作按钮应横向排布并可换行"
     assert "w-full inline-flex justify-center items-center" not in top, (
         "操作按钮不应再使用整列宽（w-full）的纵向堆叠样式"
     )

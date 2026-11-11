@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import uuid
@@ -34,6 +35,13 @@ ECHO_SERVER_NAME = "NanZi Echo 测试 MCP"
 ECHO_TOOL_LOCAL_NAME = "echo"
 ECHO_TOOL_NAME = f"{ECHO_SERVER_NAME}:{ECHO_TOOL_LOCAL_NAME}"
 ECHO_TOOL_DESCRIPTION = "验证 MCP 请求是否收到，以及 NanZi 用户身份断言是否验签成功。"
+ECHO_MAIL_TOOL_LOCAL_NAME = "send_mail"
+ECHO_MAIL_TOOL_NAME = f"{ECHO_SERVER_NAME}:{ECHO_MAIL_TOOL_LOCAL_NAME}"
+ECHO_MAIL_TOOL_DESCRIPTION = (
+    "模拟给某个用户发一封邮件。``mailkey`` 专供凭据注入验收：把它标成「来自凭据」后"
+    "模型看不到它，由平台按 ``username`` 匹配凭据后注入。返回的是掩码值与指纹，"
+    "用来验证「不同 username 取到了不同的 key」，但看不到明文。"
+)
 # 个人 Echo 与平台 Echo 共用同一个 FastMCP 端点，靠路径里的 server_id 区分实例。
 ECHO_SERVER_ID_HEADER = "X-Nanzi-Echo-Server"
 ECHO_PATH_PREFIX = "/mcp/echo/"
@@ -369,6 +377,62 @@ ECHO_SLOW_TOOL_DESCRIPTION = (
 )
 #: 每步默认间隔（毫秒）。测试里传 0 可以直接跑完，不真正等待。
 ECHO_SLOW_DEFAULT_INTERVAL_MS = 800
+
+
+@echo_mcp.tool(name=ECHO_MAIL_TOOL_LOCAL_NAME, description=ECHO_MAIL_TOOL_DESCRIPTION)
+async def send_mail(
+    ctx: Context,
+    username: str,
+    mailkey: str | None = None,
+    subject: str = "",
+) -> dict[str, Any]:
+    """模拟发邮件，并把收到的 ``mailkey`` 以「掩码 + 指纹」的形式回显。
+
+    为什么回显指纹而不是明文：验收要能回答「注入的是 A 那条还是 B 那条」，
+    指纹可以（同一条凭据的指纹是稳定的），而明文不行——回显明文等于把凭据
+    泄露进对话与 trace。
+
+    Args:
+        username: 收件人。凭据规则通常用它当键（``arg:username``）。
+        mailkey: 凭据参数。模型侧看不到，由平台注入。
+        subject: 邮件主题，普通参数，用来确认「非凭据参数照常由模型填」。
+    """
+    key_text = mailkey or ""
+    return {
+        "ok": True,
+        "username": username,
+        "subject": subject,
+        "mailkey_present": bool(key_text),
+        "mailkey_length": len(key_text),
+        # 掩码看着方便，指纹用于自动化断言
+        "mailkey_masked": _mask_secret(key_text) if key_text else None,
+        "mailkey_fingerprint": (
+            hashlib.sha256(key_text.encode("utf-8")).hexdigest()[:12] if key_text else None
+        ),
+        "message": f"已模拟给 {username} 发送邮件",
+    }
+
+
+def send_mail_tool_schema() -> str:
+    """返回 ``send_mail`` 的稳定 JSON Schema，供 MCP 管理页缓存。"""
+    return json.dumps(
+        {
+            "type": "object",
+            "properties": {
+                "username": {
+                    "type": "string",
+                    "description": "收件人。凭据规则通常用它当键。",
+                },
+                "mailkey": {
+                    "type": "string",
+                    "description": "凭据参数：标成「来自凭据」后由平台注入，模型看不到。",
+                },
+                "subject": {"type": "string", "description": "邮件主题"},
+            },
+            "required": ["username"],
+        },
+        ensure_ascii=False,
+    )
 
 
 @echo_mcp.tool(name=ECHO_SLOW_TOOL_NAME, description=ECHO_SLOW_TOOL_DESCRIPTION)

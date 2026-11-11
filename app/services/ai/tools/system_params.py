@@ -23,7 +23,9 @@ class SystemParamConfigError(ValueError):
     """系统级参数配置不合法。"""
 
 
-PARAM_SOURCES = frozenset({"literal", "credential"})
+#: ``literal`` 平台写死；``credential`` 绑一条固定凭据；``rule`` 按定位规则动态选。
+#: 后两者对模型都不可见（值由平台注入），区别只在「谁来选这条凭据」。
+PARAM_SOURCES = frozenset({"literal", "credential", "rule"})
 
 
 @dataclass(frozen=True)
@@ -96,11 +98,11 @@ def parse_system_params(parameter_schema: Any) -> list[SystemParamSpec]:
         if source not in PARAM_SOURCES:
             raise SystemParamConfigError(f"系统级参数 {name} 的来源不支持：{source}")
         value = entry.get("value")
-        if source == "credential":
-            # 凭据来源的值运行时才知道，配置里不存任何东西
+        if source != "literal":
+            # 凭据来源（固定凭据 / 按规则）的值运行时才知道，配置里不存任何东西
             if type_name != "string":
                 raise SystemParamConfigError(
-                    f"系统级参数 {name} 来自凭据，类型只能是 string"
+                    f"系统级参数 {name} 由凭据提供，类型只能是 string"
                 )
             value = ""
         elif not isinstance(value, str) or not value.strip():
@@ -158,8 +160,10 @@ def apply_system_params(
     specs = validate_system_params(parameter_schema)
     prepared = dict(params)
     for spec in specs:
-        if spec.source == "credential":
-            # 由注入层按绑定补；这里不能塞空串，否则「没绑定」会变成一个空值请求
+        if spec.source != "literal":
+            # 由注入层按绑定/规则补；这里不能塞空串，否则「没绑定」会变成一个空值请求。
+            # 必须用 != "literal" 而不是 == "credential"：漏掉 rule 的话，规则未命中的
+            # 参数会被填成空串发出去，`unresolved_params` 也检测不到，用户只会收到远端的 401。
             prepared.pop(spec.name, None)
             continue
         raw = replace_user_placeholders(spec.value, variables, expected_type=spec.type)
@@ -169,4 +173,6 @@ def apply_system_params(
 
 def credential_param_names(parameter_schema: Any) -> list[str]:
     """声明为「来自凭据」的参数名，按声明顺序。"""
-    return [spec.name for spec in validate_system_params(parameter_schema) if spec.source == "credential"]
+    # 「不是 literal」都算：固定凭据和按规则都从模型可见 schema 里移除，
+    # 值由平台注入。只认 credential 的话，选了「按规则匹配」的参数模型照样能编一个值。
+    return [spec.name for spec in validate_system_params(parameter_schema) if spec.source != "literal"]
