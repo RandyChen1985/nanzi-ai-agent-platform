@@ -665,7 +665,7 @@ onMounted(load)
 
 <template>
   <div class="space-y-4">
-    <!-- 顶部：scope 切换 + 搜索 + 新建 -->
+    <!-- 工具栏：scope 切换 + 搜索 + 新建 -->
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div class="inline-flex rounded-xl bg-gray-100 p-1">
         <button
@@ -686,10 +686,12 @@ onMounted(load)
         </button>
       </div>
 
-      <div class="flex items-center gap-2">
+      <!-- 窄屏：搜索整行，下一行「?」与「新建」并排。整块用一个不换行的 flex 时，
+           中文按钮会被挤成一列竖排字（跨 360~430px 的机型都会中招）。 -->
+      <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
         <button
           type="button"
-          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-300 text-sm font-semibold text-gray-500 transition-colors hover:border-blue-400 hover:text-blue-600"
+          class="order-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-300 text-sm font-semibold text-gray-500 transition-colors hover:border-blue-400 hover:text-blue-600 sm:order-1"
           title="这些凭据会被用在哪里"
           aria-label="查看凭据使用范围"
           @click="usageHelpOpen = true"
@@ -698,12 +700,12 @@ onMounted(load)
           v-model="keyword"
           type="search"
           placeholder="搜索名称或标识"
-          class="w-44 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none sm:w-56"
+          class="order-1 w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none sm:order-2 sm:w-56"
         />
         <button
           v-if="scope === 'mine'"
           type="button"
-          class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+          class="order-3 flex-1 whitespace-nowrap rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 sm:flex-none"
           @click="openCreate"
         >
           新建凭据

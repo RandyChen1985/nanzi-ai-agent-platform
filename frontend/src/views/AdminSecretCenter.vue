@@ -701,15 +701,17 @@ onMounted(load)
       <p class="text-sm text-gray-600">
         系统级凭据对<strong>被授权的用户</strong>可见可用；未授权的连名称都不会出现。
       </p>
-      <div class="flex items-center gap-2">
+      <!-- 窄屏：搜索框独占一行，「新建」再独占一行；中间一行放视图切换与两个记录入口。
+           以前整块用一个不换行的 flex，六个控件挤在一行里，中文按钮被压成一列竖排字。 -->
+      <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
         <input
           v-model="keyword"
           type="search"
           placeholder="搜索"
-          class="w-40 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none sm:w-52"
+          class="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none sm:w-52"
         />
         <!-- 视图切换：卡片看得全，列表扫得快 -->
-        <div class="flex items-center rounded-lg border border-gray-300 bg-white p-0.5" role="group" aria-label="视图切换">
+        <div class="flex shrink-0 items-center rounded-lg border border-gray-300 bg-white p-0.5" role="group" aria-label="视图切换">
           <button
             type="button"
             class="rounded-md p-1.5"
@@ -739,21 +741,22 @@ onMounted(load)
         </div>
         <button
           type="button"
-          class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+          class="shrink-0 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
           @click="openAudit"
         >
           变更记录
         </button>
         <button
           type="button"
-          class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+          class="shrink-0 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
           @click="openUsage()"
         >
           使用记录
         </button>
+        <!-- 窄屏独占一行：它是这一页唯一的写操作，挤在中间行会被压到四个字换行 -->
         <button
           type="button"
-          class="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
+          class="w-full shrink-0 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 sm:w-auto"
           @click="openCreate"
         >
           新建系统凭据
