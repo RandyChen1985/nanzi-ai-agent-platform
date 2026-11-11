@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { defineAsyncComponent } from 'vue'
+import { defineAsyncComponent, type AsyncComponentLoader } from 'vue'
 import {
   PERSONAL_RESOURCE_MODAL_TABS,
   type PersonalResourceTab,
 } from '@/constants/personalResources'
+import PersonalResourcePanelLoader from '@/components/embed/PersonalResourcePanelLoader.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -18,24 +19,24 @@ const emit = defineEmits<{
   (e: 'open-question', payload: unknown): void
 }>()
 
-const PersonalMemoryPanel = defineAsyncComponent(
-  () => import('@/components/personal/PersonalMemoryPanel.vue'),
-)
-const PersonalTokenUsage = defineAsyncComponent(
-  () => import('@/components/personal/PersonalTokenUsage.vue'),
-)
-const DataPortalHome = defineAsyncComponent(
-  () => import('@/views/DataPortalHome.vue'),
-)
-const SkillsManagement = defineAsyncComponent(
-  () => import('@/views/SkillsManagement.vue'),
-)
-const McpManagement = defineAsyncComponent(
-  () => import('@/views/McpManagement.vue'),
-)
-const TaskCenter = defineAsyncComponent(
-  () => import('@/views/TaskCenter.vue'),
-)
+/**
+ * 各 Tab 面板按需懒加载：delay 设为 0 让占位立刻出现（默认 200ms 会先白一下再跳），
+ * 占位本身撑满内容区，所以加载期间弹窗尺寸不会变化。
+ */
+const lazyPanel = (loader: AsyncComponentLoader) =>
+  defineAsyncComponent({
+    loader,
+    loadingComponent: PersonalResourcePanelLoader,
+    delay: 0,
+    suspensible: false,
+  })
+
+const PersonalMemoryPanel = lazyPanel(() => import('@/components/personal/PersonalMemoryPanel.vue'))
+const PersonalTokenUsage = lazyPanel(() => import('@/components/personal/PersonalTokenUsage.vue'))
+const DataPortalHome = lazyPanel(() => import('@/views/DataPortalHome.vue'))
+const SkillsManagement = lazyPanel(() => import('@/views/SkillsManagement.vue'))
+const McpManagement = lazyPanel(() => import('@/views/McpManagement.vue'))
+const TaskCenter = lazyPanel(() => import('@/views/TaskCenter.vue'))
 
 const close = () => emit('update:visible', false)
 
@@ -52,7 +53,7 @@ const setTab = (tab: PersonalResourceTab) => {
     @click.self="close"
   >
     <div
-      class="bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-2xl shadow-2xl w-[min(920px,96vw)] max-h-[85vh] border border-gray-200/80 dark:border-gray-700/80 transform transition-all scale-100 animate-fade-in-up flex flex-col overflow-hidden"
+      class="bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200/80 dark:border-gray-700/80 transform transition-all scale-100 animate-fade-in-up flex flex-col overflow-hidden w-[min(920px,96vw)] h-[min(820px,88vh)] max-w-full max-h-full"
     >
       <!-- Header -->
       <div class="flex justify-between items-center px-5 sm:px-6 pt-5 pb-3 flex-shrink-0">
@@ -96,27 +97,73 @@ const setTab = (tab: PersonalResourceTab) => {
         </button>
       </div>
 
-      <!-- Content -->
-      <div class="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-4 custom-scrollbar">
-        <PersonalMemoryPanel v-if="activeTab === 'memory'" />
-        <PersonalTokenUsage v-else-if="activeTab === 'tokens'" />
-        <DataPortalHome
-          v-else-if="activeTab === 'data'"
-          embedded
-          delegate-navigation
-          @open-report="emit('open-report', $event)"
-          @open-conversation="emit('open-conversation', $event)"
-          @open-question="emit('open-question', $event)"
-        />
-        <SkillsManagement v-else-if="activeTab === 'skills'" personal-only />
-        <McpManagement v-else-if="activeTab === 'mcp'" personal-only />
-        <TaskCenter
-          v-else-if="activeTab === 'tasks'"
-          personal-only
-          embedded
-          @open-report="emit('open-report', $event)"
-        />
+      <!-- Content：高度由弹窗固定，切换 Tab 时旧内容淡出、新内容淡入，不会牵动弹窗尺寸 -->
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <div
+          :key="activeTab"
+          class="panel-switch h-full overflow-y-auto px-4 sm:px-5 py-4 custom-scrollbar"
+        >
+          <PersonalMemoryPanel v-if="activeTab === 'memory'" />
+          <PersonalTokenUsage v-else-if="activeTab === 'tokens'" />
+          <DataPortalHome
+            v-else-if="activeTab === 'data'"
+            embedded
+            delegate-navigation
+            @open-report="emit('open-report', $event)"
+            @open-conversation="emit('open-conversation', $event)"
+            @open-question="emit('open-question', $event)"
+          />
+          <SkillsManagement v-else-if="activeTab === 'skills'" personal-only />
+          <McpManagement v-else-if="activeTab === 'mcp'" personal-only />
+          <TaskCenter
+            v-else-if="activeTab === 'tasks'"
+            personal-only
+            embedded
+            @open-report="emit('open-report', $event)"
+          />
+        </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 弹窗入场：原先模板里就写了 animate-fade-in-up，但全局没有这个 keyframes，实际不生效 */
+.animate-fade-in-up {
+  animation: personal-resource-fade-in-up 0.16s ease-out both;
+}
+
+@keyframes personal-resource-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Tab 内容切换：只做透明度/位移，不参与布局，固定高度下不会有尺寸抖动 */
+.panel-switch {
+  animation: personal-resource-panel-in 0.18s ease-out both;
+}
+
+@keyframes personal-resource-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in-up,
+  .panel-switch {
+    animation: none;
+  }
+}
+</style>
