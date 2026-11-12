@@ -1218,7 +1218,7 @@ onBeforeUnmount(() => {
 
                   <!-- 标签 -->
                   <div>
-                    <label class="mb-1 block text-xs font-semibold text-gray-600">标签</label>
+                    <label class="mb-1 block text-xs font-semibold text-gray-600">业务标签</label>
                     <div class="mb-1.5 flex flex-wrap gap-1.5">
                       <span
                         v-for="(tag, index) in draft.tags"
@@ -1228,13 +1228,13 @@ onBeforeUnmount(() => {
                         {{ tag }}
                         <button type="button" class="text-blue-400 hover:text-red-500" @click="removeTag(index)">✕</button>
                       </span>
-                      <span v-if="!draft.tags.length" class="text-[11px] text-gray-300">暂无标签</span>
+                      <span v-if="!draft.tags.length" class="text-[11px] text-gray-300">暂无业务标签</span>
                     </div>
                     <div class="flex gap-1.5">
                       <input
                         v-model="tagInput"
                         type="text"
-                        placeholder="输入标签后回车"
+                        placeholder="输入业务标签后回车"
                         class="min-w-0 flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs outline-none focus:border-blue-500"
                         @keyup.enter="addTag"
                       />
@@ -1655,8 +1655,8 @@ onBeforeUnmount(() => {
                       @click="toggleOpt('copyTags')"
                     />
                     <div>
-                      <div class="text-xs font-semibold text-gray-700">复制标签</div>
-                      <div class="mt-0.5 text-[11px] text-gray-400">保留源数据集的标签，可在第 1 步增删。</div>
+                      <div class="text-xs font-semibold text-gray-700">复制业务标签</div>
+                      <div class="mt-0.5 text-[11px] text-gray-400">保留源数据集的业务标签，可在第 1 步增删。</div>
                     </div>
                   </div>
                   <div class="flex gap-2.5 px-3 py-2">
@@ -1789,7 +1789,7 @@ onBeforeUnmount(() => {
                   </div>
                   <div class="rounded-xl border border-gray-100 px-3 py-2.5">
                     <h4 class="mb-2 text-[11px] font-semibold text-gray-400">复制范围</h4>
-                    <div class="flex justify-between gap-2 py-0.5 text-[11px]"><span class="text-gray-400">标签</span><span class="max-w-[70%] truncate text-right text-gray-800">{{ opts.copyTags && draft.tags.length ? draft.tags.join('、') : '不复制' }}</span></div>
+                    <div class="flex justify-between gap-2 py-0.5 text-[11px]"><span class="text-gray-400">业务标签</span><span class="max-w-[70%] truncate text-right text-gray-800">{{ opts.copyTags && draft.tags.length ? draft.tags.join('、') : '不复制' }}</span></div>
                     <div class="flex justify-between gap-2 py-0.5 text-[11px]"><span class="text-gray-400">描述</span><span class="text-gray-800">{{ opts.copyDesc ? '继承源描述' : '清空' }}</span></div>
                     <div class="flex justify-between gap-2 py-0.5 text-[11px]"><span class="text-gray-400">数据权限</span><span class="text-gray-800">{{ opts.copyPerm ? '继承源策略' : '不复制 · 默认关闭' }}</span></div>
                     <div class="flex justify-between gap-2 py-0.5 text-[11px]"><span class="text-gray-400">RAG 同步</span><span class="text-gray-800">未同步（保存后手动同步）</span></div>

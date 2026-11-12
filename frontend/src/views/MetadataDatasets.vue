@@ -10,6 +10,7 @@ import HeroSilhouette from '../components/common/HeroSilhouette.vue'
 import MetadataDriftAlertsDrawer from '../components/metadata/MetadataDriftAlertsDrawer.vue'
 import MetadataCronInspectionModal from '../components/metadata/MetadataCronInspectionModal.vue'
 import CopyDatasetWizard from '../components/metadata/CopyDatasetWizard.vue'
+import InfoTooltip from '../components/InfoTooltip.vue'
 import RowPolicyConfigModal from '../components/metadata/RowPolicyConfigModal.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
@@ -416,6 +417,24 @@ const newDataset = ref({
   tags: [] as string[]
 })
 const tagInput = ref('')
+/**
+ * 业务标签说明（新建 / 编辑数据集共用一份，避免两处各写一段、改一处留一处）。
+ *
+ * 文案必须说清三件事，都是读代码确认的口径：
+ * 1. 标签唯一的实质消费点是 AI 数据集目录——`app/services/ai/config.py` 的
+ *    `_format_dataset_menu` 把它拼成 `- Dataset: <name> [标签]` 注入 ChatBI 系统提示
+ *    （`chatbi/system_prompt.py`、`clarification.py`、`schema_prefetch.py`）与数据门户
+ *    导航生成，所以「会影响 AI 分析」是事实，不是销售话术；
+ * 2. 它**不参与**数据权限判定（`dataset_scope_service` 全程不读该字段），改标签不会
+ *    放宽或收紧「谁能查」，这句话能挡掉最常见的误解；
+ * 3. 智能体「绑定数据集」弹窗的搜索会匹配标签（`utils/metadataDatasetFilter.ts`），
+ *    所以标签还承担检索线索的作用。
+ */
+const businessTagHint =
+  '用于描述这个数据集属于什么业务主题（如财务、销售、核心数据）。' +
+  '它会随「已授权数据集目录」一起提供给 AI，影响 ChatBI 选库、澄清提问与数据门户推荐；' +
+  '但不参与数据权限判定，改标签不会改变谁能查。' +
+  '智能体绑定数据集时也可以按业务标签搜索。'
 const rowFilterConfigStr = ref('')
 
 const dbConnections = ref<any[]>([])
@@ -2651,7 +2670,10 @@ onMounted(async () => {
 
             <div>
 
-              <label class="block text-sm font-medium text-gray-700 mb-1">标签</label>
+              <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
+                <span>业务标签</span>
+                <InfoTooltip class="ml-1 text-gray-400" align="left" :text="businessTagHint" />
+              </label>
               <div class="flex gap-2 mb-2">
                 <input v-model="tagInput" @keyup.enter="addTag" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
               </div>
@@ -2756,7 +2778,10 @@ onMounted(async () => {
             </div>
 
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">标签</label>
+              <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
+                <span>业务标签</span>
+                <InfoTooltip class="ml-1 text-gray-400" align="left" :text="businessTagHint" />
+              </label>
               <div class="flex gap-2 mb-2">
                 <input v-model="tagInput" @keyup.enter="addTag(editingDataset)" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
               </div>
