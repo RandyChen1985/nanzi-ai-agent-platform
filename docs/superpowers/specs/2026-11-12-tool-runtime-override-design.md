@@ -226,3 +226,20 @@ AgentScope 运行链是单模型 agent：`assistant_agent_runner` 统一创建 `
 
 `tests/ai` + `tests/api` **5025 passed**；`tests/frontend` **4885 passed / 1 skipped**；`vue-tsc -p tsconfig.app.json --noEmit` **157（基线，0 新增）**。
 新增测试：`test_script_tool_runtime.py`（内层超时优先级 2 条）、`test_tool_runtime_config.py`（脏值清洗 1 条）、`test_tool_advanced_badge_contract.py`（告警判断 / 文案 / 默认值 / 降级路径 4 条）。
+
+## 十二、第四轮：`msg.logs` 三个写入点（2026-11-12 收尾）
+
+Review 又指出一处降级路径遗漏，核实成立：`msg.logs` 有**三个**写入口，上一轮只补了第一个。
+
+| 写入点 | 场景 | 状态 |
+|---|---|---|
+| `msg.logs[existingIdx] = {...}` | 更新已有日志（工具完成态） | 上一轮已补 |
+| `msg.logs.push({...})` | **首次推入 = `TOOL_CALL_START` 的 pending 态** | 本轮补上 |
+| `AgentDebug.vue` 的 `msg.logs.push(log)` | 调试页同口径 | 本轮补上（含 `LogEntry` 类型） |
+
+pending 行恰恰是唯一需要分母的状态（完成态已有实际耗时），漏这一处比漏更新那处更关键——只是主链路 `syncProcessTimelineLog` 覆盖了它，才没在页面上暴露。
+
+契约测试改为**同时断言三个写入点**，避免以后只改一处：
+`tests/frontend/test_tool_advanced_badge_contract.py::test_legacy_logs_path_also_carries_timeout`。
+
+验证：`tests/frontend` 4885 passed / 1 skipped；`tests/ai` 相关 34 passed；`vue-tsc -p tsconfig.app.json --noEmit` 与基线零差异（157）。

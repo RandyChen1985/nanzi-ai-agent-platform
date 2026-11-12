@@ -12153,6 +12153,9 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     model: data.model,
     temperature: data.temperature,
     tool_result_state: data.tool_result_state,
+    // 首次推入就是「调用工具」的 pending 态，分母只有这里有；漏写就退回版本级快照
+    timeout_seconds:
+      (data.timeout_seconds as number | undefined) ?? null,
     file_metadata: data.file_metadata,
     resolution_status: data.resolution_status,
     rowFilterApplied: data.row_filter_applied === true,

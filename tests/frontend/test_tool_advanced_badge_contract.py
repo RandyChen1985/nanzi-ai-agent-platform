@@ -17,6 +17,7 @@ TIMELINE = Path("frontend/src/components/chat/ChatExecutionTimeline.vue")
 TIMELINE_UTIL = Path("frontend/src/utils/processTimeline.ts")
 SSE = Path("frontend/src/utils/agentscopeSseHandlers.ts")
 EMBED = Path("frontend/src/views/EmbedChat.vue")
+DEBUG = Path("frontend/src/views/AgentDebug.vue")
 
 
 def _source(path: Path) -> str:
@@ -168,7 +169,18 @@ def test_frontend_global_timeout_default_matches_backend():
 
 
 def test_legacy_logs_path_also_carries_timeout():
-    """降级路径读 msg.logs 时同样要有真实超时，否则降级后又是 300s。"""
+    """降级路径读 msg.logs 时同样要有真实超时，否则降级后又是 300s。
+
+    msg.logs 有三个写入口，缺一不可：更新已有条目、首次推入（pending 态）、
+    调试页推入。只修「更新」那一处，pending 行仍然拿不到值。
+    """
     embed = _source(EMBED)
-    assert "timeout_seconds:" in embed
-    assert "data.timeout_seconds" in embed
+    debug = _source(DEBUG)
+
+    # 更新已有条目
+    assert "timeout_seconds:\n        (data.timeout_seconds as number | undefined) ?? currentLog.timeout_seconds" in embed
+    # 首次推入（pending 态，分母就在这一步）
+    assert "timeout_seconds:\n      (data.timeout_seconds as number | undefined) ?? null" in embed
+    assert "msg.logs.push({" in embed
+    # 调试页同口径
+    assert "timeout_seconds: (data.timeout_seconds as number | undefined) ?? null" in debug
