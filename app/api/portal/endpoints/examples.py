@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import String, cast, desc, select, func
+from sqlalchemy import String, cast, desc, or_, select, func
 from typing import Optional, List
 import time
 import logging
@@ -31,6 +31,38 @@ def permission_for_audit_status(status: str) -> str:
     return "element:chatbi_example:audit"
 
 
+# 批量操作 → (目标状态, 所需功能点权限)。批量接口一次校验 action 对应的码，
+# 与单条接口保持同一套映射，避免两条路径的权限口径漂移。
+BATCH_AUDIT_ACTIONS = {
+    "approve": ("approved", "element:chatbi_example:audit"),
+    "reject": ("rejected", "element:chatbi_example:audit"),
+    "deprecate": ("deprecated", "element:chatbi_example:delete"),
+}
+BATCH_ACTION_PERMISSIONS = {
+    **{action: perm for action, (_, perm) in BATCH_AUDIT_ACTIONS.items()},
+    "delete": "element:chatbi_example:delete",
+    "sync": "element:chatbi_example:sync",
+}
+BATCH_ACTION_LABELS = {
+    "approve": "批量通过",
+    "reject": "批量驳回",
+    "deprecate": "批量废弃",
+    "delete": "批量删除",
+    "sync": "批量同步",
+}
+# 单次批量操作上限，避免一页 50 条之外的大范围误点把请求拖成长事务
+BATCH_MAX_SIZE = 200
+
+
+async def _ensure_element_permission(db: AsyncSession, user: dict, code: str) -> None:
+    """按功能点权限码校验当前用户，admin 直接放行。"""
+    if user.get("role") == "admin":
+        return
+    from app.services.permission_service import PermissionService
+    if not await PermissionService(db).check_permission(int(user["user_id"]), "element", code):
+        raise HTTPException(status_code=403, detail=f"Permission required: {code}")
+
+
 def _chatbi_example_user_join():
     """构造兼容 MySQL/ PostgreSQL 的案例用户关联条件。
 
@@ -54,6 +86,11 @@ class UpdateExampleRequest(BaseModel):
     sql_text: Optional[str] = None
     sql_metadata: Optional[dict] = None
     category: Optional[str] = None
+
+class BatchExampleActionRequest(BaseModel):
+    """批量操作请求体：action 见 BATCH_ACTION_PERMISSIONS。"""
+    ids: List[int]
+    action: str  # approve / reject / deprecate / delete / sync
 
 class ExampleSearchTestRequest(BaseModel):
     """案例集检索测试请求体（只读、不落库）。"""
@@ -122,6 +159,26 @@ async def update_example(
 
     await db.commit()
     return {"code": 200, "message": "更新成功。"}
+
+@router.delete("/{id}")
+async def delete_example(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_permission("element", "element:chatbi_example:delete"))
+):
+    """
+    物理删除一条「已废弃」案例。
+
+    垃圾案例先「废弃」再删除，避免一次性抹掉仍需留痕的审核记录；删除时联动
+    清理本地 Redis 向量、RAGFlow 文档与引用流水。
+    """
+    try:
+        success = await ExampleService.delete_example(db, id)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    if not success:
+        raise HTTPException(status_code=404, detail="该案例记录不存在或已被删除，请刷新列表。")
+    return {"code": 200, "message": "删除成功。"}
 
 @router.get("")
 async def list_examples(
@@ -289,15 +346,7 @@ async def audit_example(
         raise HTTPException(status_code=400, detail="Invalid status.")
 
     required = permission_for_audit_status(request.status)
-    if user.get("role") != "admin":
-        from app.services.permission_service import PermissionService
-        if not await PermissionService(db).check_permission(
-            int(user["user_id"]), "element", required
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail=f"Permission required: {required}",
-            )
+    await _ensure_element_permission(db, user, required)
 
     try:
         success = await ExampleService.audit_example(db, request.id, request.status)
@@ -307,6 +356,109 @@ async def audit_example(
         raise HTTPException(status_code=400, detail=str(ve))
 
     return {"code": 200, "message": "审核操作成功。"}
+
+@router.post("/batch")
+async def batch_operate_examples(
+    request: BatchExampleActionRequest,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    批量审核 / 废弃 / 删除 / 同步案例。
+
+    - approve / reject：批量审核，归 element:chatbi_example:audit；
+    - deprecate：批量废弃，归 element:chatbi_example:delete；
+    - delete：批量物理删除，仅「已废弃」条目可删，归 element:chatbi_example:delete；
+    - sync：批量触发向量索引 / RAGFlow 同步，归 element:chatbi_example:sync。
+
+    逐条处理：单条失败（如数据查询类缺 SQL）只记入 failed，不影响其余条目，
+    前端据此提示「成功 x 条，失败 y 条」。
+    """
+    required = BATCH_ACTION_PERMISSIONS.get(request.action)
+    if not required:
+        raise HTTPException(status_code=400, detail="不支持的批量操作类型。")
+
+    ids = list(dict.fromkeys(request.ids or []))
+    if not ids:
+        raise HTTPException(status_code=400, detail="请先选择要操作的案例。")
+    if len(ids) > BATCH_MAX_SIZE:
+        raise HTTPException(
+            status_code=400, detail=f"单次批量操作最多支持 {BATCH_MAX_SIZE} 条案例。"
+        )
+
+    await _ensure_element_permission(db, user, required)
+
+    success_ids: List[int] = []
+    failed: List[dict] = []
+    sync_ids: List[int] = []
+
+    for example_id in ids:
+        try:
+            if request.action == "sync":
+                # 同步与单条接口同口径：只允许已通过/已废弃的记录
+                stmt = select(ChatBIExample).where(ChatBIExample.id == example_id)
+                res = await db.execute(stmt)
+                example = res.scalars().first()
+                if not example:
+                    failed.append({"id": example_id, "reason": "案例不存在或已被删除"})
+                    continue
+                if example.status not in ["approved", "deprecated"]:
+                    failed.append({
+                        "id": example_id,
+                        "reason": f"当前状态（{example.status}）不允许同步",
+                    })
+                    continue
+                sync_ids.append(example_id)
+                success_ids.append(example_id)
+                continue
+
+            if request.action == "delete":
+                deleted = await ExampleService.delete_example(db, example_id)
+                if deleted:
+                    success_ids.append(example_id)
+                else:
+                    failed.append({"id": example_id, "reason": "案例不存在或已被删除"})
+                continue
+
+            target_status = BATCH_AUDIT_ACTIONS[request.action][0]
+            audited = await ExampleService.audit_example(db, example_id, target_status)
+            if audited:
+                success_ids.append(example_id)
+            else:
+                failed.append({"id": example_id, "reason": "案例不存在或已被删除"})
+        except ValueError as ve:
+            await db.rollback()
+            failed.append({"id": example_id, "reason": str(ve)})
+        except Exception as exc:  # 单条异常不阻断整批
+            await db.rollback()
+            logger.error(
+                "[ExampleBatch] action=%s example=%s failed: %s",
+                request.action, example_id, exc,
+            )
+            failed.append({"id": example_id, "reason": str(exc) or "操作失败"})
+
+    if sync_ids:
+        metadata_provider = await ConfigService.get("metadata_provider", default="local")
+        is_local_mode = str(metadata_provider or "").strip().lower() == "local"
+        target = (ExampleService.sync_to_local_redis
+                  if is_local_mode else ExampleService.sync_to_ragflow)
+        for example_id in sync_ids:
+            background_tasks.add_task(target, example_id)
+
+    label = BATCH_ACTION_LABELS.get(request.action, "批量操作")
+    message = f"{label}完成：成功 {len(success_ids)} 条"
+    if failed:
+        message += f"，失败 {len(failed)} 条"
+    return {
+        "code": 200,
+        "message": message,
+        "data": {
+            "action": request.action,
+            "success_ids": success_ids,
+            "failed": failed,
+        },
+    }
 
 @router.post("/sync/{example_id}")
 async def sync_example(
