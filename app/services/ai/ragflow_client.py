@@ -479,25 +479,44 @@ class RagFlowClient:
             return None
         return [dict(item) for item in cached[1]]
 
-    # 不同 RAGFlow 发行版的「建库」字段契约不同：
-    #   chunk_method —— 官方 Python 版：chunk_method + description + permission
-    #   parse_type   —— Go 版内置解析器：parse_type(int, 1=BuiltIn) + parser_id，
-    #                   并明确拒绝 description / chunk_method
+    # 不同 RAGFlow 发行版的「建库」字段契约不同（按 :meth:`create_dataset` 的
+    # 阶梯降级顺序排列）：
+    #   chunk_method            —— 官方 Python 版：chunk_method + description + permission
+    #   chunk_method_no_desc    —— 接受 chunk_method、只拒 description 的发行版
+    #                              （正式版源码），description 由 PUT 补写
+    #   parse_type              —— Go 版内置解析器：parse_type(int, 1=BuiltIn) + parser_id，
+    #                              并明确拒绝 description / chunk_method
     # 探测结果按 base_url 缓存，避免每次建库都多打一次被拒绝的请求。
     _create_contract_cache: Dict[str, str] = {}
 
-    # Go 版拒绝旧字段时的文案。只有命中这些提示才切换契约，
+    # 各发行版拒绝字段时的文案。只有命中这些提示才切换契约，
     # 避免把权限不足、模型未配置等真实错误也当成契约不匹配去重试。
-    _PARSE_TYPE_CONTRACT_HINTS = (
+    # 注意大小写不统一：rc3 源码返回 "Extra inputs are not permitted"，
+    # 正式版源码返回小写 "extra inputs are not permitted"，匹配必须忽略大小写，
+    # 否则正式版的报错会直接穿透给用户（既不切契约，也不补写描述）。
+    _DATASET_CONTRACT_HINTS = (
         "parse_type is required",
         "parser_id is required",
-        "Extra inputs are not permitted",
+        "extra inputs are not permitted",
     )
 
     @classmethod
-    def _looks_like_parse_type_contract_error(cls, message: str) -> bool:
-        msg = message or ""
-        return any(hint in msg for hint in cls._PARSE_TYPE_CONTRACT_HINTS)
+    def _looks_like_dataset_contract_error(cls, message: str) -> bool:
+        msg = (message or "").lower()
+        return any(hint in msg for hint in cls._DATASET_CONTRACT_HINTS)
+
+    @classmethod
+    def _rejects_description_only(cls, message: str) -> bool:
+        """被拒的字段只有 description 时返回 True。
+
+        说明该发行版接受 ``chunk_method``、只拒 ``description``（正式版源码即
+        如此）。这种版本不该直接换成 parse_type 契约，先去掉 description 重试
+        更稳；两边都不可用时再由调用方升级契约。
+        """
+        msg = (message or "").lower()
+        if "not permitted" not in msg:
+            return False
+        return "description" in msg and "chunk_method" not in msg
 
     # 1.0 的 parser_id 合法值：general / qa / manual / table / paper / book /
     # laws / presentation / picture / one / audio / email。
@@ -527,14 +546,19 @@ class RagFlowClient:
             return await self._handle_response(resp, "Create Dataset")
 
     async def _create_dataset_with_chunk_method(
-        self, url: str, name: str, description: str, chunk_method: str
+        self,
+        url: str,
+        name: str,
+        description: str,
+        chunk_method: str,
+        *,
+        include_description: bool = True,
     ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "name": name,
-            "description": description,
-            "chunk_method": chunk_method,
-            "permission": "me",
-        }
+        payload: Dict[str, Any] = {"name": name}
+        if include_description:
+            payload["description"] = description
+        payload["chunk_method"] = chunk_method
+        payload["permission"] = "me"
 
         # If chunk_method is 'one', we don't need complex parser_config
         if chunk_method == "naive":
@@ -567,7 +591,7 @@ class RagFlowClient:
         return await self._post_create_dataset(url, payload)
 
     async def _update_dataset_description(self, dataset_id: str, description: str) -> None:
-        """1.0 建库不接受 description，但 PUT 支持部分更新，用它补写。"""
+        """建库契约不接受 description 时（1.0 / 正式版源码），用 PUT 部分更新补写。"""
         url = f"{self.base_url}/api/v1/datasets/{dataset_id}"
         try:
             async with httpx.AsyncClient(timeout=DEFAULT_METADATA_TIMEOUT) as client:
@@ -582,43 +606,98 @@ class RagFlowClient:
             )
 
     async def _fill_description(self, data: Any, description: str) -> None:
-        """建库成功后，在需要时按 1.0 的方式补写描述。"""
+        """建库成功后，在需要时用 PUT 部分更新补写描述。"""
         if not description or not isinstance(data, dict):
             return
         dataset_id = data.get("id")
         if dataset_id:
             await self._update_dataset_description(dataset_id, description)
 
+    async def _create_dataset_without_description(
+        self, url: str, name: str, description: str, chunk_method: str
+    ) -> Dict[str, Any]:
+        """阶梯 2：保留 chunk_method、去掉 description，成功后 PUT 补写描述。"""
+        data = await self._create_dataset_with_chunk_method(
+            url, name, description, chunk_method, include_description=False
+        )
+        await self._fill_description(data, description)
+        return data
+
+    async def _create_dataset_via_parse_type(
+        self, url: str, name: str, description: str, chunk_method: str
+    ) -> Dict[str, Any]:
+        """阶梯 3：parse_type + parser_id 契约，并记住探测结果。"""
+        data = await self._create_dataset_with_parse_type(url, name, chunk_method)
+        self._create_contract_cache[self.base_url] = "parse_type"
+        await self._fill_description(data, description)
+        return data
+
     async def create_dataset(self, name: str, description: str = "", chunk_method: str = "naive") -> Dict[str, Any]:
         """Create a new dataset (Knowledge Base)
 
-        自动适配两种建库契约：官方版用 ``chunk_method``，1.0 版用
-        ``parse_type`` + ``parser_id``。默认仍按官方契约请求，只有对方明确
-        拒绝这些字段时才切换，因此官方版的请求内容与次数完全不变。
+        建库契约按发行版不同，按阶梯降级，只有对方明确拒绝字段时才继续下一级：
+
+        1. ``chunk_method + description`` —— 官方 Python 版；
+        2. ``chunk_method``（去掉 description）→ PUT 补写描述 —— 接受
+           chunk_method、只拒 description 的发行版（正式版源码）；
+        3. ``parse_type + parser_id``（不带 description）→ PUT 补写描述 ——
+           Go 版 / 1.0。
+
+        判断依据是错误文案里被拒的字段名，因此匹配必须忽略大小写：rc3 返回
+        ``Extra inputs...``，正式版返回 ``extra inputs...``。默认仍先按第 1 级
+        请求，官方版的请求内容与次数完全不变。
         """
         await self._ensure_config()
         url = f"{self.base_url}/api/v1/datasets"
 
-        if self._create_contract_cache.get(self.base_url) == "parse_type":
+        contract = self._create_contract_cache.get(self.base_url)
+        if contract == "parse_type":
             data = await self._create_dataset_with_parse_type(url, name, chunk_method)
             await self._fill_description(data, description)
             return data
+
+        if contract == "chunk_method_no_description":
+            return await self._create_dataset_without_description(
+                url, name, description, chunk_method
+            )
 
         try:
             data = await self._create_dataset_with_chunk_method(
                 url, name, description, chunk_method
             )
         except RagFlowServiceError as e:
-            if not self._looks_like_parse_type_contract_error(str(e)):
+            if not self._looks_like_dataset_contract_error(str(e)):
                 raise
+
+            if self._rejects_description_only(str(e)):
+                logger.info(
+                    f"[RAGFlow] Create Dataset 不接受 description，"
+                    f"去掉该字段重试并在建库后补写（base_url={self.base_url}）：{e}"
+                )
+                try:
+                    data = await self._create_dataset_without_description(
+                        url, name, description, chunk_method
+                    )
+                except RagFlowServiceError as inner:
+                    if not self._looks_like_dataset_contract_error(str(inner)):
+                        raise
+                    logger.info(
+                        f"[RAGFlow] 去掉 description 仍被拒，"
+                        f"改用 parse_type+parser_id 重试（base_url={self.base_url}）：{inner}"
+                    )
+                    return await self._create_dataset_via_parse_type(
+                        url, name, description, chunk_method
+                    )
+                self._create_contract_cache[self.base_url] = "chunk_method_no_description"
+                return data
+
             logger.info(
                 f"[RAGFlow] Create Dataset 不接受 chunk_method 契约，"
                 f"改用 parse_type+parser_id 重试（base_url={self.base_url}）：{e}"
             )
-            data = await self._create_dataset_with_parse_type(url, name, chunk_method)
-            self._create_contract_cache[self.base_url] = "parse_type"
-            await self._fill_description(data, description)
-            return data
+            return await self._create_dataset_via_parse_type(
+                url, name, description, chunk_method
+            )
 
         self._create_contract_cache[self.base_url] = "chunk_method"
         return data

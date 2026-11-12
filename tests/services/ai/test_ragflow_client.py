@@ -499,3 +499,123 @@ async def test_delete_documents_uses_write_timeout(ragflow_client, mock_config):
         await ragflow_client.delete_documents("ds_001", ["doc_001"])
 
     assert mock_async_client.call_args.kwargs["timeout"] == DEFAULT_WRITE_TIMEOUT
+
+
+# --- 建库契约降级：大小写不敏感 + 「只拒 description」的阶梯 ---
+# 回归背景：同一套平台连了两种 RAGFlow 发行版，拒绝字段时的文案不同——
+#   rc3 源码     : "Extra inputs are not permitted: description"（大写 E）
+#   正式版源码   : "extra inputs are not permitted: description"（小写 e）
+# 契约探测原先做大小写敏感的 ``in`` 匹配，正式版的小写文案匹配不上，直接
+# 穿透成用户可见报错，既没切 parse_type 契约，也没走「建库后补写描述」。
+# 另外正式版拒的是 description 而不是 chunk_method，说明它是「接受
+# chunk_method、只拒 description」的发行版，此时直接换成 parse_type+parser_id
+# 未必能建库，所以先去掉 description 重试，仍被拒才升级到 parse_type。
+
+
+_NOPERM_LOWER_DESC = "extra inputs are not permitted: description"
+_NOPERM_LOWER_METHOD = "extra inputs are not permitted: chunk_method"
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_matches_contract_hint_case_insensitively(ragflow_client, mock_config):
+    """正式版的小写 not permitted 文案也应触发契约切换。"""
+    RagFlowClient._create_contract_cache.clear()
+    rejected = httpx.Response(200, json={"code": 101, "message": _NOPERM_LOWER_METHOD})
+    accepted = httpx.Response(200, json={"code": 0, "data": {"id": "ds-lower"}})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.side_effect = [rejected, accepted]
+        data = await ragflow_client.create_dataset("kb", chunk_method="one")
+
+    assert data["id"] == "ds-lower"
+    assert mock_post.call_args_list[1].kwargs["json"]["parse_type"] == 1
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_drops_description_before_switching_contract(ragflow_client, mock_config):
+    """只拒 description 的版本应保留 chunk_method，去掉 description 重试后 PUT 补写。"""
+    RagFlowClient._create_contract_cache.clear()
+    rejected = httpx.Response(200, json={"code": 101, "message": _NOPERM_LOWER_DESC})
+    accepted = httpx.Response(200, json={"code": 0, "data": {"id": "ds-nodesc"}})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+            patch("httpx.AsyncClient.put", new_callable=AsyncMock) as mock_put:
+        mock_post.side_effect = [rejected, accepted]
+        mock_put.return_value = httpx.Response(200, json={"code": 0, "data": None})
+
+        data = await ragflow_client.create_dataset("kb", description="我的描述", chunk_method="one")
+
+    assert data["id"] == "ds-nodesc"
+    assert mock_post.call_count == 2
+    second = mock_post.call_args_list[1].kwargs["json"]
+    assert second["chunk_method"] == "one"
+    assert "description" not in second
+    assert "parse_type" not in second
+    assert mock_put.call_count == 1
+    assert mock_put.call_args.kwargs["json"] == {"description": "我的描述"}
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_escalates_to_parse_type_when_description_less_fails(ragflow_client, mock_config):
+    """去掉 description 后仍被拒，说明判断有误，应继续降级到 parse_type 契约。"""
+    RagFlowClient._create_contract_cache.clear()
+    rejected_desc = httpx.Response(200, json={"code": 101, "message": _NOPERM_LOWER_DESC})
+    rejected_method = httpx.Response(200, json={"code": 101, "message": _NOPERM_LOWER_METHOD})
+    accepted = httpx.Response(200, json={"code": 0, "data": {"id": "ds-go"}})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+            patch("httpx.AsyncClient.put", new_callable=AsyncMock) as mock_put:
+        mock_post.side_effect = [rejected_desc, rejected_method, accepted]
+        mock_put.return_value = httpx.Response(200, json={"code": 0, "data": None})
+
+        data = await ragflow_client.create_dataset("kb", description="我的描述", chunk_method="one")
+
+    assert data["id"] == "ds-go"
+    assert mock_post.call_count == 3
+    third = mock_post.call_args_list[2].kwargs["json"]
+    assert third == {"name": "kb", "parse_type": 1, "parser_id": "one"}
+    assert mock_put.call_count == 1
+    assert mock_put.call_args.kwargs["json"] == {"description": "我的描述"}
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_drops_empty_description_when_rejected(ragflow_client, mock_config):
+    """description 为空也会被发成 ""，被拒时同样应去掉字段，而不是换契约。"""
+    RagFlowClient._create_contract_cache.clear()
+    rejected = httpx.Response(200, json={"code": 101, "message": _NOPERM_LOWER_DESC})
+    accepted = httpx.Response(200, json={"code": 0, "data": {"id": "ds-empty"}})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+            patch("httpx.AsyncClient.put", new_callable=AsyncMock) as mock_put:
+        mock_post.side_effect = [rejected, accepted]
+
+        data = await ragflow_client.create_dataset("kb", chunk_method="one")
+
+    assert data["id"] == "ds-empty"
+    second = mock_post.call_args_list[1].kwargs["json"]
+    assert "description" not in second
+    assert "parse_type" not in second
+    assert mock_put.await_count == 0  # 没有描述可补写
+
+
+@pytest.mark.asyncio
+async def test_description_less_contract_is_remembered_per_base_url(ragflow_client, mock_config):
+    """「只拒 description」的探测结果应按 base_url 缓存，避免每次都多打一次失败请求。"""
+    RagFlowClient._create_contract_cache.clear()
+    rejected = httpx.Response(200, json={"code": 101, "message": _NOPERM_LOWER_DESC})
+    accepted = httpx.Response(200, json={"code": 0, "data": {"id": "ds-nodesc"}})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+            patch("httpx.AsyncClient.put", new_callable=AsyncMock) as mock_put:
+        mock_post.side_effect = [rejected, accepted, accepted]
+        mock_put.return_value = httpx.Response(200, json={"code": 0, "data": None})
+
+        await ragflow_client.create_dataset("kb1", description="描述一", chunk_method="one")
+        await ragflow_client.create_dataset("kb2", description="描述二", chunk_method="one")
+
+    # 第一次：带 description 被拒 + 去掉 description 成功；第二次直接走无 description 契约。
+    assert mock_post.call_count == 3
+    third = mock_post.call_args_list[2].kwargs["json"]
+    assert third["chunk_method"] == "one"
+    assert "description" not in third
+    assert mock_put.call_count == 2
