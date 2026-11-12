@@ -176,13 +176,19 @@ def test_static_groups_collapse_by_default_in_every_mode():
 # 注册表页：分组维度的可读性与操作（下拉计数 / 徽章筛选 / 未分组提醒 / 分组视图）
 # --------------------------------------------------------------------------- #
 def test_registry_group_filter_shows_counts():
-    """看不到「每组多少、还有多少没归类」，就无从开始治理。"""
+    """看不到「每组多少、还有多少没归类」，就无从开始治理。
+
+    口径在「业务分组页签」上线时改过一次：筛选下拉与页签现在共用
+    `groupTabCounts`（关键词 / 方法 / 状态过滤后的**命中数**），不再是全量
+    `groupFilterOptions`。原因是两处并排显示时数字必须一致——页签写「履约罚款 2」、
+    下拉写「履约罚款 6」，用户没法判断哪个是真的。全量计数仍留给表单里的分组下拉与
+    「分组管理」（那里问的是「这个组一共多少工具」）。
+    """
     source = _source(REGISTRY)
-    assert "groupFilterOptions" in source
-    # 三个选项都要带计数，否则「每组多少 / 还剩多少没归类」又看不见了
-    # （筛选已收进面板，这里的断言跟着面板里的文案走）
-    assert "全部分组（{{ groupFilterOptions.all }}）" in source
-    assert "未分组（{{ groupFilterOptions.ungrouped }}）" in source
+    assert "groupTabCounts" in source
+    assert "groupFilterOptions" in source  # 全量计数仍服务表单与分组管理
+    assert "全部分组（{{ groupTabCounts.total }}）" in source
+    assert "未分组（{{ groupTabCounts.ungrouped }}）" in source
     assert "{{ name }}（{{ count }}）" in source
 
 
@@ -248,11 +254,16 @@ def test_registry_puts_url_under_the_tool_name():
 
 
 def test_registry_table_has_six_columns():
-    """列数一变，空态 colspan 与分组视图的复用都要跟着改。"""
+    """列数一变，空态 colspan 与分组视图的复用都要跟着改。
+
+    「业务分组」列现在按 `groupFilter` 条件渲染：用页签（或筛选面板）锁定某一组后，
+    表格里再放一列「业务分组」就是重复信息。因此空态 colspan 必须是动态的 6 / 5，
+    写死 6 会在选中分组后多撑出一列空白。
+    """
     source = _source(REGISTRY)
     header = source[source.index("<thead"):source.index("</thead>")]
     assert len(re.findall(r"<th[\s>]", header)) == 6
-    assert 'colspan="6"' in source
+    assert ':colspan="groupFilter === \'all\' ? 6 : 5"' in source
 
 
 def test_registry_only_the_name_column_absorbs_spare_width():

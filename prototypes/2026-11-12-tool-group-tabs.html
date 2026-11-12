@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>工具注册表 · 业务分组多 Tab 与顶部筛选联动</title>
+<meta name="prototype-kind" content="方案对比">
+<style>
+  :root{
+    --ink:#0f172a; --ink-2:#334155; --ink-3:#64748b; --ink-4:#94a3b8;
+    --line:#e2e8f0; --line-2:#eef1f5; --bg:#f7f8fa; --card:#fff;
+    --p:#1677ff; --p-hover:#4096ff; --p-dark:#0958d9; --p-soft:#e8f2ff; --p-line:#bcd9ff;
+    --green:#10b981; --green-soft:#ecfdf5; --green-ink:#047857; --green-line:#a7f3d0;
+    --red:#dc2626; --red-soft:#fef2f2; --red-line:#fecaca;
+    --amber:#b45309; --amber-soft:#fffbeb; --amber-line:#fcd34d;
+    --indigo:#6366f1; --indigo-soft:#eef2ff; --indigo-ink:#4f46e5;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:13px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page{max-width:1180px;margin:0 auto;padding:28px 24px 72px}
+
+  /* ---------- 评审说明 ---------- */
+  .eyebrow{font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--p-dark);margin-bottom:8px}
+  .lead{margin:0 0 18px;color:var(--ink-3);font-size:13px;line-height:1.85;max-width:960px}
+  .lead b{color:var(--ink-2)}
+  .lead code{background:#eef2f7;border-radius:4px;padding:1px 5px;font-size:11.5px;color:var(--ink-2)}
+
+  /* 现状核查 */
+  .audit{background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:16px 18px;margin-bottom:20px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .audit h2{margin:0 0 4px;font-size:13.5px;font-weight:900;letter-spacing:-.1px}
+  .audit p{margin:0 0 12px;font-size:11.5px;color:var(--ink-3);line-height:1.8}
+  .audit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .audit-item{display:flex;gap:9px;align-items:flex-start;background:#f8fafc;border:1px solid var(--line-2);border-radius:10px;padding:9px 11px}
+  .audit-item .dot{width:16px;height:16px;border-radius:99px;flex-shrink:0;margin-top:2px;display:grid;place-items:center;font-size:9.5px;font-weight:900;color:#fff}
+  .audit-item.has .dot{background:var(--green)}
+  .audit-item.todo .dot{background:var(--p)}
+  .audit-item b{font-size:11.5px;font-weight:800;display:block;color:var(--ink)}
+  .audit-item span{font-size:11px;color:var(--ink-3);line-height:1.7;display:block}
+  .audit-item code{font-size:10.5px;background:#eef2f7;border-radius:3px;padding:0 3px;color:var(--ink-2)}
+
+  /* ---------- 方案切换 ---------- */
+  .planbar{position:sticky;top:0;z-index:40;background:rgba(247,248,250,.94);backdrop-filter:blur(8px);padding:10px 0 12px;margin-bottom:6px;border-bottom:1px solid var(--line-2)}
+  .planbar-in{max-width:1180px;margin:0 auto;padding:0 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .planbar .lbl{font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-4)}
+  .plans{display:flex;gap:6px;flex-wrap:wrap}
+  .plans button{border:1px solid var(--line);background:#fff;border-radius:10px;padding:7px 12px;font:inherit;font-size:12px;font-weight:800;color:var(--ink-3);cursor:pointer;transition:.15s;display:flex;align-items:center;gap:6px}
+  .plans button.on{border-color:var(--p);background:var(--p-soft);color:var(--p-dark);box-shadow:0 1px 2px rgba(22,119,255,.15)}
+  .plans button .tag{font-size:9.5px;font-weight:900;letter-spacing:.04em;background:#eef2f7;color:var(--ink-4);border-radius:5px;padding:1px 5px}
+  .plans button.on .tag{background:#fff;color:var(--p-dark)}
+  .planbar .hint{margin-left:auto;font-size:11px;color:var(--ink-4)}
+
+  /* ---------- 复刻页面 ---------- */
+  .card{background:var(--card);border:1px solid var(--line-2);border-radius:16px;box-shadow:0 1px 2px rgba(15,23,42,.03);overflow:visible}
+  .typetabs{display:flex;gap:4px;padding:6px 16px 0;border-bottom:1px solid var(--line-2)}
+  .typetabs button{position:relative;border:0;background:transparent;padding:8px 12px 11px;font:inherit;font-size:13px;font-weight:700;color:var(--ink-3);cursor:pointer;display:flex;align-items:center;gap:6px}
+  .typetabs button.on{color:var(--p)}
+  .typetabs button.on::after{content:"";position:absolute;left:8px;right:8px;bottom:-1px;height:2px;border-radius:2px 2px 0 0;background:var(--p)}
+  .typetabs .n{background:#eef2f7;color:var(--ink-3);border-radius:5px;padding:1px 6px;font-size:11px;font-weight:800;font-variant-numeric:tabular-nums}
+
+  .head{padding:16px 20px 0}
+  .head h1{margin:0;font-size:18px;font-weight:900;letter-spacing:-.3px}
+  .head p{margin:5px 0 0;font-size:12px;color:var(--ink-3)}
+
+  .toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:14px 20px 16px}
+  .search{position:relative;flex:1 1 260px;min-width:200px}
+  .search input{width:100%;border:1px solid #d7dde6;background:#fff;border-radius:10px;padding:8px 11px 8px 32px;font:inherit;font-size:12.5px;outline:none;transition:.15s}
+  .search input:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(22,119,255,.14)}
+  .search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--ink-4)}
+
+  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #d7dde6;background:#fff;border-radius:10px;padding:8px 12px;font:inherit;font-size:12.5px;font-weight:700;color:var(--ink-2);cursor:pointer;transition:.15s;white-space:nowrap}
+  .btn:hover{border-color:#c3ccd8;background:#f9fbfd}
+  .btn.primary{background:var(--p);border-color:var(--p);color:#fff}
+  .btn.primary:hover{background:var(--p-hover);border-color:var(--p-hover)}
+  .btn.on{border-color:var(--p-line);background:var(--p-soft);color:var(--p-dark)}
+  .btn .badge{min-width:18px;justify-content:center;border-radius:99px;background:var(--p);color:#fff;font-size:10px;font-weight:900;padding:1px 5px}
+  .btn .badge.ghost{background:#eef2f7;color:var(--ink-3)}
+
+  .seg{display:flex;background:#eef1f5;border-radius:10px;padding:3px;gap:2px}
+  .seg button{border:0;background:transparent;border-radius:8px;padding:6px 10px;font:inherit;font-size:11.5px;font-weight:800;color:var(--ink-3);cursor:pointer;white-space:nowrap}
+  .seg button.on{background:#fff;color:var(--p-dark);box-shadow:0 1px 2px rgba(15,23,42,.08)}
+
+  /* 筛选面板 */
+  .filter-wrap{position:relative}
+  .filter-panel{position:absolute;right:0;top:calc(100% + 6px);z-index:30;width:min(21rem,calc(100vw - 2rem));background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;box-shadow:0 12px 32px rgba(15,23,42,.14)}
+  .filter-panel[hidden]{display:none}
+  .filter-panel .grp + .grp{margin-top:12px;padding-top:12px;border-top:1px solid var(--line-2)}
+  .filter-panel .grp > p{margin:0 0 6px;font-size:11px;font-weight:800;color:var(--ink-3)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chips button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 9px;font:inherit;font-size:11.5px;font-weight:700;color:var(--ink-3);cursor:pointer}
+  .chips button.on{border-color:var(--p);background:var(--p-soft);color:var(--p-dark)}
+  .filter-panel select{width:100%;border:1px solid #d7dde6;border-radius:9px;background:#fff;padding:6px 9px;font:inherit;font-size:11.5px;outline:none}
+  .filter-panel select:focus{border-color:var(--p)}
+  .filter-foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--line-2);display:flex;align-items:center;justify-content:space-between}
+  .filter-foot span{font-size:11px;color:var(--ink-4)}
+  .filter-foot button{border:0;background:transparent;font:inherit;font-size:11.5px;font-weight:800;color:var(--p);cursor:pointer}
+  .filter-foot button:disabled{color:#c7ced8;cursor:not-allowed}
+
+  /* 页签条（本需求主体） */
+  .grouptabs{display:flex;align-items:center;gap:4px;padding:0 20px;border-bottom:1px solid var(--line-2);position:relative}
+  .grouptabs[hidden]{display:none}
+  .gtabs-scroll{display:flex;align-items:center;gap:2px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+  .gtabs-scroll::-webkit-scrollbar{display:none}
+  .gtab{position:relative;border:0;background:transparent;padding:10px 11px 11px;font:inherit;font-size:12.5px;font-weight:700;color:var(--ink-3);cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;border-radius:8px 8px 0 0;transition:.15s}
+  .gtab:hover{background:#f5f8fc;color:var(--ink-2)}
+  .gtab.on{color:var(--p-dark)}
+  .gtab.on::after{content:"";position:absolute;left:6px;right:6px;bottom:-1px;height:2px;background:var(--p);border-radius:2px 2px 0 0}
+  .gtab .n{font-variant-numeric:tabular-nums;font-size:11px;font-weight:800;color:var(--ink-4);background:#f1f5f9;border-radius:5px;padding:1px 5px}
+  .gtab.on .n{background:var(--p-soft);color:var(--p-dark)}
+  .gtab .n.zero{opacity:.5}
+  .gmore{position:relative;flex-shrink:0}
+  .gmore > button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 8px;font:inherit;font-size:11.5px;font-weight:800;color:var(--ink-3);cursor:pointer;display:flex;align-items:center;gap:4px;margin:0 0 4px 6px}
+  .gmore > button[hidden]{display:none}
+  .gmore-menu{position:absolute;right:0;top:calc(100% + 2px);z-index:30;width:220px;max-height:260px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:5px;box-shadow:0 12px 30px rgba(15,23,42,.14)}
+  .gmore-menu[hidden]{display:none}
+  .gmore-menu button{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:transparent;border-radius:7px;padding:6px 8px;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;text-align:left}
+  .gmore-menu button:hover{background:#f5f8fc}
+  .gmore-menu button.on{background:var(--p-soft);color:var(--p-dark);font-weight:800}
+  .gmore-menu .n{font-size:11px;font-weight:800;color:var(--ink-4)}
+
+  /* 当前筛选提示 */
+  .activebar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 20px;background:#f8fbff;border-bottom:1px solid var(--line-2);font-size:11.5px;color:var(--ink-3)}
+  .activebar[hidden]{display:none}
+  .activebar .chip{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid var(--p-line);color:var(--p-dark);border-radius:99px;padding:2px 4px 2px 9px;font-weight:800;font-size:11px}
+  .activebar .chip button{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:0 3px;opacity:.7}
+  .activebar .chip button:hover{opacity:1}
+  .activebar .clear{margin-left:auto;border:0;background:transparent;font:inherit;font-size:11.5px;font-weight:800;color:var(--p);cursor:pointer}
+
+  /* 表格 */
+  table{width:100%;border-collapse:collapse}
+  thead th{background:#fbfcfe;text-align:left;font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4);padding:9px 12px;border-bottom:1px solid var(--line-2);white-space:nowrap}
+  tbody td{padding:11px 12px;border-bottom:1px solid var(--line-2);vertical-align:middle}
+  tbody tr:hover{background:#fafcff}
+  .tname{font-size:12.5px;font-weight:800;color:var(--ink);display:flex;align-items:center;gap:6px}
+  .tname .truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+  .tdesc{font-size:11px;color:var(--ink-3);margin:2px 0 0;line-height:1.55}
+  .turl{font-size:10.5px;color:var(--ink-4);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin:2px 0 0;word-break:break-all}
+  .method{display:inline-flex;border-radius:99px;padding:1px 8px;font-size:10.5px;font-weight:900;letter-spacing:.02em}
+  .m-GET{background:var(--green-soft);color:var(--green-ink)}
+  .m-POST{background:#e8f2ff;color:var(--p-dark)}
+  .m-PUT{background:#fff7e6;color:#ad6800}
+  .m-PATCH{background:#f5f0ff;color:#6d28d9}
+  .m-DELETE{background:var(--red-soft);color:#b91c1c}
+  .gbadge{display:inline-flex;border-radius:99px;background:var(--indigo-soft);color:var(--indigo-ink);font-size:10.5px;font-weight:800;padding:1px 8px;cursor:pointer;border:0;font-family:inherit}
+  .gbadge:hover{background:#e0e7ff}
+  .gbadge.none{background:transparent;color:var(--ink-4);cursor:default;font-weight:700}
+  .dot{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;color:var(--ink-2);white-space:nowrap}
+  .dot i{width:6px;height:6px;border-radius:99px;display:inline-block}
+  .dot.on i{background:var(--green)}
+  .dot.off i{background:#cbd5e1}
+  .rowacts{display:flex;gap:4px;justify-content:flex-end}
+  .rowacts button{border:1px solid transparent;background:transparent;border-radius:7px;padding:3px 8px;font:inherit;font-size:11.5px;font-weight:800;color:var(--p);cursor:pointer;white-space:nowrap}
+  .rowacts button:hover{background:var(--p-soft)}
+  .rowacts button.danger{color:#c0392b}
+  .rowacts button.danger:hover{background:var(--red-soft)}
+  .empty{padding:48px 20px;text-align:center;color:var(--ink-4);font-size:12.5px}
+  .tablefoot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 20px;background:#fbfcfe;border-radius:0 0 16px 16px;font-size:11.5px;color:var(--ink-3)}
+
+  /* 方案说明卡 */
+  .notes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:18px}
+  .note{background:#fff;border:1px solid var(--line-2);border-radius:14px;padding:14px 16px}
+  .note h3{margin:0 0 6px;font-size:12.5px;font-weight:900;display:flex;align-items:center;gap:6px}
+  .note h3 .k{background:var(--p-soft);color:var(--p-dark);border-radius:6px;font-size:10px;font-weight:900;padding:1px 6px}
+  .note p{margin:0;font-size:11.5px;color:var(--ink-3);line-height:1.8}
+  .note p + p{margin-top:6px}
+  .note b{color:var(--ink-2)}
+  .note code{background:#eef2f7;border-radius:3px;padding:0 3px;font-size:10.5px;color:var(--ink-2)}
+
+  /* 待拍板 */
+  .decisions{background:#fff;border:1px solid var(--line-2);border-radius:14px;padding:16px 18px;margin-top:16px}
+  .decisions h2{margin:0 0 10px;font-size:13px;font-weight:900}
+  .decisions ol{margin:0;padding-left:18px;font-size:12px;color:var(--ink-2);line-height:1.95}
+  .decisions li b{color:var(--ink)}
+  .decisions .rec{color:var(--p-dark);font-weight:800}
+
+  /* 弹窗 */
+  .mask{position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(2px);z-index:80;display:grid;place-items:center;padding:20px}
+  .mask[hidden]{display:none}
+  .modal{width:min(560px,100%);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;box-shadow:0 24px 64px rgba(15,23,42,.28)}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line-2)}
+  .modal-head h2{margin:0;font-size:15px;font-weight:900}
+  .modal-head button{border:0;background:transparent;font-size:18px;color:var(--ink-4);cursor:pointer;line-height:1}
+  .modal-body{padding:16px 20px}
+  .field + .field{margin-top:13px}
+  .field > label{display:block;font-size:12px;font-weight:800;color:var(--ink-2);margin-bottom:5px}
+  .field input,.field select,.field textarea{width:100%;border:1px solid #d7dde6;border-radius:9px;padding:8px 10px;font:inherit;font-size:12.5px;outline:none;background:#fff}
+  .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(22,119,255,.14)}
+  .field .help{margin:5px 0 0;font-size:11px;color:var(--ink-4);line-height:1.7}
+  .group-field{border:1px solid var(--p-line);background:#f6faff;border-radius:12px;padding:12px 13px}
+  .group-field > label{font-size:12px;font-weight:900;color:var(--p-dark);display:flex;align-items:center;gap:6px;margin-bottom:6px}
+  .group-field .newtag{font-size:9.5px;font-weight:900;background:var(--p);color:#fff;border-radius:5px;padding:1px 6px;letter-spacing:.03em}
+  .group-hint{margin:7px 0 0;font-size:11px;color:var(--ink-3);line-height:1.7;display:flex;gap:6px;align-items:flex-start}
+  .group-hint b{color:var(--ink-2)}
+  .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--line-2);background:#fbfcfe;border-radius:0 0 16px 16px}
+
+  @media (max-width:900px){
+    .audit-grid,.notes{grid-template-columns:1fr}
+    .page{padding:20px 14px 84px}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="eyebrow">原型 · 工具注册表</div>
+  <p class="lead">
+    诉求是「新建 / 编辑时有业务分组、顶部能按它筛、页面能按它多 Tab」。先给结论：<b>前两项在 API 工具页已经存在</b>
+    （见下方核查表），所以真正要新增的只有 <b>「按分组的多 Tab 视图」</b>。
+    下面三个方案主差别是「Tab 放在哪一层、和现有列表 / 分组视图怎么共存」，页面里的数据与控件都可点。
+  </p>
+
+  <!-- ===== 现状核查 ===== -->
+  <section class="audit">
+    <h2>现状核查：业务分组（<code>group_name</code>）已经支持的入口</h2>
+    <p>逐处读 <code>ToolRegistry.vue</code> / <code>ToolWizard.vue</code> / <code>ScriptToolWizard.vue</code> / <code>GroupSelect.vue</code> 得到，不是推测。</p>
+    <div class="audit-grid">
+      <div class="audit-item has"><span class="dot">✓</span><div>
+        <b>新建工具时可填</b>
+        <span><code>ToolWizard.vue</code> 的「业务分组」输入框（带 datalist 候选），留空 = 未分组。</span>
+      </div></div>
+      <div class="audit-item has"><span class="dot">✓</span><div>
+        <b>编辑弹窗可改</b>
+        <span>编辑态用 <code>GroupSelect</code>：可选已有分组，也能直接敲新分组。</span>
+      </div></div>
+      <div class="audit-item has"><span class="dot">✓</span><div>
+        <b>顶部筛选面板里已有</b>
+        <span>就是你截图里那一项：<code>全部分组（12）/ 未分组（n）/ 各组（n）</code>。</span>
+      </div></div>
+      <div class="audit-item has"><span class="dot">✓</span><div>
+        <b>表格行内可点、可批量设</b>
+        <span>行内分组徽标点一下即「只看该组」；勾选多行后可批量设置分组；另有「分组管理」。</span>
+      </div></div>
+      <div class="audit-item todo"><span class="dot">＋</span><div>
+        <b>缺的：按分组的多 Tab 视图</b>
+        <span>现在只有「列表视图 / 分组视图（折叠）」两档，折叠要点开才看得到组内工具。</span>
+      </div></div>
+      <div class="audit-item todo"><span class="dot">!</span><div>
+        <b>要顺带确认：分组不只用于过滤</b>
+        <span>智能体配置的「工具能力」步骤也按 <code>group_name</code> 归组（<code>toolGrouping.ts</code>）。文案别写成「仅过滤」，否则和实际行为不符。</span>
+      </div></div>
+    </div>
+  </section>
+</div>
+
+<!-- ===== 方案切换 ===== -->
+<div class="planbar">
+  <div class="planbar-in">
+    <span class="lbl">方案</span>
+    <div class="plans" id="plans">
+      <button data-plan="A" class="on">A · 常驻分组页签 <span class="tag">推荐</span></button>
+      <button data-plan="B">B · 只在分组视图里出页签</button>
+      <button data-plan="C">C · 页签 + 组内再折叠</button>
+    </div>
+    <span class="hint">
+      分组数量：<b id="gcLabel">6 组</b> ·
+      <button class="btn" id="gcToggle" style="padding:3px 8px;font-size:11px">切换成 11 组看溢出</button>
+      <button class="btn" id="openAdd" style="padding:3px 8px;font-size:11px">▣ 看新建 / 编辑表单</button>
+    </span>
+  </div>
+</div>
+
+<div class="page" style="padding-top:6px">
+  <!-- ===== 页面复刻 ===== -->
+  <section class="card">
+    <div class="typetabs">
+      <button class="on">API 工具 <span class="n" id="apiCount">24</span></button>
+      <button>脚本工具 <span class="n">6</span></button>
+    </div>
+
+    <div class="head">
+      <h1>工具注册表</h1>
+      <p>API 工具：平台代你发 HTTP 请求；导出时凭据只留占位符，导入后需要补自己的值。</p>
+    </div>
+
+    <div class="toolbar">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="搜索名称、描述或 URL...">
+      </div>
+
+      <div class="filter-wrap">
+        <button class="btn" id="filterBtn" aria-expanded="false">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg>
+          筛选 <span class="badge" id="filterBadge" hidden>0</span>
+        </button>
+        <div class="filter-panel" id="filterPanel" hidden>
+          <div class="grp">
+            <p>HTTP 方法</p>
+            <div class="chips" data-group="method">
+              <button data-v="all" class="on">全部</button>
+              <button data-v="GET">GET</button><button data-v="POST">POST</button>
+              <button data-v="PUT">PUT</button><button data-v="PATCH">PATCH</button><button data-v="DELETE">DELETE</button>
+            </div>
+          </div>
+          <div class="grp">
+            <p>状态</p>
+            <div class="chips" data-group="status">
+              <button data-v="all" class="on">全部</button><button data-v="on">启用</button><button data-v="off">停用</button>
+            </div>
+          </div>
+          <div class="grp">
+            <p>业务分组</p>
+            <select id="groupSelect"></select>
+          </div>
+          <div class="filter-foot">
+            <span id="filterSummary">未设置筛选</span>
+            <button id="filterClear" disabled>清除全部</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="seg" id="viewSeg">
+        <button data-view="list" class="on">列表视图</button>
+        <button data-view="group">分组视图</button>
+      </div>
+
+      <button class="btn primary" id="addBtn">+ 添加工具</button>
+      <button class="btn" style="padding-left:9px;padding-right:9px" title="更多：导入 / 导出 / 分组管理">▾</button>
+    </div>
+
+    <!-- 分组页签（方案 A/C 常驻；方案 B 仅分组视图） -->
+    <div class="grouptabs" id="groupTabs">
+      <div class="gtabs-scroll" id="gtabsScroll"></div>
+      <div class="gmore">
+        <button id="gmoreBtn" hidden>更多分组 ▾</button>
+        <div class="gmore-menu" id="gmoreMenu" hidden></div>
+      </div>
+    </div>
+
+    <!-- 当前筛选提示 -->
+    <div class="activebar" id="activeBar" hidden>
+      <span>当前范围</span>
+      <span class="chip" id="groupChip">履约罚款 <button>✕</button></span>
+      <button class="clear" id="clearAll">清除全部筛选</button>
+    </div>
+
+    <div id="subgroupNote" hidden style="padding:8px 20px;font-size:11px;color:#4f46e5;background:#f6f5ff;border-bottom:1px solid #eae7ff">
+      方案 C：当前页签内再按 HTTP 方法折叠 ↓
+    </div>
+
+    <div id="tableWrap"></div>
+
+    <div class="tablefoot">
+      <span id="footCount">共 24 个工具</span>
+      <span style="color:#cbd5e1">|</span>
+      <span id="footGroup"></span>
+      <span style="margin-left:auto;color:var(--ink-4)" id="footHint">按业务分组多 Tab 后，表格里就不再重复显示「业务分组」列</span>
+    </div>
+  </section>
+
+  <!-- ===== 脚本工具页：同一套页签条，只是列与筛选维度不同 ===== -->
+  <section class="card" style="margin-top:16px">
+    <div class="typetabs">
+      <button>API 工具 <span class="n">24</span></button>
+      <button class="on">脚本工具 <span class="n">6</span></button>
+    </div>
+
+    <div class="head">
+      <h1>工具注册表</h1>
+      <p>脚本工具：平台在沙箱里执行脚本；筛选维度多一个<b>「来源」（内置 / 自定义）</b>，页签规则与 API 工具页完全一致（同一个组件，顺序、未分组殿后、溢出出口都一样）。</p>
+    </div>
+
+    <div class="toolbar">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input type="search" placeholder="搜索名称、描述或用途...">
+      </div>
+      <button class="btn">筛选 <span class="badge">1</span></button>
+      <button class="btn primary">+ 添加脚本工具</button>
+    </div>
+
+    <div class="grouptabs">
+      <div class="gtabs-scroll">
+        <button class="gtab on">全部 <span class="n">6</span></button>
+        <button class="gtab">财务对账 <span class="n">2</span></button>
+        <button class="gtab">工单处理 <span class="n">2</span></button>
+        <button class="gtab">未分组 <span class="n">2</span></button>
+      </div>
+    </div>
+
+    <div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:34px"></th>
+            <th>名称</th>
+            <th style="width:90px">语言</th>
+            <th style="width:90px">来源</th>
+            <th style="width:120px">业务分组</th>
+            <th style="width:100px">状态</th>
+            <th style="width:170px;text-align:right">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><input type="checkbox" style="width:13px;height:13px"></td>
+            <td>
+              <div class="tname"><span>parse_invoice</span><button class="gbadge">自定义</button></div>
+              <p class="tdesc">解析 PDF 发票，输出结构化字段</p>
+            </td>
+            <td style="font-size:11.5px;color:var(--ink-3)">Python</td>
+            <td><span class="gbadge">自定义</span></td>
+            <td><button class="gbadge">财务对账</button></td>
+            <td><span class="dot on"><i></i>启用</span></td>
+            <td><div class="rowacts"><button>编辑</button><button>试运行</button><button class="danger">删除</button></div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" style="width:13px;height:13px"></td>
+            <td>
+              <div class="tname"><span>sync_erp_order</span></div>
+              <p class="tdesc">定时把 ERP 订单同步到平台库</p>
+            </td>
+            <td style="font-size:11.5px;color:var(--ink-3)">Python</td>
+            <td><span class="gbadge" style="background:#f1f5f9;color:var(--ink-3)">内置</span></td>
+            <td><button class="gbadge">财务对账</button></td>
+            <td><span class="dot on"><i></i>启用</span></td>
+            <td><div class="rowacts"><button>编辑</button><button>试运行</button><button class="danger">删除</button></div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" style="width:13px;height:13px"></td>
+            <td>
+              <div class="tname"><span>gen_daily_report</span></div>
+              <p class="tdesc">按模板生成每日运营日报</p>
+            </td>
+            <td style="font-size:11.5px;color:var(--ink-3)">Python</td>
+            <td><span class="gbadge" style="background:#f1f5f9;color:var(--ink-3)">内置</span></td>
+            <td><button class="gbadge">工单处理</button></td>
+            <td><span class="dot off"><i></i>停用</span></td>
+            <td><div class="rowacts"><button>编辑</button><button>试运行</button><button class="danger">删除</button></div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" style="width:13px;height:13px"></td>
+            <td>
+              <div class="tname"><span>assign_ticket_owner</span></div>
+              <p class="tdesc">按规则给工单分配处理人</p>
+            </td>
+            <td style="font-size:11.5px;color:var(--ink-3)">JavaScript</td>
+            <td><span class="gbadge">自定义</span></td>
+            <td><button class="gbadge">工单处理</button></td>
+            <td><span class="dot on"><i></i>启用</span></td>
+            <td><div class="rowacts"><button>编辑</button><button>试运行</button><button class="danger">删除</button></div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" style="width:13px;height:13px"></td>
+            <td>
+              <div class="tname"><span>hello_world</span></div>
+              <p class="tdesc">最小示例，用于验证沙箱可用</p>
+            </td>
+            <td style="font-size:11.5px;color:var(--ink-3)">Python</td>
+            <td><span class="gbadge" style="background:#f1f5f9;color:var(--ink-3)">内置</span></td>
+            <td><span class="gbadge none">—</span></td>
+            <td><span class="dot on"><i></i>启用</span></td>
+            <td><div class="rowacts"><button>编辑</button><button>试运行</button><button class="danger">删除</button></div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" style="width:13px;height:13px"></td>
+            <td>
+              <div class="tname"><span>csv_to_json</span></div>
+              <p class="tdesc">把 CSV 转成 JSON 数组</p>
+            </td>
+            <td style="font-size:11.5px;color:var(--ink-3)">Python</td>
+            <td><span class="gbadge">自定义</span></td>
+            <td><span class="gbadge none">—</span></td>
+            <td><span class="dot on"><i></i>启用</span></td>
+            <td><div class="rowacts"><button>编辑</button><button>试运行</button><button class="danger">删除</button></div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="tablefoot">
+      <span>共 6 个脚本工具</span>
+      <span style="color:#cbd5e1">|</span>
+      <span>页签命中数按「关键词 + 来源 + 状态」算</span>
+      <span style="margin-left:auto;color:var(--ink-4)">点「财务对账」后，表格里那一列同样会消失</span>
+    </div>
+  </section>
+
+  <!-- ===== 方案说明 ===== -->
+  <div class="notes">
+    <div class="note">
+      <h3><span class="k">A</span>常驻分组页签（推荐）</h3>
+      <p>页签在工具栏下方，<b>与「列表 / 分组」视图切换解耦</b>：页签负责「看哪一组」，视图切换只决定「这一组怎么排」。</p>
+      <p>点页签 = 设置 <code>groupFilter</code>，与筛选面板里的下拉是<b>同一份状态</b>，两边永不打架。</p>
+      <p>因为已知在当前组内，表格去掉「业务分组」列，宽屏能多留给名称和 URL。</p>
+    </div>
+    <div class="note">
+      <h3><span class="k">B</span>只在分组视图里出页签</h3>
+      <p>改动最小：把现有「分组视图」的折叠头换成页签，列表视图完全不动（仍带分组列、仍可全量浏览）。</p>
+      <p>代价：要先切到「分组视图」才看得见页签，<b>「按分组切换」不是一个随时可用的第一级动作</b>，跟你要的「页面上多 Tab」感觉差一截。</p>
+    </div>
+    <div class="note">
+      <h3><span class="k">C</span>页签 + 组内再折叠</h3>
+      <p>在 A 之上，把每个页签内部再按 HTTP 方法分折叠段，适合「一组里有几十个工具、想按 GET/POST 扫」的场景。</p>
+      <p>代价：层级变深、首屏多一次点击；<b>没有真实证据表明一组会大到需要两级导航</b>，先不做。</p>
+    </div>
+  </div>
+
+  <!-- ===== 待拍板 ===== -->
+  <section class="decisions">
+    <h2>需要你拍板的 4 件事</h2>
+    <ol>
+      <li><b>页签要不要是「常驻第一级导航」？</b> <span class="rec">建议：是（方案 A）</span>，它与筛选下拉同源，不需要额外心智负担。</li>
+      <li><b>页签计数怎么算？</b> <span class="rec">建议：按「关键词 + 方法 + 状态」过滤后的数量</span>，即每个组里当前条件下有多少命中；组内外都一致，切 Tab 前就知道里面有没有东西。</li>
+      <li><b>分组变多（11+）时？</b> <span class="rec">建议：横向滚动 + 右侧「更多分组」下拉</span>；「未分组」固定排最后、只在有人没分组时才出现。</li>
+      <li><b>业务分组要不要改成受控字典（只能选不能自己敲）？</b> 现状可自由输入（<code>GroupSelect</code> 允许新建），这会有「履约罚款 / 履约罚金」两个近义组的风险；<span class="rec">建议：本次不动</span>，另做「分组管理」里的合并能力。</li>
+    </ol>
+  </section>
+
+  <!-- 弹窗：新建 / 编辑 -->
+  <div class="mask" id="mask" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="工具表单">
+      <div class="modal-head">
+        <h2 id="modalTitle">添加 API 工具</h2>
+        <button id="modalClose" aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>工具名称</label>
+          <input id="fName" value="query_penalty_records" placeholder="e.g. query_penalty_records">
+          <p class="help">模型按名称与描述选工具，用动词开头、英文下划线。</p>
+        </div>
+        <div class="field">
+          <label>请求 URL</label>
+          <input value="https://ops.nanzi.com/api/penalty/records" placeholder="https://…">
+        </div>
+        <div class="field group-field">
+          <label>业务分组 <span class="newtag">本次要明确的字段</span></label>
+          <select id="fGroup">
+            <option value="">未分组</option>
+            <option selected>履约罚款</option>
+            <option>设备巡检</option>
+            <option>工单处理</option>
+            <option>财务对账</option>
+            <option>CRM 客户</option>
+            <option>合规审计</option>
+            <option value="__new">＋ 新建分组…</option>
+          </select>
+          <p class="group-hint">
+            <span>ⓘ</span>
+            <span>可选已有分组，也能直接输入新分组。<b>它用于注册表筛选与页签切换，同时决定智能体配置「工具能力」步骤里的归组</b>；留空则落在「其他扩展工具」。它不参与 HTTP 请求本身，也不改变谁能看到这个工具。</span>
+          </p>
+        </div>
+        <div class="field">
+          <label>描述</label>
+          <textarea rows="3">查询指定时间范围内的履约罚款记录，返回罚款单号、扣款金额与执行状态。用户问「这个月罚了多少」时使用。</textarea>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" id="modalCancel">取消</button>
+        <button class="btn primary" id="modalSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ===================== 数据（真实感的工具清单） ===================== */
+const TOOLS = [
+  { name:'query_penalty_records',  desc:'查询履约罚款明细（按合同 / 时间段）', url:'/api/penalty/records',        method:'GET',    group:'履约罚款', on:true },
+  { name:'create_penalty_notice',  desc:'生成罚款通知单并落地待审批',           url:'/api/penalty/notice',         method:'POST',   group:'履约罚款', on:true },
+  { name:'update_penalty_rule',    desc:'更新罚款规则（阶梯 / 上限）',           url:'/api/penalty/rule/{id}',      method:'PUT',    group:'履约罚款', on:true },
+  { name:'calc_penalty_amount',    desc:'按合同条款试算罚款金额',               url:'/api/penalty/calc',           method:'POST',   group:'履约罚款', on:true },
+  { name:'export_penalty_report',  desc:'导出罚款月报（Excel）',                url:'/api/penalty/export',         method:'GET',    group:'履约罚款', on:true },
+  { name:'void_penalty_notice',    desc:'作废未执行的罚款通知单',               url:'/api/penalty/notice/{id}',    method:'DELETE', group:'履约罚款', on:false },
+
+  { name:'query_device_status',    desc:'查询设备在线状态与最近心跳',           url:'/api/device/status',          method:'GET',    group:'设备巡检', on:true },
+  { name:'list_inspection_plans',  desc:'列出巡检计划与责任人',                 url:'/api/inspection/plans',       method:'GET',    group:'设备巡检', on:true },
+  { name:'create_inspection_task', desc:'创建巡检任务并指派到班组',             url:'/api/inspection/tasks',       method:'POST',   group:'设备巡检', on:true },
+  { name:'report_device_fault',    desc:'上报设备故障，自动开维修单',           url:'/api/device/fault',           method:'POST',   group:'设备巡检', on:true },
+  { name:'get_device_history',     desc:'查询设备历史巡检与维修记录',           url:'/api/device/{id}/history',    method:'GET',    group:'设备巡检', on:true },
+
+  { name:'search_tickets',         desc:'按关键词 / 状态搜索工单',              url:'/api/ticket/search',          method:'GET',    group:'工单处理', on:true },
+  { name:'create_ticket',          desc:'创建工单（可带告警上下文）',           url:'/api/ticket',                 method:'POST',   group:'工单处理', on:true },
+  { name:'assign_ticket',          desc:'把工单指派给指定处理人',               url:'/api/ticket/{id}/assign',     method:'PUT',    group:'工单处理', on:true },
+  { name:'close_ticket',           desc:'关闭工单并填写处理结论',               url:'/api/ticket/{id}/close',      method:'PATCH',  group:'工单处理', on:true },
+
+  { name:'reconcile_invoice',      desc:'发票与回款对账，输出差异清单',         url:'/api/finance/reconcile',      method:'POST',   group:'财务对账', on:true },
+  { name:'get_invoice_detail',     desc:'按发票号查询开票与回款明细',           url:'/api/finance/invoice/{no}',   method:'GET',    group:'财务对账', on:true },
+  { name:'export_reconcile_result',desc:'导出对账结果供财务复核',               url:'/api/finance/reconcile/export', method:'GET',  group:'财务对账', on:true },
+
+  { name:'crm_customer_search',    desc:'按客户名 / 统一社会信用代码搜索',      url:'/api/crm/customers',          method:'GET',    group:'CRM 客户', on:true },
+  { name:'crm_customer_profile',   desc:'查询客户画像与合作年限',               url:'/api/crm/customers/{id}',     method:'GET',    group:'CRM 客户', on:true },
+  { name:'crm_follow_up_create',   desc:'登记客户跟进记录',                     url:'/api/crm/follow-up',          method:'POST',   group:'CRM 客户', on:true },
+
+  { name:'weather_query',          desc:'查询城市实时天气',                     url:'/api/weather/now',            method:'GET',    group:'',        on:true },
+  { name:'exchange_rate',          desc:'查询汇率（对账用）',                   url:'/api/fx/rate',                method:'GET',    group:'',        on:true },
+  { name:'holiday_calendar',       desc:'查询法定节假日（排班用）',             url:'/api/calendar/holiday',       method:'GET',    group:'',        on:false },
+];
+
+/* 额外的 5 个分组，只在「11 组」场景出现，用来检验页签溢出 */
+const EXTRA = [
+  { name:'audit_log_export',   desc:'导出操作审计日志',       url:'/api/audit/log/export',  method:'GET',  group:'合规审计', on:true },
+  { name:'audit_rule_list',    desc:'列出合规校验规则',       url:'/api/audit/rules',       method:'GET',  group:'合规审计', on:true },
+  { name:'kb_search',          desc:'检索知识库制度条款',     url:'/api/kb/search',         method:'POST', group:'知识检索', on:true },
+  { name:'notify_send',        desc:'按模板推送站内 / 邮件通知', url:'/api/notify/send',    method:'POST', group:'通知推送', on:true },
+  { name:'report_subscribe',   desc:'订阅经营日报',           url:'/api/report/subscribe',  method:'POST', group:'报表订阅', on:true },
+  { name:'permission_query',   desc:'查询某人的数据权限范围', url:'/api/perm/scope',        method:'GET',  group:'权限查询', on:true },
+  { name:'dict_lookup',        desc:'查询业务字典',           url:'/api/dict/{code}',       method:'GET',  group:'字典查询', on:true },
+];
+
+/* ===================== 状态 ===================== */
+const UNGROUPED = '__ungrouped';
+const state = {
+  plan:'A',
+  tab:'all',          // 'all' | UNGROUPED | 分组名
+  method:'all',
+  status:'all',
+  q:'',
+  view:'list',        // list | group
+  many:false,         // 11 组场景
+  panel:false,
+  moreOpen:false,
+};
+const el = (id) => document.getElementById(id);
+
+function tools(){
+  return state.many ? TOOLS.concat(EXTRA) : TOOLS;
+}
+
+/* 关键词 + 方法 + 状态（不含分组），用于页签计数 */
+function baseFiltered(){
+  const q = state.q.trim().toLowerCase();
+  return tools().filter(t=>{
+    if (state.method !== 'all' && t.method !== state.method) return false;
+    if (state.status === 'on' && !t.on) return false;
+    if (state.status === 'off' && t.on) return false;
+    if (!q) return true;
+    return (t.name + ' ' + t.desc + ' ' + t.url + ' ' + t.group).toLowerCase().includes(q);
+  });
+}
+
+function groupOrder(){
+  const counts = new Map();
+  baseFiltered().forEach(t=>{
+    const g = t.group || '';
+    counts.set(g, (counts.get(g) || 0) + 1);
+  });
+  const named = [...counts.entries()].filter(([g])=>g).sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0],'zh'));
+  return { list: named, ungrouped: counts.get('') || 0, all: baseFiltered().length };
+}
+
+/* 页签是否可见：A/C 常驻；B 只在分组视图里出现 */
+function tabsVisible(){
+  return state.plan === 'A' || state.plan === 'C' || (state.plan === 'B' && state.view === 'group');
+}
+
+function visible(){
+  // 页签不可见时不存在「当前分组」这层意思，忽略 tab，免得出现「看不到页签却被某个组过滤」的鬼状态
+  const rows = baseFiltered();
+  if (!tabsVisible() || state.tab === 'all') return rows;
+  if (state.tab === UNGROUPED) return rows.filter(t=>!t.group);
+  return rows.filter(t=>t.group === state.tab);
+}
+
+/* ===================== 渲染：页签 ===================== */
+function renderTabs(){
+  const { list, ungrouped, all } = groupOrder();
+  const wrap = el('groupTabs');
+  const scroll = el('gtabsScroll');
+  wrap.hidden = !tabsVisible();
+
+  const items = [{ key:'all', label:'全部', n:all }]
+    .concat(list.map(([g,n])=>({ key:g, label:g, n })))
+    .concat(ungrouped ? [{ key:UNGROUPED, label:'未分组', n:ungrouped }] : []);
+
+  scroll.innerHTML = items.map(it=>`
+    <button class="gtab ${state.tab===it.key?'on':''}" data-tab="${it.key}">
+      ${it.label}<span class="n ${it.n===0?'zero':''}">${it.n}</span>
+    </button>`).join('');
+
+  // 溢出处理：滚动宽度超过可视宽度时才给「更多分组」入口
+  requestAnimationFrame(()=>{
+    const over = scroll.scrollWidth - scroll.clientWidth > 4;
+    el('gmoreBtn').hidden = !over;
+    el('gmoreMenu').innerHTML = items.map(it=>`
+      <button data-tab="${it.key}" class="${state.tab===it.key?'on':''}">
+        <span>${it.label}</span><span class="n">${it.n}</span>
+      </button>`).join('');
+    if (!over) state.moreOpen = false;
+    el('gmoreMenu').hidden = !(over && state.moreOpen);
+  });
+}
+
+/* ===================== 渲染：筛选面板 ===================== */
+function renderFilter(){
+  const { list, ungrouped, all } = groupOrder();
+  const opts = [`<option value="all">全部分组（${all}）</option>`];
+  if (ungrouped) opts.push(`<option value="${UNGROUPED}">未分组（${ungrouped}）</option>`);
+  list.forEach(([g,n])=>opts.push(`<option value="${g}">${g}（${n}）</option>`));
+  const sel = el('groupSelect');
+  sel.innerHTML = opts.join('');
+  sel.value = state.tab;
+
+  const n = (state.method!=='all'?1:0) + (state.status!=='all'?1:0) + (state.tab!=='all'?1:0);
+  el('filterBadge').hidden = n === 0;
+  el('filterBadge').textContent = String(n);
+  el('filterBtn').classList.toggle('on', n>0);
+  el('filterSummary').textContent = n ? `已选 ${n} 项` : '未设置筛选';
+  el('filterClear').disabled = n === 0;
+
+  const bar = el('activeBar');
+  bar.hidden = n === 0;
+  const label = state.tab==='all' ? '全部分组'
+    : state.tab===UNGROUPED ? '未分组'
+    : state.tab;
+  el('groupChip').innerHTML = `${label} <button aria-label="取消分组筛选">✕</button>`;
+}
+
+/* ===================== 渲染：表格 ===================== */
+function renderTable(){
+  const rows = visible();
+  // 页签已经表明「在看哪一组」时不再重复一列；页签不可见 / 在「全部」时保留该列
+  const showGroupCol = !tabsVisible() || state.tab === 'all';
+  const head = `
+    <thead><tr>
+      <th style="width:38px"><input type="checkbox" aria-label="全选"></th>
+      <th>名称</th>
+      <th style="width:92px">Method</th>
+      ${showGroupCol?'<th style="width:120px">业务分组</th>':''}
+      <th style="width:92px">状态</th>
+      <th style="width:176px;text-align:right">操作</th>
+    </tr></thead>`;
+
+  let body = '';
+  if (rows.length === 0){
+    body = `<tbody><tr><td colspan="6" class="empty">这一组里没有符合条件的工具 —— 换个页签，或者清掉筛选条件</td></tr></tbody>`;
+  } else if (state.plan === 'C' && state.view === 'group'){
+    // 方案 C：组内按 HTTP 方法再折叠
+    const byMethod = new Map();
+    rows.forEach(t=>{ if(!byMethod.has(t.method)) byMethod.set(t.method, []); byMethod.get(t.method).push(t); });
+    body = [...byMethod.entries()].map(([m, list])=>`
+      <tbody>
+        <tr><td colspan="6" style="background:#fafbfd;font-size:11px;font-weight:800;color:var(--ink-3);padding:6px 14px">
+          ${m} <span style="color:var(--ink-4);font-weight:700">· ${list.length} 个</span>
+        </td></tr>
+        ${list.map(rowHtml).join('')}
+      </tbody>`).join('');
+  } else {
+    body = `<tbody>${rows.map(rowHtml).join('')}</tbody>`;
+  }
+
+  el('tableWrap').innerHTML = `<table>${head}${body}</table>`;
+  el('footCount').textContent = `共 ${rows.length} 个工具`;
+  el('footGroup').textContent = state.tab==='all'
+    ? `分布在 ${groupOrder().list.length} 个业务分组${groupOrder().ungrouped?' + 未分组':''}`
+    : (state.tab===UNGROUPED ? '当前只看未分组' : `当前只看「${state.tab}」`);
+
+  function rowHtml(t){
+    const grp = t.group
+      ? `<button class="gbadge" data-tab="${t.group}" title="只看「${t.group}」">${t.group}</button>`
+      : `<span class="gbadge none">—</span>`;
+    return `<tr>
+      <td><input type="checkbox" aria-label="选择 ${t.name}"></td>
+      <td>
+        <div class="tname"><span class="truncate">${t.name}</span></div>
+        <p class="tdesc">${t.desc}</p>
+        <p class="turl">${t.url}</p>
+      </td>
+      <td><span class="method m-${t.method}">${t.method}</span></td>
+      ${showGroupCol?`<td>${grp}</td>`:''}
+      <td><span class="dot ${t.on?'on':'off'}"><i></i>${t.on?'启用':'停用'}</span></td>
+      <td><div class="rowacts"><button>编辑</button><button>测试</button><button class="danger">删除</button></div></td>
+    </tr>`;
+  }
+}
+
+function renderAll(){
+  el('apiCount').textContent = String(tools().length);
+  el('gcLabel').textContent = state.many ? '11 组' : '6 组';
+  el('gcToggle').textContent = state.many ? '切回 6 组' : '切换成 11 组看溢出';
+  el('subgroupNote').hidden = !(state.plan === 'C' && state.view === 'group');
+  el('footHint').hidden = !(state.plan === 'A' || state.plan === 'C');
+  document.querySelectorAll('#viewSeg button').forEach(b=>{
+    b.classList.toggle('on', b.dataset.view === state.view);
+  });
+  renderTabs();
+  renderFilter();
+  renderTable();
+}
+
+/* ===================== 交互 ===================== */
+document.querySelectorAll('#plans button').forEach(b=>{
+  b.onclick = () => {
+    state.plan = b.dataset.plan;
+    document.querySelectorAll('#plans button').forEach(x=>x.classList.toggle('on', x===b));
+    // 方案 B 默认落到分组视图，否则页签不出现，看着像坏了
+    state.view = state.plan === 'B' ? 'group' : 'list';
+    renderAll();
+  };
+});
+document.querySelectorAll('#viewSeg button').forEach(b=>{
+  b.onclick = () => {
+    state.view = b.dataset.view;
+    if (!tabsVisible()) state.tab = 'all';
+    renderAll();
+  };
+});
+el('gcToggle').onclick = () => { state.many = !state.many; state.moreOpen = false; renderAll(); };
+
+el('q').oninput = (e) => { state.q = e.target.value; renderAll(); };
+
+el('filterBtn').onclick = (e) => {
+  e.stopPropagation();
+  state.panel = !state.panel;
+  el('filterPanel').hidden = !state.panel;
+  el('filterBtn').setAttribute('aria-expanded', String(state.panel));
+};
+document.addEventListener('click', (e)=>{
+  if (!e.target.closest('.filter-wrap')){
+    state.panel = false; el('filterPanel').hidden = true;
+    el('filterBtn').setAttribute('aria-expanded','false');
+  }
+  if (!e.target.closest('.gmore')){ state.moreOpen = false; el('gmoreMenu').hidden = true; }
+});
+document.querySelectorAll('.filter-panel .chips').forEach(box=>{
+  box.onclick = (e) => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    const kind = box.dataset.group;
+    state[kind] = btn.dataset.v;
+    box.querySelectorAll('button').forEach(x=>x.classList.toggle('on', x===btn));
+    // 换方法 / 状态后组内计数会变，若当前分组已无命中就回到「全部」，避免空白页
+    if (state.tab !== 'all' && visible().length === 0) state.tab = 'all';
+    renderAll();
+  };
+});
+el('groupSelect').onchange = (e) => { state.tab = e.target.value; renderAll(); };
+el('filterClear').onclick = () => {
+  state.method='all'; state.status='all'; state.tab='all';
+  document.querySelectorAll('.filter-panel .chips').forEach(box=>{
+    box.querySelectorAll('button').forEach(x=>x.classList.toggle('on', x.dataset.v==='all'));
+  });
+  renderAll();
+};
+document.addEventListener('click', (e)=>{
+  const tabBtn = e.target.closest('[data-tab]');
+  if (tabBtn){
+    state.tab = tabBtn.dataset.tab;
+    state.moreOpen = false; el('gmoreMenu').hidden = true;
+    renderAll();
+  }
+});
+el('gmoreBtn').onclick = (e) => {
+  e.stopPropagation();
+  state.moreOpen = !state.moreOpen;
+  el('gmoreMenu').hidden = !state.moreOpen;
+};
+el('clearAll').onclick = () => el('filterClear').click();
+
+/* 弹窗 */
+function openModal(title){
+  el('modalTitle').textContent = title;
+  el('mask').hidden = false;
+}
+el('addBtn').onclick = () => openModal('添加 API 工具');
+el('openAdd').onclick = () => openModal('添加 API 工具');
+el('modalClose').onclick = el('modalCancel').onclick = () => { el('mask').hidden = true; };
+el('modalSave').onclick = () => { el('mask').hidden = true; };
+el('mask').onclick = (e) => { if (e.target === el('mask')) el('mask').hidden = true; };
+el('fGroup').onchange = (e) => {
+  if (e.target.value === '__new'){
+    const name = prompt('新分组名称（例如：履约罚款）');
+    if (name && name.trim()){
+      const opt = document.createElement('option');
+      opt.textContent = name.trim();
+      e.target.insertBefore(opt, e.target.querySelector('[value="__new"]'));
+      e.target.value = name.trim();
+    } else {
+      e.target.value = '';
+    }
+  }
+};
+document.addEventListener('keydown', (e)=>{
+  if (e.key === 'Escape'){ el('mask').hidden = true; state.moreOpen=false; el('gmoreMenu').hidden=true; }
+});
+
+/* 支持 ?plan=A|B|C&many=1&view=group&tab=设备巡检 ：方便直接分享某一屏，也便于自动截图 */
+(function applyUrlState(){
+  const q = new URLSearchParams(location.search);
+  const plan = (q.get('plan')||'').toUpperCase();
+  if (['A','B','C'].includes(plan)){
+    state.plan = plan;
+    document.querySelectorAll('#plans button').forEach(b=>b.classList.toggle('on', b.dataset.plan===plan));
+    state.view = plan === 'B' ? 'group' : 'list';
+  }
+  if (q.get('many') === '1') state.many = true;
+  if (q.get('view') === 'group' || q.get('view') === 'list') state.view = q.get('view');
+  const tab = q.get('tab');
+  if (tab) state.tab = tab === 'ungrouped' ? UNGROUPED : tab;
+  if (!tabsVisible()) state.tab = 'all';
+  if (q.get('open') === '1') setTimeout(()=>openModal('添加 API 工具'), 0);
+})();
+
+renderAll();
+</script>
+</body>
+</html>
