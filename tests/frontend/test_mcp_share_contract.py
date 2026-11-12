@@ -47,7 +47,9 @@ def test_personal_menu_lists_three_sections():
     assert "收到的分享" in source
     assert "我的分享" in source
     assert "variant === 'aside'" in source
-    assert "hidden w-[200px]" in source
+    # 宽度由折叠态驱动（展开 200px / 收起 64px），不再写死在 class 里
+    assert "hidden shrink-0" in source
+    assert "w-[200px]" in source
     assert "md:hidden" in source
 
 

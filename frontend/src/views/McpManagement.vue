@@ -36,6 +36,30 @@ const normalizePersonalMenu = (value?: string): McpPersonalMenuKey =>
 const resolvePersonalMenu = (): McpPersonalMenuKey =>
   normalizePersonalMenu(String(route.query.mcp_tab || '') || props.initialPersonalMenu)
 const mcpMenu = ref<McpPersonalMenuKey>(resolvePersonalMenu())
+
+/**
+ * 「个人 MCP」左侧栏是否收起。
+ *
+ * 与「我的技能」一致：记住选择（localStorage）。内容区有概览条 + 服务列表，
+ * 小屏上 200px 侧栏会把卡片挤成一条；用户收起一次就该一直收起。
+ * 读不到存储（隐私模式 / 禁用 storage）时退回展开，不影响功能。
+ */
+const MCP_PERSONAL_MENU_COLLAPSED_KEY = 'mcp.personalMenu.collapsed'
+const readPersonalMenuCollapsed = (): boolean => {
+  try {
+    return localStorage.getItem(MCP_PERSONAL_MENU_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+const personalMenuCollapsed = ref(readPersonalMenuCollapsed())
+watch(personalMenuCollapsed, (collapsed) => {
+  try {
+    localStorage.setItem(MCP_PERSONAL_MENU_COLLAPSED_KEY, collapsed ? '1' : '0')
+  } catch {
+    /* 存不了就算了，不影响当前会话 */
+  }
+})
 const shareDialogServer = ref<{ id: string; server_name: string; sse_url: string } | null>(null)
 const mcpShareCounts = ref({ received_pending: 0, sent_pending: 0, sent_total: 0 })
 // 平台 MCP 列表/工具/日志已收紧为 admin；非管理员直接落到「我的 MCP」，不显示会 403 的平台页签。
@@ -307,7 +331,9 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
           variant="aside"
           :active="mcpMenu"
           :counts="mcpShareCounts"
+          :collapsed="personalMenuCollapsed"
           @select="mcpMenu = $event"
+          @toggle-collapsed="personalMenuCollapsed = !personalMenuCollapsed"
         />
         <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
           <McpPersonalMenu

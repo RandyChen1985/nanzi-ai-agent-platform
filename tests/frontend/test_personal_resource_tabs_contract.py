@@ -93,3 +93,30 @@ def test_personal_menu_aside_can_collapse() -> None:
     assert "localStorage.setItem(PERSONAL_MENU_COLLAPSED_KEY" in view
     assert ':collapsed="personalMenuCollapsed"' in view
     assert '@toggle-collapsed="personalMenuCollapsed = !personalMenuCollapsed"' in view
+
+
+def test_mcp_personal_menu_aside_can_collapse() -> None:
+    """「个人 MCP」左栏与「个人技能」同构：同样可折叠成 64px 图标条。
+
+    MCP 页签内容（调用概览 + 服务注册表）本身比技能卡片更宽，小屏上 200px 侧栏
+    更吃亏；折叠状态同样归父级持有并跨刷新记住。
+    """
+    menu = _read(MCP_MENU)
+    view = _read(MCP_VIEW)
+
+    # 组件：两态宽度 + 折叠开关 + 无障碍属性
+    assert "collapsed?: boolean" in menu
+    assert "toggle-collapsed" in menu
+    assert "w-[64px]" in menu and "w-[200px]" in menu
+    assert "aria-expanded" in menu
+    # 折叠后只剩图标，角标必须换成一个点，否则 64px 会被撑开
+    assert "collapsed && badgeText(item.badge)" in menu
+    # 折叠态下每个按钮要有 title/aria-label，否则只剩图标等于没有文字
+    assert ':title="collapsed ? item.label : undefined"' in menu
+
+    # 页面：状态 + 持久化 + 接线（键名与技能页分开，互不干扰）
+    assert "const personalMenuCollapsed = ref(readPersonalMenuCollapsed())" in view
+    assert "MCP_PERSONAL_MENU_COLLAPSED_KEY" in view
+    assert "localStorage.setItem(MCP_PERSONAL_MENU_COLLAPSED_KEY" in view
+    assert ':collapsed="personalMenuCollapsed"' in view
+    assert '@toggle-collapsed="personalMenuCollapsed = !personalMenuCollapsed"' in view
