@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>技能工作台 · 业务分组页签与筛选</title>
+<style>
+  :root{
+    --p:#1677ff; --p-dark:#0958d9; --p-soft:#e8f2ff; --p-line:#bfdbfe;
+    --ink:#0f172a; --ink-2:#334155; --ink-3:#64748b; --ink-4:#94a3b8;
+    --line:#e2e8f0; --line-2:#eef2f7; --bg:#f5f7fb; --card:#fff;
+    --green:#16a34a; --green-soft:#dcfce7; --green-ink:#15803d;
+    --red-soft:#fee2e2; --indigo:#4f46e5; --indigo-soft:#eef2ff; --indigo-ink:#4338ca;
+    --amber-soft:#fef3c7; --amber-ink:#b45309;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  code{font-family:var(--mono);font-size:.92em;background:#f1f5f9;border:1px solid var(--line);border-radius:4px;padding:1px 4px;color:var(--ink-2)}
+  .page{max-width:1340px;margin:0 auto;padding:26px 20px 90px}
+
+  .kicker{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:var(--p);background:var(--p-soft);border-radius:99px;padding:3px 9px}
+  .lead{margin:12px 0 0;font-size:13.5px;line-height:1.85;color:var(--ink-2);max-width:1120px}
+  .lead b{color:var(--ink)}
+
+  /* 现状核查 */
+  .audit{background:var(--card);border:1px solid var(--line-2);border-radius:16px;padding:16px 18px;margin:18px 0 0}
+  .audit h2{margin:0 0 3px;font-size:13.5px;font-weight:900}
+  .audit .sub{margin:0 0 12px;font-size:11.5px;color:var(--ink-4);line-height:1.7}
+  .audit-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .audit-item{display:flex;gap:8px;align-items:flex-start;background:#fafcff;border:1px solid var(--line-2);border-radius:10px;padding:9px 11px}
+  .audit-item .dot{width:16px;height:16px;border-radius:99px;flex-shrink:0;margin-top:2px;display:grid;place-items:center;font-size:9.5px;font-weight:900;color:#fff}
+  .audit-item.has .dot{background:var(--green)}
+  .audit-item.todo .dot{background:var(--p)}
+  .audit-item.warn .dot{background:#f59e0b}
+  .audit-item b{display:block;font-size:12px;font-weight:800;margin-bottom:2px}
+  .audit-item p{margin:0;font-size:11.5px;line-height:1.65;color:var(--ink-3)}
+
+  /* 方案切换条 */
+  .planbar{position:sticky;top:0;z-index:40;margin:20px -20px 0;padding:10px 20px;background:rgba(245,247,251,.93);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .planbar-in{max-width:1340px;margin:0 auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .planbar .lbl{font-size:11px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-4);margin-right:2px}
+  .pbtn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:6px 11px;font:inherit;font-size:12px;font-weight:800;color:var(--ink-2);cursor:pointer;transition:.15s}
+  .pbtn:hover{border-color:#cbd5e1}
+  .pbtn.on{border-color:var(--p);color:var(--p-dark);background:var(--p-soft);box-shadow:0 0 0 1px var(--p) inset}
+  .pbtn .tag{font-size:10px;font-weight:900;color:var(--p);margin-left:4px}
+  .planbar .hint{margin-left:auto;font-size:11.5px;color:var(--ink-4);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:6px 11px;font:inherit;font-size:12px;font-weight:700;color:var(--ink-2);cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.15s}
+  .btn:hover{border-color:#cbd5e1;background:#fafcff}
+  .btn.primary{background:var(--p);border-color:var(--p);color:#fff}
+  .btn.primary:hover{background:var(--p-dark)}
+  .btn.sm{padding:3px 8px;font-size:11px}
+
+  /* 应用复刻 */
+  .app{background:#fff;border:1px solid var(--line-2);border-radius:16px;margin-top:18px;overflow:visible;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .app-head{padding:18px 20px 0;display:flex;align-items:center;gap:9px}
+  .app-head h1{margin:0;font-size:21px;font-weight:900;letter-spacing:-.02em;display:flex;align-items:center;gap:8px}
+  .app-head .q{width:17px;height:17px;border-radius:99px;border:1.5px solid #cbd5e1;color:#94a3b8;font-size:11px;font-weight:900;display:grid;place-items:center}
+  .app-head .guide{font-size:12px;color:var(--ink-4);font-weight:700}
+
+  .l1tabs{display:flex;align-items:center;gap:22px;padding:14px 20px 0;border-bottom:1px solid var(--line-2)}
+  .l1tab{position:relative;border:0;background:transparent;padding:8px 2px 11px;font:inherit;font-size:13.5px;font-weight:800;color:var(--ink-3);cursor:pointer;display:flex;align-items:center;gap:7px}
+  .l1tab svg{width:15px;height:15px;opacity:.75}
+  .l1tab.on{color:var(--p-dark)}
+  .l1tab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--p)}
+  .l1tab .n{font-size:11px;font-weight:900;background:var(--p-soft);color:var(--p-dark);border-radius:99px;padding:1px 6px;font-variant-numeric:tabular-nums}
+  .l1tab .n.warn{background:var(--amber-soft);color:var(--amber-ink)}
+
+  .body{display:flex;gap:16px;padding:16px 20px 6px;align-items:flex-start}
+  .aside{width:168px;flex-shrink:0;border-right:1px solid var(--line-2);padding-right:12px}
+  .aside .it{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:7px 9px;border-radius:9px;font-size:12.5px;font-weight:700;color:var(--ink-3);cursor:pointer}
+  .aside .it:hover{background:#f6f9fd}
+  .aside .it.on{background:var(--p-soft);color:var(--p-dark);font-weight:900}
+  .aside .it .n{font-size:10.5px;color:var(--ink-4);font-weight:800}
+  .aside .it.on .n{color:var(--p-dark)}
+  /* 侧栏折叠：展开 200px / 收起 64px，收起后只剩图标（真实实现见 SkillPersonalMenu.vue） */
+  .aside{transition:width .2s}
+  .aside-head{display:flex;align-items:center;gap:8px;padding:0 2px 10px}
+  .aside-head .ico{width:28px;height:28px;border-radius:9px;background:var(--p);color:#fff;display:grid;place-items:center;font-size:13px;flex-shrink:0}
+  .aside-head .ttl{font-size:12.5px;font-weight:900;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .aside-head .colbtn{width:22px;height:22px;border-radius:7px;border:0;background:transparent;color:var(--ink-4);cursor:pointer;display:grid;place-items:center;font-size:13px;flex-shrink:0}
+  .aside-head .colbtn:hover{background:#eef2f7;color:var(--ink-2)}
+  .aside .it .ic{display:none;font-size:13px;line-height:1}
+  .aside.collapsed{width:64px;padding-right:8px}
+  .aside.collapsed .aside-head{flex-direction:column;gap:6px;padding:0 0 10px}
+  .aside.collapsed .ttl{display:none}
+  .aside.collapsed .it{justify-content:center;padding:8px 0;position:relative}
+  .aside.collapsed .it .lbl,.aside.collapsed .it .n{display:none}
+  .aside.collapsed .it .ic{display:block}
+  .aside.collapsed .it.on::after{content:"";position:absolute;right:4px;top:6px;width:5px;height:5px;border-radius:99px;background:#f59e0b}
+  .main{flex:1;min-width:0}
+
+  .toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .search{position:relative;flex:1;min-width:220px}
+  .search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--ink-4)}
+  .search input{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 12px 9px 32px;font:inherit;font-size:12.5px;background:#fff;outline:none;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .search input:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(22,119,255,.14)}
+  .seg{display:inline-flex;align-items:center;gap:2px;background:#eef2f7;border:1px solid var(--line);border-radius:9px;padding:2px}
+  .seg button{border:0;background:transparent;border-radius:7px;padding:5px 9px;font:inherit;font-size:11.5px;font-weight:800;color:var(--ink-3);cursor:pointer}
+  .seg button.on{background:#fff;color:var(--p-dark);box-shadow:0 1px 2px rgba(15,23,42,.08)}
+  select.inp{border:1px solid var(--line);border-radius:9px;padding:8px 9px;font:inherit;font-size:12.5px;background:#fff;color:var(--ink-2);outline:none}
+  select.inp:focus{border-color:var(--p)}
+
+  /* 方案 A：分组页签条 */
+  .grouptabs{display:flex;align-items:center;gap:4px;margin-top:12px;border-bottom:1px solid var(--line-2);position:relative}
+  .grouptabs[hidden]{display:none}
+  .gtabs-scroll{display:flex;align-items:center;gap:2px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+  .gtabs-scroll::-webkit-scrollbar{display:none}
+  .gtab{position:relative;border:0;background:transparent;padding:8px 10px 9px;font:inherit;font-size:12.5px;font-weight:700;color:var(--ink-3);cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;border-radius:8px 8px 0 0}
+  .gtab:hover{background:#f5f8fc;color:var(--ink-2)}
+  .gtab.on{color:var(--p-dark)}
+  .gtab.on::after{content:"";position:absolute;left:6px;right:6px;bottom:-1px;height:2px;background:var(--p);border-radius:2px 2px 0 0}
+  .gtab .n{font-variant-numeric:tabular-nums;font-size:11px;font-weight:800;color:var(--ink-4);background:#f1f5f9;border-radius:5px;padding:1px 5px}
+  .gtab.on .n{background:var(--p-soft);color:var(--p-dark)}
+  .gmore{position:relative;flex-shrink:0}
+  .gmore > button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 8px;font:inherit;font-size:11.5px;font-weight:800;color:var(--ink-3);cursor:pointer;display:flex;align-items:center;gap:4px;margin:0 0 4px 6px}
+  .gmore > button[hidden]{display:none}
+  .gmore-menu{position:absolute;right:0;top:calc(100% + 2px);z-index:30;width:208px;max-height:240px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:5px;box-shadow:0 12px 30px rgba(15,23,42,.14)}
+  .gmore-menu[hidden]{display:none}
+  .gmore-menu button{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:transparent;border-radius:7px;padding:6px 8px;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;text-align:left}
+  .gmore-menu button:hover{background:#f5f8fc}
+  .gmore-menu button.on{background:var(--p-soft);color:var(--p-dark);font-weight:800}
+  .gmore-menu .n{font-size:11px;font-weight:800;color:var(--ink-4)}
+
+  /* 方案 B：胶囊 chips */
+  .chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:12px}
+  .chips[hidden]{display:none}
+  .chip{border:1px solid var(--line);background:#fff;border-radius:99px;padding:4px 10px;font:inherit;font-size:11.5px;font-weight:800;color:var(--ink-3);cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+  .chip:hover{border-color:#cbd5e1;color:var(--ink-2)}
+  .chip.on{background:var(--p);border-color:var(--p);color:#fff}
+  .chip .n{font-size:10.5px;opacity:.75;font-variant-numeric:tabular-nums}
+
+  .resultbar{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11.5px;color:var(--ink-4);flex-wrap:wrap}
+  .resultbar .chip2{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid var(--p-line);color:var(--p-dark);border-radius:99px;padding:2px 4px 2px 9px;font-weight:800;font-size:11px}
+  .resultbar .chip2 button{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:0 3px;opacity:.7}
+  .resultbar .chip2[hidden]{display:none}
+  .resultbar .clear{margin-left:auto;border:0;background:transparent;font:inherit;font-size:11.5px;font-weight:800;color:var(--p);cursor:pointer}
+
+  /* 卡片 */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(500px,1fr));gap:12px;margin-top:12px}
+  .sk{border:1px solid var(--line);border-radius:14px;padding:15px;background:#fff;display:flex;flex-direction:column;gap:9px;cursor:pointer;transition:.15s}
+  .sk:hover{border-color:var(--p-line);box-shadow:0 8px 20px rgba(15,23,42,.06)}
+  .sk-top{display:flex;align-items:flex-start;gap:10px}
+  .sk-ico{width:40px;height:40px;border-radius:11px;background:#eef2ff;border:1px solid #e0e7ff;display:grid;place-items:center;flex-shrink:0;color:#6366f1;font-size:17px}
+  .sk-t{flex:1;min-width:0}
+  .sk-name{font-size:14px;font-weight:900;color:var(--ink);display:flex;align-items:center;gap:7px;min-width:0}
+  .sk-name span.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .plat{flex-shrink:0;background:var(--p-soft);color:var(--p-dark);border-radius:99px;font-size:9.5px;font-weight:900;padding:1px 7px;letter-spacing:.02em}
+  .sk-id{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);margin-top:2px;letter-spacing:.02em;text-transform:uppercase}
+  .sw{width:34px;height:19px;border-radius:99px;background:var(--p);position:relative;flex-shrink:0}
+  .sw.off{background:#cbd5e1}
+  .sw i{position:absolute;top:2px;left:16px;width:15px;height:15px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+  .sw.off i{left:2px}
+  .sk-desc{font-size:12px;line-height:1.65;color:var(--ink-3);margin:0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;min-height:3.3em}
+  .sk-gchip{align-self:flex-start;border:1px solid #e0e7ff;background:var(--indigo-soft);color:var(--indigo-ink);border-radius:99px;font-size:10.5px;font-weight:800;padding:1px 8px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:4px}
+  .sk-gchip:hover{background:#e0e7ff}
+  .sk-gchip.none{border:1px dashed #cbd5e1;background:transparent;color:var(--ink-4);cursor:default}
+  .sk-foot{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line-2);padding-top:9px;font-size:10.5px;color:var(--ink-4);margin-top:auto;flex-wrap:wrap}
+  .sk-foot .path{font-family:var(--mono);max-width:46%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sk-foot .bind{background:#f1f5f9;border-radius:5px;padding:1px 6px;font-weight:800;color:var(--ink-3)}
+  .sk-foot .time{margin-left:auto;font-variant-numeric:tabular-nums}
+  .empty{padding:44px 20px;text-align:center;color:var(--ink-4);font-size:12.5px}
+
+  /* 说明与决策 */
+  .notes{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}
+  .note{background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:14px 15px}
+  .note h3{margin:0 0 8px;font-size:12.5px;font-weight:900;display:flex;align-items:center;gap:7px}
+  .note h3 .k{width:18px;height:18px;border-radius:6px;background:var(--p);color:#fff;display:grid;place-items:center;font-size:10.5px}
+  .note p{margin:0 0 7px;font-size:11.5px;line-height:1.75;color:var(--ink-3)}
+  .note p:last-child{margin-bottom:0}
+  .note b{color:var(--ink-2)}
+  .dataplan{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+  .dataplan .note h3 .k{background:var(--indigo)}
+  .decisions{background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:16px 18px;margin-top:16px}
+  .decisions h2{margin:0 0 10px;font-size:13.5px;font-weight:900}
+  .decisions ol{margin:0;padding-left:19px;display:grid;gap:8px}
+  .decisions li{font-size:12px;line-height:1.8;color:var(--ink-2)}
+  .rec{color:var(--p-dark);font-weight:800}
+
+  /* 弹窗 */
+  .mask{position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:60;display:grid;place-items:center;padding:20px}
+  .mask[hidden]{display:none}
+  .modal{background:#fff;border-radius:16px;width:min(620px,100%);max-height:88vh;overflow:auto;box-shadow:0 30px 70px rgba(15,23,42,.28)}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line-2)}
+  .modal-head h2{margin:0;font-size:14px;font-weight:900}
+  .modal-head button{border:0;background:transparent;font-size:15px;color:var(--ink-4);cursor:pointer}
+  .modal-body{padding:16px 18px;display:grid;gap:13px}
+  .field label{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:800;color:var(--ink-2);margin-bottom:5px}
+  .field input,.field textarea,.field select{width:100%;border:1px solid var(--line);border-radius:9px;padding:8px 10px;font:inherit;font-size:12.5px;outline:none}
+  .field input:focus,.field textarea:focus,.field select:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(22,119,255,.12)}
+  .field .help{margin:5px 0 0;font-size:11px;line-height:1.65;color:var(--ink-4)}
+  .hl{border:1px dashed var(--p);background:#f7fbff;border-radius:11px;padding:11px}
+  .hl .flag{background:var(--p);color:#fff;border-radius:99px;font-size:9.5px;font-weight:900;padding:1px 7px;letter-spacing:.03em}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+  .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--line-2)}
+  .codeblk{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:10px 12px;font-family:var(--mono);font-size:11px;line-height:1.7;white-space:pre;overflow:auto}
+  .codeblk .k{color:#7dd3fc}
+  .codeblk .hl2{background:rgba(34,197,94,.18);border-radius:4px;padding:0 3px;color:#86efac}
+
+  @media (max-width:900px){
+    .audit-grid,.notes,.dataplan,.two{grid-template-columns:1fr}
+    .body{flex-direction:column}
+    .aside{width:100%;border-right:0;border-bottom:1px solid var(--line-2);padding:0 0 10px;display:flex;gap:6px;flex-wrap:wrap}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <span class="kicker">原型 · 技能工作台</span>
+  <p class="lead">
+    诉求：技能工作台「平台技能 / 我的技能」也加业务分组，不然技能太多看不过来。
+    先说结论：技能和前面几个页面<b>不一样</b>——它<b>不是数据库表</b>，元数据全在
+    <code>data/skills/&lt;id&gt;/SKILL.md</code> 的 YAML frontmatter 里，平台技能与我的技能用的是<b>同一个解析器</b>。
+    所以「分组存在哪」是这次的第一决策（写进 SKILL.md 几乎零成本，建表则要防双源漂移），UI 反而是第二位的。
+    另外这页已经有一层<b>左侧二级菜单</b>（我的技能 / 收到的分享 / 我的分享），分组页签是<b>第三层</b>，位置要选对。
+  </p>
+
+  <!-- ===== 现状核查 ===== -->
+  <section class="audit">
+    <h2>现状核查：技能工作台上已经有什么</h2>
+    <p class="sub">逐处读 <code>views/SkillsManagement.vue</code>、<code>api/portal/endpoints/skills.py</code>、<code>api/portal/endpoints/personal_skills.py</code>、<code>utils/skill_metadata.py</code> 得到。</p>
+    <div class="audit-grid">
+      <div class="audit-item has">
+        <span class="dot">✓</span>
+        <div><b>四个一级视图 + 全文搜索</b><p>平台技能 / 我的技能 / 待审核 / 已发布，每个带计数徽标；搜索框匹配技能名称与描述。</p></div>
+      </div>
+      <div class="audit-item has">
+        <span class="dot">✓</span>
+        <div><b>「我的技能」里已有二级菜单</b><p>左侧 aside：我的技能 / 收到的分享 / 我的分享（窄屏折成顶部胶囊）。<b>再加分组页签就是第三层</b>，不能随手往中间塞。</p></div>
+      </div>
+      <div class="audit-item has">
+        <span class="dot">✓</span>
+        <div><b>技能 = 目录 + SKILL.md</b><p>列表是扫物理目录、解析 frontmatter 出来的，<b>没有技能主表</b>；平台技能与我的技能共用同一个 <code>parse_skill_metadata</code>。</p></div>
+      </div>
+      <div class="audit-item has">
+        <span class="dot">✓</span>
+        <div><b>frontmatter 是通用键值</b><p>解析器把每行 <code>key: value</code> 原样收下（只对 enabled 做兜底），所以新增 <code>group:</code> 字段<b>零迁移</b>就能被读出来。</p></div>
+      </div>
+      <div class="audit-item todo">
+        <span class="dot">+</span>
+        <div><b>没有「分组」字段</b><p>frontmatter 里没有 group，列表接口也只回 id / name / description / path / enabled，要加就得在<b>解析层补一个字段</b>。</p></div>
+      </div>
+      <div class="audit-item warn">
+        <span class="dot">!</span>
+        <div><b>关键分歧：分组写文件还是写库</b><p>写 SKILL.md → 随技能文件不漂移，但改分组=改文件（要接口）；写 DB 表 → 好做分组管理与统计，但技能文件本身可被直接编辑/导入/分享，<b>双源必然漂移</b>。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 方案切换 ===== -->
+  <div class="planbar">
+    <div class="planbar-in">
+      <span class="lbl">视图方案</span>
+      <button class="pbtn on" data-plan="A">A · 分组页签条<span class="tag">推荐</span></button>
+      <button class="pbtn" data-plan="B">B · 胶囊 chips</button>
+      <button class="pbtn" data-plan="C">C · 只要下拉筛选</button>
+      <span class="hint">
+        一级视图：
+        <button class="btn sm" id="viewToggle">切到「我的技能」</button>
+        分组数量：<b id="gcLabel">—</b> ·
+        <button class="btn sm" id="gcToggle">切到多分组看溢出</button>
+        <button class="btn sm" id="openForm">▣ 看新建技能表单</button>
+        <button class="btn sm" id="toPersonal">▤ 看「我的技能」侧栏折叠</button>
+      </span>
+    </div>
+  </div>
+
+  <!-- ===== 页面复刻 ===== -->
+  <section class="app">
+    <div class="app-head">
+      <h1>技能工作台 <span class="q">?</span></h1>
+      <span class="guide">显示指引</span>
+    </div>
+
+    <!-- 一级视图 -->
+    <div class="l1tabs" id="l1tabs">
+      <button class="l1tab on" data-view="global">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M5 8l7-3 7 3v8l-7 3-7-3z"/></svg>
+        平台技能 <span class="n" id="cGlobal">11</span>
+      </button>
+      <button class="l1tab" data-view="personal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3-5.5 7-5.5s7 2 7 5.5"/></svg>
+        我的技能 <span class="n">12</span>
+      </button>
+      <button class="l1tab" data-view="review">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>
+        待审核 <span class="n warn">1</span>
+      </button>
+      <button class="l1tab" data-view="pubs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16"/></svg>
+        已发布 <span class="n">2</span>
+      </button>
+    </div>
+
+    <div class="body">
+      <!-- 「我的技能」的二级菜单（分组页签只能落在右侧内容区，不在这里加第三层） -->
+      <div class="aside" id="aside" hidden>
+        <div class="aside-head">
+          <span class="ico">☰</span>
+          <span class="ttl">个人技能</span>
+          <button type="button" class="colbtn" id="collapseBtn" title="收起侧栏" aria-label="收起个人技能侧栏">‹</button>
+        </div>
+        <div class="it on"><span class="ic">▤</span><span class="lbl">我的技能</span> <span class="n" id="cMine">12</span></div>
+        <div class="it"><span class="ic">↓</span><span class="lbl">收到的分享</span> <span class="n">0</span></div>
+        <div class="it"><span class="ic">↑</span><span class="lbl">我的分享</span> <span class="n">0</span></div>
+      </div>
+
+      <div class="main">
+        <div class="toolbar">
+          <div class="search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+            <input id="q" type="search" placeholder="搜索技能名称或描述...">
+          </div>
+
+          <!-- 方案 C 的下拉就放在排序旁边 -->
+          <select class="inp" id="groupSel" hidden></select>
+
+          <div class="seg" id="sortSeg">
+            <button class="on" data-sort="name">名称</button>
+            <button data-sort="time">时间</button>
+          </div>
+
+          <button class="btn primary" id="addBtn">+ 新建技能</button>
+        </div>
+
+        <!-- 方案 A：分组页签条（放在搜索行之下、「我的技能」二级菜单的右侧，不与之混在一起） -->
+        <div class="grouptabs" id="groupTabs">
+          <div class="gtabs-scroll" id="gtabsScroll"></div>
+          <div class="gmore">
+            <button id="gmoreBtn" hidden>更多分组 ▾</button>
+            <div class="gmore-menu" id="gmoreMenu" hidden></div>
+          </div>
+        </div>
+
+        <!-- 方案 B：胶囊 chips -->
+        <div class="chips" id="groupChips" hidden></div>
+
+        <div class="resultbar" id="resultbar">
+          <span id="resultText">共 11 个技能</span>
+          <span class="chip2" id="groupChip" hidden>分组 · 天气出行 <button>✕</button></span>
+          <button class="clear" id="clearAll" hidden>清除全部筛选</button>
+        </div>
+
+        <div class="grid" id="cards"></div>
+      </div>
+    </div>
+
+    <div style="height:14px"></div>
+  </section>
+
+  <!-- ===== 数据来源两方案 ===== -->
+  <div class="dataplan">
+    <div class="note">
+      <h3><span class="k">甲</span>写进 SKILL.md 的 frontmatter（推荐）</h3>
+      <p>在 <code>SKILL.md</code> 顶部加一行 <code>group: 天气出行</code>，解析层多回一个 <code>group</code> 字段即可。</p>
+      <div class="codeblk">---
+<span class="k">name</span>: 天气查询与出行建议
+<span class="k">description</span>: 查询指定城市实时天气…
+<span class="k">enabled</span>: true
+<span class="hl2"><span class="k">group</span>: 天气出行</span>
+---</div>
+      <p style="margin-top:8px">好处：<b>零迁移</b>；平台技能与我的技能<b>同一套</b>（共用解析器）；技能被复制、分享、发布时<b>分组跟着走</b>；直接改文件的场景也不会漂移。<br>
+      代价：改分组要落成「改文件」的接口（和现在改 <code>enabled</code> 的写法一样，已经有现成套路）；想统计「哪些分组是空的」得扫一遍目录（列表本来就全量扫，不算额外成本）。</p>
+    </div>
+    <div class="note">
+      <h3><span class="k">乙</span>新建一张技能分组表</h3>
+      <p>建 <code>skill_groups(skill_id, scope, group_name)</code>，技能文件不动，分组只在库里改。</p>
+      <p>好处：分组改名/合并/排序都好做，也能给「分组」加描述与权限。</p>
+      <p>代价：技能是<b>文件</b>——用户能直接改文件、能导入导出、能分享给别人，DB 里那条记录却不会跟着走。<b>一旦有人手工搬运技能目录，分组就丢或者滞后</b>，而且平台技能与个人技能要分 scope，等于两份真相。要做得干净就得再加同步逻辑，成本反而更高。</p>
+      <p style="color:var(--ink-4)">除非后续要做「分组作为权限载体」，否则不建议。</p>
+    </div>
+  </div>
+
+  <!-- ===== UI 三方案 ===== -->
+  <div class="notes">
+    <div class="note">
+      <h3><span class="k">A</span>分组页签条（＋推荐）</h3>
+      <p>放在<b>搜索行下方、卡片网格上方</b>，与工具注册表、元数据管理<b>长得一模一样</b>（同一套页签条组件、同一套计数口径、同样「更多分组」溢出）。</p>
+      <p>好处：一眼看到每组多少个、点一下就到；三个页面行为统一，用户不用重新学。</p>
+      <p>代价：占一行高度；「我的技能」页已经是「二级菜单 + 页签」两层横竖混排，视觉上要克制（所以位置固定在最上面内容区，不跟左侧菜单抢）。</p>
+    </div>
+    <div class="note">
+      <h3><span class="k">B</span>胶囊 chips</h3>
+      <p>同样的分组信息，做成一行小胶囊，紧贴搜索行下方。</p>
+      <p>好处：比页签轻，视觉压力小；分组少（≤ 6 个）时很好看。</p>
+      <p>代价：分组一多就换行堆成一片；与另两个页面的交互不一致（那边是页签）；计数挤在胶囊里，可读性差一截。</p>
+    </div>
+    <div class="note">
+      <h3><span class="k">C</span>只加筛选下拉</h3>
+      <p>把「业务分组」做成排序按钮旁边的下拉，不做页签。</p>
+      <p>好处：几乎不占地方，改动最小。</p>
+      <p>代价：看不到每组有多少、也不知道哪组是空的——你的原话是「太多了看不过来」，<b>光是能筛还不够，得能一眼扫到分布</b>。</p>
+    </div>
+  </div>
+
+  <!-- ===== 已落地 ===== -->
+  <section class="decisions">
+    <h2>✅ 已按建议落地（2026-11-12）</h2>
+    <ol>
+      <li><b>分组存在 SKILL.md frontmatter（甲方案）</b>——零迁移、平台与我的技能同一套、随文件复制/分享/发布走，不双源漂移。实现：<code>utils/skill_metadata.py</code> 的 <code>normalize_skill_group</code> / <code>get_skill_group</code> / <code>build_default_skill_md</code> / <code>set_skill_group_in_file</code>。</li>
+      <li><b>页签只放右侧内容区、搜索行下方</b>，与「我的技能」的左侧二级菜单并列而不叠加；待审核 / 已发布不做分组。复用 <code>ToolGroupTabs.vue</code> + <code>toolGroupTabs.ts</code>，与另两个页面同一套计数与溢出方案。</li>
+      <li><b>分组名可选已有 + 允许新建</b>：新建表单与「⋯ → 设置分组」两处共用同一个 <code>datalist</code>（跨平台 / 我的两个列表聚合）。</li>
+      <li><b>本次只做单条设置</b>；批量改分组留到确实嫌烦了再加。列表视图（表格）不加分组列，分组通过页签筛。</li>
+      <li><b>改分组走专用端点</b> <code>PUT …/{id}/group</code>（平台 / 个人各一个），只改 frontmatter 那一行、正文不碰——不回传整份 SKILL.md，避免并发编辑时把正文冲掉。</li>
+      <li><b>没有迁移</b>：直接重启后端即可；存量技能不需要回填，不带分组的技能自动落进「未分组」。</li>
+    </ol>
+    <p style="margin:10px 0 0;font-size:12px;color:#64748b">
+      设计说明：<code>docs/superpowers/specs/2026-11-12-skill-group-design.md</code> ·
+      契约测试：<code>tests/frontend/test_skill_group_tabs_contract.py</code>（26 条）+
+      真跑探针 <code>tests/frontend/skill_group_tabs_probe.cjs</code>
+    </p>
+  </section>
+</div>
+
+<!-- 新建 / 编辑技能弹窗 -->
+<div class="mask" id="mask" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="技能表单">
+    <div class="modal-head">
+      <h2 id="modalTitle">新建技能</h2>
+      <button id="modalClose" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="two">
+        <div class="field">
+          <label>技能 ID</label>
+          <input value="weather_travel_advice" readonly>
+          <p class="help">英文/数字/中划线，创建后不可改。</p>
+        </div>
+        <div class="field">
+          <label>技能名称</label>
+          <input value="天气查询与出行建议">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>描述</label>
+        <textarea rows="2">查询指定城市（默认上海）的实时及未来数日天气，并输出结构化天气报告与出行建议。</textarea>
+      </div>
+
+      <div class="hl">
+        <div class="field">
+          <label>业务分组 <span class="flag">本次要加的字段</span></label>
+          <input list="sk-group-options" value="天气出行" placeholder="如 天气出行（留空 = 未分组）">
+          <datalist id="sk-group-options">
+            <option value="天气出行"></option>
+            <option value="数据检索"></option>
+            <option value="文档写作"></option>
+            <option value="开发工具"></option>
+          </datalist>
+          <p class="help">单选。只用于技能列表的分组页签与筛选。<b>会写进 SKILL.md 的 frontmatter（<code>group: …</code>）</b>，所以技能被复制、分享、发布时分组会跟着走。</p>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>写进文件后长这样</label>
+        <div class="codeblk">---
+<span class="k">name</span>: 天气查询与出行建议
+<span class="k">description</span>: 查询指定城市实时天气…
+<span class="k">enabled</span>: true
+<span class="hl2"><span class="k">group</span>: 天气出行</span>
+---</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="modalCancel">取消</button>
+      <button class="btn primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const UNGROUPED = '__ungrouped__';
+
+  // 平台技能（11 个）：4 个分组 + 3 个未分组
+  const GLOBAL = [
+    { id:'weather_travel_advice', name:'天气查询与出行建议', desc:'查询指定城市（默认上海）的实时及未来数日天气，并输出结构化天气报告与出行建议。当用户询问「今天/明天/本周天气怎么样」「某城市天气」「要不要带伞」时使用。', group:'天气出行', enabled:true, path:'data/skills/public-skill-32b49d58', bind:0, time:'2026/08/10 13:18' },
+    { id:'brainstorming', name:'brainstorming', desc:'You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation.', group:'开发工具', enabled:true, path:'data/skills/brainstorming', bind:0, time:'2026/07/13 09:02' },
+    { id:'test_driven_development', name:'test-driven-development', desc:'Use when implementing any feature or bugfix, before writing implementation code.', group:'开发工具', enabled:true, path:'data/skills/tdd', bind:2, time:'2026/07/13 09:02' },
+    { id:'pdf_text_extract', name:'PDF 文本抽取', desc:'把 PDF 转成结构化文本，保留标题层级与表格，适用于合同、报表类文档的批量入库。', group:'文档写作', enabled:true, path:'data/skills/pdf-text-extract', bind:1, time:'2026/06/28 16:40' },
+    { id:'doc_polish', name:'公文润色', desc:'按党政公文格式规范润色通知、纪要、请示，输出修改说明。', group:'文档写作', enabled:false, path:'data/skills/doc-polish', bind:0, time:'2026/06/12 11:20' },
+    { id:'sql_query_builder', name:'SQL 取数助手', desc:'根据自然语言与表结构生成跨库 SQL，自带方言适配与风险提示。', group:'数据检索', enabled:true, path:'data/skills/sql-query-builder', bind:4, time:'2026/08/02 10:05' },
+    { id:'rag_retrieval', name:'知识库检索', desc:'按问题改写多轮检索知识库并给出带引用的答案。', group:'数据检索', enabled:true, path:'data/skills/rag-retrieval', bind:3, time:'2026/07/30 15:11' },
+    { id:'metric_explain', name:'指标口径解释', desc:'查询指标字典并解释某个指标的计算口径、数据来源与常见误用。', group:'数据检索', enabled:true, path:'data/skills/metric-explain', bind:1, time:'2026/07/21 09:44' },
+    { id:'meeting_notes', name:'会议纪要', desc:'把会议录音转写整理成决议、待办与责任人清单。', group:'', enabled:true, path:'data/skills/meeting-notes', bind:0, time:'2026/05/30 14:02' },
+    { id:'quick_translate', name:'快速翻译', desc:'中英日互译，保留术语表与专有名词。', group:'', enabled:true, path:'data/skills/quick-translate', bind:1, time:'2026/05/18 08:33' },
+    { id:'legacy_helper', name:'历史兼容助手', desc:'早期业务遗留的辅助技能，仅保留只读用法。', group:'', enabled:false, path:'data/skills/legacy-helper', bind:0, time:'2026/03/02 19:25' },
+  ];
+
+  // 我的技能（12 个）：另一套分组（含同名分组，用来验证两个视图各自计数）
+  const PERSONAL = [
+    { id:'my_weekly_report', name:'周报生成', desc:'按本周工作项与数据自动生成周报草稿，支持自定义模板。', group:'文档写作', enabled:true, path:'data/skills/users/42/my-weekly-report', bind:2, time:'2026/08/11 09:12' },
+    { id:'my_ticket_triage', name:'工单归类', desc:'按内容把工单分派到对应处理组，输出建议与置信度。', group:'数据检索', enabled:true, path:'data/skills/users/42/my-ticket-triage', bind:1, time:'2026/08/05 17:03' },
+    { id:'my_contract_check', name:'合同条款核对', desc:'比对合同文本与标准条款库，标出缺漏与偏离项。', group:'文档写作', enabled:true, path:'data/skills/users/42/my-contract-check', bind:0, time:'2026/07/29 11:41' },
+    { id:'my_weather_brief', name:'天气简报', desc:'每天 8 点汇总本地天气并推送到群里。', group:'天气出行', enabled:false, path:'data/skills/users/42/my-weather-brief', bind:0, time:'2026/07/18 07:55' },
+    { id:'my_code_review', name:'代码评审清单', desc:'按团队规范逐条检查 PR，输出必须修改与建议修改。', group:'开发工具', enabled:true, path:'data/skills/users/42/my-code-review', bind:3, time:'2026/08/09 20:14' },
+    { id:'my_changelog', name:'发布说明整理', desc:'把 PR 与 issue 汇总成对外发布说明。', group:'开发工具', enabled:true, path:'data/skills/users/42/my-changelog', bind:1, time:'2026/08/01 13:26' },
+    { id:'my_kb_sync', name:'知识库同步', desc:'把飞书文档同步进知识库并做去重与切片。', group:'数据检索', enabled:true, path:'data/skills/users/42/my-kb-sync', bind:0, time:'2026/07/25 16:30' },
+    { id:'my_ppt', name:'汇报提纲', desc:'按主题生成 PPT 提纲与讲稿。', group:'文档写作', enabled:true, path:'data/skills/users/42/my-ppt', bind:2, time:'2026/07/11 10:08' },
+    { id:'my_travel_plan', name:'出差行程', desc:'按目的地与日程生成差旅安排与预算。', group:'天气出行', enabled:true, path:'data/skills/users/42/my-travel-plan', bind:1, time:'2026/06/30 15:20' },
+    { id:'my_scratch', name:'临时草稿', desc:'个人试验用的草稿技能，随时可能删。', group:'', enabled:true, path:'data/skills/users/42/my-scratch', bind:0, time:'2026/06/02 22:41' },
+    { id:'my_old_bot', name:'旧版机器人', desc:'早期接的问答机器人，逻辑已迁走。', group:'', enabled:false, path:'data/skills/users/42/my-old-bot', bind:0, time:'2026/02/14 09:00' },
+    { id:'my_notes', name:'随手笔记', desc:'速记并自动打标签归档。', group:'', enabled:true, path:'data/skills/users/42/my-notes', bind:0, time:'2026/08/12 08:47' },
+  ];
+
+  // 多分组场景（看溢出）：给平台技能补一批分组
+  const EXTRA_GROUPS = [
+    '天气出行','数据检索','开发工具','文档写作','运维支撑','风险合规','指标中台','知识运营',
+    '客户服务','安全审计','法务合同','研发效能','市场营销','物流配送','人力资源','财务管理',
+    '供应链协同','质量管理','培训学习','项目协同'
+  ];
+
+  const state = { plan:'A', view:'global', many:false, q:'', group:'all', collapsed:false };
+  const q = new URLSearchParams(location.search);
+  if (q.get('plan')) state.plan = q.get('plan').toUpperCase();
+  if (q.get('view')) state.view = q.get('view');
+  if (q.get('many') === '1') state.many = true;
+  if (q.get('tab')) state.group = (q.get('tab') === '未分组' ? UNGROUPED : q.get('tab'));
+  if (q.get('open') === '1') setTimeout(()=>{ document.getElementById('mask').hidden = false; }, 0);
+  if (q.get('collapsed') === '1') state.collapsed = true;
+
+  const baseList = () => state.view === 'personal' ? PERSONAL : GLOBAL;
+  function list(){
+    const rows = baseList();
+    if (!state.many) return rows;
+    // 多分组场景：每组各造一条技能，制造「分组多到放不下」
+    return EXTRA_GROUPS.map((g, i) => {
+      const base = rows[i % rows.length];
+      return { ...base, id: `${base.id}_${i}`, group: g };
+    });
+  }
+  const groupOf = (s) => String(s.group || '').trim();
+
+  function match(s){
+    const kw = state.q.trim().toLowerCase();
+    if (kw && !(s.name.toLowerCase().includes(kw) || s.desc.toLowerCase().includes(kw) || s.id.toLowerCase().includes(kw))) return false;
+    return true;
+  }
+  const filtered = () => list().filter(match);
+
+  function counts(){
+    const m = new Map(); let ungrouped = 0; let total = 0;
+    for (const s of filtered()){
+      total++;
+      const g = groupOf(s);
+      if (!g){ ungrouped++; continue; }
+      m.set(g, (m.get(g)||0)+1);
+    }
+    return { total, ungrouped, groups:[...m.entries()].sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0],'zh-Hans-CN')) };
+  }
+
+  const items = () => {
+    const { total, ungrouped, groups } = counts();
+    const out = [{ key:'all', label:'全部', count: total }];
+    for (const [g,n] of groups) out.push({ key:g, label:g, count:n });
+    if (ungrouped > 0) out.push({ key:UNGROUPED, label:'未分组', count: ungrouped });
+    return out;
+  };
+
+  const visible = () => filtered().filter((s)=>{
+    if (state.group === 'all') return true;
+    if (state.group === UNGROUPED) return !groupOf(s);
+    return groupOf(s) === state.group;
+  });
+
+  const $ = (id)=>document.getElementById(id);
+  const esc = (s)=>String(s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  function renderTabs(){
+    const tabs = $('groupTabs'), chips = $('groupChips'), sel = $('groupSel');
+    const showTabs = state.plan === 'A', showChips = state.plan === 'B', showSel = state.plan === 'C';
+    tabs.hidden = !showTabs; chips.hidden = !showChips; sel.hidden = !showSel;
+
+    const it = items();
+
+    if (showTabs){
+      $('gtabsScroll').innerHTML = it.map((x)=>
+        `<button class="gtab ${state.group===x.key?'on':''}" data-g="${esc(x.key)}">${esc(x.label)} <span class="n">${x.count}</span></button>`).join('');
+      $('gmoreMenu').innerHTML = it.map((x)=>
+        `<button class="${state.group===x.key?'on':''}" data-g="${esc(x.key)}"><span>${esc(x.label)}</span><span class="n">${x.count}</span></button>`).join('');
+      $('gmoreMenu').hidden = true;
+      requestAnimationFrame(()=>{
+        const sc = $('gtabsScroll');
+        $('gmoreBtn').hidden = sc.scrollWidth - sc.clientWidth <= 4;
+      });
+      document.querySelectorAll('.gmore-menu button').forEach((b)=>{ b.onclick = ()=>{ state.group = b.dataset.g; $('gmoreMenu').hidden = true; renderAll(); }; });
+    }
+
+    if (showChips){
+      chips.innerHTML = it.map((x)=>
+        `<button class="chip ${state.group===x.key?'on':''}" data-g="${esc(x.key)}">${esc(x.label)} <span class="n">${x.count}</span></button>`).join('');
+    }
+
+    if (showSel){
+      sel.innerHTML = it.map((x)=>`<option value="${esc(x.key)}">${x.key==='all'?'业务分组：全部':esc(x.label)}（${x.count}）</option>`).join('');
+      sel.value = state.group;
+    }
+  }
+
+  function renderCards(){
+    const rows = visible();
+    const wrap = $('cards');
+    if (!rows.length){ wrap.innerHTML = `<div class="empty">没有匹配的技能，试试清空筛选。</div>`; return; }
+    wrap.innerHTML = rows.map((s)=>{
+      const g = groupOf(s);
+      const gchip = state.group === 'all'
+        ? (g ? `<button class="sk-gchip" data-g="${esc(g)}">▣ ${esc(g)}</button>` : `<span class="sk-gchip none">未分组</span>`)
+        : '';
+      const plat = state.view === 'global' ? '<span class="plat">平台</span>' : '';
+      return `<div class="sk">
+        <div class="sk-top">
+          <div class="sk-ico">▤</div>
+          <div class="sk-t">
+            <div class="sk-name"><span class="nm">${esc(s.name)}</span>${plat}</div>
+            <div class="sk-id">ID: ${esc(s.id)}</div>
+          </div>
+          <div class="sw ${s.enabled?'':'off'}"><i></i></div>
+        </div>
+        <p class="sk-desc">${esc(s.desc)}</p>
+        ${gchip}
+        <div class="sk-foot">
+          <span class="path">${esc(s.path)}</span>
+          <span class="bind">绑定 ${s.bind}</span>
+          <span class="time">${esc(s.time)}</span>
+        </div>
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('.sk-gchip[data-g]').forEach((b)=>{
+      b.onclick = (e)=>{ e.stopPropagation(); state.group = b.dataset.g; renderAll(); };
+    });
+  }
+
+  function renderChrome(){
+    const c = counts();
+    const rows = visible();
+    $('cGlobal').textContent = GLOBAL.length;
+    $('cMine').textContent = PERSONAL.length;
+
+    // 一级视图
+    document.querySelectorAll('#l1tabs .l1tab').forEach((b)=>{
+      b.classList.toggle('on', b.dataset.view === state.view);
+    });
+    $('aside').hidden = state.view !== 'personal';
+    // 侧栏折叠：真实实现里这个状态存 localStorage，刷新后保持
+    $('aside').classList.toggle('collapsed', state.collapsed);
+    const colBtn = $('collapseBtn');
+    if (colBtn) {
+      colBtn.textContent = state.collapsed ? '›' : '‹';
+      colBtn.title = state.collapsed ? '展开侧栏' : '收起侧栏';
+      colBtn.setAttribute('aria-label', state.collapsed ? '展开个人技能侧栏' : '收起个人技能侧栏');
+      colBtn.setAttribute('aria-expanded', String(!state.collapsed));
+    }
+
+    // 结果条
+    $('resultText').textContent = state.q || state.group !== 'all'
+      ? `筛出 ${rows.length} 个 / 共 ${filtered().length} 个`
+      : `共 ${rows.length} 个技能`;
+    const chip = $('groupChip');
+    if (state.group !== 'all'){
+      const cur = items().find((x)=>x.key === state.group);
+      chip.hidden = false;
+      chip.innerHTML = `分组 · ${esc(cur ? cur.label : state.group)} <button>✕</button>`;
+      chip.querySelector('button').onclick = ()=>{ state.group='all'; renderAll(); };
+    } else chip.hidden = true;
+    $('clearAll').hidden = !(state.q || state.group !== 'all');
+
+    // planbar
+    document.querySelectorAll('.planbar .pbtn').forEach((b)=>{ b.classList.toggle('on', b.dataset.plan === state.plan); });
+    $('gcLabel').textContent = `${c.groups.length} 组${c.ungrouped ? ` + 未分组 ${c.ungrouped}` : ''}`;
+    $('gcToggle').textContent = state.many ? '切回少分组' : '切到多分组看溢出';
+    $('viewToggle').textContent = state.view === 'global' ? '切到「我的技能」' : '切回「平台技能」';
+
+    renderTabs();
+  }
+
+  function renderAll(){ renderChrome(); renderCards(); }
+
+  // 事件
+  document.querySelectorAll('.planbar .pbtn').forEach((b)=>{ b.onclick = ()=>{ state.plan = b.dataset.plan; renderAll(); }; });
+  $('viewToggle').onclick = ()=>{ state.view = state.view === 'global' ? 'personal' : 'global'; state.group='all'; renderAll(); };
+  $('toPersonal').onclick = ()=>{ state.view = 'personal'; state.group = 'all'; renderAll(); };
+  $('gcToggle').onclick = ()=>{ state.many = !state.many; state.group='all'; renderAll(); };
+  document.querySelectorAll('#l1tabs .l1tab').forEach((b)=>{
+    b.onclick = ()=>{
+      if (b.dataset.view === 'review' || b.dataset.view === 'pubs') return; // 这两个视图本次不做分组
+      state.view = b.dataset.view; state.group='all'; renderAll();
+    };
+  });
+  $('q').oninput = (e)=>{
+    state.q = e.target.value;
+    if (state.group !== 'all' && !items().some((x)=>x.key === state.group)) state.group = 'all';
+    renderAll();
+  };
+  $('groupSel').onchange = (e)=>{ state.group = e.target.value; renderAll(); };
+  $('sortSeg').onclick = (e)=>{
+    const b = e.target.closest('button[data-sort]'); if (!b) return;
+    [...e.currentTarget.querySelectorAll('button')].forEach((x)=>x.classList.toggle('on', x === b));
+  };
+  $('clearAll').onclick = ()=>{
+    state.q=''; state.group='all'; $('q').value=''; renderAll();
+  };
+  $('gtabsScroll').onclick = (e)=>{
+    const b = e.target.closest('.gtab'); if (!b) return;
+    state.group = b.dataset.g; renderAll();
+  };
+  $('groupChips').onclick = (e)=>{
+    const b = e.target.closest('.chip'); if (!b) return;
+    state.group = b.dataset.g; renderAll();
+  };
+  $('gmoreBtn').onclick = (e)=>{ e.stopPropagation(); const m = $('gmoreMenu'); m.hidden = !m.hidden; };
+  $('collapseBtn').onclick = ()=>{ state.collapsed = !state.collapsed; renderAll(); };
+  document.addEventListener('click', (e)=>{ if (!e.target.closest('.gmore')) $('gmoreMenu').hidden = true; });
+  window.addEventListener('resize', ()=>{
+    const sc = $('gtabsScroll');
+    $('gmoreBtn').hidden = sc.scrollWidth - sc.clientWidth <= 4;
+  });
+
+  // 弹窗
+  const openModal = ()=>{ $('mask').hidden = false; };
+  $('openForm').onclick = openModal;
+  $('addBtn').onclick = openModal;
+  $('modalClose').onclick = ()=>{ $('mask').hidden = true; };
+  $('modalCancel').onclick = ()=>{ $('mask').hidden = true; };
+  $('mask').onclick = (e)=>{ if (e.target.id === 'mask') $('mask').hidden = true; };
+
+  renderAll();
+})();
+</script>
+</body>
+</html>

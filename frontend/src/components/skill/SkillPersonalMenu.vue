@@ -10,19 +10,24 @@ import { computed } from 'vue'
 
 type PersonalMenuKey = 'mine' | 'received' | 'sent'
 
+/** 折叠状态归父级：宽度变化会影响右侧内容区，且需要跨刷新记住。 */
 const props = withDefaults(defineProps<{
   active: PersonalMenuKey
   receivedCount?: number
   sentPendingCount?: number
   variant?: 'aside' | 'chips' | 'tabs'
+  /** 仅 `aside` 变体生效：收成 64px 图标条，给内容区让出 136px */
+  collapsed?: boolean
 }>(), {
   receivedCount: 0,
   sentPendingCount: 0,
   variant: 'aside',
+  collapsed: false,
 })
 
 const emit = defineEmits<{
   (e: 'select', key: PersonalMenuKey): void
+  (e: 'toggle-collapsed'): void
 }>()
 
 interface MenuItem {
@@ -65,39 +70,78 @@ function select(key: PersonalMenuKey) {
 </script>
 
 <template>
-  <!-- 宽屏：左侧栏 -->
+  <!-- 宽屏：左侧栏（可折叠成图标条，给右侧内容区让出空间） -->
   <aside
     v-if="variant === 'aside'"
-    class="hidden w-[200px] shrink-0 border-r border-gray-100 bg-gray-50/70 p-4 md:block dark:border-gray-800 dark:bg-gray-800/70"
+    class="hidden shrink-0 border-r border-gray-100 bg-gray-50/70 transition-[width,padding] duration-200 md:block dark:border-gray-800 dark:bg-gray-800/70"
+    :class="collapsed ? 'w-[64px] p-2' : 'w-[200px] p-4'"
   >
-    <div class="mb-5 flex items-center gap-2 px-2 text-sm font-bold text-gray-900 dark:text-gray-100">
-      <span class="grid h-8 w-8 place-items-center rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-500/20">
+    <div
+      class="flex items-center gap-2"
+      :class="collapsed ? 'mb-3 flex-col' : 'mb-5 px-2'"
+    >
+      <span class="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-500/20">
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10" />
         </svg>
       </span>
-      个人技能
+      <span v-if="!collapsed" class="min-w-0 flex-1 truncate text-sm font-bold text-gray-900 dark:text-gray-100">个人技能</span>
+      <button
+        type="button"
+        class="grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded-lg text-gray-400 transition-colors hover:bg-white hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+        :title="collapsed ? '展开侧栏' : '收起侧栏'"
+        :aria-expanded="!collapsed"
+        aria-controls="skill-personal-menu"
+        :aria-label="collapsed ? '展开个人技能侧栏' : '收起个人技能侧栏'"
+        @click="emit('toggle-collapsed')"
+      >
+        <!-- 收起时指向右、展开时指向左：图标方向 = 点下去之后侧栏会往哪走 -->
+        <svg
+          class="h-4 w-4 transition-transform"
+          :class="collapsed ? 'rotate-180' : ''"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+        </svg>
+      </button>
     </div>
-    <nav class="space-y-1">
+    <nav id="skill-personal-menu" class="space-y-1">
       <button
         v-for="item in items"
         :key="item.key"
         type="button"
-        class="flex w-full cursor-pointer items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-all"
-        :class="active === item.key
-          ? 'bg-blue-600 font-semibold text-white shadow-sm shadow-blue-500/20'
-          : 'text-gray-600 hover:bg-white hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100'"
+        class="flex w-full cursor-pointer items-center gap-2.5 rounded-xl text-sm transition-all"
+        :class="[
+          collapsed ? 'justify-center px-0 py-2.5' : 'px-3 py-2.5 text-left',
+          active === item.key
+            ? 'bg-blue-600 font-semibold text-white shadow-sm shadow-blue-500/20'
+            : 'text-gray-600 hover:bg-white hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100',
+        ]"
+        :title="collapsed ? item.label : undefined"
+        :aria-label="collapsed ? item.label : undefined"
         @click="select(item.key)"
       >
-        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="item.path" />
-        </svg>
-        <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
-        <span
-          v-if="badgeText(item.badge)"
-          class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
-          :class="active === item.key ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'"
-        >{{ badgeText(item.badge) }}</span>
+        <!-- 折叠后只剩图标：角标改成一个点，避免把 64px 又撑开 -->
+        <span class="relative shrink-0">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="item.path" />
+          </svg>
+          <span
+            v-if="collapsed && badgeText(item.badge)"
+            class="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ring-2"
+            :class="active === item.key ? 'bg-white ring-blue-600' : 'bg-amber-500 ring-gray-50 dark:ring-gray-800'"
+          ></span>
+        </span>
+        <template v-if="!collapsed">
+          <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
+          <span
+            v-if="badgeText(item.badge)"
+            class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
+            :class="active === item.key ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'"
+          >{{ badgeText(item.badge) }}</span>
+        </template>
       </button>
     </nav>
   </aside>

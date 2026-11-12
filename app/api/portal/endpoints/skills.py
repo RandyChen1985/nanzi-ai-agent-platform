@@ -44,7 +44,12 @@ from app.services.skill_publication_service import (
     reject_publication,
     revoke_published_version,
 )
-from app.utils.skill_metadata import parse_skill_frontmatter
+from app.utils.skill_metadata import (
+    build_default_skill_md,
+    get_skill_group,
+    parse_skill_frontmatter,
+    set_skill_group_in_file,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -78,6 +83,14 @@ class SkillCreateRequest(BaseModel):
     id: str
     name: str
     description: str
+    #: 业务分组，写进 SKILL.md 的 frontmatter（`group: …`）。空 / 缺省 = 未分组。
+    group: Optional[str] = None
+
+
+class SkillGroupUpdateRequest(BaseModel):
+    """只改业务分组，正文不动。"""
+
+    group: Optional[str] = None
 
 class FileEditRequest(BaseModel):
     path: str
@@ -197,6 +210,9 @@ def parse_skill_metadata(skill_id: str, skill_md_path: str) -> dict:
         "description": (meta.get("description") or "").strip() or "暂无技能描述",
         "path": f"data/skills/{skill_id}",
         "enabled": str(meta.get("enabled", "true")),
+        # 业务分组：单值，只服务技能工作台的页签与筛选（不参与权限、不进 AI 提示词）。
+        # 平台与个人技能共用这一个解析函数，所以两边同时就有了。
+        "group": get_skill_group(meta),
     }
     return metadata
 
@@ -508,25 +524,53 @@ async def create_skill(
             
         os.makedirs(skill_dir, exist_ok=True)
         skill_md_path = os.path.join(skill_dir, "SKILL.md")
-        
-        default_content = (
-            f"---\n"
-            f"name: {req.name}\n"
-            f"description: {req.description}\n"
-            f"---\n\n"
-            f"# {req.name}\n\n"
-            f"在此处编写该技能的具体战术规范、操作流程与 <HARD-GATE> 红线守则。\n"
-        )
-        
+
+        default_content = build_default_skill_md(req.name, req.description, req.group)
+
         with open(skill_md_path, "w", encoding="utf-8") as f:
             f.write(default_content)
-            
+
+
         return {"status": "success", "message": f"技能 {req.id} 创建成功"}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"[Skills] Failed to create skill {req.id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{skill_id}/group", response_model=Dict[str, Any])
+async def update_skill_group(
+    skill_id: str,
+    req: SkillGroupUpdateRequest,
+    user: Dict = Depends(skill_platform_admin),
+):
+    """设置 / 清除**平台技能**的业务分组（只改 SKILL.md frontmatter 里那一行）。
+
+    单开一个端点而不是复用「编辑 SKILL.md 文件」：后者要求前端把整份正文回传，而列表页
+    只持有元数据——真按那条路走就得先读全文再覆盖，中间任何时序差（有人正好在网页编辑器
+    里改过正文）都会把正文冲掉。这里只动分组行，正文一个字节不碰。
+
+    分组写进文件而不是数据库，是为了让它在复制 / 分享 / 发布时跟着技能走；代价是改分组
+    等于改文件，因此必须走这个接口（而不是让前端直接拼文件内容）。
+    """
+    try:
+        skill_dir = validate_secure_skill_path(skill_id)
+        skill_md_path = os.path.join(skill_dir, "SKILL.md")
+        if not os.path.exists(skill_md_path):
+            raise HTTPException(status_code=404, detail="技能不存在或缺少 SKILL.md")
+        if not set_skill_group_in_file(skill_md_path, req.group):
+            raise HTTPException(status_code=500, detail="写入技能分组失败，请确认文件可写")
+        return {
+            "status": "success",
+            "group": get_skill_group(parse_skill_frontmatter(skill_id, skill_md_path)),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Skills] Failed to update group for {skill_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/{skill_id}", response_model=Dict[str, Any])
 async def get_skill_detail(

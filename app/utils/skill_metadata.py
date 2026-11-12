@@ -141,6 +141,123 @@ def toggle_skill_enabled_in_file(skill_md_path: str, enabled: bool) -> bool:
     return False
 
 
+#: 业务分组在 SKILL.md frontmatter 里的键名。
+#:
+#: 为什么分组存**文件**而不是建表：技能本体就是目录 + SKILL.md（列表由扫目录解析得出），
+#: 它能被直接编辑、导入导出、分享给同事、发布成平台版本。这些路径都会搬运文件，却不会
+#: 顺带更新数据库——分组一旦落在库里，搬运一次就丢一次，双源必然漂移。写进 frontmatter
+#: 则复制/分享/发布天然带着走，且解析层是通用键值，连迁移都不需要。
+SKILL_GROUP_KEY = "group"
+
+#: 分组名长度上限。与 `meta_datasets.group_name` 的 VARCHAR(64) 对齐，避免同一套「业务
+#: 分组」在两类资源上长度口径不同；frontmatter 本身不限长，超长直接截断而不是报错。
+SKILL_GROUP_MAX_LEN = 64
+
+
+def normalize_skill_group(raw: Any) -> Optional[str]:
+    """分组名归一：去首尾空白、换行折成空格、超长截断、空串归 ``None``。
+
+    换行必须折掉：它会被原样写进 frontmatter，而 frontmatter 是逐行 ``key: value``
+    解析的——带换行的值会把后面半行变成新的键，等于把文件写坏。
+    """
+    text = re.sub(r"[\r\n]+", " ", str(raw or "")).strip()
+    if not text:
+        return None
+    return text[:SKILL_GROUP_MAX_LEN]
+
+
+def get_skill_group(meta: Optional[Dict[str, Any]]) -> Optional[str]:
+    """从解析后的 frontmatter 取业务分组（缺失 / 空白 → ``None``）。"""
+    if not meta:
+        return None
+    return normalize_skill_group(meta.get(SKILL_GROUP_KEY))
+
+
+def build_default_skill_md(
+    name: str,
+    description: str,
+    group: Optional[str] = None,
+) -> str:
+    """新建技能时的默认 SKILL.md（平台技能与个人技能**共用这一份**）。
+
+    此前两个接口各拼一份完全相同的字符串，加字段就得改两处、漏一处就是「个人技能能填
+    分组、平台技能填了丢」。分组为空时输出与历史模板逐字一致，不需要回填旧文件。
+    """
+    safe_name = str(name or "").strip()
+    lines = [
+        "---",
+        f"name: {safe_name}",
+        f"description: {str(description or '').strip()}",
+    ]
+    normalized = normalize_skill_group(group)
+    if normalized:
+        lines.append(f"{SKILL_GROUP_KEY}: {normalized}")
+    lines.extend(
+        [
+            "---",
+            "",
+            f"# {safe_name}",
+            "",
+            "在此处编写该技能的具体战术规范、操作流程与 <HARD-GATE> 红线守则。",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def set_skill_group_in_file(skill_md_path: str, group: Optional[str]) -> bool:
+    """在 SKILL.md 的 frontmatter 里设置（或清除）业务分组，返回是否写成功。
+
+    与 :func:`toggle_skill_enabled_in_file` 同一套做法：只动 frontmatter 里那一行，
+    正文一个字节都不碰。**不做整文件覆盖**——调用方拿着列表数据覆盖 SKILL.md，
+    稍有时序差（期间有人在网页编辑器里改过）就会把用户的正文冲掉。
+
+    ``group`` 传空/空白表示清除该行（回到「未分组」）；文件没有 frontmatter 时按需补一份。
+    """
+    if not os.path.exists(skill_md_path):
+        return False
+    try:
+        with open(skill_md_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        # 与解析侧同样的 BOM 容忍：BOM 留在原处会让 ^--- 匹配失败，从而误判「没有
+        # frontmatter」并再补一份重复的块。
+        content = content.lstrip("\ufeff")
+        normalized = normalize_skill_group(group)
+
+        match = _FRONTMATTER_RE.match(content)
+        if match:
+            yaml_block = match.group(1)
+            rest_content = content[match.end():]
+
+            new_lines: List[str] = []
+            has_group = False
+            for line in yaml_block.splitlines():
+                if line.strip().lower().startswith(f"{SKILL_GROUP_KEY}:"):
+                    has_group = True
+                    if normalized:
+                        new_lines.append(f"{SKILL_GROUP_KEY}: {normalized}")
+                    # 归一为空 = 删除这一行，不写 `group:`（空值会被解析成空串而非缺失）
+                    continue
+                new_lines.append(line)
+
+            if not has_group and normalized:
+                new_lines.append(f"{SKILL_GROUP_KEY}: {normalized}")
+
+            new_content = f"---\n" + "\n".join(new_lines) + f"\n---\n{rest_content}"
+        else:
+            if not normalized:
+                # 没有 frontmatter 也就没有分组可改：直接视为成功，避免前端报「保存失败」
+                return True
+            body = content.lstrip("\n")
+            new_content = f"---\n{SKILL_GROUP_KEY}: {normalized}\n---\n\n{body}"
+
+        with open(skill_md_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        return True
+    except Exception:
+        logger.warning("[SkillGroup] 写入技能分组失败：%s", skill_md_path, exc_info=True)
+        return False
+
+
 def format_skill_meta_text(meta: Dict[str, str]) -> str:
     """将 Frontmatter 格式化为隐式指令中的 meta 摘要。"""
     name = (meta.get("name") or meta.get("id") or "").strip()

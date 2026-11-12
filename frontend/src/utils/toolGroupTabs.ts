@@ -16,6 +16,12 @@
  */
 
 export interface GroupableTool {
+  /**
+   * 资源自身的标识。工具没有 id（用 name 当标识），技能有（技能 ID 与显示名是两个字段，
+   * 且用户习惯直接搜 ID），数据集则是数字主键——因此类型放宽成 `string | number` 且可选；
+   * 是否参与搜索由调用方的 `searchFields` 决定（匹配时统一 `String(...)`）。
+   */
+  id?: string | number | null
   name?: string | null
   display_name?: string | null
   description?: string | null
@@ -28,7 +34,7 @@ export interface GroupableTool {
 }
 
 /** 关键词参与匹配的字段；两类工具该搜的字段不同，由调用方指定 */
-export type ToolSearchField = 'name' | 'display_name' | 'description' | 'url_template'
+export type ToolSearchField = 'id' | 'name' | 'display_name' | 'description' | 'url_template'
 
 export const DEFAULT_SEARCH_FIELDS: readonly ToolSearchField[] = ['name', 'description', 'url_template']
 

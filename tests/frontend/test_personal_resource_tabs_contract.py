@@ -67,3 +67,29 @@ def test_admin_multi_tab_form_is_untouched() -> None:
     mcp = _read(MCP_VIEW)
     assert 'id="tab-global-mcp"' in mcp
     assert 'id="tab-audit-logs"' in mcp
+
+def test_personal_menu_aside_can_collapse() -> None:
+    """「个人技能」左栏要能折叠。
+
+    内容区加了分组页签后，200px 侧栏在小屏上会把卡片挤成一条；折叠状态由父级持有
+    （宽度变化影响右侧布局，且要跨刷新记住），组件只负责渲染两态并回传点击。
+    """
+    menu = _read(SKILL_MENU)
+    view = _read(SKILL_VIEW)
+
+    # 组件：两态宽度 + 折叠开关 + 无障碍属性
+    assert "collapsed?: boolean" in menu
+    assert "toggle-collapsed" in menu
+    assert "w-[64px]" in menu and "w-[200px]" in menu
+    assert "aria-expanded" in menu
+    # 折叠后只剩图标，角标必须换成一个点，否则 64px 会被撑开
+    assert "collapsed && badgeText(item.badge)" in menu
+    # 折叠态下每个按钮要有 title/aria-label，否则只剩图标等于没有文字
+    assert ':title="collapsed ? item.label : undefined"' in menu
+
+    # 页面：状态 + 持久化 + 接线
+    assert "const personalMenuCollapsed = ref(readPersonalMenuCollapsed())" in view
+    assert "PERSONAL_MENU_COLLAPSED_KEY" in view
+    assert "localStorage.setItem(PERSONAL_MENU_COLLAPSED_KEY" in view
+    assert ':collapsed="personalMenuCollapsed"' in view
+    assert '@toggle-collapsed="personalMenuCollapsed = !personalMenuCollapsed"' in view
