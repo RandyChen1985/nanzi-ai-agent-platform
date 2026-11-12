@@ -15,6 +15,44 @@ def set_execution_options_context(options: Dict[str, Any]):
     """Set the execution options context for the current request."""
     execution_options_context.set(options or {})
 
+
+# 当前正在执行的工具级运行时覆盖（温度等），由工具调用包装器 set/reset。
+# 只有内部会自己调 LLM 的工具（如 read_image）会读取它；纯函数工具拿到 None。
+tool_runtime_override_context: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "tool_runtime_override_context", default=None
+)
+
+
+def get_current_tool_runtime_override() -> Optional[Dict[str, Any]]:
+    """读取当前工具级运行时覆盖；不在工具调用栈内时为 None。"""
+    return tool_runtime_override_context.get()
+
+
+def get_current_tool_temperature() -> Optional[float]:
+    """读取当前工具配置的温度覆盖；未配置或不在工具栈内返回 None（0.0 是合法值）。"""
+    override = tool_runtime_override_context.get() or {}
+    value = override.get("temperature")
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def set_tool_runtime_override(override: Optional[Dict[str, Any]]):
+    """设置当前工具级运行时覆盖，返回 token 供 finally 阶段 reset。"""
+    return tool_runtime_override_context.set(override)
+
+
+def reset_tool_runtime_override(token: Any) -> None:
+    """恢复调用前的工具级覆盖。"""
+    try:
+        tool_runtime_override_context.reset(token)
+    except (ValueError, RuntimeError):
+        # token 跨上下文 reset 会抛错，退化为清空，避免污染后续调用。
+        tool_runtime_override_context.set(None)
+
 # Define a ContextVar to hold the current executing agent's context
 class AgentContext(BaseModel):
     agent_id: str

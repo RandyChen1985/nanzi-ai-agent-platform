@@ -101,6 +101,47 @@ logger = logging.getLogger(__name__)
 from app.services.ai.grounding.models import EvidenceType
 
 
+def tool_config_name(item: Any) -> str:
+    """从版本 ``tools`` 元素里取工具名。
+
+    支持三种形态：字符串（历史）、dict（DB JSON 直出）、``ToolConfigItem``（运行时对象）。
+    名称缺失或全空白都视为无效元素，调用方据此跳过。
+    """
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        return str(item.get("name") or "").strip()
+    return str(getattr(item, "name", "") or "").strip()
+
+
+def _parse_tool_config_dict(item: dict[str, Any], *, context: str, logger: Any) -> Any:
+    """把版本 JSON 里的工具配置 dict 转成 ``ToolConfigItem``，单个字段非法不连坐。
+
+    历史 JSON 里的 ``timeout_seconds`` 可能是脏值（0、负数、字符串），Pydantic 校验会
+    整条失败；若因此丢弃整份配置，「工具描述覆盖」这种完全无关的设置也会一起失效——
+    界面上配了、模型看到旧描述。这里剔除非法超时再试一次，把其余配置保住。
+    """
+    from app.schemas.agent import ToolConfigItem
+
+    try:
+        return ToolConfigItem(**item)
+    except Exception as exc:  # noqa: BLE001 - 脏数据不该中断整轮工具装配
+        logger.warning("Failed to parse %s tool config dict: %s", context, exc)
+
+    relaxed = {key: value for key, value in item.items() if key != "timeout_seconds"}
+    if relaxed == item:
+        return None
+    try:
+        return ToolConfigItem(**relaxed)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to parse %s tool config dict after dropping timeout_seconds: %s",
+            context,
+            exc,
+        )
+        return None
+
+
 AGENTSCOPE_BUILTIN_TOOL_ALIASES: Dict[str, str] = {
     "exec_command": "Bash",
     "bash": "Bash",
@@ -566,6 +607,33 @@ class ToolRegistry:
 
     @classmethod
     async def get_runtime_tool(cls, name: str):
+        """按名字取运行时工具 spec，并统一补上「内部是否自调 LLM」的能力标记。
+
+        标记必须在这里统一补：只有配了高级参数的工具才会走
+        ``_configure_runtime_tool_spec()``，没配的工具若不在入口标记，
+        前端与运行时都会误判成「不需要温度」，能力信息就随配置有无而漂移。
+        """
+        from dataclasses import replace
+
+        from app.services.ai.runtime.agentscope.tool_timeout import PLATFORM_TOOL_NAME_KEY
+
+        spec = await cls._resolve_runtime_tool(name)
+        if spec is None:
+            return None
+        # 记下「配置里用的名字」：智能体版本的工具配置按平台名存（如 exec_command），
+        # 而 spec.name 可能是 AgentScope 原生名（Bash）或 MCP 的 model 化名。
+        # 不记这一笔，工具级超时按 spec.name 查表就永远查不到，界面配了 10s、
+        # 实际仍按版本级 300s 跑。
+        metadata = dict(spec.metadata or {})
+        metadata[PLATFORM_TOOL_NAME_KEY] = name
+        return replace(
+            spec,
+            supports_internal_llm=spec.name in cls.TOOLS_WITH_INTERNAL_LLM,
+            metadata=metadata,
+        )
+
+    @classmethod
+    async def _resolve_runtime_tool(cls, name: str):
         """
         Retrieve a platform-neutral runtime tool spec by name.
 
@@ -664,26 +732,13 @@ class ToolRegistry:
         委派工具按对补齐：历史版本可能只勾了 ``sub_agent_call``，缺 batch 就调不了
         并行委派；页面也只有一个开关，不该逼用户勾两次。
         """
-        from app.schemas.agent import ToolConfigItem
+        import copy
+
         from app.services.ai.tools.agent_delegate_tool import ensure_delegation_tool_pair
 
         tools = []
         for item in ensure_delegation_tool_pair(tool_configs):
-            name = ""
-            config_item: Optional[ToolConfigItem] = None
-            
-            if isinstance(item, str):
-                name = item
-            elif isinstance(item, dict):
-                name = item.get("name", "")
-                try:
-                    config_item = ToolConfigItem(**item)
-                except Exception as e:
-                    logger.warning(f"Failed to parse tool config dict: {e}")
-            elif hasattr(item, "name"):
-                name = getattr(item, "name")
-                config_item = item
-            
+            name = tool_config_name(item)
             if not name:
                 continue
 
@@ -691,11 +746,14 @@ class ToolRegistry:
             if not tool:
                 continue
 
-            # Apply Runtime Configuration if present (Including engine_config_override for Webhooks)
-            if config_item:
-                 tool = await cls._configure_tool_runtime(tool, config_item)
-            
-            tools.append(tool)
+            # 不注入 `_runtime_config`：AgentScope 运行链走 get_runtime_tools()，
+            # 配置（描述/温度/超时）在那里按 spec 应用；挂在实例上的隐藏属性
+            # 没有任何消费者，历史上只被时间线卡片读到过。
+            #
+            # 仍然浅拷贝：`get_tool()` 返回的是注册表里的**共享实例**，调用方一旦
+            # 改动（补 description、挂工作区）会污染全局。历史实现用 copy.copy
+            # 隔离，这条保护不能随配置注入一起删掉。
+            tools.append(copy.copy(tool))
         return tools
 
     @classmethod
@@ -713,20 +771,13 @@ class ToolRegistry:
         seen_tool_names = set()
         for item in ensure_delegation_tool_pair(tool_configs):
             config_item = None
-            if isinstance(item, str):
-                name = item
-            elif isinstance(item, dict):
-                name = item.get("name", "")
-                try:
-                    from app.schemas.agent import ToolConfigItem
-                    config_item = ToolConfigItem(**item)
-                except Exception as e:
-                    logger.warning(f"Failed to parse runtime tool config dict: {e}")
-            elif hasattr(item, "name"):
-                name = getattr(item, "name")
+            name = tool_config_name(item)
+            if isinstance(item, dict):
+                config_item = _parse_tool_config_dict(
+                    item, context="runtime", logger=logger
+                )
+            elif not isinstance(item, str) and name:
                 config_item = item
-            else:
-                name = ""
 
             if not name:
                 continue
@@ -739,13 +790,59 @@ class ToolRegistry:
                 seen_tool_names.add(spec.name)
         return runtime_tools
 
+    #: 内部会自己发起 LLM 调用的工具：只有它们的「温度」覆盖才有意义。
+    #: 与前端 frontend/src/constants/toolCapabilities.ts 同源维护；纯函数工具执行时不采样，
+    #: 给它们配温度属于空承诺，前端会把控件置灰。
+    TOOLS_WITH_INTERNAL_LLM: frozenset[str] = frozenset({"read_image"})
+
+    @classmethod
+    def _wrap_with_tool_temperature(
+        cls, callable_obj: Any, *, tool_name: str, temperature: Any
+    ) -> Any:
+        """把工具级温度挂到当前调用上下文，供工具内部起 LLM 时读取。
+
+        只有 ``TOOLS_WITH_INTERNAL_LLM`` 里的工具会被包装；其它工具原样返回，
+        避免为纯函数工具多套一层协程。
+        """
+        import inspect
+
+        from app.core.context import reset_tool_runtime_override, set_tool_runtime_override
+
+        override = {"tool_name": tool_name, "temperature": temperature}
+
+        async def invoke_with_tool_temperature(**kwargs: Any) -> Any:
+            token = set_tool_runtime_override(override)
+            try:
+                result = callable_obj(**kwargs)
+                if inspect.isawaitable(result):
+                    return await result
+                return result
+            finally:
+                reset_tool_runtime_override(token)
+
+        return invoke_with_tool_temperature
+
     @classmethod
     def _configure_runtime_tool_spec(cls, spec: Any, config: Any):
         from dataclasses import replace
 
         description = getattr(config, "description_override", None) or spec.description
+        supports_internal_llm = spec.name in cls.TOOLS_WITH_INTERNAL_LLM
+        temperature = getattr(config, "temperature", None)
+        if supports_internal_llm and temperature is not None:
+            spec = replace(
+                spec,
+                callable=cls._wrap_with_tool_temperature(
+                    spec.callable, tool_name=spec.name, temperature=temperature
+                ),
+            )
+        spec = replace(
+            spec,
+            description=description,
+            supports_internal_llm=supports_internal_llm,
+        )
         if spec.name != "get_dataset_schema":
-            return replace(spec, description=description)
+            return spec
 
         metadata_dataset_ids = list(getattr(config, "metadata_dataset_ids", None) or [])
         original_callable = spec.callable
@@ -960,49 +1057,6 @@ class ToolRegistry:
             callable=invoke_dashboard_context,
             permission_scope="read",
         )
-
-    @classmethod
-    async def _configure_tool_runtime(cls, tool: Any, config: Any) -> Any:
-        """
-        Injects runtime configuration (model, temperature) into a tool instance.
-        """
-        try:
-            # 1. Capture original metadata BEFORE copy
-            # Handle both Pydantic fields and instance attributes
-            orig_name = getattr(tool, "name", None)
-            orig_desc = getattr(tool, "description", None)
-            
-            # If description is missing on instance, try class attribute
-            if not orig_desc and hasattr(tool, "__class__"):
-                orig_desc = getattr(tool.__class__, "description", None)
-
-            # 2. Perform Shallow Copy
-            # We use copy.copy() as it's the most generic way to clone python objects
-            # including Pydantic models (it calls __copy__)
-            import copy
-            tool_copy = copy.copy(tool)
-            
-            # 3. Restore Metadata (Force Overwrite)
-            # This is critical because Pydantic's copy might reset fields to defaults
-            if orig_name: 
-                tool_copy.name = orig_name
-            
-            # Ensure description is never None
-            if orig_desc:
-                tool_copy.description = orig_desc
-            else:
-                tool_copy.description = f"Tool: {orig_name or 'unknown'}"
-
-            # 4. Inject Runtime Config
-            # We attach it as a hidden attribute to avoid Pydantic validation errors
-            # if extra fields are forbidden
-            object.__setattr__(tool_copy, "_runtime_config", config)
-            
-            return tool_copy
-        except Exception as e:
-            logger.error(f"Failed to configure tool runtime: {e}")
-            # Fallback: return original tool if copying fails
-            return tool
 
     @classmethod
     def register(cls, name: str, tool: Any):

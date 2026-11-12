@@ -63,6 +63,11 @@ export type ProcessTimelineLogItem = {
   temperature?: number;
   /** AgentScope 归一化后的框架侧结果状态（success / error / timeout / denied / interrupted）。 */
   tool_result_state?: string;
+  /**
+   * 本次工具调用真实的超时秒数（三级解析后的生效值）。
+   * 后端随「调用工具」事件下发；缺失时才回退 `run_config` 的版本级/全局级快照。
+   */
+  timeout_seconds?: number | null;
   file_metadata?: FileToolMetadata;
   /**
    * 模型为本次工具调用写的意图摘要（AgentScope 内置 Bash 的 description），
@@ -1126,6 +1131,7 @@ export function upsertTimelineLog(
     model?: string;
     temperature?: number;
     tool_result_state?: string;
+    timeout_seconds?: number | null;
     file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
@@ -1158,6 +1164,7 @@ export function upsertTimelineLog(
     if (data.model !== undefined) existing.model = data.model;
     if (data.temperature !== undefined) existing.temperature = data.temperature;
     if (data.tool_result_state !== undefined) existing.tool_result_state = data.tool_result_state;
+    if (data.timeout_seconds !== undefined) existing.timeout_seconds = data.timeout_seconds;
     if (data.file_metadata !== undefined) existing.file_metadata = data.file_metadata;
     if (data.resolution_status !== undefined) existing.resolution_status = data.resolution_status;
     if (data.execution_time_ms !== undefined) existing.execution_time_ms = data.execution_time_ms;
@@ -1293,6 +1300,7 @@ export function upsertTimelineLog(
     model: data.model,
     temperature: data.temperature,
     tool_result_state: data.tool_result_state,
+    timeout_seconds: data.timeout_seconds,
     file_metadata: data.file_metadata,
     resolution_status: data.resolution_status,
     execution_time_ms: data.execution_time_ms,
@@ -1369,6 +1377,7 @@ export function mergeTimelineLogs(
     model?: string;
     temperature?: number;
     tool_result_state?: string;
+    timeout_seconds?: number | null;
     file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
@@ -1412,6 +1421,7 @@ export function mergeTimelineLogs(
       targetLog.model = log.model ?? targetLog.model;
       targetLog.temperature = log.temperature ?? targetLog.temperature;
       targetLog.tool_result_state = log.tool_result_state ?? targetLog.tool_result_state;
+      targetLog.timeout_seconds = log.timeout_seconds ?? targetLog.timeout_seconds;
       targetLog.file_metadata = log.file_metadata ?? targetLog.file_metadata;
       targetLog.resolution_status = log.resolution_status ?? targetLog.resolution_status;
       targetLog.execution_time_ms = log.execution_time_ms ?? targetLog.execution_time_ms;
@@ -1523,6 +1533,7 @@ export function buildLegacyProcessTimeline(input: {
     model?: string;
     temperature?: number;
     tool_result_state?: string;
+    timeout_seconds?: number | null;
     file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;

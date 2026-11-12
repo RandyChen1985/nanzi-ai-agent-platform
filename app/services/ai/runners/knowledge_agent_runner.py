@@ -274,11 +274,14 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         self._last_tool_resolution = resolved
         from app.services.ai.runtime.agentscope.tool_timeout import (
             apply_configured_agent_tool_timeout,
+            collect_tool_timeouts,
         )
 
         return await apply_configured_agent_tool_timeout(
             resolved.specs,
             agent_timeout=getattr(self.config, "toolcall_timeout_seconds", None),
+            # 知识库智能体的版本同样带工具级配置，漏传会让「配了不生效」再次出现。
+            tool_timeouts=collect_tool_timeouts(configured_tools),
         )
 
     async def _maybe_open_scope_gate(

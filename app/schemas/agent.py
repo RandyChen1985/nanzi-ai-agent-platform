@@ -10,8 +10,13 @@ class ToolConfigItem(BaseModel):
     """Specific configuration for a tool instance usage."""
     name: str
     enabled: bool = True
-    model_name: Optional[str] = None  # Override Agent's model
-    temperature: Optional[float] = None # Override Agent's temperature
+    # 历史字段：AgentScope 运行链只有一个 agent 级模型，工具是纯 callable，
+    # 这里填的模型没有任何下发点。保留解析只为兼容旧版本 JSON，不再展示、不再生效。
+    model_name: Optional[str] = None
+    temperature: Optional[float] = None # Override Agent's temperature / 仅对内部自调 LLM 的工具生效
+    # 工具级执行超时：留空跟随上层（智能体版本级 → 全局级）；
+    # 生效时只会收紧、不会放宽（不能超过上层选定的值），详见 tool_timeout.resolve_tool_timeout。
+    timeout_seconds: Optional[StrictInt] = Field(default=None, ge=1, le=3600)
     description_override: Optional[str] = None # Optional: Allow prompting tuning
     engine_config_override: Optional[Dict[str, Any]] = None
     metadata_dataset_ids: Optional[List[str]] = None  # get_dataset_schema 可见元数据集范围
@@ -21,6 +26,27 @@ class ToolConfigItem(BaseModel):
     #   非空 = 只允许名单内的（系统级仍要过 agent 授权，自建仍要过本人创建）
     # 与 metadata_dataset_ids 同构：只对特定工具生效，随发布版本走。
     delegable_agent_ids: Optional[List[str]] = None
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def _coerce_timeout_seconds(cls, value: Any) -> Any:
+        """历史 JSON 里的脏超时（0 / 负数 / 字符串 / 超范围）当作「未配置」。
+
+        ``ChatConfig.tools`` 直接持有 ``ToolConfigItem``，任何一个脏值都会让整份
+        配置校验失败 → 会话直接不可用，这比丢一个字段严重得多。清洗口径与
+        ``registry._parse_tool_config_dict`` 保持一致：只保留 1–3600 的整数。
+        """
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            parsed = float(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+        # JSON 里 10.0 很常见：先按浮点解析再判整，否则 int("10.0") 会把它洗成「未配置」
+        if not parsed.is_integer():
+            return None
+        number = int(parsed)
+        return number if 1 <= number <= 3600 else None
 
     @model_validator(mode="after")
     def _validate_metadata_dataset_ids(self):

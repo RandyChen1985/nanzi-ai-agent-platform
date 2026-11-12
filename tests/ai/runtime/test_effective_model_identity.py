@@ -103,7 +103,8 @@ def test_tool_observation_prefers_recorded_effective_model():
     assert result["log"]["model"] == "gpt-oss-120b@v1"
 
 
-def test_tool_observation_keeps_tool_runtime_model_over_session_override():
+def test_tool_observation_ignores_legacy_tool_runtime_model():
+    """工具级模型覆盖已下架：AgentScope 无按工具换模型的落点，卡片不应再报它。"""
     set_execution_options_context({"model": "gpt-oss-120b"})
     tool = SimpleNamespace(
         _runtime_config=SimpleNamespace(temperature=0.9, model_name="tool-model")
@@ -111,7 +112,7 @@ def test_tool_observation_keeps_tool_runtime_model_over_session_override():
 
     result = _observe(_runner(model_name="deepseek-v4-flash"), target_tool=tool)
 
-    assert result["log"]["model"] == "tool-model"
+    assert result["log"]["model"] == "gpt-oss-120b"
 
 
 def test_tool_observation_falls_back_to_agent_version_model():

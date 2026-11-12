@@ -1563,6 +1563,8 @@ interface LogEntry {
   model?: string;
   temperature?: number;
   tool_result_state?: string;
+  /** 本次工具调用真实的超时秒数（三级解析后的生效值）。 */
+  timeout_seconds?: number | null;
   subagent?: SubagentTraceMeta;
   rowFilterApplied?: boolean;
 }
@@ -3994,6 +3996,7 @@ const addRealLog = (msg: Message, data: any) => {
       tool_args: data.tool_args,
       tool_summary: data.tool_summary,
       tool_result_state: data.tool_result_state,
+      timeout_seconds: (data.timeout_seconds as number | undefined) ?? null,
       file_metadata: data.file_metadata,
       resolution_status: data.resolution_status,
       execution_time_ms: data.execution_time_ms ?? null,

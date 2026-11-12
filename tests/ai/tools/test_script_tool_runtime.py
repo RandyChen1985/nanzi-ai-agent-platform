@@ -103,6 +103,36 @@ def _config(**overrides) -> ScriptToolConfig:
     return ScriptToolConfig(**base)
 
 
+def test_sandbox_inner_timeout_not_looser_than_outer():
+    """沙箱通道的内层超时不能比外层宽。
+
+    外层按 RuntimeToolSpec.timeout_seconds 到点就取消协程；内层原来是 `+5`，
+    于是永远轮不到它自己报「脚本执行超时」，用户只能看到外层那句笼统超时。
+    """
+    source = Path(__file__).resolve().parents[3].joinpath(
+        "app/services/ai/tools/script_tool_runtime.py"
+    ).read_text(encoding="utf-8")
+    assert "timeout=timeout_seconds + 5" not in source
+    assert "timeout=timeout_seconds," in source
+
+
+async def test_resolve_timeout_prefers_resolved_tool_timeout(tmp_path):
+    """外层算好的三级超时必须优先，否则脚本自带超时会反过来压过工具级配置。
+
+    实机语义：用户在智能体版本里把某脚本工具配成 60s（上层允许），
+    脚本自己写着 30s —— 旧实现内层直接按 30s 杀进程，工具级配置等于白配。
+    """
+    runner = ScriptToolRunner(_config(timeout_seconds=30), workdir=tmp_path, tool_timeout_seconds=60)
+    # 留半秒余量给内层先报「脚本执行超时」，但净值仍跟着工具级的 60s
+    assert await runner.resolve_timeout() == pytest.approx(59.5)
+
+
+async def test_resolve_timeout_falls_back_to_script_config_when_unresolved(tmp_path):
+    """没有外层值（例如直接单测调用）时才退回脚本自带超时。"""
+    runner = ScriptToolRunner(_config(timeout_seconds=30), workdir=tmp_path)
+    assert await runner.resolve_timeout() == pytest.approx(30.0)
+
+
 def test_missing_required_param_is_reported_before_execution(tmp_path):
     runner = ScriptToolRunner(_config(), workdir=tmp_path)
     with pytest.raises(ScriptToolError) as exc:

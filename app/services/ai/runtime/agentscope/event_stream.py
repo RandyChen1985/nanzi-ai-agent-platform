@@ -699,6 +699,15 @@ async def map_standard_agentscope_event(
             "status": "pending",
             "category": "tool",
         }
+        # 挂起行要显示「已耗时 / 上限」，分母必须是这条工具调用**真实的**超时：
+        # 版本级/全局级只是兜底，工具级配了 10s 就该显示 10s。run_config 只带
+        # 版本级快照，不带工具级，所以在这里按工具名把 spec 上的生效值捎下去。
+        for candidate in tools or []:
+            if getattr(candidate, "name", "") == tool_name:
+                effective_timeout = getattr(candidate, "timeout_seconds", None)
+                if effective_timeout:
+                    start_log["timeout_seconds"] = effective_timeout
+                break
         display_args = format_tool_args_for_display(inline_arguments, tool_name=tool_name)
         if display_args:
             start_log["tool_args"] = display_args

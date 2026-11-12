@@ -1149,6 +1149,94 @@ class AgentManagerService:
 
         return list((await session.execute(stmt)).scalars().all())
 
+    @staticmethod
+    async def list_assigned_agents(
+        session: AsyncSession,
+        user: Any = None,
+    ) -> List[Any]:
+        """他人创建、经管理员授权、且当前启用的智能体，供「分配给我」只读视图使用。
+
+        口径与 ``_user_can_execute_agent`` **同源**：两者都取
+        ``PermissionService.get_user_permissions().permissions.agents``。
+        刻意不另写一套 SQL 判授权——「能用」与「看得见」一旦分叉，就会出现
+        「对话页选得到、智能体中心看不到」这种问题（本功能正是为此而加）。
+
+        与 ``list_agents`` 的三点区别：
+        1. 不返回自己创建的（那些在「我的智能体」里，重复出现只会让人以为有两份）；
+        2. 只返回已启用的（停用的智能体执行时会被 ``resolve_embed_agent_access``
+           直接 404，列出来只会让人以为系统坏了）；
+        3. 三个可编辑字段在服务端定死为 False，不交给前端判断。
+
+        管理员返回空列表：他已有「全部智能体」，再来一份「分配给我的」是重复视图。
+        """
+        if not user:
+            return []
+
+        is_admin, username, user_id = AgentManagerService._extract_user_identity(user)
+        if is_admin:
+            return []
+        # 身份缺 username 时不猜：`created_by != ''` 会把「别人创建的历史数据」全算成
+        # 「不是我创建的」，虽然仍受上面的授权集合约束，但没有依据就不要给出结果。
+        if not username:
+            return []
+
+        from app.services.permission_service import PermissionService
+
+        perm_service = PermissionService(session)
+        try:
+            uid_int = int(user_id)
+            perms = await perm_service.get_user_permissions(uid_int)
+            allowed_ids = list(perms.permissions.agents or [])
+        except (ValueError, TypeError):
+            # 与 list_allowed_agents 同一套容错：身份脏数据按「无授权」处理，不 500
+            allowed_ids = []
+
+        if not allowed_ids:
+            return []
+
+        stmt = select(AIAgent).where(
+            AIAgent.id.in_(allowed_ids),
+            # 必须与 `_user_can_execute_agent` 的判定保持一致：对**非**系统级智能体，
+            # 那边只认 `created_by == username`，授权行即使存在也不生效。少了这一条，
+            # 「分配给我」会列出点进去就 403 的死链——写入侧
+            # （permission_service.update_* 遍历 updates.agents）并不校验 is_system，
+            # 所以「非系统级也有授权行」这种脏数据是真的可能存在。
+            AIAgent.is_system == True,  # noqa: E712 — 与同文件既有写法保持一致
+            AIAgent.is_enabled == True,  # noqa: E712
+            # created_by 为空的历史数据在 list_agents 里同样不出现，
+            # 属「有授权但看不见」，必须收进来
+            or_(AIAgent.created_by != username, AIAgent.created_by.is_(None)),
+        )
+
+        main_first = case(
+            (or_(AIAgent.id == MAIN_GENERAL_AGENT_ID, AIAgent.name.in_(MAIN_GENERAL_AGENT_NAMES)), 0),
+            else_=1,
+        )
+        stmt = stmt.order_by(
+            main_first,
+            AIAgent.sort_order.desc(),
+            AIAgent.is_system.desc(),
+            AIAgent.display_name,
+        )
+
+        agents = list((await session.execute(stmt)).scalars().all())
+
+        for agent in agents:
+            # AIAgentResponse.is_editable 默认值是 True —— 默认值就是「可编辑」，
+            # 所以这三行是安全边界，不是装饰。漏算任何一处都等于放行。
+            #
+            # 注意这是**实例级动态属性**（不是映射列），赋值不会触发 UPDATE，但会留在
+            # 当前 session 的 identity map 里直到该请求结束。因此不要依赖这三个标记
+            # 跨调用传递状态：同一请求里若先调本方法、再调 ``list_agents``（它对同一
+            # 批 ORM 实例有另一套算法），后者的赋值会覆盖前者。今天没有端点同时调两个，
+            # 且非管理员时两者集合按构造互斥（``list_agents`` 只留 created_by == 自己），
+            # 但没有约束禁止将来这么做。
+            agent.is_editable = False
+            agent.can_edit_versions = False
+            agent.can_publish_version = False
+
+        return agents
+
     @classmethod
     async def attach_team_metadata(
         cls,
