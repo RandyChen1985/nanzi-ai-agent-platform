@@ -31,12 +31,24 @@ def _ensure_share_table(sync_conn) -> None:
     """
     from sqlalchemy import inspect
 
+    from sqlalchemy import text as _sql_text
+
     table = Base.metadata.tables["ai_agent_share_requests"]
     inspector = inspect(sync_conn)
     if table.name in inspector.get_table_names():
         existing = {col["name"] for col in inspector.get_columns(table.name)}
         expected = {col.name for col in table.columns}
         if not expected.issubset(existing):
+            # 表结构过期时**不能**直接 drop：这是真实开发库，里面可能躺着
+            # 真实用户的分享请求，drop 一次就全没了。只有空表才允许重建。
+            rows = sync_conn.execute(
+                _sql_text("SELECT COUNT(*) FROM %s" % table.name)
+            ).scalar()
+            if rows:
+                raise RuntimeError(
+                    "表 %s 结构落后于模型且有 %d 条真实数据，拒绝 DROP 重建。"
+                    "请先执行对应迁移，而不是靠测试删表。" % (table.name, rows)
+                )
             table.drop(sync_conn, checkfirst=True)
     table.create(sync_conn, checkfirst=True)
 
@@ -51,7 +63,16 @@ async def share_table():
     AgentShareService.reset_probe_state_for_tests(None)
     yield
     async with AsyncSessionLocal() as session:
-        await session.execute(delete(AgentShareRequest))
+        # 只清测试账号（test_user / test_admin）相关的记录。
+        # 原先是无 WHERE 的 delete(AgentShareRequest)：测试连的是真实开发库，
+        # 跑一次就清空所有人的 agent 分享请求。
+        await session.execute(
+            delete(AgentShareRequest).where(
+                (AgentShareRequest.recipient_user_name.in_(["test_user", "test_admin"]))
+                | (AgentShareRequest.owner_user_name.in_(["test_user", "test_admin"]))
+                | (AgentShareRequest.recipient_user_name.is_(None))
+            )
+        )
         await session.commit()
     AgentShareService.reset_probe_state_for_tests(None)
 
