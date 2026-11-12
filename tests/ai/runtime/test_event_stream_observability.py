@@ -550,6 +550,65 @@ async def test_tool_call_start_exposes_arguments_for_timeline_card(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tool_call_start_carries_effective_tool_timeout(monkeypatch):
+    """挂起行的「已耗时 / 上限」分母必须是这条工具的真实超时。
+
+    `run_config` 只带版本级/全局级快照，工具级把 Bash 收紧到 10s 时它仍写 180s，
+    界面上就会显示「972ms / 180s」，让人以为工具级配置没生效。
+    """
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace as NS
+
+    import app.services.config_service as cfg
+
+    monkeypatch.setattr(cfg.ConfigService, "get", AsyncMock(return_value="docker"))
+    state = new_native_stream_state()
+    event = NS(
+        type="TOOL_CALL_START",
+        tool_call_id="t1",
+        tool_call_name="Bash",
+        arguments={"command": "ls"},
+    )
+    tools = [NS(name="Bash", timeout_seconds=10.0, description="", parameters_schema={})]
+
+    logs = []
+    async for chunk in map_standard_agentscope_event(
+        event, state=state, emit_observability=False, tools=tools
+    ):
+        if chunk.get("type") == "log":
+            logs.append(chunk)
+
+    assert logs[0]["timeout_seconds"] == 10.0
+
+
+@pytest.mark.asyncio
+async def test_tool_call_start_omits_timeout_when_unknown(monkeypatch):
+    """查不到生效超时时宁可不给分母，也不要编一个数字出来。"""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace as NS
+
+    import app.services.config_service as cfg
+
+    monkeypatch.setattr(cfg.ConfigService, "get", AsyncMock(return_value="docker"))
+    state = new_native_stream_state()
+    event = NS(
+        type="TOOL_CALL_START",
+        tool_call_id="t2",
+        tool_call_name="Bash",
+        arguments={"command": "ls"},
+    )
+
+    logs = []
+    async for chunk in map_standard_agentscope_event(
+        event, state=state, emit_observability=False, tools=[]
+    ):
+        if chunk.get("type") == "log":
+            logs.append(chunk)
+
+    assert "timeout_seconds" not in logs[0]
+
+
+@pytest.mark.asyncio
 async def test_tool_call_start_carries_bash_intent_summary(monkeypatch):
     """进行中的 Bash 卡片也要能显示「这条命令在干什么」：起始事件即带上摘要。"""
     from unittest.mock import AsyncMock

@@ -90,7 +90,12 @@ def test_tool_observation_reports_session_override_as_effective_temperature():
     assert result["trace"].temperature == 0.3
 
 
-def test_tool_observation_keeps_tool_runtime_temperature_over_session_override():
+def test_tool_observation_ignores_legacy_tool_runtime_temperature():
+    """工具级温度只作用于工具内部自调 LLM，不再改写卡片上的 agent 采样温度。
+
+    历史上卡片会读 ``target_tool._runtime_config.temperature``，于是出现
+    「卡片写 0.9、agent 实际按 0.3 采样」的口径错位；这条链路已删除。
+    """
     set_execution_options_context({"temperature": 0.3})
     tool = SimpleNamespace(
         _runtime_config=SimpleNamespace(temperature=0.9, model_name="tool-model")
@@ -98,8 +103,7 @@ def test_tool_observation_keeps_tool_runtime_temperature_over_session_override()
 
     result = _observe(_runner(temperature=0.0), target_tool=tool)
 
-    assert result["log"]["temperature"] == 0.9
-    assert result["log"]["model"] == "tool-model"
+    assert result["log"]["temperature"] == 0.3
 
 
 def test_tool_observation_falls_back_to_agent_version_temperature():

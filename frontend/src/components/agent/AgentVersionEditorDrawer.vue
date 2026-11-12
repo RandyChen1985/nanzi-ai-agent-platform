@@ -56,7 +56,8 @@ const props = withDefaults(defineProps<{
   mcpToolsCount: number;
   isToolSelected: (name: string) => boolean;
   isSkillSelected: (skillId: string) => boolean;
-  getToolCustomConfig: (name: string) => any;
+  /** 工具级高级配置摘要：count=已配置项数，parts=文案片段，用于齿轮点亮与摘要行 */
+  getToolAdvancedConfigSummary: (name: string) => { count: number; parts: string[] };
   hasToolMetadataDatasetBinding: (name: string) => boolean;
   /** 该工具是否已配置调度白名单；两个委派工具共用 sub_agent_call 那一份。 */
   hasDelegationAllowlist: (name: string) => boolean;
@@ -1243,6 +1244,13 @@ const externalCreationMissingFields = computed(() => {
                         <span v-if="tool.isSystem" class="text-[9px] bg-gray-100 text-gray-500 px-1 rounded font-sans font-normal">系统</span>
                       </div>
                       <div class="text-[10px] text-gray-400 mt-0.5 line-clamp-2">{{ tool.description }}</div>
+                      <!-- 已自定义的高级项：一眼看出这个工具被单独调过什么 -->
+                      <div
+                        v-if="isToolSelected(tool.name) && getToolAdvancedConfigSummary(tool.name).count > 0"
+                        class="tool-advanced-line"
+                      >
+                        {{ getToolAdvancedConfigSummary(tool.name).parts.join(' · ') }}
+                      </div>
                       <!-- 调度范围只有一份，入口只挂在 sub_agent_call；
                            sub_agent_batch_call 由它自动带上，不单独出卡片。 -->
                       <div
@@ -1252,8 +1260,20 @@ const externalCreationMissingFields = computed(() => {
                         调度范围：{{ delegationScopeCount(tool.name) }} 个智能体
                       </div>
                       <div v-if="isToolSelected(tool.name)" class="flex gap-1 mt-1.5" @click.stop>
-                        <button type="button" @click="emit('openToolRuntimeConfig', tool.name)" class="tool-action-btn" title="配置">
+                        <button
+                          type="button"
+                          @click="emit('openToolRuntimeConfig', tool.name)"
+                          class="tool-action-btn"
+                          :class="getToolAdvancedConfigSummary(tool.name).count > 0 ? 'tool-action-btn--active' : ''"
+                          :title="getToolAdvancedConfigSummary(tool.name).count > 0
+                            ? `已配置 ${getToolAdvancedConfigSummary(tool.name).count} 项：${getToolAdvancedConfigSummary(tool.name).parts.join('、')}`
+                            : '高级配置：暂未自定义'"
+                        >
                           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                          <span
+                            v-if="getToolAdvancedConfigSummary(tool.name).count > 0"
+                            class="tool-action-count"
+                          >{{ getToolAdvancedConfigSummary(tool.name).count }}</span>
                         </button>
                         <button
                           v-if="tool.name === 'get_dataset_schema'"
@@ -2044,6 +2064,8 @@ const externalCreationMissingFields = computed(() => {
 }
 
 .tool-action-btn {
+  /* relative 给右上角的已配置角标做定位锚点 */
+  position: relative;
   padding: 4px;
   border-radius: 4px;
   color: #9ca3af;
@@ -2057,6 +2079,32 @@ const externalCreationMissingFields = computed(() => {
 .tool-action-btn--active {
   color: var(--color-primary, #2563eb);
   background: white;
+}
+/* 已配置项数角标：齿轮右上角，避免「亮了但不知道亮什么」 */
+.tool-action-count {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 2px;
+  border-radius: 999px;
+  border: 1.5px solid white;
+  background: var(--color-primary, #2563eb);
+  color: white;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+/* 工具卡片内的已配置摘要行：与卡片内「调度范围」同层级 */
+.tool-advanced-line {
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--color-primary-dark, #1d4ed8);
 }
 
 .tool-action-btn--attention {

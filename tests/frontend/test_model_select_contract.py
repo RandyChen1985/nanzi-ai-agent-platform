@@ -62,15 +62,20 @@ def test_version_editor_uses_searchable_model_select_for_both_pickers():
     assert 'accent="emerald"' in model_step
 
 
-def test_tool_runtime_model_picker_also_uses_searchable_select():
+def test_tool_runtime_modal_no_longer_offers_model_picker():
+    """工具级「执行模型」已下架：AgentScope 单模型 agent，工具是纯 callable，换模型无落点。
+
+    历史上这个下拉只把值写进 `model_name`，而运行链没有任何消费者——
+    留着它等于承诺一个不存在的功能。参数位改由「执行超时」承接。
+    """
     source = TOOL_MODAL.read_text(encoding="utf-8")
 
-    assert "import ModelSelect from \"../common/ModelSelect.vue\"" in source
-    assert "<ModelSelect" in source
-    assert 'allow-empty' in source
-    assert 'empty-label="跟随智能体默认配置"' in source
-    # 工具级覆盖需要看到 model_id 才能区分同名模型
-    assert "show-model-id" in source
+    assert "ModelSelect" not in source
+    # 「已移除」的占位说明后来也被去掉了：用户明确不需要在弹窗里看到这块。
+    assert "执行模型" not in source
+    assert "Override Model" not in source
+    assert "执行超时 (Execute Timeout)" in source
+    assert "timeout_seconds" in source
     assert "<select" not in source
 
 

@@ -3358,11 +3358,13 @@ class AssistantAgentRunner(BaseExecutor):
         self._last_tool_resolution = resolved
         from app.services.ai.runtime.agentscope.tool_timeout import (
             apply_configured_agent_tool_timeout,
+            collect_tool_timeouts,
         )
 
         tools = await apply_configured_agent_tool_timeout(
             resolved.specs,
             agent_timeout=getattr(self.config, "toolcall_timeout_seconds", None),
+            tool_timeouts=collect_tool_timeouts(configured_tools),
         )
         from app.core.context import get_current_agent_context
         from app.services.ai.tools.session_status import runtime_tool_capability_from_spec
@@ -3904,21 +3906,18 @@ class AssistantAgentRunner(BaseExecutor):
                 permission_scope=str(getattr(target_tool, "permission_scope", "ask")),
             )
 
-        runtime_cfg = getattr(target_tool, "_runtime_config", None)
-        # 卡片与审计轨迹必须报「真实下发」的模型：工具级覆盖 > 会话覆盖（输入框选的）
-        # > 版本配置。只读版本配置会出现「选了 gpt-oss-120b，卡片仍写 DeepSeek-V4-Flash」。
+        # 卡片与审计轨迹必须报「真实下发」的模型：会话覆盖（输入框选的）> 版本配置。
+        # 工具级模型覆盖已下架（AgentScope 无按工具换模型的落点），这里不再读它。
         t_model = resolve_effective_model_name(
-            tool_model=getattr(runtime_cfg, "model_name", None),
             recorded_model=getattr(self, "_session_effective_model", None),
             session_model=session_model_override(),
             config_model=getattr(self.config, "model_name", None),
         )
-        # 卡片与审计轨迹必须报「真实下发」的温度：工具级覆盖 > 会话覆盖 > 版本温度。
+        # 卡片与审计轨迹必须报「真实下发」的温度：会话覆盖 > 版本温度。
         recorded_session_temp = coerce_temperature(
             getattr(self, "_session_effective_temperature", None)
         )
         t_temp = resolve_effective_temperature(
-            tool_temperature=getattr(runtime_cfg, "temperature", None),
             session_temperature=(
                 recorded_session_temp
                 if recorded_session_temp is not None
@@ -3926,6 +3925,9 @@ class AssistantAgentRunner(BaseExecutor):
             ),
             config_temperature=getattr(self.config, "temperature", None),
         )
+        # 超时同样要报真实值：三级解析后的 spec.timeout_seconds，来源说明是谁定的。
+        t_timeout = getattr(target_tool, "timeout_seconds", None)
+        t_timeout_source = getattr(target_tool, "timeout_source", None)
 
         # Ensure types for AgentExecutionStep validation (especially when using Mocks in tests)
         if not isinstance(t_model, str) or not t_model.strip():
@@ -3936,6 +3938,11 @@ class AssistantAgentRunner(BaseExecutor):
             model=t_model, temperature=t_temp, tool_name=tool_name, tool_input=tool_args,
             tool_output=tool_output if isinstance(tool_output, (dict, list)) else {"raw": str(tool_output)},
             execution_time_ms=duration_tool, status="success" if not is_error else "error",
+            meta_info=(
+                {"timeout_seconds": t_timeout, "timeout_source": t_timeout_source}
+                if t_timeout is not None
+                else None
+            ),
             timestamp=datetime.fromtimestamp(time.time() - duration_tool / 1000)
         )
 
@@ -3959,6 +3966,9 @@ class AssistantAgentRunner(BaseExecutor):
             "model": t_model,
             "temperature": t_temp,
         }
+        if t_timeout is not None:
+            log_event["timeout_seconds"] = t_timeout
+            log_event["timeout_source"] = t_timeout_source
         # 工具入参单独承载（Bash 即命令原文），不占用 details 的输出截断预算。
         display_args = format_tool_args_for_display(tool_args, tool_name=tool_name)
         if display_args:

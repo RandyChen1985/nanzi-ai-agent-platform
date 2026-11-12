@@ -512,6 +512,11 @@ class RuntimeToolSpec:
     evidence_policy: RuntimeEvidencePolicy = "non_empty"
     evidence_inference_disabled: bool = False
     timeout_seconds: float | None = None
+    # 超时来源：tool / tool_defined / agent / global。卡片与审计用它说明「这个数字是谁定的」。
+    timeout_source: str | None = None
+    # 该工具内部是否会自己发起 LLM 调用（如 read_image 走多模态模型）。
+    # 只有这类工具的温度覆盖才有意义，前端据此决定温度控件是否可编辑。
+    supports_internal_llm: bool = False
     audit_callback: Callable[[RuntimeToolAuditEvent], Any] | None = None
     native_tool: Any | None = None
     is_concurrency_safe: bool | None = None

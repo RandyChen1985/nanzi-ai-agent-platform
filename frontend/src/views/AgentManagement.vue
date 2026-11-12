@@ -29,6 +29,7 @@ import AgentNameField from "../components/agent/AgentNameField.vue";
 import AgentHistoryModal from "../components/agent/AgentHistoryModal.vue";
 import RagFlowResourceSelector from "../components/RagFlowResourceSelector.vue";
 import ToolRuntimeConfigModal from "../components/agent/ToolRuntimeConfigModal.vue";
+import { toolSupportsInternalLlm } from "../constants/toolCapabilities";
 import MetadataDatasetBindingModal from "../components/agent/MetadataDatasetBindingModal.vue";
 import DelegationScopeModal from "../components/agent/DelegationScopeModal.vue";
 import AgentTeamEditorModal from "../components/agent/AgentTeamEditorModal.vue";
@@ -89,7 +90,8 @@ const currentToolConfig = ref<any>({});
 // Model Management
 const models = ref<AIModel[]>([]);
 const globalModelTemperature = ref(0);
-const globalAgentToolcallTimeout = ref(120);
+// 与后端 DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT 保持一致：接口没返回时按 180 算上限
+const globalAgentToolcallTimeout = ref(180);
 const fetchModels = async () => {
   try {
     const res = await modelApi.list();
@@ -4491,22 +4493,75 @@ const toggleSelectAllMcp = (serverName: string, tools: any[]) => {
   versionForm.value.tools = currentTools;
 };
 
-const getToolCustomConfig = (toolName: string) => {
-  const found = versionForm.value.tools?.find(t =>
-    (typeof t !== 'string' && (t as any).name === toolName)
+/**
+ * 工具级高级配置摘要：决定版本配置页里齿轮是否点亮、角标几项、摘要写什么。
+ *
+ * 只计入本工具自己的高级参数（执行超时 / 温度 / 描述覆盖）；
+ * 数据集绑定、调度范围各有独立按钮点亮，重复计入会让「齿轮亮了」说不清亮的是什么。
+ * 判定用「值 ≠ 默认」而不是「键存在」：历史版本保存时总会写 temperature: 0，
+ * 按键判定会让所有老工具全亮，提示就失效了。
+ */
+const getToolAdvancedConfigSummary = (
+  toolName: string,
+): { count: number; parts: string[] } => {
+  const found = versionForm.value.tools?.find(
+    (t: any) => typeof t !== 'string' && t.name === toolName,
   );
-  if (found && typeof found === 'object') {
-    const cfg = found as any;
-    if (
-      cfg.model_name ||
-      (cfg.temperature !== undefined && cfg.temperature !== 0) ||
-      cfg.description_override
-    ) {
-      return cfg;
-    }
+  if (!found || typeof found === 'string') return { count: 0, parts: [] };
+  const cfg = found as any;
+  const parts: string[] = [];
+
+  const rawTimeout = cfg.timeout_seconds;
+  const timeout = Number(rawTimeout);
+  if (
+    rawTimeout !== null &&
+    rawTimeout !== undefined &&
+    rawTimeout !== '' &&
+    Number.isFinite(timeout) &&
+    timeout > 0
+  ) {
+    // 显示「真实生效」的数字：老数据里可能存着超过上层的值（上层后来被调小了），
+    // 运行时会被 min 收口，摘要若照抄配置值就会与真实行为不一致。
+    const ceiling = toolTimeoutCeiling.value;
+    const effective = Number.isFinite(ceiling) && ceiling > 0 ? Math.min(timeout, ceiling) : timeout;
+    parts.push(
+      timeout > effective ? `超时 ${Math.round(effective)}s（上限）` : `超时 ${Math.round(effective)}s`,
+    );
   }
-  return null;
+
+  const rawTemperature = cfg.temperature;
+  const temperature = Number(rawTemperature);
+  if (
+    rawTemperature !== null &&
+    rawTemperature !== undefined &&
+    Number.isFinite(temperature) &&
+    temperature > 0
+  ) {
+    parts.push(`温度 ${temperature.toFixed(1)}`);
+  }
+
+  if (String(cfg.description_override ?? '').trim()) {
+    parts.push('描述覆盖');
+  }
+
+  return { count: parts.length, parts };
 };
+
+/** 工具级超时的上限：上层（版本级优先，否则全局）当前生效值；工具级只能收紧不能放宽。 */
+const toolTimeoutCeiling = computed<number>(() => {
+  const agentTimeout = Number(versionForm.value.toolcall_timeout_seconds);
+  if (Number.isFinite(agentTimeout) && agentTimeout > 0) return Math.round(agentTimeout);
+  const globalTimeout = Number(globalAgentToolcallTimeout.value);
+  if (Number.isFinite(globalTimeout) && globalTimeout > 0) return Math.round(globalTimeout);
+  return 180;
+});
+
+const toolTimeoutCeilingSource = computed<string>(() => {
+  const agentTimeout = Number(versionForm.value.toolcall_timeout_seconds);
+  return Number.isFinite(agentTimeout) && agentTimeout > 0
+    ? '智能体版本配置'
+    : '系统全局配置';
+});
 
 const hasToolMetadataDatasetBinding = (toolName: string) => {
   const found = versionForm.value.tools?.find(t =>
@@ -7756,7 +7811,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :stale-tool-refs-error="versionToolHealthError"
       :is-tool-selected="isToolSelected"
       :is-skill-selected="isSkillSelected"
-      :get-tool-custom-config="getToolCustomConfig"
+      :get-tool-advanced-config-summary="getToolAdvancedConfigSummary"
       :has-tool-metadata-dataset-binding="hasToolMetadataDatasetBinding"
       :has-delegation-allowlist="hasDelegationAllowlist"
       :delegation-scope-count="delegationScopeCount"
@@ -8138,8 +8193,10 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       v-model:model="showToolRuntimeModal"
       :tool-name="currentConfiguringTool"
       :config="currentToolConfig"
-      :available-models="models.filter(m => m.is_active && (m.type === 'llm' || m.type === 'multimodal'))"
       :readonly="!canEditVersion"
+      :supports-internal-llm="toolSupportsInternalLlm(currentConfiguringTool)"
+      :upper-timeout-seconds="toolTimeoutCeiling"
+      :upper-timeout-source="toolTimeoutCeilingSource"
       @save="handleToolConfigSave"
     />
 

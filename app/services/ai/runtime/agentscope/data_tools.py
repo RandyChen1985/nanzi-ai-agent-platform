@@ -74,11 +74,14 @@ async def resolve_chatbi_runtime_tools(
         )
     from app.services.ai.runtime.agentscope.tool_timeout import (
         apply_configured_agent_tool_timeout,
+        collect_tool_timeouts,
     )
 
     return await apply_configured_agent_tool_timeout(
         resolved.specs,
         agent_timeout=agent_timeout,
+        # ChatBI 也是从版本 tools 装配工具，工具级超时同样要按名字命中。
+        tool_timeouts=collect_tool_timeouts(configured_items),
     )
 
 

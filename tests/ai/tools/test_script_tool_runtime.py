@@ -103,6 +103,23 @@ def _config(**overrides) -> ScriptToolConfig:
     return ScriptToolConfig(**base)
 
 
+async def test_resolve_timeout_prefers_resolved_tool_timeout(tmp_path):
+    """外层算好的三级超时必须优先，否则脚本自带超时会反过来压过工具级配置。
+
+    实机语义：用户在智能体版本里把某脚本工具配成 60s（上层允许），
+    脚本自己写着 30s —— 旧实现内层直接按 30s 杀进程，工具级配置等于白配。
+    """
+    runner = ScriptToolRunner(_config(timeout_seconds=30), workdir=tmp_path, tool_timeout_seconds=60)
+    # 留半秒余量给内层先报「脚本执行超时」，但净值仍跟着工具级的 60s
+    assert await runner.resolve_timeout() == pytest.approx(59.5)
+
+
+async def test_resolve_timeout_falls_back_to_script_config_when_unresolved(tmp_path):
+    """没有外层值（例如直接单测调用）时才退回脚本自带超时。"""
+    runner = ScriptToolRunner(_config(timeout_seconds=30), workdir=tmp_path)
+    assert await runner.resolve_timeout() == pytest.approx(30.0)
+
+
 def test_missing_required_param_is_reported_before_execution(tmp_path):
     runner = ScriptToolRunner(_config(), workdir=tmp_path)
     with pytest.raises(ScriptToolError) as exc:

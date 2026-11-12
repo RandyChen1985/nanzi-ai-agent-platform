@@ -3010,6 +3010,8 @@ interface LogEntry {
   model?: string;
   temperature?: number;
   tool_result_state?: string;
+  /** 本次工具调用真实的超时秒数（三级解析后的生效值），降级路径也要带上。 */
+  timeout_seconds?: number | null;
   file_metadata?: import("@/utils/processTimeline").FileToolMetadata;
   resolution_status?: 'disabled' | 'missing' | 'filtered';
   execution_time_ms?: number | null;
@@ -12100,6 +12102,10 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
       model: data.model ?? currentLog.model,
       temperature: data.temperature ?? currentLog.temperature,
       tool_result_state: data.tool_result_state ?? currentLog.tool_result_state,
+      // 降级路径（buildLegacyProcessTimeline 读 msg.logs）也要拿到这条调用的真实超时，
+      // 少了它只剩版本级快照，工具级收紧在界面上就看不出来。
+      timeout_seconds:
+        (data.timeout_seconds as number | undefined) ?? currentLog.timeout_seconds,
       file_metadata: data.file_metadata ?? currentLog.file_metadata,
       resolution_status: data.resolution_status ?? currentLog.resolution_status,
       rowFilterApplied: data.row_filter_applied === true || currentLog.rowFilterApplied,

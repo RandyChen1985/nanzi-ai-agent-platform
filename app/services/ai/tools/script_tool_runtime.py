@@ -203,6 +203,7 @@ class ScriptToolRunner:
         sandbox_root: str | None = None,
         user_info: Optional[Mapping[str, Any]] = None,
         conversation_id: str | None = None,
+        tool_timeout_seconds: float | None = None,
     ) -> None:
         self.config = config
         self.workdir = Path(workdir).expanduser().resolve()
@@ -210,6 +211,12 @@ class ScriptToolRunner:
         self.sandbox_root = sandbox_root
         self.user_info = dict(user_info or {})
         self.conversation_id = conversation_id
+        # 外层已经算好的三级超时（工具级 → 脚本自带 → 版本级 → 全局）。
+        # 内层必须用它：否则脚本自带超时会反过来压过用户配的工具级，
+        # 「版本级放大」对没自带超时的脚本也永远不生效。
+        self.tool_timeout_seconds = (
+            float(tool_timeout_seconds) if tool_timeout_seconds else None
+        )
         # 上次解析凭据环境变量时被拒绝的原因（停用/过期/开关没开）；
         # 只在返回 None 之后有意义，供调用方在错误信息里带出去。
         self._credential_denials: str = ""
@@ -487,6 +494,10 @@ class ScriptToolRunner:
         return result
 
     async def resolve_timeout(self) -> float:
+        # 优先用外层解析好的三级超时；留半秒余量让内层先超时，
+        # 从而给出「脚本执行超时」这种可读错误，而不是让外层协程被直接取消。
+        if self.tool_timeout_seconds:
+            return max(1.0, self.tool_timeout_seconds - INNER_TIMEOUT_MARGIN_SECONDS)
         if self.config.timeout_seconds:
             return max(1.0, float(self.config.timeout_seconds))
         try:

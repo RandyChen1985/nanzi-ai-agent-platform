@@ -791,6 +791,12 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
         ? undefined
         : Number(data.temperature),
     tool_result_state: data.tool_result_state === undefined ? undefined : String(data.tool_result_state),
+    // 这条调用真实的超时（工具级可能把 180s 收紧成 10s）。这里是一层显式字段映射：
+    // 漏一个字段，后端下发了也进不了时间线条目，界面只能退回版本级快照。
+    timeout_seconds:
+      data.timeout_seconds === undefined || data.timeout_seconds === null
+        ? undefined
+        : Number(data.timeout_seconds),
     file_metadata: data.file_metadata as import("./processTimeline").FileToolMetadata | undefined,
     resolution_status: data.resolution_status as "disabled" | "missing" | "filtered" | undefined,
     execution_time_ms:

@@ -7658,6 +7658,9 @@ def _bind_script_tool_spec(
         sandbox_root=getattr(local_ws, "workspace_user_root", None),
         user_info=user_info,
         conversation_id=getattr(local_ws, "conversation_id", None),
+        # spec 上已经是三级解析后的生效值（工具级 > 脚本自带 > 版本级 > 全局）；
+        # 不传下去，内层会退回「脚本自带 或 全局-margin」，把工具级配置架空。
+        tool_timeout_seconds=getattr(spec, "timeout_seconds", None),
     )
 
     async def _invoke_script_tool(**kwargs: Any) -> Any:
@@ -7889,6 +7892,10 @@ async def bind_configured_tools_to_workspace(
                     getattr(spec, "evidence_inference_disabled", False)
                 ),
                 timeout_seconds=getattr(spec, "timeout_seconds", None),
+                # 来源与能力标记也要跟着走：rebound 是新 spec，不显式搬运就会在绑定
+                # 这一步丢掉「这个超时是谁定的」，卡片与审计来源退化成空。
+                timeout_source=getattr(spec, "timeout_source", None),
+                supports_internal_llm=bool(getattr(spec, "supports_internal_llm", False)),
                 audit_callback=getattr(spec, "audit_callback", None),
             )
         )

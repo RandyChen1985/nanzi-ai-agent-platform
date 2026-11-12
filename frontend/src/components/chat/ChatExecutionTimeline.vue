@@ -1457,6 +1457,10 @@ function formatTimelineDuration(item: ProcessTimelineLogItem): string {
 function pendingToolTimeoutSeconds(item: ProcessTimelineLogItem): number | null {
   if (item.status !== "pending") return null;
   if (String(item.category || "") !== "tool") return null;
+  // 优先这条调用自己的生效超时：工具级可能把 180s 收紧成 10s，
+  // 只显示本轮快照会让人以为工具级没生效。字段缺失才回退快照。
+  const own = Number(item.timeout_seconds);
+  if (Number.isFinite(own) && own > 0) return own;
   const seconds = Number(props.toolTimeoutSeconds);
   return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
 }
