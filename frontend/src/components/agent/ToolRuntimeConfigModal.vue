@@ -19,20 +19,28 @@ const props = withDefaults(defineProps<{
   readonly?: boolean;
   /** 该工具内部是否会自己调 LLM；只有这类工具的温度才有意义 */
   supportsInternalLlm?: boolean;
-  /** 上层已选定的工具超时（版本级或全局级），工具级只能收紧不能放宽 */
+  /** 上层的工具超时默认值（版本级或全局级）；工具级留空时继承它，配了则以工具级为准 */
   upperTimeoutSeconds?: number | null;
   /** 上层超时的来源描述，用于「跟随上层」的说明文案 */
   upperTimeoutSource?: string;
+  /**
+   * 整轮看门狗时长（秒）。>0 时它是**真正的天花板**：从用户发消息到收尾，超过它整轮
+   * 会被强制取消并释放会话锁——工具级配得比它大也跑不完。0 表示看门狗已关闭。
+   */
+  producerHardTimeoutSeconds?: number | null;
 }>(), {
   readonly: false,
   supportsInternalLlm: false,
   upperTimeoutSeconds: null,
+  producerHardTimeoutSeconds: null,
   upperTimeoutSource: "智能体版本配置",
 });
 
 const emit = defineEmits(["update:model", "save"]);
 
-const MAX_TOOL_TIMEOUT = 3600;
+// 工具级允许配置的上限，与版本级同口径（1 天）。上层值只是「默认值」，不是天花板：
+// 某些工具天生就慢，硬压到全局 180s/3600s 会逼用户把整个版本级调大，连带影响所有工具。
+const MAX_TOOL_TIMEOUT = 86400;
 
 const localConfig = ref<ToolConfig>({ ...props.config });
 const timeoutDraft = ref<string>("");
@@ -40,50 +48,57 @@ const timeoutDraft = ref<string>("");
 // 但保存时两者都还原成「不写这个键」，避免把默认值写成显式配置。
 const temperatureDraft = ref<number>(0);
 
-/**
- * 输入上限 = min(表单硬上限 3600, 上层生效值)。
- * 不这样做会出现「提示按 180s 生效、实际存下 600s」——列表摘要读的是存下的值，
- * 于是界面数字与真实下发对不上，而这正是本次要修的毛病。
- */
-const timeoutCeiling = computed<number>(() => {
-  const upper = props.upperTimeoutSeconds;
-  if (upper === null || upper === undefined || !Number.isFinite(Number(upper)) || Number(upper) <= 0) {
-    return MAX_TOOL_TIMEOUT;
-  }
-  return Math.min(MAX_TOOL_TIMEOUT, Math.round(Number(upper)));
+/** 上层生效值（版本级优先、否则全局级）；只用于「默认值」与越界提示，不再钳制输入。 */
+const upperTimeout = computed<number | null>(() => {
+  const upper = Number(props.upperTimeoutSeconds);
+  return Number.isFinite(upper) && upper > 0 ? Math.round(upper) : null;
 });
 
 const clampTimeout = (value: unknown): number | null => {
   if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return null;
-  return Math.min(timeoutCeiling.value, Math.max(1, Math.round(number)));
+  // 只受表单硬上限约束：填多大就生效多大，不再被上层截断
+  return Math.min(MAX_TOOL_TIMEOUT, Math.max(1, Math.round(number)));
 };
 
-// 工具级只能收紧：最终生效值不会超过上层选定值
+/** 生效值即用户填的值；留空才回落到上层。 */
 const effectiveTimeout = computed<{ value: number | null; source: "tool" | "upper" }>(() => {
   const own = clampTimeout(timeoutDraft.value);
-  const upper = props.upperTimeoutSeconds;
-  if (own === null) return { value: upper ?? null, source: "upper" };
-  return { value: upper === null ? own : Math.min(own, upper), source: "tool" };
+  if (own === null) return { value: upperTimeout.value, source: "upper" };
+  return { value: own, source: "tool" };
 });
 
-const isTimeoutClamped = computed(() => {
-  // 必须拿「用户原样输入」和上限比：clampTimeout() 返回的已经是压到上限以内的值，
-  // 用它来判断会恒为 false，琥珀色告警永远不出现，用户填 600 就被静默改成上限。
+/** 超过上层值：只提示，不阻止保存（用户可能就是需要给这个慢工具更长的预算）。 */
+const isAboveUpper = computed(() => {
+  const own = clampTimeout(timeoutDraft.value);
+  if (own === null || upperTimeout.value === null) return false;
+  return own > upperTimeout.value;
+});
+
+/** 超过表单硬上限：这时会被截断，必须说清楚。 */
+const isOverMax = computed(() => {
   const raw = Number(timeoutDraft.value);
   if (timeoutDraft.value === "" || !Number.isFinite(raw) || raw <= 0) return false;
-  return raw > timeoutCeiling.value;
+  return raw > MAX_TOOL_TIMEOUT;
 });
 
-/** 上限的来历：是被上层值限住，还是被工具级表单硬上限 3600 限住。 */
-const ceilingHint = computed(() => {
-  const upper = Number(props.upperTimeoutSeconds);
-  if (Number.isFinite(upper) && upper > timeoutCeiling.value) {
-    return `范围 1–${timeoutCeiling.value} 秒（工具级单次上限 ${MAX_TOOL_TIMEOUT}s，上层 ${upper}s 更大）`;
-  }
-  return `范围 1–${timeoutCeiling.value} 秒（等于上层生效值，工具级只能更小）`;
+/** 整轮看门狗（真正天花板）；0/null/非法值视为关闭。 */
+const producerHardTimeout = computed<number | null>(() => {
+  const value = Number(props.producerHardTimeoutSeconds);
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : null;
 });
+
+/** 工具级配置超过了整轮预算：跑不到，必须提示。 */
+const isAboveProducer = computed(() => {
+  const own = clampTimeout(timeoutDraft.value);
+  if (own === null || producerHardTimeout.value === null) return false;
+  return own > producerHardTimeout.value;
+});
+
+const rangeHint = computed(() =>
+  `范围 1–${MAX_TOOL_TIMEOUT} 秒；留空则继承${props.upperTimeoutSource}`,
+);
 
 const temperatureValue = computed<number>(() => Number(temperatureDraft.value || 0));
 
@@ -169,7 +184,7 @@ const clearTimeout = () => {
                 v-model="timeoutDraft"
                 type="number"
                 min="1"
-                :max="timeoutCeiling"
+                :max="MAX_TOOL_TIMEOUT"
                 step="1"
                 :disabled="readonly"
                 placeholder="留空 = 跟随上层"
@@ -192,11 +207,27 @@ const clearTimeout = () => {
               <span v-else>上层也未设置时使用系统默认 180s</span>
               <span v-if="effectiveTimeout.source === 'upper'">· 来源：{{ upperTimeoutSource }}</span>
             </p>
-            <p v-if="isTimeoutClamped" class="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-700">
-              工具级只能收紧、不能放宽：上限 {{ timeoutCeiling }}s，保存后按 {{ effectiveTimeout.value }}s 生效。
+            <!-- 超过整轮看门狗：这是真正的天花板，配了也跑不完 -->
+            <p v-if="isAboveProducer" class="mt-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-800">
+              已超出整轮看门狗 {{ producerHardTimeout }}s：本轮会先被强制终止并释放会话，
+              这个工具等不到自己超时。需要更久请先调大系统配置的看门狗时长。
             </p>
-            <p v-else class="mt-1.5 text-[10px] leading-relaxed text-gray-400">
-              {{ ceilingHint }}。留空则继承{{ upperTimeoutSource }}。
+            <!-- 超过上层值：允许保存，但要说清"这个工具会比其它工具跑得久" -->
+            <p v-else-if="isAboveUpper" class="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-700">
+              已超出{{ upperTimeoutSource }}的 {{ upperTimeout }}s：该工具会独占更长运行时间，保存后按
+              {{ effectiveTimeout.value }}s 生效（其它工具不受影响）。
+            </p>
+            <!-- 超过表单硬上限：这里是真的会被截断，必须说清最终值 -->
+            <p v-if="isOverMax" class="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-700">
+              单个工具最多 {{ MAX_TOOL_TIMEOUT }}s，超出部分会被截断，保存后按 {{ effectiveTimeout.value }}s 生效。
+            </p>
+            <p v-if="!isAboveUpper && !isOverMax && !isAboveProducer" class="mt-1.5 text-[10px] leading-relaxed text-gray-400">
+              {{ rangeHint }}。
+            </p>
+            <!-- 整轮预算常驻展示：它是「工具级生效上限」之外的第二道约束，藏起来就会踩坑 -->
+            <p v-if="producerHardTimeout !== null" class="mt-1 text-[10px] leading-relaxed text-gray-400">
+              整轮看门狗 {{ producerHardTimeout }}s：从发消息到收尾的总时长上限（含模型调用与所有工具），
+              超过它整轮会被强制终止。
             </p>
           </div>
 

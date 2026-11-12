@@ -370,11 +370,21 @@ async def list_agents(session: AsyncSession = Depends(get_db_session), user: Dic
 async def get_agent_toolcall_timeout(
     user: Dict[str, Any] = Depends(require_permission("menu", "menu:agent_management")),
 ):
-    """返回智能体管理页需要展示的全局工具调用超时。"""
+    """返回智能体管理页需要展示的全局工具调用超时，以及整轮看门狗时长。
+
+    看门狗要一起返回：工具级超时允许配得比它大，但那样整轮会先被取消、配置白配，
+    配置界面必须能据此提示——否则用户以为配了 1200s，实际 600s 就被掐断。
+    """
     from app.services.ai.runtime.agentscope.tool_timeout import load_agent_max_toolcall_timeout
+    from app.services.ai.runtime.producer_watchdog import load_producer_hard_timeout
 
     timeout_seconds = await load_agent_max_toolcall_timeout()
-    return {"seconds": int(timeout_seconds)}
+    producer_hard_timeout = await load_producer_hard_timeout()
+    return {
+        "seconds": int(timeout_seconds),
+        # 0 表示看门狗已关闭，此时不存在整轮天花板
+        "producer_hard_timeout_seconds": int(producer_hard_timeout),
+    }
 
 
 @router.get(

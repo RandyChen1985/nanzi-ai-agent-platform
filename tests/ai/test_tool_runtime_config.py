@@ -216,7 +216,10 @@ def test_dirty_timeout_is_coerced_before_chat_config_validation():
     assert ToolConfigItem(name="t", timeout_seconds=10.0).timeout_seconds == 10
     assert ToolConfigItem(name="t", timeout_seconds="10.0").timeout_seconds == 10
     assert ToolConfigItem(name="t", timeout_seconds=10.5).timeout_seconds is None
-    assert ToolConfigItem(name="t", timeout_seconds=7200).timeout_seconds is None
+    # 工具级现在允许到 86400（可以超过全局默认值），超过这个上限才算脏值
+    assert ToolConfigItem(name="t", timeout_seconds=7200).timeout_seconds == 7200
+    assert ToolConfigItem(name="t", timeout_seconds=86400).timeout_seconds == 86400
+    assert ToolConfigItem(name="t", timeout_seconds=90000).timeout_seconds is None
     assert ToolConfigItem(name="t", timeout_seconds=10).timeout_seconds == 10
     assert ToolConfigItem(name="t", timeout_seconds="12").timeout_seconds == 12
 

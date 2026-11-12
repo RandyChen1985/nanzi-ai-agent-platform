@@ -1,4 +1,9 @@
-"""工具级超时的三级覆盖：工具级 ≤ 上层（版本级/全局级），只能收紧不能放宽。"""
+"""工具级超时的逐级覆盖：工具级 > 工具自带 > 版本级 > 全局级。
+
+上层是**默认值**而不是天花板：工具级可以把某个慢工具放大到超过上层（配置界面只提示，
+运行时不再静默截断）。静默截断会让「界面填的值」和「实际生效的值」对不上，
+而那正是本模块要消灭的问题。
+"""
 
 import pytest
 
@@ -43,34 +48,38 @@ class TestResolveToolTimeout:
         assert value == 60
         assert source == "tool"
 
-    def test_tool_cannot_exceed_global_ceiling(self):
-        """工具级不能顶开系统级：全局 180 时，配 600 也只能按 180 生效。"""
+    def test_tool_can_exceed_global_default(self):
+        """慢工具可以放大到超过全局默认值：全局 180 时配 600，就按 600 跑。
+
+        这是本轮的语义变更。旧实现会 min 成 180——用户填 600、界面提示按 180 生效，
+        而「给某个慢工具更长预算」正是工具级存在的意义。
+        """
         value, source = resolve_tool_timeout(
             tool_config_timeout=600, global_timeout=180
         )
-        assert value == 180
+        assert value == 600
         assert source == "tool"
 
-    def test_tool_cannot_exceed_agent_ceiling(self):
+    def test_tool_can_exceed_agent_default(self):
         value, source = resolve_tool_timeout(
             tool_config_timeout=600, agent_timeout=300, global_timeout=180
         )
-        assert value == 300
+        assert value == 600
         assert source == "tool"
 
-    def test_spec_defined_timeout_is_kept_but_capped(self):
-        """脚本工具自带的超时不再被整批覆盖抹平，但同样不能突破上层。"""
+    def test_spec_defined_timeout_is_kept(self):
+        """脚本工具自带的超时原样保留，同样不再被上层截断。"""
         value, source = resolve_tool_timeout(
             spec_timeout=90, global_timeout=180
         )
         assert value == 90
         assert source == "tool_defined"
 
-        capped, capped_source = resolve_tool_timeout(
+        over, over_source = resolve_tool_timeout(
             spec_timeout=900, global_timeout=180
         )
-        assert capped == 180
-        assert capped_source == "tool_defined"
+        assert over == 900
+        assert over_source == "tool_defined"
 
     def test_tool_config_beats_spec_defined(self):
         value, source = resolve_tool_timeout(
@@ -95,7 +104,7 @@ class TestResolveToolTimeout:
 
 class TestApplyAgentToolTimeout:
     def test_batch_keeps_per_tool_values(self):
-        """逐工具解析：一个工具收紧，不影响同批其它工具。"""
+        """逐工具解析：一个工具单独调，不影响同批其它工具。"""
         specs = [_spec("system_http_request"), _spec("execute_sql_query")]
         applied = apply_agent_tool_timeout(
             specs,

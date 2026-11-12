@@ -92,6 +92,9 @@ const models = ref<AIModel[]>([]);
 const globalModelTemperature = ref(0);
 // 与后端 DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT 保持一致：接口没返回时按 180 算上限
 const globalAgentToolcallTimeout = ref(180);
+// 整轮看门狗：工具级超时配得比它大也跑不完（整轮先被取消），弹窗需要据此提示。
+// 0 表示看门狗已关闭，此时没有整轮天花板。
+const producerHardTimeout = ref(600);
 const fetchModels = async () => {
   try {
     const res = await modelApi.list();
@@ -121,6 +124,10 @@ const fetchGlobalAgentToolcallTimeout = async () => {
     const value = Number(res.data.seconds);
     if (Number.isInteger(value) && value >= 1 && value <= 3600) {
       globalAgentToolcallTimeout.value = value;
+    }
+    const producer = Number(res.data.producer_hard_timeout_seconds);
+    if (Number.isInteger(producer) && producer >= 0) {
+      producerHardTimeout.value = producer;
     }
   } catch (error) {
     console.warn("Failed to fetch global agent tool-call timeout", error);
@@ -4520,13 +4527,11 @@ const getToolAdvancedConfigSummary = (
     Number.isFinite(timeout) &&
     timeout > 0
   ) {
-    // 显示「真实生效」的数字：老数据里可能存着超过上层的值（上层后来被调小了），
-    // 运行时会被 min 收口，摘要若照抄配置值就会与真实行为不一致。
-    const ceiling = toolTimeoutCeiling.value;
-    const effective = Number.isFinite(ceiling) && ceiling > 0 ? Math.min(timeout, ceiling) : timeout;
-    parts.push(
-      timeout > effective ? `超时 ${Math.round(effective)}s（上限）` : `超时 ${Math.round(effective)}s`,
-    );
+    // 工具级是「覆盖」不是「收紧」：填多少就生效多少，摘要照抄配置值即为真实值。
+    // 超过上层默认值时补一个标记，让人一眼看出这个工具比同版本其它工具跑得久。
+    const ceiling = Number(toolTimeoutCeiling.value);
+    const aboveUpper = Number.isFinite(ceiling) && ceiling > 0 && timeout > ceiling;
+    parts.push(`超时 ${Math.round(timeout)}s${aboveUpper ? '·超上层' : ''}`);
   }
 
   const rawTemperature = cfg.temperature;
@@ -4547,7 +4552,10 @@ const getToolAdvancedConfigSummary = (
   return { count: parts.length, parts };
 };
 
-/** 工具级超时的上限：上层（版本级优先，否则全局）当前生效值；工具级只能收紧不能放宽。 */
+/**
+ * 上层的超时默认值（版本级优先，否则全局）：工具级留空时继承它。
+ * 注意它**不是**工具级的天花板——工具级可以超过它，界面只做提示。
+ */
 const toolTimeoutCeiling = computed<number>(() => {
   const agentTimeout = Number(versionForm.value.toolcall_timeout_seconds);
   if (Number.isFinite(agentTimeout) && agentTimeout > 0) return Math.round(agentTimeout);
@@ -7782,6 +7790,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :agent-form="agentForm"
       :version-form="versionForm"
       :global-agent-toolcall-timeout="globalAgentToolcallTimeout"
+      :producer-hard-timeout-seconds="producerHardTimeout"
       :selected-agent="selectedAgent"
       :models="models"
       :global-model-temperature="globalModelTemperature"
@@ -8197,6 +8206,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :supports-internal-llm="toolSupportsInternalLlm(currentConfiguringTool)"
       :upper-timeout-seconds="toolTimeoutCeiling"
       :upper-timeout-source="toolTimeoutCeilingSource"
+      :producer-hard-timeout-seconds="producerHardTimeout"
       @save="handleToolConfigSave"
     />
 

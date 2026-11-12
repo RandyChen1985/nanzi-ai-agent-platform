@@ -258,3 +258,81 @@ Review 的第二遍深挖提了 4 条边界问题，逐条核实：**3 条成立
 
 验证：`tests/ai` + `tests/api` **5026 passed**；`tests/frontend` 4885 passed / 1 skipped；`vue-tsc -p tsconfig.app.json --noEmit` 与基线零差异（157）。
 新增测试：`test_sandbox_inner_timeout_not_looser_than_outer`、`_coerce_timeout_seconds` 的浮点用例。
+
+## 十四、语义调整：工具级从「只能收紧」改为「逐级覆盖」（2026-11-12）
+
+上线后讨论发现「工具级只能收紧」这条约束站不住，已改为**上层是默认值、工具级可覆盖**。
+
+### 为什么改
+
+1. **天花板本来就漏**：版本级 `toolcall_timeout_seconds` 可配到 86400，管理员把某版本设成 7200，该版本下所有工具都能跑 7200s——全局 3600 的"保护上限"在版本级那一层并不成立。
+2. **版本级被迫一身兼两职**（默认值 + 天花板）：想给一个慢工具配 600s，就得把整个版本调到 ≥600s，于是该智能体下**所有工具**默认预算一起变大，把不想放大的也放大了。这恰恰废掉了工具级存在的意义。
+3. **需求真实**：大文件处理、外部 HTTP 批处理、长脚本、大仓库检索，天生就慢。
+
+### 新语义
+
+| 层级 | 作用 | 范围 |
+|---|---|---|
+| 工具级 | **最高优先级**，配了就按它跑，可以超过上层 | 1–86400 |
+| 工具自带（脚本） | 次优先 | 工具作者定义 |
+| 版本级 | 默认值 | 1–86400 |
+| 全局 | 兜底默认值 | 1–3600（默认 180） |
+
+- 运行时**不再静默截断**：`resolve_tool_timeout` 去掉 `min(配置值, 上层值)`，直接返回配置值。
+- 配置界面**只提示不阻止**：
+  - 超过上层默认值 → 琥珀色提示「已超出{版本级/系统全局}的 Ns：该工具会独占更长运行时间，保存后按 X s 生效（其它工具不受影响）」
+  - 超过表单硬上限 86400 → 提示会被截断（这是唯一真截断）
+- 列表摘要显示真实配置值，超上层时补「·超上层」标记。
+
+### 为什么保留 86400 这个硬上限
+
+完全不设边界等于允许「无超时」（填 99999999 的工具永远不返回，会长期占住会话/worker）。86400 与版本级同口径，不引入第二套数字；真要更长的单次调用，说明是平台级决策，应走版本级默认值。
+
+### 改动清单
+
+- 后端：`tool_timeout.resolve_tool_timeout` 去掉 min；新增 `MAX_TOOL_TIMEOUT_SECONDS = 86400`；`ToolConfigItem.timeout_seconds` 范围 1–86400（含清洗逻辑）
+- 前端：`ToolRuntimeConfigModal` 的 `timeoutCeiling`（按上层钳制）→ `upperTimeout`（仅默认值/提示）+ `isAboveUpper` + `isOverMax`；`MAX_TOOL_TIMEOUT` 3600 → 86400；摘要去掉 `Math.min`
+- 测试：`test_tool_timeout_three_levels.py` 两个「cannot exceed」反转为「can exceed」；`test_agent_tool_timeout.py` 期望值更新；`test_tool_runtime_config.py` 范围断言更新；前端契约改为断言「不静默截断 + 越界提示」
+
+## 十五、真正的天花板：整轮看门狗（2026-11-12）
+
+第十四节放开工具级上限后，暴露出上层的另一道约束——`agent_chat_producer_hard_timeout_seconds`：
+
+```python
+# app/api/v1/endpoints/chat.py
+await asyncio.wait_for(asyncio.shield(producer_task), timeout=hard_timeout)
+except asyncio.TimeoutError:
+    producer_task.cancel()        # 整个 producer 被取消
+    await _release_locks_on_client_abort()
+```
+
+### 它与工具超时是**两个维度**
+
+| | 工具级/版本级/全局级 | 整轮看门狗 |
+|---|---|---|
+| 管的范围 | 单次工具调用 | **整轮**：从发消息到收尾，含鉴权准备、每次模型调用、每次工具调用、落库收尾 |
+| 超时后的表现 | `RuntimeTimeoutError` → 「工具执行超时（上限 N 秒）」 | 整个协程被 cancel → **整轮中断**，没有任何「工具超时」文案 |
+| 计时起点 | 该工具开始执行时 | 用户发出消息时（**累计**） |
+
+因此生效上限是：
+
+```
+实际能跑到 = min(工具级配置, 看门狗 − 本轮已耗时)
+```
+
+即使工具级配 500s（< 600s 看门狗），只要前面模型思考与其它工具花掉 200s，第 700s 照样被掐。
+
+### 处置
+
+1. **上限对齐**：`MAX_PRODUCER_HARD_TIMEOUT_SECONDS` 3600 → **86400**。不改这一项，工具级的长预算永远跑不完，放开工具级等于白放开。默认值仍 600，正常对话兜底时长不变——调大上限只影响「producer 卡死时最晚多久被强杀」。
+2. **迁移只改描述**：`db-prod/V216` + `db-prod-pg/V116` 更新 description（配置页展示的是 DB 里的描述，改代码不改描述会让运维以为上限还是 3600）。不新增行、不动 value。
+3. **配置界面提示**（方案 A，用户选定）：`/api/portal/agents/toolcall-timeout` 增加返回 `producer_hard_timeout_seconds`。**两层都要提示**：
+   - **工具级**（`ToolRuntimeConfigModal`）：常驻展示「整轮看门狗 N s」，工具级超过它时给更强的琥珀色警告：**本轮会先被强制终止并释放会话，这个工具等不到自己超时**。
+   - **智能体版本级**（`AgentVersionEditorDrawer`）：同样常驻展示 + 越界警告，并额外点明**「该版本下所有工具都会受影响」**——版本级是所有工具的默认值，踩中的概率比工具级更高，只提示工具级会让人误判成「是这个工具有问题」。顺带补「超过 86400 会失焦截断」的即时提示（原先只有 blur 才截断，输入 9999999 时界面一声不吭，看着像能存）。
+   - 看门狗为 0（已关闭）时两层都不展示、不参与比较。
+4. **不推荐关闭看门狗解决长超时**：关闭会失去「会话最终一定被释放」的兜底，producer 卡死时只能等会话锁 TTL 过期。
+
+### 仍然存在的第三道限制（既有行为，未处理）
+
+- 沙箱执行通道自身 600s（`SANDBOX_COMMAND_TIMEOUT_SECONDS`）：脚本工具在沙箱里配 1200s 仍被通道截断。
+- 部分内置工具自带固定内层超时（`system_http_request` 的 `httpx(timeout=30)`）：收紧有效，放大会被其限制。

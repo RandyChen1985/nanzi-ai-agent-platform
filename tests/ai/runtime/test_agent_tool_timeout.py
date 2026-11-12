@@ -51,14 +51,15 @@ def test_agent_tool_timeout_config_parsing_and_precedence():
         ),
     ]
 
+    # 上层是默认值，不是天花板：没配的工具继承上层，自带/工具级配置则原样生效
     limited = apply_agent_tool_timeout(specs, 180.0)
-    assert [spec.timeout_seconds for spec in limited] == [180.0, 180.0]
+    assert [spec.timeout_seconds for spec in limited] == [180.0, 600.0]
 
     version_limited = apply_agent_tool_timeout(specs, 120.0, agent_timeout=300.0)
-    assert [spec.timeout_seconds for spec in version_limited] == [300.0, 300.0]
+    assert [spec.timeout_seconds for spec in version_limited] == [300.0, 600.0]
 
     version_over_global = apply_agent_tool_timeout(specs, 300.0, agent_timeout=120.0)
-    assert [spec.timeout_seconds for spec in version_over_global] == [120.0, 120.0]
+    assert [spec.timeout_seconds for spec in version_over_global] == [120.0, 600.0]
 
 
 @pytest.mark.asyncio

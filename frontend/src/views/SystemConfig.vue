@@ -1120,10 +1120,12 @@ const normalizeAgentToolcallTimeoutInput = (item: ConfigItem) => {
     : '120'
 }
 // producer 硬超时看门狗。与工具超时的唯一区别是下界：0 是合法值，表示关闭看门狗
-// （后端 validate_producer_hard_timeout 接受 0 或 60-3600）。注意「清空输入框」不等于
+// （后端 validate_producer_hard_timeout 接受 0 或 60-86400）。注意「清空输入框」不等于
 // 「填 0」——空值一律回落默认值，否则用户误删一下就静默关掉了兜底。
+// 上限与工具级/版本级超时同口径：工具级允许配到 86400，看门狗若只到 3600，那些长预算
+// 就永远跑不完（整轮先被取消），配置等于白配。
 const PRODUCER_HARD_TIMEOUT_MIN = 0
-const PRODUCER_HARD_TIMEOUT_MAX = 3600
+const PRODUCER_HARD_TIMEOUT_MAX = 86400
 const PRODUCER_HARD_TIMEOUT_DEFAULT = 600
 const getProducerHardTimeoutValue = (item: ConfigItem) => {
   const raw = String(item.value ?? '').trim()

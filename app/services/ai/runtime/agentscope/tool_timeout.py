@@ -13,6 +13,10 @@ DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT = 180.0
 MIN_AGENT_MAX_TOOLCALL_TIMEOUT = 1.0
 MAX_AGENT_MAX_TOOLCALL_TIMEOUT = 3600.0
 MAX_AGENT_VERSION_TOOLCALL_TIMEOUT = 86400.0
+#: 单个工具允许配置的上限，与版本级同口径（1 天）。
+#: 工具级不再被上层钳制——某些工具天生就慢（大文件处理、外部批处理、长脚本），
+#: 「只能收紧」会逼用户把整个版本级的默认值调大，等于连带放大了所有工具。
+MAX_TOOL_TIMEOUT_SECONDS = 86400.0
 _INTEGER_PATTERN = re.compile(r"^[0-9]+$")
 
 
@@ -118,9 +122,13 @@ def resolve_tool_timeout(
 ) -> tuple[float, str]:
     """解析单个工具的真实生效超时与来源层级。
 
-    三级覆盖：工具级配置 > 工具自带定义 > 智能体版本级 > 全局级。
-    工具级只做「收紧」不做「放宽」：最终值不会超过上层（版本级/全局级）选定的值——
-    全局是平台保护上限，单个工具配置不能把它顶开。
+    逐级覆盖：工具级配置 > 工具自带定义 > 智能体版本级 > 全局级。
+    **上层是默认值，不是天花板**：工具级可以把某个慢工具的预算放大到超过上层
+    （典型场景：一个大文件处理工具需要 600s，而版本级默认 180s）。
+    超上限只在配置界面提示，不在运行时静默截断——静默截断会让"界面上填的值"
+    和"实际生效的值"再次对不上，而这正是本模块要消灭的问题。
+
+    失控风险由「工具级取值范围（≤ 86400）」+ 管理员对版本级/全局级的把控共同兜底。
 
     Returns:
         (生效秒数, 来源)。来源取值：``tool`` / ``tool_defined`` / ``agent`` / ``global``。
@@ -134,11 +142,11 @@ def resolve_tool_timeout(
 
     configured = _coerce_positive_timeout(tool_config_timeout)
     if configured is not None:
-        return min(configured, ceiling), "tool"
+        return configured, "tool"
 
     defined = _coerce_positive_timeout(spec_timeout)
     if defined is not None:
-        return min(defined, ceiling), "tool_defined"
+        return defined, "tool_defined"
 
     return ceiling, ceiling_source
 

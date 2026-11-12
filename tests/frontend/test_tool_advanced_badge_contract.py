@@ -39,9 +39,10 @@ def test_gear_button_lights_up_with_count_badge_and_summary():
 def test_summary_counts_only_tool_level_parameters():
     management = _source(MANAGEMENT)
     assert "const getToolAdvancedConfigSummary" in management
-    # 摘要必须写「真实生效」的秒数：老数据可能存着超过上层的值，运行时会被 min 收口
-    assert "Math.min(timeout, ceiling)" in management
-    assert "超时 ${Math.round(effective)}s" in management
+    # 工具级是覆盖不是收紧：摘要照抄配置值即为真实生效值，超上层只补个标记
+    assert "Math.min(timeout, ceiling)" not in management
+    assert "超时 ${Math.round(timeout)}s" in management
+    assert "·超上层" in management
     assert "温度 ${temperature.toFixed(1)}" in management
     assert "parts.push('描述覆盖')" in management
     # 数据集绑定与调度范围各有独立按钮点亮，不重复计入
@@ -63,13 +64,17 @@ def test_modal_drops_model_picker_and_adds_timeout():
     assert "执行超时 (Execute Timeout)" in modal
     assert "留空 = 跟随上层" in modal
     assert "timeout_seconds" in modal
-    # 工具级只能收紧，弹窗要给出明确的生效值与来源
+    # 工具级是「覆盖」：上层值只用于默认值与越界提示，不钳制输入
     assert "upperTimeoutSeconds" in modal
-    assert "只能收紧" in modal
-    # 输入上限必须跟着上层收口，否则会出现「提示按 180s 生效、实际存下 600s」
-    assert "const timeoutCeiling" in modal
-    assert ':max="timeoutCeiling"' in modal
-    assert "Math.min(timeoutCeiling.value" in modal
+    assert "const upperTimeout = computed" in modal
+    assert "const isAboveUpper = computed" in modal
+    assert "该工具会独占更长运行时间" in modal
+    # 表单硬上限（86400）才是真截断，且输入框 max 要跟着它
+    assert "const MAX_TOOL_TIMEOUT = 86400;" in modal
+    assert ':max="MAX_TOOL_TIMEOUT"' in modal
+    assert "const isOverMax = computed" in modal
+    # 旧语义必须消失：不能再出现「只能收紧」这种钳制文案
+    assert "只能收紧" not in modal
 
 
 def test_modal_disables_temperature_for_pure_function_tools():
@@ -136,22 +141,49 @@ def test_sse_log_mapping_forwards_timeout_field():
     assert "data.timeout_seconds === null" in block
 
 
-def test_modal_clamp_warning_uses_raw_input_not_clamped_value():
-    """告警判断必须用用户原样输入。
+def test_modal_does_not_silently_truncate_tool_timeout():
+    """工具级超时不能被上层值静默截断。
 
-    踩过的坑：`isTimeoutClamped` 拿 `clampTimeout()` 的返回值去比上限，
-    而它返回的已经是压到上限以内的值 → 判断恒为 false，琥珀色提示永不出现，
-    用户填 600 被静默改成 180，界面却什么都不说。
+    历史坑：`clampTimeout` 里带上了上层值，用户填 600 被静默改成 180，界面一声不吭。
+    现在钳制只受表单硬上限（86400）约束，且只有「超硬上限」才算真截断并提示；
+    超上层值只提示、不拦。
     """
     modal = _source(MODAL)
-    marker = "const isTimeoutClamped = computed"
-    block = modal[modal.index(marker): modal.index("});", modal.index(marker))]
-    assert "const raw = Number(timeoutDraft.value)" in block
-    assert "raw > timeoutCeiling.value" in block
-    assert "clampTimeout(timeoutDraft.value)" not in block
-    # 上限来历要说清：被上层限住 vs 被 3600 硬上限限住
-    assert "const ceilingHint = computed" in modal
-    assert "MAX_TOOL_TIMEOUT" in modal
+
+    block = modal[modal.index("const clampTimeout"): modal.index("};", modal.index("const clampTimeout"))]
+    assert "Math.min(MAX_TOOL_TIMEOUT" in block
+    assert "upperTimeout" not in block  # 不再按上层值截断
+    assert "timeoutCeiling" not in block
+
+    # 两种提示分开：超上层只提醒（允许保存），超硬上限才是真截断
+    assert "const isAboveUpper = computed" in modal
+    assert "const isOverMax = computed" in modal
+    assert "const upperTimeout = computed" in modal
+    # 生效值直接取工具级，不再与上层取 min
+    assert "return { value: own, source: \"tool\" };" in modal
+
+
+def test_modal_warns_when_tool_timeout_exceeds_producer_watchdog():
+    """整轮看门狗是真正的天花板：工具级超过它，本轮会先被取消。
+
+    它和版本级/全局级不是一回事：后两者是「默认值」，看门狗是「整轮总时长兜底」
+    （含模型调用与所有工具）。只做默认值提示而不提示看门狗，用户会以为配 1200s
+    就能跑 1200s，实际 600s 时整轮被强制终止且没有任何「工具超时」文案。
+    """
+    modal = _source(MODAL)
+    management = _source(MANAGEMENT)
+
+    assert "producerHardTimeoutSeconds" in modal
+    assert "const isAboveProducer = computed" in modal
+    assert "已超出整轮看门狗" in modal
+    # 常驻展示整轮预算，而不是只在实际越界时才提
+    assert "整轮看门狗 {{ producerHardTimeout }}s" in modal
+    # 0 表示看门狗关闭：此时不存在天花板，不能拿 0 去比
+    assert "value > 0 ? Math.round(value) : null" in modal
+
+    # 管理页要把看门狗值传下来
+    assert "producerHardTimeout" in management
+    assert ":producer-hard-timeout-seconds=\"producerHardTimeout\"" in management
 
 
 def test_modal_temperature_hint_matches_slider():
