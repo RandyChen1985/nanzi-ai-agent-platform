@@ -122,6 +122,17 @@ async def _sanitize_task_config(
             sanitized.pop("reasoning_effort", None)
         else:
             sanitized["reasoning_effort"] = reasoning_effort
+    if "notification_channel_groups" in sanitized:
+        # 任务级「发到哪个群」。只做结构归一（合法渠道 + 正整数），不在这里查库
+        # 校验群是否还存在：群被删是随时可能发生的运行期事实，投递时会用
+        # resolve_channel 复核，并在失效时降级发默认群且留痕。
+        from app.services.task_notification_channels import normalize_channel_groups
+
+        groups = normalize_channel_groups(sanitized.get("notification_channel_groups"))
+        if groups:
+            sanitized["notification_channel_groups"] = groups
+        else:
+            sanitized.pop("notification_channel_groups", None)
     if "temperature" in sanitized:
         temperature = normalize_temperature(sanitized.get("temperature"))
         if temperature is None:

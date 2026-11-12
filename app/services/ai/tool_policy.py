@@ -32,6 +32,18 @@ class ToolMetadata:
 
 
 _KNOWN_TOOL_METADATA: Mapping[str, ToolMetadata] = {
+    # 用户自己配了哪些消息群。只读、无副作用，与凭据 / 数据集清单同口径；
+    # 显式登记是为了让 capability/source 字段与其它清单工具一致，
+    # 而不是靠 READ_ONLY_TOOL_NAMES + evidence_types 兜底推导出 unknown。
+    "list_notification_channels": ToolMetadata(
+        capability="notification_channels",
+        source="user_config",
+        freshness="realtime",
+        side_effect="read",
+        confirmation="none",
+        idempotent="yes",
+        nudge_mode="evidence",
+    ),
     "get_current_model": ToolMetadata(
         capability="current_model",
         source="runtime_environment",

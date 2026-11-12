@@ -390,6 +390,36 @@ const notificationChannelOptions = [
   { value: 'email', label: '邮件' },
 ] as const
 const notificationChannels = ref<string[]>(['portal'])
+// 任务级「发到哪个群」：渠道 -> 群 ID 字符串（'' 表示跟随个人中心的默认群）。
+// 存字符串而不是 number：select 的空选项天然是 ''，混用 number 会被 v-model.number
+// 转成 NaN 或 0，反而要处处防御。
+const notificationChannelGroups = ref<Record<string, string>>({})
+// 个人中心里各渠道的群清单（只用来渲染下拉，权威校验仍在投递时做）
+const channelGroupOptions = ref<Record<string, Array<{ id: number; name: string; is_enabled: boolean; is_default: boolean }>>>({})
+// 只有这三个渠道有「群」的概念：邮件发的是收件人列表，站内消息没有群
+const GROUP_CAPABLE_CHANNELS = ['dingtalk', 'wechat_work', 'feishu'] as const
+const selectedGroupChannels = computed(() =>
+  GROUP_CAPABLE_CHANNELS.filter((channel) => notificationChannels.value.includes(channel))
+)
+// 新勾选的渠道必须有一个 '' 初值，否则 v-model 绑到 undefined 上，select 会显示
+// 空白而不是「默认群（跟随个人中心设置）」—— 用户看不出这行到底发给谁。
+watch(
+  selectedGroupChannels,
+  (channels) => {
+    const next = { ...notificationChannelGroups.value }
+    let changed = false
+    for (const channel of channels) {
+      if (next[channel] === undefined) {
+        next[channel] = ''
+        changed = true
+      }
+    }
+    if (changed) notificationChannelGroups.value = next
+  },
+  { immediate: true }
+)
+const notificationChannelLabel = (channel: string) =>
+  notificationChannelOptions.find((option) => option.value === channel)?.label || channel
 // 渠道就绪：后端 /notifications/readiness 的权威判定，与发信路径同源。
 // 前端**不再自己推断**渠道能不能发：渠道可用性取决于「全局邮件服务是否启用」
 // 这类前端根本看不到的事实，自己推断必然与投递路径漂移（曾把可用渠道锁死）。
@@ -461,10 +491,32 @@ const notificationChannelBlockedTitle = (channel: string) => {
     ? `${reason}（可在个人中心 → 消息通知中查看或配置）`
     : '请先在个人中心 → 消息通知中配置并启用该通道'
 }
+const groupOptionsFor = (channel: string) => {
+  // 只列启用的群；旧键名 enabled 兜底，避免部署窗口期读不到就当作「全部停用」
+  const list = (channelGroupOptions.value[channel] || []).filter(
+    (group) => group.is_enabled ?? (group as { enabled?: boolean }).enabled
+  )
+  const options = list.map((group) => ({
+    id: group.id,
+    label: `${group.name || '未命名群'}（id ${group.id}）${group.is_default ? ' · 默认' : ''}`,
+  }))
+  const current = Number(notificationChannelGroups.value[channel])
+  if (current > 0 && !list.some((group) => group.id === current)) {
+    // 群被删或停用后仍然显示出来：静默改发默认群会让人以为任务还在发原群
+    options.push({ id: current, label: `id ${current}（已失效，将改发默认群）` })
+  }
+  return options
+}
 const pruneUnavailableNotificationChannels = () => {
   notificationChannels.value = notificationChannels.value.filter((channel) =>
     isNotificationChannelReady(channel)
   )
+  // 渠道被裁剪掉后，它的群选择留着只会在保存时写进一份没人读的配置
+  for (const channel of Object.keys(notificationChannelGroups.value)) {
+    if (!notificationChannels.value.includes(channel)) {
+      delete notificationChannelGroups.value[channel]
+    }
+  }
 }
 const fetchNotificationReadiness = async () => {
   try {
@@ -478,8 +530,13 @@ const fetchNotificationReadiness = async () => {
 const fetchPersonalNotificationConfigs = async () => {
   personalNotificationLoading.value = true
   try {
-    const res = await axios.get('/api/portal/notifications/config')
-    personalNotificationConfigs.value = res.data || {}
+    const [configRes, groupsRes] = await Promise.all([
+      axios.get('/api/portal/notifications/config'),
+      // 群清单失败不影响主流程：下拉里只剩「默认群」，任务照样能保存
+      axios.get('/api/portal/notifications/channels').catch(() => null),
+    ])
+    personalNotificationConfigs.value = configRes.data || {}
+    channelGroupOptions.value = groupsRes?.data || {}
   } catch (error) {
     console.warn('Failed to load personal notification configs', error)
     personalNotificationConfigs.value = {}
@@ -888,6 +945,7 @@ const openCreateModal = async () => {
   const defaultAgentId = systemAgents.value[0]?.id || agents.value[0]?.id || ''
   editingTask.value = { name: '', agent_id: defaultAgentId, cron_expr: '0 8 * * *', prompt: '', status: 1 }
   notificationChannels.value = ['portal']
+  notificationChannelGroups.value = {}
   taskConstraints.value = ''
   hydrateExecutionOptions({})
   showAgentDropdown.value = false
@@ -913,6 +971,14 @@ const openEditModal = async (task: AgentTask) => {
   notificationChannels.value = Array.isArray(cfg.notification_channels)
     ? cfg.notification_channels.map((c: string) => String(c))
     : []
+  notificationChannelGroups.value = {}
+  const rawGroups = cfg.notification_channel_groups
+  if (rawGroups && typeof rawGroups === 'object' && !Array.isArray(rawGroups)) {
+    for (const [channel, value] of Object.entries(rawGroups as Record<string, unknown>)) {
+      const groupId = Number(value)
+      if (groupId > 0) notificationChannelGroups.value[channel] = String(groupId)
+    }
+  }
   taskConstraints.value = String(cfg.task_constraints || '')
   hydrateExecutionOptions(cfg)
   showAgentDropdown.value = false
@@ -949,6 +1015,17 @@ const saveTask = async () => {
       baseConfig.notification_channels = [...notificationChannels.value]
     } else {
       delete baseConfig.notification_channels
+    }
+    // 只保留仍然勾选、且选了具体群的渠道；其余一律不写，读的时候自然回落到默认群
+    const groupPayload: Record<string, number> = {}
+    for (const channel of notificationChannels.value) {
+      const groupId = Number(notificationChannelGroups.value[channel])
+      if (groupId > 0) groupPayload[channel] = groupId
+    }
+    if (Object.keys(groupPayload).length) {
+      baseConfig.notification_channel_groups = groupPayload
+    } else {
+      delete baseConfig.notification_channel_groups
     }
     const constraints = String(taskConstraints.value || '').trim()
     if (constraints) baseConfig.task_constraints = constraints
@@ -2693,6 +2770,31 @@ onMounted(async () => {
                   />
                   {{ channel.label }}
                 </label>
+              </div>
+              <div
+                v-if="selectedGroupChannels.length"
+                class="mt-1 space-y-1.5 border-t border-gray-200/70 pt-2"
+              >
+                <p class="text-[10px] font-bold text-gray-400">发送到哪个群</p>
+                <div
+                  v-for="channel in selectedGroupChannels"
+                  :key="channel"
+                  class="flex items-center gap-2"
+                >
+                  <span class="w-14 shrink-0 text-[10px] font-black text-gray-500">{{ notificationChannelLabel(channel) }}</span>
+                  <select
+                    v-model="notificationChannelGroups[channel]"
+                    class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="">默认群（跟随个人中心设置）</option>
+                    <option v-for="option in groupOptionsFor(channel)" :key="option.id" :value="String(option.id)">
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </div>
+                <p class="text-[10px] leading-relaxed text-gray-400">
+                  选的群被删除或停用后，任务结果会改发该渠道的默认群，并在投递记录里写明原因。
+                </p>
               </div>
               <p class="text-[10px] text-gray-400 leading-relaxed">
                 勾选后任务执行完成由调度器统一投递结果；站内消息始终可用。钉钉 / 企业微信 / 邮件需先在个人中心配置并启用对应通道。

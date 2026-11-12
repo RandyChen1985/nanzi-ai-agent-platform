@@ -329,6 +329,7 @@ def _build_scheduled_task_prompt(
     agent_display_name: str,
     prompt: str,
     notification_channels: Optional[List[str]] = None,
+    notification_channel_groups: Optional[Dict[str, int]] = None,
 ) -> str:
     from app.services.task_notification_channels import build_notification_delivery_supplement
 
@@ -351,7 +352,9 @@ def _build_scheduled_task_prompt(
 
     parts = [global_rules, user_task]
 
-    supplement = build_notification_delivery_supplement(notification_channels or [])
+    supplement = build_notification_delivery_supplement(
+        notification_channels or [], notification_channel_groups
+    )
     if supplement:
         parts.append(supplement)
 
@@ -436,14 +439,13 @@ async def _send_task_failure_alert(
             f"- 时间：{_now_iso()}"
         )
 
-        channels = channels_from_task_config(_task_config(task))
+        from app.services.task_notification_channels import channel_groups_from_task_config
+
+        task_config = _task_config(task)
+        channels = channels_from_task_config(task_config)
+        alert_groups = channel_groups_from_task_config(task_config)
         external_channels = [c for c in channels if c != "portal"] or ["dingtalk"]
-        external_senders = {
-            "dingtalk": NotificationService.send_dingtalk,
-            "wechat_work": NotificationService.send_wechat_work,
-            "feishu": NotificationService.send_feishu,
-            "email": NotificationService.send_email,
-        }
+        from app.services.task_notification_delivery import send_external_channel
 
         alerted = False
         async with AsyncSessionLocal() as db:
@@ -464,11 +466,20 @@ async def _send_task_failure_alert(
             except Exception as portal_err:
                 logger.warning("Task alert portal delivery failed for task %s: %s", task.id, portal_err)
 
+            # 复用任务结果投递那一份实现：邮件没有 channel_id 参数、群失效要降级
+            # 发默认群，这两条都得和正文投递完全一致，各写一遍必然漂移。
             for channel in external_channels:
-                sender = external_senders.get(channel)
-                if sender is None:
-                    continue
-                ok, send_err = await sender(db, user_id, title, content)
+                try:
+                    ok, send_err = await send_external_channel(
+                        db,
+                        user_id=user_id,
+                        channel=channel,
+                        title=title,
+                        body=content,
+                        group_id=alert_groups.get(channel),
+                    )
+                except Exception as send_exc:  # noqa: BLE001 - 单个渠道炸掉不能连累其余渠道
+                    ok, send_err = False, f"{channel}:{send_exc}"
                 if ok:
                     alerted = True
                 else:
@@ -936,12 +947,17 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
         metadata_ids = metadata_dataset_ids_from_scope(resource_scope)
         # 提前统一计算通知渠道，阶段2构建 prompt 与阶段3通知投递共用，避免重复调用。
         notification_channels = channels_from_task_config(task_config)
+        # 任务级「发到哪个群」：与渠道同源取一次，提示词与阶段3投递共用
+        from app.services.task_notification_channels import channel_groups_from_task_config
+
+        notification_channel_groups = channel_groups_from_task_config(task_config)
 
         full_prompt = _build_scheduled_task_prompt(
             task_id_snapshot,
             agent_display_name,
             task_prompt,
             notification_channels=notification_channels,
+            notification_channel_groups=notification_channel_groups,
         )
         run_conversation_id = _new_task_run_conversation_id(task_conversation_id)
 
@@ -1071,6 +1087,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                         trace_id=trace_id,
                         content=str(result.get("content") or ""),
                         reasoning_content=str(result.get("reasoning_content") or "") or None,
+                        channel_groups=notification_channel_groups,
                     )
                 except Exception as delivery_err:
                     logger.error(f"❌ Task {task_id} notification delivery raised: {delivery_err}", exc_info=True)

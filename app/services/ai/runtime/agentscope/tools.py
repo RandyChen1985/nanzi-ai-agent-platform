@@ -116,6 +116,10 @@ READ_ONLY_TOOL_NAMES = {
     "list_accessible_directories",
     "list_accessible_knowledge_bases",
     "list_available_agents",
+    # 只读查询用户自己配了哪些消息群（返回群名与内部 ID，不含 webhook/密钥）。
+    # 不登记的话默认权限是 "ask"：每次模型想按群名发消息都得先弹一次审批，
+    # 定时任务（无人值守）里则直接被拒，等于这个工具形同虚设。
+    "list_notification_channels",
     "request_user_confirmation",
     "ask_user_question",
     "get_my_tasks",
