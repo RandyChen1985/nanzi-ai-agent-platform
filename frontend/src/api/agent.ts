@@ -211,6 +211,14 @@ export const agentApi = {
       params: params?.includeDisabled ? { include_disabled: true } : undefined,
     }),
 
+  /**
+   * 「分配给我」：管理员授权我使用、但不是我创建的智能体（服务端保证只读）。
+   *
+   * 与 `listAllowedAgents` 不是一回事：那个是「我能执行的」，包含我自己创建的，
+   * 也不带只读语义；这个专供智能体中心的只读视图。
+   */
+  listAssignedAgents: () => axios.get<AIAgent[]>('/api/portal/agents/assigned'),
+
   // Read-only global tool-call timeout shown in the version editor
   getGlobalToolcallTimeout: () => axios.get<{ seconds: number }>('/api/portal/agents/toolcall-timeout'),
 

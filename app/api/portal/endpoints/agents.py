@@ -292,6 +292,26 @@ async def list_allowed_agents(
     return await AgentManagerService.attach_team_metadata(session, agents)
 
 
+@router.get(
+    "/assigned",
+    response_model=List[AIAgentResponse],
+    summary="分配给我的智能体（只读）",
+)
+async def list_assigned_agents(
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(require_permission("menu", "menu:agent_management")),
+):
+    """他人创建、管理员授权给我使用、且当前启用的智能体。
+
+    只读视图：``is_editable`` / ``can_edit_versions`` / ``can_publish_version``
+    由服务层定死为 False，接口不做二次判定——单一来源才不会漏。
+
+    权限沿用 ``menu:agent_management``（与智能体中心页面一致），不新增权限点。
+    路由必须排在 ``/{agent_id}`` 系列之前，否则 "assigned" 会被当成 agent_id。
+    """
+    return await AgentManagerService.list_assigned_agents(session, user=user)
+
+
 @router.get("/{agent_id}/embed-access", response_model=AIAgentResponse)
 async def get_embed_agent_access(
     agent_id: str,

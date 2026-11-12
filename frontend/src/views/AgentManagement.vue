@@ -660,6 +660,22 @@ const hasElementPerm = (code: string): boolean => {
 
 const canReviewSystem = computed(() => hasElementPerm('element:agent:system_publish'))
 
+/** 菜单权限判断（与 hasElementPerm 同风格，只查 menus）。admin 直通。 */
+const hasMenuPerm = (code: string): boolean => {
+  try {
+    const raw = localStorage.getItem('user_info')
+    if (!raw) return false
+    const info = JSON.parse(raw)
+    if (info.role === 'admin') return true
+    const perms = info.permissions
+    // 扁平数组里菜单与元素权限混存（与 useUser().hasPermission 同口径）
+    const list: string[] = Array.isArray(perms) ? perms : perms?.menus || []
+    return list.includes(code)
+  } catch {
+    return false
+  }
+}
+
 const showSystemPublishModal = ref(false)
 const systemPublishMode = ref<'publish' | 'apply'>('publish')
 const systemPublishTarget = ref<AIAgent | null>(null)
@@ -844,7 +860,7 @@ const handleShareDone = (count: number) => {
 
 // 分享：与技能 / MCP 分享同一套交互——平级视图 + 侧边菜单角标。
 // 不再做成「有待处理才出现的弹窗」：那样对方根本不知道去哪儿找。
-type AgentWorkspaceTab = 'all' | 'mine' | 'received' | 'sent' | 'teams'
+type AgentWorkspaceTab = 'all' | 'mine' | 'assigned' | 'received' | 'sent' | 'teams'
 
 /** 专家团主专家：列表页「专家团」tab 的数据源。主助手不当团主，历史数据即使为
  *  true 也不进这个视图——否则会冒出一个不该被当成专才分派的「团」。 */
@@ -1194,23 +1210,91 @@ const refreshShareCounts = async () => {
 
 const route = useRoute()
 
+// 「分配给我」独立数据源：刻意不并进 agents.value —— 那是管理台列表，
+// 混入会让 totalAgentCount、业务分组页签、管理筛选器全部算错。
+const assignedAgents = ref<AIAgent[]>([])
+const assignedAgentsLoaded = ref(false)
+const assignedAgentsError = ref(false)
+
+/**
+ * 拉取被分配的智能体。
+ *
+ * 失败不抛：这个视图是附加信息，它 403/500 不该让整个智能体中心白屏。
+ * 但也不能把失败说成「没有分配」——空态要能区分这两种情况，否则用户会拿着
+ * 「还没有智能体被分配给你」去找管理员，而管理员那边看到的却是「明明授权了」。
+ * 管理员不请求——后端对他恒返回空，前端也不显示该 tab。
+ */
+const fetchAssignedAgents = async () => {
+  if (isAdminViewer.value) {
+    assignedAgents.value = []
+    assignedAgentsLoaded.value = true
+    return
+  }
+  try {
+    const res = await agentApi.listAssignedAgents()
+    assignedAgents.value = res.data || []
+    assignedAgentsError.value = false
+  } catch (e) {
+    console.warn('Failed to load assigned agents', e)
+    assignedAgents.value = []
+    assignedAgentsError.value = true
+  } finally {
+    assignedAgentsLoaded.value = true
+  }
+}
+
+/** 「分配给我」的关键词过滤：只按名称/描述，不接管理筛选器 */
+const filteredAssignedAgents = computed<AIAgent[]>(() => {
+  const k = searchKeyword.value.trim().toLowerCase()
+  if (!k) return assignedAgents.value
+  return assignedAgents.value.filter((a) =>
+    [a.name, a.display_name, a.description]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .includes(k)
+  )
+})
+
+/**
+ * URL 上的视图 key 是否对该角色有效。
+ *
+ * 两个角色专属视图：`all` 只有管理员有，`assigned` 只有普通用户有。
+ * 若仍按 query 落到不属于自己的视图，会得到「没有任何 tab 高亮 + 内容对不上」的页面
+ * —— 管理员进 `assigned` 是空列表，普通用户进 `all` 是没有选中态的列表。
+ */
+const isTabAvailableForRole = (tab: string) => {
+  if (tab === 'assigned') return !isAdminViewer.value
+  if (tab === 'all') return isAdminViewer.value
+  return true
+}
+
 /** 站内信/外链可以直接带 ?agents_tab=received 落位 */
 const resolveInitialTab = (): AgentWorkspaceTab => {
   const raw = String(route.query.agents_tab || '')
-  if (raw === 'received' || raw === 'sent' || raw === 'mine' || raw === 'all' || raw === 'teams') {
+  if (
+    (raw === 'received' || raw === 'sent' || raw === 'mine' || raw === 'all' || raw === 'assigned' || raw === 'teams') &&
+    isTabAvailableForRole(raw)
+  ) {
     return raw as AgentWorkspaceTab
   }
   // 管理员默认看「全部」：他原本看到的就是平台全量，别因为加了视图就缩小范围
   return isAdminViewer.value ? 'all' : 'mine'
 }
 
-/** 管理员多一个「全部」：他要能看别人名下的智能体；普通用户只有自己的 */
+/** 管理员多一个「全部」：他要能看别人名下的智能体；普通用户多一个「分配给我」 */
 const workspaceTabs = computed<Array<{ key: AgentWorkspaceTab; label: string; badge: number }>>(
   () => [
     // 「全部 / 我的」不带数字：页头已经写着「共 N 个」，同一屏说两遍是冗余，
     // 而 14 − 11 这个差值才是用户想知道的——摆两个绝对值等于把减法留给用户。
     ...(isAdminViewer.value ? [{ key: 'all' as AgentWorkspaceTab, label: '全部智能体', badge: 0 }] : []),
     { key: 'mine', label: '我的智能体', badge: 0 },
+    // 「分配给我」：平台授权我用、不是我创建的。放在「我的」之后、「分享给我」之前——
+    // 顺序即语义：我能管的 → 我被给的 → 等我去接的。
+    // 管理员不显示：他已有「全部智能体」，再来一份是重复视图。
+    ...(isAdminViewer.value
+      ? []
+      : [{ key: 'assigned' as AgentWorkspaceTab, label: '分配给我', badge: assignedAgents.value.length }]),
     // 分享类 tab 只在真有东西时才带数字（0 没有行动价值，还分心），
     // 且数字是「这个视图有多少条」而非「有几个待处理」——后者会被读成收到了 2 个智能体。
     { key: 'received', label: '分享给我', badge: shareCounts.value.received_total },
@@ -1236,8 +1320,8 @@ watch(
   () => route.query.agents_tab,
   (raw) => {
     const next = String(raw || '')
-    const allowed: AgentWorkspaceTab[] = ['received', 'sent', 'mine', 'all', 'teams']
-    if (next && allowed.includes(next as AgentWorkspaceTab)) {
+    const allowed: AgentWorkspaceTab[] = ['received', 'sent', 'mine', 'all', 'assigned', 'teams']
+    if (next && allowed.includes(next as AgentWorkspaceTab) && isTabAvailableForRole(next)) {
       workspaceTab.value = next as AgentWorkspaceTab
       if (next !== 'mine') void refreshShareCounts()
     }
@@ -1290,6 +1374,16 @@ const onSystemChanged = () => {
 
 /** 标题旁的总数：原来由「全部 N」那个 tab 承担，tab 取消后放这里 */
 const totalAgentCount = computed(() => agents.value.length)
+
+/**
+ * 头部「共 N 个」跟随当前视图。
+ *
+ * 「分配给我」的数据不在 agents.value 里（那是管理台列表），直接用
+ * totalAgentCount 会出现「共 2 个」却摆着 3 张卡片的错位。
+ */
+const headerAgentCount = computed(() =>
+  workspaceTab.value === 'assigned' ? assignedAgents.value.length : totalAgentCount.value
+)
 
 // 配置异常：已发布版本绑定的模型不可用（model_issue），或引用了已失效的工具/MCP（tool_issue）。
 // 两类判定都在后端完成（LOCAL 引擎的已启用智能体才返回），这里只做汇总展示。
@@ -3732,6 +3826,47 @@ const openPreview = async (agent: AIAgent) => {
   window.open(`/dashboard/chat?agent_id=${encodeURIComponent(agentKey)}&preview=1`, "_blank");
 };
 
+/**
+ * 「分配给我」的进入对话。
+ *
+ * 落点按权限分流，不是为了复用取票链路而复用：
+ * - 有 `menu:ai_chat` → 平台内 `/dashboard/chat`。它有门户外壳与返回入口，
+ *   也是平台其它「进入对话」的落点（`openTeamChat` 同样跳这里）。
+ * - 没有该菜单（角色只被授了智能体） → 平台内本来就没有对话入口，
+ *   `/dashboard/chat` 的 `meta.perm` 会把他挡在门外，只能走 `/embed/chat`：
+ *   它凭 ticket 校验「能不能执行这个智能体」，不依赖门户菜单。
+ *
+ * 两条路径都不带 `preview=1`：preview 是管理者试跑语义（强制干净临时会话、
+ * 不写续接指针），使用者要的是正常对话，应该续接自己的历史。
+ */
+const openAssignedChat = async (agent: AIAgent) => {
+  const agentKey = agent.name || agent.id
+  if (hasMenuPerm('menu:ai_chat')) {
+    // 平台内对话页按 id 解析（与 openTeamChat 一致），不走 name
+    window.open(`/dashboard/chat?agent_id=${encodeURIComponent(agent.id || agentKey)}`, '_blank')
+    return
+  }
+  try {
+    const res = await axios.post('/api/v1/embed/tickets', {
+      agent_id: agentKey,
+      expires_in: 300,
+    })
+    if (res.data?.code === 200 && res.data.data?.ticket) {
+      const ticket = res.data.data.ticket
+      window.open(
+        `/embed/chat?ticket=${encodeURIComponent(ticket)}&agent_id=${encodeURIComponent(agentKey)}&theme=light`,
+        '_blank'
+      )
+      return
+    }
+  } catch (e) {
+    console.warn('Failed to generate embed ticket for assigned agent', e)
+  }
+  // 没有对话菜单权限时没有可靠的平台内落点：明确告知失败，
+  // 而不是把用户弹到会被路由守卫拦住的页面
+  showToast('打开对话失败，请稍后重试', 'error')
+}
+
 const createExternalEngineAgent = async () => {
   agentForm.value.agent_type = 'GENERAL';
   agentForm.value.capabilities = normalizeAgentCapabilities(
@@ -4837,6 +4972,7 @@ onMounted(() => {
   if (cached) userInfo.value = JSON.parse(cached);
   void fetchPendingSystemCount();
   void refreshShareCounts();
+  void fetchAssignedAgents();
   workspaceTab.value = resolveInitialTab();
   document.addEventListener('click', closeCardMenus);
 });
@@ -4896,7 +5032,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1">
           <h1 class="shrink-0 whitespace-nowrap text-xl font-bold text-gray-900 sm:text-2xl">智能体中心</h1>
-          <span class="shrink-0 text-xs font-medium text-gray-500">共 {{ totalAgentCount }} 个</span>
+          <span class="shrink-0 text-xs font-medium text-gray-500">共 {{ headerAgentCount }} 个</span>
           <!-- 说明入口只作为附注：无边框、灰色小图标 -->
           <button
             type="button"
@@ -5036,9 +5172,11 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           :placeholder="
             workspaceTab === 'teams'
               ? '搜索专家团…'
-              : workspaceTab === 'mine' || workspaceTab === 'all'
-                ? '搜索名称或标识符…'
-                : '搜索智能体或分享人…'
+              : workspaceTab === 'assigned'
+                ? '搜索分配给我的智能体…'
+                : workspaceTab === 'mine' || workspaceTab === 'all'
+                  ? '搜索名称或标识符…'
+                  : '搜索智能体或分享人…'
           "
           class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
         />
@@ -5436,6 +5574,96 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </svg>
         {{ agentGroupTabsVisible ? '隐藏分组' : '显示分组' }}
       </button>
+    </div>
+
+    <!-- 「分配给我」：平台授权我使用、但不是我创建的智能体，只读。
+         独立面板而不复用下面的管理列表：列表区挂着批量操作、分组页签、
+         管理筛选器，那些对使用者既无意义也会算错口径。 -->
+    <div v-if="workspaceTab === 'assigned'" class="space-y-3">
+      <div class="flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800">
+        <svg class="mt-0.5 h-4 w-4 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+        <span>
+          这些智能体由平台分配给你，<b class="font-semibold">可以直接对话，但不能修改配置</b>。想定制请新建自己的智能体。
+        </span>
+      </div>
+
+      <!-- 加载中要有占位：否则面板只剩上方提示条，请求回来后突然长出卡片或空态，高度跳一下 -->
+      <div
+        v-if="!assignedAgentsLoaded"
+        class="rounded-xl border border-gray-200 bg-white py-12 text-center text-xs text-gray-400"
+      >
+        正在加载分配给你的智能体…
+      </div>
+
+      <!-- 空态要说清「为什么是空的」：只写「暂无数据」会让用户拿着空页面去找管理员，
+           而管理员那边看到的却是「明明授权了」 -->
+      <div
+        v-else-if="!filteredAssignedAgents.length"
+        class="rounded-xl border border-dashed border-gray-300 bg-white py-12 text-center"
+      >
+        <p class="text-sm font-semibold text-gray-700">
+          {{
+            assignedAgentsError
+              ? '分配列表加载失败'
+              : assignedAgents.length
+                ? '没有匹配的智能体'
+                : '还没有智能体被分配给你'
+          }}
+        </p>
+        <p class="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-gray-400">
+          <template v-if="assignedAgentsError">
+            请刷新页面重试；若一直失败，请联系管理员确认授权状态。
+          </template>
+          <template v-else-if="assignedAgents.length">换个关键词试试。</template>
+          <template v-else>
+            分配来的智能体可以直接对话，但不能修改配置。<br />
+            如果你确认已被授权却看不到，可能是该智能体已被停用。
+          </template>
+        </p>
+      </div>
+
+      <div v-else class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <article
+          v-for="agent in filteredAssignedAgents"
+          :key="agent.id"
+          class="flex flex-col rounded-xl border border-gray-200 bg-white shadow-sm transition-colors hover:border-primary/40"
+        >
+          <div class="flex items-start gap-3 px-4 pt-4">
+            <div class="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg border border-blue-100 bg-blue-50 text-sm font-semibold text-blue-700">
+              <img v-if="agent.avatar_url" :src="agent.avatar_url" :alt="agent.display_name" class="h-full w-full object-cover" />
+              <span v-else>{{ (agent.display_name || agent.name || '?').slice(0, 1) }}</span>
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-sm font-bold text-gray-900" :title="agent.display_name">
+                {{ agent.display_name || agent.name }}
+              </p>
+              <div class="mt-1 flex flex-wrap items-center gap-1.5">
+                <span class="rounded-full bg-indigo-50 px-2 py-px text-[10px] font-semibold text-indigo-700">平台提供</span>
+                <span class="rounded-full bg-amber-50 px-2 py-px text-[10px] font-semibold text-amber-700">只读</span>
+              </div>
+            </div>
+          </div>
+
+          <p class="mt-2 line-clamp-2 min-h-[2.75rem] px-4 text-xs leading-relaxed text-gray-500">
+            {{ agent.description || '暂无描述' }}
+          </p>
+
+          <!-- 动作区只有一个入口：编辑/复制/删除/版本发布整块不渲染，
+               不是置灰——置灰会暗示「你可能有权」，反而引投诉。 -->
+          <div class="mt-auto flex items-center justify-between gap-2 border-t border-gray-100 px-4 py-2.5">
+            <span class="truncate text-[11px] text-gray-400">只读 · 不可修改配置</span>
+            <button
+              type="button"
+              class="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-primary/90"
+              @click="openAssignedChat(agent)"
+            >
+              进入对话
+            </button>
+          </div>
+        </article>
+      </div>
     </div>
 
     <AgentShareReceivedPanel

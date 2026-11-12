@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="prototype-kind" content="效果预览" />
+<title>智能体中心 · 「分配给我」只读视图</title>
+<style>
+  *{box-sizing:border-box}
+  :root{
+    --bg:#f6f8fb;--card:#fff;--ink:#0f172a;--ink-2:#475569;--ink-3:#64748b;--ink-4:#94a3b8;
+    --line:#e2e8f0;--line-2:#eef2f7;
+    --p:#1677ff;--p-dark:#0958d9;--p-soft:#eaf3ff;
+    --ok:#10b981;--warn:#f59e0b;--rose:#e11d48;--slate:#64748b;
+    --shadow:0 1px 2px rgba(15,23,42,.05),0 8px 24px -12px rgba(15,23,42,.12);
+  }
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1280px;margin:0 auto;padding:26px 22px 80px}
+  h1{font-size:22px;margin:0 0 6px;letter-spacing:-.01em}
+  .lead{color:var(--ink-3);font-size:13px;margin:0 0 18px;max-width:940px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
+  .sec{margin-top:26px}
+  .sec>h2{display:flex;align-items:center;gap:9px;font-size:16px;margin:0 0 12px}
+  .sec>h2 .num{display:grid;place-items:center;width:22px;height:22px;border-radius:7px;background:var(--ink);color:#fff;font-size:12px;font-weight:800}
+  .muted{color:var(--ink-3)}
+  code{background:#f1f5f9;border-radius:5px;padding:1px 5px;font-size:12px;color:#0f172a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  /* ---------- 工具条 ---------- */
+  .toolbar{position:sticky;top:0;z-index:60;display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 14px;margin:0 0 18px;background:rgba(246,248,251,.94);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:14px}
+  .toolbar .lab{font-size:11px;font-weight:800;color:var(--ink-4);letter-spacing:.05em;text-transform:uppercase}
+  .sw{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;user-select:none;padding:4px 10px;border:1px solid var(--line);border-radius:10px;background:#fff}
+  .sw input{appearance:none;width:32px;height:18px;border-radius:99px;background:#cbd5e1;position:relative;cursor:pointer;transition:.18s;flex:0 0 auto;margin:0}
+  .sw input:checked{background:var(--p)}
+  .sw input::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:.18s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+  .sw input:checked::after{transform:translateX(14px)}
+  .sw.on{border-color:#bfdbfe;background:var(--p-soft);color:var(--p-dark)}
+
+  /* ---------- 概览三卡 ---------- */
+  .audit{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .audit .a{padding:14px 16px;border-radius:14px;background:#fff;border:1px solid var(--line)}
+  .audit .a .k{font-size:11.5px;font-weight:800;color:var(--ink-2);letter-spacing:.06em;margin-bottom:6px}
+  .audit .a .d{font-size:12.5px;color:var(--ink-2);line-height:1.65}
+  .audit .a.problem{border-color:#fecdd3;background:#fff5f6}
+  .audit .a.solution{border-color:#bfdbfe;background:#f5f9ff}
+  .audit .a.boundary{border-color:#fde68a;background:#fffbeb}
+  @media (max-width:900px){.audit{grid-template-columns:1fr}}
+
+  /* ---------- 系统复刻 ---------- */
+  .app{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}
+  .app-body{padding:20px 24px 26px}
+  .pagehead{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px}
+  .pagehead h3{margin:0;font-size:21px;font-weight:800;letter-spacing:-.01em}
+  .pagehead .cnt{font-size:12px;color:var(--ink-3);font-weight:600;margin-top:2px}
+  .pagehead .acts{display:flex;gap:8px}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:10px;padding:7px 13px;font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;font-family:inherit;transition:.15s;display:inline-flex;align-items:center;gap:6px}
+  .btn:hover{border-color:#93c5fd;color:var(--p)}
+  .btn.pri{background:var(--p);border-color:var(--p);color:#fff}
+  .btn.pri:hover{background:var(--p-dark);border-color:var(--p-dark);color:#fff}
+
+  /* tab 行：复刻真实页面的视图切换条 */
+  .tabbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;border-bottom:1px solid var(--line);padding-bottom:9px;margin:16px 0 0}
+  .tab{position:relative;border:0;background:transparent;border-radius:9px;padding:6px 12px;font-size:13.5px;font-weight:600;color:var(--ink-2);cursor:pointer;font-family:inherit;transition:.15s;display:inline-flex;align-items:center;gap:6px}
+  .tab:hover{background:#f8fafc}
+  .tab.on{background:var(--p-soft);color:var(--p-dark)}
+  .tab .bdg{display:inline-flex;min-width:16px;height:16px;align-items:center;justify-content:center;border-radius:99px;padding:0 4px;font-size:10px;font-weight:800;background:#e2e8f0;color:#475569}
+  .tab.on .bdg{background:var(--p);color:#fff}
+  .tab .ico{width:14px;height:14px;flex:0 0 auto}
+  .tab.is-new::after{content:"新增";position:absolute;top:-8px;right:-4px;font-size:9px;font-weight:800;letter-spacing:.04em;background:#fef3c7;color:#b45309;border:1px solid #fde68a;border-radius:99px;padding:0 5px;line-height:14px}
+
+  /* 搜索行 */
+  .searchrow{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0 0}
+  .searchbox{position:relative;flex:1;min-width:220px}
+  .searchbox svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--ink-4)}
+  .searchbox input{width:100%;border:1px solid #cbd5e1;border-radius:10px;padding:8px 12px 8px 34px;font-size:13.5px;font-family:inherit;color:var(--ink);outline:none;transition:.15s;background:#fff}
+  .searchbox input:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(22,119,255,.12)}
+  .filterbtn{border:1px solid #cbd5e1;background:#fff;border-radius:10px;padding:8px 13px;font-size:13px;font-weight:600;color:var(--ink-2);cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px}
+  .filterbtn svg{width:14px;height:14px}
+
+  /* 只读提示条 */
+  .readonly-bar{display:flex;align-items:center;gap:8px;margin:14px 0 0;padding:9px 12px;border:1px solid #dbeafe;background:#f5f9ff;border-radius:11px;font-size:12.5px;color:#1e40af;line-height:1.5}
+  .readonly-bar b{font-weight:800}
+  .readonly-bar svg{width:15px;height:15px;flex:0 0 auto;color:#3b82f6}
+
+  /* 卡片网格 */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin:14px 0 0}
+  .acard{background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 16px 0;display:flex;flex-direction:column;transition:.16s;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+  .acard:hover{border-color:#bfdbfe;box-shadow:0 4px 16px -8px rgba(22,119,255,.28)}
+  .acard .top{display:flex;gap:11px;align-items:flex-start}
+  .av{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;font-size:17px;flex:0 0 auto;background:linear-gradient(135deg,#e0edff,#f0f7ff);border:1px solid #dbeafe}
+  .acard .nm{font-size:14.5px;font-weight:800;line-height:1.35;margin:0;letter-spacing:-.01em}
+  .badges{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+  .bdg2{font-size:10px;font-weight:800;padding:1px 7px;border-radius:99px;background:#f1f5f9;color:#475569;letter-spacing:.02em}
+  .bdg2.sys{background:#eef2ff;color:#4338ca}
+  .bdg2.ro{background:#fff7ed;color:#b45309}
+  .acard .desc{font-size:12.5px;color:var(--ink-3);line-height:1.65;margin:11px 0 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:41px}
+  .acard .foot{display:flex;align-items:center;gap:8px;justify-content:space-between;border-top:1px solid var(--line-2);margin-top:13px;padding:10px 0 11px}
+  .acard .foot .note{font-size:11px;color:var(--ink-4);font-weight:600;display:flex;align-items:center;gap:5px}
+  .acard .foot .note .dot{width:5px;height:5px;border-radius:50%;background:#cbd5e1}
+  .act{padding:6px 12px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;border:1px solid transparent;font-family:inherit;transition:.15s;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+  .act.go{background:var(--p);color:#fff}
+  .act.go:hover{background:var(--p-dark)}
+  .act.ghost{background:#fff;border-color:var(--line);color:var(--ink-2)}
+  .act.ghost:hover{border-color:#93c5fd;color:var(--p)}
+  .act.danger{background:#fff;border-color:#fecdd3;color:#be123c}
+  .act svg{width:13px;height:13px}
+
+  /* 面板切换 */
+  .panel{display:none}
+  .panel.show{display:block}
+
+  /* 空态 */
+  .empty-state{display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:46px 22px;border:1px dashed #cbd5e1;border-radius:14px;margin:18px 0 0;background:#fcfdff}
+  .empty-state .eico{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;background:#f1f5f9;margin-bottom:12px}
+  .empty-state .eico svg{width:22px;height:22px;color:var(--ink-4)}
+  .empty-state h4{margin:0 0 6px;font-size:14.5px;font-weight:800}
+  .empty-state p{margin:0;font-size:12.5px;color:var(--ink-3);line-height:1.7;max-width:430px}
+  .empty-state p b{color:var(--ink-2)}
+  .panel.as-empty .grid,.panel.as-empty .readonly-bar{display:none}
+  .panel.as-empty .empty-state{display:flex}
+
+  /* 分享视图（对照） */
+  .sharecard{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border:1px solid var(--line);border-radius:13px;margin:12px 0 0;background:#fff}
+  .sharecard .body{flex:1;min-width:0}
+  .sharecard .body .t{font-size:13.5px;font-weight:800;margin:0}
+  .sharecard .body .s{font-size:12px;color:var(--ink-3);margin:4px 0 0;line-height:1.6}
+  .sharecard .ops{display:flex;gap:7px;flex:0 0 auto}
+
+  /* 边界标注模式：把"本该有但现在不渲染"的入口显形 */
+  .ghost-zone{display:none;margin:0 0 12px;padding:8px 9px;border:1px dashed #cbd5e1;border-radius:10px;background:repeating-linear-gradient(45deg,#fafafa,#fafafa 6px,#f4f4f5 6px,#f4f4f5 12px)}
+  body.anno .ghost-zone{display:block}
+  .ghost-zone .gtitle{font-size:9.5px;font-weight:800;color:#94a3b8;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;gap:5px}
+  .ghost-zone .row{display:flex;flex-wrap:wrap;gap:5px}
+  .ghost{font-size:11px;color:#94a3b8;text-decoration:line-through;background:#fff;border:1px dashed #e2e8f0;border-radius:7px;padding:2px 7px;font-weight:600}
+  .anno-banner{display:none;margin:12px 0 0;padding:10px 13px;border-radius:11px;background:#0f172a;color:#e2e8f0;font-size:12.5px;line-height:1.6}
+  body.anno .anno-banner{display:block}
+  .anno-banner b{color:#93c5fd}
+
+  /* 对照表 */
+  .cmp{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;overflow:hidden;border-radius:14px;border:1px solid var(--line);background:#fff}
+  .cmp th{background:#f8fafc;text-align:left;padding:10px 13px;font-size:11px;color:var(--ink-3);font-weight:800;letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid var(--line);white-space:nowrap}
+  .cmp td{padding:11px 13px;border-bottom:1px solid var(--line-2);vertical-align:top;color:var(--ink-2)}
+  .cmp tr:last-child td{border-bottom:0}
+  .cmp td:first-child{font-weight:700;color:var(--ink);white-space:nowrap}
+  .cmp .hl{background:#f5f9ff}
+
+  /* toast */
+  .toast{position:fixed;left:50%;bottom:34px;transform:translate(-50%,14px);background:#0f172a;color:#fff;font-size:13px;font-weight:600;padding:10px 18px;border-radius:11px;box-shadow:0 12px 32px -10px rgba(15,23,42,.5);opacity:0;pointer-events:none;transition:.22s;z-index:200;max-width:90vw;text-align:center}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+
+  @media (max-width:640px){
+    .app-body{padding:16px}
+    .pagehead h3{font-size:18px}
+    .grid{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>智能体中心 · 「分配给我」只读视图</h1>
+  <p class="lead">
+    管理员在角色里给用户分配了系统级智能体，用户在对话页能用，但智能体中心里一个都看不到。
+    本原型给智能体中心加一个<b>常驻的只读 tab</b>：看得见、能对话，但改不了、复制不走。
+  </p>
+
+  <div class="toolbar">
+    <span class="lab">演示开关</span>
+    <label class="sw" id="swAnno">
+      <input type="checkbox" id="annoToggle" /> 边界标注
+    </label>
+    <label class="sw" id="swEmpty">
+      <input type="checkbox" id="emptyToggle" /> 空态
+    </label>
+    <span class="muted" style="font-size:11.5px">（tab 与卡片可直接点击）</span>
+  </div>
+
+  <!-- ============ 1. 一屏看懂 ============ -->
+  <section class="sec" style="margin-top:0">
+    <div class="audit">
+      <div class="a problem">
+        <div class="k">问题</div>
+        <div class="d">
+          智能体中心的列表只认 <code>created_by == 我</code>，从不查授权表；对话侧的可用列表认
+          <code>系统级 + 已授权</code>。两套规则 → <b>能用，但看不见</b>。
+        </div>
+      </div>
+      <div class="a solution">
+        <div class="k">方案</div>
+        <div class="d">
+          新增 <code>GET /agents/assigned</code>，只读三字段由<b>服务端定死</b>；
+          tab 常驻在「我的智能体」之后；0 条时给解释而不是空白。
+        </div>
+      </div>
+      <div class="a boundary">
+        <div class="k">边界</div>
+        <div class="d">
+          卡片只留一个「进入对话」。编辑、复制、删除、版本发布<b>整块不渲染</b>，
+          不是置灰——置灰会暗示「你可能有权」。
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 2. 系统复刻 ============ -->
+  <section class="sec">
+    <h2><span class="num">1</span>智能体中心（点击 tab 对比三种视图）</h2>
+
+    <div class="app">
+      <div class="app-body">
+
+        <div class="pagehead">
+          <div>
+            <h3>智能体中心</h3>
+            <div class="cnt" id="headCount">共 3 个</div>
+          </div>
+          <div class="acts">
+            <button class="btn" onclick="toast('原型示意：这里仍是「从场景模板交付」入口')">从场景模板交付</button>
+            <button class="btn pri" onclick="toast('原型示意：普通用户能否新建由 element:agent:create 决定')">+ 空白新建</button>
+          </div>
+        </div>
+
+        <!-- 视图 tab 行 -->
+        <div class="tabbar" role="tablist" aria-label="智能体视图">
+          <button class="tab" data-tab="mine" role="tab" aria-selected="false">我的智能体</button>
+          <button class="tab on is-new" data-tab="assigned" role="tab" aria-selected="true">
+            分配给我 <span class="bdg">3</span>
+          </button>
+          <button class="tab" data-tab="received" role="tab" aria-selected="false">
+            分享给我 <span class="bdg">1</span>
+          </button>
+          <button class="tab" data-tab="sent" role="tab" aria-selected="false">我分享的</button>
+          <button class="tab" data-tab="teams" role="tab" aria-selected="false">
+            <svg class="ico" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            专家团
+          </button>
+        </div>
+
+        <!-- 搜索行 -->
+        <div class="searchrow">
+          <div class="searchbox">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input id="searchInput" type="search" placeholder="搜索分配给我的智能体…" />
+          </div>
+          <!-- 筛选只在「我的 / 全部」出现：管理筛选器对使用者没意义 -->
+          <button class="filterbtn" id="filterBtn" style="display:none" onclick="toast('原型示意：管理筛选器只在「我的智能体」出现')">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+            </svg>
+            筛选
+          </button>
+        </div>
+
+        <div class="anno-banner">
+          <b>边界标注已开启。</b>虚线条里列出的是<b>这个视图完全不渲染</b>的入口——不是置灰、不是禁用，
+          是 DOM 里根本没有。对比切到「我的智能体」，那里它们都在。
+        </div>
+
+        <!-- ===== 面板：分配给我 ===== -->
+        <div class="panel show" data-panel="assigned">
+          <div class="readonly-bar">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <span>这些智能体由平台分配给你，<b>可以直接对话，但不能修改配置</b>。想定制请新建自己的智能体。</span>
+          </div>
+
+          <div class="grid" id="assignedGrid">
+            <!-- 卡片 1 -->
+            <article class="acard" data-name="ChatBI 数据智能助手 自然语言查数据 口径澄清">
+              <div class="top">
+                <div class="av">📊</div>
+                <div style="min-width:0">
+                  <p class="nm">ChatBI 数据智能助手</p>
+                  <div class="badges">
+                    <span class="bdg2 sys">平台提供</span>
+                    <span class="bdg2 ro">只读</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">用自然语言查数据、出图表，支持多轮追问与口径澄清，回答带 SQL 与数据来源。</p>
+              <div class="ghost-zone">
+                <div class="gtitle">下列入口在本视图不渲染</div>
+                <div class="row">
+                  <span class="ghost">编辑智能体</span><span class="ghost">设置分组</span>
+                  <span class="ghost">版本与发布</span><span class="ghost">复制</span>
+                  <span class="ghost">删除</span><span class="ghost">更多操作 ⋯</span>
+                </div>
+              </div>
+              <div class="foot">
+                <span class="note"><span class="dot"></span>只读 · 不可修改配置</span>
+                <button class="act go" onclick="toast('原型示意：打开该智能体的正常对话（不带 preview=1，会续接你的历史）')">
+                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                  进入对话
+                </button>
+              </div>
+            </article>
+
+            <!-- 卡片 2 -->
+            <article class="acard" data-name="合同审查专家 风险条款 合规清单">
+              <div class="top">
+                <div class="av">📑</div>
+                <div style="min-width:0">
+                  <p class="nm">合同审查专家</p>
+                  <div class="badges">
+                    <span class="bdg2 sys">平台提供</span>
+                    <span class="bdg2 ro">只读</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">上传合同逐条比对风险条款，输出修改建议、风险等级与可执行的合规清单。</p>
+              <div class="ghost-zone">
+                <div class="gtitle">下列入口在本视图不渲染</div>
+                <div class="row">
+                  <span class="ghost">编辑智能体</span><span class="ghost">设置分组</span>
+                  <span class="ghost">版本与发布</span><span class="ghost">复制</span>
+                  <span class="ghost">删除</span><span class="ghost">更多操作 ⋯</span>
+                </div>
+              </div>
+              <div class="foot">
+                <span class="note"><span class="dot"></span>只读 · 不可修改配置</span>
+                <button class="act go" onclick="toast('原型示意：打开该智能体的正常对话（不带 preview=1，会续接你的历史）')">
+                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                  进入对话
+                </button>
+              </div>
+            </article>
+
+            <!-- 卡片 3 -->
+            <article class="acard" data-name="元数据治理助手 字段口径 血缘 治理建议">
+              <div class="top">
+                <div class="av">🗂️</div>
+                <div style="min-width:0">
+                  <p class="nm">元数据治理助手</p>
+                  <div class="badges">
+                    <span class="bdg2 sys">平台提供</span>
+                    <span class="bdg2 ro">只读</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">梳理数据集血缘与字段口径，批量生成治理建议，可直接落到元数据管理里复核。</p>
+              <div class="ghost-zone">
+                <div class="gtitle">下列入口在本视图不渲染</div>
+                <div class="row">
+                  <span class="ghost">编辑智能体</span><span class="ghost">设置分组</span>
+                  <span class="ghost">版本与发布</span><span class="ghost">复制</span>
+                  <span class="ghost">删除</span><span class="ghost">更多操作 ⋯</span>
+                </div>
+              </div>
+              <div class="foot">
+                <span class="note"><span class="dot"></span>只读 · 不可修改配置</span>
+                <button class="act go" onclick="toast('原型示意：打开该智能体的正常对话（不带 preview=1，会续接你的历史）')">
+                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                  进入对话
+                </button>
+              </div>
+            </article>
+          </div>
+
+          <div class="empty-state">
+            <div class="eico">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-3.586a1 1 0 00-.707.293l-1.414 1.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-1.414-1.414A1 1 0 006.586 13H3" />
+              </svg>
+            </div>
+            <h4>还没有智能体被分配给你</h4>
+            <p>
+              分配来的智能体可以直接对话，但不能修改配置。<br />
+              <b>如果你确认已被授权却看不到，可能是该智能体已被停用</b>——停用的智能体无法执行，
+              这里也不会列出。
+            </p>
+          </div>
+        </div>
+
+        <!-- ===== 面板：我的智能体（对照） ===== -->
+        <div class="panel" data-panel="mine">
+          <div class="grid">
+            <article class="acard" data-name="报销票据识别 差旅 发票">
+              <div class="top">
+                <div class="av">🧾</div>
+                <div style="min-width:0">
+                  <p class="nm">报销票据识别</p>
+                  <div class="badges">
+                    <span class="bdg2">自定义</span>
+                    <span class="bdg2" style="background:#ecfdf5;color:#047857">已发布 v3</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">识别差旅发票与行程单，自动匹配报销科目，输出可导入财务系统的明细表。</p>
+              <div class="foot">
+                <span class="note"><span class="dot"></span>我创建 · 更新于 11-09</span>
+                <span style="display:flex;gap:6px">
+                  <button class="act ghost" onclick="toast('原型示意：这是我的智能体，可以编辑')">编辑</button>
+                  <button class="act ghost" onclick="toast('原型示意：三点菜单（编辑 / 设置分组 / 版本与发布 / 复制 / 删除）')">⋯</button>
+                </span>
+              </div>
+            </article>
+
+            <article class="acard" data-name="周报汇编助手 汇总 部门">
+              <div class="top">
+                <div class="av">📝</div>
+                <div style="min-width:0">
+                  <p class="nm">周报汇编助手</p>
+                  <div class="badges">
+                    <span class="bdg2">自定义</span>
+                    <span class="bdg2" style="background:#fff7ed;color:#b45309">草稿</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">汇总部门成员的周报要点，按项目归类并生成管理层速览版。</p>
+              <div class="foot">
+                <span class="note"><span class="dot"></span>我创建 · 更新于 11-11</span>
+                <span style="display:flex;gap:6px">
+                  <button class="act ghost" onclick="toast('原型示意：这是我的智能体，可以编辑')">编辑</button>
+                  <button class="act ghost" onclick="toast('原型示意：三点菜单（编辑 / 设置分组 / 版本与发布 / 复制 / 删除）')">⋯</button>
+                </span>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <!-- ===== 面板：分享给我（对照） ===== -->
+        <div class="panel" data-panel="received">
+          <div class="readonly-bar" style="border-color:#fde68a;background:#fffbeb;color:#92400e">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true" style="color:#d97706">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span><b>和「分配给我」不是一回事：</b>这里是待接收件，<b>必须接受</b>才会生成一份属于你的副本。</span>
+          </div>
+
+          <div class="sharecard">
+            <div class="av" style="background:linear-gradient(135deg,#fef3c7,#fffbeb);border-color:#fde68a">🎧</div>
+            <div class="body">
+              <p class="t">客服质检助手</p>
+              <p class="s">王海涛 分享给你 · 11-10 14:22 · 附言「先拿去用，质检口径改过了，有问题找我」</p>
+            </div>
+            <div class="ops">
+              <button class="act ghost" onclick="toast('原型示意：拒绝这条分享')">拒绝</button>
+              <button class="act go" onclick="toast('原型示意：接受后生成属于我的副本，并进入新建向导')">接受</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== 面板：我分享的 / 专家团（占位） ===== -->
+        <div class="panel" data-panel="sent">
+          <div class="empty-state" style="display:flex">
+            <div class="eico">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+            </div>
+            <h4>还没有分享出去的智能体</h4>
+            <p>分享会生成一份独立副本给对方，你后续的改动不会影响他。</p>
+          </div>
+        </div>
+
+        <div class="panel" data-panel="teams">
+          <div class="empty-state" style="display:flex">
+            <div class="eico">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+            </div>
+            <h4>还没有专家团</h4>
+            <p>专家团是「主专家 + 子专家」的聚合视图，不是独立实体。</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3. 三个视图的区别 ============ -->
+  <section class="sec">
+    <h2><span class="num">2</span>「分配给我」和「分享给我」差在哪</h2>
+    <table class="cmp">
+      <thead>
+        <tr>
+          <th>维度</th>
+          <th class="hl">分配给我（新增）</th>
+          <th>分享给我（已有）</th>
+          <th>我的智能体（已有）</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>含义</td>
+          <td class="hl">平台已授予<b>使用权限</b></td>
+          <td>别人发来的<b>待接收件</b></td>
+          <td>我自己创建的</td>
+        </tr>
+        <tr>
+          <td>需要操作</td>
+          <td class="hl">不需要，直接能用</td>
+          <td>必须接受</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>操作结果</td>
+          <td class="hl">仍指向<b>同一个</b>智能体</td>
+          <td>生成<b>我拥有的副本</b></td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>能否改配置</td>
+          <td class="hl">否（只读）</td>
+          <td>接受后可以（副本）</td>
+          <td>可以</td>
+        </tr>
+        <tr>
+          <td>角标含义</td>
+          <td class="hl">可用总数</td>
+          <td>待处理数</td>
+          <td>无角标</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:12px;margin:10px 0 0">
+      两个 tab 挨着放，角标语义又不同（「可用总数」vs「待处理数」），所以文案必须把差异说死——否则一定有人来问「这两个有什么区别」。
+    </p>
+  </section>
+
+  <!-- ============ 4. 实现口径 ============ -->
+  <section class="sec">
+    <h2><span class="num">3</span>实现口径（无表结构变更）</h2>
+    <table class="cmp">
+      <thead>
+        <tr><th>项</th><th>取值</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>接口</td>
+          <td><code>GET /api/portal/agents/assigned</code>，权限 <code>menu:agent_management</code></td>
+        </tr>
+        <tr>
+          <td>可见口径</td>
+          <td><code>id IN 授权集合</code> AND <code>is_enabled</code> AND (<code>created_by != 我</code> OR <code>created_by IS NULL</code>)</td>
+        </tr>
+        <tr>
+          <td>只读字段</td>
+          <td>服务端定死 <code>is_editable=false</code>、<code>can_edit_versions=false</code>、<code>can_publish_version=false</code></td>
+        </tr>
+        <tr>
+          <td>不挂载</td>
+          <td><code>model_issue</code> / <code>tool_issue</code> / <code>readiness_*</code> / <code>team_member_ids</code> / <code>execution_count</code></td>
+        </tr>
+        <tr>
+          <td>管理员</td>
+          <td>不显示该 tab，接口返回空数组（已有「全部智能体」，再来一份是重复视图）</td>
+        </tr>
+        <tr>
+          <td>进入对话</td>
+          <td>复用取票逻辑但<b>不带</b> <code>preview=1</code>（那是管理者的试跑语义，会强制干净临时会话）</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  var toastEl = document.getElementById('toast');
+  var toastTimer = null;
+  window.toast = function (msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 2600);
+  };
+
+  /* ---- 视图 tab 切换 ---- */
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  var panels = Array.prototype.slice.call(document.querySelectorAll('[data-panel]'));
+  var searchInput = document.getElementById('searchInput');
+  var filterBtn = document.getElementById('filterBtn');
+  var headCount = document.getElementById('headCount');
+
+  var placeholderByTab = {
+    mine: '搜索名称或标识符…',
+    assigned: '搜索分配给我的智能体…',
+    received: '搜索智能体或分享人…',
+    sent: '搜索智能体或分享人…',
+    teams: '搜索专家团…'
+  };
+  var countByTab = { mine: '共 2 个', assigned: '共 3 个', received: '1 条待处理', sent: '', teams: '' };
+
+  function applyTab(key) {
+    tabs.forEach(function (t) {
+      var on = t.getAttribute('data-tab') === key;
+      t.classList.toggle('on', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    panels.forEach(function (p) {
+      p.classList.toggle('show', p.getAttribute('data-panel') === key);
+    });
+    searchInput.placeholder = placeholderByTab[key] || '搜索…';
+    headCount.textContent = countByTab[key] || '';
+    // 管理筛选器只在「我的智能体」可见（真实页面口径：mine / all）
+    filterBtn.style.display = key === 'mine' ? 'inline-flex' : 'none';
+    // 搜索关键词只作用于智能体列表类视图
+    searchInput.value = '';
+    filterCards('');
+  }
+
+  tabs.forEach(function (t) {
+    t.addEventListener('click', function () { applyTab(t.getAttribute('data-tab')); });
+  });
+
+  /* ---- 搜索：按名称 / 描述过滤当前面板卡片 ---- */
+  function filterCards(kw) {
+    var active = document.querySelector('.panel.show');
+    if (!active) return;
+    var cards = Array.prototype.slice.call(active.querySelectorAll('.acard'));
+    var visible = 0;
+    cards.forEach(function (c) {
+      var hay = (c.getAttribute('data-name') || '') + ' ' + c.textContent;
+      var hit = !kw || hay.toLowerCase().indexOf(kw.toLowerCase()) !== -1;
+      c.style.display = hit ? '' : 'none';
+      if (hit) visible++;
+    });
+    if (active.getAttribute('data-panel') === 'assigned') {
+      headCount.textContent = kw ? '找到 ' + visible + ' 个' : '共 3 个';
+    }
+  }
+  searchInput.addEventListener('input', function (e) { filterCards(e.target.value.trim()); });
+
+  /* ---- 边界标注 ---- */
+  var annoToggle = document.getElementById('annoToggle');
+  var swAnno = document.getElementById('swAnno');
+  annoToggle.addEventListener('change', function () {
+    document.body.classList.toggle('anno', annoToggle.checked);
+    swAnno.classList.toggle('on', annoToggle.checked);
+  });
+
+  /* ---- 空态 ---- */
+  var emptyToggle = document.getElementById('emptyToggle');
+  var swEmpty = document.getElementById('swEmpty');
+  var assignedBadge = document.querySelector('[data-tab="assigned"] .bdg');
+  emptyToggle.addEventListener('change', function () {
+    var panel = document.querySelector('[data-panel="assigned"]');
+    panel.classList.toggle('as-empty', emptyToggle.checked);
+    swEmpty.classList.toggle('on', emptyToggle.checked);
+    headCount.textContent = emptyToggle.checked ? '共 0 个' : '共 3 个';
+    // 0 条时角标不显示：与「分享给我」的既有规则一致（0 没有行动价值，还会分心）
+    if (assignedBadge) assignedBadge.style.display = emptyToggle.checked ? 'none' : '';
+  });
+
+  applyTab('assigned');
+})();
+</script>
+</body>
+</html>
