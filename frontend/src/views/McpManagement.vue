@@ -40,16 +40,17 @@ const mcpMenu = ref<McpPersonalMenuKey>(resolvePersonalMenu())
 /**
  * 「个人 MCP」左侧栏是否收起。
  *
- * 与「我的技能」一致：记住选择（localStorage）。内容区有概览条 + 服务列表，
- * 小屏上 200px 侧栏会把卡片挤成一条；用户收起一次就该一直收起。
- * 读不到存储（隐私模式 / 禁用 storage）时退回展开，不影响功能。
+ * 与「我的技能」一致：默认收起成 64px 图标条，把空间让给右侧的调用概览 + 服务列表。
+ * 存过 '0'（展开）的老用户保持展开，不强行改掉已有选择。
  */
 const MCP_PERSONAL_MENU_COLLAPSED_KEY = 'mcp.personalMenu.collapsed'
 const readPersonalMenuCollapsed = (): boolean => {
   try {
-    return localStorage.getItem(MCP_PERSONAL_MENU_COLLAPSED_KEY) === '1'
+    const raw = localStorage.getItem(MCP_PERSONAL_MENU_COLLAPSED_KEY)
+    // 读不到（首次进入 / 隐私模式 / 禁用 storage）时按默认收起处理
+    return raw === null ? true : raw === '1'
   } catch {
-    return false
+    return true
   }
 }
 const personalMenuCollapsed = ref(readPersonalMenuCollapsed())

@@ -94,6 +94,11 @@ def test_personal_menu_aside_can_collapse() -> None:
     assert ':collapsed="personalMenuCollapsed"' in view
     assert '@toggle-collapsed="personalMenuCollapsed = !personalMenuCollapsed"' in view
 
+    # 首次进入默认收起（用户要求）：读不到存储时按折叠处理；
+    # 存过 '0'（展开）的老用户保持展开，不强行改掉已有选择
+    assert "const raw = localStorage.getItem(PERSONAL_MENU_COLLAPSED_KEY)" in view
+    assert "return raw === null ? true : raw === '1'" in view
+
 
 def test_mcp_personal_menu_aside_can_collapse() -> None:
     """「个人 MCP」左栏与「个人技能」同构：同样可折叠成 64px 图标条。
@@ -120,3 +125,26 @@ def test_mcp_personal_menu_aside_can_collapse() -> None:
     assert "localStorage.setItem(MCP_PERSONAL_MENU_COLLAPSED_KEY" in view
     assert ':collapsed="personalMenuCollapsed"' in view
     assert '@toggle-collapsed="personalMenuCollapsed = !personalMenuCollapsed"' in view
+
+    # 与技能页同样默认收起（两页键名分开，互不干扰）
+    assert "const raw = localStorage.getItem(MCP_PERSONAL_MENU_COLLAPSED_KEY)" in view
+    assert "return raw === null ? true : raw === '1'" in view
+
+
+def test_share_menu_icons_match_between_skill_and_mcp() -> None:
+    """「收到的分享 / 我的分享」两处用同一套图标。
+
+    原先技能左栏用的是托盘 + 上下箭头，读起来像「导出 / 导入文件」，跟「谁把技能
+    分享给了谁」无关；MCP 左栏已经是收件箱 / 纸飞机，两页不该各说各的。
+    """
+    skill = _read(SKILL_MENU)
+    mcp = _read(MCP_MENU)
+    inbox = "M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7"
+    paper_plane = "M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"
+    for path in (inbox, paper_plane):
+        assert path in skill, "技能左栏缺少与 MCP 一致的分享图标"
+        assert path in mcp, "MCP 左栏的分享图标被改动了"
+    # 托盘上下箭头（导出/导入语义）与斜纸飞机（16px 下像三角警示牌）都不该再出现
+    assert "M12 4v12m0 0l-4-4m4 4l4-4" not in skill
+    assert "M12 20V8m0 0l4 4m-4-4l-4 4" not in skill
+    assert "M12 19l9 2-9-18-9 18 9-2zm0 0v-8" not in skill

@@ -220,16 +220,17 @@ const personalMenu = ref<PersonalMenuKey>(resolvePersonalMenu())
 /**
  * 「个人技能」左侧栏是否收起。
  *
- * 记住选择（localStorage）：内容区现在多了分组页签，小屏上 200px 侧栏会把卡片挤成一条；
- * 用户收起一次就该一直收起，而不是每次进页面都再点一遍。
- * 读不到存储（隐私模式 / 禁用 storage）时退回展开，不影响功能。
+ * 默认收起：第一次进来就是 64px 图标条，把 200px 让给右侧卡片（那里才是要看的东西），
+ * 需要文字时点一下箭头展开。存过 '0'（展开）的老用户保持展开，不强行改掉已有选择。
  */
 const PERSONAL_MENU_COLLAPSED_KEY = 'skills.personalMenu.collapsed'
 const readPersonalMenuCollapsed = (): boolean => {
   try {
-    return localStorage.getItem(PERSONAL_MENU_COLLAPSED_KEY) === '1'
+    const raw = localStorage.getItem(PERSONAL_MENU_COLLAPSED_KEY)
+    // 读不到（首次进入 / 隐私模式 / 禁用 storage）时按默认收起处理
+    return raw === null ? true : raw === '1'
   } catch {
-    return false
+    return true
   }
 }
 const personalMenuCollapsed = ref(readPersonalMenuCollapsed())
