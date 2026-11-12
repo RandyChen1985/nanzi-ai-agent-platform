@@ -13,6 +13,7 @@ from app.services.ai.agent_system_columns import attach_system_status
 from app.services.ai.agent_system_publication_service import AgentSystemPublicationService
 from app.services.ai.agent_types import resolve_agent_type
 from app.services.ai.welcome_card_service import normalize_welcome_config, safe_welcome_config
+from app.utils.group_name import normalize_group_name
 import json
 from dataclasses import dataclass
 
@@ -329,6 +330,8 @@ class AgentManagerService:
                 values=data.capabilities,
             ),
             agent_type=resolved_agent_type.value,
+            # 新建向导也接受分组：建完就是归好类的，不必建完再去菜单里补一次
+            group_name=data.group_name,
             onboarding_key=onboarding_key,
             onboarding_step="VERSION",
             # 系统级只能通过「发布为系统级」获得（有事件、有流程），新建表单不再接受该字段
@@ -1356,7 +1359,9 @@ class AgentManagerService:
             is_enabled=data.is_enabled if data.is_enabled is not None else True,
             created_by=created_by,
             engine_type=data.engine_type,
-            engine_config=data.engine_config
+            engine_config=data.engine_config,
+            # 业务分组（单值）：只影响列表页页签与筛选，默认未分组
+            group_name=data.group_name,
         )
         session.add(agent)
         await session.commit()
@@ -1443,6 +1448,8 @@ class AgentManagerService:
                 else source.engine_config
             ),
             owner_group=source.owner_group,
+            # 分组跟着副本走：复制通常是「照着这个再做一个同类」，落到未分组反而要再归一次
+            group_name=source.group_name,
         )
         session.add(agent)
 
@@ -1617,6 +1624,33 @@ class AgentManagerService:
         return agent
 
     @staticmethod
+    async def set_agent_group(
+        session: AsyncSession,
+        agent_id: str,
+        group_name: Optional[str],
+        user: Any = None,
+    ) -> Optional[AIAgent]:
+        """只改「业务分组」，不碰其它任何字段。
+
+        为什么单开端点而不是走 ``update_agent``：那条路为了「元数据整表单保存」加了一串
+        与分组无关的前置校验——待审冻结、是否系统级、引擎是否可改……用户只是想把智能体
+        归个类，不该因为「正在审核中」而被拒；而且整表单 PUT 要求前端回传全部字段，
+        任何一处少传都会覆盖。
+
+        **不检查「待审冻结」**：分组是纯导航字段，不改变审核方要评的内容（提示词、
+        工具、模型）；管理员审核期间所有者整理自己的分组是合理需求。
+        """
+        agent = await session.get(AIAgent, agent_id)
+        if not agent:
+            return None
+        if not AgentManagerService.can_edit_agent_meta(agent, user):
+            return None
+        agent.group_name = normalize_group_name(group_name)
+        await session.commit()
+        await session.refresh(agent)
+        return agent
+
+    @staticmethod
     async def update_agent(session: AsyncSession, agent_id: str, data: AIAgentBase, user: Any = None) -> Optional[AIAgent]:
         """Update existing agent metadata"""
         agent = await session.get(AIAgent, agent_id)
@@ -1700,6 +1734,10 @@ class AgentManagerService:
             )
         if "team_profile" in data.model_fields_set:
             agent.team_profile = data.team_profile
+        # 分组同样是「局部更新」：其它表单（版本配置、专家团、排版样式）不会带这个字段，
+        # 无条件赋值会把已设好的分组悄悄清空。只有真的想改它时才落库。
+        if "group_name" in data.model_fields_set:
+            agent.group_name = data.group_name
         agent.avatar_url = adopt_pending_avatar(data.avatar_url, agent.id)
         from app.services.ai.agent_types import (
             normalize_agent_capabilities_for_agent,

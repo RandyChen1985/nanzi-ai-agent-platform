@@ -25,6 +25,7 @@ from app.schemas.agent import (
     AIAgentReorderRequest,
     AIAgentVersionResponse, AIAgentVersionBase,
     AgentDuplicateRequest,
+    AgentGroupUpdateRequest,
     AgentExecutionHistoryResponse,
     AgentOnboardingCreateRequest,
     AgentOnboardingResponse,
@@ -517,6 +518,33 @@ async def update_agent(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not agent:
         raise HTTPException(status_code=403, detail="Forbidden: You can only edit your own agents")
+    return agent
+
+
+@router.put(
+    "/{agent_id}/group",
+    response_model=AIAgentResponse,
+    dependencies=[Depends(require_permission("element", "element:agent:edit"))],
+    summary="设置智能体业务分组（只改这一列，不触发其它元数据校验）",
+)
+async def update_agent_group(
+    agent_id: str,
+    data: AgentGroupUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """只改「业务分组」；空白或 null 表示清空（回到未分组）。
+
+    不走 `PUT /{agent_id}`：那条路为「元数据整表单保存」服务，会连带校验待审冻结、
+    是否系统级、引擎是否可改，用户只是想把智能体归个类，不该因此被拒。
+    """
+    agent = await AgentManagerService.set_agent_group(
+        session, agent_id, data.group_name, user=user
+    )
+    if not agent:
+        raise HTTPException(
+            status_code=404, detail="智能体不存在，或你没有权限修改它的分组"
+        )
     return agent
 
 

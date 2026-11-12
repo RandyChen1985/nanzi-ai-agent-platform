@@ -11,6 +11,12 @@ import type {
   StaleToolRef,
 } from "../api/agent";
 import { modelApi, type AIModel } from "../api/model";
+import ToolGroupTabs from "@/components/system/ToolGroupTabs.vue";
+import {
+  ALL_GROUP_KEY,
+  computeGroupTabs,
+  type GroupableTool,
+} from "@/utils/toolGroupTabs";
 import { toolApi, scriptToolApi, type SysApiTool } from "../api/tool";
 import Modal from "../components/Modal.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
@@ -47,6 +53,7 @@ import {
   ClockIcon,
   CpuChipIcon,
   DocumentDuplicateIcon,
+  FolderIcon,
   PencilSquareIcon,
   TrashIcon,
   UserCircleIcon,
@@ -404,6 +411,8 @@ const agentForm = ref<AIAgentBase>({
   team_profile: { name: "", intro: "" },
   engine_type: "LOCAL",
   engine_config: null,
+  // 业务分组：空串 = 未分组（后端归一成 None）
+  group_name: "",
 });
 
 const engineConfigUI = ref({
@@ -1444,7 +1453,14 @@ const filteredTeams = computed<AIAgent[]>(() => {
   })
 })
 
-const filteredAgents = computed(() => {
+/**
+ * 当前视图 + 关键词 + 所有筛选条件命中的智能体，**不含业务分组**。
+ *
+ * 页签上的数字直接来自这里，因此天然满足「页签数字 = 点进去看到的条数」——
+ * 这一页有十来个筛选条件，如果页签只算搜索，用户勾了「只看已启用」后会看到
+ * 「页签说 5、点进去 3」。分组过滤放在下游的 filteredAgents 里。
+ */
+const agentsMatchingFilters = computed<AIAgent[]>(() => {
   let result = [...agents.value];
 
   // 0. 工作区视图：「全部」看平台所有智能体（管理员），「我的智能体」只看自己名下。
@@ -1526,7 +1542,122 @@ const filteredAgents = computed(() => {
     );
   }
 
-  // 4. Sort: sort_order (descending), then is_system (descending), then Alphabetical
+  return result;
+});
+
+/* ---------------- 业务分组 ---------------- */
+
+/** 分组筛选的哨兵值，与「未分组」页签、下拉共用同一个常量 */
+const UNGROUPED_AGENT_GROUP = '__ungrouped__'
+
+/** 智能体的业务分组名（归一口径：去空白，空白即未分组） */
+const agentGroupName = (agent: AIAgent) => String(agent.group_name || '').trim()
+
+/**
+ * 交给共享分组模块的形状映射。`computeGroupTabs` 与工具注册表、元数据管理、技能工作台
+ * 用的是同一份实现，所以页签顺序、未分组固定末位、同名按中文排序这些规则不会各页一套。
+ */
+const toGroupableAgent = (agent: AIAgent): GroupableTool => ({
+  id: agent.id,
+  name: agent.name,
+  display_name: agent.display_name,
+  description: agent.description,
+  is_active: agent.is_enabled ?? true,
+  group_name: agent.group_name ?? '',
+})
+
+const agentGroupFilter = ref<string>(ALL_GROUP_KEY)
+
+/**
+ * 页签数据：输入是**已经过视图 + 关键词 + 全部筛选**的列表，filters 传空，
+ * 于是每个数字就等于「切到这一组能看到的条数」。
+ */
+const agentGroupTabsData = computed(() =>
+  computeGroupTabs(agentsMatchingFilters.value.map(toGroupableAgent), {}, UNGROUPED_AGENT_GROUP),
+)
+const agentGroupTabs = computed(() => agentGroupTabsData.value.items)
+
+/**
+ * 分组页签是否显示。默认显示，用户手动收起后记住选择。
+ *
+ * 分组页签是「浏览辅助」——不认识业务域的人靠它认路，认识的人只想看列表。
+ * 常驻一行在后者眼里就是白占高度，所以给个开关；收起后按钮仍在原位，
+ * 不会出现「藏起来就再也找不到」。
+ */
+const AGENT_GROUP_TABS_VISIBLE_KEY = 'agent-management:group-tabs-visible'
+
+const readAgentGroupTabsVisible = (): boolean => {
+  try {
+    const raw = localStorage.getItem(AGENT_GROUP_TABS_VISIBLE_KEY)
+    return raw === null ? true : raw !== '0'
+  } catch {
+    return true
+  }
+}
+
+const agentGroupTabsVisible = ref(readAgentGroupTabsVisible())
+
+watch(agentGroupTabsVisible, (visible) => {
+  try {
+    localStorage.setItem(AGENT_GROUP_TABS_VISIBLE_KEY, visible ? '1' : '0')
+  } catch {
+    /* 隐私模式下写不进去：不影响本次会话的显示状态 */
+  }
+})
+
+/**
+ * 只有「全部 + 未分组」两个页签时没有信息量（一个分组都还没建），
+ * 整行连开关一起不出现——否则用户第一次进来会先学会点一个没用的开关。
+ */
+const agentGroupTabsAvailable = computed(() => agentGroupTabs.value.length > 2)
+
+/** 开关只在两个浏览视图、且确实有分组可看时出现 */
+const canToggleAgentGroupTabs = computed(
+  () =>
+    (workspaceTab.value === 'mine' || workspaceTab.value === 'all') &&
+    agentGroupTabsAvailable.value,
+)
+
+const showAgentGroupTabs = computed(
+  () => canToggleAgentGroupTabs.value && agentGroupTabsVisible.value,
+)
+
+/** 全量分组名（不受筛选影响）：给「设置分组」弹窗与「分组」下拉做候选，避免同一业务域两种写法 */
+const agentGroupOptions = computed(() => {
+  const names = new Set<string>()
+  for (const agent of agents.value) {
+    const name = agentGroupName(agent)
+    if (name) names.add(name)
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+})
+
+// 切视图 / 切二级菜单回「全部」：停在一个当前视图里不存在的分组上会看到空列表
+watch([workspaceTab], () => {
+  agentGroupFilter.value = ALL_GROUP_KEY
+})
+
+// 选中分组被搜索/筛选清空、或分组名被改掉后回「全部」；
+// 首屏加载期跳过（列表还空着，会把用户刚点的分组清掉）
+watch(agentGroupTabsData, (data) => {
+  if (!agents.value.length) return
+  const exists =
+    agentGroupFilter.value === ALL_GROUP_KEY ||
+    agentGroupFilter.value === UNGROUPED_AGENT_GROUP ||
+    data.items.some((item) => item.key === agentGroupFilter.value)
+  if (!exists) agentGroupFilter.value = ALL_GROUP_KEY
+})
+
+/** 列表实际渲染的智能体：在筛选结果上再套一层业务分组，最后排序 */
+const filteredAgents = computed<AIAgent[]>(() => {
+  let result = [...agentsMatchingFilters.value];
+  if (agentGroupFilter.value === UNGROUPED_AGENT_GROUP) {
+    result = result.filter((a) => !agentGroupName(a));
+  } else if (agentGroupFilter.value !== ALL_GROUP_KEY) {
+    result = result.filter((a) => agentGroupName(a) === agentGroupFilter.value);
+  }
+
+  // 5. Sort: sort_order (descending), then is_system (descending), then Alphabetical
   return result.sort((a, b) => {
     if (isMainAgent(a) !== isMainAgent(b)) return isMainAgent(a) ? -1 : 1;
     if ((a.is_enabled ?? true) !== (b.is_enabled ?? true)) {
@@ -1675,12 +1806,24 @@ const clearAllAgentFilters = () => {
 };
 
 const canDragAgents = computed(
-  () => !hasActiveAgentFilters.value && userInfo.value?.role === "admin" && !loading.value,
+  () =>
+    !hasActiveAgentFilters.value &&
+    agentGroupFilter.value === ALL_GROUP_KEY &&
+    userInfo.value?.role === "admin" &&
+    !loading.value,
 );
 
 // 普通用户只看到自己创建的智能体（系统内置的不再出现），空列表要说明原因，
 // 否则会以为系统坏了或权限丢了。
 const emptyStateMessage = computed(() => {
+  // 选中某个业务分组时的空列表与「一个智能体都没有」是两回事，必须最先区分：
+  // 否则用户点了「未分组」看到「你还没有创建智能体」，会以为数据没了
+  if (agentGroupFilter.value !== ALL_GROUP_KEY) {
+    if (agentGroupFilter.value === UNGROUPED_AGENT_GROUP) {
+      return "当前的搜索与筛选条件下没有未分组的智能体——都已经归好类了。";
+    }
+    return `「${agentGroupFilter.value}」分组在当前的搜索与筛选条件下没有智能体，换个分组或清掉筛选看看。`;
+  }
   if (!hasActiveAgentFilters.value && userInfo.value?.role !== "admin") {
     return "你还没有创建智能体。系统内置智能体由管理员维护，已授权的可以直接在对话里使用。";
   }
@@ -2908,6 +3051,7 @@ const startAgentCreation = () => {
     is_expert_team_lead: false,
     team_profile: { name: "", intro: "" },
     engine_type: "LOCAL",
+    group_name: "",
     engine_config: {
       dataset_ids: [],
       safety_check_enabled: true,
@@ -2941,6 +3085,40 @@ const startAgentCreation = () => {
   resetAgentNameCheckState();
 };
 
+/**
+ * 「设置分组」小弹窗的状态。
+ *
+ * 只改 `group_name` 一列，走专用端点：整表单 PUT 会连带校验「待审冻结」「引擎不可改」
+ * 「是否系统级不能改」，用户只是归个类，不该因为正在审核被拒。
+ */
+const agentGroupDialog = ref<{ agent: AIAgent; value: string } | null>(null)
+const savingAgentGroup = ref(false)
+
+const openAgentGroupDialog = (agent: AIAgent) => {
+  agentGroupDialog.value = { agent, value: agentGroupName(agent) }
+}
+
+const saveAgentGroup = async () => {
+  const target = agentGroupDialog.value
+  if (!target || savingAgentGroup.value) return
+  savingAgentGroup.value = true
+  try {
+    const updated = await agentApi.updateAgentGroup(
+      target.agent.id,
+      target.value.trim() || null,
+    )
+    // 就地更新：整页重拉会把用户的搜索词、页签滚动位置和卡片拖拽顺序一起抖掉
+    target.agent.group_name = updated.data?.group_name ?? null
+    const name = agentGroupName(target.agent)
+    agentGroupDialog.value = null
+    showToast(name ? `已归入「${name}」分组` : "已设为未分组", "success")
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || "设置分组失败", "error")
+  } finally {
+    savingAgentGroup.value = false
+  }
+}
+
 const openAgentModal = (agent?: AIAgent) => {
   // 每次打开都清空上一次的重名结论，避免残留提示误伤当前智能体
   resetAgentNameCheckState();
@@ -2970,6 +3148,8 @@ const openAgentModal = (agent?: AIAgent) => {
         name: agent.team_profile?.name || "",
         intro: agent.team_profile?.intro || "",
       },
+      // 同上：null（未分组）在输入框里要落成空串
+      group_name: agent.group_name || "",
     };
     selectedMarkdownTheme.value = agent.engine_config?.default_markdown_theme || "default";
     // 缺省即开启（与 EmbedChat 的 ?? true 对齐）；只有显式 false 才关闭，
@@ -3039,6 +3219,7 @@ const openAgentModal = (agent?: AIAgent) => {
       is_enabled: true,
       engine_type: "LOCAL",
       engine_config: null,
+      group_name: "",
     };
     engineConfigUI.value = {
         app_id: "",
@@ -5203,6 +5384,42 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           {{ tab.badge > 99 ? '99+' : tab.badge }}
         </span>
       </button>
+
+      <!-- 分组页签开关：整理型用户不需要这一行，收起后列表能多显示一行。
+           固定在页签行右端，收起时按钮仍在，随时可以再展开。 -->
+      <button
+        v-if="canToggleAgentGroupTabs"
+        type="button"
+        class="ml-auto flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition-colors"
+        :class="
+          agentGroupTabsVisible
+            ? 'text-gray-500 hover:bg-gray-100'
+            : 'text-primary hover:bg-primary/5'
+        "
+        :aria-pressed="agentGroupTabsVisible"
+        :title="
+          agentGroupTabsVisible
+            ? '收起分组页签，给列表让出一行'
+            : '展开分组页签，按业务域浏览'
+        "
+        @click="agentGroupTabsVisible = !agentGroupTabsVisible"
+      >
+        <svg
+          class="h-3.5 w-3.5 shrink-0"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          aria-hidden="true"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            :d="agentGroupTabsVisible ? 'M4.5 15.75l7.5-7.5 7.5 7.5' : 'M19.5 8.25l-7.5 7.5-7.5-7.5'"
+          />
+        </svg>
+        {{ agentGroupTabsVisible ? '隐藏分组' : '显示分组' }}
+      </button>
     </div>
 
     <AgentShareReceivedPanel
@@ -5358,6 +5575,17 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </div>
         </article>
       </div>
+    </div>
+
+    <!-- 业务分组页签：只服务「全部 / 我的智能体」两个浏览视图。
+         「分享给我 / 我分享的 / 专家团」是待办与协作队列，按业务域切分没有意义。
+         与工具注册表、元数据管理、技能工作台共用同一个组件与同一套计数口径。 -->
+    <div v-if="showAgentGroupTabs" class="mt-3">
+      <ToolGroupTabs
+        v-model="agentGroupFilter"
+        :items="agentGroupTabs"
+        aria-label="按业务分组浏览智能体"
+      />
     </div>
 
     <!-- 列表区：管理员在「全部 / 我的智能体」两个视图共用，
@@ -5709,6 +5937,24 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             {{ agent.description }}
           </p>
 
+          <!-- 业务分组：锁定某个分组浏览时不再逐条显示（每条都一样，纯噪音）；
+               未分组的显示虚线徽标，让漏网的看得见。点它 = 只看这个分组。 -->
+          <div v-if="agentGroupFilter === ALL_GROUP_KEY" class="mt-2">
+            <button
+              v-if="agentGroupName(agent)"
+              type="button"
+              class="inline-flex max-w-full items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+              :title="`只看「${agentGroupName(agent)}」分组`"
+              @click.stop="agentGroupFilter = agentGroupName(agent)"
+            >
+              <span class="truncate">{{ agentGroupName(agent) }}</span>
+            </button>
+            <span
+              v-else
+              class="inline-flex items-center rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-[10px] text-gray-400"
+            >未分组</span>
+          </div>
+
           <!-- 待完善：从「就绪度 chip + 独立黄条 + 橙色主按钮」三处重复，合并成卡内唯一一条可点入口 -->
           <button
             v-if="!agent.readiness_ready && formatReadinessMissing(agent).length"
@@ -5859,6 +6105,16 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 >
                   <PencilSquareIcon class="h-4 w-4 text-gray-400" />
                   编辑智能体
+                </button>
+                <!-- 设置分组单独一个入口：只改这一列，不受「审核中冻结」影响，也不用打开整个编辑弹窗 -->
+                <button
+                  v-if="agent.is_editable !== false"
+                  v-has-perm="'element:agent:edit'"
+                  @click="closeCardMenus(); openAgentGroupDialog(agent)"
+                  class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+                >
+                  <FolderIcon class="h-4 w-4 text-gray-400" />
+                  设置分组
                 </button>
                 <!-- 复制不修改源智能体，因此在可编辑性之外单独判定：列表对普通用户只含自建智能体，
                      后端对「别人创建的系统智能体」另有 403 兜底 -->
@@ -6872,6 +7128,26 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               ></textarea>
             </div>
 
+            <!-- 业务分组：只服务智能体中心的页签与筛选，与「能力标签」（capabilities，进路由）
+                 是两件事。允许直接输入新名字，候选来自全平台已有分组。 -->
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1"
+                >业务分组</label
+              >
+              <input
+                v-model="agentForm.group_name"
+                type="text"
+                list="agent-group-options"
+                maxlength="64"
+                placeholder="如 法务合规（留空 = 未分组）"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
+              />
+              <p class="mt-1 text-[11px] leading-relaxed text-gray-400">
+                单选，只用于智能体中心的页签与筛选；不参与权限、不进 AI 提示词，也不影响路由
+                —— 那是「能力标签」的职责。
+              </p>
+            </div>
+
             <div v-if="agentForm.engine_type === 'LOCAL'">
               <!-- 编辑时类型不可改，三张卡只是占位；蓝色提示仍保留，用来说明当前类型的运行行为 -->
               <template v-if="!isEditingAgent">
@@ -7513,6 +7789,62 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :agent="systemHistoryTarget"
       @close="showSystemHistoryDrawer = false"
     />
+    <!-- 设置业务分组：只改 group_name 一列，不打开整个编辑弹窗。
+         Teleport 到 body —— 卡片 hover 带 transform，否则 fixed 遮罩只盖住卡片。 -->
+    <Teleport to="body">
+      <div
+        v-if="agentGroupDialog"
+        class="fixed inset-0 z-[9990] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+        @click.self="agentGroupDialog = null"
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="agent-group-title"
+          class="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl"
+        >
+          <h2 id="agent-group-title" class="mb-1 text-base font-bold text-gray-800">
+            设置业务分组
+          </h2>
+          <p class="mb-4 text-xs text-gray-500">
+            {{ agentGroupDialog.agent.display_name }}
+            <span class="font-mono text-[10px] text-gray-400">（{{ agentGroupDialog.agent.name }}）</span>
+          </p>
+          <input
+            v-model="agentGroupDialog.value"
+            type="text"
+            list="agent-group-options"
+            maxlength="64"
+            placeholder="如 法务合规（留空 = 未分组）"
+            class="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
+            @keydown.enter.prevent="saveAgentGroup"
+          />
+          <p class="mt-1.5 text-[10px] leading-relaxed text-gray-400">
+            单选，只影响智能体中心的页签与筛选；不参与权限、不进 AI 提示词，
+            也不影响路由（那是「能力标签」的职责）。
+          </p>
+          <div class="mt-5 flex justify-end gap-2 border-t border-gray-100 pt-4">
+            <button
+              type="button"
+              class="rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50"
+              @click="agentGroupDialog = null"
+            >取消</button>
+            <button
+              type="button"
+              class="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark disabled:opacity-50"
+              :disabled="savingAgentGroup"
+              @click="saveAgentGroup"
+            >{{ savingAgentGroup ? "保存中…" : "保存" }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 分组候选：编辑弹窗与「设置分组」弹窗共用，避免同一业务域被写成两个名字 -->
+    <datalist id="agent-group-options">
+      <option v-for="name in agentGroupOptions" :key="name" :value="name"></option>
+    </datalist>
+
     <AgentTransferOwnerModal
       :show="showTransferOwnerModal"
       :agent="transferOwnerTarget"

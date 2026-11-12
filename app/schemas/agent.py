@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, ConfigDict, StrictInt, model_validator, f
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 from app.services.ai.agent_types import AgentType
+from app.utils.group_name import GROUP_NAME_MAX_LEN, normalize_group_name
 
 # --- Agent Management Schemas ---
 
@@ -143,6 +144,19 @@ class AIAgentBase(BaseModel):
     team_profile: Optional[Dict[str, Any]] = None
     engine_type: str = "LOCAL"
     engine_config: Optional[Dict[str, Any]] = None
+    # 业务分组（单值）：只服务智能体中心的页签与筛选。
+    # 与 owner_group（所属用户组 / 权限维度）、capabilities（多值路由标签）是三件事，
+    # 详见 db-prod/V214 的说明。空白串归一成 None（= 未分组）。
+    group_name: Optional[str] = Field(
+        None,
+        max_length=GROUP_NAME_MAX_LEN,
+        description="业务分组名：智能体中心按它出分组页签；为空表示未分组",
+    )
+
+    @field_validator("group_name", mode="before")
+    @classmethod
+    def normalize_group(cls, v):
+        return normalize_group_name(v)
 
     @field_validator("is_expert_team_lead", mode="before")
     @classmethod
@@ -160,6 +174,22 @@ class AIAgentBase(BaseModel):
         if not name and not intro:
             return None
         return {"name": name, "intro": intro}
+
+class AgentGroupUpdateRequest(BaseModel):
+    """只改「业务分组」的请求体。
+
+    刻意不复用 ``AIAgentBase`` 整表单 PUT：那条路会连带校验
+    「是否系统级不能改」「引擎创建后不可修改」「待审中冻结」等一堆与分组无关的规则，
+    用户只是想把智能体归个类，不该因此被拒；也不会顺手把别的字段写回。
+    """
+
+    group_name: Optional[str] = Field(None, max_length=GROUP_NAME_MAX_LEN)
+
+    @field_validator("group_name", mode="before")
+    @classmethod
+    def normalize_group(cls, v):
+        return normalize_group_name(v)
+
 
 class AgentDuplicateRequest(BaseModel):
     """复制智能体时的目标标识与显示名；其余配置一律从源智能体复制。"""

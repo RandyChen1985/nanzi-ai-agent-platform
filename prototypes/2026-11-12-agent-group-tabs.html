@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>智能体中心 · 给「全部 / 我的智能体」加业务分组页签</title>
+<style>
+  *{box-sizing:border-box}
+  /* display:flex/grid 会盖掉 [hidden] 的 display:none —— 本页靠 hidden 切换方案，
+     少了这条 A 方案会把 B 方案的左栏一起渲染出来 */
+  [hidden]{display:none!important}
+  :root{
+    --bg:#f6f8fb;--card:#fff;--ink:#0f172a;--ink-2:#475569;--ink-3:#64748b;--ink-4:#94a3b8;
+    --line:#e2e8f0;--line-2:#eef2f7;--p:#2563eb;--p-dark:#1d4ed8;--p-soft:#eff6ff;
+    --ok:#10b981;--warn:#f59e0b;--pur:#7c3aed;--rose:#e11d48;
+    --shadow:0 1px 2px rgba(15,23,42,.05),0 8px 24px -12px rgba(15,23,42,.12);
+  }
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1320px;margin:0 auto;padding:28px 24px 72px}
+  h1{font-size:22px;margin:0 0 6px}
+  h2{font-size:16px;margin:0 0 12px}
+  .lead{color:var(--ink-3);font-size:13px;margin:0 0 22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
+  .sec{margin-top:26px}
+  .sec > h2{display:flex;align-items:center;gap:8px}
+  .sec > h2 .num{display:grid;place-items:center;width:22px;height:22px;border-radius:7px;background:var(--ink);color:#fff;font-size:12px;font-weight:800}
+  .muted{color:var(--ink-3)}
+
+  /* ---------- 顶部工具条 ---------- */
+  .toolbar{position:sticky;top:0;z-index:60;display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 14px;margin:0 0 20px;background:rgba(246,248,251,.92);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:14px}
+  .toolbar .lab{font-size:11px;font-weight:800;color:var(--ink-4);letter-spacing:.04em;text-transform:uppercase}
+  .seg{display:inline-flex;padding:3px;background:#eef2f7;border-radius:10px;gap:3px}
+  .seg button{border:0;background:transparent;padding:5px 11px;border-radius:8px;font-size:12px;font-weight:700;color:var(--ink-3);cursor:pointer;font-family:inherit}
+  .seg button.on{background:#fff;color:var(--p);box-shadow:0 1px 2px rgba(15,23,42,.08)}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;color:var(--ink-2);cursor:pointer;font-family:inherit}
+  .btn:hover{border-color:#c7d2fe;color:var(--p)}
+  .btn.sm{padding:5px 10px;font-size:12px}
+
+  /* ---------- 现状核查 ---------- */
+  .audit{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+  .audit .a{padding:14px 16px;border-radius:14px;background:#fff;border:1px solid var(--line)}
+  .audit .a .k{font-size:11px;font-weight:800;color:var(--ink-4);letter-spacing:.04em;text-transform:uppercase}
+  .audit .a .v{font-size:20px;font-weight:800;margin:2px 0 4px}
+  .audit .a .d{font-size:12px;color:var(--ink-3);line-height:1.55}
+  .audit .a.warnb{border-color:#fde68a;background:#fffbeb}
+
+  /* ---------- 字段对照表 ---------- */
+  .tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;overflow:hidden;border-radius:14px;border:1px solid var(--line);background:#fff}
+  .tbl th{background:#f8fafc;text-align:left;padding:10px 12px;font-size:11px;color:var(--ink-3);font-weight:800;letter-spacing:.03em;text-transform:uppercase;border-bottom:1px solid var(--line);white-space:nowrap}
+  .tbl td{padding:11px 12px;border-bottom:1px solid var(--line-2);vertical-align:top;color:var(--ink-2)}
+  .tbl tr:last-child td{border-bottom:0}
+  .tbl code{background:#f1f5f9;border-radius:5px;padding:1px 5px;font-size:11.5px;color:#0f172a}
+  .tbl .no{color:var(--rose);font-weight:700}
+  .tbl .yes{color:#047857;font-weight:700}
+  .tbl tr.pick td{background:#f0fdf4}
+
+  /* ---------- 方案卡 ---------- */
+  .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .plan{padding:15px 16px;border-radius:14px;border:1.5px solid var(--line);background:#fff;cursor:pointer;transition:.15s}
+  .plan:hover{border-color:#bfdbfe}
+  .plan.on{border-color:var(--p);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+  .plan .tag{display:inline-block;font-size:10px;font-weight:800;padding:1px 7px;border-radius:99px;background:#eef2f7;color:var(--ink-3);margin-bottom:6px}
+  .plan.on .tag{background:var(--p-soft);color:var(--p)}
+  .plan .n{font-weight:800;font-size:13.5px;margin-bottom:4px}
+  .plan .d{font-size:12px;color:var(--ink-3);line-height:1.55}
+  .plan ul{margin:8px 0 0;padding-left:16px;font-size:11.5px;color:var(--ink-3)}
+  .plan ul li{margin:2px 0}
+  @media (max-width:980px){.plans{grid-template-columns:1fr}}
+
+  /* ---------- 系统复刻 ---------- */
+  .app{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}
+  .app-body{padding:20px 24px 26px}
+  .pagehead{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px}
+  .pagehead .ht{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .pagehead h3{margin:0;font-size:21px;font-weight:800}
+  .pagehead .cnt{font-size:12px;color:var(--ink-3);font-weight:600}
+  .pagehead .sum{margin:2px 0 0;font-size:12px;color:var(--ink-3);display:flex;gap:8px}
+  .pagehead .sum b{color:#334155}
+  .pagehead .acts{display:flex;gap:8px;align-items:center}
+  .pbtn{display:inline-flex;align-items:center;gap:6px;border-radius:9px;border:1px solid var(--line);background:#fff;padding:7px 12px;font-size:13px;color:var(--ink-2);font-weight:600;cursor:pointer}
+  .pbtn.pri{background:var(--p);border-color:var(--p);color:#fff}
+  .pbtn.pri:hover{background:var(--p-dark)}
+
+  /* 一级 tab */
+  .ltabs{display:flex;flex-wrap:wrap;gap:20px;margin:16px 0 0;border-bottom:1px solid var(--line);padding:0 2px}
+  .ltab{position:relative;border:0;background:transparent;padding:9px 0 11px;font-size:13.5px;font-weight:600;color:var(--ink-3);cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit}
+  .ltab .n{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:#eef2f7;color:var(--ink-3);font-size:10.5px;font-weight:800;font-variant-numeric:tabular-nums}
+  .ltab.on{color:var(--p)}
+  .ltab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--p);border-radius:2px 2px 0 0}
+  .ltab.on .n{background:var(--p-soft);color:var(--p)}
+
+  /* 搜索行 */
+  .srow{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+  .search{position:relative;flex:1;min-width:220px}
+  .search input{width:100%;padding:8px 12px 8px 34px;border:1px solid #cbd5e1;border-radius:9px;font-size:13px;outline:none;font-family:inherit;color:var(--ink)}
+  .search input:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+  .search .ico{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--ink-4);font-size:13px}
+  .vseg{display:inline-flex;align-items:center;gap:2px;padding:3px;border-radius:9px;background:#e9edf3}
+  .vseg button{border:0;background:transparent;padding:4px 8px;border-radius:6px;cursor:pointer;color:var(--ink-3);font-size:12px;font-weight:600;font-family:inherit}
+  .vseg button.on{background:#fff;color:var(--p);box-shadow:0 1px 2px rgba(15,23,42,.08)}
+
+  /* 分组页签 */
+  .gtabs{display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:10px;border-top:1px dashed var(--line);flex-wrap:wrap}
+  .gtab{display:inline-flex;align-items:center;gap:6px;border:1px solid transparent;background:transparent;padding:5px 10px;border-radius:9px;font-size:13px;font-weight:600;color:var(--ink-3);cursor:pointer;font-family:inherit;white-space:nowrap}
+  .gtab:hover{background:#f1f5f9;color:var(--ink)}
+  .gtab.on{background:var(--p-soft);border-color:#bfdbfe;color:var(--p)}
+  .gtab .n{font-size:11px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--ink-4)}
+  .gtab.on .n{color:var(--p)}
+  .gtab.ung b{font-weight:600;color:var(--ink-4)}
+  .gmore{position:relative}
+  .gmenu{position:absolute;left:0;top:calc(100% + 6px);z-index:40;min-width:180px;max-height:280px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 30px -12px rgba(15,23,42,.3);padding:6px}
+  .gmenu button{display:flex;width:100%;align-items:center;justify-content:space-between;gap:10px;border:0;background:transparent;padding:7px 9px;border-radius:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer;font-family:inherit;text-align:left}
+  .gmenu button:hover{background:#f5f7fb}
+  .gmenu .n{font-size:11px;color:var(--ink-4);font-variant-numeric:tabular-nums}
+  .count-tip{margin:8px 0 0;font-size:11.5px;color:var(--ink-4)}
+
+  /* 左栏方案 */
+  .split{display:flex;gap:16px;margin-top:14px;align-items:flex-start}
+  .lbar{width:186px;flex-shrink:0;border:1px solid var(--line);border-radius:12px;background:#f8fafc;padding:8px}
+  .lbar .t{font-size:11px;font-weight:800;color:var(--ink-4);padding:4px 8px 8px;letter-spacing:.04em;text-transform:uppercase}
+  .lbar button{display:flex;width:100%;align-items:center;justify-content:space-between;gap:8px;border:0;background:transparent;padding:8px 10px;border-radius:9px;font-size:13px;color:var(--ink-2);cursor:pointer;font-family:inherit;text-align:left}
+  .lbar button:hover{background:#fff}
+  .lbar button.on{background:var(--p);color:#fff;font-weight:700}
+  .lbar button.on .n{color:#fff}
+  .lbar .n{font-size:11px;color:var(--ink-4);font-variant-numeric:tabular-nums}
+  .main{min-width:0;flex:1}
+
+  /* 卡片网格 */
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  .acard{background:#fff;border:1px solid var(--line);border-radius:13px;display:flex;flex-direction:column;transition:.15s}
+  .acard:hover{box-shadow:0 10px 24px -14px rgba(15,23,42,.35);transform:translateY(-1px)}
+  .acard.off{background:#f8fafc;opacity:.62;filter:grayscale(1)}
+  .atop{display:flex;align-items:flex-start;gap:11px;padding:14px 14px 0}
+  .ava{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;font-size:17px;font-weight:800;flex-shrink:0;border:1px solid var(--line-2)}
+  .ava.b1{background:#eff6ff;color:#2563eb}.ava.b2{background:#ecfdf5;color:#059669}
+  .ava.b3{background:#fef3c7;color:#b45309}.ava.b4{background:#f5f3ff;color:#7c3aed}
+  .ava.b5{background:#fce7f3;color:#be185d}
+  .nmwrap{min-width:0;flex:1}
+  .nrow{display:flex;align-items:center;gap:6px;min-width:0}
+  .nrow .nm{font-weight:800;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .badge{flex-shrink:0;font-size:10px;font-weight:800;padding:1px 6px;border-radius:99px;border:1px solid}
+  .badge.team{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
+  .badge.sys{background:#eef2ff;border-color:#c7d2fe;color:#4338ca}
+  .badge.grp{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;cursor:pointer}
+  .badge.grp:hover{background:#dbeafe}
+  .badge.ung{background:#f8fafc;border-color:#e2e8f0;color:#94a3b8;border-style:dashed}
+  .metaline{display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11.5px;color:var(--ink-3);flex-wrap:wrap}
+  .dotok{width:6px;height:6px;border-radius:99px;background:var(--ok);display:inline-block}
+  .dotwarn{width:6px;height:6px;border-radius:99px;background:var(--warn);display:inline-block}
+  .sw{width:36px;height:20px;border-radius:99px;background:#22c55e;position:relative;flex-shrink:0;margin-top:2px}
+  .sw.off{background:#e2e8f0}
+  .sw::after{content:"";position:absolute;top:2px;left:18px;width:16px;height:16px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+  .sw.off::after{left:2px}
+  .adesc{padding:10px 14px 0;font-size:12.5px;color:var(--ink-3);line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .grow{flex:1}
+  .gline{padding:9px 14px 0}
+  .afoot{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line-2);margin-top:11px}
+  .afoot .own{min-width:0;flex:1;font-size:11px;color:var(--ink-3);line-height:1.5}
+  .afoot .own .upd{color:var(--ink-4)}
+  .afoot .i{color:var(--ink-4);font-size:13px;cursor:pointer}
+  .empty{padding:40px;text-align:center;color:var(--ink-4);font-size:13px;border:1px dashed var(--line);border-radius:13px;margin-top:14px}
+
+  /* 徽标落点对比 */
+  .cmp2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:900px){.cmp2{grid-template-columns:1fr}}
+  .cmpbox{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fbfdff}
+  .cmpbox .hd{padding:9px 13px;font-size:12px;font-weight:800;border-bottom:1px solid var(--line);background:#f8fafc;display:flex;justify-content:space-between;gap:8px}
+  .cmpbox .hd small{font-weight:600;color:var(--ink-4);font-size:11px}
+  .cmpbox .bd{padding:12px}
+
+  /* 表单弹窗 */
+  .dlg{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff;box-shadow:var(--shadow)}
+  .dlg .hd{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--line)}
+  .dlg .hd h4{margin:0;font-size:14.5px;font-weight:800}
+  .dlg .tabs{display:flex;gap:16px;padding:0 18px;border-bottom:1px solid var(--line)}
+  .dlg .tabs span{font-size:12.5px;font-weight:700;color:var(--ink-3);padding:9px 0 10px;position:relative}
+  .dlg .tabs span.on{color:var(--p)}
+  .dlg .tabs span.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--p)}
+  .dlg .bd{padding:16px 18px}
+  .fr{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .fld{min-width:0}
+  .fld.full{grid-column:1/-1}
+  .fld label{display:block;font-size:11px;font-weight:800;color:var(--ink-4);letter-spacing:.03em;text-transform:uppercase;margin-bottom:5px}
+  .fld input,.fld textarea{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:8px 10px;font-size:13px;font-family:inherit;color:var(--ink);outline:none}
+  .fld input:focus,.fld textarea:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+  .fld .hint{margin:5px 0 0;font-size:11px;color:var(--ink-4);line-height:1.5}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .chip{font-size:11.5px;padding:3px 9px;border-radius:99px;border:1px solid var(--line);background:#f8fafc;color:var(--ink-3);cursor:pointer}
+  .chip:hover{border-color:#bfdbfe;color:var(--p);background:#eff6ff}
+  .dlg .ft{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--line);background:#fbfdff}
+
+  /* 待拍板 */
+  .decisions{border-radius:16px;border:1px solid #fde68a;background:#fffbeb;padding:16px 20px}
+  .decisions h2{color:#92400e;margin-bottom:8px}
+  .decisions ol{margin:0;padding-left:20px}
+  .decisions li{margin:7px 0;font-size:13px;color:#78350f;line-height:1.6}
+  .decisions .rec{background:#fef3c7;border-radius:6px;padding:1px 6px;font-weight:700;color:#92400e}
+  .decisions code{background:#fef3c7;border-radius:4px;padding:1px 4px;font-size:12px}
+  footer{margin-top:34px;text-align:center;font-size:11.5px;color:var(--ink-4)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>智能体中心 · 给「全部智能体 / 我的智能体」加业务分组</h1>
+  <div class="card" style="border-color:#86efac;background:#f0fdf4;margin:0 0 18px">
+    <b>✅ 已按方案 A 落地</b>　新增单值 <code>ai_agents.group_name</code>（迁移 MySQL <code>V214</code> / PG <code>V114</code>），
+    页签放在搜索行下方，页签数字含「除分组之外的所有条件」。实现说明见
+    <code>docs/superpowers/specs/2026-11-12-agent-group-design.md</code>。
+    本页保留为设计决策记录：下面三套方案与 4 个决策项即当时的取舍过程。
+  </div>
+  <p class="lead">
+    目标：智能体多起来以后，不用靠搜索也能一眼看出「平台上都有哪些业务域、各有多少个」。
+    本页先给现状核查与落库口径，再给三套 UI 方案与真实页面复刻，最后列出需要你拍板的 4 件事。
+  </p>
+
+  <!-- ===== 工具条 ===== -->
+  <div class="toolbar">
+    <span class="lab">UI 方案</span>
+    <div class="seg" id="planSeg">
+      <button data-plan="A" class="on">A · 分组页签条</button>
+      <button data-plan="B">B · 左侧分组栏</button>
+      <button data-plan="C">C · 只加下拉筛选</button>
+    </div>
+    <span class="lab">当前视图</span>
+    <div class="seg" id="viewSeg">
+      <button data-view="all" class="on">全部智能体</button>
+      <button data-view="mine">我的智能体</button>
+    </div>
+    <span class="lab">分组数量</span>
+    <div class="seg" id="manySeg">
+      <button data-many="0" class="on">5 个</button>
+      <button data-many="1">18 个（看溢出）</button>
+    </div>
+    <button class="btn sm" id="toForm">▣ 看编辑弹窗里的分组字段</button>
+  </div>
+
+  <!-- ===== 1. 现状核查 ===== -->
+  <section class="sec">
+    <h2><span class="num">1</span>先核查现状：这一页已经有多少东西了</h2>
+    <div class="audit">
+      <div class="a">
+        <div class="k">一级视图</div>
+        <div class="v">5 个</div>
+        <div class="d">全部智能体 / 我的智能体 / 分享给我 / 我分享的 / 专家团（管理员多「全部」）</div>
+      </div>
+      <div class="a">
+        <div class="k">已有筛选维度</div>
+        <div class="v">6 个</div>
+        <div class="d">状态、类型、来源、引擎、就绪度，外加搜索（名称 / 标识 / 描述 / 团名 / 所属团）</div>
+      </div>
+      <div class="a warnb">
+        <div class="k">问题在于</div>
+        <div class="v">都藏在下拉里</div>
+        <div class="d">6 个筛选全收在「筛选」面板里，用户必须先知道有什么，才能筛。<b>没有任何地方能一眼看到分布</b>。</div>
+      </div>
+      <div class="a">
+        <div class="k">卡片已有徽标</div>
+        <div class="v">4 类</div>
+        <div class="d">👥 专家团主专家、子专家所属团（可点筛选）、🛡 系统内置、就绪度圆点。分组徽标要挤进去。</div>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12.5px;margin:12px 0 0">
+      结论：分组不是「再加一个筛选条件」，而是补上<b>唯一缺失的那一层「分布式导航」</b>——
+      筛选回答「怎么排除」，页签回答「有哪些、各几个」。
+    </p>
+  </section>
+
+  <!-- ===== 2. 字段该存哪 ===== -->
+  <section class="sec">
+    <h2><span class="num">2</span>字段该存哪：表里已经有三个「像分组」的字段，但都不能用</h2>
+    <table class="tbl">
+      <thead>
+        <tr><th>字段</th><th>真实语义（读代码与迁移注释得出）</th><th>谁在读</th><th>能不能当业务分组</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>ai_agents.owner_group</code><br><span class="muted">VARCHAR(50)</span></td>
+          <td>迁移注释写的是「所属组 (预留)」/ PG 注释「所属用户组」——指<b>组织架构上的用户组</b>，不是业务分组</td>
+          <td>分享服务、系统级发布服务在元数据里传递它；已有索引 <code>idx_owner_created(owner_group, created_at)</code></td>
+          <td class="no">不行：这是权限/组织维度。拿它当业务分组，以后想「按用户组授权智能体」就无路可走</td>
+        </tr>
+        <tr>
+          <td><code>ai_agents.capabilities</code><br><span class="muted">JSON</span></td>
+          <td>模型注释原文：「Tags for routing e.g. ["data","coding"]」——<b>给 AI 路由用的能力标签</b>，多值</td>
+          <td>路由 / 调度时会读，影响「这条请求该派给谁」</td>
+          <td class="no">不行：多值 → 一个智能体出现在多个页签、计数相加大于总数；且会把「导航口径」和「路由口径」绑死</td>
+        </tr>
+        <tr>
+          <td><code>ai_agents.agent_type</code></td>
+          <td>枚举式类型（GENERAL 等），已经是筛选维度之一</td>
+          <td>筛选、卡片文字、部分运行时分支</td>
+          <td class="no">不行：这是「机制类型」，不是「业务域」；且已有独立筛选入口</td>
+        </tr>
+        <tr class="pick">
+          <td><code>ai_agents.group_name</code><br><span class="muted">本次新增 VARCHAR(64)</span></td>
+          <td>单值业务分组，只服务列表页的分组页签与筛选</td>
+          <td>只读：智能体中心的页签 / 筛选</td>
+          <td class="yes">采用：与 <code>meta_datasets.group_name</code>、<code>tools.group_name</code> 完全同构，三页一套口径</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:12.5px;margin:12px 0 0">
+      与「技能分组」的区别值得说清：技能是<b>文件</b>（分组写进 <code>SKILL.md</code> 才不会被复制/分享弄丢），
+      智能体是<b>数据库实体</b>——所以这里就该老实加一列，跟元数据管理那次一致。
+    </p>
+  </section>
+
+  <!-- ===== 3. 三方案 ===== -->
+  <section class="sec">
+    <h2><span class="num">3</span>三套 UI 方案（点上面工具条切换，下面是真实页面复刻）</h2>
+    <div class="plans" id="plans">
+      <div class="plan on" data-plan="A">
+        <span class="tag">推荐</span>
+        <div class="n">A · 搜索行下方一条分组页签</div>
+        <div class="d">与工具注册表、元数据管理、技能工作台<b>完全同一套</b>组件与计数口径。</div>
+        <ul>
+          <li>一眼看到所有业务域与各自数量</li>
+          <li>位置在搜索行下、卡片上，不动左侧结构</li>
+          <li>分组多时收进「更多分组 ▾」</li>
+        </ul>
+      </div>
+      <div class="plan" data-plan="B">
+        <div class="tag">重排</div>
+        <div class="n">B · 内容区左侧分组栏</div>
+        <div class="d">分组 ≥ 10 个时更好翻，但要给这一页新增一条左栏。</div>
+        <ul>
+          <li>好处：分组很多时纵向列表更好扫</li>
+          <li>代价：一级 Tab(5) + 左栏 + 搜索行，层级变三层</li>
+          <li>代价：与「我的技能」左栏形态重复，占用横向空间</li>
+        </ul>
+      </div>
+      <div class="plan" data-plan="C">
+        <div class="tag">最小</div>
+        <div class="n">C · 只把分组塞进「筛选」面板</div>
+        <div class="d">改动最小，但补不上「看不到分布」这个原始问题。</div>
+        <ul>
+          <li>好处：不动布局，只多一个下拉</li>
+          <li>代价：用户仍然不知道有哪些分组、各多少</li>
+          <li>代价：与已有 6 个筛选混在一起，更难被发现</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 4. 页面复刻 ===== -->
+  <section class="sec">
+    <h2><span class="num">4</span>页面复刻（当前方案：<span id="planLabel">A · 分组页签条</span>）</h2>
+    <div class="app">
+      <div class="app-body">
+        <!-- 页头 -->
+        <div class="pagehead">
+          <div>
+            <div class="ht">
+              <h3>智能体中心</h3>
+              <span class="cnt">共 <span id="totCount">12</span> 个</span>
+            </div>
+            <p class="sum"><span>待完善 <b>2</b></span><span style="color:#cbd5e1">·</span><span>审核中 <b>1</b></span><span style="color:#cbd5e1">·</span><span>已停用 <b>1</b></span></p>
+          </div>
+          <div class="acts">
+            <button class="pbtn">显示指引</button>
+            <button class="pbtn">发布审核</button>
+            <button class="pbtn pri">＋ 新建智能体</button>
+          </div>
+        </div>
+
+        <!-- 一级 tab -->
+        <div class="ltabs" id="ltabs">
+          <button class="ltab on" data-ltab="all">全部智能体</button>
+          <button class="ltab" data-ltab="mine">我的智能体</button>
+          <button class="ltab" data-ltab="received">分享给我 <span class="n">2</span></button>
+          <button class="ltab" data-ltab="sent">我分享的 <span class="n">1</span></button>
+          <button class="ltab" data-ltab="teams">专家团 <span class="n">1</span></button>
+        </div>
+
+        <!-- 搜索行 -->
+        <div class="srow">
+          <div class="search">
+            <span class="ico">🔍</span>
+            <input type="search" id="kw" placeholder="搜索名称或标识符…" />
+          </div>
+          <div class="vseg">
+            <button class="on">▦ 网格</button>
+            <button>☰ 列表</button>
+          </div>
+          <button class="pbtn">筛选 <span style="color:#94a3b8">⌄</span></button>
+        </div>
+
+        <!-- A / C 共用：分组页签条（C 方案下替换为下拉，见下） -->
+        <div id="gtabsWrap">
+          <div class="gtabs" id="gtabs"></div>
+          <p class="count-tip" id="countTip"></p>
+        </div>
+        <div id="gselectWrap" hidden>
+          <div class="srow" style="margin-top:12px">
+            <select id="gselect" style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:9px;font-size:13px;font-family:inherit;color:#0f172a;background:#fff">
+            </select>
+            <span class="muted" style="font-size:12px;align-self:center">（方案 C：分组只作为筛选面板里的一个下拉，看不到分布）</span>
+          </div>
+        </div>
+
+        <!-- B 方案：左栏 + 内容 -->
+        <div id="bwrap" class="split" hidden>
+          <div class="lbar" id="lbar"><div class="t">业务分组</div></div>
+          <div class="main"><div class="grid" id="gridB"></div></div>
+        </div>
+
+        <!-- A / C 方案：卡片网格 -->
+        <div class="grid" id="grid"></div>
+        <div class="empty" id="empty" hidden></div>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12px;margin:10px 0 0">
+      复刻用的是真实页面结构：页头「共 N 个」+ 三条状态摘要、5 个一级视图、搜索行（批量 / 网格·列表 / 筛选）、
+      卡片（头像 · 名称 · 专家团 / 系统徽标 · 就绪度 · 类型·引擎 · 开关 · 描述 · 创建者/更新时间 · 预览/更多）。
+      <b>分组页签插在搜索行与卡片之间</b>，不改动上面任何一层。
+    </p>
+  </section>
+
+  <!-- ===== 5. 徽标落点 ===== -->
+  <section class="sec">
+    <h2><span class="num">5</span>卡片上的分组徽标放哪：两个子方案</h2>
+    <div class="cmp2">
+      <div class="cmpbox">
+        <div class="hd">① 挂在名称右侧徽标群 <small>省一行，但那一行已经挤</small></div>
+        <div class="bd">
+          <article class="acard">
+            <div class="atop">
+              <div class="ava b1">合</div>
+              <div class="nmwrap">
+                <div class="nrow">
+                  <span class="nm">合同审查助手</span>
+                  <span class="badge team">👥 专家团</span>
+                  <span class="badge grp">法务合规</span>
+                </div>
+                <div class="metaline"><span class="dotok"></span>已就绪 · 通用 · LOCAL</div>
+              </div>
+              <div class="sw"></div>
+            </div>
+            <p class="adesc">比对合同条款与法务红线，标出风险条款并给出修改建议。</p>
+            <div class="afoot">
+              <div class="own">创建者：张伟<br><span class="upd">更新于 11/12 13:05</span></div>
+              <span class="i">💬</span><span class="i">⋯</span>
+            </div>
+          </article>
+        </div>
+      </div>
+      <div class="cmpbox">
+        <div class="hd">② 描述下方独立一行 <small>更清楚，多占 22px 高</small></div>
+        <div class="bd">
+          <article class="acard">
+            <div class="atop">
+              <div class="ava b1">合</div>
+              <div class="nmwrap">
+                <div class="nrow">
+                  <span class="nm">合同审查助手</span>
+                  <span class="badge team">👥 专家团</span>
+                </div>
+                <div class="metaline"><span class="dotok"></span>已就绪 · 通用 · LOCAL</div>
+              </div>
+              <div class="sw"></div>
+            </div>
+            <p class="adesc">比对合同条款与法务红线，标出风险条款并给出修改建议。</p>
+            <div class="gline"><span class="badge grp">法务合规</span></div>
+            <div class="afoot">
+              <div class="own">创建者：张伟<br><span class="upd">更新于 11/12 13:05</span></div>
+              <span class="i">💬</span><span class="i">⋯</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12.5px;margin:12px 0 0">
+      两个方案配套同一条规则：<b>锁定某个分组时，卡片不再逐条显示分组徽标</b>（每条都一样，纯噪音）；
+      未分组的显示虚线「未分组」，让漏网的看得见。点击徽标 = 只看这个分组。
+    </p>
+  </section>
+
+  <!-- ===== 6. 表单 ===== -->
+  <section class="sec">
+    <h2><span class="num">6</span>新建 / 编辑弹窗里的分组字段</h2>
+    <div class="dlg">
+      <div class="hd">
+        <h4>编辑智能体</h4>
+        <span class="muted" style="font-size:18px;cursor:pointer">✕</span>
+      </div>
+      <div class="tabs">
+        <span class="on">基本信息</span><span>能力标签</span><span>专家团</span><span>排版样式</span>
+      </div>
+      <div class="bd">
+        <div class="fr">
+          <div class="fld">
+            <label>显示名称</label>
+            <input value="合同审查助手" />
+          </div>
+          <div class="fld">
+            <label>唯一标识</label>
+            <input value="contract_review" />
+          </div>
+          <div class="fld full">
+            <label>业务分组</label>
+            <input id="formGroup" list="groupOptions" value="法务合规" placeholder="如 法务合规（留空 = 未分组）" />
+            <div class="chips" id="formChips"></div>
+            <p class="hint">
+              单选，只用于智能体中心的页签与筛选。不参与权限、不进 AI 提示词，也不影响路由——
+              那是「能力标签」(<code>capabilities</code>) 的职责。
+            </p>
+            <datalist id="groupOptions"></datalist>
+          </div>
+          <div class="fld full">
+            <label>描述</label>
+            <textarea rows="2">比对合同条款与法务红线，标出风险条款并给出修改建议。</textarea>
+          </div>
+        </div>
+      </div>
+      <div class="ft">
+        <button class="pbtn">取消</button>
+        <button class="pbtn pri">保存</button>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12.5px;margin:12px 0 0">
+      字段放在「基本信息」tab 的第三行（名称 / 标识之后），与描述同属「这是什么」；
+      候选值来自全平台已有分组 + 常用建议，也允许直接输入新名字。
+    </p>
+  </section>
+
+  <!-- ===== 7. 待拍板 ===== -->
+  <section class="sec">
+    <section class="decisions">
+      <h2>需要你拍板 4 件事</h2>
+      <ol>
+        <li>
+          <b>分组落库用新字段 <code>group_name</code>，还是复用已有的 <code>owner_group</code>？</b>
+          <span class="rec">建议：新增 <code>group_name</code></span>——<code>owner_group</code> 的注释是「所属用户组」，
+          是组织/权限维度，还被分享与发布服务在用；拿它当业务分组，以后「按用户组授权智能体」就没地方放了。
+        </li>
+        <li>
+          <b>页签放在哪一屏？</b>
+          <span class="rec">建议：只放「全部智能体 / 我的智能体」两个视图</span>（方案 A）。
+          「分享给我 / 我分享的 / 专家团」不做分组——那是待办与协作队列，不是浏览场景。
+        </li>
+        <li>
+          <b>页签上的数字算不算其它筛选？</b>
+          <span class="rec">建议：算（除分组本身之外的所有条件）</span>——
+          这一页有 6 个筛选，如果页签数字只算搜索，用户勾了「只看已启用」后会看到「页签说 5、点进去 3」。
+          原则始终是：<b>页签数字 = 点进去看到的条数</b>。
+        </li>
+        <li>
+          <b>要不要「批量设分组」？</b>
+          <span class="rec">建议：本期先单条</span>（新建/编辑弹窗里改 + 卡片更多菜单里改），
+          但有 12 个以上存量智能体时一条条点会烦——如果你要，我可以顺手做成「批量模式里多一个『设置分组』」。
+        </li>
+      </ol>
+    </section>
+  </section>
+
+  <footer>原型 · 2026-11-12 · 智能体中心业务分组（未实现，等确认后再动代码）</footer>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  /* ---------------- 数据 ---------------- */
+  const BASE = [
+    { id:'contract_review', name:'合同审查助手', desc:'比对合同条款与法务红线，标出风险条款并给出修改建议。', group:'法务合规', ready:true, type:'通用', engine:'LOCAL', owner:'张伟', enabled:true, system:false, team:true, tone:'b1', ch:'合' },
+    { id:'bid_writer', name:'投标文件生成', desc:'按招标文件要求组织章节，自动引用公司资质与业绩。', group:'法务合规', ready:true, type:'任务型', engine:'LOCAL', owner:'李娜', enabled:true, system:false, team:false, tone:'b2', ch:'投' },
+    { id:'policy_qa', name:'制度问答', desc:'基于内部制度库回答考勤、报销、用章流程。', group:'法务合规', ready:false, type:'问答型', engine:'LOCAL', owner:'王强', enabled:true, system:false, team:false, tone:'b3', ch:'制' },
+    { id:'finance_report', name:'财报分析助手', desc:'读三张表并生成同比环比分析与管理层摘要。', group:'财务分析', ready:true, type:'分析型', engine:'LOCAL', owner:'张伟', enabled:true, system:false, team:false, tone:'b2', ch:'财' },
+    { id:'invoice_audit', name:'发票稽核', desc:'核对发票要素与报销单，标出不合规项。', group:'财务分析', ready:true, type:'任务型', engine:'AGENT_SCOPE', owner:'陈敏', enabled:true, system:false, team:false, tone:'b4', ch:'票' },
+    { id:'sql_copilot', name:'SQL 取数助手', desc:'自然语言转 SQL，自动补上权限校验与行数上限。', group:'数据分析', ready:true, type:'分析型', engine:'LOCAL', owner:'刘洋', enabled:true, system:false, team:false, tone:'b1', ch:'S' },
+    { id:'metric_explain', name:'指标口径解释', desc:'解释指标定义、计算逻辑与常见误用。', group:'数据分析', ready:true, type:'问答型', engine:'LOCAL', owner:'刘洋', enabled:false, system:false, team:false, tone:'b5', ch:'指' },
+    { id:'dashboard_design', name:'看板设计', desc:'按业务问题推荐图表形态并给出布局建议。', group:'数据分析', ready:false, type:'分析型', engine:'LOCAL', owner:'赵磊', enabled:true, system:false, team:false, tone:'b3', ch:'看' },
+    { id:'ticket_triage', name:'工单分派', desc:'按内容把工单分派到对应处理组，输出建议与置信度。', group:'客户服务', ready:true, type:'任务型', engine:'LOCAL', owner:'陈敏', enabled:true, system:false, team:false, tone:'b2', ch:'工' },
+    { id:'cs_copilot', name:'客服坐席助手', desc:'实时给出话术建议与知识引用，支持多轮追问。', group:'客户服务', ready:true, type:'问答型', engine:'AGENT_SCOPE', owner:'孙悦', enabled:true, system:true, team:false, tone:'b4', ch:'客' },
+    { id:'meeting_notes', name:'会议纪要', desc:'把录音转写整理成决议、待办与责任人。', group:'办公协同', ready:true, type:'任务型', engine:'LOCAL', owner:'周涛', enabled:true, system:false, team:false, tone:'b5', ch:'会' },
+    { id:'doc_polish', name:'公文润色', desc:'按公文格式规范润色通知、请示、函。', group:'办公协同', ready:true, type:'任务型', engine:'LOCAL', owner:'周涛', enabled:true, system:false, team:false, tone:'b1', ch:'文' },
+    { id:'main_assistant', name:'智能助手', desc:'平台默认对话入口，按能力路由到合适的智能体。', group:'', ready:true, type:'通用', engine:'LOCAL', owner:'系统', enabled:true, system:true, team:false, tone:'b3', ch:'智' },
+    { id:'legacy_bot', name:'历史兼容机器人', desc:'早期接入的通用问答，暂未归档。', group:'', ready:false, type:'问答型', engine:'LOCAL', owner:'王强', enabled:false, system:false, team:false, tone:'b4', ch:'历' },
+  ];
+
+  /* 18 个分组：用于演示页签溢出 */
+  const MANY_GROUPS = ['法务合规','财务分析','数据分析','客户服务','办公协同','人力资源','供应链','市场投放','研发效能','运维监控',
+    '知识管理','风险控制','采购管理','质量管理','培训赋能','审计合规','投标支撑','项目交付'];
+
+  const state = { plan:'A', view:'all', many:false, group:'all', kw:'' };
+
+  /** many 模式下把每条智能体摊到不同分组上（保证每组分到 1~2 条） */
+  function agents() {
+    if (!state.many) return BASE;
+    return BASE.map((a, i) => ({ ...a, group: MANY_GROUPS[i % MANY_GROUPS.length] }));
+  }
+
+  /** 当前一级视图内的智能体（全部 / 我的） */
+  function viewAgents() {
+    const all = agents();
+    if (state.view === 'mine') return all.filter((a) => a.owner === '张伟');
+    return all;
+  }
+
+  function kwMatch(a) {
+    const k = state.kw.trim().toLowerCase();
+    if (!k) return true;
+    return [a.name, a.id, a.desc].filter(Boolean).join(' ').toLowerCase().includes(k);
+  }
+
+  /**
+   * 页签计数口径：除「分组」本身之外的所有条件（当前视图 + 搜索 + 其它筛选）都算进来。
+   * 这样页签上的数字永远等于点进去看到的条数。
+   */
+  function tabStats() {
+    const rows = viewAgents().filter(kwMatch);
+    const map = new Map();
+    let grouped = 0;
+    rows.forEach((a) => {
+      const g = (a.group || '').trim();
+      if (!g) return;
+      grouped++;
+      map.set(g, (map.get(g) || 0) + 1);
+    });
+    const items = [...map.entries()]
+      .sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0], 'zh'))
+      .map(([label, count]) => ({ label, count }));
+    return { total: rows.length, items, ungrouped: rows.length - grouped };
+  }
+
+  function currentRows() {
+    const rows = viewAgents().filter(kwMatch);
+    if (state.plan === 'C') {
+      if (state.group === 'all') return rows;
+      if (state.group === '__ungrouped__') return rows.filter((a) => !(a.group || '').trim());
+      return rows.filter((a) => (a.group || '').trim() === state.group);
+    }
+    if (state.group === 'all') return rows;
+    if (state.group === '__ungrouped__') return rows.filter((a) => !(a.group || '').trim());
+    return rows.filter((a) => (a.group || '').trim() === state.group);
+  }
+
+  /* ---------------- 渲染：分组页签 ---------------- */
+  const MAX_VISIBLE = 6;
+
+  function renderTabs() {
+    const { total, items, ungrouped } = tabStats();
+    const box = $('gtabs');
+    const list = [];
+
+    list.push(`<button type="button" class="gtab ${state.group === 'all' ? 'on' : ''}" data-g="all">全部 <span class="n">${total}</span></button>`);
+
+    const visible = items.length > MAX_VISIBLE ? items.slice(0, MAX_VISIBLE - 1) : items;
+    visible.forEach((it) => {
+      list.push(`<button type="button" class="gtab ${state.group === it.label ? 'on' : ''}" data-g="${esc(it.label)}">${esc(it.label)} <span class="n">${it.count}</span></button>`);
+    });
+
+    if (items.length > MAX_VISIBLE) {
+      const rest = items.slice(MAX_VISIBLE - 1);
+      const restCount = rest.reduce((s, it) => s + it.count, 0);
+      list.push(`<div class="gmore"><button type="button" class="gtab" id="gmoreBtn">更多分组 <span class="n">${restCount}</span> ⌄</button><div class="gmenu" id="gmenu" hidden>${rest.map((it) => `<button type="button" data-g="${esc(it.label)}"><span>${esc(it.label)}</span><span class="n">${it.count}</span></button>`).join('')}</div></div>`);
+    }
+
+    if (ungrouped > 0) {
+      list.push(`<button type="button" class="gtab ${state.group === '__ungrouped__' ? 'on' : ''}" data-g="__ungrouped__"><b>未分组</b> <span class="n">${ungrouped}</span></button>`);
+    }
+
+    // 选中的分组被搜索筛空后自动回「全部」（否则停在一个不存在页签上）
+    const exists = state.group === 'all' || state.group === '__ungrouped__' ||
+      items.some((it) => it.label === state.group);
+    if (!exists) state.group = 'all';
+
+    box.innerHTML = list.join('');
+    box.querySelectorAll('[data-g]').forEach((el) => {
+      el.onclick = () => { state.group = el.dataset.g; closeMenu(); renderAll(); };
+    });
+    const more = $('gmoreBtn');
+    if (more) {
+      more.onclick = (e) => { e.stopPropagation(); const m = $('gmenu'); m.hidden = !m.hidden; };
+    }
+
+    $('countTip').textContent = `共 ${total} 个智能体 · 页签数字 = 点进去看到的条数（已含搜索与其它筛选，但不含分组本身）`;
+  }
+
+  /* ---------------- 渲染：卡片 ---------------- */
+  function cardHTML(a) {
+    const g = (a.group || '').trim();
+    const groupBadge = g
+      ? `<button type="button" class="badge grp" data-g="${esc(g)}">${esc(g)}</button>`
+      : `<span class="badge ung">未分组</span>`;
+    // 锁定某组时不再逐条显示分组徽标（每条都一样，纯噪音）
+    const showBadge = state.group === 'all';
+    return `
+      <article class="acard ${a.enabled ? '' : 'off'}">
+        <div class="atop">
+          <div class="ava ${a.tone}">${a.ch}</div>
+          <div class="nmwrap">
+            <div class="nrow">
+              <span class="nm">${esc(a.name)}</span>
+              ${a.team ? '<span class="badge team">👥 专家团</span>' : ''}
+              ${a.system ? '<span class="badge sys">🛡</span>' : ''}
+              ${showBadge ? groupBadge : ''}
+            </div>
+            <div class="metaline">
+              <span class="${a.ready ? 'dotok' : 'dotwarn'}"></span>${a.ready ? '已就绪' : '待完善'}
+              <span style="color:#cbd5e1">·</span>${a.type} · ${a.engine}
+              ${a.enabled ? '' : '<span style="background:#f1f5f9;border-radius:4px;padding:0 5px;color:#64748b">已停用</span>'}
+            </div>
+          </div>
+          <div class="sw ${a.enabled ? '' : 'off'}"></div>
+        </div>
+        <p class="adesc">${esc(a.desc)}</p>
+        <div class="grow"></div>
+        <div class="afoot">
+          <div class="own">创建者：${esc(a.owner)}<br><span class="upd">更新于 11/12 13:05</span></div>
+          <span class="i">💬</span><span class="i">⋯</span>
+        </div>
+      </article>`;
+  }
+
+  function renderCards(targetId) {
+    const rows = currentRows();
+    const grid = $(targetId);
+    grid.innerHTML = rows.map(cardHTML).join('');
+    grid.querySelectorAll('[data-g]').forEach((el) => {
+      el.onclick = (e) => { e.stopPropagation(); state.group = el.dataset.g; renderAll(); };
+    });
+    const empty = $('empty');
+    if (targetId === 'grid') {
+      grid.hidden = rows.length === 0;
+      empty.hidden = rows.length !== 0;
+      if (!rows.length) {
+        empty.textContent = state.kw
+          ? `没有匹配「${state.kw}」的智能体`
+          : state.view === 'mine'
+            ? '你名下还没有智能体。切到「全部智能体」可以看到平台上其他人的。'
+            : '这个分组下还没有智能体';
+      }
+    }
+  }
+
+  /* ---------------- 渲染：左栏（方案 B） ---------------- */
+  function renderLeft() {
+    const { total, items, ungrouped } = tabStats();
+    const html = [`<button type="button" class="${state.group === 'all' ? 'on' : ''}" data-g="all"><span>全部</span><span class="n">${total}</span></button>`];
+    items.forEach((it) => {
+      html.push(`<button type="button" class="${state.group === it.label ? 'on' : ''}" data-g="${esc(it.label)}"><span>${esc(it.label)}</span><span class="n">${it.count}</span></button>`);
+    });
+    if (ungrouped) {
+      html.push(`<button type="button" class="${state.group === '__ungrouped__' ? 'on' : ''}" data-g="__ungrouped__"><span>未分组</span><span class="n">${ungrouped}</span></button>`);
+    }
+    const bar = $('lbar');
+    bar.innerHTML = '<div class="t">业务分组</div>' + html.join('');
+    bar.querySelectorAll('[data-g]').forEach((el) => {
+      el.onclick = () => { state.group = el.dataset.g; renderAll(); };
+    });
+  }
+
+  /* ---------------- 渲染：方案 C 下拉 ---------------- */
+  function renderSelect() {
+    const { total, items, ungrouped } = tabStats();
+    const sel = $('gselect');
+    const opts = [`<option value="all">全部分组（${total}）</option>`]
+      .concat(items.map((it) => `<option value="${esc(it.label)}">${esc(it.label)}（${it.count}）</option>`));
+    if (ungrouped) opts.push(`<option value="__ungrouped__">未分组（${ungrouped}）</option>`);
+    sel.innerHTML = opts.join('');
+    sel.value = state.group;
+    sel.onchange = () => { state.group = sel.value; renderAll(); };
+  }
+
+  /* ---------------- 渲染：表单候选 ---------------- */
+  function renderFormOptions() {
+    const all = agents();
+    const names = [...new Set(all.map((a) => (a.group || '').trim()).filter(Boolean))]
+      .sort((x, y) => x.localeCompare(y, 'zh'));
+    $('groupOptions').innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join('');
+    $('formChips').innerHTML = names.map((n) => `<span class="chip" data-fill="${esc(n)}">${esc(n)}</span>`).join('');
+    $('formChips').querySelectorAll('[data-fill]').forEach((el) => {
+      el.onclick = () => { $('formGroup').value = el.dataset.fill; };
+    });
+  }
+
+  /* ---------------- 总渲染 ---------------- */
+  function renderAll() {
+    const { total } = tabStats();
+    $('totCount').textContent = total;
+
+    const isB = state.plan === 'B';
+    const isC = state.plan === 'C';
+
+    $('gtabsWrap').hidden = isB || isC;
+    $('gselectWrap').hidden = !isC;
+    $('bwrap').hidden = !isB;
+    $('grid').hidden = isB;
+    $('empty').hidden = true;
+
+    if (isB) { renderLeft(); renderCards('gridB'); }
+    else if (isC) { renderSelect(); renderCards('grid'); }
+    else { renderTabs(); renderCards('grid'); }
+
+    $('planLabel').textContent = isB ? 'B · 左侧分组栏' : isC ? 'C · 只加下拉筛选（分布不可见）' : 'A · 分组页签条';
+    renderFormOptions();
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  function closeMenu() { const m = $('gmenu'); if (m) m.hidden = true; }
+
+  /* ---------------- 交互 ---------------- */
+  $('planSeg').querySelectorAll('button').forEach((b) => {
+    b.onclick = () => {
+      state.plan = b.dataset.plan; state.group = 'all';
+      $('planSeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      document.querySelectorAll('#plans .plan').forEach((p) => p.classList.toggle('on', p.dataset.plan === state.plan));
+      renderAll();
+    };
+  });
+  $('viewSeg').querySelectorAll('button').forEach((b) => {
+    b.onclick = () => {
+      state.view = b.dataset.view; state.group = 'all';
+      $('viewSeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      document.querySelectorAll('#ltabs .ltab').forEach((x) => x.classList.toggle('on', x.dataset.ltab === state.view));
+      renderAll();
+    };
+  });
+  $('manySeg').querySelectorAll('button').forEach((b) => {
+    b.onclick = () => {
+      state.many = b.dataset.many === '1'; state.group = 'all';
+      $('manySeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      renderAll();
+    };
+  });
+  document.querySelectorAll('#plans .plan').forEach((p) => {
+    p.onclick = () => { $('planSeg').querySelector(`[data-plan="${p.dataset.plan}"]`).click(); };
+  });
+  $('kw').oninput = (e) => { state.kw = e.target.value; renderAll(); };
+  document.addEventListener('click', closeMenu);
+  $('toForm').onclick = () => {
+    const el = $('formGroup');
+    el.scrollIntoView({ behavior:'smooth', block:'center' });
+    el.style.boxShadow = '0 0 0 4px rgba(37,99,235,.22)';
+    setTimeout(() => { el.style.boxShadow = ''; el.focus(); }, 1400);
+  };
+
+  /* URL 参数：?plan=B&view=mine&many=1 */
+  const q = new URLSearchParams(location.search);
+  if (q.get('plan')) {
+    const b = $('planSeg').querySelector(`[data-plan="${q.get('plan').toUpperCase()}"]`);
+    if (b) b.click();
+  }
+  if (q.get('view')) {
+    const b = $('viewSeg').querySelector(`[data-view="${q.get('view')}"]`);
+    if (b) b.click();
+  }
+  if (q.get('many') === '1') $('manySeg').querySelector('[data-many="1"]').click();
+
+  renderAll();
+})();
+</script>
+</body>
+</html>

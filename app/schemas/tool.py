@@ -4,15 +4,9 @@ from datetime import datetime
 import json
 
 
-def normalize_group_name(value: Optional[str]) -> Optional[str]:
-    """业务分组名归一：去首尾空白，空白串视为「未分组」（None）。
-
-    既允许使用者清空分组（回到未分组），也避免把 ``"   "`` 存成看不见的空分组。
-    """
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
+# 归一口径已抽到 app/utils/group_name.py（工具 / 数据集 / 智能体 / 技能四处共用）。
+# 这里保留同名导入，`from app.schemas.tool import normalize_group_name` 的老写法继续可用。
+from app.utils.group_name import GROUP_NAME_MAX_LEN, normalize_group_name  # noqa: F401
 
 
 class SysApiToolBase(BaseModel):

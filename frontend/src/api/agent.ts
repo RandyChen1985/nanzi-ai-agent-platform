@@ -61,6 +61,12 @@ export interface AIAgent {
   /** 创建者显示名（real_name 优先），管理员辨认归属用 */
   created_by_name?: string
   owner_group?: string
+  /**
+   * 业务分组（单值，可空 = 未分组）：只服务智能体中心的页签与筛选。
+   * 与 `owner_group`（所属用户组 / 组织权限维度）、`capabilities`（多值路由标签）是三件事，
+   * 详见 db-prod/V214 的说明。
+   */
+  group_name?: string | null
   is_editable?: boolean
   engine_type?: 'LOCAL' | 'RAGFLOW' | 'OPENCLAW'
   engine_config?: any
@@ -131,6 +137,8 @@ export interface AIAgentBase {
   is_expert_team_lead?: boolean
   /** 专家团展示信息；两项都空时后端归一成 null */
   team_profile?: { name?: string; intro?: string } | null
+  /** 业务分组（单值）；空串/null = 未分组 */
+  group_name?: string | null
 }
 
 export interface ToolConfigItem {
@@ -224,6 +232,15 @@ export const agentApi = {
   
   // Update agent
   updateAgent: (id: string, data: Partial<AIAgent>) => axios.put<AIAgent>(`/api/portal/agents/${id}`, data),
+
+  /**
+   * 只改「业务分组」。
+   *
+   * 不复用 `updateAgent`：那条路是整表单保存，后端会连带校验待审冻结 / 是否系统级 / 引擎
+   * 是否可改，用户只是归个类，不该因为「正在审核中」被拒；也不会顺手覆盖别的字段。
+   */
+  updateAgentGroup: (id: string, groupName: string | null) =>
+    axios.put<AIAgent>(`/api/portal/agents/${id}/group`, { group_name: groupName }),
 
   // Batch reorder agents (sort_order)
   reorderAgents: (items: { id: string; sort_order: number }[]) =>

@@ -35,6 +35,10 @@ class AIAgent(Base):
     engine_config = Column(JSON, nullable=True)
     created_by = Column(String(64), nullable=True)
     owner_group = Column(String(50), nullable=True)
+    # 业务分组（单值）：只服务智能体中心的页签与筛选，不参与权限、不进 AI 提示词、
+    # 不影响路由。与 owner_group（所属用户组 / 组织权限维度）、capabilities
+    # （多值路由标签）刻意分开，详见 db-prod/V214 的说明。
+    group_name = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
