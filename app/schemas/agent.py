@@ -39,9 +39,13 @@ class ToolConfigItem(BaseModel):
         if value is None or isinstance(value, bool):
             return None
         try:
-            number = int(str(value).strip())
+            parsed = float(str(value).strip())
         except (TypeError, ValueError):
             return None
+        # JSON 里 10.0 很常见：先按浮点解析再判整，否则 int("10.0") 会把它洗成「未配置」
+        if not parsed.is_integer():
+            return None
+        number = int(parsed)
         return number if 1 <= number <= 3600 else None
 
     @model_validator(mode="after")

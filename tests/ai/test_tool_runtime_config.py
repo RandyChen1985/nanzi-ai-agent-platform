@@ -212,6 +212,10 @@ def test_dirty_timeout_is_coerced_before_chat_config_validation():
     assert ToolConfigItem(name="t", timeout_seconds=0).timeout_seconds is None
     assert ToolConfigItem(name="t", timeout_seconds=-5).timeout_seconds is None
     assert ToolConfigItem(name="t", timeout_seconds="abc").timeout_seconds is None
+    # JSON 里 10.0 这类浮点形式很常见，不能当成脏值洗掉；10.5 才算非法
+    assert ToolConfigItem(name="t", timeout_seconds=10.0).timeout_seconds == 10
+    assert ToolConfigItem(name="t", timeout_seconds="10.0").timeout_seconds == 10
+    assert ToolConfigItem(name="t", timeout_seconds=10.5).timeout_seconds is None
     assert ToolConfigItem(name="t", timeout_seconds=7200).timeout_seconds is None
     assert ToolConfigItem(name="t", timeout_seconds=10).timeout_seconds == 10
     assert ToolConfigItem(name="t", timeout_seconds="12").timeout_seconds == 12

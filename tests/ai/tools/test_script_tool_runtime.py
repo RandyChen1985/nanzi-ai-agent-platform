@@ -103,6 +103,19 @@ def _config(**overrides) -> ScriptToolConfig:
     return ScriptToolConfig(**base)
 
 
+def test_sandbox_inner_timeout_not_looser_than_outer():
+    """沙箱通道的内层超时不能比外层宽。
+
+    外层按 RuntimeToolSpec.timeout_seconds 到点就取消协程；内层原来是 `+5`，
+    于是永远轮不到它自己报「脚本执行超时」，用户只能看到外层那句笼统超时。
+    """
+    source = Path(__file__).resolve().parents[3].joinpath(
+        "app/services/ai/tools/script_tool_runtime.py"
+    ).read_text(encoding="utf-8")
+    assert "timeout=timeout_seconds + 5" not in source
+    assert "timeout=timeout_seconds," in source
+
+
 async def test_resolve_timeout_prefers_resolved_tool_timeout(tmp_path):
     """外层算好的三级超时必须优先，否则脚本自带超时会反过来压过工具级配置。
 

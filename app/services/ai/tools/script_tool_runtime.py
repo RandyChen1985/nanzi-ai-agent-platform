@@ -539,9 +539,12 @@ class ScriptToolRunner:
         )
         try:
             async with _sandbox_activity_heartbeat(cache_key=cache_key):
+                # 不能比外层多留余量：外层按 RuntimeToolSpec.timeout_seconds 到点就会
+                # 取消协程，内层如果更宽松，就永远轮不到它自己报「脚本执行超时」，
+                # 用户只能看到外层那句笼统的超时。这里与外层同口径（本地分支亦然）。
                 raw = await asyncio.wait_for(
                     _await_maybe(bash_tool(command=command, cwd=sandbox_cwd)),
-                    timeout=timeout_seconds + 5,
+                    timeout=timeout_seconds,
                 )
         except asyncio.TimeoutError:
             return ShellRunResult(exit_code=None, stdout="", stderr="", timed_out=True)

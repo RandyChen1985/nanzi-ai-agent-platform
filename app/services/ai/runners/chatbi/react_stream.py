@@ -312,6 +312,15 @@ async def stream_agentscope_events(
             or runner._is_schema_fatal(state)
         )
         runner._sync_pending_data_run_state(state, stream_state)
+        # 与 AssistantAgentRunner._build_tool_observation 同口径：完成态审计也要能看出
+        # 这次调用的生效超时与来源，否则排障时只能猜「到底按谁的预算跑的」。
+        tool_timeout_seconds = None
+        tool_timeout_source = None
+        for candidate in tools or []:
+            if getattr(candidate, "name", "") == tool_name:
+                tool_timeout_seconds = getattr(candidate, "timeout_seconds", None)
+                tool_timeout_source = getattr(candidate, "timeout_source", None)
+                break
         runner._increment_step()
         runner.trace_buffer.append(
             AgentExecutionStep(
@@ -325,6 +334,11 @@ async def stream_agentscope_events(
                 tool_output=output,
                 raw_log=str(output),
                 execution_time_ms=duration_ms,
+                meta_info=(
+                    {"timeout_seconds": tool_timeout_seconds, "timeout_source": tool_timeout_source}
+                    if tool_timeout_seconds is not None
+                    else None
+                ),
                 timestamp=datetime.fromtimestamp(state.tool_started_at.get(tool_id, time.time())),
             )
         )
@@ -348,6 +362,7 @@ async def stream_agentscope_events(
             "type": "log",
             "id": tool_id,
             "title": f"工具完成: {tool_name}",
+            **({"timeout_seconds": tool_timeout_seconds} if tool_timeout_seconds is not None else {}),
             "details": runner._format_tool_details(tool_name, output, state, tool_args),
             "status": "success" if not is_error else "error",
             "execution_time_ms": duration_ms,

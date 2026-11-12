@@ -243,3 +243,18 @@ pending 行恰恰是唯一需要分母的状态（完成态已有实际耗时）
 `tests/frontend/test_tool_advanced_badge_contract.py::test_legacy_logs_path_also_carries_timeout`。
 
 验证：`tests/frontend` 4885 passed / 1 skipped；`tests/ai` 相关 34 passed；`vue-tsc -p tsconfig.app.json --noEmit` 与基线零差异（157）。
+
+## 十三、第五轮：四条边界的核实与处置（2026-11-12）
+
+Review 的第二遍深挖提了 4 条边界问题，逐条核实：**3 条成立并已修，1 条属设计取舍，另有 1 个子项记录不修**。
+
+| # | 问题 | 核实 | 处置 |
+|---|---|---|---|
+| 1 | 沙箱模式下 `_run_sandbox` 用 `timeout=timeout_seconds + 5`，内层永远比外层宽 → 外层先取消协程，用户看不到「脚本执行超时（上限 N 秒）」这句内层文案 | **成立**（既有行为，但与本轮的三级超时语义冲突） | 改为 `timeout=timeout_seconds`。内层值本身已含 0.5s 余量（`resolve_timeout`），必然先于外层触发，与本地分支口径一致 |
+| 2 | `_coerce_timeout_seconds` 用 `int(str(value))`，JSON 里常见的 `10.0` 会被 `int("10.0")` 判成脏值洗成 `None` | **成立**（本轮新写的清洗逻辑自身的 bug） | 改先 `float()` 解析再判 `is_integer()`：`10.0 → 10`，`10.5 → None` |
+| 3 | 部分内置工具自带固定内层超时（如 `system_http_request` 的 `httpx(timeout=30)`）：工具级往小调有效（外层掐断），往大写调无效 | **成立，但属既有设计** | **不修**：逐个改内置工具的内部超时不现实，且「工具级只能收紧」的语义下，放大本就该由上层预算决定。记录为已知限制 |
+| 4a | ChatBI 的完成态 `AgentExecutionStep` / `log_payload` 没带 `timeout_seconds` / `timeout_source`，与 `AssistantAgentRunner._build_tool_observation` 不一致 | **成立** | 已补：完成态同样从 tools 里取生效值与来源 |
+| 4b | 委派工具只给 `sub_agent_call` 配超时，自动补齐的 `sub_agent_batch_call`（字符串条目）不会继承 | **成立，设计合理** | **不修**：batch 是另一个工具，用户没给它配就是没配；强行复制会让「配置视图」与「实际生效」再次不一致 |
+
+验证：`tests/ai` + `tests/api` **5026 passed**；`tests/frontend` 4885 passed / 1 skipped；`vue-tsc -p tsconfig.app.json --noEmit` 与基线零差异（157）。
+新增测试：`test_sandbox_inner_timeout_not_looser_than_outer`、`_coerce_timeout_seconds` 的浮点用例。
