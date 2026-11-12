@@ -38,6 +38,7 @@ from app.services.mcp.stale_tool_cleanup import (
     prune_agent_versions_by_names,
 )
 from app.services.mcp.tool_ref_health import configured_tool_names as _configured_tool_names
+from app.utils.group_name import GROUP_NAME_MAX_LEN, normalize_group_name
 from app.services.mcp.management_rate_limit import enforce_mcp_management_rate_limit
 from app.services.mcp_share_service import (
     McpShareConflictError,
@@ -119,6 +120,13 @@ class McpServerBase(BaseModel):
     user_assertion_audience: Optional[str] = Field(default=None, max_length=255)
     user_assertion_key_id: Optional[str] = Field(default=None, max_length=100)
     user_assertion_issuer: Optional[str] = Field(default="nanzi-platform", max_length=255)
+    # 业务分组：左栏页签与筛选用；空值表示「未分组」，不参与任何权限与出站判定
+    group_name: Optional[str] = Field(default=None, max_length=GROUP_NAME_MAX_LEN)
+
+    @field_validator("group_name", mode="before")
+    @classmethod
+    def validate_group_name(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_group_name(value)
 
     @field_validator("server_name")
     @classmethod
@@ -183,6 +191,22 @@ class McpVerifyRequest(McpServerWrite):
         if not text:
             return None
         return _normalize_mcp_server_name(text)
+
+
+class McpServerGroupUpdateRequest(BaseModel):
+    """只改业务分组的轻量请求。
+
+    不复用 ``McpServerWrite``：那条路径要求回传 server_name / sse_url，还会因改名迁移
+    智能体的工具名引用、因服务启用而触发一次远端 sync_tools。用户只是想归个类，
+    不该顺手打一次外部服务。
+    """
+
+    group_name: Optional[str] = Field(default=None, max_length=GROUP_NAME_MAX_LEN)
+
+    @field_validator("group_name", mode="before")
+    @classmethod
+    def validate_group_name(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_group_name(value)
 
 
 def _normalized_remark(value: Optional[str]) -> Optional[str]:
@@ -1017,6 +1041,72 @@ async def create_echo_test_mcp(
     response.authorization_configured, response.masked_auth_headers = mcp_auth_headers_summary(server)
     return response
 
+async def _server_response_with_counts(db: AsyncSession, server: McpServer) -> McpServerResponse:
+    """把单条服务拼成与列表一致的响应（含三个工具计数）。
+
+    分组更新只改一列，但前端拿返回值和列表项合并，计数必须照旧带上，
+    否则卡片上的「已发布 N」会在改完分组后瞬间变成 0。
+    """
+    stmt = (
+        select(
+            func.sum(case((McpToolCache.is_available.is_(True), 1), else_=0)).label("available"),
+            func.sum(case((McpToolCache.is_available.is_(False), 1), else_=0)).label("stale"),
+            func.sum(
+                case(
+                    (
+                        and_(
+                            McpToolCache.is_available.is_(True),
+                            McpToolCache.is_published.is_(True),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("published"),
+        )
+        .where(McpToolCache.server_id == server.id)
+    )
+    row = (await db.execute(stmt)).one()
+    item = McpServerResponse.model_validate(server)
+    item.tool_count = int(row.available or 0)
+    item.stale_tool_count = int(row.stale or 0)
+    item.published_tool_count = int(row.published or 0)
+    item.auth_headers_configured = mcp_auth_headers_configured(server)
+    item.authorization_configured, item.masked_auth_headers = mcp_auth_headers_summary(server)
+    return item
+
+
+@router.put(
+    "/servers/{server_id}/group",
+    response_model=McpServerResponse,
+    dependencies=[Depends(require_permission("element", "element:mcp_management:edit"))],
+)
+async def update_mcp_server_group(
+    server_id: str,
+    data: McpServerGroupUpdateRequest,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    """只改业务分组。
+
+    刻意不复用 ``PUT /servers/{server_id}``：那条路会整表单覆盖、改名时迁移智能体的
+    工具名引用、服务启用时还会触发一次远端 sync_tools。分组是纯导航字段，
+    也不检查「服务是否可编辑」之外的东西——它不改变任何运行时行为。
+    """
+    server = (await db.execute(select(McpServer).where(McpServer.id == server_id))).scalar_one_or_none()
+    if not server:
+        raise HTTPException(status_code=404, detail="MCP 服务不存在")
+    if server.scope == "global" and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="只有系统管理员才能修改平台公共 MCP 服务的分组")
+    if server.scope == "personal" and server.user_id != _get_user_id(user):
+        raise HTTPException(status_code=403, detail="无法修改其他用户的私有 MCP 服务")
+
+    server.group_name = normalize_group_name(data.group_name)
+    await db.commit()
+    await db.refresh(server)
+    return await _server_response_with_counts(db, server)
+
+
 @router.post("/servers", response_model=McpServerResponse, dependencies=[Depends(require_permission("element", "element:mcp_management:create"))])
 async def create_mcp_server(
     data: McpServerWrite,
@@ -1175,6 +1265,9 @@ async def update_mcp_server(
     # 启用/禁用等局部更新可能不传 remark，避免误清空
     if "remark" in data.model_fields_set:
         server.remark = _normalized_remark(data.remark)
+    # 分组同理：版本配置、凭据面板等表单根本不带 group_name，无条件赋值会悄悄清空分组
+    if "group_name" in data.model_fields_set:
+        server.group_name = data.group_name
     await db.commit()
     _clear_runtime_tool_cache()
 
@@ -1224,6 +1317,7 @@ async def update_mcp_server(
     response_data["user_assertion_audience"] = server.user_assertion_audience
     response_data["user_assertion_key_id"] = server.user_assertion_key_id
     response_data["user_assertion_issuer"] = server.user_assertion_issuer
+    response_data["group_name"] = server.group_name
     response_data["auth_headers_configured"] = mcp_auth_headers_configured(server)
     response_data["authorization_configured"], response_data["masked_auth_headers"] = (
         mcp_auth_headers_summary(server)
