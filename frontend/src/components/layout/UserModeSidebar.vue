@@ -49,16 +49,22 @@
     </div>
 
     <!--
-      菜单区固定、任务区独立滚动。
+      菜单区与会话列表共享剩下的高度（仍是两个独立滚动区）。
 
       之前两者共用一个滚动容器：任务多或窗口矮（分屏 / 13 寸）时菜单会被一起滚走，
-      想换入口得先滚回顶部。菜单内容本身也会随「专家」「更多」展开变长，所以给它
-      自己的 52vh 上限与滚动条。
+      想换入口得先滚回顶部。于是给菜单区加了 52vh 死上限——但「更多」展开后子项比
+      52vh 还高，后面几项落到滚动条外，滚动条之外看着就像菜单只有这么多（作者本人
+      漏看过「系统概览」「系统设置」）。
+
+      现在改成：菜单区按内容自然高度铺开，会话列表 flex-1 让位（先被压缩，压到
+      min-h-[9rem] 就停），空间不够时菜单区才开始自己滚动 + 底部渐隐提示。
+      展开「更多」→ 整组可见、会话列表整体下移；收起 → 会话列表空间自动还回来。
+      全靠 flex 分配，不需要测量像素，窗口缩放 / 分屏也不会算错。
     -->
-    <div class="relative flex-shrink-0 px-2.5">
+    <div class="relative flex min-h-0 px-2.5">
       <div
         ref="menuScrollRef"
-        class="max-h-[52vh] overflow-y-auto custom-scrollbar"
+        class="min-h-0 w-full overflow-y-auto custom-scrollbar"
         @scroll.passive="updateMenuOverflow"
       >
         <nav class="flex flex-col gap-0.5" aria-label="用户模式导航">
@@ -114,7 +120,11 @@
                 </svg>
               </button>
 
-              <div v-show="!collapsed && expanded[item.key] !== false" class="flex flex-col gap-0.5 pb-1 pl-[30px]">
+              <div
+                v-show="!collapsed && expanded[item.key] !== false"
+                :data-group-body="item.key"
+                class="flex flex-col gap-0.5 pb-1 pl-[30px]"
+              >
                 <button
                   v-for="child in item.children"
                   :key="child.key"
@@ -149,11 +159,13 @@
       />
     </div>
 
-    <!-- 会话列表（历史会话）：收起侧栏时空间不够，整块隐藏（v-show 保住滚动位置与搜索态） -->
+    <!-- 会话列表（历史会话）：收起侧栏时空间不够，整块隐藏（v-show 保住滚动位置与搜索态）。
+         min-h-[9rem]：菜单展开时要给会话列表留一条活路（标题行 + 两三条会话），
+         不能再往下压，剩下的空间交给菜单区自己滚动。 -->
     <div
       v-show="!collapsed"
       ref="scrollRef"
-      class="min-h-0 flex-1 overflow-y-auto px-2.5 pb-3 custom-scrollbar"
+      class="min-h-[9rem] flex-1 overflow-y-auto px-2.5 pb-3 custom-scrollbar"
       @scroll.passive="onScroll"
     >
       <!-- 标题行：sticky，任务多的时候搜索结果也还能关掉 -->
@@ -679,8 +691,9 @@ const menuScrollRef = ref<HTMLElement | null>(null)
 /**
  * 滚动区底部是否还有内容。
  *
- * 菜单区限高 52vh，「更多」展开后子项会溢出——溢出部分没有任何视觉提示，
- * 用户会以为菜单就这么多（作者本人就漏看过「系统设置」）。
+ * 菜单区不再死锁 52vh，正常窗口下展开「更多」整组都看得见。但窗口矮（分屏 / 13 寸）
+ * 或菜单再多几项时，菜单区会被会话列表的 min-h 顶住、只好自己滚动——这时溢出部分
+ * 没有任何视觉提示，用户会以为菜单就这么多（作者本人就漏看过「系统设置」）。
  * 留 4px 容差：亚像素缩放时 scrollHeight 常比 clientHeight 大 1 左右，
  * 不加容差会在本来就没溢出时也闪出渐隐。
  */
@@ -689,6 +702,30 @@ const updateMenuOverflow = () => {
   const el = menuScrollRef.value
   if (!el) return
   menuOverflowBelow.value = el.scrollHeight - el.scrollTop - el.clientHeight > 4
+}
+
+/**
+ * 展开分组后，把这一组的子项挪进可视区。
+ *
+ * 空间够的时候子项本来就在视野里，这一步是空转；空间不够（菜单区已经顶到上限）时
+ * 用户是点了「更多」才展开的，结果新展开的那几项落在他看不见的下面，等于点了个寂寞。
+ */
+const revealGroupBody = (key: string) => {
+  const el = menuScrollRef.value
+  if (!el) return
+  const body = el.querySelector<HTMLElement>(`[data-group-body="${key}"]`)
+  if (!body) return
+  const bodyTop = body.offsetTop
+  const bodyBottom = bodyTop + body.offsetHeight
+  const visibleTop = el.scrollTop
+  const visibleBottom = visibleTop + el.clientHeight
+  if (bodyBottom > visibleBottom) {
+    // 露不全时至少保证最后一项贴着底边，别让「系统概览」这种末项继续藏起来
+    el.scrollTop = bodyBottom - el.clientHeight + 6
+  } else if (bodyTop < visibleTop) {
+    el.scrollTop = Math.max(0, bodyTop - 6)
+  }
+  updateMenuOverflow()
 }
 
 // 内容变化（展开分组、权限码到位）不会触发 scroll，要用 ResizeObserver 补
@@ -721,7 +758,10 @@ watch(
     for (const item of menu.value) {
       if (item.kind !== "group" || !item.children) continue
       const containsCurrent = item.children.some((child) => pathMatches(path, child.path))
+      const wasOpen = expanded[item.key] !== false
       expanded[item.key] = containsCurrent
+      // 路由把某一组撑开时，同样要让子项落在可视区（例如从聊天页直接跳到「更多」里的页面）
+      if (containsCurrent && !wasOpen) void nextTick(() => revealGroupBody(item.key))
     }
   },
   { immediate: true },
@@ -775,6 +815,10 @@ const toggleGroup = (item: ResolvedUserModeItem) => {
     return
   }
   expanded[item.key] = !isOpen
+  if (expanded[item.key]) {
+    // 等 DOM 把子项撑开、flex 重新分配完高度，再决定要不要把这一组滚进视野
+    void nextTick(() => revealGroupBody(item.key))
+  }
 }
 
 const navItemClass = (item: ResolvedUserModeItem, active: boolean): string => {
@@ -1387,12 +1431,13 @@ onMounted(() => {
   window.addEventListener("nanzi:conversation-active", onConversationActive)
   void nextTick(updateMenuOverflow)
   if (typeof ResizeObserver !== "undefined" && menuScrollRef.value) {
-    // 观察 nav 本身：分组展开只改内部高度，容器自身尺寸不变
+    menuResizeObserver = new ResizeObserver(() => updateMenuOverflow())
+    // 观察 nav：分组展开只改内部高度，滚动容器自身尺寸不变
     const nav = menuScrollRef.value.firstElementChild
-    if (nav) {
-      menuResizeObserver = new ResizeObserver(() => updateMenuOverflow())
-      menuResizeObserver.observe(nav)
-    }
+    if (nav) menuResizeObserver.observe(nav)
+    // 同时观察滚动容器：窗口变矮 / 会话列表把空间顶掉时，容器自身高度会变，
+    // 这时候「下面还有内容」的渐隐提示也得跟着重算
+    menuResizeObserver.observe(menuScrollRef.value)
   }
   void pinnedApi.load()
   void loadTasks()
