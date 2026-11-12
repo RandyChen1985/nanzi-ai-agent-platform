@@ -31,6 +31,20 @@ def test_personal_resources_modal_shell_and_tabs():
     assert "我的站内消息" not in modal
 
 
+def test_personal_resources_modal_keeps_fixed_size_and_loading_placeholder():
+    modal = _source("frontend/src/components/embed/PersonalResourcesModal.vue")
+    # 弹窗尺寸固定：用 h-[min(820px,88vh)]，不能用 max-h 让内容决定高度——
+    # 否则切 Tab 时新面板还在懒加载，内容区高度为 0，观感是「窗口先缩成一条再被撑开」
+    assert "h-[min(820px,88vh)]" in modal
+    assert "max-h-[85vh]" not in modal
+    # 懒加载面板必须带占位组件，且占位撑满内容区，加载期间尺寸不跳
+    assert "loadingComponent" in modal
+    assert "PersonalResourcePanelLoader" in modal
+    loader = _source("frontend/src/components/embed/PersonalResourcePanelLoader.vue")
+    assert "h-full" in loader
+    assert "animate-spin" in loader
+
+
 def test_welcome_dashboard_renders_action_cards_before_personal_resources():
     dashboard = _source("frontend/src/components/embed/WelcomeDashboard.vue")
     assert "WorkbenchPersonalResources" in dashboard

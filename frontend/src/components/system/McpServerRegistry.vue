@@ -41,12 +41,16 @@ import {
   DocumentTextIcon,
   EllipsisHorizontalIcon,
   KeyIcon,
+  FolderIcon,
+  TableCellsIcon,
 } from '@heroicons/vue/24/outline'
 import McpServerLogModal from './McpServerLogModal.vue'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
 import SecretLocatorEditor, { ruleSummary, type LocatorRule } from '../secrets/SecretLocatorEditor.vue'
 import { isAuthorizationHeader, planMcpAuthHeaders } from '@/utils/mcpAuthHeaders'
 import McpServerAgentsDrawer from './McpServerAgentsDrawer.vue'
+import ToolGroupTabs from './ToolGroupTabs.vue'
+import { ALL_GROUP_KEY, computeGroupTabs, type GroupableTool } from '@/utils/toolGroupTabs'
 import { buildJavaMcpSample, buildPythonMcpSample } from './mcpCodeSamples'
 
 const props = withDefaults(defineProps<{
@@ -121,13 +125,48 @@ function sortServers(list: any[]): any[] {
   }
 }
 
-const filteredServers = computed(() => {
-  const base = onlyRunning.value
+/**
+ * 右栏概览里的「值得处理」四项：点一下就把左栏切成对应筛选。
+ * 它们不进后端（列表接口只有 scope 一个参数），纯前端过滤即可。
+ */
+type McpTodoKey = 'offline' | 'unpublished' | 'stale-tools' | 'stale-sync'
+const todoFilter = ref<McpTodoKey | ''>('')
+
+const MCP_TODO_LABELS: Record<McpTodoKey, string> = {
+  offline: '未启用',
+  unpublished: '一个工具都没发布',
+  'stale-tools': '远端已失效',
+  'stale-sync': '超过 7 天未同步',
+}
+
+const STALE_SYNC_MS = 7 * 24 * 60 * 60 * 1000
+
+const matchesTodo = (server: any, key: McpTodoKey): boolean => {
+  if (key === 'offline') return server.enabled_status !== 1
+  if (key === 'unpublished') {
+    return server.enabled_status === 1 && Number(server.published_tool_count || 0) === 0
+  }
+  if (key === 'stale-tools') return Number(server.stale_tool_count || 0) > 0
+  const ts = server.last_sync_at ? new Date(server.last_sync_at).getTime() : 0
+  return !ts || Date.now() - ts > STALE_SYNC_MS
+}
+
+/**
+ * 只做「仅运行中 + 关键词 + 待办筛选」，**不含业务分组**。
+ *
+ * 页签的每个数字必须等于「切到那一组能看到的条数」，所以计数从这一层取；
+ * 分组条件在下面的 filteredServers 里再套一次。与工具注册表、智能体中心同一套拆法。
+ */
+const serversMatchingFilters = computed(() => {
+  let base = onlyRunning.value
     ? servers.value.filter((s: any) => s.enabled_status === 1)
     : servers.value
+  if (todoFilter.value) {
+    base = base.filter((s: any) => matchesTodo(s, todoFilter.value as McpTodoKey))
+  }
   const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return sortServers(base)
-  return sortServers(base.filter((s: any) => {
+  if (!query) return base
+  return base.filter((s: any) => {
     const nameMatch = (s.server_name || '').toLowerCase().includes(query)
     // 接口字段是 remark / sse_url（McpServerResponse）；早先这里写成 description / url，
     // 两个都不存在，按备注或地址搜索一律 0 结果。
@@ -137,7 +176,178 @@ const filteredServers = computed(() => {
       (t.name || '').toLowerCase().includes(query) || (t.description || '').toLowerCase().includes(query)
     )
     return nameMatch || descMatch || urlMatch || toolMatch
+  })
+})
+
+/* ---------------- 业务分组 ---------------- */
+
+/** 「未分组」页签与下拉共用的哨兵值 */
+const UNGROUPED_MCP_GROUP = '__ungrouped__'
+
+/** 服务归一口径：去空白，空白即未分组（与后端 normalize_group_name 一致） */
+const mcpGroupName = (server: any) => String(server?.group_name || '').trim()
+
+/**
+ * 交给共享分组模块的形状映射。页签顺序、未分组固定末位、同名按中文排序这些规则
+ * 与工具注册表 / 元数据管理 / 技能工作台 / 智能体中心完全一致，不在这里另立一套。
+ */
+const toGroupableServer = (server: any): GroupableTool => ({
+  id: server.id,
+  name: server.server_name,
+  display_name: server.server_name,
+  description: server.remark,
+  url_template: server.sse_url,
+  is_active: server.enabled_status === 1,
+  group_name: server.group_name ?? '',
+})
+
+const mcpGroupFilter = ref<string>(ALL_GROUP_KEY)
+
+/** 输入是「已过筛选」的列表、filters 传空 → 每个数字就是点进去能看到的条数 */
+const mcpGroupTabsData = computed(() =>
+  computeGroupTabs(serversMatchingFilters.value.map(toGroupableServer), {}, UNGROUPED_MCP_GROUP),
+)
+const mcpGroupTabs = computed(() => mcpGroupTabsData.value.items)
+
+/**
+ * 分组页签默认显示，手动收起后记住选择。
+ *
+ * 左栏只有约 400px：页签是「不认识业务域时用来认路」的辅助，认识的人只想看列表，
+ * 常驻一行在后者眼里就是白占高度。收起后开关仍在原位，不会藏起来找不回。
+ */
+const MCP_GROUP_TABS_VISIBLE_KEY = 'mcp-console:group-tabs-visible'
+
+const readMcpGroupTabsVisible = (): boolean => {
+  try {
+    const raw = localStorage.getItem(MCP_GROUP_TABS_VISIBLE_KEY)
+    return raw === null ? true : raw !== '0'
+  } catch {
+    return true
+  }
+}
+
+const mcpGroupTabsVisible = ref(readMcpGroupTabsVisible())
+
+watch(mcpGroupTabsVisible, (visible) => {
+  try {
+    localStorage.setItem(MCP_GROUP_TABS_VISIBLE_KEY, visible ? '1' : '0')
+  } catch {
+    /* 隐私模式写不进去：不影响本次会话 */
+  }
+})
+
+/** 一个分组都没建时整行连开关都不出现——先教用户点一个没用的开关是负收益 */
+const mcpGroupTabsAvailable = computed(() => mcpGroupTabs.value.length > 2)
+const showMcpGroupTabs = computed(() => mcpGroupTabsAvailable.value && mcpGroupTabsVisible.value)
+
+/**
+ * 页签整行消失时必须退回「全部」。
+ *
+ * 两种会让它消失：只剩「全部 + 一个分组」（`length > 2` 不成立），或用户手动收起。
+ * 这两种情况下页面上**没有任何切回「全部」的入口**，而列表仍按某个分组过滤——
+ * 典型触发路径：在「未分组」里把最后一个未分组服务归了组，页签条随之消失，用户看到的
+ * 是一片空列表，只能刷新页面。收起开关同理：既然不展示分组了，就别再按分组过滤。
+ */
+watch(showMcpGroupTabs, (visible) => {
+  if (!visible && mcpGroupFilter.value !== ALL_GROUP_KEY) {
+    mcpGroupFilter.value = ALL_GROUP_KEY
+  }
+})
+
+/**
+ * 分组候选（「设置分组」弹窗与编辑表单共用的 datalist）。
+ *
+ * 必须从**全量**服务里取：`mcpGroupTabsData` 建立在 `serversMatchingFilters` 之上，
+ * 开着搜索或「仅运行中」时它只剩命中的那几组，用户会把已有分组再打一遍（打错一个字就多一组）。
+ */
+const mcpGroupOptions = computed(() => {
+  const names = new Set<string>()
+  for (const server of servers.value) {
+    const name = mcpGroupName(server)
+    if (name) names.add(name)
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+})
+
+/** 当前分组被删空 / 切了 scope 之后要能自动回到「全部」，否则会停在一个不存在的组上看到空列表 */
+watch([() => props.scope, mcpGroupTabsData], () => {
+  if (mcpGroupFilter.value === ALL_GROUP_KEY) return
+  if (!mcpGroupTabs.value.some((item) => item.key === mcpGroupFilter.value)) {
+    mcpGroupFilter.value = ALL_GROUP_KEY
+  }
+})
+
+/**
+ * 卡片密度：宽松（默认）看完整信息，紧凑则隐藏备注与同步时间，一屏多出一倍行数。
+ * 服务多的用户（55 个）只想「快速找到那一个」，所以给个开关并记住选择。
+ */
+const MCP_CARD_DENSITY_KEY = 'mcp-console:card-density'
+
+const readCardDensity = (): 'comfy' | 'compact' => {
+  try {
+    return localStorage.getItem(MCP_CARD_DENSITY_KEY) === 'compact' ? 'compact' : 'comfy'
+  } catch {
+    return 'comfy'
+  }
+}
+
+const cardDensity = ref<'comfy' | 'compact'>(readCardDensity())
+
+watch(cardDensity, (value) => {
+  try {
+    localStorage.setItem(MCP_CARD_DENSITY_KEY, value)
+  } catch {
+    /* 同上：存不了不影响当前会话 */
+  }
+})
+
+/**
+ * 右栏空态的两块内容：分组分布 + 四类待办。
+ * 未选中服务时右半屏是全页最大的一块面积，与其只写一句提示，不如让它回答
+ * 「哪个业务域最重、有多少服务白配了没发布、谁已经挂了」。
+ */
+const mcpGroupDistribution = computed(() => {
+  const { groups, ungrouped } = mcpGroupTabsData.value
+  const max = Math.max(1, ungrouped, ...groups.map(([, count]) => count))
+  const bars = groups.map(([name, count]) => ({
+    name,
+    count,
+    pct: Math.round((count / max) * 100),
+    muted: false,
   }))
+  if (ungrouped > 0) {
+    bars.push({ name: '未分组', count: ungrouped, pct: Math.round((ungrouped / max) * 100), muted: true })
+  }
+  return bars
+})
+
+const mcpTodoCounts = computed(() => {
+  const rows = serversMatchingFilters.value
+  return (['offline', 'unpublished', 'stale-tools', 'stale-sync'] as McpTodoKey[])
+    .map((key) => ({
+      key,
+      label: MCP_TODO_LABELS[key],
+      count: rows.filter((server: any) => matchesTodo(server, key)).length,
+    }))
+    .filter((item) => item.count > 0)
+})
+
+/** 筛选行上显示的当前待办名（模板里不做 `as` 断言，避免依赖编译期剥离） */
+const todoFilterLabel = computed(() => (todoFilter.value ? MCP_TODO_LABELS[todoFilter.value] : ''))
+
+const toggleTodoFilter = (key: McpTodoKey) => {
+  todoFilter.value = todoFilter.value === key ? '' : key
+}
+
+const filteredServers = computed(() => {
+  const base = mcpGroupFilter.value === ALL_GROUP_KEY
+    ? serversMatchingFilters.value
+    : serversMatchingFilters.value.filter((s: any) => (
+        mcpGroupFilter.value === UNGROUPED_MCP_GROUP
+          ? !mcpGroupName(s)
+          : mcpGroupName(s) === mcpGroupFilter.value
+      ))
+  return sortServers(base)
 })
 
 /** 用户只填后缀；保存时与固定前缀拼接 */
@@ -740,6 +950,7 @@ const restoreHeaderPair = (index: number) => {
 const newServer = ref({
   server_name: '',
   remark: '',
+  group_name: '',
   sse_url: '',
   auth_headers: '{}',
   enabled_status: 1,
@@ -1411,15 +1622,60 @@ function closeActionMenu() {
   actionMenu.value = null
 }
 
-function runServerAction(action: 'share' | 'logs' | 'edit' | 'sync' | 'delete') {
+function runServerAction(action: 'share' | 'logs' | 'edit' | 'group' | 'sync' | 'delete') {
   const server = actionMenu.value?.server
   closeActionMenu()
   if (!server) return
   if (action === 'share') emit('share-server', server)
   else if (action === 'logs') openLogModal(server)
   else if (action === 'edit') openEditModal(server)
+  else if (action === 'group') openGroupDialog(server)
   else if (action === 'sync') syncTools(server.id)
   else if (action === 'delete') confirmDeleteServer(server)
+}
+
+/* ---------------- 设置分组 ---------------- */
+
+/**
+ * 分组弹窗走**专用轻端点** `PUT /api/portal/mcp/servers/{id}/group`。
+ *
+ * 不用整表单保存：那条路要求回传 server_name / sse_url，改名会迁移智能体的工具名引用，
+ * 服务启用时还会触发一次远端 sync_tools。归个类不该顺手打一次外部服务。
+ */
+const groupDialog = ref<{ server: any; value: string } | null>(null)
+const savingGroup = ref(false)
+
+function openGroupDialog(server: any) {
+  groupDialog.value = { server, value: mcpGroupName(server) }
+}
+
+function closeGroupDialog() {
+  if (savingGroup.value) return
+  groupDialog.value = null
+}
+
+async function saveGroup() {
+  const target = groupDialog.value
+  if (!target || savingGroup.value) return
+  const nextValue = target.value.trim()
+  if (nextValue === mcpGroupName(target.server)) {
+    groupDialog.value = null
+    return
+  }
+  savingGroup.value = true
+  try {
+    const { data } = await axios.put(`/api/portal/mcp/servers/${target.server.id}/group`, {
+      group_name: nextValue || null,
+    })
+    // 列表项与右侧详情是同一个对象引用，改一处两处同步
+    target.server.group_name = data?.group_name ?? (nextValue || null)
+    showToast(nextValue ? `已归入「${nextValue}」` : '已移出分组', 'success')
+    groupDialog.value = null
+  } catch (error: any) {
+    showToast(getApiErrorMessage(error, '设置分组失败'), 'error')
+  } finally {
+    savingGroup.value = false
+  }
 }
 
 const createEchoTestMcp = async () => {
@@ -1466,6 +1722,7 @@ const resetWizard = () => {
   newServer.value = {
     server_name: '',
     remark: '',
+    group_name: '',
     sse_url: '',
     auth_headers: '{}',
     enabled_status: 1,
@@ -1578,6 +1835,8 @@ const openEditModal = (server: any) => {
   newServer.value = {
     server_name: server.server_name,
     remark: server.remark || '',
+    // 必须回填：整表单保存会把没带的字段写回默认值，漏这一行等于「编辑一次配置就丢了分组」
+    group_name: server.group_name || '',
     sse_url: server.sse_url,
     auth_headers: '{}',
     enabled_status: server.enabled_status,
@@ -2451,6 +2710,16 @@ onMounted(fetchServers)
           </div>
         </div>
 
+        <!-- 业务分组页签：与工具注册表 / 元数据 / 技能 / 智能体共用同一个组件，
+             顺序、未分组殿后、溢出收进「更多分组」的规则完全一致 -->
+        <div v-if="showMcpGroupTabs" class="mt-2">
+          <ToolGroupTabs
+            v-model="mcpGroupFilter"
+            :items="mcpGroupTabs"
+            aria-label="按业务分组浏览 MCP 服务"
+          />
+        </div>
+
         <!-- 第二行：筛选 + 排序 + 当前条数。固定两行，避免窄左栏把新建挤到下一行 -->
         <div class="flex flex-wrap items-center gap-2">
           <button
@@ -2467,6 +2736,17 @@ onMounted(fetchServers)
             仅运行中
           </button>
 
+          <button
+            v-if="todoFilter"
+            type="button"
+            class="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 text-[11px] text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+            title="清除该筛选"
+            @click="todoFilter = ''"
+          >
+            {{ todoFilterLabel }}
+            <XMarkIcon class="h-3 w-3" />
+          </button>
+
           <select
             v-model="sortBy"
             class="h-8 shrink-0 rounded-md border border-gray-200 bg-white px-1.5 text-[11px] text-gray-600 shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
@@ -2481,6 +2761,31 @@ onMounted(fetchServers)
           <span class="ml-auto shrink-0 text-[10px] text-gray-400">
             {{ filteredServers.length }} / {{ servers.length }} 个服务
           </span>
+
+          <!-- 分组页签收起开关：一个分组都没建时不出现（点了也没用） -->
+          <button
+            v-if="mcpGroupTabsAvailable"
+            type="button"
+            class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-500 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
+            :aria-pressed="mcpGroupTabsVisible"
+            :title="mcpGroupTabsVisible ? '隐藏分组页签' : '显示分组页签'"
+            :aria-label="mcpGroupTabsVisible ? '隐藏分组页签' : '显示分组页签'"
+            @click="mcpGroupTabsVisible = !mcpGroupTabsVisible"
+          >
+            <FolderIcon class="h-4 w-4" :class="mcpGroupTabsVisible ? 'text-indigo-500' : ''" />
+          </button>
+
+          <!-- 卡片密度：55 个服务时紧凑模式一屏能多看一倍 -->
+          <button
+            type="button"
+            class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-500 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
+            :aria-pressed="cardDensity === 'compact'"
+            :title="cardDensity === 'compact' ? '切换为宽松视图' : '切换为紧凑视图'"
+            :aria-label="cardDensity === 'compact' ? '切换为宽松视图' : '切换为紧凑视图'"
+            @click="cardDensity = cardDensity === 'compact' ? 'comfy' : 'compact'"
+          >
+            <TableCellsIcon class="h-4 w-4" :class="cardDensity === 'compact' ? 'text-indigo-500' : ''" />
+          </button>
         </div>
       </div>
 
@@ -2517,18 +2822,36 @@ onMounted(fetchServers)
             v-for="server in filteredServers"
             :key="server.id"
             @click="selectServer(server)"
-            class="group relative cursor-pointer border-l-4 p-3 transition-colors sm:p-4"
-            :class="selectedServer?.id === server.id
-              ? 'border-primary bg-primary/10 ring-1 ring-inset ring-primary/25 hover:bg-primary/15 dark:bg-primary/15 dark:ring-primary/25 dark:hover:bg-primary/20'
-              : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'"
+            class="group relative cursor-pointer border-l-4 transition-colors"
+            :class="[
+              cardDensity === 'compact' ? 'p-2 sm:p-2.5' : 'p-3 sm:p-4',
+              selectedServer?.id === server.id
+                ? 'border-primary bg-primary/10 ring-1 ring-inset ring-primary/25 hover:bg-primary/15 dark:bg-primary/15 dark:ring-primary/25 dark:hover:bg-primary/20'
+                : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50',
+            ]"
             :aria-current="selectedServer?.id === server.id ? 'true' : undefined"
           >
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0 flex-1">
-                <span
-                  class="block truncate text-sm font-bold"
-                  :class="selectedServer?.id === server.id ? 'text-primary' : 'text-gray-900 dark:text-gray-100'"
-                >{{ server.server_name }}</span>
+                <div class="flex min-w-0 items-center gap-1.5">
+                  <span
+                    class="truncate text-sm font-bold"
+                    :class="selectedServer?.id === server.id ? 'text-primary' : 'text-gray-900 dark:text-gray-100'"
+                  >{{ server.server_name }}</span>
+                  <template v-if="mcpGroupFilter === ALL_GROUP_KEY">
+                    <button
+                      v-if="mcpGroupName(server)"
+                      type="button"
+                      class="inline-flex shrink-0 items-center rounded border border-violet-100 bg-violet-50 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300"
+                      :title="`只看「${mcpGroupName(server)}」分组`"
+                      @click.stop="mcpGroupFilter = mcpGroupName(server)"
+                    >{{ mcpGroupName(server) }}</button>
+                    <span
+                      v-else
+                      class="inline-flex shrink-0 items-center rounded border border-dashed border-gray-300 px-1.5 py-0.5 text-[9px] font-semibold text-gray-400 dark:border-gray-600 dark:text-gray-500"
+                    >未分组</span>
+                  </template>
+                </div>
                 <div v-if="server.user_assertion_enabled || isEchoTestServer(server)" class="mt-1 flex flex-wrap items-center gap-1">
                   <span
                     v-if="server.user_assertion_enabled"
@@ -2540,7 +2863,7 @@ onMounted(fetchServers)
                   >平台测试 MCP / 所有智能体可挂载</span>
                 </div>
                 <p
-                  v-if="server.remark"
+                  v-if="server.remark && cardDensity !== 'compact'"
                   class="mt-1 line-clamp-2 text-[11px] leading-snug text-gray-500"
                   :title="server.remark"
                 >{{ server.remark }}</p>
@@ -2624,7 +2947,7 @@ onMounted(fetchServers)
                 已分享 {{ server.share_count }} 次
               </span>
               <span
-                v-if="server.last_sync_at"
+                v-if="server.last_sync_at && cardDensity !== 'compact'"
                 class="ml-auto shrink-0 text-gray-400"
                 :title="new Date(server.last_sync_at).toLocaleString()"
               >{{ formatRelativeTime(server.last_sync_at) }}</span>
@@ -2657,9 +2980,49 @@ onMounted(fetchServers)
       class="flex min-h-[22rem] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:min-h-0"
       :class="selectedServer ? 'flex' : 'hidden lg:flex'"
     >
-      <div v-if="!selectedServer" class="flex flex-1 flex-col items-center justify-center text-gray-400">
-        <SparklesIcon class="mb-4 h-12 w-12 opacity-20" />
-        <p class="text-sm">请在左侧选择一个 MCP 服务查看工具</p>
+      <div v-if="!selectedServer" class="flex flex-1 flex-col items-center justify-center px-6 py-8 text-gray-400">
+        <SparklesIcon class="mb-3 h-10 w-10 opacity-20" />
+        <p class="text-sm">从左侧选一个服务查看工具，或先看这里的分布</p>
+
+        <div v-if="mcpGroupDistribution.length" class="mt-6 w-full max-w-md space-y-1.5">
+          <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">分组分布</div>
+          <div
+            v-for="bar in mcpGroupDistribution"
+            :key="bar.name"
+            class="flex items-center gap-2 text-xs"
+          >
+            <span class="w-24 shrink-0 truncate text-gray-500" :class="bar.muted ? 'italic text-gray-400' : ''">{{ bar.name }}</span>
+            <span class="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+              <span
+                class="block h-full rounded-full"
+                :class="bar.muted ? 'bg-gray-300 dark:bg-gray-600' : 'bg-indigo-400'"
+                :style="{ width: `${bar.pct}%` }"
+              ></span>
+            </span>
+            <span class="w-8 shrink-0 text-right text-[10px] tabular-nums text-gray-400">{{ bar.count }}</span>
+          </div>
+        </div>
+
+        <div v-if="mcpTodoCounts.length" class="mt-5 w-full max-w-md">
+          <div class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">值得处理</div>
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              v-for="todo in mcpTodoCounts"
+              :key="todo.key"
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] transition-colors"
+              :class="todoFilter === todo.key
+                ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300'
+                : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
+              :aria-pressed="todoFilter === todo.key"
+              :title="todoFilter === todo.key ? '再次点击取消该筛选' : `只看「${todo.label}」的服务`"
+              @click="toggleTodoFilter(todo.key)"
+            >
+              {{ todo.label }}
+              <span class="font-bold tabular-nums">{{ todo.count }}</span>
+            </button>
+          </div>
+        </div>
       </div>
       
       <template v-else>
@@ -3444,6 +3807,23 @@ onMounted(fetchServers)
               class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none resize-none"
             />
           </div>
+
+          <div>
+            <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+              业务分组
+              <span class="ml-1 font-normal text-gray-400 normal-case tracking-normal">选填</span>
+            </label>
+            <input
+              v-model="newServer.group_name"
+              list="mcp-group-name-options"
+              maxlength="64"
+              placeholder="例如：研发效能 / 数据平台（留空即「未分组」）"
+              class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none"
+            />
+            <p class="mt-1 text-[10px] text-gray-400 leading-relaxed">
+              只影响「MCP 工具集」左栏的分组页签与筛选，不改动服务配置与调用链路。
+            </p>
+          </div>
           
           <div>
             <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">发现的工具预览</label>
@@ -3636,6 +4016,15 @@ onMounted(fetchServers)
           v-if="canEditMcp"
           type="button"
           class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
+          @click="runServerAction('group')"
+        >
+          <FolderIcon class="h-4 w-4 shrink-0 text-violet-500" />
+          设置分组
+        </button>
+        <button
+          v-if="canEditMcp"
+          type="button"
+          class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
           @click="runServerAction('edit')"
         >
           <PencilSquareIcon class="h-4 w-4 shrink-0 text-gray-400" />
@@ -3664,6 +4053,55 @@ onMounted(fetchServers)
         </button>
       </template>
     </div>
+
+    <!-- 分组候选：卡片「⋯ → 设置分组」与编辑/新建表单共用同一份，两处不会给出不同建议 -->
+    <datalist id="mcp-group-name-options">
+      <option v-for="name in mcpGroupOptions" :key="name" :value="name"></option>
+    </datalist>
+
+    <!-- 设置分组弹窗：走专用轻端点，不触发整表单保存 -->
+    <Teleport to="body">
+      <div v-if="groupDialog" class="fixed inset-0 z-[80] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-slate-900/40" @click="closeGroupDialog"></div>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mcp-group-title"
+          class="relative w-full max-w-md rounded-xl border border-gray-100 bg-white p-5 shadow-2xl dark:border-gray-700 dark:bg-gray-900"
+        >
+          <h3 id="mcp-group-title" class="text-sm font-bold text-gray-900 dark:text-gray-100">设置分组</h3>
+          <p class="mt-1 truncate text-[11px] text-gray-500" :title="groupDialog.server?.server_name">
+            {{ groupDialog.server?.server_name }}
+          </p>
+          <input
+            v-model="groupDialog.value"
+            list="mcp-group-name-options"
+            maxlength="64"
+            placeholder="例如：研发效能 / 数据平台"
+            aria-label="业务分组名"
+            class="mt-3 w-full rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-800 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+            @keydown.enter.prevent="saveGroup"
+            @keydown.esc.prevent="closeGroupDialog"
+          />
+          <p class="mt-1.5 text-[10px] text-gray-400">
+            留空表示移出分组（按「未分组」统计）。分组只影响左栏页签与筛选，不改动服务配置。
+          </p>
+          <div class="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+              @click="closeGroupDialog"
+            >取消</button>
+            <button
+              type="button"
+              class="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-primary/90 disabled:opacity-60"
+              :disabled="savingGroup"
+              @click="saveGroup"
+            >{{ savingGroup ? '保存中…' : '保存' }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- MCP 接入模拟代码 Modal -->
     <div

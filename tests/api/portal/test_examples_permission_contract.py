@@ -70,8 +70,19 @@ def test_audit_maps_status_to_independent_codes():
 
     source = _segment("audit_example", "sync_example")
     assert "permission_for_audit_status(request.status)" in source
-    assert "check_permission(" in source, "audit 没有按状态做权限校验"
-    assert 'user.get("role") != "admin"' in source, "非 admin 必须走 check_permission"
+    # 权限判定已抽成 _ensure_element_permission（批量接口复用同一实现），
+    # 端点只需按状态取码后交给它
+    assert "await _ensure_element_permission(db, user, required)" in source
+
+
+def test_element_permission_helper_keeps_admin_bypass_and_check():
+    """抽取 helper 后仍必须「admin 放行 + 非 admin 查码 + 403 拒绝」。"""
+    helper = API.read_text(encoding="utf-8").split(
+        "async def _ensure_element_permission", 1
+    )[1].split("\n\ndef ", 1)[0]
+    assert 'user.get("role") == "admin"' in helper, "helper 必须保留 admin 短路"
+    assert "check_permission(" in helper
+    assert "raise HTTPException(status_code=403" in helper
 
 
 def test_frontend_defines_one_predicate_per_code():

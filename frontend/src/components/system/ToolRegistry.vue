@@ -3,6 +3,7 @@ import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch } from 'vue'
 import { toolApi, scriptToolApi, type SysApiTool } from '../../api/tool'
 import { SUPPORTED_HTTP_METHODS } from '../../utils/toolMethods'
 import { parseToolSchema, validateSystemParams } from '../../utils/toolSchema'
+import { computeGroupTabs, matchesToolFilters, toolGroupName } from '../../utils/toolGroupTabs'
 import { isValidSigningKeyId, isValidSigningSecret } from '../../utils/requestSigning'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
@@ -11,6 +12,7 @@ import ApiToolTester from './ApiToolTester.vue'
 import ToolHeadersEditor from './ToolHeadersEditor.vue'
 import ToolParamEditor from './ToolParamEditor.vue'
 import GroupSelect from './GroupSelect.vue'
+import ToolGroupTabs from './ToolGroupTabs.vue'
 import ToolWizard from './ToolWizard.vue'
 import ToolSigningEditor from './ToolSigningEditor.vue'
 import ScriptToolList from './ScriptToolList.vue'
@@ -86,6 +88,8 @@ const toggleSaving = ref(false)
 const UNGROUPED_FILTER = '__ungrouped__'
 // 列表视图（扁平行）/ 分组视图（按业务分组折叠）
 const viewMode = ref<'list' | 'group'>('list')
+// 业务分组页签（方案 A：常驻第一级导航）。页签渲染与溢出处理在 ToolGroupTabs.vue 里，
+// 这里只算数据并持有 `groupFilter`——它同时被页签和筛选面板的下拉读写。
 const collapsedRegistryGroups = ref<Set<string>>(new Set())
 
 type ToolForm = {
@@ -190,23 +194,34 @@ const urlPlaceholders = computed(() => {
     return Array.from(names)
 })
 
-const filteredTools = computed(() => {
-    const keyword = toolSearchQuery.value.trim().toLowerCase()
-    return tools.value.filter((tool) => {
-        const matchesKeyword = !keyword || [tool.name, tool.description, tool.url_template]
-            .some((value) => String(value || '').toLowerCase().includes(keyword))
-        const matchesMethod = toolMethodFilter.value === 'all'
-            || String(tool.method || '').toUpperCase() === toolMethodFilter.value
-        const matchesStatus = toolStatusFilter.value === 'all'
-            || (toolStatusFilter.value === 'active' && tool.is_active)
-            || (toolStatusFilter.value === 'inactive' && !tool.is_active)
-        const groupName = String(tool.group_name || '').trim()
-        const matchesGroup = groupFilter.value === 'all'
+const registryFilters = computed(() => ({
+    keyword: toolSearchQuery.value.trim().toLowerCase(),
+    method: toolMethodFilter.value,
+    status: toolStatusFilter.value,
+}))
+
+const filteredTools = computed(() =>
+    tools.value.filter((tool) => {
+        if (!matchesToolFilters(tool, registryFilters.value)) return false
+        const groupName = toolGroupName(tool)
+        return groupFilter.value === 'all'
             || (groupFilter.value === UNGROUPED_FILTER && !groupName)
             || groupName === groupFilter.value
-        return matchesKeyword && matchesMethod && matchesStatus && matchesGroup
     })
-})
+)
+
+/**
+ * 页签 / 筛选面板用的分组计数：按「关键词 + 方法 + 状态」过滤后的命中数。
+ *
+ * 与 `groupFilterOptions`（全量计数）刻意分开——表单里的分组下拉与「分组管理」问的是
+ * 「这个组一共有多少工具」，跟着搜索框变就是错的；页签问的是「当前条件下这一组还能
+ * 看到几个」。混用必然有一边说谎。计算本身在 utils/toolGroupTabs.ts，测试直接跑它。
+ */
+const groupTabCounts = computed(() =>
+    computeGroupTabs(tools.value, registryFilters.value, UNGROUPED_FILTER)
+)
+
+const groupTabItems = computed(() => groupTabCounts.value.items)
 
 // 分组统计：下拉里带上每组规模，并让「还有多少没归类」一眼可见
 const groupFilterOptions = computed(() => {
@@ -230,6 +245,17 @@ const groupFilterOptions = computed(() => {
 })
 
 const ungroupedToolsCount = computed(() => groupFilterOptions.value.ungrouped)
+
+watch(groupTabItems, (items) => {
+    // 当前分组不在页签里（搜索后该组已无命中、或分组刚被删）就回「全部」：
+    // 否则页签消失、表格空白、下拉显示空值，用户只会认为功能坏了。
+    // `tools.length > 0` 是必须的：加载中列表为空时会走到这里，没有这个条件就会把
+    // 用户刚选的分组顺手清掉，表现成「刷新一下筛选没了」。
+    if (tools.value.length > 0 && groupFilter.value !== 'all'
+        && !items.some((item) => item.key === groupFilter.value)) {
+        groupFilter.value = 'all'
+    }
+})
 
 // 已有业务分组名：表单用 datalist 复用，避免同一业务域被写成「履约罚款」「履约罚金」两个组
 
@@ -893,9 +919,9 @@ onBeforeUnmount(() => {
                                 v-model="groupFilter"
                                 class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                             >
-                                <option value="all">全部分组（{{ groupFilterOptions.all }}）</option>
-                                <option :value="UNGROUPED_FILTER">未分组（{{ groupFilterOptions.ungrouped }}）</option>
-                                <option v-for="[name, count] in groupFilterOptions.groups" :key="name" :value="name">{{ name }}（{{ count }}）</option>
+                                <option value="all">全部分组（{{ groupTabCounts.total }}）</option>
+                                <option v-if="groupTabCounts.ungrouped > 0" :value="UNGROUPED_FILTER">未分组（{{ groupTabCounts.ungrouped }}）</option>
+                                <option v-for="[name, count] in groupTabCounts.groups" :key="name" :value="name">{{ name }}（{{ count }}）</option>
                             </select>
                         </div>
 
@@ -1008,7 +1034,15 @@ onBeforeUnmount(() => {
                 </div>
             </div>
          </div>
-         
+
+         <!-- 业务分组页签：与筛选面板的「业务分组」下拉共用 groupFilter，切哪边另一边同步 -->
+         <ToolGroupTabs
+            :items="groupTabItems"
+            :model-value="groupFilter"
+            aria-label="按业务分组筛选 API 工具"
+            @update:model-value="groupFilter = $event"
+         />
+
          <div
             v-if="canSave && ungroupedToolsCount > 0 && groupFilter !== UNGROUPED_FILTER"
             class="flex flex-wrap items-center gap-2 border-b border-amber-100 bg-amber-50/70 px-4 py-2 text-xs text-amber-800"
@@ -1062,7 +1096,8 @@ onBeforeUnmount(() => {
                     </th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">名称</th>
                     <th class="w-24 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Method</th>
-                    <th class="w-32 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">业务分组</th>
+                    <!-- 页签已经表明「在看哪一组」，不再重复一列，把宽度还给名称与 URL -->
+                    <th v-if="groupFilter === 'all'" class="w-32 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">业务分组</th>
                     <th class="w-32 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">状态</th>
                     <th class="w-44 px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">操作</th>
                 </tr>
@@ -1098,7 +1133,7 @@ onBeforeUnmount(() => {
                             {{ t.method }}
                         </span>
                     </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                    <td v-if="groupFilter === 'all'" class="px-6 py-4 whitespace-nowrap text-sm">
                         <button
                             v-if="t.group_name"
                             type="button"
@@ -1181,7 +1216,7 @@ onBeforeUnmount(() => {
                      </td>
                 </tr>
                 <tr v-if="group.tools.length === 0">
-                    <td colspan="6" class="px-6 py-8 text-center text-gray-400 text-sm">{{ hasToolFilters ? '暂无匹配工具' : '暂无工具配置' }}</td>
+                    <td :colspan="groupFilter === 'all' ? 6 : 5" class="px-6 py-8 text-center text-gray-400 text-sm">{{ hasToolFilters ? '暂无匹配工具' : '暂无工具配置' }}</td>
                 </tr>
             </tbody>
          </table>

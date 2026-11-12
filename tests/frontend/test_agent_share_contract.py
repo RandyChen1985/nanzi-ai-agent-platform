@@ -169,10 +169,19 @@ def test_admin_has_all_agents_tab():
     tabs_block = src[src.index("const workspaceTabs") : src.index("const workspaceTabs") + 700]
     assert "isAdminViewer.value" in tabs_block
 
-    # 归属过滤必须真的按 created_by 收窄
-    filter_block = src[src.index("const filteredAgents"): src.index("const filteredAgents") + 700]
+    # 归属过滤必须真的按 created_by 收窄。
+    # 加了业务分组页签后，原来的 filteredAgents 拆成两段：
+    #   agentsMatchingFilters = 视图 + 关键词 + 全部筛选（不含分组）
+    #   filteredAgents        = 上一段结果再套分组，最后排序
+    # 归属过滤属于前者——顺带成为「页签数字 = 点进去的条数」的口径来源。
+    filter_block = src[
+        src.index("const agentsMatchingFilters") : src.index("const agentsMatchingFilters") + 900
+    ]
     assert "workspaceTab.value === 'mine'" in filter_block
     assert "a.created_by === me" in filter_block
+    # 分组过滤只能在过滤之后的第二段里
+    group_block = src[src.index("const filteredAgents") : src.index("const filteredAgents") + 700]
+    assert "agentGroupFilter.value" in group_block
 
 
 def test_admin_default_tab_does_not_shrink_scope():

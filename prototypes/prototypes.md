@@ -70,7 +70,7 @@ YYYY-MM-DD-主题.html
 | 目录 | 放什么 | 不要放什么 |
 |---|---|---|
 | `prototypes/` | 可交互的 HTML 原型、方案对照页 | 实现代码、接口文档 |
-| `prototypes/shots/` | 原型配套的截图、前后对比图 | — |
+| `prototypes/shots/` | 原型配套的截图、前后对比图（**不入库**：已进 `.gitignore`，单张几百 KB，累积会把仓库撑大；`index.html` 不引用这些图） | — |
 | `prototypes/resource-cards/` | 某个原型的子资源（css/图为一体的小项目） | — |
 | `docs/diagrams/` | 架构图、流程图 | 交互原型 |
 | `docs/html/` | 对外发布的技术长文 | 原型 |

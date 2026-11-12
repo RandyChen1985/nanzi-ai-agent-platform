@@ -4,7 +4,7 @@ import asyncio
 import re
 from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import desc, update, select
+from sqlalchemy import delete, desc, update, select
 from datetime import datetime
 
 from app.models.chatbi_example import ChatBIExample, ChatBIExampleUsage
@@ -1014,4 +1014,60 @@ class ExampleService:
 
         example.status = status
         await db.commit()
+        return True
+
+    @staticmethod
+    async def delete_example(db: AsyncSession, example_id: int) -> bool:
+        """物理删除一条「已废弃」案例，并清理向量索引、远程文档与引用流水。
+
+        删除只对 `deprecated` 开放：待审核/已通过/已驳回的案例必须先在列表里
+        「废弃」再删除，避免一次点击抹掉仍需留痕的审核记录。
+
+        向量与 RAGFlow 侧的清理失败只记日志、不阻断删除——远程残留会让本地
+        永远删不掉脏数据，删库行才是用户要求的结果（残留可再靠一键同步兜底）。
+
+        :return: True 表示已删除；False 表示记录不存在（幂等友好）。
+        :raises ValueError: 记录存在但不是「已废弃」状态。
+        """
+        stmt = select(ChatBIExample).where(ChatBIExample.id == example_id)
+        result = await db.execute(stmt)
+        example = result.scalars().first()
+        if not example:
+            return False
+        if example.status != "deprecated":
+            raise ValueError("只有「已废弃」状态的案例允许删除，请先废弃该案例")
+
+        rag_doc_id = example.rag_doc_id
+        if rag_doc_id:
+            try:
+                target_kb_id = await ExampleService.ensure_chatbi_sample_kb_id()
+                client = RagFlowClient()
+                await client.delete_documents(target_kb_id, [rag_doc_id])
+            except Exception as e:
+                logger.error(
+                    "[ExampleDelete] Failed to delete RAGFlow doc %s for example %s: %s",
+                    rag_doc_id, example_id, e,
+                )
+
+        try:
+            from app.services.ai.example_index_service import ExampleIndexService
+            await ExampleIndexService.delete_vector(example_id)
+        except Exception as e:
+            logger.error(
+                "[ExampleDelete] Failed to delete local vector for example %s: %s",
+                example_id, e,
+            )
+
+        try:
+            # 引用流水是纯统计明细，案例都不存在了留着只会污染统计
+            await db.execute(
+                delete(ChatBIExampleUsage).where(ChatBIExampleUsage.example_id == example_id)
+            )
+            await db.delete(example)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+        logger.info("[ExampleDelete] Permanently deleted deprecated example %s", example_id)
         return True

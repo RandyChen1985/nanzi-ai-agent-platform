@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { metadataApi } from '../api/metadata'
-import type { Dataset } from '../api/metadata'
+import type { Dataset, DbConnectionConfig } from '../api/metadata'
 import axios from '@/utils/axios'
 import SmartImportWizard from '../components/metadata/SmartImportWizard.vue'
 import MetadataFlowGuideBanner from '../components/metadata/MetadataFlowGuideBanner.vue'
@@ -10,6 +10,9 @@ import HeroSilhouette from '../components/common/HeroSilhouette.vue'
 import MetadataDriftAlertsDrawer from '../components/metadata/MetadataDriftAlertsDrawer.vue'
 import MetadataCronInspectionModal from '../components/metadata/MetadataCronInspectionModal.vue'
 import CopyDatasetWizard from '../components/metadata/CopyDatasetWizard.vue'
+import InfoTooltip from '../components/InfoTooltip.vue'
+import ToolGroupTabs from '../components/system/ToolGroupTabs.vue'
+import { computeGroupTabs, toolGroupName } from '../utils/toolGroupTabs'
 import RowPolicyConfigModal from '../components/metadata/RowPolicyConfigModal.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
@@ -191,6 +194,16 @@ type DatasetSortField = 'display_name' | 'status' | 'table_count' | 'quality_sco
 type SortDirection = 'asc' | 'desc'
 
 const statusFilter = ref<StatusFilter>('all')
+
+/**
+ * 业务分组筛选（页签与筛选面板共用这一份状态）。
+ *
+ * 与 `tags` 的区别别搞混：`group_name` 是**单值归属**（这个数据集归哪个业务域），
+ * 只服务页面导航；`tags` 是**多值打标**，还会进「已授权数据集目录」提示词影响 ChatBI。
+ * 拿 tags 做页签会出现「一个数据集出现在多个页签、计数相加大于总数」，且没有「未分组」。
+ */
+const groupFilter = ref('all')
+const UNGROUPED_GROUP = '__ungrouped__'
 const sortField = ref<DatasetSortField>('updated_at')
 const sortDirection = ref<SortDirection>('desc')
 
@@ -263,8 +276,48 @@ const qualityTooltip = (ds: Dataset): string => {
   return lines.join('\n')
 }
 
+/**
+ * 交给共用纯函数的「像工具一样」的形状：utils/toolGroupTabs 只认 is_active 布尔，
+ * 数据集这边是 status 整型（1 = 启用），在这里做一次映射，别让它渗进公共模块。
+ */
+const datasetGroupTools = computed(() =>
+  datasets.value.map((ds) => ({
+    name: ds.name,
+    display_name: ds.display_name,
+    description: ds.description,
+    is_active: ds.status === 1,
+    group_name: ds.group_name || '',
+  })),
+)
+
+const datasetFilters = computed(() => ({
+  keyword: searchQuery.value.trim().toLowerCase(),
+  status: statusFilter.value,
+  searchFields: ['name', 'display_name', 'description'] as const,
+}))
+
+/** 页签 / 筛选用的分组命中数（关键词 + 状态过滤后），与工具注册表同一套规则 */
+const datasetGroupCounts = computed(() =>
+  computeGroupTabs(datasetGroupTools.value, datasetFilters.value, UNGROUPED_GROUP),
+)
+const datasetGroupTabs = computed(() => datasetGroupCounts.value.items)
+
+/** 已有分组：表单里做候选，避免同一业务域被写成「财务」「财务核算」两个组 */
+const datasetGroupOptions = computed(() =>
+  Array.from(new Set(datasets.value.map((ds) => toolGroupName(ds)).filter(Boolean))).sort(
+    (a, b) => a.localeCompare(b, 'zh-Hans-CN'),
+  ),
+)
+
 const displayDatasets = computed(() => {
   let list = datasets.value
+
+  if (groupFilter.value !== 'all') {
+    list = list.filter((ds) => {
+      const name = toolGroupName(ds)
+      return groupFilter.value === UNGROUPED_GROUP ? !name : name === groupFilter.value
+    })
+  }
 
   if (statusFilter.value === 'active') {
     list = list.filter((ds) => ds.status === 1)
@@ -285,8 +338,17 @@ const displayDatasets = computed(() => {
 })
 
 const hasActiveFilters = computed(() =>
-  !!searchQuery.value || statusFilter.value !== 'all'
+  !!searchQuery.value || statusFilter.value !== 'all' || groupFilter.value !== 'all'
 )
+
+// 当前分组被搜空、或分组名被改掉时回「全部」：否则页签消失、列表空白，看着像功能坏了。
+// `datasets.length > 0` 避开首屏加载（此时列表为空，会把用户刚选的分组顺手清掉）。
+watch(datasetGroupTabs, (items) => {
+  if (datasets.value.length > 0 && groupFilter.value !== 'all'
+      && !items.some((item) => item.key === groupFilter.value)) {
+    groupFilter.value = 'all'
+  }
+})
 
 // 数据集多时（几百条）一次性渲染全部卡片会明显卡顿：先渲染一屏，按需追加
 const PAGE_SIZE = 24
@@ -295,6 +357,12 @@ const visibleDatasets = computed(() => displayDatasets.value.slice(0, visibleCou
 const hasMoreDatasets = computed(
   () => visibleDatasets.value.length < displayDatasets.value.length
 )
+// 切分组回到第一屏：否则从「只有 2 个数据集的组」切到「50 个的组」时，
+// 会沿用上一次点过「加载更多」后的条数，看起来像一次性渲染了一大片
+watch(groupFilter, () => {
+  visibleCount.value = PAGE_SIZE
+})
+
 const loadMoreDatasets = () => {
   visibleCount.value += PAGE_SIZE
 }
@@ -413,14 +481,47 @@ const newDataset = ref({
   data_source: '',
   enable_data_perm: false,
   row_filter_config: null as any,
-  tags: [] as string[]
+  tags: [] as string[],
+  // 业务分组：单值，留空 = 未分组
+  group_name: ''
 })
+
+/** 分组名的入库口径：去空格，空串一律落 null（否则「空格分组」会变成一个真实页签） */
+const normalizeGroupName = (value?: string | null): string | null => {
+  const trimmed = String(value ?? '').trim()
+  return trimmed ? trimmed : null
+}
 const tagInput = ref('')
+/**
+ * 业务标签说明（新建 / 编辑数据集共用一份，避免两处各写一段、改一处留一处）。
+ *
+ * 文案必须说清三件事，都是读代码确认的口径：
+ * 1. 标签唯一的实质消费点是 AI 数据集目录——`app/services/ai/config.py` 的
+ *    `_format_dataset_menu` 把它拼成 `- Dataset: <name> [标签]` 注入 ChatBI 系统提示
+ *    （`chatbi/system_prompt.py`、`clarification.py`、`schema_prefetch.py`）与数据门户
+ *    导航生成，所以「会影响 AI 分析」是事实，不是销售话术；
+ * 2. 它**不参与**数据权限判定（`dataset_scope_service` 全程不读该字段），改标签不会
+ *    放宽或收紧「谁能查」，这句话能挡掉最常见的误解；
+ * 3. 智能体「绑定数据集」弹窗的搜索会匹配标签（`utils/metadataDatasetFilter.ts`），
+ *    所以标签还承担检索线索的作用。
+ */
+const businessTagHint =
+  '用于描述这个数据集属于什么业务主题（如财务、销售、核心数据）。' +
+  '它会随「已授权数据集目录」一起提供给 AI，影响 ChatBI 选库、澄清提问与数据门户推荐；' +
+  '但不参与数据权限判定，改标签不会改变谁能查。' +
+  '智能体绑定数据集时也可以按业务标签搜索。'
+/**
+ * 业务分组说明。必须与 `businessTagHint` 明确分工，否则用户会以为「分组就是标签的单选版」：
+ * 分组只被列表页的页签与筛选读取（`groupFilter`），不进 AI 提示词、不参与数据权限；
+ * 标签才是 `_format_dataset_menu` 拼进数据集目录、影响 ChatBI 的那一份。
+ */
+const businessGroupHint =
+  '这个数据集归属哪个业务分组（如财务核算、销售经营），单选，留空即「未分组」。' +
+  '它只用于列表页的分组页签与筛选，方便按业务域浏览；' +
+  '不参与数据权限判定，也不会写进 AI 提示词——要让 AI 认识业务属性请用下面的「业务标签」。'
 const rowFilterConfigStr = ref('')
 
-const dbConnections = ref<any[]>([])
-const showCreateDsDropdown = ref(false)
-const showEditDsDropdown = ref(false)
+const dbConnections = ref<DbConnectionConfig[]>([])
 
 const fetchDbConnections = async () => {
   try {
@@ -431,25 +532,23 @@ const fetchDbConnections = async () => {
   }
 }
 
-const toggleDataSourceDropdown = async (mode: 'create' | 'edit') => {
-  await fetchDbConnections()
-  if (mode === 'create') {
-    showCreateDsDropdown.value = !showCreateDsDropdown.value
-    showEditDsDropdown.value = false
-  } else {
-    showEditDsDropdown.value = !showEditDsDropdown.value
-    showCreateDsDropdown.value = false
-  }
-}
+/**
+ * 数据源 ID 只能选不能手输：`data_source` 必须能在「数据源管理」里对得上，
+ * 手输一个拼错的名字不会报错，只会在真正查数时连不上，排查成本极高。
+ * 打开弹窗时刷新一次，避免用户刚在数据源管理里加完、这里还是旧列表。
+ */
+watch([showCreateModal, showEditDatasetModal], ([createOpen, editOpen]) => {
+  if (createOpen || editOpen) fetchDbConnections()
+})
 
-const selectDataSource = (name: string, mode: 'create' | 'edit') => {
-  if (mode === 'create') {
-    newDataset.value.data_source = name
-    showCreateDsDropdown.value = false
-  } else {
-    editingDataset.value.data_source = name
-    showEditDsDropdown.value = false
-  }
+/**
+ * 历史数据集可能有「未在数据源管理登记」的 data_source（配置被删、早期手输遗留）。
+ * 这类值必须原样留在选项里：否则下拉一渲染就变成空选，用户点保存等于把配置悄悄清了。
+ */
+const isUnregisteredDataSource = (name?: string | null): boolean => {
+  const value = String(name ?? '').trim()
+  if (!value) return false
+  return !dbConnections.value.some((conn) => conn.name === value)
 }
 
 const fetchSystemConfig = async () => {
@@ -564,10 +663,10 @@ const handleCreate = async () => {
     if (!newDataset.value.data_source) {
         newDataset.value.data_source = defaultDataSource.value
     }
-    await metadataApi.createDataset(newDataset.value)
+    await metadataApi.createDataset({ ...newDataset.value, group_name: normalizeGroupName(newDataset.value.group_name) })
     showCreateModal.value = false
     showToast('数据集已创建，默认为禁用状态，请在列表中审核后手动启用', 'success', 5000)
-    newDataset.value = { name: '', display_name: '', description: '', data_source: '', enable_data_perm: false, row_filter_config: null, tags: [] }
+    newDataset.value = { name: '', display_name: '', description: '', data_source: '', enable_data_perm: false, row_filter_config: null, tags: [], group_name: '' }
     rowFilterConfigStr.value = ''
     fetchDatasets()
   } catch (e) {
@@ -627,6 +726,7 @@ const handleUpdateDataset = async () => {
     if (!editingDataset.value.data_source) {
         editingDataset.value.data_source = defaultDataSource.value
     }
+    editingDataset.value.group_name = normalizeGroupName(editingDataset.value.group_name)
     await metadataApi.updateDataset(editingDataset.value.id, editingDataset.value)
     showEditDatasetModal.value = false
     editingDataset.value = null
@@ -1370,6 +1470,20 @@ onMounted(async () => {
       </button>
     </div>
 
+    <!--
+      业务分组页签：意图与工具注册表一致 —— 点页签 = 设 groupFilter，
+      与上方搜索、状态筛选、卡片/列表视图切换共用同一份状态，切视图不会丢筛选。
+      分组数 ≤ 1 时组件自己隐藏（只有「全部」时留着只是噪音）。
+    -->
+    <div v-if="!loading && datasets.length > 0" class="mb-1">
+      <ToolGroupTabs v-model="groupFilter" :items="datasetGroupTabs" aria-label="按业务分组浏览数据集" />
+    </div>
+
+    <!-- 新建 / 编辑表单里「业务分组」的候选：只用已有分组，避免同一业务域写成两个名字 -->
+    <datalist id="dataset-group-options">
+      <option v-for="group in datasetGroupOptions" :key="group" :value="group" />
+    </datalist>
+
     <!-- Loading State：首帧即显示，避免请求较慢时列表区整块空白 -->
     <div v-if="loading" class="space-y-4" role="status" aria-live="polite" aria-busy="true">
       <div class="flex items-center gap-2 text-xs text-gray-400">
@@ -1397,7 +1511,7 @@ onMounted(async () => {
       <p class="text-xs text-gray-400 mt-1">试试其他关键词，或清除筛选后浏览全部</p>
       <button
         type="button"
-        @click="searchQuery = ''; statusFilter = 'all'"
+        @click="searchQuery = ''; statusFilter = 'all'; groupFilter = 'all'"
         class="mt-4 px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-200 transition-colors"
       >
         清除筛选
@@ -1501,6 +1615,30 @@ onMounted(async () => {
           <p class="mt-2.5 text-xs text-gray-500 line-clamp-2 leading-relaxed min-h-[2.5rem]">
             {{ ds.description || '暂无描述' }}
           </p>
+
+          <!--
+            业务分组徽标：锁定某一组时不显示（此时每条都属于该组，纯重复信息）。
+            点徽标 = 直接按这个分组收窄，省一次去顶部找页签。
+          -->
+          <div v-if="groupFilter === 'all'" class="mt-1.5 flex items-center gap-1">
+            <button
+              v-if="toolGroupName(ds)"
+              type="button"
+              class="inline-flex items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+              :title="`只看「${toolGroupName(ds)}」分组的数据集`"
+              @click.stop="groupFilter = toolGroupName(ds)"
+            >
+              <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10" /></svg>
+              {{ toolGroupName(ds) }}
+            </button>
+            <span
+              v-else
+              class="inline-flex items-center rounded-full border border-dashed border-gray-200 px-2 py-0.5 text-[10px] text-gray-400"
+              title="未设置业务分组"
+            >
+              未分组
+            </span>
+          </div>
 
           <div class="mt-2.5 flex items-center justify-between gap-2 text-[10px] text-gray-400">
             <span v-if="ds.updated_at" class="inline-flex items-center gap-1 truncate">
@@ -1761,6 +1899,14 @@ onMounted(async () => {
                    </div>
                    <div class="flex items-center gap-2 mt-0.5">
                       <span class="text-xs font-mono text-gray-400">#{{ ds.name }}</span>
+                      <!-- 锁定分组时不再显示：整列都是同一个组 -->
+                      <span
+                        v-if="groupFilter === 'all' && toolGroupName(ds)"
+                        class="inline-flex items-center rounded-full border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 truncate max-w-[7rem]"
+                        :title="`业务分组：${toolGroupName(ds)}`"
+                      >
+                        {{ toolGroupName(ds) }}
+                      </span>
                    </div>
                 </div>
              </div>
@@ -2593,22 +2739,25 @@ onMounted(async () => {
 
     <!-- Create Modal -->
     <Teleport to="body">
-      <div v-if="showCreateModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100">
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center">
-            <h2 class="text-xl font-bold text-gray-900">新建数据集</h2>
+      <div v-if="showCreateModal" class="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/50 backdrop-blur-sm p-4 sm:items-center">
+        <div class="my-auto flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-100 bg-white shadow-2xl">
+          <div class="flex shrink-0 items-center justify-between border-b border-gray-100 px-6 py-4">
+            <h2 class="text-lg font-bold text-gray-900">新建数据集</h2>
             <button @click="showCreateModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
               <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
-          <div class="p-6 space-y-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">物理名称 (Unique Name)</label>
-              <input v-model="newDataset.name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. nanzi_resources">
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
-              <input v-model="newDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 资源数据集">
+          <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+            <!-- 能并排的字段就别各占一行：弹窗高度直接决定「看得到看不到保存按钮」 -->
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">物理名称 (Unique Name)</label>
+                <input v-model="newDataset.name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. nanzi_resources">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
+                <input v-model="newDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 资源数据集">
+              </div>
             </div>
             <div>
               <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
@@ -2617,53 +2766,63 @@ onMounted(async () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 </span>
               </label>
-              <div class="relative flex gap-2">
-                <input v-model="newDataset.data_source" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. default_clickhouse or mysql_crm_01">
-                <button 
-                  type="button"
-                  @click="toggleDataSourceDropdown('create')"
-                  class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-500 hover:text-blue-500 hover:border-blue-500 transition-colors flex-shrink-0"
-                  title="选择已配置的数据源"
-                >
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-                </button>
-                <div v-if="showCreateDsDropdown" class="absolute right-0 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl z-[60] overflow-y-auto max-h-48 py-1">
-                  <div v-if="dbConnections.length === 0" class="px-4 py-2 text-xs text-gray-400 italic">暂无已配置的数据源</div>
-                  <button
-                    v-else
-                    v-for="conn in dbConnections"
-                    :key="conn.id"
-                    @click="selectDataSource(conn.name, 'create')"
-                    type="button"
-                    class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors flex items-center justify-between"
-                  >
-                    <span class="font-medium font-mono">{{ conn.name }}</span>
-                    <span class="text-[10px] uppercase px-1.5 py-0.5 rounded font-bold bg-blue-50 text-blue-600 border border-blue-100">{{ conn.db_type }}</span>
-                  </button>
+              <select
+                v-model="newDataset.data_source"
+                class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">使用系统默认（{{ defaultDataSource }}）</option>
+                <option v-for="conn in dbConnections" :key="conn.id" :value="conn.name">
+                  {{ conn.name }} · {{ conn.db_type }}
+                </option>
+                <!-- 未登记的存量值必须留在选项里，否则下拉一渲染就成空选，保存等于清掉配置 -->
+                <option v-if="isUnregisteredDataSource(newDataset.data_source)" :value="newDataset.data_source">
+                  {{ newDataset.data_source }}（未在数据源管理中登记，保持原值）
+                </option>
+              </select>
+              <p class="mt-1 text-xs text-gray-400">
+                只能从「数据源管理」里已配置的数据源中选择；留空则使用系统默认（{{ defaultDataSource }}）。
+                <button type="button" class="font-medium text-blue-600 hover:underline" @click="router.push({ name: 'DataSourceManagement' })">去数据源管理添加</button>
+              </p>
+            </div>
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
+                  <span>业务分组</span>
+                  <InfoTooltip class="ml-1 text-gray-400" align="left" :text="businessGroupHint" />
+                </label>
+                <input
+                  v-model="newDataset.group_name"
+                  list="dataset-group-options"
+                  type="text"
+                  maxlength="64"
+                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="如 财务核算（留空 = 未分组）"
+                />
+                <p class="text-xs text-gray-400 mt-1">单选。决定这个数据集出现在哪个分组页签；不参与数据权限。</p>
+              </div>
+              <div>
+
+                <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
+                  <span>业务标签</span>
+                  <InfoTooltip class="ml-1 text-gray-400" align="left" :text="businessTagHint" />
+                </label>
+                <div class="flex gap-2 mb-2">
+                  <input v-model="tagInput" @keyup.enter="addTag(newDataset)" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <span v-for="(tag, i) in newDataset.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
+                    {{ tag }}
+                    <button @click="removeTag(newDataset, i as number)" class="text-blue-400 hover:text-red-500 ml-1">&times;</button>
+                  </span>
                 </div>
               </div>
-              <p class="text-xs text-gray-400 mt-1">留空则使用系统默认 ({{ defaultDataSource }})。若需使用 MySQL，建议 ID 包含 'mysql'。</p>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">描述</label>
-              <textarea v-model="newDataset.description" rows="3" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="描述该数据集包含的内容..."></textarea>
-            </div>
-
-            <div>
-
-              <label class="block text-sm font-medium text-gray-700 mb-1">标签</label>
-              <div class="flex gap-2 mb-2">
-                <input v-model="tagInput" @keyup.enter="addTag" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
-              </div>
-              <div class="flex flex-wrap gap-2">
-                <span v-for="(tag, i) in newDataset.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
-                  {{ tag }}
-                  <button @click="removeTag(newDataset, i as number)" class="text-blue-400 hover:text-red-500 ml-1">&times;</button>
-                </span>
-              </div>
+              <textarea v-model="newDataset.description" rows="2" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="描述该数据集包含的内容..."></textarea>
             </div>
           </div>
-          <div class="bg-gray-50 p-6 flex justify-end gap-3">
+          <div class="flex shrink-0 justify-end gap-3 border-t border-gray-100 bg-gray-50 px-6 py-3">
             <button @click="showCreateModal = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">取消</button>
             <button @click="handleCreate" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-all shadow-md font-medium">确认创建</button>
           </div>
@@ -2688,22 +2847,24 @@ onMounted(async () => {
 
     <!-- Edit Dataset Modal -->
     <Teleport to="body">
-      <div v-if="showEditDatasetModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100">
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
-            <h2 class="text-xl font-bold text-gray-900">编辑数据集</h2>
+      <div v-if="showEditDatasetModal" class="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/50 backdrop-blur-sm p-4 sm:items-center">
+        <div class="my-auto flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-100 bg-white shadow-2xl">
+          <div class="flex shrink-0 items-center justify-between border-b border-gray-100 bg-blue-50/30 px-6 py-4">
+            <h2 class="text-lg font-bold text-gray-900">编辑数据集</h2>
             <button @click="showEditDatasetModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
               <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
-          <div class="p-6 space-y-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">物理名称 (Unique Name)</label>
-              <input v-model="editingDataset.name" type="text" disabled class="w-full bg-white border border-gray-300 rounded-lg px-4 py-2 text-gray-500 cursor-not-allowed disabled:bg-gray-100" title="物理名称不可修改">
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
-              <input v-model="editingDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 资源数据集">
+          <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">物理名称 (Unique Name)</label>
+                <input v-model="editingDataset.name" type="text" disabled class="w-full bg-white border border-gray-300 rounded-lg px-4 py-2 text-gray-500 cursor-not-allowed disabled:bg-gray-100" title="物理名称不可修改">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
+                <input v-model="editingDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 资源数据集">
+              </div>
             </div>
             <div>
               <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
@@ -2712,32 +2873,55 @@ onMounted(async () => {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 </span>
               </label>
-              <div class="relative flex gap-2">
-                <input v-model="editingDataset.data_source" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. default_clickhouse or mysql_crm_01">
-                <button 
-                  type="button"
-                  @click="toggleDataSourceDropdown('edit')"
-                  class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-500 hover:text-blue-500 hover:border-blue-500 transition-colors flex-shrink-0"
-                  title="选择已配置的数据源"
-                >
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-                </button>
-                <div v-if="showEditDsDropdown" class="absolute right-0 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl z-[60] overflow-y-auto max-h-48 py-1">
-                  <div v-if="dbConnections.length === 0" class="px-4 py-2 text-xs text-gray-400 italic">暂无已配置的数据源</div>
-                  <button
-                    v-else
-                    v-for="conn in dbConnections"
-                    :key="conn.id"
-                    @click="selectDataSource(conn.name, 'edit')"
-                    type="button"
-                    class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors flex items-center justify-between"
-                  >
-                    <span class="font-medium font-mono">{{ conn.name }}</span>
-                    <span class="text-[10px] uppercase px-1.5 py-0.5 rounded font-bold bg-blue-50 text-blue-600 border border-blue-100">{{ conn.db_type }}</span>
-                  </button>
+              <select
+                v-model="editingDataset.data_source"
+                class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">使用系统默认（{{ defaultDataSource }}）</option>
+                <option v-for="conn in dbConnections" :key="conn.id" :value="conn.name">
+                  {{ conn.name }} · {{ conn.db_type }}
+                </option>
+                <!-- 未登记的存量值必须留在选项里，否则下拉一渲染就成空选，保存等于清掉配置 -->
+                <option v-if="isUnregisteredDataSource(editingDataset.data_source)" :value="editingDataset.data_source">
+                  {{ editingDataset.data_source }}（未在数据源管理中登记，保持原值）
+                </option>
+              </select>
+              <p class="mt-1 text-xs text-gray-400">
+                只能从「数据源管理」里已配置的数据源中选择；留空则使用系统默认（{{ defaultDataSource }}）。
+                <button type="button" class="font-medium text-blue-600 hover:underline" @click="router.push({ name: 'DataSourceManagement' })">去数据源管理添加</button>
+              </p>
+            </div>
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
+                  <span>业务分组</span>
+                  <InfoTooltip class="ml-1 text-gray-400" align="left" :text="businessGroupHint" />
+                </label>
+                <input
+                  v-model="editingDataset.group_name"
+                  list="dataset-group-options"
+                  type="text"
+                  maxlength="64"
+                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="如 财务核算（留空 = 未分组）"
+                />
+                <p class="text-xs text-gray-400 mt-1">单选。决定这个数据集出现在哪个分组页签；不参与数据权限。</p>
+              </div>
+              <div>
+                <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
+                  <span>业务标签</span>
+                  <InfoTooltip class="ml-1 text-gray-400" align="left" :text="businessTagHint" />
+                </label>
+                <div class="flex gap-2 mb-2">
+                  <input v-model="tagInput" @keyup.enter="addTag(editingDataset)" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <span v-for="(tag, i) in editingDataset.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
+                    {{ tag }}
+                    <button @click="removeTag(editingDataset, i as number)" class="text-blue-400 hover:text-red-500 ml-1">&times;</button>
+                  </span>
                 </div>
               </div>
-              <p class="text-xs text-gray-400 mt-1">留空则使用系统默认 ({{ defaultDataSource }})。若需使用 MySQL，建议 ID 包含 'mysql'。</p>
             </div>
             <div>
               <div class="flex justify-between items-center mb-1">
@@ -2752,23 +2936,10 @@ onMounted(async () => {
                   AI 辅助生成 (基于表信息)
                 </button>
               </div>
-              <textarea v-model="editingDataset.description" rows="3" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="描述该数据集包含的内容..."></textarea>
-            </div>
-
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">标签</label>
-              <div class="flex gap-2 mb-2">
-                <input v-model="tagInput" @keyup.enter="addTag(editingDataset)" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
-              </div>
-              <div class="flex flex-wrap gap-2">
-                <span v-for="(tag, i) in editingDataset.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
-                  {{ tag }}
-                  <button @click="removeTag(editingDataset, i as number)" class="text-blue-400 hover:text-red-500 ml-1">&times;</button>
-                </span>
-              </div>
+              <textarea v-model="editingDataset.description" rows="2" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="描述该数据集包含的内容..."></textarea>
             </div>
           </div>
-          <div class="bg-gray-50 p-6 flex justify-end gap-3">
+          <div class="flex shrink-0 justify-end gap-3 border-t border-gray-100 bg-gray-50 px-6 py-3">
             <button @click="showEditDatasetModal = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">取消</button>
             <button @click="handleUpdateDataset" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-all shadow-md font-medium">确认更新</button>
           </div>

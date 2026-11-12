@@ -79,7 +79,12 @@ def test_parse_skill_metadata_tolerates_bom_like_the_runtime_parser(tmp_path):
 
 
 def test_parse_skill_metadata_keeps_field_defaults(tmp_path):
-    """返回字段与默认值语义不变：name 回落 ID、description 回落「暂无技能描述」。"""
+    """返回字段与默认值语义不变：name 回落 ID、description 回落「暂无技能描述」。
+
+    ``group`` 是技能分组加进列表字段后新增的一项：SKILL.md 里没有 ``group:`` 时返回
+    ``None``（= 未分组），前端据此把它归进「未分组」页签。这条断言是逐字段全等，
+    所以新增字段必须在这里显式列出，否则这里会静默漏掉字段变更。
+    """
     missing = tmp_path / "SKILL.md"
 
     meta = skills.parse_skill_metadata("ghost", str(missing))
@@ -90,6 +95,7 @@ def test_parse_skill_metadata_keeps_field_defaults(tmp_path):
         "description": "暂无技能描述",
         "path": "data/skills/ghost",
         "enabled": "true",
+        "group": None,
     }
 
 

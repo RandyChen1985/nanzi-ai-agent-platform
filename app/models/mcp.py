@@ -24,6 +24,9 @@ class McpServer(Base):
     
     scope = Column(String(20), default="global", nullable=False)
     user_id = Column(Integer, nullable=True)
+    # 业务分组：单值归属，只服务「MCP 工具集」左栏页签与筛选。
+    # 与 remark（自由备注）、scope（global/personal 归属范围）都不是一回事，见 V215 迁移注释。
+    group_name = Column(String(64), nullable=True)
     
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

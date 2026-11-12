@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MCP 工具集 · 左栏加分组页签并重排版式</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --line:#e5e7eb; --line2:#eef1f4;
+    --ink:#111827; --ink2:#4b5563; --ink3:#9ca3af;
+    --blue:#2563eb; --blue-weak:#eff4ff; --indigo:#4f46e5; --indigo-weak:#eef2ff;
+    --green:#10b981; --green-weak:#ecfdf5; --amber:#f59e0b; --amber-weak:#fffbeb;
+    --rose:#e11d48; --rose-weak:#fff1f2; --violet:#7c3aed; --violet-weak:#f5f3ff;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1240px;margin:0 auto;padding:32px 24px 72px}
+  h1{font-size:22px;line-height:1.4;margin:0 0 10px;letter-spacing:-.01em}
+  .lead{margin:0 0 22px;color:var(--ink2);font-size:13.5px}
+  h2{font-size:15px;margin:34px 0 14px;display:flex;align-items:center;gap:9px}
+  h2 .num{
+    display:inline-flex;width:22px;height:22px;border-radius:7px;background:var(--ink);color:#fff;
+    font-size:11px;font-weight:800;align-items:center;justify-content:center;flex:0 0 auto;
+  }
+  h3{font-size:13px;margin:0 0 8px}
+  .note{margin:12px 0 0;font-size:12.5px;color:var(--ink2)}
+  code{background:#f1f3f6;border:1px solid var(--line2);border-radius:5px;padding:1px 4px;font-size:11.5px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .muted{color:var(--ink3)}
+  .tiny{font-size:11px}
+
+  /* ---------- 工具条 ---------- */
+  .toolbar{
+    display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;padding:10px 12px;margin:0 0 8px;
+  }
+  .toolbar .lab{font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.03em;margin-left:6px}
+  .toolbar .lab:first-child{margin-left:0}
+  .seg{display:inline-flex;background:#f1f3f6;border-radius:9px;padding:2px}
+  .seg button{
+    border:0;background:transparent;border-radius:7px;padding:5px 10px;font-size:12px;font-weight:600;
+    color:var(--ink2);cursor:pointer;font-family:inherit;white-space:nowrap;
+  }
+  .seg button.on{background:#fff;color:var(--blue);box-shadow:0 1px 2px rgba(16,24,40,.08)}
+
+  /* ---------- 现状核查卡 ---------- */
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 15px}
+  .card .k{font-size:10.5px;font-weight:800;letter-spacing:.05em;color:var(--ink3);text-transform:uppercase}
+  .card .v{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+  .card .d{font-size:11.5px;color:var(--ink2);line-height:1.55}
+  .card.warn{border-color:#fde68a;background:var(--amber-weak)}
+  .card.warn .v{color:#b45309}
+
+  /* ---------- 表格 ---------- */
+  table{width:100%;border-collapse:separate;border-spacing:0;background:var(--card);
+    border:1px solid var(--line);border-radius:14px;overflow:hidden;font-size:12.5px}
+  th,td{text-align:left;padding:11px 13px;vertical-align:top;border-top:1px solid var(--line2)}
+  thead th{border-top:0;background:#fafbfc;font-size:11px;font-weight:800;color:var(--ink3);
+    letter-spacing:.04em;text-transform:uppercase}
+  td code{white-space:nowrap}
+  .no{color:var(--rose);font-weight:700}
+  .yes{color:#047857;font-weight:700}
+
+  /* ---------- 方案卡 ---------- */
+  .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .plan{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 15px}
+  .plan.best{border-color:#a7f3d0;background:#f0fdf9}
+  .plan .top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .plan .tag{
+    font-size:10px;font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:999px;
+    background:#f1f3f6;color:var(--ink2);border:1px solid var(--line)
+  }
+  .plan.best .tag{background:#d1fae5;color:#065f46;border-color:#a7f3d0}
+  .plan ul{margin:6px 0 0;padding-left:16px;font-size:12px;color:var(--ink2)}
+  .plan li{margin:3px 0}
+
+  /* ---------- 复刻区 ---------- */
+  .stage{background:#eef0f4;border:1px solid var(--line);border-radius:16px;padding:14px}
+  .mock{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .mock-head{padding:16px 20px 0}
+  .mock-title{display:flex;align-items:center;gap:9px}
+  .mock-title h4{margin:0;font-size:19px;letter-spacing:-.01em}
+  .q{
+    width:15px;height:15px;border-radius:999px;border:1px solid #cbd5e1;color:#94a3b8;font-size:9px;
+    display:inline-flex;align-items:center;justify-content:center;font-weight:700
+  }
+  .mock-sub{margin:6px 0 0;font-size:12px;color:var(--ink3)}
+  .scopes{display:flex;align-items:center;gap:4px;margin:14px 0 0;border-bottom:1px solid var(--line2);padding-bottom:0}
+  .scope{
+    display:inline-flex;align-items:center;gap:6px;padding:8px 12px;font-size:13px;font-weight:600;
+    color:var(--ink2);border-bottom:2px solid transparent;cursor:pointer;margin-bottom:-1px
+  }
+  .scope.on{color:var(--blue);border-bottom-color:var(--blue)}
+  .scope .pip{font-size:11px;font-weight:800;color:var(--ink3)}
+  .scope.on .pip{color:var(--blue)}
+  .badge-n{
+    display:inline-flex;min-width:18px;height:18px;padding:0 5px;border-radius:999px;align-items:center;
+    justify-content:center;font-size:10.5px;font-weight:800;background:var(--blue);color:#fff
+  }
+  .m-body{display:flex;gap:14px;padding:14px 20px 20px;align-items:flex-start}
+  .m-left{
+    width:400px;flex:0 0 400px;border:1px solid var(--line);border-radius:12px;background:#fff;overflow:hidden;
+    display:flex;flex-direction:column
+  }
+  .m-right{flex:1;min-width:0;border:1px solid var(--line);border-radius:12px;background:#fff;min-height:430px}
+
+  .l-tools{padding:10px 11px 0}
+  .row1{display:flex;gap:7px;align-items:center}
+  .search{
+    flex:1;display:flex;align-items:center;gap:6px;height:32px;border:1px solid var(--line);
+    border-radius:8px;padding:0 9px;color:var(--ink3);font-size:12px;background:#fff
+  }
+  .btn-add{
+    height:32px;padding:0 12px;border-radius:8px;background:var(--blue);color:#fff;border:0;font-size:12px;
+    font-weight:700;display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-family:inherit
+  }
+
+  /* 分组页签（方案 A 的核心，与工具注册表/技能/智能体同一套外观） */
+  .gtabs{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;margin:9px 0 0;padding-bottom:2px;
+    overflow-x:auto;scrollbar-width:none}
+  .gtabs::-webkit-scrollbar{display:none}
+  .gtab{
+    display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);
+    background:#fff;font-size:11px;font-weight:600;color:var(--ink2);cursor:pointer;font-family:inherit;white-space:nowrap
+  }
+  .gtab .c{font-size:10.5px;font-weight:800;color:var(--ink3);font-variant-numeric:tabular-nums}
+  .gtab.on{background:var(--blue-weak);border-color:#bfdbfe;color:var(--blue)}
+  .gtab.on .c{color:var(--blue)}
+  .gtab.more{color:var(--ink2)}
+  .gtab.ungroup{border-style:dashed;color:var(--ink3)}
+
+  .filters{display:flex;align-items:center;gap:7px;margin:9px 0 0;padding-bottom:10px;border-bottom:1px solid var(--line2)}
+  .chip{
+    display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px;border-radius:7px;
+    border:1px solid var(--line);background:#fff;font-size:11px;color:var(--ink2);cursor:pointer;font-family:inherit
+  }
+  .chip.on{background:var(--indigo-weak);border-color:#c7d2fe;color:#3730a3}
+  .dot{width:6px;height:6px;border-radius:999px;display:inline-block}
+  .chip .sel{border:0;background:transparent;font:inherit;color:inherit;cursor:pointer;padding-right:2px}
+  .count{margin-left:auto;font-size:10.5px;color:var(--ink3);font-variant-numeric:tabular-nums}
+
+  .servers{max-height:430px;overflow-y:auto;overflow-x:hidden}
+  .srv{
+    display:flex;gap:9px;padding:11px 12px;border-top:1px solid var(--line2);cursor:pointer;position:relative
+  }
+  .srv:first-child{border-top:0}
+  .srv:hover{background:#fafbfc}
+  .srv.on{background:var(--blue-weak)}
+  .srv.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--blue)}
+  .srv .main{min-width:0;flex:1}
+  .srv .name{display:flex;align-items:center;gap:6px;min-width:0}
+  .srv .name b{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .srv.on .name b{color:var(--blue)}
+  .gchip{
+    display:inline-flex;align-items:center;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:700;
+    background:var(--violet-weak);color:#5b21b6;border:1px solid #ddd6fe;white-space:nowrap;flex:0 0 auto
+  }
+  .gchip.none{background:#fff;color:var(--ink3);border:1px dashed #d1d5db}
+  .srv .meta{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:5px}
+  .tagx{
+    display:inline-flex;align-items:center;border-radius:5px;padding:1px 5px;font-size:9.5px;font-weight:700;
+    background:#f3f4f6;color:#4b5563;border:1px solid #e5e7eb
+  }
+  .tagx.ok{background:var(--green-weak);color:#047857;border-color:#bbf7d0}
+  .tagx.bad{background:var(--rose-weak);color:#be123c;border-color:#fecdd3}
+  .tagx.info{background:var(--indigo-weak);color:#3730a3;border-color:#c7d2fe}
+  .srv .stamp{font-size:10px;color:var(--ink3);margin-top:5px}
+  .srv .right{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:0 0 auto}
+  .toggle{display:inline-block;width:30px;height:17px;border-radius:999px;background:#e5e7eb;position:relative;flex:0 0 auto}
+  .toggle.on{background:var(--blue)}
+  .toggle::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:999px;background:#fff;
+    box-shadow:0 1px 2px rgba(0,0,0,.15);transition:left .15s}
+  .toggle.on::after{left:15px}
+
+  /* 方案 B：分组标题已表达归属，卡内不重复徽标 */
+  .mock[data-plan="B"] .gchip{display:none}
+
+  /* 紧凑密度 */
+  .dense-compact .srv{padding:7px 12px}
+  .dense-compact .srv .name b{font-size:12.5px}
+  .dense-compact .srv .meta{margin-top:3px}
+  .dense-compact .srv .stamp{display:none}
+  .dense-compact .srv .remark{display:none}
+
+  /* 右栏空态 */
+  .empty{height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;
+    padding:28px;color:var(--ink3);text-align:center;min-height:430px}
+  .empty .spark{font-size:34px;opacity:.18;margin-bottom:10px}
+  .empty p{margin:0;font-size:12.5px}
+  .glance{width:100%;max-width:420px;margin-top:20px;text-align:left}
+  .glance .t{font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--ink3);text-transform:uppercase;margin-bottom:8px}
+  .gbar{display:flex;align-items:center;gap:8px;font-size:12px;padding:5px 0;color:var(--ink2)}
+  .gbar .nm{width:88px;flex:0 0 88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .gbar .track{flex:1;height:6px;border-radius:999px;background:#f1f3f6;overflow:hidden}
+  .gbar .fill{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#a5b4fc,#818cf8)}
+  .gbar .n{font-size:10.5px;color:var(--ink3);font-variant-numeric:tabular-nums;width:44px;text-align:right}
+  .todos{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px}
+  .todo{
+    display:inline-flex;align-items:center;gap:5px;border-radius:8px;border:1px solid var(--line);
+    padding:4px 8px;font-size:11px;color:var(--ink2);background:#fff
+  }
+  .todo b{font-variant-numeric:tabular-nums}
+
+  /* 工具列表右栏（选中服务时） */
+  .tool-head{padding:12px 14px;border-bottom:1px solid var(--line);background:#f8fafc}
+  .tool-head h5{margin:0;font-size:13px}
+  .tool-head .sub{font-size:10.5px;color:var(--ink3);margin-top:2px}
+  .tool{display:flex;gap:9px;padding:10px 14px;border-top:1px solid var(--line2);align-items:flex-start}
+  .tool .nm{font-size:12px;font-weight:700;font-family:ui-monospace,Menlo,monospace}
+  .tool .ds{font-size:11px;color:var(--ink2);margin-top:2px;line-height:1.5}
+  .tool .pub{margin-left:auto;flex:0 0 auto}
+
+  /* 方案 B：折叠分组清单 */
+  .acc{border-top:1px solid var(--line2)}
+  .acc-h{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;background:#fbfcfd;
+    border-top:1px solid var(--line2);font-size:12px;font-weight:700}
+  .acc:first-child .acc-h{border-top:0}
+  .acc-h .caret{font-size:9px;color:var(--ink3);transition:transform .15s}
+  .acc.open .acc-h .caret{transform:rotate(90deg)}
+  .acc-h .cnt{margin-left:auto;font-size:10.5px;color:var(--ink3);font-weight:600}
+  .acc-b{display:none}
+  .acc.open .acc-b{display:block}
+
+  /* 方案 C：全宽表格 */
+  .wide{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
+  .wide table{border:0;border-radius:0}
+  .wide thead th{background:#fafbfc}
+  .wide tbody tr:hover{background:#fafbfc;cursor:pointer}
+  .wide td{font-size:12px}
+  .wide .nm{font-weight:700}
+
+  /* 品牌色小工具 */
+  .hl{background:linear-gradient(180deg,transparent 62%,#fef08a 62%)}
+  .kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 4px;font-size:10.5px;
+    font-family:ui-monospace,Menlo,monospace;color:var(--ink2);background:#fff}
+
+  .cols2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .cols3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .cmp{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 14px}
+  .cmp .cap{font-size:11px;font-weight:800;color:var(--ink3);letter-spacing:.04em;text-transform:uppercase;margin-bottom:9px}
+  .cmp .demo{border:1px solid var(--line);border-radius:10px;padding:10px;background:#fcfdfe}
+  .cmp .why{font-size:11.5px;color:var(--ink2);margin-top:9px;line-height:1.6}
+  .decide{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .decide ol{margin:8px 0 0;padding-left:20px;font-size:12.5px;color:var(--ink2)}
+  .decide li{margin:7px 0}
+  .decide b{color:var(--ink)}
+  .pill{display:inline-block;font-size:10.5px;font-weight:800;padding:1px 7px;border-radius:999px;
+    background:var(--blue-weak);color:var(--blue);border:1px solid #bfdbfe;margin-left:4px}
+  @media (max-width:1080px){
+    .cards,.plans,.cols3{grid-template-columns:1fr 1fr}
+    .cols2{grid-template-columns:1fr}
+    .m-left{width:340px;flex-basis:340px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div style="display:flex;align-items:flex-start;gap:10px;background:#ecfdf5;border:1px solid #a7f3d0;
+    border-radius:12px;padding:12px 14px;margin:0 0 16px;font-size:12.5px;color:#065f46">
+    <b style="flex:0 0 auto">✅ 已按方案 A 落地</b>
+    <span>
+      左栏分组页签（复用 <code style="background:#d1fae5;border-color:#a7f3d0">ToolGroupTabs</code>）+ 卡片分组徽标 +
+      右栏空态「分组分布 / 值得处理」+ 密度切换，均已实现；后端为 <code style="background:#d1fae5;border-color:#a7f3d0">sys_mcp_servers.group_name</code>
+      （V215 / V115）+ 专用端点 <code style="background:#d1fae5;border-color:#a7f3d0">PUT /mcp/servers/{id}/group</code>。
+      本页保留三方案对比与决策记录，实现说明见
+      <code style="background:#d1fae5;border-color:#a7f3d0">docs/superpowers/specs/2026-11-12-mcp-group-design.md</code>。
+    </span>
+  </div>
+
+  <h1>MCP 工具集 · 给「平台 MCP / 我的 MCP」加业务分组，并把左栏重排一遍</h1>
+  <p class="lead">
+    55 个平台服务平铺在一个细长列表里，右半屏常年是一句「请在左侧选择一个 MCP 服务查看工具」。
+    下面先核查现状到底卡在哪，再给字段落库结论与三套排版方案，最后是需要你拍板的四件事。
+  </p>
+
+  <!-- ===== 工具条 ===== -->
+  <div class="toolbar">
+    <span class="lab">UI 方案</span>
+    <div class="seg" id="segPlan">
+      <button type="button" data-plan="A" class="on">A · 左栏分组页签</button>
+      <button type="button" data-plan="B">B · 分组折叠清单</button>
+      <button type="button" data-plan="C">C · 全宽表格 + 详情</button>
+    </div>
+    <span class="lab">当前视图</span>
+    <div class="seg" id="segView">
+      <button type="button" data-view="platform" class="on">平台 MCP</button>
+      <button type="button" data-view="mine">我的 MCP</button>
+    </div>
+    <span class="lab">分组数量</span>
+    <div class="seg" id="segMany">
+      <button type="button" data-many="5" class="on">5 个</button>
+      <button type="button" data-many="9">9 个（溢出）</button>
+    </div>
+    <span class="lab">卡片密度</span>
+    <div class="seg" id="segDense">
+      <button type="button" data-dense="comfy" class="on">宽松</button>
+      <button type="button" data-dense="compact">紧凑</button>
+    </div>
+  </div>
+  <p class="tiny muted" style="margin:6px 0 0">
+    提示：点左栏的服务会切到右栏工具列表，再点一下顶部分组页签回到「未选中」状态看右栏空态。
+  </p>
+
+  <!-- ===== 1 现状 ===== -->
+  <h2><span class="num">1</span> 先看清现状：问题不在「不好看」</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="k">左栏工具栏</div>
+      <div class="v">2 行</div>
+      <div class="d">搜索 + 新建 / 仅运行中 + 排序 + 条数。再加分组就是第 3 行，左栏只有 400px 宽。</div>
+    </div>
+    <div class="card">
+      <div class="k">服务总数</div>
+      <div class="v">55</div>
+      <div class="d">全部平铺，靠搜索或滚动找。没有任何「分布」视图：谁没发布、谁远端失效、谁在跑。</div>
+    </div>
+    <div class="card warn">
+      <div class="k">右半屏利用率</div>
+      <div class="v">≈0</div>
+      <div class="d">未选中服务时只有一句「请在左侧选择一个 MCP 服务查看工具」——全页面最大一块面积在说废话。</div>
+    </div>
+    <div class="card">
+      <div class="k">单张卡片信息</div>
+      <div class="v">5 类</div>
+      <div class="d">名称 / 签名标签 / 备注 / 工具数·已发布 / 同步时间。55 条要滚 4~5 屏，密度偏高但缺分组锚点。</div>
+    </div>
+  </div>
+  <p class="note">
+    结论：<b>分组不是「再加一个筛选条件」，而是补上唯一缺失的那一层——分布导航</b>。
+    筛选回答「怎么排除」，分组回答「有哪些、各几个」。同时右栏空态应该顺手承担「全局盘一眼」的职责，
+    否则那块面积永远浪费。
+  </p>
+
+  <!-- ===== 2 字段 ===== -->
+  <h2><span class="num">2</span> 分组往哪存：<code>sys_mcp_servers</code> 里没有能直接用的字段</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:190px">现有字段</th>
+        <th style="width:250px">真实用途（读码与迁移注释得出）</th>
+        <th style="width:210px">谁在依赖</th>
+        <th>能不能当业务分组</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>remark</code> VARCHAR(500)</td>
+        <td>自由备注，用户在新建向导里随手写的一句话，可空可重复。</td>
+        <td>服务卡片上 `line-clamp-2` 展示。</td>
+        <td><span class="no">不行</span>：自由文本不属于「枚举式归属」，用它当分组等于把备注当分类，改一次文案就换一次分组。</td>
+      </tr>
+      <tr>
+        <td><code>scope</code> VARCHAR(20)</td>
+        <td><code>global</code> / <code>personal</code>——这条服务是平台共享的还是某个人的。</td>
+        <td>列表过滤、分享、绑定校验全在用。</td>
+        <td><span class="no">不行</span>：这是<b>归属范围</b>，不是业务域。混用会让「个人服务」和「平台服务」再也没法按同一个业务域聚合。</td>
+      </tr>
+      <tr>
+        <td><code>credential_mode</code> / <code>auth_headers</code> / <code>user_assertion_*</code></td>
+        <td>服务怎么认我们：静态 Token、凭据中心绑定、用户身份断言。</td>
+        <td>凭据面板、运行时注入。</td>
+        <td><span class="no">不行</span>：安全配置，与导航无关。</td>
+      </tr>
+      <tr>
+        <td><code>enabled_status</code> / <code>last_sync_at</code></td>
+        <td>运行状态与上次同步时间。</td>
+        <td>「仅运行中」筛选、排序、状态开关。</td>
+        <td><span class="no">不行</span>：这是状态，已经是筛选维度。</td>
+      </tr>
+      <tr>
+        <td><b>新增 <code>group_name</code></b> VARCHAR(64) NULL</td>
+        <td>这个服务属于哪个业务域（单值），只服务左栏页签与筛选，不参与权限、不影响运行时。</td>
+        <td>新加，没有历史包袱。</td>
+        <td><span class="yes">可以</span>：与 <code>tools.group_name</code> / <code>meta_datasets.group_name</code> / <code>ai_agents.group_name</code> 同构，四处页签共用同一套组件与计数口径。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="note">
+    落地成本与前三处一样小：<code>db-prod/V215</code> + <code>db-prod-pg/V115</code> 各一条
+    <code>ALTER TABLE ... ADD COLUMN group_name VARCHAR(64) NULL</code>，存量行落 NULL 按「未分组」统计，不需要回填。
+    设置入口两个：服务卡片「⋯ → 设置分组」、添加服务向导第一步。
+  </p>
+
+  <div class="decide" style="margin-top:14px;border-color:#fecdd3;background:#fff8f9">
+    <h3 style="margin:0 0 4px">为什么不能顺手复用现有的 <code>PUT /api/portal/mcp/servers/{id}</code></h3>
+    <p class="note" style="margin:0 0 8px">那条接口是「编辑服务」的整表单保存，用它改分组会连带三件事：</p>
+    <ol style="margin:0;padding-left:20px;font-size:12.5px;color:var(--ink2)">
+      <li><b>整表单覆盖</b>：<code>server_name</code> / <code>sse_url</code> 必填，前端每次都靠 <code>buildServerPayload(server)</code> 回传全部字段。前端少传一个字段就是一次静默清空（<code>remark</code> 就是因此才单独做了 <code>model_fields_set</code> 保护）。</li>
+      <li><b>改名会迁移工具引用</b>：智能体是按<b>工具名</b>绑定的，服务改名时后端要同步改写引用。分组跟名字毫无关系，不该走进这条重活。</li>
+      <li><b>服务是启用状态时会触发一次 <code>sync_tools</code></b>：真的去外部拉工具列表并覆盖缓存。用户只是想归个类，不该顺手打一次远端。</li>
+    </ol>
+    <p class="note" style="margin:8px 0 0">所以照智能体中心的做法单开一个轻端点：<code>PUT /api/portal/mcp/servers/{id}/group</code>，只写 <code>group_name</code> 一列，返回持久化后的值。</p>
+  </div>
+
+  <!-- ===== 3 方案 ===== -->
+  <h2><span class="num">3</span> 三套排版方案</h2>
+  <div class="plans">
+    <div class="plan best">
+      <div class="top"><span class="tag">推荐</span><h3 style="margin:0">A · 左栏分组页签</h3></div>
+      <ul>
+        <li>搜索行下面加一行分组页签（全部 / 各分组 / 未分组），溢出收进「更多分组 ▾」</li>
+        <li>与工具注册表、元数据管理、技能工作台、智能体中心<b>同一套组件与计数口径</b></li>
+        <li>卡片右上角显示分组徽标，点徽标 = 只看该组</li>
+        <li>代价：左栏 400px 实际只常显 <b>3 个分组</b>，其余进「更多分组 ▾」（见下方复刻）；窄屏要换行</li>
+      </ul>
+    </div>
+    <div class="plan">
+      <div class="top"><span class="tag">备选</span><h3 style="margin:0">B · 分组折叠清单</h3></div>
+      <ul>
+        <li>把分组做成手风琴标题，一屏看到所有分组名 + 数量</li>
+        <li>分组很多（15+）时翻找更快，不必横向溢出</li>
+        <li>与其它四处页面的形态不一致，用户要学两套</li>
+        <li>代价：展开/收起状态要记，搜索时分组结构会被打散；分组标题已表达归属，卡内徽标要关掉</li>
+      </ul>
+    </div>
+    <div class="plan">
+      <div class="top"><span class="tag">改动最大</span><h3 style="margin:0">C · 全宽表格 + 详情抽屉</h3></div>
+      <ul>
+        <li>放弃左右分栏，服务按宽表格铺满（一屏 12~15 行）</li>
+        <li>列：服务 / 分组 / 工具数 / 已发布 / 绑定智能体 / 状态 / 最近同步</li>
+        <li>点一行右侧抽屉看工具——更适合「管理 55 个」而不是「用一个」</li>
+        <li>代价：与「我的 MCP」两栏形态分裂；改造面最大</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===== 4 复刻 ===== -->
+  <h2><span class="num">4</span> 真实页面复刻（按上面工具条切换方案 / 视图 / 分组数 / 密度）</h2>
+  <div class="stage">
+    <div class="mock">
+      <div class="mock-head">
+        <div class="mock-title">
+          <h4>MCP 工具集</h4>
+          <span class="q">?</span>
+          <span class="tagx">显示指引</span>
+          <span class="tagx info">Model Context Protocol</span>
+        </div>
+        <p class="mock-sub">接入并管理外部 MCP 远程服务（SSE / Streamable HTTP），自动识别工具集并无缝绑定至智能体生态</p>
+        <div class="scopes">
+          <span class="scope on">✦ 平台 MCP <span class="badge-n" id="scopeBadge">18</span></span>
+          <span class="scope">👤 我的 MCP <span class="pip">6</span></span>
+          <span class="scope">🗂 审计日志</span>
+        </div>
+      </div>
+
+      <!-- 我的 MCP：调用概览条（真实页面在内容区顶部，跨全宽） -->
+      <div id="callSummary" hidden style="margin:0 20px 2px;border:1px solid var(--line);border-radius:10px;
+        padding:8px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:14px;font-size:11px;color:var(--ink2)">
+        <span style="font-weight:800;color:var(--ink)">调用概览</span>
+        <span class="chip" style="cursor:default">近 7 天 ▾</span>
+        <span>调用 <b style="color:var(--ink)">1,204</b></span>
+        <span>成功率 <b style="color:#059669">98%</b></span>
+        <span>失败 <b style="color:var(--rose)">23</b></span>
+        <span>平均 <b style="color:var(--ink)">318ms</b></span>
+        <span style="margin-left:auto;color:var(--ink3)">明细 ›</span>
+      </div>
+
+      <div class="m-body" id="mBody">
+        <!-- 左栏 -->
+        <div class="m-left" id="mLeft">
+          <div class="l-tools">
+            <div class="row1">
+              <div class="search">🔍 搜索服务或工具…</div>
+              <button class="btn-add" type="button">＋ 添加</button>
+            </div>
+
+            <!-- A：分组页签 -->
+            <div class="gtabs" id="gtabsA">
+              <button class="gtab on" type="button" data-g="all">全部 <span class="c">55</span></button>
+              <button class="gtab" type="button" data-g="协作办公">协作办公 <span class="c">12</span></button>
+              <button class="gtab" type="button" data-g="研发效能">研发效能 <span class="c">15</span></button>
+              <button class="gtab" type="button" data-g="数据平台">数据平台 <span class="c">9</span></button>
+              <button class="gtab" type="button" data-g="运维监控">运维监控 <span class="c">7</span></button>
+              <button class="gtab more more-a" type="button" data-g="more">更多分组 ▾</button>
+              <button class="gtab ungroup" type="button" data-g="__none__">未分组 <span class="c">8</span></button>
+            </div>
+
+            <div class="filters">
+              <button class="chip" type="button"><span class="dot" style="background:#cbd5e1"></span>仅运行中</button>
+              <span class="chip"><span class="sel">默认排序 ▾</span></span>
+              <span class="count" id="listCount">55 / 55 个服务</span>
+            </div>
+          </div>
+
+          <!-- A 的主体：平铺列表（带分组徽标） -->
+          <div class="servers" id="listA"></div>
+
+          <!-- B 的主体：折叠分组 -->
+          <div id="listB" hidden></div>
+        </div>
+
+        <!-- 右栏 -->
+        <div class="m-right" id="mRight">
+          <!-- 空态（默认）：分组概览 + 待办 -->
+          <div class="empty" id="rightEmpty">
+            <div class="spark">✦</div>
+            <p>从左侧选一个服务查看工具，或先看这里的分布</p>
+            <div class="glance">
+              <div class="t">分组分布</div>
+              <div id="glanceBars"></div>
+              <div class="t" style="margin-top:18px">值得处理</div>
+              <div class="todos" id="glanceTodos"></div>
+            </div>
+          </div>
+
+          <!-- 选中服务时的工具列表 -->
+          <div id="rightTools" hidden>
+            <div class="tool-head">
+              <h5 id="toolTitle">mcp-public-admin-hcp 工具</h5>
+              <div class="sub">发布后的工具智能体才可见 · 绑定 4 个智能体 · 生效 2 个</div>
+            </div>
+            <div class="tool">
+              <div>
+                <div class="nm">list_orders</div>
+                <div class="ds">按客户与时间范围拉取订单列表，支持分页与状态过滤。</div>
+              </div>
+              <span class="pub tagx ok">已发布</span>
+            </div>
+            <div class="tool">
+              <div>
+                <div class="nm">get_order_detail</div>
+                <div class="ds">按订单号取明细，含商品行与履约状态。</div>
+              </div>
+              <span class="pub tagx ok">已发布</span>
+            </div>
+            <div class="tool">
+              <div>
+                <div class="nm">refund_order</div>
+                <div class="ds">发起退款（需要审批单号），失败会返回错误码。</div>
+              </div>
+              <span class="pub tagx">待发布</span>
+            </div>
+            <div class="tool">
+              <div>
+                <div class="nm">batch_export</div>
+                <div class="ds">导出订单明细到对象存储，返回下载地址。</div>
+              </div>
+              <span class="pub tagx">待发布</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 方案 C：整块换成宽表格（由 JS 克隆 4.1 那张表） -->
+        <div id="mWide" hidden style="flex:1;min-width:0"></div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    复刻里可以直接感受三点：<b>分组页签占了多高</b>（一行 26px，换来的是不必滚动就知道有哪些域）、
+    <b>卡片上的分组徽标</b>（名字右侧小 chip，锁定分组时隐藏）、
+    <b>右栏空态换成分布 + 待办</b>（同一块面积从「说废话」变成「看一眼全局」）。页签在 400px 左栏里只常显 <b>3 个</b>，其余收进「更多分组 ▾」（切换「分组数量」可看）：这不是缺陷，是<b>方案 A 唯一的真实代价</b>——横向空间就这么多。实现上直接用共享组件 <code>ToolGroupTabs</code>，溢出规则与工具注册表 / 技能 / 智能体一致。
+  </p>
+
+  <!-- ===== 4b 方案 C 的表格复刻 ===== -->
+  <h2><span class="num">4.1</span> 方案 C 长什么样（同一批数据，换成宽表格）</h2>
+  <div class="wide">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:34px"></th>
+          <th>服务</th>
+          <th style="width:110px">分组</th>
+          <th style="width:70px">工具</th>
+          <th style="width:90px">已发布</th>
+          <th style="width:110px">绑定智能体</th>
+          <th style="width:90px">状态</th>
+          <th style="width:110px">最近同步</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="dot" style="background:#10b981"></span></td><td class="nm">mcp-public-admin-hcp</td><td><span class="gchip">数据平台</span></td><td>8</td><td><span class="tagx ok">8</span></td><td>4 / 生效 2</td><td><span class="toggle on"></span></td><td class="tiny muted">2 天前</td></tr>
+        <tr><td><span class="dot" style="background:#10b981"></span></td><td class="nm">github-mcp</td><td><span class="gchip">研发效能</span></td><td>14</td><td><span class="tagx ok">14</span></td><td>9 / 生效 9</td><td><span class="toggle on"></span></td><td class="tiny muted">3 小时前</td></tr>
+        <tr><td><span class="dot" style="background:#10b981"></span></td><td class="nm">jira-mcp</td><td><span class="gchip">研发效能</span></td><td>11</td><td><span class="tagx ok">11</span></td><td>6 / 生效 6</td><td><span class="toggle on"></span></td><td class="tiny muted">3 小时前</td></tr>
+        <tr><td><span class="dot" style="background:#10b981"></span></td><td class="nm">postgres-mcp-readonly</td><td><span class="gchip">数据平台</span></td><td>6</td><td><span class="tagx ok">6</span></td><td>12 / 生效 10</td><td><span class="toggle on"></span></td><td class="tiny muted">1 天前</td></tr>
+        <tr><td><span class="dot" style="background:#cbd5e1"></span></td><td class="nm">slack-mcp</td><td><span class="gchip">协作办公</span></td><td>7</td><td><span class="tagx">0</span></td><td>—</td><td><span class="toggle"></span></td><td class="tiny muted">5 天前</td></tr>
+        <tr><td><span class="dot" style="background:#cbd5e1"></span></td><td class="nm">Renamed Server c1c8e5c3</td><td><span class="gchip none">未分组</span></td><td>1</td><td><span class="tagx ok">1</span></td><td>0</td><td><span class="toggle on"></span></td><td class="tiny muted">2 天前</td></tr>
+        <tr><td><span class="dot" style="background:#ef4444"></span></td><td class="nm">legacy-crm-mcp</td><td><span class="gchip">测试验证</span></td><td>4</td><td><span class="tagx bad">远端失效 2</span></td><td>1 / 生效 0</td><td><span class="toggle on"></span></td><td class="tiny muted">12 天前</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">
+    C 的搜索 / 分组筛选会整体上移到表格上方（复刻里为了对比只留了表体）；
+    C 的可读性确实最好，但它把「浏览」和「操作」拆成两步（点行 → 抽屉），
+    而这一页的高频动作恰恰是「选中服务、看看工具、点发布」。改造面也最大：
+    左栏、右栏、移动端断点、我的 MCP 全都要重排。
+    <b>本期建议只做 A</b>，把 C 记为「服务破百之后」的下一步。
+  </p>
+
+  <!-- ===== 5 细节 ===== -->
+  <h2><span class="num">5</span> 四个需要定下来的细节</h2>
+
+  <h3 style="margin-top:4px">① 分组徽标放哪</h3>
+  <div class="cols2">
+    <div class="cmp">
+      <div class="cap">方案 ① 名字右侧（推荐）</div>
+      <div class="demo">
+        <div class="srv" style="cursor:default">
+          <div class="main">
+            <div class="name"><b>mcp-public-admin-hcp</b><span class="gchip">数据平台</span></div>
+            <div class="meta"><span class="tagx">8 工具</span><span class="tagx ok">8 已发布</span></div>
+          </div>
+          <div class="right"><span class="toggle on"></span></div>
+        </div>
+      </div>
+      <div class="why">服务名本身就是短的（<code>jira-mcp</code>、<code>slack-mcp</code>），右侧还有空间；一行内就能把「这是谁、属于哪」读完。名字过长时 chip 固定在尾部被裁，不至于把名字挤没。</div>
+    </div>
+    <div class="cmp">
+      <div class="cap">方案 ② 名字下方独立一行</div>
+      <div class="demo">
+        <div class="srv" style="cursor:default">
+          <div class="main">
+            <div class="name"><b>mcp-public-admin-hcp</b></div>
+            <div class="meta"><span class="gchip">数据平台</span><span class="tagx">8 工具</span><span class="tagx ok">8 已发布</span></div>
+          </div>
+          <div class="right"><span class="toggle on"></span></div>
+        </div>
+      </div>
+      <div class="why">不挤名字，但每条卡片会高 18px——55 条就是多滚半屏。MCP 名一般比智能体展示名短，没必要为它让一行。</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:20px">② 右栏空态怎么用</h3>
+  <div class="cols2">
+    <div class="cmp">
+      <div class="cap">现状：一句话占半屏</div>
+      <div class="demo" style="min-height:150px;display:flex;align-items:center;justify-content:center">
+        <div style="text-align:center;color:#9ca3af">
+          <div style="font-size:28px;opacity:.2">✦</div>
+          <div class="tiny">请在左侧选择一个 MCP 服务查看工具</div>
+        </div>
+      </div>
+      <div class="why">用户第一次进来看到的就是这块。它不提供任何信息，也不给下一步动作。</div>
+    </div>
+    <div class="cmp">
+      <div class="cap">建议：分组分布 + 待办（见上方复刻）</div>
+      <div class="demo">
+        <div class="gbar"><span class="nm">研发效能</span><span class="track"><span class="fill" style="width:100%"></span></span><span class="n">15</span></div>
+        <div class="gbar"><span class="nm">协作办公</span><span class="track"><span class="fill" style="width:80%"></span></span><span class="n">12</span></div>
+        <div class="gbar"><span class="nm" style="color:#9ca3af">未分组</span><span class="track"><span class="fill" style="width:53%;background:#e5e7eb"></span></span><span class="n">8</span></div>
+        <div class="todos" style="margin-top:10px">
+          <span class="todo">🟡 一个工具都没发布 <b>13</b></span>
+          <span class="todo">🔴 远端已失效 <b>3</b></span>
+        </div>
+      </div>
+      <div class="why">同一块面积改成「看一眼全局」：哪个域最重、有多少服务白配了没发布、谁已经挂了。待办项可点，点完直接变成左栏筛选。</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:20px">③ 卡片密度</h3>
+  <div class="cols2">
+    <div class="cmp">
+      <div class="cap">宽松（现状，一屏约 6 条）</div>
+      <div class="demo">
+        <div class="srv" style="cursor:default;padding-left:0;padding-right:0">
+          <div class="main">
+            <div class="name"><b>jira-mcp</b><span class="gchip">研发效能</span></div>
+            <div class="meta"><span class="tagx">11 工具</span><span class="tagx ok">11 已发布</span></div>
+            <div class="stamp">3 小时前同步</div>
+          </div>
+          <div class="right"><span class="toggle on"></span></div>
+        </div>
+      </div>
+      <div class="why">信息完整，适合「逐个核对配置」。</div>
+    </div>
+    <div class="cmp">
+      <div class="cap">紧凑（可选，一屏约 11 条）</div>
+      <div class="demo dense-compact">
+        <div class="srv" style="cursor:default;padding-left:0;padding-right:0">
+          <div class="main">
+            <div class="name"><b>jira-mcp</b><span class="gchip">研发效能</span></div>
+            <div class="meta"><span class="tagx">11 工具</span><span class="tagx ok">11 已发布</span></div>
+          </div>
+          <div class="right"><span class="toggle on"></span></div>
+        </div>
+      </div>
+      <div class="why">隐藏备注与同步时间（悬浮仍可看），一行 7px 内边距。给「我就想快速找到那一个」用。顶部工具条加一个密度切换即可。</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:20px">④ 顺手能补的三个便利性</h3>
+  <div class="cols3">
+    <div class="cmp">
+      <div class="cap">批量操作</div>
+      <div class="why">服务列表目前没有多选。加「批量启用 / 批量禁用 / 立即同步」——55 个服务里改一批凭据或停用一批时才有得用。</div>
+    </div>
+    <div class="cmp">
+      <div class="cap">键盘上下切换</div>
+      <div class="why">左栏是 master-detail，<span class="kbd">↑</span><span class="kbd">↓</span> 切换服务、<span class="kbd">/</span> 聚焦搜索，比鼠标点 55 次快得多。</div>
+    </div>
+    <div class="cmp">
+      <div class="cap">「未分组」优先露出</div>
+      <div class="why">刚导入的一批服务都是未分组，页签把「未分组」固定在末位但带数字，一眼看出还剩多少没归类（与其它四处页面一致）。</div>
+    </div>
+  </div>
+
+  <!-- ===== 6 决策 ===== -->
+  <h2><span class="num">6</span> 需要你拍板的四件事</h2>
+  <div class="decide">
+    <ol>
+      <li><b>方案选哪个？</b>建议 <b>A（左栏分组页签）</b>：与工具注册表 / 元数据管理 / 技能工作台 / 智能体中心完全一致，一套组件、一套计数口径。B 只在分组超过 15 个时才更优，C 留给「服务破百」。</li>
+      <li><b>分组存哪？</b>建议<b>新增 <code>sys_mcp_servers.group_name</code></b>（V215 / V115）。<code>remark</code>（自由备注）与 <code>scope</code>（全局/个人）都不能顶替。</li>
+      <li><b>右栏空态要不要改成分组分布 + 待办？</b>建议<b>要</b>：这是全页最大的一块闲置面积，改成分布图 + 4 个可点待办，等于白送一个总览。</li>
+      <li><b>「我的 MCP」是否同一套？</b>建议<b>是</b>：同组件同分组，但页签数字只算当前 scope（个人服务与平台服务不混成一个分组计数）。另外「我的 MCP」左栏已可折叠，分组页签跟着一起收。</li>
+    </ol>
+    <p class="note" style="margin-top:14px">
+      若按建议全做，本期范围是：<span class="pill">V215/V115 迁移</span>
+      <span class="pill">专用 PUT /mcp/servers/{id}/group</span>
+      <span class="pill">左栏分组页签</span>
+      <span class="pill">卡片分组徽标</span>
+      <span class="pill">右栏空态概览</span>
+      <span class="pill">密度切换</span>；
+      批量操作与键盘切换列为下一步。
+    </p>
+  </div>
+</div>
+
+<script>
+(function () {
+  var state = { plan: 'A', view: 'platform', many: 5, dense: 'comfy' };
+  (function readParams() {
+    var q = new URLSearchParams(location.search);
+    if (q.get('plan')) state.plan = String(q.get('plan')).toUpperCase();
+    if (q.get('view')) state.view = q.get('view');
+    if (q.get('many')) state.many = parseInt(q.get('many'), 10) || 5;
+    if (q.get('dense')) state.dense = q.get('dense');
+  })();
+
+  var SERVERS = [
+    { name: 'mcp-public-admin-hcp', group: '数据平台', tools: 8, pub: 8, run: 1, sync: '2 天前同步', bind: '4 个智能体', remark: '后台管理侧订单与商品查询' },
+    { name: 'github-mcp', group: '研发效能', tools: 14, pub: 14, run: 1, sync: '3 小时前同步', bind: '9 个智能体' },
+    { name: 'jira-mcp', group: '研发效能', tools: 11, pub: 11, run: 1, sync: '3 小时前同步', bind: '6 个智能体' },
+    { name: 'gitlab-mcp', group: '研发效能', tools: 12, pub: 9, run: 1, sync: '1 天前同步', bind: '3 个智能体' },
+    { name: 'postgres-mcp-readonly', group: '数据平台', tools: 6, pub: 6, run: 1, sync: '1 天前同步', bind: '12 个智能体' },
+    { name: 'clickhouse-mcp', group: '数据平台', tools: 5, pub: 5, run: 1, sync: '1 天前同步', bind: '7 个智能体' },
+    { name: 'slack-mcp', stale: true, group: '协作办公', tools: 7, pub: 0, run: 0, sync: '5 天前同步', bind: '未绑定' },
+    { name: 'dingtalk-mcp', group: '协作办公', tools: 9, pub: 9, run: 1, sync: '2 天前同步', bind: '5 个智能体' },
+    { name: 'feishu-mcp', group: '协作办公', tools: 10, pub: 6, run: 1, sync: '6 小时前同步', bind: '11 个智能体' },
+    { name: 'prometheus-mcp', group: '运维监控', tools: 6, pub: 6, run: 1, sync: '2 天前同步', bind: '2 个智能体' },
+    { name: 'k8s-mcp', stale: true, group: '运维监控', tools: 13, pub: 4, run: 1, sync: '4 天前同步', bind: '1 个智能体' },
+    { name: 'legacy-crm-mcp', stale: true, group: '测试验证', tools: 4, pub: 0, run: 1, sync: '12 天前同步', bind: '1 个智能体', dead: 2 },
+    { name: 'Renamed Server c1c8e5c3', group: '', tools: 1, pub: 1, run: 1, sync: '2 天前同步', bind: '未绑定' },
+    { name: 'Renamed Server 82634021', stale: true, group: '', tools: 1, pub: 1, run: 1, sync: '2 天前同步', bind: '未绑定' },
+    { name: 'Test Server 4fff', stale: true, group: '', tools: 2, pub: 0, run: 1, sync: '昨天同步', bind: '未绑定' },
+    { name: 'echo-test-mcp', group: '测试验证', tools: 1, pub: 1, run: 1, sync: '1 小时前同步', bind: '所有智能体可挂载' },
+    { name: 'notion-mcp', group: '协作办公', tools: 8, pub: 8, run: 1, sync: '2 天前同步', bind: '4 个智能体' },
+    { name: 'figma-mcp', stale: true, group: '协作办公', tools: 5, pub: 3, run: 1, sync: '3 天前同步', bind: '2 个智能体' }
+  ];
+
+  var PERSONAL = [
+    { name: 'my-jira-mcp', group: '研发效能', tools: 11, pub: 11, run: 1, sync: '3 小时前同步', bind: '2 个智能体' },
+    { name: 'my-notion-mcp', group: '协作办公', tools: 8, pub: 5, run: 1, sync: '昨天同步', bind: '1 个智能体' },
+    { name: 'my-pg-readonly', group: '数据平台', tools: 6, pub: 6, run: 1, sync: '2 天前同步', bind: '3 个智能体' },
+    { name: 'scratch-echo', group: '', tools: 1, pub: 1, run: 1, sync: '1 小时前同步', bind: '未绑定' },
+    { name: 'my-grafana-mcp', stale: true, group: '运维监控', tools: 4, pub: 0, run: 0, sync: '6 天前同步', bind: '未绑定' },
+    { name: 'shared-from-lina', group: '数据平台', tools: 5, pub: 5, run: 1, sync: '4 天前同步', bind: '由 lina 分享' }
+  ];
+
+  var GROUPS_MANY = [
+    '协作办公', '研发效能', '数据平台', '运维监控', '测试验证',
+    '安全合规', '客户服务', '财务分析', '知识管理'
+  ];
+
+  function groups() {
+    return state.many > 5 ? GROUPS_MANY : GROUPS_MANY.slice(0, 5);
+  }
+
+  function rows() {
+    return state.view === 'mine' ? PERSONAL : SERVERS;
+  }
+
+  function countByGroup(name) {
+    return rows().filter(function (s) { return (s.group || '') === name; }).length;
+  }
+
+  function srvRow(s, opts) {
+    opts = opts || {};
+    var groupChip = s.group
+      ? '<span class="gchip">' + s.group + '</span>'
+      : '<span class="gchip none">未分组</span>';
+    var meta = '<span class="tagx">' + s.tools + ' 工具</span>';
+    meta += s.pub > 0
+      ? '<span class="tagx ok">' + s.pub + ' 已发布</span>'
+      : '<span class="tagx">0 已发布</span>';
+    if (s.dead) meta += '<span class="tagx bad">远端失效 ' + s.dead + '</span>';
+    var remark = s.remark
+      ? '<div class="remark tiny muted" style="margin-top:4px">' + s.remark + '</div>'
+      : '';
+    var stamp = '<div class="stamp">' + s.sync + ' · ' + s.bind + '</div>';
+    return ''
+      + '<div class="srv" data-srv="' + s.name + '">'
+      +   '<div class="main">'
+      +     '<div class="name"><b>' + s.name + '</b>' + groupChip + '</div>'
+      +     '<div class="meta">' + meta + '</div>'
+      +     remark + stamp
+      +   '</div>'
+      +   '<div class="right"><span class="toggle ' + (s.run ? 'on' : '') + '"></span></div>'
+      + '</div>';
+  }
+
+  function renderGlance() {
+    var rs = rows();
+    var bars = groups().map(function (g) {
+      return { name: g, n: rs.filter(function (s) { return s.group === g; }).length };
+    });
+    var noneN = rs.filter(function (s) { return !s.group; }).length;
+    bars.push({ name: '未分组', n: noneN, muted: true });
+    var max = Math.max.apply(null, [1].concat(bars.map(function (b) { return b.n; })));
+    document.getElementById('glanceBars').innerHTML = bars.map(function (b) {
+      var pct = Math.round((b.n / max) * 100);
+      var fill = b.muted
+        ? '<span class="fill" style="width:' + pct + '%;background:#e5e7eb"></span>'
+        : '<span class="fill" style="width:' + pct + '%"></span>';
+      return '<div class="gbar"><span class="nm"' + (b.muted ? ' style="color:#9ca3af"' : '') + '>'
+        + b.name + '</span><span class="track">' + fill + '</span><span class="n">' + b.n + '</span></div>';
+    }).join('');
+
+    var off = rs.filter(function (s) { return s.run === 0; }).length;
+    var noPub = rs.filter(function (s) { return s.pub === 0; }).length;
+    var dead = rs.filter(function (s) { return s.dead; }).length;
+    document.getElementById('glanceTodos').innerHTML =
+      '<span class="todo">未启用 <b>' + off + '</b></span>'
+      + '<span class="todo">🟡 一个工具都没发布 <b>' + noPub + '</b></span>'
+      + (dead ? '<span class="todo">🔴 远端已失效 <b>' + dead + '</b></span>' : '')
+      + '<span class="todo">🕒 超过 7 天未同步 <b>' + rs.filter(function (s) { return s.stale; }).length + '</b></span>';
+  }
+
+  function renderTabs() {
+    var host = document.getElementById('gtabsA');
+    if (!host) return;
+    var gs = groups();
+    var MAX_VISIBLE = 3;                     // 400px 左栏实测：4 个分组 + 全部 + 未分组就会挤出边界
+    var visible = gs.slice(0, MAX_VISIBLE);
+    var html = '<button class="gtab on" type="button" data-g="all">全部 <span class="c">' + rows().length + '</span></button>';
+    visible.forEach(function (g) {
+      html += '<button class="gtab" type="button" data-g="' + g + '">' + g + ' <span class="c">' + countByGroup(g) + '</span></button>';
+    });
+    if (gs.length > MAX_VISIBLE) {
+      html += '<button class="gtab more" type="button" data-g="more">更多分组 ▾ <span class="c">+' + (gs.length - MAX_VISIBLE) + '</span></button>';
+    }
+    var un = rows().filter(function (s) { return !s.group; }).length;
+    html += '<button class="gtab ungroup" type="button" data-g="__none__">未分组 <span class="c">' + un + '</span></button>';
+    host.innerHTML = html;
+  }
+
+  function renderList() {
+    var hostA = document.getElementById('listA');
+    var hostB = document.getElementById('listB');
+    if (state.plan === 'B') {
+      hostA.hidden = true;
+      hostB.hidden = false;
+      var gs = groups();
+      var byGroup = {};
+      gs.forEach(function (g) { byGroup[g] = []; });
+      var none = [];
+      rows().forEach(function (s) {
+        if (s.group && byGroup[s.group]) byGroup[s.group].push(s);
+        else if (!s.group) none.push(s);
+      });
+      var html = '';
+      gs.forEach(function (g, i) {
+        var rows = byGroup[g];
+        var open = i < 2 ? ' open' : '';
+        html += '<div class="acc' + open + '">'
+          + '<div class="acc-h" data-acc><span class="caret">▶</span>' + g
+          + '<span class="cnt">' + rows.length + ' 个服务</span></div>'
+          + '<div class="acc-b">' + rows.map(function (s) { return srvRow(s); }).join('') + '</div>'
+          + '</div>';
+      });
+      if (none.length) {
+        html += '<div class="acc open"><div class="acc-h" data-acc><span class="caret">▶</span>未分组'
+          + '<span class="cnt">' + none.length + ' 个服务</span></div>'
+          + '<div class="acc-b">' + none.map(function (s) { return srvRow(s); }).join('') + '</div></div>';
+      }
+      hostB.innerHTML = html;
+    } else {
+      hostA.hidden = false;
+      hostB.hidden = true;
+      hostA.innerHTML = rows().map(function (s) { return srvRow(s); }).join('');
+    }
+    document.getElementById('listCount').textContent = rows().length + ' / ' + rows().length + ' 个服务';
+    var badge = document.getElementById('scopeBadge');
+    if (badge) badge.textContent = rows().length;
+  }
+
+  function apply() {
+    document.getElementById('gtabsA').hidden = state.plan !== 'A';
+    var isC = state.plan === 'C';
+    document.getElementById('mLeft').hidden = isC;
+    document.getElementById('mRight').hidden = isC;
+    var wide = document.getElementById('mWide');
+    wide.hidden = !isC;
+    if (isC && wide.childElementCount === 0) {
+      var src = document.querySelector('.wide');
+      if (src) wide.appendChild(src.cloneNode(true));
+    }
+    document.querySelectorAll('.more-a').forEach(function (el) { el.hidden = state.many <= 5; });
+    var mock = document.querySelector('.mock');
+    mock.setAttribute('data-plan', state.plan);
+    mock.classList.toggle('dense-compact', state.dense === 'compact');
+    renderTabs();
+    renderList();
+    renderGlance();
+  }
+
+  document.getElementById('segPlan').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-plan]');
+    if (!b) return;
+    state.plan = b.dataset.plan;
+    this.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+    apply();
+  });
+  document.getElementById('segView').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-view]');
+    if (!b) return;
+    state.view = b.dataset.view;
+    this.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+    document.querySelectorAll('.scope').forEach(function (x, i) {
+      x.classList.toggle('on', state.view === 'mine' ? i === 1 : i === 0);
+    });
+    document.getElementById('callSummary').hidden = state.view !== 'mine';
+    apply();
+  });
+  document.getElementById('segMany').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-many]');
+    if (!b) return;
+    state.many = parseInt(b.dataset.many, 10);
+    this.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+    apply();
+  });
+  document.getElementById('segDense').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-dense]');
+    if (!b) return;
+    state.dense = b.dataset.dense;
+    this.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+    apply();
+  });
+
+  // 分组页签点击：切 active + 回空态
+  document.getElementById('gtabsA').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-g]');
+    if (!b) return;
+    this.querySelectorAll('.gtab').forEach(function (x) { x.classList.toggle('on', x === b); });
+    showEmpty();
+  });
+
+  // 折叠
+  document.body.addEventListener('click', function (e) {
+    var h = e.target.closest('[data-acc]');
+    if (h) { h.parentElement.classList.toggle('open'); return; }
+    var row = e.target.closest('.srv');
+    if (row) {
+      document.querySelectorAll('.srv').forEach(function (x) { x.classList.remove('on'); });
+      row.classList.add('on');
+      var name = row.getAttribute('data-srv');
+      document.getElementById('rightEmpty').hidden = true;
+      document.getElementById('rightTools').hidden = false;
+      document.getElementById('toolTitle').textContent = name + ' 工具';
+    }
+  });
+
+  function showEmpty() {
+    document.getElementById('rightEmpty').hidden = false;
+    document.getElementById('rightTools').hidden = true;
+    document.querySelectorAll('.srv').forEach(function (x) { x.classList.remove('on'); });
+  }
+
+  // 让 URL 参数与初始按钮态一致
+  (function syncFromState() {
+    function mark(segId, attr, val) {
+      document.querySelectorAll('#' + segId + ' button').forEach(function (b) {
+        b.classList.toggle('on', b.getAttribute(attr) === String(val));
+      });
+    }
+    mark('segPlan', 'data-plan', state.plan);
+    mark('segView', 'data-view', state.view);
+    mark('segMany', 'data-many', state.many);
+    mark('segDense', 'data-dense', state.dense);
+    document.querySelectorAll('.scope').forEach(function (x, i) {
+      x.classList.toggle('on', state.view === 'mine' ? i === 1 : i === 0);
+    });
+    document.getElementById('callSummary').hidden = state.view !== 'mine';
+  })();
+
+  apply();
+})();
+</script>
+</body>
+</html>

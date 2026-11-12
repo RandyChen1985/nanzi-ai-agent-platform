@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from "vue";
+import { ref, onMounted, onBeforeUnmount, computed, watch } from "vue";
 import { useRouter } from 'vue-router';
 import ExampleFlowGuideBanner from '../components/example/ExampleFlowGuideBanner.vue';
 import ExampleSearchTestModal from '../components/example/ExampleSearchTestModal.vue';
@@ -122,6 +122,40 @@ const filterStatus = ref("pending");
 const filterCategory = ref("");
 const searchQuery = ref("");
 
+// --- 复选框批量选择 ---
+// 只收集本页可见的 id：翻页/切 Tab/改筛选都会清空，避免跨页残留的选择
+// 让用户在看不到的行上执行批量操作。
+const selectedIds = ref<number[]>([]);
+const selectAllRef = ref<HTMLInputElement | null>(null);
+
+const canBatchOperate = computed(
+  () => canAuditExample.value || canSyncExample.value || canDeleteExample.value
+);
+const selectedExamples = computed(
+  () => examples.value.filter((ex) => selectedIds.value.includes(ex.id))
+);
+const selectedCount = computed(() => selectedIds.value.length);
+const allPageSelected = computed(
+  () => examples.value.length > 0 && examples.value.every((ex) => selectedIds.value.includes(ex.id))
+);
+const somePageSelected = computed(() => selectedCount.value > 0 && !allPageSelected.value);
+
+const toggleSelectAllOnPage = () => {
+  selectedIds.value = allPageSelected.value ? [] : examples.value.map((ex) => ex.id);
+};
+
+const toggleRowSelected = (id: number, checked: boolean) => {
+  if (checked) {
+    if (!selectedIds.value.includes(id)) selectedIds.value = [...selectedIds.value, id];
+  } else {
+    selectedIds.value = selectedIds.value.filter((item) => item !== id);
+  }
+};
+
+const clearSelection = () => {
+  selectedIds.value = [];
+};
+
 const statusTabs = [
   { value: "pending", label: "待审核" },
   { value: "approved", label: "已通过" },
@@ -154,6 +188,9 @@ const fetchExamples = async () => {
     if (res.data.code === 200) {
       examples.value = res.data.data.items;
       total.value = res.data.data.total;
+      // 只保留仍在当前页上的选择：翻页/切 Tab/改筛选后不会残留看不见的选中项
+      const visibleIds = new Set(examples.value.map((ex) => ex.id));
+      selectedIds.value = selectedIds.value.filter((id) => visibleIds.has(id));
     }
   } catch (error) {
     if (currentVersion !== fetchVersion) return;
@@ -174,6 +211,28 @@ const scheduleFetch = (resetPage = true) => {
   }, 300);
 };
 
+/**
+ * 「后台任务跑完了，过几秒再拉一次状态」这类延时任务。
+ *
+ * 必须登记并在卸载时清掉：批量同步 / 一键同步 / 智能增强都是先在服务端起后台任务、
+ * 前端延时复查，用户很可能在这 3 秒内切走页面。不清理的话定时器照样触发，
+ * 对已卸载的组件发请求、写 ref，network 面板里表现为「离开页面后还多一条」。
+ */
+const refreshTimers = new Set<ReturnType<typeof setTimeout>>();
+const runLater = (task: () => void | Promise<void>, delay = 3000) => {
+  const timer = setTimeout(() => {
+    refreshTimers.delete(timer);
+    void task();
+  }, delay);
+  refreshTimers.add(timer);
+};
+
+onBeforeUnmount(() => {
+  if (fetchTimer) clearTimeout(fetchTimer);
+  refreshTimers.forEach((timer) => clearTimeout(timer));
+  refreshTimers.clear();
+});
+
 const selectStatusTab = (value: string) => {
   filterStatus.value = value;
   page.value = 1;
@@ -189,6 +248,11 @@ const resetFilters = () => {
 };
 
 watch([searchQuery, filterCategory, filterStatus], () => scheduleFetch(true));
+
+// 半选态必须落到 DOM property 上，模板里没有对应 attribute 可绑定
+watch([selectedIds, examples], () => {
+  if (selectAllRef.value) selectAllRef.value.indeterminate = somePageSelected.value;
+});
 
 const auditExample = async (id: number, status: string) => {
   if (actionLoading.value[id]) return;
@@ -217,6 +281,197 @@ const auditExample = async (id: number, status: string) => {
   }
 };
 
+/**
+ * 批量操作定义。
+ *
+ * 按钮组按「选中项的状态集合」推导，而不是按当前 Tab 硬编码：这样在「全部」
+ * Tab 里只勾选同状态案例时也能直接批量操作，跨状态混选时只保留所有状态都
+ * 允许的动作（废弃），避免把「通过」「同步」这类状态前置条件不同的动作混在
+ * 一起发出必然失败的请求。
+ */
+type BatchActionKey = "approve" | "reject" | "deprecate" | "delete" | "sync";
+
+interface BatchActionItem {
+  key: BatchActionKey;
+  label: string;
+  tone: "emerald" | "rose" | "indigo" | "amber" | "danger";
+  confirmTitle: string;
+  confirmMessage: string;
+  confirmText: string;
+  confirmType: "danger" | "primary" | "warning";
+}
+
+const BATCH_TONE_CLASS: Record<BatchActionItem["tone"], string> = {
+  emerald: "border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50",
+  rose: "border-rose-200 bg-white text-rose-600 hover:bg-rose-50",
+  indigo: "border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50",
+  amber: "border-amber-200 bg-white text-amber-700 hover:bg-amber-50",
+  danger: "border-red-300 bg-red-50 text-red-700 hover:bg-red-100",
+};
+
+const batchActions = computed<BatchActionItem[]>(() => {
+  const selected = selectedExamples.value;
+  if (!selected.length) return [];
+  const statusSet = new Set(selected.map((ex) => ex.status));
+  const uniformStatus = statusSet.size === 1 ? [...statusSet][0] : null;
+  const count = selected.length;
+  const actions: BatchActionItem[] = [];
+
+  if (uniformStatus === "pending" && canAuditExample.value) {
+    actions.push({
+      key: "approve",
+      label: "通过",
+      tone: "emerald",
+      confirmTitle: "批量通过确认",
+      confirmMessage: `确定将通过所选 ${count} 条案例吗？通过后还需要同步到${
+        isLocalMode.value ? "本地向量索引" : " RAGFlow"
+      }才会被检索命中。`,
+      confirmText: "确定通过",
+      confirmType: "primary",
+    });
+    actions.push({
+      key: "reject",
+      label: "驳回",
+      tone: "rose",
+      confirmTitle: "批量驳回确认",
+      confirmMessage: `确定将驳回所选 ${count} 条案例吗？驳回后不再参与向量检索。`,
+      confirmText: "确定驳回",
+      confirmType: "warning",
+    });
+  }
+
+  if (uniformStatus === "approved" && canSyncExample.value) {
+    actions.push({
+      key: "sync",
+      label: "同步",
+      tone: "indigo",
+      confirmTitle: "批量同步确认",
+      confirmMessage: `确定将所选 ${count} 条案例重新同步到${
+        isLocalMode.value ? "本地向量索引 (Redis)" : " RAGFlow"
+      }吗？`,
+      confirmText: "开始同步",
+      confirmType: "primary",
+    });
+  }
+
+  if (!statusSet.has("deprecated") && canDeleteExample.value) {
+    actions.push({
+      key: "deprecate",
+      label: "废弃",
+      tone: "amber",
+      confirmTitle: "批量废弃确认",
+      confirmMessage: `确定将废弃所选 ${count} 条案例吗？废弃后不再参与检索，可稍后到「已废弃」Tab 中删除。`,
+      confirmText: "确定废弃",
+      confirmType: "warning",
+    });
+  }
+
+  if (uniformStatus === "deprecated" && canDeleteExample.value) {
+    actions.push({
+      key: "delete",
+      label: "永久删除",
+      tone: "danger",
+      confirmTitle: "永久删除确认",
+      confirmMessage: `确定永久删除所选 ${count} 条已废弃案例吗？此操作不可恢复，将同时清理本地向量索引、RAGFlow 文档与引用流水。`,
+      confirmText: "永久删除",
+      confirmType: "danger",
+    });
+  }
+
+  return actions;
+});
+
+/** 「全部」Tab 跨状态混选时提示用户切到具体 Tab，避免误操作 */
+const mixedSelectionHint = computed(() => {
+  const selected = selectedExamples.value;
+  if (selected.length < 2) return "";
+  const statusSet = new Set(selected.map((ex) => ex.status));
+  if (statusSet.size === 1) return "";
+  return statusSet.has("deprecated")
+    ? "所选案例同时包含已废弃与其它状态，请切换到对应 Tab 后批量操作"
+    : "所选案例状态不一致，当前只保留所有状态都可执行的操作";
+});
+
+const batchConfirm = ref<BatchActionItem | null>(null);
+const batchRunning = ref(false);
+
+const requestBatchAction = (action: BatchActionItem) => {
+  if (!selectedIds.value.length || batchRunning.value) return;
+  // 批量同步与单条同步同口径：RAGFlow 模式未连上时先拦住，别让用户点出一个必然失败的批次
+  if (action.key === "sync" && !isLocalMode.value && !isEngineReady.value) {
+    showToast("RAGFlow 服务未就绪，暂时无法同步", "warning");
+    return;
+  }
+  batchConfirm.value = action;
+};
+
+const runBatchAction = async () => {
+  const action = batchConfirm.value;
+  if (!action || batchRunning.value) return;
+  const ids = [...selectedIds.value];
+  if (!ids.length) {
+    batchConfirm.value = null;
+    return;
+  }
+  batchRunning.value = true;
+  try {
+    const res = await axios.post("/api/portal/examples/batch", { ids, action: action.key });
+    if (res.data.code === 200) {
+      const failed: Array<{ id: number; reason: string }> = res.data.data?.failed || [];
+      const message = res.data.message || "批量操作完成";
+      if (failed.length) {
+        const reasons = Array.from(new Set(failed.map((item) => item.reason))).slice(0, 2).join("；");
+        showToast(`${message}。原因：${reasons}`, "warning");
+      } else {
+        showToast(message, "success");
+      }
+      clearSelection();
+      await fetchExamples();
+      // 同步是后台任务，稍后再拉一次状态
+      if (action.key === "sync") {
+        runLater(() => fetchExamples());
+      }
+    }
+  } catch (error: any) {
+    showToast(error.response?.data?.detail || "批量操作失败", "error");
+  } finally {
+    batchRunning.value = false;
+    batchConfirm.value = null;
+  }
+};
+
+/** 单条删除（仅「已废弃」案例）：先确认再删除 */
+const deleteTarget = ref<ChatBIExample | null>(null);
+const deleteRunning = ref(false);
+
+const requestDeleteExample = (ex: ChatBIExample) => {
+  openRowMenuExample.value = null;
+  if (ex.status !== "deprecated") {
+    showToast("只有「已废弃」的案例允许删除，请先执行废弃操作", "warning");
+    return;
+  }
+  deleteTarget.value = ex;
+};
+
+const confirmDeleteExample = async () => {
+  const target = deleteTarget.value;
+  if (!target || deleteRunning.value) return;
+  deleteRunning.value = true;
+  try {
+    const res = await axios.delete(`/api/portal/examples/${target.id}`);
+    if (res.data.code === 200) {
+      showToast("案例已永久删除", "success");
+      selectedIds.value = selectedIds.value.filter((id) => id !== target.id);
+      await fetchExamples();
+    }
+  } catch (error: any) {
+    showToast(error.response?.data?.detail || "删除失败", "error");
+  } finally {
+    deleteRunning.value = false;
+    deleteTarget.value = null;
+  }
+};
+
 const syncAllToRag = async () => {
   showSyncAllConfirm.value = false;
   if (loading.value) return;
@@ -226,10 +481,8 @@ const syncAllToRag = async () => {
     const res = await axios.post("/api/portal/examples/sync-all");
     if (res.data.code === 200) {
       showToast(res.data.message || "一键同步任务已启动", "success");
-      // 3秒后自动刷新
-      setTimeout(() => {
-        fetchExamples();
-      }, 3000);
+      // 3秒后自动刷新（登记定时器，卸载时清掉）
+      runLater(() => fetchExamples());
     }
   } catch (error) {
     showToast("一键同步失败", "error");
@@ -245,10 +498,8 @@ const syncToRag = async (id: number) => {
     const res = await axios.post(`/api/portal/examples/sync/${id}`);
     if (res.data.code === 200) {
       showToast("已触发同步任务", "success");
-      // 3秒后自动刷新
-      setTimeout(() => {
-        fetchExamples();
-      }, 3000);
+      // 3秒后自动刷新（登记定时器，卸载时清掉）
+      runLater(() => fetchExamples());
     }
   } catch (error) {
     showToast("同步请求失败", "error");
@@ -321,8 +572,8 @@ const manualEnhance = async () => {
     if (res.data.code === 200) {
       showToast("智能增强任务已启动，请稍后刷新查看", "success");
       currentExample.value.enhance_status = 'pending';
-      // 3秒后自动刷新一次详情数据
-      setTimeout(async () => {
+      // 3秒后自动刷新一次详情数据（登记定时器，卸载时清掉）
+      runLater(async () => {
         const checkRes = await axios.get("/api/portal/examples", { params: { trace_id: currentExample.value?.trace_id } });
         if (checkRes.data.code === 200 && checkRes.data.data.items.length > 0) {
           currentExample.value = { ...checkRes.data.data.items[0] };
@@ -739,12 +990,54 @@ onMounted(async () => {
       </div>
     </div>
 
+    <!-- 批量操作条：选中案例后才出现，按钮组按所选状态推导 -->
+    <div
+      v-if="selectedCount > 0"
+      class="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-blue-700"
+    >
+      <span class="font-bold">已选 {{ selectedCount }} 条</span>
+      <button
+        v-for="action in batchActions"
+        :key="action.key"
+        type="button"
+        class="rounded-lg border px-2.5 py-1 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+        :class="BATCH_TONE_CLASS[action.tone]"
+        :disabled="batchRunning"
+        @click="requestBatchAction(action)"
+      >
+        {{ action.label }}
+      </button>
+      <span v-if="mixedSelectionHint" class="text-blue-500/90">{{ mixedSelectionHint }}</span>
+      <span v-else-if="!batchActions.length" class="text-blue-500/90">
+        所选案例没有可执行的批量操作
+      </span>
+      <button
+        type="button"
+        class="ml-auto shrink-0 rounded px-2 py-1 font-medium text-blue-600 hover:underline"
+        @click="clearSelection"
+      >
+        取消选择
+      </button>
+    </div>
+
     <!-- Table Card -->
     <div class="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
       <div class="overflow-x-auto">
         <table class="min-w-full divide-y divide-gray-200">
           <thead class="bg-gray-50">
             <tr>
+              <th v-if="canBatchOperate" scope="col" class="w-10 px-4 py-3 text-left">
+                <input
+                  ref="selectAllRef"
+                  type="checkbox"
+                  class="h-3.5 w-3.5 rounded border-gray-300 cursor-pointer"
+                  :checked="allPageSelected"
+                  :disabled="!examples.length"
+                  title="全选当前页"
+                  aria-label="全选当前页案例"
+                  @change="toggleSelectAllOnPage"
+                />
+              </th>
               <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">ID</th>
               <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[20rem] whitespace-nowrap">问答内容</th>
               <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">分类</th>
@@ -758,7 +1051,7 @@ onMounted(async () => {
           </thead>
           <tbody class="bg-white divide-y divide-gray-200">
             <tr v-if="!loading && examples.length === 0">
-              <td :colspan="isLocalMode ? 6 : 7" class="px-6 py-14 text-center">
+              <td :colspan="(isLocalMode ? 6 : 7) + (canBatchOperate ? 1 : 0)" class="px-6 py-14 text-center">
                 <p class="text-sm text-gray-500 font-medium">
                   <template v-if="hasActiveFilters">
                     没有符合当前筛选条件的案例
@@ -782,6 +1075,15 @@ onMounted(async () => {
               </td>
             </tr>
             <tr v-for="ex in examples" :key="ex.id" class="hover:bg-gray-50/80 transition-colors">
+              <td v-if="canBatchOperate" class="px-4 py-3.5 align-top">
+                <input
+                  type="checkbox"
+                  class="mt-1 h-3.5 w-3.5 rounded border-gray-300 cursor-pointer"
+                  :checked="selectedIds.includes(ex.id)"
+                  :aria-label="`选择案例 #${ex.id}`"
+                  @change="toggleRowSelected(ex.id, ($event.target as HTMLInputElement).checked)"
+                />
+              </td>
               <td class="px-4 py-3.5 whitespace-nowrap text-sm font-mono text-gray-500">
                 #{{ ex.id }}
               </td>
@@ -1080,6 +1382,30 @@ onMounted(async () => {
       @cancel="showSyncAllConfirm = false"
     />
 
+    <!-- 批量操作确认弹窗（通过/驳回/废弃/删除/同步共用） -->
+    <ConfirmModal
+      v-if="batchConfirm"
+      :title="batchConfirm.confirmTitle"
+      :message="batchConfirm.confirmMessage"
+      :confirm-text="batchConfirm.confirmText"
+      :type="batchConfirm.confirmType"
+      :loading="batchRunning"
+      @confirm="runBatchAction"
+      @cancel="batchConfirm = null"
+    />
+
+    <!-- 单条永久删除确认弹窗 -->
+    <ConfirmModal
+      v-if="deleteTarget"
+      title="永久删除确认"
+      :message="`确定永久删除案例 #${deleteTarget.id}「${(deleteTarget.user_query || '').slice(0, 40)}」吗？此操作不可恢复，将同时清理本地向量索引、RAGFlow 文档与引用流水。`"
+      confirm-text="永久删除"
+      type="danger"
+      :loading="deleteRunning"
+      @confirm="confirmDeleteExample"
+      @cancel="deleteTarget = null"
+    />
+
     <!-- 行内「更多」操作浮动下拉菜单：Teleport 到 body，防止被表格裁切 -->
     <Teleport to="body">
       <div
@@ -1129,6 +1455,17 @@ onMounted(async () => {
         >
           <TrashIcon class="w-4 h-4 text-gray-400 shrink-0" />
           废弃案例
+        </button>
+
+        <!-- 仅有「已废弃」的案例允许彻底删除 -->
+        <button
+          v-if="openRowMenuExample.status === 'deprecated' && canDeleteExample"
+          type="button"
+          class="w-full text-left px-3.5 py-2 text-xs font-medium text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors"
+          @click="requestDeleteExample(openRowMenuExample)"
+        >
+          <TrashIcon class="w-4 h-4 text-red-500 shrink-0" />
+          永久删除
         </button>
       </div>
     </Teleport>

@@ -14,6 +14,12 @@ from starlette.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_api_key
+from app.utils.skill_metadata import (
+    build_default_skill_md,
+    get_skill_group,
+    parse_skill_frontmatter,
+    set_skill_group_in_file,
+)
 from app.core.upload_limits import SKILL_PACKAGE_MAX_BYTES, SKILL_PACKAGE_MAX_MB
 from app.core.orm import get_db_session
 from app.services.ai.skill_resolver import (
@@ -58,6 +64,7 @@ from app.api.portal.endpoints.skills import (
     parse_skill_metadata,
     get_file_tree,
     get_skill_modified_at,
+    SkillGroupUpdateRequest,
     atomic_import_skill_package,
     build_skill_archive,
     safe_extract_archive,
@@ -340,14 +347,8 @@ async def create_personal_skill(
 
         os.makedirs(skill_dir, exist_ok=True)
         skill_md_path = os.path.join(skill_dir, "SKILL.md")
-        default_content = (
-            f"---\n"
-            f"name: {req.name}\n"
-            f"description: {req.description}\n"
-            f"---\n\n"
-            f"# {req.name}\n\n"
-            f"在此处编写该技能的具体战术规范、操作流程与 <HARD-GATE> 红线守则。\n"
-        )
+        # 与平台技能共用同一份模板（含可选的分组行），避免两边各拼一份后字段漂移
+        default_content = build_default_skill_md(req.name, req.description, req.group)
         with open(skill_md_path, "w", encoding="utf-8") as f:
             f.write(default_content)
         return {"status": "success", "message": f"个人技能 {req.id} 创建成功"}
@@ -396,6 +397,35 @@ async def get_personal_skill_detail(
         raise
     except Exception as e:
         logger.error("[PersonalSkills] Failed to fetch detail for %s: %s", skill_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{skill_id}/group", summary="设置个人技能的业务分组")
+async def update_personal_skill_group(
+    skill_id: str,
+    req: SkillGroupUpdateRequest,
+    user: dict = Depends(require_api_key),
+):
+    """设置 / 清除**个人技能**的业务分组（只改 SKILL.md frontmatter 里那一行）。
+
+    与平台技能同一个实现（``set_skill_group_in_file``），区别只有路径解析与鉴权：
+    个人技能先按当前用户解析根目录，再用 :func:`_validate_personal_skill_path` 挡路径穿越。
+    """
+    try:
+        skill_dir = _validate_personal_skill_path(user, skill_id)
+        skill_md_path = os.path.join(skill_dir, "SKILL.md")
+        if not os.path.exists(skill_md_path):
+            raise HTTPException(status_code=404, detail="个人技能不存在或缺少 SKILL.md")
+        if not set_skill_group_in_file(skill_md_path, req.group):
+            raise HTTPException(status_code=500, detail="写入技能分组失败，请确认文件可写")
+        return {
+            "status": "success",
+            "group": get_skill_group(parse_skill_frontmatter(skill_id, skill_md_path)),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("[PersonalSkills] Failed to update group for %s: %s", skill_id, e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

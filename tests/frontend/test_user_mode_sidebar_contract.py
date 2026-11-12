@@ -686,10 +686,10 @@ def test_menu_and_task_list_scroll_independently() -> None:
     """菜单固定、任务区独立滚动：任务多时菜单不能被一起滚走。"""
     sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
 
-    menu_index = sidebar.index("max-h-[52vh] overflow-y-auto custom-scrollbar")
+    menu_index = sidebar.index('ref="menuScrollRef"')
     task_index = sidebar.index('ref="scrollRef"')
     assert menu_index < task_index
-    assert 'class="min-h-0 flex-1 overflow-y-auto px-2.5 pb-3 custom-scrollbar"' in sidebar
+    assert 'class="min-h-[9rem] flex-1 overflow-y-auto px-2.5 pb-3 custom-scrollbar"' in sidebar
 
 
 def test_new_chat_highlight_requires_no_active_conversation() -> None:
@@ -915,17 +915,25 @@ def test_filter_panel_has_backdrop_so_iframe_clicks_close_it(sidebar: str) -> No
 
 
 def test_menu_scroll_area_signals_more_content_below() -> None:
-    """菜单区限高 52vh，溢出时必须给「下面还有」的提示。
+    """菜单区仍要能提示「下面还有」，但只在真的装不下时才滚动。
 
-    真实翻车：加了「系统设置」后自己也漏看过——「更多」展开的子项落到滚动条
-    之外，那里没有任何视觉线索，看起来就像菜单只有这么多。所以锁三件事：
-    有渐变提示、只在真有溢出时显示（4px 容差防亚像素误闪）、不拦点击。
+    真实翻车：菜单区曾经死锁 52vh，加完「系统设置」后自己也漏看过——「更多」展开的
+    子项落到滚动条之外，那里没有任何视觉线索，看起来就像菜单只有这么多。
+
+    现在菜单区按内容自然高度铺开（展开「更多」时整组可见，会话列表让位、下移），
+    只有窗口矮到会话列表已经顶到 min-h、菜单区被迫滚动时才需要渐隐提示。
+    所以这里锁四件事：不再写死 52vh、溢出判据仍在、渐隐仍只在真有溢出时显示、
+    展开后会把新出现的子项滚进视野。
     """
     sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
 
+    # 不再写死高度：菜单区撑开、会话列表让位
+    assert "max-h-[52vh]" not in sidebar
+    assert 'class="relative flex min-h-0 px-2.5"' in sidebar
+    assert 'class="min-h-0 w-full overflow-y-auto custom-scrollbar"' in sidebar
+
     # 滚动容器可定位、可观察
     assert 'ref="menuScrollRef"' in sidebar
-    assert 'class="max-h-[52vh] overflow-y-auto custom-scrollbar"' in sidebar
     assert '@scroll.passive="updateMenuOverflow"' in sidebar
 
     # 判据：还有内容在下面才显示
@@ -934,7 +942,13 @@ def test_menu_scroll_area_signals_more_content_below() -> None:
     # 纯视觉：不能挡住「更多」组最后一项的点击
     assert "pointer-events-none absolute inset-x-2.5 bottom-0 h-8 bg-gradient-to-t" in sidebar
 
-    # 展开分组只改内部高度，scroll 事件不会触发，必须用 ResizeObserver 补
+    # 展开分组只改内部高度，scroll 事件不会触发，必须用 ResizeObserver 补；
+    # 容器自身被压缩时尺寸会变，所以两个都要观察
     assert "new ResizeObserver(() => updateMenuOverflow())" in sidebar
     assert "menuResizeObserver.observe(nav)" in sidebar
+    assert "menuResizeObserver.observe(menuScrollRef.value)" in sidebar
     assert "menuResizeObserver?.disconnect()" in sidebar
+
+    # 展开后把这一组的子项滚进视野，否则点了「更多」还是看不到最后一项
+    assert ':data-group-body="item.key"' in sidebar
+    assert "revealGroupBody(item.key)" in sidebar

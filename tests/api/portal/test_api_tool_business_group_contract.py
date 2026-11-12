@@ -45,11 +45,17 @@ def test_blank_group_name_normalizes_to_none(blank):
     assert tool.group_name is None
 
 
-def test_group_name_over_64_chars_is_rejected():
+def test_group_name_over_64_chars_is_truncated():
+    """超长分组名按 64 截断，不抛错——这是四处共用的归一口径。
+
+    `app/utils/group_name.py` 的注释写得很明确：与 DB 的 VARCHAR(64) 对齐、入参阶段就截断，
+    别等 MySQL 严格模式来兜。原先这条断言期望抛 `ValidationError`，与实现正好相反
+    （before validator 已经把值截到 64，`max_length` 永远不会触发），一直是红的。
+    """
     from app.schemas.tool import SysApiToolCreate
 
-    with pytest.raises(ValidationError):
-        SysApiToolCreate(name="t", url_template="http://x", group_name="履" * 65)
+    tool = SysApiToolCreate(name="t", url_template="http://x", group_name="履" * 65)
+    assert tool.group_name == "履" * 64
 
 
 def test_update_schema_normalizes_and_keeps_unset_semantics():

@@ -50,7 +50,11 @@ def test_personal_menu_lists_three_sections():
     # 宽屏左栏 + 窄屏胶囊两种变体
     assert "variant === 'aside'" in source
     assert "'aside' | 'chips'" in source
-    assert "hidden w-[200px]" in source
+    # 左栏宽度由折叠状态决定：展开 200px / 收起 64px（两个值都必须还在，
+    # 少一个就说明折叠把某一态写死成了固定宽度）
+    assert "hidden shrink-0" in source
+    assert "w-[200px]" in source
+    assert "w-[64px]" in source
 
 
 def test_share_dialog_sends_targets_and_message_with_limit():

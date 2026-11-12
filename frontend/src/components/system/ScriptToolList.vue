@@ -9,6 +9,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { scriptToolApi, type ScriptTool, type ScriptToolCapabilities, type ScriptToolPayload, type ScriptToolPreviewResult } from '@/api/tool'
 import { parseToolSchema, type SchemaParam } from '@/utils/toolSchema'
+import { computeGroupTabs, matchesToolFilters, toolGroupName } from '@/utils/toolGroupTabs'
 import {
   buildParamsFromForm,
   defaultValues,
@@ -25,6 +26,7 @@ import ToolBundleImportModal from './ToolBundleImportModal.vue'
 import { useToolBundleExport } from '@/composables/useToolBundleExport'
 import Modal from '../Modal.vue'
 import ConfirmModal from '../ConfirmModal.vue'
+import ToolGroupTabs from './ToolGroupTabs.vue'
 
 const props = defineProps<{
   canSave: boolean
@@ -83,24 +85,45 @@ function closeActionsMenu() {
 const batchGroupName = ref<string | null>(null)
 const batchSaving = ref(false)
 
-const filteredTools = computed(() => {
-  const keyword = searchQuery.value.trim().toLowerCase()
-  return tools.value.filter((tool) => {
-    if (sourceFilter.value !== 'all' && tool.source !== sourceFilter.value) return false
-    if (statusFilter.value === 'active' && !tool.is_active) return false
-    if (statusFilter.value === 'inactive' && tool.is_active) return false
-    if (groupFilter.value === UNGROUPED && tool.group_name) return false
-    if (groupFilter.value !== 'all' && groupFilter.value !== UNGROUPED && tool.group_name !== groupFilter.value) {
-      return false
-    }
-    if (!keyword) return true
-    return [tool.name, tool.display_name, tool.description]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(keyword))
-  })
+/**
+ * 脚本工具的过滤维度：关键词 / 来源（内置 or 自定义）/ 状态。
+ *
+ * 与 API 工具页共用 `utils/toolGroupTabs.ts` 的判定函数，差异只有「搜哪些字段」（脚本多
+ * display_name、没有 URL）和「多一个来源维度」。共用同一份实现，两页的页签计数口径
+ * 才不会一个算全量、一个算命中。
+ */
+const scriptFilters = computed(() => ({
+  keyword: searchQuery.value.trim().toLowerCase(),
+  status: statusFilter.value,
+  source: sourceFilter.value,
+  searchFields: ['name', 'display_name', 'description'] as const,
+}))
+
+const filteredTools = computed(() =>
+  tools.value.filter((tool) => {
+    if (!matchesToolFilters(tool, scriptFilters.value)) return false
+    const groupName = toolGroupName(tool)
+    return groupFilter.value === 'all'
+      || (groupFilter.value === UNGROUPED && !groupName)
+      || groupName === groupFilter.value
+  }),
+)
+
+/** 页签 / 筛选面板的分组命中数（关键词 + 来源 + 状态过滤后） */
+const groupTabCounts = computed(() => computeGroupTabs(tools.value, scriptFilters.value, UNGROUPED))
+
+const groupTabItems = computed(() => groupTabCounts.value.items)
+
+// 当前分组不在页签里（搜索后已无命中、或分组刚被删）就回「全部」，否则页签消失 +
+// 列表空白，看着像功能坏了。`tools.length > 0` 避免加载期间把用户刚选的分组清掉。
+watch(groupTabItems, (items) => {
+  if (tools.value.length > 0 && groupFilter.value !== 'all'
+      && !items.some((item) => item.key === groupFilter.value)) {
+    groupFilter.value = 'all'
+  }
 })
 
-/** 分组 → 工具数，供筛选面板与批量分组下拉展示 */
+/** 分组 → 工具数（全量），供批量分组下拉展示；筛选面板与页签用上面的 groupTabCounts */
 const groupCounts = computed(() => {
   const map = new Map<string, number>()
   for (const tool of tools.value) {
@@ -565,7 +588,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <template v-if="groupCounts.length">
+          <template v-if="groupTabCounts.groups.length || groupTabCounts.ungrouped > 0">
             <div class="my-3 border-t border-gray-100"></div>
             <div>
               <p class="mb-1.5 text-xs font-semibold text-gray-500">业务分组</p>
@@ -573,10 +596,10 @@ onBeforeUnmount(() => {
                 v-model="groupFilter"
                 class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
               >
-                <option value="all">全部分组</option>
-                <option :value="UNGROUPED">未分组</option>
-                <option v-for="group in groupCounts" :key="group.name" :value="group.name">
-                  {{ group.name }}（{{ group.count }}）
+                <option value="all">全部分组（{{ groupTabCounts.total }}）</option>
+                <option v-if="groupTabCounts.ungrouped > 0" :value="UNGROUPED">未分组（{{ groupTabCounts.ungrouped }}）</option>
+                <option v-for="[name, count] in groupTabCounts.groups" :key="name" :value="name">
+                  {{ name }}（{{ count }}）
                 </option>
               </select>
             </div>
@@ -659,6 +682,14 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <!-- 业务分组页签：与筛选面板的「业务分组」下拉共用 groupFilter，与 API 工具页同一版式 -->
+    <ToolGroupTabs
+      :items="groupTabItems"
+      :model-value="groupFilter"
+      aria-label="按业务分组筛选脚本工具"
+      @update:model-value="groupFilter = $event"
+    />
+
     <!-- 选中后浮出的批量操作条：只在勾选时出现，避免常驻按钮误点 -->
     <div
       v-if="selectedIds.size"
@@ -703,7 +734,7 @@ onBeforeUnmount(() => {
           <th class="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">名称</th>
           <th class="w-[90px] px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">语言</th>
           <th class="w-[90px] px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">来源</th>
-          <th class="w-[120px] px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">业务分组</th>
+          <th v-if="groupFilter === 'all'" class="w-[120px] px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">业务分组</th>
           <th class="w-[110px] px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-gray-400">状态</th>
           <th class="w-[130px] px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-gray-400">操作</th>
         </tr>
@@ -752,7 +783,7 @@ onBeforeUnmount(() => {
               title="代码/参数/依赖/超时已在本平台改过：代码库版本不再生效"
             >已覆盖</span>
           </td>
-          <td class="px-3 py-3.5 text-[13px] text-gray-600">{{ tool.group_name || '—' }}</td>
+          <td v-if="groupFilter === 'all'" class="px-3 py-3.5 text-[13px] text-gray-600">{{ tool.group_name || '—' }}</td>
           <td class="px-3 py-3.5">
             <div class="flex items-center justify-end gap-2">
               <span
