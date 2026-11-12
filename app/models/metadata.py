@@ -11,6 +11,8 @@ class MetaDataset(Base):
     display_name = Column(String(100), comment='显示名称')
     description = Column(Text, comment='描述')
     tags = Column(JSON, comment='标签列表')
+    # 业务分组：单值归属，只服务列表页的页签浏览与筛选；不进 AI 提示词（那里用 tags）
+    group_name = Column(String(64), nullable=True, comment='业务分组')
     data_source = Column(String(50), default="clickhouse", comment="数据源类型: clickhouse, mysql")
     status = Column(Integer, default=0, comment="1:启用, 0:禁用")
     

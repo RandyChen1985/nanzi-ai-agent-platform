@@ -345,6 +345,7 @@ class MetadataService:
             "display_name": dataset.display_name,
             "description": dataset.description,
             "tags": dataset.tags,
+            "group_name": dataset.group_name,
             "data_source": dataset.data_source,
             "status": dataset.status
         }
@@ -384,6 +385,7 @@ class MetadataService:
                 "display_name": old_dataset.display_name,
                 "description": old_dataset.description,
                 "tags": old_dataset.tags,
+                "group_name": old_dataset.group_name,
                 "data_source": old_dataset.data_source,
                 "status": old_dataset.status
             }
@@ -401,6 +403,7 @@ class MetadataService:
                 "display_name": new_dataset.display_name,
                 "description": new_dataset.description,
                 "tags": new_dataset.tags,
+                "group_name": new_dataset.group_name,
                 "data_source": new_dataset.data_source,
                 "status": new_dataset.status
             }
@@ -439,6 +442,7 @@ class MetadataService:
                 "display_name": old_dataset.display_name,
                 "description": old_dataset.description,
                 "tags": old_dataset.tags,
+                "group_name": old_dataset.group_name,
                 "data_source": old_dataset.data_source,
                 "status": old_dataset.status
             }

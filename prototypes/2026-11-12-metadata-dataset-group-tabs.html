@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>元数据管理 · 业务分组页签与筛选</title>
+<style>
+  :root{
+    --p:#1677ff; --p-dark:#0958d9; --p-soft:#e8f2ff; --p-line:#bfdbfe;
+    --ink:#0f172a; --ink-2:#334155; --ink-3:#64748b; --ink-4:#94a3b8;
+    --line:#e2e8f0; --line-2:#eef2f7; --bg:#f5f7fb; --card:#fff;
+    --green:#16a34a; --green-soft:#dcfce7; --green-ink:#15803d;
+    --red-soft:#fee2e2; --indigo-soft:#eef2ff; --indigo-ink:#4338ca;
+    --amber-soft:#fef3c7; --amber-ink:#b45309;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  code{font-family:var(--mono);font-size:.92em;background:#f1f5f9;border:1px solid var(--line);border-radius:4px;padding:1px 4px;color:var(--ink-2)}
+  .page{max-width:1340px;margin:0 auto;padding:26px 20px 90px}
+
+  /* ---------- 原型外壳 ---------- */
+  .kicker{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:var(--p);background:var(--p-soft);border-radius:99px;padding:3px 9px}
+  .lead{margin:12px 0 0;font-size:13.5px;line-height:1.85;color:var(--ink-2);max-width:1100px}
+  .lead b{color:var(--ink)}
+
+  .audit{background:var(--card);border:1px solid var(--line-2);border-radius:16px;padding:16px 18px;margin:18px 0 0}
+  .audit h2{margin:0 0 3px;font-size:13.5px;font-weight:900}
+  .audit .sub{margin:0 0 12px;font-size:11.5px;color:var(--ink-4);line-height:1.7}
+  .audit-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .audit-item{display:flex;gap:8px;align-items:flex-start;background:#fafcff;border:1px solid var(--line-2);border-radius:10px;padding:9px 11px}
+  .audit-item .dot{width:16px;height:16px;border-radius:99px;flex-shrink:0;margin-top:2px;display:grid;place-items:center;font-size:9.5px;font-weight:900;color:#fff}
+  .audit-item.has .dot{background:var(--green)}
+  .audit-item.todo .dot{background:var(--p)}
+  .audit-item.warn .dot{background:#f59e0b}
+  .audit-item b{display:block;font-size:12px;font-weight:800;margin-bottom:2px}
+  .audit-item p{margin:0;font-size:11.5px;line-height:1.65;color:var(--ink-3)}
+
+  /* ---------- 方案切换条 ---------- */
+  .planbar{position:sticky;top:0;z-index:40;margin:20px -20px 0;padding:10px 20px;background:rgba(245,247,251,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .planbar-in{max-width:1340px;margin:0 auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .planbar .lbl{font-size:11px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-4);margin-right:2px}
+  .pbtn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:6px 11px;font:inherit;font-size:12px;font-weight:800;color:var(--ink-2);cursor:pointer;transition:.15s}
+  .pbtn:hover{border-color:#cbd5e1}
+  .pbtn.on{border-color:var(--p);color:var(--p-dark);background:var(--p-soft);box-shadow:0 0 0 1px var(--p) inset}
+  .pbtn .tag{font-size:10px;font-weight:900;color:var(--p);margin-left:4px}
+  .planbar .hint{margin-left:auto;font-size:11.5px;color:var(--ink-4);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .planbar .hint .btn{padding:3px 8px;font-size:11px}
+
+  /* ---------- 应用卡片 ---------- */
+  .app{background:var(--card);border:1px solid var(--line-2);border-radius:16px;margin-top:18px;overflow:visible;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .head{padding:18px 20px 0}
+  .head h1{margin:0;font-size:19px;font-weight:900;letter-spacing:-.01em}
+  .head p{margin:5px 0 0;font-size:12px;color:var(--ink-3)}
+
+  .toolbar{display:flex;align-items:center;gap:9px;padding:14px 20px 12px;flex-wrap:wrap}
+  .countbox{font-size:12px;color:var(--ink-4);white-space:nowrap;width:74px;text-align:right;font-variant-numeric:tabular-nums}
+  .countbox b{color:var(--ink-2)}
+  .search{position:relative;flex:1;min-width:260px;max-width:420px}
+  .search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--ink-4)}
+  .search input{width:100%;border:1px solid var(--line);border-radius:9px;padding:8px 30px 8px 32px;font:inherit;font-size:12.5px;background:#fff;outline:none;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .search input:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(22,119,255,.14)}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 11px;font:inherit;font-size:12.5px;font-weight:700;color:var(--ink-2);cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.15s}
+  .btn:hover{border-color:#cbd5e1;background:#fafcff}
+  .btn.primary{background:var(--p);border-color:var(--p);color:#fff}
+  .btn.primary:hover{background:var(--p-dark)}
+  select.inp{border:1px solid var(--line);border-radius:9px;padding:7px 9px;font:inherit;font-size:12.5px;background:#fff;color:var(--ink-2);outline:none}
+  select.inp:focus{border-color:var(--p)}
+  .seg{display:inline-flex;align-items:center;gap:2px;background:#eef2f7;border:1px solid var(--line);border-radius:9px;padding:2px}
+  .seg button{border:0;background:transparent;border-radius:7px;padding:5px 9px;font:inherit;font-size:11.5px;font-weight:800;color:var(--ink-3);cursor:pointer}
+  .seg button.on{background:#fff;color:var(--p-dark);box-shadow:0 1px 2px rgba(15,23,42,.08)}
+  .badge{display:inline-flex;min-width:16px;height:16px;align-items:center;justify-content:center;border-radius:99px;background:var(--p-soft);color:var(--p-dark);font-size:10px;font-weight:900;padding:0 4px}
+
+  /* ---------- 分组页签 ---------- */
+  .grouptabs{display:flex;align-items:center;gap:4px;padding:0 20px;border-bottom:1px solid var(--line-2);position:relative}
+  .grouptabs[hidden]{display:none}
+  .gtabs-scroll{display:flex;align-items:center;gap:2px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+  .gtabs-scroll::-webkit-scrollbar{display:none}
+  .gtab{position:relative;border:0;background:transparent;padding:9px 11px 10px;font:inherit;font-size:12.5px;font-weight:700;color:var(--ink-3);cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;border-radius:8px 8px 0 0;transition:.15s}
+  .gtab:hover{background:#f5f8fc;color:var(--ink-2)}
+  .gtab.on{color:var(--p-dark)}
+  .gtab.on::after{content:"";position:absolute;left:6px;right:6px;bottom:-1px;height:2px;background:var(--p);border-radius:2px 2px 0 0}
+  .gtab .n{font-variant-numeric:tabular-nums;font-size:11px;font-weight:800;color:var(--ink-4);background:#f1f5f9;border-radius:5px;padding:1px 5px}
+  .gtab.on .n{background:var(--p-soft);color:var(--p-dark)}
+  .gmore{position:relative;flex-shrink:0}
+  .gmore > button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 8px;font:inherit;font-size:11.5px;font-weight:800;color:var(--ink-3);cursor:pointer;display:flex;align-items:center;gap:4px;margin:0 0 4px 6px}
+  .gmore > button[hidden]{display:none}
+  .gmore-menu{position:absolute;right:0;top:calc(100% + 2px);z-index:30;width:220px;max-height:260px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:5px;box-shadow:0 12px 30px rgba(15,23,42,.14)}
+  .gmore-menu[hidden]{display:none}
+  .gmore-menu button{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:transparent;border-radius:7px;padding:6px 8px;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;text-align:left}
+  .gmore-menu button:hover{background:#f5f8fc}
+  .gmore-menu button.on{background:var(--p-soft);color:var(--p-dark);font-weight:800}
+  .gmore-menu .n{font-size:11px;font-weight:800;color:var(--ink-4)}
+
+  .activebar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 20px;background:#f8fbff;border-bottom:1px solid var(--line-2);font-size:11.5px;color:var(--ink-3)}
+  .activebar[hidden]{display:none}
+  .activebar .chip{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid var(--p-line);color:var(--p-dark);border-radius:99px;padding:2px 4px 2px 9px;font-weight:800;font-size:11px}
+  .activebar .chip button{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:0 3px;opacity:.7}
+  .activebar .clear{margin-left:auto;border:0;background:transparent;font:inherit;font-size:11.5px;font-weight:800;color:var(--p);cursor:pointer}
+
+  /* ---------- 卡片网格 ---------- */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:16px 20px 6px}
+  .ds{border:1px solid var(--line);border-radius:12px;padding:12px 13px;background:#fff;cursor:pointer;transition:.15s;position:relative;display:flex;flex-direction:column;gap:7px}
+  .ds:hover{border-color:var(--p-line);box-shadow:0 6px 18px rgba(15,23,42,.06)}
+  .ds-top{display:flex;align-items:flex-start;gap:9px}
+  .ds-ico{width:32px;height:32px;border-radius:9px;background:#f4f8ff;border:1px solid #e5eefc;display:grid;place-items:center;flex-shrink:0;font-size:15px}
+  .ds-name{font-size:13px;font-weight:900;color:var(--ink);line-height:1.35;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .ds-id{font-size:10.5px;font-family:var(--mono);color:var(--ink-4);margin-top:1px}
+  .ds-desc{font-size:11.5px;color:var(--ink-3);line-height:1.6;margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .ds-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--ink-3);margin-top:auto;padding-top:7px;border-top:1px solid var(--line-2)}
+  .ds-meta b{color:var(--ink-2);font-weight:800}
+  .score{border-radius:99px;padding:1px 6px;font-weight:900;font-size:10.5px}
+  .score.good{background:var(--green-soft);color:var(--green-ink)}
+  .score.mid{background:var(--amber-soft);color:var(--amber-ink)}
+  .score.bad{background:var(--red-soft);color:#b91c1c}
+  .ds-tags{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+  .tagchip{border-radius:99px;background:#f1f5f9;color:var(--ink-3);font-size:10px;font-weight:800;padding:1px 7px;white-space:nowrap}
+  .gchip{border-radius:99px;background:var(--indigo-soft);color:var(--indigo-ink);font-size:10.5px;font-weight:800;padding:1px 8px;white-space:nowrap;border:0;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:4px}
+  .gchip.none{background:transparent;color:var(--ink-4);cursor:default;border:1px dashed #cbd5e1}
+  .gchip:hover{background:#e0e7ff}
+
+  /* ---------- 列表视图 ---------- */
+  .listwrap{padding:0 20px 6px}
+  table{width:100%;border-collapse:collapse}
+  thead th{background:#fbfcfe;text-align:left;font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4);padding:9px 10px;border-bottom:1px solid var(--line-2);white-space:nowrap}
+  tbody td{padding:10px;border-bottom:1px solid var(--line-2);vertical-align:middle;font-size:12px}
+  tbody tr:hover{background:#fafcff}
+  .tname{font-size:12.5px;font-weight:800;color:var(--ink)}
+  .tid{font-size:10.5px;font-family:var(--mono);color:var(--ink-4)}
+  .dotstate{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;color:var(--ink-2);white-space:nowrap}
+  .dotstate i{width:6px;height:6px;border-radius:99px;display:inline-block}
+  .dotstate.on i{background:var(--green)}
+  .dotstate.off i{background:#cbd5e1}
+  .rowacts{display:flex;gap:4px;justify-content:flex-end}
+  .rowacts button{border:1px solid transparent;background:transparent;border-radius:7px;padding:3px 8px;font:inherit;font-size:11.5px;font-weight:800;color:var(--p);cursor:pointer;white-space:nowrap}
+  .rowacts button:hover{background:var(--p-soft)}
+
+  .tablefoot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 20px;background:#fbfcfe;border-radius:0 0 16px 16px;font-size:11.5px;color:var(--ink-3)}
+  .empty{padding:46px 20px;text-align:center;color:var(--ink-4);font-size:12.5px}
+
+  /* ---------- 说明卡 ---------- */
+  .notes{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}
+  .note{background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:14px 15px}
+  .note h3{margin:0 0 8px;font-size:12.5px;font-weight:900;display:flex;align-items:center;gap:7px}
+  .note h3 .k{width:18px;height:18px;border-radius:6px;background:var(--p);color:#fff;display:grid;place-items:center;font-size:10.5px}
+  .note p{margin:0 0 7px;font-size:11.5px;line-height:1.75;color:var(--ink-3)}
+  .note p:last-child{margin-bottom:0}
+  .note b{color:var(--ink-2)}
+
+  .decisions{background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:16px 18px;margin-top:16px}
+  .decisions h2{margin:0 0 10px;font-size:13.5px;font-weight:900}
+  .decisions ol{margin:0;padding-left:19px;display:grid;gap:8px}
+  .decisions li{font-size:12px;line-height:1.8;color:var(--ink-2)}
+  .rec{color:var(--p-dark);font-weight:800}
+
+  /* ---------- 弹窗 ---------- */
+  .mask{position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:60;display:grid;place-items:center;padding:20px}
+  .mask[hidden]{display:none}
+  .modal{background:#fff;border-radius:16px;width:min(620px,100%);max-height:88vh;overflow:auto;box-shadow:0 30px 70px rgba(15,23,42,.28)}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line-2)}
+  .modal-head h2{margin:0;font-size:14px;font-weight:900}
+  .modal-head button{border:0;background:transparent;font-size:15px;color:var(--ink-4);cursor:pointer}
+  .modal-body{padding:16px 18px;display:grid;gap:13px}
+  .field label{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:800;color:var(--ink-2);margin-bottom:5px}
+  .field input,.field textarea,.field select{width:100%;border:1px solid var(--line);border-radius:9px;padding:8px 10px;font:inherit;font-size:12.5px;outline:none}
+  .field input:focus,.field textarea:focus,.field select:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(22,119,255,.12)}
+  .field .help{margin:5px 0 0;font-size:11px;line-height:1.65;color:var(--ink-4)}
+  .hl{border:1px dashed var(--p);background:#f7fbff;border-radius:11px;padding:11px}
+  .hl .flag{background:var(--p);color:#fff;border-radius:99px;font-size:9.5px;font-weight:900;padding:1px 7px;letter-spacing:.03em}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+  .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--line-2)}
+
+  /* ---------- 表单排版对比 ---------- */
+  .formfix{background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:16px 18px;margin-top:18px}
+  .formfix h2{margin:0 0 4px;font-size:13.5px;font-weight:900}
+  .formfix .sub{margin:0 0 14px;font-size:11.5px;line-height:1.7;color:var(--ink-3)}
+  .fixwrap{display:grid;grid-template-columns:1fr 1.35fr;gap:14px;align-items:start}
+  .fixwrap figure{margin:0}
+  .fixwrap figcaption{font-size:11.5px;font-weight:800;color:var(--ink-2);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+  .fixwrap figcaption .flag{font-size:9.5px;font-weight:900;padding:1px 7px;border-radius:99px;letter-spacing:.03em}
+  .flag.bad{background:var(--red-soft);color:#b91c1c}
+  .flag.good{background:var(--green-soft);color:var(--green-ink)}
+  /* 视口模拟：真实故障是「内容比视口高 + 居中裁切」，所以旧版上下都切掉 */
+  .vp{height:392px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;position:relative}
+  .vp-old{display:flex;align-items:center;justify-content:center}
+  .vp-old .vpbox{width:100%;max-width:330px}
+  .vp-new{display:flex;flex-direction:column}
+  .vp-new .vpbody{flex:1;min-height:0;overflow:auto;padding:12px 14px}
+  .vphead{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line-2);font-size:12px;font-weight:900}
+  .vphead .x{color:var(--ink-4);font-weight:400}
+  .vpfoot{display:flex;justify-content:flex-end;gap:7px;padding:9px 14px;border-top:1px solid var(--line-2);background:#fafcfe;font-size:11.5px}
+  .vpfoot .b{border:1px solid var(--line);border-radius:7px;padding:4px 10px;font-weight:800;color:var(--ink-2);background:#fff}
+  .vpfoot .b.p{background:var(--p);border-color:var(--p);color:#fff}
+  .vf{margin-bottom:9px}
+  .vf .l{font-size:11px;font-weight:800;color:var(--ink-2);margin-bottom:3px;display:flex;align-items:center;gap:4px}
+  .vf .i{height:26px;border:1px solid var(--line);border-radius:7px;background:#fff;font-size:10.5px;color:var(--ink-3);display:flex;align-items:center;padding:0 8px}
+  .vf .i.ta{height:44px;align-items:flex-start;padding-top:5px}
+  .vf .h{font-size:9.5px;color:var(--ink-4);margin-top:3px;line-height:1.5}
+  .vgrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .vchips{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+  .vchips span{font-size:9.5px;font-weight:800;background:#eff6ff;color:#1d4ed8;border:1px solid #dbeafe;border-radius:99px;padding:1px 7px}
+  .cutnote{position:absolute;left:0;right:0;font-size:10px;font-weight:900;color:#b91c1c;background:rgba(254,226,226,.94);text-align:center;padding:4px 6px;letter-spacing:.02em}
+  .cutnote.top{top:0;border-bottom:1px dashed #fca5a5}
+  .cutnote.bot{bottom:0;border-top:1px dashed #fca5a5}
+  .fixlist{margin:14px 0 0;padding-left:19px;display:grid;gap:6px}
+  .fixlist li{font-size:11.5px;line-height:1.75;color:var(--ink-2)}
+  .fixlist b{color:var(--ink)}
+
+  @media (max-width:900px){
+    .audit-grid,.notes,.two,.fixwrap{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <span class="kicker">原型 · 元数据管理</span>
+  <p class="lead">
+    诉求：元数据管理（数据集）也支持<b>业务分组</b>——新建/编辑能填、顶部能按它筛、页面能按分组多 Tab，<b>搜索</b>也要能配合分组。
+    先说结论：数据集页现在<b>已有搜索</b>（名称 / ID / 描述）与「状态」筛选，卡片上还挂着<b>业务标签</b>；
+    但数据库里<b>没有分组字段</b>（<code>meta_datasets</code> 只有 <code>tags</code>）。所以这次的核心不是画页签，而是先回答
+    「<b>分组和已有的业务标签是什么关系</b>」——标签是<b>多值</b>、还会进 AI 提示词；页签需要<b>单值归属</b>。
+    下面三个方案的差别全在这一点上，页面里的数据与控件都点得动。
+  </p>
+
+  <!-- ===== 现状核查 ===== -->
+  <section class="audit">
+    <h2>现状核查：数据集上已经有什么</h2>
+    <p class="sub">逐处读 <code>views/MetadataDatasets.vue</code>、<code>models/metadata.py</code>、<code>services/ai/config.py</code> 得到，不是推测。</p>
+    <div class="audit-grid">
+      <div class="audit-item has">
+        <span class="dot">✓</span>
+        <div><b>搜索已经有了</b><p>工具栏就是「搜索数据集名称、ID或描述…」，命中 <code>name</code> / <code>display_name</code> / <code>description</code>，另有「状态：全部/已启用/已禁用」。</p></div>
+      </div>
+      <div class="audit-item has">
+        <span class="dot">✓</span>
+        <div><b>业务标签已经有了</b><p><code>meta_datasets.tags</code>（JSON 数组，<b>多值</b>），卡片右侧显示前 2 个 + 「+n」，编辑弹窗可改。</p></div>
+      </div>
+      <div class="audit-item has">
+        <span class="dot">✓</span>
+        <div><b>标签会进 AI 提示词</b><p><code>services/ai/config.py</code> 把「数据集名 [标签]」渲染进已授权数据集目录，影响 ChatBI 选库、澄清提问与数据门户推荐。</p></div>
+      </div>
+      <div class="audit-item todo">
+        <span class="dot">+</span>
+        <div><b>没有「业务分组」字段</b><p><code>meta_datasets</code> 无 <code>group_name</code>：要做得先加一列迁移（可空，历史数据落「未分组」）。</p></div>
+      </div>
+      <div class="audit-item todo">
+        <span class="dot">+</span>
+        <div><b>没有按分组浏览</b><p>现在只有「卡片 / 列表」两种视图切换，没有按业务分组切页签，也没有分组下拉。</p></div>
+      </div>
+      <div class="audit-item warn">
+        <span class="dot">!</span>
+        <div><b>关键分歧：分组 ≠ 标签</b><p>标签多值、一个数据集可挂多个，还进提示词；页签要的是单值归属。直接拿标签当页签会出现「一个数据集出现在 3 个页签、计数相加大于总数」。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 方案切换 ===== -->
+  <div class="planbar">
+    <div class="planbar-in">
+      <span class="lbl">方案</span>
+      <button class="pbtn on" data-plan="A">A · 新增单值分组 + 页签<span class="tag">推荐</span></button>
+      <button class="pbtn" data-plan="B">B · 直接用标签当页签</button>
+      <button class="pbtn" data-plan="C">C · 只加分组筛选与徽标</button>
+      <span class="hint">
+        分组数量：<b id="gcLabel">—</b> ·
+        <button class="btn" id="gcToggle">切换成 12 组看溢出</button>
+        <button class="btn" id="openForm">▣ 看新建 / 编辑表单</button>
+      </span>
+    </div>
+  </div>
+
+  <!-- ===== 页面复刻 ===== -->
+  <section class="app">
+    <div class="head">
+      <h1>元数据管理</h1>
+      <p>管理业务数据集及其表结构语义</p>
+    </div>
+
+    <div class="toolbar">
+      <div class="countbox" id="countBox">共 <b>12</b> 个</div>
+
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="搜索数据集名称、ID或描述...">
+      </div>
+
+      <select class="inp" id="statusSel">
+        <option value="all">状态：全部</option>
+        <option value="active">已启用</option>
+        <option value="inactive">已禁用</option>
+      </select>
+
+      <!-- C 方案才出现的分组下拉 -->
+      <select class="inp" id="groupSel" hidden>
+        <option value="all">业务分组：全部</option>
+      </select>
+
+      <button class="btn" id="filterBtn" style="display:none">筛选</button>
+
+      <div class="seg" id="viewSeg">
+        <button data-view="grid" class="on">卡片</button>
+        <button data-view="list">列表</button>
+      </div>
+
+      <button class="btn" title="检索测试">▤ 检索测试</button>
+      <button class="btn primary" id="addBtn">+ 新建数据集</button>
+    </div>
+
+    <!-- 分组页签（方案 A/B 常驻；方案 C 不出现） -->
+    <div class="grouptabs" id="groupTabs">
+      <div class="gtabs-scroll" id="gtabsScroll"></div>
+      <div class="gmore">
+        <button id="gmoreBtn" hidden>更多分组 ▾</button>
+        <div class="gmore-menu" id="gmoreMenu" hidden></div>
+      </div>
+    </div>
+
+    <!-- 当前筛选提示 -->
+    <div class="activebar" id="activeBar" hidden>
+      <span>当前范围</span>
+      <span class="chip" id="groupChip">财务核算 <button>✕</button></span>
+      <button class="clear" id="clearAll">清除全部筛选</button>
+    </div>
+
+    <!-- B 方案专用提示 -->
+    <div id="tagNote" hidden style="padding:8px 20px;font-size:11.5px;line-height:1.7;color:#b45309;background:#fffbeb;border-bottom:1px solid #fde68a">
+      方案 B：页签来自<b>标签</b>（多值）。「全部 12」是数据集个数，但下面各页签的计数相加是 <b id="tagSum">—</b>：
+      同一个数据集挂了几个标签，就会出现在几个页签里。<b>没有「未分组」这一档</b>——没打标签的数据集只在「全部」里出现。
+    </div>
+
+    <div id="cardsWrap"></div>
+
+    <div class="tablefoot">
+      <span id="footCount">共 12 个数据集</span>
+      <span style="color:#cbd5e1">|</span>
+      <span id="footGroup">分布在 5 个业务分组</span>
+      <span style="margin-left:auto;color:var(--ink-4)" id="footHint">页签计数按「关键词 + 状态」过滤后计算</span>
+    </div>
+  </section>
+
+  <!-- ===== 方案说明 ===== -->
+  <div class="notes">
+    <div class="note">
+      <h3><span class="k">A</span>新增单值分组 + 常驻页签</h3>
+      <p>给 <code>meta_datasets</code> 加 <code>group_name</code>（可空）：一个数据集属于<b>一个</b>业务分组，与工具注册表 <code>sys_api_tools.group_name</code> 同一套语义。</p>
+      <p>页签在工具栏下方，与搜索、状态筛选、卡片/列表视图切换<b>全部联动</b>；点击页签 = 设 <code>groupFilter</code>。</p>
+      <p>已有分组的批次后，卡片上默认也显示分组徽标；<b>锁定某一组时不显示</b>（此时每条都是这个组，重复信息白占地方）。</p>
+    </div>
+    <div class="note">
+      <h3><span class="k">B</span>直接用现有标签当页签</h3>
+      <p>零迁移：页签直接由 <code>tags</code> 聚合出来，点击就按标签过滤。</p>
+      <p>代价三条：① 标签是<b>多值</b>，一个数据集会出现在多个页签，<b>计数相加 ≠ 总数</b>（本页可切到 B 看那行黄条）；② 没有「未分组」——<b>没打标签的数据集永远只在「全部」里</b>，找不到漏网项；③ 标签是给 AI 选库用的<span style="color:var(--ink-4)">（会写进提示词）</span>，拿来当导航会把「治理口径」和「导航口径」绑死，以后想改标签就动导航。</p>
+    </div>
+    <div class="note">
+      <h3><span class="k">C</span>只加筛选下拉与徽标</h3>
+      <p>不加页签：工具栏多一个「业务分组」下拉（与状态下拉同排），卡片显示分组徽标。改动最小，<b>但「按分组浏览」得先展开下拉再选</b>，看不到每组有多少、也不知道哪组是空的。</p>
+      <p>适合「分组只是偶尔用来收窄范围」的场景；你的诉求是「多 Tab 浏览」，C 差一截。</p>
+    </div>
+  </div>
+
+  <!-- ===== 顺带修的表单排版 ===== -->
+  <section class="formfix">
+    <h2>顺带修的：新建 / 编辑弹窗太高，底部按钮看不到</h2>
+    <p class="sub">
+      你截图里的问题是两层叠加：<b>① 6 个字段全竖排</b>（每行一个，天然就高）；<b>② 弹窗是「垂直居中 + overflow:hidden」</b>——
+      内容一旦比视口高，上下会被<b>同时裁掉且无法滚动</b>，所以底部按钮不是「要滚一下」而是<b>彻底点不到</b>。
+      只缩字段不改第 ② 点，换个矮屏幕（笔记本 768px）照样会复发。
+    </p>
+    <div class="fixwrap">
+      <figure>
+        <figcaption>现状：1 列 × 6 字段 <span class="flag bad">按钮在视口外</span></figcaption>
+        <div class="vp vp-old">
+          <div class="cutnote top">↑ 顶部被裁：标题 / 关闭按钮也不见了</div>
+          <div class="vpbox">
+            <div class="vphead" style="border:1px solid var(--line-2);border-radius:10px 10px 0 0">新建数据集 <span class="x">✕</span></div>
+            <div style="border:1px solid var(--line-2);border-top:0;padding:12px 14px">
+              <div class="vf"><div class="l">物理名称 (Unique Name)</div><div class="i">znt2_test_ds</div></div>
+              <div class="vf"><div class="l">显示名称 (Display Name)</div><div class="i">智能体2</div></div>
+              <div class="vf"><div class="l">数据源 ID</div><div class="i">mysql_aiagent</div><div class="h">留空则使用系统默认 (default_clickhouse)。</div></div>
+              <div class="vf"><div class="l">描述</div><div class="i ta">核心模块，用于统一管理智能体配置…</div></div>
+              <div class="vf"><div class="l">业务分组 ⓘ</div><div class="i">智能体</div><div class="h">单选。不参与数据权限。</div></div>
+              <div class="vf"><div class="l">业务标签 ⓘ</div><div class="i">输入标签并回车</div>
+                <div class="vchips"><span>AI</span><span>元数据</span><span>权限</span><span>监控</span><span>配置</span></div>
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:7px;border-top:1px solid var(--line-2);margin-top:10px;padding-top:9px">
+                <span class="b" style="border:1px solid var(--line);border-radius:7px;padding:4px 10px;font-size:11px">取消</span>
+                <span style="background:var(--p);color:#fff;border-radius:7px;padding:4px 10px;font-size:11px;font-weight:800">确认创建</span>
+              </div>
+            </div>
+          </div>
+          <div class="cutnote bot">↓ 底部被裁：取消 / 确认创建点不到</div>
+        </div>
+      </figure>
+
+      <figure>
+        <figcaption>优化后：两列 + 限高滚动 + 按钮常驻 <span class="flag good">按钮永远可见</span></figcaption>
+        <div class="vp vp-new">
+          <div class="vphead">新建数据集 <span class="x">✕</span></div>
+          <div class="vpbody">
+            <div class="vgrid">
+              <div class="vf"><div class="l">物理名称 (Unique Name)</div><div class="i">znt2_test_ds</div></div>
+              <div class="vf"><div class="l">显示名称 (Display Name)</div><div class="i">智能体2</div></div>
+            </div>
+            <div class="vf"><div class="l">数据源 ID ⓘ</div><div class="i" style="justify-content:space-between;border-color:#bfdbfe">mysql_aiagent · mysql <span style="color:#94a3b8">▾</span></div><div class="h">只能选「数据源管理」里已配置的数据源；留空 = 系统默认。</div></div>
+            <div class="vgrid">
+              <div class="vf"><div class="l">业务分组 ⓘ</div><div class="i">智能体</div></div>
+              <div class="vf"><div class="l">业务标签 ⓘ</div><div class="i">输入标签并回车</div></div>
+            </div>
+            <div class="vchips" style="margin-top:-4px"><span>AI</span><span>元数据</span><span>权限</span><span>监控</span><span>配置</span></div>
+            <div class="vf" style="margin-top:8px"><div class="l">描述</div><div class="i ta">核心模块，用于统一管理智能体配置、用户权限、执行监控、元数据同步…</div></div>
+          </div>
+          <div class="vpfoot">
+            <span class="b">取消</span>
+            <span class="b p">确认创建</span>
+          </div>
+        </div>
+      </figure>
+    </div>
+
+    <ul class="fixlist">
+      <li><b>字段两列并排</b>：物理名称 ↔ 显示名称、业务分组 ↔ 业务标签；数据源 ID 与描述仍占整行（一个带下拉按钮，一个是多行文本）。</li>
+      <li><b>弹窗限高 + body 内滚动</b>：容器 <code>max-h-[calc(100vh-2rem)]</code> + <code>flex flex-col</code>，中间区 <code>overflow-y-auto</code>，头尾 <code>shrink-0</code>。按钮从此永远在视口里，矮屏幕也一样。</li>
+      <li><b>窄屏回单列</b>：<code>grid-cols-1 sm:grid-cols-2</code>，手机/窄窗不会把两列挤成细条。</li>
+      <li><b>弹窗加宽</b> <code>max-w-lg → max-w-2xl</code>：两列才不憋屈，输入框不至于只剩半截。</li>
+      <li><b>描述从 3 行降到 2 行</b>并挪到最后（次要信息，而且它最容易把弹窗顶高）。</li>
+      <li><b>数据源 ID 改成只能选、不能手输</b>（见上：右侧已无输入框，只有一个下拉）。手输一个拼错的名字不会报错，只会在真正查数时连不上；存量数据集若带着「未在数据源管理登记」的值，该值仍原样留在选项里，避免打开弹窗一保存就把配置清掉。</li>
+      <li><b>外层允许滚动</b> <code>items-start sm:items-center + overflow-y-auto</code>：极端情况（超小屏 + 长标签）仍能滚到按钮，不会再出现「整块被裁」。新建与编辑两个弹窗一起改。</li>
+    </ul>
+  </section>
+
+  <!-- ===== 待拍板 ===== -->
+  <section class="decisions">
+    <h2>需要你拍板 4 件事</h2>
+    <ol>
+      <li><b>分组是新增单值字段，还是复用现有业务标签？</b> <span class="rec">建议：新增 <code>group_name</code>（方案 A）</span>，标签继续管「AI 选库的多维度打标」，两者分工不同。</li>
+      <li><b>分组要不要也写进 AI 提示词？</b> <span class="rec">建议：不写</span>——数据集目录里已经带着标签（<code>[财务, 核心]</code>），再加分组会让同一件事说两遍、还会占上下文。若确实需要 AI 按业务域理解，<b>把分组加进「已授权数据集目录」那一行的前缀</b>比新增字段更省。<span style="color:var(--ink-4)">这条影响 ChatBI 行为，需要你确认。</span></li>
+      <li><b>分组名允许自由输入还是受控字典？</b> <span class="rec">建议：本次自由输入 + 已有分组候选（datalist）</span>，与 API 工具页保持一致；近义组合并留给后续「分组管理」。</li>
+      <li><b>页签在「卡片视图」和「列表视图」都常驻吗？</b> <span class="rec">建议：都常驻</span>，两种视图共用同一个 <code>groupFilter</code>，切视图不会把筛选丢了。</li>
+    </ol>
+  </section>
+</div>
+
+<!-- 弹窗：新建 / 编辑数据集 -->
+<div class="mask" id="mask" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="数据集表单">
+    <div class="modal-head">
+      <h2 id="modalTitle">新建数据集</h2>
+      <button id="modalClose" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>数据集名称</label>
+        <input value="finance_ledger" readonly>
+        <p class="help">物理库名，创建后不可改。</p>
+      </div>
+      <div class="field">
+        <label>显示名称</label>
+        <input value="总账与凭证">
+      </div>
+
+      <div class="hl">
+        <div class="field">
+          <label>业务分组 <span class="flag">本次要加的字段</span></label>
+          <select>
+            <option>财务核算</option>
+            <option>销售经营</option>
+            <option>供应链</option>
+            <option>人力行政</option>
+            <option value="">未分组</option>
+          </select>
+          <p class="help">单选。只用于<b>列表页的页签切换与筛选</b>，决定这个数据集归到哪个业务域；留空 = 未分组。<b>不参与数据权限判定</b>，也不会写进 AI 提示词。</p>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>业务标签</label>
+        <input value="核心, 生产">
+        <p class="help">多值，逗号分隔（已有字段 <code>tags</code>）。会随「已授权数据集目录」提供给 AI，影响 ChatBI 选库与数据门户推荐。与上面的分组是<b>两件事</b>：标签说「它有什么属性」，分组说「它归谁管」。</p>
+      </div>
+
+      <div class="two">
+        <div class="field">
+          <label>数据源</label>
+          <select><option>clickhouse</option><option>mysql</option><option>postgresql</option></select>
+        </div>
+        <div class="field">
+          <label>状态</label>
+          <select><option>启用</option><option>禁用</option></select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>描述</label>
+        <textarea rows="2">总账凭证、科目余额与期间结账数据</textarea>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="modalCancel">取消</button>
+      <button class="btn primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ---------------- 数据 ----------------
+  const BASE = [
+    { name:'finance_ledger', disp:'总账与凭证', desc:'总账凭证、科目余额与期间结账数据', src:'clickhouse', tables:42, score:88, active:true, tags:['核心','生产'], group:'财务核算' },
+    { name:'finance_reconcile', disp:'对账明细', desc:'银行与业务系统对账明细，含差异清单', src:'mysql', tables:18, score:72, active:true, tags:['财务'], group:'财务核算' },
+    { name:'finance_ar_ap', disp:'应收应付', desc:'应收账款与应付账款的账龄与核销', src:'postgresql', tables:26, score:65, active:true, tags:['财务','生产'], group:'财务核算' },
+    { name:'sales_orders', disp:'订单交易事实', desc:'订单主表与明细，含渠道、金额与履约状态', src:'clickhouse', tables:31, score:79, active:true, tags:['销售','生产'], group:'销售经营' },
+    { name:'sales_customer', disp:'客户主数据', desc:'客户档案、分级与统一社会信用代码', src:'mysql', tables:12, score:84, active:true, tags:['销售','核心'], group:'销售经营' },
+    { name:'sales_channel', disp:'渠道与推广', desc:'渠道投放、活动与转化数据', src:'clickhouse', tables:9, score:58, active:false, tags:['销售'], group:'销售经营' },
+    { name:'supply_chain', disp:'供应链履约', desc:'采购、入库与履约时效明细', src:'mysql', tables:22, score:70, active:true, tags:['生产'], group:'供应链' },
+    { name:'inventory_stock', disp:'库存快照', desc:'每日库存快照与周转率', src:'clickhouse', tables:15, score:62, active:true, tags:[], group:'供应链' },
+    { name:'hr_staff', disp:'员工花名册', desc:'在职员工、组织与岗位信息', src:'mysql', tables:8, score:91, active:true, tags:['核心'], group:'人力行政' },
+    { name:'hr_payroll', disp:'薪酬发放', desc:'月度薪酬、奖金与社保明细', src:'postgresql', tables:6, score:47, active:false, tags:['财务','人事'], group:'人力行政' },
+    { name:'adhoc_sandbox', disp:'临时分析沙箱', desc:'分析师临时建表用，随时可能清空', src:'clickhouse', tables:4, score:30, active:true, tags:['测试'], group:'' },
+    { name:'legacy_backup', disp:'历史归档库', desc:'三年前的历史数据归档，只读', src:'mysql', tables:63, score:41, active:false, tags:[], group:'' },
+  ];
+
+  // 12 组状态：再加 7 组各一个数据集，用来演示页签溢出
+  const EXTRA = [
+    { name:'ops_ticket', disp:'工单流转', desc:'工单创建、指派与关闭', src:'mysql', tables:11, score:68, active:true, tags:['生产'], group:'运维支撑' },
+    { name:'ops_alert', disp:'告警事件', desc:'监控告警与处理记录', src:'clickhouse', tables:7, score:55, active:true, tags:[], group:'运维支撑' },
+    { name:'risk_rule', disp:'风控规则', desc:'风控规则与命中记录', src:'postgresql', tables:9, score:74, active:true, tags:['核心'], group:'风险合规' },
+    { name:'risk_audit', disp:'审计日志', desc:'操作审计与留痕', src:'mysql', tables:5, score:82, active:true, tags:['生产'], group:'风险合规' },
+    { name:'bi_metric', disp:'指标字典', desc:'统一指标定义与口径', src:'clickhouse', tables:14, score:86, active:true, tags:['核心'], group:'指标中台' },
+    { name:'bi_adhoc', disp:'自助分析', desc:'自助取数与探索结果', src:'clickhouse', tables:6, score:44, active:false, tags:[], group:'指标中台' },
+    { name:'kb_doc', disp:'文档素材', desc:'知识库引用的结构化素材', src:'postgresql', tables:3, score:59, active:true, tags:['测试'], group:'知识库' },
+    { name:'sec_login', disp:'登录安全', desc:'登录风控与异常会话', src:'mysql', tables:4, score:77, active:true, tags:['核心'], group:'安全审计' },
+    { name:'mkt_campaign', disp:'营销活动', desc:'活动报名、核销与 ROI', src:'clickhouse', tables:10, score:63, active:true, tags:['销售'], group:'市场营销' },
+    { name:'logi_delivery', disp:'物流配送', desc:'运单轨迹与签收时效', src:'mysql', tables:13, score:69, active:true, tags:['生产'], group:'物流配送' },
+    { name:'cs_feedback', disp:'客服反馈', desc:'工单满意度与回访记录', src:'postgresql', tables:5, score:52, active:true, tags:[], group:'客户服务' },
+    { name:'legal_contract', disp:'合同档案', desc:'合同文本与关键条款抽取', src:'mysql', tables:7, score:71, active:false, tags:['财务'], group:'法务合同' },
+    { name:'dev_ci', disp:'研发效能', desc:'构建、发布与缺陷统计', src:'clickhouse', tables:6, score:66, active:true, tags:['测试'], group:'研发效能' },
+  ];
+
+  const UNGROUPED = '__ungrouped__';
+  const state = { plan:'A', many:false, view:'grid', tab:'all', q:'', status:'all' };
+
+  const q = new URLSearchParams(location.search);
+  if (q.get('plan')) state.plan = q.get('plan').toUpperCase();
+  if (q.get('many') === '1') state.many = true;
+  if (q.get('view')) state.view = q.get('view');
+  if (q.get('tab')) state.tab = q.get('tab') === '未分组' ? UNGROUPED : q.get('tab');
+  if (q.get('open') === '1') setTimeout(()=>openModal(), 0);
+
+  const all = () => state.many ? BASE.concat(EXTRA) : BASE;
+  const groupOf = (d) => (d.group || '').trim();
+  const allGroups = () => {
+    const m = new Map();
+    for (const d of all()) { const g = groupOf(d); if (!g) continue; m.set(g, (m.get(g)||0)+1); }
+    return [...m.entries()].sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0],'zh-Hans-CN'));
+  };
+
+  // ---------------- 过滤 ----------------
+  function matchBase(d){
+    const kw = state.q.trim().toLowerCase();
+    if (kw) {
+      const hay = [d.name, d.disp, d.desc].concat(d.tags).join(' ').toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
+    if (state.status === 'active' && !d.active) return false;
+    if (state.status === 'inactive' && d.active) return false;
+    return true;
+  }
+  const baseFiltered = () => all().filter(matchBase);
+
+  // 页签口径：关键词 + 状态过滤后的命中数（不含分组本身）
+  function groupCounts(){
+    const m = new Map(); let ungrouped = 0; let total = 0;
+    for (const d of baseFiltered()){
+      total++;
+      const g = groupOf(d);
+      if (!g) { ungrouped++; continue; }
+      m.set(g, (m.get(g)||0)+1);
+    }
+    return { total, ungrouped, groups:[...m.entries()].sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0],'zh-Hans-CN')) };
+  }
+
+  // B 方案：页签来自标签（多值）
+  function tagCounts(){
+    const m = new Map();
+    for (const d of baseFiltered()){
+      for (const t of d.tags){ m.set(t, (m.get(t)||0)+1); }
+    }
+    return [...m.entries()].sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0],'zh-Hans-CN'));
+  }
+
+  function tabItems(){
+    if (state.plan === 'B'){
+      const items = [{ key:'all', label:'全部', count: baseFiltered().length }];
+      for (const [t,n] of tagCounts()) items.push({ key:'tag:'+t, label:t, count:n });
+      return items;
+    }
+    const { total, ungrouped, groups } = groupCounts();
+    const items = [{ key:'all', label:'全部', count: total }];
+    for (const [g,n] of groups) items.push({ key:g, label:g, count:n });
+    if (ungrouped > 0) items.push({ key:UNGROUPED, label:'未分组', count: ungrouped });
+    return items;
+  }
+
+  function visibleRows(){
+    return baseFiltered().filter((d)=>{
+      if (state.tab === 'all') return true;
+      if (state.tab === UNGROUPED) return !groupOf(d);
+      if (state.tab.startsWith('tag:')) return d.tags.includes(state.tab.slice(4));
+      return groupOf(d) === state.tab;
+    });
+  }
+
+  // ---------------- 渲染 ----------------
+  const $ = (id) => document.getElementById(id);
+  const tabsVisible = () => state.plan !== 'C';
+  // B 方案没有分组字段，卡片上自然不该出现分组徽标
+  const showGroupBadge = () => state.plan === 'B' ? false : (state.tab === 'all' || state.plan === 'C');
+
+  function renderTabs(){
+    const wrap = $('groupTabs');
+    wrap.hidden = !tabsVisible();
+    const items = tabItems();
+    const scroll = $('gtabsScroll');
+    scroll.innerHTML = items.map((it)=>
+      `<button class="gtab ${state.tab===it.key?'on':''}" data-tab="${esc(it.key)}">${esc(it.label)} <span class="n">${it.count}</span></button>`
+    ).join('');
+
+    const menu = $('gmoreMenu');
+    menu.innerHTML = items.map((it)=>
+      `<button class="${state.tab===it.key?'on':''}" data-tab="${esc(it.key)}"><span>${esc(it.label)}</span><span class="n">${it.count}</span></button>`
+    ).join('');
+    $('gmoreMenu').hidden = true;
+
+    requestAnimationFrame(()=>{
+      const btn = $('gmoreBtn');
+      btn.hidden = scroll.scrollWidth - scroll.clientWidth <= 4;
+    });
+
+    document.querySelectorAll('.gmore-menu button').forEach((b)=>{
+      b.onclick = ()=>{ state.tab = b.dataset.tab; $('gmoreMenu').hidden = true; renderAll(); };
+    });
+  }
+
+  function scoreClass(s){ return s >= 80 ? 'good' : s >= 60 ? 'mid' : 'bad'; }
+
+  function renderCards(){
+    const rows = visibleRows();
+    const wrap = $('cardsWrap');
+    if (state.view === 'list'){ renderList(rows); return; }
+
+    if (!rows.length){
+      wrap.innerHTML = `<div class="empty">没有匹配的数据集，试试清空筛选。</div>`;
+      return;
+    }
+    wrap.innerHTML = `<div class="grid">${rows.map((d)=>{
+      const g = groupOf(d);
+      const gb = showGroupBadge()
+        ? (g ? `<button class="gchip" data-g="${esc(g)}">▣ ${esc(g)}</button>` : `<span class="gchip none">未分组</span>`)
+        : '';
+      const tags = d.tags.slice(0,2).map(t=>`<span class="tagchip">${esc(t)}</span>`).join('')
+        + (d.tags.length>2 ? `<span class="tagchip">+${d.tags.length-2}</span>` : '');
+      return `<div class="ds">
+        <div class="ds-top">
+          <div class="ds-ico">▦</div>
+          <div style="flex:1;min-width:0">
+            <div class="ds-name">${esc(d.disp)}</div>
+            <div class="ds-id">#${esc(d.name)}</div>
+          </div>
+        </div>
+        <p class="ds-desc">${esc(d.desc)}</p>
+        <div class="ds-tags">${gb}${tags}</div>
+        <div class="ds-meta">
+          <span>${esc(d.src)}</span>
+          <span>表 <b>${d.tables}</b></span>
+          <span class="score ${scoreClass(d.score)}">质量 ${d.score}</span>
+          <span class="dotstate ${d.active?'on':'off'}" style="margin-left:auto"><i></i>${d.active?'启用':'停用'}</span>
+        </div>
+      </div>`;
+    }).join('')}</div>`;
+
+    wrap.querySelectorAll('.gchip[data-g]').forEach((b)=>{
+      b.onclick = (e)=>{ e.stopPropagation(); state.tab = b.dataset.g; renderAll(); };
+    });
+  }
+
+  function renderList(rows){
+    const wrap = $('cardsWrap');
+    if (!rows.length){ wrap.innerHTML = `<div class="empty">没有匹配的数据集，试试清空筛选。</div>`; return; }
+    const colSpan = showGroupBadge() ? 7 : 6;
+    wrap.innerHTML = `<div class="listwrap"><table>
+      <thead><tr>
+        <th>数据集</th><th style="width:96px">数据源</th>
+        ${showGroupBadge()?'<th style="width:120px">业务分组</th>':''}
+        <th style="width:74px">表数</th><th style="width:86px">质量分</th>
+        <th style="width:92px">状态</th><th style="width:150px;text-align:right">操作</th>
+      </tr></thead>
+      <tbody>${rows.map((d)=>{
+        const g = groupOf(d);
+        return `<tr>
+          <td><div class="tname">${esc(d.disp)}</div><div class="tid">#${esc(d.name)}</div></td>
+          <td>${esc(d.src)}</td>
+          ${showGroupBadge()?`<td>${g?`<button class="gchip" data-g="${esc(g)}">${esc(g)}</button>`:'<span class="gchip none">未分组</span>'}</td>`:''}
+          <td>${d.tables}</td>
+          <td><span class="score ${scoreClass(d.score)}">${d.score}</span></td>
+          <td><span class="dotstate ${d.active?'on':'off'}"><i></i>${d.active?'启用':'停用'}</span></td>
+          <td><div class="rowacts"><button>表结构</button><button>编辑</button><button>删除</button></div></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+    wrap.querySelectorAll('.gchip[data-g]').forEach((b)=>{
+      b.onclick = (e)=>{ e.stopPropagation(); state.tab = b.dataset.g; renderAll(); };
+    });
+  }
+
+  function renderChrome(){
+    const rows = visibleRows();
+    const total = all().length;
+    $('countBox').innerHTML = (state.q || state.status !== 'all' || state.tab !== 'all')
+      ? `<b>${rows.length}</b> / ${total}` : `共 <b>${total}</b> 个`;
+
+    // 页签条
+    renderTabs();
+
+    // 当前范围
+    const bar = $('activeBar');
+    const items = tabItems();
+    const cur = items.find((it)=> it.key === state.tab);
+    if (state.tab !== 'all' && cur){
+      bar.hidden = false;
+      $('groupChip').innerHTML = `${state.plan==='B'?'标签':'分组'} · ${esc(cur.label)} <button>✕</button>`;
+      $('groupChip').querySelector('button').onclick = ()=>{ state.tab='all'; renderAll(); };
+    } else bar.hidden = true;
+
+    // B 方案提示
+    if (state.plan === 'B'){
+      const sum = items.slice(1).reduce((a,it)=>a+it.count,0);
+      $('tagNote').hidden = false;
+      $('tagSum').textContent = sum;
+    } else $('tagNote').hidden = true;
+
+    // C 方案下拉
+    const gsel = $('groupSel');
+    if (state.plan === 'C'){
+      gsel.hidden = false;
+      const { ungrouped, groups } = groupCounts();
+      gsel.innerHTML = `<option value="all">业务分组：全部（${baseFiltered().length}）</option>`
+        + groups.map(([g,n])=>`<option value="${esc(g)}">${esc(g)}（${n}）</option>`).join('')
+        + (ungrouped>0?`<option value="${UNGROUPED}">未分组（${ungrouped}）</option>`:'');
+      gsel.value = state.tab;
+    } else gsel.hidden = true;
+
+    // 页脚
+    $('footCount').textContent = `当前 ${rows.length} 个数据集`;
+    const gc = groupCounts();
+    $('footGroup').textContent = state.plan === 'B'
+      ? `标签口径：${tagCounts().length} 个标签（可重复计数）`
+      : `分布在 ${gc.groups.length} 个业务分组${gc.ungrouped?` + 未分组 ${gc.ungrouped}`:''}`;
+
+    document.querySelectorAll('.planbar .pbtn').forEach((b)=>{
+      b.classList.toggle('on', b.dataset.plan === state.plan);
+    });
+    const liveGroups = state.plan === 'B' ? tagCounts().length : groupCounts().groups.length;
+    const liveUngrouped = state.plan === 'B' ? 0 : groupCounts().ungrouped;
+    document.getElementById('gcLabel').textContent =
+      `${liveGroups} 组${liveUngrouped ? ` + 未分组 ${liveUngrouped}` : ''}`;
+    document.getElementById('gcToggle').textContent = state.many ? '切回少量分组' : '切换成多分组看溢出';
+    document.querySelectorAll('#viewSeg button').forEach((b)=>{
+      b.classList.toggle('on', b.dataset.view === state.view);
+    });
+  }
+
+  function renderAll(){ renderChrome(); renderCards(); }
+
+  function esc(s){ return String(s).replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+  // ---------------- 事件 ----------------
+  document.querySelectorAll('.planbar .pbtn').forEach((b)=>{
+    b.onclick = ()=>{ state.plan = b.dataset.plan; if (state.plan === 'C') state.tab = 'all'; renderAll(); };
+  });
+  document.getElementById('gcToggle').onclick = ()=>{ state.many = !state.many; state.tab='all'; renderAll(); };
+  document.getElementById('viewSeg').onclick = (e)=>{
+    const btn = e.target.closest('button[data-view]'); if (!btn) return;
+    state.view = btn.dataset.view; renderAll();
+  };
+  document.getElementById('q').oninput = (e)=>{
+    state.q = e.target.value;
+    // 当前分组被筛空就回「全部」，否则页签消失、页面空白
+    const items = tabItems();
+    if (state.tab !== 'all' && !items.some((it)=> it.key === state.tab)) state.tab = 'all';
+    renderAll();
+  };
+  document.getElementById('statusSel').onchange = (e)=>{
+    state.status = e.target.value;
+    const items = tabItems();
+    if (state.tab !== 'all' && !items.some((it)=> it.key === state.tab)) state.tab = 'all';
+    renderAll();
+  };
+  document.getElementById('groupSel').onchange = (e)=>{ state.tab = e.target.value; renderAll(); };
+  document.getElementById('clearAll').onclick = ()=>{
+    state.q=''; state.status='all'; state.tab='all';
+    document.getElementById('q').value=''; document.getElementById('statusSel').value='all';
+    renderAll();
+  };
+  document.getElementById('gtabsScroll').onclick = (e)=>{
+    const b = e.target.closest('.gtab'); if (!b) return;
+    state.tab = b.dataset.tab; renderAll();
+  };
+  document.getElementById('gmoreBtn').onclick = (e)=>{
+    e.stopPropagation();
+    const m = $('gmoreMenu'); m.hidden = !m.hidden;
+  };
+  document.addEventListener('click', (e)=>{
+    if (!e.target.closest('.gmore')) $('gmoreMenu').hidden = true;
+  });
+
+  // 弹窗
+  function openModal(){ $('mask').hidden = false; }
+  function closeModal(){ $('mask').hidden = true; }
+  document.getElementById('openForm').onclick = openModal;
+  document.getElementById('addBtn').onclick = openModal;
+  document.getElementById('modalClose').onclick = closeModal;
+  document.getElementById('modalCancel').onclick = closeModal;
+  document.getElementById('mask').onclick = (e)=>{ if (e.target.id === 'mask') closeModal(); };
+
+  renderAll();
+  window.addEventListener('resize', ()=>{
+    const scroll = $('gtabsScroll');
+    $('gmoreBtn').hidden = scroll.scrollWidth - scroll.clientWidth <= 4;
+  });
+})();
+</script>
+</body>
+</html>

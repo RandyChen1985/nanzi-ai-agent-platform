@@ -23,6 +23,8 @@ export interface Dataset {
   display_name: string;
   description?: string;
   tags: string[];
+  /** 业务分组：单值归属，只用于列表页页签与筛选（tags 才是进 AI 提示词的多维打标） */
+  group_name?: string | null;
   data_source: string;
   status?: number;
   enable_data_perm?: boolean;
@@ -784,6 +786,8 @@ export interface CloneDatasetPayload {
   display_name?: string;
   description?: string;
   tags?: string[];
+  /** 省略时后端沿用源数据集的分组 */
+  group_name?: string | null;
   data_source?: string;
   tables: CloneTableInput[];
   relationships: CloneRelationshipInput[];

@@ -187,6 +187,9 @@ class DatasetCloneService:
             display_name=display_name,
             description=payload.description,
             tags=list(payload.tags or []),
+            # 分组默认沿用源数据集（payload 显式带了就用 payload 的）：复制出来的库通常
+            # 仍属于同一个业务域，落成「未分组」等于让用户再手工归一次类
+            group_name=(payload.group_name if payload.group_name is not None else source.group_name),
             data_source=data_source,
             # 沿用源数据集的启停状态：源是停用就复制成停用，由用户在列表里决定何时启用
             status=source.status if source.status is not None else 1,

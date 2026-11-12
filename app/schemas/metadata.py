@@ -83,6 +83,8 @@ class DatasetBase(BaseModel):
     display_name: Optional[str] = None
     description: Optional[str] = None
     tags: Optional[List[str]] = []
+    # 业务分组：单值。tags 是多维打标（会进 AI 数据集目录），两者分工不同，不要合并
+    group_name: Optional[str] = None
     data_source: Optional[str] = "clickhouse"
     status: Optional[int] = 0
     enable_data_perm: Optional[bool] = False
@@ -95,6 +97,7 @@ class DatasetUpdate(BaseModel):
     display_name: Optional[str] = None
     description: Optional[str] = None
     tags: Optional[List[str]] = None
+    group_name: Optional[str] = None
     data_source: Optional[str] = None
     status: Optional[int] = None
     enable_data_perm: Optional[bool] = None
@@ -350,6 +353,8 @@ class CloneDatasetRequest(BaseModel):
     display_name: Optional[str] = Field(default=None, max_length=100)
     description: Optional[str] = None
     tags: Optional[List[str]] = []
+    # 复制时默认沿用源数据集的分组（前端向导里可改）
+    group_name: Optional[str] = None
     data_source: Optional[str] = Field(default=None, max_length=50)
     tables: List[TableCreate] = []
     relationships: List[CloneRelationshipPayload] = []
