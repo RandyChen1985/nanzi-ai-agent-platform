@@ -1622,6 +1622,22 @@ const showAgentGroupTabs = computed(
   () => canToggleAgentGroupTabs.value && agentGroupTabsVisible.value,
 )
 
+/**
+ * 页签整行消失时必须退回「全部」。
+ *
+ * 两种会让它消失：只剩「全部 + 一个分组」（`length > 2` 不成立），或用户手动收起。
+ * 这两种情况下页面上**没有任何切回「全部」的入口**——典型触发路径：在「未分组」页签里
+ * 把最后一个未分组智能体归进了某个分组，页签条随之消失，而 `agentGroupFilter` 还停在
+ * `__ungrouped__`，列表空着、也没有按钮能点回「全部」，用户只能刷新。
+ * （下面那个 watch 特意放行 `UNGROUPED_AGENT_GROUP`，是为了搜索时不被踢出当前页签，
+ * 它解决不了页签条整个消失的情况。）
+ */
+watch(showAgentGroupTabs, (visible) => {
+  if (!visible && agentGroupFilter.value !== ALL_GROUP_KEY) {
+    agentGroupFilter.value = ALL_GROUP_KEY
+  }
+})
+
 /** 全量分组名（不受筛选影响）：给「设置分组」弹窗与「分组」下拉做候选，避免同一业务域两种写法 */
 const agentGroupOptions = computed(() => {
   const names = new Set<string>()

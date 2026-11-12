@@ -6,6 +6,8 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from app.utils.group_name import GROUP_NAME_MAX_LEN, normalize_group_name
+
 logger = logging.getLogger(__name__)
 
 USER_MESSAGE_CONTEXT_DIVIDER = "\n\n---\n\n"
@@ -151,19 +153,18 @@ SKILL_GROUP_KEY = "group"
 
 #: 分组名长度上限。与 `meta_datasets.group_name` 的 VARCHAR(64) 对齐，避免同一套「业务
 #: 分组」在两类资源上长度口径不同；frontmatter 本身不限长，超长直接截断而不是报错。
-SKILL_GROUP_MAX_LEN = 64
+SKILL_GROUP_MAX_LEN = GROUP_NAME_MAX_LEN
 
 
 def normalize_skill_group(raw: Any) -> Optional[str]:
-    """分组名归一：去首尾空白、换行折成空格、超长截断、空串归 ``None``。
+    """分组名归一：直接复用 `app/utils/group_name.py` 的同一份实现。
 
-    换行必须折掉：它会被原样写进 frontmatter，而 frontmatter 是逐行 ``key: value``
-    解析的——带换行的值会把后面半行变成新的键，等于把文件写坏。
+    技能这边只多一层顾虑——换行必须折掉：值会被原样写进 frontmatter，而 frontmatter 是
+    逐行 ``key: value`` 解析的，带换行的值会把后面半行变成新的键，等于把文件写坏。
+    统一实现里 `str.split()` 已经把所有空白（含换行、制表符、连续空格）折成单个空格，
+    比原先只折 ``[\r\n]+`` 更严；否则「研发效能\tA」会带着制表符进页签。
     """
-    text = re.sub(r"[\r\n]+", " ", str(raw or "")).strip()
-    if not text:
-        return None
-    return text[:SKILL_GROUP_MAX_LEN]
+    return normalize_group_name(raw)
 
 
 def get_skill_group(meta: Optional[Dict[str, Any]]) -> Optional[str]:

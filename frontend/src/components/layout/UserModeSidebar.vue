@@ -715,7 +715,10 @@ const revealGroupBody = (key: string) => {
   if (!el) return
   const body = el.querySelector<HTMLElement>(`[data-group-body="${key}"]`)
   if (!body) return
-  const bodyTop = body.offsetTop
+  // 用两个 rect 的差值算「这一组相对滚动容器的偏移」。`offsetTop` 依赖 offsetParent
+  // （容器自己没定位，实际挂在带 relative 的父级上），目前恰好因为父级没有纵向内边距
+  // 才对得上——外层样式一调就静默错位，而错位表现为「点了更多却滚到别处」。
+  const bodyTop = el.scrollTop + (body.getBoundingClientRect().top - el.getBoundingClientRect().top)
   const bodyBottom = bodyTop + body.offsetHeight
   const visibleTop = el.scrollTop
   const visibleBottom = visibleTop + el.clientHeight

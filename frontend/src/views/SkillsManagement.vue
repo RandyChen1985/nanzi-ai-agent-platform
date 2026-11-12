@@ -3335,6 +3335,7 @@ onUnmounted(() => {
                 v-model="newSkill.group"
                 type="text"
                 list="skill-group-options"
+                maxlength="64"
                 placeholder="如 天气出行（留空 = 未分组）"
                 class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
                 :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
@@ -4191,7 +4192,7 @@ onUnmounted(() => {
     <div
       v-if="groupDialog"
       class="fixed inset-0 z-[9990] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-      @click.self="groupDialog = null"
+      @click.self="!savingGroup && (groupDialog = null)"
     >
       <div
         role="dialog"
@@ -4210,10 +4211,12 @@ onUnmounted(() => {
           v-model="groupDialog.value"
           type="text"
           list="skill-group-options"
+          maxlength="64"
           placeholder="如 天气出行（留空 = 未分组）"
           class="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm transition-all focus:outline-none focus:ring-2"
           :class="groupDialog.skill.scope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
           @keydown.enter.prevent="saveSkillGroup"
+          @keydown.esc.prevent="!savingGroup && (groupDialog = null)"
         />
         <p class="mt-1.5 text-[10px] leading-relaxed text-gray-400">
           单选，写进该技能的 SKILL.md（<code class="rounded bg-gray-100 px-1">group: …</code>）。

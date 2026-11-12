@@ -256,14 +256,24 @@ def test_model_has_group_name_column() -> None:
 
 
 def test_schemas_accept_group_name() -> None:
-    """创建 / 更新 / 复制三个入口都要收这个字段，缺一个就会出现「填了不生效」。"""
+    """创建 / 更新 / 复制三个入口都要收这个字段，缺一个就会出现「填了不生效」。
+
+    除了收，还必须与另外三处同口径（`app/utils/group_name.py`）：空白串归 None、
+    超长按 64 截断。原先这三处是裸的 `Optional[str] = None`，`"   "` 会落成一个
+    看不见的空分组页签。行为断言见
+    `tests/api/portal/test_dataset_business_group_contract.py`。
+    """
     src = _source(SCHEMAS)
+    declared = "group_name: Optional[str] = Field(default=None, max_length=GROUP_NAME_MAX_LEN)"
     dataset_base = src.split("class DatasetBase(BaseModel):")[1].split("class DatasetCreate")[0]
-    assert "group_name: Optional[str] = None" in dataset_base
+    assert declared in dataset_base
     dataset_update = src.split("class DatasetUpdate(BaseModel):")[1].split("class DatasetResponse")[0]
-    assert "group_name: Optional[str] = None" in dataset_update
+    assert declared in dataset_update
     clone_req = src.split("class CloneDatasetRequest(BaseModel):")[1].split("class BatchDeleteDatasetsRequest")[0]
-    assert "group_name: Optional[str] = None" in clone_req
+    assert declared in clone_req
+    # 三处都要挂同一个归一 validator
+    assert src.count('@field_validator("group_name", mode="before")') >= 3
+    assert "from app.utils.group_name import GROUP_NAME_MAX_LEN, normalize_group_name" in src
 
 
 def test_changelog_records_group_name() -> None:
@@ -275,9 +285,15 @@ def test_changelog_records_group_name() -> None:
 
 
 def test_clone_inherits_source_group() -> None:
-    """复制数据集默认沿用源分组：复制出来的库通常仍属同一个业务域。"""
+    """复制数据集默认沿用源分组：复制出来的库通常仍属同一个业务域。
+
+    但「默认沿用」不能吃掉显式清空：调用方传 `group_name: null` 的意思就是「副本不分组」，
+    用 `is not None` 判断永远分不清「没提这个字段」与「明确要清空」。所以判据必须是
+    `model_fields_set`。
+    """
     src = _source(CLONE_SERVICE)
-    assert "payload.group_name if payload.group_name is not None else source.group_name" in src
+    assert '"group_name" in payload.model_fields_set' in src
+    assert "if payload.group_name is not None else source.group_name" not in src
 
 
 def test_migrations_exist_for_both_databases() -> None:

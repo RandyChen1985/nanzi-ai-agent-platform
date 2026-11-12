@@ -1186,6 +1186,7 @@ async def create_mcp_server(
         "enabled_status": data.enabled_status,
         "scope": target_scope,
         "remark": server_data["remark"],
+        "group_name": new_server.group_name,
         "credential_mode": data.credential_mode,
         "user_assertion_enabled": data.user_assertion_enabled,
         "user_assertion_header": data.user_assertion_header,

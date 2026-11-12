@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from "vue";
+import { ref, onMounted, onBeforeUnmount, computed, watch } from "vue";
 import { useRouter } from 'vue-router';
 import ExampleFlowGuideBanner from '../components/example/ExampleFlowGuideBanner.vue';
 import ExampleSearchTestModal from '../components/example/ExampleSearchTestModal.vue';
@@ -211,6 +211,28 @@ const scheduleFetch = (resetPage = true) => {
   }, 300);
 };
 
+/**
+ * 「后台任务跑完了，过几秒再拉一次状态」这类延时任务。
+ *
+ * 必须登记并在卸载时清掉：批量同步 / 一键同步 / 智能增强都是先在服务端起后台任务、
+ * 前端延时复查，用户很可能在这 3 秒内切走页面。不清理的话定时器照样触发，
+ * 对已卸载的组件发请求、写 ref，network 面板里表现为「离开页面后还多一条」。
+ */
+const refreshTimers = new Set<ReturnType<typeof setTimeout>>();
+const runLater = (task: () => void | Promise<void>, delay = 3000) => {
+  const timer = setTimeout(() => {
+    refreshTimers.delete(timer);
+    void task();
+  }, delay);
+  refreshTimers.add(timer);
+};
+
+onBeforeUnmount(() => {
+  if (fetchTimer) clearTimeout(fetchTimer);
+  refreshTimers.forEach((timer) => clearTimeout(timer));
+  refreshTimers.clear();
+});
+
 const selectStatusTab = (value: string) => {
   filterStatus.value = value;
   page.value = 1;
@@ -407,9 +429,7 @@ const runBatchAction = async () => {
       await fetchExamples();
       // 同步是后台任务，稍后再拉一次状态
       if (action.key === "sync") {
-        setTimeout(() => {
-          fetchExamples();
-        }, 3000);
+        runLater(() => fetchExamples());
       }
     }
   } catch (error: any) {
@@ -461,10 +481,8 @@ const syncAllToRag = async () => {
     const res = await axios.post("/api/portal/examples/sync-all");
     if (res.data.code === 200) {
       showToast(res.data.message || "一键同步任务已启动", "success");
-      // 3秒后自动刷新
-      setTimeout(() => {
-        fetchExamples();
-      }, 3000);
+      // 3秒后自动刷新（登记定时器，卸载时清掉）
+      runLater(() => fetchExamples());
     }
   } catch (error) {
     showToast("一键同步失败", "error");
@@ -480,10 +498,8 @@ const syncToRag = async (id: number) => {
     const res = await axios.post(`/api/portal/examples/sync/${id}`);
     if (res.data.code === 200) {
       showToast("已触发同步任务", "success");
-      // 3秒后自动刷新
-      setTimeout(() => {
-        fetchExamples();
-      }, 3000);
+      // 3秒后自动刷新（登记定时器，卸载时清掉）
+      runLater(() => fetchExamples());
     }
   } catch (error) {
     showToast("同步请求失败", "error");
@@ -556,8 +572,8 @@ const manualEnhance = async () => {
     if (res.data.code === 200) {
       showToast("智能增强任务已启动，请稍后刷新查看", "success");
       currentExample.value.enhance_status = 'pending';
-      // 3秒后自动刷新一次详情数据
-      setTimeout(async () => {
+      // 3秒后自动刷新一次详情数据（登记定时器，卸载时清掉）
+      runLater(async () => {
         const checkRes = await axios.get("/api/portal/examples", { params: { trace_id: currentExample.value?.trace_id } });
         if (checkRes.data.code === 200 && checkRes.data.data.items.length > 0) {
           currentExample.value = { ...checkRes.data.data.items[0] };

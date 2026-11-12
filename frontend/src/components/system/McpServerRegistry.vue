@@ -240,8 +240,34 @@ watch(mcpGroupTabsVisible, (visible) => {
 const mcpGroupTabsAvailable = computed(() => mcpGroupTabs.value.length > 2)
 const showMcpGroupTabs = computed(() => mcpGroupTabsAvailable.value && mcpGroupTabsVisible.value)
 
-/** 分组候选（编辑弹窗 datalist 用）；用全量分组而不是当前筛选结果 */
-const mcpGroupOptions = computed(() => mcpGroupTabsData.value.groups.map(([name]) => name))
+/**
+ * 页签整行消失时必须退回「全部」。
+ *
+ * 两种会让它消失：只剩「全部 + 一个分组」（`length > 2` 不成立），或用户手动收起。
+ * 这两种情况下页面上**没有任何切回「全部」的入口**，而列表仍按某个分组过滤——
+ * 典型触发路径：在「未分组」里把最后一个未分组服务归了组，页签条随之消失，用户看到的
+ * 是一片空列表，只能刷新页面。收起开关同理：既然不展示分组了，就别再按分组过滤。
+ */
+watch(showMcpGroupTabs, (visible) => {
+  if (!visible && mcpGroupFilter.value !== ALL_GROUP_KEY) {
+    mcpGroupFilter.value = ALL_GROUP_KEY
+  }
+})
+
+/**
+ * 分组候选（「设置分组」弹窗与编辑表单共用的 datalist）。
+ *
+ * 必须从**全量**服务里取：`mcpGroupTabsData` 建立在 `serversMatchingFilters` 之上，
+ * 开着搜索或「仅运行中」时它只剩命中的那几组，用户会把已有分组再打一遍（打错一个字就多一组）。
+ */
+const mcpGroupOptions = computed(() => {
+  const names = new Set<string>()
+  for (const server of servers.value) {
+    const name = mcpGroupName(server)
+    if (name) names.add(name)
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+})
 
 /** 当前分组被删空 / 切了 scope 之后要能自动回到「全部」，否则会停在一个不存在的组上看到空列表 */
 watch([() => props.scope, mcpGroupTabsData], () => {

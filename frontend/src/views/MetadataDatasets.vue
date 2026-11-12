@@ -2807,7 +2807,7 @@ onMounted(async () => {
                   <InfoTooltip class="ml-1 text-gray-400" align="left" :text="businessTagHint" />
                 </label>
                 <div class="flex gap-2 mb-2">
-                  <input v-model="tagInput" @keyup.enter="addTag" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
+                  <input v-model="tagInput" @keyup.enter="addTag(newDataset)" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
                 </div>
                 <div class="flex flex-wrap gap-2">
                   <span v-for="(tag, i) in newDataset.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
