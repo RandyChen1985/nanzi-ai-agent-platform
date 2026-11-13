@@ -25,9 +25,11 @@
 --     「执行前状态自查」语句确认到哪一步了。
 --   ④⑤ 两条 UPDATE 本身是幂等的（见各自注释），不受执行方式影响。
 
--- ① 先加列（下面建索引要用到 is_default）
+-- ① 先加列（拆分为单列 DDL 以兼容分片/只允许单语句单列的 MySQL 环境；下面建索引要用到 is_default）
 ALTER TABLE user_notification_configs
-    ADD COLUMN name VARCHAR(64) NOT NULL DEFAULT '' COMMENT '群名称（按名称指定发送目标时使用）' AFTER channel_type,
+    ADD COLUMN name VARCHAR(64) NOT NULL DEFAULT '' COMMENT '群名称（按名称指定发送目标时使用）' AFTER channel_type;
+
+ALTER TABLE user_notification_configs
     ADD COLUMN is_default TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否为该渠道的默认群：1=是，0=否' AFTER config_json;
 
 -- ② 建新索引：最左前缀是 user_id，接替旧唯一键支撑外键，

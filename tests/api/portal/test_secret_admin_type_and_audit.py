@@ -111,3 +111,36 @@ def test_global_binding_audit_preserves_actor_id():
     for endpoint in (secrets_endpoint.create_binding, secrets_endpoint.delete_binding):
         src = inspect.getsource(endpoint)
         assert "actor_id=_actor_id(user_info)" in src, endpoint.__name__
+
+
+def test_system_secret_status_guard_and_admin_actor_fixes():
+    """service 层禁非管理员改系统凭据状态；admin 创建/授权用 _actor_id。"""
+    from app.services.secrets import center
+
+    sig = inspect.signature(center.set_secret_status)
+    assert "actor_is_admin" in sig.parameters
+    assert sig.parameters["actor_is_admin"].default is False
+
+    center_src = inspect.getsource(center.set_secret_status)
+    assert "SCOPE_SYSTEM" in center_src
+    assert "actor_is_admin" in center_src
+    assert "SecretPermissionError" in center_src
+
+    for admin_fn in (secrets_endpoint.admin_disable, secrets_endpoint.admin_set_status):
+        src = inspect.getsource(admin_fn)
+        assert "actor_is_admin=True" in src, admin_fn.__name__
+
+    for admin_fn in (secrets_endpoint.admin_create, secrets_endpoint.admin_grant):
+        src = inspect.getsource(admin_fn)
+        assert "_actor_id(admin)" in src, admin_fn.__name__
+
+
+def test_check_binding_passes_user_attrs_and_identity_attrs_skips_bool():
+    """/check-binding 必须向解析器传递 user_attrs，且 _identity_attrs 支持整型并跳过 bool。"""
+    src = inspect.getsource(secrets_endpoint.check_binding)
+    assert "user_attrs=_identity_attrs(user_info)" in src
+
+    attrs = secrets_endpoint._identity_attrs(
+        {"user_id": 42, "email": "u@corp.cn", "dept_code": True}
+    )
+    assert attrs == {"user_id": "42", "email": "u@corp.cn"}

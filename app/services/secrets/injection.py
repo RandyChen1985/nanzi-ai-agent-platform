@@ -212,16 +212,32 @@ def _current_user_attrs(user_info: Mapping[str, Any] | None) -> dict[str, str]:
     只挑规则可能用到的几个，不把整个 ``user_info`` 塞进解析器——那会把 token、
     权限等无关字段一起带进日志上下文。
 
-    ``user_info`` 优先（试跑显式传入），缺的字段再用上下文兜底。
+    ``user_info`` 优先（试跑显式传入）；若未跨用户则缺的字段可用上下文兜底，
+    如果显式传入了不同于上下文 ``user_id`` 的其他用户，则隔离上下文避免属性串号。
     """
-    info: dict[str, Any] = _context_user_identity()
-    if user_info:
+    ctx_info = _context_user_identity()
+    if not user_info:
+        info: dict[str, Any] = ctx_info
+    else:
+        explicit_uid = user_info.get("user_id")
+        if explicit_uid in (None, ""):
+            explicit_uid = user_info.get("id")
+        ctx_uid = ctx_info.get("user_id")
+        # 传入了与上下文不同的显式 user_id 时，禁止继承上下文中另一位用户的 dept_code/email
+        if (
+            explicit_uid not in (None, "")
+            and ctx_uid not in (None, "")
+            and str(explicit_uid) != str(ctx_uid)
+        ):
+            info = {}
+        else:
+            info = dict(ctx_info)
         info.update({key: value for key, value in user_info.items() if value not in (None, "")})
 
     attrs: dict[str, str] = {}
     for key in ("email", "user_name", "username", "real_name", "dept_code", "user_id"):
         value = info.get(key)
-        if value in (None, ""):
+        if value in (None, "") or isinstance(value, bool):
             continue
         # user_id 在 User 表里是整型，按 str 收下：规则里的占位符一律是字符串，
         # 之前只收 str 会把 user_id 整个丢掉。
@@ -481,11 +497,9 @@ async def apply_mcp_bindings(
     他没法自己把旧值清空，等于死锁。
 
     遍历的是**绑定槽位**而不是 headers：绑定表才是「谁要用凭据」的唯一事实
-    来源，配置里有没有这个 Header 与此无关（没有就补上）。
+    来源，配置里有没有这个 Header 与此无关（没有就补上）；因此即使服务配置
+    里的初始 headers 为空（``{}``），也要继续走绑定槽位检查。
     """
-    if not headers:
-        return headers
-
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
@@ -509,7 +523,7 @@ async def apply_mcp_bindings(
 
     target = host_of(getattr(server, "sse_url", None))
     trace_id = _current_trace_id()
-    resolved = dict(headers)
+    resolved = dict(headers or {})
     limit = await _max_inject_per_call()
     injected = 0
 

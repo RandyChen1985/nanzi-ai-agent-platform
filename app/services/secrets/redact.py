@@ -15,8 +15,8 @@
 from __future__ import annotations
 
 import logging
-from contextvars import ContextVar
-from typing import Any, Mapping, Sequence
+from contextvars import Context, ContextVar
+from typing import Any, Iterable, Mapping, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +63,30 @@ def injected_count() -> int:
     return len(_injected.get())
 
 
+def injected_values() -> tuple[str, ...]:
+    """返回当前 context 已登记的明文元组，供脱敏审计与跨任务回流使用。"""
+    return _injected.get()
+
+
+def merge_injected(values: Iterable[str]) -> None:
+    """把一组已注入明文合入当前 context（保持长度过滤、去重与上限淘汰语义）。"""
+    for value in values:
+        register_injected(value)
+
+
+def collect_injected_from_context(ctx: Context) -> None:
+    """把复制出去的子 Context 中登记的明文回收合并回当前 context。"""
+    values = ctx.run(_injected.get)
+    if values:
+        merge_injected(values)
+
+
 def _mask(value: str) -> str:
     """留头尾各 4 位，中间打码——够认出「是哪个值」，抄不走。"""
     return f"{value[:4]}***{value[-4:]}" if len(value) > 12 else "***"
 
 
-def redact_text(text: str, *, where: str = "") -> str:
+def redact_text(text: str, *, where: str = "", log_hits: bool = True) -> str:
     """把文本里出现的已注入值换成掩码。
 
     先做 `in` 判断再 `replace`：绝大多数结果里一个都不会出现，那一次包含判断
@@ -84,7 +102,7 @@ def redact_text(text: str, *, where: str = "") -> str:
         if value in text:
             text = text.replace(value, _mask(value))
             hits += 1
-    if hits:
+    if hits and log_hits:
         # 只记位置和条数，**不记值也不记命中内容**——日志本身就是泄漏面
         logger.warning(
             "[SecretRedact] %s 的结果里出现 %s 条本次注入的凭据值，已掩码",
@@ -94,16 +112,17 @@ def redact_text(text: str, *, where: str = "") -> str:
     return text
 
 
-def redact_value(value: Any, *, where: str = "") -> Any:
+def redact_value(value: Any, *, where: str = "", log_hits: bool = True) -> Any:
     """递归掩码。字典的 **key 不动**（key 是字段名，不是值）。"""
     if isinstance(value, str):
-        return redact_text(value, where=where)
+        return redact_text(value, where=where, log_hits=log_hits)
     if isinstance(value, Mapping):
         return {
-            key: redact_value(item, where=where) for key, item in value.items()
+            key: redact_value(item, where=where, log_hits=log_hits)
+            for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
-        masked = [redact_value(item, where=where) for item in value]
+        masked = [redact_value(item, where=where, log_hits=log_hits) for item in value]
         return type(value)(masked) if isinstance(value, tuple) else masked
     return value
 

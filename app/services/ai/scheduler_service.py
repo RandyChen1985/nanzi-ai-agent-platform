@@ -856,7 +856,12 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
 
                 try:
                     from app.services.portal_notification_service import PortalNotificationService
-                    from app.services.notification_service import NotificationService
+                    from app.services.task_notification_channels import (
+                        channel_groups_from_task_config,
+                    )
+                    from app.services.task_notification_delivery import (
+                        send_external_channel,
+                    )
 
                     async with AsyncSessionLocal() as notify_session:
                         # 1. 站内信（始终投递并 commit 事务，确保通知持久化且对管理员可见）
@@ -897,32 +902,33 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                                 await notify_session.rollback()
                                 logger.warning(f"  ❌ [站内信] 投递落库失败: {pe}", exc_info=True)
 
-                        # 2. 外部机器人 / 邮件通知（钉钉/企微/飞书/邮件）
-                        ext_map = {
-                            "dingtalk": ("钉钉群机器人", NotificationService.send_dingtalk),
-                            "wechat_work": ("企业微信群机器人", NotificationService.send_wechat_work),
-                            "feishu": ("飞书群机器人", NotificationService.send_feishu),
-                            "email": ("邮件通知", NotificationService.send_email),
+                        # 2. 外部机器人 / 邮件通知（钉钉/企微/飞书/邮件），透传任务指定的群并复用失效降级
+                        alert_groups = channel_groups_from_task_config(task_config)
+                        ext_names = {
+                            "dingtalk": "钉钉群机器人",
+                            "wechat_work": "企业微信群机器人",
+                            "feishu": "飞书群机器人",
+                            "email": "邮件通知",
                         }
                         for ch in alert_channels:
-                            if ch == "portal":
+                            if ch == "portal" or ch not in ext_names:
                                 continue
-                            item = ext_map.get(ch)
-                            if item:
-                                ch_name, sender = item
-                                try:
-                                    success, err_msg = await sender(
-                                        notify_session,
-                                        user_id=task_user_id,
-                                        title=alert_title,
-                                        content=alert_body,
-                                    )
-                                    if success:
-                                        logger.info(f"  🚀 [{ch_name}] 通知已成功派发至 {ch}")
-                                    else:
-                                        logger.warning(f"  ⚠️ [{ch_name}] 派发失败: {err_msg}")
-                                except Exception as ee:
-                                    logger.warning(f"  ❌ [{ch_name}] 派发异常: {ee}")
+                            ch_name = ext_names[ch]
+                            try:
+                                success, detail = await send_external_channel(
+                                    notify_session,
+                                    user_id=task_user_id,
+                                    channel=ch,
+                                    title=alert_title,
+                                    body=alert_body,
+                                    group_id=alert_groups.get(ch),
+                                )
+                                if success:
+                                    logger.info(f"  🚀 [{ch_name}] 通知已成功派发: {detail}")
+                                else:
+                                    logger.warning(f"  ⚠️ [{ch_name}] 派发失败: {detail}")
+                            except Exception as ee:
+                                logger.warning(f"  ❌ [{ch_name}] 派发异常: {ee}")
                 except Exception as ne:
                     logger.error(f"❌ [元数据定时巡检] 通知调度失败: {ne}", exc_info=True)
             else:

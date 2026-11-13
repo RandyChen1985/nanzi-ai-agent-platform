@@ -286,6 +286,8 @@ def _actor_id(user: Mapping[str, Any] | None) -> str | None:
 
 
 def _fail(exc: SecretValidationError) -> HTTPException:
+    if isinstance(exc, SecretPermissionError):
+        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
@@ -319,8 +321,9 @@ def _identity_attrs(user_info: Dict[str, Any]) -> dict[str, str]:
     attrs: dict[str, str] = {}
     for key in ("email", "user_name", "username", "real_name", "dept_code", "user_id"):
         value = info.get(key)
-        if isinstance(value, str) and value:
-            attrs[key] = value
+        if value in (None, "") or isinstance(value, bool):
+            continue
+        attrs[key] = value if isinstance(value, str) else str(value)
     if "user_name" not in attrs and "username" in attrs:
         attrs["user_name"] = attrs["username"]
     return attrs
@@ -691,6 +694,7 @@ async def check_binding(
         slot=payload.slot,
         target_host=payload.target_host,
         dept_code=dept_code,
+        user_attrs=_identity_attrs(user_info),
     )
     return {
         "code": 0,
@@ -1147,7 +1151,7 @@ async def admin_create(
             category=payload.category,
             remark=payload.remark,
             expires_at=payload.expires_at,
-            created_by=str(admin.get("user_id") or ""),
+            created_by=_actor_id(admin),
         )
     except SecretValidationError as exc:
         raise _fail(exc)
@@ -1311,7 +1315,7 @@ async def admin_grant(
             secret_id=secret_id,
             grantee_type=payload.grantee_type,
             grantee_id=payload.grantee_id,
-            granted_by=str(admin.get("user_id") or ""),
+            granted_by=_actor_id(admin),
             expires_at=payload.expires_at,
         )
     except SecretValidationError as exc:
@@ -1360,6 +1364,7 @@ async def admin_disable(
             secret_id=secret_id,
             status_value="disabled",
             actor_id=_actor_id(admin),
+            actor_is_admin=True,
         )
     except SecretValidationError as exc:
         raise _fail(exc)
@@ -1394,6 +1399,7 @@ async def admin_set_status(
             secret_id=secret_id,
             status_value=payload.status,
             actor_id=_actor_id(admin),
+            actor_is_admin=True,
         )
     except SecretValidationError as exc:
         raise _fail(exc)

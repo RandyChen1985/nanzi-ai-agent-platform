@@ -187,6 +187,8 @@ class NotificationService:
         cls, db: AsyncSession, user_id: int, channel_type: str
     ) -> List[UserNotificationConfig]:
         """取该用户该渠道的全部记录，按「默认群优先 → id 升序」排序。"""
+        if db is None:
+            return []
         stmt = (
             select(UserNotificationConfig)
             .where(
@@ -381,7 +383,7 @@ class NotificationService:
 
     @staticmethod
     def _coerce_group_id(raw: Any) -> Optional[int]:
-        """群 ID 归一：模型可能把数字写成 "13"、"13.0" 甚至 "id=13"。"""
+        """群 ID 归一：只接受正整数或其标准字符串写法（如 "13"、"13.0"、"id=13"）。"""
         if isinstance(raw, bool):
             return None
         if isinstance(raw, int):
@@ -389,10 +391,10 @@ class NotificationService:
         if isinstance(raw, float):
             return int(raw) if raw == int(raw) and raw > 0 else None
         text = str(raw or "").strip()
-        match = re.search(r"\d+", text)
+        match = re.fullmatch(r"(?:id\s*[:=]\s*)?([0-9]+)(?:\.0+)?", text, flags=re.IGNORECASE)
         if not match:
             return None
-        value = int(match.group())
+        value = int(match.group(1))
         return value if value > 0 else None
 
     @staticmethod
@@ -1194,10 +1196,23 @@ class NotificationService:
     ) -> Dict[str, Any]:
         try:
             config = await cls.load_raw_channel_config(db, user_id, channel)
+            if config.get("is_enabled") and str(config.get("webhook_url") or "").strip():
+                return {"ready": True, "reason": ""}
+            records = await cls.list_channel_records(db, user_id, channel)
         except Exception as exc:
             logger.warning("读取 %s 渠道配置失败: %s", channel, exc, exc_info=True)
             await cls._rollback_quietly(db)
             return {"ready": False, "reason": "渠道状态读取失败，请稍后重试"}
+
+        if records:
+            configs = [cls._parse_config_json(record) for record in records]
+            enabled_configs = [cfg for cfg in configs if cfg.get("is_enabled")]
+            if not enabled_configs:
+                return {"ready": False, "reason": "未启用"}
+            if any(str(cfg.get("webhook_url") or "").strip() for cfg in enabled_configs):
+                return {"ready": True, "reason": ""}
+            return {"ready": False, "reason": "未填写 Webhook 地址"}
+
         if not config.get("is_enabled"):
             return {"ready": False, "reason": "未启用"}
         if not str(config.get("webhook_url") or "").strip():

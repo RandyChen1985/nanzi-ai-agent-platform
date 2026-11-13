@@ -91,7 +91,10 @@ class TestCoerceGroupId:
     def test_parses_common_forms(self, raw: Any, expected: int):
         assert NotificationService._coerce_group_id(raw) == expected
 
-    @pytest.mark.parametrize("raw", [True, False, None, "", "abc", 0, -5])
+    @pytest.mark.parametrize(
+        "raw",
+        [True, False, None, "", "abc", 0, -5, "13.5", "grp-1", "第13号群", "id=13abc"],
+    )
     def test_rejects_invalid(self, raw: Any):
         assert NotificationService._coerce_group_id(raw) is None
 
@@ -429,3 +432,41 @@ class TestDefaultGroupUniqueness:
         await NotificationService.save_channels(_MemoryDB(), 1, "dingtalk", payload)
 
         assert sum(1 for r in records if r.is_default) == 1, "同渠道只能有一个默认群"
+
+
+class TestWebhookMultiGroupReadiness:
+    """多群配置下只要有任一启用群配置了 Webhook，就绪判定就不能误判不可用。"""
+
+    @pytest.mark.asyncio
+    async def test_ready_when_second_enabled_group_has_webhook(self, monkeypatch):
+        records = [
+            _record(1, "缺址群", enabled=True, is_default=True, webhook=""),
+            _record(2, "备用群", enabled=True, is_default=False, webhook="https://oapi.dingtalk.com/robot/send?token=ok"),
+        ]
+        _patch_records(monkeypatch, records)
+
+        res = await NotificationService._webhook_channel_readiness(None, 1, "dingtalk")
+        assert res == {"ready": True, "reason": ""}
+
+    @pytest.mark.asyncio
+    async def test_not_ready_when_all_enabled_groups_lack_webhook(self, monkeypatch):
+        records = [
+            _record(1, "停用有址群", enabled=False, is_default=False, webhook="https://x"),
+            _record(2, "启用缺址群", enabled=True, is_default=True, webhook="   "),
+        ]
+        _patch_records(monkeypatch, records)
+
+        res = await NotificationService._webhook_channel_readiness(None, 1, "dingtalk")
+        assert res == {"ready": False, "reason": "未填写 Webhook 地址"}
+
+
+def test_scheduler_metadata_inspection_uses_task_notification_groups():
+    """元数据定时巡检外部告警必须通过 send_external_channel 透传指定群组。"""
+    import inspect
+
+    from app.services.ai import scheduler_service
+
+    src = inspect.getsource(scheduler_service)
+    assert "channel_groups_from_task_config(task_config)" in src
+    assert "send_external_channel(" in src
+    assert "group_id=alert_groups.get(ch)" in src

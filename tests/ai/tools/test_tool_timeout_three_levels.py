@@ -151,3 +151,110 @@ class TestCollectToolTimeouts:
         )
 
         assert collected == {"system_http_request": 600.0, "read_image": 120.0}
+
+
+class TestToolTimeoutContextPropagation:
+    def test_active_tool_timeout_context_roundtrip(self):
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            get_active_tool_timeout_seconds,
+            reset_active_tool_timeout_seconds,
+            set_active_tool_timeout_seconds,
+        )
+
+        assert get_active_tool_timeout_seconds() is None
+        tok = set_active_tool_timeout_seconds(900.0)
+        try:
+            assert get_active_tool_timeout_seconds() == 900.0
+        finally:
+            reset_active_tool_timeout_seconds(tok)
+        assert get_active_tool_timeout_seconds() is None
+
+    @pytest.mark.asyncio
+    async def test_resolve_mcp_tool_timeout_honors_active_and_version_over_3600(
+        self, monkeypatch
+    ):
+        from app.core.context import AgentContext, set_agent_context
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            reset_active_tool_timeout_seconds,
+            set_active_tool_timeout_seconds,
+        )
+        from app.services.ai.tools.mcp_factory import resolve_mcp_tool_timeout
+
+        set_agent_context(
+            AgentContext(
+                agent_id="a1",
+                agent_name="Main",
+                agent_max_toolcall_timeout_seconds=7200.0,
+            )
+        )
+        try:
+            # 无 active 时，>3600 且 <=86400 的版本级快照应原样保留
+            assert await resolve_mcp_tool_timeout() == 7200.0
+            # 有工具级活跃超时时，优先覆盖版本级（包括更大或更小）
+            tok = set_active_tool_timeout_seconds(45.0)
+            try:
+                assert await resolve_mcp_tool_timeout() == 45.0
+            finally:
+                reset_active_tool_timeout_seconds(tok)
+        finally:
+            set_agent_context(None)
+
+    @pytest.mark.asyncio
+    async def test_resolve_delegation_timeout_honors_active_and_version_over_3600(
+        self, monkeypatch
+    ):
+        from app.core.context import AgentContext, set_agent_context
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            reset_active_tool_timeout_seconds,
+            set_active_tool_timeout_seconds,
+        )
+        from app.services.ai.tools import agent_delegate_tool as delegation_tool
+
+        set_agent_context(
+            AgentContext(
+                agent_id="main-agent",
+                agent_name="Main",
+                agent_max_toolcall_timeout_seconds=7200.0,
+            )
+        )
+        try:
+            # 修复前误用 3600 上限的解析器，会把 7200 截成 180
+            assert await delegation_tool._resolve_delegation_timeout_seconds() == 7200.0
+            tok = set_active_tool_timeout_seconds(14400.0)
+            try:
+                assert (
+                    await delegation_tool._resolve_delegation_timeout_seconds() == 14400.0
+                )
+            finally:
+                reset_active_tool_timeout_seconds(tok)
+        finally:
+            set_agent_context(None)
+
+    @pytest.mark.asyncio
+    async def test_runtime_tool_stream_propagates_timeout_to_async_generator(self):
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            get_active_tool_timeout_seconds,
+        )
+        from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+        observed: list[float | None] = []
+
+        async def streamed_tool():
+            observed.append(get_active_tool_timeout_seconds())
+            yield {"status": "ok"}
+
+        spec = RuntimeToolSpec(
+            name="mcp_stream_demo",
+            description="demo",
+            parameters_schema={},
+            callable=streamed_tool,
+            source_type="mcp",
+            timeout_seconds=720.0,
+        )
+        runtime_tool = spec.to_runtime_tool()
+        # 通过 RuntimeTool 实际消费异步生成器期间能读到 720.0，结束后清空
+        stream = await runtime_tool()
+        collected = [c async for c in stream]
+        assert collected
+        assert observed == [720.0]
+        assert get_active_tool_timeout_seconds() is None

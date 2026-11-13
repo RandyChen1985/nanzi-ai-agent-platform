@@ -889,6 +889,7 @@ async def set_secret_status(
     secret_id: str,
     status_value: str,
     actor_id: str | None = None,
+    actor_is_admin: bool = False,
 ) -> UserSecret:
     """启用 / 停用。停用是切断所有绑定的唯一手段，且不可撤销地影响全部使用者。"""
     if status_value not in {"active", "disabled"}:
@@ -896,8 +897,15 @@ async def set_secret_status(
     row = await session.get(UserSecret, secret_id)
     if row is None:
         raise SecretValidationError("凭据不存在")
-    if row.owner_scope == SCOPE_USER and actor_id is not None and row.owner_id != actor_id:
-        raise SecretValidationError("不能操作他人的凭据")
+    if row.owner_scope == SCOPE_SYSTEM and not actor_is_admin:
+        raise SecretPermissionError("系统级凭据由管理员维护，不能在个人视图下调整状态")
+    if (
+        row.owner_scope == SCOPE_USER
+        and not actor_is_admin
+        and actor_id is not None
+        and row.owner_id != actor_id
+    ):
+        raise SecretPermissionError("不能操作他人的凭据")
 
     row.status = status_value
     await _audit(

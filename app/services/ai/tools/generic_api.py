@@ -385,7 +385,15 @@ class GenericApiToolFactory:
                 "body": body,
             })
 
-        logger.info(f"[GenericTool] Executing {config.name} ({method} {url}) with params: {remaining_params}")
+        safe_log_url = redact_value(
+            url, where=f"API 工具 {config.name} 请求日志", log_hits=False
+        )
+        safe_log_params = redact_value(
+            remaining_params, where=f"API 工具 {config.name} 请求日志", log_hits=False
+        )
+        logger.info(
+            f"[GenericTool] Executing {config.name} ({method} {safe_log_url}) with params: {safe_log_params}"
+        )
 
         started = time.monotonic()
         # We disable trust_env=True to avoid SOCKS proxy issues if dependency is missing

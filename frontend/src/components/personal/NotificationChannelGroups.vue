@@ -205,7 +205,7 @@ const saveBlockedReason = computed(() => {
   for (const group of groups.value) {
     if (!group.name.trim()) return '每个群都要有名称，否则发送时无法识别。'
     if (!group.webhook_url.trim()) {
-      return `「${group.name.trim()}」还没有填写 Webhook 地址后再保存。`
+      return `请先为「${group.name.trim()}」填写 Webhook 地址再保存。`
     }
   }
   const names = groups.value.map((g) => g.name.trim().toLowerCase())

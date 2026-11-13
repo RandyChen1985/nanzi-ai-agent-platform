@@ -76,10 +76,15 @@ class send_dingtalk_message(BaseTool):
             return "Error: 无法确定当前用户，钉钉消息未发送。"
 
         try:
+            user_id = int(agent_ctx.user_id)
+        except (TypeError, ValueError):
+            return "Error: 当前用户 ID 无效，钉钉消息未发送。"
+
+        try:
             async with AsyncSessionLocal() as db:
                 ok, message, target = await NotificationService.dispatch_notification(
                     db,
-                    int(agent_ctx.user_id),
+                    user_id,
                     "dingtalk",
                     title=title,
                     content=content,
@@ -330,10 +335,15 @@ class send_wechat_work_message(BaseTool):
             return "Error: 无法确定当前用户，企业微信消息未发送。"
 
         try:
+            user_id = int(agent_ctx.user_id)
+        except (TypeError, ValueError):
+            return "Error: 当前用户 ID 无效，企业微信消息未发送。"
+
+        try:
             async with AsyncSessionLocal() as db:
                 ok, message, target = await NotificationService.dispatch_notification(
                     db,
-                    int(agent_ctx.user_id),
+                    user_id,
                     "wechat_work",
                     title="",
                     content=content,

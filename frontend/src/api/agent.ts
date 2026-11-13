@@ -148,7 +148,7 @@ export interface ToolConfigItem {
   model_name?: string | null
   /** 仅对内部自调 LLM 的工具（如 read_image）生效 */
   temperature?: number | null
-  /** 工具级执行超时（秒，1–3600）；空 = 跟随上层，且只会收紧不会放宽 */
+  /** 工具级执行超时（秒，1–86400）；空 = 跟随工具定义/智能体版本/全局配置，可覆盖放宽 */
   timeout_seconds?: number | null
   description_override?: string | null
   engine_config_override?: Record<string, unknown> | null

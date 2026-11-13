@@ -1279,14 +1279,22 @@ def finalize_delegation_result(
 
 
 async def _resolve_delegation_timeout_seconds() -> float:
+    from app.services.ai.runtime.agentscope.tool_timeout import (
+        get_active_tool_timeout_seconds,
+        load_agent_max_toolcall_timeout,
+        parse_agent_version_toolcall_timeout,
+    )
+
+    active_timeout = get_active_tool_timeout_seconds()
+    if active_timeout is not None and active_timeout > 0:
+        return float(active_timeout)
+
     current_context = get_current_agent_context()
-    snapshot = getattr(current_context, "agent_max_toolcall_timeout_seconds", None)
+    snapshot = getattr(current_context, "agent_max_toolcall_timeout_seconds", None) if current_context else None
     if snapshot is not None:
-        from app.services.ai.runtime.agentscope.tool_timeout import parse_agent_max_toolcall_timeout
-
-        return parse_agent_max_toolcall_timeout(snapshot)
-
-    from app.services.ai.runtime.agentscope.tool_timeout import load_agent_max_toolcall_timeout
+        parsed_version_timeout = parse_agent_version_toolcall_timeout(snapshot)
+        if parsed_version_timeout is not None:
+            return parsed_version_timeout
 
     return await load_agent_max_toolcall_timeout()
 
@@ -1974,6 +1982,14 @@ async def sub_agent_call(
     )
 
     set_agent_context(sub_ctx)
+    # 进入子智能体执行前暂清父级对 sub_agent_call 本身设置的活跃超时上下文，
+    # 避免子智能体内的工具误读成父工具的 timeout_seconds；子自己的工具调用时会按需重新设置。
+    from app.services.ai.runtime.agentscope.tool_timeout import (
+        reset_active_tool_timeout_seconds,
+        set_active_tool_timeout_seconds,
+    )
+
+    original_tool_timeout_token = set_active_tool_timeout_seconds(None)
 
     full_output = ""
     structured_holder: Dict[str, Any] = {}
@@ -2097,6 +2113,7 @@ async def sub_agent_call(
                 await sub_stream.aclose()
             except Exception as close_err:
                 logger.warning(f"Failed to close sub-agent generator stream: {close_err}")
+        reset_active_tool_timeout_seconds(original_tool_timeout_token)
         set_agent_context(original_ctx)
         set_execution_options_context(original_execution_options)
 

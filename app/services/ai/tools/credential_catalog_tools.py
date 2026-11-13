@@ -113,7 +113,12 @@ async def list_my_credentials(keyword: str = "", limit: int = _DEFAULT_LIMIT) ->
         async with AsyncSessionLocal() as session:
             # 部门授权也要算进来：少了 dept_code，通过部门获得的系统级凭据会「能用
             # 但列不出来」，用户会以为清单不全。
-            user = await session.get(User, user_id)
+            # User.id 为整型主键；在 PostgreSQL/asyncpg 下直接传入 str 会报类型错误。
+            try:
+                uid_int: int | None = int(user_id)
+            except (TypeError, ValueError):
+                uid_int = None
+            user = await session.get(User, uid_int) if uid_int is not None else None
             dept_code = getattr(user, "dept_code", None) if user is not None else None
             rows = await list_visible_secrets(
                 session,

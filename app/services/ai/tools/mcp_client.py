@@ -1000,6 +1000,13 @@ class McpClientService:
                     timeout_seconds=timeout_seconds,
                 )
                 return redact_value(call_result, where=f"MCP 工具 {tool_name}")
+        except TimeoutError:
+            # 超时必须原样往上抛：上层靠 ``isinstance(exc, TimeoutError)`` 把它
+            # 判成「工具超时」。换成别的异常类型会被记成普通失败，用户看到的是
+            # 「调用异常」而不是「超时」，排查方向直接跑偏。
+            call_status = "failed"
+            call_error = "MCP tool call timed out"
+            raise
         except asyncio.CancelledError:
             call_status = "failed"
             call_error = "MCP tool call cancelled"
@@ -1007,7 +1014,11 @@ class McpClientService:
         except Exception as call_exc:
             call_status = "failed"
             call_error = redact_value(str(call_exc), where=f"MCP 工具 {tool_name} 审计")
-            raise
+            # **就地脱敏后再抛**：这条异常会经 ``RuntimeToolError`` 回显给模型、
+            # 写进轨迹，还可能被上层日志带堆栈打出来。流式调用里注入的凭据是在
+            # 子 Task 的 Context 里登记的，要等父级 finally 才回收——等到那时再
+            # 用 ``redact_value`` 已经抓不到原值了，所以必须在抛错现场处理。
+            raise RuntimeError(f"MCP tool call failed: {call_error}") from None
         finally:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             try:
@@ -1125,7 +1136,9 @@ class McpClientService:
         except Exception as http_err:
             redacted_err = redact_value(str(http_err), where=f"MCP 服务 {method} 异常")
             logger.error(f"[MCP-Direct] HTTP Request failed for {method}: {redacted_err}")
-            raise
+            raise RuntimeError(
+                f"MCP HTTP request failed for {method}: {redacted_err}"
+            ) from None
         finally:
             session_mgr._active_requests = max(0, getattr(session_mgr, "_active_requests", 1) - 1)
             if session_mgr._active_requests == 0:

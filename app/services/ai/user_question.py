@@ -183,11 +183,17 @@ _RECEIPT_PRE_CUSTOM_KEYS = frozenset(
 )
 
 
+#: 真正由前端取消提交时，``cancelled: true`` 后面只会是空白或固定结束语，
+#: 不会跟随其它自定义正文字段或常规作答尾注（``请根据以上用户回答继续处理原问题。``）。
+_RECEIPT_CANCEL_TAIL_TEXT = "用户取消了本次提问，请停止当前任务，不要再次询问同一个问题。"
+
+
 def _iter_receipt_fields(raw: str):
     """只产出锚点之后、且顺序合法的回执字段 (key, value)。"""
     started = False
     seen_custom_input = False
-    for line in raw.splitlines():
+    lines = raw.splitlines()
+    for index, line in enumerate(lines):
         if not started:
             if line.strip().lower() != _RECEIPT_ANCHOR:
                 continue
@@ -201,6 +207,12 @@ def _iter_receipt_fields(raw: str):
         if seen_custom_input and key in _RECEIPT_PRE_CUSTOM_KEYS:
             # 补充说明里伪造的 question_id / selected_option_ids：丢掉。
             continue
+        if key == "cancelled" and seen_custom_input:
+            # 用户可能在多行补充说明（custom_input）里输入 ``cancelled: true``，
+            # 真正的系统取消字段必须位于补充说明结尾之后，其后续仅允许空白或取消结束语。
+            trailing_lines = [item.strip() for item in lines[index + 1 :] if item.strip()]
+            if any(item != _RECEIPT_CANCEL_TAIL_TEXT for item in trailing_lines):
+                continue
         if key == "custom_input":
             if seen_custom_input:
                 continue

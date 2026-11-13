@@ -188,3 +188,126 @@ async def test_context_manager_preserves_email(clean_context):
     finally:
         agent_context.reset(ctx_token)
         execution_options_context.reset(opt_token)
+
+
+def test_explicit_user_info_with_different_user_id_isolates_context_attrs(clean_context):
+    """显式传入另一用户 user_id 时，禁止继承当前上下文用户的部门与邮箱。"""
+    from app.utils.context import current_user_info
+
+    current_user_info.set(
+        {"user_id": 100, "email": "u100@example.com", "dept_code": "D100"}
+    )
+    attrs = _current_user_attrs({"user_id": 200, "email": "u200@example.com"})
+    assert attrs["user_id"] == "200"
+    assert attrs["email"] == "u200@example.com"
+    assert "dept_code" not in attrs
+
+
+@pytest.mark.asyncio
+async def test_apply_mcp_headers_injects_even_when_initial_headers_empty(monkeypatch):
+    """无静态请求头的 MCP 服务仍必须触发凭据槽位注入。"""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.services.secrets import injection
+    from app.services.secrets.redact import reset_injected
+    from app.services.secrets.resolver import ResolveResult, SecretValue
+
+    reset_injected()
+    try:
+        monkeypatch.setattr(
+            injection,
+            "list_bound_slots",
+            AsyncMock(return_value=["header:Authorization"]),
+        )
+        monkeypatch.setattr(
+            injection.secret_resolver,
+            "resolve",
+            AsyncMock(
+                return_value=ResolveResult(
+                    ok=True,
+                    value=SecretValue("Bearer secret-token-12345"),
+                    secret_key="mcp.auth",
+                )
+            ),
+        )
+        monkeypatch.setattr(injection, "_max_inject_per_call", AsyncMock(return_value=5))
+        used: dict = {}
+        server = SimpleNamespace(
+            id="srv-empty-hdr", server_name="srv", sse_url="https://mcp.corp/sse"
+        )
+        resolved = await injection.apply_mcp_headers(
+            {},
+            server,
+            user_info={"user_id": 7, "dept_code": "D1"},
+            used=used,
+        )
+        assert resolved == {"Authorization": "Bearer secret-token-12345"}
+        assert used["user_id"] == "7"
+        assert used["slots"] == ["header:Authorization"]
+    finally:
+        reset_injected()
+
+
+def test_user_placeholders_and_locator_and_catalog_fixes():
+    """resolve_user_variables 含 email，且 locator 变换为空串后返回空候选。"""
+    from app.services.ai.tools.user_placeholders import resolve_user_variables
+    from app.services.secrets.locator import RuleSpec, build_candidates
+
+    vars_map = resolve_user_variables(
+        {"user_id": 12, "email": "alice@corp.cn", "user_name": "alice"}
+    )
+    assert vars_map["email"] == "alice@corp.cn"
+
+    spec = RuleSpec(
+        strategy="rule",
+        key_source="user.email",
+        transforms=("trim", "lower"),
+        templates=("key.{value}",),
+        target="secret_key",
+    )
+    assert build_candidates(spec, identity={"email": "   "}, args={}) == []
+
+
+@pytest.mark.asyncio
+async def test_credential_catalog_safely_handles_non_numeric_user_id(monkeypatch):
+    """list_my_credentials 把 user_id 安全转为 int 后查库，避免 PG 类型报错。"""
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.core.context import AgentContext, agent_context
+    from app.services.ai.tools import credential_catalog_tools as cat
+
+    seen_keys: list = []
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, model, pk):  # noqa: ANN001
+            seen_keys.append(pk)
+            return SimpleNamespace(dept_code="D9")
+
+    monkeypatch.setattr("app.core.orm.AsyncSessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(cat, "list_visible_secrets", AsyncMock(return_value=[]))
+
+    t1 = agent_context.set(AgentContext(agent_id="a", agent_name="n", user_id="42"))
+    try:
+        res1 = json.loads(await cat.list_my_credentials())
+        assert res1["total"] == 0
+        assert seen_keys == [42]
+    finally:
+        agent_context.reset(t1)
+
+    seen_keys.clear()
+    t2 = agent_context.set(AgentContext(agent_id="a", agent_name="n", user_id="not-a-num"))
+    try:
+        res2 = json.loads(await cat.list_my_credentials())
+        assert res2["total"] == 0
+        assert seen_keys == []
+    finally:
+        agent_context.reset(t2)

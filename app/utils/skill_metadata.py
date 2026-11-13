@@ -184,11 +184,12 @@ def build_default_skill_md(
     此前两个接口各拼一份完全相同的字符串，加字段就得改两处、漏一处就是「个人技能能填
     分组、平台技能填了丢」。分组为空时输出与历史模板逐字一致，不需要回填旧文件。
     """
-    safe_name = str(name or "").strip()
+    safe_name = " ".join(str(name or "").split())
+    safe_desc = " ".join(str(description or "").split())
     lines = [
         "---",
         f"name: {safe_name}",
-        f"description: {str(description or '').strip()}",
+        f"description: {safe_desc}",
     ]
     normalized = normalize_skill_group(group)
     if normalized:

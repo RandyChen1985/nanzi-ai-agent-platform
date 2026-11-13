@@ -162,6 +162,8 @@ def build_candidates(
     if raw is None or raw == "":
         return []
     value = _apply_transforms(str(raw), spec.transforms)
+    if not value:
+        return []
     return [tpl.replace("{value}", value) for tpl in spec.templates]
 
 

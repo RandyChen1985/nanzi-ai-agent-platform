@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+from contextvars import ContextVar, Token
 from dataclasses import replace
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -312,3 +313,25 @@ async def apply_sandbox_gateway_timeout(workspace: Any) -> float | None:
     except Exception:
         return None
     return timeout
+
+
+_active_tool_timeout_seconds: ContextVar[float | None] = ContextVar(
+    "active_tool_timeout_seconds", default=None
+)
+
+
+def get_active_tool_timeout_seconds() -> float | None:
+    """获取当前正在执行的工具实例经三级规则解析后的生效超时秒数。"""
+    return _active_tool_timeout_seconds.get()
+
+
+def set_active_tool_timeout_seconds(value: float | None) -> Token[float | None]:
+    """绑定当前工具调用的三级解析超时秒数，供 MCP / 子代理内部超时与外层保持同源。"""
+    return _active_tool_timeout_seconds.set(
+        float(value) if value is not None and value > 0 else None
+    )
+
+
+def reset_active_tool_timeout_seconds(token: Token[float | None]) -> None:
+    """恢复进入工具调用前的 active_tool_timeout_seconds 上下文状态。"""
+    _active_tool_timeout_seconds.reset(token)

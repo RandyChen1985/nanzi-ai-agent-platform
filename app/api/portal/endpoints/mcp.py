@@ -1722,12 +1722,15 @@ async def execute_mcp_tool(
         from app.services.secrets.redact import redact_value
 
         safe_error = str(redact_value(str(e), where="MCP工具执行异常"))
+        # **不打堆栈**：``safe_error`` 已经把关键信息（类型 + 脱敏后的消息）给全了，
+        # 而 ``exc_info=True`` 打的是原始异常对象的 traceback，最后一行是**未脱敏**
+        # 的异常消息。凭据中心注入的 token 可能就在那句话里，等于把脱敏白做了。
         logger.warning(
-            "MCP tool test execution failed for server %s tool %s: %s",
+            "MCP tool test execution failed for server %s tool %s: %s: %s",
             tool.server_id,
             tool.tool_name,
+            type(e).__name__,
             safe_error,
-            exc_info=True,
         )
         raise HTTPException(
             status_code=502,
