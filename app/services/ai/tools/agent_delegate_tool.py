@@ -1922,6 +1922,9 @@ async def sub_agent_call(
         "api_key": main_ctx.api_key,
         "user_name": main_ctx.user_dimensions.get("user_name") if main_ctx.user_dimensions else None,
         "real_name": main_ctx.user_dimensions.get("real_name") if main_ctx.user_dimensions else None,
+        # 凭据定位规则可以按 user.email 命中。子代理若跑在独立执行上下文里，
+        # ContextVar 不会传过去，只能靠这里显式带；不带就与修复前一样失效。
+        "email": main_ctx.user_dimensions.get("email") if main_ctx.user_dimensions else None,
         "dept_code": main_ctx.user_dimensions.get("dept_code") if main_ctx.user_dimensions else None,
         "org_path": main_ctx.user_dimensions.get("org_path") if main_ctx.user_dimensions else None,
         "extra_data": main_ctx.user_dimensions.get("extra_data") if main_ctx.user_dimensions else None,

@@ -48,6 +48,7 @@ from app.services.ai.tools.request_signing import (
 )
 from app.services.ai.tools.system_params import SystemParamConfigError, validate_system_params
 from app.services.ai.tools.user_placeholders import UserPlaceholderError
+from app.services.secrets.redact import redact_value
 from app.utils.masking import mask_sensitive_data
 
 router = APIRouter()
@@ -692,22 +693,26 @@ async def preview_tool(
             request=request_info(),
         )
     except httpx.HTTPError as exc:
+        safe_exc = redact_value(str(exc), where="API 工具试跑异常")
         return SysApiToolPreviewResponse(
             ok=False,
             error_kind="connection",
-            message=f"没能连上目标接口（{type(exc).__name__}）：{exc}",
+            message=f"没能连上目标接口（{type(exc).__name__}）：{safe_exc}",
             request=request_info(),
         )
     except Exception as exc:  # noqa: BLE001 —— 试跑必须给出原因，而不是甩一个 500
-        logger.warning("[ToolPreview] unexpected failure: %s", exc)
+        safe_exc = redact_value(str(exc), where="API 工具试跑异常")
+        logger.warning("[ToolPreview] unexpected failure: %s", safe_exc)
         return SysApiToolPreviewResponse(
-            ok=False, error_kind="connection", message=f"试跑失败：{exc}",
+            ok=False, error_kind="connection", message=f"试跑失败：{safe_exc}",
             request=request_info(),
         )
 
     raw_body = response.text or ""
-    truncated = len(raw_body) > PREVIEW_BODY_LIMIT
-    body_text = raw_body[:PREVIEW_BODY_LIMIT]
+    # 先脱敏再截断，避免跨越 PREVIEW_BODY_LIMIT 的凭据只剩下前半段明文
+    redacted_body = redact_value(raw_body, where="API 工具试跑响应")
+    truncated = len(redacted_body) > PREVIEW_BODY_LIMIT
+    body_text = redacted_body[:PREVIEW_BODY_LIMIT]
 
     if 200 <= response.status_code < 300:
         return SysApiToolPreviewResponse(

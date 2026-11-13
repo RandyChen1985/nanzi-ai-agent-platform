@@ -452,9 +452,12 @@ class GenericApiToolFactory:
                 capture["headers"] = dict(actual_request.headers)
 
         if raise_on_http_error and not 200 <= response.status_code < 300:
-            raise RuntimeError(
-                f"HTTP {response.status_code}: {response.text[:500]}"
-            )
+            # 报错正文必须先脱敏再截断：若凭据值恰好跨越 500 字符切片边界，
+            # 先切片会破坏精确匹配，把密钥前半段明文直接交给模型。
+            safe_error_body = redact_value(
+                response.text, where=f"API 工具 {config.name} 错误响应"
+            )[:500]
+            raise RuntimeError(f"HTTP {response.status_code}: {safe_error_body}")
 
         return response, elapsed_ms, url
 
@@ -486,5 +489,7 @@ class GenericApiToolFactory:
             # 历史文案：``[Error] Unsupported method: XXX``
             return f"[Error] {e}"
         except Exception as e:
-            logger.error(f"[GenericTool] Execution failed: {e}")
-            return f"[Execution Error] {str(e)}"
+            # 先脱敏再写日志和返给模型：底层连接/HTTP 异常可能带着完整 URL query 与 headers。
+            safe_error = redact_value(str(e), where=f"API 工具 {config.name} 异常")
+            logger.error(f"[GenericTool] Execution failed: {safe_error}")
+            return f"[Execution Error] {safe_error}"

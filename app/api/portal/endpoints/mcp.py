@@ -1636,6 +1636,11 @@ async def execute_mcp_tool(
         "issuer": None,
         "key_id": None,
     }
+    from app.utils.context import current_user_info
+
+    # 非签名分支走 McpToolFactory（只读 AgentContext / current_user_info），不设这层
+    # ContextVar 时 HTTP 测试台路由会让用户级绑定和 user.* 规则拿不到当前用户。
+    user_ctx_token = current_user_info.set(user)
     try:
         # 凭据参数注入要在**两种分支之前**做：签名模式下走的是
         # `call_remote_tool`，它绕过了 McpToolFactory，不注入的话
@@ -1676,6 +1681,7 @@ async def execute_mcp_tool(
                     "user_id",
                     "user_name",
                     "real_name",
+                    "email",
                     "dept_code",
                     "org_path",
                     "extra_data",
@@ -1712,18 +1718,23 @@ async def execute_mcp_tool(
         raise
     except Exception as e:
         # 远程执行失败必须是错误状态，不能 HTTP 200 返回 status=error：否则监控/调用方
-        # 会把失败当成功。详情限长，避免把内部堆栈/地址整段回给前端。
+        # 会把失败当成功。先脱敏再限长，避免敏感信息被截断或回传给前端。
+        from app.services.secrets.redact import redact_value
+
+        safe_error = str(redact_value(str(e), where="MCP工具执行异常"))
         logger.warning(
             "MCP tool test execution failed for server %s tool %s: %s",
             tool.server_id,
             tool.tool_name,
-            e,
+            safe_error,
             exc_info=True,
         )
         raise HTTPException(
             status_code=502,
-            detail=f"MCP 工具执行失败: {str(e)[:500]}",
+            detail=f"MCP 工具执行失败: {safe_error[:500]}",
         ) from e
+    finally:
+        current_user_info.reset(user_ctx_token)
 
 @router.get("/tools/{tool_id}/curl")
 async def get_mcp_tool_curl(

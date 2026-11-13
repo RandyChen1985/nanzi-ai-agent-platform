@@ -872,6 +872,9 @@ async def test_sub_agent_call_context_inheritance_and_user_info():
         user_dimensions={
             "user_name": "test_user",
             "real_name": "Test User",
+            # 凭据定位规则可按 user.email 命中，子代理跑在独立执行上下文时
+            # ContextVar 不传播，必须靠 user_info 显式带过去
+            "email": "test_user@example.com",
             "dept_code": "DEPT01",
             "org_path": "/ROOT/DEPT01",
             "extra_data": {"role_level": 3},
@@ -939,6 +942,7 @@ async def test_sub_agent_call_context_inheritance_and_user_info():
             "api_key": "sk-main-key",
             "user_name": "test_user",
             "real_name": "Test User",
+            "email": "test_user@example.com",
             "dept_code": "DEPT01",
             "org_path": "/ROOT/DEPT01",
             "extra_data": {"role_level": 3},

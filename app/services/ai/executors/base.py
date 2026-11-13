@@ -99,6 +99,8 @@ class BaseExecutor(ABC):
             "id": u_id_val,
             "user_name": self.user_info.get("user_name"),
             "real_name": self.user_info.get("real_name"),
+            # 保持与 AgentContextManager 维度对齐，避免子代理覆写后丢失 email
+            "email": self.user_info.get("email"),
             "role": self.user_info.get("role"),
             "dept_code": self.user_info.get("dept_code"),
             "org_path": self.user_info.get("org_path"),

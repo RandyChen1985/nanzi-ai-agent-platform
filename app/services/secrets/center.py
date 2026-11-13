@@ -312,6 +312,7 @@ async def bind_secret(
     slot: str,
     bound_by_user_id: str | None,
     dept_code: str = "",
+    actor_id: str | None = None,
 ) -> SecretBinding:
     """把一个槽位绑到一条凭据上。同一槽位重复绑定视为「改绑」。"""
     if consumer_type not in VALID_CONSUMER_TYPES:
@@ -391,10 +392,12 @@ async def bind_secret(
         bound_by_user_id=owner_key,
     )
     session.add(binding)
+    # 全局绑定时 bound_by_user_id 为 None，若不显式透传 actor_id 会丢失操作人。
+    audit_actor_id = actor_id if actor_id is not None else bound_by_user_id
     await _audit(
         action="bind",
         secret=secret,
-        actor_id=bound_by_user_id,
+        actor_id=audit_actor_id,
         detail={
             "consumer_type": consumer_type,
             "consumer_id": consumer_id,
@@ -415,6 +418,7 @@ async def bind_rule(
     slot: str,
     rule: dict | str | None,
     bound_by_user_id: str | None,
+    actor_id: str | None = None,
 ) -> SecretBinding:
     """把一个槽位绑到「一条定位规则」上（``strategy='rule'``，无 ``secret_id``）。
 
@@ -485,6 +489,7 @@ async def bind_rule(
         "rule": json.loads(payload),
     }
 
+    audit_actor_id = actor_id if actor_id is not None else bound_by_user_id
     if existing is not None:
         # 同一槽位重配规则 = 改规则，不新增第二条（唯一索引也会拦住）
         existing.rule_json = payload
@@ -493,7 +498,7 @@ async def bind_rule(
         await _audit(
             action="bind_rule",
             secret=None,
-            actor_id=bound_by_user_id,
+            actor_id=audit_actor_id,
             detail={"updated": True, **audit_detail},
         )
         return existing
@@ -513,7 +518,7 @@ async def bind_rule(
     await _audit(
         action="bind_rule",
         secret=None,
-        actor_id=bound_by_user_id,
+        actor_id=audit_actor_id,
         detail=audit_detail,
     )
     return binding
@@ -583,6 +588,7 @@ async def unbind_slot(
     slot: str,
     bound_by_user_id: str | None,
     strategy: str = "fixed",
+    actor_id: str | None = None,
 ) -> int:
     """解绑。返回删除条数（0 表示本来就没绑）。
 
@@ -630,7 +636,7 @@ async def unbind_slot(
             await _audit(
                 action="unbind",
                 secret=secret,
-                actor_id=bound_by_user_id,
+                actor_id=actor_id if actor_id is not None else bound_by_user_id,
                 detail={
                     "consumer_type": consumer_type,
                     "consumer_id": consumer_id,
@@ -703,7 +709,14 @@ async def grant_secret(
     return grant
 
 
-async def revoke_grant(session, *, secret_id: str, grantee_type: str, grantee_id: str) -> int:
+async def revoke_grant(
+    session,
+    *,
+    secret_id: str,
+    grantee_type: str,
+    grantee_id: str,
+    actor_id: str | None = None,
+) -> int:
     """撤销授权。已建立的绑定不随之删除，但下一次调用会被 ``denied_by_grant`` 拦下。"""
     result = await session.execute(
         delete(SecretGrant).where(
@@ -717,7 +730,7 @@ async def revoke_grant(session, *, secret_id: str, grantee_type: str, grantee_id
         await _audit(
             action="revoke",
             secret=secret,
-            actor_id=None,
+            actor_id=actor_id,
             detail={
                 "grantee_type": grantee_type,
                 "grantee_id": grantee_id,

@@ -657,6 +657,9 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                 "user_id": user.id,
                 "user_name": user.user_name,
                 "real_name": user.real_name,
+                # 凭据定位可以按 user.email 命中，定时任务没有请求上下文，
+                # 不在这里带上就永远取不到。
+                "email": getattr(user, "email", None),
                 "role": user.role,
                 # 部门要带上：凭据中心的授权可以是「部门级」（grantee_type='dept'）。
                 # 少了这一项，管理员授给部门的系统凭据在定时任务里会全部判成

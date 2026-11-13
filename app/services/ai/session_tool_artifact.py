@@ -53,6 +53,10 @@ REUSABLE_RESULT_ACQUISITION_TOOLS = frozenset(
     }
 )
 
+# 「把停下来的子代理接着跑完」的工具。它们跟事实获取工具不同：不重查数据，
+# 而是唤醒上一轮被 ask_user_question 暂停的子代理。系统回执场景必须保留。
+RESUME_CAPABLE_TOOLS = frozenset({"sub_agent_call", "sub_agent_batch_call"})
+
 # 不参与快照：时钟、检索碎片、ChatBI 专用、纯编排、知识库（有独立短路）
 _EXCLUDED_TOOL_NAMES = frozenset(
     {
@@ -464,6 +468,38 @@ def append_session_tool_artifact_to_system_prompt(
     return str(system_content or "")
 
 
+def reusable_result_removal_names(
+    user_question: str | None,
+    artifact: Dict[str, Any] | None,
+    *,
+    force_reuse: bool = False,
+) -> frozenset[str]:
+    """本轮应当从工具清单里移除的工具名。**提示词与运行时共用这一处判定。**
+
+    两边各写一套的下场是：提示词列着 ``sub_agent_call``，运行时却把它拔掉，
+    模型只会回一句「我当前工具集中没有 sub_agent_call」，用户看到的是续聊失败。
+    """
+    if is_system_receipt_message(user_question):
+        # 回执 = 把被暂停的流程接着做完，本身要豁免（否则 resume 工具没了）。
+        # 只有补充说明里追加了新诉求（「顺便画个图」）才裁，且只裁事实获取工具：
+        # sub_agent_call 是唤醒子代理的唯一途径，裁掉它父代理再也 resume 不了。
+        if not should_inject_session_artifact(
+            user_question, artifact, force_reuse=force_reuse
+        ):
+            return frozenset()
+        return REUSABLE_RESULT_ACQUISITION_TOOLS - RESUME_CAPABLE_TOOLS
+
+    # 非回执：force_reuse 是上层已经定好的「本轮就吃上一轮结果」，即使没有快照
+    # 也要裁 —— should_inject_session_artifact 在没有 artifact 时直接返回 False，
+    # 不能用它代替这个短路。
+    if force_reuse or should_inject_session_artifact(
+        user_question, artifact, force_reuse=force_reuse
+    ):
+        return REUSABLE_RESULT_ACQUISITION_TOOLS
+
+    return frozenset()
+
+
 def filter_tools_for_reusable_result(
     tools: list[Any],
     *,
@@ -471,19 +507,23 @@ def filter_tools_for_reusable_result(
     artifact: Dict[str, Any] | None,
     force_reuse: bool = False,
 ) -> list[Any]:
-    """命中可复用快照时移除事实获取工具，避免模型再次执行原查询。"""
-    if not should_inject_session_artifact(
+    """命中可复用快照时移除事实获取工具，避免模型再次执行原查询。
+
+    移除哪些由 :func:`reusable_result_removal_names` 决定，与提示词侧同源。
+    """
+    removal = reusable_result_removal_names(
         user_question,
         artifact,
         force_reuse=force_reuse,
-    ):
+    )
+    if not removal:
         return tools
     filtered = []
     for tool in tools or []:
         name = str(getattr(tool, "name", None) or getattr(tool, "tool_name", None) or "")
         if isinstance(tool, dict):
             name = str(tool.get("name") or tool.get("tool_name") or name)
-        if name in REUSABLE_RESULT_ACQUISITION_TOOLS:
+        if name in removal:
             continue
         filtered.append(tool)
     return filtered
