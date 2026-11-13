@@ -893,6 +893,7 @@
                 :is-thinking="msg.isThinking"
                 :has-answer="Boolean(visibleStreamBody(msg))"
                 :expand-thoughts="config.expandThoughts"
+                :reasoning-density="config.reasoningDensity"
                 :thinking-text="msg.thinkingText"
                 :duration="msg.thoughtDuration"
                 :prompt-tokens="msg.prompt_tokens"
@@ -2842,6 +2843,7 @@ import {
   applyStreamErrorMessage,
   type StreamErrorDetail,
 } from "@/utils/streamErrorPresentation";
+import { normalizeReasoningDensity } from "@/utils/reasoningDensity";
 import RagPreviewDrawer from "@/components/RagPreviewDrawer.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import ShareConversationDialog from "@/components/ShareConversationDialog.vue";
@@ -4285,7 +4287,8 @@ const config = reactive({
   enableSqlPlan: false,
   enableGrounding: false, // Embed 默认关闭反幻觉校验，由用户在右上角设置中主动开启
   groundingBlockMode: "strict_buffer" as "strict_buffer" | "stream_with_retraction",
-  expandThoughts: true, // 思考过程默认展示开关
+  expandThoughts: true, // 思考过程默认展示开关（旧字段：链路级展开，密度三档会同步它）
+  reasoningDensity: "standard" as "detailed" | "standard" | "compact" | "off", // 思考密度：详细 / 标准 / 精简 / 关闭
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
   hideMessageBorder: true,
   /** 隐藏聊天头像开关：关掉后气泡吃掉头像占的左右各 40px，用于显示更多内容 */
@@ -4847,6 +4850,7 @@ const saveRoutingSettings = () => {
     writeConfigValue("yovole_approval_mode", config.approvalMode || "ask");
     writeConfigValue("yovole_embed_theme", config.theme || "light");
     writeConfigValue("yovole_expand_thoughts", config.expandThoughts ? "1" : "0");
+    writeConfigValue("yovole_reasoning_density", config.reasoningDensity || "standard");
     writeConfigValue("yovole_grounding_block_mode", config.groundingBlockMode || "strict_buffer");
     writeConfigValue("yovole_markdown_theme", config.markdownTheme || "default");
     writeConfigValue("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
@@ -8441,7 +8445,15 @@ const truncateServerHistory = async (keepCount: number): Promise<boolean> => {
     return response.data?.data?.success !== false;
   } catch (e) {
     console.warn("Failed to truncate server history before resend", e);
-    showToast("同步会话历史失败，请稍后重试", "error");
+    // 后端在会话仍在生成时会返回 409：这是「稍等就好」，不是真失败，
+    // 沿用通用文案会让人以为历史同步坏了。
+    const status = (e as { response?: { status?: number } })?.response?.status;
+    showToast(
+      status === 409
+        ? "上一轮回答仍在生成，请等它结束后再编辑"
+        : "同步会话历史失败，请稍后重试",
+      "error",
+    );
     return false;
   }
 };
@@ -12192,6 +12204,10 @@ const applyPermissionStreamEvent = (
   // 里含 run_status 终态帧（后端先发该帧、之后才落库），若重放也调 markOutputCompleted
   // 就会在恢复器启动后 1 秒内把它自断，界面永久停在草稿。
   const replay = options?.replay === true;
+  if (data?.type === "keepalive") {
+    if (!replay) resetStallTimer();
+    return;
+  }
   applyStreamTraceId(msg, data);
   if (data.agent_name && !msg.agentName) msg.agentName = data.agent_name;
   if (data.agent_display_name && !msg.agentDisplayName) msg.agentDisplayName = data.agent_display_name;
@@ -12350,9 +12366,12 @@ const submitPendingExternalExecution = async (msg: Message) => {
   }
   streamInFlight = true;
   isProcessing.value = true;
-  // 恢复流没有 AbortSignal：finally 只能复位「自己这一次」的锁态。令牌在此刻自增后，
-  // 只要期间切了会话或被新的流接管，后来者的令牌就不是它，收尾时必须让位——否则会把
-  // 新会话的 streamInFlight 清掉（SSE 与续显再次同写，重复输出借道回归）。
+  // 恢复流绑定当前会话 AbortController（支持主动停止、切会话与卸载取消），同时保留 liveWriterToken 防并发串台。
+  const resumeAbort = new AbortController();
+  if (abortController) {
+    abortController.abort();
+  }
+  abortController = resumeAbort;
   const resumeToken = ++liveWriterToken;
   msg.isThinking = true;
   startThoughtTimer(msg);
@@ -12367,16 +12386,25 @@ const submitPendingExternalExecution = async (msg: Message) => {
       output: pending.outputDraft || "(empty external result)",
       headers: embedAuthHeaders() || {},
       credentials: "include",
+      signal: resumeAbort.signal,
       onEvent: (data) => {
         applyPermissionStreamEvent(msg, data);
-        // 恢复流没有后台 producer，刷新/断流后只能靠本地快照；按 1.5s 节流把增量落盘。
         maybePersistStreamSnapshot();
       },
     });
   } catch (error: any) {
-    pending.status = "error";
-    msg.content += `\n[外部执行恢复失败: ${error.message || "Unknown error"}]`;
+    if (error?.name === "AbortError") {
+      if (!embedUnmounted) {
+        msg.content += "\n[已取消提交外部执行结果]";
+      }
+    } else {
+      pending.status = "error";
+      msg.content += `\n[外部执行恢复失败: ${error.message || "Unknown error"}]`;
+    }
   } finally {
+    if (abortController === resumeAbort) {
+      abortController = null;
+    }
     pending.isSubmitting = false;
     // 刻意**不**在这里 finishRecoveredTurn：恢复流没有后台 producer，客户端读流中断时
     // 后端可能既不落库也不写审计，提前清快照会让这一轮在刷新后永久消失。收尾统一交给
@@ -12520,9 +12548,12 @@ const confirmPendingPermission = async (
   }
   streamInFlight = true;
   isProcessing.value = true;
-  // 恢复流没有 AbortSignal：finally 只能复位「自己这一次」的锁态。令牌在此刻自增后，
-  // 只要期间切了会话或被新的流接管，后来者的令牌就不是它，收尾时必须让位——否则会把
-  // 新会话的 streamInFlight 清掉（SSE 与续显再次同写，重复输出借道回归）。
+  // 恢复流绑定当前会话 AbortController（支持主动停止、切会话与卸载取消），同时保留 liveWriterToken 防并发串台。
+  const resumeAbort = new AbortController();
+  if (abortController) {
+    abortController.abort();
+  }
+  abortController = resumeAbort;
   const resumeToken = ++liveWriterToken;
   if (confirmed) {
     msg.isThinking = true;
@@ -12540,6 +12571,7 @@ const confirmPendingPermission = async (
         ...(embedAuthHeaders() || {}),
       },
       body: JSON.stringify({ confirmed, scope }),
+      signal: resumeAbort.signal,
       credentials: "include",
     });
     if (!response.ok) throw new Error(await parseFetchErrorMessage(response));
@@ -12563,9 +12595,12 @@ const confirmPendingPermission = async (
           isPermissionStreamDone = true;
           break;
         }
-        applyPermissionStreamEvent(msg, JSON.parse(dataStr));
-        // 恢复流没有后台 producer，刷新/断流后只能靠本地快照；按 1.5s 节流把增量落盘。
-        maybePersistStreamSnapshot();
+        try {
+          applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+          maybePersistStreamSnapshot();
+        } catch (parseErr) {
+          console.warn("Failed to parse permission SSE event:", dataStr, parseErr);
+        }
       }
       scrollToBottom();
       if (isPermissionStreamDone) {
@@ -12579,13 +12614,26 @@ const confirmPendingPermission = async (
     }
     for (const dataStr of parser.flush()) {
       if (dataStr === "[DONE]") continue;
-      applyPermissionStreamEvent(msg, JSON.parse(dataStr));
-      maybePersistStreamSnapshot();
+      try {
+        applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+        maybePersistStreamSnapshot();
+      } catch (parseErr) {
+        console.warn("Failed to parse final permission SSE event:", dataStr, parseErr);
+      }
     }
   } catch (error: any) {
-    pending.status = "error";
-    msg.content += `\n[工具确认失败: ${error.message || "Unknown error"}]`;
+    if (error?.name === "AbortError") {
+      if (!embedUnmounted) {
+        msg.content += "\n[已终止工具确认流]";
+      }
+    } else {
+      pending.status = "error";
+      msg.content += `\n[工具确认失败: ${error.message || "Unknown error"}]`;
+    }
   } finally {
+    if (abortController === resumeAbort) {
+      abortController = null;
+    }
     pending.isSubmitting = false;
     // 与外部执行恢复同理：不在这里 finishRecoveredTurn，收尾交给落库终态同步。
     if (liveWriterToken === resumeToken) {
@@ -13067,6 +13115,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     const sseLineParser = createSseLineParser();
 
     let isChatStreamDone = false;
+    let receivedDuplicateRequest = false;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -13105,6 +13154,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
           if (handleBufferedBodyEvent(data)) {
             // 已进入正文缓冲。
           } else if (data.type === "duplicate_request") {
+            receivedDuplicateRequest = true;
             flushContentBuffer();
             agentMsg.value.isThinking = false;
             (agentMsg.value as any).status = "duplicate_request";
@@ -13282,12 +13332,15 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     // 误判为断线在途——既误弹恢复提示，又白拉一次事件日志。
     // 收尾副作用限定在本轮自己的会话：切走后草稿槽已被换绑，此刻再落定时间线会落到
     // 当前会话的消息上（`currentStreamAgentMessage` 的兜底是「列表最后一条」）。
-    if (conversationId.value === streamConversationId) {
-      activeStreamDraft = null;
-      // 本轮的输出已经完整落到界面，恢复卡片转入完成态。
-      recoveryCardTerminalApplied.value = true;
-      settleRecoveredTimeline();
-      clearStreamReplayTimer();
+    // 收到 duplicate_request 仅代表本次并发请求被拒，原有后台任务仍在运行，不可提前清草稿与续显计时器。
+    if (!receivedDuplicateRequest) {
+      if (conversationId.value === streamConversationId) {
+        activeStreamDraft = null;
+        // 本轮的输出已经完整落到界面，恢复卡片转入完成态。
+        recoveryCardTerminalApplied.value = true;
+        settleRecoveredTimeline();
+        clearStreamReplayTimer();
+      }
     }
   } catch (e: any) {
     flushContentBuffer();
@@ -13629,6 +13682,13 @@ onMounted(() => {
   }
   const savedExpandThoughts = readConfigValue("yovole_expand_thoughts");
   if (savedExpandThoughts !== null) config.expandThoughts = savedExpandThoughts === "1";
+  // 老用户只存过布尔的 expandThoughts：按 normalize 映射成三档，不硬塞一个默认值。
+  const savedDensity = readConfigValue("yovole_reasoning_density");
+  config.reasoningDensity = normalizeReasoningDensity(
+    savedDensity ?? (savedExpandThoughts === null ? null : savedExpandThoughts === "1"),
+  );
+  // 同 ChatSettings：只有「关闭」档收起整条链路，其余三档保持展开。
+  config.expandThoughts = config.reasoningDensity !== "off";
   const savedGroundingBlockMode = readConfigValue("yovole_grounding_block_mode");
   if (savedGroundingBlockMode === "strict_buffer" || savedGroundingBlockMode === "stream_with_retraction") {
     config.groundingBlockMode = savedGroundingBlockMode;

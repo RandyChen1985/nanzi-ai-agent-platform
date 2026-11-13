@@ -259,5 +259,24 @@ class PendingAgentScopeConfirmationRegistry:
         self._items.clear()
         pending_agentscope_store.clear()
 
+    async def clear_conversation(
+        self,
+        user_id: str | int | None,
+        conversation_id: str | None,
+    ) -> None:
+        """清理指定用户与会话下的全部挂起工具确认与外部执行快照。"""
+        if user_id is None or not conversation_id:
+            return
+        target_user = str(user_id)
+        target_conv = str(conversation_id)
+        for request_id in [
+            req_id
+            for req_id, req in self._items.items()
+            if str(req.snapshot.conversation_id or "") == target_conv
+            and (req.user_id is None or str(req.user_id) == target_user)
+        ]:
+            self._items.pop(request_id, None)
+        await pending_agentscope_store.clear_conversation(user_id, conversation_id)
+
 
 pending_agentscope_confirmations = PendingAgentScopeConfirmationRegistry()

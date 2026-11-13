@@ -4,7 +4,7 @@ import uuid
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Dict, Any, Optional, AsyncGenerator, Collection
+from typing import List, Dict, Any, Optional, AsyncGenerator, Awaitable, Callable, Collection
 
 from app.schemas.agent import AgentExecutionStep, ChatConfig
 from app.services.ai.agent_manager import AgentManagerService
@@ -1205,32 +1205,41 @@ class AgentService:
             performance_tracker=performance_tracker,
         )
 
+        on_lane_acquired = None
+        if isinstance(request_observability, dict):
+            on_lane_acquired = request_observability.pop("_on_lane_acquired", None)
+
         preflight_step = PreflightStep(self)
         async for chunk in preflight_step.check_quota_and_queue(pipeline_context):
+            if isinstance(chunk, dict) and chunk.get("type") == "log":
+                _track_process_timeline(shared_state["process_timeline"], chunk)
             yield chunk
 
         if pipeline_context.execution_status == "quota_exceeded":
             return
 
-        waiting_log_emitted = False
+        waiting_log_emitted = bool(shared_state.get("queue_wait_pending"))
         queue_start_time = asyncio.get_running_loop().time()
-        if conversation_id and await conversation_run_lane.is_locked(
-            user_id=lane_user_id, conversation_id=conversation_id
-        ):
-            waiting_log_emitted = True
 
         try:
-            async with track_conversation_run(
-                lane_user_id, conversation_id
-            ) as run_handle, conversation_run_lane.hold(
+            # 必须先拿到会话互斥锁，再向运行注册表登记 run_handle；
+            # 否则排队中的追问会在 hold() 阻塞期间提前覆盖当前持锁任务的句柄，
+            # 导致 /cancel 误杀排队者而非真实运行者。
+            async with conversation_run_lane.hold(
                 user_id=lane_user_id,
                 conversation_id=conversation_id,
                 trace_id=trace_id,
-            ):
+            ), track_conversation_run(
+                lane_user_id, conversation_id
+            ) as run_handle:
                 pipeline_context.run_handle = run_handle
+                if callable(on_lane_acquired):
+                    callback_result = on_lane_acquired()
+                    if asyncio.iscoroutine(callback_result):
+                        await callback_result
                 if waiting_log_emitted:
                     queue_elapsed_ms = (asyncio.get_running_loop().time() - queue_start_time) * 1000
-                    yield {
+                    queue_done_chunk = {
                         "type": "log",
                         "id": "session:queue_wait",
                         "title": "上一次任务已完成",
@@ -1239,6 +1248,8 @@ class AgentService:
                         "category": "system",
                         "execution_time_ms": max(1.0, queue_elapsed_ms),
                     }
+                    _track_process_timeline(shared_state["process_timeline"], queue_done_chunk)
+                    yield queue_done_chunk
 
                 pipeline = PipelineRunner([
                     preflight_step,
@@ -2518,6 +2529,7 @@ class AgentService:
         confirmed: bool,
         grant_scope: str = "once",
         user_info: Optional[Dict[str, Any]] = None,
+        on_lane_acquired: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """恢复 AgentScope 工具权限确认流；委托至 AgentScopeResumeHandler。"""
         from app.services.ai.runtime.agentscope.resume import AgentScopeResumeHandler
@@ -2528,6 +2540,7 @@ class AgentService:
             confirmed=confirmed,
             grant_scope=grant_scope,
             user_info=user_info,
+            on_lane_acquired=on_lane_acquired,
         ):
             yield chunk
 
@@ -2568,6 +2581,7 @@ class AgentService:
         external_execution_request_id: str,
         results: List[Dict[str, Any]],
         user_info: Optional[Dict[str, Any]] = None,
+        on_lane_acquired: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """恢复 AgentScope 外部工具执行流；委托至 AgentScopeResumeHandler。"""
         from app.services.ai.runtime.agentscope.resume import AgentScopeResumeHandler
@@ -2577,6 +2591,7 @@ class AgentService:
             external_execution_request_id=external_execution_request_id,
             results=results,
             user_info=user_info,
+            on_lane_acquired=on_lane_acquired,
         ):
             yield chunk
 

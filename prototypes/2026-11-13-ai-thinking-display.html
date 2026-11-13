@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 思考展示 · 链路内改造（轨道 / 密度 / 委派）+ 全状态覆盖</title>
+<meta name="prototype-kind" content="方案对比">
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --panel-2:#fbfbfd;
+  --text:#1f2328; --text-2:#4a5262; --text-3:#8b93a1; --text-4:#a9b0bd;
+  --line:#e5e7eb; --line-2:#eef0f3;
+  --brand:#4f46e5; --brand-soft:#eef0ff;
+  /* 思考 / 工具 / 委派统一走中性灰阶，只靠形状与缩进区分 */
+  --think:#4b5563; --think-2:#a8b0bd; --think-line:#e9ebef;
+  --tool:#6b7280; --tool-soft:#f4f5f7;
+  --delegate:#5b6270; --delegate-soft:#fbfbfd; --delegate-line:#eaecf0;
+  /* 语义色只保留错误与中断，且都压到最淡 */
+  --err:#b42318; --err-bg:#fef3f2; --err-line:#fecdca;
+  --warn:#b54708; --warn-bg:#fffaeb; --warn-line:#fedf89;
+  --ok:#067647; --ok-bg:#ecfdf3; --ok-line:#abefc6;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --shadow:0 1px 2px rgba(16,24,40,.04),0 4px 12px rgba(16,24,40,.04);
+}
+body.dark{
+  --bg:#0e1015; --panel:#161922; --panel-2:#1b1f2a;
+  --text:#e8eaf0; --text-2:#c3c8d4; --text-3:#8b93a1; --text-4:#6e7686;
+  --line:#262b36; --line-2:#1e222c;
+  --brand:#818cf8; --brand-soft:#1d2130;
+  --think:#c3c8d4; --think-2:#4b5260; --think-line:#272c36;
+  --tool:#a7aebb; --tool-soft:#1c2029;
+  --delegate:#b9bfca; --delegate-soft:#191d26; --delegate-line:#272c36;
+  --err:#fda29b; --err-bg:#2a1414; --err-line:#4a2020;
+  --warn:#fec84b; --warn-bg:#241d0e; --warn-line:#3d3018;
+  --ok:#75e0a7; --ok-bg:#0f2419; --ok-line:#1d3a2b;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 16px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+
+/* 顶栏 */
+.bar{position:sticky;top:0;z-index:60;background:var(--panel);border-bottom:1px solid var(--line)}
+.bar-in{max-width:1100px;margin:0 auto;padding:12px 18px 10px;display:flex;align-items:center;gap:14px}
+.logo{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:15px;color:#fff;
+  background:linear-gradient(135deg,#8b5cf6,#4f46e5);box-shadow:0 4px 12px rgba(99,102,241,.35);flex:none}
+.bar h1{margin:0;font-size:15px;font-weight:700;letter-spacing:-.01em}
+.bar p{margin:1px 0 0;font-size:11.5px;color:var(--text-3)}
+.ghost{margin-left:auto;border:1px solid var(--line);border-radius:8px;padding:6px 11px;font-size:12px;
+  color:var(--text-2);background:var(--panel-2)}
+.ghost:hover{border-color:var(--brand);color:var(--brand)}
+.tabs{max-width:1100px;margin:0 auto;padding:0 14px 9px;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{white-space:nowrap;font-size:12.5px;padding:6px 12px;border-radius:8px;color:var(--text-3);border:1px solid transparent}
+.tabs button:hover{background:var(--line-2);color:var(--text-2)}
+.tabs button.on{background:var(--brand-soft);color:var(--brand);border-color:color-mix(in srgb,var(--brand) 22%,transparent);font-weight:600}
+
+main{max-width:1100px;margin:0 auto;padding:20px 18px 90px}
+.view{display:none}
+.view.on{display:block}
+.viewhead{max-width:780px;margin:0 auto 16px;padding-left:2px}
+.viewhead h2{margin:0 0 4px;font-size:16px;font-weight:700}
+.viewhead p{margin:0;font-size:12.5px;color:var(--text-3);line-height:1.7}
+.chatcol{max-width:780px;margin:0 auto}
+
+/* 气泡 */
+.user{display:flex;justify-content:flex-end;margin:0 0 16px}
+.user b{background:var(--brand);color:#fff;padding:9px 14px;border-radius:14px 14px 4px 14px;font-size:13px;
+  font-weight:400;max-width:80%;line-height:1.6;box-shadow:var(--shadow)}
+.answer{margin-top:14px;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:14px 16px;
+  font-size:13.5px;line-height:1.8;color:var(--text-2);box-shadow:var(--shadow)}
+.answer p{margin:0 0 9px}
+.answer p:last-child{margin-bottom:0}
+.answer strong{color:var(--text);font-weight:600}
+.answer ul,.answer ol{margin:0 0 9px;padding-left:19px}
+.answer li{margin:2px 0}
+.answer code{font-family:var(--mono);font-size:12px;background:var(--panel-2);border:1px solid var(--line-2);
+  padding:.5px 4px;border-radius:4px;color:var(--text-2)}
+.hint{font-size:11.5px;color:var(--text-4);line-height:1.75}
+.hint b{color:var(--danger,#b42318);font-weight:600}
+.hint code{font-family:var(--mono);font-size:11px;background:var(--panel-2);border:1px solid var(--line-2);
+  padding:.5px 3px;border-radius:3px}
+.pno{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;background:#fee2e2;color:#b91c1c;
+  font-size:9.5px;font-weight:700;margin-left:3px;vertical-align:1px}
+body.dark .pno{background:#3b1518;color:#fca5a5}
+
+/* ============ 现状复刻 ============ */
+.tl{border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden}
+.tl-hdr{display:flex;align-items:center;gap:7px;padding:7px 11px;cursor:pointer;user-select:none}
+.tl-hdr:hover{background:var(--line-2)}
+.tl-ico{width:20px;height:20px;border-radius:5px;background:var(--line-2);display:grid;place-items:center;flex:none}
+.dot{width:8px;height:8px;border-radius:50%;background:#0ea5e9;box-shadow:0 0 0 2px rgba(14,165,233,.18);
+  animation:breathe 1.6s ease-in-out infinite;flex:none}
+@keyframes breathe{0%,100%{opacity:.55;transform:scale(.85)}50%{opacity:1;transform:scale(1.12)}}
+.tl-title{font-size:12px;font-weight:600;color:var(--text-2);flex:none}
+.pill{flex:none;background:var(--line-2);border-radius:999px;padding:1px 6px;font-family:var(--mono);font-size:10px;
+  font-weight:600;color:#6b7280}
+body.dark .pill{color:var(--text-3)}
+.tl-sum{font-size:10px;color:var(--text-3);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-cur{margin-left:auto;font-size:10px;color:var(--text-4);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chev{flex:none;color:var(--text-3);font-size:11px;transition:transform .2s}
+.chev.up{transform:rotate(180deg)}
+.tl-body{padding:2px 5px 6px;border-top:1px solid var(--line-2)}
+.dimbar{display:flex;align-items:center;justify-content:space-between;padding:3px 4px;font-size:10px;
+  color:var(--text-4);margin-bottom:2px}
+.dimbar button{font-size:10px;color:var(--text-3)}
+.skillbar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;border:1px solid #ede9fe;background:#faf5ff;
+  border-radius:6px;padding:4px 6px;font-size:11px;font-weight:600;color:#7c3aed;margin-bottom:2px}
+body.dark .skillbar{background:#1c1630;border-color:#312456;color:#c4b5fd}
+.skillbar .sb{background:#f3e8ff;border:1px solid #e9d5ff;border-radius:999px;padding:0 6px;font-size:10px;font-weight:700}
+body.dark .skillbar .sb{background:#2a1f47;border-color:#3b2b5e}
+.ritem{padding:2px 4px}
+.rhead{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--text-3);cursor:pointer;width:100%;text-align:left}
+.rhead:hover{color:var(--text-2)}
+.rhead .lbl{flex:none}
+.rprev{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-4)}
+.rnum{flex:none;background:var(--line-2);border-radius:999px;padding:0 6px;font-family:var(--mono);font-size:10px;color:#6b7280}
+body.dark .rnum{color:var(--text-3)}
+.rtime{flex:none;font-family:var(--mono);font-size:10px;color:var(--text-4)}
+.rbody{border-left:2px solid var(--line);margin:2px 0 0;padding-left:10px;position:relative}
+.rbody pre{margin:0;font-family:inherit;font-size:12px;line-height:20px;color:var(--text-3);white-space:pre-wrap;
+  word-break:break-word;padding-right:20px}
+.trow{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;padding:2px 4px;font-size:11px;line-height:20px;
+  color:var(--text-3);min-width:0}
+.trow .tt{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trow .ttime{flex:none;font-family:var(--mono);font-size:10px;color:var(--text-4)}
+.trow .ic{flex:none;width:14px;text-align:center;font-size:11px;opacity:.75}
+.tkids{margin-left:14px;border-left:1px solid var(--line);padding-left:8px;font-size:10.5px;color:var(--text-4)}
+.tkids div{padding:1px 0}
+
+/* ============ 新：容器 + 轨道 ============ */
+.wrap{border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden}
+.hd{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;user-select:none;min-width:0}
+.hd:hover{background:var(--line-2)}
+.hd-ico{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;flex:none;font-size:11px;
+  background:var(--line-2);color:var(--text-3)}
+.hd-t{font-size:12px;font-weight:600;color:var(--text-2);flex:none}
+.hd-stat{display:flex;align-items:center;gap:5px;min-width:0;overflow:hidden;flex:none}
+.chip{flex:none;font-family:var(--mono);font-size:10px;font-weight:500;padding:1px 6px;border-radius:999px;
+  border:1px solid var(--line);color:var(--text-3)}
+.hd-right{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
+.body{padding:4px 10px 8px;border-top:1px solid var(--line-2)}
+.body.closed{display:none}
+
+.rail{position:relative;padding-left:20px}
+.rail::before{content:"";position:absolute;left:5.5px;top:6px;bottom:12px;width:1.5px;background:var(--line)}
+.rail.norail{padding-left:2px}
+.rail.norail::before{display:none}
+.rail.norail .nd::before{display:none}
+.nd{position:relative;padding:1px 0}
+.nd::before{content:"";position:absolute;left:-18.5px;top:8px;width:8px;height:8px;border-radius:50%;
+  background:var(--panel);border:1.5px solid var(--think-2);z-index:1}
+.nd.tool::before{border-color:var(--text-4);border-radius:1.5px;left:-17.5px;top:9px;width:6px;height:6px}
+.nd.say::before{border-color:var(--line);background:var(--line);width:5px;height:5px;left:-17px;top:9.5px}
+.nd.dlg::before{border-color:var(--text-3);border-radius:1.5px;transform:rotate(45deg);left:-17.5px;top:7px;
+  width:7px;height:7px;background:var(--panel)}
+.nd.fail::before{border-color:var(--err)}
+.nd.warn::before{border-color:var(--warn)}
+
+.row{display:flex;align-items:center;gap:7px;min-width:0;padding:4px 6px;border-radius:7px;cursor:pointer;
+  text-align:left;width:100%}
+.row:hover{background:var(--line-2)}
+.row.flat{cursor:default}
+.row.flat:hover{background:none}
+.rk{flex:none;font-size:11.5px;font-weight:600;letter-spacing:.01em;color:var(--text-2)}
+.tool .rk{font-weight:400}
+.say .rk{color:var(--text-4);font-weight:400;font-size:10.5px}
+.nd.say .row{align-items:flex-start}
+.nd.say .rk{flex:1;min-width:0;white-space:normal;line-height:1.65}
+.rseq{flex:none;font-family:var(--mono);font-size:9.5px;color:var(--text-4);border:1px solid var(--line);
+  border-radius:4px;padding:0 3px;line-height:13px}
+.rsum{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--text-3)}
+.row .meta{display:flex;align-items:center;gap:6px;flex:none;margin-left:auto}
+.mnum{font-family:var(--mono);font-size:10px;color:var(--text-4)}
+.mnum.ok{color:var(--text-4);font-weight:500}
+.mnum.err{color:var(--err);font-weight:600}
+.mnum.warn{color:var(--warn);font-weight:600}
+.tagst{flex:none;font-size:9.5px;font-weight:600;padding:0 5px;border-radius:4px;line-height:15px}
+.tagst.err{background:var(--err-bg);color:var(--err);border:1px solid var(--err-line)}
+.tagst.warn{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn-line)}
+.tagst.ok{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-line)}
+.tagst.dim{background:var(--line-2);color:var(--text-3)}
+.chev2{flex:none;color:var(--text-4);font-size:10px;transition:transform .18s;width:10px;text-align:center}
+.chev2.up{transform:rotate(180deg)}
+.ldot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--text-3);
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--text-3) 16%,transparent);animation:breathe 1.6s ease-in-out infinite}
+.pbar{flex:none;width:52px;height:3px;border-radius:2px;background:var(--line);overflow:hidden;position:relative}
+.pbar i{position:absolute;top:0;bottom:0;left:0;width:38%;background:var(--text-4);border-radius:2px;
+  animation:slide 1.4s ease-in-out infinite}
+@keyframes slide{0%{left:-40%}100%{left:100%}}
+
+/* 思考正文 */
+.tbody{margin:0 0 6px 1px;padding:5px 6px 2px 13px;border-left:2px solid var(--think-line);
+  font-size:13px;line-height:1.82;color:var(--text-2)}
+.tbody>*:first-child{margin-top:0}
+.tbody p{margin:0 0 8px}
+.tbody strong{color:var(--text);font-weight:600}
+.tbody ul,.tbody ol{margin:0 0 8px;padding-left:19px}
+.tbody li{margin:2px 0}
+.tbody code{font-family:var(--mono);font-size:12px;background:var(--panel-2);border:1px solid var(--line-2);
+  padding:.5px 4px;border-radius:4px;color:var(--text-2)}
+.tbody pre.code{margin:0 0 8px;padding:8px 10px;border-radius:7px;background:var(--panel-2);border:1px solid var(--line-2);overflow-x:auto}
+.tbody pre.code code{background:none;border:0;padding:0;font-size:11.5px;line-height:1.7;color:var(--text-2);white-space:pre}
+.tbody mark{background:color-mix(in srgb,var(--text-3) 13%,transparent);color:var(--text);border-radius:3px;
+  padding:0 2px;font-weight:600;box-decoration-break:clone}
+.clip{position:relative;max-height:210px;overflow:hidden}
+.clip::after{content:"";position:absolute;left:0;right:0;bottom:0;height:54px;pointer-events:none;
+  background:linear-gradient(to bottom,transparent,var(--panel))}
+.more{font-size:11.5px;color:var(--text-2);font-weight:600;padding:2px 0 4px;display:inline-flex;align-items:center;gap:3px}
+.more:hover{text-decoration:underline}
+
+/* 工具详情 */
+.targs{margin:2px 0 6px 2px;padding-left:12px;border-left:2px solid var(--line-2)}
+.targs pre{margin:0 0 5px;font-family:var(--mono);font-size:11px;line-height:1.65;color:var(--text-3);
+  white-space:pre-wrap;word-break:break-all}
+.targs pre.out{border-top:1px dashed var(--line);padding-top:5px;color:var(--text-2)}
+.targs .lb{font-size:10px;color:var(--text-4);font-weight:600;margin-bottom:2px}
+.errline{margin:2px 0 6px 2px;padding:5px 9px;border-radius:6px;background:var(--err-bg);
+  border:1px solid var(--err-line);color:var(--err);font-size:11.5px;line-height:1.6}
+.metaline{margin:0 0 4px 2px;font-size:10.5px;color:var(--text-4)}
+
+/* 委派分支 */
+.dlg{margin:4px 0 6px;padding:1px 0 2px 2px;border-left:2px solid var(--delegate-line);border-radius:0 6px 6px 0}
+.dhd{display:flex;align-items:center;gap:7px;padding:6px 9px;cursor:pointer;min-width:0;border-radius:0 6px 6px 0}
+.dhd:hover{background:var(--line-2)}
+.dk{flex:none;font-size:11.5px;font-weight:600;color:var(--text-3)}
+.dname{flex:none;font-size:12px;font-weight:600;color:var(--text)}
+.dsum{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--text-3)}
+.dbody{margin:0 8px 7px;padding:2px 0 0 12px;border-left:1.5px solid var(--delegate-line)}
+.dbody .nd::before{border-color:var(--text-4)}
+.dbody .tbody{border-left-color:var(--delegate-line)}
+/* 平铺模式：委派退化成一行普通 log */
+.dflat{display:flex;align-items:center;gap:7px;padding:4px 6px;font-size:11.5px;color:var(--text-2);cursor:pointer;border-radius:7px}
+.dflat:hover{background:var(--line-2)}
+.dflat .rk{font-weight:400}
+.dflat-kids{margin-left:16px;border-left:1px solid var(--line);padding-left:9px}
+
+.rollup{display:flex;align-items:center;gap:8px;margin:4px 0;padding:6px 9px;border-radius:7px;
+  border:1px dashed var(--line);background:var(--panel-2);font-size:11.5px;color:var(--text-2)}
+.rollup .rk{flex:none;color:var(--text-2);font-weight:600}
+.rollup .rsum{color:var(--text-3)}
+.rollup .more{margin-left:auto;flex:none;padding:0}
+
+/* 控件 */
+.ctrls{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin:0 0 14px;font-size:12px}
+.sw{display:flex;align-items:center;gap:7px}
+.sw>.lb{color:var(--text-4);font-size:11.5px;flex:none}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
+.seg button{padding:4px 10px;font-size:12px;color:var(--text-3);border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--line-2);color:var(--text);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:5px 11px;font-size:12px;
+  color:var(--text-2);box-shadow:var(--shadow)}
+.btn:hover{border-color:var(--text-3)}
+.btn.on{background:var(--text);color:var(--panel);border-color:var(--text)}
+
+/* 说明块 */
+.verdict{margin:18px auto 0;max-width:780px;border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  padding:14px 16px;box-shadow:var(--shadow)}
+.verdict h3{margin:0 0 8px;font-size:13px;display:flex;align-items:center;gap:7px}
+.verdict h3 i{width:18px;height:18px;border-radius:5px;background:var(--brand-soft);color:var(--brand);display:grid;
+  place-items:center;font-size:10px;font-style:normal;font-weight:700;flex:none}
+.verdict dl{margin:0;display:grid;grid-template-columns:58px 1fr;gap:6px 10px;font-size:12.5px;line-height:1.72}
+.verdict dt{color:var(--text-3);font-size:11.5px;padding-top:1px}
+.verdict dd{margin:0;color:var(--text-2)}
+.verdict dd em{font-style:normal;color:var(--text);font-weight:600}
+
+/* 状态覆盖页 */
+.matrix{max-width:860px;margin:0 auto;display:grid;gap:12px}
+.case{border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden}
+.case-h{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line-2);
+  background:var(--panel-2)}
+.case-n{flex:none;width:20px;height:20px;border-radius:6px;background:var(--line-2);color:var(--text-3);
+  display:grid;place-items:center;font-family:var(--mono);font-size:10.5px;font-weight:700}
+.case-t{font-size:12.5px;font-weight:600;color:var(--text);flex:none}
+.case-src{font-family:var(--mono);font-size:10px;color:var(--text-4);margin-left:auto;flex:none}
+.case-body{padding:8px 12px 12px}
+.case-note{padding:0 14px 12px;font-size:11.5px;color:var(--text-3);line-height:1.7}
+.case-note code{font-family:var(--mono);font-size:11px;background:var(--panel-2);border:1px solid var(--line-2);
+  padding:.5px 3px;border-radius:3px}
+.invariants{max-width:860px;margin:0 auto 16px;border:1px solid var(--line);border-radius:12px;
+  background:var(--panel);padding:14px 16px;box-shadow:var(--shadow)}
+.invariants h3{margin:0 0 4px;font-size:13px;display:flex;align-items:center;gap:7px}
+.invariants h3 i{width:18px;height:18px;border-radius:5px;background:var(--warn-bg);color:var(--warn);display:grid;
+  place-items:center;font-size:10px;font-style:normal;font-weight:700;flex:none;border:1px solid var(--warn-line)}
+.invariants p{margin:0 0 8px;font-size:12px;color:var(--text-3)}
+.invariants ul{margin:0;padding-left:19px;font-size:12.5px;line-height:1.8;color:var(--text-2)}
+.invariants li{margin:3px 0}
+.invariants li code{font-family:var(--mono);font-size:11px;background:var(--panel-2);border:1px solid var(--line-2);
+  padding:.5px 3px;border-radius:3px}
+.invariants li b{color:var(--text);font-weight:600}
+
+/* 清单 */
+.tips{max-width:860px;margin:0 auto;display:grid;gap:11px}
+.tip{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:13px 15px;
+  box-shadow:var(--shadow);display:grid;grid-template-columns:22px 1fr;gap:11px}
+.tip .n{width:22px;height:22px;border-radius:7px;background:var(--brand-soft);color:var(--brand);display:grid;
+  place-items:center;font-size:11px;font-weight:700;font-family:var(--mono)}
+.tip h4{margin:0 0 4px;font-size:13px}
+.tip p{margin:0;font-size:12.5px;color:var(--text-2);line-height:1.72}
+.tip .lv{font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;margin-left:7px;vertical-align:1px}
+.lv.p0{background:#fee2e2;color:#b91c1c}
+.lv.done{background:#dcfce7;color:#15803d}
+.lv.p1{background:#fef3c7;color:#b45309}
+.lv.p2{background:#e0e7ff;color:#4338ca}
+body.dark .lv.p0{background:#3b1518;color:#fca5a5}
+body.dark .lv.p1{background:#2c2410;color:#fcd34d}
+body.dark .lv.p2{background:#1d2136;color:#a5b4fc}
+
+@media (max-width:640px){
+  html,body{overflow-x:hidden}
+  main{padding:14px 11px 70px}
+  .hd{padding:8px 10px}
+  .hd-stat .chip:nth-child(n+2){display:none}
+  .rk{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto}
+  .rsum,.dsum{display:none}
+  .dname{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tbody{font-size:13px;padding-right:2px}
+  .answer{padding:12px 13px}
+  .ctrls{gap:10px}
+  .verdict dl{grid-template-columns:52px 1fr}
+}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <span class="logo">◈</span>
+    <div>
+      <h1>AI 思考展示 · 链路内改造</h1>
+      <p>一个容器一个开关 · 三个可调开关 · 全状态覆盖</p>
+    </div>
+    <button class="ghost" id="themeBtn">🌙 深色</button>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button data-v="now" class="on">① 现状（对照）</button>
+    <button data-v="main">② 改造（三开关）</button>
+    <button data-v="matrix">③ 状态覆盖</button>
+    <button data-v="tips">④ 优化清单</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ① 现状 -->
+  <section class="view on" id="v-now">
+    <div class="viewhead">
+      <h2>现状：一条链路里的 5 轮思考 + 5 次工具 + 2 次委派</h2>
+      <p>按现有代码复刻（<code>ChatExecutionTimeline</code> 的 reasoning / log / children 三层）。红圈对应第 ④ 页问题编号。重点看委派：子代理是<strong>一个 log 行</strong>（工具位里夹着），内部步骤要展开两层才看得到，且与主代理同样式。</p>
+    </div>
+    <div class="chatcol" id="now-col"></div>
+    <div class="verdict">
+      <h3><i>?</i>要保留的既有结构（不推翻）</h3>
+      <dl>
+        <dt>容器</dt><dd>整条执行链路一个容器、一个总开关，一起收起一起展开</dd>
+        <dt>层级</dt><dd>思考 / 工具 / 旁白 / 委派都在同一条时间线上，子代理是带 children 的容器节点</dd>
+        <dt>默认</dt><dd>生成中展开、出正文后自动折叠；用户手点过就不再自动收（<code>userToggled</code>）</dd>
+      </dl>
+    </div>
+  </section>
+
+  <!-- ② 改造 -->
+  <section class="view" id="v-main">
+    <div class="viewhead">
+      <h2>改造：同一个容器，三个独立开关</h2>
+      <p>不是三个互斥方案，是三个可以任意组合的开关。调一下看效果——<strong>关掉轨道</strong>只剩缩进和字重，<strong>精简档</strong>把 5 轮思考压成一行但工具链还在，<strong>关闭档</strong>把整条链路收成一行标题，<strong>委派平铺</strong>退回现状那种 log 行。</p>
+    </div>
+    <div class="chatcol">
+      <div class="ctrls">
+        <span class="sw"><span class="lb">轨道</span>
+          <span class="seg" id="sw-rail"><button data-v="1" class="on">显示</button><button data-v="0">隐藏</button></span>
+        </span>
+        <span class="sw"><span class="lb">思考密度</span>
+          <span class="seg" id="sw-d">
+            <button data-d="detailed">详细</button>
+            <button data-d="standard" class="on">标准</button>
+            <button data-d="compact">精简</button>
+            <button data-d="off">关闭</button>
+          </span>
+        </span>
+        <span class="sw"><span class="lb">委派</span>
+          <span class="seg" id="sw-dlg"><button data-v="branch" class="on">分支</button><button data-v="flat">平铺</button></span>
+        </span>
+        <button class="btn" id="main-live">▶ 模拟生成中</button>
+        <button class="btn" id="main-reset">重置</button>
+      </div>
+      <div id="main-col"></div>
+      <div class="hint" id="main-tip" style="margin:10px 2px 0"></div>
+    </div>
+    <div class="verdict">
+      <h3><i>★</i>推荐默认值</h3>
+      <dl>
+        <dt>轨道</dt><dd>显示 —— 它同时解决「这段是思考还是工具」和「层级在哪」，关掉就退回一锅灰字</dd>
+        <dt>密度</dt><dd>四档：详细 / 标准 / 精简 / 关闭。前三档只决定卡片<em>内部</em>怎么排；<b>关闭</b>决定整张卡片折不折（恢复改造前的布尔开关语义）</dd>
+        <dt>委派</dt><dd>分支 —— 头行给「谁 · 几步 · 多久」，子代理的思考标成「子代理思考」并缩进</dd>
+      </dl>
+    </div>
+  </section>
+
+  <!-- ③ 状态覆盖 -->
+  <section class="view" id="v-matrix">
+    <div class="viewhead">
+      <h2>状态覆盖：改造后每种情况长什么样</h2>
+      <p>这一页是<strong>实现验收清单</strong>。下面每个 case 都来自现有代码里真实存在的一种渲染分支，改样式时逐个对照，避免把边界情况弄丢。</p>
+    </div>
+    <div class="invariants">
+      <h3><i>!</i>实现时不许动的既有行为</h3>
+      <p>这些是现有代码里带注释的硬约束，不是审美问题：</p>
+      <ul>
+        <li><b>历史会话</b>：<code>hydrateHistoryProcessTimeline</code> 把残留 <code>pending</code> 一律落成 <code>interrupted</code>——否则呼吸动画常驻、<code>timelineHasPending</code> 恒真、每 500ms 全量重渲染。</li>
+        <li><b>历史默认全折叠</b>：<code>childrenExpanded:false</code>、reasoning <code>contentExpanded:false</code>。36 条消息 × 20~40 节点全常驻 DOM 会让展开卡顿。</li>
+        <li><b>旁白默认展开且不限高</b>：流式最后一条还在逐字增长，套固定高度会让新字滚动到可视区外；长旁白可能被提升为正文。</li>
+        <li><b><code>userToggled</code> 保护</b>：用户手点过展开/收起后，跑完不再自动折叠。</li>
+        <li><b>准备父级</b>完成后收起，但 <code>error</code> / <code>interrupted</code> 时保持展开（<code>shouldCollapsePreparationChildren</code>）。</li>
+        <li><b>todo 只留最后一个</b>（<code>selectTimelineRenderableItems</code>），且不计入头部步骤数。</li>
+        <li><b><code>category=model</code> 默认隐藏</b>，只有 fallback 换模提示（<code>warning</code>）才显示。</li>
+        <li><b>空内容不渲染</b>：思考正文为空时整行不出现（<code>hasVisibleTimelineText</code>）。</li>
+      </ul>
+    </div>
+    <div class="matrix" id="matrix-col"></div>
+  </section>
+
+  <!-- ④ 清单 -->
+  <section class="view" id="v-tips">
+    <div class="viewhead">
+      <h2>优化清单</h2>
+      <p>P0＝纯前端收益直接；P1＝需要设计决策；P2＝需要后端配合。落地前请对照 ③ 状态覆盖页的「不许动的既有行为」。</p>
+    </div>
+    <div class="tips" id="tips-col"></div>
+  </section>
+</main>
+
+<!-- ============ 数据 ============ -->
+<script type="text/plain" id="src-q">帮我看下华东区 Q3 售后工单的响应时长，跟 Q2 比一下，如果变慢了，找出卡在哪个环节，最后出一份给运营总监的复盘结论。</script>
+
+<script type="text/plain" id="src-t1">先明确口径：**响应时长 = 首次响应时间 − 提交时间**，只统计华东区（`region_code = 'EC'`）Q2 / Q3 已结案工单。
+
+需要先确认三件事：
+1. 宽表里有没有 `first_reply_at` 字段；
+2. 8 月的空值率是多少——空值多的话中位数会被拉偏；
+3. 转运环节要按 `team_level` 拆开看，否则二线和三线的恶化会互相抵消。
+
+第 1 件事属于元数据范畴，我不猜，委派给元数据专家核对；统计我自己来。</script>
+
+<script type="text/plain" id="src-d1">收到。任务要求核对 `fct_ticket_wide` 是否含首次响应字段，以及 8 月空值率。
+
+先取数据集 schema，再按关键词检索是否有「首次响应」口径的指标定义。</script>
+
+<script type="text/plain" id="src-d2">字段确认在，`first_reply_at` 是 string 类型的时间戳，需要转换。
+
+==注意==：8 月空值率 3.1%，但表里还有一个 `first_reply_at_filled`（补录字段），后续取数优先用它兜底，避免整段算成缺失。</script>
+
+<script type="text/plain" id="src-t2">元数据专家回来了：`first_reply_at` 存在，但 **8 月有 3.1% 的空值**，且表里还有补录字段 `first_reply_at_filled`。
+
+==等一下，我前面的假设有问题==：我原以为这些空值是「没响应」，实际是 8 月起部分工单走了线上（企业微信）通道，链路里根本没写回这个字段。如果直接 `AVG(first_reply_at - created_at)`，这一批会被算成缺失而不是算成 0，Q3 反而会显得更快。
+
+改成两条口径交叉验证：
+- 口径 A：只算有首次响应时间的工单（可比的存量）；
+- 口径 B：用线上通道的 `msg_first_seen_at` 补齐。
+
+```sql
+SELECT team_level,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY resp_secs) AS p90
+FROM fct_ticket_wide
+WHERE region_code = 'EC'
+  AND quarter IN ('Q2','Q3')
+GROUP BY team_level;
+```
+
+P90 比平均值更值得看：这次恶化很可能集中在长尾。</script>
+
+<script type="text/plain" id="src-t3">两条口径的结论一致，**Q3 P90 由 4.2h 升到 9.8h（+133%）**，而中位数只涨了 6%——典型的「少数工单被拖住」，不是整体变慢。
+
+按 `team_level` 拆开：
+- 一线（L1）：4.2h → 4.5h，基本持平；
+- 二线（L2）：5.1h → 9.6h，**主要恶化点**；
+- 三线（L3）：9.9h → 10.1h，没动。
+
+所以卡点不是受理量，而是 **L2 的转派排队**。这一步要连着转运明细一起看，交给 SQL 分析专家跑明细。</script>
+
+<script type="text/plain" id="src-d3">任务：取 L2 转派排队明细，按 24 小时分布看长尾在哪。
+
+先看 `tkt_transfer_log` 字段，再按 `queue_wait` 倒序取前 200 条。</script>
+
+<script type="text/plain" id="src-t4">明细验证了推断，而且定位更精确：**38 条超过 24h 未分派，93% 落在 20:00–次日 09:00**。
+
+再交叉 Q3 的分派规则变更记录：7 月 15 日转派改成人工池抢单，夜间没有值班人——时间点和长尾开始出现的时间吻合。
+
+结论收敛：卡点是 **L2 夜间抢单无人受理**，不是处理能力不足。</script>
+
+<script type="text/plain" id="src-t5">三点都对上了，出结论。给运营总监的版本要压成一页：先说慢在哪、再说为什么、最后给两条可执行的改动。</script>
+
+<script type="text/plain" id="src-long">完整推导过程（这一条故意写长，用来验证限高）。
+
+第一层：确认口径。响应时长取首次响应时间减提交时间，只算华东区已结案工单。这一步看起来简单，但华东区下面还有四个大区经理的辖区，`region_code` 只精确到省，所以需要再叠一层 `manager_area` 才能和运营总监看到的报表对上。
+
+第二层：确认空值。8 月起线上通道的工单没有写回 `first_reply_at`，直接 AVG 会让 Q3 显得更快。补录字段 `first_reply_at_filled` 覆盖了其中 92%，剩余 8% 需要用 `msg_first_seen_at` 兜底。
+
+第三层：确认统计量。均值受长尾拖累严重，P90 更能反映用户体感；同时给出中位数作为对照，两者背离恰好说明「不是整体变慢，而是少量工单被拖住」。
+
+第四层：确认归因路径。从 `team_level` 拆解到 `queue_wait`，再到 24 小时分布，最后交叉规则变更记录。四步任何一步断了都推不出结论，所以每一步都要留痕。
+
+第五层：产出。给运营总监的版本只留结论 + 两条动作；完整推导留在思考里，供复盘时追溯。</script>
+
+<script type="text/plain" id="src-ans">Q3 比 Q2 慢了，但**慢在长尾，不是整体变慢**：P90 由 4.2h 升到 9.8h（+133%），中位数只涨 6%。
+
+卡点在**二线（L2）的夜间转派排队**：
+
+- L1 一线 4.2h → 4.5h，基本持平
+- L2 二线 5.1h → 9.6h（+88%，主要恶化点）
+- 转派等待 1.8h → 6.2h，38 条超过 24h 未分派，93% 落在 20:00–09:00
+
+直接原因是 7 月 15 日转派改成人工池抢单，而夜间没有值班人。建议：① 夜间改回自动分配；② 给超过 4h 未分派的工单加升级提醒。</script>
+
+<script>
+/* ================= 基础 ================= */
+const $ = (id) => document.getElementById(id);
+const T = (id) => $('src-' + id).textContent.trim();
+
+const RUN = [
+  { k: 'think', key: '0', r: 1, sec: 3.2, chars: 412, md: T('t1') },
+  { k: 'say', key: '1', text: '先核对字段口径，再按环节拉数。' },
+  { k: 'delegate', key: '2', agent: '元数据专家', sec: 8.4, state: 'ok', steps: [
+      { k: 'think', sec: 2.4, chars: 260, md: T('d1'), sub: true },
+      { k: 'tool', name: 'get_dataset_schema', sec: 1.1, args: '{"dataset":"dw","tables":["fct_ticket_wide"]}',
+        out: '42 个字段 · first_reply_at / first_reply_at_filled / team_level / channel 均存在' },
+      { k: 'tool', name: 'search_metadata', sec: 2.3, args: '{"keyword":"首次响应 口径"}',
+        out: '命中 3 条指标定义：首次响应时长（主口径）、首次响应时长（线上口径）…' },
+      { k: 'think', sec: 1.6, chars: 180, md: T('d2'), sub: true },
+  ]},
+  { k: 'think', key: '3', r: 2, sec: 9.8, chars: 1263, md: T('t2') },
+  { k: 'tool', key: '4', name: 'Bash · 按环节拆解响应时长', sec: 4.6,
+    args: 'python scripts/ticket_sla_breakdown.py --region EC --quarters Q2,Q3',
+    out: 'L1 一线     4.2h → 4.5h\nL2 二线     5.1h → 9.6h   ← 恶化\nL3 三线     9.9h → 10.1h\n转派等待    1.8h → 6.2h' },
+  { k: 'think', key: '5', r: 3, sec: 2.1, chars: 340, md: T('t3') },
+  { k: 'delegate', key: '6', agent: 'SQL 分析专家', sec: 6.2, state: 'ok', steps: [
+      { k: 'think', sec: 2.8, chars: 300, md: T('d3'), sub: true },
+      { k: 'tool', name: 'execute_sql_query', sec: 3.4,
+        args: 'SELECT hour(created_at) h, count(*) FROM tkt_transfer_log WHERE queue_wait > 4h GROUP BY h',
+        out: '20:00–09:00 占 93%（共 38 条超 24h 未分派）' },
+  ]},
+  { k: 'think', key: '7', r: 4, sec: 5.4, chars: 738, md: T('t4') },
+  { k: 'tool', key: '8', name: '查询转运明细 tkt_transfer_log', sec: 2.1,
+    args: '{"limit":200,"order":"queue_wait desc"}',
+    out: '200 行 · P90 排队 6.2h，其中 38 条超过 24h 未分派（93% 落在 20:00–09:00）' },
+  { k: 'think', key: '9', r: 5, sec: 1.8, chars: 220, md: T('t5') },
+];
+const THINK_ROWS = RUN.filter((n) => n.k === 'think');
+const DLG_ROWS = RUN.filter((n) => n.k === 'delegate');
+const TOOL_ROWS = RUN.filter((n) => n.k === 'tool' || n.k === 'delegate')
+  .flatMap((n) => (n.k === 'delegate' ? n.steps.filter((s) => s.k === 'tool') : [n]));
+const TOTAL_SEC = RUN.reduce((a, n) => a + (n.sec || 0), 0).toFixed(1);
+const THINK_SEC = (THINK_ROWS.reduce((a, n) => a + n.sec, 0)
+  + DLG_ROWS.reduce((a, d) => a + d.steps.filter((s) => s.k === 'think').reduce((x, s) => x + s.sec, 0), 0)).toFixed(1);
+
+/* ================= Markdown / 文本 ================= */
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function inl(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/==([^=]+)==/g, '<mark>$1</mark>');
+}
+function md(src) {
+  const lines = String(src).split('\n');
+  const out = []; let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^```/.test(line)) {
+      const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+      i++;
+      out.push('<pre class="code"><code>' + esc(buf.join('\n')) + '</code></pre>');
+      continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    if (/^\d+[.)]\s/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\d+[.)]\s/.test(lines[i])) { buf.push(lines[i].replace(/^\d+[.)]\s/, '')); i++; }
+      out.push('<ol>' + buf.map((x) => '<li>' + inl(x) + '</li>').join('') + '</ol>');
+      continue;
+    }
+    if (/^[-*]\s/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^[-*]\s/.test(lines[i])) { buf.push(lines[i].replace(/^[-*]\s/, '')); i++; }
+      out.push('<ul>' + buf.map((x) => '<li>' + inl(x) + '</li>').join('') + '</ul>');
+      continue;
+    }
+    const buf = [];
+    while (i < lines.length && lines[i].trim() && !/^```/.test(lines[i])
+      && !/^[-*]\s/.test(lines[i]) && !/^\d+[.)]\s/.test(lines[i])) { buf.push(lines[i]); i++; }
+    out.push('<p>' + buf.map(inl).join('<br>') + '</p>');
+  }
+  return out.join('');
+}
+function flat(src) {
+  return String(src).split(/\r?\n/)
+    .map(function (l) {
+      var t = l.trim();
+      if (!t) return '';
+      if (/^(`{3,}|~{3,})/.test(t)) return '';
+      if (/^[|\s:-]*-[|\s:-]*$/.test(t)) return '';
+      return t.replace(/^#{1,6}\s+/, '').replace(/^[-*+]\s+/, '')
+        .replace(/^\d+[.)]\s+/, '').replace(/^>\s?/, '');
+    })
+    .filter(function (x) { return x !== ''; })
+    .map(function (l) {
+      return l.replace(/`([^`]*)`/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/==([^=]+)==/g, '$1');
+    })
+    .join(' ').replace(/\s+/g, ' ').trim();
+}
+function head80(src) {
+  const f = flat(src);
+  return f.length <= 80 ? f : f.slice(0, 80) + '…';
+}
+function digest(src) {
+  const f = flat(src);
+  const hit = f.match(/[^。！？；]*(?:所以|结论|改成|但是|注意|卡点)[^。！？；]*[。！？；]/);
+  if (hit && hit[0].length >= 8 && hit[0].length <= 64) return hit[0];
+  const first = f.match(/^[^。！？；]{8,52}[。！？；]/);
+  if (first) return first[0];
+  return f.slice(0, 52) + (f.length > 52 ? '…' : '');
+}
+const rawMark = (s) => String(s).replace(/==([^=]+)==/g, '$1');
+const userBubble = () => '<div class="user"><b>' + esc(T('q')) + '</b></div>';
+
+/* ================= 状态 ================= */
+const S = {
+  rail: true,
+  density: 'standard',
+  delegate: 'branch',
+  open: {},
+  closed: false,
+  live: false,
+};
+const isOpen = (k) => (S.open[k] !== undefined ? S.open[k] : false);
+const toggle = (k) => { S.open[k] = !isOpen(k); };
+
+/* ================= 节点渲染（矩阵页也复用） ================= */
+/**
+ * @param {object} o
+ *   rail        是否画轨道（默认 true）
+ *   density     detailed | standard | compact | off
+ *   delegate    branch | flat
+ *   live        是否处于生成中（影响呼吸点与自动展开）
+ */
+function nodeThink(n, key, o) {
+  const density = o.density;
+  // 关闭档连生成中的那轮也不自动展开，但用户手动点开依然有效
+  const open = density === 'detailed' || isOpen(key) || (density !== 'off' && o.live && n.pending);
+  const live = o.live && n.pending;
+  const fullKey = key + '.full';
+  const needClip = (n.chars || flat(n.md).length) > 1200 && !isOpen(fullKey);
+  const chars = n.chars !== undefined ? n.chars : flat(n.md).length;
+  const meta = [];
+  if (n.state === 'interrupted') meta.push('<span class="tagst dim">未完成</span>');
+  if (n.state === 'error') meta.push('<span class="tagst err">失败</span>');
+  if (n.sec !== undefined && n.sec !== null) meta.push(`<span class="mnum">${n.sec}s</span>`);
+  if (chars) meta.push(`<span class="mnum">${chars} 字</span>`);
+  return `
+    <div class="nd th${n.state === 'error' ? ' fail' : ''}">
+      <button class="row" data-act="toggle" data-k="${key}">
+        ${live ? '<span class="ldot"></span>' : ''}
+        <span class="rk">${n.sub ? '子代理思考' : '深度思考'}</span>
+        ${(!n.sub && n.r) ? `<span class="rseq">${n.r}</span>` : ''}
+        ${open ? '' : `<span class="rsum">${esc(n.digest || digest(n.md))}</span>`}
+        <span class="meta">${meta.join('')}<span class="chev2 ${open ? 'up' : ''}">⌄</span></span>
+      </button>
+      ${open ? `
+        <div class="tbody ${needClip ? 'clip' : ''}">
+          ${md(n.md)}
+          ${live ? '<p style="color:var(--text-3);font-size:12px">正在继续推理…<span class="ldot" style="display:inline-block;vertical-align:-1px;margin-left:4px"></span></p>' : ''}
+        </div>
+        ${needClip ? `<button class="more" data-act="toggle" data-k="${fullKey}">⌄ 展开全部（还有约 ${chars - 900} 字）</button>` : ''}
+      ` : ''}
+    </div>`;
+}
+
+function nodeTool(n, key, o) {
+  const open = isOpen(key);
+  const meta = [];
+  if (n.pending) {
+    meta.push('<span class="pbar"><i></i></span>');
+    if (n.elapsed) meta.push(`<span class="mnum">${n.elapsed}s</span>`);
+  } else if (n.state === 'error') {
+    meta.push('<span class="tagst err">失败</span>');
+  } else if (n.state === 'interrupted') {
+    meta.push('<span class="tagst dim">未完成</span>');
+  } else if (n.state === 'timeout') {
+    meta.push('<span class="tagst warn">超时</span>');
+  } else if (n.state === 'warning') {
+    meta.push(`<span class="tagst warn">${esc(n.tag || '提醒')}</span>`);
+  } else if (n.state === 'ok') {
+    meta.push('<span class="mnum ok">成功</span>');
+  }
+  if (n.sec) meta.push(`<span class="mnum">${n.sec}s</span>`);
+  if (n.hasDetail !== false) meta.push(`<span class="chev2 ${open ? 'up' : ''}">⌄</span>`);
+  return `
+    <div class="nd tool${n.state === 'error' ? ' fail' : (n.state === 'timeout' || n.state === 'warning') ? ' warn' : ''}">
+      <button class="row tool" data-act="toggle" data-k="${key}">
+        <span class="rk">🔧 ${esc(n.name)}${n.summary ? `<span style="color:var(--text-4)"> · ${esc(n.summary)}</span>` : ''}</span>
+        <span class="meta">${meta.join('')}</span>
+      </button>
+      ${n.error ? `<div class="errline">错误原因：${esc(n.error)}</div>` : ''}
+      ${n.meta ? `<div class="metaline">${esc(n.meta)}</div>` : ''}
+      ${n.pendingHint ? `<div class="metaline" style="color:var(--text-3)">${esc(n.pendingHint)}</div>` : ''}
+      ${open ? `
+      <div class="targs">
+        ${n.args ? `<div class="lb">入参</div><pre>${esc(n.args)}</pre>` : ''}
+        ${n.out ? `<div class="lb">输出</div><pre class="out">${esc(n.out)}</pre>` : ''}
+      </div>` : ''}
+      ${n.action ? `<div style="margin:2px 0 5px 8px"><button class="btn" style="font-size:11px;padding:3px 9px">${esc(n.action)}</button></div>` : ''}
+    </div>`;
+}
+
+function nodeDelegate(d, key, o) {
+  const open = isOpen(key);
+  const innerThink = d.steps.filter((s) => s.k === 'think');
+  const innerTool = d.steps.filter((s) => s.k === 'tool');
+  const meta = [];
+  if (d.stop && d.state !== 'ok') meta.push(`<span class="tagst dim">${d.stop}</span>`);
+  if (d.state === 'pending') meta.push('<span class="ldot"></span><span class="tagst dim">进行中</span>');
+  else if (d.state === 'error') meta.push('<span class="tagst err">失败</span>');
+  else if (d.state === 'interrupted') meta.push('<span class="tagst dim">未完成</span>');
+  else meta.push('<span class="mnum ok">成功</span>');
+  if (d.sec) meta.push(`<span class="mnum">${d.sec}s</span>`);
+  meta.push(`<span class="chev2 ${open ? 'up' : ''}">⌄</span>`);
+  const sum = `${d.agent}${d.resume ? ` · 本轮续聊 #${d.resume}` : ''}`;
+  const subsum = `${innerThink.length} 轮思考 · ${innerTool.length} 次工具${
+    innerThink.length ? ' · 思考 ' + innerThink.reduce((a, s) => a + s.sec, 0).toFixed(1) + 's' : ''
+  }`;
+  const kids = d.steps.map((s, i) => (s.k === 'think'
+    ? nodeThink(s, key + '.' + i, o)
+    : nodeTool(s, key + '.' + i, o))).join('');
+
+  if (o.delegate === 'flat') {
+    return `
+      <div class="nd dlg${d.state === 'error' ? ' fail' : ''}">
+        <div class="dflat" data-act="toggle" data-k="${key}">
+          <span class="rk">🔧 调用子代理：${esc(d.agent)}</span>
+          <span class="meta" style="margin-left:auto">${meta.join('')}</span>
+        </div>
+        ${open ? `<div class="dflat-kids">${kids}</div>` : ''}
+      </div>`;
+  }
+  return `
+    <div class="nd dlg${d.state === 'error' ? ' fail' : ''}">
+      <div class="dlg">
+        <div class="dhd" data-act="toggle" data-k="${key}">
+          <span class="dk">⑂ 委派</span>
+          <span class="dname">${esc(sum)}</span>
+          <span class="dsum">${subsum}</span>
+          <span class="meta" style="display:flex;align-items:center;gap:6px">${meta.join('')}</span>
+        </div>
+        ${open ? `<div class="dbody${o.rail === false ? ' norail' : ''} rail">${kids}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+function nodeSay(n, key, o) {
+  return `<div class="nd say"><div class="row flat say"><span class="rk">💬 ${esc(n.text)}</span></div></div>`;
+}
+
+/* ================= 组装一条链路 ================= */
+function renderRun(o) {
+  const density = o.density || 'standard';
+  const railCls = o.rail === false ? ' norail' : '';
+  let rows = '';
+  let rolled = false;
+  const liveIdx = o.live ? RUN.length - 1 : -1;
+
+  RUN.forEach((n0, i) => {
+    const key = String(i);
+    const n = (i === liveIdx && n0.k === 'think')
+      ? Object.assign({}, n0, { pending: true, sec: undefined, chars: undefined })
+      : n0;
+    if (n.k === 'think') {
+      if (density === 'compact') {
+        if (!rolled) {
+          rolled = true;
+          rows += `
+            <div class="rollup">
+              <span class="rk">深度思考</span>
+              <span class="rsum">${THINK_ROWS.length} 轮 · 合计 ${THINK_SEC}s · ${THINK_ROWS.reduce((a, x) => a + x.chars, 0)} 字（已收起）</span>
+              <button class="more" data-act="density" data-d="standard">展开</button>
+            </div>`;
+        }
+        return;
+      }
+      rows += nodeThink(n, key, o);
+      return;
+    }
+    if (n.k === 'tool') { rows += nodeTool(n, key, o); return; }
+    if (n.k === 'delegate') { rows += nodeDelegate(n, key, o); return; }
+    if (n.k === 'say') { rows += nodeSay(n, key, o); }
+  });
+
+  const head = `
+    <div class="wrap">
+      <div class="hd" data-act="whole">
+        <span class="hd-ico">${S.live ? '<span class="ldot"></span>' : '✓'}</span>
+        <span class="hd-t">${S.live ? '执行过程' : '执行完成'}</span>
+        <span class="hd-stat">
+          <span class="chip">${TOTAL_SEC}s</span>
+          <span class="chip">思考 ${THINK_ROWS.length} 轮</span>
+          <span class="chip">工具 ${TOOL_ROWS.length}</span>
+          <span class="chip">委派 ${DLG_ROWS.length}</span>
+        </span>
+        <span class="hd-right"><span class="chev ${S.closed ? '' : 'up'}">⌄</span></span>
+      </div>
+      <div class="body ${S.closed ? 'closed' : ''}">
+        <div class="rail${railCls}">${rows}</div>
+      </div>
+    </div>`;
+  return head + (o.live ? '' : '<div class="answer">' + md(T('ans')) + '</div>');
+}
+
+/* ================= ① 现状 ================= */
+function legacyThink(n) {
+  const open = n.key === '3';
+  return `
+  <div class="ritem">
+    <button class="rhead" data-lg="${n.key}">
+      <span class="ic">🧠</span><span class="lbl">深度思考</span>
+      <span class="rprev">${esc(head80(n.md))}</span>
+      <span class="rnum">${n.chars} 字</span><span class="rtime">${n.sec}s</span>
+      <span class="chev ${open ? 'up' : ''}">⌄</span>
+    </button>
+    <blockquote class="rbody" style="${open ? '' : 'display:none'}"><pre>${esc(rawMark(n.md))}</pre></blockquote>
+  </div>`;
+}
+function legacyBody() {
+  return RUN.map((n) => {
+    if (n.k === 'think') return legacyThink(n);
+    if (n.k === 'tool') return `
+      <div class="trow"><span class="ic">🔧</span><span class="tt">${esc(n.name)}</span>
+      <span class="ttime">${n.sec}s</span><span class="chev">⌄</span></div>`;
+    if (n.k === 'delegate') return `
+      <div class="trow"><span class="ic">🔧</span><span class="tt">调用子代理：${esc(n.agent)}</span>
+      <span class="ttime">${n.sec}s</span><span class="chev up">⌄</span></div>
+      <div class="tkids"><div style="color:var(--text-3)">${n.steps.length} 个步骤 ⌄</div>
+      ${n.steps.map((s) => `<div>${s.k === 'think' ? '🧠 深度思考　' + esc(head80(s.md)) : '🔧 ' + esc(s.name) + '　' + s.sec + 's'}</div>`).join('')}</div>`;
+    return `<div class="trow"><span class="ic">💬</span><span class="tt">${esc(n.text)}</span></div>`;
+  }).join('');
+}
+function renderNow() {
+  const body = `<div class="dimbar"><span>执行明细链路</span><button>全部展开明细 ⌄</button></div>
+    <div class="skillbar">✦ 已加载技能 <span class="sb">数据查询</span><span class="sb">报表解读</span></div>
+    ${legacyBody()}`;
+  $('now-col').innerHTML = `
+    ${userBubble()}
+    <div class="hint" style="margin:0 0 6px 2px">① 生成中</div>
+    <div class="tl">
+      <div class="tl-hdr" data-body="lg-live">
+        <span class="tl-ico"><span class="dot"></span></span>
+        <span class="tl-title">执行过程</span>
+        <span class="pill">${RUN.length} 步骤</span><span class="pill">耗时 ${TOTAL_SEC}s</span>
+        <span class="tl-sum">· 深度思考 · 2 项 bash · 3 次查询 · 2 次委派</span>
+        <span class="tl-cur">正在查询转运明细…</span><span class="chev up">⌄</span>
+      </div>
+      <div class="tl-body" id="lg-live">${body}
+        <div class="hint" style="padding:4px 5px">↑ 5 轮思考、5 次工具、2 次委派全塞在同一条灰字流里
+          <span class="pno">1</span><span class="pno">3</span><span class="pno">5</span><span class="pno">7</span></div>
+      </div>
+    </div>
+    <div class="hint" style="margin:16px 0 6px 2px">② 跑完后（自动折叠成一行）</div>
+    <div class="tl">
+      <div class="tl-hdr" data-body="lg-done">
+        <span class="tl-ico"><span style="color:var(--ok);font-size:11px">✓</span></span>
+        <span class="tl-title">执行完成</span>
+        <span class="pill">${RUN.length} 步骤</span><span class="pill">耗时 ${TOTAL_SEC}s</span>
+        <span class="tl-sum">· 深度思考 · 2 项 bash · 3 次查询 · 2 次委派</span><span class="chev">⌄</span>
+      </div>
+      <div class="tl-body" id="lg-done" style="display:none">${body}</div>
+    </div>
+    <div class="hint" style="margin:6px 2px 0">↑ 整条收起后思考全没了；想只收思考、保留工具链，现在没有这一档 <span class="pno">10</span></div>
+    <div class="answer">${md(T('ans'))}</div>`;
+  document.querySelectorAll('#now-col .tl-hdr').forEach((h) => {
+    h.onclick = () => {
+      const b = $(h.dataset.body);
+      const hidden = b.style.display === 'none';
+      b.style.display = hidden ? '' : 'none';
+      h.querySelector('.chev').classList.toggle('up', hidden);
+    };
+  });
+  document.querySelectorAll('#now-col .rhead').forEach((b) => {
+    b.onclick = () => {
+      const pre = b.parentNode.querySelector('.rbody');
+      const hidden = pre.style.display === 'none';
+      pre.style.display = hidden ? '' : 'none';
+      b.querySelector('.chev').classList.toggle('up', hidden);
+    };
+  });
+}
+
+/* ================= ② 改造 ================= */
+function mainOpts() { return { rail: S.rail, density: S.density, delegate: S.delegate, live: S.live }; }
+
+function paintMain() {
+  $('main-col').innerHTML = renderRun(mainOpts());
+  const tips = {
+    detailed: '详细：5 轮思考全展开，约 5 屏——用来确认「再看一遍推理」，不适合默认',
+    standard: '标准：每轮收成一行（生成中的那轮自动展开），5 轮只占 5 行',
+    compact: '精简：思考压成一行汇总，工具链和委派仍逐步可见——这就是「折叠整条思考」那一档',
+    off: '关闭：整条执行链路默认收成一行标题，点开才看得见内容——回到改造前「不看思考」的设置',
+  };
+  const extra = [
+    S.rail ? '轨道开启：圆点＝思考、方块＝工具、菱形＝委派' : '轨道关闭：只剩缩进，层级靠缩进和字重',
+    S.delegate === 'branch' ? '委派＝分支（头行概要 + 内层缩进）' : '委派＝平铺（退回现状那种 log 行）',
+  ];
+  $('main-tip').innerHTML = `${tips[S.density]} · ${extra.join(' · ')}`;
+}
+
+/* ================= ③ 状态覆盖 ================= */
+function caseCard(n, title, src, note, body) {
+  return `
+    <div class="case">
+      <div class="case-h"><span class="case-n">${n}</span><span class="case-t">${title}</span>
+        <span class="case-src">${src}</span></div>
+      <div class="case-body"><div class="rail">${body}</div></div>
+      ${note ? `<div class="case-note">${note}</div>` : ''}
+    </div>`;
+}
+
+function renderMatrix() {
+  const O = { rail: true, density: 'standard', delegate: 'branch', live: false };
+  const OL = { rail: true, density: 'standard', delegate: 'branch', live: true };
+  const cases = [];
+
+  // 1 生成中
+  cases.push(caseCard(1, '生成中的思考 + 工具（活体）', 'status: pending', `
+    <b>不变式</b>：正在生成的那一轮永远展开、带呼吸点；工具显示进度条与实时秒表；整条显示「执行过程」。
+    <code>pending</code> 只在实时流里出现，历史会话里必须落成 <code>interrupted</code>。`, [
+    nodeThink({ r: 1, sec: 3.2, chars: 412, md: T('t1'), digest: '' }, 'm1a', OL),
+    nodeThink({ r: 2, sec: 6.4, chars: 860, md: T('t2'), pending: true }, 'm1b', OL),
+    nodeTool({ name: 'Bash · 按环节拆解响应时长', pending: true, elapsed: 2.7, args: 'python scripts/ticket_sla_breakdown.py --region EC' }, 'm1c', OL),
+  ].join('')));
+
+  // 2 超长思考
+  cases.push(caseCard(2, '超长思考（限高 + 渐隐）', 'chars > 1200', `
+    <b>不变式</b>：只有超过 1200 字才限高 210px + 底部渐隐 + 「展开全部」；短思考点开即读全，不做二次拦截。
+    这里同时验证 Markdown 渲染（有序列表 / 加粗 / 行内 code / 自我修正高亮）。`, [
+    nodeThink({ r: 1, sec: 12.4, md: T('long') + '\n\n' + T('t2') + '\n\n' + T('long') }, 'm2a', { ...O, density: 'detailed' }),
+  ].join('')));
+
+  // 3 工具各种终态
+  cases.push(caseCard(3, '工具的四类终态', 'status: success / error / interrupted / timeout', `
+    <b>不变式</b>：<code>error</code> 显示「失败」+ 错误原因行；<code>interrupted</code> 显示「未完成」；
+    <code>timeout</code> 显示「超时」；成功只留一个浅灰「成功」，不做强提醒。`, [
+    nodeTool({ name: '查询表结构 fct_ticket_wide', sec: 1.2, state: 'ok', args: '{"table":"fct_ticket_wide"}' }, 'm3a', O),
+    nodeTool({ name: 'execute_sql_query', sec: 3.4, state: 'error', error: 'SQL 解析失败：Unknown column queue_wait_min，请确认字段名' }, 'm3b', O),
+    nodeTool({ name: '调用外部 API · 工单归档', sec: 8.1, state: 'interrupted' }, 'm3c', O),
+    nodeTool({ name: 'Bash · 全量回放 90 天流水', sec: 120, state: 'timeout' }, 'm3d', O),
+  ].join('')));
+
+  // 4 历史会话
+  cases.push(caseCard(4, '历史会话恢复（默认全折叠、无 pending）', 'hydrateHistoryProcessTimeline', `
+    <b>不变式</b>：历史里所有 <code>pending</code> → <code>interrupted</code>；reasoning 的
+    <code>contentExpanded:false</code>、children 的 <code>childrenExpanded:false</code>，即默认全折叠；
+    老数据可能没有 <code>execution_time_ms</code>，所以<b>不显示耗时</b>；只有 <code>reasoning_content</code>
+    没有 reasoning 节点时，兜底造一条 <code>history_reasoning</code>。`, [
+    nodeThink({ r: 1, md: T('t1') }, 'm4a', O),
+    nodeTool({ name: 'get_dataset_schema', state: 'interrupted', meta: '历史记录缺少终态事件，按未完成展示' }, 'm4b', O),
+    nodeThink({ r: 2, md: T('t2') }, 'm4c', O),
+  ].join('')));
+
+  // 5 空思考 / 空内容
+  cases.push(caseCard(5, '空思考 → 整行不渲染', 'hasVisibleTimelineText 为空', `
+    <b>不变式</b>：思考正文为空（含只有空白 / 只有 Markdown 围栏）时整行不出现，不能留一个空壳行。
+    下方只有工具，属于「模型没输出推理」的常见情况。`, [
+    nodeTool({ name: '查询表结构 fct_ticket_wide', sec: 1.2, state: 'ok' }, 'm5a', O),
+    nodeTool({ name: '查询转运明细 tkt_transfer_log', sec: 2.1, state: 'ok' }, 'm5b', O),
+  ].join('')));
+
+  // 6 旁白
+  cases.push(caseCard(6, '旁白：默认展开、不限高、可挂工具', 'textKind: narration', `
+    <b>不变式</b>：旁白默认展开且<b>不做限高内滚</b>（流式最后一条还在逐字增长，套固定高度会让新字滚出可视区；
+    长旁白可能被提升为正文）。超过 120 字或 3 行才默认收起，且由用户主动收。
+    工具会被挂到最近的旁白下面（<code>upsertTimelineLog</code> 的 narration parent 逻辑）。`, `
+    <div class="nd say"><div class="row flat say"><span class="rk">💬 先核对字段口径，再按环节拉数。这类口径确认我不猜，交给元数据专家。</span></div></div>
+    <div class="nd tool"><div class="targs" style="margin-left:14px">${nodeTool({ name: 'get_dataset_schema', sec: 1.1, state: 'ok' }, 'm6a', O)}</div></div>
+    <div class="nd say"><div class="row flat say"><span class="rk">💬 口径确定后有个坑：8 月线上通道的工单没有写回 first_reply_at，直接按均值算会让 Q3 反而显得更快，所以下面要换两套口径交叉验证，并把 P90 作为主指标——这段旁白偏长，按现有规则会被默认收起，但点开后必须完整显示，不能套滚动盒。</span></div></div>
+  `));
+
+  // 7 委派各状态
+  cases.push(caseCard(7, '委派：成功 / 进行中 / 失败 / 续聊', 'subagent + stop_reason / resume_index', `
+    <b>不变式</b>：容器识别沿用 <code>subagent_&lt;run_id&gt;</code> / 「调用子代理」/ <code>sub_agent_call</code> /
+    <code>sub_agent_batch_call</code>；状态文案 进行中 / 已完成 / 失败 / 未完成；续聊显示「本轮续聊 #N」；
+    <code>stop_reason</code> 跟在概要后面；子代理内部步骤里的「开始生成回复」心跳要被过滤掉。`, [
+    nodeDelegate({ agent: '元数据专家', sec: 8.4, state: 'ok', stop: '完成', resume: 1, steps: [
+      { k: 'think', sec: 2.4, chars: 260, md: T('d1'), sub: true },
+      { k: 'tool', name: 'get_dataset_schema', sec: 1.1, state: 'ok' },
+    ]}, 'm7a', { ...O, density: 'detailed' }),
+    nodeDelegate({ agent: 'SQL 分析专家', state: 'pending', steps: [
+      { k: 'think', sec: 2.8, chars: 300, md: T('d3'), sub: true },
+    ]}, 'm7b', O),
+    nodeDelegate({ agent: '报表生成专家', sec: 5.0, state: 'error', stop: '超时中止', steps: [
+      { k: 'tool', name: 'render_dashboard', sec: 5.0, state: 'timeout' },
+    ]}, 'm7c', { ...O, density: 'detailed' }),
+  ].join('')));
+
+  // 8 委派平铺对比
+  S.open['m8a'] = true; S.open['m8b'] = true;
+  const demoDlg = () => ({ agent: '元数据专家', sec: 8.4, state: 'ok', steps: [
+    { k: 'think', sec: 2.4, chars: 260, md: T('d1'), sub: true },
+    { k: 'tool', name: 'get_dataset_schema', sec: 1.1, state: 'ok' },
+  ]});
+  cases.push(caseCard(8, '同一段委派：分支 vs 平铺', '开关 delegate', `
+    上：改造后的分支（头行给规模，内部缩进一层）。下：关掉开关退回现状的平铺形态。
+    保留平铺是为了<b>回退路径可用</b>——如果线上出问题，一个开关能退回今天的样子。`, `
+    <div class="hint" style="margin:2px 0 4px">分支（默认）</div>
+    ${nodeDelegate(demoDlg(), 'm8a', O)}
+    <div class="hint" style="margin:12px 0 4px">平铺（回退）</div>
+    <div style="border-left:1.5px dashed var(--line);padding-left:6px">
+      ${nodeDelegate(demoDlg(), 'm8b', { ...O, delegate: 'flat' })}
+    </div>`));
+
+  // 9 准备阶段
+  cases.push(caseCard(9, '准备阶段父级（完成后收起，失败保持展开）', 'PREPARATION_TIMELINE_PARENT_ID', `
+    <b>不变式</b>：<code>shouldCollapsePreparationChildren</code>——完成后默认收起，但
+    <code>error</code> / <code>interrupted</code> 或用户手点过时必须保持展开。状态文案 准备中 / 已完成 / 准备失败 / 未完成。
+    沙箱预热 pending 时按耗时递进安抚文案。`, [
+    nodeTool({ name: '鉴权及上下文与能力准备', state: 'ok', summary: '12 项准备已完成', hasDetail: true }, 'm9a', O),
+    nodeTool({ name: '鉴权及上下文与能力准备', state: 'error', error: '工作区准备失败：沙箱资源不足', summary: '3 项失败' }, 'm9b', O),
+  ].join('')));
+
+  // 10 路由 + 模型调用隐藏
+  cases.push(caseCard(10, '路由决策（分组）与模型调用（默认隐藏）', 'route:target_config / category=model', `
+    <b>不变式</b>：路由子步骤归到 <code>route:target_config</code> 下；<code>category=model</code> 的调用默认不显示，
+    只有 <code>status=warning</code>（换模 / 降级 fallback）时才冒出来提醒。`, [
+    nodeTool({ name: '智能路由决策', state: 'ok', summary: '目标专家：数据分析师 · 置信度 0.92', hasDetail: true }, 'm10a', O),
+    nodeTool({ name: '模型降级：deepseek-v3 → deepseek-v3-lite', state: 'warning', tag: '换模', summary: '主模型限流，已自动切换' }, 'm10b', O),
+  ].join('')));
+
+  // 11 任务清单
+  cases.push(caseCard(11, '任务清单（只留最后一个）与队列等待', 'selectTimelineRenderableItems / isQueueWaitItem', `
+    <b>不变式</b>：多个 todo 只渲染最后一个；todo <b>不计入</b>头部步骤数；
+    <code>settled</code> 终态要随历史回放，否则刷新后又当进行中。队列等待项要带「终止」按钮。`, [
+    `<div class="nd"><div class="row flat" style="gap:8px">
+        <span class="rk" style="font-weight:400">📋 任务清单</span>
+        <span class="rsum">3/4 已完成 · 剩「出复盘结论」</span>
+        <span class="meta"><span class="tagst dim">已终止</span></span>
+      </div></div>`,
+    nodeTool({ name: '等待上一次会话完成', state: 'ok', summary: '排队 12.4s 后获得会话锁', action: '终止本次运行并释放会话锁' }, 'm11b', O),
+  ].join('')));
+
+  // 12 密度四档对比
+  const densityHint = (d) => ({
+    detailed: '每轮思考正文都展开',
+    standard: '只展开当前这轮，落定的收成摘要行',
+    compact: '多轮思考压成一行，工具与委派照旧可见',
+    off: '整条链路收成一行标题，点开才见内容',
+  })[d];
+  cases.push(caseCard(12, '同一段对话的密度四档', 'density 开关', `
+    四档并排：详细 / 标准 / 精简 / 关闭。<b>前三档只决定卡片内部怎么排</b>——精简档把思考压成一行，
+    工具链与委派照旧可见，不需要为了藏思考把工具一起关掉；<b>关闭档才是「不看」</b>，
+    它收的是整张卡片，等于改造前那个布尔开关的「关」。`, `
+    <div style="display:grid;gap:14px">
+      ${[['详细', 'detailed'], ['标准', 'standard'], ['精简', 'compact'], ['关闭', 'off']].map(([lbl, d]) => `
+        <div><div class="hint" style="margin:0 0 6px">${lbl} —— ${densityHint(d)}</div>
+        <div class="rail">${
+          d === 'compact'
+            ? `<div class="rollup"><span class="rk">深度思考</span><span class="rsum">5 轮 · 合计 ${THINK_SEC}s · ${THINK_ROWS.reduce((a, x) => a + x.chars, 0)} 字（已收起）</span></div>
+               ${nodeTool({ name: 'Bash · 按环节拆解响应时长', sec: 4.6, state: 'ok' }, 'm12c1', { ...O, density: d })}`
+            : d === 'off'
+              ? `<div class="wrap"><div class="hd"><span class="hd-ico">✓</span><span class="hd-t">执行完成</span>
+                   <span class="hd-stat"><span class="chip">${TOTAL_SEC}s</span><span class="chip">思考 ${THINK_ROWS.length} 轮</span>
+                   <span class="chip">工具 ${TOOL_ROWS.length}</span><span class="chip">委派 ${DLG_ROWS.length}</span></span>
+                   <span class="hd-right"><span class="chev">⌄</span></span></div>
+                 <div class="body closed"><div class="rail"></div></div></div>`
+              : nodeThink({ r: 1, sec: 3.2, chars: 412, md: T('t1') }, 'm12-' + d + '1', { ...O, density: d })
+                + nodeThink({ r: 2, sec: 9.8, chars: 1263, md: T('t2') }, 'm12-' + d + '2', { ...O, density: d })
+        }</div></div>`).join('')}
+    </div>`));
+
+  $('matrix-col').innerHTML = cases.join('');
+}
+
+/* ================= ④ 清单 ================= */
+const TIPS = [
+  { n: 1, lv: 'p0', done: true, t: '思考正文渲染 Markdown，而不是裸 <code>&lt;pre&gt;</code>',
+    d: '现在 <code>**加粗**</code>、<code>- 列表</code>、代码围栏全部裸露。复用 <code>MessageRenderer</code> 的 md 管线，代码块行内滚动。' },
+  { n: 2, lv: 'p0', done: true, t: '折叠摘要从「硬截 80 字」换成「首句 / 结论句」',
+    d: '规则：首个句末标点前、12–46 字、命中「所以 / 结论 / 改成 / 卡点」优先。纯函数，可单测。' },
+  { n: 3, lv: 'p0', done: true, t: '超长思考（>1200 字）限高渐隐，短的点开即读全',
+    d: '避免「点开一行 → 再点展开」两道拦截，只有真正长的才拦一道。' },
+  { n: 4, lv: 'p0', done: true, t: '生成中的那一轮永远展开，历史轮次按密度收',
+    d: '这是「一大堆思考」的真正解法：不是把思考改成卡片，而是让历史轮次默认一行。' },
+  { n: 5, lv: 'p0', done: true, t: '思考 / 工具 / 旁白 / 委派靠形状与缩进分层',
+    d: '只加一条轨道和四种形状（圆点 / 方块 / 小点 / 菱形），全程不用饱和色，浅色与深色都稳。' },
+  { n: 6, lv: 'p1', done: true, t: '密度四档（详细 / 标准 / 精简 / 关闭），接进「思考过程」设置',
+    d: '精简档是新增的「只收思考、不收工具」能力；关闭档保留老用户原本的「不看」选项（整条链路收起），两者不可互相替代。' },
+  { n: 7, lv: 'p1', done: true, t: '委派渲染成缩进分支，头行给「谁 · 几步 · 多久」',
+    d: '现在是长得像工具的 log 行，内部要展开两层。头行信息应该是委派对象与规模。' },
+  { n: 8, lv: 'p1', done: true, t: '子代理内部的思考标「子代理思考」并缩进',
+    d: '现在与主代理同色同级，读起来像主代理自己想的，责任边界不清。' },
+  { n: 9, lv: 'p2', done: true, t: '并行委派（<code>sub_agent_batch_call</code>）归成一个块',
+    d: '实机改为头行标「并行 2/3」而不是套分组节点：分组会把这几个容器降级成普通子步骤，丢掉各自的展开态与耗时；后端在批次派发时写 <code>batch_id</code> / <code>batch_index</code> / <code>batch_total</code>。' },
+  { n: 10, lv: 'p2', done: true, t: '深色模式两级色板（正文 / 元信息分开）',
+    d: '正文与元信息差两级灰，只有字数 / 耗时留在最浅一级；灰阶方案天然支持深浅两套，不需要为彩色单独调一套暗色。' },
+  { n: 11, lv: 'p0', done: true, t: '改样式前，先过一遍第 ③ 页的「不许动的既有行为」',
+    d: '历史 pending 落 interrupted、历史默认全折叠、旁白不限高、<code>userToggled</code> 保护、todo 只留最后一个、<code>category=model</code> 默认隐藏——这七条都是现有代码里带注释的硬约束。' },
+];
+function renderTips() {
+  $('tips-col').innerHTML = TIPS.map((x) => `
+    <div class="tip"><span class="n">${x.n}</span><div><h4>${x.t}<span class="lv ${x.lv}">${x.lv.toUpperCase()}</span>${x.done ? '<span class="lv done">已落地</span>' : ''}</h4><p>${x.d}</p></div></div>`).join('');
+}
+
+/* ================= 交互 ================= */
+function bindRun(container) {
+  container.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-act]');
+    if (!el) return;
+    const act = el.dataset.act;
+    if (act === 'whole') { S.closed = !S.closed; paintMain(); return; }
+    if (act === 'density') { setDensity(el.dataset.d); return; }
+    if (act === 'toggle') {
+      const k = el.dataset.k;
+      toggle(k);
+      if ($('v-main').classList.contains('on')) paintMain();
+      else { renderMatrix(); }
+      return;
+    }
+  });
+}
+
+function setDensity(d) {
+  S.density = d;
+  // 关闭档 = 整条链路折叠；其余三档 = 展开（只在卡片内部排布）
+  S.closed = d === 'off';
+  document.querySelectorAll('#sw-d button').forEach((b) => b.classList.toggle('on', b.dataset.d === d));
+  paintMain();
+}
+function setRail(v) {
+  S.rail = v;
+  document.querySelectorAll('#sw-rail button').forEach((b) => b.classList.toggle('on', b.dataset.v === String(v ? 1 : 0)));
+  paintMain();
+}
+function setDelegate(v) {
+  S.delegate = v;
+  document.querySelectorAll('#sw-dlg button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+  paintMain();
+}
+
+const RENDER = {
+  now: renderNow,
+  main: paintMain,
+  matrix: () => { $('matrix-col').innerHTML = ''; renderMatrix(); },
+  tips: renderTips,
+};
+function show(v) {
+  document.querySelectorAll('.view').forEach((s) => s.classList.toggle('on', s.id === 'v-' + v));
+  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+  RENDER[v] && RENDER[v]();
+  if (location.hash !== '#' + v) history.replaceState(null, '', '#' + v);
+}
+document.querySelectorAll('#tabs button').forEach((b) => { b.onclick = () => show(b.dataset.v); });
+
+$('themeBtn').onclick = () => {
+  document.body.classList.toggle('dark');
+  $('themeBtn').textContent = document.body.classList.contains('dark') ? '☀️ 浅色' : '🌙 深色';
+  const cur = document.querySelector('#tabs button.on').dataset.v;
+  RENDER[cur] && RENDER[cur]();
+};
+
+/* URL 参数：?rail=0&d=compact&dlg=flat&theme=dark&live=1 */
+const q = location.search;
+if (/[?&]theme=dark/.test(q)) { document.body.classList.add('dark'); $('themeBtn').textContent = '☀️ 浅色'; }
+if (/[?&]rail=0/.test(q)) S.rail = false;
+if (/[?&]dlg=flat/.test(q)) S.delegate = 'flat';
+const dm = (q.match(/[?&]d=(detailed|standard|compact|off)/) || [])[1];
+if (dm) S.density = dm;
+if (/[?&]live=1/.test(q)) S.live = true;
+
+
+/* 初始化 */
+renderNow();
+renderTips();
+bindRun($('main-col'));
+bindRun($('matrix-col'));
+document.querySelectorAll('#sw-rail button').forEach((b) => { b.onclick = () => setRail(b.dataset.v === '1'); });
+document.querySelectorAll('#sw-d button').forEach((b) => { b.onclick = () => setDensity(b.dataset.d); });
+document.querySelectorAll('#sw-dlg button').forEach((b) => { b.onclick = () => setDelegate(b.dataset.v); });
+setRail(S.rail); setDelegate(S.delegate); setDensity(S.density);
+
+$('main-live').onclick = () => {
+  S.live = !S.live;
+  $('main-live').classList.toggle('on', S.live);
+  S.open['3'] = true;
+  paintMain();
+};
+$('main-reset').onclick = () => {
+  S.live = false; S.closed = false; S.open = {}; S.rail = true; S.density = 'standard'; S.delegate = 'branch';
+  $('main-live').classList.remove('on');
+  setRail(true); setDelegate('branch'); setDensity('standard');
+};
+
+const initHash = (location.hash || '').replace('#', '');
+if (initHash && RENDER[initHash]) show(initHash);
+window.addEventListener('hashchange', () => {
+  const h = (location.hash || '').replace('#', '');
+  if (RENDER[h]) show(h);
+});
+</script>
+</body>
+</html>

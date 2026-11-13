@@ -123,6 +123,11 @@ class AgentContext(BaseModel):
     delegation_session_histories: Dict[str, List[Dict[str, str]]] = Field(default_factory=dict)
     #: 续聊次数单独计数，不与 ``delegation_agent_call_counts``（重查额度）共用。
     delegation_resume_call_counts: Dict[str, int] = Field(default_factory=dict)
+    #: 当前子代理所属的批量委派批次（`batch_id` / `index` / `total`），单次委派为 None。
+    #: 由 `sub_agent_batch_call` 在派发前写进**该任务自己的**上下文副本，
+    #: 前端据此把同一批并行的子代理收成一个块——没有它，并行的几个子代理只能一条条
+    #: 平铺，用户看不出它们是同时跑的。
+    delegation_batch: Optional[Dict[str, Any]] = None
     #: 本轮已经占用了提问卡的委派 run_id。``UserQuestionStore`` 每个会话只有一个
     #: active 槽位，batch 并行时多个子代理同时提问会把先来的标成 superseded 静默吃掉；
     #: 用这个共享标记保证同一时刻只放行一张卡（deep=False 的 model_copy 共享同一实例）。

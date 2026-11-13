@@ -178,3 +178,36 @@ return {
 };
 """
     ) == {"marked": 4, "plain": 10}
+
+
+def test_conclusion_sentence_is_preferred_over_head_cut():
+    """总长超过上限时，优先挑「命中标记词且长度像一句话」的句子，而不是硬截前 80 字。"""
+    assert _run_typescript(
+        """
+const raw = "先明确口径。" + "甲".repeat(30) + "。所以卡点不是受理量而是二线转派排队。" + "乙".repeat(30) + "。";
+const result = api.resolveReasoningPreview(raw);
+return { text: result.text, truncated: result.truncated };
+"""
+    ) == {"text": "所以卡点不是受理量而是二线转派排队。…", "truncated": True}
+
+
+def test_conclusion_sentence_out_of_length_range_falls_back_to_head_cut():
+    """标记词句过长（像整段）时不采用，退回定长截取 + 句读回退。"""
+    assert _run_typescript(
+        """
+const raw = "先明确口径。" + "甲".repeat(60) + "。所以" + "乙".repeat(70) + "。";
+const result = api.resolveReasoningPreview(raw);
+return { endsWithEllipsis: result.text.endsWith("…"), length: result.text.length };
+"""
+    ) == {"endsWithEllipsis": True, "length": 68}
+
+
+def test_pending_preview_ignores_conclusion_rule():
+    """进行中始终跟随最新内容，不能被结论句规则抢走。"""
+    assert _run_typescript(
+        """
+const raw = "先明确口径。" + "甲".repeat(30) + "。所以卡点不是受理量而是二线转派排队。" + "乙".repeat(40) + "。";
+const result = api.resolveReasoningPreview(raw, { pending: true });
+return { startsWithEllipsis: result.text.startsWith("…"), containsHead: result.text.includes("先明确口径") };
+"""
+    ) == {"startsWithEllipsis": True, "containsHead": False}

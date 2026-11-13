@@ -227,7 +227,7 @@ class ExecutionStep(BasePipelineStep):
                         if performance_tracker is not None:
                             performance_tracker.observe_chunk(chunk)
                         sync_execution_state()
-                    if chunk.get("type") != "multi_agent_output_flag":
+                    if not isinstance(chunk, dict) or chunk.get("type") != "multi_agent_output_flag":
                         yield chunk
             finally:
                 # 执行中取消/异常时显式释放 executor 流，避免底层生成的协程/连接残留

@@ -55,7 +55,7 @@ class RouteStep(BasePipelineStep):
                 agent_name = mention_match.group(1)
                 user_query = mention_match.group(2).strip()
                 if messages and isinstance(messages[-1], dict) and messages[-1].get("role") == "user":
-                    messages[-1]["content"] = user_query
+                    messages[-1] = {**messages[-1], "content": user_query}
                 context.agent_name = agent_name
                 context.user_query = user_query
                 shared_state["agent_name"] = agent_name

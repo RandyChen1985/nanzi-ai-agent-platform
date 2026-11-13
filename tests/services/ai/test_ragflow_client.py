@@ -299,6 +299,28 @@ async def test_list_documents_maps_ingestion_status_to_run(ragflow_client, mock_
 
 
 @pytest.mark.asyncio
+async def test_list_documents_maps_go_status_to_enabled(ragflow_client, mock_config):
+    """1.0 的列表只回 status（"1"/"0" 表示启用/停用），不再回 enabled。
+
+    前端 ``isDocEnabled`` 与文档详情页的「参与检索」都只读 ``enabled``，字段
+    缺失会把停用文档显示成「参与检索」，用户再去取消时就发出了 enabled=false。
+    """
+    docs = [
+        {"id": "d1", "status": "1", "ingestion_status": "COMPLETED"},
+        {"id": "d2", "status": "0", "ingestion_status": "COMPLETED"},
+        # 已有 enabled（0.x 契约）时以它为准，不要被 status 覆盖
+        {"id": "d3", "enabled": 1, "status": "0"},
+    ]
+    response = httpx.Response(200, json={"code": 0, "data": {"docs": docs}})
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = response
+        result = await ragflow_client.list_documents("ds1", page_size=10)
+
+    assert [d["enabled"] for d in result] == [1, 0, 1]
+
+
+@pytest.mark.asyncio
 async def test_create_dataset_remembers_contract_per_base_url(ragflow_client, mock_config):
     """契约探测结果按 base_url 缓存，避免每次建库都多打一次失败请求。"""
     RagFlowClient._create_contract_cache.clear()

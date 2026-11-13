@@ -719,12 +719,17 @@ class DataAgentRunner(BaseExecutor):
                         current_history = task_history + [{"role": "user", "content": task.query}]
                         assistant_content: list[str] = []
                         failed = False
+                        interrupted = False
                         async for chunk in self._execute_raw(current_history):
                             if chunk.get("content"):
                                 assistant_content.append(str(chunk["content"]))
                             if chunk.get("type") == "error" or chunk.get("status") == "error":
                                 failed = True
+                            if is_interrupt_sse_chunk(chunk):
+                                interrupted = True
                             yield chunk
+                        if interrupted:
+                            return
                         task.status = ChatBITaskStatus.FAILED if failed else ChatBITaskStatus.SUCCEEDED
                         task_history.append({"role": "user", "content": task.query})
                         task_history.append({

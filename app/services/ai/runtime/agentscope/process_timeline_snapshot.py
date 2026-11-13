@@ -133,6 +133,8 @@ def _update_log(existing: Dict[str, Any], chunk: Dict[str, Any]) -> None:
     # 「本会话已授权」是一次性事实，只在携带时写入，历史回放仍能看到这条免确认凭证。
     if chunk.get("auto_approved"):
         existing["auto_approved"] = True
+    if chunk.get("reasoning"):
+        existing["reasoning"] = True
     if chunk.get("status") is not None:
         existing["status"] = str(chunk.get("status") or existing.get("status") or "success")
     if chunk.get("category") is not None:
@@ -582,6 +584,9 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         log["tool_result_state"] = str(chunk["tool_result_state"])
     if chunk.get("auto_approved"):
         log["auto_approved"] = True
+    # 子代理思考：保留标记，历史回放才能继续用 Markdown 渲染并归到子代理容器里。
+    if chunk.get("reasoning"):
+        log["reasoning"] = True
 
     parent_id = chunk.get("parent_id")
     if parent_id is not None and parent_id != log_id:

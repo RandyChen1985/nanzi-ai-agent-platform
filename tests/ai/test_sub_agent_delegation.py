@@ -351,13 +351,17 @@ async def test_consume_sub_agent_stream_legacy_promote_still_counts_as_answer():
 
 
 @pytest.mark.asyncio
-async def test_consume_sub_agent_stream_drops_reasoning_frames():
-    """子代理思考流不得进入委派工具结果，也不得转发到主聊天。
+async def test_consume_sub_agent_stream_keeps_reasoning_out_of_the_payload():
+    """子代理思考流不得进入委派工具结果；但要以**折叠日志**的形式回流一次。
 
     回归背景：THINKING_BLOCK_DELTA 被翻译成 ``{"type": "reasoning_content",
     "content": delta}``，而 ``_extract_delegation_text`` 对任何带 content 的
     chunk 都当正文，导致父智能体收到的工具结果被子代理的完整思考过程占满，
     最终正文反而在 64KB 截断时被丢掉。
+
+    后来补了另一半需求：用户要能分辨「这段是子代理想的」。所以思考改走
+    ``category="reasoning"`` 的 log 帧挂进子代理容器（前端默认折叠），
+    但**正文与工具结果这两条路仍然不能碰**——那才是当初出问题的原因。
     """
     from app.services.ai.tools.agent_delegate_tool import _consume_sub_agent_stream
 
@@ -376,8 +380,18 @@ async def test_consume_sub_agent_stream_drops_reasoning_frames():
     )
 
     assert full_output == "最终结论：销售额为 42。"
+    assert "先分析用户意图" not in full_output
     assert interrupt is None
-    assert eq.empty(), "思考帧不应转发给主聊天"
+
+    forwarded = []
+    while not eq.empty():
+        forwarded.append(eq.get_nowait())
+    reasoning_logs = [f for f in forwarded if f.get("category") == "reasoning"]
+    assert len(reasoning_logs) == 1, "思考应当作为一条折叠日志回流"
+    assert reasoning_logs[0]["details"] == "先分析用户意图，再决定查哪张表。"
+    assert reasoning_logs[0]["type"] == "log"
+    # 不能有任何一帧把思考当成正文塞给主聊天
+    assert all(f.get("type") != "reasoning_content" for f in forwarded)
 
 
 def test_finalize_delegation_output_empty():

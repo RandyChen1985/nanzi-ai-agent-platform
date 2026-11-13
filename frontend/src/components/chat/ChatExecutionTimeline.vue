@@ -52,26 +52,72 @@
         </div>
         <div
           v-if="skillBadges.length"
-          class="flex flex-wrap items-center gap-1 rounded-md border border-purple-100/70 bg-purple-50/70 px-1.5 py-1 text-[11px] font-semibold text-purple-700 dark:border-purple-900/30 dark:bg-purple-950/20 dark:text-purple-300"
+          class="flex flex-wrap items-center gap-1 rounded-md border border-gray-200/70 bg-gray-50/70 px-1.5 py-1 text-[11px] font-semibold text-gray-600 dark:border-gray-700/40 dark:bg-gray-800/40 dark:text-gray-300"
         >
           <SparklesIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>{{ skillNoticeLabel }}</span>
           <span
             v-for="skill in skillBadges"
             :key="skill.key"
-            class="rounded-full border border-purple-200/70 bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold dark:border-purple-800/40 dark:bg-purple-900/40"
+            class="rounded-full border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
             :title="skill.description"
           >
             {{ skill.label }}
           </span>
         </div>
         <div
+          class="timeline-rail space-y-0.5"
+        >
+        <div
           v-for="item in items"
           :key="item.id"
           class="relative"
+          :class="timelineNodeClass(item)"
         >
           <div v-if="item.kind === 'todo'" class="py-0.5">
             <ChatTodoCard :timeline="[item]" archived />
+          </div>
+          <!-- 精简密度：多轮思考压成一行。工具调用仍是独立条目，不做合并。 -->
+          <div
+            v-else-if="item.kind === 'text' && item.mergedReasoning"
+            class="rounded-md px-1 py-0.5 text-[12px] leading-5 text-gray-400 dark:text-gray-500"
+          >
+            <button
+              type="button"
+              class="flex w-full items-center gap-2 text-left text-[11.5px] hover:text-gray-600 dark:hover:text-gray-300"
+              :aria-expanded="compactRoundsOpen"
+              :aria-label="compactRoundsOpen ? '收起各组思考' : '展开各组思考'"
+              @click="toggleCompactRounds"
+            >
+              <span v-if="item.pending" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
+              <CpuChipIcon v-else class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span class="shrink-0">深度思考</span>
+              <span
+                v-if="item.mergedReasoning.previews.length"
+                class="hidden min-w-0 flex-1 truncate text-gray-400 dark:text-gray-500 sm:block"
+              >{{ item.mergedReasoning.previews[item.mergedReasoning.previews.length - 1] }}</span>
+              <span class="ml-auto flex shrink-0 items-center gap-2">
+                <span
+                  class="rounded-full bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                  :title="mergedReasoningLabel(item.mergedReasoning)"
+                >{{ mergedReasoningLabel(item.mergedReasoning) }}</span>
+                <svg class="h-3 w-3 shrink-0 transition-transform" :class="{ 'rotate-180': compactRoundsOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
+                </svg>
+              </span>
+            </button>
+            <!-- 展开态：逐轮摊开正文，合并行留在原位，再点一次即可收回 -->
+            <div v-if="compactRoundsOpen && item.mergedReasoning.sources?.length" class="mt-1 space-y-1.5">
+              <div v-for="(round, roundIndex) in item.mergedReasoning.sources" :key="round.id">
+                <div class="flex items-center gap-2 text-[10px] text-gray-400 dark:text-gray-500">
+                  <span class="shrink-0">第 {{ roundIndex + 1 }} 轮</span>
+                  <span v-if="round.execution_time_ms" class="shrink-0 font-mono">{{ formatDuration(round.execution_time_ms) }}</span>
+                </div>
+                <div class="reasoning-md border-l-2 border-gray-200 pl-2.5 pr-6 text-gray-600 dark:border-gray-700 dark:text-gray-400">
+                  <div class="reasoning-md-body" v-html="reasoningDetailsHtml(round.content)" />
+                </div>
+              </div>
+            </div>
           </div>
           <div v-else-if="item.kind === 'text' && (hasVisibleTimelineText(item.content) || item.children?.length)" class="rounded-md px-1 py-0.5 text-[12px] leading-5"
             :class="item.pending ? 'text-gray-600 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'"
@@ -130,7 +176,24 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
                     </svg>
                   </button>
-                  <pre class="w-fit max-w-full whitespace-pre-wrap break-words pr-6 font-sans">{{ visibleTimelineText(item.content) }}<span v-if="item.pending" class="ml-0.5 animate-pulse">▌</span></pre>
+                  <div
+                    class="reasoning-md pr-6 text-gray-600 dark:text-gray-400"
+                    :class="{ 'reasoning-md-clamped': isReasoningClamped(item) }"
+                  >
+                    <!-- 走与正文同一条 markdown 管线（内部已 sanitize），不再是裸 <pre> -->
+                    <div class="reasoning-md-body" v-html="reasoningHtml(item)" />
+                  </div>
+                  <button
+                    v-if="isReasoningClamped(item)"
+                    type="button"
+                    class="mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+                    @click="expandReasoningFull(item)"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
+                    </svg>
+                    展开全部（共 {{ reasoningCharCountOf(item) }} 字）
+                  </button>
                 </blockquote>
                 <template v-else>
                   <button
@@ -171,6 +234,7 @@
                   :key="child.id"
                   class="rounded-md px-1 py-0.5 text-[11px] leading-5 transition-colors"
                   :class="{
+                    'subagent-branch': isSubagentLog(child),
                     'bg-red-50/60 text-red-700 dark:bg-red-950/20 dark:text-red-300': child.status === 'error',
                     'bg-amber-50/60 text-amber-700 dark:bg-amber-950/20 dark:text-amber-300': child.status === 'warning',
                     'text-gray-600 dark:text-gray-300': child.status === 'pending',
@@ -204,9 +268,19 @@
                       :is-live-timer="String(child.id) === liveTimerLogId"
                     />
                     <span
+                      v-if="parallelBatchLabel(child)"
+                      class="shrink-0 rounded bg-gray-100 px-1 font-mono text-[10px] text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                      title="同一批并行执行的委派"
+                    >{{ parallelBatchLabel(child) }}</span>
+                    <span
+                      v-if="subagentScaleLabel(child)"
+                      class="shrink-0 font-mono text-[10px] text-gray-400 dark:text-gray-500"
+                      :title="`子代理内部共 ${child.children?.length || 0} 个步骤`"
+                    >{{ subagentScaleLabel(child) }}</span>
+                    <span
                       v-if="child.subagent && subagentStatusLabel(child.status)"
                       class="shrink-0 text-[10px]"
-                      :class="child.status === 'error' ? 'text-red-600' : child.status === 'pending' ? 'text-emerald-500 dark:text-emerald-400' : child.status === 'interrupted' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'"
+                      :class="child.status === 'error' ? 'text-red-600' : 'text-gray-400 dark:text-gray-500'"
                     >
                       {{ subagentStatusLabel(child.status) }}
                     </span>
@@ -243,7 +317,7 @@
                   </div>
 
                   <!-- 嵌套展示子代理/沙箱准备等内部前置步骤 -->
-                  <div v-if="child.children?.length && child.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
+                  <div v-if="child.children?.length && child.childrenExpanded !== false" class="tl-branch ml-4 mt-0.5 space-y-0 pl-2">
                     <div
                       v-for="subStep in child.children"
                       :key="subStep.id"
@@ -314,7 +388,13 @@
                               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
                             </svg>
                           </button>
-                          <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(subStep.details) }}</pre>
+                          <div
+                            v-if="subStep.reasoning"
+                            class="reasoning-md border-l-2 border-gray-200 pl-2.5 pr-6 text-gray-600 dark:border-gray-700 dark:text-gray-400"
+                          >
+                            <div class="reasoning-md-body" v-html="reasoningDetailsHtml(subStep.details)" />
+                          </div>
+                          <pre v-else class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(subStep.details) }}</pre>
                         </div>
                       </div>
                     </div>
@@ -337,7 +417,13 @@
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
                         </svg>
                       </button>
-                      <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(child.details) }}</pre>
+                      <div
+                        v-if="child.reasoning"
+                        class="reasoning-md mt-1 border-l-2 border-gray-200 pl-2.5 pr-6 text-gray-600 dark:border-gray-700 dark:text-gray-400"
+                      >
+                        <div class="reasoning-md-body" v-html="reasoningDetailsHtml(child.details)" />
+                      </div>
+                      <pre v-else class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(child.details) }}</pre>
                     </div>
                   </div>
                 </div>
@@ -375,6 +461,17 @@
                 >子代理 · </span>
                 <span>{{ displayTimelineTitle(item) }}</span>
               </span>
+              <!-- 根级别的委派容器同样要标并行位置与规模：主代理没有旁白时容器就落在这一层 -->
+              <span
+                v-if="parallelBatchLabel(item)"
+                class="shrink-0 rounded bg-gray-100 px-1 font-mono text-[10px] text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                title="同一批并行执行的委派"
+              >{{ parallelBatchLabel(item) }}</span>
+              <span
+                v-if="subagentScaleLabel(item)"
+                class="shrink-0 font-mono text-[10px] text-gray-400 dark:text-gray-500"
+                :title="`子代理内部共 ${item.children?.length || 0} 个步骤`"
+              >{{ subagentScaleLabel(item) }}</span>
               <span
                 v-if="item.auto_approved"
                 class="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300"
@@ -402,7 +499,7 @@
               <span
                 v-if="isPreparationParent(item)"
                 class="shrink-0 text-[10px] font-medium"
-                :class="item.status === 'error' ? 'text-red-600 dark:text-red-400' : item.status === 'pending' ? 'text-sky-600 dark:text-sky-400' : item.status === 'interrupted' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-gray-500'"
+                :class="item.status === 'error' ? 'text-red-600 dark:text-red-400' : 'text-gray-400 dark:text-gray-500'"
               >
                 {{ preparationStatusLabel(item) }}
               </span>
@@ -415,7 +512,7 @@
               <span
                 v-if="item.subagent && subagentStatusLabel(item.status)"
                 class="shrink-0 text-[10px]"
-                :class="item.status === 'error' ? 'text-red-600' : item.status === 'pending' ? 'text-emerald-500 dark:text-emerald-400' : item.status === 'interrupted' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'"
+                :class="item.status === 'error' ? 'text-red-600' : 'text-gray-400 dark:text-gray-500'"
               >
                 {{ subagentStatusLabel(item.status) }}
               </span>
@@ -454,7 +551,7 @@
                 :aria-valuenow="toolProgressPercent(item) ?? undefined"
               >
                 <div
-                  class="h-full rounded-full bg-indigo-500 transition-[width] duration-300 ease-out dark:bg-indigo-400"
+                  class="h-full rounded-full bg-gray-400 transition-[width] duration-300 ease-out dark:bg-gray-500"
                   :style="toolProgressWidth(item) ? { width: toolProgressWidth(item) } : undefined"
                 />
               </div>
@@ -483,7 +580,7 @@
             </div>
 
             <!-- 嵌套展示根级别子代理内部步骤 / 子步骤 -->
-            <div v-if="item.children?.length && isChildrenOpen(item)" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
+            <div v-if="item.children?.length && isChildrenOpen(item)" class="tl-branch ml-4 mt-0.5 space-y-0 pl-2">
               <div
                 v-for="subStep in item.children"
                 :key="subStep.id"
@@ -534,7 +631,7 @@
                     {{ timelineMetaText(subStep) }}
                   </div>
                 </div>
-                <div v-if="subStep.children?.length && subStep.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
+                <div v-if="subStep.children?.length && subStep.childrenExpanded !== false" class="tl-branch ml-4 mt-0.5 space-y-0 pl-2">
                   <div
                     v-for="nestedStep in subStep.children"
                     :key="nestedStep.id"
@@ -608,7 +705,13 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
                       </svg>
                     </button>
-                    <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(subStep.details) }}</pre>
+                    <div
+                      v-if="subStep.reasoning"
+                      class="reasoning-md border-l-2 border-gray-200 pl-2.5 pr-6 text-gray-600 dark:border-gray-700 dark:text-gray-400"
+                    >
+                      <div class="reasoning-md-body" v-html="reasoningDetailsHtml(subStep.details)" />
+                    </div>
+                    <pre v-else class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(subStep.details) }}</pre>
                   </div>
                 </div>
               </div>
@@ -631,7 +734,13 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
                   </svg>
                 </button>
-                <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(item.details) }}</pre>
+                <div
+                  v-if="item.reasoning"
+                  class="reasoning-md mt-1 border-l-2 border-gray-200 pl-2.5 pr-6 text-gray-600 dark:border-gray-700 dark:text-gray-400"
+                >
+                  <div class="reasoning-md-body" v-html="reasoningDetailsHtml(item.details)" />
+                </div>
+                <pre v-else class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(item.details) }}</pre>
               </div>
             </div>
           </div>
@@ -639,6 +748,7 @@
 
         <div v-if="isThinking && !items.length" class="px-2 py-1 text-xs text-gray-400 animate-pulse">
           {{ thinkingText || '正在处理…' }}
+        </div>
         </div>
       </div>
     </transition>
@@ -678,6 +788,13 @@ import {
   resolveReasoningPreview,
   type ReasoningPreview,
 } from "@/utils/reasoningPreview";
+import { renderMarkdown } from "@/utils/markdown";
+import {
+  mergeReasoningRounds,
+  mergedReasoningLabel,
+  normalizeReasoningDensity,
+  type ReasoningDensity,
+} from "@/utils/reasoningDensity";
 import {
   skillFlowNoticeLabel,
   summarizeSkillFlowBadges,
@@ -697,6 +814,7 @@ import {
   resolveLiveTimerLogId,
   resolveTimelineCurrentStep,
   selectTimelineRenderableItems,
+  sortParallelBatchItems,
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
   isWorkspacePrewarmPending,
@@ -743,6 +861,8 @@ const props = withDefaults(defineProps<{
    * 无论哪种情况，用户手动点过标题之后都只认用户操作。
    */
   expandThoughts?: boolean;
+  /** 思考密度：详细 / 标准 / 精简。未传按标准（与改造前行为一致）。 */
+  reasoningDensity?: ReasoningDensity;
   thinkingText?: string;
   duration?: string;
   skillSummary?: string;
@@ -864,10 +984,20 @@ const isHiddenModelCall = (item: ProcessTimelineItem): boolean =>
   && item.status !== "warning"
   && !/fallback/i.test(String(item.title || ""));
 
-const items = computed(() =>
-  groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value)
-    .filter((item) => !isHiddenModelCall(item))
-);
+/** 精简档下用户点了汇总行：临时取消合并，把各轮还原成一行行摘要。 */
+const compactRoundsOpen = ref(false);
+
+const densityMode = computed(() => normalizeReasoningDensity(props.reasoningDensity));
+
+const items = computed(() => {
+  const base = groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value)
+    .filter((item) => !isHiddenModelCall(item));
+  // 并行委派的容器按事件到达顺序插入，编号会跟位置对不上；统一按 batch_index 排一次。
+  const ordered = sortParallelBatchItems(base);
+  // 只在精简档合并。合并行本身不随展开消失——展开了还留着它，用户才能再收回去。
+  if (densityMode.value !== "compact") return ordered;
+  return mergeReasoningRounds(ordered);
+});
 
 const hasPending = computed(() => timelineHasPending(items.value));
 const headerTitle = computed(() => props.hasAnswer ? "执行完成" : "执行过程");
@@ -938,6 +1068,9 @@ const hasExpandableItems = computed(() => {
 function toggleAllDetails() {
   isAllDetailsExpanded.value = !isAllDetailsExpanded.value;
   const target = isAllDetailsExpanded.value;
+  // 精简档的合并行不受 contentExpanded 支配（正文挂在汇总行下面），
+  // 必须单独跟随，否则点了「全部展开明细」思考纹丝不动。
+  compactRoundsOpen.value = target;
   function setExpand(it: any) {
     if (it.kind === "text") {
       if (it.textKind === "reasoning" || narrationNeedsCollapse(it)) it.contentExpanded = target;
@@ -1123,7 +1256,30 @@ onBeforeUnmount(() => {
 });
 
 function isReasoningBodyOpen(item: ProcessTimelineTextItem): boolean {
-  return isReasoningContentExpanded(item);
+  return isReasoningContentExpanded(item, { density: densityMode.value });
+}
+
+/**
+ * 子代理思考的详情渲染成 Markdown。
+ *
+ * 后端把它作为 `category="reasoning"` 的日志下发，若仍用工具输出那套 `<pre>` + mono 字体，
+ * 星号、列表、围栏一样会裸露——和主代理思考正文是同一个问题。
+ * 结果按原文缓存：时间线的秒表 tick 每 500ms 重渲整棵树，同一段思考不该被反复转 markdown。
+ */
+const reasoningDetailsCache = new Map<string, string>();
+function reasoningDetailsHtml(text?: string | null): string {
+  const source = visibleTimelineText(text);
+  if (!source) return "";
+  const cached = reasoningDetailsCache.get(source);
+  if (cached !== undefined) return cached;
+  const html = renderMarkdown(source);
+  if (reasoningDetailsCache.size > 200) reasoningDetailsCache.clear();
+  reasoningDetailsCache.set(source, html);
+  return html;
+}
+
+function toggleCompactRounds(): void {
+  compactRoundsOpen.value = !compactRoundsOpen.value;
 }
 
 /** 折叠态摘要；pending 时跟随最新内容。内部上下文块剥离沿用 visibleTimelineText。 */
@@ -1134,6 +1290,74 @@ function reasoningPreviewOf(item: ProcessTimelineTextItem): ReasoningPreview {
 /** 折叠态字数胶囊口径，与摘要同源。 */
 function reasoningCharCountOf(item: ProcessTimelineTextItem): number {
   return reasoningCharCount(visibleTimelineText(item.content));
+}
+
+/**
+ * 超过该字数的思考正文默认限高。
+ *
+ * 阈值取 2000 而不是 1200：实测单轮「深度思考」常见就在 1000~1300 字，按 1200 拦等于
+ * 每一轮都要点两次才能读完（点开思考 → 再点展开全部），把一个偶发保护变成固定负担。
+ * 真正要拦的是几千字的超长思考——那种才是把链路撑成好几屏的原因。
+ */
+const REASONING_CLAMP_CHAR_THRESHOLD = 2000;
+
+/** 已手动「展开全部」的思考项，按 id 记在组件内。 */
+const reasoningFullExpanded = ref<Set<string>>(new Set());
+
+/**
+ * 思考正文是否限高。
+ *
+ * 三条约束：
+ * 1. **进行中不限高**——流式最后一段还在逐字增长，套固定高度会让新打出来的字落在可视区外，
+ *    与旁白「不做限高内滚」同源（见 isNarrationBodyOpen 注释）；
+ * 2. 只在超长时拦一道，短思考点开即读全，不做「点开一行 → 再点展开」两次点击；
+ * 3. 展开状态记在组件里，不写回时间线对象——时间线在流式合并与历史恢复时会被重建，
+ *    写回的字段会被冲掉，表现成「点了展开又收回去」。
+ */
+function isReasoningClamped(item: ProcessTimelineTextItem): boolean {
+  if (item.textKind !== "reasoning") return false;
+  if (item.pending) return false;
+  if (reasoningFullExpanded.value.has(String(item.id))) return false;
+  return reasoningCharCountOf(item) > REASONING_CLAMP_CHAR_THRESHOLD;
+}
+
+function expandReasoningFull(item: ProcessTimelineTextItem): void {
+  const next = new Set(reasoningFullExpanded.value);
+  next.add(String(item.id));
+  reasoningFullExpanded.value = next;
+}
+
+/**
+ * 思考正文的 HTML。
+ *
+ * 已落定的内容做结果缓存：折叠别的 item、工具状态变化都会触发整条时间线重渲染，
+ * 不缓存就每次都重跑一遍 markdown-it。进行中不缓存——内容还在长，缓存会锁在旧版本。
+ */
+const reasoningHtmlCache = new WeakMap<ProcessTimelineTextItem, { source: string; html: string }>();
+
+/**
+ * 把流式光标塞进最后一个块级元素的**内部**末尾。
+ *
+ * 直接拼在 `</p>` 后面时，光标是行内元素却被放在块级元素之外，浏览器会另起一行渲染，
+ * 看起来像正文下面多了一条不断闪动的竖线。
+ */
+function withReasoningCaret(html: string): string {
+  const caret = '<span class="reasoning-caret">▌</span>';
+  const closeIndex = html.lastIndexOf("</p>");
+  if (closeIndex < 0) return `${html}${caret}`;
+  return `${html.slice(0, closeIndex)}${caret}${html.slice(closeIndex)}`;
+}
+
+function reasoningHtml(item: ProcessTimelineTextItem): string {
+  const source = visibleTimelineText(item.content);
+  if (item.pending) {
+    return withReasoningCaret(renderMarkdown(source));
+  }
+  const cached = reasoningHtmlCache.get(item);
+  if (cached && cached.source === source) return cached.html;
+  const html = renderMarkdown(source);
+  reasoningHtmlCache.set(item, { source, html });
+  return html;
 }
 
 /**
@@ -1181,6 +1405,77 @@ function narrationPreviewOf(item: ProcessTimelineTextItem): string {
  */
 function isNarrationBodyOpen(item: ProcessTimelineTextItem): boolean {
   return item.contentExpanded !== false;
+}
+
+/**
+ * 委派容器判定：与 processTimeline 里 reorganizeSubagentItems 的口径保持一致。
+ *
+ * 五个条件缺一不可地覆盖了历史数据：老记录只有标题、新记录才带 subagent 元数据，
+ * 批量委派又是另一个 tool_name。任何一条漏掉，那条委派就会退化成普通工具行。
+ */
+function isSubagentLog(log: ProcessTimelineLogItem): boolean {
+  const id = String(log.id || "");
+  const title = log.title || "";
+  return id.startsWith("subagent_")
+    || log.tool_name === "sub_agent_call"
+    || log.tool_name === "sub_agent_batch_call"
+    || title.includes("调用子代理")
+    || title.includes("委派智能体")
+    || Boolean(log.subagent);
+}
+
+function isSubagentContainer(item: ProcessTimelineItem): boolean {
+  return item.kind === "log" && isSubagentLog(item);
+}
+
+/**
+ * 委派头行的规模摘要：「4 步 · 2 次工具」。
+ *
+ * 规模原先只在展开后看得到（内部那张明细），头行只剩「谁 + 多久」——
+ * 判断「这次委派是不是干了件大事」得先展开再数，多一次交互。
+ * 步数等于工具数时只写「N 步」，避免「4 步 · 4 次工具」这种同义重复。
+ */
+/**
+ * 并行委派标记：「并行 2/3」。
+ *
+ * `sub_agent_batch_call` 派出的几个子代理是**同时**跑的，但界面上原本一条条平铺，
+ * 读起来像依次执行——一个序号就能纠正这个误读，且不用为它套一层分组节点
+ * （分组会把这几张容器降级成普通子步骤，丢掉各自的展开态与耗时）。
+ */
+function parallelBatchLabel(log: ProcessTimelineLogItem): string {
+  const meta = log.subagent;
+  if (!meta?.batch_id) return "";
+  const total = Number(meta.batch_total || 0);
+  if (!Number.isFinite(total) || total < 2) return "";
+  const index = Number(meta.batch_index || 0);
+  return `并行 ${index + 1}/${total}`;
+}
+
+function subagentScaleLabel(log: ProcessTimelineLogItem): string {
+  if (!isSubagentLog(log)) return "";
+  const children = log.children || [];
+  if (!children.length) return "";
+  const parts = [`${children.length} 步`];
+  const toolCount = children.filter((child) => isToolTimelineItem(child)).length;
+  if (toolCount > 0 && toolCount < children.length) parts.push(`${toolCount} 次工具`);
+  return parts.join(" · ");
+}
+
+/**
+ * 轨道节点的形状类。
+ *
+ * 只区分形状、不区分色相：思考圆点、工具方块、旁白小点、委派菱形。
+ * 颜色在浅色与深色两套主题下都要成立，饱和色总会在其中一套里失衡，所以整条链只走灰阶，
+ * 由形状 + 缩进承担分层（见 style 里的 .timeline-rail 注释）。
+ */
+function timelineNodeClass(item: ProcessTimelineItem): string {
+  if (item.kind === "todo") return "tl-node tl-node-todo";
+  if (item.kind === "text") {
+    return item.textKind === "reasoning" ? "tl-node tl-node-think" : "tl-node tl-node-say";
+  }
+  if (item.status === "error") return "tl-node tl-node-fail";
+  if (isSubagentContainer(item)) return "tl-node tl-node-agent";
+  return "tl-node tl-node-tool";
 }
 
 function isRouteGroup(item: ProcessTimelineLogItem): boolean {
@@ -1369,6 +1664,8 @@ function iconFor(item: ProcessTimelineLogItem): string {
 }
 
 function timelineIconFor(item: ProcessTimelineLogItem): any {
+  // 子代理思考用 CpuChip（与主代理思考同图标），避免被当成一次工具调用读过去。
+  if (item.reasoning) return CpuChipIcon;
   if (item.category === "tool_resolution") return item.status === "error" ? ExclamationTriangleIcon : MapIcon;
   if (item.status === "error") return ExclamationTriangleIcon;
   // 降级/重置这类提醒既不是错误也不是普通步骤：默认气泡图标会让人以为只是又一步。
@@ -1552,6 +1849,201 @@ async function handleCopy(key: string, text?: string | null) {
 </script>
 
 <style scoped>
+/* ===== 执行链路轨道 =====
+   一条竖线 + 四种形状的节点。要解决的是「这一段是思考还是工具、层级在哪」——
+   原先所有条目同字号同灰度平铺，只能靠逐行读文字判断。
+   刻意**只用灰阶**、不用色相：彩色需要在浅色/深色两套主题里各调一次且总有一套失衡，
+   而形状 + 缩进天然与主题无关。深浅两套灰由模板上的 --tl-* 变量注入（scoped 里不能写
+   `:global(.dark)`，契约 test_embed_theme_sync_contract 有反向锁）。 */
+.timeline-rail {
+  position: relative;
+  padding-left: 1.1rem;
+}
+.timeline-rail::before {
+  content: "";
+  position: absolute;
+  left: 0.24rem;
+  top: 0.45rem;
+  bottom: 0.55rem;
+  width: 1px;
+  /* 半透明中性灰：叠在白卡片上是浅灰，叠在深色卡片上是深灰，一套值覆盖两套主题。
+     用主题变量要各调一次，用任意属性类又要 Tailwind 生成规则（本项目没有先例），
+     半透明是这里最省事也最不会在某个主题下失衡的写法。 */
+  background: rgba(127, 127, 127, 0.24);
+}
+/* 实心点直接压在竖线上：不需要描边，也就不用猜底层是白卡片还是深色卡片。 */
+.timeline-rail > .tl-node::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: -1.04rem;
+  top: 0.44rem;
+  width: 0.36rem;
+  height: 0.36rem;
+  border-radius: 9999px;
+  background: rgba(127, 127, 127, 0.52);
+}
+/* 思考节点：默认形状，其余类型在此基础上改。 */
+.timeline-rail > .tl-node-think::before {
+  background: rgba(127, 127, 127, 0.52);
+}
+.timeline-rail > .tl-node-tool::before {
+  left: -1.02rem;
+  top: 0.46rem;
+  width: 0.32rem;
+  height: 0.32rem;
+  border-radius: 1px;
+  background: rgba(127, 127, 127, 0.4);
+}
+.timeline-rail > .tl-node-say::before {
+  left: -0.97rem;
+  top: 0.52rem;
+  width: 0.22rem;
+  height: 0.22rem;
+  background: rgba(127, 127, 127, 0.36);
+}
+.timeline-rail > .tl-node-agent::before {
+  left: -1.01rem;
+  top: 0.45rem;
+  width: 0.3rem;
+  height: 0.3rem;
+  border-radius: 1px;
+  transform: rotate(45deg);
+  background: rgba(127, 127, 127, 0.4);
+}
+.timeline-rail > .tl-node-todo::before {
+  background: rgba(127, 127, 127, 0.32);
+}
+/* 失败状态是全链路唯一的彩色：它需要被立刻看见，灰度做不到。 */
+.timeline-rail > .tl-node-fail::before {
+  background: rgb(239 68 68);
+}
+
+/* 嵌套层（工具的内部步骤、子步骤）沿用轨道同一套灰，不再另起一套色。 */
+.tl-branch {
+  border-left: 1px solid rgba(127, 127, 127, 0.2);
+}
+
+/* 委派分支：一条左侧竖线把子代理的执行范围框出来，头行仍是一行概要。
+   与普通工具行的区别只靠「分支线 + 缩进 + 委派图标」，不靠颜色——
+   颜色在深浅两套主题里各调一次，形状和缩进一次就够。 */
+.subagent-branch {
+  border-left: 2px solid rgba(127, 127, 127, 0.24);
+  border-radius: 0 0.375rem 0.375rem 0;
+  padding-left: 0.4rem;
+  margin-left: -0.35rem;
+}
+
+/* ===== 深度思考正文：真实渲染 Markdown 后的排版 =====
+   思考正文原先是一块 <pre>，模型吐出的 `**加粗**`、`- 列表`、```sql 围栏全部裸露。
+   这里不再另起一套 markdown 管线，直接复用正文的 renderMarkdown（内部已 sanitize），
+   只补排版样式。字号与正文对齐（0.75rem），避免「想起了才像正文、想完了就变脚注」。 */
+.reasoning-md {
+  font-size: 0.75rem;
+  line-height: 1.75;
+  /* 正文颜色由模板上的 text-gray-600 / dark:text-gray-400 给，这里只定排版。 */
+  overflow-wrap: anywhere;
+}
+
+.reasoning-md-body :deep(p) { margin: 0 0 0.5rem; }
+.reasoning-md-body :deep(p:first-child) { margin-top: 0; }
+.reasoning-md-body :deep(p:last-child) { margin-bottom: 0; }
+.reasoning-md-body :deep(ul),
+.reasoning-md-body :deep(ol) { margin: 0 0 0.5rem; padding-left: 1.1rem; }
+.reasoning-md-body :deep(ul) { list-style: disc; }
+.reasoning-md-body :deep(ol) { list-style: decimal; }
+.reasoning-md-body :deep(li) { margin: 0.1rem 0; }
+.reasoning-md-body :deep(strong) { font-weight: 600; color: inherit; }
+.reasoning-md-body :deep(em) { font-style: italic; }
+.reasoning-md-body :deep(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  padding: 0.05rem 0.22rem;
+  border-radius: 0.25rem;
+  background: rgba(127, 127, 127, 0.13);
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+.reasoning-md-body :deep(pre) {
+  margin: 0 0 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.4rem;
+  background: rgba(127, 127, 127, 0.07);
+  border: 1px solid rgba(127, 127, 127, 0.16);
+  overflow-x: auto;
+  line-height: 1.6;
+}
+.reasoning-md-body :deep(pre code) {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 0.95em;
+}
+.reasoning-md-body :deep(a) {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.reasoning-md-body :deep(blockquote) {
+  margin: 0 0 0.5rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid rgba(127, 127, 127, 0.2);
+}
+.reasoning-md-body :deep(h1),
+.reasoning-md-body :deep(h2),
+.reasoning-md-body :deep(h3),
+.reasoning-md-body :deep(h4) {
+  font-size: 1em;
+  font-weight: 600;
+  color: inherit;
+  margin: 0.6rem 0 0.3rem;
+}
+.reasoning-md-body :deep(table) {
+  border-collapse: collapse;
+  margin: 0 0 0.5rem;
+  font-size: 0.95em;
+}
+.reasoning-md-body :deep(th),
+.reasoning-md-body :deep(td) {
+  border: 1px solid rgba(127, 127, 127, 0.16);
+  padding: 0.15rem 0.4rem;
+}
+.reasoning-md-body :deep(hr) {
+  border: 0;
+  border-top: 1px solid rgba(127, 127, 127, 0.16);
+  margin: 0.6rem 0;
+}
+
+/* 流式光标：跟随最后一段仍在增长的思考。 */
+.reasoning-caret {
+  margin-left: 0.15rem;
+  animation: reasoning-caret-pulse 1s ease-in-out infinite;
+}
+@keyframes reasoning-caret-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* 超长思考限高。
+   用 mask 而不是白色渐变遮罩：遮罩要猜底层背景色（卡片在浅色/深色、是否嵌套在子代理块里
+   背景都不同），猜错就是一条突兀的色带；mask 直接让文字自身淡出，与任何背景都不冲突。 */
+.reasoning-md-clamped {
+  position: relative;
+  max-height: 14rem;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+}
+
+/* 深色不再单独写一套：正文颜色走模板上的 dark:text-gray-400，其余结构色（代码底、
+   引用线、表格线）一律半透明中性灰——同一套值在深浅两套主题下都成立。
+   这样也顺带避开了契约禁止的 `:global(.dark)`（会被编译成命中所有 .dark 元素的全局规则，
+   是「深色白雾」的成因）。 */
+
+@media (prefers-reduced-motion: reduce) {
+  .reasoning-caret { animation: none; opacity: 1; }
+}
+
 /* 远端没给 total 时的「不确定态」：一条两端淡出的光带单向滑过整条轨道。
    两端都是透明的，循环接缝处看不出跳变；旧写法用 margin-left 在 0↔86% 来回跑，
    在窄轨道里就是一条横跳的实心色块，观感像闪烁。 */
@@ -1560,10 +2052,10 @@ async function handleCopy(key: string, text?: string | null) {
   background-color: transparent;
   background-image: linear-gradient(
     90deg,
-    rgba(129, 140, 248, 0) 0%,
-    rgba(129, 140, 248, 0.55) 45%,
-    #a5b4fc 55%,
-    rgba(129, 140, 248, 0) 100%
+    rgba(127, 127, 127, 0) 0%,
+    rgba(127, 127, 127, 0.45) 45%,
+    rgba(127, 127, 127, 0.62) 55%,
+    rgba(127, 127, 127, 0) 100%
   );
   /* 扫光保持单向循环。曾试过「只播 3 次（约 7 秒）」：委派时 sub_agent_call 会 pending
      近 30 秒，扫光 7 秒后停住，看起来像「已完成」，反而误导。这里持续循环的代价很低——

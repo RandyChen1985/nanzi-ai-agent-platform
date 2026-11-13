@@ -37,6 +37,11 @@ export type ProcessTimelineTextItem = {
   childrenExpanded?: boolean;
   /** 深度思考正文是否展开；未设置时：进行中展开，结束后折叠。 */
   contentExpanded?: boolean;
+  /**
+   * 精简密度下多轮思考被合并成一行时的汇总信息。
+   * 有它即表示「这一项代表若干轮思考」，`content` 为空、正文不再逐轮渲染。
+   */
+  mergedReasoning?: import("./reasoningDensity").MergedReasoningSummary;
   /** Parallel expert streams key pending narration by agent name. */
   sourceId?: string;
   sourceLabel?: string;
@@ -83,6 +88,13 @@ export type ProcessTimelineLogItem = {
   resolution_status?: ToolResolutionStatus;
   /** 本条工具调用因「本会话总是允许」而免于弹框，时间线上做轻标记。 */
   auto_approved?: boolean;
+  /**
+   * 子代理思考（后端 `category="reasoning"` 的日志）。
+   *
+   * 它走日志通道而不是文本项，是因为思考既不能进委派结果、也不能进父会话正文；
+   * 标出来是为了让渲染层用 Markdown + 「子代理思考」标签，而不是当工具输出丢进 `<pre>`。
+   */
+  reasoning?: boolean;
   execution_time_ms?: number | null;
   started_at?: number | null;
   subagent?: SubagentTraceMeta;
@@ -426,6 +438,13 @@ export function resolveTimelineCurrentStep(
       const current = item.todos.find((todo) => todo.status === "in_progress")
         || item.todos.find((todo) => todo.status === "pending");
       if (current) return `${current.content} · 进行中`;
+    }
+    // 精简档把多轮思考合并成一行，`content` 为空——只看 content 会让标题栏在
+    // 生成思考的阶段退回上一句旁白，看不出机器正在想事情。
+    if (item.kind === "text" && item.pending && item.mergedReasoning) {
+      const previews = item.mergedReasoning.previews;
+      const last = previews.length ? previews[previews.length - 1] : "";
+      return last ? `深度思考 · ${last}` : "深度思考 · 进行中";
     }
     if (item.kind === "text" && item.pending && item.content.trim()) {
       const pendingChild = [...(item.children || [])].reverse().find((child) => child.status === "pending");
@@ -810,31 +829,41 @@ function findSubagentContainerLog(
   const targetRunId = subagent.run_id;
   const targetChildTraceId = subagent.child_trace_id;
 
-  const matchContainer = (log: ProcessTimelineLogItem): boolean => {
+  /** 精确命中：按 id / run_id / child_trace_id 认人，并行委派下每个子代理只归自己的容器。 */
+  const exactMatch = (log: ProcessTimelineLogItem): boolean => {
     if (targetRunId && log.id === `subagent_${targetRunId}`) return true;
     if (targetRunId && log.subagent?.run_id === targetRunId) return true;
     if (targetChildTraceId && log.subagent?.child_trace_id === targetChildTraceId) return true;
-    if (
-      (log.title.includes("sub_agent_call") ||
-        log.title.includes("委派智能体") ||
-        log.title.includes("调用子代理") ||
-        log.tool_name === "sub_agent_call" ||
-        log.tool_name === "sub_agent_batch_call") &&
-      (!log.subagent || !targetRunId || log.subagent.run_id === targetRunId)
-    ) return true;
     return false;
   };
 
-  for (const item of items) {
-    if (item.kind === "log") {
-      if (matchContainer(item)) return item;
-    } else if (item.kind === "text") {
-      for (const child of item.children || []) {
-        if (matchContainer(child)) return child;
+  /** 兜底：只认标题/工具名，用在容器还没建立（或历史数据缺元数据）的时候。 */
+  const looseMatch = (log: ProcessTimelineLogItem): boolean =>
+    (log.title.includes("sub_agent_call") ||
+      log.title.includes("委派智能体") ||
+      log.title.includes("调用子代理") ||
+      log.tool_name === "sub_agent_call" ||
+      log.tool_name === "sub_agent_batch_call") &&
+    (!log.subagent || !targetRunId || log.subagent.run_id === targetRunId);
+
+  const scan = (predicate: (log: ProcessTimelineLogItem) => boolean) => {
+    for (const item of items) {
+      if (item.kind === "log") {
+        if (predicate(item)) return item;
+      } else if (item.kind === "text") {
+        for (const child of item.children || []) {
+          if (predicate(child)) return child;
+        }
       }
     }
-  }
-  return undefined;
+    return undefined;
+  };
+
+  // 先全树找精确容器，找不到才退兜底。
+  // 顺序不能反：`sub_agent_batch_call` 开始时 runner 会先发一条没有 subagent 元数据的
+  // 「调用工具」日志，而兜底条件把它当成容器；并行派发时它排在所有子代理容器之前，
+  // 一旦先命中，几个子代理的内部步骤会全被塞进这条工具日志，各自的容器全空。
+  return scan(exactMatch) ?? scan(looseMatch);
 }
 
 export function appendTimelineNarrationDelta(
@@ -969,11 +998,83 @@ function finishPendingReasoningItems(target: ProcessTimelineTarget): void {
   }
 }
 
-export function isReasoningContentExpanded(item: ProcessTimelineTextItem): boolean {
+export function isReasoningContentExpanded(
+  item: ProcessTimelineTextItem,
+  options: { density?: import("./reasoningDensity").ReasoningDensity } = {},
+): boolean {
   if (item.textKind !== "reasoning") return true;
+  // 用户手动点过就以手动为准，密度设置只在「没点过」时给默认值。
   if (item.contentExpanded === true) return true;
   if (item.contentExpanded === false) return false;
+  if (options.density === "detailed") return true;
+  // compact 与 off 都不展开正文：compact 靠一行汇总代替逐轮正文，
+  // off 干脆把整张链路收成标题行（点开后也一样不展开，逐条手动点）。
+  if (options.density === "compact" || options.density === "off") return false;
   return item.pending;
+}
+
+/**
+ * 把同一批并行委派的子代理容器按 `batch_index` 排好。
+ *
+ * 为什么要排：并行派发时，各子代理的容器是按**事件到达顺序**插进时间线的，
+ * 而事件到达本身有抖动——界面上就会出现「并行 3/3」排在「并行 1/3」前面的怪状，
+ * 恰好把「并行」读成了「编号错乱」。标签只说明第几个，位置得跟标签一致。
+ *
+ * 只重排**相邻且同 batch_id** 的一段：不跨条目搬运，避免把旁白或工具行夹进来；
+ * 没有 batch 元数据的容器一律不动（老数据没有这个字段）。
+ */
+export function sortParallelBatchItems(
+  items: ProcessTimelineItem[],
+): ProcessTimelineItem[] {
+  const sorted = sortBatchRun(items);
+  return sorted.map((item) => {
+    if (item.kind !== "text" || !item.children?.length) return item;
+    const children = sortBatchRun(item.children);
+    return children === item.children ? item : { ...item, children };
+  });
+}
+
+function batchMetaOf(item: { kind: string; subagent?: SubagentTraceMeta }):
+  | { batchId: string; index: number }
+  | undefined {
+  if (item.kind !== "log") return undefined;
+  const meta = item.subagent;
+  if (!meta?.batch_id) return undefined;
+  const index = Number(meta.batch_index ?? 0);
+  return { batchId: meta.batch_id, index: Number.isFinite(index) ? index : 0 };
+}
+
+function sortBatchRun<T extends ProcessTimelineItem | ProcessTimelineLogItem>(
+  items: T[],
+): T[] {
+  let changed = false;
+  const result = items.slice();
+  let cursor = 0;
+  while (cursor < result.length) {
+    const head = batchMetaOf(result[cursor]);
+    if (!head) {
+      cursor += 1;
+      continue;
+    }
+    let end = cursor + 1;
+    while (end < result.length && batchMetaOf(result[end])?.batchId === head.batchId) {
+      end += 1;
+    }
+    if (end - cursor > 1) {
+      // Array.prototype.sort 是稳定排序：序号相同或缺失时保持原有先后。
+      const run = result.slice(cursor, end).sort((left, right) => {
+        const a = batchMetaOf(left)?.index ?? 0;
+        const b = batchMetaOf(right)?.index ?? 0;
+        return a - b;
+      });
+      for (let offset = 0; offset < run.length; offset += 1) {
+        if (result[cursor + offset] !== run[offset]) changed = true;
+        result[cursor + offset] = run[offset];
+      }
+    }
+    cursor = end;
+  }
+  return changed ? result : items;
 }
 
 /** 等待用户操作的挂起类别：机器没在跑，不该展示实时秒表。 */
@@ -1137,6 +1238,8 @@ export function upsertTimelineLog(
     execution_time_ms?: number | null;
     started_at?: number | null;
     subagent?: SubagentTraceMeta;
+    /** 子代理思考：决定渲染成 Markdown 正文而不是工具输出。 */
+    reasoning?: boolean;
     progress?: number | null;
     total?: number | null;
     progressMessage?: string | null;
@@ -1170,6 +1273,7 @@ export function upsertTimelineLog(
     if (data.execution_time_ms !== undefined) existing.execution_time_ms = data.execution_time_ms;
     if (data.started_at !== undefined) existing.started_at = data.started_at;
     if (data.subagent !== undefined) existing.subagent = data.subagent;
+    if (data.reasoning !== undefined) existing.reasoning = data.reasoning;
     // 进度是执行期装饰：条目一结束就必须清掉，否则会被 process_timeline 快照
     // 一起落库，历史记录里留一堆过期的 progress 字段。
     if (data.status !== undefined && data.status !== "pending") {
@@ -1308,6 +1412,7 @@ export function upsertTimelineLog(
     // msg.logs 侧已在 EmbedChat 里这么做，processTimeline 侧此前一直缺失。
     started_at: data.started_at ?? (data.status === "pending" ? Date.now() : undefined),
     subagent: data.subagent,
+    reasoning: data.reasoning,
     isExpanded: false,
     children: [],
     childrenExpanded: defaultChildrenExpandedForLog(data.id),
@@ -1383,6 +1488,7 @@ export function mergeTimelineLogs(
     execution_time_ms?: number | null;
     started_at?: number | null;
     subagent?: SubagentTraceMeta;
+    reasoning?: boolean;
   }> | undefined,
 ): ProcessTimelineItem[] {
   const items = [...(timeline || [])];
@@ -1427,6 +1533,7 @@ export function mergeTimelineLogs(
       targetLog.execution_time_ms = log.execution_time_ms ?? targetLog.execution_time_ms;
       targetLog.started_at = log.started_at ?? targetLog.started_at;
       targetLog.subagent = log.subagent ?? targetLog.subagent;
+      targetLog.reasoning = log.reasoning ?? targetLog.reasoning;
       continue;
     }
     upsertTimelineLog({ processTimeline: items }, log);
@@ -1603,6 +1710,20 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
   const isInnerSubagentStep = (log: ProcessTimelineLogItem): boolean =>
     !isContainer(log) && (Boolean(log.subagent) || log.title.startsWith("["));
 
+  /**
+   * 两张容器是不是同一个子代理。
+   *
+   * 同一个子代理会产出多条容器形状的日志（工具完成事件 + 生命周期事件），要合并；
+   * 并行委派时 `run_id` 不同，必须各自成卡。缺元数据时维持原来的合并行为，
+   * 避免影响既有历史数据。
+   */
+  const isSameSubagentRun = (a: ProcessTimelineLogItem, b: ProcessTimelineLogItem): boolean => {
+    const runA = a.subagent?.run_id;
+    const runB = b.subagent?.run_id;
+    if (!runA || !runB) return true;
+    return runA === runB;
+  };
+
   let activeContainer: ProcessTimelineLogItem | undefined = undefined;
   let activeNarration: ProcessTimelineTextItem | undefined = undefined;
 
@@ -1610,46 +1731,59 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
     if (item.kind === "text") {
       if (item.children?.length) {
         const newChildren: ProcessTimelineLogItem[] = [];
-        let subContainer: ProcessTimelineLogItem | undefined = undefined;
-        const innerSteps: ProcessTimelineLogItem[] = [];
+        // 每张子代理容器各带一组内部步骤。原来只有一个 `innerSteps` 全局数组，
+        // 于是并行委派的几张容器会被并成一张、步骤全堆在最后那张下面，
+        // 历史回放里三个并行子代理看起来只剩一个。
+        const groups: Array<{ container: ProcessTimelineLogItem; steps: ProcessTimelineLogItem[] }> = [];
+        let currentGroup: { container: ProcessTimelineLogItem; steps: ProcessTimelineLogItem[] } | undefined;
+        const orphanSteps: ProcessTimelineLogItem[] = [];
 
         for (const child of item.children) {
           if (isContainer(child)) {
-            if (subContainer) {
-              subContainer.execution_time_ms = child.execution_time_ms || subContainer.execution_time_ms;
-              subContainer.status = child.status || subContainer.status;
-              if (child.details) subContainer.details = child.details;
-              if (child.tool_args) subContainer.tool_args = child.tool_args;
-              if (child.subagent) subContainer.subagent = child.subagent;
+            if (currentGroup && isSameSubagentRun(currentGroup.container, child)) {
+              // 同一个子代理的重复容器（工具完成事件 + 生命周期事件）：合并成一张
+              const target = currentGroup.container;
+              target.execution_time_ms = child.execution_time_ms || target.execution_time_ms;
+              target.status = child.status || target.status;
+              if (child.details) target.details = child.details;
+              if (child.tool_args) target.tool_args = child.tool_args;
+              if (child.subagent) target.subagent = child.subagent;
               if (child.title.includes("调用子代理") || child.title.includes("委派智能体") || child.title.includes("sub_agent_call")) {
-                subContainer.title = child.title;
+                target.title = child.title;
               }
               for (const inner of child.children || []) {
-                if (!isNoiseHeartbeatStep(inner)) innerSteps.push(inner);
+                if (!isNoiseHeartbeatStep(inner)) currentGroup.steps.push(inner);
               }
             } else {
-              subContainer = child;
-              const prev = subContainer.children || [];
-              subContainer.children = [];
-              for (const inner of prev) {
-                if (!isNoiseHeartbeatStep(inner)) innerSteps.push(inner);
-              }
+              const prev = child.children || [];
+              child.children = [];
+              currentGroup = {
+                container: child,
+                steps: prev.filter((inner) => !isNoiseHeartbeatStep(inner)),
+              };
+              groups.push(currentGroup);
             }
           } else if (isInnerSubagentStep(child)) {
-            if (!isNoiseHeartbeatStep(child)) innerSteps.push(child);
+            if (!isNoiseHeartbeatStep(child)) {
+              // 没有容器可归时先挂着，循环结束后再回落到更外层的容器
+              if (currentGroup) currentGroup.steps.push(child);
+              else orphanSteps.push(child);
+            }
           } else {
             newChildren.push(child);
           }
         }
 
-        if (subContainer) {
-          subContainer.children = innerSteps;
-          subContainer.childrenExpanded = true;
-          newChildren.push(subContainer);
-          activeContainer = subContainer;
-        } else if (innerSteps.length && activeContainer) {
+        for (const group of groups) {
+          group.container.children = group.steps;
+          group.container.childrenExpanded = true;
+          newChildren.push(group.container);
+        }
+        const lastGroup = groups[groups.length - 1];
+        if (lastGroup) activeContainer = lastGroup.container;
+        if (orphanSteps.length && activeContainer) {
           activeContainer.children ||= [];
-          activeContainer.children.push(...innerSteps);
+          activeContainer.children.push(...orphanSteps);
         }
         item.children = newChildren;
       }

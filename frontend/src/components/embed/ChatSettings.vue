@@ -2,6 +2,12 @@
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import GroundingHelpPopover from '@/components/GroundingHelpPopover.vue';
+import {
+  normalizeReasoningDensity,
+  reasoningDensityHint,
+  reasoningDensityLabel,
+  type ReasoningDensity,
+} from "@/utils/reasoningDensity";
 import Switch from '@/components/Switch.vue';
 import { useToast } from '@/composables/useToast';
 import axios from '@/utils/axios';
@@ -356,16 +362,22 @@ const handleSetSqlPlan = (enabled: boolean) => {
     saveSettings();
 };
 
-const handleSetExpandThoughts = (enabled: boolean) => {
-    if (props.config.expandThoughts === enabled) {
+const REASONING_DENSITY_OPTIONS = ["detailed", "standard", "compact", "off"] as const;
+
+const currentReasoningDensity = () =>
+    normalizeReasoningDensity(props.config.reasoningDensity ?? props.config.expandThoughts);
+
+const handleSetReasoningDensity = (density: ReasoningDensity) => {
+    if (currentReasoningDensity() === density) {
         saveSettings();
         return;
     }
-    props.config.expandThoughts = enabled;
-    showToast(
-        enabled ? "思考过程默认展开已开启" : "思考过程默认展开已关闭",
-        enabled ? "success" : "info"
-    );
+    props.config.reasoningDensity = density;
+    // 「关闭」档才收起整条链路（恢复改造前 expandThoughts=false 的语义）；
+    // 详细/标准/精简都保持展开——前三档是在卡片**内部**排布，不能顺手把卡片也关了，
+    // 否则精简档「工具调用仍然可见」的承诺会自相矛盾。
+    props.config.expandThoughts = density !== "off";
+    showToast(`思考过程已切换为「${reasoningDensityLabel(density)}」`, "success");
     saveSettings();
 };
 
@@ -972,14 +984,29 @@ const handleLogout = () => {
                 <div class="mt-0.5 text-gray-400 dark:text-gray-500 shrink-0">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
                 </div>
-                <div>
+                <div class="min-w-0">
                   <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">思考过程</h5>
                   <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">
-                    {{ config.expandThoughts ? '思考过程中展开，可实时查看推理链；回答完成后自动折叠' : '思考过程中也不展开，只保留标题行；回答完成后同样折叠' }}
+                    {{ reasoningDensityHint(currentReasoningDensity()) }}
                   </p>
                 </div>
               </div>
-              <Switch :modelValue="config.expandThoughts" @update:modelValue="handleSetExpandThoughts" class="scale-[0.8] origin-right" />
+            </div>
+            <!-- 三档密度：详细 / 标准 / 精简。精简档是新增的「只收思考、不收工具」能力。 -->
+            <div class="mt-1 flex items-center gap-0.5 rounded-md bg-gray-100 p-0.5 dark:bg-gray-800">
+              <button
+                v-for="opt in REASONING_DENSITY_OPTIONS"
+                :key="opt"
+                type="button"
+                class="flex-1 rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors"
+                :class="currentReasoningDensity() === opt
+                  ? 'bg-white text-gray-700 shadow-sm dark:bg-gray-700 dark:text-gray-200'
+                  : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'"
+                :aria-pressed="currentReasoningDensity() === opt"
+                @click="handleSetReasoningDensity(opt)"
+              >
+                {{ reasoningDensityLabel(opt) }}
+              </button>
             </div>
 
             <!-- Switch Row 4: Grounding Toggle -->
