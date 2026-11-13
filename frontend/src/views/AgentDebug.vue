@@ -2064,7 +2064,15 @@ const truncateServerHistory = async (keepCount: number): Promise<boolean> => {
     return response.data?.data?.success !== false;
   } catch (e) {
     console.warn("Failed to truncate server history before resend", e);
-    showToast("同步会话历史失败，请稍后重试", "error");
+    // 后端在会话仍在生成时会返回 409：这是「稍等就好」，不是真失败，
+    // 沿用通用文案会让人以为历史同步坏了。
+    const status = (e as { response?: { status?: number } })?.response?.status;
+    showToast(
+      status === 409
+        ? "上一轮回答仍在生成，请等它结束后再编辑"
+        : "同步会话历史失败，请稍后重试",
+      "error",
+    );
     return false;
   }
 };
@@ -3824,6 +3832,15 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
                 }
               }
             }
+            // Error Event 必须优先于 content 分支判断，防止带 content 的错误帧既按正文追加又再被 applyStreamErrorMessage 写双份。
+            else if (data.type === "error" || data.status === "error") {
+              agentMsg.value.isThinking = false;
+              if (thoughtTimer) {
+                clearInterval(thoughtTimer);
+                thoughtTimer = null;
+              }
+              applyStreamErrorMessage(agentMsg.value, data);
+            }
             // Handle Content Stream
             else if (data.type === "answer_delta" || data.content) {
               const piece = sanitizeStreamContent(String(data.content));
@@ -3875,13 +3892,6 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
                    thoughtTimer = null;
                  }
               }
-            } else if (data.type === "error" || data.status === "error") {
-              agentMsg.value.isThinking = false;
-              if (thoughtTimer) {
-                clearInterval(thoughtTimer);
-                thoughtTimer = null;
-              }
-              applyStreamErrorMessage(agentMsg.value, data);
             }
             if (data.intent) {
               agentMsg.value.intent = data.intent;
@@ -4017,18 +4027,31 @@ const submitPendingExternalExecution = async (msg: Message) => {
   msg.thoughtStartTime = Date.now();
   msg.thoughtDuration = "0.0";
   msg.thinkingText = "正在提交外部执行结果...";
+  const resumeAbort = new AbortController();
+  if (abortController) {
+    abortController.abort();
+  }
+  abortController = resumeAbort;
 
   try {
     await resumeExternalExecutionStream({
       requestId: pending.external_execution_request_id,
       toolCall: pending.tool_call,
       output: pending.outputDraft || "(empty external result)",
+      signal: resumeAbort.signal,
       onEvent: (data) => applyPermissionStreamEvent(msg, data),
     });
   } catch (error: any) {
-    pending.status = "error";
-    msg.content += `\n[外部执行恢复失败: ${error.message || "Unknown error"}]`;
+    if (error?.name === "AbortError") {
+      msg.content += "\n[已取消提交外部执行结果]";
+    } else {
+      pending.status = "error";
+      msg.content += `\n[外部执行恢复失败: ${error.message || "Unknown error"}]`;
+    }
   } finally {
+    if (abortController === resumeAbort) {
+      abortController = null;
+    }
     pending.isSubmitting = false;
     isProcessing.value = msg.pendingExternalExecution?.status === "pending" || msg.pendingPermission?.status === "pending";
     msg.isThinking = false;
@@ -4048,6 +4071,7 @@ const submitPendingExternalExecution = async (msg: Message) => {
 };
 
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
+  if (data?.type === "keepalive") return;
   // 无条件写入 trace_id —— 不作为门控（恢复流 permission_result/log 等多不带
   // trace_id，若作为 gate 会整体丢帧，见 EmbedChat 同函数做法）。
   applyStreamTraceId(msg, data);
@@ -4304,6 +4328,11 @@ const confirmPendingPermission = async (
     msg.thoughtDuration = "0.0";
     msg.thinkingText = "正在继续执行...";
   }
+  const resumeAbort = new AbortController();
+  if (abortController) {
+    abortController.abort();
+  }
+  abortController = resumeAbort;
 
   try {
     const response = await fetch(`/api/v1/chat/permissions/${pending.permission_request_id}/confirm`, {
@@ -4312,32 +4341,64 @@ const confirmPendingPermission = async (
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ confirmed, scope }),
+      signal: resumeAbort.signal,
     });
     if (!response.ok) throw new Error(response.statusText);
     const reader = response.body?.getReader();
     const decoder = new TextDecoder();
     if (!reader) throw new Error("No response body");
     const parser = createSseLineParser();
+    let isPermissionStreamDone = false;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       const dataLines = parser.feed(decoder.decode(value, { stream: true }));
       for (const dataStr of dataLines) {
-        if (dataStr === "[DONE]") continue;
-        applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+        if (dataStr === "[DONE]") {
+          isPermissionStreamDone = true;
+          break;
+        }
+        try {
+          applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+        } catch (parseErr) {
+          console.warn("Failed to parse permission SSE event:", dataStr, parseErr);
+        }
       }
       scrollToBottom();
+      if (isPermissionStreamDone) {
+        try {
+          await reader.cancel();
+        } catch {
+          // ignore
+        }
+        break;
+      }
     }
     for (const dataStr of parser.flush()) {
-      if (dataStr !== "[DONE]") applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+      if (dataStr === "[DONE]") continue;
+      try {
+        applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+      } catch (parseErr) {
+        console.warn("Failed to parse final permission SSE event:", dataStr, parseErr);
+      }
     }
   } catch (error: any) {
-    pending.status = "error";
-    msg.isThinking = false;
-    msg.content += `\n[工具确认失败: ${error.message || "Unknown error"}]`;
+    if (error?.name === "AbortError") {
+      msg.isThinking = false;
+      msg.content += "\n[已终止工具确认流]";
+    } else {
+      pending.status = "error";
+      msg.isThinking = false;
+      msg.content += `\n[工具确认失败: ${error.message || "Unknown error"}]`;
+    }
   } finally {
+    if (abortController === resumeAbort) {
+      abortController = null;
+    }
     pending.isSubmitting = false;
-    isProcessing.value = msg.pendingPermission?.status === "pending";
+    isProcessing.value = Boolean(
+      msg.pendingPermission?.status === "pending" || msg.pendingExternalExecution?.status === "pending",
+    );
     msg.isThinking = false;
     if (thoughtTimer) {
       clearInterval(thoughtTimer);

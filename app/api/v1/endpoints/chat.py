@@ -3,7 +3,7 @@ import os
 import time
 import asyncio
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, AsyncGenerator, Dict, Any, Union, Literal
+from typing import List, Optional, AsyncGenerator, Awaitable, Callable, Dict, Any, Union, Literal
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import AliasChoices, BaseModel, Field, field_validator
@@ -1253,6 +1253,20 @@ async def get_conversation_stream_events(
     return StandardResponse(data=ConversationStreamEventsResponse(**payload))
 
 
+def _audit_query_candidates(content: str) -> list[str]:
+    """生成 Redis 末尾消息与 DB 审计记录的匹配候选，兼容 @mention 前缀剥离。"""
+    import re
+
+    text = str(content or "")
+    candidates = [text]
+    mention_match = re.match(r"^[@＠]([^\s]+)\s+(.*)$", text, re.DOTALL)
+    if mention_match:
+        stripped = mention_match.group(2).strip()
+        if stripped and stripped not in candidates:
+            candidates.append(stripped)
+    return candidates
+
+
 def _merge_latest_audit_assistant(
     history: list[dict[str, Any]],
     audit_messages: list[dict[str, Any]],
@@ -1260,7 +1274,7 @@ def _merge_latest_audit_assistant(
     """仅补齐 Redis 尾部 user 对应的缺失 assistant，避免重复整段历史。"""
     if not history or history[-1].get("role") != "user":
         return history
-    latest_content = str(history[-1].get("content") or "")
+    candidates = set(_audit_query_candidates(str(history[-1].get("content") or "")))
     existing_trace_ids = {
         str(message.get("trace_id"))
         for message in history
@@ -1269,7 +1283,7 @@ def _merge_latest_audit_assistant(
     for item in audit_messages:
         assistant = item.get("assistant")
         if (
-            str(item.get("query") or "") == latest_content
+            str(item.get("query") or "") in candidates
             and isinstance(assistant, dict)
             and assistant.get("trace_id")
             and str(assistant["trace_id"]) not in existing_trace_ids
@@ -1308,12 +1322,13 @@ async def get_conversation_history(
         from sqlalchemy import select
 
         latest_user_content = str(history[-1].get("content") or "")
+        query_candidates = _audit_query_candidates(latest_user_content)
         stmt = (
             select(AgentExecutionHistory)
             .where(
                 AgentExecutionHistory.conversation_id == conversation_id,
                 AgentExecutionHistory.user_id == user_id,
-                AgentExecutionHistory.query == latest_user_content,
+                AgentExecutionHistory.query.in_(query_candidates),
             )
             .order_by(AgentExecutionHistory.created_at.desc())
             .limit(5)
@@ -2371,19 +2386,27 @@ async def create_chat_completion(
 
             await conversation_stream_journal.append(lane_user_id, conversation_id, [chunk])
 
+        lane_acquired = False
+
+        async def _clear_stream_journal_on_lane() -> None:
+            nonlocal lane_acquired
+            if lane_acquired:
+                return
+            # 必须在拿到会话运行锁之后才能清理事件日志：若当前尚有上一轮任务持锁运行，
+            # 排队中的新请求提前 clear 会把在途任务的过程日志与序号全部抹掉。
+            from app.services.ai.runtime.conversation_stream_journal import (
+                conversation_stream_journal,
+            )
+
+            await conversation_stream_journal.clear(lane_user_id, conversation_id)
+            lane_acquired = True
+
+        request_observability["_on_lane_acquired"] = _clear_stream_journal_on_lane
+
         async def _producer_task() -> None:
-            nonlocal claim_trace_id, claim_status
+            nonlocal claim_trace_id, claim_status, request_claim
             terminal_enqueued = False
             try:
-                # 新一轮开始：清空上一轮的事件日志与序号计数器，使本轮 _seq 从 1 重新
-                # 计数、日志只含本轮事件。前端在新一轮会把续显游标整体归零，两边口径
-                # 一致——否则残留的上一轮事件会被续显当成「本轮过程」重放出来。
-                from app.services.ai.runtime.conversation_stream_journal import (
-                    conversation_stream_journal,
-                )
-
-                await conversation_stream_journal.clear(lane_user_id, conversation_id)
-
                 async for chunk in agent_service.chat_completion_stream(
                     history,
                     agent_id=completion_request.agent_id,
@@ -2402,24 +2425,28 @@ async def create_chat_completion(
                 ):
                     if isinstance(chunk, dict):
                         if chunk.get("trace_id"):
-                            claim_trace_id = str(chunk["trace_id"])
+                            new_trace_id = str(chunk["trace_id"])
+                            if new_trace_id != claim_trace_id:
+                                claim_trace_id = new_trace_id
+                                if request_claim is not None:
+                                    from app.services.ai.runtime.chat_request_idempotency import (
+                                        chat_request_idempotency,
+                                    )
+
+                                    request_claim = await chat_request_idempotency.update_trace_id(
+                                        request_claim, claim_trace_id
+                                    )
                         if chunk.get("type") == "error" or chunk.get("status") == "error":
                             claim_status = "failed"
+                    # 清理只由 `_on_lane_acquired`（真正拿到会话锁之后）驱动，这里**不能**有兜底：
+                    # 会话忙 / 配额超限的早退路径从未持有过锁，它们随后发出的 error 帧一旦触发
+                    # clear，就会把仍持锁在跑那一轮的 journal 与序号计数一起抹掉，前端续显直接断。
                     # 事件日志独立于连接状态：客户端断开后 producer 仍继续跑，
-                    # 这些事件是切回页面时"继续实时显示"的唯一来源。
-                    await _record_stream_event(chunk)
+                    # 这些事件是切回页面时"继续实时显示"的唯一来源；未拿锁期间不污染上一轮日志。
+                    if lane_acquired:
+                        await _record_stream_event(chunk)
                     if not client_disconnected_event.is_set():
                         await queue.put(("chunk", chunk))
-                    # run_status 表示模型输出已完成。提前结束 SSE 响应，producer
-                    # 仍继续消费生成器，以便在后台完成 Redis/摘要持久化和会话收尾。
-                    if (
-                        isinstance(chunk, dict)
-                        and chunk.get("type") == "run_status"
-                        and not terminal_enqueued
-                        and not client_disconnected_event.is_set()
-                    ):
-                        await queue.put(("done", None))
-                        terminal_enqueued = True
                 if not terminal_enqueued and not client_disconnected_event.is_set():
                     await queue.put(("done", None))
                 await _flush_stream_journal(force=True)
@@ -2657,6 +2684,227 @@ async def create_chat_completion(
         return StandardResponse(data=result)
 
 
+_RESUME_JOURNAL_COALESCED_TYPES = {
+    "answer",
+    "answer_delta",
+    "reasoning_content",
+    "thinking",
+    "process_narration",
+    "process_narration_commit",
+    "process_narration_promote",
+}
+
+
+async def _build_resume_background_sse_response(
+    *,
+    request: Request,
+    pending_request_id: str,
+    user_info: Dict[str, Any],
+    stream_factory: Callable[[Callable[[], Awaitable[None]]], AsyncGenerator[Dict[str, Any], None]],
+    label: str,
+) -> StreamingResponse:
+    """为工具确认与外部执行恢复端点提供与主对话一致的后台 producer + journal + keepalive SSE。"""
+    from app.services.ai.runtime.agentscope.confirmations import pending_agentscope_confirmations
+    from app.services.ai.runtime.conversation_run_cancel import release_conversation_run_locks
+    from app.services.ai.runtime.conversation_stream_journal import (
+        TRANSIENT_EVENT_TYPES,
+        conversation_stream_journal,
+    )
+
+    current_user_id = (user_info or {}).get("user_id") or (user_info or {}).get("id")
+    pending = await pending_agentscope_confirmations.peek_async(
+        pending_request_id,
+        user_id=current_user_id,
+    )
+    conversation_id = (
+        getattr(getattr(pending, "runner", None), "conversation_id", None)
+        or (getattr(getattr(pending, "snapshot", None), "conversation_id", None) if pending else None)
+    )
+    lane_user_id = current_user_id or (getattr(pending, "user_id", None) if pending else None)
+
+    client_disconnected_event = asyncio.Event()
+    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+
+    stream_journal_pending: list[dict[str, Any]] = []
+    stream_journal_chars = 0
+    stream_journal_last_flush = time.monotonic()
+    lane_acquired = False
+
+    async def _release_locks_on_abort() -> None:
+        if lane_user_id and conversation_id:
+            await release_conversation_run_locks(
+                user_id=lane_user_id,
+                conversation_id=conversation_id,
+            )
+
+    async def _flush_resume_journal(*, force: bool = False) -> None:
+        nonlocal stream_journal_chars, stream_journal_last_flush
+        if not stream_journal_pending or not conversation_id or not lane_user_id:
+            return
+        now = time.monotonic()
+        if not force and now - stream_journal_last_flush < 1.0 and stream_journal_chars < 2000:
+            return
+        batch = list(stream_journal_pending)
+        stream_journal_pending.clear()
+        stream_journal_chars = 0
+        stream_journal_last_flush = now
+        await conversation_stream_journal.append(lane_user_id, conversation_id, batch)
+
+    async def _record_resume_event(chunk: Any) -> None:
+        nonlocal stream_journal_chars
+        if not isinstance(chunk, dict) or not conversation_id or not lane_user_id:
+            return
+        event_type = str(chunk.get("type") or "")
+        if event_type in TRANSIENT_EVENT_TYPES:
+            return
+        if event_type in _RESUME_JOURNAL_COALESCED_TYPES:
+            stream_journal_pending.append(chunk)
+            stream_journal_chars += len(str(chunk.get("content") or ""))
+            await _flush_resume_journal()
+            return
+        await _flush_resume_journal(force=True)
+        await conversation_stream_journal.append(lane_user_id, conversation_id, [chunk])
+
+    async def _on_lane_acquired() -> None:
+        nonlocal lane_acquired
+        if lane_acquired:
+            return
+        if conversation_id and lane_user_id:
+            await conversation_stream_journal.clear(lane_user_id, conversation_id)
+        lane_acquired = True
+
+    async def _producer_task() -> None:
+        try:
+            async for chunk in stream_factory(_on_lane_acquired):
+                if lane_acquired:
+                    await _record_resume_event(chunk)
+                if not client_disconnected_event.is_set():
+                    await queue.put(("chunk", chunk))
+            if not client_disconnected_event.is_set():
+                await queue.put(("done", None))
+            await _flush_resume_journal(force=True)
+        except asyncio.CancelledError:
+            from app.core.cancellation import spawn_detached
+
+            spawn_detached(
+                _release_locks_on_abort(),
+                name=f"release-locks-resume-{conversation_id or 'unknown'}",
+            )
+            raise
+        except Exception as exc:
+            logger.error(
+                "[ChatAPI] Background resume producer (%s) encountered error: %s",
+                label,
+                exc,
+                exc_info=True,
+            )
+            if not client_disconnected_event.is_set():
+                await queue.put(("error", exc))
+
+    producer_task = asyncio.create_task(
+        _producer_task(),
+        name=f"chat-resume-producer-{label}-{conversation_id or 'unknown'}",
+    )
+
+    async def _producer_watchdog(
+        hard_timeout: float, lock_grace_seconds: float = 5.0
+    ) -> None:
+        try:
+            await asyncio.wait_for(asyncio.shield(producer_task), timeout=hard_timeout)
+        except asyncio.TimeoutError:
+            logger.error(
+                "[ChatAPI] resume producer (%s) hard timeout %.0fs conversation=%s",
+                label,
+                hard_timeout,
+                conversation_id,
+            )
+            if not producer_task.done():
+                producer_task.cancel()
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(producer_task), timeout=lock_grace_seconds
+                )
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            try:
+                await _release_locks_on_abort()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "[ChatAPI] resume watchdog failed to release locks conversation=%s: %s",
+                    conversation_id,
+                    exc,
+                )
+        except asyncio.CancelledError:
+            if not producer_task.done():
+                producer_task.cancel()
+            raise
+
+    hard_timeout = await load_producer_hard_timeout()
+    if hard_timeout > 0:
+        watchdog_task = asyncio.create_task(
+            _producer_watchdog(hard_timeout),
+            name=f"chat-resume-watchdog-{label}-{conversation_id or 'unknown'}",
+        )
+        _BACKGROUND_TASKS.add(watchdog_task)
+        watchdog_task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+    async def sse_generator() -> AsyncGenerator[str, None]:
+        client_disconnected = False
+        last_keepalive = 0.0
+        try:
+            while True:
+                if not client_disconnected and await request.is_disconnected():
+                    client_disconnected = True
+                    client_disconnected_event.set()
+                    break
+                try:
+                    tag, payload = await asyncio.wait_for(queue.get(), timeout=0.25)
+                except asyncio.TimeoutError:
+                    if producer_task.done() and queue.empty():
+                        break
+                    now = time.monotonic()
+                    if now - last_keepalive >= 1.0:
+                        yield 'data: {"type":"keepalive"}\n\n'
+                        last_keepalive = now
+                    continue
+
+                if tag == "chunk":
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                elif tag == "done":
+                    yield "data: [DONE]\n\n"
+                    break
+                elif tag == "error":
+                    try:
+                        err_text = sanitize_error_text(payload) if payload is not None else "未知错误"
+                    except Exception:
+                        err_text = "服务处理出错，请稍后重试"
+                    yield (
+                        "data: "
+                        + json.dumps({"type": "error", "content": err_text}, ensure_ascii=False)
+                        + "\n\n"
+                    )
+                    yield "data: [DONE]\n\n"
+                    break
+        except asyncio.CancelledError:
+            client_disconnected_event.set()
+            logger.info(
+                "[ChatAPI] Resume SSE (%s) cancelled by client for conversation=%s; "
+                "background producer continues.",
+                label,
+                conversation_id,
+            )
+        finally:
+            client_disconnected_event.set()
+
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers=SSE_RESPONSE_HEADERS,
+    )
+
+
 @router.post(
     "/permissions/{permission_request_id}/confirm",
     summary="确认或拒绝待执行工具调用",
@@ -2665,22 +2913,21 @@ async def create_chat_completion(
 async def confirm_tool_permission(
     permission_request_id: str,
     confirm_request: ToolPermissionConfirmRequest,
+    request: Request,
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
-    async def sse_generator() -> AsyncGenerator[str, None]:
-        async for chunk in agent_service.resume_agentscope_permission_stream(
+    return await _build_resume_background_sse_response(
+        request=request,
+        pending_request_id=permission_request_id,
+        user_info=user_info,
+        label="permission",
+        stream_factory=lambda on_lane_acquired: agent_service.resume_agentscope_permission_stream(
             permission_request_id=permission_request_id,
             confirmed=confirm_request.confirmed,
             grant_scope=confirm_request.scope,
             user_info=user_info,
-        ):
-            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(
-        sse_generator(),
-        media_type="text/event-stream",
-        headers=SSE_RESPONSE_HEADERS,
+            on_lane_acquired=on_lane_acquired,
+        ),
     )
 
 
@@ -2745,21 +2992,20 @@ async def revoke_tool_permission_grant(
 async def resume_external_execution(
     external_execution_request_id: str,
     resume_request: ExternalExecutionResumeRequest,
+    request: Request,
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
-    async def sse_generator() -> AsyncGenerator[str, None]:
-        async for chunk in agent_service.resume_agentscope_external_execution_stream(
+    return await _build_resume_background_sse_response(
+        request=request,
+        pending_request_id=external_execution_request_id,
+        user_info=user_info,
+        label="external",
+        stream_factory=lambda on_lane_acquired: agent_service.resume_agentscope_external_execution_stream(
             external_execution_request_id=external_execution_request_id,
             results=[item.model_dump() for item in resume_request.results],
             user_info=user_info,
-        ):
-            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(
-        sse_generator(),
-        media_type="text/event-stream",
-        headers=SSE_RESPONSE_HEADERS,
+            on_lane_acquired=on_lane_acquired,
+        ),
     )
 
 
@@ -3153,6 +3399,30 @@ async def get_admin_history(
         params=params, request=request, db=db, cross_user=True
     )
 
+async def _clear_conversation_runtime_state(user_id: Any, conversation_id: Optional[str]) -> None:
+    """删除或截断会话历史后同步清理 AgentState、挂起确认与断线回放日志。"""
+    if user_id is None or not conversation_id:
+        return
+    try:
+        from app.services.ai.runtime.agentscope.confirmations import (
+            pending_agentscope_confirmations,
+        )
+        from app.services.ai.runtime.agentscope.state_store import agent_state_store
+        from app.services.ai.runtime.conversation_stream_journal import (
+            conversation_stream_journal,
+        )
+
+        await agent_state_store.delete(user_id, conversation_id)
+        await pending_agentscope_confirmations.clear_conversation(user_id, conversation_id)
+        await conversation_stream_journal.clear(user_id, conversation_id)
+    except Exception as cleanup_err:
+        logger.warning(
+            "[ChatAPI] Failed to clear runtime state for conversation=%s: %s",
+            conversation_id,
+            cleanup_err,
+        )
+
+
 @router.delete("/history/{trace_id}",
     response_model=StandardResponse[Dict[str, bool]],
     summary="删除历史记录",
@@ -3161,6 +3431,7 @@ async def get_admin_history(
 async def delete_history(
     trace_id: str,
     request: Request,
+    user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -3169,8 +3440,8 @@ async def delete_history(
     from app.models.audit import AgentExecutionHistory, AgentExecutionTrace
     from sqlalchemy import delete, select
 
-    user_info = getattr(request.state, "user", None) if request else None
-    current_user_id = _require_chat_user_id(user_info)
+    effective_user_info = user_info or (getattr(request.state, "user", None) if request else None)
+    current_user_id = _require_chat_user_id(effective_user_info)
 
     # 1. Find Record——先按「当前用户」过滤：他人记录一律按不存在处理（404），
     #    任何角色（含 admin）都不能删除别人的历史与轨迹。
@@ -3211,6 +3482,7 @@ class BatchDeleteHistoryRequest(BaseModel):
 async def batch_delete_history(
     payload: BatchDeleteHistoryRequest,
     request: Request,
+    user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session)
 ):
     from app.models.audit import AgentExecutionHistory, AgentExecutionTrace
@@ -3221,8 +3493,8 @@ async def batch_delete_history(
 
     # 1. 严格自隔离：任何角色（含 admin）都只能删除属于自己的会话，
     #    不能借 conversation_ids 删除他人的 DB 历史与 Redis 记忆。
-    user_info = getattr(request.state, "user", None)
-    current_user_id = _require_chat_user_id(user_info)
+    effective_user_info = user_info or (getattr(request.state, "user", None) if request else None)
+    current_user_id = _require_chat_user_id(effective_user_info)
 
     # 2. 取出会话归属人；Redis key 的 user_id 必须与 DB 删除范围同源。
     stmt = (
@@ -3261,12 +3533,12 @@ async def batch_delete_history(
 
         await knowledge_citation_store.delete_many(trace_ids)
 
-    # 数据库历史删除后同步清理会话 Redis，避免项目资源范围和记忆残留。
-    # 删除范围已被 user_id 收敛到当前用户，因此 Redis 也只清当前用户自己的键——
-    # 绝不能按传入的 conversation_id 去清他人的记忆。
+    # 数据库历史删除后同步清理会话 Redis、AgentScope 状态、挂起快照与断线回放日志。
+    # 删除范围已被 user_id 收敛到当前用户，绝不能按传入的 conversation_id 去清他人状态。
     from app.services.ai.memory_service import memory_service
     for conversation_id in payload.conversation_ids:
         await memory_service.clear_history(current_user_id, conversation_id)
+        await _clear_conversation_runtime_state(current_user_id, conversation_id)
 
     return StandardResponse(data={"success": True})
 
@@ -3290,9 +3562,20 @@ async def truncate_history_endpoint(
 ):
     from app.models.audit import AgentExecutionHistory, AgentExecutionTrace
     from app.services.ai.memory_service import memory_service
+    from app.services.ai.runtime.session_run_lane import conversation_run_lane
     from sqlalchemy import delete, select
 
     user_id = _require_chat_user_id(user_info)
+
+    # 拦截运行中的截断请求，避免后台 producer 与截断并发写入造成历史错位或状态撕裂。
+    if await conversation_run_lane.is_locked(
+        user_id=str(user_id),
+        conversation_id=payload.conversation_id,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="当前会话正在生成中，请先停止生成后再重发或截断历史",
+        )
 
     # 1. 截断 Redis 记忆
     history_truncated = await memory_service.truncate_history(
@@ -3306,8 +3589,17 @@ async def truncate_history_endpoint(
             detail="会话历史暂时无法同步，请稍后重试",
         )
 
-    # 2. 如果保留数量对应的轮次之后的 DB 历史也可以同步裁剪
-    keep_turns = payload.keep_count // 2
+    # 2. 基于保留消息轨迹精确同步裁剪 DB 审计历史（而非脆弱的 keep_count // 2 猜轮数）
+    remaining_messages: List[Dict[str, Any]] = []
+    if payload.keep_count > 0:
+        try:
+            remaining_messages = await memory_service.get_history(
+                str(user_id),
+                payload.conversation_id,
+            )
+        except Exception:
+            remaining_messages = []
+
     stmt = (
         select(AgentExecutionHistory)
         .where(
@@ -3318,8 +3610,34 @@ async def truncate_history_endpoint(
     )
     result = await db.execute(stmt)
     rows = result.scalars().all()
-    if len(rows) > keep_turns:
-        to_delete = rows[keep_turns:]
+
+    to_delete = []
+    if rows:
+        if payload.keep_count == 0:
+            to_delete = list(rows)
+        elif remaining_messages:
+            retained_trace_ids = {
+                str(msg.get("trace_id"))
+                for msg in remaining_messages
+                if isinstance(msg, dict) and msg.get("trace_id")
+            }
+            matched_indices = [
+                idx for idx, row in enumerate(rows) if row.trace_id and row.trace_id in retained_trace_ids
+            ]
+            if matched_indices:
+                to_delete = rows[max(matched_indices) + 1 :]
+            else:
+                retained_user_turns = sum(
+                    1
+                    for msg in remaining_messages
+                    if isinstance(msg, dict) and msg.get("role") == "user"
+                )
+                to_delete = rows[retained_user_turns:]
+        else:
+            keep_turns = payload.keep_count // 2
+            to_delete = rows[keep_turns:]
+
+    if to_delete:
         trace_ids = [r.trace_id for r in to_delete if r.trace_id]
         if trace_ids:
             await db.execute(
@@ -3335,6 +3653,8 @@ async def truncate_history_endpoint(
             from app.services.ai.knowledge_citation_store import knowledge_citation_store
 
             await knowledge_citation_store.delete_many(trace_ids)
+
+    await _clear_conversation_runtime_state(str(user_id), payload.conversation_id)
 
     return StandardResponse(data={"success": True, "keep_count": payload.keep_count})
 

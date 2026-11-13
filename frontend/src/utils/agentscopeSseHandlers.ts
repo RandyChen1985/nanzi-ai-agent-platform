@@ -803,6 +803,8 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
       data.execution_time_ms === undefined ? undefined : Number(data.execution_time_ms),
     started_at: data.started_at === undefined ? undefined : Number(data.started_at),
     subagent: normalizeSubagentTraceMeta(data.subagent),
+    // 子代理思考走日志通道，靠这个标记决定用 Markdown 渲染而不是当工具输出。
+    reasoning: data.reasoning === true ? true : undefined,
   });
 }
 
@@ -1139,6 +1141,7 @@ export async function resumeExternalExecutionStream(options: {
   output: string;
   headers?: Record<string, string>;
   credentials?: RequestCredentials;
+  signal?: AbortSignal;
   onEvent: (data: Record<string, unknown>) => void;
 }): Promise<void> {
   const toolCallId = options.toolCall?.id || `call_${Date.now()}`;
@@ -1152,6 +1155,7 @@ export async function resumeExternalExecutionStream(options: {
         ...(options.headers || {}),
       },
       credentials: options.credentials,
+      signal: options.signal,
       body: JSON.stringify({
         results: [
           {

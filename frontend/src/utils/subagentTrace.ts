@@ -10,6 +10,16 @@ export interface SubagentTraceMeta {
   resume?: boolean
   /** 续聊序号（第几次续聊，从 1 起）；非续聊时为 0/缺失。 */
   resume_index?: number
+  /**
+   * 并行委派批次（`sub_agent_batch_call` 才会带）。
+   *
+   * 同一批次里几个子代理是**同时**跑的，但界面上原先只是一条条平铺，
+   * 看起来像依次执行。头行标「并行 2/3」就能把这个关系表达出来，
+   * 不必再套一层分组节点（那会把这几个容器降级成普通子步骤、丢掉它们自己的展开态）。
+   */
+  batch_id?: string
+  batch_index?: number
+  batch_total?: number
 }
 
 const asNonEmptyString = (value: unknown): string | null => {
@@ -19,6 +29,13 @@ const asNonEmptyString = (value: unknown): string | null => {
 }
 
 /** 续聊序号归一化：后端可能给 2 / "2" / 0，只有正整数才值得显示。 */
+const asBatchIndex = (value: unknown): number => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return 0
+  const truncated = Math.trunc(parsed)
+  return truncated >= 0 ? truncated : 0
+}
+
 const asResumeIndex = (value: unknown): number => {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) return 0
@@ -42,6 +59,10 @@ export const normalizeSubagentTraceMeta = (value: unknown): SubagentTraceMeta | 
     tool_filter: toolFilter,
     resume: source.resume === true,
     resume_index: asResumeIndex(source.resume_index),
+    batch_id: asNonEmptyString(source.batch_id) ?? undefined,
+    // 序号从 0 起：`asResumeIndex` 会把 0 判成空，batch_index 必须用独立的解析。
+    batch_index: asBatchIndex(source.batch_index),
+    batch_total: asResumeIndex(source.batch_total),
   }
   return Object.values(normalized).some((item) => item !== null && item !== undefined)
     ? normalized

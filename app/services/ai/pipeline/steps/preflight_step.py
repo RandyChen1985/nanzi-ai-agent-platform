@@ -76,6 +76,7 @@ class PreflightStep(BasePipelineStep):
         if context.conversation_id and await conversation_run_lane.is_locked(
             user_id=context.lane_user_id, conversation_id=context.conversation_id
         ):
+            context.shared_state["queue_wait_pending"] = True
             yield {
                 "type": "log",
                 "id": "session:queue_wait",

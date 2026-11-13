@@ -146,7 +146,9 @@ class ContextStep(BasePipelineStep):
                     user_msg["content"],
                     files=user_msg.get("files"),
                 )
-                context.shared_state["context_user_message"] = user_msg
+                # 独立副本保留写入 Redis 时的原始内容，避免后续 RouteStep 剥离 @mention
+                # 时原地篡改引用，导致 FinalizeStep 孤儿用户消息回滚匹配失败。
+                context.shared_state["context_user_message"] = dict(user_msg)
 
                 window_hidden = _window_for_context(
                     server_history if server_history else [],

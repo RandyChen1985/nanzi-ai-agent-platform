@@ -117,14 +117,27 @@ check(
     !sweepKeyframes.includes('opacity'),
   sweepKeyframes,
 );
+// 扫光的颜色跟版式一起改成灰阶了，这里不再锁具体色相——锁的是两条**视觉事实**：
+// 两端 alpha 为 0（循环接缝看不见跳变），以及峰值 alpha < 1（兜底比确定态的实色更浅）。
+// 原先写死 indigo 色值，等于把「色板」和「动效正确性」焊在一起，改色就得改断言。
+const indeterminateBlock = style.slice(style.indexOf('.timeline-progress-indeterminate > div'));
+const gradientBody = indeterminateBlock.slice(0, indeterminateBlock.indexOf('}'));
+const sweepStops = [...gradientBody.matchAll(/rgba\(\s*\d+,\s*\d+,\s*\d+,\s*([\d.]+)\s*\)/g)].map(
+  (match) => Number(match[1]),
+);
 check(
   '扫光两端透明，循环接缝处看不见跳变',
-  style.includes('rgba(129, 140, 248, 0)'),
-  'styles',
+  sweepStops.length >= 3 && sweepStops[0] === 0 && sweepStops[sweepStops.length - 1] === 0,
+  sweepStops,
 );
 check(
   '兜底扫光比确定态更浅（确定态才是主角，兜底只表达「在动」）',
-  style.includes('#a5b4fc'),
+  sweepStops.some((alpha) => alpha > 0 && alpha < 1),
+  sweepStops,
+);
+check(
+  '进度条不再引入饱和色（整条链路统一灰阶）',
+  !/indigo|purple|emerald|sky-|violet/.test(style),
   'styles',
 );
 check(

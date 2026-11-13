@@ -101,8 +101,16 @@ def test_body_first_char_fold_ignores_the_setting():
 
 
 def test_setting_copy_states_the_new_semantics():
-    """设置文案必须写明「回答完成后折叠」，否则用户不知道开关管到哪。"""
-    source = SETTINGS.read_text(encoding="utf-8")
-    assert "回答完成后自动折叠" in source
-    assert "回答完成后同样折叠" in source
-    assert "回答后仍保留在页面上" not in source
+    """设置文案必须写明「回答完成后」的行为，否则用户不知道这个开关管到哪。
+
+    文案本身从 ChatSettings 移到了 `reasoningDensityHint`（四档各一句），
+    所以这里锁两件事：面板确实消费了那份文案、且每一档都写清了回答后的行为。
+    """
+    settings = SETTINGS.read_text(encoding="utf-8")
+    assert "reasoningDensityHint(" in settings
+    assert "思考过程默认展开已开启" not in settings, "旧布尔开关的文案应已由四档取代"
+    hints = (ROOT / "frontend/src/utils/reasoningDensity.ts").read_text(encoding="utf-8")
+    body = hints[hints.index("export function reasoningDensityHint"):]
+    body = body[: body.index("\n}")]
+    assert body.count("回答完成后") == 4, "四档都必须说明回答完成后的行为"
+    assert "回答后仍保留在页面上" not in settings

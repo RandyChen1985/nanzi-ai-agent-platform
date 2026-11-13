@@ -295,7 +295,7 @@ class ContextCompactor:
         final_ctx_event: dict = {}
         full_for_compact = history_messages_for_token_budget(source_history)
         compact_kwargs: dict = dict(
-            user_id=(user_info or {}).get("user_id"),
+            user_id=(user_info or {}).get("user_id") or (user_info or {}).get("id"),
             conversation_id=conversation_id,
             agent_id=agent_id,
             agent_name=agent_name,

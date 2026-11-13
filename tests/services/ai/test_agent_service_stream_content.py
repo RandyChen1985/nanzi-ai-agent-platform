@@ -48,12 +48,9 @@ def test_chat_stream_emits_terminal_status_before_waiting_for_history_persistenc
     persist_index = source.index("await await_unless_cancelling(")
     assert status_index < persist_index
 
-    endpoint_source = (root / "app/api/v1/endpoints/chat.py").read_text(
-        encoding="utf-8"
-    )
-    terminal_index = endpoint_source.index('chunk.get("type") == "run_status"')
-    done_index = endpoint_source.index('await queue.put(("done", None))', terminal_index)
-    assert terminal_index < done_index
+    # run_status 之后 FinalizeStep 若落库失败会补发 history_persist_failed；
+    # endpoint 必须等生成器完整产出后才发 [DONE]，确保告警事件能通过 SSE 送达前端，
+    # 同时耗时摘要由 defer_summary=True 异步脱离主路径。
     persistence_source = (root / "app/services/ai/agent_service.py").read_text(encoding="utf-8")
     assert "defer_summary: bool = False" in persistence_source
     assert "if defer_summary:" in persistence_source

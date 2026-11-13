@@ -650,6 +650,11 @@ async def load_delegable_system_agent_candidates(session: Any) -> List[Any]:
 DELEGATION_TOOL_NAME = "sub_agent_call"
 DELEGATION_BATCH_TOOL_NAME = "sub_agent_batch_call"
 
+#: 单条「子代理思考」日志保留的最大字符数。
+#: 思考是逐 token 累积的，一轮就能几千字；作为时间线明细可以有，但也得有上限——
+#: 否则一条 SSE 帧能带上万字，前端渲染和落库都吃不消。超出部分截断并显式标注。
+DELEGATION_SUBAGENT_REASONING_MAX_CHARS = 4000
+
 
 def is_main_general_agent_target(agent: Any) -> bool:
     """该智能体是否是主助手（系统兜底入口）——它**不能**作为委派目标。
@@ -1375,8 +1380,46 @@ async def _consume_sub_agent_stream(
     full_output = ""
     interrupt_type: str | None = None
 
+    reasoning_buffer: list[str] = []
+    reasoning_seq = 0
+
+    async def flush_subagent_reasoning() -> None:
+        """把攒下的子代理思考作为**一条折叠日志**投给父会话。
+
+        三条边界（缺一条都会踩坑）：
+        1. 不并进 `full_output`——reasoning 帧逐 token 累积，很容易顶到委派结果上限，
+           真正的结论反而被截掉；
+        2. 不并进父会话正文——那会让父智能体的回答里混进子代理的推理；
+        3. 走 `log` 帧、带上 `subagent` 元数据，前端会把它挂进**子代理容器**里，
+           默认折叠，想看才展开。这样既不占屏，也把「这是子代理想的」和主代理区分开。
+        """
+        nonlocal reasoning_seq
+        text = "".join(reasoning_buffer).strip()
+        reasoning_buffer.clear()
+        if not text or main_ctx.event_queue is None:
+            return
+        if len(text) > DELEGATION_SUBAGENT_REASONING_MAX_CHARS:
+            text = text[:DELEGATION_SUBAGENT_REASONING_MAX_CHARS] + "\n\n…（思考过长，已截断）"
+        reasoning_seq += 1
+        payload: Dict[str, Any] = {
+            "type": "log",
+            "id": f"subagent_reasoning:{run_id or sub_display_name}:{reasoning_seq}",
+            "title": f"[{sub_display_name}] 子代理思考",
+            "details": text,
+            "status": "success",
+            "category": "reasoning",
+            "reasoning": True,
+        }
+        if subagent_metadata is not None:
+            payload["subagent"] = dict(subagent_metadata)
+        await main_ctx.event_queue.put(payload)
+
     async for chunk in sub_stream:
         chunk_type = str(chunk.get("type") or "")
+        # 任何非思考帧到达，先把攒下的思考落一次：思考轮次之间夹着工具调用，
+        # 不在这里落，多轮思考会粘成一大坨、前面的轮次全被后面的覆盖。
+        if chunk_type not in {"reasoning_content", "thinking"}:
+            await flush_subagent_reasoning()
         if structured_result is not None and isinstance(chunk.get("structured"), dict):
             structured_result["value"] = chunk["structured"]
         if chunk_type == "tool_progress":
@@ -1388,11 +1431,13 @@ async def _consume_sub_agent_stream(
                 await main_ctx.event_queue.put(chunk)
             continue
         if chunk_type in {"reasoning_content", "thinking"}:
-            # 思考流是子代理自己的会话资产，不是交付正文：
-            # 1) 拼进工具结果会把父智能体的上下文撑满（reasoning 帧逐 token 累积，
-            #    很容易顶到 64KB 上限，真正的结论反而被截掉）；
-            # 2) 转发给主聊天又会让用户在父会话里看到子代理的完整推理。
-            # 两条路都不该走，这里显式丢弃。
+            # 思考流不是交付正文：不进 `full_output`（会把结论挤掉）、不进父会话正文。
+            # 但它也不是垃圾——用户要能分辨「这段是子代理想的」，所以先攒着，
+            # 由 `flush_subagent_reasoning` 作为折叠日志挂到子代理容器里。
+            if chunk_type == "reasoning_content":
+                delta = str(chunk.get("content") or "")
+                if delta:
+                    reasoning_buffer.append(delta)
             continue
         if chunk_type == "user_question":
             # 子代理在委派中向用户提问：先登记到父会话，登记成功才把卡片放到主聊天流。
@@ -1463,6 +1508,9 @@ async def _consume_sub_agent_stream(
             # 静默丢弃，主助手回答里的 [ID:n] 便没有任何切片可展开——这正是
             # 「委派后引用列表整块消失、点序号只提示引用详情加载中」的根因。
             await main_ctx.event_queue.put(chunk)
+
+    # 收尾兜底：最后一段思考后面可能没有任何帧，不落就会丢。
+    await flush_subagent_reasoning()
 
     return full_output, interrupt_type
 
@@ -1823,6 +1871,7 @@ async def sub_agent_call(
     trace_start_index = len(main_ctx.trace_buffer or [])
     lifecycle_log_id = f"subagent_{run_id}"
     lifecycle_started_at = int(time.time() * 1000)
+    delegation_batch = getattr(main_ctx, "delegation_batch", None)
     subagent_metadata = {
         "display_name": sub_display_name,
         "agent_name": target_config.agent_name or agent_name,
@@ -1840,6 +1889,11 @@ async def sub_agent_call(
             else 0
         ),
     }
+    # 并行委派：带上批次键与序号，前端才能把同一批收成一个块并显示「2/3」。
+    if isinstance(delegation_batch, dict) and delegation_batch.get("batch_id"):
+        subagent_metadata["batch_id"] = str(delegation_batch["batch_id"])
+        subagent_metadata["batch_index"] = int(delegation_batch.get("index") or 0)
+        subagent_metadata["batch_total"] = int(delegation_batch.get("total") or 1)
     _put_subagent_lifecycle_log(
         main_ctx,
         log_id=lifecycle_log_id,
@@ -2389,8 +2443,24 @@ class BatchSubAgentTool(BaseTool):
                 ensure_ascii=False,
             )
 
+        batch_id = f"subbatch_{uuid.uuid4().hex[:12]}"
+        batch_total = len(args.calls)
+
         async def run_one(index: int, call: BatchSubAgentCall) -> dict[str, Any]:
-            task_ctx = main_ctx.model_copy(deep=False, update={"trace_buffer": []})
+            task_ctx = main_ctx.model_copy(
+                deep=False,
+                update={
+                    "trace_buffer": [],
+                    # 每个任务拿到**自己的**批次信息（单次委派为 None）。
+                    # 必须写进 task_ctx 而不是 main_ctx：几个任务并发跑，
+                    # 写共享实例会互相覆盖，最后全都标成同一个 index。
+                    "delegation_batch": {
+                        "batch_id": batch_id,
+                        "index": index,
+                        "total": batch_total,
+                    },
+                },
+            )
             original_ctx = get_current_agent_context()
             set_agent_context(task_ctx)
             try:

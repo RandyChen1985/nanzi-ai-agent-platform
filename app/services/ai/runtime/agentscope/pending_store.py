@@ -147,6 +147,53 @@ class PendingAgentScopeStore:
     def clear(self) -> None:
         self._memory_fallback.clear()
 
+    async def clear_conversation(
+        self,
+        user_id: str | int | None,
+        conversation_id: str | None,
+    ) -> None:
+        """按用户与会话清理过期的挂起恢复快照，避免历史删改/截断后残留。"""
+        if user_id is None or not conversation_id:
+            return
+        target_conv = str(conversation_id)
+        for request_id in [
+            req_id
+            for req_id, snapshot in self._memory_fallback.items()
+            if str(snapshot.conversation_id or "") == target_conv
+            and self._user_matches(snapshot, user_id)
+        ]:
+            self._memory_fallback.pop(request_id, None)
+
+        from app.core.redis import get_redis
+
+        redis = await get_redis()
+        if not redis:
+            return
+        try:
+            normalized_user = self._user_id(user_id)
+        except ValueError:
+            return
+        pattern = f"{memory_service.KEY_PREFIX}:{normalized_user}:pending:*"
+        try:
+            keys_to_delete: list[Any] = []
+            async for key in redis.scan_iter(match=pattern):
+                raw = await redis.get(key)
+                if not raw:
+                    continue
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                data = json.loads(raw)
+                if str(data.get("conversation_id") or "") == target_conv:
+                    keys_to_delete.append(key)
+            if keys_to_delete:
+                await redis.delete(*keys_to_delete)
+        except Exception as exc:
+            logger.warning(
+                "[PendingAgentScopeStore] clear_conversation failed (conv=%s): %s",
+                target_conv,
+                exc,
+            )
+
     @staticmethod
     def _from_dict(data: dict[str, Any]) -> PendingAgentScopeSnapshot | None:
         try:
