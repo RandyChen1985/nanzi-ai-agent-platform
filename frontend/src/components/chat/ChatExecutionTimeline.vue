@@ -814,6 +814,7 @@ import {
   resolveLiveTimerLogId,
   resolveTimelineCurrentStep,
   selectTimelineRenderableItems,
+  sortParallelBatchItems,
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
   isWorkspacePrewarmPending,
@@ -991,9 +992,11 @@ const densityMode = computed(() => normalizeReasoningDensity(props.reasoningDens
 const items = computed(() => {
   const base = groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value)
     .filter((item) => !isHiddenModelCall(item));
+  // 并行委派的容器按事件到达顺序插入，编号会跟位置对不上；统一按 batch_index 排一次。
+  const ordered = sortParallelBatchItems(base);
   // 只在精简档合并。合并行本身不随展开消失——展开了还留着它，用户才能再收回去。
-  if (densityMode.value !== "compact") return base;
-  return mergeReasoningRounds(base);
+  if (densityMode.value !== "compact") return ordered;
+  return mergeReasoningRounds(ordered);
 });
 
 const hasPending = computed(() => timelineHasPending(items.value));

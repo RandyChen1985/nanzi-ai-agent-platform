@@ -229,3 +229,85 @@ return {
 };
 """,
     ) == {"sourceIds": ["r1", "r2"], "contents": ["第一轮。", "第二轮。"]}
+
+
+# —— 并行委派：编号要和位置一致 ——
+
+
+def test_parallel_containers_are_ordered_by_batch_index():
+    """容器按事件到达顺序插入，编号会跟位置对不上（3/3 排在最前），必须按 batch_index 重排。"""
+    assert _run(
+        TIMELINE_TS,
+        """
+const mk = (id, index, batchId) => ({
+  kind: "log", id, title: "调用子代理：" + id, details: "", status: "success",
+  subagent: { display_name: id, batch_id: batchId, batch_index: index, batch_total: 3 },
+  isExpanded: false, children: [],
+});
+const out = api.sortParallelBatchItems([
+  mk("devops", 2, "b1"),
+  mk("data", 0, "b1"),
+  mk("kb", 1, "b1"),
+]);
+return out.map((i) => i.subagent.batch_index);
+""",
+    ) == [0, 1, 2]
+
+
+def test_batch_ordering_reaches_nested_children():
+    """容器通常挂在旁白的 children 下，排序必须递归进这一层，否则主路径没修到。"""
+    assert _run(
+        TIMELINE_TS,
+        """
+const mk = (id, index) => ({
+  kind: "log", id, title: "调用子代理：" + id, details: "", status: "success",
+  subagent: { display_name: id, batch_id: "b1", batch_index: index, batch_total: 3 },
+  isExpanded: false, children: [],
+});
+const items = [{
+  kind: "text", id: "n1", textKind: "narration", content: "并行委派几个。", pending: false,
+  children: [mk("c", 2), mk("a", 0), mk("b", 1)],
+}];
+const out = api.sortParallelBatchItems(items);
+return out[0].children.map((c) => c.subagent.batch_index);
+""",
+    ) == [0, 1, 2]
+
+
+def test_batch_ordering_leaves_other_items_alone():
+    """没有 batch 元数据的条目、以及不同批次之间不能被打乱。"""
+    assert _run(
+        TIMELINE_TS,
+        """
+const mk = (id, index, batchId) => ({
+  kind: "log", id, title: "调用子代理：" + id, details: "", status: "success",
+  subagent: { display_name: id, batch_id: batchId, batch_index: index, batch_total: 2 },
+  isExpanded: false, children: [],
+});
+const plain = { kind: "log", id: "tool1", title: "调用工具：x", details: "", status: "success",
+  isExpanded: false, children: [] };
+const out = api.sortParallelBatchItems([
+  mk("b2_0", 0, "b2"),
+  plain,
+  mk("b1_1", 1, "b1"),
+  mk("b1_0", 0, "b1"),
+]);
+return out.map((i) => i.id);
+""",
+    ) == ["b2_0", "tool1", "b1_0", "b1_1"]
+
+
+def test_batch_ordering_is_stable_for_equal_index():
+    """序号相同（或缺失）时保持原有先后，不要在前面塞一个凭空出现的顺序。"""
+    assert _run(
+        TIMELINE_TS,
+        """
+const mk = (id, index) => ({
+  kind: "log", id, title: "调用子代理：" + id, details: "", status: "success",
+  subagent: { display_name: id, batch_id: "b1", batch_index: index, batch_total: 2 },
+  isExpanded: false, children: [],
+});
+const out = api.sortParallelBatchItems([mk("first", 0), mk("second", 0)]);
+return out.map((i) => i.id);
+""",
+    ) == ["first", "second"]

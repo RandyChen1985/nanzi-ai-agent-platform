@@ -1013,6 +1013,70 @@ export function isReasoningContentExpanded(
   return item.pending;
 }
 
+/**
+ * 把同一批并行委派的子代理容器按 `batch_index` 排好。
+ *
+ * 为什么要排：并行派发时，各子代理的容器是按**事件到达顺序**插进时间线的，
+ * 而事件到达本身有抖动——界面上就会出现「并行 3/3」排在「并行 1/3」前面的怪状，
+ * 恰好把「并行」读成了「编号错乱」。标签只说明第几个，位置得跟标签一致。
+ *
+ * 只重排**相邻且同 batch_id** 的一段：不跨条目搬运，避免把旁白或工具行夹进来；
+ * 没有 batch 元数据的容器一律不动（老数据没有这个字段）。
+ */
+export function sortParallelBatchItems(
+  items: ProcessTimelineItem[],
+): ProcessTimelineItem[] {
+  const sorted = sortBatchRun(items);
+  return sorted.map((item) => {
+    if (item.kind !== "text" || !item.children?.length) return item;
+    const children = sortBatchRun(item.children);
+    return children === item.children ? item : { ...item, children };
+  });
+}
+
+function batchMetaOf(item: { kind: string; subagent?: SubagentTraceMeta }):
+  | { batchId: string; index: number }
+  | undefined {
+  if (item.kind !== "log") return undefined;
+  const meta = item.subagent;
+  if (!meta?.batch_id) return undefined;
+  const index = Number(meta.batch_index ?? 0);
+  return { batchId: meta.batch_id, index: Number.isFinite(index) ? index : 0 };
+}
+
+function sortBatchRun<T extends ProcessTimelineItem | ProcessTimelineLogItem>(
+  items: T[],
+): T[] {
+  let changed = false;
+  const result = items.slice();
+  let cursor = 0;
+  while (cursor < result.length) {
+    const head = batchMetaOf(result[cursor]);
+    if (!head) {
+      cursor += 1;
+      continue;
+    }
+    let end = cursor + 1;
+    while (end < result.length && batchMetaOf(result[end])?.batchId === head.batchId) {
+      end += 1;
+    }
+    if (end - cursor > 1) {
+      // Array.prototype.sort 是稳定排序：序号相同或缺失时保持原有先后。
+      const run = result.slice(cursor, end).sort((left, right) => {
+        const a = batchMetaOf(left)?.index ?? 0;
+        const b = batchMetaOf(right)?.index ?? 0;
+        return a - b;
+      });
+      for (let offset = 0; offset < run.length; offset += 1) {
+        if (result[cursor + offset] !== run[offset]) changed = true;
+        result[cursor + offset] = run[offset];
+      }
+    }
+    cursor = end;
+  }
+  return changed ? result : items;
+}
+
 /** 等待用户操作的挂起类别：机器没在跑，不该展示实时秒表。 */
 export const NON_LIVE_TIMER_CATEGORIES: ReadonlySet<string> = new Set([
   "permission",
