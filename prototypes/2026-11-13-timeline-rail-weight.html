@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>执行链路轨迹线 · 三档灰度对比</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 28px 56px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f7f8fa;
+    color: #1f2328;
+  }
+  h1 { margin: 0 0 6px; font-size: 19px; font-weight: 600; }
+  .lede { margin: 0 0 22px; font-size: 13px; line-height: 1.7; color: #6b7280; max-width: 940px; }
+  .lede b { color: #374151; font-weight: 600; }
+
+  .toolbar { display: flex; gap: 8px; margin-bottom: 20px; }
+  .toolbar button {
+    border: 1px solid #d8dbe0; background: #fff; color: #4b5563;
+    border-radius: 8px; padding: 6px 14px; font-size: 12.5px; cursor: pointer;
+  }
+  .toolbar button[aria-pressed="true"] { background: #1f2328; border-color: #1f2328; color: #fff; }
+
+  .cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; }
+  @media (max-width: 1100px) { .cols { grid-template-columns: 1fr; } }
+
+  .col { background: #fff; border: 1px solid #e6e8eb; border-radius: 12px; padding: 18px 16px 14px; }
+  .col.dark { background: #1c1f24; border-color: #2b3038; }
+
+  .col-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+  .col-name { font-size: 13.5px; font-weight: 600; }
+  .col.dark .col-name { color: #e5e7eb; }
+  .col-tag { font-size: 11px; color: #9ca3af; }
+  .col-tag.now { color: #b45309; font-weight: 600; }
+  .col-tag.pick { color: #047857; font-weight: 600; }
+
+  /* ===== 轨道本体：三档只改这一组变量 ===== */
+  .cols[data-weight="now"]  { --rail: .24; --node-think: .52; --node-tool: .40; --node-say: .36; --node-agent: .40; --node-todo: .32; --branch: .20; }
+  .cols[data-weight="soft"] { --rail: .16; --node-think: .42; --node-tool: .31; --node-say: .27; --node-agent: .31; --node-todo: .24; --branch: .14; }
+  .cols[data-weight="faint"]{ --rail: .10; --node-think: .32; --node-tool: .23; --node-say: .20; --node-agent: .23; --node-todo: .18; --branch: .10; }
+
+  .rail { position: relative; padding-left: 1.1rem; }
+  .rail::before {
+    content: ""; position: absolute; left: .24rem; top: .45rem; bottom: .55rem;
+    width: 1px; background: rgba(127,127,127,var(--rail));
+  }
+  .node { position: relative; }
+  .node::before {
+    content: ""; position: absolute; z-index: 1; border-radius: 9999px;
+    left: -1.04rem; top: .44rem; width: .36rem; height: .36rem;
+    background: rgba(127,127,127,var(--node-think));
+  }
+  .node.tool::before { left: -1.02rem; top: .46rem; width: .32rem; height: .32rem; border-radius: 1px; background: rgba(127,127,127,var(--node-tool)); }
+  .node.say::before  { left: -.97rem;  top: .52rem; width: .22rem; height: .22rem; background: rgba(127,127,127,var(--node-say)); }
+  .node.agent::before{ left: -1.01rem; top: .45rem; width: .30rem; height: .30rem; border-radius: 1px; transform: rotate(45deg); background: rgba(127,127,127,var(--node-agent)); }
+  .node.todo::before { background: rgba(127,127,127,var(--node-todo)); }
+
+  .row { display: flex; align-items: center; gap: 7px; min-height: 30px; font-size: 13px; color: #3f4650; }
+  .col.dark .row { color: #c9cfd8; }
+  .row .ico { width: 13px; height: 13px; flex: none; opacity: .55; }
+  .row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .meta { font-size: 11.5px; color: #9aa1ab; flex: none; }
+  .row .chev { font-size: 10px; color: #b6bcc4; flex: none; }
+  .row.narr { color: #4b5563; line-height: 1.55; padding: 3px 0; }
+  .col.dark .row.narr { color: #b3bac4; }
+
+  .kids { margin-left: 1.25rem; border-left: 1px solid rgba(127,127,127,var(--branch)); padding-left: .5rem; }
+  .kids .row { min-height: 24px; font-size: 12.5px; color: #6b7280; }
+  .col.dark .kids .row { color: #9aa1ab; }
+
+  .vals { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #e6e8eb; font-size: 11.5px; line-height: 1.9; color: #6b7280; font-variant-numeric: tabular-nums; }
+  .col.dark .vals { border-top-color: #2b3038; color: #8b929c; }
+  .vals code { background: #f1f3f5; border-radius: 4px; padding: 1px 4px; font-size: 11px; }
+  .col.dark .vals code { background: #262a31; }
+
+  .notes { margin-top: 26px; max-width: 940px; font-size: 12.5px; line-height: 1.9; color: #6b7280; }
+  .notes h2 { font-size: 13.5px; color: #374151; margin: 0 0 6px; font-weight: 600; }
+  .notes ul { margin: 0 0 16px; padding-left: 20px; }
+  .notes b { color: #374151; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 9999px; vertical-align: -1px; margin-right: 3px; }
+</style>
+</head>
+<body>
+
+<h1>执行链路轨迹线 · 三档灰度对比</h1>
+<p class="lede">
+  同一段执行过程，只有「竖线 + 节点」的灰度不同。你要看的是<b>哪个既能退到背景里、又还能靠形状和深浅读出层级</b>。
+  中间那档是我的推荐：<b>整体压淡约三分之一，但刻意保留思考 › 工具 › 旁白之间的深浅差</b>。
+</p>
+
+<div class="toolbar">
+  <button id="btn-light" aria-pressed="true">浅色主题</button>
+  <button id="btn-dark" aria-pressed="false">深色主题</button>
+</div>
+
+<div class="cols" data-weight="soft" id="cols">
+
+  <div class="col">
+    <div class="col-head">
+      <span class="col-name">A · 现在</span>
+      <span class="col-tag now">当前线上</span>
+    </div>
+    <div class="rail">
+      <div class="node"><div class="row"><span class="ico">🥏</span><span class="t">鉴权及上下文与能力准备</span><span class="meta">8 项准备 · 242ms</span><span class="chev">⌄</span></div></div>
+      <div class="node tool"><div class="row"><span class="ico">🔧</span><span class="t">工具可用性检查</span><span class="chev">⌄</span></div></div>
+      <div class="node say"><div class="row"><span class="ico">💬</span><span class="t">会话运行时准备</span><span class="meta">34ms</span><span class="chev">⌄</span></div></div>
+      <div class="node say"><div class="row"><span class="ico">💬</span><span class="t">开始生成回复</span><span class="chev">⌄</span></div></div>
+      <div class="node narr">
+        <div class="row narr"><span>我先通过 GitHub API 拉取上周合并的 PR 列表，再逐个获取改动统计。</span></div>
+        <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">1 个工具调用</span></div></div>
+      </div>
+      <div class="node narr">
+        <div class="row narr"><span>上周合并的 PR 已定位到 #294 至 #305，共 12 个。接下来逐个拉取统计。</span></div>
+        <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">2 个工具调用</span></div></div>
+      </div>
+    </div>
+    <div class="vals">
+      竖线 <code>.24</code><br>
+      思考 <code>.52</code> · 工具 <code>.40</code> · 旁白 <code>.36</code><br>
+      分支 <code>.20</code>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-head">
+      <span class="col-name">B · 压淡约 1/3</span>
+      <span class="col-tag pick">推荐</span>
+    </div>
+    <div class="rail">
+      <div class="node"><div class="row"><span class="ico">🥏</span><span class="t">鉴权及上下文与能力准备</span><span class="meta">8 项准备 · 242ms</span><span class="chev">⌄</span></div></div>
+      <div class="node tool"><div class="row"><span class="ico">🔧</span><span class="t">工具可用性检查</span><span class="chev">⌄</span></div></div>
+      <div class="node say"><div class="row"><span class="ico">💬</span><span class="t">会话运行时准备</span><span class="meta">34ms</span><span class="chev">⌄</span></div></div>
+      <div class="node say"><div class="row"><span class="ico">💬</span><span class="t">开始生成回复</span><span class="chev">⌄</span></div></div>
+      <div class="node narr">
+        <div class="row narr"><span>我先通过 GitHub API 拉取上周合并的 PR 列表，再逐个获取改动统计。</span></div>
+        <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">1 个工具调用</span></div></div>
+      </div>
+      <div class="node narr">
+        <div class="row narr"><span>上周合并的 PR 已定位到 #294 至 #305，共 12 个。接下来逐个拉取统计。</span></div>
+        <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">2 个工具调用</span></div></div>
+      </div>
+    </div>
+    <div class="vals">
+      竖线 <code>.16</code><br>
+      思考 <code>.42</code> · 工具 <code>.31</code> · 旁白 <code>.27</code><br>
+      分支 <code>.14</code>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-head">
+      <span class="col-name">C · 再淡一档</span>
+      <span class="col-tag">更弱</span>
+    </div>
+    <div class="rail">
+      <div class="node"><div class="row"><span class="ico">🥏</span><span class="t">鉴权及上下文与能力准备</span><span class="meta">8 项准备 · 242ms</span><span class="chev">⌄</span></div></div>
+      <div class="node tool"><div class="row"><span class="ico">🔧</span><span class="t">工具可用性检查</span><span class="chev">⌄</span></div></div>
+      <div class="node say"><div class="row"><span class="ico">💬</span><span class="t">会话运行时准备</span><span class="meta">34ms</span><span class="chev">⌄</span></div></div>
+      <div class="node say"><div class="row"><span class="ico">💬</span><span class="t">开始生成回复</span><span class="chev">⌄</span></div></div>
+      <div class="node narr">
+        <div class="row narr"><span>我先通过 GitHub API 拉取上周合并的 PR 列表，再逐个获取改动统计。</span></div>
+        <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">1 个工具调用</span></div></div>
+      </div>
+      <div class="node narr">
+        <div class="row narr"><span>上周合并的 PR 已定位到 #294 至 #305，共 12 个。接下来逐个拉取统计。</span></div>
+        <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">2 个工具调用</span></div></div>
+      </div>
+    </div>
+    <div class="vals">
+      竖线 <code>.10</code><br>
+      思考 <code>.32</code> · 工具 <code>.23</code> · 旁白 <code>.20</code><br>
+      分支 <code>.10</code>
+    </div>
+  </div>
+
+</div>
+
+<div class="notes">
+  <h2>怎么选</h2>
+  <ul>
+    <li><b>A 的问题</b>：思考点 0.52 已经接近正文灰度的 40%，读的时候眼睛会先去点、再回文字，轨道抢了内容。</li>
+    <li><b>B 的思路</b>：线压到 0.16，点压到 0.42/0.31/0.27 —— <b>绝对值都淡了，但三者之间的比值没变</b>，所以「思考比工具重、工具比旁白重」仍然读得出来。</li>
+    <li><b>C 的风险</b>：0.32 的点和 0.20 的旁白点在 Retina 上几乎成一个灰斑，层级差被抹平，又退回「平铺」；深色主题下更明显（见深色对比）。</li>
+    <li><b>不要动的</b>：失败节点的红色 <code>rgb(239,68,68)</code>。它是全链路唯一的彩色，用来让错误立刻被看见，跟这套灰阶不冲突。</li>
+  </ul>
+
+  <h2>顺带一个发现</h2>
+  <ul>
+    <li>截图里「开始生成回复」这一行的节点明显<b>比上面几行淡且小</b>——它是 <code>say</code> 档。但语义上它和「会话运行时准备」是同一层级的阶段，尺寸差会让它看起来像子步骤。</li>
+    <li>可以先按 B 定重量，再看要不要把这个节点归到 <code>think</code> 档。这个需要你判断，我没动。</li>
+  </ul>
+</div>
+
+<script>
+  var cols = document.getElementById('cols');
+  var btnLight = document.getElementById('btn-light');
+  var btnDark = document.getElementById('btn-dark');
+  function setTheme(dark) {
+    document.querySelectorAll('.col').forEach(function (col) {
+      col.classList.toggle('dark', dark);
+    });
+    btnLight.setAttribute('aria-pressed', String(!dark));
+    btnDark.setAttribute('aria-pressed', String(dark));
+    document.body.style.background = dark ? '#14171b' : '#f7f8fa';
+    document.body.style.color = dark ? '#e5e7eb' : '#1f2328';
+  }
+  btnLight.addEventListener('click', function () { setTheme(false); });
+  btnDark.addEventListener('click', function () { setTheme(true); });
+</script>
+
+</body>
+</html>

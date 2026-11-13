@@ -509,3 +509,16 @@ class AgentSystemUnpublishPreview(BaseModel):
     agent_id: str
     affected_user_count: int
     sample_user_names: List[str] = []
+
+
+class DelegationScopeUpdate(BaseModel):
+    """专家团成员的整份替换。
+
+    名单是**整体替换**语义：传什么就是什么，空数组表示「显式禁止委派任何子专家」，
+    与「未配置（null，表示全部可委派）」是两件事，不要用缺省值混淆。
+    """
+
+    delegable_agent_ids: List[str] = Field(default_factory=list)
+    #: 已发布版本没启用 sub_agent_call 时，是否同意这次保存一并启用它。
+    #: 默认 False：启用工具属于改动工具集，必须由调用方明确表示同意。
+    enable_delegation_tool: bool = False

@@ -37,6 +37,7 @@ from app.schemas.agent import (
     AgentSystemReviewRequest,
     AgentSystemUnpublishPreview,
     AgentSystemUnpublishRequest,
+    DelegationScopeUpdate,
 )
 
 router = APIRouter()
@@ -860,6 +861,114 @@ async def publish_agent_version(agent_id: str, version_id: str, session: AsyncSe
     if not success:
         raise HTTPException(status_code=403, detail="Forbidden: Failed to publish version (check ownership)")
     return {"status": "success"}
+
+def _delegation_scope_error(exc: Exception) -> HTTPException:
+    """把服务层的领域异常翻译成前端能直接分支的错误码。"""
+    from app.services.ai.agent_delegation_scope_service import (
+        AgentNotVisibleError,
+        DelegationScopeError,
+        DelegationToolDisabledError,
+        NoPublishedVersionError,
+        TooManyMembersError,
+    )
+
+    if isinstance(exc, NoPublishedVersionError):
+        return HTTPException(
+            status_code=409,
+            detail={"code": "NO_PUBLISHED_VERSION", "message": str(exc)},
+        )
+    if isinstance(exc, DelegationToolDisabledError):
+        return HTTPException(
+            status_code=409,
+            detail={"code": "DELEGATION_TOOL_DISABLED", "message": str(exc)},
+        )
+    if isinstance(exc, TooManyMembersError):
+        return HTTPException(
+            status_code=422,
+            detail={
+                "code": "TOO_MANY_MEMBERS",
+                "message": str(exc),
+                "count": exc.count,
+            },
+        )
+    if isinstance(exc, AgentNotVisibleError):
+        # 不存在与无权共用一个 404：分开会变成存在性探测
+        return HTTPException(
+            status_code=404,
+            detail={"code": "AGENT_NOT_FOUND", "message": str(exc)},
+        )
+    if isinstance(exc, DelegationScopeError):
+        return HTTPException(
+            status_code=403,
+            detail={"code": "SCOPE_NOT_WRITABLE", "message": str(exc)},
+        )
+    raise exc
+
+
+@router.get(
+    "/{agent_id}/delegation-scope",
+    dependencies=[Depends(require_permission("element", "element:agent:edit"))],
+)
+async def read_delegation_scope(
+    agent_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """专家团成员现状：版本号、是否有已发布版本、委派工具是否启用、当前名单。
+
+    三项前置条件一次带回去，前端才能直接决定「成员区可编辑 / 换成说明」，
+    不用让用户点一次保存才发现配不了。
+    """
+    from app.services.ai.agent_delegation_scope_service import (
+        AgentDelegationScopeService,
+    )
+
+    try:
+        # 必须带上 user：版本号与成员名单属于配置信息，不能凭 agent_id 裸读
+        state = await AgentDelegationScopeService.read_scope(session, agent_id, user)
+    except Exception as exc:  # noqa: BLE001
+        raise _delegation_scope_error(exc) from exc
+    return state.as_dict()
+
+
+@router.put(
+    "/{agent_id}/delegation-scope",
+    dependencies=[Depends(require_permission("element", "element:agent:edit"))],
+)
+async def save_delegation_scope(
+    agent_id: str,
+    data: DelegationScopeUpdate,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """保存成员名单：生成一份新版本，**只**替换名单，其余配置原样沿用。
+
+    不走「新建草稿 → 发布」两段式：运行时读的就是最新 PUBLISHED 版本，
+    在这里复刻一份并立刻发布，用户感知是「改完就生效」，版本历史仍然完整。
+    """
+    from app.services.ai.agent_delegation_scope_service import (
+        AgentDelegationScopeService,
+    )
+
+    try:
+        state = await AgentDelegationScopeService.save_scope(
+            session,
+            agent_id,
+            data.delegable_agent_ids,
+            enable_tool=data.enable_delegation_tool,
+            user=user,
+        )
+    except Exception as exc:  # noqa: BLE001 —— 统一在这里翻译成 HTTP 语义
+        from app.services.ai.agent_manager import AgentNotReadyError
+
+        if isinstance(exc, AgentNotReadyError):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "AGENT_NOT_READY", "missing": list(exc.missing)},
+            ) from exc
+        raise _delegation_scope_error(exc) from exc
+    return state.as_dict()
+
 
 @router.delete("/{agent_id}/versions/{version_id}", dependencies=[Depends(require_permission("element", "element:agent:edit"))])
 async def delete_agent_version(agent_id: str, version_id: str, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):

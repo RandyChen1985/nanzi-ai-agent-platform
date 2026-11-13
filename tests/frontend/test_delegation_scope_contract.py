@@ -141,7 +141,9 @@ def test_modal_uses_platform_shell_so_it_cannot_sink_behind_the_drawer():
     assert "<Modal" in MODAL
     # 抽屉是 z-[9990]、其内置弹窗是 z-[10000]，白名单弹窗必须压过它们
     assert "DELEGATION_SCOPE_Z_INDEX = 10010" in MODAL
-    assert ':z-index="DELEGATION_SCOPE_Z_INDEX"' in MODAL
+    # 默认仍是 10010；「专家团设置」（同为 10010）内部唤起时由调用方传更高的
+    # zIndex 覆盖，否则两个同层窗口互相盖住。
+    assert ':z-index="zIndex ?? DELEGATION_SCOPE_Z_INDEX"' in MODAL
     # 确认层还要在 Modal 之上
     assert "DELEGATION_SCOPE_Z_INDEX + 10" in MODAL
 
@@ -188,3 +190,19 @@ def test_team_lead_badge_states_the_personal_only_scope():
     assert "团主 · 仅个人能力" in MODAL
     assert "团主专家 · 不可选" not in MODAL
     assert "只能用个人能力" in MODAL
+
+
+def test_rules_block_is_collapsed_by_default():
+    """规则说明默认折叠，但折叠态仍要能看懂「未配置 vs 配置后」的差别。
+
+    四行常驻说明会吃掉弹窗三分之一的高度（团设置在它之上再叠一层更明显），
+    而其中只有「未配置 ≠ 配置后」这一条会直接导致误操作；其余三条看列表里的
+    「系统兜底 · 不可委派」「无 agent 授权」「未加入」徽标也就明白了。
+    """
+    modal = MODAL
+    assert "const showRules = ref(false)" in modal
+    # 折叠用 v-show 而不是 v-if：文本留在 DOM 里，Ctrl+F、读屏、契约都还能找到
+    assert 'v-show="showRules"' in modal
+    assert ':aria-expanded="showRules"' in modal
+    # 折叠态那一行必须保留核心语义
+    assert "= 全部「已授权给你的系统智能体」" in modal

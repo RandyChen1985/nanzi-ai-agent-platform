@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>执行链路轨迹 · 四种减重思路对比</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 30px 26px 60px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f7f8fa; color: #1f2328;
+  }
+  h1 { margin: 0 0 6px; font-size: 19px; font-weight: 600; }
+  .lede { margin: 0 0 18px; font-size: 13px; line-height: 1.75; color: #6b7280; max-width: 1100px; }
+  .lede b { color: #374151; }
+
+  .toolbar { display: flex; gap: 8px; margin-bottom: 18px; }
+  .toolbar button {
+    border: 1px solid #d8dbe0; background: #fff; color: #4b5563;
+    border-radius: 8px; padding: 6px 14px; font-size: 12.5px; cursor: pointer;
+  }
+  .toolbar button[aria-pressed="true"] { background: #1f2328; border-color: #1f2328; color: #fff; }
+
+  /* ===== 四列 ===== */
+  .cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  @media (max-width: 1500px) { .cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 820px)  { .cols { grid-template-columns: 1fr; } }
+
+  .col { background: #fff; border: 1px solid #e6e8eb; border-radius: 12px; padding: 16px 14px 13px; }
+  .col.dark { background: #1c1f24; border-color: #2b3038; }
+  .col.recommend { border-color: #10b981; box-shadow: 0 0 0 1px #10b981 inset; }
+
+  .col-head { margin-bottom: 13px; }
+  .col-name { display: block; font-size: 13.5px; font-weight: 600; margin-bottom: 3px; }
+  .col.dark .col-name { color: #e5e7eb; }
+  .col-desc { font-size: 11.5px; line-height: 1.6; color: #9ca3af; }
+  .badge { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 4px; margin-left: 4px; vertical-align: 1px; }
+  .badge.pick { background: #d1fae5; color: #047857; }
+  .badge.now { background: #fef3c7; color: #b45309; }
+  .col.dark .badge.pick { background: #064e3b; color: #6ee7b7; }
+  .col.dark .badge.now { background: #451a03; color: #fbbf24; }
+
+  /* ===== 轨道 ===== */
+  .rail { position: relative; padding-left: 1.1rem; }
+
+  /* A/C：整条贯穿线 */
+  .rail.through::before {
+    content: ""; position: absolute; left: .24rem; top: .45rem; bottom: .35rem;
+    width: 1px; background: rgba(127,127,127,.24);
+  }
+  /* B/C/D：已完成态整体很淡 */
+  .rail.quiet::before { background: rgba(127,127,127,.12); }
+
+  /* 分段：每个 seg 自己画线，seg 之间断开 */
+  .seg { position: relative; }
+  .seg + .seg { margin-top: 9px; }
+  .seg.segmented { padding-left: 0; }
+  .seg.segmented::before {
+    content: ""; position: absolute; left: -0.86rem; top: .42rem; bottom: .34rem;
+    width: 1px; background: rgba(127,127,127,.20);
+  }
+
+  .node { position: relative; }
+  .node::before {
+    content: ""; position: absolute; z-index: 1; border-radius: 9999px;
+    left: -1.04rem; top: .46rem; width: .34rem; height: .34rem;
+    background: rgba(127,127,127,.18);
+  }
+  .node.tool::before { left: -1.02rem; top: .48rem; width: .30rem; height: .30rem; border-radius: 1px; background: rgba(127,127,127,.14); }
+  .node.say::before  { left: -.97rem;  top: .54rem; width: .21rem; height: .21rem; background: rgba(127,127,127,.12); }
+  .node.agent::before{ left: -1.01rem; top: .47rem; width: .28rem; height: .28rem; border-radius: 1px; transform: rotate(45deg); background: rgba(127,127,127,.14); }
+
+  /* 进行中：借用行内状态点（.thought-status-dot）的同一个蓝。
+     两处说的是同一件事，同一个颜色才不会被读成两种状态；
+     全轨只有这一个点是彩色，其余仍是灰阶。 */
+  .node.running::before { background: #0ea5e9; animation: pulse 1.9s ease-in-out infinite; }
+  .node.failed::before { background: rgb(239 68 68); }
+  @keyframes pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+
+  /* 还在跑：线末端渐隐，表示「还会往下长」。 */
+  .rail.live.through::before {
+    background: linear-gradient(to bottom,
+      rgba(127,127,127,.14) 0%, rgba(127,127,127,.14) 68%, rgba(127,127,127,.02) 100%);
+  }
+
+  /* 状态图例 */
+  .legend { display: flex; gap: 12px; margin-top: 9px; font-size: 11px; color: #9aa1ab; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .legend i { width: 7px; height: 7px; border-radius: 9999px; display: inline-block; }
+  .legend .sw-done { background: rgba(127,127,127,.18); box-shadow: inset 0 0 0 1px rgba(127,127,127,.25); }
+  .legend .sw-run { background: #0ea5e9; }
+  .legend .sw-fail { background: rgb(239 68 68); }
+
+  /* ===== 行 ===== */
+  .row { display: flex; align-items: center; gap: 6px; min-height: 29px; font-size: 12.5px; color: #3f4650; }
+  .col.dark .row { color: #c9cfd8; }
+  .row .ico { width: 12px; height: 12px; flex: none; opacity: .5; }
+  .row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .meta { font-size: 11px; color: #9aa1ab; flex: none; }
+  .row .chev { font-size: 9px; color: #b6bcc4; flex: none; }
+  .row.narr { color: #4b5563; line-height: 1.5; padding: 2px 0; white-space: normal; }
+  .col.dark .row.narr { color: #b3bac4; }
+  .row.running-row .t { color: #1f2328; font-weight: 500; }
+  .col.dark .row.running-row .t { color: #f3f4f6; }
+  .spin { display: inline-block; width: 10px; height: 10px; border: 1.5px solid #d1d5db; border-top-color: #6b7280; border-radius: 9999px; animation: spin .9s linear infinite; }
+  .col.dark .spin { border-color: #374151; border-top-color: #9ca3af; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .kids { margin-left: 1.2rem; border-left: 1px solid rgba(127,127,127,.16); padding-left: .5rem; }
+  .kids .row { min-height: 22px; font-size: 12px; color: #6b7280; }
+  .col.dark .kids .row { color: #9aa1ab; }
+
+  /* hover 点亮：静止极淡，指到哪亮哪 */
+  .hoverlit .node::before { opacity: .35; transition: opacity .16s ease; }
+  .hoverlit .node:hover::before { opacity: 1; }
+  .hoverlit .row { transition: color .16s ease; }
+  .hoverlit .node:hover .t { color: #111827; }
+  .col.dark .hoverlit .node:hover .t { color: #fff; }
+
+  .foot { margin-top: 13px; padding-top: 11px; border-top: 1px dashed #e6e8eb; font-size: 11.5px; line-height: 1.85; color: #6b7280; }
+  .col.dark .foot { border-top-color: #2b3038; color: #8b929c; }
+  .foot b { color: #374151; }
+  .col.dark .foot b { color: #d1d5db; }
+  .foot code { background: #f1f3f5; border-radius: 4px; padding: 1px 4px; font-size: 10.5px; }
+  .col.dark .foot code { background: #262a31; }
+
+  .notes { margin-top: 26px; max-width: 1100px; font-size: 12.5px; line-height: 1.95; color: #6b7280; }
+  .notes h2 { font-size: 13.5px; color: #374151; margin: 0 0 7px; font-weight: 600; }
+  .notes ul { margin: 0 0 18px; padding-left: 20px; }
+  .notes b { color: #374151; }
+  .kbd { background: #eef0f2; border-radius: 4px; padding: 1px 5px; font-size: 11px; color: #4b5563; }
+</style>
+</head>
+<body>
+
+<h1>执行链路轨迹 · 四种减重思路</h1>
+<p class="lede">
+  不是继续调灰度，而是<b>减少不该出现的视觉重量</b>。四列画的是同一段执行过程（准备 3 步 + 两段旁白 + 一个正在跑的步骤），
+  差别在于「哪些点该亮、线该画多长、毫秒级准备要不要占一行」。
+</p>
+
+<div class="toolbar">
+  <button id="btn-light" aria-pressed="true">浅色主题</button>
+  <button id="btn-dark" aria-pressed="false">深色主题</button>
+</div>
+
+<div class="cols" id="cols">
+
+  <!-- ========== A 现状 ========== -->
+  <div class="col">
+    <div class="col-head">
+      <span class="col-name">A · 现状<span class="badge now">当前线上</span></span>
+      <span class="col-desc">贯穿线 + 所有节点同一强度</span>
+    </div>
+    <div class="rail through">
+      <div class="node"><div class="row"><span class="ico">🥏</span><span class="t">鉴权及上下文与能力准备</span><span class="meta">242ms</span><span class="chev">⌄</span></div></div>
+      <div class="node tool"><div class="row"><span class="ico">🔧</span><span class="t">工具可用性检查</span><span class="chev">⌄</span></div></div>
+      <div class="node say"><div class="row"><span class="ico">💬</span><span class="t">会话运行时准备</span><span class="meta">34ms</span><span class="chev">⌄</span></div></div>
+      <div class="node say"><div class="row"><span class="ico">💬</span><span class="t">开始生成回复</span><span class="chev">⌄</span></div></div>
+      <div class="node narr">
+        <div class="row narr"><span>我先通过 GitHub API 拉取上周合并的 PR 列表，再逐个获取改动统计。</span></div>
+        <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">1 个工具调用</span></div></div>
+      </div>
+      <div class="node narr">
+        <div class="row narr"><span>上周合并的 PR 已定位到 #294 至 #305，共 12 个。接下来逐个拉取统计。</span></div>
+        <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">2 个工具调用</span></div></div>
+      </div>
+      <div class="node"><div class="row running-row"><span class="spin"></span><span class="t">逐个获取 12 个 PR 的改动统计</span><span class="meta">进行中</span></div></div>
+    </div>
+    <div class="foot">
+      <b>8 行 · 一条线贯穿到底</b><br>
+      7 个点全亮（<code>.52/.40/.36</code>），只有最后一行在真的跑
+    </div>
+  </div>
+
+  <!-- ========== B 按状态分权重 ========== -->
+  <div class="col">
+    <div class="col-head">
+      <span class="col-name">B · 按状态分权重<span class="badge pick">已采用</span></span>
+      <span class="col-desc">完成态退成标点；进行中借行内的蓝并呼吸；线末端渐隐</span>
+    </div>
+    <div class="rail through quiet live">
+      <div class="node done"><div class="row"><span class="ico">🥏</span><span class="t">鉴权及上下文与能力准备</span><span class="meta">242ms</span><span class="chev">⌄</span></div></div>
+      <div class="node tool done"><div class="row"><span class="ico">🔧</span><span class="t">工具可用性检查</span><span class="chev">⌄</span></div></div>
+      <div class="node say done"><div class="row"><span class="ico">💬</span><span class="t">会话运行时准备</span><span class="meta">34ms</span><span class="chev">⌄</span></div></div>
+      <div class="node say done"><div class="row"><span class="ico">💬</span><span class="t">开始生成回复</span><span class="chev">⌄</span></div></div>
+      <div class="node narr done">
+        <div class="row narr"><span>我先通过 GitHub API 拉取上周合并的 PR 列表，再逐个获取改动统计。</span></div>
+        <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">1 个工具调用</span></div></div>
+      </div>
+      <div class="node narr done">
+        <div class="row narr"><span>上周合并的 PR 已定位到 #294 至 #305，共 12 个。接下来逐个拉取统计。</span></div>
+        <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">2 个工具调用</span></div></div>
+      </div>
+      <div class="node running"><div class="row running-row"><span class="spin"></span><span class="t">逐个获取 12 个 PR 的改动统计</span><span class="meta">进行中</span></div></div>
+    </div>
+    <div class="legend">
+      <span><i class="sw-done"></i>已完成</span>
+      <span><i class="sw-run"></i>进行中</span>
+      <span><i class="sw-fail"></i>失败</span>
+    </div>
+    <div class="foot">
+      <b>8 行 · 点有了状态语义</b><br>
+      完成 <code>灰 .18/.14/.12</code> · 进行中 <code>#0ea5e9</code> + 呼吸<br>
+      全轨只有进行中和失败是彩色，其余全是标点
+    </div>
+  </div>
+
+  <!-- ========== C 线分段 ========== -->
+  <div class="col">
+    <div class="col-head">
+      <span class="col-name">C · 线分段</span>
+      <span class="col-desc">只在同组内连线，组间断开</span>
+    </div>
+    <div class="rail through quiet">
+      <div class="seg segmented">
+        <div class="node done"><div class="row"><span class="ico">🥏</span><span class="t">鉴权及上下文与能力准备</span><span class="meta">242ms</span><span class="chev">⌄</span></div></div>
+        <div class="node tool done"><div class="row"><span class="ico">🔧</span><span class="t">工具可用性检查</span><span class="chev">⌄</span></div></div>
+        <div class="node say done"><div class="row"><span class="ico">💬</span><span class="t">会话运行时准备</span><span class="meta">34ms</span><span class="chev">⌄</span></div></div>
+        <div class="node say done"><div class="row"><span class="ico">💬</span><span class="t">开始生成回复</span><span class="chev">⌄</span></div></div>
+      </div>
+      <div class="seg segmented">
+        <div class="node narr done">
+          <div class="row narr"><span>我先通过 GitHub API 拉取上周合并的 PR 列表，再逐个获取改动统计。</span></div>
+          <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">1 个工具调用</span></div></div>
+        </div>
+        <div class="node narr done">
+          <div class="row narr"><span>上周合并的 PR 已定位到 #294 至 #305，共 12 个。接下来逐个拉取统计。</span></div>
+          <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">2 个工具调用</span></div></div>
+        </div>
+      </div>
+      <div class="seg segmented">
+        <div class="node running"><div class="row running-row"><span class="spin"></span><span class="t">逐个获取 12 个 PR 的改动统计</span><span class="meta">进行中</span></div></div>
+      </div>
+    </div>
+    <div class="foot">
+      <b>8 行 · 线从「贯穿」变成「三段」</b><br>
+      总长度约为原来的 60%，断开处本身就是分组信号<br>
+      不用把线调到几乎看不见
+    </div>
+  </div>
+
+  <!-- ========== D 组合 ========== -->
+  <div class="col recommend">
+    <div class="col-head">
+      <span class="col-name">D · 组合<span class="badge">可选</span></span>
+      <span class="col-desc">B 的效果 + 线分段 + 准备阶段折叠成一行</span>
+    </div>
+    <div class="rail through quiet live">
+      <div class="seg segmented">
+        <div class="node tool done"><div class="row"><span class="ico">🥏</span><span class="t">准备（鉴权 · 工具检查 · 运行时）</span><span class="meta">8 项 · 276ms</span><span class="chev">⌄</span></div></div>
+        <div class="node say done"><div class="row"><span class="ico">💬</span><span class="t">开始生成回复</span><span class="chev">⌄</span></div></div>
+      </div>
+      <div class="seg segmented">
+        <div class="node narr done">
+          <div class="row narr"><span>我先通过 GitHub API 拉取上周合并的 PR 列表，再逐个获取改动统计。</span></div>
+          <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">1 个工具调用</span></div></div>
+        </div>
+        <div class="node narr done">
+          <div class="row narr"><span>上周合并的 PR 已定位到 #294 至 #305，共 12 个。接下来逐个拉取统计。</span></div>
+          <div class="kids"><div class="row"><span class="chev">⌄</span><span class="t">2 个工具调用</span></div></div>
+        </div>
+      </div>
+      <div class="seg segmented">
+        <div class="node running"><div class="row running-row"><span class="spin"></span><span class="t">逐个获取 12 个 PR 的改动统计</span><span class="meta">进行中</span></div></div>
+      </div>
+    </div>
+    <div class="foot">
+      <b>6 行 · 比 A 少 2 行，比 C 少 2 个点</b><br>
+      准备三步合成一行（展开还能看到原文）<br>
+      少行数比淡颜色更有效地让轨道退后
+    </div>
+  </div>
+
+</div>
+
+<div class="notes">
+  <h2>怎么看这四列</h2>
+  <ul>
+    <li><b>先把视线放到最后一行「进行中」</b>：A 里它和上面七个点一样重，你得靠转圈的图标才能找到「现在跑到哪」；B/C/D 里它是<b>全屏唯一的蓝点</b>，而且线在那里渐隐——不用读字就知道进度到这儿为止。</li>
+    <li><b>为什么用蓝而不是更亮的灰</b>：只靠灰度时，完成态和进行态只差 1.6~3 倍，截个图或开了「减少动态效果」就分不出来。行内的状态点本来就是 <code>#0ea5e9</code>，轨道点用同一个色是呼应同一个语义，不算多一种颜色。</li>
+    <li><b>再看左侧那条线</b>：A 的线从头画到尾，中间跨过旁白、工具子层，其实没表达任何分组；C/D 断成三段，<span class="kbd">准备</span> / <span class="kbd">拉取</span> / <span class="kbd">统计</span> 的边界自己就浮出来了。</li>
+    <li><b>最后数行数</b>：A/C 是 8 行，D 是 6 行。用户在长过程里最先感到累的是<b>行数</b>，不是灰度——这也是为什么 D 的观感提升最大。</li>
+    <li>点「深色主题」再看一遍：C/D 的分段在深底上差距比浅色更明显，A 的贯穿线在深底会糊成一整条。</li>
+  </ul>
+
+  <h2>实现代价</h2>
+  <ul>
+    <li><b>B</b>（低）：模板里已有 <code>status</code>，加 done / running 两个 class 分支即可，样式只改 <code>--w</code> 变量值。</li>
+    <li><b>C</b>（中）：要在渲染前算分组边界——按「同一层级的连续同类项 + 有子项的旁白自成一组」切。逻辑放 <code>processTimeline.ts</code> 里可单测。</li>
+    <li><b>D</b>（中）：折叠复用已有的准备阶段合并逻辑，只是把阈值从「毫秒级」定得更明确：<b>同一阶段且单项 &lt; 500ms 的连续项合成一行</b>。</li>
+    <li>四条都不动数据结构，只动渲染与样式，回滚容易。</li>
+  </ul>
+
+  <h2>还没画的备选</h2>
+  <ul>
+    <li><b>hover 点亮</b>：静止再压淡一档，鼠标停到哪行哪行恢复。原型里 A/B 两列的样式已经埋了 <code>.hoverlit</code>，想试可以在控制台给 <code>.rail</code> 加上这个类。</li>
+    <li><b>轨道承载耗时</b>：线段长度或节点大小反映真实耗时，能一眼看出瓶颈。但毫秒与秒差三个数量级，要取对数或分段，容易失真，我先没放进对比。</li>
+  </ul>
+</div>
+
+<script>
+  var btnLight = document.getElementById('btn-light');
+  var btnDark = document.getElementById('btn-dark');
+  function setTheme(dark) {
+    document.querySelectorAll('.col').forEach(function (col) { col.classList.toggle('dark', dark); });
+    btnLight.setAttribute('aria-pressed', String(!dark));
+    btnDark.setAttribute('aria-pressed', String(dark));
+    document.body.style.background = dark ? '#14171b' : '#f7f8fa';
+    document.body.style.color = dark ? '#e5e7eb' : '#1f2328';
+  }
+  btnLight.addEventListener('click', function () { setTheme(false); });
+  btnDark.addEventListener('click', function () { setTheme(true); });
+</script>
+
+</body>
+</html>

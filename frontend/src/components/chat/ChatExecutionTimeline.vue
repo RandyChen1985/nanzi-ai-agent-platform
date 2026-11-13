@@ -67,6 +67,7 @@
         </div>
         <div
           class="timeline-rail space-y-0.5"
+          :class="{ 'tl-running': hasPending }"
         >
         <div
           v-for="item in items"
@@ -1469,13 +1470,31 @@ function subagentScaleLabel(log: ProcessTimelineLogItem): string {
  * 由形状 + 缩进承担分层（见 style 里的 .timeline-rail 注释）。
  */
 function timelineNodeClass(item: ProcessTimelineItem): string {
-  if (item.kind === "todo") return "tl-node tl-node-todo";
+  if (item.kind === "todo") return `tl-node tl-node-todo ${nodeStateClass(item)}`;
   if (item.kind === "text") {
-    return item.textKind === "reasoning" ? "tl-node tl-node-think" : "tl-node tl-node-say";
+    return item.textKind === "reasoning"
+      ? `tl-node tl-node-think ${nodeStateClass(item)}`
+      : `tl-node tl-node-say ${nodeStateClass(item)}`;
   }
+  // 失败节点保持全链路唯一的彩色，不参与「完成态退成标点」的压淡。
   if (item.status === "error") return "tl-node tl-node-fail";
-  if (isSubagentContainer(item)) return "tl-node tl-node-agent";
-  return "tl-node tl-node-tool";
+  if (isSubagentContainer(item)) return `tl-node tl-node-agent ${nodeStateClass(item)}`;
+  return `tl-node tl-node-tool ${nodeStateClass(item)}`;
+}
+
+/**
+ * 轨道节点的状态权重。
+ *
+ * 一行固定的竖线加十几个同样亮的点，读者得先扫一遍才能找出「现在跑到哪」——
+ * 已完成的行其实不需要吸引注意力，它的文字已经写着「已完成 242ms」。
+ * 所以把亮度交给状态：跑完的退成标点，正在跑的那一行才是锚点。
+ */
+function nodeStateClass(item: ProcessTimelineItem): "tl-node-running" | "tl-node-done" {
+  // 直接复用 timelineHasPending 的口径，而不是在这里另写一份判断：
+  // 两处一旦各写一半就会漂——比如 todo 还要看 todos 里有没有 pending/in_progress，
+  // 有子步骤的旁白/工具行要看 children 是否还在跑。漏了这些，轨道上的点会在
+  // 整轮早就结束后还一直呼吸，或者工具还没跑完就提前压淡成完成态。
+  return timelineHasPending([item]) ? "tl-node-running" : "tl-node-done";
 }
 
 function isRouteGroup(item: ProcessTimelineLogItem): boolean {
@@ -1869,7 +1888,17 @@ async function handleCopy(key: string, text?: string | null) {
   /* 半透明中性灰：叠在白卡片上是浅灰，叠在深色卡片上是深灰，一套值覆盖两套主题。
      用主题变量要各调一次，用任意属性类又要 Tailwind 生成规则（本项目没有先例），
      半透明是这里最省事也最不会在某个主题下失衡的写法。 */
-  background: rgba(127, 127, 127, 0.24);
+  background: rgba(127, 127, 127, 0.14);
+}
+/* 还在跑的时候，线的末端渐隐：它是「还会往下长」的信号。
+   没有它，过程一长、呼吸的那个点被滚出视野，整块看起来就分不清是跑完了还是卡住了。 */
+.timeline-rail.tl-running::before {
+  background: linear-gradient(
+    to bottom,
+    rgba(127, 127, 127, 0.14) 0%,
+    rgba(127, 127, 127, 0.14) 70%,
+    rgba(127, 127, 127, 0.02) 100%
+  );
 }
 /* 实心点直接压在竖线上：不需要描边，也就不用猜底层是白卡片还是深色卡片。 */
 .timeline-rail > .tl-node::before {
@@ -1914,6 +1943,34 @@ async function handleCopy(key: string, text?: string | null) {
 .timeline-rail > .tl-node-todo::before {
   background: rgba(127, 127, 127, 0.32);
 }
+/* 状态权重：压的是不透明度而不是颜色，这样四种形状之间原有的深浅差还在。
+   0.34 ≈ 把思考点 0.52 压到 0.18、工具点 0.40 压到 0.14，退到能看见位置但不抢读。 */
+.timeline-rail > .tl-node-done::before {
+  opacity: 0.34;
+}
+.timeline-rail > .tl-node-running::before {
+  opacity: 1;
+  /* 借用行内状态点（.thought-status-dot）的同一个蓝：两处表达的是同一件事
+     「这一步正在跑」，同一个颜色才不会让人以为它们是两种状态。
+     整条轨道只有这一个点是彩色，其余仍是灰阶，不构成「花了」。 */
+  background: #0ea5e9;
+  animation: tl-node-breathe 1.9s ease-in-out infinite;
+}
+@keyframes tl-node-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .timeline-rail > .tl-node-running::before {
+    animation: none;
+    opacity: 1;
+  }
+}
 /* 失败状态是全链路唯一的彩色：它需要被立刻看见，灰度做不到。 */
 .timeline-rail > .tl-node-fail::before {
   background: rgb(239 68 68);
@@ -1927,11 +1984,12 @@ async function handleCopy(key: string, text?: string | null) {
 /* 委派分支：一条左侧竖线把子代理的执行范围框出来，头行仍是一行概要。
    与普通工具行的区别只靠「分支线 + 缩进 + 委派图标」，不靠颜色——
    颜色在深浅两套主题里各调一次，形状和缩进一次就够。 */
+/* 委派分支不再自己画左边框：外层「N 个工具调用」的展开区已经有一条分支线，
+   内层再画一条、还用负 margin 把它拉过去，两条就并成一条带重影的粗线。
+   子代理的范围由外层那条线表达，这里只保留缩进。 */
 .subagent-branch {
-  border-left: 2px solid rgba(127, 127, 127, 0.24);
   border-radius: 0 0.375rem 0.375rem 0;
-  padding-left: 0.4rem;
-  margin-left: -0.35rem;
+  padding-left: 0.15rem;
 }
 
 /* ===== 深度思考正文：真实渲染 Markdown 后的排版 =====

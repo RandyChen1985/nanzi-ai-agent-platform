@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { agentApi } from "../api/agent";
+import { agentApi, type DelegationScopeState } from "../api/agent";
 import type {
   AIAgent,
   AIAgentBase,
@@ -1102,11 +1102,75 @@ const showTeamEditorModal = ref(false)
 const teamEditorAgent = ref<AIAgent | null>(null)
 const teamEditorMembers = ref<any[]>([])
 const teamEditorSaving = ref(false)
+/** 成员名单现状；null = 还没取到（组件按只读处理，不猜） */
+const teamEditorScope = ref<DelegationScopeState | null>(null)
+const teamEditorScopeLoading = ref(false)
 
-const openTeamEditor = (team: AIAgent) => {
+/**
+ * 团设置里的候选智能体。
+ *
+ * 刻意不复用版本抽屉那份 `delegationScopeAgents`：它按 `selectedAgent` 过滤，
+ * 而团设置是从列表页直接打开的，`selectedAgent` 未必是当前这个团。
+ */
+const teamEditorScopeAgents = computed(() =>
+  (agents.value || [])
+    .filter(a => String(a.id) !== String(teamEditorAgent.value?.id ?? ""))
+    // 不过滤 is_enabled：停用的智能体仍在库里、仍可能是成员。这里过滤掉，
+    // 弹窗就会把它算成「已被删除或不可见」的失效项，用户看到的是"成员被删了"
+    // 这种错误结论，反而更难判断该移除还是该启用。
+    .map(a => ({
+      id: String(a.id),
+      name: a.name,
+      display_name: (a as any).display_name,
+      description: (a as any).description,
+      capabilities: (a as any).capabilities || [],
+      is_system: (a as any).is_system,
+      is_enabled: (a as any).is_enabled,
+      created_by: (a as any).created_by,
+      is_expert_team_lead: (a as any).is_expert_team_lead === true,
+      team_name: (a as any).team_name ?? null,
+      team_member_ids: (a as any).team_member_ids ?? null,
+      // 新加的成员不在打开弹窗时的快照里，头像与「未发布/已停用」判断只能从这里拿
+      avatar_url: (a as any).avatar_url ?? null,
+      published_version_number: (a as any).published_version_number ?? null,
+      engine_type: (a as any).engine_type ?? null,
+    })),
+)
+
+/**
+ * 能否编辑这个团。
+ *
+ * 用 `is_editable` 而**不是** `can_edit_versions`：这两者会分叉。
+ * 普通用户自己创建、后来被上架成系统级（`is_system=True`）时，后端允许他
+ * 「建版本 / 改草稿」（`can_edit_versions=True`），但把 `is_editable` 置 False——
+ * 元数据与线上基线归管理员。团设置改的是元数据 + 线上成员名单，属于后者，
+ * 与后端 `_assert_writable` 的判定完全一致。用错字段的结果是按钮看着能点，
+ * 用户改完一屏成员、点保存才被 403 拦住。
+ */
+const isTeamEditable = (team: AIAgent): boolean =>
+  (team as any).is_editable !== false
+
+const openTeamEditor = async (team: AIAgent) => {
   teamEditorAgent.value = team
   teamEditorMembers.value = teamMemberRows(team)
+  teamEditorScope.value = null
   showTeamEditorModal.value = true
+  // 三项前置条件先取回来：不取就分不清「空名单」和「还没加载」，
+  // 用户会看到一个可以点但点了报错的成员区。
+  teamEditorScopeLoading.value = true
+  try {
+    const { data } = await agentApi.getDelegationScope(team.id)
+    // 请求期间用户可能已经切到别的团或关掉弹窗：晚到的响应不能覆盖当前状态，
+    // 否则会把 A 团的成员名单显示在 B 团下面，保存一次就写错了对象。
+    if (!showTeamEditorModal.value || teamEditorAgent.value?.id !== team.id) return
+    teamEditorScope.value = data
+  } catch (error: any) {
+    if (!showTeamEditorModal.value || teamEditorAgent.value?.id !== team.id) return
+    showToast(error?.response?.data?.detail?.message || '读取成员配置失败', 'error')
+    showTeamEditorModal.value = false
+  } finally {
+    if (teamEditorAgent.value?.id === team.id) teamEditorScopeLoading.value = false
+  }
 }
 
 /**
@@ -1117,11 +1181,30 @@ const openTeamEditor = (team: AIAgent) => {
 const saveTeamProfile = async (payload: {
   is_expert_team_lead: boolean
   team_profile: { name: string; intro: string } | null
+  scope_dirty: boolean
+  delegable_agent_ids: string[]
+  enable_delegation_tool: boolean
 }) => {
   const agent = teamEditorAgent.value
   if (!agent || teamEditorSaving.value) return
   teamEditorSaving.value = true
+  // 成员与团信息是两个接口、两个事务，做不到一起成功或一起失败。
+  // 记下第一段是否已经落地，失败时才能说清「哪一半成了」，
+  // 否则用户看到「保存失败」会重试，而重试可能又生成一个版本。
+  let scopeSaved = false
   try {
+    // 成员名单是版本级配置，必须先写：它失败就没必要再改团信息，
+    // 否则会出现「团已经改名了、成员没存上」的半成品状态。
+    if (payload.scope_dirty) {
+      const { data: savedScope } = await agentApi.saveDelegationScope(agent.id, {
+        delegable_agent_ids: payload.delegable_agent_ids,
+        enable_delegation_tool: payload.enable_delegation_tool,
+      })
+      scopeSaved = true
+      // 把新状态写回去：否则第二步失败、用户留在弹窗里再点一次保存，
+      // 名单看着还是「脏」的，会再复制一个内容完全相同的版本。
+      teamEditorScope.value = savedScope
+    }
     await agentApi.updateAgent(agent.id, {
       name: agent.name,
       display_name: agent.display_name,
@@ -1138,10 +1221,37 @@ const saveTeamProfile = async (payload: {
       team_profile: payload.team_profile,
     } as any)
     showTeamEditorModal.value = false
-    showToast(payload.is_expert_team_lead ? '专家团已更新' : '已取消专家团标记', 'success')
+    showToast(
+      payload.scope_dirty
+        ? `专家团已更新，成员 ${payload.delegable_agent_ids.length} 位（已生成新版本）`
+        : payload.is_expert_team_lead
+          ? '专家团已更新'
+          : '已取消专家团标记',
+      'success',
+    )
     await fetchAgents()
   } catch (error: any) {
-    showToast(error?.response?.data?.detail || '保存失败，请重试', 'error')
+    const detail = error?.response?.data?.detail
+    // 后端的领域错误带 code，前端按码给可操作的提示，不透传英文堆栈
+    const code = typeof detail === 'object' ? detail?.code : null
+    const message =
+      code === 'NO_PUBLISHED_VERSION'
+        ? '该智能体还没有已发布的版本，先发布一个版本再配成员'
+        : code === 'DELEGATION_TOOL_DISABLED'
+          ? '当前版本没有启用委派工具，无法保存成员'
+          : code === 'TOO_MANY_MEMBERS'
+            ? detail?.message || '成员数量超出上限'
+            : code === 'AGENT_NOT_READY'
+              ? `配置还不完整：${(detail?.missing || []).join('、') || '见配置与发布'}`
+              : typeof detail === 'object'
+                ? detail?.message
+                : detail
+    showToast(
+      scopeSaved
+        ? `成员已保存（新版本已发布），但团信息没存上：${message || '请重试'}`
+        : message || '保存失败，请重试',
+      'error',
+    )
   } finally {
     teamEditorSaving.value = false
   }
@@ -5866,8 +5976,19 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             <div class="flex gap-2">
               <button
                 type="button"
-                class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-600 transition hover:bg-gray-50"
-                @click="openTeamEditor(team)"
+                class="rounded-lg border px-3 py-1.5 text-xs transition"
+                :class="
+                  isTeamEditable(team)
+                    ? 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                    : 'cursor-not-allowed border-gray-200 text-gray-300'
+                "
+                :disabled="!isTeamEditable(team)"
+                :title="
+                  isTeamEditable(team)
+                    ? '改团名称、介绍与成员'
+                    : '只有所有者或管理员可以修改专家团'
+                "
+                @click="isTeamEditable(team) && openTeamEditor(team)"
               >
                 编辑专家团
               </button>
@@ -8222,6 +8343,10 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :agent="teamEditorAgent"
       :members="teamEditorMembers"
       :saving="teamEditorSaving"
+      :scope-state="teamEditorScope"
+      :scope-agents="teamEditorScopeAgents"
+      :authorized-agent-ids="delegationAuthorizedAgentIds"
+      :scope-loading="teamEditorScopeLoading"
       @save="saveTeamProfile"
       @configure-scope="openTeamConfigureScope"
     />

@@ -83,8 +83,8 @@ def test_timeline_node_shapes_cover_four_kinds():
 def test_structural_colors_use_translucent_gray_not_theme_vars():
     """结构色用半透明中性灰：深浅两套主题一套值，也不引主题变量。"""
     style = _style_block()
-    assert "rgba(127, 127, 127, 0.24)" in style  # 轨道竖线 / 委派分支线
-    assert "rgba(127, 127, 127, 0.52)" in style  # 思考节点
+    assert "rgba(127, 127, 127, 0.14)" in style  # 轨道竖线
+    assert "rgba(127, 127, 127, 0.52)" in style  # 思考节点（完成态再由 opacity 压淡）
     # 上下文的主题变量一旦被 Tailwind 丢弃，var() 就会取不到值（颜色塌成继承）。
     assert "var(--rm-" not in style
     assert "var(--tl-" not in style

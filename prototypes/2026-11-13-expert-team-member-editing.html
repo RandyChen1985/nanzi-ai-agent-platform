@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>专家团设置 · 成员就地编辑（隐式新版本）</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 30px 24px 60px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f2f4f7; color: #1f2328;
+  }
+  h1 { margin: 0 0 6px; font-size: 19px; font-weight: 600; }
+  .lede { margin: 0 0 20px; font-size: 13px; line-height: 1.75; color: #6b7280; max-width: 780px; }
+  .lede b { color: #374151; }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .tabs button {
+    border: 1px solid #d8dbe0; background: #fff; color: #4b5563;
+    border-radius: 8px; padding: 7px 14px; font-size: 12.5px; cursor: pointer;
+  }
+  .tabs button[aria-pressed="true"] { background: #1f2328; border-color: #1f2328; color: #fff; }
+
+  /* ===== 弹窗 ===== */
+  .modal {
+    width: 100%; max-width: 720px; background: #fff; border-radius: 16px;
+    box-shadow: 0 18px 50px rgba(15, 23, 42, .14); overflow: hidden;
+    border: 1px solid #e9ecf1;
+  }
+  .modal-hd {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 24px 14px;
+  }
+  .modal-hd h2 { margin: 0; font-size: 18px; font-weight: 600; }
+  .modal-hd .x { color: #b0b6c0; font-size: 18px; cursor: pointer; }
+
+  .modal-bd { padding: 4px 24px 8px; }
+
+  .toggle-card {
+    display: flex; gap: 10px; align-items: flex-start;
+    border: 1px solid #eceff3; background: #fafbfc; border-radius: 12px;
+    padding: 12px 14px; margin-bottom: 18px;
+  }
+  .toggle-card .ico { font-size: 15px; line-height: 1.3; }
+  .toggle-card .body { flex: 1; min-width: 0; }
+  .toggle-card .title { font-size: 13.5px; font-weight: 600; margin-bottom: 3px; }
+  .toggle-card .desc { font-size: 11.5px; line-height: 1.6; color: #8b929c; }
+  .switch {
+    width: 42px; height: 24px; border-radius: 9999px; background: #22c55e;
+    position: relative; flex: none; cursor: pointer;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; right: 2px; width: 20px; height: 20px;
+    border-radius: 9999px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  }
+
+  .field { margin-bottom: 16px; }
+  .field > label { display: block; font-size: 12.5px; font-weight: 600; color: #4b5563; margin-bottom: 6px; }
+  .input {
+    border: 1px solid #e3e7ec; border-radius: 10px; padding: 9px 12px;
+    font-size: 13.5px; color: #1f2328; background: #fff;
+  }
+  .textarea { min-height: 74px; border: 1px solid #e3e7ec; border-radius: 10px; padding: 9px 12px; font-size: 13.5px; }
+  .hint { display: flex; justify-content: space-between; font-size: 11px; color: #9aa1ab; margin-top: 5px; }
+
+  /* ===== 成员区块 ===== */
+  .members { border: 1px solid #eceff3; border-radius: 12px; overflow: hidden; }
+  .members-hd {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; background: #fafbfc; border-bottom: 1px solid #eceff3;
+    font-size: 13px; font-weight: 600;
+  }
+  .members-hd .count { font-size: 11.5px; font-weight: 400; color: #9aa1ab; }
+
+  .member {
+    display: flex; align-items: center; gap: 9px;
+    padding: 10px 14px; border-bottom: 1px solid #f2f4f7; font-size: 13px;
+  }
+  .member:last-of-type { border-bottom: none; }
+  .avatar {
+    width: 26px; height: 26px; border-radius: 9999px; flex: none;
+    background: radial-gradient(circle at 30% 25%, #f29ad4, #d452b0);
+    display: grid; place-items: center; color: #fff; font-size: 12px;
+  }
+  .member .name { font-weight: 500; }
+  .tag {
+    font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 5px;
+  }
+  .tag.lead { background: #e0f2fe; color: #0369a1; }
+  .tag.sub { background: #dcfce7; color: #15803d; }
+  .member .spacer { flex: 1; }
+  .remove {
+    font-size: 11.5px; color: #9aa1ab; cursor: pointer; opacity: 0;
+    transition: opacity .15s ease, color .15s ease;
+  }
+  .member:hover .remove { opacity: 1; }
+  .remove:hover { color: #dc2626; }
+
+  .add-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 10px 14px; border-top: 1px solid #f2f4f7;
+    font-size: 12.5px; color: #6b7280; cursor: pointer;
+  }
+  .add-row:hover { background: #fafbfc; color: #1f2328; }
+  .add-row .plus { font-size: 14px; line-height: 1; }
+
+  /* ===== 第二层：选择成员弹框（对齐 DelegationScopeModal） ===== */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(15, 23, 42, .38);
+    display: grid; place-items: center; z-index: 40; padding: 24px;
+  }
+  .overlay[hidden] { display: none; }
+  .picker-modal {
+    width: 100%; max-width: 660px; max-height: 82vh; background: #fff;
+    border-radius: 14px; box-shadow: 0 24px 60px rgba(15,23,42,.26); display: flex; flex-direction: column;
+  }
+  .pm-hd { display: flex; align-items: center; gap: 8px; padding: 16px 20px 8px; }
+  .pm-hd h3 { margin: 0; font-size: 15.5px; font-weight: 600; }
+  .pm-hd code { background: #f1f3f5; border: 1px solid #e3e7ec; border-radius: 4px; padding: 1px 6px; font-size: 11px; color: #4b5563; }
+  .pm-hd .x { margin-left: auto; color: #b0b6c0; cursor: pointer; }
+  .pm-bd { padding: 0 20px; overflow: auto; flex: 1; }
+  .pm-lede { font-size: 12px; line-height: 1.65; color: #6b7280; margin: 0 0 10px; }
+  .pm-rule {
+    background: #f9fafb; border: 1px solid #eceff3; border-radius: 9px;
+    padding: 9px 11px; font-size: 11.5px; line-height: 1.75; color: #6b7280; margin-bottom: 12px;
+  }
+  .pm-rule b { color: #374151; }
+  .pm-rule code { background: #fff; border-radius: 4px; padding: 1px 4px; font-size: 10.5px; }
+  .pm-tools { display: flex; gap: 8px; margin-bottom: 12px; }
+  .pm-search {
+    flex: 1; display: flex; align-items: center; gap: 7px;
+    border: 1px solid #e3e7ec; border-radius: 9px; padding: 0 11px; height: 34px;
+    font-size: 12.5px; color: #9aa1ab;
+  }
+  .pm-onlysel {
+    display: flex; align-items: center; gap: 5px; height: 34px; padding: 0 11px;
+    border: 1px solid #e3e7ec; border-radius: 9px; font-size: 12px; color: #6b7280; cursor: pointer;
+  }
+  .pm-tabs { display: flex; gap: 2px; border-bottom: 1px solid #e3e7ec; margin-bottom: 4px; }
+  .pm-tab {
+    display: flex; align-items: center; gap: 5px; padding: 8px 11px; font-size: 12px;
+    color: #6b7280; border-bottom: 2px solid transparent; cursor: pointer; margin-bottom: -1px;
+  }
+  .pm-tab.on { color: #2563eb; border-bottom-color: #2563eb; font-weight: 500; }
+  .pm-tab .n { background: #f1f3f5; border-radius: 9999px; padding: 0 6px; font-size: 10px; color: #6b7280; }
+  .pm-tab.on .n { background: #dbeafe; color: #2563eb; }
+
+  .row2 {
+    display: flex; align-items: flex-start; gap: 10px; padding: 8px; border-radius: 9px; cursor: pointer;
+  }
+  .row2:hover { background: #f9fafb; }
+  .row2.on { background: #f2f7ff; }
+  .row2.off { opacity: .55; cursor: not-allowed; }
+  .row2.off:hover { background: transparent; }
+  .box2 {
+    width: 15px; height: 15px; border-radius: 4px; border: 1px solid #d1d5db; flex: none; margin-top: 2px;
+    display: grid; place-items: center; font-size: 10px; color: #fff;
+  }
+  .row2.on .box2 { background: #2563eb; border-color: #2563eb; }
+  .row2 .rmain { min-width: 0; flex: 1; }
+  .row2 .rname { font-size: 12.5px; font-weight: 600; color: #1f2328; }
+  .row2 .rname code { font-size: 10px; color: #9aa1ab; font-weight: 400; margin-left: 4px; }
+  .row2 .mine { border: 1px solid #e3e7ec; background: #f9fafb; border-radius: 4px; padding: 0 4px; font-size: 9.5px; color: #6b7280; margin-left: 4px; }
+  .row2 .rdesc { font-size: 11px; line-height: 1.6; color: #9aa1ab; margin-top: 2px; }
+  .row2 .capa { display: flex; gap: 4px; margin-top: 4px; }
+  .row2 .capa span { border: 1px solid #e3e7ec; background: #f9fafb; border-radius: 4px; padding: 0 4px; font-size: 9.5px; color: #8b929c; }
+  .badge2 { flex: none; border-radius: 9999px; padding: 1px 7px; font-size: 9.5px; white-space: nowrap; }
+  .badge2.none { background: #f1f5f9; border: 1px solid #cbd5e1; color: #475569; }
+  .badge2.lead { background: #f0fdfa; border: 1px solid #99f6e4; color: #0f766e; }
+  .badge2.noauth { background: #fffbeb; border: 1px solid #fde68a; color: #b45309; }
+  .badge2.in { background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; }
+
+  .pm-ft {
+    display: flex; align-items: center; gap: 8px; padding: 13px 20px; border-top: 1px solid #f0f2f5;
+  }
+  .pm-ft .cnt { font-size: 11.5px; color: #8b929c; }
+  .pm-ft .btns { margin-left: auto; display: flex; gap: 8px; }
+
+  /* ===== 禁用态 ===== */
+  .enable-box {
+    padding: 11px 14px; background: #fffbeb; border-bottom: 1px solid #fde68a;
+  }
+  .eb-hd { display: flex; gap: 6px; align-items: center; font-size: 12.5px; font-weight: 600; color: #92400e; margin-bottom: 4px; }
+  .eb-hd .bi { font-size: 13px; }
+  .eb-bd { font-size: 11.5px; line-height: 1.7; color: #a16207; margin-bottom: 8px; }
+  .eb-bd code { background: #fef3c7; border-radius: 4px; padding: 1px 5px; font-size: 10.5px; }
+  .eb-opt { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #78350f; cursor: pointer; }
+  .eb-opt input { accent-color: #2563eb; }
+
+  .blocked { padding: 16px 14px; }
+  .blocked .bh { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 6px; }
+  .blocked .bi { color: #d97706; font-size: 14px; line-height: 1.4; }
+  .blocked .bt { font-size: 13px; font-weight: 600; color: #92400e; }
+  .blocked .bd { font-size: 12px; line-height: 1.7; color: #8b929c; margin-left: 22px; }
+  .blocked .bd code { background: #f1f3f5; border-radius: 4px; padding: 1px 5px; font-size: 11px; }
+
+  .foot-note {
+    padding: 10px 14px; background: #fafbfc; border-top: 1px solid #eceff3;
+    font-size: 11px; line-height: 1.6; color: #8b929c;
+  }
+
+  .modal-ft {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px; border-top: 1px solid #f0f2f5; background: #fff;
+  }
+  .modal-ft .left { font-size: 11.5px; color: #8b929c; }
+  .modal-ft .left b { color: #374151; }
+  .btns { display: flex; gap: 8px; margin-left: auto; }
+  .btn {
+    border-radius: 9px; padding: 8px 16px; font-size: 12.5px; cursor: pointer; border: 1px solid transparent;
+  }
+  .btn.ghost { background: #fff; border-color: #d8dbe0; color: #4b5563; }
+  .btn.primary { background: #2563eb; color: #fff; font-weight: 600; }
+  .btn.primary.off { background: #c7cdd6; cursor: not-allowed; }
+
+  .notes { margin-top: 26px; max-width: 780px; font-size: 12.5px; line-height: 1.95; color: #6b7280; }
+  .notes h3 { font-size: 13.5px; color: #374151; margin: 0 0 7px; font-weight: 600; }
+  .notes ul { margin: 0 0 18px; padding-left: 20px; }
+  .notes b { color: #374151; }
+  .notes code { background: #e8ebef; border-radius: 4px; padding: 1px 5px; font-size: 11px; }
+  .kbd { background: #e8ebef; border-radius: 4px; padding: 1px 5px; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<h1>专家团设置 · 成员就地编辑</h1>
+<p class="lede">
+  成员不再只是只读展示，可以直接在这个弹窗里增删。保存时后端<b>复制当前已发布版本、只替换成员名单</b>，
+  其余字段原样带过去，旧版本归档——用户不用走发布流程，但版本历史还在。
+</p>
+
+<div class="tabs">
+  <button data-state="ok" aria-pressed="true">① 正常：可编辑</button>
+  <button data-state="nover" aria-pressed="false">② 没有已发布版本</button>
+  <button data-state="notool" aria-pressed="false">③ 未启用委派工具</button>
+</div>
+
+<!-- ========== 弹窗 ========== -->
+<div class="modal">
+  <div class="modal-hd">
+    <h2>专家团设置</h2>
+    <span class="x">✕</span>
+  </div>
+
+  <div class="modal-bd">
+    <div class="toggle-card">
+      <span class="ico">👥</span>
+      <div class="body">
+        <div class="title">专家团主专家</div>
+        <div class="desc">打开后会在智能体中心以「专家团」形式展示；关闭不影响它作为普通智能体使用，已配好的调度范围会保留。</div>
+      </div>
+      <div class="switch"></div>
+    </div>
+
+    <div class="field">
+      <label>专家团名称</label>
+      <div class="input">资产管理专家团</div>
+    </div>
+
+    <div class="field">
+      <label>团队介绍&amp;提示词 <span style="color:#b0b6c0">ⓘ</span></label>
+      <div class="textarea">负责资产管理</div>
+      <div class="hint"><span>写协作流程与能力边界；这段话会进团主专家的系统提示词，不影响主助手的选人判断。</span><span>6/500</span></div>
+    </div>
+
+    <!-- ===== 成员：可编辑态 ===== -->
+    <div class="members" id="members-ok">
+      <div class="members-hd">
+        <span>团队成员</span>
+        <span class="count" id="count-ok">3 位子专家</span>
+      </div>
+
+      <div class="member">
+        <span class="avatar">🤖</span>
+        <span class="name">111</span>
+        <span class="tag lead">主专家</span>
+        <span class="spacer"></span>
+      </div>
+
+      <div class="member" data-member="dddd">
+        <span class="avatar">🤖</span>
+        <span class="name">dddd</span>
+        <span class="tag sub">子专家</span>
+        <span class="spacer"></span>
+        <span class="remove" data-remove="dddd">移除</span>
+      </div>
+
+      <div class="member" data-member="eeee">
+        <span class="avatar">🤖</span>
+        <span class="name">eeee</span>
+        <span class="tag sub">子专家</span>
+        <span class="spacer"></span>
+        <span class="remove" data-remove="eeee">移除</span>
+      </div>
+
+      <div class="add-row" id="add-row"><span class="plus">＋</span><span>添加成员</span></div>
+
+      <div class="foot-note">
+        这里只维护成员名单。保存会生成一个新版本、仅替换名单，其余配置原样保留。
+      </div>
+    </div>
+
+    <!-- ===== 成员：没有已发布版本 ===== -->
+    <div class="members" id="members-nover" hidden>
+      <div class="members-hd">
+        <span>团队成员</span>
+        <span class="count">不可配置</span>
+      </div>
+      <div class="blocked">
+        <div class="bh"><span class="bi">⚠</span><span class="bt">该智能体还没有已发布的版本</span></div>
+        <div class="bd">
+          成员名单保存在版本配置里，所以需要先发布一个版本。发布之后回到这里就能直接增删成员。
+        </div>
+      </div>
+      <div class="foot-note">
+        发布版本会同时带上提示词、工具等全部配置；之后改成员就只需要在这里改。
+      </div>
+    </div>
+
+    <!-- ===== 成员：未启用委派工具（可一键启用） ===== -->
+    <div class="members" id="members-notool" hidden>
+      <div class="members-hd">
+        <span>团队成员</span>
+        <span class="count" id="count-notool">3 位子专家</span>
+      </div>
+      <div class="enable-box">
+        <div class="eb-hd"><span class="bi">ⓘ</span><span>这个版本还没启用委派工具</span></div>
+        <div class="eb-bd">成员名单存放在 <code>sub_agent_call</code> 上。勾选下面的选项，保存时会一并启用（同比补上并行委派 <code>sub_agent_batch_call</code>）。</div>
+        <label class="eb-opt">
+          <input type="checkbox" id="enable-tool" checked />
+          <span>保存时一并启用委派工具</span>
+        </label>
+      </div>
+
+      <div id="notool-list">
+        <div class="member">
+          <span class="avatar">🤖</span>
+          <span class="name">111</span>
+          <span class="tag lead">主专家</span>
+          <span class="spacer"></span>
+        </div>
+        <div class="member">
+          <span class="avatar">🤖</span>
+          <span class="name">dddd</span>
+          <span class="tag sub">子专家</span>
+          <span class="spacer"></span>
+          <span class="remove" style="opacity:1">移除</span>
+        </div>
+      </div>
+
+      <div class="blocked" id="notool-blocked" hidden>
+        <div class="bh"><span class="bi">⚠</span><span class="bt">不启用工具就无法配置成员</span></div>
+        <div class="bd">保留当前选择的话，这次保存只会更新团名称与介绍，成员名单不会变化。</div>
+      </div>
+
+      <div class="foot-note" id="notool-foot">
+        只有这一个字段被追加，提示词、模型参数和其他工具都不会被改动。
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-ft">
+    <div class="left" id="left-note"><b id="ver">v12</b> · 保存后生成新版本，仅更新成员名单</div>
+    <div class="btns">
+      <button class="btn ghost" id="jump" hidden>去发布版本</button>
+      <button class="btn ghost">取消</button>
+      <button class="btn primary" id="save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 第二层：选择成员 ========== -->
+<div class="overlay" id="picker-overlay" hidden>
+  <div class="picker-modal">
+    <div class="pm-hd">
+      <h3>调度白名单</h3>
+      <code>sub_agent_call</code>
+      <span class="x" id="pm-close">✕</span>
+    </div>
+    <div class="pm-bd">
+      <p class="pm-lede">限制本智能体可以委派的子智能体范围。不配置则维持默认，配置后名单外的智能体一律拒绝。</p>
+
+      <div class="pm-rule">
+        <b>未配置</b> = 全部「已授权给你的系统智能体」；<b>配置后</b> = 只从名单中调度。<br />
+        你自己的智能体默认<b>不可被委派</b>，加入名单后才开通；系统智能体即使进名单，仍要校验你的 agent 授权。<br />
+        该名单同时作用于 <code>sub_agent_batch_call</code>，批量委派不单独配置。
+      </div>
+
+      <div class="pm-tools">
+        <div class="pm-search">🔍 搜索名称、标识或能力…</div>
+        <label class="pm-onlysel">☐ 只看已选</label>
+      </div>
+
+      <div class="pm-tabs">
+        <div class="pm-tab on">我的智能体<span class="n">3</span></div>
+        <div class="pm-tab">系统智能体<span class="n">5</span></div>
+        <div class="pm-tab">已失效<span class="n">0</span></div>
+      </div>
+
+      <div style="padding:8px 0 4px">
+        <div class="row2 on" data-pick="dddd">
+          <span class="box2">✓</span>
+          <div class="rmain">
+            <div class="rname">dddd<code>dddd</code><span class="mine">我的</span></div>
+            <div class="rdesc">负责资产台账核对</div>
+          </div>
+          <span class="badge2 in">已在团内</span>
+        </div>
+
+        <div class="row2 on" data-pick="运维专家（DevOps Expert）">
+          <span class="box2">✓</span>
+          <div class="rmain">
+            <div class="rname">运维专家（DevOps Expert）<code>devops_expert</code><span class="mine">我的</span></div>
+            <div class="rdesc">查 Jira 历史工单、排障复盘</div>
+            <div class="capa"><span>运维</span><span>jira</span></div>
+          </div>
+        </div>
+
+        <div class="row2" data-pick="知识库助手">
+          <span class="box2"></span>
+          <div class="rmain">
+            <div class="rname">知识库助手<code>kb_assistant</code><span class="mine">我的</span></div>
+            <div class="rdesc">检索内部文档与制度</div>
+          </div>
+        </div>
+
+        <div class="row2 off">
+          <span class="box2"></span>
+          <div class="rmain">
+            <div class="rname">主助手<code>main</code></div>
+            <div class="rdesc">系统兜底入口</div>
+          </div>
+          <span class="badge2 none">系统兜底 · 不可委派</span>
+        </div>
+
+        <div class="row2 off">
+          <span class="box2"></span>
+          <div class="rmain">
+            <div class="rname">某团主专家<code>expert_lead</code></div>
+            <div class="rdesc">它是「资产专家团」的主专家</div>
+          </div>
+          <span class="badge2 lead">团主 · 仅个人能力</span>
+        </div>
+
+        <div class="row2 off">
+          <span class="box2"></span>
+          <div class="rmain">
+            <div class="rname">财务分析助手<code>finance</code></div>
+            <div class="rdesc">预算与成本分析</div>
+          </div>
+          <span class="badge2 noauth">无 agent 授权</span>
+        </div>
+      </div>
+    </div>
+    <div class="pm-ft">
+      <span class="cnt">已选 <b id="pm-count">2</b> 个</span>
+      <div class="btns">
+        <button class="btn ghost" id="pm-cancel">取消</button>
+        <button class="btn primary" id="pm-ok">确定</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="notes">
+  <h3>这套交互里几个刻意的选择</h3>
+  <ul>
+    <li><b>主专家不能移除</b>：它就是这个智能体本身，「移除」等于把团解散，那应该用上面的开关，而不是删一行成员。</li>
+    <li><b>移除按钮只在 hover 时出现</b>：不动手时列表保持干净，鼠标经过才浮现，避免一屏全是红色删除。</li>
+    <li><b>候选列表直接标出「已在团内 / 无权限」</b>：不用点下去才知道结果。无权限的来自后端 <code>authorized_agent_ids</code>，前端只做置灰。</li>
+    <li><b>禁用态不在保存时才报错</b>：加载时就用 GET 拿到 <code>exists_published</code> / <code>sub_agent_call_enabled</code>，直接把区块换成说明，按钮置灰。</li>
+    <li><b>两种「死路」的出口不同</b>：没有版本 → 「去发布版本」；工具没启用 → 同样要先去发布，但文案说清是「工具」的问题，否则用户会反复回来点。</li>
+  </ul>
+
+  <h3>一个实现上的坑：层级</h3>
+  <ul>
+    <li>「专家团设置」和「调度白名单」现在<b>都是 z-index 10010</b>（注释写着两者一致、避免被版本抽屉 9990 盖住）。成员选择要在团设置<b>之上</b>打开，所以选择弹框必须提到 10020，否则会出现互相盖住或点不到的情况。</li>
+    <li>成员弹框里的候选来源、勾选态、只读判定，都可以<b>直接复用</b> <code>DelegationScopeModal</code> 已有的 props（<code>agents</code> / <code>selected-ids</code> / <code>authorized-ids</code>），不需要另写一套取数。</li>
+  </ul>
+
+  <h3>保存时后端做什么（隐式新版本）</h3>
+  <ul>
+    <li>查出该智能体 <code>status='PUBLISHED'</code> 的最新版本；<b>只有成员名单这一个字段被替换</b>（<code>tools</code> 里 <code>sub_agent_call.delegable_agent_ids</code>），提示词、模型参数、其他工具、权限全部原样复制。</li>
+    <li>新版本标 <code>PUBLISHED</code>、旧版本标 <code>ARCHIVED</code>，版本号 +1。</li>
+    <li>保存后调用 <code>_invalidate_access_caches()</code>，失效路由缓存与权限缓存——不失效的话运行时会继续用旧名单，表现为「加了却委派不到」。</li>
+    <li>团身份与文案仍然走原来的智能体级接口、立即生效，不参与版本复制。</li>
+  </ul>
+
+  <h3>这份原型没画的</h3>
+  <ul>
+    <li><b>并发与草稿覆盖</b>：按你的决定先不做保护（假设这块不会多人同时操作）。</li>
+    <li><b>成员排序</b>：目前名单是集合语义，顺序不影响调度。要不要支持拖拽排序，看后面有没有需求。</li>
+    <li><b>嵌套专家团</b>：一个子专家本身也是团主专家的情形，这版没处理。</li>
+  </ul>
+</div>
+
+<script>
+  var tabs = document.querySelectorAll('.tabs button');
+  var blocks = {
+    ok: document.getElementById('members-ok'),
+    nover: document.getElementById('members-nover'),
+    notool: document.getElementById('members-notool'),
+  };
+  var jump = document.getElementById('jump');
+  var save = document.getElementById('save');
+  var leftNote = document.getElementById('left-note');
+
+  function show(state) {
+    tabs.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.state === state)); });
+    Object.keys(blocks).forEach(function (k) { blocks[k].hidden = k !== state; });
+    var blocked = state !== 'ok';
+    save.classList.toggle('off', blocked);
+    jump.hidden = state === 'ok';
+    if (state === 'notool') {
+      jump.hidden = true;
+      syncNoTool();
+      return;
+    }
+    if (blocked) {
+      jump.textContent = '去发布版本';
+      leftNote.textContent = '成员区不可配置，保存只会更新团名称与介绍';
+    } else {
+      leftNote.innerHTML = '<b>v12</b> · 保存后生成新版本，仅更新成员名单';
+    }
+  }
+
+  // ③ 未启用工具：勾选即可以配成员，取消则回到不可配
+  var enableTool = document.getElementById('enable-tool');
+  function syncNoTool() {
+    var on = enableTool.checked;
+    document.getElementById('notool-list').hidden = !on;
+    document.getElementById('notool-blocked').hidden = on;
+    document.getElementById('count-notool').textContent = on ? '2 位子专家' : '不可配置';
+    document.getElementById('notool-foot').hidden = !on;
+    leftNote.innerHTML = on
+      ? '<b>v12</b> · 保存后生成新版本，启用委派工具并更新成员名单'
+      : '未勾选启用工具，保存只会更新团名称与介绍';
+  }
+  enableTool.addEventListener('change', syncNoTool);
+
+  tabs.forEach(function (b) {
+    b.addEventListener('click', function () { show(b.dataset.state); });
+  });
+
+  // 添加成员 → 打开与「配置调度范围」同一个弹框
+  var addRow = document.getElementById('add-row');
+  var overlay = document.getElementById('picker-overlay');
+  addRow.addEventListener('click', function () { overlay.hidden = false; });
+  document.getElementById('pm-close').addEventListener('click', function () { overlay.hidden = true; });
+  document.getElementById('pm-cancel').addEventListener('click', function () { overlay.hidden = true; });
+
+  // 勾选
+  document.querySelectorAll('.row2[data-pick]').forEach(function (row) {
+    row.addEventListener('click', function () {
+      row.classList.toggle('on');
+      row.querySelector('.box2').textContent = row.classList.contains('on') ? '✓' : '';
+      document.getElementById('pm-count').textContent =
+        document.querySelectorAll('.row2.on[data-pick]').length;
+    });
+  });
+
+  // 确定：把新勾选的写回团成员列表
+  document.getElementById('pm-ok').addEventListener('click', function () {
+    var list = document.getElementById('members-ok');
+    var existing = {};
+    list.querySelectorAll('.member[data-member]').forEach(function (m) { existing[m.dataset.member] = 1; });
+    document.querySelectorAll('.row2.on[data-pick]').forEach(function (row) {
+      var name = row.dataset.pick;
+      if (existing[name]) return;
+      var el = document.createElement('div');
+      el.className = 'member';
+      el.dataset.member = name;
+      el.innerHTML = '<span class="avatar">🤖</span><span class="name"></span>'
+        + '<span class="tag sub">子专家</span><span class="spacer"></span>'
+        + '<span class="remove">移除</span>';
+      el.querySelector('.name').textContent = name;
+      el.querySelector('.remove').addEventListener('click', function () { el.remove(); recount(); });
+      list.insertBefore(el, document.getElementById('add-row'));
+    });
+    recount();
+    overlay.hidden = true;
+  });
+
+  function recount() {
+    var n = document.querySelectorAll('#members-ok .member[data-member]').length + 1;
+    document.getElementById('count-ok').textContent = n + ' 位子专家';
+  }
+
+  // 移除成员
+  document.querySelectorAll('[data-remove]').forEach(function (el) {
+    el.addEventListener('click', function () {
+      var row = el.closest('.member');
+      if (row) row.remove();
+      var left = document.querySelectorAll('#members-ok .member[data-member]').length;
+      document.getElementById('count-ok').textContent = (left + 1) + ' 位子专家';
+    });
+  });
+
+  // 候选勾选
+  document.querySelectorAll('.cand').forEach(function (el) {
+    el.addEventListener('click', function () {
+      if (el.style.cursor === 'not-allowed') return;
+      el.classList.toggle('on');
+    });
+  });
+</script>
+
+</body>
+</html>

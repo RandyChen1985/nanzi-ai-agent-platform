@@ -1051,13 +1051,17 @@ function sortBatchRun<T extends ProcessTimelineItem | ProcessTimelineLogItem>(
   const result = items.slice();
   let cursor = 0;
   while (cursor < result.length) {
-    const head = batchMetaOf(result[cursor]);
+    const current = result[cursor];
+    if (!current) break;
+    const head = batchMetaOf(current);
     if (!head) {
       cursor += 1;
       continue;
     }
     let end = cursor + 1;
-    while (end < result.length && batchMetaOf(result[end])?.batchId === head.batchId) {
+    while (end < result.length) {
+      const candidate = result[end];
+      if (!candidate || batchMetaOf(candidate)?.batchId !== head.batchId) break;
       end += 1;
     }
     if (end - cursor > 1) {
@@ -1068,8 +1072,10 @@ function sortBatchRun<T extends ProcessTimelineItem | ProcessTimelineLogItem>(
         return a - b;
       });
       for (let offset = 0; offset < run.length; offset += 1) {
-        if (result[cursor + offset] !== run[offset]) changed = true;
-        result[cursor + offset] = run[offset];
+        const source = run[offset];
+        if (!source) continue;
+        if (result[cursor + offset] !== source) changed = true;
+        result[cursor + offset] = source;
       }
     }
     cursor = end;

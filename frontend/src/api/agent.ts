@@ -9,6 +9,18 @@ export type AgentType = 'GENERAL' | 'CHATBI' | 'KNOWLEDGE_BASE'
  *
  * 两个端点签名一致：`username` 只在审计端点上有意义（自隔离端点会忽略它）。
  */
+export interface DelegationScopeState {
+  exists_published: boolean;
+  version_id?: string | null;
+  version_no?: number | null;
+  sub_agent_call_enabled: boolean;
+  /** 名单是否被显式配置过。false = 未限制（全量可委派），不是「一个都不许」。 */
+  scope_configured: boolean;
+  delegable_agent_ids: string[];
+  lead_agent_id?: string | null;
+  max_members: number;
+}
+
 export interface ChatHistoryQueryParams {
   page?: number
   page_size?: number
@@ -279,6 +291,23 @@ export const agentApi = {
   
   // Delete version (DRAFT/ARCHIVED only)
   deleteVersion: (agentId: string, versionId: string) => axios.delete(`/api/portal/agents/${agentId}/versions/${versionId}`),
+
+  /** 专家团成员现状：版本号、是否有已发布版本、委派工具是否启用、当前名单。 */
+  getDelegationScope: (agentId: string) =>
+    axios.get<DelegationScopeState>(`/api/portal/agents/${agentId}/delegation-scope`),
+
+  /**
+   * 保存成员名单。后端会复制一份已发布版本、只替换名单并立即发布，
+   * 其余配置原样保留——所以这里不需要先建草稿再发布。
+   */
+  saveDelegationScope: (
+    agentId: string,
+    data: { delegable_agent_ids: string[]; enable_delegation_tool?: boolean },
+  ) =>
+    axios.put<DelegationScopeState>(
+      `/api/portal/agents/${agentId}/delegation-scope`,
+      data,
+    ),
 
   /** 版本配置里已失效的工具引用（只读诊断，用于编辑器内解绑） */
   getVersionToolHealth: (agentId: string, versionId: string) =>
