@@ -35,12 +35,13 @@ from app.services.ai.tools.parameter_schema import (
     apply_user_placeholders,
     parse_parameter_schema,
 )
+from app.services.ai.tools.user_placeholders import UserPlaceholderError
 
 from app.services.secrets.injection import (
     apply_script_env_bindings,
     build_env_file_content,
 )
-from app.services.secrets.redact import redact_text
+from app.services.secrets.redact import redact_text, redact_value
 
 logger = logging.getLogger(__name__)
 
@@ -251,17 +252,44 @@ class ScriptToolRunner:
 
     # ------------------------------------------------------------------ 参数
 
+    def _effective_user_variables(self) -> Dict[str, Any]:
+        """构造脚本运行时的用户占位符变量：优先显式 ``user_info``（如试跑），隔离跨用户污染。"""
+        ctx_vars = dict(_current_user_variables())
+        if not self.user_info:
+            return ctx_vars
+
+        from app.services.ai.tools.user_placeholders import resolve_user_variables
+
+        explicit_vars = resolve_user_variables(self.user_info)
+        explicit_uid = explicit_vars.get("user_id")
+        ctx_uid = ctx_vars.get("user_id")
+        if (
+            explicit_uid is not None
+            and ctx_uid is not None
+            and str(explicit_uid) != str(ctx_uid)
+        ):
+            return explicit_vars
+        merged = ctx_vars
+        merged.update(explicit_vars)
+        return merged
+
     def prepare_params(self, params: Mapping[str, Any]) -> Dict[str, Any]:
         _schema, properties, required = parse_parameter_schema(
             self.config.parameter_schema,
             tool_name=self.config.name,
         )
-        prepared = apply_user_placeholders(
-            self.config.parameter_schema,
-            dict(params),
-            _current_user_variables(),
-            tool_name=self.config.name,
-        )
+        try:
+            prepared = apply_user_placeholders(
+                self.config.parameter_schema,
+                dict(params),
+                self._effective_user_variables(),
+                tool_name=self.config.name,
+            )
+        except UserPlaceholderError as exc:
+            # 用户变量取不到是**配置/资料问题**，不是运行时故障。统一收敛成
+            # ScriptToolError：试跑端点（只捕获它）与工具调用层都按可读错误呈现，
+            # 而不是抛 ValueError 一路冒到框架层变成 500。
+            raise ScriptToolError(str(exc)) from exc
         missing = [
             name
             for name in sorted(required)
@@ -711,9 +739,9 @@ def _truncate(text: str, limit: int = MAX_RESULT_BYTES) -> str:
 async def render_result_for_model(result: ScriptRunResult, *, workdir: Path) -> str:
     """把执行结果转成模型可读文本：成功给 stdout，失败给退出码 + stderr。
 
-    **结果要过脱敏**：脚本 env 一旦注入，``echo $API_KEY`` 就会把明文写进
-    stdout，再随工具结果回到模型上下文。这条路径和外部的远端服务没有区别，
-    都是「工具把收到的值回显出来」。
+    **先脱敏再截断**：脚本 env 一旦注入，``echo $API_KEY`` 就会把明文写进
+    stdout/stderr；若先按字节截断再脱敏，横跨 100KB 上限的凭据值会被腰斩，
+    剩余前半段无法命中精确匹配而以明文逃逸回模型上下文。
     """
     rendered = await _render_result(result, workdir=workdir)
     return redact_text(rendered, where="脚本工具输出")
@@ -721,14 +749,27 @@ async def render_result_for_model(result: ScriptRunResult, *, workdir: Path) -> 
 
 async def _render_result(result: ScriptRunResult, *, workdir: Path) -> str:
     if result.timed_out:
-        return result.message or "脚本执行超时，已终止"
+        return redact_text(
+            result.message or "脚本执行超时，已终止", where="脚本工具输出"
+        )
 
     if not result.ok:
         code = "未知" if result.exit_code is None else str(result.exit_code)
-        stderr = _truncate(result.stderr.strip() or result.message or "（无错误输出）")
+        safe_stderr = redact_text(
+            result.stderr.strip() or result.message or "（无错误输出）",
+            where="脚本工具输出",
+        )
+        stderr = _truncate(safe_stderr)
         head = f"脚本执行失败（退出码 {code}）"
         if result.stdout.strip():
-            return head + "\n--- stdout ---\n" + _truncate(result.stdout.strip()) + "\n--- stderr ---\n" + stderr
+            safe_stdout = redact_text(result.stdout.strip(), where="脚本工具输出")
+            return (
+                head
+                + "\n--- stdout ---\n"
+                + _truncate(safe_stdout)
+                + "\n--- stderr ---\n"
+                + stderr
+            )
         return head + "\n--- stderr ---\n" + stderr
 
     published = await publish_artifacts(result.artifacts, workdir=workdir) if result.artifacts else []
@@ -745,9 +786,9 @@ async def _render_result(result: ScriptRunResult, *, workdir: Path) -> str:
     except (ValueError, TypeError):
         payload = None
 
-    if isinstance(payload, dict) and published:
-        payload["published_artifacts"] = published
-        return _truncate(json.dumps(payload, ensure_ascii=False))
     if isinstance(payload, dict):
-        return _truncate(json.dumps(payload, ensure_ascii=False))
-    return _truncate(stdout)
+        if published:
+            payload["published_artifacts"] = published
+        safe_payload = redact_value(payload, where="脚本工具输出")
+        return _truncate(json.dumps(safe_payload, ensure_ascii=False))
+    return _truncate(redact_text(stdout, where="脚本工具输出"))

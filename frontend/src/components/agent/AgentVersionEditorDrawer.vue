@@ -30,6 +30,11 @@ const props = withDefaults(defineProps<{
   agentForm: Partial<AIAgentBase>;
   versionForm: Partial<AIAgentVersion>;
   globalAgentToolcallTimeout: number;
+  /**
+   * 整轮看门狗时长（秒）。版本级超时是「所有工具的默认值」，配得比它大整轮会先被取消，
+   * 预算根本用不满，所以这一层也必须提示。0 = 看门狗已关闭，此时不存在该天花板。
+   */
+  producerHardTimeoutSeconds?: number | null;
   selectedAgent: AIAgent | null;
   models: AIModel[];
   globalModelTemperature: number;
@@ -228,6 +233,29 @@ const getAgentVersionToolcallTimeoutValue = () => {
     ? value
     : AGENT_VERSION_TOOLCALL_TIMEOUT_DEFAULT;
 };
+/** 整轮看门狗（真正天花板）；0/null/非法值视为关闭。 */
+const producerHardTimeout = computed<number | null>(() => {
+  const value = Number(props.producerHardTimeoutSeconds);
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : null;
+});
+
+/** 版本级超时超过了整轮预算：整轮会先被强制终止，预算用不满。 */
+const isVersionTimeoutAboveProducer = computed(() => {
+  if (producerHardTimeout.value === null) return false;
+  if (!isAgentVersionToolcallTimeoutEnabled.value) return false;
+  const value = Number(props.versionForm.toolcall_timeout_seconds);
+  if (!Number.isFinite(value) || value <= 0) return false;
+  return value > producerHardTimeout.value;
+});
+
+/** 输入超过表单硬上限 86400：失焦才截断，这里先提示，避免「填了 9999999 看着像能存」。 */
+const isVersionTimeoutOverMax = computed(() => {
+  if (!isAgentVersionToolcallTimeoutEnabled.value) return false;
+  const value = Number(props.versionForm.toolcall_timeout_seconds);
+  if (!Number.isFinite(value) || value <= 0) return false;
+  return value > AGENT_VERSION_TOOLCALL_TIMEOUT_MAX;
+});
+
 const setAgentVersionToolcallTimeoutEnabled = (enabled: boolean) => {
   if (!props.canEditVersion) return;
   props.versionForm.toolcall_timeout_seconds = enabled
@@ -1046,6 +1074,10 @@ const externalCreationMissingFields = computed(() => {
                     默认使用全局配置；启用后，以当前智能体版本配置为准，不再与全局或工具配置取最大值。
                   </p>
                   <p class="mt-1 text-[11px] text-gray-400">当前全局配置：{{ globalAgentToolcallTimeout }} 秒（范围 1–3600）</p>
+                  <p v-if="producerHardTimeout !== null" class="mt-1 text-[11px] text-gray-400">
+                    整轮看门狗 {{ producerHardTimeout }} 秒：从发消息到收尾的总时长上限（含所有工具与模型调用），
+                    版本级配置超过它时本轮会先被强制终止。
+                  </p>
                 </div>
                 <div class="flex items-center gap-2">
                   <span class="text-xs font-medium text-gray-600">
@@ -1070,7 +1102,8 @@ const externalCreationMissingFields = computed(() => {
                   </button>
                 </div>
               </div>
-              <div v-if="isAgentVersionToolcallTimeoutEnabled" class="mt-3 flex items-center gap-2">
+              <div v-if="isAgentVersionToolcallTimeoutEnabled" class="mt-3">
+                <div class="flex items-center gap-2">
                 <button
                   type="button"
                   aria-label="减少智能体工具调用超时时间"
@@ -1100,6 +1133,17 @@ const externalCreationMissingFields = computed(() => {
                   class="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-lg leading-none text-gray-600 hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
                 >+</button>
                 <span class="text-xs text-gray-500">秒（范围 1–86400）</span>
+                </div>
+                <!-- 超过整轮看门狗：整轮会先被取消，这一层的预算用不满 -->
+                <p v-if="isVersionTimeoutAboveProducer" class="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-800">
+                  已超出整轮看门狗 {{ producerHardTimeout }} 秒：本轮会先被强制终止并释放会话，
+                  这个预算用不满（该版本下所有工具都会受影响）。需要更久请先调大系统配置的看门狗时长。
+                </p>
+                <!-- 超过表单硬上限：目前只在失焦时截断，先提示，避免误以为填多少都能存 -->
+                <p v-else-if="isVersionTimeoutOverMax" class="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-700">
+                  单个版本最多 {{ AGENT_VERSION_TOOLCALL_TIMEOUT_MAX }} 秒，离开输入框后会被截断为
+                  {{ AGENT_VERSION_TOOLCALL_TIMEOUT_MAX }} 秒。
+                </p>
               </div>
               <p v-else class="mt-2 text-[11px] text-gray-400">当前跟随全局配置（当前全局值 {{ globalAgentToolcallTimeout }} 秒）</p>
             </div>

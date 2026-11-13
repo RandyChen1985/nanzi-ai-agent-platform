@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from collections.abc import Iterable, Mapping
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -253,7 +254,40 @@ def _is_admin(user_info: Dict[str, Any]) -> bool:
     return str(user_info.get("role") or "") == "admin"
 
 
+def _owner_ids(owners: Iterable[Any]) -> list[int]:
+    """把「绑定者 id」收敛成整型列表，供 ``User.id.in_()`` 使用。
+
+    User.id 是整型主键，而 bindings 里存的是字符串。MySQL 靠隐式转换能过，
+    PostgreSQL（asyncpg）会直接报 operator does not exist: integer = character
+    varying，接口 500。非数字值直接丢弃，不猜。
+    """
+    return sorted({int(item) for item in owners if str(item).isdigit()})
+
+
+def _actor_id(user: Mapping[str, Any] | None) -> str | None:
+    """审计操作人。
+
+    两处都不能想当然：
+    - 键名是 ``user_id`` 而不是 ``id``（``AuthService._user_model_to_data``
+      产出的身份字典里就叫这个），读错就永远返回 None，审计照样缺失；
+    - 值是**字符串**：``SecretAuditLog.actor_id`` 是 ``String(64)``，MySQL 会
+      隐式转换混过去，PostgreSQL（asyncpg）严格类型会直接报错。
+
+    拿不到就老实记 None，绝不编一个 id 出来。
+    """
+    if not isinstance(user, Mapping):
+        return None
+    raw = user.get("user_id")
+    if raw in (None, ""):
+        raw = user.get("id")  # 兼容直接传 {"id": ...} 的调用方
+    if raw in (None, ""):
+        return None
+    return str(raw)
+
+
 def _fail(exc: SecretValidationError) -> HTTPException:
+    if isinstance(exc, SecretPermissionError):
+        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
@@ -287,8 +321,9 @@ def _identity_attrs(user_info: Dict[str, Any]) -> dict[str, str]:
     attrs: dict[str, str] = {}
     for key in ("email", "user_name", "username", "real_name", "dept_code", "user_id"):
         value = info.get(key)
-        if isinstance(value, str) and value:
-            attrs[key] = value
+        if value in (None, "") or isinstance(value, bool):
+            continue
+        attrs[key] = value if isinstance(value, str) else str(value)
     if "user_name" not in attrs and "username" in attrs:
         attrs["user_name"] = attrs["username"]
     return attrs
@@ -659,6 +694,7 @@ async def check_binding(
         slot=payload.slot,
         target_host=payload.target_host,
         dept_code=dept_code,
+        user_attrs=_identity_attrs(user_info),
     )
     return {
         "code": 0,
@@ -1027,6 +1063,7 @@ async def create_binding(
                 slot=slot,
                 rule=payload.rule,
                 bound_by_user_id=bound_by,
+                actor_id=_actor_id(user_info),
             )
         except SecretValidationError as exc:
             raise _fail(exc)
@@ -1045,6 +1082,7 @@ async def create_binding(
             slot=slot,
             bound_by_user_id=bound_by,
             dept_code=dept_code,
+            actor_id=_actor_id(user_info),
         )
     except SecretPermissionError:
         raise HTTPException(status_code=404, detail="凭据不存在")
@@ -1085,6 +1123,7 @@ async def delete_binding(
         slot=slot,
         bound_by_user_id=bound_by,
         strategy=payload.strategy,
+        actor_id=_actor_id(user_info),
     )
     return {"code": 0, "message": "已解绑", "data": {"removed": removed}}
 
@@ -1112,7 +1151,7 @@ async def admin_create(
             category=payload.category,
             remark=payload.remark,
             expires_at=payload.expires_at,
-            created_by=str(admin.get("user_id") or ""),
+            created_by=_actor_id(admin),
         )
     except SecretValidationError as exc:
         raise _fail(exc)
@@ -1197,13 +1236,17 @@ async def admin_list(
                 names[(consumer_type, str(row_id))] = str(row_name or "")
 
         if owners:
+            # User.id 是整型主键，bindings 里存的是字符串。MySQL 会隐式转换混过去，
+            # PostgreSQL（asyncpg）直接报 operator does not exist: integer = character
+            # varying，接口 500。center.resolve_usage_users 里是同样的写法，照抄。
+            owner_ids = _owner_ids(owners)
             user_rows = (
                 await db.execute(
                     select(User.id, User.user_name, User.real_name).where(
-                        User.id.in_(owners)
+                        User.id.in_(owner_ids)
                     )
                 )
-            ).all()
+            ).all() if owner_ids else []
             for user_id, user_name, real_name in user_rows:
                 user_names[str(user_id)] = real_name or user_name or str(user_id)
 
@@ -1272,7 +1315,7 @@ async def admin_grant(
             secret_id=secret_id,
             grantee_type=payload.grantee_type,
             grantee_id=payload.grantee_id,
-            granted_by=str(admin.get("user_id") or ""),
+            granted_by=_actor_id(admin),
             expires_at=payload.expires_at,
         )
     except SecretValidationError as exc:
@@ -1290,7 +1333,11 @@ async def admin_revoke(
     db: AsyncSession = Depends(get_db_session),
 ):
     removed = await center.revoke_grant(
-        db, secret_id=secret_id, grantee_type=grantee_type, grantee_id=grantee_id
+        db,
+        secret_id=secret_id,
+        grantee_type=grantee_type,
+        grantee_id=grantee_id,
+        actor_id=_actor_id(admin),
     )
     return {"code": 0, "message": "已撤销", "data": {"removed": removed}}
 
@@ -1311,8 +1358,13 @@ async def admin_disable(
         # 但「疑似泄漏」时管理员仍可通过滥用告警要求用户自行停用。
         raise HTTPException(status_code=403, detail="只能强制停用系统级凭据")
     try:
+        # 审计必须记到具体管理员：凭据被误停用时，「谁停的」是第一现场信息。
         row = await center.set_secret_status(
-            db, secret_id=secret_id, status_value="disabled", actor_id=None
+            db,
+            secret_id=secret_id,
+            status_value="disabled",
+            actor_id=_actor_id(admin),
+            actor_is_admin=True,
         )
     except SecretValidationError as exc:
         raise _fail(exc)
@@ -1343,7 +1395,11 @@ async def admin_set_status(
         raise HTTPException(status_code=400, detail="status 只能是 active 或 disabled")
     try:
         row = await center.set_secret_status(
-            db, secret_id=secret_id, status_value=payload.status, actor_id=None
+            db,
+            secret_id=secret_id,
+            status_value=payload.status,
+            actor_id=_actor_id(admin),
+            actor_is_admin=True,
         )
     except SecretValidationError as exc:
         raise _fail(exc)

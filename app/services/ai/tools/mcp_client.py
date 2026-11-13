@@ -939,24 +939,7 @@ class McpClientService:
                         progress_callback=progress_callback,
                         timeout_seconds=timeout_seconds,
                     )
-                    text = "".join(
-                        getattr(item, "text", "")
-                        for item in (getattr(response, "content", None) or [])
-                    )
-                    if bool(getattr(response, "isError", False) or getattr(response, "is_error", False)):
-                        raise RuntimeError(text or f"MCP tool '{tool_name}' returned an error")
-                    structured_content = getattr(response, "structuredContent", None)
-                    if structured_content is None:
-                        structured_content = getattr(response, "structured_content", None)
-                    if structured_content is not None:
-                        call_result = {
-                            "success": True,
-                            "content": text,
-                            "structured_content": structured_content,
-                        }
-                        return redact_value(call_result, where=f"MCP 工具 {tool_name}")
-                    call_result = text if text else {"success": True, "content": ""}
-                    return redact_value(call_result, where=f"MCP 工具 {tool_name}")
+                    return cls._normalize_sse_tool_result(response, tool_name)
                 except Exception as e:
                     transport_broken = False
                     if not transport_retry and _is_transport_error(e):
@@ -992,29 +975,7 @@ class McpClientService:
                                 progress_callback=progress_callback,
                                 timeout_seconds=timeout_seconds,
                             )
-                            text = "".join(
-                                getattr(item, "text", "")
-                                for item in (getattr(response, "content", None) or [])
-                            )
-                            if bool(
-                                getattr(response, "isError", False)
-                                or getattr(response, "is_error", False)
-                            ):
-                                raise RuntimeError(
-                                    text or f"MCP tool '{tool_name}' returned an error"
-                                )
-                            structured_content = getattr(response, "structuredContent", None)
-                            if structured_content is None:
-                                structured_content = getattr(response, "structured_content", None)
-                            if structured_content is not None:
-                                call_result = {
-                                    "success": True,
-                                    "content": text,
-                                    "structured_content": structured_content,
-                                }
-                                return redact_value(call_result, where=f"MCP 工具 {tool_name}")
-                            call_result = text if text else {"success": True, "content": ""}
-                            return redact_value(call_result, where=f"MCP 工具 {tool_name}")
+                            return cls._normalize_sse_tool_result(response, tool_name)
                         except Exception as retry_error:
                             e = RuntimeError(
                                 f"{original_error}; reconnect retry failed: {retry_error}"
@@ -1025,7 +986,12 @@ class McpClientService:
                     # 用户的连接并触发重连风暴。
                     if transport_broken and not ephemeral_session:
                         await session_mgr.close()
-                    raise RuntimeError(f"MCP tool '{tool_name}' failed: {e}") from e
+                    raise RuntimeError(
+                        redact_value(
+                            f"MCP tool '{tool_name}' failed: {e}",
+                            where=f"MCP 工具 {tool_name} 异常",
+                        )
+                    ) from e
             else:
                 call_result = await cls._call_direct_http_tool(
                     session_mgr,
@@ -1034,14 +1000,25 @@ class McpClientService:
                     timeout_seconds=timeout_seconds,
                 )
                 return redact_value(call_result, where=f"MCP 工具 {tool_name}")
+        except TimeoutError:
+            # 超时必须原样往上抛：上层靠 ``isinstance(exc, TimeoutError)`` 把它
+            # 判成「工具超时」。换成别的异常类型会被记成普通失败，用户看到的是
+            # 「调用异常」而不是「超时」，排查方向直接跑偏。
+            call_status = "failed"
+            call_error = "MCP tool call timed out"
+            raise
         except asyncio.CancelledError:
             call_status = "failed"
             call_error = "MCP tool call cancelled"
             raise
         except Exception as call_exc:
             call_status = "failed"
-            call_error = str(call_exc)
-            raise
+            call_error = redact_value(str(call_exc), where=f"MCP 工具 {tool_name} 审计")
+            # **就地脱敏后再抛**：这条异常会经 ``RuntimeToolError`` 回显给模型、
+            # 写进轨迹，还可能被上层日志带堆栈打出来。流式调用里注入的凭据是在
+            # 子 Task 的 Context 里登记的，要等父级 finally 才回收——等到那时再
+            # 用 ``redact_value`` 已经抓不到原值了，所以必须在抛错现场处理。
+            raise RuntimeError(f"MCP tool call failed: {call_error}") from None
         finally:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             try:
@@ -1157,8 +1134,11 @@ class McpClientService:
             )
             logger.info(f"[MCP-Direct] Response from {method}: HTTP {resp.status_code}")
         except Exception as http_err:
-            logger.error(f"[MCP-Direct] HTTP Request failed for {method}: {http_err}")
-            raise
+            redacted_err = redact_value(str(http_err), where=f"MCP 服务 {method} 异常")
+            logger.error(f"[MCP-Direct] HTTP Request failed for {method}: {redacted_err}")
+            raise RuntimeError(
+                f"MCP HTTP request failed for {method}: {redacted_err}"
+            ) from None
         finally:
             session_mgr._active_requests = max(0, getattr(session_mgr, "_active_requests", 1) - 1)
             if session_mgr._active_requests == 0:
@@ -1191,7 +1171,10 @@ class McpClientService:
             except json.JSONDecodeError:
                 data = cls._parse_sse_payload(raw_text)
                 if data is None:
-                    logger.warning(f"[MCP-Direct] Non-JSON success response: {raw_text[:200]}")
+                    safe_preview = redact_value(
+                        raw_text, where=f"MCP 服务 {method} 非 JSON 响应"
+                    )[:200]
+                    logger.warning(f"[MCP-Direct] Non-JSON success response: {safe_preview}")
                     return None  # Success but not JSON (e.g. 202 Accepted)
                 logger.info(f"[MCP-Direct] Parsed SSE-encoded response for {method}")
 
@@ -1220,8 +1203,15 @@ class McpClientService:
                         is_notification,
                         retry_count=retry_count + 1,
                     )
-                logger.error(f"[MCP-Direct] RPC Error Response: {data['error']}")
-                raise Exception(f"RPC Error {data['error'].get('code')}: {data['error'].get('message')}")
+                redacted_error = redact_value(
+                    data["error"], where=f"MCP 服务 {method} RPC 错误"
+                )
+                logger.error(f"[MCP-Direct] RPC Error Response: {redacted_error}")
+                if isinstance(redacted_error, dict):
+                    raise Exception(
+                        f"RPC Error {redacted_error.get('code')}: {redacted_error.get('message')}"
+                    )
+                raise Exception(f"RPC Error: {redacted_error}")
             return data
 
         error_payload = None
@@ -1252,8 +1242,10 @@ class McpClientService:
                 retry_count=retry_count + 1,
             )
 
-        logger.error(f"[MCP-Direct] Error Response Body: {resp.text[:500]}")
-        raise Exception(f"HTTP {resp.status_code}: {resp.text}")
+        safe_body = redact_value(resp.text, where=f"MCP 服务 {method} 错误响应")
+        logger.error(f"[MCP-Direct] Error Response Body: {safe_body[:500]}")
+        # 完整 body 脱敏后抛给上层；日志侧同样保留脱敏前缀，避免明文进日志。
+        raise Exception(f"HTTP {resp.status_code}: {safe_body}")
 
     @classmethod
     async def _call_direct_http_tool(
@@ -1281,6 +1273,50 @@ class McpClientService:
             "name": tool_name,
             "arguments": arguments
         }, **rpc_kwargs)
+        return cls._normalize_direct_http_tool_result(res, tool_name)
+
+    @staticmethod
+    def _normalize_sse_tool_result(response: Any, tool_name: str) -> Any:
+        """规整 SSE/SDK tools/call 返回并统一脱敏（首次调用与重连重试共用）。"""
+        where = f"MCP 工具 {tool_name}"
+        text = "".join(
+            getattr(item, "text", "")
+            for item in (getattr(response, "content", None) or [])
+        )
+        if bool(getattr(response, "isError", False) or getattr(response, "is_error", False)):
+            # 远端 tools/call 的错误体同样可能回显入参（含凭据槽位），
+            # 脱敏后才能进模型上下文。
+            raise RuntimeError(
+                redact_value(text, where=f"{where} 错误响应")
+                or f"MCP tool '{tool_name}' returned an error"
+            )
+        structured_content = getattr(response, "structuredContent", None)
+        if structured_content is None:
+            structured_content = getattr(response, "structured_content", None)
+        if structured_content is not None:
+            return redact_value(
+                {
+                    "success": True,
+                    "content": text,
+                    "structured_content": structured_content,
+                },
+                where=where,
+            )
+        return redact_value(
+            text if text else {"success": True, "content": ""},
+            where=where,
+        )
+
+    @staticmethod
+    def _normalize_direct_http_tool_result(res: Any, tool_name: str) -> Any:
+        """把 Direct HTTP 的 tools/call 结果规整成工具返回值。
+
+        抽出来是为了能被单测覆盖：**正常返回才是主路径**，它和错误分支一样必须
+        脱敏。远端会把入参（含刚注入的凭据槽位）原样回显在 content 里，
+        漏掉这条等于把明文交给模型。
+        """
+        where = f"MCP 工具 {tool_name}"
+
         if isinstance(res, dict) and bool(res.get("isError") or res.get("is_error")):
             error_text = "".join(
                 c.get("text", "")
@@ -1288,10 +1324,13 @@ class McpClientService:
                 if isinstance(c, dict) and c.get("type") == "text"
             )
             raise RuntimeError(
-                error_text
-                or str(res.get("message") or res.get("error") or "")
+                redact_value(
+                    error_text or str(res.get("message") or res.get("error") or ""),
+                    where=f"{where} 错误响应",
+                )
                 or f"MCP tool '{tool_name}' returned an error"
             )
+
         if isinstance(res, dict) and "content" in res:
             text = "".join(
                 c.get("text", "")
@@ -1302,15 +1341,24 @@ class McpClientService:
             if structured_content is None:
                 structured_content = res.get("structured_content")
             if structured_content is not None:
-                return {
-                    "success": True,
-                    "content": text,
-                    "structured_content": structured_content,
-                }
-            return text if text else {"success": True, "content": ""}
+                return redact_value(
+                    {
+                        "success": True,
+                        "content": text,
+                        "structured_content": structured_content,
+                    },
+                    where=where,
+                )
+            return redact_value(
+                text if text else {"success": True, "content": ""},
+                where=where,
+            )
+
         if res is None:
             return {"success": True, "content": ""}
-        return str(res)
+
+        # 整个响应体串化返回，连字段边界都没有，含凭据时必然整段进模型上下文
+        return redact_value(str(res), where=where)
 
     @classmethod
     async def sync_tools(

@@ -40,6 +40,9 @@ def build_base_dimensions(user_info: Dict[str, Any], user_id: int) -> Dict[str, 
         "id": user_id,
         "user_name": user_info.get("user_name"),
         "real_name": user_info.get("real_name"),
+        # 凭据定位规则可以按 user.email 命中；缺这一项时规则永远匹配不到，
+        # 且不报错，只是静默退回兜底凭据。
+        "email": user_info.get("email"),
         "role": user_info.get("role"),
         # 主部门：旧规则继续可用，不受多部门能力影响
         "dept_code": user_info.get("dept_code"),

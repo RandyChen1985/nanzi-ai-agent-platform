@@ -167,7 +167,18 @@ def test_retry_policy_from_task_config_defaults_and_clamps():
 async def cleanup_tasks():
     yield
     async with AsyncSessionLocal() as session:
-        await session.execute(delete(AgentScheduledTask))
+        # 只清本套测试自己建的（test_user 名下）。原先这里是
+        # delete(AgentScheduledTask) —— 无 WHERE，跑一次测试就把所有真实用户
+        # 的定时任务清空，且立即 commit。测试连的是真实开发库，没有任何隔离。
+        from app.models.user import User
+
+        await session.execute(
+            delete(AgentScheduledTask).where(
+                AgentScheduledTask.user_id.in_(
+                    select(User.id).where(User.user_name == "test_user")
+                )
+            )
+        )
         await session.commit()
 
 @pytest.mark.asyncio

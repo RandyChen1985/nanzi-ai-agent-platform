@@ -15,6 +15,12 @@ COMPONENT = (ROOT / "frontend/src/components/personal/NotificationConfigs.vue").
     encoding="utf-8"
 )
 CHANNELS = ("dingtalk", "wechat_work", "feishu", "email")
+# 三个群渠道的表单已下沉到子组件：多群之后「发到哪个群」的逻辑完全共用，
+# 表单没必要在父组件里重复三遍。邮件不是群语义，仍留在父组件。
+GROUP_CHANNELS = ("dingtalk", "wechat_work", "feishu")
+CHANNEL_GROUPS = (ROOT / "frontend/src/components/personal/NotificationChannelGroups.vue").read_text(
+    encoding="utf-8"
+)
 
 
 def test_availability_comes_from_backend_readiness():
@@ -37,10 +43,17 @@ def test_badge_distinguishes_enabled_from_usable():
         assert f"channelBadge('{channel}')" in COMPONENT, f"{channel} 卡片缺少状态徽标"
 
 
-def test_badge_only_shows_for_enabled_channels():
-    """徽标只在渠道已启用时出现，未启用时不必多一个「未启用」标签。"""
-    for channel in CHANNELS:
-        assert f'v-if="configs.{channel}.is_enabled"' in COMPONENT, channel
+def test_badge_only_shows_for_configured_channels():
+    """徽标只在渠道有配置时出现，没配置时不必多一个「未配置」标签。
+
+    多群之后「渠道是否启用」不再是一个开关，而是「有没有群 / 群是否启用」，
+    所以群渠道改看群数量；邮件仍是单套配置，继续看 is_enabled。
+    """
+    for channel in GROUP_CHANNELS:
+        # 计数从「一个数字」变成 {enabled, total}（头部要显示 x/y），
+        # 显隐判断跟着走 total：0 个群时不该冒出「已启用·可用」的徽标
+        assert f'v-if="groupCounts.{channel}.total > 0"' in COMPONENT, channel
+    assert 'v-if="configs.email.is_enabled"' in COMPONENT
 
 
 def test_toggle_failure_rolls_the_switch_back():
@@ -60,19 +73,27 @@ def test_save_config_reports_success():
 
 
 def test_save_button_is_gated_by_required_fields():
-    for channel in CHANNELS:
-        assert f"channelSaveDisabled('{channel}')" in COMPONENT, f"{channel} 保存按钮未接入校验"
-    assert "请先填写 Webhook 地址后再保存。" in COMPONENT
+    for channel in GROUP_CHANNELS:
+        assert 'channel-type="' + channel + '"' in COMPONENT, f"{channel} 未接入多群组件"
+    # 群渠道的必填校验在子组件里：缺 Webhook 就不该允许保存
+    assert "saveBlockedReason" in CHANNEL_GROUPS
+    # 断言「缺 Webhook」这个原因本身，不绑定具体句式（原句「还没有填写 Webhook
+    # 地址后再保存」有语病，已改成「请先为「X」填写 Webhook 地址再保存」）
+    assert "填写 Webhook 地址再保存" in CHANNEL_GROUPS
+    assert ':disabled="saving || !dirty || !!saveBlockedReason"' in CHANNEL_GROUPS
+    # 邮件仍走父组件的单套配置校验
+    assert "channelSaveDisabled('email')" in COMPONENT
 
 
 def test_blocked_save_shows_a_visible_reason():
     """置灰必须附带可见原因——只把按钮变灰是另一种「界面说谎」。"""
-    for channel in CHANNELS:
-        marker = "emailSaveBlockedReason" if channel == "email" else f"channelSaveBlockedReason('{channel}')"
-        # 每张卡片的提示行都要真的渲染这个原因，而不只是用在 disabled 上
-        assert COMPONENT.count(marker) >= 2, (
-            f"{channel} 卡片必须把置灰原因渲染到界面上（{marker} 只出现一次说明它只用在 disabled 上）"
-        )
+    # 群渠道：原因既进 title 也渲染成一行文字，两者都出现才算「可见」
+    assert CHANNEL_GROUPS.count("saveBlockedReason") >= 2, (
+        "多群组件必须把置灰原因渲染到界面上，而不只是用在 disabled 上"
+    )
+    assert 'v-if="saveBlockedReason"' in CHANNEL_GROUPS
+    # 邮件：仍由父组件渲染
+    assert COMPONENT.count("emailSaveBlockedReason") >= 2
 
 
 def test_email_save_block_only_for_custom_source():
@@ -82,3 +103,15 @@ def test_email_save_block_only_for_custom_source():
     assert "=== 'custom'" in window and "customSmtpConfigured" in window, (
         "邮件的保存校验只应作用于自定义来源"
     )
+
+
+def test_group_list_reads_is_enabled_and_tolerates_legacy_key():
+    """「读不到启用状态」绝不能等同于「已停用」。
+
+    后端曾经在群列表响应里返回 ``enabled``，而前端读 ``is_enabled``：结果是整列
+    显示成「已停用」，用户点一次保存就把停用真写回库里 —— 一次保存废掉全部群，
+    而且没有任何报错。现在两边统一为 ``is_enabled``，并保留对旧键名的兜底读取，
+    覆盖前后端新旧版本同时存在的部署窗口期。
+    """
+    assert "item.is_enabled" in CHANNEL_GROUPS
+    assert ".enabled" in CHANNEL_GROUPS, "必须保留旧键名兜底，否则部署窗口期会误判为停用"

@@ -31,7 +31,12 @@
     <div v-else class="space-y-6">
       <!-- 1. DingTalk Config Card -->
       <div class="bg-white border border-gray-100 rounded-xl p-6 shadow-sm hover:shadow-md transition-all duration-300">
-        <div class="flex items-center justify-between">
+        <div
+          class="flex cursor-pointer select-none items-center justify-between rounded-lg -mx-2 px-2 py-1 hover:bg-gray-50/80 transition-colors"
+          role="button"
+          :aria-expanded="isCardExpanded('dingtalk')"
+          @click="toggleChannelCard('dingtalk')"
+        >
           <div class="flex items-center space-x-3">
             <div class="p-2 bg-blue-50 rounded-lg text-blue-500">
               <!-- Dingtalk Icon (using SVG) -->
@@ -59,80 +64,53 @@
           </div>
           <div class="flex items-center gap-3">
             <span
-              v-if="configs.dingtalk.is_enabled"
+              v-if="channelDirty.dingtalk"
+              class="px-1.5 py-0.5 text-[9.5px] font-black text-amber-700 bg-amber-100 rounded"
+              title="该渠道有改动尚未保存"
+            >未保存</span>
+            <span
+              class="text-[11px] text-gray-400"
+              :title="`dingtalk：${groupCounts.dingtalk.enabled} 个启用，共 ${groupCounts.dingtalk.total} 个`"
+            >{{ groupCounts.dingtalk.enabled }}/{{ groupCounts.dingtalk.total }} 个群</span>
+            <span
+              v-if="groupCounts.dingtalk.total > 0"
               class="px-2 py-0.5 text-[10px] font-black rounded-full border whitespace-nowrap"
               :class="channelBadge('dingtalk').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
               :title="channelBadge('dingtalk').reason"
             >{{ channelBadge('dingtalk').label }}</span>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" v-model="configs.dingtalk.is_enabled" class="sr-only peer" @change="onToggleChannel('dingtalk')">
-              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
+            <svg
+              class="w-4 h-4 shrink-0 text-gray-400 transition-transform duration-200"
+              :class="isCardExpanded('dingtalk') ? 'rotate-180' : ''"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
           </div>
         </div>
 
         <!-- DingTalk Form (Transition Expand) -->
-        <div v-if="configs.dingtalk.is_enabled" class="mt-6 border-t border-gray-50 pt-4 space-y-4">
-          <div>
-            <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">Webhook 地址</label>
-            <input 
-              type="text" 
-              v-model="configs.dingtalk.webhook_url"
-              placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."
-              class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 placeholder-gray-300"
-            />
-            <p class="text-[11px] text-gray-400 mt-1">钉钉群 &rarr; 智能群助手 &rarr; 添加机器人 &rarr; 自定义 &rarr; 复制 Webhook 地址。</p>
-          </div>
-          <div>
-            <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">加签密钥 (可选)</label>
-            <input 
-              type="password" 
-              v-model="configs.dingtalk.secret"
-              placeholder="SEC..."
-              class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 placeholder-gray-300"
-            />
-            <p class="text-[11px] text-gray-400 mt-1">若机器人启用了「加签」安全设置，请在此填写 SEC 开头的密钥。</p>
-          </div>
-          
-          <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 pt-2">
-            <p
-              class="text-[11px]"
-              :class="channelSaveBlockedReason('dingtalk') ? 'text-amber-600' : 'text-gray-400'"
-            >
-              {{ channelSaveBlockedReason('dingtalk') || '测试连通性会真实发送一条消息到该群，不会影响线上业务。' }}
-            </p>
-            <div class="flex items-center space-x-3 shrink-0">
-              <button 
-                @click="testConfig('dingtalk')"
-                :disabled="channelTestDisabled('dingtalk')"
-                :title="channelTestBlockedReason('dingtalk')"
-                class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
-              >
-                <span v-if="testingChannel['dingtalk']" class="inline-flex items-center">
-                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                  正在测试...
-                </span>
-                <span v-else>测试连通性</span>
-              </button>
-              <button 
-                @click="saveConfig('dingtalk')"
-                :disabled="channelSaveDisabled('dingtalk')"
-                class="px-4 py-2 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
-              >
-                <span v-if="savingChannel['dingtalk']" class="inline-flex items-center">
-                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                  保存中...
-                </span>
-                <span v-else>保存配置</span>
-              </button>
-            </div>
-          </div>
+        <div v-show="isCardExpanded('dingtalk')" class="mt-5 border-t border-gray-50 pt-4">
+          <NotificationChannelGroups
+            ref="dingtalkEditor"
+            channel-type="dingtalk"
+            label="钉钉"
+            webhook-placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."
+            :supports-secret="true"
+            hint="钉钉群 → 智能群助手 → 添加机器人 → 自定义 → 复制 Webhook 地址。若机器人启用了「加签」，请填写 SEC 开头的密钥。"
+            @show-toast="showToast"
+            @changed="(counts: ChannelCounts) => (groupCounts.dingtalk = counts)"
+            @saved="fetchChannelReadiness"
+            @dirty="(d: boolean) => setChannelDirty('dingtalk', d)"
+          />
         </div>
       </div>
 
       <!-- 2. WeChat Work Config Card -->
       <div class="bg-white border border-gray-100 rounded-xl p-6 shadow-sm hover:shadow-md transition-all duration-300">
-        <div class="flex items-center justify-between">
+        <div
+          class="flex cursor-pointer select-none items-center justify-between rounded-lg -mx-2 px-2 py-1 hover:bg-gray-50/80 transition-colors"
+          role="button"
+          :aria-expanded="isCardExpanded('wechat_work')"
+          @click="toggleChannelCard('wechat_work')"
+        >
           <div class="flex items-center space-x-3">
             <div class="p-2 bg-green-50 rounded-lg text-green-600">
               <!-- WeChat Icon -->
@@ -160,70 +138,53 @@
           </div>
           <div class="flex items-center gap-3">
             <span
-              v-if="configs.wechat_work.is_enabled"
+              v-if="channelDirty.wechat_work"
+              class="px-1.5 py-0.5 text-[9.5px] font-black text-amber-700 bg-amber-100 rounded"
+              title="该渠道有改动尚未保存"
+            >未保存</span>
+            <span
+              class="text-[11px] text-gray-400"
+              :title="`wechat_work：${groupCounts.wechat_work.enabled} 个启用，共 ${groupCounts.wechat_work.total} 个`"
+            >{{ groupCounts.wechat_work.enabled }}/{{ groupCounts.wechat_work.total }} 个群</span>
+            <span
+              v-if="groupCounts.wechat_work.total > 0"
               class="px-2 py-0.5 text-[10px] font-black rounded-full border whitespace-nowrap"
               :class="channelBadge('wechat_work').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
               :title="channelBadge('wechat_work').reason"
             >{{ channelBadge('wechat_work').label }}</span>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" v-model="configs.wechat_work.is_enabled" class="sr-only peer" @change="onToggleChannel('wechat_work')">
-              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-            </label>
+            <svg
+              class="w-4 h-4 shrink-0 text-gray-400 transition-transform duration-200"
+              :class="isCardExpanded('wechat_work') ? 'rotate-180' : ''"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
           </div>
         </div>
 
         <!-- WeChat Work Form -->
-        <div v-if="configs.wechat_work.is_enabled" class="mt-6 border-t border-gray-50 pt-4 space-y-4">
-          <div>
-            <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">Webhook 地址</label>
-            <input 
-              type="text" 
-              v-model="configs.wechat_work.webhook_url"
-              placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
-              class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 placeholder-gray-300"
-            />
-            <p class="text-[11px] text-gray-400 mt-1">企业微信群聊 &rarr; 添加群机器人 &rarr; 新建机器人 &rarr; 复制 Webhook 地址。</p>
-          </div>
-
-          <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 pt-2">
-            <p
-              class="text-[11px]"
-              :class="channelSaveBlockedReason('wechat_work') ? 'text-amber-600' : 'text-gray-400'"
-            >
-              {{ channelSaveBlockedReason('wechat_work') || '测试连通性会真实发送一条消息到该群，不会影响线上业务。' }}
-            </p>
-            <div class="flex items-center space-x-3 shrink-0">
-              <button 
-                @click="testConfig('wechat_work')"
-                :disabled="channelTestDisabled('wechat_work')"
-                :title="channelTestBlockedReason('wechat_work')"
-                class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
-              >
-                <span v-if="testingChannel['wechat_work']" class="inline-flex items-center">
-                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                  正在测试...
-                </span>
-                <span v-else>测试连通性</span>
-              </button>
-              <button 
-                @click="saveConfig('wechat_work')"
-                :disabled="channelSaveDisabled('wechat_work')"
-                class="px-4 py-2 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
-              >
-                <span v-if="savingChannel['wechat_work']" class="inline-flex items-center">
-                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                  保存中...
-                </span>
-                <span v-else>保存配置</span>
-              </button>
-            </div>
-          </div>
+        <div v-show="isCardExpanded('wechat_work')" class="mt-5 border-t border-gray-50 pt-4">
+          <NotificationChannelGroups
+            ref="wechatWorkEditor"
+            channel-type="wechat_work"
+            label="企微"
+            webhook-placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
+            :supports-secret="false"
+            hint="企业微信群 → 群机器人 → 添加 → 复制 Webhook 地址。企业微信机器人不支持加签。"
+            @show-toast="showToast"
+            @changed="(counts: ChannelCounts) => (groupCounts.wechat_work = counts)"
+            @saved="fetchChannelReadiness"
+            @dirty="(d: boolean) => setChannelDirty('wechat_work', d)"
+          />
         </div>
       </div>
 
       <!-- 3. Feishu Config Card -->
       <div class="bg-white border border-gray-100 rounded-xl p-6 shadow-sm hover:shadow-md transition-all duration-300">
-        <div class="flex items-center justify-between">
+        <div
+          class="flex cursor-pointer select-none items-center justify-between rounded-lg -mx-2 px-2 py-1 hover:bg-gray-50/80 transition-colors"
+          role="button"
+          :aria-expanded="isCardExpanded('feishu')"
+          @click="toggleChannelCard('feishu')"
+        >
           <div class="flex items-center space-x-3">
             <div class="p-2 bg-cyan-50 rounded-lg text-cyan-600">
               <!-- Feishu Icon (Paper plane / Lark icon) -->
@@ -251,80 +212,53 @@
           </div>
           <div class="flex items-center gap-3">
             <span
-              v-if="configs.feishu.is_enabled"
+              v-if="channelDirty.feishu"
+              class="px-1.5 py-0.5 text-[9.5px] font-black text-amber-700 bg-amber-100 rounded"
+              title="该渠道有改动尚未保存"
+            >未保存</span>
+            <span
+              class="text-[11px] text-gray-400"
+              :title="`feishu：${groupCounts.feishu.enabled} 个启用，共 ${groupCounts.feishu.total} 个`"
+            >{{ groupCounts.feishu.enabled }}/{{ groupCounts.feishu.total }} 个群</span>
+            <span
+              v-if="groupCounts.feishu.total > 0"
               class="px-2 py-0.5 text-[10px] font-black rounded-full border whitespace-nowrap"
               :class="channelBadge('feishu').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
               :title="channelBadge('feishu').reason"
             >{{ channelBadge('feishu').label }}</span>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" v-model="configs.feishu.is_enabled" class="sr-only peer" @change="onToggleChannel('feishu')">
-              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-600"></div>
-            </label>
+            <svg
+              class="w-4 h-4 shrink-0 text-gray-400 transition-transform duration-200"
+              :class="isCardExpanded('feishu') ? 'rotate-180' : ''"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
           </div>
         </div>
 
         <!-- Feishu Form -->
-        <div v-if="configs.feishu.is_enabled" class="mt-6 border-t border-gray-50 pt-4 space-y-4">
-          <div>
-            <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">Webhook 地址</label>
-            <input 
-              type="text" 
-              v-model="configs.feishu.webhook_url"
-              placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
-              class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 placeholder-gray-300"
-            />
-            <p class="text-[11px] text-gray-400 mt-1">飞书群聊 &rarr; 设置 &rarr; 群机器人 &rarr; 添加机器人 &rarr; 自定义机器人 &rarr; 复制 Webhook 地址。</p>
-          </div>
-          <div>
-            <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">签名密钥 (可选)</label>
-            <input 
-              type="password" 
-              v-model="configs.feishu.secret"
-              placeholder="若开启签名校验请输入秘钥"
-              class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 placeholder-gray-300"
-            />
-            <p class="text-[11px] text-gray-400 mt-1">若飞书机器人启用了「签名校验」安全设置，请在此填写秘钥。</p>
-          </div>
-
-          <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 pt-2">
-            <p
-              class="text-[11px]"
-              :class="channelSaveBlockedReason('feishu') ? 'text-amber-600' : 'text-gray-400'"
-            >
-              {{ channelSaveBlockedReason('feishu') || '测试连通性会真实发送一条消息到该群，不会影响线上业务。' }}
-            </p>
-            <div class="flex items-center space-x-3 shrink-0">
-              <button 
-                @click="testConfig('feishu')"
-                :disabled="channelTestDisabled('feishu')"
-                :title="channelTestBlockedReason('feishu')"
-                class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
-              >
-                <span v-if="testingChannel['feishu']" class="inline-flex items-center">
-                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                  正在测试...
-                </span>
-                <span v-else>测试连通性</span>
-              </button>
-              <button 
-                @click="saveConfig('feishu')"
-                :disabled="channelSaveDisabled('feishu')"
-                class="px-4 py-2 text-xs font-medium text-white bg-cyan-600 hover:bg-cyan-700 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
-              >
-                <span v-if="savingChannel['feishu']" class="inline-flex items-center">
-                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                  保存中...
-                </span>
-                <span v-else>保存配置</span>
-              </button>
-            </div>
-          </div>
+        <div v-show="isCardExpanded('feishu')" class="mt-5 border-t border-gray-50 pt-4">
+          <NotificationChannelGroups
+            ref="feishuEditor"
+            channel-type="feishu"
+            label="飞书"
+            webhook-placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
+            :supports-secret="true"
+            hint="飞书群 → 设置 → 群机器人 → 添加自定义机器人 → 复制 Webhook 地址。启用「签名校验」时填写密钥。"
+            @show-toast="showToast"
+            @changed="(counts: ChannelCounts) => (groupCounts.feishu = counts)"
+            @saved="fetchChannelReadiness"
+            @dirty="(d: boolean) => setChannelDirty('feishu', d)"
+          />
         </div>
       </div>
 
       <!-- 4. SMTP Email Config Card -->
       <div class="bg-white border border-gray-100 rounded-xl p-6 shadow-sm hover:shadow-md transition-all duration-300">
-        <div class="flex items-center justify-between">
+        <div
+          class="flex cursor-pointer select-none items-center justify-between rounded-lg -mx-2 px-2 py-1 hover:bg-gray-50/80 transition-colors"
+          role="button"
+          :aria-expanded="isCardExpanded('email')"
+          @click="toggleChannelCard('email')"
+        >
           <div class="flex items-center space-x-3">
             <div class="p-2 bg-orange-50 rounded-lg text-orange-500">
               <!-- Email Icon -->
@@ -357,14 +291,24 @@
               :class="channelBadge('email').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
               :title="channelBadge('email').reason"
             >{{ channelBadge('email').label }}</span>
-            <label class="relative inline-flex items-center cursor-pointer">
+            <!-- 必须 stop：这个开关在折叠头内部，点击会冒泡到 toggleChannelCard，
+                 而 <label> 包 <input> 还会额外向 input 转发一次合成 click，
+                 结果是「点一下开关，卡片跟着收起」 -->
+            <label class="relative inline-flex items-center cursor-pointer" @click.stop>
               <input type="checkbox" v-model="configs.email.is_enabled" class="sr-only peer" @change="onToggleChannel('email')">
               <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
             </label>
+            <svg
+              class="w-4 h-4 shrink-0 text-gray-400 transition-transform duration-200"
+              :class="isCardExpanded('email') ? 'rotate-180' : ''"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
           </div>
         </div>
 
         <!-- Email SMTP Form -->
+        <!-- 折叠用 v-show、开关态用 v-if：两者语义不同，不能合成一个条件 -->
+        <div v-show="isCardExpanded('email')">
         <div v-if="configs.email.is_enabled" class="mt-6 border-t border-gray-50 pt-4 space-y-4">
           <!-- 邮件服务来源：默认走平台统一配置 -->
           <div>
@@ -572,6 +516,7 @@
             </div>
           </div>
         </div>
+        </div>
       </div>
     </div>
 
@@ -676,8 +621,53 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import axios from '../../utils/axios'
 import Modal from '../Modal.vue'
+// 钉钉 / 飞书 / 企微的多群管理抽成独立组件：三个渠道除了「怎么发出去」之外，
+// 「发到哪个群」的逻辑完全一致，没必要在这份 1000 多行的文件里重复三遍。
+import NotificationChannelGroups from './NotificationChannelGroups.vue'
 
 const emit = defineEmits(['show-toast'])
+
+// 子组件自己维护群列表，这里只存计数 —— 用于卡片头部的「N 个群」与状态徽标显隐
+// 「启用了几个 / 一共几个」—— 只显示总数会掩盖「配了但全部停用」，
+// 而这正是发不出消息的典型状态。
+type ChannelCounts = { total: number; enabled: number }
+const groupCounts = ref<Record<'dingtalk' | 'wechat_work' | 'feishu', ChannelCounts>>({
+  dingtalk: { total: 0, enabled: 0 },
+  wechat_work: { total: 0, enabled: 0 },
+  feishu: { total: 0, enabled: 0 },
+})
+
+function showToast(message: string, type: 'success' | 'error' = 'success') {
+  emit('show-toast', message, type)
+}
+
+// 四张渠道卡片可折叠：默认全部收起，进入页面先看「每个渠道几个群、可用不可用」，
+// 需要改再展开。折叠状态记到 localStorage —— 用户常看的那个渠道不必每次重新点开。
+const CARD_STATE_KEY = 'notification-channel-cards-expanded'
+const expandedCards = ref<Record<string, boolean>>((() => {
+  try {
+    const raw = localStorage.getItem(CARD_STATE_KEY)
+    const parsed = raw ? JSON.parse(raw) : null
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    // 存坏了就当没存过，默认全收起，不要因为一段脏 JSON 让整页打不开
+    return {}
+  }
+})())
+const isCardExpanded = (channel: string) => expandedCards.value[channel] === true
+const toggleChannelCard = (channel: string) => {
+  expandedCards.value = { ...expandedCards.value, [channel]: !isCardExpanded(channel) }
+  try {
+    localStorage.setItem(CARD_STATE_KEY, JSON.stringify(expandedCards.value))
+  } catch {
+    // 隐私模式下 localStorage 可能不可写，折叠依然要能点
+  }
+}
+// 各渠道是否有未保存的改动：折叠后只剩这一处能提醒用户「里面改过还没存」
+const channelDirty = ref<Record<string, boolean>>({})
+const setChannelDirty = (channel: string, value: boolean) => {
+  channelDirty.value = { ...channelDirty.value, [channel]: value }
+}
 
 const loading = ref(false)
 const configs = ref<Record<string, any>>({
@@ -1028,18 +1018,22 @@ const channelSaveDisabled = (channel: string) =>
   !!savingChannel.value[channel] ||
   !!channelSaveBlockedReason(channel)
 
-// 「测试连通性」复用同一套必填前置校验（邮件另用更全的判据，含全局服务是否启用）：
-// webhook 都没填就点测试，只能换来一句必然失败的报错，不如把按钮灰掉并写出原因。
-const channelTestBlockedReason = (channel: string): string =>
-  channel === 'email' ? emailTestBlockedReason.value : channelSaveBlockedReason(channel)
-const channelTestDisabled = (channel: string) =>
-  !!testingChannel.value[channel] ||
-  !!savingChannel.value[channel] ||
-  !!channelTestBlockedReason(channel)
 
 // 「刷新配置」必须把可用性一起刷新：只刷配置会让徽标停留在旧结论上
+// 子组件各自持有群列表，父组件的「刷新配置」必须把它们一起刷 ——
+// 否则用户在这里点刷新，看到的群仍然是子组件挂载时那一份。
+type GroupEditor = { reload: () => Promise<void> }
+const dingtalkEditor = ref<GroupEditor | null>(null)
+const wechatWorkEditor = ref<GroupEditor | null>(null)
+const feishuEditor = ref<GroupEditor | null>(null)
 const refreshAll = async () => {
-  await Promise.all([fetchConfigs(), fetchChannelReadiness()])
+  await Promise.all([
+    fetchConfigs(),
+    fetchChannelReadiness(),
+    ...[dingtalkEditor, wechatWorkEditor, feishuEditor].map((editor) =>
+      editor.value?.reload?.()
+    ),
+  ])
 }
 
 // 开关本身也要持久化：关闭后表单（含保存按钮）会收起，若不在此保存，刷新后状态会回弹

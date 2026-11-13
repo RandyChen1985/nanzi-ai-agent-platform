@@ -79,9 +79,9 @@ def test_watchdog_helpers_exist_with_zero_as_lower_bound():
     ):
         assert f"const {name}" in source
 
-    # 边界必须是 0-3600 且默认 600，与后端 producer_watchdog 模块一致
+    # 边界必须是 0-86400 且默认 600，与后端 producer_watchdog 模块一致
     assert "PRODUCER_HARD_TIMEOUT_MIN = 0" in source
-    assert "PRODUCER_HARD_TIMEOUT_MAX = 3600" in source
+    assert "PRODUCER_HARD_TIMEOUT_MAX = 86400" in source
     assert "PRODUCER_HARD_TIMEOUT_DEFAULT = 600" in source
 
 

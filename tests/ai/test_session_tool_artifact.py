@@ -14,6 +14,7 @@ from app.services.ai.session_tool_artifact import (
     consider_turn_artifact_candidate,
     filter_tools_for_reusable_result,
     insert_session_tool_artifact_context,
+    reusable_result_removal_names,
     should_inject_session_artifact,
 )
 from app.services.ai.executors.common import normalize_messages_for_llm
@@ -640,3 +641,77 @@ def test_receipt_with_new_followup_request_still_narrows_tools():
         )
         is True
     )
+
+
+def test_receipt_followup_narrows_facts_but_keeps_resume_tool():
+    """回执 + 补充说明「画个图」：该裁事实获取工具，但绝不能裁 sub_agent_call。
+
+    提示词侧过去对系统回执无条件豁免（一个都不裁），运行时却由
+    should_inject_session_artifact 判成复用、连 sub_agent_call 一起拔掉。
+    结果是提示词列着 sub_agent_call、运行时没有，父代理再也 resume 不了
+    那个停下来的子代理——用户看到「我当前工具集中没有 sub_agent_call」。
+    """
+    artifact = _delegation_artifact()
+    receipt = _answer_receipt("把刚才的结果画成柱状图")
+
+    removal = reusable_result_removal_names(receipt, artifact)
+    assert "sub_agent_call" not in removal
+    assert "sub_agent_batch_call" not in removal
+    assert "execute_sql_query" in removal
+
+    tools = [
+        {"name": "sub_agent_call"},
+        {"name": "sub_agent_batch_call"},
+        {"name": "execute_sql_query"},
+        {"name": "write_file"},
+    ]
+    kept = [
+        tool["name"]
+        for tool in filter_tools_for_reusable_result(
+            tools, user_question=receipt, artifact=artifact
+        )
+    ]
+    assert kept == ["sub_agent_call", "sub_agent_batch_call", "write_file"]
+
+
+def test_plain_receipt_keeps_everything():
+    """回执本身没有补充诉求时，一个工具都不该裁。"""
+    artifact = _delegation_artifact()
+    assert reusable_result_removal_names(_answer_receipt(), artifact) == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_prompt_and_runtime_agree_on_removal():
+    """提示词与运行时必须给出同一份清单 —— 这是本 bug 的根因。"""
+    from app.services.ai.prompt_assembler import (
+        resolve_effective_prompt_tool_names_for_turn,
+    )
+
+    artifact = _delegation_artifact()
+    receipt = _answer_receipt("把刚才的结果画成柱状图")
+    removal = reusable_result_removal_names(receipt, artifact)
+
+    class _Cfg:
+        tools: list = []
+        tool_names: list = []
+
+    class _Decision:
+        reusable_result_mode = "none"
+
+    names = await resolve_effective_prompt_tool_names_for_turn(
+        _Cfg(),
+        current_user_query=receipt,
+        turn_decision=_Decision(),
+        session_artifact=artifact,
+    )
+    # 结构性契约：提示词侧必须调用与运行时同一个判定函数，
+    # 不能再自己写一套（这正是「提示词列着、运行时没有」的来源）。
+    import inspect
+
+    src = inspect.getsource(resolve_effective_prompt_tool_names_for_turn)
+    assert "reusable_result_removal_names" in src
+    assert "REUSABLE_RESULT_ACQUISITION_TOOLS" not in src
+
+    # 被裁掉的工具不会出现在提示词清单里
+    for gone in removal:
+        assert gone not in names, gone

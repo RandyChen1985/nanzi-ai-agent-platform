@@ -45,6 +45,18 @@ def _ensure_share_table(sync_conn) -> None:
         existing = {col["name"] for col in inspector.get_columns(table.name)}
         expected = {col.name for col in table.columns}
         if not expected.issubset(existing):
+            # 真实开发库里可能有真实用户的分享请求，drop 一次就全没了。
+            # 只有空表才允许重建；有数据就说明该执行迁移了。
+            from sqlalchemy import text as _sql_text
+
+            rows = sync_conn.execute(
+                _sql_text("SELECT COUNT(*) FROM %s" % table.name)
+            ).scalar()
+            if rows:
+                raise RuntimeError(
+                    "表 %s 结构落后于模型且有 %d 条真实数据，拒绝 DROP 重建。"
+                    "请先执行对应迁移。" % (table.name, rows)
+                )
             table.drop(sync_conn, checkfirst=True)
     table.create(sync_conn, checkfirst=True)
 
@@ -59,7 +71,17 @@ async def share_table(db_session):
     await conn.run_sync(_ensure_share_table)
     AgentShareService.reset_probe_state_for_tests(None)
     yield
-    await db_session.execute(delete(AgentShareRequest))
+    # 只清本套测试自己造的分享请求（用户名都是 owner-xxxxxx / peer-xxxxxx /
+    # other-xxxxxx 的随机后缀）。原先是无 WHERE 的 delete(AgentShareRequest)：
+    # 测试连的是真实开发库，跑一次就把所有人的分享请求清空。
+    from sqlalchemy import or_
+
+    patterns = ("owner-%", "peer-%", "other-%")
+    clauses = []
+    for pattern in patterns:
+        clauses.append(AgentShareRequest.owner_user_name.like(pattern))
+        clauses.append(AgentShareRequest.recipient_user_name.like(pattern))
+    await db_session.execute(delete(AgentShareRequest).where(or_(*clauses)))
     await db_session.commit()
     AgentShareService.reset_probe_state_for_tests(None)
 

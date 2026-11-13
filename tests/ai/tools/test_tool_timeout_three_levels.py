@@ -1,4 +1,9 @@
-"""工具级超时的三级覆盖：工具级 ≤ 上层（版本级/全局级），只能收紧不能放宽。"""
+"""工具级超时的逐级覆盖：工具级 > 工具自带 > 版本级 > 全局级。
+
+上层是**默认值**而不是天花板：工具级可以把某个慢工具放大到超过上层（配置界面只提示，
+运行时不再静默截断）。静默截断会让「界面填的值」和「实际生效的值」对不上，
+而那正是本模块要消灭的问题。
+"""
 
 import pytest
 
@@ -43,34 +48,38 @@ class TestResolveToolTimeout:
         assert value == 60
         assert source == "tool"
 
-    def test_tool_cannot_exceed_global_ceiling(self):
-        """工具级不能顶开系统级：全局 180 时，配 600 也只能按 180 生效。"""
+    def test_tool_can_exceed_global_default(self):
+        """慢工具可以放大到超过全局默认值：全局 180 时配 600，就按 600 跑。
+
+        这是本轮的语义变更。旧实现会 min 成 180——用户填 600、界面提示按 180 生效，
+        而「给某个慢工具更长预算」正是工具级存在的意义。
+        """
         value, source = resolve_tool_timeout(
             tool_config_timeout=600, global_timeout=180
         )
-        assert value == 180
+        assert value == 600
         assert source == "tool"
 
-    def test_tool_cannot_exceed_agent_ceiling(self):
+    def test_tool_can_exceed_agent_default(self):
         value, source = resolve_tool_timeout(
             tool_config_timeout=600, agent_timeout=300, global_timeout=180
         )
-        assert value == 300
+        assert value == 600
         assert source == "tool"
 
-    def test_spec_defined_timeout_is_kept_but_capped(self):
-        """脚本工具自带的超时不再被整批覆盖抹平，但同样不能突破上层。"""
+    def test_spec_defined_timeout_is_kept(self):
+        """脚本工具自带的超时原样保留，同样不再被上层截断。"""
         value, source = resolve_tool_timeout(
             spec_timeout=90, global_timeout=180
         )
         assert value == 90
         assert source == "tool_defined"
 
-        capped, capped_source = resolve_tool_timeout(
+        over, over_source = resolve_tool_timeout(
             spec_timeout=900, global_timeout=180
         )
-        assert capped == 180
-        assert capped_source == "tool_defined"
+        assert over == 900
+        assert over_source == "tool_defined"
 
     def test_tool_config_beats_spec_defined(self):
         value, source = resolve_tool_timeout(
@@ -95,7 +104,7 @@ class TestResolveToolTimeout:
 
 class TestApplyAgentToolTimeout:
     def test_batch_keeps_per_tool_values(self):
-        """逐工具解析：一个工具收紧，不影响同批其它工具。"""
+        """逐工具解析：一个工具单独调，不影响同批其它工具。"""
         specs = [_spec("system_http_request"), _spec("execute_sql_query")]
         applied = apply_agent_tool_timeout(
             specs,
@@ -142,3 +151,113 @@ class TestCollectToolTimeouts:
         )
 
         assert collected == {"system_http_request": 600.0, "read_image": 120.0}
+
+
+class TestToolTimeoutContextPropagation:
+    def test_active_tool_timeout_context_roundtrip(self):
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            get_active_tool_timeout_seconds,
+            reset_active_tool_timeout_seconds,
+            set_active_tool_timeout_seconds,
+        )
+
+        assert get_active_tool_timeout_seconds() is None
+        tok = set_active_tool_timeout_seconds(900.0)
+        try:
+            assert get_active_tool_timeout_seconds() == 900.0
+        finally:
+            reset_active_tool_timeout_seconds(tok)
+        assert get_active_tool_timeout_seconds() is None
+
+    @pytest.mark.asyncio
+    async def test_resolve_mcp_tool_timeout_honors_active_and_version_over_3600(
+        self, monkeypatch
+    ):
+        from app.core.context import AgentContext, set_agent_context
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            reset_active_tool_timeout_seconds,
+            set_active_tool_timeout_seconds,
+        )
+        from app.services.ai.tools.mcp_factory import resolve_mcp_tool_timeout
+
+        set_agent_context(
+            AgentContext(
+                agent_id="a1",
+                agent_name="Main",
+                agent_max_toolcall_timeout_seconds=7200.0,
+            )
+        )
+        try:
+            # 无 active 时，>3600 且 <=86400 的版本级快照应原样保留
+            assert await resolve_mcp_tool_timeout() == 7200.0
+            # 有工具级活跃超时时，优先覆盖版本级（包括更大或更小）
+            tok = set_active_tool_timeout_seconds(45.0)
+            try:
+                assert await resolve_mcp_tool_timeout() == 45.0
+            finally:
+                reset_active_tool_timeout_seconds(tok)
+        finally:
+            set_agent_context(None)
+
+    @pytest.mark.asyncio
+    async def test_resolve_delegation_timeout_honors_active_and_version_over_3600(
+        self, monkeypatch
+    ):
+        from app.core.context import AgentContext, set_agent_context
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            reset_active_tool_timeout_seconds,
+            set_active_tool_timeout_seconds,
+        )
+        from app.services.ai.tools import agent_delegate_tool as delegation_tool
+
+        set_agent_context(
+            AgentContext(
+                agent_id="main-agent",
+                agent_name="Main",
+                agent_max_toolcall_timeout_seconds=7200.0,
+            )
+        )
+        try:
+            # 修复前误用 3600 上限的解析器，会把 7200 截成 180
+            assert await delegation_tool._resolve_delegation_timeout_seconds() == 7200.0
+            tok = set_active_tool_timeout_seconds(14400.0)
+            try:
+                assert (
+                    await delegation_tool._resolve_delegation_timeout_seconds() == 14400.0
+                )
+            finally:
+                reset_active_tool_timeout_seconds(tok)
+        finally:
+            set_agent_context(None)
+
+    @pytest.mark.asyncio
+    async def test_runtime_tool_stream_propagates_timeout_to_async_generator(self):
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            get_active_tool_timeout_seconds,
+        )
+        from app.services.ai.runtime.agentscope.tools import (
+            RuntimeToolSpec,
+            runtime_tool_from_spec,
+        )
+
+        observed: list[float | None] = []
+
+        async def streamed_tool():
+            observed.append(get_active_tool_timeout_seconds())
+            yield {"status": "ok"}
+
+        spec = RuntimeToolSpec(
+            name="mcp_stream_demo",
+            description="demo",
+            parameters_schema={},
+            callable=streamed_tool,
+            source_type="mcp",
+            timeout_seconds=720.0,
+        )
+        runtime_tool = runtime_tool_from_spec(spec)
+        # 通过 RuntimeTool 实际消费异步生成器期间能读到 720.0，结束后清空
+        stream = await runtime_tool()
+        collected = [c async for c in stream]
+        assert collected
+        assert observed == [720.0]
+        assert get_active_tool_timeout_seconds() is None

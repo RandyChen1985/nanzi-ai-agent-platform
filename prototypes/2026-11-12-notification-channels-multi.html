@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>消息通道多渠道 · 钉钉/飞书/企微统一多群与按群 ID 指定</title>
+<meta name="prototype-kind" content="方案设计">
+<style>
+  :root{
+    --ink:#0f172a; --ink-2:#334155; --ink-3:#64748b; --ink-4:#94a3b8;
+    --line:#e2e8f0; --line-2:#eef1f5; --bg:#f7f8fa; --card:#fff;
+    --p:#1677ff; --p-hover:#4096ff; --p-dark:#0958d9; --p-soft:#e8f2ff; --p-line:#bcd9ff;
+    --green:#10b981; --green-soft:#ecfdf5; --green-ink:#047857; --green-line:#a7f3d0;
+    --red:#dc2626; --red-soft:#fef2f2; --red-line:#fecaca;
+    --amber:#b45309; --amber-soft:#fffbeb; --amber-line:#fcd34d;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:13px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page{max-width:1080px;margin:0 auto;padding:28px 24px 90px}
+
+  .eyebrow{font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--p-dark);margin-bottom:8px}
+  h1{margin:0 0 10px;font-size:21px;font-weight:900;letter-spacing:-.4px}
+  .lead{margin:0 0 18px;color:var(--ink-3);font-size:13px;line-height:1.85;max-width:960px}
+  .lead b{color:var(--ink-2)}
+  .lead code{font-family:var(--mono);background:#eef2f7;border-radius:4px;padding:1px 5px;font-size:11.5px;color:var(--ink-2)}
+
+  /* ---------- 范围 ---------- */
+  .scope{background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:15px 18px;margin-bottom:16px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .scope h2{margin:0 0 10px;font-size:13px;font-weight:900}
+  .scope-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .scope-item{display:flex;gap:9px;align-items:flex-start;border-radius:10px;padding:9px 11px;border:1px solid var(--line-2);background:#f8fafc}
+  .scope-item.do{border-color:var(--green-line);background:var(--green-soft)}
+  .scope-item.dont{border-color:var(--line);background:#f8fafc}
+  .scope-item .dot{width:16px;height:16px;border-radius:99px;flex-shrink:0;margin-top:2px;display:grid;place-items:center;font-size:9.5px;font-weight:900;color:#fff}
+  .scope-item.do .dot{background:var(--green)}
+  .scope-item.dont .dot{background:#cbd5e1}
+  .scope-item b{font-size:11.5px;font-weight:800;display:block;color:var(--ink)}
+  .scope-item span{font-size:11px;color:var(--ink-3);line-height:1.7;display:block}
+  .scope-item.dont b,.scope-item.dont span{color:var(--ink-4)}
+  .scope-item code{font-family:var(--mono);font-size:10.5px;background:#fff;border:1px solid var(--line);border-radius:3px;padding:0 3px}
+
+  /* ---------- 现状核查 ---------- */
+  .audit{background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:15px 18px;margin-bottom:16px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .audit h2{margin:0 0 4px;font-size:13px;font-weight:900}
+  .audit p.sub{margin:0 0 11px;font-size:11.5px;color:var(--ink-3);line-height:1.8}
+  .audit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+  .audit-item{display:flex;gap:9px;align-items:flex-start;background:#f8fafc;border:1px solid var(--line-2);border-radius:10px;padding:9px 11px}
+  .audit-item .dot{width:16px;height:16px;border-radius:99px;flex-shrink:0;margin-top:2px;display:grid;place-items:center;font-size:9.5px;font-weight:900;color:#fff}
+  .audit-item.no .dot{background:var(--red)}
+  .audit-item.yes .dot{background:var(--green)}
+  .audit-item.warn .dot{background:var(--amber)}
+  .audit-item b{font-size:11.5px;font-weight:800;display:block;color:var(--ink)}
+  .audit-item span{font-size:11px;color:var(--ink-3);line-height:1.7;display:block}
+  .audit-item code{font-family:var(--mono);font-size:10.5px;background:#eef2f7;border-radius:3px;padding:0 3px;color:var(--ink-2)}
+
+  /* ---------- 视图切换 ---------- */
+  .planbar{position:sticky;top:0;z-index:40;background:rgba(247,248,250,.94);backdrop-filter:blur(8px);padding:10px 0 12px;margin-bottom:16px;border-bottom:1px solid var(--line-2)}
+  .plans{display:flex;gap:6px;flex-wrap:wrap}
+  .plans button{border:1px solid var(--line);background:#fff;border-radius:10px;padding:7px 12px;font:inherit;font-size:12px;font-weight:800;color:var(--ink-3);cursor:pointer;transition:.15s;display:flex;align-items:center;gap:6px}
+  .plans button.on{border-color:var(--p);background:var(--p-soft);color:var(--p-dark);box-shadow:0 1px 2px rgba(22,119,255,.15)}
+  .plans button .num{font-size:9.5px;font-weight:900;background:#eef2f7;color:var(--ink-4);border-radius:5px;padding:1px 5px}
+  .plans button.on .num{background:#fff;color:var(--p-dark)}
+
+  .view[hidden]{display:none}
+  .card{background:var(--card);border:1px solid var(--line-2);border-radius:16px;box-shadow:0 1px 2px rgba(15,23,42,.03);padding:18px 20px}
+  .card > h2{margin:0;font-size:14px;font-weight:900;letter-spacing:-.1px}
+  .card > p.cap{margin:4px 0 16px;font-size:11.5px;color:var(--ink-3);line-height:1.85}
+
+  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #d7dde6;background:#fff;border-radius:9px;padding:7px 12px;font:inherit;font-size:12px;font-weight:800;color:var(--ink-2);cursor:pointer;transition:.15s;white-space:nowrap}
+  .btn:hover{border-color:#c3ccd8;background:#f9fbfd}
+  .btn.primary{background:var(--p);border-color:var(--p);color:#fff}
+  .btn.primary:hover{background:var(--p-hover);border-color:var(--p-hover)}
+  .btn.danger{color:var(--red);border-color:#f3d3d3}
+  .btn.danger:hover{background:var(--red-soft)}
+  .btn.sm{padding:4px 9px;font-size:11px;border-radius:7px}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  input[type=text],input[type=password]{border:1px solid #d7dde6;border-radius:9px;padding:8px 10px;font:inherit;font-size:12.5px;color:var(--ink);outline:none;transition:.15s;background:#fff;width:100%}
+  input[type=text]:focus,input[type=password]:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(22,119,255,.14)}
+  input::placeholder{color:#a9b4c2}
+
+  /* ---------- 渠道区块 ---------- */
+  .channel-block + .channel-block{margin-top:20px;padding-top:18px;border-top:1px solid var(--line-2)}
+  .channel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .channel-head .left{display:flex;align-items:center;gap:10px}
+  .ch-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:15px;border:1px solid;flex-shrink:0}
+  .ch-icon.dt{background:var(--p-soft);color:var(--p-dark);border-color:var(--p-line)}
+  .ch-icon.fs{background:#eef2ff;color:#4f46e5;border-color:#c7d2fe}
+  .ch-icon.wx{background:var(--green-soft);color:var(--green-ink);border-color:var(--green-line)}
+  .channel-head h3{margin:0;font-size:13.5px;font-weight:900}
+  .channel-head .sub{margin:1px 0 0;font-size:11px;color:var(--ink-4)}
+  .channel-head .sub b{color:var(--ink-3)}
+
+  .ch-list{display:flex;flex-direction:column;gap:9px}
+  .ch-item{border:1px solid var(--line);border-radius:12px;padding:12px 13px;background:#fff;transition:.15s;position:relative}
+  .ch-item.is-default{border-color:var(--p-line);background:linear-gradient(180deg,#f7fbff,#fff);box-shadow:0 1px 3px rgba(22,119,255,.07)}
+  .ch-item.disabled{opacity:.62;background:#fafbfc}
+  .ch-row1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ch-id{font-family:var(--mono);font-size:10.5px;font-weight:800;color:var(--ink-3);background:#f1f5f9;border:1px solid var(--line);border-radius:6px;padding:1px 6px;cursor:pointer;user-select:all;flex-shrink:0}
+  .ch-id:hover{background:var(--p-soft);border-color:var(--p-line);color:var(--p-dark)}
+  .ch-name{border:1px solid transparent;background:transparent;font:inherit;font-size:12.5px;font-weight:900;color:var(--ink);padding:3px 6px;border-radius:7px;width:auto;min-width:110px;flex:0 1 auto}
+  .ch-name:hover{border-color:var(--line)}
+  .ch-name:focus{border-color:var(--p);background:#fff;box-shadow:0 0 0 3px rgba(22,119,255,.14);outline:none}
+  .badge-default{font-size:9.5px;font-weight:900;letter-spacing:.03em;background:var(--p);color:#fff;border-radius:5px;padding:1.5px 6px}
+  .badge-env{font-size:9.5px;font-weight:900;background:#f1f5f9;color:var(--ink-3);border-radius:5px;padding:1.5px 6px}
+  .ch-row1 .spacer{flex:1}
+
+  .switch{position:relative;display:inline-flex;align-items:center;cursor:pointer}
+  .switch input{position:absolute;opacity:0;width:0;height:0}
+  .switch .track{width:38px;height:21px;border-radius:99px;background:#cbd5e1;transition:.18s;position:relative}
+  .switch .track::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.2);transition:.18s}
+  .switch input:checked + .track{background:var(--p)}
+  .switch input:checked + .track::after{transform:translateX(17px)}
+
+  .ch-row2{display:flex;gap:9px;margin-top:9px;flex-wrap:wrap}
+  .ch-row2 .fld{flex:1;min-width:190px}
+  .ch-row2 .fld > span{display:block;font-size:10px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-4);margin-bottom:4px}
+  .ch-row2 input{font-size:11.5px;padding:6px 9px;border-radius:8px}
+  .ch-row3{display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap}
+  .ch-row3 .spacer{flex:1}
+
+  .note{display:flex;gap:8px;align-items:flex-start;border-radius:10px;padding:9px 11px;font-size:11px;line-height:1.75;margin-top:12px}
+  .note .ic{flex-shrink:0;font-size:12px;line-height:1.5}
+  .note.gray{background:#f8fafc;border:1px solid var(--line-2);color:var(--ink-3)}
+  .note.blue{background:var(--p-soft);border:1px solid var(--p-line);color:var(--p-dark)}
+  .note.amber{background:var(--amber-soft);border:1px solid var(--amber-line);color:var(--amber)}
+  .note.red{background:var(--red-soft);border:1px solid var(--red-line);color:var(--red)}
+  .note b{font-weight:800}
+  .note code{font-family:var(--mono);font-size:10.5px;background:#fff;border:1px solid currentColor;border-radius:3px;padding:0 3px;opacity:.85}
+
+  /* ---------- 代码块 ---------- */
+  pre.code{margin:0;background:#0f172a;color:#e2e8f0;border-radius:12px;padding:13px 15px;font-family:var(--mono);font-size:11.5px;line-height:1.85;overflow-x:auto;white-space:pre}
+  pre.code .kw{color:#7dd3fc}
+  pre.code .str{color:#a7f3d0}
+  pre.code .cmt{color:#64748b}
+  pre.code .new{background:rgba(167,243,208,.14);border-radius:4px;padding:0 3px}
+  pre.code .warn{color:#fcd34d}
+
+  /* ---------- 流程 ---------- */
+  .flow{display:flex;flex-direction:column;gap:0;margin:2px 0 18px}
+  .step{display:flex;gap:12px;position:relative;padding-bottom:14px}
+  .step:last-child{padding-bottom:0}
+  .step .rail{width:26px;flex-shrink:0;display:flex;flex-direction:column;align-items:center}
+  .step .num{width:24px;height:24px;border-radius:99px;display:grid;place-items:center;font-size:11px;font-weight:900;background:var(--p);color:#fff;flex-shrink:0}
+  .step.s2 .num{background:var(--green-ink)}
+  .step.s3 .num{background:#64748b}
+  .step .rail::after{content:"";flex:1;width:2px;background:var(--line);margin-top:4px;border-radius:2px}
+  .step:last-child .rail::after{display:none}
+  .step .body{flex:1;min-width:0;padding-bottom:2px}
+  .step .body h4{margin:0 0 3px;font-size:12.5px;font-weight:900;color:var(--ink)}
+  .step .body p{margin:0;font-size:11px;color:var(--ink-3);line-height:1.8}
+  .step .body code{font-family:var(--mono);font-size:10.5px;background:#eef2f7;border-radius:3px;padding:0 4px;color:var(--ink-2)}
+  .step .body .outcome{display:inline-flex;align-items:center;gap:5px;margin-top:6px;font-size:10.5px;font-weight:800;border-radius:6px;padding:2.5px 8px;background:var(--green-soft);color:var(--green-ink);border:1px solid var(--green-line)}
+  .step .body .outcome.fallback{background:var(--amber-soft);color:var(--amber);border-color:var(--amber-line)}
+  .step .body .outcome.fail{background:var(--red-soft);color:var(--red);border-color:var(--red-line)}
+
+  table.scene{width:100%;border-collapse:separate;border-spacing:0;font-size:11.5px}
+  table.scene th{text-align:left;font-size:10.5px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-4);padding:0 10px 7px;border-bottom:1px solid var(--line)}
+  table.scene td{padding:9px 10px;border-bottom:1px solid var(--line-2);vertical-align:top;line-height:1.75;color:var(--ink-2)}
+  table.scene tr:last-child td{border-bottom:0}
+  table.scene td b{color:var(--ink);font-weight:800}
+  table.scene code{font-family:var(--mono);font-size:10.5px;background:#eef2f7;border-radius:3px;padding:0 4px;color:var(--ink-2)}
+  .pill{display:inline-block;font-size:10px;font-weight:800;border-radius:99px;padding:1px 7px;border:1px solid transparent;white-space:nowrap}
+  .pill.ok{background:var(--green-soft);color:var(--green-ink);border-color:var(--green-line)}
+  .pill.warn{background:var(--amber-soft);color:var(--amber);border-color:var(--amber-line)}
+  .pill.err{background:var(--red-soft);color:var(--red);border-color:var(--red-line)}
+  .pill.gray{background:#f1f5f9;color:var(--ink-3);border-color:var(--line)}
+
+  .bubble{border:1px solid var(--line);border-radius:12px;background:#f8fafc;padding:12px 14px;font-family:var(--mono);font-size:11.5px;line-height:1.85;color:var(--ink-2);white-space:pre-wrap;word-break:break-word}
+  .bubble .ok{color:var(--green-ink);font-weight:800}
+  .bubble .bad{color:var(--red);font-weight:800}
+  .bubble .dim{color:var(--ink-4)}
+
+  .kv{display:grid;grid-template-columns:118px 1fr;gap:8px 14px;font-size:11.5px;align-items:start}
+  .kv dt{color:var(--ink-4);font-weight:800;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;padding-top:1px}
+  .kv dd{margin:0;color:var(--ink-2);line-height:1.8}
+  .kv dd code{font-family:var(--mono);font-size:10.5px;background:#eef2f7;border-radius:3px;padding:0 4px}
+
+  @media (max-width:760px){
+    .scope-grid,.audit-grid{grid-template-columns:1fr}
+    .kv{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="eyebrow">方案设计 · 钉钉 / 飞书 / 企业微信 三渠道统一</div>
+  <h1>消息通道多渠道：统一多群配置 + 按群 ID 精确指定</h1>
+  <p class="lead">
+    钉钉、飞书、企业微信<strong>三套渠道走完全一样的逻辑</strong>：每个渠道可以配<strong>多个群</strong>，
+    每个群有平台维护的<strong>群 ID</strong>和名称、可以单独启用停用、可以设一个默认群。
+    发送时：<strong>AI 指定了群 ID 就发给那个群</strong>（不存在或已停用则忽略、<b>不兜底</b>），
+    <strong>没指定就发默认群</strong>。另外新增一个 <code>list_notification_channels</code> 工具，
+    让 AI 能主动查「我到底有哪些可用的通道」。
+  </p>
+
+  <!-- ========== 范围 ========== -->
+  <div class="scope">
+    <h2>本期范围</h2>
+    <div class="scope-grid">
+      <div class="scope-item do">
+        <div class="dot">✓</div>
+        <div>
+          <b>三渠道都支持配多个群</b>
+          <span>钉钉 / 飞书 / 企业微信，每渠道最多 10 个群，各自的默认群、启用状态独立</span>
+        </div>
+      </div>
+      <div class="scope-item do">
+        <div class="dot">✓</div>
+        <div>
+          <b>新增 <code>list_notification_channels</code> 工具</b>
+          <span>AI 主动查询：有哪些渠道、每个渠道下有哪些群、群 ID / 名称 / 是否默认 / 是否启用</span>
+        </div>
+      </div>
+      <div class="scope-item do">
+        <div class="dot">✓</div>
+        <div>
+          <b>三个发送工具统一加 <code>group_id</code></b>
+          <span>指定了就发指定的群；不存在 / 已停用 / 不是自己的 → 忽略不发送</span>
+        </div>
+      </div>
+      <div class="scope-item dont">
+        <div class="dot">✕</div>
+        <div>
+          <b>不做标签路由、不做工具级指定群</b>
+          <span>也不在工具描述里硬塞渠道清单——交给 list 工具按需查</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 现状核查 ========== -->
+  <div class="audit">
+    <h2>现状核查（读码结论）</h2>
+    <p class="sub">前两条决定了改造面，最后一条决定了能不能不破坏存量。</p>
+    <div class="audit-grid">
+      <div class="audit-item no">
+        <div class="dot">✕</div>
+        <div>
+          <b>每用户每渠道只能存一条</b>
+          <span><code>UNIQUE KEY ux_user_notification_channel (user_id, channel_type)</code>，三个渠道共用这一张表、同一个限制</span>
+        </div>
+      </div>
+      <div class="audit-item no">
+        <div class="dot">✕</div>
+        <div>
+          <b>三个发送工具参数还不统一</b>
+          <span>钉钉/飞书是 <code>(title, content)</code>，企微只有 <code>(content)</code>——本期只统一加 <code>group_id</code>，不动各自原有参数</span>
+        </div>
+      </div>
+      <div class="audit-item warn">
+        <div class="dot">!</div>
+        <div>
+          <b>AI 目前完全看不见通道</b>
+          <span>没有任何 list 类工具，AI 只能等发送失败才知道「没配」，也不知道有哪些群可选</span>
+        </div>
+      </div>
+      <div class="audit-item yes">
+        <div class="dot">✓</div>
+        <div>
+          <b>读取口是统一的</b>
+          <span>12 处调用都走 <code>get_config_by_type_raw()</code>，让它继续返回「默认渠道」即可零改动</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 视图切换 ========== -->
+  <div class="planbar">
+    <div class="plans">
+      <button class="on" data-v="1"><span class="num">①</span>个人中心 · 三渠道多群</button>
+      <button data-v="2"><span class="num">②</span>AI 怎么知道 / 怎么选群</button>
+      <button data-v="3"><span class="num">③</span>回执与兼容迁移</button>
+    </div>
+  </div>
+
+  <!-- ================= 视图一 ================= -->
+  <section class="view" data-v="1">
+    <div class="card">
+      <h2>① 个人中心 → 消息通知</h2>
+      <p class="cap">
+        三个渠道一模一样：每个渠道一组群，群里那个
+        <code style="font-family:var(--mono);background:#f1f5f9;border:1px solid var(--line);border-radius:5px;padding:1px 5px">ID 12</code>
+        就是群 ID（平台维护），点一下可复制。启用的群才能被发送；停用的群 AI 看得到但用不了。
+      </p>
+
+      <!-- 钉钉 -->
+      <div class="channel-block">
+        <div class="channel-head">
+          <div class="left">
+            <div class="ch-icon dt">🅳</div>
+            <div>
+              <h3>钉钉群机器人</h3>
+              <p class="sub">已配置 <b>3</b> 个 · <b>2</b> 个启用 · 默认群：<b>运维告警群</b>（ID 12）</p>
+            </div>
+          </div>
+          <button class="btn primary" data-add="dingtalk">+ 新增钉钉群</button>
+        </div>
+
+        <div class="ch-list" id="list-dingtalk">
+          <div class="ch-item is-default">
+            <div class="ch-row1">
+              <span class="ch-id">ID 12</span>
+              <input class="ch-name" value="运维告警群">
+              <span class="badge-default">默认</span>
+              <span class="badge-env">启用</span>
+              <span class="spacer"></span>
+              <button class="btn sm" data-act="test">测试</button>
+              <button class="btn sm danger" data-act="del">删除</button>
+              <label class="switch"><input type="checkbox" checked data-act="toggle"><span class="track"></span></label>
+            </div>
+            <div class="ch-row2">
+              <div class="fld"><span>Webhook</span><input type="text" value="https://oapi.dingtalk.com/robot/send?access_token=9f2c…a71d"></div>
+              <div class="fld"><span>加签密钥（可选）</span><input type="password" value="SECxxxxx"></div>
+            </div>
+            <div class="ch-row3">
+              <span class="spacer"></span>
+              <label style="display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:800;color:var(--ink-3);cursor:pointer">
+                <input type="radio" name="default-dingtalk" checked> 设为默认
+              </label>
+            </div>
+          </div>
+
+          <div class="ch-item">
+            <div class="ch-row1">
+              <span class="ch-id">ID 13</span>
+              <input class="ch-name" value="每日数据日报">
+              <span class="badge-env">启用</span>
+              <span class="spacer"></span>
+              <button class="btn sm" data-act="test">测试</button>
+              <button class="btn sm danger" data-act="del">删除</button>
+              <label class="switch"><input type="checkbox" checked data-act="toggle"><span class="track"></span></label>
+            </div>
+            <div class="ch-row2">
+              <div class="fld"><span>Webhook</span><input type="text" value="https://oapi.dingtalk.com/robot/send?access_token=1b3e…c0f2"></div>
+              <div class="fld"><span>加签密钥（可选）</span><input type="password" value="" placeholder="未启用加签"></div>
+            </div>
+            <div class="ch-row3">
+              <span class="spacer"></span>
+              <label style="display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:800;color:var(--ink-3);cursor:pointer">
+                <input type="radio" name="default-dingtalk"> 设为默认
+              </label>
+            </div>
+          </div>
+
+          <div class="ch-item disabled">
+            <div class="ch-row1">
+              <span class="ch-id">ID 14</span>
+              <input class="ch-name" value="旧项目群（已弃用）">
+              <span class="badge-env">已停用</span>
+              <span class="spacer"></span>
+              <button class="btn sm" data-act="test" disabled>测试</button>
+              <button class="btn sm danger" data-act="del">删除</button>
+              <label class="switch"><input type="checkbox" data-act="toggle"><span class="track"></span></label>
+            </div>
+            <div class="ch-row2">
+              <div class="fld"><span>Webhook</span><input type="text" value="https://oapi.dingtalk.com/robot/send?access_token=7d1f…88ba"></div>
+              <div class="fld"><span>加签密钥（可选）</span><input type="password" value=""></div>
+            </div>
+            <div class="ch-row3">
+              <span class="spacer"></span>
+              <label style="display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:800;color:var(--ink-4);cursor:not-allowed">
+                <input type="radio" name="default-dingtalk" disabled> 设为默认
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 飞书 -->
+      <div class="channel-block">
+        <div class="channel-head">
+          <div class="left">
+            <div class="ch-icon fs">🅵</div>
+            <div>
+              <h3>飞书群机器人</h3>
+              <p class="sub">已配置 <b>2</b> 个 · <b>2</b> 个启用 · 默认群：<b>飞书项目群</b>（ID 21）</p>
+            </div>
+          </div>
+          <button class="btn primary" data-add="feishu">+ 新增飞书群</button>
+        </div>
+
+        <div class="ch-list" id="list-feishu">
+          <div class="ch-item is-default">
+            <div class="ch-row1">
+              <span class="ch-id">ID 21</span>
+              <input class="ch-name" value="飞书项目群">
+              <span class="badge-default">默认</span>
+              <span class="badge-env">启用</span>
+              <span class="spacer"></span>
+              <button class="btn sm" data-act="test">测试</button>
+              <button class="btn sm danger" data-act="del">删除</button>
+              <label class="switch"><input type="checkbox" checked data-act="toggle"><span class="track"></span></label>
+            </div>
+            <div class="ch-row2">
+              <div class="fld"><span>Webhook</span><input type="text" value="https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"></div>
+              <div class="fld"><span>加签密钥（可选）</span><input type="password" value=""></div>
+            </div>
+            <div class="ch-row3">
+              <span class="spacer"></span>
+              <label style="display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:800;color:var(--ink-3);cursor:pointer">
+                <input type="radio" name="default-feishu" checked> 设为默认
+              </label>
+            </div>
+          </div>
+
+          <div class="ch-item">
+            <div class="ch-row1">
+              <span class="ch-id">ID 22</span>
+              <input class="ch-name" value="飞书日报群">
+              <span class="badge-env">启用</span>
+              <span class="spacer"></span>
+              <button class="btn sm" data-act="test">测试</button>
+              <button class="btn sm danger" data-act="del">删除</button>
+              <label class="switch"><input type="checkbox" checked data-act="toggle"><span class="track"></span></label>
+            </div>
+            <div class="ch-row2">
+              <div class="fld"><span>Webhook</span><input type="text" value="https://open.feishu.cn/open-apis/bot/v2/hook/yyyy"></div>
+              <div class="fld"><span>加签密钥（可选）</span><input type="password" value=""></div>
+            </div>
+            <div class="ch-row3">
+              <span class="spacer"></span>
+              <label style="display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:800;color:var(--ink-3);cursor:pointer">
+                <input type="radio" name="default-feishu"> 设为默认
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 企微 -->
+      <div class="channel-block">
+        <div class="channel-head">
+          <div class="left">
+            <div class="ch-icon wx">🆆</div>
+            <div>
+              <h3>企业微信群机器人</h3>
+              <p class="sub">已配置 <b>1</b> 个 · <b>1</b> 个启用 · 默认群：<b>企微值班群</b>（ID 31）</p>
+            </div>
+          </div>
+          <button class="btn primary" data-add="wechat_work">+ 新增企微群</button>
+        </div>
+
+        <div class="ch-list" id="list-wechat_work">
+          <div class="ch-item is-default">
+            <div class="ch-row1">
+              <span class="ch-id">ID 31</span>
+              <input class="ch-name" value="企微值班群">
+              <span class="badge-default">默认</span>
+              <span class="badge-env">启用</span>
+              <span class="spacer"></span>
+              <button class="btn sm" data-act="test">测试</button>
+              <button class="btn sm danger" data-act="del">删除</button>
+              <label class="switch"><input type="checkbox" checked data-act="toggle"><span class="track"></span></label>
+            </div>
+            <div class="ch-row2">
+              <div class="fld"><span>Webhook</span><input type="text" value="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx"></div>
+              <div class="fld"><span>（企微无加签）</span><input type="text" value="—" disabled></div>
+            </div>
+            <div class="ch-row3">
+              <span class="spacer"></span>
+              <label style="display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:800;color:var(--ink-3);cursor:pointer">
+                <input type="radio" name="default-wechat_work" checked> 设为默认
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note blue">
+        <span class="ic">ℹ</span>
+        <span>
+          <b>群 ID 全平台唯一：</b>三个渠道共用一张表，ID 是主键，所以「ID 13」永远只对应一个群，
+          不会出现「钉钉 13 号群」和「飞书 13 号群」混淆。
+        </span>
+      </div>
+      <div class="note gray">
+        <span class="ic">◻</span>
+        <span>
+          <b>默认群规则：</b>每个渠道最多一个默认群，且<b>只有启用的群能被设为默认</b>。
+          默认群被停用或删除时，自动由该渠道最早的启用群接管（前端提示 + 后端兜底）。
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 视图二 ================= -->
+  <section class="view" data-v="2" hidden>
+    <div class="card" style="margin-bottom:16px">
+      <h2>② AI 怎么知道有哪些通道：新增 list_notification_channels</h2>
+      <p class="cap">
+        参考 <code>list_accessible_datasets</code> 的做法：一个工具返回当前用户<b>全部渠道 + 群</b>的结构化清单，
+        带 <code>id</code> / <code>name</code> / <code>enabled</code> / <code>is_default</code>。
+      </p>
+
+      <pre class="code"><span class="cmt"># 工具签名</span>
+list_notification_channels(<span class="kw">channel_type?</span>=<span class="str">"dingtalk"</span>, <span class="kw">include_disabled?</span>=<span class="str">false</span>)
+
+<span class="cmt"># 返回（JSON 字符串）</span>
+{
+  <span class="str">"channels"</span>: [
+    {<span class="str">"type"</span>: <span class="str">"dingtalk"</span>, <span class="str">"label"</span>: <span class="str">"钉钉"</span>, <span class="str">"default_id"</span>: 12, <span class="str">"items"</span>: [
+        {<span class="str">"id"</span>: 12, <span class="str">"name"</span>: <span class="str">"运维告警群"</span>, <span class="str">"enabled"</span>: true,  <span class="str">"is_default"</span>: true},
+        {<span class="str">"id"</span>: 13, <span class="str">"name"</span>: <span class="str">"每日数据日报"</span>, <span class="str">"enabled"</span>: true,  <span class="str">"is_default"</span>: false},
+        {<span class="str">"id"</span>: 14, <span class="str">"name"</span>: <span class="str">"旧项目群（已弃用）"</span>, <span class="str">"enabled"</span>: false, <span class="str">"is_default"</span>: false}
+    ]},
+    {<span class="str">"type"</span>: <span class="str">"feishu"</span>, <span class="str">"label"</span>: <span class="str">"飞书"</span>, <span class="str">"default_id"</span>: 21, <span class="str">"items"</span>: [...]},
+    {<span class="str">"type"</span>: <span class="str">"wechat_work"</span>, <span class="str">"label"</span>: <span class="str">"企业微信"</span>, <span class="str">"default_id"</span>: 31, <span class="str">"items"</span>: [...]}
+  ],
+  <span class="str">"note"</span>: <span class="str">"钉钉默认群 id=12（运维告警群）。停用的群不会作为发送目标。"</span>
+}</pre>
+
+      <div class="note blue" style="margin-top:14px">
+        <span class="ic">ℹ</span>
+        <span>
+          <b>为什么不把清单塞进工具描述：</b>三个渠道最多 30 个群，全塞进描述会让每次调用的上下文变臃肿，
+          而且用户新加群后描述不会自动刷新。用 list 工具<b>按需查</b>，数据实时、描述保持简洁。
+        </span>
+      </div>
+      <div class="note gray">
+        <span class="ic">◻</span>
+        <span>
+          <b>AI 的使用路径：</b>用户说「发到运维群」→ AI 调 <code>list_notification_channels</code> 找名字含「运维」的群
+          → 拿到 id=12 → 调 <code>send_dingtalk_message(..., group_id=12)</code>。
+          没找到就如实告诉用户「你没有叫运维的群，现有的是 A/B/C」。
+        </span>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h2>三个发送工具：group_id 和 group_name 二选一</h2>
+      <p class="cap">
+        用户说「发给运维告警群」是最自然的说法，不该逼模型先查一遍 ID 再发。
+        所以两个参数都收：<b>ID 精确、名称好用</b>，服务端统一解析。
+      </p>
+
+      <pre class="code">send_dingtalk_message(title, content, <span class="new">group_id=None, group_name=None</span>)
+send_feishu_message(title, content, <span class="new">group_id=None, group_name=None</span>)
+send_wechat_work_message(content, <span class="new">group_id=None, group_name=None</span>)   <span class="cmt"># 企微本来就没有 title</span>
+
+<span class="cmt"># 用户说「发给运维告警群」 → 模型直接传名称，不用先查</span>
+send_dingtalk_message(title=<span class="str">"..."</span>, content=<span class="str">"..."</span>, group_name=<span class="new">"运维告警群"</span>)
+
+<span class="cmt"># 重名时模型会收到候选列表，再改用 id 精确指定</span>
+send_dingtalk_message(title=<span class="str">"..."</span>, content=<span class="str">"..."</span>, group_id=<span class="new">13</span>)</pre>
+
+      <div class="note blue" style="margin-top:14px">
+        <span class="ic">ℹ</span>
+        <span>
+          <b>优先级：<code style="background:#fff;border:1px solid var(--p-line);border-radius:3px;padding:0 3px">group_id</code> &gt; <code style="background:#fff;border:1px solid var(--p-line);border-radius:3px;padding:0 3px">group_name</code></b>。
+          两个都没传 → 发默认群。两个都传且指向不同群 → 以 id 为准（名称会被忽略并记一条日志）。
+        </span>
+      </div>
+
+      <h3 style="margin:18px 0 6px;font-size:12.5px;font-weight:900">名称怎么解析（三步，越往后越松）</h3>
+      <table class="scene">
+        <thead><tr><th style="width:26%">步骤</th><th style="width:30%">规则</th><th>命中 / 不命中</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>① 归一化精确匹配</b></td>
+            <td>去掉首尾空格、忽略大小写与全半角、去掉模型爱加的「群」后缀</td>
+            <td><span class="pill ok">唯一命中</span> 用它 ／ <span class="pill gray">无</span> 进第 ② 步</td>
+          </tr>
+          <tr>
+            <td><b>② 唯一包含匹配</b></td>
+            <td>群名包含用户说的串（或反过来）</td>
+            <td><span class="pill ok">只命中 1 个</span> 用它 ／ <span class="pill warn">命中多个</span> 报候选、要求用 id</td>
+          </tr>
+          <tr>
+            <td><b>③ 都不中</b></td>
+            <td>——</td>
+            <td><span class="pill err">忽略，不发送</span>（不兜底默认群）</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="note amber">
+        <span class="ic">⚠</span>
+        <span>
+          <b>重名只能靠 ID：</b>用户配了两个都叫「项目群」的群时，名称解析会直接拒绝并回「有 2 个叫项目群的群：id=15、id=17，请用 id 指定」——
+          <b>绝不替你猜一个</b>。这跟「名称可以重复、可以随时被改」的现实一致。
+        </span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>发送时的解析顺序</h2>
+      <p class="cap">规则很短：<b>指定了就发指定的，没指定就发默认的</b>。指定的不可用就忽略，<b>不兜底</b>。</p>
+
+      <div class="flow">
+        <div class="step">
+          <div class="rail"><div class="num">1</div></div>
+          <div class="body">
+            <h4>传了 <code>group_id</code> 或 <code>group_name</code></h4>
+            <p>名称先按三步解析成唯一一条记录，再统一校验：<b>存在</b>、<b>属于当前用户</b>、<b>渠道类型匹配</b>（不能拿钉钉 ID 去发飞书）、<b>已启用</b>。</p>
+            <span class="outcome">全都过 → 只发这一个群</span>
+          </div>
+        </div>
+        <div class="step s2">
+          <div class="rail"><div class="num">2</div></div>
+          <div class="body">
+            <h4>传了但校验不过</h4>
+            <p>不存在 / 不是自己的 / 渠道不匹配 / 已停用 → <b>忽略，消息不发送</b>。回执写明原因并列出可用群 ID。</p>
+            <span class="outcome fin" style="background:var(--red-soft);color:var(--red);border-color:var(--red-line)">忽略：本条不发送，不兜底</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="rail"><div class="num">3</div></div>
+          <div class="body">
+            <h4>没传 <code>group_id</code></h4>
+            <p>用该渠道的默认群（每人每渠道最多一个）。</p>
+            <span class="outcome">发默认群</span>
+          </div>
+        </div>
+        <div class="step s3">
+          <div class="rail"><div class="num">4</div></div>
+          <div class="body">
+            <h4>没设默认 / 一个启用群都没有</h4>
+            <p>没设默认 → 用该渠道最早的<b>启用</b>群；一个都没有 → 返回可读错误，引导去个人中心配置。</p>
+            <span class="outcome fallback">兜底 / 报错</span>
+          </div>
+        </div>
+      </div>
+
+      <table class="scene" style="margin-top:4px">
+        <thead>
+          <tr>
+            <th style="width:30%">调用</th>
+            <th style="width:24%">结果</th>
+            <th style="width:46%">回执</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>group_id=13</code>（钉钉）</td>
+            <td><b>每日数据日报</b></td>
+            <td><span class="pill ok">指定群</span> <code>已发送到「每日数据日报」(id=13)</code></td>
+          </tr>
+          <tr>
+            <td>不传 group_id</td>
+            <td><b>该渠道默认群</b></td>
+            <td><span class="pill ok">默认群</span> <code>已发送到「运维告警群」(id=12)</code></td>
+          </tr>
+          <tr>
+            <td><code>group_name="运维告警群"</code></td>
+            <td><b>运维告警群</b>（id=12）</td>
+            <td><span class="pill ok">按名称</span> <code>已发送到「运维告警群」(id=12)</code></td>
+          </tr>
+          <tr>
+            <td><code>group_name="运维"</code><br>只有一个群名含「运维」</td>
+            <td><b>运维告警群</b>（唯一包含命中）</td>
+            <td><span class="pill ok">按名称</span> <code>已发送到「运维告警群」(id=12)</code></td>
+          </tr>
+          <tr>
+            <td><code>group_name="项目群"</code><br>两个群名都含「项目群」</td>
+            <td><b>不发</b></td>
+            <td><span class="pill err">重名</span> <code>有 2 个群匹配「项目群」：id=15、id=17，请用 group_id 指定</code></td>
+          </tr>
+          <tr>
+            <td><code>group_name="财务群"</code>（没有）</td>
+            <td><b>不发</b></td>
+            <td><span class="pill err">已忽略</span> <code>没有名称匹配「财务群」的群，消息未发送</code></td>
+          </tr>
+          <tr>
+            <td><code>group_id=99</code>（不存在）</td>
+            <td><b>不发</b></td>
+            <td><span class="pill err">已忽略</span> <code>群 id=99 不存在，消息未发送</code></td>
+          </tr>
+          <tr>
+            <td><code>group_id=14</code>（已停用）</td>
+            <td><b>不发</b></td>
+            <td><span class="pill err">已忽略</span> <code>群 id=14「旧项目群」已停用</code></td>
+          </tr>
+          <tr>
+            <td>钉钉工具传 <code>group_id=21</code><br>（那是飞书的群）</td>
+            <td><b>不发</b></td>
+            <td><span class="pill err">已忽略</span> <code>群 id=21 不是钉钉渠道的群</code></td>
+          </tr>
+          <tr>
+            <td>完全没配该渠道 / 全部停用</td>
+            <td><b>不发</b></td>
+            <td><span class="pill err">失败</span> <code>未配置钉钉群，请到个人中心配置</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="note amber">
+        <span class="ic">⚠</span>
+        <span>
+          <b>「忽略」意味着消息会丢</b>——这是你要的语义（指定错了就不发，不擅自改投默认群）。
+          为了不让它静默发生，回执写「消息未发送」+ 列出该渠道的可用群 ID，AI 一般会当场改对重发。
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 视图三 ================= -->
+  <section class="view" data-v="3" hidden>
+    <div class="card" style="margin-bottom:16px">
+      <h2>③ 回执</h2>
+      <p class="cap">三渠道措辞统一，只把渠道名换掉。要能区分「没这个群」「群停用了」「webhook 失效」。</p>
+
+      <div class="bubble"><span class="ok">✓</span> 已发送到钉钉「每日数据日报」<span class="dim">(id=13)</span></div>
+      <div class="bubble" style="margin-top:10px"><span class="ok">✓</span> 已发送到飞书「飞书项目群」<span class="dim">(id=21，默认群)</span></div>
+
+      <div class="bubble" style="margin-top:10px"><span class="bad">✗</span> 未发送：钉钉群 id=99 不存在。
+<span class="dim">当前可用钉钉群：id=12「运维告警群」、id=13「每日数据日报」</span></div>
+
+      <div class="bubble" style="margin-top:10px"><span class="bad">✗</span> 未发送：群 id=14「旧项目群（已弃用）」已停用。
+<span class="dim">当前可用钉钉群：id=12「运维告警群」、id=13「每日数据日报」</span></div>
+
+      <div class="bubble" style="margin-top:10px"><span class="bad">✗</span> 发送失败：token is not exist (Code: 300001)
+<span class="dim">目标：钉钉「运维告警群」(id=12)</span></div>
+
+      <div class="note blue">
+        <span class="ic">ℹ</span>
+        <span>
+          <b>三种失败必须区分：</b>「群不存在」是 AI 指错了群、「群已停用」是配置问题、
+          「token 失效」是 webhook 本身坏了。混在一起说会让用户完全找错方向。
+        </span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>迁移与兼容</h2>
+      <p class="cap">目标：<b>存量零感知</b>。没配多个群、也没传 group_id 的智能体，行为与今天一模一样。</p>
+
+      <dl class="kv">
+        <dt>表结构</dt>
+        <dd>
+          <code>user_notification_configs</code> 去掉 <code>ux_user_notification_channel</code> 唯一键，
+          新增 <code>name</code>（群名称）、<code>is_default</code>（0/1）。<b>不需要新增 ID 列</b>——主键就是群 ID。
+          存量行回填 <code>name='默认群'</code>、<code>is_default=1</code>。
+          <br>三个渠道共用这一张表，<code>channel_type</code> 区分，迁移一次全部搞定。
+        </dd>
+
+        <dt style="margin-top:10px">为什么敢改这张表</dt>
+        <dd>
+          12 处读取全部经过 <code>get_config_by_type_raw()</code>。内部改成
+          <b>「启用优先 → is_default 优先 → id 升序，取第一条」</b>，所有调用点（三个发送工具、定时任务投递、邮件服务）
+          <b>一行都不用改</b>，行为等价于今天「只有一条记录」。
+        </dd>
+
+        <dt style="margin-top:10px">新增公共函数</dt>
+        <dd>
+          <code>list_notification_channels(user_id)</code>（供 list 工具用）与
+          <code>resolve_notification_channel(user_id, channel_type, group_id)</code>（供三个发送工具共用，
+          统一做存在/归属/渠道匹配/启用四项校验）。三个工具不再各写一遍。
+        </dd>
+
+        <dt style="margin-top:10px">工具改动面</dt>
+        <dd>
+          三个 Input 各加一个可选 <code>group_id: Optional[int]</code>；新增
+          <code>list_notification_channels</code> 工具并在 registry 注册（含权限白名单与证据类型）。
+          <code>ToolConfigItem</code> 与智能体版本配置<b>完全不动</b>。
+        </dd>
+
+        <dt style="margin-top:10px">定时任务</dt>
+        <dd>
+          任务投递走 <code>NotificationService.send_*(db, user_id, ...)</code>，内部同样用「默认渠道」，
+          因此<b>任务通知行为不变</b>。以后若想让任务发到指定群，可在任务的渠道配置里加群 ID 选择（本期不做）。
+        </dd>
+
+        <dt style="margin-top:10px">不做的事</dt>
+        <dd>
+          不允许工具传 webhook（SSRF 风险）；不做标签路由；不做工具级指定群；本期不做 @某人。
+        </dd>
+      </dl>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>三渠道的差异（改造时要分别处理，其余全部复用）</h2>
+      <table class="scene">
+        <thead><tr><th style="width:16%">渠道</th><th style="width:20%">参数</th><th style="width:20%">加签</th><th>长度上限</th></tr></thead>
+        <tbody>
+          <tr><td><b>钉钉</b></td><td><code>(title, content)</code></td><td>支持（timestamp+sign）</td><td><code>_DINGTALK_MAX_BYTES</code></td></tr>
+          <tr><td><b>飞书</b></td><td><code>(title, content)</code></td><td>支持</td><td>飞书卡片限制</td></tr>
+          <tr><td><b>企业微信</b></td><td><code>(content)</code> 无 title</td><td>不支持</td><td><code>_WECHAT_WORK_MAX_BYTES</code></td></tr>
+        </tbody>
+      </table>
+      <div class="note gray">
+        <span class="ic">◻</span>
+        <span>
+          差异只在「怎么发出去」这一层；<b>「发到哪个群」的逻辑三渠道完全相同</b>，共用
+          <code>resolve_notification_channel()</code> 与同一套回执措辞。
+        </span>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  // ---- 视图切换 ----
+  const btns = document.querySelectorAll('.plans button');
+  const views = document.querySelectorAll('.view');
+  btns.forEach(b => b.addEventListener('click', () => {
+    btns.forEach(x => x.classList.toggle('on', x === b));
+    const v = b.dataset.v;
+    views.forEach(s => { s.hidden = s.dataset.v !== v; });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }));
+
+  // ---- 渠道行：默认 / 启用 / 删除 / 测试 / 复制 ID ----
+  const nextIds = { dingtalk: 15, feishu: 23, wechat_work: 32 };
+
+  function refresh(listEl) {
+    const items = [...listEl.querySelectorAll('.ch-item')];
+    let hasDefault = false;
+    items.forEach(item => {
+      const radio = item.querySelector('input[type=radio]');
+      const toggle = item.querySelector('[data-act="toggle"]');
+      const enabled = toggle.checked;
+
+      item.classList.toggle('disabled', !enabled);
+      if (radio.checked && !enabled) radio.checked = false;
+      if (radio.checked) hasDefault = true;
+      item.classList.toggle('is-default', radio.checked && enabled);
+
+      const badge = item.querySelector('.badge-default');
+      if (radio.checked && enabled && !badge) {
+        const b = document.createElement('span');
+        b.className = 'badge-default';
+        b.textContent = '默认';
+        item.querySelector('.ch-row1').insertBefore(b, item.querySelector('.ch-row1 .spacer'));
+      } else if ((!radio.checked || !enabled) && badge) {
+        badge.remove();
+      }
+    });
+    // 无默认时提示第一个启用的会顶上
+    const tip = listEl.parentElement.querySelector('.no-default-tip');
+    if (!hasDefault) {
+      const first = items.find(i => i.querySelector('[data-act="toggle"]').checked);
+      if (first && !tip) {
+        const p = document.createElement('div');
+        p.className = 'note amber no-default-tip';
+        p.innerHTML = '<span class="ic">⚠</span><span><b>该渠道没有默认群：</b>不指定群 ID 时会落到最早的启用群「'
+          + first.querySelector('.ch-name').value + '」。</span>';
+        listEl.after(p);
+      }
+    } else if (tip) {
+      tip.remove();
+    }
+  }
+
+  document.addEventListener('change', e => {
+    const t = e.target;
+    if (t.type === 'radio' && t.checked) {
+      const group = t.name;
+      document.querySelectorAll(`input[name="${group}"]`).forEach(r => { if (r !== t) r.checked = false; });
+      refresh(t.closest('.ch-list'));
+    }
+    if (t.dataset && t.dataset.act === 'toggle') refresh(t.closest('.ch-list'));
+  });
+
+  document.addEventListener('click', e => {
+    // 复制群 ID
+    if (e.target.classList.contains('ch-id')) {
+      const btn = e.target;
+      const id = btn.textContent.replace(/\D/g, '');
+      const old = btn.textContent;
+      if (navigator.clipboard) navigator.clipboard.writeText(id).catch(() => {});
+      btn.textContent = '已复制 ✓';
+      setTimeout(() => { btn.textContent = old; }, 900);
+      return;
+    }
+
+    const act = e.target.dataset && e.target.dataset.act;
+    if (act === 'del') {
+      const item = e.target.closest('.ch-item');
+      const listEl = item.closest('.ch-list');
+      item.style.transition = 'opacity .18s, transform .18s';
+      item.style.opacity = '0';
+      item.style.transform = 'translateX(-8px)';
+      setTimeout(() => { item.remove(); refresh(listEl); }, 180);
+      return;
+    }
+    if (act === 'test') {
+      const btn = e.target;
+      btn.textContent = '发送中…';
+      btn.disabled = true;
+      setTimeout(() => {
+        btn.textContent = '已发送';
+        setTimeout(() => { btn.textContent = '测试'; btn.disabled = false; }, 1200);
+      }, 700);
+      return;
+    }
+
+    // 新增渠道
+    const add = e.target.dataset && e.target.dataset.add;
+    if (add) {
+      const listEl = document.getElementById('list-' + add);
+      const n = listEl.querySelectorAll('.ch-item').length;
+      if (n >= 10) { alert('每个渠道最多 10 个群'); return; }
+      const label = { dingtalk: '钉钉群', feishu: '飞书群', wechat_work: '企微群' }[add];
+      const id = nextIds[add]++;
+      const div = document.createElement('div');
+      div.className = 'ch-item';
+      div.innerHTML = `
+        <div class="ch-row1">
+          <span class="ch-id">ID ${id}</span>
+          <input class="ch-name" value="新${label} ${n + 1}">
+          <span class="badge-env">启用</span>
+          <span class="spacer"></span>
+          <button class="btn sm" data-act="test">测试</button>
+          <button class="btn sm danger" data-act="del">删除</button>
+          <label class="switch"><input type="checkbox" checked data-act="toggle"><span class="track"></span></label>
+        </div>
+        <div class="ch-row2">
+          <div class="fld"><span>Webhook</span><input type="text" placeholder="粘贴群机器人 Webhook 地址"></div>
+          <div class="fld"><span>加签密钥（可选）</span><input type="password" placeholder="SEC..."></div>
+        </div>
+        <div class="ch-row3">
+          <span class="spacer"></span>
+          <label style="display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:800;color:var(--ink-3);cursor:pointer">
+            <input type="radio" name="default-${add}"> 设为默认
+          </label>
+        </div>`;
+      listEl.appendChild(div);
+      refresh(listEl);
+    }
+  });
+
+  document.querySelectorAll('.ch-list').forEach(refresh);
+</script>
+</body>
+</html>

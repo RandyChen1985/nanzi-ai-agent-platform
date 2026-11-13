@@ -107,7 +107,7 @@ def resolve_user_variables(user_info: Mapping[str, Any] | None) -> dict[str, Any
     if raw_uid is not None:
         variables["id"] = _coerce_user_id(raw_uid)
         variables["user_id"] = variables["id"]
-    for key in ("user_name", "real_name", "dept_code", "org_path", "role"):
+    for key in ("user_name", "real_name", "email", "dept_code", "org_path", "role"):
         value = info.get(key)
         if value is not None and value != "":
             variables[key] = value

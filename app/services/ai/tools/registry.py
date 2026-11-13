@@ -21,6 +21,7 @@ from app.services.ai.tools.task_manager_tools import (
     start_task, pause_task, run_task_manually
 )
 from app.services.ai.tools.notification_tools import (
+    list_notification_channels,
     send_dingtalk_message,
     send_email,
     send_feishu_message,
@@ -209,6 +210,8 @@ TOOL_EVIDENCE_TYPES = {
     "list_accessible_directories": frozenset({EvidenceType.RUNTIME_STATE}),
     # 凭据清单属于用户自己的配置数据，不是外部事实
     "list_my_credentials": frozenset({EvidenceType.RUNTIME_STATE}),
+    # 消息群清单同样是用户自己的配置数据，不是外部事实
+    "list_notification_channels": frozenset({EvidenceType.RUNTIME_STATE}),
     "list_available_skills": frozenset({EvidenceType.RUNTIME_STATE}),
     "read_skill_instruction": frozenset({EvidenceType.RUNTIME_STATE}),
     "publish_generated_file": frozenset({EvidenceType.USER_FILE}),
@@ -227,6 +230,7 @@ TOOL_EVIDENCE_POLICY: dict[str, str] = {
     "list_available_agents": "allow_empty_success",
     "list_accessible_directories": "allow_empty_success",
     "list_my_credentials": "allow_empty_success",
+    "list_notification_channels": "allow_empty_success",
     "list_available_skills": "allow_empty_success",
     "read_skill_instruction": "allow_empty_success",
     # 记忆/知识/文件检索：查无结果 = "未找到"，属于合法事实依据
@@ -346,6 +350,7 @@ class ToolRegistry:
     _wechat_work_tool = send_wechat_work_message()
     _feishu_tool = send_feishu_message()
     _portal_notification_tool = send_portal_notification()
+    _list_notification_channels_tool = list_notification_channels()
 
     _registry: Dict[str, Any] = {
         "get_dataset_schema": get_dataset_schema,
@@ -372,6 +377,8 @@ class ToolRegistry:
         "send_wechat_work_message": _wechat_work_tool,
         "send_feishu_message": _feishu_tool,
         "send_portal_notification": _portal_notification_tool,
+        # 消息通道清单：让模型在指定群之前能查到自己有哪些群（含群 ID）
+        "list_notification_channels": _list_notification_channels_tool,
         # Register Jira Tools
         "jira_search": _jira_search,
         "jira_create_issue": _jira_create,
@@ -1076,6 +1083,7 @@ class ToolRegistry:
             memory_search,
             list_accessible_datasets,
             list_accessible_directories,
+            cls._list_notification_channels_tool,
             list_accessible_knowledge_bases,
             list_available_agents,
             list_my_credentials,

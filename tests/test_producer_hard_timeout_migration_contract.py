@@ -20,6 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 MYSQL_MIGRATION = ROOT / "db-prod/V172-add-producer-hard-timeout-config.sql"
 PG_MIGRATION = ROOT / "db-prod-pg/V73-add-producer-hard-timeout-config.sql"
+# 上限调整到 86400 时补的描述更新（历史插入记录不动，只更新 description）
+MYSQL_CAP_MIGRATION = ROOT / "db-prod/V216-raise-producer-hard-timeout-cap.sql"
+PG_CAP_MIGRATION = ROOT / "db-prod-pg/V116-raise-producer-hard-timeout-cap.sql"
 
 CONFIG_KEY = "agent_chat_producer_hard_timeout_seconds"
 
@@ -66,8 +69,27 @@ def test_description_documents_the_tool_timeout_conflict(migration):
     assert "整轮" in source
     # 0 = 关闭的语义要交代，否则没人知道这个开关能关
     assert "0 表示关闭" in source
-    # 范围要与后端校验一致
+    # 首次插入时记录的是当时的范围；后续调整由 V216/V116 更新描述（见下一个用例）
     assert "60" in source and "3600" in source
+
+
+@pytest.mark.parametrize("migration", [MYSQL_CAP_MIGRATION, PG_CAP_MIGRATION])
+def test_latest_description_range_matches_backend_cap(migration):
+    """最新一份描述里的范围必须与后端常量一致。
+
+    范围从 60-3600 放宽到 60-86400 后，配置页展示的仍是从 DB 读到的旧 description——
+    改代码不改描述，运维会以为上限还是 3600，长超时工具配了也白配。
+    """
+    from app.services.ai.runtime.producer_watchdog import MAX_PRODUCER_HARD_TIMEOUT_SECONDS
+
+    source = migration.read_text(encoding="utf-8")
+    assert CONFIG_KEY in source
+    assert f"60-{int(MAX_PRODUCER_HARD_TIMEOUT_SECONDS)}" in source
+    # 关闭语义与「整轮」维度不能因为改描述而丢
+    assert "0 表示关闭" in source
+    assert "整轮" in source
+    # 只改描述，不动 value / 不新增行
+    assert "INSERT" not in source.upper()
 
 
 @pytest.mark.parametrize("migration", [MYSQL_MIGRATION, PG_MIGRATION])

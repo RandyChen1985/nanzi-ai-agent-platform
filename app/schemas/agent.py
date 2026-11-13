@@ -14,9 +14,10 @@ class ToolConfigItem(BaseModel):
     # 这里填的模型没有任何下发点。保留解析只为兼容旧版本 JSON，不再展示、不再生效。
     model_name: Optional[str] = None
     temperature: Optional[float] = None # Override Agent's temperature / 仅对内部自调 LLM 的工具生效
-    # 工具级执行超时：留空跟随上层（智能体版本级 → 全局级）；
-    # 生效时只会收紧、不会放宽（不能超过上层选定的值），详见 tool_timeout.resolve_tool_timeout。
-    timeout_seconds: Optional[StrictInt] = Field(default=None, ge=1, le=3600)
+    # 工具级执行超时：留空跟随上层（智能体版本级 → 全局级）。
+    # 可以超过上层值——上层是默认值而不是天花板；超过时配置界面会给提示，
+    # 运行时不再静默截断，详见 tool_timeout.resolve_tool_timeout。
+    timeout_seconds: Optional[StrictInt] = Field(default=None, ge=1, le=86400)
     description_override: Optional[str] = None # Optional: Allow prompting tuning
     engine_config_override: Optional[Dict[str, Any]] = None
     metadata_dataset_ids: Optional[List[str]] = None  # get_dataset_schema 可见元数据集范围
@@ -34,7 +35,7 @@ class ToolConfigItem(BaseModel):
 
         ``ChatConfig.tools`` 直接持有 ``ToolConfigItem``，任何一个脏值都会让整份
         配置校验失败 → 会话直接不可用，这比丢一个字段严重得多。清洗口径与
-        ``registry._parse_tool_config_dict`` 保持一致：只保留 1–3600 的整数。
+        ``registry._parse_tool_config_dict`` 保持一致：只保留 1–86400 的整数。
         """
         if value is None or isinstance(value, bool):
             return None
@@ -46,7 +47,7 @@ class ToolConfigItem(BaseModel):
         if not parsed.is_integer():
             return None
         number = int(parsed)
-        return number if 1 <= number <= 3600 else None
+        return number if 1 <= number <= 86400 else None
 
     @model_validator(mode="after")
     def _validate_metadata_dataset_ids(self):

@@ -488,6 +488,8 @@ async def preview_script_tool(
     workdir = await _preview_workdir(user)
     # local 策略就是后端进程执行，这里不传 sandbox_ws 即代表本地通道；上面的
     # 策略判断已经挡住了所有本应进容器的场景。
+    from app.services.secrets.redact import redact_text
+
     runner = ScriptToolRunner(config, workdir=workdir, user_info=user)
 
     try:
@@ -496,18 +498,27 @@ async def preview_script_tool(
         return SysScriptToolPreviewResponse(
             ok=False,
             sandbox_policy=policy,
-            message=str(exc),
+            message=redact_text(str(exc), where="脚本工具试运行异常"),
         )
+
+    # 先脱敏再截断，防止注入凭据横跨输出截断边界导致半段明文逃逸回前端
+    safe_stdout = redact_text(result.stdout or "", where="脚本工具试运行输出")
+    safe_stderr = redact_text(result.stderr or "", where="脚本工具试运行错误输出")
+    safe_message = (
+        redact_text(result.message, where="脚本工具试运行消息")
+        if result.message
+        else result.message
+    )
 
     return SysScriptToolPreviewResponse(
         ok=result.ok,
         exit_code=result.exit_code,
-        stdout=result.stdout[:20000],
-        stderr=result.stderr[:8000],
+        stdout=safe_stdout[:20000],
+        stderr=safe_stderr[:8000],
         duration_ms=result.duration_ms,
         timed_out=result.timed_out,
         sandbox_policy=policy,
-        message=result.message,
+        message=safe_message,
     )
 
 

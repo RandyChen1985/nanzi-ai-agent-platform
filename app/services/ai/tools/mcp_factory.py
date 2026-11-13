@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import contextvars
 import json
 import keyword
 import logging
@@ -12,11 +13,14 @@ from app.services.ai.tools.tool_compat import StructuredTool
 from app.models.mcp import McpToolCache
 from app.services.ai.tools.mcp_client import McpClientService
 from app.services.ai.runtime.agentscope.tool_timeout import (
+    get_active_tool_timeout_seconds,
     load_agent_max_toolcall_timeout,
+    parse_agent_version_toolcall_timeout,
 )
 from app.services.ai.grounding.models import EvidenceType
 from app.core.context import get_current_agent_context
 from app.services.secrets.injection import apply_mcp_arg_bindings, denial_hint, denial_text
+from app.services.secrets.redact import collect_injected_from_context
 
 logger = logging.getLogger(__name__)
 
@@ -48,15 +52,21 @@ MCP_PROGRESS_MIN_INTERVAL_SECONDS = 0.25
 
 
 async def resolve_mcp_tool_timeout() -> Optional[float]:
-    """单次 MCP 工具调用的超时：优先请求期快照，其次系统配置。
+    """单次 MCP 工具调用的超时：优先外层工具三级解析结果，其次请求期版本快照，再回退系统全局配置。
 
-    平台已有 ``agent_max_toolcall_timeout``（全局默认 180s，支持版本级覆盖），
-    并把它快照进 ``AgentContext``。MCP 输出链路曾经写死 120s，长工具会在进度
-    走到一半时被静默掐断——这里统一回同一个旋钮。
+    平台已有 ``agent_max_toolcall_timeout``（全局默认 180s，支持版本级 1–86400s
+    与工具级覆盖），此前 MCP 只读版本级快照而忽略外层工具级配置，导致慢工具
+    即使单独调大了工具超时仍会在底层被提前掐断。
     """
+    active_timeout = get_active_tool_timeout_seconds()
+    if active_timeout is not None and active_timeout > 0:
+        return float(active_timeout)
     context = get_current_agent_context()
     snapshot = getattr(context, "agent_max_toolcall_timeout_seconds", None) if context else None
-    if snapshot:
+    if snapshot is not None:
+        parsed_version_timeout = parse_agent_version_toolcall_timeout(snapshot)
+        if parsed_version_timeout is not None:
+            return float(parsed_version_timeout)
         try:
             value = float(snapshot)
         except (TypeError, ValueError):
@@ -135,6 +145,9 @@ async def stream_remote_tool_with_progress(
             )
         )
 
+    # create_task 默认复制 ContextVar，子协程内部新注册的 header/token 不会自动
+    # 回流到父协程；显式传入 child_ctx 并在 finally 回收，避免父层异常脱敏漏掉明文。
+    child_ctx = contextvars.copy_context()
     call_task = asyncio.create_task(
         McpClientService.call_remote_tool(
             server_id=server_id,
@@ -143,7 +156,8 @@ async def stream_remote_tool_with_progress(
             progress_callback=_on_progress,
             timeout_seconds=timeout_seconds,
             **identity_kwargs,
-        )
+        ),
+        context=child_ctx,
     )
     getter: Optional[asyncio.Future] = None
     try:
@@ -182,6 +196,7 @@ async def stream_remote_tool_with_progress(
         elif not call_task.cancelled():
             # 取走异常，避免 "Task exception was never retrieved" 噪声日志。
             call_task.exception()
+        collect_injected_from_context(child_ctx)
 
 
 def _map_schema_type(param_def: dict[str, Any]) -> Any:

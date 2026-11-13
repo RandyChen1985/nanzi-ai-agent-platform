@@ -246,6 +246,8 @@ class AgentContextManager:
                 "id": u_id_val,
                 "user_name": user_info.get("user_name"),
                 "real_name": user_info.get("real_name"),
+                # 凭据定位规则可按 user.email 命中，且委派子代理会从此处还原身份
+                "email": user_info.get("email"),
                 "role": user_info.get("role"),
                 "dept_code": user_info.get("dept_code"),
                 "org_path": user_info.get("org_path"),

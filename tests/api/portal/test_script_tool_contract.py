@@ -755,3 +755,37 @@ async def test_preview_still_runs_under_local_policy(tmp_path, monkeypatch):
     assert result.ok, result.stderr
     assert "hello-preview" in result.stdout
     assert result.sandbox_policy == "local"
+
+
+async def test_preview_reports_missing_user_variable_instead_of_500(tmp_path, monkeypatch):
+    """缺用户变量要返回可读失败，不能抛 ValueError 变成 500。
+
+    ``prepare_params`` 原来抛 ``UserPlaceholderError(ValueError)``，而本端点只
+    ``except ScriptToolError``——两个异常没有继承关系，「用户没填邮箱」直接 500。
+    """
+    from app.api.portal.endpoints import script_tools as endpoints
+
+    async def fake_policy() -> str:
+        return "local"
+
+    async def fake_workdir(_user):
+        return tmp_path
+
+    monkeypatch.setattr(endpoints, "current_sandbox_policy", fake_policy)
+    monkeypatch.setattr(endpoints, "_preview_workdir", fake_workdir)
+
+    result = await endpoints.preview_script_tool(
+        SysScriptToolPreviewRequest(
+            code="print('should-not-run')",
+            parameter_schema={
+                "type": "object",
+                "properties": {"applicant": {"type": "string", "default": "{user.email}"}},
+            },
+        ),
+        db=None,
+        user={"user_id": 1, "user_name": "tester"},
+    )
+
+    assert result.ok is False
+    assert "{user.email}" in result.message
+    assert "没有取到值" in result.message

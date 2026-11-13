@@ -16,6 +16,24 @@ RuntimeErrorKind = Literal[
 ]
 
 
+def _redact_error_message(message: str) -> str:
+    """异常消息回显给模型/落库前统一脱敏。
+
+    工具在错误消息里回显输入是常态（401 响应体、请求 URL、SDK 错误串），而这条
+    消息会进 ``RuntimeToolError`` → 工具结果 → 轨迹表三层持久面。调用点有十来处，
+    靠逐处记得处理迟早漏一条，收敛到基类构造统一过关。
+
+    函数内导入：``redact`` 是低层模块，放在模块级会让 errors 的早期导入多一条
+    依赖链；脱敏本身失败也只回退原文，不能让错误路径再炸一次。
+    """
+    try:
+        from app.services.secrets.redact import redact_value
+
+        return str(redact_value(message, where="工具异常消息", log_hits=False))
+    except Exception:  # noqa: BLE001 - 脱敏失败不该掩盖原始错误
+        return message
+
+
 class AgentScopeRuntimeError(Exception):
     """Base error for the platform runtime adapter."""
 
@@ -28,7 +46,7 @@ class AgentScopeRuntimeError(Exception):
         cause: BaseException | None = None,
         details: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__(_redact_error_message(message))
         self.cause = cause
         self.details = details or {}
 

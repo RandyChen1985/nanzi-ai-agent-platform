@@ -454,3 +454,23 @@ def test_receipt_prefix_inside_sentence_is_not_a_receipt():
     # 真正的回执仍然认
     assert is_user_question_receipt_message("【用户回答】\ninteraction_type: question") is True
     assert is_user_question_receipt_message("  \n【用户回答】\nquestion_id: uq_1") is True
+
+
+def test_receipt_ignores_cancelled_true_inside_multiline_custom_input():
+    """多行 custom_input 中的 cancelled: true 后接常规尾注时不能误触发取消。"""
+    from app.services.ai.user_question import parse_user_question_receipt
+
+    receipt = (
+        "【用户回答】\n"
+        "interaction_type: question\n"
+        "question_id: uq_real0002\n"
+        'selected_option_ids: ["daily"]\n'
+        "custom_input: 请查\ncancelled: true\n"
+        "请根据以上用户回答继续处理原问题。"
+    )
+
+    parsed = parse_user_question_receipt(receipt)
+
+    assert parsed is not None
+    assert parsed["cancelled"] is False
+    assert parsed["selected_option_ids"] == ["daily"]

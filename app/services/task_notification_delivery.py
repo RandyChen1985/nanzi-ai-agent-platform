@@ -15,7 +15,12 @@ from app.core.orm import AsyncSessionLocal
 from app.models.audit import AgentExecutionTrace
 from app.services.notification_service import NotificationService
 from app.services.portal_notification_service import PortalNotificationService
-from app.services.task_notification_channels import CHANNEL_SPECS, normalize_notification_channels
+from app.services.task_notification_channels import (
+    CHANNEL_SPECS,
+    GROUP_CAPABLE_CHANNELS,
+    normalize_channel_groups,
+    normalize_notification_channels,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +81,18 @@ def notification_tool_succeeded(tool_name: Optional[str], tool_output: Any) -> b
     if not text:
         return False
     lowered = text.lower()
-    if lowered.startswith("error") or "failed to send" in lowered:
+    # 失败文案先排除：三个发送工具失败时返回「<渠道>消息未发送：…」或 Error …
+    if lowered.startswith("error") or "failed to send" in lowered or "未发送" in text:
         return False
-    return "successfully sent" in lowered or "已成功" in text
+    # 成功文案在多群改造后改成了「已发送到钉钉「运维告警群」(id=12)」。
+    # 这里原先只认「successfully sent」/「已成功」，新文案一条都不匹配 ——
+    # 结果是模型明明调了工具、消息已经发出去，调度侧仍判为未送达再发一遍，
+    # 群里收到两条一样的消息。三个渠道的成功文案都要认。
+    return (
+        "successfully sent" in lowered
+        or "已成功" in text
+        or "已发送" in text
+    )
 
 
 def build_task_notification_title(task_name: str) -> str:
@@ -384,6 +398,55 @@ def channels_missing_delivery(
     return missing
 
 
+async def send_external_channel(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    channel: str,
+    title: str,
+    body: str,
+    group_id: Optional[int] = None,
+) -> Tuple[bool, str]:
+    """向单个外部渠道投递，任务结果与失败告警共用这一份。
+
+    共用是必须的，不是图省事：失败告警那条路曾经自己拼 ``channel_id=...``
+    直接调 ``send_email``，而邮件发送没有这个参数 —— 一勾邮件告警就
+    ``TypeError``，且异常跳出整个渠道循环，排在后面的渠道也一起丢掉。
+    群失效的降级同样只在这里做过，告警那条路当时是直接失败的。
+    """
+    sender_name = _EXTERNAL_SENDERS.get(channel)
+    if sender_name is None:
+        return False, f"{channel}:unsupported"
+    sender = getattr(NotificationService, sender_name, None)
+    if sender is None:
+        return False, f"{channel}:unsupported"
+
+    # 邮件发的是收件人列表、站内消息没有群；两者都不接 channel_id 参数。
+    if group_id is None or channel not in GROUP_CAPABLE_CHANNELS:
+        ok, err = await sender(db, user_id, title, body)
+        return (True, f"{channel}:ok") if ok else (False, f"{channel}:{err or 'send failed'}")
+
+    # 指定了群：先确认它还能用。
+    target, target_err = await NotificationService.resolve_channel(
+        db, user_id, channel, group_id=group_id
+    )
+    if target is None:
+        # 无人值守场景不能静默丢消息 —— 降级发默认群，并把「原本要发哪、
+        # 为什么没发成」写进投递记录，用户查得到也能据此修配置。
+        ok, err = await sender(db, user_id, title, body)
+        if ok:
+            return (
+                True,
+                f"{channel}:ok(指定群 id={group_id} 已失效，改发默认群；原因：{target_err})",
+            )
+        return False, f"{channel}:{err or 'send failed'}（指定群 id={group_id} 已失效：{target_err}）"
+
+    ok, err = await sender(db, user_id, title, body, channel_id=group_id)
+    if ok:
+        return True, f"{channel}:ok->「{target.name or '未命名群'}」(id={target.id})"
+    return False, f"{channel}:{err or 'send failed'}"
+
+
 async def _deliver_channel(
     db: AsyncSession,
     *,
@@ -393,6 +456,7 @@ async def _deliver_channel(
     body: str,
     trace_id: Optional[str],
     task_name: str,
+    group_id: Optional[int] = None,
 ) -> Tuple[bool, str]:
     if channel == "portal":
         try:
@@ -416,16 +480,14 @@ async def _deliver_channel(
             logger.warning("TaskCenter portal delivery failed: %s", exc, exc_info=True)
             return False, f"portal:{exc}"
 
-    sender_name = _EXTERNAL_SENDERS.get(channel)
-    if sender_name is None:
-        return False, f"{channel}:unsupported"
-    sender = getattr(NotificationService, sender_name, None)
-    if sender is None:
-        return False, f"{channel}:unsupported"
-    ok, err = await sender(db, user_id, title, body)
-    if ok:
-        return True, f"{channel}:ok"
-    return False, f"{channel}:{err or 'send failed'}"
+    return await send_external_channel(
+        db,
+        user_id=user_id,
+        channel=channel,
+        title=title,
+        body=body,
+        group_id=group_id,
+    )
 
 
 async def ensure_task_notification_deliveries(
@@ -437,11 +499,14 @@ async def ensure_task_notification_deliveries(
     trace_id: Optional[str],
     content: str,
     reasoning_content: Optional[str] = None,
+    channel_groups: Optional[Dict[str, int]] = None,
 ) -> Tuple[bool, List[str]]:
     """
     确保各勾选渠道至少送达一次。
 
     - 若智能体已成功调用对应通知工具则跳过（避免重复）。
+    - ``channel_groups`` 是任务配置的「渠道 -> 群 ID」；未给的渠道发默认群，
+      给了但群已失效时降级发默认群，并在 notes 里留痕。
     - 否则由调度侧统一投递助手总结；查数结果仅用于完整性校验。
     - 正文与 EmbedChat 一致：不含模型思考折叠面板（reasoning_content）。
     - 内容不完整（半截话且无可用数据）时拒绝投递并返回失败。
@@ -484,6 +549,7 @@ async def ensure_task_notification_deliveries(
         reasoning_content=reasoning_content,
     )
 
+    groups = normalize_channel_groups(channel_groups)
     all_ok = True
     for channel in missing:
         ok, note = await _deliver_channel(
@@ -494,6 +560,7 @@ async def ensure_task_notification_deliveries(
             body=body,
             trace_id=trace_id,
             task_name=task_name,
+            group_id=groups.get(channel),
         )
         notes.append(note)
         if not ok:

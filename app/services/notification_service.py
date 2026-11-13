@@ -1,6 +1,8 @@
 import json
 import logging
+import re
 import time
+import unicodedata
 import hmac
 import hashlib
 import base64
@@ -15,6 +17,24 @@ from app.models.user_notification_config import UserNotificationConfig
 from app.services.platform_timezone import platform_now
 
 logger = logging.getLogger(__name__)
+
+# 支持「一个用户配置多个群」的渠道。邮件不是群语义（一个用户只有一套 SMTP 配置），
+# 保持单条配置链路不变。
+MULTI_GROUP_CHANNELS: Tuple[str, ...] = ("dingtalk", "feishu", "wechat_work")
+# 每个用户每个渠道最多配置多少个群：够覆盖真实场景，又不至于让页面与
+# 「群清单」无限膨胀。
+MAX_CHANNELS_PER_TYPE = 10
+# 群名称长度上限，与迁移里的 VARCHAR(64) 对齐
+MAX_CHANNEL_NAME_LENGTH = 64
+# 存量记录回填与老接口新建记录时用的默认群名。
+# 必须与 db-prod/V217 与 db-prod-pg/V117 里的 CASE 回填保持一致，
+# 否则同一个群会在「升级来的」和「新建的」之间显示成两个名字。
+DEFAULT_CHANNEL_NAME: Dict[str, str] = {
+    "dingtalk": "默认钉钉群",
+    "feishu": "默认飞书群",
+    "wechat_work": "默认企微群",
+    "email": "默认邮件配置",
+}
 
 # 发送重试：仅对网络/传输类异常重试；渠道返回的业务错误码（如 webhook 配置错误）不重试
 _SEND_RETRY_DELAYS_SEC = (2.0, 5.0)
@@ -139,13 +159,369 @@ class NotificationService:
     async def get_config_by_type_raw(
         cls, db: AsyncSession, user_id: int, channel_type: str
     ) -> Optional[UserNotificationConfig]:
-        """Fetch raw notification config from DB by type"""
-        stmt = select(UserNotificationConfig).where(
-            UserNotificationConfig.user_id == user_id,
-            UserNotificationConfig.channel_type == channel_type
+        """取该用户该渠道「当前生效」的那条配置。
+
+        多群改造后同一 (user_id, channel_type) 可能有多条记录，于是「取唯一一条」
+        不再成立。这里的语义变成：
+
+            已启用优先 → 默认群优先 → id 升序 → 取第一条
+
+        - 有默认群且启用：返回默认群（等价于改造前「唯一那条」）；
+        - 默认群被停用/删除：返回该渠道最早的启用群 —— 避免「没设默认就彻底发不出去」；
+        - 一个启用的都没有：退回第一条（调用方看 ``is_enabled`` 会报「未启用」，
+          与改造前完全一致）。
+
+        这样 12 处既有调用点（三个发送工具、定时任务投递、邮件服务、readiness）
+        一行都不用改，行为在「只配过一个群」时与改造前完全等价。
+        """
+        rows = await cls.list_channel_records(db, user_id, channel_type)
+        if not rows:
+            return None
+        for record in rows:
+            if cls._record_is_enabled(record):
+                return record
+        return rows[0]
+
+    @classmethod
+    async def list_channel_records(
+        cls, db: AsyncSession, user_id: int, channel_type: str
+    ) -> List[UserNotificationConfig]:
+        """取该用户该渠道的全部记录，按「默认群优先 → id 升序」排序。"""
+        if db is None:
+            return []
+        stmt = (
+            select(UserNotificationConfig)
+            .where(
+                UserNotificationConfig.user_id == user_id,
+                UserNotificationConfig.channel_type == channel_type,
+            )
+            .order_by(
+                UserNotificationConfig.is_default.desc(),
+                UserNotificationConfig.id.asc(),
+            )
         )
         result = await db.execute(stmt)
-        return result.scalar_one_or_none()
+        return list(result.scalars().all())
+
+    @staticmethod
+    def _parse_config_json(record: Optional[UserNotificationConfig]) -> Dict[str, Any]:
+        """安全解析记录里的 config_json。"""
+        if not record or not record.config_json:
+            return {}
+        try:
+            data = json.loads(record.config_json)
+        except Exception as exc:
+            logger.error(
+                "Failed to parse config_json for record %s: %s",
+                getattr(record, "id", "?"), exc,
+            )
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    @classmethod
+    def _record_is_enabled(cls, record: Optional[UserNotificationConfig]) -> bool:
+        return bool(cls._parse_config_json(record).get("is_enabled"))
+
+    # ------------------------------------------------------------------
+    # 多群：列表 / 按群 ID 或名称解析 / 批量保存
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_group_name(raw: Any) -> str:
+        """群名称归一化，供「按名称指定发送目标」时比较。
+
+        模型几乎不会原样复述用户的口语：用户说「发给运维告警群群」，它可能就传
+        「运维告警群群」；说「发给运维」，它可能传「运维」。所以比较前统一做：
+        全角转半角、去掉全部空白、忽略大小写、去掉一个尾随的「群」字。
+        """
+        text = unicodedata.normalize("NFKC", str(raw or "")).strip()
+        text = re.sub(r"\s+", "", text).casefold()
+        # 用户口语「发给运维告警群」里「群」是量词，模型复述时常叠加成「运维告警群群」。
+        # 两边（配置名与调用名）都剥掉全部尾随「群」，才能把这类复述对齐；
+        # 单字「群」保底不动，避免把群名剥成空串。
+        while len(text) > 1 and text.endswith("群"):
+            text = text[:-1]
+        return text
+
+    @classmethod
+    def _available_groups_hint(cls, records: List[UserNotificationConfig]) -> str:
+        """把该渠道可用的群列给模型看 —— 指错目标时它需要这份清单才能改对。"""
+        enabled = [r for r in records if cls._record_is_enabled(r)]
+        if not enabled:
+            return "该渠道没有已启用的群"
+        parts = [f'id={r.id}「{r.name or "未命名"}」' for r in enabled]
+        return "、".join(parts)
+
+    @classmethod
+    async def list_channels(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        channel_type: Optional[str] = None,
+        *,
+        include_credentials: bool = False,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """列出用户的群配置。
+
+        - ``include_credentials=False``：给模型看的视图（id/name/enabled/is_default）；
+        - ``include_credentials=True``：给个人中心表单用，额外带 webhook 与脱敏后的 secret。
+
+        只覆盖支持多群的三个渠道；email 不是「群」语义，仍由原有单条配置链路处理。
+        """
+        targets = (
+            [channel_type]
+            if channel_type in MULTI_GROUP_CHANNELS
+            else list(MULTI_GROUP_CHANNELS)
+        )
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for channel in targets:
+            records = await cls.list_channel_records(db, user_id, channel)
+            items: List[Dict[str, Any]] = []
+            for record in records:
+                config = cls._parse_config_json(record)
+                item: Dict[str, Any] = {
+                    "id": record.id,
+                    "name": record.name or "",
+                    # 键名必须与请求体 ChannelItemReq 和前端一致，统一用 is_enabled。
+                    # 这里曾写成 enabled，结果前端读 item.is_enabled 恒为 undefined →
+                    # Boolean(undefined)=false → 界面显示「已停用」，用户一点保存就真的
+                    # 把 is_enabled:false 写回库里，等于点一次保存就把群停用掉。
+                    "is_enabled": bool(config.get("is_enabled")),
+                    "is_default": bool(record.is_default),
+                }
+                if include_credentials:
+                    item["webhook_url"] = config.get("webhook_url", "")
+                    secret = config.get("secret", "")
+                    item["secret"] = "******" if secret else ""
+                items.append(item)
+            result[channel] = items
+        return result
+
+    @classmethod
+    async def resolve_channel(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        channel_type: str,
+        group_id: Optional[int] = None,
+        group_name: Optional[str] = None,
+    ) -> Tuple[Optional[UserNotificationConfig], str]:
+        """把「指定的群」解析成唯一一条记录。
+
+        返回 ``(record, error)``：``record`` 为 None 时 ``error`` 是给模型/用户的说明。
+
+        规则（与产品约定一致）：
+        - 指定了群但找不到 / 已停用 / 渠道不匹配 → **忽略，不兜底默认群**；
+        - 都没指定 → 交给 ``get_config_by_type_raw`` 取默认群（启用优先）。
+        """
+        records = await cls.list_channel_records(db, user_id, channel_type)
+        label = TEST_CHANNEL_LABELS.get(channel_type, channel_type)
+        hint = cls._available_groups_hint(records)
+
+        if group_id is not None:
+            target_id = cls._coerce_group_id(group_id)
+            if target_id is None:
+                return None, f"群 id={group_id!r} 不是合法的群 ID，应为正整数。"
+            record = next((r for r in records if r.id == target_id), None)
+            if record is None:
+                # 不存在、或存在但属于别人的渠道，对外一律说「不存在」——
+                # 区分开等于告诉调用方「这个 ID 别人在用」。
+                return None, f"群 id={target_id} 不存在。当前可用{label}群：{hint}"
+            if not cls._record_is_enabled(record):
+                return (
+                    None,
+                    f"群 id={target_id}「{record.name or '未命名'}」已停用，消息未发送。"
+                    f"当前可用{label}群：{hint}",
+                )
+            return record, ""
+
+        wanted = str(group_name or "").strip()
+        if wanted:
+            needle = cls._normalize_group_name(wanted)
+            if not needle:
+                return None, f"群名称「{wanted}」无效，请给出具体的群名或改用群 ID。"
+            # 只在启用的群里找：停用的群即使名称对上了也不该发出去
+            candidates = [r for r in records if cls._record_is_enabled(r)]
+            exact = [
+                r for r in candidates
+                if cls._normalize_group_name(r.name) == needle
+            ]
+            if len(exact) == 1:
+                return exact[0], ""
+            if len(exact) > 1:
+                return None, cls._ambiguous_group_message(label, exact)
+
+            contains = [
+                r for r in candidates
+                if needle in cls._normalize_group_name(r.name)
+                or cls._normalize_group_name(r.name) in needle
+            ]
+            if len(contains) == 1:
+                return contains[0], ""
+            if len(contains) > 1:
+                return None, cls._ambiguous_group_message(label, contains)
+
+            return (
+                None,
+                f"没有名称匹配「{wanted}」的{label}群，消息未发送。"
+                f"当前可用{label}群：{hint}",
+            )
+
+        record = await cls.get_config_by_type_raw(db, user_id, channel_type)
+        if record is None:
+            return None, f"用户未配置{label}群，请到「个人中心 → 消息通知」配置。"
+        if not cls._record_is_enabled(record):
+            return None, f"{label}通知未启用，请到「个人中心 → 消息通知」启用。"
+        return record, ""
+
+    @classmethod
+    def _ambiguous_group_message(
+        cls, label: str, candidates: List[UserNotificationConfig]
+    ) -> str:
+        detail = "、".join(f"id={r.id}「{r.name or '未命名'}」" for r in candidates)
+        return f"有 {len(candidates)} 个{label}群匹配：{detail}，请用群 ID 精确指定。"
+
+    @staticmethod
+    def _coerce_group_id(raw: Any) -> Optional[int]:
+        """群 ID 归一：只接受正整数或其标准字符串写法（如 "13"、"13.0"、"id=13"）。"""
+        if isinstance(raw, bool):
+            return None
+        if isinstance(raw, int):
+            return raw if raw > 0 else None
+        if isinstance(raw, float):
+            return int(raw) if raw == int(raw) and raw > 0 else None
+        text = str(raw or "").strip()
+        match = re.fullmatch(r"(?:id\s*[:=]\s*)?([0-9]+)(?:\.0+)?", text, flags=re.IGNORECASE)
+        if not match:
+            return None
+        value = int(match.group(1))
+        return value if value > 0 else None
+
+    @staticmethod
+    def _resolve_secret(raw: Any, previous: Dict[str, Any]) -> str:
+        """把表单里的脱敏串还原成库里真实密钥。"""
+        value = "" if raw is None else str(raw)
+        if value == "******":
+            return str(previous.get("secret") or "")
+        return value
+
+    @classmethod
+    async def save_channels(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        channel_type: str,
+        channels: List[Dict[str, Any]],
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """整体保存某渠道的群列表（新增 / 修改 / 删除一次提交）。
+
+        前端每次提交整份列表：带 id 的是更新，不带 id 的是新建，库里有但提交里
+        没有的视为删除。这样「改名」「设默认」「删群」都在一次事务里落库，
+        不会留下「两个默认群」或「默认群被删了没人接班」这种中间态。
+
+        ``is_default`` 归一规则：以提交里第一个标了默认的为准；一个都没标时，
+        由第一个启用的群自动接任（都停用则取第一个），保证「不指定群」永远有落点。
+        """
+        if channel_type not in MULTI_GROUP_CHANNELS:
+            raise ValueError(f"{channel_type} 渠道不支持配置多个群")
+        if not isinstance(channels, list):
+            raise ValueError("channels 必须是列表")
+        if len(channels) > MAX_CHANNELS_PER_TYPE:
+            raise ValueError(f"每个渠道最多配置 {MAX_CHANNELS_PER_TYPE} 个群")
+
+        entries: List[Dict[str, Any]] = []
+        seen_names: Dict[str, str] = {}
+        for index, raw in enumerate(channels):
+            entry = dict(raw or {})
+            name = str(entry.get("name") or "").strip()
+            if not name:
+                raise ValueError(f"第 {index + 1} 个群缺少名称")
+            if len(name) > MAX_CHANNEL_NAME_LENGTH:
+                raise ValueError(
+                    f"群名称「{name}」超过 {MAX_CHANNEL_NAME_LENGTH} 个字符"
+                )
+            key = name.casefold()
+            if key in seen_names:
+                raise ValueError(f"群名称「{name}」重复，同一渠道下名称必须唯一")
+            seen_names[key] = name
+            entries.append(
+                {
+                    "id": cls._coerce_group_id(entry.get("id")),
+                    "name": name,
+                    "is_enabled": bool(entry.get("is_enabled")),
+                    "is_default": bool(entry.get("is_default")),
+                    "webhook_url": str(entry.get("webhook_url") or "").strip(),
+                    "secret_raw": entry.get("secret"),
+                }
+            )
+
+        if entries:
+            # 优先认「已启用且被标为默认」的那条：前端在兜底顶默认时可能留下
+            # 多个 is_default（如默认群被停用后又有新群接管默认位），
+            # 若按数组顺序取第一个 is_default，就会把停用群选成默认群 ——
+            # 保存一次之后「不指定群」仍然发不出去，而界面上看不出问题。
+            default_index = next(
+                (
+                    i
+                    for i, item in enumerate(entries)
+                    if item["is_default"] and item["is_enabled"]
+                ),
+                None,
+            )
+            if default_index is None:
+                # 没有「启用的默认群」时，先挑一个启用的群，再看谁标了默认：
+                # 默认标记落在停用群上时，「不指定群」就永远发不出去，
+                # 而界面上那个群还明晃晃写着「默认」。
+                default_index = next(
+                    (i for i, item in enumerate(entries) if item["is_enabled"]), None
+                )
+            if default_index is None:
+                default_index = next(
+                    (i for i, item in enumerate(entries) if item["is_default"]), None
+                )
+            if default_index is None:
+                default_index = 0
+            for i, item in enumerate(entries):
+                item["is_default"] = i == default_index
+
+        existing = {
+            record.id: record
+            for record in await cls.list_channel_records(db, user_id, channel_type)
+        }
+
+        kept_ids = set()
+        for entry in entries:
+            record = existing.get(entry["id"]) if entry["id"] else None
+            if record is not None:
+                kept_ids.add(record.id)
+                previous = cls._parse_config_json(record)
+            else:
+                record = UserNotificationConfig(
+                    user_id=user_id, channel_type=channel_type
+                )
+                previous = {}
+                db.add(record)
+
+            record.name = entry["name"]
+            record.is_default = entry["is_default"]
+            config: Dict[str, Any] = {
+                **previous,
+                "is_enabled": entry["is_enabled"],
+                "webhook_url": entry["webhook_url"],
+            }
+            # 企业微信机器人没有加签，不写这个键，避免界面出现无意义字段
+            if channel_type != "wechat_work":
+                config["secret"] = cls._resolve_secret(entry["secret_raw"], previous)
+            record.config_json = json.dumps(config, ensure_ascii=False)
+
+        for record_id, record in existing.items():
+            if record_id not in kept_ids:
+                await db.delete(record)
+
+        await db.commit()
+        return await cls.list_channels(
+            db, user_id, channel_type, include_credentials=True
+        )
 
     @classmethod
     async def get_user_configs(cls, db: AsyncSession, user_id: int) -> Dict[str, Any]:
@@ -185,6 +561,21 @@ class NotificationService:
         return configs
 
     @classmethod
+    async def _clear_other_defaults(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        channel_type: str,
+        *,
+        keep_id: Optional[int],
+    ) -> None:
+        """把同渠道其它记录的 is_default 清零，保证「一个渠道只有一个默认群」。"""
+        for record in await cls.list_channel_records(db, user_id, channel_type):
+            if record.id == keep_id or not record.is_default:
+                continue
+            record.is_default = False
+
+    @classmethod
     async def save_user_config(
         cls, db: AsyncSession, user_id: int, channel_type: str, config_data: Dict[str, Any]
     ) -> UserNotificationConfig:
@@ -205,10 +596,24 @@ class NotificationService:
         db_record = await cls.get_config_by_type_raw(db, user_id, channel_type)
         if db_record:
             db_record.config_json = json.dumps(resolved_config, ensure_ascii=False)
+            # 老接口可能落到一条历史遗留的「无名 / 非默认」记录上（多群改造前插入的），
+            # 顺手补齐，否则这条记录在群清单里永远显示「未命名」且不参与默认群。
+            if not db_record.name:
+                db_record.name = DEFAULT_CHANNEL_NAME.get(channel_type, "默认群")
+            if not db_record.is_default:
+                # 同一渠道只能有一个默认群。get_config_by_type_raw 是「已启用优先」，
+                # 可能返回一条非默认的记录（如默认群已停用），此时若只把这条置默认，
+                # 库里就会出现两个 is_default=1 —— 「不指定群」发到哪一条变成看运气。
+                await cls._clear_other_defaults(db, user_id, channel_type, keep_id=db_record.id)
+                db_record.is_default = True
         else:
             db_record = UserNotificationConfig(
                 user_id=user_id,
                 channel_type=channel_type,
+                # 多群之后，这个老接口代表「该渠道的默认群」：必须带上名字并占住默认位，
+                # 否则会造出一条既没名字、又不参与「不指定群」兜底的孤儿记录。
+                name=DEFAULT_CHANNEL_NAME.get(channel_type, "默认群"),
+                is_default=True,
                 config_json=json.dumps(resolved_config, ensure_ascii=False)
             )
             db.add(db_record)
@@ -219,10 +624,24 @@ class NotificationService:
 
     @classmethod
     async def resolve_masked_config(
-        cls, db: AsyncSession, user_id: int, channel_type: str, config_data: Dict[str, Any]
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        channel_type: str,
+        config_data: Dict[str, Any],
+        channel_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Resolve masked '******' values back to their actual stored values"""
-        db_record = await cls.get_config_by_type_raw(db, user_id, channel_type)
+        """Resolve masked '******' values back to their actual stored values.
+
+        ``channel_id`` 指定了具体某个群时按该群反解：多群之后「默认群」上的
+        secret 未必是当前正在测试的那一个，拿错密钥测出来的结论毫无意义。
+        """
+        if channel_id is not None:
+            target_id = cls._coerce_group_id(channel_id)
+            records = await cls.list_channel_records(db, user_id, channel_type)
+            db_record = next((r for r in records if r.id == target_id), None)
+        else:
+            db_record = await cls.get_config_by_type_raw(db, user_id, channel_type)
         existing_data = {}
         if db_record and db_record.config_json:
             try:
@@ -435,17 +854,77 @@ class NotificationService:
 
     # Core message sending APIs for user configured channels
     @classmethod
-    async def send_dingtalk(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
+    async def dispatch_notification(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        channel_type: str,
+        *,
+        title: str,
+        content: str,
+        channel_id: Optional[int] = None,
+        channel_name: Optional[str] = None,
+    ) -> Tuple[bool, str, Optional[UserNotificationConfig]]:
+        """按渠道把消息发到「指定的群」或「默认群」。
+
+        返回 ``(ok, message, target)``：``target`` 是实际命中的那条渠道记录，
+        供调用方生成「已发送到「运维告警群」(id=12)」这种可核对的回执 —— 只回
+        「发送成功」的话，用户永远不知道消息到底进了哪个群。
+
+        指定了群但解析不出来（不存在/已停用/渠道不匹配）时**不发送、不兜底默认群**，
+        直接把原因返回给调用方。
+        """
+        record, error = await cls.resolve_channel(
+            db,
+            user_id,
+            channel_type,
+            group_id=channel_id,
+            group_name=channel_name,
+        )
+        if record is None:
+            return False, error, None
+
+        config = cls._parse_config_json(record)
+        label = TEST_CHANNEL_LABELS.get(channel_type, channel_type)
+        if not str(config.get("webhook_url") or "").strip():
+            return (
+                False,
+                f"{label}群「{record.name or '未命名'}」(id={record.id}) 还没有填写 Webhook 地址",
+                record,
+            )
+
+        if channel_type == "dingtalk":
+            ok, err = await cls._send_dingtalk_msg_real(config, title, content)
+        elif channel_type == "wechat_work":
+            ok, err = await cls._send_wechat_work_msg_real(config, title, content)
+        elif channel_type == "feishu":
+            ok, err = await cls._send_feishu_msg_real(config, title, content)
+        else:
+            return False, f"不支持的通知渠道：{channel_type}", record
+        return ok, err, record
+
+    @classmethod
+    async def send_dingtalk(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        title: str,
+        content: str,
+        *,
+        channel_id: Optional[int] = None,
+        channel_name: Optional[str] = None,
+    ) -> Tuple[bool, str]:
         """Send message using user's configured DingTalk channel"""
-        db_record = await cls.get_config_by_type_raw(db, user_id, "dingtalk")
-        if not db_record or not db_record.config_json:
-            return False, "用户未配置钉钉通知"
-            
-        data = json.loads(db_record.config_json)
-        if not data.get("is_enabled"):
-            return False, "用户未启用钉钉通知"
-            
-        return await cls._send_dingtalk_msg_real(data, title, content)
+        ok, error, _target = await cls.dispatch_notification(
+            db,
+            user_id,
+            "dingtalk",
+            title=title,
+            content=content,
+            channel_id=channel_id,
+            channel_name=channel_name,
+        )
+        return ok, error
 
     @classmethod
     async def _send_dingtalk_msg_real(cls, config: Dict[str, Any], title: str, content: str) -> Tuple[bool, str]:
@@ -480,37 +959,68 @@ class NotificationService:
         return await _send_with_retries(send_once, channel="dingtalk")
 
     @classmethod
-    async def send_wechat_work(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
-        record = await cls.get_config_by_type_raw(db, user_id, "wechat_work")
-        if not record or not record.config_json:
-            return False, "用户未配置企业微信通知"
-        config = json.loads(record.config_json)
-        if not config.get("is_enabled") or not config.get("webhook_url"):
-            return False, "用户未启用企业微信通知"
+    async def send_wechat_work(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        title: str,
+        content: str,
+        *,
+        channel_id: Optional[int] = None,
+        channel_name: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        ok, error, _target = await cls.dispatch_notification(
+            db,
+            user_id,
+            "wechat_work",
+            title=title,
+            content=content,
+            channel_id=channel_id,
+            channel_name=channel_name,
+        )
+        return ok, error
 
-        body = _truncate_utf8(f"### {title}\n\n{content}", _WECHAT_WORK_MAX_BYTES)
+    @classmethod
+    async def _send_wechat_work_msg_real(
+        cls, config: Dict[str, Any], title: str, content: str
+    ) -> Tuple[bool, str]:
+        # 企微群机器人消息没有独立标题字段（工具入参也没有 title），
+        # 有标题时才拼进正文，避免出现「### 」这种空标题残留。
+        raw_body = f"### {title}\n\n{content}" if str(title or "").strip() else content
+        body = _truncate_utf8(raw_body, _WECHAT_WORK_MAX_BYTES)
+        webhook_url = config.get("webhook_url")
 
         async def send_once() -> Tuple[bool, str]:
             payload = {"msgtype": "markdown", "markdown": {"content": body}}
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(config["webhook_url"], json=payload)
+                response = await client.post(webhook_url, json=payload)
                 data = response.json()
             return (True, "") if data.get("errcode") == 0 else (False, str(data.get("errmsg") or data))
 
         return await _send_with_retries(send_once, channel="wechat_work")
 
     @classmethod
-    async def send_feishu(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
+    async def send_feishu(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        title: str,
+        content: str,
+        *,
+        channel_id: Optional[int] = None,
+        channel_name: Optional[str] = None,
+    ) -> Tuple[bool, str]:
         """Send message using user's configured Feishu channel"""
-        db_record = await cls.get_config_by_type_raw(db, user_id, "feishu")
-        if not db_record or not db_record.config_json:
-            return False, "用户未配置飞书通知"
-
-        data = json.loads(db_record.config_json)
-        if not data.get("is_enabled"):
-            return False, "用户未启用飞书通知"
-
-        return await cls._send_feishu_msg_real(data, title, content)
+        ok, error, _target = await cls.dispatch_notification(
+            db,
+            user_id,
+            "feishu",
+            title=title,
+            content=content,
+            channel_id=channel_id,
+            channel_name=channel_name,
+        )
+        return ok, error
 
     @classmethod
     async def _send_feishu_msg_real(cls, config: Dict[str, Any], title: str, content: str) -> Tuple[bool, str]:
@@ -686,10 +1196,23 @@ class NotificationService:
     ) -> Dict[str, Any]:
         try:
             config = await cls.load_raw_channel_config(db, user_id, channel)
+            if config.get("is_enabled") and str(config.get("webhook_url") or "").strip():
+                return {"ready": True, "reason": ""}
+            records = await cls.list_channel_records(db, user_id, channel)
         except Exception as exc:
             logger.warning("读取 %s 渠道配置失败: %s", channel, exc, exc_info=True)
             await cls._rollback_quietly(db)
             return {"ready": False, "reason": "渠道状态读取失败，请稍后重试"}
+
+        if records:
+            configs = [cls._parse_config_json(record) for record in records]
+            enabled_configs = [cfg for cfg in configs if cfg.get("is_enabled")]
+            if not enabled_configs:
+                return {"ready": False, "reason": "未启用"}
+            if any(str(cfg.get("webhook_url") or "").strip() for cfg in enabled_configs):
+                return {"ready": True, "reason": ""}
+            return {"ready": False, "reason": "未填写 Webhook 地址"}
+
         if not config.get("is_enabled"):
             return {"ready": False, "reason": "未启用"}
         if not str(config.get("webhook_url") or "").strip():

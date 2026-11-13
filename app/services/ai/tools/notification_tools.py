@@ -7,7 +7,7 @@ import hashlib
 import base64
 import urllib.parse
 import httpx
-from typing import Any, Dict, List, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union
 from app.services.ai.tools.tool_compat import BaseTool
 from pydantic import BaseModel, Field
 
@@ -30,76 +30,74 @@ def _normalize_attachment_input(raw: Union[List[str], str, None]) -> List[str]:
 class DingTalkInput(BaseModel):
     title: str = Field(description="The title of the message (visible in notifications)")
     content: str = Field(description="The main body of the message in Markdown format")
+    group_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "可选。要发到哪个钉钉群的群 ID（正整数）。"
+            "用户明确说「发到 xx 群」时，用 list_notification_channels 查到对应群的 id 再填这里。"
+            "留空则发到用户的默认钉钉群。**不要编造 id**。"
+        ),
+    )
+    group_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "可选。要发到哪个钉钉群的名称，如「运维告警群」。"
+            "已知群名但不确定 id 时可只填这个；与 group_id 同时填时以 group_id 为准。"
+            "留空则发到默认群。"
+        ),
+    )
 
 class send_dingtalk_message(BaseTool):
     # Pydantic v2 requires type annotations for field overrides
     name: str = "send_dingtalk_message"
     description: str = (
         "发送钉钉群机器人 Markdown 消息。Send a Markdown message to DingTalk. "
-        "本工具会自动读取当前用户在个人中心 -> 消息通知里的钉钉 Webhook/加签配置，"
-        "无需用户在本轮对话中提供 webhook、access_token 或群聊目标。"
+        "默认发到当前用户在个人中心 -> 消息通知里设置的**默认钉钉群**，"
+        "无需用户提供 webhook 或 access_token。"
+        "用户明确要求发到某个群时，用 group_id 或 group_name 指定；"
+        "不确定用户有哪些群时，先调用 list_notification_channels 查一下。"
     )
     args_schema: Type[BaseModel] = DingTalkInput
 
-    async def _arun(self, title: str, content: str) -> str:
+    async def _arun(
+        self,
+        title: str,
+        content: str,
+        group_id: Optional[int] = None,
+        group_name: Optional[str] = None,
+    ) -> str:
         """Use the tool asynchronously."""
-        webhook_url = None
-        secret = None
-        
-        # Directly retrieve from user's personal notification config
         from app.core.context import get_current_agent_context
         from app.core.orm import AsyncSessionLocal
         from app.services.notification_service import NotificationService
-        
+
         agent_ctx = get_current_agent_context()
-        if agent_ctx and agent_ctx.user_id:
-            try:
-                async with AsyncSessionLocal() as db:
-                    db_record = await NotificationService.get_config_by_type_raw(db, agent_ctx.user_id, "dingtalk")
-                    if db_record and db_record.config_json:
-                        user_cfg = json.loads(db_record.config_json)
-                        if user_cfg.get("is_enabled"):
-                            webhook_url = user_cfg.get("webhook_url")
-                            secret = user_cfg.get("secret")
-                        else:
-                            return "Error: DingTalk notification is disabled. Please enable it in Personal Center -> Message Notifications."
-            except Exception as e:
-                logger.error(f"Failed to load user personal DingTalk config: {e}", exc_info=True)
-
-        if not webhook_url:
-            logger.warning(f"DingTalk Tool: Webhook URL missing in user personal settings.")
-            return "Error: DingTalk Webhook URL not configured. Please go to Personal Center -> Message Notifications and set it."
-
+        if not agent_ctx or not agent_ctx.user_id:
+            return "Error: 无法确定当前用户，钉钉消息未发送。"
 
         try:
-            target_url = webhook_url
-            if secret:
-                timestamp = str(round(time.time() * 1000))
-                string_to_sign = f'{timestamp}\n{secret}'
-                hmac_code = hmac.new(secret.encode('utf-8'), string_to_sign.encode('utf-8'), digestmod=hashlib.sha256).digest()
-                sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
-                target_url = f"{webhook_url}&timestamp={timestamp}&sign={sign}"
+            user_id = int(agent_ctx.user_id)
+        except (TypeError, ValueError):
+            return "Error: 当前用户 ID 无效，钉钉消息未发送。"
 
-            payload = {
-                "msgtype": "markdown",
-                "markdown": {
-                    "title": title,
-                    "text": f"### {title}\n\n{content}"
-                }
-            }
-
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(target_url, json=payload)
-                resp_data = response.json()
-                
-                if resp_data.get("errcode") == 0:
-                    return f"Successfully sent DingTalk message: {title}"
-                else:
-                    return f"Failed to send DingTalk message: {resp_data.get('errmsg')} (Code: {resp_data.get('errcode')})"
-
+        try:
+            async with AsyncSessionLocal() as db:
+                ok, message, target = await NotificationService.dispatch_notification(
+                    db,
+                    user_id,
+                    "dingtalk",
+                    title=title,
+                    content=content,
+                    channel_id=group_id,
+                    channel_name=group_name,
+                )
         except Exception as e:
             logger.error(f"DingTalk Tool Error: {e}", exc_info=True)
             return f"Error executing DingTalk tool: {str(e)}"
+
+        if ok:
+            return f"已发送到钉钉「{target.name or '未命名群'}」(id={target.id})"
+        return f"钉钉消息未发送：{message}"
 
     def _run(self, title: str, content: str) -> str:
         raise NotImplementedError("Use _arun instead")
@@ -295,63 +293,70 @@ class send_email(BaseTool):
 
 class WeChatWorkInput(BaseModel):
     content: str = Field(description="The main body of the message in Markdown format")
+    group_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "可选。要发到哪个企微群的群 ID（正整数）。"
+            "用户明确说「发到 xx 群」时，用 list_notification_channels 查到对应群的 id 再填这里。"
+            "留空则发到默认企微群。**不要编造 id**。"
+        ),
+    )
+    group_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "可选。要发到哪个企微群的名称。已知群名但不确定 id 时可只填这个；"
+            "与 group_id 同时填时以 group_id 为准。留空则发到默认群。"
+        ),
+    )
 
 class send_wechat_work_message(BaseTool):
     name: str = "send_wechat_work_message"
     description: str = (
         "发送企业微信群机器人 Markdown 消息。Send a Markdown message to WeChat Work. "
-        "本工具会自动读取当前用户在个人中心 -> 消息通知里的企微 Webhook 配置，"
-        "无需用户在本轮对话中提供 webhook 或群聊目标。"
+        "默认发到当前用户在个人中心 -> 消息通知里设置的**默认企微群**。"
+        "用户明确要求发到某个群时，用 group_id 或 group_name 指定；"
+        "不确定用户有哪些群时，先调用 list_notification_channels 查一下。"
     )
     args_schema: Type[BaseModel] = WeChatWorkInput
 
-    async def _arun(self, content: str) -> str:
+    async def _arun(
+        self,
+        content: str,
+        group_id: Optional[int] = None,
+        group_name: Optional[str] = None,
+    ) -> str:
         """Use the tool asynchronously."""
-        webhook_url = None
-        
-        # Directly retrieve from user's personal notification config
         from app.core.context import get_current_agent_context
         from app.core.orm import AsyncSessionLocal
         from app.services.notification_service import NotificationService
-        
-        agent_ctx = get_current_agent_context()
-        if agent_ctx and agent_ctx.user_id:
-            try:
-                async with AsyncSessionLocal() as db:
-                    db_record = await NotificationService.get_config_by_type_raw(db, agent_ctx.user_id, "wechat_work")
-                    if db_record and db_record.config_json:
-                        user_cfg = json.loads(db_record.config_json)
-                        if user_cfg.get("is_enabled"):
-                            webhook_url = user_cfg.get("webhook_url")
-                        else:
-                            return "Error: WeChat Work notification is disabled. Please enable it in Personal Center -> Message Notifications."
-            except Exception as e:
-                logger.error(f"Failed to load user personal WeChat Work config: {e}", exc_info=True)
 
-        if not webhook_url:
-            logger.warning(f"WeChat Work Tool: Webhook URL missing in user personal settings.")
-            return "Error: WeChat Work Webhook URL not configured. Please go to Personal Center -> Message Notifications and set it."
+        agent_ctx = get_current_agent_context()
+        if not agent_ctx or not agent_ctx.user_id:
+            return "Error: 无法确定当前用户，企业微信消息未发送。"
 
         try:
-            payload = {
-                "msgtype": "markdown",
-                "markdown": {
-                    "content": content
-                }
-            }
+            user_id = int(agent_ctx.user_id)
+        except (TypeError, ValueError):
+            return "Error: 当前用户 ID 无效，企业微信消息未发送。"
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(webhook_url, json=payload)
-                resp_data = response.json()
-                
-                if resp_data.get("errcode") == 0:
-                    return f"Successfully sent WeChat Work message."
-                else:
-                    return f"Failed to send WeChat Work message: {resp_data.get('errmsg')} (Code: {resp_data.get('errcode')})"
-
+        try:
+            async with AsyncSessionLocal() as db:
+                ok, message, target = await NotificationService.dispatch_notification(
+                    db,
+                    user_id,
+                    "wechat_work",
+                    title="",
+                    content=content,
+                    channel_id=group_id,
+                    channel_name=group_name,
+                )
         except Exception as e:
             logger.error(f"WeChat Work Tool Error: {e}", exc_info=True)
             return f"Error executing WeChat Work tool: {str(e)}"
+
+        if ok:
+            return f"已发送到企业微信「{target.name or '未命名群'}」(id={target.id})"
+        return f"企业微信消息未发送：{message}"
 
     def _run(self, content: str) -> str:
         raise NotImplementedError("Use _arun instead")
@@ -435,18 +440,40 @@ class send_portal_notification(BaseTool):
 class FeishuInput(BaseModel):
     title: str = Field(description="The title of the message card (visible in notifications)")
     content: str = Field(description="The main body of the message in Markdown format")
+    group_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "可选。要发到哪个飞书群的群 ID（正整数）。"
+            "用户明确说「发到 xx 群」时，用 list_notification_channels 查到对应群的 id 再填这里。"
+            "留空则发到默认飞书群。**不要编造 id**。"
+        ),
+    )
+    group_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "可选。要发到哪个飞书群的名称。已知群名但不确定 id 时可只填这个；"
+            "与 group_id 同时填时以 group_id 为准。留空则发到默认群。"
+        ),
+    )
 
 
 class send_feishu_message(BaseTool):
     name: str = "send_feishu_message"
     description: str = (
         "发送飞书群机器人 Markdown 卡片消息。Send a Markdown message card to Feishu. "
-        "本工具会自动读取当前用户在个人中心 -> 消息通知里的飞书 Webhook/加签配置，"
-        "无需用户在本轮对话中提供 webhook 或群聊目标。"
+        "默认发到当前用户在个人中心 -> 消息通知里设置的**默认飞书群**。"
+        "用户明确要求发到某个群时，用 group_id 或 group_name 指定；"
+        "不确定用户有哪些群时，先调用 list_notification_channels 查一下。"
     )
     args_schema: Type[BaseModel] = FeishuInput
 
-    async def _arun(self, title: str, content: str) -> str:
+    async def _arun(
+        self,
+        title: str,
+        content: str,
+        group_id: Optional[int] = None,
+        group_name: Optional[str] = None,
+    ) -> str:
         """Use the tool asynchronously."""
         from app.core.context import get_current_agent_context
         from app.core.orm import AsyncSessionLocal
@@ -461,22 +488,151 @@ class send_feishu_message(BaseTool):
         except (TypeError, ValueError):
             return "Error: 当前用户 ID 无效，飞书消息未发送。"
 
-        cleaned_title = str(title or "").strip()
         cleaned_content = str(content or "").strip()
         if not cleaned_content:
             return "Error: 正文内容不能为空。"
 
         try:
             async with AsyncSessionLocal() as db:
-                ok, err = await NotificationService.send_feishu(
-                    db, user_id=user_id, title=cleaned_title or "智能体消息通知", content=cleaned_content
+                ok, message, target = await NotificationService.dispatch_notification(
+                    db,
+                    user_id,
+                    "feishu",
+                    title=str(title or "").strip() or "智能体消息通知",
+                    content=cleaned_content,
+                    channel_id=group_id,
+                    channel_name=group_name,
                 )
-                if ok:
-                    return f"Successfully sent Feishu message: {cleaned_title or '智能体消息通知'}"
-                return f"Failed to send Feishu message: {err}"
         except Exception as e:
             logger.error("Feishu Tool Error: %s", e, exc_info=True)
             return f"Error executing Feishu tool: {str(e)}"
 
+        if ok:
+            return f"已发送到飞书「{target.name or '未命名群'}」(id={target.id})"
+        return f"飞书消息未发送：{message}"
+
     def _run(self, title: str, content: str) -> str:
+        raise NotImplementedError("Use _arun instead")
+
+
+class ListNotificationChannelsInput(BaseModel):
+    channel_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "可选。只看某个渠道：dingtalk（钉钉）/ feishu（飞书）/ wechat_work（企业微信）。"
+            "留空则返回全部三个渠道。"
+        ),
+    )
+
+
+class list_notification_channels(BaseTool):
+    """列出当前用户可用的消息通道与群。
+
+    模型在两种情况下必须先查：用户说了一个群名但不确定对应哪个 id；
+    用户问「我能发到哪些群 / 有没有配钉钉」。没有这份清单就只能瞎猜 id，
+    而猜错会直接导致消息被忽略（按设计不兜底默认群）。
+    """
+
+    name: str = "list_notification_channels"
+    description: str = (
+        "列出当前用户已配置的消息通道（钉钉 / 飞书 / 企业微信）及其下的群："
+        "每个群给出 id、名称、是否启用、是否为默认群。"
+        "发消息到指定群之前用它查群 ID；用户问「我有哪些群/通道」时也用它。"
+        "只返回用户自己的配置，不包含任何 webhook 或密钥。"
+    )
+    args_schema: Type[BaseModel] = ListNotificationChannelsInput
+
+    async def _arun(self, channel_type: Optional[str] = None) -> str:
+        from app.core.context import get_current_agent_context
+        from app.core.orm import AsyncSessionLocal
+        from app.services.notification_service import (
+            MULTI_GROUP_CHANNELS,
+            NotificationService,
+            TEST_CHANNEL_LABELS,
+        )
+
+        agent_ctx = get_current_agent_context()
+        if not agent_ctx or not agent_ctx.user_id:
+            return json.dumps(
+                {"channels": [], "note": "无法确定当前用户，查不到可用的消息通道。"},
+                ensure_ascii=False,
+            )
+
+        wanted = str(channel_type or "").strip()
+        if wanted and wanted not in MULTI_GROUP_CHANNELS:
+            return json.dumps(
+                {
+                    "channels": [],
+                    "note": (
+                        f"channel_type={channel_type!r} 不是有效渠道，"
+                        f"可选：{'、'.join(MULTI_GROUP_CHANNELS)}。"
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+        try:
+            async with AsyncSessionLocal() as db:
+                grouped = await NotificationService.list_channels(
+                    db, int(agent_ctx.user_id), wanted or None
+                )
+        except Exception as exc:  # noqa: BLE001 - 查询失败要让模型知道，而不是空清单
+            logger.error("list_notification_channels 查询失败: %s", exc, exc_info=True)
+            return json.dumps(
+                {"channels": [], "note": f"查询消息通道失败：{exc}"},
+                ensure_ascii=False,
+            )
+
+        channels: List[Dict[str, Any]] = []
+        default_notes: List[str] = []
+        for key in MULTI_GROUP_CHANNELS:
+            if wanted and key != wanted:
+                continue
+            items = grouped.get(key) or []
+            enabled_items = [i for i in items if i.get("is_enabled")]
+            # 这里的「默认」必须和 send_* 的真实兜底一致：发信走
+            # get_config_by_type_raw（已启用优先 → 默认群优先 → id 升序），
+            # 默认群停用时会自动落到最早启用的群。原先只认「is_default 且启用」，
+            # 默认群一停用就报「没有已启用的群」，可实际上消息发得出去 ——
+            # 模型据此会告诉用户去配群，而群本来就是配好的。
+            default_item = next(
+                (i for i in enabled_items if i.get("is_default")), None
+            )
+            fallback_used = False
+            if default_item is None and enabled_items:
+                default_item = enabled_items[0]
+                fallback_used = True
+            if default_item:
+                label = TEST_CHANNEL_LABELS[key]
+                if fallback_used:
+                    default_notes.append(
+                        f"{label}默认群已停用或不存，不指定群时发到最早启用的 id={default_item['id']}"
+                        f"「{default_item['name']}」"
+                    )
+                else:
+                    default_notes.append(
+                        f"{label}默认群 id={default_item['id']}「{default_item['name']}」"
+                    )
+            channels.append(
+                {
+                    "type": key,
+                    "label": TEST_CHANNEL_LABELS.get(key, key),
+                    "configured": bool(items),
+                    "default_id": default_item["id"] if default_item else None,
+                    "default_is_fallback": fallback_used,
+                    "items": items,
+                }
+            )
+
+        if default_notes:
+            note = "；".join(default_notes) + "。不给 group_id 时发到默认群；已停用的群不能作为发送目标。"
+        else:
+            note = "没有已启用的群。请用户先到「个人中心 → 消息通知」配置并启用至少一个群。"
+
+        return json.dumps(
+            {"channels": channels, "note": note},
+            ensure_ascii=False,
+        )
+
+    def _run(self, channel_type: Optional[str] = None) -> str:
         raise NotImplementedError("Use _arun instead")

@@ -507,7 +507,13 @@ class TestVisibility:
             )
         }
 
-        await center.set_secret_status(session, secret_id=row.id, status_value="disabled")
+        # 非管理员调用 service 层不能变更系统级凭据状态
+        with pytest.raises(center.SecretPermissionError):
+            await center.set_secret_status(session, secret_id=row.id, status_value="disabled")
+
+        await center.set_secret_status(
+            session, secret_id=row.id, status_value="disabled", actor_is_admin=True
+        )
         assert row.id not in {
             r.id
             for r in await center.list_visible_secrets(

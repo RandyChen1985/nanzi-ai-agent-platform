@@ -10,9 +10,22 @@ from app.models.user_notification_config import UserNotificationConfig
 @pytest.mark.asyncio
 async def test_get_notification_configs_default(client: AsyncClient, valid_api_key: str, db_session):
     """Test getting notification configs when none exist in DB (should return defaults)"""
-    from sqlalchemy import delete
-    # Prevent cross-test pollution by clearing the config table first
-    await db_session.execute(delete(UserNotificationConfig))
+    from sqlalchemy import delete, select
+
+    from app.models.user import User
+
+    # 只清本测试账号（test_user）的配置。
+    # 这里原本是 delete(UserNotificationConfig) —— 没有 WHERE 的全表删除。
+    # 测试连的是真实开发库（conftest 用的就是 AsyncSessionLocal），
+    # 于是每跑一次测试就把**所有用户**配好的钉钉/飞书/企微群清空一次，
+    # 而且删完即 commit，无法回滚。跨用例污染用 user_id 过滤同样能解决。
+    await db_session.execute(
+        delete(UserNotificationConfig).where(
+            UserNotificationConfig.user_id.in_(
+                select(User.id).where(User.user_name == "test_user")
+            )
+        )
+    )
     await db_session.commit()
 
     response = await client.get(

@@ -196,32 +196,24 @@ async def resolve_effective_prompt_tool_names_for_turn(
     却被裁掉」的假拦截 —— 模型照着清单调用，白名单判定为未注册。
     """
     names = resolve_effective_prompt_tool_names(agent_config)
-    from app.services.ai.session_tool_artifact import (
-        REUSABLE_RESULT_ACQUISITION_TOOLS,
-        is_system_receipt_message,
-        should_inject_session_artifact,
-    )
+    from app.services.ai.session_tool_artifact import reusable_result_removal_names
 
     force_reuse = (
         str(getattr(turn_decision, "reusable_result_mode", "none") or "none").strip().lower()
         == "reuse"
     )
-    # 系统回执（提问卡回答、业务确认卡确定或取消）要单独豁免：它是把被暂停的流程
-    # 接着做完，而不是就着上一轮结果追问。判成复用就会让 sub_agent_call 从清单里
-    # 消失，父再也无法 resume 那个停下来的子代理。这里显式豁免（而不是只依赖
-    # should_inject 内部判断），是因为下面的 `force_reuse` 短路会让函数没机会执行。
-    reuse_applies = not is_system_receipt_message(
-        str(current_user_query or "")
-    ) and (
-        force_reuse
-        or should_inject_session_artifact(
+    # 裁掉哪些工具必须与运行时 filter_tools_for_reusable_result 走**同一个函数**。
+    # 过去这里对系统回执无条件豁免（一个都不裁），运行时却按 should_inject 把
+    # sub_agent_call 一起拔掉——提示词列着、运行时没有，续聊必然失败。
+    # 现在两边都由 reusable_result_removal_names 决定：回执裁事实获取工具、
+    # 保留 sub_agent_call。
+    names.difference_update(
+        reusable_result_removal_names(
             str(current_user_query or ""),
             session_artifact,
             force_reuse=force_reuse,
         )
     )
-    if reuse_applies:
-        names.difference_update(REUSABLE_RESULT_ACQUISITION_TOOLS)
     return names
 
 

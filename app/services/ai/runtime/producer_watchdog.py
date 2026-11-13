@@ -6,8 +6,11 @@
 超时，整轮就先被取消并释放会话锁。该约束由迁移 SQL 的 description 说明。
 
 **值语义**：`0`（或负值）表示关闭看门狗——整轮不再有总时长兜底，只依赖模型流空闲
-守卫与工具各自的超时；其余取值必须在 60-3600 秒之间。上限不让再大，是因为看门狗的
-职责是「保证会话最终一定能被释放」，太长就形同虚设。
+守卫与工具各自的超时；其余取值必须在 60-86400 秒之间。
+
+上限放到 86400（与工具级/版本级超时同口径）：工具级超时已经允许配到 86400，若看门狗
+还卡在 3600，那些「给慢工具配的长预算」永远跑不完，配置也就白配了。默认值仍是 600 秒，
+所以正常对话的兜底时长不受影响——调大上限只影响「producer 卡死时最晚多久被强杀」。
 """
 from __future__ import annotations
 
@@ -20,7 +23,7 @@ logger = logging.getLogger(__name__)
 PRODUCER_HARD_TIMEOUT_KEY = "agent_chat_producer_hard_timeout_seconds"
 DEFAULT_PRODUCER_HARD_TIMEOUT_SECONDS = 600.0
 MIN_PRODUCER_HARD_TIMEOUT_SECONDS = 60.0
-MAX_PRODUCER_HARD_TIMEOUT_SECONDS = 3600.0
+MAX_PRODUCER_HARD_TIMEOUT_SECONDS = 86400.0
 
 # 关闭看门狗的统一表示：传入的 0 / 负值都归一到这里，避免出现「-600 被当成小超时」。
 PRODUCER_HARD_TIMEOUT_DISABLED = 0.0
@@ -34,7 +37,7 @@ def parse_producer_hard_timeout(
     """解析看门狗配置值；无法解析时回退 ``default``。
 
     与 ``validate_producer_hard_timeout`` 的分工（重要）：
-    - **校验**约束写入侧（管理端保存）：只接受 0 或 60-3600；
+    - **校验**约束写入侧（管理端保存）：只接受 0 或 60-86400；
     - **解析**只负责读取侧的健壮性——脏数据不能阻断对话，但**合法数字一律原样使用**，
       不在这里二次判定范围。
 
@@ -60,7 +63,7 @@ def parse_producer_hard_timeout(
 
 
 def validate_producer_hard_timeout(value: Any) -> None:
-    """校验管理端保存的看门狗取值：0 表示关闭，其余必须在 60-3600 秒之间。"""
+    """校验管理端保存的看门狗取值：0 表示关闭，其余必须在 60-86400 秒之间。"""
     if isinstance(value, bool):
         raise ValueError(_range_message())
     try:
@@ -80,7 +83,7 @@ def _range_message() -> str:
         f"{PRODUCER_HARD_TIMEOUT_KEY} 必须为数字（秒）：0 表示关闭看门狗，"
         f"或 {MIN_PRODUCER_HARD_TIMEOUT_SECONDS:g}-{MAX_PRODUCER_HARD_TIMEOUT_SECONDS:g} 秒之间。"
         f"注意它约束的是**整轮**总时长——工具调用超时"
-        f"（agent_max_toolcall_timeout）配得比它大不会生效"
+        f"（含工具级配置）配得比它大，整轮会先被取消"
     )
 
 

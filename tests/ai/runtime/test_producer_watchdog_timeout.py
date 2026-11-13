@@ -25,7 +25,9 @@ def test_key_and_default_match_the_read_site():
     assert PRODUCER_HARD_TIMEOUT_KEY == "agent_chat_producer_hard_timeout_seconds"
     assert DEFAULT_PRODUCER_HARD_TIMEOUT_SECONDS == 600.0
     assert MIN_PRODUCER_HARD_TIMEOUT_SECONDS == 60.0
-    assert MAX_PRODUCER_HARD_TIMEOUT_SECONDS == 3600.0
+    # 上限与工具级/版本级超时同口径：工具级能配到 86400，看门狗若只到 3600，
+    # 那些长预算就永远跑不完（整轮先被取消）
+    assert MAX_PRODUCER_HARD_TIMEOUT_SECONDS == 86400.0
 
 
 @pytest.mark.parametrize("raw", ["900", " 900 ", 900, 900.0, "60", "3600"])
@@ -49,11 +51,11 @@ def test_garbage_falls_back_to_default(raw):
     assert parse_producer_hard_timeout(raw) == DEFAULT_PRODUCER_HARD_TIMEOUT_SECONDS
 
 
-@pytest.mark.parametrize("raw", ["0.2", "1", "30", "59.9", "3600.1", "1e9", 1e9])
+@pytest.mark.parametrize("raw", ["0.2", "1", "30", "59.9", "86400.1", "1e9", 1e9])
 def test_legal_numbers_are_preserved_even_outside_the_managed_range(raw):
     """读取侧不做范围二次判定——范围是**写入侧**的约束。
 
-    回归护栏：曾经在 parse 里也判了 60-3600，导致两件事同时坏掉——
+    回归护栏：曾经在 parse 里也判了允许区间，导致两件事同时坏掉——
     ① DB 里手工填的 30 被静默改成 600（"配置写着 30、实际跑 600"）；
     ② 等待小超时的集成测试（mock 返回 "0.2" 验证看门狗释放锁）会挂住 600 秒。
     """
@@ -64,12 +66,12 @@ def test_parse_accepts_a_custom_default():
     assert parse_producer_hard_timeout("bad", default=123.0) == 123.0
 
 
-@pytest.mark.parametrize("raw", ["0", 0, "60", "600", "3600", 900.0])
+@pytest.mark.parametrize("raw", ["0", 0, "60", "600", "3600", "86400", 900.0])
 def test_validate_accepts_zero_and_the_range(raw):
     validate_producer_hard_timeout(raw)  # 不抛即通过
 
 
-@pytest.mark.parametrize("raw", ["59.9", "3600.1", "-1", "abc", "", None, True, float("nan")])
+@pytest.mark.parametrize("raw", ["59.9", "86400.1", "-1", "abc", "", None, True, float("nan")])
 def test_validate_rejects_out_of_range_and_garbage(raw):
     with pytest.raises(ValueError):
         validate_producer_hard_timeout(raw)
@@ -82,12 +84,12 @@ def test_validate_message_states_the_allowed_shapes():
     message = str(excinfo.value)
     assert PRODUCER_HARD_TIMEOUT_KEY in message
     assert "0" in message
-    assert "60" in message and "3600" in message
+    assert "60" in message and "86400" in message
 
 
 def test_parse_is_consistent_with_validate_on_the_range():
     """解析与校验不能各说各话：校验放行的值，解析不得悄悄回退默认。"""
-    for raw in ("60", "600", "3600"):
+    for raw in ("60", "600", "3600", "86400"):
         validate_producer_hard_timeout(raw)
         assert parse_producer_hard_timeout(raw) == float(raw)
 
