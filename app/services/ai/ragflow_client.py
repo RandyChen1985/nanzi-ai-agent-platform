@@ -78,6 +78,15 @@ def clear_document_list_cache(dataset_id: Optional[str] = None) -> None:
         _documents_cache.pop(key, None)
 
 
+def clear_write_method_contract_cache() -> None:
+    """清掉「文档 / 切片更新用 PUT 还是 PATCH」的探测结果。
+
+    测试之间需要隔离；运维把 RAGFlow 换成另一个发行版（或回滚升级）后，
+    也应当调一次，否则会继续按旧的缓存方法发请求。
+    """
+    RagFlowClient._write_method_cache.clear()
+
+
 def _wrap_transport_error(
     exc: httpx.TransportError, action: str, timeout_val: float
 ) -> RagFlowError:
@@ -257,10 +266,15 @@ class RagFlowClient:
 
     @classmethod
     def _normalize_document(cls, document: Any) -> Any:
-        """把 1.0 的 ``ingestion_status`` 映射成前端认识的 ``run``。
+        """把 1.0 的字段别名补齐成前端认识的 0.x 契约。
 
         1.0 不再返回 ``run``，而前端 ``getDocStatus`` 只认 ``run`` / ``status``，
         缺字段会把已解析完成的文档显示成「未解析」，因此补一个等价别名。
+
+        同理，1.0 的列表只回 ``status``（``"1"`` / ``"0"`` 表示启用 / 停用），
+        不再回 ``enabled``，而前端 ``isDocEnabled`` 与文档详情页的「参与检索」
+        只读 ``enabled`` —— 缺字段会让停用文档显示成「参与检索」。这里只在
+        ``enabled`` 缺失时用 ``status`` 补，0.x 已有 ``enabled`` 时以它为准。
         """
         if not isinstance(document, dict):
             return document
@@ -269,6 +283,12 @@ class RagFlowClient:
             mapped = cls._INGESTION_STATUS_TO_RUN.get(status)
             if mapped:
                 document["run"] = mapped
+        if document.get("enabled") in (None, ""):
+            raw_status = document.get("status")
+            if raw_status not in (None, ""):
+                document["enabled"] = (
+                    1 if str(raw_status).strip().lower() in ("1", "true") else 0
+                )
         return document
 
     async def _handle_response(self, response: httpx.Response, action: str) -> Dict[str, Any]:
@@ -499,6 +519,76 @@ class RagFlowClient:
         "parser_id is required",
         "extra inputs are not permitted",
     )
+
+    # 「更新文档 / 更新切片」的 HTTP 方法也随发行版漂移：
+    #   PATCH —— RAGFlow 0.25+（api/apps/restful_apis/*）与 1.0 Go 版；
+    #   PUT   —— RAGFlow 0.24 及更早（api/apps/sdk/doc.py），且只注册了 PUT。
+    # 先按 PATCH 发，只有对方明确回「方法不支持」时才回退 PUT，并把成功的方法
+    # 按 base_url + 资源类型记住，避免每次写操作都多打一次被拒绝的请求。
+    _write_method_cache: Dict[str, str] = {}
+
+    # 「方法不支持」的两种表现：
+    #   0.24 及更早：Werkzeug 405 被包成 HTTP 200 + code 100 +
+    #                "<MethodNotAllowed '405: Method Not Allowed'>"；
+    #   1.0 Go 版：gin 落到 NoRoute，返回 404 +
+    #                {"message": "Not Found: /api/v1/datasets/…"}。
+    # 只认这两类信号，避免把权限不足、名字重复等真实错误也当成方法问题重试。
+    _METHOD_NOT_ALLOWED_HINTS = (
+        "methodnotallowed",
+        "method not allowed",
+        "405",
+        "not found: /api/",
+    )
+
+    @classmethod
+    def is_method_not_allowed_error(cls, message: str) -> bool:
+        msg = (message or "").lower()
+        return any(hint in msg for hint in cls._METHOD_NOT_ALLOWED_HINTS)
+
+    async def _write_with_method_fallback(
+        self,
+        *,
+        cache_scope: str,
+        url: str,
+        action: str,
+        payload: Dict[str, Any],
+    ) -> Any:
+        """按 PATCH 优先、PUT 兜底的顺序发一次「局部更新」写请求。
+
+        RAGFlow 0.25 起把文档 / 切片的更新方法从 PUT 换成了 PATCH，老发行版
+        又完全没有 PATCH 路由。方法错误只可能出现在第一次调用，所以把探测结果
+        缓存起来；一旦确认是 PUT 契约，后续请求不再先撞一次 405。
+        """
+        key = f"{self.base_url or ''}|{cache_scope}"
+        method = self._write_method_cache.get(key, "PATCH")
+        try:
+            data = await self._request(
+                method,
+                url,
+                action=action,
+                timeout=DEFAULT_WRITE_TIMEOUT,
+                headers=self._get_headers(),
+                json=payload,
+            )
+            return data
+        except RagFlowServiceError as e:
+            if method != "PATCH" or not self.is_method_not_allowed_error(str(e)):
+                raise
+            logger.info(
+                f"[RAGFlow] {action} 不接受 PATCH，改回 PUT 重试"
+                f"（base_url={self.base_url}）：{e}"
+            )
+
+        data = await self._request(
+            "PUT",
+            url,
+            action=action,
+            timeout=DEFAULT_WRITE_TIMEOUT,
+            headers=self._get_headers(),
+            json=payload,
+        )
+        self._write_method_cache[key] = "PUT"
+        return data
 
     @classmethod
     def _looks_like_dataset_contract_error(cls, message: str) -> bool:
@@ -990,7 +1080,8 @@ class RagFlowClient:
     ) -> Dict[str, Any]:
         """部分更新文档：改名 / 启停 / 解析配置。
 
-        RAGFlow 的 ``PUT /documents/{id}`` 只改传过去的字段，所以这里严格按
+        RAGFlow 的 ``PUT /documents/{id}``（0.24 及更早）与
+        ``PATCH /documents/{id}``（0.25+ / 1.0）只改传过去的字段，所以这里严格按
         「None = 不动」组装 payload —— 否则只想停用文档时会顺手把名字写成空。
         """
         await self._ensure_config()
@@ -998,7 +1089,13 @@ class RagFlowClient:
         if name is not None:
             payload["name"] = name
         if enabled is not None:
-            payload["enabled"] = enabled
+            # 必须发 0/1 整数，不能发 JSON 布尔：RAGFlow 1.0 的 Go 结构体是
+            # ``Enabled *int``，0.25+ 的 Pydantic ``UpdateDocumentReq.enabled`` 也是
+            # ``int``（lax 模式同样不做 bool→int），发 false 会被拒成
+            # "Field: <enabled> - Message: <Input should be a valid integer> - Value: <False>"。
+            # 0.24 及更早的 ``sdk/doc.py`` 是 ``int(req["enabled"])``，0/1 一样成立，
+            # 所以整数是唯一跨版本安全的写法。
+            payload["enabled"] = 1 if enabled else 0
         if chunk_method is not None:
             payload["chunk_method"] = chunk_method
         if parser_config is not None:
@@ -1007,13 +1104,11 @@ class RagFlowClient:
             raise ValueError("update_document requires at least one field")
 
         url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}"
-        data = await self._request(
-            "PUT",
-            url,
+        data = await self._write_with_method_fallback(
+            cache_scope="documents",
+            url=url,
             action="Update Document",
-            timeout=DEFAULT_WRITE_TIMEOUT,
-            headers=self._get_headers(),
-            json=payload,
+            payload=payload,
         )
         clear_document_list_cache(dataset_id)
         return data if isinstance(data, dict) else {}
@@ -1076,6 +1171,9 @@ class RagFlowClient:
         if content is not None:
             payload["content"] = content
         if available is not None:
+            # 这里与文档级 enabled 相反：``available`` 必须保持布尔。
+            # 1.0 Go 版严格 ``raw.(bool)``（发 0/1 会被拒成 "`available` must be
+            # a boolean"），0.25+ Python 版 ``_parse_available_flag`` 也吃布尔。
             payload["available"] = available
         if important_keywords is not None:
             payload["important_keywords"] = important_keywords
@@ -1083,26 +1181,35 @@ class RagFlowClient:
             raise ValueError("update_chunk requires at least one field")
 
         url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks/{chunk_id}"
-        data = await self._request(
-            "PUT",
-            url,
+        data = await self._write_with_method_fallback(
+            cache_scope="chunks",
+            url=url,
             action="Update Chunk",
-            timeout=DEFAULT_WRITE_TIMEOUT,
-            headers=self._get_headers(),
-            json=payload,
+            payload=payload,
         )
         return data if isinstance(data, dict) else {}
 
     async def delete_chunk(self, dataset_id: str, document_id: str, chunk_id: str) -> None:
+        """删除单个切片。
+
+        注意：``DELETE /documents/{id}/chunks/{chunk_id}`` 这个路由**任何发行版
+        都没有**（0.24 把 PUT 挂在 ``chunks/{chunk_id}`` 上、0.25+/1.0 换成
+        PATCH），删除切片一律走「文档级 + chunk_ids」批量接口：
+        ``DELETE /documents/{id}/chunks`` + ``{"chunk_ids": [...]}``。
+        发旧路径只会拿到 405 ``<MethodNotAllowed>``。
+        """
         await self._ensure_config()
-        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks/{chunk_id}"
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks"
         await self._request(
             "DELETE",
             url,
             action="Delete Chunk",
             timeout=DEFAULT_WRITE_TIMEOUT,
             headers=self._get_headers(),
+            json={"chunk_ids": [chunk_id]},
         )
+        # 删除会改 chunk_count，别让文档列表在 60s 内还显示旧数量
+        clear_document_list_cache(dataset_id)
 
     async def list_document_chunks(
         self,
