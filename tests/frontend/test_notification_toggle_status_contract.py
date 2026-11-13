@@ -77,7 +77,9 @@ def test_save_button_is_gated_by_required_fields():
         assert 'channel-type="' + channel + '"' in COMPONENT, f"{channel} 未接入多群组件"
     # 群渠道的必填校验在子组件里：缺 Webhook 就不该允许保存
     assert "saveBlockedReason" in CHANNEL_GROUPS
-    assert "还没有填写 Webhook 地址" in CHANNEL_GROUPS
+    # 断言「缺 Webhook」这个原因本身，不绑定具体句式（原句「还没有填写 Webhook
+    # 地址后再保存」有语病，已改成「请先为「X」填写 Webhook 地址再保存」）
+    assert "填写 Webhook 地址再保存" in CHANNEL_GROUPS
     assert ':disabled="saving || !dirty || !!saveBlockedReason"' in CHANNEL_GROUPS
     # 邮件仍走父组件的单套配置校验
     assert "channelSaveDisabled('email')" in COMPONENT
