@@ -210,8 +210,9 @@ async def test_apply_mcp_headers_injects_even_when_initial_headers_empty(monkeyp
     from unittest.mock import AsyncMock
 
     from app.services.secrets import injection
+    from app.services.secrets.policy import SensitiveValue
     from app.services.secrets.redact import reset_injected
-    from app.services.secrets.resolver import ResolveResult, SecretValue
+    from app.services.secrets.resolver import ResolveResult
 
     reset_injected()
     try:
@@ -226,7 +227,7 @@ async def test_apply_mcp_headers_injects_even_when_initial_headers_empty(monkeyp
             AsyncMock(
                 return_value=ResolveResult(
                     ok=True,
-                    value=SecretValue("Bearer secret-token-12345"),
+                    value=SensitiveValue("Bearer secret-token-12345"),
                     secret_key="mcp.auth",
                 )
             ),
@@ -236,9 +237,9 @@ async def test_apply_mcp_headers_injects_even_when_initial_headers_empty(monkeyp
         server = SimpleNamespace(
             id="srv-empty-hdr", server_name="srv", sse_url="https://mcp.corp/sse"
         )
-        resolved = await injection.apply_mcp_headers(
-            {},
+        resolved = await injection.apply_mcp_bindings(
             server,
+            {},
             user_info={"user_id": 7, "dept_code": "D1"},
             used=used,
         )
@@ -260,7 +261,6 @@ def test_user_placeholders_and_locator_and_catalog_fixes():
     assert vars_map["email"] == "alice@corp.cn"
 
     spec = RuleSpec(
-        strategy="rule",
         key_source="user.email",
         transforms=("trim", "lower"),
         templates=("key.{value}",),
@@ -292,22 +292,41 @@ async def test_credential_catalog_safely_handles_non_numeric_user_id(monkeypatch
             seen_keys.append(pk)
             return SimpleNamespace(dept_code="D9")
 
-    monkeypatch.setattr("app.core.orm.AsyncSessionLocal", lambda: _FakeSession())
+    # 必须 patch 工具模块里的名字：``from app.core.orm import AsyncSessionLocal``
+    # 是模块级绑定，改 ``app.core.orm.AsyncSessionLocal`` 对它无效，测试会去连真实库。
+    monkeypatch.setattr(cat, "AsyncSessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(cat, "_catalog_enabled", AsyncMock(return_value=True))
     monkeypatch.setattr(cat, "list_visible_secrets", AsyncMock(return_value=[]))
 
     t1 = agent_context.set(AgentContext(agent_id="a", agent_name="n", user_id="42"))
     try:
-        res1 = json.loads(await cat.list_my_credentials())
+        # ``@tool`` 装饰后是不可直接调用的 FunctionTool，取底层协程调用；
+        # 这样才能断言真实实现里的 int 归一，而不是绕过它去测桩。
+        res1 = json.loads(await cat.list_my_credentials.func())
         assert res1["total"] == 0
         assert seen_keys == [42]
     finally:
         agent_context.reset(t1)
 
     seen_keys.clear()
-    t2 = agent_context.set(AgentContext(agent_id="a", agent_name="n", user_id="not-a-num"))
-    try:
-        res2 = json.loads(await cat.list_my_credentials())
-        assert res2["total"] == 0
-        assert seen_keys == []
-    finally:
-        agent_context.reset(t2)
+    # 上游把 user_id 当字符串传的执行器路径：工具要自己转成整型再去查 User。
+    monkeypatch.setattr(
+        cat,
+        "get_current_agent_context",
+        lambda: SimpleNamespace(user_id="42"),
+    )
+    res_str = json.loads(await cat.list_my_credentials.func())
+    assert res_str["total"] == 0
+    assert seen_keys == [42]
+
+    seen_keys.clear()
+    # 「非数字」根本进不来。这里直接替换上下文取值函数，模拟执行器/委派路径传入
+    # 非法 user_id 的情况：工具自身要降级为空清单，而不是抛 ValueError。
+    monkeypatch.setattr(
+        cat,
+        "get_current_agent_context",
+        lambda: SimpleNamespace(user_id="not-a-num"),
+    )
+    res2 = json.loads(await cat.list_my_credentials.func())
+    assert res2["total"] == 0
+    assert seen_keys == []

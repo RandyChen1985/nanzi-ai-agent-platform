@@ -393,14 +393,19 @@ async def test_script_render_and_preview_redact_before_truncation(tmp_path, monk
         "app.api.portal.endpoints.script_tools._preview_workdir",
         lambda user_info: _async_val(tmp_path),
     )
+    # ``ScriptToolRunner`` 是端点函数**内部**导入的局部名字，模块上没有这个属性，
+    # 按模块路径 patch 会 ImportError；直接替换类方法才真正生效。
     monkeypatch.setattr(
-        "app.api.portal.endpoints.script_tools.ScriptToolRunner.run",
+        ScriptToolRunner,
+        "run",
         lambda self, params: _async_val(fake_result),
     )
     req = SysScriptToolPreviewRequest(code="print('ok')", language="python")
     resp = await preview_script_tool(req, db=None, user={"user_id": 200})
-    assert SECRET[:10] not in resp.stdout
-    assert SECRET[:10] not in resp.stderr
+    # 凭据正好横跨 20000/8000 截断边界：先脱敏再截断时整值已被掩码替换，窗口内
+    # 连前缀都不该出现；若顺序反了，前半段会留在窗口里（只断言前 10 个字符会漏放）。
+    assert SECRET[:5] not in resp.stdout
+    assert SECRET[:5] not in resp.stderr
     assert SECRET not in (resp.message or "")
 
 
@@ -432,6 +437,11 @@ async def test_generic_api_info_log_redacts_url_and_params(caplog, monkeypatch):
             return False
 
         async def request(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            return _FakeResp()
+
+        # GET 分支走的是 client.get(...)，不是 client.request(...)；只实现 request
+        # 会让「GET 的 INFO 日志」这条用例根本走不到断言，报 AttributeError。
+        async def get(self, *args, **kwargs):  # noqa: ANN002, ANN003
             return _FakeResp()
 
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)

@@ -235,7 +235,10 @@ class TestToolTimeoutContextPropagation:
         from app.services.ai.runtime.agentscope.tool_timeout import (
             get_active_tool_timeout_seconds,
         )
-        from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+        from app.services.ai.runtime.agentscope.tools import (
+            RuntimeToolSpec,
+            runtime_tool_from_spec,
+        )
 
         observed: list[float | None] = []
 
@@ -251,7 +254,7 @@ class TestToolTimeoutContextPropagation:
             source_type="mcp",
             timeout_seconds=720.0,
         )
-        runtime_tool = spec.to_runtime_tool()
+        runtime_tool = runtime_tool_from_spec(spec)
         # 通过 RuntimeTool 实际消费异步生成器期间能读到 720.0，结束后清空
         stream = await runtime_tool()
         collected = [c async for c in stream]

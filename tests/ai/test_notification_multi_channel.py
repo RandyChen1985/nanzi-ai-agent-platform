@@ -440,8 +440,8 @@ class TestWebhookMultiGroupReadiness:
     @pytest.mark.asyncio
     async def test_ready_when_second_enabled_group_has_webhook(self, monkeypatch):
         records = [
-            _record(1, "缺址群", enabled=True, is_default=True, webhook=""),
-            _record(2, "备用群", enabled=True, is_default=False, webhook="https://oapi.dingtalk.com/robot/send?token=ok"),
+            _record(1, "缺址群", enabled=True, is_default=True, webhook_url=""),
+            _record(2, "备用群", enabled=True, is_default=False, webhook_url="https://oapi.dingtalk.com/robot/send?token=ok"),
         ]
         _patch_records(monkeypatch, records)
 
@@ -451,8 +451,8 @@ class TestWebhookMultiGroupReadiness:
     @pytest.mark.asyncio
     async def test_not_ready_when_all_enabled_groups_lack_webhook(self, monkeypatch):
         records = [
-            _record(1, "停用有址群", enabled=False, is_default=False, webhook="https://x"),
-            _record(2, "启用缺址群", enabled=True, is_default=True, webhook="   "),
+            _record(1, "停用有址群", enabled=False, is_default=False, webhook_url="https://x"),
+            _record(2, "启用缺址群", enabled=True, is_default=True, webhook_url="   "),
         ]
         _patch_records(monkeypatch, records)
 
