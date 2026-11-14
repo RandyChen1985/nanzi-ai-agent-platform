@@ -266,9 +266,15 @@ def test_view_switch_tabs_are_outside_list_only_block():
     assert "搜索名称或标识符" not in inside
     assert "搜索智能体或分享人" not in inside
 
-    # 反过来：批量 / 网格列表切换 / 筛选 只服务于智能体列表
-    assert "filterPanelOpen" in inside
+    # 反过来：批量 / 网格列表切换 只服务于智能体列表
     assert "toggleBatchMode" in inside
+    # 「筛选」已上移到页头动作区，不再和这批控件同行；
+    # 但它仍必须只在列表视图出现，否则分享视图会多出一个无意义的入口
+    filter_start = src.index("<!-- 高级筛选：状态/类型/引擎/就绪度/来源")
+    # 从注释结束（-->）之后再找标签，否则会命中注释自己的 ">"
+    after_comment = src.index("-->", filter_start) + 3
+    filter_tag = src[after_comment : src.index(">", src.index("<div", after_comment)) + 1]
+    assert 'workspaceTab === \'mine\' || workspaceTab === \'all\'' in filter_tag
 
 
 def test_share_panels_receive_search_keyword():
@@ -287,3 +293,151 @@ def test_share_panels_receive_search_keyword():
         panel = _read(panel_path)
         assert "keyword" in panel, f"{panel_path.name} 未声明 keyword 属性"
         assert "visible" in panel, f"{panel_path.name} 未按关键词过滤"
+
+
+def test_workspace_tabs_scroll_instead_of_wrapping_on_mobile():
+    """视图页签条在移动端必须一行横向滚动，不能换行。
+
+    换行会把「专家团」挤到第二行，而这些是并列的视图，分两行读起来像两组
+    不同的东西。子项同时要 shrink-0 + whitespace-nowrap，否则 flex 会先压窄
+    文字再折行，滚动就失效了。
+    """
+    page = Path("frontend/src/views/AgentManagement.vue").read_text()
+    start = page.index('ref="workspaceTabsRef"')
+    block = page[start : page.index('@click="switchWorkspaceTab', start)]
+
+    assert "overflow-x-auto" in block
+    assert "flex-wrap" not in block
+    assert "shrink-0 whitespace-nowrap" in block
+    # 滚动条隐藏，但保留滑动与键盘可达（不设 overflow-hidden）
+    assert "[scrollbar-width:none]" in block
+    assert "overflow-hidden" not in block
+
+
+def test_active_workspace_tab_is_scrolled_into_view():
+    """滚到看不见的页签被选中时，要自动滚进来——否则用户看不出选中了哪个。"""
+    page = Path("frontend/src/views/AgentManagement.vue").read_text()
+    assert "const ensureActiveTabVisible" in page
+    assert 'inline: "nearest", block: "nearest"' in page
+    # 两条进入路径都要覆盖：点击切换、站内信/URL 直达
+    assert page.count("ensureActiveTabVisible()") >= 2
+
+
+def test_group_toggle_stays_outside_the_scrolling_tab_strip():
+    """「隐藏分组」不能被塞进页签的滚动容器。
+
+    塞进去的后果是双重的：它会被滚到屏幕外，而且 `ml-auto` 在滚动容器里
+    失效（没有剩余空间可分配），窄屏下会被压成一个字一行。
+    """
+    page = Path("frontend/src/views/AgentManagement.vue").read_text()
+    strip = page.index('ref="workspaceTabsRef"')
+    strip_close = page.index("</div>", page.index("@click=\"switchWorkspaceTab", strip))
+    toggle = page.index("agentGroupTabsVisible ? '隐藏分组'", strip)
+    assert toggle > strip_close, "「隐藏分组」仍在滚动容器内"
+    # 它**自己的开标签**要有 shrink-0 + nowrap，否则被 flex 压窄后逐字换行。
+    # 只看开标签：按钮内部 svg 也带 shrink-0，扫整段会让断言恒真。
+    toggle_start = page.rindex("<button", strip_close, toggle)
+    toggle_tag = page[toggle_start : page.index(">", toggle_start)]
+    assert "shrink-0" in toggle_tag
+    assert "whitespace-nowrap" in toggle_tag
+
+
+def test_header_stacks_vertically_on_mobile():
+    """窄屏下标题与操作按钮必须纵向堆叠。
+
+    并排时 375px 宽度里按钮区（发布审核 + 新建智能体 + 下拉）抢走大半，
+    标题被压断、状态摘要被挤成一个字一行。
+    """
+    page = Path("frontend/src/views/AgentManagement.vue").read_text()
+    anchor = page.index("flex flex-col gap-3 sm:flex-row sm:items-start")
+    head = page[anchor : anchor + 200]
+    assert "justify-between" in head
+
+
+def test_tab_strip_shows_clickable_scroll_arrows():
+    """藏了滚动条就必须给可点的翻页箭头。
+
+    否则用户只看到「分享给我」被切一半，第一反应是页面坏了，而不是「可以右滑」。
+    箭头按滚动位置出现，滑到头就消失，不长期遮挡页签。
+    """
+    page = Path("frontend/src/views/AgentManagement.vue").read_text()
+
+    assert 'aria-label="向右查看更多视图"' in page
+    assert 'aria-label="向左查看更多视图"' in page
+    assert 'v-if="canScrollRight"' in page
+    assert 'v-if="canScrollLeft"' in page
+
+    # 位置判断要跟着滚动实时更新，否则滑完箭头还在
+    assert '@scroll.passive="updateScrollHints"' in page
+    # 把比较运算钉住：只断言状态名存在，改坏边界也照样绿
+    assert "el.scrollLeft < max - 4" in page
+    assert "el.scrollLeft > 4" in page
+    # 首次挂载就要算一次，否则箭头要等第一次滚动才出现
+    assert "nextTick(updateScrollHints)" in page
+
+
+def test_mobile_search_is_collapsed_by_default():
+    """移动端搜索默认收起，点页头的放大镜才铺开。
+
+    窄屏下搜索框独占一整行，而这行里真常用的是「筛选」；列表一屏才 2~3 张卡片，
+    多压一行等于少看一张。
+    """
+    page = Path("frontend/src/views/AgentManagement.vue").read_text()
+
+    assert "const mobileSearchOpen = ref(false)" in page
+    assert 'aria-controls="agent-search-row"' in page
+
+    # 隐藏范围只能包住搜索框本身：这一行还有批量与视图切换，
+    # 整行 hidden 会把它们一起藏掉
+    anchor = page.index('id="agent-search-row"')
+    tag = page[page.rindex("<div", 0, anchor) : page.index(">", anchor)]
+    assert "mobileSearchOpen ? '' : 'hidden sm:block'" in tag
+    assert "flex flex-wrap items-center gap-2.5" in page
+
+
+def test_collapsing_mobile_search_clears_the_keyword():
+    """收起时必须清空关键词。
+
+    留着会让列表继续被一个肉眼看不见的关键词过滤，用户只会觉得
+    「怎么少了几个智能体」，而且再也找不到是从哪过滤的。
+    """
+    page = Path("frontend/src/views/AgentManagement.vue").read_text()
+    body = page[page.index("const toggleMobileSearch"):]
+    body = body[: body.index("const switchWorkspaceTab")]
+    assert "searchKeyword.value = ''" in body
+    # 展开时要自动聚焦，否则用户还得再点一次输入框
+    assert "searchInputRef.value?.focus()" in body
+
+
+def test_mobile_header_lays_out_four_buttons_without_a_scroll_container():
+    """窄屏页头一行四颗：搜索 / 发布审核 / 新建 / 筛选。
+
+    关键约束是「可换行但不可滚动」——
+    新建组和筛选面板都是 absolute 定位，一行加上 overflow-x-auto 会把它们裁掉，
+    表现就是点了没反应；所以兜底用 flex-wrap。
+    """
+    page = Path("frontend/src/views/AgentManagement.vue").read_text()
+
+    bar_start = page.index("flex flex-wrap items-center gap-1.5")
+    bar = page[bar_start : page.index("<!-- 搜索、筛选与两个横幅", bar_start)]
+    bar_tag = bar.split(">")[0]
+    assert "overflow-x-auto" not in bar_tag, "动作区不能成为滚动容器（会裁掉 absolute 面板）"
+    assert "flex-wrap" in bar_tag, "放不下时靠换行兜底"
+    assert "sm:flex-nowrap" in bar_tag, "桌面端不换行"
+
+    positions = [
+        bar.index('aria-controls="agent-search-row"'),  # 搜索
+        bar.index("发布审核"),                           # 审核
+        bar.index("新建<span"),                           # 新建
+        bar.index('aria-label="筛选"'),                   # 筛选
+    ]
+    assert positions == sorted(positions), "顺序应为 搜索 → 发布审核 → 新建 → 筛选"
+
+    # 筛选面板的定位锚必须是 relative
+    filter_at = bar.index('aria-label="筛选"')
+    container = bar[bar.rindex("<div", 0, filter_at) : filter_at]
+    assert "relative" in container
+
+    # 短文案只作用于移动端，桌面保留全称
+    assert '新建<span class="hidden sm:inline">智能体</span>' in page
+    assert '<span class="hidden sm:inline">筛选</span>' in page

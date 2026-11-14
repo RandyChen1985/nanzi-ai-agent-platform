@@ -233,7 +233,9 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
           个人私有
         </span>
       </div>
-      <p class="mcp-page-desc text-xs leading-relaxed text-gray-500 dark:text-gray-400 sm:text-sm">
+      <!-- 窄屏隐藏：这行有 40 多个字，一张卡片的位置只换来一句介绍，
+           而且它撑高页头后会把下面的二级 tab 挤出可视区 -->
+      <p class="mcp-page-desc hidden text-xs leading-relaxed text-gray-500 dark:text-gray-400 sm:block sm:text-sm">
         {{
           personalOnly
             ? '登记并管理仅对自己可见的 MCP，可在对话中挂载使用'
@@ -312,7 +314,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
     <McpPersonalMenu
       v-if="!personalOnly && !isAdmin && activeScope === 'personal'"
       variant="tabs"
-      class="mb-2"
+      class="mb-2 flex-shrink-0"
       :active="mcpMenu"
       :counts="mcpShareCounts"
       @select="mcpMenu = $event"
@@ -340,6 +342,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
           <McpPersonalMenu
             v-if="isAdmin"
             variant="chips"
+            class="shrink-0"
             :active="mcpMenu"
             :counts="mcpShareCounts"
             @select="mcpMenu = $event"

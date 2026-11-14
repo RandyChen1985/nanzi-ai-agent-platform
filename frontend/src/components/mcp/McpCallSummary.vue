@@ -50,6 +50,8 @@ const RANGES = [
 
 const range = ref('7d')
 const expanded = ref(false)
+/** 整卡折叠：移动端这块能占掉半屏，收起来只留标题行和区间切换 */
+const collapsed = ref(false)
 const loading = ref(false)
 const data = ref<SummaryPayload | null>(null)
 
@@ -108,7 +110,18 @@ defineExpose({ reload: load })
         </button>
       </div>
 
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
+      <!-- 收起后只留这一句：整块收起来却连一个数字都不给，等于把信息全藏了 -->
+      <span v-if="collapsed" class="text-[11px] text-gray-500 dark:text-gray-400">
+        调用
+        <strong class="ml-0.5 tabular-nums text-gray-800 dark:text-gray-100">{{ summary?.total_calls ?? 0 }}</strong>
+        次 · 成功率
+        <strong class="ml-0.5 tabular-nums text-emerald-600 dark:text-emerald-400">{{ summary?.success_rate ?? 100 }}%</strong>
+      </span>
+
+      <div
+        v-if="!collapsed"
+        class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400"
+      >
         <span>
           调用
           <strong class="ml-0.5 text-sm font-bold tabular-nums text-gray-800 dark:text-gray-100">
@@ -139,9 +152,9 @@ defineExpose({ reload: load })
       </div>
 
       <button
-        v-if="hasCalls"
+        v-if="hasCalls && !collapsed"
         type="button"
-        class="ml-auto flex items-center gap-1 text-[11px] text-gray-400 transition-colors hover:text-emerald-600 dark:text-gray-500 dark:hover:text-emerald-400"
+        class="flex items-center gap-1 text-[11px] text-gray-400 transition-colors hover:text-emerald-600 dark:text-gray-500 dark:hover:text-emerald-400"
         @click="expanded = !expanded"
       >
         {{ expanded ? '收起' : '明细' }}
@@ -155,13 +168,33 @@ defineExpose({ reload: load })
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
         </svg>
       </button>
+
+      <!-- 整卡折叠：与「明细」区分开，一个收整块、一个展开明细 -->
+      <button
+        type="button"
+        class="ml-auto flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-white/5 dark:hover:text-gray-200"
+        :aria-expanded="!collapsed"
+        :title="collapsed ? '展开调用概览' : '收起调用概览'"
+        @click="collapsed = !collapsed"
+      >
+        <span class="hidden sm:inline">{{ collapsed ? '展开' : '收起' }}</span>
+        <svg
+          class="h-3.5 w-3.5 transition-transform"
+          :class="collapsed ? 'rotate-180' : ''"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+        </svg>
+      </button>
     </div>
 
-    <p v-if="!hasCalls && !loading" class="mt-1.5 text-[11px] text-gray-400 dark:text-gray-500">
+    <p v-if="!hasCalls && !loading && !collapsed" class="mt-1.5 text-[11px] text-gray-400 dark:text-gray-500">
       这段时间内还没有调用记录。挂载到智能体后，这里的调用量、成功率和热门工具会自动统计。
     </p>
 
-    <div v-if="expanded && hasCalls" class="mt-3 grid gap-3 border-t border-gray-100 pt-3 dark:border-gray-800 md:grid-cols-3">
+    <div v-if="expanded && hasCalls && !collapsed" class="mt-3 grid gap-3 border-t border-gray-100 pt-3 dark:border-gray-800 md:grid-cols-3">
       <div class="min-w-0">
         <p class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">调用最多的服务</p>
         <ul class="space-y-1">

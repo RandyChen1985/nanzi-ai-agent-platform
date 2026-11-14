@@ -126,3 +126,55 @@ def test_onboarding_sync_merges_dataset_ids_and_locks_engine_switch():
     engine_block = _block(drawer, "const selectEngine")
     assert "if (!props.isCreatingAgent) return;" in engine_block
     assert "执行引擎在创建后不可修改" in drawer
+
+
+def test_wizard_stepper_has_compact_mobile_variant():
+    """向导步骤条在窄屏下不能原样铺开。
+
+    原来那排按钮在 375px 里每个只剩十几像素宽，标题被压成「智/能/体/信/息」
+    一个字一行。移动端换成「当前步骤名 + 第几步/共几步 + 进度点」，
+    桌面端保持原有的可点击完整步骤条。
+    """
+    drawer = Path("frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text()
+
+    # 完整步骤条只在 >=sm 显示（class 跨行书写，按前缀匹配）
+    assert "hidden items-center gap-1 overflow-x-auto" in drawer
+    assert "sm:flex" in drawer
+    # 移动端紧凑条
+    assert 'class="flex items-center gap-2 sm:hidden"' in drawer
+    assert "currentStepLabel()" in drawer
+
+    # 进度点要能跳回已完成的步骤，且不可达的步骤禁用
+    assert ':disabled="!canReachStep(step.id)"' in drawer
+    assert 'aria-current' in drawer
+
+    # 只有一步时（外部引擎）不显示「第 1 步 / 共 1 步」和点
+    assert 'v-if="versionConfigSteps.length > 1"' in drawer
+
+
+def test_desktop_stepper_never_wraps_inside_a_narrow_drawer():
+    """完整步骤条自己不许被压缩折行。
+
+    断点只管「要不要换成紧凑条」，挡不住竖排：抽屉是 max-w-4xl（窄屏更小），
+    而视口可能远大于它——900px 视口 + 660px 抽屉时，5 个按钮没有 shrink-0
+    就会被压成「模/型/策/略」，跟移动端一样难看。按钮必须 shrink-0 +
+    whitespace-nowrap，容器放不下时横滑。
+    """
+    drawer = Path("frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text()
+
+    strip = drawer.index("hidden items-center gap-1 overflow-x-auto")
+    strip_tag = drawer[drawer.rindex("<div", 0, strip) : drawer.index(">", strip)]
+    assert "overflow-x-auto" in strip_tag
+
+    # 找模板里那颗步骤按钮（用 px-3 py-1.5 定位，避免匹配到其他按钮）
+    btn = drawer.index("px-3 py-1.5 text-xs font-medium transition-all")
+    btn_tag = drawer[drawer.rindex("<button", 0, btn) : drawer.index(">", btn)]
+    assert "shrink-0" in btn_tag
+    assert "whitespace-nowrap" in btn_tag
+
+    # 序号圆也要固定尺寸，否则被压成椭圆。
+    # 按 `{{ idx + 1 }}` 反向定位，不能用 text-[10px] font-bold——
+    # 那会先匹配到顶部那颗状态徽标（版本/新建）。
+    num = drawer.index(">{{ idx + 1 }}</span>")
+    num_tag = drawer[drawer.rindex("<span", 0, num) : num]
+    assert "shrink-0" in num_tag

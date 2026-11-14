@@ -33,3 +33,39 @@ def test_card_actions_are_visible_without_hover_on_touch():
     menu_block = source.split('<!-- 卡片「⋯」操作菜单 -->', 1)[1].split('<SkillShareDialog', 1)[0]
     assert "opacity-0" not in menu_block
     assert "group-hover" not in menu_block
+
+
+def test_create_button_follows_the_stats_button():
+    """新建放在工具栏、统计按钮之后，且不在可滚动容器里。
+
+    两条约束同时成立才算对：
+    - 位置：排在统计后面，不再占页头右侧；
+    - 结构：它必须待在那个 overflow-x-auto 容器之外——
+      新建的下拉菜单是 absolute 定位，被滚动容器包住就会被裁掉，
+      点开看起来毫无反应（智能体中心踩过一次同样的坑）。
+    """
+    source = _read(SKILLS_VIEW)
+
+    header = source.split("<!-- Header：只剩标题与说明入口", 1)[1]
+    header = header.split("<!-- 技能工作台全生命周期指引横幅", 1)[0]
+    assert "openCreateModal" not in header, "新建不该再占页头"
+
+    toolbar = source.split("<!-- 排序 / 视图 / 统计 留在可滑区", 1)[1]
+    toolbar = toolbar.split("<!-- 业务分组页签", 1)[0]
+    stats_at = toolbar.index("openStatsModal")
+    create_at = toolbar.index("openCreateModal")
+    assert create_at > stats_at, "新建必须在统计按钮之后"
+
+    # 可滑区必须在新建之前就闭合：统计按钮之后第一个 </div> 就是它的闭合
+    strip_close = toolbar.index("</div>", toolbar.index("openStatsModal"))
+    assert strip_close < create_at, (
+        "可滑区容器应该在新建之前闭合，否则新建的下拉菜单会被 overflow 裁掉"
+    )
+    # 只认主按钮（下拉里的「空白新建」带括号，不算第二个入口）
+    assert toolbar.count('@click="openCreateModal"') == 1
+
+
+def test_create_button_label_shrinks_on_mobile():
+    """窄屏下主操作只留「新建」，桌面仍是「新建技能」。"""
+    source = _read(SKILLS_VIEW)
+    assert '新建<span class="hidden sm:inline">技能</span>' in source

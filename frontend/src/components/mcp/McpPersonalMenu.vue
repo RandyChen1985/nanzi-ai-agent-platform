@@ -135,7 +135,7 @@ const badgeText = (value: number | null): string =>
   <!-- 只有一个一级 Tab：二级视图直接作为顶部 tab（与「智能体中心」同款） -->
   <div
     v-else-if="variant === 'tabs'"
-    class="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2 dark:border-gray-800"
+    class="flex items-center gap-1.5 overflow-x-auto border-b border-gray-200 pb-2 [scrollbar-width:none] dark:border-gray-800 [&::-webkit-scrollbar]:hidden"
     role="tablist"
     aria-label="MCP 视图"
   >
@@ -145,7 +145,7 @@ const badgeText = (value: number | null): string =>
       type="button"
       role="tab"
       :aria-selected="active === item.key"
-      class="cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+      class="shrink-0 cursor-pointer whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
       :class="active === item.key ? 'bg-primary/10 text-primary' : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/5'"
       @click="emit('select', item.key)"
     >
@@ -162,7 +162,12 @@ const badgeText = (value: number | null): string =>
   </div>
 
   <!-- 窄屏：横向胶囊 -->
-  <div v-else class="flex gap-2 overflow-x-auto pb-1 md:hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+  <!-- chips 是主体区里的工具条：父级 flex-col 会把它压扁，
+       必须 shrink-0，否则只会露出被切掉的一条边 -->
+  <div
+    v-else
+    class="flex shrink-0 gap-2 overflow-x-auto pb-1 [scrollbar-width:none] md:hidden [&::-webkit-scrollbar]:hidden"
+  >
     <button
       v-for="item in items"
       :key="item.key"

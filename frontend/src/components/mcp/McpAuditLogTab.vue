@@ -143,6 +143,25 @@ const handleFilterChange = () => {
   fetchLogs()
 }
 
+/**
+ * 窄屏筛选默认收起。
+ *
+ * 服务下拉 / 时间胶囊 / 搜索 / 状态 / 筛选 / 刷新在 375px 下会摊成 5 行，
+ * 加上顶部 2×2 统计卡，整块「固定不滚」的区域比一屏还高，
+ * 于是下面 flex-1 的列表区被压成 0 高，日志根本滚不出来。
+ */
+const mobileFiltersOpen = ref(false)
+
+/** 只数「会改变结果」的条件，时间默认值不算 */
+const activeFilterCount = computed(() => {
+  let n = 0
+  if (selectedServerId.value) n += 1
+  if (toolNameFilter.value.trim()) n += 1
+  if (statusFilter.value !== 'all') n += 1
+  if (timeRangeFilter.value !== '7d') n += 1
+  return n
+})
+
 // 重置所有筛选
 const resetFilters = () => {
   selectedServerId.value = ''
@@ -238,101 +257,149 @@ onMounted(() => {
     </div>
 
     <!-- 综合筛选与控制栏 -->
-    <div class="px-6 py-3.5 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3 bg-white shrink-0">
-      <div class="flex flex-wrap items-center gap-2.5">
-        <!-- 所属 MCP 服务下拉选择 -->
-        <div class="flex items-center gap-1.5">
-          <ServerIcon class="h-4 w-4 text-gray-400" />
-          <select
-            v-model="selectedServerId"
-            @change="handleFilterChange"
-            class="w-52 rounded-lg border border-gray-300 bg-white py-1.5 px-2.5 text-xs font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-          >
-            <option value="">全部 MCP 服务 (全量)</option>
-            <option v-for="srv in serverOptions" :key="srv.id" :value="srv.id">
-              {{ srv.server_name }}
-            </option>
-          </select>
-        </div>
-
-        <!-- 时间范围胶囊 -->
-        <div class="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100/80 text-xs">
-          <button
-            type="button"
-            @click="timeRangeFilter = '24h'; handleFilterChange()"
-            class="rounded-md px-2.5 py-1 font-medium transition-colors"
-            :class="timeRangeFilter === '24h' ? 'bg-white text-gray-800 shadow-xs' : 'text-gray-500 hover:text-gray-800'"
-          >
-            近 24 小时
-          </button>
-          <button
-            type="button"
-            @click="timeRangeFilter = '7d'; handleFilterChange()"
-            class="rounded-md px-2.5 py-1 font-medium transition-colors"
-            :class="timeRangeFilter === '7d' ? 'bg-white text-gray-800 shadow-xs' : 'text-gray-500 hover:text-gray-800'"
-          >
-            近 7 天
-          </button>
-          <button
-            type="button"
-            @click="timeRangeFilter = '30d'; handleFilterChange()"
-            class="rounded-md px-2.5 py-1 font-medium transition-colors"
-            :class="timeRangeFilter === '30d' ? 'bg-white text-gray-800 shadow-xs' : 'text-gray-500 hover:text-gray-800'"
-          >
-            近 30 天
-          </button>
-        </div>
-
-        <!-- 工具名过滤输入框 -->
-        <div class="relative">
+    <div class="shrink-0 border-b border-gray-200 bg-white px-3 py-2.5 sm:px-6 sm:py-3.5">
+      <!-- 窄屏只留一行：搜索 + 筛选开关 + 刷新。
+           完整条件收进「筛选」，否则光筛选区就占 5 行，列表被压成 0 高。 -->
+      <div class="flex items-center gap-2 sm:hidden">
+        <div class="relative min-w-0 flex-1">
           <MagnifyingGlassIcon class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
           <input
             v-model="toolNameFilter"
             @keyup.enter="handleFilterChange"
             type="text"
             placeholder="按工具名称过滤..."
-            class="w-44 rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-2.5 text-xs text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            class="w-full rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-2.5 text-xs text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           />
         </div>
-
-        <!-- 状态筛选 -->
-        <select
-          v-model="statusFilter"
-          @change="handleFilterChange"
-          class="rounded-lg border border-gray-300 bg-white py-1.5 px-2.5 text-xs font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-        >
-          <option value="all">全部状态</option>
-          <option value="success">仅成功 (Success)</option>
-          <option value="failed">仅失败 (Failed)</option>
-        </select>
-
         <button
           type="button"
-          @click="handleFilterChange"
-          class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
+          class="inline-flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
+          :class="activeFilterCount > 0 ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-gray-50 text-gray-700'"
+          :aria-expanded="mobileFiltersOpen"
+          @click="mobileFiltersOpen = !mobileFiltersOpen"
         >
           筛选
+          <span
+            v-if="activeFilterCount > 0"
+            class="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-bold text-white"
+          >{{ activeFilterCount }}</span>
+          <svg class="h-3.5 w-3.5 transition-transform" :class="mobileFiltersOpen ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
         </button>
-
         <button
-          v-if="selectedServerId || toolNameFilter || statusFilter !== 'all' || timeRangeFilter !== '7d'"
           type="button"
-          @click="resetFilters"
-          class="text-xs text-gray-500 hover:text-indigo-600 transition-colors underline"
+          @click="fetchLogs"
+          :disabled="loading"
+          class="inline-flex shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white p-1.5 text-gray-700 shadow-2xs transition-colors hover:bg-gray-50 disabled:opacity-50"
+          title="刷新数据"
         >
-          重置
+          <ArrowPathIcon class="h-4 w-4" :class="loading ? 'animate-spin text-indigo-600' : 'text-gray-500'" />
         </button>
       </div>
 
-      <button
-        type="button"
-        @click="fetchLogs"
-        :disabled="loading"
-        class="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-700 shadow-2xs hover:bg-gray-50 transition-colors disabled:opacity-50"
+      <div
+        class="mt-2.5 flex-wrap items-center justify-between gap-3 sm:mt-0 sm:flex"
+        :class="mobileFiltersOpen ? 'flex' : 'hidden'"
       >
-        <ArrowPathIcon class="h-3.5 w-3.5" :class="loading ? 'animate-spin text-indigo-600' : 'text-gray-500'" />
-        刷新数据
-      </button>
+        <div class="flex flex-wrap items-center gap-2.5">
+          <!-- 所属 MCP 服务下拉选择 -->
+          <div class="flex w-full items-center gap-1.5 sm:w-auto">
+            <ServerIcon class="h-4 w-4 shrink-0 text-gray-400" />
+            <select
+              v-model="selectedServerId"
+              @change="handleFilterChange"
+              class="w-full rounded-lg border border-gray-300 bg-white py-1.5 px-2.5 text-xs font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 sm:w-52"
+            >
+              <option value="">全部 MCP 服务 (全量)</option>
+              <option v-for="srv in serverOptions" :key="srv.id" :value="srv.id">
+                {{ srv.server_name }}
+              </option>
+            </select>
+          </div>
+
+          <!-- 时间范围胶囊 -->
+          <div class="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100/80 text-xs">
+            <button
+              type="button"
+              @click="timeRangeFilter = '24h'; handleFilterChange()"
+              class="rounded-md px-2.5 py-1 font-medium transition-colors"
+              :class="timeRangeFilter === '24h' ? 'bg-white text-gray-800 shadow-xs' : 'text-gray-500 hover:text-gray-800'"
+            >
+              近 24 小时
+            </button>
+            <button
+              type="button"
+              @click="timeRangeFilter = '7d'; handleFilterChange()"
+              class="rounded-md px-2.5 py-1 font-medium transition-colors"
+              :class="timeRangeFilter === '7d' ? 'bg-white text-gray-800 shadow-xs' : 'text-gray-500 hover:text-gray-800'"
+            >
+              近 7 天
+            </button>
+            <button
+              type="button"
+              @click="timeRangeFilter = '30d'; handleFilterChange()"
+              class="rounded-md px-2.5 py-1 font-medium transition-colors"
+              :class="timeRangeFilter === '30d' ? 'bg-white text-gray-800 shadow-xs' : 'text-gray-500 hover:text-gray-800'"
+            >
+              近 30 天
+            </button>
+          </div>
+
+          <!-- 工具名过滤输入框：窄屏已在上面的摘要行，避免两个输入框同时出现 -->
+          <div class="relative hidden sm:block">
+            <MagnifyingGlassIcon class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            <input
+              v-model="toolNameFilter"
+              @keyup.enter="handleFilterChange"
+              type="text"
+              placeholder="按工具名称过滤..."
+              class="w-44 rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-2.5 text-xs text-gray-800 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+          </div>
+
+          <!-- 状态筛选 -->
+          <select
+            v-model="statusFilter"
+            @change="handleFilterChange"
+            class="rounded-lg border border-gray-300 bg-white py-1.5 px-2.5 text-xs font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          >
+            <option value="all">全部状态</option>
+            <option value="success">仅成功 (Success)</option>
+            <option value="failed">仅失败 (Failed)</option>
+          </select>
+
+          <!-- 窄屏展开后这里必须留着：上面那一行的「筛选」只管开合，
+               真正把条件提交给接口的是这一颗 -->
+          <button
+            type="button"
+            @click="handleFilterChange"
+            class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100"
+          >
+            <span class="sm:hidden">应用</span>
+            <span class="hidden sm:inline">筛选</span>
+          </button>
+
+          <button
+            v-if="selectedServerId || toolNameFilter || statusFilter !== 'all' || timeRangeFilter !== '7d'"
+            type="button"
+            @click="resetFilters"
+            class="text-xs text-gray-500 hover:text-indigo-600 transition-colors underline"
+          >
+            重置
+          </button>
+        </div>
+
+        <button
+          type="button"
+          @click="fetchLogs"
+          :disabled="loading"
+          class="hidden items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-700 shadow-2xs hover:bg-gray-50 transition-colors disabled:opacity-50 sm:inline-flex"
+        >
+          <ArrowPathIcon class="h-3.5 w-3.5" :class="loading ? 'animate-spin text-indigo-600' : 'text-gray-500'" />
+          刷新数据
+        </button>
+      </div>
     </div>
 
     <!-- 流水列表区（可滚动） -->

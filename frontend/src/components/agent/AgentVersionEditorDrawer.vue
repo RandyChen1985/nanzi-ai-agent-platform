@@ -192,6 +192,8 @@ const formatTemperature = (value: unknown) => {
 const stepIndex = () => props.versionConfigSteps.findIndex((s) => s.id === props.versionConfigStep);
 const isFirstStep = () => stepIndex() <= 0;
 const isLastStep = () => stepIndex() >= props.versionConfigSteps.length - 1;
+/** 移动端紧凑条：只显示当前步骤名 + 第几步/共几步，整条压到一行 */
+const currentStepLabel = () => props.versionConfigSteps[stepIndex()]?.label ?? '';
 const canReachStep = (step: VersionConfigStep) =>
   props.canReachVersionConfigStep ? props.canReachVersionConfigStep(step) : true;
 const isCurrentStepComplete = () =>
@@ -570,13 +572,57 @@ const externalCreationMissingFields = computed(() => {
 
         <!-- Stepper -->
         <div class="px-6 py-3 border-b border-gray-100 bg-white flex-shrink-0">
-          <div class="flex items-center gap-1">
+          <!-- 移动端：整条步骤条换成「当前步骤 + 进度点」。
+               原来那一排按钮在 375px 下每个只剩十几个像素宽，标题被压成
+               一个字一行（智能体信息竖着排下来），比没有还难读。 -->
+          <div class="flex items-center gap-2 sm:hidden">
+            <span
+              class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-white"
+            >{{ stepIndex() + 1 }}</span>
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-sm font-semibold text-gray-900">{{ currentStepLabel() }}</div>
+              <!-- 外部引擎只有一步，「第 1 步 / 共 1 步」+ 一个点是噪音 -->
+              <div v-if="versionConfigSteps.length > 1" class="text-[10px] leading-tight text-gray-400">
+                第 {{ stepIndex() + 1 }} 步 / 共 {{ versionConfigSteps.length }} 步
+              </div>
+            </div>
+            <div v-if="versionConfigSteps.length > 1" class="flex shrink-0 items-center gap-1">
+              <button
+                v-for="(step, idx) in versionConfigSteps"
+                :key="`dot-${step.id}`"
+                type="button"
+                class="rounded-full transition-all"
+                :class="[
+                  idx === stepIndex()
+                    ? 'h-1.5 w-4 bg-primary'
+                    : idx < stepIndex()
+                      ? 'h-1.5 w-1.5 bg-primary/40'
+                      : 'h-1.5 w-1.5 bg-gray-200',
+                  canReachStep(step.id) ? 'cursor-pointer' : 'cursor-not-allowed',
+                ]"
+                :disabled="!canReachStep(step.id)"
+                :aria-label="`第 ${idx + 1} 步：${step.label}`"
+                :aria-current="idx === stepIndex() ? 'step' : undefined"
+                :title="step.label"
+                @click="goStep(step.id)"
+              />
+            </div>
+          </div>
+
+          <!-- 断点只管「要不要换成紧凑条」；能不能不竖排，取决于按钮自己
+               有没有 shrink-0。抽屉宽度是 max-w-4xl（约 896px，窄屏时更小），
+               而视口可能远大于它——只看 sm 断点会让 900px 视口里的 660px 抽屉
+               继续走完整步骤条，5 个按钮被压成「模/型/策/略」竖排。
+               所以这里既禁止收缩，也在放不下时允许横滑。 -->
+          <div
+            class="hidden items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex"
+          >
             <template v-for="(step, idx) in versionConfigSteps" :key="step.id">
               <button
                 type="button"
                 @click="goStep(step.id)"
                 :disabled="!canReachStep(step.id) && versionConfigStep !== step.id"
-                class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                class="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
                 :class="versionConfigStep === step.id
                   ? 'bg-primary text-white shadow-sm'
                   : canReachStep(step.id)
@@ -585,7 +631,7 @@ const externalCreationMissingFields = computed(() => {
                 :title="!canReachStep(step.id) && versionConfigStep !== step.id ? '请先完成前面的配置步骤' : undefined"
               >
                 <span
-                  class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border"
+                  class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold"
                   :class="versionConfigStep === step.id
                     ? 'bg-white/20 border-white/30 text-white'
                     : canReachStep(step.id)
@@ -607,7 +653,7 @@ const externalCreationMissingFields = computed(() => {
             外部引擎不创建本地版本，完成当前页面即可创建智能体。
           </div>
           <div v-else class="mt-2 text-[10px] text-gray-400">
-            配置完成度 {{ versionConfigProgress }} / {{ versionConfigProgressTotal }}（{{ versionConfigProgressLabels }}）
+            配置完成度 {{ versionConfigProgress }} / {{ versionConfigProgressTotal }}<span class="hidden sm:inline">（{{ versionConfigProgressLabels }}）</span>
           </div>
         </div>
 

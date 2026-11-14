@@ -2124,9 +2124,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div :class="personalOnly ? 'space-y-6' : 'space-y-5'">
-    <!-- Header：标题单独一行；搜索 + 排序/视图 + 新建同一工具行 -->
-    <div class="flex flex-col gap-4">
+  <div :class="personalOnly ? 'space-y-5' : 'space-y-4'">
+    <!-- Header：只剩标题与说明入口 -->
+    <div class="flex flex-wrap items-center gap-3">
       <div class="flex min-w-0 items-center gap-2.5">
         <h1
           class="font-bold tracking-normal text-gray-900"
@@ -2154,7 +2154,6 @@ onUnmounted(() => {
           <span class="whitespace-nowrap">显示指引</span>
         </button>
       </div>
-
     </div>
 
     <!-- 技能工作台全生命周期指引横幅 -->
@@ -2442,87 +2441,94 @@ onUnmounted(() => {
               />
             </div>
 
-            <div class="flex shrink-0 flex-wrap items-center gap-2">
-              <div class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
-                <button
-                  type="button"
-                  class="rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
-                  :class="skillSortBy === 'name' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
-                  title="按名称排序"
-                  @click="skillSortBy = 'name'"
-                >
-                  名称
-                </button>
-                <button
-                  type="button"
-                  class="rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
-                  :class="skillSortBy === 'time' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
-                  title="按更新时间排序"
-                  @click="skillSortBy = 'time'"
-                >
-                  时间
-                </button>
-                <button
-                  type="button"
-                  class="rounded-md p-1.5 text-gray-500 transition-all hover:bg-gray-200 hover:text-gray-800"
-                  :title="skillSortOrder === 'asc' ? '当前升序，点击切换降序' : '当前降序，点击切换升序'"
-                  @click="toggleSkillSortOrder"
-                >
-                  <svg class="h-4 w-4 transition-transform" :class="skillSortOrder === 'desc' ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0v4m0 0l-3-3m3 3l3-3" />
-                  </svg>
-                </button>
-              </div>
-
-              <div class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
-                <button
-                  type="button"
-                  class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-                  :class="viewMode === 'card' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
-                  title="卡片视图"
-                  @click="viewMode = 'card'"
-                >
-                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-                  :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
-                  title="列表视图"
-                  @click="viewMode = 'list'"
-                >
-                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                </button>
-              </div>
-
-              <button
-                v-if="!personalOnly"
-                type="button"
-                class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
-                title="统计查看"
-                @click="openStatsModal"
+            <!-- 排序 / 视图 / 统计 留在可滑区；新建跟在可滑区之后。
+                 新建不能塞进这个滚动容器：它的「更多创建方式」是 absolute 定位，
+                 overflow 会直接把菜单裁掉，点开看起来毫无反应。 -->
+            <div class="flex min-w-0 items-center gap-2">
+              <div
+                class="-my-1 flex min-w-0 items-center gap-2 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
-                <svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-              </button>
+                <div class="flex shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
+                  <button
+                    type="button"
+                    class="shrink-0 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
+                    :class="skillSortBy === 'name' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                    title="按名称排序"
+                    @click="skillSortBy = 'name'"
+                  >
+                    名称
+                  </button>
+                  <button
+                    type="button"
+                    class="shrink-0 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
+                    :class="skillSortBy === 'time' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                    title="按更新时间排序"
+                    @click="skillSortBy = 'time'"
+                  >
+                    时间
+                  </button>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded-md p-1.5 text-gray-500 transition-all hover:bg-gray-200 hover:text-gray-800"
+                    :title="skillSortOrder === 'asc' ? '当前升序，点击切换降序' : '当前降序，点击切换升序'"
+                    @click="toggleSkillSortOrder"
+                  >
+                    <svg class="h-4 w-4 transition-transform" :class="skillSortOrder === 'desc' ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0v4m0 0l-3-3m3 3l3-3" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div class="flex shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
+                  <button
+                    type="button"
+                    class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
+                    :class="viewMode === 'card' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                    title="卡片视图"
+                    @click="viewMode = 'card'"
+                  >
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
+                    :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                    title="列表视图"
+                    @click="viewMode = 'list'"
+                  >
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                  </button>
+                </div>
+
+                <button
+                  v-if="!personalOnly"
+                  type="button"
+                  class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
+                  title="统计查看"
+                  @click="openStatsModal"
+                >
+                  <svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                </button>
+              </div>
 
               <div class="relative shrink-0" @click.stop>
                 <div class="flex items-stretch overflow-hidden rounded-lg shadow-sm">
                   <button
                     type="button"
-                    class="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white transition-all active:scale-[0.98]"
+                    class="flex shrink-0 items-center justify-center gap-2 whitespace-nowrap px-3 py-2 text-sm font-medium text-white transition-all active:scale-[0.98] sm:px-4"
                     :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'"
                     @click="openCreateModal"
                   >
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                     </svg>
-                    新建技能
+                    新建<span class="hidden sm:inline">技能</span>
                   </button>
                   <button
                     type="button"

@@ -78,9 +78,10 @@ def test_header_puts_primary_actions_on_their_own_row():
     src = _source()
 
     assert "第 1 行：标题 + 主操作固定右上" in src
-    assert 'class="flex shrink-0 items-center gap-2"' in src
-    # 搜索独占一栏
-    assert "第 2 行：搜索独占一栏，视图切换与「筛选」跟在后面" in src
+    # 动作区在移动端是一行四按钮（搜索/审核/新建/筛选），可横滑不换行
+    assert "flex items-center gap-1.5 overflow-x-auto" in src
+    # 搜索独占一栏；「筛选」已上移到页头动作区
+    assert "第 2 行：搜索独占一栏，批量 / 视图切换跟在后面" in src
     assert 'class="relative min-w-[220px] flex-1"' in src
     # 旧的「统一操作组」包法已不存在
     assert "操作组：视图切换 / 发布审核 / 新建" not in src

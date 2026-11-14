@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from "vue";
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { agentApi, type DelegationScopeState } from "../api/agent";
 import type {
@@ -1424,6 +1424,71 @@ const workspaceTabs = computed<Array<{ key: AgentWorkspaceTab; label: string; ba
   ],
 )
 
+const workspaceTabsRef = ref<HTMLElement | null>(null);
+const canScrollLeft = ref(false);
+const canScrollRight = ref(false);
+
+/**
+ * 页签条还能不能往左/右滑。
+ *
+ * 滚动条是刻意隐藏的（移动端那根细横条难看也难点），代价是用户看不出
+ * 「右边还有三个视图」。按滚动位置给出可点击的圆形箭头：能滑才出现，
+ * 滑到头立刻消失，不会一直挡着页签。
+ */
+const updateScrollHints = () => {
+  const el = workspaceTabsRef.value;
+  if (!el) return;
+  // 4px 容差：缩放后 scrollWidth 会多算一两像素，不容差会永远显示右箭头
+  const max = el.scrollWidth - el.clientWidth;
+  canScrollLeft.value = el.scrollLeft > 4;
+  canScrollRight.value = max > 4 && el.scrollLeft < max - 4;
+};
+
+/** 点箭头翻一屏（留一点重叠，避免刚好把某个页签切在边界上） */
+const scrollStripBy = (direction: 1 | -1) => {
+  const el = workspaceTabsRef.value;
+  if (!el) return;
+  el.scrollBy({ left: direction * Math.max(120, el.clientWidth * 0.7), behavior: "smooth" });
+};
+
+/**
+ * 把当前选中的页签滚进可视区。
+ *
+ * 移动端这条是横向滚动的，滚动条又刻意隐藏了：切到「专家团」这种靠右的页签后，
+ * 它可能仍停在屏幕外，用户只看到样式变了一下却找不到是哪个被选中。
+ * 用 `inline: 'nearest'` 只在必要时滚动，`block: 'nearest'` 保证不会带着整页上下跳。
+ */
+const ensureActiveTabVisible = () => {
+  void nextTick(() => {
+    workspaceTabsRef.value
+      ?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+      ?.scrollIntoView({ inline: "nearest", block: "nearest" });
+    updateScrollHints();
+  })
+}
+
+/**
+ * 移动端搜索默认收起。
+ *
+ * 窄屏下搜索框会独占一整行，而这行里真正常用的只有「筛选」；列表本身
+ * 一屏才 2~3 张卡片，多压一行等于少看一张。所以移动端把搜索收进页头那颗
+ * 放大镜，点开才铺出输入框。桌面端不受影响，一直显示。
+ */
+const mobileSearchOpen = ref(false);
+const searchInputRef = ref<HTMLInputElement | null>(null);
+
+const toggleMobileSearch = () => {
+  if (mobileSearchOpen.value) {
+    // 收起时一并清空：否则列表会继续被一个肉眼看不见的关键词过滤，
+    // 用户只会觉得「怎么少了几个智能体」。
+    searchKeyword.value = '';
+    mobileSearchOpen.value = false;
+    return;
+  }
+  mobileSearchOpen.value = true;
+  void nextTick(() => searchInputRef.value?.focus());
+};
+
 const switchWorkspaceTab = (tab: AgentWorkspaceTab) => {
   workspaceTab.value = tab
   // 写回 URL：否则刷新会跳回默认视图，站内信在同路由内 push 时也读不到新 query
@@ -1432,7 +1497,14 @@ const switchWorkspaceTab = (tab: AgentWorkspaceTab) => {
   else query.agents_tab = tab
   void router.replace({ query })
   if (tab !== 'mine') void refreshShareCounts()
+  ensureActiveTabVisible()
 }
+
+// 分享计数、授权列表都是异步拉回来的，页签宽度会变，箭头状态得跟着重算
+watch(
+  () => workspaceTabs.value.length,
+  () => nextTick(updateScrollHints),
+);
 
 // 已经在本页时点站内信只改 query，组件复用不会重新挂载，必须监听
 watch(
@@ -1443,6 +1515,8 @@ watch(
     if (next && allowed.includes(next as AgentWorkspaceTab) && isTabAvailableForRole(next)) {
       workspaceTab.value = next as AgentWorkspaceTab
       if (next !== 'mine') void refreshShareCounts()
+      // 从站内信/URL 直达靠右的页签时同样要让它可见
+      ensureActiveTabVisible()
     }
   },
 )
@@ -5158,10 +5232,13 @@ const handleResize = () => { windowWidth.value = window.innerWidth; };
 
 onMounted(() => {
   window.addEventListener('resize', handleResize);
+  window.addEventListener('resize', updateScrollHints);
+  void nextTick(updateScrollHints);
 });
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize);
+  window.removeEventListener('resize', updateScrollHints);
   document.removeEventListener('click', closeCardMenus);
   clearDuplicateNameTimer();
 });
@@ -5201,7 +5278,10 @@ const formatSkillCountLabel = (agent: AIAgent) => {
          所以宽度再窄「新建智能体」也不会被单独挤到第二行。
          方案 A：标题下补一行状态摘要（待完善 / 审核中 / 已停用），
          「?」与「显示指引」收进右侧动作区，不再和主操作一起摊在标题旁。 -->
-    <div class="flex items-start justify-between gap-4">
+    <!-- 窄屏纵向堆叠：标题 + 右侧两个按钮并排时，375px 宽度下按钮区抢走
+         大半，标题被压断、状态摘要被挤成一个字一行。移动端改成标题在上、
+         按钮另起一行。 -->
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1">
           <h1 class="shrink-0 whitespace-nowrap text-xl font-bold text-gray-900 sm:text-2xl">智能体中心</h1>
@@ -5228,7 +5308,10 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </p>
       </div>
 
-      <div class="flex shrink-0 items-center gap-2">
+      <!-- 移动端一行四颗：搜索 / 发布审核 / 新建 / 筛选。
+           这里不能加 overflow-x-auto：新建组与筛选面板都是 absolute 定位，
+           滚动容器会把它们裁掉，看起来像点不动。放不下时用 flex-wrap 兜底。 -->
+      <div class="flex flex-wrap items-center gap-1.5 sm:shrink-0 sm:flex-nowrap sm:gap-2">
         <button
           v-if="!showAgentFlowGuide"
           type="button"
@@ -5249,6 +5332,28 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           @click="closeAgentFlowGuide"
         >
           收起指引
+        </button>
+
+        <!-- 移动端搜索入口：展开后铺出搜索行，收起时顺手清掉关键词 -->
+        <button
+          type="button"
+          class="flex shrink-0 items-center justify-center rounded-lg border px-2.5 py-2 shadow-sm transition-colors sm:hidden"
+          :class="
+            mobileSearchOpen
+              ? 'border-primary bg-primary/5 text-primary'
+              : 'border-gray-300 bg-white text-gray-700'
+          "
+          :aria-expanded="mobileSearchOpen"
+          aria-controls="agent-search-row"
+          :title="mobileSearchOpen ? '收起并清除搜索' : '搜索智能体'"
+          @click="toggleMobileSearch"
+        >
+          <svg v-if="!mobileSearchOpen" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
         </button>
 
         <button
@@ -5285,7 +5390,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
               </svg>
-              新建智能体
+              新建<span class="hidden sm:inline">智能体</span>
             </button>
             <button
               type="button"
@@ -5324,87 +5429,28 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             </button>
           </div>
         </div>
-      </div>
-    </div>
-
-    <!-- 搜索、筛选与两个横幅只服务于「智能体列表」；分享视图有自己的列表，
-         留着它们会让「找到 N 个智能体」这种文案指向一个完全不相关的清单 -->
-    <!-- 搜索框对所有视图都保留：两个分享面板自己没有搜索，藏掉就等于没法搜。
-         批量 / 网格列表切换 / 筛选 只服务于智能体列表，仍只在一屏内显示。 -->
-    <!-- 第 2 行：搜索独占一栏，视图切换与「筛选」跟在后面 -->
-    <div class="flex flex-wrap items-center gap-2.5">
-      <div class="relative min-w-[220px] flex-1">
-        <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-          <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </span>
-        <input
-          v-model="searchKeyword"
-          type="search"
-          :placeholder="
-            workspaceTab === 'teams'
-              ? '搜索专家团…'
-              : workspaceTab === 'assigned'
-                ? '搜索分配给我的智能体…'
-                : workspaceTab === 'mine' || workspaceTab === 'all'
-                  ? '搜索名称或标识符…'
-                  : '搜索智能体或分享人…'
-          "
-          class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
-        />
-      </div>
-
-      <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
-      <div class="flex shrink-0 items-center gap-2">
-        <div v-if="!isMobile" class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
-          <button
-            type="button"
-            class="rounded-md px-2 py-1.5 text-xs font-medium transition-all"
-            :class="batchMode ? 'border border-blue-200 bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'"
-            title="批量选择启用/禁用"
-            @click="toggleBatchMode"
-          >
-            批量
-          </button>
-          <button
-            type="button"
-            class="rounded-md p-1.5 transition-all"
-            :class="viewMode === 'grid' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
-            title="网格视图"
-            @click="toggleViewMode('grid')"
-          >
-            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            class="rounded-md p-1.5 transition-all"
-            :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
-            title="列表视图"
-            @click="toggleViewMode('list')"
-          >
-            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
-        </div>
 
         <!-- 高级筛选：状态/类型/引擎/就绪度/来源原先散在工具栏与 7 个 tab 里，
-             现在收进一个面板，避免同一维度两处入口 -->
-        <div class="relative" @click.stop>
+             现在收进一个面板，避免同一维度两处入口。
+             放在页头动作区末尾，但这一行绝对不能加 overflow-x-auto——
+             滚动容器会把 absolute 定位的面板裁掉，点筛选会看起来「打不开」。 -->
+        <div
+          v-if="workspaceTab === 'mine' || workspaceTab === 'all'"
+          class="relative shrink-0"
+          @click.stop
+        >
           <button
             type="button"
             class="flex items-center gap-1.5 rounded-lg border bg-white px-3 py-2 text-sm shadow-sm transition-colors cursor-pointer"
             :class="activeFilterCount > 0 ? 'border-primary text-primary' : 'border-gray-300 text-gray-700 hover:border-primary/40 hover:text-primary'"
             title="按状态、类型、引擎、就绪度、来源筛选"
+            aria-label="筛选"
             @click="filterPanelOpen = !filterPanelOpen"
           >
             <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
             </svg>
-            筛选
+            <span class="hidden sm:inline">筛选</span>
             <span
               v-if="activeFilterCount > 0"
               class="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-white"
@@ -5538,6 +5584,79 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- 搜索、筛选与两个横幅只服务于「智能体列表」；分享视图有自己的列表，
+         留着它们会让「找到 N 个智能体」这种文案指向一个完全不相关的清单 -->
+    <!-- 搜索框对所有视图都保留：两个分享面板自己没有搜索，藏掉就等于没法搜。
+         批量 / 网格列表切换只服务于智能体列表，仍只在一屏内显示。
+         「筛选」在页头动作区（新建右侧），不占这一行。 -->
+    <!-- 第 2 行：搜索独占一栏，批量 / 视图切换跟在后面 -->
+    <div class="flex flex-wrap items-center gap-2.5">
+      <!-- 只藏搜索框本身：这一行还有批量与视图切换，整行收起会把它们一起藏掉 -->
+      <div
+        id="agent-search-row"
+        class="relative min-w-[220px] flex-1"
+        :class="mobileSearchOpen ? '' : 'hidden sm:block'"
+      >
+        <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+          <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </span>
+        <input
+          ref="searchInputRef"
+          v-model="searchKeyword"
+          type="search"
+          :placeholder="
+            workspaceTab === 'teams'
+              ? '搜索专家团…'
+              : workspaceTab === 'assigned'
+                ? '搜索分配给我的智能体…'
+                : workspaceTab === 'mine' || workspaceTab === 'all'
+                  ? '搜索名称或标识符…'
+                  : '搜索智能体或分享人…'
+          "
+          class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
+        />
+      </div>
+
+      <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
+      <div class="flex shrink-0 items-center gap-2">
+        <div v-if="!isMobile" class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
+          <button
+            type="button"
+            class="rounded-md px-2 py-1.5 text-xs font-medium transition-all"
+            :class="batchMode ? 'border border-blue-200 bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+            title="批量选择启用/禁用"
+            @click="toggleBatchMode"
+          >
+            批量
+          </button>
+          <button
+            type="button"
+            class="rounded-md p-1.5 transition-all"
+            :class="viewMode === 'grid' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+            title="网格视图"
+            @click="toggleViewMode('grid')"
+          >
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="rounded-md p-1.5 transition-all"
+            :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+            title="列表视图"
+            @click="toggleViewMode('list')"
+          >
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        </div>
+      </div>
       </template>
     </div>
     <!-- 智能体 5 步全流程指引：方案 A 起改为按需展开，不再常驻首屏。
@@ -5668,56 +5787,93 @@ const formatSkillCountLabel = (agent: AIAgent) => {
          分享做成页面级视图而不是弹窗，否则「对方在哪看到」只能靠站内信猜。
          注意：这一段必须在上面那个 v-if 之外，否则切到分享视图时切换条自己
          也被隐藏，用户就再也点不回「我的智能体」了。 -->
-    <div
-      class="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2"
-      role="tablist"
-      aria-label="智能体视图"
-    >
-      <button
-        v-for="tab in workspaceTabs"
-        :key="tab.key"
-        type="button"
-        role="tab"
-        :aria-selected="workspaceTab === tab.key"
-        class="relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
-        :class="workspaceTab === tab.key ? 'bg-primary/10 text-primary' : 'text-gray-600 hover:bg-gray-50'"
-        @click="switchWorkspaceTab(tab.key)"
-      >
-        <svg
-          v-if="tab.key === 'teams'"
-          class="mr-1 inline-block h-3.5 w-3.5 shrink-0 align-text-bottom"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          aria-hidden="true"
+    <!-- 移动端一行横向滚动，不换行：换行会把「专家团」挤到第二行，
+         而这一条本身就是并列视图，分两行读起来像两组不同的东西。
+         滚动条隐藏，但保留触摸滑动与键盘 Tab 可达。 -->
+    <div class="flex items-center gap-1.5 border-b border-gray-200 pb-2">
+      <!-- 只有页签本身滚动，「隐藏分组」留在滚动区外面：
+           放进同一个滚动容器的话，它既会被挤到屏幕外，`ml-auto` 也失效
+           （滚动容器没有剩余空间可分配），窄屏下会被压成一个字一行。 -->
+      <div class="relative min-w-0 flex-1">
+        <div
+          ref="workspaceTabsRef"
+          class="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          role="tablist"
+          aria-label="智能体视图"
+          @scroll.passive="updateScrollHints"
         >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
-          />
-        </svg>
-        {{ tab.label }}
-        <span
-          v-if="tab.key === 'teams' || tab.badge > 0"
-          class="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold"
-          :class="
-            workspaceTab === tab.key || tab.badge > 0
-              ? 'bg-primary text-white'
-              : 'bg-gray-200 text-gray-600'
-          "
+          <button
+            v-for="tab in workspaceTabs"
+            :key="tab.key"
+            type="button"
+            role="tab"
+            :aria-selected="workspaceTab === tab.key"
+            class="relative shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="workspaceTab === tab.key ? 'bg-primary/10 text-primary' : 'text-gray-600 hover:bg-gray-50'"
+            @click="switchWorkspaceTab(tab.key)"
+          >
+            <svg
+              v-if="tab.key === 'teams'"
+              class="mr-1 inline-block h-3.5 w-3.5 shrink-0 align-text-bottom"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+              />
+            </svg>
+            {{ tab.label }}
+            <span
+              v-if="tab.key === 'teams' || tab.badge > 0"
+              class="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold"
+              :class="
+                workspaceTab === tab.key || tab.badge > 0
+                  ? 'bg-primary text-white'
+                  : 'bg-gray-200 text-gray-600'
+              "
+            >
+              {{ tab.badge > 99 ? '99+' : tab.badge }}
+            </span>
+          </button>
+        </div>
+
+        <!-- 能滑才出现的翻页箭头：滚动条藏起来了，不给个可点的提示，
+             用户只会看到「分享给我」被切一半，以为页面坏了 -->
+        <button
+          v-if="canScrollLeft"
+          type="button"
+          class="absolute left-0 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-500 shadow-sm backdrop-blur transition-colors hover:text-gray-800"
+          aria-label="向左查看更多视图"
+          @click="scrollStripBy(-1)"
         >
-          {{ tab.badge > 99 ? '99+' : tab.badge }}
-        </span>
-      </button>
+          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <button
+          v-if="canScrollRight"
+          type="button"
+          class="absolute right-0 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-500 shadow-sm backdrop-blur transition-colors hover:text-gray-800"
+          aria-label="向右查看更多视图"
+          @click="scrollStripBy(1)"
+        >
+          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
 
       <!-- 分组页签开关：整理型用户不需要这一行，收起后列表能多显示一行。
            固定在页签行右端，收起时按钮仍在，随时可以再展开。 -->
       <button
         v-if="canToggleAgentGroupTabs"
         type="button"
-        class="ml-auto flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition-colors"
+        class="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg px-2 py-1 text-xs transition-colors"
         :class="
           agentGroupTabsVisible
             ? 'text-gray-500 hover:bg-gray-100'
