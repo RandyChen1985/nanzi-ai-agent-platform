@@ -97,7 +97,9 @@ const groupName = ref('')
 const schemaText = ref('')
 const code = ref('')
 const requirements = ref<RequirementRow[]>([])
-const timeout = ref('')
+// type="number" 的 v-model 会产生数字，清空时仍是空字符串。
+const timeout = ref<string | number>('')
+const timeoutText = computed(() => String(timeout.value).trim())
 const isActive = ref(true)
 
 const isBuiltin = computed(() => props.tool?.source === 'builtin')
@@ -403,7 +405,7 @@ const schemaError = computed(() => {
 const codeMissing = computed(() => !code.value.trim() && !isBuiltin.value)
 
 const timeoutError = computed(() => {
-  const raw = timeout.value.trim()
+  const raw = timeoutText.value
   if (!raw) return ''
   const value = Number(raw)
   if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) {
@@ -603,7 +605,7 @@ const submit = () => {
       .filter(Boolean)
       // 保序去重：重复的包会让 pip 行为变得难以预测
       .filter((item, index, list) => list.indexOf(item) === index),
-    timeout_seconds: timeout.value.trim() ? Number(timeout.value.trim()) : null,
+    timeout_seconds: timeoutText.value ? Number(timeoutText.value) : null,
     group_name: groupName.value.trim() || null,
     is_active: isActive.value,
   })
@@ -968,7 +970,7 @@ const primaryLabel = computed(() => {
             <li>· 名称：<b class="font-mono text-gray-800">{{ name.trim() || '（未填）' }}</b></li>
             <li>· 参数：{{ paramNames.length }} 个<span v-if="requiredParamCount">（必填 {{ requiredParamCount }}）</span></li>
             <li>· 依赖：{{ requirementCount ? `${requirementCount} 个` : '无（仅标准库）' }}</li>
-            <li>· 超时：{{ timeout.trim() ? `${timeout} 秒` : '跟随平台配置' }}</li>
+            <li>· 超时：{{ timeoutText ? `${timeoutText} 秒` : '跟随平台配置' }}</li>
           </ul>
           <p v-if="isBuiltin" class="mt-1.5 text-[11px] text-amber-700">
             改动代码、参数、依赖或超时后，保存会把该内置脚本标记为「已覆盖」，平台后续修复不再影响它；只改分组/展示信息不会。
@@ -1039,10 +1041,11 @@ const primaryLabel = computed(() => {
             v-model="envSecretId"
             scene="script_env"
             system-only
-            placeholder="选择一条允许「脚本环境变量」场景的凭据"
+            placeholder="选择允许「脚本环境变量」场景的系统凭据"
             @picked="onEnvSecretPicked"
           />
         </div>
+        <p class="mt-1 text-xs text-gray-500">此处为全局绑定，仅可选择已授权给当前用户的系统凭据；个人凭据不在此处列出。</p>
       </div>
 
       <div v-if="envPickedSecret?.credential_format === 'structured_v1'">

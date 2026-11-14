@@ -10,7 +10,39 @@
 
 **Spec:** [结构化凭据与工具注入统一规范](../specs/2026-11-14-credential-injection.md)。
 
-## 本轮增补：固定模式即时选择凭据
+## 本轮增补：脚本超时输入导致保存失效
+
+截图中输入 30 秒后确认区仍显示跟随平台配置。实际 Vue 数字输入事件已复现 `timeout.value.trim is not a function`：`type="number"` 的 `v-model` 返回数字，但校验、摘要和提交假定值始终为字符串，异常阻断了渲染和提交。父组件保存接口接收整数或 null，与后端 1–3600 秒规则一致。
+
+- [x] 修复：声明超时输入为数字/字符串，统一规范化后用于校验、摘要与提交；保留留空、范围校验及保存中的重复提交保护。
+- [x] 回归：新建输入 30 秒、编辑修改、清空回退平台、非法与边界值、原有超时回显、保存中防重复，均通过真实向导及 Vue 输入事件验证。只替换网络与不参与超时逻辑的编辑器外观。
+- [x] 同步现有 spec、plan、原型和测试清单；不改接口、数据库或执行链。
+
+综合回归 **59 项通过**（17.73 秒）：在下方浮层修复的 7 个测试文件基础上加入 `tests/frontend/test_script_tool_wizard_save_behavior.py`，使用相同 `--confcutdir=tests/frontend` 隔离运行。包含 6 项新增保存行为测试及全量 Vue 模板/脚本语法检查；`git diff --check` 通过，原型索引已更新检查且无差异。不访问数据库或真实凭据，不启动服务。此回归不等同于浏览器实机或脚本容器验收。
+
+## 本轮增补：脚本环境变量凭据选择浮层
+
+用户反馈脚本工具新建向导第四步打开“绑定环境变量”后无法选择凭据。代码依据：`CredentialPicker` 的浮层传送到 `body`，原固定层级为 `10100`，低于 `ScriptToolWizard` 主弹窗的 `12000` 和绑定子弹窗的 `12500`，候选浮层会被遮罩覆盖。候选接口已在 `scene=script_env` 时包含单值和结构化凭据；本次修复不扩大候选范围。
+
+- [x] 前端：浮层跟随触发器所在弹窗层级，保持高于当前弹窗及遮罩；保留普通绑定入口的定位、搜索、键盘/鼠标选择和关闭行为。补充全局绑定的系统凭据范围提示与空态说明。
+- [x] 回归：以实际 Vue 组件及合成元数据覆盖高层级弹窗、换层重开、鼠标/键盘选择、系统空态和场景过滤；先确认旧实现层级断言失败，再验证修复通过。单值与结构化候选仍沿用现有接口及筛选逻辑。
+- [x] 权限语义核对：此向导保存 `is_global: true`，保留 `system-only`；仅选择当前用户已获授权、状态启用且允许 `script_env` 的系统凭据，个人凭据不适用。保留运行时共享检查、平台/个人双开关、字段注入与脚本输出检查。
+- [x] 文档与原型：同步现有 spec、plan、HTML 原型和测试清单，不新增重复交付材料。
+
+验证记录：以下纯前端回归 **53 项通过**（14.37 秒），包含 4 项新增真实 Vue 组件行为回归和全量 Vue 模板/脚本语法检查；`git diff --check` 通过。使用现有前端依赖及项目虚拟环境，不安装新组件，不连接数据库。实际组件测试使用自定义 renderer，不等同于浏览器布局/点击命中验证；本轮未执行真实浏览器、容器或部署联调，未操作真实凭据及服务启停。
+
+```bash
+/home/administrator/projects/nanzi-ai-agent-platform/.venv/bin/python -m pytest --confcutdir=tests/frontend \
+  tests/frontend/test_credential_picker_layer_behavior.py \
+  tests/frontend/test_credential_picker_search_contract.py \
+  tests/frontend/test_script_env_binding_contract.py \
+  tests/frontend/test_script_tool_registry_contract.py \
+  tests/frontend/test_confirm_modal_zindex_contract.py \
+  tests/frontend/test_mcp_fixed_credential_behavior.py \
+  tests/frontend/test_vue_templates_compile.py -q
+```
+
+## 历史增补：固定模式即时选择凭据
 
 用户反馈切换为“固定凭据”后没有可选列表。代码依据：`McpCredentialProfileForm.vue` 将选择器显示及候选加载限定为已保存的 `current.selection_mode === 'fixed'`，选择器还位于表单底部；现有候选 API 只接受已经保存且有效的 profile，无法按未保存的类型、版本查询。基线为 `f917f49d`。
 
