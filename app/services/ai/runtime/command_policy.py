@@ -43,7 +43,7 @@ SHELL_TOOL_NAMES = frozenset(
     }
 )
 
-# MCP 工具名形态是 ``mcp_<可读名>_<hash>``（模型侧名字由 build_model_tool_name 生成）。
+# MCP 的命令策略读取平台内部工具名。保留旧别名格式供历史调用记录识别。
 # 只按"含 shell 语义的词"放宽，而不是所有 mcp_* 都当 shell——否则 jira/postgres 这类
 # 带 query 参数的 MCP 工具会被无谓地拉进命令匹配。
 #
@@ -66,6 +66,8 @@ def is_shell_like_tool_name(tool_name: Any) -> bool:
         return False
     if name in SHELL_TOOL_NAMES:
         return True
+    if ":" in name:
+        return name.rsplit(":", 1)[1] in SHELL_TOOL_NAMES or any(marker in name for marker in MCP_SHELL_MARKERS)
     if name.startswith("mcp_"):
         return any(marker in name for marker in MCP_SHELL_MARKERS)
     return False

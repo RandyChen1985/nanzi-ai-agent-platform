@@ -6,14 +6,16 @@ import {
 } from "@/utils/toolPermissionDisplay";
 import type { PendingToolPermission } from "@/utils/agentscopeSseHandlers";
 import { copyToClipboard } from "@/utils/clipboard";
+import CredentialApprovalPicker from "@/components/secrets/CredentialApprovalPicker.vue";
 
 const props = defineProps<{
   payload: PendingToolPermission;
   disabled?: boolean;
+  authHeaders?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{
-  (event: "submit", confirmed: boolean, scope?: "once" | "session"): void;
+  (event: "submit", confirmed: boolean, scope?: "once" | "session", credentialId?: string): void;
   (event: "revoke"): void;
   (event: "discard"): void;
   (event: "expire"): void;
@@ -23,6 +25,8 @@ const expanded = ref(props.payload.status === "pending");
 const detailsExpanded = ref(props.payload.status === "pending");
 const copied = ref(false);
 const copyFailed = ref(false);
+const selectedCredential = ref("");
+const credentialReady = computed(() => !props.payload.credential_selection_required || !!selectedCredential.value);
 
 const display = computed<ToolPermissionDisplay>(() =>
   getToolPermissionDisplay({
@@ -203,8 +207,8 @@ async function copyDetails() {
 }
 
 function submit(confirmed: boolean, scope: "once" | "session" = "once") {
-  if (locked.value) return;
-  emit("submit", confirmed, scope);
+  if (locked.value || (confirmed && !credentialReady.value)) return;
+  emit("submit", confirmed, scope, confirmed && props.payload.credential_selection_required ? selectedCredential.value : undefined);
 }
 
 function revoke() {
@@ -228,6 +232,7 @@ watch(isExpired, (expired) => {
 watch(
   () => props.payload.permission_request_id,
   () => {
+    selectedCredential.value = "";
     expanded.value = props.payload.status === "pending";
     detailsExpanded.value = props.payload.status === "pending";
   },
@@ -448,6 +453,11 @@ watch(
             {{ expiryHint }}
           </p>
 
+          <CredentialApprovalPicker v-if="isPending && payload.credential_selection_required"
+            v-model="selectedCredential" :request-id="payload.permission_request_id" :disabled="locked"
+            :auth-headers="authHeaders" :retry-error="payload.credentialRetryError"
+            class="mt-3" @created="emit('submit', true, 'once', $event)" />
+
           <!-- 待确认时的底部操作栏 -->
           <div v-if="isPending" class="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <div v-if="isSubmitting" class="flex items-center gap-2 self-center text-xs opacity-75 sm:mr-auto" aria-live="polite">
@@ -494,14 +504,14 @@ watch(
               type="button"
               class="inline-flex min-h-[2.75rem] w-full items-center justify-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[2rem] sm:w-auto"
               :class="display.riskTone === 'low' ? 'bg-sky-600 hover:bg-sky-700 focus-visible:ring-sky-600' : 'bg-amber-600 hover:bg-amber-700 focus-visible:ring-amber-600'"
-              :disabled="locked"
+              :disabled="locked || !credentialReady"
               aria-label="仅本次允许执行工具调用"
               @click="submit(true)"
             >
               <svg v-if="!isSubmitting" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="m5 13 4 4L19 7" />
               </svg>
-              {{ isSubmitting ? "正在提交确认…" : "本次允许执行" }}
+              {{ isSubmitting ? "正在提交确认…" : (payload.credential_selection_required ? "授权并继续" : "本次允许执行") }}
             </button>
           </div>
         </div>

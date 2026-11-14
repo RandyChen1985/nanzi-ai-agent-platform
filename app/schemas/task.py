@@ -47,6 +47,13 @@ class TaskUpdate(BaseModel):
         return _validate_cron_expr(v)
 
 class TaskResponse(TaskBase):
+    @field_validator("config")
+    @classmethod
+    def hide_credential_refs(cls, config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        from app.services.secrets.task_credential_wait import public_task_config
+
+        return public_task_config(config)
+
     # 覆盖父类严格校验：从 DB 读取时宽容处理历史非法 cron，不崩溃列表页
     @field_validator("cron_expr", mode="before")
     @classmethod

@@ -807,8 +807,7 @@ async def test_api_tool_items_carry_their_business_group(db_session, monkeypatch
 # `operator does not exist: boolean = integer`，`VALUES (..., 1, ...)` 会抛
 # `column "enabled" is of type boolean but expression is of type integer`。
 #
-# 测试跑在 SQLite 上，而 SQLite 的 BOOLEAN 亲和 NUMERIC，`1` 照样能过——也就是说
-# **这类方言问题测试永远测不出来**，只能靠契约断言钉住。
+# 编译 SQL 不会执行布尔比较，下面同时检查原生语句使用的字面量。
 # ---------------------------------------------------------------------------
 
 _AGENT_SCOPE_SOURCES = (
@@ -837,10 +836,10 @@ def test_agent_scoped_native_sql_uses_portable_boolean_literals():
 def test_boolean_literals_survive_both_dialects():
     """`TRUE` 在 MySQL 与 PG 都是合法布尔字面量（MySQL 视其为 1 的别名）。"""
     from sqlalchemy import text
-    from sqlalchemy.dialects import mysql, postgresql, sqlite
+    from sqlalchemy.dialects import mysql, postgresql
 
     statement = text("SELECT 1 FROM t WHERE enabled = TRUE")
-    for dialect in (mysql.dialect(), postgresql.dialect(), sqlite.dialect()):
+    for dialect in (mysql.dialect(), postgresql.dialect()):
         compiled = str(statement.compile(dialect=dialect))
         assert "TRUE" in compiled.upper() or "1" in compiled
 

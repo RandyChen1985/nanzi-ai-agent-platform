@@ -65,6 +65,7 @@ import {
 import {
   applyStreamTraceId,
   appendAssistantBodyDelta,
+  applyCredentialRetryError,
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
   markStalePendingStreamLogs,
@@ -93,6 +94,7 @@ import {
   type UserQuestionState,
 } from "@/utils/userQuestion";
 import { useToast } from "../composables/useToast";
+import { mcpMountFeedback } from "@/utils/mcpMountFeedback";
 import { useTokenQuota } from "@/composables/useTokenQuota";
 import { useContextUsage } from "@/composables/useContextUsage";
 import { useContextCompactions } from "@/composables/useContextCompactions";
@@ -659,6 +661,10 @@ function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): Ski
 const conversationId = ref("");
 const metadataMountableDatasets = ref<Array<{ id: string; name?: string; description?: string; dataset_name?: string }>>([]);
 const sessionMountedMetadataDatasetIds = ref<string[]>([]);
+const sessionMountedMcpToolIds = ref<string[]>([]);
+const resourceScopeSaves = reactive(new Set<string>());
+const resourceScopeSaving = computed(() => resourceScopeSaves.has(conversationId.value));
+let resourceScopeLoadSequence = 0;
 
 const {
   remoteRunActive,
@@ -683,6 +689,13 @@ const refreshCurrentRunStatus = () => (
 watch(conversationId, () => {
   void refreshCurrentRunStatus();
 }, { immediate: true });
+
+watch(conversationId, () => {
+  resourceScopeLoadSequence += 1;
+  sessionMountedMetadataDatasetIds.value = [];
+  sessionMountedMcpToolIds.value = [];
+  void loadSessionResourceScope();
+});
 
 const finalizeConversationInBackground = (cid: string) => {
   void finalizeConversation(cid);
@@ -2934,17 +2947,31 @@ const loadMetadataMountableDatasets = async () => {
   }
 };
 
-const loadMetadataDatasetSessionScope = async () => {
-  if (!conversationId.value) return;
+type SessionResourceSelection = {
+  datasets?: Array<{ id: string }>;
+  mcp_tools?: Array<{ id: string }>;
+};
+
+const applySessionResourceScope = (scope: SessionResourceSelection) => {
+  resourceScopeLoadSequence += 1;
+  const ids = (items: Array<{ id: string }> = []) =>
+    items.map(item => String(item.id || "").trim()).filter(Boolean);
+  sessionMountedMetadataDatasetIds.value = ids(scope.datasets);
+  sessionMountedMcpToolIds.value = ids(scope.mcp_tools);
+};
+
+const loadSessionResourceScope = async () => {
+  const targetId = conversationId.value;
+  if (!targetId) return;
+  const requestId = ++resourceScopeLoadSequence;
   try {
     const res = await axios.get(
-      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+      `/api/v1/chat/conversation/${encodeURIComponent(targetId)}/resource-scope`,
     );
-    sessionMountedMetadataDatasetIds.value = (res.data?.data?.datasets || [])
-      .map((item: any) => String(item.id || "").trim())
-      .filter(Boolean);
+    if (conversationId.value !== targetId || requestId !== resourceScopeLoadSequence) return;
+    if (res.data?.data) applySessionResourceScope(res.data.data);
   } catch (error) {
-    console.warn("Failed to load metadata dataset session scope", error);
+    console.warn("Failed to load conversation resource scope", error);
   }
 };
 
@@ -2967,105 +2994,64 @@ const mountMcpToolToSession = async (
       scope: tool?.scope || "global",
     }))
     .filter((tool) => tool.id && tool.name);
-  if (!tools.length) return;
+  if (!tools.length || resourceScopeSaving.value || sendLocked.value) return;
+  const targetId = conversationId.value;
+  resourceScopeSaves.add(targetId);
   try {
-    const res = await axios.get(
-      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+    const res = await axios.post(
+      `/api/v1/chat/conversation/${encodeURIComponent(targetId)}/resource-scope/mcp-tools`,
+      { mcp_tools: tools },
     );
-    const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] };
-    const existing = scope.mcp_tools || [];
-    const existingNames = new Set(existing.map((item: any) => String(item.name || "").trim()).filter(Boolean));
-    const existingIds = new Set(existing.map((item: any) => String(item.id || "").trim()).filter(Boolean));
-    const toAdd = tools.filter((tool) => !existingNames.has(tool.name) && !existingIds.has(tool.id));
-    if (!toAdd.length) {
-      showToast(tools.length === 1 ? "该 MCP 工具已挂载到本会话" : "所选 MCP 工具均已挂载到本会话", "info");
-      return;
-    }
-    await axios.put(
-      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
-      {
-        ...scope,
-        mcp_tools: [...existing, ...toAdd],
-      },
-    );
-    showToast(
-      toAdd.length === 1 ? `已挂载 MCP 工具：${toAdd[0]?.name || ''}` : `已挂载 ${toAdd.length} 个 MCP 工具`,
-      "success",
-    );
-  } catch (error) {
-    console.warn("Failed to mount MCP tool to session", error);
-    showToast("挂载 MCP 工具失败", "error");
+    if (conversationId.value !== targetId) return;
+    const saved = res.data?.data;
+    if (!saved?.scope) throw new Error("服务未返回会话资源保存结果");
+    applySessionResourceScope(saved.scope);
+    showToast(mcpMountFeedback(tools, saved.mounted_mcp_tools));
+  } catch {
+    if (conversationId.value === targetId) showToast("未能保存 MCP 挂载，请重试", "error");
+  } finally {
+    resourceScopeSaves.delete(targetId);
   }
 };
 
-const pinMetadataDatasetToSession = async (datasetId: string) => {
-  if (!conversationId.value) {
-    showToast("请先开始会话", "error");
+const updateSessionDatasetMount = async (datasetId: string, mounted: boolean) => {
+  if (resourceScopeSaving.value) return;
+  const targetId = conversationId.value;
+  if (!targetId) {
+    showToast('请先开始会话', 'error');
     return;
   }
-  const id = String(datasetId || "").trim();
+  const id = String(datasetId || '').trim();
   if (!id) return;
+  resourceScopeSaves.add(targetId);
   try {
-    const res = await axios.get(
-      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+    const res = await axios.patch(
+      `/api/v1/chat/conversation/${encodeURIComponent(targetId)}/resource-scope/datasets`,
+      { dataset_id: id, mounted },
     );
-    const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] };
-    if ((scope.datasets || []).some((item: any) => String(item.id || "").trim() === id)) {
-      showToast("该数据集已设为本会话默认", "info");
-      return;
+    const saved = res.data?.data;
+    if (!saved) throw new Error('服务未返回会话资源保存结果');
+    if (conversationId.value !== targetId) return;
+    applySessionResourceScope(saved);
+    if (mounted) {
+      const name = metadataMountableDatasets.value.find(dataset => dataset.id === id)?.name || id;
+      showToast(`已设为本会话默认：后续提问将默认锁定在【${name}】`, 'success');
+    } else {
+      showToast('已取消本会话默认，问数将恢复默认权限范围', 'info');
     }
-    const dataset = metadataMountableDatasets.value.find((item) => item.id === id);
-    const selected = {
-      id,
-      name: dataset?.name || id,
-      ...(dataset?.dataset_name ? { dataset_name: dataset.dataset_name } : {}),
-    };
-    const saved = await axios.put(
-      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
-      { ...scope, datasets: [...(scope.datasets || []), selected] },
-    );
-    sessionMountedMetadataDatasetIds.value = (saved.data?.data?.datasets || [...(scope.datasets || []), selected])
-      .map((item: any) => String(item.id || "").trim())
-      .filter(Boolean);
-    const dsName = selected.name || dataset?.name || id;
-    showToast(`已设为本会话默认：后续提问将默认锁定在【${dsName}】`, "success");
-  } catch (error) {
-    console.warn("Failed to pin metadata dataset to session", error);
-    showToast("设置会话默认范围失败", "error");
-  }
-};
-
-const unpinMetadataDatasetFromSession = async (datasetId: string) => {
-  if (!conversationId.value) {
-    showToast("请先开始会话", "error");
-    return;
-  }
-  const id = String(datasetId || "").trim();
-  if (!id) return;
-  try {
-    const res = await axios.get(
-      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
-    );
-    const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] };
-    const nextDatasets = (scope.datasets || []).filter((item: any) => String(item.id || "").trim() !== id);
-    const saved = await axios.put(
-      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
-      { ...scope, datasets: nextDatasets },
-    );
-    sessionMountedMetadataDatasetIds.value = (saved.data?.data?.datasets || nextDatasets)
-      .map((item: any) => String(item.id || "").trim())
-      .filter(Boolean);
-    showToast("已取消本会话默认，问数将恢复默认权限范围", "info");
-  } catch (error) {
-    console.warn("Failed to unpin metadata dataset from session", error);
-    showToast("取消会话默认失败", "error");
+  } catch {
+    if (conversationId.value === targetId) {
+      showToast(mounted ? '设置会话默认范围失败' : '取消会话默认失败', 'error');
+    }
+  } finally {
+    resourceScopeSaves.delete(targetId);
   }
 };
 
 const openPortalDrawer = async () => {
   // 挂载匹配异步补齐，不阻塞门户打开
   void loadMetadataMountableDatasets();
-  void loadMetadataDatasetSessionScope();
+  void loadSessionResourceScope();
   await rawOpenPortalDrawer();
 };
 
@@ -3524,6 +3510,10 @@ const captureSendSnapshot = (overrides: ChatSendOverrides = {}): ChatSendSnapsho
 const sendPreparedMessage = async (
   prepare: () => Promise<ChatSendSnapshot | null>,
 ) => runSendExclusive(async () => {
+  if (resourceScopeSaving.value) {
+    showToast("会话资源正在保存，请稍后发送", "info");
+    return;
+  }
   if (isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value) return;
   const snapshot = await prepare();
   if (!snapshot) return;
@@ -3537,6 +3527,10 @@ const sendMessage = async (overrides: ChatSendOverrides = {}) => runSendExclusiv
 
 const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   const { content, files } = snapshot;
+  if (resourceScopeSaving.value) {
+    showToast("会话资源正在保存，请稍后发送", "info");
+    return;
+  }
   const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value];
   if (!content && files.length === 0) return;
   if (isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value) return;
@@ -4078,6 +4072,8 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
   if (data.agent_name && !msg.agentName) msg.agentName = data.agent_name;
   if (data.agent_display_name && !msg.agentDisplayName) msg.agentDisplayName = data.agent_display_name;
 
+  if (applyCredentialRetryError(msg.pendingPermission, data)) return;
+
   if (data?.type === "run_status") {
     // 恢复流末尾的 run_status 终态：status 为 success / rejected / error 等真实结果，
     // 按终态映射，避免把“用户拒绝/执行失败”错误显示为已完成。
@@ -4317,10 +4313,12 @@ const confirmPendingPermission = async (
   msg: Message,
   confirmed: boolean,
   scope: "once" | "session" = "once",
+  credentialId?: string,
 ) => {
   const pending = msg.pendingPermission;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
+  pending.credentialRetryError = undefined;
   isProcessing.value = true;
   if (confirmed) {
     msg.isThinking = true;
@@ -4340,7 +4338,7 @@ const confirmPendingPermission = async (
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ confirmed, scope }),
+      body: JSON.stringify({ confirmed, scope, credential_secret_id: credentialId }),
       signal: resumeAbort.signal,
     });
     if (!response.ok) throw new Error(response.statusText);
@@ -5102,7 +5100,7 @@ onUnmounted(() => {
               <ToolPermissionCard
                 v-if="msg.pendingPermission"
                 :payload="msg.pendingPermission"
-                @submit="(confirmed, scope) => confirmPendingPermission(msg, confirmed, scope)"
+                @submit="(confirmed, scope, credentialId) => confirmPendingPermission(msg, confirmed, scope, credentialId)"
                 @revoke="revokeSessionPermission(msg)"
                 @discard="discardPendingPermission(msg)"
                 @expire="expirePendingPermission(msg)"
@@ -5424,7 +5422,8 @@ onUnmounted(() => {
           ref="chatInputRef"
           v-model="userInput"
           :is-processing="isProcessing || remoteRunBusy || pendingPermissionLocking"
-          :is-submitting="sendLocked"
+          :is-submitting="sendLocked || resourceScopeSaving"
+          :attached-mcp-tool-ids="sessionMountedMcpToolIds"
           :show-shortcuts="debugConfig.showShortcuts"
           :slash-commands="slashCommands"
           :allowed-agents="agents"
@@ -5874,8 +5873,8 @@ onUnmounted(() => {
     @record-question-click="(payload) => recordPortalQuestionClick(portalNavigationPayload, payload)"
     @clear-question-click="(payload) => clearPortalQuestionClick(portalNavigationPayload, payload)"
     @toggle-metadata-dataset="(datasetId) => toggleMetadataDatasetActive(datasetId, chatInputRef, metadataMountableDatasets)"
-    @pin-metadata-dataset="pinMetadataDatasetToSession"
-    @unpin-metadata-dataset="unpinMetadataDatasetFromSession"
+    @pin-metadata-dataset="updateSessionDatasetMount($event, true)"
+    @unpin-metadata-dataset="updateSessionDatasetMount($event, false)"
     @refresh="refreshPortalNavigation"
     @execute-saved-report="handleExecuteSavedReport"
     @edit-saved-report="openEditReportModal"

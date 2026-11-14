@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+from app.services.secrets.mcp_result_storage import MCP_JSONPATH_RESULT, is_projected_result_metadata
 
 DETAILS_MAX_CHARS = 2000
 TODO_STATUSES = {"pending", "in_progress", "completed"}
@@ -130,6 +131,8 @@ def _update_log(existing: Dict[str, Any], chunk: Dict[str, Any]) -> None:
         existing["temperature"] = chunk["temperature"]
     if chunk.get("tool_result_state"):
         existing["tool_result_state"] = str(chunk["tool_result_state"])
+    if is_projected_result_metadata(chunk):
+        existing[MCP_JSONPATH_RESULT] = "v1"
     # 「本会话已授权」是一次性事实，只在携带时写入，历史回放仍能看到这条免确认凭证。
     if chunk.get("auto_approved"):
         existing["auto_approved"] = True
@@ -582,6 +585,8 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         log["temperature"] = chunk["temperature"]
     if chunk.get("tool_result_state"):
         log["tool_result_state"] = str(chunk["tool_result_state"])
+    if is_projected_result_metadata(chunk):
+        log[MCP_JSONPATH_RESULT] = "v1"
     if chunk.get("auto_approved"):
         log["auto_approved"] = True
     # 子代理思考：保留标记，历史回放才能继续用 Markdown 渲染并归到子代理容器里。
@@ -660,6 +665,8 @@ def _finalize_log(item: Dict[str, Any]) -> Dict[str, Any]:
         copied["temperature"] = item.get("temperature")
     if item.get("tool_result_state") is not None:
         copied["tool_result_state"] = item.get("tool_result_state")
+    if is_projected_result_metadata(item):
+        copied[MCP_JSONPATH_RESULT] = "v1"
     # 「本会话已授权」是审计留痕：定稿丢掉的话，刷新/回放就看不到这条免确认凭证。
     if item.get("auto_approved") is True:
         copied["auto_approved"] = True

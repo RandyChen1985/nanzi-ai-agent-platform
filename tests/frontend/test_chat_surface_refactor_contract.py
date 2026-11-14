@@ -78,10 +78,10 @@ def test_chat_surfaces_keep_permission_and_external_execution_panels():
         assert timeline_at >= 0
         assert permission_at > timeline_at
         assert external_at > permission_at
-        # 权限卡已抽成 ToolPermissionCard，允许/拒绝通过 submit(true/false, scope) 回传。
+        # 权限卡同时回传授权范围和选中的凭据引用。
         assert '<ToolPermissionCard' in source
         assert source.find("<ToolPermissionCard") < permission_at
-        assert '@submit="(confirmed, scope) => confirmPendingPermission(msg, confirmed, scope)"' in source
+        assert '@submit="(confirmed, scope, credentialId) => confirmPendingPermission(msg, confirmed, scope, credentialId)"' in source
         assert '@revoke="revokeSessionPermission(msg)"' in source
         assert '@click="submitPendingExternalExecution(msg)"' in source
 

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy.dialects.sqlite import dialect
+from sqlalchemy.dialects import mysql, postgresql
 
 from app.services.mcp.platform_oauth import (
     ACCESS_TOKEN_TTL_SECONDS,
@@ -108,7 +108,8 @@ def test_intersect_authorized_ids_distinguishes_none_and_empty_client_policy():
 
 
 @pytest.mark.asyncio
-async def test_security_policy_changes_expire_unconsumed_authorization_codes():
+@pytest.mark.parametrize("dialect", [mysql.dialect, postgresql.dialect], ids=["mysql", "postgresql"])
+async def test_security_policy_changes_expire_unconsumed_authorization_codes(dialect):
     from app.services.mcp.platform_oauth import PlatformMcpOAuthService
 
     db = SimpleNamespace(execute=AsyncMock())

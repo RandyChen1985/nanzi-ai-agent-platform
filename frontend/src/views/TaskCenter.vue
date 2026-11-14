@@ -20,6 +20,7 @@ import CronFieldLegend from '@/components/common/CronFieldLegend.vue'
 import { validateCronExpression } from '@/utils/cronSchedule'
 import { describeScene, inferScene } from '@/utils/cronScenes'
 import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
+import TaskCredentialWaitModal from '@/components/task/TaskCredentialWaitModal.vue'
 import TaskFlowGuideBanner from '@/components/task/TaskFlowGuideBanner.vue'
 import TaskPromptComposer, {
   type TaskApprovalMode,
@@ -657,6 +658,10 @@ const onOptimizeToast = (message: string, type?: 'success' | 'error' | 'info') =
   showToast(message, type === 'error' ? 'error' : 'success')
 }
 const selectedTask = ref<AgentTask | null>(null)
+const credentialTask = ref<AgentTask | null>(null)
+const taskNeedsCredential = (task: AgentTask) =>
+  task.last_status === 'awaiting_credential'
+  && String(task.user_id) === String(userInfo.value?.user_id || userInfo.value?.id || '')
 const logs = ref<TaskLog[]>([])
 const logsLoading = ref(false)
 const logsPage = ref(1)
@@ -1386,6 +1391,8 @@ onMounted(async () => {
 </script>
 
 <template>
+  <TaskCredentialWaitModal v-if="credentialTask" :task-id="credentialTask.id" :task-name="credentialTask.name"
+    @close="credentialTask = null" @updated="fetchTasks(true)" />
   <div class="space-y-5">
     <!-- Header：标题一行；窄屏搜索通栏，状态+刷新并排，新建通栏 -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1889,8 +1896,11 @@ onMounted(async () => {
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
             </button>
           </div>
+          <button v-if="taskNeedsCredential(task)" type="button" class="rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800" @click="credentialTask = task">
+            凭据授权
+          </button>
           <button 
-            v-if="canManageTask(task)"
+            v-else-if="canManageTask(task)"
             @click="runTaskNow(task)"
             :disabled="runningTaskIds.has(task.id)"
             class="text-[10px] font-bold flex items-center px-2 py-1 rounded bg-white border border-gray-200 shadow-sm hover:border-primary hover:text-primary transition-all disabled:opacity-50"
@@ -1995,7 +2005,10 @@ onMounted(async () => {
                 <button v-if="canManageTask(task)" class="rounded-lg p-1.5 text-gray-300 hover:bg-red-50 hover:text-red-500" title="删除订阅" @click="deleteTask(task)"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
               </div>
               <div v-else class="flex items-center justify-end space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                <button v-if="canManageTask(task)" @click="runTaskNow(task)" :disabled="runningTaskIds.has(task.id)" class="p-1.5 text-primary hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="立即执行">
+                <button v-if="taskNeedsCredential(task)" type="button" class="rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800" @click="credentialTask = task">
+                  凭据授权
+                </button>
+                <button v-else-if="canManageTask(task)" @click="runTaskNow(task)" :disabled="runningTaskIds.has(task.id)" class="p-1.5 text-primary hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="立即执行">
                   <svg v-if="!runningTaskIds.has(task.id)" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
                   <span v-else class="animate-spin text-[10px]">⌛</span>
                 </button>

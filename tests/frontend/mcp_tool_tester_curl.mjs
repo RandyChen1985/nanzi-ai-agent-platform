@@ -14,6 +14,7 @@ import process from 'node:process';
 
 const require = createRequire(resolve('frontend/package.json'));
 const { parse } = require('@vue/compiler-dom');
+const { parse: parseSfc } = require('@vue/compiler-sfc');
 
 const source = readFileSync('frontend/src/components/system/McpToolTester.vue', 'utf8');
 
@@ -24,8 +25,9 @@ const check = (label, ok, detail = '') => {
   }
 };
 
-const template = source.split('<template>')[1].split('</template>')[0];
-const script = source.split('<script setup lang="ts">')[1].split('</script>')[0];
+const { descriptor } = parseSfc(source);
+const template = descriptor.template.content;
+const script = descriptor.scriptSetup.content;
 
 const ast = parse(template);
 const nodes = [];

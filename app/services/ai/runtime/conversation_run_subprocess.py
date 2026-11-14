@@ -12,7 +12,9 @@ from app.services.ai.runtime.conversation_run_registry import (
 
 
 def _subprocess_kwargs(cwd: str | None = None) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {}
+    from app.services.secrets.payload_crypto import runtime_child_environment
+
+    kwargs: dict[str, Any] = {"env": runtime_child_environment()}
     if cwd is not None:
         kwargs["cwd"] = cwd
     if os.name == "posix":
@@ -50,6 +52,13 @@ class CancellableLocalBackend(_local_backend_cls()):  # type: ignore[misc]
         timeout: float | None = None,
     ) -> Any:
         from agentscope.tool._builtin._backend import ExecResult
+        from app.services.secrets.payload_config import payload_keyring_requires_isolation
+
+        if await payload_keyring_requires_isolation():
+            return ExecResult(
+                exit_code=1, stdout=b"",
+                stderr="配置结构化凭据密钥后，代码执行需要使用隔离沙箱。".encode("utf-8"),
+            )
 
         try:
             process = await asyncio.create_subprocess_exec(

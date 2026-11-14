@@ -100,10 +100,8 @@ def parse_system_params(parameter_schema: Any) -> list[SystemParamSpec]:
         value = entry.get("value")
         if source != "literal":
             # 凭据来源（固定凭据 / 按规则）的值运行时才知道，配置里不存任何东西
-            if type_name != "string":
-                raise SystemParamConfigError(
-                    f"系统级参数 {name} 由凭据提供，类型只能是 string"
-                )
+            if source == "rule" and type_name != "string":
+                raise SystemParamConfigError(f"系统级参数 {name} 使用定位规则时类型须为 string")
             value = ""
         elif not isinstance(value, str) or not value.strip():
             raise SystemParamConfigError(f"系统级参数 {name} 缺少固定值")
@@ -148,7 +146,7 @@ def _coerce_literal(value: Any, type_name: str, name: str) -> Any:
         return value
     except (TypeError, ValueError) as exc:
         raise SystemParamConfigError(
-            f"系统级参数 {name} 的值 {value!r} 不能转换为 {type_name}"
+            f"系统级参数 {name} 的值不能转换为 {type_name}"
         ) from exc
 
 

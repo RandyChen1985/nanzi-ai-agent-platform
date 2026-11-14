@@ -322,6 +322,12 @@ class AgentOnboardingResponse(BaseModel):
 
 # --- Chat Execution Schemas ---
 
+class SessionMcpToolConfig(ToolConfigItem):
+    """已由服务端挂载的个人 MCP 工具。随运行快照保留工具 ID。"""
+
+    session_mcp_tool_id: str
+
+
 class ChatConfig(BaseModel):
     """Resolved configuration for a single chat turn"""
     agent_id: str
@@ -342,7 +348,7 @@ class ChatConfig(BaseModel):
     # 版本级开关：False 表示该智能体版本禁止用户在输入框手动切换模型
     allow_model_switch: bool = True
     system_prompt: str
-    tools: List[Union[str, ToolConfigItem]]
+    tools: List[Union[str, SessionMcpToolConfig, ToolConfigItem]]
     toolcall_timeout_seconds: Optional[int] = None
     skills_custom: bool = False
     skills: List[str] = Field(default_factory=list)

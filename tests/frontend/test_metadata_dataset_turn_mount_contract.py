@@ -52,8 +52,8 @@ def test_embed_chat_sends_turn_metadata_datasets_and_persists_pins():
     assert "metadata_dataset_ids" in source
     assert "useDatasetMount" in source
     assert "syncActiveMetadataDatasetsFromInput" in source
-    assert "pinMetadataDatasetToSession" in source
-    assert "unpinMetadataDatasetFromSession" in source
+    assert "updateSessionDatasetMount" in source
+    assert "/resource-scope/datasets" in source
     assert "persistResourceScope" in source
     assert "const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value]" in source
     # 顺序断言必须限定在发送流程内：文件里别处（身份切换重置）也会清空 uploadedFiles，
@@ -71,8 +71,8 @@ def test_agent_debug_sends_turn_metadata_datasets_and_persists_pins():
     assert "metadata_dataset_ids" in source
     assert "useDatasetMount" in source
     assert "syncActiveMetadataDatasetsFromInput" in source
-    assert "pinMetadataDatasetToSession" in source
-    assert "unpinMetadataDatasetFromSession" in source
+    assert "updateSessionDatasetMount" in source
+    assert "/resource-scope/datasets" in source
     assert "const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value]" in source
     assert source.index("const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value]") < source.index("chatInputRef.value.uploadedFiles = []")
     assert "requestBody.metadata_dataset_ids = turnMetadataDatasetIds" in source

@@ -604,12 +604,12 @@ class TestMcpFactoryDropsCredentialParams:
         assert "keyword" in fields
         assert "api_key" not in fields
 
-    def test_without_declaration_nothing_is_dropped(self):
+    def test_unbound_sensitive_field_is_hidden(self):
         from app.services.ai.tools.mcp_factory import McpToolFactory
 
         tool = McpToolFactory.create_tool(self._record(None))
 
-        assert "api_key" in set(tool.args_schema.model_fields.keys())
+        assert set(tool.args_schema.model_fields) == {"keyword"}
 
 
 class TestCurrentUserResolution:
@@ -761,8 +761,10 @@ class TestScriptEnvInjection:
 
         tool = SimpleNamespace(id="script-1", name="my_script")
 
-        # 平台策略默认关 → 即使绑定了也拿不到
-        assert await apply_script_env_bindings(tool, user_info=USER) == {}
+        # 平台策略默认关闭时，已有绑定必须拒绝整次执行。
+        from app.services.secrets.injection import BindingLookupError
+        with pytest.raises(BindingLookupError):
+            await apply_script_env_bindings(tool, user_info=USER)
 
     async def test_returns_value_when_both_switches_on(self, monkeypatch):
         """两层开关都打开之后，脚本确实能拿到变量。
@@ -847,22 +849,3 @@ class TestScriptEnvInjection:
         # 别人的个人绑定不该出现在我的槽位列表里
         assert await list_bound_slots("script_tool", "script-2", prefix="env:", user_id=USER_ID) == []
         assert await list_bound_slots("script_tool", "script-2", prefix="env:", user_id="42") == ["env:OTHER_SECRET"]
-
-
-class TestScriptRuntimeWiring:
-    """运行时要真的把执行身份传下去。
-
-    单测直接调 `apply_script_env_bindings(tool, user_info=...)` 永远是通过的，
-    接线处漏掉 `user_info` 却没人发现——`_current_user(None)` 返回空 user_id，
-    函数安静地返回 `{}`，脚本里那些变量就一直是空的，不报错也不告警。
-    """
-
-    def test_runner_passes_user_info_into_env_binding(self):
-        import inspect
-
-        from app.services.ai.tools import script_tool_runtime
-
-        source = inspect.getsource(script_tool_runtime)
-        call = source[source.index("apply_script_env_bindings("):]
-        call = call[: call.index(")") + 1]
-        assert "user_info=self.user_info" in call

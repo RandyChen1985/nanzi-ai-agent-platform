@@ -88,6 +88,7 @@ def _build_connect_args() -> dict:
 engine = create_async_engine(
     settings.DATABASE_ASYNC_URL,
     echo=False,
+    hide_parameters=True,
     pool_pre_ping=True,
     pool_size=settings.MYSQL_POOL_SIZE,
     max_overflow=settings.MYSQL_MAX_OVERFLOW,

@@ -22,13 +22,13 @@ export interface McpToolGroup {
 const props = withDefaults(
   defineProps<{
     /** 已挂载到会话的 MCP 工具名 */
-    attachedToolNames?: string[]
+    attachedToolIds?: string[]
     compact?: boolean
     fullWidth?: boolean
     /** 桌面侧栏浮层：高度铺满左侧加号菜单，上下对齐 */
     fillHeight?: boolean
   }>(),
-  { attachedToolNames: () => [], compact: false, fullWidth: false, fillHeight: false },
+  { attachedToolIds: () => [], compact: false, fullWidth: false, fillHeight: false },
 )
 
 const emit = defineEmits<{
@@ -47,7 +47,7 @@ const selectedIds = ref<Set<string>>(new Set())
 /** 折叠的分组 serverName */
 const collapsedGroups = ref<Set<string>>(new Set())
 
-const attachedNameSet = computed(() => new Set(props.attachedToolNames.map((n) => String(n || '').trim()).filter(Boolean)))
+const attachedIdSet = computed(() => new Set(props.attachedToolIds))
 
 /** 会话挂载仅允许个人已发布 MCP */
 const personalTools = computed(() =>
@@ -86,10 +86,10 @@ const groupedTools = computed((): McpToolGroup[] => {
 const selectedCount = computed(() => selectedIds.value.size)
 
 const selectedTools = computed(() =>
-  personalTools.value.filter((t) => selectedIds.value.has(t.id) && !attachedNameSet.value.has(t.name)),
+  personalTools.value.filter((t) => selectedIds.value.has(t.id) && !attachedIdSet.value.has(t.id)),
 )
 
-const isAttached = (tool: McpToolItem) => attachedNameSet.value.has(tool.name)
+const isAttached = (tool: McpToolItem) => attachedIdSet.value.has(tool.id)
 const isSelected = (tool: McpToolItem) => selectedIds.value.has(tool.id)
 
 const selectableToolsInGroup = (group: McpToolGroup) => group.tools.filter((t) => !isAttached(t))

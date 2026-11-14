@@ -2,8 +2,8 @@
 
 平台内部用 ``server_name:tool_name`` 作为 MCP 工具唯一标识（避免跨服务器重名），
 但 OpenAI 兼容的 Function Calling 只接受 ``^[a-zA-Z0-9_-]+$``。因此注册给模型的
-名字必须是合法别名，而所有"给模型看的工具名"（工具清单、提示词、日志建议）都必须
-使用同一个别名，否则模型会照抄平台内部标识并被运行时白名单拦截。
+名字必须是合法别名。工具清单、提示词和日志建议使用相同的调用名；模型还可以通过
+用户在本轮明确给出的标识找到已经挂载的 MCP 工具。
 
 本模块只依赖标准库，便于提示词组装等热路径引用。
 """
@@ -16,24 +16,44 @@ import re
 # OpenAI Function Calling 通常限制工具名最多 64 个字符。
 MODEL_TOOL_NAME_MAX_LENGTH = 64
 _MODEL_TOOL_NAME_PREFIX = "mcp_"
-_READABLE_NAME_FALLBACK = "mcp_tool"
 # 平台 MCP 工具的命名空间分隔符：``server_name:tool_name``。
 PLATFORM_MCP_TOOL_SEPARATOR = ":"
+_MODEL_MCP_TOOL_NAME = re.compile(rf"{_MODEL_TOOL_NAME_PREFIX}[0-9a-f]{{20}}")
+_TOOL_REFERENCE_CHAR = r"[a-zA-Z0-9_.:/+-]"
 
 
 def build_model_tool_name(platform_tool_name: str) -> str:
-    """把平台工具标识转换为模型 Function Calling 可接受的稳定工具名。
+    """注册稳定的模型别名。外部工具名称不作为模型输入。"""
+    name_hash = hashlib.sha256(str(platform_tool_name).encode("utf-8")).hexdigest()[:20]
+    return f"{_MODEL_TOOL_NAME_PREFIX}{name_hash}"
 
-    保留可读部分并追加原始名称哈希，既避免非法字符，也避免不同原名清洗后发生碰撞。
-    """
-    raw_name = str(platform_tool_name)
-    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "_", raw_name).strip("_")
-    readable_name = normalized or _READABLE_NAME_FALLBACK
-    name_hash = hashlib.sha256(raw_name.encode("utf-8")).hexdigest()[:10]
-    max_readable_length = (
-        MODEL_TOOL_NAME_MAX_LENGTH - len(_MODEL_TOOL_NAME_PREFIX) - len(name_hash) - 1
+
+def is_model_mcp_tool_name(tool_name: str) -> bool:
+    return _MODEL_MCP_TOOL_NAME.fullmatch(tool_name) is not None
+
+
+def mcp_tool_reference_from_query(
+    platform_name: str | None,
+    model_name: str,
+    user_query: str,
+) -> str | None:
+    """仅取用户本轮已给出、且与已解析 MCP 调用名一致的完整标识。"""
+    if not user_query or not platform_name or len(platform_name) > 255:
+        return None
+    server_name, _, tool_name = platform_name.partition(PLATFORM_MCP_TOOL_SEPARATOR)
+    if (
+        not server_name.strip()
+        or not tool_name.strip()
+        or not platform_name.isprintable()
+        or any(char in platform_name for char in "<>`")
+        or build_model_tool_name(platform_name) != model_name
+    ):
+        return None
+    match = re.search(
+        rf"(?<!{_TOOL_REFERENCE_CHAR}){re.escape(platform_name)}(?!{_TOOL_REFERENCE_CHAR})",
+        user_query,
     )
-    return f"{_MODEL_TOOL_NAME_PREFIX}{readable_name[:max_readable_length]}_{name_hash}"
+    return match[0] if match else None
 
 
 def is_platform_namespaced_tool_name(tool_name: str | None) -> bool:
@@ -45,7 +65,7 @@ def to_runtime_tool_names(platform_tool_name: str | None) -> tuple[str, ...]:
     """平台侧工具名 → 运行时应被视为「同一个工具」的全部名字。
 
     禁用名单里存的是平台名（``jira_search`` / ``server:tool``），而 MCP 工具在运行时
-    注册的是 ``build_model_tool_name()`` 生成的模型调用名（``mcp_jira_search_<hash>``）。
+    注册的是 ``build_model_tool_name()`` 生成的模型调用名（``mcp_<hash>``）。
     拦截判定必须两侧都能命中，否则会出现「勾了禁用却拦不住」——策略形同虚设。
     内置工具名不受影响（运行时就是原名，额外变体只可能命中同名 MCP 工具，与
     按名字拦截的语义一致）。

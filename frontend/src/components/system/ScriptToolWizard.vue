@@ -18,6 +18,7 @@ import CodeEditor from '../CodeEditor.vue'
 import GroupSelect from './GroupSelect.vue'
 import ConfirmModal from '../ConfirmModal.vue'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
+import { getCredentialVersion, type CredentialField } from '@/composables/useCredentialFields'
 import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
 
@@ -96,7 +97,9 @@ const groupName = ref('')
 const schemaText = ref('')
 const code = ref('')
 const requirements = ref<RequirementRow[]>([])
-const timeout = ref('')
+// type="number" 的 v-model 会产生数字，清空时仍是空字符串。
+const timeout = ref<string | number>('')
+const timeoutText = computed(() => String(timeout.value).trim())
 const isActive = ref(true)
 
 const isBuiltin = computed(() => props.tool?.source === 'builtin')
@@ -126,6 +129,7 @@ interface EnvBinding {
   secret_id: string
   secret_key: string
   secret_name: string
+  value_field: string | null
 }
 
 const envBindings = ref<EnvBinding[]>([])
@@ -137,10 +141,17 @@ const envBindingsBusy = ref(false)
 const envDialogOpen = ref(false)
 const envVariable = ref('')
 const envSecretId = ref<string | null>(null)
-const envPickedSecret = ref<{ id: string; secret_key: string } | null>(null)
+type EnvSecret = { id: string; secret_key: string; name: string; credential_format?: string; type_key?: string; type_version?: number; extra_fields?: Record<string, CredentialField> }
+const envPickedSecret = ref<EnvSecret | null>(null)
+const envValueField = ref('')
+const envFields = ref<Record<string, CredentialField>>({})
+const envFieldsLoading = ref(false)
+let envFieldsRequestId = 0
+const envTypeName = ref('')
+const envFieldTypeNames: Record<string, string> = { string: '文本', integer: '整数', number: '数字', boolean: '布尔' }
 const envError = ref('')
 
-const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,123}$/
 
 async function loadEnvBindings() {
   envBindings.value = []
@@ -160,6 +171,7 @@ async function loadEnvBindings() {
         secret_id: row.secret_id,
         secret_key: row.secret_key,
         secret_name: row.secret_name,
+        value_field: row.value_field || null,
       }))
   } catch {
     // 读不到绑定不该挡住编辑脚本
@@ -167,25 +179,57 @@ async function loadEnvBindings() {
 }
 
 function openEnvDialog() {
+  envFieldsRequestId++
+  envFieldsLoading.value = false
   envVariable.value = ''
   envSecretId.value = null
   envPickedSecret.value = null
+  envValueField.value = ''
+  envFields.value = {}
   envError.value = ''
   envDialogOpen.value = true
 }
 
-function onEnvSecretPicked(item: { id: string; secret_key: string } | null) {
+async function onEnvSecretPicked(item: EnvSecret | null) {
+  const requestId = ++envFieldsRequestId
+  envFieldsLoading.value = false
+  envError.value = ''
   envPickedSecret.value = item
+  envValueField.value = ''
+  envFields.value = {}
+  envTypeName.value = ''
+  if (!item || item.credential_format !== 'structured_v1') return
+  envFieldsLoading.value = true
+  try {
+    if (!item.type_key || !item.type_version) throw new Error('凭据类型元数据缺失')
+    const type = await getCredentialVersion(item.type_key, item.type_version)
+    if (requestId !== envFieldsRequestId) return
+    envTypeName.value = type.name
+    envFields.value = Object.fromEntries(Object.entries(type.schema.properties).filter(([, field]) => ['string', 'integer', 'number', 'boolean'].includes(field.type)))
+  } catch {
+    if (requestId === envFieldsRequestId) envError.value = '无法加载凭据字段'
+  } finally {
+    if (requestId === envFieldsRequestId) envFieldsLoading.value = false
+  }
 }
 
 async function saveEnvBinding() {
   const variable = envVariable.value.trim()
   if (!ENV_NAME_RE.test(variable)) {
-    envError.value = '变量名只能用字母、数字、下划线，且不能以数字开头'
+    envError.value = '变量名最多 124 个字符，只能用字母、数字、下划线，且不能以数字开头'
+    return
+  }
+  const upper = variable.toUpperCase()
+  if (['PATH', 'HOME', 'PWD', 'OLDPWD', 'SHELL', 'USER', 'LOGNAME', 'TMPDIR', 'TEMP', 'TMP', 'BASH_ENV', 'ENV', 'IFS'].includes(upper) || /^(LD_|DYLD_|PYTHON)/.test(upper)) {
+    envError.value = '该变量名由执行环境保留'
     return
   }
   if (!envPickedSecret.value) {
     envError.value = '请选择凭据'
+    return
+  }
+  if (envPickedSecret.value.credential_format === 'structured_v1' && (!envValueField.value || !envFields.value[envValueField.value])) {
+    envError.value = '请选择可用的凭据字段'
     return
   }
   if (allEnvBindings.value.some((row) => row.variable === variable)) {
@@ -200,7 +244,8 @@ async function saveEnvBinding() {
       variable,
       secret_id: envPickedSecret.value.id,
       secret_key: envPickedSecret.value.secret_key,
-      secret_name: envPickedSecret.value.secret_key,
+      secret_name: envPickedSecret.value.name,
+      value_field: envValueField.value || null,
     })
     envDialogOpen.value = false
     showToast(`已选中 ${variable}，保存脚本后生效`, 'success')
@@ -215,6 +260,7 @@ async function saveEnvBinding() {
       consumer_type: 'script_tool',
       consumer_id: props.tool.id,
       slot: `env:${variable}`,
+      value_field: envValueField.value || null,
       // 系统管理里配的绑定是给全平台用的：不设全局的话，管理员配完
       // 只有他自己能用，别人的脚本读到的永远是空变量。
       is_global: true,
@@ -242,6 +288,7 @@ async function removeEnvBinding(row: EnvBinding) {
         consumer_type: 'script_tool',
         consumer_id: props.tool.id,
         slot: row.slot,
+        value_field: row.value_field,
         is_global: true,
       },
     })
@@ -272,6 +319,7 @@ async function flushPendingEnvBindings(toolId: string) {
         consumer_type: 'script_tool',
         consumer_id: toolId,
         slot: row.slot,
+        value_field: row.value_field,
         is_global: true,
       })
     } catch {
@@ -357,7 +405,7 @@ const schemaError = computed(() => {
 const codeMissing = computed(() => !code.value.trim() && !isBuiltin.value)
 
 const timeoutError = computed(() => {
-  const raw = timeout.value.trim()
+  const raw = timeoutText.value
   if (!raw) return ''
   const value = Number(raw)
   if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) {
@@ -557,7 +605,7 @@ const submit = () => {
       .filter(Boolean)
       // 保序去重：重复的包会让 pip 行为变得难以预测
       .filter((item, index, list) => list.indexOf(item) === index),
-    timeout_seconds: timeout.value.trim() ? Number(timeout.value.trim()) : null,
+    timeout_seconds: timeoutText.value ? Number(timeoutText.value) : null,
     group_name: groupName.value.trim() || null,
     is_active: isActive.value,
   })
@@ -842,7 +890,7 @@ const primaryLabel = computed(() => {
               <p class="text-sm font-medium text-gray-700">环境变量</p>
               <p class="mt-0.5 text-xs text-gray-500">
                 绑上凭据后，平台在执行前把值写进环境变量，脚本里用
-                <code class="font-mono">os.environ["变量名"]</code> 读。值不会出现在命令行里。
+                <code class="font-mono">os.environ["变量名"]</code> 读。使用专用隔离执行环境，输出会检查凭据回显；平台和个人开关均须开启。整数和布尔字段转换为字符串。
               </p>
             </div>
             <button
@@ -870,7 +918,7 @@ const primaryLabel = computed(() => {
             >
               <code class="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-800">{{ row.variable }}</code>
               <span class="text-gray-300">←</span>
-              <span class="min-w-0 flex-1 truncate text-xs text-gray-700">{{ row.secret_name }}</span>
+              <span class="min-w-0 flex-1 truncate text-xs text-gray-700">{{ row.secret_name }}<template v-if="row.value_field"> · {{ row.value_field }}</template></span>
               <code class="hidden shrink-0 font-mono text-[10px] text-gray-400 sm:inline">{{ row.secret_key }}</code>
               <button
                 type="button"
@@ -922,7 +970,7 @@ const primaryLabel = computed(() => {
             <li>· 名称：<b class="font-mono text-gray-800">{{ name.trim() || '（未填）' }}</b></li>
             <li>· 参数：{{ paramNames.length }} 个<span v-if="requiredParamCount">（必填 {{ requiredParamCount }}）</span></li>
             <li>· 依赖：{{ requirementCount ? `${requirementCount} 个` : '无（仅标准库）' }}</li>
-            <li>· 超时：{{ timeout.trim() ? `${timeout} 秒` : '跟随平台配置' }}</li>
+            <li>· 超时：{{ timeoutText ? `${timeoutText} 秒` : '跟随平台配置' }}</li>
           </ul>
           <p v-if="isBuiltin" class="mt-1.5 text-[11px] text-amber-700">
             改动代码、参数、依赖或超时后，保存会把该内置脚本标记为「已覆盖」，平台后续修复不再影响它；只改分组/展示信息不会。
@@ -992,12 +1040,22 @@ const primaryLabel = computed(() => {
           <CredentialPicker
             v-model="envSecretId"
             scene="script_env"
-            placeholder="选择一条允许「脚本环境变量」场景的凭据"
+            system-only
+            placeholder="选择允许「脚本环境变量」场景的系统凭据"
             @picked="onEnvSecretPicked"
           />
         </div>
+        <p class="mt-1 text-xs text-gray-500">此处为全局绑定，仅可选择已授权给当前用户的系统凭据；个人凭据不在此处列出。</p>
       </div>
 
+      <div v-if="envPickedSecret?.credential_format === 'structured_v1'">
+        <label class="block text-xs font-medium text-gray-700" for="env-value-field">凭据字段（{{ envTypeName || '结构化凭据' }}）</label>
+        <select id="env-value-field" v-model="envValueField" :disabled="envFieldsLoading" class="mt-1 w-full rounded-md border-gray-300 text-sm">
+          <option value="">请选择字段</option>
+          <option v-for="(field, key) in envFields" :key="key" :value="key">{{ field.title || key }} ({{ key }} · {{ envFieldTypeNames[field.type] || field.type }})</option>
+        </select>
+        <p class="mt-1 text-xs text-gray-500">仅支持文本、整数、数字和布尔字段，不显示凭据值。</p>
+      </div>
       <p v-if="envError" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
         {{ envError }}
       </p>

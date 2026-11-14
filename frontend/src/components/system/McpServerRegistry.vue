@@ -1,4 +1,11 @@
 <script setup lang="ts">
+import McpCredentialProfileForm from '@/components/mcp/McpCredentialProfileForm.vue'
+import McpModelResultFieldsForm from '@/components/mcp/McpModelResultFieldsForm.vue'
+import { credentialError } from '@/composables/useCredentialFields'
+import {
+  credentialProfileUrl, getMcpCredentialConfig, type McpCredentialConfig,
+  splitMcpResultPaths, type McpCredentialProfile,
+} from '@/utils/mcpCredentialProfiles'
 import { ref, onMounted, watch, computed, nextTick } from 'vue'
 import axios from '@/utils/axios'
 import { copyToClipboard } from '@/utils/clipboard'
@@ -1221,6 +1228,36 @@ function toolParamNames(tool: any): string[] {
 // 因为影响的是所有人（不只是操作者），chip 点一下只是打开确认弹层，不直接改。
 
 const paramMarkTarget = ref<{ tool: any } | null>(null)
+const paramCredentialConfig = ref<McpCredentialConfig | null>(null)
+const paramCredentialMode = ref<'legacy' | 'group'>('legacy')
+const paramCredentialError = ref('')
+const paramSaveError = ref('')
+const paramResultFields = ref('')
+const paramProfileLoading = ref(false)
+const confirmLegacyMode = ref(false)
+
+function handleGroupSaved(profile: McpCredentialProfile) {
+  if (paramCredentialConfig.value) {
+    paramCredentialConfig.value = { ...paramCredentialConfig.value, profile, stale: false }
+  }
+}
+
+async function restoreLegacyMode() {
+  const tool = paramMarkTarget.value?.tool
+  const config = paramCredentialConfig.value
+  if (!tool || !config?.profile || !confirmLegacyMode.value || paramProfileLoading.value) return
+  paramProfileLoading.value = true
+  paramCredentialError.value = ''
+  try {
+    await axios.delete(credentialProfileUrl(tool.id), { params: { expected_revision: config.profile.revision, expected_profile_id: config.profile.profile_id } })
+    if (paramMarkTarget.value?.tool !== tool) return
+    await reloadParamMark(tool)
+  } catch (err) {
+    paramCredentialError.value = credentialError(err, '无法切换配置')
+  } finally {
+    paramProfileLoading.value = false
+  }
+}
 /**
  * 弹窗是否还在拉绑定。
  *
@@ -1329,14 +1366,14 @@ function paramSlot(tool: any, name: string): string {
  * 复用它会静默不加载，表现就是「绑成功了但界面还显示未选」。
  */
 async function loadBindingsFor(serverId: string) {
-  if (!serverId) return
+  if (!serverId) return false
   try {
     const res = await axios.get('/api/portal/secrets/bindings', {
       params: { consumer_type: 'mcp_server', consumer_id: serverId },
     })
     // 参数设置弹窗和编辑弹窗会同时发请求（先开 A 再点 B 的工具卡片），
     // 谁后返回谁覆盖。晚到的旧响应必须丢掉，否则参数设置里会显示别的服务的绑定。
-    if (paramMarkTarget.value?.tool?.server_id !== serverId) return
+    if (paramMarkTarget.value?.tool?.server_id !== serverId) return false
     const map: Record<string, HeaderBinding> = {}
     const rules: Record<string, HeaderBinding> = {}
     for (const row of res.data?.data || []) {
@@ -1359,8 +1396,10 @@ async function loadBindingsFor(serverId: string) {
     // 和 loadMcpBinding 拉的是同一个服务的全部绑定，谁先谁后内容都一致。
     headerBindings.value = map
     slotRules.value = rules
+    return true
   } catch {
-    // 拉不到就按「未绑」显示，不该挡住参数设置
+    // 未完整加载时不能拿旧绑定或空草稿覆盖已保存的来源。
+    return false
   }
 }
 
@@ -1491,17 +1530,38 @@ async function reloadParamMark(tool: any, param = '') {
   const serverId = String(tool?.server_id || '')
   // 先挂上目标：`loadBindingsFor` 的守卫要求它已经指向这个服务，晚到的旧响应才会被丢掉
   paramMarkTarget.value = { tool }
+  const target = paramMarkTarget.value
+  paramCredentialConfig.value = null
+  paramCredentialMode.value = 'legacy'
+  paramCredentialError.value = ''
+  paramSaveError.value = ''
+  paramResultFields.value = ''
+  confirmLegacyMode.value = false
+  paramProfileLoading.value = true
+  const configRequest = getMcpCredentialConfig(String(tool.id)).then(config => {
+    if (paramMarkTarget.value !== target) return
+    paramCredentialConfig.value = config
+    paramResultFields.value = (config.model_result_policy?.model_result_fields || []).join('\n')
+    if (config.profile) paramCredentialMode.value = 'group'
+    else if (!config.model_result_policy) paramCredentialError.value = '当前后端版本不支持同时保存结果字段，请升级后重试。'
+  }).catch(err => {
+    if (paramMarkTarget.value === target) paramCredentialError.value = credentialError(err, '无法加载凭据配置')
+  }).finally(() => {
+    if (paramMarkTarget.value === target) paramProfileLoading.value = false
+  })
   paramFocus.value = param
   paramDraft.value = {}
   paramRuleDraft.value = {}
   paramBindingsLoading.value = true
   try {
-    await loadBindingsFor(serverId)
+    const loaded = await loadBindingsFor(serverId)
+    if (paramMarkTarget.value === target && !loaded) paramCredentialError.value = '无法加载凭据绑定，请关闭后重新打开参数设置。'
   } finally {
-    paramBindingsLoading.value = false
+    if (paramMarkTarget.value === target) paramBindingsLoading.value = false
   }
+  await configRequest
   // 拉的过程中用户可能已经关了弹窗、或点了另一个工具的参数设置
-  if (paramMarkTarget.value?.tool !== tool) return
+  if (paramMarkTarget.value !== target) return
   buildParamDraft(tool)
 }
 
@@ -1532,6 +1592,10 @@ async function submitParamMark() {
   if (!target || paramMarkBusy.value) return
   // 绑定还没回来时草稿是空的，这时候保存会把所有来源清成「模型填写」
   if (paramBindingsLoading.value) return
+  if (paramProfileLoading.value || paramBindBusy.value || paramCredentialError.value) return
+  const config = paramCredentialConfig.value
+  const policy = config?.model_result_policy
+  if (!config || config.profile || !policy || paramCredentialMode.value !== 'legacy') return
   // 按钮已经禁用了，这里再兜一次：快捷键/程序触发绕过 disabled 时也要挡住
   if (draftUnboundNames.value.length) {
     const parts: string[] = []
@@ -1546,6 +1610,7 @@ async function submitParamMark() {
     .filter(([, source]) => source !== 'model')
     .map(([name]) => name)
   paramMarkBusy.value = true
+  paramSaveError.value = ''
   try {
     // 规则绑定先落库。它和「固定凭据」是两条独立记录，同槽位可以并存
     // （规则负责定位、固定当 on_miss=fallback_fixed 的回退目标）。
@@ -1581,21 +1646,33 @@ async function submitParamMark() {
     }
     const res = await axios.put(`/api/portal/mcp/tools/${tool.id}/credential-params`, {
       params: next,
+      model_result_fields: splitMcpResultPaths(paramResultFields.value),
+      expected_revision: policy.revision,
+      expected_target: policy.target,
     })
+    if (!res.data?.model_result_policy) throw new Error('保存响应缺少结果策略')
     // 用后端回的真实值，别拿本地草稿当结果——不一致时界面会一直显示旧状态
     const saved = res.data?.credential_params
     tool.credential_params = JSON.stringify(Array.isArray(saved) ? saved : next)
+    paramCredentialConfig.value = { ...config, model_result_policy: res.data.model_result_policy }
+    const warning = res.data.warnings?.find((item: { code: string }) => item.code === 'MCP_RESULT_FIELDS_INVALID')
+    if (warning) {
+      paramSaveError.value = `结果已设为模型不可见。${warning.message}`
+      return
+    }
+    paramResultFields.value = res.data.model_result_policy.model_result_fields.join('\n')
     showToast(
       next.length
-        ? `已设置 ${next.length} 个参数由凭据提供，模型不再看到它们`
-        : '已恢复为全部由模型填写',
+        ? `已保存结果字段及参数来源，${next.length} 个参数由凭据提供`
+        : '已保存结果字段，参数全部由模型填写',
       'success',
     )
     paramMarkTarget.value = null
     // 重新拉一遍：本地改的是列表里的对象引用，一旦别处刷新就会被旧数据盖回去
     await fetchServers()
   } catch (e: any) {
-    showToast(e?.response?.data?.detail || '保存失败', 'error')
+    paramSaveError.value = credentialError(e, '保存失败，请重试')
+    showToast(paramSaveError.value, 'error')
   } finally {
     paramMarkBusy.value = false
   }
@@ -3253,12 +3330,13 @@ onMounted(fetchServers)
                   <p class="line-clamp-2 text-xs leading-relaxed text-gray-600 dark:text-gray-400">
                     {{ tool.tool_description || '暂无描述' }}
                   </p>
-                  <div class="mt-2 flex flex-wrap items-center gap-1" v-if="toolParamNames(tool).length">
+                  <div class="mt-2 flex flex-wrap items-center gap-1"
+                    v-if="toolParamNames(tool).length || (canManageTool(tool) && canPublishMcp)">
                     <button
                       v-if="canManageTool(tool) && canPublishMcp"
                       type="button"
                       class="mr-1 inline-flex shrink-0 items-center gap-0.5 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium text-indigo-600 hover:bg-indigo-100"
-                      v-tooltip="'设置哪些参数的值由凭据中心提供'"
+                      v-tooltip="'设置参数凭据和模型可见结果字段'"
                       @click.stop="openParamMark(tool)"
                     >
                       <KeyIcon class="h-2.5 w-2.5" />
@@ -4325,7 +4403,7 @@ onMounted(fetchServers)
           <div
             v-if="paramMarkTarget"
             class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
-            @click.self="paramMarkTarget = null"
+            @click.self="!paramMarkBusy && (paramMarkTarget = null)"
           >
             <div class="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
               <div class="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
@@ -4334,10 +4412,14 @@ onMounted(fetchServers)
                   <p class="mt-0.5 truncate text-xs text-gray-500">
                     {{ paramMarkTarget.tool.tool_name }}
                   </p>
+                  <p v-if="paramCredentialConfig?.model_tool_name" class="mt-0.5 break-all text-xs text-gray-500">
+                    对话调用名 <code>{{ paramCredentialConfig.model_tool_name }}</code>
+                  </p>
                 </div>
                 <button
                   type="button"
                   class="shrink-0 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  :disabled="paramMarkBusy"
                   @click="paramMarkTarget = null"
                 >
                   <XMarkIcon class="h-4 w-4" />
@@ -4345,12 +4427,41 @@ onMounted(fetchServers)
               </div>
 
               <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+                <div v-if="paramCredentialConfig" class="mb-3 flex gap-1 rounded-lg bg-slate-100 p-1 text-sm">
+                  <button type="button" :disabled="paramMarkBusy" :class="paramCredentialMode === 'group' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'"
+                    class="rounded-md px-3 py-1.5" @click="paramCredentialMode = 'group'">同一条凭据</button>
+                  <button type="button" :disabled="paramMarkBusy" :class="paramCredentialMode === 'legacy' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'"
+                    class="rounded-md px-3 py-1.5" @click="paramCredentialMode = 'legacy'">逐参数设置</button>
+                </div>
+                <p v-if="paramCredentialError" role="alert" class="mb-2 text-xs text-rose-700">{{ paramCredentialError }}</p>
+                <p v-if="paramSaveError" role="alert" class="mb-2 text-xs text-rose-700">{{ paramSaveError }}</p>
+                <McpCredentialProfileForm v-if="paramCredentialMode === 'group' && paramCredentialConfig"
+                  :key="paramMarkTarget.tool.id" :tool-id="paramMarkTarget.tool.id" :config="paramCredentialConfig"
+                  @saved="handleGroupSaved" />
+                <div v-else-if="paramCredentialConfig?.profile" class="rounded-lg border bg-amber-50 p-3 text-sm text-amber-950">
+                  <p>此工具正在使用同一条凭据。切换会移除组映射及其固定绑定。</p>
+                  <label class="mt-2 flex items-center gap-2"><input v-model="confirmLegacyMode" type="checkbox" />确认切换为逐参数设置</label>
+                  <button type="button" :disabled="!confirmLegacyMode || paramProfileLoading"
+                    class="mt-2 rounded-lg border bg-white px-3 py-1.5 disabled:opacity-50" @click="restoreLegacyMode">切换配置</button>
+                </div>
+                <template v-else>
+                <McpModelResultFieldsForm v-if="paramCredentialConfig?.model_result_policy"
+                  :key="paramMarkTarget.tool.id" v-model="paramResultFields"
+                  :policy="paramCredentialConfig.model_result_policy" class="mb-3"
+                  :busy="paramMarkBusy"
+                  :disabled="paramMarkBusy || paramBindingsLoading || paramProfileLoading || !!paramCredentialError || draftUnboundNames.length > 0 || paramBindBusy"
+                  @save="submitParamMark" />
+                <p v-if="paramCredentialConfig?.parameters.some(item => item.sensitive && paramDraft[item.name] === 'model')"
+                  role="alert" class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                  存在未绑定的敏感参数。请为这些参数配置服务端凭据，配置完成后才可调用。
+                </p>
                 <!-- 绑定没回来之前不渲染来源下拉：草稿还是空的，画出来就是一堆
                      「模型填写」，用户会以为之前的规则丢了 -->
                 <p v-if="paramBindingsLoading" class="py-10 text-center text-xs text-gray-400">
                   加载中…
                 </p>
-                <table v-if="!paramBindingsLoading" class="w-full table-fixed text-xs">
+                <fieldset v-if="!paramBindingsLoading" :disabled="paramMarkBusy || paramBindBusy" class="min-w-0">
+                <table class="w-full table-fixed text-xs">
                   <thead>
                     <!-- 参数名都很短（api_key / tenant_token），来源列却要放下
                          「选凭据 + 凭据名 + 状态」三样东西。以前参数名按内容吃走
@@ -4449,6 +4560,7 @@ onMounted(fetchServers)
                     </tr>
                   </tbody>
                 </table>
+                </fieldset>
 
                 <p
                   v-if="draftCredentialCount"
@@ -4462,9 +4574,11 @@ onMounted(fetchServers)
                     在这里选的凭据<strong>只对这个服务生效</strong>，别人用自己的账号调不到它。
                   </template>
                 </p>
+                </template>
               </div>
 
-              <div class="flex items-center gap-2 border-t border-gray-100 px-5 py-3">
+              <div v-if="paramCredentialMode === 'legacy' && !paramCredentialConfig?.profile"
+                class="flex items-center gap-2 border-t border-gray-100 px-5 py-3">
                 <span class="text-[11px] text-gray-400">
                   <template v-if="draftCredentialCount">
                     {{ draftCredentialCount }} 个参数由凭据提供
@@ -4472,7 +4586,7 @@ onMounted(fetchServers)
                   <template v-else>全部由模型填写</template>
                   <!-- 两个动作是分开落库的，不讲清楚会以为「选完凭据就好了」 -->
                   <span class="text-gray-300"> · </span>
-                  <span class="text-gray-400">选凭据即刻生效，来源改动需点「保存」</span>
+                  <span class="text-gray-400">选凭据即刻生效，来源改动需点「保存」；结果字段一并保存</span>
                   <span v-if="draftMissingCred.length" class="text-red-600">
                     <span class="text-gray-300"> · </span>
                     {{ draftMissingCred.join('、') }} 还没选凭据
@@ -4486,11 +4600,12 @@ onMounted(fetchServers)
                   <button
                     type="button"
                     class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+                    :disabled="paramMarkBusy"
                     @click="paramMarkTarget = null"
                   >取消</button>
                   <button
                     type="button"
-                    :disabled="paramMarkBusy || paramBindingsLoading || draftUnboundNames.length > 0"
+                    :disabled="paramMarkBusy || paramBindingsLoading || paramProfileLoading || !!paramCredentialError || draftUnboundNames.length > 0 || paramBindBusy || !paramCredentialConfig?.model_result_policy"
                     :title="draftUnboundNames.length
                       ? [
                           draftMissingCred.length ? draftMissingCred.join('、') + ' 还没选凭据' : '',

@@ -10,9 +10,7 @@
 header 一律不动——用户既然手写了，说明他要的就是那个值；想换成凭据中心的值，
 先把那格清空再绑定。
 
-脚本 env 与定时任务还没接，原因写在 ``docs/superpowers/specs/`` 的分期里：
-脚本能 ``print(os.environ)``，值一旦进子进程就没有任何技术手段能拦住它回显，
-必须在「凭据中心已经稳定跑一段时间」之后再开，而且默认关。
+脚本环境变量由隔离执行器接收；解析失败时整次拒绝。
 """
 
 from __future__ import annotations
@@ -31,6 +29,8 @@ from app.services.secrets.policy import (
     resolve_api_tool_slot,
 )
 from app.services.secrets.redact import register_injected
+from app.services.secrets.field_binding import target_digest
+from app.services.secrets.payload_config import payload_keyring_requires_isolation
 from app.services.secrets.resolver import secret_resolver
 from app.services.ai.tools.tool_credentials import CREDENTIAL_PLACEHOLDER_PREFIX
 
@@ -51,6 +51,8 @@ DENIAL_REASONS = {
     "denied_by_grant": "凭据还没有授权给你",
     "denied_by_script_policy": "平台或你的偏好关闭了脚本环境变量注入",
     "denied_by_binding": "没有找到绑定",
+    "binding_unavailable": "凭据绑定暂不可用",
+    "structured_credentials_unavailable": "结构化凭据暂不可解密",
     # 规则没匹配上：这不是「没绑」，也不是「凭据坏了」，而是「按这次的值找不到
     # 对应的那条」——文案要说清是哪一步，否则用户只会去翻凭据状态。
     "rule_miss": "匹配规则没有找到对应凭据",
@@ -60,6 +62,8 @@ DENIAL_REASONS = {
 #: 每种拒绝对应要做什么。只写「为什么」没用——用户按「检查状态」去查，
 #: 而真正要改的是域名白名单或场景勾选，两者根本不在同一个页面。
 DENIAL_HINTS = {
+    "binding_unavailable": "请稍后重试或联系管理员检查凭据存储",
+    "structured_credentials_unavailable": "请联系管理员检查结构化凭据密钥环",
     "denied_by_host": "请编辑这条凭据的「域名白名单」放行目标域名（填 * 表示不限）",
     "denied_by_scenario": "请在这条凭据上勾选对应的使用场景",
     "denied_by_grant": "请管理员把这条凭据授权给你（部门或全体）",
@@ -135,9 +139,9 @@ def _current_user(user_info: Mapping[str, Any] | None) -> tuple[str, str]:
     拿不到 user_id，于是绑定全部解析失败、工具退回「凭据没填」——症状看起来
     像用户没配凭据，实际是上下文没接上。
     """
-    if user_info:
+    if user_info and (user_info.get("user_id") or user_info.get("id")):
         return (
-            str(user_info.get("user_id") or ""),
+            str(user_info.get("user_id") or user_info.get("id") or ""),
             str(user_info.get("dept_code") or ""),
         )
 
@@ -154,7 +158,7 @@ def _current_user(user_info: Mapping[str, Any] | None) -> tuple[str, str]:
             if uid not in (None, ""):
                 return str(uid), str(dimensions.get("dept_code") or "")
     except Exception:  # noqa: BLE001
-        logger.debug("[SecretInject] 读取 AgentContext 用户维度失败", exc_info=True)
+        logger.debug("[SecretInject] 读取 AgentContext 用户维度失败")
 
     try:
         from app.utils.context import current_user_info
@@ -271,7 +275,7 @@ async def _max_inject_per_call() -> int:
         _, _, limit = await SecretResolver._platform_flags()
         return limit
     except Exception:  # noqa: BLE001
-        logger.warning("[SecretInject] 读取注入条数上限失败，按默认值处理", exc_info=True)
+        logger.warning("[SecretInject] 读取注入条数上限失败，按默认值处理")
         return DEFAULT_MAX_INJECT
 
 
@@ -320,6 +324,7 @@ async def apply_api_tool_bindings(
                 consumer_id=str(getattr(config, "id", "") or ""),
                 slot=f"header:{name}",
                 target_host=target,
+                target_binding_digest=target_digest(CONSUMER_API_TOOL, config, f"header:{name}"),
                 trace_id=trace_id,
                 dept_code=dept_code,
                 user_attrs=user_attrs,
@@ -368,10 +373,14 @@ async def apply_api_tool_param_bindings(
     槽位按 HTTP 语义落成 ``query:名字``（GET）或 ``body:名字``（其它方法），
     和绑定表里存的一致。
     """
-    from app.services.ai.tools.system_params import credential_param_names
+    from app.services.ai.tools.system_params import validate_system_params
     from app.services.secrets.locator import choice_field
 
-    names = credential_param_names(getattr(config, "parameter_schema", None))
+    types = {
+        spec.name: spec.type for spec in validate_system_params(getattr(config, "parameter_schema", None))
+        if spec.source != "literal"
+    }
+    names = list(types)
     if not names:
         return params
 
@@ -419,10 +428,10 @@ async def apply_api_tool_param_bindings(
                 scene=SCENE_API_TOOL,
                 consumer_type=CONSUMER_API_TOOL,
                 consumer_id=str(getattr(config, "id", "") or ""),
-                # 槽位由这里推，不写死前缀：POST /refund/{applicant} 里的
-                # applicant 是 path 参数，不是 body 字段。
+                # 槽位由方法与地址模板共同决定。
                 slot=slot,
                 target_host=target,
+                target_binding_digest=target_digest(CONSUMER_API_TOOL, config, slot),
                 trace_id=trace_id,
                 dept_code=dept_code,
                 # 参数级注入：模型填的其余参数就是规则的匹配来源。
@@ -440,6 +449,13 @@ async def apply_api_tool_param_bindings(
 
         if result.ok and result.value is not None:
             plain = result.value.reveal()
+            type_matches = type(plain) in {
+                "string": (str,), "integer": (int,), "number": (int, float), "boolean": (bool,),
+            }[types[name]]
+            if not type_matches:
+                if denials is not None:
+                    denials[slot] = "denied_by_binding"
+                continue
             register_injected(plain)
             resolved[name] = plain
             injected += 1
@@ -509,9 +525,15 @@ async def apply_mcp_bindings(
     if not server_id:
         return headers
 
-    slots = await list_bound_slots(
-        CONSUMER_MCP, server_id, prefix="header:", user_id=user_id
-    )
+    try:
+        slots = await list_bound_slots(
+            CONSUMER_MCP, server_id, prefix="header:", user_id=user_id
+        )
+    except BindingLookupError:
+        if denials is None:
+            raise
+        denials["header:"] = "binding_unavailable"
+        return headers
     if not slots:
         return headers
 
@@ -546,12 +568,16 @@ async def apply_mcp_bindings(
                 consumer_id=server_id,
                 slot=slot,
                 target_host=target,
+                target_binding_digest=target_digest(CONSUMER_MCP, server, slot),
                 trace_id=trace_id,
                 dept_code=dept_code,
                 user_attrs=user_attrs,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[SecretInject] MCP %s 的 %s 解析失败: %s", server_id, slot, exc)
+            logger.warning("[SecretInject] MCP %s 的凭据解析失败 (%s)", server_id, type(exc).__name__)
+            if denials is None:
+                raise BindingLookupError("凭据绑定暂不可用") from None
+            denials[slot] = "binding_unavailable"
             continue
 
         if result.ok and result.value is not None:
@@ -559,8 +585,8 @@ async def apply_mcp_bindings(
             register_injected(plain)
             _set_case_insensitive(resolved, name, plain)
             injected += 1
-        else:
-            _record(denials, slot, result.denial)
+        elif denials is not None:
+            denials[slot] = result.denial or DENY_BINDING
 
     return resolved
 
@@ -649,15 +675,14 @@ async def _resolve_choices(
         # 模型给了编号但一个都解析不出来（比如写成「第 3 条」而不是 c3）。
         # 以前这里静默返回，事后无法回答「模型到底有没有挑」。
         logger.info(
-            "[SecretCatalog] 模型填的凭据编号无法解析，按未选择处理: %s",
-            {name: str(text) for name, text in choices.items()},
+            "[SecretCatalog] 模型填的凭据编号无法解析，按未选择处理",
         )
         return {}
 
     try:
         async with AsyncSessionLocal() as session:
             rows = await list_visible_secrets(
-                session, user_id=user_id, dept_code=dept_code, only_active=True
+                session, user_id=user_id, dept_code=dept_code, only_active=True, legacy_only=True
             )
     except Exception as exc:  # noqa: BLE001 - 拿不到候选就退回「模型没选」
         logger.warning("[SecretInject] 解析凭据编号时读取可见凭据失败: %s", exc)
@@ -688,6 +713,7 @@ async def apply_mcp_arg_bindings(
     *,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    target_host: str | None = None,
 ) -> dict[str, Any]:
     """把凭据填进 MCP 工具调用的 ``arguments``。
 
@@ -710,7 +736,7 @@ async def apply_mcp_arg_bindings(
     if not server_id:
         return arguments
 
-    target = await _mcp_server_host(server_id)
+    target = target_host if target_host is not None else await _mcp_server_host(server_id)
     trace_id = _current_trace_id()
     resolved = dict(arguments)
     limit = await _max_inject_per_call()
@@ -802,6 +828,10 @@ _bindings_unavailable_until = 0.0
 _BINDINGS_COOLDOWN_SECONDS = 60.0
 
 
+class BindingLookupError(RuntimeError):
+    """启用结构化凭据后，绑定状态未知会阻止执行。"""
+
+
 async def list_bound_slots(
     consumer_type: str,
     consumer_id: str,
@@ -824,6 +854,8 @@ async def list_bound_slots(
     if not consumer_type or not consumer_id:
         return []
     if time.monotonic() < _bindings_unavailable_until:
+        if consumer_type == "script_tool" or await payload_keyring_requires_isolation():
+            raise BindingLookupError("凭据绑定暂不可用")
         return []
     try:
         async with AsyncSessionLocal() as session:
@@ -835,15 +867,14 @@ async def list_bound_slots(
                     )
                 )
             ).scalars().all()
-    except Exception:  # noqa: BLE001 - 表不存在/库抖动一律按「没有绑定」
+    except Exception as exc:  # noqa: BLE001
         _bindings_unavailable_until = time.monotonic() + _BINDINGS_COOLDOWN_SECONDS
         logger.warning(
-            "[SecretInject] 读取绑定失败，%d 秒内不再重试（凭据注入暂停）: %s/%s",
-            int(_BINDINGS_COOLDOWN_SECONDS),
-            consumer_type,
-            consumer_id,
-            exc_info=True,
+            "[SecretInject] 读取绑定失败，%d 秒内不再重试 (%s)",
+            int(_BINDINGS_COOLDOWN_SECONDS), type(exc).__name__,
         )
+        if consumer_type == "script_tool" or await payload_keyring_requires_isolation():
+            raise BindingLookupError("凭据绑定暂不可用") from None
         return []
 
     slots: list[str] = []
@@ -853,6 +884,8 @@ async def list_bound_slots(
             continue
         if not str(row.slot or "").startswith(prefix):
             continue
+        if consumer_type == "script_tool" and (getattr(row, "strategy", None) or "fixed") != "fixed":
+            raise BindingLookupError("脚本环境变量只支持固定绑定，请移除旧定位规则")
         slots.append(row.slot)
     return sorted(set(slots))
 
@@ -863,68 +896,60 @@ async def apply_script_env_bindings(
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """解析脚本工具要注入的环境变量，返回 ``{变量名: 值}``。
-
-    **默认拿不到任何东西**：``SCENE_SCRIPT_ENV`` 要求平台策略
-    (``secret_policy_allow_script_env``) 与用户偏好 (``sys_secret_user_prefs``)
-    同时为真，两层默认都是关。闸门在 ``resolver.evaluate_secret`` 里，不在这里——
-    这样「开关在哪、谁拦的」只有一个答案。
-
-    值会写进会话工作区里的一个 0600 文件再由 shell ``.`` 加载，**不进命令行**：
-    ``ps aux`` 和容器进程列表都看得到命令行，看得见就等于泄露。
-    """
+    """解析完整环境变量；任何绑定失败均拒绝整次执行。"""
     from app.services.secrets.policy import CONSUMER_SCRIPT, SCENE_SCRIPT_ENV
 
-    user_id, dept_code = _current_user(user_info)
-    user_attrs = _current_user_attrs(user_info)
-    if not user_id:
-        return {}
+    import math
+    from app.services.secrets.field_binding import valid_script_env_name
 
+    user_id, dept_code = _current_user(user_info)
     tool_id = str(getattr(tool_config, "id", "") or "")
     if not tool_id:
         return {}
-
-    slots = await list_bound_slots(
-        CONSUMER_SCRIPT, tool_id, prefix="env:", user_id=user_id
-    )
+    slots = await list_bound_slots(CONSUMER_SCRIPT, tool_id, prefix="env:", user_id=user_id)
     if not slots:
         return {}
-
-    trace_id = _current_trace_id()
+    if not user_id:
+        raise BindingLookupError("凭据绑定暂不可用")
     resolved: dict[str, str] = {}
+    used: set[str] = set()
+    revisions: dict[str, int | None] = {}
     limit = await _max_inject_per_call()
-    if len(slots) > limit:
-        logger.warning(
-            "[SecretInject] 脚本 %s 绑了 %s 个环境变量，超过单次注入上限 %s，只注入前 %s 个",
-            tool_id,
-            len(slots),
-            limit,
-            limit,
-        )
-        slots = slots[:limit]
-
     for slot in slots:
         name = slot.partition(":")[2]
-        if not name:
-            continue
+        if not valid_script_env_name(name):
+            raise BindingLookupError("凭据绑定暂不可用")
         try:
             result = await secret_resolver.resolve(
-                user_id=user_id,
-                scene=SCENE_SCRIPT_ENV,
-                consumer_type=CONSUMER_SCRIPT,
-                consumer_id=tool_id,
-                slot=slot,
-                trace_id=trace_id,
-                dept_code=dept_code,
-                user_attrs=user_attrs,
+                user_id=user_id, scene=SCENE_SCRIPT_ENV,
+                consumer_type=CONSUMER_SCRIPT, consumer_id=tool_id, slot=slot,
+                target_binding_digest=target_digest(CONSUMER_SCRIPT, tool_config, slot),
+                trace_id=_current_trace_id(), dept_code=dept_code,
+                user_attrs=_current_user_attrs(user_info),
             )
-        except Exception:  # noqa: BLE001
-            logger.warning("[SecretInject] 脚本 %s 的 %s 解析失败", tool_id, slot, exc_info=True)
-            continue
-        if result.ok and result.value is not None:
-            plain = result.value.reveal()
-            register_injected(plain)
-            resolved[name] = plain
-        else:
-            _record(denials, slot, result.denial)
+            if not result.ok or result.value is None or not result.secret_id:
+                if denials is not None:
+                    denials[slot] = result.denial or "denied_by_binding"
+                raise BindingLookupError("凭据绑定暂不可用")
+            used.add(str(result.secret_id))
+            if len(used) > limit:
+                raise BindingLookupError("凭据绑定暂不可用")
+            revision = getattr(result.value, "value_revision", None)
+            if result.secret_id in revisions and revisions[result.secret_id] != revision:
+                raise BindingLookupError("凭据绑定暂不可用")
+            revisions[result.secret_id] = revision
+            value = result.value.reveal()
+            if type(value) is bool:
+                value = "true" if value else "false"
+            elif type(value) is int:
+                value = str(value)
+            elif type(value) is float and math.isfinite(value):
+                value = str(value)
+            elif type(value) is not str:
+                raise BindingLookupError("凭据绑定暂不可用")
+            if "\0" in value:
+                raise BindingLookupError("凭据绑定暂不可用")
+            resolved[name] = value
+        except Exception:
+            raise BindingLookupError("凭据绑定暂不可用") from None
     return resolved

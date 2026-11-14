@@ -49,6 +49,7 @@ DENY_SCENARIO = "denied_by_scenario"
 DENY_SCRIPT_POLICY = "denied_by_script_policy"
 DENY_EXPIRED = "expired"
 DENY_DISABLED = "disabled"
+DENY_STRUCTURED_UNAVAILABLE = "structured_credentials_unavailable"
 #: 绑的是定位规则，但按本次入参没有匹配到任何可见凭据，且规则声明的策略是 fail。
 #: 单独一个值是为了和「压根没绑定」区分开：前者要提示配置者改规则，后者是常态。
 DENY_RULE_MISS = "rule_miss"

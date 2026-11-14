@@ -30,6 +30,7 @@ class UserSecret(Base):
     name = Column(String(128), nullable=False)
     #: ``credential`` 永不可读 / ``variable`` 可读可复制
     secret_type = Column(String(16), nullable=False, default="credential")
+    credential_format = Column(String(24), nullable=False, default="legacy", server_default="legacy")
     value_encrypted = Column(Text, nullable=True)
     value_fingerprint = Column(String(16), nullable=True)
     #: 仅 ``variable`` 存前 8 字符供列表展示；``credential`` 必须为 None
@@ -92,6 +93,8 @@ class SecretBinding(Base):
     strategy = Column(String(16), nullable=False, default="fixed", server_default="fixed")
     #: ``strategy='rule'`` 时的规则 JSON；见 ``app/services/secrets/locator.py``
     rule_json = Column(Text, nullable=True)
+    value_field = Column(String(64), nullable=True)
+    target_digest = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

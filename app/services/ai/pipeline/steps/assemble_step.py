@@ -166,6 +166,7 @@ class AssembleStep(BasePipelineStep):
 
             context_setup_kwargs = dict(
                 config=agent_config,
+                credential_user_query=context.user_query,
                 execution_options=execution_options,
                 user_info=user_info,
                 api_key=context.api_key,

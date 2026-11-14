@@ -24,10 +24,15 @@ from sqlalchemy import and_, or_, select
 
 from app.core.orm import AsyncSessionLocal
 from app.models.secret import SecretBinding, SecretGrant, SecretUsageLog, SecretUserPref, UserSecret
+from app.services.secrets.field_binding import BoundFieldValue, resolve_field
+from app.services.secrets.payload_crypto import PayloadCryptoError
+from app.services.secrets.type_catalog import CredentialTypeError
 from app.services.secrets.policy import (
     DENY_BINDING,
     DENY_GRANT,
+    DENY_HOST,
     DENY_RULE_MISS,
+    DENY_STRUCTURED_UNAVAILABLE,
     GRANTEE_ALL,
     GRANTEE_DEPT,
     GRANTEE_USER,
@@ -55,7 +60,7 @@ class ResolveResult:
     ok: bool
     secret_id: str | None = None
     secret_key: str | None = None
-    value: SensitiveValue | None = None
+    value: SensitiveValue | BoundFieldValue | None = None
     denial: str | None = None
     detail: str = ""
 
@@ -71,6 +76,7 @@ class Located:
     secret_id: str | None = None
     strategy: str = "fixed"
     fallback_used: bool = False
+    binding: SecretBinding | None = None
     denial: str | None = None
     detail: str = ""
 
@@ -133,6 +139,7 @@ class SecretResolver:
         user_attrs: Mapping[str, Any] | None = None,
         rule_args: Mapping[str, Any] | None = None,
         preferred_secret_id: str | None = None,
+        target_binding_digest: str | None = None,
     ) -> ResolveResult:
         """解析一个槽位。返回 ``ok=False`` 时调用方应走自己的默认值。"""
         if not user_id or not consumer_type or not consumer_id or not slot:
@@ -164,7 +171,7 @@ class SecretResolver:
                     return ResolveResult(ok=False, denial=DENY_BINDING)
 
                 row = await session.get(UserSecret, located.secret_id)
-                if row is None:
+                if row is None or getattr(row, "credential_format", "legacy") not in {"legacy", "structured_v1"}:
                     return ResolveResult(
                         ok=False, denial=DENY_BINDING, detail="secret row missing"
                     )
@@ -229,17 +236,22 @@ class SecretResolver:
                         denial=denial,
                     )
 
-                ciphertext = self._pick_ciphertext(row, now)
-                if not ciphertext:
-                    return ResolveResult(
-                        ok=False,
-                        secret_id=record.id,
-                        secret_key=record.secret_key,
-                        denial=DENY_BINDING,
-                        detail="no ciphertext",
-                    )
-
-                plaintext = self._decrypt(ciphertext)
+                if getattr(row, "credential_format", "legacy") == "structured_v1":
+                    if located.strategy != "fixed" or located.binding is None:
+                        return ResolveResult(ok=False, denial=DENY_HOST)
+                    try:
+                        value = await resolve_field(
+                            session, row, located.binding, user_id=user_id, expected_target=target_binding_digest,
+                        )
+                    except (CredentialTypeError, PayloadCryptoError):
+                        return ResolveResult(ok=False, denial=DENY_STRUCTURED_UNAVAILABLE)
+                    except ValueError:
+                        return ResolveResult(ok=False, denial=DENY_HOST)
+                else:
+                    ciphertext = self._pick_ciphertext(row, now)
+                    if not ciphertext:
+                        return ResolveResult(ok=False, secret_id=record.id, denial=DENY_BINDING)
+                    value = SensitiveValue(self._decrypt(ciphertext))
 
                 await self._log_usage(
                     session,
@@ -262,7 +274,7 @@ class SecretResolver:
                     ok=True,
                     secret_id=record.id,
                     secret_key=record.secret_key,
-                    value=SensitiveValue(plaintext),
+                    value=value,
                 )
         except Exception as exc:  # noqa: BLE001 - 见模块 docstring 的 fail-closed 说明
             logger.warning(
@@ -271,7 +283,7 @@ class SecretResolver:
                 consumer_id,
                 slot,
                 user_id,
-                exc,
+                type(exc).__name__,
             )
             return ResolveResult(ok=False, denial=DENY_BINDING, detail="resolver error")
 
@@ -325,7 +337,7 @@ class SecretResolver:
 
             if rule_binding is None:
                 if fixed_binding is not None and fixed_binding.secret_id:
-                    return Located(secret_id=fixed_binding.secret_id, strategy="fixed")
+                    return Located(secret_id=fixed_binding.secret_id, strategy="fixed", binding=fixed_binding)
                 continue
 
             # 坏规则时 spec 为 None，wanted 保持空列表：细节文案要能安全降级
@@ -335,7 +347,7 @@ class SecretResolver:
                 spec = parse_rule(rule_binding.rule_json)
             except RuleError as exc:
                 # 坏规则按未命中处理：不崩、不静默换人，交由 on_miss 语义
-                logger.warning("[SecretLocator] 规则不合法，按未命中处理: %s", exc)
+                logger.warning("[SecretLocator] 规则不合法，按未命中处理: %s", type(exc).__name__)
 
             if spec is not None:
                 wanted = build_candidates(spec, identity=identity, args=args)
@@ -374,7 +386,7 @@ class SecretResolver:
             if on_miss == "fallback_fixed" and fixed_binding is not None and fixed_binding.secret_id:
                 logger.info("[SecretLocator] 规则未命中，回退本层固定绑定 slot=%s", slot)
                 return Located(
-                    secret_id=fixed_binding.secret_id, strategy="fixed", fallback_used=True
+                    secret_id=fixed_binding.secret_id, strategy="fixed", fallback_used=True, binding=fixed_binding
                 )
             if on_miss == "model" and preferred_secret_id:
                 if visible is None:
@@ -468,7 +480,7 @@ class SecretResolver:
         from app.services.secrets.center import list_visible_secrets
 
         return await list_visible_secrets(
-            session, user_id=user_id, dept_code=dept_code, only_active=True
+            session, user_id=user_id, dept_code=dept_code, only_active=True, legacy_only=True
         )
 
     @staticmethod
@@ -513,7 +525,7 @@ class SecretResolver:
         try:
             configs = await ConfigService.get_all_from_db()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[SecretResolver] 读取平台凭据策略失败，按最严格默认值处理: %s", exc)
+            logger.warning("[SecretResolver] 读取平台凭据策略失败，按最严格默认值处理: %s", type(exc).__name__)
             return False, False, DEFAULT_MAX_INJECT
 
         def _value(key: str):
@@ -587,7 +599,7 @@ class SecretResolver:
             )
             await session.commit()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[SecretResolver] 写使用流水失败 %s: %s", record.secret_key, exc)
+            logger.warning("[SecretResolver] 写使用流水失败 %s: %s", record.secret_key, type(exc).__name__)
 
 
 secret_resolver = SecretResolver()

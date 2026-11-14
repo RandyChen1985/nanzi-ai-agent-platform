@@ -1,5 +1,6 @@
 import logging
 import os
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import List, Optional
@@ -128,6 +129,8 @@ class Settings(BaseSettings):
     # Security - API Key Encryption
     # Fernet Key (32 url-safe base64-encoded bytes)
     ENCRYPTION_KEY: str
+    CREDENTIAL_PAYLOAD_KEYRING_JSON: SecretStr = SecretStr("{}")
+    CREDENTIAL_PAYLOAD_ACTIVE_KEY_ID: str = ""
 
     # 产物下载 token 的签名密钥（可选）。
     # 未配置时回退 ENCRYPTION_KEY —— 单机/开发环境无需额外配置。

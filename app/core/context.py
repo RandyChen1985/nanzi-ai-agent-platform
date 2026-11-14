@@ -93,6 +93,8 @@ class AgentContext(BaseModel):
     is_admin: bool = False
     api_key: Optional[str] = None
     user_dimensions: Dict[str, Any] = Field(default_factory=dict)
+    credential_user_query: str = Field(default="", exclude=True, repr=False)
+    scheduled_task_id: int | None = Field(default=None, exclude=True)
     authorized_attachment_paths: List[str] = Field(default_factory=list)
     current_turn_attachment_paths: List[str] = Field(default_factory=list)
     grounding_evidence_ledger: Optional[Any] = Field(

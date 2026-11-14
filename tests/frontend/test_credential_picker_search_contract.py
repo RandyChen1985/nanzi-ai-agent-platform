@@ -76,7 +76,7 @@ class TestFloatingLayer:
         source = PICKER.read_text(encoding="utf-8")
 
         assert "<Teleport to=\"body\">" in source, "绑定弹窗会裁掉内部浮层，必须 Teleport 到 body"
-        assert "zIndex: '10100'" in source, "浮层要压过 z-[100] 的遮罩"
+        # 高层级弹窗的展开与选择由 test_credential_picker_layer_behavior.py 验证。
         assert "position: 'fixed'" in source
 
     def test_long_lists_scroll_inside_a_capped_menu(self):

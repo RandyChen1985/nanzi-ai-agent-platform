@@ -2471,7 +2471,10 @@ class AgentService:
         full_reasoning_content = ""
         trace_id = ""
         agent_name_resp = ""
+        from app.services.secrets.task_credential_wait import wait_event
+
         final_status = "success"
+        credential_wait = None
 
         async for chunk in self.chat_completion_stream(
             messages,
@@ -2493,6 +2496,7 @@ class AgentService:
             if "trace_id" in chunk and chunk.get("status") == "init":
                 trace_id = chunk["trace_id"]
             final_status = _apply_turn_status_signal(final_status, chunk)
+            credential_wait = credential_wait or wait_event(chunk)
             full_content = _accumulate_stream_content(full_content, chunk)
             full_reasoning_content = _accumulate_reasoning_content(
                 full_reasoning_content, chunk
@@ -2520,6 +2524,7 @@ class AgentService:
             "trace_id": trace_id,
             "agent_name": agent_name_resp,
             "status": final_status,
+            **({"credential_wait": credential_wait} if credential_wait and final_status == "awaiting_permission" else {}),
         }
 
     async def resume_agentscope_permission_stream(
@@ -2530,6 +2535,9 @@ class AgentService:
         grant_scope: str = "once",
         user_info: Optional[Dict[str, Any]] = None,
         on_lane_acquired: Optional[Callable[[], Awaitable[None]]] = None,
+        credential_secret_id: str | None = None,
+        scheduled_task_id: int | None = None,
+        remember_credential: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """恢复 AgentScope 工具权限确认流；委托至 AgentScopeResumeHandler。"""
         from app.services.ai.runtime.agentscope.resume import AgentScopeResumeHandler
@@ -2541,6 +2549,9 @@ class AgentService:
             grant_scope=grant_scope,
             user_info=user_info,
             on_lane_acquired=on_lane_acquired,
+            credential_secret_id=credential_secret_id,
+            scheduled_task_id=scheduled_task_id,
+            remember_credential=remember_credential,
         ):
             yield chunk
 

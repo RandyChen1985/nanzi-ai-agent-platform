@@ -13,7 +13,7 @@
  * 全程不离开键盘。
  *
  * 浮层 Teleport 到 body：这些绑定弹窗都带遮罩和固定宽度，浮层留在弹窗内会被
- * 裁掉下半截，而且 z-index 要压过 `z-[100]` 的遮罩。
+ * 裁掉下半截；层级跟随触发按钮所在弹窗，避免被更高层级的嵌套弹窗遮住。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from '../../utils/axios'
@@ -31,6 +31,7 @@ const props = withDefaults(
     /** 只显示启用了该场景的凭据；留空则显示全部 */
     scene?: string
     placeholder?: string
+    systemOnly?: boolean
     disabled?: boolean
   }>(),
   {
@@ -38,6 +39,7 @@ const props = withDefaults(
     scene: '',
     placeholder: '选择凭据',
     disabled: false,
+    systemOnly: false,
   },
 )
 
@@ -133,15 +135,16 @@ function countLabel(matched: number, total: number): string {
 
 const emptyText = computed(() => {
   if (searching.value) return `没有匹配「${query.value.trim()}」的凭据，换个关键词试试。`
+  if (props.systemOnly) return '没有可选的系统凭据。请在系统凭据管理中确认凭据已启用、已授权给当前用户，并允许当前使用场景。个人凭据不能用于全局绑定。'
   return '没有可选的凭据。先到「个人中心 → 我的凭据」建一条，或确认它启用了当前使用场景。'
 })
 
 async function load() {
   loading.value = true
   try {
-    const res = await axios.get('/api/portal/secrets/picker')
+    const res = await axios.get('/api/portal/secrets/picker', { params: props.scene === 'script_env' ? { scene: 'script_env' } : {} })
     const groups = res.data?.data?.groups || {}
-    mine.value = groups.mine || []
+    mine.value = props.systemOnly ? [] : (groups.mine || [])
     shared.value = groups.shared || []
   } catch (e) {
     console.error('加载凭据列表失败', e)
@@ -165,12 +168,18 @@ function updateMenuPosition() {
     180,
     Math.min(Math.round(window.innerHeight * 0.7), available),
   )
+  // 菜单已移到 body，不再继承弹窗层级；嵌套绑定弹窗可能高于默认浮层。
+  let zIndex = 10100
+  for (let ancestor = el.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const ancestorZIndex = Number.parseInt(window.getComputedStyle(ancestor).zIndex, 10)
+    if (Number.isFinite(ancestorZIndex)) zIndex = Math.max(zIndex, ancestorZIndex + 1)
+  }
   menuStyle.value = {
     position: 'fixed',
     left: `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`,
     width: `${width}px`,
     maxHeight: `${maxHeight}px`,
-    zIndex: '10100',
+    zIndex: String(zIndex),
     ...(openUpward
       ? { top: 'auto', bottom: `${Math.max(8, window.innerHeight - rect.top + 4)}px` }
       : { top: `${rect.bottom + 4}px`, bottom: 'auto' }),

@@ -213,6 +213,7 @@ class AgentContextManager:
         runtime_model_info: Optional[Dict[str, Any]] = None,
         published_download_urls: Optional[List[str]] = None,
         agent_max_toolcall_timeout_seconds: Optional[float] = None,
+        credential_user_query: str = "",
     ):
         """
         Setup the execution context (execution options + agent config).
@@ -364,6 +365,8 @@ class AgentContextManager:
             is_admin=is_admin_val,
             api_key=api_key_val,
             user_dimensions=user_dims,
+            credential_user_query=credential_user_query,
+            scheduled_task_id=(user_info or {}).get("scheduled_task_id"),
             authorized_attachment_paths=list(authorized_attachment_paths or []),
             current_turn_attachment_paths=list(current_turn_attachment_paths or []),
             agent_max_toolcall_timeout_seconds=agent_max_toolcall_timeout_seconds,

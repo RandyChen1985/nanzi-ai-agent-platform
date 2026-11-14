@@ -132,8 +132,8 @@ const props = withDefaults(defineProps<{
   activeLtmPreference?: any;
   /** 当前会话有效智能体 ID，用于过滤平台技能列表 */
   agentId?: string | null;
-  /** 会话已挂载的 MCP 工具名 */
-  attachedMcpToolNames?: string[];
+  /** 会话已挂载的 MCP 工具 ID */
+  attachedMcpToolIds?: string[];
   /**
    * 项目会话资源范围：非空时「数据&知识库」浮层只列范围内的资源，
    * 与知识库面板 / 数据门户同口径。`null` / 未传表示不限制。
@@ -2990,7 +2990,7 @@ defineExpose({
                                   <McpCascadeMenu
                                     ref="mcpCascadeRef"
                                     fill-height
-                                    :attached-tool-names="attachedMcpToolNames"
+                                    :attached-tool-ids="attachedMcpToolIds"
                                     @select="mountMcpFromCascade"
                                   />
                                 </div>
@@ -3121,7 +3121,7 @@ defineExpose({
                               <McpCascadeMenu
                                 ref="mcpCascadeRef"
                                 full-width
-                                :attached-tool-names="attachedMcpToolNames"
+                                :attached-tool-ids="attachedMcpToolIds"
                                 @select="mountMcpFromCascade"
                               />
                             </div>

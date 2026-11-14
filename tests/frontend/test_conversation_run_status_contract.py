@@ -89,7 +89,7 @@ def test_both_chat_surfaces_refresh_remote_status_on_visibility_and_bind_busy_st
         else:
             assert ':is-processing="isProcessing || remoteRunBusy || pendingPermissionLocking"' in source
             assert "if (isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value) return;" in source
-        assert ':is-submitting="sendLocked"' in source
+        assert ':is-submitting="sendLocked || resourceScopeSaving"' in source
 
 
 def test_mark_output_completed_keeps_lock_truth_alive_for_recovery():

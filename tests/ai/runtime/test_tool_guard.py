@@ -9,7 +9,7 @@ from app.services.ai.runtime.agentscope.tool_guard import (
 )
 
 MCP_PLATFORM_TOOL_NAME = "mcp-public-admin-ivsom-mcp-server:mcp_query_abnormal_list"
-MCP_MODEL_TOOL_NAME = "mcp_mcp-public-admin-ivsom-mcp-server_mcp_query_abnor_c243c57fdb"
+MCP_MODEL_TOOL_NAME = "mcp_c243c57fdb5ed602a379"
 
 
 def _mcp_spec() -> SimpleNamespace:

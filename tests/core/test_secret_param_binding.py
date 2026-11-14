@@ -53,9 +53,10 @@ def test_literal_param_still_written():
     assert apply_system_params(schema, {}, {}) == {"tenant": "t-1"}
 
 
-def test_credential_param_requires_string_type():
+def test_fixed_field_supports_integer_and_rule_requires_string():
+    assert credential_param_names(schema_with(type_name="integer")) == [PARAM]
     with pytest.raises(SystemParamConfigError):
-        credential_param_names(schema_with(type_name="integer"))
+        credential_param_names(schema_with(source="rule", type_name="integer"))
 
 
 def test_unknown_source_is_rejected():

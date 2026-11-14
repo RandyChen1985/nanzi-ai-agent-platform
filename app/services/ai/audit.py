@@ -11,6 +11,10 @@ from app.services.ai.audit_payload import (
     truncate_text_bytes,
 )
 from app.services.secrets.guard import build_storage_scanner
+from app.services.secrets.mcp_result_storage import (
+    is_projected_result_metadata,
+    restore_projected_timeline_outputs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +206,10 @@ class AuditManager:
                         # 先擦凭据、再截断：顺序反了会把密钥切成两半，
                         # 半截值既匹配不上指纹、又仍然泄露关键片段。
                         tool_input=bound_audit_payload(scanner.mask_data(log.tool_input)),
-                        tool_output=bound_audit_payload(scanner.mask_data(log.tool_output)),
+                        tool_output=bound_audit_payload(
+                            log.tool_output if is_projected_result_metadata(log.meta_info)
+                            else scanner.mask_data(log.tool_output)
+                        ),
                         execution_time_ms=log.execution_time_ms,
                         status=log.status,
                         # 错误信息是最容易夹带连接串/密钥的地方（"Access denied for ..."），
@@ -281,7 +288,9 @@ class AuditManager:
             if isinstance(reasoning_content, str)
             else reasoning_content
         )
-        safe_timeline = scanner.mask_data(process_timeline)
+        safe_timeline = restore_projected_timeline_outputs(
+            process_timeline, scanner.mask_data(process_timeline),
+        )
 
         bounded_query, query_bytes = truncate_text_bytes(
             safe_query, max_bytes=MAX_HISTORY_TEXT_BYTES

@@ -1,27 +1,17 @@
-"""系统工具：列出当前用户「可见」的凭据清单。
-
-只有元数据（编号 / secret_key / 名称 / 备注 / 分类 / 状态），**没有任何凭据值**。
-值只在注入阶段由平台解密、直接写进出站请求，既不进模型上下文，也不进工具出参。
-
-为什么要这个工具：在它之前，「我有哪些凭据」在对话里是黑盒——用户问「我有几个
-邮箱账号？」模型答不了，只能让他自己去凭据中心翻。它也让模型能先看清候选，再
-决定这次调用怎么组织。
-
-它和规则里的 `__secret_choice` 是配合关系，不是替代：凭据参数已经从模型可见的
-schema 里移除，模型即使 list 出想要的那条也没有字段可以「指定用它」；本工具负责
-「看见有哪些」，`__secret_choice` 负责「这一次用哪条」。两边用同一套编号。
-"""
+"""模型端凭据数量统计，兼容旧候选编号；不返回录入明细或凭据值。"""
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from app.core.context import get_current_agent_context
 from app.core.orm import AsyncSessionLocal
 from app.models.user import User
 from app.services.ai.tools.tool_compat import tool
 from app.services.secrets.center import list_visible_secrets
+from app.services.secrets.policy import SCOPE_SYSTEM, SCOPE_USER, TYPE_CREDENTIAL
+from app.services.secrets.structured_payload import LEGACY_FORMAT, STRUCTURED_FORMAT
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +33,7 @@ def _catalog_sort_key(row: Any) -> tuple[str, str]:
     return (str(getattr(row, "secret_key", "") or ""), str(getattr(row, "id", "") or ""))
 
 
-async def _catalog_enabled() -> bool:
+async def _catalog_enabled(*, strict: bool = False) -> bool:
     """平台开关，默认开。
 
     关掉的口子留给需要最严格合规的租户：这个能力会把「某用户有哪些凭据」写进
@@ -54,6 +44,8 @@ async def _catalog_enabled() -> bool:
     try:
         configs = await ConfigService.get_all_from_db()
     except Exception as exc:  # noqa: BLE001
+        if strict:
+            raise
         logger.warning("[SecretCatalog] 读取平台开关失败，按默认（开启）处理: %s", exc)
         return True
     meta = configs.get("secret_policy_allow_catalog") if isinstance(configs, dict) else None
@@ -65,43 +57,59 @@ async def _catalog_enabled() -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _credential_counts(rows: list[Any]) -> dict[str, Any]:
+    counts: dict[str, Any] = {
+        "total": 0,
+        "enabled": 0,
+        "single_value": {"total": 0, "enabled": 0},
+        "structured": {"total": 0, "enabled": 0},
+        "other": {"total": 0, "enabled": 0},
+    }
+    formats = {LEGACY_FORMAT: "single_value", STRUCTURED_FORMAT: "structured"}
+    for row in rows:
+        if row.secret_type != TYPE_CREDENTIAL:
+            continue
+        group = formats.get(row.credential_format, "other")
+        enabled = int(row.status == "active")
+        counts["total"] += 1
+        counts["enabled"] += enabled
+        counts[group]["total"] += 1
+        counts[group]["enabled"] += enabled
+    return counts
+
+
+def _unavailable_catalog(code: str, note: str) -> str:
+    # 未查询成功不能以 0 条回答，也不能为对话提供成功的运行状态证据。
+    return json.dumps(
+        {"status": "unavailable", "success": False, "code": code, "note": note},
+        ensure_ascii=False,
+    )
+
+
 @tool
 async def list_my_credentials(keyword: str = "", limit: int = _DEFAULT_LIMIT) -> str:
-    """列出当前用户「可见」的凭据清单（编号 / secret_key / 名称 / 备注 / 分类 / 状态）。
+    """统计当前用户保存和获授权共享的凭据，包含单值与结构化凭据，不返回值或录入明细。
 
-    使用规则：
-    - 当用户问「我有哪些凭据」「我绑了几个邮箱账号」「有没有某个系统的 key」时调用。
-    - **只返回元数据，没有任何凭据值**。不要据此编造值、也不要假装知道值；值由平台
-      在调用工具时注入，模型看不到也不该问用户要。
-    - ``secret_key`` 是这条凭据在配置里的标识（例如 ``A`` / ``B`` / ``CC``）；规则就是
-      按它做精确匹配的。用户说「用 C 的账号」而清单里只有 ``CC`` 时，很可能指的就是它，
-      但要让用户确认，不要自行认定。
-    - ``remark`` 是用户自己写的备注，常能看出用途（例如「C 的邮箱账号」）。
-    - ``ref`` 是本轮内的短编号，可以原样引用给用户看（例如「第 3 条」），
-      但它只在本轮有效，不要跨对话使用。
-    - 条目多时用 ``keyword`` 收窄（匹配 secret_key / 名称 / 备注 / 分类，不区分大小写），
-      默认最多 20 条、上限 50 条；``truncated=true`` 表示还有未展示的条目。
-    - 只看得到「你自己的凭据 + 已授权给你的系统级凭据」。未授权的系统级凭据
-      **连名称都不会出现**——查不到就如实说「没有」，不要猜。
-    - 输出里没有 ``value`` 字段是设计如此，不是缺字段。
+    - 问「我保存了多少条」使用 owned.total；shared.total 是获授权共享的数量。
+    - total 是两者合计；owned/shared 内的 single_value、structured、other 分别按格式统计。
+    - total 包含停用和过期的已保存记录；enabled 只表示状态为启用，不保证未过期或可调用。
+    - 数量不含变量，也不含另存在 MCP 服务设置中的认证信息。
+    - legacy_choices.items 保留旧 c1/c2 候选编号，仅用于旧版单值注入。
+      legacy_choices.total/truncated 只描述编号候选，不是凭据统计，不能用于回答保存数量。
+    - limit 仅限制返回的旧编号，所有统计始终完整。keyword 不筛选统计或检索账号。
+    - status=unavailable 表示未取得统计，不能回答「0 条」。名称、账号等明细请查看凭据中心。
 
     Args:
-        keyword: 可选。按 secret_key / 名称 / 备注 / 分类模糊匹配，不区分大小写。
-        limit: 可选。最多返回几条，默认 20，最大 50。
+        keyword: 保留的兼容参数，不筛选数量。
+        limit: 最多返回的旧候选编号个数，最大 50，不影响统计。
     """
     ctx = get_current_agent_context()
     user_id = getattr(ctx, "user_id", None)
     if not user_id:
-        return json.dumps(
-            {"items": [], "total": 0, "truncated": False, "note": "无法确定当前用户，未查询凭据清单"},
-            ensure_ascii=False,
-        )
+        return _unavailable_catalog("CURRENT_USER_UNAVAILABLE", "无法确定当前用户，未查询凭据清单")
 
     if not await _catalog_enabled():
-        return json.dumps(
-            {"items": [], "total": 0, "truncated": False, "note": "平台已关闭「列出我的凭据」能力"},
-            ensure_ascii=False,
-        )
+        return _unavailable_catalog("CREDENTIAL_CATALOG_DISABLED", "平台已关闭「列出我的凭据」能力")
 
     try:
         wanted = int(limit or _DEFAULT_LIMIT)
@@ -119,60 +127,51 @@ async def list_my_credentials(keyword: str = "", limit: int = _DEFAULT_LIMIT) ->
             except (TypeError, ValueError):
                 uid_int = None
             user = await session.get(User, uid_int) if uid_int is not None else None
-            dept_code = getattr(user, "dept_code", None) if user is not None else None
+            if user is None:
+                return _unavailable_catalog("CURRENT_USER_UNAVAILABLE", "当前用户已不可用，未查询凭据清单")
+            dept_code = getattr(user, "dept_code", None)
             rows = await list_visible_secrets(
                 session,
                 user_id=str(user_id),
                 dept_code=dept_code,
-                only_active=True,
+                only_active=False,
+                legacy_only=False,
+            )
+            # 与注入层复用原 SQL 条件，包含数据库自身的字符串比较规则。
+            legacy_rows = await list_visible_secrets(
+                session, user_id=str(user_id), dept_code=dept_code, only_active=True, legacy_only=True,
             )
     except Exception as exc:  # noqa: BLE001 - 清单读不到不该炸掉整轮对话
         logger.warning("[SecretCatalog] 读取可见凭据失败: %s", exc)
-        return json.dumps(
-            {"items": [], "total": 0, "truncated": False, "note": "凭据清单暂时读不到，请稍后再试"},
-            ensure_ascii=False,
-        )
+        return _unavailable_catalog("CREDENTIAL_CATALOG_UNAVAILABLE", "凭据清单暂时读不到，请稍后再试")
 
-    ordered = sorted(rows, key=_catalog_sort_key)
-    needle = (keyword or "").strip().lower()
-
-    items: list[dict[str, Any]] = []
-    for index, row in enumerate(ordered, start=1):
-        item = {
-            "ref": ref_of(index),
-            "secret_key": str(getattr(row, "secret_key", "") or ""),
-            "name": str(getattr(row, "name", "") or ""),
-            "remark": (getattr(row, "remark", None) or None),
-            "category": (getattr(row, "category", None) or None),
-            "status": str(getattr(row, "status", "") or ""),
-        }
-        if needle:
-            haystack = " ".join(
-                str(item[key] or "") for key in ("secret_key", "name", "remark", "category")
-            ).lower()
-            if needle not in haystack:
-                continue
-        items.append(item)
-
-    total = len(items)
-    truncated = total > wanted
-    items = items[:wanted]
-
-    note: Optional[str] = None
-    if not items:
-        note = (
-            "没有匹配到凭据"
-            if needle
-            else "你名下没有可用凭据（或都没有授权给你）"
-        )
-    elif truncated:
-        note = f"还有 {total - wanted} 条未展示，可用 keyword 收窄"
+    owned = _credential_counts([row for row in rows if row.owner_scope == SCOPE_USER])
+    shared = _credential_counts([row for row in rows if row.owner_scope == SCOPE_SYSTEM])
+    # 旧编号必须与 injection._resolve_choices 的 active + legacy 范围一致。
+    # 不剔除其中的变量或自身已过期记录，不加入结构化凭据，避免已有 cN 移位。
+    choice_total = len(legacy_rows)
+    choices = {
+        "items": [{"ref": ref_of(index)} for index in range(1, min(choice_total, wanted) + 1)],
+        "total": choice_total,
+        "truncated": choice_total > wanted,
+    }
+    note = (
+        "我保存的凭据数量看 owned.total；获授权共享的看 shared.total；total 为两者合计。"
+        "统计包含单值和结构化凭据，也包含停用或过期的记录，不含变量或 MCP 服务设置中的认证。"
+        "enabled 仅表示状态启用，实际使用还要校验有效期、绑定、场景、目标和功能开关。"
+        "legacy_choices 仅提供旧候选编号，可能包含变量或已过期的旧记录；编号截断不影响完整统计。"
+        "本结果不提供名称、账号等明细，不能据此判断某条具名凭据是否存在。"
+    )
 
     return json.dumps(
         {
-            "items": items,
-            "total": total,
-            "truncated": truncated,
+            "status": "success",
+            "total": owned["total"] + shared["total"],
+            "enabled": owned["enabled"] + shared["enabled"],
+            "owned": owned,
+            "shared": shared,
+            "truncated": False,
+            "legacy_choices": choices,
             "note": note,
         },
         ensure_ascii=False,

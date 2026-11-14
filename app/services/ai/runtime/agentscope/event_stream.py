@@ -265,6 +265,8 @@ async def stream_pending_tool_interrupt(
                             return str(d_name)
         return target_name
 
+    from app.services.secrets.credential_approval import MCP_CREDENTIAL_REF, confirmation_ref
+
     request_id_field = _pending_request_id_field(kind)
     for tool_call in getattr(event, "tool_calls", []) or []:
         tool_id = getattr(tool_call, "id", "") or f"call_{uuid.uuid4().hex[:8]}"
@@ -284,6 +286,22 @@ async def stream_pending_tool_interrupt(
             tool_args = redact_browser_arguments({**tool_args, "sensitive": True})
         _sync_todo_snapshot_from_context(state, get_current_agent_context())
         _sync_published_download_urls_from_context(state, get_current_agent_context())
+        runner_context = runner._runner_context(
+            system_content=state.get("system_content", ""), max_steps=int(state.get("max_steps", 5)),
+        )
+        credential_ref = None
+        if kind == "permission":
+            for container in (tools, getattr(runner, "tools", None)):
+                values = container.values() if isinstance(container, dict) else (container or [])
+                target = next((item for item in values if getattr(item, "name", None) == tool_name), None)
+                selection_reason = getattr(target, "credential_selection_reasons", {}).pop(tool_id, None)
+                if selection_reason and (credential_ref := confirmation_ref(target)):
+                    credential_ref = {**credential_ref, "selection_reason": selection_reason}
+                    task_id = getattr(get_current_agent_context(), "scheduled_task_id", None)
+                    if task_id is not None:
+                        credential_ref["scheduled_task_id"] = task_id
+                    runner_context = {**runner_context, MCP_CREDENTIAL_REF: credential_ref}
+                    break
         pending = await pending_agentscope_confirmations.register(
             kind=kind,
             agent=agent,
@@ -297,10 +315,7 @@ async def stream_pending_tool_interrupt(
             conversation_id=runner.conversation_id,
             agent_name=runner._runtime_agent_name(),
             state=state,
-            runner_context=runner._runner_context(
-                system_content=state.get("system_content", ""),
-                max_steps=int(state.get("max_steps", 5)),
-            ),
+            runner_context=runner_context,
         )
         yield {
             "type": sse_type,
@@ -314,14 +329,17 @@ async def stream_pending_tool_interrupt(
             "expires_at": int(
                 pending.snapshot.created_at + PENDING_CONFIRMATION_TTL_SECONDS
             ),
+            "credential_selection_required": bool(credential_ref),
             "title": (
-                f"需要确认工具调用: {display_name}"
+                f"选择本次调用的凭据: {display_name}"
+                if credential_ref else f"需要确认工具调用: {display_name}"
                 if kind == "permission"
                 else f"需要外部执行工具: {display_name}"
             ),
             "details": f"参数: {json.dumps(tool_args, ensure_ascii=False)}",
             "supports_session_grant": (
                 kind == "permission"
+                and not credential_ref
                 and _supports_session_grant(
                     tool_name,
                     tools,

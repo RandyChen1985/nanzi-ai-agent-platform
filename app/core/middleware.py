@@ -37,6 +37,18 @@ def _decode_captured_response_body(
         return payload.decode("utf-8", errors="replace").replace("\x00", "")
     return f"<binary response: {len(payload)} bytes>"
 
+def credential_metadata_only(path: str) -> bool:
+    path = path.rstrip("/")
+    return (
+        any(path == prefix or path.startswith(prefix + "/") for prefix in (
+            "/api/portal/secrets", "/api/portal/credential-types", "/api/v1/chat/permissions",
+            "/api/portal/mcp", "/api/portal/tools",
+            "/api/portal/system/configs/structured-credentials",
+        ))
+        or (path.startswith("/api/v1/tasks/") and path.endswith("/credential-wait"))
+    )
+
+
 class AccessLogMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # 1. Path Filtering: Only log /api/ requests
@@ -50,14 +62,16 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         start_time = time.time()
         
         # 3. Process Request & Capture Response Body (Optional chunks capture)
+        protected = credential_metadata_only(request.url.path)
         request_body_str = None
         try:
             content_type = request.headers.get("content-type", "")
             content_length = request.headers.get("content-length")
             
             # Only capture JSON/Text, skip large files or unknown types
-            if ("application/json" in content_type or "text/" in content_type) and \
-               (not content_length or int(content_length) < 102400): # 100KB limit
+            if not protected and ("application/json" in content_type or "text/" in content_type) and (
+                not content_length or int(content_length) < 102400
+            ):
                 body_bytes = await request.body()
                 request_body_str = body_bytes.decode("utf-8", errors="ignore")
                 # Truncate if still too long (double safety)
@@ -79,6 +93,8 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
             
         # Add Trace ID to headers
         response.headers["X-Trace-Id"] = trace_id
+        if protected:
+            response.headers["Cache-Control"] = "no-store"
         response_content_encoding = response.headers.get("content-encoding")
         response_content_type = response.headers.get("content-type")
 
@@ -94,8 +110,8 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
                         captured_response_bytes += len(captured_chunk)
                 yield chunk
 
-        original_iterator = response.body_iterator
-        response.body_iterator = body_iterator(original_iterator)
+        if not protected:
+            response.body_iterator = body_iterator(response.body_iterator)
 
         # 4. Immediate async enqueue (Non-blocking)
         # We define a post-response callback to be called later
@@ -120,8 +136,8 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
                 status_code=response.status_code,
                 process_time_ms=process_time,
                 client_ip=request.client.host if request.client else None,
-                request_params=request_body_str or request.query_params.__str__(),
-                response_body=response_body
+                request_params=None if protected else request_body_str or str(request.query_params),
+                response_body=None if protected else response_body
             )
 
         # Use asyncio.create_task to ensure it runs even if the client disconnects

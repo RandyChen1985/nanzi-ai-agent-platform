@@ -40,7 +40,7 @@ export PYTHONPATH=$PYTHONPATH:.
 
 ## 2. 环境要求
 
-- 确保依赖已安装。推荐开发环境先执行 `./dev.sh`；如果只准备测试环境而不启动服务，需先确保 `uv` 已安装，再执行：
+- 在项目根目录安装 Python 依赖。
   ```bash
   uv python install 3.11
   uv venv --python 3.11 .venv
@@ -49,6 +49,24 @@ export PYTHONPATH=$PYTHONPATH:.
     -r requirements.txt
   ```
 - 确保本地数据库（ClickHouse, MySQL, Redis）已启动且配置正确（参考 `.env` 文件）。
+
+### 临时 MySQL 或 PostgreSQL 库
+
+凭据生命周期和元数据关系计数测试使用 `TEST_DATABASE_URL`，两种数据库任选其一。请使用专门的测试实例和账号。MySQL 账号需能创建、读写和删除 `nanzi_test_*` 临时库。PostgreSQL 账号需有 `CREATEDB` 权限，可连接维护库并删除自己创建的库。
+
+```bash
+# MySQL 8 示例
+export TEST_DATABASE_URL='mysql+aiomysql://test_runner:<password>@127.0.0.1:3307'
+
+# PostgreSQL 示例。使用这条时替换上面的配置
+# export TEST_DATABASE_URL='postgresql+psycopg://test_runner:<password>@127.0.0.1:5433/postgres'
+
+.venv/bin/python -m pytest -q \
+  tests/secrets/test_structured_secret_lifecycle.py \
+  tests/test_metadata_relationship_count_batch.py
+```
+
+每个用例生成唯一的 `nanzi_test_*` 库名，建库并初始化所需的表。用例结束后关闭连接并删除本次创建的库，断言失败时也执行清理。全量运行同样需要设置 `TEST_DATABASE_URL`。
 
 ## 3. 目录结构
 

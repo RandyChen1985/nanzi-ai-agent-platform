@@ -31,6 +31,10 @@ from app.services.ai.runtime.workspace_access_policy import (
 )
 
 
+from app.services.secrets.payload_config import payload_keyring_requires_isolation
+from app.services.secrets.payload_crypto import runtime_child_environment
+
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -175,9 +179,14 @@ async def run_shell_command_capture(
     timeout_seconds: float = 30.0,
 ) -> ShellCaptureResult:
     """Run a legacy shell command through the same bounded process primitive."""
+    if await payload_keyring_requires_isolation():
+        return ShellCaptureResult(
+            stdout="", stderr="配置结构化凭据密钥后，代码执行需要使用隔离沙箱。", exit_code=1,
+        )
     process = await asyncio.create_subprocess_shell(
         command,
         cwd=str(cwd) if cwd is not None else None,
+        env=runtime_child_environment(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=os.name == "posix",
@@ -548,10 +557,19 @@ class CodeExecutionHandle:
                 result = await self._run_in_sandbox(policy, started_at=started_at)
                 return
 
+            if await payload_keyring_requires_isolation():
+                message = "配置结构化凭据密钥后，代码执行需要使用隔离沙箱。"
+                self.started.set()
+                await self._emit("error", {"code": "sandbox_required", "message": message})
+                result = CodeExecutionResult(
+                    status="blocked", elapsed_ms=int((time.perf_counter() - started_at) * 1000), error=message,
+                )
+                return
             self._script_path = materialize_script(self.workspace, self.language, self.code)
             command = build_script_command(self.language, self._script_path)
             process_kwargs: dict[str, Any] = {
                 "cwd": str(self.workspace),
+                "env": runtime_child_environment(),
                 "stdout": asyncio.subprocess.PIPE,
                 "stderr": asyncio.subprocess.PIPE,
             }

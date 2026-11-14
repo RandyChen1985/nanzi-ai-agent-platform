@@ -16,6 +16,8 @@ from app.services.ai.context_usage import estimate_context_usage, estimate_text_
 from app.services.ai.memory_service import memory_service
 from app.services.ai.runtime.agentscope.middleware import STATS_KEY_SUFFIX
 from app.services.ai.tools.tool_compat import tool
+from app.services.secrets.credential_approval import MCP_CREDENTIAL_REF
+from app.services.secrets.mcp_capability import MCP_CREDENTIAL_INFO, public_credential_info
 
 
 _SAFE_MODEL_FIELDS = (
@@ -451,7 +453,7 @@ def _attachments_summary(context: Any) -> dict[str, Any]:
 def _resource_summary(context: Any) -> dict[str, Any]:
     capabilities = list(getattr(context, "runtime_tool_capabilities", []) or []) if context else []
     mcp_tools = [
-        {"name": item.get("name"), "source_type": item.get("source_type"), "status": "mounted"}
+        {"name": item["name"], "source_type": "mcp", "status": "mounted"}
         for item in capabilities
         if isinstance(item, dict) and item.get("source_type") == "mcp" and item.get("name")
     ]
@@ -472,11 +474,27 @@ def _resource_summary(context: Any) -> dict[str, Any]:
     }
 
 
-def runtime_tool_capability_from_spec(spec: Any) -> dict[str, Any]:
+def _mcp_credential_info(metadata: Any) -> dict[str, Any]:
+    if not isinstance(metadata, dict):
+        return {}
+    info = public_credential_info(metadata.get(MCP_CREDENTIAL_INFO))
+    if info:
+        return info
+    # 兼容仅含内部结构化引用的运行态，不将该引用本身交给模型。
+    ref = metadata.get(MCP_CREDENTIAL_REF)
+    return public_credential_info({"mode": ref.get("selection_mode")}) if isinstance(ref, dict) else {}
+
+
+def runtime_tool_capability_from_spec(
+    spec: Any, *, platform_tool_name: str | None = None,
+) -> dict[str, Any]:
     """Build a safe capability record from an already resolved runtime spec."""
     from app.services.ai.tool_policy import resolve_tool_metadata
 
     metadata = resolve_tool_metadata(spec)
+    spec_metadata = getattr(spec, "metadata", None)
+    ref = spec_metadata.get(MCP_CREDENTIAL_REF) if isinstance(spec_metadata, dict) else None
+    credential_info = _mcp_credential_info(spec_metadata)
     return {
         "name": str(getattr(spec, "name", "") or ""),
         "description": str(getattr(spec, "description", "") or ""),
@@ -490,7 +508,39 @@ def runtime_tool_capability_from_spec(spec: Any) -> dict[str, Any]:
         "freshness": metadata.freshness,
         "idempotent": metadata.idempotent,
         "nudge_mode": metadata.nudge_mode,
+        **({"platform_tool_name": platform_tool_name} if platform_tool_name else {}),
+        **({MCP_CREDENTIAL_REF: dict(ref)} if isinstance(ref, dict) else {}),
+        **({MCP_CREDENTIAL_INFO: credential_info} if credential_info else {}),
     }
+
+
+def mounted_mcp_tool_capability(tool_name: str) -> tuple[str, dict | None]:
+    """查当前用户已挂载的 MCP，不把非推导模式等同于未挂载。"""
+    context = get_current_agent_context()
+    user_id = str(getattr(context, "user_id", None) or "")
+    if not user_id:
+        return "", None
+    for capability in getattr(context, "runtime_tool_capabilities", ()) or ():
+        if not isinstance(capability, dict) or capability.get("source_type") != "mcp":
+            continue
+        if tool_name != capability.get("name"):
+            continue
+        return user_id, {**capability, MCP_CREDENTIAL_INFO: _mcp_credential_info(capability)}
+    return user_id, None
+
+
+def mounted_mcp_credential_ref(tool_name: str) -> tuple[str, dict | None]:
+    user_id, capability = mounted_mcp_tool_capability(tool_name)
+    ref = capability.get(MCP_CREDENTIAL_REF) if capability else None
+    return user_id, ref if isinstance(ref, dict) and ref.get("selection_mode") == "infer" else None
+
+
+def _public_runtime_capability(capability: dict) -> dict:
+    public = {key: value for key, value in capability.items() if key not in {MCP_CREDENTIAL_REF, MCP_CREDENTIAL_INFO}}
+    credential_info = _mcp_credential_info(capability)
+    if credential_info:
+        public[MCP_CREDENTIAL_INFO] = credential_info
+    return public
 
 
 @tool
@@ -552,16 +602,26 @@ async def session_status() -> str:
 
 @tool
 async def get_runtime_capabilities() -> str:
-    """读取当前运行时实际挂载的系统、配置和 MCP 工具能力。"""
+    """读取当前运行时实际挂载的工具能力。
+
+    name 是实际调用名。platform_tool_name 对应本轮点名的 MCP 标识。
+    mcp_credential 描述凭据注入模式；只有 candidate_lookup_required 为 true 时才查询账号候选。
+    固定凭据由服务端注入，直接调用工具即可，不能用候选查询判断固定凭据是否存在。
+    """
     context = get_current_agent_context()
     capabilities = list(getattr(context, "runtime_tool_capabilities", []) or []) if context else []
     payload = {
         "schema_version": 1,
         "scope": "current_runtime",
-        "tools": capabilities,
+        "tools": [
+            _public_runtime_capability(item)
+            for item in capabilities if isinstance(item, dict)
+        ],
         "limitations": [
             "这里只报告当前运行时已经解析并挂载的工具，不代表所有已注册工具",
-            "工具能力描述不授予权限，实际调用仍受服务端权限、工具门禁、路径和数据授权约束",
+            "MCP 使用 name 字段调用。platform_tool_name 仅在本轮消息匹配已挂载工具时提供。",
+            "凭据模式只说明如何调用，具体绑定、权限与有效性仍在执行时校验。固定凭据无需查询账号候选。",
+            "实际调用仍受服务端权限、工具门禁、路径和数据授权约束",
         ],
     }
     return json.dumps(payload, ensure_ascii=False)

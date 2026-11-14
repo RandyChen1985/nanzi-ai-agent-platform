@@ -30,6 +30,9 @@ class AgentScopeResumeHandler:
         grant_scope: str = "once",
         user_info: Optional[Dict[str, Any]] = None,
         on_lane_acquired: Optional[Callable[[], Awaitable[None]]] = None,
+        credential_secret_id: str | None = None,
+        scheduled_task_id: int | None = None,
+        remember_credential: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         async for chunk in cls._run_resume_flow(
             agent_service,
@@ -40,6 +43,9 @@ class AgentScopeResumeHandler:
             results=None,
             user_info=user_info,
             on_lane_acquired=on_lane_acquired,
+            credential_secret_id=credential_secret_id,
+            scheduled_task_id=scheduled_task_id,
+            remember_credential=remember_credential,
         ):
             yield chunk
 
@@ -77,6 +83,9 @@ class AgentScopeResumeHandler:
         results: Optional[List[Dict[str, Any]]],
         user_info: Optional[Dict[str, Any]] = None,
         on_lane_acquired: Optional[Callable[[], Awaitable[None]]] = None,
+        credential_secret_id: str | None = None,
+        scheduled_task_id: int | None = None,
+        remember_credential: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         from app.core.cancellation import await_unless_cancelling, current_task_cancelling
         from app.services.ai.agent_service import (
@@ -181,6 +190,54 @@ class AgentScopeResumeHandler:
                     }
                     return
                 pending = still_pending
+
+                from app.services.secrets.credential_approval import (
+                    approval_for_pending, current_credential_approval, pending_ref,
+                )
+
+                ref = pending_ref(pending) if not is_external else None
+                approval = None
+                if ref:
+                    if ref.get("scheduled_task_id") != scheduled_task_id:
+                        yield {"type": "error", "status": "error", "content": "请在所属任务的凭据授权入口继续"}
+                        return
+                    grant_scope = "once"
+                    if not current_user_id or str(pending.user_id) != str(current_user_id):
+                        yield {"type": "error", "status": "error", "content": "当前用户无权确认该凭据调用"}
+                        return
+                    if confirmed:
+                        if not credential_secret_id:
+                            yield {"type": "error", "status": "error", "content": "请选择本次调用使用的凭据"}
+                            return
+                        from sqlalchemy.exc import SQLAlchemyError
+
+                        from app.core.orm import AsyncSessionLocal
+                        from app.services.secrets.mcp_profiles import CredentialInvocationError, pending_candidates
+                        from app.services.secrets.type_catalog import CredentialTypeError
+
+                        try:
+                            async with AsyncSessionLocal() as db:
+                                allowed = await pending_candidates(db, ref, str(current_user_id), secret_id=credential_secret_id)
+                            if len(allowed) != 1:
+                                raise CredentialInvocationError("CREDENTIAL_SELECTION_INVALID", "所选凭据已失效或授权已撤销，请重新选择")
+                            approval = approval_for_pending(
+                                pending, credential_secret_id, remember_credential=scheduled_task_id is not None and remember_credential,
+                            )
+                        except (CredentialInvocationError, CredentialTypeError) as exc:
+                            yield {"type": "error", "status": "error", "code": exc.code, "content": str(exc)}
+                            return
+                        except SQLAlchemyError:
+                            yield {
+                                "type": "error", "status": "error", "code": "CREDENTIAL_QUERY_UNAVAILABLE",
+                                "content": "暂时无法查询凭据，请重试",
+                            }
+                            return
+                        except (KeyError, ValueError, TypeError):
+                            yield {
+                                "type": "error", "status": "error", "code": "CREDENTIAL_PROFILE_CHANGED",
+                                "content": "凭据授权请求已变化，请重新发起调用",
+                            }
+                            return
 
                 # 确认真正持有会话锁且快照有效后，再回调清理/开启运行日志，避免并发请求互相清日志。
                 if on_lane_acquired is not None:
@@ -312,6 +369,7 @@ class AgentScopeResumeHandler:
                         )
                     return await audit_coro
 
+                approval_scope = current_credential_approval.set(approval)
                 try:
                     resume_stream = (
                         runner.resume_agentscope_external_execution(
@@ -368,6 +426,8 @@ class AgentScopeResumeHandler:
                         cancelling=cancelling,
                     )
                     raise
+                finally:
+                    current_credential_approval.reset(approval_scope)
 
                 # 本轮已完整跑完：此刻才消费快照（仍在锁内、早于终态帧与落库），中途断开不会提前删除。
                 consumed = await pending_agentscope_confirmations.pop_async(
@@ -492,6 +552,7 @@ class AgentScopeResumeHandler:
                 config=runner.config,
                 execution_options=dict(getattr(runner, "execution_options", {}) or {}),
                 user_info=effective_user_info,
+                credential_user_query=str((pending.state or {}).get("user_query") or ""),
                 api_key=effective_user_info.get("api_key"),
                 conversation_id=(
                     getattr(runner, "conversation_id", None)
@@ -509,6 +570,7 @@ class AgentScopeResumeHandler:
             return
         if hasattr(runner, "_ensure_agent_context"):
             context = runner._ensure_agent_context()
+            context.credential_user_query = str((pending.state or {}).get("user_query") or "")
             restored_urls = _restore_published_download_urls_from_pending(pending)
             if restored_urls:
                 context.published_download_urls = restored_urls

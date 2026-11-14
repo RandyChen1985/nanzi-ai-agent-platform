@@ -27,7 +27,7 @@ def test_chat_surfaces_lock_duplicate_sends_before_async_preflight_finishes():
         _assert_send_lock_contract(source)
         # EmbedChat 额外叠加 recoveryLocking（运行态未知但仍有未收敛草稿时也要锁住）。
         assert ':is-processing="isProcessing || remoteRunBusy' in source
-        assert ':is-submitting="sendLocked"' in source
+        assert ':is-submitting="sendLocked || resourceScopeSaving"' in source
 
 
 def test_preflight_send_paths_claim_the_gate_before_history_or_render_awaits():

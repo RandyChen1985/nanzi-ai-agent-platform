@@ -788,6 +788,7 @@ class ToolPermissionMiddleware(MiddlewareBase):
         )
 
         if self._deny_override is None:
+            self._remember_credential_reason(tool, input_kwargs.get("tool_call"), decision)
             return decision
 
         try:
@@ -804,9 +805,10 @@ class ToolPermissionMiddleware(MiddlewareBase):
                 tool_name,
                 exc,
             )
-            return decision
+            override = None
 
         if override is None:
+            self._remember_credential_reason(tool, input_kwargs.get("tool_call"), decision)
             return decision
 
         from agentscope.permission import PermissionBehavior
@@ -825,7 +827,20 @@ class ToolPermissionMiddleware(MiddlewareBase):
             tool_name,
             getattr(override_behavior, "value", override_behavior),
         )
+        self._remember_credential_reason(tool, input_kwargs.get("tool_call"), decision)
         return decision
+
+    @staticmethod
+    def _remember_credential_reason(tool: Any, tool_call: Any, decision: Any) -> None:
+        # SDK 的确认事件只有 tool_call，没有 PermissionDecision。仅暂存本次调用的安全原因码。
+        pending_reasons = getattr(tool, "credential_selection_reasons", None)
+        call_id = getattr(tool_call, "id", None)
+        reason = getattr(decision, "decision_reason", None)
+        behavior = getattr(decision, "behavior", None)
+        if pending_reasons is not None and call_id and getattr(behavior, "value", behavior) == "ask" and reason in {
+            "credential_missing", "credential_ambiguous", "credential_selection_invalid", "credential_selection_required",
+        }:
+            pending_reasons[call_id] = reason
 
 
 class BashSandboxParentLinkMiddleware(MiddlewareBase):

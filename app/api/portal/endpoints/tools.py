@@ -35,6 +35,7 @@ from app.services.ai.tools.forbidden_catalog import (
 )
 from app.services.ai.tools.generic_api import (
     GenericApiToolFactory,
+    SensitiveApiParametersError,
     UnresolvedCredentialError,
     UnsupportedMethodError,
 )
@@ -664,7 +665,7 @@ async def preview_tool(
             ok=False, error_kind="missing_user_variable", message=str(exc),
             request=request_info(),
         )
-    except UnresolvedCredentialError as exc:
+    except (UnresolvedCredentialError, SensitiveApiParametersError) as exc:
         # 导入的工具还带着 ${CREDENTIAL:...}：试跑就直说，别等运行时才发现
         return SysApiToolPreviewResponse(
             ok=False, error_kind="missing_credential", message=str(exc),
@@ -706,6 +707,14 @@ async def preview_tool(
         return SysApiToolPreviewResponse(
             ok=False, error_kind="connection", message=f"试跑失败：{safe_exc}",
             request=request_info(),
+        )
+
+    if getattr(response, "extensions", {}).get("nanzi_credential_protected"):
+        ok = 200 <= response.status_code < 300
+        return SysApiToolPreviewResponse(
+            ok=ok, status_code=response.status_code, elapsed_ms=elapsed_ms,
+            request=request_info(), error_kind=None if ok else "http_error",
+            message="受保护的调用已完成" if ok else "目标接口拒绝了受保护的调用",
         )
 
     raw_body = response.text or ""

@@ -296,13 +296,15 @@ async def test_credential_catalog_safely_handles_non_numeric_user_id(monkeypatch
     # 是模块级绑定，改 ``app.core.orm.AsyncSessionLocal`` 对它无效，测试会去连真实库。
     monkeypatch.setattr(cat, "AsyncSessionLocal", lambda: _FakeSession())
     monkeypatch.setattr(cat, "_catalog_enabled", AsyncMock(return_value=True))
-    monkeypatch.setattr(cat, "list_visible_secrets", AsyncMock(return_value=[]))
+    visible_secrets = AsyncMock(return_value=[])
+    monkeypatch.setattr(cat, "list_visible_secrets", visible_secrets)
 
     t1 = agent_context.set(AgentContext(agent_id="a", agent_name="n", user_id="42"))
     try:
         # ``@tool`` 装饰后是不可直接调用的 FunctionTool，取底层协程调用；
         # 这样才能断言真实实现里的 int 归一，而不是绕过它去测桩。
         res1 = json.loads(await cat.list_my_credentials.func())
+        assert res1["status"] == "success"
         assert res1["total"] == 0
         assert seen_keys == [42]
     finally:
@@ -316,17 +318,23 @@ async def test_credential_catalog_safely_handles_non_numeric_user_id(monkeypatch
         lambda: SimpleNamespace(user_id="42"),
     )
     res_str = json.loads(await cat.list_my_credentials.func())
+    assert res_str["status"] == "success"
     assert res_str["total"] == 0
     assert seen_keys == [42]
 
     seen_keys.clear()
-    # 「非数字」根本进不来。这里直接替换上下文取值函数，模拟执行器/委派路径传入
-    # 非法 user_id 的情况：工具自身要降级为空清单，而不是抛 ValueError。
+    visible_secrets.reset_mock()
+    # 模拟执行器/委派路径传入非法 user_id：身份不可用不等于查询成功且有 0 条，
+    # 必须返回 unavailable，也不能继续查询可见凭据。
     monkeypatch.setattr(
         cat,
         "get_current_agent_context",
         lambda: SimpleNamespace(user_id="not-a-num"),
     )
     res2 = json.loads(await cat.list_my_credentials.func())
-    assert res2["total"] == 0
+    assert res2["status"] == "unavailable"
+    assert res2["success"] is False
+    assert res2["code"] == "CURRENT_USER_UNAVAILABLE"
+    assert "total" not in res2
     assert seen_keys == []
+    visible_secrets.assert_not_awaited()

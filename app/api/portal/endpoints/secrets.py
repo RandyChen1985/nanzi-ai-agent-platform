@@ -20,15 +20,15 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_admin, require_api_key
 from app.core.orm import get_db_session
 from app.models.secret import SecretUserPref
-from app.services.secrets import center
+from app.services.secrets import center, structured_payload
 from app.services.secrets.injection import denial_text
-from app.services.secrets.center import SecretPermissionError, SecretValidationError
+from app.services.secrets.center import SecretCredentialError, SecretPermissionError, SecretValidationError
 from app.services.secrets.policy import (
     ALL_SCENES,
     CONSUMER_API_TOOL,
@@ -50,10 +50,24 @@ MASK = "••••••••••••"
 # ── 请求 / 响应模型 ────────────────────────────────────────────────────
 
 
+class StructuredSecretRequest(BaseModel):
+    type_key: str = Field(min_length=1, max_length=64)
+    type_version: int = Field(ge=1)
+    account: str = Field(min_length=1, max_length=128, repr=False)
+    fields: Dict[str, Any] = Field(repr=False)
+    extra_fields: Optional[Dict[str, dict]] = Field(default=None, repr=False)
+
+    def to_input(self) -> structured_payload.StructuredInput:
+        return structured_payload.StructuredInput(
+            self.type_key, self.type_version, self.account, self.fields, self.extra_fields,
+        )
+
+
 class CreateSecretRequest(BaseModel):
     secret_key: str = Field(..., description="同一 owner 内唯一的标识，如 jira.prod.token")
     name: str = ""
-    value: str = Field(..., description="凭据值；落库即加密，此后任何接口都不再返回")
+    value: Optional[SecretStr] = Field(default=None, description="单值凭据或变量的值")
+    structured: Optional[StructuredSecretRequest] = Field(default=None, repr=False)
     secret_type: str = TYPE_CREDENTIAL
     allowed_scenarios: List[str] = Field(default_factory=list)
     allowed_hosts: List[str] = Field(default_factory=list)
@@ -72,7 +86,9 @@ class UpdateSecretRequest(BaseModel):
 
 
 class RotateRequest(BaseModel):
-    value: str
+    value: Optional[SecretStr] = None
+    field_changes: Optional[Dict[str, Any]] = Field(default=None, repr=False)
+    expected_value_revision: Optional[int] = Field(default=None, ge=1)
     expires_at: Optional[datetime] = None
     overlap_days: int = Field(default=7, ge=0, le=30)
 
@@ -80,6 +96,7 @@ class RotateRequest(BaseModel):
 class BindRequest(BaseModel):
     #: ``strategy=fixed`` 时必填；``strategy=rule`` 时留空（规则不指向具体凭据）
     secret_id: str = ""
+    value_field: str | None = Field(default=None, max_length=64)
     consumer_type: str
     consumer_id: str
     #: 直接指定槽位（``header:Authorization`` / ``env:VAR`` …）
@@ -143,9 +160,10 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z")
 
 
-def serialize_secret(row) -> Dict[str, Any]:
+def serialize_secret(row, meta: dict | None = None) -> Dict[str, Any]:
     """对外视图。**永不包含** ``value_encrypted`` 或解密后的值。"""
     is_variable = row.secret_type == TYPE_VARIABLE
+    credential_format = getattr(row, "credential_format", structured_payload.LEGACY_FORMAT)
     return {
         "id": row.id,
         "owner_scope": row.owner_scope,
@@ -153,12 +171,16 @@ def serialize_secret(row) -> Dict[str, Any]:
         "secret_key": row.secret_key,
         "name": row.name,
         "secret_type": row.secret_type,
+        "credential_format": credential_format,
+        "type_key": "variable" if is_variable else "scalar",
+        "type_version": 1,
+        **(meta or {}),
         "category": row.category,
         "remark": row.remark,
         "status": row.status,
         "allowed_scenarios": row.allowed_scenarios or [],
         "allowed_hosts": row.allowed_hosts or [],
-        "has_value": bool(row.value_encrypted),
+        "has_value": bool(row.value_encrypted) or bool(meta),
         # 变量类展示前 8 位；凭证类永远是掩码。
         "value_preview": row.value_preview if is_variable else None,
         "value_masked": (row.value_preview or "") if is_variable else MASK,
@@ -172,7 +194,20 @@ def serialize_secret(row) -> Dict[str, Any]:
     }
 
 
-async def _usage_stats(db: AsyncSession, secret_ids: list[str]) -> Dict[str, Dict[str, Any]]:
+async def _structured_metadata(db, rows) -> dict[str, dict]:
+    return await structured_payload.describe_payloads(
+        db, [row.id for row in rows if getattr(row, "credential_format", None) == structured_payload.STRUCTURED_FORMAT],
+    )
+
+
+async def _serialize_details(db, row) -> dict:
+    metadata = await _structured_metadata(db, [row])
+    return serialize_secret(row, metadata.get(row.id))
+
+
+async def _usage_stats(
+    db: AsyncSession, secret_ids: list[str], *, binding_user_id: str | None = None,
+) -> Dict[str, Dict[str, Any]]:
     """按凭据聚合「绑了几个」「最近用过没有」「近 7 天成功/失败」。
 
     列表页一次要展示几十行，逐行查会变成 N+1；这里两张表各一次 GROUP BY。
@@ -183,6 +218,7 @@ async def _usage_stats(db: AsyncSession, secret_ids: list[str]) -> Dict[str, Dic
     from sqlalchemy import and_, case, func, select
 
     from app.models.secret import SecretBinding, SecretUsageLog
+    from app.services.secrets.center import visible_fixed_binding_conditions
 
     if not secret_ids:
         return {}
@@ -192,13 +228,14 @@ async def _usage_stats(db: AsyncSession, secret_ids: list[str]) -> Dict[str, Dic
         for sid in secret_ids
     }
     try:
-        binding_rows = (
-            await db.execute(
-                select(SecretBinding.secret_id, func.count(SecretBinding.id))
-                .where(SecretBinding.secret_id.in_(secret_ids))
-                .group_by(SecretBinding.secret_id)
-            )
-        ).all()
+        binding_query = (
+            select(SecretBinding.secret_id, func.count(SecretBinding.id))
+            .where(SecretBinding.secret_id.in_(secret_ids))
+            .group_by(SecretBinding.secret_id)
+        )
+        if binding_user_id is not None:
+            binding_query = binding_query.where(*visible_fixed_binding_conditions(binding_user_id))
+        binding_rows = (await db.execute(binding_query)).all()
         for secret_id, count in binding_rows:
             stats[secret_id]["binding_count"] = int(count or 0)
 
@@ -286,6 +323,8 @@ def _actor_id(user: Mapping[str, Any] | None) -> str | None:
 
 
 def _fail(exc: SecretValidationError) -> HTTPException:
+    if isinstance(exc, SecretCredentialError):
+        return HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)})
     if isinstance(exc, SecretPermissionError):
         return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -446,6 +485,9 @@ async def list_audit(
 
 @router.get("/picker", summary="凭据选择器数据（供绑定入口使用）")
 async def picker(
+    type_key: Optional[str] = Query(default=None, max_length=64),
+    type_version: Optional[int] = Query(default=None, ge=1),
+    scene: Optional[str] = Query(default=None, max_length=32),
     user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -455,12 +497,21 @@ async def picker(
     """
     user_id, dept_code = _user_ctx(user_info)
     # 选择器只列能用的：停用的摆进来，用户选中、绑定成功，调用时才发现被拒
+    if (type_key is None) != (type_version is None):
+        raise HTTPException(400, detail="类型和版本须同时提供")
+    include_structured = type_key is not None or scene == "script_env"
     rows = await center.list_visible_secrets(
-        db, user_id=user_id, dept_code=dept_code, only_active=True
+        db, user_id=user_id, dept_code=dept_code, only_active=True, legacy_only=not include_structured,
     )
+    metadata = await _structured_metadata(db, rows) if include_structured else {}
 
     grouped: Dict[str, List[Dict[str, Any]]] = {"mine": [], "shared": []}
     for row in rows:
+        if isinstance(scene, str) and scene and scene not in (row.allowed_scenarios or []):
+            continue
+        meta = metadata.get(row.id)
+        if type_key is not None and (not meta or (meta["type_key"], meta["type_version"]) != (type_key, type_version)):
+            continue
         is_system = row.owner_scope == SCOPE_SYSTEM
         grouped["shared" if is_system else "mine"].append(
             {
@@ -468,6 +519,11 @@ async def picker(
                 "secret_key": row.secret_key,
                 "name": row.name,
                 "secret_type": row.secret_type,
+                "owner_scope": row.owner_scope,
+                "credential_format": getattr(row, "credential_format", "legacy"),
+                **({key: meta[key] for key in (
+                    "account", "type_key", "type_version", "secret_fields_set", "extra_fields",
+                ) if key in meta} if meta else {}),
                 "category": row.category,
                 "status": row.status,
                 "allowed_scenarios": row.allowed_scenarios or [],
@@ -674,6 +730,7 @@ class CheckBindingRequest(BaseModel):
 async def check_binding(
     payload: CheckBindingRequest,
     user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """把「调用时才会发现」的问题提前到配置时。
 
@@ -683,16 +740,31 @@ async def check_binding(
 
     返回值里**没有明文**，也没有脱敏值——只说能取到还是不能。
     """
+    from app.models.mcp import McpServer
+    from app.models.tool import SysApiTool
+    from app.services.secrets.field_binding import target_digest
+    from app.services.secrets.injection import host_of
     from app.services.secrets.resolver import secret_resolver
 
     user_id, dept_code = _user_ctx(user_info)
+    consumer = None
+    target = payload.target_host
+    if payload.consumer_type == CONSUMER_MCP:
+        consumer = await db.get(McpServer, payload.consumer_id)
+        if consumer is not None and consumer.scope == "personal" and str(consumer.user_id) != user_id:
+            raise HTTPException(404, detail="目标不存在")
+        target = host_of(consumer.sse_url) if consumer is not None else None
+    elif payload.consumer_type == CONSUMER_API_TOOL:
+        consumer = await db.get(SysApiTool, payload.consumer_id)
+        target = host_of(consumer.url_template) if consumer is not None else None
     result = await secret_resolver.resolve(
         user_id=user_id,
         scene=payload.scene,
         consumer_type=payload.consumer_type,
         consumer_id=payload.consumer_id,
         slot=payload.slot,
-        target_host=payload.target_host,
+        target_host=target,
+        target_binding_digest=target_digest(payload.consumer_type, consumer, payload.slot) if consumer is not None else None,
         dept_code=dept_code,
         user_attrs=_identity_attrs(user_info),
     )
@@ -780,6 +852,8 @@ async def list_platform_credential_targets(
     # 塞进同一个 dict 必然互相覆盖。
     bindings: Dict[str, Dict[str, Any]] = {}
     rules: Dict[str, Dict[str, Any]] = {}
+    visible = await center.list_visible_secrets(db, user_id=user_id, dept_code=_user_ctx(user_info)[1])
+    visible_ids = {row.id for row in visible}
     for binding, secret in rows:
         # 别人的个人绑定与我无关；系统级绑定（bound_by_user_id 为空）要显示
         # 空串与 NULL 都表示全局绑定
@@ -793,10 +867,10 @@ async def list_platform_credential_targets(
                 "bound_by_me": binding.bound_by_user_id == user_id,
             }
             continue
-        if secret is None:
-            # 理论上不会发生（fixed 必填 secret_id），真发生了也别让整页 500
+        if secret is None or secret.id not in visible_ids:
             continue
         bindings[key] = {
+            "value_field": binding.value_field,
             "secret_id": secret.id,
             "secret_key": secret.secret_key,
             "secret_name": secret.name,
@@ -827,6 +901,8 @@ async def list_platform_credential_targets(
 
     from app.services.mcp.mcp_auth_policy import resolve_mcp_auth_headers
     from app.services.secrets.injection import mcp_arg_slots
+
+    from app.models.credential_type import McpCredentialProfile
 
     mcp_items = []
     for server in servers:
@@ -868,7 +944,14 @@ async def list_platform_credential_targets(
                 # 规则的键只能从「这次调用里模型填的其他参数」里选
                 arg_options[slot] = [item for item in plain if item != name]
 
+        fixed_groups = (await db.execute(select(McpToolCache.id, McpToolCache.tool_name).join(
+            McpCredentialProfile, McpCredentialProfile.tool_id == McpToolCache.id,
+        ).where(
+            McpToolCache.server_id == server.id, McpToolCache.is_available.is_(True),
+            McpToolCache.is_published.is_(True), McpCredentialProfile.selection_mode == "fixed",
+        ))).all()
         mcp_items.append({
+            "group_tools": [{"id": row.id, "name": row.tool_name.split(":", 1)[-1]} for row in fixed_groups],
             "id": server.id,
             "server_name": server.server_name,
             "remark": getattr(server, "remark", None),
@@ -1032,8 +1115,8 @@ async def create_binding(
         raise HTTPException(status_code=400, detail="strategy 只能是 fixed 或 rule")
     if payload.strategy == "fixed" and not payload.secret_id:
         raise HTTPException(status_code=400, detail="固定绑定必须指定 secret_id")
-    if payload.strategy == "rule" and payload.rule is None:
-        raise HTTPException(status_code=400, detail="strategy=rule 时必须给出 rule")
+    if payload.strategy == "rule" and (payload.rule is None or payload.value_field is not None):
+        raise HTTPException(status_code=400, detail="规则绑定需要规则，结构化字段使用固定绑定")
     slot = await _resolve_slot(
         db,
         consumer_type=payload.consumer_type,
@@ -1082,6 +1165,7 @@ async def create_binding(
             slot=slot,
             bound_by_user_id=bound_by,
             dept_code=dept_code,
+            value_field=payload.value_field,
             actor_id=_actor_id(user_info),
         )
     except SecretPermissionError:
@@ -1128,6 +1212,18 @@ async def delete_binding(
     return {"code": 0, "message": "已解绑", "data": {"removed": removed}}
 
 
+@router.delete("/bindings/{binding_id}", summary="按记录解除本人固定绑定")
+async def delete_personal_binding(
+    binding_id: str,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id, _ = _user_ctx(user_info)
+    if not await center.unbind_personal_binding(db, binding_id=binding_id, user_id=user_id):
+        raise HTTPException(status_code=404, detail="绑定不存在")
+    return {"code": 0, "message": "已解绑"}
+
+
 # ── 管理员：系统级凭据 ─────────────────────────────────────────────────
 
 
@@ -1144,7 +1240,8 @@ async def admin_create(
             owner_id="",
             secret_key=payload.secret_key,
             name=payload.name,
-            value=payload.value,
+            value=payload.value.get_secret_value() if payload.value is not None else None,
+            structured=payload.structured.to_input() if payload.structured is not None else None,
             secret_type=payload.secret_type,
             allowed_scenarios=payload.allowed_scenarios,
             allowed_hosts=payload.allowed_hosts,
@@ -1155,7 +1252,7 @@ async def admin_create(
         )
     except SecretValidationError as exc:
         raise _fail(exc)
-    return {"code": 0, "message": "已创建", "data": serialize_secret(row)}
+    return {"code": 0, "message": "已创建", "data": await _serialize_details(db, row)}
 
 
 @router.get("/admin", summary="系统级凭据列表（管理员）")
@@ -1250,11 +1347,12 @@ async def admin_list(
             for user_id, user_name, real_name in user_rows:
                 user_names[str(user_id)] = real_name or user_name or str(user_id)
 
+    metadata = await _structured_metadata(db, rows)
     return {
         "code": 0,
         "data": [
             {
-                **serialize_secret(row),
+                **serialize_secret(row, metadata.get(row.id)),
                 **stats.get(row.id, {}),
                 "bindings": [
                     {
@@ -1368,7 +1466,7 @@ async def admin_disable(
         )
     except SecretValidationError as exc:
         raise _fail(exc)
-    return {"code": 0, "message": "已停用", "data": serialize_secret(row)}
+    return {"code": 0, "message": "已停用", "data": await _serialize_details(db, row)}
 
 
 @router.post("/admin/{secret_id}/status", summary="停用 / 恢复系统级凭据（管理员）")
@@ -1403,7 +1501,7 @@ async def admin_set_status(
         )
     except SecretValidationError as exc:
         raise _fail(exc)
-    return {"code": 0, "message": "已保存", "data": serialize_secret(row)}
+    return {"code": 0, "message": "已保存", "data": await _serialize_details(db, row)}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1426,8 +1524,9 @@ async def list_secrets(
     elif scope == "mine":
         rows = [row for row in rows if row.owner_scope == SCOPE_USER]
 
-    items = [serialize_secret(row) for row in rows]
-    stats = await _usage_stats(db, [row.id for row in rows])
+    metadata = await _structured_metadata(db, rows)
+    items = [serialize_secret(row, metadata.get(row.id)) for row in rows]
+    stats = await _usage_stats(db, [row.id for row in rows], binding_user_id=user_id)
     for item in items:
         item.update(stats.get(item["id"], {}))
 
@@ -1454,7 +1553,8 @@ async def create_secret(
             owner_id=user_id,
             secret_key=payload.secret_key,
             name=payload.name,
-            value=payload.value,
+            value=payload.value.get_secret_value() if payload.value is not None else None,
+            structured=payload.structured.to_input() if payload.structured is not None else None,
             secret_type=payload.secret_type,
             allowed_scenarios=payload.allowed_scenarios,
             allowed_hosts=payload.allowed_hosts,
@@ -1465,7 +1565,40 @@ async def create_secret(
         )
     except SecretValidationError as exc:
         raise _fail(exc)
-    return {"code": 0, "message": "已创建", "data": serialize_secret(row)}
+    return {"code": 0, "message": "已创建", "data": await _serialize_details(db, row)}
+
+
+@router.get("/{secret_id}/tool-relations", summary="凭据关联工具")
+async def get_secret_tool_relations(
+    secret_id: str,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    from sqlalchemy import select
+    from sqlalchemy.orm import load_only
+
+    from app.models.secret import UserSecret
+    from app.services.secrets import mcp_profiles, tool_relations
+    from app.services.secrets.resolver import SecretResolver
+
+    user_id, _ = _user_ctx(user_info)
+    user = await mcp_profiles.active_invocation_user(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="凭据不存在")
+    row = await db.scalar(select(UserSecret).options(load_only(
+        UserSecret.id, UserSecret.owner_scope, UserSecret.owner_id, UserSecret.secret_key,
+        UserSecret.secret_type, UserSecret.credential_format, UserSecret.status, UserSecret.expires_at,
+        UserSecret.previous_expires_at, UserSecret.allowed_hosts, UserSecret.allowed_scenarios,
+    )).where(UserSecret.id == secret_id))
+    now = datetime.utcnow()
+    if row is None or not (
+        (row.owner_scope == SCOPE_USER and row.owner_id == user_id)
+        or (row.owner_scope == SCOPE_SYSTEM and await SecretResolver._has_grant(db, row.id, user_id, user.dept_code, now))
+    ):
+        raise HTTPException(status_code=404, detail="凭据不存在")
+
+    data = await tool_relations.list_tool_relations(db, row, user_id=user_id, dept_code=user.dept_code, now=now)
+    return {"code": 0, "data": data}
 
 
 @router.get("/{secret_id}", summary="凭据详情（不含明文）")
@@ -1497,13 +1630,14 @@ async def get_secret(
     return {
         "code": 0,
         "data": {
-            **serialize_secret(row),
+            **(await _serialize_details(db, row)),
             "bindings": [
                 {
                     "id": b.id,
                     "consumer_type": b.consumer_type,
                     "consumer_id": b.consumer_id,
                     "slot": b.slot,
+                    "value_field": b.value_field,
                     "is_global": not b.bound_by_user_id,
                     "bound_by_me": b.bound_by_user_id == user_id,
                 }
@@ -1538,7 +1672,7 @@ async def update_secret(
         raise HTTPException(status_code=404, detail="凭据不存在")
     except SecretValidationError as exc:
         raise _fail(exc)
-    return {"code": 0, "message": "已保存", "data": serialize_secret(row)}
+    return {"code": 0, "message": "已保存", "data": await _serialize_details(db, row)}
 
 
 @router.delete("/{secret_id}", summary="删除凭据")
@@ -1575,7 +1709,9 @@ async def rotate_secret(
         row = await center.rotate_secret(
             db,
             secret_id=secret_id,
-            new_value=payload.value,
+            new_value=payload.value.get_secret_value() if payload.value is not None else None,
+            field_changes=payload.field_changes,
+            expected_value_revision=payload.expected_value_revision,
             rotated_by=user_id,
             overlap_days=payload.overlap_days,
             expires_at=payload.expires_at,
@@ -1585,7 +1721,7 @@ async def rotate_secret(
         raise HTTPException(status_code=404, detail="凭据不存在")
     except SecretValidationError as exc:
         raise _fail(exc)
-    return {"code": 0, "message": "已轮换", "data": serialize_secret(row)}
+    return {"code": 0, "message": "已轮换", "data": await _serialize_details(db, row)}
 
 
 @router.post("/{secret_id}/status", summary="停用 / 启用我自己的凭据")
@@ -1616,7 +1752,7 @@ async def set_status(
         )
     except SecretValidationError as exc:
         raise _fail(exc)
-    return {"code": 0, "message": "已保存", "data": serialize_secret(row)}
+    return {"code": 0, "message": "已保存", "data": await _serialize_details(db, row)}
 
 
 @router.get("/{secret_id}/value", summary="读取变量类明文")

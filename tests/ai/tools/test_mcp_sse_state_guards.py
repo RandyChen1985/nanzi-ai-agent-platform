@@ -21,6 +21,13 @@ SERVER_ID = "guard-server"
 SSE_URL = "https://example.test/mcp"
 
 
+@pytest.fixture
+def mock_public_server(monkeypatch):
+    monkeypatch.setattr(McpClientService, "_load_server", AsyncMock(
+        return_value=SimpleNamespace(sse_url=SSE_URL, auth_headers=None),
+    ))
+
+
 class _FakeAsyncContextManager:
     """最小 async 上下文管理器，用于伪造 sse_client / ClientSession。"""
 
@@ -189,7 +196,7 @@ async def test_call_remote_tool_falls_back_to_direct_http_after_reconnect_downgr
 
 
 @pytest.mark.asyncio
-async def test_list_remote_tools_reports_missing_sse_session(monkeypatch):
+async def test_list_remote_tools_reports_missing_sse_session(monkeypatch, mock_public_server):
     """工具列表同样不得对 None session 直接取属性。"""
     session_mgr = SimpleNamespace(is_direct_http=False, session=None)
     monkeypatch.setattr(McpClientService, "get_session", AsyncMock(return_value=session_mgr))
@@ -199,7 +206,7 @@ async def test_list_remote_tools_reports_missing_sse_session(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_list_remote_tools_downgrade_after_reconnect_uses_direct_http(monkeypatch):
+async def test_list_remote_tools_downgrade_after_reconnect_uses_direct_http(monkeypatch, mock_public_server):
     """工具列表重连后降级 Direct HTTP 的既有口径保持不变。"""
     sse_session = SimpleNamespace(
         list_tools=AsyncMock(side_effect=ConnectionError("sse dropped"))

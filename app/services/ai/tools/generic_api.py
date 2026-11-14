@@ -2,6 +2,7 @@ import logging
 import time
 import httpx
 import json
+from urllib.parse import urlsplit
 from typing import Dict, Any, Mapping, Optional, Type
 from pydantic import create_model, Field
 from app.services.ai.tools.request_signing import (
@@ -9,7 +10,7 @@ from app.services.ai.tools.request_signing import (
     sign_request,
     validate_no_reserved_signing_headers,
 )
-from app.services.ai.tools.system_params import apply_system_params, credential_param_names
+from app.services.ai.tools.system_params import apply_system_params, credential_param_names, parse_system_params
 from app.services.ai.tools.tool_compat import StructuredTool
 from app.services.ai.tools.user_placeholders import (
     contains_user_placeholder,
@@ -24,9 +25,13 @@ from app.services.ai.tools.parameter_schema import (
     apply_user_placeholders as _apply_user_placeholders_impl,
     parse_parameter_schema as _parse_parameter_schema,
 )
-from app.services.ai.tools.tool_credentials import unresolved_credential_headers
+from app.services.ai.tools.tool_credentials import is_credential_header, unresolved_credential_headers
 from app.services.secrets.injection import apply_api_tool_bindings, apply_api_tool_param_bindings
 from app.services.secrets.redact import redact_value
+from app.services.secrets.outbound_visibility import protected_transport
+from app.services.secrets.payload_config import payload_keyring_requires_isolation
+from app.services.secrets.payload_crypto import deployment_keyring_configured
+from app.services.secrets.credential_schema import sensitive_field
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,10 @@ class UnsupportedMethodError(Exception):
     def __init__(self, method: str):
         self.method = method
         super().__init__(f"Unsupported method: {method}")
+
+
+class SensitiveApiParametersError(ValueError):
+    """敏感参数需要服务端凭据来源。"""
 
 
 class UnresolvedCredentialError(Exception):
@@ -122,7 +131,7 @@ class UnresolvedCredentialError(Exception):
 
 class GenericApiToolFactory:
     @staticmethod
-    def create_tool(tool_config: SysApiTool) -> StructuredTool:
+    def create_tool(tool_config: SysApiTool, *, protect_sensitive_parameters: bool | None = None) -> StructuredTool:
         """
         Creates a runtime StructuredTool-compatible wrapper from a SysApiTool configuration.
         """
@@ -135,8 +144,16 @@ class GenericApiToolFactory:
             tool_config.parameter_schema,
             tool_name=tool_config.name,
         )
+        credential_names = credential_param_names(tool_config.parameter_schema)
 
+        if protect_sensitive_parameters is None:
+            protect_sensitive_parameters = deployment_keyring_configured()
         for param_name, param_def in properties.items():
+            if param_name in credential_names or (
+                protect_sensitive_parameters
+                and sensitive_field(param_name, param_def if isinstance(param_def, dict) else {})
+            ):
+                continue
             # Skip keys that are clearly not parameters if we were passed a raw schema but misses checks
             if param_name in ["type", "required", "$schema"] and properties is schema_def:
                  continue
@@ -194,22 +211,10 @@ class GenericApiToolFactory:
         # 编号来自 ``list_my_credentials`` 的返回，两边用同一套排序（secret_key → id），
         # 与 MCP 工具参数那条链路逐位一致。
         # **不在这里注入候选清单**：工具定义可能被缓存复用，而候选按用户可见范围算。
-        try:
-            _credential_names = credential_param_names(
-                getattr(tool_config, "parameter_schema", None)
-            )
-        except Exception as exc:  # noqa: BLE001 - 坏配置不该让整个工具定义构建失败
-            logger.warning(
-                "[GenericApi] 工具 %s 的系统参数配置不合法，跳过凭据编号字段: %s",
-                getattr(tool_config, "name", "?"),
-                exc,
-            )
-            _credential_names = []
-
-        if _credential_names:
+        if credential_names:
             from app.services.secrets.locator import choice_field
 
-            for _name in _credential_names:
+            for _name in credential_names:
                 _alias = choice_field(_name)
                 if _alias in fields:
                     continue
@@ -245,6 +250,7 @@ class GenericApiToolFactory:
         # 携带复杂查询条件的接口；写操作不应通过该表注册。
         tool.is_read_only = True
         tool.permission_scope = "read"
+        tool.protect_sensitive_parameters = protect_sensitive_parameters
         declared_types = set()
         for value in schema_def.get("x-nanzi-evidence-types") or []:
             try:
@@ -297,6 +303,14 @@ class GenericApiToolFactory:
             if user_info is not None
             else current_user_variables()
         )
+        system_specs = parse_system_params(config.parameter_schema)
+        if await payload_keyring_requires_isolation():
+            _, properties, _ = _parse_parameter_schema(config.parameter_schema, tool_name=config.name)
+            if any(
+                sensitive_field(name, spec if isinstance(spec, dict) else {})
+                for name, spec in properties.items()
+            ):
+                raise SensitiveApiParametersError("请先将敏感参数配置为服务端凭据")
         params = _apply_user_placeholders(config, params, variables)
         params = apply_system_params(config.parameter_schema, params, variables)
 
@@ -307,7 +321,7 @@ class GenericApiToolFactory:
         # 凭据参数必须**先于**路径替换注入：`apply_system_params` 会把声明为
         # 「来自凭据」的参数摘掉（它不能塞空串），URL 里 `{applicant}` 就再也
         # 拿不到值，字面量会被原样发出去。
-        credential_params = credential_param_names(getattr(config, "parameter_schema", None))
+        credential_params = [spec.name for spec in system_specs if spec.source != "literal"]
         if credential_params:
             param_denials: dict[str, str] = {}
             params = await apply_api_tool_param_bindings(
@@ -349,8 +363,10 @@ class GenericApiToolFactory:
                     h_config = {}
             if isinstance(h_config, dict):
                 headers.update(h_config)
+        headers_before_binding = dict(headers)
         if headers:
             headers = replace_headers_user_placeholders(headers, variables)
+            headers_before_binding = dict(headers)
             # 凭据中心：只补「本来就没填」的 header，手填的真实值一律不动。
             # 必须在 unresolved_credential_headers 之前——否则占位符会先被判为
             # 「未填」而抛错，绑定过的凭据根本没机会生效。
@@ -359,16 +375,38 @@ class GenericApiToolFactory:
                 config, headers, user_info=user_info, denials=auth_denials
             )
             pending = unresolved_credential_headers(headers)
-            if pending:
-                # 导入工具默认没有凭据；发出去只会换来对方的 401，不如在这里说清楚
-                raise UnresolvedCredentialError(config.name, pending, auth_denials)
+            if pending or auth_denials:
+                missing = pending or [slot.partition(":")[2] for slot in auth_denials]
+                raise UnresolvedCredentialError(config.name, missing, auth_denials)
 
         # 3. Request
         signing = parse_signing_config(config)
         if signing.enabled:
             validate_no_reserved_signing_headers(headers)
 
-        if capture is not None and not signing.enabled:
+        source = urlsplit(config.url_template)
+        protected = bool(
+            credential_params or signing.enabled or headers != headers_before_binding or source.query
+            or source.username is not None or any(sensitive_field(spec.name, {}) for spec in system_specs)
+            or any(
+                is_credential_header(name) or name.lower() not in {"accept", "content-type", "user-agent"}
+                for name in headers
+            )
+        )
+        if protected:
+            # 模型提供的参数只能填路径或请求参数。目标的 scheme/authority 来自已批准的配置。
+            destination = urlsplit(url)
+            if (
+                source.scheme not in {"https", "http"} or not source.hostname
+                or source.username is not None or source.password is not None
+                or "{" in source.netloc or "}" in source.netloc
+                or (source.scheme, source.netloc) != (destination.scheme, destination.netloc)
+            ):
+                raise RuntimeError("CREDENTIAL_TOOL_TARGET_INVALID")
+            if capture is not None:
+                capture.update(method=method, credential_protected=True)
+
+        if capture is not None and not signing.enabled and not protected:
             if method == "GET":
                 query = remaining_params
                 body = None
@@ -385,70 +423,70 @@ class GenericApiToolFactory:
                 "body": body,
             })
 
-        safe_log_url = redact_value(
-            url, where=f"API 工具 {config.name} 请求日志", log_hits=False
-        )
-        safe_log_params = redact_value(
-            remaining_params, where=f"API 工具 {config.name} 请求日志", log_hits=False
-        )
-        logger.info(
-            f"[GenericTool] Executing {config.name} ({method} {safe_log_url}) with params: {safe_log_params}"
-        )
+        logger.info("[GenericTool] Executing %s (%s)", config.name, method)
 
         started = time.monotonic()
         # We disable trust_env=True to avoid SOCKS proxy issues if dependency is missing
         # If explicit proxy is needed, it should be configured in settings or handled via specific client config.
-        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
-            if signing.enabled:
-                # 先让 httpx 构造最终请求，再对**实际会发出去的** path/query/body
-                # 签名；不能拿 json= 序列化前的 dict 另算一份。
-                request = client.build_request(
-                    method,
-                    url,
-                    params=remaining_params if method == "GET" else None,
-                    json=remaining_params if method != "GET" else None,
-                    headers=headers,
-                )
-                raw_path = request.url.raw_path.split(b"?", 1)[0].decode("ascii")
-                raw_query = request.url.query.decode("ascii")
-                signature_headers = sign_request(
-                    method=method,
-                    raw_path=raw_path,
-                    raw_query=raw_query,
-                    body=request.content,
-                    secret=signing.secret or "",
-                    key_id=signing.key_id or "",
-                )
-                request.headers.update(signature_headers)
-                headers = dict(request.headers)
-                if capture is not None:
-                    capture.update({
-                        "method": method,
-                        "url": str(request.url),
-                        "headers": dict(headers),
-                        "query": dict(remaining_params) if method == "GET" else {},
-                        "body": remaining_params if method != "GET" else None,
-                    })
-                if method == "GET":
-                    response = await client.get(str(request.url), headers=headers)
-                else:
-                    response = await client.request(
+        transport_scope = protected_transport.set(protected)
+        try:
+            async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
+                if signing.enabled:
+                    # 先让 httpx 构造最终请求，再对**实际会发出去的** path/query/body
+                    # 签名；不能拿 json= 序列化前的 dict 另算一份。
+                    request = client.build_request(
                         method,
-                        str(request.url),
-                        content=request.content,
+                        url,
+                        params=remaining_params if method == "GET" else None,
+                        json=remaining_params if method != "GET" else None,
                         headers=headers,
                     )
-            elif method == "GET":
-                response = await client.get(url, params=remaining_params, headers=headers)
-            elif method in ["POST", "PUT", "PATCH", "DELETE"]:
-                # Default to JSON body for non-GET
-                response = await client.request(method, url, json=remaining_params, headers=headers)
-            else:
-                raise UnsupportedMethodError(method)
+                    raw_path = request.url.raw_path.split(b"?", 1)[0].decode("ascii")
+                    raw_query = request.url.query.decode("ascii")
+                    signature_headers = sign_request(
+                        method=method,
+                        raw_path=raw_path,
+                        raw_query=raw_query,
+                        body=request.content,
+                        secret=signing.secret or "",
+                        key_id=signing.key_id or "",
+                    )
+                    request.headers.update(signature_headers)
+                    headers = dict(request.headers)
+                    if capture is not None and not protected:
+                        capture.update({
+                            "method": method,
+                            "url": str(request.url),
+                            "headers": dict(headers),
+                            "query": dict(remaining_params) if method == "GET" else {},
+                            "body": remaining_params if method != "GET" else None,
+                        })
+                    if method == "GET":
+                        response = await client.get(str(request.url), headers=headers)
+                    else:
+                        response = await client.request(
+                            method,
+                            str(request.url),
+                            content=request.content,
+                            headers=headers,
+                        )
+                elif method == "GET":
+                    response = await client.get(url, params=remaining_params, headers=headers)
+                elif method in ["POST", "PUT", "PATCH", "DELETE"]:
+                    # Default to JSON body for non-GET
+                    response = await client.request(method, url, json=remaining_params, headers=headers)
+                else:
+                    raise UnsupportedMethodError(method)
+        except Exception:
+            if protected:
+                raise RuntimeError("CREDENTIAL_TOOL_FAILED") from None
+            raise
+        finally:
+            protected_transport.reset(transport_scope)
 
         elapsed_ms = int((time.monotonic() - started) * 1000)
 
-        if capture is not None:
+        if capture is not None and not protected:
             # 请求成功后用 httpx 真正构造出的 URL/Headers 覆盖预捕获值：
             # 这样连 httpx 自动补的 Content-Type、query 编码也能在试跑详情里看到。
             try:
@@ -459,7 +497,11 @@ class GenericApiToolFactory:
                 capture["url"] = str(actual_request.url)
                 capture["headers"] = dict(actual_request.headers)
 
+        if protected:
+            response.extensions["nanzi_credential_protected"] = True
         if raise_on_http_error and not 200 <= response.status_code < 300:
+            if protected:
+                raise RuntimeError("CREDENTIAL_TOOL_FAILED")
             # 报错正文必须先脱敏再截断：若凭据值恰好跨越 500 字符切片边界，
             # 先切片会破坏精确匹配，把密钥前半段明文直接交给模型。
             safe_error_body = redact_value(
@@ -479,6 +521,9 @@ class GenericApiToolFactory:
                 config, params
             )
 
+            if getattr(response, "extensions", {}).get("nanzi_credential_protected"):
+                return {"status": "success", "result_visibility": "restricted"}
+
             # 回灌之前掩码：远端把请求参数原样回显是常见操作，而模型不该看到注入的值。
             where = f"API 工具 {config.name}"
             if response.status_code == 204 or not response.content:
@@ -496,6 +541,8 @@ class GenericApiToolFactory:
         except UnsupportedMethodError as e:
             # 历史文案：``[Error] Unsupported method: XXX``
             return f"[Error] {e}"
+        except SensitiveApiParametersError:
+            return {"status": "error", "code": "CREDENTIAL_MAPPING_REQUIRED"}
         except Exception as e:
             # 先脱敏再写日志和返给模型：底层连接/HTTP 异常可能带着完整 URL query 与 headers。
             safe_error = redact_value(str(e), where=f"API 工具 {config.name} 异常")

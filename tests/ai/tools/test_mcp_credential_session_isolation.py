@@ -64,7 +64,9 @@ def _patched(monkeypatch, *, bound_user_of_headers: bool):
             used["slots"] = ["header:X-Tenant"]
         return {**headers, "X-Tenant": f"tenant-of-{user_id}"}
 
-    async def fake_get_session(server_id, *, session_key=None, auth_headers=None):
+    async def fake_get_session(server_id, *, session_key=None, auth_headers=None, server_snapshot=None):
+        if bound_user_of_headers:
+            assert server_snapshot is server
         calls.append((session_key, dict(auth_headers or {})))
         return session_mgr
 
