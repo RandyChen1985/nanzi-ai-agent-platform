@@ -1,5 +1,13 @@
 # 自动化测试与交付变更清单 (Automation Test & Delivery Checklist)
 
+## 2026-11-14 社区 PR 验收汇总
+
+- 投稿分支按贡献指南使用 `feature/structured-credentials`，目标 `main`；完整保留 `structured-credentials` 的功能及两处脚本交互修复，原开发分支保留。
+- 最新自动化回归：凭据选择与脚本保存等相关纯前端 **59 项通过**，含全量 Vue 模板/脚本语法检查；暂存区差异检查通过。各阶段 PostgreSQL、无数据库回归及迁移静态检查结果见现有实施计划，不累加重复执行数。
+- **用户确认已完成的手动验收**：MySQL/PostgreSQL 双数据库升级、PostgreSQL 升级验证、浏览器实际验收、真实 MCP 端到端联调、定时任务实际联调、脚本 Docker/K8s 容器实际联调。此前阶段的“容器待验收”记录已由本次用户确认更新为通过。上述结果由用户报告，区别于 Agent 执行的自动化回归；未记录具体浏览器矩阵，不宣称跨浏览器均已验证。
+- **尚存检查限制**：全项目 `vue-tsc` 的 155 条既有错误；3 项既有前端字符串契约失败（`test_embed_chat_keeps_lock_truth_driving_recovery_while_composer_uses_busy`、`test_card_emits_scope_and_revoke_events`、`test_chat_pages_send_scope_and_revoke_grants`）。MySQL 业务回归尚无执行记录，双库升级通过不代表两库全量业务测试通过。
+- 本次发布准备不操作真实凭据、业务数据库或部署服务；提交信息使用中文，作者使用贡献者提供的 Git 身份。
+
 ## 2026-11-14 脚本超时输入与保存
 
 - 修复数字输入框将超时转为 number 后，校验/确认区/保存调用 `.trim()` 抛错的问题；统一处理输入值，保持留空提交 null、填写 1–3600 整数秒的既有规则。
