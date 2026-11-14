@@ -252,6 +252,8 @@ async def test_scheduled_metadata_inspection_triggers_alert_on_missing_tables():
         assert "1 张表物理缺失" in mock_portal_notify.await_args.kwargs.get("content", "")
 
         mock_dingtalk_notify.assert_awaited()
-        assert "1 张表物理缺失" in mock_dingtalk_notify.await_args.kwargs.get("content", "")
+        # 钉钉投递已统一走 send_external_channel，content 作为定位参数传入
+        # （(db, user_id, title, content)），不再走 kwargs，所以从 args 取最后一项。
+        assert "1 张表物理缺失" in mock_dingtalk_notify.await_args.args[-1]
 
 
