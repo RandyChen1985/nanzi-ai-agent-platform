@@ -35,14 +35,17 @@ def test_scenario_templates_use_separate_market_detail_and_install_routes():
     assert "/dashboard/scenario-templates" not in dashboard
     assert "activeNames: ['ScenarioTemplates', 'ScenarioTemplateDetail', 'ScenarioTemplateInstall']" not in dashboard
 
-    assert "新建智能体" in agent_management
-    assert "showCreateAgentMenu" in agent_management
-    assert "更多创建方式" in agent_management
-    assert "空白新建" in agent_management
-    assert "从场景模板交付" in agent_management
-    assert "showCreateAgentMenu = false; startAgentCreation()" in agent_management
-    assert "showCreateAgentMenu = false; router.push('/dashboard/scenario-templates')" in agent_management
-    assert "router.push('/dashboard/scenario-templates')" in agent_management
+    # 新建下拉抽成组件（页头与窄屏搜索行各渲染一份，实现只留一处）
+    create_btn = _read("frontend/src/components/agent/AgentCreateButton.vue")
+    assert '新建<span class="hidden sm:inline">智能体</span>' in create_btn
+    assert "更多创建方式" in create_btn
+    assert "空白新建" in create_btn
+    assert "从场景模板交付" in create_btn
+    assert "emit('create')" in create_btn
+    assert "emit('template')" in create_btn
+    # 两个动作在页面侧接到原实现上
+    assert '@create="startAgentCreation"' in agent_management
+    assert "@template=\"router.push('/dashboard/scenario-templates')\"" in agent_management
 
     assert "getScenarioTemplates" in api
     assert "getScenarioTemplate" in api

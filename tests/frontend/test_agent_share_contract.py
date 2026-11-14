@@ -268,8 +268,8 @@ def test_view_switch_tabs_are_outside_list_only_block():
 
     # 反过来：批量 / 网格列表切换 只服务于智能体列表
     assert "toggleBatchMode" in inside
-    # 「筛选」已上移到页头动作区，不再和这批控件同行；
-    # 但它仍必须只在列表视图出现，否则分享视图会多出一个无意义的入口
+    # 「筛选」跟在批量之后（同在列表专属块内），但不在页头第一行；
+    # 它仍必须只在列表视图出现，否则分享视图会多出一个无意义的入口
     filter_start = src.index("<!-- 高级筛选：状态/类型/引擎/就绪度/来源")
     # 从注释结束（-->）之后再找标签，否则会命中注释自己的 ">"
     after_comment = src.index("-->", filter_start) + 3
@@ -376,45 +376,62 @@ def test_tab_strip_shows_clickable_scroll_arrows():
     assert "nextTick(updateScrollHints)" in page
 
 
-def test_mobile_search_is_collapsed_by_default():
-    """移动端搜索默认收起，点页头的放大镜才铺开。
+def test_narrow_row_holds_search_review_and_create():
+    """窄屏第二行就是主操作条：搜索框 + 审核 + 新建，同一行。
 
-    窄屏下搜索框独占一整行，而这行里真常用的是「筛选」；列表一屏才 2~3 张卡片，
-    多压一行等于少看一张。
+    搜索框不再折叠进页头的放大镜——收起后这一行只剩两颗按钮，
+    等于把「搜一下」这个最常用的动作藏起来。
+    「筛选」在窄屏不出现：它有 9 项条件，是低频动作，这一行要留给三颗高频入口；
+    原来筛选占的那个位置改由「发布审核」顶上（文案收成「审核」）。
     """
     page = Path("frontend/src/views/AgentManagement.vue").read_text()
 
-    assert "const mobileSearchOpen = ref(false)" in page
-    assert 'aria-controls="agent-search-row"' in page
+    assert "mobileSearchOpen" not in page, "搜索框不再有折叠态"
+    assert "toggleMobileSearch" not in page
 
-    # 隐藏范围只能包住搜索框本身：这一行还有批量与视图切换，
-    # 整行 hidden 会把它们一起藏掉
+    # 搜索框常显：不能在窄屏挂隐藏
     anchor = page.index('id="agent-search-row"')
     tag = page[page.rindex("<div", 0, anchor) : page.index(">", anchor)]
-    assert "mobileSearchOpen ? '' : 'hidden sm:block'" in tag
-    assert "flex flex-wrap items-center gap-2.5" in page
+    assert "hidden" not in tag, "窄屏也要直接显示搜索框"
+    assert "flex-1" in tag, "搜索框吃掉剩余宽度，审核与新建才排得进一行"
+
+    # 筛选只在桌面渲染
+    filter_note = page.index("<!-- 窄屏不放筛选")
+    filter_tag_at = page.index("<div", filter_note)
+    filter_tag = page[filter_tag_at : page.index(">", filter_tag_at)]
+    assert "!isMobile" in filter_tag, "窄屏不显示筛选"
+
+    # 顺序：搜索 → 批量/视图（桌面）→ 筛选（桌面）→ 审核（窄屏）→ 新建（窄屏）
+    row_start = page.index("<!-- 第 2 行：搜索独占一栏")
+    row = page[row_start : page.index("<!-- 智能体 5 步全流程指引", row_start)]
+    positions = [
+        row.index('id="agent-search-row"'),
+        row.index("toggleBatchMode"),
+        row.index('aria-label="筛选"'),
+        row.index('v-if="canReviewSystem && isMobile"'),
+        row.index('<AgentCreateButton\n        v-if="isMobile"'),
+    ]
+    assert positions == sorted(positions), "顺序应为 搜索 → 批量/视图 → 筛选 → 审核 → 新建"
+
+    # 窄屏那颗审核只留图标：多两个字就把搜索框压窄一截
+    review_at = row.index('v-if="canReviewSystem && isMobile"')
+    review_chunk = row[review_at : row.index("</button>", review_at)]
+    assert 'aria-label="审核"' in review_chunk, "纯图标按钮必须有可读名称"
+    assert "<svg" in review_chunk, "图标要在"
+    # 去掉无障碍名称与 title 后，按钮里不该再有可见的「审核」文本
+    visible = review_chunk.replace('aria-label="审核"', "").replace(
+        "查看待审核的「发布为系统级」申请", ""
+    )
+    assert "审核" not in visible, "窄屏不显示文字，只留图标"
+    # 待审数量用角标，不占按钮宽度
+    assert "absolute -right-1 -top-1" in review_chunk
 
 
-def test_collapsing_mobile_search_clears_the_keyword():
-    """收起时必须清空关键词。
+def test_desktop_header_keeps_create_but_narrow_hides_it():
+    """页头动作区（桌面）：显示指引 / 发布审核 / 新建。
 
-    留着会让列表继续被一个肉眼看不见的关键词过滤，用户只会觉得
-    「怎么少了几个智能体」，而且再也找不到是从哪过滤的。
-    """
-    page = Path("frontend/src/views/AgentManagement.vue").read_text()
-    body = page[page.index("const toggleMobileSearch"):]
-    body = body[: body.index("const switchWorkspaceTab")]
-    assert "searchKeyword.value = ''" in body
-    # 展开时要自动聚焦，否则用户还得再点一次输入框
-    assert "searchInputRef.value?.focus()" in body
-
-
-def test_mobile_header_lays_out_four_buttons_without_a_scroll_container():
-    """窄屏页头一行四颗：搜索 / 发布审核 / 新建 / 筛选。
-
-    关键约束是「可换行但不可滚动」——
-    新建组和筛选面板都是 absolute 定位，一行加上 overflow-x-auto 会把它们裁掉，
-    表现就是点了没反应；所以兜底用 flex-wrap。
+    窄屏只留「发布审核」这类低频入口，新建让位到搜索行末尾（见上一条用例）。
+    动作区仍然不能成为滚动容器——新建下拉是 absolute 定位，会被裁掉。
     """
     page = Path("frontend/src/views/AgentManagement.vue").read_text()
 
@@ -426,18 +443,17 @@ def test_mobile_header_lays_out_four_buttons_without_a_scroll_container():
     assert "sm:flex-nowrap" in bar_tag, "桌面端不换行"
 
     positions = [
-        bar.index('aria-controls="agent-search-row"'),  # 搜索
-        bar.index("发布审核"),                           # 审核
-        bar.index("新建<span"),                           # 新建
-        bar.index('aria-label="筛选"'),                   # 筛选
+        bar.index("显示指引"),
+        bar.index("发布审核"),
+        bar.index('<AgentCreateButton\n          v-if="!isMobile"'),
     ]
-    assert positions == sorted(positions), "顺序应为 搜索 → 发布审核 → 新建 → 筛选"
+    assert positions == sorted(positions), "顺序应为 显示指引 → 发布审核 → 新建"
 
-    # 筛选面板的定位锚必须是 relative
-    filter_at = bar.index('aria-label="筛选"')
-    container = bar[bar.rindex("<div", 0, filter_at) : filter_at]
-    assert "relative" in container
+    # 搜索与筛选都已经搬到第二行，不该再出现在页头
+    assert 'aria-controls="agent-search-row"' not in bar
+    assert 'aria-label="筛选"' not in bar
 
-    # 短文案只作用于移动端，桌面保留全称
-    assert '新建<span class="hidden sm:inline">智能体</span>' in page
+    # 短文案只作用于移动端，桌面保留全称（新建那半句已随组件搬走）
+    create_btn = Path("frontend/src/components/agent/AgentCreateButton.vue").read_text()
+    assert '新建<span class="hidden sm:inline">智能体</span>' in create_btn
     assert '<span class="hidden sm:inline">筛选</span>' in page

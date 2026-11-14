@@ -38,6 +38,7 @@ import DingTalkConfigModal from "../components/agent/DingTalkConfigModal.vue";
 import EmailConfigModal from "../components/agent/EmailConfigModal.vue";
 import WeChatWorkConfigModal from "../components/agent/WeChatWorkConfigModal.vue";
 import FeishuConfigModal from "../components/agent/FeishuConfigModal.vue";
+import AgentCreateButton from "../components/agent/AgentCreateButton.vue";
 import AgentFlowGuideBanner from "../components/agent/AgentFlowGuideBanner.vue";
 import MessageRenderer from "../components/MessageRenderer.vue";
 import type { MarkdownTheme } from "@/types/markdownTheme";
@@ -149,7 +150,6 @@ const fetchModelHealth = async () => {
 const showAgentModal = ref(false);
 const showVersionModal = ref(false);
 const showHistoryModal = ref(false);
-const showCreateAgentMenu = ref(false);
 
 const showVersionsDrawer = ref(false); // New Drawer State
 
@@ -1466,28 +1466,6 @@ const ensureActiveTabVisible = () => {
     updateScrollHints();
   })
 }
-
-/**
- * 移动端搜索默认收起。
- *
- * 窄屏下搜索框会独占一整行，而这行里真正常用的只有「筛选」；列表本身
- * 一屏才 2~3 张卡片，多压一行等于少看一张。所以移动端把搜索收进页头那颗
- * 放大镜，点开才铺出输入框。桌面端不受影响，一直显示。
- */
-const mobileSearchOpen = ref(false);
-const searchInputRef = ref<HTMLInputElement | null>(null);
-
-const toggleMobileSearch = () => {
-  if (mobileSearchOpen.value) {
-    // 收起时一并清空：否则列表会继续被一个肉眼看不见的关键词过滤，
-    // 用户只会觉得「怎么少了几个智能体」。
-    searchKeyword.value = '';
-    mobileSearchOpen.value = false;
-    return;
-  }
-  mobileSearchOpen.value = true;
-  void nextTick(() => searchInputRef.value?.focus());
-};
 
 const switchWorkspaceTab = (tab: AgentWorkspaceTab) => {
   workspaceTab.value = tab
@@ -5203,7 +5181,6 @@ const closeReadinessPopover = () => {
 const closeCardMenus = () => {
   openCardMenuId.value = null
   activeReadinessPopoverAgentId.value = null
-  showCreateAgentMenu.value = false
   // 列表视图的「更多」菜单也归这里统一关，避免滚动/点别处后残留
   openRowMenuId.value = null
 }
@@ -5308,7 +5285,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </p>
       </div>
 
-      <!-- 移动端一行四颗：搜索 / 发布审核 / 新建 / 筛选。
+      <!-- 桌面一行：显示指引 / 发布审核 / 新建。
+           窄屏只留低频入口，新建与发布审核都下移到第 2 行（与搜索框同一行）。
            这里不能加 overflow-x-auto：新建组与筛选面板都是 absolute 定位，
            滚动容器会把它们裁掉，看起来像点不动。放不下时用 flex-wrap 兜底。 -->
       <div class="flex flex-wrap items-center gap-1.5 sm:shrink-0 sm:flex-nowrap sm:gap-2">
@@ -5334,30 +5312,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           收起指引
         </button>
 
-        <!-- 移动端搜索入口：展开后铺出搜索行，收起时顺手清掉关键词 -->
+        <!-- 窄屏让位到第 2 行（文案收成「审核」），见下方搜索行末尾 -->
         <button
-          type="button"
-          class="flex shrink-0 items-center justify-center rounded-lg border px-2.5 py-2 shadow-sm transition-colors sm:hidden"
-          :class="
-            mobileSearchOpen
-              ? 'border-primary bg-primary/5 text-primary'
-              : 'border-gray-300 bg-white text-gray-700'
-          "
-          :aria-expanded="mobileSearchOpen"
-          aria-controls="agent-search-row"
-          :title="mobileSearchOpen ? '收起并清除搜索' : '搜索智能体'"
-          @click="toggleMobileSearch"
-        >
-          <svg v-if="!mobileSearchOpen" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-
-        <button
-          v-if="canReviewSystem"
+          v-if="canReviewSystem && !isMobile"
           type="button"
           class="relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm transition-colors hover:border-primary/40 hover:text-primary"
           title="查看待审核的「发布为系统级」申请"
@@ -5380,232 +5337,31 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </span>
         </button>
 
-        <div v-has-perm="'element:agent:create'" class="relative" @click.stop>
-          <div class="flex items-stretch overflow-hidden rounded-lg shadow-sm">
-            <button
-              type="button"
-              class="flex items-center gap-1.5 whitespace-nowrap bg-primary px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark cursor-pointer"
-              @click="startAgentCreation"
-            >
-              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              新建<span class="hidden sm:inline">智能体</span>
-            </button>
-            <button
-              type="button"
-              class="border-l border-white/25 bg-primary px-2 text-white transition-colors hover:bg-primary-dark cursor-pointer"
-              title="更多创建方式"
-              @click="showCreateAgentMenu = !showCreateAgentMenu"
-            >
-              <svg class="h-4 w-4 transition-transform" :class="{ 'rotate-180': showCreateAgentMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-          </div>
-          <div
-            v-if="showCreateAgentMenu"
-            class="absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-lg border border-gray-100 bg-white py-1 shadow-xl"
-          >
-            <button
-              type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-              @click="showCreateAgentMenu = false; startAgentCreation()"
-            >
-              <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              空白新建
-            </button>
-            <button
-              type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-              @click="showCreateAgentMenu = false; router.push('/dashboard/scenario-templates')"
-            >
-              <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h10M4 17h7" />
-              </svg>
-              从场景模板交付
-            </button>
-          </div>
-        </div>
-
-        <!-- 高级筛选：状态/类型/引擎/就绪度/来源原先散在工具栏与 7 个 tab 里，
-             现在收进一个面板，避免同一维度两处入口。
-             放在页头动作区末尾，但这一行绝对不能加 overflow-x-auto——
-             滚动容器会把 absolute 定位的面板裁掉，点筛选会看起来「打不开」。 -->
-        <div
-          v-if="workspaceTab === 'mine' || workspaceTab === 'all'"
-          class="relative shrink-0"
-          @click.stop
-        >
-          <button
-            type="button"
-            class="flex items-center gap-1.5 rounded-lg border bg-white px-3 py-2 text-sm shadow-sm transition-colors cursor-pointer"
-            :class="activeFilterCount > 0 ? 'border-primary text-primary' : 'border-gray-300 text-gray-700 hover:border-primary/40 hover:text-primary'"
-            title="按状态、类型、引擎、就绪度、来源筛选"
-            aria-label="筛选"
-            @click="filterPanelOpen = !filterPanelOpen"
-          >
-            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-            </svg>
-            <span class="hidden sm:inline">筛选</span>
-            <span
-              v-if="activeFilterCount > 0"
-              class="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-white"
-            >
-              {{ activeFilterCount }}
-            </span>
-          </button>
-
-          <div v-if="filterPanelOpen" class="fixed inset-0 z-30" @click="filterPanelOpen = false"></div>
-          <div
-            v-if="filterPanelOpen"
-            class="absolute right-0 top-full z-40 mt-1.5 max-h-[calc(100vh-9rem)] w-[560px] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-gray-100 bg-white p-4 shadow-2xl"
-          >
-            <div class="mb-3 flex items-center justify-between">
-              <span class="text-sm font-bold text-gray-800">高级筛选</span>
-              <button type="button" class="cursor-pointer rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600" @click="filterPanelOpen = false">
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-semibold text-gray-500">状态</span>
-                <select v-model="statusFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
-                  <option value="all">全部</option>
-                  <option value="enabled">已启用</option>
-                  <option value="disabled">已禁用</option>
-                </select>
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-semibold text-gray-500">类型</span>
-                <select v-model="typeFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
-                  <option value="all">全部</option>
-                  <option value="GENERAL">通用助手</option>
-                  <option value="CHATBI">ChatBI</option>
-                  <option value="KNOWLEDGE_BASE">知识库助手</option>
-                </select>
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-semibold text-gray-500">引擎</span>
-                <select v-model="engineFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
-                  <option value="all">全部</option>
-                  <option value="LOCAL">LOCAL</option>
-                  <option value="RAGFLOW">RAGFlow</option>
-                  <option value="OPENCLAW">OpenClaw</option>
-                </select>
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-semibold text-gray-500">就绪度</span>
-                <select v-model="readinessFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
-                  <option value="all">全部</option>
-                  <option value="ready">已就绪</option>
-                  <option value="unready">待完善</option>
-                </select>
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-semibold text-gray-500">来源</span>
-                <select v-model="sourceFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
-                  <option value="all">全部</option>
-                  <option value="system">系统级</option>
-                  <option value="custom">自定义</option>
-                </select>
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-semibold text-gray-500">权属人</span>
-                <select v-model="ownerFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
-                  <option value="all">全部</option>
-                  <option value="orphan">权属人已停用</option>
-                </select>
-              </label>
-            </div>
-
-            <!-- 团队：前两个是「是/否」，第三个按团主 id 过滤。
-                 并排三个正好一行，与上面 6 个条件同一套视觉，不新开一层折叠。 -->
-            <div class="mt-3 border-t border-gray-100 pt-3">
-              <div class="mb-2 flex items-center gap-2 text-[11px] font-bold text-teal-700">
-                <span class="h-px flex-1 bg-teal-100"></span>
-                <span>团队</span>
-                <span class="h-px flex-1 bg-teal-100"></span>
-              </div>
-              <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <label class="block">
-                  <span class="mb-1 block text-[11px] font-semibold text-gray-500">专家团主专家</span>
-                  <select v-model="teamLeadFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
-                    <option value="all">全部</option>
-                    <option value="yes">只看团主专家</option>
-                    <option value="no">排除团主专家</option>
-                  </select>
-                </label>
-                <label class="block">
-                  <span class="mb-1 block text-[11px] font-semibold text-gray-500">子专家</span>
-                  <select v-model="subAgentFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
-                    <option value="all">全部</option>
-                    <option value="yes">只看子专家</option>
-                    <option value="no">排除子专家</option>
-                  </select>
-                </label>
-                <label class="block">
-                  <span class="mb-1 block text-[11px] font-semibold text-gray-500">所属团</span>
-                  <select v-model="teamFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
-                    <option value="all">全部</option>
-                    <option v-for="team in teamFilterOptions" :key="team.id" :value="team.id">{{ team.name }}</option>
-                  </select>
-                </label>
-              </div>
-              <p class="mt-2 text-[11px] leading-5 text-gray-400">
-                子专家＝被某个专家团的调度范围纳入的智能体。两个条件都选「是」时结果为空：团主与子专家在当前版本里不重叠。
-              </p>
-            </div>
-
-            <!-- 条件已经 9 个，面板在小屏上会超一屏：底部操作条贴住容器底部，
-                 否则「应用」要滚到底才点得到 -->
-            <div class="sticky -bottom-4 -mx-4 mt-4 flex items-center justify-between border-t border-gray-100 bg-white px-4 pb-4 pt-3">
-              <div class="flex items-center gap-3">
-                <button type="button" class="cursor-pointer text-xs text-gray-500 hover:text-gray-700" @click="clearAllAgentFilters">
-                  重置
-                </button>
-                <!-- 应用前就能看到会剩几个：选完三个条件点应用才发现是空的最挫 -->
-                <span class="text-[11px] text-gray-400">匹配 {{ filteredAgents.length }} 个</span>
-              </div>
-              <button
-                type="button"
-                class="cursor-pointer rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-dark"
-                @click="filterPanelOpen = false"
-              >
-                应用
-              </button>
-            </div>
-          </div>
-        </div>
+        <!-- 窄屏下这颗让位给搜索行末尾（与「搜索框 + 筛选」同一行），见第 2 行 -->
+        <AgentCreateButton
+          v-if="!isMobile"
+          @create="startAgentCreation"
+          @template="router.push('/dashboard/scenario-templates')"
+        />
       </div>
     </div>
 
     <!-- 搜索、筛选与两个横幅只服务于「智能体列表」；分享视图有自己的列表，
          留着它们会让「找到 N 个智能体」这种文案指向一个完全不相关的清单 -->
     <!-- 搜索框对所有视图都保留：两个分享面板自己没有搜索，藏掉就等于没法搜。
-         批量 / 网格列表切换只服务于智能体列表，仍只在一屏内显示。
-         「筛选」在页头动作区（新建右侧），不占这一行。 -->
+         批量 / 网格列表切换与「筛选」只服务于智能体列表，仍只在一屏内显示。
+         筛选跟在它们之后——放页头第一行会把「显示指引 / 发布审核 / 新建」挤到换行。 -->
     <!-- 第 2 行：搜索独占一栏，批量 / 视图切换跟在后面 -->
     <div class="flex flex-wrap items-center gap-2.5">
-      <!-- 只藏搜索框本身：这一行还有批量与视图切换，整行收起会把它们一起藏掉 -->
-      <div
-        id="agent-search-row"
-        class="relative min-w-[220px] flex-1"
-        :class="mobileSearchOpen ? '' : 'hidden sm:block'"
-      >
+      <!-- 窄屏也常显：这一行就是「搜索 + 筛选 + 新建」的主操作条，
+           再折叠一次就只剩两颗图标，反而更难用 -->
+      <div id="agent-search-row" class="relative min-w-0 flex-1">
         <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
           <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
         </span>
         <input
-          ref="searchInputRef"
           v-model="searchKeyword"
           type="search"
           :placeholder="
@@ -5657,7 +5413,199 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </button>
         </div>
       </div>
+
+      <!-- 高级筛选：状态/类型/引擎/就绪度/来源原先散在工具栏与 7 个 tab 里，
+           现在收进一个面板，避免同一维度两处入口。
+           跟在批量 / 视图切换之后（页头第一行只留高频动作）。
+           这一行同样绝对不能加 overflow-x-auto——滚动容器会把 absolute
+           定位的面板裁掉，点筛选会看起来「打不开」。 -->
+      <!-- 窄屏不放筛选：这一行要装「搜索 + 审核 + 新建」三颗，
+           筛选是低频动作且条件有 9 项，留到桌面用 -->
+      <div
+        v-if="!isMobile && (workspaceTab === 'mine' || workspaceTab === 'all')"
+        class="relative shrink-0"
+        @click.stop
+      >
+        <button
+          type="button"
+          class="flex items-center gap-1.5 rounded-lg border bg-white px-3 py-2 text-sm shadow-sm transition-colors cursor-pointer"
+          :class="activeFilterCount > 0 ? 'border-primary text-primary' : 'border-gray-300 text-gray-700 hover:border-primary/40 hover:text-primary'"
+          title="按状态、类型、引擎、就绪度、来源筛选"
+          aria-label="筛选"
+          @click="filterPanelOpen = !filterPanelOpen"
+        >
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+          </svg>
+          <span class="hidden sm:inline">筛选</span>
+          <span
+            v-if="activeFilterCount > 0"
+            class="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-white"
+          >
+            {{ activeFilterCount }}
+          </span>
+        </button>
+
+        <div v-if="filterPanelOpen" class="fixed inset-0 z-30" @click="filterPanelOpen = false"></div>
+        <div
+          v-if="filterPanelOpen"
+          class="absolute right-0 top-full z-40 mt-1.5 max-h-[calc(100vh-9rem)] w-[560px] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-gray-100 bg-white p-4 shadow-2xl"
+        >
+          <div class="mb-3 flex items-center justify-between">
+            <span class="text-sm font-bold text-gray-800">高级筛选</span>
+            <button type="button" class="cursor-pointer rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600" @click="filterPanelOpen = false">
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <label class="block">
+              <span class="mb-1 block text-[11px] font-semibold text-gray-500">状态</span>
+              <select v-model="statusFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                <option value="all">全部</option>
+                <option value="enabled">已启用</option>
+                <option value="disabled">已禁用</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-[11px] font-semibold text-gray-500">类型</span>
+              <select v-model="typeFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                <option value="all">全部</option>
+                <option value="GENERAL">通用助手</option>
+                <option value="CHATBI">ChatBI</option>
+                <option value="KNOWLEDGE_BASE">知识库助手</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-[11px] font-semibold text-gray-500">引擎</span>
+              <select v-model="engineFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                <option value="all">全部</option>
+                <option value="LOCAL">LOCAL</option>
+                <option value="RAGFLOW">RAGFlow</option>
+                <option value="OPENCLAW">OpenClaw</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-[11px] font-semibold text-gray-500">就绪度</span>
+              <select v-model="readinessFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                <option value="all">全部</option>
+                <option value="ready">已就绪</option>
+                <option value="unready">待完善</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-[11px] font-semibold text-gray-500">来源</span>
+              <select v-model="sourceFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                <option value="all">全部</option>
+                <option value="system">系统级</option>
+                <option value="custom">自定义</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-[11px] font-semibold text-gray-500">权属人</span>
+              <select v-model="ownerFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                <option value="all">全部</option>
+                <option value="orphan">权属人已停用</option>
+              </select>
+            </label>
+          </div>
+
+          <!-- 团队：前两个是「是/否」，第三个按团主 id 过滤。
+               并排三个正好一行，与上面 6 个条件同一套视觉，不新开一层折叠。 -->
+          <div class="mt-3 border-t border-gray-100 pt-3">
+            <div class="mb-2 flex items-center gap-2 text-[11px] font-bold text-teal-700">
+              <span class="h-px flex-1 bg-teal-100"></span>
+              <span>团队</span>
+              <span class="h-px flex-1 bg-teal-100"></span>
+            </div>
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-semibold text-gray-500">专家团主专家</span>
+                <select v-model="teamLeadFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  <option value="all">全部</option>
+                  <option value="yes">只看团主专家</option>
+                  <option value="no">排除团主专家</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-semibold text-gray-500">子专家</span>
+                <select v-model="subAgentFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  <option value="all">全部</option>
+                  <option value="yes">只看子专家</option>
+                  <option value="no">排除子专家</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-semibold text-gray-500">所属团</span>
+                <select v-model="teamFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  <option value="all">全部</option>
+                  <option v-for="team in teamFilterOptions" :key="team.id" :value="team.id">{{ team.name }}</option>
+                </select>
+              </label>
+            </div>
+            <p class="mt-2 text-[11px] leading-5 text-gray-400">
+              子专家＝被某个专家团的调度范围纳入的智能体。两个条件都选「是」时结果为空：团主与子专家在当前版本里不重叠。
+            </p>
+          </div>
+
+          <!-- 条件已经 9 个，面板在小屏上会超一屏：底部操作条贴住容器底部，
+               否则「应用」要滚到底才点得到 -->
+          <div class="sticky -bottom-4 -mx-4 mt-4 flex items-center justify-between border-t border-gray-100 bg-white px-4 pb-4 pt-3">
+            <div class="flex items-center gap-3">
+              <button type="button" class="cursor-pointer text-xs text-gray-500 hover:text-gray-700" @click="clearAllAgentFilters">
+                重置
+              </button>
+              <!-- 应用前就能看到会剩几个：选完三个条件点应用才发现是空的最挫 -->
+              <span class="text-[11px] text-gray-400">匹配 {{ filteredAgents.length }} 个</span>
+            </div>
+            <button
+              type="button"
+              class="cursor-pointer rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-dark"
+              @click="filterPanelOpen = false"
+            >
+              应用
+            </button>
+          </div>
+        </div>
+      </div>
       </template>
+
+      <!-- 窄屏：审核占原来筛选的位置，只留图标不显示文字——这一行要装
+           「搜索 + 审核 + 新建」，多两个字就把搜索框压窄一截。
+           纯图标必须有可读名称（aria-label），待审数量改成角标，否则会把按钮撑宽。 -->
+      <button
+        v-if="canReviewSystem && isMobile"
+        type="button"
+        class="relative flex shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-gray-700 shadow-sm transition-colors hover:border-primary/40 hover:text-primary"
+        title="查看待审核的「发布为系统级」申请"
+        aria-label="审核"
+        @click="openSystemReview"
+      >
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+          />
+        </svg>
+        <span
+          v-if="pendingSystemCount > 0"
+          class="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white"
+        >
+          {{ pendingSystemCount > 99 ? '99+' : pendingSystemCount }}
+        </span>
+      </button>
+
+      <!-- 窄屏：与「搜索框 + 审核」同一行，页头那颗此时不渲染 -->
+      <AgentCreateButton
+        v-if="isMobile"
+        class="shrink-0"
+        @create="startAgentCreation"
+        @template="router.push('/dashboard/scenario-templates')"
+      />
     </div>
     <!-- 智能体 5 步全流程指引：方案 A 起改为按需展开，不再常驻首屏。
          放在视图条件之外——「显示指引」按钮现在所有 tab 都出现，面板必须跟着按钮，

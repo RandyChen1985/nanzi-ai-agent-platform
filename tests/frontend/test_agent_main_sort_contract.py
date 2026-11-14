@@ -32,7 +32,7 @@ def test_agent_management_header_keeps_title_single_line_and_search_takes_full_r
     view = VIEW.read_text(encoding="utf-8")
 
     assert 'class="shrink-0 whitespace-nowrap text-xl font-bold text-gray-900 sm:text-2xl"' in view
-    assert 'class="relative min-w-[220px] flex-1"' in view
+    assert 'class="relative min-w-0 flex-1"' in view
     assert "sm:w-52 lg:w-56" not in view
 
 

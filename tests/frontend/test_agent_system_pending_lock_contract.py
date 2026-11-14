@@ -73,16 +73,17 @@ def test_header_puts_primary_actions_on_their_own_row():
     """主操作独立成行，宽度再窄也不会被挤到筛选控件后面。
 
     上一版把「视图切换 / 发布审核 / 新建」打包成一组参与换行，只是缓解；
-    现在「发布审核 + 新建」直接放在标题行右侧，和下方搜索/筛选不在同一个 flex 流里。
+    现在「发布审核 + 新建」直接放在标题行右侧，和下方搜索行不在同一个 flex 流里。
+    窄屏下新建会下移到搜索行末尾（与「搜索 / 筛选」同一行），页头只留低频入口。
     """
     src = _source()
 
     assert "第 1 行：标题 + 主操作固定右上" in src
-    # 动作区在移动端是一行四按钮（搜索/审核/新建/筛选），可横滑不换行
-    assert "flex items-center gap-1.5 overflow-x-auto" in src
-    # 搜索独占一栏；「筛选」已上移到页头动作区
+    # 动作区靠换行兜底，不能是滚动容器（新建下拉是 absolute 定位，会被裁掉）
+    assert "flex flex-wrap items-center gap-1.5 sm:shrink-0 sm:flex-nowrap sm:gap-2" in src
     assert "第 2 行：搜索独占一栏，批量 / 视图切换跟在后面" in src
-    assert 'class="relative min-w-[220px] flex-1"' in src
+    # 搜索框吃掉整行剩余宽度；窄屏也不再折叠，min-w 归零才能和筛选/新建挤进一行
+    assert 'class="relative min-w-0 flex-1"' in src
     # 旧的「统一操作组」包法已不存在
     assert "操作组：视图切换 / 发布审核 / 新建" not in src
 
