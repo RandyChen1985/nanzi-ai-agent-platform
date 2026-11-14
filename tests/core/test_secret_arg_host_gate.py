@@ -68,16 +68,24 @@ class TestArgInjectionPassesHost:
 class TestDenialCodeIsNeverExposed:
     """`denials` 现在存原始 code，任何一个消费点漏了翻译都会把常量抛给用户。"""
 
-    def test_portal_endpoint_translates(self):
-        from app.api.portal.endpoints import mcp as mcp_endpoint
+    @pytest.mark.asyncio
+    async def test_shared_preparation_provides_localized_denial(self, monkeypatch):
+        from types import SimpleNamespace
+        from app.services.secrets import mcp_profiles
 
-        source = inspect.getsource(mcp_endpoint)
-        start = source.find("凭据参数缺失")
-        assert start != -1
-        head = source[max(0, start - 900):start]
-        assert "denial_text(why)" in head, "端点没把拒绝 code 翻译成人话"
+        tool = SimpleNamespace(
+            credential_params=["password"], tool_name="fixture:list_mail",
+            parameter_schema={"properties": {"password": {"type": "string"}}},
+        )
+        server = SimpleNamespace(sse_url="https://fixture.example.test/mcp")
 
-    def test_portal_endpoint_offers_a_hint(self):
-        from app.api.portal.endpoints import mcp as mcp_endpoint
+        async def denied(_tool, args, *, denials, **kwargs):
+            denials["arg:list_mail:password"] = "denied_by_host"
+            return args
 
-        assert "denial_hint(why)" in inspect.getsource(mcp_endpoint)
+        monkeypatch.setattr(mcp_profiles, "apply_mcp_arg_bindings", denied)
+        with pytest.raises(mcp_profiles.CredentialInvocationError) as error:
+            await mcp_profiles._prepare_legacy_arguments(tool, server, {}, {"user_id": 1})
+        assert "目标域名不在白名单" in str(error.value)
+        assert "域名白名单」放行" in str(error.value)
+        assert "denied_by_host" not in str(error.value)

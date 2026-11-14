@@ -45,6 +45,8 @@ class McpToolCache(Base):
     #: 剔除，运行时按 ``arg:<短工具名>:<参数名>`` 槽位注入。
     #: 不塞进 ``parameter_schema``：同步时整体覆盖，且 ``x-nanzi-*`` 会被剥掉。
     credential_params = Column(Text, nullable=True)
+    # 无组凭据时的结果路径与批准时的工具/目标指纹，保存在同一配置快照。
+    model_result_policy = Column(JSON, nullable=True)
     is_published = Column(Boolean, default=False)
     is_available = Column(Boolean, nullable=False, default=True)
     

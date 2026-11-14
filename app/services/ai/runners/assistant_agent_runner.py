@@ -129,6 +129,7 @@ from app.services.ai.runtime.sandbox_degradation import (
 from app.services.ai.runtime.agentscope.errors import extract_tool_loop_fuse_message
 from app.services.ai.runtime.agentscope.tools import (
     RuntimeToolSpec,
+    restore_mounted_tool_capabilities,
     runtime_tool_spec_from_legacy_tool,
 )
 from app.services.ai.runtime.agentscope.tool_choice_compat import (
@@ -2877,6 +2878,7 @@ class AssistantAgentRunner(BaseExecutor):
                 target_tool=target_tool,
                 tool_index=0,
                 tool_result_state=tool_result_state,
+                tool_result_metadata=getattr(event, "metadata", None),
                 sandbox_policy=display_sandbox_policy,
                 logical_root=display_logical_root,
             )
@@ -3353,6 +3355,7 @@ class AssistantAgentRunner(BaseExecutor):
         loop_detector: ToolLoopDetector | None = None,
     ) -> tuple[Any, List[RuntimeToolSpec], Any, Dict[str, Any]]:
         if pending.agent is not None and pending.tools and pending.native_model is not None:
+            restore_mounted_tool_capabilities(getattr(pending.agent, "toolkit", None))
             return pending.agent, pending.tools, pending.native_model, pending.state
 
         ctx = pending.snapshot.runner_context
@@ -3426,20 +3429,11 @@ class AssistantAgentRunner(BaseExecutor):
             collect_tool_timeouts,
         )
 
-        tools = await apply_configured_agent_tool_timeout(
+        return await apply_configured_agent_tool_timeout(
             resolved.specs,
             agent_timeout=getattr(self.config, "toolcall_timeout_seconds", None),
             tool_timeouts=collect_tool_timeouts(configured_tools),
         )
-        from app.core.context import get_current_agent_context
-        from app.services.ai.tools.session_status import runtime_tool_capability_from_spec
-
-        context = get_current_agent_context()
-        if context is not None:
-            context.runtime_tool_capabilities = [
-                runtime_tool_capability_from_spec(spec) for spec in tools
-            ]
-        return tools
 
     def _apply_knowledge_fallback_budget(
         self,
@@ -3971,6 +3965,7 @@ class AssistantAgentRunner(BaseExecutor):
         target_tool: Any,
         tool_index: int,
         tool_result_state: Any = None,
+        tool_result_metadata: Any = None,
         sandbox_policy: str | None = None,
         logical_root: str = "/workspace",
     ) -> Dict[str, Any]:
@@ -4024,16 +4019,21 @@ class AssistantAgentRunner(BaseExecutor):
         if not isinstance(t_model, str) or not t_model.strip():
             t_model = str(self.config.model_name or "")
 
+        from app.services.secrets.mcp_result_storage import MCP_JSONPATH_RESULT, is_projected_result_metadata
+
+        result_metadata = (
+            {MCP_JSONPATH_RESULT: "v1"} if is_projected_result_metadata(tool_result_metadata) else {}
+        )
         trace_step = AgentExecutionStep(
             step_number=self._increment_step(), event_type="tool_call", agent_name=self.config.agent_name,
             model=t_model, temperature=t_temp, tool_name=tool_name, tool_input=tool_args,
             tool_output=tool_output if isinstance(tool_output, (dict, list)) else {"raw": str(tool_output)},
             execution_time_ms=duration_tool, status="success" if not is_error else "error",
-            meta_info=(
-                {"timeout_seconds": t_timeout, "timeout_source": t_timeout_source}
-                if t_timeout is not None
-                else None
-            ),
+            meta_info={
+                **result_metadata,
+                **({"timeout_seconds": t_timeout, "timeout_source": t_timeout_source}
+                   if t_timeout is not None else {}),
+            } or None,
             timestamp=datetime.fromtimestamp(time.time() - duration_tool / 1000)
         )
 
@@ -4046,6 +4046,7 @@ class AssistantAgentRunner(BaseExecutor):
         log_event = {
             "type": "log",
             "id": tool_id,
+            **result_metadata,
             # 耗时只由 execution_time_ms 承载：标题里再写一遍会与时间线右侧的耗时
             # 并排成两个口径不同的数字（这里是后端精确值，右侧在缺少该字段时只能
             # 按 started_at 反算），且其它 runner 的标题本就不带耗时。

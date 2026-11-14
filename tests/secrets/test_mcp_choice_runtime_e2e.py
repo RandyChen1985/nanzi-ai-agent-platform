@@ -16,14 +16,17 @@
 """
 import json
 import uuid
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import delete
+import pytest_asyncio
+from unittest.mock import AsyncMock
 
-from app.core.orm import AsyncSessionLocal
+from app.core import orm
 from app.models.mcp import McpServer, McpToolCache
-from app.models.secret import SecretBinding, SecretUsageLog, UserSecret
-from app.services.secrets import center
+from app.services.secrets import center, injection, resolver
+from tests.secrets.test_structured_secret_lifecycle import credential_db
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -60,21 +63,25 @@ RULE = {
 }
 
 
-async def _cleanup(session):
-    await session.execute(delete(SecretBinding).where(SecretBinding.consumer_id == SERVER_ID))
-    await session.execute(delete(SecretUsageLog).where(SecretUsageLog.user_id == USER_ID))
-    await session.execute(delete(UserSecret).where(UserSecret.owner_id == USER_ID))
-    await session.execute(delete(McpToolCache).where(McpToolCache.server_id == SERVER_ID))
-    await session.execute(delete(McpServer).where(McpServer.id == SERVER_ID))
-    await session.commit()
+@pytest_asyncio.fixture
+async def seeded(credential_db, monkeypatch):
+    """隔离数据库中创建 MCP 规则和三条合成凭据。"""
+    from app.services.ai.tools import mcp_client, registry
 
+    @asynccontextmanager
+    async def session_factory():
+        yield credential_db
 
-@pytest.fixture
-async def seeded():
-    """真实 DB：一个全局 MCP 服务 + 一条工具（mailkey 走规则）+ 三条凭据。"""
-    async with AsyncSessionLocal() as session:
-        await _cleanup(session)
+    async def platform_flags():
+        return False, True, 10
 
+    for module in (orm, mcp_client, registry, resolver):
+        monkeypatch.setattr(module, "AsyncSessionLocal", session_factory)
+    monkeypatch.setattr(resolver.SecretResolver, "_platform_flags", staticmethod(platform_flags))
+    monkeypatch.setattr(injection, "_bindings_unavailable_until", 0.0)
+    registry.ToolRegistry.clear_db_tool_cache()
+
+    async with session_factory() as session:
         session.add(
             McpServer(
                 id=SERVER_ID,
@@ -107,7 +114,7 @@ async def seeded():
                 secret_key=key,
                 name=f"{key} 的邮箱账号",
                 value=value,
-                # 备注是模型推断的主要依据
+                # 备注只能在用户管理界面可见。
                 remark=f"{key} 的邮箱账号",
                 category="mail",
                 allowed_scenarios=["mcp"],
@@ -124,9 +131,7 @@ async def seeded():
         )
 
     yield
-
-    async with AsyncSessionLocal() as session:
-        await _cleanup(session)
+    registry.ToolRegistry.clear_db_tool_cache()
 
 
 @pytest.fixture
@@ -139,14 +144,16 @@ def fake_runtime(monkeypatch):
         lambda: ({"user_id": USER_ID}, {}),
     )
 
-    async def _fake_stream(**kwargs):
-        captured["arguments"] = dict(kwargs.get("arguments") or {})
-        yield "remote-ok"
+    from app.services.ai.tools import mcp_client
 
-    monkeypatch.setattr(
-        "app.services.ai.tools.mcp_factory.stream_remote_tool_with_progress",
-        _fake_stream,
-    )
+    async def exchange(session, tool, arguments, **kwargs):
+        captured["arguments"] = dict(arguments)
+        return {"echo": arguments}
+
+    transport = SimpleNamespace(is_direct_http=True, auth_headers={}, close=AsyncMock())
+    monkeypatch.setattr(mcp_client.McpClientService, "get_session", AsyncMock(return_value=transport))
+    monkeypatch.setattr(mcp_client.McpClientService, "_call_direct_http_tool", exchange)
+    monkeypatch.setattr(mcp_client, "record_outbound_audit_log", AsyncMock())
     return captured
 
 
@@ -166,17 +173,18 @@ async def test_model_sees_choice_field_and_its_choice_reaches_the_wire(seeded, f
 
     # ① 模型拿到的工具定义里必须有编号字段，且凭据参数本身不可见
     properties = spec.parameters_schema["properties"]
-    assert "secret_choice_mailkey" in properties
+    assert "credential_choice_1" in properties
     assert "mailkey" not in properties
     assert "mailkey" not in spec.parameters_schema.get("required", [])
 
     # ② 模型按 schema 填参（username=C 匹配不上 cc，只能靠编号兜底）
-    await _call_via_spec(spec, username="C", subject="hi", secret_choice_mailkey="c3")
+    result = await _call_via_spec(spec, username="C", subject="hi", credential_choice_1="c3")
+    assert result == {"status": "success", "result_visibility": "restricted"}
 
     # ③ 出站参数：值来自 CC；编号字段绝不能发给远端
     sent = fake_runtime["arguments"]
     assert sent["mailkey"] == VALUE_CC
-    assert "secret_choice_mailkey" not in sent
+    assert "secret_choice_mailkey" not in sent and "credential_choice_1" not in sent
     assert sent["username"] == "C"
 
 
@@ -186,7 +194,7 @@ async def test_rule_hit_ignores_the_choice_on_the_real_path(seeded, fake_runtime
     from app.services.ai.tools.registry import ToolRegistry
 
     spec = await ToolRegistry.get_runtime_tool(TOOL_NAME)
-    await _call_via_spec(spec, username="A", secret_choice_mailkey="c2")
+    await _call_via_spec(spec, username="A", credential_choice_1="c2")
 
     sent = fake_runtime["arguments"]
     assert sent["mailkey"] == VALUE_A
@@ -199,7 +207,7 @@ async def test_choice_field_is_optional_in_the_published_schema(seeded):
     from app.services.ai.tools.registry import ToolRegistry
 
     spec = await ToolRegistry.get_runtime_tool(TOOL_NAME)
-    field = spec.parameters_schema["properties"]["secret_choice_mailkey"]
+    field = spec.parameters_schema["properties"]["credential_choice_1"]
     assert field["type"] == "string"
     assert "list_my_credentials" in field["description"]
-    assert "secret_choice_mailkey" not in spec.parameters_schema.get("required", [])
+    assert "credential_choice_1" not in spec.parameters_schema.get("required", [])

@@ -22,7 +22,7 @@ def mock_tool_config():
             },
             "required": ["user_id"]
         },
-        headers={"X-Test": "HeaderValue"}
+        headers={"Accept": "application/json"}
     )
 
 def test_create_tool_schema_parsing(mock_tool_config):
@@ -91,7 +91,7 @@ async def test_execute_request_get_with_path_substitution(mock_tool_config):
         args, kwargs = mock_get.call_args
         assert args[0] == "http://api.example.com/users/123"
         assert kwargs["params"] == {"include_details": True}
-        assert kwargs["headers"]["X-Test"] == "HeaderValue"
+        assert kwargs["headers"]["Accept"] == "application/json"
         
         assert json.loads(result)["name"] == "John"
 

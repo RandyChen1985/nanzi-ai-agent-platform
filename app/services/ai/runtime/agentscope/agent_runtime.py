@@ -323,6 +323,7 @@ def build_tools_fingerprint(
         "agent_name": config.agent_name,
         "agent_version": config.agent_version,
         "model_name": config.model_name,
+        "tool_result_visibility": "credential_status_only_v1",
         "tools": tool_names,
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)

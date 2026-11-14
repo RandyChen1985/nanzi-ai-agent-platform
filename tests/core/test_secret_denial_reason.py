@@ -154,16 +154,18 @@ async def test_mcp_fails_loudly_instead_of_falling_back_to_fixed_token():
     )
 
 
-def test_script_runner_surfaces_denials():
-    """脚本场景同样要留下原因。
-
-    脚本里读不到环境变量的表现是 KeyError，用户只会看到「脚本报错了」；
-    真正的原因可能是凭据过期、也可能只是脚本注入开关没开。
-    """
-    import inspect
-
+@pytest.mark.asyncio
+async def test_shared_workspace_scripts_reject_credential_bindings(monkeypatch):
+    from types import SimpleNamespace
     from app.services.ai.tools import script_tool_runtime
 
-    source = inspect.getsource(script_tool_runtime.ScriptToolRunner)
-    assert "script_denials" in source
-    assert "_credential_denials" in source
+    async def bound(consumer_type, tool_id, *, prefix, user_id):
+        assert (tool_id, prefix, user_id) == ("fixture", "env:", "42")
+        return ["env:DEMO"]
+
+    monkeypatch.setattr(script_tool_runtime, "list_bound_slots", bound)
+    runner = object.__new__(script_tool_runtime.ScriptToolRunner)
+    runner.config = SimpleNamespace(id="fixture")
+    runner.user_info = {"user_id": 42}
+    with pytest.raises(script_tool_runtime.ScriptToolError, match="脚本凭据需要独立执行环境"):
+        await runner.run({})

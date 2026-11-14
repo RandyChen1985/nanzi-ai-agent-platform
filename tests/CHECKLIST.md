@@ -1,5 +1,60 @@
 # 自动化测试与交付变更清单 (Automation Test & Delivery Checklist)
 
+## 2026-11-14 固定凭据即时选择与统一保存
+
+- “同一条凭据”切换固定模式后，直接在模式下方显示本人及系统共享候选，按草稿类型/版本查询，无需先保存映射。提供加载、空列表、失败重试；迟到响应不覆盖新选择，不可用旧绑定需用户明确重选或解绑。
+- 配置、JSONPath 与个人固定引用同事务保存，失败回滚；原独立绑定接口、未传新字段的旧客户端及固定模式免模型选择保留。未新增生产组件、依赖或 SQL 迁移。
+- 系统 PostgreSQL 隔离回归 **71 passed**；新增实际 Vue 表单 **11 passed**，原有相关后端/前端 **55 passed**。新用例先红后绿，原型离线检查通过。全项目类型检查仍有155条既有错误，本次修改及候选调用文件未报错。
+- 同步现有 spec、plan、HTML 原型及验收指南。未使用 SQLite、操作真实凭据/业务表、启动服务或部署；MySQL及浏览器/真实MCP联调尚未执行。
+
+## 2026-11-14 系统共享凭据统一授权
+
+- 根因：凭据中心使用 `SecretGrant`，MCP 候选/执行/关联又叠加 `McpCredentialUseGrant`。用户确认统一后，取消第二层凭据授权；类型版本、实例状态/有效期、场景/域名及工具权限继续生效。候选、固定绑定、恢复和实际注入使用同一口径，撤权后拒绝。
+- 修复共享结构化字段在 API/脚本/MCP 认证中的个人绑定限制；绑定归属、目标摘要及执行时共享校验保留。移除旧二次授权组件，共享候选标明来源。历史 grants 接口保留只读/清理提示，PUT 返回明确的 410；不将历史记录自动转成全局共享，不新增组件、依赖或 SQL 迁移。
+- 系统 PostgreSQL 隔离回归 **90 passed**（69 项生命周期/共享/配置/关联 + 21 项候选分页与元数据检查）；相关纯回归 **154 passed**，前端相关回归 **233 passed**。共享回归先观察失败再修复，旧候选夹具已移除 SQLite。SFC 编译、下拉实际渲染、原型离线检查、Python AST 与 diff 检查通过。
+- 同步[规格](../docs/superpowers/specs/2026-11-14-credential-injection.md)、[计划与验证记录](../docs/superpowers/plans/2026-11-14-credential-injection.md#本轮共享授权验证记录)、现有原型及验收指南。未操作业务表/真实凭据、未启动服务或部署；按用户后续指令仅创建本地提交，不推送。MySQL及真实环境待验证，全项目既有遗留问题未扩大处理。
+
+## 2026-11-14 结构化凭据开关仅限制新建
+
+- 关闭 `structured_credentials_enabled` 仅禁止新增结构化实例；类型/Schema/版本/预览继续可见，列表及创建选项明确禁用原因。已有凭据允许使用、轮换、编辑和绑定，聊天/定时任务可选已有凭据；单值凭据和变量不受影响。创建、权限、密钥、实例启停/有效期继续由服务端校验。
+- 修复关闭开关导致动态工具关联被隐藏的遗漏；不新增组件或依赖，不改 SQL。同步[现有规格](../docs/superpowers/specs/2026-11-14-credential-injection.md)、[计划与完整验证记录](../docs/superpowers/plans/2026-11-14-credential-injection.md#本轮实现与验证)、[原型](../prototypes/2026-11-14-credential-injection.html)和发布指南。
+- 按用户要求移除本轮 SQLite 夹具，复用系统 PostgreSQL 与现有 `nanzi_test_*` 隔离机制。最终数据库回归 **48 passed**，相关无数据库回归 **289 passed**；新增前端行为 **9 passed**，改动文件局部类型检查、模板编译及原型离线检查通过。
+- 全纯前端 **4994 passed、1 skipped、7 failed**；4项缺配置失败已复核通过，3项既有字符串契约失败仍保留。全项目类型检查有155条错误，未涉及本轮修改文件，不能视为全项目通过。具体失败名称见计划记录。
+- 未操作业务表或真实凭据，未启动服务、部署、提交或推送；未验证 MySQL/浏览器视觉/真实MCP与容器联调。
+
+## 2026-11-14 凭据分支连续编号与两提交合并
+
+- MySQL 合并迁移由 V220 改为 **V218**，PostgreSQL 由 V120 改为 **V118**，分别紧接主分支 V217/V117；只更名并更新首行版本注释，SQL 其余字节、历史迁移和通用导入器不变。同步代码提示、现有文档与测试引用。
+- 迁移相关检查 **39 passed**，覆盖连续编号、结构与种子、SQL 解析以及旧断点/显式文件选择；测试禁止进入 SQL 执行器。旧开发断点高于新编号时需显式指定新脚本，详见[发布指南](../docs/credential-center-verification.md)。Python AST 和 13 个相对文档链接检查通过。
+- 按授权将 `ed6aae40`、`2c990212` 与本次编号调整合为一个提交；压缩以已验证的完整暂存树为准，不执行数据库或服务操作，不推送远端。
+
+## 2026-11-14 structured-credentials 密钥帮助与 rebase 后复核
+
+- 系统配置新增可复制的本地生成命令、首次配置和轮换占位 JSON；明确 32 个随机原始字节、带 `=` 的 URL-safe Base64、编号、历史读密钥保留及留空行为。同步现有 spec、plan、发布指南和 HTML 原型，无真实密钥生成或保存。
+- 候选查询按授权后上限分批读取；修复任务恢复的 `timedelta` 漏导入、旧任务等待重新激活、claim 旧快照读取及删除锁序，移除重复摘要校验。新增 18 项回归。
+- 最终后端 **439 passed**、前端 **300 passed**；配置保存另有 **6** 项合成数据/内存 SQLite 检查通过。帮助组件局部类型检查、两个 Vue SFC 编译、Python AST 和 diff 检查通过；原型与后端 **30** 个格式案例一致，**18** 个状态与 **5** 个复制分支通过，索引重建为 **64** 项且无差异。
+- 保留 JSONPath 原样返回、模型参数隔离、固定/动态凭据、权限、脚本输出检查、错误脱敏及超时语义。未执行真实数据库/服务/容器或浏览器联调，未提交或推送。完整范围及限制见[现有计划](../docs/superpowers/plans/2026-11-14-credential-injection.md#本轮实现与回归记录)。
+
+## 2026-11-14 结构化凭据统一交付与提交整理
+
+范围为 `e79c882a`（含）至 `8a805eb7` 的 20 个提交。压缩前历史保存在 Git 标签 `archive/credential-injection-20261114`；业务代码保持该终点行为，本轮整理迁移、规格、计划和原型。
+
+| 交付项 | 改动文件 | 验证与边界 |
+| --- | --- | --- |
+| 双库合并迁移 | `db-prod/V218-add-structured-credentials.sql`、`db-prod-pg/V118-add-structured-credentials.sql`；`app/main.py` 缺表提示；`docs/credential-center-verification.md` | 各自替代本分支的 4 份凭据迁移，保留种子及已有配置，补齐可重复执行的列守卫；新增迁移契约 **16 passed**（包括旧断点选择），相关执行器回归合计 **91 passed、11 deselected**。11 项依赖缺失的原生客户端被排除；真实双库升级待可销毁测试库验收。 |
+| 统一规格与计划 | `docs/superpowers/specs/2026-11-14-credential-injection.md`、`docs/superpowers/plans/2026-11-14-credential-injection.md` | 当前需求只维护这一组文件；历史来源、审计差距和已撤销要求集中归档，保留早于本范围的原始文档。 |
+| 完整交互原型 | `prototypes/2026-11-14-credential-injection.html`、`prototypes/index.html` | 覆盖凭据中心、类型表单、两项系统配置、固定/推导 MCP、JSONPath、原生补录、脚本环境变量和任务恢复；内联资源与演示数据，不接真实服务。脚本语法、3 种模式/7 个结果预设及静态结构校验通过；已生成 59 项索引。浏览器策略禁止 file 协议预览，视觉与实际点击待人工验收。 |
+| 凭据行为回归 | `tests/secrets/`、`tests/api/test_mcp_*`、`tests/core/test_mcp_projected_result_storage.py`、`tests/ai/tools/test_credential_script_*` | 本轮定向后端 **284 passed**；模型字段隐藏、固定候选提示、JSONPath 原样输出、脚本环境注入与输出检查、任务等待逻辑覆盖。使用合成数据、mock/进程内测试，不代表真实容器或双库集成已通过。 |
+| 前端契约 | `tests/frontend/test_mcp_tool_tester_result_contract.py`、`test_mcp_result_fields_save.py`、`test_secret_center_entry_contract.py`、`test_script_env_binding_contract.py`、`test_credential_schema_draft.py` | 本轮 **223 passed**。本轮未修改 Vue/TypeScript 业务代码，未重新运行全量类型检查。 |
+
+未运行 `./dev.sh`、数据库迁移或部署，未推送远端。远端在共同祖先后另有独立开发提交，后续集成需单独处理，不能强推覆盖。
+
+## 2026-11-12 结构化凭据与 MCP 授权
+
+- 后端定向回归 **614 项通过**。SQLite、模拟上游及独立回环网络覆盖类型禁用、授权卡新建、账号校验、字段映射、权限隔离、恢复占用、绑定故障、MCP/HTTP 回显隔离及旧工具兼容。
+- 前端相关契约 **588 项通过，1 项跳过**。隔离目录 Vite 打包成功。应用类型检查仍有 157 项既有诊断，与审查基线一致。
+- MySQL V216 和 PostgreSQL V116 的种子与结构通过代码校验。真实双库执行、浏览器登录联调和部署验收待完成。发布与回退见 [凭据中心上线与验证](../docs/credential-center-verification.md)。
+
 > 说明：本清单记录近期功能交付与自动化测试覆盖情况。历史已稳定的旧版本记录定期清理瘦身，完整变更可追溯 Git 历史；**2026-10-21 之前的记录已归档到 [`docs/changelog/`](../docs/changelog/)**（按月分文件，可直接 grep）。
 
 | 深度思考展示优化：Markdown 渲染 / 结论句摘要 / 超长限高 / 执行轨道（Thinking Display Polish） | 原型：`prototypes/2026-11-13-ai-thinking-display.html`（新增，已在 `prototypes/index.html` 登记）、`prototypes/shots/2026-11-13-thinking-{main,matrix,now,compact}.png`（配套截图，shots/ 不入库）；前端：`frontend/src/utils/reasoningPreview.ts`、`frontend/src/components/chat/ChatExecutionTimeline.vue`；测试：`tests/frontend/test_reasoning_preview_behavior.py`（+3）、`tests/frontend/test_reasoning_markdown_render_contract.py`（新增 5） | **需求（用户）**：一次回答里有大量思考，独立的「思考卡」会堆一屏，且希望能整体折叠；同时要求「不要五颜六色、整体是浅浅的浅色风格」。**三条纠正**：① 否决独立思考卡方案（一次回答十几轮思考 → 十几张卡，折叠也不方便），改为在现有时间线上做优化；② 指出前版方案把 A/B/C 当成互斥选项，实际是同一个渲染器上的三个开关；③ 要求覆盖历史会话回放等全部状态，不许破坏既有功能。**改造（纯前端，未改数据结构）**：① **思考正文真实渲染 Markdown**——原先是裸 `<pre>`，模型吐出的 `**加粗**`、`- 列表`、```sql 围栏全部原样裸露；改走与正文同一条 `renderMarkdown`（内部已 sanitize），新增 `.reasoning-md` 排版（段落/列表/代码块/引用/表格），深浅两套主题靠 `text-gray-600 dark:text-gray-400` 继承 + 半透明中性灰结构色，不新起主题变量。② **摘要从「前 80 字硬截」改为「结论句优先」**——`resolveReasoningPreview` 新增 `conclusionPreview`：按句读切句，挑「命中标记词（所以/结论/卡点/因此…）且长度 12~46 字」的句子；没有合适的句子退回原定长截取，两条规则互不兜底因此各自可测；pending 仍取尾部跟随最新内容。③ **超长思考限高**——超过 1200 字默认 `max-height: 13rem` + `mask-image` 渐隐（**阈值后续按实测调到 2000 字 / 14rem**，见文末同主题记录，此处保留当时的决策过程）（用 mask 而非白色遮罩：遮罩要猜底层背景色，卡片深浅与是否嵌在子代理块里都不同，猜错就是一条突兀色带），底部给「展开全部（共 N 字）」。**三条硬约束**：进行中不限高（流式最后一段还在逐字增长，套固定高度会让新字落在可视区外，与旁白「不做限高内滚」同源）、短思考点开即读全（不做两次点击）、展开状态记在组件内不写回 item（时间线在流式合并与历史恢复时会被重建，写回字段会被冲掉 → 表现为「点了展开又收回去」）。④ **执行链路轨道 + 四类节点形状**——一条竖线贯穿 + 思考圆点 / 工具方块 / 旁白小点 / 委派菱形 / 失败红点，把「这段是思考还是工具、层级在哪」从颜色里解放出来；刻意只用灰阶（彩色要两套主题各调一次且总有一套失衡，形状与缩进天然与主题无关），结构色统一半透明中性灰 `rgba(127,127,127,α)`，一套值覆盖深浅两套主题。⑤ **委派渲染成分支**——子代理容器加左侧 2px 分支线（`.subagent-branch`），内部嵌套线由 indigo 改中性，状态色（进行中绿 / 未完成琥珀）一并收掉，进行中改由行首呼吸点表达；失败红与换模提示琥珀保留（语义必需）。**踩到的坑**：Tailwind 任意属性类 `[--rm-text:rgb(...)]` 在本项目**没有被生成**（仓库无先例），`var()` 取不到值会让颜色塌成继承——构建产物里 grep 不到定义才发现，遂改为半透明灰方案；另 `:global(.dark)` 被契约 `test_embed_theme_sync_contract` 禁止（会被编译成命中所有 `.dark` 元素的全局规则，是「深色白雾」的成因），深色改由 Tailwind 类承担。**验证**：`tests/frontend` **4906 passed / 1 skipped**（含新增结论句 3 条 + 渲染契约 5 条；首轮曾红 2 条——一是本仓禁止的 `:global(.dark)`，二是 Tailwind 变量方案导致的样式失效）；`vue-tsc --noEmit` 通过；`vite build` 通过并核实产物中 `.timeline-rail` / `.subagent-branch` / `.reasoning-md-clamped` 均已生成、无 `var(--rm-/--tl-)` 残留、无全局裸 `.dark` 规则；用构建产物 CSS + 组件真实 DOM 结构（含 `data-v`）做了浅色/深色双主题离线渲染截图核对。**未做**：未跑 `./dev.sh`，实机观感与流式过程待控制台确认；P1（三级密度开关接入既有「思考过程」设置）、P2（并行委派分组需后端 batch 字段、深色两档灰）留待下一轮 | ✅ 已实现（待实机） | 2026-11-13 |

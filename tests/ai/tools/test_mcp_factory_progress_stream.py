@@ -234,3 +234,29 @@ async def test_non_numeric_progress_is_ignored(monkeypatch):
 
     assert [item.metadata["mcp_progress"]["progress"] for item in items[:-1]] == [1.0]
     assert items[-1] == "done"
+
+
+@pytest.mark.parametrize("protected", [False, True])
+async def test_stream_timeout_preserves_type_and_sanitizes_error(monkeypatch, protected):
+    from app.services.secrets.redact import register_injected, reset_injected
+
+    sentinel = "fixture-stream-timeout-credential"
+    reset_injected()
+
+    async def timeout_call(**kwargs):
+        # 普通调用在子 Task 登记，脱敏出口要先回收该 Context。
+        if not protected:
+            register_injected(sentinel)
+        raise TimeoutError("timeout: " + sentinel)
+
+    monkeypatch.setattr(McpClientService, "call_remote_tool", timeout_call)
+    try:
+        with pytest.raises(TimeoutError) as exc_info:
+            [item async for item in mcp_factory.stream_remote_tool_with_progress(
+                server_id="fixture-server", tool_name="probe", arguments={}, protect_payload=protected,
+            )]
+        assert sentinel not in str(exc_info.value)
+        assert exc_info.value.__cause__ is None
+        assert exc_info.value.__suppress_context__
+    finally:
+        reset_injected()

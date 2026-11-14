@@ -1,6 +1,12 @@
+import asyncio
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from redis.exceptions import WatchError
+
 import pytest
+from fastapi import HTTPException
 
 from app.services.conversation_resource_service import (
     TTL_SECONDS,
@@ -22,6 +28,190 @@ async def test_replace_writes_the_shared_thirty_day_ttl():
     assert TTL_SECONDS == 2592000
     assert ConversationResourceService.TTL_SECONDS == TTL_SECONDS
     assert redis.set.await_args.kwargs["ex"] == TTL_SECONDS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("storage_failure", ["missing", "read_failed", "write_failed", "write_rejected"])
+async def test_chat_cannot_confirm_mcp_mount_when_scope_was_not_saved(monkeypatch, storage_failure):
+    from app.api.v1.endpoints import chat
+
+    tool = {"id": "mcp-fixture", "name": "fixture-mail:list_mail"}
+    normalizer = AsyncMock(return_value={"mcp_tools": [tool]})
+    monkeypatch.setattr(chat, "_normalize_conversation_resource_scope", normalizer)
+    redis = _WatchRedis({"knowledge_scope": {"mode": "all"}})
+    redis.failure = storage_failure
+    get_redis = AsyncMock(return_value=None if storage_failure == "missing" else redis)
+    with patch("app.services.conversation_resource_service.get_redis", get_redis):
+        with pytest.raises(HTTPException) as error:
+            await chat.update_conversation_resource_scope(
+                "fixture-conversation",
+                chat.ConversationResourceScopeRequest(mcp_tools=[tool]),
+                user_info={"user_id": 7},
+                db=AsyncMock(),
+            )
+
+    assert error.value.status_code == 503
+    assert redis.version == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_saves_only_active_owned_mcp_tools(monkeypatch):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.api.v1.endpoints import chat
+    from app.models.knowledge import KnowledgeBaseMetadata
+    from app.models.mcp import McpServer, McpToolCache
+    from app.services.metadata_service import MetadataService
+    from app.services.permission_service import PermissionService
+    from tests.temporary_database import temporary_database
+
+    monkeypatch.setattr(MetadataService, "list_accessible_dataset_options", AsyncMock(return_value=[]))
+    monkeypatch.setattr(PermissionService, "get_knowledge_base_access", AsyncMock(return_value={"accessible_ids": set()}))
+
+    redis = _WatchRedis({"knowledge_scope": {"mode": "all"}})
+    monkeypatch.setattr("app.services.conversation_resource_service.get_redis", AsyncMock(return_value=redis))
+
+    async with temporary_database(
+        KnowledgeBaseMetadata.__table__, McpServer.__table__, McpToolCache.__table__,
+    ) as engine, async_sessionmaker(engine)() as db:
+        server_states = {
+            "active": {"user_id": 7, "enabled_status": 1},
+            "disabled": {"user_id": 7, "enabled_status": 0},
+            "foreign": {"user_id": 8, "enabled_status": 1},
+        }
+        tools = []
+        for key, state in server_states.items():
+            server = McpServer(id=key, server_name=key, scope="personal", sse_url="https://mcp.example", **state)
+            tools.append(McpToolCache(
+                id=f"tool-{key}", tool_name=f"{key}:list_mail", server=server, is_published=True, is_available=True,
+            ))
+        db.add_all(tools)
+        await db.flush()
+
+        requests = [{"id": tool.id} for tool in tools] + [{"id": "old-id", "name": "active:list_mail"}]
+        body = chat.ConversationResourceScopeRequest(mcp_tools=requests[-1:])
+        stale = await chat.update_conversation_resource_scope(
+            "fixture-conversation", body, user_info={"user_id": 7}, db=db,
+        )
+        assert stale.data["mcp_tools"] == []
+
+        body = chat.ConversationResourceScopeRequest(mcp_tools=requests)
+        result = await chat.update_conversation_resource_scope(
+            "fixture-conversation", body, user_info={"user_id": 7}, db=db,
+        )
+
+    assert [item["id"] for item in result.data["mcp_tools"]] == ["tool-active"]
+    assert result.data["knowledge_scope"] == {"mode": "all"}
+    assert result.data == json.loads(redis.value)
+
+
+class _WatchRedis:
+    def __init__(self, scope):
+        self.value = json.dumps(scope)
+        self.version = 0
+        self.failure = None
+
+    def pipeline(self):
+        return _WatchPipeline(self)
+
+
+class _WatchPipeline:
+    def __init__(self, redis):
+        self.redis = redis
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_error):
+        pass
+
+    async def watch(self, _key):
+        self.version = self.redis.version
+
+    async def get(self, _key):
+        if self.redis.failure == "read_failed":
+            raise ConnectionError("fixture unavailable")
+        value = self.redis.value
+        await asyncio.sleep(0)
+        return value
+
+    def multi(self):
+        pass
+
+    def set(self, _key, value, *, ex):
+        assert ex == TTL_SECONDS
+        self.value = value
+
+    async def execute(self):
+        if self.redis.failure == "write_failed":
+            raise ConnectionError("fixture unavailable")
+        if self.redis.failure == "write_rejected":
+            return [False]
+        if self.redis.version != self.version:
+            raise WatchError()
+        self.redis.value = self.value
+        self.redis.version += 1
+        return [True]
+
+
+@pytest.mark.asyncio
+async def test_parallel_mcp_mounts_keep_both_tools_and_existing_resources(monkeypatch):
+    from app.api.v1.endpoints import chat
+
+    from app.services.metadata_service import MetadataService
+
+    monkeypatch.setattr(
+        MetadataService, "list_accessible_dataset_options", AsyncMock(return_value=[
+            SimpleNamespace(id="dataset-one", name="dataset-one"),
+        ]),
+    )
+    redis = _WatchRedis({
+        "skills": [{"id": "old-skill"}],
+        "knowledge_scope": {"mode": "all"},
+        "mcp_tools": [{"id": "old-tool", "name": "fixture:existing"}],
+    })
+    monkeypatch.setattr("app.services.conversation_resource_service.get_redis", AsyncMock(return_value=redis))
+
+    async def authorized_mounts(_db, owner, items):
+        assert owner == "7"
+        return [item for item in items if item["id"] != "unavailable"]
+
+    monkeypatch.setattr(chat, "normalize_personal_mcp_mounts", authorized_mounts)
+
+    async def mount(tool_id, name):
+        return await chat.mount_conversation_mcp_tools(
+            "fixture-conversation",
+            chat.ConversationMcpMountRequest(
+                mcp_tools=[{"id": tool_id, "name": name}, {"id": "unavailable", "name": "fixture:off"}],
+            ),
+            user_info={"user_id": 7},
+            db=AsyncMock(),
+        )
+
+    await asyncio.gather(
+        mount("first", "fixture:first"),
+        mount("second", "fixture:second"),
+        ConversationResourceService.patch_scope(
+            7, "fixture-conversation", pending_scope_gate={"gate_id": "fixture-gate"},
+        ),
+    )
+    await chat.update_conversation_dataset_mount(
+        "fixture-conversation",
+        chat.ConversationDatasetMountRequest(dataset_id="dataset-one", mounted=True),
+        user_info={"user_id": 7},
+        db=AsyncMock(),
+    )
+    latest = await mount("first", "fixture:first")
+    stored = json.loads(redis.value)
+
+    assert latest.data["scope"] == stored
+    assert [tool["id"] for tool in latest.data["mounted_mcp_tools"]] == ["first"]
+    assert {tool["id"] for tool in stored["mcp_tools"]} == {"old-tool", "first", "second"}
+    assert len(stored["mcp_tools"]) == 3
+    assert stored["skills"] == [{"id": "old-skill"}]
+    assert [dataset["id"] for dataset in stored["datasets"]] == ["dataset-one"]
+    assert stored["knowledge_scope"] == {"mode": "all"}
+    assert stored["pending_scope_gate"] == {"gate_id": "fixture-gate"}
 
 
 @pytest.mark.asyncio

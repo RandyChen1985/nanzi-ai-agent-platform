@@ -730,7 +730,7 @@ def test_platform_prompt_enforces_html_interactive_app_output():
 # MCP 工具的平台内部标识（server_name:tool_name）与模型侧 Function Calling 名不同，
 # 提示词清单必须给出模型侧可调用名，否则模型照抄平台标识会被运行时白名单拦截。
 MCP_PLATFORM_TOOL_NAME = "mcp-public-admin-ivsom-mcp-server:mcp_query_abnormal_list"
-MCP_MODEL_TOOL_NAME = "mcp_mcp-public-admin-ivsom-mcp-server_mcp_query_abnor_c243c57fdb"
+MCP_MODEL_TOOL_NAME = "mcp_c243c57fdb5ed602a379"
 
 
 def _prompt_inventory_names(prompt: str) -> set[str]:

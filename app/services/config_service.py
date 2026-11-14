@@ -35,6 +35,8 @@ from app.services.ai.runtime.agentscope.tool_parallel import (
     set_max_concurrency_limit,
 )
 
+from app.services.secrets.payload_crypto import PAYLOAD_CONFIG_KEYS
+
 logger = logging.getLogger(__name__)
 
 CACHE_PREFIX = "sys_config:"
@@ -101,8 +103,14 @@ def resolve_effective_sandbox_policy(
     return normalized
 
 
+def _is_payload_config_key(key: str) -> bool:
+    return key.strip().lower() in PAYLOAD_CONFIG_KEYS
+
+
 def validate_config_update(key: str, value: str) -> None:
     """校验系统配置更新是否合法。"""
+    if _is_payload_config_key(key):
+        raise ValueError("请通过凭证策略保存结构化凭证配置")
     if key == AGENT_MAX_TOOLCALL_TIMEOUT_KEY:
         validate_agent_max_toolcall_timeout(value)
     elif key == PRODUCER_HARD_TIMEOUT_KEY:
@@ -302,7 +310,7 @@ class ConfigService:
                     _SYSTEM_CONFIGS_TABLE.c.description,
                     _SYSTEM_CONFIGS_TABLE.c.category,
                     _SYSTEM_CONFIGS_TABLE.c.is_secret,
-                )
+                ).where(func.lower(_SYSTEM_CONFIGS_TABLE.c.key).not_in(PAYLOAD_CONFIG_KEYS))
             )
             rows = result.fetchall()
             configs = {}
@@ -329,6 +337,8 @@ class ConfigService:
         2. Check DB
         3. Return Default
         """
+        if _is_payload_config_key(key):
+            return default
         # 1. Check Redis
         redis = await get_redis()
         if redis:
@@ -345,7 +355,8 @@ class ConfigService:
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
                     select(_SYSTEM_CONFIGS_TABLE.c.value).where(
-                        _SYSTEM_CONFIGS_TABLE.c.key == key
+                        _SYSTEM_CONFIGS_TABLE.c.key == key,
+                        func.lower(_SYSTEM_CONFIGS_TABLE.c.key).not_in(PAYLOAD_CONFIG_KEYS),
                     )
                 )
                 row = result.fetchone()
@@ -366,11 +377,11 @@ class ConfigService:
     @staticmethod
     async def get_many(defaults: Dict[str, Optional[str]]) -> Dict[str, Optional[str]]:
         """批量读取一组配置；沿用 get 的缓存、空值和默认值语义。"""
-        if not defaults:
-            return {}
         values = dict(defaults)
+        keys = [key for key in defaults if not _is_payload_config_key(key)]
+        if not keys:
+            return values
         redis = await get_redis()
-        keys = list(defaults)
         cached = await redis.mget([f"{CACHE_PREFIX}{key}" for key in keys]) if redis else [None] * len(keys)
         missing = []
         for key, value in zip(keys, cached):
@@ -384,7 +395,10 @@ class ConfigService:
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
                     select(_SYSTEM_CONFIGS_TABLE.c.key, _SYSTEM_CONFIGS_TABLE.c.value)
-                    .where(_SYSTEM_CONFIGS_TABLE.c.key.in_(missing))
+                    .where(
+                        _SYSTEM_CONFIGS_TABLE.c.key.in_(missing),
+                        func.lower(_SYSTEM_CONFIGS_TABLE.c.key).not_in(PAYLOAD_CONFIG_KEYS),
+                    )
                 )
                 rows = result.fetchall()
             if redis:
@@ -431,11 +445,13 @@ class ConfigService:
         try:
             # 1. Fetch old value for audit
             result = await session.execute(
-                select(_SYSTEM_CONFIGS_TABLE.c.value).where(
+                select(_SYSTEM_CONFIGS_TABLE.c.value, _SYSTEM_CONFIGS_TABLE.c.key).where(
                     _SYSTEM_CONFIGS_TABLE.c.key == key
                 )
             )
             row = result.fetchone()
+            if row and _is_payload_config_key(row[1]):
+                raise ValueError("请通过凭证策略保存结构化凭证配置")
             old_value = row[0] if row else None
             change_type = "UPDATE" if row else "CREATE"
 
@@ -593,11 +609,13 @@ class ConfigService:
             try:
                 # 1. Fetch old value and secret flag
                 result = await session.execute(
-                    select(_SYSTEM_CONFIGS_TABLE.c.value, _SYSTEM_CONFIGS_TABLE.c.is_secret).where(
-                        _SYSTEM_CONFIGS_TABLE.c.key == key
-                    )
+                    select(
+                        _SYSTEM_CONFIGS_TABLE.c.value, _SYSTEM_CONFIGS_TABLE.c.is_secret, _SYSTEM_CONFIGS_TABLE.c.key,
+                    ).where(_SYSTEM_CONFIGS_TABLE.c.key == key)
                 )
                 row = result.fetchone()
+                if row and _is_payload_config_key(row[2]):
+                    raise ValueError("请通过凭证策略保存结构化凭证配置")
                 old_value = row[0] if row else None
                 is_secret = bool(row[1]) if row and row[1] is not None else False
 
@@ -703,6 +721,8 @@ class ConfigService:
         ``mask_secret=True`` 时对密钥类键的历史值做掩码。历史表里 old/new 是明文，
         通过提示词历史这类「旁路」接口回显等于把密钥历史直接交出去。
         """
+        if _is_payload_config_key(key):
+            return []
         async with AsyncSessionLocal() as session:
             sql = """
                 SELECT id, config_key, old_value, new_value, description, changed_by, change_type, created_at
@@ -716,6 +736,8 @@ class ConfigService:
             
             history = []
             for r in rows:
+                if _is_payload_config_key(r[1]):
+                    continue
                 history.append({
                     "id": r[0],
                     "config_key": r[1],

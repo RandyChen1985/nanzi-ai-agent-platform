@@ -18,12 +18,15 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Sequence
 
 from sqlalchemy import and_, delete, or_, select
+from sqlalchemy.exc import IntegrityError
 
+from app.models.credential_type import McpCredentialUseGrant, StructuredCredential
 from app.models.secret import SecretBinding, SecretGrant, UserSecret
+from app.services.secrets import structured_payload, type_catalog
 from app.services.secrets.fingerprint import secret_fingerprint
 from app.services.secrets.policy import (
     ALL_SCENES,
@@ -118,6 +121,15 @@ class SecretValidationError(ValueError):
     """入参不合法。消息会直接回给前端，所以要说清「哪里不对」。"""
 
 
+class SecretCredentialError(SecretValidationError):
+    """携带可供门户分支处理的错误码，不包含凭据值。"""
+
+    def __init__(self, error: type_catalog.CredentialTypeError):
+        super().__init__(str(error))
+        self.code = error.code
+        self.status_code = error.status_code
+
+
 class SecretPermissionError(SecretValidationError):
     """无权操作这条凭据。
 
@@ -163,6 +175,12 @@ def _validate_hosts(hosts: Iterable[str] | None) -> list[str]:
     return cleaned
 
 
+def _utc_naive(value: datetime | None) -> datetime | None:
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _encrypt(value: str) -> str:
     return get_api_key_manager().encrypt_api_key(value)
 
@@ -174,7 +192,8 @@ async def create_secret(
     owner_id: str,
     secret_key: str,
     name: str,
-    value: str,
+    value: str | None = None,
+    structured: structured_payload.StructuredInput | None = None,
     secret_type: str = TYPE_CREDENTIAL,
     allowed_scenarios: Iterable[str] | None = None,
     allowed_hosts: Iterable[str] | None = None,
@@ -188,8 +207,10 @@ async def create_secret(
         raise SecretValidationError(f"未知的归属范围: {owner_scope}")
     if secret_type not in VALID_TYPES:
         raise SecretValidationError(f"未知的凭据类型: {secret_type}")
-    if not value:
+    if structured is None and not value:
         raise SecretValidationError("凭据值不能为空")
+    if structured is not None and (value is not None or secret_type != TYPE_CREDENTIAL):
+        raise SecretValidationError("结构化凭据只能提交结构化字段")
     if owner_scope == SCOPE_USER and not owner_id:
         raise SecretValidationError("用户级凭据必须指定 owner_id")
 
@@ -207,6 +228,13 @@ async def create_secret(
     if existing.first() is not None:
         raise SecretValidationError(f"凭据标识已存在: {key}")
 
+    if structured is None:
+        try:
+            type_key = "variable" if secret_type == TYPE_VARIABLE else "scalar"
+            await type_catalog.creation_version(session, type_key, 1)
+        except type_catalog.CredentialTypeError as exc:
+            raise SecretCredentialError(exc) from None
+
     row = UserSecret(
         id=str(uuid.uuid4()),
         owner_scope=owner_scope,
@@ -214,30 +242,35 @@ async def create_secret(
         secret_key=key,
         name=(name or key).strip()[:128],
         secret_type=secret_type,
-        value_encrypted=_encrypt(value),
-        value_fingerprint=secret_fingerprint(value),
-        # 预览就是泄露：credential 一律不存，variable 才允许展示前 8 位
-        value_preview=(value[:8] if secret_type == TYPE_VARIABLE else None),
+        credential_format=structured_payload.STRUCTURED_FORMAT if structured else structured_payload.LEGACY_FORMAT,
+        value_encrypted=_encrypt(value) if structured is None else None,
+        value_fingerprint=secret_fingerprint(value) if structured is None else None,
+        value_preview=value[:8] if secret_type == TYPE_VARIABLE else None,
         allowed_hosts=_validate_hosts(allowed_hosts),
         allowed_scenarios=_validate_scenarios(allowed_scenarios),
         status="active",
-        expires_at=expires_at,
+        expires_at=_utc_naive(expires_at),
         category=category,
         remark=remark,
         created_by=created_by or owner_id or None,
     )
+    if structured is not None:
+        try:
+            await structured_payload.create_payload(session, row, structured)
+        except type_catalog.CredentialTypeError as exc:
+            raise SecretCredentialError(exc) from None
+        type_key = structured.type_key
     session.add(row)
-    await _audit(
-        action="create",
-        secret=row,
-        actor_id=created_by or owner_id or None,
-        detail={
-            "secret_type": secret_type,
-            "allowed_scenarios": list(row.allowed_scenarios or []),
-            "allowed_hosts": list(row.allowed_hosts or []),
-        },
-    )
-    await session.commit()
+    type_catalog.audit_change(session, "create", created_by or owner_id or None, {
+        "type_key": type_key, "type_version": structured.type_version if structured else 1,
+    }, secret=row)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise SecretCredentialError(type_catalog.CredentialTypeError(
+            "CREDENTIAL_ACCOUNT_CONFLICT", "同一归属下的凭据标识或账号已存在", 409,
+        )) from None
 
     # 新值必须立刻进入落库扫描的快照，否则最长 60 秒内它仍会明文进审计。
     secret_registry.invalidate()
@@ -248,17 +281,18 @@ async def rotate_secret(
     session,
     *,
     secret_id: str,
-    new_value: str,
+    new_value: str | None = None,
+    field_changes: dict | None = None,
+    expected_value_revision: int | None = None,
     rotated_by: str | None = None,
     overlap_days: int = ROTATION_OVERLAP_DAYS,
     expires_at: datetime | None = None,
     actor_is_admin: bool = False,
 ) -> UserSecret:
     """轮换凭据值，旧值保留 ``overlap_days`` 天作为回退窗口。"""
-    if not new_value:
-        raise SecretValidationError("新值不能为空")
-
-    row = await session.get(UserSecret, secret_id)
+    row = await session.scalar(select(UserSecret).where(
+        UserSecret.id == secret_id,
+    ).with_for_update().execution_options(populate_existing=True))
     if row is None:
         raise SecretValidationError("凭据不存在")
     if row.owner_scope == SCOPE_USER and row.owner_id != rotated_by:
@@ -275,13 +309,33 @@ async def rotate_secret(
     # 用 datetime.now() 在 UTC+8 的机器上会写进本地时间：轮换时间凭空快 8 小时，
     # previous_expires_at 也跟着偏，7 天回退窗口实际只有 6 天 16 小时。
     now = datetime.utcnow()
+    if row.credential_format == structured_payload.STRUCTURED_FORMAT:
+        if new_value is not None:
+            raise SecretValidationError("结构化凭据只能提交轮换字段")
+        try:
+            payload = await structured_payload.rotate_payload(session, row, field_changes or {}, expected_value_revision)
+        except type_catalog.CredentialTypeError as exc:
+            raise SecretCredentialError(exc) from None
+        row.last_rotated_at = now
+        if expires_at is not None:
+            row.expires_at = _utc_naive(expires_at)
+        type_catalog.audit_change(session, "rotate", rotated_by, {
+            "type_key": payload.type_key, "type_version": payload.type_version,
+            "value_revision": payload.value_revision, "fields": sorted(field_changes or {}),
+        }, secret=row)
+        await session.commit()
+        return row
+
+    if row.credential_format != structured_payload.LEGACY_FORMAT or field_changes is not None or not new_value:
+        raise SecretValidationError("轮换值与凭据格式不匹配")
     row.previous_value_encrypted = row.value_encrypted
     row.previous_expires_at = now + timedelta(days=overlap_days)
     row.value_encrypted = _encrypt(new_value)
     row.value_fingerprint = secret_fingerprint(new_value)
     row.value_preview = new_value[:8] if row.secret_type == TYPE_VARIABLE else None
     row.last_rotated_at = now
-    row.expires_at = expires_at if expires_at is not None else row.expires_at
+    if expires_at is not None:
+        row.expires_at = _utc_naive(expires_at)
     await _audit(
         action="rotate",
         secret=row,
@@ -312,6 +366,7 @@ async def bind_secret(
     slot: str,
     bound_by_user_id: str | None,
     dept_code: str = "",
+    value_field: str | None = None,
     actor_id: str | None = None,
 ) -> SecretBinding:
     """把一个槽位绑到一条凭据上。同一槽位重复绑定视为「改绑」。"""
@@ -330,6 +385,11 @@ async def bind_secret(
             f"{consumer_type} 不支持 {prefix}: 槽位，可用的前缀："
             + " / ".join(sorted(allowed))
         )
+
+    if consumer_type == "script_tool":
+        from app.services.secrets.field_binding import valid_script_env_name
+        if not valid_script_env_name(slot_name):
+            raise SecretValidationError("环境变量名称无效")
 
     secret = await session.get(UserSecret, secret_id)
     if secret is None:
@@ -356,6 +416,20 @@ async def bind_secret(
         )
         if secret.id not in {item.id for item in visible}:
             raise SecretPermissionError("凭据不存在")
+
+    target = None
+    if secret.credential_format == structured_payload.STRUCTURED_FORMAT:
+        from app.services.secrets.field_binding import validate_binding
+
+        # 系统共享沿用上方授权校验；个人绑定只对绑定者生效。
+        try:
+            target = await validate_binding(session, secret, consumer_type, consumer_id, slot, value_field, actor_id)
+        except type_catalog.CredentialTypeError as exc:
+            raise SecretCredentialError(exc) from None
+        except ValueError as exc:
+            raise SecretValidationError(str(exc)) from None
+    elif secret.credential_format != structured_payload.LEGACY_FORMAT or value_field is not None:
+        raise SecretValidationError("凭据格式与绑定方式不匹配")
 
     # 「全局绑定」用空串表示，不用 NULL：唯一索引 uk_binding_slot 含这一列，
     # 而 NULL 在唯一索引里互不相等（多行 NULL 允许共存），等于没有约束。
@@ -390,6 +464,8 @@ async def bind_secret(
         consumer_id=consumer_id,
         slot=slot,
         bound_by_user_id=owner_key,
+        value_field=value_field,
+        target_digest=target,
     )
     session.add(binding)
     # 全局绑定时 bound_by_user_id 为 None，若不显式透传 actor_id 会丢失操作人。
@@ -402,6 +478,7 @@ async def bind_secret(
             "consumer_type": consumer_type,
             "consumer_id": consumer_id,
             "slot": slot,
+            "value_field": value_field,
             # 为空表示管理员全局绑定；有值就是「只对这个人生效」
             "global": not owner_key,
         },
@@ -431,6 +508,8 @@ async def bind_rule(
     """
     from app.services.secrets.locator import RuleError, parse_rule
 
+    if consumer_type == "script_tool":
+        raise SecretValidationError("脚本环境变量仅支持固定凭据绑定")
     if consumer_type not in VALID_CONSUMER_TYPES:
         raise SecretValidationError(f"未知的消费者类型: {consumer_type}")
     if not consumer_id or not slot:
@@ -648,6 +727,29 @@ async def unbind_slot(
     return result.rowcount or 0
 
 
+async def unbind_personal_binding(session, *, binding_id: str, user_id: str) -> bool:
+    """删除本人创建的固定绑定。按记录 ID 定位，以便清理目标已不可见的绑定。"""
+    if not user_id:
+        return False
+    binding = await session.scalar(select(SecretBinding).where(
+        SecretBinding.id == binding_id, SecretBinding.bound_by_user_id == user_id, SecretBinding.strategy == "fixed",
+    ).with_for_update())
+    if binding is None:
+        return False
+
+    secret = await session.get(UserSecret, binding.secret_id) if binding.secret_id else None
+    if secret is not None:
+        await _audit(action="unbind", secret=secret, actor_id=user_id, detail={
+            "consumer_type": binding.consumer_type,
+            "consumer_id": binding.consumer_id,
+            "slot": binding.slot,
+            "removed": 1,
+        })
+    await session.delete(binding)
+    await session.commit()
+    return True
+
+
 async def grant_secret(
     session,
     *,
@@ -748,6 +850,7 @@ async def list_visible_secrets(
     dept_code: str | None = None,
     include_system: bool = True,
     only_active: bool = False,
+    legacy_only: bool = False,
 ) -> Sequence[UserSecret]:
     """列出用户能「看见」的凭据：自己的 + 被授权的系统级。
 
@@ -782,6 +885,8 @@ async def list_visible_secrets(
     # 注意：`conditions` 最终要进 `or_()`，往里追加等于「只要 active 就可见」。
     # 附加过滤必须走 AND。
     extra = [UserSecret.status == "active"] if only_active else []
+    if legacy_only:
+        extra.append(UserSecret.credential_format == structured_payload.LEGACY_FORMAT)
 
     stmt = (
         select(UserSecret)
@@ -805,7 +910,9 @@ async def delete_secret(
 
     from app.models.secret import SecretBinding, SecretGrant
 
-    row = await session.get(UserSecret, secret_id)
+    row = await session.scalar(select(UserSecret).where(
+        UserSecret.id == secret_id,
+    ).with_for_update().execution_options(populate_existing=True))
     if row is None:
         raise SecretValidationError("凭据不存在")
     if row.owner_scope == SCOPE_USER and row.owner_id != actor_id:
@@ -823,6 +930,9 @@ async def delete_secret(
     )
     await session.execute(sa_delete(SecretGrant).where(SecretGrant.secret_id == secret_id))
     await session.execute(sa_delete(SecretBinding).where(SecretBinding.secret_id == secret_id))
+    if row.credential_format == structured_payload.STRUCTURED_FORMAT:
+        await session.execute(sa_delete(McpCredentialUseGrant).where(McpCredentialUseGrant.secret_id == secret_id))
+        await session.execute(sa_delete(StructuredCredential).where(StructuredCredential.secret_id == secret_id))
     await session.delete(row)
     await session.commit()
     secret_registry.invalidate()
@@ -937,6 +1047,13 @@ async def list_audit(
     if actor_id:
         stmt = stmt.where(SecretAuditLog.actor_id == actor_id)
     return (await session.execute(stmt)).scalars().all()
+
+
+def visible_fixed_binding_conditions(user_id: str):
+    return (
+        SecretBinding.strategy == "fixed",
+        or_(SecretBinding.bound_by_user_id.in_(("", user_id)), SecretBinding.bound_by_user_id.is_(None)),
+    )
 
 
 async def list_bindings(session, *, secret_id: str) -> Sequence[SecretBinding]:
@@ -1148,7 +1265,7 @@ async def read_variable_value(
     row = await session.get(UserSecret, secret_id)
     if row is None:
         raise SecretValidationError("凭据不存在")
-    if row.secret_type != TYPE_VARIABLE:
+    if row.secret_type != TYPE_VARIABLE or row.credential_format != structured_payload.LEGACY_FORMAT:
         raise SecretValidationError("凭证类凭据不可读取；请在配置中引用，由平台注入")
     if row.owner_scope == SCOPE_USER and row.owner_id != actor_id:
         raise SecretPermissionError("不能读取他人的凭据")

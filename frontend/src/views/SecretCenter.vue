@@ -14,6 +14,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import axios from '../utils/axios'
 import { useDismissible } from '../utils/dismissible'
 import { shortTime } from '../utils/date'
+import { mcpToolDisplayName } from '../utils/mcpToolDisplayName'
+import CredentialFieldForm from '../components/secrets/CredentialFieldForm.vue'
+import CredentialRotationFields from '../components/secrets/CredentialRotationFields.vue'
+import CredentialTypesPanel from '../components/secrets/CredentialTypesPanel.vue'
+import { credentialError, useCredentialFields, type CredentialMeta, type FieldValue } from '../composables/useCredentialFields'
 import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
 import { RESULT_LABEL } from '../utils/secretLabels'
 import {
@@ -21,7 +26,7 @@ import {
   secretActionStyle,
 } from '../utils/secretAudit'
 
-interface SecretItem {
+interface SecretItem extends CredentialMeta {
   id: string
   owner_scope: 'user' | 'system'
   owner_id: string | null
@@ -66,7 +71,7 @@ interface UsageRow {
 const SCENES = [
   { key: 'mcp', label: 'MCP 服务', hint: '出站请求头', desc: '作为连接头的值，在建立 MCP 连接时注入', wired: true },
   { key: 'api_tool', label: 'API 工具', hint: '请求头 / 参数', desc: '填进工具的请求头，只补没填的位置；手填了真实值的不覆盖', wired: true },
-  { key: 'script_env', label: '脚本环境变量', hint: '默认关，需平台 + 个人都开', desc: '以环境变量形式进子进程，脚本里可直接读；stdout 会被指纹扫描', wired: true },
+  { key: 'script_env', label: '脚本环境变量', hint: '隔离执行', desc: '凭据注入专用隔离执行环境，输出会检查凭据回显', wired: true },
   { key: 'agent', label: '智能体', hint: '暂未接入，勾了也不会注入', desc: '暂未接入，勾了也不会注入', wired: false },
 ]
 
@@ -150,10 +155,6 @@ function showToast(text: string, type: 'ok' | 'err' = 'ok') {
 }
 
 // ── 三栏浏览：左筛选 / 中列表 / 右详情 ──────────────────────────────
-//
-// 原型里「待配置」指的是「团队工具需要你的个人密钥，你还没填」。我们没有
-// 「消费者声明需要凭据」这张表，硬造一个只会是假的；换成本模型里真实存在、
-// 同样需要用户动手的那件事：**建好了却没绑到任何地方**——它同样不会生效。
 type FilterKind = 'all' | 'unbound' | 'expired' | 'unused90' | 'multibound' | 'category'
 
 const filterKind = ref<FilterKind>('all')
@@ -172,7 +173,7 @@ const isExpired = (item: SecretItem) =>
 const isDisabled = (item: SecretItem) => item.status === 'disabled'
 
 const unboundCount = computed(
-  () => scopedItems.value.filter((i) => (i.binding_count || 0) === 0 && !isDisabled(i)).length,
+  () => scopedItems.value.filter((i) => (i.binding_count || 0) === 0).length,
 )
 const expiredCount = computed(() => scopedItems.value.filter(isExpired).length)
 const unused90Count = computed(
@@ -256,6 +257,26 @@ async function load() {
 
 // ── 创建 ──────────────────────────────────────────────────────────────
 const showCreate = ref(false)
+const showTypes = ref(false)
+const {
+  types: creationTypes, typeKey, account: credentialAccount, values: credentialValues,
+  loading: typeLoading, error: typeError, selected: selectedType, structured: structuredType,
+  refresh: refreshTypes, clear: clearCredentialFields, complete: credentialComplete, request: credentialRequest,
+} = useCredentialFields()
+const createExpiry = ref('')
+watch(typeKey, key => {
+  form.value.value = ''
+  revealValue.value = false
+  clearCredentialFields()
+  if (key && key !== 'scalar' && key !== 'variable') form.value.allowed_scenarios = ['mcp']
+})
+watch(showCreate, open => {
+  if (!open) {
+    clearCredentialFields()
+    form.value.value = ''
+    revealValue.value = false
+  }
+})
 // 新建向导的三步：说清楚是什么 → 划清楚能去哪 → 确认不可逆的部分。
 // 做成一步会变成一屏十几个字段，用户填到一半就忘了自己在建什么。
 const createStep = ref(1)
@@ -264,7 +285,6 @@ const form = ref({
   secret_key: '',
   name: '',
   value: '',
-  secret_type: 'credential' as 'credential' | 'variable',
   allowed_scenarios: ['mcp'] as string[],
   allowed_hosts: '',
   category: '',
@@ -281,18 +301,20 @@ function openCreate() {
     secret_key: '',
     name: '',
     value: '',
-    secret_type: 'credential',
     allowed_scenarios: ['mcp'],
     allowed_hosts: '',
     category: '',
     remark: '',
   }
   createStep.value = 1
+  createExpiry.value = ''
   showCreate.value = true
+  void refreshTypes()
 }
 
 // 纯空白不算填了；但保存时用的仍是原值，不 trim —— JSON / PEM 的缩进要保住
-const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && form.value.value.trim())
+const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && credentialComplete()
+  && (structuredType.value || form.value.value.trim()))
 
 function nextCreateStep() {
   if (createStep.value === 1 && !canLeaveStep1()) {
@@ -314,14 +336,14 @@ function toggleScene(key: string) {
 
 async function submitCreate() {
   if (!form.value.secret_key.trim()) return showToast('请填写凭据标识', 'err')
-  if (!form.value.value.trim()) return showToast('请填写凭据值', 'err')
+  if (!canLeaveStep1()) return showToast('请填写启用类型的必填字段', 'err')
   createBusy.value = true
   try {
     await axios.post('/api/portal/secrets', {
       secret_key: form.value.secret_key.trim(),
       name: form.value.name.trim() || form.value.secret_key.trim(),
-      value: form.value.value,
-      secret_type: form.value.secret_type,
+      ...credentialRequest(form.value.value),
+      expires_at: createExpiry.value ? new Date(createExpiry.value).toISOString() : null,
       allowed_scenarios: form.value.allowed_scenarios,
       allowed_hosts: form.value.allowed_hosts
         .split(/[,，\s]+/)
@@ -334,7 +356,7 @@ async function submitCreate() {
     showToast('已创建。值已加密保存，之后任何人（包括管理员）都读不回来')
     await load()
   } catch (e: any) {
-    showToast(e?.response?.data?.detail || '创建失败', 'err')
+    showToast(credentialError(e, '创建失败'), 'err')
   } finally {
     createBusy.value = false
   }
@@ -343,20 +365,35 @@ async function submitCreate() {
 // ── 轮换 ──────────────────────────────────────────────────────────────
 const rotateTarget = ref<SecretItem | null>(null)
 const rotateValue = ref('')
+const rotateFields = ref<Record<string, FieldValue>>({})
+const structuredRotation = computed(() => rotateTarget.value?.credential_format === 'structured_v1')
+const canRotate = computed(() => structuredRotation.value
+  ? Object.keys(rotateFields.value).length > 0
+  : !!rotateValue.value.trim())
+
 const rotateBusy = ref(false)
+watch(rotateTarget, item => {
+  if (!item) {
+    rotateValue.value = ''
+    rotateFields.value = {}
+  }
+})
 
 function openRotate(item: SecretItem) {
   rotateTarget.value = item
   rotateValue.value = ''
+  rotateFields.value = {}
   revealRotateValue.value = false
 }
 
 async function submitRotate() {
-  if (!rotateTarget.value || !rotateValue.value) return
+  if (!rotateTarget.value || !canRotate.value) return
   rotateBusy.value = true
   try {
     await axios.post(`/api/portal/secrets/${rotateTarget.value.id}/rotate`, {
-      value: rotateValue.value,
+      ...(structuredRotation.value
+        ? { field_changes: rotateFields.value, expected_value_revision: rotateTarget.value?.value_revision }
+        : { value: rotateValue.value }),
       overlap_days: 7,
     })
     rotateTarget.value = null
@@ -364,7 +401,7 @@ async function submitRotate() {
     showToast('已轮换。旧值保留 7 天，正在跑的任务不会中断')
     await load()
   } catch (e: any) {
-    showToast(e?.response?.data?.detail || '轮换失败', 'err')
+    showToast(credentialError(e, '轮换失败'), 'err')
   } finally {
     rotateBusy.value = false
   }
@@ -424,15 +461,38 @@ async function copyRevealed() {
   }
 }
 
-// ── 绑定总览 ──────────────────────────────────────────────────────────
-//
-// 「这条凭据被绑到哪了」。没有这个视图时，用户只能去每个 API 工具、每个 MCP 服务、
-// 每个脚本里翻，翻不完也不知道有没有漏。反查接口按 secret_id 走同一条 `/bindings`。
+interface ToolRelationBinding {
+  id: string
+  slot: string | null
+  bound_by_me: boolean
+}
+
+interface ToolRelation {
+  kind: string
+  id: string
+  name: string
+  server_name: string | null
+  selection_mode: 'infer' | 'ask' | null
+  used: boolean
+  bindings: ToolRelationBinding[]
+}
+
+interface ToolRelations {
+  items: ToolRelation[]
+  unresolved_usage: boolean
+  unresolved_bindings: ToolRelationBinding[]
+}
+
 const CONSUMER_LABEL: Record<string, string> = {
   api_tool: 'API 工具',
-  mcp_server: 'MCP 服务',
+  mcp_server: 'MCP 连接',
   script_tool: '脚本工具',
-  agent: '智能体',
+}
+
+function bindingSlotLabel(slot: string | null): string {
+  if (!slot || slot.startsWith('group:')) return '整组凭据'
+  if (slot.startsWith('arg:')) return `参数 ${slot.slice(slot.lastIndexOf(':') + 1)}`
+  return slot
 }
 
 // ── 使用记录 ──────────────────────────────────────────────────────────
@@ -581,15 +641,13 @@ function scenarioLabels(item: SecretItem): string[] {
 function statusTone(item: SecretItem): string {
   if (isDisabled(item)) return 'bg-gray-100 text-gray-500'
   if (isExpired(item)) return 'bg-rose-50 text-rose-600'
-  if ((item.binding_count || 0) === 0) return 'bg-slate-100 text-slate-500'
   return 'bg-emerald-50 text-emerald-700'
 }
 
 function statusText(item: SecretItem): string {
   if (isDisabled(item)) return '已停用'
   if (isExpired(item)) return '已过期'
-  if ((item.binding_count || 0) === 0) return '未绑定'
-  return '正常'
+  return '已启用'
 }
 
 /** 「今天 10:32」「昨天 22:03」「11-06 08:00」——列表里只需要相对粗粒度 */
@@ -600,7 +658,6 @@ function categoryOf(item: SecretItem): string {
 
 function selectSecret(item: SecretItem) {
   selectedId.value = item.id
-  void loadBindingsOf(item)
 }
 
 // ── 停用 / 启用 ──────────────────────────────────────────────────────
@@ -608,56 +665,55 @@ async function toggleStatus(item: SecretItem) {
   const next = isDisabled(item) ? 'active' : 'disabled'
   try {
     await axios.post(`/api/portal/secrets/${item.id}/status`, { status: next })
-    showToast(next === 'disabled' ? '已停用，所有绑定调用会立即失败' : '已启用')
+    showToast(next === 'disabled' ? '已停用，工具将无法使用此凭据' : '已启用')
     await load()
   } catch (e: any) {
     showToast(e?.response?.data?.detail || '操作失败', 'err')
   }
 }
 
-// ── 从这条凭据上解绑 ─────────────────────────────────────────────────
-async function unbindFrom(row: any) {
+const toolRelations = ref<ToolRelations | null>(null)
+const typeMatchedToolCount = computed(() => toolRelations.value?.items.filter(row => row.selection_mode).length ?? 0)
+const usedToolCount = computed(() => toolRelations.value?.items.filter(row => row.used).length ?? 0)
+const toolRelationsBusy = ref(false)
+const toolRelationsError = ref(false)
+const unbindingId = ref<string | null>(null)
+
+// 快速切换卡片时，只应用最后一次请求的结果。
+let relationsRequest = 0
+async function loadToolRelations(item: SecretItem | null) {
+  const request = ++relationsRequest
+  toolRelations.value = null
+  toolRelationsError.value = false
+  toolRelationsBusy.value = item !== null
+  if (!item) return
   try {
-    await axios.delete('/api/portal/secrets/bindings', {
-      data: {
-        consumer_type: row.consumer_type,
-        consumer_id: row.consumer_id,
-        slot: row.slot,
-      },
-    })
+    const res = await axios.get<{ data: ToolRelations }>(`/api/portal/secrets/${item.id}/tool-relations`)
+    if (request === relationsRequest) toolRelations.value = res.data.data
+  } catch {
+    if (request === relationsRequest) toolRelationsError.value = true
+  } finally {
+    if (request === relationsRequest) toolRelationsBusy.value = false
+  }
+}
+
+async function unbindFrom(binding: ToolRelationBinding) {
+  if (unbindingId.value) return
+  unbindingId.value = binding.id
+  try {
+    await axios.delete(`/api/portal/secrets/bindings/${binding.id}`)
     showToast('已解除绑定')
-    await Promise.all([load(), loadBindingsOf(selected.value)])
+    await load()
   } catch (e: any) {
     showToast(e?.response?.data?.detail || '解除失败', 'err')
-  }
-}
-
-// ── 选中项的绑定列表（右侧详情内嵌，不再单开弹窗）──────────────────
-const selectedBindings = ref<any[]>([])
-const selectedBindingsBusy = ref(false)
-
-async function loadBindingsOf(item: SecretItem | null) {
-  if (!item) {
-    selectedBindings.value = []
-    return
-  }
-  selectedBindingsBusy.value = true
-  try {
-    const res = await axios.get('/api/portal/secrets/bindings', {
-      params: { secret_id: item.id },
-    })
-    selectedBindings.value = res.data?.data || []
-  } catch {
-    selectedBindings.value = []
   } finally {
-    selectedBindingsBusy.value = false
+    unbindingId.value = null
   }
 }
 
-// 选中项跟着列表走：切 scope / 改筛选之后，右侧要显示当前列表里那一条
 watch(selected, (item) => {
   if (item && item.id !== selectedId.value) selectedId.value = item.id
-  void loadBindingsOf(item)
+  void loadToolRelations(item)
 })
 
 onMounted(load)
@@ -686,7 +742,7 @@ onMounted(load)
         </button>
       </div>
 
-      <!-- 窄屏：搜索整行，下一行「?」与「新建」并排。整块用一个不换行的 flex 时，
+      <!-- 窄屏：搜索整行，下一行放帮助、类型和新建操作。整块用一个不换行的 flex 时，
            中文按钮会被挤成一列竖排字（跨 360~430px 的机型都会中招）。 -->
       <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
         <button
@@ -702,6 +758,8 @@ onMounted(load)
           placeholder="搜索名称或标识"
           class="order-1 w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none sm:order-2 sm:w-56"
         />
+        <button type="button" class="order-3 shrink-0 whitespace-nowrap rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+          @click="showTypes = true">凭据类型</button>
         <button
           v-if="scope === 'mine'"
           type="button"
@@ -713,6 +771,8 @@ onMounted(load)
       </div>
     </div>
 
+    <CredentialTypesPanel v-if="showTypes" @close="showTypes = false" />
+
     <!-- 安全提示 -->
     <div
       v-if="showSecurityHint"
@@ -721,8 +781,7 @@ onMounted(load)
       <p class="min-w-0 flex-1">
         <strong>凭据建完即不可读。</strong>
         「凭证」类型的值加密保存后，任何人（包括管理员）都无法再查看明文——只能轮换或停用；
-        「变量」类型可以随时查看（每次查看都留记录）。想让某个 MCP / 工具用上，
-        还需要在它那一侧<strong>显式绑定</strong>；建完不等于能用。
+        「变量」类型可以随时查看（每次查看都留记录）。工具可以使用固定绑定，支持结构化凭据的 MCP 工具也可按类型动态选择。
       </p>
       <button
         type="button"
@@ -737,13 +796,13 @@ onMounted(load)
       </button>
     </div>
 
-    <!-- 有待绑定的凭据：建完不绑等于没建，这条比任何说明都值得先说 -->
+    <!-- 固定绑定筛选提示 -->
     <div
       v-if="unboundCount > 0 && !loading && showUnboundHint"
       class="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800"
     >
-      <span class="font-semibold">{{ unboundCount }} 条凭据还没绑定到任何地方。</span>
-      <span>凭据建完不等于能用——要去 API 工具的请求头或参数、MCP 服务的认证区或工具参数，或脚本的环境变量里显式绑上它。</span>
+      <span class="font-semibold">{{ unboundCount }} 条凭据没有固定绑定。</span>
+      <span>动态选择和实际使用情况可在凭据详情的「关联工具」里查看。</span>
       <button type="button" class="ml-auto shrink-0 font-medium text-amber-900 underline" @click="filterKind = 'unbound'">
         只看这些 →
       </button>
@@ -806,7 +865,7 @@ onMounted(load)
           @click="filterKind = 'unbound'"
         >
           <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
-          <span class="flex-1">未绑定</span>
+          <span class="flex-1">无固定绑定</span>
           <span class="text-[11px] text-gray-400">{{ unboundCount }}</span>
         </button>
         <button
@@ -854,7 +913,7 @@ onMounted(load)
           :class="filterKind === 'multibound' ? 'bg-gray-100 font-medium text-gray-800' : ''"
           @click="filterKind = 'multibound'"
         >
-          <span class="flex-1">被多处绑定</span>
+          <span class="flex-1">多处固定绑定</span>
           <span class="text-[11px] text-gray-400">{{ multiboundCount }}</span>
         </button>
       </aside>
@@ -864,7 +923,7 @@ onMounted(load)
         <div class="grid grid-cols-[minmax(0,1fr)_84px_56px_84px] gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2 text-[11px] font-medium text-gray-500">
           <span>名称 / 标识</span>
           <span>状态</span>
-          <span class="text-center">绑定</span>
+          <span class="text-center">固定绑定</span>
           <span class="text-right">最近使用</span>
         </div>
 
@@ -1002,46 +1061,75 @@ onMounted(load)
             </div>
           </div>
 
-          <!-- 绑定到哪 -->
-          <div>
+          <div v-if="selected.credential_format === 'structured_v1'" class="space-y-1 text-xs text-slate-600">
+            <p>类型版本 <code>{{ selected.type_key }} · v{{ selected.type_version }}</code></p>
+            <p>账号 {{ selected.account }}</p>
+            <p v-if="selected.secret_fields_set?.length">已设置 {{ selected.secret_fields_set.join('、') }}</p>
+          </div>
+
+          <div aria-live="polite">
             <p class="text-[11px] font-medium text-gray-500">
-              已绑定（{{ selectedBindingsBusy ? '…' : selectedBindings.length }}）
+              关联工具（{{ toolRelations ? toolRelations.items.length : '…' }}）
             </p>
-            <p v-if="selectedBindingsBusy" class="mt-1 text-[10px] text-gray-400">加载中…</p>
-            <p
-              v-else-if="!selectedBindings.length"
-              class="mt-1 rounded-lg border border-dashed border-gray-200 px-2 py-3 text-center text-[10px] text-gray-400"
-            >
-              还没绑定到任何工具，所以不会被注入
-            </p>
-            <div v-else class="mt-1 space-y-1">
-              <div
-                v-for="row in selectedBindings"
-                :key="row.id"
-                class="flex items-center gap-1.5 rounded-lg bg-gray-50 px-2 py-1.5"
-              >
-                <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-white text-[10px] font-semibold text-gray-600">
-                  {{ (CONSUMER_LABEL[row.consumer_type] || '?').slice(0, 1) }}
-                </span>
-                <div class="min-w-0 flex-1">
-                  <p class="truncate text-[10px] font-medium text-gray-700">
-                    {{ CONSUMER_LABEL[row.consumer_type] || row.consumer_type }}
-                  </p>
-                  <p class="truncate font-mono text-[10px] text-gray-400">{{ row.slot }}</p>
-                </div>
-                <span
-                  class="shrink-0 rounded px-1 py-0.5 text-[9px]"
-                  :class="row.bound_by_me ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'"
-                >{{ row.bound_by_me ? '我绑的' : '全局' }}</span>
-                <button
-                  v-if="row.bound_by_me"
-                  type="button"
-                  class="shrink-0 text-[9px] text-gray-400 hover:text-rose-600"
-                  :title="`从 ${CONSUMER_LABEL[row.consumer_type] || row.consumer_type} 解除`"
-                  @click.stop="unbindFrom(row)"
-                >移除</button>
-              </div>
+            <p v-if="toolRelationsBusy" class="mt-1 text-xs text-gray-500">加载中…</p>
+            <div v-else-if="toolRelationsError" class="mt-1 flex items-center gap-2 text-xs text-gray-500">
+              加载关联工具失败
+              <button type="button" class="text-blue-700 underline" @click="loadToolRelations(selected)">重试</button>
             </div>
+            <template v-else-if="toolRelations">
+              <p v-if="toolRelations.items.length" class="mt-1 text-[11px] text-gray-500">
+                按类型匹配 {{ typeMatchedToolCount }} 个 · 曾使用 {{ usedToolCount }} 个
+              </p>
+              <p
+                v-if="!toolRelations.items.length && !toolRelations.unresolved_usage && !toolRelations.unresolved_bindings.length"
+                class="mt-1 rounded-lg border border-dashed border-gray-200 px-2 py-3 text-center text-xs text-gray-500"
+              >暂无关联工具</p>
+              <ul v-else-if="toolRelations.items.length" class="mt-1 space-y-1">
+                <li v-for="row in toolRelations.items" :key="`${row.kind}:${row.id}`" class="rounded-lg bg-gray-50 px-2 py-1.5">
+                  <p class="break-words text-xs font-medium text-gray-800">
+                    {{ row.kind === 'mcp_tool' ? mcpToolDisplayName(row.name, row.server_name) : row.name }}
+                  </p>
+                  <p class="break-words text-[11px] text-gray-500">{{ row.server_name || CONSUMER_LABEL[row.kind] }}</p>
+                  <div class="mt-1 flex flex-wrap gap-1 text-[10px]">
+                    <span v-if="row.bindings.length" class="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-800">固定绑定</span>
+                    <span v-if="row.selection_mode" class="rounded bg-blue-100 px-1.5 py-0.5 text-blue-800">
+                      {{ row.selection_mode === 'infer' ? '按类型 · 模型选择' : '按类型 · 按次选择' }}
+                    </span>
+                    <span v-if="row.used" class="rounded bg-gray-200 px-1.5 py-0.5 text-gray-700">曾使用</span>
+                  </div>
+                  <div v-for="binding in row.bindings" :key="binding.id" class="mt-1 flex flex-wrap items-center gap-x-2 text-[11px]">
+                    <span class="break-all text-gray-600">{{ bindingSlotLabel(binding.slot) }} · {{ binding.bound_by_me ? '我绑定' : '全局' }}</span>
+                    <button
+                      v-if="binding.bound_by_me"
+                      type="button"
+                      class="text-gray-500 underline hover:text-rose-600 disabled:opacity-50"
+                      :disabled="!!unbindingId"
+                      :aria-label="`移除 ${row.name} 的${bindingSlotLabel(binding.slot)}绑定`"
+                      @click="unbindFrom(binding)"
+                    >移除</button>
+                  </div>
+                </li>
+              </ul>
+              <div v-if="toolRelations.unresolved_bindings.length" class="mt-1 space-y-1">
+                <div
+                  v-for="binding in toolRelations.unresolved_bindings"
+                  :key="binding.id"
+                  class="flex flex-wrap items-center gap-x-2 rounded-lg bg-gray-50 px-2 py-1.5 text-[11px] text-gray-600"
+                >
+                  <span>固定绑定 · 目标不可见或已删除</span>
+                  <button
+                    v-if="binding.bound_by_me"
+                    type="button"
+                    class="text-gray-500 underline hover:text-rose-600 disabled:opacity-50"
+                    :disabled="!!unbindingId"
+                    @click="unbindFrom(binding)"
+                  >移除</button>
+                </div>
+              </div>
+              <p v-if="toolRelations.unresolved_usage" class="mt-1 text-[11px] text-gray-500">
+                部分历史目标已不可见或无法识别。
+              </p>
+            </template>
           </div>
 
           <!-- 使用概览 -->
@@ -1103,7 +1191,7 @@ onMounted(load)
           <div class="flex items-start justify-between border-b border-gray-100 px-5 py-3">
             <div>
               <h3 class="text-base font-semibold text-gray-900">这些凭据会被用在哪里</h3>
-              <p class="mt-0.5 text-xs text-gray-500">只有下面五处会真的读到凭据的值；其余位置即使勾了也不会生效。</p>
+              <p class="mt-0.5 text-xs text-gray-500">工具配置和凭据授权共同决定本次调用能用哪些凭据。</p>
             </div>
             <button
               type="button"
@@ -1130,7 +1218,13 @@ onMounted(load)
                   </div>
                   <p class="mt-1 text-xs leading-relaxed text-gray-500">
                     工具端把某个入参（例如 <code>api_key</code>）标成「来自凭据」后，该参数从模型可见的定义里消失，调用时由平台补进 <code>tools/call</code>。
-                    这类参数没有兜底值：没绑定或绑定的凭据不可用，这次调用直接失败并说明缺哪个。
+                    逐参数绑定没有兜底值。绑定的凭据不可用时，本次调用会提示缺少的参数。
+                  </p>
+                </div>
+                <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                  <span class="font-medium text-gray-800">MCP 工具 · 结构化凭据</span>
+                  <p class="mt-1 text-xs leading-relaxed text-gray-500">
+                    工具指定凭据类型和版本。模型结合上下文从凭据中心选择账号，平台核验归属或共享权限；未找到时按类型表单补录，存在歧义时在调用界面选择。
                   </p>
                 </div>
                 <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
@@ -1559,29 +1653,25 @@ onMounted(load)
                 />
               </label>
 
-              <div>
-                <span class="text-xs font-medium text-gray-700">类型</span>
-                <div class="mt-1 grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    class="rounded-lg border px-3 py-2 text-left text-xs"
-                    :class="form.secret_type === 'credential' ? 'border-violet-400 bg-violet-50' : 'border-gray-200'"
-                    @click="form.secret_type = 'credential'"
-                  >
-                    <span class="block font-medium text-gray-900">凭证</span>
-                    <span class="text-[11px] text-gray-500">Token / 密码，建完不可读</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="rounded-lg border px-3 py-2 text-left text-xs"
-                    :class="form.secret_type === 'variable' ? 'border-sky-400 bg-sky-50' : 'border-gray-200'"
-                    @click="form.secret_type = 'variable'"
-                  >
-                    <span class="block font-medium text-gray-900">变量</span>
-                    <span class="text-[11px] text-gray-500">租户号 / 地址，可复制</span>
-                  </button>
-                </div>
-              </div>
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">凭据类型 <span class="text-rose-500">*</span></span>
+                <select v-model="typeKey" :disabled="typeLoading || !creationTypes.length"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                  <option v-if="!typeKey" value="" disabled>{{ typeLoading ? '加载中…' : '暂无可创建的类型' }}</option>
+                  <option v-for="type in creationTypes" :key="type.type_key" :value="type.type_key" :disabled="!type.can_create">
+                    {{ type.name }} · v{{ type.version }}{{ !type.can_create ? ' · 已禁用：' + (type.creation_disabled_reason || '此类型暂不可新建') : '' }}
+                  </option>
+                </select>
+                <span v-if="typeError" role="alert" class="mt-1 block text-xs text-rose-700">{{ typeError }}</span>
+              </label>
+              <template v-if="structuredType && selectedType">
+                <label class="block">
+                  <span class="text-xs font-medium text-gray-700">凭据账号 <span class="text-rose-500">*</span></span>
+                  <input v-model="credentialAccount" autocomplete="off" maxlength="128" placeholder="用于选择的账号或别名"
+                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <CredentialFieldForm v-model="credentialValues" :schema="selectedType.schema" />
+              </template>
 
               <label class="block">
                 <span class="text-xs font-medium text-gray-700">分类</span>
@@ -1597,7 +1687,7 @@ onMounted(load)
                 <span class="mt-1 block text-[11px] text-gray-500">左侧筛选栏就是按这个分组的，留空归到「未分类」。</span>
               </label>
 
-              <label class="block">
+              <label v-if="selectedType && !structuredType" class="block">
                 <div class="flex items-center justify-between">
                   <span class="text-xs font-medium text-gray-700">凭据值 <span class="text-rose-500">*</span></span>
                   <button
@@ -1679,6 +1769,11 @@ onMounted(load)
                 </span>
               </label>
 
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">有效期</span>
+                <input v-model="createExpiry" type="datetime-local"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+              </label>
               <div class="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 text-[11px] leading-relaxed text-blue-800">
                 <b>不勾任何场景</b> = 这条凭据建完只是个仓库条目，任何工具都取不到。
                 绑定是白名单，不是黑名单。
@@ -1698,7 +1793,7 @@ onMounted(load)
                 </div>
                 <div class="flex items-start gap-3 px-3 py-2">
                   <dt class="w-20 shrink-0 text-gray-500">类型</dt>
-                  <dd class="text-gray-900">{{ form.secret_type === 'credential' ? '凭证（建完不可读）' : '变量（可复制）' }}</dd>
+                  <dd class="text-gray-900">{{ selectedType ? selectedType.name + ' · v' + selectedType.version : '—' }}</dd>
                 </div>
                 <div class="flex items-start gap-3 px-3 py-2">
                   <dt class="w-20 shrink-0 text-gray-500">分类</dt>
@@ -1777,7 +1872,7 @@ onMounted(load)
             <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
               <h3 class="text-base font-semibold text-gray-900">轮换凭据值</h3>
               <p class="mt-1 text-xs text-gray-500">
-                <code>{{ rotateTarget.secret_key }}</code> 的新值。旧值会保留 7 天，正在运行的任务不会中断。
+                <code>{{ rotateTarget.secret_key }}</code> 的新值。{{ structuredRotation ? '新修订立即生效。' : '单值凭据保留旧值过渡窗口。' }}
               </p>
               <div class="mt-3 flex items-center justify-end">
                 <button
@@ -1786,7 +1881,9 @@ onMounted(load)
                   @click="revealRotateValue = !revealRotateValue"
                 >{{ revealRotateValue ? '隐藏' : '显示' }}</button>
               </div>
-              <textarea
+              <CredentialRotationFields v-if="structuredRotation && rotateTarget"
+                v-model="rotateFields" :item="rotateTarget" />
+              <textarea v-else
                 v-model="rotateValue"
                 :rows="3"
                 spellcheck="false"
@@ -1800,7 +1897,7 @@ onMounted(load)
                 </button>
                 <button
                   type="button"
-                  :disabled="rotateBusy || !rotateValue.trim()"
+                  :disabled="rotateBusy || !canRotate"
                   class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
                   @click="submitRotate"
                 >
@@ -1823,9 +1920,9 @@ onMounted(load)
               <p class="mt-1 text-xs text-gray-500">
                 <code>{{ deleteTarget.secret_key }}</code> 会被删除。
                 <template v-if="deleteTarget.binding_count">
-                  它当前绑在 <b class="text-rose-600">{{ deleteTarget.binding_count }}</b> 个地方，这些调用会立刻开始失败。
+                  删除时会解除 <b class="text-rose-600">{{ deleteTarget.binding_count }}</b> 处固定绑定。
                 </template>
-                使用记录会保留。
+                工具将无法再选用这条凭据。使用记录会保留。
               </p>
               <div class="mt-4 flex justify-end gap-2">
                 <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100" @click="deleteTarget = null">

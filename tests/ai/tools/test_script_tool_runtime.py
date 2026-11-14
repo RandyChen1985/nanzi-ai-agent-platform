@@ -13,6 +13,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from unittest.mock import AsyncMock
+
+
+@pytest.fixture(autouse=True)
+def local_execution_without_deployment_keyring(monkeypatch):
+    # 本文件验证无凭据的本地执行；明确给定部署状态，避免离线时查库失败触发隔离闸门。
+    monkeypatch.setattr("app.services.ai.code_execution_service.payload_keyring_requires_isolation", AsyncMock(return_value=False))
 
 from app.services.ai.tools.script_tool_runtime import (
     EXIT_MARK,

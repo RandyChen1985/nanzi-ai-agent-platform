@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Iterable
+from typing import Any, Callable, Dict, Iterable, List
+
+from redis.exceptions import WatchError
 
 from app.core.redis import get_redis
 from app.services.ai.conversation_identity import require_user_id
@@ -21,10 +23,10 @@ TTL_SECONDS = 2592000
 
 
 class MountSyncUnavailable(RuntimeError):
-    """Redis 不可用，无法同步会话挂载。
+    """Redis 无法保存或同步会话资源。
 
-    ``strict_unavailable=True`` 时抛出，让调用方（删除/下架）能把「这一处没同步」写进
-    warnings；重命名链路历史上是静默降级（返回 0），因此默认不抛，避免改变既有语义。
+    用户主动保存与要求确认同步的管理操作会收到此异常。
+    其他内部调用仍按尽力同步处理。
     """
 
 
@@ -76,17 +78,18 @@ class ConversationResourceService:
         return result
 
     @classmethod
-    async def get(cls, user_id: Any, conversation_id: str) -> Dict[str, Any]:
+    async def get(
+        cls, user_id: Any, conversation_id: str, *, require_storage: bool = False,
+    ) -> Dict[str, Any]:
         try:
             redis = await get_redis()
-        except Exception:
-            redis = None
-        if not redis:
+            raw = await redis.get(cls._key(user_id, conversation_id)) if redis else None
+        except Exception as exc:
+            if require_storage:
+                raise MountSyncUnavailable("会话资源读取失败") from exc
             return cls._empty_scope()
-        try:
-            raw = await redis.get(cls._key(user_id, conversation_id))
-        except Exception:
-            return cls._empty_scope()
+        if require_storage and not redis:
+            raise MountSyncUnavailable("会话资源不可读取")
         return cls._decode_scope(raw)
 
     @classmethod
@@ -140,7 +143,9 @@ class ConversationResourceService:
         }
 
     @classmethod
-    async def replace(cls, user_id: Any, conversation_id: str, scope: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    async def replace(
+        cls, user_id: Any, conversation_id: str, scope: Dict[str, Any], *, require_storage: bool = False,
+    ) -> Dict[str, Any]:
         normalized: Dict[str, Any] = {"project_name": str(scope.get("project_name") or "").strip()[:100]}
         normalized.update({
             key: [item for item in scope.get(key, []) if isinstance(item, dict) and item.get("id")]
@@ -151,25 +156,87 @@ class ConversationResourceService:
         # 规范化器也只返回这 5 个键，所以「没传」是常态而不是例外。若照旧写 None，
         # 用户挂一个技能/数据集就会把刚确认的检索范围抹掉，下一轮门禁再弹一次；
         # 卡片正开着时 pending 快照也会一起没，点了选项还原不到 ID 又弹一张新卡。
-        current = await cls.get(user_id, conversation_id)
-        for key in ("knowledge_scope", "pending_scope_gate"):
-            if key in scope:
-                candidate = scope.get(key)
-                normalized[key] = candidate if isinstance(candidate, dict) else None
-                continue
-            existing = current.get(key) if isinstance(current, dict) else None
-            normalized[key] = existing if isinstance(existing, dict) else None
+        def replace_fields(current: Dict[str, Any]) -> Dict[str, Any]:
+            fields = dict(normalized)
+            for key in ("knowledge_scope", "pending_scope_gate"):
+                candidate = scope.get(key, current.get(key))
+                fields[key] = candidate if isinstance(candidate, dict) else None
+            return fields
+
+        if require_storage:
+            return await cls._update_scope(user_id, conversation_id, replace_fields)
+
+        updated = replace_fields(await cls.get(user_id, conversation_id))
         try:
             redis = await get_redis()
             if redis:
                 await redis.set(
                     cls._key(user_id, conversation_id),
-                    json.dumps(normalized, ensure_ascii=False),
+                    json.dumps(updated, ensure_ascii=False),
                     ex=cls.TTL_SECONDS,
                 )
         except Exception:
             pass
-        return normalized
+        return updated
+
+    @classmethod
+    async def _update_scope(
+        cls, user_id: Any, conversation_id: str, update: Callable[[Dict[str, Any]], Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """基于当前 Redis 值修改字段，遇到同一会话的并发写入时重读。"""
+        try:
+            redis = await get_redis()
+            if redis:
+                key = cls._key(user_id, conversation_id)
+                for _ in range(3):
+                    try:
+                        async with redis.pipeline() as pipe:
+                            await pipe.watch(key)
+                            updated = update(cls._decode_scope(await pipe.get(key)))
+                            pipe.multi()
+                            pipe.set(key, json.dumps(updated, ensure_ascii=False), ex=cls.TTL_SECONDS)
+                            written, = await pipe.execute()
+                    except WatchError:
+                        continue
+                    if written:
+                        return updated
+                    break
+        except Exception as exc:
+            raise MountSyncUnavailable("会话资源更新失败") from exc
+        raise MountSyncUnavailable("会话资源未更新")
+
+    @classmethod
+    async def update_dataset_mount(
+        cls, user_id: Any, conversation_id: str, dataset_id: str, dataset: Dict[str, Any] | None,
+    ) -> Dict[str, Any]:
+        """添加或移除一个默认数据集，保留其他会话资源。"""
+        def update(current: Dict[str, Any]) -> Dict[str, Any]:
+            if dataset is None:
+                current["datasets"] = [item for item in current["datasets"] if str(item.get("id")) != dataset_id]
+            elif all(str(item.get("id")) != dataset_id for item in current["datasets"]):
+                current["datasets"].append(dataset)
+            return current
+
+        return await cls._update_scope(user_id, conversation_id, update)
+
+    @classmethod
+    async def append_mcp_tools(
+        cls, user_id: Any, conversation_id: str, tools: list[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """将已校验的 MCP 工具追加到会话，保留已有的其他资源。"""
+        if not tools:
+            return await cls.get(user_id, conversation_id, require_storage=True)
+        ids = {tool["id"] for tool in tools}
+        names = {tool["name"] for tool in tools}
+
+        def append(current: Dict[str, Any]) -> Dict[str, Any]:
+            current["mcp_tools"] = [
+                tool for tool in current["mcp_tools"]
+                if tool.get("id") not in ids and tool.get("name") not in names
+            ] + tools
+            return current
+
+        return await cls._update_scope(user_id, conversation_id, append)
 
     @classmethod
     async def patch_scope(
@@ -178,18 +245,19 @@ class ConversationResourceService:
         conversation_id: str,
         **fields: Any,
     ) -> Dict[str, Any]:
-        """只更新指定字段，其余保持原样。
-
-        ``replace`` 是整体覆盖，直接拿部分字段去写会清掉其他挂载项，所以这里先读再写。
-        Redis 没有事务，同一会话的并发写会「后写者胜出」；会话挂载与门禁都是低频操作，
-        这个窗口可以接受。将来若出现高频并发写，再换成 Lua 脚本原子更新。
-        """
+        """只更新指定字段，其余保持原样。"""
         conversation = str(conversation_id or "").strip()
         if not conversation:
             return cls._empty_scope()
-        current = await cls.get(user_id, conversation)
-        current.update(fields)
-        return await cls.replace(user_id, conversation, current)
+
+        def update(current: Dict[str, Any]) -> Dict[str, Any]:
+            patched = {**current, **fields}
+            return cls._decode_scope(json.dumps(patched, ensure_ascii=False))
+
+        try:
+            return await cls._update_scope(user_id, conversation, update)
+        except MountSyncUnavailable:
+            return update(await cls.get(user_id, conversation))
 
     @staticmethod
     def _mount_scope_matches(item: Dict[str, Any], scope: str | None) -> bool:

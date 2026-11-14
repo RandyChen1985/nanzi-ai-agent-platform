@@ -228,12 +228,9 @@ export const validateSystemParams = (
         if (!SYSTEM_PARAM_TYPES.includes(param.type)) {
             errors.push(`系统级参数 ${name || index + 1} 的类型不支持：${param.type}`)
         }
-        if (param.source !== 'literal') {
-            // 值运行时才取（固定凭据或按规则定位）；类型必须是 string，否则注入进来没法转
-            if (param.type !== 'string') {
-                errors.push(`系统级参数 ${name || index + 1} 由凭据提供，类型只能是 string`)
-            }
-        } else if (!param.value.trim()) {
+        if (param.source === 'rule' && param.type !== 'string') {
+            errors.push('系统级参数 ' + (name || index + 1) + ' 使用定位规则时类型须为 string')
+        } else if (param.source === 'literal' && !param.value.trim()) {
             errors.push(`系统级参数 ${name || index + 1} 缺少固定值`)
         }
     })

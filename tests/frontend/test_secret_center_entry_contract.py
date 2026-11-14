@@ -34,6 +34,24 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+class TestCredentialTypeCatalog:
+    def test_members_open_catalog_with_read_access(self):
+        panel = _read(ROOT / "frontend/src/components/secrets/CredentialTypesPanel.vue")
+        assert '<CredentialTypesPanel v-if="showTypes" @close=' in _read(SECRET_CENTER)
+        assert '<CredentialTypesPanel v-if="showTypes" manage @close=' in _read(ADMIN_SECRET_CENTER)
+        assert "listCredentialTypes(props.manage)" in panel
+        assert 'v-if="manage && selected.source' in panel
+
+    def test_published_schema_uses_local_input_preview(self):
+        panel = _read(ROOT / "frontend/src/components/secrets/CredentialTypesPanel.vue")
+        published = panel.split('<template v-if="selected">', 1)[1]
+        assert "预览录入表单" in published
+        assert ':schema="selected.schema"' in published
+        preview = _read(ROOT / "frontend/src/components/secrets/CredentialTypeFormPreview.vue")
+        assert "CredentialFieldForm v-model=" in preview
+        assert "<form" not in preview and "axios" not in preview and "localStorage" not in preview
+
+
 class TestPersonalTab:
     def test_tab_is_registered_in_type_and_deeplink_array(self):
         source = _read(PERSONAL_CENTER)
@@ -404,7 +422,7 @@ class TestMcpToolParamCredential:
         source = _read(self.REGISTRY)
         assert "const draftUnboundNames = computed(" in source
         # 按钮禁用（绑定还没回来时草稿是空的，这时保存会把来源全清成「模型填写」）
-        assert "paramMarkBusy || paramBindingsLoading || draftUnboundNames.length > 0" in source
+        assert "paramMarkBusy || paramBindingsLoading || paramProfileLoading || !!paramCredentialError || draftUnboundNames.length > 0" in source
         # 函数里再兜一次，绕过 disabled 也挡得住
         start = source.find("async function submitParamMark(")
         body = source[start:source.find("\n}", start)]
@@ -758,15 +776,16 @@ class TestAdminSecretCenterUsage:
 class TestInjectionHelpStaysAccurate:
     """「这些凭据会被用在哪里」是用户唯一能看到的全貌，过时比没有更糟。
 
-    它列的是「真的会读到值的五个位置」。功能新增了却没同步，用户按它配完
-    发现不生效，比没有这个弹窗还迷惑。
+    工具支持固定绑定和动态选择，帮助文案需要覆盖这两种配置。
     """
 
     CENTER = "frontend/src/views/SecretCenter.vue"
 
-    def test_lists_five_injection_points(self):
+    def test_documents_structured_credential_selection(self):
         source = _read(ROOT / self.CENTER)
-        assert "只有下面五处会真的读到凭据的值" in source
+        assert "MCP 工具 · 结构化凭据" in source
+        assert "模型选择" in source
+        assert "按次选择" in source
 
     def test_every_slot_prefix_is_documented(self):
         """六个槽位前缀都要在弹窗里出现，缺一个就是少说了一种用法。"""
@@ -1007,15 +1026,12 @@ class TestCopyMatchesCode:
         assert "「变量」类型可以随时查看" in source
         assert "值和变量都加密保存" not in source
 
-    def test_unbound_hint_covers_all_five_injection_points(self):
-        """漏掉「MCP 工具参数」等于告诉用户那条路不存在。"""
+    def test_unbound_hint_distinguishes_dynamic_selection(self):
         source = _read(ROOT / "frontend/src/views/SecretCenter.vue")
-        start = source.find("凭据建完不等于能用——要去")
-        assert start != -1
+        start = source.index("条凭据没有固定绑定")
         span = source[start:start + 200]
-        assert "请求头或参数" in span
-        assert "工具参数" in span
-        assert "环境变量" in span
+        assert "动态选择" in span
+        assert "关联工具" in span
 
     def test_admin_copy_mentions_every_grant_target(self):
         """授权档位有三种（用户 / 部门 / 全体），只说两种会漏掉最常用的那个。"""
@@ -1448,7 +1464,8 @@ class TestNoPlaintextOnScreen:
         for path in (SECRET_CENTER, ADMIN_SECRET_CENTER):
             source = _read(path)
             assert "form.value.value.trim()" in source
-            assert "value: form.value.value," in source
+            assert "credentialRequest(form.value.value)" in source
+        assert "value: legacyValue" in _read(ROOT / "frontend/src/composables/useCredentialFields.ts")
 
     def test_admin_page_states_that_admin_cannot_read(self):
         source = _read(ADMIN_SECRET_CENTER)
@@ -1651,19 +1668,22 @@ class TestScriptEnvBindingEntry:
         assert "pendingEnvBindings" in source
         assert "先保存，再回来配" not in source
 
-    def test_env_file_is_shell_quoted(self):
-        from app.services.secrets.injection import build_env_file_content
-
-        rendered = build_env_file_content({"DB_PASSWORD": "p@ss$(whoami)`id`"})
-        # 单引号包裹，$ 与反引号都不展开
-        assert rendered == "DB_PASSWORD='p@ss$(whoami)`id`'\n"
+    def test_script_credentials_use_private_channel_not_shared_env_file(self):
+        runtime = _read(ROOT / "app/services/ai/tools/script_tool_runtime.py")
+        execution = _read(ROOT / "app/services/ai/tools/credential_script_execution.py")
+        assert "execute_credential_script" in runtime
+        assert "apply_script_env_bindings" in execution
+        assert "run_credential_process" in execution
+        assert '"env": env' in execution
+        assert "build_env_file_content" not in execution
+        assert ".env" not in execution
 
 
 class TestValueRevealAndBindingsOverview:
     """「查看变量值」与「这条凭据用在哪」两个入口。
 
     前者是 variable 类型存在的意义——值本来就是要填到别处去的，不给看等于没用；
-    后者回答「我把它绑到哪了」，否则只能去每个工具、每个 MCP 服务里翻。
+    后者同时展示固定绑定、符合类型的动态候选和实际使用过的目标。
     """
 
     CENTER = ROOT / "frontend/src/views/SecretCenter.vue"
@@ -1683,12 +1703,17 @@ class TestValueRevealAndBindingsOverview:
         # 读明文会记流水，界面上要讲清楚，避免用户以为这是「悄悄看一眼」
         assert "这次读取会记一条使用记录" in source
 
-    def test_bindings_overview_queries_by_secret(self):
+    def test_tool_relations_overview_counts_tools_and_shows_each_source(self):
         source = _read(self.CENTER)
 
-        # 右侧详情内嵌展示「已绑定」，不再是弹窗；查询仍按 secret_id 反查
-        assert "loadBindingsOf" in source
-        assert "secret_id: item.id" in source
+        assert "/secrets/${item.id}/tool-relations" in source
+        assert "关联工具（" in source
+        assert "toolRelations.items.length" in source
+        assert "固定绑定" in source
+        assert "模型选择" in source
+        assert "按次选择" in source
+        assert "曾使用" in source
+        assert "还没绑定到任何工具，所以不会被注入" not in source
 
     def test_backend_accepts_secret_id_lookup(self):
         source = _read(self.ENDPOINTS)

@@ -12,6 +12,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from unittest.mock import AsyncMock
+
+
+@pytest.fixture(autouse=True)
+def local_execution_without_deployment_keyring(monkeypatch):
+    monkeypatch.setattr("app.services.ai.code_execution_service.payload_keyring_requires_isolation", AsyncMock(return_value=False))
 
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 from app.services.ai.runtime.agentscope.workspace import _bind_script_tool_spec

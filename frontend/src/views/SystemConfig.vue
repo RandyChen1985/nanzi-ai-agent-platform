@@ -19,6 +19,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import TaskProgressDrawer from '../components/common/TaskProgressDrawer.vue'
 import ModelSelect from '../components/common/ModelSelect.vue'
 import RedisKeyCleanupModal from '../components/system/RedisKeyCleanupModal.vue'
+import CredentialKeyringHelp from '../components/system/CredentialKeyringHelp.vue'
 import Switch from '../components/Switch.vue'
 import { copyToClipboard } from '../utils/clipboard'
 import { useRouter, useRoute } from 'vue-router'
@@ -58,7 +59,7 @@ import {
 
 const router = useRouter()
 const route = useRoute()
-const { hasPermission, userInfo } = useUser()
+const { hasPermission, userInfo, isAdmin } = useUser()
 const canSave = hasPermission('element:system:config_save')
 
 const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'logs' | 'branding' | 'langfuse'>('configs')
@@ -792,7 +793,15 @@ interface ConfigItem {
   value: string
   description: string
   is_secret: boolean
+  keyring_status?: 'unconfigured' | 'invalid' | 'valid'
+  active_key_id?: string | null
 }
+
+const structuredCredentialEnabledKey = 'structured_credentials_enabled'
+const credentialKeyringKey = 'credential_payload_keyring_json'
+const keyringStatusLabels = { unconfigured: '未配置', invalid: '配置无效', valid: '校验通过' }
+const keyringExample = '{"active_key_id":"cred-v1","keys":{"cred-v1":"<替换为本地生成的密钥>"}}'
+const isStructuredCredentialConfig = (key: string) => key === structuredCredentialEnabledKey || key === credentialKeyringKey
 
 const configGroups = ref<{ [category: string]: ConfigItem[] }>({})
 const collapsedConfigGroups = ref<Set<string>>(new Set())
@@ -985,6 +994,7 @@ const isKnowledgeFeatureEnabled = computed(() => {
 
 const isConfigItemDisabled = (_category: string, item: ConfigItem) => {
   if (item.key === 'third_party_user_sync_config') return true
+  if (isStructuredCredentialConfig(item.key)) return !isAdmin.value || saving.value
   return !canSave
 }
 // 大模型请求读取超时（秒）：范围与后端 app/services/ai/runtime/agentscope/request_timeout.py
@@ -1460,7 +1470,9 @@ const fetchConfigs = async () => {
 }
 
 const saveConfigs = async () => {
+  if (saving.value) return
   saving.value = true
+  let credentialSaved = false
   try {
     const updates: ConfigItem[] = []
     for (const cat in configGroups.value) {
@@ -1478,11 +1490,38 @@ const saveConfigs = async () => {
         saving.value = false
         return
     }
-    await axios.put('/api/portal/system/configs', { updates })
+    const credentialUpdates = updates.filter(item => isStructuredCredentialConfig(item.key))
+    const policyUpdates = updates.filter(item => !isStructuredCredentialConfig(item.key))
+    if (credentialUpdates.length) {
+      const enabled = credentialUpdates.find(item => item.key === structuredCredentialEnabledKey)
+      const keyring = credentialUpdates.find(item => item.key === credentialKeyringKey)
+      const { data } = await axios.put('/api/portal/system/configs/structured-credentials', {
+        [structuredCredentialEnabledKey]: enabled ? enabled.value === 'true' : undefined,
+        [credentialKeyringKey]: keyring?.value,
+      })
+      credentialSaved = true
+      // 独立提交成功即清空密钥输入，即使同批普通参数随后保存失败。
+      for (const item of configGroups.value.security ?? []) {
+        if (item.key === structuredCredentialEnabledKey) {
+          item.value = String(data[structuredCredentialEnabledKey])
+        } else if (item.key === credentialKeyringKey) {
+          item.value = ''
+          item.keyring_status = data.keyring_status
+          item.active_key_id = data.active_key_id
+        } else {
+          continue
+        }
+        originalConfigs.value[item.key] = item.value
+      }
+    }
+    if (policyUpdates.length) {
+      await axios.put('/api/portal/system/configs', { updates: policyUpdates })
+    }
     showToast(`成功更新 ${updates.length} 项配置`, 'success')
     await fetchConfigs()
   } catch (e: any) {
-     showToast(`保存失败: ${e.response?.data?.detail || e.message}`, 'error')
+    const message = credentialSaved ? '结构化凭据配置已保存，其他参数保存失败' : '保存失败'
+    showToast(`${message}：${e.response?.data?.message || e.response?.data?.detail || e.message}`, 'error')
   } finally {
     saving.value = false
   }
@@ -1490,18 +1529,13 @@ const saveConfigs = async () => {
 
 // 检测未保存的配置修改
 const changedConfigsList = computed(() => {
-  const list: { key: string; label?: string; oldValue: any; newValue: any }[] = []
+  const list: { key: string }[] = []
   for (const cat in configGroups.value) {
     const items = configGroups.value[cat]
     if (items) {
       items.forEach(item => {
         if (originalConfigs.value && item.value !== originalConfigs.value[item.key]) {
-          list.push({
-            key: item.key,
-            label: item.description || item.key,
-            oldValue: originalConfigs.value[item.key],
-            newValue: item.value
-          })
+          list.push({ key: item.key })
         }
       })
     }
@@ -1638,7 +1672,6 @@ const getCategoryLabel = (cat: string, short = true) => {
     'sandbox':       { short: '安全沙箱',    full: '安全沙箱 (Sandbox)' },
     'other':         { short: '其他参数',    full: '其他参数 (Other Parameters)' },
     'email':         { short: '邮件服务',    full: '邮件服务 (Mail Service)' },
-    // 这个分组里只有 secret_policy_*：既然全是凭据注入的闸门，就叫它凭证策略
     'security':      { short: '凭证策略',    full: '凭证策略 (Credential Policy)' },
   }
   const entry = map[cat]
@@ -4687,6 +4720,37 @@ onUnmounted(() => {
                                  <option value="observe">observe (仅观测：保持传统布局发送，仅统计供应商命中指标)</option>
                                  <option value="enabled">enabled (启用优化：按灰度比例启用稳定层前置缓存布局)</option>
                               </select>
+                          </div>
+                          <div v-else-if="item.key === structuredCredentialEnabledKey" class="flex items-center gap-3">
+                            <Switch
+                              :model-value="item.value === 'true'"
+                              :disabled="isConfigItemDisabled(String(category), item)"
+                              aria-label="启用结构化凭据"
+                              @update:model-value="item.value = $event ? 'true' : 'false'"
+                            />
+                            <span class="text-xs font-medium" :class="item.value === 'true' ? 'text-primary' : 'text-gray-500'">
+                              {{ item.value === 'true' ? '启用' : '关闭' }}
+                            </span>
+                          </div>
+                          <div v-else-if="item.key === credentialKeyringKey" class="space-y-2">
+                            <p class="text-xs text-gray-600">
+                              {{ keyringStatusLabels[item.keyring_status ?? 'unconfigured'] }}
+                              <template v-if="item.active_key_id"> · 活跃密钥编号 {{ item.active_key_id }}</template>
+                            </p>
+                            <input
+                              v-if="isAdmin"
+                              v-model.trim="item.value"
+                              type="password"
+                              autocomplete="new-password"
+                              spellcheck="false"
+                              maxlength="65535"
+                              aria-label="结构化凭据密钥环 JSON"
+                              :disabled="isConfigItemDisabled(String(category), item)"
+                              :placeholder="keyringExample"
+                              class="block w-full rounded-md border-gray-300 bg-white px-3 py-2 font-mono text-sm shadow-sm focus:border-primary focus:ring-primary disabled:bg-gray-100"
+                            />
+                            <p v-if="isAdmin" class="text-xs text-gray-500">留空保留现有密钥环。密钥环以明文保存在平台主库，保存后不会回填。</p>
+                            <CredentialKeyringHelp v-if="isAdmin" />
                           </div>
                           <div v-else-if="isBooleanFlag(item)">
                             <div class="flex items-center gap-3">

@@ -16,7 +16,15 @@ from app.core.orm import AsyncSessionLocal
 from app.models.mcp import McpServer, McpToolCache
 from app.services.mcp.mcp_auth_policy import build_mcp_headers, resolve_mcp_auth_headers
 from app.services.secrets.injection import apply_mcp_bindings
+from app.services.secrets.mcp_model_result import (
+    parse_mcp_json_result_text,
+    project_model_result,
+    restricted_model_result,
+)
+from app.services.secrets.mcp_profiles import McpCredentialInvocation, PreparedMcpArguments, prepare_mcp_arguments
+from app.services.secrets.type_catalog import CredentialTypeError
 from app.services.secrets.redact import redact_value
+from app.services.secrets.outbound_visibility import protected_transport
 from app.services.mcp.outbound_audit import record_outbound_audit_log
 from sqlalchemy import select, update
 
@@ -76,6 +84,17 @@ class McpToolCallTimeout(TimeoutError):
     的子类，落在「断连重连」的判定里会把一次超时的写操作重发一遍（远端执行两次、
     总耗时翻倍）。
     """
+
+
+def safe_mcp_timeout_error(exc: TimeoutError, *, protected: bool) -> TimeoutError:
+    """保留超时类型，避免超时正文或异常链回显请求凭据。"""
+    message = (
+        "MCP tool call timed out"
+        if protected
+        else redact_value(str(exc), where="MCP 工具超时")
+    )
+    error_type = McpToolCallTimeout if isinstance(exc, McpToolCallTimeout) else TimeoutError
+    return error_type(message)
 
 
 #: 传输层断开的异常类型。mcp 2.x 的客户端传输跑在 **httpx2** + anyio 之上：
@@ -243,6 +262,53 @@ async def _call_tool_with_progress(
         ) from exc
 
 
+def _normalize_mcp_tool_result(
+    structured_content: Any,
+    text_blocks: list[str],
+    *,
+    single_block: bool,
+) -> dict[str, Any] | str:
+    """统一 SDK 和 Direct HTTP 的工具结果，保持结构化内容优先。"""
+    text = "".join(text_blocks)
+    if (
+        protected_transport.get()
+        and single_block
+        and len(text_blocks) == 1
+        and isinstance(structured_content, dict)
+        and structured_content.keys() == {"result"}
+        and structured_content["result"] == text
+    ):
+        # SDK 会把返回 JSON 字符串的工具包装为 {"result": 原字符串}，
+        # 同时在唯一文本块重复该值。只解这一层确定的包装。
+        try:
+            parsed = parse_mcp_json_result_text(text)
+        except (ValueError, RecursionError):
+            pass
+        else:
+            if isinstance(parsed, (dict, list)):
+                structured_content = parsed
+
+    if structured_content is not None:
+        return {"success": True, "content": text, "structured_content": structured_content}
+    return text if text else {"success": True, "content": ""}
+
+
+def _normalize_sdk_tool_result(response: Any, tool_name: str) -> dict[str, Any] | str:
+    content = getattr(response, "content", None) or []
+    text_blocks = [
+        item.text for item in content
+        if getattr(item, "type", "text") == "text" and isinstance(getattr(item, "text", None), str)
+    ]
+    if getattr(response, "isError", False) or getattr(response, "is_error", False):
+        raise RuntimeError("".join(text_blocks) or f"MCP tool '{tool_name}' returned an error")
+    structured_content = getattr(response, "structuredContent", None)
+    if structured_content is None:
+        structured_content = getattr(response, "structured_content", None)
+    return _normalize_mcp_tool_result(
+        structured_content, text_blocks, single_block=len(content) == 1,
+    )
+
+
 class McpSseSession:
     """Manages an MCP connection, supporting both standard SSE and Direct HTTP Post gateways"""
     def __init__(self, server_id: str, sse_url: str, auth_headers: Optional[Dict] = None):
@@ -274,6 +340,9 @@ class McpSseSession:
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(timeout=120.0)
         return self._http_client
+
+    def _create_sse_http_client(self, *args: Any, **kwargs: Any) -> httpx2.AsyncClient:
+        return _create_no_redirect_mcp_http_client(*args, **kwargs)
 
     def next_rpc_id(self) -> int:
         self._rpc_id_counter += 1
@@ -313,7 +382,7 @@ class McpSseSession:
         ``progress_callback`` / ``notifications`` 都能工作。
         """
         http_client = await self._exit_stack.enter_async_context(
-            _create_no_redirect_mcp_http_client(headers=self.auth_headers)
+            self._create_sse_http_client(headers=self.auth_headers)
         )
         read_stream, write_stream = await self._exit_stack.enter_async_context(
             streamable_http_client(self.sse_url, http_client=http_client)
@@ -393,7 +462,7 @@ class McpSseSession:
                 "[MCP] %s cleanup failed for %s (ignored): %s",
                 label,
                 self.server_id,
-                cleanup_err,
+                type(cleanup_err).__name__,
             )
 
     async def connect(self):
@@ -402,9 +471,7 @@ class McpSseSession:
             if self.session or self.mcp_session_id or self._transport_ready:
                 return
 
-            # Debug: Log header keys (redacted)
-            header_keys = list(self.auth_headers.keys())
-            logger.info(f"[MCP] Connecting to {self.server_id} at {self.sse_url}. Headers keys present: {header_keys}")
+            logger.info("[MCP] Connecting to server %s", self.server_id)
             try:
                 self._exit_stack = AsyncExitStack()
 
@@ -463,7 +530,7 @@ class McpSseSession:
                         "[MCP] Streamable HTTP unavailable for %s (%s: %s); trying SSE",
                         self.server_id,
                         type(stream_err).__name__,
-                        stream_err,
+                        "credential transport" if protected_transport.get() or self.auth_headers else stream_err,
                     )
                     await self._discard_transport("streamable HTTP")
 
@@ -477,7 +544,7 @@ class McpSseSession:
                                 sse_client(
                                     url=self.sse_url,
                                     headers=self.auth_headers,
-                                    httpx_client_factory=_create_no_redirect_mcp_http_client,
+                                    httpx_client_factory=self._create_sse_http_client,
                                 )
                             )
                             sse_session = await self._exit_stack.enter_async_context(
@@ -509,7 +576,7 @@ class McpSseSession:
                             "falling back to Direct HTTP (no progress channel)",
                             self.server_id,
                             type(sse_err).__name__,
-                            sse_err,
+                            "credential transport" if protected_transport.get() or self.auth_headers else sse_err,
                         )
                         await self._discard_transport("SSE")
 
@@ -519,8 +586,8 @@ class McpSseSession:
                 logger.info(f"[MCP] Switched to Direct HTTP mode for {self.server_id}")
                 self.last_used_at = time.time()
                 
-            except Exception as e:
-                logger.error(f"[MCP] Connection failed for {self.server_id}: {e}", exc_info=True)
+            except Exception as exc:
+                logger.error("[MCP] Connection failed for %s (%s)", self.server_id, type(exc).__name__)
                 raise
 
     async def close(self):
@@ -557,7 +624,7 @@ class McpSseSession:
                     try:
                         await http_client.aclose()
                     except Exception as exc:
-                        logger.debug("[MCP] HTTP client cleanup failed for %s: %s", self.server_id, exc)
+                        logger.debug("[MCP] HTTP client cleanup failed for %s (%s)", self.server_id, type(exc).__name__)
             if exit_stack:
                 try:
                     await exit_stack.aclose()
@@ -565,7 +632,7 @@ class McpSseSession:
                     logger.warning(
                         "[MCP] Transport cleanup failed for %s; cached state was cleared: %s",
                         self.server_id,
-                        exc,
+                        type(exc).__name__,
                     )
             logger.info(f"[MCP] Session closed for {self.server_id}")
 
@@ -594,6 +661,7 @@ class McpClientService:
         *,
         session_key: Optional[str] = None,
         auth_headers: Optional[Dict[str, str]] = None,
+        server_snapshot: Optional[McpServer] = None,
     ) -> McpSseSession:
         if not cls._cleanup_task:
             cls._cleanup_task = asyncio.create_task(cls._idle_cleanup_loop())
@@ -605,7 +673,7 @@ class McpClientService:
             try:
                 async with creation_lock:
                     if cache_key not in cls._sessions:
-                        server = await cls._load_server(server_id)
+                        server = server_snapshot if server_snapshot is not None else await cls._load_server(server_id)
                         from app.services.mcp.url_policy import (
                             McpUrlPolicyError,
                             validate_mcp_outbound_url,
@@ -657,7 +725,7 @@ class McpClientService:
             if name is None:
                 continue
             if name in seen:
-                logger.warning("[MCP] Remote tool list contains duplicate name %r; keeping first", name)
+                logger.warning("[MCP] Remote tool list contains a duplicate tool; keeping first")
                 continue
             seen.add(name)
             result.append(tool)
@@ -735,60 +803,64 @@ class McpClientService:
         只带静态 Header 会被远端拒绝。签名断言是按用户签发的，必须使用短生命周期
         的临时会话，避免把某个用户的断言复用给其他请求。
         """
-        ephemeral_session = False
-        session_key: Optional[str] = None
-        auth_headers: Optional[Dict[str, str]] = None
-        if user_info:
-            server = await cls._load_server(server_id)
-            if bool(getattr(server, "user_assertion_enabled", False)):
-                user_id = str((user_info or {}).get("user_id") or "").strip()
-                if not user_id:
-                    raise ValueError("MCP UserContext requires an authenticated user_id")
-                auth_headers = build_mcp_headers(
-                    server,
-                    user_info=user_info,
-                    agent_info={
-                        "agent_id": "mcp-tool-sync",
-                        "agent_name": "MCP 工具同步",
-                    },
-                )
-                session_key = f"{server_id}:sync:user:{user_id}:{uuid.uuid4().hex}"
-                ephemeral_session = True
+        session_options: dict = {}
+        session_key = None
+        verify_session = cls._sessions.get(server_id) if server_id.startswith("verify_") else None
+        server = None if verify_session is not None else await cls._load_server(server_id)
+        if verify_session is not None:
+            protected = bool(verify_session.auth_headers or urlparse(verify_session.sse_url).query)
+        elif user_info:
+            headers = build_mcp_headers(
+                server, user_info=user_info,
+                agent_info={"agent_id": "mcp-tool-sync", "agent_name": "MCP 工具同步"},
+            )
+            denials: dict[str, str] = {}
+            headers = await apply_mcp_bindings(server, headers, user_info=user_info, denials=denials)
+            if denials:
+                raise McpCredentialDeniedError(server.server_name, denials)
+            protected = bool(headers or urlparse(getattr(server, "sse_url", "") or "").query)
+            if protected:
+                actor_id = str(user_info.get("user_id") or user_info.get("id") or "")
+                session_key = f"{server_id}:sync:user:{actor_id}:{uuid.uuid4().hex}"
+                session_options = {"session_key": session_key, "auth_headers": headers, "server_snapshot": server}
+        else:
+            # 自动发现只用服务自身静态配置，不借用任意用户绑定。
+            protected = bool(resolve_mcp_auth_headers(server) or urlparse(getattr(server, "sse_url", "") or "").query)
+            if protected:
+                session_key = f"{server_id}:sync:{uuid.uuid4().hex}"
+                session_options = {"session_key": session_key, "server_snapshot": server}
 
-        session_mgr = await cls.get_session(
-            server_id,
-            session_key=session_key,
-            auth_headers=auth_headers,
-        )
+        token = protected_transport.set(protected)
+        session_mgr = None
         try:
-            if not session_mgr.is_direct_http:
-                session = session_mgr.session
-                if session is None:
-                    raise RuntimeError("MCP SSE session is unavailable")
-                try:
-                    return cls._dedupe_remote_tools(await cls._list_sse_tools(session))
-                except Exception as exc:
-                    logger.warning(
-                        "[MCP] Tool listing failed for %s; reconnecting once: %s",
-                        server_id,
-                        exc,
-                    )
-                    await session_mgr.close()
-                    await session_mgr.connect()
-                    if session_mgr.is_direct_http:
-                        return cls._dedupe_remote_tools(
-                            await cls._list_direct_http_tools(session_mgr)
-                        )
-                    session = session_mgr.session
-                    if session is None:
-                        raise RuntimeError("MCP SSE session is unavailable after reconnect")
-                    return cls._dedupe_remote_tools(await cls._list_sse_tools(session))
-            return cls._dedupe_remote_tools(await cls._list_direct_http_tools(session_mgr))
-        finally:
-            if ephemeral_session:
+            session_mgr = await cls.get_session(server_id, **session_options)
+            if session_mgr.is_direct_http:
+                return cls._dedupe_remote_tools(await cls._list_direct_http_tools(session_mgr))
+            if session_mgr.session is None:
+                raise RuntimeError("MCP SSE session is unavailable")
+            try:
+                return cls._dedupe_remote_tools(await cls._list_sse_tools(session_mgr.session))
+            except Exception:
+                logger.warning("[MCP] Tool listing failed for %s; reconnecting once", server_id)
                 await session_mgr.close()
+                await session_mgr.connect()
+                if session_mgr.is_direct_http:
+                    return cls._dedupe_remote_tools(await cls._list_direct_http_tools(session_mgr))
+                if session_mgr.session is None:
+                    raise RuntimeError("MCP SSE session is unavailable after reconnect")
+                return cls._dedupe_remote_tools(await cls._list_sse_tools(session_mgr.session))
+        except Exception:
+            if protected:
+                raise RuntimeError("MCP 凭据连接或工具发现失败") from None
+            raise
+        finally:
+            try:
+                if session_key and session_mgr is not None:
+                    await session_mgr.close()
+            finally:
                 if session_key:
                     cls._sessions.pop(session_key, None)
+                protected_transport.reset(token)
 
     @classmethod
     async def _ensure_direct_http_initialized(cls, session_mgr: McpSseSession) -> None:
@@ -853,14 +925,37 @@ class McpClientService:
         require_user_context: bool = False,
         progress_callback: Optional[McpProgressCallback] = None,
         timeout_seconds: Optional[float] = None,
+        protect_payload: bool = False,
+        for_model: bool = False,
+        credential_call: McpCredentialInvocation | None = None,
+        conversation_id: str | None = None,
     ) -> Any:
         session_kwargs: Dict[str, Any] = {}
         ephemeral_session = False
         session_key: Optional[str] = None
-        if require_user_context or user_info or agent_info or request_id or private_key:
+        prepared: PreparedMcpArguments | None = None
+        server = None
+        if credential_call or for_model or require_user_context or user_info or agent_info or request_id or private_key:
             server = await cls._load_server(server_id)
             if getattr(server, "enabled_status", 1) != 1:
                 raise ValueError("MCP 服务已禁用，无法执行工具")
+            if credential_call is not None:
+                from app.services.secrets.mcp_profiles import CredentialInvocationError
+
+                try:
+                    async with AsyncSessionLocal() as db:
+                        prepared = await prepare_mcp_arguments(
+                            db, server, tool_name, arguments, credential_call, user_info=user_info or {},
+                            trace_id=request_id, conversation_id=conversation_id,
+                        )
+                except CredentialTypeError as exc:
+                    raise CredentialInvocationError(exc.code, str(exc), exc.status_code) from None
+                except CredentialInvocationError:
+                    raise
+                except Exception:
+                    raise CredentialInvocationError("CREDENTIAL_PROFILE_UNAVAILABLE") from None
+                arguments = prepared.arguments
+                protect_payload = protect_payload or prepared.protect_payload
             signed_user_enabled = bool(getattr(server, "user_assertion_enabled", False))
             if signed_user_enabled and require_user_context:
                 user_id = str((user_info or {}).get("user_id") or "").strip()
@@ -889,6 +984,10 @@ class McpClientService:
                 # 用户绑了凭据却用不了（停用/过期/场景不符）时**必须失败**，不能
                 # 悄悄退回服务级 fixed_token：那样请求会成功，用户以为用的是自己的
                 # 账号，实际用的是管理员的——权限边界和审计都错位了。
+                if for_model:
+                    from app.services.secrets.mcp_profiles import CredentialInvocationError
+
+                    raise CredentialInvocationError("CREDENTIAL_ACCESS_DENIED")
                 raise McpCredentialDeniedError(
                     str(getattr(server, "server_name", "") or server_id), mcp_denials
                 )
@@ -915,9 +1014,47 @@ class McpClientService:
                 bound_user = str(mcp_used.get("user_id") or "").strip() or "unknown"
                 session_key = f"{server_id}:user:{bound_user}:bind:{uuid.uuid4().hex}"
                 ephemeral_session = True
+            protect_payload = protect_payload or bool(
+                mcp_used.get("slots") or urlparse(getattr(server, "sse_url", "") or "").query
+                or any(name.lower() not in {"accept", "content-type", "user-agent"} for name in auth_headers)
+            )
+            if protect_payload and not ephemeral_session:
+                session_key = f"{server_id}:credential:{uuid.uuid4().hex}"
+                ephemeral_session = True
             session_kwargs = {"session_key": session_key, "auth_headers": auth_headers}
+            if protect_payload and getattr(server, "sse_url", None):
+                # 不复用目标或凭据不同的会话，授权和建连使用同一服务快照。
+                session_kwargs["server_snapshot"] = server
 
-        session_mgr = await cls.get_session(server_id, **session_kwargs)
+        if protect_payload:
+            progress_callback = None
+
+        def model_result(result: Any) -> Any:
+            if not protect_payload:
+                return redact_value(result, where=f"MCP 工具 {tool_name}")
+            if prepared and prepared.result_policy_stale:
+                return restricted_model_result("fields_stale")
+            if not prepared or not prepared.model_result_fields:
+                return restricted_model_result()
+            return project_model_result(result, prepared.model_result_fields)
+
+        transport_scope = protected_transport.set(protect_payload)
+        try:
+            session_mgr = await cls.get_session(server_id, **session_kwargs)
+        except BaseException as exc:
+            protected_transport.reset(transport_scope)
+            if isinstance(exc, TimeoutError):
+                raise safe_mcp_timeout_error(exc, protected=protect_payload) from None
+            if protect_payload and isinstance(exc, Exception):
+                raise RuntimeError("CREDENTIAL_TOOL_FAILED") from None
+            raise
+        session_headers = getattr(session_mgr, "auth_headers", None) or {}
+        if (for_model or credential_call is not None) and any(
+            name.lower() not in {"accept", "content-type", "user-agent"} for name in session_headers
+        ):
+            protect_payload = True
+            protected_transport.set(True)
+            progress_callback = None
         start_time = time.perf_counter()
         call_status = "success"
         call_error: Optional[str] = None
@@ -939,10 +1076,13 @@ class McpClientService:
                         progress_callback=progress_callback,
                         timeout_seconds=timeout_seconds,
                     )
-                    return cls._normalize_sse_tool_result(response, tool_name)
+                    call_result = cls._normalize_sse_tool_result(response, tool_name)
+                    return model_result(call_result)
+                except TimeoutError:
+                    raise
                 except Exception as e:
                     transport_broken = False
-                    if not transport_retry and _is_transport_error(e):
+                    if not protect_payload and not transport_retry and _is_transport_error(e):
                         transport_retry = True
                         transport_broken = True
                         original_error = e
@@ -963,7 +1103,7 @@ class McpClientService:
                                     arguments,
                                     timeout_seconds=timeout_seconds,
                                 )
-                                return redact_value(call_result, where=f"MCP 工具 {tool_name}")
+                                return model_result(call_result)
                             session = session_mgr.session
                             if session is None:
                                 await session_mgr.close()
@@ -975,7 +1115,10 @@ class McpClientService:
                                 progress_callback=progress_callback,
                                 timeout_seconds=timeout_seconds,
                             )
-                            return cls._normalize_sse_tool_result(response, tool_name)
+                            call_result = cls._normalize_sse_tool_result(response, tool_name)
+                            return model_result(call_result)
+                        except TimeoutError:
+                            raise
                         except Exception as retry_error:
                             e = RuntimeError(
                                 f"{original_error}; reconnect retry failed: {retry_error}"
@@ -986,6 +1129,8 @@ class McpClientService:
                     # 用户的连接并触发重连风暴。
                     if transport_broken and not ephemeral_session:
                         await session_mgr.close()
+                    if protect_payload:
+                        raise RuntimeError("CREDENTIAL_TOOL_FAILED") from None
                     raise RuntimeError(
                         redact_value(
                             f"MCP tool '{tool_name}' failed: {e}",
@@ -999,20 +1144,21 @@ class McpClientService:
                     arguments,
                     timeout_seconds=timeout_seconds,
                 )
-                return redact_value(call_result, where=f"MCP 工具 {tool_name}")
-        except TimeoutError:
-            # 超时必须原样往上抛：上层靠 ``isinstance(exc, TimeoutError)`` 把它
-            # 判成「工具超时」。换成别的异常类型会被记成普通失败，用户看到的是
-            # 「调用异常」而不是「超时」，排查方向直接跑偏。
+                return model_result(call_result)
+        except TimeoutError as timeout_exc:
+            # 保留 TimeoutError 语义，让上层识别工具超时；正文和异常链需先清理。
             call_status = "failed"
             call_error = "MCP tool call timed out"
-            raise
+            raise safe_mcp_timeout_error(timeout_exc, protected=protect_payload) from None
         except asyncio.CancelledError:
             call_status = "failed"
             call_error = "MCP tool call cancelled"
             raise
         except Exception as call_exc:
             call_status = "failed"
+            if protect_payload:
+                call_error = "CREDENTIAL_TOOL_FAILED"
+                raise RuntimeError(call_error) from None
             call_error = redact_value(str(call_exc), where=f"MCP 工具 {tool_name} 审计")
             # **就地脱敏后再抛**：这条异常会经 ``RuntimeToolError`` 回显给模型、
             # 写进轨迹，还可能被上层日志带堆栈打出来。流式调用里注入的凭据是在
@@ -1026,14 +1172,14 @@ class McpClientService:
                     record_outbound_audit_log(
                         server_id=server_id,
                         tool_name=tool_name,
-                        arguments=arguments,
+                        arguments={} if protect_payload else arguments,
                         user_info=user_info,
                         agent_info=agent_info,
                         request_id=request_id,
                         status=call_status,
                         latency_ms=latency_ms,
                         error_message=call_error,
-                        tool_output=call_result,
+                        tool_output=None if protect_payload else call_result,
                     )
                 )
                 # 事件循环对 Task 只持弱引用；不在集合里留强引用，极端情况下任务可能在
@@ -1043,10 +1189,15 @@ class McpClientService:
             except Exception as audit_dispatch_err:
                 logger.warning("[MCP] Failed to dispatch outbound audit log: %s", audit_dispatch_err)
 
-            if ephemeral_session:
-                await session_mgr.close()
-                if session_key:
-                    cls._sessions.pop(session_key, None)
+            try:
+                if ephemeral_session:
+                    try:
+                        await session_mgr.close()
+                    finally:
+                        if session_key:
+                            cls._sessions.pop(session_key, None)
+            finally:
+                protected_transport.reset(transport_scope)
 
     @staticmethod
     def _parse_sse_payload(text: str) -> Optional[Dict]:
@@ -1120,7 +1271,7 @@ class McpClientService:
         if rpc_id is not None:
             payload["id"] = rpc_id
 
-        logger.debug(f"[MCP-Direct] Request: {method} to {session_mgr.sse_url} | RPC ID: {rpc_id} | Headers keys: {list(headers.keys())}")
+        logger.debug("[MCP-Direct] Request %s to server %s", method, session_mgr.server_id)
         client = session_mgr.get_http_client()
         session_mgr._active_requests = getattr(session_mgr, "_active_requests", 0) + 1
         session_mgr._active_requests_changed.clear()
@@ -1133,7 +1284,11 @@ class McpClientService:
                 timeout=timeout if timeout and timeout > 0 else None,
             )
             logger.info(f"[MCP-Direct] Response from {method}: HTTP {resp.status_code}")
+        except TimeoutError as timeout_exc:
+            raise safe_mcp_timeout_error(timeout_exc, protected=protected_transport.get()) from None
         except Exception as http_err:
+            if protected_transport.get():
+                raise RuntimeError("CREDENTIAL_TOOL_FAILED") from None
             redacted_err = redact_value(str(http_err), where=f"MCP 服务 {method} 异常")
             logger.error(f"[MCP-Direct] HTTP Request failed for {method}: {redacted_err}")
             raise RuntimeError(
@@ -1158,7 +1313,7 @@ class McpClientService:
                     pass
             if s_id:
                 session_mgr.mcp_session_id = s_id
-                logger.info(f"[MCP-Direct] Captured Session ID: {s_id}")
+                logger.info("[MCP-Direct] Received MCP session")
 
         # Accept all 2xx codes (200, 201, 202, 204)
         if 200 <= resp.status_code < 300:
@@ -1171,23 +1326,25 @@ class McpClientService:
             except json.JSONDecodeError:
                 data = cls._parse_sse_payload(raw_text)
                 if data is None:
-                    safe_preview = redact_value(
-                        raw_text, where=f"MCP 服务 {method} 非 JSON 响应"
-                    )[:200]
-                    logger.warning(f"[MCP-Direct] Non-JSON success response: {safe_preview}")
+                    logger.warning("[MCP-Direct] Non-JSON success response for %s", method)
                     return None  # Success but not JSON (e.g. 202 Accepted)
                 logger.info(f"[MCP-Direct] Parsed SSE-encoded response for {method}")
 
-            if "result" in data:
+            # 投影需要区分协议包络与含 result/error 的业务 JSON。其他调用沿用旧网关的解包约定。
+            rpc_envelope = isinstance(data, dict)
+            if rpc_envelope and method == "tools/call" and protected_transport.get():
+                rpc_envelope = data.get("jsonrpc") == "2.0" or set(data) <= {"id", "result", "error"}
+            if rpc_envelope and "result" in data:
                 return data["result"]
             if is_notification:
                 return None
-            if "error" in data:
+            if rpc_envelope and "error" in data:
                 if (
                     request_session_id
                     and retry_count < 1
                     and not is_notification
                     and method != "initialize"
+                    and not protected_transport.get()
                     and cls._is_session_expired_payload(data)
                 ):
                     logger.warning(
@@ -1203,6 +1360,8 @@ class McpClientService:
                         is_notification,
                         retry_count=retry_count + 1,
                     )
+                if protected_transport.get():
+                    raise RuntimeError("CREDENTIAL_TOOL_FAILED")
                 redacted_error = redact_value(
                     data["error"], where=f"MCP 服务 {method} RPC 错误"
                 )
@@ -1224,6 +1383,7 @@ class McpClientService:
             and retry_count < 1
             and not is_notification
             and method != "initialize"
+            and not protected_transport.get()
             and resp.status_code in {400, 401, 404, 410}
             and cls._is_session_expired_payload(error_payload)
         ):
@@ -1242,6 +1402,8 @@ class McpClientService:
                 retry_count=retry_count + 1,
             )
 
+        if protected_transport.get():
+            raise RuntimeError("CREDENTIAL_TOOL_FAILED")
         safe_body = redact_value(resp.text, where=f"MCP 服务 {method} 错误响应")
         logger.error(f"[MCP-Direct] Error Response Body: {safe_body[:500]}")
         # 完整 body 脱敏后抛给上层；日志侧同样保留脱敏前缀，避免明文进日志。
@@ -1277,43 +1439,22 @@ class McpClientService:
 
     @staticmethod
     def _normalize_sse_tool_result(response: Any, tool_name: str) -> Any:
-        """规整 SSE/SDK tools/call 返回并统一脱敏（首次调用与重连重试共用）。"""
+        """规整 SDK 结果；凭据调用保留原值供 JSONPath 选择，普通调用继续脱敏。"""
         where = f"MCP 工具 {tool_name}"
-        text = "".join(
-            getattr(item, "text", "")
-            for item in (getattr(response, "content", None) or [])
-        )
-        if bool(getattr(response, "isError", False) or getattr(response, "is_error", False)):
-            # 远端 tools/call 的错误体同样可能回显入参（含凭据槽位），
-            # 脱敏后才能进模型上下文。
-            raise RuntimeError(
-                redact_value(text, where=f"{where} 错误响应")
-                or f"MCP tool '{tool_name}' returned an error"
-            )
-        structured_content = getattr(response, "structuredContent", None)
-        if structured_content is None:
-            structured_content = getattr(response, "structured_content", None)
-        if structured_content is not None:
-            return redact_value(
-                {
-                    "success": True,
-                    "content": text,
-                    "structured_content": structured_content,
-                },
-                where=where,
-            )
-        return redact_value(
-            text if text else {"success": True, "content": ""},
-            where=where,
-        )
+        try:
+            normalized = _normalize_sdk_tool_result(response, tool_name)
+        except RuntimeError as exc:
+            if protected_transport.get():
+                raise RuntimeError("CREDENTIAL_TOOL_FAILED") from None
+            raise RuntimeError(redact_value(str(exc), where=f"{where} 错误响应")) from None
+        return normalized if protected_transport.get() else redact_value(normalized, where=where)
 
     @staticmethod
     def _normalize_direct_http_tool_result(res: Any, tool_name: str) -> Any:
         """把 Direct HTTP 的 tools/call 结果规整成工具返回值。
 
-        抽出来是为了能被单测覆盖：**正常返回才是主路径**，它和错误分支一样必须
-        脱敏。远端会把入参（含刚注入的凭据槽位）原样回显在 content 里，
-        漏掉这条等于把明文交给模型。
+        凭据调用保留原始业务结果，由配置的 JSONPath 决定模型可见内容；
+        普通调用沿用脱敏规则，错误分支仍需避免回显凭据。
         """
         where = f"MCP 工具 {tool_name}"
 
@@ -1330,35 +1471,46 @@ class McpClientService:
                 )
                 or f"MCP tool '{tool_name}' returned an error"
             )
-
-        if isinstance(res, dict) and "content" in res:
-            text = "".join(
-                c.get("text", "")
-                for c in (res.get("content") or [])
-                if isinstance(c, dict) and c.get("type") == "text"
-            )
-            structured_content = res.get("structuredContent")
-            if structured_content is None:
-                structured_content = res.get("structured_content")
-            if structured_content is not None:
-                return redact_value(
-                    {
-                        "success": True,
-                        "content": text,
-                        "structured_content": structured_content,
-                    },
-                    where=where,
+        if isinstance(res, dict):
+            blocks = res.get("content")
+            has_structured_content = "structuredContent" in res or "structured_content" in res
+            result_type = res.get("resultType", res.get("result_type", "complete"))
+            complete_mcp_result = result_type == "complete" and res.keys() <= {
+                "content", "structuredContent", "structured_content", "isError", "is_error",
+                "_meta", "resultType", "result_type",
+            }
+            has_mcp_blocks = "content" in res and (
+                not protected_transport.get()
+                or (
+                    complete_mcp_result
+                    and (
+                        blocks is None or isinstance(blocks, list) and all(
+                            isinstance(block, dict) and isinstance(block.get("type"), str) for block in blocks
+                        )
+                    )
                 )
-            return redact_value(
-                text if text else {"success": True, "content": ""},
-                where=where,
             )
-
+            if has_structured_content or has_mcp_blocks:
+                blocks = blocks if isinstance(blocks, list) else []
+                text_blocks = [
+                    block["text"] for block in blocks
+                    if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+                ]
+                structured_content = res.get("structuredContent")
+                if structured_content is None:
+                    structured_content = res.get("structured_content")
+                normalized = _normalize_mcp_tool_result(
+                    structured_content,
+                    text_blocks,
+                    single_block=complete_mcp_result and len(blocks) == 1,
+                )
+                return normalized if protected_transport.get() else redact_value(normalized, where=where)
         if res is None:
             return {"success": True, "content": ""}
-
-        # 整个响应体串化返回，连字段边界都没有，含凭据时必然整段进模型上下文
-        return redact_value(str(res), where=where)
+        if protected_transport.get() and isinstance(res, (dict, list)):
+            # Direct HTTP 兼容网关可直接返回业务 JSON。保留结构交给投影层处理。
+            return {"success": True, "content": "", "structured_content": res}
+        return str(res) if protected_transport.get() else redact_value(str(res), where=where)
 
     @classmethod
     async def sync_tools(

@@ -1,6 +1,7 @@
 """前端契约：会话级 MCP 工具挂载与技能中心对齐。"""
 
 from pathlib import Path
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 CHAT_INPUT = (ROOT / "frontend/src/components/embed/ChatInput.vue").read_text(encoding="utf-8")
@@ -12,7 +13,7 @@ RESOURCE_SVC = (ROOT / "app/services/conversation_resource_service.py").read_tex
 def test_mcp_cascade_menu_exists_and_lists_portal_tools():
     assert "MCP 工具" in MCP_MENU or "我的 MCP" in MCP_MENU
     assert "/api/portal/tools/mcp" in MCP_MENU
-    assert "attachedToolNames" in MCP_MENU
+    assert "attachedToolIds" in MCP_MENU
     assert "/dashboard/personal?tab=mcp" in MCP_MENU
     assert "groupedTools" in MCP_MENU
     assert "toggleGroupSelectAll" in MCP_MENU
@@ -39,12 +40,25 @@ def test_chat_input_has_mcp_center_entry():
 def test_embed_chat_persists_mcp_tools_in_resource_scope():
     assert "mcp_tools" in EMBED
     assert "mountMcpToolToSession" in EMBED
-    assert "attached-mcp-tool-names" in EMBED
+    assert "attached-mcp-tool-ids" in EMBED
     assert "'mcp_tools'" in EMBED or '"mcp_tools"' in EMBED
-    assert "toAdd" in EMBED
-    assert "已挂载" in EMBED and "个 MCP 工具" in EMBED
+    debug = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+    for source in (EMBED, debug):
+        assert "/resource-scope/mcp-tools" in source
+        assert "mcpMountFeedback(tools, saved.mounted_mcp_tools)" in source
+    assert "mcpMountFeedback(requested.mcp_tools, saved.mcp_tools)" in EMBED
     assert "toLowerCase() === 'personal'" in EMBED
     assert "仅可选择个人已发布 MCP" in EMBED
+
+
+def test_mount_feedback_matches_server_receipt():
+    result = subprocess.run(
+        ["node", "tests/frontend/session_mcp_mount_feedback.mjs"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_conversation_resource_service_supports_mcp_tools():

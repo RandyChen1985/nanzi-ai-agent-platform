@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.services.ai.tools.model_tool_name import (
+    is_model_mcp_tool_name,
     is_platform_namespaced_tool_name,
     to_model_tool_name,
 )
@@ -25,6 +26,12 @@ from app.services.ai.user_extra_data import redacted_extra_data_text
 _PLATFORM_BRAND_NAME_TOKEN = "{platform_brand_name}"
 # 平台全局守则标题的稳定特征，供执行器识别该段落（不受品牌名变化影响）。
 _PLATFORM_GLOBAL_PROMPT_MARKER = " · 全局守则]"
+TOOL_INVENTORY_HEADER = "## 本轮可用工具（名称大小写敏感，须完全一致）"
+_MCP_TOOL_INVENTORY_GUIDANCE = (
+    "MCP 工具在本清单中以 `mcp_` 开头的模型调用名为准；形如 `服务名:工具名` 的"
+    "平台内部标识（可能出现在历史消息、技能文档或页面文案里）不是可调用的工具名，"
+    "禁止使用。"
+)
 
 
 class AgentServicePrompts:
@@ -441,13 +448,9 @@ class AgentServicePrompts:
     ) -> str:
         if not tool_names:
             return ""
-        lines = ["## 本轮可用工具（名称大小写敏感，须完全一致）"]
+        lines = [TOOL_INVENTORY_HEADER]
         if include_mcp_alias_rule:
-            lines.append(
-                "MCP 工具在本清单中以 `mcp_` 开头的模型调用名为准；形如 `服务名:工具名` 的"
-                "平台内部标识（可能出现在历史消息、技能文档或页面文案里）不是可调用的工具名，"
-                "禁止使用。"
-            )
+            lines.append(_MCP_TOOL_INVENTORY_GUIDANCE)
         for name in sorted(tool_names, key=str):
             summary = AgentServicePrompts._PLATFORM_TOOL_ONE_LINERS.get(name)
             if summary:
@@ -1300,9 +1303,6 @@ class AgentServicePrompts:
         )
 
 
-TOOL_INVENTORY_HEADER = "## 本轮可用工具（名称大小写敏感，须完全一致）"
-
-
 def prune_unregistered_tool_inventory(
     system_content: str,
     known_tool_names: Iterable[str],
@@ -1331,6 +1331,10 @@ def prune_unregistered_tool_inventory(
 
     kept: List[str] = []
     index = header_index + 1
+    had_alias_guidance = index < len(lines) and lines[index].strip() == _MCP_TOOL_INVENTORY_GUIDANCE
+    if had_alias_guidance:
+        index += 1
+    has_mcp = False
     while index < len(lines):
         line = lines[index]
         stripped = line.strip()
@@ -1342,6 +1346,7 @@ def prune_unregistered_tool_inventory(
         name = entry.split(":", 1)[0].strip().strip("`")
         if name in known:
             kept.append(line)
+            has_mcp = has_mcp or is_model_mcp_tool_name(name)
         index += 1
 
     # index 现在指向段尾（空行或下一个 section 的起点）
@@ -1353,7 +1358,8 @@ def prune_unregistered_tool_inventory(
     if not kept:
         result_lines = head + tail
     else:
-        result_lines = head + [TOOL_INVENTORY_HEADER, *kept, ""] + tail
+        guidance = [_MCP_TOOL_INVENTORY_GUIDANCE] if had_alias_guidance and has_mcp else []
+        result_lines = head + [TOOL_INVENTORY_HEADER, *guidance, *kept, ""] + tail
     return "\n".join(result_lines)
 
 

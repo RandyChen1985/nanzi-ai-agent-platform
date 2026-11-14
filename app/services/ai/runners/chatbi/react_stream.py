@@ -24,6 +24,7 @@ from app.services.ai.runtime.agentscope.stream_reconcile import (
     truncate_for_display,
 )
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+from app.services.secrets.mcp_result_storage import MCP_JSONPATH_RESULT, is_projected_result_metadata
 from app.services.ai.runners.assistant_agent_runner import (
     _build_file_tool_metadata,
     _resolve_agentscope_tool_args,
@@ -81,6 +82,10 @@ async def stream_agentscope_events(
         raw_args = state.tool_args_text.get(tool_id, "")
         tool_args = _resolve_agentscope_tool_args(agent, tool_id, raw_args)
         output = state.tool_outputs.get(tool_id, "")
+        result_metadata = (
+            {MCP_JSONPATH_RESULT: "v1"}
+            if is_projected_result_metadata(getattr(event, "metadata", None)) else {}
+        )
         duration_ms = (time.time() - state.tool_started_at.get(tool_id, time.time())) * 1000
         if tool_name == "get_dataset_schema":
             runner._record_schema_keywords(state, tool_args)
@@ -334,11 +339,11 @@ async def stream_agentscope_events(
                 tool_output=output,
                 raw_log=str(output),
                 execution_time_ms=duration_ms,
-                meta_info=(
-                    {"timeout_seconds": tool_timeout_seconds, "timeout_source": tool_timeout_source}
-                    if tool_timeout_seconds is not None
-                    else None
-                ),
+                meta_info={
+                    **result_metadata,
+                    **({"timeout_seconds": tool_timeout_seconds, "timeout_source": tool_timeout_source}
+                       if tool_timeout_seconds is not None else {}),
+                } or None,
                 timestamp=datetime.fromtimestamp(state.tool_started_at.get(tool_id, time.time())),
             )
         )
@@ -361,6 +366,7 @@ async def stream_agentscope_events(
         log_payload: Dict[str, Any] = {
             "type": "log",
             "id": tool_id,
+            **result_metadata,
             "title": f"工具完成: {tool_name}",
             **({"timeout_seconds": tool_timeout_seconds} if tool_timeout_seconds is not None else {}),
             "details": runner._format_tool_details(tool_name, output, state, tool_args),

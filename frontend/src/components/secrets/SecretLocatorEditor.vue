@@ -172,7 +172,7 @@ const preview = ref<{
 const onMissHint = computed(() => {
   switch (draft.value.on_miss) {
     case 'model':
-      return '匹配不上时，让模型自己挑一条。模型可以先用 list_my_credentials 查你有哪些凭据（只有编号、名称、备注，没有值），再在调用里把编号填进 secret_choice_<参数名>；规则命中时它填的编号会被忽略。只有「工具参数」这一级能用这个兜底（MCP 服务参数、API 工具参数）；Header 级不支持，配在 Header 上照样会失败。另外它依赖模型主动去查，确定性不如规则。'
+      return '匹配不上时，让模型自己挑一条。模型可以先用 list_my_credentials 查看凭据数量及 legacy_choices 中的旧版候选编号（不含名称、备注或值），再在调用里把编号填进 secret_choice_<参数名>；规则命中时它填的编号会被忽略。只有「工具参数」这一级能用这个兜底（MCP 服务参数、API 工具参数）；Header 级不支持，配在 Header 上照样会失败。另外它依赖模型主动去查，确定性不如规则。'
     case 'fallback_fixed':
       return '匹配不上时，回退到同一层级的固定凭据。需要先在这个槽位另绑一条固定凭据，否则匹配不上就是失败。使用流水会标成 success_fallback，方便事后发现「规则其实一直没命中」。'
     default:

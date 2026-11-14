@@ -10,7 +10,7 @@ import shlex
 import time
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Literal
 
 from app.services.ai.grounding.models import EvidenceType
@@ -93,6 +93,12 @@ def _format_runtime_tool_result(result: Any) -> str:
     return truncate_for_context(text)
 
 
+def _runtime_result_metadata(result: Any, call_id: str) -> dict[str, Any]:
+    from app.services.secrets.mcp_result_storage import projected_result_metadata
+
+    return {"nanzi_call_id": call_id, **projected_result_metadata(result)}
+
+
 def _new_tool_call_id(tool_name: str) -> str:
     """为一次运行时工具调用生成稳定的内部调用标识。"""
     return f"{tool_name}:{uuid.uuid4().hex}"
@@ -125,6 +131,7 @@ READ_ONLY_TOOL_NAMES = {
     "request_user_confirmation",
     "ask_user_question",
     "get_my_tasks",
+    "list_mcp_credential_candidates",
     "jira_search",
     "jira_get_projects",
     "read_file",
@@ -566,11 +573,15 @@ class RuntimeToolSpec:
         *,
         call_id: str | None = None,
     ) -> Any:
+        from app.services.secrets.credential_approval import confirmation_ref
+
         arguments = arguments or {}
+        # 这类确认绑定原工具参数，传输超时仍由运行时独立控制。
+        argument_schema = None if confirmation_ref(self) else self.parameters_schema
         call_arguments, timeout_seconds = _prepare_timeout_arguments(
             self.name,
             arguments,
-            self.parameters_schema,
+            argument_schema,
             self.timeout_seconds,
         )
         audit_arguments = _redact_runtime_tool_arguments(self.name, arguments)
@@ -772,6 +783,10 @@ class AgentScopeRuntimeTool:
 
     @property
     def is_concurrency_safe(self) -> bool:
+        from app.services.secrets.credential_approval import confirmation_ref
+
+        if confirmation_ref(self):
+            return False
         return is_tool_concurrency_safe(
             tool_name=self.name,
             permission_scope=self.spec.permission_scope,
@@ -799,6 +814,7 @@ class AgentScopeRuntimeTool:
         self.loop_detector = loop_detector
         self.user_id = user_id
         self.conversation_id = conversation_id
+        self.credential_selection_reasons: dict[str, str] = {}
 
     def _check_tool_loop(self, tool_input: dict[str, Any]) -> None:
         if not self.loop_detector:
@@ -807,6 +823,10 @@ class AgentScopeRuntimeTool:
         if verdict.fused:
             _raise_tool_loop_fuse(verdict.message)
 
+    @property
+    def _command_policy_name(self) -> str:
+        return self.display_name if self.spec.source_type == "mcp" else self.name
+
     async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:
         try:
             from agentscope.permission import PermissionBehavior, PermissionDecision
@@ -814,7 +834,7 @@ class AgentScopeRuntimeTool:
             return None
 
         deletion_decision = _shell_deletion_permission_decision(
-            self.name,
+            self._command_policy_name,
             tool_input,
             cwd=os.getcwd(),
         )
@@ -825,7 +845,9 @@ class AgentScopeRuntimeTool:
         if forbidden_decision:
             return forbidden_decision
 
-        blacklist_decision = await _enforce_command_blacklist(self.name, tool_input, getattr(self, "user_id", None))
+        blacklist_decision = await _enforce_command_blacklist(
+            self._command_policy_name, tool_input, getattr(self, "user_id", None),
+        )
         if blacklist_decision:
             return blacklist_decision
 
@@ -855,6 +877,30 @@ class AgentScopeRuntimeTool:
             browser_decision = await _browser_permission_decision(self.name, tool_input)
             if browser_decision is not None:
                 return browser_decision
+
+        from app.services.secrets.credential_approval import confirmation_ref
+        from app.services.secrets.mcp_profiles import CredentialInvocationError, credential_selection_reason
+
+        credential_ref = confirmation_ref(self)
+        if credential_ref:
+            if self.approval_mode == "deny" or self.spec.permission_scope == "dangerous":
+                return PermissionDecision(
+                    behavior=PermissionBehavior.DENY, message="当前工具执行策略拒绝此调用", bypass_immune=True,
+                )
+            try:
+                selection_reason = await credential_selection_reason(
+                    credential_ref, tool_input, str(self.user_id or ""),
+                )
+            except CredentialInvocationError as exc:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.DENY, message=str(exc),
+                    decision_reason=exc.code, bypass_immune=True,
+                )
+            if selection_reason:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ASK, message="请选择本次工具调用可使用的凭据",
+                    decision_reason=selection_reason, bypass_immune=True,
+                )
 
         if self.spec.permission_scope == "read":
             return PermissionDecision(
@@ -895,7 +941,14 @@ class AgentScopeRuntimeTool:
         )
 
     async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
-        return self.is_read_only
+        from app.services.secrets.credential_approval import confirmation_ref
+
+        # AgentScope 对只读工具直接放行。凭据选择必须走 check_permissions。
+        return (
+            self.is_read_only
+            and confirmation_ref(self) is None
+            and not is_shell_like_tool_name(self._command_policy_name)
+        )
 
     def match_rule(self, rule_content: str | None, tool_input: dict[str, Any]) -> bool:
         return rule_content is None
@@ -928,7 +981,7 @@ class AgentScopeRuntimeTool:
                     if is_tool_execution_success(res)
                     else ToolResultState.ERROR
                 ),
-                metadata={"nanzi_call_id": call_id},
+                metadata=_runtime_result_metadata(res, call_id),
             )
         except Exception as exc:
             if isinstance(exc, PermissionError):
@@ -1055,7 +1108,7 @@ class AgentScopeRuntimeTool:
                 ],
                 state=ToolResultState.SUCCESS if result_ok else ToolResultState.ERROR,
                 is_last=True,
-                metadata={"nanzi_call_id": call_id},
+                metadata=_runtime_result_metadata(result, call_id),
             )
         finally:
             reset_active_tool_timeout_seconds(timeout_token)
@@ -1720,19 +1773,53 @@ def build_toolkit(
     user_id: int | str | None = None,
     conversation_id: str | None = None,
 ):
-    toolkit_cls = _load_agentscope_toolkit()
-    tool_specs = filter_valid_runtime_tool_specs(tool_specs)
-    tools = [
-        runtime_tool_from_spec(
-            spec,
-            approval_mode=approval_mode,
-            loop_detector=loop_detector,
-            user_id=user_id,
-            conversation_id=conversation_id,
+    from app.core.context import get_current_agent_context
+    from app.services.ai.tools.model_tool_name import mcp_tool_reference_from_query
+    from app.services.ai.tools.session_status import runtime_tool_capability_from_spec
+
+    context = get_current_agent_context()
+    user_query = getattr(context, "credential_user_query", "")
+    tools = []
+    capabilities = {}
+    for spec in filter_valid_runtime_tool_specs(tool_specs):
+        platform_name = None
+        if spec.source_type == "mcp":
+            platform_name = mcp_tool_reference_from_query(spec.display_name, spec.name, user_query)
+        if platform_name:
+            spec = replace(
+                spec,
+                description=(
+                    f"{spec.description} 本轮消息中的 MCP 标识为 "
+                    f"{json.dumps(platform_name, ensure_ascii=False)}，实际调用名为 `{spec.name}`。"
+                ),
+            )
+        tools.append(
+            runtime_tool_from_spec(
+                spec,
+                approval_mode=approval_mode,
+                loop_detector=loop_detector,
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
         )
-        for spec in tool_specs
-    ]
-    return toolkit_cls(tools=tools)
+        capabilities[spec.name] = runtime_tool_capability_from_spec(
+            spec, platform_tool_name=platform_name,
+        )
+
+    toolkit = _load_agentscope_toolkit()(tools=tools)
+    toolkit._platform_tool_capabilities = tuple(capabilities.values())
+    restore_mounted_tool_capabilities(toolkit)
+    return toolkit
+
+
+def restore_mounted_tool_capabilities(toolkit: Any) -> None:
+    """新建或恢复会话时，把已经注册的工具目录同步到当前上下文。"""
+    from app.core.context import get_current_agent_context
+
+    context = get_current_agent_context()
+    if context is not None:
+        capabilities = getattr(toolkit, "_platform_tool_capabilities", ())
+        context.runtime_tool_capabilities = [dict(item) for item in capabilities]
 
 
 def _schema_from_legacy_tool(tool: Any) -> dict[str, Any]:

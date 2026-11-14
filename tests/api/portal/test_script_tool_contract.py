@@ -736,6 +736,9 @@ async def test_preview_refuses_host_execution_under_container_policy(tmp_path, m
 async def test_preview_still_runs_under_local_policy(tmp_path, monkeypatch):
     """local 策略本来就是后端进程执行，不能被上面的拒绝逻辑连坐。"""
     from app.api.portal.endpoints import script_tools as endpoints
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("app.services.ai.code_execution_service.payload_keyring_requires_isolation", AsyncMock(return_value=False))
 
     async def fake_policy() -> str:
         return "local"

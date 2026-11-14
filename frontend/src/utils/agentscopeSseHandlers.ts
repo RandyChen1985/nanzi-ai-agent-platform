@@ -51,6 +51,8 @@ export interface PendingToolPermission {
   expanded?: boolean;
   /** 后端判定该工具可以提供「本会话总是允许」选项。 */
   supports_session_grant?: boolean;
+  credential_selection_required?: boolean;
+  credentialRetryError?: string;
   /** 用户已点过「撤销本会话授权」：卡片据此给一句明确回执。 */
   sessionGrantRevoked?: boolean;
   /** 挂起确认的绝对过期时间（unix 秒）：刷新/恢复后仍能判断卡片是否已失效。 */
@@ -58,6 +60,13 @@ export interface PendingToolPermission {
   expires_in_seconds?: number;
   /** 用户主动「放弃本轮」：命令没有执行，卡片显示放弃回执而不是「已拒绝」。 */
   discarded?: boolean;
+}
+
+export function applyCredentialRetryError(pending: PendingToolPermission | undefined, data: any): boolean {
+  if (!pending?.credential_selection_required || pending.status !== "pending" || data.type !== "error"
+      || !["CREDENTIAL_QUERY_UNAVAILABLE", "CREDENTIAL_SELECTION_INVALID"].includes(data.code)) return false;
+  pending.credentialRetryError = String(data.content || "暂时无法确认凭据，请重试");
+  return true;
 }
 
 export interface PendingExternalExecution {
@@ -230,6 +239,9 @@ export function handlePermissionRequired<T extends AgentStreamMessage>(
     status: "pending",
     expanded: true,
     supports_session_grant: Boolean(data.supports_session_grant),
+    credential_selection_required: Boolean(data.credential_selection_required),
+    expires_at: Number(data.expires_at || 0) || undefined,
+    expires_in_seconds: Number(data.expires_in_seconds || 0) || undefined,
   };
   msg.isThinking = false;
   addLog(msg, {

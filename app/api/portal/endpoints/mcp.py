@@ -18,10 +18,15 @@ from app.core.dependencies import (
     require_api_key,
 )
 from app.models.mcp import McpServer, McpToolCache, McpOutboundAuditLog
+from app.models.credential_type import McpCredentialProfile, McpCredentialUseGrant
+from app.services.secrets.mcp_model_result import ProjectedMcpResult, RestrictedMcpResult
+from app.services.secrets.mcp_profiles import (
+    CredentialInvocationError, McpCredentialInvocation,
+)
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession, McpSyncGuardError
-from app.services.ai.tools.mcp_factory import McpToolFactory
-from app.services.ai.tools.tool_compat import resolve_tool_invocation_result
+from app.services.ai.tools.mcp_factory import resolve_mcp_tool_timeout
+from app.services.ai.tools.model_tool_name import build_model_tool_name
 from app.services.mcp.curl_snippet import build_mcp_curl_snippet
 from app.services.mcp.mcp_auth_policy import (
     _parse_auth_headers,
@@ -644,8 +649,7 @@ async def verify_mcp_server(
         if temp_id in McpClientService._sessions:
             await McpClientService._sessions[temp_id].close()
             del McpClientService._sessions[temp_id]
-        # 原始异常可能带内部地址/HTTP 响应，不能直接回给客户端；详情只落服务端日志。
-        logger.warning("MCP verify failed for %s: %s", data.sse_url, e, exc_info=True)
+        logger.warning("MCP verify failed (%s)", type(e).__name__)
         raise HTTPException(
             status_code=400,
             detail="连接失败：请检查服务地址、网络连通性与认证配置",
@@ -1363,6 +1367,9 @@ async def delete_mcp_server(
     tool_ids = [row[0] for row in cached_rows if row[0]]
 
     # 1. Cascade delete associated tools first
+    if tool_ids:
+        await db.execute(delete(McpCredentialUseGrant).where(McpCredentialUseGrant.tool_id.in_(tool_ids)))
+        await db.execute(delete(McpCredentialProfile).where(McpCredentialProfile.tool_id.in_(tool_ids)))
     await db.execute(delete(McpToolCache).where(McpToolCache.server_id == server_id))
     
     # 2. Delete the server itself
@@ -1601,7 +1608,9 @@ async def list_mcp_server_tools(
     return res
 
 class ToolExecutionRequest(BaseModel):
-    arguments: Dict[str, Any]
+    arguments: Dict[str, Any] = Field(repr=False)
+    credential_account: Optional[str] = Field(default=None, max_length=128, repr=False)
+    selected_secret_id: Optional[str] = Field(default=None, max_length=36, repr=False)
 
 @router.post("/tools/{tool_id}/execute", dependencies=[Depends(require_permission("element", "element:mcp_management:execute"))])
 async def execute_mcp_tool(
@@ -1628,114 +1637,51 @@ async def execute_mcp_tool(
     if not tool.is_published:
         raise HTTPException(status_code=409, detail="工具尚未发布，无法执行")
 
-    mcp_auth = {
-        "user_assertion_sent": False,
-        "header": None,
-        "value_masked": None,
-        "audience": None,
-        "issuer": None,
-        "key_id": None,
-    }
     from app.utils.context import current_user_info
 
-    # 非签名分支走 McpToolFactory（只读 AgentContext / current_user_info），不设这层
-    # ContextVar 时 HTTP 测试台路由会让用户级绑定和 user.* 规则拿不到当前用户。
+    # 测试台和对话使用同一注入链；上下文身份也要覆盖为本次认证用户。
     user_ctx_token = current_user_info.set(user)
     try:
-        # 凭据参数注入要在**两种分支之前**做：签名模式下走的是
-        # `call_remote_tool`，它绕过了 McpToolFactory，不注入的话
-        # 声明成凭据的参数永远是空的（测试台会看到 {"arguments": {}}）。
-        from app.services.secrets.injection import (
-            apply_mcp_arg_bindings,
-            denial_hint,
-            denial_text,
-        )
-
-        arguments = dict(req.arguments or {})
-        arg_denials: dict[str, str | None] = {}
-        arguments = await apply_mcp_arg_bindings(
-            tool, arguments, user_info=user, denials=arg_denials
-        )
-        if arg_denials:
-            # denials 存的是**原始 code**，必须过 denial_text()——直接拼进去
-            # 会把 denied_by_host 这种内部常量抛到界面上。
-            detail = "；".join(
-                f"{slot.split(':')[-1]}（{denial_text(why)}）"
-                for slot, why in arg_denials.items()
-            )
-            hints: list[str] = []
-            for why in arg_denials.values():
-                hint = denial_hint(why)
-                if hint and hint not in hints:
-                    hints.append(hint)
-            message = f"凭据参数缺失（{detail}）"
-            if hints:
-                message += "。" + "；".join(hints)
-            raise HTTPException(status_code=400, detail=message)
+        profile = await db.get(McpCredentialProfile, tool.id)
+        arguments = dict(req.arguments)
+        if profile is None and (req.selected_secret_id or req.credential_account):
+            raise CredentialInvocationError("CREDENTIAL_SELECTION_INVALID")
 
         signed_user_mode = bool(server.user_assertion_enabled)
-        if signed_user_mode:
-            test_user_info = {
-                key: user.get(key)
-                for key in (
-                    "user_id",
-                    "user_name",
-                    "real_name",
-                    "email",
-                    "dept_code",
-                    "org_path",
-                    "extra_data",
-                )
-                if user.get(key) is not None
-            }
-            result = await McpClientService.call_remote_tool(
-                server_id=tool.server_id,
-                tool_name=tool.tool_name.split(":", 1)[-1],
-                arguments=arguments,
-                user_info=test_user_info,
-                agent_info={
-                    "agent_id": "mcp-tool-tester",
-                    "agent_name": "MCP 工具测试台",
-                },
-                request_id=str(uuid.uuid4()),
-            )
-            mcp_auth = {
-                "user_assertion_sent": True,
-                "header": server.user_assertion_header or "X-Nanzi-User-Assertion",
-                "value_masked": "********",
-                "audience": server.user_assertion_audience,
-                "issuer": server.user_assertion_issuer or "nanzi-platform",
-                "key_id": server.user_assertion_key_id,
-            }
-        else:
-            lc_tool = McpToolFactory.create_tool(tool)
-            result = await resolve_tool_invocation_result(
-                await lc_tool.ainvoke(arguments)
-            )
-        return {"status": "success", "result": result, "mcp_auth": mcp_auth}
-    except HTTPException:
-        # 凭据缺失之类的 4xx 是**我们**给的结论，别被下面的兜底改成 502
-        raise
-    except Exception as e:
-        # 远程执行失败必须是错误状态，不能 HTTP 200 返回 status=error：否则监控/调用方
-        # 会把失败当成功。先脱敏再限长，避免敏感信息被截断或回传给前端。
-        from app.services.secrets.redact import redact_value
-
-        safe_error = str(redact_value(str(e), where="MCP工具执行异常"))
-        # **不打堆栈**：``safe_error`` 已经把关键信息（类型 + 脱敏后的消息）给全了，
-        # 而 ``exc_info=True`` 打的是原始异常对象的 traceback，最后一行是**未脱敏**
-        # 的异常消息。凭据中心注入的 token 可能就在那句话里，等于把脱敏白做了。
-        logger.warning(
-            "MCP tool test execution failed for server %s tool %s: %s: %s",
-            tool.server_id,
-            tool.tool_name,
-            type(e).__name__,
-            safe_error,
+        result = await McpClientService.call_remote_tool(
+            server_id=tool.server_id, tool_name=tool.tool_name.split(":", 1)[-1], arguments=arguments,
+            user_info=user, agent_info={"agent_id": "mcp-tool-tester", "agent_name": "MCP 工具测试台"},
+            request_id=str(uuid.uuid4()), timeout_seconds=await resolve_mcp_tool_timeout(),
+            protect_payload=bool(profile),
+            credential_call=McpCredentialInvocation(
+                tool.id, profile.revision if profile else None,
+                selected_secret_id=req.selected_secret_id, explicit_account=req.credential_account,
+                profile_id=profile.profile_id if profile else None,
+            ),
         )
-        raise HTTPException(
-            status_code=502,
-            detail=f"MCP 工具执行失败: {safe_error[:500]}",
-        ) from e
+        mcp_auth = {
+            "user_assertion_sent": signed_user_mode,
+            "header": (server.user_assertion_header or "X-Nanzi-User-Assertion") if signed_user_mode else None,
+            "value_masked": "********" if signed_user_mode else None,
+            "audience": server.user_assertion_audience if signed_user_mode else None,
+            "issuer": (server.user_assertion_issuer or "nanzi-platform") if signed_user_mode else None,
+            "key_id": server.user_assertion_key_id if signed_user_mode else None,
+        }
+        response = {"status": "success", "result": result, "mcp_auth": mcp_auth}
+        if isinstance(result, (ProjectedMcpResult, RestrictedMcpResult)):
+            response["model_result"] = {
+                "tool_name": build_model_tool_name(tool.tool_name),
+                "visibility": result["result_visibility"],
+                "reason": result.reason if isinstance(result, RestrictedMcpResult) else None,
+            }
+        return response
+    except CredentialInvocationError as exc:
+        raise HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)}) from None
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("MCP test failed for server %s tool %s: %s", tool.server_id, tool.id, type(exc).__name__)
+        raise HTTPException(502, detail="MCP 工具执行失败") from None
     finally:
         current_user_info.reset(user_ctx_token)
 
@@ -1789,6 +1735,10 @@ class ToolCredentialParamsRequest(BaseModel):
     """声明工具上哪些参数的值由凭据中心提供。"""
 
     params: List[str] = Field(default_factory=list)
+    # 新客户端同时提交结果路径；旧客户端省略时只更新参数声明。
+    model_result_fields: Any = None
+    expected_revision: int | None = Field(default=None, ge=0)
+    expected_target: str | None = Field(default=None, min_length=64, max_length=64)
 
 
 @router.put(
@@ -1807,18 +1757,11 @@ async def set_tool_credential_params(
     ``arg:<短工具名>:<参数名>`` 槽位注入。所以只接受 schema 里真实存在的参数名，
     拼错一个就等于声明了一个永远不会被填的参数。
     """
-    tool = (
-        await db.execute(select(McpToolCache).where(McpToolCache.id == tool_id))
-    ).scalar_one_or_none()
-    if not tool:
-        raise HTTPException(status_code=404, detail="Tool not found")
+    from app.api.portal.endpoints.mcp_credential_profiles import _resource
+    from app.services.secrets import mcp_profiles
 
-    server = (
-        await db.execute(select(McpServer).where(McpServer.id == tool.server_id))
-    ).scalar_one_or_none()
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
-    _ensure_server_control_access(server, user)
+    # 与同步工具、保存结果路径使用相同的服务→工具锁顺序。
+    tool, server = await _resource(db, tool_id, user, control=True, lock_target=True)
 
     try:
         schema = json.loads(tool.parameter_schema or "{}")
@@ -1855,15 +1798,34 @@ async def set_tool_credential_params(
         if name not in cleaned:
             cleaned.append(name)
 
-    await db.execute(
-        update(McpToolCache)
-        .where(McpToolCache.id == tool_id)
-        .values(credential_params=json.dumps(cleaned, ensure_ascii=False) if cleaned else None)
-    )
-    await db.commit()
+    response: Dict[str, Any] = {"status": "success", "credential_params": cleaned}
+    if "model_result_fields" in payload.model_fields_set:
+        if payload.expected_revision is None or payload.expected_target is None:
+            raise HTTPException(status_code=422, detail="保存结果字段需要当前配置版本，请刷新后重试")
+        try:
+            revision, fields, error = await mcp_profiles.save_tool_result_policy(
+                db, tool, server, paths=payload.model_result_fields,
+                expected_revision=payload.expected_revision, expected_target=payload.expected_target,
+                actor_id=str(_get_user_id(user)), credential_params=cleaned,
+            )
+        except mcp_profiles.CredentialInvocationError as exc:
+            raise HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)}) from None
+        response["model_result_policy"] = {
+            "revision": revision, "model_result_fields": fields, "stale": False,
+            "target": mcp_profiles.tool_result_target(tool, server),
+        }
+        if error:
+            response["warnings"] = [{"code": "MCP_RESULT_FIELDS_INVALID", "message": error}]
+    else:
+        # 参数集合未变化时保留原 JSON 表示，避免空白或排序变化误伤旧的结果指纹。
+        from app.services.secrets.injection import mcp_arg_slots
+
+        if set(cleaned) != {name for name, _ in mcp_arg_slots(tool)}:
+            tool.credential_params = json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+        await db.commit()
     # 工具定义变了（参数被剔除），运行时的工具缓存必须重建，否则模型还会看到旧 schema
     _clear_runtime_tool_cache()
-    return {"status": "success", "credential_params": cleaned}
+    return response
 
 
 @router.put("/tools/{tool_id}/publish", dependencies=[Depends(require_permission("element", "element:mcp_management:publish"))])

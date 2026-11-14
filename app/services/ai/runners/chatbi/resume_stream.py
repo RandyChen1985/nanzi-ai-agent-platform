@@ -9,7 +9,10 @@ from app.services.ai.runtime.agentscope.agent_runtime import build_tools_fingerp
 from app.services.ai.runtime.agentscope.event_stream import is_interrupt_sse_chunk
 from app.services.ai.runtime.agentscope.session_lock import SessionLockTimeout, agentscope_session_lock
 from app.services.ai.runtime.agentscope.state_store import agent_state_store
-from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+from app.services.ai.runtime.agentscope.tools import (
+    RuntimeToolSpec,
+    restore_mounted_tool_capabilities,
+)
 from app.services.ai.runners.chatbi import agent_builder as chatbi_agent_builder
 from app.services.ai.runners.chatbi import state_serialization as chatbi_state
 from app.services.ai.runners.chatbi.run_state import DataRunState
@@ -20,6 +23,7 @@ async def resolve_pending_runtime(
     pending: Any,
 ) -> tuple[Any, list[RuntimeToolSpec], Any, DataRunState, Dict[str, Any]]:
     if pending.agent is not None and pending.tools and pending.native_model is not None:
+        restore_mounted_tool_capabilities(getattr(pending.agent, "toolkit", None))
         data_state, stream_meta = chatbi_state.pending_state_to_data_run_state(pending.state or {})
         guarded_tools = runner._wrap_tools_with_schema_gate(pending.tools, data_state)
         return pending.agent, guarded_tools, pending.native_model, data_state, stream_meta

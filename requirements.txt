@@ -61,6 +61,11 @@ mcp==2.3.0
 # （app/services/ai/tools/mcp_client.py），因此显式声明并锁定，避免依赖 mcp 的传递解析。
 # 升级时与 mcp 同步升，并跑 tests/services/mcp/test_mcp_client_sse_transport.py。
 httpx2==2.12.0
+# MCP 模型结果投影使用 RFC 9535。1.0.x 支持 Python 3.11。
+jsonpath-rfc9535==1.0.1
+# 直接用于 I-Regexp 校验及带超时的正则匹配，与上述解析器一起锁定。
+iregexp-check==0.1.4
+regex==2026.11.9
 pandas>=2.0.0
 openpyxl>=3.1.0
 python-docx>=1.1.0

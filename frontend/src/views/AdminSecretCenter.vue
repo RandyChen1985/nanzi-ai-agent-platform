@@ -10,8 +10,12 @@
  * - 不能「恢复」被停用的凭据，只能重新创建；
  * - 不能停用个人凭据（那是用户自己的资产）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import CredentialFieldForm from '../components/secrets/CredentialFieldForm.vue'
+import CredentialRotationFields from '../components/secrets/CredentialRotationFields.vue'
+import { credentialError, useCredentialFields, type CredentialMeta, type FieldValue } from '../composables/useCredentialFields'
 import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
+import CredentialTypesPanel from '../components/secrets/CredentialTypesPanel.vue'
 import SecretRowActions from '../components/secrets/SecretRowActions.vue'
 import { resultLabel } from '../utils/secretLabels'
 // 变更记录的「动作」文案与配色是共享模块提供的：模板里直接用 secretActionLabel /
@@ -45,7 +49,7 @@ interface SecretBindingRef {
   tool_name?: string | null
 }
 
-interface SystemSecret {
+interface SystemSecret extends CredentialMeta {
   id: string
   secret_key: string
   name: string
@@ -155,7 +159,7 @@ const visibleScenarios = (keys: string[]) => keys.filter((key) => !DEPRECATED_SC
 const CREATE_SCENES = [
   { key: 'mcp', label: 'MCP 服务', desc: '作为连接头的值，在建立 MCP 连接时注入', wired: true },
   { key: 'api_tool', label: 'API 工具', desc: '填进工具的请求头，或声明为「来自凭据」的参数位', wired: true },
-  { key: 'script_env', label: '脚本环境变量', desc: '以环境变量形式进子进程；平台与个人两层开关都开才生效', wired: true },
+  { key: 'script_env', label: '脚本环境变量', desc: '凭据注入专用隔离执行环境，输出会检查凭据回显', wired: true },
   { key: 'agent', label: '智能体', desc: '暂未接入，勾了也不会注入', wired: false },
 ]
 
@@ -260,13 +264,32 @@ async function load() {
 
 // ── 新建系统级凭据 ────────────────────────────────────────────────────
 const showCreate = ref(false)
+const showTypes = ref(false)
+const {
+  types: creationTypes, typeKey, account: credentialAccount, values: credentialValues,
+  loading: typeLoading, error: typeError, selected: selectedType, structured: structuredType,
+  refresh: refreshTypes, clear: clearCredentialFields, complete: credentialComplete, request: credentialRequest,
+} = useCredentialFields()
+const createExpiry = ref('')
+watch(typeKey, key => {
+  form.value.value = ''
+  revealValue.value = false
+  clearCredentialFields()
+  if (key && key !== 'scalar' && key !== 'variable') form.value.allowed_scenarios = ['mcp']
+})
+watch(showCreate, open => {
+  if (!open) {
+    clearCredentialFields()
+    form.value.value = ''
+    revealValue.value = false
+  }
+})
 const createStep = ref(1)
 const createBusy = ref(false)
 const form = ref({
   secret_key: '',
   name: '',
   value: '',
-  secret_type: 'credential' as 'credential' | 'variable',
   allowed_scenarios: ['mcp'] as string[],
   allowed_hosts: '',
 })
@@ -442,24 +465,39 @@ async function saveEdit() {
 // 是全平台共用的，不能改值就只能删了重建，连带清掉所有绑定和授权。
 const rotateOpen = ref(false)
 const rotateBusy = ref(false)
+watch(rotateOpen, open => {
+  if (!open) {
+    rotateValue.value = ''
+    rotateFields.value = {}
+  }
+})
 const rotateTarget = ref<SystemSecret | null>(null)
 const rotateValue = ref('')
+const rotateFields = ref<Record<string, FieldValue>>({})
+const structuredRotation = computed(() => rotateTarget.value?.credential_format === 'structured_v1')
+const canRotate = computed(() => structuredRotation.value
+  ? Object.keys(rotateFields.value).length > 0
+  : !!rotateValue.value.trim())
+
 const revealRotateValue = ref(false)
 
 function openRotate(item: SystemSecret) {
   rotateTarget.value = item
   rotateValue.value = ''
+  rotateFields.value = {}
   revealRotateValue.value = false
   rotateOpen.value = true
 }
 
 async function submitRotate() {
   const target = rotateTarget.value
-  if (!target || !rotateValue.value.trim() || rotateBusy.value) return
+  if (!target || !canRotate.value || rotateBusy.value) return
   rotateBusy.value = true
   try {
     await axios.post(`/api/portal/secrets/${target.id}/rotate`, {
-      value: rotateValue.value,
+      ...(structuredRotation.value
+        ? { field_changes: rotateFields.value, expected_value_revision: rotateTarget.value?.value_revision }
+        : { value: rotateValue.value }),
       // 旧值保留 7 天：正在跑的任务不会在下一分钟突然失败
       overlap_days: 7,
     })
@@ -469,7 +507,7 @@ async function submitRotate() {
     showToast('已轮换。旧值保留 7 天，正在跑的任务不会中断', 'ok')
     await load()
   } catch (e: any) {
-    showToast(e?.response?.data?.detail || '轮换失败', 'err')
+    showToast(credentialError(e, '轮换失败'), 'err')
   } finally {
     rotateBusy.value = false
   }
@@ -497,16 +535,18 @@ function openCreate() {
     secret_key: '',
     name: '',
     value: '',
-    secret_type: 'credential',
     allowed_scenarios: ['mcp'],
     allowed_hosts: '',
   }
   createStep.value = 1
+  createExpiry.value = ''
   showCreate.value = true
+  void refreshTypes()
 }
 
 // 纯空白不算填了；但保存时用的仍是原值，不 trim —— JSON / PEM 的缩进要保住
-const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && form.value.value.trim())
+const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && credentialComplete()
+  && (structuredType.value || form.value.value.trim()))
 
 function nextCreateStep() {
   if (createStep.value === 1 && !canLeaveStep1()) {
@@ -527,14 +567,14 @@ function toggleScene(key: string) {
 
 async function submitCreate() {
   if (!form.value.secret_key.trim()) return showToast('请填写凭据标识', 'err')
-  if (!form.value.value.trim()) return showToast('请填写凭据值', 'err')
+  if (!canLeaveStep1()) return showToast('请填写启用类型的必填字段', 'err')
   createBusy.value = true
   try {
     await axios.post('/api/portal/secrets/admin', {
       secret_key: form.value.secret_key.trim(),
       name: form.value.name.trim() || form.value.secret_key.trim(),
-      value: form.value.value,
-      secret_type: form.value.secret_type,
+      ...credentialRequest(form.value.value),
+      expires_at: createExpiry.value ? new Date(createExpiry.value).toISOString() : null,
       allowed_scenarios: form.value.allowed_scenarios,
       allowed_hosts: form.value.allowed_hosts
         .split(/[,，\s]+/)
@@ -545,7 +585,7 @@ async function submitCreate() {
     showToast('已创建。记得授权，否则没有人能用它')
     await load()
   } catch (e: any) {
-    showToast(e?.response?.data?.detail || '创建失败', 'err')
+    showToast(credentialError(e, '创建失败'), 'err')
   } finally {
     createBusy.value = false
   }
@@ -754,6 +794,8 @@ onMounted(load)
           使用记录
         </button>
         <!-- 窄屏独占一行：它是这一页唯一的写操作，挤在中间行会被压到四个字换行 -->
+        <button type="button" class="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50" @click="showTypes = true">凭据类型</button>
+        <CredentialTypesPanel v-if="showTypes" manage @close="showTypes = false" />
         <button
           type="button"
           class="w-full shrink-0 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 sm:w-auto"
@@ -795,6 +837,9 @@ onMounted(load)
               </span>
             </div>
             <p class="mt-1 font-mono text-[11px] text-gray-400">{{ item.value_masked }}</p>
+              <p v-if="item.credential_format === 'structured_v1'" class="mt-1 text-xs text-slate-600">
+                {{ item.type_key }} · v{{ item.type_version }} · {{ item.account }}
+              </p>
             <div class="mt-1.5 flex flex-wrap gap-1">
               <span
                 v-for="scene in visibleScenarios(item.allowed_scenarios)"
@@ -946,6 +991,9 @@ onMounted(load)
                 <code class="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">{{ item.secret_key }}</code>
               </div>
               <p class="mt-0.5 font-mono text-[11px] text-gray-400">{{ item.value_masked }}</p>
+              <p v-if="item.credential_format === 'structured_v1'" class="mt-1 text-xs text-slate-600">
+                {{ item.type_key }} · v{{ item.type_version }} · {{ item.account }}
+              </p>
             </td>
             <td class="px-3 py-2.5">
               <span
@@ -1082,30 +1130,26 @@ onMounted(load)
                   class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
                 />
               </label>
-              <div>
-                <span class="text-xs font-medium text-gray-700">类型</span>
-                <div class="mt-1 grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    class="rounded-lg border px-3 py-2 text-left text-xs"
-                    :class="form.secret_type === 'credential' ? 'border-violet-400 bg-violet-50' : 'border-gray-200'"
-                    @click="form.secret_type = 'credential'"
-                  >
-                    <span class="block font-medium text-gray-900">凭证</span>
-                    <span class="text-[11px] text-gray-500">Token / 密码，建完不可读</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="rounded-lg border px-3 py-2 text-left text-xs"
-                    :class="form.secret_type === 'variable' ? 'border-sky-400 bg-sky-50' : 'border-gray-200'"
-                    @click="form.secret_type = 'variable'"
-                  >
-                    <span class="block font-medium text-gray-900">变量</span>
-                    <span class="text-[11px] text-gray-500">租户号 / 地址，被授权者可复制</span>
-                  </button>
-                </div>
-              </div>
               <label class="block">
+                <span class="text-xs font-medium text-gray-700">凭据类型 <span class="text-rose-500">*</span></span>
+                <select v-model="typeKey" :disabled="typeLoading || !creationTypes.length"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                  <option v-if="!typeKey" value="" disabled>{{ typeLoading ? '加载中…' : '暂无可创建的类型' }}</option>
+                  <option v-for="type in creationTypes" :key="type.type_key" :value="type.type_key" :disabled="!type.can_create">
+                    {{ type.name }} · v{{ type.version }}{{ !type.can_create ? ' · 已禁用：' + (type.creation_disabled_reason || '此类型暂不可新建') : '' }}
+                  </option>
+                </select>
+                <span v-if="typeError" role="alert" class="mt-1 block text-xs text-rose-700">{{ typeError }}</span>
+              </label>
+              <template v-if="structuredType && selectedType">
+                <label class="block">
+                  <span class="text-xs font-medium text-gray-700">凭据账号 <span class="text-rose-500">*</span></span>
+                  <input v-model="credentialAccount" autocomplete="off" maxlength="128" placeholder="用于选择的账号或别名"
+                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <CredentialFieldForm v-model="credentialValues" :schema="selectedType.schema" />
+              </template>
+              <label v-if="selectedType && !structuredType" class="block">
                 <div class="flex items-center justify-between">
                   <span class="text-xs font-medium text-gray-700">凭据值 <span class="text-rose-500">*</span></span>
                   <button
@@ -1174,6 +1218,11 @@ onMounted(load)
                   逗号分隔，支持 <code>*.</code> 通配子域。留空 = 只允许平台内部目标。
                 </span>
               </label>
+              <label class="block">
+                <span class="text-xs font-medium text-gray-700">有效期</span>
+                <input v-model="createExpiry" type="datetime-local"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+              </label>
               <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
                 <b>建完不等于能用</b>：系统级凭据还要在列表里单独授权给用户、部门或全体用户，否则没有任何人能取到它。
               </div>
@@ -1192,7 +1241,7 @@ onMounted(load)
                 </div>
                 <div class="flex items-start gap-3 px-3 py-2">
                   <dt class="w-20 shrink-0 text-gray-500">类型</dt>
-                  <dd class="text-gray-900">{{ form.secret_type === 'credential' ? '凭证（建完不可读）' : '变量（被授权者可复制）' }}</dd>
+                  <dd class="text-gray-900">{{ selectedType ? selectedType.name + ' · v' + selectedType.version : '—' }}</dd>
                 </div>
                 <div class="flex items-start gap-3 px-3 py-2">
                   <dt class="w-20 shrink-0 text-gray-500">场景</dt>
@@ -1437,7 +1486,9 @@ onMounted(load)
                 @click="revealRotateValue = !revealRotateValue"
               >{{ revealRotateValue ? '隐藏' : '显示' }}</button>
             </div>
-            <textarea
+            <CredentialRotationFields v-if="structuredRotation && rotateTarget"
+                v-model="rotateFields" :item="rotateTarget" />
+              <textarea v-else
               v-model="rotateValue"
               :rows="3"
               class="block w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-primary focus:ring-primary"
@@ -1458,7 +1509,7 @@ onMounted(load)
             >取消</button>
             <button
               type="button"
-              :disabled="rotateBusy || !rotateValue.trim()"
+              :disabled="rotateBusy || !canRotate"
               class="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
               @click="submitRotate"
             >{{ rotateBusy ? '提交中…' : '轮换' }}</button>

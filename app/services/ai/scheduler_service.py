@@ -2,7 +2,7 @@ import logging
 import uuid
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -10,6 +10,7 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -199,7 +200,10 @@ async def _write_task_metrics(
     task: AgentScheduledTask,
     metrics: Dict[str, Any],
 ) -> None:
-    config = _task_config(task)
+    stored_config = await session.scalar(
+        select(AgentScheduledTask.config).where(AgentScheduledTask.id == task.id).with_for_update(),
+    )
+    config = dict(stored_config or {})
     config[TASK_METRICS_KEY] = metrics
     await session.execute(
         update(AgentScheduledTask)
@@ -207,7 +211,6 @@ async def _write_task_metrics(
         .values(config=config)
     )
     await session.commit()
-    task.config = config
 
 
 async def _mark_task_attempt_started(session: AsyncSession, task: AgentScheduledTask) -> Dict[str, Any]:
@@ -562,12 +565,224 @@ async def _handle_task_execution_failure(
         )
 
 
+async def _complete_task_execution(
+    session, task, trace_id, result, notification_channels, *, notification_channel_groups=None,
+) -> None:
+    if notification_channel_groups is None:
+        from app.services.task_notification_channels import channel_groups_from_task_config
+
+        notification_channel_groups = channel_groups_from_task_config(_task_config(task))
+    # 5. Update Task Metadata (Atomic update)
+    # 执行成功先落库，结果通知投递单独记录，投递失败不再把任务标失败。
+    await session.execute(
+        update(AgentScheduledTask)
+        .where(AgentScheduledTask.id == task.id)
+        .values(
+            last_run_id=trace_id,
+            last_run_at=datetime.now(),
+            run_count=AgentScheduledTask.run_count + 1
+        )
+    )
+    await session.commit()
+    await _mark_task_success(
+        session,
+        task,
+        trace_id=trace_id,
+        message="任务执行成功",
+    )
+    logger.info(f"📊 Updated run_count and last_run_id for task {task.id}")
+
+    # 6. 结果通知投递（与任务执行状态解耦）
+    if notification_channels:
+        delivery_ok = False
+        delivery_notes: List[str] = []
+        try:
+            from app.services.task_notification_delivery import ensure_task_notification_deliveries
+
+            await asyncio.sleep(0.5)
+            delivery_ok, delivery_notes = await ensure_task_notification_deliveries(
+                session,
+                user_id=task.user_id,
+                task_name=task.name,
+                channels=notification_channels,
+                trace_id=trace_id,
+                content=str(result.get("content") or ""),
+                reasoning_content=str(result.get("reasoning_content") or "") or None,
+                channel_groups=notification_channel_groups,
+            )
+        except Exception as delivery_err:
+            logger.error(f"❌ Task {task.id} notification delivery raised: {delivery_err}", exc_info=True)
+            delivery_notes = [str(delivery_err)]
+        logger.info(
+            "📬 Task %s notification delivery trace=%s ok=%s notes=%s",
+            task.id,
+            trace_id,
+            delivery_ok,
+            delivery_notes,
+        )
+        delivery_metrics = await _record_task_delivery_result(
+            session, task, ok=delivery_ok, notes=delivery_notes
+        )
+        if not delivery_ok and _should_alert_delivery_failure(delivery_metrics):
+            error = "任务执行成功，但结果通知投递失败：" + "; ".join(delivery_notes)
+            await _send_task_failure_alert(
+                task.user_id, task, trace_id=trace_id, error=error,
+                metrics=delivery_metrics, kind="delivery",
+            )
+
+
+async def resume_task_credential(
+    task_id: int, request_id: str, secret_id: str | None, *, user_info: dict, remember_credential: bool = False,
+) -> dict:
+    """从同一会话快照恢复，只能由任务所有者操作。None 取消该运行。"""
+    from app.models.credential_type import TaskCredentialWait
+    from app.services.ai.agent_service import (
+        agent_service, _accumulate_reasoning_content, _accumulate_stream_content, _apply_turn_status_signal,
+    )
+    from app.services.ai.runtime.agentscope.confirmations import pending_agentscope_confirmations
+    from app.services.secrets import task_credential_wait
+    from app.services.secrets.credential_approval import pending_ref
+    from app.services.secrets.mcp_profiles import CredentialInvocationError, pending_candidates
+    from app.services.secrets.type_catalog import CredentialTypeError
+    from app.services.task_notification_channels import channels_from_task_config
+
+    user_id = str(user_info.get("user_id") or "")
+    async with AsyncSessionLocal() as session:
+        task = await session.get(AgentScheduledTask, task_id)
+        if not task or str(task.user_id) != user_id:
+            raise CredentialInvocationError("TASK_NOT_FOUND", "任务不存在", 404)
+        timeout = execution_timeout_from_task_config(_task_config(task))
+
+    lock_token = await _acquire_task_execution_lock(task_id, timeout + _TASK_EXEC_LOCK_TTL_BUFFER_SEC)
+    if lock_token is None:
+        raise CredentialInvocationError("TASK_BUSY", "任务正在处理，请稍后重试")
+    try:
+        async with AsyncSessionLocal() as session:
+            task = await session.get(AgentScheduledTask, task_id, with_for_update=True)
+            await task_credential_wait.expire_waits(session, task_id)
+            wait = await session.scalar(select(TaskCredentialWait).where(
+                TaskCredentialWait.request_id == request_id, TaskCredentialWait.task_id == task_id,
+            ).with_for_update())
+            if task is None or str(task.user_id) != user_id or wait is None or str(wait.user_id) != user_id:
+                raise CredentialInvocationError("TASK_NOT_FOUND", "任务或授权不存在", 404)
+            if wait.status == "pending" and wait.task_definition_digest != task_credential_wait.task_definition_digest(task):
+                task_credential_wait.resolve_wait(session, wait, "cancelled")
+            if wait.status != "pending":
+                await session.commit()
+                raise CredentialInvocationError("TASK_CREDENTIAL_WAIT_CLOSED", "任务授权已处理")
+            if wait.expires_at <= datetime.utcnow():
+                task_credential_wait.resolve_wait(session, wait, "expired")
+                await session.commit()
+                raise CredentialInvocationError("TASK_CREDENTIAL_WAIT_EXPIRED", "任务授权已过期")
+            try:
+                pending = await pending_agentscope_confirmations.peek_async(request_id, user_id=user_id)
+            except Exception:
+                raise CredentialInvocationError(
+                    "CREDENTIAL_QUERY_UNAVAILABLE", "暂时无法读取授权请求，请重试", 503,
+                ) from None
+            ref = pending_ref(pending) if pending else None
+            if (not ref or ref.get("scheduled_task_id") != task_id
+                    or pending.snapshot.conversation_id != wait.run_conversation_id):
+                task_credential_wait.resolve_wait(session, wait, "expired")
+                await session.commit()
+                raise CredentialInvocationError("TASK_CREDENTIAL_WAIT_EXPIRED", "任务快照已过期")
+            if secret_id is None:
+                task_credential_wait.resolve_wait(session, wait, "cancelled")
+                metrics = _task_metrics(task)
+                metrics.update(last_status="cancelled", last_message="任务所有者取消了本次凭据授权")
+                await _write_task_metrics(session, task, metrics)
+                await pending_agentscope_confirmations.pop_async(request_id, user_id=user_id)
+                return task_credential_wait.wait_view(wait)
+            try:
+                eligible = await pending_candidates(session, ref, user_id, secret_id=secret_id)
+                task_refs = await task_credential_wait.load_task_credential_refs(session, task)
+            except CredentialTypeError as exc:
+                raise CredentialInvocationError(exc.code, str(exc), exc.status_code) from None
+            except SQLAlchemyError:
+                raise CredentialInvocationError(
+                    "CREDENTIAL_QUERY_UNAVAILABLE", "暂时无法查询凭据，请重试", 503,
+                ) from None
+            if len(eligible) != 1:
+                raise CredentialInvocationError("CREDENTIAL_SELECTION_INVALID", "所选凭据已失效或授权已撤销，请重新选择")
+            wait.status = "resuming"
+            wait.resume_lease_until = datetime.utcnow() + timedelta(seconds=timeout + _TASK_EXEC_LOCK_TTL_BUFFER_SEC)
+            run_conversation_id, trace_id = wait.run_conversation_id, wait.trace_id
+            await session.commit()
+
+        status, content, next_wait, resume_error = "error", "", None, None
+        reasoning_content = ""
+
+        async def resume():
+            nonlocal status, content, reasoning_content, next_wait, resume_error
+            status = "success"
+            async for chunk in agent_service.resume_agentscope_permission_stream(
+                permission_request_id=request_id, confirmed=True, credential_secret_id=secret_id,
+                user_info={**user_info, "is_scheduled_task": True, "scheduled_task_id": task_id},
+                scheduled_task_id=task_id,
+                remember_credential=remember_credential,
+            ):
+                status = _apply_turn_status_signal(status, chunk)
+                content = _accumulate_stream_content(content, chunk)
+                reasoning_content = _accumulate_reasoning_content(reasoning_content, chunk)
+                next_wait = next_wait or task_credential_wait.wait_event(chunk)
+                if chunk.get("type") == "error" and chunk.get("code") in {
+                    "CREDENTIAL_QUERY_UNAVAILABLE", "CREDENTIAL_SELECTION_INVALID",
+                }:
+                    resume_error = CredentialInvocationError(
+                        chunk["code"], chunk["content"], 503 if chunk["code"] == "CREDENTIAL_QUERY_UNAVAILABLE" else 409,
+                    )
+
+        scope = task_credential_wait.current_task_credential_refs.set(task_refs)
+        try:
+            await asyncio.wait_for(resume(), timeout=timeout)
+        except asyncio.CancelledError:
+            async with AsyncSessionLocal() as session:
+                await session.get(AgentScheduledTask, task_id, with_for_update=True)
+                wait = await session.get(TaskCredentialWait, request_id, with_for_update=True)
+                if wait is not None and wait.status == "resuming":
+                    await task_credential_wait.recover_wait(session, wait)
+                    await session.commit()
+            raise
+        except Exception:
+            status = "error"
+        finally:
+            task_credential_wait.current_task_credential_refs.reset(scope)
+
+        async with AsyncSessionLocal() as session:
+            task = await session.get(AgentScheduledTask, task_id, with_for_update=True)
+            wait = await session.get(TaskCredentialWait, request_id, with_for_update=True)
+            if task is None or wait is None:
+                raise CredentialInvocationError("TASK_NOT_FOUND", "任务不存在", 404)
+            if resume_error:
+                await task_credential_wait.recover_wait(session, wait)
+                await session.commit()
+                raise resume_error
+            task_credential_wait.resolve_wait(session, wait, "completed" if status == "success" or next_wait else "failed")
+            if next_wait and status == "awaiting_permission" and wait.task_definition_digest == task_credential_wait.task_definition_digest(task):
+                view = task_credential_wait.add_wait(
+                    session, task, event=next_wait, trace_id=trace_id, conversation_id=run_conversation_id,
+                )
+                await session.commit()
+                return task_credential_wait.wait_view(view)
+            if status == "success":
+                await _complete_task_execution(
+                    session, task, trace_id, {"content": content, "reasoning_content": reasoning_content},
+                    channels_from_task_config(_task_config(task)),
+                )
+            else:
+                await _mark_task_failure(session, task, trace_id=trace_id, error="授权后的任务执行未完成")
+            return task_credential_wait.wait_view(wait)
+    finally:
+        await _release_task_execution_lock(task_id, lock_token)
+
+
 async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_attempt: int = 0):
     """
     Top-level wrapper function for task execution to avoid APScheduler serialization issues.
     """
     # Delay import to avoid circular dependencies
     from app.services.ai.agent_service import agent_service
+    from app.services.secrets import task_credential_wait
 
     logger.info(f"🔔 Triggering {'MANUAL ' if is_manual else 'SCHEDULED '}task {task_id} (attempt={retry_attempt})")
 
@@ -622,11 +837,26 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
             # 供下面的 _mark_task_* helper（内部会访问 task.config）使用。
             phase1_task = (
                 await session.execute(
-                    select(AgentScheduledTask).where(AgentScheduledTask.id == task_id_snapshot)
+                    select(AgentScheduledTask).where(AgentScheduledTask.id == task_id_snapshot).with_for_update()
                 )
             ).scalar_one_or_none()
             if phase1_task is None:
                 logger.error(f"Task {task_id} disappeared before execution; aborting.")
+                return
+            if phase1_task.status != 1 and not is_manual:
+                return
+
+            task_config = _task_config(phase1_task)
+            execution_timeout = execution_timeout_from_task_config(task_config)
+            task_user_id = phase1_task.user_id
+            task_name = phase1_task.name
+            task_conversation_id = phase1_task.conversation_id
+            task_agent_id = phase1_task.agent_id
+            task_prompt = phase1_task.prompt
+            await task_credential_wait.expire_waits(session, task_id_snapshot)
+            if await task_credential_wait.latest_wait(session, task_id_snapshot, active_only=True):
+                await session.commit()
+                logger.info("Task %s has a pending credential authorization", task_id_snapshot)
                 return
 
             # 3. User Impersonation
@@ -666,6 +896,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                 # `denied_by_grant`——而同样的任务手动点一次却是正常的，很难查。
                 "dept_code": getattr(user, "dept_code", None),
                 "is_scheduled_task": True,
+                "scheduled_task_id": task_id_snapshot,
                 "quick_suggestions_forbidden": True,
                 "task_name": task_name,
                 "requires_tool_execution": True,
@@ -676,6 +907,8 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
             # 4. Execute via Agent Service
             # 标记「已开始」并提交（_mark_task_attempt_started 内部会 commit），
             # 随后离开本 with 块立即释放连接，让长 LLM 调用不再占用连接池连接。
+            task_definition = task_credential_wait.task_definition_digest(phase1_task)
+            task_refs = await task_credential_wait.load_task_credential_refs(session, phase1_task)
             await _mark_task_attempt_started(session, phase1_task)
 
         # ── 特殊系统任务分支：元数据物理一致性巡检（无需调用 LLM 与外部 Agent）──
@@ -984,6 +1217,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
         # and capture it from the response to ensure consistency with Audit Logs.
         result: Optional[Dict[str, Any]] = None
         execution_error: Optional[str] = None
+        scope = task_credential_wait.current_task_credential_refs.set(task_refs)
         try:
             result = await asyncio.wait_for(
                 agent_service.chat_completion(
@@ -1005,6 +1239,8 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
         except Exception as exec_e:
             execution_error = str(exec_e)
             logger.error(f"❌ Task {task_id} execution raised error: {exec_e}", exc_info=True)
+        finally:
+            task_credential_wait.current_task_credential_refs.reset(scope)
 
         trace_id = result.get('trace_id') if result else None
 
@@ -1016,7 +1252,9 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
         async with AsyncSessionLocal() as session:
             # 阶段 1.1 结束后的 task 已 detached，重新按 id 查询以绑定到本连接。
             fresh_task = (
-                await session.execute(select(AgentScheduledTask).where(AgentScheduledTask.id == task_id_snapshot))
+                await session.execute(
+                    select(AgentScheduledTask).where(AgentScheduledTask.id == task_id_snapshot).with_for_update(),
+                )
             ).scalar_one_or_none()
 
             if execution_error is not None:
@@ -1035,6 +1273,20 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
 
             if fresh_task is None:
                 logger.error(f"Task {task_id}: record disappeared during execution; skipping metadata update.")
+                return
+
+            credential_wait = (result or {}).get("credential_wait")
+            if credential_wait:
+                if task_definition != task_credential_wait.task_definition_digest(fresh_task):
+                    await _mark_task_skipped(session, fresh_task, reason="任务配置已修改，本次授权未保留")
+                    return
+                task_credential_wait.add_wait(
+                    session, fresh_task, event=credential_wait, trace_id=trace_id or "",
+                    conversation_id=run_conversation_id,
+                )
+                metrics = _task_metrics(fresh_task)
+                metrics.update(last_status="awaiting_credential", last_message="等待任务所有者选择凭据", last_trace_id=trace_id)
+                await _write_task_metrics(session, fresh_task, metrics)
                 return
 
             if _is_incomplete_task_result(result):
@@ -1060,63 +1312,10 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                     )
                 return
 
-            # 5. Update Task Metadata (Atomic update)
-            # 执行成功先落库，结果通知投递单独记录，投递失败不再把任务标失败。
-            await session.execute(
-                update(AgentScheduledTask)
-                .where(AgentScheduledTask.id == task_id_snapshot)
-                .values(
-                    last_run_id=trace_id,
-                    last_run_at=datetime.now(),
-                    run_count=AgentScheduledTask.run_count + 1
-                )
+            await _complete_task_execution(
+                session, fresh_task, trace_id, result, notification_channels,
+                notification_channel_groups=notification_channel_groups,
             )
-            await session.commit()
-            await _mark_task_success(
-                session,
-                fresh_task,
-                trace_id=trace_id,
-                message="任务执行成功",
-            )
-            logger.info(f"📊 Updated run_count and last_run_id for task {task_id}")
-
-            # 6. 结果通知投递（与任务执行状态解耦）
-            if notification_channels:
-                delivery_ok = False
-                delivery_notes: List[str] = []
-                try:
-                    from app.services.task_notification_delivery import ensure_task_notification_deliveries
-
-                    await asyncio.sleep(0.5)
-                    delivery_ok, delivery_notes = await ensure_task_notification_deliveries(
-                        session,
-                        user_id=task_user_id,
-                        task_name=task_name,
-                        channels=notification_channels,
-                        trace_id=trace_id,
-                        content=str(result.get("content") or ""),
-                        reasoning_content=str(result.get("reasoning_content") or "") or None,
-                        channel_groups=notification_channel_groups,
-                    )
-                except Exception as delivery_err:
-                    logger.error(f"❌ Task {task_id} notification delivery raised: {delivery_err}", exc_info=True)
-                    delivery_notes = [str(delivery_err)]
-                logger.info(
-                    "📬 Task %s notification delivery trace=%s ok=%s notes=%s",
-                    task_id,
-                    trace_id,
-                    delivery_ok,
-                    delivery_notes,
-                )
-                delivery_metrics = await _record_task_delivery_result(
-                    session, fresh_task, ok=delivery_ok, notes=delivery_notes
-                )
-                if not delivery_ok and _should_alert_delivery_failure(delivery_metrics):
-                    error = "任务执行成功，但结果通知投递失败：" + "; ".join(delivery_notes)
-                    await _send_task_failure_alert(
-                        task_user_id, fresh_task, trace_id=trace_id, error=error,
-                        metrics=delivery_metrics, kind="delivery",
-                    )
 
             # Allow logs to flush
             await asyncio.sleep(0.5)

@@ -20,6 +20,41 @@ def has_any_resource(scope: Dict[str, Any] | None) -> bool:
     )
 
 
+async def normalize_dataset_mounts(
+    db: AsyncSession, user_id: int | None, *, is_admin: bool, items: list[Dict[str, Any]],
+) -> list[Dict[str, Any]]:
+    from app.services.metadata_service import MetadataService
+
+    if not items:
+        return []
+    datasets = await MetadataService.list_accessible_dataset_options(
+        db, user_id=user_id, is_admin=is_admin, status=1,
+    )
+    by_token = {}
+    for dataset in datasets:
+        for token in (dataset.id, dataset.name, getattr(dataset, "dataset_name", None)):
+            if token is not None and str(token).strip():
+                by_token[str(token).strip().casefold()] = dataset
+
+    result = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        dataset = next(
+            (by_token[token] for key in ("id", "dataset_name", "name")
+             if (token := str(item.get(key) or "").strip().casefold()) in by_token),
+            None,
+        )
+        if dataset is not None:
+            result.append({
+                "id": str(dataset.id),
+                "name": str(getattr(dataset, "display_name", None) or dataset.name or dataset.id),
+                "dataset_name": str(dataset.name or ""),
+                "description": str(getattr(dataset, "description", None) or ""),
+            })
+    return result
+
+
 async def normalize_resource_scope_for_user(
     db: AsyncSession,
     user_info: Dict[str, Any],
@@ -27,7 +62,6 @@ async def normalize_resource_scope_for_user(
 ) -> Dict[str, Any]:
     """把客户端提交的资源 token 收敛为指定用户可见目录中的可信快照。"""
     from app.models.knowledge import KnowledgeBaseMetadata
-    from app.services.metadata_service import MetadataService
     from app.core.config import settings
     from app.services.ai.skill_resolver import get_user_personal_skills_dir
     from app.services.permission_service import PermissionService
@@ -35,8 +69,7 @@ async def normalize_resource_scope_for_user(
     # app.api.portal.endpoints.skills.parse_skill_metadata，服务层依赖 API 层会把整棵
     # 路由依赖拖进资源收敛路径，也让「解析口径」多绕一层）
     from app.utils.skill_metadata import is_skill_enabled, parse_skill_frontmatter
-    from sqlalchemy import and_, select
-    from sqlalchemy.orm import joinedload
+    from sqlalchemy import select
 
     raw_scope = raw_scope if isinstance(raw_scope, dict) else {}
     raw_user_id = user_info.get("user_id") or user_info.get("id")
@@ -44,39 +77,9 @@ async def normalize_resource_scope_for_user(
         user_id = int(raw_user_id) if raw_user_id is not None else None
     except (TypeError, ValueError):
         user_id = None
-    is_admin = user_info.get("role") == "admin"
-    datasets = await MetadataService.list_accessible_dataset_options(
-        db, user_id=user_id, is_admin=is_admin, status=1
+    datasets = await normalize_dataset_mounts(
+        db, user_id, is_admin=user_info.get("role") == "admin", items=raw_scope.get("datasets") or [],
     )
-    dataset_by_token: Dict[str, Any] = {}
-    for dataset in datasets:
-        for token in (
-            dataset.id,
-            dataset.name,
-            getattr(dataset, "dataset_name", None),
-        ):
-            if token is not None and str(token).strip():
-                dataset_by_token[str(token).strip().casefold()] = dataset
-
-    def normalize_dataset(item: Any) -> Dict[str, Any] | None:
-        if not isinstance(item, dict):
-            return None
-        dataset = next(
-            (
-                dataset_by_token.get(str(item.get(key) or "").strip().casefold())
-                for key in ("id", "dataset_name", "name")
-                if str(item.get(key) or "").strip().casefold() in dataset_by_token
-            ),
-            None,
-        )
-        if dataset is None:
-            return None
-        return {
-            "id": str(dataset.id),
-            "name": str(getattr(dataset, "display_name", None) or dataset.name or dataset.id),
-            "dataset_name": str(dataset.name or ""),
-            "description": str(getattr(dataset, "description", None) or ""),
-        }
 
     kb_access = await PermissionService(db).get_knowledge_base_access(
         int(user_id), user_info.get("user_name")
@@ -170,63 +173,60 @@ async def normalize_resource_scope_for_user(
         if skill:
             normalized_skills.append(skill)
 
-    from app.models.mcp import McpServer, McpToolCache
-
-    mcp_personal_cond = and_(
-        McpServer.scope == "personal",
-        McpServer.user_id == int(user_id) if user_id is not None else -1,
-    )
-    # 会话动态挂载仅允许个人已发布 MCP；平台 MCP 走智能体版本配置
-    mcp_stmt = (
-        select(McpToolCache)
-        .join(McpToolCache.server)
-        .options(joinedload(McpToolCache.server))
-        .where(
-            McpToolCache.is_published == True,  # noqa: E712
-            McpToolCache.is_available == True,  # noqa: E712
-            mcp_personal_cond if user_id is not None else False,
-        )
-    )
-    mcp_rows = list((await db.execute(mcp_stmt)).scalars().unique().all())
-    mcp_by_token: Dict[str, Dict[str, Any]] = {}
-    for row in mcp_rows:
-        server = row.server
-        snapshot = {
-            "id": str(row.id),
-            "name": str(row.tool_name or ""),
-            "description": str(row.tool_description or ""),
-            "server_name": str(getattr(server, "server_name", None) or "Unknown"),
-            "scope": str(getattr(server, "scope", None) or "global"),
-        }
-        if not snapshot["name"]:
-            continue
-        for token in (snapshot["id"], snapshot["name"]):
-            if token.strip():
-                mcp_by_token[token.strip().casefold()] = snapshot
-
-    normalized_mcp_tools: list[Dict[str, Any]] = []
-    seen_mcp_names: set[str] = set()
-    for item in raw_scope.get("mcp_tools", []) or []:
-        if not isinstance(item, dict):
-            continue
-        matched = None
-        for key in ("id", "name"):
-            token = str(item.get(key) or "").strip().casefold()
-            if token and token in mcp_by_token:
-                matched = mcp_by_token[token]
-                break
-        if not matched:
-            continue
-        name = matched["name"]
-        if name in seen_mcp_names:
-            continue
-        seen_mcp_names.add(name)
-        normalized_mcp_tools.append(matched)
-
     return {
         "project_name": str(raw_scope.get("project_name") or "").strip()[:100],
-        "datasets": [item for raw in raw_scope.get("datasets", []) or [] if (item := normalize_dataset(raw))],
+        "datasets": datasets,
         "knowledge_bases": [item for raw in raw_scope.get("knowledge_bases", []) or [] if (item := normalize_kb(raw))],
         "skills": normalized_skills,
-        "mcp_tools": normalized_mcp_tools,
+        "mcp_tools": await normalize_personal_mcp_mounts(db, user_id, raw_scope.get("mcp_tools") or []),
     }
+
+
+async def normalize_personal_mcp_mounts(
+    db: AsyncSession, user_id: Any, items: list[Dict[str, Any]],
+) -> list[Dict[str, Any]]:
+    """校验会话请求中属于当前用户且可挂载的个人 MCP 工具。"""
+    from sqlalchemy import select
+    from sqlalchemy.orm import contains_eager
+
+    from app.models.mcp import McpServer, McpToolCache
+
+    if not items or user_id is None:
+        return []
+    try:
+        owner_id = int(user_id)
+    except (TypeError, ValueError):
+        return []
+
+    stmt = (
+        select(McpToolCache)
+        .join(McpToolCache.server)
+        .options(contains_eager(McpToolCache.server))
+        .where(
+            McpServer.scope == "personal",
+            McpServer.user_id == owner_id,
+            McpServer.enabled_status == 1,
+            McpToolCache.is_published.is_(True),
+            McpToolCache.is_available.is_(True),
+        )
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    by_id = {str(row.id).casefold(): row for row in rows}
+    by_name = {row.tool_name.casefold(): row for row in rows if row.tool_name}
+    mounts: dict[str, Dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        tool_id = str(item.get("id") or "").strip().casefold()
+        tool_name = str(item.get("name") or "").strip().casefold()
+        row = by_id.get(tool_id) if tool_id else by_name.get(tool_name)
+        if row is None or not row.tool_name or row.tool_name in mounts:
+            continue
+        mounts[row.tool_name] = {
+            "id": str(row.id),
+            "name": row.tool_name,
+            "description": row.tool_description or "",
+            "server_name": row.server.server_name,
+            "scope": row.server.scope,
+        }
+    return list(mounts.values())

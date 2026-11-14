@@ -1,11 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, File, UploadFile
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool
+from sqlalchemy.exc import SQLAlchemyError
 from app.core.dependencies import require_admin, require_permission
 from app.core.config import settings
 from app.core import redis
 from app.services.config_service import ConfigService
+from app.services.secrets.payload_config import load_payload_config, save_payload_config
+from app.services.secrets.payload_crypto import ENABLED_CONFIG_KEY, KEYRING_CONFIG_KEY
+from app.services.secrets.type_catalog import CredentialTypeError
 from app.schemas.branding import BrandingSettingsUpdate
 from app.services.branding_settings_service import BrandingSettingsService
 from app.services.ai.ragflow_client import RagFlowClient
@@ -689,6 +693,31 @@ class ConfigUpdateRequest(BaseModel):
     updates: List[ConfigItem]
 
 
+class StructuredCredentialConfigUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    structured_credentials_enabled: StrictBool | None = None
+    credential_payload_keyring_json: SecretStr | None = Field(default=None, max_length=65535)
+
+
+@router.put("/configs/structured-credentials")
+async def update_structured_credential_config(
+    request: StructuredCredentialConfigUpdate,
+    user: Dict = Depends(require_admin),
+):
+    keyring = request.credential_payload_keyring_json
+    try:
+        return await save_payload_config(
+            enabled=request.structured_credentials_enabled,
+            keyring_json=keyring.get_secret_value() if keyring is not None else None,
+        )
+    except CredentialTypeError as exc:
+        raise HTTPException(exc.status_code, detail=str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from None
+    except SQLAlchemyError:
+        raise HTTPException(503, detail="结构化凭据配置暂不可用") from None
+
+
 DEPLOYMENT_CHECKLIST_KEY = "deployment_setup_checklist"
 DEPLOYMENT_CHECKLIST_VERSION = "post_install_v2"
 DEPLOYMENT_CHECKLIST_ITEMS = (
@@ -770,7 +799,27 @@ async def get_system_configs(
     Sensitive values are masked.
     """
     try:
-        return await ConfigService.get_all_configs_grouped()
+        grouped = await ConfigService.get_all_configs_grouped()
+        status = (await load_payload_config()).status()
+        grouped.setdefault("security", []).extend([
+            {
+                "key": ENABLED_CONFIG_KEY,
+                "value": "true" if status[ENABLED_CONFIG_KEY] else "false",
+                "description": "仅控制新建结构化凭据；关闭后已有凭据仍可使用、轮换、编辑和绑定，类型定义仍可管理。",
+                "is_secret": False,
+            },
+            {
+                "key": KEYRING_CONFIG_KEY,
+                "value": "",
+                "description": "输入包含 active_key_id 和 keys 的 JSON。保存后显示校验状态和活跃密钥编号。",
+                "is_secret": True,
+                "keyring_status": status["keyring_status"],
+                "active_key_id": status["active_key_id"],
+            },
+        ])
+        return grouped
+    except CredentialTypeError as exc:
+        raise HTTPException(exc.status_code, detail=str(exc)) from None
     except Exception as e:
         logging.error(f"Failed to get configs: {e}")
         raise HTTPException(status_code=500, detail=str(e))

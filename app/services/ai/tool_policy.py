@@ -288,6 +288,15 @@ _KNOWN_TOOL_METADATA: Mapping[str, ToolMetadata] = {
         idempotent="yes",
         nudge_mode="evidence",
     ),
+    "list_mcp_credential_candidates": ToolMetadata(
+        capability="credential_catalog",
+        source="platform_self_help",
+        freshness="current_turn",
+        side_effect="read",
+        confirmation="none",
+        idempotent="yes",
+        nudge_mode="fallback",
+    ),
     "list_accessible_datasets": ToolMetadata(
         capability="dataset_catalog",
         source="platform_self_help",

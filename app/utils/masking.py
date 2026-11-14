@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Union
 # 精确匹配的敏感键名
 SENSITIVE_KEYS_FULL = {
     "authorization", "auth", "password", "passwd", "pwd", "token", 
-    "api_key", "apikey", "secret", "sk", "private_key",
+    "api_key", "apikey", "secret", "sk", "private_key", "credential_payload_keyring_json",
     # 请求签名密钥：只在创建/更新/试跑请求体里出现，绝不能进审计库
     "signing_secret", "signingsecret",
     # 会话 / 票据类凭据：签发接口会把它们放在**响应体**里

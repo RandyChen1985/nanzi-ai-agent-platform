@@ -325,7 +325,8 @@ async def test_mcp_tool_factory_uses_model_safe_name_and_preserves_remote_tool_n
 
     assert re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", tool.name)
     assert ":" not in tool.name
-    assert tool.name.startswith("mcp_data-analytics-mcp_list_events_")
+    assert re.fullmatch(r"mcp_[a-f0-9]{20}", tool.name)
+    assert tool.display_name == record.tool_name
     # MCP 工具现在返回异步生成器：中间是进度片，最后一片才是结果。
     produced = await tool.ainvoke({"glibId": "pt3_v3"})
     assert [item async for item in produced] == ["event list"]

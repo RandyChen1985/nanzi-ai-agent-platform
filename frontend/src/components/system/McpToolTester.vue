@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import axios from '@/utils/axios'
+import { credentialError } from '@/composables/useCredentialFields'
+import { getMcpCredentialConfig, listMcpCredentialCandidates, type McpCredentialConfig, type McpCredentialCandidates } from '@/utils/mcpCredentialProfiles'
 import { copyToClipboard } from '@/utils/clipboard'
 import { useToast } from '@/composables/useToast'
 import { useUser } from '@/composables/useUser'
@@ -24,6 +26,23 @@ type McpAuthStatus = {
   key_id: string | null
 }
 
+type McpModelResultInfo = {
+  tool_name: string
+  visibility: 'projected' | 'restricted'
+  reason: string | null
+}
+
+const restrictedReasons: Record<string, string> = {
+  fields_not_configured: '此工具尚未保存模型可见的结果字段。',
+  fields_stale: '工具参数或目标已变化，请重新保存结果字段。',
+  fields_invalid: '结果字段格式错误，请检查 JSONPath。',
+  invalid_response: '无法从 MCP 响应读取有效的业务 JSON。',
+  response_shape_mismatch: 'JSONPath 与响应结构不符，请核对对象、数组和字段类型。',
+  no_matching_fields: 'JSONPath 在解包后的业务 JSON 中未匹配到任何节点。',
+  query_limit_exceeded: 'JSONPath 查询超过处理上限，请缩小查询范围。',
+  result_too_large: '结果超过可返回大小，请缩小查询范围。',
+}
+
 const props = defineProps<{
   tool: any,
   isOpen: boolean
@@ -37,6 +56,21 @@ const { hasPermission } = useUser()
 const canExecuteMcp = computed(() => hasPermission('element:mcp_management:execute'))
 
 const loading = ref(false)
+const credentialConfig = ref<McpCredentialConfig | null>(null)
+const credentialCandidates = ref<McpCredentialCandidates | null>(null)
+const selectedCredential = ref('')
+const credentialLoading = ref(false)
+const credentialLoadError = ref('')
+const missingCredentialParams = computed(() => credentialConfig.value?.parameters.filter(
+  item => item.sensitive && !credentialParams.value.includes(item.name),
+).map(item => item.name) || [])
+const credentialReady = computed(() => {
+  if (credentialLoading.value || credentialLoadError.value || missingCredentialParams.value.length) return false
+  const profile = credentialConfig.value?.profile
+  if (!profile) return true
+  if (credentialConfig.value?.stale) return false
+  return profile.selection_mode === 'fixed' ? !!credentialCandidates.value?.fixed_secret_id : !!selectedCredential.value
+})
 const result = ref<unknown>(null)
 const error = ref<string | null>(null)
 const args = ref<Record<string, any>>({})
@@ -46,6 +80,14 @@ const requestPayload = ref<{ arguments: Record<string, any> } | null>(null)
 const requestCopied = ref(false)
 const copied = ref(false)
 const mcpAuth = ref<McpAuthStatus | null>(null)
+const modelResult = ref<McpModelResultInfo | null>(null)
+const modelResultHint = computed(() => {
+  const info = modelResult.value
+  if (!info) return ''
+  if (info.visibility === 'projected') return '模型会收到下方 JSON 中的 data 字段。'
+  const reason = restrictedReasons[info.reason || '']
+  return reason ? `模型只显示执行状态。${reason}` : '模型只显示执行状态。'
+})
 const curlSnippet = ref<{ curl: string; notes: string[]; url: string } | null>(null)
 const curlLoading = ref(false)
 const curlError = ref<string | null>(null)
@@ -61,6 +103,7 @@ const schema = computed(() => {
 
 /** 声明为「来自凭据」的参数：模型看不到，测试台也不该让人填。 */
 const credentialParams = computed<string[]>(() => {
+  if (credentialConfig.value?.profile) return Object.keys(credentialConfig.value.profile.mappings)
   try {
     const parsed = JSON.parse((props.tool as any).credential_params || '[]')
     return Array.isArray(parsed) ? parsed.map(String) : []
@@ -71,11 +114,11 @@ const credentialParams = computed<string[]>(() => {
 
 const properties = computed(() => {
   const all = schema.value.properties || {}
-  if (!credentialParams.value.length) return all
+  if (!credentialParams.value.length && !missingCredentialParams.value.length) return all
   // 这些参数的值由平台在调用时注入，人工填什么都会被覆盖——不如不给填
   const out: Record<string, any> = {}
   for (const [key, prop] of Object.entries(all)) {
-    if (!credentialParams.value.includes(key)) out[key] = prop
+    if (!credentialParams.value.includes(key) && !missingCredentialParams.value.includes(key)) out[key] = prop
   }
   return out
 })
@@ -109,7 +152,14 @@ const getPlaceholder = (prop: any): string => {
   return prop.description || '请输入 JSON 内容'
 }
 
-watch([() => props.tool, () => props.isOpen], () => {
+watch([() => props.tool, () => props.isOpen], async ([tool, open], _, onCleanup) => {
+  let active = true
+  onCleanup(() => { active = false })
+  credentialConfig.value = null
+  credentialCandidates.value = null
+  credentialLoading.value = false
+  credentialLoadError.value = ''
+  selectedCredential.value = ''
   args.value = {}
   rawJsonArgs.value = {}
   result.value = null
@@ -119,9 +169,25 @@ watch([() => props.tool, () => props.isOpen], () => {
   requestCopied.value = false
   copied.value = false
   mcpAuth.value = null
+  modelResult.value = null
   curlSnippet.value = null
   curlError.value = null
   curlCopied.value = false
+  if (!open || !tool?.id) return
+  credentialLoading.value = true
+  try {
+    const config = await getMcpCredentialConfig(tool.id)
+    if (!active) return
+    credentialConfig.value = config
+    if (config.profile && !config.stale) {
+      const candidates = await listMcpCredentialCandidates(tool.id)
+      if (active) credentialCandidates.value = candidates
+    }
+  } catch (err) {
+    if (active) credentialLoadError.value = credentialError(err, '无法加载工具凭据状态')
+  } finally {
+    if (active) credentialLoading.value = false
+  }
 }, { immediate: true })
 
 const normalizeResultText = (value: unknown): string => {
@@ -285,6 +351,7 @@ watch(activeTab, (tab) => {
 })
 
 const executeTool = async () => {
+  if (!credentialReady.value) return
   loading.value = true
   result.value = null
   error.value = null
@@ -322,20 +389,25 @@ const executeTool = async () => {
   requestCopied.value = false
   copied.value = false
   mcpAuth.value = null
+  modelResult.value = null
 
   try {
     const res = await axios.post(`/api/portal/mcp/tools/${props.tool.id}/execute`, {
-      arguments: finalArgs
+      arguments: finalArgs,
+      ...(selectedCredential.value ? { selected_secret_id: selectedCredential.value } : {}),
     })
 
     mcpAuth.value = res.data.mcp_auth || null
+    modelResult.value = res.data.model_result || null
     if (res.data.status === 'success') {
-      result.value = res.data.result
+      result.value = modelResult.value?.visibility === 'restricted'
+        ? { status: 'success', result_visibility: 'restricted' }
+        : res.data.result
     } else {
       error.value = res.data.message || '执行失败'
     }
   } catch (e: any) {
-    error.value = e.response?.data?.detail || e.message
+    error.value = credentialError(e, '执行失败')
   } finally {
     loading.value = false
     activeTab.value = 'details'
@@ -362,6 +434,9 @@ const executeTool = async () => {
 
       <div class="p-6 border-b border-gray-100">
         <h2 class="text-lg font-bold text-gray-900 mb-1">{{ tool.tool_name }}</h2>
+        <p v-if="credentialConfig?.model_tool_name" class="mb-1 break-all text-xs text-gray-500">
+          对话调用名 <code>{{ credentialConfig.model_tool_name }}</code>
+        </p>
         <p class="text-xs text-gray-500 italic">{{ tool.tool_description || '暂无描述' }}</p>
       </div>
 
@@ -451,6 +526,23 @@ const executeTool = async () => {
             <b>{{ credentialParams.length }} 个参数由凭据提供</b>（{{ credentialParams.join('、') }}），
             这里不提供输入框——运行测试时由平台按当前用户注入。
           </div>
+          <p v-if="credentialLoadError" role="alert" class="rounded-lg bg-rose-50 p-2 text-xs text-rose-800">{{ credentialLoadError }}</p>
+          <p v-if="missingCredentialParams.length" role="alert" class="rounded-lg bg-rose-50 p-2 text-xs text-rose-800">
+            {{ missingCredentialParams.join('、') }} 需要先配置服务端凭据映射。
+          </p>
+          <p v-if="credentialConfig?.stale" role="alert" class="rounded-lg bg-amber-50 p-2 text-xs text-amber-800">工具凭据配置已过期，请重新保存。</p>
+          <template v-if="credentialConfig?.profile && !credentialConfig.stale">
+            <p v-if="credentialConfig.profile.selection_mode === 'fixed'" class="text-xs text-slate-700">
+              {{ credentialCandidates?.fixed_secret_id ? '将使用个人固定绑定。' : '请先在参数设置中保存个人固定绑定。' }}
+            </p>
+            <label v-else class="block text-xs font-medium text-gray-700">
+              本次调用的凭据
+              <select v-model="selectedCredential" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm">
+                <option value="">请选择</option>
+                <option v-for="item in credentialCandidates?.items" :key="item.id" :value="item.id">{{ item.name }} · {{ item.account }}{{ item.owner_scope === 'system' ? ' · 系统共享' : '' }}</option>
+              </select>
+            </label>
+          </template>
           <div v-if="Object.keys(properties).length === 0" class="text-xs text-gray-400 italic">
             此工具无需参数
           </div>
@@ -534,6 +626,10 @@ const executeTool = async () => {
               <pre class="p-3 pr-10 text-xs font-mono leading-relaxed whitespace-pre-wrap break-words max-h-[260px] overflow-y-auto custom-scrollbar m-0 text-slate-100">{{ formattedRequest }}</pre>
             </div>
           </div>
+
+          <p v-if="modelResultHint" role="status" class="rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
+            {{ modelResultHint }}
+          </p>
 
           <!-- Result Area -->
           <div v-if="formattedResult" class="space-y-2 animate-fade-in">

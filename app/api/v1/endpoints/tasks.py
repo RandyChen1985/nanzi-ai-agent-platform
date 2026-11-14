@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 
@@ -181,7 +182,15 @@ async def list_tasks(
     raw_user_id = user_info.get("user_id") or user_info.get("id")
     user_id = int(raw_user_id) if raw_user_id is not None else None
     is_admin = user_info.get("role") == "admin"
+    from app.services.secrets.task_credential_wait import expire_waits, latest_wait, wait_view
+
     tasks = await TaskCenterService.list_tasks(db, user_id, is_admin)
+    for task in tasks:
+        if getattr(task, "last_status", None) == "awaiting_credential":
+            await expire_waits(db, task.id)
+            wait = wait_view(await latest_wait(db, task.id))
+            if wait and wait["status"] not in {"pending", "resuming"}:
+                task.last_status = "credential_" + wait["status"]
     return StandardResponse(data=[TaskResponse.from_orm(t) for t in tasks])
 
 
@@ -423,6 +432,45 @@ async def run_task_immediately(
     asyncio.create_task(scheduler_service.run_task(task_id, is_manual=True))
     
     return StandardResponse(data={"message": "Task triggered successfully"})
+
+class TaskCredentialResolution(BaseModel):
+    request_id: str = Field(min_length=1, max_length=64)
+    secret_id: str | None = Field(default=None, max_length=36, repr=False)
+    cancelled: bool = False
+    remember_credential: bool = False
+
+
+@router.get("/{task_id}/credential-wait")
+async def task_credential_wait_status(
+    task_id: int, user_info: Dict[str, Any] = Depends(require_api_key), db: AsyncSession = Depends(get_db_session),
+):
+    from app.services.secrets.task_credential_wait import expire_waits, latest_wait, wait_view
+
+    task = await db.get(AgentScheduledTask, task_id)
+    if task is None or str(task.user_id) != str(user_info.get("user_id") or ""):
+        raise HTTPException(404, detail="任务不存在")
+    await expire_waits(db, task_id)
+    return StandardResponse(data=wait_view(await latest_wait(db, task_id)))
+
+
+@router.post("/{task_id}/credential-wait")
+async def resolve_task_credential_wait(
+    task_id: int, payload: TaskCredentialResolution, user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.ai.scheduler_service import resume_task_credential
+    from app.services.secrets.mcp_profiles import CredentialInvocationError
+
+    if payload.cancelled == bool(payload.secret_id) or (payload.cancelled and payload.remember_credential):
+        raise HTTPException(400, detail="请选择凭据或取消此次运行")
+    try:
+        result = await resume_task_credential(
+            task_id, payload.request_id, payload.secret_id, user_info=user_info,
+            remember_credential=payload.remember_credential,
+        )
+    except CredentialInvocationError as exc:
+        raise HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)}) from None
+    return StandardResponse(data=result)
+
 
 @router.get("/{task_id}/logs", response_model=StandardResponse[ListResponse[TaskLogResponse]])
 async def get_task_logs(

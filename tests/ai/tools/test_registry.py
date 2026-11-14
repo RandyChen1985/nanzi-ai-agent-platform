@@ -25,9 +25,10 @@ async def test_get_static_tool():
 @pytest.mark.asyncio
 async def test_get_db_tool_and_caching():
     """测试从数据库加载工具并验证缓存逻辑"""
-    mock_config = SysApiTool(name="db_tool", is_active=True, parameter_schema="{}")
-    mock_tool_instance = MagicMock()
-    mock_tool_instance.name = "db_tool"
+    mock_config = SysApiTool(
+        name="db_tool", is_active=True,
+        parameter_schema='{"properties":{"query":{"type":"string"},"password":{"type":"string"}}}',
+    )
     
     # 模拟异步 Session
     mock_session = AsyncMock()
@@ -49,18 +50,23 @@ async def test_get_db_tool_and_caching():
     mock_session_instance.__aenter__.return_value = mock_session
     mock_session_instance.__aexit__.return_value = None
     
-    with patch("app.services.ai.tools.registry.AsyncSessionLocal", return_value=mock_session_instance), \
-         patch("app.services.ai.tools.generic_api.GenericApiToolFactory.create_tool", return_value=mock_tool_instance):
-        
-        # 1. 第一次调用：查询数据库 (2次查询：MCP + Generic)
+    isolation = AsyncMock(return_value=False)
+    with (
+        patch("app.services.ai.tools.registry.AsyncSessionLocal", return_value=mock_session_instance),
+        patch("app.services.secrets.payload_config.payload_keyring_requires_isolation", isolation),
+    ):
         tool = await ToolRegistry.get_tool("db_tool")
-        assert tool == mock_tool_instance
+        assert set(tool.args_schema.model_fields) == {"query", "password"}
         assert mock_session.execute.call_count == 2
-        
-        # 2. 第二次调用：应当命中缓存，不查数据库
-        tool_cached = await ToolRegistry.get_tool("db_tool")
-        assert tool_cached == mock_tool_instance
+
+        assert await ToolRegistry.get_tool("db_tool") is tool
         assert mock_session.execute.call_count == 2
+
+        # 别的节点保存密钥环后，仍在缓存中的工具需要更新模型参数。
+        isolation.return_value = True
+        protected_tool = await ToolRegistry.get_tool("db_tool")
+        assert set(protected_tool.args_schema.model_fields) == {"query"}
+        assert mock_session.execute.call_count == 4
 
 @pytest.mark.asyncio
 async def test_get_db_tool_ttl_expiry():

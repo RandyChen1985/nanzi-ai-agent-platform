@@ -909,7 +909,8 @@
               <ToolPermissionCard
                 v-if="msg.pendingPermission"
                 :payload="msg.pendingPermission"
-                @submit="(confirmed, scope) => confirmPendingPermission(msg, confirmed, scope)"
+                :auth-headers="embedAuthHeaders() || undefined"
+                @submit="(confirmed, scope, credentialId) => confirmPendingPermission(msg, confirmed, scope, credentialId)"
                 @revoke="revokeSessionPermission(msg)"
                 @discard="discardPendingPermission(msg)"
                 @expire="expirePendingPermission(msg)"
@@ -1471,7 +1472,7 @@
         ref="chatInputRef"
         v-model="userInput"
         :is-processing="isProcessing || remoteRunBusy || recoveryLocking || pendingPermissionLocking"
-        :is-submitting="sendLocked"
+        :is-submitting="sendLocked || resourceScopeSaving"
         :show-shortcuts="!isMobile && config.showShortcuts"
         :slash-commands="effectiveSlashCommands"
         :allowed-agents="allowedAgents"
@@ -1493,7 +1494,7 @@
         :temperature-override="temperatureOverride"
         :active-ltm-preference="activeLtmPreference"
         :agent-id="effectiveEmbedChatAgentId"
-        :attached-mcp-tool-names="(resourceScope.mcp_tools || []).map((item: any) => String(item.name || '')).filter(Boolean)"
+        :attached-mcp-tool-ids="(resourceScope.mcp_tools || []).map((item: any) => String(item.id || '')).filter(Boolean)"
         :allowed-dataset-ids="mountableDatasetScopeIds"
         :allowed-knowledge-base-ids="mountableKnowledgeScopeIds"
         :routing-mode="config.routingMode"
@@ -2471,8 +2472,8 @@
       @record-question-click="(payload) => recordDatasetMenuQuestionClick(scopedPortalNavigationPayload, payload)"
       @clear-question-click="(payload) => clearDatasetMenuQuestionClick(scopedPortalNavigationPayload, payload)"
       @toggle-metadata-dataset="(datasetId) => toggleMetadataDatasetActive(datasetId, chatInputRef, resourceOptions.datasets)"
-      @pin-metadata-dataset="pinMetadataDatasetToSession"
-      @unpin-metadata-dataset="unpinMetadataDatasetFromSession"
+      @pin-metadata-dataset="updateSessionDatasetMount($event, true)"
+      @unpin-metadata-dataset="updateSessionDatasetMount($event, false)"
       @refresh="refreshPortalNavigation"
       @execute-saved-report="handleExecuteSavedReport"
       @edit-saved-report="openEditReportModal"
@@ -2894,6 +2895,7 @@ import {
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import SessionResourceScopeBar from "@/components/embed/SessionResourceScopeBar.vue";
 import ResourceScopeModal from "@/components/embed/ResourceScopeModal.vue";
+import { mcpMountFeedback } from "@/utils/mcpMountFeedback";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { isDirectRenderableUrl, resolvePublicUploadsPreviewUrl } from "@/utils/workspaceFilePreview";
 import TraceLogViewer from "@/components/TraceLogViewer.vue";
@@ -2965,6 +2967,7 @@ import { usePinnedConversations } from "@/composables/chat/usePinnedConversation
 import {
   applyStreamTraceId,
   appendAssistantBodyDelta,
+  applyCredentialRetryError,
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
   resolveStreamLogDurationMs,
@@ -5149,7 +5152,9 @@ const resourceOptionGroups: { key: ResourceScopeGroupKey; label: string; shortLa
   },
 ];
 const resourceScopeModalDraft = ref(emptyResourceScopeState());
-const resourceScopeSaving = ref(false);
+const resourceScopeSaves = reactive(new Set<string>());
+const resourceScopeSaving = computed(() => resourceScopeSaves.has(conversationId.value));
+let resourceScopeLoadedFor = '';
 const resourceScopeActiveTab = ref<ResourceScopeGroupKey>('datasets');
 const resourceScopeCount = computed(() => resourceScope.value.datasets.length + resourceScope.value.knowledge_bases.length + resourceScope.value.skills.length + resourceScope.value.mcp_tools.length);
 const projectSessionHasDatasetScope = computed(() => Boolean(resourceScope.value.project_name) && resourceScope.value.datasets.length > 0);
@@ -5239,9 +5244,11 @@ const resourceEntryMatchesOption = (entry: any, option: any) => {
   return false;
 };
 
-const remapScopeSelections = (items: any[], options: any[]) =>
+const remapScopeSelections = (items: any[], options: any[], key: ResourceScopeGroupKey) =>
   (items || []).map((selected: any) => {
-    const matched = options.find((option: any) => resourceEntryMatchesOption(selected, option));
+    const matched = options.find((option: any) =>
+      key === 'mcp_tools' ? resourceScopeEntriesMatch(selected, option) : resourceEntryMatchesOption(selected, option),
+    );
     return matched
       ? {
           ...selected,
@@ -5457,9 +5464,9 @@ const loadResourceOptions = async () => {
     for (const group of resourceOptionGroups) {
       const options = resourceOptions[group.key] || [];
       const key = group.key;
-      resourceScope.value[key] = remapScopeSelections(resourceScope.value[key], options);
+      resourceScope.value[key] = remapScopeSelections(resourceScope.value[key], options, key);
       if (showResourceScopeModal.value) {
-        resourceScopeModalDraft.value[key] = remapScopeSelections(resourceScopeModalDraft.value[key], options);
+        resourceScopeModalDraft.value[key] = remapScopeSelections(resourceScopeModalDraft.value[key], options, key);
       }
     }
     resourceOptionsLoaded.value = true;
@@ -5493,7 +5500,19 @@ const closeResourceScopeModal = () => {
   showResourceScopeModal.value = false;
 };
 
-const openResourceScopeModal = () => {
+const openResourceScopeModal = async () => {
+  const targetId = conversationId.value;
+  const identity = activeIdentityKey;
+  if (resourceScopeSaving.value) return;
+  // /project 会在同一 tick 新建会话，先让会话 watcher 清理旧资源。
+  await nextTick();
+  if (conversationId.value !== targetId || activeIdentityKey !== identity) return;
+  if (resourceScopeLoadedFor !== targetId) await loadResourceScope();
+  if (conversationId.value !== targetId || activeIdentityKey !== identity || resourceScopeSaving.value) return;
+  if (!targetId || resourceScopeLoadedFor !== targetId) {
+    showToast('会话资源暂时无法读取，请重试', 'error');
+    return;
+  }
   resourceScopeModalDraft.value = cloneResourceScope(resourceScope.value);
   syncResourceScopeActiveTabForDraft();
   showResourceScopeModal.value = true;
@@ -5512,11 +5531,9 @@ const loadResourceScope = async () => {
   try {
     const res = await axios.get(`/api/v1/chat/conversation/${encodeURIComponent(requestedId)}/resource-scope`, { headers: embedAuthHeaders() });
     if (requestId !== resourceScopeLoadSequence || conversationId.value !== requestedId) return;
-    resourceScope.value = {
-      ...emptyResourceScopeState(),
-      ...(res.data?.data || {}),
-      mcp_tools: Array.isArray(res.data?.data?.mcp_tools) ? res.data.data.mcp_tools : [],
-    };
+    if (!res.data?.data) throw new Error('服务未返回会话资源');
+    resourceScope.value = { ...emptyResourceScopeState(), ...res.data.data };
+    resourceScopeLoadedFor = requestedId;
     syncResourceScopeDraftStrings(resourceScope.value);
   } catch (error) { console.warn('[ResourceScope] load failed', error); }
 };
@@ -5542,19 +5559,31 @@ const buildPersistableScope = (source: typeof resourceScope.value) => {
   };
 };
 
+const applySavedResourceScope = (saved: typeof resourceScope.value, targetId: string, identity: string) => {
+  if (conversationId.value !== targetId || activeIdentityKey !== identity) return false;
+  resourceScopeLoadSequence += 1;
+  resourceScopeLoadedFor = targetId;
+  resourceScope.value = { ...emptyResourceScopeState(), ...saved };
+  syncResourceScopeDraftStrings(resourceScope.value);
+  return true;
+};
+
 const persistResourceScope = async (scope: ReturnType<typeof buildPersistableScope>) => {
+  const targetId = conversationId.value;
+  const identity = activeIdentityKey;
+  if (resourceScopeLoadedFor !== targetId) throw new Error('会话资源尚未读取');
   const res = await axios.put(
-    `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+    `/api/v1/chat/conversation/${encodeURIComponent(targetId)}/resource-scope`,
     scope,
     { headers: embedAuthHeaders() },
   );
-  const saved = res.data?.data || scope;
-  resourceScope.value = saved;
-  syncResourceScopeDraftStrings(saved);
-  return saved;
+  const saved = res.data?.data;
+  if (!saved) throw new Error('服务未返回会话资源保存结果');
+  return applySavedResourceScope(saved, targetId, identity) ? saved : null;
 };
 
 const mountMcpToolToSession = async (toolsInput: Array<{ id: string; name: string; description?: string; server_name?: string; server_remark?: string; scope?: string }> | { id: string; name: string; description?: string; server_name?: string; server_remark?: string; scope?: string }) => {
+  if (resourceScopeSaving.value) return;
   if (!conversationId.value) {
     showToast('请先开始会话', 'error');
     return;
@@ -5569,87 +5598,68 @@ const mountMcpToolToSession = async (toolsInput: Array<{ id: string; name: strin
       scope: tool?.scope || 'global',
     }))
     .filter((tool) => tool.id && tool.name);
-  if (!tools.length) return;
+  if (!tools.length || sendLocked.value) return;
 
-  const existing = resourceScope.value.mcp_tools || [];
-  const existingNames = new Set(existing.map((item: any) => String(item.name || '').trim()).filter(Boolean));
-  const existingIds = new Set(existing.map((item: any) => String(item.id || '').trim()).filter(Boolean));
-  const toAdd = tools.filter((tool) => !existingNames.has(tool.name) && !existingIds.has(tool.id));
-  if (!toAdd.length) {
-    showToast(tools.length === 1 ? '该 MCP 工具已挂载到本会话' : '所选 MCP 工具均已挂载到本会话', 'info');
-    return;
-  }
-
-  const nextScope = {
-    ...resourceScope.value,
-    mcp_tools: [...existing, ...toAdd],
-  };
-  resourceScopeSaving.value = true;
+  const targetId = conversationId.value;
+  const identity = activeIdentityKey;
+  resourceScopeSaves.add(targetId);
   try {
-    await persistResourceScope(buildPersistableScope(nextScope));
-    showToast(
-      toAdd.length === 1 ? `已挂载 MCP 工具：${toAdd[0]?.name || ''}` : `已挂载 ${toAdd.length} 个 MCP 工具`,
-      'success',
+    const res = await axios.post(
+      `/api/v1/chat/conversation/${encodeURIComponent(targetId)}/resource-scope/mcp-tools`,
+      { mcp_tools: tools },
+      { headers: embedAuthHeaders() },
     );
-  } catch (error) {
-    showToast('挂载 MCP 工具失败', 'error');
+    const saved = res.data?.data;
+    if (!saved?.scope) throw new Error('服务未返回会话资源保存结果');
+    if (applySavedResourceScope(saved.scope, targetId, identity)) {
+      showToast(mcpMountFeedback(tools, saved.mounted_mcp_tools));
+    }
+  } catch {
+    if (conversationId.value === targetId && activeIdentityKey === identity) {
+      showToast('未能保存 MCP 挂载，请重试', 'error');
+    }
   } finally {
-    resourceScopeSaving.value = false;
+    resourceScopeSaves.delete(targetId);
   }
 };
 
-const pinMetadataDatasetToSession = async (datasetId: string) => {
-  if (!conversationId.value) {
+const updateSessionDatasetMount = async (datasetId: string, mounted: boolean) => {
+  if (resourceScopeSaving.value) return;
+  const targetId = conversationId.value;
+  if (!targetId) {
     showToast('请先开始会话', 'error');
     return;
   }
   const id = String(datasetId || '').trim();
   if (!id) return;
-  if (resourceScope.value.datasets.some((item: any) => String(item.id) === id)) {
-    showToast('该数据集已设为本会话默认', 'info');
-    return;
-  }
-  const selected =
-    (resourceOptions.datasets || []).find((item: any) => String(item.id) === id) || { id, name: id };
-  const nextScope = {
-    ...resourceScope.value,
-    datasets: [...resourceScope.value.datasets, selected],
-  };
-  resourceScopeSaving.value = true;
+  const identity = activeIdentityKey;
+  resourceScopeSaves.add(targetId);
   try {
-    await persistResourceScope(buildPersistableScope(nextScope));
-    const dsName = selected.name || selected.display_name || selected.dataset_name || id;
-    showToast(`已设为本会话默认：后续提问将默认锁定在【${dsName}】`, 'success');
-  } catch (error) {
-    showToast('设置会话默认范围失败', 'error');
+    const res = await axios.patch(
+      `/api/v1/chat/conversation/${encodeURIComponent(targetId)}/resource-scope/datasets`,
+      { dataset_id: id, mounted },
+      { headers: embedAuthHeaders() },
+    );
+    const saved = res.data?.data;
+    if (!saved) throw new Error('服务未返回会话资源保存结果');
+    if (!applySavedResourceScope(saved, targetId, identity)) return;
+    if (mounted) {
+      const name = resourceScope.value.datasets.find(item => item.id === id)?.name || id;
+      showToast(`已设为本会话默认：后续提问将默认锁定在【${name}】`, 'success');
+    } else {
+      showToast('已取消本会话默认，问数将恢复默认权限范围', 'info');
+    }
+  } catch {
+    if (conversationId.value === targetId && activeIdentityKey === identity) {
+      showToast(mounted ? '设置会话默认范围失败' : '取消会话默认失败', 'error');
+    }
   } finally {
-    resourceScopeSaving.value = false;
-  }
-};
-
-const unpinMetadataDatasetFromSession = async (datasetId: string) => {
-  if (!conversationId.value) {
-    showToast('请先开始会话', 'error');
-    return;
-  }
-  const id = String(datasetId || '').trim();
-  if (!id) return;
-  const nextScope = {
-    ...resourceScope.value,
-    datasets: resourceScope.value.datasets.filter((item: any) => String(item.id) !== id),
-  };
-  resourceScopeSaving.value = true;
-  try {
-    await persistResourceScope(buildPersistableScope(nextScope));
-    showToast('已取消本会话默认，问数将恢复默认权限范围', 'info');
-  } catch (error) {
-    showToast('取消会话默认失败', 'error');
-  } finally {
-    resourceScopeSaving.value = false;
+    resourceScopeSaves.delete(targetId);
   }
 };
 
 const saveResourceScope = async () => {
+  if (resourceScopeSaving.value) return;
   if (!conversationId.value) {
     showToast('请先开始会话', 'error');
     return;
@@ -5659,15 +5669,23 @@ const saveResourceScope = async () => {
     showToast('请先填写项目名称', 'warning');
     return;
   }
-  resourceScopeSaving.value = true;
+  const targetId = conversationId.value;
+  resourceScopeSaves.add(targetId);
   try {
-    await persistResourceScope(buildPersistableScope(draft));
+    const requested = buildPersistableScope(draft);
+    const saved = await persistResourceScope(requested);
+    if (!saved) return;
     showResourceScopeModal.value = false;
-    showToast('项目会话资源已保存', 'success');
+    const feedback = mcpMountFeedback(requested.mcp_tools, saved.mcp_tools);
+    if (requested.mcp_tools.length && feedback.type !== 'success') {
+      showToast({ message: `项目会话资源已保存。${feedback.message}`, type: 'warning' });
+    } else {
+      showToast('项目会话资源已保存', 'success');
+    }
   } catch (error) {
-    showToast('资源范围更新失败', 'error');
+    if (conversationId.value === targetId) showToast('资源范围更新失败', 'error');
   } finally {
-    resourceScopeSaving.value = false;
+    resourceScopeSaves.delete(targetId);
   }
 };
 
@@ -6977,6 +6995,11 @@ const updateActiveConversationOnServer = async (cid: string) => {
 watch(conversationId, () => {
   // 临时历史条目的时间锚点随会话走：每个会话一个稳定的「本页打开时刻」
   pendingHistoryAnchor.value = new Date();
+  resourceScopeLoadSequence += 1;
+  resourceScopeLoadedFor = '';
+  resourceScope.value = emptyResourceScopeState();
+  syncResourceScopeDraftStrings(resourceScope.value);
+  showResourceScopeModal.value = false;
   void loadResourceScope();
 });
 
@@ -11133,7 +11156,7 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
         conversation_id: conversationId.value,
         clear_host_conversation_pin: true,
       });
-      openResourceScopeModal();
+      await openResourceScopeModal();
       return true;
   }
   return false;
@@ -11573,7 +11596,7 @@ let pendingQuickSend: {
   /** 点击时已就绪的「本轮强制走查数智能体」意图，随补发一起生效。 */
   forceDataQueryAgent: boolean;
 } | null = null;
-const quickSendBlocked = () => isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value || sendLocked.value;
+const quickSendBlocked = () => isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value || sendLocked.value || resourceScopeSaving.value;
 /** 输入框里是否已有用户自己的内容（文字或附件）。 */
 const hasUserComposerDraft = () =>
   Boolean(userInput.value.trim()) || Boolean(chatInputRef.value?.uploadedFiles?.length);
@@ -11639,7 +11662,7 @@ const flushPendingQuickSend = async () => {
   }));
 };
 // 锁一释放立即补发；这里不依赖用户再点一次。
-watch([isProcessing, remoteRunBusy, sendLocked], () => {
+watch(quickSendBlocked, () => {
   void flushPendingQuickSend();
 });
 // 切换 / 新建 / 清空会话后，属于旧会话的排队项立即作废：否则旧会话的提问会被补发到
@@ -12214,6 +12237,8 @@ const applyPermissionStreamEvent = (
 
   if (applyReusableResultStatusEvent(msg, data)) return;
 
+  if (applyCredentialRetryError(msg.pendingPermission, data)) return;
+
   if (data?.type === "run_status") {
     // 恢复流（权限确认 / 外部执行）在末尾发射 run_status 作为终态，其 status 为
     // success / rejected / error 等真实执行结果。按终态映射状态，避免把“用户拒绝”
@@ -12527,10 +12552,12 @@ const confirmPendingPermission = async (
   msg: Message,
   confirmed: boolean,
   scope: "once" | "session" = "once",
+  credentialId?: string,
 ) => {
   const pending = msg.pendingPermission;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
+  pending.credentialRetryError = undefined;
   // 与外部执行恢复同理：这段恢复流直接写这条消息，事件日志不记录它。先让续显让位，
   // 再把自己标记为「流在途」，恢复器在此期间不会补占位或启动续显。
   stopReplayForLiveStream();
@@ -12570,7 +12597,7 @@ const confirmPendingPermission = async (
         "Content-Type": "application/json",
         ...(embedAuthHeaders() || {}),
       },
-      body: JSON.stringify({ confirmed, scope }),
+      body: JSON.stringify({ confirmed, scope, credential_secret_id: credentialId }),
       signal: resumeAbort.signal,
       credentials: "include",
     });
@@ -12819,6 +12846,10 @@ const captureSendSnapshot = (overrides: ChatSendOverrides = {}): ChatSendSnapsho
 const sendPreparedMessage = async (
   prepare: () => Promise<ChatSendSnapshot | null>,
 ) => runSendExclusive(async () => {
+  if (resourceScopeSaving.value) {
+    showToast('会话资源正在保存，请稍后发送', 'info');
+    return;
+  }
   if (isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value) return;
   const snapshot = await prepare();
   if (!snapshot) return;
@@ -12860,6 +12891,10 @@ const sendSandboxHealthReport = () => {
 
 const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   const { content, files } = snapshot;
+  if (resourceScopeSaving.value) {
+    showToast('会话资源正在保存，请稍后发送', 'info');
+    return;
+  }
   if ((!content && files.length === 0) || isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value) return;
 
   // 一旦有真正的发送落地，排队的快捷提问即视为已被用户后续操作取代，避免重复发送。

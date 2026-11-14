@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, List, Optional, Sequence
+from typing import Any, List, Optional, Sequence
+
+from app.schemas.agent import SessionMcpToolConfig
 
 
 def _tool_config_name(item: Any) -> str:
@@ -13,19 +15,20 @@ def _tool_config_name(item: Any) -> str:
     return str(getattr(item, "name", "") or "").strip()
 
 
-def extract_session_mcp_tool_names(resource_scope: Optional[dict[str, Any]]) -> List[str]:
-    """从会话资源范围提取 MCP 工具名（保序去重）。"""
-    names: List[str] = []
-    seen: set[str] = set()
+def _session_mcp_mounts(resource_scope: Optional[dict[str, Any]]) -> dict[str, str]:
+    mounts: dict[str, str] = {}
     for item in (resource_scope or {}).get("mcp_tools") or []:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or "").strip()
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        names.append(name)
-    return names
+        if name:
+            mounts.setdefault(name, str(item.get("id") or "").strip())
+    return mounts
+
+
+def extract_session_mcp_tool_names(resource_scope: Optional[dict[str, Any]]) -> List[str]:
+    """从会话资源范围提取 MCP 工具名（保序去重）。"""
+    return list(_session_mcp_mounts(resource_scope))
 
 
 def merge_tools_with_session_mcp(
@@ -35,15 +38,14 @@ def merge_tools_with_session_mcp(
     """
     版本 tools ∪ 会话 mcp_tools（按工具名去重）。
 
-    已有配置项保留原形态（str / ToolConfigItem / dict）；
-    会话新增工具以纯 name 字符串追加。
+    版本显式配置保留原形态。会话挂载的工具携带保存时的 ID，兼容只有名称的历史快照。
     """
     merged: List[Any] = list(configured_tools or [])
     seen = {_tool_config_name(item) for item in merged if _tool_config_name(item)}
-    for name in extract_session_mcp_tool_names(resource_scope):
+    for name, tool_id in _session_mcp_mounts(resource_scope).items():
         if name in seen:
             continue
-        merged.append(name)
+        merged.append(SessionMcpToolConfig(name=name, session_mcp_tool_id=tool_id) if tool_id else name)
         seen.add(name)
     return merged
 

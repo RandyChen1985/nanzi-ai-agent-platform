@@ -31,6 +31,7 @@ const props = withDefaults(
     /** 只显示启用了该场景的凭据；留空则显示全部 */
     scene?: string
     placeholder?: string
+    systemOnly?: boolean
     disabled?: boolean
   }>(),
   {
@@ -38,6 +39,7 @@ const props = withDefaults(
     scene: '',
     placeholder: '选择凭据',
     disabled: false,
+    systemOnly: false,
   },
 )
 
@@ -139,9 +141,9 @@ const emptyText = computed(() => {
 async function load() {
   loading.value = true
   try {
-    const res = await axios.get('/api/portal/secrets/picker')
+    const res = await axios.get('/api/portal/secrets/picker', { params: props.scene === 'script_env' ? { scene: 'script_env' } : {} })
     const groups = res.data?.data?.groups || {}
-    mine.value = groups.mine || []
+    mine.value = props.systemOnly ? [] : (groups.mine || [])
     shared.value = groups.shared || []
   } catch (e) {
     console.error('加载凭据列表失败', e)

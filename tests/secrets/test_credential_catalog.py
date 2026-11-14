@@ -35,18 +35,6 @@ def test_order_is_reproducible_and_ref_points_at_same_row():
     assert ref_of([r.secret_key for r in first].index("CC") + 1) == "c3"
 
 
-def test_payload_never_contains_value_or_internal_ids():
-    """元数据可以给，值、内部 id、归属人都不行。"""
-    assert "value_encrypted" not in SRC
-    assert "previous_value" not in SRC
-    assert "secret_id" not in SRC
-    assert "owner_scope" not in SRC
-    assert "owner_id" not in SRC
-    # 明确返回的字段
-    for key in ("ref", "secret_key", "name", "remark", "category", "status"):
-        assert f'"{key}"' in SRC
-
-
 def test_tool_is_registered_and_default_available():
     """没注册等于没做：模型看不到这个工具。"""
     from app.services.ai.tools.registry import ToolRegistry

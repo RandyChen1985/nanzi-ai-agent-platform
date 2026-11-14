@@ -50,6 +50,7 @@ from app.services.ai.tools.resource_catalog_tools import (
     list_available_agents,
 )
 from app.services.ai.tools.credential_catalog_tools import list_my_credentials
+from app.services.ai.tools.mcp_credential_candidates import list_mcp_credential_candidates
 from app.services.ai.tools.user_info_tools import get_myinfo
 from app.services.ai.tools.user_confirmation_tools import request_user_confirmation
 from app.services.ai.tools.user_question_tools import ask_user_question
@@ -212,6 +213,7 @@ TOOL_EVIDENCE_TYPES = {
     "list_my_credentials": frozenset({EvidenceType.RUNTIME_STATE}),
     # 消息群清单同样是用户自己的配置数据，不是外部事实
     "list_notification_channels": frozenset({EvidenceType.RUNTIME_STATE}),
+    "list_mcp_credential_candidates": frozenset({EvidenceType.RUNTIME_STATE}),
     "list_available_skills": frozenset({EvidenceType.RUNTIME_STATE}),
     "read_skill_instruction": frozenset({EvidenceType.RUNTIME_STATE}),
     "publish_generated_file": frozenset({EvidenceType.USER_FILE}),
@@ -231,6 +233,7 @@ TOOL_EVIDENCE_POLICY: dict[str, str] = {
     "list_accessible_directories": "allow_empty_success",
     "list_my_credentials": "allow_empty_success",
     "list_notification_channels": "allow_empty_success",
+    "list_mcp_credential_candidates": "allow_empty_success",
     "list_available_skills": "allow_empty_success",
     "read_skill_instruction": "allow_empty_success",
     # 记忆/知识/文件检索：查无结果 = "未找到"，属于合法事实依据
@@ -415,6 +418,7 @@ class ToolRegistry:
         "list_accessible_knowledge_bases": list_accessible_knowledge_bases,
         "list_available_agents": list_available_agents,
         "list_my_credentials": list_my_credentials,
+        "list_mcp_credential_candidates": list_mcp_credential_candidates,
         "get_myinfo": get_myinfo,
         "request_user_confirmation": request_user_confirmation,
         "ask_user_question": ask_user_question,
@@ -514,15 +518,7 @@ class ToolRegistry:
         if name in cls._registry:
             return cls._registry[name]
 
-        # 2. Check Memory Cache
-        now = time.time()
-        cache_key = cls._db_tool_cache_key(name)
-        if cache_key in cls._db_tool_cache:
-            last_fetched = cls._db_tool_ids_fetched_at.get(cache_key, 0)
-            if now - last_fetched < cls._db_tool_cache_ttl:
-                return cls._db_tool_cache[cache_key]
-
-        # 3. Check DB for Generic or MCP Tools
+        # 2. Check the cache and then DB for dynamic tools.
         loaded = await cls._load_db_tool_with_source(name)
         return loaded[0] if loaded else None
 
@@ -558,34 +554,62 @@ class ToolRegistry:
         return None
 
     @classmethod
-    async def _load_db_tool_with_source(cls, name: str) -> Optional[tuple[Any, str]]:
-        now = time.time()
+    async def _load_db_tool_with_source(
+        cls, name: str, *, session_mcp_tool_id: str | None = None,
+    ) -> Optional[tuple[Any, str]]:
+        from app.services.secrets.payload_config import payload_keyring_requires_isolation
+
         cache_key = cls._db_tool_cache_key(name)
-        if cache_key in cls._db_tool_cache:
-            last_fetched = cls._db_tool_ids_fetched_at.get(cache_key, 0)
-            if now - last_fetched < cls._db_tool_cache_ttl:
-                return cls._db_tool_cache[cache_key], cls._db_tool_source_cache.get(cache_key, "static")
+        tool = cls._db_tool_cache.get(cache_key)
+        source = cls._db_tool_source_cache.get(cache_key, "static")
+        if (
+            session_mcp_tool_id is None and tool is not None
+            and time.time() - cls._db_tool_ids_fetched_at.get(cache_key, 0) < cls._db_tool_cache_ttl
+            # 逐参数凭据策略变化会增删模型选择字段，不能复用旧绑定快照。
+            and not (source == "mcp" and getattr(tool, "has_mcp_parameter_bindings", False))
+        ):
+            if source != "generic_api" or tool.protect_sensitive_parameters == await payload_keyring_requires_isolation():
+                return tool, source
 
         try:
             async with AsyncSessionLocal() as session:
                 # A. Check MCP Tools first
                 mcp_stmt = select(McpToolCache).where(
-                    McpToolCache.tool_name == name, 
-                    McpToolCache.is_published == True,
-                    McpToolCache.is_available == True,
+                    McpToolCache.is_published.is_(True),
+                    McpToolCache.is_available.is_(True),
                 ).join(
                     McpServer,
                     McpServer.id == McpToolCache.server_id,
                 ).where(cls._mcp_visible_scope_condition())
+                if session_mcp_tool_id is not None:
+                    mcp_stmt = mcp_stmt.where(McpToolCache.id == session_mcp_tool_id, McpServer.scope == "personal")
+                else:
+                    mcp_stmt = mcp_stmt.where(McpToolCache.tool_name == name)
                 mcp_res = await session.execute(mcp_stmt)
                 mcp_config = mcp_res.scalar_one_or_none()
                 
                 if mcp_config:
-                    tool_instance = McpToolFactory.create_tool(mcp_config)
-                    cls._db_tool_cache[cache_key] = tool_instance
-                    cls._db_tool_source_cache[cache_key] = "mcp"
-                    cls._db_tool_ids_fetched_at[cache_key] = time.time()
+                    from app.models.credential_type import CredentialType, McpCredentialProfile
+                    from app.services.secrets.mcp_capability import load_parameter_binding_modes
+
+                    profile = await session.get(McpCredentialProfile, mcp_config.id)
+                    credential_type = await session.get(CredentialType, profile.type_key) if profile else None
+                    parameter_binding_modes = await load_parameter_binding_modes(
+                        session, mcp_config, cache_key[1] if cache_key[1] != "global-only" else "",
+                    ) if profile is None else None
+                    tool_instance = McpToolFactory.create_tool(
+                        mcp_config, credential_profile=profile,
+                        credential_type_name=credential_type.name if credential_type else None,
+                        verify_profile=True,
+                        parameter_binding_modes=parameter_binding_modes,
+                    )
+                    if session_mcp_tool_id is None:
+                        cls._db_tool_cache[cache_key] = tool_instance
+                        cls._db_tool_source_cache[cache_key] = "mcp"
+                        cls._db_tool_ids_fetched_at[cache_key] = time.time()
                     return tool_instance, "mcp"
+                if session_mcp_tool_id is not None:
+                    return None
 
                 # B. Check Generic API Tools
                 stmt = select(SysApiTool).where(SysApiTool.name == name, SysApiTool.is_active == True)
@@ -593,7 +617,9 @@ class ToolRegistry:
                 tool_config = gen_res.scalar_one_or_none()
                 
                 if tool_config:
-                    tool_instance = GenericApiToolFactory.create_tool(tool_config)
+                    tool_instance = GenericApiToolFactory.create_tool(
+                        tool_config, protect_sensitive_parameters=await payload_keyring_requires_isolation(session),
+                    )
                     cls._db_tool_cache[cache_key] = tool_instance
                     cls._db_tool_source_cache[cache_key] = "generic_api"
                     cls._db_tool_ids_fetched_at[cache_key] = time.time()
@@ -613,7 +639,7 @@ class ToolRegistry:
         return None
 
     @classmethod
-    async def get_runtime_tool(cls, name: str):
+    async def get_runtime_tool(cls, name: str, *, session_mcp_tool_id: str | None = None):
         """按名字取运行时工具 spec，并统一补上「内部是否自调 LLM」的能力标记。
 
         标记必须在这里统一补：只有配了高级参数的工具才会走
@@ -623,8 +649,18 @@ class ToolRegistry:
         from dataclasses import replace
 
         from app.services.ai.runtime.agentscope.tool_timeout import PLATFORM_TOOL_NAME_KEY
+        from app.services.ai.runtime.agentscope.tools import runtime_tool_spec_from_legacy_tool
 
-        spec = await cls._resolve_runtime_tool(name)
+        if session_mcp_tool_id is None:
+            spec = await cls._resolve_runtime_tool(name)
+        else:
+            loaded = await cls._load_db_tool_with_source(name, session_mcp_tool_id=session_mcp_tool_id)
+            if not loaded:
+                return None
+            tool, source_type = loaded
+            spec = cls._attach_evidence_metadata(
+                tool.display_name, runtime_tool_spec_from_legacy_tool(tool, source_type=source_type),
+            )
         if spec is None:
             return None
         # 记下「配置里用的名字」：智能体版本的工具配置按平台名存（如 exec_command），
@@ -789,7 +825,11 @@ class ToolRegistry:
             if not name:
                 continue
 
-            spec = await cls.get_runtime_tool(name)
+            session_mcp_tool_id = getattr(config_item, "session_mcp_tool_id", None)
+            if session_mcp_tool_id:
+                spec = await cls.get_runtime_tool(name, session_mcp_tool_id=session_mcp_tool_id)
+            else:
+                spec = await cls.get_runtime_tool(name)
             if spec and config_item:
                 spec = cls._configure_runtime_tool_spec(spec, config_item)
             if spec and spec.name not in seen_tool_names:
@@ -1087,6 +1127,7 @@ class ToolRegistry:
             list_accessible_knowledge_bases,
             list_available_agents,
             list_my_credentials,
+            list_mcp_credential_candidates,
             get_myinfo,
             request_user_confirmation,
             ask_user_question,

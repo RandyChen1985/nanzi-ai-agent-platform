@@ -77,16 +77,10 @@ async def test_patch_scope_merges_without_dropping_mounts(monkeypatch):
         "pending_scope_gate": None,
     }
 
-    async def _fake_get(user_id, conversation_id):
-        return dict(stored)
+    async def _fake_update(user_id, conversation_id, update):
+        return update(stored)
 
-    async def _fake_replace(user_id, conversation_id, scope):
-        stored.clear()
-        stored.update(scope)
-        return dict(scope)
-
-    monkeypatch.setattr(ConversationResourceService, "get", _fake_get)
-    monkeypatch.setattr(ConversationResourceService, "replace", _fake_replace)
+    monkeypatch.setattr(ConversationResourceService, "_update_scope", _fake_update)
 
     result = await ConversationResourceService.patch_scope(
         1,

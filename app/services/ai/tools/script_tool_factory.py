@@ -76,6 +76,7 @@ def config_from_row(row: SysScriptTool, *, builtin: BuiltinScriptTool | None = N
         raise ScriptToolError(f"脚本工具 {row.name} 没有可用源码")
     schema, requirements, timeout_seconds = runtime_metadata_from_row(row, builtin=builtin)
     return ScriptToolConfig(
+        id=getattr(row, "id", None),
         name=row.name,
         code=code,
         parameter_schema=schema,

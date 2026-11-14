@@ -85,8 +85,11 @@ def test_pending_quick_send_flushes_when_lock_releases():
     source = _embed_source()
     assert "flushPendingQuickSend" in source
     # 补发由「输入是否仍被占住」驱动：锁真相归恢复器，不再兼任输入锁。
+    guard = source.split("const quickSendBlocked = ", 1)[1].split(";", 1)[0]
+    for lock in ("isProcessing", "remoteRunBusy", "sendLocked", "resourceScopeSaving"):
+        assert f"{lock}.value" in guard
     assert re.search(
-        r"watch\(\[isProcessing, remoteRunBusy, sendLocked\], \(\) => \{\s*void flushPendingQuickSend\(\);",
+        r"watch\(quickSendBlocked, \(\) => \{\s*void flushPendingQuickSend\(\);",
         source,
     ), "待补发的快捷提问应在发送锁释放时自动 flush"
 

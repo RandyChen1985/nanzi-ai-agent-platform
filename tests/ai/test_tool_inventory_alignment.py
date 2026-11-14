@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from app.services.ai.agent_prompts import (
+    AgentServicePrompts,
     TOOL_INVENTORY_HEADER,
     prune_unregistered_tool_inventory,
 )
@@ -95,6 +96,27 @@ def test_prune_keeps_section_at_end_of_prompt():
     pruned = prune_unregistered_tool_inventory(prompt, {"a"})
     assert pruned.strip().endswith("- a: x")
     assert "- b: y" not in pruned
+
+
+
+@pytest.mark.parametrize("keep_mcp", [True, False])
+def test_prune_continues_past_mcp_alias_guidance(keep_mcp):
+    live = "mcp_1234567890abcdef1234"
+    ghost = "mcp_abcdef1234567890abcd"
+    inventory = AgentServicePrompts._build_platform_tool_inventory_section(
+        {live, ghost, "session_status"}, include_mcp_alias_rule=True,
+    )
+    prompt = f"{inventory}\n\n## 下一段\n保留"
+    known = {"session_status", live} if keep_mcp else {"session_status"}
+
+    pruned = prune_unregistered_tool_inventory(prompt, known)
+
+    assert TOOL_INVENTORY_HEADER in pruned
+    assert "- session_status:" in pruned
+    assert ghost not in pruned
+    assert (f"- {live}" in pruned) is keep_mcp
+    assert ("平台内部标识" in pruned) is keep_mcp
+    assert pruned.endswith("## 下一段\n保留")
 
 
 # ---- A：提示词裁剪与工具裁剪同源 ----

@@ -57,6 +57,12 @@ async def test_mcp_call_uses_user_scoped_session_and_signed_headers(monkeypatch)
     get_session = AsyncMock(return_value=session_mgr)
     monkeypatch.setattr(McpClientService, "get_session", get_session)
 
+    # 本用例仅验证签名头与会话隔离，避免连接外部数据库查绑定。
+    async def no_bound_headers(_server, headers, **_kwargs):
+        return headers
+
+    monkeypatch.setattr("app.services.ai.tools.mcp_client.apply_mcp_bindings", no_bound_headers)
+
     result = await McpClientService.call_remote_tool(
         "server-1",
         "get-data",
@@ -67,7 +73,7 @@ async def test_mcp_call_uses_user_scoped_session_and_signed_headers(monkeypatch)
         private_key=private_key,
     )
 
-    assert result == {"success": True, "content": ""}
+    assert result == {"status": "success", "result_visibility": "restricted"}
     get_session.assert_awaited_once()
     call_args = get_session.await_args
     assert call_args.args == ("server-1",)

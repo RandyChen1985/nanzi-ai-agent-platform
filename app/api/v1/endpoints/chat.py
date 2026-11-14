@@ -2,6 +2,7 @@ import json
 import os
 import time
 import asyncio
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, AsyncGenerator, Awaitable, Callable, Dict, Any, Union, Literal
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
@@ -22,9 +23,13 @@ from app.schemas.agent import TraceLogResponse, AgentExecutionHistoryListRespons
 from app.utils.fs_access import get_user_uploads_dir, open_upload_storage_file
 from app.utils.skill_metadata import normalize_skill_scope
 from app.services.permission_service import PermissionService
-from app.services.conversation_resource_service import ConversationResourceService
+from app.services.conversation_resource_service import ConversationResourceService, MountSyncUnavailable
 from app.services.conversation_routing_service import ConversationRoutingService
-from app.services.resource_scope_normalizer import normalize_resource_scope_for_user
+from app.services.resource_scope_normalizer import (
+    normalize_dataset_mounts,
+    normalize_personal_mcp_mounts,
+    normalize_resource_scope_for_user,
+)
 from app.services.ai.business_context import sanitize_injected_context
 from app.services.ai.conversation_identity import MissingUserIdentityError, require_user_id
 from app.services.ai.memory_service import memory_service
@@ -691,11 +696,18 @@ class ChatCancelResponse(BaseModel):
 
 
 class ToolPermissionConfirmRequest(BaseModel):
+    credential_secret_id: Optional[str] = Field(default=None, max_length=36, repr=False)
     confirmed: bool = Field(..., description="是否允许执行该工具调用")
     scope: Literal["once", "session"] = Field(
         default="once",
         description="授权范围：once 仅本次；session 本会话内该工具不再确认",
     )
+
+
+class ToolCredentialCreateRequest(BaseModel):
+    account: str = Field(min_length=1, max_length=128, repr=False)
+    name: str = Field(default="", max_length=128, repr=False)
+    fields: dict[str, Any] = Field(max_length=32, repr=False)
 
 
 class ExternalExecutionResultItem(BaseModel):
@@ -2905,6 +2917,155 @@ async def _build_resume_background_sse_response(
     )
 
 
+async def _pending_credential_request(request_id: str, user_info: dict):
+    from app.services.ai.runtime.agentscope.confirmations import pending_agentscope_confirmations
+    from app.services.secrets.credential_approval import pending_ref
+
+    user_id = str(user_info.get("user_id") or user_info.get("id") or "")
+    if not user_id:
+        raise HTTPException(404, detail="授权请求不存在或已过期")
+    try:
+        pending = await pending_agentscope_confirmations.peek_async(request_id, user_id=user_id)
+    except Exception:
+        raise HTTPException(503, detail={
+            "code": "CREDENTIAL_QUERY_UNAVAILABLE", "message": "暂时无法读取授权请求，请重试",
+        }) from None
+    ref = pending_ref(pending) if pending and pending.user_id == user_id else None
+    if ref is None:
+        raise HTTPException(404, detail="授权请求不存在或已过期")
+    return pending, ref, user_id
+
+
+async def _credential_creation_status(db, pending, ref, profile, server, user_id, dept_code, *, candidates=None):
+    from app.services.secrets import mcp_profiles
+    from app.services.secrets.credential_schema import account_key
+
+    hint = mcp_profiles.pending_account_hint(pending, profile)
+    original_reason = ref.get("selection_reason")
+    if hint is not None:
+        digest = account_key(hint)[1]
+        if candidates is None:
+            matching = await mcp_profiles.list_candidates(
+                db, profile, server, user_id=user_id, dept_code=dept_code, digest=digest, limit=2,
+            )
+        else:
+            matching = [row for row in candidates if row.account == hint]
+        if matching:
+            return hint, "credential_ambiguous" if len(matching) > 1 else "credential_selection_required"
+        if await mcp_profiles.has_visible_candidate(
+            db, profile, server, user_id=user_id, dept_code=dept_code, digest=digest,
+        ):
+            return hint, "credential_selection_invalid"
+        return hint, "credential_missing"
+
+    if original_reason == "credential_selection_invalid":
+        return None, original_reason
+    if candidates is None:
+        candidates = await mcp_profiles.list_candidates(
+            db, profile, server, user_id=user_id, dept_code=dept_code, limit=2,
+        )
+    if candidates:
+        return None, "credential_ambiguous" if len(candidates) > 1 else "credential_selection_required"
+    if await mcp_profiles.list_candidates(
+        db, profile, server, user_id=user_id, dept_code=dept_code, only_usable=False, limit=1,
+    ):
+        return None, "credential_selection_invalid"
+    return None, "credential_missing"
+
+
+@router.get("/permissions/{permission_request_id}/credential-options")
+async def get_tool_credential_options(permission_request_id: str, user_info: Dict[str, Any] = Depends(require_api_key)):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.core.orm import AsyncSessionLocal
+    from app.services.secrets import mcp_profiles, task_credential_wait, type_catalog
+    from app.services.secrets.payload_config import creation_availability, load_payload_config
+
+    pending, ref, user_id = await _pending_credential_request(permission_request_id, user_info)
+    creation = None
+    try:
+        async with AsyncSessionLocal() as db:
+            await task_credential_wait.require_pending_task_wait(db, pending, ref, user_id)
+            profile, server, user = await mcp_profiles.pending_target(db, ref, user_id)
+            rows = await mcp_profiles.list_candidates(db, profile, server, user_id=user_id, dept_code=user.dept_code)
+            account_hint, selection_reason = await _credential_creation_status(
+                db, pending, ref, profile, server, user_id, user.dept_code, candidates=rows,
+            )
+            credential_type = await type_catalog.get_type(db, profile.type_key)
+            host = mcp_profiles.host_of(server.sse_url)
+            if selection_reason == "credential_missing" and host:
+                version = await type_catalog.get_version(db, profile.type_key, profile.type_version)
+                config = await load_payload_config(db)
+                creation = {
+                    "type_name": credential_type.name, "version": profile.type_version,
+                    "schema": version.schema_json, "host": host,
+                    "account_hint": account_hint,
+                    **creation_availability(type_key=credential_type.type_key, type_enabled=credential_type.enabled,
+                                            structured_enabled=config.enabled),
+                }
+    except (mcp_profiles.CredentialInvocationError, type_catalog.CredentialTypeError) as exc:
+        raise HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)}) from None
+    except SQLAlchemyError:
+        raise HTTPException(503, detail={
+            "code": "CREDENTIAL_QUERY_UNAVAILABLE", "message": "暂时无法查询凭据，请重试",
+        }) from None
+    return {"code": 0, "data": [
+        {"id": row[0].id, "name": row[0].name, "account": row.account, "owner_scope": row[0].owner_scope}
+        for row in rows
+    ], "creation": creation, "selection_reason": selection_reason}
+
+
+@router.post("/permissions/{permission_request_id}/credential-options", status_code=201)
+async def create_tool_credential(
+    permission_request_id: str, payload: ToolCredentialCreateRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.core.orm import AsyncSessionLocal
+    from app.services.secrets import center, mcp_profiles, structured_payload, task_credential_wait, type_catalog
+    from app.services.secrets.credential_schema import CredentialSchemaError, account_key
+    from app.services.secrets.policy import SCENE_MCP
+
+    pending, ref, user_id = await _pending_credential_request(permission_request_id, user_info)
+    try:
+        async with AsyncSessionLocal() as db:
+            await task_credential_wait.require_pending_task_wait(db, pending, ref, user_id, lock=True)
+            profile, server, user = await mcp_profiles.pending_target(db, ref, user_id, lock=True)
+            account, _ = account_key(payload.account)
+            account_hint, selection_reason = await _credential_creation_status(
+                db, pending, ref, profile, server, user_id, user.dept_code,
+            )
+            host = mcp_profiles.host_of(server.sse_url)
+            if not host or (account_hint is not None and account != account_hint):
+                raise HTTPException(409, detail="当前授权请求的账号或目标已变化")
+            if selection_reason == "credential_selection_invalid":
+                raise HTTPException(409, detail={
+                    "code": "CREDENTIAL_SELECTION_INVALID", "message": "已有凭据不可用，请前往凭据中心修复或重新选择",
+                })
+            if selection_reason != "credential_missing":
+                raise HTTPException(409, detail={
+                    "code": "CREDENTIAL_SELECTION_REQUIRED", "message": "当前已有可用凭据，请刷新列表后选择",
+                })
+            row = await center.create_secret(
+                db, owner_id=user_id, secret_key=f"mcp.{uuid.uuid4().hex}",
+                name=payload.name or account,
+                allowed_hosts=[host], allowed_scenarios=[SCENE_MCP],
+                structured=structured_payload.StructuredInput(
+                    profile.type_key, profile.type_version, account, payload.fields,
+                ),
+            )
+    except (mcp_profiles.CredentialInvocationError, type_catalog.CredentialTypeError, center.SecretCredentialError) as exc:
+        raise HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)}) from None
+    except (CredentialSchemaError, center.SecretValidationError) as exc:
+        raise HTTPException(400, detail=str(exc)) from None
+    except SQLAlchemyError:
+        raise HTTPException(503, detail={
+            "code": "CREDENTIAL_SAVE_UNAVAILABLE", "message": "暂时无法确认凭据保存结果，请先刷新列表",
+        }) from None
+    return {"code": 0, "data": {"id": row.id}}
+
+
 @router.post(
     "/permissions/{permission_request_id}/confirm",
     summary="确认或拒绝待执行工具调用",
@@ -2927,6 +3088,7 @@ async def confirm_tool_permission(
             grant_scope=confirm_request.scope,
             user_info=user_info,
             on_lane_acquired=on_lane_acquired,
+            credential_secret_id=confirm_request.credential_secret_id,
         ),
     )
 
@@ -4017,7 +4179,10 @@ async def get_conversation_resource_scope(
     user_info: dict = Depends(require_api_key),
 ):
     user_id = _require_chat_user_id(user_info)
-    scope = await ConversationResourceService.get(user_id, conversation_id)
+    try:
+        scope = await ConversationResourceService.get(user_id, conversation_id, require_storage=True)
+    except MountSyncUnavailable:
+        raise HTTPException(status_code=503, detail="会话资源暂时无法读取，请重试") from None
     return StandardResponse(data=scope)
 
 
@@ -4030,7 +4195,60 @@ async def update_conversation_resource_scope(
 ):
     user_id = _require_chat_user_id(user_info)
     normalized = await _normalize_conversation_resource_scope(db, user_info, body.model_dump())
-    scope = await ConversationResourceService.replace(user_id, conversation_id, normalized)
+    try:
+        scope = await ConversationResourceService.replace(user_id, conversation_id, normalized, require_storage=True)
+    except MountSyncUnavailable:
+        raise HTTPException(status_code=503, detail="会话资源暂时无法保存，请重试") from None
+    return StandardResponse(data=scope)
+
+
+class ConversationMcpMountRequest(BaseModel):
+    mcp_tools: List[Dict[str, Any]]
+
+
+@router.post("/conversation/{conversation_id}/resource-scope/mcp-tools", summary="挂载会话 MCP 工具")
+async def mount_conversation_mcp_tools(
+    conversation_id: str,
+    body: ConversationMcpMountRequest,
+    user_info: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id = _require_chat_user_id(user_info)
+    tools = await normalize_personal_mcp_mounts(db, user_id, body.mcp_tools)
+    try:
+        scope = await ConversationResourceService.append_mcp_tools(user_id, conversation_id, tools)
+    except MountSyncUnavailable:
+        raise HTTPException(status_code=503, detail="会话资源暂时无法保存，请重试") from None
+    return StandardResponse(data={"scope": scope, "mounted_mcp_tools": tools})
+
+
+class ConversationDatasetMountRequest(BaseModel):
+    dataset_id: str = Field(min_length=1)
+    mounted: bool
+
+
+@router.patch("/conversation/{conversation_id}/resource-scope/datasets", summary="更新会话默认数据集")
+async def update_conversation_dataset_mount(
+    conversation_id: str,
+    body: ConversationDatasetMountRequest,
+    user_info: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id = _require_numeric_chat_user_id(user_info)
+    dataset_id = body.dataset_id.strip()
+    dataset = None
+    if body.mounted:
+        matches = await normalize_dataset_mounts(
+            db, user_id, is_admin=user_info.get("role") == "admin", items=[{"id": dataset_id}],
+        )
+        if not matches:
+            raise HTTPException(status_code=404, detail="数据集不可用")
+        dataset = matches[0]
+        dataset_id = dataset["id"]
+    try:
+        scope = await ConversationResourceService.update_dataset_mount(user_id, conversation_id, dataset_id, dataset)
+    except MountSyncUnavailable:
+        raise HTTPException(status_code=503, detail="会话资源暂时无法保存，请重试") from None
     return StandardResponse(data=scope)
 
 

@@ -10,7 +10,9 @@
  * 这里**只做绑定这一件事**：不显示地址、不能改服务、不能看工具。用户的权限
  * 应当刚好够用，而不是把整个管理面板借给他。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import FixedMcpCredentialDialog from './FixedMcpCredentialDialog.vue'
+import { credentialError, getCredentialVersion, type CredentialMeta, type CredentialField } from '@/composables/useCredentialFields'
 import axios from '../../utils/axios'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
 import SecretLocatorEditor, { type LocatorRule } from '../secrets/SecretLocatorEditor.vue'
@@ -21,6 +23,7 @@ type Binding = {
   secret_name: string
   /** 绑定还在，但凭据可能已被停用/过期 */
   secret_status?: string
+  value_field?: string | null
 }
 
 /** 绑了却用不了，比没绑更该提示——否则用户只会看到调用失败。 */
@@ -43,6 +46,7 @@ type McpTarget = {
   server_name: string
   remark: string | null
   has_fixed_token: boolean
+  group_tools?: Array<{ id: string; name: string }>
   bindable_slots: string[]
   bindings: Record<string, Binding | null>
   /** 槽位 → 我配的规则（与固定绑定并存） */
@@ -78,6 +82,57 @@ const picked = ref<{ id: string; secret_key: string } | null>(null)
 const secretId = ref<string | null>(null)
 const busy = ref(false)
 const bindError = ref('')
+const groupTarget = ref<{ id: string; name: string } | null>(null)
+const typedMode = ref(false)
+const typedId = ref('')
+const valueField = ref('')
+const fields = ref<Record<string, CredentialField>>({})
+const structured = ref<Array<CredentialMeta & { id: string; name: string; allowed_scenarios: string[]; status: string }>>([])
+const typedChoices = computed(() => {
+  const target = editing.value
+  if (!target) return []
+  return structured.value.filter(item => item.credential_format === 'structured_v1' && item.status === 'active'
+    && (target.kind === 'tool' ? /^(header|body):/.test(target.slot) && item.allowed_scenarios.includes('api_tool')
+      : target.slot.startsWith('header:') && item.type_key === 'mcp_token' && item.allowed_scenarios.includes('mcp')))
+})
+const typedFields = computed(() => Object.entries(fields.value).filter(([name, field]) =>
+  editing.value?.kind === 'mcp' ? name === 'token' : !editing.value?.slot.startsWith('header:') || field.type === 'string',
+))
+
+watch(editing, async (target, _, onCleanup) => {
+  let active = true
+  onCleanup(() => { active = false })
+  structured.value = []
+  fields.value = {}
+  const binding = target?.target.bindings?.[target.slot]
+  typedMode.value = Boolean(binding?.value_field)
+  typedId.value = binding?.value_field ? binding.secret_id : ''
+  valueField.value = binding?.value_field || ''
+  if (!target || (target.kind === 'mcp' && !target.slot.startsWith('header:'))) return
+  try {
+    const response = await axios.get('/api/portal/secrets', { params: { scope: 'mine' } })
+    if (active) structured.value = response.data?.data?.items || []
+  } catch (err) {
+    if (active && typedMode.value) bindError.value = credentialError(err, '无法加载结构化凭据')
+  }
+})
+
+watch([typedId, structured], async ([id], _, onCleanup) => {
+  let active = true
+  onCleanup(() => { active = false })
+  fields.value = {}
+  const item = structured.value.find(row => row.id === id)
+  if (!item?.type_key || !item.type_version) return
+  try {
+    const type = await getCredentialVersion(item.type_key, item.type_version)
+    if (!active) return
+    fields.value = type.schema.properties
+    if (editing.value?.kind === 'mcp') valueField.value = 'token'
+    else if (valueField.value && !fields.value[valueField.value]) valueField.value = ''
+  } catch (err) {
+    if (active) bindError.value = credentialError(err, '无法加载凭据字段')
+  }
+})
 
 /** 正在给哪个槽位配规则 */
 const locatorCtx = ref<{
@@ -233,7 +288,7 @@ function openBindTool(target: ToolTarget, slot: string) {
 }
 
 async function checkCurrent() {
-  if (!editing.value || !secretId.value) return
+  if (!editing.value || !(typedMode.value ? typedId.value : secretId.value)) return
   checking.value = true
   checkResult.value = null
   try {
@@ -282,14 +337,19 @@ async function submit() {
     const consumerType = target.kind === 'mcp' ? 'mcp_server' : 'api_tool'
     const consumerId = target.target.id
     const slot = editingSlot.value
-    if (!secretId.value) {
+    const chosenId = typedMode.value ? typedId.value : secretId.value
+    if (!chosenId) {
       await axios.delete('/api/portal/secrets/bindings', {
         data: { consumer_type: consumerType, consumer_id: consumerId, slot },
       })
     } else {
-      if (!picked.value) throw new Error('请选择凭据')
+      if (typedMode.value && !valueField.value) {
+        bindError.value = '请选择要注入的字段'
+        return
+      }
       await axios.post('/api/portal/secrets/bindings', {
-        secret_id: picked.value.id,
+        secret_id: chosenId,
+        ...(typedMode.value ? { value_field: valueField.value } : {}),
         consumer_type: consumerType,
         consumer_id: consumerId,
         slot,
@@ -401,6 +461,12 @@ onMounted(load)
                 @click="openLocatorFor('mcp', item, 'header:Authorization')"
               >{{ item.rules?.['header:Authorization'] ? '改规则' : '规则' }}</button>
             </template>
+            <div v-if="item.group_tools?.length" class="mt-2 flex w-full flex-wrap gap-2 border-t pt-2">
+              <button v-for="tool in item.group_tools" :key="tool.id" type="button"
+                class="rounded-lg border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50" @click="groupTarget = tool">
+                {{ tool.name }} · 固定凭据
+              </button>
+            </div>
           </li>
         </ul>
       </section>
@@ -478,11 +544,25 @@ onMounted(load)
             只影响你自己的调用。真实值不写进服务配置，调用时按当前用户现取。
           </p>
 
-          <div class="mt-3">
-            <CredentialPicker v-model="secretId" scene="mcp" @picked="onPicked" />
+          <div class="mt-3 space-y-2">
+            <div v-if="typedChoices.length || typedMode" class="flex gap-2 text-xs">
+              <button type="button" class="rounded-lg border px-2 py-1" :class="!typedMode ? 'bg-blue-50' : ''" @click="typedMode = false">单值凭据</button>
+              <button type="button" class="rounded-lg border px-2 py-1" :class="typedMode ? 'bg-blue-50' : ''" @click="typedMode = true">结构化字段</button>
+            </div>
+            <CredentialPicker v-if="!typedMode" v-model="secretId" :scene="editing.kind === 'mcp' ? 'mcp' : 'api_tool'" @picked="onPicked" />
+            <template v-else>
+              <select v-model="typedId" aria-label="选择结构化凭据" class="w-full rounded-lg border p-2 text-sm" @change="valueField = ''">
+                <option value="">不绑定</option>
+                <option v-for="item in typedChoices" :key="item.id" :value="item.id">{{ item.name }} · {{ item.account }}</option>
+              </select>
+              <select v-if="typedId" v-model="valueField" aria-label="选择字段" class="w-full rounded-lg border p-2 text-sm">
+                <option value="">请选择字段</option>
+                <option v-for="[name, field] in typedFields" :key="name" :value="name">{{ field.title || name }}{{ field.writeOnly ? ' · 敏感字段' : '' }}</option>
+              </select>
+            </template>
           </div>
 
-          <div v-if="secretId" class="mt-2 space-y-1">
+          <div v-if="typedMode ? typedId : secretId" class="mt-2 space-y-1">
             <button
               type="button"
               :disabled="checking"
@@ -509,12 +589,14 @@ onMounted(load)
               class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
               @click="submit"
             >
-              {{ busy ? '保存中…' : secretId ? '保存绑定' : '解除绑定' }}
+              {{ busy ? '保存中…' : (typedMode ? typedId : secretId) ? '保存绑定' : '解除绑定' }}
             </button>
           </div>
         </div>
       </div>
     </Teleport>
+
+    <FixedMcpCredentialDialog v-if="groupTarget" :tool-id="groupTarget.id" :tool-name="groupTarget.name" @close="groupTarget = null" />
 
     <!-- 规则编辑器：必须和「绑定凭据」弹窗**平级**，不能嵌进 v-if="editing" 里面。
          嵌进去的话，点「规则」只设 locatorCtx、不动 editing，整个子树不渲染，

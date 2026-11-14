@@ -21,7 +21,7 @@ from app.api.portal.api import portal_router
 from app.api.v1.api import v1_router
 from app.core.config import resolve_cors_origins, settings
 from app.core import database, redis
-from app.core.middleware import AccessLogMiddleware, SecurityHeadersMiddleware
+from app.core.middleware import AccessLogMiddleware, SecurityHeadersMiddleware, credential_metadata_only
 from app.core.logging_filters import install_cancellation_log_filters
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
@@ -342,7 +342,7 @@ async def database_connection_exception_handler(request: Request, exc: Exception
         content={
             "code": ErrorCode.DATABASE_CONNECTION_FAILED,
             "message": "数据库连接失败",
-            "detail": "数据库暂时不可用，请稍后重试。" if settings.is_production else str(exc),
+            "detail": "数据库暂时不可用，请稍后重试。" if credential_metadata_only(request.url.path) or settings.is_production else str(exc),
             "data": None,
             "timestamp": datetime.datetime.now().isoformat(),
             "trace_id": trace_id,
@@ -387,7 +387,10 @@ async def database_schema_exception_handler(request: Request, exc: Exception):
         if table
         else "依赖的数据表不存在，数据库迁移还没执行。"
     )
-    if table.startswith("sys_secret"):
+    if table in {"sys_secret_structured_payloads", "sys_credential_types", "sys_credential_type_versions",
+                 "sys_mcp_credential_profiles", "sys_mcp_credential_use_grants", "sys_task_credential_waits"}:
+        hint += "请执行结构化凭据迁移（MySQL V218 或 PostgreSQL V118）。"
+    elif table.startswith("sys_secret"):
         hint += "请执行 db-prod/V209-add-credential-center.sql（PostgreSQL 为 db-prod-pg/V109）。"
     else:
         hint += "请检查对应版本的迁移脚本是否已执行。"
@@ -398,7 +401,7 @@ async def database_schema_exception_handler(request: Request, exc: Exception):
         content={
             "code": ErrorCode.DATABASE_CONNECTION_FAILED,
             "message": hint,
-            "detail": hint if settings.is_production else message,
+            "detail": hint if credential_metadata_only(request.url.path) or settings.is_production else message,
             "data": None,
             "timestamp": datetime.datetime.now().isoformat(),
             "trace_id": trace_id,
@@ -449,7 +452,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={
             "code": ErrorCode.INVALID_PARAMETER,
             "message": "参数校验失败",
-            "detail": str(exc.errors()), # Or format properly as a list of errors
+            # Pydantic includes raw request values in validation errors. Field paths and codes suffice.
+            "detail": "凭据请求参数格式无效" if credential_metadata_only(request.url.path) else str(exc.errors()),
             "data": None,
             "timestamp": datetime.datetime.now().isoformat(),
             "trace_id": trace_id,
@@ -506,7 +510,11 @@ async def general_exception_handler(request: Request, exc: Exception):
     """
     Standardize all other unhandled exceptions (500).
     """
-    logging.error(f"Unhandled exception: {exc}", exc_info=True)
+    protected = credential_metadata_only(request.url.path)
+    if protected:
+        logging.error("Credential request failed (%s)", type(exc).__name__)
+    else:
+        logging.error(f"Unhandled exception: {exc}", exc_info=True)
     trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
     execution_mode = await _get_execution_mode()
     return JSONResponse(
@@ -514,7 +522,7 @@ async def general_exception_handler(request: Request, exc: Exception):
         content={
             "code": ErrorCode.INTERNAL_SERVER_ERROR,
             "message": "服务器内部错误",
-            "detail": "系统遇到未预期错误，请联系技术支持。" if settings.is_production else str(exc),
+            "detail": "系统遇到未预期错误，请联系技术支持。" if protected or settings.is_production else str(exc),
             "data": None,
             "timestamp": datetime.datetime.now().isoformat(),
             "trace_id": trace_id,

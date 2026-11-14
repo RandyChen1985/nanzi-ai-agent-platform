@@ -12,6 +12,7 @@ from app.services.ai.scheduler_service import (
     _task_run_conversation_prefix,
 )
 from app.services.cron_compat import validate_standard_crontab
+from app.services.secrets.task_credential_wait import TASK_CREDENTIAL_REFS_KEY, public_task_config
 from app.models.audit import AgentExecutionHistory
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ class TaskCenterService:
             cron_expr=cron_expr,
             prompt=prompt,
             source=source,
-            config=config,
+            config=public_task_config(config),
             status=1 # Running by default
         )
         
@@ -147,21 +148,24 @@ class TaskCenterService:
             if current_cron:
                 validate_standard_crontab(current_cron)
 
-        # 执行指标存于 config.task_metrics（由调度器维护）；前端 PATCH 提交的 config
-        # 通常不含该字段，整体覆盖会抹掉执行统计，这里始终以库内指标为准回填。
-        if "config" in updates:
-            from app.services.ai.scheduler_service import TASK_METRICS_KEY
+        if set(updates) & {"agent_id", "prompt", "config", "status", "cron_expr"}:
+            # 任务配置、授权恢复和指标写入统一先锁任务，再处理等待记录。
+            existing_config = (await db.execute(
+                select(AgentScheduledTask.config).where(AgentScheduledTask.id == task_id).with_for_update(),
+            )).scalar_one_or_none()
+            if "config" in updates:
+                existing_config = existing_config or {}
+                new_config = public_task_config(updates["config"]) or {}
+                for key in (TASK_METRICS_KEY, TASK_CREDENTIAL_REFS_KEY):
+                    if key in existing_config:
+                        new_config[key] = existing_config[key]
+                updates = {**updates, "config": new_config}
 
-            existing_config = (
-                await db.execute(
-                    select(AgentScheduledTask.config).where(AgentScheduledTask.id == task_id)
-                )
-            ).scalar_one_or_none() or {}
-            new_config = dict(updates["config"] or {})
-            if TASK_METRICS_KEY in existing_config:
-                new_config[TASK_METRICS_KEY] = existing_config[TASK_METRICS_KEY]
-            updates = {**updates, "config": new_config}
+            from app.models.credential_type import TaskCredentialWait
 
+            await db.execute(update(TaskCredentialWait).where(
+                TaskCredentialWait.task_id == task_id, TaskCredentialWait.status == "pending",
+            ).values(status="cancelled", resolved_at=datetime.utcnow()))
         stmt = update(AgentScheduledTask).where(AgentScheduledTask.id == task_id).values(**updates)
         await db.execute(stmt)
         await db.commit()
@@ -173,12 +177,15 @@ class TaskCenterService:
 
     @staticmethod
     async def delete_task(db: AsyncSession, task_id: int):
-        task = await TaskCenterService.get_task(db, task_id)
+        # 与授权恢复/租约回收一致，先锁任务，再删除等待记录。
+        task = await db.get(AgentScheduledTask, task_id, with_for_update=True)
         if task:
             # 彻底摘除调度 Job（含未执行的重试 Job）
             await scheduler_service.remove_task(task_id)
             
-            # Delete from DB
+            from app.models.credential_type import TaskCredentialWait
+
+            await db.execute(delete(TaskCredentialWait).where(TaskCredentialWait.task_id == task_id))
             await db.execute(delete(AgentScheduledTask).where(AgentScheduledTask.id == task_id))
             await db.commit()
 

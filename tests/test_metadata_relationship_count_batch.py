@@ -1,7 +1,7 @@
 """数据集列表关系数批量统计的行为测试。
 
 get_datasets 原先对每个数据集循环 count（N+1），数据集一多列表加载明显变慢。
-这里用内存 SQLite 直接执行批量查询，锁住与详情页一致的口径：
+在临时 MySQL 或 PostgreSQL 库中执行批量查询，覆盖与详情页一致的计数口径。
 
 - 同一数据集内的关系计 1 次
 - 跨数据集关系的两侧数据集各计 1 次
@@ -10,18 +10,30 @@ get_datasets 原先对每个数据集循环 count（N+1），数据集一多列�
 
 from pathlib import Path
 
-from sqlalchemy import create_engine, insert
+import pytest
+import pytest_asyncio
+from sqlalchemy import insert
 
-from app.core.orm import Base
 from app.models.metadata import MetaDataset, MetaRelationship, MetaTable
 from app.services.metadata_service import build_relationship_count_stmt
+from tests.temporary_database import init_infrastructure, temporary_database  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = ROOT / "app/services/metadata_service.py"
 
 
-def _seed(conn):
-    conn.execute(
+pytestmark = pytest.mark.no_infrastructure
+
+
+@pytest_asyncio.fixture
+async def metadata_db():
+    async with temporary_database(MetaDataset.__table__, MetaTable.__table__, MetaRelationship.__table__) as engine:
+        async with engine.begin() as connection:
+            yield connection
+
+
+async def _seed(conn):
+    await conn.execute(
         insert(MetaDataset).values(
             [
                 {"id": 1, "name": "ds_a"},
@@ -29,7 +41,7 @@ def _seed(conn):
             ]
         )
     )
-    conn.execute(
+    await conn.execute(
         insert(MetaTable).values(
             [
                 {"id": 1, "dataset_id": 1, "physical_name": "t1", "term": "T1"},
@@ -38,7 +50,7 @@ def _seed(conn):
             ]
         )
     )
-    conn.execute(
+    await conn.execute(
         insert(MetaRelationship).values(
             [
                 # 同数据集
@@ -52,36 +64,21 @@ def _seed(conn):
     )
 
 
-def test_relationship_counts_cover_same_dataset_cross_dataset_and_self_join():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(
-        engine,
-        tables=[MetaDataset.__table__, MetaTable.__table__, MetaRelationship.__table__],
-    )
-
-    with engine.begin() as conn:
-        _seed(conn)
-        rows = conn.execute(build_relationship_count_stmt()).all()
+async def test_relationship_counts_cover_same_dataset_cross_dataset_and_self_join(metadata_db):
+    await _seed(metadata_db)
+    rows = (await metadata_db.execute(build_relationship_count_stmt())).all()
 
     counts = {dataset_id: count for dataset_id, count in rows}
     assert counts[1] == 3, "同数据集 1 条 + 跨库 1 条 + 自关联 1 条"
     assert counts[2] == 1, "跨库关系的目标表属于 B 数据集"
 
 
-def test_datasets_without_relationships_are_absent_from_result():
-    """没有关系的集合不应出现在批量结果里，调用方按 0 兜底。"""
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(
-        engine,
-        tables=[MetaDataset.__table__, MetaTable.__table__, MetaRelationship.__table__],
+async def test_datasets_without_relationships_are_absent_from_result(metadata_db):
+    await metadata_db.execute(insert(MetaDataset).values({"id": 9, "name": "empty_ds"}))
+    await metadata_db.execute(
+        insert(MetaTable).values({"id": 90, "dataset_id": 9, "physical_name": "t", "term": "T"})
     )
-
-    with engine.begin() as conn:
-        conn.execute(insert(MetaDataset).values({"id": 9, "name": "empty_ds"}))
-        conn.execute(
-            insert(MetaTable).values({"id": 90, "dataset_id": 9, "physical_name": "t", "term": "T"})
-        )
-        rows = conn.execute(build_relationship_count_stmt()).all()
+    rows = (await metadata_db.execute(build_relationship_count_stmt())).all()
 
     assert rows == []
 

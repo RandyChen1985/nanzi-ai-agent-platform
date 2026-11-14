@@ -136,8 +136,9 @@ def _capabilities_for(policy: str) -> ScriptToolCapabilities:
             sandbox_label="会话沙箱",
             sandbox_enabled=True,
             notice=(
-                "脚本在会话沙箱内执行：工作区挂载的是你的用户目录（同一账号的其他会话也能读到），"
-                "无法访问平台后端进程、数据库或你的本机文件。"
+                "普通脚本在会话沙箱内执行，工作区挂载你的用户目录。"
+                "绑定凭据的脚本在本次专用隔离实例中执行，凭据仅进入子进程环境变量；"
+                "输入使用工作区快照，输出检查凭据回显后返回，当前只导出通过检查的 UTF-8 文本产物。"
             ),
         )
     return ScriptToolCapabilities(
@@ -147,6 +148,7 @@ def _capabilities_for(policy: str) -> ScriptToolCapabilities:
         notice=(
             "当前部署未启用容器沙箱（本地策略）：脚本以后端进程的权限运行，不是安全边界——"
             "可读环境变量、数据库连接等。请只运行你自己写的或完全信任的脚本。"
+            "绑定凭据的脚本需要 Docker 或 K8s 策略，本地策略不会注入凭据。"
         ),
     )
 
