@@ -68,6 +68,7 @@ const notificationKindLabel = (item: any) => {
     return "资源申请";
   if (item?.category === "resource_access_result" || item?.category === "knowledge_access_result")
     return "申请结果";
+  if (item?.category === "system_broadcast") return "公告";
   return "系统";
 };
 
@@ -529,6 +530,13 @@ defineExpose({ open: openFromExternal, toggle });
               </div>
               <h3 class="text-base font-black text-gray-800">{{ detailItem.title }}</h3>
               <p class="mt-1 text-[11px] text-gray-400">{{ formatDate(detailItem.created_at) }}</p>
+              <!-- 管理员群发的公告：标出发件人，避免和系统自动消息混为一谈 -->
+              <p
+                v-if="detailItem.metadata?.source === 'admin_broadcast'"
+                class="mt-1 text-[11px] font-bold text-gray-500"
+              >
+                发件人：{{ detailItem.metadata.sender_real_name || detailItem.metadata.sender_user_name || '管理员' }}
+              </p>
             </div>
             <div class="flex items-center gap-1.5 shrink-0">
               <button type="button" class="shrink-0 rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600" title="关闭详情" aria-label="关闭详情" @click="closeDetail">
