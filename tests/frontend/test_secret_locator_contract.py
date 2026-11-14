@@ -73,11 +73,11 @@ def test_rule_branch_reads_rule_draft_not_binding():
     assert "fixedBindingOfSlot" in src
 
 
-def test_saving_rule_binding_posts_strategy_rule():
+def test_saving_rule_binding_uses_parameter_transaction():
     src = REGISTRY.read_text(encoding="utf-8")
-    assert "strategy: 'rule'" in src
-    # 从规则改回别的来源时必须把旧规则删掉，否则下次打开会被回填成「规则」
-    assert "strategy: 'rule',\n            is_global" in src
+    assert "binding_changes: bindingChanges" in src
+    # 改回其他来源时，解除规则与来源和结果策略一并保存。
+    assert "operation: 'delete_rule'" in src
 
 
 def test_locator_editor_is_mounted_with_plain_params_only():
@@ -87,7 +87,7 @@ def test_locator_editor_is_mounted_with_plain_params_only():
     assert "locatorArgOptions" in src
     fn = src[src.index("function locatorArgOptions"):]
     fn = fn[: fn.index("\n}\n")]
-    assert "marked.has(name)" in fn
+    assert "paramDraft.value[name] === 'model'" in fn
     assert "name !== self" in fn
 
 
@@ -244,14 +244,6 @@ class TestRuleAndFixedCoexist:
         fn = src[src.index("const ruleBindingOfSlot"):]
         fn = fn[: fn.index("\n}\n")]
         assert "slotRules.value[slot]" in fn
-
-    def test_deleting_a_rule_clears_the_local_copy(self):
-        """删完规则不回清本地，网络失败时会显示一条其实已经没了的规则。"""
-        src = REGISTRY.read_text(encoding="utf-8")
-        start = src.index("async function submitParamMark(")
-        body = src[start:start + 4000]
-        assert "delete slotRules.value[slot]" in body
-
 
 def test_param_mark_waits_for_bindings_before_filling_the_draft():
     """打开参数设置必须先等绑定回来再算草稿。

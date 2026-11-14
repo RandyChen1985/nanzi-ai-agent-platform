@@ -83,13 +83,15 @@ async def claim_approval(session, approval: CredentialApproval) -> bool:
     }
     task_ref = None
     try:
-        if approval.remember_credential and approval.scheduled_task_id is not None:
+        if approval.scheduled_task_id is not None:
             from app.services.secrets import task_credential_wait
 
-            task_ref = await task_credential_wait.record_task_credential_claim(session, approval, claim_id)
-            if task_ref is None:
+            task = await task_credential_wait.lock_task_credential_claim(session, approval)
+            if task is None:
                 return False
-            detail["task_id"] = approval.scheduled_task_id
+            if approval.remember_credential:
+                task_ref = task_credential_wait.record_task_credential_claim(task, approval, claim_id)
+                detail["task_id"] = approval.scheduled_task_id
         session.add(SecretAuditLog(
             id=claim_id, action="mcp_approval_claim", actor_id=approval.user_id,
             secret_id=approval.secret_id, detail=json.dumps(detail),

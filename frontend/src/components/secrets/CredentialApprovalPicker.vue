@@ -108,7 +108,10 @@ async function saveCredential() {
     emit('update:modelValue', body.data.id)
     emit('created', body.data.id)
   } catch (err) {
-    if (sequence === requestSequence) error.value = err instanceof Error ? err.message : '凭据创建失败'
+    if (sequence === requestSequence) {
+      const message = err instanceof Error ? err.message : '凭据创建失败'
+      error.value = message + '。凭据字段已清空，请重新填写。'
+    }
   } finally {
     saving.value = false
   }

@@ -725,8 +725,9 @@ async def _render_result(result: ScriptRunResult, *, workdir: Path) -> str:
 
     published = await publish_artifacts(result.artifacts, workdir=workdir) if result.artifacts else []
     stdout = result.stdout.strip()
+    notice = result.message.strip()
     if not stdout:
-        return "脚本执行成功，没有输出。" + (
+        return (notice or "脚本执行成功，没有输出。") + (
             "\n已登记可下载文件：" + "、".join(item["filename"] or item["path"] for item in published)
             if published
             else ""
@@ -740,6 +741,11 @@ async def _render_result(result: ScriptRunResult, *, workdir: Path) -> str:
     if isinstance(payload, dict):
         if published:
             payload["published_artifacts"] = published
-        safe_payload = redact_value(payload, where="脚本工具输出")
-        return _truncate(json.dumps(safe_payload, ensure_ascii=False))
-    return _truncate(redact_text(stdout, where="脚本工具输出"))
+        if notice == payload.get("artifact_notice"):
+            notice = ""
+        if notice and "output_notice" not in payload:
+            payload = {"output_notice": notice, **payload}
+            notice = ""
+        stdout = json.dumps(redact_value(payload, where="脚本工具输出"), ensure_ascii=False)
+    text = f"{notice}\n{stdout}" if notice and notice not in stdout else stdout
+    return _truncate(redact_text(text, where="脚本工具输出"))

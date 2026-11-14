@@ -171,10 +171,12 @@ async def test_task_resume_recovery_locks_task_before_wait_and_resets_context(mo
 
     task, row = _recovering_task()
     row.status = "pending"
-    pending = SimpleNamespace(snapshot=SimpleNamespace(
-        conversation_id=row.run_conversation_id,
-        runner_context={approvals.MCP_CREDENTIAL_REF: {"scheduled_task_id": task.id}},
-    ))
+    pending = SimpleNamespace(
+        request_id=row.request_id, user_id=str(task.user_id), snapshot=SimpleNamespace(
+            conversation_id=row.run_conversation_id, trace_id=row.trace_id,
+            runner_context={approvals.MCP_CREDENTIAL_REF: {"scheduled_task_id": task.id}},
+        ),
+    )
 
     @asynccontextmanager
     async def sessions():
@@ -187,7 +189,8 @@ async def test_task_resume_recovery_locks_task_before_wait_and_resets_context(mo
                     task_locked = True
                 return task
             if model is TaskCredentialWait:
-                assert task_locked, "取消恢复也必须先锁任务，再锁等待记录"
+                if kwargs.get("with_for_update"):
+                    assert task_locked, "取消恢复也必须先锁任务，再锁等待记录"
                 return row
             assert model is SecretAuditLog
             return None
@@ -209,6 +212,7 @@ async def test_task_resume_recovery_locks_task_before_wait_and_resets_context(mo
     monkeypatch.setattr(scheduler, "_acquire_task_execution_lock", AsyncMock(return_value="task-lock"))
     monkeypatch.setattr(scheduler, "_release_task_execution_lock", release)
     monkeypatch.setattr(pending_agentscope_confirmations, "peek_async", AsyncMock(return_value=pending))
+    monkeypatch.setattr(mcp_profiles.SecretResolver, "_platform_flags", AsyncMock(return_value=(False, True, 3)))
     monkeypatch.setattr(mcp_profiles, "pending_candidates", AsyncMock(return_value=[object()]))
     monkeypatch.setattr(agent_service, "resume_agentscope_permission_stream", interrupted_resume)
     previous = {"previous-tool": None}
@@ -313,6 +317,8 @@ async def _waiting_task(db, *, status="pending"):
         trace_id="trace-test", conversation_id="run-test",
     )
     wait.status = status
+    if status == "resuming":
+        wait.resume_lease_until = datetime.utcnow() + timedelta(minutes=5)
     ref = {
         "tool_id": "tool-test", "profile_id": "profile-test", "revision": 3,
         "selection_mode": "ask", "scheduled_task_id": task.id,
@@ -353,11 +359,12 @@ async def test_remembered_selection_is_scoped_and_uses_a_durable_claim(session_f
     from app.services.secrets.mcp_profiles import CredentialInvocationError
 
     async with session_factory() as db:
-        task, _, ref, pending = await _waiting_task(db, status="resuming")
+        task, wait, ref, pending = await _waiting_task(db, status="resuming")
         claim = approvals.approval_for_pending(pending, "secret-test", remember_credential=True)
         task_id = task.id
         active_refs = {"tool-test": waits.TaskCredentialRef(task_id, "101", "profile-test", 3, "old-secret")}
         scope = waits.current_task_credential_refs.set(active_refs)
+        lease_scope = waits.current_task_resume_lease.set(wait.resume_lease_until)
         try:
             assert await approvals.claim_approval(db, claim)
             assert waits.task_credential_secret_id(ref, "101") == "secret-test"
@@ -366,6 +373,7 @@ async def test_remembered_selection_is_scoped_and_uses_a_durable_claim(session_f
             )
             assert waits.task_credential_secret_id(ref, "101") == "secret-test"
         finally:
+            waits.current_task_resume_lease.reset(lease_scope)
             waits.current_task_credential_refs.reset(scope)
 
     async with session_factory() as db:
@@ -469,7 +477,7 @@ async def test_credential_creation_rechecks_live_candidates(monkeypatch):
 
     from app.api.v1.endpoints import chat
     from app.core import orm
-    from app.services.secrets import center, mcp_profiles, type_catalog
+    from app.services.secrets import center, mcp_profiles, payload_config, type_catalog
 
     ref = {"selection_reason": "credential_missing"}
     pending = SimpleNamespace()
@@ -483,8 +491,11 @@ async def test_credential_creation_rechecks_live_candidates(monkeypatch):
     monkeypatch.setattr(mcp_profiles, "pending_account_hint", lambda *_: "fixture@example.test")
     monkeypatch.setattr(mcp_profiles, "list_candidates", AsyncMock(return_value=[]))
     monkeypatch.setattr(mcp_profiles, "has_visible_candidate", visible)
-    monkeypatch.setattr(type_catalog, "get_type", AsyncMock(return_value=SimpleNamespace(enabled=True, name="邮件")))
+    monkeypatch.setattr(type_catalog, "get_type", AsyncMock(
+        return_value=SimpleNamespace(type_key="imap_password", enabled=True, name="邮件"),
+    ))
     monkeypatch.setattr(type_catalog, "get_version", AsyncMock(return_value=SimpleNamespace(schema_json={})))
+    monkeypatch.setattr(payload_config, "load_payload_config", AsyncMock(return_value=SimpleNamespace(enabled=True)))
     monkeypatch.setattr(center, "create_secret", create)
 
     @asynccontextmanager
@@ -506,3 +517,260 @@ async def test_credential_creation_rechecks_live_candidates(monkeypatch):
         )
     assert caught.value.detail["code"] == "CREDENTIAL_SELECTION_INVALID"
     create.assert_not_awaited()
+
+
+async def test_once_approval_cannot_consume_a_wait_closed_by_an_edit():
+    task, row = _recovering_task()
+    row.status = "cancelled"
+    approval = approvals.CredentialApproval(
+        request_id=row.request_id, user_id=str(task.user_id), conversation_id=row.run_conversation_id,
+        tool_id="tool-test", profile_id="profile-test", profile_revision=1, arguments_digest="test",
+        secret_id="secret-test", expires_at=time.time() + 60,
+        scheduled_task_id=task.id, remember_credential=False,
+    )
+
+    async def get(model, identifier, **kwargs):
+        return task if model is AgentScheduledTask else row
+
+    receipts = []
+    session = SimpleNamespace(get=get, add=receipts.append, commit=AsyncMock())
+    assert not await approvals.claim_approval(session, approval)
+    assert receipts == []
+
+
+@pytest.mark.parametrize("redis_failure", ["error", "timeout"])
+async def test_snapshot_read_failure_preserves_the_wait_without_holding_a_task_lock(monkeypatch, redis_failure):
+    from app.core import redis
+    from app.services.ai import scheduler_service as scheduler
+    from app.services.secrets import mcp_profiles
+
+    task, row = _recovering_task()
+    row.status = "pending"
+    db_open = False
+    read_with_db_open = None
+
+    @asynccontextmanager
+    async def sessions():
+        nonlocal db_open
+        db_open = True
+        try:
+            yield SimpleNamespace(
+                get=AsyncMock(side_effect=lambda model, *args, **kwargs: task if model is AgentScheduledTask else row),
+                scalar=AsyncMock(return_value=row),
+                execute=AsyncMock(), scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [])),
+                commit=AsyncMock(), flush=AsyncMock(), add=Mock(),
+            )
+        finally:
+            db_open = False
+
+    async def get_snapshot(key):
+        nonlocal read_with_db_open
+        read_with_db_open = db_open
+        if redis_failure == "error":
+            raise ConnectionError("synthetic read failure")
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(redis, "get_redis", AsyncMock(return_value=SimpleNamespace(get=get_snapshot)))
+    monkeypatch.setattr(scheduler, "AsyncSessionLocal", sessions)
+    monkeypatch.setattr(scheduler, "_acquire_task_execution_lock", AsyncMock(return_value="task-lock"))
+    monkeypatch.setattr(scheduler, "_release_task_execution_lock", AsyncMock())
+    monkeypatch.setattr(waits, "TASK_WAIT_SNAPSHOT_TIMEOUT_SEC", 0.01, raising=False)
+
+    with pytest.raises(mcp_profiles.CredentialInvocationError) as caught:
+        await asyncio.wait_for(
+            scheduler.resume_task_credential(task.id, row.request_id, "secret-test", user_info={"user_id": task.user_id}),
+            timeout=0.5,
+        )
+
+    assert caught.value.code == "CREDENTIAL_QUERY_UNAVAILABLE"
+    assert read_with_db_open is False
+    assert row.status == "pending"
+
+
+async def test_task_detail_projects_expiry_only_for_the_matching_run():
+    from app.api.v1.endpoints import tasks as task_api
+
+    raw_task, row = _recovering_task()
+    now = datetime.utcnow()
+    task = AgentScheduledTask(
+        **vars(raw_task), name="Task", source="web", created_at=now, updated_at=now,
+    )
+    task.config = {"task_metrics": {
+        "last_status": "awaiting_credential", "last_trace_id": row.trace_id,
+        "last_run_conversation_id": row.run_conversation_id,
+        "credential_wait_request_id": row.request_id,
+    }}
+    row.status, row.expires_at = "pending", now - timedelta(seconds=1)
+    session = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: task)),
+        scalars=AsyncMock(return_value=[row]),
+    )
+    response = await task_api.get_task(task.id, {"user_id": task.user_id}, session)
+    assert response.data.last_status == "credential_expired"
+
+    task.config["task_metrics"]["last_run_conversation_id"] = "new-run"
+    response = await task_api.get_task(task.id, {"user_id": task.user_id}, session)
+    assert response.data.last_status == "awaiting_credential"
+
+
+async def test_late_success_after_a_wait_event_completes_the_resumed_task(monkeypatch):
+    from app.services.ai import scheduler_service as scheduler
+    from app.services.ai.agent_service import agent_service
+    from app.services.secrets import mcp_profiles
+
+    task, row = _recovering_task()
+    row.status = "pending"
+    pending = SimpleNamespace(
+        request_id=row.request_id, user_id=str(task.user_id), snapshot=SimpleNamespace(
+            conversation_id=row.run_conversation_id, trace_id=row.trace_id,
+            runner_context={approvals.MCP_CREDENTIAL_REF: {"scheduled_task_id": task.id}},
+        ),
+    )
+    inserted = []
+
+    @asynccontextmanager
+    async def sessions():
+        yield SimpleNamespace(
+            get=AsyncMock(side_effect=lambda model, *args, **kwargs: task if model is AgentScheduledTask else row),
+            commit=AsyncMock(), add=inserted.append,
+        )
+
+    async def resume(**kwargs):
+        yield {
+            "type": "permission_required", "credential_selection_required": True,
+            "permission_request_id": "next-request", "expires_at": int(time.time()) + 120,
+        }
+        yield {"type": "run_status", "status": "success"}
+
+    monkeypatch.setattr(scheduler, "AsyncSessionLocal", sessions)
+    monkeypatch.setattr(scheduler, "_acquire_task_execution_lock", AsyncMock(return_value=""))
+    monkeypatch.setattr(waits, "peek_task_credential_snapshot", AsyncMock(return_value=pending))
+    monkeypatch.setattr(mcp_profiles.SecretResolver, "_platform_flags", AsyncMock(return_value=(False, True, 3)))
+    monkeypatch.setattr(mcp_profiles, "pending_candidates", AsyncMock(return_value=[object()]))
+    monkeypatch.setattr(agent_service, "resume_agentscope_permission_stream", resume)
+    completed = AsyncMock()
+    monkeypatch.setattr(scheduler, "_complete_task_execution", completed)
+
+    result = await scheduler.resume_task_credential(
+        task.id, row.request_id, "fake-secret", user_info={"user_id": task.user_id},
+    )
+    assert result["status"] == "completed"
+    completed.assert_awaited_once()
+    assert all(not isinstance(item, TaskCredentialWait) for item in inserted)
+
+
+async def test_wait_status_uses_the_request_linked_to_the_current_run():
+    from app.api.v1.endpoints import tasks as task_api
+
+    task, older = _recovering_task()
+    older.status = "completed"
+    active = SimpleNamespace(**vars(older))
+    active.request_id, active.status = "current-request", "pending"
+    task.config = {"task_metrics": {
+        "last_status": "awaiting_credential", "last_trace_id": active.trace_id,
+        "last_run_conversation_id": active.run_conversation_id, "credential_wait_request_id": active.request_id,
+    }}
+    db = SimpleNamespace(
+        get=AsyncMock(side_effect=lambda model, identifier: task if model is AgentScheduledTask else active),
+        scalar=AsyncMock(return_value=older), scalars=AsyncMock(return_value=[active]),
+    )
+    response = await task_api.task_credential_wait_status(task.id, {"user_id": task.user_id}, db)
+    assert response.data["request_id"] == "current-request"
+    assert response.data["status"] == "pending"
+
+
+async def test_resume_retries_if_wait_reopens_during_snapshot_prefetch(monkeypatch):
+    from app.services.ai import scheduler_service as scheduler
+    from app.services.secrets import mcp_profiles
+
+    task, row = _recovering_task()
+    row.resume_lease_until = datetime.utcnow() + timedelta(minutes=2)
+
+    @asynccontextmanager
+    async def sessions():
+        yield SimpleNamespace(
+            get=AsyncMock(side_effect=lambda model, *args, **kwargs: task if model is AgentScheduledTask else row),
+            commit=AsyncMock(), add=Mock(),
+        )
+
+    async def acquire(*args):
+        row.status = "pending"
+        row.resume_lease_until = None
+        return ""
+
+    monkeypatch.setattr(scheduler, "AsyncSessionLocal", sessions)
+    monkeypatch.setattr(scheduler, "_acquire_task_execution_lock", acquire)
+    monkeypatch.setattr(waits, "peek_task_credential_snapshot", AsyncMock(return_value=None))
+    with pytest.raises(mcp_profiles.CredentialInvocationError) as caught:
+        await scheduler.resume_task_credential(task.id, row.request_id, "secret-test", user_info={"user_id": task.user_id})
+
+    assert caught.value.code == "CREDENTIAL_QUERY_UNAVAILABLE"
+    assert row.status == "pending"
+
+
+async def test_resume_checks_selected_candidate_without_a_second_connection_under_lock(monkeypatch):
+    from app.services.ai import scheduler_service as scheduler
+    from app.services.ai.agent_service import agent_service
+    from app.services.config_service import ConfigService
+    from app.services.secrets import mcp_profiles
+
+    task, row = _recovering_task()
+    row.status = "pending"
+    pending = SimpleNamespace(
+        request_id=row.request_id, user_id=str(task.user_id), snapshot=SimpleNamespace(
+            conversation_id=row.run_conversation_id, trace_id=row.trace_id,
+            runner_context={approvals.MCP_CREDENTIAL_REF: {"scheduled_task_id": task.id}},
+        ),
+    )
+    in_db_session = False
+    policy_reads = []
+    candidate_reads = []
+
+    @asynccontextmanager
+    async def sessions():
+        nonlocal in_db_session
+        in_db_session = True
+
+        async def query_candidates(statement):
+            candidate_reads.append(in_db_session)
+            assert "sys_secret_grants" in str(statement)
+            parent = SimpleNamespace(
+                id="secret-test", owner_scope="user", owner_id=str(task.user_id), secret_key="fixture",
+                secret_type="credential", status="active", expires_at=None, previous_expires_at=None,
+                allowed_hosts=["mcp.example.internal"], allowed_scenarios=["mcp"],
+            )
+            return [(parent, "account", "digest", 1)]
+
+        try:
+            yield SimpleNamespace(
+                get=AsyncMock(side_effect=lambda model, *args, **kwargs: task if model is AgentScheduledTask else row),
+                execute=query_candidates, commit=AsyncMock(), add=Mock(),
+            )
+        finally:
+            in_db_session = False
+
+    async def read_host_policy():
+        policy_reads.append(in_db_session)
+        return {"secret_policy_allow_external_host": {"value": "false"}}
+
+    async def offline_resume(**kwargs):
+        yield {"type": "run_status", "status": "success"}
+
+    monkeypatch.setattr(ConfigService, "get_all_from_db", staticmethod(read_host_policy))
+    monkeypatch.setattr(scheduler, "AsyncSessionLocal", sessions)
+    monkeypatch.setattr(scheduler, "_acquire_task_execution_lock", AsyncMock(return_value=""))
+    monkeypatch.setattr(scheduler, "_complete_task_execution", AsyncMock())
+    monkeypatch.setattr(waits, "peek_task_credential_snapshot", AsyncMock(return_value=pending))
+    monkeypatch.setattr(mcp_profiles, "pending_target", AsyncMock(return_value=(
+        SimpleNamespace(type_key="fixture", type_version=1),
+        SimpleNamespace(sse_url="https://mcp.example.internal"),
+        SimpleNamespace(dept_code=None),
+    )))
+    monkeypatch.setattr(agent_service, "resume_agentscope_permission_stream", offline_resume)
+
+    result = await scheduler.resume_task_credential(
+        task.id, row.request_id, "secret-test", user_info={"user_id": task.user_id},
+    )
+    assert result["status"] == "completed"
+    assert policy_reads == [False]
+    assert candidate_reads == [True]

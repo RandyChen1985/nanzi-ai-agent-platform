@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import axios from '@/utils/axios'
 import { credentialError } from '@/composables/useCredentialFields'
 import { getMcpCredentialConfig, listMcpCredentialCandidates, type McpCredentialConfig, type McpCredentialCandidates } from '@/utils/mcpCredentialProfiles'
@@ -56,6 +56,9 @@ const { hasPermission } = useUser()
 const canExecuteMcp = computed(() => hasPermission('element:mcp_management:execute'))
 
 const loading = ref(false)
+let testerGeneration = 0
+let curlRequest = 0
+onBeforeUnmount(() => { testerGeneration += 1 })
 const credentialConfig = ref<McpCredentialConfig | null>(null)
 const credentialCandidates = ref<McpCredentialCandidates | null>(null)
 const selectedCredential = ref('')
@@ -64,13 +67,19 @@ const credentialLoadError = ref('')
 const missingCredentialParams = computed(() => credentialConfig.value?.parameters.filter(
   item => item.sensitive && !credentialParams.value.includes(item.name),
 ).map(item => item.name) || [])
-const credentialReady = computed(() => {
-  if (credentialLoading.value || credentialLoadError.value || missingCredentialParams.value.length) return false
+const credentialBlockedReason = computed(() => {
+  if (credentialLoading.value) return '正在加载凭据配置…'
+  if (credentialLoadError.value) return credentialLoadError.value
+  if (missingCredentialParams.value.length) return '请先配置缺少的凭据参数。'
   const profile = credentialConfig.value?.profile
-  if (!profile) return true
-  if (credentialConfig.value?.stale) return false
-  return profile.selection_mode === 'fixed' ? !!credentialCandidates.value?.fixed_secret_id : !!selectedCredential.value
+  if (!profile) return ''
+  if (credentialConfig.value?.stale) return '请重新保存已过期的凭据配置。'
+  if (profile.selection_mode === 'fixed') {
+    return credentialCandidates.value?.fixed_secret_id ? '' : '请先保存个人固定绑定。'
+  }
+  return selectedCredential.value ? '' : '请先选择本次调用的凭据。'
 })
+const credentialReady = computed(() => !credentialBlockedReason.value)
 const result = ref<unknown>(null)
 const error = ref<string | null>(null)
 const args = ref<Record<string, any>>({})
@@ -104,6 +113,7 @@ const schema = computed(() => {
 /** 声明为「来自凭据」的参数：模型看不到，测试台也不该让人填。 */
 const credentialParams = computed<string[]>(() => {
   if (credentialConfig.value?.profile) return Object.keys(credentialConfig.value.profile.mappings)
+  if (credentialConfig.value?.credential_params) return credentialConfig.value.credential_params
   try {
     const parsed = JSON.parse((props.tool as any).credential_params || '[]')
     return Array.isArray(parsed) ? parsed.map(String) : []
@@ -155,6 +165,9 @@ const getPlaceholder = (prop: any): string => {
 watch([() => props.tool, () => props.isOpen], async ([tool, open], _, onCleanup) => {
   let active = true
   onCleanup(() => { active = false })
+  testerGeneration += 1
+  loading.value = false
+  curlLoading.value = false
   credentialConfig.value = null
   credentialCandidates.value = null
   credentialLoading.value = false
@@ -316,18 +329,22 @@ const curlArguments = computed(() => {
 })
 
 const loadCurlSnippet = async () => {
+  const generation = testerGeneration
+  const request = ++curlRequest
+  const isCurrent = () => generation === testerGeneration && request === curlRequest
   curlLoading.value = true
   curlError.value = null
   try {
     const res = await axios.get(`/api/portal/mcp/tools/${props.tool.id}/curl`, {
       params: { arguments: JSON.stringify(curlArguments.value) }
     })
-    curlSnippet.value = res.data
+    if (isCurrent()) curlSnippet.value = res.data
   } catch (e: any) {
+    if (!isCurrent()) return
     curlSnippet.value = null
     curlError.value = e.response?.data?.detail || e.message
   } finally {
-    curlLoading.value = false
+    if (isCurrent()) curlLoading.value = false
   }
 }
 
@@ -351,7 +368,8 @@ watch(activeTab, (tab) => {
 })
 
 const executeTool = async () => {
-  if (!credentialReady.value) return
+  if (loading.value || !credentialReady.value) return
+  const generation = testerGeneration
   loading.value = true
   result.value = null
   error.value = null
@@ -397,6 +415,7 @@ const executeTool = async () => {
       ...(selectedCredential.value ? { selected_secret_id: selectedCredential.value } : {}),
     })
 
+    if (generation !== testerGeneration) return
     mcpAuth.value = res.data.mcp_auth || null
     modelResult.value = res.data.model_result || null
     if (res.data.status === 'success') {
@@ -407,10 +426,12 @@ const executeTool = async () => {
       error.value = res.data.message || '执行失败'
     }
   } catch (e: any) {
-    error.value = credentialError(e, '执行失败')
+    if (generation === testerGeneration) error.value = credentialError(e, '执行失败')
   } finally {
-    loading.value = false
-    activeTab.value = 'details'
+    if (generation === testerGeneration) {
+      loading.value = false
+      activeTab.value = 'details'
+    }
   }
 }
 </script>
@@ -699,11 +720,14 @@ const executeTool = async () => {
         </div>
       </div>
 
-      <div class="p-4 border-t border-gray-100 bg-gray-50 flex justify-end">
+      <div class="p-4 border-t border-gray-100 bg-gray-50 space-y-2">
+        <p v-if="canExecuteMcp && credentialBlockedReason" class="text-xs text-slate-700" role="status">
+          {{ credentialBlockedReason }}
+        </p>
         <button
           v-if="canExecuteMcp"
           @click="executeTool"
-          :disabled="loading"
+          :disabled="loading || !credentialReady"
           class="w-full px-4 py-2 bg-primary text-white rounded-lg shadow-lg shadow-primary/20 hover:bg-primary-dark transition-all flex justify-center items-center font-bold text-sm disabled:opacity-70 disabled:cursor-not-allowed"
         >
           <svg v-if="loading" class="animate-spin h-4 w-4 mr-2 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

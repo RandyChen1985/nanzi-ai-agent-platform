@@ -684,6 +684,7 @@ const bindingIssue = (binding: HeaderBinding | null): string => {
   return '凭据不可用'
 }
 const headerBindings = ref<Record<string, HeaderBinding>>({})
+const paramFixedBindings = ref<Record<string, HeaderBinding>>({})
 
 /**
  * 同一槽位的**规则**绑定单独存一份。
@@ -731,7 +732,6 @@ async function loadMcpBinding() {
   if (!editingId.value) {
     // 不清的话，从「编辑服务 A」跳到「添加」时，新向导会显示 A 的 header 绑定
     headerBindings.value = {}
-    slotRules.value = {}
     return
   }
   try {
@@ -742,7 +742,6 @@ async function loadMcpBinding() {
     // 编辑 A 的过程中切到 B，A 的响应晚到会盖掉 B 的绑定
     if (editingId.value !== requestedId) return
     const map: Record<string, HeaderBinding> = {}
-    const rules: Record<string, HeaderBinding> = {}
     for (const row of res.data?.data || []) {
       // 平台 MCP：管理员设的全局绑定要算「已绑定」，别人的个人绑定看不见。
       // 个人 MCP：只有自己绑的才算——这里的「全局」对它没有意义。
@@ -756,13 +755,10 @@ async function loadMcpBinding() {
         rule: row.rule || null,
         rule_summary: row.rule_summary || null,
       }
-      // 规则行单独放：同槽位还能有一条固定凭据（规则未命中时的回退目标），
-      // 混在一张表里会互相覆盖，见 slotRules 的注释。
-      if ((row.strategy || 'fixed') === 'rule') rules[row.slot] = entry
-      else map[row.slot] = entry
+      // Header 配置只读固定绑定；逐参数配置有独立的请求和草稿。
+      if (entry.strategy === 'fixed') map[row.slot] = entry
     }
     headerBindings.value = map
-    slotRules.value = rules
     const hit = map['header:Authorization']
     if (hit) {
       mcpBindingSecretId.value = hit.secret_id
@@ -1232,6 +1228,8 @@ const paramCredentialConfig = ref<McpCredentialConfig | null>(null)
 const paramCredentialMode = ref<'legacy' | 'group'>('legacy')
 const paramCredentialError = ref('')
 const paramSaveError = ref('')
+const paramSaveConflict = ref(false)
+const paramConflictDraft = ref<{ resultFields: string; sources: Record<string, ParamSource>; rules: Record<string, LocatorRule | null> } | null>(null)
 const paramResultFields = ref('')
 const paramProfileLoading = ref(false)
 const confirmLegacyMode = ref(false)
@@ -1366,19 +1364,20 @@ function paramSlot(tool: any, name: string): string {
  * 复用它会静默不加载，表现就是「绑成功了但界面还显示未选」。
  */
 async function loadBindingsFor(serverId: string) {
-  if (!serverId) return false
+  const target = paramMarkTarget.value
+  if (!serverId || target?.tool?.server_id !== serverId) return false
   try {
     const res = await axios.get('/api/portal/secrets/bindings', {
       params: { consumer_type: 'mcp_server', consumer_id: serverId },
     })
     // 参数设置弹窗和编辑弹窗会同时发请求（先开 A 再点 B 的工具卡片），
     // 谁后返回谁覆盖。晚到的旧响应必须丢掉，否则参数设置里会显示别的服务的绑定。
-    if (paramMarkTarget.value?.tool?.server_id !== serverId) return false
+    if (paramMarkTarget.value !== target) return false
     const map: Record<string, HeaderBinding> = {}
     const rules: Record<string, HeaderBinding> = {}
     for (const row of res.data?.data || []) {
-      // 别人的个人绑定看不见；平台 MCP 还要把全局绑定算进来
-      if (!row.bound_by_me && !(isGlobalBinding.value && row.is_global)) continue
+      // 编辑的是当前入口负责的作用域，保留另外作用域的调用优先级。
+      if (isGlobalBinding.value ? !row.is_global : !row.bound_by_me) continue
       const entry: HeaderBinding = {
         secret_id: row.secret_id || '',
         secret_key: row.secret_key || '',
@@ -1393,8 +1392,7 @@ async function loadBindingsFor(serverId: string) {
     }
     // 必须以服务端为准：合并的话，服务端已经删掉的绑定在本地还留着——
     // 表现就是「提示已解除，界面还显示着那个凭据」。
-    // 和 loadMcpBinding 拉的是同一个服务的全部绑定，谁先谁后内容都一致。
-    headerBindings.value = map
+    paramFixedBindings.value = map
     slotRules.value = rules
     return true
   } catch {
@@ -1403,21 +1401,13 @@ async function loadBindingsFor(serverId: string) {
   }
 }
 
-/** 任意槽位的固定绑定（header:/arg: 共用一个 map；规则另有 slotRules） */
-const bindingOfSlot = (slot: string): HeaderBinding | null =>
-  headerBindings.value[slot] || pendingBindings.value[slot] || null
-
 /** 同槽位的「规则」绑定。规则与固定绑定是两条独立记录，可以同时存在。 */
 const ruleBindingOfSlot = (slot: string): HeaderBinding | null => {
-  const binding = slotRules.value[slot] || pendingBindings.value[slot] || null
-  return binding && (binding.strategy || 'fixed') === 'rule' ? binding : null
+  return slotRules.value[slot] || null
 }
 
 /** 同槽位的「固定凭据」绑定（规则未命中时的回退目标也是它） */
-const fixedBindingOfSlot = (slot: string): HeaderBinding | null => {
-  const binding = headerBindings.value[slot] || pendingBindings.value[slot] || null
-  return binding && (binding.strategy || 'fixed') !== 'rule' ? binding : null
-}
+const fixedBindingOfSlot = (slot: string): HeaderBinding | null => paramFixedBindings.value[slot] || null
 
 /** 正在为哪个参数挑凭据；非空时显示绑定弹窗。和 Header 那个是同一套选择器。 */
 const paramBindCtx = ref<{ tool: any; name: string } | null>(null)
@@ -1427,7 +1417,7 @@ const paramBindBusy = ref(false)
 
 function openParamBind(tool: any, name: string) {
   paramBindCtx.value = { tool, name }
-  const existing = bindingOfSlot(paramSlot(tool, name))
+  const existing = fixedBindingOfSlot(paramSlot(tool, name))
   paramBindSecretId.value = existing?.secret_id || null
   paramBindPicked.value = existing
     ? { id: existing.secret_id, secret_key: existing.secret_key }
@@ -1471,8 +1461,7 @@ async function saveParamBind() {
         },
       })
       // 立刻清本地，别等 load——万一 load 失败，界面会一直显示已解绑的样子
-      delete headerBindings.value[slot]
-      delete pendingBindings.value[slot]
+      if (paramMarkTarget.value?.tool === ctx.tool) delete paramFixedBindings.value[slot]
       showToast(`已解除 ${ctx.name} 的绑定`, 'success')
     }
     paramBindCtx.value = null
@@ -1508,8 +1497,11 @@ function applyLocatorRule(rule: LocatorRule) {
 
 /** 该参数可当键的入参名：所有普通参数去掉自己（不能用一个凭据参数当键） */
 function locatorArgOptions(tool: any, self: string): string[] {
-  const marked = new Set(credentialParamList(tool))
-  return toolParamNames(tool).filter((name) => name !== self && !marked.has(name))
+  return paramToolNames(tool).filter(name => name !== self && paramDraft.value[name] === 'model')
+}
+
+function paramToolNames(tool: any): string[] {
+  return paramCredentialConfig.value?.parameters.map(({ name }) => name) ?? toolParamNames(tool)
 }
 
 function openParamMark(tool: any, param = '') {
@@ -1535,34 +1527,48 @@ async function reloadParamMark(tool: any, param = '') {
   paramCredentialMode.value = 'legacy'
   paramCredentialError.value = ''
   paramSaveError.value = ''
+  paramSaveConflict.value = false
+  paramConflictDraft.value = null
   paramResultFields.value = ''
   confirmLegacyMode.value = false
   paramProfileLoading.value = true
-  const configRequest = getMcpCredentialConfig(String(tool.id)).then(config => {
-    if (paramMarkTarget.value !== target) return
-    paramCredentialConfig.value = config
-    paramResultFields.value = initialMcpResultFieldText(config.model_result_policy)
-    if (config.profile) paramCredentialMode.value = 'group'
-    else if (!config.model_result_policy) paramCredentialError.value = '当前后端版本不支持同时保存结果字段，请升级后重试。'
-  }).catch(err => {
-    if (paramMarkTarget.value === target) paramCredentialError.value = credentialError(err, '无法加载凭据配置')
-  }).finally(() => {
-    if (paramMarkTarget.value === target) paramProfileLoading.value = false
-  })
   paramFocus.value = param
+  paramFixedBindings.value = {}
+  slotRules.value = {}
   paramDraft.value = {}
   paramRuleDraft.value = {}
   paramBindingsLoading.value = true
   try {
+    // 先读修订，再读绑定。若两次读取之间有提交，保留旧修订让保存返回 409；
+    // 反过来或并发读取，可能用旧绑定配上新修订而静默覆盖已保存的设置。
+    const config = await getMcpCredentialConfig(String(tool.id))
+    if (paramMarkTarget.value !== target) return
+    paramCredentialConfig.value = config
+    if (Array.isArray(config.credential_params)) tool.credential_params = JSON.stringify(config.credential_params)
+    paramResultFields.value = initialMcpResultFieldText(config.model_result_policy)
+    if (config.profile) {
+      paramCredentialMode.value = 'group'
+      return
+    }
+    if (!config.model_result_policy) {
+      paramCredentialError.value = '当前后端版本不支持同时保存结果字段，请升级后重试。'
+      return
+    }
     const loaded = await loadBindingsFor(serverId)
-    if (paramMarkTarget.value === target && !loaded) paramCredentialError.value = '无法加载凭据绑定，请关闭后重新打开参数设置。'
+    if (paramMarkTarget.value !== target) return
+    if (!loaded) {
+      paramCredentialError.value = '无法加载凭据绑定，请关闭后重新打开参数设置。'
+      return
+    }
+    buildParamDraft(tool)
+  } catch (err) {
+    if (paramMarkTarget.value === target) paramCredentialError.value = credentialError(err, '无法加载凭据配置')
   } finally {
-    if (paramMarkTarget.value === target) paramBindingsLoading.value = false
+    if (paramMarkTarget.value === target) {
+      paramBindingsLoading.value = false
+      paramProfileLoading.value = false
+    }
   }
-  await configRequest
-  // 拉的过程中用户可能已经关了弹窗、或点了另一个工具的参数设置
-  if (paramMarkTarget.value !== target) return
-  buildParamDraft(tool)
 }
 
 /** 按「刚拉回来的绑定」算草稿：有规则就以规则为准，其次固定凭据，最后才是模型填写 */
@@ -1570,7 +1576,7 @@ function buildParamDraft(tool: any) {
   const marked = new Set(credentialParamList(tool))
   const draft: Record<string, ParamSource> = {}
   const rules: Record<string, LocatorRule | null> = {}
-  for (const name of toolParamNames(tool)) {
+  for (const name of paramToolNames(tool)) {
     const slot = paramSlot(tool, name)
     const rule = ruleBindingOfSlot(slot)?.rule || null
     if (rule) {
@@ -1587,9 +1593,22 @@ function buildParamDraft(tool: any) {
   paramRuleDraft.value = rules
 }
 
+async function reloadConflictingParamMark() {
+  const tool = paramMarkTarget.value?.tool
+  if (!tool || paramMarkBusy.value || paramProfileLoading.value || !paramSaveConflict.value) return
+  const draft = {
+    resultFields: paramResultFields.value, sources: { ...paramDraft.value }, rules: { ...paramRuleDraft.value },
+  }
+  const loading = reloadParamMark(tool)
+  const target = paramMarkTarget.value
+  await loading
+  if (paramMarkTarget.value !== target) return
+  paramConflictDraft.value = draft
+}
+
 async function submitParamMark() {
   const target = paramMarkTarget.value
-  if (!target || paramMarkBusy.value) return
+  if (!target || paramMarkBusy.value || paramSaveConflict.value) return
   // 绑定还没回来时草稿是空的，这时候保存会把所有来源清成「模型填写」
   if (paramBindingsLoading.value) return
   if (paramProfileLoading.value || paramBindBusy.value || paramCredentialError.value) return
@@ -1612,51 +1631,49 @@ async function submitParamMark() {
   paramMarkBusy.value = true
   paramSaveError.value = ''
   try {
-    // 规则绑定先落库。它和「固定凭据」是两条独立记录，同槽位可以并存
-    // （规则负责定位、固定当 on_miss=fallback_fixed 的回退目标）。
+    // 规则和参数来源、结果策略共用一个事务；固定凭据仍用原绑定入口。
+    const bindingChanges: Array<{
+      parameter: string; operation: 'upsert_rule' | 'delete_rule'; is_global: boolean; rule?: LocatorRule;
+    }> = []
     for (const [name, source] of Object.entries(paramDraft.value)) {
       const slot = paramSlot(tool, name)
+      const saved = ruleBindingOfSlot(slot)
       const rule = paramRuleDraft.value[name] || null
       if (source === 'rule') {
-        if (!rule) continue
-        await axios.post('/api/portal/secrets/bindings', {
-          consumer_type: 'mcp_server',
-          consumer_id: serverId,
-          slot,
-          strategy: 'rule',
-          rule,
-          is_global: isGlobalBinding.value,
-        })
-      } else if (ruleBindingOfSlot(slot)) {
-        // 从规则改成别的来源：把旧规则删掉。留着它不会生效（credential_params
-        // 仍会移除参数），但下次打开弹窗会被回填成「规则」，用户会以为没改成功。
-        await axios.delete('/api/portal/secrets/bindings', {
-          data: {
-            consumer_type: 'mcp_server',
-            consumer_id: serverId,
-            slot,
-            strategy: 'rule',
-            is_global: isGlobalBinding.value,
-          },
-        })
-        // 本地也立刻清：下一步可能因网络失败没跑到 loadBindingsFor，
-        // 而弹窗已经关了，再打开会显示一条其实已经删掉的规则
-        delete slotRules.value[slot]
+        if (rule && JSON.stringify(rule) !== JSON.stringify(saved?.rule)) {
+          bindingChanges.push({ parameter: name, operation: 'upsert_rule', rule, is_global: isGlobalBinding.value })
+        }
+      } else if (saved) {
+        bindingChanges.push({ parameter: name, operation: 'delete_rule', is_global: isGlobalBinding.value })
       }
+    }
+    if (bindingChanges.length && !config.supports_atomic_parameter_rules) {
+      paramSaveError.value = '当前后端版本不支持同时保存参数规则，请升级后重试。'
+      return
     }
     const res = await axios.put(`/api/portal/mcp/tools/${tool.id}/credential-params`, {
       params: next,
       model_result_fields: splitMcpResultPaths(paramResultFields.value),
       expected_revision: policy.revision,
       expected_target: policy.target,
+      ...(bindingChanges.length ? { binding_changes: bindingChanges } : {}),
     })
     if (!res.data?.model_result_policy) throw new Error('保存响应缺少结果策略')
+    if (bindingChanges.length && res.data.binding_changes_applied !== bindingChanges.length) {
+      paramSaveConflict.value = true
+      paramSaveError.value = '服务未确认规则已保存，请确认后端已升级，然后重新加载设置。'
+      return
+    }
     // 用后端回的真实值，别拿本地草稿当结果——不一致时界面会一直显示旧状态
     const saved = res.data?.credential_params
     tool.credential_params = JSON.stringify(Array.isArray(saved) ? saved : next)
     paramCredentialConfig.value = { ...config, model_result_policy: res.data.model_result_policy }
     const warning = res.data.warnings?.find((item: { code: string }) => item.code === 'MCP_RESULT_FIELDS_INVALID')
     if (warning) {
+      if (bindingChanges.length && !await loadBindingsFor(serverId)) {
+        if (paramMarkTarget.value === target) paramCredentialError.value = '规则已保存，无法读取最新绑定。请重新打开参数设置。'
+        return
+      }
       paramSaveError.value = `结果已设为模型不可见。${warning.message}`
       return
     }
@@ -1671,6 +1688,7 @@ async function submitParamMark() {
     // 重新拉一遍：本地改的是列表里的对象引用，一旦别处刷新就会被旧数据盖回去
     await fetchServers()
   } catch (e: any) {
+    if (e.response?.status === 409) paramSaveConflict.value = true
     paramSaveError.value = credentialError(e, '保存失败，请重试')
     showToast(paramSaveError.value, 'error')
   } finally {
@@ -4435,6 +4453,21 @@ onMounted(fetchServers)
                 </div>
                 <p v-if="paramCredentialError" role="alert" class="mb-2 text-xs text-rose-700">{{ paramCredentialError }}</p>
                 <p v-if="paramSaveError" role="alert" class="mb-2 text-xs text-rose-700">{{ paramSaveError }}</p>
+                <button v-if="paramSaveConflict" type="button" :disabled="paramMarkBusy || paramProfileLoading"
+                  class="mb-3 rounded border px-2 py-1 text-xs text-blue-700"
+                  @click="reloadConflictingParamMark">重新加载并保留草稿</button>
+                <details v-if="paramConflictDraft" class="mb-3 rounded border bg-slate-50 p-2 text-xs">
+                  <summary class="cursor-pointer">查看冲突前的草稿</summary>
+                  <p class="mt-2 whitespace-pre-wrap break-all">{{ paramConflictDraft.resultFields || '结果路径为空' }}</p>
+                  <ul class="mt-2 space-y-1">
+                    <li v-for="(source, name) in paramConflictDraft.sources" :key="name" class="break-all">
+                      {{ name }}：{{ source === 'model' ? '模型填写' : source === 'cred' ? '固定凭据' : '规则凭据' }}
+                      <span v-if="source === 'rule' && paramConflictDraft.rules[name]?.key_source">
+                        （{{ paramConflictDraft.rules[name]?.key_source }}）
+                      </span>
+                    </li>
+                  </ul>
+                </details>
                 <McpCredentialProfileForm v-if="paramCredentialMode === 'group' && paramCredentialConfig"
                   :key="paramMarkTarget.tool.id" :tool-id="paramMarkTarget.tool.id" :config="paramCredentialConfig"
                   @saved="handleGroupSaved" />
@@ -4449,7 +4482,7 @@ onMounted(fetchServers)
                   :key="paramMarkTarget.tool.id" v-model="paramResultFields"
                   :policy="paramCredentialConfig.model_result_policy" class="mb-3"
                   :busy="paramMarkBusy"
-                  :disabled="paramMarkBusy || paramBindingsLoading || paramProfileLoading || !!paramCredentialError || draftUnboundNames.length > 0 || paramBindBusy"
+                  :disabled="paramSaveConflict || paramMarkBusy || paramBindingsLoading || paramProfileLoading || !!paramCredentialError || draftUnboundNames.length > 0 || paramBindBusy"
                   @save="submitParamMark" />
                 <p v-if="paramCredentialConfig?.parameters.some(item => item.sensitive && paramDraft[item.name] === 'model')"
                   role="alert" class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-800">
@@ -4475,7 +4508,7 @@ onMounted(fetchServers)
                   </thead>
                   <tbody>
                     <tr
-                      v-for="name in toolParamNames(paramMarkTarget.tool)"
+                      v-for="name in paramToolNames(paramMarkTarget.tool)"
                       :key="name"
                       :class="[
                         'border-t border-gray-100',
@@ -4605,7 +4638,7 @@ onMounted(fetchServers)
                   >取消</button>
                   <button
                     type="button"
-                    :disabled="paramMarkBusy || paramBindingsLoading || paramProfileLoading || !!paramCredentialError || draftUnboundNames.length > 0 || paramBindBusy || !paramCredentialConfig?.model_result_policy"
+                    :disabled="paramSaveConflict || paramMarkBusy || paramBindingsLoading || paramProfileLoading || !!paramCredentialError || draftUnboundNames.length > 0 || paramBindBusy || !paramCredentialConfig?.model_result_policy"
                     :title="draftUnboundNames.length
                       ? [
                           draftMissingCred.length ? draftMissingCred.join('、') + ' 还没选凭据' : '',

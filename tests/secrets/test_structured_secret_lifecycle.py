@@ -436,7 +436,7 @@ async def test_mcp_injects_authorized_credentials_and_only_returns_approved_data
         assert "synthetic-mail-only" not in chunks[0].content[0].text
     else:
         result = await invoke("101", args)
-        assert result == {"status": "success", "result_visibility": "restricted"}
+        assert result == {"status": "success", "result_visibility": "restricted", "reason": "fields_not_configured"}
     assert observed == [("list_mail", expected)]
     await asyncio.sleep(0)
     assert audits and audits[0]["arguments"] == {} and audits[0]["tool_output"] is None
@@ -760,7 +760,7 @@ async def test_header_authenticated_tool_projects_saved_fields_without_a_credent
     assert audits[0]["tool_output"] is None and audits[0]["arguments"] == {}
 
     server.sse_url = "https://mcp.example.test/new-endpoint"
-    assert await invoke() == [{"status": "success", "result_visibility": "restricted"}]
+    assert await invoke() == [{"status": "success", "result_visibility": "restricted", "reason": "fields_stale"}]
     config = (await mcp_credential_profiles.get_profile(tool.id, user=owner, db=db))["data"]
     assert config["model_result_policy"]["stale"]
     stale_save = mcp_credential_profiles.ModelResultFieldsRequest(
@@ -780,7 +780,7 @@ async def test_header_authenticated_tool_projects_saved_fields_without_a_credent
     )
     assert cleared["data"]["model_result_fields"] == []
     Transport.auth_headers = {}
-    assert await invoke() == [{"status": "success", "result_visibility": "restricted"}]
+    assert await invoke() == [{"status": "success", "result_visibility": "restricted", "reason": "fields_not_configured"}]
 
 
 async def test_saving_without_result_fields_hides_previously_visible_data(mcp_fixture):

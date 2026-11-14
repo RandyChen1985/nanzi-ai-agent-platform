@@ -179,7 +179,7 @@ async def test_model_sees_choice_field_and_its_choice_reaches_the_wire(seeded, f
 
     # ② 模型按 schema 填参（username=C 匹配不上 cc，只能靠编号兜底）
     result = await _call_via_spec(spec, username="C", subject="hi", credential_choice_1="c3")
-    assert result == {"status": "success", "result_visibility": "restricted"}
+    assert result == {"status": "success", "result_visibility": "restricted", "reason": "fields_not_configured"}
 
     # ③ 出站参数：值来自 CC；编号字段绝不能发给远端
     sent = fake_runtime["arguments"]

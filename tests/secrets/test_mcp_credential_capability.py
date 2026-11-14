@@ -181,10 +181,12 @@ async def test_binding_query_failure_preserves_tool_with_unknown_mode(bound_regi
 
 @pytest.mark.parametrize("operation", ["health", "health_check", "healthcheck", "unhealthy", "health_delete"])
 def test_health_purpose_uses_exact_local_operation_mapping(operation):
-    tool = McpToolFactory.create_tool(record(operation=operation, params=()), verify_profile=True)
+    tool = McpToolFactory.create_tool(record(operation=operation), verify_profile=True)
     assert ("服务健康检查" in tool.description) == (operation in {"health", "health_check", "healthcheck"})
     assert "synthetic-remote-description" not in tool.description
-    assert tool.runtime_metadata.get("mcp_credential") == {"mode": "none", "candidate_lookup_required": False}
+    assert tool.runtime_metadata.get("mcp_credential") == {
+        "mode": "parameter_bindings", "candidate_lookup_required": False,
+    }
 
 
 def test_public_credential_info_drops_internal_fields_and_recomputes_candidate_flag():

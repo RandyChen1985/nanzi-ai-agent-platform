@@ -86,8 +86,12 @@ def credential_info(profile, credential_type_name, parameters, binding_modes) ->
     return public_credential_info({"mode": mode})
 
 
-def model_credential_description(tool_name: str, info: dict) -> str:
-    # 仅精确匹配本地操作白名单，不把远端名称或描述直接拼入模型说明。
+def model_credential_description(
+    tool_name: str, info: dict, remote_description: str | None = None, *, allow_remote: bool = False,
+) -> str:
+    if allow_remote and info.get("mode") == "none" and isinstance(remote_description, str) and remote_description.strip():
+        return remote_description
+    # 凭据相关工具的说明只取本地操作名和配置，避免公开远端认证指导。
     operation = str(tool_name).split(":", 1)[-1].lower()
     purpose = "服务健康检查。" if operation in {"health", "health_check", "healthcheck"} else "调用 MCP 工具。"
     kind = info.get("credential_type", {})

@@ -7,11 +7,11 @@ import logging
 import re
 import time
 from typing import Dict, Any, List, Optional
-from pydantic import create_model, Field
+from pydantic import AliasChoices, create_model, Field
 from app.services.ai.tools.model_tool_name import build_model_tool_name
 from app.services.ai.tools.tool_compat import StructuredTool
 from app.models.mcp import McpToolCache
-from app.services.ai.tools.mcp_client import McpClientService, safe_mcp_timeout_error
+from app.services.ai.tools.mcp_client import McpClientService, McpProtectedCallError, safe_mcp_timeout_error
 from app.services.ai.runtime.agentscope.tool_timeout import (
     get_active_tool_timeout_seconds,
     load_agent_max_toolcall_timeout,
@@ -23,9 +23,10 @@ from app.services.secrets.injection import apply_mcp_arg_bindings, denial_hint, 
 from app.services.secrets.redact import collect_injected_from_context
 from app.services.secrets.credential_approval import MCP_CREDENTIAL_REF, approved_arguments_digest
 from app.services.secrets.mcp_capability import MCP_CREDENTIAL_INFO, credential_info, model_credential_description
-from app.services.secrets.mcp_model_result import ProjectedMcpResult, restricted_model_result
+from app.services.secrets.mcp_model_result import ProjectedMcpResult, RestrictedMcpResult, restricted_model_result
 from app.services.secrets.mcp_profiles import (
-    CredentialInvocationError, McpCredentialInvocation, model_schema, structural_schema, unbound_sensitive_args,
+    CredentialInvocationError, McpCredentialInvocation, business_mcp_schema, model_schema,
+    parse_schema, unbound_sensitive_args,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,13 +114,13 @@ async def stream_remote_tool_with_progress(
             )
         except TimeoutError as timeout_exc:
             raise safe_mcp_timeout_error(timeout_exc, protected=True) from None
-        except CredentialInvocationError as exc:
+        except (CredentialInvocationError, McpProtectedCallError) as exc:
             yield {"status": "error", "code": exc.code}
         except Exception:
             yield {"status": "error", "code": "CREDENTIAL_TOOL_FAILED"}
         else:
             # 只接受客户端经本地字段规则筛选后的类型；原始字典不能走这条分支。
-            yield result if isinstance(result, ProjectedMcpResult) else restricted_model_result()
+            yield result if isinstance(result, (ProjectedMcpResult, RestrictedMcpResult)) else restricted_model_result()
         return
 
     from agentscope.message import ToolResultState
@@ -241,8 +242,10 @@ def _map_schema_type(param_def: dict[str, Any]) -> Any:
 
     # 兼容 type 为列表的情况，如 ["string", "null"]
     if isinstance(raw_type, list):
-        non_null_types = [t for t in raw_type if t != "null"]
-        type_str = non_null_types[0] if non_null_types else "string"
+        non_null_types = {t for t in raw_type if isinstance(t, str) and t != "null"}
+        if len(non_null_types) != 1:
+            return Any
+        type_str = next(iter(non_null_types))
     elif isinstance(raw_type, str):
         type_str = raw_type
     else:
@@ -250,8 +253,6 @@ def _map_schema_type(param_def: dict[str, Any]) -> Any:
             type_str = "array"
         elif "properties" in param_def:
             type_str = "object"
-        elif "enum" in param_def:
-            type_str = "string"
         else:
             return Any
 
@@ -317,35 +318,6 @@ def credential_param_names(tool_record: Any) -> list[str]:
     return [n for n in names if isinstance(n, str) and n.strip()]
 
 
-# 已知的通用参数名称可以直接解释给模型。其他远端字符串使用本地别名。
-_SAFE_MODEL_FIELDS = {
-    "credential_account", "query", "text", "limit", "offset", "page", "page_size",
-    "folder", "start", "end", "timeout", "format", "id", "count", "name", "username", "subject", "keyword",
-    "command",
-}
-
-
-def _alias_model_properties(schema: dict) -> dict[str, str]:
-    properties = schema.get("properties")
-    if not isinstance(properties, dict):
-        return {}
-    new_props = {}
-    aliases = {}
-    for index, (name, spec) in enumerate(properties.items(), start=1):
-        alias = name if name in _SAFE_MODEL_FIELDS else f"arg_{index}"
-        if alias != name:
-            aliases[alias] = name
-        # 嵌套对象只暴露类型。来自远端的子属性名可包含任意文本。
-        if isinstance(spec, dict) and spec.get("type") in ("object", "array"):
-            spec = {"type": spec["type"]}
-        new_props[alias] = spec
-    schema["properties"] = new_props
-    if isinstance(schema.get("required"), list):
-        by_source = {value: key for key, value in aliases.items()}
-        schema["required"] = [by_source.get(name, name) for name in schema["required"]]
-    return aliases
-
-
 class McpToolFactory:
     @staticmethod
     def create_tool(
@@ -356,52 +328,33 @@ class McpToolFactory:
         Creates a runtime StructuredTool-compatible wrapper from a cached MCP tool record.
         """
         
-        # 1. Parse JSON Schema from MCP
-        remote_schema = json.loads(tool_record.parameter_schema or "{}")
-        _credential_args = [] if credential_profile else credential_param_names(tool_record)
+        remote_schema = parse_schema(tool_record)
+        _credential_args = [] if credential_profile is not None else credential_param_names(tool_record)
         unmapped = unbound_sensitive_args(remote_schema, _credential_args) if credential_profile is None else set()
+        protected_args = set(_credential_args) | unmapped
         if credential_profile is not None:
             schema_def = model_schema(remote_schema, credential_profile, type_name=credential_type_name)
-        elif verify_profile:
-            schema_def = structural_schema({**remote_schema, "type": "object"})
+        elif verify_profile or (
+            protected_args and (
+                isinstance(remote_schema.get("properties"), dict)
+                or {"$defs", "definitions", "$ref"} & remote_schema.keys()
+            )
+        ):
+            schema_def = business_mcp_schema(remote_schema, protected_args)
         else:
-            schema_def = remote_schema
-        properties = schema_def.get("properties", {})
-        required_fields = set(schema_def.get("required", []))
+            # 保持直接调用方读取历史扁平 schema 的方式。
+            schema_def = {name: spec for name, spec in remote_schema.items() if name not in protected_args}
+
         public_credential = credential_info(
             credential_profile, credential_type_name, _credential_args, parameter_binding_modes,
         )
-        description = (
-            model_credential_description(tool_record.tool_name, public_credential)
-            if verify_profile or credential_profile or _credential_args else (tool_record.tool_description or "")
+        description = model_credential_description(
+            tool_record.tool_name, public_credential, tool_record.tool_description,
+            allow_remote=credential_profile is None and not protected_args,
         )
 
-        # 声明过「值由凭据提供」的参数从模型可见的参数里剔除：留着的话模型会
-        # 自己编一个值填进去，而平台随后又要用凭据覆盖它，等于骗了模型一次，
-        # 日志里也看不出这个值到底是谁给的。
-        #
-        # 要改的是**两份** schema：
-        #   - ``args_schema``：本地调用校验用；
-        #   - ``schema_def``（→ ``tool.mcp_input_schema``）：这才是真正送给模型的
-        #     参数表——``_schema_from_legacy_tool`` 与 ``legacy_tools_to_openai_schemas``
-        #     两处都优先读它，只在 args_schema 上做改动，模型什么也看不到。
-        protected_args = set(_credential_args) | unmapped
-        for _name in protected_args:
-            properties.pop(_name, None)
-            if not isinstance(schema_def.get("properties"), dict):
-                # 扁平形态：顶层就是参数表，上面的 pop 改的是新 dict，没回写
-                schema_def.pop(_name, None)
-            required_fields.discard(_name)
-        if protected_args and isinstance(schema_def.get("required"), list):
-            remaining = [n for n in schema_def["required"] if n not in protected_args]
-            if remaining:
-                schema_def["required"] = remaining
-            else:
-                # 空 required 留着只会让模型以为「必填但没定义」
-                schema_def.pop("required", None)
-
         fields = {}
-        alias_to_param = _alias_model_properties(schema_def) if verify_profile and credential_profile is None else {}
+        alias_to_param = {}
         properties = schema_def.get("properties", {})
         required_fields = set(schema_def.get("required", []))
         for param_name, param_def in properties.items():
@@ -421,13 +374,19 @@ class McpToolFactory:
             alias = _safe_field_name(param_name)
             base_alias = alias
             suffix = 2
-            while alias in fields or (alias != param_name and alias in properties):
+            while alias in fields or (alias != param_name and (alias in properties or alias in protected_args)):
                 alias = f"{base_alias}_{suffix}"
                 suffix += 1
-            if alias != param_name:
+            validation_alias = param_name
+            if not verify_profile and alias != param_name:
                 alias_to_param[alias] = param_name
+                validation_alias = AliasChoices(param_name, alias)
 
-            fields[alias] = (field_type, Field(default=p_default, description=p_desc))
+            fields[alias] = (
+                field_type,
+                Field(default=p_default, description=p_desc, serialization_alias=param_name,
+                      validation_alias=validation_alias),
+            )
         
         # 凭据参数被剔除了，但「规则没匹配上时让模型挑一条」需要一条回传通道：
         # 固定绑定不需要编号；规则和策略未知的参数保留兼容通道。候选清单
@@ -435,14 +394,21 @@ class McpToolFactory:
         # 候选从 ``list_my_credentials`` 拿，两边用同一套编号（排序后的序号）。
         from app.services.secrets.locator import choice_field
 
-        for index, _name in enumerate(_credential_args, start=1):
+        choice_to_param = {}
+        choice_index = 0
+        for _name in _credential_args:
+            choice_index += 1
             if (parameter_binding_modes or {}).get(_name) == "fixed":
                 continue
-            _alias = f"credential_choice_{index}" if verify_profile else choice_field(_name)
-            if _alias in fields:
-                continue
+            _alias = choice_field(_name)
             if verify_profile:
-                alias_to_param[_alias] = choice_field(_name)
+                _alias = f"credential_choice_{choice_index}"
+                while _alias in properties or _alias in fields or _alias in protected_args:
+                    choice_index += 1
+                    _alias = f"credential_choice_{choice_index}"
+                choice_to_param[_alias] = _name
+            elif _alias in fields:
+                continue
             _choice_desc = (
                 "可选凭据编号，由 list_my_credentials 提供。只在平台规则未命中且允许选择时生效。"
             )
@@ -474,7 +440,13 @@ class McpToolFactory:
                 yield {"status": "error", "code": "CREDENTIAL_MAPPING_REQUIRED"}
                 return
             original_digest = approved_arguments_digest(kwargs) if credential_profile is not None else None
-            # 字段别名 → 远端原始参数名（只有不合法名字才会出现在映射里）
+            # 凭据编号独立传给解析器，避免与远端同名业务字段冲突。
+            parameter_choices = []
+            for alias, name in choice_to_param.items():
+                value = kwargs.pop(alias, None)
+                if isinstance(value, str):
+                    parameter_choices.append((name, value))
+            # 仅旧调用入口接受本地字段别名。公开 schema 已使用原名，扩展键也按原样传递。
             if alias_to_param:
                 kwargs = {
                     alias_to_param.get(key, key): value
@@ -537,6 +509,7 @@ class McpToolFactory:
                     tool_record.id, credential_profile.revision if credential_profile else None,
                     profile_id=credential_profile.profile_id if credential_profile else None,
                     arguments_digest=original_digest,
+                    parameter_choices=tuple(parameter_choices),
                 )
                 identity_kwargs["conversation_id"] = getattr(context, "conversation_id", None)
 
@@ -553,7 +526,7 @@ class McpToolFactory:
             ):
                 yield item
         
-        _execute.__doc__ = description or f"MCP tool: {tool_record.tool_name}"
+        _execute.__doc__ = description
         
         # 数据库存储的冒号名称仅作平台标识；模型侧使用合法别名，执行闭包仍保留原始 MCP 名称。
         tool = StructuredTool.from_function(
@@ -564,7 +537,7 @@ class McpToolFactory:
             args_schema=args_schema
         )
         tool.display_name = tool_record.tool_name
-        # 保留远端原始 Schema；args_schema 仅负责兼容本地参数校验，不能替代嵌套约束。
+        # args_schema 只负责本地类型适配。模型看到原名及业务结构。
         tool.mcp_input_schema = schema_def
         # 逐参数绑定可随时变更，依赖其策略裁剪的模型参数表必须在加载时重建。
         tool.has_mcp_parameter_bindings = bool(_credential_args)
@@ -577,12 +550,12 @@ class McpToolFactory:
             }
 
         declared_types = set()
-        for value in schema_def.get("x-nanzi-evidence-types") or []:
+        for value in remote_schema.get("x-nanzi-evidence-types") or []:
             try:
                 declared_types.add(EvidenceType(value))
             except (TypeError, ValueError):
                 logger.warning("Ignoring invalid evidence type %r for %s", value, tool_record.tool_name)
-        annotations = schema_def.get("x-nanzi-mcp-annotations") or {}
+        annotations = remote_schema.get("x-nanzi-mcp-annotations") or {}
 
         # 只读权限与证据推断
         from app.services.ai.tools.registry import _is_read_only_mcp_tool
@@ -614,7 +587,7 @@ class McpToolFactory:
             tool.evidence_types = frozenset({EvidenceType.EXTERNAL_TOOL})
 
         if getattr(tool, "evidence_types", None):
-            declared_policy = schema_def.get("x-nanzi-evidence-policy")
+            declared_policy = remote_schema.get("x-nanzi-evidence-policy")
             tool.evidence_policy = (
                 declared_policy
                 if declared_policy in {"non_empty", "structured_success", "allow_empty_success"}

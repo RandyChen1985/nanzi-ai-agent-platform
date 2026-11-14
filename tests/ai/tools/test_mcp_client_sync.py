@@ -46,7 +46,11 @@ async def test_sync_tools_unpublishes_tools_removed_from_remote_server():
     db_context.__aenter__.return_value = db
     db_context.__aexit__.return_value = None
 
-    with patch.object(
+    async def invalidate_after_commit():
+        db.commit.assert_awaited_once()
+
+    with patch("app.services.mcp.tool_cache_revision.advance_tool_revision",
+               AsyncMock(side_effect=invalidate_after_commit)) as notify, patch.object(
         McpClientService,
         "list_remote_tools",
         AsyncMock(return_value=[live_tool]),
@@ -61,6 +65,7 @@ async def test_sync_tools_unpublishes_tools_removed_from_remote_server():
     assert stale_tool.is_available is False
     assert db.add.call_count == 1
     db.commit.assert_awaited_once()
+    notify.assert_awaited_once()
 
 
 @pytest.mark.asyncio

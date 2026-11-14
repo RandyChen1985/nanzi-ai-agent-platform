@@ -9,8 +9,9 @@ pytestmark = pytest.mark.no_infrastructure
 
 
 @pytest.mark.parametrize("case", [
-    "type_status", "type_filter", "type_details", "personal_options", "admin_options",
-    "picker_global_disabled", "picker_type_disabled", "picker_existing", "picker_stale",
+    "type_status", "type_filter", "type_details", "type_conflict", "personal_options", "admin_options",
+    "picker_global_disabled", "picker_type_disabled", "picker_existing", "picker_stale", "tester_ready",
+    "scenarios", "mount_saving", "tester_switch",
 ])
 def test_creation_gate_behavior(case):
     result = subprocess.run(

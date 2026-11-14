@@ -11,16 +11,20 @@
 3. 管理员在「系统配置 → 参数配置 → 凭证策略」展开密钥生成帮助，按下节在本地生成密钥并填写 `credential_payload_keyring_json`，再设置 `structured_credentials_enabled`。保存后平台从主库读取对应设置。首次保存前沿用原来的部署密钥环与活跃编号。密钥环 JSON 以明文保存在主库，主库备份包含这些值。
 4. 从个人 IMAP 测试工具开始，依次验证创建、固定和按次授权、助手恢复、调度恢复、API 固定字段。启用的类型可选，保存结构化值需要有效的密钥环。系统凭据统一检查凭据中心的共享授权及类型、场景、域名等条件，无需再次配置逐工具凭据授权。使用合成值和模拟上游。
 
-以下命令供部署人员在确认目标库后手动执行；本次代码整理没有执行迁移：
+V218/V118 保持原样，PR #315 的后续迁移 MySQL V219 / PostgreSQL V119 单独补齐兼容问题。MySQL 读取现有 MCP 缓存表两个 ID 列的实际 utf8mb4 排序规则，并只修改 profile 中对应列；标准 V43 基线使用 utf8mb4_unicode_ci。业务库的默认排序规则不能代替实测列定义，不需要改变服务器默认字符集、业务库默认值或账号摘要索引。修复文件也补齐等待和旧授权索引，保证长密文容量与微秒时间精度。同名索引定义不兼容或 MCP ID 列无法安全转换时，先核对造成冲突的结构和数据，再执行。
+
+以下命令供部署人员在确认目标库后手动执行。已经完成 V218/V118（或同等结构）时只需执行相应修复文件；双库测试使用单独临时库，未迁移业务库。
 
 ```bash
 # MySQL（与下面 PostgreSQL 命令二选一）
 ./db-prod/apply-sql.sh db-prod/V218-add-structured-credentials.sql
+./db-prod/apply-sql.sh db-prod/V219-align-structured-credential-storage.sql
 # PostgreSQL
 ./db-prod-pg/apply-sql.sh db-prod-pg/V118-add-structured-credentials.sql
+./db-prod-pg/apply-sql.sh db-prod-pg/V119-align-structured-credential-storage.sql
 ```
 
-前置基线为 MySQL V217 / PostgreSQL V117 及以前的适用主分支迁移。合并 SQL 是增量升级文件，不是空库基线；新环境仍由各自导入入口按序执行全套迁移。真实双库首次执行、部分升级和重复执行需在可销毁测试库验收，静态校验不能代替这一步。
+前置基线为 MySQL V217 / PostgreSQL V117 及以前的适用主分支迁移。合并 SQL 是增量升级文件，不是空库基线；新环境仍由各自导入入口按序执行全套迁移。修复文件的编号可能低于旧开发断点 V220/V120，遇到这种情况须显式指定对应文件名。独立回归使用现有导入器解析真实历史 SQL，在可销毁测试库检查首次、部分升级及重复执行，覆盖本功能所需表，不将其视为全站迁移验收。
 
 ### 本地生成密钥与保存配置
 

@@ -18,6 +18,8 @@ MAX_REQUEST = 16 * 1024 * 1024
 MAX_CAPTURE = 4 * 1024 * 1024
 MAX_ARTIFACT = 1024 * 1024
 MAX_ARTIFACTS = 8
+OUTPUT_REDACTED_NOTICE = "凭据脚本输出已脱敏，已移除凭据回显。"
+OUTPUT_HIDDEN_NOTICE = "凭据脚本部分或全部输出已隐藏，无法安全展示。"
 
 
 def make_redactor(values):
@@ -51,18 +53,33 @@ def clean_json(value, redact):
 
 
 def clean_output(text, redact):
+    return clean_output_with_notice(text, redact)[0]
+
+
+def clean_output_with_notice(text, redact):
     try:
         parsed = json.loads(text)
         cleaned = clean_json(parsed, redact)
         output = json.dumps(cleaned, ensure_ascii=False)
         # 凭据可能本身就是 JSON / 跨节点片段；叶子替换不能处理时隐藏整段。
         if (redact.contains(text) and cleaned == parsed) or redact.contains(output):
-            return ""
-        return output
+            return "", OUTPUT_HIDDEN_NOTICE
+        return output, OUTPUT_REDACTED_NOTICE if cleaned != parsed else ""
     except RecursionError:
-        return ""
+        return "", OUTPUT_HIDDEN_NOTICE
     except (ValueError, TypeError):
-        return redact(text)
+        output = redact(text)
+        if (not output.strip() and output != text) or contains_echo(output, redact):
+            return "", OUTPUT_HIDDEN_NOTICE
+        return output, OUTPUT_REDACTED_NOTICE if output != text else ""
+
+
+def output_notice(*notices):
+    if OUTPUT_HIDDEN_NOTICE in notices:
+        return OUTPUT_HIDDEN_NOTICE
+    if OUTPUT_REDACTED_NOTICE in notices:
+        return OUTPUT_REDACTED_NOTICE
+    return ""
 
 
 def contains_echo(text, redact):
@@ -189,10 +206,14 @@ def execute(request):
             cwd=work, env={**clean_env, **env},
             stdin=json.dumps(request["params"], ensure_ascii=False).encode(), timeout=float(request["timeout"]),
         )
+        # 先检查脚本原始输出，再改写产物列表，以保留对跨节点回显的检查。
+        raw_stdout = stdout
+        stdout, stdout_notice = clean_output_with_notice(raw_stdout, redact)
+        stderr, stderr_notice = clean_output_with_notice(stderr, redact)
         artifacts, blocked = [], 0
         try:
-            parsed = json.loads(stdout)
-        except (ValueError, TypeError):
+            parsed = json.loads(raw_stdout)
+        except (ValueError, TypeError, RecursionError):
             parsed = None
         declared = parsed.get("artifacts", []) if isinstance(parsed, dict) else []
         if not isinstance(declared, list):
@@ -212,12 +233,14 @@ def execute(request):
                 artifacts.append({"path": relative, "data": base64.b64encode(data).decode("ascii")})
             except (ValueError, OSError, UnicodeError):
                 blocked += 1
-        if isinstance(parsed, dict) and "artifacts" in parsed:
+        if stdout and isinstance(parsed, dict) and "artifacts" in parsed:
             parsed["artifacts"] = [item["path"] for item in artifacts]
-            stdout = json.dumps(parsed, ensure_ascii=False)
-        # 检查完整输出后才截断，避免截断导致无法匹配完整秘密。
-        stdout = clean_output(stdout, redact)
-        stderr = clean_output(stderr, redact)
+            stdout, rewrite_notice = clean_output_with_notice(json.dumps(parsed, ensure_ascii=False), redact)
+            stdout_notice = output_notice(stdout_notice, rewrite_notice)
+        # 提示写入既有 stderr 字段，扫描完整输出后再为提示预留空间。
+        notice = output_notice(stdout_notice, stderr_notice)
+        if notice:
+            stderr = f"{notice}\n{stderr}" if stderr else notice
         return {"exit_code": code, "stdout": bounded_text(stdout, 80 * 1024), "stderr": bounded_text(stderr, 8 * 1024),
                 "timed_out": timed_out, "artifacts": artifacts, "blocked_artifacts": blocked}
 

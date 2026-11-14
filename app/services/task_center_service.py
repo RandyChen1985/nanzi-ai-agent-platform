@@ -2,6 +2,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete, desc, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 from datetime import datetime
 import uuid
 
@@ -12,10 +13,16 @@ from app.services.ai.scheduler_service import (
     _task_run_conversation_prefix,
 )
 from app.services.cron_compat import validate_standard_crontab
+from app.services.secrets import task_credential_wait
 from app.services.secrets.task_credential_wait import TASK_CREDENTIAL_REFS_KEY, public_task_config
 from app.models.audit import AgentExecutionHistory
 
 logger = logging.getLogger(__name__)
+
+
+def _attach_next_run_time(task: AgentScheduledTask) -> None:
+    # 下次执行时间来自本节点调度器，仅用于展示。防止读接口结束时把 ORM 脏值提交到数据库。
+    set_committed_value(task, "next_run_at", scheduler_service.get_next_run_time(task.id))
 
 
 def attach_task_metrics(task: AgentScheduledTask) -> AgentScheduledTask:
@@ -78,7 +85,7 @@ class TaskCenterService:
         # Sync to scheduler
         await scheduler_service.upsert_task(new_task)
         # 回填下次执行时间，让 Web 响应与 AI 工具返回值能反映调度是否真的生效
-        new_task.next_run_at = scheduler_service.get_next_run_time(new_task.id)
+        _attach_next_run_time(new_task)
         
         return new_task
 
@@ -113,7 +120,7 @@ class TaskCenterService:
             # We attach creator_name and agent_name attribute for Pydantic to pick up
             task_obj.creator_name = real_name or user_name or f"User:{task_obj.user_id}"
             task_obj.agent_name = agent_name or task_obj.agent_id or "Unknown Agent"
-            task_obj.next_run_at = scheduler_service.get_next_run_time(task_obj.id)
+            _attach_next_run_time(task_obj)
             attach_task_metrics(task_obj)
             tasks.append(task_obj)
             
@@ -125,7 +132,7 @@ class TaskCenterService:
         result = await db.execute(stmt)
         task = result.scalar_one_or_none()
         if task:
-            task.next_run_at = scheduler_service.get_next_run_time(task.id)
+            _attach_next_run_time(task)
             attach_task_metrics(task)
         return task
 
@@ -137,39 +144,34 @@ class TaskCenterService:
     ) -> Optional[AgentScheduledTask]:
         if "cron_expr" in updates:
             validate_standard_crontab(str(updates.get("cron_expr") or ""))
-        if updates.get("status") == 1:
-            # 启动前确认库内表达式可调度：历史脏数据若直接启用，调度器只会打日志跳过，
-            # 用户（或 AI）会以为「已启动」而任务永远不跑。
-            current_cron = (
-                await db.execute(
-                    select(AgentScheduledTask.cron_expr).where(AgentScheduledTask.id == task_id)
-                )
-            ).scalar_one_or_none()
-            if current_cron:
-                validate_standard_crontab(current_cron)
-
-        if set(updates) & {"agent_id", "prompt", "config", "status", "cron_expr"}:
+        invalidated = []
+        definition_fields = {"agent_id", "prompt", "config", "status", "cron_expr", "conversation_id", "user_id"}
+        task = None
+        if definition_fields.intersection(updates):
             # 任务配置、授权恢复和指标写入统一先锁任务，再处理等待记录。
-            existing_config = (await db.execute(
-                select(AgentScheduledTask.config).where(AgentScheduledTask.id == task_id).with_for_update(),
-            )).scalar_one_or_none()
-            if "config" in updates:
-                existing_config = existing_config or {}
-                new_config = public_task_config(updates["config"]) or {}
-                for key in (TASK_METRICS_KEY, TASK_CREDENTIAL_REFS_KEY):
-                    if key in existing_config:
-                        new_config[key] = existing_config[key]
-                updates = {**updates, "config": new_config}
+            task = await db.get(AgentScheduledTask, task_id, with_for_update=True, populate_existing=True)
+            if task is not None:
+                previous_definition = (task.user_id, task_credential_wait.task_definition_digest(task))
+                if updates.get("status") == 1 and "cron_expr" not in updates and task.cron_expr:
+                    # 历史脏表达式不能直接启用。
+                    validate_standard_crontab(task.cron_expr)
+                if "config" in updates:
+                    existing_config = task.config if isinstance(task.config, dict) else {}
+                    new_config = public_task_config(updates["config"]) or {}
+                    for key in (TASK_METRICS_KEY, TASK_CREDENTIAL_REFS_KEY):
+                        if key in existing_config:
+                            new_config[key] = existing_config[key]
+                    updates = {**updates, "config": new_config}
 
-            from app.models.credential_type import TaskCredentialWait
-
-            await db.execute(update(TaskCredentialWait).where(
-                TaskCredentialWait.task_id == task_id, TaskCredentialWait.status == "pending",
-            ).values(status="cancelled", resolved_at=datetime.utcnow()))
-        stmt = update(AgentScheduledTask).where(AgentScheduledTask.id == task_id).values(**updates)
-        await db.execute(stmt)
+        if updates:
+            stmt = update(AgentScheduledTask).where(AgentScheduledTask.id == task_id).values(**updates)
+            await db.execute(stmt)
+        if task is not None and previous_definition != (task.user_id, task_credential_wait.task_definition_digest(task)):
+            invalidated = await task_credential_wait.invalidate_edited_waits(db, task)
         await db.commit()
-        
+        for request_id, user_id in invalidated:
+            await task_credential_wait.discard_task_credential_snapshot(request_id, user_id)
+
         updated_task = await TaskCenterService.get_task(db, task_id)
         if updated_task:
             await scheduler_service.upsert_task(updated_task)

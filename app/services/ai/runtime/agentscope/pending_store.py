@@ -111,11 +111,14 @@ class PendingAgentScopeStore:
             self._memory_fallback.pop(request_id, None)
         return snapshot
 
-    async def peek(self, request_id: str, *, user_id: str | int | None = None) -> PendingAgentScopeSnapshot | None:
+    async def peek(
+        self, request_id: str, *, user_id: str | int | None = None, strict: bool = False,
+    ) -> PendingAgentScopeSnapshot | None:
         await self.prune()
         from app.core.redis import get_redis
 
         redis = await get_redis()
+        read_error = None
         if redis:
             key = self._key(user_id, request_id)
             try:
@@ -127,10 +130,19 @@ class PendingAgentScopeStore:
                     if snapshot and not snapshot.is_expired():
                         return snapshot
             except Exception as exc:
-                logger.warning("[PendingAgentScopeStore] Redis peek failed: %s", exc)
+                if strict:
+                    read_error = exc
+                else:
+                    logger.warning("[PendingAgentScopeStore] Redis peek failed: %s", exc)
         snapshot = self._memory_fallback.get(request_id)
         if snapshot and snapshot.is_expired():
             self._memory_fallback.pop(request_id, None)
+            snapshot = None
+        if strict:
+            if snapshot and self._user_matches(snapshot, user_id):
+                return snapshot
+            if read_error is not None:
+                raise read_error
             return None
         return snapshot
 

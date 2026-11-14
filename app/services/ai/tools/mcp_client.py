@@ -12,6 +12,7 @@ import anyio
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.exceptions import MCPError
 from app.core.orm import AsyncSessionLocal
 from app.models.mcp import McpServer, McpToolCache
 from app.services.mcp.mcp_auth_policy import build_mcp_headers, resolve_mcp_auth_headers
@@ -84,6 +85,48 @@ class McpToolCallTimeout(TimeoutError):
     的子类，落在「断连重连」的判定里会把一次超时的写操作重发一遍（远端执行两次、
     总耗时翻倍）。
     """
+
+
+_MCP_ERROR_MESSAGES = {
+    "MCP_UPSTREAM_AUTH_FAILED": "MCP 上游拒绝此次认证，请检查服务凭据或权限。",
+    "MCP_UPSTREAM_RATE_LIMITED": "MCP 上游调用频率受限，请稍后重试。",
+    "MCP_UPSTREAM_UNAVAILABLE": "MCP 上游连接不可用，请检查服务状态。",
+    "MCP_UPSTREAM_PROTOCOL_ERROR": "MCP 上游返回协议错误。",
+    "CREDENTIAL_TOOL_FAILED": "MCP 工具执行失败。",
+}
+
+
+class McpProtectedCallError(RuntimeError):
+    """异常仅携带平台定义的错误码，不使用上游异常文本。"""
+
+    def __init__(self, code: str):
+        self.code = code if code in _MCP_ERROR_MESSAGES else "CREDENTIAL_TOOL_FAILED"
+        self.message = _MCP_ERROR_MESSAGES[self.code]
+        super().__init__(self.code)
+
+
+def _protected_http_error(status_code: int) -> McpProtectedCallError:
+    if status_code in (401, 403):
+        code = "MCP_UPSTREAM_AUTH_FAILED"
+    elif status_code == 429:
+        code = "MCP_UPSTREAM_RATE_LIMITED"
+    elif 500 <= status_code < 600:
+        code = "MCP_UPSTREAM_UNAVAILABLE"
+    else:
+        code = "CREDENTIAL_TOOL_FAILED"
+    return McpProtectedCallError(code)
+
+
+def _protected_call_error(exc: Exception) -> McpProtectedCallError:
+    if isinstance(exc, McpProtectedCallError):
+        return exc
+    if isinstance(exc, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+        return _protected_http_error(exc.response.status_code)
+    if isinstance(exc, (httpx.ProtocolError, httpx2.ProtocolError)):
+        return McpProtectedCallError("MCP_UPSTREAM_PROTOCOL_ERROR")
+    if _is_transport_error(exc):
+        return McpProtectedCallError("MCP_UPSTREAM_UNAVAILABLE")
+    return McpProtectedCallError("CREDENTIAL_TOOL_FAILED")
 
 
 def safe_mcp_timeout_error(exc: TimeoutError, *, protected: bool) -> TimeoutError:
@@ -332,6 +375,7 @@ class McpSseSession:
         self._direct_initialized = False
         self._rpc_id_counter = 1
         self._http_client: Optional[httpx.AsyncClient] = None
+        self._protected_tool_status: int | None = None
         self._active_requests: int = 0
         self._active_requests_changed = asyncio.Event()
         self._active_requests_changed.set()
@@ -384,6 +428,8 @@ class McpSseSession:
         http_client = await self._exit_stack.enter_async_context(
             self._create_sse_http_client(headers=self.auth_headers)
         )
+        if protected_transport.get():
+            http_client.event_hooks["response"].append(self._observe_protected_tool_status)
         read_stream, write_stream = await self._exit_stack.enter_async_context(
             streamable_http_client(self.sse_url, http_client=http_client)
         )
@@ -392,6 +438,18 @@ class McpSseSession:
         )
         await session.initialize()
         self.session = session
+
+    async def _observe_protected_tool_status(self, response: httpx2.Response) -> None:
+        # SDK 会把 HTTP 响应转换为统一的 MCPError。仅记录本次调用的状态，
+        # 不记录请求、响应或 SDK 生成的异常文本；不把握手/通知错误归给工具。
+        if response.status_code < 400 or response.request.method != "POST":
+            return
+        try:
+            request = json.loads(response.request.content)
+        except (ValueError, httpx2.RequestNotRead, RecursionError):
+            return
+        if isinstance(request, dict) and request.get("method") == "tools/call":
+            self._protected_tool_status = response.status_code
 
     @staticmethod
     def _clear_internal_cancellation() -> None:
@@ -1034,6 +1092,8 @@ class McpClientService:
                 return redact_value(result, where=f"MCP 工具 {tool_name}")
             if prepared and prepared.result_policy_stale:
                 return restricted_model_result("fields_stale")
+            if prepared and prepared.result_policy_error:
+                return restricted_model_result(prepared.result_policy_error)
             if not prepared or not prepared.model_result_fields:
                 return restricted_model_result()
             return project_model_result(result, prepared.model_result_fields)
@@ -1043,10 +1103,11 @@ class McpClientService:
             session_mgr = await cls.get_session(server_id, **session_kwargs)
         except BaseException as exc:
             protected_transport.reset(transport_scope)
-            if isinstance(exc, TimeoutError):
-                raise safe_mcp_timeout_error(exc, protected=protect_payload) from None
+            if isinstance(exc, (TimeoutError, httpx.TimeoutException, httpx2.TimeoutException)):
+                timeout_exc = exc if isinstance(exc, TimeoutError) else McpToolCallTimeout(str(exc))
+                raise safe_mcp_timeout_error(timeout_exc, protected=protect_payload) from None
             if protect_payload and isinstance(exc, Exception):
-                raise RuntimeError("CREDENTIAL_TOOL_FAILED") from None
+                raise _protected_call_error(exc) from None
             raise
         session_headers = getattr(session_mgr, "auth_headers", None) or {}
         if (for_model or credential_call is not None) and any(
@@ -1078,7 +1139,7 @@ class McpClientService:
                     )
                     call_result = cls._normalize_sse_tool_result(response, tool_name)
                     return model_result(call_result)
-                except TimeoutError:
+                except (TimeoutError, httpx.TimeoutException, httpx2.TimeoutException):
                     raise
                 except Exception as e:
                     transport_broken = False
@@ -1130,7 +1191,11 @@ class McpClientService:
                     if transport_broken and not ephemeral_session:
                         await session_mgr.close()
                     if protect_payload:
-                        raise RuntimeError("CREDENTIAL_TOOL_FAILED") from None
+                        if ephemeral_session and isinstance(e, MCPError):
+                            upstream_status = getattr(session_mgr, "_protected_tool_status", None)
+                            if upstream_status is not None:
+                                raise _protected_http_error(upstream_status) from None
+                        raise _protected_call_error(e) from None
                     raise RuntimeError(
                         redact_value(
                             f"MCP tool '{tool_name}' failed: {e}",
@@ -1145,10 +1210,11 @@ class McpClientService:
                     timeout_seconds=timeout_seconds,
                 )
                 return model_result(call_result)
-        except TimeoutError as timeout_exc:
+        except (TimeoutError, httpx.TimeoutException, httpx2.TimeoutException) as exc:
             # 保留 TimeoutError 语义，让上层识别工具超时；正文和异常链需先清理。
             call_status = "failed"
             call_error = "MCP tool call timed out"
+            timeout_exc = exc if isinstance(exc, TimeoutError) else McpToolCallTimeout(str(exc))
             raise safe_mcp_timeout_error(timeout_exc, protected=protect_payload) from None
         except asyncio.CancelledError:
             call_status = "failed"
@@ -1157,8 +1223,9 @@ class McpClientService:
         except Exception as call_exc:
             call_status = "failed"
             if protect_payload:
-                call_error = "CREDENTIAL_TOOL_FAILED"
-                raise RuntimeError(call_error) from None
+                safe_error = _protected_call_error(call_exc)
+                call_error = safe_error.code
+                raise safe_error from None
             call_error = redact_value(str(call_exc), where=f"MCP 工具 {tool_name} 审计")
             # **就地脱敏后再抛**：这条异常会经 ``RuntimeToolError`` 回显给模型、
             # 写进轨迹，还可能被上层日志带堆栈打出来。流式调用里注入的凭据是在
@@ -1286,9 +1353,11 @@ class McpClientService:
             logger.info(f"[MCP-Direct] Response from {method}: HTTP {resp.status_code}")
         except TimeoutError as timeout_exc:
             raise safe_mcp_timeout_error(timeout_exc, protected=protected_transport.get()) from None
+        except (httpx.TimeoutException, httpx2.TimeoutException) as exc:
+            raise safe_mcp_timeout_error(McpToolCallTimeout(str(exc)), protected=protected_transport.get()) from None
         except Exception as http_err:
             if protected_transport.get():
-                raise RuntimeError("CREDENTIAL_TOOL_FAILED") from None
+                raise _protected_call_error(http_err) from None
             redacted_err = redact_value(str(http_err), where=f"MCP 服务 {method} 异常")
             logger.error(f"[MCP-Direct] HTTP Request failed for {method}: {redacted_err}")
             raise RuntimeError(
@@ -1361,7 +1430,7 @@ class McpClientService:
                         retry_count=retry_count + 1,
                     )
                 if protected_transport.get():
-                    raise RuntimeError("CREDENTIAL_TOOL_FAILED")
+                    raise McpProtectedCallError("MCP_UPSTREAM_PROTOCOL_ERROR")
                 redacted_error = redact_value(
                     data["error"], where=f"MCP 服务 {method} RPC 错误"
                 )
@@ -1403,7 +1472,7 @@ class McpClientService:
             )
 
         if protected_transport.get():
-            raise RuntimeError("CREDENTIAL_TOOL_FAILED")
+            raise _protected_http_error(resp.status_code)
         safe_body = redact_value(resp.text, where=f"MCP 服务 {method} 错误响应")
         logger.error(f"[MCP-Direct] Error Response Body: {safe_body[:500]}")
         # 完整 body 脱敏后抛给上层；日志侧同样保留脱敏前缀，避免明文进日志。
@@ -1607,8 +1676,9 @@ class McpClientService:
                     cached_tool.is_available = False
             await db.commit()
             try:
-                from app.services.ai.tools.registry import ToolRegistry
-                ToolRegistry.clear_db_tool_cache()
+                from app.services.mcp.tool_cache_revision import invalidate_runtime_tools
+
+                await invalidate_runtime_tools()
             except Exception:
                 logger.exception("[MCP] Failed to clear runtime tool cache after sync for %s", server_id)
             return {

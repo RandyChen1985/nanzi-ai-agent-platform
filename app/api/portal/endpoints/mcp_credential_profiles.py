@@ -17,6 +17,7 @@ from app.models.mcp import McpServer, McpToolCache
 from app.models.secret import SecretBinding
 from app.services.ai.tools.model_tool_name import build_model_tool_name
 from app.services.secrets import mcp_profiles, type_catalog
+from app.services.secrets.injection import mcp_arg_slots
 from app.services.secrets.policy import CONSUMER_MCP
 
 router = APIRouter()
@@ -100,7 +101,9 @@ def _serialize(profile) -> dict | None:
 
 
 async def _current(db, tool, server, revision: int | None = None, profile_id: str | None = None):
-    profile = await db.get(McpCredentialProfile, tool.id)
+    profile = await db.get(McpCredentialProfile, tool.id, with_for_update=True) if revision is not None else await db.get(
+        McpCredentialProfile, tool.id,
+    )
     if profile is None or (revision is not None and (revision, profile_id) != (profile.revision, profile.profile_id)):
         raise HTTPException(409, detail="工具凭据配置已变化，请刷新后重试")
     if not mcp_profiles.profile_is_current(profile, tool, server):
@@ -112,8 +115,10 @@ async def _current(db, tool, server, revision: int | None = None, profile_id: st
 async def get_profile(tool_id: str, user: dict = Depends(require_api_key), db: AsyncSession = Depends(get_db_session)):
     tool, server = await _resource(db, tool_id, user, control=True)
     profile = await db.get(McpCredentialProfile, tool.id)
-    schema = mcp_profiles.parse_schema(tool)
-    props = schema.get("properties") or {}
+    raw_schema = mcp_profiles.parse_schema(tool)
+    schema = mcp_profiles.resolve_local_mcp_schema(raw_schema)
+    raw_props = mcp_profiles.mcp_parameter_properties(raw_schema)
+    props = mcp_profiles.mcp_parameter_properties(schema)
     sensitive = mcp_profiles.unbound_sensitive_args(schema, [])
     result_revision, result_fields, result_stale = mcp_profiles.tool_result_policy(tool, server)
     if result_stale:
@@ -124,13 +129,21 @@ async def get_profile(tool_id: str, user: dict = Depends(require_api_key), db: A
         "profile": _serialize(profile),
         "stale": bool(profile and not mcp_profiles.profile_is_current(profile, tool, server)),
         "model_tool_name": build_model_tool_name(tool.tool_name),
+        "credential_params": [name for name, _ in mcp_arg_slots(tool)],
+        "supports_atomic_parameter_rules": True,
         "model_result_policy": {
             "revision": result_revision, "model_result_fields": result_fields, "stale": result_stale,
             "target": mcp_profiles.tool_result_target(tool, server),
         },
         "parameters": [
-            {"name": name, "type": spec.get("type"), "required": name in (schema.get("required") or []),
-             "sensitive": name in sensitive, "group_binding_required": mcp_profiles.group_binding_required(name, spec)}
+            {
+                "name": name, "type": raw_props.get(name, spec).get("type"),
+                "mapping_type": mcp_profiles.mapping_target_type(spec),
+                "required": name in (schema.get("required") or []), "sensitive": name in sensitive,
+                "group_binding_required": mcp_profiles.group_binding_required(
+                    name, spec, authentication_connection=bool(sensitive),
+                ),
+            }
             for name, spec in props.items() if isinstance(spec, dict)
         ] if isinstance(props, dict) else [],
     }}
@@ -161,7 +174,7 @@ async def put_profile(
     except Exception:
         await db.rollback()
         raise
-    _clear_runtime_tool_cache()
+    await _clear_runtime_tool_cache()
     result = {"code": 0, "data": _serialize(profile)}
     if warnings:
         result["warnings"] = warnings
@@ -182,6 +195,7 @@ async def put_model_result_fields(
         )
     except mcp_profiles.CredentialInvocationError as exc:
         raise _fail(exc) from None
+    await _clear_runtime_tool_cache()
     response = {"code": 0, "data": {
         "revision": revision, "model_result_fields": fields, "stale": False, "target": payload.expected_target,
     }}
@@ -204,7 +218,7 @@ async def delete_profile(
     await db.delete(profile)
     type_catalog.audit_change(db, "mcp_profile_delete", str(_get_user_id(user)), {"tool_id": tool_id})
     await db.commit()
-    _clear_runtime_tool_cache()
+    await _clear_runtime_tool_cache()
     return {"code": 0}
 
 

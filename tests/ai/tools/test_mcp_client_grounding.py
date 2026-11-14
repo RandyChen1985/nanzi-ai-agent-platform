@@ -73,7 +73,7 @@ async def test_mcp_call_uses_user_scoped_session_and_signed_headers(monkeypatch)
         private_key=private_key,
     )
 
-    assert result == {"status": "success", "result_visibility": "restricted"}
+    assert result == {"status": "success", "result_visibility": "restricted", "reason": "fields_not_configured"}
     get_session.assert_awaited_once()
     call_args = get_session.await_args
     assert call_args.args == ("server-1",)

@@ -353,7 +353,7 @@ class TestMcpToolParamCredential:
     def test_param_settings_lists_every_param(self):
         """弹窗里要能一次看到所有参数，而不是只处理被点中的那个。"""
         source = _read(self.REGISTRY)
-        assert 'v-for="name in toolParamNames(paramMarkTarget.tool)"' in source
+        assert 'v-for="name in paramToolNames(paramMarkTarget.tool)"' in source
         assert "模型填写" in source
         assert "来自凭据" in source
 
@@ -364,7 +364,7 @@ class TestMcpToolParamCredential:
         「未选 · 各人绑自己的」竖排成四行。改成固定列宽，参数名只占三成。
         """
         source = _read(self.REGISTRY)
-        start = source.find('v-for="name in toolParamNames(paramMarkTarget.tool)"')
+        start = source.find('v-for="name in paramToolNames(paramMarkTarget.tool)"')
         table_head = source[source.rfind("<table", 0, start):start]
         body = source[start:source.find("</table>", start)]
 
@@ -494,10 +494,21 @@ class TestMcpToolParamCredential:
         assert "v-if=\"draftCredentialCount\"" in source
 
     def test_factory_drops_declared_params(self):
-        source = _read(self.FACTORY)
-        assert "credential_param_names(tool_record)" in source
-        assert "properties.pop(_name, None)" in source
-        assert "required_fields.discard(_name)" in source
+        from types import SimpleNamespace
+
+        from app.services.ai.tools.mcp_factory import McpToolFactory
+
+        record = SimpleNamespace(
+            tool_name="fixture:list_items", tool_description="Fixture",
+            credential_params='["key"]',
+            parameter_schema=(
+                '{"type":"object","properties":{"key":{"type":"string"},"query":{"type":"string"}},'
+                '"required":["key","query"]}'
+            ),
+        )
+        tool = McpToolFactory.create_tool(record, verify_profile=True)
+        assert "key" not in tool.mcp_input_schema["properties"]
+        assert tool.mcp_input_schema["required"] == ["query"]
 
     def test_factory_injects_before_call(self):
         source = _read(self.FACTORY)
@@ -609,8 +620,7 @@ class TestToolTesterHidesCredentialParams:
         # 解绑时本地立刻清，不等加载
         start = source.find("async function saveParamBind(")
         body = source[start:source.find("\n}", start)]
-        assert "delete headerBindings.value[slot]" in body
-        assert "delete pendingBindings.value[slot]" in body
+        assert "delete paramFixedBindings.value[slot]" in body
 
     def test_api_tool_unbind_clears_both_maps(self):
         source = _read(ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue")
@@ -688,7 +698,7 @@ class TestBindingEdgeCases:
     def test_stale_binding_response_is_discarded(self):
         """并发加载要丢掉晚到的旧响应，否则参数设置里会显示别的服务的绑定。"""
         source = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
-        assert "if (paramMarkTarget.value?.tool?.server_id !== serverId) return" in source
+        assert "if (paramMarkTarget.value !== target) return false" in source
         assert "if (editingId.value !== requestedId) return" in source
 
 

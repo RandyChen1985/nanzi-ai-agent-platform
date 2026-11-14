@@ -221,6 +221,7 @@ class PendingAgentScopeConfirmationRegistry:
         request_id: str,
         *,
         user_id: str | int | None = None,
+        strict: bool = False,
     ) -> PendingAgentScopeConfirmation | None:
         """非破坏式读取：先查内存，再查 Redis 快照，均不删除。
 
@@ -236,7 +237,7 @@ class PendingAgentScopeConfirmationRegistry:
         if request:
             self._items.pop(request_id, None)
 
-        snapshot = await pending_agentscope_store.peek(request_id, user_id=user_id)
+        snapshot = await pending_agentscope_store.peek(request_id, user_id=user_id, strict=strict)
         if not snapshot:
             return None
         return PendingAgentScopeConfirmation.from_snapshot(snapshot)

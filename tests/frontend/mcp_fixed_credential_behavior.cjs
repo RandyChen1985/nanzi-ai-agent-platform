@@ -106,18 +106,25 @@ function response(items = rows, fixed_secret_id = null) {
 }
 async function harness({ profile = defaultProfile, stale = false,
   policy = { revision: 0, target: 'target-1', model_result_fields: [], stale: false },
-  getCandidates = async () => response(), put } = {}) {
+  parameters = [{ name: 'password', type: 'string', required: true, sensitive: true, group_binding_required: true }],
+  fields = {}, getCandidates = async () => response(), getLatest, put } = {}) {
   const gets = [], writes = [], saves = []
+  function typeWithFields(...args) {
+    const type = typeRow(...args)
+    Object.assign(type.schema.properties, fields)
+    return type
+  }
   global.credentialTestApi = {
     get: async (url, options) => {
       if (url === baseUrl + '/candidates') {
         gets.push(options?.params)
         return await getCandidates(options?.params, gets.length)
       }
-      if (url === '/api/portal/credential-types') return { data: { data: [typeRow(), typeRow('other_auth')] } }
+      if (url === baseUrl && getLatest) return { data: { data: await getLatest() } }
+      if (url === '/api/portal/credential-types') return { data: { data: [typeWithFields(), typeWithFields('other_auth')] } }
       const version = url.match(/\/credential-types\/([^/]+)\/versions\/(\d+)$/)
       assert.ok(version, `意外 GET：${url}`)
-      return { data: { data: typeRow(version[1], Number(version[2])) } }
+      return { data: { data: typeWithFields(version[1], Number(version[2])) } }
     },
     put: async (url, body) => {
       writes.push({ url, body })
@@ -126,9 +133,7 @@ async function harness({ profile = defaultProfile, stale = false,
     },
   }
   const mounted = mount(await build('src/components/mcp/McpCredentialProfileForm.vue'), {
-    toolId: 'tool-1', config: { profile, stale,
-      parameters: [{ name: 'password', type: 'string', required: true, sensitive: true, group_binding_required: true }],
-      model_result_policy: policy },
+    toolId: 'tool-1', config: { profile, stale, parameters, model_result_policy: policy },
     onSaved: value => saves.push(value),
   })
   await settle()
@@ -136,7 +141,32 @@ async function harness({ profile = defaultProfile, stale = false,
 }
 
 async function run(which) {
-  if (which === 'result_field_defaults') {
+  if (which === 'nullable_field_options') {
+    const cases = [
+      ['plain_string', { type: 'string' }, ['password', 'null_last']],
+      ['null_last', { type: ['string', 'null'] }, ['password', 'null_last']],
+      ['null_first', { type: ['null', 'string'] }, ['password', 'null_last']],
+      ['any_of', { type: null, mapping_type: 'string' }, ['password', 'null_last']],
+      ['one_of', { type: null, mapping_type: 'string' }, ['password', 'null_last']],
+      ['nullable_number', { type: ['null', 'number'], mapping_type: 'number' }, ['count', 'ratio']],
+      ['mixed_types', { type: ['string', 'integer', 'null'] }, []],
+      ['ambiguous_branches', { type: null, mapping_type: null }, []],
+      ['null_only', { type: ['null'] }, []],
+    ]
+    const h = await harness({
+      profile: { ...defaultProfile, mappings: {} },
+      fields: { null_last: { type: 'string' }, count: { type: 'integer' }, ratio: { type: 'number' } },
+      parameters: cases.map(([name, spec]) => ({ name, ...spec, group_binding_required: name === 'null_last' })),
+    })
+    for (const [name, , expected] of cases) {
+      const mapping = find(h.root, n => n.props['aria-label'] === name + ' 的凭据字段')
+      assert.deepEqual(mapping.options.map(option => option.value || ''), ['', ...expected], name)
+    }
+    await event(button(h.root, '按同名建议'), 'click')
+    await event(button(h.root, '保存设置'), 'click')
+    assert.deepEqual(h.writes[0].body.mappings, { null_last: 'null_last' })
+    h.app.unmount()
+  } else if (which === 'result_field_defaults') {
     for (const [options, expected] of [
       [{ profile: null }, ['$']],
       [{ profile: null, policy: { revision: 1, target: 'target-1', model_result_fields: [], stale: false } }, []],
@@ -243,6 +273,34 @@ async function run(which) {
     assert.deepEqual(h.writes[0].body.model_result_fields, ['$'])
     assert.equal(h.saves.length, 1)
     assert.equal(selectedValue(selectFor(h.root, '我的固定凭据')), shared.id)
+    h.app.unmount()
+  } else if (which === 'save_conflict') {
+    const latest = { ...defaultProfile, revision: 4, model_result_fields: ['$.latest'] }
+    let first = true
+    const h = await harness({
+      getLatest: () => ({
+        profile: latest, stale: false, parameters: [
+          { name: 'password', type: 'string', group_binding_required: true },
+        ], model_result_policy: { revision: 4, target: 'latest-target', model_result_fields: [], stale: false },
+      }),
+      put: async () => {
+        if (first) {
+          first = false
+          throw { isAxiosError: true, response: { status: 409, data: { detail: '配置已更新' } } }
+        }
+        return { data: { data: latest } }
+      },
+    })
+    await event(button(h.root, '保存设置'), 'click')
+    assert.equal(button(h.root, '保存设置').props.disabled, true)
+    await event(button(h.root, '保存设置'), 'click')
+    assert.equal(h.writes.length, 1)
+    await event(button(h.root, '重新加载并保留草稿'), 'click')
+    assert.match(text(h.root), /查看冲突前的草稿/)
+    await event(button(h.root, '保存设置'), 'click')
+    assert.deepEqual(h.writes.map(w => [w.body.expected_revision, w.body.model_result_fields]), [
+      [3, ['$']], [4, ['$.latest']],
+    ])
     h.app.unmount()
   } else if (which === 'save_failure') {
     const h = await harness({ put: async () => { throw { isAxiosError: true,

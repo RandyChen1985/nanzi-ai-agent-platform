@@ -714,6 +714,7 @@ async def apply_mcp_arg_bindings(
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
     target_host: str | None = None,
+    model_choices: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """把凭据填进 MCP 工具调用的 ``arguments``。
 
@@ -745,11 +746,12 @@ async def apply_mcp_arg_bindings(
     # 解析层才会采纳它，规则命中时会被忽略（并记「判断不一致」日志）。
     from app.services.secrets.locator import choice_field
 
-    choices = {
-        name: str(arguments.get(choice_field(name)) or "").strip()
-        for name, _slot in pairs
-        if str(arguments.get(choice_field(name)) or "").strip()
-    }
+    choices = {}
+    for name, _slot in pairs:
+        raw = model_choices.get(name) if model_choices is not None else arguments.get(choice_field(name))
+        choice = str(raw or "").strip()
+        if choice:
+            choices[name] = choice
     preferred = (
         await _resolve_choices(choices, user_id=user_id, dept_code=dept_code)
         if choices

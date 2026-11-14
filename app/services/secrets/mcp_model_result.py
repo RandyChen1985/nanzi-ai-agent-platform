@@ -28,6 +28,10 @@ _FIELD_PART = re.compile(r"([A-Za-z_][A-Za-z0-9_-]{0,63})(\[\])?")
 _SELECTOR_ERROR = "请填写有效的 JSONPath，例如 $、$.messages[*] 或 $.messages[*][1]"
 _SELECTED = object()
 _QUERY_ENV = ResultQueryEnvironment()
+_RESTRICTED_REASONS = frozenset({
+    "fields_not_configured", "fields_stale", "fields_invalid", "invalid_response",
+    "no_matching_fields", "result_too_large", "query_limit_exceeded",
+})
 
 
 class ProjectedMcpResult(dict[str, Any]):
@@ -35,11 +39,11 @@ class ProjectedMcpResult(dict[str, Any]):
 
 
 class RestrictedMcpResult(dict[str, str]):
-    """模型只收到状态，固定原因码仅由管理端单独读取。"""
+    """受限结果只有状态和平台生成的诊断原因，不携带工具响应。"""
 
     def __init__(self, reason: str):
-        super().__init__(status="success", result_visibility="restricted")
-        self.reason = reason
+        self.reason = reason if reason in _RESTRICTED_REASONS else "fields_not_configured"
+        super().__init__(status="success", result_visibility="restricted", reason=self.reason)
 
 
 def restricted_model_result(reason: str = "fields_not_configured") -> RestrictedMcpResult:
@@ -97,9 +101,13 @@ def _reject_non_json_number(_value: str) -> None:
     raise ValueError("工具响应必须是有效 JSON")
 
 
+class _ResponseTooLarge(ValueError):
+    """响应超过 JSON 解析上限。"""
+
+
 def parse_mcp_json_result_text(text: str) -> Any:
     if len(text) > _MAX_RESPONSE_BYTES or len(text.encode()) > _MAX_RESPONSE_BYTES:
-        raise ValueError("工具响应超出大小限制")
+        raise _ResponseTooLarge("工具响应超出大小限制")
     return json.loads(text, parse_constant=_reject_non_json_number)
 
 
@@ -215,6 +223,8 @@ def project_model_result(
         return restricted_model_result("fields_invalid")
     try:
         source = _result_source(result)
+    except _ResponseTooLarge:
+        return restricted_model_result("result_too_large")
     except (ValueError, TypeError, RecursionError):
         return restricted_model_result("invalid_response")
     budget = QueryBudget()

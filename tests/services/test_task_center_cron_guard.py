@@ -94,9 +94,11 @@ async def test_update_task_rejects_invalid_cron_without_writing():
 async def test_update_task_refuses_to_start_task_with_invalid_stored_cron():
     """历史脏任务直接启用时，调度器只会跳过；启动动作必须失败并说明原因。"""
     db = MagicMock()
-    db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=lambda: "0 8 1 * 1")
-    )
+    db.get = AsyncMock(return_value=SimpleNamespace(
+        id=3, user_id=7, agent_id="main", conversation_id="task_conv_test",
+        prompt="检查负载", cron_expr="0 8 1 * 1", status=0, config=None,
+    ))
+    db.execute = AsyncMock()
 
     with pytest.raises(ValueError, match="同时限定"):
         await TaskCenterService.update_task(db, 3, {"status": 1})
@@ -105,9 +107,11 @@ async def test_update_task_refuses_to_start_task_with_invalid_stored_cron():
 @pytest.mark.asyncio
 async def test_update_task_allows_starting_task_with_valid_stored_cron():
     db = MagicMock()
-    db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=lambda: "0 8 * * 1-5")
-    )
+    db.get = AsyncMock(return_value=SimpleNamespace(
+        id=3, user_id=7, agent_id="main", conversation_id="task_conv_test",
+        prompt="检查负载", cron_expr="0 8 * * 1-5", status=0, config=None,
+    ))
+    db.execute = AsyncMock()
     db.commit = AsyncMock()
 
     with patch.object(tcs, "scheduler_service") as sched:

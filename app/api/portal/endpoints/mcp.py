@@ -24,7 +24,7 @@ from app.services.secrets.mcp_profiles import (
     CredentialInvocationError, McpCredentialInvocation,
 )
 from app.models.agent import AIAgent, AIAgentVersion
-from app.services.ai.tools.mcp_client import McpClientService, McpSseSession, McpSyncGuardError
+from app.services.ai.tools.mcp_client import McpClientService, McpProtectedCallError, McpSseSession, McpSyncGuardError
 from app.services.ai.tools.mcp_factory import resolve_mcp_tool_timeout
 from app.services.ai.tools.model_tool_name import build_model_tool_name
 from app.services.mcp.curl_snippet import build_mcp_curl_snippet
@@ -93,11 +93,11 @@ def _iso_utc(value: Any) -> Optional[str]:
     return value.astimezone(timezone.utc).isoformat()
 
 
-def _clear_runtime_tool_cache() -> None:
+async def _clear_runtime_tool_cache() -> None:
     """Make MCP configuration changes effective without waiting for TTL."""
-    from app.services.ai.tools.registry import ToolRegistry
+    from app.services.mcp.tool_cache_revision import invalidate_runtime_tools
 
-    ToolRegistry.clear_db_tool_cache()
+    await invalidate_runtime_tools()
 
 def _normalize_mcp_server_name(value: Any) -> str:
     """校验并返回展示名。
@@ -1035,7 +1035,7 @@ async def create_echo_test_mcp(
             slow_tool.is_available = True
 
     await db.commit()
-    _clear_runtime_tool_cache()
+    await _clear_runtime_tool_cache()
     response = McpServerResponse.model_validate(server)
     echo_tool_total = 2  # echo + echo_slow（进度验收工具）
     response.tool_count = echo_tool_total
@@ -1274,7 +1274,7 @@ async def update_mcp_server(
     if "group_name" in data.model_fields_set:
         server.group_name = data.group_name
     await db.commit()
-    _clear_runtime_tool_cache()
+    await _clear_runtime_tool_cache()
 
     # 会话挂载（Redis）必须在 commit 之后同步：先改 Redis 再提交，一旦提交失败就会出现
     # 「库里还是旧名、会话里已经是新名」的错位，且刷新页面也无法自愈。
@@ -1387,7 +1387,7 @@ async def delete_mcp_server(
     affected_agent_versions = await prune_agent_versions_by_names(db, tool_names)
 
     await db.commit()
-    _clear_runtime_tool_cache()
+    await _clear_runtime_tool_cache()
     try:
         await McpClientService.evict_session(server_id)
     except Exception as e:
@@ -1444,7 +1444,7 @@ async def cleanup_mcp_server_stale_tools(
             **result,
         }
 
-    _clear_runtime_tool_cache()
+    await _clear_runtime_tool_cache()
     message = f"已清理 {result['removed_count']} 个远端已删除的工具"
     if result["affected_agent_versions"]:
         message += f"，并从 {result['affected_agent_versions']} 个智能体版本配置中移除了对应引用"
@@ -1474,7 +1474,6 @@ async def sync_mcp_tools(
         sync_result = await McpClientService.sync_tools(
             server_id, user_info=_mcp_user_context(user), force=force
         ) or {}
-        _clear_runtime_tool_cache()
         stale_unpublished = int(sync_result.get("stale_unpublished", 0))
         return {
             "status": "success",
@@ -1677,6 +1676,10 @@ async def execute_mcp_tool(
         return response
     except CredentialInvocationError as exc:
         raise HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)}) from None
+    except McpProtectedCallError as exc:
+        raise HTTPException(502, detail={"code": exc.code, "message": exc.message}) from None
+    except TimeoutError:
+        raise HTTPException(504, detail={"code": "MCP_UPSTREAM_TIMEOUT", "message": "MCP 工具调用超时。"}) from None
     except HTTPException:
         raise
     except Exception as exc:
@@ -1731,6 +1734,15 @@ async def get_mcp_tool_curl(
     )
 
 
+class ToolParameterRuleChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parameter: str = Field(min_length=1, max_length=128)
+    operation: Literal["upsert_rule", "delete_rule"]
+    is_global: bool = False
+    rule: dict[str, Any] | None = Field(default=None, repr=False)
+
+
 class ToolCredentialParamsRequest(BaseModel):
     """声明工具上哪些参数的值由凭据中心提供。"""
 
@@ -1739,6 +1751,73 @@ class ToolCredentialParamsRequest(BaseModel):
     model_result_fields: Any = None
     expected_revision: int | None = Field(default=None, ge=0)
     expected_target: str | None = Field(default=None, min_length=64, max_length=64)
+    binding_changes: list[ToolParameterRuleChange] = Field(default_factory=list, max_length=128)
+
+
+def _check_parameter_rule_source(spec, props, credential_params) -> None:
+    if spec.key_source.startswith("arg:"):
+        depends_on = spec.key_source[4:]
+        if depends_on not in props or depends_on in credential_params:
+            raise HTTPException(400, detail="凭据规则只能使用工具中由模型填写的参数，请先修改相关规则")
+
+
+async def _stage_tool_parameter_rules(db, tool, server, user, changes, props, credential_params) -> None:
+    from app.services.secrets import center
+    from app.services.secrets.locator import RuleError, parse_rule
+
+    caller = str(_get_user_id(user))
+    short_name = tool.tool_name.split(":", 1)[-1]
+    staged = set()
+    for change in changes:
+        parameter = change.parameter
+        slot = f"arg:{short_name}:{parameter}"
+        if parameter not in props or len(slot) > 128:
+            raise HTTPException(400, detail="绑定的参数不在当前工具定义中，或绑定槽位过长")
+        if change.is_global and user.get("role") != "admin":
+            raise HTTPException(403, detail="只有管理员可以设置或解除全局绑定")
+        owner = None if change.is_global else caller
+        key = (slot, owner)
+        if key in staged:
+            raise HTTPException(400, detail="同一参数规则不能重复修改")
+        staged.add(key)
+        target = dict(consumer_type="mcp_server", consumer_id=server.id, slot=slot,
+                      bound_by_user_id=owner, actor_id=caller, commit=False)
+        try:
+            if change.operation == "upsert_rule":
+                if parameter not in credential_params or change.rule is None:
+                    raise HTTPException(400, detail="规则只能绑定到由凭据提供的参数")
+                _check_parameter_rule_source(parse_rule(change.rule), props, credential_params)
+                await center.bind_rule(db, rule=change.rule, **target)
+            else:
+                if change.rule is not None:
+                    raise HTTPException(400, detail="解除规则时不能提交规则内容")
+                await center.unbind_slot(db, strategy="rule", **target)
+        except (center.SecretValidationError, RuleError, TypeError) as exc:
+            raise HTTPException(400, detail="凭据定位规则无效，请检查规则配置") from exc
+
+
+async def _ensure_rule_inputs_remain_public(db, tool, server, props, previous: set[str], current: set[str]) -> None:
+    from app.models.secret import SecretBinding
+    from app.services.secrets.locator import RuleError, parse_rule
+
+    # 声明对所有调用者生效，不能让配置修改切断其他调用者已有规则依赖。
+    newly_hidden = current - previous
+    still_injected = current & previous
+    if not newly_hidden or not still_injected:
+        return
+    short_name = tool.tool_name.split(":", 1)[-1]
+    rules = await db.scalars(select(SecretBinding.rule_json).where(
+        SecretBinding.consumer_type == "mcp_server", SecretBinding.consumer_id == server.id,
+        SecretBinding.slot.in_([f"arg:{short_name}:{name}" for name in still_injected]),
+        SecretBinding.strategy == "rule",
+    ).with_for_update())
+    for rule in rules:
+        try:
+            spec = parse_rule(rule)
+        except (RuleError, TypeError):
+            continue
+        if spec.key_source[4:] in newly_hidden and spec.key_source.startswith("arg:"):
+            _check_parameter_rule_source(spec, props, current)
 
 
 @router.put(
@@ -1759,6 +1838,7 @@ async def set_tool_credential_params(
     """
     from app.api.portal.endpoints.mcp_credential_profiles import _resource
     from app.services.secrets import mcp_profiles
+    from app.services.secrets.injection import mcp_arg_slots
 
     # 与同步工具、保存结果路径使用相同的服务→工具锁顺序。
     tool, server = await _resource(db, tool_id, user, control=True, lock_target=True)
@@ -1767,7 +1847,7 @@ async def set_tool_credential_params(
         schema = json.loads(tool.parameter_schema or "{}")
     except ValueError:
         schema = {}
-    props = (schema.get("properties") or {}) if isinstance(schema, dict) else {}
+    props = mcp_profiles.mcp_parameter_properties(schema) if isinstance(schema, dict) else {}
 
     def _accepts_string(spec: Any) -> bool:
         """凭据值永远是字符串；声明成整数/布尔/对象的参数注入进去会破坏类型。"""
@@ -1799,6 +1879,9 @@ async def set_tool_credential_params(
             cleaned.append(name)
 
     response: Dict[str, Any] = {"status": "success", "credential_params": cleaned}
+    previous = {name for name, _ in mcp_arg_slots(tool)}
+    if payload.binding_changes and "model_result_fields" not in payload.model_fields_set:
+        raise HTTPException(422, detail="修改参数规则需要同时提交配置快照和结果字段")
     if "model_result_fields" in payload.model_fields_set:
         if payload.expected_revision is None or payload.expected_target is None:
             raise HTTPException(status_code=422, detail="保存结果字段需要当前配置版本，请刷新后重试")
@@ -1806,10 +1889,13 @@ async def set_tool_credential_params(
             revision, fields, error = await mcp_profiles.save_tool_result_policy(
                 db, tool, server, paths=payload.model_result_fields,
                 expected_revision=payload.expected_revision, expected_target=payload.expected_target,
-                actor_id=str(_get_user_id(user)), credential_params=cleaned,
+                actor_id=str(_get_user_id(user)), credential_params=cleaned, commit=False,
             )
         except mcp_profiles.CredentialInvocationError as exc:
             raise HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)}) from None
+        if payload.binding_changes:
+            await _stage_tool_parameter_rules(db, tool, server, user, payload.binding_changes, props, cleaned)
+            response["binding_changes_applied"] = len(payload.binding_changes)
         response["model_result_policy"] = {
             "revision": revision, "model_result_fields": fields, "stale": False,
             "target": mcp_profiles.tool_result_target(tool, server),
@@ -1818,13 +1904,17 @@ async def set_tool_credential_params(
             response["warnings"] = [{"code": "MCP_RESULT_FIELDS_INVALID", "message": error}]
     else:
         # 参数集合未变化时保留原 JSON 表示，避免空白或排序变化误伤旧的结果指纹。
-        from app.services.secrets.injection import mcp_arg_slots
-
-        if set(cleaned) != {name for name, _ in mcp_arg_slots(tool)}:
+        if set(cleaned) != previous:
             tool.credential_params = json.dumps(cleaned, ensure_ascii=False) if cleaned else None
-        await db.commit()
+    # 会话禁用 autoflush；规则更新、解除必须计入这次事务的最终状态。
+    current = set(cleaned)
+    if current - previous and current & previous:
+        if payload.binding_changes:
+            await db.flush()
+        await _ensure_rule_inputs_remain_public(db, tool, server, props, previous, current)
+    await db.commit()
     # 工具定义变了（参数被剔除），运行时的工具缓存必须重建，否则模型还会看到旧 schema
-    _clear_runtime_tool_cache()
+    await _clear_runtime_tool_cache()
     return response
 
 
@@ -1852,7 +1942,7 @@ async def toggle_tool_publish(
     stmt = update(McpToolCache).where(McpToolCache.id == tool_id).values(is_published=published)
     await db.execute(stmt)
     await db.commit()
-    _clear_runtime_tool_cache()
+    await _clear_runtime_tool_cache()
     return {"status": "success", "is_published": published}
 
 

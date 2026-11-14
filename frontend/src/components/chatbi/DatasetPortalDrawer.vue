@@ -192,6 +192,7 @@
                 :mountable-datasets="mountableDatasets"
                 :active-metadata-dataset-ids="activeMetadataDatasetIds"
                 :session-mounted-dataset-ids="sessionMountedDatasetIds"
+                :session-mount-saving="sessionMountSaving"
                 @quick-question="(query, action) => emit('quick-question', query, action)"
                 @record-question-click="(p) => emit('record-question-click', p)"
                 @clear-question-click="(p) => emit('clear-question-click', p)"
@@ -224,6 +225,7 @@ withDefaults(defineProps<{
   mountableDatasets?: Array<{ id: string; name?: string; description?: string }>;
   activeMetadataDatasetIds?: string[];
   sessionMountedDatasetIds?: string[];
+  sessionMountSaving?: boolean;
   initialLoading?: boolean;
   backgroundRefreshing?: boolean;
   focusSavedReportRequest?: {

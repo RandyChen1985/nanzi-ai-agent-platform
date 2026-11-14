@@ -164,8 +164,9 @@ async def test_direct_http_tool_call_reinitializes_after_server_loses_session(
 
 
 @pytest.mark.asyncio
-async def test_direct_http_json_rpc_session_error_reinitializes(mock_session):
+async def test_direct_http_json_rpc_session_error_reinitializes(mock_session, monkeypatch):
     """部分 MCP 服务用 HTTP 200 JSON-RPC error 表示旧会话失效。"""
+    monkeypatch.setattr(McpClientService, "_load_server", AsyncMock(return_value=SimpleNamespace(sse_url=SSE_URL)))
     rpc_error = Response(
         200,
         json={"jsonrpc": "2.0", "id": 2, "error": {"code": -32001, "message": "Session expired"}},
@@ -207,7 +208,8 @@ async def test_direct_http_json_rpc_session_error_reinitializes(mock_session):
 
 
 @pytest.mark.asyncio
-async def test_sse_list_tools_reconnects_once_after_transport_failure(mock_session):
+async def test_sse_list_tools_reconnects_once_after_transport_failure(mock_session, monkeypatch):
+    monkeypatch.setattr(McpClientService, "_load_server", AsyncMock(return_value=SimpleNamespace(sse_url=SSE_URL)))
     stale_client = MagicMock()
     stale_client.list_tools = AsyncMock(side_effect=ConnectionError("stream closed"))
     fresh_client = MagicMock()

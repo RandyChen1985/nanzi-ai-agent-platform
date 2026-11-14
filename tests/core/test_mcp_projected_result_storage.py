@@ -17,6 +17,120 @@ VALUE = "fixture-known-secret-value"
 TOOL = "mcp_fixture"
 
 
+@pytest.mark.asyncio
+async def test_restricted_result_reason_survives_stream_and_runtime_serialization(monkeypatch):
+    from app.services.ai.tools import mcp_factory
+    from app.services.secrets.mcp_model_result import project_model_result
+
+    async def call(**kwargs):
+        return project_model_result({"structured_content": {"not_selected": VALUE}}, ["$.missing"])
+
+    monkeypatch.setattr(mcp_factory.McpClientService, "call_remote_tool", call)
+
+    async def stream():
+        async for part in mcp_factory.stream_remote_tool_with_progress(
+            server_id="fixture", tool_name="find", arguments={}, protect_payload=True,
+        ):
+            yield part
+
+    runtime = AgentScopeRuntimeTool(RuntimeToolSpec(
+        name=TOOL, description="Fixture", parameters_schema={"type": "object", "properties": {}},
+        source_type="mcp", callable=stream,
+    ))
+    response = ToolResponse()
+    async for chunk in await runtime():
+        response.append_chunk(chunk)
+    serialized = json.loads(response.content[0].text)
+    assert serialized == {
+        "status": "success", "result_visibility": "restricted", "reason": "no_matching_fields",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("http_status", "code"), [
+    (401, "MCP_UPSTREAM_AUTH_FAILED"),
+    (429, "MCP_UPSTREAM_RATE_LIMITED"),
+])
+async def test_protected_http_uses_only_fixed_error_code(http_status, code, monkeypatch, caplog):
+    from unittest.mock import AsyncMock
+    import httpx
+    from app.services.ai.tools import mcp_client, mcp_factory
+    from app.services.secrets.outbound_visibility import protected_transport
+
+    async def respond(request):
+        return httpx.Response(http_status, json={"message": VALUE}, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        session = mcp_client.McpSseSession("fixture", "https://example.test/rpc")
+        session.get_http_client = lambda: client
+
+        async def remote(**_kwargs):
+            token = protected_transport.set(True)
+            try:
+                return await mcp_client.McpClientService._direct_http_rpc(session, "tools/call", {"name": "find", "arguments": {}})
+            finally:
+                protected_transport.reset(token)
+
+        mocked = AsyncMock(side_effect=remote)
+        monkeypatch.setattr(mcp_factory.McpClientService, "call_remote_tool", mocked)
+        assert [part async for part in mcp_factory.stream_remote_tool_with_progress(
+            server_id="fixture", tool_name="find", arguments={}, protect_payload=True,
+        )] == [{"status": "error", "code": code}]
+        assert mocked.await_count == 1
+    assert VALUE not in caplog.text
+
+
+@pytest.mark.parametrize(("http_status", "code"), [
+    (401, "MCP_UPSTREAM_AUTH_FAILED"),
+    (429, "MCP_UPSTREAM_RATE_LIMITED"),
+])
+async def test_protected_streamable_http_keeps_status_through_the_sdk(http_status, code, monkeypatch, caplog):
+    from unittest.mock import AsyncMock
+
+    import httpx2
+
+    from app.services.ai.tools import mcp_client
+
+    methods = []
+
+    async def respond(request):
+        rpc = json.loads(request.content)
+        methods.append(rpc["method"])
+        if rpc["method"] == "initialize":
+            return httpx2.Response(200, json={"jsonrpc": "2.0", "id": rpc["id"], "result": {
+                "protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+                "serverInfo": {"name": "fixture", "version": "1.0"},
+            }})
+        if rpc["method"] == "notifications/initialized":
+            return httpx2.Response(202)
+        return httpx2.Response(http_status, json={"message": VALUE})
+
+    server = SimpleNamespace(
+        id="fixture", sse_url="https://example.test/rpc", enabled_status=1, user_assertion_enabled=False,
+    )
+    monkeypatch.setattr(mcp_client.McpClientService, "_load_server", AsyncMock(return_value=server))
+    monkeypatch.setattr(mcp_client, "build_mcp_headers", lambda *a, **kw: {})
+    monkeypatch.setattr(mcp_client, "apply_mcp_bindings", AsyncMock(return_value={}))
+    monkeypatch.setattr(mcp_client, "record_outbound_audit_log", AsyncMock())
+
+    async def get_session(*args, **kwargs):
+        session = mcp_client.McpSseSession(server.id, server.sse_url)
+        session._create_sse_http_client = lambda **_: httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+        session._tcp_endpoint_reachable = AsyncMock(return_value=True)
+        await session.connect()
+        assert not session.is_direct_http
+        return session
+
+    monkeypatch.setattr(mcp_client.McpClientService, "get_session", get_session)
+    with pytest.raises(mcp_client.McpProtectedCallError) as error:
+        await mcp_client.McpClientService.call_remote_tool(
+            server.id, "find", {}, protect_payload=True, timeout_seconds=2, user_info={"user_id": "9"},
+        )
+    assert error.value.code == code
+    assert methods.count("tools/call") == 1
+    assert VALUE not in caplog.text
+
+
 async def _result_block(*, projected=True, streaming=True):
     payload = {"status": "success", "result_visibility": "projected", "data": {"token": VALUE}}
     result = ProjectedMcpResult(payload) if projected else payload

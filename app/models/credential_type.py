@@ -2,9 +2,14 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy.dialects import mysql
 
 from app.core.orm import Base
+
+
+def _precise_datetime() -> DateTime:
+    return DateTime().with_variant(mysql.DATETIME(fsp=6), "mysql")
 
 
 class CredentialType(Base):
@@ -49,7 +54,7 @@ class StructuredCredential(Base):
     account_digest = Column(String(64), nullable=False)
     value_revision = Column(Integer, nullable=False, default=1)
     key_id = Column(String(48), nullable=False)
-    payload_encrypted = Column(Text, nullable=False)
+    payload_encrypted = Column(Text().with_variant(mysql.LONGTEXT(), "mysql"), nullable=False)
     public_projection = Column(JSON, nullable=False)
     secret_fields_set = Column(JSON, nullable=False)
     extra_schema = Column(JSON, nullable=False)
@@ -76,16 +81,18 @@ class McpCredentialProfile(Base):
 
 class McpCredentialUseGrant(Base):
     __tablename__ = "sys_mcp_credential_use_grants"
+    __table_args__ = (Index("ix_mcp_credential_use_grants_secret", "secret_id"),)
 
     tool_id = Column(String(36), primary_key=True)
     secret_id = Column(String(36), primary_key=True)
     grantee_type = Column(String(16), primary_key=True)
     grantee_id = Column(String(64), primary_key=True)
-    expires_at = Column(DateTime, nullable=True)
+    expires_at = Column(_precise_datetime(), nullable=True)
 
 
 class TaskCredentialWait(Base):
     __tablename__ = "sys_task_credential_waits"
+    __table_args__ = (Index("ix_task_credential_waits_task", "task_id", "status", "expires_at"),)
 
     request_id = Column(String(64), primary_key=True)
     task_id = Column(Integer, nullable=False)
@@ -94,7 +101,7 @@ class TaskCredentialWait(Base):
     task_definition_digest = Column(String(64), nullable=False)
     trace_id = Column(String(64), nullable=False)
     status = Column(String(16), nullable=False, default="pending")
-    expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    resolved_at = Column(DateTime)
-    resume_lease_until = Column(DateTime)
+    expires_at = Column(_precise_datetime(), nullable=False)
+    created_at = Column(_precise_datetime(), nullable=False, default=datetime.utcnow)
+    resolved_at = Column(_precise_datetime())
+    resume_lease_until = Column(_precise_datetime())

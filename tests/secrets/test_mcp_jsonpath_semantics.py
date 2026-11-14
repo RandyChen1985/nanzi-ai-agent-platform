@@ -93,7 +93,7 @@ def test_regex_timeout_restricts_entire_projection(monkeypatch, function, operat
         protected_values=(),
     )
 
-    assert result == {"status": "success", "result_visibility": "restricted"}
+    assert result == {"status": "success", "result_visibility": "restricted", "reason": "query_limit_exceeded"}
     assert result.reason == "query_limit_exceeded"
 
 
@@ -118,5 +118,5 @@ def test_nonmatching_filter_still_spends_traversal_budget(monkeypatch):
     )
 
     assert control["data"] == {"summary": "ready"}
-    assert result == {"status": "success", "result_visibility": "restricted"}
+    assert result == {"status": "success", "result_visibility": "restricted", "reason": "query_limit_exceeded"}
     assert result.reason == "query_limit_exceeded"

@@ -39,18 +39,18 @@ async def test_read_only_tools_requiring_credentials_go_through_confirmation(mon
 def test_authenticated_tool_metadata_uses_local_projection():
     record = SimpleNamespace(
         id="fixture", server_id="s1", tool_name="mail:synthetic-in-remote-name",
-        tool_description="synthetic-remote-description", credential_params=None,
+        tool_description="synthetic-remote-description", credential_params='["password"]',
         parameter_schema=json.dumps({
             "type": "object",
             "properties": {
-                "synthetic-key-from-remote": {"type": "string", "default": "synthetic-echo"},
+                "password": {"type": "string", "default": "synthetic-echo"},
                 "query": {"type": "string"},
             },
         }),
     )
     tool = McpToolFactory.create_tool(record, verify_profile=True)
     assert "synthetic" not in repr((tool.name, tool.description, tool.mcp_input_schema, tool.args_schema.model_json_schema()))
-    assert set(tool.mcp_input_schema["properties"]) == {"arg_1", "query"}
+    assert set(tool.mcp_input_schema["properties"]) == {"credential_choice_1", "query"}
 
 
 @pytest.mark.asyncio

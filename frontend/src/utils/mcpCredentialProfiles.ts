@@ -20,8 +20,17 @@ export type McpCredentialConfig = {
   profile: McpCredentialProfile | null
   stale: boolean
   model_tool_name?: string
+  credential_params?: string[]
+  supports_atomic_parameter_rules?: boolean
   model_result_policy?: McpModelResultPolicy
-  parameters: Array<{ name: string; type: string | string[] | null; required: boolean; sensitive: boolean; group_binding_required: boolean }>
+  parameters: Array<{
+    name: string
+    type: string | string[] | null
+    mapping_type?: string | null
+    required: boolean
+    sensitive: boolean
+    group_binding_required: boolean
+  }>
 }
 export type CredentialCandidate = {
   id: string

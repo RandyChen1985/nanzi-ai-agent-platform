@@ -108,10 +108,25 @@ class AgentScopeResumeHandler:
         if user_info:
             current_user_id = user_info.get("user_id") or user_info.get("id")
 
-        pending = await pending_agentscope_confirmations.peek_async(
-            request_id,
-            user_id=current_user_id,
-        )
+        async def peek_pending():
+            if scheduled_task_id is None:
+                return await pending_agentscope_confirmations.peek_async(request_id, user_id=current_user_id)
+            from app.services.secrets.task_credential_wait import peek_task_credential_snapshot
+
+            try:
+                return await peek_task_credential_snapshot(request_id, current_user_id)
+            except Exception:
+                raise CredentialInvocationError(
+                    "CREDENTIAL_QUERY_UNAVAILABLE", "暂时无法读取授权请求，请重试", 503,
+                ) from None
+
+        from app.services.secrets.mcp_profiles import CredentialInvocationError
+
+        try:
+            pending = await peek_pending()
+        except CredentialInvocationError as exc:
+            yield {"type": "error", "status": "error", "code": exc.code, "content": str(exc)}
+            return
         if not pending:
             yield {
                 "type": "error",
@@ -174,10 +189,11 @@ class AgentScopeResumeHandler:
                 trace_id=pending.trace_id,
             ), track_conversation_run(lane_user_id, conversation_id) as run_handle:
                 # 进锁后先只读复核快照，确认未被等锁期间的其他请求消费后再执行任何副作用。
-                still_pending = await pending_agentscope_confirmations.peek_async(
-                    request_id,
-                    user_id=current_user_id,
-                )
+                try:
+                    still_pending = await peek_pending()
+                except CredentialInvocationError as exc:
+                    yield {"type": "error", "status": "error", "code": exc.code, "content": str(exc)}
+                    return
                 if still_pending is None:
                     yield {
                         "type": "error",
@@ -212,7 +228,7 @@ class AgentScopeResumeHandler:
                         from sqlalchemy.exc import SQLAlchemyError
 
                         from app.core.orm import AsyncSessionLocal
-                        from app.services.secrets.mcp_profiles import CredentialInvocationError, pending_candidates
+                        from app.services.secrets.mcp_profiles import pending_candidates
                         from app.services.secrets.type_catalog import CredentialTypeError
 
                         try:

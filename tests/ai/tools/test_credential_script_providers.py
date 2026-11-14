@@ -1,12 +1,16 @@
 """Contract tests with mocked Docker and Kubernetes clients."""
 
 import asyncio
+import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from aiodocker.exceptions import DockerError
 from aiohttp import WSMsgType
 from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.exceptions import ApiException
 from kubernetes_asyncio.stream import WsApiClient
 
 from app.services.ai.tools import credential_script_providers as providers
@@ -17,6 +21,31 @@ PAYLOAD = b'{"credential":"synthetic-secret"}'
 STDIN_FRAME = b"33\n" + PAYLOAD
 
 
+def _docker_command(*messages):
+    stream = MagicMock()
+    stream.__aenter__.return_value = stream
+    stream.write_in = AsyncMock()
+    stream.read_out = AsyncMock(side_effect=[
+        *(SimpleNamespace(stream=channel, data=data) for channel, data in messages),
+        None,
+    ])
+    return stream, SimpleNamespace(
+        start=Mock(return_value=stream), inspect=AsyncMock(return_value={"Running": False, "ExitCode": 0}),
+    )
+
+
+def _k8s_command(*messages):
+    ws = MagicMock()
+    ws.send_bytes = AsyncMock()
+    ws.__aiter__.return_value = [
+        SimpleNamespace(type=WSMsgType.BINARY, data=bytes([channel]) + data)
+        for channel, data in messages
+    ] + [SimpleNamespace(type=WSMsgType.BINARY, data=b'\x03{"status":"Success"}')]
+    connection = MagicMock()
+    connection.__aenter__.return_value = ws
+    return ws, connection
+
+
 def _workspace(policy, monkeypatch):
     workspace = SimpleNamespace(
         _platform_sandbox_policy=policy,
@@ -24,17 +53,11 @@ def _workspace(policy, monkeypatch):
         env={"LEGACY": "parent-env-secret"},
     )
     if policy == "docker":
-        stream = MagicMock()
-        stream.__aenter__.return_value = stream
-        stream.write_in = AsyncMock()
-        stream.read_out = AsyncMock(side_effect=[
-            SimpleNamespace(stream=2, data=b"hidden stderr"),
-            SimpleNamespace(stream=1, data=b"output"),
-            None,
-        ])
-        command = SimpleNamespace(start=Mock(return_value=stream),
-                                  inspect=AsyncMock(return_value={"Running": False, "ExitCode": 0}))
-        private_container = SimpleNamespace(start=AsyncMock(), exec=AsyncMock(return_value=command))
+        stream, command = _docker_command((2, b"hidden stderr"), (1, b"output"))
+        probe_stream, probe = _docker_command((1, b"python\n"))
+        private_container = SimpleNamespace(
+            start=AsyncMock(), exec=AsyncMock(side_effect=lambda *args, stdin, **kwargs: command if stdin else probe),
+        )
         containers = SimpleNamespace(
             create=AsyncMock(return_value=private_container),
             container=Mock(return_value=SimpleNamespace(delete=AsyncMock())),
@@ -46,6 +69,7 @@ def _workspace(policy, monkeypatch):
             create=containers.create, delete=containers.container.return_value.delete,
             remove_handle=containers.container, exec=private_container.exec, send=stream.write_in,
             read=stream.read_out, inspect=command.inspect,
+            probe_send=probe_stream.write_in, probe_read=probe_stream.read_out,
         )
 
     status = SimpleNamespace(phase="Running", container_statuses=[
@@ -64,16 +88,9 @@ def _workspace(policy, monkeypatch):
     workspace._node_selector = {"sandbox": "true"}
     workspace._tolerations = []
     workspace._image_pull_secrets = ["image-pull"]
-    ws = MagicMock()
-    ws.send_bytes = AsyncMock()
-    ws.__aiter__.return_value = [
-        SimpleNamespace(type=WSMsgType.BINARY, data=b"\x02hidden stderr"),
-        SimpleNamespace(type=WSMsgType.BINARY, data=b"\x01output"),
-        SimpleNamespace(type=WSMsgType.BINARY, data=b'\x03{"status":"Success"}'),
-    ]
-    conn = MagicMock()
-    conn.__aenter__.return_value = ws
-    exec_api = AsyncMock(return_value=conn)
+    ws, conn = _k8s_command((2, b"hidden stderr"), (1, b"output"))
+    probe_ws, probe_conn = _k8s_command((1, b"python\n"))
+    exec_api = AsyncMock(side_effect=lambda *args, stdin, **kwargs: conn if stdin else probe_conn)
     monkeypatch.setattr(
         "kubernetes_asyncio.client.CoreV1Api",
         Mock(return_value=SimpleNamespace(connect_get_namespaced_pod_exec=exec_api)),
@@ -87,6 +104,7 @@ def _workspace(policy, monkeypatch):
         send=ws.send_bytes,
         read=workspace._v1.read_namespaced_pod,
         websocket=ws,
+        probe_send=probe_ws.send_bytes, probe_websocket=probe_ws,
     )
 
 
@@ -109,7 +127,10 @@ async def test_private_instance_sends_payload_only_over_stdin(policy, monkeypatc
     assert providers.validate_credential_provider(workspace) == policy
     assert await _run(workspace) == b"output"
     assert PAYLOAD not in repr(calls.create.call_args).encode()
-    assert PAYLOAD not in repr(calls.exec.call_args).encode()
+    assert PAYLOAD not in repr(calls.exec.await_args_list).encode()
+    probe_call, worker_call = calls.exec.await_args_list
+    assert not probe_call.kwargs["stdin"] and worker_call.kwargs["stdin"]
+    calls.probe_send.assert_not_awaited()
     assert "parent-env-secret" not in repr(calls.create.call_args)
     assert workspace._container.mock_calls == []
 
@@ -124,10 +145,10 @@ async def test_private_instance_sends_payload_only_over_stdin(policy, monkeypatc
         assert host["NetworkMode"] != "host"
         assert not host.get("Privileged")
         name = calls.create.call_args.kwargs["name"]
+        labels = config["Labels"]
         calls.remove_handle.assert_called_once_with(name)
-        calls.exec.assert_awaited_once_with(
-            ["python", "-I", "-c", BOOTSTRAP], stdin=True, stdout=True, stderr=True, tty=False,
-        )
+        assert worker_call.args == (["python", "-I", "-c", BOOTSTRAP],)
+        assert worker_call.kwargs == dict(stdin=True, stdout=True, stderr=True, tty=False)
         calls.send.assert_awaited_once_with(STDIN_FRAME)
         calls.delete.assert_awaited_once_with(force=True, v=True)
     else:
@@ -145,14 +166,87 @@ async def test_private_instance_sends_payload_only_over_stdin(policy, monkeypatc
         assert "env" not in worker and not worker["securityContext"]["privileged"]
         assert spec["activeDeadlineSeconds"] >= 2
         name = pod["metadata"]["name"]
-        assert calls.exec.call_args.kwargs["name"] == name
-        assert calls.exec.call_args.kwargs["command"] == ["python", "-I", "-c", BOOTSTRAP]
-        assert calls.exec.call_args.kwargs["stdin"]
-        assert calls.exec.call_args.kwargs["_preload_content"] is False
+        labels = pod["metadata"]["labels"]
+        assert probe_call.kwargs["name"] == worker_call.kwargs["name"] == name
+        assert worker_call.kwargs["command"] == ["python", "-I", "-c", BOOTSTRAP]
+        assert worker_call.kwargs["_preload_content"] is False
         calls.send.assert_awaited_once_with(b"\x00" + STDIN_FRAME)
         calls.delete.assert_awaited_once_with(
             name=name, namespace="test-namespace", grace_period_seconds=0,
         )
+    assert labels["agentscope.workspace"] == "true"
+    assert labels["agentscope.workspace.id"] == name
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["docker", "k8s"])
+@pytest.mark.parametrize(("available", "selected"), [
+    (("python",), "python"),
+    (("python3",), "python3"),
+    (("python", "python3"), "python"),
+    ((), None),
+])
+async def test_credential_worker_selects_interpreter_in_private_image(policy, available, selected, tmp_path, monkeypatch):
+    workspace, calls = _workspace(policy, monkeypatch)
+    for executable in available:
+        (tmp_path / executable).symlink_to(sys.executable)
+    received = []
+    original_exec = calls.exec.side_effect
+
+    def image_exec(*args, stdin, **kwargs):
+        command = args[0] if args else kwargs["command"]
+        if stdin:
+            if not (tmp_path / command[0]).is_file():
+                raise FileNotFoundError(command[0])
+            received.append(command)
+            return original_exec(*args, stdin=stdin, **kwargs)
+        probe = subprocess.run(
+            command, stdin=subprocess.DEVNULL, capture_output=True,
+            env={"PATH": str(tmp_path)}, check=True, timeout=2,
+        )
+        if policy == "docker":
+            stream, process = _docker_command((1, probe.stdout))
+            stream.write_in = calls.probe_send
+            return process
+        ws, connection = _k8s_command((1, probe.stdout))
+        ws.send_bytes = calls.probe_send
+        return connection
+
+    calls.exec.side_effect = image_exec
+    if selected is None:
+        with pytest.raises(providers.CredentialExecutionUnavailable) as exc:
+            await _run(workspace)
+        assert getattr(exc.value, "code", None) == "interpreter_missing"
+        assert "python3" in str(exc.value)
+        assert received == []
+        calls.send.assert_not_awaited()
+    else:
+        assert await _run(workspace) == b"output"
+        assert received == [[selected, "-I", "-c", BOOTSTRAP]]
+    calls.probe_send.assert_not_awaited()
+    calls.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["docker", "k8s"])
+async def test_invalid_interpreter_probe_output_does_not_send_credentials(policy, monkeypatch):
+    workspace, calls = _workspace(policy, monkeypatch)
+    unexpected = b"synthetic-secret"
+    if policy == "docker":
+        calls.probe_read.side_effect = [SimpleNamespace(stream=1, data=unexpected), None]
+    else:
+        calls.probe_websocket.__aiter__.return_value = [
+            SimpleNamespace(type=WSMsgType.BINARY, data=b"\x01" + unexpected),
+            SimpleNamespace(type=WSMsgType.BINARY, data=b'\x03{"status":"Success"}'),
+        ]
+
+    with pytest.raises(providers.CredentialExecutionUnavailable) as exc:
+        await _run(workspace)
+
+    assert getattr(exc.value, "code", None) == "transport_failed"
+    assert "synthetic-secret" not in str(exc.value)
+    calls.send.assert_not_awaited()
+    calls.delete.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -179,13 +273,77 @@ async def test_interrupted_create_still_forces_delete(policy, finish, monkeypatc
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("policy", ["docker", "k8s"])
+async def test_cleanup_treats_already_missing_instance_as_removed(policy, monkeypatch):
+    workspace, calls = _workspace(policy, monkeypatch)
+    error = DockerError(404, "fixture removed") if policy == "docker" else ApiException(status=404)
+    calls.delete.side_effect = error
+    assert await _run(workspace) == b"output"
+    calls.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["docker", "k8s"])
 async def test_cleanup_failure_fails_closed(policy, monkeypatch):
     workspace, calls = _workspace(policy, monkeypatch)
-    calls.delete.side_effect = RuntimeError("synthetic-secret")
+    calls.delete.side_effect = (
+        DockerError(403, "synthetic-secret") if policy == "docker"
+        else ApiException(status=403, reason="synthetic-secret")
+    )
     with pytest.raises(providers.CredentialExecutionUnavailable) as exc:
         await _run(workspace)
+    assert getattr(exc.value, "code", None) == "cleanup_failed"
+    assert "清理失败" in str(exc.value)
     assert "synthetic-secret" not in str(exc.value)
     assert exc.value.__suppress_context__
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["docker", "k8s"])
+async def test_cleanup_times_out_without_returning_worker_output(policy, monkeypatch):
+    workspace, calls = _workspace(policy, monkeypatch)
+
+    async def stall(**kwargs):
+        await asyncio.Event().wait()
+
+    calls.delete.side_effect = stall
+    monkeypatch.setattr(providers, "_CLEANUP_TIMEOUT_SECONDS", 0.02)
+    with pytest.raises(providers.CredentialExecutionUnavailable) as exc:
+        await asyncio.wait_for(_run(workspace), timeout=1)
+
+    assert getattr(exc.value, "code", None) == "cleanup_failed"
+    calls.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["docker", "k8s"])
+async def test_failed_cleanup_takes_precedence_over_worker_timeout(policy, monkeypatch):
+    workspace, calls = _workspace(policy, monkeypatch)
+
+    async def stall(*args):
+        await asyncio.Event().wait()
+
+    calls.send.side_effect = stall
+    calls.delete.side_effect = RuntimeError("synthetic-secret")
+    with pytest.raises(providers.CredentialExecutionUnavailable) as exc:
+        await _run(workspace, timeout=0.04)
+
+    assert getattr(exc.value, "code", None) == "cleanup_failed"
+    assert "synthetic-secret" not in str(exc.value)
+    calls.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["docker", "k8s"])
+async def test_transport_error_returns_fixed_diagnostic(policy, monkeypatch):
+    workspace, calls = _workspace(policy, monkeypatch)
+    calls.send.side_effect = RuntimeError("synthetic-secret")
+
+    with pytest.raises(providers.CredentialExecutionUnavailable) as exc:
+        await _run(workspace)
+
+    assert getattr(exc.value, "code", None) == "transport_failed"
+    assert "synthetic-secret" not in str(exc.value)
+    calls.delete.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -199,8 +357,9 @@ async def test_output_limit_applies_to_stderr(policy, monkeypatch):
         calls.websocket.__aiter__.return_value = [
             SimpleNamespace(type=WSMsgType.BINARY, data=b"\x02" + oversized),
         ]
-    with pytest.raises(providers.CredentialExecutionUnavailable):
+    with pytest.raises(providers.CredentialExecutionUnavailable) as exc:
         await _run(workspace)
+    assert getattr(exc.value, "code", None) == "output_limit"
     calls.delete.assert_awaited_once()
 
 
@@ -235,6 +394,16 @@ async def test_concurrent_calls_delete_their_own_private_instances(policy, monke
 
     calls.create.side_effect = create
     if policy == "docker":
+        probe_tasks = set()
+
+        async def read_probe():
+            task = asyncio.current_task()
+            if task in probe_tasks:
+                return None
+            probe_tasks.add(task)
+            return SimpleNamespace(stream=1, data=b"python\n")
+
+        calls.probe_read.side_effect = read_probe
         per_task_reads = {}
 
         async def read():
@@ -276,6 +445,35 @@ async def test_cancel_propagates_even_when_delete_fails(policy, monkeypatch, cap
         await task
     calls.delete.assert_awaited_once()
     assert "synthetic-secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["docker", "k8s"])
+async def test_repeated_cancellation_waits_for_private_instance_removal(policy, monkeypatch):
+    workspace, calls = _workspace(policy, monkeypatch)
+    cleaning = asyncio.Event()
+    release = asyncio.Event()
+    removed = asyncio.Event()
+
+    async def remove(**kwargs):
+        cleaning.set()
+        await release.wait()
+        removed.set()
+
+    calls.delete.side_effect = remove
+    task = asyncio.create_task(_run(workspace))
+    await asyncio.wait_for(cleaning.wait(), 1)
+    try:
+        for _ in range(2):
+            task.cancel()
+            await asyncio.sleep(0)
+        assert not task.done()
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(removed.wait(), 1)
+    calls.delete.assert_awaited_once()
 
 
 @pytest.mark.asyncio

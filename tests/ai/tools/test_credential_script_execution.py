@@ -16,15 +16,19 @@ def run_worker(tmp_path, code, *, env=None, files=None, timeout=2):
 
     payload = json.dumps({"code": code, "params": {"limit": 3}, "requirements": [],
                           "env": env or {}, "files": files or {}, "timeout": timeout}).encode()
+    return json.loads(_run_worker_process(worker_source(), payload, tmp_path))
+
+
+def _run_worker_process(bootstrap, payload, workdir):
     process = subprocess.run(
-        [sys.executable, "-I", "-c", worker_source()],
+        [sys.executable, "-I", "-c", bootstrap],
         input=str(len(payload)).encode() + b"\n" + payload,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=tmp_path, timeout=8,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=workdir, timeout=8,
         env={"PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8"},
     )
     assert process.returncode == 0, process.stderr
     assert not process.stderr
-    return json.loads(process.stdout)
+    return process.stdout
 
 
 def test_worker_injects_only_child_and_masks_short_and_json_escaped_values(tmp_path):
@@ -34,6 +38,7 @@ def test_worker_injects_only_child_and_masks_short_and_json_escaped_values(tmp_p
     assert "p7" not in str(result) and 'a\\"b' not in str(result)
     assert "993" not in str(result)
     assert "[REDACTED]" in result["stdout"] and "[REDACTED]" in result["stderr"]
+    assert "输出已脱敏" in result["stderr"]
     assert list(tmp_path.iterdir()) == []
 
 
@@ -131,7 +136,32 @@ def test_worker_blocks_artifact_equal_to_redaction_marker(tmp_path):
 def test_worker_hides_secret_which_is_json_or_spans_json_nodes(tmp_path, value):
     code = "import os; print(os.environ['TOKEN'])" if value.startswith(("{", '"synthetic')) else "import os; print('{'+os.environ['TOKEN']+'}')"
     result = run_worker(tmp_path, code, env={"TOKEN": value})
-    assert "synthetic-needle" not in result["stdout"]
+    assert result["stdout"] == ""
+    assert "输出已隐藏" in result["stderr"]
+    assert "synthetic-needle" not in result["stderr"]
+
+
+def test_worker_checks_cross_node_echo_before_rewriting_artifact_paths(tmp_path):
+    value = '"synthetic-left", "synthetic-right"'
+    code = (
+        "from pathlib import Path; import json; "
+        "Path('synthetic-left').write_text('a'); "
+        "print(json.dumps({'artifacts': ['synthetic-left', 'synthetic-right']}))"
+    )
+    result = run_worker(tmp_path, code, env={"TOKEN": value})
+
+    assert result["stdout"] == ""
+    assert "输出已隐藏" in result["stderr"]
+    assert "synthetic-left" not in result["stderr"]
+    assert "synthetic-right" not in result["stderr"]
+
+
+def test_worker_hides_a_plain_output_if_replacement_joins_another_credential(tmp_path):
+    result = run_worker(tmp_path, "print('synthetic-A' + 'tail-value')",
+                        env={"SHORT": "A", "TOKEN": "synthetic-tail-value"})
+    assert result["exit_code"] == 0
+    assert result["stdout"] == ""
+    assert "输出已隐藏" in result["stderr"]
 
 
 @pytest.mark.asyncio
@@ -177,6 +207,142 @@ async def test_lazy_workspace_is_prepared_before_credentials_are_read(tmp_path, 
     result = await execution.execute_credential_script(runner, {})
     assert order == ["ready", "resolve"]
     assert result.ok and "needle" not in result.stdout + result.stderr
+    assert "输出已脱敏" in result.message
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("value", "code", "stdout", "notice"), [
+    (
+        '\"first\", \"second\"',
+        "import os; print('[' + os.environ['TOKEN'] + ']')",
+        "",
+        "输出已隐藏",
+    ),
+    (
+        "p7",
+        "import os, json; print(json.dumps({'value': os.environ['TOKEN']}))",
+        '{"value": "[REDACTED]"}',
+        "输出已脱敏",
+    ),
+    (
+        "p7",
+        "import os, json; print(json.dumps({'value': os.environ['TOKEN'], 'output_notice': 'business field'}))",
+        '{"value": "[REDACTED]", "output_notice": "business field"}',
+        "输出已脱敏",
+    ),
+    (
+        "p7",
+        "import os, sys; print('business'); print(os.environ['TOKEN'], file=sys.stderr)",
+        "business\n",
+        "输出已脱敏",
+    ),
+    (
+        "输出已隐藏",
+        "import os; print(os.environ['TOKEN'])",
+        "[REDACTED]\n",
+        "输出已脱敏",
+    ),
+    (
+        "p7\n",
+        "import os, sys; print('business'); sys.stderr.write(os.environ['TOKEN'] + 'p7')",
+        "business\n",
+        "输出已脱敏",
+    ),
+    ("p7", "pass", "", ""),
+])
+async def test_runner_surfaces_private_worker_output_notice(value, code, stdout, notice, tmp_path, monkeypatch):
+    from app.services.ai.tools import credential_script_execution as execution
+    from app.services.ai.tools import credential_script_providers as providers
+    from app.services.ai.tools import script_tool_runtime as runtime
+
+    monkeypatch.setattr(runtime, "list_bound_slots", AsyncMock(return_value=["env:TOKEN"]))
+    monkeypatch.setattr(execution, "apply_script_env_bindings", AsyncMock(return_value={"TOKEN": value}))
+
+    async def transport(workspace, *, bootstrap, payload, timeout_seconds):
+        return _run_worker_process(bootstrap, payload, tmp_path)
+
+    monkeypatch.setattr(providers, "run_credential_process", transport)
+    workspace = SimpleNamespace(_platform_sandbox_policy="docker", _image_tag="fixture",
+        _client=SimpleNamespace(containers=SimpleNamespace(create=lambda: None, container=lambda: None)))
+    runner = runtime.ScriptToolRunner(
+        runtime.ScriptToolConfig(id="t", name="fixture", code=code, timeout_seconds=10),
+        workdir=tmp_path, sandbox_root=str(tmp_path), sandbox_ws=workspace,
+    )
+
+    result = await runner.run({})
+    rendered = await runtime.render_result_for_model(result, workdir=runner.workdir)
+
+    assert result.ok and result.stdout == stdout
+    assert value not in result.stdout + result.stderr + result.message + rendered
+    if notice:
+        assert notice in result.message and notice in rendered
+        assert "没有输出" not in rendered
+        if stdout.startswith("{"):
+            expected = json.loads(stdout)
+            if "output_notice" in expected:
+                _, _, rendered_payload = rendered.partition("\n")
+                assert json.loads(rendered_payload) == expected
+            else:
+                assert json.loads(rendered)["value"] == "[REDACTED]"
+    else:
+        assert not result.message
+        assert "没有输出" in rendered
+
+
+@pytest.mark.asyncio
+async def test_runner_uses_only_sanitized_result_when_export_rewrite_hides_stdout(tmp_path, monkeypatch):
+    from app.services.ai.tools import credential_script_execution as execution
+    from app.services.ai.tools import credential_script_providers as providers
+    from app.services.ai.tools.script_tool_runtime import ScriptToolConfig, ScriptToolRunner
+
+    value = '"id": "9", "tag":'
+    response = {
+        "exit_code": 0,
+        "stdout": '{"artifacts": ["leak.txt"], "id":"9","tag":"business"}',
+        "stderr": "",
+        "artifacts": [{"path": "leak.txt", "data": base64.b64encode(value.encode()).decode()}],
+    }
+    monkeypatch.setattr(execution, "apply_script_env_bindings", AsyncMock(return_value={"TOKEN": value}))
+    monkeypatch.setattr(providers, "run_credential_process", AsyncMock(return_value=json.dumps(response).encode()))
+    workspace = SimpleNamespace(_platform_sandbox_policy="docker", _image_tag="fixture",
+        _client=SimpleNamespace(containers=SimpleNamespace(create=lambda: None, container=lambda: None)))
+    runner = ScriptToolRunner(ScriptToolConfig(id="t", name="fixture", code="pass", timeout_seconds=10),
+                             workdir=tmp_path, sandbox_root=str(tmp_path), sandbox_ws=workspace)
+
+    result = await execution.execute_credential_script(runner, {})
+
+    assert result.ok and result.stdout == ""
+    assert "输出已隐藏" in result.message and "未发布" in result.message
+    assert value not in result.stderr + result.message
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response", [
+    b'{"stdout": "synthetic-secret"',
+    b'{"exit_code": "synthetic-secret", "stderr": "synthetic-secret"}',
+    b'\xffsynthetic-secret',
+])
+async def test_invalid_worker_response_keeps_private_output_out_of_script_error(response, tmp_path, monkeypatch, caplog):
+    from app.services.ai.tools import credential_script_execution as execution
+    from app.services.ai.tools import credential_script_providers as providers
+    from app.services.ai.tools.script_tool_runtime import ScriptToolConfig, ScriptToolError, ScriptToolRunner
+
+    injected_env = {"TOKEN": "synthetic-secret"}
+    monkeypatch.setattr(execution, "apply_script_env_bindings", AsyncMock(return_value=injected_env))
+    monkeypatch.setattr(providers, "run_credential_process", AsyncMock(return_value=response))
+    workspace = SimpleNamespace(_platform_sandbox_policy="docker", _image_tag="fixture",
+        _client=SimpleNamespace(containers=SimpleNamespace(create=lambda: None, container=lambda: None)))
+    runner = ScriptToolRunner(ScriptToolConfig(id="t", name="fixture", code="pass", timeout_seconds=10),
+                             workdir=tmp_path, sandbox_root=str(tmp_path), sandbox_ws=workspace)
+
+    with pytest.raises(ScriptToolError) as exc:
+        await execution.execute_credential_script(runner, {})
+
+    assert "synthetic-secret" not in str(exc.value) + caplog.text
+    assert exc.value.__suppress_context__
+    assert injected_env == {}
     assert list(tmp_path.iterdir()) == []
 
 

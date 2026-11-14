@@ -16,6 +16,9 @@ const editor = ref<{ mode: 'create' | 'publish'; source?: CredentialType } | nul
 const preview = ref(false)
 const busy = ref(false)
 const error = ref('')
+const conflict = ref(false)
+type TypeDraft = { type_key: string; name: string; enabled: boolean; schema: CredentialSchema }
+const conflictDraft = ref<TypeDraft | null>(null)
 const closeButton = ref<HTMLButtonElement | null>(null)
 const visible = computed(() => types.value.filter(item =>
   filter.value === 'all' || item.can_create === (filter.value === 'enabled'),
@@ -34,6 +37,7 @@ async function perform(task: () => Promise<void>) {
   try {
     await task()
   } catch (err) {
+    if ((err as { response?: { status?: number } })?.response?.status === 409) conflict.value = true
     error.value = credentialError(err, '操作失败，请刷新后重试')
   } finally {
     busy.value = false
@@ -59,6 +63,13 @@ function openEditor(mode: 'create' | 'publish', source?: CredentialType) {
   editor.value = { mode, source }
 }
 
+function reloadTypes() {
+  void perform(async () => {
+    await load()
+    conflict.value = false
+  })
+}
+
 function close() {
   if (!busy.value) emit('close')
 }
@@ -68,9 +79,10 @@ function cancelEditor() {
   closeButton.value?.focus()
 }
 
-function save(draft: { type_key: string; name: string; enabled: boolean; schema: CredentialSchema }) {
+function save(draft: TypeDraft) {
   const current = editor.value
-  if (!current) return
+  if (!current || busy.value || conflict.value) return
+  conflictDraft.value = draft
   void perform(async () => {
     const item = current.source
     const response = current.mode === 'publish' && item
@@ -81,11 +93,13 @@ function save(draft: { type_key: string; name: string; enabled: boolean; schema:
     const saved = response.data.data as CredentialType
     if (filter.value !== 'all' && saved.can_create !== (filter.value === 'enabled')) filter.value = 'all'
     select(saved)
+    conflictDraft.value = null
     await load()
   })
 }
 
 function toggle(item: CredentialType) {
+  if (conflict.value) return
   void perform(async () => {
     await axios.patch('/api/portal/credential-types/' + item.type_key + '/status', {
       enabled: !item.enabled, expected_revision: item.revision,
@@ -121,7 +135,16 @@ onMounted(() => {
           </div>
         </header>
         <div v-if="error" role="alert" class="mx-4 mt-3 rounded-lg bg-rose-50 px-3 py-2 text-rose-800 sm:mx-5">{{ error }}</div>
-        <CredentialTypeEditor v-if="editor" :mode="editor.mode" :source="editor.source" :saving="busy"
+        <div v-if="conflict" class="mx-4 mt-2 sm:mx-5">
+          <button type="button" :disabled="busy" class="rounded border px-3 py-1 text-blue-700" @click="reloadTypes">
+            重新加载最新类型
+          </button>
+        </div>
+        <details v-if="conflictDraft && !editor" class="mx-4 mt-2 rounded border bg-slate-50 p-2 text-xs sm:mx-5">
+          <summary class="cursor-pointer">查看未保存的类型草稿</summary>
+          <pre class="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-all">{{ JSON.stringify(conflictDraft, null, 2) }}</pre>
+        </details>
+        <CredentialTypeEditor v-if="editor" :mode="editor.mode" :source="editor.source" :saving="busy || conflict"
           @cancel="cancelEditor" @save="save" />
         <div v-else class="min-h-0 overflow-y-auto p-4 sm:grid sm:grid-cols-[18rem_minmax(0,1fr)] sm:gap-5 sm:p-5">
           <div>
@@ -152,7 +175,7 @@ onMounted(() => {
                 <select :value="selected.version" aria-label="查看版本" :disabled="busy" class="rounded border p-1.5" @change="changeVersion">
                   <option v-for="version in versions" :key="version" :value="version">v{{ version }}</option>
                 </select>
-                <button v-if="manage" type="button" :disabled="busy" title="切换类型自身的新建配置，不改变全局开关" class="rounded-lg border px-2 py-1.5" @click="toggle(selected)">
+                <button v-if="manage" type="button" :disabled="busy || conflict" title="切换类型自身的新建配置，不改变全局开关" class="rounded-lg border px-2 py-1.5" @click="toggle(selected)">
                   {{ selected.enabled ? '禁用' : '启用' }}
                 </button>
               </div>

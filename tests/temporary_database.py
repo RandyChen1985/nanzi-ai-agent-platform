@@ -58,7 +58,8 @@ async def temporary_database(*tables: Table) -> AsyncIterator[AsyncEngine]:
                 current_database = (await connection.exec_driver_sql(database_query)).scalar_one()
                 if current_database != database:
                     raise RuntimeError("数据库连接未选中本用例新建的临时库")
-                await connection.run_sync(tables[0].metadata.create_all, tables=tables)
+                if tables:
+                    await connection.run_sync(tables[0].metadata.create_all, tables=tables)
             yield engine
         finally:
             await engine.dispose()

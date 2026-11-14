@@ -264,11 +264,10 @@ const {
   refresh: refreshTypes, clear: clearCredentialFields, complete: credentialComplete, request: credentialRequest,
 } = useCredentialFields()
 const createExpiry = ref('')
-watch(typeKey, key => {
+watch(typeKey, () => {
   form.value.value = ''
   revealValue.value = false
   clearCredentialFields()
-  if (key && key !== 'scalar' && key !== 'variable') form.value.allowed_scenarios = ['mcp']
 })
 watch(showCreate, open => {
   if (!open) {

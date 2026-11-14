@@ -10,7 +10,7 @@ const { parse, compileScript } = require('@vue/compiler-sfc')
 const source = readFileSync('frontend/src/components/system/McpServerRegistry.vue', 'utf8')
 const { descriptor } = parse(source)
 const script = ts.createSourceFile('registry.ts', descriptor.scriptSetup.content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-const functions = ['submitParamMark', 'reloadParamMark']
+const functions = ['submitParamMark', 'reloadParamMark', 'reloadConflictingParamMark']
 const selected = script.statements.filter(node => ts.isFunctionDeclaration(node) && functions.includes(node.name?.text))
 assert.equal(selected.length, functions.length)
 const js = ts.transpileModule(selected.map(node => node.getText(script)).join('\n'), {
@@ -21,7 +21,7 @@ const helpers = ts.transpileModule(readFileSync('frontend/src/utils/mcpCredentia
 }).outputText.replace(/import axios from ['"]@\/utils\/axios['"];?/, 'const axios = undefined;')
 const { splitMcpResultPaths, initialMcpResultFieldText } = await import('data:text/javascript;base64,' + Buffer.from(helpers).toString('base64'))
 
-function harness({ text = '$', policy = { revision: 4, model_result_fields: [], stale: true, target: 'before' }, put, getConfig, loadBindings } = {}) {
+function harness({ text = '$', policy = { revision: 4, model_result_fields: [], stale: true, target: 'before' }, put, getConfig, loadBindings, drafts, rules, existing, supportsRules = true } = {}) {
   const requests = []
   const tool = { id: 'health', server_id: 'server', credential_params: '[]' }
   let persisted = policy
@@ -29,12 +29,16 @@ function harness({ text = '$', policy = { revision: 4, model_result_fields: [], 
     paramMarkTarget: ref({ tool }), paramMarkBusy: ref(false), paramBindingsLoading: ref(false),
     paramProfileLoading: ref(false), paramCredentialError: ref(''), paramSaveError: ref(''),
     paramResultFields: ref(text), paramBindBusy: ref(false), paramCredentialMode: ref('legacy'),
+    paramSaveConflict: ref(false), paramConflictDraft: ref(null),
     confirmLegacyMode: ref(false), paramFocus: ref(''),
-    paramCredentialConfig: ref({ profile: null, stale: false, parameters: [], model_result_policy: policy }),
+    paramCredentialConfig: ref({ profile: null, stale: false, parameters: [], model_result_policy: policy,
+      supports_atomic_parameter_rules: supportsRules }),
     draftUnboundNames: ref([]), draftMissingCred: ref([]), draftMissingRule: ref([]),
-    paramDraft: ref({ ping: 'cred' }), paramRuleDraft: ref({}), slotRules: ref({}),
+    paramDraft: ref(drafts || { ping: 'cred' }), paramRuleDraft: ref(rules || {}), slotRules: ref({}),
+    paramFixedBindings: ref({}),
     isGlobalBinding: ref(false), headerBindings: ref({}),
-    paramSlot: (_, name) => 'arg:health:' + name, ruleBindingOfSlot: () => null,
+    paramSlot: (_, name) => 'arg:health:' + name, ruleBindingOfSlot: slot => existing?.[slot] || null,
+    credentialParamList: row => JSON.parse(row.credential_params || '[]'),
     showToast: () => {}, credentialError: (err, fallback) => err.response?.data?.detail || fallback,
     splitMcpResultPaths, initialMcpResultFieldText, fetchServers: async () => {}, buildParamDraft: () => {},
     getMcpCredentialConfig: getConfig || (async () => ({ profile: null, stale: false, parameters: [], model_result_policy: persisted })),
@@ -43,11 +47,77 @@ function harness({ text = '$', policy = { revision: 4, model_result_fields: [], 
       requests.push({ url, body })
       if (put) return await put(url, body)
       persisted = { revision: 5, model_result_fields: body.model_result_fields || [], stale: false, target: 'after' }
-      return { data: { credential_params: body.params, model_result_policy: persisted } }
+      return { data: { credential_params: body.params, model_result_policy: persisted,
+        binding_changes_applied: body.binding_changes?.length } }
     } },
   }
-  const actions = new Function(...Object.keys(state), js + '\nreturn { submitParamMark, reloadParamMark };')(...Object.values(state))
+  const actions = new Function(...Object.keys(state), js + '\nreturn { submitParamMark, reloadParamMark, reloadConflictingParamMark };')(...Object.values(state))
   return { ...actions, state, requests, tool }
+}
+
+// 旧后端可能忽略新字段，不能提交一个会静默漏掉规则的保存请求。
+{
+  const h = harness({ drafts: { ping: 'rule' }, rules: { ping: { key_source: 'user.user_name' } }, supportsRules: false })
+  await h.submitParamMark()
+  assert.equal(h.requests.length, 0)
+  assert.match(h.state.paramSaveError.value, /升级/)
+}
+
+// 先读取保存时要比较的修订，再读取绑定，否则可能用旧规则配上新修订。
+{
+  let resolveConfig
+  let loaded = false
+  const h = harness({
+    getConfig: () => new Promise(resolve => { resolveConfig = resolve }),
+    loadBindings: async () => { loaded = true; return true },
+  })
+  const open = h.reloadParamMark(h.tool)
+  assert.equal(loaded, false)
+  resolveConfig({ profile: null, parameters: [], model_result_policy: {
+    revision: 5, model_result_fields: ['$'], stale: false, target: 'new',
+  } })
+  await open
+  assert.equal(loaded, true)
+}
+
+// 一次保存才有机会让后端原子提交，不能偷偷发旧绑定接口的写请求。
+{
+  const rule = { key_source: 'arg:region' }
+  const h = harness({
+    drafts: { ping: 'rule', old: 'model' }, rules: { ping: rule },
+    existing: { 'arg:health:old': { rule } },
+  })
+  await h.submitParamMark()
+  assert.deepEqual(h.requests[0].body.binding_changes, [
+    { parameter: 'ping', operation: 'upsert_rule', rule, is_global: false },
+    { parameter: 'old', operation: 'delete_rule', is_global: false },
+  ])
+  assert.equal(h.requests.length, 1)
+}
+
+// 409 后禁止旧快照重试；显式重载展示最新设置，草稿仍可核对。
+{
+  let fail = true
+  const h = harness({
+    text: '$.draft', put: async () => {
+      if (fail) throw { response: { status: 409, data: { detail: '设置已有更新' } } }
+      return { data: { credential_params: [], model_result_policy: { revision: 7, model_result_fields: ['$.saved'], stale: false, target: 'saved' } } }
+    },
+    getConfig: async () => ({ profile: null, credential_params: [], parameters: [],
+      model_result_policy: { revision: 6, model_result_fields: ['$.saved'], stale: false, target: 'saved' } }),
+  })
+  await h.submitParamMark()
+  assert.equal(h.state.paramSaveConflict.value, true)
+  await h.submitParamMark()
+  assert.equal(h.requests.length, 1)
+  await h.reloadConflictingParamMark()
+  assert.equal(h.state.paramSaveConflict.value, false)
+  assert.equal(h.state.paramResultFields.value, '$.saved')
+  assert.equal(h.state.paramConflictDraft.value.resultFields, '$.draft')
+  fail = false
+  await h.submitParamMark()
+  assert.equal(h.requests[1].body.expected_revision, 6)
+  assert.deepEqual(h.requests[1].body.model_result_fields, ['$.saved'])
 }
 
 // 底部保存要把结果草稿与最终来源一起提交，使用打开弹窗时的策略快照。

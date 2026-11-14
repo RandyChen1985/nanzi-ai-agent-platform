@@ -2465,6 +2465,7 @@
       :mountable-datasets="resourceOptions.datasets"
       :active-metadata-dataset-ids="activeMetadataDatasetIds"
       :session-mounted-dataset-ids="sessionMountedMetadataDatasetIds"
+      :session-mount-saving="resourceScopeSaving"
       :initial-loading="portalLoading && !portalNavigationPayload"
       :background-refreshing="portalBackgroundRefreshing"
       :focus-saved-report-request="savedReportFocusRequest"

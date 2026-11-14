@@ -51,13 +51,68 @@ function mount(component, props = {}) {
   return { root, app }
 }
 
+function setupFunctions(relative, names, bindings) {
+  const ts = localRequire('typescript')
+  const { descriptor } = parse(fs.readFileSync(path.join(frontend, relative), 'utf8'))
+  const source = ts.createSourceFile(relative + '.ts', descriptor.scriptSetup.content, ts.ScriptTarget.Latest, true)
+  const statements = source.statements.filter(stmt => names.includes(stmt.expression?.expression?.getText(source))
+    || stmt.declarationList?.declarations.some(decl => names.includes(decl.name.getText(source))))
+  const code = ts.transpileModule(statements.map(stmt => stmt.getText(source)).join('\n'), {
+    compilerOptions: { module: ts.ModuleKind.ESNext },
+  }).outputText
+  return new Function(...Object.keys(bindings), code + '\nreturn typeof handlePinToSession === "function" ? handlePinToSession : null')(...Object.values(bindings))
+}
+
+async function scenarioCase() {
+  for (const page of ['SecretCenter', 'AdminSecretCenter']) {
+    const typeKey = Vue.ref('scalar'), showCreate = Vue.ref(true), revealValue = Vue.ref(true)
+    const form = Vue.ref({ value: 'synthetic', allowed_scenarios: ['api_tool', 'script_env'] })
+    const scope = Vue.effectScope()
+    scope.run(() => setupFunctions('src/views/' + page + '.vue', ['watch'], {
+      watch: (subject, ...args) => {
+        if (subject === typeKey || subject === showCreate) Vue.watch(subject, ...args)
+      },
+      typeKey, showCreate, revealValue, form, clearCredentialFields() {},
+      rotateOpen: Vue.ref(false), rotateTarget: Vue.ref(null), selected: Vue.ref(null),
+    }))
+    typeKey.value = 'service_auth'
+    await settle()
+    assert.deepEqual(form.value.allowed_scenarios, ['api_tool', 'script_env'], page)
+    assert.equal(form.value.value, '', page)
+    scope.stop()
+  }
+}
+
+async function mountSavingCase() {
+  const events = []
+  const props = { sessionMountSaving: false }
+  const group = { id: 'fixture' }
+  const handlePin = setupFunctions('src/components/chatbi/DatasetCapabilityMenu.vue', ['handlePinToSession'], {
+    props, isDatasetDisabled: () => false, isSessionMounted: () => false,
+    resolveDatasetIdForGroup: x => x.id, openMountMenuGroupKey: Vue.ref('fixture'),
+    emit: (_, id) => { events.push(id); props.sessionMountSaving = true },
+  })
+  handlePin(group)
+  handlePin(group)
+  assert.deepEqual(events, ['fixture'])
+  props.sessionMountSaving = false
+  handlePin(group)
+  assert.deepEqual(events, ['fixture', 'fixture'])
+}
+
 async function build(relative) {
   const result = await esbuild.build({
     entryPoints: [path.join(frontend, relative)], bundle: true, write: false, format: 'cjs',
     platform: 'node', external: ['vue', 'axios'], alias: { '@': path.join(frontend, 'src') }, logLevel: 'silent',
     plugins: [{ name: 'real-vue-with-network-boundary', setup(build) {
       build.onResolve({ filter: /(?:@\/utils\/axios|utils\/axios)$/ }, () => ({ path: 'network', namespace: 'test' }))
-      build.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export default globalThis.credentialTestApi', loader: 'js' }))
+      build.onResolve({ filter: /@\/composables\/useUser$/ }, () => ({ path: 'user', namespace: 'test' }))
+      build.onLoad({ filter: /.*/, namespace: 'test' }, args => ({
+        contents: args.path === 'user'
+          ? 'export const useUser = () => ({ hasPermission: () => true })'
+          : 'export default globalThis.credentialTestApi',
+        loader: 'js',
+      }))
       build.onLoad({ filter: /\.vue$/ }, args => {
         const { descriptor } = parse(fs.readFileSync(args.path, 'utf8'), { filename: args.path })
         const compiled = compileScript(descriptor, { id: args.path, inlineTemplate: true,
@@ -83,6 +138,31 @@ const types = [typeRow('service_auth', true, false, globalReason), typeRow('paus
 
 async function panelCase(which) {
   global.credentialTestApi = { get: async url => ({ data: { data: url.endsWith('/versions/1') ? { ...types[0], version: 1 } : types } }) }
+  if (which === 'type_conflict') {
+    let version = 1
+    const requests = []
+    global.credentialTestApi = {
+      get: async () => {
+        const revision = version++
+        return { data: { data: types.map(type => ({ ...type, revision })) } }
+      },
+      patch: async (url, body) => {
+        requests.push(body)
+        if (requests.length === 1) throw { isAxiosError: true, response: { status: 409, data: { detail: '类型已更新' } } }
+      },
+    }
+    const mounted = mount(await build('src/components/secrets/CredentialTypesPanel.vue'), { manage: true })
+    await settle()
+    await event(button(body, '禁用'), 'click')
+    assert.equal(button(body, '禁用').props.disabled, true)
+    await event(button(body, '禁用'), 'click')
+    assert.equal(requests.length, 1, '冲突后不能拿旧版本提交')
+    await event(button(body, '重新加载最新类型'), 'click')
+    await event(button(body, '禁用'), 'click')
+    assert.deepEqual(requests.map(x => x.expected_revision), [1, 2])
+    mounted.app.unmount()
+    return
+  }
   const mounted = mount(await build('src/components/secrets/CredentialTypesPanel.vue'), { manage: true })
   await settle()
   const row = find(body, n => n.tag === 'button' && text(n).includes('service_auth'))
@@ -181,14 +261,69 @@ async function pickerCase(which) {
     await event(find(mounted.root, n => n.tag === 'form'), 'submit')
     assert.equal(postCount, 1)
     assert.ok(text(find(mounted.root, n => n.props.role === 'alert')).includes(globalReason), '旧页面被后端拒绝时显示真实原因')
+    assert.match(text(mounted.root), /凭据字段已清空，请重新填写/)
     assert.equal(find(mounted.root, n => n.tag === 'textarea').props.value, '', '提交后不保留敏感字段')
   }
+  mounted.app.unmount()
+}
+
+async function testerCase() {
+  let release
+  let calls = 0
+  global.credentialTestApi = {
+    get: () => new Promise(resolve => { release = resolve }),
+    post: async () => { calls++; return { data: { status: 'success', result: {} } } },
+  }
+  const Tester = await build('src/components/system/McpToolTester.vue')
+  const mounted = mount(Tester, {
+    isOpen: true,
+    tool: { id: 'fixture', tool_name: 'Fixture:find', parameter_schema: '{"type":"object","properties":{}}' },
+  })
+  await settle()
+  assert.equal(button(mounted.root, '运行测试').props.disabled, true)
+  assert.match(text(mounted.root), /正在加载凭据配置/)
+  release({ data: { data: { profile: null, parameters: [], stale: false } } })
+  await settle()
+  assert.equal(button(mounted.root, '运行测试').props.disabled, false)
+  await event(button(mounted.root, '运行测试'), 'click')
+  assert.equal(calls, 1)
+  mounted.app.unmount()
+}
+
+async function testerSwitchCase() {
+  const tool = id => ({ id, tool_name: 'Fixture:' + id, parameter_schema: '{"type":"object","properties":{}}' })
+  const current = Vue.ref(tool('first'))
+  const requests = []
+  global.credentialTestApi = {
+    get: async () => ({ data: { data: { profile: null, parameters: [], stale: false } } }),
+    post: url => new Promise(resolve => requests.push({ url, resolve })),
+  }
+  const Tester = await build('src/components/system/McpToolTester.vue')
+  const mounted = mount({ setup: () => () => Vue.h(Tester, { isOpen: true, tool: current.value }) })
+  await settle()
+  await event(button(mounted.root, '运行测试'), 'click')
+  assert.match(requests[0].url, /first\/execute$/)
+  current.value = tool('second')
+  await settle()
+  await event(button(mounted.root, '运行测试'), 'click')
+  assert.match(requests[1].url, /second\/execute$/)
+  requests[1].resolve({ data: { status: 'success', result: { second: 'new-result' } } })
+  await settle()
+  requests[0].resolve({ data: { status: 'success', result: { first: 'old-result' } } })
+  await settle()
+  const rendered = text(mounted.root) + all(mounted.root, n => !!n.props.innerHTML).map(n => n.props.innerHTML).join('')
+  assert.match(rendered, /new-result/)
+  assert.doesNotMatch(rendered, /old-result/)
   mounted.app.unmount()
 }
 
 const which = process.argv[2]
 ;(async () => {
   if (which.startsWith('type_')) await panelCase(which)
+  else if (which === 'tester_ready') await testerCase()
+  else if (which === 'tester_switch') await testerSwitchCase()
+  else if (which === 'scenarios') await scenarioCase()
+  else if (which === 'mount_saving') await mountSavingCase()
   else if (which.endsWith('_options')) await optionsCase(which)
   else await pickerCase(which)
 })().catch(error => { console.error(error); process.exitCode = 1 })

@@ -58,7 +58,7 @@ def config(monkeypatch):
         async def commit(self):
             self.commits += 1
 
-    monkeypatch.setattr(mcp, "_clear_runtime_tool_cache", lambda: None)
+    monkeypatch.setattr(mcp, "_clear_runtime_tool_cache", AsyncMock())
     monkeypatch.setattr(mcp_profiles, "apply_mcp_arg_bindings", AsyncMock(return_value={"ping": "fixture-secret"}))
     return MemorySession(), tool, server
 
@@ -77,9 +77,9 @@ async def save(db, tool, policy, fields):
     )
 
 
-async def prepare(db, tool, server):
+async def prepare(db, tool, server, arguments=None):
     return await mcp_profiles.prepare_mcp_arguments(
-        db, server, "health", {}, mcp_profiles.McpCredentialInvocation(tool.id, None),
+        db, server, "health", arguments or {}, mcp_profiles.McpCredentialInvocation(tool.id, None),
         user_info=OWNER, trace_id=None, conversation_id=None,
     )
 
@@ -102,11 +102,12 @@ async def test_root_saved_with_new_credential_param_survives_reopen_and_executio
 
 @pytest.mark.parametrize("fields", [[], ["$["], None])
 async def test_empty_or_invalid_edit_replaces_previous_visible_policy(config, fields):
-    db, tool, _ = config
+    db, tool, server = config
     await save(db, tool, await read_policy(db, tool), ["$"])
     response = await save(db, tool, await read_policy(db, tool), fields)
     assert (await read_policy(db, tool))["model_result_fields"] == []
     assert response["model_result_policy"]["model_result_fields"] == []
+    assert (await prepare(db, tool, server)).result_policy_error == ("fields_invalid" if fields else None)
     if fields:
         assert response["warnings"][0]["code"] == "MCP_RESULT_FIELDS_INVALID"
 
@@ -159,7 +160,7 @@ async def test_stale_policy_keeps_editable_paths_but_execution_remains_restricte
     reopened = await read_policy(db, tool)
     assert reopened["stale"] is True
     assert reopened["model_result_fields"] == ["$"]
-    prepared = await prepare(db, tool, server)
+    prepared = await prepare(db, tool, server, {"ping": "business-ping"} if change == "endpoint" else {})
     assert prepared.result_policy_stale is True
     assert prepared.model_result_fields == ()
 

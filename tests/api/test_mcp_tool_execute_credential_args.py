@@ -89,7 +89,9 @@ async def test_debug_uses_one_injection_and_protected_transport(signed, monkeypa
     assert remote[0] == ({"password": "synthetic-value"}, True)
     assert "synthetic-value" not in repr(response)
     assert response["mcp_auth"]["user_assertion_sent"] is signed
-    assert response["result"] == {"status": "success", "result_visibility": "restricted"}
+    assert response["result"] == {
+        "status": "success", "result_visibility": "restricted", "reason": "no_matching_fields",
+    }
     assert response["model_result"] == {
         "tool_name": mcp.build_model_tool_name("mail:list_mail"),
         "visibility": "restricted", "reason": "no_matching_fields",
@@ -304,7 +306,9 @@ async def test_protected_mcp_wire_result_reaches_tester_and_chat(
     assert seen == [("list_mail", {"password": "fixture-password"})] * 2
     if expected is None:
         assert tester["model_result"]["reason"] == "no_matching_fields"
-        assert tester["result"] == {"status": "success", "result_visibility": "restricted"}
+        assert tester["result"] == {
+            "status": "success", "result_visibility": "restricted", "reason": "no_matching_fields",
+        }
     else:
         assert tester["model_result"]["reason"] is None
         assert tester["result"] == {

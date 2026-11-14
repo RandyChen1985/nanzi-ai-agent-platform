@@ -10,6 +10,203 @@
 
 **Spec:** [结构化凭据与工具注入统一规范](../specs/2026-11-14-credential-injection.md)。
 
+## PR #315 检视复核与整改
+
+**Goal:** 修复已核实的 MCP 参数兼容、配置保存和任务状态问题，补足真实迁移与异常路径验证；不把报告中的推断或既定安全取舍直接当作缺陷修改。
+
+**基线：** 用户提供的 `PR315-REVIEW.md` 审查远端 `2ea92114`；本次核实本地 `68e27119`，后者另含结果字段默认 `$`、折叠及说明调整。下文 P0/P1/P2 编号均引用该报告。结论表保留整改前的复核记录，实施和验证结果见下节。
+
+### 实施与验证记录
+
+- **迁移**：沿用 MySQL V218、PostgreSQL V118，新增连续编号 V219/V119。MySQL `nanzi` 默认字符集与排序规则实测为 `utf8mb4` / `utf8mb4_unicode_ci`，无需修改库或服务器默认值。V219 按工具缓存实际关联列转换 profile 的两列，预检冲突 ID 和不兼容索引；保留账号摘要、已有密文及其他列。临时库使用真实历史 SQL 的相关表和实际迁移解析器验证首次、部分升级和重跑，不代表全站空库基线回放。
+- **MCP 入参**：普通业务字段、分页参数、本地 schema 引用、开放对象及可区分的组合类型保留原义。测试台与模型使用同一业务投影，凭据和选择器字段仍由平台隔离处理。
+- **配置**：逐参数规则、参数来源及结果路径一次提交，验证依赖和作用域。MySQL 锁内使用最新 profile/绑定，409 后可读最新参数和绑定并查阅原草稿。固定凭据继续使用原入口。
+- **任务**：统一列表与详情状态，缩短恢复事务，按认领划分旧等待。快照读失败可重试；有权限的调用最多消费一次。运行中不重放已认领出站请求。
+- **结果与脚本**：MCP 受限原因可序列化，非法独立路径不再与主动留空混淆；固定错误分类覆盖测试所用 SDK HTTP 和直连路径。同步提交后通知各 worker 刷新。脚本支持 `python3` 镜像、保留清理失败语义，脱敏后再次检查，输出隐藏有明确提示。
+- **前端**：类型切换保留场景，补录失败提示重填已清空字段；测试台和任务弹窗隔离迟到响应；挂载保存期间禁用重复提交。
+
+| 检查 | 结果 |
+| --- | --- |
+| 主双库回归（真实迁移、候选、共享授权、生命周期、任务和关联查询） | MySQL 122 项通过；PostgreSQL 121 项通过、1 项仅 MySQL 的检查跳过 |
+| 后续定向双库回归 | 迁移 MySQL 5 项通过、PostgreSQL 4 项通过和 1 项跳过；参数保存事务每库 7 项通过；原生任务等待和旧编号到出站每库 11 项通过。与上一行部分重叠，不累计为独立覆盖数 |
+| 纯后端 | MCP、迁移契约、提供者和脚本 368 项通过；任务专项 54 项通过、7 项既有数据库或调度器用例未执行 |
+| 纯前端 | 311 项通过，包含实际 Vue 组件运行与全项目 Vue 模板/脚本编译 |
+| 全项目类型检查 | 仍报告 155 条既有错误，凭据相关改动组件未新增诊断 |
+| 原型 | 总览生成与内联 JS 语法检查通过 |
+
+本轮未修改 `nanzi` 或业务数据库，仅使用现有服务中的临时测试库；已清理本轮超时留下的临时库。不启动或部署服务，不提交、不推送。实际浏览器交互、CredentialPicker 性能、远端 MCP、真实 Docker/K8s 故障联调、JSONPath 压测和完整项目回归本轮未重新执行。用户此前报告的实际验收保留为历史记录。
+
+### 范围与约束
+
+- 保留服务端注入、模型不接收凭据值、固定/推导模式、凭据中心统一共享授权和关闭开关仅禁止新建的语义。
+- MCP JSONPath 仍按选中内容原样返回，不重新加入敏感字段名、凭据回显或健康状态过滤；脚本输出检查保持独立。
+- 保留密钥环配置名称、JSON 格式及存储方式，不引入新组件、SQLite 或新数据库产品。
+- 不操作业务数据库、真实凭据或服务启停；数据库验证仅用现有 MySQL/PostgreSQL 服务中的专用可销毁测试库。不得直接运行会初始化真实数据库/Redis 的根 conftest。
+- 现有 spec、plan、HTML 原型和 `tests/CHECKLIST.md` 随经确认的修改更新，不另建重复规格或计划。本轮实施已获授权；提交与推送等待后续指令。
+
+### 检视结论逐项核实
+
+| 报告项 | 当前结论 | 证据、影响与处理方向 |
+| --- | --- | --- |
+| P0-1 MySQL collation | 部分成立，部署风险待实库复现 | `mcp_profiles.py:475` 的同字符集 bin/ci 比较不能直接判 1267；真正风险是 `tool_relations.py:84`、`portal/endpoints/secrets.py:947` 中隐式 ci/ci 关联列不一致。按关联列对齐，不能把全部表改成 unicode_ci。 |
+| P0-2 普通 token 参数被阻断 | 已复现，优先修复 | `mcp_profiles.py:97` 将 `page_token` 判为未绑定凭据，`mcp_factory.py:473` 在实际调用前直接拒绝；影响普通分页 MCP，即使未传该可选参数也会阻断。 |
+| P1-1 任务指标因缺少赋值而覆盖 | 报告根因不成立 | `scheduler_service.py:198` 使用 ORM UPDATE 且未关闭会话同步；主要调用实体属于同一 Session。不能恢复 `task.config = config` 充当修复。锁前计算 metrics 的并发覆盖是另一项需单独验证的风险。 |
+| P1-2 自由对象参数丢失 | 已复现，优先修复 | `mcp_profiles.py:167,263` 将合法 map 投影为 `properties: {}` 并丢弃键值，如 `payload: {subject: ...}` 出站变成 `{}`。 |
+| P1-3 普通工具信息过度简化 | 已复现，优先修复 | `registry.py:600` 开启 verify_profile；`mcp_factory.py:365,404` 将未绑定工具的业务字段改为 arg_N、删说明与嵌套结构，`mcp_capability.py:89` 多数用途只剩通用文案。应保留业务语义，稳定模型调用名不改。 |
+| P1-4 nullable 映射失败 | 已复现，优先修复 | `mcp_profiles.py:136` 和 `McpCredentialProfileForm.vue:43` 将字符串类型直接与类型数组比较，`["string","null"]` 无法绑定字符串字段。 |
+| P2-1 缺失索引未补齐 | 成立于部分升级场景 | MySQL CREATE TABLE IF NOT EXISTS 不修已有表的索引；PG 有单独索引语句。补迁移守卫并同步 ORM。 |
+| P2-2 TEXT/LONGTEXT | 成立，属于 DDL/ORM 差异 | 生产 SQL 是 LONGTEXT，ORM Text 建表会落为 MySQL TEXT；并非 ORM 会截断生产 LONGTEXT。补 MySQL 方言类型和大密文往返。 |
+| P2-3 时间精度 | 成立，报告误差范围不完整 | MySQL DATETIME 未指定微秒；普通模式舍入，TIME_TRUNCATE_FRACTIONAL 模式截断。重要时间列与 ORM 对齐 DATETIME(6)。 |
+| P2-4 旧授权 secret_id 索引 | 结构成立，性能需测 | 联合主键不以 secret_id 开头；但新授权接口已返回 410，主要影响旧数据清理，不能按持续增长的主链阻断定级。 |
+| P2-5 迁移测试薄弱 | 部分成立 | 现有测试还检查表、复合键、种子 schema/hash、幂等守卫和迁移选择；缺的是实际迁移后的两库结构与查询验证。 |
+| P2-6 列表维护等待状态 | 部分成立 | 仅 awaiting_credential 项执行维护，不是每任务 commit；真实风险是读取事务累积多个行锁，以及单项锁等待拖住列表。 |
+| P2-7 恢复长事务 | 成立 | `scheduler_service.py:661` 取锁后跨 Redis 与候选查询；缩短事务，但认领前仍须复验权限、定义摘要和一次消费条件。 |
+| P2-8 success 被 next_wait 吞掉 | 当前不成立 | `scheduler_service.py:761` 仅 awaiting_permission 进入下一等待，success 到正常完成路径。保留并补事件序列回归。 |
+| P2-9 等待历史无清理 | 部分成立 | 没有终态按年龄清理，但删除任务会删除等待记录；保留期属产品决策，不能直接删除活跃租约或一次消费依据。 |
+| P2-10 列表/详情状态不同 | 成立 | 列表临时写 task.last_status，详情从 config.task_metrics 读取；到期/取消可能显示不一致。统一有效状态投影并绑定运行身份。 |
+| P2-11 编辑后旧等待 | 部分成立 | pending 被取消但 Redis 快照、旧弹窗滞后；服务端仍复验，不能等同于可继续越权执行。resuming 要区分认领前后，不能一律取消。 |
+| P2-12 清理异常覆盖输出 | 既定 fail-closed 行为 | 已有 `test_cleanup_failure_fails_closed`；保留清理失败不能宣告完全成功的契约，改善错误分类与幂等清理。 |
+| P2-13 python3-only 镜像 | 条件成立 | 凭据执行器固定 python，普通脚本有 python/python3 查找；补可信启动阶段的解释器选择和受控错误。 |
+| P2-14 容器传输零测试 | 当前不成立 | `test_credential_script_providers.py` 已实际调用 run_credential_process，覆盖 stdin、取消、超限、清理、readiness、并发和 TTL；客户端 mock 不等于入口全 mock。 |
+| P2-15 编码及产物范围 | 不构成现行规格违约 | spec 明确只承诺精确回显检查，并允许检查通过的文本产物发布到会话工作目录；不承诺抵御可信脚本任意编码/外发。范围与保留期可单列改善。 |
+| P2-16 短值误伤 | 可用性事实，现行安全取舍 | 短值检查和不能安全替换时隐藏整段已有规格及测试。补脱敏提示，不能忽略短值或取消检查。 |
+| P2-17 48 KiB 限制 | 事实成立，处理方式待定 | 超限返回 restricted；不是内容过滤。优先补诊断和说明，不静默截断，也不未经评估删除资源上限。 |
+| P2-18 restricted 原因丢失 | 成立于模型/持久化链路 | reason 是 dict 子类属性；测试接口另带 reason，但序列化会丢失，factory 还可能重建默认原因。应传递受控原因码，不能放出原文。 |
+| P2-19 根数组包装 | 部分成立 | 实验确认 `$` 返回根数组原样；`$[*]` 等部分选择会套 items，部分索引会保留 null 空位。输出形状调整属接口兼容决策，不能宣称 `$` 已坏。 |
+| P2-20 250ms 预算 | 风险待负载验证 | 存在墙钟预算和 100000 步预算；需测高负载误触发，不能直接移除时间/正则保护。 |
+| P2-21 错误统一化 | 部分成立 | timeout、CredentialInvocationError 已单独处理，其余传输异常趋于统一。补稳定错误分类，仍不把原始异常/凭据写入日志或上下文。 |
+| P2-22 多 worker 缓存 | 结构风险成立，需并发验证 | 当前清理本 worker、TTL 60 秒；其他 worker 可能拒绝旧 profile。复用现有 Redis/修订信号协调失效，保持用户隔离，禁止自动重放已发往远端的调用。 |
+| P2-23 返回解包差异 | 成立，但统一需兼容确认 | SDK 重复 result 文本包装只在 protected transport 下解包；不能泛化成对所有业务 result 字段递归解包。 |
+| P2-24 409 后无法直接重试 | 部分成立 | 后端已提示刷新，但前端没有冲突恢复入口；需显式重载、保留草稿供核对，不能偷偷换 revision 自动覆盖。 |
+| P2-25 规则绑定部分保存 | 成立，优先修复 | `McpServerRegistry.vue:1615` 先独立保存/删除规则，再 PUT 参数和结果策略；第二步失败留下中间状态。优先改一次事务保存。 |
+| P2-26 切类型丢场景 | 成立于新建草稿 | SecretCenter/AdminSecretCenter 切结构化类型强制重置 ['mcp']；只在初次新建初始化默认场景，后续保留合法选择。 |
+| P2-27 失败后明文清空 | 既定行为，保留 | 真实组件测试明确断言提交后敏感字段不保留；只补需要重新填写的提示，不恢复/缓存密码。 |
+| P2-28 滚动明显掉帧 | 证据不足 | 有重复布局/祖先样式读取，但已排除菜单内部滚动且关闭时返回；先用浏览器 Performance 测，再决定 rAF 合并等优化。 |
+| P2-29 测试按钮无反应 | 成立 | 函数对未 ready 直接 return，按钮只按 loading 禁用；统一按钮可用条件与具体原因。 |
+| P2-30 第二次挂载被丢弃 | 成立于仍可交互入口 | ChatInput 已传 saving；遗漏主要在 DatasetPortalDrawer/Menu。传递 saving 并禁用重复操作，不默认引入队列。 |
+| P2-31 可视化收紧合法 schema | 不成立 | 平台凭据类型 schema 本就禁止嵌套 additionalProperties:true；转换前先验证。此问题不能与 MCP 业务 map 丢失混为一谈。 |
+| P2-32 candidates.profile 必须可空 | 不成立 | 当前 API 重载已区分 draft 可空与非 draft 必须已有 profile；固定弹窗不传 draft，无 profile 返回 409。 |
+| P2-33 任务弹窗生命周期 | 部分成立 | 缺迟到响应守卫及 resuming 跟进；正常 POST 已 await 恢复到终态/下一等待，不是每次都停在 resuming。 |
+| P2-34 测试全是字符串 | 部分成立 | 静态断言存在，但也有实际 Vue 和提供者契约；围绕成立的问题补行为测试，保留有效接线检查，不按文件类型全盘删除。 |
+
+MySQL 判定依据：[collation coercibility](https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html)、[表字符集默认规则](https://dev.mysql.com/doc/refman/8.0/en/charset-table.html)、[微秒精度](https://dev.mysql.com/doc/refman/8.0/en/fractional-seconds.html)。账号唯一键采用 NFC/trim 后的 SHA256 摘要，Alice/alice 摘要不同；不应把账号展示列 collation 与摘要唯一性混淆。ORM 判定依据：[SQLAlchemy 会话同步](https://docs.sqlalchemy.org/en/20/orm/queryguide/dml.html#selecting-a-synchronization-strategy)。
+
+### 优先验证的五类交叉场景
+
+1. 没有结构化 profile 的普通分页 MCP：page_token 不得阻断，字段说明、嵌套结构及出站值保留（任务 A）。
+2. 同工具同时包含注入字段、自由 map 和 nullable 业务/凭据参数：只隐藏注入目标，不误删业务数据（任务 A）。
+3. 真实 SQL 升级后的 MySQL：关联查询、账号语义、大密文及微秒边界须与 PostgreSQL 一致（任务 B）。
+4. 定时恢复与编辑/撤权/取消并发：最多执行一次，旧等待不能覆盖新运行或新配置（任务 D）。
+5. 保存第二阶段失败、409 冲突、慢请求/关闭弹窗：不得出现无提示部分成功或迟到响应串写（任务 C、G）。
+
+### 任务 A：恢复 MCP 业务参数契约（第一批）
+
+**文件：** `app/services/secrets/mcp_profiles.py`、`mcp_capability.py`，`app/services/ai/tools/mcp_factory.py`、`registry.py`，`frontend/src/components/mcp/McpCredentialProfileForm.vue`；测试扩展 `tests/secrets/test_mcp_structured_profile.py`、`tests/frontend/mcp_fixed_credential_behavior.cjs`。
+
+**接口：** 保留 `compile_mappings(tool_schema, type_schema, mappings)`、`model_schema(tool_schema, profile, *, type_name=None)`、`_public_mcp_arguments(value, schema)` 的调用方式；新增内部 `mapping_type_compatible(source_kind: str, target_schema: dict) -> bool`，不新增对外凭据字段。
+
+- [x] 先补失败用例：page_token 可选/必填、自由 object、additionalProperties:true/带类型、嵌套数组、无 profile/逐参数/profile 三条路径，以及已映射密码不能由模型覆盖。
+- [x] 将运行时硬性凭据判断收敛到平台声明/映射及明确敏感标记；不能仅因 `_token` 后缀或一般业务连接名阻断调用。保留缺失明确敏感映射时的受控配置错误。
+- [x] 保留未注入字段原名、业务说明、约束和嵌套结构；稳定 mcp_hash 调用名保持不变。无凭据的普通工具恢复原用途描述；凭据工具继续使用既有本地类型与调用说明，避免远端根描述暴露注入字段。本批不新增用途配置字段或改工具身份。
+- [x] 对 schema 允许的自由对象保留键和值并按 additionalProperties 的子类型递归校验；不支持的结构显式拒绝，不能静默变成空对象。平台凭据类型 schema 的有限子集不扩展。
+- [x] 映射兼容允许单一非空类型及其 nullable 表达（包括可等价归一化的 anyOf/oneOf），保留 integer→number；多种非空候选类型明确报不支持，不能取数组首项。前端候选筛选与后端采用同一测试矩阵。
+- [x] 回归目标：上述失败用例转绿，普通工具、fixed、infer、逐参数绑定均能保持业务参数，真正注入字段仍不进入模型 schema/上下文。
+
+### 任务 B：迁移与 ORM 一致性（第一批）
+
+**文件：** `app/models/credential_type.py`、两库现有结构化迁移作为基线、两库各一份新增修复迁移、`tests/test_structured_credentials_migration_contract.py`、新增 `tests/integration/test_structured_credentials_migration_roundtrip.py`、`docs/credential-center-verification.md`。
+
+**接口：** 不改业务表字段/API 名称；用现有迁移机制修复列/索引。迁移编号实施时按主干实际最大版本连续分配，兼顾旧 V220/V120 开发断点，不能只重写已经执行过的 V218/V118。
+
+- [x] 在专用双库分别从真实历史 SQL 的相关表升级，记录 information_schema 中列类型、collation、精度、索引；先复现受影响 JOIN，不能用 metadata.create_all 替代迁移验证。
+- [x] MySQL 仅对确认不一致的关联列显式对齐排序规则，保留其余二进制比较契约；保留原数据与唯一性，发现非标准历史结构先报告预检错误。
+- [x] payload ORM 使用 `Text().with_variant(mysql.LONGTEXT(), "mysql")`；重要到期/租约时间对齐 DATETIME(6) 与相应默认值；补任务等待索引及旧授权 secret_id 索引，ORM 与迁移一致。
+- [x] 新迁移支持首次、部分升级、重复执行；同名错误索引不能当已满足。验证候选/关联工具/门户查询、超过 64 KiB 的密文往返、业务上限、账号大小写/NFC、过期边界。
+- [x] 回归目标：两库真实升级和上述查询全部通过；旧开发版本断点的显式修复路径有清楚操作说明。
+
+### 任务 C：逐参数配置原子保存与冲突恢复（第二批）
+
+**文件：** `frontend/src/components/system/McpServerRegistry.vue`、`frontend/src/components/secrets/CredentialTypesPanel.vue`、`app/api/portal/endpoints/mcp.py`、`app/services/secrets/center.py`；测试 `tests/api/test_mcp_result_policy_save.py`、`tests/frontend/mcp_result_fields_save.mjs`。
+
+**接口：** 已在 `PUT /api/portal/mcp/tools/{tool_id}/credential-params` 增加可选 `binding_changes`：每项包含 parameter、operation（upsert_rule/delete_rule）、rule（仅 upsert）及 is_global；槽位由服务器根据工具推导。省略时兼容旧请求，仍使用 expected_revision/expected_target。配置读取会声明批量能力，保存响应确认应用的规则数。
+
+- [x] 复现规则先保存而参数保存失败，断言不能留下半成品；补新增规则、删除规则、全局/个人权限和中途抛错回滚测试。
+- [x] 后端在一个事务内完成权限/快照校验、相关绑定更新和参数/结果策略保存；事务未提交前不发布缓存失效。前端改为一次提交，不做盲目补偿回滚。
+- [x] 409 后进入明确冲突态，提供重新加载入口，保留本地草稿供核对；不能自动更换 revision 重试覆盖远端修改。
+- [x] 回归目标：任何阶段失败均保持原状态；冲突重载后仅在用户确认草稿时保存，旧客户端请求仍兼容。
+
+### 任务 D：任务等待状态与事务边界（第二批）
+
+**文件：** `app/services/ai/scheduler_service.py`、`app/services/task_center_service.py`、`app/services/secrets/task_credential_wait.py`、`app/api/v1/endpoints/tasks.py`、`frontend/src/components/task/TaskCredentialWaitModal.vue`；测试 `tests/services/test_scheduler_service.py`，新增 `tests/integration/test_task_credential_wait_concurrency.py`。
+
+**接口：** 维持现有恢复 API；列表和详情复用同一有效状态投影，继续按 request_id、运行/trace、定义摘要与租约校验。不得单独恢复 `task.config = config`。
+
+- [x] 补 started→success→delivery 与失败投递的真实 Session 回归，验证计数和最新 config 保留；并发测试区分正常 ORM 同步与锁前计算指标导致的覆盖。
+- [x] 将列表的租约维护与批量读取分开，复用既有调度维护能力做短事务；列表/详情使用统一投影，不依赖临时 ORM 属性。旧等待的终态不得覆盖新执行。
+- [x] Redis 快照预取放到持锁前并设超时；认领时锁内仍复验归属、权限、定义、状态和候选有效性，取得租约后尽快提交，不取消一次消费保障。
+- [x] 编辑取消 pending 后按 request_id 幂等失效快照；resuming 按认领前后区分，不一律取消。弹窗加请求身份/卸载守卫，展示后台继续的状态，对 resuming 有界刷新。
+- [x] 回归目标：被锁单项不拖死整个列表，Redis 慢/失败、撤权、编辑、双恢复只触发一次外部执行；列表与详情状态一致。
+
+### 任务 E：结果诊断、传输错误和缓存一致性（第三批）
+
+**文件：** `app/services/secrets/mcp_model_result.py`、`mcp_jsonpath.py`、`mcp_result_storage.py`，`app/services/ai/tools/mcp_factory.py`、`mcp_client.py`、`registry.py`，`app/api/portal/endpoints/mcp.py`；测试 `tests/secrets/test_mcp_jsonpath_semantics.py`、`tests/core/test_mcp_projected_result_storage.py`，新增 `tests/services/mcp/test_mcp_cache_revision_behavior.py`。
+
+**接口：** 保持成功结果 data 和 JSONPath 求值；给 restricted 返回及持久化增加固定枚举 reason（fields_not_configured/fields_invalid/fields_stale/no_matching_fields/invalid_response/result_too_large/query_limit_exceeded），保留旧 status/result_visibility。属于兼容性扩展，不返回原始响应或敏感异常。
+
+- [x] 覆盖原因从 client→factory→模型/测试台→存储完整传递，防止序列化丢属性或重建时变成默认原因；只记录工具 ID、修订、耗时、大小及受控原因。
+- [x] 补大响应、无匹配、非法路径、非 JSON、资源超限及常见传输失败测试；按已知异常类型分类网络/认证/限流/协议错误，保留原有超时识别，不暴露 exception 文本。
+- [x] 用两个独立缓存实例模拟不同 worker；保存后复用既有 Redis 或配置修订失效机制。保持用户维度缓存和执行前版本核验，不能自动重放已经发送远端的调用。
+- [ ] 对 48 KiB、512 KiB、250ms/步数限制做说明及负载测量；本批不改上限、不静默截断、不增加内容过滤。数组包装与 SDK 解包行为另列兼容决策。
+- [x] 回归目标：同一种 restricted 原因在聊天、测试台、任务、追踪中一致，用户能区分未配置与查询失败；配置变化不会长期停留在旧 worker 缓存。
+
+### 任务 F：脚本解释器兼容与失败诊断（第三批）
+
+**文件：** `app/services/ai/tools/credential_script_providers.py`、`credential_script_execution.py`、`credential_script_worker.py`；测试 `tests/ai/tools/test_credential_script_providers.py`、`test_credential_script_execution.py`。
+
+**接口：** 保留 run_credential_process、stdin 凭据通道和 ScriptRunResult 契约；新增错误分类仅为固定安全码/提示，不携带原始帧、明文或未经检查的 stdout。
+
+- [x] 先覆盖 python-only、python3-only、双命令、无解释器；在可信启动阶段解析可执行程序后执行现有隔离 bootstrap，凭据继续只从 stdin 进入。
+- [x] 保留 cleanup failure fails-closed，补安全错误码与幂等删除处理；删除 404 按已不存在处理，其他失败不能直接冒充清理成功。沿用现有 TTL/孤儿回收机制并验证异常路径。
+- [x] 保留短值和跨节点回显检查，补固定“输出已脱敏/隐藏”提示，避免用户把空输出当无数据。不要通过忽略短值、放回原始输出修复可用性。
+- [x] 回归目标：Docker/K8s 提供者契约、取消/超时/删除失败矩阵通过；用户已有实际联调记录继续保留，但不替代新增故障用例。
+
+### 任务 G：前端状态一致性与必要的性能验证（第四批）
+
+**文件：** `frontend/src/views/SecretCenter.vue`、`AdminSecretCenter.vue`、`EmbedChat.vue`、`AgentDebug.vue`，`frontend/src/components/system/McpToolTester.vue`、`frontend/src/components/secrets/CredentialApprovalPicker.vue`，`frontend/src/components/chatbi/DatasetPortalDrawer.vue`、`DatasetCapabilityMenu.vue`；扩展 `tests/frontend/test_credential_creation_gate_behavior.py` 及真实组件脚本 `tests/frontend/credential_creation_gate_behavior.cjs`。CredentialPicker 的性能核验列为后续工作。
+
+- [x] 类型切换保留已选合法场景；初次新建仍按现有默认值，已有凭据和禁新建开关语义不变。
+- [x] 测试按钮 disabled 与 credentialReady/loading 一致并显示具体原因；数据集挂载入口收到 saving 状态后禁用重复操作，父级保留防御检查及反馈。
+- [x] 补录提交失败保持敏感字段清空，仅明确提示重新填写；不改已有明文生命周期。
+- [ ] 在真实浏览器记录 CredentialPicker 打开/关闭、外层滚动、菜单内部滚动、嵌套模态框的布局成本；仅在确认问题后用 rAF 合并必要定位，保留动态层级与卸载清理。
+- [x] 回归目标：慢请求、失败、关闭和切换对象不会串写；按钮状态与实际提交一致；两种凭据中心、管理员/普通用户均覆盖。
+
+### 任务 H：交付验证与文档同步（随各批完成，最终汇总）
+
+**文件：** 本 plan、现有 spec、`prototypes/2026-11-14-credential-injection.html`、`tests/CHECKLIST.md`、`docs/credential-center-verification.md`。
+
+- [x] 每批先证明对应失败，再做最小修复与相关回归；保留有价值静态契约，新增组件、Session、真实迁移或提供者边界测试，不以断言条数代替覆盖结论。
+- [x] 前端相关回归通过 `python -m pytest --confcutdir=tests/frontend <本批测试文件> -q` 隔离；后端纯函数回归用 `--noconftest` 和合成配置。数据库集成单独使用检查过的专用双库 fixture，不把“无基础设施标记”当作不会连库的保证。
+- [ ] 最终覆盖普通 MCP/fixed/infer/逐参数、个人/共享、禁新建后存量使用、JSONPath、任务恢复和 Docker/K8s 故障路径；按修改范围做浏览器实际操作，不把 renderer 测试称为实机验收。
+- [x] 同步规格/原型/说明后执行 `python prototypes/build_index.py` 与 `git diff --check`；重新对比全项目类型检查和既有失败，只要求本次无新增，仍如实记录遗留问题。
+- [ ] 用中文提交信息分批提交便于 review；提交或推送由用户后续指令决定，不能把本节待办勾成已经验收。
+
+### 需单独确认、不能夹带实施的行为或兼容性调整
+
+1. JSONPath 部分根数组输出是否移除 items 包装及如何处理未选索引的 null 占位；需确定老 shorthand/消费端兼容策略，不改已经正确的 `$` 根数组。
+2. 统一有/无凭据调用的 SDK 返回解包形状；只识别 SDK 明确包装，不能递归剥离业务 result 字段。
+3. 放宽或可配置化结果大小/时间预算；需先得到负载数据，若引入分页/产物返回则另行定义接口，不能假称 JSONPath 原样返回。
+4. 等待记录、检查通过产物的保留期；需先确定审计/一次消费和跨会话可见性要求，再做终态批量清理。当前方案不选择任意天数，也不清真实数据。
+5. 清理失败仍返回业务成功、失败后保留密码、忽略短值回显等建议改变现行保证，本方案不采纳。若要改变，必须另行评估并更新规格。
+6. 旧版独立绑定 API 保留原契约，两种入口互相改同一规则时不共享修订。生产配置应使用新版参数设置的一次保存；跨入口版本化后续另行评估。
+
+### 整改前的分析验证
+
+- 对当前源文件抽取原函数做无数据库最小实验，复现 page_token 误判、自由 map 丢值、nullable 映射拒绝、普通字段 arg_N/嵌套结构丢失；这证明函数行为，不等同完整远端调用。
+- 使用项目现有依赖实际调用 JSONPath 投影：`$` 根数组保持数组，`$[*]` 增加 items 包装；50,000 字符结果为 result_too_large，无匹配为 no_matching_fields，序列化后的 restricted 字典没有 reason。
+- 使用现有 SQLAlchemy 在无 bind Session 中验证 ORM 同步路径，started→success→delivery 的计数/状态保留；没有创建 engine 或连接数据库。这是对报告归因的反证，不代替并发数据库回归。
+- 四项现有前端行为检查通过：`mcp_fixed_credential_behavior.cjs new_profile`、`save_failure`，`credential_creation_gate_behavior.cjs picker_stale`，`credential_schema_draft.mjs`。不代表尚未修复的 nullable、409、滚动性能已验收。
+- 分析阶段未提前实施，也未运行双库集成；之后的实施和验证结果见本节上方。
+
 ## 本轮增补：结果字段默认值与高级设置
 
 用户要求结果字段默认 `$`、默认折叠并简化说明。两个前端表单此前重复展开结果编辑区域，初始化均为空；逐参数入口可通过策略 revision 区分尚未保存与已保存的空范围。

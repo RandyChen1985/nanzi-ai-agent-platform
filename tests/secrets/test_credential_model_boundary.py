@@ -37,7 +37,9 @@ async def test_credentialed_tool_exposes_only_platform_status_to_model(monkeypat
     tool = mcp_factory.McpToolFactory.create_tool(_tool())
     assert "password" not in tool.mcp_input_schema["properties"]
     stream = await tool.ainvoke({"folder": "inbox"})
-    assert [part async for part in stream] == [{"status": "success", "result_visibility": "restricted"}]
+    assert [part async for part in stream] == [
+        {"status": "success", "result_visibility": "restricted", "reason": "fields_not_configured"},
+    ]
 
 
 @pytest.mark.parametrize("mode", ["structured", "json", "list", "empty", "plain", "echo", "oversize"])
@@ -74,7 +76,8 @@ def test_projection_only_exposes_configured_business_fields(mode):
 
     actual = project_model_result(result, fields, protected_values=("fixture-only-password",))
     if expected is None:
-        assert actual == {"status": "success", "result_visibility": "restricted"}
+        assert actual == {"status": "success", "result_visibility": "restricted",
+                          "reason": "invalid_response" if mode == "plain" else "result_too_large"}
     else:
         assert actual == {"status": "success", "result_visibility": "projected", "data": expected}
 

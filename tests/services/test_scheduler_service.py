@@ -347,3 +347,58 @@ def test_task_constraints_from_config_reads_trimmed_text():
 )
 def test_task_constraints_from_config_returns_empty_for_absent_or_blank(raw_config):
     assert _task_constraints_from_config(raw_config) == ""
+
+
+@pytest.mark.no_infrastructure
+async def test_task_attempt_uses_current_metrics_under_the_task_lock():
+    from app.services.ai.scheduler_service import _mark_task_attempt_started
+
+    class LockedConfigSession:
+        async def scalar(self, statement):
+            assert statement._for_update_arg is not None
+            return {
+                "task_constraints": "new instructions",
+                "_mcp_credential_refs": {"tool-test": "receipt-test"},
+                "task_metrics": {"trigger_count": 4, "skipped_count": 2},
+            }
+
+        async def execute(self, statement):
+            self.written_config = statement.compile().params["config"]
+
+        async def commit(self):
+            pass
+
+    session = LockedConfigSession()
+    task = AgentScheduledTask(id=17, config={"task_metrics": {"trigger_count": 1}})
+    await _mark_task_attempt_started(session, task)
+
+    assert session.written_config["task_constraints"] == "new instructions"
+    assert session.written_config["_mcp_credential_refs"] == {"tool-test": "receipt-test"}
+    assert session.written_config["task_metrics"]["trigger_count"] == 5
+    assert session.written_config["task_metrics"]["skipped_count"] == 2
+
+
+@pytest.mark.no_infrastructure
+async def test_task_list_and_detail_next_run_is_read_only(monkeypatch):
+    from types import SimpleNamespace
+    from sqlalchemy import inspect
+    from sqlalchemy.orm import Session
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    from app.services.task_center_service import TaskCenterService
+
+    next_run = datetime(2030, 1, 1)
+    task = AgentScheduledTask(id=17, user_id=101, agent_id="test-agent", config={})
+    set_committed_value(task, "next_run_at", None)
+    monkeypatch.setattr(scheduler_service, "get_next_run_time", lambda _: next_run)
+    with Session() as identity_map:
+        identity_map.enable_relationship_loading(task)
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            SimpleNamespace(all=lambda: [(task, "Owner", None, "Agent")]),
+            SimpleNamespace(scalar_one_or_none=lambda: task),
+        ]))
+        listed = await TaskCenterService.list_tasks(db, user_id=101)
+        detail = await TaskCenterService.get_task(db, task.id)
+
+    assert listed[0].next_run_at == detail.next_run_at == next_run
+    assert not inspect(task).attrs.next_run_at.history.has_changes()

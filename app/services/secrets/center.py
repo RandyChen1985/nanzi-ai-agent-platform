@@ -496,6 +496,7 @@ async def bind_rule(
     rule: dict | str | None,
     bound_by_user_id: str | None,
     actor_id: str | None = None,
+    commit: bool = True,
 ) -> SecretBinding:
     """把一个槽位绑到「一条定位规则」上（``strategy='rule'``，无 ``secret_id``）。
 
@@ -546,17 +547,17 @@ async def bind_rule(
     )
 
     owner_key = bound_by_user_id or ""
-    existing = (
-        await session.execute(
-            select(SecretBinding).where(
-                SecretBinding.consumer_type == consumer_type,
-                SecretBinding.consumer_id == consumer_id,
-                SecretBinding.slot == slot,
-                SecretBinding.bound_by_user_id == owner_key,
-                SecretBinding.strategy == "rule",
-            )
-        )
-    ).scalars().first()
+    stmt = select(SecretBinding).where(
+        SecretBinding.consumer_type == consumer_type,
+        SecretBinding.consumer_id == consumer_id,
+        SecretBinding.slot == slot,
+        SecretBinding.bound_by_user_id == owner_key,
+        SecretBinding.strategy == "rule",
+    )
+    if not commit:
+        # 调用者已持有服务、工具锁；按当前绑定决定新增或更新。
+        stmt = stmt.with_for_update()
+    existing = (await session.execute(stmt)).scalars().first()
 
     audit_detail = {
         "consumer_type": consumer_type,
@@ -569,37 +570,29 @@ async def bind_rule(
     }
 
     audit_actor_id = actor_id if actor_id is not None else bound_by_user_id
-    if existing is not None:
-        # 同一槽位重配规则 = 改规则，不新增第二条（唯一索引也会拦住）
-        existing.rule_json = payload
-        existing.secret_id = None
-        await session.commit()
-        await _audit(
-            action="bind_rule",
-            secret=None,
-            actor_id=audit_actor_id,
-            detail={"updated": True, **audit_detail},
+    if existing is None:
+        binding = SecretBinding(
+            id=str(uuid.uuid4()),
+            secret_id=None,
+            consumer_type=consumer_type,
+            consumer_id=consumer_id,
+            slot=slot,
+            bound_by_user_id=owner_key,
+            strategy="rule",
+            rule_json=payload,
         )
-        return existing
-
-    binding = SecretBinding(
-        id=str(uuid.uuid4()),
-        secret_id=None,
-        consumer_type=consumer_type,
-        consumer_id=consumer_id,
-        slot=slot,
-        bound_by_user_id=owner_key,
-        strategy="rule",
-        rule_json=payload,
-    )
-    session.add(binding)
-    await session.commit()
-    await _audit(
-        action="bind_rule",
-        secret=None,
-        actor_id=audit_actor_id,
-        detail=audit_detail,
-    )
+        session.add(binding)
+    else:
+        # 同一槽位复配规则，只更新原规则记录。
+        binding = existing
+        binding.rule_json = payload
+        binding.secret_id = None
+        audit_detail["updated"] = True
+    if commit:
+        await session.commit()
+        await _audit(action="bind_rule", secret=None, actor_id=audit_actor_id, detail=audit_detail)
+    else:
+        type_catalog.audit_change(session, "bind_rule", audit_actor_id, audit_detail)
     return binding
 
 
@@ -668,6 +661,7 @@ async def unbind_slot(
     bound_by_user_id: str | None,
     strategy: str = "fixed",
     actor_id: str | None = None,
+    commit: bool = True,
 ) -> int:
     """解绑。返回删除条数（0 表示本来就没绑）。
 
@@ -709,21 +703,22 @@ async def unbind_slot(
             owner_clause,
         )
     )
-    if secret_id:
+    detail = {"consumer_type": consumer_type, "consumer_id": consumer_id, "slot": slot,
+              "removed": result.rowcount or 0}
+    if not commit and result.rowcount:
+        secret = await session.get(UserSecret, secret_id) if secret_id else None
+        type_catalog.audit_change(session, "unbind", actor_id or bound_by_user_id, detail, secret=secret)
+    elif secret_id:
         secret = await session.get(UserSecret, secret_id)
         if secret is not None:
             await _audit(
                 action="unbind",
                 secret=secret,
                 actor_id=actor_id if actor_id is not None else bound_by_user_id,
-                detail={
-                    "consumer_type": consumer_type,
-                    "consumer_id": consumer_id,
-                    "slot": slot,
-                    "removed": result.rowcount or 0,
-                },
+                detail=detail,
             )
-    await session.commit()
+    if commit:
+        await session.commit()
     return result.rowcount or 0
 
 

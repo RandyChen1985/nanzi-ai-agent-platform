@@ -912,11 +912,12 @@
                     </button>
                     <button
                       type="button"
-                      class="flex w-full flex-col text-left px-2.5 py-1.5 rounded-lg transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 group/btn"
+                      :disabled="sessionMountSaving"
+                      class="flex w-full flex-col text-left px-2.5 py-1.5 rounded-lg transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 group/btn disabled:cursor-not-allowed disabled:opacity-50"
                       @click="handlePinToSession(group)"
                     >
                       <span class="text-xs font-semibold text-gray-800 dark:text-gray-200 group-hover/btn:text-gray-900 dark:group-hover/btn:text-white flex items-center justify-between">
-                        <span>{{ isSessionMounted(group) ? '取消本会话默认' : '本会话默认' }}</span>
+                        <span>{{ sessionMountSaving ? '正在保存会话范围…' : isSessionMounted(group) ? '取消本会话默认' : '本会话默认' }}</span>
                         <span v-if="isSessionMounted(group)" class="text-[10px] text-blue-600 dark:text-blue-400 font-normal">已固定</span>
                       </span>
                       <span class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 leading-tight">
@@ -1546,6 +1547,7 @@ const props = withDefaults(defineProps<{
   mountableDatasets?: Array<{ id: string; name?: string; dataset_name?: string; display_name?: string; description?: string }>;
   activeMetadataDatasetIds?: string[];
   sessionMountedDatasetIds?: string[];
+  sessionMountSaving?: boolean;
 }>(), {
   initialLoading: false,
   backgroundRefreshing: false,
@@ -1774,7 +1776,7 @@ const handleToggleTurnMount = (group: DatasetCapabilityGroup) => {
 };
 
 const handlePinToSession = (group: DatasetCapabilityGroup) => {
-  if (isDatasetDisabled(group)) return;
+  if (props.sessionMountSaving || isDatasetDisabled(group)) return;
   const id = resolveDatasetIdForGroup(group);
   if (!id) return;
   if (isSessionMounted(group)) {

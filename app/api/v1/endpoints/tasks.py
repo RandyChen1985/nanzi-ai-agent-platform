@@ -15,6 +15,7 @@ from app.schemas.task import (
     TaskExecutionHistoryItem,
 )
 from app.services.task_center_service import TaskCenterService
+from app.services.secrets import task_credential_wait
 from app.schemas.response import StandardResponse, ListResponse
 from app.models.saved_report import PortalSavedReport, PortalSavedReportRun, PortalSavedReportSubscription
 from app.models.task import AgentScheduledTask
@@ -171,6 +172,29 @@ async def create_task(
     )
     return StandardResponse(data=TaskResponse.from_orm(task))
 
+
+async def _task_responses(db: AsyncSession, tasks: List[AgentScheduledTask]) -> List[TaskResponse]:
+    metrics_by_task = {}
+    for task in tasks:
+        metrics = task_credential_wait.task_wait_metrics(task)
+        if metrics.get("last_status") == "awaiting_credential":
+            metrics_by_task[task.id] = metrics
+    waits = await task_credential_wait.waits_for_task_metrics(db, metrics_by_task)
+    responses = []
+    for task in tasks:
+        response = TaskResponse.model_validate(task)
+        row = waits.get(task.id)
+        if (
+            row is not None and str(row.user_id) == str(task.user_id)
+            and task_credential_wait.wait_matches_run(row, metrics_by_task[task.id])
+        ):
+            status = task_credential_wait.wait_view(row, task=task)["status"]
+            if status not in {"pending", "resuming"}:
+                response.last_status = "credential_" + status
+        responses.append(response)
+    return responses
+
+
 @router.get("/", response_model=StandardResponse[List[TaskResponse]])
 async def list_tasks(
     user_info: Dict[str, Any] = Depends(require_api_key),
@@ -182,16 +206,8 @@ async def list_tasks(
     raw_user_id = user_info.get("user_id") or user_info.get("id")
     user_id = int(raw_user_id) if raw_user_id is not None else None
     is_admin = user_info.get("role") == "admin"
-    from app.services.secrets.task_credential_wait import expire_waits, latest_wait, wait_view
-
     tasks = await TaskCenterService.list_tasks(db, user_id, is_admin)
-    for task in tasks:
-        if getattr(task, "last_status", None) == "awaiting_credential":
-            await expire_waits(db, task.id)
-            wait = wait_view(await latest_wait(db, task.id))
-            if wait and wait["status"] not in {"pending", "resuming"}:
-                task.last_status = "credential_" + wait["status"]
-    return StandardResponse(data=[TaskResponse.from_orm(t) for t in tasks])
+    return StandardResponse(data=await _task_responses(db, tasks))
 
 
 @router.get("/report-subscriptions")
@@ -360,7 +376,7 @@ async def get_task(
         raise HTTPException(status_code=404, detail="Task not found")
     
     _check_task_ownership(task, user_info)
-    return StandardResponse(data=TaskResponse.from_orm(task))
+    return StandardResponse(data=(await _task_responses(db, [task]))[0])
 
 @router.patch("/{task_id}", response_model=StandardResponse[TaskResponse])
 async def update_task(
@@ -390,7 +406,9 @@ async def update_task(
         payload["config"] = await _sanitize_task_config(db, owner_info, payload["config"])
 
     updated = await TaskCenterService.update_task(db, task_id, payload)
-    return StandardResponse(data=TaskResponse.from_orm(updated))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return StandardResponse(data=(await _task_responses(db, [updated]))[0])
 
 @router.delete("/{task_id}", response_model=StandardResponse[Dict[str, bool]])
 async def delete_task(
@@ -444,13 +462,20 @@ class TaskCredentialResolution(BaseModel):
 async def task_credential_wait_status(
     task_id: int, user_info: Dict[str, Any] = Depends(require_api_key), db: AsyncSession = Depends(get_db_session),
 ):
-    from app.services.secrets.task_credential_wait import expire_waits, latest_wait, wait_view
-
     task = await db.get(AgentScheduledTask, task_id)
     if task is None or str(task.user_id) != str(user_info.get("user_id") or ""):
         raise HTTPException(404, detail="任务不存在")
-    await expire_waits(db, task_id)
-    return StandardResponse(data=wait_view(await latest_wait(db, task_id)))
+    metrics = task_credential_wait.task_wait_metrics(task)
+    if metrics.get("last_status") == "awaiting_credential":
+        rows = await task_credential_wait.waits_for_task_metrics(db, {task.id: metrics})
+        row = rows.get(task.id)
+        if row and (row.user_id != task.user_id or not task_credential_wait.wait_matches_run(row, metrics)):
+            row = None
+    else:
+        row = await task_credential_wait.latest_wait(db, task_id, user_id=task.user_id)
+        if row and row.status in {"pending", "resuming"} and task_credential_wait.has_newer_run(row, metrics):
+            row = None
+    return StandardResponse(data=task_credential_wait.wait_view(row, task=task))
 
 
 @router.post("/{task_id}/credential-wait")

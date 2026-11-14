@@ -7,7 +7,9 @@ import stat
 import time
 import uuid
 
-from app.services.ai.tools.credential_script_worker import make_redactor, clean_output, contains_echo, bounded_text
+from app.services.ai.tools.credential_script_worker import (
+    bounded_text, clean_output_with_notice, contains_echo, make_redactor, output_notice,
+)
 from app.services.secrets.injection import apply_script_env_bindings, BindingLookupError
 
 
@@ -154,25 +156,35 @@ async def execute_credential_script(runner, params):
         exit_code = response.get("exit_code")
         if exit_code is not None and (not isinstance(exit_code, int) or isinstance(exit_code, bool)):
             raise CredentialExecutionError("凭据脚本退出状态无效")
-        stdout = clean_output(str(response.get("stdout") or ""), redact)
-        stderr = clean_output(str(response.get("stderr") or ""), redact)
+        stdout, stdout_notice = clean_output_with_notice(str(response.get("stdout") or ""), redact)
+        raw_stderr = str(response.get("stderr") or "")
+        # Worker 修饰的固定首行单独处理，避免影响对原 stderr 的检查。
+        first_line, _, remaining_stderr = raw_stderr.partition("\n")
+        worker_notice = output_notice(first_line)
+        stderr, stderr_notice = clean_output_with_notice(remaining_stderr if worker_notice else raw_stderr, redact)
         artifacts, blocked = export_artifacts(response.get("artifacts", []), runner.workdir, redact, sandbox_root=runner.sandbox_root)
         blocked += int(response.get("blocked_artifacts", 0))
         try:
             parsed = json.loads(stdout)
         except ValueError:
             parsed = None
-        if isinstance(parsed, dict) and "artifacts" in parsed:
-            parsed["artifacts"] = artifacts
-            stdout = json.dumps(parsed, ensure_ascii=False)
-        message = "部分产物未通过凭据回显或文件格式检查，未发布" if blocked else ""
-        if message:
-            stderr = (stderr + "\n" + message).strip()
-            if isinstance(parsed, dict):
-                parsed["artifact_notice"] = message
-                stdout = json.dumps(parsed, ensure_ascii=False)
-            else:
-                stdout += "\n" + message
+        artifact_notice = "部分产物未通过凭据回显或文件格式检查，未发布" if blocked else ""
+        if isinstance(parsed, dict) and ("artifacts" in parsed or artifact_notice):
+            if "artifacts" in parsed:
+                parsed["artifacts"] = artifacts
+            if artifact_notice:
+                parsed["artifact_notice"] = artifact_notice
+            stdout, rewrite_notice = clean_output_with_notice(json.dumps(parsed, ensure_ascii=False), redact)
+            stdout_notice = output_notice(stdout_notice, rewrite_notice)
+        notice = output_notice(worker_notice, stdout_notice, stderr_notice)
+        message = artifact_notice
+        if artifact_notice:
+            stderr = f"{artifact_notice}\n{stderr}" if stderr else artifact_notice
+            if not isinstance(parsed, dict) and not notice:
+                stdout += "\n" + artifact_notice
+        if notice:
+            stderr = notice + ("\n" + stderr if stderr else "")
+            message = notice + ("\n" + message if message else "")
         timed_out = response.get("timed_out") is True
         return ScriptRunResult(ok=exit_code == 0 and not timed_out, exit_code=exit_code,
                                stdout=bounded_text(stdout, 80 * 1024), stderr=bounded_text(stderr, 8 * 1024),

@@ -465,6 +465,7 @@ class ToolRegistry:
     _db_tool_source_cache: Dict[tuple[str, str], str] = {}
     _db_tool_cache_ttl = 60.0 # 60 seconds
     _db_tool_ids_fetched_at: Dict[tuple[str, str], float] = {}
+    _mcp_tool_cache_revisions: Dict[tuple[str, str], str] = {}
 
     @classmethod
     def clear_db_tool_cache(cls) -> None:
@@ -472,6 +473,7 @@ class ToolRegistry:
         cls._db_tool_cache.clear()
         cls._db_tool_source_cache.clear()
         cls._db_tool_ids_fetched_at.clear()
+        cls._mcp_tool_cache_revisions.clear()
 
     @staticmethod
     def _db_tool_cache_key(name: str) -> tuple[str, str]:
@@ -558,20 +560,31 @@ class ToolRegistry:
         cls, name: str, *, session_mcp_tool_id: str | None = None,
     ) -> Optional[tuple[Any, str]]:
         from app.services.secrets.payload_config import payload_keyring_requires_isolation
+        from app.services.mcp.tool_cache_revision import current_tool_revision
 
         cache_key = cls._db_tool_cache_key(name)
         tool = cls._db_tool_cache.get(cache_key)
         source = cls._db_tool_source_cache.get(cache_key, "static")
+        revision: str | None = None
+        revision_checked = False
         if (
             session_mcp_tool_id is None and tool is not None
             and time.time() - cls._db_tool_ids_fetched_at.get(cache_key, 0) < cls._db_tool_cache_ttl
             # 逐参数凭据策略变化会增删模型选择字段，不能复用旧绑定快照。
             and not (source == "mcp" and getattr(tool, "has_mcp_parameter_bindings", False))
         ):
-            if source != "generic_api" or tool.protect_sensitive_parameters == await payload_keyring_requires_isolation():
+            if source == "mcp":
+                revision = await current_tool_revision()
+                revision_checked = True
+                if revision is not None and revision == cls._mcp_tool_cache_revisions.get(cache_key):
+                    return tool, source
+            elif source != "generic_api" or tool.protect_sensitive_parameters == await payload_keyring_requires_isolation():
                 return tool, source
 
         try:
+            # 先读共享版本再取数据库快照，避免将旧快照记在新版本下。
+            if session_mcp_tool_id is None and not revision_checked:
+                revision = await current_tool_revision()
             async with AsyncSessionLocal() as session:
                 # A. Check MCP Tools first
                 mcp_stmt = select(McpToolCache).where(
@@ -603,10 +616,11 @@ class ToolRegistry:
                         verify_profile=True,
                         parameter_binding_modes=parameter_binding_modes,
                     )
-                    if session_mcp_tool_id is None:
+                    if session_mcp_tool_id is None and revision is not None:
                         cls._db_tool_cache[cache_key] = tool_instance
                         cls._db_tool_source_cache[cache_key] = "mcp"
                         cls._db_tool_ids_fetched_at[cache_key] = time.time()
+                        cls._mcp_tool_cache_revisions[cache_key] = revision
                     return tool_instance, "mcp"
                 if session_mcp_tool_id is not None:
                     return None

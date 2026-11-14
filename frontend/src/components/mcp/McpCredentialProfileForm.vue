@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from '@/utils/axios'
 import { credentialError, getCredentialVersion, isStructuredType, listCredentialTypes, type CredentialType } from '@/composables/useCredentialFields'
 import {
-  credentialProfileUrl, initialMcpResultFieldText, listMcpCredentialCandidates, splitMcpResultPaths, type CredentialCandidate, type McpCredentialConfig,
+  credentialProfileUrl, getMcpCredentialConfig, initialMcpResultFieldText, listMcpCredentialCandidates, splitMcpResultPaths, type CredentialCandidate, type McpCredentialConfig,
   type McpCredentialProfile, type SelectionMode,
 } from '@/utils/mcpCredentialProfiles'
 
@@ -11,7 +11,8 @@ const props = defineProps<{ toolId: string; config: McpCredentialConfig }>()
 const emit = defineEmits<{ saved: [McpCredentialProfile] }>()
 
 const types = ref<CredentialType[]>([])
-const current = ref<McpCredentialProfile | null>(props.config.profile)
+const latestConfig = ref(props.config)
+const current = ref<McpCredentialProfile | null>(latestConfig.value.profile)
 const typeKey = ref(current.value?.type_key || '')
 const typeVersion = ref(current.value?.type_version || 0)
 const versionDefinition = ref<CredentialType | null>(null)
@@ -23,6 +24,8 @@ const resultFieldText = ref(current.value
 const busy = ref(false)
 const loadingType = ref(false)
 const error = ref('')
+const conflict = ref(false)
+const previousDraft = ref<{ type: string; version: number; mode: SelectionMode; mappings: Record<string, string>; results: string } | null>(null)
 const saved = ref('')
 const fixedId = ref('')
 const candidates = ref<CredentialCandidate[]>([])
@@ -34,13 +37,20 @@ const versionOptions = computed(() => {
   const max = Math.max(types.value.find(item => item.type_key === typeKey.value)?.latest_version || 0, typeVersion.value)
   return Array.from({ length: max }, (_, index) => index + 1).reverse()
 })
-const unmapped = computed(() => props.config.parameters.filter(arg => arg.group_binding_required && !mappings.value[arg.name]))
+const unmapped = computed(() => latestConfig.value.parameters.filter(arg => arg.group_binding_required && !mappings.value[arg.name]))
 const mapped = computed(() => Object.entries(mappings.value).filter(([, field]) => field))
-const canSave = computed(() => !!versionDefinition.value && !busy.value && !loadingType.value
+const canSave = computed(() => !!versionDefinition.value && !busy.value && !conflict.value && !loadingType.value
   && !!mapped.value.length && !unmapped.value.length
   && (selectionMode.value !== 'fixed' || (!loadingCandidates.value && !candidateError.value && !fixedUnavailable.value)))
 
-function fieldOptions(targetType: string | string[] | null) {
+function fieldOptions(parameter: McpCredentialConfig['parameters'][number]) {
+  let targetType = parameter.mapping_type
+  // 兼容尚未返回 mapping_type 的后端版本。
+  if (targetType === undefined) {
+    const types = Array.isArray(parameter.type) ? parameter.type : [parameter.type]
+    const nonNull = [...new Set(types.filter(type => type !== 'null'))]
+    targetType = nonNull.length === 1 ? nonNull[0] : null
+  }
   return Object.entries(versionDefinition.value?.schema.properties || {}).filter(([, field]) =>
     field.type === targetType || (field.type === 'integer' && targetType === 'number'),
   )
@@ -97,8 +107,8 @@ watch([typeKey, typeVersion], async ([key, version], _, onCleanup) => {
 
 function suggestMappings() {
   const suggestions: Record<string, string> = {}
-  for (const parameter of props.config.parameters) {
-    const matching = fieldOptions(parameter.type).find(([name]) => name === parameter.name)
+  for (const parameter of latestConfig.value.parameters) {
+    const matching = fieldOptions(parameter).find(([name]) => name === parameter.name)
     if (matching) suggestions[parameter.name] = matching[0]
   }
   mappings.value = { ...suggestions, ...mappings.value }
@@ -112,10 +122,40 @@ async function perform(task: () => Promise<void>) {
   try {
     await task()
   } catch (err) {
+    if ((err as { response?: { status?: number } })?.response?.status === 409) conflict.value = true
     error.value = credentialError(err, '操作失败，请刷新后重试')
   } finally {
     busy.value = false
   }
+}
+
+function reloadProfile() {
+  if (!conflict.value || busy.value) return
+  void perform(async () => {
+    const latest = await getMcpCredentialConfig(props.toolId)
+    const profile = latest.profile
+    if (profile && !types.value.some(type => type.type_key === profile.type_key)) {
+      types.value.push(await getCredentialVersion(profile.type_key, profile.type_version))
+    }
+    previousDraft.value = {
+      type: typeKey.value, version: typeVersion.value, mode: selectionMode.value,
+      mappings: { ...mappings.value }, results: resultFieldText.value,
+    }
+    const bindingQueryUnchanged = profile && typeKey.value === profile.type_key
+      && typeVersion.value === profile.type_version && selectionMode.value === profile.selection_mode
+    latestConfig.value = latest
+    current.value = profile
+    typeKey.value = profile?.type_key || types.value[0]?.type_key || ''
+    typeVersion.value = profile?.type_version || types.value[0]?.latest_version || 0
+    selectionMode.value = profile?.selection_mode || 'infer'
+    mappings.value = { ...profile?.mappings }
+    resultFieldText.value = profile
+      ? (profile.model_result_fields || []).join('\n')
+      : initialMcpResultFieldText(latest.model_result_policy)
+    // 若类型、版本、模式未变，watch 不会更新个人固定绑定。
+    if (bindingQueryUnchanged && selectionMode.value === 'fixed') await loadCandidates()
+    conflict.value = false
+  })
 }
 
 function save() {
@@ -128,10 +168,11 @@ function save() {
       ...(selectionMode.value === 'fixed' ? { fixed_secret_id: fixedId.value || null } : {}),
       model_result_fields: splitMcpResultPaths(resultFieldText.value),
       expected_revision: current.value?.revision || 0, expected_profile_id: current.value?.profile_id,
-      expected_result_target: props.config.model_result_policy?.target,
+      expected_result_target: latestConfig.value.model_result_policy?.target,
     })
     const profile = response.data.data as McpCredentialProfile
     current.value = profile
+    previousDraft.value = null
     const resultFieldsSupported = Array.isArray(profile.model_result_fields)
     const resultFieldsWarning = response.data.warnings?.find(
       (warning: { code: string }) => warning.code === 'MCP_RESULT_FIELDS_INVALID',
@@ -161,8 +202,18 @@ onMounted(() => void perform(async () => {
 
 <template>
   <div class="space-y-4 text-sm">
-    <p v-if="config.stale" role="alert" class="rounded-lg bg-amber-50 px-3 py-2 text-amber-800">工具参数或目标已变化。重新保存配置后再试跑。</p>
+    <p v-if="latestConfig.stale" role="alert" class="rounded-lg bg-amber-50 px-3 py-2 text-amber-800">工具参数或目标已变化。重新保存配置后再试跑。</p>
     <p v-if="error" role="alert" class="rounded-lg bg-rose-50 px-3 py-2 text-rose-800">{{ error }}</p>
+    <button v-if="conflict" type="button" :disabled="busy" class="rounded border px-3 py-1 text-blue-700"
+      @click="reloadProfile">重新加载并保留草稿</button>
+    <details v-if="previousDraft" class="rounded border bg-slate-50 p-2 text-xs">
+      <summary class="cursor-pointer">查看冲突前的草稿</summary>
+      <p class="mt-2">{{ previousDraft.type }} v{{ previousDraft.version }} ·
+        {{ previousDraft.mode === 'fixed' ? '固定凭据' : previousDraft.mode === 'ask' ? '调用时授权' : '由模型推导账号' }}
+      </p>
+      <p v-for="(field, parameter) in previousDraft.mappings" :key="parameter">{{ parameter }} → {{ field }}</p>
+      <p class="whitespace-pre-wrap break-all">{{ previousDraft.results || '结果路径为空' }}</p>
+    </details>
     <p v-if="saved" role="status" class="rounded-lg bg-emerald-50 px-3 py-2 text-emerald-800">{{ saved }}</p>
     <div class="grid gap-3 rounded-xl border bg-slate-50 p-3 sm:grid-cols-2">
       <label class="text-xs font-medium">凭据类型
@@ -213,7 +264,7 @@ onMounted(() => void perform(async () => {
       <button type="button" :disabled="!versionDefinition || busy" class="rounded-lg border px-2 py-1 text-xs" @click="suggestMappings">按同名建议</button>
     </div>
     <div class="divide-y rounded-lg border">
-      <div v-for="parameter in config.parameters" :key="parameter.name" class="grid grid-cols-2 items-center gap-2 p-2.5 text-xs">
+      <div v-for="parameter in latestConfig.parameters" :key="parameter.name" class="grid grid-cols-2 items-center gap-2 p-2.5 text-xs">
         <div>
           <code>{{ parameter.name }}</code>
           <span class="ml-2 text-slate-500">{{ parameter.type || '未知类型' }}</span>
@@ -223,7 +274,7 @@ onMounted(() => void perform(async () => {
         <select v-model="mappings[parameter.name]" :disabled="busy" :aria-label="parameter.name + ' 的凭据字段'"
           class="w-full rounded-lg border bg-white px-2 py-1.5">
           <option value="" :selected="!mappings[parameter.name]">模型填写</option>
-          <option v-for="[name, field] in fieldOptions(parameter.type)" :key="name" :value="name">
+          <option v-for="[name, field] in fieldOptions(parameter)" :key="name" :value="name">
             {{ name }}{{ field.writeOnly ? ' · 敏感字段' : '' }}
           </option>
         </select>
@@ -253,14 +304,14 @@ onMounted(() => void perform(async () => {
           <p>更多内容查看 <a href="https://www.rfc-editor.org/rfc/rfc9535.html" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline underline-offset-2">JSONPath 官方文档（RFC 9535）</a>。</p>
           <p>首次配置默认使用 <code>$</code>。留空、路径无效或无匹配时，只显示执行状态。按 JSONPath 选中的内容原样返回。</p>
           <p>所选内容可能出现在对话和执行追踪中。</p>
-          <p v-if="config.stale" class="text-amber-800">工具参数或目标已变化，已保留原结果字段。请核对当前响应后重新保存。</p>
+          <p v-if="latestConfig.stale" class="text-amber-800">工具参数或目标已变化，已保留原结果字段。请核对当前响应后重新保存。</p>
         </div>
       </div>
     </details>
     <details class="rounded-lg border bg-slate-50 px-3 py-2 text-xs">
       <summary class="cursor-pointer font-medium">模型参数预览</summary>
       <p class="mt-2">
-        <code v-for="parameter in config.parameters.filter(item => !item.group_binding_required && !mappings[item.name])" :key="parameter.name"
+        <code v-for="parameter in latestConfig.parameters.filter(item => !item.group_binding_required && !mappings[item.name])" :key="parameter.name"
           class="mr-2">{{ parameter.name }}</code>
         <code v-if="selectionMode === 'infer'" class="mr-2">credential_account（可选）</code>
       </p>
