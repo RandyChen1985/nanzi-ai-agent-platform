@@ -19,7 +19,7 @@ const js = ts.transpileModule(selected.map(node => node.getText(script)).join('\
 const helpers = ts.transpileModule(readFileSync('frontend/src/utils/mcpCredentialProfiles.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.ESNext },
 }).outputText.replace(/import axios from ['"]@\/utils\/axios['"];?/, 'const axios = undefined;')
-const { splitMcpResultPaths } = await import('data:text/javascript;base64,' + Buffer.from(helpers).toString('base64'))
+const { splitMcpResultPaths, initialMcpResultFieldText } = await import('data:text/javascript;base64,' + Buffer.from(helpers).toString('base64'))
 
 function harness({ text = '$', policy = { revision: 4, model_result_fields: [], stale: true, target: 'before' }, put, getConfig, loadBindings } = {}) {
   const requests = []
@@ -36,7 +36,7 @@ function harness({ text = '$', policy = { revision: 4, model_result_fields: [], 
     isGlobalBinding: ref(false), headerBindings: ref({}),
     paramSlot: (_, name) => 'arg:health:' + name, ruleBindingOfSlot: () => null,
     showToast: () => {}, credentialError: (err, fallback) => err.response?.data?.detail || fallback,
-    splitMcpResultPaths, fetchServers: async () => {}, buildParamDraft: () => {},
+    splitMcpResultPaths, initialMcpResultFieldText, fetchServers: async () => {}, buildParamDraft: () => {},
     getMcpCredentialConfig: getConfig || (async () => ({ profile: null, stale: false, parameters: [], model_result_policy: persisted })),
     loadBindingsFor: loadBindings || (async () => true),
     axios: { put: async (url, body) => {
@@ -67,6 +67,21 @@ function harness({ text = '$', policy = { revision: 4, model_result_fields: [], 
   const h = harness({ text: ' \n ' })
   await h.submitParamMark()
   assert.deepEqual(h.requests[0].body.model_result_fields, [])
+}
+
+// 首次打开预填根路径；保存过的空范围、失效范围和自定义路径不能自动扩大。
+for (const [policy, expected] of [
+  [{ revision: 0, model_result_fields: [], stale: false, target: 'new' }, ['$']],
+  [{ revision: 1, model_result_fields: [], stale: false, target: 'saved' }, []],
+  [{ revision: 1, model_result_fields: [], stale: true, target: 'stale' }, []],
+  [{ revision: 0, model_result_fields: [], stale: true, target: 'invalid' }, []],
+  [{ revision: 2, model_result_fields: ['$.messages[*]'], stale: false, target: 'saved' }, ['$.messages[*]']],
+]) {
+  const h = harness({ policy })
+  await h.reloadParamMark(h.tool)
+  assert.equal(h.state.paramResultFields.value, expected.join('\n'))
+  await h.submitParamMark()
+  assert.deepEqual(h.requests[0].body.model_result_fields, expected)
 }
 
 // 配置未完整加载、无 CAS 快照或绑定未保存时，不能发出任何写请求。

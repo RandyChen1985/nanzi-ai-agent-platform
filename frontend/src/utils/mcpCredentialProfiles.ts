@@ -35,6 +35,13 @@ export type McpCredentialCandidates = {
   items: CredentialCandidate[]
 }
 
+/** 仅尚未保存的有效策略预填根路径；显式留空、失效或旧版响应均保留原范围。 */
+export function initialMcpResultFieldText(policy?: McpModelResultPolicy): string {
+  const fields = policy?.model_result_fields || []
+  if (policy?.revision === 0 && !policy.stale && fields.length === 0) return '$'
+  return fields.join('\n')
+}
+
 /** 每行开始一个查询，也保留 RFC 9535 表达式内部的折行。 */
 export function splitMcpResultPaths(text: string): string[] {
   const paths: string[] = []

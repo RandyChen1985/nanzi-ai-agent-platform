@@ -104,7 +104,9 @@ function deferred() {
 function response(items = rows, fixed_secret_id = null) {
   return { data: { data: { profile: defaultProfile, items, fixed_secret_id } } }
 }
-async function harness({ profile = defaultProfile, getCandidates = async () => response(), put } = {}) {
+async function harness({ profile = defaultProfile, stale = false,
+  policy = { revision: 0, target: 'target-1', model_result_fields: [], stale: false },
+  getCandidates = async () => response(), put } = {}) {
   const gets = [], writes = [], saves = []
   global.credentialTestApi = {
     get: async (url, options) => {
@@ -124,9 +126,9 @@ async function harness({ profile = defaultProfile, getCandidates = async () => r
     },
   }
   const mounted = mount(await build('src/components/mcp/McpCredentialProfileForm.vue'), {
-    toolId: 'tool-1', config: { profile, stale: false,
+    toolId: 'tool-1', config: { profile, stale,
       parameters: [{ name: 'password', type: 'string', required: true, sensitive: true, group_binding_required: true }],
-      model_result_policy: { revision: 0, target: 'target-1', model_result_fields: [], stale: false } },
+      model_result_policy: policy },
     onSaved: value => saves.push(value),
   })
   await settle()
@@ -134,7 +136,23 @@ async function harness({ profile = defaultProfile, getCandidates = async () => r
 }
 
 async function run(which) {
-  if (which === 'immediate_selector') {
+  if (which === 'result_field_defaults') {
+    for (const [options, expected] of [
+      [{ profile: null }, ['$']],
+      [{ profile: null, policy: { revision: 1, target: 'target-1', model_result_fields: [], stale: false } }, []],
+      [{ profile: { ...defaultProfile, model_result_fields: [] } }, []],
+      [{ profile: { ...defaultProfile, model_result_fields: ['$.key'] }, stale: true }, ['$.key']],
+    ]) {
+      const h = await harness(options)
+      assert.equal(find(h.root, n => n.tag === 'textarea').value, expected.join('\n'))
+      const mapping = find(h.root, n => n.props['aria-label'] === 'password 的凭据字段')
+      mapping.options.forEach(option => { option.selected = option.value === 'password' })
+      await event(mapping, 'change')
+      await event(button(h.root, '保存设置'), 'click')
+      assert.deepEqual(h.writes[0].body.model_result_fields, expected)
+      h.app.unmount()
+    }
+  } else if (which === 'immediate_selector') {
     const h = await harness()
     await choose(h.root, '凭据选择方式', 'fixed')
     const select = selectFor(h.root, '我的固定凭据')

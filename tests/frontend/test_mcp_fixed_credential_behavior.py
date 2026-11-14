@@ -11,7 +11,7 @@ pytestmark = pytest.mark.no_infrastructure
 @pytest.mark.parametrize("case", [
     "immediate_selector", "new_profile", "restore_fixed", "type_version_reload",
     "late_response", "error_retry", "empty_candidates", "save_together",
-    "save_failure", "unavailable_binding", "infer_unchanged",
+    "save_failure", "unavailable_binding", "infer_unchanged", "result_field_defaults",
 ])
 def test_fixed_credential_behavior(case):
     result = subprocess.run(

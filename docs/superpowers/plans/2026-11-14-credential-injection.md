@@ -10,6 +10,19 @@
 
 **Spec:** [结构化凭据与工具注入统一规范](../specs/2026-11-14-credential-injection.md)。
 
+## 本轮增补：结果字段默认值与高级设置
+
+用户要求结果字段默认 `$`、默认折叠并简化说明。两个前端表单此前重复展开结果编辑区域，初始化均为空；逐参数入口可通过策略 revision 区分尚未保存与已保存的空范围。
+
+- [x] 两个入口改为原生折叠区，默认收起，标题显示“高级功能，请谨慎使用”；提供根、字段、数组、二维数组、递归查找示例和官方 RFC 链接。
+- [x] 根据用户补充明确示例只是通用说明，不代表业务含义；按用户提供的文字展示，实际执行以 JSONPath 自身规则和响应结构为准，不修改后端解析、匹配或投影。
+- [x] 仅未保存且未失效的策略预填 `$`；已有 profile、空范围及自定义路径保留原样，失效 profile 的路径也保留供重新确认。仅填写前端草稿，不自动写入配置或改变运行时缺配置的处理。
+- [x] 在既有保存行为测试增加首次默认值、显式留空、已有路径和失效配置的读取/保存覆盖；旧实现已复现两个 `'' !== '$'` 断言失败。
+- [x] 同步既有规格、HTML 原型和测试清单；不新增组件、依赖、SQL 或后端过滤，不操作真实配置和服务。
+- [x] 相关纯前端回归 **52 passed**（14.71 秒），覆盖两种保存入口、固定凭据表单、JSONPath 输入、工具分组及全量 Vue 模板/脚本编译；独立复核的 JSONPath 与模型边界无数据库回归 **68 passed**（25.62 秒）。后者首次因合成环境缺少配置而收集失败，补齐合成配置并使用 `--noconftest` 隔离共享数据库 fixture 后通过。
+
+前端验证使用 `pytest --confcutdir=tests/frontend`，文件为 `test_mcp_result_fields_save.py`、`test_mcp_fixed_credential_behavior.py`、`test_mcp_tool_tester_result_contract.py`、`test_mcp_group_tabs_contract.py`、`test_vue_templates_compile.py`。后端复核为 `tests/secrets/test_mcp_jsonpath_semantics.py` 和 `tests/secrets/test_credential_model_boundary.py`，未连接数据库或真实 MCP。原型索引已重建；本轮未运行浏览器实际交互验收，不代表全项目类型检查或遗留契约失败已解决。
+
 ## 社区 PR 交付记录
 
 用户已授权向社区提交 PR，并要求功能分支遵循 `feature/` 命名、中文提交信息及维护 `tests/CHECKLIST.md`。投稿分支 `feature/structured-credentials` 基于上游 `main`，重放现有两次功能提交时将占位作者替换为用户提供的 Git 身份；已核对投稿分支代码树与原 `structured-credentials` 完全一致，原分支保留。后续只增补本节与验收清单，不改已验证的业务实现。

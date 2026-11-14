@@ -4,7 +4,7 @@ import McpModelResultFieldsForm from '@/components/mcp/McpModelResultFieldsForm.
 import { credentialError } from '@/composables/useCredentialFields'
 import {
   credentialProfileUrl, getMcpCredentialConfig, type McpCredentialConfig,
-  splitMcpResultPaths, type McpCredentialProfile,
+  initialMcpResultFieldText, splitMcpResultPaths, type McpCredentialProfile,
 } from '@/utils/mcpCredentialProfiles'
 import { ref, onMounted, watch, computed, nextTick } from 'vue'
 import axios from '@/utils/axios'
@@ -1541,7 +1541,7 @@ async function reloadParamMark(tool: any, param = '') {
   const configRequest = getMcpCredentialConfig(String(tool.id)).then(config => {
     if (paramMarkTarget.value !== target) return
     paramCredentialConfig.value = config
-    paramResultFields.value = (config.model_result_policy?.model_result_fields || []).join('\n')
+    paramResultFields.value = initialMcpResultFieldText(config.model_result_policy)
     if (config.profile) paramCredentialMode.value = 'group'
     else if (!config.model_result_policy) paramCredentialError.value = '当前后端版本不支持同时保存结果字段，请升级后重试。'
   }).catch(err => {
