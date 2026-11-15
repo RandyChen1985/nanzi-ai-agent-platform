@@ -72,7 +72,9 @@ def test_locate_matches_only_within_visible_set():
     ``pool`` 的初值必须是 ``visible``，别有人绕过可见集合另起一个来源。
     """
     resolver_src = Path("app/services/secrets/resolver.py").read_text(encoding="utf-8")
-    assert "pick_match(spec, wanted, pool)" in resolver_src
+    # 2026-11-16：调用多了一个 field_value 回调（target=field 时按字段值匹配要解密），
+    # 但「候选池来自 visible」这条不变，所以断言放宽到前缀。
+    assert "pick_match(spec, wanted, pool" in resolver_src
     assert "pool = visible" in resolver_src
     assert "UserSecret.secret_key" not in resolver_src
 

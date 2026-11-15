@@ -17,6 +17,14 @@ export type LocatorRule = {
    */
   value_template?: string
   /**
+   * ``target='field'`` 时匹配凭据里哪个字段的值（如 `username`）。
+   *
+   * 「调用方给了邮箱，找 username 字段等于这个邮箱的凭据」是最常见的诉求，而
+   * secret_key 是标识、name 是给人看的中文描述、category 是分类，三个都接不住
+   * 业务值。这一项会进规则 JSON（后端 parse_rule 认得）。
+   */
+  target_field?: string
+  /**
    * 取用字段（点分隔路径）；空 = 整段。
    * **不在规则 JSON 里**，它落在绑定记录上——保存时由调用方拆出去单独提交，
    * 否则后端的 `parse_rule` 会因为未知字段拒收。
@@ -45,7 +53,10 @@ const USER_KEY_LABEL: Record<string, string> = {
  */
 export function ruleSummary(rule: LocatorRule | null | undefined): string {
   if (!rule) return ''
-  const target = TARGET_LABEL[rule.target] || rule.target
+  const target =
+    rule.target === 'field' && rule.target_field
+      ? `字段 ${rule.target_field}`
+      : TARGET_LABEL[rule.target] || rule.target
   const source = rule.key_source.startsWith('arg:')
     ? `入参 ${rule.key_source.slice(4)}`
     : USER_KEY_LABEL[rule.key_source] || rule.key_source
@@ -155,6 +166,8 @@ const TARGETS = [
   { value: 'secret_key', label: 'secret_key（精确）' },
   { value: 'name', label: '名称（精确）' },
   { value: 'category', label: '分类（精确）' },
+  // 前三个都是元数据；业务值（邮箱、租户号）只存在凭据的字段里
+  { value: 'field', label: '凭据里的字段值' },
 ]
 
 function blankRule(): LocatorRule {
@@ -163,6 +176,7 @@ function blankRule(): LocatorRule {
     transforms: ['trim'],
     templates: ['{value}'],
     target: 'secret_key',
+    target_field: '',
     // 凭据 key 入库时被规范成小写，而入参常带大写；默认宽松匹配才不会「配了却不生效」
     match: 'exact_ci',
     on_miss: 'fail',
@@ -263,6 +277,11 @@ function validate(): string {
   if (!r.templates.length) return '至少要有一条模板'
   if (r.templates.some((t) => !t.includes('{value}'))) return '每条模板都必须包含 {value}'
   if (r.templates.length > 3) return '模板最多 3 条'
+  // 按字段值匹配必须说清是哪个字段。不拦的话后端会拒，但错误出现在一个已经填了
+  // 一堆东西的表单下面，用户得自己找是哪一项没填。
+  if (r.target === 'field' && !(r.target_field || '').trim()) {
+    return '选了「凭据里的字段值」，还得填是哪个字段（例如 username）'
+  }
   return ''
 }
 
@@ -444,6 +463,14 @@ function save() {
               >
                 <option v-for="t in TARGETS" :key="t.value" :value="t.value">{{ t.label }}</option>
               </select>
+              <!-- 按字段值匹配：得说清是哪个字段，否则没法比 -->
+              <input
+                v-if="draft.target === 'field'"
+                v-model="draft.target_field"
+                type="text"
+                placeholder="凭据里的字段名，如 username"
+                class="w-44 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+              />
               <select
                 v-model="draft.match"
                 class="rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"

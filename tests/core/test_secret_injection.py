@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from types import SimpleNamespace
 
@@ -2020,3 +2021,154 @@ class TestDeclaredTypeCoercion:
 
         # 没有 schema 就原样给：改动前是什么样，现在还什么样
         assert args["port"] == "465"
+
+
+class TestRuleMatchesCredentialFieldValue:
+    """规则按凭据内字段值挑凭据：调用方给邮箱，找 username 字段等于它的那条。
+
+    这是真实场景里最常见的一种：MCP 邮件工具收到 `username=alice@corp.com`，
+    要用对应那条凭据的密码。secret_key 是标识、name 是中文描述、category 是分类，
+    三个元数据都接不住业务值，所以规则新增了 `target="field"`。
+    """
+
+    async def test_password_injected_from_credential_matched_by_email(self):
+        async with AsyncSessionLocal() as session:
+            for key, name, email in (
+                ("mcp.mail.user.alice2", "alice的邮箱凭证", "alice@corp.com"),
+                ("mcp.mail.user.bob", "bob的邮箱凭证", "bob@corp.com"),
+            ):
+                await center.create_secret(
+                    session,
+                    owner_id=USER_ID,
+                    secret_key=key,
+                    name=name,
+                    value=json.dumps({"username": email, "password": f"pw-{email}"}),
+                    allowed_scenarios=[SCENE_MCP],
+                    allowed_hosts=[],
+                    value_format="json",
+                )
+            await center.bind_rule(
+                session,
+                consumer_type="mcp_server",
+                consumer_id="srv-field-1",
+                slot="arg:list-mail:password",
+                rule={
+                    "key_source": "arg:username",
+                    "target": "field",
+                    "target_field": "username",
+                    "match": "exact_ci",
+                },
+                bound_by_user_id=USER_ID,
+                value_path="password",
+            )
+
+        tool = SimpleNamespace(
+            id="tool-field-1",
+            tool_name="server:list-mail",
+            server_id="srv-field-1",
+            credential_params='["password"]',
+            parameter_schema='{"properties": {"password": {"type": "string"}}}',
+        )
+        denials: dict[str, str] = {}
+
+        args = await apply_mcp_arg_bindings(
+            tool, {"username": "alice@corp.com"}, user_info=USER, denials=denials
+        )
+
+        # 挑中的是 alice 那条，不是 bob 的，也不是按 key/name 猜的
+        assert args["password"] == "pw-alice@corp.com"
+        assert not denials
+
+    async def test_unknown_email_fails_instead_of_injecting_someone_else(self):
+        """匹配不上就是匹配不上：不能退回「随便挑一条可见凭据」。"""
+        async with AsyncSessionLocal() as session:
+            await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mcp.mail.user.carol",
+                name="carol的邮箱凭证",
+                value=json.dumps({"username": "carol@corp.com", "password": "pw-carol"}),
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=[],
+                value_format="json",
+            )
+            await center.bind_rule(
+                session,
+                consumer_type="mcp_server",
+                consumer_id="srv-field-2",
+                slot="arg:list-mail:password",
+                rule={
+                    "key_source": "arg:username",
+                    "target": "field",
+                    "target_field": "username",
+                    "on_miss": "fail",
+                },
+                bound_by_user_id=USER_ID,
+                value_path="password",
+            )
+
+        tool = SimpleNamespace(
+            id="tool-field-2",
+            tool_name="server:list-mail",
+            server_id="srv-field-2",
+            credential_params='["password"]',
+            parameter_schema='{"properties": {"password": {"type": "string"}}}',
+        )
+        denials: dict[str, str] = {}
+
+        args = await apply_mcp_arg_bindings(
+            tool, {"username": "nobody@corp.com"}, user_info=USER, denials=denials
+        )
+
+        assert "password" not in args
+        assert denials.get("arg:list-mail:password")
+
+
+class TestRuleFieldMatchWorksOutsideMcpArgs:
+    """按字段值匹配是**规则**的能力，不是 MCP 参数注入的专属。
+
+    规则挂在槽位上，四类消费者（header / MCP 参数 / API 工具参数 / 脚本 env）走的是
+    同一个 resolver、同一次 pick_match。这里用 header 再验一遍：如果哪天有人把
+    field 匹配写进 mcp 那条支路里，这条会红。
+    """
+
+    async def test_header_slot_can_match_by_credential_field(self):
+        async with AsyncSessionLocal() as session:
+            await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mcp.mail.field.header",
+                name="按 username 字段认人的邮箱凭证",
+                value=json.dumps({"username": USER_ID, "password": "pw-from-field"}),
+                allowed_scenarios=[SCENE_MCP],
+                # Header 注入会校验目标域名（参数注入不会），不填就是 denied_by_host
+                allowed_hosts=["mcp.example.com"],
+                value_format="json",
+            )
+            await center.bind_rule(
+                session,
+                consumer_type="mcp_server",
+                consumer_id="srv-field-h",
+                slot="header:Authorization",
+                rule={
+                    "key_source": "user.user_id",
+                    "target": "field",
+                    "target_field": "username",
+                    "match": "exact",
+                },
+                bound_by_user_id=USER_ID,
+                value_path="password",
+            )
+
+        server = SimpleNamespace(
+            id="srv-field-h", server_name="field-h", sse_url="https://mcp.example.com/sse"
+        )
+        denials: dict[str, str] = {}
+        headers = await apply_mcp_bindings(
+            server,
+            {"Authorization": "${CREDENTIAL:mail.field.header}"},
+            user_info=USER,
+            denials=denials,
+        )
+
+        assert headers["Authorization"] == "pw-from-field"

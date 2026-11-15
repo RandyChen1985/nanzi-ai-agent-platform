@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 #: 身份类键来源（补充能力，主场景是 ``arg:<入参名>``）
 USER_KEY_SOURCES = (
@@ -23,7 +23,7 @@ USER_KEY_SOURCES = (
     "user.user_id",
 )
 TRANSFORMS = ("trim", "strip_domain", "lower")
-TARGETS = ("secret_key", "name", "category")
+TARGETS = ("secret_key", "name", "category", "field")
 MATCHES = ("exact", "exact_ci")
 ON_MISS = ("fail", "fallback_fixed", "model")
 MAX_TEMPLATES = 3
@@ -37,6 +37,8 @@ ALLOWED_FIELDS = {
     # 结构约定：命中的凭据必须都是这个模板。有了它，字段集合在配置期就确定，
     # 「取用字段」能给成下拉，运行时也能校验命中的那条结构对不对。
     "value_template",
+    # 只有 target=field 时用：匹配凭据里哪个字段的**值**
+    "target_field",
 }
 
 
@@ -64,6 +66,13 @@ class RuleSpec:
     on_miss: str = "fail"
     #: 只接受这个模板的凭据；空串 = 不限。模板不符按**未命中**处理。
     value_template: str = ""
+    #: ``target="field"`` 时匹配凭据里哪个字段的值（如 ``username``）。
+    #:
+    #: 「调用方给了邮箱，找 username 字段等于这个邮箱的凭据」是最常见的诉求，而
+    #: secret_key / name / category 都是元数据：key 得是一串标识、name 是给人看的
+    #: 中文描述，都接不住业务值。按字段值匹配需要先解密，所以只在 target=field 时
+    #: 才走这条重路径。
+    target_field: str = ""
 
     @property
     def is_arg_key(self) -> bool:
@@ -135,6 +144,23 @@ def parse_rule(raw: str | bytes | Mapping[str, Any] | None) -> RuleSpec:
         raise RuleError(f"target 不支持 {target!r}；可用 {' / '.join(TARGETS)}")
 
     # 见 RuleSpec.match 的说明：默认不区分大小写
+    # 按字段值匹配要先解密，比读元数据重得多，所以只在这个目标下开放
+    target_field = ""
+    if target == "field":
+        target_field = str(data.get("target_field") or "").strip()
+        if not target_field:
+            raise RuleError(
+                "target=field 时必须给出 target_field（凭据里哪个字段参与匹配，"
+                "例如 username）"
+            )
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$", target_field):
+            raise RuleError(f"target_field 格式不对：{target_field!r}")
+    elif str(data.get("target_field") or "").strip():
+        # 写了字段名却选了别的目标：静默忽略会让人以为「按字段匹配」生效了，
+        # 实际还在按 name / secret_key 匹配，而且照样能配上——最难查的那种。
+        raise RuleError(
+            "给了 target_field 但 target 不是 field；按字段值匹配要写 target='field'"
+        )
     match = data.get("match") or "exact_ci"
     if match not in MATCHES:
         raise RuleError(f"match 不支持 {match!r}；可用 {' / '.join(MATCHES)}")
@@ -158,6 +184,7 @@ def parse_rule(raw: str | bytes | Mapping[str, Any] | None) -> RuleSpec:
         match=match,
         on_miss=on_miss,
         value_template=value_template,
+        target_field=target_field,
     )
 
 
@@ -203,14 +230,24 @@ def pick_match(
     spec: RuleSpec,
     wanted: Sequence[str],
     secrets: Sequence[Any],
+    *,
+    field_value: Callable[[Any], str | None] | None = None,
 ) -> tuple[Any | None, str]:
     """在给定凭据里找第一条命中的。返回 ``(凭据 or None, 实际用的待匹配值)``。
 
     ``wanted`` 的顺序就是模板顺序——第一条命中的即生效。
+
+    ``field_value`` 只在 ``target="field"`` 时参与：key / name / category 都是凭据表
+    上的列，直接读；而「字段值」要先解密再解析 JSON，这一步只有调用方做得了
+    （它才知道怎么解密、以及「现在」是几点）。没给回调就当作取不到——宁可未命中，
+    也不要拿元数据凑一个假的命中。
     """
     for candidate in wanted:
         for secret in secrets:
-            field = _field_of(secret, spec.target)
+            if spec.target == "field":
+                field = field_value(secret) if field_value is not None else None
+            else:
+                field = _field_of(secret, spec.target)
             if field is None:
                 continue
             if spec.match == "exact_ci":
@@ -221,7 +258,12 @@ def pick_match(
     return None, wanted[0] if wanted else ""
 
 
-_TARGET_LABEL = {"secret_key": "secret_key", "name": "名称", "category": "分类"}
+_TARGET_LABEL = {
+    "secret_key": "secret_key",
+    "name": "名称",
+    "category": "分类",
+    "field": "字段",
+}
 
 
 def rule_summary(spec: RuleSpec) -> str:
@@ -237,6 +279,8 @@ def rule_summary(spec: RuleSpec) -> str:
             "user.user_id": "我的用户 ID",
         }.get(spec.key_source, spec.key_source)
     target = _TARGET_LABEL.get(spec.target, spec.target)
+    if spec.target == "field" and spec.target_field:
+        target = f"字段 {spec.target_field}"
     return f"{target} = {spec.templates[0]}（取{source}）"
 
 

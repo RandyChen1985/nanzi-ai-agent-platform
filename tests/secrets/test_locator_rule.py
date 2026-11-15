@@ -162,3 +162,92 @@ def test_catalog_sort_key_is_total_order():
         ("A", "9"),
         ("B", "2"),
     ]
+
+
+class TestMatchByCredentialField:
+    """``target="field"``：按凭据里某个字段的**值**匹配。
+
+    诉求来源：「调用方传了邮箱，找 username 字段等于这个邮箱的那条凭据」。
+    secret_key 是一串标识、name 是给人看的中文描述、category 是分类——三个都是
+    元数据，接不住业务值，所以只能加一种按字段值匹配的目标。
+    """
+
+    def test_field_target_requires_a_field_name(self):
+        with pytest.raises(RuleError) as exc:
+            parse_rule({"key_source": "arg:username", "target": "field"})
+        assert "target_field" in str(exc.value)
+
+    def test_field_name_must_be_safe(self):
+        with pytest.raises(RuleError):
+            parse_rule(
+                {"key_source": "arg:username", "target": "field", "target_field": "字 段"}
+            )
+
+    def test_field_target_parses(self):
+        spec = parse_rule(
+            {"key_source": "arg:username", "target": "field", "target_field": "username"}
+        )
+        assert spec.target == "field"
+        assert spec.target_field == "username"
+
+    def test_summary_names_the_field(self):
+        spec = parse_rule(
+            {"key_source": "arg:username", "target": "field", "target_field": "username"}
+        )
+        # 摘要要说清「按哪个字段」，否则界面上只看到「字段 = ...」猜不出是哪个
+        assert "字段 username" in rule_summary(spec)
+
+    def test_without_resolver_it_never_matches(self):
+        """没给取值器就当取不到：宁可未命中，也不拿元数据凑一个假命中。"""
+        spec = parse_rule(
+            {"key_source": "arg:username", "target": "field", "target_field": "username"}
+        )
+        secret = _Secret("mcp.mail.user.alice2", "alice的邮箱凭证", "邮件")
+
+        assert pick_match(spec, ["alice@corp.com"], [secret])[0] is None
+
+    def test_matches_credential_field_value(self):
+        spec = parse_rule(
+            {"key_source": "arg:username", "target": "field", "target_field": "username"}
+        )
+        alice = _Secret("mcp.mail.user.alice2", "alice的邮箱凭证", "邮件", id="a")
+        bob = _Secret("mcp.mail.user.bob", "bob的邮箱凭证", "邮件", id="b")
+        values = {"a": "alice@corp.com", "b": "bob@corp.com"}
+
+        hit, used = pick_match(
+            spec,
+            ["alice@corp.com"],
+            [bob, alice],
+            field_value=lambda record: values.get(record.id),
+        )
+
+        assert hit is alice
+        assert used == "alice@corp.com"
+
+    def test_field_match_is_case_insensitive_by_default(self):
+        spec = parse_rule(
+            {
+                "key_source": "arg:username",
+                "target": "field",
+                "target_field": "username",
+                "match": "exact_ci",
+            }
+        )
+        alice = _Secret("k", "n", "c", id="a")
+
+        hit, _ = pick_match(
+            spec, ["ALICE@corp.com"], [alice], field_value=lambda _r: "alice@corp.com"
+        )
+
+        assert hit is alice
+
+    def test_metadata_targets_still_ignore_the_resolver(self):
+        """普通规则不该被取值器影响：它是给 field 用的，别的目标仍然读元数据。"""
+        spec = parse_rule({"key_source": "user.email", "target": "secret_key"})
+        secret = _Secret("alice", "n", "c", id="a")
+
+        hit, _ = pick_match(
+            spec, ["alice"], [secret], field_value=lambda _r: "完全不相干的值"
+        )
+
+        assert hit is secret

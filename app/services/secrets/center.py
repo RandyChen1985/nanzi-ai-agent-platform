@@ -1136,6 +1136,10 @@ async def bind_rule(
             # 模板约束属于「结构约定」，是规则的一部分；取用字段写进绑定列
             # （和固定绑定同一列），注入层就不用关心它是哪种策略。
             **({"value_template": spec.value_template} if spec.value_template else {}),
+            # target=field 时匹配哪个字段，必须一起落库：漏了它，读回来
+            # parse_rule 会判「必须给出 target_field」，这条规则永远不生效，
+            # 而保存时一切正常。
+            **({"target_field": spec.target_field} if spec.target_field else {}),
         },
         ensure_ascii=False,
     )

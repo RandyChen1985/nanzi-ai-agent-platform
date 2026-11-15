@@ -15,10 +15,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, Callable
 
 from sqlalchemy import and_, or_, select
 
@@ -422,7 +424,20 @@ class SecretResolver:
                             for record in visible
                             if (getattr(record, "value_template", None) or "") == tpl_wanted
                         ]
-                    hit, used = pick_match(spec, wanted, pool)
+                    field_value = (
+                        self._field_value_resolver(spec.target_field)
+                        if getattr(spec, "target", "") == "field"
+                        else None
+                    )
+                    if field_value is not None and len(pool) > 200:
+                        # 按字段值匹配要把候选整批解密。数量异常时先留个痕，
+                        # 免得「调用变慢」查到最后是一条规则把所有人凭据都解了一遍。
+                        logger.warning(
+                            "[SecretLocator] 按字段值匹配的候选过多（%s 条），"
+                            "consumer=%s/%s slot=%s",
+                            len(pool), consumer_type, consumer_id, slot,
+                        )
+                    hit, used = pick_match(spec, wanted, pool, field_value=field_value)
                     if hit is None and tpl_wanted:
                         logger.info(
                             "[SecretLocator] 规则要求模板 %s，可见候选中没有结构相符的凭据 "
@@ -655,6 +670,66 @@ class SecretResolver:
         """用户偏好（第 ② 层）。没有记录 = 不允许。"""
         pref = await session.get(SecretUserPref, user_id)
         return bool(pref and pref.allow_script_env)
+
+    @staticmethod
+    def _field_value_resolver(field: str) -> Callable[[Any], str | None]:
+        """按凭据内某个字段的值匹配时用的取值器：解密 → 解析 JSON → 取字段。
+
+        只有 ``target="field"`` 才走这里。key / name / category 都是凭据表上的列，
+        直接读就行；字段值必须解密，所以这条路径比普通规则重得多——一条规则会让
+        整批候选都过一遍解密。个人可见凭据通常几十条，代价可接受；但这也是为什么
+        它没被做成默认目标。
+
+        解不开、不是 JSON、字段不存在、值是对象/数组——一律当作「这条取不到」，
+        继续看下一条。单条坏数据不该让整次解析失败，更不能因此把别处的凭据注进去。
+
+        **注意这条路径会解密每一份可见候选。** 对「别人授权给我用的系统级凭据」
+        来说，这相当于给了调用方一个等值探测口子：配一条规则、传一个值，就能从
+        命中与否反推那条凭据的某个字段是不是这个值。前提是他本来就有该凭据的
+        使用授权（规则只在可见集合里挑），而且每次试探都会走正常 resolve 路径、
+        在凭据流水里留下记录，事后可追。如果将来要收紧，收紧点在这里。
+
+        结果按凭据 id 记忆：一条规则最多 3 个模板，每个模板都会重放一遍候选列表，
+        不记的话同一批凭据会被反复解密三遍。
+        """
+        key = (field or "").strip()
+        cache: dict[str, str | None] = {}
+
+        def _remember(record_id: str, value: str | None) -> str | None:
+            if record_id:
+                cache[record_id] = value
+            return value
+
+        def resolve(record: Any) -> str | None:
+            if not key:
+                return None
+            record_id = str(getattr(record, "id", "") or "")
+            if record_id and record_id in cache:
+                return cache[record_id]
+            try:
+                # naive UTC：库里所有 datetime 都是这个口径（见 resolve 里 now 的注释）。
+                # 用带时区的 now 去和 expires_at 比会抛 TypeError，被下面的兜底吞掉，
+                # 表现成「规则永远未命中」——排查时完全看不出来。
+                ciphertext = SecretResolver._pick_ciphertext(record, datetime.utcnow())
+                if not ciphertext:
+                    return _remember(record_id, None)
+                plain = SecretResolver._decrypt(ciphertext)
+            except Exception:  # noqa: BLE001 - 单条坏数据不该让整次匹配失败
+                logger.debug("[SecretLocator] 候选凭据解密失败，跳过", exc_info=True)
+                return _remember(record_id, None)
+            try:
+                data = json.loads(plain)
+            except (TypeError, ValueError):
+                return _remember(record_id, None)
+            if not isinstance(data, dict):
+                return _remember(record_id, None)
+            value = data.get(key)
+            if value is None or isinstance(value, (dict, list)):
+                # 只有标量适合跟入参比：整段对象拿去和字符串比永远不等
+                return _remember(record_id, None)
+            return _remember(record_id, str(value))
+
+        return resolve
 
     @staticmethod
     def _pick_ciphertext(row: UserSecret, now: datetime) -> str | None:
