@@ -11,7 +11,7 @@ import WorkspaceActionMenu from '@/components/embed/WorkspaceActionMenu.vue'
 import WorkspaceDirectorySaveDialog from '@/components/embed/WorkspaceDirectorySaveDialog.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { planBatchDelete, selectAllState, toggleSelectAllPaths } from '@/utils/workspaceBatchSelection'
-import { buildWorkspaceActionEntries } from '@/utils/workspaceActionEntries'
+import { buildWorkspaceActionEntries, buildWorkspaceItemMenuContext, isPublicWorkspaceItem } from '@/utils/workspaceActionEntries'
 import type { WorkspaceActionKey, WorkspaceActionTarget, WorkspaceMenuContext } from '@/utils/workspaceActionEntries'
 import { useWorkspaceUploadQueue } from '@/composables/useWorkspaceUploadQueue'
 import { shouldAutoDismissUploads } from '@/utils/workspaceUploadQueue'
@@ -836,13 +836,12 @@ const isPathInUserWorkspace = (path: string) => {
   return norm === rootNorm || norm.startsWith(`${rootNorm}/`)
 }
 
-const isPublicItem = (item?: { path?: string; is_public?: boolean; is_user_workspace?: boolean; is_dir?: boolean } | null) => {
-  if (!item) return false
-  if (item.is_user_workspace) return false
-  if (typeof item.is_public === 'boolean') return item.is_public
-  if (!item.path) return false
-  return !isPathInUserWorkspace(item.path)
-}
+/**
+ * 公共条目判定：委托给 `isPublicWorkspaceItem`，与管理页（WorkspaceManage）同口径。
+ * 「管理员删公共目录 = 永久删除」有两个使用方，各内联一份判定就会分叉，别在这里重写。
+ */
+const isPublicItem = (item?: { path?: string; is_public?: boolean; is_user_workspace?: boolean; is_dir?: boolean } | null) =>
+  isPublicWorkspaceItem(item, userWorkspaceRoot.value)
 
 const canCreateInPath = (parentPath: string) => {
   if (isAdminScope.value && currentPathWritable.value && !isTrashPath(parentPath)) return true
@@ -888,17 +887,17 @@ const buildItemMenuContext = (item: WorkspaceItemLike): WorkspaceMenuContext => 
     isDir: !!item.is_dir,
     isPreviewable: item.is_dir ? undefined : canPreviewWorkspaceFile(item.name),
   }
-  if (isTrashRootItem(item)) return { scene: 'trash-root', target }
-  if (isTrashListItem(item)) return { scene: 'trash-item', target }
-  if (isPublicItem(item)) {
-    return {
-      scene: 'public-item',
-      target,
-      isAdminScope: isAdminScope.value,
-      isSystemProtected: isSystemProtectedDir(item),
-    }
-  }
-  return { scene: 'regular-item', target, canManage: canManageItem(item) }
+  // 场景判定收敛到纯函数模块（管理页行操作复用同一份），这里只提供上下文
+  return buildWorkspaceItemMenuContext({
+    item,
+    target,
+    userWorkspaceRoot: userWorkspaceRoot.value,
+    isAdminScope: isAdminScope.value,
+    isTrashRoot: isTrashRootItem(item),
+    inTrash: isTrashListItem(item),
+    isSystemProtected: isSystemProtectedDir(item),
+    canManage: canManageItem(item),
+  })
 }
 
 const openContextMenu = (

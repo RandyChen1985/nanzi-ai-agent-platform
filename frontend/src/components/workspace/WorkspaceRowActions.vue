@@ -25,29 +25,42 @@
 
     <div
       v-if="open"
-      class="absolute right-0 z-40 mt-1 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl dark:border-gray-700 dark:bg-gray-800"
+      class="absolute right-0 z-40 mt-1 w-44 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl dark:border-gray-700 dark:bg-gray-800"
       role="menu"
       @click.stop
     >
-      <button
-        v-for="entry in entries"
-        :key="entry.key"
-        type="button"
-        class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-        :class="entry.danger
-          ? 'text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40'
-          : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/60'"
-        :disabled="entry.disabled"
-        :title="entry.disabledHint || entry.label"
-        @click="run(entry.key)"
-      >{{ entry.label }}</button>
+      <template v-for="entry in entries" :key="entry.key">
+        <!-- 表头项（如「公共目录（管理员）」）只是说明，不是动作 -->
+        <div
+          v-if="entry.key === 'header'"
+          class="select-none border-b border-gray-100 px-3 py-1.5 text-[10px] font-bold text-primary/80 dark:border-gray-800 dark:text-primary/70"
+        >
+          <span aria-hidden="true">{{ entry.icon }}</span>
+          <span class="ml-1">{{ entry.label }}</span>
+        </div>
+        <button
+          v-else
+          type="button"
+          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          :class="entry.danger
+            ? 'text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40'
+            : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/60'"
+          :disabled="entry.disabled"
+          :title="entry.disabledHint || entry.label"
+          @click="run(entry.key)"
+        >{{ entry.label }}</button>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
-import { buildWorkspaceActionEntries, isExtractableArchive } from "@/utils/workspaceActionEntries"
+import {
+  buildWorkspaceActionEntries,
+  buildWorkspaceItemMenuContext,
+  isExtractableArchive,
+} from "@/utils/workspaceActionEntries"
 import type { WorkspaceActionKey } from "@/utils/workspaceActionEntries"
 
 interface RowItem {
@@ -61,6 +74,12 @@ interface RowItem {
 const props = defineProps<{
   item: RowItem
   inTrash?: boolean
+  /** 当前是否管理员视图：公共目录条目据它决定是否露出重命名/永久删除。 */
+  isAdminScope?: boolean
+  /** 系统保护目录（docs / skills / branding 等），管理员也不可删除。 */
+  isSystemProtected?: boolean
+  /** 本人私有工作区根：`is_public` 缺失时兜底判定公共性。 */
+  userWorkspaceRoot?: string
 }>()
 
 const emit = defineEmits<{
@@ -84,11 +103,17 @@ const entries = computed(() => {
     isPreviewable: true,
   }
 
-  const raw = buildWorkspaceActionEntries({
-    scene: props.inTrash ? "trash-item" : "regular-item",
-    target,
-    canManage: true,
-  })
+  const raw = buildWorkspaceActionEntries(
+    buildWorkspaceItemMenuContext({
+      item: props.item,
+      target,
+      userWorkspaceRoot: props.userWorkspaceRoot,
+      isAdminScope: props.isAdminScope,
+      inTrash: props.inTrash,
+      isSystemProtected: props.isSystemProtected,
+      canManage: true,
+    }),
+  )
 
   return raw
     .filter((entry) => entry.key !== "mount") // 独立页没有会话，不展示挂载

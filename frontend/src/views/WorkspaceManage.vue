@@ -318,6 +318,9 @@
                   v-if="!isVirtualRoot"
                   :item="item"
                   :in-trash="inTrash"
+                  :is-admin-scope="scope === 'admin_all'"
+                  :is-system-protected="SYSTEM_PROTECTED.has(item.name)"
+                  :user-workspace-root="userWorkspaceRoot"
                   @preview="handlePreview"
                   @download="handleDownload"
                   @rename="openRename"
@@ -372,6 +375,9 @@
               v-if="!isVirtualRoot"
               :item="item"
               :in-trash="inTrash"
+              :is-admin-scope="scope === 'admin_all'"
+              :is-system-protected="SYSTEM_PROTECTED.has(item.name)"
+              :user-workspace-root="userWorkspaceRoot"
               @preview="handlePreview"
               @download="handleDownload"
               @rename="openRename"
@@ -448,7 +454,7 @@ import ChatCanvas from "@/components/embed/ChatCanvas.vue"
 import { useWorkspaceCanvas } from "@/composables/chat/useWorkspaceCanvas"
 import { useToast } from "@/composables/useToast"
 import { useWorkspaceUploadQueue } from "@/composables/useWorkspaceUploadQueue"
-import { isExtractableArchive } from "@/utils/workspaceActionEntries"
+import { isExtractableArchive, isPublicWorkspaceItem } from "@/utils/workspaceActionEntries"
 import {
   canPreviewWorkspaceFile,
   copyTextToClipboard,
@@ -921,17 +927,37 @@ const askExtract = (item: FsItem) => {
 const confirmAction = ref<{ title: string; message: string; confirmText: string; run: () => Promise<void> } | null>(null)
 const confirmSubmitting = ref(false)
 
+/**
+ * 删除确认。
+ *
+ * 管理员删公共目录（docs / skills / branding 等）时，后端 `/fs/delete-entry`
+ * 直接 rmtree/remove，**不会**进本人回收站（公共目录不属于任何人的回收站）。
+ * 所以确认框必须说「永久删除」，否则管理员会以为还能还原回来。
+ * 判定复用 `isPublicWorkspaceItem`，与聊天抽屉同口径。
+ */
 const askDelete = (item: FsItem) => {
-  confirmAction.value = {
-    title: "移到回收站",
-    message: `「${item.name}」会被移到回收站，可以再还原回来。`,
-    confirmText: "移到回收站",
-    run: async () => {
-      await deleteWorkspaceEntry(item.path)
-      showToast("已移到回收站", "success")
-      void load(currentPath.value)
-    },
-  }
+  const permanent = scope.value === "admin_all" && isPublicWorkspaceItem(item, userWorkspaceRoot.value)
+  confirmAction.value = permanent
+    ? {
+        title: "永久删除",
+        message: `「${item.name}」属于公共目录，删除后无法恢复，也不会进入回收站。`,
+        confirmText: "永久删除",
+        run: async () => {
+          await deleteWorkspaceEntry(item.path)
+          showToast("已永久删除", "success")
+          void load(currentPath.value)
+        },
+      }
+    : {
+        title: "移到回收站",
+        message: `「${item.name}」会被移到回收站，可以再还原回来。`,
+        confirmText: "移到回收站",
+        run: async () => {
+          await deleteWorkspaceEntry(item.path)
+          showToast("已移到回收站", "success")
+          void load(currentPath.value)
+        },
+      }
 }
 
 const askPurge = (item: FsItem) => {
@@ -961,23 +987,34 @@ const askEmptyTrash = () => {
 }
 
 const askBatchDelete = () => {
-  const deletable = Array.from(selectedPaths).filter((path) => {
-    const item = items.value.find((entry) => entry.path === path)
-    return item ? canManageItem(item) : false
-  })
+  const deletable = Array.from(selectedPaths)
+    .map((path) => items.value.find((entry) => entry.path === path))
+    .filter((item): item is FsItem => !!item && canManageItem(item))
   if (!deletable.length) {
     showToast("选中的项目都不能删除", "warning")
     return
   }
+  // 管理员勾中的公共目录条目会被后端直接永久删除（不进任何人的回收站），
+  // 文案必须分开说清楚，否则「可以再还原回来」是假的。
+  const permanentCount = deletable.filter(
+    (item) => scope.value === "admin_all" && isPublicWorkspaceItem(item, userWorkspaceRoot.value),
+  ).length
+  const trashedCount = deletable.length - permanentCount
+  const lines: string[] = []
+  if (trashedCount > 0) lines.push(`${trashedCount} 项将被移到回收站，可以再还原回来。`)
+  if (permanentCount > 0) lines.push(`${permanentCount} 项属于公共目录，将被永久删除且不会进入回收站。`)
   confirmAction.value = {
     title: "批量删除",
-    message: `${deletable.length} 项将被移到回收站，可以再还原回来。`,
-    confirmText: "移到回收站",
+    message: lines.join("\n"),
+    confirmText: permanentCount > 0 ? "永久删除" : "移到回收站",
     run: async () => {
-      for (const path of deletable) {
-        await deleteWorkspaceEntry(path)
+      for (const item of deletable) {
+        await deleteWorkspaceEntry(item.path)
       }
-      showToast(`已删除 ${deletable.length} 项`, "success")
+      const summary: string[] = []
+      if (trashedCount > 0) summary.push(`${trashedCount} 项已移到回收站`)
+      if (permanentCount > 0) summary.push(`${permanentCount} 项已永久删除`)
+      showToast(summary.join("，"), "success")
       clearSelection()
       void load(currentPath.value)
     },
