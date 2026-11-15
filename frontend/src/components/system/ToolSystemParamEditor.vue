@@ -415,8 +415,11 @@ function onMappingSaved(payload: { bound: string[]; freed: string[] }) {
   void loadBindings()
   injectedDraft?.bumpRevision?.()
   if (changed) {
-    mappingHint.value = '参数来源已同步，保存工具后生效'
-    window.setTimeout(() => { mappingHint.value = '' }, 4000)
+    // 不自动消失。这里的「同步」只改了本地草稿：运行时认的是参数自己的 source
+    // （generic_api 只注入 source==='credential' 的行），没点「保存」写回工具，
+    // 库里就只有绑定、没有来源标记，调用时根本不会用凭据——而且不报错。
+    // 原来提示 4 秒后自己消失，用户只会看到绑定标签出现了，以为已经生效。
+    mappingHint.value = '绑定已保存，但还要点下面的「保存」把参数来源写回工具，运行时才会用凭据'
   }
 }
 
@@ -537,7 +540,18 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <span v-if="mappingHint" class="text-[11px] text-emerald-600">{{ mappingHint }}</span>
+        <span
+          v-if="mappingHint"
+          class="flex items-center gap-1 rounded bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+        >
+          {{ mappingHint }}
+          <button
+            type="button"
+            class="rounded px-0.5 text-amber-500 hover:bg-amber-100 hover:text-amber-800"
+            aria-label="关闭提示"
+            @click="mappingHint = ''"
+          >×</button>
+        </span>
         <button
           v-if="paramTab === 'single'"
           type="button"

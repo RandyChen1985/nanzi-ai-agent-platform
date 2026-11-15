@@ -882,3 +882,262 @@ class TestPersonalCredentialOnPlatformTool:
         )
         assert resp.status_code == 400, resp.text
         assert "管理员" in resp.text
+
+
+class TestBatchSyncsCredentialParams:
+    """MCP 工具的「由凭据提供」清单由 batch 同批写，不再有第二次 PUT。
+
+    生产事故的根因就在这里：绑定和清单原来是两个请求，第一次成功、第二次失败
+    （当时是 `port` 的类型校验 400）就留下「绑了却不注入」——界面显示已映射，
+    运行时模型照旧自己填密码，服务端只回一句 credentials_rejected。
+    """
+
+    async def _mcp_tool(self, owner_id: int, schema: dict, *, scope: str = "personal"):
+        from app.core.orm import AsyncSessionLocal
+        from app.models.mcp import McpServer, McpToolCache
+
+        server_id = f"srv-{uuid.uuid4().hex[:8]}"
+        tool_id = f"tool-{uuid.uuid4().hex[:8]}"
+        async with AsyncSessionLocal() as session:
+            session.add(
+                McpServer(
+                    id=server_id,
+                    server_name=f"mcp-private-{uuid.uuid4().hex[:6]}",
+                    sse_url="https://mail.example.com/mcp",
+                    scope=scope,
+                    user_id=owner_id,
+                    enabled_status=1,
+                )
+            )
+            session.add(
+                McpToolCache(
+                    id=tool_id,
+                    server_id=server_id,
+                    tool_name="list-mail",
+                    parameter_schema=json.dumps(schema, ensure_ascii=False),
+                    is_published=False,
+                )
+            )
+            await session.commit()
+        return server_id, tool_id
+
+    async def _owner_id(self, client, api_key: str) -> int:
+        """测试账号的 user_id。走平台自己的鉴权链路，别在测试里复制 hash 规则。"""
+        from app.core.orm import AsyncSessionLocal
+        from app.services.auth_service import AuthService
+
+        async with AsyncSessionLocal() as session:
+            info = await AuthService.verify_api_key(api_key, session)
+        assert info and info.get("user_id"), "测试账号不存在"
+        return int(info["user_id"])
+
+    async def _stored_params(self, tool_id: str):
+        from app.core.orm import AsyncSessionLocal
+        from app.models.mcp import McpToolCache
+
+        async with AsyncSessionLocal() as session:
+            tool = await session.get(McpToolCache, tool_id)
+            raw = tool.credential_params
+        return json.loads(raw) if raw else []
+
+    async def test_batch_writes_the_list_in_the_same_request(
+        self, client, clean_secrets, valid_api_key
+    ):
+        secret = await _create_secret(client, valid_api_key)
+        owner = await self._owner_id(client, valid_api_key)
+        server_id, tool_id = await self._mcp_tool(
+            owner,
+            {"properties": {"username": {"type": "string"}, "password": {"type": "string"}}},
+        )
+
+        resp = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json={
+                "consumer_type": "mcp_server",
+                "consumer_id": server_id,
+                "mcp_tool_id": tool_id,
+                "items": [
+                    {
+                        "slot": "arg:list-mail:username",
+                        "name": "username",
+                        "secret_id": secret["id"],
+                        "value_path": "username",
+                    },
+                    {
+                        "slot": "arg:list-mail:password",
+                        "name": "password",
+                        "secret_id": secret["id"],
+                        "value_path": "password",
+                    },
+                ],
+            },
+            headers=_headers(valid_api_key),
+        )
+
+        assert resp.status_code == 200, resp.text
+        # 一次请求同时落了两份数据：绑定 + 清单
+        assert resp.json()["data"]["credential_params"] == ["username", "password"]
+        assert await self._stored_params(tool_id) == ["username", "password"]
+
+    async def test_row_back_to_model_removes_it_from_the_list(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """某行改成「模型填写」后，参数必须从清单里消失，否则模型永远看不到它。"""
+        secret = await _create_secret(client, valid_api_key)
+        owner = await self._owner_id(client, valid_api_key)
+        server_id, tool_id = await self._mcp_tool(
+            owner,
+            {"properties": {"username": {"type": "string"}, "password": {"type": "string"}}},
+        )
+
+        def _body(username_strategy: str, username_secret: str):
+            user_row: dict = {
+                "slot": "arg:list-mail:username",
+                "name": "username",
+                "strategy": username_strategy,
+            }
+            if username_secret:
+                user_row.update({"secret_id": username_secret, "value_path": "username"})
+            return {
+                "consumer_type": "mcp_server",
+                "consumer_id": server_id,
+                "mcp_tool_id": tool_id,
+                "items": [
+                    user_row,
+                    {
+                        "slot": "arg:list-mail:password",
+                        "name": "password",
+                        "secret_id": secret["id"],
+                        "value_path": "password",
+                    },
+                ],
+            }
+
+        first = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json=_body("fixed", secret["id"]),
+            headers=_headers(valid_api_key),
+        )
+        assert first.status_code == 200, first.text
+        assert await self._stored_params(tool_id) == ["username", "password"]
+
+        second = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json=_body("none", ""),
+            headers=_headers(valid_api_key),
+        )
+        assert second.status_code == 200, second.text
+        assert await self._stored_params(tool_id) == ["password"]
+
+    async def test_unknown_param_name_is_rejected_and_nothing_is_saved(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """清单直接决定哪些参数从模型可见 schema 里消失，名字拼错就不能放进去。
+
+        校验放在同一个事务里：不合法就整批回滚，绑定也不会留下——
+        「绑定存了、清单没跟上」正是这次要消灭的状态。
+        """
+        secret = await _create_secret(client, valid_api_key)
+        owner = await self._owner_id(client, valid_api_key)
+        server_id, tool_id = await self._mcp_tool(
+            owner, {"properties": {"password": {"type": "string"}}}
+        )
+
+        resp = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json={
+                "consumer_type": "mcp_server",
+                "consumer_id": server_id,
+                "mcp_tool_id": tool_id,
+                "items": [
+                    {
+                        "slot": "arg:list-mail:passwrod",
+                        "name": "passwrod",
+                        "secret_id": secret["id"],
+                        "value_path": "password",
+                    },
+                ],
+            },
+            headers=_headers(valid_api_key),
+        )
+
+        assert resp.status_code == 400, resp.text
+        assert "不在工具" in resp.text
+        assert await self._stored_params(tool_id) == []
+        listed = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "mcp_server", "consumer_id": server_id},
+            headers=_headers(valid_api_key),
+        )
+        assert listed.json()["data"] == []
+
+    async def test_object_param_cannot_be_declared_as_credential(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """对象/数组参数仍由模型填：凭据里那段 JSON 结构不一定对得上对方的嵌套 schema。"""
+        secret = await _create_secret(client, valid_api_key)
+        owner = await self._owner_id(client, valid_api_key)
+        server_id, tool_id = await self._mcp_tool(
+            owner, {"properties": {"filter": {"type": "object"}}}
+        )
+
+        resp = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json={
+                "consumer_type": "mcp_server",
+                "consumer_id": server_id,
+                "mcp_tool_id": tool_id,
+                "items": [
+                    {
+                        "slot": "arg:list-mail:filter",
+                        "name": "filter",
+                        "secret_id": secret["id"],
+                        "value_path": "username",
+                    },
+                ],
+            },
+            headers=_headers(valid_api_key),
+        )
+
+        assert resp.status_code == 400, resp.text
+        assert "凭据只能提供字符串、数字、布尔" in resp.text
+        assert await self._stored_params(tool_id) == []
+
+    async def test_tool_from_another_server_is_rejected(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """mcp_tool_id 必须属于 consumer_id 指向的那个服务。
+
+        不校验的话，两个都归同一个人的服务之间可以错配：绑定写进 A、清单写进 B，
+        两边都不是用户想要的状态，而且都「保存成功」。
+        """
+        secret = await _create_secret(client, valid_api_key)
+        owner = await self._owner_id(client, valid_api_key)
+        _, tool_id = await self._mcp_tool(
+            owner, {"properties": {"password": {"type": "string"}}}
+        )
+        other_server_id, _ = await self._mcp_tool(
+            owner, {"properties": {"password": {"type": "string"}}}
+        )
+
+        resp = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json={
+                "consumer_type": "mcp_server",
+                "consumer_id": other_server_id,
+                "mcp_tool_id": tool_id,
+                "items": [
+                    {
+                        "slot": "arg:list-mail:password",
+                        "name": "password",
+                        "secret_id": secret["id"],
+                        "value_path": "password",
+                    },
+                ],
+            },
+            headers=_headers(valid_api_key),
+        )
+
+        assert resp.status_code == 400, resp.text
+        assert "不是同一个 MCP 服务" in resp.text
+        assert await self._stored_params(tool_id) == []

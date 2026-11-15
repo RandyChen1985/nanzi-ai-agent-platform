@@ -1731,35 +1731,33 @@ async function onParamMappingSaved(payload: {
   removed: number
   bound: string[]
   freed: string[]
+  credentialParams: string[] | null
 }) {
   const tool = paramMarkTarget.value?.tool
   if (!tool) return
-  const current = credentialParamList(tool)
-  const next = new Set(current)
-  for (const name of payload.bound) next.add(name)
-  for (const name of payload.freed) next.delete(name)
-  const list = [...next]
-  // 只在真的变了时才写：没动清单就多发一次 PUT，会让「保存后生效」的提示到处冒
-  if (list.length !== current.length || list.some((n) => !current.includes(n))) {
-    try {
-      const res = await axios.put(`/api/portal/mcp/tools/${tool.id}/credential-params`, {
-        params: list,
-      })
-      const saved = res.data?.credential_params
-      tool.credential_params = JSON.stringify(Array.isArray(saved) ? saved : list)
-      showToast(
-        `已同步：${payload.bound.length} 个参数改由凭据提供` +
-          (payload.freed.length ? `，${payload.freed.length} 个恢复由模型填写` : ''),
-        'success',
-      )
-    } catch (e: any) {
-      // 绑定已经落库了，这里失败只影响「运行时是否注入」，要说清楚而不是静默
-      showToast(
-        e?.response?.data?.detail ||
-          '绑定已保存，但「由凭据提供」的清单没同步成功，请打开参数设置再保存一次',
-        'error',
-      )
-    }
+  // 清单由后端的 bindings/batch 在同一个事务里写回，这里只更新本地状态。
+  //
+  // 原来这里要再发一次 PUT /credential-params：两步之间任何一次失败都会留下
+  // 「绑定有了、清单没有」的半保存状态——界面显示已映射，运行时模型照旧自己填
+  // 密码，服务端只回一句 credentials_rejected，排查方向全错。合成一步之后，
+  // 绑定和清单要么一起成、要么一起不成。
+  if (payload.credentialParams) {
+    tool.credential_params = JSON.stringify(payload.credentialParams)
+    showToast(
+      payload.bound.length
+        ? `已保存：${payload.bound.length} 个参数由凭据提供` +
+            (payload.freed.length ? `，${payload.freed.length} 个恢复由模型填写` : '')
+        : '已保存：参数全部恢复由模型填写',
+      'success',
+    )
+  } else {
+    // 没拿到清单只可能是权限不够（清单是服务端级配置，个人绑定仍可生效）
+    showToast(
+      payload.bound.length
+        ? '绑定已保存。这个工具的参数清单只有管理员能改，非管理员保存后可能仍需管理员同步一次'
+        : '已保存',
+      payload.bound.length ? 'warning' : 'success',
+    )
   }
   await reloadParamMark(tool)
   await fetchServers()
@@ -1856,46 +1854,43 @@ async function submitParamMark() {
     .map(([name]) => name)
   paramMarkBusy.value = true
   try {
-    // 规则绑定先落库。它和「固定凭据」是两条独立记录，同槽位可以并存
-    // （规则负责定位、固定当 on_miss=fallback_fixed 的回退目标）。
-    for (const [name, source] of Object.entries(paramDraft.value)) {
+    // 一次 batch 提交：绑定和「由凭据提供」的清单在同一个事务里落库。
+    //
+    // 原来是循环 POST 每条绑定、最后单独 PUT 一次清单——中间任何一步失败就会留下
+    // 「绑定有了、清单没有」的半保存状态：界面显示已映射，运行时模型照旧自己填
+    // 密码，服务端只回 credentials_rejected，排查方向全错。
+    const items = Object.entries(paramDraft.value).map(([name, source]) => {
       const slot = paramSlot(tool, name)
-      const rule = paramRuleDraft.value[name] || null
       if (source === 'rule') {
-        if (!rule) continue
+        const rule = paramRuleDraft.value[name] || null
+        if (!rule) return { slot, name, strategy: 'none' as const }
         const { value_path: rulePath = '', ...ruleBody } = rule
-        await axios.post('/api/portal/secrets/bindings', {
-          consumer_type: 'mcp_server',
-          consumer_id: serverId,
-          slot,
-          strategy: 'rule',
-          rule: ruleBody,
-          value_path: rulePath,
-          is_global: isGlobalBinding.value,
-        })
-      } else if (ruleBindingOfSlot(slot)) {
-        // 从规则改成别的来源：把旧规则删掉。留着它不会生效（credential_params
-        // 仍会移除参数），但下次打开弹窗会被回填成「规则」，用户会以为没改成功。
-        await axios.delete('/api/portal/secrets/bindings', {
-          data: {
-            consumer_type: 'mcp_server',
-            consumer_id: serverId,
-            slot,
-            strategy: 'rule',
-            is_global: isGlobalBinding.value,
-          },
-        })
-        // 本地也立刻清：下一步可能因网络失败没跑到 loadBindingsFor，
-        // 而弹窗已经关了，再打开会显示一条其实已经删掉的规则
-        delete slotRules.value[slot]
+        return { slot, name, strategy: 'rule' as const, rule: ruleBody, value_path: rulePath }
       }
-    }
-    const res = await axios.put(`/api/portal/mcp/tools/${tool.id}/credential-params`, {
-      params: next,
+      if (source === 'cred') {
+        const fixed = fixedBindingOfSlot(slot)
+        if (fixed?.secret_id) {
+          return {
+            slot,
+            name,
+            strategy: 'fixed' as const,
+            secret_id: fixed.secret_id,
+            value_path: fixed.value_path || '',
+          }
+        }
+      }
+      return { slot, name, strategy: 'none' as const }
+    })
+    const res = await axios.post('/api/portal/secrets/bindings/batch', {
+      consumer_type: 'mcp_server',
+      consumer_id: serverId,
+      is_global: isGlobalBinding.value,
+      items,
+      mcp_tool_id: String(tool.id || ''),
     })
     // 用后端回的真实值，别拿本地草稿当结果——不一致时界面会一直显示旧状态
-    const saved = res.data?.credential_params
-    tool.credential_params = JSON.stringify(Array.isArray(saved) ? saved : next)
+    const savedList = res.data?.data?.credential_params
+    tool.credential_params = JSON.stringify(Array.isArray(savedList) ? savedList : next)
     showToast(
       next.length
         ? `已设置 ${next.length} 个参数由凭据提供，模型不再看到它们`
@@ -4785,6 +4780,7 @@ onMounted(fetchServers)
                   :slots="paramSlotMap(paramMarkTarget?.tool)"
                   :single-value-params="paramSingleValueMap"
                   :subject="paramMarkTarget?.tool?.tool_name || ''"
+                  :mcp-tool-id="String(paramMarkTarget?.tool?.id || '')"
                   @saved="onParamMappingSaved"
                 />
                 <table v-else-if="!paramBindingsLoading" class="w-full table-fixed text-xs">

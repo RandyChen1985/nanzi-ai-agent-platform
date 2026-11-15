@@ -28,14 +28,29 @@ const props = withDefaults(
     /** 单值页里已经配了凭据的参数：本页保存会把它们改成这里的样子 */
     singleValueParams?: Record<string, string>
     subject?: string
+    /**
+     * MCP 工具 id。带上它，后端会在同一个事务里把「由凭据提供」的参数清单
+     * （credential_params）也更新掉。
+     *
+     * 不带的话就得由父组件在保存成功后再发一次 PUT——那条路一旦失败，绑定已经在
+     * 库里、清单却是空的，运行时模型照旧自己填密码，界面上还一切正常。
+     */
+    mcpToolId?: string
   }>(),
-  { isGlobal: false, slots: () => ({}), singleValueParams: () => ({}), subject: '' },
+  { isGlobal: false, slots: () => ({}), singleValueParams: () => ({}), subject: '', mcpToolId: '' },
 )
 
 const emit = defineEmits<{
   (
     e: 'saved',
-    payload: { saved: number; removed: number; bound: string[]; freed: string[] },
+    payload: {
+      saved: number
+      removed: number
+      bound: string[]
+      freed: string[]
+      /** 后端同批写回的「由凭据提供」清单；没带 mcpToolId 时为 null */
+      credentialParams: string[] | null
+    },
   ): void
 }>()
 
@@ -310,6 +325,8 @@ async function save() {
       consumer_id: props.consumerId,
       is_global: props.isGlobal,
       items,
+      // 清单和绑定必须同批写：分两次请求的话，第一次成功第二次失败就是「绑了却不注入」
+      mcp_tool_id: props.mcpToolId || undefined,
     })
     const data = res.data?.data || { saved: 0, removed: 0 }
     // 保存后按库里的事实重算一遍：界面此前显示的是内存草稿。
@@ -322,6 +339,7 @@ async function save() {
       removed: data.removed || 0,
       bound: props.params.filter((n) => picks.value[n]),
       freed: props.params.filter((n) => !picks.value[n]),
+      credentialParams: Array.isArray(data.credential_params) ? data.credential_params : null,
     })
   } catch (e: any) {
     errorText.value = e?.response?.data?.detail || '保存失败'

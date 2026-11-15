@@ -149,6 +149,25 @@ async def _audit_batch_rows(
                 actor_id=actor,
                 detail=detail,
             )
+            if item.get("cleared_rule"):
+                # 同一行还顺手删了这条槽位上原有的规则：用户表达的是「改成固定
+                # 凭据」，规则是被动消失的，所以要单独留一笔，否则事后查不到
+                # 规则是什么时候、被哪个操作弄没的。
+                await center._audit(  # noqa: SLF001
+                    enabled=True,
+                    action="unbind",
+                    secret=None,
+                    actor_id=actor,
+                    detail={
+                        "consumer_type": consumer_type,
+                        "consumer_id": consumer_id,
+                        "slot": item["slot"],
+                        "strategy": "rule",
+                        "global": not fallback_actor,
+                        "batched": True,
+                        "reason": "changed_to_fixed",
+                    },
+                )
         except Exception:  # noqa: BLE001
             # 审计失败不该让「已经保存成功」的请求变成 500
             logger.warning("[SecretAudit] 批量补写审计失败: slot=%s", item["slot"], exc_info=True)
@@ -186,6 +205,15 @@ class BindBatchRequest(BaseModel):
     consumer_id: str
     is_global: bool = False
     items: list[BindItem]
+    #: 消费者是 MCP 工具时的工具 id。
+    #:
+    #: 一份绑定要真正生效，除了「参数 → 凭据的哪个字段」（本接口），还需要工具上
+    #: 那份「哪些参数由凭据提供」的清单（``credential_params``）——它决定参数是否
+    #: 从模型可见的 schema 里剔除、调用时是否注入。这两份数据原来由前端分两次请求
+    #: 写，第一次成功、第二次失败就留下「绑了却不注入」的半保存状态：界面显示已
+    #: 映射，运行时模型照旧自己填，服务端只回一句 credentials_rejected，排查方向
+    #: 全错。带上这个字段就把两份数据放进同一个事务。
+    mcp_tool_id: str = ""
 
 
 class BindRequest(BaseModel):
@@ -1519,6 +1547,103 @@ async def _resolve_slot(
     raise HTTPException(status_code=400, detail=f"{consumer_type} 不支持按参数名绑定")
 
 
+def _param_name_of_slot(slot: str) -> str:
+    """从槽位反推参数名：``arg:<短工具名>:<参数名>`` / ``header:<名字>`` / ``env:<VAR>``。"""
+    parts = str(slot or "").split(":", 2)
+    if len(parts) == 3:
+        return parts[2]
+    return parts[1] if len(parts) == 2 else ""
+
+
+async def _sync_mcp_credential_params(
+    db: AsyncSession,
+    *,
+    tool_id: str,
+    server_id: str,
+    names: list[str],
+    user_info: Dict[str, Any],
+) -> list[str] | None:
+    """把「由凭据提供」的参数清单写回 MCP 工具，与绑定同一事务提交。
+
+    权限与 ``PUT /mcp/tools/{id}/credential-params`` 保持一致：清单是服务端级配置
+    （它影响所有调用这个工具的人），所以只允许管理员或该私有服务的所有者改。
+    没权限时返回 ``None`` 并**不阻断绑定保存**——个人绑定照旧可以只对自己生效，
+    只是清单没跟着变，行为与改动前一致。
+
+    清单是**全量覆盖**：``batch`` 保存的本来就是整张映射表，某一行改成「模型填写」
+    之后，对应的参数必须从清单里消失，否则模型永远看不到它。
+    """
+    from sqlalchemy import select
+
+    from app.api.portal.endpoints.mcp import accepts_credential_value
+    from app.models.mcp import McpServer, McpToolCache
+
+    tool = (
+        await db.execute(select(McpToolCache).where(McpToolCache.id == tool_id))
+    ).scalar_one_or_none()
+    if tool is None:
+        return None
+    # 工具必须属于这一批绑定指向的那个服务。不校验的话，两个都归同一个人的服务
+    # 之间可以错配：绑定写进服务 A、清单写进服务 B，两边都不是用户想要的状态。
+    if str(tool.server_id or "") != str(server_id):
+        raise HTTPException(
+            status_code=400,
+            detail="mcp_tool_id 和 consumer_id 不是同一个 MCP 服务，拒绝保存",
+        )
+    server = (
+        await db.execute(select(McpServer).where(McpServer.id == tool.server_id))
+    ).scalar_one_or_none()
+    if server is None:
+        return None
+
+    user_id, _dept = _user_ctx(user_info)
+    is_admin = _is_admin(user_info)
+    if server.scope == "global" and not is_admin:
+        return None
+    # 按字符串比：``_user_ctx`` 给的是 str，``server.user_id`` 是 int 列。
+    # 直接比的话 ``1 != "1"`` 恒为真，非管理员保存多值映射时清单永远不同步——
+    # 而且界面上一切正常，正是这次要消灭的那种静默失败。
+    if server.scope == "personal" and str(server.user_id or "") != user_id and not is_admin:
+        return None
+
+    # 清单直接决定「哪些参数从模型可见的 schema 里消失」，所以要和
+    # ``PUT /mcp/tools/{id}/credential-params`` 过同一道校验：名字必须在工具
+    # 参数定义里（拼错的参数名等于声明一个永远填不上的坑），类型必须是凭据能喂的
+    # 标量（对象/数组硬注入只会在远端解析阶段炸，比「不让配」更难查）。
+    # 校验不过就整批回滚——这比「绑定存下了、清单没跟上」好得多。
+    try:
+        schema = json.loads(tool.parameter_schema or "{}")
+    except ValueError:
+        schema = {}
+    props = (schema.get("properties") or {}) if isinstance(schema, dict) else {}
+
+    cleaned: list[str] = []
+    for name in names:
+        text = str(name or "").strip()
+        if not text or text in cleaned:
+            continue
+        if text not in props:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"参数 {text} 不在工具 {getattr(tool, 'tool_name', tool_id)} "
+                    "的参数定义里（远端可能改了参数名，请先同步工具）"
+                ),
+            )
+        if not accepts_credential_value(props[text]):
+            declared = props[text].get("type") if isinstance(props[text], dict) else None
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"参数 {text} 的类型是 {declared}，凭据只能提供字符串、数字、布尔。"
+                    "对象/数组这类参数请让模型填，或改由 MCP 服务端固定配置。"
+                ),
+            )
+        cleaned.append(text)
+    tool.credential_params = json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+    return cleaned
+
+
 @router.post("/bindings/batch", summary="一次保存整张绑定映射表")
 async def create_bindings_batch(
     payload: BindBatchRequest,
@@ -1566,6 +1691,10 @@ async def create_bindings_batch(
         resolved.append(
             {
                 "slot": slot,
+                # 远端原始参数名：清单里存的是它，槽位里那个短名不能替代。
+                # 只传 slot 不传 name 的调用方（脚本、第三方集成）在这里兜一层，
+                # 否则它的绑定会进库、清单却被静默漏掉，等于「绑了但不注入」。
+                "name": str(item.name or "").strip() or _param_name_of_slot(slot),
                 "strategy": strategy,
                 "secret_id": item.secret_id,
                 "rule": item.rule,
@@ -1703,6 +1832,25 @@ async def create_bindings_batch(
                 audit=False,
             )
             continue
+        # 同槽位的旧规则要一起清掉。``bind_secret`` 只删 fixed 行——让 fixed 与
+        # rule 在同一个槽位并存是它的设计（rule 负责定位、fixed 作 fallback），
+        # 但这里用户明确把来源改成了「固定凭据」：留着旧规则它会先命中，用户
+        # 以为改好了、实际还在按规则挑。不计入 removed：用户没主动解除任何东西。
+        cleared_rule = await center.unbind_slot(
+            db,
+            consumer_type=payload.consumer_type,
+            consumer_id=payload.consumer_id,
+            slot=slot,
+            bound_by_user_id=bound_by,
+            strategy="rule",
+            commit=False,
+            audit=False,
+        )
+        if cleared_rule:
+            # 这是一次真实的「规则被删掉」，只是用户没有直接表达它。不补审计的话，
+            # 事后看到「某槽位从规则变成固定凭据」，查不出规则是什么时候没的。
+            # 补写推迟到整批提交之后（和本批其它行同一时机），所以这里只打标记。
+            item["cleared_rule"] = True
         await center.bind_secret(
             db,
             secret_id=item["secret_id"],
@@ -1722,8 +1870,27 @@ async def create_bindings_batch(
         )
         saved += 1
 
+    # 绑定写完了，顺手把「由凭据提供」的清单也在同一事务里更新掉。
+    # 清单漏更新的后果是静默的：界面显示已映射，运行时模型照旧自己填密码。
+    credential_params: list[str] | None = None
+    if payload.mcp_tool_id and payload.consumer_type == "mcp_server":
+        credential_params = await _sync_mcp_credential_params(
+            db,
+            tool_id=payload.mcp_tool_id,
+            server_id=payload.consumer_id,
+            names=[item["name"] for item in resolved if item["strategy"] != "none"],
+            user_info=user_info,
+        )
+
     # 整批一个事务：上面任何一步抛错，这一批整体回滚，不会留下半张映射表
     await db.commit()
+
+    if credential_params is not None:
+        # 清单变了，运行时工具缓存必须重建：不清的话模型还会看到旧 schema，
+        # 于是「保存成功但下次调用仍然让模型填密码」。
+        from app.api.portal.endpoints.mcp import _clear_runtime_tool_cache
+
+        _clear_runtime_tool_cache()
 
     # 提交成功了才补写审计。这里逐条写而不是攒一批：批量接口的行数是个位数，
     # 而且 _audit 自己会吞异常，一条写失败不影响其余的。
@@ -1739,7 +1906,12 @@ async def create_bindings_batch(
     return {
         "code": 0,
         "message": f"已保存 {saved} 条绑定" + (f"，解除 {removed} 条" if removed else ""),
-        "data": {"saved": saved, "removed": removed},
+        "data": {
+            "saved": saved,
+            "removed": removed,
+            # 只有带了 mcp_tool_id 才有值；前端据此更新本地状态，不必再发一次请求
+            "credential_params": credential_params,
+        },
     }
 
 

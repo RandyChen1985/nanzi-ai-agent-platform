@@ -77,10 +77,18 @@ def test_rule_branch_reads_rule_draft_not_binding():
 
 
 def test_saving_rule_binding_posts_strategy_rule():
+    """规则来源通过 bindings/batch 一次提交，不再逐条 POST。
+
+    2026-11-16：原来这里是循环 POST 每条绑定、最后单独 PUT 一次
+    credential-params。两步之间任何一次失败都会留下「绑定有了、清单没有」的
+    半保存状态——界面显示已映射，运行时模型照旧自己填密码。
+    现在整张表（含规则与「回到模型填写」）由 batch 一次写，清单在同一个事务里。
+    """
     src = REGISTRY.read_text(encoding="utf-8")
-    assert "strategy: 'rule'" in src
-    # 从规则改回别的来源时必须把旧规则删掉，否则下次打开会被回填成「规则」
-    assert "strategy: 'rule',\n            is_global" in src
+    assert "strategy: 'rule' as const" in src
+    assert "/api/portal/secrets/bindings/batch" in src
+    # 清单跟着绑定同批落库，不再有第二次 PUT
+    assert "mcp_tool_id: String(tool.id || '')" in src
 
 
 def test_locator_editor_is_mounted_with_plain_params_only():
@@ -248,12 +256,22 @@ class TestRuleAndFixedCoexist:
         fn = fn[: fn.index("\n}\n")]
         assert "slotRules.value[slot]" in fn
 
-    def test_deleting_a_rule_clears_the_local_copy(self):
-        """删完规则不回清本地，网络失败时会显示一条其实已经没了的规则。"""
+    def test_deleting_a_rule_is_handled_by_the_single_batch_write(self):
+        """从规则改成别的来源时，旧规则的删除由 batch 的服务端写入轮统一做。
+
+        2026-11-16：原来前端要显式 DELETE 一次并顺手清本地 ``slotRules``，
+        因为 ``bind_secret`` 只清 fixed 行、不管 rule。现在 batch 在写入轮对
+        每个 fixed 项先清同槽位的 rule，前端不再各写一遍——两处规则不同步正是
+        之前「改成固定凭据了、实际还在按规则挑」的来源。
+        """
         src = REGISTRY.read_text(encoding="utf-8")
         start = src.index("async function submitParamMark(")
-        body = src[start:start + 4000]
-        assert "delete slotRules.value[slot]" in body
+        body = src[start:start + 5000]
+        # 草稿里 source 不是 rule 的项一律提交 none/fixed，由后端负责清旧规则
+        assert "strategy: 'none' as const" in body
+        assert "strategy: 'fixed' as const" in body
+        backend = Path("app/api/portal/endpoints/secrets.py").read_text(encoding="utf-8")
+        assert "同槽位的旧规则要一起清掉" in backend
 
 
 def test_param_mark_waits_for_bindings_before_filling_the_draft():

@@ -514,13 +514,20 @@ class TestMcpToolParamCredential:
         次数这类连接参数恰好都是数字：让模型每次猜端口等于埋雷，而它们又不在
         Header 里，于是「只允许 string」实际等于「这个参数平台管不了」。
         现在放开标量，类型转换由注入层按 schema 做（coerce_to_declared_type）。
+
+        2026-11-16：判定提成了模块级 ``accepts_credential_value``——绑定的批量保存
+        顺带写清单时要用**同一道**校验，各写一份的话哪天一边放开、另一边没跟上，
+        就会出现「这里能配、那里报错」。
         """
         source = _read(ROOT / "app/api/portal/endpoints/mcp.py")
-        assert "_accepts_credential" in source
-        assert 'credential_types = ("string", "integer", "number", "boolean")' in source
+        assert "def accepts_credential_value(" in source
+        assert 'CREDENTIAL_PARAM_TYPES = ("string", "integer", "number", "boolean")' in source
         assert "凭据只能提供字符串、数字、布尔" in source
         # `type` 可能是 ["integer","null"] 这种联合类型，要认出来
         assert "isinstance(declared, list)" in source
+        # 批量保存那条路必须复用它，而不是自己再判一遍
+        batch = _read(ROOT / "app/api/portal/endpoints/secrets.py")
+        assert "accepts_credential_value(props[text])" in batch
 
 
 class TestApiToolSystemParamCredential:
@@ -610,8 +617,9 @@ class TestToolTesterHidesCredentialParams:
         start = source.find("async function submitParamMark(")
         body = source[start:source.find("\n}", start)]
         assert "await fetchServers()" in body
-        # 用后端回的真实值，而不是本地草稿
-        assert "Array.isArray(saved) ? saved : next" in body
+        # 用后端回的真实值，而不是本地草稿。2026-11-16：清单改由 bindings/batch
+        # 同批写回，变量名跟着从 saved 变成 savedList，语义不变。
+        assert "Array.isArray(savedList) ? savedList : next" in body
 
 
 class TestBindingEdgeCases:

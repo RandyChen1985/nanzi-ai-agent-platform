@@ -409,3 +409,25 @@ class TestCustomJsonKeyValueEditor:
             assert "props.lockStructure" in body, name
         assert 'v-if="!lockStructure"' in source
         assert "轮换中字段结构已锁定，只能改值。" in source
+
+
+class TestApiToolMappingReminder:
+    """API 工具的参数来源要用户手动「保存工具」才写回，提示不能自己消失。
+
+    这里和 MCP 不一样：MCP 的「由凭据提供」清单是工具表上的独立列，可以由
+    bindings/batch 同批写；API 工具认的是参数自己的 `source`，它存在
+    `parameter_schema` 里，而整份 schema 是用户在弹窗里编辑的草稿——批量接口直接
+    覆盖会和用户其它未保存的改动打架。
+
+    所以只能靠提示把人叫住：绑定落库了但没点「保存」，运行时 `generic_api`
+    只注入 `source == 'credential'` 的行，凭据根本不会被用，而且不报错。
+    """
+
+    def test_hint_does_not_auto_dismiss(self):
+        source = _read(ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue")
+        assert "window.setTimeout(() => { mappingHint.value = '' }" not in source
+        assert "还要点下面的「保存」把参数来源写回工具" in source
+
+    def test_hint_has_a_manual_dismiss(self):
+        source = _read(ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue")
+        assert '@click="mappingHint = \'\'"' in source

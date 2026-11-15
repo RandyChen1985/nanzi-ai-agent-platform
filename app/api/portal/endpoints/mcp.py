@@ -100,6 +100,32 @@ def _clear_runtime_tool_cache() -> None:
 
     ToolRegistry.clear_db_tool_cache()
 
+#: 凭据能喂的参数类型。标量都算：字符串原样给，数字和布尔由注入层按 schema
+#: 转一次类型（见 injection.coerce_to_declared_type）。
+CREDENTIAL_PARAM_TYPES = ("string", "integer", "number", "boolean")
+
+
+def accepts_credential_value(spec: Any) -> bool:
+    """凭据值能否喂给这个参数。
+
+    对象和数组仍然拒绝：凭据里那段 JSON 的结构不一定符合对方的嵌套 schema，
+    硬注入只会在远端解析阶段失败，比「不让配」更难查。
+
+    曾经这里是「只允许 string」——理由是凭据值永远是字符串。但端口、超时、
+    重试次数这类**连接参数**恰好都是数字，它们既不该让模型每次猜，也不在
+    Header 里，于是「只允许 string」等于告诉用户「这个参数平台管不了」。
+    现在放开标量，由注入层负责转换，转不了就在凭据流水里报出来。
+
+    提成模块级是因为**两个入口**都要判：``PUT /credential-params``（单值页
+    直接改清单）和 ``POST /secrets/bindings`` 的批量保存（顺带写清单）。
+    各写一份的话，哪天一边放开、另一边没跟上，就会出现「这里能配、那里报错」。
+    """
+    declared = spec.get("type") if isinstance(spec, dict) else None
+    if isinstance(declared, list):
+        return any(kind in CREDENTIAL_PARAM_TYPES for kind in declared)
+    return declared is None or declared in CREDENTIAL_PARAM_TYPES
+
+
 def _normalize_mcp_server_name(value: Any) -> str:
     """校验并返回展示名。
 
@@ -2030,26 +2056,6 @@ async def set_tool_credential_params(
         schema = {}
     props = (schema.get("properties") or {}) if isinstance(schema, dict) else {}
 
-    #: 凭据能喂的参数类型。标量都算：字符串原样给，数字和布尔由注入层按 schema
-    #: 转一次类型（见 injection.coerce_to_declared_type）。
-    credential_types = ("string", "integer", "number", "boolean")
-
-    def _accepts_credential(spec: Any) -> bool:
-        """凭据值能否喂给这个参数。
-
-        对象和数组仍然拒绝：凭据里那段 JSON 的结构不一定符合对方的嵌套 schema，
-        硬注入只会在远端解析阶段失败，比「不让配」更难查。
-
-        曾经这里是「只允许 string」——理由是凭据值永远是字符串。但端口、超时、
-        重试次数这类**连接参数**恰好都是数字，它们既不该让模型每次猜，也不在
-        Header 里，于是「只允许 string」等于告诉用户「这个参数平台管不了」。
-        现在放开标量，由注入层负责转换，转不了就在凭据流水里报出来。
-        """
-        declared = spec.get("type") if isinstance(spec, dict) else None
-        if isinstance(declared, list):
-            return any(kind in credential_types for kind in declared)
-        return declared is None or declared in credential_types
-
     cleaned: List[str] = []
     for name in payload.params:
         name = str(name or "").strip()
@@ -2060,7 +2066,7 @@ async def set_tool_credential_params(
                 status_code=400,
                 detail=f"参数 {name} 不在这个工具的参数定义里（远端可能改了参数名，请先同步工具）",
             )
-        if not _accepts_credential(props[name]):
+        if not accepts_credential_value(props[name]):
             declared = props[name].get("type") if isinstance(props[name], dict) else None
             raise HTTPException(
                 status_code=400,
