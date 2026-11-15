@@ -78,6 +78,8 @@ def config_from_row(row: SysScriptTool, *, builtin: BuiltinScriptTool | None = N
     return ScriptToolConfig(
         name=row.name,
         code=code,
+        # 绑定的 consumer_id 就是这个主键，不透传等于 env: 注入全失效
+        id=str(row.id),
         parameter_schema=schema,
         requirements=requirements,
         timeout_seconds=timeout_seconds,

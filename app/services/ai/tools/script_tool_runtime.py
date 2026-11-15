@@ -82,6 +82,10 @@ class ScriptToolConfig:
 
     name: str
     code: str
+    # 凭据绑定的消费方 id。缺了它 `apply_script_env_bindings` 里的
+    # `getattr(config, "id", "")` 永远是空串，函数在第一道判断就 return {}，
+    # 于是 env: 绑定从来没注入过——界面上绑得好好的，脚本里读到的一直是空。
+    id: str = ""
     parameter_schema: Any = None
     requirements: tuple[str, ...] = ()
     timeout_seconds: Optional[int] = None

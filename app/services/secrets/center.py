@@ -622,7 +622,14 @@ async def rotate_secret(
     row.value_template = template
     row.value_summary = summary
     row.last_rotated_at = now
-    row.expires_at = expires_at if expires_at is not None else row.expires_at
+    if expires_at is not None:
+        row.expires_at = expires_at
+    elif row.expires_at is not None and row.expires_at <= now:
+        # 继承来的过期时间已经过去了。轮换是「换上新凭据」，新值不该一落地就失效——
+        # 更糟的是 _pick_ciphertext 会因此判定新值不可用，回退到 previous 里那份
+        # 刚被替换掉的旧密文，整个双写窗口用的都是旧值。清掉过期时间，
+        # 让它作为一份不过期的新凭据生效；真要限期由调用方显式传。
+        row.expires_at = None
     await _audit(
         action="rotate",
         secret=row,
@@ -1208,7 +1215,10 @@ async def migrate_api_tool_param_slots(session, tool: Any) -> int:
         )
     )).scalars().all()
 
-    existing = {(row.slot, row.bound_by_user_id) for row in rows}
+    # 带上 strategy：唯一索引是 (slot, bound_by_user_id, strategy)，同一个参数位
+    # 同时存在 fixed 和 rule 两条是合法的。漏掉这一维，迁完 fixed 行之后，紧接着
+    # 处理同参数的 rule 行会命中「新槽位已经有人绑了」，把合法的规则绑定当残留删掉。
+    existing = {(row.slot, row.bound_by_user_id, row.strategy) for row in rows}
     moved = 0
     for row in rows:
         prefix, _, name = str(row.slot).partition(":")
@@ -1221,13 +1231,16 @@ async def migrate_api_tool_param_slots(session, tool: Any) -> int:
         )
         if not target or target == row.slot:
             continue
-        if (target, row.bound_by_user_id) in existing:
+        # 先留住旧键：下面要么删行、要么改 row.slot，改完就取不到原值了
+        old_key = (row.slot, row.bound_by_user_id, row.strategy)
+        if (target, row.bound_by_user_id, row.strategy) in existing:
             # 新槽位已经有人绑了：这条是历史残留，删掉
             await session.delete(row)
+            existing.discard(old_key)
         else:
             row.slot = target
-            existing.add((target, row.bound_by_user_id))
-        existing.discard((row.slot, row.bound_by_user_id))
+            existing.discard(old_key)
+            existing.add((target, row.bound_by_user_id, row.strategy))
         moved += 1
 
     if moved:
