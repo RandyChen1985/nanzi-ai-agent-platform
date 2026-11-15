@@ -383,9 +383,24 @@ type UsageRow = {
   conversation_id?: string | null
   /** 单次调用的追踪号 */
   trace_id?: string | null
+  /** 聚合后：这次调用一共注入了几条参数 */
+  slot_count?: number
+  /** 聚合后：其中有几条没成功 */
+  failed_count?: number
+  /** 聚合后：各参数明细，展开才显示 */
+  slots?: { slot: string | null; result: string }[]
   created_at: string
 }
 const usageRows = ref<UsageRow[]>([])
+/** 展开了参数明细的流水行（按行 id 记） */
+const expandedUsageKeys = ref<string[]>([])
+
+function toggleUsageExpand(row: UsageRow) {
+  const key = String(row.id)
+  expandedUsageKeys.value = expandedUsageKeys.value.includes(key)
+    ? expandedUsageKeys.value.filter((item) => item !== key)
+    : [...expandedUsageKeys.value, key]
+}
 /** 按用户筛选：ID / 用户名 / 姓名 / 邮箱都能搜，后端做子串匹配 */
 const usageUserKeyword = ref('')
 let usageSearchTimer: ReturnType<typeof setTimeout> | null = null
@@ -416,6 +431,8 @@ async function loadUsageDetail() {
     const res = await axios.get('/api/portal/secrets/usage', {
       params: {
         limit: 100,
+        // 一次工具调用注入多个参数会写多条流水，聚合后才是「一次调用一行」
+        grouped: 'true',
         ...(usageSecretId.value ? { secret_id: usageSecretId.value } : {}),
         ...(usageUserKeyword.value.trim()
           ? { user_keyword: usageUserKeyword.value.trim() }
@@ -1874,7 +1891,19 @@ onMounted(load)
                   <span class="ml-auto shrink-0 text-gray-400">{{ shortTime(row.created_at) }}</span>
                 </div>
                 <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[10px] text-gray-400">
-                  <span v-if="row.slot">{{ row.slot }}</span>
+                  <!-- 一次调用注入多个参数聚合成一行，点开展开看每个参数位 -->
+                  <button
+                    v-if="(row.slot_count || 1) > 1"
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-1.5 py-0.5 font-sans text-[10px] text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+                    :title="expandedUsageKeys.includes(row.id) ? '收起参数明细' : '展开看这次注入了哪几个参数'"
+                    @click="toggleUsageExpand(row)"
+                  >
+                    {{ row.slot_count }} 个参数
+                    <span class="text-gray-400">{{ expandedUsageKeys.includes(row.id) ? '收起' : '展开' }}</span>
+                  </button>
+                  <span v-else-if="row.slot">{{ row.slot }}</span>
+                  <span v-if="row.failed_count" class="font-sans text-amber-600">{{ row.failed_count }} 项失败</span>
                   <span v-if="row.target_host">{{ row.target_host }}</span>
                   <!-- 回到那次对话才查得动「用户说这条凭据用不了」；trace_id 只够定位单次调用。
                        历史流水这一列是 NULL（注入链路过去没传），所以显式说「无会话」而不是留空。 -->
@@ -1892,6 +1921,22 @@ onMounted(load)
                     class="text-gray-400"
                     :title="`trace：${row.trace_id}`"
                   >trace {{ String(row.trace_id).slice(0, 8) }}</span>
+                </div>
+                <div
+                  v-if="expandedUsageKeys.includes(row.id) && (row.slots || []).length"
+                  class="mt-1 space-y-0.5 border-t border-gray-200/70 pt-1"
+                >
+                  <div
+                    v-for="(detail, index) in row.slots"
+                    :key="`${detail.slot}-${index}`"
+                    class="flex items-center gap-2 pl-3 font-mono text-[10px] text-gray-500"
+                  >
+                    <span class="text-gray-300">└</span>
+                    <span class="truncate">{{ detail.slot }}</span>
+                    <span :class="detail.result === 'success' ? 'text-emerald-600' : 'text-amber-600'">
+                      {{ resultLabel(detail.result) }}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>

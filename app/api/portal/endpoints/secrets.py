@@ -296,6 +296,53 @@ def serialize_secret(row) -> Dict[str, Any]:
     }
 
 
+def _group_usage_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """把同一次工具调用的多条槽位流水合成一行。
+
+    一次 ``send_mail`` 注入 host/port/security/username/password 会写 5 条流水，
+    界面上就是 5 行时间相同、会话相同、只差槽位的记录——用户看到的「重复」
+    其实是同一次调用。聚合键取 ``(trace_id, secret_id, user_id, consumer_id)``：
+    同一次调用里注入两条不同凭据仍然分成两行，因为它们说的不是同一件事。
+
+    没有 ``trace_id`` 的老流水无法判断是不是同一次调用，各自成组——
+    宁可多显示几行，也不要把两次无关的调用合并成一次。
+    """
+    groups: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+    for item in items:
+        trace_id = item.get("trace_id")
+        if trace_id:
+            key: Tuple[Any, ...] = (
+                "trace",
+                str(trace_id),
+                item.get("secret_id"),
+                item.get("user_id"),
+                item.get("consumer_id"),
+            )
+        else:
+            key = ("row", item.get("id"))
+
+        group = groups.get(key)
+        if group is None:
+            # 保留首条的全部字段（rows 已按时间倒序，首条就是最新那条）
+            group = dict(item)
+            group["slots"] = []
+            group["slot_count"] = 0
+            group["failed_count"] = 0
+            groups[key] = group
+
+        group["slots"].append(
+            {"slot": item.get("slot"), "result": item.get("result")}
+        )
+        group["slot_count"] += 1
+        if item.get("result") != "success":
+            group["failed_count"] += 1
+            # 组内出现失败就以失败示人，不能因为其他参数成功就显示「成功」
+            group["result"] = item.get("result")
+        if not group.get("conversation_id") and item.get("conversation_id"):
+            group["conversation_id"] = item["conversation_id"]
+    return list(groups.values())
+
+
 async def _audit_readable(
     db: AsyncSession, rows: list
 ) -> Dict[str, Dict[str, str]]:
@@ -673,6 +720,10 @@ async def list_usage(
         description="按用户筛选：ID、用户名、姓名或邮箱，子串匹配",
     ),
     limit: int = Query(default=100, ge=1, le=500),
+    grouped: bool = Query(
+        default=False,
+        description="按 trace_id 聚合：一次工具调用注入多个参数只显示一行",
+    ),
     user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -688,32 +739,30 @@ async def list_usage(
     # 用户展示信息单独批量取：流水表只存 user_id，界面光显示「用户 7」没法排查
     # 「某用户说用不了」——对方是谁还得先去用户表反查。
     users = await center.resolve_usage_users(db, rows)
-    return {
-        "code": 0,
-        "data": [
-            {
-                "id": r.id,
-                "secret_id": r.secret_id,
-                "secret_key": r.secret_key_snapshot,
-                "owner_scope": r.owner_scope,
-                "user_id": r.user_id,
-                "user_name": (users.get(str(r.user_id)) or {}).get("user_name"),
-                "user_real_name": (users.get(str(r.user_id)) or {}).get("real_name"),
-                "user_email": (users.get(str(r.user_id)) or {}).get("email"),
-                "scene": r.scene,
-                "consumer_type": r.consumer_type,
-                "consumer_id": r.consumer_id,
-                "slot": r.slot,
-                "target_host": r.target_host,
-                "result": r.result,
-                "trace_id": r.trace_id,
-                # 排查「这条凭据是不是那次对话用的」要靠它；trace_id 只够定位单次调用
-                "conversation_id": r.conversation_id,
-                "created_at": _iso(r.created_at),
-            }
-            for r in rows
-        ],
-    }
+    items = [
+        {
+            "id": r.id,
+            "secret_id": r.secret_id,
+            "secret_key": r.secret_key_snapshot,
+            "owner_scope": r.owner_scope,
+            "user_id": r.user_id,
+            "user_name": (users.get(str(r.user_id)) or {}).get("user_name"),
+            "user_real_name": (users.get(str(r.user_id)) or {}).get("real_name"),
+            "user_email": (users.get(str(r.user_id)) or {}).get("email"),
+            "scene": r.scene,
+            "consumer_type": r.consumer_type,
+            "consumer_id": r.consumer_id,
+            "slot": r.slot,
+            "target_host": r.target_host,
+            "result": r.result,
+            "trace_id": r.trace_id,
+            # 排查「这条凭据是不是那次对话用的」要靠它；trace_id 只够定位单次调用
+            "conversation_id": r.conversation_id,
+            "created_at": _iso(r.created_at),
+        }
+        for r in rows
+    ]
+    return {"code": 0, "data": _group_usage_items(items) if grouped else items}
 
 
 @router.get("/usage/stats", summary="使用记录统计（按凭据 / 场景 / 结果 / 天）")

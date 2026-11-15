@@ -77,6 +77,12 @@ interface UsageRow {
   trace_id?: string | null
   /** 会话 id：点回去才能看清当时在干什么 */
   conversation_id?: string | null
+  /** 聚合后：这次调用一共注入了几条参数（1 表示不是聚合行） */
+  slot_count?: number
+  /** 聚合后：其中有几条没成功 */
+  failed_count?: number
+  /** 聚合后：各参数的明细，展开才显示 */
+  slots?: { slot: string | null; result: string }[]
   created_at: string | null
 }
 
@@ -538,6 +544,15 @@ type AuditRow = {
   created_at: string
 }
 const auditRows = ref<AuditRow[]>([])
+/** 展开了参数明细的流水行（按行 id 记，切凭据时整体清空） */
+const expandedUsageKeys = ref<string[]>([])
+
+function toggleUsageExpand(row: { id: string }) {
+  const key = String(row.id)
+  expandedUsageKeys.value = expandedUsageKeys.value.includes(key)
+    ? expandedUsageKeys.value.filter((item) => item !== key)
+    : [...expandedUsageKeys.value, key]
+}
 
 async function loadRecords(tab: RecordTab) {
   // 统计面板自己拉数据（`:secret-id` 变了会重新加载），这里不代劳
@@ -546,12 +561,17 @@ async function loadRecords(tab: RecordTab) {
   try {
     const url = tab === 'usage' ? '/api/portal/secrets/usage' : '/api/portal/secrets/audit'
     const params: Record<string, string | number> = { limit: 50 }
+    // 一次工具调用注入多个参数会写多条流水，聚合后才是「一次调用一行」
+    if (tab === 'usage') params.grouped = 'true'
     // 不带 secret_id = 「我的全部凭据」；只有显式切到全部时才走这条路
     if (usageScope.value === 'secret' && usageSecretId.value) {
       params.secret_id = usageSecretId.value
     }
     const res = await axios.get(url, { params })
-    if (tab === 'usage') usageRows.value = res.data?.data || []
+    if (tab === 'usage') {
+      usageRows.value = res.data?.data || []
+      expandedUsageKeys.value = []
+    }
     else auditRows.value = res.data?.data || []
   } catch (e: any) {
     showToast(e?.response?.data?.detail || '加载记录失败', 'err')
@@ -591,10 +611,10 @@ const policy = ref({
 })
 const prefs = ref({ allow_script_env: false })
 const policyBusy = ref(false)
+/** 策略是否真的取回来了。没取回来时不要拿默认值当结论显示给用户。 */
+const policyLoaded = ref(false)
 
-async function togglePolicy() {
-  policyOpen.value = !policyOpen.value
-  if (!policyOpen.value) return
+async function loadPolicyData() {
   try {
     const [policyRes, prefsRes] = await Promise.all([
       axios.get('/api/portal/secrets/policy'),
@@ -602,9 +622,16 @@ async function togglePolicy() {
     ])
     policy.value = policyRes.data?.data || policy.value
     prefs.value = prefsRes.data?.data || prefs.value
-  } catch (e: any) {
-    showToast(e?.response?.data?.detail || '加载策略失败', 'err')
+    policyLoaded.value = true
+  } catch {
+    // 这里失败不打扰用户：展开时会再试一次，折叠态的徽章只是不显示
   }
+}
+
+async function togglePolicy() {
+  policyOpen.value = !policyOpen.value
+  if (!policyOpen.value) return
+  if (!policyLoaded.value) await loadPolicyData()
 }
 
 async function savePrefs(value: boolean) {
@@ -675,22 +702,6 @@ async function toggleStatus(item: SecretItem) {
 }
 
 // ── 从这条凭据上解绑 ─────────────────────────────────────────────────
-async function unbindFrom(row: any) {
-  try {
-    await axios.delete('/api/portal/secrets/bindings', {
-      data: {
-        consumer_type: row.consumer_type,
-        consumer_id: row.consumer_id,
-        slot: row.slot,
-      },
-    })
-    showToast('已解除绑定')
-    await Promise.all([load(), loadBindingsOf(selected.value)])
-  } catch (e: any) {
-    showToast(e?.response?.data?.detail || '解除失败', 'err')
-  }
-}
-
 // ── 选中项的绑定列表（右侧详情内嵌，不再单开弹窗）──────────────────
 const selectedBindings = ref<any[]>([])
 const selectedBindingsBusy = ref(false)
@@ -703,14 +714,92 @@ const selectedBindingsBusy = ref(false)
  */
 const BINDING_PREVIEW_COUNT = 3
 const selectedBindingsExpanded = ref(false)
+
+interface BindingGroupView {
+  key: string
+  consumer_type: string
+  consumer_id: string
+  consumer_name: string
+  bound_by_me: boolean
+  /** 组内最严的压制程度：只要有一条被规则挡住，整组都算不生效 */
+  rule_shadow: 'fail' | 'fallback_fixed' | 'model' | null
+  rows: any[]
+}
+
+/**
+ * 按「哪台服务」聚合。
+ *
+ * 一条结构化凭据给同一台 MCP 服务的 host/port/security/username/password 各绑
+ * 一次，是**一次操作**，列表里却占 5 行、服务名重复 5 遍。聚合成一行、
+ * 展开看槽位，才看得出「我给这台服务绑了 5 个参数位」。
+ *
+ * 键里带 bound_by_me：同一条凭据可能既有别人绑的、也有我绑的，混在一起会让
+ * 「移除」按钮的语义变得含糊。
+ */
+const groupedBindings = computed<BindingGroupView[]>(() => {
+  const map = new Map<string, BindingGroupView>()
+  for (const row of selectedBindings.value) {
+    const key = `${row.consumer_type}:${row.consumer_id}:${row.bound_by_me ? 'me' : 'global'}`
+    let group = map.get(key)
+    if (!group) {
+      group = {
+        key,
+        consumer_type: row.consumer_type,
+        consumer_id: row.consumer_id,
+        consumer_name: String(row.consumer_name || ''),
+        bound_by_me: !!row.bound_by_me,
+        rule_shadow: null,
+        rows: [],
+      }
+      map.set(key, group)
+    }
+    group.rows.push(row)
+    if (row.rule_shadow === 'fail') group.rule_shadow = 'fail'
+    else if (row.rule_shadow && group.rule_shadow !== 'fail') group.rule_shadow = row.rule_shadow
+  }
+  return [...map.values()]
+})
+
 const shownBindings = computed(() =>
   selectedBindingsExpanded.value
-    ? selectedBindings.value
-    : selectedBindings.value.slice(0, BINDING_PREVIEW_COUNT),
+    ? groupedBindings.value
+    : groupedBindings.value.slice(0, BINDING_PREVIEW_COUNT),
 )
+
+/** 展开了槽位明细的服务组（切凭据时整体清空） */
+const expandedBindingGroups = ref<string[]>([])
+
+function toggleBindingGroup(key: string) {
+  expandedBindingGroups.value = expandedBindingGroups.value.includes(key)
+    ? expandedBindingGroups.value.filter((item) => item !== key)
+    : [...expandedBindingGroups.value, key]
+}
+
+/** 解除整组：一次操作绑上来的，就该一次撤干净 */
+async function unbindGroup(group: BindingGroupView) {
+  if (!group.rows.length) return
+  try {
+    for (const row of group.rows) {
+      await axios.delete('/api/portal/secrets/bindings', {
+        data: {
+          consumer_type: row.consumer_type,
+          consumer_id: row.consumer_id,
+          slot: row.slot,
+        },
+      })
+    }
+    showToast(`已解除 ${group.rows.length} 个槽位`)
+    await Promise.all([load(), loadBindingsOf(selected.value)])
+  } catch (e: any) {
+    // 逐条删，中途失败时前面的已经删掉了——如实说，别报「全部成功」
+    showToast(e?.response?.data?.detail || '解除失败，部分槽位可能已解除', 'err')
+    await Promise.all([load(), loadBindingsOf(selected.value)])
+  }
+}
 
 async function loadBindingsOf(item: SecretItem | null) {
   selectedBindingsExpanded.value = false
+  expandedBindingGroups.value = []
   if (!item) {
     selectedBindings.value = []
     return
@@ -788,7 +877,11 @@ watch(selected, (item) => {
   void loadFieldsOf(item)
 })
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  // 折叠态也要能一眼看到「平台开没开」，否则用户还得先展开才知道为什么注入没生效
+  void loadPolicyData()
+})
 </script>
 
 <template>
@@ -886,6 +979,115 @@ onMounted(load)
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
         </svg>
       </button>
+    </div>
+
+    <!-- 注入策略：放在列表上方。它回答的正是「我明明绑了凭据，为什么没注入」，
+         而这几乎是最常来这里找的答案——原来沉在页面最底部，得滚到底才看得见。 -->
+    <div class="rounded-xl border border-gray-200">
+      <button
+        type="button"
+        class="flex w-full flex-wrap items-center justify-between gap-2 px-4 py-3 text-left"
+        @click="togglePolicy"
+      >
+        <span class="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-800">
+          注入策略
+          <!-- 收起态也把闸门状态露出来：先知道结论，再决定要不要展开看原因 -->
+          <template v-if="policyLoaded">
+            <span
+              class="rounded px-1.5 py-0.5 text-[10px] font-normal"
+              :class="policy.allow_script_env ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
+            >脚本读取：{{ policy.allow_script_env ? '开' : '关' }}</span>
+            <span
+              class="rounded px-1.5 py-0.5 text-[10px] font-normal"
+              :class="policy.allow_external_host ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
+            >外部域名：{{ policy.allow_external_host ? '开' : '关' }}</span>
+            <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-normal text-gray-500">
+              单次最多 {{ policy.max_inject_per_call }} 条
+            </span>
+          </template>
+        </span>
+        <span class="text-xs text-gray-400">{{ policyOpen ? '收起' : '展开' }}</span>
+      </button>
+
+      <div v-if="policyOpen" class="space-y-3 border-t border-gray-100 px-4 py-3 text-xs text-gray-600">
+        <!-- 前两项是平台级配置：普通用户只能看。不写明「谁改的、去哪改」，用户会以为是自己
+             这里没打开，反复点也点不动。 -->
+        <div class="rounded-lg bg-gray-50 p-3">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="flex flex-wrap items-center gap-1.5 font-medium text-gray-800">
+                平台允许脚本从环境变量读取凭据
+                <span class="rounded bg-gray-200 px-1 py-0.5 text-[10px] font-normal text-gray-600">管理员设定</span>
+              </p>
+              <p class="mt-0.5 text-[11px] text-gray-500">
+                脚本能 <code>print(os.environ)</code>，值进了子进程就没有任何手段能拦住它回显。默认关，且关闭时是整类拒绝。
+              </p>
+            </div>
+            <span
+              class="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium"
+              :class="policy.allow_script_env ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
+            >
+              {{ policy.allow_script_env ? '已开启' : '已关闭' }}
+            </span>
+          </div>
+          <p class="mt-1.5 text-[10px] text-gray-400">
+            这一项由管理员在「系统配置 → 凭证策略」里设置，此处只读。
+          </p>
+        </div>
+
+        <div class="rounded-lg bg-gray-50 p-3">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="flex flex-wrap items-center gap-1.5 font-medium text-gray-800">
+                平台允许凭据发往外部域名
+                <span class="rounded bg-gray-200 px-1 py-0.5 text-[10px] font-normal text-gray-600">管理员设定</span>
+              </p>
+              <p class="mt-0.5 text-[11px] text-gray-500">
+                权威开关仍是每条凭据自己的域名白名单；这一项是部署级兜底闸门。
+              </p>
+            </div>
+            <span
+              class="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium"
+              :class="policy.allow_external_host ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
+            >
+              {{ policy.allow_external_host ? '已开启' : '已关闭' }}
+            </span>
+          </div>
+          <p class="mt-1.5 text-[10px] text-gray-400">
+            同样由管理员在「系统配置 → 凭证策略」里设置，此处只读。
+          </p>
+        </div>
+
+        <div class="rounded-lg bg-blue-50 p-3">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="flex flex-wrap items-center gap-1.5 font-medium text-gray-800">
+                我的偏好：允许脚本读取我的凭据
+                <span class="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-normal text-blue-700">我能改</span>
+              </p>
+              <p class="mt-0.5 text-[11px] text-gray-500">
+                与上面的平台策略取交集——两层都开才真正生效。
+              </p>
+            </div>
+            <button
+              type="button"
+              :disabled="policyBusy"
+              class="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-medium disabled:opacity-60"
+              :class="prefs.allow_script_env ? 'bg-gray-200 text-gray-700' : 'bg-blue-600 text-white'"
+              @click="savePrefs(!prefs.allow_script_env)"
+            >
+              {{ prefs.allow_script_env ? '改为禁止' : '允许' }}
+            </button>
+          </div>
+          <!-- 平台关着的时候点「允许」什么也不会发生，不说明就是让人白点 -->
+          <p
+            v-if="policyLoaded && !policy.allow_script_env"
+            class="mt-1.5 text-[10px] text-amber-600"
+          >
+            平台侧目前是关闭的，这里点「允许」也不会生效——需要管理员先在「系统配置 → 凭证策略」打开上面那一项。
+          </p>
+        </div>
+      </div>
     </div>
 
     <div v-if="loading" class="py-12 text-center text-sm text-gray-400">加载中…</div>
@@ -1189,7 +1391,7 @@ onMounted(load)
           <!-- 绑定到哪 -->
           <div>
             <p class="text-[11px] font-medium text-gray-500">
-              已绑定（{{ selectedBindingsBusy ? '…' : selectedBindings.length }}）
+              已绑定（{{ selectedBindingsBusy ? '…' : `${groupedBindings.length} 处 · ${selectedBindings.length} 个槽位` }}）
             </p>
             <p v-if="selectedBindingsBusy" class="mt-1 text-[10px] text-gray-400">加载中…</p>
             <p
@@ -1200,62 +1402,88 @@ onMounted(load)
             </p>
             <div v-else class="mt-1 space-y-1">
               <div
-                v-for="row in shownBindings"
-                :key="row.id"
-                class="flex items-center gap-1.5 rounded-lg bg-gray-50 px-2 py-1.5"
-                :class="row.rule_shadow === 'fail' ? 'opacity-60' : ''"
+                v-for="group in shownBindings"
+                :key="group.key"
+                class="rounded-lg bg-gray-50 px-2 py-1.5"
+                :class="group.rule_shadow === 'fail' ? 'opacity-60' : ''"
               >
-                <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-white text-[10px] font-semibold text-gray-600">
-                  {{ (CONSUMER_LABEL[row.consumer_type] || '?').slice(0, 1) }}
-                </span>
-                <div class="min-w-0 flex-1">
-                  <!-- 先报名字：槽位只有工具短名，多台服务下同名工具根本分不清该去哪解绑 -->
-                  <p class="truncate text-[10px] font-medium text-gray-700" :title="row.consumer_name">
-                    {{ row.consumer_name || CONSUMER_LABEL[row.consumer_type] || row.consumer_type }}
-                  </p>
-                  <p class="truncate font-mono text-[10px] text-gray-400" :title="row.slot">
-                    <span class="text-gray-300">{{ CONSUMER_LABEL[row.consumer_type] || row.consumer_type }}</span>
-                    · {{ row.slot }}
-                  </p>
-                  <!-- 同一槽位还有 rule 绑定时，这条 fixed 是否真的会被选中取决于 on_miss。
-                       不标出来，用户会以为「已绑定」=「在用」，只能翻流水表才发现是死数据。 -->
-                  <p
-                    v-if="row.rule_shadow === 'fail'"
-                    class="truncate text-[9px] text-gray-400"
-                    title="同一槽位上还有一条规则绑定，且规则设了 on_miss=fail：规则未命中时会整条失败，不会回退到这条固定绑定。所以这条目前不会生效——想让它生效，先删掉那个槽位的规则绑定。"
-                  >规则优先，这条不会生效</p>
-                  <p
-                    v-else-if="row.rule_shadow === 'fallback_fixed'"
-                    class="truncate text-[9px] text-amber-600"
-                    title="同一槽位有规则绑定；只有规则未命中时才会回退到这条固定绑定。"
-                  >规则未命中时才用它</p>
-                  <p
-                    v-else-if="row.rule_shadow === 'model'"
-                    class="truncate text-[9px] text-sky-600"
-                    title="同一槽位有规则绑定；只有模型在编号字段里指定了这条凭据时才会用它。"
-                  >需模型指定才用</p>
+                <div class="flex items-center gap-1.5">
+                  <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-white text-[10px] font-semibold text-gray-600">
+                    {{ (CONSUMER_LABEL[group.consumer_type] || '?').slice(0, 1) }}
+                  </span>
+                  <div class="min-w-0 flex-1">
+                    <!-- 先报名字：槽位只有工具短名，多台服务下同名工具根本分不清该去哪解绑 -->
+                    <p class="truncate text-[10px] font-medium text-gray-700" :title="group.consumer_name">
+                      {{ group.consumer_name || CONSUMER_LABEL[group.consumer_type] || group.consumer_type }}
+                    </p>
+                    <p class="truncate text-[10px] text-gray-400">
+                      <span class="text-gray-300">{{ CONSUMER_LABEL[group.consumer_type] || group.consumer_type }}</span>
+                      ·
+                      <!-- 一次操作把这台服务的多个参数位全绑上，是同一件事，聚合成一行 -->
+                      <button
+                        v-if="group.rows.length > 1"
+                        type="button"
+                        class="font-sans text-gray-500 hover:text-gray-700 hover:underline"
+                        :title="expandedBindingGroups.includes(group.key) ? '收起槽位' : '展开看绑了哪些槽位'"
+                        @click.stop="toggleBindingGroup(group.key)"
+                      >{{ group.rows.length }} 个槽位 {{ expandedBindingGroups.includes(group.key) ? '收起' : '展开' }}</button>
+                      <span v-else class="font-mono">{{ group.rows[0].slot }}</span>
+                    </p>
+                    <!-- 同一槽位还有 rule 绑定时，这些 fixed 是否真的会被选中取决于 on_miss。
+                         不标出来，用户会以为「已绑定」=「在用」，只能翻流水表才发现是死数据。 -->
+                    <p
+                      v-if="group.rule_shadow === 'fail'"
+                      class="truncate text-[9px] text-gray-400"
+                      title="这些槽位上还有规则绑定，且规则设了 on_miss=fail：规则未命中时会整条失败，不会回退到固定绑定。所以这些绑定目前不会生效——想让它生效，先删掉对应槽位的规则绑定。"
+                    >规则优先，这些绑定不会生效</p>
+                    <p
+                      v-else-if="group.rule_shadow === 'fallback_fixed'"
+                      class="truncate text-[9px] text-amber-600"
+                      title="这些槽位上有规则绑定；只有规则未命中时才会回退到固定绑定。"
+                    >规则未命中时才用它</p>
+                    <p
+                      v-else-if="group.rule_shadow === 'model'"
+                      class="truncate text-[9px] text-sky-600"
+                      title="这些槽位上有规则绑定；只有模型在编号字段里指定了这条凭据时才会用它。"
+                    >需模型指定才用</p>
+                  </div>
+                  <span
+                    class="shrink-0 rounded px-1 py-0.5 text-[9px]"
+                    :class="group.bound_by_me ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'"
+                  >{{ group.bound_by_me ? '我绑的' : '全局' }}</span>
+                  <button
+                    v-if="group.bound_by_me"
+                    type="button"
+                    class="shrink-0 text-[9px] text-gray-400 hover:text-rose-600"
+                    :title="group.rows.length > 1
+                      ? `从 ${group.consumer_name || group.consumer_type} 解除这 ${group.rows.length} 个槽位`
+                      : `从 ${group.consumer_name || group.consumer_type} 解除`"
+                    @click.stop="unbindGroup(group)"
+                  >移除</button>
                 </div>
-                <span
-                  class="shrink-0 rounded px-1 py-0.5 text-[9px]"
-                  :class="row.bound_by_me ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'"
-                >{{ row.bound_by_me ? '我绑的' : '全局' }}</span>
-                <button
-                  v-if="row.bound_by_me"
-                  type="button"
-                  class="shrink-0 text-[9px] text-gray-400 hover:text-rose-600"
-                  :title="`从 ${CONSUMER_LABEL[row.consumer_type] || row.consumer_type} 解除`"
-                  @click.stop="unbindFrom(row)"
-                >移除</button>
+                <div
+                  v-if="expandedBindingGroups.includes(group.key)"
+                  class="mt-1 space-y-0.5 border-t border-gray-200/70 pt-1"
+                >
+                  <div
+                    v-for="row in group.rows"
+                    :key="row.id"
+                    class="flex items-center gap-1.5 pl-3 font-mono text-[10px] text-gray-500"
+                  >
+                    <span class="text-gray-300">└</span>
+                    <span class="truncate" :title="row.slot">{{ row.slot }}</span>
+                  </div>
+                </div>
               </div>
               <button
-                v-if="selectedBindings.length > BINDING_PREVIEW_COUNT"
+                v-if="groupedBindings.length > BINDING_PREVIEW_COUNT"
                 type="button"
                 class="w-full rounded-lg border border-dashed border-gray-200 px-2 py-1 text-[10px] text-gray-500 hover:border-gray-300 hover:text-gray-700"
                 @click="selectedBindingsExpanded = !selectedBindingsExpanded"
               >
                 {{ selectedBindingsExpanded
                   ? '收起'
-                  : `展开其余 ${selectedBindings.length - BINDING_PREVIEW_COUNT} 条` }}
+                  : `展开其余 ${groupedBindings.length - BINDING_PREVIEW_COUNT} 处` }}
               </button>
             </div>
           </div>
@@ -1663,7 +1891,19 @@ onMounted(load)
                 >
                   {{ RESULT_LABEL[row.result] || row.result }}
                 </span>
-                <span v-if="row.slot" class="font-mono text-[10px] text-gray-400">{{ row.slot }}</span>
+                <!-- 一次工具调用注入多个参数本来就是一回事，聚合成一行；点开展开看每个参数位 -->
+                <button
+                  v-if="(row.slot_count || 1) > 1"
+                  type="button"
+                  class="inline-flex items-center gap-0.5 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+                  :title="expandedUsageKeys.includes(row.id) ? '收起参数明细' : '展开看这次注入了哪几个参数'"
+                  @click="toggleUsageExpand(row)"
+                >
+                  {{ row.slot_count }} 个参数
+                  <span class="text-gray-400">{{ expandedUsageKeys.includes(row.id) ? '收起' : '展开' }}</span>
+                </button>
+                <span v-else-if="row.slot" class="font-mono text-[10px] text-gray-400">{{ row.slot }}</span>
+                <span v-if="row.failed_count" class="text-[10px] text-amber-600">{{ row.failed_count }} 项失败</span>
                 <span v-if="row.target_host" class="text-gray-400">{{ row.target_host }}</span>
                 <!-- 会话是排查的落点：trace_id 只能定位单次调用，回不到对话就说不清「当时在做什么」 -->
                 <a
@@ -1683,6 +1923,22 @@ onMounted(load)
                   :title="[row.user_email, row.user_id ? `ID: ${row.user_id}` : ''].filter(Boolean).join('\n')"
                 >{{ row.user_real_name || row.user_name || row.user_id }}</span>
                 <span class="ml-auto text-gray-400">{{ shortTime(row.created_at) }}</span>
+                <div
+                  v-if="expandedUsageKeys.includes(row.id) && (row.slots || []).length"
+                  class="w-full space-y-0.5 border-t border-gray-200/70 pt-1"
+                >
+                  <div
+                    v-for="(detail, index) in row.slots"
+                    :key="`${detail.slot}-${index}`"
+                    class="flex items-center gap-2 pl-3 font-mono text-[10px] text-gray-500"
+                  >
+                    <span class="text-gray-400">└</span>
+                    <span class="truncate">{{ detail.slot }}</span>
+                    <span :class="detail.result === 'success' ? 'text-emerald-600' : 'text-amber-600'">
+                      {{ RESULT_LABEL[detail.result] || detail.result }}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1697,68 +1953,6 @@ onMounted(load)
         </div>
       </div>
     </Teleport>
-
-    <!-- 注入策略 -->
-    <div class="rounded-xl border border-gray-200">
-      <button
-        type="button"
-        class="flex w-full items-center justify-between px-4 py-3 text-left"
-        @click="togglePolicy"
-      >
-        <span class="text-sm font-medium text-gray-800">注入策略</span>
-        <span class="text-xs text-gray-400">{{ policyOpen ? '收起' : '展开' }}</span>
-      </button>
-
-      <div v-if="policyOpen" class="space-y-3 border-t border-gray-100 px-4 py-3 text-xs text-gray-600">
-        <div class="flex items-start justify-between gap-4 rounded-lg bg-gray-50 p-3">
-          <div>
-            <p class="font-medium text-gray-800">平台允许脚本从环境变量读取凭据</p>
-            <p class="mt-0.5 text-[11px] text-gray-500">
-              脚本能 <code>print(os.environ)</code>，值进了子进程就没有任何手段能拦住它回显。默认关，且关闭时是整类拒绝。
-            </p>
-          </div>
-          <span
-            class="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium"
-            :class="policy.allow_script_env ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
-          >
-            {{ policy.allow_script_env ? '已开启' : '已关闭' }}
-          </span>
-        </div>
-
-        <div class="flex items-start justify-between gap-4 rounded-lg bg-gray-50 p-3">
-          <div>
-            <p class="font-medium text-gray-800">平台允许凭据发往外部域名</p>
-            <p class="mt-0.5 text-[11px] text-gray-500">
-              权威开关仍是每条凭据自己的域名白名单；这一项是部署级兜底闸门。
-            </p>
-          </div>
-          <span
-            class="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium"
-            :class="policy.allow_external_host ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
-          >
-            {{ policy.allow_external_host ? '已开启' : '已关闭' }}
-          </span>
-        </div>
-
-        <div class="flex items-start justify-between gap-4 rounded-lg bg-blue-50 p-3">
-          <div>
-            <p class="font-medium text-gray-800">我的偏好：允许脚本读取我的凭据</p>
-            <p class="mt-0.5 text-[11px] text-gray-500">
-              与上面的平台策略取交集——两层都开才真正生效。
-            </p>
-          </div>
-          <button
-            type="button"
-            :disabled="policyBusy"
-            class="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-medium disabled:opacity-60"
-            :class="prefs.allow_script_env ? 'bg-gray-200 text-gray-700' : 'bg-blue-600 text-white'"
-            @click="savePrefs(!prefs.allow_script_env)"
-          >
-            {{ prefs.allow_script_env ? '改为禁止' : '允许' }}
-          </button>
-        </div>
-      </div>
-    </div>
 
     <!-- 创建弹窗：三步向导 -->
     <Teleport to="body">
