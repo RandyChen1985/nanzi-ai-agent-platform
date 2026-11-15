@@ -106,3 +106,31 @@ def test_platform_targets_param_slots_cover_path_query_body():
     assert resolve_api_tool_slot(
         name="body", method="POST", url_template="http://x/search"
     ) == "body:body"
+
+
+def test_preview_wires_the_same_field_value_resolver_as_runtime():
+    """试算必须和运行时用**同一个**字段取值器。
+
+    这条盯的是一个真实回归：`target="field"` 上线后，试算接口调 `pick_match` 时没传
+    `field_value`，而取值器的语义是「没给回调就当取不到」——于是配置者点「试算一下」
+    永远看到「未命中」，真实调用却能命中。同一份规则两个答案，比不给试算更糟：
+    用户会反复改规则、最后放弃这个功能。
+
+    变异验证：删掉 `locate_preview` 里的 `field_value=` 实参，这条会红。
+    """
+    src = Path("app/api/portal/endpoints/secrets.py").read_text(encoding="utf-8")
+    assert "field_value = field_value_resolver(spec.target_field)" in src
+    assert "pick_match(spec, wanted, pool, field_value=field_value)" in src
+    # 取值器必须是模块级的那一个（试算和运行时共用），不能各写一份
+    resolver_src = Path("app/services/secrets/resolver.py").read_text(encoding="utf-8")
+    assert "def field_value_resolver(" in resolver_src
+
+
+def test_preview_miss_reason_names_the_field():
+    """未命中原因要说清比的是哪个字段。
+
+    「没有 field = alice@corp.com 的凭据」看不出是哪一项没对上，用户只会觉得
+    规则坏了。
+    """
+    src = Path("app/api/portal/endpoints/secrets.py").read_text(encoding="utf-8")
+    assert 'f"没有 {spec.target_field} 字段 = {used} 的凭据"' in src

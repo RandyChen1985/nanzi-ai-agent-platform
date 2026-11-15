@@ -26,6 +26,7 @@ from sqlalchemy import and_, or_, select
 
 from app.core.orm import AsyncSessionLocal
 from app.models.secret import SecretBinding, SecretGrant, SecretUsageLog, SecretUserPref, UserSecret
+from app.services.secrets.references import stringify_field_value
 from app.services.secrets.policy import (
     DENY_BINDING,
     DENY_GRANT,
@@ -180,6 +181,7 @@ class SecretResolver:
                     identity=user_attrs,
                     args=rule_args,
                     preferred_secret_id=preferred_secret_id,
+                    scene=scene,
                 )
                 if located.denial:
                     return ResolveResult(
@@ -355,6 +357,7 @@ class SecretResolver:
         preferred_secret_id: str | None = None,
         rows: Sequence[Any] | None = None,
         visible: Sequence[Any] | None = None,
+        scene: str | None = None,
     ) -> Located:
         """选出这次要用的凭据。**层间**个人优先，**层内**规则优先。
 
@@ -425,7 +428,7 @@ class SecretResolver:
                             if (getattr(record, "value_template", None) or "") == tpl_wanted
                         ]
                     field_value = (
-                        self._field_value_resolver(spec.target_field)
+                        field_value_resolver(spec.target_field, scene=scene)
                         if getattr(spec, "target", "") == "field"
                         else None
                     )
@@ -672,66 +675,6 @@ class SecretResolver:
         return bool(pref and pref.allow_script_env)
 
     @staticmethod
-    def _field_value_resolver(field: str) -> Callable[[Any], str | None]:
-        """按凭据内某个字段的值匹配时用的取值器：解密 → 解析 JSON → 取字段。
-
-        只有 ``target="field"`` 才走这里。key / name / category 都是凭据表上的列，
-        直接读就行；字段值必须解密，所以这条路径比普通规则重得多——一条规则会让
-        整批候选都过一遍解密。个人可见凭据通常几十条，代价可接受；但这也是为什么
-        它没被做成默认目标。
-
-        解不开、不是 JSON、字段不存在、值是对象/数组——一律当作「这条取不到」，
-        继续看下一条。单条坏数据不该让整次解析失败，更不能因此把别处的凭据注进去。
-
-        **注意这条路径会解密每一份可见候选。** 对「别人授权给我用的系统级凭据」
-        来说，这相当于给了调用方一个等值探测口子：配一条规则、传一个值，就能从
-        命中与否反推那条凭据的某个字段是不是这个值。前提是他本来就有该凭据的
-        使用授权（规则只在可见集合里挑），而且每次试探都会走正常 resolve 路径、
-        在凭据流水里留下记录，事后可追。如果将来要收紧，收紧点在这里。
-
-        结果按凭据 id 记忆：一条规则最多 3 个模板，每个模板都会重放一遍候选列表，
-        不记的话同一批凭据会被反复解密三遍。
-        """
-        key = (field or "").strip()
-        cache: dict[str, str | None] = {}
-
-        def _remember(record_id: str, value: str | None) -> str | None:
-            if record_id:
-                cache[record_id] = value
-            return value
-
-        def resolve(record: Any) -> str | None:
-            if not key:
-                return None
-            record_id = str(getattr(record, "id", "") or "")
-            if record_id and record_id in cache:
-                return cache[record_id]
-            try:
-                # naive UTC：库里所有 datetime 都是这个口径（见 resolve 里 now 的注释）。
-                # 用带时区的 now 去和 expires_at 比会抛 TypeError，被下面的兜底吞掉，
-                # 表现成「规则永远未命中」——排查时完全看不出来。
-                ciphertext = SecretResolver._pick_ciphertext(record, datetime.utcnow())
-                if not ciphertext:
-                    return _remember(record_id, None)
-                plain = SecretResolver._decrypt(ciphertext)
-            except Exception:  # noqa: BLE001 - 单条坏数据不该让整次匹配失败
-                logger.debug("[SecretLocator] 候选凭据解密失败，跳过", exc_info=True)
-                return _remember(record_id, None)
-            try:
-                data = json.loads(plain)
-            except (TypeError, ValueError):
-                return _remember(record_id, None)
-            if not isinstance(data, dict):
-                return _remember(record_id, None)
-            value = data.get(key)
-            if value is None or isinstance(value, (dict, list)):
-                # 只有标量适合跟入参比：整段对象拿去和字符串比永远不等
-                return _remember(record_id, None)
-            return _remember(record_id, str(value))
-
-        return resolve
-
-    @staticmethod
     def _pick_ciphertext(row: UserSecret, now: datetime) -> str | None:
         """轮换双写窗口内优先用新值，新值已过期才回退到旧值。"""
         if row.value_encrypted and (row.expires_at is None or row.expires_at > now):
@@ -792,6 +735,117 @@ class SecretResolver:
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretResolver] 写使用流水失败 %s: %s", record.secret_key, exc)
             return None
+
+# ── 按凭据字段值匹配：取值器 ─────────────────────────────────────────────
+#
+# 放在模块级而不是 SecretResolver 的静态方法里：试算接口
+# （``POST /secrets/locate-preview``）也要用它。试算如果拿不到取值器，
+# 就会一律按未命中报——真实调用却命中——把配置者彻底带偏。
+
+
+def field_value_resolver(field: str, scene: str | None = None) -> Callable[[Any], str | None]:
+    """按凭据内某个字段的值匹配时用的取值器：解密 → 解析 JSON → 取字段。
+
+    只有 ``target="field"`` 才走这里。key / name / category 都是凭据表上的列，
+    直接读就行；字段值必须解密，所以这条路径比普通规则重得多——一条规则会让
+    整批候选都过一遍解密。
+
+    解不开、不是 JSON、字段不存在、值是对象/数组、凭据当前不可用——一律当作
+    「这条取不到」，继续看下一条。单条坏数据不该让整次解析失败，更不能因此把
+    别处的凭据注进去。
+
+    **注意这条路径会解密每一份可见候选。** 对「别人授权给我用的系统级凭据」
+    来说，这相当于给了调用方一个等值探测口子：配一条规则、传一个值，就能从
+    命中与否反推那条凭据的某个字段是不是这个值。前提是他本来就有该凭据的
+    使用授权（规则只在可见集合里挑），而且每次试探都会走正常 resolve 路径、
+    在凭据流水里留下记录，事后可追。要收紧的话，收紧点在这里。
+
+    结果按凭据 id 记忆：一条规则最多 3 个模板，每个模板都会重放一遍候选列表，
+    不记的话同一批凭据会被反复解密三遍。
+    """
+    key = (field or "").strip()
+    cache: dict[str, str | None] = {}
+
+    def _remember(record_id: str, value: str | None) -> str | None:
+        if record_id:
+            cache[record_id] = value
+        return value
+
+    def resolve(record: Any) -> str | None:
+        if not key:
+            return None
+        record_id = str(getattr(record, "id", "") or "")
+        if record_id and record_id in cache:
+            return cache[record_id]
+
+        now = datetime.utcnow()
+        # 整条凭据都过期的不参与匹配。否则它可能凭字段值胜出，随后被
+        # evaluate_secret 判过期拒绝，把后面真正可用的那条挡住——顺序决定谁先被看到，
+        # 而用户只会看到「凭据不可用」，完全想不到是被一条过期的抢了位置。
+        if not _record_is_usable(record, now, scene):
+            return _remember(record_id, None)
+        try:
+            # naive UTC：库里所有 datetime 都是这个口径（见 resolve 里 now 的注释）。
+            # 用带时区的 now 去和 expires_at 比会抛 TypeError，被下面的兜底吞掉，
+            # 表现成「规则永远未命中」——排查时完全看不出来。
+            ciphertext = SecretResolver._pick_ciphertext(record, now)
+            if not ciphertext:
+                return _remember(record_id, None)
+            plain = SecretResolver._decrypt(ciphertext)
+        except Exception:  # noqa: BLE001 - 单条坏数据不该让整次匹配失败
+            logger.debug("[SecretLocator] 候选凭据解密失败，跳过", exc_info=True)
+            return _remember(record_id, None)
+
+        try:
+            node: Any = json.loads(plain)
+        except (TypeError, ValueError):
+            return _remember(record_id, None)
+        # 点号当路径：正则允许 ``auth.username``，只看顶层键会让嵌套凭据
+        # 配得出规则却永远取不到值。数组下标与 references.pick_field_typed
+        # 同语义（``items.0.id``），否则同一份路径在引用解析里能取、在规则里取不到。
+        for part in key.split("."):
+            if isinstance(node, dict):
+                node = node.get(part)
+            elif isinstance(node, list) and part.isdigit() and int(part) < len(node):
+                node = node[int(part)]
+            else:
+                return _remember(record_id, None)
+            if node is None:
+                return _remember(record_id, None)
+        if node is None or isinstance(node, (dict, list)):
+            # 只有标量适合跟入参比：整段对象拿去和字符串比永远不等
+            return _remember(record_id, None)
+        # 与 header / 环境变量侧同一套字符串化口径：bool 给 true/false、
+        # 465.0 给 465。各写一份 str() 会让同一条凭据在两边比出不同结果。
+        return _remember(record_id, stringify_field_value(node))
+
+    return resolve
+
+
+def _record_is_usable(row: Any, now: datetime, scene: str | None = None) -> bool:
+    """凭据现在能不能用：场景放行 + 还有可用密文（轮换过渡期内旧值仍有效）。
+
+    场景也要在这里判。只在 evaluate_secret 里判的话，一条「不给这个场景用」的
+    凭据会凭字段值先胜出、随后被判拒绝，把后面真正能用的那条挡住——用户只看到
+    「凭据不可用」，完全想不到是被一条根本不该参与匹配的抢了位置。
+    口径与 policy 一致：``allowed_scenarios`` 为空即不授权任何场景。
+    """
+    if scene:
+        scopes = getattr(row, "allowed_scenarios", None) or []
+        if not isinstance(scopes, (list, tuple)) or scene not in [
+            str(s) for s in scopes if s
+        ]:
+            return False
+    if getattr(row, "value_encrypted", None) and (
+        getattr(row, "expires_at", None) is None or row.expires_at > now
+    ):
+        return True
+    if getattr(row, "previous_value_encrypted", None) and (
+        getattr(row, "previous_expires_at", None) is None
+        or row.previous_expires_at > now
+    ):
+        return True
+    return False
 
 
 secret_resolver = SecretResolver()

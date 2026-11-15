@@ -2172,3 +2172,214 @@ class TestRuleFieldMatchWorksOutsideMcpArgs:
         )
 
         assert headers["Authorization"] == "pw-from-field"
+
+
+class TestFieldMatchEdgeCases:
+    """按字段值匹配的边界：嵌套路径、标量口径、过期凭据不遮蔽可用凭据。"""
+
+    async def _bind_field_rule(self, session, *, consumer_id: str, field: str):
+        await center.bind_rule(
+            session,
+            consumer_type="mcp_server",
+            consumer_id=consumer_id,
+            slot="arg:list-mail:password",
+            rule={
+                "key_source": "arg:username",
+                "target": "field",
+                "target_field": field,
+                "match": "exact_ci",
+            },
+            bound_by_user_id=USER_ID,
+            value_path="password",
+        )
+
+    async def test_nested_field_path_matches(self):
+        """`auth.username` 要真的按路径往下取。
+
+        target_field 的正则允许点号，如果运行时只 `data.get(key)` 查顶层键，
+        这种规则能保存、能保存成功、永远匹配不上——配置者看不出任何异常。
+        """
+        async with AsyncSessionLocal() as session:
+            await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mcp.mail.nested",
+                name="嵌套结构的邮箱凭证",
+                value=json.dumps(
+                    {"auth": {"username": "alice@corp.com"}, "password": "pw-nested"}
+                ),
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=[],
+                value_format="json",
+            )
+            await self._bind_field_rule(
+                session, consumer_id="srv-nested", field="auth.username"
+            )
+
+        tool = SimpleNamespace(
+            id="tool-nested",
+            tool_name="server:list-mail",
+            server_id="srv-nested",
+            credential_params='["password"]',
+            parameter_schema='{"properties": {"password": {"type": "string"}}}',
+        )
+        denials: dict[str, str] = {}
+
+        args = await apply_mcp_arg_bindings(
+            tool, {"username": "alice@corp.com"}, user_info=USER, denials=denials
+        )
+
+        assert args["password"] == "pw-nested"
+
+    async def test_numbers_compare_with_the_same_rule_as_headers(self):
+        """字段是数字时按 `stringify_field_value` 比：465.0 要能对上 "465"。
+
+        用裸 `str(value)` 会得到 "465.0"，与 header / 环境变量侧的转换口径不一致，
+        同一条凭据在两个位置比出不同结果。
+        """
+        async with AsyncSessionLocal() as session:
+            await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mcp.mail.numeric",
+                name="带数字字段的邮箱凭证",
+                # 465.0 而不是 465：裸 str() 会给出 "465.0"，只有走
+                # stringify_field_value 才会归一成 "465"
+                value=json.dumps({"tenant": 465.0, "tls": True, "password": "pw-numeric"}),
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=[],
+                value_format="json",
+            )
+            await self._bind_field_rule(
+                session, consumer_id="srv-numeric", field="tenant"
+            )
+
+        tool = SimpleNamespace(
+            id="tool-numeric",
+            tool_name="server:list-mail",
+            server_id="srv-numeric",
+            credential_params='["password"]',
+            parameter_schema='{"properties": {"password": {"type": "string"}}}',
+        )
+        denials: dict[str, str] = {}
+
+        args = await apply_mcp_arg_bindings(
+            tool, {"username": "465"}, user_info=USER, denials=denials
+        )
+
+        assert args["password"] == "pw-numeric"
+
+    async def test_expired_credential_does_not_shadow_a_usable_one(self):
+        """整条凭据过期时不参与匹配。
+
+        否则它可能凭字段值胜出，随后被判定过期拒绝，把后面真正可用的那条挡住——
+        而用户只看到「凭据不可用」，想不到是被一条过期的抢了位置。字段值匹配要
+        解密全部候选，这个遮蔽从「偶尔」变成「每次」。
+        """
+        from datetime import datetime, timedelta
+
+        from sqlalchemy import update
+
+        from app.models.secret import UserSecret
+
+        async with AsyncSessionLocal() as session:
+            # 两条的字段值一样，靠 secret_key 决定顺序（a 在前），
+            # 让「过期的那条排在前面」成为必然
+            for key, pwd in (("a-mcp.mail.expired", "pw-expired"), ("b-mcp.mail.live", "pw-live")):
+                await center.create_secret(
+                    session,
+                    owner_id=USER_ID,
+                    secret_key=key,
+                    name=f"同值凭据 {key}",
+                    value=json.dumps({"username": "same@corp.com", "password": pwd}),
+                    allowed_scenarios=[SCENE_MCP],
+                    allowed_hosts=[],
+                    value_format="json",
+                )
+            await session.execute(
+                update(UserSecret)
+                .where(UserSecret.secret_key == "a-mcp.mail.expired")
+                .values(expires_at=datetime.utcnow() - timedelta(days=1))
+            )
+            await session.commit()
+            await self._bind_field_rule(
+                session, consumer_id="srv-expired", field="username"
+            )
+
+        tool = SimpleNamespace(
+            id="tool-expired",
+            tool_name="server:list-mail",
+            server_id="srv-expired",
+            credential_params='["password"]',
+            parameter_schema='{"properties": {"password": {"type": "string"}}}',
+        )
+        denials: dict[str, str] = {}
+
+        args = await apply_mcp_arg_bindings(
+            tool, {"username": "same@corp.com"}, user_info=USER, denials=denials
+        )
+
+        # 没被过期那条挡住：拿到的是仍可用的那条
+        assert args["password"] == "pw-live"
+
+
+class TestFieldMatchSkipsCredentialsForOtherScenes:
+    """场景不匹配的凭据不参与匹配，不能抢位。
+
+    与过期凭据同一个机理：只在 evaluate_secret 里判场景的话，一条「不给这个场景用」
+    的凭据会凭字段值先胜出、随后被判 denied_by_scenario，把后面真正能用的那条挡住，
+    而用户只会看到「凭据不可用」。
+    """
+
+    async def test_other_scene_does_not_shadow_usable_credential(self):
+        async with AsyncSessionLocal() as session:
+            # a 在前、场景不含 mcp；b 在后、场景正常
+            await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="a-mcp.mail.otherscene",
+                name="只给 API 工具用的凭据",
+                value=json.dumps({"username": "same2@corp.com", "password": "pw-other"}),
+                allowed_scenarios=["api_tool"],
+                allowed_hosts=[],
+                value_format="json",
+            )
+            await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="b-mcp.mail.mcpscene",
+                name="可给 MCP 用的凭据",
+                value=json.dumps({"username": "same2@corp.com", "password": "pw-mcp"}),
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=[],
+                value_format="json",
+            )
+            await center.bind_rule(
+                session,
+                consumer_type="mcp_server",
+                consumer_id="srv-scene",
+                slot="arg:list-mail:password",
+                rule={
+                    "key_source": "arg:username",
+                    "target": "field",
+                    "target_field": "username",
+                    "match": "exact_ci",
+                },
+                bound_by_user_id=USER_ID,
+                value_path="password",
+            )
+
+        tool = SimpleNamespace(
+            id="tool-scene",
+            tool_name="server:list-mail",
+            server_id="srv-scene",
+            credential_params='["password"]',
+            parameter_schema='{"properties": {"password": {"type": "string"}}}',
+        )
+        denials: dict[str, str] = {}
+
+        args = await apply_mcp_arg_bindings(
+            tool, {"username": "same2@corp.com"}, user_info=USER, denials=denials
+        )
+
+        assert args["password"] == "pw-mcp"

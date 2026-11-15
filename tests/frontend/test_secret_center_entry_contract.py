@@ -618,8 +618,11 @@ class TestToolTesterHidesCredentialParams:
         body = source[start:source.find("\n}", start)]
         assert "await fetchServers()" in body
         # 用后端回的真实值，而不是本地草稿。2026-11-16：清单改由 bindings/batch
-        # 同批写回，变量名跟着从 saved 变成 savedList，语义不变。
-        assert "Array.isArray(savedList) ? savedList : next" in body
+        # 同批写回，变量名跟着从 saved 变成 savedList；null 时**不能**再回退到
+        # 本地 next（那会把「没权限改清单」显示成保存成功），改成只在拿到数组时
+        # 才写回并提示成功。
+        assert "if (Array.isArray(savedList))" in body
+        assert "Array.isArray(savedList) ? savedList : next" not in body
 
 
 class TestBindingEdgeCases:
@@ -2050,3 +2053,26 @@ class TestAuditActionBadges:
             imported = {name.strip() for name in match.group(1).split(",") if name.strip()}
             for name in ("secretActionLabel", "secretActionStyle"):
                 assert name in imported, f"{path.name} 用了 {name} 却没导入"
+
+
+class TestParamMarkSaveHonesty:
+    """单值页保存时不能拿本地草稿冒充后端结果。
+
+    后端没回清单（null）只有两种情况：没有改这个服务清单的权限，或工具刚被删。
+    这时把本地草稿写进 `tool.credential_params` 并弹绿色成功，界面显示「已设置」、
+    实际清单没变、运行时照旧不注入——和这次要修的原故障同一种静默。
+    """
+
+    def test_null_list_is_not_papered_over(self):
+        src = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
+        # 旧写法：Array.isArray(savedList) ? savedList : next —— null 时用本地草稿顶上
+        assert 'JSON.stringify(Array.isArray(savedList) ? savedList : next)' not in src
+        assert "if (Array.isArray(savedList))" in src
+        # 失败分支必须给出可执行的说明，而不是一句「保存失败」让人无从下手
+        assert "「由凭据提供」的清单没改成功" in src
+
+    def test_tool_list_refreshed_after_saving_params(self):
+        """清单变了 → 模型可见的参数表也变了，工具列表要一起刷新。"""
+        src = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
+        assert "if (serverId) await fetchTools(serverId)" in src
+        assert "if (tool.server_id) await fetchTools(String(tool.server_id))" in src

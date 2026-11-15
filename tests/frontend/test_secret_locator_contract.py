@@ -361,3 +361,56 @@ class TestCreateDialogKeepsItsSize:
             ROOT / "frontend/src/views/AdminSecretCenter.vue",
         ):
             assert "min-h-0 flex-1 overflow-y-auto" in _read(path), path.name
+
+
+class TestTargetFieldNormalization:
+    """切换匹配目标后 `target_field` 必须被清空，否则整条规则 400。
+
+    控件只在 `target === 'field'` 时渲染，但 draft 里那个值还在。用户先选「凭据里的
+    字段值」填了字段名、再切回按标识匹配，提交上去就是「给了 target_field 但 target
+    不是 field」——后端整条拒绝，而弹窗此时已经关闭，用户完全看不出是哪一项错了。
+    """
+
+    def test_normalize_clears_target_field(self):
+        src = EDITOR.read_text(encoding="utf-8")
+        assert "if (rule.target !== 'field') rule.target_field = ''" in src
+        # 三个出口（保存 / 试算）都必须走同一份归一化
+        assert "emit('save', normalizeForSubmit())" in src
+        assert "normalizeForSubmit()" in src
+
+    def test_preview_uses_the_same_normalization_as_save(self):
+        """试算和保存提交同一份规则。
+
+        两份逻辑时会出现「试算通过、保存报 400」这种割裂，用户会以为是后端随机出错。
+        """
+        src = EDITOR.read_text(encoding="utf-8")
+        assert "const { value_path: _path, ...ruleBody } = normalizeForSubmit()" in src
+
+    def test_validate_rejects_illegal_field_names(self):
+        """字段名格式要在前端先拦一道，与 parse_rule 的正则同口径。"""
+        src = EDITOR.read_text(encoding="utf-8")
+        assert r"/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/.test(field)" in src
+
+
+class TestFieldTargetIsVisibleInSummaries:
+    """按字段值匹配时，摘要要说清比的是哪个字段。"""
+
+    def test_panel_summary_shows_the_field_name(self):
+        panel = (
+            ROOT / "frontend/src/components/secrets/SecretFieldMappingPanel.vue"
+        ).read_text(encoding="utf-8")
+        # 只显示「匹配凭据的 field」等于没说：用户看不出配的是 username 还是 email
+        assert "字段 ${rule.target_field || '?'}" in panel
+
+    def test_panel_blocks_field_picks_without_a_credential(self):
+        """选了字段却没选凭据会静默清空绑定，必须在提交前拦住。
+
+        判的是**值**不是 key：切回「模型填写」时 `v-model="picks[name]"` 只把值设成
+        空串，key 还留着。按 `Object.keys().length` 判的话，一旦选过字段，用户就再也
+        保存不了「全部清空」——清理动作被自己的兜底挡住了。
+        """
+        panel = (
+            ROOT / "frontend/src/components/secrets/SecretFieldMappingPanel.vue"
+        ).read_text(encoding="utf-8")
+        assert "Object.values(picks.value).some(Boolean)" in panel
+        assert "Object.keys(picks.value).length" not in panel

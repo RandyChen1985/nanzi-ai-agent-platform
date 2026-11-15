@@ -108,6 +108,10 @@ async def _audit_batch_rows(
     """
     actor = actor_id or fallback_actor
     for item in resolved:
+        if item["strategy"] == "none" and not item.get("actually_removed"):
+            # 这一行本来就是「模型填写」，库里没有任何绑定被删掉。
+            # 记一条 unbind 等于往审计里写从没发生过的事。
+            continue
         action = "unbind" if item["strategy"] == "none" else "bind"
         if item["strategy"] == "rule":
             action = "bind_rule"
@@ -1548,11 +1552,59 @@ async def _resolve_slot(
 
 
 def _param_name_of_slot(slot: str) -> str:
-    """从槽位反推参数名：``arg:<短工具名>:<参数名>`` / ``header:<名字>`` / ``env:<VAR>``。"""
-    parts = str(slot or "").split(":", 2)
-    if len(parts) == 3:
-        return parts[2]
-    return parts[1] if len(parts) == 2 else ""
+    """从槽位反推参数名：``arg:<短工具名>:<参数名>`` / ``header:<名字>`` / ``env:<VAR>``。
+
+    取**最后一段**而不是 ``split(":", 2)[2]``：短工具名自己可以含冒号——注入层生成
+    槽位时是 ``full_name.split(":", 1)[1]``，只切第一个冒号，所以远端工具名
+    ``ns:send`` 会得到 ``arg:ns:send:token``，按第二段取会得到 ``send:token``。
+    """
+    text = str(slot or "")
+    return text.rsplit(":", 1)[-1] if ":" in text else ""
+
+
+async def _unbind_all_layers(
+    db: AsyncSession,
+    *,
+    consumer_type: str,
+    consumer_id: str,
+    slot: str,
+    bound_by: str | None,
+    actor_id: str | None,
+    strategy: str,
+) -> int:
+    """解绑一个槽位，**连带处理降级绑定**。
+
+    ``bound_by=None``（全局保存）时只删全局那一行不够：管理员在平台级工具上绑
+    自己的个人凭据时，``bind_secret`` 会把它降级成本人绑定（个人凭据不可能给所有
+    人用）。那条绑定在界面上显示为「已绑定」，但按全局语义删不掉——于是「改回模型
+    填写」之后它还留着，下次打开弹窗又显示由凭据提供，而清单已经被移除：反向的
+    半保存，运行时不会注入、界面却说配了。
+
+    只清操作人自己那一层，不动别人的个人绑定：那是各人自己的覆盖配置，不该被
+    一次整表保存抹掉。
+    """
+    removed = await center.unbind_slot(
+        db,
+        consumer_type=consumer_type,
+        consumer_id=consumer_id,
+        slot=slot,
+        bound_by_user_id=bound_by,
+        strategy=strategy,
+        commit=False,
+        audit=False,
+    )
+    if bound_by is None and actor_id:
+        removed += await center.unbind_slot(
+            db,
+            consumer_type=consumer_type,
+            consumer_id=consumer_id,
+            slot=slot,
+            bound_by_user_id=actor_id,
+            strategy=strategy,
+            commit=False,
+            audit=False,
+        )
+    return removed
 
 
 async def _sync_mcp_credential_params(
@@ -1613,8 +1665,16 @@ async def _sync_mcp_credential_params(
     # 校验不过就整批回滚——这比「绑定存下了、清单没跟上」好得多。
     try:
         schema = json.loads(tool.parameter_schema or "{}")
-    except ValueError:
-        schema = {}
+    except ValueError as exc:
+        # 解析不出来就分不清「参数名拼错」和「schema 本身是坏的」。原来会退化成
+        # 「参数 X 不在工具的参数定义里」，把用户引到错误的排查方向（他会去改参数名）。
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"工具 {getattr(tool, 'tool_name', tool_id)} 的参数定义读不出来"
+                f"（{exc}），先同步一次工具再保存"
+            ),
+        ) from exc
     props = (schema.get("properties") or {}) if isinstance(schema, dict) else {}
 
     cleaned: list[str] = []
@@ -1665,7 +1725,16 @@ async def create_bindings_batch(
     # 一刀切会把它当成越权拒掉。权限判断下沉到 bind_secret，按凭据作用域判：
     # 系统级凭据 + 全局 → 必须管理员；个人凭据 → 自动降级成本人绑定。
     is_admin = _is_admin(user_info)
+    # 写入时的归属。这里**不**对 is_global 一刀切：个人凭据在任何作用域下都不可能
+    # 「给所有人用」，bind_secret 会把它降级成本人绑定；系统级凭据 + 全局才要求管理员，
+    # 由 bind_secret 拒绝并给出「只有管理员可以设置全局绑定」。
     bound_by: str | None = None if payload.is_global else user_id
+    # 解绑 / 清旧规则时的归属。这是**删数据**，且这一层的处理逻辑看不到凭据作用域
+    # （strategy="none" 连凭据都没有），所以只能按身份判：非管理员永远只动本人层。
+    # 不这么分的话，普通用户在有权访问的平台级服务上说一句 is_global=True +
+    # strategy="none"，就能拆掉全平台共用的绑定和规则——单条 DELETE 明确禁止这件事
+    # （`只有管理员可以解除全局绑定`），批量接口不能成为绕道。
+    unbind_bound_by: str | None = None if (payload.is_global and is_admin) else user_id
 
     # —— 第一轮：把槽位都解析出来，并全量校验；有一条不过就整体拒绝 ——
     errors: list[dict] = []
@@ -1789,19 +1858,25 @@ async def create_bindings_batch(
     for item in resolved:
         slot = item["slot"]
         if item["strategy"] == "none":
+            deleted = 0
             for stale in ("fixed", "rule"):
-                removed += await center.unbind_slot(
+                # 审计延后到整批提交成功之后：_audit 用独立事务，在这里写的话，
+                # 第 4 条失败整批回滚时审计里已经留了前 3 条没发生过的操作
+                deleted += await _unbind_all_layers(
                     db,
                     consumer_type=payload.consumer_type,
                     consumer_id=payload.consumer_id,
                     slot=slot,
-                    bound_by_user_id=bound_by,
+                    bound_by=unbind_bound_by,
+                    actor_id=_actor_id(user_info),
                     strategy=stale,
-                    commit=False,
-                    # 审计延后到整批提交成功之后：_audit 用独立事务，
-                    # 在这里写的话，第 4 条失败整批回滚时审计里已经留了前 3 条
-                    audit=False,
                 )
+            if deleted:
+                # 只有真删到了东西才补审计。整表保存会把所有「模型填写」的参数都
+                # 提交成 none，无条件记一条的话，一个 15 参数、只绑了 1 个密码的
+                # 工具每保存一次就多 14 条从没发生过的解绑记录。
+                item["actually_removed"] = True
+                removed += deleted
             continue
         if item["strategy"] == "rule":
             await center.bind_rule(
@@ -1836,15 +1911,14 @@ async def create_bindings_batch(
         # rule 在同一个槽位并存是它的设计（rule 负责定位、fixed 作 fallback），
         # 但这里用户明确把来源改成了「固定凭据」：留着旧规则它会先命中，用户
         # 以为改好了、实际还在按规则挑。不计入 removed：用户没主动解除任何东西。
-        cleared_rule = await center.unbind_slot(
+        cleared_rule = await _unbind_all_layers(
             db,
             consumer_type=payload.consumer_type,
             consumer_id=payload.consumer_id,
             slot=slot,
-            bound_by_user_id=bound_by,
+            bound_by=unbind_bound_by,
+            actor_id=_actor_id(user_info),
             strategy="rule",
-            commit=False,
-            audit=False,
         )
         if cleared_rule:
             # 这是一次真实的「规则被删掉」，只是用户没有直接表达它。不补审计的话，
@@ -1945,7 +2019,16 @@ async def create_binding(
     # 一刀切会把它当成越权拒掉。权限判断下沉到 bind_secret，按凭据作用域判：
     # 系统级凭据 + 全局 → 必须管理员；个人凭据 → 自动降级成本人绑定。
     is_admin = _is_admin(user_info)
+    # 写入时的归属。这里**不**对 is_global 一刀切：个人凭据在任何作用域下都不可能
+    # 「给所有人用」，bind_secret 会把它降级成本人绑定；系统级凭据 + 全局才要求管理员，
+    # 由 bind_secret 拒绝并给出「只有管理员可以设置全局绑定」。
     bound_by: str | None = None if payload.is_global else user_id
+    # 解绑 / 清旧规则时的归属。这是**删数据**，且这一层的处理逻辑看不到凭据作用域
+    # （strategy="none" 连凭据都没有），所以只能按身份判：非管理员永远只动本人层。
+    # 不这么分的话，普通用户在有权访问的平台级服务上说一句 is_global=True +
+    # strategy="none"，就能拆掉全平台共用的绑定和规则——单条 DELETE 明确禁止这件事
+    # （`只有管理员可以解除全局绑定`），批量接口不能成为绕道。
+    unbind_bound_by: str | None = None if (payload.is_global and is_admin) else user_id
 
     # 规则绑定没有凭据可校验，走单独的函数；固定绑定保持原路径
     if payload.strategy == "rule":
@@ -2602,7 +2685,7 @@ class LocatePreviewRequest(BaseModel):
     sample_args: dict[str, Any] = Field(default_factory=dict)
 
 
-@router.post("/locate-preview", summary="试算规则会命中哪条凭据（不发请求、不解密）")
+@router.post("/locate-preview", summary="试算规则会命中哪条凭据（不发请求；按字段值匹配需解密）")
 async def locate_preview(
     payload: LocatePreviewRequest,
     user_info: Dict[str, Any] = Depends(require_api_key),
@@ -2615,7 +2698,11 @@ async def locate_preview(
     1. **身份固定为当前登录人**。试算用的是你自己的可见范围，不代表别人能命中
        同样的凭据；管理员配全局规则时界面必须写明这一点，否则会把试算结果当成
        「所有人都能这样」。
-    2. **不解密**：只取 ``secret_key`` / ``name`` 这类元数据，值一个字节都不碰。
+    2. **尽量不解密**：按标识 / 名称 / 分类匹配时只读元数据，值一个字节都不碰。
+       唯一例外是 ``target="field"``——按凭据里的字段值匹配，**定义上**就要先解密
+       才能比。这种情况下只做相等比较：命中与否是返回值，字段值本身不回传给前端，
+       也不写使用流水（试算不产生业务调用）。不这么做的话，试算会永远报「未命中」、
+       真实调用却命中，配置者只能反复瞎改规则。
     3. **不写流水**：试算不是一次真实使用，写进使用流水会污染「谁在什么时候用了
        什么凭据」的审计口径。
     """
@@ -2658,7 +2745,20 @@ async def locate_preview(
             {"step": "模板约束", "detail": f"{spec.value_template} 命中 {len(pool)} 条"}
         )
 
-    hit, used = pick_match(spec, wanted, pool)
+    # target=field 要解密候选才比得出字段值。试算是配置者本人在可见集合上做的
+    # 预演，必须和真实调用同一套取值器——否则试算永远说「未命中」、真跑却命中，
+    # 配置者会被彻底带偏（这正是这一版之前的实际行为）。
+    field_value = None
+    if spec.target == "field":
+        from app.services.secrets.resolver import field_value_resolver
+
+        field_value = field_value_resolver(spec.target_field)
+        if field_value is not None:
+            steps.append(
+                {"step": "字段匹配", "detail": f"比较 {spec.target_field} 字段的值"}
+            )
+
+    hit, used = pick_match(spec, wanted, pool, field_value=field_value)
     if hit is not None:
         steps.append({"step": "匹配", "detail": f"命中 {hit.secret_key}"})
         return {
@@ -2689,7 +2789,13 @@ async def locate_preview(
             "candidate_count": len(pool),
             "steps": steps,
             "miss_reason": (
-                f"没有 {spec.target} = {used} 的凭据"
+                # field 目标要说清比的是哪个字段：只说「没有 field = x 的凭据」，
+                # 配置者根本不知道是哪一项没对上
+                (
+                    f"没有 {spec.target_field} 字段 = {used} 的凭据"
+                    if spec.target == "field"
+                    else f"没有 {spec.target} = {used} 的凭据"
+                )
                 if wanted
                 else f"取不到 {spec.key_source} 的值（这次调用里没这个参数）"
             ),

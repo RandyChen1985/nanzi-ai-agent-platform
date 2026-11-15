@@ -97,8 +97,13 @@ const candidateFields = computed(() =>
 const ruleSummaryText = computed(() => {
   const rule = ruleDraft.value
   if (!rule) return ''
+  // 按字段值匹配时要说清比的是哪个字段：只显示「匹配凭据的 field」等于没说
+  const targetLabel =
+    rule.target === 'field'
+      ? `字段 ${rule.target_field || '?'}`
+      : rule.target || '?'
   const parts = [
-    `按 ${rule.key_source || '?'} 匹配凭据的 ${rule.target || '?'}`,
+    `按 ${rule.key_source || '?'} 匹配凭据的 ${targetLabel}`,
     rule.match === 'exact' ? '精确' : rule.match || '',
     rule.value_template ? `模板 ${rule.value_template}` : '不限模板',
   ]
@@ -298,6 +303,20 @@ async function save() {
   }
   if (source.value === 'rule' && !ruleDraft.value) {
     errorText.value = '还没有配规则'
+    return
+  }
+  // 选了字段却没选凭据：会提交成 strategy=fixed + secret_id=''，后端按
+  // 「回到模型填写」处理——绑定和清单一起被清掉，还不报错。
+  // 正常操作走不到（换凭据时 changeSecret 会清空 picks），这里是兜底：
+  // 让下一个人加交互时不会把这个洞重新打开。
+  if (
+    source.value === 'fixed' &&
+    !secretId.value &&
+    // 判值不判 key：切回「模型填写」时 `v-model="picks[name]"` 只把值设成空串，
+    // key 还留在对象里。按 key 判的话，一旦选过字段就再也保存不了「全部清空」。
+    Object.values(picks.value).some(Boolean)
+  ) {
+    errorText.value = '还没选凭据，先选一条再把字段分给参数'
     return
   }
   busy.value = true

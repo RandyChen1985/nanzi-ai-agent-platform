@@ -78,7 +78,9 @@ export function ruleSummary(rule: LocatorRule | null | undefined): string {
  * 「规则匹配什么」这种要命语义。
  *
  * 试算走 `POST /api/portal/secrets/locate-preview`：身份固定为当前登录人，
- * 不解密、不写流水。这点必须在界面上说清——否则管理员会以为试算结果代表所有人。
+ * 不发请求、不写流水。按标识 / 名称 / 分类匹配时不碰凭据值；选了「凭据里的字段值」
+ * 时后端必须先解密才能比（只返回命中与否，不回传字段值）。这点必须在界面上说清——
+ * 否则管理员会以为试算结果代表所有人。
  */
 import { computed, ref, watch } from 'vue'
 import axios from '@/utils/axios'
@@ -279,8 +281,14 @@ function validate(): string {
   if (r.templates.length > 3) return '模板最多 3 条'
   // 按字段值匹配必须说清是哪个字段。不拦的话后端会拒，但错误出现在一个已经填了
   // 一堆东西的表单下面，用户得自己找是哪一项没填。
-  if (r.target === 'field' && !(r.target_field || '').trim()) {
-    return '选了「凭据里的字段值」，还得填是哪个字段（例如 username）'
+  if (r.target === 'field') {
+    const field = (r.target_field || '').trim()
+    if (!field) return '选了「凭据里的字段值」，还得填是哪个字段（例如 username）'
+    // 与 parse_rule 的正则同口径；在这里拦一道，用户能立刻看到哪一项不对，
+    // 而不是等外层整表提交时才收到一句后端报错
+    if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/.test(field)) {
+      return '字段名只能用字母、数字、下划线、点和短横线，并以字母或下划线开头'
+    }
   }
   return ''
 }
@@ -299,15 +307,12 @@ async function runPreview() {
     if (isArgKey.value && argName.value && sampleValue.value !== '') {
       sampleArgs[argName.value] = sampleValue.value
     }
-    // value_path 落在绑定记录上，不属于规则 JSON；混进来会被 parse_rule 判为未知字段
-    const { value_path: _path, ...ruleBody } = draft.value
+    // value_path 落在绑定记录上，不属于规则 JSON；混进来会被 parse_rule 判为未知字段。
+    // 归一化和保存走同一份逻辑：试算能过、保存却 400，会让人怀疑是后端随机出错。
+    const { value_path: _path, ...ruleBody } = normalizeForSubmit()
     const res = await axios.post('/api/portal/secrets/locate-preview', {
       slot: props.slot,
-      rule: {
-        ...ruleBody,
-        // 结果里按模板顺序展示，空模板没必要发过去
-        templates: draft.value.templates.filter((t) => t.trim()),
-      },
+      rule: ruleBody,
       sample_args: sampleArgs,
     })
     const data = res.data?.data
@@ -329,6 +334,25 @@ async function runPreview() {
   }
 }
 
+/**
+ * 提交前的归一化。
+ *
+ * 控件的显示状态和 draft 的内容必须一致：`target_field` 的输入框只在
+ * `target === 'field'` 时渲染，但用户先填过再切走时，draft 里那个值还在。
+ * 直接提交会被后端判「给了 target_field 但 target 不是 field」整条规则 400，
+ * 而弹窗此时已经关闭——用户完全看不出是哪一项填错了。
+ *
+ * `value_path` / `value_template` 同理（它们由 props 决定显示与否）。
+ */
+function normalizeForSubmit() {
+  const rule = { ...draft.value }
+  if (rule.target !== 'field') rule.target_field = ''
+  rule.templates = rule.templates.map((t) => t.trim()).filter(Boolean)
+  rule.value_path = props.showValuePath ? rule.value_path : ''
+  rule.value_template = props.showValueTemplate ? rule.value_template : ''
+  return rule
+}
+
 function close() {
   emit('update:open', false)
 }
@@ -344,14 +368,7 @@ function save() {
     errorText.value = bad
     return
   }
-  emit('save', {
-    ...draft.value,
-    templates: draft.value.templates.map((t) => t.trim()).filter(Boolean),
-    // 不显示某一项时必须清空：控件藏了但 draft 里可能还留着上次的值，
-    // 直接展开提交等于把用户看不见的配置又写回去了。
-    value_path: props.showValuePath ? draft.value.value_path : '',
-    value_template: props.showValueTemplate ? draft.value.value_template : '',
-  })
+  emit('save', normalizeForSubmit())
 }
 </script>
 

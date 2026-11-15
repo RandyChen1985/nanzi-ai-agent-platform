@@ -1761,6 +1761,8 @@ async function onParamMappingSaved(payload: {
   }
   await reloadParamMark(tool)
   await fetchServers()
+  // 清单变了 → 模型可见的参数表也变了，工具列表要一起刷新
+  if (tool.server_id) await fetchTools(String(tool.server_id))
 }
 
 /** 单值页里已配了凭据的参数（参数名 → 凭据标识），多值页据此提示会被覆盖 */
@@ -1888,18 +1890,32 @@ async function submitParamMark() {
       items,
       mcp_tool_id: String(tool.id || ''),
     })
-    // 用后端回的真实值，别拿本地草稿当结果——不一致时界面会一直显示旧状态
+    // 用后端回的真实值，别拿本地草稿当结果——不一致时界面会一直显示旧状态。
+    //
+    // 后端没回清单（null）只有两种情况：没有改这个服务清单的权限，或工具刚被
+    // 删掉/换了服务。这时**不能**拿本地 next 顶上：界面会显示「已设置」，
+    // 实际清单没变，运行时照旧不注入，而用户以为配好了。
     const savedList = res.data?.data?.credential_params
-    tool.credential_params = JSON.stringify(Array.isArray(savedList) ? savedList : next)
-    showToast(
-      next.length
-        ? `已设置 ${next.length} 个参数由凭据提供，模型不再看到它们`
-        : '已恢复为全部由模型填写',
-      'success',
-    )
+    if (Array.isArray(savedList)) {
+      tool.credential_params = JSON.stringify(savedList)
+      showToast(
+        next.length
+          ? `已设置 ${next.length} 个参数由凭据提供，模型不再看到它们`
+          : '已恢复为全部由模型填写',
+        'success',
+      )
+    } else {
+      showToast(
+        '绑定已保存，但「由凭据提供」的清单没改成功（可能没有这个服务的清单权限），请让管理员再保存一次',
+        'warning',
+      )
+    }
     paramMarkTarget.value = null
-    // 重新拉一遍：本地改的是列表里的对象引用，一旦别处刷新就会被旧数据盖回去
+    // 重新拉一遍：本地改的是列表里的对象引用，一旦别处刷新就会被旧数据盖回去。
+    // 工具列表单独刷：清单变了意味着模型看到的参数表也变了，不刷新的话卡片上
+    // 还挂着旧的「已映射 x/y」。
     await fetchServers()
+    if (serverId) await fetchTools(serverId)
   } catch (e: any) {
     showToast(e?.response?.data?.detail || '保存失败', 'error')
   } finally {

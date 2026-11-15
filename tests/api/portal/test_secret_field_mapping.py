@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -1141,3 +1142,325 @@ class TestBatchSyncsCredentialParams:
         assert resp.status_code == 400, resp.text
         assert "不是同一个 MCP 服务" in resp.text
         assert await self._stored_params(tool_id) == []
+
+
+class TestBatchUnbindCoversDowngradedBindings:
+    """全局保存要连带清掉「本人的降级绑定」。
+
+    管理员在平台级工具上绑自己的个人凭据时，`bind_secret` 会把绑定降级成
+    `bound_by_user_id=本人`（个人凭据不可能给所有人用）。界面把它显示成已绑定，
+    但保存时若只按 is_global 删全局层，那条绑定删不掉——「改回模型填写」之后它
+    还留着，下次打开弹窗又显示由凭据提供，而清单已经被移除：反向的半保存。
+    """
+
+    async def _mcp_tool(self, owner_id: int):
+        from app.core.orm import AsyncSessionLocal
+        from app.models.mcp import McpServer, McpToolCache
+
+        server_id = f"srv-{uuid.uuid4().hex[:8]}"
+        tool_id = f"tool-{uuid.uuid4().hex[:8]}"
+        async with AsyncSessionLocal() as session:
+            session.add(
+                McpServer(
+                    id=server_id,
+                    server_name=f"mcp-platform-{uuid.uuid4().hex[:6]}",
+                    sse_url="https://mail.example.com/mcp",
+                    scope="global",
+                    user_id=None,
+                    enabled_status=1,
+                )
+            )
+            session.add(
+                McpToolCache(
+                    id=tool_id,
+                    server_id=server_id,
+                    tool_name="list-mail",
+                    parameter_schema=json.dumps(
+                        {"properties": {"password": {"type": "string"}}},
+                        ensure_ascii=False,
+                    ),
+                    is_published=False,
+                )
+            )
+            await session.commit()
+        return server_id, tool_id
+
+    async def _rows(self, consumer_id: str, slot: str):
+        from sqlalchemy import select
+
+        from app.core.orm import AsyncSessionLocal
+        from app.models.secret import SecretBinding
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(SecretBinding).where(
+                    SecretBinding.consumer_type == "mcp_server",
+                    SecretBinding.consumer_id == consumer_id,
+                    SecretBinding.slot == slot,
+                )
+            )
+            return list(result.scalars().all())
+
+    async def test_switching_back_to_model_also_clears_my_own_downgraded_binding(
+        self, client, clean_secrets, admin_api_key
+    ):
+        from app.core.orm import AsyncSessionLocal
+        from app.services.auth_service import AuthService
+
+        # 管理员绑**自己的**个人凭据：个人凭据不可能给所有人用，bind_secret 会把它
+        # 降级成本人绑定——正是这条降级绑定在全局保存时删不掉
+        secret = await _create_secret(client, admin_api_key)
+        async with AsyncSessionLocal() as session:
+            info = await AuthService.verify_api_key(admin_api_key, session)
+        owner = int(info["user_id"])
+
+        server_id, tool_id = await self._mcp_tool(owner)
+        slot = "arg:list-mail:password"
+
+        # 1) 平台级服务 + 自己的个人凭据 + 全局保存 → 库里落成降级绑定
+        body = {
+            "consumer_type": "mcp_server",
+            "consumer_id": server_id,
+            "is_global": True,
+            "mcp_tool_id": tool_id,
+            "items": [
+                {
+                    "slot": slot,
+                    "name": "password",
+                    "secret_id": secret["id"],
+                    "value_path": "password",
+                }
+            ],
+        }
+        resp = await client.post(
+            f"{PREFIX}/bindings/batch", json=body, headers=_headers(admin_api_key)
+        )
+        assert resp.status_code == 200, resp.text
+        rows = await self._rows(server_id, slot)
+        assert len(rows) == 1
+        # 关键前提：个人凭据的全局绑定被降级成本人绑定
+        assert str(rows[0].bound_by_user_id or "") == str(owner)
+
+        # 2) 改回「模型填写」→ 那条降级绑定必须一起被清掉
+        body["items"] = [{"slot": slot, "name": "password", "strategy": "none"}]
+        resp = await client.post(
+            f"{PREFIX}/bindings/batch", json=body, headers=_headers(admin_api_key)
+        )
+        assert resp.status_code == 200, resp.text
+
+        assert await self._rows(server_id, slot) == []
+        assert resp.json()["data"]["credential_params"] == []
+
+    async def test_saving_untouched_params_writes_no_unbind_audit(
+        self, client, clean_secrets, admin_api_key
+    ):
+        """整表保存时，本来就是「模型填写」的参数不该留下解绑记录。
+
+        前端为了同步清单会把工具的全部参数都提交上来（没绑的填 none）。无条件记
+        一条 unbind 的话，一个 15 参数、只绑了 1 个密码的工具每保存一次就多 14 条
+        从没发生过的解绑记录，审计表很快就没法看了。
+        """
+        from sqlalchemy import select
+
+        from app.core.orm import AsyncSessionLocal
+        from app.models.secret import SecretAuditLog
+        from app.services.auth_service import AuthService
+
+        secret = await _create_secret(client, admin_api_key)
+        async with AsyncSessionLocal() as session:
+            info = await AuthService.verify_api_key(admin_api_key, session)
+        owner = int(info["user_id"])
+
+        server_id, tool_id = await self._mcp_tool(owner)
+        assert secret  # 造凭据这一步本身不该失败
+
+        async with AsyncSessionLocal() as session:
+            before = len(
+                (
+                    await session.execute(
+                        select(SecretAuditLog.id).where(
+                            SecretAuditLog.action == "unbind"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        # 完全没有绑定的两个参数，提交成 none
+        resp = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json={
+                "consumer_type": "mcp_server",
+                "consumer_id": server_id,
+                "is_global": True,
+                "mcp_tool_id": tool_id,
+                "items": [
+                    {"slot": "arg:list-mail:password", "name": "password", "strategy": "none"},
+                    {"slot": "arg:list-mail:extra", "name": "extra", "strategy": "none"},
+                ],
+            },
+            headers=_headers(admin_api_key),
+        )
+        assert resp.status_code == 200, resp.text
+
+        async with AsyncSessionLocal() as session:
+            after = len(
+                (
+                    await session.execute(
+                        select(SecretAuditLog.id).where(
+                            SecretAuditLog.action == "unbind"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        # 什么都没删掉，就不该有解绑记录
+        assert after == before
+
+    async def test_real_unbind_is_still_audited(self, client, clean_secrets, admin_api_key):
+        """真删到东西时审计不能丢——上面那条跳过不能变成「再也不记」。"""
+        from sqlalchemy import select
+
+        from app.core.orm import AsyncSessionLocal
+        from app.models.secret import SecretAuditLog
+        from app.services.auth_service import AuthService
+
+        secret = await _create_secret(client, admin_api_key)
+        async with AsyncSessionLocal() as session:
+            info = await AuthService.verify_api_key(admin_api_key, session)
+        owner = int(info["user_id"])
+
+        server_id, tool_id = await self._mcp_tool(owner)
+        slot = "arg:list-mail:password"
+        body = {
+            "consumer_type": "mcp_server",
+            "consumer_id": server_id,
+            "is_global": True,
+            "mcp_tool_id": tool_id,
+            "items": [
+                {
+                    "slot": slot,
+                    "name": "password",
+                    "secret_id": secret["id"],
+                    "value_path": "password",
+                }
+            ],
+        }
+        assert (
+            await client.post(
+                f"{PREFIX}/bindings/batch", json=body, headers=_headers(admin_api_key)
+            )
+        ).status_code == 200
+
+        body["items"] = [{"slot": slot, "name": "password", "strategy": "none"}]
+        assert (
+            await client.post(
+                f"{PREFIX}/bindings/batch", json=body, headers=_headers(admin_api_key)
+            )
+        ).status_code == 200
+
+        async with AsyncSessionLocal() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(SecretAuditLog).where(
+                            SecretAuditLog.action == "unbind",
+                            # 审计表没有 consumer 列，槽位只落在 detail JSON 里
+                            SecretAuditLog.detail.like("%list-mail:password%"),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert rows, "真删掉了绑定却没有解绑审计"
+
+
+class TestNonAdminCannotTouchTheGlobalLayer:
+    """普通用户不能借 `is_global=true` 拆掉全平台的绑定。
+
+    单条 `DELETE /bindings` 有 `只有管理员可以解除全局绑定` 的保护，批量接口原先漏了：
+    `bound_by = None if payload.is_global else user_id` 直接照单全收，于是普通用户在
+    **自己有权访问的平台级服务**上发一句 `is_global=True` + `strategy="none"`，就能删掉
+    全平台共用的绑定和规则——而这些配置是所有人共用的。
+    """
+
+    def test_global_layer_requires_admin(self):
+        src = (
+            Path(__file__).parents[3] / "app/api/portal/endpoints/secrets.py"
+        ).read_text(encoding="utf-8")
+        # 解绑/清规则的归属必须按身份算：非管理员永远只动本人层
+        assert "unbind_bound_by: str | None = None if (payload.is_global and is_admin) else user_id" in src
+        # 两处解绑（none 分支、fixed 清旧规则）都要用这个归属，不能退回 bound_by
+        assert src.count("bound_by=unbind_bound_by") == 2
+        # 写入侧仍按凭据作用域判（个人凭据要能降级），所以 bound_by 的写法保留
+        assert "bound_by: str | None = None if payload.is_global else user_id" in src
+
+    async def test_downgraded_to_personal_layer_instead_of_global(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """普通用户即使传 is_global=True，绑定也只落在本人层。"""
+        from sqlalchemy import select
+
+        from app.core.orm import AsyncSessionLocal
+        from app.models.secret import SecretBinding
+        from app.services.auth_service import AuthService
+
+        secret = await _create_secret(client, valid_api_key)
+        async with AsyncSessionLocal() as session:
+            info = await AuthService.verify_api_key(valid_api_key, session)
+        owner = int(info["user_id"])
+
+        server_id = f"srv-{uuid.uuid4().hex[:8]}"
+        async with AsyncSessionLocal() as session:
+            from app.models.mcp import McpServer
+
+            session.add(
+                McpServer(
+                    id=server_id,
+                    server_name=f"mcp-mine-{uuid.uuid4().hex[:6]}",
+                    sse_url="https://mail.example.com/mcp",
+                    scope="personal",
+                    user_id=owner,
+                    enabled_status=1,
+                )
+            )
+            await session.commit()
+
+        resp = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json={
+                "consumer_type": "mcp_server",
+                "consumer_id": server_id,
+                "is_global": True,  # 非管理员提这个要求
+                "items": [
+                    {
+                        "slot": "arg:list-mail:password",
+                        "name": "password",
+                        "secret_id": secret["id"],
+                        "value_path": "password",
+                    }
+                ],
+            },
+            headers=_headers(valid_api_key),
+        )
+        assert resp.status_code == 200, resp.text
+
+        async with AsyncSessionLocal() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(SecretBinding).where(
+                            SecretBinding.consumer_id == server_id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert rows, "绑定没落库"
+        # 落成本人层，不是全局层（空串/NULL 代表全局）
+        assert str(rows[0].bound_by_user_id or "") == str(owner)
