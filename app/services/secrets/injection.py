@@ -562,6 +562,37 @@ def _apply_value_path(
     register_injected(as_text)
     return picked if typed else as_text
 
+
+def _keep_auth_scheme(rendered: str, original: Any) -> str:
+    """给裸 token 补回认证方案前缀。
+
+    MCP 的「固定 Token」入口只让用户填 token，``Bearer`` 由后端拼
+    （``resolve_mcp_auth_headers``）。改走凭据中心后这条规则断了：原 headers 里
+    没有 Authorization 时 ``_render_reference`` 直接返回凭据本身，用户看到的是
+    「验证用旧 Token 能过、实际调用 401」。
+
+    只在**确实没有方案**时补：``Basic dXNlcjpwYXNz`` 这种自带方案的（含空格）
+    原样保留，凭据本身就是完整头（``Bearer xxx``）的也一样。
+    """
+    text = str(rendered or "")
+    if not text:
+        return text
+    # 自带方案的形态：`<scheme> <value>`，两类都含空格
+    if " " in text.strip():
+        return text
+    prev = str(original or "").strip()
+    if not prev:
+        # 原 headers 里根本没有这个头——正是「从固定 Token 切到凭据」的场景，
+        # 固定 Token 那条路会自动拼 Bearer，这里得对齐
+        return f"Bearer {text}"
+    if "${" in prev or "${".upper() in prev.upper():
+        # 用户显式写了占位符：他要的就是那一段原样替换，别替他加方案
+        return text
+    if " " in prev:
+        # 原值带方案但没写占位符（靠 value_path 取值），沿用原方案
+        return f"{prev.split(' ', 1)[0]} {text}"
+    return text
+
 async def apply_api_tool_param_bindings(
     config: Any,
     params: dict[str, Any],
@@ -820,10 +851,11 @@ async def apply_mcp_bindings(
         if result.ok and result.value is not None:
             plain = result.value.reveal()
             register_injected(plain)
+            _original_header = _get_case_insensitive(resolved, name)
             rendered = _render_reference(
                 # 槽位名与配置里的 Header 名大小写可能不一致；
                 # 直接 get(name) 取不到时会误判成「没有引用」，把整段 JSON 盖上去。
-                _get_case_insensitive(resolved, name),
+                _original_header,
                 plain,
                 secret_key=result.secret_key,
                 slot=slot,
@@ -838,6 +870,10 @@ async def apply_mcp_bindings(
                     (denials or {}).get(f"header:{name}") or "reference_unresolved",
                 )
                 continue
+            if name.lower() == "authorization":
+                # 固定 Token 那条路自动拼 Bearer，凭据这条路得补上同样的前缀，
+                # 否则切过来之后凭据是裸 token，对方按 `Bearer` 解析直接 401
+                rendered = _keep_auth_scheme(rendered, _original_header)
             _set_case_insensitive(resolved, name, rendered)
             injected += 1
         else:

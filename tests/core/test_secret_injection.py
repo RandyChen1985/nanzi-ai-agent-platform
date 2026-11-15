@@ -359,7 +359,10 @@ class TestMcpInjection:
             server, {"Authorization": "Bearer shared-service-token"}, user_info=USER
         )
 
-        assert result["Authorization"] == PLAINTEXT
+        # 换的是 token，不是认证方案：原值是 ``Bearer xxx``，注入后仍是 Bearer。
+        # 原来这里断言裸值，等于把「凭据注入会吃掉 Bearer 前缀」这个 bug 写成了
+        # 预期——两个入口（固定 Token / 凭据中心）形态不一致，调用侧就 401。
+        assert result["Authorization"] == f"Bearer {PLAINTEXT}"
 
     async def test_non_credential_headers_untouched(self):
         """``Accept`` 之类不查库、不改动——每多查一个 header 就多一次解密。"""
@@ -1792,3 +1795,46 @@ class TestDenialReasonWithoutCollector:
 
         assert picked is _MISSING
         assert denials["arg:tool:proxy"] == "reference_field_missing"
+
+
+class TestMcpAuthorizationKeepsItsScheme:
+    """MCP 服务的 Authorization 改走凭据中心后，不能把 ``Bearer `` 丢掉。
+
+    「固定 Token」入口只让用户填 token，前缀由后端拼；凭据这条路的原 headers 里
+    往往根本没有 Authorization，渲染结果是裸凭据。两个入口对同一个字段给出不同
+    形态，症状是「验证用旧 Token 能连上、实际调用 401」——而两边看代码都没错。
+    """
+
+    def test_bare_token_gets_bearer(self):
+        from app.services.secrets.injection import _keep_auth_scheme
+
+        assert _keep_auth_scheme("abc123", None) == "Bearer abc123"
+        assert _keep_auth_scheme("abc123", "") == "Bearer abc123"
+
+    def test_existing_scheme_is_respected(self):
+        from app.services.secrets.injection import _keep_auth_scheme
+
+        assert _keep_auth_scheme("abc123", "Token old") == "Token abc123"
+
+    def test_explicit_placeholder_is_left_alone(self):
+        """用户写了裸占位符就是想要裸值，替他补 Bearer 等于改配置。"""
+        from app.services.secrets.injection import _keep_auth_scheme
+
+        assert _keep_auth_scheme("abc123", "${CREDENTIAL:mail.smtp}") == "abc123"
+        assert _keep_auth_scheme("abc123", "${secret:mail.smtp.password}") == "abc123"
+
+    def test_value_carrying_its_own_scheme_is_untouched(self):
+        """凭据本身是完整头（Basic / 已带 Bearer）时不要再套一层。"""
+        from app.services.secrets.injection import _keep_auth_scheme
+
+        assert _keep_auth_scheme("Basic dXNlcjpwYXNz", "") == "Basic dXNlcjpwYXNz"
+        assert _keep_auth_scheme("Bearer abc123", None) == "Bearer abc123"
+
+    def test_only_authorization_is_touched(self):
+        """其它 header 原样注入：给 X-Api-Key 补 Bearer 就是凭空造了个错值。"""
+        from pathlib import Path
+
+        source = (Path(__file__).parents[2] / "app/services/secrets/injection.py").read_text(
+            encoding="utf-8"
+        )
+        assert 'if name.lower() == "authorization":' in source
