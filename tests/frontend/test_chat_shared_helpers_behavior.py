@@ -2040,3 +2040,111 @@ def test_timeline_pending_hint_component_owns_label_and_indicator_style():
     assert "text-sky-600" not in hint, "文案已改浅灰，不得回退到强调蓝"
     assert "border-top-color: transparent" in hint, "缺口圆环靠透明上边框形成"
     assert "border-top-color: currentColor" in hint, "减弱动效时补成完整圆环，避免停在「坏掉的圆」"
+
+def test_server_credential_wait_restores_into_chat_without_a_local_snapshot():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const messages = [
+  { role: 'user', trace_id: 'pending-turn', content: '请查邮箱' },
+  { role: 'agent', trace_id: 'pending-turn', content: '正在查找', isHistory: true }
+];
+const event = {
+  type: 'permission_required', status: 'pending', trace_id: 'pending-turn',
+  permission_request_id: 'my-request', credential_selection_required: true,
+  title: '选择凭据', expires_at: Math.floor(Date.now() / 1000) + 60
+};
+let logCount = 0;
+const create = traceId => ({role: 'agent', trace_id: traceId, content: ''});
+const addLog = () => { logCount++; };
+const attached = api.restoreConversationCredentialCard(messages, event, create, addLog);
+messages[1].pendingPermission.isSubmitting = true;
+const duplicate = api.restoreConversationCredentialCard(messages, event, create, addLog);
+const expired = api.restoreConversationCredentialCard(messages, {
+  ...event, permission_request_id: 'expired', expires_at: Math.floor(Date.now() / 1000) - 10
+}, create, addLog);
+const missingAssistant = [messages[0]];
+api.restoreConversationCredentialCard(missingAssistant, event, create, addLog);
+return {
+  attached, duplicate, expired, logCount,
+  messageCount: messages.length, preservedBody: messages[1].content,
+  pending: messages[1].pendingPermission,
+  newCard: missingAssistant[1].pendingPermission,
+};
+""",
+    )
+    assert result["attached"]
+    assert not result["duplicate"]
+    assert not result["expired"]
+    assert result["messageCount"] == 2
+    assert result["preservedBody"] == "正在查找"
+    assert result["pending"]["permission_request_id"] == "my-request"
+    assert result["pending"]["isSubmitting"]
+    assert result["newCard"]["credential_selection_required"]
+    assert result["logCount"] == 2
+
+def test_embed_chat_looks_up_server_wait_without_snapshot_and_ignores_a_late_response_after_switching():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const view = fs.readFileSync('frontend/src/views/EmbedChat.vue', 'utf8');
+const start = view.indexOf('const restoreServerCredentialCard =');
+const end = view.indexOf('const shouldUseServerActiveConversation =', start);
+const source = ts.transpileModule(view.slice(start, end), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+}).outputText;
+const requests = [];
+const messages = {value: []};
+const setup = new Function('api', 'messages', 'requests', `
+let conversationInitializationGeneration = 1;
+const conversationId = { value: 'before-switch' };
+const hasPermission = { value: true };
+let embedUnmounted = false, streamInFlight = false, liveWriterToken = 0;
+const pendingLookups = [];
+const axios = { get: url => new Promise(resolve => {
+  requests.push(url);
+  pendingLookups.push(resolve);
+}) };
+const readStreamSnapshot = () => null;
+const isApiSuccess = body => body.code === 200;
+const embedAuthHeaders = () => undefined;
+const nextTick = async () => {};
+const scrollToBottom = () => {};
+const addEmbedLogFromStream = () => {};
+const restoreConversationCredentialCard = api.restoreConversationCredentialCard;
+const afterStreamSnapshotRestored = () => {};
+${source}
+return {
+  restoreEmbedStreamSnapshot,
+  respond: event => pendingLookups.shift()({data: {code: 200, data: event}}),
+  switchConversation: () => {
+    conversationId.value = 'current';
+    conversationInitializationGeneration++;
+  }
+};
+`);
+const viewModel = setup(api, messages, requests);
+const event = {
+  type: 'permission_required', status: 'pending', trace_id: 'trace-before-switch',
+  permission_request_id: 'wait-before-switch', credential_selection_required: true,
+  expires_at: Math.floor(Date.now() / 1000) + 60
+};
+await viewModel.restoreEmbedStreamSnapshot();
+viewModel.switchConversation();
+viewModel.respond(event);
+await new Promise(resolve => setImmediate(resolve));
+const staleCards = messages.value.length;
+await viewModel.restoreEmbedStreamSnapshot();
+viewModel.respond({...event, trace_id: 'trace-current', permission_request_id: 'current-wait'});
+await new Promise(resolve => setImmediate(resolve));
+return {requests, staleCards, cards: messages.value.map(message => message.pendingPermission?.permission_request_id)};
+""",
+    )
+    assert result == {
+        "requests": [
+            "/api/v1/chat/conversation/before-switch/pending-credential",
+            "/api/v1/chat/conversation/current/pending-credential",
+        ],
+        "staleCards": 0,
+        "cards": ["current-wait"],
+    }

@@ -325,3 +325,75 @@ async def test_confirmation_snapshot_resolves_shared_tool_call_coroutine_once():
     assert pending.snapshot.tool_call["suggested_rules"] == []
     assert pending.snapshot.agent_state["context"][0]["tool_call"]["suggested_rules"] == []
     assert tool_call.suggested_rules == []
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case", ["active", "consumed", "expired", "foreign", "other-conversation", "scheduled", "terminal", "newer-wait"],
+)
+async def test_conversation_restores_only_the_current_credential_wait(monkeypatch, case):
+    from unittest.mock import AsyncMock
+
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from app.api.v1.endpoints import chat
+    from app.services.ai.runtime.agentscope import pending_store
+    from app.services.ai.runtime.conversation_stream_journal import conversation_stream_journal
+    from app.services.secrets.credential_approval import MCP_CREDENTIAL_REF
+
+    user_id, conversation_id, request_id = "owner-44", "mail-turn", "credential-fixture"
+    store = PendingAgentScopeStore()
+    monkeypatch.setattr(pending_store, "pending_agentscope_store", store)
+    ref = {"tool_id": "test-mail", "revision": 1, "selection_reason": "credential_selection_required"}
+    if case == "scheduled":
+        ref["scheduled_task_id"] = 27
+    snapshot = PendingAgentScopeSnapshot(
+        request_id=request_id, kind="permission",
+        user_id="other-user" if case == "foreign" else user_id,
+        conversation_id="other-conversation" if case == "other-conversation" else conversation_id,
+        trace_id="mail-trace", reply_id="mail-reply", agent_name="Fixture",
+        tool_call={"id": "mail-call", "name": "mcp_fixture", "input": '{"limit":1}'},
+        agent_state={"fixture_hidden_state": "internal-snapshot-data"},
+        stream_state={}, runner_context={MCP_CREDENTIAL_REF: ref},
+        created_at=time.time() - (PENDING_CONFIRMATION_TTL_SECONDS + 10 if case == "expired" else 0),
+    )
+    await store.register(snapshot)
+    if case == "consumed":
+        await store.pop(request_id, user_id=user_id)
+    events = [{
+        "_seq": 8, "type": "permission_required", "status": "pending",
+        "permission_request_id": request_id, "credential_selection_required": True,
+        "id": "mail-call", "title": "Choose test mailbox", "details": "Limit 1",
+        "tool_call": {"id": "mail-call", "name": "mcp_fixture", "display_name": "Mailbox", "args": {"limit": 1}},
+    }, {
+        "_seq": 9, "type": "run_status", "status": "success" if case == "terminal" else "awaiting_permission",
+    }]
+    if case == "newer-wait":
+        events.append({
+            "_seq": 10, "type": "permission_required", "status": "pending",
+            "permission_request_id": "regular-confirmation", "credential_selection_required": False,
+        })
+    monkeypatch.setattr(
+        conversation_stream_journal, "read_after", AsyncMock(return_value={"events": events, "next_seq": 10}),
+    )
+
+    app = FastAPI()
+    app.include_router(chat.router)
+    app.dependency_overrides[chat.require_api_key] = lambda: {"user_id": user_id}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get(f"/conversation/{conversation_id}/pending-credential")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    data = response.json()["data"]
+    if case != "active":
+        assert data is None
+        return
+    assert data["trace_id"] == "mail-trace"
+    assert data["permission_request_id"] == request_id
+    assert data["credential_selection_required"] is True
+    assert data["supports_session_grant"] is False
+    assert data["expires_at"] == int(snapshot.created_at + PENDING_CONFIRMATION_TTL_SECONDS)
+    assert data["tool_call"]["args"] == {"limit": 1}
+    assert "internal-snapshot-data" not in response.text
+    assert await store.peek(request_id, user_id=user_id, strict=True) is not None

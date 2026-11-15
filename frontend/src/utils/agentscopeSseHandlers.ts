@@ -253,6 +253,31 @@ export function handlePermissionRequired<T extends AgentStreamMessage>(
   });
 }
 
+
+/** 用服务端当前待选事件恢复卡片，保留已有消息和正在提交的状态。 */
+export function restoreConversationCredentialCard<T extends AgentStreamMessage & { role: string }>(
+  messages: T[],
+  event: Record<string, unknown>,
+  createMessage: (traceId: string) => T,
+  addLog: AddStreamLogFn<T>,
+): boolean {
+  const traceId = typeof event.trace_id === "string" ? event.trace_id : "";
+  const requestId = typeof event.permission_request_id === "string" ? event.permission_request_id : "";
+  const expiresAt = Number(event.expires_at);
+  if (
+    event.type !== "permission_required" || event.status !== "pending"
+    || event.credential_selection_required !== true || !traceId || !requestId
+    || !Number.isFinite(expiresAt) || expiresAt * 1000 <= Date.now()
+  ) return false;
+
+  const existing = [...messages].reverse().find(message => message.role === "agent" && message.trace_id === traceId);
+  if (existing?.pendingPermission?.permission_request_id === requestId) return false;
+  const target = existing ?? createMessage(traceId);
+  handlePermissionRequired(target, event, addLog);
+  if (!existing) messages.push(target);
+  return true;
+}
+
 export function handleExternalExecutionRequired<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, unknown>,

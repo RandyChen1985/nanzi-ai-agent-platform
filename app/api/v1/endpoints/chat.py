@@ -1265,6 +1265,77 @@ async def get_conversation_stream_events(
     return StandardResponse(data=ConversationStreamEventsResponse(**payload))
 
 
+@router.get(
+    "/conversation/{conversation_id}/pending-credential",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="恢复当前会话仍待选择的凭据",
+)
+async def get_conversation_pending_credential(
+    conversation_id: str,
+    response: Response,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.ai.runtime.agentscope.pending_store import (
+        PENDING_CONFIRMATION_TTL_SECONDS,
+        pending_agentscope_store,
+    )
+    from app.services.ai.runtime.conversation_stream_journal import conversation_stream_journal
+    from app.services.secrets.credential_approval import MCP_CREDENTIAL_REF
+
+    user_id = _require_chat_user_id(user_info)
+    response.headers["Cache-Control"] = "no-store"
+    batch = await conversation_stream_journal.read_after(
+        user_id=user_id, conversation_id=conversation_id, tail_only=True,
+    )
+    for event in reversed(batch["events"]):
+        event_type = event.get("type")
+        if event_type == "permission_required":
+            break
+        if (
+            event_type in {"permission_result", "external_execution_required", "user_question", "business_confirmation"}
+            or (event_type == "run_status" and event.get("status") != "awaiting_permission")
+        ):
+            return StandardResponse()
+    else:
+        return StandardResponse()
+
+    request_id = event.get("permission_request_id")
+    if event.get("credential_selection_required") is not True or not isinstance(request_id, str) or not request_id:
+        return StandardResponse()
+    try:
+        snapshot = await pending_agentscope_store.peek(request_id, user_id=user_id, strict=True)
+    except Exception:
+        raise HTTPException(503, detail="暂时无法读取授权请求，请重试") from None
+    if (
+        snapshot is None or snapshot.kind != "permission" or snapshot.user_id != user_id
+        or snapshot.conversation_id != conversation_id or snapshot.request_id != request_id
+    ):
+        return StandardResponse()
+    ref = snapshot.runner_context.get(MCP_CREDENTIAL_REF)
+    if not isinstance(ref, dict) or ref.get("scheduled_task_id") is not None:
+        return StandardResponse()
+
+    # 只重放已发送给该会话的卡片字段。原生 Agent 状态及注入参数从不返回。
+    tool_call = event.get("tool_call")
+    return StandardResponse(data={
+        "type": "permission_required",
+        "status": "pending",
+        "permission_request_id": request_id,
+        "reply_id": snapshot.reply_id,
+        "id": event.get("id"),
+        "title": event.get("title"),
+        "details": event.get("details"),
+        "tool_call": {
+            key: tool_call[key] for key in ("id", "name", "display_name", "args") if key in tool_call
+        } if isinstance(tool_call, dict) else None,
+        "trace_id": snapshot.trace_id,
+        "agent_name": snapshot.agent_name,
+        "credential_selection_required": True,
+        "supports_session_grant": False,
+        "expires_at": int(snapshot.created_at + PENDING_CONFIRMATION_TTL_SECONDS),
+    })
+
+
 def _audit_query_candidates(content: str) -> list[str]:
     """生成 Redis 末尾消息与 DB 审计记录的匹配候选，兼容 @mention 前缀剥离。"""
     import re

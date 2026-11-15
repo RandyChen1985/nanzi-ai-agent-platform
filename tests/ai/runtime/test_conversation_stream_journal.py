@@ -349,6 +349,22 @@ async def test_read_after_short_circuits_when_cursor_is_current(fake_redis):
     assert batch == {"events": [], "next_seq": 1}
 
 
+async def test_pending_credential_lookup_reads_only_the_current_event_window(fake_redis):
+    from app.services.ai.runtime.conversation_stream_journal import READ_TAIL_WINDOW_EVENTS
+
+    journal = ConversationStreamJournal(max_events=2000, ttl_seconds=60)
+    event_count = READ_TAIL_WINDOW_EVENTS + 50
+    await journal.append("u1", "c1", [{"type": "log", "title": str(i)} for i in range(event_count)])
+    await journal.append("u1", "c1", [{"type": "permission_required", "credential_selection_required": True}])
+
+    batch = await journal.read_after("u1", "c1", tail_only=True)
+
+    assert len(batch["events"]) == READ_TAIL_WINDOW_EVENTS
+    assert batch["events"][0]["_seq"] == 52
+    assert batch["events"][-1]["type"] == "permission_required"
+    assert batch["next_seq"] == event_count + 1
+
+
 async def test_read_after_falls_back_to_full_scan_when_cursor_precedes_window(fake_redis):
     """游标早于尾部窗口（首次恢复 / 日志被截断）时必须退回全量，不能漏读中间事件。"""
     from app.services.ai.runtime.conversation_stream_journal import READ_TAIL_WINDOW_EVENTS

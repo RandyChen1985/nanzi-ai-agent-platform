@@ -2972,6 +2972,7 @@ import {
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
   resolveStreamLogDurationMs,
+  restoreConversationCredentialCard,
   finalizeAllPendingStreamLogs,
   markStalePendingStreamLogs,
   mergeStreamCitations,
@@ -6174,6 +6175,46 @@ const reviveInterruptedResumeCards = (msg: Message) => {
 };
 
 /**
+ * 工具待确认时运行锁已经释放。新标签没有本地草稿，向服务端查询该会话仍有效的卡片。
+ */
+const restoreServerCredentialCard = async (cid: string, generation: number) => {
+  if (!hasPermission.value || streamInFlight) return;
+  const writer = liveWriterToken;
+  try {
+    const { data } = await axios.get(
+      `/api/v1/chat/conversation/${encodeURIComponent(cid)}/pending-credential`,
+      { headers: embedAuthHeaders(), timeout: 5000 },
+    );
+    if (
+      embedUnmounted || conversationId.value !== cid || generation !== conversationInitializationGeneration
+      || streamInFlight || writer !== liveWriterToken || !isApiSuccess(data) || !data.data
+    ) return;
+
+    const restored = restoreConversationCredentialCard<Message>(
+      messages.value,
+      data.data,
+      traceId => ({
+        id: Date.now(),
+        trace_id: traceId,
+        role: "agent",
+        content: "",
+        logs: [],
+        isThinking: false,
+        feedback: null,
+        agentName: typeof data.data.agent_name === "string" ? data.data.agent_name : undefined,
+      }),
+      addEmbedLogFromStream,
+    );
+    if (restored) {
+      await nextTick();
+      scrollToBottom(true);
+    }
+  } catch (error) {
+    console.warn("[EmbedChat] 恢复会话凭据待选卡片失败", error);
+  }
+};
+
+/**
  * 挂载后还原草稿：草稿自带 trace_id，落库终态到达时会被 `planHistorySync` 精确命中
  * 并覆盖，因此这里只需把它放回消息列表即可。
  *
@@ -6181,6 +6222,7 @@ const reviveInterruptedResumeCards = (msg: Message) => {
  * 从事件日志 / Redis 会话历史补出草稿，避免界面上出现永远空白的回答。
  */
 const restoreEmbedStreamSnapshot = async (expectedGeneration?: number) => {
+  const generation = expectedGeneration ?? conversationInitializationGeneration;
   const cid = conversationId.value;
   if (!cid) return;
   let shouldKickRecovery = false;
@@ -6294,15 +6336,12 @@ const restoreEmbedStreamSnapshot = async (expectedGeneration?: number) => {
       scrollToBottom();
     }
   } finally {
-    const generationStillCurrent =
-      expectedGeneration === undefined || expectedGeneration === conversationInitializationGeneration;
-    if (
-      shouldKickRecovery &&
-      generationStillCurrent &&
-      !embedUnmounted &&
-      cid === conversationId.value
-    ) {
+    const isCurrent = () => !embedUnmounted
+      && generation === conversationInitializationGeneration
+      && cid === conversationId.value;
+    if (shouldKickRecovery && isCurrent()) {
       afterStreamSnapshotRestored?.();
+      void restoreServerCredentialCard(cid, generation);
     }
   }
 };

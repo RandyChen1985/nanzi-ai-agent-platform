@@ -189,16 +189,19 @@ class ConversationStreamJournal:
         conversation_id: str,
         *,
         after_seq: int = 0,
+        tail_only: bool = False,
     ) -> dict[str, Any]:
-        """读取 seq > after_seq 的事件；失败返回空批次。"""
+        """读取游标后的事件。仅查当前挂起状态时可限制在日志尾部。"""
         cursor = int(after_seq or 0)
         try:
             redis = await self._redis()
             if redis is None:
                 return {"events": [], "next_seq": cursor}
-            raw_items = await self._read_window_items(
-                redis, self._list_key(user_id, conversation_id), cursor
-            )
+            list_key = self._list_key(user_id, conversation_id)
+            if tail_only:
+                raw_items = await redis.lrange(list_key, -READ_TAIL_WINDOW_EVENTS, -1)
+            else:
+                raw_items = await self._read_window_items(redis, list_key, cursor)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "[StreamJournal] read failed for conversation=%s: %s",
