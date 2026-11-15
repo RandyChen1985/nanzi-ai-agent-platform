@@ -955,7 +955,12 @@ class McpClientService:
                         progress_callback=progress_callback,
                         timeout_seconds=timeout_seconds,
                     )
-                    return cls._normalize_sse_tool_result(response, tool_name)
+                    # 先接住再返回：`finally` 里写 mcp_outbound_audit_logs 读的是
+                    # call_result，直接 return 会让那边的 tool_output 恒为 None——
+                    # 审计看起来「记了一条」，实际出参是空的。顺带补上 redact，
+                    # 另两条出口都有，只有这里漏了。
+                    call_result = cls._normalize_sse_tool_result(response, tool_name)
+                    return redact_value(call_result, where=f"MCP 工具 {tool_name}")
                 except Exception as e:
                     transport_broken = False
                     if not transport_retry and _is_transport_error(e):
@@ -991,7 +996,10 @@ class McpClientService:
                                 progress_callback=progress_callback,
                                 timeout_seconds=timeout_seconds,
                             )
-                            return cls._normalize_sse_tool_result(response, tool_name)
+                            # 重连成功这条出口同样要先接住：审计的 tool_output 读的是
+                            # call_result，直接 return 会让它恒为 None
+                            call_result = cls._normalize_sse_tool_result(response, tool_name)
+                            return redact_value(call_result, where=f"MCP 工具 {tool_name}")
                         except Exception as retry_error:
                             e = RuntimeError(
                                 f"{original_error}; reconnect retry failed: {retry_error}"

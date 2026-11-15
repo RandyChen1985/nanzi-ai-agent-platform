@@ -351,17 +351,20 @@ class GenericApiToolFactory:
                 headers.update(h_config)
         if headers:
             headers = replace_headers_user_placeholders(headers, variables)
-            # 凭据中心：只补「本来就没填」的 header，手填的真实值一律不动。
-            # 必须在 unresolved_credential_headers 之前——否则占位符会先被判为
-            # 「未填」而抛错，绑定过的凭据根本没机会生效。
-            auth_denials: dict[str, str] = {}
-            headers = await apply_api_tool_bindings(
-                config, headers, user_info=user_info, denials=auth_denials
-            )
-            pending = unresolved_credential_headers(headers)
-            if pending:
-                # 导入工具默认没有凭据；发出去只会换来对方的 401，不如在这里说清楚
-                raise UnresolvedCredentialError(config.name, pending, auth_denials)
+        # 凭据注入不能在 `if headers:` 里面：工具一个 header 都没配（`{}`）时，
+        # 后台绑好的 header:Authorization 就永远不生效——界面上写着「来自凭据」，
+        # 发出去的请求里却没有这个头，对方回 401，而这里看起来什么都对。
+        # 只补「本来就没填」的 header，手填的真实值一律不动。
+        # 必须在 unresolved_credential_headers 之前——否则占位符会先被判为
+        # 「未填」而抛错，绑定过的凭据根本没机会生效。
+        auth_denials: dict[str, str] = {}
+        headers = await apply_api_tool_bindings(
+            config, headers or {}, user_info=user_info, denials=auth_denials
+        )
+        pending = unresolved_credential_headers(headers)
+        if pending:
+            # 导入工具默认没有凭据；发出去只会换来对方的 401，不如在这里说清楚
+            raise UnresolvedCredentialError(config.name, pending, auth_denials)
 
         # 3. Request
         signing = parse_signing_config(config)
