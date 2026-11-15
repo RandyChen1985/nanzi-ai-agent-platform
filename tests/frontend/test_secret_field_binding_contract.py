@@ -792,6 +792,20 @@ class TestWizardPendingBindingsSurviveSave:
         assert 'ref="paramEditorRef"' in wizard
         assert "defineExpose({ flushPending })" in wizard
 
+    def test_step_three_is_kept_alive(self):
+        """第 3 步不能随步骤切换卸载，否则 pending 跟着没。
+
+        只暴露 `flushPending` 不够：四步原来是 v-if/v-else 互斥渲染，用户配完凭据
+        点「下一步」看试跑，第 3 步的组件当场销毁，保存时 `flushPending` 拿到空数组。
+        改成 v-show 保活后，组件实例活到保存那一刻。
+        """
+        wizard = _read(ROOT / "frontend/src/components/system/ToolWizard.vue")
+        for n in (1, 2, 3, 4):
+            assert f'v-show="step === {n}"' in wizard, f"第 {n} 步没有用 v-show 保活"
+        # 互斥链一旦回来，上面那条会静默失效
+        assert 'v-else-if="step === 3"' not in wizard
+        assert 'v-if="step === 1"' not in wizard
+
     def test_registry_flushes_the_wizard_too(self):
         source = _read(ROOT / "frontend/src/components/system/ToolRegistry.vue")
         assert 'ref="wizardRef"' in source

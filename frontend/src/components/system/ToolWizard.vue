@@ -217,7 +217,13 @@ const goToStep = (target: number) => {
     </ol>
 
     <!-- ① 粘贴请求 -->
-    <section v-if="step === 1" class="space-y-3">
+    <!-- 四步全部用 v-show 保活，不要改回 v-if/v-else 链。
+         第 3 步里的 ToolParamEditor 持有「新建态凭据绑定」的 pending：工具还没有 id，
+         绑定先记在组件内存里，等保存后由父组件 flushPending 补写。换成互斥渲染，
+         用户在第 3 步配完凭据、点「下一步」看试跑，这一步的组件就会被销毁，
+         pending 一起没了——保存时 flushPending 拿到的是空数组，凭据一条都不落库。
+         第 4 步的 ApiToolTester 挂载时不发请求（只有表单重置的 watch），常驻是安全的。 -->
+    <section v-show="step === 1" class="space-y-3">
       <div>
         <label class="block text-sm font-medium text-gray-700">粘贴一条请求</label>
         <p class="mt-0.5 text-xs text-gray-500">
@@ -279,7 +285,7 @@ const goToStep = (target: number) => {
     </section>
 
     <!-- ② 起名与描述 -->
-    <section v-else-if="step === 2" class="space-y-4">
+    <section v-show="step === 2" class="space-y-4">
       <div>
         <label class="block text-sm font-medium text-gray-700">工具名称 <span class="text-red-500">*</span></label>
         <input
@@ -316,7 +322,7 @@ const goToStep = (target: number) => {
     </section>
 
     <!-- ③ 确认参数 -->
-    <section v-else-if="step === 3" class="space-y-3">
+    <section v-show="step === 3" class="space-y-3">
       <div v-if="staleParams" class="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
         <p class="flex-1 text-xs leading-relaxed text-amber-800">
           你在第 1 步改过请求地址：这里的参数可能已过期。<b>不会自动覆盖</b>你手改过的内容。
@@ -352,7 +358,7 @@ const goToStep = (target: number) => {
     </section>
 
     <!-- ④ 试跑一次 -->
-    <section v-else class="space-y-3">
+    <section v-show="step === 4" class="space-y-3">
       <ToolSigningEditor
         v-model:enabled="toolForm.signing_enabled"
         v-model:key-id="toolForm.signing_key_id"
