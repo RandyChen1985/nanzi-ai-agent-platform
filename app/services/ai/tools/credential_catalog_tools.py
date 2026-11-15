@@ -67,7 +67,7 @@ async def _catalog_enabled() -> bool:
 
 @tool
 async def list_my_credentials(keyword: str = "", limit: int = _DEFAULT_LIMIT) -> str:
-    """列出当前用户「可见」的凭据清单（编号 / secret_key / 名称 / 备注 / 分类 / 状态）。
+    """列出当前用户「可见」的凭据清单（编号 / secret_key / 名称 / 备注 / 分类 / 状态 / 值形态）。
 
     使用规则：
     - 当用户问「我有哪些凭据」「我绑了几个邮箱账号」「有没有某个系统的 key」时调用。
@@ -79,6 +79,14 @@ async def list_my_credentials(keyword: str = "", limit: int = _DEFAULT_LIMIT) ->
     - ``remark`` 是用户自己写的备注，常能看出用途（例如「C 的邮箱账号」）。
     - ``ref`` 是本轮内的短编号，可以原样引用给用户看（例如「第 3 条」），
       但它只在本轮有效，不要跨对话使用。
+    - ``value_format`` 区分两种凭据：``text`` 是单值（一个 token、一整段 PEM），
+      ``json`` 是结构化对象。只有 ``json`` 才谈得上「取其中某个字段」；对 ``text``
+      不要建议拆字段，它只能整段使用。
+    - ``value_template`` 非空时表示结构化凭据套用了某个已知模板（如 ``smtp``），
+      字段集合由模板固定。但你**看不到具体字段名**——需要字段级配置时，请让用户
+      在凭据中心或参数设置里选，不要凭模板名猜字段。
+    - ``value_summary`` 是非敏感摘要（如 ``smtp.exmail.qq.com:465``），由平台从
+      非敏感字段拼成，可以引用给用户确认「说的是不是这台服务器 / 这个账号」。
     - 条目多时用 ``keyword`` 收窄（匹配 secret_key / 名称 / 备注 / 分类，不区分大小写），
       默认最多 20 条、上限 50 条；``truncated=true`` 表示还有未展示的条目。
     - 只看得到「你自己的凭据 + 已授权给你的系统级凭据」。未授权的系统级凭据
@@ -145,6 +153,12 @@ async def list_my_credentials(keyword: str = "", limit: int = _DEFAULT_LIMIT) ->
             "remark": (getattr(row, "remark", None) or None),
             "category": (getattr(row, "category", None) or None),
             "status": str(getattr(row, "status", "") or ""),
+            # 下面三项都是**表上已有的列**，读出来不额外解密任何值。
+            # 少了它们，模型分不清「一个 token」和「一台服务器的账号密码」，
+            # 就会给出「把 password 字段映射到这个参数」这类用不上的建议。
+            "value_format": str(getattr(row, "value_format", "text") or "text"),
+            "value_template": (getattr(row, "value_template", None) or None),
+            "value_summary": (getattr(row, "value_summary", None) or None),
         }
         if needle:
             haystack = " ".join(

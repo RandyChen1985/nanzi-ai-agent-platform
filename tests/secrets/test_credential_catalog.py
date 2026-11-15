@@ -43,7 +43,17 @@ def test_payload_never_contains_value_or_internal_ids():
     assert "owner_scope" not in SRC
     assert "owner_id" not in SRC
     # 明确返回的字段
-    for key in ("ref", "secret_key", "name", "remark", "category", "status"):
+    for key in (
+        "ref",
+        "secret_key",
+        "name",
+        "remark",
+        "category",
+        "status",
+        "value_format",
+        "value_template",
+        "value_summary",
+    ):
         assert f'"{key}"' in SRC
 
 
@@ -63,3 +73,29 @@ def test_catalog_can_be_disabled_by_platform_switch():
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+class TestValueShapeIsVisibleToTheModel:
+    """模型要分得清「一个 token」和「一台服务器的账号密码」。
+
+    缺了形态信息时，模型对单值凭据也会建议「把 password 字段映射到这个参数」——
+    用户照做只会得到一个填不出来的下拉框。
+
+    这三项都是 ``sys_secrets`` 表上已有的列，读出来不解密任何值，所以可以放心
+    放进清单出参（列表每页最多 50 条，逐条解密会把「列清单」变成重操作）。
+    """
+
+    def test_shape_fields_are_returned(self):
+        for key in ("value_format", "value_template", "value_summary"):
+            assert f'"{key}": ' in SRC, key
+
+    def test_reading_them_does_not_decrypt(self):
+        # 形态与摘要都来自表列；一旦这里出现解密调用，清单接口就会随条数线性变慢
+        assert "decrypt" not in SRC
+        assert "describe_value_fields" not in SRC
+
+    def test_docstring_tells_the_model_what_they_mean(self):
+        assert "``text`` 是单值" in SRC
+        assert "``json`` 是结构化" in SRC
+        # 模板名不等于字段清单：字段名后端没有定义，让模型别猜
+        assert "不要凭模板名猜字段" in SRC
