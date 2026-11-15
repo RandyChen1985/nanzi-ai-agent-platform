@@ -486,6 +486,11 @@ const openModal = (tool?: SysApiTool, isClone = false) => {
     }
     // 新建优先走向导；编辑已有工具走完整表单，避免用户每次都被迫从第 1 步开始。
     editorMode.value = tool && !isClone ? 'form' : 'wizard'
+    // 上一次编辑留下的「未绑定参数」必须清掉。
+    // 它只有表单分支的 ToolParamEditor 会更新，向导分支不绑定这个事件——
+    // 残留在这里的直接后果是：新建工具走完向导、试跑也过了，保存按钮仍是灰的，
+    // 而提示写着上一次那工具的参数名。
+    paramUnboundNames.value = []
     clearFormErrors()
     advancedOpen.value = false
     wizardDirty.value = false
