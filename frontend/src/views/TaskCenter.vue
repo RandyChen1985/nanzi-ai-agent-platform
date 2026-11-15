@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { taskApi, type AgentTask, type TaskLog, type TaskExecutionHistoryItem } from '../api/task'
 import { agentApi, type AIAgent } from '../api/agent'
 import Modal from '../components/Modal.vue'
@@ -20,7 +20,7 @@ import CronFieldLegend from '@/components/common/CronFieldLegend.vue'
 import { validateCronExpression } from '@/utils/cronSchedule'
 import { describeScene, inferScene } from '@/utils/cronScenes'
 import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
-import TaskCredentialWaitModal from '@/components/task/TaskCredentialWaitModal.vue'
+import TaskCredentialWaitPanel from '@/components/task/TaskCredentialWaitPanel.vue'
 import TaskFlowGuideBanner from '@/components/task/TaskFlowGuideBanner.vue'
 import TaskPromptComposer, {
   type TaskApprovalMode,
@@ -268,6 +268,7 @@ const openTaskLogsFromHistory = (item: TaskExecutionHistoryItem) => {
 
 watch(mainViewTab, (tab) => {
   if (tab === 'history') void fetchExecutionHistory(true)
+  else if (credentialRun.value) closeCredentialRun()
 })
 
 watch(
@@ -658,10 +659,51 @@ const onOptimizeToast = (message: string, type?: 'success' | 'error' | 'info') =
   showToast(message, type === 'error' ? 'error' : 'success')
 }
 const selectedTask = ref<AgentTask | null>(null)
-const credentialTask = ref<AgentTask | null>(null)
+const credentialRun = ref<{ taskId: number; taskName: string; traceId?: string } | null>(null)
+const credentialRunAnchor = ref<HTMLElement | null>(null)
+const canAuthorizeTask = (task: AgentTask) =>
+  String(task.user_id) === String(userInfo.value?.user_id || userInfo.value?.id || '')
 const taskNeedsCredential = (task: AgentTask) =>
-  task.last_status === 'awaiting_credential'
-  && String(task.user_id) === String(userInfo.value?.user_id || userInfo.value?.id || '')
+  task.last_status === 'awaiting_credential' && canAuthorizeTask(task)
+const pendingCredentialTasks = computed(() => tasks.value.filter(taskNeedsCredential))
+const credentialTraceId = (task: AgentTask): string | undefined => {
+  const traceId = task.config?.task_metrics?.last_trace_id
+  return typeof traceId === 'string' && traceId ? traceId : undefined
+}
+const credentialTaskForHistory = (item: TaskExecutionHistoryItem) =>
+  pendingCredentialTasks.value.find(task => task.id === item.task_id && credentialTraceId(task) === item.trace_id)
+
+function openCredentialRun(task: AgentTask, traceId = credentialTraceId(task)) {
+  if (!canAuthorizeTask(task)) return
+  credentialRun.value = { taskId: task.id, taskName: task.name, traceId }
+  mainViewTab.value = 'history'
+  if (!props.embedded && traceId) {
+    void router.replace({ query: {
+      ...route.query, view: 'history', credential_task_id: String(task.id), credential_trace_id: traceId,
+    } })
+  }
+  void nextTick(() => credentialRunAnchor.value?.focus())
+}
+
+function openCredentialRunFromHistory(item: TaskExecutionHistoryItem) {
+  const task = credentialTaskForHistory(item)
+  if (task) openCredentialRun(task, item.trace_id)
+}
+
+function closeCredentialRun() {
+  credentialRun.value = null
+  if (!props.embedded && route.query.credential_task_id) {
+    const query = { ...route.query }
+    delete query.credential_task_id
+    delete query.credential_trace_id
+    void router.replace({ query: { ...query, view: mainViewTab.value } })
+  }
+}
+
+function refreshCredentialRun() {
+  void fetchTasks(true)
+  void fetchExecutionHistory(true)
+}
 const logs = ref<TaskLog[]>([])
 const logsLoading = ref(false)
 const logsPage = ref(1)
@@ -1378,6 +1420,15 @@ const metricValue = (value: number | undefined) => Number(value || 0)
 
 onMounted(async () => {
   await Promise.all([fetchTasks(true), fetchAgents()])
+  const { credential_task_id: taskIdForCredential, credential_trace_id: traceIdForCredential } = route.query
+  if (!props.embedded && typeof taskIdForCredential === 'string' && typeof traceIdForCredential === 'string') {
+    const target = tasks.value.find(task => String(task.id) === taskIdForCredential && canAuthorizeTask(task))
+    if (target && traceIdForCredential) {
+      credentialRun.value = { taskId: target.id, taskName: target.name, traceId: traceIdForCredential }
+      mainViewTab.value = 'history'
+      return
+    }
+  }
   const view = props.initialView || String(route.query.view || '')
   if (view === 'history' && showHistoryTab.value) {
     mainViewTab.value = 'history'
@@ -1391,8 +1442,6 @@ onMounted(async () => {
 </script>
 
 <template>
-  <TaskCredentialWaitModal v-if="credentialTask" :task-id="credentialTask.id" :task-name="credentialTask.name"
-    @close="credentialTask = null" @updated="fetchTasks(true)" />
   <div class="space-y-5">
     <!-- Header：标题一行；窄屏搜索通栏，状态+刷新并排，新建通栏 -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1583,6 +1632,18 @@ onMounted(async () => {
 
     <!-- 管理员全局执行记录 -->
     <div v-if="mainViewTab === 'history' && showHistoryTab" class="space-y-4">
+      <div v-if="credentialRun" ref="credentialRunAnchor" tabindex="-1" class="max-w-2xl rounded-xl focus-visible:outline-primary">
+        <TaskCredentialWaitPanel :task-id="credentialRun.taskId" :task-name="credentialRun.taskName"
+          :trace-id="credentialRun.traceId" @close="closeCredentialRun" @updated="refreshCredentialRun" />
+      </div>
+      <div v-else-if="pendingCredentialTasks.length" class="space-y-2">
+        <button v-for="task in pendingCredentialTasks" :key="task.id" type="button"
+          class="flex min-h-11 w-full max-w-2xl flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-left text-sm text-amber-950 hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-primary"
+          @click="openCredentialRun(task)">
+          <span class="min-w-0 break-words font-medium">{{ task.name }}</span>
+          <span>待选择凭据</span>
+        </button>
+      </div>
       <div class="flex flex-col gap-2.5 rounded-xl border border-gray-200 bg-white p-3 shadow-sm lg:flex-row lg:flex-wrap lg:items-center">
         <div class="relative min-w-0 flex-1 lg:max-w-xs">
           <input
@@ -1679,7 +1740,10 @@ onMounted(async () => {
                 <td class="px-4 py-3 text-xs text-gray-600">{{ item.creator_name || item.username || '—' }}</td>
                 <td class="px-4 py-3 text-xs text-gray-600 truncate" :title="item.agent_name || ''">{{ item.agent_name || item.agent_id || '—' }}</td>
                 <td class="px-4 py-3">
-                  <span class="rounded-full px-2 py-0.5 text-[9px] font-black" :class="logStatusMeta(item.status).class">
+                  <span v-if="credentialTaskForHistory(item)" class="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black text-amber-700">
+                    待选择凭据
+                  </span>
+                  <span v-else class="rounded-full px-2 py-0.5 text-[9px] font-black" :class="logStatusMeta(item.status).class">
                     {{ logStatusMeta(item.status).label }}
                   </span>
                 </td>
@@ -1707,6 +1771,8 @@ onMounted(async () => {
                 </td>
                 <td class="px-4 py-3">
                   <div class="flex flex-col gap-1">
+                    <button v-if="credentialTaskForHistory(item)" type="button"
+                      class="text-xs font-semibold text-primary hover:underline" @click="openCredentialRunFromHistory(item)">选择凭据</button>
                     <button type="button" class="text-[10px] font-bold text-primary hover:underline" @click="viewTrace(item.trace_id)">Trace</button>
                     <button
                       type="button"
@@ -1896,8 +1962,8 @@ onMounted(async () => {
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
             </button>
           </div>
-          <button v-if="taskNeedsCredential(task)" type="button" class="rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800" @click="credentialTask = task">
-            凭据授权
+          <button v-if="taskNeedsCredential(task)" type="button" class="rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800" @click="openCredentialRun(task)">
+            待选择凭据
           </button>
           <button 
             v-else-if="canManageTask(task)"
@@ -2005,8 +2071,8 @@ onMounted(async () => {
                 <button v-if="canManageTask(task)" class="rounded-lg p-1.5 text-gray-300 hover:bg-red-50 hover:text-red-500" title="删除订阅" @click="deleteTask(task)"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
               </div>
               <div v-else class="flex items-center justify-end space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                <button v-if="taskNeedsCredential(task)" type="button" class="rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800" @click="credentialTask = task">
-                  凭据授权
+                <button v-if="taskNeedsCredential(task)" type="button" class="rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800" @click="openCredentialRun(task)">
+                  待选择凭据
                 </button>
                 <button v-else-if="canManageTask(task)" @click="runTaskNow(task)" :disabled="runningTaskIds.has(task.id)" class="p-1.5 text-primary hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="立即执行">
                   <svg v-if="!runningTaskIds.has(task.id)" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>

@@ -22,7 +22,7 @@ const emit = defineEmits<{
 }>();
 
 const expanded = ref(props.payload.status === "pending");
-const detailsExpanded = ref(props.payload.status === "pending");
+const detailsExpanded = ref(props.payload.status === "pending" && !props.payload.credential_selection_required);
 const copied = ref(false);
 const copyFailed = ref(false);
 const selectedCredential = ref("");
@@ -125,7 +125,7 @@ const statusLabel = computed(() => {
   if (isExpired.value) return "已过期";
   if (props.payload.discarded) return "已放弃";
   const labels: Record<PendingToolPermission["status"], string> = {
-    pending: "待确认",
+    pending: props.payload.credential_selection_required ? "待选择凭据" : "待确认",
     approved: "已允许",
     approved_session: "已允许（本会话）",
     rejected: "已拒绝",
@@ -234,7 +234,7 @@ watch(
   () => {
     selectedCredential.value = "";
     expanded.value = props.payload.status === "pending";
-    detailsExpanded.value = props.payload.status === "pending";
+    detailsExpanded.value = props.payload.status === "pending" && !props.payload.credential_selection_required;
   },
 );
 
@@ -246,7 +246,7 @@ watch(
       detailsExpanded.value = false;
     } else if (nextStatus === "pending" && previousStatus !== "pending") {
       expanded.value = true;
-      detailsExpanded.value = true;
+      detailsExpanded.value = !props.payload.credential_selection_required;
     }
   },
 );
@@ -505,7 +505,7 @@ watch(
               class="inline-flex min-h-[2.75rem] w-full items-center justify-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[2rem] sm:w-auto"
               :class="display.riskTone === 'low' ? 'bg-sky-600 hover:bg-sky-700 focus-visible:ring-sky-600' : 'bg-amber-600 hover:bg-amber-700 focus-visible:ring-amber-600'"
               :disabled="locked || !credentialReady"
-              aria-label="仅本次允许执行工具调用"
+              :aria-label="payload.credential_selection_required ? '授权并继续' : '仅本次允许执行工具调用'"
               @click="submit(true)"
             >
               <svg v-if="!isSubmitting" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">

@@ -291,7 +291,10 @@ async def stream_pending_tool_interrupt(
         )
         credential_ref = None
         if kind == "permission":
-            for container in (tools, getattr(runner, "tools", None)):
+            # 权限中间件把按调用编号记录的原因保存在实际挂载的工具上。
+            get_tool = getattr(getattr(agent, "toolkit", None), "get_tool", None)
+            mounted_tool = await get_tool(tool_name) if callable(get_tool) else None
+            for container in ((mounted_tool,), tools, getattr(runner, "tools", None)):
                 values = container.values() if isinstance(container, dict) else (container or [])
                 target = next((item for item in values if getattr(item, "name", None) == tool_name), None)
                 selection_reason = getattr(target, "credential_selection_reasons", {}).pop(tool_id, None)

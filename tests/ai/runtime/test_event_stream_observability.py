@@ -281,6 +281,77 @@ async def test_permission_interrupt_carries_absolute_expiry():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("task_id", [None, 41], ids=["chat", "scheduled-task"])
+async def test_mounted_credential_tool_emits_selection_request(monkeypatch, task_id):
+    from unittest.mock import AsyncMock
+
+    from app.core.context import AgentContext, agent_context
+    from app.services.ai.runtime.agentscope import tools as runtime_tools
+    from app.services.ai.runtime.agentscope.confirmations import pending_agentscope_confirmations
+    from app.services.ai.runtime.agentscope.middleware import ToolPermissionMiddleware
+    from app.services.secrets import mcp_profiles
+    from app.services.secrets.credential_approval import MCP_CREDENTIAL_REF, pending_ref
+    from app.services.secrets.task_credential_wait import wait_event
+
+    monkeypatch.setattr(runtime_tools, "_enforce_tool_forbidden", AsyncMock(return_value=None))
+    monkeypatch.setattr(runtime_tools, "_enforce_command_blacklist", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        mcp_profiles, "credential_selection_reason",
+        AsyncMock(return_value="credential_selection_required"),
+    )
+    ref = {
+        "tool_id": "mail-tool", "profile_id": "mail-profile", "revision": 3,
+        "selection_mode": "infer",
+    }
+    spec = runtime_tools.RuntimeToolSpec(
+        name="mcp_fixture_mail", description="Read a mailbox",
+        parameters_schema={"type": "object", "properties": {"limit": {"type": "integer"}}},
+        source_type="mcp", callable=AsyncMock(), metadata={MCP_CREDENTIAL_REF: ref},
+    )
+    toolkit = runtime_tools.build_toolkit([spec], approval_mode="allow", user_id=101)
+    agent = SimpleNamespace(state={}, toolkit=toolkit)
+    tool = await toolkit.get_tool(spec.name)
+    call = SimpleNamespace(id="call-mail", name=spec.name, input='{"limit": 1}')
+    runner = SimpleNamespace(
+        trace_id="trace-mail", conversation_id="conversation-mail",
+        _runtime_user_id=lambda: "101", _runtime_agent_name=lambda: "fixture",
+        _runner_context=lambda **_: {},
+    )
+
+    async def check_permissions(**kwargs):
+        return await tool.check_permissions(kwargs["tool_input"], None)
+
+    token = agent_context.set(AgentContext(
+        agent_id="fixture", agent_name="fixture", scheduled_task_id=task_id,
+    ))
+    try:
+        decision = await ToolPermissionMiddleware().on_check_permission(
+            agent, {"tool": tool, "tool_call": call, "tool_input": {"limit": 1}}, check_permissions,
+        )
+        assert decision.behavior.value == "ask"
+        chunks = [chunk async for chunk in map_standard_agentscope_event(
+            SimpleNamespace(type="REQUIRE_USER_CONFIRM", tool_calls=[call], reply_id="reply-mail"),
+            state=new_native_stream_state(), agent=agent, runner=runner, tools=[spec],
+            native_model=object(),
+        )]
+    finally:
+        agent_context.reset(token)
+
+    assert len(chunks) == 1
+    event = chunks[0]
+    request_id = event["permission_request_id"]
+    pending = await pending_agentscope_confirmations.pop_async(request_id, user_id=101)
+    assert event["credential_selection_required"] is True
+    assert event["supports_session_grant"] is False
+    expected_ref = {**ref, "selection_reason": "credential_selection_required"}
+    if task_id is not None:
+        expected_ref["scheduled_task_id"] = task_id
+        assert wait_event(event) == {"request_id": request_id, "expires_at": event["expires_at"]}
+    assert pending_ref(pending) == expected_ref
+    assert not tool.credential_selection_reasons
+
+
+@pytest.mark.asyncio
 async def test_map_standard_agentscope_event_interrupts_on_external_execution():
     state = new_native_stream_state()
 

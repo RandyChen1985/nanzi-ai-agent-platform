@@ -237,9 +237,10 @@ async function pickerCase(which) {
     requestId: 'request-1', modelValue: 'existing-1', 'onUpdate:modelValue': id => selection.push(id),
   })
   await settle()
-  const select = find(mounted.root, n => n.tag === 'select')
-  assert.ok(!select.props.disabled, '已有凭据选择不受创建开关影响')
-  await event(select, 'change', { target: { value: 'existing-1' } })
+  const choices = find(mounted.root, n => n.tag === 'fieldset')
+  assert.ok(!choices.props.disabled, '已有凭据选择不受创建开关影响')
+  const option = find(choices, n => n.tag === 'input' && n.props.value === 'existing-1')
+  await event(option, 'change')
   assert.equal(selection.at(-1), 'existing-1')
   if (disabled) {
     const create = button(mounted.root, '新建凭据')

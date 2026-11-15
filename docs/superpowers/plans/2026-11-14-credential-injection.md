@@ -137,7 +137,7 @@ MySQL 判定依据：[collation coercibility](https://dev.mysql.com/doc/refman/8
 
 ### 任务 D：任务等待状态与事务边界（第二批）
 
-**文件：** `app/services/ai/scheduler_service.py`、`app/services/task_center_service.py`、`app/services/secrets/task_credential_wait.py`、`app/api/v1/endpoints/tasks.py`、`frontend/src/components/task/TaskCredentialWaitModal.vue`；测试 `tests/services/test_scheduler_service.py`，新增 `tests/integration/test_task_credential_wait_concurrency.py`。
+**文件：** `app/services/ai/scheduler_service.py`、`app/services/task_center_service.py`、`app/services/secrets/task_credential_wait.py`、`app/api/v1/endpoints/tasks.py`、`frontend/src/components/task/TaskCredentialWaitPanel.vue`；测试 `tests/services/test_scheduler_service.py`，新增 `tests/integration/test_task_credential_wait_concurrency.py`。
 
 **接口：** 维持现有恢复 API；列表和详情复用同一有效状态投影，继续按 request_id、运行/trace、定义摘要与租约校验。不得单独恢复 `task.config = config`。
 
@@ -514,7 +514,7 @@ git diff --check
 | 类型、版本、payload、密钥配置 | `app/models/credential_type.py`；`app/services/secrets/credential_schema.py`、`structured_payload.py`、`payload_crypto.py`、`payload_config.py`、`type_catalog.py`；类型 API 与 CredentialTypeEditor/Preview | `test_structured_payload.py`、`test_structured_secret_lifecycle.py`、`test_structured_credential_settings.py`、前端 schema draft |
 | 模型投影和服务端映射 | `app/services/secrets/mcp_profiles.py`；`app/services/ai/tools/mcp_factory.py`、`mcp_client.py`；McpCredentialProfileForm | `test_mcp_structured_profile.py`、`test_credential_model_boundary.py`、`test_credential_outbound_flow.py` |
 | 元数据候选与统计 | `app/services/ai/tools/mcp_credential_candidates.py`、`credential_catalog_tools.py`；`app/services/secrets/tool_relations.py` | `test_mcp_credential_candidates.py`、`test_credential_inventory.py`、`test_credential_catalog.py`、`test_secret_tool_relations.py` |
-| 原生表单、恢复、任务复用 | `credential_approval.py`、`task_credential_wait.py`；AgentScope tools/resume/event_stream；scheduler/task_center_service；CredentialApprovalPicker、TaskCredentialWaitModal | `test_task_credential_wait.py`、`test_credential_operational_boundary.py`、恢复快照生命周期 |
+| 原生表单、恢复、任务复用 | `credential_approval.py`、`task_credential_wait.py`；AgentScope tools/resume/event_stream；scheduler/task_center_service；CredentialApprovalPicker、TaskCredentialWaitPanel | `test_task_credential_wait.py`、`test_credential_operational_boundary.py`、恢复快照生命周期 |
 | JSONPath 与记录 | `mcp_jsonpath.py`、`mcp_model_result.py`、`mcp_result_storage.py`；McpModelResultFieldsForm、McpToolTester；MCP 参数设置 API | `test_mcp_jsonpath_semantics.py`、`test_mcp_health_status_result.py`、`test_mcp_result_policy_save.py`、`test_mcp_projected_result_storage.py`、前端结果保存 |
 | 脚本字段、隔离执行、输出 | `field_binding.py`、`injection.py`、`center.py`；`credential_script_execution.py`、`credential_script_providers.py`、`credential_script_worker.py`、`script_tool_runtime.py`；ScriptToolWizard | `test_script_env_binding.py`、`test_script_credential_picker.py`、`test_credential_script_execution.py`、`test_credential_script_providers.py`、前端 script env |
 | 会话挂载与兼容 | `session_mcp_tools.py`、运行时工具清单/别名、McpCascadeMenu、EmbedChat | 会话 MCP、清单一致性、挂载反馈、旧 cN 选择与脚本运行器回归 |
@@ -619,3 +619,10 @@ python -m pytest --noconftest -q --tb=short \
 - 对照原范围父节点，新增交付材料恰为 MySQL SQL 1 份、PostgreSQL SQL 1 份、spec 1 份、plan 1 份、原型 1 份及其索引更新。
 - 对照归档标签，app/frontend/依赖/环境模板中仅 `app/main.py` 的缺表迁移编号文案变化；凭据与工具运行逻辑未变化。
 - 本轮查询的远端 main/dev 分支均为 `2920e9ad`，与本地共享上述父节点但另有 18 个独立提交。本次未合并远端改动、未推送或强推，后续集成须保留这些独立开发成果。
+
+## 2026-11-15 凭据补选入口与内嵌卡片
+
+- [x] 通过实际 Toolkit 和权限中间件构造挂起事件，分别复现对话及定时任务丢失补选标记。`event_stream.py` 从实际挂载的工具按调用编号读取原因，候选查询和任务待选记录使用同一确认快照。
+- [x] 共用 `CredentialApprovalPicker` 呈现内嵌候选。定时任务从列表或执行记录中的对应运行打开 `TaskCredentialWaitPanel`，按 trace 绑定该次运行，复用既有查询和恢复接口。过期、迟到请求及后台恢复完成均在卡片内更新。
+- [x] 挂起事件回归 **23 通过**，定向前端回归 **50 通过**。系统 PostgreSQL 临时库中，从运行时挂起验证对话补选续跑、任务待选恢复及下一次运行复用引用。模型和 MCP 上游采用测试替身，临时库已清理。
+- [ ] 部署后在真实浏览器验证对话和任务两处补选入口。全项目类型检查保留 **155 条既有诊断**。
