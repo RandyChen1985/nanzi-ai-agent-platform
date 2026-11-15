@@ -15,6 +15,9 @@ import axios from '../utils/axios'
 import { useDismissible } from '../utils/dismissible'
 import { shortTime } from '../utils/date'
 import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
+import CredentialValueEditor from '../components/secrets/CredentialValueEditor.vue'
+import SecretFormatBadge from '../components/secrets/SecretFormatBadge.vue'
+import { credentialTemplateLabel } from '../utils/credentialTemplates'
 import { RESULT_LABEL } from '../utils/secretLabels'
 import {
   secretActionLabel,
@@ -36,6 +39,11 @@ interface SecretItem {
   value_masked: string
   value_preview: string | null
   readable: boolean
+  // 值形态：text 单值 / json 结构化。老记录没有这两个字段，按单值处理
+  value_format?: 'text' | 'json'
+  value_template?: string | null
+  /** 非敏感字段拼成的摘要（host · port · 用户名），凭证类也有 */
+  value_summary?: string | null
   created_at: string | null
   expires_at: string | null
   last_rotated_at: string | null
@@ -269,14 +277,16 @@ const form = ref({
   allowed_hosts: '',
   category: '',
   remark: '',
+  // 值形态与模板标识：只在「结构化」档下写库，单值档一律回落 text
+  value_format: 'text' as 'text' | 'json',
+  value_template: null as string | null,
+  value_secret_fields: [] as string[],
 })
 
-//: 凭据值默认掩码。JSON / 证书这类多行值需要看清结构，所以要能临时显形。
-const revealValue = ref(false)
-const revealRotateValue = ref(false)
+//: 值本身是否可提交（结构化时由字段校验决定，不只是「非空」）
+const valueValid = ref(false)
 
 function openCreate() {
-  revealValue.value = false
   form.value = {
     secret_key: '',
     name: '',
@@ -286,13 +296,17 @@ function openCreate() {
     allowed_hosts: '',
     category: '',
     remark: '',
+    value_format: 'text',
+    value_template: null,
+    value_secret_fields: [],
   }
+  valueValid.value = false
   createStep.value = 1
   showCreate.value = true
 }
 
 // 纯空白不算填了；但保存时用的仍是原值，不 trim —— JSON / PEM 的缩进要保住
-const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && form.value.value.trim())
+const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && valueValid.value)
 
 function nextCreateStep() {
   if (createStep.value === 1 && !canLeaveStep1()) {
@@ -315,6 +329,8 @@ function toggleScene(key: string) {
 async function submitCreate() {
   if (!form.value.secret_key.trim()) return showToast('请填写凭据标识', 'err')
   if (!form.value.value.trim()) return showToast('请填写凭据值', 'err')
+  // 「下一步」已经拦过一次，但提交是唯一的写入口，不能只靠上一步的按钮状态
+  if (!valueValid.value) return showToast('凭据值还没填完整，回到第 1 步检查标红的字段', 'err')
   createBusy.value = true
   try {
     await axios.post('/api/portal/secrets', {
@@ -329,6 +345,11 @@ async function submitCreate() {
         .filter(Boolean),
       category: form.value.category.trim() || null,
       remark: form.value.remark.trim() || null,
+      // 单值档不写模板：后端会忽略，但这里先清掉，避免库里留下误导性的标识
+      value_format: form.value.value_format,
+      value_template: form.value.value_format === 'json' ? form.value.value_template : null,
+      value_secret_fields:
+        form.value.value_format === 'json' ? form.value.value_secret_fields : [],
     })
     showCreate.value = false
     showToast('已创建。值已加密保存，之后任何人（包括管理员）都读不回来')
@@ -344,20 +365,31 @@ async function submitCreate() {
 const rotateTarget = ref<SecretItem | null>(null)
 const rotateValue = ref('')
 const rotateBusy = ref(false)
+const rotateFormat = ref<'text' | 'json'>('text')
+const rotateTemplate = ref<string | null>(null)
+const rotateSecretFields = ref<string[]>([])
+const rotateValid = ref(false)
 
 function openRotate(item: SecretItem) {
   rotateTarget.value = item
   rotateValue.value = ''
-  revealRotateValue.value = false
+  rotateFormat.value = item.value_format === 'json' ? 'json' : 'text'
+  rotateTemplate.value = item.value_template || null
+  rotateSecretFields.value = []
+  rotateValid.value = false
 }
 
 async function submitRotate() {
-  if (!rotateTarget.value || !rotateValue.value) return
+  if (!rotateTarget.value || !rotateValid.value) return
   rotateBusy.value = true
   try {
     await axios.post(`/api/portal/secrets/${rotateTarget.value.id}/rotate`, {
       value: rotateValue.value,
       overlap_days: 7,
+      value_format: rotateFormat.value,
+      // 沿用原模板：结构化凭据换成单值等于把结构丢了，摘要也会跟着失效
+      value_template: rotateFormat.value === 'json' ? rotateTemplate.value : null,
+      value_secret_fields: rotateFormat.value === 'json' ? rotateSecretFields.value : [],
     })
     rotateTarget.value = null
     rotateValue.value = ''
@@ -894,13 +926,15 @@ onMounted(load)
               :class="item.secret_type === 'variable' ? 'bg-sky-100 text-sky-700' : 'bg-violet-100 text-violet-700'"
             >{{ item.secret_type === 'variable' ? '变' : '凭' }}</span>
             <div class="min-w-0">
-              <p class="truncate text-xs font-medium text-gray-800">
-                {{ item.name }}
+              <div class="flex min-w-0 items-center gap-1">
+                <p class="truncate text-xs font-medium text-gray-800">{{ item.name }}</p>
                 <span
                   v-if="item.owner_scope === 'system'"
-                  class="ml-1 rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-normal text-emerald-700"
+                  class="shrink-0 rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-normal text-emerald-700"
                 >系统</span>
-              </p>
+                <!-- 形态徽标：扫一眼就能分清「一个 token」和「一份配置」 -->
+                <SecretFormatBadge :format="item.value_format" :template="item.value_template" />
+              </div>
               <p class="truncate text-[11px] text-gray-400">
                 <code class="font-mono">{{ item.secret_key }}</code> · {{ categoryOf(item) }}
               </p>
@@ -961,6 +995,23 @@ onMounted(load)
                 class="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-gray-200 hover:bg-white/20"
                 @click="openReveal(selected)"
               >查看</button>
+            </div>
+            <div
+              v-if="selected.value_format === 'json'"
+              class="mt-1.5 rounded-md border border-indigo-100 bg-indigo-50/60 px-2 py-1.5"
+            >
+              <p class="text-[10px] font-medium text-indigo-700">
+                结构化 · {{ credentialTemplateLabel(selected.value_template) }}
+              </p>
+              <p
+                v-if="selected.secret_type !== 'variable'"
+                class="mt-0.5 break-all font-mono text-[10.5px] leading-relaxed text-indigo-900"
+              >
+                {{ selected.value_summary || '（没有可展示的非敏感字段）' }}
+              </p>
+              <p class="mt-0.5 text-[10px] text-indigo-500">
+                摘要由后端从已加密的 JSON 里挑非敏感字段生成，敏感字段不参与。
+              </p>
             </div>
             <p class="mt-1 text-[10px] leading-relaxed text-gray-400">
               <template v-if="selected.secret_type === 'variable'">
@@ -1506,7 +1557,10 @@ onMounted(load)
         class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
         @click.self="showCreate = false"
       >
-        <div class="flex max-h-[calc(100vh-120px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div
+          class="flex max-h-[calc(100vh-120px)] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+          :class="createStep === 1 && form.value_format === 'json' ? 'max-w-3xl' : 'max-w-xl'"
+        >
           <div class="border-b border-gray-100 px-5 py-3">
             <h3 class="flex items-center gap-1.5 text-base font-semibold text-gray-900">
               <span class="text-blue-600">+</span> 新建凭据
@@ -1597,30 +1651,14 @@ onMounted(load)
                 <span class="mt-1 block text-[11px] text-gray-500">左侧筛选栏就是按这个分组的，留空归到「未分类」。</span>
               </label>
 
-              <label class="block">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs font-medium text-gray-700">凭据值 <span class="text-rose-500">*</span></span>
-                  <button
-                    type="button"
-                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-                    @click="revealValue = !revealValue"
-                  >
-                    {{ revealValue ? '隐藏' : '显示' }}
-                  </button>
-                </div>
-                <textarea
-                  v-model="form.value"
-                  :rows="4"
-                  spellcheck="false"
-                  autocomplete="off"
-                  placeholder="短 token 直接粘贴；JSON / PEM 这类多行值可以整段贴进来"
-                  class="mt-1 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm leading-relaxed focus:border-blue-500 focus:outline-none"
-                  :class="{ 'masked-value': !revealValue }"
-                ></textarea>
-                <span class="mt-1 block text-[11px] text-amber-600">
-                  提交后不可再查看，只能轮换或停用。多行内容会原样保存，不会被 trim。
-                </span>
-              </label>
+              <CredentialValueEditor
+                v-model="form.value"
+                v-model:format="form.value_format"
+                v-model:template="form.value_template"
+                v-model:secretFields="form.value_secret_fields"
+                v-model:valid="valueValid"
+                :secret-type="form.secret_type"
+              />
 
               <label class="block">
                 <span class="text-xs font-medium text-gray-700">备注</span>
@@ -1774,33 +1812,39 @@ onMounted(load)
             class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
             @click.self="rotateTarget = null"
           >
-            <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <div
+              class="max-h-[calc(100vh-120px)] w-full overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl"
+              :class="rotateFormat === 'json' ? 'max-w-2xl' : 'max-w-md'"
+            >
               <h3 class="text-base font-semibold text-gray-900">轮换凭据值</h3>
               <p class="mt-1 text-xs text-gray-500">
                 <code>{{ rotateTarget.secret_key }}</code> 的新值。旧值会保留 7 天，正在运行的任务不会中断。
               </p>
-              <div class="mt-3 flex items-center justify-end">
-                <button
-                  type="button"
-                  class="rounded px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-                  @click="revealRotateValue = !revealRotateValue"
-                >{{ revealRotateValue ? '隐藏' : '显示' }}</button>
+              <p
+                v-if="rotateTarget.value_format === 'json'"
+                class="mt-1 text-[11px] text-blue-700"
+              >
+                这条是结构化凭据（{{ credentialTemplateLabel(rotateTarget.value_template) }}），
+                默认沿用同一套模板。切回单值会让 `${secret:标识.字段}` 引用全部失效，
+                请确认没有别处在按字段取用。
+              </p>
+              <div class="mt-3">
+                <CredentialValueEditor
+                  v-model="rotateValue"
+                  v-model:format="rotateFormat"
+                  v-model:template="rotateTemplate"
+                  v-model:secretFields="rotateSecretFields"
+                  v-model:valid="rotateValid"
+                  :secret-type="rotateTarget.secret_type"
+                />
               </div>
-              <textarea
-                v-model="rotateValue"
-                :rows="3"
-                spellcheck="false"
-                autocomplete="off"
-                class="mt-1 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm leading-relaxed focus:border-blue-500 focus:outline-none"
-                :class="{ 'masked-value': !revealRotateValue }"
-              ></textarea>
               <div class="mt-4 flex justify-end gap-2">
                 <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100" @click="rotateTarget = null">
                   取消
                 </button>
                 <button
                   type="button"
-                  :disabled="rotateBusy || !rotateValue.trim()"
+                  :disabled="rotateBusy || !rotateValid"
                   class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
                   @click="submitRotate"
                 >

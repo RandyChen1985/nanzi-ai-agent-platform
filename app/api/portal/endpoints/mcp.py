@@ -19,6 +19,7 @@ from app.core.dependencies import (
 )
 from app.models.mcp import McpServer, McpToolCache, McpOutboundAuditLog
 from app.models.agent import AIAgent, AIAgentVersion
+from app.services.ai.tools.tool_credentials import unresolved_credential_headers
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession, McpSyncGuardError
 from app.services.ai.tools.mcp_factory import McpToolFactory
 from app.services.ai.tools.tool_compat import resolve_tool_invocation_result
@@ -622,6 +623,20 @@ async def verify_mcp_server(
     saved_server = await _load_verify_saved_server(db, data, user)
     auth_headers = _build_verify_auth_headers(saved_server, data)
     auth_headers.update(_build_verify_user_assertion_headers(saved_server, data, user))
+
+    pending_refs = unresolved_credential_headers(auth_headers)
+    if pending_refs:
+        # 测试台是「连一下就看看」，最容易手写 `${secret:...}` 试字段名。但这条链路
+        # 不做绑定注入，字面量会被原样发给对方服务器——所以先在本地拦下说清楚。
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "这些请求头里的凭据还没有被解析："
+                + "、".join(pending_refs)
+                + "。连通性测试不解析凭据绑定：要么把值改成真实值再测，"
+                "要么先在服务里绑定凭据并保存，然后用真实调用验证。"
+            ),
+        )
 
     temp_id = f"verify_{uuid.uuid4().hex[:8]}"
     McpClientService._sessions[temp_id] = McpSseSession(temp_id, data.sse_url, auth_headers)

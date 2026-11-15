@@ -15,6 +15,10 @@ from mcp.client.streamable_http import streamable_http_client
 from app.core.orm import AsyncSessionLocal
 from app.models.mcp import McpServer, McpToolCache
 from app.services.mcp.mcp_auth_policy import build_mcp_headers, resolve_mcp_auth_headers
+from app.services.ai.tools.tool_credentials import (
+    unbound_reason,
+    unresolved_credential_headers,
+)
 from app.services.secrets.injection import apply_mcp_bindings
 from app.services.secrets.redact import redact_value
 from app.services.mcp.outbound_audit import record_outbound_audit_log
@@ -891,6 +895,18 @@ class McpClientService:
                 # 账号，实际用的是管理员的——权限边界和审计都错位了。
                 raise McpCredentialDeniedError(
                     str(getattr(server, "server_name", "") or server_id), mcp_denials
+                )
+            pending_refs = unresolved_credential_headers(auth_headers)
+            if pending_refs:
+                # 兜底：注入侧没报拒绝、但值里仍留着字面量占位符。带上它去连外部
+                # 服务，等于把 `${secret:...}` 原样发出去。
+                raise McpCredentialDeniedError(
+                    str(getattr(server, "server_name", "") or server_id),
+                    {
+                        f"header:{name}": unbound_reason(auth_headers.get(name))
+                        or "reference_unbound"
+                        for name in pending_refs
+                    },
                 )
             session_key = server_id
             if signed_user_enabled:

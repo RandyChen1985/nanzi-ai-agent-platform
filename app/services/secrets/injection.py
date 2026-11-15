@@ -31,8 +31,16 @@ from app.services.secrets.policy import (
     resolve_api_tool_slot,
 )
 from app.services.secrets.redact import register_injected
+from app.services.secrets.references import (
+    ReferenceError,
+    has_secret_reference,
+    render_references,
+)
 from app.services.secrets.resolver import secret_resolver
-from app.services.ai.tools.tool_credentials import CREDENTIAL_PLACEHOLDER_PREFIX
+from app.services.ai.tools.tool_credentials import (
+    CREDENTIAL_PLACEHOLDER_PREFIX,
+    unbound_reason,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +62,16 @@ DENIAL_REASONS = {
     # 规则没匹配上：这不是「没绑」，也不是「凭据坏了」，而是「按这次的值找不到
     # 对应的那条」——文案要说清是哪一步，否则用户只会去翻凭据状态。
     "rule_miss": "匹配规则没有找到对应凭据",
+    # 引用语法（${secret:key.field}）的三类失败。刻意不复用「凭据没填」：
+    # 用户看到「凭据没填」只会去绑一次，而真正要改的是引用里的 key 或字段名。
+    "reference_mismatch": "引用里的凭据与这个槽位绑定的不是同一条",
+    "reference_field_missing": "引用指向的字段在凭据里不存在",
+    "reference_not_json": "凭据值是单值，不能按字段取用",
+    "reference_bad_syntax": "引用语法写错了",
+    # 走到这里说明「这个头根本没有绑定」：值里写着引用，却没有任何槽位来解析它。
+    # 和上面三类不同——那三类是绑了但取不到，这两条是压根没绑。
+    "reference_unbound": "这个请求头里的凭据引用没有绑定",
+    "credential_unbound": "这个请求头里的凭据占位符没有绑定",
 }
 
 
@@ -70,6 +88,14 @@ DENIAL_HINTS = {
         "请检查这条参数的匹配规则：这次入参的值要和某条凭据的 key 一致；"
         "也可以在规则里把「挑不到时」改成回退固定凭据"
     ),
+    "reference_mismatch": (
+        "引用里写的是别的凭据标识：先把这个槽位绑到引用的那条，或把引用改成已绑定凭据的标识"
+    ),
+    "reference_field_missing": "把引用里的字段名改成凭据里真实存在的键（可以在凭据详情的 JSON 预览里核对）",
+    "reference_not_json": "这条凭据是单值（token / PEM），不能写 .字段；要么去掉引用里的字段，要么改存成结构化凭据",
+    "reference_bad_syntax": "引用形如 ${secret:凭据标识.字段名}，字段名只能是字母数字下划线连字符或数组下标",
+    "reference_unbound": "给这个请求头的槽位绑一条凭据（绑定后引用才会被解析），或把值里的 ${secret:...} 删掉",
+    "credential_unbound": "给这个请求头的槽位绑一条凭据，或把 ${CREDENTIAL:...} 占位符删掉",
 }
 
 
@@ -84,6 +110,34 @@ def denial_hint(reason: str | None) -> str:
     if not reason:
         return "请先到凭据中心绑定一条凭据"
     return DENIAL_HINTS.get(reason, "")
+
+
+def _flag_unresolved_references(
+    headers: Mapping[str, Any], denials: dict[str, str] | None
+) -> None:
+    """替换完还留着字面量占位符的头，记一条拒绝。
+
+    「没绑定」对**没写占位符**的头是常态（绝大多数 Header 本来就不绑凭据），
+    所以 ``_record`` 才刻意忽略 ``denied_by_binding``。但**值里写着** ``${secret:...}``
+    或 ``${CREDENTIAL:...}`` 就不一样了：那是用户明确要求注入，却没配绑定或者
+    绑错了。这时绝不能把它当普通字符串发给外部服务——对方要么 401，要么把这个
+    字面量存进自己的日志，而用户完全看不出问题出在自己漏绑了一条凭据。
+    """
+    if denials is None:
+        return
+    # denials 里已有的键来自**绑定槽位**（``header:authorization``），这里的键来自
+    # **配置里的 Header 名**（``Authorization``）。大小写不一致时 setdefault 拦不住，
+    # 会同时冒出「凭据已停用」和「没有绑定」两条互相矛盾的拒绝原因。
+    seen = {str(key).lower() for key in denials}
+    for raw_name, value in (headers or {}).items():
+        reason = unbound_reason(value)
+        if not reason:
+            continue
+        slot_key = f"header:{raw_name}"
+        if slot_key.lower() in seen:
+            continue
+        denials[slot_key] = reason
+        seen.add(slot_key.lower())
 
 
 def _record(denials: dict[str, str] | None, slot: str, reason: str | None) -> None:
@@ -109,8 +163,51 @@ def _looks_unfilled(value: Any) -> bool:
         return True
     if text.startswith(CREDENTIAL_PLACEHOLDER_PREFIX):
         return True
+    # ${secret:key.field} 是「指向某条凭据的字段」，同样属于待填。
+    # 注意必须整段包含判断：`Bearer ${secret:...}` 这类前缀拼接也要识别出来，
+    # 否则这格会被当成「用户手填的值」原样发出去。
+    if has_secret_reference(text):
+        return True
     # 全是掩码字符（前端回显的脱敏值）
     return bool(text) and set(text) <= {"*", "•"}
+
+
+def _render_reference(
+    original: Any,
+    plain: str,
+    *,
+    secret_key: str | None,
+    slot: str,
+    denials: dict[str, str] | None,
+) -> str | None:
+    """把槽位原值里的 ``${secret:key.field}`` 换成取值结果。
+
+    返回 ``None`` 表示这个槽位**不该注入**：调用方保留原值不动，交给「凭据未填」
+    的既有报错路径把问题说出来。绝不退回整段明文——把含所有密码的 JSON 塞进
+    ``Authorization`` 头，比直接失败危险得多。
+    """
+    if not has_secret_reference(original):
+        return plain
+    picked_values: list[str] = []
+    try:
+        rendered = render_references(
+            str(original),
+            known_key=secret_key or "",
+            plaintext=plain,
+            collect=picked_values,
+        )
+    except ReferenceError as exc:
+        logger.warning(
+            "[SecretInject] %s 的引用解析失败（%s）: %s", slot, exc.kind, exc.detail or "-"
+        )
+        _record(denials, slot, exc.kind)
+        return None
+    # 三样都进脱敏池：整段明文、取出的单个字段值、带前缀的渲染结果。
+    # 只登记整段是不够的——远端回显的通常是「invalid token: <字段值>」。
+    for value in picked_values:
+        register_injected(value)
+    register_injected(rendered)
+    return rendered
 
 
 def host_of(url: str | None) -> str | None:
@@ -331,7 +428,16 @@ async def apply_api_tool_bindings(
         if result.ok and result.value is not None:
             plain = result.value.reveal()
             register_injected(plain)
-            resolved[name] = plain
+            rendered = _render_reference(
+                resolved.get(name),
+                plain,
+                secret_key=result.secret_key,
+                slot=f"header:{name}",
+                denials=denials,
+            )
+            if rendered is None:
+                continue
+            resolved[name] = rendered
             injected += 1
         else:
             # 「没有绑定」是常态，不必刷日志；其它拒绝原因值得记一笔，
@@ -441,6 +547,8 @@ async def apply_api_tool_param_bindings(
         if result.ok and result.value is not None:
             plain = result.value.reveal()
             register_injected(plain)
+            # 参数级注入是整值替换：值是模型给的业务参数（不是可编辑的 header 文本），
+            # 没有「引用占位符」可渲染，因此不走 _render_reference。
             resolved[name] = plain
             injected += 1
             if preferred.get(name) and result.secret_id == preferred.get(name):
@@ -460,6 +568,17 @@ async def apply_api_tool_param_bindings(
             _record(denials, slot, result.denial)
 
     return resolved
+
+
+def _get_case_insensitive(headers: Mapping[str, Any], name: str) -> Any:
+    """按 Header 名取值，忽略大小写。取不到返回 None。"""
+    if name in headers:
+        return headers[name]
+    lowered = name.lower()
+    for key, value in headers.items():
+        if str(key).lower() == lowered:
+            return value
+    return None
 
 
 def _set_case_insensitive(headers: dict[str, str], name: str, value: str) -> None:
@@ -503,16 +622,19 @@ async def apply_mcp_bindings(
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
+        _flag_unresolved_references(headers, denials)
         return headers
 
     server_id = str(getattr(server, "id", "") or "")
     if not server_id:
+        _flag_unresolved_references(headers, denials)
         return headers
 
     slots = await list_bound_slots(
         CONSUMER_MCP, server_id, prefix="header:", user_id=user_id
     )
     if not slots:
+        _flag_unresolved_references(headers, denials)
         return headers
 
     # 回传给调用方：这个服务对这个用户**有**绑定，出站连接就不能跨用户复用。
@@ -557,11 +679,23 @@ async def apply_mcp_bindings(
         if result.ok and result.value is not None:
             plain = result.value.reveal()
             register_injected(plain)
-            _set_case_insensitive(resolved, name, plain)
+            rendered = _render_reference(
+                # 槽位名与配置里的 Header 名大小写可能不一致；
+                # 直接 get(name) 取不到时会误判成「没有引用」，把整段 JSON 盖上去。
+                _get_case_insensitive(resolved, name),
+                plain,
+                secret_key=result.secret_key,
+                slot=slot,
+                denials=denials,
+            )
+            if rendered is None:
+                continue
+            _set_case_insensitive(resolved, name, rendered)
             injected += 1
         else:
             _record(denials, slot, result.denial)
 
+    _flag_unresolved_references(resolved, denials)
     return resolved
 
 

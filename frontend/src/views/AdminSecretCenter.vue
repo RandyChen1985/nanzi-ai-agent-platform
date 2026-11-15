@@ -12,6 +12,9 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
+import CredentialValueEditor from '../components/secrets/CredentialValueEditor.vue'
+import SecretFormatBadge from '../components/secrets/SecretFormatBadge.vue'
+import { credentialTemplateLabel } from '../utils/credentialTemplates'
 import SecretRowActions from '../components/secrets/SecretRowActions.vue'
 import { resultLabel } from '../utils/secretLabels'
 // 变更记录的「动作」文案与配色是共享模块提供的：模板里直接用 secretActionLabel /
@@ -56,6 +59,11 @@ interface SystemSecret {
   category: string | null
   remark: string | null
   value_masked: string
+  // 值形态：text 单值 / json 结构化。老记录没有这两个字段，按单值处理
+  value_format?: 'text' | 'json'
+  value_template?: string | null
+  /** 非敏感字段拼成的摘要（host · port · 用户名），凭证类也有 */
+  value_summary?: string | null
   grants: Grant[]
   grant_count: number
   last_rotated_at: string | null
@@ -269,7 +277,14 @@ const form = ref({
   secret_type: 'credential' as 'credential' | 'variable',
   allowed_scenarios: ['mcp'] as string[],
   allowed_hosts: '',
+  // 值形态与模板标识：只在「结构化」档下写库，单值档一律回落 text
+  value_format: 'text' as 'text' | 'json',
+  value_template: null as string | null,
+  value_secret_fields: [] as string[],
 })
+
+//: 值本身是否可提交（结构化时由字段校验决定，不只是「非空」）
+const valueValid = ref(false)
 
 // ── 变更记录（管理员看全局） ──────────────────────────────────────────
 // 与「使用记录」分开：一个记「谁用了」，一个记「谁改了」。管理员最常问的后一个
@@ -444,24 +459,34 @@ const rotateOpen = ref(false)
 const rotateBusy = ref(false)
 const rotateTarget = ref<SystemSecret | null>(null)
 const rotateValue = ref('')
-const revealRotateValue = ref(false)
+const rotateFormat = ref<'text' | 'json'>('text')
+const rotateTemplate = ref<string | null>(null)
+const rotateSecretFields = ref<string[]>([])
+const rotateValid = ref(false)
 
 function openRotate(item: SystemSecret) {
   rotateTarget.value = item
   rotateValue.value = ''
-  revealRotateValue.value = false
+  rotateFormat.value = item.value_format === 'json' ? 'json' : 'text'
+  rotateTemplate.value = item.value_template || null
+  rotateSecretFields.value = []
+  rotateValid.value = false
   rotateOpen.value = true
 }
 
 async function submitRotate() {
   const target = rotateTarget.value
-  if (!target || !rotateValue.value.trim() || rotateBusy.value) return
+  if (!target || !rotateValid.value || rotateBusy.value) return
   rotateBusy.value = true
   try {
     await axios.post(`/api/portal/secrets/${target.id}/rotate`, {
       value: rotateValue.value,
       // 旧值保留 7 天：正在跑的任务不会在下一分钟突然失败
       overlap_days: 7,
+      value_format: rotateFormat.value,
+      // 沿用原模板：结构化凭据换成单值等于把结构丢了，摘要也会跟着失效
+      value_template: rotateFormat.value === 'json' ? rotateTemplate.value : null,
+      value_secret_fields: rotateFormat.value === 'json' ? rotateSecretFields.value : [],
     })
     rotateOpen.value = false
     rotateTarget.value = null
@@ -488,11 +513,7 @@ async function openAudit() {
   }
 }
 
-//: 凭据值默认掩码。JSON / 证书这类多行值需要看清结构，所以要能临时显形。
-const revealValue = ref(false)
-
 function openCreate() {
-  revealValue.value = false
   form.value = {
     secret_key: '',
     name: '',
@@ -500,13 +521,17 @@ function openCreate() {
     secret_type: 'credential',
     allowed_scenarios: ['mcp'],
     allowed_hosts: '',
+    value_format: 'text',
+    value_template: null,
+    value_secret_fields: [],
   }
+  valueValid.value = false
   createStep.value = 1
   showCreate.value = true
 }
 
 // 纯空白不算填了；但保存时用的仍是原值，不 trim —— JSON / PEM 的缩进要保住
-const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && form.value.value.trim())
+const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && valueValid.value)
 
 function nextCreateStep() {
   if (createStep.value === 1 && !canLeaveStep1()) {
@@ -528,6 +553,8 @@ function toggleScene(key: string) {
 async function submitCreate() {
   if (!form.value.secret_key.trim()) return showToast('请填写凭据标识', 'err')
   if (!form.value.value.trim()) return showToast('请填写凭据值', 'err')
+  // 「下一步」已经拦过一次，但提交是唯一的写入口，不能只靠上一步的按钮状态
+  if (!valueValid.value) return showToast('凭据值还没填完整，回到第 1 步检查标红的字段', 'err')
   createBusy.value = true
   try {
     await axios.post('/api/portal/secrets/admin', {
@@ -540,6 +567,11 @@ async function submitCreate() {
         .split(/[,，\s]+/)
         .map((h) => h.trim())
         .filter(Boolean),
+      // 单值档不写模板：后端会忽略，但这里先清掉，避免库里留下误导性的标识
+      value_format: form.value.value_format,
+      value_template: form.value.value_format === 'json' ? form.value.value_template : null,
+      value_secret_fields:
+        form.value.value_format === 'json' ? form.value.value_secret_fields : [],
     })
     showCreate.value = false
     showToast('已创建。记得授权，否则没有人能用它')
@@ -787,6 +819,7 @@ onMounted(load)
             <div class="flex items-center gap-2">
               <span class="font-medium text-gray-900">{{ item.name }}</span>
               <code class="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">{{ item.secret_key }}</code>
+              <SecretFormatBadge :format="item.value_format" :template="item.value_template" size="sm" />
               <span
                 class="rounded px-1.5 py-0.5 text-[11px] font-medium"
                 :class="item.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
@@ -794,7 +827,10 @@ onMounted(load)
                 {{ item.status === 'active' ? '生效中' : '已停用' }}
               </span>
             </div>
-            <p class="mt-1 font-mono text-[11px] text-gray-400">{{ item.value_masked }}</p>
+            <p v-if="item.value_format === 'json'" class="mt-1 break-all font-mono text-[11px] text-indigo-700">
+              {{ item.value_summary || '（无摘要）' }}
+            </p>
+            <p v-else class="mt-1 font-mono text-[11px] text-gray-400">{{ item.value_masked }}</p>
             <div class="mt-1.5 flex flex-wrap gap-1">
               <span
                 v-for="scene in visibleScenarios(item.allowed_scenarios)"
@@ -944,8 +980,13 @@ onMounted(load)
               <div class="flex flex-wrap items-center gap-1.5">
                 <span class="font-medium text-gray-900">{{ item.name }}</span>
                 <code class="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">{{ item.secret_key }}</code>
+                <SecretFormatBadge :format="item.value_format" :template="item.value_template" size="sm" />
               </div>
-              <p class="mt-0.5 font-mono text-[11px] text-gray-400">{{ item.value_masked }}</p>
+              <!-- 结构化凭据没有「可看的前缀」，这里显示后端挑出的非敏感摘要 -->
+              <p v-if="item.value_format === 'json'" class="mt-0.5 break-all font-mono text-[11px] text-indigo-700">
+                {{ item.value_summary || '（无摘要）' }}
+              </p>
+              <p v-else class="mt-0.5 font-mono text-[11px] text-gray-400">{{ item.value_masked }}</p>
             </td>
             <td class="px-3 py-2.5">
               <span
@@ -1030,7 +1071,10 @@ onMounted(load)
         class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
         @click.self="showCreate = false"
       >
-        <div class="flex max-h-[calc(100vh-120px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div
+          class="flex max-h-[calc(100vh-120px)] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+          :class="createStep === 1 && form.value_format === 'json' ? 'max-w-3xl' : 'max-w-xl'"
+        >
           <div class="border-b border-gray-100 px-5 py-3">
             <h3 class="flex items-center gap-1.5 text-base font-semibold text-gray-900">
               <span class="text-slate-900">+</span> 新建系统级凭据
@@ -1105,30 +1149,14 @@ onMounted(load)
                   </button>
                 </div>
               </div>
-              <label class="block">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs font-medium text-gray-700">凭据值 <span class="text-rose-500">*</span></span>
-                  <button
-                    type="button"
-                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-                    @click="revealValue = !revealValue"
-                  >
-                    {{ revealValue ? '隐藏' : '显示' }}
-                  </button>
-                </div>
-                <textarea
-                  v-model="form.value"
-                  :rows="4"
-                  spellcheck="false"
-                  autocomplete="off"
-                  placeholder="短 token 直接粘贴；JSON / PEM 这类多行值可以整段贴进来"
-                  class="mt-1 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm leading-relaxed focus:border-slate-500 focus:outline-none"
-                  :class="{ 'masked-value': !revealValue }"
-                ></textarea>
-                <span class="mt-1 block text-[11px] text-amber-600">
-                  提交后任何人（包括你）都无法再查看明文，只能停用后重建。多行内容会原样保存，不会被 trim。
-                </span>
-              </label>
+              <CredentialValueEditor
+                v-model="form.value"
+                v-model:format="form.value_format"
+                v-model:template="form.value_template"
+                v-model:secretFields="form.value_secret_fields"
+                v-model:valid="valueValid"
+                :secret-type="form.secret_type"
+              />
             </div>
 
             <!-- 步骤 2 -->
@@ -1419,31 +1447,32 @@ onMounted(load)
         class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
         @click.self="rotateOpen = false"
       >
-        <div class="flex w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div
+          class="flex max-h-[calc(100vh-120px)] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+          :class="rotateFormat === 'json' ? 'max-w-2xl' : 'max-w-md'"
+        >
           <div class="border-b border-gray-100 px-5 py-3">
             <h3 class="text-base font-semibold text-gray-900">轮换凭据值</h3>
             <p class="mt-0.5 text-xs text-gray-500">
               <code class="rounded bg-gray-100 px-1 py-0.5">{{ rotateTarget?.secret_key }}</code>
               的所有绑定方会同时用上新值。
             </p>
+            <p v-if="rotateTarget?.value_format === 'json'" class="mt-1 text-[11px] text-blue-700">
+              这条是结构化凭据（{{ credentialTemplateLabel(rotateTarget?.value_template) }}），
+              默认沿用同一套模板。切回单值会让 `${secret:标识.字段}` 引用全部失效，
+              请确认没有别处在按字段取用。
+            </p>
           </div>
 
-          <div class="space-y-2 px-5 py-4">
-            <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-gray-700">新值</span>
-              <button
-                type="button"
-                class="text-[11px] text-gray-500 hover:text-gray-800"
-                @click="revealRotateValue = !revealRotateValue"
-              >{{ revealRotateValue ? '隐藏' : '显示' }}</button>
-            </div>
-            <textarea
+          <div class="min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-4">
+            <CredentialValueEditor
               v-model="rotateValue"
-              :rows="3"
-              class="block w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-primary focus:ring-primary"
-              :class="{ 'masked-value': !revealRotateValue }"
-              placeholder="粘贴新的 Token / 密钥"
-            ></textarea>
+              v-model:format="rotateFormat"
+              v-model:template="rotateTemplate"
+              v-model:secretFields="rotateSecretFields"
+              v-model:valid="rotateValid"
+              :secret-type="rotateTarget?.secret_type || 'credential'"
+            />
             <p class="text-[11px] leading-relaxed text-amber-700">
               旧值会保留 <b>7 天</b>作为回退窗口——正在跑的任务不会立刻失败；
               7 天后自动失效。想马上作废旧值，轮换后再点「强制停用」重建。
@@ -1458,7 +1487,7 @@ onMounted(load)
             >取消</button>
             <button
               type="button"
-              :disabled="rotateBusy || !rotateValue.trim()"
+              :disabled="rotateBusy || !rotateValid"
               class="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
               @click="submitRotate"
             >{{ rotateBusy ? '提交中…' : '轮换' }}</button>

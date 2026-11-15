@@ -55,6 +55,15 @@ class CreateSecretRequest(BaseModel):
     name: str = ""
     value: str = Field(..., description="凭据值；落库即加密，此后任何接口都不再返回")
     secret_type: str = TYPE_CREDENTIAL
+    #: ``text`` = 单值（token / PEM 整段）；``json`` = 结构化对象序列化后的字符串。
+    #: 两者都只存一列加密值，区别只在于「怎么读」，以及能不能按字段引用。
+    value_format: str = Field(default="text", description="text | json")
+    #: 结构化模板标识（``smtp`` / ``sftp`` / ``mysql`` …）。模板定义在前端常量，
+    #: 后端只记标识用于回显与列表徽标，不校验字段结构。
+    value_template: Optional[str] = Field(default=None, description="模板标识，仅 value_format=json")
+    #: 模板里标记为 ``secret`` 的字段名。后端据此把它们从列表摘要里排除——
+    #: **只传键名不传值**，所以摘要里的每个字都来自已加密的那份 JSON。
+    value_secret_fields: List[str] = Field(default_factory=list)
     allowed_scenarios: List[str] = Field(default_factory=list)
     allowed_hosts: List[str] = Field(default_factory=list)
     category: Optional[str] = None
@@ -75,6 +84,10 @@ class RotateRequest(BaseModel):
     value: str
     expires_at: Optional[datetime] = None
     overlap_days: int = Field(default=7, ge=0, le=30)
+    #: 不传则沿用记录原来的形态；传了才允许在换代时切换单值/结构化。
+    value_format: Optional[str] = None
+    value_template: Optional[str] = None
+    value_secret_fields: List[str] = Field(default_factory=list)
 
 
 class BindRequest(BaseModel):
@@ -161,8 +174,15 @@ def serialize_secret(row) -> Dict[str, Any]:
         "has_value": bool(row.value_encrypted),
         # 变量类展示前 8 位；凭证类永远是掩码。
         "value_preview": row.value_preview if is_variable else None,
-        "value_masked": (row.value_preview or "") if is_variable else MASK,
+        # 结构化变量没有「前 8 个字符」可看（那是 `{"host":`），退回摘要。
+        "value_masked": (row.value_preview or row.value_summary or "") if is_variable else MASK,
         "readable": is_variable,
+        # 值形态与模板：列表靠这两个字段区分「单值」和「结构化 · SMTP」。
+        "value_format": row.value_format or "text",
+        "value_template": row.value_template,
+        # 摘要**只含非敏感字段**（host / 端口 / 用户名这类），凭证类也能有；
+        # 它描述的是「这条凭据连的是哪儿」，不是值本身。
+        "value_summary": row.value_summary,
         "expires_at": _iso(row.expires_at),
         "last_rotated_at": _iso(row.last_rotated_at),
         "created_at": _iso(row.created_at),
@@ -471,7 +491,10 @@ async def picker(
                 "category": row.category,
                 "status": row.status,
                 "allowed_scenarios": row.allowed_scenarios or [],
-                "value_masked": (row.value_preview or "") if row.secret_type == TYPE_VARIABLE else MASK,
+                # 与 serialize_secret 同口径：结构化变量没有前 8 位可看，退回摘要
+                "value_masked": (row.value_preview or row.value_summary or "")
+                if row.secret_type == TYPE_VARIABLE
+                else MASK,
             }
         )
 
@@ -1152,6 +1175,9 @@ async def admin_create(
             remark=payload.remark,
             expires_at=payload.expires_at,
             created_by=_actor_id(admin),
+            value_format=payload.value_format,
+            value_template=payload.value_template,
+            value_secret_fields=payload.value_secret_fields,
         )
     except SecretValidationError as exc:
         raise _fail(exc)
@@ -1462,6 +1488,9 @@ async def create_secret(
             remark=payload.remark,
             expires_at=payload.expires_at,
             created_by=user_id,
+            value_format=payload.value_format,
+            value_template=payload.value_template,
+            value_secret_fields=payload.value_secret_fields,
         )
     except SecretValidationError as exc:
         raise _fail(exc)
@@ -1580,6 +1609,9 @@ async def rotate_secret(
             overlap_days=payload.overlap_days,
             expires_at=payload.expires_at,
             actor_is_admin=_is_admin(user_info),
+            value_format=payload.value_format,
+            value_template=payload.value_template,
+            value_secret_fields=payload.value_secret_fields,
         )
     except SecretPermissionError:
         raise HTTPException(status_code=404, detail="凭据不存在")

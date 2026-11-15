@@ -104,6 +104,9 @@ class TestHelpers:
             ("****", True),
             ("••••••••••••", True),
             ("${CREDENTIAL:jira.prod.token}", True),
+            # 引用形如 ${secret:标识.字段}，整段或前缀拼接都算待填
+            ("${secret:mail.smtp.password}", True),
+            ("Bearer ${secret:mail.smtp.token}", True),
             ("real-value", False),
             ("Bearer abc123", False),
         ],
@@ -866,3 +869,314 @@ class TestScriptRuntimeWiring:
         call = source[source.index("apply_script_env_bindings("):]
         call = call[: call.index(")") + 1]
         assert "user_info=self.user_info" in call
+
+
+SMTP_JSON = '{"host": "smtp.exmail.qq.com", "port": 465, "username": "bot@nanzi.ai", "password": "Sup3rSecret"}'
+
+
+async def _seed_structured_binding(
+    *,
+    value: str = SMTP_JSON,
+    secret_type: str = "credential",
+    slot: str = "header:Authorization",
+    tool_id: str = "tool-1",
+    value_format: str = "json",
+):
+    """建一条结构化凭据并绑到 header 槽位，返回 (secret, key)。"""
+    key = f"mail.smtp.{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as session:
+        secret = await center.create_secret(
+            session,
+            owner_id=USER_ID,
+            secret_key=key,
+            name="告警邮箱",
+            value=value,
+            secret_type=secret_type,
+            allowed_scenarios=[SCENE_API_TOOL],
+            allowed_hosts=["api.example.com"],
+            value_format=value_format,
+            value_template="smtp" if value_format == "json" else None,
+            value_secret_fields=["password"] if value_format == "json" else [],
+        )
+        await center.bind_secret(
+            session,
+            secret_id=secret.id,
+            consumer_type="api_tool",
+            consumer_id=tool_id,
+            slot=slot,
+            bound_by_user_id=USER_ID,
+        )
+    return secret, key
+
+
+class TestStructuredReferenceInjection:
+    """``${secret:标识.字段}`` 在注入层的实际行为。
+
+    重点是「失败必须变红」：解析不出来时这个 header 不能被注入成任何东西，
+    尤其不能退回整段明文——那会把含密码的 JSON 原样发出去。
+    """
+
+    async def test_field_reference_fills_header(self):
+        _, key = await _seed_structured_binding()
+
+        result = await apply_api_tool_bindings(
+            _config(), {"Authorization": f"${{secret:{key}.password}}"}, user_info=USER
+        )
+
+        assert result["Authorization"] == "Sup3rSecret"
+
+    async def test_prefix_text_is_kept(self):
+        _, key = await _seed_structured_binding()
+
+        result = await apply_api_tool_bindings(
+            _config(), {"Authorization": f"Bearer ${{secret:{key}.username}}"}, user_info=USER
+        )
+
+        assert result["Authorization"] == "Bearer bot@nanzi.ai"
+
+    async def test_integral_float_port_is_normalized(self):
+        # 绑定是按槽位的：X-Port 要有自己的绑定，否则连引用都走不到
+        _, key = await _seed_structured_binding(slot="header:X-Port")
+
+        result = await apply_api_tool_bindings(
+            _config(), {"X-Port": f"${{secret:{key}.port}}"}, user_info=USER
+        )
+
+        assert result["X-Port"] == "465"
+
+    async def test_key_mismatch_leaves_placeholder_and_records_denial(self):
+        await _seed_structured_binding()
+        denials: dict[str, str] = {}
+
+        result = await apply_api_tool_bindings(
+            _config(),
+            {"Authorization": "${secret:some.other.key.password}"},
+            user_info=USER,
+            denials=denials,
+        )
+
+        # 保留原占位符：让「凭据未填」的既有报错路径把问题说出来
+        assert result["Authorization"] == "${secret:some.other.key.password}"
+        assert denials["header:Authorization"] == "reference_mismatch"
+
+    async def test_missing_field_records_denial(self):
+        _, key = await _seed_structured_binding()
+        denials: dict[str, str] = {}
+
+        await apply_api_tool_bindings(
+            _config(),
+            {"Authorization": f"${{secret:{key}.nope}}"},
+            user_info=USER,
+            denials=denials,
+        )
+
+        assert denials["header:Authorization"] == "reference_field_missing"
+
+    async def test_single_value_credential_cannot_be_indexed(self):
+        _, key = await _seed_structured_binding(value=PLAINTEXT, value_format="text")
+        denials: dict[str, str] = {}
+
+        result = await apply_api_tool_bindings(
+            _config(),
+            {"Authorization": f"${{secret:{key}.password}}"},
+            user_info=USER,
+            denials=denials,
+        )
+
+        assert denials["header:Authorization"] == "reference_not_json"
+        # 关键：绝不能退回整段单值明文
+        assert result["Authorization"] != PLAINTEXT
+
+    async def test_whole_key_reference_injects_serialized_json(self):
+        secret, key = await _seed_structured_binding()
+
+        result = await apply_api_tool_bindings(
+            _config(), {"Authorization": f"${{secret:{key}}}"}, user_info=USER
+        )
+
+        # 整段引用给的是加密前的那份 JSON 原文
+        assert result["Authorization"].startswith('{"host": "smtp.exmail.qq.com"')
+        assert result["Authorization"] == SMTP_JSON
+
+    async def test_reference_does_not_bypass_binding(self):
+        """没绑到这个工具就没有凭据：引用不能自己按 key 找到值。"""
+        _, key = await _seed_structured_binding(tool_id="tool-1")
+        denials: dict[str, str] = {}
+
+        result = await apply_api_tool_bindings(
+            _config(tool_id="other-tool"),
+            {"Authorization": f"${{secret:{key}.password}}"},
+            user_info=USER,
+            denials=denials,
+        )
+
+        assert result["Authorization"] == f"${{secret:{key}.password}}"
+
+
+class TestUnresolvedReferenceIsBlocked:
+    """未解析的 ``${secret:...}`` 必须被当成「凭据未填」拦下。
+
+    否则注入失败（没绑定、字段写错、key 不匹配）时，这句占位符会被当作
+    「用户手填的真实值」原样发到外部接口——用户看到的是对方的 401，
+    完全猜不到是自己把字段名写错了。
+    """
+
+    def test_placeholder_detection_covers_reference_syntax(self):
+        from app.services.ai.tools.tool_credentials import (
+            is_credential_placeholder,
+            unresolved_credential_headers,
+        )
+
+        assert is_credential_placeholder("${CREDENTIAL:x-api-key}") is True
+        assert is_credential_placeholder("${secret:mail.smtp.token}") is True
+        assert is_credential_placeholder("Bearer ${secret:mail.smtp.token}") is True
+        assert is_credential_placeholder("real-value") is False
+
+        pending = unresolved_credential_headers(
+            {"Authorization": "Bearer ${secret:mail.smtp.token}", "X-Trace": "abc"}
+        )
+        assert pending == ["Authorization"]
+
+    async def test_failed_reference_stays_pending_so_the_call_aborts(self):
+        await _seed_structured_binding()
+        from app.services.ai.tools.tool_credentials import unresolved_credential_headers
+
+        headers = {"Authorization": "${secret:other.key.password}"}
+        result = await apply_api_tool_bindings(_config(), headers, user_info=USER)
+
+        # 注入层（正确地）没有替换它
+        assert result["Authorization"] == "${secret:other.key.password}"
+        # 调用方据此抛 UnresolvedCredentialError，而不是把占位符发出去
+        assert unresolved_credential_headers(result) == ["Authorization"]
+
+    async def test_mcp_header_name_case_mismatch_still_renders_reference(self):
+        """槽位名与配置里的 Header 名大小写不同时，不能误判成「没有引用」。"""
+        key = f"mail.smtp.{uuid.uuid4().hex[:6]}"
+        async with AsyncSessionLocal() as session:
+            secret = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key=key,
+                name="告警邮箱",
+                value=SMTP_JSON,
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=["mcp.example.com"],
+                value_format="json",
+                value_template="smtp",
+                value_secret_fields=["password"],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-case",
+                slot="header:authorization",
+                bound_by_user_id=USER_ID,
+            )
+
+        server = SimpleNamespace(
+            id="srv-case", server_name="case", sse_url="https://mcp.example.com/sse"
+        )
+        result = await apply_mcp_bindings(
+            server,
+            {"Authorization": f"Bearer ${{secret:{key}.username}}"},
+            user_info=USER,
+        )
+
+        assert result["Authorization"] == "Bearer bot@nanzi.ai"
+
+    async def test_mcp_unbound_reference_is_denied_not_sent_out(self):
+        """头里写着 ``${secret:...}`` 却没有任何绑定时，必须记一条拒绝。
+
+        MCP 的注入只遍历**绑定槽位**：没有绑定时整个头原样返回。若不额外检查，
+        这句占位符会被原样发给外部 MCP 服务。API 工具侧由
+        ``unresolved_credential_headers`` 拦，MCP 侧要在这里对齐。
+        """
+        server = SimpleNamespace(
+            id=f"no-binding-{uuid.uuid4().hex[:6]}",
+            server_name="unbound",
+            sse_url="https://mcp.example.com/sse",
+        )
+        denials: dict[str, str] = {}
+        headers = {"Authorization": "Bearer ${secret:mail.smtp.token}"}
+
+        result = await apply_mcp_bindings(
+            server, headers, user_info=USER, denials=denials
+        )
+
+        assert result["Authorization"] == "Bearer ${secret:mail.smtp.token}"
+        assert denials == {"header:Authorization": "reference_unbound"}
+
+    async def test_mcp_unbound_legacy_placeholder_is_denied(self):
+        server = SimpleNamespace(
+            id=f"no-binding-{uuid.uuid4().hex[:6]}",
+            server_name="unbound",
+            sse_url="https://mcp.example.com/sse",
+        )
+        denials: dict[str, str] = {}
+
+        await apply_mcp_bindings(
+            server,
+            {"X-Api-Key": "${CREDENTIAL:x-api-key}"},
+            user_info=USER,
+            denials=denials,
+        )
+
+        assert denials == {"header:X-Api-Key": "credential_unbound"}
+
+    async def test_mcp_plain_headers_are_not_flagged(self):
+        """普通 Header 不该被记成拒绝：绝大多数头本来就不绑凭据。"""
+        server = SimpleNamespace(
+            id=f"no-binding-{uuid.uuid4().hex[:6]}",
+            server_name="unbound",
+            sse_url="https://mcp.example.com/sse",
+        )
+        denials: dict[str, str] = {}
+
+        await apply_mcp_bindings(
+            server, {"Accept": "application/json"}, user_info=USER, denials=denials
+        )
+
+        assert denials == {}
+
+    async def test_mcp_case_insensitive_denial_is_not_duplicated(self):
+        """槽位名与 Header 名大小写不同时，不能同时给出两条矛盾拒因。"""
+        key = f"mail.smtp.{uuid.uuid4().hex[:6]}"
+        async with AsyncSessionLocal() as session:
+            secret = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key=key,
+                name="停用的邮箱",
+                value=SMTP_JSON,
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=["mcp.example.com"],
+                value_format="json",
+                value_template="smtp",
+                value_secret_fields=["password"],
+            )
+            # 绑在**小写**槽位上（配置里的 Header 名是 Authorization）
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-case2",
+                slot="header:authorization",
+                bound_by_user_id=USER_ID,
+            )
+            await center.set_secret_status(session, secret_id=secret.id, status_value="disabled")
+
+        server = SimpleNamespace(
+            id="srv-case2", server_name="case2", sse_url="https://mcp.example.com/sse"
+        )
+        denials: dict[str, str] = {}
+        await apply_mcp_bindings(
+            server,
+            {"Authorization": "${secret:" + key + ".password}"},
+            user_info=USER,
+            denials=denials,
+        )
+
+        # 只应剩「凭据已停用」，不该再加一条「这个头没有绑定」
+        assert list(denials.values()) == ["disabled"]
+        assert len({slot.lower() for slot in denials}) == 1

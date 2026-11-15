@@ -35,6 +35,7 @@ from app.services.ai.tools.tool_credentials import (
     credential_placeholder,
     is_credential_header,
     is_credential_placeholder,
+    is_masked_placeholder,
     mask_headers,
     unresolved_credential_headers,
 )
@@ -73,10 +74,14 @@ def merge_headers_for_import(
         value = "" if raw_value is None else str(raw_value)
         if is_credential_placeholder(value):
             kept = existing_map.get(name)
-            if kept and not is_credential_placeholder(kept):
+            # 只把「本地值还是一个脱敏占位符」视为没有配置。``${secret:key.field}``
+            # 是本地**手写的有效引用**，不能当占位符洗掉。
+            if kept and not is_masked_placeholder(kept):
                 value = kept
         merged[name] = value
-    return merged, unresolved_credential_headers(merged)
+    # 待补 = 合并后仍是脱敏占位符的头。本地手写的 ``${secret:key.field}`` 是**配好的**
+    # 引用，运行时会解析，不该出现在「导入后请补凭据」的提示里。
+    return merged, [name for name, value in merged.items() if is_masked_placeholder(value)]
 
 
 # --------------------------------------------------------------------- 构建文件

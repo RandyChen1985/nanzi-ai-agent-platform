@@ -20,6 +20,7 @@ import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Sequence
+from urllib.parse import urlsplit
 
 from sqlalchemy import and_, delete, or_, select
 
@@ -167,6 +168,264 @@ def _encrypt(value: str) -> str:
     return get_api_key_manager().encrypt_api_key(value)
 
 
+# ── 结构化值（value_format=json）────────────────────────────────────────
+#
+# 结构化只是「录入与展示的方式」，不是新的存储：JSON 序列化后仍是同一条字符串，
+# 加密、掩码、审计、轮换、注入全部复用原有链路。因此这一节只做三件事：
+# 校验（是不是合法对象）、记下模板标识、算一个**只含非敏感字段**的列表摘要。
+
+#: 单值（token / PEM 整段）—— 存量记录全是这一类。
+VALUE_FORMAT_TEXT = "text"
+#: 结构化对象：JSON 序列化后的字符串。
+VALUE_FORMAT_JSON = "json"
+VALID_VALUE_FORMATS = frozenset({VALUE_FORMAT_TEXT, VALUE_FORMAT_JSON})
+
+#: 模板标识的合法字符集（``smtp`` / ``api-key`` / ``aliyun-oss``）。
+#: 模板定义在前端常量里，后端只存这个标识用于回显，不校验字段结构。
+_TEMPLATE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+#: 摘要最多拼几个字段、单段长度、整体长度（DB 列 160，留出分隔符余量）。
+SUMMARY_MAX_FIELDS = 3
+SUMMARY_FIELD_MAX = 48
+SUMMARY_MAX_LEN = 150
+
+#: 明显像密钥的值不进摘要。这是**兜底**，不是主防线——主防线是前端声明的敏感字段名。
+#: 兜底的必要性在于：前端把 host 填成域名以外的值、或者用户被模板误导把 token 塞进
+#: 用户名里，都不该让那串东西出现在列表上。
+_SECRETISH_RE = re.compile(
+    r"""^(
+        sk-|sk_|ghp_|gho_|ghu_|xox[abps]-|AKIA[0-9A-Z]{8,}|LTAI[0-9A-Za-z]{8,}|
+        AKID[0-9A-Za-z]{8,}|-----BEGIN\ |Bearer\ |eyJ[A-Za-z0-9_-]{10,}
+    )""",
+    re.X,
+)
+
+
+def _looks_like_secret(text: str) -> bool:
+    """粗判一个值是不是密钥。宁可错杀（摘要少一段）也不能错放。"""
+    if _SECRETISH_RE.match(text):
+        return True
+    # 长、无空格、字母数字混合的连续串：典型 token 形状（host 名/路径通常带点或斜杠）
+    if len(text) >= 40 and " " not in text and re.search(r"[A-Za-z]", text) and re.search(r"\d", text):
+        return True
+    return False
+
+
+def _validate_value_format(value_format: str | None) -> str:
+    fmt = (value_format or VALUE_FORMAT_TEXT).strip().lower()
+    if fmt not in VALID_VALUE_FORMATS:
+        raise SecretValidationError(f"未知的值形态: {value_format}（只支持 text / json）")
+    return fmt
+
+
+def _validate_value_template(template: str | None, value_format: str) -> str | None:
+    """模板标识只对结构化值有意义；单值形态静默丢弃（而不是报错）。"""
+    if value_format != VALUE_FORMAT_JSON:
+        return None
+    cleaned = (template or "").strip().lower()
+    if not cleaned:
+        return None
+    if not _TEMPLATE_PATTERN.match(cleaned):
+        raise SecretValidationError("模板标识只能用小写字母、数字与连字符，且以字母或数字开头")
+    return cleaned
+
+
+def _normalize_secret_fields(fields: Iterable[str] | None) -> list[str]:
+    """敏感字段名列表（模板里 ``secret: true`` 的那些键）。
+
+    只接受合法键名，去重保序，上限 50 个。它的唯一用途是**从摘要里排除**，
+    不参与加密（整段本来就已经加密了）。
+    """
+    if not fields:
+        return []
+    cleaned: list[str] = []
+    for raw in fields:
+        name = str(raw or "").strip()
+        if not name:
+            continue
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$", name):
+            raise SecretValidationError(f"敏感字段名不合法: {raw}")
+        if name not in cleaned:
+            cleaned.append(name)
+        if len(cleaned) > 50:
+            raise SecretValidationError("敏感字段过多（上限 50 个）")
+    return cleaned
+
+
+def parse_structured_value(value: str) -> dict[str, Any]:
+    """把结构化值解析成对象；不是合法 JSON 对象一律拒绝。
+
+    只校验「是不是对象」，不校验字段 schema —— 模板升级、字段增删都不该让
+    一条已经存好的凭据变得读不出来。
+    """
+    try:
+        data = json.loads(value)
+    except (TypeError, ValueError) as exc:
+        raise SecretValidationError(f"结构化凭据值不是合法 JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SecretValidationError("结构化凭据值的顶层必须是 JSON 对象（不支持数组）")
+    return data
+
+
+#: 摘要里跳过的**键名**：它们描述「怎么连」的模式开关，值通常是 ssl / key /
+#: preferred 这类枚举，占一格却什么也说明不了，真正有辨识度的用户名反被挤掉。
+#:
+#: 按键名排除而不是按值猜：按值猜（「短小写就是枚举」）会把 ``h`` / ``db1``
+#: 这类短主机名一起误杀，而按名字判断的边界清楚、可枚举、可 review。
+#: 服务端兜底的敏感键名词根。前端靠模板的 ``secret`` 标记声明，但「自定义 JSON」
+#: 没有模板可依、轮换也可能拿不到声明——摘要绝不能因为「没人告诉我这是密码」
+#: 就把密码写进明文列。宁可比前端多排除几个字段，也不能漏一个。
+_SENSITIVE_KEY_WORDS = frozenset(
+    {
+        "password", "passwd", "pwd", "pw", "passphrase",
+        "secret", "token", "key", "apikey",
+        "privatekey", "credential", "credentials",
+        "signature", "salt", "cookie", "session", "dsn",
+    }
+)
+
+#: 明确「只是名字」的键，豁免下面的词根过滤。
+#:
+#: ``key_name`` 是 Header / 参数的名字（``X-API-Key``），不是密钥本身；把它一起
+#: 过滤掉，``api-key`` 这类凭据的摘要就只剩空字符串，列表里没有任何辨识度。
+_SENSITIVE_KEY_EXEMPT = frozenset({"key_name", "header_name", "param_name"})
+
+#: 驼峰边界：``apiKey`` → ``api_Key``，用于把键名拆成词。
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+#: 词分隔符：下划线 / 连字符 / 点 / 空格。
+_KEY_WORD_SPLIT_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _key_words(key_name: str) -> list[str]:
+    """``auth_tokens`` → ``['auth','tokens']``；``apiKey`` → ``['api','key']``。"""
+    spaced = _CAMEL_BOUNDARY_RE.sub("_", key_name)
+    return [word for word in _KEY_WORD_SPLIT_RE.split(spaced.lower()) if word]
+
+
+def _is_sensitive_key(key_name: str) -> bool:
+    """键名里**有一个词**像密码，就整条不进摘要。
+
+    为什么按词而不是按后缀（``endswith``）：后缀匹配放过 ``auth_tokens``、
+    ``credentials``、``password_v2``、``api_key_live``——带上复数或版本号就绕过了，
+    而这些恰恰是最常见的写法。按词匹配既兜住它们，又不会像裸子串匹配那样把
+    ``keyboard`` / ``tokenizer`` 误杀。
+    """
+    if key_name.strip().lower() in _SENSITIVE_KEY_EXEMPT:
+        return False
+    for word in _key_words(key_name):
+        if word in _SENSITIVE_KEY_WORDS:
+            return True
+        # 复数：tokens → token / credentials → credential
+        if word.endswith("s") and word[:-1] in _SENSITIVE_KEY_WORDS:
+            return True
+    return False
+
+
+def _looks_like_credentialed_url(text: str) -> bool:
+    """``http://user:pass@host:port`` 这类内嵌账密的地址，整条跳过。
+
+    不用正则：未编码的密码里完全可能有 ``/``、``:``、``@``，任何字符类都会漏掉
+    一种写法（``http://user:ab/cd@proxy`` 就能绕过 ``[^/@]+``）。``urlsplit`` 按
+    URL 语法拆 netloc，直接问它「有没有 password」。
+    """
+    if "://" not in text:
+        return False
+    head = text.split()[0] if text.split() else ""
+    try:
+        parts = urlsplit(head)
+    except ValueError:
+        return False
+    if parts.password:
+        return True
+    # 未编码的 ``/`` ``:`` ``@`` 会让 netloc 被提前截断：
+    # ``http://user:ab/cd@proxy`` 的 netloc 只有 ``user:ab``，urlsplit 看不到 password。
+    # 这时按「:// 之后、第一个 @ 之前同时出现冒号」再兜一层——宁可多跳过一个 URL，
+    # 也不要把可能是账密的东西写进摘要列。
+    tail = head.split("://", 1)[1]
+    return "@" in tail and ":" in tail.split("@")[0]
+
+
+_SUMMARY_SKIP_KEYS = frozenset(
+    {
+        "security", "security_protocol", "auth_type", "ssl_mode", "sslmode",
+        "charset", "encoding", "mode", "type", "protocol", "sasl_mechanism",
+        "grant_type", "passive", "verify_tls", "verify", "tls", "use_tls",
+        "use_ssl", "internal", "in_query", "path_style", "unread_only",
+        "format", "version",
+    }
+)
+
+
+def build_value_summary(value: str, secret_fields: Iterable[str] | None = None) -> str | None:
+    """生成列表摘要，形如 ``smtp.exmail.qq.com:465 · alert-bot``。
+
+    **安全边界**：候选键名由前端声明（模板常量在前端），但**值**由后端从 JSON 里
+    挑出来，前端无法把任意字符串塞进摘要列。它最坏能做的是「少声明一个敏感字段」，
+    而那只影响它自己这条凭据，且仍需用户亲手提交。
+
+    另有三道兜底：嵌套结构不进摘要、像密钥的值不进摘要、整体长度硬截断。
+    """
+    if not value:
+        return None
+    try:
+        data = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    blocked = {str(item).strip().lower() for item in (secret_fields or [])}
+    parts: list[str] = []
+    for key, item in data.items():
+        key_name = str(key).strip().lower()
+        if key_name in blocked or key_name in _SUMMARY_SKIP_KEYS:
+            continue
+        # 前端没声明也照样排除：键名像密码的一律不进摘要。
+        # 传**原始键名**：先 lower 会把 clientSecret 的驼峰边界抹掉，分词就失效了。
+        if _is_sensitive_key(str(key)):
+            continue
+        # 嵌套结构不进摘要：又长又没辨识度，还可能是另一层凭据。
+        if isinstance(item, (dict, list)):
+            continue
+        if item is None:
+            continue
+        if isinstance(item, bool):
+            text = "是" if item else "否"
+        else:
+            text = str(item).strip()
+        if not text:
+            continue
+        if _looks_like_secret(text) or _looks_like_credentialed_url(text):
+            continue
+        parts.append(text[:SUMMARY_FIELD_MAX])
+        if len(parts) >= SUMMARY_MAX_FIELDS:
+            break
+
+    if not parts:
+        return None
+    return " · ".join(parts)[:SUMMARY_MAX_LEN]
+
+
+def _value_meta(
+    value: str,
+    *,
+    secret_type: str,
+    value_format: str,
+    secret_fields: Iterable[str] | None,
+) -> tuple[str | None, str | None]:
+    """算出 ``(value_preview, value_summary)``，并把结构化值的合法性校验掉。
+
+    - 单值 + 变量：沿用「前 8 个字符」预览；
+    - 单值 + 凭证：两者都不给（预览就是泄露）；
+    - 结构化（无论哪种类型）：校验 JSON，摘要只拼非敏感字段，**不给**前 8 个字符
+      ——``{"host":`` 这八位没有任何信息量。
+    """
+    if value_format == VALUE_FORMAT_JSON:
+        parse_structured_value(value)  # 校验；不合法直接抛 SecretValidationError
+        return None, build_value_summary(value, secret_fields)
+    return (value[:8] if secret_type == TYPE_VARIABLE else None), None
+
+
 async def create_secret(
     session,
     *,
@@ -182,8 +441,15 @@ async def create_secret(
     remark: str | None = None,
     expires_at: datetime | None = None,
     created_by: str | None = None,
+    value_format: str = VALUE_FORMAT_TEXT,
+    value_template: str | None = None,
+    value_secret_fields: Iterable[str] | None = None,
 ) -> UserSecret:
-    """建一条凭据。值只进密文字段，任何路径都不再返回明文。"""
+    """建一条凭据。值只进密文字段，任何路径都不再返回明文。
+
+    ``value_format=json`` 时 ``value`` 是结构化对象序列化后的字符串，会先校验能否
+    解析成对象，再由 ``_value_meta`` 算出只含非敏感字段的摘要。
+    """
     if owner_scope not in VALID_SCOPES:
         raise SecretValidationError(f"未知的归属范围: {owner_scope}")
     if secret_type not in VALID_TYPES:
@@ -192,6 +458,15 @@ async def create_secret(
         raise SecretValidationError("凭据值不能为空")
     if owner_scope == SCOPE_USER and not owner_id:
         raise SecretValidationError("用户级凭据必须指定 owner_id")
+
+    fmt = _validate_value_format(value_format)
+    template = _validate_value_template(value_template, fmt)
+    preview, summary = _value_meta(
+        value,
+        secret_type=secret_type,
+        value_format=fmt,
+        secret_fields=_normalize_secret_fields(value_secret_fields),
+    )
 
     key = _validate_key(secret_key)
     # 系统级用空串占位，让 (owner_scope, owner_id, secret_key) 的唯一约束真正生效
@@ -216,8 +491,12 @@ async def create_secret(
         secret_type=secret_type,
         value_encrypted=_encrypt(value),
         value_fingerprint=secret_fingerprint(value),
-        # 预览就是泄露：credential 一律不存，variable 才允许展示前 8 位
-        value_preview=(value[:8] if secret_type == TYPE_VARIABLE else None),
+        # 预览就是泄露：credential 一律不存，variable 才允许展示前 8 位。
+        # 结构化值两者取其一——只给摘要，不给前 8 个字符（见 _value_meta）。
+        value_preview=preview,
+        value_format=fmt,
+        value_template=template,
+        value_summary=summary,
         allowed_hosts=_validate_hosts(allowed_hosts),
         allowed_scenarios=_validate_scenarios(allowed_scenarios),
         status="active",
@@ -253,8 +532,16 @@ async def rotate_secret(
     overlap_days: int = ROTATION_OVERLAP_DAYS,
     expires_at: datetime | None = None,
     actor_is_admin: bool = False,
+    value_format: str | None = None,
+    value_template: str | None = None,
+    value_secret_fields: Iterable[str] | None = None,
 ) -> UserSecret:
-    """轮换凭据值，旧值保留 ``overlap_days`` 天作为回退窗口。"""
+    """轮换凭据值，旧值保留 ``overlap_days`` 天作为回退窗口。
+
+    ``value_format`` 不传时沿用记录上的形态；传了才允许在换代时把单值换成结构化
+    （或反之）。摘要同理重新生成——**不沿用旧摘要**：旧摘要描述的是上一版值，
+    留着等于在列表上展示已经不存在的主机名。
+    """
     if not new_value:
         raise SecretValidationError("新值不能为空")
 
@@ -271,6 +558,18 @@ async def rotate_secret(
     if row.secret_type not in VALID_TYPES:
         raise SecretValidationError(f"未知的凭据类型: {row.secret_type}")
 
+    fmt = _validate_value_format(value_format or row.value_format or VALUE_FORMAT_TEXT)
+    # 模板：显式传就用新的；没传时沿用旧模板（「同结构换一份值」是最常见的轮换）。
+    template = _validate_value_template(
+        value_template if value_template is not None else row.value_template, fmt
+    )
+    preview, summary = _value_meta(
+        new_value,
+        secret_type=row.secret_type,
+        value_format=fmt,
+        secret_fields=_normalize_secret_fields(value_secret_fields),
+    )
+
     # 库里一律是 naive UTC（模型 default=datetime.utcnow，序列化时再补 Z）。
     # 用 datetime.now() 在 UTC+8 的机器上会写进本地时间：轮换时间凭空快 8 小时，
     # previous_expires_at 也跟着偏，7 天回退窗口实际只有 6 天 16 小时。
@@ -279,7 +578,10 @@ async def rotate_secret(
     row.previous_expires_at = now + timedelta(days=overlap_days)
     row.value_encrypted = _encrypt(new_value)
     row.value_fingerprint = secret_fingerprint(new_value)
-    row.value_preview = new_value[:8] if row.secret_type == TYPE_VARIABLE else None
+    row.value_preview = preview
+    row.value_format = fmt
+    row.value_template = template
+    row.value_summary = summary
     row.last_rotated_at = now
     row.expires_at = expires_at if expires_at is not None else row.expires_at
     await _audit(
@@ -289,6 +591,8 @@ async def rotate_secret(
         detail={
             "previous_expires_at": row.previous_expires_at.isoformat(timespec="seconds"),
             "overlap_days": overlap_days,
+            "value_format": fmt,
+            "value_template": template,
         },
     )
     await session.commit()
