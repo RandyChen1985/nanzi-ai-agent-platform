@@ -46,6 +46,7 @@ from app.services.ai.tools.request_signing import (
     validate_signing_key_id,
     validate_signing_secret,
 )
+from app.services.ai.tools.registry import ToolRegistry
 from app.services.ai.tools.system_params import SystemParamConfigError, validate_system_params
 from app.services.ai.tools.user_placeholders import UserPlaceholderError
 from app.services.secrets.redact import redact_value
@@ -434,6 +435,9 @@ async def create_tool(
         await db.rollback()
         raise HTTPException(status_code=400, detail="签名 Key-Id 已被其他工具使用") from exc
     await db.refresh(new_tool)
+    # 脚本工具和 MCP 服务改完都清缓存，API 工具原来没清：新建/改过之后，
+    # 智能体在缓存有效期内拿到的仍是旧定义，新加的系统参数或请求头看不见。
+    ToolRegistry.clear_db_tool_cache()
     return new_tool
 
 @router.put("/{tool_id}", response_model=SysApiToolResponse)
@@ -482,6 +486,7 @@ async def update_tool(
         await db.rollback()
         raise HTTPException(status_code=400, detail="签名 Key-Id 已被其他工具使用") from exc
     await db.refresh(tool)
+    ToolRegistry.clear_db_tool_cache()
 
     # URL / method 决定了参数落在 path、query 还是 body。改了配置之后旧槽位就是
     # 孤儿——界面按参数名查还显示「已绑定」，运行时按新槽位查却取不到。
@@ -511,6 +516,7 @@ async def batch_set_tool_group(
     for tool in tools:
         tool.group_name = payload.group_name
     await db.commit()
+    ToolRegistry.clear_db_tool_cache()
     return {"updated": len(tools), "group_name": payload.group_name}
 
 
@@ -528,6 +534,7 @@ async def delete_tool(
     
     await db.delete(tool)
     await db.commit()
+    ToolRegistry.clear_db_tool_cache()
     # 表间没有外键，孤儿绑定没人替我们清：不清的话「这条凭据被绑到哪了」
     # 会一直显示一个已经删掉的工具。
     from app.services.secrets import center as secret_center
@@ -636,12 +643,16 @@ async def preview_tool(
         """把内核捕获的最终请求转成响应；凭据只以脱敏形式离开服务端。"""
         if not capture:
             return None
+        safe_url = redact_value(capture.get("url") or "", where="API 工具试跑请求", log_hits=False)
+        safe_headers = redact_value(capture.get("headers") or {}, where="API 工具试跑请求", log_hits=False)
+        safe_query = redact_value(capture.get("query") or {}, where="API 工具试跑请求", log_hits=False)
+        safe_body = redact_value(capture.get("body"), where="API 工具试跑请求", log_hits=False)
         return SysApiToolPreviewRequestInfo(
             method=str(capture.get("method") or ""),
-            url=str(mask_sensitive_data(capture.get("url") or "") or ""),
-            headers=mask_sensitive_data(capture.get("headers") or {}) or {},
-            query=mask_sensitive_data(capture.get("query") or {}) or {},
-            body=mask_sensitive_data(capture.get("body")),
+            url=str(mask_sensitive_data(safe_url) or ""),
+            headers=mask_sensitive_data(safe_headers) or {},
+            query=mask_sensitive_data(safe_query) or {},
+            body=mask_sensitive_data(safe_body),
         )
 
     try:

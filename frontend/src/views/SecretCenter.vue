@@ -15,11 +15,19 @@ import axios from '../utils/axios'
 import { useDismissible } from '../utils/dismissible'
 import { shortTime } from '../utils/date'
 import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
+import CredentialValueEditor from '../components/secrets/CredentialValueEditor.vue'
+import SecretFormatBadge from '../components/secrets/SecretFormatBadge.vue'
+import { credentialTemplateLabel } from '../utils/credentialTemplates'
 import { RESULT_LABEL } from '../utils/secretLabels'
 import {
   secretActionLabel,
   secretActionStyle,
 } from '../utils/secretAudit'
+import {
+  formatLocalDateTimeSummary,
+  isoToLocalDateTimeInput,
+  localDateTimeInputToIso,
+} from '../utils/secretExpiry'
 
 interface SecretItem {
   id: string
@@ -36,6 +44,11 @@ interface SecretItem {
   value_masked: string
   value_preview: string | null
   readable: boolean
+  // 值形态：text 单值 / json 结构化。老记录没有这两个字段，按单值处理
+  value_format?: 'text' | 'json'
+  value_template?: string | null
+  /** 非敏感字段拼成的摘要（host · port · 用户名），凭证类也有 */
+  value_summary?: string | null
   created_at: string | null
   expires_at: string | null
   last_rotated_at: string | null
@@ -86,6 +99,7 @@ const editForm = ref({
   allowed_hosts: '',
   category: '',
   remark: '',
+  expires_at: '',
 })
 
 function openEdit() {
@@ -97,6 +111,7 @@ function openEdit() {
     allowed_hosts: (item.allowed_hosts || []).join(', '),
     category: item.category || '',
     remark: item.remark || '',
+    expires_at: isoToLocalDateTimeInput(item.expires_at),
   }
   editOpen.value = true
 }
@@ -123,6 +138,7 @@ async function saveEdit() {
       allowed_hosts: hosts,
       category: editForm.value.category.trim() || null,
       remark: editForm.value.remark.trim() || null,
+      expires_at: localDateTimeInputToIso(editForm.value.expires_at),
     })
     showToast('已保存', 'ok')
     editOpen.value = false
@@ -269,14 +285,17 @@ const form = ref({
   allowed_hosts: '',
   category: '',
   remark: '',
+  expires_at: '',
+  // 值形态与模板标识：只在「结构化」档下写库，单值档一律回落 text
+  value_format: 'text' as 'text' | 'json',
+  value_template: null as string | null,
+  value_secret_fields: [] as string[],
 })
 
-//: 凭据值默认掩码。JSON / 证书这类多行值需要看清结构，所以要能临时显形。
-const revealValue = ref(false)
-const revealRotateValue = ref(false)
+//: 值本身是否可提交（结构化时由字段校验决定，不只是「非空」）
+const valueValid = ref(false)
 
 function openCreate() {
-  revealValue.value = false
   form.value = {
     secret_key: '',
     name: '',
@@ -286,13 +305,18 @@ function openCreate() {
     allowed_hosts: '',
     category: '',
     remark: '',
+    expires_at: '',
+    value_format: 'text',
+    value_template: null,
+    value_secret_fields: [],
   }
+  valueValid.value = false
   createStep.value = 1
   showCreate.value = true
 }
 
 // 纯空白不算填了；但保存时用的仍是原值，不 trim —— JSON / PEM 的缩进要保住
-const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && form.value.value.trim())
+const canLeaveStep1 = () => Boolean(form.value.secret_key.trim() && valueValid.value)
 
 function nextCreateStep() {
   if (createStep.value === 1 && !canLeaveStep1()) {
@@ -315,6 +339,8 @@ function toggleScene(key: string) {
 async function submitCreate() {
   if (!form.value.secret_key.trim()) return showToast('请填写凭据标识', 'err')
   if (!form.value.value.trim()) return showToast('请填写凭据值', 'err')
+  // 「下一步」已经拦过一次，但提交是唯一的写入口，不能只靠上一步的按钮状态
+  if (!valueValid.value) return showToast('凭据值还没填完整，回到第 1 步检查标红的字段', 'err')
   createBusy.value = true
   try {
     await axios.post('/api/portal/secrets', {
@@ -329,6 +355,12 @@ async function submitCreate() {
         .filter(Boolean),
       category: form.value.category.trim() || null,
       remark: form.value.remark.trim() || null,
+      expires_at: localDateTimeInputToIso(form.value.expires_at),
+      // 单值档不写模板：后端会忽略，但这里先清掉，避免库里留下误导性的标识
+      value_format: form.value.value_format,
+      value_template: form.value.value_format === 'json' ? form.value.value_template : null,
+      value_secret_fields:
+        form.value.value_format === 'json' ? form.value.value_secret_fields : [],
     })
     showCreate.value = false
     showToast('已创建。值已加密保存，之后任何人（包括管理员）都读不回来')
@@ -344,20 +376,37 @@ async function submitCreate() {
 const rotateTarget = ref<SecretItem | null>(null)
 const rotateValue = ref('')
 const rotateBusy = ref(false)
+const rotateFormat = ref<'text' | 'json'>('text')
+const rotateTemplate = ref<string | null>(null)
+const rotateSecretFields = ref<string[]>([])
+const rotateValid = ref(false)
+const rotateExpiresAt = ref('')
+const rotateClearExpires = ref(false)
 
 function openRotate(item: SecretItem) {
   rotateTarget.value = item
   rotateValue.value = ''
-  revealRotateValue.value = false
+  rotateFormat.value = item.value_format === 'json' ? 'json' : 'text'
+  rotateTemplate.value = item.value_template || null
+  rotateSecretFields.value = []
+  rotateValid.value = false
+  rotateExpiresAt.value = ''
+  rotateClearExpires.value = false
 }
 
 async function submitRotate() {
-  if (!rotateTarget.value || !rotateValue.value) return
+  if (!rotateTarget.value || !rotateValid.value) return
   rotateBusy.value = true
   try {
     await axios.post(`/api/portal/secrets/${rotateTarget.value.id}/rotate`, {
       value: rotateValue.value,
       overlap_days: 7,
+      expires_at: rotateClearExpires.value ? null : localDateTimeInputToIso(rotateExpiresAt.value),
+      clear_expires_at: rotateClearExpires.value,
+      value_format: rotateFormat.value,
+      // 沿用原模板：结构化凭据换成单值等于把结构丢了，摘要也会跟着失效
+      value_template: rotateFormat.value === 'json' ? rotateTemplate.value : null,
+      value_secret_fields: rotateFormat.value === 'json' ? rotateSecretFields.value : [],
     })
     rotateTarget.value = null
     rotateValue.value = ''
@@ -654,10 +703,64 @@ async function loadBindingsOf(item: SecretItem | null) {
   }
 }
 
+// ── 「怎么用」：结构化凭据的字段清单 ──────────────────────────────────
+//
+// 选字段是使用侧的关键一步：用户得知道这条凭据能取哪几部分、引用怎么写。
+// 字段清单来自后端（敏感字段只给名字），列表里直接给可复制的引用片段。
+interface SecretField {
+  name: string
+  sensitive: boolean
+  preview: string
+}
+const selectedFields = ref<SecretField[]>([])
+const fieldsBusy = ref(false)
+const copiedField = ref('')
+
+/** 请求序号：快速切换选中凭据时，先发后到的响应会盖掉当前这条的字段清单 */
+let fieldsSeq = 0
+
+async function loadFieldsOf(item: any) {
+  const seq = ++fieldsSeq
+  selectedFields.value = []
+  copiedField.value = ''
+  if (!item?.id || item.value_format !== 'json') {
+    fieldsBusy.value = false
+    return
+  }
+  fieldsBusy.value = true
+  try {
+    const res = await axios.get(`/api/portal/secrets/${encodeURIComponent(item.id)}/fields`)
+    if (seq !== fieldsSeq) return
+    selectedFields.value = Array.isArray(res.data?.data?.fields) ? res.data.data.fields : []
+  } catch {
+    if (seq !== fieldsSeq) return
+    selectedFields.value = []
+  } finally {
+    // 只有最新那次请求才有资格收掉 loading，否则后来的请求还在跑就先灭了灯
+    if (seq === fieldsSeq) fieldsBusy.value = false
+  }
+}
+
+/** 引用片段：注入层认这个写法，写进 Header 就能只取该字段。 */
+function referenceOf(item: any, field: string): string {
+  return `\${secret:${item.secret_key}.${field}}`
+}
+
+async function copyReference(item: any, field: string) {
+  try {
+    await navigator.clipboard.writeText(referenceOf(item, field))
+    copiedField.value = field
+    showToast(`已复制 ${field} 的引用片段`)
+  } catch {
+    showToast('复制失败，请手动选中复制', 'err')
+  }
+}
+
 // 选中项跟着列表走：切 scope / 改筛选之后，右侧要显示当前列表里那一条
 watch(selected, (item) => {
   if (item && item.id !== selectedId.value) selectedId.value = item.id
   void loadBindingsOf(item)
+  void loadFieldsOf(item)
 })
 
 onMounted(load)
@@ -894,13 +997,15 @@ onMounted(load)
               :class="item.secret_type === 'variable' ? 'bg-sky-100 text-sky-700' : 'bg-violet-100 text-violet-700'"
             >{{ item.secret_type === 'variable' ? '变' : '凭' }}</span>
             <div class="min-w-0">
-              <p class="truncate text-xs font-medium text-gray-800">
-                {{ item.name }}
+              <div class="flex min-w-0 items-center gap-1">
+                <p class="truncate text-xs font-medium text-gray-800">{{ item.name }}</p>
                 <span
                   v-if="item.owner_scope === 'system'"
-                  class="ml-1 rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-normal text-emerald-700"
+                  class="shrink-0 rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-normal text-emerald-700"
                 >系统</span>
-              </p>
+                <!-- 形态徽标：扫一眼就能分清「一个 token」和「一份配置」 -->
+                <SecretFormatBadge :format="item.value_format" :template="item.value_template" />
+              </div>
               <p class="truncate text-[11px] text-gray-400">
                 <code class="font-mono">{{ item.secret_key }}</code> · {{ categoryOf(item) }}
               </p>
@@ -962,6 +1067,23 @@ onMounted(load)
                 @click="openReveal(selected)"
               >查看</button>
             </div>
+            <div
+              v-if="selected.value_format === 'json'"
+              class="mt-1.5 rounded-md border border-indigo-100 bg-indigo-50/60 px-2 py-1.5"
+            >
+              <p class="text-[10px] font-medium text-indigo-700">
+                结构化 · {{ credentialTemplateLabel(selected.value_template) }}
+              </p>
+              <p
+                v-if="selected.secret_type !== 'variable'"
+                class="mt-0.5 break-all font-mono text-[10.5px] leading-relaxed text-indigo-900"
+              >
+                {{ selected.value_summary || '（没有可展示的非敏感字段）' }}
+              </p>
+              <p class="mt-0.5 text-[10px] text-indigo-500">
+                摘要由后端从已加密的 JSON 里挑非敏感字段生成，敏感字段不参与。
+              </p>
+            </div>
             <p class="mt-1 text-[10px] leading-relaxed text-gray-400">
               <template v-if="selected.secret_type === 'variable'">
                 变量类（租户号、接口地址）可读可复制。
@@ -970,6 +1092,43 @@ onMounted(load)
                 凭证创建后<b>任何界面都不再显示明文</b>，包括你自己。要换新值用「轮换」。
               </template>
             </p>
+          </div>
+
+          <!-- 怎么用：结构化凭据能取哪几部分 -->
+          <div v-if="selected.value_format === 'json'">
+            <p class="text-[11px] font-medium text-gray-500">怎么用（可取的字段）</p>
+            <p v-if="fieldsBusy" class="mt-1 text-[10px] text-gray-400">加载中…</p>
+            <p
+              v-else-if="!selectedFields.length"
+              class="mt-1 text-[10px] leading-relaxed text-amber-600"
+            >
+              读不出字段清单，只能整段注入；用之前确认内容格式与使用方一致。
+            </p>
+            <div v-else class="mt-1 space-y-1">
+              <div
+                v-for="field in selectedFields"
+                :key="field.name"
+                class="rounded-lg bg-gray-50 px-2 py-1.5"
+              >
+                <div class="flex items-center gap-1.5">
+                  <code class="min-w-0 flex-1 truncate font-mono text-[10.5px] font-medium text-gray-800">{{ field.name }}</code>
+                  <span
+                    v-if="field.sensitive"
+                    class="shrink-0 rounded bg-amber-100 px-1 py-0.5 text-[9px] text-amber-700"
+                  >敏感</span>
+                  <span v-else-if="field.preview" class="min-w-0 shrink truncate text-[10px] text-gray-400">{{ field.preview }}</span>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded bg-white px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-primary"
+                    @click.stop="copyReference(selected, field.name)"
+                  >{{ copiedField === field.name ? '已复制' : '复制引用' }}</button>
+                </div>
+                <code class="mt-0.5 block break-all font-mono text-[10px] text-indigo-600">{{ referenceOf(selected, field.name) }}</code>
+              </div>
+              <p class="text-[10px] leading-relaxed text-gray-400">
+                绑定时在此选一个字段，注入层就只取那一段；不选会整段 JSON 注进去。
+              </p>
+            </div>
           </div>
 
           <!-- 场景 -->
@@ -1275,6 +1434,26 @@ onMounted(load)
                 />
               </label>
             </div>
+
+            <div>
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-gray-700">有效期截止（本地时间）</span>
+                <button
+                  v-if="editForm.expires_at"
+                  type="button"
+                  class="text-[11px] text-blue-600 hover:underline"
+                  @click="editForm.expires_at = ''"
+                >设为长期有效</button>
+              </div>
+              <input
+                v-model="editForm.expires_at"
+                type="datetime-local"
+                class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-primary focus:ring-primary"
+              />
+              <p class="mt-0.5 text-[11px] text-gray-400">
+                留空表示长期有效；到期后运行时会自动拦截并写入失效记录。
+              </p>
+            </div>
           </div>
 
           <div class="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
@@ -1506,7 +1685,19 @@ onMounted(load)
         class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
         @click.self="showCreate = false"
       >
-        <div class="flex max-h-[calc(100vh-120px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <!--
+          尺寸写死，不跟着内容走。
+          原来宽度和高度都是自适应的：切「自由输入 / 结构化（模板）」时，模板卡片区
+          一出现，弹窗就从 max-w-xl 跳到 max-w-3xl、高度也跟着窜一截，刚对准的
+          「下一步」按钮会从鼠标底下跑掉。
+          宽度按宽的那个固定（结构化要两列卡片）；高度 `h` 给死，再用 `max-h`
+          兜住小屏——`max-height` 优先于 `height`，所以屏幕够高就是 760px，
+          不够就退到 100vh-120px。中间的滚动区本来就是 `flex-1 overflow-y-auto`，
+          内容多了滚动，而不是把弹窗撑破。
+        -->
+        <div
+          class="flex h-[760px] max-h-[calc(100vh-120px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        >
           <div class="border-b border-gray-100 px-5 py-3">
             <h3 class="flex items-center gap-1.5 text-base font-semibold text-gray-900">
               <span class="text-blue-600">+</span> 新建凭据
@@ -1597,30 +1788,14 @@ onMounted(load)
                 <span class="mt-1 block text-[11px] text-gray-500">左侧筛选栏就是按这个分组的，留空归到「未分类」。</span>
               </label>
 
-              <label class="block">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs font-medium text-gray-700">凭据值 <span class="text-rose-500">*</span></span>
-                  <button
-                    type="button"
-                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-                    @click="revealValue = !revealValue"
-                  >
-                    {{ revealValue ? '隐藏' : '显示' }}
-                  </button>
-                </div>
-                <textarea
-                  v-model="form.value"
-                  :rows="4"
-                  spellcheck="false"
-                  autocomplete="off"
-                  placeholder="短 token 直接粘贴；JSON / PEM 这类多行值可以整段贴进来"
-                  class="mt-1 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm leading-relaxed focus:border-blue-500 focus:outline-none"
-                  :class="{ 'masked-value': !revealValue }"
-                ></textarea>
-                <span class="mt-1 block text-[11px] text-amber-600">
-                  提交后不可再查看，只能轮换或停用。多行内容会原样保存，不会被 trim。
-                </span>
-              </label>
+              <CredentialValueEditor
+                v-model="form.value"
+                v-model:format="form.value_format"
+                v-model:template="form.value_template"
+                v-model:secretFields="form.value_secret_fields"
+                v-model:valid="valueValid"
+                :secret-type="form.secret_type"
+              />
 
               <label class="block">
                 <span class="text-xs font-medium text-gray-700">备注</span>
@@ -1679,6 +1854,26 @@ onMounted(load)
                 </span>
               </label>
 
+              <div>
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-medium text-gray-700">有效期截止（可选，本地时间）</span>
+                  <button
+                    v-if="form.expires_at"
+                    type="button"
+                    class="text-[11px] text-blue-600 hover:underline"
+                    @click="form.expires_at = ''"
+                  >设为长期有效</button>
+                </div>
+                <input
+                  v-model="form.expires_at"
+                  type="datetime-local"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                />
+                <span class="mt-1 block text-[11px] text-gray-400">
+                  留空表示长期有效；过期后调用方会拒绝注入并保留记录。
+                </span>
+              </div>
+
               <div class="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 text-[11px] leading-relaxed text-blue-800">
                 <b>不勾任何场景</b> = 这条凭据建完只是个仓库条目，任何工具都取不到。
                 绑定是白名单，不是黑名单。
@@ -1720,6 +1915,10 @@ onMounted(load)
                 <div class="flex items-start gap-3 px-3 py-2">
                   <dt class="w-20 shrink-0 text-gray-500">域名</dt>
                   <dd class="font-mono text-gray-900">{{ form.allowed_hosts || '仅平台内部' }}</dd>
+                </div>
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">有效期</dt>
+                  <dd class="text-gray-900">{{ formatLocalDateTimeSummary(form.expires_at) }}</dd>
                 </div>
               </dl>
 
@@ -1774,33 +1973,66 @@ onMounted(load)
             class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
             @click.self="rotateTarget = null"
           >
-            <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <div
+              class="max-h-[calc(100vh-120px)] w-full overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl"
+              :class="rotateFormat === 'json' ? 'max-w-2xl' : 'max-w-md'"
+            >
               <h3 class="text-base font-semibold text-gray-900">轮换凭据值</h3>
               <p class="mt-1 text-xs text-gray-500">
                 <code>{{ rotateTarget.secret_key }}</code> 的新值。旧值会保留 7 天，正在运行的任务不会中断。
               </p>
-              <div class="mt-3 flex items-center justify-end">
-                <button
-                  type="button"
-                  class="rounded px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-                  @click="revealRotateValue = !revealRotateValue"
-                >{{ revealRotateValue ? '隐藏' : '显示' }}</button>
+              <p
+                v-if="rotateTarget.value_format === 'json'"
+                class="mt-1 text-[11px] text-blue-700"
+              >
+                这条是结构化凭据（{{ credentialTemplateLabel(rotateTarget.value_template) }}），
+                默认沿用同一套模板。切回单值会让 `${secret:标识.字段}` 引用全部失效，
+                请确认没有别处在按字段取用。
+              </p>
+              <div class="mt-3">
+                <CredentialValueEditor
+                  v-model="rotateValue"
+                  v-model:format="rotateFormat"
+                  v-model:template="rotateTemplate"
+                  v-model:secretFields="rotateSecretFields"
+                  v-model:valid="rotateValid"
+                  :secret-type="rotateTarget.secret_type"
+                />
               </div>
-              <textarea
-                v-model="rotateValue"
-                :rows="3"
-                spellcheck="false"
-                autocomplete="off"
-                class="mt-1 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm leading-relaxed focus:border-blue-500 focus:outline-none"
-                :class="{ 'masked-value': !revealRotateValue }"
-              ></textarea>
+              <div class="mt-3 space-y-1.5 rounded-lg border border-gray-200 bg-gray-50/70 p-3">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-xs font-medium text-gray-700">新凭据有效期（可选，本地时间）</span>
+                  <span class="text-[11px] text-gray-500">
+                    原有效期：{{ rotateTarget.expires_at ? shortTime(rotateTarget.expires_at) : '长期有效' }}
+                  </span>
+                </div>
+                <input
+                  v-model="rotateExpiresAt"
+                  type="datetime-local"
+                  :disabled="rotateClearExpires"
+                  class="block w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:text-gray-400"
+                  @input="rotateClearExpires = false"
+                />
+                <label class="flex items-center gap-1.5 text-[11px] text-gray-600">
+                  <input
+                    v-model="rotateClearExpires"
+                    type="checkbox"
+                    class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    @change="rotateClearExpires && (rotateExpiresAt = '')"
+                  />
+                  <span>清除原截止时间，转为长期有效</span>
+                </label>
+                <p class="text-[11px] text-gray-400">
+                  留空且不勾选时默认沿用原截止时间（若原凭据已过期或将在 7 天过渡窗内到期，则自动清为长期有效）。
+                </p>
+              </div>
               <div class="mt-4 flex justify-end gap-2">
                 <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100" @click="rotateTarget = null">
                   取消
                 </button>
                 <button
                   type="button"
-                  :disabled="rotateBusy || !rotateValue.trim()"
+                  :disabled="rotateBusy || !rotateValid"
                   class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
                   @click="submitRotate"
                 >

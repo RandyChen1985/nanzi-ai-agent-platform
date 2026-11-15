@@ -337,6 +337,31 @@ def test_overwrite_reports_pending_when_target_has_no_credential():
     assert pending == ["Authorization"]
 
 
+def test_overwrite_keeps_local_field_reference():
+    """本地写的是 ``${secret:key.field}`` 时必须保留。
+
+    回归点：``is_credential_placeholder`` 后来也认 ``${secret:...}``（运行时拦未解析
+    引用用），如果这里继续用它判断「本地值值不值得保留」，一次覆盖导入就会把用户
+    手写的字段引用洗成 ``${CREDENTIAL:authorization}``——绑定还在，但取不到字段了。
+    """
+    merged, pending = merge_headers_for_import(
+        {"Authorization": credential_placeholder("Authorization")},
+        {"Authorization": "Bearer ${secret:mail.smtp.password}"},
+    )
+    assert merged["Authorization"] == "Bearer ${secret:mail.smtp.password}"
+    assert pending == []
+
+
+def test_overwrite_keeps_local_single_value_credential():
+    merged, pending = merge_headers_for_import(
+        {"Authorization": credential_placeholder("Authorization")},
+        {"Authorization": "${CREDENTIAL:my.token}"},
+    )
+    # 本地还是占位符 = 没配过，允许被导入值覆盖
+    assert is_credential_placeholder(merged["Authorization"])
+    assert pending == ["Authorization"]
+
+
 def test_unresolved_headers_helper():
     assert unresolved_credential_headers(
         {"Authorization": "${CREDENTIAL:authorization}", "Accept": "application/json"}

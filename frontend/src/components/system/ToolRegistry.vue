@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch, provide } from 'vue'
 import { toolApi, scriptToolApi, type SysApiTool } from '../../api/tool'
 import { SUPPORTED_HTTP_METHODS } from '../../utils/toolMethods'
 import { parseToolSchema, validateSystemParams } from '../../utils/toolSchema'
@@ -54,6 +54,10 @@ const fieldErrors = ref<Partial<Record<'name' | 'url_template' | 'headers_str' |
 const paramEditorRef = ref<{
     flushPending: (consumerId: string) => Promise<string[]>
 } | null>(null)
+/** 向导模式下的那一份：新建默认走向导，走这里才拿得到新建态记下的凭据绑定 */
+const wizardRef = ref<{
+    flushPending: (consumerId: string) => Promise<string[]>
+} | null>(null)
 const headersEditorRef = ref<{
   flushPending: (consumerId: string) => Promise<string[]>
 } | null>(null)
@@ -65,6 +69,21 @@ const headersEditorRef = ref<{
  */
 /** 「来自凭据」但还没选凭据的参数名；非空时保存按钮禁用。 */
 const paramUnboundNames = ref<string[]>([])
+const formUnboundNames = ref<string[]>([])
+const wizardUnboundNames = ref<string[]>([])
+/**
+ * 弹窗内跨填写模式（向导 ↔ 表单）共享的新建态参数凭据/规则草稿与修订版本号：
+ * 切页不丢未保存选择，且编辑态一边改了绑定另一边能同步重载。
+ */
+const draftParamBindings = ref<Record<string, any>>({})
+const draftParamRules = ref<Record<string, any>>({})
+const paramBindingRevision = ref(0)
+provide('apiToolDraftParamPending', {
+    bindings: draftParamBindings,
+    rules: draftParamRules,
+    revision: paramBindingRevision,
+    bumpRevision: () => { paramBindingRevision.value += 1 },
+})
 
 const suppressFormWatch = ref(false)
 const wizardDirty = ref(false)
@@ -444,6 +463,21 @@ const toolPendingCredentials = (tool: SysApiTool) => pendingCredentialHeaders(to
 // saveTool() 也仍然只有一条保存路径。
 const editorMode = ref<'form' | 'wizard'>('form')
 
+const syncParamUnboundNames = () => {
+    paramUnboundNames.value = editorMode.value === 'wizard'
+        ? wizardUnboundNames.value
+        : formUnboundNames.value
+}
+const onWizardUnboundChanged = (names: string[]) => {
+    wizardUnboundNames.value = names
+    if (editorMode.value === 'wizard') paramUnboundNames.value = names
+}
+const onFormUnboundChanged = (names: string[]) => {
+    formUnboundNames.value = names
+    if (editorMode.value === 'form') paramUnboundNames.value = names
+}
+watch(editorMode, syncParamUnboundNames)
+
 const openModal = (tool?: SysApiTool, isClone = false) => {
     if (tool) {
         isEditing.value = !isClone
@@ -486,6 +520,12 @@ const openModal = (tool?: SysApiTool, isClone = false) => {
     }
     // 新建优先走向导；编辑已有工具走完整表单，避免用户每次都被迫从第 1 步开始。
     editorMode.value = tool && !isClone ? 'form' : 'wizard'
+    // 上一次编辑留下的「未绑定参数」必须清掉；同时清空新建态共享的暂存凭据与规则。
+    formUnboundNames.value = []
+    wizardUnboundNames.value = []
+    draftParamBindings.value = {}
+    draftParamRules.value = {}
+    paramUnboundNames.value = []
     clearFormErrors()
     advancedOpen.value = false
     wizardDirty.value = false
@@ -718,8 +758,12 @@ const saveTool = async () => {
                 if (headersEditorRef.value) {
                     failed.push(...await headersEditorRef.value.flushPending(newId))
                 }
-                // 参数位的凭据也是新建态先记账，这里一起补写
-                if (paramEditorRef.value) {
+                // 参数位的凭据也是新建态先记账，这里一起补写。
+                // 向导与表单通过 v-show 保活且共享同一份新建态 pending，
+                // 按当前激活模式调用 flushPending(newId) 即可，避免同一份 pending 重复提交两次。
+                if (editorMode.value === 'wizard' && wizardRef.value) {
+                    failed.push(...await wizardRef.value.flushPending(newId))
+                } else if (paramEditorRef.value) {
                     failed.push(...await paramEditorRef.value.flushPending(newId))
                 }
                 if (failed.length) {
@@ -1275,14 +1319,16 @@ onBeforeUnmount(() => {
                     {{ formError }}
                 </div>
               
-                <!-- 向导模式：4 步引导，写的是同一份 toolForm -->
+                <!-- 向导模式：4 步引导，写的是同一份 toolForm；v-show 保活防止切回表单时步骤与暂存状态丢失 -->
                 <ToolWizard
-                    v-if="editorMode === 'wizard'"
+                    v-show="editorMode === 'wizard'"
+                    ref="wizardRef"
                     :tool-form="toolForm"
                     @dirty-change="wizardDirty = $event"
+                    @unbound-changed="onWizardUnboundChanged"
                 />
 
-                <div v-else class="space-y-4">
+                <div v-show="editorMode === 'form'" class="space-y-4">
                     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div>
                            <label for="tool-name" class="block text-sm font-medium text-gray-700">工具名称 (唯一标识)</label>
@@ -1318,6 +1364,11 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div data-tool-field="parameter_schema_str" class="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30" tabindex="-1">
+                        <!--
+                          `is-global`：API 工具目前全部是平台级（管理员在这里统一配置，
+                          所有人共用），所以传 true。真出现「个人级 API 工具」时，
+                          把这里换成按工具归属判断——组件内部不再写死，改一处就够。
+                        -->
                         <ToolParamEditor
                             ref="paramEditorRef"
                             v-model="toolForm.parameter_schema_str"
@@ -1325,7 +1376,8 @@ onBeforeUnmount(() => {
                             :url-template="toolForm.url_template"
                             :consumer-id="isEditing && toolForm.id ? String(toolForm.id) : ''"
                             :consumer-type="'api_tool'"
-                            @unbound-changed="paramUnboundNames = $event"
+                            :is-global="true"
+                            @unbound-changed="onFormUnboundChanged"
                         />
                         <p v-if="fieldErrors.parameter_schema_str" class="mt-1 text-xs text-red-600">{{ fieldErrors.parameter_schema_str }}</p>
                     </div>
@@ -1355,11 +1407,13 @@ onBeforeUnmount(() => {
                         </summary>
                         <div class="space-y-4 border-t border-gray-200 px-3 py-3">
                             <div data-tool-field="headers_str" class="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30" tabindex="-1">
+                                <!-- 同 ToolParamEditor 的 is-global：API 工具都是平台级 -->
                                 <ToolHeadersEditor
                                     ref="headersEditorRef"
                                     v-model="toolForm.headers_str"
                                     :error="fieldErrors.headers_str"
                                     :consumer-id="isEditing && toolForm.id ? String(toolForm.id) : ''"
+                                    :is-global="true"
                                 />
                             </div>
 

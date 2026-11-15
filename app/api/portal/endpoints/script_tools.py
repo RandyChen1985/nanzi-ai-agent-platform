@@ -504,10 +504,16 @@ async def preview_script_tool(
     # 先脱敏再截断，防止注入凭据横跨输出截断边界导致半段明文逃逸回前端
     safe_stdout = redact_text(result.stdout or "", where="脚本工具试运行输出")
     safe_stderr = redact_text(result.stderr or "", where="脚本工具试运行错误输出")
+    raw_message = result.message or ""
+    if result.credential_denials:
+        denial_tip = f"凭据环境变量未注入：{result.credential_denials}"
+        raw_message = f"{raw_message}；{denial_tip}" if raw_message else denial_tip
     safe_message = (
-        redact_text(result.message, where="脚本工具试运行消息")
-        if result.message
-        else result.message
+        redact_text(raw_message, where="脚本工具试运行消息")
+        if raw_message
+        # 空消息必须给空串，不能给 None：SysScriptToolPreviewResponse.message 是
+        # 非 Optional 的 str，成功且无消息（最常见的一条路径）会直接 500。
+        else ""
     )
 
     return SysScriptToolPreviewResponse(

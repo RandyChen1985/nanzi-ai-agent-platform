@@ -26,7 +26,10 @@ def test_editor_exists_and_covers_the_five_steps():
     assert "② 怎么变形" in src
     assert "③ 套成什么" in src
     assert "④ 匹配凭据的" in src
-    assert "⑤ 挑不到时" in src
+    # 新增的一步：命中之后取凭据的哪一部分
+    assert "⑤ 取用字段" in src
+    assert "value_template" in src
+    assert "⑥ 挑不到时" in src
 
 
 def test_editor_offers_all_three_on_miss_strategies():
@@ -307,3 +310,36 @@ def test_model_on_miss_hint_scopes_to_param_level():
     hint = hint[: hint.index("case 'fallback_fixed':")]
     assert "Header" in hint and "不支持" in hint
 
+
+
+def _read(path) -> str:
+    return Path(path).read_text(encoding="utf-8")
+
+
+class TestCreateDialogKeepsItsSize:
+    """三步向导的尺寸不能跟着内容走。
+
+    踩过的坑：宽度按 `form.value_format` 在 `max-w-xl` / `max-w-3xl` 之间切，
+    高度又是内容撑的。点一下「结构化（模板）」，模板卡片区一出现，弹窗横向纵向
+    同时跳一截，刚对准的「下一步」会从鼠标底下跑掉——点一次切换就要重新找按钮。
+
+    宽度按宽的那个固定，高度给死再用 `max-h` 兜小屏（`max-height` 优先于
+    `height`），中间的滚动区负责消化多出来的内容。
+    """
+
+    def test_size_is_not_computed_from_content(self):
+        for path in (
+            ROOT / "frontend/src/views/SecretCenter.vue",
+            ROOT / "frontend/src/views/AdminSecretCenter.vue",
+        ):
+            source = _read(path)
+            assert "createStep === 1 && form.value_format === 'json'" not in source, path.name
+            assert 'h-[760px] max-h-[calc(100vh-120px)] w-full max-w-3xl' in source, path.name
+
+    def test_the_body_still_scrolls(self):
+        """高度给死之后，中间必须是滚动区，否则内容会被裁掉且滚不到。"""
+        for path in (
+            ROOT / "frontend/src/views/SecretCenter.vue",
+            ROOT / "frontend/src/views/AdminSecretCenter.vue",
+        ):
+            assert "min-h-0 flex-1 overflow-y-auto" in _read(path), path.name

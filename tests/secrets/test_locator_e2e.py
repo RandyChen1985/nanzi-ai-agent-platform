@@ -99,13 +99,13 @@ async def seeded():
 
 async def _bind_rule(on_miss: str = "fail"):
     async with AsyncSessionLocal() as session:
-        return await center.bind_rule(
+        row = await center.bind_rule(
             session,
             consumer_type="mcp_server",
             consumer_id=SERVER_ID,
             slot=SLOT,
             rule={
-                "key_source": "arg:username",
+                "key_source": "arg:to",
                 "transforms": ["trim"],
                 "templates": ["{value}"],
                 "target": "secret_key",
@@ -114,6 +114,10 @@ async def _bind_rule(on_miss: str = "fail"):
             },
             bound_by_user_id=None,  # 全局规则，等价于管理员配好的那一份
         )
+        # 建没建成本身就该断言：以前这里 `return` 一个可能为 None 的结果，
+        # 后面所有「规则没命中」的失败都会伪装成「注入没生效」，排查方向全错。
+        assert row is not None, "规则绑定没建成"
+        return row
 
 
 async def _inject(arguments: dict, denials: dict | None = None) -> dict:
@@ -130,8 +134,8 @@ async def test_different_username_injects_different_secret(seeded):
     """核心场景：同一个工具，username=A 用 A 的 key，username=B 用 B 的 key。"""
     await _bind_rule("fail")
 
-    got_a = await _inject({"username": "A", "subject": "hi"})
-    got_b = await _inject({"username": "B", "subject": "hi"})
+    got_a = await _inject({"to": "A", "subject": "hi"})
+    got_b = await _inject({"to": "B", "subject": "hi"})
 
     assert got_a["mailkey"] == "sk-alpha-111111"
     assert got_b["mailkey"] == "sk-bravo-222222"
@@ -151,7 +155,7 @@ async def test_unmatched_username_fails_and_reports_slot(seeded):
     await _bind_rule("fail")
 
     denials: dict = {}
-    got = await _inject({"username": "C"}, denials)
+    got = await _inject({"to": "C"}, denials)
 
     assert "mailkey" not in got
     assert denials.get(SLOT) == "rule_miss"
@@ -163,7 +167,7 @@ async def test_model_choice_rescues_the_mismatch(seeded):
     await _bind_rule("model")
 
     # 候选按 secret_key 排序：A(c1) B(c2) CC(c3)
-    got = await _inject({"username": "C", "secret_choice_mailkey": "c3"})
+    got = await _inject({"to": "C", "secret_choice_mailkey": "c3"})
 
     assert got["mailkey"] == "sk-charlie-333333"
 
@@ -173,7 +177,7 @@ async def test_model_choice_is_ignored_when_rule_hits(seeded):
     """规则命中时，模型乱填的编号必须被忽略——否则模型一句话就能改掉注入的凭据。"""
     await _bind_rule("model")
 
-    got = await _inject({"username": "A", "secret_choice_mailkey": "c3"})
+    got = await _inject({"to": "A", "secret_choice_mailkey": "c3"})
 
     assert got["mailkey"] == "sk-alpha-111111"
 
@@ -184,7 +188,7 @@ async def test_bad_choice_number_is_treated_as_no_choice(seeded):
     await _bind_rule("model")
 
     denials: dict = {}
-    got = await _inject({"username": "C", "secret_choice_mailkey": "c99"}, denials)
+    got = await _inject({"to": "C", "secret_choice_mailkey": "c99"}, denials)
 
     assert "mailkey" not in got
     assert denials.get(SLOT) == "rule_miss"
@@ -206,7 +210,7 @@ async def test_other_users_secret_is_never_matched(seeded):
     await _bind_rule("fail")
 
     denials: dict = {}
-    got = await _inject({"username": "Z"}, denials)
+    got = await _inject({"to": "Z"}, denials)
 
     assert "mailkey" not in got
     assert denials.get(SLOT) == "rule_miss"
@@ -223,12 +227,13 @@ async def test_send_mail_masks_and_fingerprints_without_leaking_plaintext():
 
     from app.services.mcp.echo_server import send_mail
 
-    out = await send_mail(None, "A", "sk-alpha-111111", "hi")
-    assert out["username"] == "A"
+    # 签名：send_mail(ctx, to, subject, host, port, ..., mailkey)
+    out = await send_mail(None, "A", "hi", None, None, None, None, None, None, "sk-alpha-111111")
+    assert out["to"] == "A"
     assert out["subject"] == "hi"
-    assert out["mailkey_present"] is True
-    assert out["mailkey_length"] == len("sk-alpha-111111")
-    assert out["mailkey_fingerprint"] == _fingerprint("sk-alpha-111111")
+    assert out["mailkey"]["present"] is True
+    assert out["mailkey"]["length"] == len("sk-alpha-111111")
+    assert out["mailkey"]["fingerprint"] == _fingerprint("sk-alpha-111111")
     # 明文绝不能出现在返回值里
     assert "sk-alpha-111111" not in json.dumps(out, ensure_ascii=False)
 
@@ -237,11 +242,10 @@ async def test_send_mail_masks_and_fingerprints_without_leaking_plaintext():
 async def test_send_mail_reports_absent_key_explicitly():
     from app.services.mcp.echo_server import send_mail
 
-    out = await send_mail(None, "A", None, "")
-    assert out["mailkey_present"] is False
-    assert out["mailkey_length"] == 0
-    assert out["mailkey_masked"] is None
-    assert out["mailkey_fingerprint"] is None
+    out = await send_mail(None, "A")
+    assert out["mailkey"]["present"] is False
+    # 没收到就不该有任何可推断的痕迹（掩码/指纹/长度都不给）
+    assert set(out["mailkey"]) == {"present"}
 
 
 def test_send_mail_schema_declares_credential_param():
@@ -251,8 +255,12 @@ def test_send_mail_schema_declares_credential_param():
     from app.services.mcp.echo_server import send_mail_tool_schema
 
     schema = json.loads(send_mail_tool_schema())
-    assert set(schema["properties"]) == {"username", "mailkey", "subject"}
-    assert schema["required"] == ["username"]
+    # 名字与「邮箱 SMTP 发送」模板字段对齐：映射面板的「按名字自动匹配」靠同名命中
+    assert {"host", "port", "security", "username", "password", "from_name"} <= set(
+        schema["properties"]
+    )
+    assert {"to", "subject", "mailkey"} <= set(schema["properties"])
+    assert schema["required"] == ["to"]
 
 
 def test_send_mail_slot_matches_what_we_bind():
@@ -287,3 +295,33 @@ async def test_send_mail_tool_schema_seen_by_mcp_client_keeps_mailkey():
     tools = {tool.name: tool for tool in await echo_mcp.list_tools()}
     schema = tools["send_mail"].input_schema
     assert "mailkey" in schema.get("properties", {})
+
+
+@pytest.mark.asyncio
+async def test_send_mail_reports_every_smtp_field():
+    """SMTP 字段要能一眼看出「映射对了没有」。
+
+    这条工具存在的意义就是验收：一条结构化凭据铺到 host/port/security/username/
+    password/from_name 上，回执里要能逐个核对。非敏感的给明文（host 映射错了一看
+    便知），敏感的只给掩码指纹（password 泄露进 trace 就白做了）。
+    """
+    import json
+
+    from app.services.mcp.echo_server import send_mail
+
+    out = await send_mail(
+        None, "ops@nanzi.ai", "日报", "smtp.exmail.qq.com", 465, "ssl",
+        "alert-bot@nanzi.ai", "Whq7mT2026smtp", "南孜平台告警", None,
+    )
+    smtp = out["smtp"]
+    assert smtp["host"]["value"] == "smtp.exmail.qq.com"
+    assert smtp["port"]["value"] == 465
+    assert smtp["security"]["value"] == "ssl"
+    assert smtp["username"]["value"] == "alert-bot@nanzi.ai"
+    assert smtp["from_name"]["value"] == "南孜平台告警"
+    # 密码只给掩码与指纹
+    assert smtp["password"]["present"] is True
+    assert smtp["password"]["fingerprint"] == _fingerprint("Whq7mT2026smtp")
+    # 只声明不传 = 明确「没收到」，不能和「收到空串」混为一谈
+    assert out["mailkey"]["present"] is False
+    assert "Whq7mT2026smtp" not in json.dumps(out, ensure_ascii=False)

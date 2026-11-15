@@ -13,6 +13,7 @@ import ChatTour from '../components/embed/ChatTour.vue'
 import { SYSTEM_CONFIG_TOUR_STEPS } from '../components/system/systemConfigTourSteps'
 import { useSystemConfigTour } from '../composables/system/useSystemConfigTour'
 import InstanceNodesPanel from '../components/system/InstanceNodesPanel.vue'
+import SystemBroadcastPanel from '../components/system/SystemBroadcastPanel.vue'
 import LangfuseConfig from '../components/system/LangfuseConfig.vue'
 import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -53,7 +54,8 @@ import {
   ExclamationTriangleIcon,
   DocumentDuplicateIcon,
   ChartBarSquareIcon,
-  EnvelopeIcon
+  EnvelopeIcon,
+  MegaphoneIcon
 } from '@heroicons/vue/24/outline'
 
 const router = useRouter()
@@ -63,8 +65,10 @@ const canSave = hasPermission('element:system:config_save')
 
 const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'logs' | 'branding' | 'langfuse'>('configs')
 const diagSubTab = ref<'console' | 'redis'>('console')
-// 系统诊断内部的二级左栏：诊断（原有内容）/ 实例（多节点心跳）
-const diagSection = ref<'diag' | 'instances'>('diag')
+// 系统诊断内部的二级左栏：诊断（原有内容）/ 实例（多节点心跳）/ 站内信群发（仅 admin）
+const diagSection = ref<'diag' | 'instances' | 'broadcast'>('diag')
+// 站内信群发是广播动作，入口与后端接口都只对管理员开放
+const isAdmin = computed(() => userInfo.value?.role === 'admin')
 const instanceSummary = ref<{ online: number; total: number }>({ online: 0, total: 0 })
 
 function onInstanceSummary(value: { online: number; total: number }) {
@@ -3695,8 +3699,18 @@ onUnmounted(() => {
                     {{ instanceSummary.online }}/{{ instanceSummary.total }}
                   </span>
                 </button>
+                <button
+                  v-if="isAdmin"
+                  type="button"
+                  class="flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-2 py-1.5 text-[13px] transition-colors cursor-pointer lg:flex-none lg:justify-start"
+                  :class="diagSection === 'broadcast' ? 'bg-primary/10 font-semibold text-primary ring-1 ring-primary/20' : 'text-gray-600 hover:bg-gray-50'"
+                  @click="diagSection = 'broadcast'"
+                >
+                  <MegaphoneIcon class="h-4 w-4 shrink-0" />
+                  站内信群发
+                </button>
                 </div>
-              <div class="mt-auto hidden rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-2 py-1.5 text-[10.5px] leading-relaxed text-gray-500 lg:block">
+              <div v-if="diagSection !== 'broadcast'" class="mt-auto hidden rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-2 py-1.5 text-[10.5px] leading-relaxed text-gray-500 lg:block">
                 主 / 从只影响定时调度，其他能力每个实例都一样。
               </div>
             </div>
@@ -4229,6 +4243,9 @@ onUnmounted(() => {
           <div v-show="diagSection === 'instances'" class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto custom-scrollbar pb-6">
             <InstanceNodesPanel @summary="onInstanceSummary" />
           </div>
+
+          <!-- 站内信群发：仅 admin 可见（后端 /broadcast 两个端点同样 require_admin） -->
+          <SystemBroadcastPanel v-if="isAdmin && diagSection === 'broadcast'" />
         </div>
 
       <!-- BRANDING TAB -->

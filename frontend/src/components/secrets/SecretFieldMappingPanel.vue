@@ -1,0 +1,539 @@
+<script setup lang="ts">
+/**
+ * 「多值凭据」页：一条凭据（或一条挑凭据的规则）供多个参数。
+ *
+ * 它不是新存储：参数 A 取字段 x 本来就是一条绑定（同一个 secret_id / 同一条规则，
+ * 不同的 value_path）。所以这里配完，单值页也能看见、也能改——两页是同一批记录的
+ * 两种看法。
+ *
+ * 保存语义是**整页覆盖**：选中的参数绑凭据，没选的一律回到「模型填写」。
+ * 「这张表就是这个工具的参数配置」比「只改动过的」更符合这里的心理模型。
+ */
+import { computed, ref, watch } from 'vue'
+import axios from '@/utils/axios'
+import type { CredentialPickerItem } from '@/utils/credentialPicker'
+import { findCredentialTemplate } from '@/utils/credentialTemplates'
+import SecretLocatorEditor, { type LocatorRule } from './SecretLocatorEditor.vue'
+
+const props = withDefaults(
+  defineProps<{
+    consumerType: string
+    consumerId: string
+    /** 管理员给全平台配（写入全局绑定） */
+    isGlobal?: boolean
+    /** 这次能映射的参数名 */
+    params: string[]
+    /** 参数名 → 槽位。不给就让后端按工具的 URL/方法推算，MCP 必须给 */
+    slots?: Record<string, string>
+    /** 单值页里已经配了凭据的参数：本页保存会把它们改成这里的样子 */
+    singleValueParams?: Record<string, string>
+    subject?: string
+  }>(),
+  { isGlobal: false, slots: () => ({}), singleValueParams: () => ({}), subject: '' },
+)
+
+const emit = defineEmits<{
+  (
+    e: 'saved',
+    payload: { saved: number; removed: number; bound: string[]; freed: string[] },
+  ): void
+}>()
+
+interface FieldMeta {
+  name: string
+  sensitive: boolean
+  preview: string
+}
+
+const source = ref<'fixed' | 'rule'>('fixed')
+const secrets = ref<CredentialPickerItem[]>([])
+const secretId = ref('')
+const liveFields = ref<FieldMeta[]>([])
+const liveFormat = ref('text')
+const picks = ref<Record<string, string>>({})
+const original = ref<Record<string, string>>({})
+/** 被别的凭据或规则占着的参数（参数名 → 来源名） */
+const takenByOther = ref<Record<string, string>>({})
+const ruleDraft = ref<LocatorRule | null>(null)
+const ruleOpen = ref(false)
+const busy = ref(false)
+const errorText = ref('')
+const autoHint = ref('')
+
+const structured = computed(() =>
+  secrets.value.filter((s) => (s.value_format || 'text') === 'json'),
+)
+
+/** 规则模式下字段集来自模板约束：没有它，字段名无从得知，只能靠手输 */
+const ruleFields = computed<FieldMeta[]>(() => {
+  const tpl = findCredentialTemplate(ruleDraft.value?.value_template)
+  if (!tpl) return []
+  return tpl.fields.map((f) => ({
+    name: f.key,
+    sensitive: Boolean(f.secret),
+    preview: '',
+  }))
+})
+
+const candidateFields = computed(() =>
+  source.value === 'rule' ? ruleFields.value : liveFields.value,
+)
+
+const ruleSummaryText = computed(() => {
+  const rule = ruleDraft.value
+  if (!rule) return ''
+  const parts = [
+    `按 ${rule.key_source || '?'} 匹配凭据的 ${rule.target || '?'}`,
+    rule.match === 'exact' ? '精确' : rule.match || '',
+    rule.value_template ? `模板 ${rule.value_template}` : '不限模板',
+  ]
+  return parts.filter(Boolean).join(' · ')
+})
+
+/** 单值页已配、本页没选的参数：保存会把它们改回模型填写，要提醒 */
+const takeover = computed(() =>
+  props.params.filter((name) => props.singleValueParams?.[name] && !picks.value[name]),
+)
+
+const pendingChanges = computed(() => {
+  const changed: { name: string; valuePath: string }[] = []
+  for (const name of props.params) {
+    const now = picks.value[name] || ''
+    const before = original.value[name] || ''
+    if (now !== before) changed.push({ name, valuePath: now })
+  }
+  return changed
+})
+
+/** 参数 → 槽位。MCP 必须给（``arg:短工具名:参数``），API 工具留空由后端推算。 */
+function slotOf(name: string): string {
+  return props.slots?.[name] || ''
+}
+
+/**
+ * 从槽位反推参数名。
+ *
+ * MCP 的槽位是 ``arg:<短工具名>:<参数名>``，只取末段会撞车——同一个服务下
+ * 另一个工具也有 ``date`` 时，两个参数会互相串台。所以下面还会再用
+ * ``props.slots`` 精确比对一次，这里的末段只用来做初筛。
+ */
+function nameOfSlot(slot: string): string {
+  return String(slot || '').split(':').pop() || ''
+}
+
+/** 只取字段清单，不动已经填好的映射 */
+async function fetchFields(id: string) {
+  liveFields.value = []
+  liveFormat.value = 'text'
+  if (!id) return
+  try {
+    const res = await axios.get(`/api/portal/secrets/${id}/fields`)
+    const data = res.data?.data
+    liveFields.value = data?.fields || []
+    liveFormat.value = data?.format || 'text'
+  } catch (e: any) {
+    errorText.value = e?.response?.data?.detail || '读取凭据字段失败'
+  }
+}
+
+/**
+ * 回填：摸清这个工具现在是怎么配的，再决定默认选哪条凭据。
+ *
+ * 顺序很重要——先读绑定、后选凭据。反过来（先挑列表里第一条结构化凭据）会让
+ * 打开页面变成「换了一条凭据」：已有映射全部清空，用户以为配置丢了。
+ */
+async function load() {
+  busy.value = true
+  errorText.value = ''
+  try {
+    const [pickerRes, bindingsRes] = await Promise.all([
+      axios.get('/api/portal/secrets/picker'),
+      props.consumerId
+        ? axios.get('/api/portal/secrets/bindings', {
+            params: { consumer_type: props.consumerType, consumer_id: props.consumerId },
+          })
+        : Promise.resolve({ data: { data: [] } }),
+    ])
+    const groups = pickerRes.data?.data?.groups || {}
+    secrets.value = [...(groups.mine || []), ...(groups.shared || [])]
+
+    // 认「本人绑的」或「全局的」，不是严格等于本页作用域。
+    //
+    // 严格相等的写法有两个坑：① 管理员拿自己的个人凭据绑平台级工具时，后端会把
+    // 它降级成本人绑定（个人凭据没法给所有人用），`is_global` 是 false，严格比对
+    // 会把它当成「没绑过」——刚保存完再打开就显示未绑定；② 管理员在一页里可能
+    // 既有全局绑定又有自己的个人绑定，只能显示其中一半。
+    const rows = (bindingsRes.data?.data || []).filter(
+      (r: any) => r.bound_by_me || Boolean(r.is_global) === Boolean(props.isGlobal),
+    )
+
+    // 按 strategy 分开存：同一个参数可以同时挂「规则」和「回退固定目标」两条绑定
+    // （on_miss=fallback_fixed），塞进同一个 Map 会互相覆盖，覆盖方向还取决于
+    // 接口返回顺序——表现就是「明明配了规则，界面上却显示成固定凭据」。
+    const byNameFixed = new Map<string, any>()
+    const byNameRule = new Map<string, any>()
+    for (const row of rows) {
+      const name = nameOfSlot(row.slot)
+      if (!props.params.includes(name)) continue
+      const expected = slotOf(name)
+      if (expected && row.slot !== expected) continue
+      if ((row.strategy || 'fixed') === 'rule') byNameRule.set(name, row)
+      else byNameFixed.set(name, row)
+    }
+
+    const ruleRow = [...byNameRule.values()][0]
+    const fixedRows = [...byNameFixed.values()]
+
+    // 一个工具通常由一条凭据供多个参数：取出现次数最多的那条作为本页选中的凭据
+    const counts = new Map<string, number>()
+    for (const row of fixedRows) {
+      if (row.secret_id) counts.set(row.secret_id, (counts.get(row.secret_id) || 0) + 1)
+    }
+    let boundId = ''
+    for (const [id, n] of counts) {
+      if (!boundId || n > (counts.get(boundId) || 0)) boundId = id
+    }
+
+    const mine: Record<string, string> = {}
+    if (ruleRow) {
+      // 规则模式：参与映射的参数各有一条同规则、不同 value_path 的绑定
+      for (const [name, row] of byNameRule) mine[name] = row.value_path || ''
+      ruleDraft.value = ruleRow.rule
+        ? { ...ruleRow.rule, value_path: ruleRow.value_path || '' }
+        : null
+      source.value = 'rule'
+    } else {
+      for (const [name, row] of byNameFixed) {
+        if (row.secret_id && row.secret_id === boundId) mine[name] = row.value_path || ''
+      }
+      source.value = 'fixed'
+    }
+
+    // 被别的凭据占着的参数：不提示的话，用户会以为这行「没配过」，
+    // 一保存就被清空
+    const taken: Record<string, string> = {}
+    for (const name of byNameRule.keys()) {
+      if (!mine[name]) taken[name] = '按规则匹配'
+    }
+    for (const [name, row] of byNameFixed) {
+      if (mine[name] || taken[name]) continue
+      if (row.secret_id && row.secret_id !== boundId) {
+        taken[name] = row.secret_key || '其他凭据'
+      }
+    }
+    takenByOther.value = taken
+
+    original.value = { ...mine }
+    picks.value = { ...mine }
+
+    secretId.value = boundId || structured.value[0]?.id || ''
+    await fetchFields(secretId.value)
+  } catch (e: any) {
+    errorText.value = e?.response?.data?.detail || '加载凭据列表失败'
+  } finally {
+    busy.value = false
+  }
+}
+
+/** 手动换凭据：字段名属于旧凭据，全部清掉重选 */
+async function changeSecret() {
+  picks.value = {}
+  original.value = {}
+  takenByOther.value = {}
+  await fetchFields(secretId.value)
+}
+
+function onRuleSaved(rule: LocatorRule) {
+  ruleDraft.value = rule
+  source.value = 'rule'
+  // 模板换了，旧字段名通常不存在了——但只在**真的能列出字段**时才清理。
+  // 选「不限定结构」时 ruleFields 是空的，照清不误会把用户手填的字段名全抹掉：
+  // 那个场景下没有下拉可选，手填是唯一途径，清掉等于让他重填一遍。
+  if (!ruleFields.value.length) {
+    ruleOpen.value = false
+    return
+  }
+  for (const name of props.params) {
+    if (picks.value[name] && !ruleFields.value.some((f) => f.name === picks.value[name])) {
+      picks.value[name] = ''
+    }
+  }
+  ruleOpen.value = false
+}
+
+function autoMatch() {
+  const names = candidateFields.value.map((f) => f.name)
+  let matched = 0
+  for (const param of props.params) {
+    if (picks.value[param]) continue
+    if (names.includes(param)) {
+      picks.value[param] = param
+      matched += 1
+    }
+  }
+  autoHint.value = matched
+    ? `按名字对上了 ${matched} 个，剩下的自己选`
+    : '没有参数名和字段名撞上，得手动选'
+}
+
+async function save() {
+  if (!props.consumerId) {
+    errorText.value = '工具还没保存，先把工具存下来再配参数凭据'
+    return
+  }
+  if (source.value === 'rule' && !ruleDraft.value) {
+    errorText.value = '还没有配规则'
+    return
+  }
+  busy.value = true
+  errorText.value = ''
+  try {
+    // 整页覆盖：没选字段的参数提交 none，由后端把固定与规则两条都清掉。
+    //
+    // `value_path` 不属于规则 JSON（它是绑定记录上的列），所以从 ruleBody 里摘掉。
+    // 但这个值**不能**回头当所有行的默认字段：`load()` 会把第一条规则行的路径
+    // 回填进来，于是「某个参数绑了 password」会让所有留空（= 模型填写）的参数
+    // 在下次保存时都被绑上 password——界面还显示它们已经回到模型填写了。
+    const { value_path: _bindingPath, ...ruleBody } = (ruleDraft.value || {}) as LocatorRule
+    void _bindingPath
+    const items = props.params.map((name) => {
+      const path = picks.value[name] || ''
+      const base = { slot: props.slots?.[name] || '', name }
+      if (!path) return { ...base, strategy: 'none' }
+      if (source.value === 'rule') {
+        return { ...base, strategy: 'rule', rule: ruleBody, value_path: path }
+      }
+      return { ...base, strategy: 'fixed', secret_id: secretId.value, value_path: path }
+    })
+    const res = await axios.post('/api/portal/secrets/bindings/batch', {
+      consumer_type: props.consumerType,
+      consumer_id: props.consumerId,
+      is_global: props.isGlobal,
+      items,
+    })
+    const data = res.data?.data || { saved: 0, removed: 0 }
+    // 保存后按库里的事实重算一遍：界面此前显示的是内存草稿。
+    // 不重算的话，「保存其实没落成规则」这种状态要等到关掉再打开才暴露，
+    // 而那时用户已经以为配好了——排查方向会全错。
+    await load()
+    original.value = { ...picks.value }
+    emit('saved', {
+      saved: data.saved || 0,
+      removed: data.removed || 0,
+      bound: props.params.filter((n) => picks.value[n]),
+      freed: props.params.filter((n) => !picks.value[n]),
+    })
+  } catch (e: any) {
+    errorText.value = e?.response?.data?.detail || '保存失败'
+  } finally {
+    busy.value = false
+  }
+}
+
+watch(() => props.consumerId, () => { void load() }, { immediate: true })
+</script>
+
+<template>
+  <div>
+    <p class="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-700">
+      先定一条凭据（或一条挑凭据的规则），再把它的字段分给各参数。
+      <strong>没选字段的参数保存后回到「模型填写」</strong>。
+    </p>
+
+    <div v-if="takeover.length" class="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+      这些参数在「单值凭据」页已经配了凭据，本页保存会把它们改回模型填写：
+      <code v-for="name in takeover" :key="name" class="ml-1 font-mono">{{ name }}</code>
+    </div>
+
+    <!-- 凭据来源 -->
+    <div class="mb-3 flex gap-2">
+      <button
+        type="button"
+        class="flex-1 rounded-lg border px-3 py-2 text-left transition-colors"
+        :class="source === 'fixed' ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-gray-300 bg-white hover:border-gray-400'"
+        @click="source = 'fixed'"
+      >
+        <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-900">
+          固定凭据
+          <span class="rounded bg-indigo-50 px-1 py-0.5 text-[10px] font-medium text-indigo-700">仅结构化</span>
+        </div>
+        <div class="mt-0.5 text-[11px] text-gray-600">选一条结构化凭据，它的字段就是下面的候选</div>
+      </button>
+      <button
+        type="button"
+        class="flex-1 rounded-lg border px-3 py-2 text-left transition-colors"
+        :class="source === 'rule' ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-gray-300 bg-white hover:border-gray-400'"
+        @click="source = 'rule'"
+      >
+        <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-900">
+          按规则匹配
+          <span class="rounded bg-violet-50 px-1 py-0.5 text-[10px] font-medium text-violet-700">按身份挑</span>
+        </div>
+        <div class="mt-0.5 text-[11px] text-gray-600">配一条规则决定用谁的凭据，模板约束决定字段集</div>
+      </button>
+    </div>
+
+    <!-- 固定凭据 -->
+    <label v-if="source === 'fixed'" class="mb-3 block">
+      <span class="mb-1 block text-[11px] font-semibold text-gray-700">选一条结构化凭据</span>
+      <select
+        v-model="secretId"
+        class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+        :disabled="!structured.length"
+        @change="changeSecret"
+      >
+        <option v-if="!structured.length" value="">
+          还没有结构化凭据——先去凭据中心把邮箱/数据库这类存成结构化
+        </option>
+        <option v-for="s in structured" :key="s.id" :value="s.id">
+          {{ s.name }} · {{ s.secret_key }} · {{ s.value_template || 'json' }}
+        </option>
+      </select>
+    </label>
+
+    <!-- 按规则 -->
+    <div v-else class="mb-3 rounded-lg border border-gray-200 bg-white">
+      <div class="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
+        <span class="text-xs font-semibold text-gray-800">挑凭据的规则</span>
+        <div class="ml-auto">
+          <button
+            type="button"
+            class="rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
+            @click="ruleOpen = true"
+          >{{ ruleDraft ? '改规则' : '配规则' }}</button>
+        </div>
+      </div>
+      <div class="px-3 py-2.5 text-[11px] leading-relaxed">
+        <p v-if="!ruleDraft" class="text-amber-700">
+          还没配规则。规则和单值页用的是同一条，只是这里还要给每个参数指定取哪个字段。
+        </p>
+        <template v-else>
+          <p class="text-gray-700">
+            <span class="mr-1 rounded bg-violet-50 px-1 py-0.5 font-medium text-violet-700">规则</span>
+            {{ ruleSummaryText }}
+          </p>
+          <p class="mt-1 text-gray-600">
+            <span class="mr-1 rounded bg-indigo-50 px-1 py-0.5 font-medium text-indigo-700">取用字段</span>
+            每条参数各自指定（见下表）
+          </p>
+          <p v-if="!ruleDraft.value_template" class="mt-2 rounded bg-amber-50 px-2 py-1.5 text-amber-800">
+            规则没声明模板约束，字段名无从得知，下表只能靠手输。
+            在规则里选一个模板，字段就能下拉。
+          </p>
+        </template>
+      </div>
+    </div>
+
+    <!-- 字段来源提示 -->
+    <p v-if="source === 'fixed' && liveFormat === 'json' && !liveFields.length" class="mb-2 text-[11px] text-rose-600">
+      这条凭据读不出字段（值不是 JSON 对象？）
+    </p>
+
+    <!-- 映射表 -->
+    <div class="rounded-lg border border-gray-200">
+      <div class="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
+        <span class="text-xs font-semibold text-gray-800">参数 → 字段</span>
+        <div class="ml-auto flex items-center gap-2">
+          <span class="text-[11px] text-gray-500">
+            已映射 {{ params.filter((n) => picks[n]).length }} / {{ params.length }}
+          </span>
+          <button
+            type="button"
+            class="rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
+            @click="autoMatch"
+          >按名字自动匹配</button>
+        </div>
+      </div>
+
+      <table class="w-full text-left text-xs">
+        <thead class="text-[11px] text-gray-500">
+          <tr>
+            <th class="px-3 py-1.5 font-medium">参数</th>
+            <th class="px-3 py-1.5 font-medium">取哪个字段</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <tr v-for="name in params" :key="name" :class="picks[name] ? 'bg-blue-50/50' : ''">
+            <td class="px-3 py-1.5">
+              <code class="font-mono text-gray-800">{{ name }}</code>
+              <!-- 来源徽标：这个参数的值到底谁给。
+                   凭据参数已经从模型可见的 schema 里移除了，但界面上看不出来，
+                   用户只能靠猜「这个要模型填还是要配凭据」。 -->
+              <span
+                v-if="picks[name]"
+                class="ml-1.5 rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-medium text-emerald-700"
+                title="运行时由平台解密并注入，模型看不到这个值"
+              >服务端注入</span>
+              <span
+                v-else-if="takenByOther[name]"
+                class="ml-1.5 rounded bg-amber-50 px-1 py-0.5 text-[10px] font-medium text-amber-700"
+              >现由 {{ takenByOther[name] }} 提供</span>
+              <span
+                v-else
+                class="ml-1.5 rounded bg-gray-100 px-1 py-0.5 text-[10px] font-medium text-gray-600"
+                title="模型可见，由模型在调用时自行填写"
+              >模型填写</span>
+            </td>
+            <td class="px-3 py-1.5">
+              <select
+                v-if="candidateFields.length"
+                v-model="picks[name]"
+                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+              >
+                <option value="">模型填写</option>
+                <option v-for="f in candidateFields" :key="f.name" :value="f.name">
+                  {{ f.name }}{{ f.sensitive ? '（敏感）' : '' }}
+                </option>
+              </select>
+              <input
+                v-else
+                v-model="picks[name]"
+                placeholder="字段名（点分隔可取嵌套）"
+                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+              />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p v-if="autoHint" class="mt-2 text-[11px] text-gray-500">{{ autoHint }}</p>
+    <p v-if="errorText" class="mt-2 text-[11px] text-rose-600">{{ errorText }}</p>
+
+    <div class="mt-3 flex items-center gap-2">
+      <span class="text-[11px] text-gray-500">
+        保存后：{{ params.filter((n) => picks[n]).length }} 个参数由凭据提供，
+        {{ params.filter((n) => !picks[n]).length }} 个回到模型填写
+        <template v-if="pendingChanges.length">（本次改动 {{ pendingChanges.length }} 个）</template>
+      </span>
+      <div class="ml-auto">
+        <button
+          type="button"
+          class="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+          :disabled="busy || !params.length"
+          @click="save"
+        >{{ busy ? '保存中…' : '保存映射' }}</button>
+      </div>
+    </div>
+
+    <!--
+      只要模板约束，不要取用字段：
+      · 模板约束必须在这里——它声明「命中的凭据都长这样」，外面的映射表据此把
+        字段做成下拉。关掉它，规则就只能手填字段名。
+      · 取用字段**不能**在这里。规则是共享的一条，而「取哪一段」是每个参数各自的，
+        所以它只能在下表逐行选。放进弹窗就得有个落地点，而任何「兜底填给所有行」
+        的做法都会误伤：留空的行本来是「模型填写」，会被悄悄绑上这个字段。
+    -->
+    <SecretLocatorEditor
+      :open="ruleOpen"
+      :rule="ruleDraft"
+      slot=""
+      :arg-options="params"
+      :title="subject ? `凭据匹配规则 · ${subject}` : '凭据匹配规则'"
+      :show-value-path="false"
+      :show-value-template="true"
+      @update:open="(value: boolean) => { if (!value) ruleOpen = false }"
+      @save="onRuleSaved"
+    />
+  </div>
+</template>

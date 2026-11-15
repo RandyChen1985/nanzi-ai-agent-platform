@@ -44,11 +44,17 @@ def test_diagnostics_subnav_stacks_above_content_on_narrow_screens(page: str) ->
 
 
 def test_diagnostics_subnav_hides_its_chrome_on_narrow_screens(page: str) -> None:
-    """窄屏只留两个页签：组标题与底部说明在手机上只是白占高度。"""
+    """窄屏只留页签：组标题与底部说明在手机上只是白占高度。
+
+    页签数量：普通用户两个（诊断 / 实例），管理员三个（多一个「站内信群发」）。
+    三者共用同一套「平分宽度、不折字」的样式，所以这里断言的是样式复用而不是写死数量。
+    """
     assert 'class="hidden px-2 pb-1.5 pt-1 text-[10.5px] font-semibold tracking-wide text-gray-400 lg:block"' in page
     assert 'class="mt-auto hidden rounded-lg border border-dashed border-gray-200 bg-gray-50/60' in page
-    # 两个页签并排时平分宽度、不折字
-    assert page.count("flex flex-1 items-center justify-center gap-2 whitespace-nowrap") == 2
+    # 页签并排时平分宽度、不折字；管理员多出的「站内信群发」必须沿用同一套样式
+    nav_tab_class = "flex flex-1 items-center justify-center gap-2 whitespace-nowrap"
+    assert page.count(nav_tab_class) >= 2
+    assert "站内信群发" in page
 
 
 def test_service_cards_header_wraps_instead_of_squeezing(page: str) -> None:

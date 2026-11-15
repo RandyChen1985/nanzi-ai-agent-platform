@@ -10,6 +10,18 @@ export type LocatorRule = {
   target: string
   match: string
   on_miss: string
+  /**
+   * 结构约定：命中的凭据必须都是这个模板（`smtp` 等）；空 = 不限。
+   * 有了它，字段集合在配置期就确定，取用字段能给成下拉；运行时挑到模板不符的
+   * 凭据按未命中处理。
+   */
+  value_template?: string
+  /**
+   * 取用字段（点分隔路径）；空 = 整段。
+   * **不在规则 JSON 里**，它落在绑定记录上——保存时由调用方拆出去单独提交，
+   * 否则后端的 `parse_rule` 会因为未知字段拒收。
+   */
+  value_path?: string
 }
 
 const TARGET_LABEL: Record<string, string> = {
@@ -59,6 +71,7 @@ export function ruleSummary(rule: LocatorRule | null | undefined): string {
  */
 import { computed, ref, watch } from 'vue'
 import axios from '@/utils/axios'
+import { CREDENTIAL_TEMPLATES, findCredentialTemplate } from '@/utils/credentialTemplates'
 import { XMarkIcon } from '@heroicons/vue/24/outline'
 
 
@@ -75,6 +88,28 @@ const props = withDefaults(
     argOptions?: string[]
     /** 已有规则时是否提供「删除这条规则」。参数入口不需要——改回「模型填写」即是删除 */
     removable?: boolean
+    /**
+     * 是否显示「取用字段」（那条「这条绑定取哪一段」的下拉）。
+     *
+     * 参数入口（单值凭据 tab）传 false：那里的语义是「这个参数拿一个整段值」，
+     * 规则命中的凭据本来就该整段注入。摆一个「取用字段」出来等于问用户一个
+     * 他没法回答的问题——命中哪条凭据运行时才知道，此刻下拉里根本没有字段可选，
+     * 只有一个空框和一句「留空 = 整段」的说明。
+     *
+     * 多值凭据 tab 也传 false，但理由不同：那里的取用字段在**映射表每一行**
+     * （同一份凭据的不同字段喂给不同参数），弹窗里再放一份保存时会被丢掉。
+     */
+    showValuePath?: boolean
+    /**
+     * 是否显示「模板约束」。
+     *
+     * 它和取用字段挤在同一节里，但完全是两件事：模板约束声明「命中的凭据都长这样」，
+     * 运行时据此把结构不符的凭据判为未命中；取用字段是「取哪一段」。
+     *
+     * 用一个开关会连带关掉另一个——上一版就是这样，多值页关掉取用字段后，
+     * 模板下拉也一起消失了，新配的规则再也没法限定结构，字段只能手填。
+     */
+    showValueTemplate?: boolean
   }>(),
   {
     rule: null,
@@ -82,6 +117,8 @@ const props = withDefaults(
     slot: '',
     argOptions: () => [],
     removable: false,
+    showValuePath: true,
+    showValueTemplate: true,
   },
 )
 
@@ -105,6 +142,15 @@ const USER_KEYS = [
   { value: 'user.user_id', label: '我的用户 ID' },
 ]
 
+const TEMPLATE_OPTIONS = CREDENTIAL_TEMPLATES.map((t) => ({ value: t.id, label: `${t.name} · ${t.id}` }))
+
+/** 选定模板后字段集合就确定了——和「固定凭据」一样能下拉，不用手打字段名 */
+const templateFields = computed(() => {
+  const tpl = findCredentialTemplate(draft.value.value_template)
+  if (!tpl) return null
+  return tpl.fields.map((f) => ({ value: f.key, label: `${f.key} · ${f.label}`, secret: Boolean(f.secret) }))
+})
+
 const TARGETS = [
   { value: 'secret_key', label: 'secret_key（精确）' },
   { value: 'name', label: '名称（精确）' },
@@ -120,6 +166,8 @@ function blankRule(): LocatorRule {
     // 凭据 key 入库时被规范成小写，而入参常带大写；默认宽松匹配才不会「配了却不生效」
     match: 'exact_ci',
     on_miss: 'fail',
+    value_template: '',
+    value_path: '',
   }
 }
 
@@ -180,6 +228,17 @@ const onMissHint = computed(() => {
   }
 })
 
+// 换了模板约束，原来选的字段可能不在这个模板里 → 当场清掉，不留到运行时才失败
+watch(
+  () => draft.value.value_template,
+  () => {
+    const fields = templateFields.value
+    if (fields && draft.value.value_path && !fields.some((f) => f.value === draft.value.value_path)) {
+      draft.value.value_path = ''
+    }
+  },
+)
+
 function addTemplate() {
   if (draft.value.templates.length >= 3) return
   draft.value.templates.push('{value}')
@@ -221,10 +280,12 @@ async function runPreview() {
     if (isArgKey.value && argName.value && sampleValue.value !== '') {
       sampleArgs[argName.value] = sampleValue.value
     }
+    // value_path 落在绑定记录上，不属于规则 JSON；混进来会被 parse_rule 判为未知字段
+    const { value_path: _path, ...ruleBody } = draft.value
     const res = await axios.post('/api/portal/secrets/locate-preview', {
       slot: props.slot,
       rule: {
-        ...draft.value,
+        ...ruleBody,
         // 结果里按模板顺序展示，空模板没必要发过去
         templates: draft.value.templates.filter((t) => t.trim()),
       },
@@ -267,6 +328,10 @@ function save() {
   emit('save', {
     ...draft.value,
     templates: draft.value.templates.map((t) => t.trim()).filter(Boolean),
+    // 不显示某一项时必须清空：控件藏了但 draft 里可能还留着上次的值，
+    // 直接展开提交等于把用户看不见的配置又写回去了。
+    value_path: props.showValuePath ? draft.value.value_path : '',
+    value_template: props.showValueTemplate ? draft.value.value_template : '',
   })
 }
 </script>
@@ -390,9 +455,59 @@ function save() {
             </div>
           </div>
 
-          <!-- ⑤ 匹配不上时 -->
+          <!-- ⑤ 结构约束：模板与取用字段是两个开关，见 showValueTemplate / showValuePath。
+               挤在一起用一个开关，关掉其中一个会连带关掉另一个。 -->
+          <div
+            v-if="showValueTemplate || showValuePath"
+            class="grid grid-cols-[76px_minmax(0,1fr)] items-start gap-3"
+          >
+            <label class="pt-1.5 text-xs text-gray-500">
+              {{ showValuePath ? '⑤ 取用字段' : '⑤ 模板约束' }}
+            </label>
+            <div class="min-w-0 space-y-2">
+              <select
+                v-if="showValueTemplate"
+                v-model="draft.value_template"
+                class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+              >
+                <option value="">不限定结构（字段只能手填）</option>
+                <option v-for="t in TEMPLATE_OPTIONS" :key="t.value" :value="t.value">{{ t.label }}</option>
+              </select>
+              <p
+                v-if="showValueTemplate"
+                class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] leading-relaxed text-gray-600"
+              >
+                规则挑的是「哪一条凭据」，运行时才知道。声明一个模板就是声明「命中的凭据都长这样」：
+                字段集合随之确定，下面可以直接选；挑到模板不符的凭据按<b>未命中</b>处理，
+                不会拿另一种结构去取值。
+              </p>
+
+              <select
+                v-if="showValuePath && templateFields"
+                v-model="draft.value_path"
+                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+              >
+                <option value="">整段（结构化凭据会被拒绝）</option>
+                <option v-for="f in templateFields" :key="f.value" :value="f.value">
+                  {{ f.label }}{{ f.secret ? '（敏感）' : '' }}
+                </option>
+              </select>
+              <input
+                v-else-if="showValuePath"
+                v-model="draft.value_path"
+                class="w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                placeholder="字段名，如 password；留空 = 整段"
+              />
+              <p v-if="showValuePath" class="text-[11px] leading-relaxed text-gray-500">
+                留空表示整段注入，只适用于单值凭据（一个 token）。命中<b>结构化</b>凭据时不会
+                默认把整份 JSON 灌进去，而是拒绝并提示补字段。
+              </p>
+            </div>
+          </div>
+
+          <!-- ⑥ 匹配不上时 -->
           <div class="grid grid-cols-[76px_minmax(0,1fr)] items-start gap-3">
-            <label class="pt-1.5 text-xs text-gray-500">⑤ 挑不到时</label>
+            <label class="pt-1.5 text-xs text-gray-500">⑥ 挑不到时</label>
             <div class="min-w-0">
               <select
                 v-model="draft.on_miss"

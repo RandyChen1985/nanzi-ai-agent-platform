@@ -188,6 +188,12 @@ class AuditManager:
 
         # 一次快照、全程复用：循环里每条都重建扫描器会把排序/去重白做一遍。
         scanner = await build_storage_scanner()
+        # 但要两层：`scanner` 只认「配置里的密钥 + MCP 固定 Token」
+        # （registry._collect 不加载 sys_secrets），凭据中心的凭据它看不见。
+        # 认得出那些值的只有 redact —— 它读的是本次调用注入时登记的明文。
+        # outbound_audit 一直是两层，这里原来只有一层，远端把凭据回显在响应里
+        # 就会原样落进 trace。顺序与那边保持一致：先 redact，再 scanner。
+        from app.services.secrets.redact import redact_text, redact_value
 
         try:
             async with AsyncSessionLocal() as session:
@@ -201,13 +207,19 @@ class AuditManager:
                         tool_name=log.tool_name,
                         # 先擦凭据、再截断：顺序反了会把密钥切成两半，
                         # 半截值既匹配不上指纹、又仍然泄露关键片段。
-                        tool_input=bound_audit_payload(scanner.mask_data(log.tool_input)),
-                        tool_output=bound_audit_payload(scanner.mask_data(log.tool_output)),
+                        tool_input=bound_audit_payload(
+                            scanner.mask_data(redact_value(log.tool_input, log_hits=False))
+                        ),
+                        tool_output=bound_audit_payload(
+                            scanner.mask_data(redact_value(log.tool_output, log_hits=False))
+                        ),
                         execution_time_ms=log.execution_time_ms,
                         status=log.status,
                         # 错误信息是最容易夹带连接串/密钥的地方（"Access denied for ..."），
                         # 之前只靠键名规则过滤，用户名密码写进 message 就会漏。
-                        error_message=scanner.mask_text(log.error_message)
+                        error_message=scanner.mask_text(
+                            redact_text(log.error_message, log_hits=False)
+                        )
                         if isinstance(log.error_message, str)
                         else log.error_message,
                         model=log.model,
@@ -217,7 +229,9 @@ class AuditManager:
                         total_tokens=getattr(log, 'total_tokens', 0) or 0,
                         span_id=getattr(log, 'span_id', None),
                         parent_span_id=getattr(log, 'parent_span_id', None),
-                        meta_info=scanner.mask_data(getattr(log, 'meta_info', None)),
+                        meta_info=scanner.mask_data(
+                            redact_value(getattr(log, 'meta_info', None), log_hits=False)
+                        ),
                         created_at=log.timestamp
                     ))
                 session.add_all(orm_objects)
@@ -274,14 +288,23 @@ class AuditManager:
         # 脱敏必须发生在截断之前：先截断会把密钥切成半截，半截值既匹配不上
         # 已知凭据、又照样把关键片段留在库里。
         scanner = await build_storage_scanner()
-        safe_query = scanner.mask_text(query) if isinstance(query, str) else query
-        safe_summary = scanner.mask_text(summary) if isinstance(summary, str) else summary
+        # 与 save_trace_logs 同一个口径：scanner 不加载凭据中心，只有 redact 认得出
+        # 本次注入的明文。这里比 trace 更容易漏——摘要和推理过程是模型写的散文，
+        # 没有任何「敏感键名」可供 scanner 判断。
+        from app.services.secrets.redact import redact_text, redact_value
+
+        safe_query = scanner.mask_text(redact_text(query, log_hits=False)) if isinstance(query, str) else query
+        safe_summary = (
+            scanner.mask_text(redact_text(summary, log_hits=False))
+            if isinstance(summary, str)
+            else summary
+        )
         safe_reasoning = (
-            scanner.mask_text(reasoning_content)
+            scanner.mask_text(redact_text(reasoning_content, log_hits=False))
             if isinstance(reasoning_content, str)
             else reasoning_content
         )
-        safe_timeline = scanner.mask_data(process_timeline)
+        safe_timeline = scanner.mask_data(redact_value(process_timeline, log_hits=False))
 
         bounded_query, query_bytes = truncate_text_bytes(
             safe_query, max_bytes=MAX_HISTORY_TEXT_BYTES

@@ -1,10 +1,20 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { KeyIcon } from '@heroicons/vue/24/outline'
 import axios from '../../utils/axios'
 import PermissionVariableMenu from '../metadata/PermissionVariableMenu.vue'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
+import SecretFieldSelect from '../secrets/SecretFieldSelect.vue'
+import type { CredentialPickerItem } from '@/utils/credentialPicker'
+import SecretBindingLabel from '../secrets/SecretBindingLabel.vue'
+import SecretFieldMappingPanel from '../secrets/SecretFieldMappingPanel.vue'
 import SecretLocatorEditor, { ruleSummary, type LocatorRule } from '../secrets/SecretLocatorEditor.vue'
+
+/** 把绑定上的取用字段并回规则草稿：编辑已有规则时不能把它弄丢。 */
+function withRulePath(rule: LocatorRule | null, valuePath?: string | null): LocatorRule | null {
+  if (!rule) return null
+  return { ...rule, value_path: valuePath || '' }
+}
 import { SYSTEM_PARAM_SOURCES, SYSTEM_PARAM_TYPES, type SystemParam } from '../../utils/toolSchema'
 import type { UserVariable } from '../../utils/userVariables'
 
@@ -13,6 +23,13 @@ interface BoundSecret {
   secret_key: string
   /** 绑定还在，但凭据可能已被停用/过期 —— 界面要标出来 */
   secret_status?: string
+  /** 只取凭据的某个字段时给路径；空串 = 整段。结构化凭据必须给 */
+  value_path?: string
+  /** text | json —— 列表里要标出「结构化 · 模板名」 */
+  value_format?: string
+  value_template?: string | null
+  /** user | system：重开弹窗时判断「是不是只对我生效」 */
+  owner_scope?: string
   /** ``fixed`` / ``rule``：同槽位两条记录，各自独立 */
   strategy?: string
   rule?: LocatorRule | null
@@ -26,6 +43,14 @@ const bindingIssue = (binding: BoundSecret | null): string => {
 }
 
 const props = withDefaults(defineProps<{
+    /**
+     * 这个消费者是不是平台级（配一次给所有人用）。
+     *
+     * 消费端（`ToolRegistry` 的系统工具管理页）才知道答案，所以由它传；
+     * 组件内部写死 `true` 有一天会变成 bug——真出现「个人级 API 工具」时，
+     * 个人工具上的绑定会被误设成全局。
+     */
+    isGlobal?: boolean
   modelValue: SystemParam[]
   builtinVariables: UserVariable[]
   extraDataVariables: UserVariable[]
@@ -40,6 +65,9 @@ const props = withDefaults(defineProps<{
    */
   plainParams?: string[]
 }>(), {
+  // 默认 true：现有调用方都是平台级。真出现个人级工具时调用方传 false，
+  // 组件不用改。
+  isGlobal: true,
   consumerId: '',
   consumerType: 'api_tool',
   plainParams: () => [],
@@ -55,20 +83,49 @@ const openMenuIndex = ref<number | null>(null)
 
 // ── 凭据绑定 ────────────────────────────────────────────────────────
 // 槽位由后端推（path / query / body 取决于 URL 和方法），这里只认参数名。
+// 由 ToolRegistry 弹窗提供的共享草稿：向导模式与表单模式共用同一份新建态 pending，
+// 切换填写方式时绑定不会丢失，也不会因各自维护一份状态而互相锁住保存按钮。
+const injectedDraft = inject<{
+  bindings: Ref<Record<string, BoundSecret>>
+  rules: Ref<Record<string, LocatorRule>>
+  revision?: Ref<number>
+  bumpRevision?: () => void
+} | null>('apiToolDraftParamPending', null)
+
 const bindings = ref<Record<string, BoundSecret>>({})
-const pending = ref<Record<string, BoundSecret>>({})
+const pending = injectedDraft ? injectedDraft.bindings : ref<Record<string, BoundSecret>>({})
 const pickingName = ref<string | null>(null)
 const pickerSecretId = ref<string | null>(null)
-const pickerItem = ref<{ id: string; secret_key: string } | null>(null)
+const pickerItem = ref<CredentialPickerItem | null>(null)
+/** 单值页里已配凭据的参数（参数名 → 凭据标识），多值页据此提示「会被覆盖」 */
+const singleValueParams = computed(() => {
+  const map: Record<string, string> = {}
+  for (const [name, binding] of Object.entries(bindings.value)) {
+    if (binding?.secret_key) map[name] = binding.secret_key
+  }
+  for (const [name, rule] of Object.entries(ruleDrafts.value)) {
+    if (rule) map[name] = map[name] || '按规则匹配'
+  }
+  return map
+})
+
+/** 两种配法分开摆：单值凭据一个参数一条，多值凭据一条供一组 */
+const paramTab = ref<'single' | 'multi'>('single')
+/** 批量映射保存后的行内提示（这个组件没有全局 toast） */
+const mappingHint = ref('')
 const pickerBusy = ref(false)
 const pickerError = ref('')
+/** 绑定选中的字段路径（结构化凭据必填） */
+const pickerValuePath = ref('')
+/** 当前凭据是否「必须选一个字段」（结构化且字段可读） */
+const pickerNeedsField = ref(false)
 
 // ── 规则定位（第三种来源）────────────────────────────────────────────
 // 与固定凭据分开存：两者是同槽位的两条独立绑定，共用一个 key 会互相覆盖。
 /** 参数名 → 已保存的规则 */
 const ruleDrafts = ref<Record<string, LocatorRule | null>>({})
 /** 新建态（工具还没有 id）下暂存的规则，保存后补写 */
-const pendingRules = ref<Record<string, LocatorRule>>({})
+const pendingRules = injectedDraft ? injectedDraft.rules : ref<Record<string, LocatorRule>>({})
 /** 正在编辑规则的参数名；非空时显示编辑器 */
 const locatorName = ref<string | null>(null)
 
@@ -110,13 +167,19 @@ async function loadBindings() {
       // 同槽位的固定与规则是两条记录。固定那条优先占位（老界面只认它），
       // 规则单独记到 ruleDrafts，避免互相覆盖。
       if (strategy === 'rule') {
-        nextRules[name] = row.rule || null
+        nextRules[name] = withRulePath(row.rule, row.value_path)
         continue
       }
       next[name] = {
         secret_id: row.secret_id || '',
         secret_key: row.secret_key || '',
         secret_status: row.secret_status,
+        value_path: row.value_path || '',
+        // 少了这个，重开弹窗时「只对你生效」判不出来
+        owner_scope: row.owner_scope,
+        // 少了这两个，列表里的结构化徽标和「整段 JSON」警示会全部退化成普通文本
+        value_format: row.value_format || 'text',
+        value_template: row.value_template || '',
         strategy,
       }
     }
@@ -129,7 +192,7 @@ async function loadBindings() {
 }
 
 watch(
-  () => [props.consumerId, props.consumerType],
+  () => [props.consumerId, props.consumerType, injectedDraft?.revision?.value],
   () => { void loadBindings() },
   { immediate: true },
 )
@@ -143,19 +206,54 @@ function openPicker(name: string) {
   pickingName.value = key
   const existing = bindingOf(key)
   pickerSecretId.value = existing?.secret_id || null
+  pickerValuePath.value = existing?.value_path || ''
+  // 回填已有的绑定：把值形态一起带上，弹窗里的字段标签才和列表上一致
   pickerItem.value = existing
-    ? { id: existing.secret_id, secret_key: existing.secret_key }
+    ? {
+        id: existing.secret_id,
+        secret_key: existing.secret_key,
+        owner_scope: existing.owner_scope,
+        value_format: existing.value_format,
+        value_template: existing.value_template,
+      } as CredentialPickerItem
     : null
   pickerError.value = ''
 }
 
 function onPicked(item: any) {
   pickerItem.value = item || null
+  // 换凭据就清掉上一个凭据的字段路径：字段名在另一条凭据里通常不存在
+  if (item?.id !== pickerSecretId.value) pickerValuePath.value = ''
 }
+
+/** 字段清单加载完：结构化且字段可读时，必须选一个字段才能保存。 */
+function onFieldsLoaded(info: { format: string; fields: { name: string }[] }) {
+  pickerNeedsField.value = info.format === 'json' && info.fields.length > 0
+}
+
+/**
+ * 「你自己这条凭据，绑上来只对你生效」。
+ *
+ * 平台级工具的参数绑定默认是全局的，用户（包括管理员）很容易以为「配一次、
+ * 所有人都用上了」。但个人凭据没法给所有人用——后端会把它降级成本人绑定，
+ * 别人调用时拿到的仍是「未绑定」。这个落差必须在选中那一刻讲清楚，
+ * 而不是等别人报错时才发现。
+ */
+const personalScopeNotice = computed(() => {
+  // 个人级工具上绑自己的凭据是正常的，不该跳这个提示
+  if (!props.isGlobal) return ''
+  const item = pickerSecretId.value ? pickerItem.value : null
+  if (!item || item.owner_scope !== 'user') return ''
+  return (
+    '这是你自己的凭据，绑定只对你生效：别人调用这个工具时，这个参数拿不到值' +
+    '（会显示「未绑定」）。要让每个人用自己的账号，请改用「按规则匹配」。'
+  )
+})
 
 function closePicker() {
   pickingName.value = null
   pickerSecretId.value = null
+  pickerValuePath.value = ''
   pickerItem.value = null
   pickerError.value = ''
 }
@@ -164,13 +262,27 @@ async function confirmPick() {
   const name = pickingName.value
   if (!name) return
   const picked = pickerSecretId.value ? pickerItem.value : null
+  // 参数是整值注入：结构化凭据不选字段，注进去的就是一整段 JSON
+  if (picked && pickerNeedsField.value && !pickerValuePath.value) {
+    pickerError.value = '这条凭据是结构化的，请先选择要取用的字段'
+    return
+  }
+  const valuePath = picked ? pickerValuePath.value : ''
   pickerBusy.value = true
   pickerError.value = ''
   try {
     // 还在新建态：工具没有 id，先记账，保存拿到 id 后由父组件调 flushPending
     if (!props.consumerId) {
       if (picked) {
-        pending.value[name] = { secret_id: picked.id, secret_key: picked.secret_key }
+        pending.value[name] = {
+          secret_id: picked.id,
+          secret_key: picked.secret_key,
+          value_path: valuePath,
+          // 新建态也要带：重开弹窗读的是 pending，缺了「只对你生效」就不显示
+          owner_scope: picked.owner_scope,
+          value_format: picked.value_format || 'text',
+          value_template: picked.value_template || '',
+        }
       } else {
         delete pending.value[name]
       }
@@ -184,12 +296,13 @@ async function confirmPick() {
           consumer_type: props.consumerType,
           consumer_id: props.consumerId,
           name,
-          is_global: true,
+          is_global: props.isGlobal,
         },
       })
       // 两个 map 都要清：解绑后只要任一还留着 key，界面就还显示「已绑定」
       delete bindings.value[name]
       delete pending.value[name]
+      injectedDraft?.bumpRevision?.()
     } else {
       await axios.post('/api/portal/secrets/bindings', {
         secret_id: picked.id,
@@ -197,12 +310,25 @@ async function confirmPick() {
         consumer_id: props.consumerId,
         // 只给参数名：槽位（path/query/body）由后端按工具的 URL 和方法算
         name,
-        // 系统管理里配的绑定给全平台用；不设全局的话只有管理员自己能用。
-        is_global: true,
+        // 作用域由消费端声明（见 isGlobal 的说明），组件不猜。
+        // 平台级工具配的绑定给全平台用；不设全局的话只有配的人自己能用。
+        is_global: props.isGlobal,
+        // 参数是整值注入，取哪个字段只能靠这两样表达
+        value_path: valuePath,
       })
-      bindings.value[name] = { secret_id: picked.id, secret_key: picked.secret_key }
+      bindings.value[name] = {
+        secret_id: picked.id,
+        secret_key: picked.secret_key,
+        value_path: valuePath,
+        owner_scope: picked.owner_scope,
+        // 少了这两项，绑定标签会因为 format 为空直接隐藏「取 xxx」——
+        // 用户刚选完字段却看不到自己选了什么，得刷新整页才恢复
+        value_format: picked.value_format || 'text',
+        value_template: picked.value_template || '',
+      }
       // 已经落库了，待写记录没有意义；留着会在保存时又写一遍
       delete pending.value[name]
+      injectedDraft?.bumpRevision?.()
     }
     closePicker()
   } catch (e: any) {
@@ -230,7 +356,8 @@ async function flushPending(consumerId: string) {
         consumer_type: props.consumerType,
         consumer_id: consumerId,
         name,
-        is_global: true,
+        is_global: props.isGlobal,
+        value_path: binding.value_path || '',
       })
     } catch {
       failed.push(name)
@@ -241,14 +368,16 @@ async function flushPending(consumerId: string) {
   // 规则同样补写。失败不阻断工具保存，但要报给调用方
   const ruleFailed: string[] = []
   for (const [name, rule] of Object.entries(pendingRules.value)) {
+    const { value_path: rulePath = '', ...ruleBody } = rule
     try {
       await axios.post('/api/portal/secrets/bindings', {
         consumer_type: props.consumerType,
         consumer_id: consumerId,
         name,
         strategy: 'rule',
-        rule,
-        is_global: true,
+        rule: ruleBody,
+        value_path: rulePath,
+        is_global: props.isGlobal,
       })
     } catch {
       ruleFailed.push(name)
@@ -256,6 +385,39 @@ async function flushPending(consumerId: string) {
   }
   pendingRules.value = {}
   return [...failed, ...ruleFailed]
+}
+
+/**
+ * 批量映射保存完：把这些参数的来源也改过来。
+ *
+ * 绑定只说明「取哪条凭据的哪个字段」，运行时认的是参数自己的 ``source``
+ * （``generic_api`` 只注入 ``source === 'credential'`` 的行）。不同步的话，
+ * 库里绑好了、界面上也看不到绑定标签，调用时参数照旧是固定值或空。
+ */
+function onMappingSaved(payload: { bound: string[]; freed: string[] }) {
+  const bound = new Set(payload.bound)
+  const freed = new Set(payload.freed)
+  let changed = false
+  const next = props.modelValue.map((p) => {
+    const name = (p.name || '').trim()
+    if (bound.has(name) && p.source !== 'credential') {
+      changed = true
+      return { ...p, source: 'credential' as SystemParam['source'] }
+    }
+    if (freed.has(name) && p.source === 'credential') {
+      changed = true
+      // 系统级参数不会交给模型，清空后回到固定值（literal），由用户自己补
+      return { ...p, source: 'literal' as SystemParam['source'] }
+    }
+    return p
+  })
+  if (changed) emit('update:modelValue', next)
+  void loadBindings()
+  injectedDraft?.bumpRevision?.()
+  if (changed) {
+    mappingHint.value = '参数来源已同步，保存工具后生效'
+    window.setTimeout(() => { mappingHint.value = '' }, 4000)
+  }
 }
 
 function openLocator(name: string) {
@@ -286,6 +448,7 @@ async function applyRule(rule: LocatorRule) {
   }
   pickerBusy.value = true
   pickerError.value = ''
+  const { value_path: rulePath = '', ...ruleBody } = rule
   try {
     await axios.post('/api/portal/secrets/bindings', {
       consumer_type: props.consumerType,
@@ -293,10 +456,13 @@ async function applyRule(rule: LocatorRule) {
       // 只给参数名：槽位（path/query/body）由后端按 URL 与方法推算
       name,
       strategy: 'rule',
-      rule,
-      is_global: true,
+      // value_path 属于绑定记录，不属于规则 JSON——混进 rule 里后端会判未知字段
+      rule: ruleBody,
+      value_path: rulePath,
+      is_global: props.isGlobal,
     })
     ruleDrafts.value[name] = rule
+    injectedDraft?.bumpRevision?.()
   } catch (e: any) {
     pickerError.value = e?.response?.data?.detail || '保存规则失败'
   } finally {
@@ -370,13 +536,33 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
           <code class="font-mono">{user.user_name}</code> 这类变量。取不到时本次调用会明确失败。
         </p>
       </div>
-      <button
-        type="button"
-        class="rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50"
-        @click="addParam"
-      >+ 添加系统级参数</button>
+      <div class="flex flex-wrap items-center gap-2">
+        <span v-if="mappingHint" class="text-[11px] text-emerald-600">{{ mappingHint }}</span>
+        <button
+          v-if="paramTab === 'single'"
+          type="button"
+          class="rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50"
+          @click="addParam"
+        >+ 添加系统级参数</button>
+      </div>
     </div>
 
+    <!-- 两种配法：单值凭据逐参数配，多值凭据一条供一组 -->
+    <div class="mt-2.5 flex gap-1 border-b border-indigo-100">
+      <button
+        v-for="tab in (['single', 'multi'] as const)"
+        :key="tab"
+        type="button"
+        class="-mb-px border-b-2 px-3 py-1.5 text-xs transition-colors"
+        :class="paramTab === tab
+          ? 'border-indigo-600 font-semibold text-indigo-700'
+          : 'border-transparent text-indigo-500 hover:text-indigo-700'"
+        @click="paramTab = tab"
+      >{{ tab === 'single' ? '单值凭据' : '多值凭据' }}</button>
+    </div>
+
+    <!-- ══ 单值凭据：一个参数配一条 ══ -->
+    <template v-if="paramTab === 'single'">
     <p v-if="modelValue.length === 0" class="mt-2 text-[11px] italic text-indigo-400">
       暂无系统级参数。申请人、操作人等不能由模型决定的值可以加在这里。
     </p>
@@ -420,18 +606,30 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
           <KeyIcon class="h-3 w-3" />
           {{ fixedBindingOf(p.name) ? '换凭据' : '选凭据' }}
         </button>
+        <!-- 只给标识不够：结构化凭据还要说清取的是哪个字段 -->
         <span
           v-if="fixedBindingOf(p.name)"
-          class="max-w-[12rem] truncate font-mono text-[11px]"
+          class="max-w-[16rem] font-mono text-[11px]"
           :class="bindingIssue(fixedBindingOf(p.name)) ? 'text-amber-700' : 'text-emerald-700'"
           :title="bindingIssue(fixedBindingOf(p.name))
             ? `已绑定 ${fixedBindingOf(p.name)?.secret_key}，但${bindingIssue(fixedBindingOf(p.name))}`
             : ''"
-        >{{ fixedBindingOf(p.name)?.secret_key }}</span>
-        <span
-          v-if="bindingIssue(fixedBindingOf(p.name))"
-          class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700"
-        >{{ bindingIssue(fixedBindingOf(p.name)) }}</span>
+        >
+          <SecretBindingLabel
+            :secret-key="fixedBindingOf(p.name)?.secret_key"
+            :format="fixedBindingOf(p.name)?.value_format"
+            :template="fixedBindingOf(p.name)?.value_template"
+            :value-path="fixedBindingOf(p.name)?.value_path"
+          />
+        </span>
+        <!-- 「未选」只在真的没绑时出现。此前的 v-else 挂在内层 `bindingIssue`
+             判断上，绑好且没问题时 issue 为空 → 也落到这里，明明绑好了却显示红字。 -->
+        <template v-if="fixedBindingOf(p.name)">
+          <span
+            v-if="bindingIssue(fixedBindingOf(p.name))"
+            class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700"
+          >{{ bindingIssue(fixedBindingOf(p.name)) }}</span>
+        </template>
         <span v-else class="text-[11px] text-red-600">未选，保存会被拦住</span>
         <span
           v-if="!consumerId && pending[p.name.trim()]"
@@ -504,7 +702,25 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
         </svg>
       </button>
+    </div>    </template>
+
+    <!-- ══ 多值凭据：一条凭据供一组参数 ══ -->
+    <div v-else class="mt-2">
+      <p v-if="!consumerId" class="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+        工具还没保存。先保存工具，再回来把这条凭据的字段分给各个参数。
+      </p>
+      <SecretFieldMappingPanel
+        v-else
+        :consumer-type="consumerType"
+        :consumer-id="consumerId"
+        :is-global="isGlobal"
+        :params="modelValue.map((p) => p.name).filter(Boolean)"
+        :single-value-params="singleValueParams"
+        :subject="'本次工具的参数'"
+        @saved="onMappingSaved"
+      />
     </div>
+
   </div>
 
   <Teleport to="body">
@@ -526,12 +742,23 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
           调用时按<strong>当前用户</strong>解析；换用户就换值，所以不会写进工具配置。
         </p>
 
-        <div class="mt-3">
+        <div class="mt-3 space-y-2">
           <CredentialPicker v-model="pickerSecretId" scene="api_tool" @picked="onPicked" />
+          <!-- 参数是整值注入：结构化凭据不选字段，注进去的就是一段 JSON -->
+          <SecretFieldSelect
+            v-if="pickerSecretId"
+            v-model="pickerValuePath"
+            :secret-id="pickerSecretId"
+            @loaded="onFieldsLoaded"
+          />
         </div>
 
+        <p
+          v-if="personalScopeNotice && !pickerError"
+          class="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700"
+        >{{ personalScopeNotice }}</p>
         <p v-if="pickerError" class="mt-2 text-[11px] text-red-600">{{ pickerError }}</p>
-        <p v-else-if="bindingOf(pickingName)" class="mt-2 text-[11px] text-emerald-600">
+        <p v-else-if="!personalScopeNotice && bindingOf(pickingName)" class="mt-2 text-[11px] text-emerald-600">
           当前已绑定 {{ bindingOf(pickingName)?.secret_key }}
         </p>
 
@@ -554,13 +781,17 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
   <!-- 规则编辑器必须和「绑定凭据」弹窗平级：嵌进 v-if="pickingName" 里面的话，
        点「配规则」只设 locatorName、不动 pickingName，整个子树不渲染 → 点了没反应 -->
+  <!-- show-value-path=false：同上，参数入口整段注入，不需要选字段 -->
   <SecretLocatorEditor
     :open="Boolean(locatorName)"
     :rule="locatorName ? (ruleDrafts[locatorName] || null) : null"
     :slot="locatorName || ''"
     :arg-options="locatorName ? locatorArgOptions(locatorName) : []"
     :title="locatorName ? `凭据匹配规则 · ${locatorName}` : '凭据匹配规则'"
+      :show-value-path="false"
+      :show-value-template="false"
     @update:open="(value: boolean) => { if (!value) locatorName = null }"
     @save="applyRule"
   />
+
 </template>

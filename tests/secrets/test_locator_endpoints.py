@@ -65,9 +65,15 @@ def test_locate_matches_only_within_visible_set():
     就会进入匹配范围——而规则是用户随手能改的东西。
 
     变异验证：在 resolver.py 里加任何 ``UserSecret.secret_key`` 引用，这条会红。
+
+    断言从 ``visible`` 改成了 ``pool``：模板约束要参与**候选筛选**（按 name 匹配时
+    可能有多条同名不同模板的凭据，先挑中再否掉会让本该命中的那条永远轮不到），
+    所以传进 ``pick_match`` 的是过滤后的池子。约束只会缩小范围——这里同时钉住
+    ``pool`` 的初值必须是 ``visible``，别有人绕过可见集合另起一个来源。
     """
     resolver_src = Path("app/services/secrets/resolver.py").read_text(encoding="utf-8")
-    assert "pick_match(spec, wanted, visible)" in resolver_src
+    assert "pick_match(spec, wanted, pool)" in resolver_src
+    assert "pool = visible" in resolver_src
     assert "UserSecret.secret_key" not in resolver_src
 
 

@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import contextvars
 import json
 import re
 import uuid
@@ -38,6 +39,7 @@ from app.services.ai.model_override import normalize_model_override
 from app.services.ai.turn_decision import TurnDecision
 from app.services.ai.delegation_session_store import DelegationSessionStore
 from app.services.ai.runtime.agentscope.stream_reconcile import DEFAULT_TOOL_OUTPUT_MAX_LEN
+from app.services.secrets.redact import collect_injected_from_context
 
 logger = logging.getLogger(__name__)
 
@@ -2492,9 +2494,10 @@ class BatchSubAgentTool(BaseTool):
             finally:
                 set_agent_context(original_ctx)
 
+        child_contexts = [contextvars.copy_context() for _ in args.calls]
         tasks = [
-            asyncio.create_task(run_one(index, call))
-            for index, call in enumerate(args.calls)
+            asyncio.create_task(run_one(index, call), context=child_ctx)
+            for (index, call), child_ctx in zip(enumerate(args.calls), child_contexts)
         ]
         try:
             raw_results = await asyncio.gather(*tasks)
@@ -2504,6 +2507,10 @@ class BatchSubAgentTool(BaseTool):
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
+        finally:
+            # 显式回收所有并发子协程注入过的凭据明文，防止返回聚合结果时遗漏脱敏
+            for child_ctx in child_contexts:
+                collect_injected_from_context(child_ctx)
 
         results: list[dict[str, Any]] = []
         for item in raw_results:

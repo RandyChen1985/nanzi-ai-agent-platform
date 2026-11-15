@@ -2,6 +2,174 @@
 
 > 说明：本清单记录近期功能交付与自动化测试覆盖情况。历史已稳定的旧版本记录定期清理瘦身，完整变更可追溯 Git 历史；**2026-10-21 之前的记录已归档到 [`docs/changelog/`](../docs/changelog/)**（按月分文件，可直接 grep）。
 
+| 凭据全链路闭环 review 修复（Credential Full-Chain Closure Fixes） | 后端：`app/api/portal/endpoints/{mcp,secrets,tools,script_tools}.py`、`app/services/secrets/{center,resolver,injection}.py`、`app/services/ai/tools/{mcp_client,script_tool_runtime,agent_delegate_tool}.py`、`app/services/mcp/stale_tool_cleanup.py`、`app/services/ai/runtime/agentscope/tools.py`；前端：`frontend/src/utils/secretExpiry.ts`（新增）、`frontend/src/views/{SecretCenter,AdminSecretCenter}.vue`、`frontend/src/components/system/{McpServerRegistry,ToolRegistry,ToolWizard,ToolParamEditor,ToolSystemParamEditor}.vue`；契约同步：`tests/secrets/test_credential_fix_contracts.py`、`tests/frontend/test_secret_field_binding_contract.py`；文档：`tests/CHECKLIST.md` | **背景**：针对凭据管理 → 使用配置 → 运行期自动注入 → 审计与脱敏全链路多轮 review 发现的闭环问题、安全隐患与交互缺陷进行集中修复，同时保持既有系统功能与前后端契约测试兼容。**① MCP 鉴权切换与探测/同步/清理闭环**：`McpServerWrite` 新增 `auth_source`，切换为凭据鉴权时清空静态 Authorization 头及 `fixed_token_encrypted` 并跳过固定 Token 非空校验；`McpVerifyRequest` 支持 `pending_secret_bindings` 使 `/verify` 经完整权限/域名/引用解析后探测；`list_remote_tools` 对非临时探测使用传入 `user_info` 叠加绑定并在命中槽位开启 `ephemeral_session`（拒绝抛 `McpCredentialDeniedError` 由 `sync_mcp_tools` 转 400）；`execute_mcp_tool` 消除双重 `apply_mcp_arg_bindings` 注入并剥离 `choice_field`；`sync_tools` 与 `stale_tool_cleanup` 按当前参数表或精确前缀 `arg:{escaped}:%` 同事务清理废弃 `SecretBinding`；`McpServerRegistry.vue` 修复 `authSource` 切换后 `readonly` 锁死与加载绑定未自动开启 `authorizationEnabled` 问题，补充新建态凭据回传。**② 凭据有效期管理与轮换过渡闭环**：新增 `frontend/src/utils/secretExpiry.ts`，在个人与管理凭据中心补齐新建向导/编辑弹窗/轮换弹窗的有效期设置与清为长期能力（`AdminSecretCenter.vue` 补 `expires_at` 类型）；后端 `center.py` 新增 `_to_naive_utc` 归一化，`create_secret` 记入审计 detail，`rotate_secret` / `update_secret` 支持 `clear_expires_at`，并在临期轮换旧版本比新/已置过期更早过期时清零过渡过期时间，避免过渡期结束时倒退回旧密文。**③ 运行期提示、脱敏隔离与缓存刷新**：`script_tool_runtime.py` 新增 `ScriptRunResult.credential_denials` 与 `materialize_secret_env(denials_out=...)` 并发隔离并在超时/失败/空输出附带脱敏拒因，`preview_script_tool` 合并该提示并过 `redact_text`；`tools.py` 补全 `batch_set_tool_group` / `delete_tool` 的 `ToolRegistry.clear_db_tool_cache()`，并对 `preview_tool` 的请求快照先过 `redact_value` 再过 `mask_sensitive_data`；`agentscope/tools.py` 警告日志统一经 `_redact_tool_error_text(exc)` 脱敏；`agent_delegate_tool.py` 在 `sub_agent_batch_call` 通过 `copy_context()` 隔离并发子任务上下文并在 `finally` 经 `collect_injected_from_context` 合并明文指纹。**④ 绑定校验、排序与向导/表单保活**：`resolver.resolve()` 新增 `record_usage: bool = True`，`check_binding` 预检传 `rule_args=payload.rule_args, record_usage=False` 避免试检查产生虚假用量流水；`injection.py` 导出 `is_header_value_unfilled`；`secrets.py` 对 `list_platform_credential_targets` 查询结果按全局优先排序确保后续个人绑定稳定覆盖，扩展 `bindable` 识别全掩码头，且 `BindItem.allow_whole` 在 `create_bindings_batch` 的 `dry_run` 与持久化阶段透传；API 工具向导与表单在 `ToolRegistry.vue` / `ToolWizard.vue` / `ToolParamEditor.vue` / `ToolSystemParamEditor.vue` 间改为 `v-show` 保活，通过 `provide/inject('apiToolDraftParamPending')`（修正 `Ref` 类型消除 TS7053）共享新建态草稿与版本刷新，按激活分支单次执行 `flushPending(newId)` 避免重复写库，并同步修正两条既有契约测试。**静态校验**：14 个修改/新增 Python 文件通过 `python3 -m py_compile` 及 Python 3.11 AST 语法兼容扫描（`PY311_AST_OK`）；`cd frontend && NODE_OPTIONS=--max-old-space-size=6144 npx vue-tsc -b` 报 `Found 155 errors.`（与仓库既有基线一致，本批 8 个前端文件 **0 报错**）；`node tests/frontend/compile_vue_templates.cjs` 333 个 SFC **0 problem**。**自动化回归（review 后补跑）**：`tests/secrets` + `tests/ai/tools` + `tests/core/test_secret_{redact,injection}.py` + `tests/api/portal` **1952 passed / 4 xfailed**；`vue-tsc -b --force` **155 = 基线**；`compile_vue_templates.cjs` **333 SFC / 0 problem**。**补跑时发现并修掉两处**：① `preview_script_tool` 把空消息写成 `None`，而 `SysScriptToolPreviewResponse.message` 是非 Optional 的 `str`——脚本试运行「成功且无消息」这条最常见的路径直接 `ValidationError` 500；② `test_mcp_stale_tools_cleanup` 三处断言按位置索引取语句，新增的绑定清理 DELETE 让索引与计数全部错位，已更新并补一条契约，验证清理按 `arg:{escaped}:%` 精确前缀匹配且 `_` 已转义（不转义会把 `axb` 的绑定一起删掉）。**未执行**：`./dev.sh`，实机功能回归需用户确认 | ✅ 已修复（自动化回归通过，待实机） | 2026-11-15 |
+| 凭据录入结构化视图与内置模板方案评审（Credential Structured Input Prototype） | 原型：`prototypes/2026-11-15-credential-structured-input.html`（新增，已在 `prototypes/index.html` 登记）；文档：`tests/CHECKLIST.md` | **需求来源（用户）**：截图指出「凭据值」是自由文本框，希望增加高级 UI 输入视图——支持结构化 JSON、内置常见凭据模板（邮箱发送、FTP 等，尽量多覆盖），选中模板后渲染成可视化编辑页，**最终入库仍是 JSON**；本轮先做录入，后续再看配置凭据页面如何适配结构化数据。**核实现状**：`SecretCenter.vue` / `AdminSecretCenter.vue` 创建弹窗第 1 步「凭据值」是单个 `<textarea>`（placeholder「短 token 直接粘贴；JSON / PEM 这类多行值可以整段贴进来」），`secret.value` 加密存单列；`credential` 类型不写 `value_preview`，`variable` 类型 preview 取 `value[:8]`（`app/services/secrets/center.py`）；注入走 `${CREDENTIAL:<标识>}` 占位。**原型内容（三个 tab）**：① 录入界面（可交互）——「自由输入 / 结构化（模板）」双档切换、29 个内置模板按邮件·文件传输·数据库·云与存储·消息通知·通用鉴权·密钥与证书·基础设施·开发与 AI 分组，按模板渲染字段表单（text/password/number/url/select/多行 PEM/开关，含必填校验、SMTP 端口联动、SFTP 认证方式条件字段、高级字段折叠、敏感字段标记与显隐切换），右侧实时 JSON 预览（语法高亮、敏感字段红底、超长与多行值折叠、字段数/字节数、校验状态、复制）；② 模板库（29 个卡片 + 分组筛选 + 关键词搜索，点卡片回到录入并套用）；③ 取用语法与影响面（存储形态前后对比、`${secret:x.field}` 子字段引用、preview 改摘要、轮换与编辑约束、后端只校验合法 JSON 不校验 schema）。**核心取舍（顶部三张决策卡）**：只改录入方式不改存储契约（新增 `value_format` / `value_template` / `value_schema` 三个描述列，旧记录 text 不回溯）；模板仅作录入期渲染骨架（前端常量，后端不校验 schema，模板升级不影响老记录）；结构化 ≠ 可见化（`secret:true` 字段仍整段加密、建完不可读，只有非敏感字段可做列表摘要）。**待拍板 4 项**：模板定义放前端常量还是后端下发；是否做子字段引用语法；credential 类型是否也存非敏感摘要；是否开放「高级 JSON 直编」。**验证**：`node --check` 内联脚本通过；Chrome headless 实渲染 3 个 tab 及换模板 / 清空校验 / 粘贴 JSON 识别 / SFTP 条件字段等状态并逐屏核对；`python3 prototypes/build_index.py` 已刷新总览（64 个原型）。**未做（原型阶段）**：未改任何实现代码（遵守「先原型、确认后再实现」）；未跑 `./dev.sh`。**已拍板（用户 4 项全选）**：① 模板放前端常量（改模板要发版，换来与渲染组件同源 review）；② 做 `${secret:标识.字段}` 子字段引用；③ `credential` 类型也存非敏感摘要；④ 开放「高级 JSON 直编」（`custom` 模板 raw 模式）。**存储修正**：原型稿里写的第三列 `value_schema` 实际落成 `value_summary`（存摘要而非 schema——schema 前端能现算，摘要必须后端拼才不泄露）。**实现落点**：迁移 `db-prod/V219-add-secret-value-format.sql` / `db-prod-pg/V119-add-secret-value-format.sql`（**已由用户执行**，3 列：`value_format` varchar(16) 默认 text、`value_template` varchar(64)、`value_summary` varchar(160)，旧记录 text 不回溯）；模型 `app/models/secret.py`（3 列 + 中文注释）；服务 `app/services/secrets/center.py`（`parse_structured_value` 拒非对象 JSON、`_validate_value_format` / `_validate_value_template`、`_normalize_secret_fields`（≤50、标识符正则）、`build_value_summary`（跳过声明敏感键 + 嵌套结构 + 形似密钥的值 + 按**键名**跳过 `security`/`ssl_mode` 这类模式开关，最多 3 段、硬截断 150）、`_value_meta` 返回 `(preview, summary)`，`create_secret` / `rotate_secret` 全链路接入，轮换**重算摘要**（否则摘要描述的是上一版值）；新文件 `app/services/secrets/references.py`（`${secret:key[.path]}` 解析：以本次绑定的真实 key 消歧点号、支持数组下标、`NOT_JSON` / `FIELD_MISSING` / `KEY_MISMATCH` / `BAD_SYNTAX` 四类显式失败，**绝不退回整段明文**——退回等于把含所有密码的 JSON 塞进 `Authorization` 头）；注入层 `injection.py`（`_looks_unfilled` 认引用、`_render_reference` 只挂在 API 工具 header 与 MCP header 两处、参数级仍是整值替换、新增 4 条拒绝原因与修复建议，引用取值同样进脱敏池）；端点 `app/api/portal/endpoints/secrets.py`（`CreateSecretRequest` / `RotateRequest` 收 `value_format` / `value_template` / `value_secret_fields`，`serialize_secret` 吐三字段，结构化变量 `value_masked` 退回摘要）。**引用为何不按 key 直查库**：那会绕过「绑定是白名单」——任何写了 `${secret:xxx}` 的地方都能读到 `xxx`，审计也记不到槽位；现在引用只做**字段选择**，槽位绑定 / 场景 / 域名 / 授权照跑，key 只用来断言「我引的是这条」。**前端**：`frontend/src/utils/credentialTemplates.ts`（29 模板 / 10 分组 / `example` 只作 placeholder）；`frontend/src/components/secrets/CredentialValueEditor.vue`（自由输入 / 结构化双档、模板选择器带搜索与分组、字段渲染含 showIf 条件字段 / 高级折叠 / 敏感标记 / 密码显隐 / select 默认值即落库值、实时校验、入库 JSON 折叠预览、`custom` 直编、粘贴 JSON 按 key 命中率识别模板）；`SecretFormatBadge.vue`（列表徽标「单值」/「结构化 · 模板名」）；两页接入 `SecretCenter.vue` / `AdminSecretCenter.vue`（创建第 1 步与轮换弹窗共用编辑器、结构化档自动加宽弹窗、轮换**沿用原格式与原模板**、列表徽标、详情/表格显示摘要）。**验证（第一轮，含一处假绿）**：`tests/services/test_secret_references.py` 54 passed；`tests/api/portal/test_secret_structured_value.py` 12 passed；`tests/frontend/test_secret_structured_input_contract.py` 23 passed；`node tests/frontend/compile_vue_templates.cjs` 330 SFC / 0 problem。**⚠️ 当时记录的「`vue-tsc --noEmit` 0 error」是假绿**：`frontend/tsconfig.json` 是 project references（`files: []`），根目录跑 `--noEmit` 什么都不检查；必须 `cd frontend && vue-tsc -b`（还要 `NODE_OPTIONS=--max-old-space-size=6144`，默认堆会 OOM）。**外部静态评审核实后修复（11 项，逐条复核成立）**：① **构建级**——`CredentialValueEditor.vue` 的模板常量导入写成 `../utils/...`（应为 `../../utils/...`），另有 2 个未使用导入；`--noEmit` 掩盖了它，真实 `-b` 报 11 个 TS 错误，已清零（总数 155 = 既有基线）；② **高危**——`tool_credentials.is_credential_placeholder` 只认 `${CREDENTIAL:`，导致 `${secret:...}` 注入失败时占位符会被当成「用户手填值」**原样发给外部接口**（现在是 pending → `UnresolvedCredentialError`）；③ `split_key_and_path` 曾把整个表达式 `.lower()`，驼峰字段（`accessToken`）必然 `field_missing`——改为只对 key 做大小写无关匹配、路径保留原样，并把 `.db` / `db..host` / `db.host.` 判为语法错误（原先静默过滤空段）；④ 单字段值未进脱敏池（远端回显的是「invalid token: xxx」而非整段 JSON）——`render_references` 增加 `collect`，注入层把每个取出的字段值登记；⑤ MCP 注入读槽位原值用了大小写敏感的 `resolved.get(name)`，`header:authorization` vs `Authorization` 不一致时误判「没有引用」→ **整段 JSON 覆盖请求头**，已加 `_get_case_insensitive`；⑥ **安全兜底**——`build_value_summary` 原先只靠前端声明 `value_secret_fields`，`custom` 模板与「轮换不传声明」两条路径会把密码明文写进 `value_summary`，现补服务端键名词根黑名单（`password/token/key/secret/...` 后缀匹配）与「URL 内嵌账密」过滤；⑦ `/picker` 的 `value_masked` 未同步摘要口径；⑧ 模型 `value_format` 补 `server_default="text"` 与 DDL 对齐；⑨ 编辑器三处交互 bug——切到结构化会静默丢键/静默清空（现：非 JSON 内容转交「自定义 JSON」承载原文 + 提示哪些键会被丢弃）、`custom` 预填 `{}` 导致「空对象可提交」且与「可以提交」绿字矛盾（现：不预填、空文本报错）、`number` 输入非数字变 `NaN`（现保留原文交给校验）；⑩ 两页 `submitCreate` 补 `valueValid` 兜底（提交是唯一写入口，不能只靠上一步按钮态）；⑪ 管理端卡片视图补摘要、个人页详情去掉重复摘要、轮换提示改为说明「切回单值的后果」。**未修（已记录）**：引用解析失败时 `SecretUsageLog` 仍记 `success`（解密已成功，改写需动 `resolver` 接口，属统计口径问题）；`${CREDENTIAL:key}` 指向结构化凭据时会把整段 JSON 注入 header（属「配置凭据页适配」，用户已明确放在后续）。**验证（最终）**：后端 `tests/api/portal tests/core tests/services` **4834 passed / 11 skipped / 6 xfailed**；前端 `tests/frontend` **5020 passed / 1 skipped**（新增契约含「导入路径必须是 `../../utils/`」「`custom` 不预填 `{}`」「`number` 不用 NaN」「非 JSON 不静默丢」等回归点）；`cd frontend && vue-tsc -b --force` **155 = 既有基线，本批文件 0 新增**；`node tests/frontend/compile_vue_templates.cjs` **330 SFC / 0 problem**。
+
+**第二轮～第四轮静态复审（外部 review）核实与修复（9 项，逐条复核成立）**：① **前端切模式丢数据**——`switchFormat('json')` 直接调 `chooseTemplate`（只从**当前**表单继承，此刻表单是空的），用户刚粘进去的 JSON 会被模板默认值顶掉；抽出 `fillTemplate(templateId, source)` 先回填再 `pushOut`，粘贴识别复用同一份逻辑。② **工具包覆盖导入回归**——`is_credential_placeholder` 扩到认 `${secret:...}` 后，`merge_headers_for_import` 会把本地手写的 `Bearer ${secret:key.field}` 判成「没配置」而洗成 `${CREDENTIAL:header}`；拆出只认前缀的 `is_masked_placeholder`，待补清单也只数它。③ **MCP 未绑定放行**——`apply_mcp_bindings` 只遍历绑定槽位，没绑就整头原样返回，字面量 `${secret:...}` 会被发给外部服务；新增 `_flag_unresolved_references`（4 个出口）+ `mcp_client` 建连前兜底 + `verify_mcp_server` 探测前 400。④ **拒因大小写重复**——槽位键 `header:authorization` 与配置键 `Authorization` 大小写不同时 `setdefault` 拦不住，会同时报「凭据已停用」和「没有绑定」；改为小写去重，并抽出 `unbound_reason()` 统一注入层与 MCP 侧口径。⑤ **摘要兜底被绕过**——`endswith` 放过 `auth_tokens` / `credentials` / `password_v2` / `clientSecret`；改成驼峰+分隔符**分词**匹配（含去复数），并豁免 `key_name`/`header_name`/`param_name` 这类「只是名字」的键（否则 `api-key` 凭据摘要全空）。⑥ **URL 账密漏判**——正则的 `[^/@]+` 漏掉未编码密码里的 `/`（`http://user:ab/cd@proxy`），改用 `urlsplit` 加「`://` 到第一个 `@` 之间含冒号」兜底。⑦ **编辑器交互**——合法 JSON 但无内置模板不再说成「不是 JSON 对象」；`{}` 不再算填好；高级字段红框与主字段统一成三元互斥（叠加两个 `border-*` 类谁生效取决于 CSS 顺序）；清空/换模板同时重置提示条与密码显隐。⑧ **两条不精确的测试**——`switchFormat` 切片分隔符缺空行导致切到文件尾、`set_secret_status` 调用用了 `status=` 而非 `status_value=`。⑨ 静态复审提到原型缺 `prototype-kind` 元标签：核实为**可选项**（`prototypes.md` 明示「可选」，66 份原型中 27 份带），未改。**验证（本轮最终）**：`tests/frontend` **5029 passed / 1 skipped**；`cd frontend && vue-tsc -b --force` **155 = 既有基线，本批文件 0 新增**；`compile_vue_templates.cjs` **330 / 0 problem**；后端改动文件 `py_compile` + 导入 + 纯函数抽查通过。**后端 pytest（全量）本轮未跑通**：本地开发库连接僵死，`tests/api/portal tests/core tests/services` 全是 setup error（`exit=124`），非断言失败；上一轮可连库时为 4834 passed / 11 skipped / 6 xfailed，但那是①②③⑤⑥修复前的代码。数据库恢复后需补跑一次。
+
+### 使用侧：凭据字段级绑定（`sys_secret_bindings.value_path`）
+
+**问题**：结构化凭据入库后是一段 JSON，而绑定只能整段给。把 SMTP 凭据绑到邮件的
+`smtp_password` 参数上，注进去的是 `{"host":…,"port":465,"password":…}`，调用方必然
+失败，而失败点离配置处很远。
+
+**做法**：
+
+- 迁移**并入原文件**（同一功能不拆两个版本）：`db-prod/V219`、`db-prod-pg/V119` 末尾追加
+  绑定表的 `value_path`（点分隔字段路径，空串=整段，存量行默认空，无需回填）。模型
+  `SecretBinding.value_path` 同步。MySQL 侧刻意写成**独立一条 ALTER**：原来那条多列 ALTER
+  在已执行过的库上会命中 1060 被整条忽略，塞进去就永远补不上这一列。
+- `center.bind_secret` 增加 `value_path` / `allow_whole`：**非 header 位点**的结构化凭据必须
+  选定字段（参数 / arg / env 都是整值注入，没有引用可写），`header:` 位点豁免——它的值本身
+  可以写 `${secret:标识.字段}`，字段由引用表达，绑定层再强制一遍会堵死「同一凭据给不同槽位
+  取不同字段」。字段名写错时**绑定时**就报，并用 `difflib` 给出最接近的候选。
+- `resolver`：`Located` / `ResolveResult` 带上 `value_path`，只从 **fixed** 绑定透出——
+  规则绑定每次挑中的凭据结构可能不同，钉死路径只会在别的凭据上失败。
+- 注入层四处统一走 `_apply_value_path`：API 工具参数、MCP 工具参数、脚本环境变量、
+  header 渲染。取不到字段时**记拒绝并保留原值，绝不退回整段明文**（`reference_field_missing`）。
+  header 位点里同时有 `${secret:…}` 引用时**引用优先**，绑定层的 `value_path` 只是兜底。
+- 新接口 `GET /secrets/{id}/fields`：返回字段清单，**敏感字段只给名字、不给值**（选择器不需要
+  值，给了就是「凭据不可读」的旁路）；非敏感字段给一段预览便于辨认。`/platform-targets`
+  与 `/bindings` 的序列化都补上 `value_path`，否则重开弹窗显示「未选」会覆盖已有配置。
+- 前端：新组件 `SecretFieldSelect.vue`，接进**五处**绑定入口——API 工具 Header、API 工具参数、
+  我的 MCP 平台服务、脚本环境变量，以及 MCP 工具集（`McpServerRegistry.vue` 里还有三处：
+  Authorization 固定绑定 / 其他 Header / 参数设置，漏了最后这处，用户点保存只会看到后端
+  一句「请选择要取用的字段」而无处可选）；没选字段就保存会被拦住。API 工具 Header 位点选完
+  生成 `${CREDENTIAL:标识}` 并保留原有 `Bearer ` 前缀——**不写字段名**，取哪一部分交给
+  绑定记录上的 `value_path`（值里带字段名的话，普通用户绑自己的凭据覆盖时会因为标识对不上
+  直接失败，见下文「`${CREDENTIAL:标识}` 与 `${secret:标识.字段}` 语义不同」）。
+  凭据选择器（`CredentialPicker.vue`）在下拉项与已选中触发器上都标出「单值 / 结构化 · 模板名」
+  （后端 `/picker` 相应补 `value_format` / `value_template`），结构化凭据要在下拉阶段就看出
+  「选中后还得选字段」。个人页凭据详情新增「怎么用（可取的字段）」：字段清单 + 可复制引用片段。
+- **列表态也要说清取了哪个字段**：只显示 `admin.mail.cre` 会让人以为整条凭据都在用，
+  实际注进去的可能只是 `password`，排查时从界面看不出来。新增展示组件
+  `SecretBindingLabel.vue`（凭据标识 + 值形态徽标 + 「取 password」），接进六处列表：
+  MCP 参数设置行、MCP 其他 Header 两处、MCP Header 绑定弹窗、API 工具参数行、
+  脚本环境变量行、我的 MCP 服务卡片、API 工具 Header 绑定弹窗。**结构化却写着「整段 JSON」
+  标黄**——那是会把一整份 JSON 注进去的可疑配置。`GET /bindings` 与 `GET /platform-targets`
+  相应补 `value_format` / `value_template`（`value_path` 上一轮已有）。
+- **规则绑定也能取字段**：`bind_rule` 收 `value_path`，`resolver` 的 rule 分支透出它。
+  规则还能声明**模板约束**（`rule.value_template`，`parse_rule` 校验格式）：命中凭据
+  模板不符按**未命中**处理（走 `on_miss`），不会拿另一种结构去取字段。有了它，
+  「字段名一致」从靠人自觉变成配置能保证、运行时能校验，字段也能给成下拉。
+  规则为空路径却命中结构化凭据时**拒绝**（`structured_without_path`），不再整段注入。
+- **执行侧三件事**（都属于「字段选好之后」）：
+  1. **类型保留**：`pick_field_typed` 返回 JSON 原类型，参数/MCP arg 位点用它
+     （`port: 465` 是数字不是 `"465"`，否则对方 schema 校验失败）；header 与环境变量
+     仍字符串化——`os.environ` 和 HTTP 头只接受文本。
+  2. **一次调用只解密一次**：五个注入入口建 `plain_cache` 传给 `resolve`，作用域单次
+     调用（不做进程级缓存：改完凭据要立刻生效，明文也不该久留）。定位/授权/审计照跑。
+  3. **审计不再谎报成功**：`_log_usage` 返回流水 id，注入失败时 `mark_usage_failed`
+     把那条改成真实原因——先记 success 再没人管，统计会把「配置错了」算成「用得好」。
+- **一条凭据供多个参数**：`POST /secrets/bindings/batch` 一次保存整张映射表，
+  **先全量 `dry_run` 校验再写**，一条不过就整体拒绝（半成功会让界面与库对不上）。
+  行可只给 `name`，槽位由后端按工具 URL/方法推算。前端 `SecretFieldMappingPanel.vue`
+  挂在 API 工具参数与 MCP 参数设置两处，只提交动过的参数（否则没参与映射的参数
+  会被当成清空而解绑）。**写入走一个事务**：`bind_secret` / `unbind_slot` 支持
+  `commit=False`，整批写完再提交，中途失败全部回滚。
+  批量面板保存后**必须同步「哪些参数由凭据提供」**（MCP 的 `credential_params`、
+  API 参数的 `source`）：绑定只说明「取哪条凭据的哪个字段」，运行时认的是那份清单，
+  不同步就会「保存成功但没生效」。
+
+## 凭据字段级绑定：几条容易改回去的边界
+
+- **`${CREDENTIAL:标识}` 与 `${secret:标识.字段}` 语义不同，不能互相替代**：
+  - 前者**不校验标识**，可以只是值的一部分（`Bearer ${CREDENTIAL:x}`），取哪一部分
+    由当前绑定自己的 `value_path` 决定——这是「个人覆盖平台默认」能成立的前提；
+  - 后者**校验标识一致**，用于「一条凭据给不同槽位取不同字段」和手写多字段拼接。
+  - 平台共享配置里的 Header 一律写前者。改成后者，普通用户绑自己的凭据覆盖时
+    必然 `reference_mismatch`（他不可能有管理员那条的标识）。
+- **换凭据必须清空 `value_path`**：字段名在另一条凭据里通常不存在。`CredentialPicker`
+  的 `picked` 事件**先于** `update:modelValue` 发出，父组件在回调里比较时读到的才是
+  旧 ID；顺序反了这个判断恒为假，会带着旧字段名保存（下拉空白、拦截失效、后端 400）。
+- **字段清单的预览与摘要同一套兜底**：键名像密码、值像密钥、地址内嵌账密、
+  URL 的 query 带 `key=` / `access_token=`——任一命中都不给预览。只靠词根过滤会漏掉
+  `webhook_url`（企业微信 webhook 的 key 在 query 上）和 `appsecret`（整词拆不开）。
+- **`null` 是值，不是失败**：`_apply_value_path` 用 `_MISSING` 哨兵表达「取不到」，
+  字段值本身是 JSON `null` 时正常注入 `None`。
+- **规则绑定也能取字段**，并可声明模板约束（`rule.value_template`）；约束参与
+  **候选筛选**而不是挑中后再否掉——否则同名不同模板的第二条永远轮不到。
+
+## 参数设置的两个 tab（单值 / 多值）
+
+- **按凭据形态分页，不按配法分页**：单值页一个参数配一条；多值页先定一条凭据
+  （或一条规则），再把字段分给各参数。多值页的「固定凭据」下拉**只列结构化凭据**——
+  单值凭据没有字段可分，选进来等于走错页。
+- **两页是同一份数据**，不是两套配置：多值页配完，单值页能看见也能改。实现时若做成
+  两个独立的存储，一定会出现「说不清哪个生效」。
+- **多值页保存是整页覆盖**：没选字段的参数提交 `strategy: "none"`，回到「模型填写」。
+  `none` 必须把**固定绑定和规则绑定两条都清**——只清一条，另一条继续生效，
+  现象是「说好改回模型填写了，还在注凭据」。
+- **多值页的「按规则」就是单值页那条规则**，不引入「组」概念：每参数一条规则绑定，
+  规则 JSON 相同、`value_path` 各自不同。运行时逐槽位求值，靠规则确定性保证命中同一条凭据。
+- **切到多值页要提示会覆盖**：单值页已配的参数逐条点名，只提示不自动改写。
+- 批量接口一条事务：`dry_run` 全量校验 → 逐条写（`commit=False`）→ 末尾一次提交。
+
+## 第二轮复审修掉的高危点（都是「看着配好了、跑起来不对」）
+
+- **`Bearer ${CREDENTIAL:标识}` 这种「前缀 + 占位符」两边的判断都要认片段**：
+  `_looks_unfilled`（注入侧）与 `is_credential_placeholder` / `unbound_reason`
+  （工具侧）只判 `startswith("${CREDENTIAL:")` 的话，带前缀的值一边被当成「用户
+  手填的真值」放过去、一边又被拦成未解析占位符。header 编辑器保留 `Bearer` 前缀时
+  生成的正好是这种值，所以这是默认路径。
+- **`dry_run` 必须在任何写操作之前返回**：`bind_secret` 里 `delete` 紧跟在纯校验之后，
+  `dry_run` 若放在 `delete` 之后，校验这一轮就已经把旧绑定删掉了——「校验失败时
+  什么都没写」这句话就不成立，而测试往往用「原本没有绑定」的槽位，检不出来。
+- **系统级参数的 `source` 只有 `literal` / `credential` / `rule`**：写 `'fixed'` 会
+  被 `<select>` 显示成空白。用 `as` 断言强转能骗过类型检查，但骗不过界面。
+- **试算接口要跟运行时一样按 `value_template` 过滤候选**：不过滤就会出现
+  「试算说命中这条，真跑却未命中」，同一份规则两种答案。
+- **批量保存要拦同批次重复槽位**：`date` 和 `query:date` 解析后是同一个槽位，
+  后一条静默覆盖前一条，用户以为配了两个参数。
+- **映射页回填顺序：先读绑定、后选凭据**。反过来（默认选列表第一条结构化凭据）
+  打开页面就等于「换了一条凭据」，已有映射全清空、字段集换成别人的。
+  另外要按 `is_global` 过滤作用域，并传了明确槽位时精确比对——否则同服务下
+  另一个工具的同名参数会串台。
+- **`SecretFieldSelect` 要有请求序号**：快速连点两个凭据时，晚到的旧结果会覆盖
+  新凭据的字段，还会顺手把刚选好的路径清空。
+
+## 审计与事务：批量保存时审计必须延后
+
+`center._audit` 用的是**独立 session + 独立事务**（表是新加的，代码能先于迁移上线，
+共用事务会让建凭据、轮换、授权统统失败）。单条操作下这个取舍没问题：操作失败就抛异常，
+审计根本不会写。
+
+但批量保存是「一整批一次提交」，审计若在写库中间调用，第 4 条失败整批回滚时，
+审计里已经留下了前 3 条「已绑定」——**记了从没发生过的操作**。排查时看到的是
+虚假线索。所以 `bind_secret` / `bind_rule` / `unbind_slot` 都有 `audit` 开关，
+批量接口传 `audit=False`，在 `db.commit()` 成功之后由 `_audit_batch_rows` 补写。
+
+改动涉及审计时记住两条：**成功路径不能跟着丢**（延着延着就漏了），
+**失败路径不能留痕**。
+
+## 嵌套字段路径：配置期追上了执行期
+
+`references.pick_field_typed` 从一开始就是逐段走 dict / list 的，`auth.token` 和
+`hosts.0` 一直能取。缺的只是配置期三处——路径正则不收数字段、绑定前只校验顶层键、
+`/fields` 只列顶层。表现就是「运行时能跑，界面配不出来」，用户只能手写路径。
+
+现在三处都通了，并且**绑定前会走完整条路径**：`auth` 存在但 `auth.tokn` 拼错时，
+保存那一刻就报「这条凭据里没有字段 auth.tokn，你是不是想用：token」。只查顶层的话，
+这个错误要等到几小时后调用方报 401 才浮现，那时已经很难联想到是字段名拼错了。
+
+字段清单展开有上限（3 层 / 200 项）：几十键的配置摊到三层就是上千项，下拉框会卡死。
+对象和数组本身也作为一项列出（标「整个对象 / 整个数组」）——整段取是合法需求，
+只列叶子等于替用户做了决定。
+
+## 迁移提醒
+
+`sys_secret_bindings.value_path` 是**追加在已有迁移文件**（`V219` / `V119`）末尾的。
+若这两个文件此前已经执行过，发版前需要**重新执行更新后的脚本**补上该列
+（MySQL 侧刻意拆成独立 `ALTER`，重跑是幂等的）。
+
+**验证**：`tests/core/test_secret_injection.py` **84 passed**（含字段选取、前缀占位符、
+`denials` 兜底三组新用例）；`tests/api/portal/test_secret_binding_value_path.py`
+**18 passed**（绑定校验 + 字段清单 + 预览不泄露）；`tests/api/portal/test_secret_field_mapping.py`
+**18 passed**（新增：批量固定/规则/解绑三种行、同批重复槽位、回滚不留审计、成功批次照常写审计）；
+`tests/frontend/test_secret_field_binding_contract.py` **57 passed**（value_path 传递与
+必选拦截、两个 tab 的形态、组件必须 import、换凭据清路径、窄格子里的绑定徽标排版）；
+`vue-tsc -b --force` 155 = 基线、本批文件 0；SFC 333 / 0 problem。
+后端与前端全量由用户统一执行。**未做**：配置凭据页（工具/MCP 绑定侧）按结构化字段选择的适配（用户明确放后面）；`${secret:...}` 目前只能手写进 header 值，前端尚无插入帮助入口；未跑 `./dev.sh`，实机观感待控制台确认 | ✅ 已实现（待实机） | 2026-11-15 |
 | 深度思考展示优化：Markdown 渲染 / 结论句摘要 / 超长限高 / 执行轨道（Thinking Display Polish） | 原型：`prototypes/2026-11-13-ai-thinking-display.html`（新增，已在 `prototypes/index.html` 登记）、`prototypes/shots/2026-11-13-thinking-{main,matrix,now,compact}.png`（配套截图，shots/ 不入库）；前端：`frontend/src/utils/reasoningPreview.ts`、`frontend/src/components/chat/ChatExecutionTimeline.vue`；测试：`tests/frontend/test_reasoning_preview_behavior.py`（+3）、`tests/frontend/test_reasoning_markdown_render_contract.py`（新增 5） | **需求（用户）**：一次回答里有大量思考，独立的「思考卡」会堆一屏，且希望能整体折叠；同时要求「不要五颜六色、整体是浅浅的浅色风格」。**三条纠正**：① 否决独立思考卡方案（一次回答十几轮思考 → 十几张卡，折叠也不方便），改为在现有时间线上做优化；② 指出前版方案把 A/B/C 当成互斥选项，实际是同一个渲染器上的三个开关；③ 要求覆盖历史会话回放等全部状态，不许破坏既有功能。**改造（纯前端，未改数据结构）**：① **思考正文真实渲染 Markdown**——原先是裸 `<pre>`，模型吐出的 `**加粗**`、`- 列表`、```sql 围栏全部原样裸露；改走与正文同一条 `renderMarkdown`（内部已 sanitize），新增 `.reasoning-md` 排版（段落/列表/代码块/引用/表格），深浅两套主题靠 `text-gray-600 dark:text-gray-400` 继承 + 半透明中性灰结构色，不新起主题变量。② **摘要从「前 80 字硬截」改为「结论句优先」**——`resolveReasoningPreview` 新增 `conclusionPreview`：按句读切句，挑「命中标记词（所以/结论/卡点/因此…）且长度 12~46 字」的句子；没有合适的句子退回原定长截取，两条规则互不兜底因此各自可测；pending 仍取尾部跟随最新内容。③ **超长思考限高**——超过 1200 字默认 `max-height: 13rem` + `mask-image` 渐隐（**阈值后续按实测调到 2000 字 / 14rem**，见文末同主题记录，此处保留当时的决策过程）（用 mask 而非白色遮罩：遮罩要猜底层背景色，卡片深浅与是否嵌在子代理块里都不同，猜错就是一条突兀色带），底部给「展开全部（共 N 字）」。**三条硬约束**：进行中不限高（流式最后一段还在逐字增长，套固定高度会让新字落在可视区外，与旁白「不做限高内滚」同源）、短思考点开即读全（不做两次点击）、展开状态记在组件内不写回 item（时间线在流式合并与历史恢复时会被重建，写回字段会被冲掉 → 表现为「点了展开又收回去」）。④ **执行链路轨道 + 四类节点形状**——一条竖线贯穿 + 思考圆点 / 工具方块 / 旁白小点 / 委派菱形 / 失败红点，把「这段是思考还是工具、层级在哪」从颜色里解放出来；刻意只用灰阶（彩色要两套主题各调一次且总有一套失衡，形状与缩进天然与主题无关），结构色统一半透明中性灰 `rgba(127,127,127,α)`，一套值覆盖深浅两套主题。⑤ **委派渲染成分支**——子代理容器加左侧 2px 分支线（`.subagent-branch`），内部嵌套线由 indigo 改中性，状态色（进行中绿 / 未完成琥珀）一并收掉，进行中改由行首呼吸点表达；失败红与换模提示琥珀保留（语义必需）。**踩到的坑**：Tailwind 任意属性类 `[--rm-text:rgb(...)]` 在本项目**没有被生成**（仓库无先例），`var()` 取不到值会让颜色塌成继承——构建产物里 grep 不到定义才发现，遂改为半透明灰方案；另 `:global(.dark)` 被契约 `test_embed_theme_sync_contract` 禁止（会被编译成命中所有 `.dark` 元素的全局规则，是「深色白雾」的成因），深色改由 Tailwind 类承担。**验证**：`tests/frontend` **4906 passed / 1 skipped**（含新增结论句 3 条 + 渲染契约 5 条；首轮曾红 2 条——一是本仓禁止的 `:global(.dark)`，二是 Tailwind 变量方案导致的样式失效）；`vue-tsc --noEmit` 通过；`vite build` 通过并核实产物中 `.timeline-rail` / `.subagent-branch` / `.reasoning-md-clamped` 均已生成、无 `var(--rm-/--tl-)` 残留、无全局裸 `.dark` 规则；用构建产物 CSS + 组件真实 DOM 结构（含 `data-v`）做了浅色/深色双主题离线渲染截图核对。**未做**：未跑 `./dev.sh`，实机观感与流式过程待控制台确认；P1（三级密度开关接入既有「思考过程」设置）、P2（并行委派分组需后端 batch 字段、深色两档灰）留待下一轮 | ✅ 已实现（待实机） | 2026-11-13 |
 | 智能体中心「分配给我」只读视图（Agent Assigned View） | 原型：`prototypes/2026-11-12-agent-assigned-view.html`（新增，已在 `prototypes/index.html` 登记）、`prototypes/shots/assigned-view-{default,anno,mine,empty,received}.png`（配套截图，shots/ 不入库）；设计：`docs/superpowers/specs/2026-11-12-agent-assigned-view-design.md`（新增）。实现落点：`app/services/ai/agent_manager.py`（新增 `list_assigned_agents`）、`app/api/portal/endpoints/agents.py`（新增 `GET /assigned`，注册在 `/{agent_id}` 系列之前）、`frontend/src/api/agent.ts`（`listAssignedAgents`）、`frontend/src/views/AgentManagement.vue`（tab/独立数据源/只读面板/`openAssignedChat`）、`tests/api/portal/test_agent_assigned_list.py` 与 `tests/frontend/test_agent_assigned_view_contract.py`（均新增）、计划 `docs/superpowers/plans/2026-11-12-agent-assigned-view.md` | **需求来源（用户）**：管理员给普通用户分配了系统级智能体，用户在对话页能用，但在智能体中心一个都看不到。**根因（读码核实）**：智能体中心 `AgentManagerService.list_agents` 对非管理员只留 `created_by == username`（`agent_manager.py:836-842`），从不查 `ResourcePermission`；对话侧的 `list_allowed_agents` / `_user_can_execute_agent` 认 `is_system AND id IN perms.agents`（`:1117-1134`、`:1050-1067`）。两套口径 → 「能用但看不见」。授权入口在角色/用户管理的智能体页签，候选集仅 `is_system AND is_enabled`（`management.py:1876-1882`）。**选定方案（用户拍板）**：单独加常驻 tab「分配给我」，只读卡片，**不提供复制、不展示配置**；数据来源走新增 `GET /agents/assigned`（另两个备选被否：改 `list_agents` 加 scope 会动已被多处调用的长函数；前端复用 `/agents/allowed` 则只读态只能靠前端盖——`AIAgentResponse.is_editable` 默认 `True`）。**口径**：授权集合复用 `permissions.agents`；再收窄 `is_enabled` 且（`created_by != 我` 或 `IS NULL`，后者覆盖历史空 created_by）；管理员不显示该 tab 且接口返回空；三个只读字段由服务端定死。**边界**：编辑/复制/删除/版本发布整块不渲染（不是置灰）；不挂 `model_issue`/`tool_issue`/`readiness_*`/`team_member_ids`/`execution_count`；「进入对话」复用取票逻辑但**不带** `preview=1`（那是管理者试跑语义，会强制干净临时会话），且必须新增独立函数、不得直接改 `openPreview`。**与「分享给我」的区分**：分配=已授权直接可用、仍指向同一个智能体、角标是可用总数；分享=待接收件、接受后生成副本、角标是待处理数。**待实测**：`POST /api/v1/embed/tickets` 走 `require_api_key` 支持门户 Cookie（`dependencies.py:73-80`），但内部还调 `_user_can_execute_agent`，需用「只有智能体授权、无其它菜单权限」的普通账号验一次——这是本功能唯一的动作入口。**旁支发现（本需求不处理）**：`ResourcePermission` 里写非系统级智能体 id 时使用侧不认、角色管理也不列，属静默无效授权数据。**实现与验证**：服务层 `list_assigned_agents` 七条口径单测全绿（管理员空、无权空且不查库、SQL 含 `is_enabled=true` + `created_by != '我'` + `created_by IS NULL` + IN 集合、三个只读字段恒 False、user_id 脏数据降级为空、user_name 缺失保守返回空）；路由真实注册顺序经 `router.routes` 冒烟确认（`/allowed` idx 9 → `/assigned` idx 9、`/{agent_id}/embed-access` idx 10）；前端契约 10 条（tab 管理员守卫、面板无编辑/复制/删除/版本入口、两条落点均不带 `preview=1`、`openPreview` 未被改动、独立数据源不并入 `agents.value`、`?agents_tab` 按角色守卫（`all`/`assigned`，init 与 watch 两条路径）、加载失败与空数据文案区分、头部计数跟随视图、`menu:ai_chat` 优先平台内对话页、加载占位存在）；后端 `tests/api/portal` 全量 1153 passed；`vue-tsc --noEmit` 0 error、325 个模板 0 problem；**代码审查后修订**：口径补 `is_system == true` 并用 SQL 断言锁住（下架时 `ResourcePermission` 被刻意保留，「有授权但已非系统级」是产品路径产生的数据，缺这条会出死链）、`user_name` 缺失保守返回空、「进入对话」按 `menu:ai_chat` 分流平台内/embed 面、加载占位、网格断点对齐主列表；`vue-tsc --noEmit` 0 error、325 个 SFC 模板编译 0 problem | ✅ 已实现（待 user 执行 `./dev.sh` 与实机验收） | 2026-11-12 |
 | 代码评审修复：分组归一口径统一 + 页签消失兜底 + 候选与定时器（Group Review Fixes） | 后端：`app/schemas/metadata.py`（数据集三模型接入 `GROUP_NAME_MAX_LEN` + `normalize_group_name`）、`app/services/dataset_clone_service.py`（改按 `model_fields_set` 取值）、`app/utils/skill_metadata.py`（`normalize_skill_group` 复用共享实现）、`app/api/portal/endpoints/mcp.py`（创建响应补 `group_name`）；前端：`frontend/src/views/MetadataDatasets.vue`、`frontend/src/components/system/McpServerRegistry.vue`、`frontend/src/views/AgentManagement.vue`、`frontend/src/views/SkillsManagement.vue`、`frontend/src/views/ExampleManagement.vue`、`frontend/src/components/layout/UserModeSidebar.vue`、`.gitignore`、`prototypes/prototypes.md`；测试：`tests/api/portal/test_dataset_business_group_contract.py`（新增 12）、`tests/frontend/test_resource_group_consistency_contract.py`（新增 9） | **来源**：外部 AI 对 `origin/main..HEAD` 10 个 commit 的静态评审，逐条复核后修掉确认成立的部分。**① 页签条整个消失后用户卡死（高）**：`showAgentGroupTabs` / `showMcpGroupTabs` 带 `items.length > 2`，在「未分组」页签里把最后一条归组后页签行连同开关一起消失，而 `groupFilter` 仍停在原分组 → 空列表且无任何切回「全部」的入口，只能刷新。修法：两页各加 `watch(showXxxGroupTabs)` 兜底回 `ALL_GROUP_KEY`（保留 Agent 那个「放行 UNGROUPED」的搜索体验）。**② 数据集分组名是裸字段（高）**：另三处都有 `max_length` + 归一 validator，数据集 `DatasetBase` / `DatasetUpdate` / `CloneDatasetRequest` 三处漏了——`"   "` 落成看不见的空分组页签、超长在 MySQL 严格模式直接 500。已接入同一份归一。**③ clone 用 `is not None` 判断（中）**：分不清「没提这个字段」与「显式传 null 要清空」，副本永远继承源分组。改 `"group_name" in payload.model_fields_set`。**④ MCP 分组候选取了筛选后子集（中）**：`mcpGroupOptions` 注释写「全量」实现却用 `mcpGroupTabsData`（建立在筛完列表上），开着搜索/仅运行中时候选少一半，用户会把已有分组再打一遍。改为遍历全量 `servers.value`。**⑤ 创建 MCP 响应漏 `group_name`（中）**：手工构造的 dict 没带该字段，与落库状态不一致。已补。**⑥ 回车加标签必崩（既有笔误）**：新建数据集弹窗 `@keyup.enter="addTag"` 把 KeyboardEvent 当参数 → `target.tags` undefined。改 `addTag(newDataset)`。**⑦ 技能分组输入漏限长**：新建表单与「设置分组」弹窗都补 `maxlength="64"`；弹窗补 `@keydown.esc`，并禁止 `savingGroup` 时点遮罩关闭（请求还在飞却看不到结果）。**⑧ `normalize_skill_group` 与统一口径不一致**：原先只折 `[\r\n]+`，制表符与连续空格会带进页签；改为直接复用 `normalize_group_name`（`str.split()` 折全部空白）。**⑨ 侧栏 `revealGroupBody` 依赖 offsetParent 巧合**：`body.offsetTop` 挂在带 `relative` 的父级上，目前只因父级没有纵向内边距才对得上；改用两个 `getBoundingClientRect()` 差值。**⑩ 延时刷新定时器未清理**：批量同步/智能增强后 4 处裸 `setTimeout(…, 3000)`，用户 3 秒内切走仍会对已卸载组件发请求；统一登记到 `refreshTimers` + `onBeforeUnmount` 清理。**顺带修掉 2 条既有红测试**：`test_parse_skill_metadata_keeps_field_defaults`（逐字段全等，本批技能分组新增 `group` 键后未同步）、`test_group_name_over_64_chars_is_rejected`（实现是截断、断言是拒绝，口径相反）。**核实后未改**：`parse_skill_frontmatter` 对首尾引号 `.strip('"')` 导致写入读出不一致（只影响「分组名带引号」的极端输入，属解析层行为，改动面大于收益）；技能「设置分组」目前仍是写 SKILL.md（不是 DB 列），与 MCP/智能体走端点不同构，属既定设计。 | `tests/frontend` 受影响文件 **691 passed / 1 skipped**（`group` / `personal_resource` / `user_mode_sidebar` / `example` / `mcp_registry_filter` / share 等）；`tests/api` 全量 **1711 passed / 5 xfailed**；`vue-tsc -b --force` **157 = 基线（0 新增）**；`tests/api/portal/test_dataset_business_group_contract.py` 12 passed、`tests/frontend/test_resource_group_consistency_contract.py` 9 passed。**（未按用户要求跑前端全量）** | ✅ 已实现（未提交，待确认） | 2026-11-12 |
@@ -1102,3 +1270,4 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 | 项 | 主要文件 | 说明 | 验证 |
 |---|---|---|---|
 | 智能体中心页头与搜索行重排（移动端一行装下搜索 / 审核 / 新建） | `frontend/src/views/AgentManagement.vue`、`frontend/src/components/agent/AgentCreateButton.vue`（新增）；测试：`tests/frontend/test_agent_share_contract.py`（删 2 增 1 重写 1）、`test_agent_main_sort_contract.py`、`test_agent_system_pending_lock_contract.py`、`test_scenario_templates_contract.py` | **需求来源（用户，分三轮）**：①「这个不对，筛选 放第二行的后面」→ 筛选整段（按钮 + 遮罩 + 9 项条件面板）从页头新建右侧搬到第 2 行批量/视图切换之后，页头只留高频动作；②「移动端的搜索框直接显示算了，搜索框，筛选，新建按钮，都在同一行」→ 删掉页头那颗移动端放大镜与 `mobileSearchOpen` / `toggleMobileSearch` / `searchInputRef` 全套折叠机制，搜索框常显并把 `min-w-[220px]` 归零（375px 下 220 的硬下限会把按钮挤出同行）；新建按钮抽成 `AgentCreateButton.vue`（页头 `v-if="!isMobile"`、搜索行 `v-if="isMobile"` 互斥渲染，下拉态各自持有，避免复制 50 行）；③「移动端不显示筛选，把审核的放到筛选的地方，发布审核的文案改成审核」+「审核 只显示 svg 图标，不显示文字」→ 筛选块 `v-if` 加 `!isMobile`；审核在搜索行占筛选原位、页头那份加 `&& !isMobile`；窄屏只留盾牌图标 + `aria-label="审核"`，待审数量从行内 `ml-0.5` 改成 `absolute -right-1 -top-1` 角标（行内徽标即使无文字也会把按钮撑宽），`px-3`→`px-2.5` + `justify-center`。**过程中自己踩的坑**：插入窄屏新建按钮时把 `</template>` 一起替换掉，`test_vue_templates_compile` 报 `Element is missing end tag`，用 `@vue/compiler-sfc` 定位到模板内第 127 行后补回。**契约同步**：删「搜索默认收起」「收起时清空关键词」两条，新增 `test_narrow_row_holds_search_review_and_create`（顺序 搜索 → 批量/视图 → 筛选 → 审核 → 新建；筛选必须带 `!isMobile`；审核必须有 `aria-label` 且摘掉无障碍名称后不残留可见文字；角标必须是 absolute），重写 `test_desktop_header_keeps_create_but_narrow_hides_it`（页头 显示指引 → 发布审核 → 新建，且不再含搜索与筛选）。 | `tests/frontend` 全量 **4979 passed / 1 skipped**；`vue-tsc -p tsconfig.app.json --noEmit` **155 errors（基线 155，0 新增）**，两个改动文件零错误；模板编译（327 个）通过；反向验证累计 **6/6 命中**（筛选移出第二行 / 页头多出筛选 / 搜索框重新隐藏 / 窄屏新建挪到搜索框前 / 窄屏审核退回长文案 / 删掉 aria-label），均字节级还原 | 2026-11-14 |
+| 管理员站内信群发（按人/部门/角色选范围，含历史发送列表与一键重发） | 迁移：`db-prod/V218-create-portal-broadcast-records.sql`、`db-prod-pg/V118-create-portal-broadcast-records.sql`（均新增）；后端：`app/models/portal_broadcast.py`（新增）、`app/schemas/portal_broadcast.py`（新增）、`app/services/portal_broadcast_service.py`（新增）、`app/api/portal/endpoints/broadcast.py`（新增）、`app/api/portal/api.py`；前端：`frontend/src/components/system/SystemBroadcastPanel.vue`（新增）、`frontend/src/views/SystemConfig.vue`、`frontend/src/components/PortalNotificationBell.vue`；测试：`tests/services/test_portal_broadcast_service.py`（新增 17 条）、`tests/frontend/test_system_broadcast_contract.py`（新增 8 条）、`tests/test_portal_broadcast_records_migration_contract.py`（新增 7 条）、`tests/frontend/test_instance_nodes_contract.py` 与 `test_system_config_mobile_diagnostics_contract.py`（更新）；设计档案：`docs/superpowers/specs/2026-11-14-admin-broadcast-design.md` | **需求来源（用户，两轮）**：先问「发站内信的是不是默认的、所有人都有」→ 审计出唯一写入口 `send_portal_notification` 的收件人恒为 `agent_ctx.user_id`（结构上不可能发给别人，唯一跨用户路径是 `POST /api/v1/embed/tickets` 的 admin 代签）→ 用户要求「管理员能发给所有人」，并指定入口位置为「系统配置与诊断 → 系统诊断」二级栏（截图圈定）→ 第一轮实现后追加「收件人支持折叠 + 历史发送列表 + 一键重发」。**定稿规则**：①三个维度取并集去重，只发启用账号，部门按物化 `path` 前缀含全部下级；②命中 0 人返回 400；③`preview` 与 `send` 共用同一解析器，`send` 必须带 `confirm_total`，人数变了返回 409 并要求重新预览（防「预览 128 人、实际发 300 人」）；④权限写死 `require_admin`，不新增 element 权限码、不动菜单；⑤不并入 `/inbox`（那边是「我的收件箱」，权限口径完全不同）；⑥第二轮新增 `portal_broadcast_records` 表，**只存范围不存最终名单快照**（名单会因人员变动与事实不符；重发时重新预览并把「历史 128 人 → 现在 130 人」的差异摆出来）；⑦「一键重发」= 回填表单 + 自动预览 + 仍需点发送，不做绕过 `confirm_total` 的直发通道；⑧记录与站内信同一事务，失败显式 rollback，消息 `metadata` 带 `broadcast_record_id` 供反查。**实现坑**：`PortalNotification` 声明为 `meta_info = Column("metadata", JSON)`，批量 `insert` 的参数键必须写属性名 `meta_info`，写列名 `metadata` 会抛 `CompileError`（未消费列名）——因此把行构造抽成 `_build_rows()` 并用 SQLite 内存库真跑一次插入兜住它，假 session 抓不到编译期错误；另 `suppressPreviewReset` 标志位解决「回填触发的 watch 立刻清空刚跑出的预览」。**前端**：入口仅 admin 可见；收件人三列可折叠成一行范围摘要；历史列表 10 条/页、含「查看/重发」；铃铛把 `system_broadcast` 显示为「公告」并标出发件人。**已知边界**：站内信按平台策略保留 30 天（群发公告同样会被清理，页面已提示）；一次上万账号会在单事务内写入（按 200 行分片）。 | `tests/services/test_portal_broadcast_service.py` **17 passed**；`tests/frontend/test_system_broadcast_contract.py` **8 passed**；`tests/test_portal_broadcast_records_migration_contract.py` **7 passed**；`pytest tests/services -m no_infrastructure -q` **2134 passed / 3 skipped / 1 xfailed**；`pytest --confcutdir=tests/frontend tests/frontend -q` **4987 passed / 1 skipped**；`vue-tsc -p tsconfig.app.json --noEmit` 对新增/改动文件零报错（`SystemConfig.vue` 余 6 条存量错误与本次无关）。**待用户确认**：执行 `./dev.sh` 后实机点验（选人/部门/角色后预览、0 人拦截、二次确认、铃铛「公告」标签、收件人折叠、历史列表重发与人数差异提示），并自行执行 `db-prod/V218` 与 `db-prod-pg/V118`（两套不可混用）。**未做**：未跑 `./dev.sh`、未 `git commit`、未执行任何数据库迁移。 |

@@ -42,11 +42,17 @@ def system_config() -> str:
 # 入口：二级左栏
 # --------------------------------------------------------------------------- #
 def test_diagnostics_tab_has_secondary_sidebar(system_config):
-    """一级 tab 里「系统诊断」保留，内部再分「诊断 / 实例」两个二级项。"""
-    assert "const diagSection = ref<'diag' | 'instances'>('diag')" in system_config
+    """一级 tab 里「系统诊断」保留，内部再分「诊断 / 实例」两个二级项。
+
+    第三个二级项「站内信群发」是管理员的广播入口，只在 admin 下出现，
+    不影响普通用户看到的「诊断 / 实例」两项。
+    """
+    assert "const diagSection = ref<'diag' | 'instances' | 'broadcast'>('diag')" in system_config
     assert "InstanceNodesPanel" in system_config
     assert "@click=\"diagSection = 'diag'\"" in system_config
     assert "@click=\"diagSection = 'instances'\"" in system_config
+    assert "@click=\"diagSection = 'broadcast'\"" in system_config
+    assert "SystemBroadcastPanel" in system_config
 
 
 def test_existing_diagnostics_content_is_kept_not_replaced(system_config):

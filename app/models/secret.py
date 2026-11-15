@@ -34,6 +34,15 @@ class UserSecret(Base):
     value_fingerprint = Column(String(16), nullable=True)
     #: 仅 ``variable`` 存前 8 字符供列表展示；``credential`` 必须为 None
     value_preview = Column(String(24), nullable=True)
+    #: ``text`` = 单值（token / PEM 整段）；``json`` = 结构化对象序列化后的字符串。
+    #: 两类都只影响「怎么读这一串」，明文仍然只在 ``value_encrypted`` 里。
+    value_format = Column(String(16), nullable=False, default="text", server_default="text")
+    #: 结构化模板标识（``smtp`` / ``sftp`` …）。模板定义在前端常量，后端只存标识，
+    #: 因此模板升级、字段增删都不会让老记录读不出来。
+    value_template = Column(String(64), nullable=True)
+    #: 列表摘要，形如 ``smtp.exmail.qq.com:465 · alert-bot``。只由**非敏感字段**拼成，
+    #: 生成规则见 ``center.build_value_summary``：候选键由前端声明，值由后端从 JSON 里挑。
+    value_summary = Column(String(160), nullable=True)
     allowed_hosts = Column(JSON, nullable=True)
     allowed_scenarios = Column(JSON, nullable=True)
     status = Column(String(16), nullable=False, default="active")
@@ -92,6 +101,13 @@ class SecretBinding(Base):
     strategy = Column(String(16), nullable=False, default="fixed", server_default="fixed")
     #: ``strategy='rule'`` 时的规则 JSON；见 ``app/services/secrets/locator.py``
     rule_json = Column(Text, nullable=True)
+    #: 只取凭据的某一部分：点分隔字段路径（``password`` / ``auth.token``）。
+    #: 空串 = 整段给，是单值凭据与全部存量行的默认。
+    #:
+    #: ``fixed`` 和 ``rule`` 都用它：规则模式下一个参数一条绑定，「命中哪条凭据」
+    #: 共享同一份规则，「取哪一段」各记各的。规则里的 ``value_template`` 负责把
+    #: 结构不符的凭据判成未命中，所以路径不会钉在别的结构上。
+    value_path = Column(String(255), nullable=False, default="", server_default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

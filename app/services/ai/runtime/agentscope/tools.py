@@ -947,7 +947,7 @@ class AgentScopeRuntimeTool:
             logger.warning(
                 "[RuntimeTool] Tool '%s' execution failed gracefully: %s",
                 self.spec.name,
-                exc,
+                _redact_tool_error_text(exc),
             )
             return ToolChunk(
                 content=[TextBlock(text=f"工具 [{self.spec.name}] 调用发生异常: {_redact_tool_error_text(exc)}")],
@@ -1029,7 +1029,7 @@ class AgentScopeRuntimeTool:
                 logger.warning(
                     "[RuntimeTool] Streamed tool '%s' failed gracefully: %s",
                     self.spec.name,
-                    exc,
+                    _redact_tool_error_text(exc),
                 )
                 yield ToolChunk(
                     content=[TextBlock(text=msg)],

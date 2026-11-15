@@ -58,6 +58,16 @@ class ResolveResult:
     value: SensitiveValue | None = None
     denial: str | None = None
     detail: str = ""
+    #: 这条绑定只取某个字段时给路径，调用方据此从明文里挑出子字段。
+    #: 空串 = 整段给。
+    value_path: str = ""
+    #: ``text`` / ``json``。注入层据此判断「整段给」是否合法：结构化凭据整段注入
+    #: 会把一整份 JSON 塞进参数或请求头，几乎总是配置错误。
+    value_format: str = ""
+    #: 规则声明「命中的凭据都得是这个模板」；空串 = 不限。
+    value_template: str = ""
+    #: 本次写下的使用流水 id；注入失败时调用方据此把那条流水改成失败。
+    usage_id: str | None = None
 
     @property
     def denied(self) -> bool:
@@ -73,6 +83,12 @@ class Located:
     fallback_used: bool = False
     denial: str | None = None
     detail: str = ""
+    #: 这条绑定要求「只取某个字段」；空串 = 整段。
+    #: 固定绑定与规则绑定都可以带：规则带的是一个**约定**——命中的凭据都取这个字段，
+    #: 缺这个字段的那条会明确失败，而不是把整份 JSON 注进去。
+    value_path: str = ""
+    #: 规则声明的模板约束（只有规则策略会有）；空串 = 不限。
+    value_template: str = ""
 
 
 def _as_bool(raw, default: bool = False) -> bool:
@@ -133,8 +149,16 @@ class SecretResolver:
         user_attrs: Mapping[str, Any] | None = None,
         rule_args: Mapping[str, Any] | None = None,
         preferred_secret_id: str | None = None,
+        plain_cache: dict[str, str] | None = None,
+        record_usage: bool = True,
     ) -> ResolveResult:
-        """解析一个槽位。返回 ``ok=False`` 时调用方应走自己的默认值。"""
+        """解析一个槽位。返回 ``ok=False`` 时调用方应走自己的默认值。
+
+        ``plain_cache``：一次工具调用内多个槽位指向同一条凭据时（「一条凭据供多个参数」），
+        解密只做一次。传同一个 dict 进来即可，作用域是单次调用——**不要**做成进程级缓存，
+        那会让改完凭据后旧明文继续生效，也让明文在内存里留得比必要的久。
+        定位、场景、域名、授权、审计每次都照跑，缓存的只有解密这一步。
+        """
         if not user_id or not consumer_type or not consumer_id or not slot:
             return ResolveResult(ok=False, denial=DENY_BINDING, detail="missing identity")
 
@@ -174,19 +198,20 @@ class SecretResolver:
                 if record.is_system:
                     granted = await self._has_grant(session, record.id, user_id, dept_code, now)
                     if not granted:
-                        await self._log_usage(
-                            session,
-                            record,
-                            user_id=user_id,
-                            scene=scene,
-                            consumer_type=consumer_type,
-                            consumer_id=consumer_id,
-                            slot=slot,
-                            target_host=target_host,
-                            trace_id=trace_id,
-                            conversation_id=conversation_id,
-                            result=DENY_GRANT,
-                        )
+                        if record_usage:
+                            await self._log_usage(
+                                session,
+                                record,
+                                user_id=user_id,
+                                scene=scene,
+                                consumer_type=consumer_type,
+                                consumer_id=consumer_id,
+                                slot=slot,
+                                target_host=target_host,
+                                trace_id=trace_id,
+                                conversation_id=conversation_id,
+                                result=DENY_GRANT,
+                            )
                         return ResolveResult(
                             ok=False,
                             secret_id=record.id,
@@ -209,19 +234,20 @@ class SecretResolver:
 
                 denial = evaluate_secret(record, context, now=now)
                 if denial:
-                    await self._log_usage(
-                        session,
-                        record,
-                        user_id=user_id,
-                        scene=scene,
-                        consumer_type=consumer_type,
-                        consumer_id=consumer_id,
-                        slot=slot,
-                        target_host=target_host,
-                        trace_id=trace_id,
-                        conversation_id=conversation_id,
-                        result=denial,
-                    )
+                    if record_usage:
+                        await self._log_usage(
+                            session,
+                            record,
+                            user_id=user_id,
+                            scene=scene,
+                            consumer_type=consumer_type,
+                            consumer_id=consumer_id,
+                            slot=slot,
+                            target_host=target_host,
+                            trace_id=trace_id,
+                            conversation_id=conversation_id,
+                            result=denial,
+                        )
                     return ResolveResult(
                         ok=False,
                         secret_id=record.id,
@@ -239,23 +265,33 @@ class SecretResolver:
                         detail="no ciphertext",
                     )
 
-                plaintext = self._decrypt(ciphertext)
+                plaintext = None
+                if plain_cache is not None:
+                    plaintext = plain_cache.get(record.id)
+                if plaintext is None:
+                    plaintext = self._decrypt(ciphertext)
+                    if plain_cache is not None:
+                        plain_cache[record.id] = plaintext
 
-                await self._log_usage(
-                    session,
-                    record,
-                    user_id=user_id,
-                    scene=scene,
-                    consumer_type=consumer_type,
-                    consumer_id=consumer_id,
-                    slot=slot,
-                    target_host=target_host,
-                    trace_id=trace_id,
-                    conversation_id=conversation_id,
-                    # 回退命中单独记一个结果：事后能查出「规则其实一直没命中」。
-                    result=(
-                        RESULT_SUCCESS_FALLBACK if located.fallback_used else "success"
-                    ),
+                usage_id = (
+                    await self._log_usage(
+                        session,
+                        record,
+                        user_id=user_id,
+                        scene=scene,
+                        consumer_type=consumer_type,
+                        consumer_id=consumer_id,
+                        slot=slot,
+                        target_host=target_host,
+                        trace_id=trace_id,
+                        conversation_id=conversation_id,
+                        # 回退命中单独记一个结果：事后能查出「规则其实一直没命中」。
+                        result=(
+                            RESULT_SUCCESS_FALLBACK if located.fallback_used else "success"
+                        ),
+                    )
+                    if record_usage
+                    else None
                 )
 
                 return ResolveResult(
@@ -263,6 +299,12 @@ class SecretResolver:
                     secret_id=record.id,
                     secret_key=record.secret_key,
                     value=SensitiveValue(plaintext),
+                    value_path=getattr(located, "value_path", "") or "",
+                    value_format=(getattr(row, "value_format", None) or "text"),
+                    value_template=(
+                        getattr(located, "value_template", "") or ""
+                    ),
+                    usage_id=usage_id,
                 )
         except Exception as exc:  # noqa: BLE001 - 见模块 docstring 的 fail-closed 说明
             logger.warning(
@@ -274,6 +316,26 @@ class SecretResolver:
                 exc,
             )
             return ResolveResult(ok=False, denial=DENY_BINDING, detail="resolver error")
+
+    async def mark_usage_failed(self, usage_id: str | None, reason: str) -> None:
+        """把一条已经写成 success 的流水改成失败。
+
+        解密成功、但注入这一步失败（引用解不开、字段在凭据里不存在、结构化却没选
+        字段）时，流水上的 success 是**假的**：统计会把「配置错了」算成「用得好」，
+        排查的人也会以为这条凭据一直正常。所以让注入层回头改这一条，
+        而不是再补记一条——否则「一次调用」在报表里会变成两条。
+        """
+        if not usage_id:
+            return
+        try:
+            async with AsyncSessionLocal() as session:
+                row = await session.get(SecretUsageLog, usage_id)
+                if row is None:
+                    return
+                row.result = reason or "reference_unresolved"
+                await session.commit()
+        except Exception as exc:  # noqa: BLE001 - 审计失败不该反过来影响调用
+            logger.warning("[SecretResolver] 回写流水失败 %s: %s", usage_id, exc)
 
     # ── 内部 ────────────────────────────────────────────────────────────
 
@@ -325,7 +387,11 @@ class SecretResolver:
 
             if rule_binding is None:
                 if fixed_binding is not None and fixed_binding.secret_id:
-                    return Located(secret_id=fixed_binding.secret_id, strategy="fixed")
+                    return Located(
+                        secret_id=fixed_binding.secret_id,
+                        strategy="fixed",
+                        value_path=getattr(fixed_binding, "value_path", "") or "",
+                    )
                 continue
 
             # 坏规则时 spec 为 None，wanted 保持空列表：细节文案要能安全降级
@@ -342,7 +408,31 @@ class SecretResolver:
                 if wanted:
                     if visible is None:
                         visible = await self._visible_records(session, user_id, dept_code)
-                    hit, used = pick_match(spec, wanted, visible)
+                    # 规则声明的模板约束：结构不符当作**没命中**，绝不拿另一种结构的
+                    # 凭据去按字段取值——那只会在取字段时失败，或者更糟：恰好同名但
+                    # 含义不同的字段被静默注进去。
+                    #
+                    # 约束要参与**候选筛选**而不是挑中后再否掉：按 name 匹配时可能有多条
+                    # 同名不同模板的凭据，先挑中一条再判不符，会让本该命中的那条永远轮不到。
+                    tpl_wanted = getattr(spec, "value_template", "") or ""
+                    pool = visible
+                    if tpl_wanted:
+                        pool = [
+                            record
+                            for record in visible
+                            if (getattr(record, "value_template", None) or "") == tpl_wanted
+                        ]
+                    hit, used = pick_match(spec, wanted, pool)
+                    if hit is None and tpl_wanted:
+                        logger.info(
+                            "[SecretLocator] 规则要求模板 %s，可见候选中没有结构相符的凭据 "
+                            "consumer=%s/%s slot=%s 候选=%s",
+                            tpl_wanted,
+                            consumer_type,
+                            consumer_id,
+                            slot,
+                            len(pool),
+                        )
                     if hit is not None:
                         logger.info(
                             "[SecretLocator] 规则命中 consumer=%s/%s slot=%s wanted=%s hit=%s",
@@ -367,20 +457,52 @@ class SecretResolver:
                                 getattr(hit, "secret_key", "?"),
                                 preferred_secret_id,
                             )
-                        return Located(secret_id=getattr(hit, "id", None), strategy="rule")
+                        return Located(
+                            secret_id=getattr(hit, "id", None),
+                            strategy="rule",
+                            # 规则也能约定「都取这个字段」，缺字段的那条会明确失败
+                            value_path=getattr(rule_binding, "value_path", "") or "",
+                            value_template=tpl_wanted,
+                        )
 
             # —— 未命中：只看规则自己声明的策略，绝不默认回退
             on_miss = getattr(spec, "on_miss", "fail") if spec is not None else "fail"
             if on_miss == "fallback_fixed" and fixed_binding is not None and fixed_binding.secret_id:
                 logger.info("[SecretLocator] 规则未命中，回退本层固定绑定 slot=%s", slot)
                 return Located(
-                    secret_id=fixed_binding.secret_id, strategy="fixed", fallback_used=True
+                    secret_id=fixed_binding.secret_id,
+                    strategy="fixed",
+                    fallback_used=True,
+                    value_path=getattr(fixed_binding, "value_path", "") or "",
                 )
             if on_miss == "model" and preferred_secret_id:
                 if visible is None:
                     visible = await self._visible_records(session, user_id, dept_code)
-                if any(getattr(s, "id", None) == preferred_secret_id for s in visible):
-                    return Located(secret_id=preferred_secret_id, strategy="model_choice")
+                chosen = next(
+                    (s for s in visible if getattr(s, "id", None) == preferred_secret_id),
+                    None,
+                )
+                if chosen is not None:
+                    tpl_wanted = getattr(spec, "value_template", "") or ""
+                    if tpl_wanted and (
+                        (getattr(chosen, "value_template", None) or "") != tpl_wanted
+                    ):
+                        # 模型挑的那条结构不符：按未命中处理，别让它带着 value_path
+                        # 去取另一种结构的字段
+                        logger.info(
+                            "[SecretLocator] 模型选的凭据模板不符，已拒绝 slot=%s 期望=%s 实际=%s",
+                            slot,
+                            tpl_wanted,
+                            getattr(chosen, "value_template", None) or "（未声明）",
+                        )
+                    else:
+                        # 取值字段来自规则本身（规则是这条绑定配的，模型只补「哪一条」）
+                        return Located(
+                            secret_id=preferred_secret_id,
+                            strategy="model_choice",
+                            value_path=getattr(rule_binding, "value_path", "") or "",
+                            value_template=tpl_wanted,
+                        )
                 logger.warning(
                     "[SecretLocator] 模型选的凭据不在可见集合内，已拒绝 slot=%s choice=%s",
                     slot,
@@ -565,12 +687,17 @@ class SecretResolver:
         trace_id: str | None,
         conversation_id: str | None,
         result: str,
-    ) -> None:
-        """写使用流水。失败只告警——审计不能反过来阻断业务。"""
+    ) -> str | None:
+        """写使用流水，返回流水 id。失败只告警——审计不能反过来阻断业务。
+
+        返回 id 是为了让调用方在**后续**步骤失败时（引用解析不出来、字段取不到）
+        把这条流水改成失败：先记 success 再没人管，统计上会把「配置错了」算成「用得好」。
+        """
+        usage_id = str(uuid.uuid4())
         try:
             session.add(
                 SecretUsageLog(
-                    id=str(uuid.uuid4()),
+                    id=usage_id,
                     secret_id=record.id,
                     secret_key_snapshot=record.secret_key,
                     owner_scope=record.owner_scope,
@@ -586,8 +713,10 @@ class SecretResolver:
                 )
             )
             await session.commit()
+            return usage_id
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretResolver] 写使用流水失败 %s: %s", record.secret_key, exc)
+            return None
 
 
 secret_resolver = SecretResolver()

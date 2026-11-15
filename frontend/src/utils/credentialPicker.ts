@@ -20,6 +20,15 @@ export interface CredentialPickerItem {
   status: string
   allowed_scenarios: string[]
   value_masked: string
+  /**
+   * user | system。个人凭据绑到平台级工具上时只有本人能用，
+   * 绑定弹窗要就地提示——用户以为自己在配「平台通用」的东西。
+   */
+  owner_scope?: string
+  /** text | json：结构化凭据绑定时还要再选字段，下拉里就得标出来 */
+  value_format?: string
+  /** 结构化凭据的模板标识（smtp / mysql …），仅用于显示 */
+  value_template?: string | null
 }
 
 export interface CredentialHighlightSegment {

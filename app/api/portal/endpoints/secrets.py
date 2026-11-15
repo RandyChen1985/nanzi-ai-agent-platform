@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_admin, require_api_key
 from app.core.orm import get_db_session
-from app.models.secret import SecretUserPref
+from app.models.secret import SecretUserPref, UserSecret
 from app.services.secrets import center
 from app.services.secrets.injection import denial_text
 from app.services.secrets.center import SecretPermissionError, SecretValidationError
@@ -55,6 +55,15 @@ class CreateSecretRequest(BaseModel):
     name: str = ""
     value: str = Field(..., description="凭据值；落库即加密，此后任何接口都不再返回")
     secret_type: str = TYPE_CREDENTIAL
+    #: ``text`` = 单值（token / PEM 整段）；``json`` = 结构化对象序列化后的字符串。
+    #: 两者都只存一列加密值，区别只在于「怎么读」，以及能不能按字段引用。
+    value_format: str = Field(default="text", description="text | json")
+    #: 结构化模板标识（``smtp`` / ``sftp`` / ``mysql`` …）。模板定义在前端常量，
+    #: 后端只记标识用于回显与列表徽标，不校验字段结构。
+    value_template: Optional[str] = Field(default=None, description="模板标识，仅 value_format=json")
+    #: 模板里标记为 ``secret`` 的字段名。后端据此把它们从列表摘要里排除——
+    #: **只传键名不传值**，所以摘要里的每个字都来自已加密的那份 JSON。
+    value_secret_fields: List[str] = Field(default_factory=list)
     allowed_scenarios: List[str] = Field(default_factory=list)
     allowed_hosts: List[str] = Field(default_factory=list)
     category: Optional[str] = None
@@ -74,7 +83,109 @@ class UpdateSecretRequest(BaseModel):
 class RotateRequest(BaseModel):
     value: str
     expires_at: Optional[datetime] = None
+    clear_expires_at: bool = False
     overlap_days: int = Field(default=7, ge=0, le=30)
+    #: 不传则沿用记录原来的形态；传了才允许在换代时切换单值/结构化。
+    value_format: Optional[str] = None
+    value_template: Optional[str] = None
+    value_secret_fields: List[str] = Field(default_factory=list)
+
+
+async def _audit_batch_rows(
+    db: AsyncSession,
+    *,
+    resolved: List[Dict[str, Any]],
+    consumer_type: str,
+    consumer_id: str,
+    actor_id: Optional[str],
+    fallback_actor: Optional[str],
+) -> None:
+    """批量保存**提交成功之后**才补写审计。
+
+    ``center._audit`` 用的是独立 session 和独立事务（见它的说明），所以不能在
+    批量写库的中间调用——第 4 条失败整批回滚时，审计里会留下前 3 条「已绑定」，
+    事后排查看到的是从没发生过的操作。漏记只是少一条线索，错记会误导判断。
+    """
+    actor = actor_id or fallback_actor
+    for item in resolved:
+        action = "unbind" if item["strategy"] == "none" else "bind"
+        if item["strategy"] == "rule":
+            action = "bind_rule"
+        try:
+            if action == "unbind":
+                # 解绑的审计要带凭据快照，但那两条已经删了，只能按槽位记一笔
+                await center._audit(  # noqa: SLF001 —— 同模块内的审计口径保持一处
+                    enabled=True,
+                    action="unbind",
+                    secret=None,
+                    actor_id=actor,
+                    detail={
+                        "consumer_type": consumer_type,
+                        "consumer_id": consumer_id,
+                        "slot": item["slot"],
+                        "batched": True,
+                    },
+                )
+                continue
+            secret = None
+            if item.get("secret_id"):
+                secret = await db.get(UserSecret, item["secret_id"])
+            detail = {
+                "consumer_type": consumer_type,
+                "consumer_id": consumer_id,
+                "slot": item["slot"],
+                "global": not fallback_actor,
+                "value_path": item.get("value_path") or "",
+                "batched": True,
+            }
+            if action == "bind_rule":
+                # 规则正文进审计：和单条 bind_rule 同口径。只记「配过一条规则」
+                # 的话，事后没人回答得出「当时按什么条件挑凭据」。
+                detail["rule"] = item.get("rule") or {}
+            await center._audit(  # noqa: SLF001
+                enabled=True,
+                action=action,
+                secret=secret,
+                actor_id=actor,
+                detail=detail,
+            )
+        except Exception:  # noqa: BLE001
+            # 审计失败不该让「已经保存成功」的请求变成 500
+            logger.warning("[SecretAudit] 批量补写审计失败: slot=%s", item["slot"], exc_info=True)
+
+
+class BindItem(BaseModel):
+    """映射表里的一行：某个槽位由谁提供、取哪个字段。
+
+    ``secret_id`` 为空表示**解除**这个槽位的绑定（映射表里被清空的那行）。
+    """
+
+    #: 直接给槽位（MCP 参数：``arg:短工具名:参数名``）
+    slot: str = ""
+    #: 或只给参数名，槽位由后端按工具的 URL/方法推算（API 工具）——
+    #: 「GET 走 query、POST 走 body、占位符走 path」这类知识不该由前端复制一份
+    name: str = ""
+    #: ``fixed`` 用 ``secret_id``；``rule`` 用 ``rule``；``none`` 表示回到「模型填写」。
+    #: 三种都能一次提交，多值凭据的两个来源因此共用同一个保存入口。
+    strategy: str = "fixed"
+    secret_id: str = ""
+    rule: Dict[str, Any] | None = None
+    value_path: str = ""
+    allow_whole: bool = False
+
+
+class BindBatchRequest(BaseModel):
+    """一次保存整张映射表。
+
+    单独一个接口而不是让前端循环调 ``/bindings``：一张表保存到一半失败，
+    用户看到的界面和库里就对不上了。这里**先全量校验再写**，要么整张生效，
+    要么一条都不动，并且把每条失败的原因原样返回。
+    """
+
+    consumer_type: str
+    consumer_id: str
+    is_global: bool = False
+    items: list[BindItem]
 
 
 class BindRequest(BaseModel):
@@ -94,6 +205,12 @@ class BindRequest(BaseModel):
     strategy: str = "fixed"
     #: ``strategy=rule`` 时必填，形如 ``{"key_source": "arg:to", "on_miss": "model"}``
     rule: dict | None = None
+    #: 只取凭据的某一部分：点分隔字段路径（``password`` / ``auth.token``）。
+    #: 空串 = 整段给。结构化凭据必须给，否则注进去的是一段 JSON。
+    value_path: str = ""
+    #: 结构化凭据确实要整段给时显式置真。默认 False——把 SMTP 凭据整段注进
+    #: ``smtp_password`` 几乎必然是配错了，不该让它在默认路径上发生。
+    allow_whole: bool = False
 
 
 class UnbindRequest(BaseModel):
@@ -161,8 +278,15 @@ def serialize_secret(row) -> Dict[str, Any]:
         "has_value": bool(row.value_encrypted),
         # 变量类展示前 8 位；凭证类永远是掩码。
         "value_preview": row.value_preview if is_variable else None,
-        "value_masked": (row.value_preview or "") if is_variable else MASK,
+        # 结构化变量没有「前 8 个字符」可看（那是 `{"host":`），退回摘要。
+        "value_masked": (row.value_preview or row.value_summary or "") if is_variable else MASK,
         "readable": is_variable,
+        # 值形态与模板：列表靠这两个字段区分「单值」和「结构化 · SMTP」。
+        "value_format": row.value_format or "text",
+        "value_template": row.value_template,
+        # 摘要**只含非敏感字段**（host / 端口 / 用户名这类），凭证类也能有；
+        # 它描述的是「这条凭据连的是哪儿」，不是值本身。
+        "value_summary": row.value_summary,
         "expires_at": _iso(row.expires_at),
         "last_rotated_at": _iso(row.last_rotated_at),
         "created_at": _iso(row.created_at),
@@ -310,9 +434,12 @@ def _rule_summary_of(binding: Any) -> str | None:
     if not raw:
         return None
     try:
-        return rule_summary(parse_rule(raw))
+        summary = rule_summary(parse_rule(raw))
     except RuleError:
         return "规则不合法（需重新配置）"
+    # 摘要里带上取用字段：规则列表光看「按部门挑凭据」看不出命中后注进去的是什么
+    path = (getattr(binding, "value_path", "") or "").strip()
+    return f"{summary} · 取 {path}" if path else summary
 
 
 def _identity_attrs(user_info: Dict[str, Any]) -> dict[str, str]:
@@ -444,6 +571,33 @@ async def list_audit(
     }
 
 
+@router.get(
+    "/{secret_id}/fields",
+    summary="这条凭据可以取哪几部分（结构化凭据的字段清单）",
+)
+async def secret_fields(
+    secret_id: str,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """绑定入口的字段选择器要的数据。
+
+    敏感字段只回名字、不回值——字段选择器不需要值，而返回了就变成「凭据可读」的
+    旁路。非敏感字段给一段预览，纯粹为了让人认出「这个是端口」。
+
+    单值凭据返回空 ``fields``，前端据此不显示字段选择器。
+    """
+    user_id, dept_code = _user_ctx(user_info)
+    try:
+        data = await center.describe_value_fields(
+            db, secret_id=secret_id, user_id=user_id, dept_code=dept_code
+        )
+    except SecretPermissionError:
+        # 与其它端点一致：未授权与不存在同样回 404，不透露「有这么一条凭据」
+        raise HTTPException(status_code=404, detail="凭据不存在")
+    return {"code": 0, "data": data}
+
+
 @router.get("/picker", summary="凭据选择器数据（供绑定入口使用）")
 async def picker(
     user_info: Dict[str, Any] = Depends(require_api_key),
@@ -470,8 +624,19 @@ async def picker(
                 "secret_type": row.secret_type,
                 "category": row.category,
                 "status": row.status,
+                # 虽然已经按 mine / shared 分好组，但组件里拿到的只有单条 item。
+                # 「个人凭据绑到平台级工具上」要就地提示「只对你生效」，
+                # 靠分组名传不到那个位置。
+                "owner_scope": row.owner_scope,
                 "allowed_scenarios": row.allowed_scenarios or [],
-                "value_masked": (row.value_preview or "") if row.secret_type == TYPE_VARIABLE else MASK,
+                # 与 serialize_secret 同口径：结构化变量没有前 8 位可看，退回摘要
+                "value_masked": (row.value_preview or row.value_summary or "")
+                if row.secret_type == TYPE_VARIABLE
+                else MASK,
+                # 下拉里要标出「单值 / 结构化·模板名」：结构化凭据绑定时必须再选字段，
+                # 用户在下拉阶段就该看出来，而不是点保存才被后端拦下。
+                "value_format": row.value_format or "text",
+                "value_template": row.value_template or "",
             }
         )
 
@@ -638,6 +803,10 @@ async def get_bindings(
                 # 绑定还在，但凭据可能已被停用/过期——界面要能标出来，
                 # 否则用户看到「已绑定」却调不通，只能去翻日志
                 "secret_status": secret.status if secret else None,
+                # 值形态：列表里要标出「结构化 · 模板名」——结构化凭据绑定还带着
+                # 「取哪个字段」，只说标识等于把最关键的一半藏起来了
+                "value_format": (secret.value_format or "text") if secret else None,
+                "value_template": (secret.value_template or None) if secret else None,
                 "secret_expires_at": (
                     secret.expires_at.isoformat()
                     if secret and secret.expires_at
@@ -646,6 +815,9 @@ async def get_bindings(
                 # 规则行原样回给前端（编辑时要回填），另给一句人话摘要
                 "rule": _rule_payload(binding),
                 "rule_summary": _rule_summary_of(binding),
+                # 取了哪一部分。空串=整段。界面上「取用字段」列直接显示它，
+                # 用户才能一眼看出这条绑定会不会把整段 JSON 注进去。
+                "value_path": getattr(binding, "value_path", "") or "",
                 "consumer_type": binding.consumer_type,
                 "consumer_id": binding.consumer_id,
                 # 别人做的个人绑定不该被看见
@@ -668,6 +840,7 @@ class CheckBindingRequest(BaseModel):
     slot: str
     scene: str = "mcp"
     target_host: str | None = None
+    rule_args: Dict[str, Any] | None = None
 
 
 @router.post("/check-binding", summary="现在这个槽位能取到凭据吗（只校验，不出站）")
@@ -695,6 +868,8 @@ async def check_binding(
         target_host=payload.target_host,
         dept_code=dept_code,
         user_attrs=_identity_attrs(user_info),
+        rule_args=payload.rule_args,
+        record_usage=False,
     )
     return {
         "code": 0,
@@ -728,6 +903,7 @@ async def list_platform_credential_targets(
     from app.models.tool import SysApiTool
     from app.services.ai.tools.system_params import credential_param_names
     from app.services.ai.tools.tool_credentials import is_credential_placeholder
+    from app.services.secrets.injection import is_header_value_unfilled
 
     user_id, _ = _user_ctx(user_info)
 
@@ -776,6 +952,8 @@ async def list_platform_credential_targets(
             select(SecretBinding, UserSecret).outerjoin(UserSecret, UserSecret.id == SecretBinding.secret_id)
         )
     ).all()
+    # 先遍历全局绑定再遍历个人绑定，确保同一槽位同时存在全局与个人条目时由个人绑定覆盖全局绑定
+    rows = sorted(rows, key=lambda pair: 0 if not pair[0].bound_by_user_id else 1)
     # 固定与规则分开两个 map：同一个 key（消费者+槽位）现在可能两条都在，
     # 塞进同一个 dict 必然互相覆盖。
     bindings: Dict[str, Dict[str, Any]] = {}
@@ -790,6 +968,8 @@ async def list_platform_credential_targets(
             rules[key] = {
                 "rule": _rule_payload(binding),
                 "rule_summary": _rule_summary_of(binding),
+                # 规则也要说清取哪个字段，否则编辑时回填不到、界面显示成「整段」
+                "value_path": getattr(binding, "value_path", "") or "",
                 "bound_by_me": binding.bound_by_user_id == user_id,
             }
             continue
@@ -802,6 +982,12 @@ async def list_platform_credential_targets(
             "secret_name": secret.name,
             "owner_scope": secret.owner_scope,
             "secret_status": secret.status,
+            # 取了哪一部分。少了它，重新打开绑定弹窗时字段选择器会显示「未选」，
+            # 用户以为没配，再选一次就把原来的配置覆盖掉了。
+            "value_path": getattr(binding, "value_path", "") or "",
+            # 值形态：卡片上要标出「结构化 · 模板名」，否则看不出取的是字段
+            "value_format": secret.value_format or "text",
+            "value_template": secret.value_template or None,
             "secret_expires_at": (
                 secret.expires_at.isoformat() if secret.expires_at else None
             ),
@@ -897,7 +1083,7 @@ async def list_platform_credential_targets(
         bindable = [
             name
             for name, value in headers.items()
-            if not str(value or "").strip() or is_credential_placeholder(value)
+            if not str(value or "").strip() or is_credential_placeholder(value) or is_header_value_unfilled(value)
         ]
         # 参数位：参数定义里标了 source=credential 的，落到 path / query / body。
         # 这些槽位和 header 一样能被个人绑定，漏掉它们的话用户在面板里看不到、
@@ -1021,6 +1207,230 @@ async def _resolve_slot(
     raise HTTPException(status_code=400, detail=f"{consumer_type} 不支持按参数名绑定")
 
 
+@router.post("/bindings/batch", summary="一次保存整张绑定映射表")
+async def create_bindings_batch(
+    payload: BindBatchRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """整张映射表的保存入口。
+
+    「一条凭据供多个参数」在界面上是一张表，落库是多条绑定。分两步：
+    先把每条当作校验跑一遍（``dry_run``），全部能过再真正写入。
+    半成功是最糟的结果——界面显示保存成功，实际只有一部分参数拿到了凭据。
+    """
+    user_id, dept_code = _user_ctx(user_info)
+    if not payload.items:
+        return {"code": 0, "message": "没有需要保存的绑定", "data": {"saved": 0, "removed": 0}}
+
+    # 不在这里对 `is_global` 一刀切：接口层看不到每条凭据的作用域。
+    # 「管理员拿个人凭据绑平台级工具」是正常操作（先用自己的账号跑通），
+    # 一刀切会把它当成越权拒掉。权限判断下沉到 bind_secret，按凭据作用域判：
+    # 系统级凭据 + 全局 → 必须管理员；个人凭据 → 自动降级成本人绑定。
+    is_admin = _is_admin(user_info)
+    bound_by: str | None = None if payload.is_global else user_id
+
+    # —— 第一轮：把槽位都解析出来，并全量校验；有一条不过就整体拒绝 ——
+    errors: list[dict] = []
+    resolved: list[dict] = []
+    for item in payload.items:
+        try:
+            slot = await _resolve_slot(
+                db,
+                consumer_type=payload.consumer_type,
+                consumer_id=payload.consumer_id,
+                slot=item.slot,
+                name=item.name,
+            )
+        except HTTPException as exc:
+            errors.append({"slot": item.slot or item.name, "detail": str(exc.detail)})
+            continue
+        raw = (item.strategy or "fixed").strip().lower()
+        strategy = raw if raw in ("rule", "none") else "fixed"
+        # 「回到模型填写」= 固定和规则两条都清。只清其中一条，另一条还会继续生效，
+        # 用户看到的是「说好改回模型填写了，结果还在注凭据」。
+        if strategy == "none" or (strategy == "fixed" and not item.secret_id):
+            strategy = "none"
+        resolved.append(
+            {
+                "slot": slot,
+                "strategy": strategy,
+                "secret_id": item.secret_id,
+                "rule": item.rule,
+                "value_path": item.value_path,
+                "allow_whole": bool(item.allow_whole),
+            }
+        )
+        if strategy == "rule":
+            if not item.rule:
+                errors.append({"slot": slot, "detail": "按规则匹配需要一并提交规则内容"})
+                continue
+            try:
+                await center.bind_rule(
+                    db,
+                    consumer_type=payload.consumer_type,
+                    consumer_id=payload.consumer_id,
+                    slot=slot,
+                    rule=item.rule,
+                    bound_by_user_id=bound_by,
+                    actor_id=_actor_id(user_info),
+                    value_path=item.value_path,
+                    dry_run=True,
+                    # 规则不指向凭据，但「全局规则」照样影响所有人：
+                    # 漏传这里，校验轮就会放行非管理员的全局规则，等到写入轮
+                    # 才抛 SecretPermissionError——而写入轮没有 try/except，直接 500。
+                    allow_global=is_admin,
+                )
+            except SecretPermissionError as exc:
+                if "管理员" in str(exc):
+                    errors.append({"slot": slot, "detail": str(exc)})
+                else:
+                    errors.append({"slot": slot, "detail": "凭据不存在或无权使用"})
+            except SecretValidationError as exc:
+                errors.append({"slot": slot, "detail": str(exc)})
+            continue
+        if not item.secret_id:
+            continue  # 解除绑定只删不建
+        try:
+            await center.bind_secret(
+                db,
+                secret_id=item.secret_id,
+                consumer_type=payload.consumer_type,
+                consumer_id=payload.consumer_id,
+                slot=slot,
+                bound_by_user_id=bound_by,
+                dept_code=dept_code,
+                actor_id=_actor_id(user_info),
+                value_path=item.value_path,
+                allow_whole=bool(item.allow_whole),
+                dry_run=True,
+                allow_global=is_admin,
+            )
+        except SecretPermissionError as exc:
+            # 两种来源要分开说：「凭据看不见」不能透露存在性，
+            # 「非管理员设全局」则是用户能自己改的操作错误。
+            if "管理员" in str(exc):
+                errors.append({"slot": slot, "detail": str(exc)})
+            else:
+                errors.append({"slot": slot, "detail": "凭据不存在或无权使用"})
+        except SecretValidationError as exc:
+            errors.append({"slot": slot, "detail": str(exc)})
+
+    # 同一批里两行落到同一个槽位（`date` 和 `query:date` 都解析成 query:date）时，
+    # 后一条会静默覆盖前一条——用户配的是两个参数，最后只生效一个。
+    seen: dict[str, str] = {}
+    for item in resolved:
+        slot = item["slot"]
+        label = item.get("name") or slot
+        if slot in seen:
+            errors.append(
+                {
+                    "slot": slot,
+                    "detail": f"和前面的 {seen[slot]} 落到同一个槽位，得先去重",
+                }
+            )
+        else:
+            seen[slot] = label
+
+    if errors:
+        raise HTTPException(
+            status_code=400,
+            detail=f"有 {len(errors)} 个参数没通过校验，未保存任何改动："
+            + "；".join(f"{e['slot'] or '（空槽位）'} → {e['detail']}" for e in errors[:5]),
+        )
+
+    if not resolved:
+        raise HTTPException(status_code=400, detail="没有需要保存的参数")
+
+    # —— 第二轮：真正写入 ——
+    saved = 0
+    removed = 0
+    for item in resolved:
+        slot = item["slot"]
+        if item["strategy"] == "none":
+            for stale in ("fixed", "rule"):
+                removed += await center.unbind_slot(
+                    db,
+                    consumer_type=payload.consumer_type,
+                    consumer_id=payload.consumer_id,
+                    slot=slot,
+                    bound_by_user_id=bound_by,
+                    strategy=stale,
+                    commit=False,
+                    # 审计延后到整批提交成功之后：_audit 用独立事务，
+                    # 在这里写的话，第 4 条失败整批回滚时审计里已经留了前 3 条
+                    audit=False,
+                )
+            continue
+        if item["strategy"] == "rule":
+            await center.bind_rule(
+                db,
+                consumer_type=payload.consumer_type,
+                consumer_id=payload.consumer_id,
+                slot=slot,
+                rule=item["rule"],
+                bound_by_user_id=bound_by,
+                actor_id=_actor_id(user_info),
+                value_path=item["value_path"],
+                dry_run=False,
+                # 同样推迟到整批写完：中途失败时整批回滚
+                commit=False,
+                audit=False,
+                allow_global=is_admin,
+            )
+            saved += 1
+            continue
+        if not item["secret_id"]:
+            removed += await center.unbind_slot(
+                db,
+                consumer_type=payload.consumer_type,
+                consumer_id=payload.consumer_id,
+                slot=slot,
+                bound_by_user_id=bound_by,
+                commit=False,
+                audit=False,
+            )
+            continue
+        await center.bind_secret(
+            db,
+            secret_id=item["secret_id"],
+            consumer_type=payload.consumer_type,
+            consumer_id=payload.consumer_id,
+            slot=slot,
+            bound_by_user_id=bound_by,
+            dept_code=dept_code,
+            actor_id=_actor_id(user_info),
+            value_path=item["value_path"],
+            allow_whole=item["allow_whole"],
+            # 提交推迟到整批写完：中途失败时全部回滚，不留半张映射表
+            commit=False,
+            # 审计同理：提交成功后再写，不记没发生过的操作
+            audit=False,
+            allow_global=is_admin,
+        )
+        saved += 1
+
+    # 整批一个事务：上面任何一步抛错，这一批整体回滚，不会留下半张映射表
+    await db.commit()
+
+    # 提交成功了才补写审计。这里逐条写而不是攒一批：批量接口的行数是个位数，
+    # 而且 _audit 自己会吞异常，一条写失败不影响其余的。
+    await _audit_batch_rows(
+        db,
+        resolved=resolved,
+        consumer_type=payload.consumer_type,
+        consumer_id=payload.consumer_id,
+        actor_id=_actor_id(user_info),
+        fallback_actor=bound_by,
+    )
+
+    return {
+        "code": 0,
+        "message": f"已保存 {saved} 条绑定" + (f"，解除 {removed} 条" if removed else ""),
+        "data": {"saved": saved, "removed": removed},
+    }
+
+
 @router.post("/bindings", summary="把一个槽位绑到凭据上")
 async def create_binding(
     payload: BindRequest,
@@ -1046,12 +1456,12 @@ async def create_binding(
     # 这个能力之前是**死代码**：`bind_secret` 只在 bound_by_user_id=None 时走全局
     # 分支，而唯一的调用点永远传 user_id——于是管理员在「MCP 服务注册」「系统工具」
     # 里配的公共同步成了他自己的一条私有绑定，普通用户调过去全是「未绑定」。
-    if payload.is_global:
-        if not _is_admin(user_info):
-            raise HTTPException(status_code=403, detail="只有管理员可以设置全局绑定")
-        bound_by: str | None = None
-    else:
-        bound_by = user_id
+    # 不在这里对 `is_global` 一刀切：接口层看不到每条凭据的作用域。
+    # 「管理员拿个人凭据绑平台级工具」是正常操作（先用自己的账号跑通），
+    # 一刀切会把它当成越权拒掉。权限判断下沉到 bind_secret，按凭据作用域判：
+    # 系统级凭据 + 全局 → 必须管理员；个人凭据 → 自动降级成本人绑定。
+    is_admin = _is_admin(user_info)
+    bound_by: str | None = None if payload.is_global else user_id
 
     # 规则绑定没有凭据可校验，走单独的函数；固定绑定保持原路径
     if payload.strategy == "rule":
@@ -1064,13 +1474,27 @@ async def create_binding(
                 rule=payload.rule,
                 bound_by_user_id=bound_by,
                 actor_id=_actor_id(user_info),
+                value_path=payload.value_path,
+                # 非管理员不能写全局规则：漏了这一条，任何普通用户
+                # 传 is_global + strategy=rule 就能改掉全平台的取数规则。
+                allow_global=is_admin,
             )
+        except SecretPermissionError as exc:
+            if "管理员" in str(exc):
+                raise HTTPException(status_code=403, detail=str(exc))
+            raise HTTPException(status_code=404, detail="凭据不存在")
         except SecretValidationError as exc:
             raise _fail(exc)
         return {
             "code": 0,
             "message": "已保存规则",
-            "data": {"id": binding.id, "slot": binding.slot, "strategy": "rule"},
+            "data": {
+                "id": binding.id,
+                "slot": binding.slot,
+                "strategy": "rule",
+                # 规则也带取用字段：命中结构化凭据时就按它取，不再整段注入
+                "value_path": getattr(binding, "value_path", "") or "",
+            },
         }
 
     try:
@@ -1083,12 +1507,28 @@ async def create_binding(
             bound_by_user_id=bound_by,
             dept_code=dept_code,
             actor_id=_actor_id(user_info),
+            value_path=payload.value_path,
+            allow_whole=payload.allow_whole,
+            allow_global=is_admin,
         )
-    except SecretPermissionError:
+    except SecretPermissionError as exc:
+        # 两种来源：凭据不可见（当它不存在，不能透露存在性）与
+        # 「非管理员设全局」（用户能自己改，必须说真话，否则 404 会让人
+        # 以为是凭据被删了，去别处找问题）。
+        if "管理员" in str(exc):
+            raise HTTPException(status_code=403, detail=str(exc))
         raise HTTPException(status_code=404, detail="凭据不存在")
     except SecretValidationError as exc:
         raise _fail(exc)
-    return {"code": 0, "message": "已绑定", "data": {"id": binding.id, "slot": binding.slot}}
+    return {
+        "code": 0,
+        "message": "已绑定",
+        "data": {
+            "id": binding.id,
+            "slot": binding.slot,
+            "value_path": getattr(binding, "value_path", "") or "",
+        },
+    }
 
 
 @router.delete("/bindings", summary="解绑一个槽位")
@@ -1152,6 +1592,9 @@ async def admin_create(
             remark=payload.remark,
             expires_at=payload.expires_at,
             created_by=_actor_id(admin),
+            value_format=payload.value_format,
+            value_template=payload.value_template,
+            value_secret_fields=payload.value_secret_fields,
         )
     except SecretValidationError as exc:
         raise _fail(exc)
@@ -1462,6 +1905,9 @@ async def create_secret(
             remark=payload.remark,
             expires_at=payload.expires_at,
             created_by=user_id,
+            value_format=payload.value_format,
+            value_template=payload.value_template,
+            value_secret_fields=payload.value_secret_fields,
         )
     except SecretValidationError as exc:
         raise _fail(exc)
@@ -1521,6 +1967,9 @@ async def update_secret(
     db: AsyncSession = Depends(get_db_session),
 ):
     user_id, _ = _user_ctx(user_info)
+    clear_expires_at = (
+        "expires_at" in payload.model_fields_set and payload.expires_at is None
+    )
     try:
         row = await center.update_secret(
             db,
@@ -1532,6 +1981,7 @@ async def update_secret(
             category=payload.category,
             remark=payload.remark,
             expires_at=payload.expires_at,
+            clear_expires_at=clear_expires_at,
             actor_is_admin=_is_admin(user_info),
         )
     except SecretPermissionError:
@@ -1579,7 +2029,11 @@ async def rotate_secret(
             rotated_by=user_id,
             overlap_days=payload.overlap_days,
             expires_at=payload.expires_at,
+            clear_expires_at=payload.clear_expires_at,
             actor_is_admin=_is_admin(user_info),
+            value_format=payload.value_format,
+            value_template=payload.value_template,
+            value_secret_fields=payload.value_secret_fields,
         )
     except SecretPermissionError:
         raise HTTPException(status_code=404, detail="凭据不存在")
@@ -1701,7 +2155,16 @@ async def locate_preview(
     )
     steps.append({"step": "可见凭据", "detail": f"{len(visible)} 条"})
 
-    hit, used = pick_match(spec, wanted, visible)
+    # 模板约束参与**候选筛选**，不是挑中之后才否掉。运行时（resolver）就是这么做的，
+    # 试算不跟着做会出现「试算说命中这条，真跑却未命中」——同一份规则两种答案。
+    pool = visible
+    if spec.value_template:
+        pool = [r for r in visible if (r.value_template or "") == spec.value_template]
+        steps.append(
+            {"step": "模板约束", "detail": f"{spec.value_template} 命中 {len(pool)} 条"}
+        )
+
+    hit, used = pick_match(spec, wanted, pool)
     if hit is not None:
         steps.append({"step": "匹配", "detail": f"命中 {hit.secret_key}"})
         return {
@@ -1713,7 +2176,7 @@ async def locate_preview(
                 "secret_name": hit.name,
                 "on_miss": spec.on_miss,
                 "summary": rule_summary(spec),
-                "candidate_count": len(visible),
+                "candidate_count": len(pool),
                 "steps": steps,
                 "miss_reason": None,
             },
@@ -1729,7 +2192,7 @@ async def locate_preview(
             "secret_name": None,
             "on_miss": spec.on_miss,
             "summary": rule_summary(spec),
-            "candidate_count": len(visible),
+            "candidate_count": len(pool),
             "steps": steps,
             "miss_reason": (
                 f"没有 {spec.target} = {used} 的凭据"

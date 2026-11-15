@@ -1125,12 +1125,19 @@ class TestRotateIsReachable:
         assert "overlap_days: 7" in source
 
     def test_new_value_is_masked_until_revealed(self):
-        """粘贴 Token 时默认打码，和创建表单一致。"""
-        source = _read(ROOT / self.ADMIN)
-        start = source.find("轮换凭据值")
-        span = source[start:start + 1600]
-        assert "masked-value" in span
-        assert "revealRotateValue" in span
+        """粘贴 Token 时默认打码，和创建表单一致。
+
+        掩码与「显示」随值输入一起收进了 ``CredentialValueEditor``：两个页面的轮换
+        弹窗都用它，所以断言的落点是组件本身。
+        """
+        admin = _read(ROOT / self.ADMIN)
+        start = admin.find("轮换凭据值")
+        span = admin[start:start + 1600]
+        # 轮换弹窗仍然走同一个编辑器
+        assert "<CredentialValueEditor" in span
+        editor = _read(ROOT / "frontend/src/components/secrets/CredentialValueEditor.vue")
+        assert "masked-value" in editor
+        assert "revealPlain" in editor
 
 
 class TestGrantAllUsers:
@@ -1438,10 +1445,14 @@ class TestNoPlaintextOnScreen:
         for path in (SECRET_CENTER, ADMIN_SECRET_CENTER):
             source = _read(path)
             template = source[source.index("<template>") :]
-            assert "revealValue" in source
-            # 显形只改 class，不能顺手去取明文
-            assert ":class=\"{ 'masked-value': !revealValue }\"" in template
-            assert "/value" not in template
+            # 页面本身不再直接渲染值输入框，统一交给编辑器
+            assert "<CredentialValueEditor" in template
+        editor = _read(ROOT / "frontend/src/components/secrets/CredentialValueEditor.vue")
+        template = editor[editor.index("<template>") :]
+        assert "revealPlain" in editor
+        # 显形只改 class，不能顺手去取明文
+        assert ":class=\"{ 'masked-value': !revealPlain }\"" in template
+        assert "/value" not in template
 
     def test_long_values_are_not_trimmed(self):
         """JSON / PEM 的缩进要保住：只判空白，保存用原值。"""

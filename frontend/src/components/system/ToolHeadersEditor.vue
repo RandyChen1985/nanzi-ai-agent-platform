@@ -16,9 +16,19 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { KeyIcon, TrashIcon } from '@heroicons/vue/24/outline'
 import axios from '../../utils/axios'
+import type { CredentialPickerItem } from '../../utils/credentialPicker'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
+import SecretFieldSelect from '../secrets/SecretFieldSelect.vue'
+import SecretBindingLabel from '../secrets/SecretBindingLabel.vue'
 
 const props = withDefaults(defineProps<{
+    /**
+     * 这个消费者是不是平台级（配一次给所有人用）。
+     *
+     * 由消费端声明，组件不猜——写死 `true` 在「个人级 API 工具」出现那天
+     * 会把个人工具上的绑定误设成全局。
+     */
+    isGlobal?: boolean
   modelValue: string
   error?: string
   /** 绑定的消费者类型；默认 API 工具 */
@@ -27,10 +37,10 @@ const props = withDefaults(defineProps<{
   consumerId?: string
 
 }>(), {
+  isGlobal: true,
   error: '',
   consumerType: 'api_tool',
   consumerId: '',
-
 })
 
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
@@ -137,6 +147,13 @@ type BindingInfo = {
   secret_name: string
   /** 后端返回的凭据状态；绑定还在，但凭据可能已被停用/过期 */
   secret_status?: string
+  /** 只取凭据的某个字段时给路径；空串 = 整段。结构化凭据必须给 */
+  value_path?: string
+  /** text | json —— 弹窗里也要标出「结构化 · 模板名」 */
+  value_format?: string
+  value_template?: string | null
+  /** user | system：重开弹窗时判断「是不是只对我生效」 */
+  owner_scope?: string
 }
 
 /** 凭据失效的提示文案：绑了却用不了，比没绑更让人困惑。 */
@@ -150,9 +167,22 @@ function bindingIssue(binding: BindingInfo | null): string {
 const bindings = ref<Record<string, BindingInfo>>({})
 const bindingSlot = ref<string | null>(null)
 const bindingSecretId = ref<string | null>(null)
-const pickedItem = ref<{ id: string; secret_key: string } | null>(null)
+/** 选中的凭据：要带上形态信息，新建态记账才不会丢掉「结构化 / 模板」 */
+type PickedSecret = {
+  id: string
+  secret_key: string
+  /** user | system：平台级工具上选个人凭据只有本人能用 */
+  owner_scope?: string
+  value_format?: string
+  value_template?: string | null
+}
+const pickedItem = ref<PickedSecret | null>(null)
 const bindingBusy = ref(false)
 const bindingError = ref('')
+/** 绑定时选中的字段路径（结构化凭据必填） */
+const bindingValuePath = ref('')
+/** 当前凭据的字段清单是否「必须选一个」 */
+const bindingNeedsField = ref(false)
 
 /**
  * 新建态选的绑定。键是完整槽位（``header:X-Tenant`` / ``query:api_key``），
@@ -167,9 +197,31 @@ const bindingOf = (key: string): BindingInfo | null => {
 }
 
 const bindingSlotName = computed(() => (bindingSlot.value || '').replace(/^header:/, ''))
-const currentBinding = computed(() =>
-  bindingSlot.value ? bindings.value[bindingSlot.value] || null : null,
-)
+/**
+ * 「平台的工具 + 你自己的凭据 = 只有你能用」。
+ *
+ * API 工具是平台级消费者，header 绑定提交时带 `is_global`；选中个人凭据
+ * 后端会降级成本人绑定，别人调用时这个 header 拿不到值。必须在选中那一刻讲清楚。
+ */
+const personalScopeNotice = computed(() => {
+  // 个人级工具上绑自己的凭据是正常的，不该跳这个提示
+  if (!props.isGlobal) return ''
+  const item = bindingSecretId.value ? pickedItem.value : null
+  if (!item || item.owner_scope !== 'user') return ''
+  return (
+    '这是你自己的凭据，绑定只对你生效：别人调用这个工具时这个 Header 拿不到值。' +
+    '要让每人用自己的账号，请改用「按规则匹配」。'
+  )
+})
+
+const currentBinding = computed(() => {
+  if (!bindingSlot.value) return null
+  // 也要看 pending：新建态（工具还没有 id）绑完不会写 bindings，
+  // 重开弹窗时底部就少一行「当前已绑定 …」，看起来像是没绑上。
+  return (
+    bindings.value[bindingSlot.value] || pendingBindings.value[bindingSlot.value] || null
+  )
+})
 
 async function loadBindings() {
   if (!props.consumerId) {
@@ -189,8 +241,13 @@ async function loadBindings() {
       next[row.slot] = {
         secret_id: row.secret_id,
         secret_key: row.secret_key,
+        // 少了这个，重开弹窗时「只对你生效」判不出来（personalScopeNotice 靠它）
+        owner_scope: row.owner_scope,
+        value_format: row.value_format || 'text',
+        value_template: row.value_template || null,
         secret_name: row.secret_name,
         secret_status: row.secret_status,
+        value_path: row.value_path || '',
       }
     }
     bindings.value = next
@@ -206,19 +263,71 @@ function openBinding(row: HeaderRow) {
   bindingSlot.value = `header:${key}`
   const existing = bindings.value[bindingSlot.value] || pendingBindings.value[bindingSlot.value]
   bindingSecretId.value = existing?.secret_id || null
+  bindingValuePath.value = existing?.value_path || ''
+  // owner_scope 也要带上：不带的话重开弹窗时 personalScopeNotice 判不出来，
+  // 用户会以为这条绑定对所有人生效。
   pickedItem.value = existing
-    ? { id: existing.secret_id, secret_key: existing.secret_key }
+    ? {
+        id: existing.secret_id,
+        secret_key: existing.secret_key,
+        owner_scope: existing.owner_scope,
+        value_format: existing.value_format,
+        value_template: existing.value_template,
+      }
     : null
   bindingError.value = ''
 }
 
-function onPicked(item: { id: string; secret_key: string } | null) {
+function onPicked(item: CredentialPickerItem | null) {
   pickedItem.value = item
+  // 换凭据就清掉上一个凭据的字段路径：名字在另一条凭据里通常不存在
+  if (item?.id !== bindingSecretId.value) bindingValuePath.value = ''
+}
+
+/** 字段清单加载完：结构化且有字段时，必须选一个才能保存。 */
+function onFieldsLoaded(info: { format: string; fields: { name: string }[] }) {
+  bindingNeedsField.value = info.format === 'json' && info.fields.length > 0
+}
+
+/**
+ * 生成这一行该有的值。
+ *
+ * **一律写 ``${CREDENTIAL:标识}``，取哪一部分交给绑定上的 ``value_path``。**
+ *
+ * 别改写成 ``${secret:标识.字段}``：那种写法在注入层会校验「引用里的标识 == 本次
+ * 解析到的凭据标识」。平台配的是管理员那条凭据，普通用户绑自己的凭据去覆盖时标识
+ * 必然对不上，直接 ``reference_mismatch`` ——「个人覆盖平台默认」就废了。
+ * ``${CREDENTIAL:...}`` 不参与这项校验，注入时用当前绑定自己的 value_path，
+ * 谁绑的就取谁的字段，正是这里需要的行为。
+ *
+ * 多字段拼接（``Bearer ${secret:k.a}-${secret:k.b}``）仍可手工写：值里带引用时
+ * 走引用渲染，不受 value_path 影响。
+ *
+ * 已有前缀（``Bearer``）保留：用户写的认证方案不该被覆盖。
+ */
+function buildHeaderValue(original: string, secretKey: string): string {
+  const ref = `\${CREDENTIAL:${secretKey}}`
+  const text = (original || '').trim()
+  if (!text) return ref
+  // 已经有指向凭据的占位符：整段换掉，不要叠加
+  if (/\$\{(?:secret|CREDENTIAL):[^}]*\}/i.test(text)) {
+    return text.replace(/\$\{(?:secret|CREDENTIAL):[^}]*\}/gi, ref)
+  }
+  // 手填过前缀（Bearer / Token …）：只替换「值」那一截，保留认证方案
+  const spaceAt = text.indexOf(' ')
+  if (spaceAt > 0) return `${text.slice(0, spaceAt)} ${ref}`
+  return ref
 }
 
 async function submitBinding() {
   if (!bindingSlot.value) return
   const picked = bindingSecretId.value ? pickedItem.value : null
+  // 结构化凭据没选字段就保存，注进去的是一整段 JSON——调用方必错，这里拦住
+  if (picked && bindingNeedsField.value && !bindingValuePath.value) {
+    bindingError.value = '这条凭据是结构化的，请先选择要取用的字段'
+    return
+  }
+  const valuePath = picked ? bindingValuePath.value : ''
   bindingBusy.value = true
   bindingError.value = ''
   const slot = bindingSlot.value
@@ -231,6 +340,10 @@ async function submitBinding() {
         secret_id: picked.id,
         secret_key: picked.secret_key,
         secret_name: '',
+        value_path: valuePath,
+        owner_scope: picked.owner_scope,
+        value_format: picked.value_format,
+        value_template: picked.value_template,
       }
     } else {
       delete pendingBindings.value[slot]
@@ -239,7 +352,7 @@ async function submitBinding() {
     if (row) {
       // 选凭据就写占位符、取消就清空：占位符让配置里留着一个「这里由凭据填」
       // 的名字，注入层才找得到这个 header；取消时清空才回到「没配」。
-      row.value = picked ? `\${CREDENTIAL:${picked.secret_key}}` : ''
+      row.value = picked ? buildHeaderValue(row.value, picked.secret_key) : ''
       emitFromRows()
     }
     bindingSlot.value = null
@@ -255,7 +368,7 @@ async function submitBinding() {
           consumer_type: props.consumerType,
           consumer_id: props.consumerId,
           slot,
-          is_global: true,
+          is_global: props.isGlobal,
         },
       })
       delete bindings.value[slot]
@@ -270,17 +383,24 @@ async function submitBinding() {
         consumer_type: props.consumerType,
         consumer_id: props.consumerId,
         slot,
-        // 系统管理里配的绑定给全平台用；不设全局的话只有管理员自己能用。
-        is_global: true,
+        // 作用域由消费端声明（见 isGlobal 的说明），组件不猜。
+        is_global: props.isGlobal,
+        // 绑定记录里也存一份：万一用户后来手改了值里的引用，注入层仍知道取哪个字段
+        value_path: valuePath,
       })
       bindings.value[slot] = {
         secret_id: picked.id,
         secret_key: picked.secret_key,
         secret_name: '',
+        value_path: valuePath,
+        // 与 pendingBindings 同口径：不带的话，刚绑完重开弹窗提示就没了
+        owner_scope: picked.owner_scope,
+        value_format: picked.value_format,
+        value_template: picked.value_template,
       }
       const row = rows.value.find((r) => r.key.trim() === headerName)
       if (row) {
-        row.value = `\${CREDENTIAL:${picked.secret_key}}`
+        row.value = buildHeaderValue(row.value, picked.secret_key)
         emitFromRows()
       }
     }
@@ -313,7 +433,8 @@ async function flushPending(consumerId: string) {
         consumer_type: props.consumerType,
         consumer_id: consumerId,
         slot,
-        is_global: true,
+        is_global: props.isGlobal,
+        value_path: binding.value_path || '',
       })
     } catch {
       failed.push(slot)
@@ -465,7 +586,7 @@ watch(
     <p v-else class="text-[11px] text-gray-400">
       敏感值建议用变量占位（如 <code>{user.user_name}</code>）——调用时才替换；
       直接填明文会原样写进工具配置。点右侧钥匙图标可改用凭据中心的凭据，
-      值会变成 <code>${CREDENTIAL:标识}</code>，不写入配置。
+      值会变成占位符（结构化凭据可精确到某个字段），不写入配置。
     </p>
   </div>
   <!-- 绑定凭据 -->
@@ -480,17 +601,37 @@ watch(
             为 <code class="rounded bg-gray-100 px-1.5 py-0.5 text-sm">{{ bindingSlot }}</code> 绑定凭据
           </h3>
           <p class="mt-1 text-xs leading-relaxed text-gray-500">
-            选中后这一行的值会变成 <code>${CREDENTIAL:标识}</code> 占位符。真实值不写进工具配置，
-            调用时由注入层现取——所以工具被导出、复制、进审计都不会带走密钥。
+            选中后这一行的值会变成占位符 <code>${CREDENTIAL:标识}</code>，原有的认证方案前缀
+            （<code>Bearer</code> / <code>Basic</code>）保留。
+            结构化凭据取哪个字段由绑定上的「取用字段」决定，不再写进值里——
+            值里带字段名的话，普通用户绑自己的凭据覆盖时会因为标识对不上直接失败。
+            真实值不写进工具配置，调用时由注入层现取——所以工具被导出、复制、进审计都不会带走密钥。
           </p>
 
-          <div class="mt-3">
+          <div class="mt-3 space-y-2">
             <CredentialPicker v-model="bindingSecretId" scene="api_tool" @picked="onPicked" />
+            <!-- 结构化凭据必须落到具体字段：整段 JSON 注进去，调用方一定收不对 -->
+            <SecretFieldSelect
+              v-if="bindingSecretId"
+              v-model="bindingValuePath"
+              :secret-id="bindingSecretId"
+              @loaded="onFieldsLoaded"
+            />
           </div>
 
+          <p
+            v-if="personalScopeNotice && !bindingError"
+            class="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700"
+          >{{ personalScopeNotice }}</p>
           <p v-if="bindingError" class="mt-2 text-[11px] text-red-600">{{ bindingError }}</p>
-          <p v-else-if="currentBinding" class="mt-2 text-[11px] text-emerald-600">
-            当前已绑定 {{ currentBinding.secret_key }}
+          <p v-else-if="currentBinding" class="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-emerald-600">
+            当前已绑定
+            <SecretBindingLabel
+              :secret-key="currentBinding.secret_key"
+              :format="currentBinding.value_format"
+              :template="currentBinding.value_template"
+              :value-path="currentBinding.value_path"
+            />
           </p>
 
           <div class="mt-4 flex justify-end gap-2">

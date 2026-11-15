@@ -208,8 +208,12 @@ function toggle() {
 }
 
 function choose(item: CredentialPickerItem | null) {
-  emit('update:modelValue', item ? item.id : null)
+  // **picked 必须先于 update:modelValue**：`v-model` 是同步回写的，父组件在
+  // `@picked` 里做「换了一条凭据吗」的判断时读到的仍是旧 ID。顺序反过来的话
+  // `item.id !== secretId` 恒为假，上一个凭据的字段路径永远清不掉，换选另一条
+  // 结构化凭据后会带着旧字段名保存（下拉空白、拦截失效、后端 400）。
   emit('picked', item)
+  emit('update:modelValue', item ? item.id : null)
   close()
   triggerRef.value?.focus()
 }
@@ -320,6 +324,11 @@ defineExpose({ reload: load })
       <span v-if="selected" class="flex min-w-0 items-center gap-2">
         <span class="truncate font-medium text-gray-900">{{ selected.name }}</span>
         <code class="truncate rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">{{ selected.secret_key }}</code>
+        <!-- 选中后紧跟着的下一步就是选字段，这里先把「这是结构化凭据」摆出来 -->
+        <span
+          v-if="selected.value_format === 'json'"
+          class="shrink-0 rounded bg-indigo-50 px-1 py-0.5 text-[10px] font-medium text-indigo-700"
+        >结构化{{ selected.value_template ? ` · ${selected.value_template}` : '' }}</span>
       </span>
       <span v-else class="text-gray-400">{{ placeholder }}</span>
       <svg class="h-4 w-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -402,12 +411,22 @@ defineExpose({ reload: load })
                       :class="segment.hit ? 'rounded bg-amber-100 px-0.5 text-amber-900' : ''"
                     >{{ segment.text }}</span>
                   </span>
-                  <span class="block truncate text-[11px] text-gray-500">
+                  <span class="flex min-w-0 items-center gap-1.5">
+                    <span class="min-w-0 truncate text-[11px] text-gray-500">
+                      <span
+                        v-for="(segment, i) in row.keySegments"
+                        :key="i"
+                        :class="segment.hit ? 'rounded bg-amber-100 px-0.5 text-amber-900' : ''"
+                      >{{ segment.text }}</span>
+                    </span>
+                    <!-- 结构化凭据选中后还要选字段，这里先标出来；
+                         否则用户点保存才被后端拦下，不知道差哪一步 -->
                     <span
-                      v-for="(segment, i) in row.keySegments"
-                      :key="i"
-                      :class="segment.hit ? 'rounded bg-amber-100 px-0.5 text-amber-900' : ''"
-                    >{{ segment.text }}</span>
+                      v-if="row.item.value_format === 'json'"
+                      class="shrink-0 rounded bg-indigo-50 px-1 py-0.5 text-[10px] font-medium text-indigo-700"
+                      :title="`结构化凭据，绑定时需要选定具体字段`"
+                    >结构化{{ row.item.value_template ? ` · ${row.item.value_template}` : '' }}</span>
+                    <span v-else class="shrink-0 text-[10px] text-gray-400">单值</span>
                   </span>
                 </span>
                 <svg
