@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from app.services.secrets.references import has_secret_reference
+from app.services.secrets.references import CREDENTIAL_REF_PATTERN, has_secret_reference
 
 CREDENTIAL_PLACEHOLDER_PREFIX = "${CREDENTIAL:"
 CREDENTIAL_PLACEHOLDER_SUFFIX = "}"
@@ -67,7 +67,14 @@ def is_credential_placeholder(value: Any) -> bool:
     """
     if not isinstance(value, str):
         return False
-    return value.strip().startswith(CREDENTIAL_PLACEHOLDER_PREFIX) or has_secret_reference(value)
+    # 三种形态都算「待填」：整段占位符、片段占位符（``Bearer ${CREDENTIAL:x}``）、
+    # 字段引用。片段形式漏判的话，那句占位符会被当成用户手填的真实值原样发出去。
+    stripped = value.strip()
+    if stripped.startswith(CREDENTIAL_PLACEHOLDER_PREFIX):
+        return True
+    if has_secret_reference(value):
+        return True
+    return CREDENTIAL_REF_PATTERN.search(value) is not None
 
 
 def is_masked_placeholder(value: Any) -> bool:
@@ -94,7 +101,9 @@ def unbound_reason(value: Any) -> Optional[str]:
         return None
     if has_secret_reference(value):
         return "reference_unbound"
-    if value.strip().startswith(CREDENTIAL_PLACEHOLDER_PREFIX):
+    # 片段形态（`Bearer ${CREDENTIAL:key}`）也要认，否则 MCP 那边未绑定时
+    # 只能落到通用兜底码，用户看不出是「这个 header 没绑凭据」。
+    if CREDENTIAL_REF_PATTERN.search(value):
         return "credential_unbound"
     return None
 

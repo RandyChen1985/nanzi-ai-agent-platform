@@ -1318,6 +1318,11 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div data-tool-field="parameter_schema_str" class="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30" tabindex="-1">
+                        <!--
+                          `is-global`：API 工具目前全部是平台级（管理员在这里统一配置，
+                          所有人共用），所以传 true。真出现「个人级 API 工具」时，
+                          把这里换成按工具归属判断——组件内部不再写死，改一处就够。
+                        -->
                         <ToolParamEditor
                             ref="paramEditorRef"
                             v-model="toolForm.parameter_schema_str"
@@ -1325,6 +1330,7 @@ onBeforeUnmount(() => {
                             :url-template="toolForm.url_template"
                             :consumer-id="isEditing && toolForm.id ? String(toolForm.id) : ''"
                             :consumer-type="'api_tool'"
+                            :is-global="true"
                             @unbound-changed="paramUnboundNames = $event"
                         />
                         <p v-if="fieldErrors.parameter_schema_str" class="mt-1 text-xs text-red-600">{{ fieldErrors.parameter_schema_str }}</p>
@@ -1355,11 +1361,13 @@ onBeforeUnmount(() => {
                         </summary>
                         <div class="space-y-4 border-t border-gray-200 px-3 py-3">
                             <div data-tool-field="headers_str" class="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30" tabindex="-1">
+                                <!-- 同 ToolParamEditor 的 is-global：API 工具都是平台级 -->
                                 <ToolHeadersEditor
                                     ref="headersEditorRef"
                                     v-model="toolForm.headers_str"
                                     :error="fieldErrors.headers_str"
                                     :consumer-id="isEditing && toolForm.id ? String(toolForm.id) : ''"
+                                    :is-global="true"
                                 />
                             </div>
 

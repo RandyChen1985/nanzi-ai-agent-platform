@@ -18,6 +18,8 @@ import CodeEditor from '../CodeEditor.vue'
 import GroupSelect from './GroupSelect.vue'
 import ConfirmModal from '../ConfirmModal.vue'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
+import SecretFieldSelect from '../secrets/SecretFieldSelect.vue'
+import SecretBindingLabel from '../secrets/SecretBindingLabel.vue'
 import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
 
@@ -126,6 +128,11 @@ interface EnvBinding {
   secret_id: string
   secret_key: string
   secret_name: string
+  /** 只取凭据的某个字段时给路径；空串 = 整段。环境变量是整值注入 */
+  value_path?: string
+  /** text | json —— 列表里要标出「结构化 · 模板名」 */
+  value_format?: string
+  value_template?: string | null
 }
 
 const envBindings = ref<EnvBinding[]>([])
@@ -137,8 +144,18 @@ const envBindingsBusy = ref(false)
 const envDialogOpen = ref(false)
 const envVariable = ref('')
 const envSecretId = ref<string | null>(null)
-const envPickedSecret = ref<{ id: string; secret_key: string } | null>(null)
+/** 选中的凭据：带形态信息，新建态记账才不会丢掉「结构化 / 模板」 */
+type PickedSecret = {
+  id: string
+  secret_key: string
+  value_format?: string
+  value_template?: string | null
+}
+const envPickedSecret = ref<PickedSecret | null>(null)
 const envError = ref('')
+/** 绑定选中的字段路径（结构化凭据必填）与「是否必须选」 */
+const envValuePath = ref('')
+const envNeedsField = ref(false)
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
@@ -160,6 +177,9 @@ async function loadEnvBindings() {
         secret_id: row.secret_id,
         secret_key: row.secret_key,
         secret_name: row.secret_name,
+        value_path: row.value_path || '',
+        value_format: row.value_format || 'text',
+        value_template: row.value_template || null,
       }))
   } catch {
     // 读不到绑定不该挡住编辑脚本
@@ -170,12 +190,20 @@ function openEnvDialog() {
   envVariable.value = ''
   envSecretId.value = null
   envPickedSecret.value = null
+  envValuePath.value = ''
   envError.value = ''
   envDialogOpen.value = true
 }
 
-function onEnvSecretPicked(item: { id: string; secret_key: string } | null) {
+function onEnvSecretPicked(item: PickedSecret | null) {
   envPickedSecret.value = item
+  // 换凭据就清掉上一个凭据的字段路径
+  if (item?.id !== envSecretId.value) envValuePath.value = ''
+}
+
+/** 字段清单加载完：环境变量是整值注入，结构化凭据必须选字段。 */
+function onEnvFieldsLoaded(info: { format: string; fields: { name: string }[] }) {
+  envNeedsField.value = info.format === 'json' && info.fields.length > 0
 }
 
 async function saveEnvBinding() {
@@ -186,6 +214,10 @@ async function saveEnvBinding() {
   }
   if (!envPickedSecret.value) {
     envError.value = '请选择凭据'
+    return
+  }
+  if (envNeedsField.value && !envValuePath.value) {
+    envError.value = '这条凭据是结构化的，请先选择要取用的字段'
     return
   }
   if (allEnvBindings.value.some((row) => row.variable === variable)) {
@@ -201,6 +233,10 @@ async function saveEnvBinding() {
       secret_id: envPickedSecret.value.id,
       secret_key: envPickedSecret.value.secret_key,
       secret_name: envPickedSecret.value.secret_key,
+      value_path: envValuePath.value,
+      // 不带上这两个，新建未保存时那个绿框只剩标识，看不出是结构化凭据、取哪个字段
+      value_format: envPickedSecret.value.value_format,
+      value_template: envPickedSecret.value.value_template,
     })
     envDialogOpen.value = false
     showToast(`已选中 ${variable}，保存脚本后生效`, 'success')
@@ -218,6 +254,8 @@ async function saveEnvBinding() {
       // 系统管理里配的绑定是给全平台用的：不设全局的话，管理员配完
       // 只有他自己能用，别人的脚本读到的永远是空变量。
       is_global: true,
+      // 环境变量是整值注入：结构化凭据取哪一部分只能靠它表达
+      value_path: envValuePath.value,
     })
     envDialogOpen.value = false
     await loadEnvBindings()
@@ -273,6 +311,9 @@ async function flushPendingEnvBindings(toolId: string) {
         consumer_id: toolId,
         slot: row.slot,
         is_global: true,
+        value_path: row.value_path || '',
+        value_format: row.value_format || 'text',
+        value_template: row.value_template || null,
       })
     } catch {
       failed.push(row.variable)
@@ -854,15 +895,17 @@ const primaryLabel = computed(() => {
             >+ 绑定环境变量</button>
           </div>
 
+          <!-- 汇总提示必须独立于明细列表：原先它和明细是 v-if / v-else 关系，
+               新建态一加变量，明细整个消失——用户看不到刚绑的变量，也删不掉。 -->
           <p v-if="!isEditing && pendingEnvBindings.length > 0" class="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
             有 {{ pendingEnvBindings.length }} 个变量已选中凭据，保存脚本后自动绑定。
           </p>
 
-          <p v-else-if="allEnvBindings.length === 0" class="mt-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+          <p v-if="allEnvBindings.length === 0" class="mt-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
             暂无绑定。脚本不需要外部凭据时留空即可。
           </p>
 
-          <div v-else class="mt-2 space-y-2">
+          <div v-if="allEnvBindings.length > 0" class="mt-2 space-y-2">
             <div
               v-for="row in allEnvBindings"
               :key="row.slot"
@@ -871,7 +914,14 @@ const primaryLabel = computed(() => {
               <code class="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-800">{{ row.variable }}</code>
               <span class="text-gray-300">←</span>
               <span class="min-w-0 flex-1 truncate text-xs text-gray-700">{{ row.secret_name }}</span>
-              <code class="hidden shrink-0 font-mono text-[10px] text-gray-400 sm:inline">{{ row.secret_key }}</code>
+              <!-- 环境变量里放的是哪一个值：结构化凭据要能看出取的是哪个字段 -->
+              <SecretBindingLabel
+                class="hidden shrink-0 sm:inline-flex"
+                :secret-key="row.secret_key"
+                :format="row.value_format"
+                :template="row.value_template"
+                :value-path="row.value_path"
+              />
               <button
                 type="button"
                 :disabled="envBindingsBusy"
@@ -988,12 +1038,19 @@ const primaryLabel = computed(() => {
 
       <div>
         <label class="block text-xs font-medium text-gray-700">凭据</label>
-        <div class="mt-1">
+        <div class="mt-1 space-y-2">
           <CredentialPicker
             v-model="envSecretId"
             scene="script_env"
             placeholder="选择一条允许「脚本环境变量」场景的凭据"
             @picked="onEnvSecretPicked"
+          />
+          <!-- 环境变量是整值注入：结构化凭据不选字段，脚本拿到的是一段 JSON -->
+          <SecretFieldSelect
+            v-if="envSecretId"
+            v-model="envValuePath"
+            :secret-id="envSecretId"
+            @loaded="onEnvFieldsLoaded"
           />
         </div>
       </div>

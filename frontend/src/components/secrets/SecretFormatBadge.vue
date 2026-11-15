@@ -13,19 +13,30 @@ const props = withDefaults(
     format?: 'text' | 'json' | string | null
     template?: string | null
     size?: 'sm' | 'xs'
+    /**
+     * 紧凑模式：只写「结构化」或「结构化 · smtp」，模板全称退到 title。
+     *
+     * 窄格子里放不下全称——「结构化 · 邮箱 SMTP 发送」有 12 个字，会把旁边的
+     * 凭据标识挤到只剩前几个字符，等于丢掉了更有用的信息（是哪条凭据）。
+     */
+    compact?: boolean
   }>(),
-  { format: 'text', template: null, size: 'xs' },
+  { format: 'text', template: null, size: 'xs', compact: false },
 )
 
 const structured = computed(() => props.format === 'json')
-const label = computed(() =>
-  structured.value ? `结构化 · ${credentialTemplateLabel(props.template)}` : '单值',
-)
-const title = computed(() =>
-  structured.value
-    ? '结构化 JSON：可以被 ${secret:标识.字段} 引用单个字段'
-    : '单值：整段就是一个值（token / PEM）',
-)
+const label = computed(() => {
+  if (!structured.value) return '单值'
+  if (!props.compact) return `结构化 · ${credentialTemplateLabel(props.template)}`
+  // 紧凑模式优先给模板 id（短且唯一），全称放 title
+  return props.template ? `结构化 · ${props.template}` : '结构化'
+})
+const title = computed(() => {
+  if (!structured.value) return '单值：整段就是一个值（token / PEM）'
+  const full = credentialTemplateLabel(props.template)
+  const base = '结构化 JSON：可以被 ${secret:标识.字段} 引用单个字段'
+  return props.compact && props.template ? `${full} · ${base}` : base
+})
 </script>
 
 <template>

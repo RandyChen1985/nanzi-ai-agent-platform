@@ -43,6 +43,11 @@ const props = withDefaults(defineProps<{
     /** 工具 id；为空表示新建，凭据绑定先记账、保存后补写 */
     consumerId?: string
     consumerType?: string
+    /**
+     * 这个消费者是不是平台级（配一次给所有人用）。只是往上传，
+     * 组件自己不知道答案——由管理页决定。
+     */
+    isGlobal?: boolean
 }>(), {
     mode: 'full',
     locations: () => ({}),
@@ -51,6 +56,7 @@ const props = withDefaults(defineProps<{
     scope: 'api',
     consumerId: '',
     consumerType: 'api_tool',
+    isGlobal: true,
 })
 
 const emit = defineEmits<{
@@ -300,6 +306,7 @@ const locationLabel = (name: string): string => {
         :extra-data-variables="extraDataVariables"
         :consumer-id="consumerId"
         :consumer-type="consumerType"
+        :is-global="isGlobal"
         :plain-params="visualParams.map((p) => p.name).filter(Boolean)"
         @unbound-changed="emit('unbound-changed', $event)"
       />

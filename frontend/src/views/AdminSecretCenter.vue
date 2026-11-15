@@ -1071,9 +1071,18 @@ onMounted(load)
         class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
         @click.self="showCreate = false"
       >
+        <!--
+          尺寸写死，不跟着内容走。
+          原来宽度和高度都是自适应的：切「自由输入 / 结构化（模板）」时，模板卡片区
+          一出现，弹窗就从 max-w-xl 跳到 max-w-3xl、高度也跟着窜一截，刚对准的
+          「下一步」按钮会从鼠标底下跑掉。
+          宽度按宽的那个固定（结构化要两列卡片）；高度 `h` 给死，再用 `max-h`
+          兜住小屏——`max-height` 优先于 `height`，所以屏幕够高就是 760px，
+          不够就退到 100vh-120px。中间的滚动区本来就是 `flex-1 overflow-y-auto`，
+          内容多了滚动，而不是把弹窗撑破。
+        -->
         <div
-          class="flex max-h-[calc(100vh-120px)] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
-          :class="createStep === 1 && form.value_format === 'json' ? 'max-w-3xl' : 'max-w-xl'"
+          class="flex h-[760px] max-h-[calc(100vh-120px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
         >
           <div class="border-b border-gray-100 px-5 py-3">
             <h3 class="flex items-center gap-1.5 text-base font-semibold text-gray-900">

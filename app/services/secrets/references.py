@@ -33,6 +33,14 @@ from typing import Any, Sequence
 #: ``tool_credentials`` 负责，两者互不重叠。
 SECRET_REF_PATTERN = re.compile(r"\$\{secret:([^{}\s]+)\}")
 
+#: ``${CREDENTIAL:标识}`` 占位符。和 ``${secret:...}`` 的区别是**不校验标识**：
+#: 它由平台写在共享配置里（值里往往是管理员那条凭据），普通用户绑自己的凭据去覆盖时
+#: 标识必然对不上。取哪一部分由当前绑定自己的 ``value_path`` 决定。
+#:
+#: 它也可以只是值的一部分（``Bearer ${CREDENTIAL:x}``），所以按「片段」匹配替换，
+#: 不能当成整段值。
+CREDENTIAL_REF_PATTERN = re.compile(r"\$\{CREDENTIAL:[^{}]*\}", re.IGNORECASE)
+
 #: 字段路径里的单段：字母数字下划线连字符，或纯数字（数组下标）。
 _PATH_SEGMENT_RE = re.compile(r"^(?:[A-Za-z0-9_-]+|\d+)$")
 
@@ -113,14 +121,31 @@ def split_key_and_path(expression: str, known_key: str) -> tuple[str, tuple[str,
     return lowered, ()
 
 
-def pick_field(plaintext: str, path: Sequence[str]) -> str:
-    """从凭据明文里取出路径指向的值。
+def stringify_field_value(value: Any) -> str:
+    """把取到的字段值变成字符串——给 HTTP 头、环境变量这类**天生是文本**的位置用。"""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(value, float) and value.is_integer():
+        # 端口写成 465.0 时给出 465，避免把 465.0 塞进 URL / 端口参数
+        return str(int(value))
+    return str(value)
 
-    明文可以是 JSON 对象（结构化凭据），也可以是单值（``path`` 为空时原样返回）。
 
-    - JSON 解析失败但确实要取字段 → ``NOT_JSON``（**不**退回整段明文）；
-    - 路径不存在 → ``FIELD_MISSING``；
-    - 取到对象/数组 → 序列化成紧凑 JSON；布尔转 ``true``/``false``；``null`` → 空串。
+pick_field_typed = None  # 占位，真实定义见下（保持模块导入顺序直观）
+
+
+def pick_field_typed(plaintext: str, path: Sequence[str]) -> Any:  # type: ignore[no-redef]
+    """从凭据明文里取出路径指向的值，**保留 JSON 里的原始类型**。
+
+    参数注入要的是「一个值」，不是「一段文本」：`port: 465` 应作为数字交给 MCP/JSON body，
+    变成 `"465"` 会被对方的 schema 判类型不符。所以这里返回原类型，
+    由调用方决定要不要字符串化（见 ``stringify_field_value``）。
+
+    ``path`` 为空时原样返回明文（单值凭据 / 整段取用）。
     """
     if not path:
         return plaintext
@@ -154,16 +179,17 @@ def pick_field(plaintext: str, path: Sequence[str]) -> str:
                 ReferenceError.FIELD_MISSING, f"路径 {where} 穿过了非对象值"
             )
 
-    if current is None:
-        return ""
-    if isinstance(current, bool):
-        return "true" if current else "false"
-    if isinstance(current, (dict, list)):
-        return json.dumps(current, ensure_ascii=False, separators=(",", ":"))
-    if isinstance(current, float) and current.is_integer():
-        # 端口写成 465.0 时给出 465，避免把 465.0 塞进 URL / 端口参数
-        return str(int(current))
-    return str(current)
+    return current
+
+
+def pick_field(plaintext: str, path: Sequence[str]) -> str:
+    """``pick_field_typed`` 的字符串版——引用渲染与 header/env 注入用这个。
+
+    - JSON 解析失败但确实要取字段 → ``NOT_JSON``（**不**退回整段明文）；
+    - 路径不存在 → ``FIELD_MISSING``；
+    - 取到对象/数组 → 序列化成紧凑 JSON；布尔转 ``true``/``false``；``null`` → 空串。
+    """
+    return stringify_field_value(pick_field_typed(plaintext, path))
 
 
 def render_references(

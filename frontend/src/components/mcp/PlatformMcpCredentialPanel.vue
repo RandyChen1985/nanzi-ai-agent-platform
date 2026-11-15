@@ -13,7 +13,15 @@
 import { computed, onMounted, ref } from 'vue'
 import axios from '../../utils/axios'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
+import SecretBindingLabel from '../secrets/SecretBindingLabel.vue'
+import SecretFieldSelect from '../secrets/SecretFieldSelect.vue'
 import SecretLocatorEditor, { type LocatorRule } from '../secrets/SecretLocatorEditor.vue'
+
+/** 把绑定上的取用字段并回规则草稿：编辑已有规则时不能把它弄丢。 */
+function withRulePath(rule: LocatorRule | null, valuePath?: string | null): LocatorRule | null {
+  if (!rule) return null
+  return { ...rule, value_path: valuePath || '' }
+}
 
 type Binding = {
   secret_id: string
@@ -21,6 +29,11 @@ type Binding = {
   secret_name: string
   /** 绑定还在，但凭据可能已被停用/过期 */
   secret_status?: string
+  /** 只取凭据的某个字段时给路径；空串 = 整段。结构化凭据必须给 */
+  value_path?: string
+  /** text | json —— 卡片上要标出「结构化 · 模板名」 */
+  value_format?: string
+  value_template?: string | null
 }
 
 /** 绑了却用不了，比没绑更该提示——否则用户只会看到调用失败。 */
@@ -35,6 +48,8 @@ const bindingIssue = (binding?: Binding | null): string => {
 type BoundRule = {
   rule: LocatorRule | null
   rule_summary: string | null
+  /** 规则命中的凭据要取哪个字段（空 = 整段） */
+  value_path?: string | null
   bound_by_me: boolean
 }
 
@@ -78,6 +93,10 @@ const picked = ref<{ id: string; secret_key: string } | null>(null)
 const secretId = ref<string | null>(null)
 const busy = ref(false)
 const bindError = ref('')
+/** 绑定选中的字段路径（结构化凭据必填） */
+const editValuePath = ref('')
+/** 当前凭据是否「必须选一个字段」 */
+const editNeedsField = ref(false)
 
 /** 正在给哪个槽位配规则 */
 const locatorCtx = ref<{
@@ -106,7 +125,7 @@ function openLocatorFor(
     title: kind === 'mcp' ? (target as McpTarget).server_name : (target as ToolTarget).name,
     slot,
     argOptions: target.arg_options?.[slot] || [],
-    existingRule: target.rules?.[slot]?.rule || null,
+    existingRule: withRulePath(target.rules?.[slot]?.rule ?? null, target.rules?.[slot]?.value_path),
   }
   locatorError.value = ''
 }
@@ -118,13 +137,16 @@ async function applyRule(rule: LocatorRule) {
   if (!ctx) return
   locatorBusy.value = true
   locatorError.value = ''
+  const { value_path: rulePath = '', ...ruleBody } = rule
   try {
     await axios.post('/api/portal/secrets/bindings', {
       consumer_type: ctx.consumerType,
       consumer_id: ctx.consumerId,
       slot: ctx.slot,
       strategy: 'rule',
-      rule,
+      // value_path 属于绑定记录，不属于规则 JSON——混进 rule 里后端会判未知字段
+      rule: ruleBody,
+      value_path: rulePath,
       // 不带 is_global：这就是「我自己的那条」
     })
     await load()
@@ -214,6 +236,7 @@ function openBindMcp(target: McpTarget, slot = 'header:Authorization') {
   const existing = target.bindings?.[slot] || target.binding || null
   editing.value = { kind: 'mcp', target, slot }
   secretId.value = existing?.secret_id || null
+  editValuePath.value = existing?.value_path || ''
   picked.value = existing
     ? { id: existing.secret_id, secret_key: existing.secret_key }
     : null
@@ -225,6 +248,7 @@ function openBindTool(target: ToolTarget, slot: string) {
   const existing = target.bindings?.[slot] || null
   editing.value = { kind: 'tool', target, slot }
   secretId.value = existing?.secret_id || null
+  editValuePath.value = existing?.value_path || ''
   picked.value = existing
     ? { id: existing.secret_id, secret_key: existing.secret_key }
     : null
@@ -271,10 +295,21 @@ const editingTitle = computed(() => {
 
 function onPicked(item: { id: string; secret_key: string } | null) {
   picked.value = item
+  // 换凭据就清掉上一个凭据的字段路径：字段名在另一条凭据里通常不存在
+  if (item?.id !== secretId.value) editValuePath.value = ''
+}
+
+/** 字段清单加载完：结构化且字段可读时必须选一个，否则注进去的是整段 JSON。 */
+function onFieldsLoaded(info: { format: string; fields: { name: string }[] }) {
+  editNeedsField.value = info.format === 'json' && info.fields.length > 0
 }
 
 async function submit() {
   if (!editing.value) return
+  if (secretId.value && editNeedsField.value && !editValuePath.value) {
+    bindError.value = '这条凭据是结构化的，请先选择要取用的字段'
+    return
+  }
   busy.value = true
   bindError.value = ''
   try {
@@ -293,6 +328,8 @@ async function submit() {
         consumer_type: consumerType,
         consumer_id: consumerId,
         slot,
+        // 槽位可能是 header 也可能是指标参数；两种都靠它表达「取哪一部分」
+        value_path: editValuePath.value,
       })
     }
     editing.value = null
@@ -341,8 +378,15 @@ onMounted(load)
 
             <span
               v-if="item.binding"
-              class="shrink-0 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700"
-            >我的凭据：{{ item.binding.secret_key }}</span>
+              class="flex shrink-0 flex-wrap items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700"
+            >我的凭据：
+              <SecretBindingLabel
+                :secret-key="item.binding.secret_key"
+                :format="item.binding.value_format"
+                :template="item.binding.value_template"
+                :value-path="item.binding.value_path"
+              />
+            </span>
             <span
               v-else-if="item.has_fixed_token"
               class="shrink-0 rounded-md bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600"
@@ -361,8 +405,12 @@ onMounted(load)
                   class="rounded px-1.5 py-0.5 text-[10px]"
                   :class="bindingIssue(item.bindings[slot])
                     ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'"
-                >我的凭据：{{ item.bindings[slot]?.secret_key
-                  }}<template v-if="bindingIssue(item.bindings[slot])">
+                >我的凭据：<SecretBindingLabel
+                  :secret-key="item.bindings[slot]?.secret_key"
+                  :format="item.bindings[slot]?.value_format"
+                  :template="item.bindings[slot]?.value_template"
+                  :value-path="item.bindings[slot]?.value_path"
+                /><template v-if="bindingIssue(item.bindings[slot])">
                     （{{ bindingIssue(item.bindings[slot]) }}，调用会失败）
                   </template></span>
                 <span v-else class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">未绑</span>
@@ -431,8 +479,17 @@ onMounted(load)
                 <code class="text-[11px] text-gray-700" :title="slot">{{ slotLabel(slot) }}</code>
                 <span
                   v-if="tool.bindings?.[slot]"
-                  class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700"
-                >我的凭据：{{ tool.bindings[slot]?.secret_key }}</span>
+                  class="rounded px-1.5 py-0.5 text-[10px]"
+                  :class="bindingIssue(tool.bindings[slot])
+                    ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'"
+                >我的凭据：<SecretBindingLabel
+                  :secret-key="tool.bindings[slot]?.secret_key"
+                  :format="tool.bindings[slot]?.value_format"
+                  :template="tool.bindings[slot]?.value_template"
+                  :value-path="tool.bindings[slot]?.value_path"
+                /><template v-if="bindingIssue(tool.bindings[slot])">
+                    （{{ bindingIssue(tool.bindings[slot]) }}，调用会失败）
+                  </template></span>
                 <span v-else class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">未绑</span>
                 <button
                   type="button"
@@ -478,8 +535,14 @@ onMounted(load)
             只影响你自己的调用。真实值不写进服务配置，调用时按当前用户现取。
           </p>
 
-          <div class="mt-3">
+          <div class="mt-3 space-y-2">
             <CredentialPicker v-model="secretId" scene="mcp" @picked="onPicked" />
+            <SecretFieldSelect
+              v-if="secretId"
+              v-model="editValuePath"
+              :secret-id="secretId"
+              @loaded="onFieldsLoaded"
+            />
           </div>
 
           <div v-if="secretId" class="mt-2 space-y-1">

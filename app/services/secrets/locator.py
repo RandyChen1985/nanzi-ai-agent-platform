@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -26,7 +27,23 @@ TARGETS = ("secret_key", "name", "category")
 MATCHES = ("exact", "exact_ci")
 ON_MISS = ("fail", "fallback_fixed", "model")
 MAX_TEMPLATES = 3
-ALLOWED_FIELDS = {"key_source", "transforms", "templates", "target", "match", "on_miss"}
+ALLOWED_FIELDS = {
+    "key_source",
+    "transforms",
+    "templates",
+    "target",
+    "match",
+    "on_miss",
+    # 结构约定：命中的凭据必须都是这个模板。有了它，字段集合在配置期就确定，
+    # 「取用字段」能给成下拉，运行时也能校验命中的那条结构对不对。
+    "value_template",
+}
+
+
+#: 模板 id 由前端模板常量定义，形如 ``smtp`` / ``mysql`` / ``custom``
+# 与 center._TEMPLATE_PATTERN 同一口径（那边是存库校验，这边是规则校验）。
+# 两处不一致时，一条规则能通过规则校验却被凭据侧判非法，排查起来极难对号。
+_TEMPLATE_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 
 class RuleError(ValueError):
@@ -45,6 +62,8 @@ class RuleSpec:
     #: 而界面上看不出任何问题——这是必须踩一次的坑。
     match: str = "exact_ci"
     on_miss: str = "fail"
+    #: 只接受这个模板的凭据；空串 = 不限。模板不符按**未命中**处理。
+    value_template: str = ""
 
     @property
     def is_arg_key(self) -> bool:
@@ -124,6 +143,13 @@ def parse_rule(raw: str | bytes | Mapping[str, Any] | None) -> RuleSpec:
     if on_miss not in ON_MISS:
         raise RuleError(f"on_miss 不支持 {on_miss!r}；可用 {' / '.join(ON_MISS)}")
 
+    value_template = str(data.get("value_template") or "").strip()
+    if value_template and not _TEMPLATE_ID_RE.match(value_template):
+        raise RuleError(
+            f"value_template 格式不对：{value_template!r}（应形如 smtp / mysql，"
+            "或留空表示不限）"
+        )
+
     return RuleSpec(
         key_source=key_source,
         transforms=tuple(transforms),
@@ -131,6 +157,7 @@ def parse_rule(raw: str | bytes | Mapping[str, Any] | None) -> RuleSpec:
         target=target,
         match=match,
         on_miss=on_miss,
+        value_template=value_template,
     )
 
 

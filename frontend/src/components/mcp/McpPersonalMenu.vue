@@ -66,9 +66,10 @@ const badgeText = (value: number | null): string =>
       class="flex items-center gap-2"
       :class="collapsed ? 'mb-3 flex-col' : 'mb-5 px-2'"
     >
+      <!-- 插头 = 接入外部 MCP 服务。别再用下面的箭头：头部和「我的 MCP」菜单项会撞成同一个图标 -->
       <span class="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-emerald-600 text-white shadow-sm shadow-emerald-500/20">
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 22v-5M9 8V2M15 8V2M18 8v5a4 4 0 01-4 4h-4a4 4 0 01-4-4V8z" />
         </svg>
       </span>
       <span v-if="!collapsed" class="min-w-0 flex-1 truncate text-sm font-bold text-gray-900 dark:text-gray-100">个人 MCP</span>

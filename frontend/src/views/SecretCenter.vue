@@ -686,10 +686,64 @@ async function loadBindingsOf(item: SecretItem | null) {
   }
 }
 
+// ── 「怎么用」：结构化凭据的字段清单 ──────────────────────────────────
+//
+// 选字段是使用侧的关键一步：用户得知道这条凭据能取哪几部分、引用怎么写。
+// 字段清单来自后端（敏感字段只给名字），列表里直接给可复制的引用片段。
+interface SecretField {
+  name: string
+  sensitive: boolean
+  preview: string
+}
+const selectedFields = ref<SecretField[]>([])
+const fieldsBusy = ref(false)
+const copiedField = ref('')
+
+/** 请求序号：快速切换选中凭据时，先发后到的响应会盖掉当前这条的字段清单 */
+let fieldsSeq = 0
+
+async function loadFieldsOf(item: any) {
+  const seq = ++fieldsSeq
+  selectedFields.value = []
+  copiedField.value = ''
+  if (!item?.id || item.value_format !== 'json') {
+    fieldsBusy.value = false
+    return
+  }
+  fieldsBusy.value = true
+  try {
+    const res = await axios.get(`/api/portal/secrets/${encodeURIComponent(item.id)}/fields`)
+    if (seq !== fieldsSeq) return
+    selectedFields.value = Array.isArray(res.data?.data?.fields) ? res.data.data.fields : []
+  } catch {
+    if (seq !== fieldsSeq) return
+    selectedFields.value = []
+  } finally {
+    // 只有最新那次请求才有资格收掉 loading，否则后来的请求还在跑就先灭了灯
+    if (seq === fieldsSeq) fieldsBusy.value = false
+  }
+}
+
+/** 引用片段：注入层认这个写法，写进 Header 就能只取该字段。 */
+function referenceOf(item: any, field: string): string {
+  return `\${secret:${item.secret_key}.${field}}`
+}
+
+async function copyReference(item: any, field: string) {
+  try {
+    await navigator.clipboard.writeText(referenceOf(item, field))
+    copiedField.value = field
+    showToast(`已复制 ${field} 的引用片段`)
+  } catch {
+    showToast('复制失败，请手动选中复制', 'err')
+  }
+}
+
 // 选中项跟着列表走：切 scope / 改筛选之后，右侧要显示当前列表里那一条
 watch(selected, (item) => {
   if (item && item.id !== selectedId.value) selectedId.value = item.id
   void loadBindingsOf(item)
+  void loadFieldsOf(item)
 })
 
 onMounted(load)
@@ -1021,6 +1075,43 @@ onMounted(load)
                 凭证创建后<b>任何界面都不再显示明文</b>，包括你自己。要换新值用「轮换」。
               </template>
             </p>
+          </div>
+
+          <!-- 怎么用：结构化凭据能取哪几部分 -->
+          <div v-if="selected.value_format === 'json'">
+            <p class="text-[11px] font-medium text-gray-500">怎么用（可取的字段）</p>
+            <p v-if="fieldsBusy" class="mt-1 text-[10px] text-gray-400">加载中…</p>
+            <p
+              v-else-if="!selectedFields.length"
+              class="mt-1 text-[10px] leading-relaxed text-amber-600"
+            >
+              读不出字段清单，只能整段注入；用之前确认内容格式与使用方一致。
+            </p>
+            <div v-else class="mt-1 space-y-1">
+              <div
+                v-for="field in selectedFields"
+                :key="field.name"
+                class="rounded-lg bg-gray-50 px-2 py-1.5"
+              >
+                <div class="flex items-center gap-1.5">
+                  <code class="min-w-0 flex-1 truncate font-mono text-[10.5px] font-medium text-gray-800">{{ field.name }}</code>
+                  <span
+                    v-if="field.sensitive"
+                    class="shrink-0 rounded bg-amber-100 px-1 py-0.5 text-[9px] text-amber-700"
+                  >敏感</span>
+                  <span v-else-if="field.preview" class="min-w-0 shrink truncate text-[10px] text-gray-400">{{ field.preview }}</span>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded bg-white px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-primary"
+                    @click.stop="copyReference(selected, field.name)"
+                  >{{ copiedField === field.name ? '已复制' : '复制引用' }}</button>
+                </div>
+                <code class="mt-0.5 block break-all font-mono text-[10px] text-indigo-600">{{ referenceOf(selected, field.name) }}</code>
+              </div>
+              <p class="text-[10px] leading-relaxed text-gray-400">
+                绑定时在此选一个字段，注入层就只取那一段；不选会整段 JSON 注进去。
+              </p>
+            </div>
           </div>
 
           <!-- 场景 -->
@@ -1557,9 +1648,18 @@ onMounted(load)
         class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
         @click.self="showCreate = false"
       >
+        <!--
+          尺寸写死，不跟着内容走。
+          原来宽度和高度都是自适应的：切「自由输入 / 结构化（模板）」时，模板卡片区
+          一出现，弹窗就从 max-w-xl 跳到 max-w-3xl、高度也跟着窜一截，刚对准的
+          「下一步」按钮会从鼠标底下跑掉。
+          宽度按宽的那个固定（结构化要两列卡片）；高度 `h` 给死，再用 `max-h`
+          兜住小屏——`max-height` 优先于 `height`，所以屏幕够高就是 760px，
+          不够就退到 100vh-120px。中间的滚动区本来就是 `flex-1 overflow-y-auto`，
+          内容多了滚动，而不是把弹窗撑破。
+        -->
         <div
-          class="flex max-h-[calc(100vh-120px)] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
-          :class="createStep === 1 && form.value_format === 'json' ? 'max-w-3xl' : 'max-w-xl'"
+          class="flex h-[760px] max-h-[calc(100vh-120px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
         >
           <div class="border-b border-gray-100 px-5 py-3">
             <h3 class="flex items-center gap-1.5 text-base font-semibold text-gray-900">

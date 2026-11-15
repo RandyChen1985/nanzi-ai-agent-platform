@@ -30,6 +30,7 @@ from app.services.secrets.injection import (
     _looks_unfilled,
 )
 from app.services.secrets.policy import SCENE_API_TOOL, SCENE_MCP, SCENE_SCRIPT_ENV
+from app.services.secrets.resolver import secret_resolver
 
 SECRET_TABLES = [
     SecretUsageLog.__table__,
@@ -218,6 +219,75 @@ class TestApiToolInjection:
         assert len(rows) == 1
         assert rows[0].scene == SCENE_API_TOOL
         assert rows[0].result == "success"
+
+
+class TestPersonalOverrideOfPlatformHeader:
+    """平台配的 header 值里写着管理员的凭据标识，普通用户绑自己的凭据去覆盖。
+
+    这是「个人覆盖平台默认」的核心场景。它能不能成，取决于 header 值的写法：
+    ``${CREDENTIAL:xxx}`` 不参与标识校验，注入时用**当前绑定**的 value_path；
+    ``${secret:xxx.field}`` 会校验标识一致，一旦用户换绑自己的凭据就必然
+    reference_mismatch —— 所以绑定时不能写后者。
+    """
+
+    async def test_user_binding_wins_and_takes_its_own_field(self):
+        async with AsyncSessionLocal() as session:
+            admin_secret = await center.create_secret(
+                session,
+                owner_id=None,
+                owner_scope="system",
+                secret_key="platform.mail",
+                name="平台邮箱",
+                value='{"host": "smtp.platform.com", "password": "PlatformPwd!1"}',
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=["mcp.example.com"],
+                value_format="json",
+                value_template="smtp",
+                value_secret_fields=["password"],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=admin_secret.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-override",
+                slot="header:Authorization",
+                bound_by_user_id=None,
+                value_path="password",
+            )
+
+            mine = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="my.mail",
+                name="我的邮箱",
+                value='{"host": "smtp.mine.com", "password": "MyOwnPwd!2026"}',
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=["mcp.example.com"],
+                value_format="json",
+                value_template="smtp",
+                value_secret_fields=["password"],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=mine.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-override",
+                slot="header:Authorization",
+                bound_by_user_id=USER_ID,
+                value_path="password",
+            )
+
+        server = SimpleNamespace(
+            id="srv-override", server_name="ovr", sse_url="https://mcp.example.com/sse"
+        )
+        headers = await apply_mcp_bindings(
+            server,
+            # 值里写的是**管理员**那条的标识：用户换绑后不应因此失败
+            {"Authorization": "Bearer ${CREDENTIAL:platform.mail}"},
+            user_info=USER,
+        )
+
+        assert headers["Authorization"] == "Bearer MyOwnPwd!2026"
 
 
 class TestMcpInjection:
@@ -1180,3 +1250,545 @@ class TestUnresolvedReferenceIsBlocked:
         # 只应剩「凭据已停用」，不该再加一条「这个头没有绑定」
         assert list(denials.values()) == ["disabled"]
         assert len({slot.lower() for slot in denials}) == 1
+
+
+class TestValuePathExecution:
+    """字段选好之后，执行那一步还差什么。
+
+    三个容易漏的点：数字字段别变成字符串、一条凭据供多个参数只解密一次、
+    取不到值时流水不能还写着成功。
+    """
+
+    JSON_VALUE = (
+        '{"host": "smtp.exmail.qq.com", "port": 465, "tls": true, '
+        '"tags": ["a", "b"], "username": "alert-bot@nanzi.ai", '
+        '"password": "Sup3rSecret!2026"}'
+    )
+
+    async def _secret(self, session, key: str, **kwargs):
+        options = {
+            "owner_id": USER_ID,
+            "secret_key": key,
+            "name": "告警邮箱",
+            "value": self.JSON_VALUE,
+            "allowed_scenarios": [SCENE_MCP, SCENE_API_TOOL],
+            "allowed_hosts": [],
+            "value_format": "json",
+            "value_template": "smtp",
+            "value_secret_fields": ["password"],
+        }
+        options.update(kwargs)
+        return await center.create_secret(session, **options)
+
+    async def test_numeric_field_keeps_its_type(self):
+        """`port: 465` 注进 MCP 参数必须是数字，不是 "465"。
+
+        MCP 服务端按 schema 校验参数类型，字符串化的端口会被判类型不符——
+        而错误信息只会说「参数 port 类型错」，看不出是平台这边转成了字符串。
+        """
+        async with AsyncSessionLocal() as session:
+            rec = await self._secret(session, "mail.typed.n")
+            await center.bind_secret(
+                session,
+                secret_id=rec.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-typed-n",
+                slot="arg:query:port",
+                bound_by_user_id=USER_ID,
+                value_path="port",
+            )
+
+        tool = SimpleNamespace(
+            id="tool-typed-n",
+            tool_name="server:query",
+            server_id="srv-typed-n",
+            credential_params='["port"]',
+        )
+        args = await apply_mcp_arg_bindings(tool, {}, user_info=USER)
+        assert args["port"] == 465
+        assert not isinstance(args["port"], str)
+
+    async def test_boolean_and_array_fields_keep_their_type(self):
+        async with AsyncSessionLocal() as session:
+            rec_b = await self._secret(session, "mail.typed.b")
+            secret_id = rec_b.id
+            for name in ("tls", "tags"):
+                await center.bind_secret(
+                    session,
+                    secret_id=secret_id,
+                    consumer_type="mcp_server",
+                    consumer_id="srv-typed-b",
+                    slot=f"arg:query:{name}",
+                    bound_by_user_id=USER_ID,
+                    value_path=name,
+                )
+
+        tool = SimpleNamespace(
+            id="tool-typed-b",
+            tool_name="server:query",
+            server_id="srv-typed-b",
+            credential_params='["tls", "tags"]',
+        )
+        args = await apply_mcp_arg_bindings(tool, {}, user_info=USER)
+        assert args["tls"] is True
+        assert args["tags"] == ["a", "b"]
+
+    async def test_header_still_gets_text(self):
+        """Header 天生是文本：数字字段必须字符串化，否则 httpx 直接报错。"""
+        async with AsyncSessionLocal() as session:
+            rec_h = await self._secret(
+                session, "mail.typed.h", allowed_hosts=["mcp.example.com"]
+            )
+            await center.bind_secret(
+                session,
+                secret_id=rec_h.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-typed-h",
+                slot="header:X-Port",
+                bound_by_user_id=USER_ID,
+                value_path="port",
+            )
+
+        server = SimpleNamespace(
+            id="srv-typed-h", server_name="typed-h", sse_url="https://mcp.example.com/sse"
+        )
+        headers = await apply_mcp_bindings(
+            server, {"X-Port": "${CREDENTIAL:mail.typed.h}"}, user_info=USER
+        )
+        assert headers["X-Port"] == "465"
+
+    async def test_failed_injection_marks_the_usage_log_failed(self):
+        """解密成功但没取出值，流水不能还写着 success。
+
+        否则统计会把「配置错了」算成「用得好」：一条结构化凭据绑在 header 上却没选
+        字段，每次都注入失败，报表里却是满屏成功。
+        """
+        from sqlalchemy import select
+
+        async with AsyncSessionLocal() as session:
+            rec = await self._secret(
+                session, "mail.audit.f", allowed_hosts=["mcp.example.com"]
+            )
+            await center.bind_secret(
+                session,
+                secret_id=rec.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-audit",
+                slot="header:Authorization",
+                bound_by_user_id=USER_ID,
+                # header 位点允许「不选字段」（值里可以写引用），这里正是走整段的情况
+                value_path="",
+            )
+
+        server = SimpleNamespace(
+            id="srv-audit", server_name="audit", sse_url="https://mcp.example.com/sse"
+        )
+        denials: dict[str, str] = {}
+        await apply_mcp_bindings(
+            server,
+            {"Authorization": "${CREDENTIAL:mail.audit.f}"},
+            user_info=USER,
+            denials=denials,
+        )
+        assert denials["header:Authorization"] == "structured_without_path"
+
+        async with AsyncSessionLocal() as session:
+            rows = (
+                await session.execute(
+                    select(SecretUsageLog).where(SecretUsageLog.secret_id == rec.id)
+                )
+            ).scalars().all()
+
+        assert len(rows) == 1, "一次调用只该有一条流水"
+        assert rows[0].result == "structured_without_path"
+
+    async def test_json_null_field_is_a_value_not_a_failure(self):
+        """``"proxy": null`` 是合法取值。
+
+        用 ``None`` 兼作「取不到」的失败信号，会把正常的 null 判成引用失败：
+        参数凭空缺一个、流水还记一条失败。
+        """
+        async with AsyncSessionLocal() as session:
+            rec = await self._secret(
+                session,
+                "mail.null.f",
+                value='{"host": "smtp.example.com", "proxy": null, "port": 465}',
+                value_secret_fields=[],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=rec.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-null",
+                slot="arg:tool:proxy",
+                bound_by_user_id=USER_ID,
+                value_path="proxy",
+            )
+
+        tool = SimpleNamespace(
+            id="tool-null",
+            tool_name="server:tool",
+            server_id="srv-null",
+            credential_params='["proxy"]',
+        )
+        denials: dict[str, str] = {}
+        args = await apply_mcp_arg_bindings(
+            tool, {"proxy": "placeholder"}, user_info=USER, denials=denials
+        )
+
+        assert "proxy" in args, "null 也应该被注入，而不是当作取不到"
+        assert args["proxy"] is None
+        assert denials == {}
+
+    async def test_same_secret_is_decrypted_once_per_call(self):
+        """一条凭据供多个参数时，一次调用只解密一次。
+
+        三个参数指向同一条凭据就是三次 RSA 解密，而它们本来就该是同一份明文。
+        """
+        async with AsyncSessionLocal() as session:
+            rec_c = await self._secret(session, "mail.cache.1")
+            secret_id = rec_c.id
+            for name in ("username", "password", "host"):
+                await center.bind_secret(
+                    session,
+                    secret_id=secret_id,
+                    consumer_type="mcp_server",
+                    consumer_id="srv-cache",
+                    slot=f"arg:query:{name}",
+                    bound_by_user_id=USER_ID,
+                    value_path=name,
+                )
+
+        calls = []
+        original = secret_resolver._decrypt
+
+        def counting(ciphertext):
+            calls.append(ciphertext)
+            return original(ciphertext)
+
+        tool = SimpleNamespace(
+            id="tool-cache",
+            tool_name="server:query",
+            server_id="srv-cache",
+            credential_params='["username", "password", "host"]',
+        )
+        monkeypatch_decrypt = counting
+        secret_resolver._decrypt = staticmethod(monkeypatch_decrypt)
+        try:
+            args = await apply_mcp_arg_bindings(tool, {}, user_info=USER)
+        finally:
+            secret_resolver._decrypt = staticmethod(original)
+
+        assert args["username"] == "alert-bot@nanzi.ai"
+        assert args["password"] == "Sup3rSecret!2026"
+        assert args["host"] == "smtp.exmail.qq.com"
+        assert len(calls) == 1, f"同一次调用解密了 {len(calls)} 次"
+
+
+class TestBindingPicksField:
+    """绑定声明了 ``value_path`` 时只注那一段，绝不整段 JSON 外发。
+
+    「整段给」在单值凭据上是对的，在结构化凭据上几乎必然错：调用方拿到
+    `{"host":…,"password":…}` 当密码用，错误点还离配置处很远。
+    """
+
+    JSON_VALUE = (
+        '{"host": "smtp.exmail.qq.com", "port": 465, '
+        '"username": "alert-bot@nanzi.ai", "password": "Sup3rSecret!2026"}'
+    )
+
+    async def _structured_secret(
+        self,
+        session,
+        key: str,
+        *,
+        template: str = "smtp",
+        hosts=("mcp.example.com",),
+        name: str = "告警邮箱",
+    ):
+        return await center.create_secret(
+            session,
+            owner_id=USER_ID,
+            secret_key=key,
+            name=name,
+            value=self.JSON_VALUE,
+            allowed_scenarios=[SCENE_MCP, SCENE_API_TOOL],
+            # arg 位点没有可解析的目标域名（工具记录不在库里），那条用例不设白名单
+            allowed_hosts=list(hosts),
+            value_format="json",
+            value_template=template,
+            value_secret_fields=["password"],
+        )
+
+    async def test_header_credential_placeholder_injects_only_that_field(self):
+        """``${CREDENTIAL:key}`` + value_path=password → 注入的是密码，不是整段 JSON。"""
+        async with AsyncSessionLocal() as session:
+            secret = await self._structured_secret(session, "mail.pick.a")
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-pick-a",
+                slot="header:Authorization",
+                bound_by_user_id=USER_ID,
+                value_path="password",
+            )
+
+        server = SimpleNamespace(
+            id="srv-pick-a", server_name="pick-a", sse_url="https://mcp.example.com/sse"
+        )
+        denials: dict[str, str] = {}
+        headers = await apply_mcp_bindings(
+            server, {"Authorization": "${CREDENTIAL:mail.pick.a}"}, user_info=USER, denials=denials
+        )
+
+        assert headers["Authorization"] == "Sup3rSecret!2026"
+        assert "host" not in headers["Authorization"]
+        assert denials == {}
+
+    async def test_explicit_reference_wins_over_binding_path(self):
+        """值里写了字段引用时以引用为准：同一凭据可以给不同槽位取不同字段。"""
+        async with AsyncSessionLocal() as session:
+            secret = await self._structured_secret(session, "mail.pick.b")
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-pick-b",
+                slot="header:Authorization",
+                bound_by_user_id=USER_ID,
+                value_path="password",
+            )
+
+        server = SimpleNamespace(
+            id="srv-pick-b", server_name="pick-b", sse_url="https://mcp.example.com/sse"
+        )
+        headers = await apply_mcp_bindings(
+            server,
+            {"Authorization": "Bearer ${secret:mail.pick.b.host}"},
+            user_info=USER,
+        )
+
+        assert headers["Authorization"] == "Bearer smtp.exmail.qq.com"
+
+    async def test_missing_field_is_denied_not_sent_whole(self):
+        """字段后来被删掉时记拒绝、保留原值——**不能**退回整段 JSON 发出去。"""
+        async with AsyncSessionLocal() as session:
+            secret = await self._structured_secret(session, "mail.pick.c")
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-pick-c",
+                slot="header:Authorization",
+                bound_by_user_id=USER_ID,
+                value_path="password",
+            )
+            # 轮换成没有 password 的结构，模拟「绑定时有、后来没了」
+            await center.rotate_secret(
+                session,
+                secret_id=secret.id,
+                new_value='{"host": "smtp.exmail.qq.com"}',
+                rotated_by=USER_ID,
+            )
+
+        server = SimpleNamespace(
+            id="srv-pick-c", server_name="pick-c", sse_url="https://mcp.example.com/sse"
+        )
+        denials: dict[str, str] = {}
+        headers = await apply_mcp_bindings(
+            server, {"Authorization": "${CREDENTIAL:mail.pick.c}"}, user_info=USER, denials=denials
+        )
+
+        assert headers["Authorization"] == "${CREDENTIAL:mail.pick.c}"
+        assert denials.get("header:Authorization") == "reference_field_missing"
+
+    async def test_mcp_arg_gets_only_the_field(self):
+        """MCP 工具参数是整值注入，字段选取只能靠绑定里的 value_path。"""
+        # credential_params 是**参数名数组**；槽位由工具短名 + 参数名推出来
+        tool = SimpleNamespace(
+            id="tool-pick",
+            server_id="srv-pick-d",
+            tool_name="server:query-customer",
+            credential_params='["api_key"]',
+        )
+        async with AsyncSessionLocal() as session:
+            secret = await self._structured_secret(session, "mail.pick.d", hosts=())
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-pick-d",
+                slot="arg:query-customer:api_key",
+                bound_by_user_id=USER_ID,
+                value_path="password",
+            )
+
+        result = await apply_mcp_arg_bindings(tool, {"keyword": "x"}, user_info=USER)
+
+        assert result["api_key"] == "Sup3rSecret!2026"
+
+    async def test_rule_binding_also_takes_a_field(self):
+        """规则只决定「哪一条凭据」，取哪个字段仍由绑定声明——命中后照样按它取。"""
+        async with AsyncSessionLocal() as session:
+            # name 设成 user_id，好让规则按 user.user_id 精确命中它
+            secret = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mail.pick.e",
+                name=USER_ID,
+                value=self.JSON_VALUE,
+                allowed_scenarios=[SCENE_MCP, SCENE_API_TOOL],
+                allowed_hosts=["mcp.example.com"],
+                value_format="json",
+                value_template="smtp",
+                value_secret_fields=["password"],
+            )
+            await center.bind_secret(
+                session,
+                secret_id=secret.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-pick-e",
+                slot="header:Authorization",
+                bound_by_user_id=USER_ID,
+                value_path="password",
+            )
+            # 同槽位再挂一条规则，规则自己也约定「取 password」
+            await center.bind_rule(
+                session,
+                consumer_type="mcp_server",
+                consumer_id="srv-pick-e",
+                slot="header:Authorization",
+                rule={"key_source": "user.user_id", "target": "name", "match": "exact"},
+                bound_by_user_id=USER_ID,
+                value_path="password",
+            )
+
+        server = SimpleNamespace(
+            id="srv-pick-e", server_name="pick-e", sse_url="https://mcp.example.com/sse"
+        )
+        headers = await apply_mcp_bindings(
+            server, {"Authorization": "${CREDENTIAL:mail.pick.e}"}, user_info=USER
+        )
+
+        # 规则命中也按 value_path 取字段：规则挑中的凭据结构未必一致，
+        # 但「取哪个字段」是规则自己要声明的约定
+        assert headers["Authorization"] == "Sup3rSecret!2026"
+
+    async def test_rule_without_field_rejects_structured_secret(self):
+        """规则命中结构化凭据但没声明字段 → 不注入整段 JSON。
+
+        整份 JSON 注进 Authorization 只会让对方回 401 或 400，而界面上看不出
+        是「少配了一个字段」。
+        """
+        async with AsyncSessionLocal() as session:
+            secret = await self._structured_secret(session, "mail.pick.f", name=USER_ID)
+            await center.bind_rule(
+                session,
+                consumer_type="mcp_server",
+                consumer_id="srv-pick-f",
+                slot="header:Authorization",
+                rule={"key_source": "user.user_id", "target": "name", "match": "exact"},
+                bound_by_user_id=USER_ID,
+            )
+
+        server = SimpleNamespace(
+            id="srv-pick-f", server_name="pick-f", sse_url="https://mcp.example.com/sse"
+        )
+        denials: dict[str, str] = {}
+        headers = await apply_mcp_bindings(
+            server,
+            {"Authorization": "${CREDENTIAL:mail.pick.f}"},
+            user_info=USER,
+            denials=denials,
+        )
+
+        assert headers["Authorization"] == "${CREDENTIAL:mail.pick.f}"
+        assert denials["header:Authorization"] == "structured_without_path"
+
+
+class TestPrefixedCredentialPlaceholder:
+    """`Bearer ${CREDENTIAL:key}` 这种「前缀 + 占位符」是 header 编辑器的默认产物。
+
+    它既不能被当成「用户手填的真值」发出去，也不能因为不匹配整段前缀就在
+    未绑定时被放过——两边的判断都得认片段形态。
+    """
+
+    def test_looks_unfilled_sees_a_fragment(self):
+        from app.services.secrets.injection import _looks_unfilled
+
+        assert _looks_unfilled("${CREDENTIAL:mail.gov}") is True
+        assert _looks_unfilled("Bearer ${CREDENTIAL:mail.gov}") is True
+        # 真实值不能被误判成待填——否则用户手填的 header 会被清掉
+        assert _looks_unfilled("Bearer sk-live-abcdef") is False
+
+    def test_unresolved_headers_catches_the_fragment(self):
+        from app.services.ai.tools.tool_credentials import (
+            unbound_reason,
+            unresolved_credential_headers,
+        )
+
+        headers = {"Authorization": "Bearer ${CREDENTIAL:platform.mail}", "X-Trace": "abc"}
+        assert unresolved_credential_headers(headers) == ["Authorization"]
+        assert unbound_reason("Bearer ${CREDENTIAL:platform.mail}") == "credential_unbound"
+
+    async def test_prefixed_value_still_injects_with_prefix(self):
+        """有绑定时整段渲染：认证方案保留，只替换占位符那一截。"""
+        from app.services.secrets.injection import _render_reference
+
+        rendered = _render_reference(
+            "Bearer ${CREDENTIAL:platform.mail}",
+            "MyOwnPwd!2026",
+            secret_key="platform.mail",
+            slot="header:Authorization",
+            denials={},
+            value_path="",
+        )
+        assert rendered == "Bearer MyOwnPwd!2026"
+
+
+class TestDenialReasonWithoutCollector:
+    """不传 denials 时，流水里也要能看出真实拒因。
+
+    五个注入入口的 `denials` 都是可选参数。传 None 时 `_record` 什么都不写，
+    最后 `mark_usage_failed` 只能退回通用码 `reference_unresolved`——
+    事后翻流水只知道「失败了」，分不清是「结构化凭据没选字段」还是「字段不存在」。
+    """
+
+    def test_every_entry_prepares_a_collector(self):
+        """契约：每个对外注入入口进来先补一个局部字典。
+
+        行为测试很难覆盖——这些入口都要查库，而「不传 denials」恰恰是生产上
+        不会发生的调用方式（六个调用点都传了）。但接口既然允许省略，就不能
+        让流水记错原因，所以用契约钉住。
+        """
+        from pathlib import Path
+
+        source = Path("app/services/secrets/injection.py").read_text(encoding="utf-8")
+        entries = [
+            "apply_api_tool_bindings",
+            "apply_api_tool_param_bindings",
+            "apply_mcp_bindings",
+            "apply_mcp_arg_bindings",
+            "apply_script_env_bindings",
+        ]
+        for name in entries:
+            body = source.split(f"async def {name}(")[1].split("\nasync def ")[0]
+            assert "if denials is None:" in body, f"{name} 没有给 denials 兜底"
+
+    def test_missing_field_records_a_specific_reason(self):
+        """真实拒因是具体的，不是通用码。"""
+        from app.services.secrets.injection import _apply_value_path
+
+        denials: dict[str, str] = {}
+        picked = _apply_value_path(
+            '{"host": "h"}',
+            "nope",
+            slot="arg:tool:proxy",
+            denials=denials,
+            value_format="json",
+        )
+        from app.services.secrets.injection import _MISSING
+
+        assert picked is _MISSING
+        assert denials["arg:tool:proxy"] == "reference_field_missing"

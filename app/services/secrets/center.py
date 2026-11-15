@@ -14,13 +14,14 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Sequence
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from sqlalchemy import and_, delete, or_, select
 
@@ -61,6 +62,7 @@ VALID_CONSUMER_TYPES = frozenset({"mcp_server", "api_tool", "script_tool", "agen
 # 但运行时永远不会被读到——用户以为配好了，调用时才发现没生效，而且没有任何报错。
 async def _audit(
     *,
+    enabled: bool = True,
     action: str,
     secret,
     actor_id: str | None,
@@ -78,6 +80,9 @@ async def _audit(
 
     任何异常都被吞掉，只记日志。
     """
+    if not enabled:
+        return
+
     import json as _json
     import uuid as _uuid
 
@@ -182,7 +187,9 @@ VALID_VALUE_FORMATS = frozenset({VALUE_FORMAT_TEXT, VALUE_FORMAT_JSON})
 
 #: 模板标识的合法字符集（``smtp`` / ``api-key`` / ``aliyun-oss``）。
 #: 模板定义在前端常量里，后端只存这个标识用于回显，不校验字段结构。
-_TEMPLATE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+# 首字符必须是小写字母（模板标识要能被当成标识符的一部分）。
+# 与 locator._TEMPLATE_ID_RE 保持一致，见那边的说明。
+_TEMPLATE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 #: 摘要最多拼几个字段、单段长度、整体长度（DB 列 160，留出分隔符余量）。
 SUMMARY_MAX_FIELDS = 3
@@ -281,6 +288,9 @@ _SENSITIVE_KEY_WORDS = frozenset(
         "secret", "token", "key", "apikey",
         "privatekey", "credential", "credentials",
         "signature", "salt", "cookie", "session", "dsn",
+        # 下面这些按词拆不出来：appsecret 是一个整词、webhook 看着像普通地址、
+        # pin/passcode 是短口令。模板里它们都标了 secret，后端得认得出。
+        "appsecret", "secretkey", "accesskey", "webhook", "pin", "passcode",
     }
 )
 
@@ -343,6 +353,35 @@ def _looks_like_credentialed_url(text: str) -> bool:
     # 也不要把可能是账密的东西写进摘要列。
     tail = head.split("://", 1)[1]
     return "@" in tail and ":" in tail.split("@")[0]
+
+
+#: URL 查询参数里出现这些名字，说明这段地址本身就是凭证。
+#:
+#: 企业微信 / 钉钉 / 飞书的 webhook 把 ``key`` ``access_token`` 直接写在 query 上，
+#: 键名却叫 ``webhook_url`` —— 词根看不出敏感，``_looks_like_credentialed_url``
+#: 只看 ``user:pass@`` 也看不出来。漏了这条，字段预览会把整段 webhook 明文吐出来。
+_CREDENTIAL_QUERY_KEYS = frozenset(
+    {
+        "key", "token", "access_token", "accesstoken", "secret", "sig", "sign",
+        "signature", "api_key", "apikey", "auth", "password", "pwd", "code",
+    }
+)
+
+
+def _looks_like_secret_url(text: str) -> bool:
+    """地址的 query 里带着 ``key=`` ``access_token=`` 这类参数就当凭证看。"""
+    if "://" not in text:
+        return False
+    head = text.split()[0] if text.split() else ""
+    try:
+        parts = urlsplit(head)
+    except ValueError:
+        return False
+    try:
+        pairs = parse_qsl(parts.query, keep_blank_values=False)
+    except ValueError:
+        return True  # 解析不了就别冒险预览
+    return any(name.strip().lower() in _CREDENTIAL_QUERY_KEYS for name, _ in pairs)
 
 
 _SUMMARY_SKIP_KEYS = frozenset(
@@ -607,6 +646,148 @@ async def rotate_secret(
     return row
 
 
+#: 字段预览的长度上限：够辨认（``smtp.exmail.qq.com``），又不至于把整段
+#: 配置摊在屏幕上。
+_FIELD_PREVIEW_LIMIT = 60
+
+
+async def describe_value_fields(
+    session,
+    *,
+    secret_id: str,
+    user_id: str,
+    dept_code: str | None = None,
+) -> dict[str, Any]:
+    """列出一条凭据「可以取哪几部分」，供绑定时的字段选择器使用。
+
+    这是使用侧的关键一步：结构化凭据能选字段，用户才不必去猜 JSON 长什么样。
+
+    边界：**敏感字段只给名字，不给值**。字段选择器拿到名字就能生成引用，把值一起
+    返回等于在「凭据不可读」这条线上开了个口子——尤其 ``credential`` 类型连创建者
+    都看不到明文。非敏感字段给一段预览，纯粹是为了让人认出「这个是端口」。
+    """
+    visible = await list_visible_secrets(
+        session, user_id=user_id, dept_code=dept_code, only_active=False
+    )
+    row = next((item for item in visible if item.id == secret_id), None)
+    if row is None:
+        raise SecretPermissionError("凭据不存在")
+
+    payload: dict[str, Any] = {
+        "id": row.id,
+        "secret_key": row.secret_key,
+        "name": row.name,
+        "format": row.value_format or "text",
+        "template": row.value_template or "",
+        "kind": row.secret_type,
+        "fields": [],
+    }
+    if payload["format"] != "json":
+        # 单值凭据没有字段可选，前端据此直接隐藏字段选择器
+        return payload
+
+    try:
+        plaintext = get_api_key_manager().decrypt_api_key(row.value_encrypted)
+        data = parse_structured_value(plaintext)
+    except Exception:  # noqa: BLE001 - 解不开/不是对象就当「没有可选字段」
+        logger.warning("[SecretCenter] 凭据 %s 的字段清单读取失败", secret_id)
+        return payload
+
+    fields: list[dict[str, Any]] = []
+
+    def walk(node: Any, prefix: str, depth: int) -> None:
+        """把 JSON 摊平成「路径 → 可选项」，**对象本身也是一项**。
+
+        对象节点也要列出来：用户可能就是要整段 `auth`（执行期 pick_field_typed
+        取到对象会序列化成紧凑 JSON），只列叶子等于替他做了决定。
+
+        上限是必要的：一份几十键的配置展开成三层就是上千项，下拉框会卡住，
+        也没人能在里面找到东西。到顶时保留该节点本身，仍可选整段。
+        """
+        if len(fields) >= _MAX_FIELD_ITEMS:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                # 检查必须放在循环**开头**：子结构递归回来时可能已经满了，
+                # 只在 append 前拦的话，外层剩下的兄弟键会继续追加，
+                # 200 条的上限照样被穿透。
+                if len(fields) >= _MAX_FIELD_ITEMS:
+                    return
+                path = f"{prefix}.{key}" if prefix else str(key)
+                # 敏感性按整条路径判：`db.password` 的 password 要命中，
+                # 只看最后一段会漏掉 `auth.apiKey` 这类前缀无关的写法。
+                sensitive = _is_sensitive_key(path)
+                if isinstance(value, (dict, list)) and depth + 1 < _MAX_FIELD_DEPTH and value:
+                    fields.append(
+                        {
+                            "name": path,
+                            "sensitive": sensitive,
+                            "preview": "",
+                            "kind": "object" if isinstance(value, dict) else "array",
+                        }
+                    )
+                    if len(fields) >= _MAX_FIELD_ITEMS:
+                        return
+                    if isinstance(value, dict):
+                        walk(value, path, depth + 1)
+                    else:
+                        # 数组按元素展开：只列下标不列内容，元素是对象时继续往下
+                        for index, item in enumerate(value):
+                            if len(fields) >= _MAX_FIELD_ITEMS:
+                                return
+                            item_path = f"{path}.{index}"
+                            if isinstance(item, (dict, list)):
+                                fields.append(
+                                    {
+                                        "name": item_path,
+                                        "sensitive": sensitive,
+                                        "preview": "",
+                                        "kind": "object" if isinstance(item, dict) else "array",
+                                    }
+                                )
+                                if isinstance(item, dict) and depth + 2 < _MAX_FIELD_DEPTH:
+                                    walk(item, item_path, depth + 2)
+                            else:
+                                fields.append(
+                                    _leaf(item_path, item, sensitive)
+                                )
+                            if len(fields) >= _MAX_FIELD_ITEMS:
+                                return
+                    continue
+                fields.append(_leaf(path, value, sensitive))
+
+    walk(data, "", 0)
+    payload["fields"] = fields
+    return payload
+
+
+def _leaf(path: str, value: Any, sensitive: bool) -> dict[str, Any]:
+    """叶子字段：非敏感标量给一段预览，其余只给名字。
+
+    键名没命中不等于值安全。这里和 ``build_value_summary`` 用同一套兜底：
+    值本身像密钥、像内嵌账密的地址、或地址里带着凭证参数，一律不预览。
+    字段选择器只需要名字就能生成引用，给不出预览不损失任何功能。
+    """
+    preview = ""
+    if not sensitive and isinstance(value, (str, int, float, bool)):
+        text = str(value)
+        blocked = isinstance(value, str) and (
+            _looks_like_secret(text)
+            or _looks_like_credentialed_url(text)
+            or _looks_like_secret_url(text)
+        )
+        if not blocked:
+            if len(text) > _FIELD_PREVIEW_LIMIT:
+                text = text[:_FIELD_PREVIEW_LIMIT] + "…"
+            preview = text
+    return {
+        "name": path,
+        "sensitive": sensitive,
+        "preview": preview,
+        "kind": "array" if isinstance(value, list) else ("object" if isinstance(value, dict) else "scalar"),
+    }
+
+
 async def bind_secret(
     session,
     *,
@@ -617,8 +798,24 @@ async def bind_secret(
     bound_by_user_id: str | None,
     dept_code: str = "",
     actor_id: str | None = None,
-) -> SecretBinding:
-    """把一个槽位绑到一条凭据上。同一槽位重复绑定视为「改绑」。"""
+    value_path: str = "",
+    allow_whole: bool = False,
+    dry_run: bool = False,
+    commit: bool = True,
+    #: 批量保存时传 False，由调用方在事务提交后统一补写（见下方注释）
+    audit: bool = True,
+    #: 调用方是不是管理员。只有管理员能把**系统级**凭据设成全局绑定。
+    #: 权限判断放在这里而不是接口层：接口层看不到凭据作用域，只能对整批一刀切，
+    #: 于是「管理员拿个人凭据绑平台级工具」也会被当成越权拒掉。
+    allow_global: bool = True,
+) -> SecretBinding | None:
+    """把一个槽位绑到一条凭据上。同一槽位重复绑定视为「改绑」。
+
+    ``value_path`` 指定只取凭据的哪一部分（结构化凭据必须给，或者显式
+    ``allow_whole=True`` 声明「就要整段 JSON」）。为什么强制选：把一条 SMTP 凭据
+    整段注进 ``smtp_password`` 参数，调用方拿到的是 ``{"host":…,"password":…}``，
+    必然失败；失败点还离配置处很远，排查要翻运行日志。
+    """
     if consumer_type not in VALID_CONSUMER_TYPES:
         raise SecretValidationError(f"未知的消费者类型: {consumer_type}")
     if not consumer_id or not slot:
@@ -644,8 +841,19 @@ async def bind_secret(
     # 普通用户绑定系统级凭据时，绑定只对自己生效（bound_by_user_id 落成自己，
     # 解析时按主体过滤），但必须先被授权。
     if bound_by_user_id is None:
+        if secret.owner_scope == SCOPE_SYSTEM and not allow_global:
+            raise SecretPermissionError("只有管理员可以设置全局绑定")
         if secret.owner_scope != SCOPE_SYSTEM:
-            raise SecretValidationError("只有系统级凭据可以设为全局绑定")
+            # 个人凭据**不可能**给所有人用，但这里不该直接拒绝：
+            # 管理员给平台级工具配自己的凭据是正常操作（先用自己的账号跑通，
+            # 再换成平台账号），拒掉等于逼他先建一条系统级凭据再删掉。
+            # 降级成本人绑定——语义从「给所有人」变成「只对我生效」，
+            # 不越权（绑定仍指向他自己的凭据），也解释得通。
+            # 必须落到**非空**的本人标识：空串在这套模型里代表「全局」
+            # （见下方的 owner_key），降级成空串等于把个人凭据绑成了全局。
+            bound_by_user_id = actor_id or secret.owner_id
+            if not bound_by_user_id:
+                raise SecretValidationError("只有系统级凭据可以设为全局绑定")
     elif secret.owner_scope == SCOPE_USER and secret.owner_id != bound_by_user_id:
         raise SecretValidationError("不能绑定他人的凭据")
     elif secret.owner_scope == SCOPE_SYSTEM:
@@ -661,10 +869,35 @@ async def bind_secret(
         if secret.id not in {item.id for item in visible}:
             raise SecretPermissionError("凭据不存在")
 
+    # 字段路径与凭据形态必须对得上：单值凭据没有字段可取，结构化凭据整段给出
+    # 又几乎必然是错的。两道都在这里拦，避免绑定成功、运行时才失败。
+    value_path = normalize_value_path(value_path)
+    if secret.value_format == "json":
+        # header 位点的值里可以写 ``${secret:key.field}``——字段由引用表达，
+        # 绑定层不必重复一遍，否则「同一条凭据给不同槽位取不同字段」这种用法会被堵死。
+        # 其它位点（参数 / arg / env）是整值注入，没有引用可写，必须在这里选定。
+        need_explicit = prefix != "header"
+        if not value_path and need_explicit and not allow_whole:
+            raise SecretValidationError(
+                "这条凭据是结构化的，请选择要取用的字段；确实要整段 JSON 请显式确认"
+            )
+        if value_path:
+            _ensure_value_path_exists(secret, value_path)
+    elif value_path:
+        raise SecretValidationError("这是单值凭据，没有可选字段")
+
     # 「全局绑定」用空串表示，不用 NULL：唯一索引 uk_binding_slot 含这一列，
     # 而 NULL 在唯一索引里互不相等（多行 NULL 允许共存），等于没有约束。
     # 空串让索引真正生效，两个请求同时绑也只能留下一条。
     owner_key = bound_by_user_id or ""
+
+    if dry_run:
+        # 只跑校验：批量保存要先确认每一条都能过，再一起落库，否则「选了 5 个参数，
+        # 3 个成功 2 个失败」这种半成品最难收拾。
+        # 位置必须在这里——前面是纯校验（凭据存在、路径字段合法），后面紧接 `delete`。
+        # 放到 delete 之后再返回的话，dry_run 这一轮就已经把旧绑定删掉了，
+        # 「校验失败时什么都没写」这句话就不成立。
+        return None
 
     # 同一槽位同一绑定者只保留一条：先删后插，避免唯一索引冲突
     await session.execute(
@@ -694,11 +927,13 @@ async def bind_secret(
         consumer_id=consumer_id,
         slot=slot,
         bound_by_user_id=owner_key,
+        value_path=value_path,
     )
     session.add(binding)
     # 全局绑定时 bound_by_user_id 为 None，若不显式透传 actor_id 会丢失操作人。
     audit_actor_id = actor_id if actor_id is not None else bound_by_user_id
     await _audit(
+        enabled=audit,
         action="bind",
         secret=secret,
         actor_id=audit_actor_id,
@@ -708,10 +943,90 @@ async def bind_secret(
             "slot": slot,
             # 为空表示管理员全局绑定；有值就是「只对这个人生效」
             "global": not owner_key,
+            # 取了哪一部分。审计里要能回答「这次把密码绑到哪了」
+            "value_path": value_path,
         },
     )
-    await session.commit()
+    # ``commit=False`` 给批量保存用：逐条提交的话，第 4 条失败时前 3 条已经落库，
+    # 「要么全成要么全不成」就成了空话。这种情况下审计也要跟着延后
+    # （``audit=False``），由调用方在提交成功之后补写——审计记了没发生的操作，
+    # 比漏记更误导。
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return binding
+
+
+#: 字段路径允许的写法：点分隔的段，**后续段允许纯数字**（数组下标）。
+#:
+#: 首页键不能是数字，但 ``list.0.id`` 这种必须放行——执行期 ``pick_field_typed``
+#: 早就支持逐段走数组了，只在配置期拦住等于「运行时能跑，界面配不出来」。
+#: 仍然拦住 ``a[0]``、空格、通配符这类「看起来像路径但解析不了」的写法。
+#: 字段清单展开的上限：层数与条目数。一份几十键的配置摊到三层就是上千项，
+#: 下拉框会卡死，也没人能在里面找到东西。
+_MAX_FIELD_DEPTH = 3
+_MAX_FIELD_ITEMS = 200
+
+_VALUE_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*$")
+
+
+def normalize_value_path(value_path: str | None) -> str:
+    """规范化字段路径；空串表示「整段」。格式不对直接拒绝。"""
+    path = (value_path or "").strip()
+    if not path:
+        return ""
+    if not _VALUE_PATH_RE.match(path):
+        raise SecretValidationError(
+            "字段路径只能是用点分隔的名字，如 password / auth.token"
+        )
+    return path
+
+
+def _ensure_value_path_exists(secret: UserSecret, value_path: str) -> None:
+    """绑定前确认这个字段真的在凭据里。
+
+    要解密一次，但值得：字段写错时，错误应该出现在**点保存的那一刻**，而不是
+    几小时后调用方报 401。名字打错时给出最接近的候选，省得自己去翻 JSON。
+    """
+    try:
+        plaintext = get_api_key_manager().decrypt_api_key(secret.value_encrypted)
+    except Exception:  # noqa: BLE001 - 解不开就别卡住绑定，运行时还有一道
+        logger.warning("[SecretCenter] 绑定时无法解密凭据 %s，跳过字段校验", secret.id)
+        return
+    try:
+        data = parse_structured_value(plaintext)
+    except SecretValidationError:
+        # 标记成 json 但内容不是对象（历史脏数据）：运行时 pick_field 会拒，
+        # 这里不重复报错，否则这类凭据连绑都绑不上。
+        return
+    # 逐段走完整条路径，而不是只看顶层：`auth.token` 的顶层 `auth` 存在、
+    # 但 `token` 拼错时，只查顶层会放行，错误要等到几小时后调用方报错才出现。
+    current: Any = data
+    walked: list[str] = []
+    for segment in value_path.split("."):
+        walked.append(segment)
+        where = ".".join(walked)
+        if isinstance(current, dict):
+            if segment not in current:
+                candidates = difflib.get_close_matches(
+                    segment, [str(k) for k in current], n=3, cutoff=0.5
+                )
+                hint = f"，你是不是想用：{'、'.join(candidates)}" if candidates else ""
+                prefix = ".".join(walked[:-1])
+                where = f"{prefix}.{segment}" if prefix else segment
+                raise SecretValidationError(f"这条凭据里没有字段 {where}{hint}")
+            current = current[segment]
+        elif isinstance(current, list):
+            if not segment.isdigit():
+                raise SecretValidationError(f"{where} 是数组，只能按下标取（如 {where}.0）")
+            if int(segment) >= len(current):
+                raise SecretValidationError(
+                    f"{where} 下标越界：这个数组只有 {len(current)} 项"
+                )
+            current = current[int(segment)]
+        else:
+            raise SecretValidationError(f"{where} 不是一个对象，没法继续往下取字段")
 
 
 async def bind_rule(
@@ -723,7 +1038,14 @@ async def bind_rule(
     rule: dict | str | None,
     bound_by_user_id: str | None,
     actor_id: str | None = None,
-) -> SecretBinding:
+    value_path: str = "",
+    dry_run: bool = False,
+    commit: bool = True,
+    audit: bool = True,
+    #: 调用方是不是管理员。规则不指向凭据，但「全局规则」照样影响所有人，
+    #: 必须同样受权限约束——否则普通用户一句请求就能改掉全平台的取数规则。
+    allow_global: bool = True,
+) -> SecretBinding | None:
     """把一个槽位绑到「一条定位规则」上（``strategy='rule'``，无 ``secret_id``）。
 
     与 ``bind_secret`` 分开而不是给它加参数：固定绑定要校验凭据归属与授权，
@@ -732,6 +1054,10 @@ async def bind_rule(
 
     规则里**不能出现 secret_id**：``parse_rule`` 拒绝未知字段，所以改一条规则
     永远变不成「读别人凭据」的手段。
+
+    ``value_path``：命中的凭据要取哪个字段。**只校验格式，不校验字段是否存在**——
+    命中哪条凭据运行时才知道，此刻没有地方去查。字段缺失会在注入时明确失败，
+    而不是把整份 JSON 注进去。
     """
     from app.services.secrets.locator import RuleError, parse_rule
 
@@ -751,10 +1077,20 @@ async def bind_rule(
             + " / ".join(sorted(allowed))
         )
 
+    if bound_by_user_id is None and not allow_global:
+        raise SecretPermissionError("只有管理员可以设置全局绑定")
+
+    path = normalize_value_path(value_path)
+
     try:
         spec = parse_rule(rule)
     except RuleError as exc:
         raise SecretValidationError(str(exc)) from exc
+
+    if dry_run:
+        # 与 bind_secret 同口径：批量保存要先确认每一条都合法，再一起写。
+        # 规则不指向具体凭据，所以这里没有「凭据是否存在」这类校验。
+        return None
 
     # 只落归一号过的字段，不原样存用户传进来的 dict：避免把未知字段
     # （尤其是 secret_id）持久化下来，将来被读规则的代码误用。
@@ -766,6 +1102,9 @@ async def bind_rule(
             "target": spec.target,
             "match": spec.match,
             "on_miss": spec.on_miss,
+            # 模板约束属于「结构约定」，是规则的一部分；取用字段写进绑定列
+            # （和固定绑定同一列），注入层就不用关心它是哪种策略。
+            **({"value_template": spec.value_template} if spec.value_template else {}),
         },
         ensure_ascii=False,
     )
@@ -791,6 +1130,7 @@ async def bind_rule(
         "global": not owner_key,
         # 规则全文进审计：事后要能回答「当时配的是什么」，而不是只知道「配过」
         "rule": json.loads(payload),
+        "value_path": path,
     }
 
     audit_actor_id = actor_id if actor_id is not None else bound_by_user_id
@@ -798,8 +1138,13 @@ async def bind_rule(
         # 同一槽位重配规则 = 改规则，不新增第二条（唯一索引也会拦住）
         existing.rule_json = payload
         existing.secret_id = None
-        await session.commit()
+        existing.value_path = path
+        if commit:
+            await session.commit()
+        else:
+            await session.flush()
         await _audit(
+            enabled=audit,
             action="bind_rule",
             secret=None,
             actor_id=audit_actor_id,
@@ -816,15 +1161,21 @@ async def bind_rule(
         bound_by_user_id=owner_key,
         strategy="rule",
         rule_json=payload,
+        value_path=path,
     )
     session.add(binding)
-    await session.commit()
     await _audit(
+        enabled=audit,
         action="bind_rule",
         secret=None,
         actor_id=audit_actor_id,
         detail=audit_detail,
     )
+    if commit:
+        await session.commit()
+    else:
+        # 批量路径：调用方提交成功后再补写审计（见 bind_secret 的说明）
+        await session.flush()
     return binding
 
 
@@ -893,6 +1244,9 @@ async def unbind_slot(
     bound_by_user_id: str | None,
     strategy: str = "fixed",
     actor_id: str | None = None,
+    commit: bool = True,
+    #: 批量保存时传 False，由调用方在事务提交后统一补写
+    audit: bool = True,
 ) -> int:
     """解绑。返回删除条数（0 表示本来就没绑）。
 
@@ -938,6 +1292,7 @@ async def unbind_slot(
         secret = await session.get(UserSecret, secret_id)
         if secret is not None:
             await _audit(
+                enabled=audit,
                 action="unbind",
                 secret=secret,
                 actor_id=actor_id if actor_id is not None else bound_by_user_id,
@@ -948,7 +1303,10 @@ async def unbind_slot(
                     "removed": result.rowcount or 0,
                 },
             )
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return result.rowcount or 0
 
 

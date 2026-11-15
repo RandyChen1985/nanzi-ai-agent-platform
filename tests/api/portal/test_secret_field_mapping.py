@@ -1,0 +1,884 @@
+"""规则绑定的取用字段 + 一次保存整张映射表。
+
+两块都属于「一条凭据供多个参数」：
+
+1. **规则绑定也要能取字段**：规则挑的是「哪一条凭据」，命中结构化凭据时如果不
+   说明取哪个字段，注进去的是一整份 JSON。规则还能声明模板约束——命中模板不符的
+   凭据按未命中处理，不会拿另一种结构去取字段。
+2. **批量保存要么整张生效，要么一条不动**：映射面板一次提交十几个参数，
+   半成功是最难收拾的结果——界面说保存成功，实际只有一部分参数拿到了凭据。
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+
+import pytest
+
+PREFIX = "/api/portal/secrets"
+
+
+@pytest.fixture
+async def clean_secrets():
+    from app.core.orm import AsyncSessionLocal
+    from tests.secret_test_guard import (
+        purge_created_after,
+        snapshot_secret_ids,
+        snapshot_user_prefs,
+    )
+
+    async with AsyncSessionLocal() as session:
+        keep = await snapshot_secret_ids(session)
+        keep_users = await snapshot_user_prefs(session)
+    try:
+        yield
+    finally:
+        async with AsyncSessionLocal() as session:
+            await purge_created_after(
+                session, keep_secret_ids=keep, keep_user_ids=keep_users
+            )
+
+
+def _headers(api_key: str) -> dict:
+    return {"X-API-Key": api_key}
+
+
+async def _batch(client, api_key: str, items: list[dict], **body):
+    payload = {
+        "consumer_type": "api_tool",
+        "consumer_id": f"tool-{uuid.uuid4().hex[:6]}",
+        **body,
+        "items": items,
+    }
+    return await client.post(f"{PREFIX}/bindings/batch", json=payload, headers=_headers(api_key))
+
+
+async def _create_secret(client, api_key: str, **overrides) -> dict:
+    payload = {
+        "secret_key": f"mail.map.{uuid.uuid4().hex[:8]}",
+        "name": "告警邮箱",
+        "value": json.dumps(
+            {
+                "host": "smtp.exmail.qq.com",
+                "port": 465,
+                "username": "alert-bot@nanzi.ai",
+                "password": "Sup3rSecret!2026",
+            },
+            ensure_ascii=False,
+        ),
+        "secret_type": "credential",
+        "allowed_scenarios": ["api_tool"],
+        "allowed_hosts": [],
+        "value_format": "json",
+        "value_template": "smtp",
+        "value_secret_fields": ["password"],
+    }
+    payload.update(overrides)
+    resp = await client.post(PREFIX, json=payload, headers=_headers(api_key))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]
+
+
+async def _bind_rule(client, api_key: str, **body):
+    payload = {
+        "consumer_type": "api_tool",
+        "consumer_id": f"tool-{uuid.uuid4().hex[:6]}",
+        "slot": "query:mailkey",
+        "strategy": "rule",
+        "rule": {"key_source": "user.user_id", "target": "name", "match": "exact"},
+    }
+    payload.update(body)
+    return await client.post(f"{PREFIX}/bindings", json=payload, headers=_headers(api_key))
+
+
+class TestRuleBindingTakesAField:
+    """规则绑定不指向某一条凭据，但「取哪个字段」仍然是它能声明的事实。"""
+
+    async def test_rule_keeps_value_path(self, client, clean_secrets, valid_api_key):
+        resp = await _bind_rule(client, valid_api_key, value_path="password")
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["value_path"] == "password"
+
+    async def test_rule_persists_value_path_and_shows_it_in_listing(
+        self, client, clean_secrets, valid_api_key
+    ):
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+        await _bind_rule(
+            client, valid_api_key, consumer_id=consumer_id, value_path="password"
+        )
+
+        listed = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+            headers=_headers(valid_api_key),
+        )
+        rows = listed.json()["data"]
+        rule_row = next(r for r in rows if r["strategy"] == "rule")
+        assert rule_row["value_path"] == "password"
+        # 摘要里也要有：列表光看「按部门挑凭据」看不出注进去的是什么
+        assert "password" in (rule_row["rule_summary"] or "")
+
+    async def test_rule_rejects_malformed_path(self, client, clean_secrets, valid_api_key):
+        """规则不能校验「字段是否存在」（凭据是运行时挑的），但格式必须当场拦。"""
+        resp = await _bind_rule(client, valid_api_key, value_path="a[0]")
+
+        assert resp.status_code == 400
+        assert "字段" in resp.json()["detail"]
+
+    async def test_rule_accepts_template_constraint(
+        self, client, clean_secrets, valid_api_key
+    ):
+        rule = {
+            "key_source": "user.user_id",
+            "target": "name",
+            "match": "exact",
+            "value_template": "smtp",
+        }
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+        resp = await _bind_rule(
+            client,
+            valid_api_key,
+            consumer_id=consumer_id,
+            rule=rule,
+            value_path="password",
+        )
+
+        assert resp.status_code == 200, resp.text
+        listed = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+            headers=_headers(valid_api_key),
+        )
+        rows = listed.json()["data"]
+        # 模板约束是规则的一部分，回填时必须原样回来，否则再打开编辑器它就丢了
+        assert rows[0]["rule"]["value_template"] == "smtp"
+
+    async def test_rule_rejects_bad_template_id(self, client, clean_secrets, valid_api_key):
+        rule = {
+            "key_source": "user.user_id",
+            "target": "name",
+            "value_template": "SMTP!",
+        }
+        resp = await _bind_rule(client, valid_api_key, rule=rule)
+
+        assert resp.status_code == 400
+        assert "value_template" in resp.json()["detail"]
+
+    async def test_rule_still_rejects_secret_id_inside_rule(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """规则里永远不能出现具体凭据——否则改规则就成了「读别人凭据」的手段。"""
+        rule = {"key_source": "user.user_id", "secret_id": "s-anything"}
+        resp = await _bind_rule(client, valid_api_key, rule=rule)
+
+        assert resp.status_code == 400
+
+
+class TestBatchBindings:
+    """一张映射表一次保存。"""
+
+    async def _batch(self, client, api_key: str, items: list[dict], **body):
+        payload = {
+            "consumer_type": "api_tool",
+            "consumer_id": f"tool-{uuid.uuid4().hex[:6]}",
+            "items": items,
+        }
+        payload.update(body)
+        return await client.post(
+            f"{PREFIX}/bindings/batch", json=payload, headers=_headers(api_key)
+        )
+
+    async def test_saves_every_row_against_one_secret(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """三个参数都取同一条凭据的不同字段——这正是「一条凭据供多个参数」。"""
+        secret = await _create_secret(client, valid_api_key)
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [
+                {
+                    "slot": "query:username",
+                    "secret_id": secret["id"],
+                    "value_path": "username",
+                },
+                {"slot": "query:mailkey", "secret_id": secret["id"], "value_path": "password"},
+                {"slot": "query:smtphost", "secret_id": secret["id"], "value_path": "host"},
+            ],
+            consumer_id=consumer_id,
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["saved"] == 3
+
+        listed = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+            headers=_headers(valid_api_key),
+        )
+        rows = listed.json()["data"]
+        by_name = {
+            r["slot"].split(":")[-1]: (r["secret_id"], r["value_path"]) for r in rows
+        }
+        assert by_name["username"] == (secret["id"], "username")
+        assert by_name["mailkey"] == (secret["id"], "password")
+        assert by_name["smtphost"] == (secret["id"], "host")
+
+    async def test_one_bad_row_saves_nothing(self, client, clean_secrets, valid_api_key):
+        """有一条不过就整体拒绝：半成功会让界面和库里对不上。"""
+        secret = await _create_secret(client, valid_api_key)
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [
+                {
+                    "slot": "query:username",
+                    "secret_id": secret["id"],
+                    "value_path": "username",
+                },
+                # 这条凭据里没有 nosuchfield
+                {
+                    "slot": "query:mailkey",
+                    "secret_id": secret["id"],
+                    "value_path": "nosuchfield",
+                },
+            ],
+            consumer_id=consumer_id,
+        )
+
+        assert resp.status_code == 400
+        assert "未保存任何改动" in resp.json()["detail"]
+
+        listed = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+            headers=_headers(valid_api_key),
+        )
+        assert listed.json()["data"] == []
+
+    async def test_empty_secret_id_unbinds_that_row(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """映射表里被清空的那行 = 这个参数不再由该凭据提供。"""
+        secret = await _create_secret(client, valid_api_key)
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+        await self._batch(
+            client,
+            valid_api_key,
+            [
+                {
+                    "slot": "query:username",
+                    "secret_id": secret["id"],
+                    "value_path": "username",
+                },
+                {"slot": "query:mailkey", "secret_id": secret["id"], "value_path": "password"},
+            ],
+            consumer_id=consumer_id,
+        )
+
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [
+                {
+                    "slot": "query:username",
+                    "secret_id": secret["id"],
+                    "value_path": "username",
+                },
+                {"slot": "query:mailkey", "secret_id": ""},
+            ],
+            consumer_id=consumer_id,
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["removed"] == 1
+
+        listed = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+            headers=_headers(valid_api_key),
+        )
+        slots = [r["slot"] for r in listed.json()["data"]]
+        assert all(not s.endswith(":mailkey") for s in slots)
+
+    async def test_name_without_known_tool_is_rejected_clearly(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """只给参数名时槽位要靠工具配置推（GET 走 query、POST 走 body）。
+
+        工具还没保存过就推不出来——这时要明说「工具不存在」，
+        而不是记成一条槽位为空的绑定。
+        """
+        secret = await _create_secret(client, valid_api_key)
+
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [{"name": "username", "secret_id": secret["id"], "value_path": "username"}],
+        )
+
+        assert resp.status_code == 400
+        assert "工具不存在" in resp.json()["detail"]
+
+    async def test_mcp_rows_take_explicit_slots(self, client, clean_secrets, valid_api_key):
+        """MCP 参数的槽位前端能算（``arg:短工具名:参数名``），给了就直接用。"""
+        secret = await _create_secret(
+            client, valid_api_key, allowed_scenarios=["mcp"]
+        )
+        consumer_id = f"srv-{uuid.uuid4().hex[:6]}"
+
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [
+                {
+                    "slot": "arg:send_mail:mailkey",
+                    "secret_id": secret["id"],
+                    "value_path": "password",
+                }
+            ],
+            consumer_type="mcp_server",
+            consumer_id=consumer_id,
+        )
+
+        assert resp.status_code == 200, resp.text
+
+        listed = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "mcp_server", "consumer_id": consumer_id},
+            headers=_headers(valid_api_key),
+        )
+        rows = listed.json()["data"]
+        assert len(rows) == 1
+        assert rows[0]["slot"] == "arg:send_mail:mailkey"
+        assert rows[0]["value_path"] == "password"
+
+
+class TestBatchRuleRows:
+    """多值凭据的「按规则」来源：一次提交，每个参数各自取不同字段。
+
+    规则和单值是同一条规则——只是每个参数多了「取哪个字段」。所以整组写 N 条
+    规则绑定（规则 JSON 相同、value_path 不同），运行时各槽位独立求值但必然
+    命中同一条凭据（规则确定性 + 同一次调用身份不变）。
+    """
+
+    async def _batch(self, client, api_key: str, items: list[dict], **body):
+        payload = {
+            "consumer_type": "api_tool",
+            "consumer_id": f"tool-{uuid.uuid4().hex[:6]}",
+            "items": items,
+        }
+        payload.update(body)
+        return await client.post(
+            f"{PREFIX}/bindings/batch", json=payload, headers=_headers(api_key)
+        )
+
+    async def test_each_param_gets_the_same_rule_with_its_own_field(
+        self, client, clean_secrets, valid_api_key
+    ):
+        rule = {
+            "key_source": "user.dept_code",
+            "target": "name",
+            "match": "exact",
+            "value_template": "smtp",
+        }
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [
+                {
+                    "slot": "query:username",
+                    "strategy": "rule",
+                    "rule": rule,
+                    "value_path": "username",
+                },
+                {
+                    "slot": "query:mailkey",
+                    "strategy": "rule",
+                    "rule": rule,
+                    "value_path": "password",
+                },
+            ],
+            consumer_id=consumer_id,
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["saved"] == 2
+
+        listed = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+            headers=_headers(valid_api_key),
+        )
+        rows = listed.json()["data"]
+        by_slot = {r["slot"].split(":")[-1]: r for r in rows}
+        assert all(r["strategy"] == "rule" for r in rows)
+        assert by_slot["username"]["value_path"] == "username"
+        assert by_slot["mailkey"]["value_path"] == "password"
+        # 规则本体相同，模板约束也带过去了
+        assert by_slot["username"]["rule"]["value_template"] == "smtp"
+        assert by_slot["mailkey"]["rule"]["value_template"] == "smtp"
+
+    async def test_bad_rule_saves_nothing(self, client, clean_secrets, valid_api_key):
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [
+                {
+                    "slot": "query:ok",
+                    "strategy": "rule",
+                    "rule": {"key_source": "user.user_id"},
+                    "value_path": "username",
+                },
+                {
+                    "slot": "query:bad",
+                    "strategy": "rule",
+                    # 模板标识大小写不合规
+                    "rule": {"key_source": "user.user_id", "value_template": "SMTP"},
+                },
+            ],
+            consumer_id=consumer_id,
+        )
+
+        assert resp.status_code == 400
+        assert "未保存任何改动" in resp.json()["detail"]
+
+        listed = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+            headers=_headers(valid_api_key),
+        )
+        assert listed.json()["data"] == []
+
+    async def test_rule_row_without_rule_is_rejected(
+        self, client, clean_secrets, valid_api_key
+    ):
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [{"slot": "query:x", "strategy": "rule", "rule": None}],
+        )
+
+        assert resp.status_code == 400
+        assert "规则" in resp.json()["detail"]
+
+    async def test_none_clears_both_fixed_and_rule(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """一个参数回到「模型填写」时，固定绑定和规则绑定都得清。
+
+        只清固定那条，规则还会继续生效——用户看到的现象是「说好改回模型填写了，
+        结果还在注凭据」，而且界面上两处状态对不上。
+        """
+        secret = await _create_secret(client, valid_api_key)
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+        slot = "query:mailkey"
+
+        # 先同时挂上固定绑定和规则绑定（两者本来就可以并存）
+        await self._batch(
+            client,
+            valid_api_key,
+            [{"slot": slot, "secret_id": secret["id"], "value_path": "password"}],
+            consumer_id=consumer_id,
+        )
+        await self._batch(
+            client,
+            valid_api_key,
+            [
+                {
+                    "slot": slot,
+                    "strategy": "rule",
+                    "rule": {"key_source": "user.user_id"},
+                    "value_path": "password",
+                }
+            ],
+            consumer_id=consumer_id,
+        )
+        before = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+            headers=_headers(valid_api_key),
+        )
+        assert len(before.json()["data"]) == 2
+
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [{"slot": slot, "strategy": "none"}],
+            consumer_id=consumer_id,
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["removed"] == 2
+
+        after = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+            headers=_headers(valid_api_key),
+        )
+        assert after.json()["data"] == []
+
+    async def test_duplicate_slot_in_one_batch_is_rejected(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """两行落到同一个槽位时后一条会静默覆盖前一条。
+
+        `date` 和 `query:date` 解析出来是同一个槽位——用户以为配了两个参数，
+        实际只有一个生效。这类覆盖在返回里看不出来，只能提前拦住。
+        """
+        secret = await _create_secret(client, valid_api_key)
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [
+                {"slot": "query:date", "secret_id": secret["id"], "value_path": "password"},
+                {"slot": "query:date", "secret_id": secret["id"], "value_path": "username"},
+            ],
+            consumer_id=consumer_id,
+        )
+
+        assert resp.status_code == 400
+        assert "同一个槽位" in resp.json()["detail"]
+
+        listed = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+            headers=_headers(valid_api_key),
+        )
+        assert listed.json()["data"] == []
+
+    async def test_rollback_leaves_no_audit_trail(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """整批回滚时不能留下「已绑定」的审计记录。
+
+        审计走独立 session 和独立事务（见 center._audit 的说明），所以在批量写库
+        的中间写审计，一旦后面的行失败整批回滚，审计里就会留下没发生过的操作。
+        漏记只是少一条线索，错记会误导排查。
+        """
+        secret = await _create_secret(client, valid_api_key)
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [
+                {
+                    "slot": "query:ok",
+                    "secret_id": secret["id"],
+                    "value_path": "password",
+                },
+                # 同一槽位出现两次 → 整批被拒
+                {"slot": "query:ok", "secret_id": secret["id"], "value_path": "username"},
+            ],
+            consumer_id=consumer_id,
+        )
+        assert resp.status_code == 400
+
+        logs = await client.get(
+            f"{PREFIX}/audit",
+            params={"secret_id": secret["id"]},
+            headers=_headers(valid_api_key),
+        )
+        assert logs.status_code == 200, logs.text
+        leaked = [
+            row
+            for row in logs.json()["data"]
+            if consumer_id in str(row.get("detail") or "")
+        ]
+        assert leaked == [], f"回滚的批次不该留下审计：{leaked}"
+
+    async def test_successful_batch_still_writes_audit(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """审计延后到提交之后，但成功路径必须照常记。
+
+        延后写审计最容易犯的错是「延着延着就漏了」——回滚时干净，成功时也干净。
+        """
+        secret = await _create_secret(client, valid_api_key)
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+
+        resp = await self._batch(
+            client,
+            valid_api_key,
+            [
+                {"slot": "query:a", "secret_id": secret["id"], "value_path": "password"},
+                {"slot": "query:b", "secret_id": secret["id"], "value_path": "username"},
+            ],
+            consumer_id=consumer_id,
+        )
+        assert resp.status_code == 200, resp.text
+
+        logs = await client.get(
+            f"{PREFIX}/audit",
+            params={"secret_id": secret["id"]},
+            headers=_headers(valid_api_key),
+        )
+        assert logs.status_code == 200, logs.text
+        mine = [
+            row for row in logs.json()["data"] if consumer_id in str(row.get("detail") or "")
+        ]
+        assert len(mine) == 2, mine
+        assert all(row["action"] == "bind" for row in mine)
+        assert {row["detail"] and "query:a" in row["detail"] for row in mine} != {False}
+
+
+class TestNestedValuePath:
+    """嵌套字段与数组下标。
+
+    执行期 `pick_field_typed` 一直是逐段走 dict / list 的，能取 `auth.token` 和
+    `list.0.id`。缺的只是配置期：路径正则不收数字段、绑定前只校验顶层键、
+    `/fields` 只列顶层。结果是「运行时能跑，界面配不出来」。
+    """
+
+    async def test_nested_path_can_be_bound(self, client, clean_secrets, valid_api_key):
+        secret = await _create_secret(
+            client,
+            valid_api_key,
+            value=json.dumps(
+                {"auth": {"token": "T-1", "user": "bot"}, "host": "h"}, ensure_ascii=False
+            ),
+            value_secret_fields=["auth.token"],
+        )
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+        resp = await _batch(
+            client,
+            valid_api_key,
+            [{"slot": "query:t", "secret_id": secret["id"], "value_path": "auth.token"}],
+            consumer_id=consumer_id,
+        )
+        assert resp.status_code == 200, resp.text
+
+        rows = (
+            await client.get(
+                f"{PREFIX}/bindings",
+                params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+                headers=_headers(valid_api_key),
+            )
+        ).json()["data"]
+        assert [row["value_path"] for row in rows] == ["auth.token"]
+
+    async def test_array_index_can_be_bound(self, client, clean_secrets, valid_api_key):
+        secret = await _create_secret(
+            client,
+            valid_api_key,
+            value=json.dumps({"hosts": ["a.example", "b.example"]}, ensure_ascii=False),
+        )
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+        resp = await _batch(
+            client,
+            valid_api_key,
+            [{"slot": "query:h", "secret_id": secret["id"], "value_path": "hosts.1"}],
+            consumer_id=consumer_id,
+        )
+        assert resp.status_code == 200, resp.text
+
+    async def test_missing_middle_segment_is_reported(self, client, clean_secrets, valid_api_key):
+        """断在中间那一段要说清是哪一段，不能只说顶层字段不存在。
+
+        `auth` 存在、`auth.tokn` 拼错时，只查顶层会放行——错误要等调用方报 401 才出现。
+        """
+        secret = await _create_secret(
+            client,
+            valid_api_key,
+            value=json.dumps({"auth": {"token": "T-1"}}, ensure_ascii=False),
+        )
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+        resp = await _batch(
+            client,
+            valid_api_key,
+            [{"slot": "query:t", "secret_id": secret["id"], "value_path": "auth.tokn"}],
+            consumer_id=consumer_id,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "auth.tokn" in resp.text
+
+    async def test_non_numeric_segment_on_array_is_rejected(
+        self, client, clean_secrets, valid_api_key
+    ):
+        secret = await _create_secret(
+            client,
+            valid_api_key,
+            value=json.dumps({"hosts": ["a.example"]}, ensure_ascii=False),
+        )
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+        resp = await _batch(
+            client,
+            valid_api_key,
+            [{"slot": "query:h", "secret_id": secret["id"], "value_path": "hosts.first"}],
+            consumer_id=consumer_id,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "下标" in resp.text or "没有字段" in resp.text
+
+    async def test_fields_list_includes_nested_paths(self, client, clean_secrets, valid_api_key):
+        """`/fields` 要能列出嵌套路径，否则界面上根本选不出来。"""
+        secret = await _create_secret(
+            client,
+            valid_api_key,
+            value=json.dumps(
+                {"auth": {"token": "T-1"}, "hosts": ["a.example"]}, ensure_ascii=False
+            ),
+        )
+        resp = await client.get(
+            f"{PREFIX}/{secret['id']}/fields", headers=_headers(valid_api_key)
+        )
+        assert resp.status_code == 200, resp.text
+        names = [field["name"] for field in resp.json()["data"]["fields"]]
+        assert "auth" in names, names
+        assert "auth.token" in names, names
+        assert "hosts" in names, names
+        assert "hosts.0" in names, names
+
+
+class TestPersonalCredentialOnPlatformTool:
+    """管理员给平台级工具配**自己的**个人凭据。
+
+    个人凭据不可能给所有人用，所以「全局绑定」这个请求落地时要降级成本人绑定。
+    之前这里直接报「只有系统级凭据可以设为全局绑定」——而前端参数入口是硬编码
+    `is_global: true` 的，于是**任何个人凭据都绑不上**，连管理员自己都不行。
+    管理员先用自己的账号跑通、再换成平台账号，是最常见不过的路径。
+    """
+
+    async def test_personal_secret_is_downgraded_not_rejected(
+        self, client, clean_secrets, valid_api_key
+    ):
+        # 建一条个人级凭据（owner_scope=user）
+        payload = {
+            "secret_key": f"mine.{uuid.uuid4().hex[:8]}",
+            "name": "我自己的邮箱",
+            "value": json.dumps({"host": "smtp.mine.com"}, ensure_ascii=False),
+            "secret_type": "credential",
+            "allowed_scenarios": ["api_tool"],
+            "allowed_hosts": [],
+            "value_format": "json",
+            "value_template": "smtp",
+        }
+        created = await client.post(PREFIX, json=payload, headers=_headers(valid_api_key))
+        assert created.status_code == 200, created.text
+        secret = created.json()["data"]
+
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+        resp = await _batch(
+            client,
+            valid_api_key,
+            [{"slot": "query:h", "secret_id": secret["id"], "value_path": "host"}],
+            consumer_id=consumer_id,
+            # 前端参数入口就是硬编码 true，这里如实模拟
+            is_global=True,
+        )
+        assert resp.status_code == 200, resp.text
+
+        rows = (
+            await client.get(
+                f"{PREFIX}/bindings",
+                params={"consumer_type": "api_tool", "consumer_id": consumer_id},
+                headers=_headers(valid_api_key),
+            )
+        ).json()["data"]
+        assert len(rows) == 1
+        # 关键：落到「本人绑定」，不是全局
+        assert rows[0]["is_global"] is False
+        assert rows[0]["bound_by_me"] is True
+
+    async def test_non_admin_cannot_make_a_global_binding(
+        self, client, clean_secrets, valid_api_key, admin_api_key
+    ):
+        """权限没有放松，只是换了判断位置。
+
+        原来在接口层对整批一刀切（`is_global` → 必须管理员），放宽「个人凭据」时
+        很容易顺手把这条也放开——那样普通用户就能把一条系统级凭据绑成全局，
+        改掉所有人看到的配置。
+        """
+        # 管理员建一条**系统级**凭据
+        payload = {
+            "secret_key": f"sys.{uuid.uuid4().hex[:8]}",
+            "name": "平台邮箱",
+            "value": json.dumps({"host": "smtp.corp.com"}, ensure_ascii=False),
+            "secret_type": "credential",
+            "allowed_scenarios": ["api_tool"],
+            "allowed_hosts": [],
+            "value_format": "json",
+            "value_template": "smtp",
+            "owner_scope": "system",
+        }
+        created = await client.post(
+            f"{PREFIX}/admin", json=payload, headers=_headers(admin_api_key)
+        )
+        assert created.status_code == 200, created.text
+        secret = created.json()["data"]
+        assert secret["owner_scope"] == "system", secret
+
+        resp = await _batch(
+            client,
+            valid_api_key,  # 普通用户
+            [{"slot": "query:h", "secret_id": secret["id"], "value_path": "host"}],
+            consumer_id=f"tool-{uuid.uuid4().hex[:6]}",
+            is_global=True,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "管理员" in resp.text
+
+    async def test_non_admin_cannot_write_a_global_rule(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """规则不指向凭据，但全局规则照样影响所有人——权限必须同样管住。
+
+        这条曾经漏过：`create_binding` 的 rule 分支没传 `allow_global`，
+        `bind_rule` 的默认值是 True，于是任何普通用户传 `is_global` +
+        `strategy="rule"` 就能改掉全平台的取数规则。
+        """
+        # 直接测服务层：HTTP 那条会先校验「工具是否存在」，
+        # 传个编造的 consumer_id 时根本走不到权限判断，测不到这里要测的东西。
+        from app.core.orm import AsyncSessionLocal
+        from app.services.secrets import center
+        from app.services.secrets.center import SecretPermissionError
+
+        async with AsyncSessionLocal() as session:
+            with pytest.raises(SecretPermissionError, match="管理员"):
+                await center.bind_rule(
+                    session,
+                    consumer_type="api_tool",
+                    consumer_id="tool-anything",
+                    slot="query:key",
+                    rule={"key_source": "arg:to", "target": "secret_key"},
+                    bound_by_user_id=None,  # 全局
+                    allow_global=False,  # 非管理员
+                )
+            await session.rollback()
+
+    async def test_batch_rule_global_is_rejected_cleanly(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """批量路径要报 400 而不是 500。
+
+        校验轮漏传 `allow_global` 时它会放行，错误要等到写入轮才冒出来，
+        而写入轮没有 try/except——用户看到的是 500，且不知道是哪一条错了。
+        """
+        resp = await _batch(
+            client,
+            valid_api_key,
+            [
+                {
+                    "slot": "query:key",
+                    "strategy": "rule",
+                    "rule": {"key_source": "arg:to", "target": "secret_key"},
+                }
+            ],
+            consumer_id=f"tool-{uuid.uuid4().hex[:6]}",
+            is_global=True,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "管理员" in resp.text

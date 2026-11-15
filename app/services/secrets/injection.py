@@ -32,9 +32,13 @@ from app.services.secrets.policy import (
 )
 from app.services.secrets.redact import register_injected
 from app.services.secrets.references import (
+    CREDENTIAL_REF_PATTERN,
     ReferenceError,
     has_secret_reference,
+    pick_field,
+    pick_field_typed,
     render_references,
+    stringify_field_value,
 )
 from app.services.secrets.resolver import secret_resolver
 from app.services.ai.tools.tool_credentials import (
@@ -72,6 +76,11 @@ DENIAL_REASONS = {
     # 和上面三类不同——那三类是绑了但取不到，这两条是压根没绑。
     "reference_unbound": "这个请求头里的凭据引用没有绑定",
     "credential_unbound": "这个请求头里的凭据占位符没有绑定",
+    # 结构化凭据整段注入：注进去的是一份 JSON，对方只会回「格式错误」。
+    # 单独一个原因，是因为用户的动作很明确——去绑定点一下「取用字段」。
+    "structured_without_path": "这条凭据是结构化的，但没指定取哪个字段",
+    # 调用方没有收集拒绝原因时的兜底：至少别把它记成成功
+    "reference_unresolved": "凭据取到了，但没取出要注入的值",
 }
 
 
@@ -95,6 +104,10 @@ DENIAL_HINTS = {
     "reference_not_json": "这条凭据是单值（token / PEM），不能写 .字段；要么去掉引用里的字段，要么改存成结构化凭据",
     "reference_bad_syntax": "引用形如 ${secret:凭据标识.字段名}，字段名只能是字母数字下划线连字符或数组下标",
     "reference_unbound": "给这个请求头的槽位绑一条凭据（绑定后引用才会被解析），或把值里的 ${secret:...} 删掉",
+    "structured_without_path": (
+        "到这个槽位的绑定里选「取用字段」（如 host / password）；"
+        "确实要注入整份 JSON 请显式勾选「整段 JSON」"
+    ),
     "credential_unbound": "给这个请求头的槽位绑一条凭据，或把 ${CREDENTIAL:...} 占位符删掉",
 }
 
@@ -161,7 +174,10 @@ def _looks_unfilled(value: Any) -> bool:
     text = str(value).strip()
     if text in _EMPTY_MARKERS:
         return True
-    if text.startswith(CREDENTIAL_PLACEHOLDER_PREFIX):
+    # 两种形态都算待填：整段占位符 `${CREDENTIAL:key}`，以及带认证方案前缀的片段
+    # `Bearer ${CREDENTIAL:key}`。只判 startswith 的话后者会被当成「用户手填的真值」
+    # 原样发出去——而 header 编辑器保留前缀时生成的恰好就是这种。
+    if text.startswith(CREDENTIAL_PLACEHOLDER_PREFIX) or CREDENTIAL_REF_PATTERN.search(text):
         return True
     # ${secret:key.field} 是「指向某条凭据的字段」，同样属于待填。
     # 注意必须整段包含判断：`Bearer ${secret:...}` 这类前缀拼接也要识别出来，
@@ -179,6 +195,8 @@ def _render_reference(
     secret_key: str | None,
     slot: str,
     denials: dict[str, str] | None,
+    value_path: str | None = "",
+    value_format: str = "",
 ) -> str | None:
     """把槽位原值里的 ``${secret:key.field}`` 换成取值结果。
 
@@ -187,7 +205,23 @@ def _render_reference(
     ``Authorization`` 头，比直接失败危险得多。
     """
     if not has_secret_reference(original):
-        return plain
+        # 没有字段级引用时，绑定声明的 value_path 就是「取哪一部分」的唯一依据。
+        # 两者同时存在时以**引用**为准：它比绑定更具体（同一条凭据可以给不同槽位
+        # 各自取不同字段），绑定层只是没有引用可写时的兜底。
+        picked = _apply_value_path(
+            plain, value_path, slot=slot, denials=denials, value_format=value_format
+        )
+        # 本函数对外只有一种失败表达（None = 不注入），哨兵到这里收口
+        if picked is _MISSING:
+            return None
+        text = str(original)
+        if CREDENTIAL_REF_PATTERN.search(text):
+            # 占位符可能只是值的一部分（``Bearer ${CREDENTIAL:x}``）：只替换那一截，
+            # 认证方案原样保留。整段返回会把 ``Bearer `` 吃掉，对方看到的是裸 token。
+            rendered = CREDENTIAL_REF_PATTERN.sub(lambda _m: str(picked), text)
+            register_injected(rendered)
+            return rendered
+        return picked
     picked_values: list[str] = []
     try:
         rendered = render_references(
@@ -385,9 +419,18 @@ async def apply_api_tool_bindings(
     任何异常都只告警、返回原 headers——凭据中心挂了不能把工具调用一起拖下水，
     它会退回「凭据未填」的既有报错路径，用户能看到明确原因。
     """
+    # 局部兜底：调用方可以不传 denials（默认 None），但流水表要记的是**真实**
+    # 拒因（structured_without_path / reference_field_missing …）。_record 在
+    # denials 为 None 时什么都不写，最后 mark_usage_failed 就只能退回通用码
+    # "reference_unresolved"，事后看不出到底配错了哪里。
+    if denials is None:
+        denials = {}
     if not headers:
         return headers
 
+    # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
+    # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
+    plain_cache: dict[str, str] = {}
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
@@ -420,6 +463,7 @@ async def apply_api_tool_bindings(
                 trace_id=trace_id,
                 dept_code=dept_code,
                 user_attrs=user_attrs,
+                plain_cache=plain_cache,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] API 工具 %s 的 %s 解析失败: %s", getattr(config, "name", "?"), name, exc)
@@ -434,8 +478,15 @@ async def apply_api_tool_bindings(
                 secret_key=result.secret_key,
                 slot=f"header:{name}",
                 denials=denials,
+                value_path=getattr(result, "value_path", ""),
+                value_format=getattr(result, "value_format", ""),
             )
             if rendered is None:
+                # 解密成功但渲染失败：这条流水已经记成 success 了，得改回来
+                await secret_resolver.mark_usage_failed(
+                    getattr(result, "usage_id", None),
+                    (denials or {}).get(f"header:{name}") or "reference_unresolved",
+                )
                 continue
             resolved[name] = rendered
             injected += 1
@@ -455,6 +506,61 @@ async def apply_api_tool_bindings(
 
     return resolved
 
+class _Missing:
+    """「没取到值」。字段值本身可能就是 JSON ``null``，用 ``None`` 兼作失败信号
+    会把正常的 null 判成引用失败——参数注入拿不到这个区别就没法办。"""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - 只为调试时看得懂
+        return "<missing>"
+
+
+_MISSING = _Missing()
+
+
+def _apply_value_path(
+    plain: str,
+    value_path: str | None,
+    *,
+    slot: str,
+    denials: dict[str, str] | None = None,
+    value_format: str = "",
+    typed: bool = False,
+) -> Any:
+    """按绑定声明的字段路径从明文里取出子字段。
+
+    ``value_path`` 为空表示整段给，原样返回——**唯独结构化凭据不行**：把一整份 JSON
+    注进某个参数或请求头几乎总是配置错误，对方只会回「格式错误」，而排查时看不出
+    是这里出的问题。所以空路径 + json 直接记拒绝，让「未选字段」这件事自己报出来。
+
+    取不到时返回 :data:`_MISSING` 并记一条拒绝——**绝不退回整段明文**：把整段 JSON
+    注进密码参数，失败点会跑到调用方那里，而且比「取不到」暴露得更多。
+
+    为什么不用 ``None`` 表示失败：JSON 里 ``"proxy": null`` 是合法取值，
+    参数注入把它当作「取不到」会凭空失败一次；header 侧另有把 None 字符串化成
+    空串的约定，两边语义不同，必须分开表达。
+
+    ``typed=True`` 给参数注入用（MCP 参数 / JSON body）：`port: 465` 必须作为数字
+    交给对方，变成 `"465"` 会被 schema 判类型不符。header 与环境变量天生是文本，
+    用默认的字符串化。
+    """
+    path = (value_path or "").strip()
+    if not path:
+        if (value_format or "") == "json":
+            _record(denials, slot, "structured_without_path")
+            return _MISSING
+        return plain
+    try:
+        picked = pick_field_typed(plain, tuple(path.split(".")))
+    except ReferenceError as exc:
+        # not_json / field_missing：都是配置与数据不一致，得让人看见
+        _record(denials, slot, exc.kind)
+        return _MISSING
+    as_text = stringify_field_value(picked)
+    # 脱敏池只收字符串：比对时按文本出现，非字符串先序列化
+    register_injected(as_text)
+    return picked if typed else as_text
 
 async def apply_api_tool_param_bindings(
     config: Any,
@@ -474,9 +580,18 @@ async def apply_api_tool_param_bindings(
     槽位按 HTTP 语义落成 ``query:名字``（GET）或 ``body:名字``（其它方法），
     和绑定表里存的一致。
     """
+    # 局部兜底：调用方可以不传 denials（默认 None），但流水表要记的是**真实**
+    # 拒因（structured_without_path / reference_field_missing …）。_record 在
+    # denials 为 None 时什么都不写，最后 mark_usage_failed 就只能退回通用码
+    # "reference_unresolved"，事后看不出到底配错了哪里。
+    if denials is None:
+        denials = {}
     from app.services.ai.tools.system_params import credential_param_names
     from app.services.secrets.locator import choice_field
 
+    # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
+    # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
+    plain_cache: dict[str, str] = {}
     names = credential_param_names(getattr(config, "parameter_schema", None))
     if not names:
         return params
@@ -536,6 +651,7 @@ async def apply_api_tool_param_bindings(
                 rule_args={k: v for k, v in params.items() if k != name},
                 user_attrs=user_attrs,
                 preferred_secret_id=preferred.get(name),
+                plain_cache=plain_cache,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -547,9 +663,24 @@ async def apply_api_tool_param_bindings(
         if result.ok and result.value is not None:
             plain = result.value.reveal()
             register_injected(plain)
-            # 参数级注入是整值替换：值是模型给的业务参数（不是可编辑的 header 文本），
-            # 没有「引用占位符」可渲染，因此不走 _render_reference。
-            resolved[name] = plain
+            # 绑定只取某个字段时先挑出来：参数值是模型看不见的整值，没有
+            # 「引用占位符」可渲染，因此不走 _render_reference。
+            picked = _apply_value_path(
+                plain,
+                getattr(result, "value_path", ""),
+                slot=slot,
+                denials=denials,
+                value_format=getattr(result, "value_format", ""),
+                # 参数值要交给对方的 schema 校验，数字/布尔/数组都得是原类型
+                typed=True,
+            )
+            if picked is _MISSING:
+                await secret_resolver.mark_usage_failed(
+                    getattr(result, "usage_id", None),
+                    (denials or {}).get(slot) or "reference_unresolved",
+                )
+                continue
+            resolved[name] = picked
             injected += 1
             if preferred.get(name) and result.secret_id == preferred.get(name):
                 # 采纳了模型的选择。留一条日志才会有「这次到底谁选的凭据」的
@@ -619,12 +750,21 @@ async def apply_mcp_bindings(
     来源，配置里有没有这个 Header 与此无关（没有就补上）；因此即使服务配置
     里的初始 headers 为空（``{}``），也要继续走绑定槽位检查。
     """
+    # 局部兜底：调用方可以不传 denials（默认 None），但流水表要记的是**真实**
+    # 拒因（structured_without_path / reference_field_missing …）。_record 在
+    # denials 为 None 时什么都不写，最后 mark_usage_failed 就只能退回通用码
+    # "reference_unresolved"，事后看不出到底配错了哪里。
+    if denials is None:
+        denials = {}
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
         _flag_unresolved_references(headers, denials)
         return headers
 
+    # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
+    # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
+    plain_cache: dict[str, str] = {}
     server_id = str(getattr(server, "id", "") or "")
     if not server_id:
         _flag_unresolved_references(headers, denials)
@@ -671,6 +811,7 @@ async def apply_mcp_bindings(
                 trace_id=trace_id,
                 dept_code=dept_code,
                 user_attrs=user_attrs,
+                plain_cache=plain_cache,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] MCP %s 的 %s 解析失败: %s", server_id, slot, exc)
@@ -687,8 +828,15 @@ async def apply_mcp_bindings(
                 secret_key=result.secret_key,
                 slot=slot,
                 denials=denials,
+                value_path=getattr(result, "value_path", ""),
+                value_format=getattr(result, "value_format", ""),
             )
             if rendered is None:
+                # 解密成功但渲染失败：这条流水已经记成 success 了，得改回来
+                await secret_resolver.mark_usage_failed(
+                    getattr(result, "usage_id", None),
+                    (denials or {}).get(f"header:{name}") or "reference_unresolved",
+                )
                 continue
             _set_case_insensitive(resolved, name, rendered)
             injected += 1
@@ -831,10 +979,19 @@ async def apply_mcp_arg_bindings(
     与 Header 那条链路的区别：Header 是「没人绑时的默认值」，所以绑定优先覆盖；
     这里没有「默认值」可言（模型看不到它），取不到就是取不到，由调用方报错。
     """
+    # 局部兜底：调用方可以不传 denials（默认 None），但流水表要记的是**真实**
+    # 拒因（structured_without_path / reference_field_missing …）。_record 在
+    # denials 为 None 时什么都不写，最后 mark_usage_failed 就只能退回通用码
+    # "reference_unresolved"，事后看不出到底配错了哪里。
+    if denials is None:
+        denials = {}
     pairs = mcp_arg_slots(tool_record)
     if not pairs:
         return arguments
 
+    # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
+    # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
+    plain_cache: dict[str, str] = {}
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
@@ -886,6 +1043,7 @@ async def apply_mcp_arg_bindings(
                 rule_args={k: v for k, v in arguments.items() if k != name},
                 user_attrs=user_attrs,
                 preferred_secret_id=preferred.get(name),
+                plain_cache=plain_cache,
             )
         except Exception as exc:  # noqa: BLE001 - 凭据中心挂了不该炸掉工具调用
             logger.warning(
@@ -901,7 +1059,22 @@ async def apply_mcp_arg_bindings(
             # 但如果它从上下文里猜出来传了，凭据才是唯一可信来源。
             plain = result.value.reveal()
             register_injected(plain)
-            resolved[name] = plain
+            picked = _apply_value_path(
+                plain,
+                getattr(result, "value_path", ""),
+                slot=slot,
+                denials=denials,
+                value_format=getattr(result, "value_format", ""),
+                # 参数值要交给对方的 schema 校验，数字/布尔/数组都得是原类型
+                typed=True,
+            )
+            if picked is _MISSING:
+                await secret_resolver.mark_usage_failed(
+                    getattr(result, "usage_id", None),
+                    (denials or {}).get(slot) or "reference_unresolved",
+                )
+                continue
+            resolved[name] = picked
         else:
             # **不能复用 `_record`**：它特意跳过「没有绑定」，因为对 Header 而言
             # 那是常态。参数级正相反——声明过就必须有值，没绑同样是缺参数。
@@ -1007,8 +1180,17 @@ async def apply_script_env_bindings(
     值会写进会话工作区里的一个 0600 文件再由 shell ``.`` 加载，**不进命令行**：
     ``ps aux`` 和容器进程列表都看得到命令行，看得见就等于泄露。
     """
+    # 局部兜底：调用方可以不传 denials（默认 None），但流水表要记的是**真实**
+    # 拒因（structured_without_path / reference_field_missing …）。_record 在
+    # denials 为 None 时什么都不写，最后 mark_usage_failed 就只能退回通用码
+    # "reference_unresolved"，事后看不出到底配错了哪里。
+    if denials is None:
+        denials = {}
     from app.services.secrets.policy import CONSUMER_SCRIPT, SCENE_SCRIPT_ENV
 
+    # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
+    # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
+    plain_cache: dict[str, str] = {}
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
@@ -1051,6 +1233,7 @@ async def apply_script_env_bindings(
                 trace_id=trace_id,
                 dept_code=dept_code,
                 user_attrs=user_attrs,
+                plain_cache=plain_cache,
             )
         except Exception:  # noqa: BLE001
             logger.warning("[SecretInject] 脚本 %s 的 %s 解析失败", tool_id, slot, exc_info=True)
@@ -1058,7 +1241,21 @@ async def apply_script_env_bindings(
         if result.ok and result.value is not None:
             plain = result.value.reveal()
             register_injected(plain)
-            resolved[name] = plain
+            picked = _apply_value_path(
+                plain,
+                getattr(result, "value_path", ""),
+                slot=slot,
+                denials=denials,
+                value_format=getattr(result, "value_format", ""),
+                # 环境变量只能放字符串：os.environ 不接受数字/布尔
+            )
+            if picked is _MISSING:
+                await secret_resolver.mark_usage_failed(
+                    getattr(result, "usage_id", None),
+                    (denials or {}).get(slot) or "reference_unresolved",
+                )
+                continue
+            resolved[name] = picked
         else:
             _record(denials, slot, result.denial)
     return resolved

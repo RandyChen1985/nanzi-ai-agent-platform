@@ -101,6 +101,13 @@ class SecretBinding(Base):
     strategy = Column(String(16), nullable=False, default="fixed", server_default="fixed")
     #: ``strategy='rule'`` 时的规则 JSON；见 ``app/services/secrets/locator.py``
     rule_json = Column(Text, nullable=True)
+    #: 只取凭据的某一部分：点分隔字段路径（``password`` / ``auth.token``）。
+    #: 空串 = 整段给，是单值凭据与全部存量行的默认。
+    #:
+    #: ``fixed`` 和 ``rule`` 都用它：规则模式下一个参数一条绑定，「命中哪条凭据」
+    #: 共享同一份规则，「取哪一段」各记各的。规则里的 ``value_template`` 负责把
+    #: 结构不符的凭据判成未命中，所以路径不会钉在别的结构上。
+    value_path = Column(String(255), nullable=False, default="", server_default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

@@ -38,9 +38,12 @@ ECHO_TOOL_DESCRIPTION = "验证 MCP 请求是否收到，以及 NanZi 用户身�
 ECHO_MAIL_TOOL_LOCAL_NAME = "send_mail"
 ECHO_MAIL_TOOL_NAME = f"{ECHO_SERVER_NAME}:{ECHO_MAIL_TOOL_LOCAL_NAME}"
 ECHO_MAIL_TOOL_DESCRIPTION = (
-    "模拟给某个用户发一封邮件。``mailkey`` 专供凭据注入验收：把它标成「来自凭据」后"
-    "模型看不到它，由平台按 ``username`` 匹配凭据后注入。返回的是掩码值与指纹，"
-    "用来验证「不同 username 取到了不同的 key」，但看不到明文。"
+    "模拟给某个用户发一封邮件。参数名与「邮箱 SMTP 发送」凭据模板的字段一一对齐"
+    "（host / port / security / username / password / from_name），一条结构化凭据就能"
+    "把这几个参数一次铺满；``mailkey`` 则留给单值凭据验收。把它们标成「来自凭据」后"
+    "模型看不到，由平台按 ``to`` 匹配后注入。返回每个参数的到达情况：非敏感的给明文"
+    "（一眼看出映射对不对），敏感的只给掩码与指纹（验证「不同 to 取到了不同的值」，"
+    "但看不到明文）。"
 )
 # 个人 Echo 与平台 Echo 共用同一个 FastMCP 端点，靠路径里的 server_id 区分实例。
 ECHO_SERVER_ID_HEADER = "X-Nanzi-Echo-Server"
@@ -379,37 +382,74 @@ ECHO_SLOW_TOOL_DESCRIPTION = (
 ECHO_SLOW_DEFAULT_INTERVAL_MS = 800
 
 
+def _receipt(name: str, value: Any, *, sensitive: bool) -> dict[str, Any]:
+    """一个注入参数的「回执」：到了没有、是什么。
+
+    非敏感参数（host / port / username …）直接回显明文——验收时要能一眼看出
+    「host 映射到了 host」，只给指纹反而要拿凭据原文去对。
+    敏感参数（password / mailkey）只给掩码与指纹：明文回显等于把凭据
+    泄露进对话与 trace，而指纹足够回答「注入的是 A 那条还是 B 那条」。
+    """
+    text = "" if value is None else str(value)
+    receipt: dict[str, Any] = {"present": bool(text)}
+    if not text:
+        return receipt
+    if sensitive:
+        receipt["masked"] = _mask_secret(text)
+        receipt["fingerprint"] = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+        receipt["length"] = len(text)
+    else:
+        receipt["value"] = value
+    return receipt
+
+
 @echo_mcp.tool(name=ECHO_MAIL_TOOL_LOCAL_NAME, description=ECHO_MAIL_TOOL_DESCRIPTION)
 async def send_mail(
     ctx: Context,
-    username: str,
-    mailkey: str | None = None,
+    to: str,
     subject: str = "",
+    host: str | None = None,
+    port: int | None = None,
+    security: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
+    from_name: str | None = None,
+    mailkey: str | None = None,
 ) -> dict[str, Any]:
-    """模拟发邮件，并把收到的 ``mailkey`` 以「掩码 + 指纹」的形式回显。
+    """模拟发一封邮件，并把每个 SMTP 参数回显出来。
 
-    为什么回显指纹而不是明文：验收要能回答「注入的是 A 那条还是 B 那条」，
-    指纹可以（同一条凭据的指纹是稳定的），而明文不行——回显明文等于把凭据
-    泄露进对话与 trace。
+    参数名**刻意与内置「邮箱 SMTP 发送」模板的字段一一对齐**（``host`` / ``port`` /
+    ``security`` / ``username`` / ``password`` / ``from_name``）：凭据多字段映射面板
+    有个「按名字自动匹配」，同名的话一条 SMTP 凭据能一键铺满这些参数，不用逐个选。
 
     Args:
-        username: 收件人。凭据规则通常用它当键（``arg:username``）。
-        mailkey: 凭据参数。模型侧看不到，由平台注入。
+        to: 收件人。凭据规则通常用它当键（``arg:to``）。
         subject: 邮件主题，普通参数，用来确认「非凭据参数照常由模型填」。
+        host: SMTP 服务器。凭据参数。
+        port: 端口。**声明成 int 而不是 str**：凭据里的 ``port: 465`` 必须原样
+            以数字注入，写成 ``"465"`` 会被真实服务判类型不符。这里能顺带验收
+            类型保留。
+        security: 加密方式（ssl / starttls / none）。凭据参数。
+        username: SMTP 登录账号。注意与 ``to``（收件人）不是一回事。
+        password: 密码 / 授权码。敏感，只回显掩码与指纹。
+        from_name: 发件人显示名。凭据参数。
+        mailkey: 单值凭据的注入验收位。模型侧看不到，由平台注入。
     """
-    key_text = mailkey or ""
     return {
         "ok": True,
-        "username": username,
+        "to": to,
         "subject": subject,
-        "mailkey_present": bool(key_text),
-        "mailkey_length": len(key_text),
-        # 掩码看着方便，指纹用于自动化断言
-        "mailkey_masked": _mask_secret(key_text) if key_text else None,
-        "mailkey_fingerprint": (
-            hashlib.sha256(key_text.encode("utf-8")).hexdigest()[:12] if key_text else None
-        ),
-        "message": f"已模拟给 {username} 发送邮件",
+        "smtp": {
+            "host": _receipt("host", host, sensitive=False),
+            "port": _receipt("port", port, sensitive=False),
+            "security": _receipt("security", security, sensitive=False),
+            "username": _receipt("username", username, sensitive=False),
+            "password": _receipt("password", password, sensitive=True),
+            "from_name": _receipt("from_name", from_name, sensitive=False),
+        },
+        # 单值凭据走的也是这条：整段就是一个值，没有字段可拆
+        "mailkey": _receipt("mailkey", mailkey, sensitive=True),
+        "message": f"已模拟给 {to} 发送邮件",
     }
 
 
@@ -419,17 +459,28 @@ def send_mail_tool_schema() -> str:
         {
             "type": "object",
             "properties": {
-                "username": {
+                # 名字与「邮箱 SMTP 发送」模板字段对齐：映射面板的「按名字自动匹配」
+                # 靠的就是同名，改名前先想清楚会不会让一键铺满失效。
+                "to": {"type": "string", "description": "收件人。凭据规则通常用它当键。"},
+                "subject": {"type": "string", "description": "邮件主题"},
+                "host": {"type": "string", "description": "SMTP 服务器。凭据参数。"},
+                "port": {"type": "integer", "description": "端口。凭据参数，按数字注入。"},
+                "security": {
                     "type": "string",
-                    "description": "收件人。凭据规则通常用它当键。",
+                    "description": "加密方式：ssl / starttls / none。凭据参数。",
                 },
+                "username": {"type": "string", "description": "SMTP 登录账号。凭据参数。"},
+                "password": {
+                    "type": "string",
+                    "description": "密码 / 授权码。凭据参数，敏感，只回显指纹。",
+                },
+                "from_name": {"type": "string", "description": "发件人显示名。凭据参数。"},
                 "mailkey": {
                     "type": "string",
-                    "description": "凭据参数：标成「来自凭据」后由平台注入，模型看不到。",
+                    "description": "单值凭据的注入验收位：标成「来自凭据」后由平台注入。",
                 },
-                "subject": {"type": "string", "description": "邮件主题"},
             },
-            "required": ["username"],
+            "required": ["to"],
         },
         ensure_ascii=False,
     )

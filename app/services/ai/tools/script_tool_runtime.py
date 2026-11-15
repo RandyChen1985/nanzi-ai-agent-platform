@@ -366,7 +366,13 @@ class ScriptToolRunner:
         if script_denials:
             # 脚本里读到空值和读不到变量是两种崩法，但用户看到的都是「脚本报错了」。
             # 把原因写进日志和结果，至少能查到是凭据过期还是开关没开。
-            detail = "；".join(f"{slot}（{why}）" for slot, why in script_denials.items())
+            # 翻成人话再拼：这些 code 是内部枚举（structured_without_path 之类），
+            # 直接透给用户等于让人去猜，日志里也不好搜。
+            from app.services.secrets.injection import denial_text
+
+            detail = "；".join(
+                f"{slot}（{denial_text(why)}）" for slot, why in script_denials.items()
+            )
             logger.warning(
                 "[ScriptTool] %s 的凭据环境变量没有注入：%s", self.config.name, detail
             )
