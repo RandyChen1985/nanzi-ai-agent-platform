@@ -19,6 +19,8 @@ export const RESULT_LABEL: Record<string, string> = {
   denied_expired: '已过期',
   // 规则没匹配上（动态凭据定位）：和「没绑定」是两回事，别混成同一个词
   rule_miss: '规则未命中',
+  // 凭据值转不成参数声明的类型（端口写成「四百六十五」这种）
+  type_mismatch: '类型不符',
   // 历史流水里出现过不带前缀的写法，留着才能正常显示老记录
   disabled: '已停用',
   expired: '已过期',

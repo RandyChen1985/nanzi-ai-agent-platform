@@ -2030,12 +2030,25 @@ async def set_tool_credential_params(
         schema = {}
     props = (schema.get("properties") or {}) if isinstance(schema, dict) else {}
 
-    def _accepts_string(spec: Any) -> bool:
-        """凭据值永远是字符串；声明成整数/布尔/对象的参数注入进去会破坏类型。"""
+    #: 凭据能喂的参数类型。标量都算：字符串原样给，数字和布尔由注入层按 schema
+    #: 转一次类型（见 injection.coerce_to_declared_type）。
+    credential_types = ("string", "integer", "number", "boolean")
+
+    def _accepts_credential(spec: Any) -> bool:
+        """凭据值能否喂给这个参数。
+
+        对象和数组仍然拒绝：凭据里那段 JSON 的结构不一定符合对方的嵌套 schema，
+        硬注入只会在远端解析阶段失败，比「不让配」更难查。
+
+        曾经这里是「只允许 string」——理由是凭据值永远是字符串。但端口、超时、
+        重试次数这类**连接参数**恰好都是数字，它们既不该让模型每次猜，也不在
+        Header 里，于是「只允许 string」等于告诉用户「这个参数平台管不了」。
+        现在放开标量，由注入层负责转换，转不了就在凭据流水里报出来。
+        """
         declared = spec.get("type") if isinstance(spec, dict) else None
         if isinstance(declared, list):
-            return "string" in declared
-        return declared in (None, "string")
+            return any(kind in credential_types for kind in declared)
+        return declared is None or declared in credential_types
 
     cleaned: List[str] = []
     for name in payload.params:
@@ -2047,13 +2060,13 @@ async def set_tool_credential_params(
                 status_code=400,
                 detail=f"参数 {name} 不在这个工具的参数定义里（远端可能改了参数名，请先同步工具）",
             )
-        if not _accepts_string(props[name]):
+        if not _accepts_credential(props[name]):
+            declared = props[name].get("type") if isinstance(props[name], dict) else None
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"参数 {name} 的类型不是字符串，不能由凭据提供。"
-                    "凭据值只能是字符串；数字、布尔、对象这类参数请让模型填，"
-                    "或在 Header 上配凭据。"
+                    f"参数 {name} 的类型是 {declared}，凭据只能提供字符串、数字、布尔。"
+                    "对象/数组这类参数请让模型填，或改由 MCP 服务端固定配置。"
                 ),
             )
         if name not in cleaned:
