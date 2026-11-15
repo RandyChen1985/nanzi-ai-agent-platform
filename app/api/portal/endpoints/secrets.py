@@ -1896,17 +1896,6 @@ async def create_bindings_batch(
             )
             saved += 1
             continue
-        if not item["secret_id"]:
-            removed += await center.unbind_slot(
-                db,
-                consumer_type=payload.consumer_type,
-                consumer_id=payload.consumer_id,
-                slot=slot,
-                bound_by_user_id=bound_by,
-                commit=False,
-                audit=False,
-            )
-            continue
         # 同槽位的旧规则要一起清掉。``bind_secret`` 只删 fixed 行——让 fixed 与
         # rule 在同一个槽位并存是它的设计（rule 负责定位、fixed 作 fallback），
         # 但这里用户明确把来源改成了「固定凭据」：留着旧规则它会先命中，用户
@@ -2019,16 +2008,9 @@ async def create_binding(
     # 一刀切会把它当成越权拒掉。权限判断下沉到 bind_secret，按凭据作用域判：
     # 系统级凭据 + 全局 → 必须管理员；个人凭据 → 自动降级成本人绑定。
     is_admin = _is_admin(user_info)
-    # 写入时的归属。这里**不**对 is_global 一刀切：个人凭据在任何作用域下都不可能
-    # 「给所有人用」，bind_secret 会把它降级成本人绑定；系统级凭据 + 全局才要求管理员，
-    # 由 bind_secret 拒绝并给出「只有管理员可以设置全局绑定」。
+    # 写入归属；全局只有管理员能设，由 bind_secret 按凭据作用域拒（个人凭据照常降级）。
+    # 单条接口不删数据，所以不需要单独的 unbind 归属。
     bound_by: str | None = None if payload.is_global else user_id
-    # 解绑 / 清旧规则时的归属。这是**删数据**，且这一层的处理逻辑看不到凭据作用域
-    # （strategy="none" 连凭据都没有），所以只能按身份判：非管理员永远只动本人层。
-    # 不这么分的话，普通用户在有权访问的平台级服务上说一句 is_global=True +
-    # strategy="none"，就能拆掉全平台共用的绑定和规则——单条 DELETE 明确禁止这件事
-    # （`只有管理员可以解除全局绑定`），批量接口不能成为绕道。
-    unbind_bound_by: str | None = None if (payload.is_global and is_admin) else user_id
 
     # 规则绑定没有凭据可校验，走单独的函数；固定绑定保持原路径
     if payload.strategy == "rule":
@@ -2685,6 +2667,21 @@ class LocatePreviewRequest(BaseModel):
     sample_args: dict[str, Any] = Field(default_factory=dict)
 
 
+#: 试算时把「消费者类型」翻译成凭据场景，让场景过滤与运行时一致。
+#: 没列进来的类型返回 None（不按场景过滤）——宁可宽一点，也别拿一个猜出来的场景
+#: 把本该命中的凭据挡掉。
+_CONSUMER_SCENE = {
+    "mcp_server": "mcp",
+    "api_tool": "api_tool",
+    "script_tool": "script_env",
+    "agent": "agent",
+}
+
+
+def _scene_of_consumer(consumer_type: str) -> str | None:
+    return _CONSUMER_SCENE.get(str(consumer_type or "").strip())
+
+
 @router.post("/locate-preview", summary="试算规则会命中哪条凭据（不发请求；按字段值匹配需解密）")
 async def locate_preview(
     payload: LocatePreviewRequest,
@@ -2752,7 +2749,11 @@ async def locate_preview(
     if spec.target == "field":
         from app.services.secrets.resolver import field_value_resolver
 
-        field_value = field_value_resolver(spec.target_field)
+        # 带上场景：不带的话，一条只授权给 api_tool 的凭据会在 mcp_server 的试算里
+        # 显示命中，真实调用却因场景不符被过滤掉——又是「试算说行、跑起来不行」
+        field_value = field_value_resolver(
+            spec.target_field, scene=_scene_of_consumer(payload.consumer_type)
+        )
         if field_value is not None:
             steps.append(
                 {"step": "字段匹配", "detail": f"比较 {spec.target_field} 字段的值"}

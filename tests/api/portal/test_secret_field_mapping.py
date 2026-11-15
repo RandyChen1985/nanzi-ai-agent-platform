@@ -1464,3 +1464,203 @@ class TestNonAdminCannotTouchTheGlobalLayer:
         assert rows, "绑定没落库"
         # 落成本人层，不是全局层（空串/NULL 代表全局）
         assert str(rows[0].bound_by_user_id or "") == str(owner)
+
+
+class TestGlobalLayerIsProtectedThroughTheRealEndpoint:
+    """走真实接口验证越权被挡住，而不只是断言源码里有那行判断。
+
+    review 指出前面几条是源码文本断言：把 `bound_by=unbind_bound_by` 改回
+    `bound_by=bound_by`、或者把那行判断删掉，文本断言会红，但如果有人换一种写法
+    实现同样的漏洞，文本断言照样绿。这里用真实请求打一遍。
+    """
+
+    async def test_non_admin_none_cannot_delete_a_global_binding(
+        self, client, clean_secrets, valid_api_key, admin_api_key
+    ):
+        from sqlalchemy import select
+
+        from app.core.orm import AsyncSessionLocal
+        from app.models.mcp import McpServer
+        from app.models.secret import SecretBinding
+        from app.services.auth_service import AuthService
+
+        # 管理员建一个平台级服务 + 一条全局绑定
+        async with AsyncSessionLocal() as session:
+            admin_info = await AuthService.verify_api_key(admin_api_key, session)
+        admin_id = int(admin_info["user_id"])
+        server_id = f"srv-{uuid.uuid4().hex[:8]}"
+
+        # 系统级凭据走管理员入口（`/admin`），普通入口会把 owner_scope 落成个人
+        system_secret = await client.post(
+            f"{PREFIX}/admin",
+            json={
+                "secret_key": f"shared.mail.{uuid.uuid4().hex[:6]}",
+                "name": "全平台共用的邮箱凭据",
+                "value": json.dumps({"password": "pw-shared"}),
+                "secret_type": "credential",
+                "allowed_scenarios": ["mcp"],
+                "allowed_hosts": [],
+                "value_format": "json",
+                "value_template": "smtp",
+                "owner_scope": "system",
+            },
+            headers=_headers(admin_api_key),
+        )
+        assert system_secret.status_code == 200, system_secret.text
+        secret_id = system_secret.json()["data"]["id"]
+
+        async with AsyncSessionLocal() as session:
+            session.add(
+                McpServer(
+                    id=server_id,
+                    server_name=f"mcp-shared-{uuid.uuid4().hex[:6]}",
+                    sse_url="https://mail.example.com/mcp",
+                    scope="global",
+                    user_id=None,
+                    enabled_status=1,
+                )
+            )
+            await session.commit()
+
+        slot = "arg:list-mail:password"
+        created = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json={
+                "consumer_type": "mcp_server",
+                "consumer_id": server_id,
+                "is_global": True,
+                "items": [
+                    {
+                        "slot": slot,
+                        "name": "password",
+                        "secret_id": secret_id,
+                        "value_path": "password",
+                    }
+                ],
+            },
+            headers=_headers(admin_api_key),
+        )
+        assert created.status_code == 200, created.text
+
+        async def _global_rows():
+            async with AsyncSessionLocal() as session:
+                rows = (
+                    (
+                        await session.execute(
+                            select(SecretBinding).where(
+                                SecretBinding.consumer_id == server_id,
+                                SecretBinding.slot == slot,
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            return [r for r in rows if not (r.bound_by_user_id or "")]
+
+        assert await _global_rows(), "前置条件：全局绑定没建成"
+
+        # 普通用户谎称 is_global=True，想把全局层清掉
+        attack = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json={
+                "consumer_type": "mcp_server",
+                "consumer_id": server_id,
+                "is_global": True,
+                "items": [{"slot": slot, "name": "password", "strategy": "none"}],
+            },
+            headers=_headers(valid_api_key),
+        )
+        assert attack.status_code == 200, attack.text
+
+        # 全局绑定必须还在
+        assert await _global_rows(), "普通用户把全平台的绑定删掉了"
+
+
+class TestLocatePreviewAgreesWithRuntime:
+    """试算走**真实接口**，确认 target=field 和场景过滤都真的生效。
+
+    之前这两点只有源码文本断言：把 `field_value=` 删掉、或者把 `scene=` 删掉，文本
+    断言照样绿，但配置者点「试算」看到的答案会跟真实调用分家。
+    """
+
+    async def _preview(self, client, api_key, *, rule, sample_args, consumer_type):
+        return await client.post(
+            f"{PREFIX}/locate-preview",
+            json={
+                "consumer_type": consumer_type,
+                "rule": rule,
+                "sample_args": sample_args,
+            },
+            headers=_headers(api_key),
+        )
+
+    async def test_field_rule_hits(self, client, clean_secrets, valid_api_key):
+        await _create_secret(
+            client,
+            valid_api_key,
+            secret_key=f"mail.prev.{uuid.uuid4().hex[:6]}",
+            value=json.dumps({"username": "alice@corp.com", "password": "pw"}),
+            allowed_scenarios=["mcp"],
+        )
+
+        resp = await self._preview(
+            client,
+            valid_api_key,
+            consumer_type="mcp_server",
+            rule={
+                "key_source": "arg:username",
+                "target": "field",
+                "target_field": "username",
+                "match": "exact_ci",
+            },
+            sample_args={"username": "alice@corp.com"},
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["ok"] is True, data["miss_reason"]
+
+    async def test_scene_mismatch_does_not_hit(self, client, clean_secrets, valid_api_key):
+        """只授权给 api_tool 的凭据，在 mcp_server 上试算必须不命中。
+
+        不筛场景的话，试算会说「命中」，真实调用却因场景不符被过滤——又一次
+        「试算说行、跑起来不行」。
+        """
+        await _create_secret(
+            client,
+            valid_api_key,
+            secret_key=f"mail.prev.{uuid.uuid4().hex[:6]}",
+            value=json.dumps({"username": "bob@corp.com", "password": "pw"}),
+            allowed_scenarios=["api_tool"],
+        )
+
+        as_mcp = await self._preview(
+            client,
+            valid_api_key,
+            consumer_type="mcp_server",
+            rule={
+                "key_source": "arg:username",
+                "target": "field",
+                "target_field": "username",
+                "match": "exact_ci",
+            },
+            sample_args={"username": "bob@corp.com"},
+        )
+        assert as_mcp.status_code == 200, as_mcp.text
+        assert as_mcp.json()["data"]["ok"] is False, "场景不符却报了命中"
+
+        # 换成 api_tool 就应当命中：同一个字段值，差别只在场景
+        as_api = await self._preview(
+            client,
+            valid_api_key,
+            consumer_type="api_tool",
+            rule={
+                "key_source": "arg:username",
+                "target": "field",
+                "target_field": "username",
+                "match": "exact_ci",
+            },
+            sample_args={"username": "bob@corp.com"},
+        )
+        assert as_api.status_code == 200, as_api.text
+        assert as_api.json()["data"]["ok"] is True, "场景放行却没有命中"

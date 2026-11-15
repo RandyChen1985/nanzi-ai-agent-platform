@@ -112,7 +112,13 @@ const props = withDefaults(
      * 多值凭据 tab 也传 false，但理由不同：那里的取用字段在**映射表每一行**
      * （同一份凭据的不同字段喂给不同参数），弹窗里再放一份保存时会被丢掉。
      */
-    showValuePath?: boolean
+    /**
+   * 试算要带上消费者类型：后端据此推断凭据场景（mcp / api_tool / script_env）。
+   * 不带的话场景过滤永远不生效——「只授权给 api_tool 的凭据」会在 mcp 工具的试算里
+   * 显示命中，真实调用却被过滤掉，又是一次「试算说行、跑起来不行」。
+   */
+  consumerType?: string
+  showValuePath?: boolean
     /**
      * 是否显示「模板约束」。
      *
@@ -312,6 +318,7 @@ async function runPreview() {
     const { value_path: _path, ...ruleBody } = normalizeForSubmit()
     const res = await axios.post('/api/portal/secrets/locate-preview', {
       slot: props.slot,
+      consumer_type: props.consumerType || '',
       rule: ruleBody,
       sample_args: sampleArgs,
     })
@@ -575,7 +582,7 @@ function save() {
           <!-- 试算 -->
           <div class="rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
-              <span class="text-xs font-semibold text-gray-700">试算（不发真实请求、不解密、不写流水）</span>
+              <span class="text-xs font-semibold text-gray-700">试算（不发真实请求、不写流水；按字段值匹配需解密比较）</span>
               <span class="text-[10px] text-gray-400">身份固定为当前登录人，不代表别人</span>
             </div>
             <div class="mt-2 flex flex-wrap items-center gap-2">

@@ -5102,6 +5102,7 @@ onMounted(fetchServers)
       :open="Boolean(locatorTarget)"
       :rule="locatorTarget ? locatorTarget.existingRule : null"
       :slot="locatorTarget ? locatorTarget.slot : ''"
+      consumer-type="mcp_server"
       :arg-options="locatorTarget ? locatorTarget.args : []"
       :title="locatorTarget ? `凭据匹配规则 · ${locatorTarget.title}` : '凭据匹配规则'"
       :show-value-path="false"

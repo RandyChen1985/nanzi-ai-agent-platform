@@ -119,7 +119,10 @@ def test_preview_wires_the_same_field_value_resolver_as_runtime():
     变异验证：删掉 `locate_preview` 里的 `field_value=` 实参，这条会红。
     """
     src = Path("app/api/portal/endpoints/secrets.py").read_text(encoding="utf-8")
-    assert "field_value = field_value_resolver(spec.target_field)" in src
+    # 2026-11-16：调用补了 scene（不带的话，只授权给别的场景的凭据会在试算里显示
+    # 命中、真实调用被过滤），所以断言放过参数、只钉住接线本身。
+    assert "field_value = field_value_resolver(" in src
+    assert "spec.target_field, scene=_scene_of_consumer(payload.consumer_type)" in src
     assert "pick_match(spec, wanted, pool, field_value=field_value)" in src
     # 取值器必须是模块级的那一个（试算和运行时共用），不能各写一份
     resolver_src = Path("app/services/secrets/resolver.py").read_text(encoding="utf-8")

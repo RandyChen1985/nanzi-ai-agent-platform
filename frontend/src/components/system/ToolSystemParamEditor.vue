@@ -800,6 +800,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
     :open="Boolean(locatorName)"
     :rule="locatorName ? (ruleDrafts[locatorName] || null) : null"
     :slot="locatorName || ''"
+    consumer-type="api_tool"
     :arg-options="locatorName ? locatorArgOptions(locatorName) : []"
     :title="locatorName ? `凭据匹配规则 · ${locatorName}` : '凭据匹配规则'"
       :show-value-path="false"

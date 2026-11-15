@@ -133,7 +133,8 @@ function openLocatorFor(
 /** 规则只写个人绑定：个人配的规则只影响自己，不会盖到别人 */
 async function applyRule(rule: LocatorRule) {
   const ctx = locatorCtx.value
-  locatorCtx.value = null
+  // 先别关弹窗：原来在这里就置 null，保存失败（400/500）时弹窗直接消失、
+  // locatorError 又没有人渲染，用户填的一整张规则表就这么没了，还不知道为什么。
   if (!ctx) return
   locatorBusy.value = true
   locatorError.value = ''
@@ -150,6 +151,8 @@ async function applyRule(rule: LocatorRule) {
       // 不带 is_global：这就是「我自己的那条」
     })
     await load()
+    // 存成功了才关
+    locatorCtx.value = null
   } catch (e: any) {
     locatorError.value = e?.response?.data?.detail || '保存规则失败'
   } finally {
@@ -586,6 +589,7 @@ onMounted(load)
       :open="Boolean(locatorCtx)"
       :rule="locatorCtx ? locatorCtx.existingRule : null"
       :slot="locatorCtx ? locatorCtx.slot : ''"
+      :consumer-type="locatorCtx ? locatorCtx.consumerType : ''"
       :arg-options="locatorCtx ? locatorCtx.argOptions : []"
       :title="locatorCtx ? `凭据匹配规则 · ${locatorCtx.title}` : '凭据匹配规则'"
       @update:open="(value: boolean) => { if (!value) locatorCtx = null }"
@@ -593,5 +597,18 @@ onMounted(load)
       @save="applyRule"
       @remove="onRemoveRule"
     />
+
+    <!-- 规则保存/删除失败必须看得见。弹窗关掉之后如果没有任何提示，用户只会以为
+         自己没点上，然后重填一遍同样的规则。 -->
+    <div
+      v-if="locatorError"
+      class="fixed inset-x-0 top-4 z-[130] mx-auto w-fit max-w-2xl rounded-md border border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700 shadow-lg"
+      role="alert"
+    >
+      {{ locatorError }}
+      <button class="ml-3 font-semibold text-rose-500 hover:text-rose-700" @click="locatorError = ''">
+        知道了
+      </button>
+    </div>
   </div>
 </template>

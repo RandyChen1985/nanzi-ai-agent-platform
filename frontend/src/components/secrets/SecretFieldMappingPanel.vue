@@ -563,6 +563,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
     -->
     <SecretLocatorEditor
       :open="ruleOpen"
+      :consumer-type="consumerType"
       :rule="ruleDraft"
       slot=""
       :arg-options="params"
