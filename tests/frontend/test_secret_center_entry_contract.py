@@ -507,16 +507,19 @@ class TestMcpToolParamCredential:
         assert "/credential-params" in source
         assert "不在这个工具的参数定义里" in source
 
-    def test_backend_rejects_non_string_param(self):
-        """凭据值永远是字符串。整数参数注入进去会破坏远端类型校验。
+    def test_backend_accepts_scalar_param_but_rejects_structured(self):
+        """标量参数可以由凭据提供，对象/数组不行。
 
-        用户很容易在参数表里顺手把 `steps` 标成凭据——它在界面上和 `api_key`
-        长得一模一样，但语义上根本不能这么用。
+        原来这里只允许 string，理由是「凭据值永远是字符串」。但端口、超时、重试
+        次数这类连接参数恰好都是数字：让模型每次猜端口等于埋雷，而它们又不在
+        Header 里，于是「只允许 string」实际等于「这个参数平台管不了」。
+        现在放开标量，类型转换由注入层按 schema 做（coerce_to_declared_type）。
         """
         source = _read(ROOT / "app/api/portal/endpoints/mcp.py")
-        assert "_accepts_string" in source
-        assert "的类型不是字符串，不能由凭据提供" in source
-        # `type` 可能是 ["string","null"] 这种联合类型，要认出来
+        assert "_accepts_credential" in source
+        assert 'credential_types = ("string", "integer", "number", "boolean")' in source
+        assert "凭据只能提供字符串、数字、布尔" in source
+        # `type` 可能是 ["integer","null"] 这种联合类型，要认出来
         assert "isinstance(declared, list)" in source
 
 

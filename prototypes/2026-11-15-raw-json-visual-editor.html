@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>自定义 JSON 凭据 · 从手写 JSON 到键值对可视化编辑器</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --faint: #9ca3af;
+    --blue: #2563eb;
+    --blue-soft: #eff6ff;
+    --emerald: #059669;
+    --emerald-soft: #ecfdf5;
+    --amber: #b45309;
+    --amber-soft: #fffbeb;
+    --rose: #e11d48;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 20px 64px;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  .lead { color: var(--muted); font-size: 13px; margin: 0 0 22px; }
+  h2 { font-size: 15px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .tag {
+    font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+    background: var(--bg); color: var(--muted); border: 1px solid var(--border);
+  }
+  .tag.new { background: var(--blue-soft); color: var(--blue); border-color: #bfdbfe; }
+  .sub { color: var(--faint); font-size: 12px; margin: 0 0 12px; }
+  section { margin-bottom: 26px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px;
+  }
+  .split { display: grid; gap: 14px; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { .split { grid-template-columns: 1fr 1fr; } }
+
+  label.fld { display: block; font-size: 11px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+  textarea, input[type=text] {
+    width: 100%; border: 1px solid var(--border); border-radius: 7px;
+    padding: 7px 9px; font-size: 12px; font-family: var(--mono);
+    background: #fff; color: var(--text); outline: none;
+  }
+  textarea:focus, input[type=text]:focus { border-color: var(--blue); }
+  textarea { resize: vertical; line-height: 1.7; }
+  .err { color: var(--rose); font-size: 11px; margin-top: 5px; }
+  .hint { color: var(--faint); font-size: 11px; margin-top: 5px; }
+
+  /* ── 键值对编辑器 ── */
+  .kv-head, .kv-row {
+    display: grid;
+    grid-template-columns: minmax(90px, 1.1fr) 74px minmax(120px, 2fr) 62px 28px;
+    gap: 6px; align-items: start;
+  }
+  .kv-head {
+    font-size: 10.5px; color: var(--faint); font-weight: 600;
+    padding: 0 0 5px; border-bottom: 1px solid var(--border); margin-bottom: 6px;
+  }
+  .kv-row { padding: 3px 0; }
+  .kv-row input, .kv-row select {
+    font-size: 11.5px; border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 7px; font-family: var(--mono); background: #fff; outline: none; width: 100%;
+  }
+  .kv-row input:focus, .kv-row select:focus { border-color: var(--blue); }
+  .kv-row input.key { font-weight: 600; }
+  .kv-row input.is-num { text-align: right; }
+  .kv-row .val-cell { display: flex; gap: 4px; align-items: center; }
+  .kv-row .val-cell input { flex: 1; min-width: 0; }
+  .eye {
+    border: 1px solid var(--border); background: #fff; border-radius: 5px;
+    font-size: 10px; color: var(--muted); padding: 4px 6px; cursor: pointer; white-space: nowrap;
+  }
+  .eye:hover { border-color: #d1d5db; color: var(--text); }
+  .del {
+    border: none; background: transparent; color: #cbd5e1; cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 5px 3px; border-radius: 5px;
+  }
+  .del:hover { color: var(--rose); background: #fef2f2; }
+  .secret-toggle {
+    display: flex; align-items: center; justify-content: center;
+    padding-top: 4px;
+  }
+  .secret-toggle input { width: 13px; height: 13px; accent-color: var(--blue); cursor: pointer; }
+  .add-row {
+    margin-top: 8px; width: 100%; border: 1px dashed #cbd5e1; background: #fff;
+    border-radius: 7px; padding: 6px; font-size: 11.5px; color: var(--muted); cursor: pointer;
+  }
+  .add-row:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .seg { display: inline-flex; background: var(--bg); border-radius: 8px; padding: 3px; }
+  .seg button {
+    border: none; background: transparent; font-size: 11.5px; font-weight: 600;
+    padding: 4px 11px; border-radius: 6px; cursor: pointer; color: var(--muted);
+  }
+  .seg button.on { background: #fff; color: var(--blue); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .pill {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: var(--emerald-soft); color: var(--emerald); font-weight: 600;
+  }
+  .pill.warn { background: var(--amber-soft); color: var(--amber); }
+
+  pre.preview {
+    margin: 12px 0 0; padding: 11px 12px; background: #0f172a; color: #e2e8f0;
+    border-radius: 9px; font-family: var(--mono); font-size: 11.5px;
+    line-height: 1.65; overflow-x: auto; white-space: pre;
+  }
+  pre.preview .k { color: #7dd3fc; }
+  pre.preview .s { color: #bef264; }
+  pre.preview .n { color: #fdba74; }
+  pre.preview .b { color: #f0abfc; }
+  pre.preview .mask { color: #94a3b8; font-style: italic; }
+
+  table.cmp { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.cmp th, table.cmp td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--border); }
+  table.cmp th { font-size: 11px; color: var(--faint); font-weight: 600; }
+  table.cmp td:first-child { font-weight: 600; white-space: nowrap; }
+
+  ul.notes { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--muted); }
+  ul.notes li { margin-bottom: 6px; }
+  ul.notes b { color: var(--text); }
+  code.inline {
+    font-family: var(--mono); font-size: 11.5px; background: var(--bg);
+    padding: 1px 5px; border-radius: 4px; color: #334155;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>自定义 JSON 凭据 · 从手写 JSON 到键值对可视化编辑器</h1>
+  <p class="lead">
+    现在「自定义 JSON」模板只有一个空白 textarea，要求用户自己写出合法的 JSON 对象。
+    对开发者和 AI 无障碍，对运维人员和业务方基本是劝退——尤其生产环境是别人在使用。
+  </p>
+
+  <!-- ── 现状 vs 新方案 ── -->
+  <section>
+    <div class="split">
+      <div>
+        <h2>现在 <span class="tag">textarea</span></h2>
+        <p class="sub">一个空框，语法错在哪全靠自己找。</p>
+        <div class="card">
+          <label class="fld">直接写 JSON 对象 <span style="color:var(--rose)">*</span></label>
+          <textarea rows="8" spellcheck="false" placeholder='{
+  "endpoint": "https://api.example.com",
+  "token": "sk-...",
+  "timeout": 30
+}'></textarea>
+          <p class="hint">顶层必须是对象；库里只存这一段文本，不校验字段结构。</p>
+        </div>
+      </div>
+
+      <div>
+        <h2>方案 <span class="tag new">键值对 + 可切 JSON</span></h2>
+        <p class="sub">默认是表格，懂 JSON 的随时切回手写。下面可以真点。</p>
+        <div class="card">
+          <div class="toolbar">
+            <div class="seg">
+              <button class="on" data-mode="kv">键值对</button>
+              <button data-mode="json">写 JSON</button>
+            </div>
+            <span class="pill" id="state-pill">3 个字段</span>
+          </div>
+
+          <!-- 键值对视图 -->
+          <div id="kv-view">
+            <div class="kv-head">
+              <span>字段名</span><span>类型</span><span>值</span><span>敏感</span><span></span>
+            </div>
+            <div id="kv-rows"></div>
+            <button class="add-row" id="add-row">+ 添加字段</button>
+          </div>
+
+          <!-- JSON 视图 -->
+          <div id="json-view" style="display:none">
+            <textarea id="json-text" rows="11" spellcheck="false"></textarea>
+            <p class="hint">要嵌套数组/对象时切到这里；切回键值对会尽量保留结构。</p>
+            <p class="err" id="json-err" style="display:none"></p>
+          </div>
+
+          <!-- 实时预览：这才是注入出去的东西 -->
+          <pre class="preview" id="preview"></pre>
+          <p class="hint">
+            上面是注入到 MCP 参数 / JSON body 时会交给对方的值。
+            数字保持数字，布尔保持布尔——端口写成 <code class="inline">"465"</code> 会被 schema 判类型不符。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 为什么这样设计 ── -->
+  <section>
+    <h2>四个设计取舍</h2>
+    <p class="sub">「可视化 JSON 编辑器」有很多种做法，下面是我建议的边界。</p>
+    <div class="card">
+      <table class="cmp">
+        <tr><th style="width:132px">问题</th><th style="width:280px">建议</th><th>理由</th></tr>
+        <tr>
+          <td>嵌套结构怎么办</td>
+          <td>顶层扁平键值对；值是对象/数组时，该行类型标 <b>JSON</b>，值格换成小编辑框</td>
+          <td>
+            硬做任意层级树形编辑器，复杂度和出错面都比手写 JSON 更大。
+            凭据实际九成是扁平 key-value；真嵌套的少数人切到「写 JSON」更顺手。
+          </td>
+        </tr>
+        <tr>
+          <td>类型谁来定</td>
+          <td>按输入自动推断（纯数字 → number、true/false → boolean），可手动下拉改回文本</td>
+          <td>
+            自动推断能覆盖大多数情况，但不强制：手机号、身份证、前导零的编号
+            必须能改回字符串，否则 <code class="inline">013800138000</code> 会被吃掉前导零。
+          </td>
+        </tr>
+        <tr>
+          <td>敏感字段</td>
+          <td>每行一个「敏感」勾选，勾上后值打码显示、且不进列表摘要</td>
+          <td>
+            结构化凭据整段已加密，但列表摘要（<code class="inline">value_summary</code>）会拼非敏感字段。
+            不标敏感 = 密码明文出现在列表上。
+          </td>
+        </tr>
+        <tr>
+          <td>和 JSON 视图的关系</td>
+          <td>两个视图编辑同一份数据，随时切换，切换时校验并提示丢不掉什么</td>
+          <td>
+            懂 JSON 的人不该被表格拖慢，不懂的人不该被迫写 JSON。
+            切到键值对无法表达的嵌套时，明说「这几行要保持 JSON」，而不是悄悄拍平。
+          </td>
+        </tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── 落地范围 ── -->
+  <section>
+    <h2>落地要动的地方</h2>
+    <div class="card">
+      <ul class="notes">
+        <li><b>只影响「自定义 JSON」一个模板。</b>带固定字段的模板（邮箱 / 数据库 / API Token…）本来就是表单，不需要改。</li>
+        <li><b>存储格式不变。</b>仍是 <code class="inline">value_format='json'</code> + 那段 JSON 文本，键值对编辑器只是换了个输入方式，老记录照常读。</li>
+        <li><b>敏感标记要能落到后端。</b>现在 <code class="inline">secret_fields</code> 来自模板声明；自定义 JSON 没有模板，需要把勾选的字段名一并提交，否则摘要会漏。</li>
+        <li><b>校验复用现有的。</b>顶层必须对象、不能为空对象、key 不能重复——这些 <code class="inline">errors.__raw</code> 已经在做，只是把错误挂到具体行上。</li>
+      </ul>
+    </div>
+  </section>
+
+  <p class="hint" style="margin-top:26px">
+    原型说明：表格可增删行、改类型、勾敏感，右上角可切到「写 JSON」，两侧实时同步并显示注入预览。
+  </p>
+</div>
+
+<script>
+/* ── 数据 ─────────────────────────────────────────────── */
+let rows = [
+  { key: 'endpoint', type: 'text',   value: 'https://api.example.com', secret: false },
+  { key: 'token',    type: 'text',   value: 'sk-live-9f2a7c',          secret: true  },
+  { key: 'timeout',  type: 'number', value: '30',                      secret: false },
+];
+let mode = 'kv';
+let revealed = {};
+
+const rowsEl = document.getElementById('kv-rows');
+const previewEl = document.getElementById('preview');
+const pillEl = document.getElementById('state-pill');
+const kvView = document.getElementById('kv-view');
+const jsonView = document.getElementById('json-view');
+const jsonText = document.getElementById('json-text');
+const jsonErr = document.getElementById('json-err');
+
+/* ── 类型推断 ─────────────────────────────────────────── */
+function inferType(raw) {
+  const t = String(raw).trim();
+  if (t === '') return 'text';
+  if (t === 'true' || t === 'false') return 'boolean';
+  if (/^-?\d+(\.\d+)?$/.test(t)) return 'number';
+  if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) return 'json';
+  return 'text';
+}
+function typedValue(row) {
+  const v = String(row.value);
+  if (row.type === 'number') {
+    const n = Number(v);
+    return Number.isFinite(n) && v.trim() !== '' ? n : v;
+  }
+  if (row.type === 'boolean') return v.trim() === 'true';
+  if (row.type === 'json') {
+    try { return JSON.parse(v); } catch { return v; }
+  }
+  return v;
+}
+
+/* ── 渲染表格 ─────────────────────────────────────────── */
+function renderRows() {
+  rowsEl.innerHTML = '';
+  rows.forEach((row, index) => {
+    const div = document.createElement('div');
+    div.className = 'kv-row';
+
+    // 字段名
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.className = 'key';
+    keyInput.value = row.key;
+    keyInput.placeholder = '如 token';
+    keyInput.addEventListener('input', (e) => { row.key = e.target.value; syncOut(); });
+
+    // 类型
+    const typeSel = document.createElement('select');
+    [['text', '文本'], ['number', '数字'], ['boolean', '布尔'], ['json', 'JSON']].forEach(([v, label]) => {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = label;
+      if (v === row.type) opt.selected = true;
+      typeSel.appendChild(opt);
+    });
+    typeSel.addEventListener('change', (e) => {
+      row.type = e.target.value;
+      // 切到布尔时把值规整成 true/false，避免留下 "yes" 这种
+      if (row.type === 'boolean' && !['true', 'false'].includes(String(row.value).trim())) {
+        row.value = String(row.value).trim() === '' ? 'true' : row.value;
+      }
+      renderRows(); syncOut();
+    });
+
+    // 值
+    const valWrap = document.createElement('div');
+    valWrap.className = 'val-cell';
+    const valInput = document.createElement('input');
+    valInput.type = 'text';
+    valInput.value = row.value;
+    if (row.type === 'number') valInput.className = 'is-num';
+    valInput.placeholder = row.type === 'json' ? '{"a":1} 或 [1,2]' : '值';
+    if (row.secret && !revealed[index]) {
+      valInput.type = 'password';
+    }
+    valInput.addEventListener('input', (e) => {
+      row.value = e.target.value;
+      // 只对「刚敲进来」的推断，用户手动改过类型就不再覆盖
+      if (!row.typePinned) {
+        const guess = inferType(e.target.value);
+        if (guess !== 'text' && guess !== row.type) {
+          row.type = guess;
+          renderRows();
+        }
+      }
+      syncOut();
+    });
+    valWrap.appendChild(valInput);
+
+    if (row.secret) {
+      const eye = document.createElement('button');
+      eye.type = 'button';
+      eye.className = 'eye';
+      eye.textContent = revealed[index] ? '隐藏' : '显示';
+      eye.addEventListener('click', () => {
+        revealed[index] = !revealed[index];
+        renderRows();
+      });
+      valWrap.appendChild(eye);
+    }
+
+    // 敏感
+    const secretWrap = document.createElement('label');
+    secretWrap.className = 'secret-toggle';
+    const secretBox = document.createElement('input');
+    secretBox.type = 'checkbox';
+    secretBox.checked = !!row.secret;
+    secretBox.title = '勾上后值打码显示，且不进列表摘要';
+    secretBox.addEventListener('change', (e) => {
+      row.secret = e.target.checked;
+      renderRows(); syncOut();
+    });
+    secretWrap.appendChild(secretBox);
+
+    // 删除
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'del';
+    del.textContent = '×';
+    del.title = '删除这一行';
+    del.addEventListener('click', () => {
+      rows.splice(index, 1);
+      revealed = {};
+      renderRows(); syncOut();
+    });
+
+    div.append(keyInput, typeSel, valWrap, secretWrap, del);
+    rowsEl.appendChild(div);
+  });
+}
+
+/* ── 输出 & 预览 ──────────────────────────────────────── */
+function buildObject() {
+  const out = {};
+  for (const row of rows) {
+    const k = String(row.key).trim();
+    if (!k) continue;
+    out[k] = typedValue(row);
+  }
+  return out;
+}
+
+function renderPreview() {
+  const obj = buildObject();
+  const keys = Object.keys(obj);
+  pillEl.textContent = `${keys.length} 个字段`;
+
+  if (!keys.length) {
+    previewEl.textContent = '（还没有字段）';
+    return;
+  }
+  const lines = keys.map((k) => {
+    const row = rows.find((r) => String(r.key).trim() === k);
+    const v = obj[k];
+    let rendered;
+    if (row && row.secret) rendered = '<span class="mask">"••••••"</span>';
+    else if (typeof v === 'number') rendered = `<span class="n">${v}</span>`;
+    else if (typeof v === 'boolean') rendered = `<span class="b">${v}</span>`;
+    else if (typeof v === 'string') rendered = `<span class="s">"${v}"</span>`;
+    else rendered = `<span class="n">${JSON.stringify(v)}</span>`;
+    return `  <span class="k">"${k}"</span>: ${rendered}`;
+  });
+  previewEl.innerHTML = '{\n' + lines.join(',\n') + '\n}';
+}
+
+function syncOut() {
+  renderPreview();
+  if (mode === 'kv') {
+    const obj = buildObject();
+    jsonText.value = JSON.stringify(obj, null, 2);
+  }
+}
+
+/* ── 模式切换 ─────────────────────────────────────────── */
+document.querySelectorAll('.seg button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const next = btn.dataset.mode;
+    if (next === mode) return;
+
+    if (next === 'json') {
+      // 键值对 → JSON：把当前表格算出的对象写进文本框
+      jsonText.value = JSON.stringify(buildObject(), null, 2);
+      jsonErr.style.display = 'none';
+    } else {
+      // JSON → 键值对：语法不合法就拦下，不拿半截数据覆盖表格
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonText.value || '{}');
+      } catch (e) {
+        jsonErr.textContent = `JSON 语法错误，先修好再切：${e.message}`;
+        jsonErr.style.display = 'block';
+        return;
+      }
+      if (Array.isArray(parsed) || typeof parsed !== 'object' || parsed === null) {
+        jsonErr.textContent = '顶层必须是对象';
+        jsonErr.style.display = 'block';
+        return;
+      }
+      const carrySecret = {};
+      rows.forEach((r) => { carrySecret[String(r.key).trim()] = r.secret; });
+      rows = Object.entries(parsed).map(([k, v]) => ({
+        key: k,
+        type: typeof v === 'number' ? 'number'
+            : typeof v === 'boolean' ? 'boolean'
+            : (v && typeof v === 'object') ? 'json' : 'text',
+        value: typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v),
+        secret: !!carrySecret[k],
+        typePinned: true,
+      }));
+      revealed = {};
+      renderRows();
+    }
+
+    mode = next;
+    document.querySelectorAll('.seg button').forEach((b) => {
+      b.classList.toggle('on', b.dataset.mode === mode);
+    });
+    kvView.style.display = mode === 'kv' ? 'block' : 'none';
+    jsonView.style.display = mode === 'json' ? 'block' : 'none';
+    renderPreview();
+  });
+});
+
+document.getElementById('add-row').addEventListener('click', () => {
+  rows.push({ key: '', type: 'text', value: '', secret: false });
+  renderRows();
+  // 新行直接聚焦到字段名，省一次点击
+  const inputs = rowsEl.querySelectorAll('input.key');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+});
+
+/* ── 初始化 ───────────────────────────────────────────── */
+renderRows();
+syncOut();
+</script>
+</body>
+</html>

@@ -79,6 +79,9 @@ DENIAL_REASONS = {
     # 结构化凭据整段注入：注进去的是一份 JSON，对方只会回「格式错误」。
     # 单独一个原因，是因为用户的动作很明确——去绑定点一下「取用字段」。
     "structured_without_path": "这条凭据是结构化的，但没指定取哪个字段",
+    # 远端 schema 声明了数字/布尔，凭据里那个字段的值转不过去（如端口填成了「四百」）。
+    # 不复用「凭据没填」：凭据确实在，要改的是那条凭据里字段的写法。
+    "type_mismatch": "凭据里这个字段的值转不成参数声明的类型",
     # 调用方没有收集拒绝原因时的兜底：至少别把它记成成功
     "reference_unresolved": "凭据取到了，但没取出要注入的值",
 }
@@ -109,6 +112,10 @@ DENIAL_HINTS = {
         "确实要注入整份 JSON 请显式勾选「整段 JSON」"
     ),
     "credential_unbound": "给这个请求头的槽位绑一条凭据，或把 ${CREDENTIAL:...} 占位符删掉",
+    "type_mismatch": (
+        "核对凭据里这个字段的值：数字参数要能转成数字（如 465），"
+        "布尔参数只能是 true / false；也可以把这个参数改回让模型填"
+    ),
 }
 
 
@@ -540,6 +547,87 @@ class _Missing:
 
 
 _MISSING = _Missing()
+
+
+def _json_loads(text: str) -> Any:
+    """解析 JSON 文本。``json`` 在这个模块里一直是函数内局部导入，这里收口一次。"""
+    import json
+
+    return json.loads(text)
+
+
+def declared_param_type(spec: Any) -> str | None:
+    """从 JSON Schema 的参数声明里取出类型名。
+
+    联合类型（``"type": ["string", "null"]``）取第一个能承接标量的那个：
+    nullable 的 integer 参数在远端实际还是按 integer 校验。
+    """
+    if not isinstance(spec, dict):
+        return None
+    declared = spec.get("type")
+    if isinstance(declared, list):
+        for candidate in ("string", "integer", "number", "boolean"):
+            if candidate in declared:
+                return candidate
+        return None
+    return declared if isinstance(declared, str) else None
+
+
+def coerce_to_declared_type(value: Any, declared: str | None) -> tuple[Any, str | None]:
+    """把凭据里取出的值转成远端参数声明的类型，返回 ``(值, 错误码)``。
+
+    配置期已经放开「数字/布尔参数可以由凭据提供」，运行期就必须补齐这一步：
+    凭据里的字段可能存成 ``"465"``，而远端声明的是 ``integer``，原样塞过去会在
+    对方那里判类型不符——那个 400 出现在工具调用栈里，用户根本看不出问题在凭据。
+
+    只做**窄转换**，不做解释性猜测：``"465" → 465``、``"1.5" → 1.5``、
+    ``"true" → True``。转不了就返回错误码让调用方拒绝注入，*不*退回原值硬塞。
+
+    对象/数组不转换：凭据里那段 JSON 的结构不一定符合对方的嵌套 schema，
+    硬转只会在远端解析阶段失败，比早一步失败更难查。
+    """
+    if declared is None:
+        # 没声明类型：维持改动前的行为，原样交给对方
+        return value, None
+    if declared == "string":
+        return stringify_field_value(value), None
+    if declared == "integer":
+        if isinstance(value, bool):
+            return int(value), None
+        if isinstance(value, int):
+            return value, None
+        if isinstance(value, float):
+            return (int(value), None) if float(value).is_integer() else (value, "type_mismatch")
+        try:
+            return int(str(value).strip()), None
+        except ValueError:
+            # "465.0" 在整数语义下应当拒绝，而不是悄悄取整
+            return value, "type_mismatch"
+    if declared == "number":
+        if isinstance(value, bool):
+            return int(value), None
+        if isinstance(value, (int, float)):
+            return value, None
+        text = str(value).strip()
+        try:
+            return int(text), None
+        except ValueError:
+            pass
+        try:
+            return float(text), None
+        except ValueError:
+            return value, "type_mismatch"
+    if declared == "boolean":
+        if isinstance(value, bool):
+            return value, None
+        text = str(value).strip().lower()
+        if text in ("true", "1", "yes", "on"):
+            return True, None
+        if text in ("false", "0", "no", "off"):
+            return False, None
+        return value, "type_mismatch"
+    # object / array / null 等：配置期已经拦掉，运行时原样传，不在这里发明规则
+    return value, None
 
 
 def _apply_value_path(
@@ -1052,6 +1140,17 @@ async def apply_mcp_arg_bindings(
     if not pairs:
         return arguments
 
+    # 参数声明的类型：配置期已经允许数字/布尔参数绑凭据，注入时得按它转一次类型。
+    # 解析失败按「没声明」处理，保持旧行为而不是让整个注入挂掉。
+    param_specs: dict[str, Any] = {}
+    try:
+        schema = _json_loads(getattr(tool_record, "parameter_schema", "") or "{}")
+    except ValueError:
+        schema = {}
+    if isinstance(schema, dict) and isinstance(schema.get("properties"), dict):
+        param_specs = schema["properties"]
+
+
     # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
     # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
     plain_cache: dict[str, str] = {}
@@ -1139,7 +1238,23 @@ async def apply_mcp_arg_bindings(
                     (denials or {}).get(slot) or "reference_unresolved",
                 )
                 continue
-            resolved[name] = picked
+            # 凭据里的字段可能存成 "465"，而远端声明的是 integer。配置期放开了这类
+            # 参数，运行期不转就是让远端回一句「类型不符」，用户查不到凭据这边来。
+            declared = declared_param_type(param_specs.get(name))
+            coerced, coerce_error = coerce_to_declared_type(picked, declared)
+            if coerce_error:
+                logger.warning(
+                    "[SecretInject] 工具 %s 的参数 %s 类型不符：槽位 %s 的值转不成 %s",
+                    getattr(tool_record, "tool_name", "?"), name, slot, declared,
+                )
+                # 直接存 code，不走 _record：那是 header 侧的助手，会跳过「没绑定」，
+                # 而参数级里没有值就是缺参数，任何原因都得报出来。
+                denials[slot] = coerce_error
+                await secret_resolver.mark_usage_failed(
+                    getattr(result, "usage_id", None), coerce_error
+                )
+                continue
+            resolved[name] = coerced
         else:
             # **不能复用 `_record`**：它特意跳过「没有绑定」，因为对 Header 而言
             # 那是常态。参数级正相反——声明过就必须有值，没绑同样是缺参数。

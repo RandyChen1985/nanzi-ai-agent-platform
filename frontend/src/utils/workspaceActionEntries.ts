@@ -74,6 +74,100 @@ function entry(
   return { key, label, icon, ...extras }
 }
 
+/**
+ * 路径比较用的归一化：统一分隔符、去掉尾部斜杠。
+ *
+ * 与抽屉里的历史内联实现保持一致（`\` → `/`，尾斜杠去掉），
+ * 抽到这里是为了让抽屉与管理页共用同一份口径。
+ */
+export function normalizeComparablePath(path: string): string {
+  return String(path || '').replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+/** 判断路径是否落在某个根目录（含根本身）下。 */
+export function isPathUnderRoot(path: string, root: string): boolean {
+  const target = normalizeComparablePath(path)
+  const base = normalizeComparablePath(root)
+  if (!target || !base) return false
+  return target === base || target.startsWith(`${base}/`)
+}
+
+export interface WorkspacePublicityItem {
+  path?: string
+  is_public?: boolean
+  is_user_workspace?: boolean
+}
+
+/**
+ * 条目是否属于「公共目录」（平台只读资源，如 docs / skills / branding）。
+ *
+ * 这是「管理员删它 = 永久删除、不进任何人回收站」的唯一判定来源，
+ * 抽屉的菜单/确认框与管理页的确认框都必须走这里。
+ * 后端下发的 `is_public` 优先；字段缺失时才按「是否在本人工作区根内」兜底，
+ * 判不出来一律返回 false —— 宁可提示「移入回收站」，也不能凭空宣称永久删除。
+ */
+export function isPublicWorkspaceItem(
+  item: WorkspacePublicityItem | null | undefined,
+  userWorkspaceRoot?: string | null,
+): boolean {
+  if (!item) return false
+  // 用户工作区容器本身：别人的私有目录不是公共资源
+  if (item.is_user_workspace) return false
+  if (typeof item.is_public === 'boolean') return item.is_public
+  if (!item.path) return false
+  // 拿不到本人工作区根就无法判断「是不是我的」，此时不下「公共」结论
+  if (!normalizeComparablePath(userWorkspaceRoot || '')) return false
+  return !isPathUnderRoot(item.path, userWorkspaceRoot || '')
+}
+
+/** 一条文件记录里与本模块判定相关的字段（抽屉与管理页的条目结构都满足）。 */
+export interface WorkspaceItemLike {
+  path?: string
+  name?: string
+  is_dir?: boolean
+  is_public?: boolean
+  is_user_workspace?: boolean
+}
+
+export interface WorkspaceItemMenuInput {
+  item: WorkspaceItemLike
+  /** 已解析好的展示名（列表返回的 name 与展示名不一定相同，交给调用方解析）。 */
+  target: WorkspaceActionTarget
+  /** 本人私有工作区根，用于在 `is_public` 缺失时兜底判定公共性。 */
+  userWorkspaceRoot?: string | null
+  isAdminScope?: boolean
+  /** 回收站条目（在 .trash 下，但不是 .trash 本身）。 */
+  inTrash?: boolean
+  /** 回收站根目录本身。 */
+  isTrashRoot?: boolean
+  /** 系统保护目录（docs / skills / branding / agent_workspaces 等），由调用方判定。 */
+  isSystemProtected?: boolean
+  /** 该条目是否可管理（用户工作区根目录本身不可重命名/删除），缺省视为可管理。 */
+  canManage?: boolean
+}
+
+/**
+ * 条目 → 菜单场景。
+ *
+ * 抽屉（⋮ / 右键 / 批量）与独立页行操作共用这一份判定，避免「同一个公共目录
+ * 在抽屉里是只读、在管理页却能点删除」这类分叉。判定顺序有含义：
+ * 回收站优先（.trash 里的路径不在任何「公共目录」语义内），其后才是公共性。
+ */
+export function buildWorkspaceItemMenuContext(input: WorkspaceItemMenuInput): WorkspaceMenuContext {
+  const { item, target } = input
+  if (input.isTrashRoot) return { scene: 'trash-root', target }
+  if (input.inTrash) return { scene: 'trash-item', target }
+  if (isPublicWorkspaceItem(item, input.userWorkspaceRoot)) {
+    return {
+      scene: 'public-item',
+      target,
+      isAdminScope: !!input.isAdminScope,
+      isSystemProtected: !!input.isSystemProtected,
+    }
+  }
+  return { scene: 'regular-item', target, canManage: input.canManage !== false }
+}
+
 function mountEntry(isDir: boolean): WorkspaceActionEntry {
   return isDir
     ? entry('mount', '挂载文件夹到会话', '📎')
@@ -171,7 +265,11 @@ export function buildWorkspaceActionEntries(ctx: WorkspaceMenuContext): Workspac
 
     if (isAdminScope && !ctx.isSystemProtected) {
       entries.push(entry('rename', '重命名', '✏️', { separatorBefore: true }))
-      entries.push(entry('purge', '永久删除', '🗑️', { danger: true }))
+      // 表单上写「永久删除」，派发的却是 delete：公共目录不属于任何人的回收站，
+      // 后端 /fs/delete-entry 对 admin + 公共路径直接 rmtree/remove（trashed_path 为空）。
+      // 不能派发 purge —— /fs/purge-entry 只接受回收站内路径，会 403「只能操作回收站内的文件或文件夹」。
+      // 抽屉侧据 is_public 切换确认文案，这里只需保证走对接口。
+      entries.push(entry('delete', '永久删除', '🗑️', { danger: true }))
     }
     return entries
   }

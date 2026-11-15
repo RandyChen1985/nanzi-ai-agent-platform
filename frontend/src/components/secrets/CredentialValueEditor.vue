@@ -72,6 +72,174 @@ const pasteMsg = ref('')
 const pasteError = ref(false)
 
 let pushingOut = false
+/** 由键值对编辑器自己推出去的文本，避免 watch(value) 再回解一遍 */
+let pushingRaw = false
+
+/* ── 自定义 JSON：键值对编辑态 ───────────────────────────────────────
+ *
+ * 「自定义 JSON」模板原来只有一个空 textarea。对开发者和 AI 没障碍，但生产上
+ * 交给运维和业务方基本是劝退——他们要填的通常就是三五个扁平键值对，却得先学会
+ * JSON 语法、再自己找语法错在哪里。
+ *
+ * 这里的 `value` 仍是唯一真源（入库的也是它）；`rawRows` 只是它的编辑视图，
+ * 两边双向同步。切到「写 JSON」不改数据，切回键值对才重解析一次。
+ */
+type RawValueType = 'text' | 'number' | 'boolean' | 'json'
+interface RawFieldRow {
+  key: string
+  type: RawValueType
+  value: string
+  /** 敏感字段：值打码显示，且不进列表摘要 */
+  secret: boolean
+}
+
+const rawRows = ref<RawFieldRow[]>([])
+const rawView = ref<'kv' | 'json'>('kv')
+/** 各行「显示」按钮的状态，按行索引记 */
+const rawRevealed = ref<Record<number, boolean>>({})
+
+function rawValueTypeOf(value: unknown): RawValueType {
+  if (typeof value === 'number') return 'number'
+  if (typeof value === 'boolean') return 'boolean'
+  if (value !== null && typeof value === 'object') return 'json'
+  return 'text'
+}
+
+/** 按类型把编辑框里的文本转回 JSON 值：465 要写进 JSON 的是数字，不是 "465" */
+function rawTypedValue(row: RawFieldRow): unknown {
+  const text = String(row.value ?? '')
+  if (row.type === 'number') {
+    const num = Number(text)
+    return text.trim() !== '' && Number.isFinite(num) ? num : text
+  }
+  if (row.type === 'boolean') return text.trim() === 'true'
+  if (row.type === 'json') {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return text
+    }
+  }
+  return text
+}
+
+function rawObject(): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const row of rawRows.value) {
+    const key = row.key.trim()
+    if (!key) continue
+    out[key] = rawTypedValue(row)
+  }
+  return out
+}
+
+function serializeRaw(): string {
+  const obj = rawObject()
+  return Object.keys(obj).length ? JSON.stringify(obj, null, 2) : ''
+}
+
+/** 键值对 → JSON 文本。每次输入都推，保证两个视图永远一致。 */
+function pushRawOut() {
+  if (!isRaw.value) return
+  pushingRaw = true
+  pushingOut = true
+  value.value = serializeRaw()
+  nextTick(() => {
+    pushingRaw = false
+    pushingOut = false
+  })
+}
+
+/** JSON 文本 → 键值对。解析失败就不动表格，交给校验把错说出来。 */
+function hydrateRaw(text: string) {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text || '{}')
+  } catch {
+    return
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return
+  // 敏感标记不在 JSON 里，切视图时按字段名沿用，否则每次切都会把勾选丢光
+  const remembered = new Map(rawRows.value.map((row) => [row.key.trim(), row.secret]))
+  rawRows.value = Object.entries(parsed as Record<string, unknown>).map(([key, item]) => ({
+    key,
+    type: rawValueTypeOf(item),
+    value: item !== null && typeof item === 'object' ? JSON.stringify(item) : String(item),
+    secret: remembered.get(key) || false,
+  }))
+  rawRevealed.value = {}
+}
+
+function addRawRow() {
+  // 轮换只换值不换结构：加字段等于改模板，别处写好的 ${secret:key.field} 会失效
+  if (props.lockStructure) return
+  rawRows.value = [...rawRows.value, { key: '', type: 'text', value: '', secret: false }]
+}
+
+function removeRawRow(index: number) {
+  if (props.lockStructure) return
+  rawRows.value = rawRows.value.filter((_, position) => position !== index)
+  rawRevealed.value = {}
+  pushRawOut()
+}
+
+/** 改类型时把值顺手规整一下：切到布尔还留着 "yes" 只会让校验报错 */
+function onRawTypeChange(row: RawFieldRow) {
+  if (row.type === 'boolean' && !['true', 'false'].includes(String(row.value).trim())) {
+    row.value = 'false'
+  }
+  pushRawOut()
+}
+
+function switchRawView(next: 'kv' | 'json') {
+  if (next === rawView.value) return
+  // 锁定结构时留在表格：JSON 视图能直接改字段名，等于开了个后门
+  if (props.lockStructure) return
+  if (next === 'kv') {
+    // 回到表格前先确认文本能解析：解析不了就留在 JSON 视图，别拿半截数据覆盖表格
+    const text = value.value.trim()
+    if (text) {
+      try {
+        const parsed = JSON.parse(text)
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return
+      } catch {
+        return
+      }
+    }
+    hydrateRaw(text)
+  }
+  rawView.value = next
+}
+
+/** 行级错误：比一句「JSON 语法错误」有用得多——能指出是第几行的哪个字段 */
+const rawRowErrors = computed<(string | null)[]>(() => {
+  const seen = new Set<string>()
+  return rawRows.value.map((row) => {
+    const key = row.key.trim()
+    const text = String(row.value ?? '').trim()
+    if (!key) {
+      // 只有一个全空行时不报错：那等于「还没开始填」，由 __raw 统一说
+      return rawRows.value.length === 1 && !text ? null : '字段名不能为空'
+    }
+    if (seen.has(key)) return '字段名重复'
+    seen.add(key)
+    // 敏感字段名要能安全地作为键传下去（后端有同名正则）。中文 key 勾敏感必须
+    // 在这里拦下：静默丢掉等于密码照进列表摘要，比报错危险得多。
+    if (row.secret && !/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/.test(key)) {
+      return '敏感字段名只能用字母开头的字母/数字/下划线'
+    }
+    if (row.type === 'number' && text !== '' && !Number.isFinite(Number(text))) return '要填数字'
+    if (row.type === 'boolean' && !['true', 'false'].includes(text)) return '只能填 true 或 false'
+    if (row.type === 'json' && text !== '') {
+      try {
+        JSON.parse(text)
+      } catch {
+        return 'JSON 语法错误'
+      }
+    }
+    return null
+  })
+})
 /** 由 chooseTemplate 主动切换模板时置位，避免 watch(template) 再用旧文本回解一遍 */
 let applyingTemplate = false
 
@@ -148,6 +316,13 @@ function hydrate(text: string) {
 const computedSecretFields = computed<string[]>(() => {
   const current = tpl.value
   if (!isStructured.value || !current) return []
+  if (current.raw) {
+    // 自定义 JSON 没有模板声明，敏感字段只能由用户逐行勾选。
+    // 不勾的字段会进列表摘要——密码勾错这一处，明文就摆在列表上了。
+    return rawRows.value
+      .filter((row) => row.secret && /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/.test(row.key.trim()))
+      .map((row) => row.key.trim())
+  }
   return current.fields.filter((field) => field.secret).map((field) => field.key)
 })
 
@@ -166,7 +341,13 @@ watch(
 )
 
 watch(value, (next) => {
-  if (!isStructured.value || isRaw.value || pushingOut) return
+  if (!isStructured.value || pushingOut) return
+  if (isRaw.value) {
+    // 只有外部塞进来的文本才回解；编辑器自己推出去的跳过，否则每敲一个字就重建表格
+    if (pushingRaw || next === serializeRaw()) return
+    hydrateRaw(next)
+    return
+  }
   const current = tpl.value
   if (!current) return
   // 外部塞进来的值（轮换回填、草稿恢复）才需要回解；本组件自己推出去的跳过
@@ -209,10 +390,16 @@ const errors = computed<Record<string, string>>(() => {
   const current = tpl.value
   if (!current) return out
   if (current.raw) {
+    // 行级错误先报：用户正在表格里填，指出「第几行的字段名重复」才用得上
+    const rowError = rawRowErrors.value.find(Boolean)
+    if (rowError) {
+      out.__raw = rowError
+      return out
+    }
     const text = value.value.trim()
     // 空文本要报错而不是放行：否则会出现「显示可以提交、按钮却是灰的」
     if (!text) {
-      out.__raw = '需要填写一个 JSON 对象'
+      out.__raw = '至少填一个字段'
       return out
     }
     try {
@@ -294,8 +481,13 @@ function chooseTemplate(id: string) {
     applyingTemplate = false
   })
   if (next.raw) {
-    // 不预填 `{}`：预填会让「一个字段都没写」看起来可以提交
+    // 不预填 `{}`：预填会让「一个字段都没写」看起来可以提交。
+    // 但如果已经带着文本切过来（轮换、草稿、改模板），得把它铺进键值对视图，
+    // 否则表格是空的、JSON 视图里却有内容。
     value.value = value.value.trim()
+    rawRows.value = []
+    rawView.value = 'kv'
+    if (value.value) hydrateRaw(value.value)
     return
   }
   pushOut()
@@ -321,6 +513,8 @@ function clearFields() {
   revealed.value = {}
   if (current.raw) {
     value.value = ''
+    rawRows.value = []
+    rawRevealed.value = {}
     return
   }
   const next: Record<string, unknown> = {}
@@ -659,18 +853,126 @@ defineExpose({ recognize })
           </template>
         </div>
 
-        <!-- 自定义 JSON：直接手编 -->
+        <!-- 自定义 JSON：默认键值对，懂 JSON 的随时切回手写 -->
         <div v-if="isRaw" class="rounded-lg border border-gray-200 bg-white p-2.5">
-          <p class="mb-1 text-[11px] font-medium text-gray-700">直接写 JSON 对象 <span class="text-rose-500">*</span></p>
-          <textarea
-            v-model="value"
-            rows="8"
-            spellcheck="false"
-            class="w-full resize-y rounded-md border px-2 py-1.5 font-mono text-xs leading-relaxed focus:outline-none"
-            :class="errors.__raw ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
-          />
+          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <p class="text-[11px] font-medium text-gray-700">
+              字段 <span class="text-rose-500">*</span>
+              <span class="ml-1 font-normal text-gray-400">（每个字段就是一个键值对）</span>
+            </p>
+            <div v-if="!lockStructure" class="inline-flex rounded-md bg-gray-100 p-0.5">
+              <button
+                type="button"
+                class="rounded px-2 py-0.5 text-[10.5px] font-medium"
+                :class="rawView === 'kv' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                @click="switchRawView('kv')"
+              >键值对</button>
+              <button
+                type="button"
+                class="rounded px-2 py-0.5 text-[10.5px] font-medium"
+                :class="rawView === 'json' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                @click="switchRawView('json')"
+              >写 JSON</button>
+            </div>
+          </div>
+
+          <!-- 键值对视图 -->
+          <template v-if="rawView === 'kv'">
+            <p v-if="!rawRows.length" class="mb-1.5 text-[11px] text-gray-400">
+              还没有字段。凭据里常见的写法是「地址 + 密钥 + 端口」这种扁平结构。
+            </p>
+            <div class="space-y-1.5">
+              <div v-for="(row, index) in rawRows" :key="index">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <input
+                    v-model="row.key"
+                    type="text"
+                    placeholder="字段名"
+                    spellcheck="false"
+                    :disabled="lockStructure"
+                    :title="lockStructure ? '轮换中不可改结构' : ''"
+                    class="w-24 shrink-0 rounded-md border px-1.5 py-1 font-mono text-[11px] font-semibold focus:outline-none"
+                    :class="rawRowErrors[index] ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+                    @input="pushRawOut"
+                  />
+                  <select
+                    v-model="row.type"
+                    :disabled="lockStructure"
+                    :title="lockStructure ? '轮换中不可改结构' : ''"
+                    class="w-16 shrink-0 rounded-md border border-gray-300 px-1 py-1 text-[10.5px] focus:border-blue-500 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
+                    @change="onRawTypeChange(row)"
+                  >
+                    <option value="text">文本</option>
+                    <option value="number">数字</option>
+                    <option value="boolean">布尔</option>
+                    <option value="json">JSON</option>
+                  </select>
+                  <div class="flex min-w-0 flex-1 items-center gap-1">
+                    <input
+                      v-model="row.value"
+                      :type="row.secret && !rawRevealed[index] ? 'password' : 'text'"
+                      :placeholder="row.type === 'json' ? '{\u0022a\u00221} 或 [1,2]' : '值'"
+                      spellcheck="false"
+                      class="min-w-0 flex-1 rounded-md border border-gray-300 px-1.5 py-1 font-mono text-[11px] focus:border-blue-500 focus:outline-none"
+                      :class="row.type === 'number' ? 'text-right' : ''"
+                      @input="pushRawOut"
+                    />
+                    <button
+                      v-if="row.secret"
+                      type="button"
+                      class="shrink-0 rounded border border-gray-200 px-1 py-0.5 text-[9.5px] text-gray-500 hover:bg-gray-50"
+                      @click="rawRevealed[index] = !rawRevealed[index]"
+                    >{{ rawRevealed[index] ? '隐藏' : '显示' }}</button>
+                  </div>
+                  <label
+                    class="flex shrink-0 cursor-pointer items-center gap-1 text-[10px] text-gray-500"
+                    title="勾上后值打码显示，且不进列表摘要。密码/密钥一定要勾。"
+                  >
+                    <input v-model="row.secret" type="checkbox" class="h-3 w-3 accent-blue-600" />
+                    敏感
+                  </label>
+                  <button
+                    v-if="!lockStructure"
+                    type="button"
+                    class="shrink-0 rounded px-1 text-sm leading-none text-gray-300 hover:bg-rose-50 hover:text-rose-600"
+                    title="删除这个字段"
+                    @click="removeRawRow(index)"
+                  >×</button>
+                </div>
+                <p v-if="rawRowErrors[index]" class="mt-0.5 pl-1 text-[10px] text-rose-600">
+                  第 {{ index + 1 }} 行：{{ rawRowErrors[index] }}
+                </p>
+              </div>
+            </div>
+            <button
+              v-if="!lockStructure"
+              type="button"
+              class="mt-1.5 w-full rounded-md border border-dashed border-gray-300 py-1 text-[10.5px] text-gray-500 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
+              @click="addRawRow"
+            >+ 添加字段</button>
+            <p v-else class="mt-1.5 text-[10px] text-gray-400">
+              轮换中字段结构已锁定，只能改值。
+            </p>
+          </template>
+
+          <!-- JSON 视图：要嵌套数组/对象时用 -->
+          <template v-else>
+            <textarea
+              v-model="value"
+              rows="8"
+              spellcheck="false"
+              class="w-full resize-y rounded-md border px-2 py-1.5 font-mono text-xs leading-relaxed focus:outline-none"
+              :class="errors.__raw ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
+            />
+            <p class="mt-1 text-[10.5px] text-gray-400">
+              嵌套对象和数组建议在这里写；切回键值对时会尽量保留结构。
+            </p>
+          </template>
+
           <p v-if="errors.__raw" class="mt-1 text-[11px] text-rose-600">{{ errors.__raw }}</p>
-          <p v-else class="mt-1 text-[11px] text-gray-500">顶层必须是对象；库里只存这一段文本，不校验字段结构。</p>
+          <p v-else class="mt-1 text-[11px] text-gray-500">
+            数字保持数字、布尔保持布尔——端口写成字符串会被对方的 schema 判类型不符。
+          </p>
         </div>
 
         <!-- 模板字段 -->

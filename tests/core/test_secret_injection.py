@@ -1838,3 +1838,185 @@ class TestMcpAuthorizationKeepsItsScheme:
             encoding="utf-8"
         )
         assert 'if name.lower() == "authorization":' in source
+
+
+class TestDeclaredTypeCoercion:
+    """凭据喂给数字/布尔参数：注入层按远端 schema 转类型。
+
+    背景：配置期原来只允许 string 参数绑凭据，理由是「凭据值永远是字符串」。
+    但端口、超时、重试次数这些连接参数恰好都是数字，它们既不该让模型每次猜，
+    也不在 Header 里——「只允许 string」实际等于告诉用户「平台管不了这个参数」。
+    放开之后转换责任落在注入层，转不了要能在流水里看出是这个原因。
+    """
+
+    def test_integer_accepts_digit_string(self):
+        from app.services.secrets.injection import coerce_to_declared_type
+
+        assert coerce_to_declared_type("465", "integer") == (465, None)
+
+    def test_integer_rejects_decimal_string(self):
+        """整数字段给 "465.0" 应当拒绝，而不是悄悄取整——差值可能正是被忽略的那一位。"""
+        from app.services.secrets.injection import coerce_to_declared_type
+
+        value, error = coerce_to_declared_type("465.0", "integer")
+
+        assert error == "type_mismatch"
+        assert value == "465.0"
+
+    def test_number_keeps_integer_form(self):
+        from app.services.secrets.injection import coerce_to_declared_type
+
+        # 整数写法不要变成 465.0：远端 schema 是 number 时也照样接受 int
+        assert coerce_to_declared_type("465", "number") == (465, None)
+        assert coerce_to_declared_type("1.5", "number") == (1.5, None)
+
+    def test_boolean_accepts_common_spellings(self):
+        from app.services.secrets.injection import coerce_to_declared_type
+
+        for text in ("true", "TRUE", "1", "yes", "on"):
+            assert coerce_to_declared_type(text, "boolean") == (True, None), text
+        for text in ("false", "0", "no", "off"):
+            assert coerce_to_declared_type(text, "boolean") == (False, None), text
+
+    def test_boolean_rejects_garbage(self):
+        from app.services.secrets.injection import coerce_to_declared_type
+
+        assert coerce_to_declared_type("maybe", "boolean")[1] == "type_mismatch"
+
+    def test_string_param_stringifies_numbers(self):
+        from app.services.secrets.injection import coerce_to_declared_type
+
+        # 远端要字符串时，凭据里的数字 465 得给成 "465"
+        assert coerce_to_declared_type(465, "string") == ("465", None)
+
+    def test_undeclared_type_passes_through(self):
+        """没声明类型时维持旧行为：原样给，平台不发明转换规则。"""
+        from app.services.secrets.injection import coerce_to_declared_type
+
+        assert coerce_to_declared_type(465, None) == (465, None)
+        assert coerce_to_declared_type("anything", None) == ("anything", None)
+
+    def test_structured_types_are_left_alone(self):
+        """对象/数组不转换：配置期已经拦掉，运行时也不在这里造规则。"""
+        from app.services.secrets.injection import coerce_to_declared_type
+
+        assert coerce_to_declared_type({"a": 1}, "object") == ({"a": 1}, None)
+        assert coerce_to_declared_type([1, 2], "array") == ([1, 2], None)
+
+    def test_union_type_picks_the_scalar(self):
+        """nullable 的 integer 参数在远端仍按 integer 校验。"""
+        from app.services.secrets.injection import declared_param_type
+
+        assert declared_param_type({"type": ["integer", "null"]}) == "integer"
+        assert declared_param_type({"type": ["string", "null"]}) == "string"
+        assert declared_param_type({"type": ["object", "null"]}) is None
+        assert declared_param_type({}) is None
+        assert declared_param_type(None) is None
+
+    async def test_string_field_is_coerced_for_integer_param(self):
+        """凭据里存成 "465"（字符串），参数声明 integer，注入时必须是数字。"""
+        async with AsyncSessionLocal() as session:
+            rec = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mail.port.text",
+                name="邮件端口（写成了字符串）",
+                value='{"port": "465"}',
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=[],
+                value_format="json",
+            )
+            await center.bind_secret(
+                session,
+                secret_id=rec.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-coerce-1",
+                slot="arg:list-mail:port",
+                bound_by_user_id=USER_ID,
+                value_path="port",
+            )
+
+        tool = SimpleNamespace(
+            id="tool-coerce-1",
+            tool_name="server:list-mail",
+            server_id="srv-coerce-1",
+            credential_params='["port"]',
+            parameter_schema='{"properties": {"port": {"type": "integer"}}}',
+        )
+
+        args = await apply_mcp_arg_bindings(tool, {}, user_info=USER)
+
+        assert args["port"] == 465
+        assert not isinstance(args["port"], str)
+
+    async def test_uncoercible_value_is_recorded_as_type_mismatch(self):
+        """转不了就拒绝注入，并在 denials 里留下具体原因——别把原值硬塞出去。"""
+        async with AsyncSessionLocal() as session:
+            rec = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mail.port.bad",
+                name="邮件端口（填错了）",
+                value='{"port": "四百六十五"}',
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=[],
+                value_format="json",
+            )
+            await center.bind_secret(
+                session,
+                secret_id=rec.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-coerce-2",
+                slot="arg:list-mail:port",
+                bound_by_user_id=USER_ID,
+                value_path="port",
+            )
+
+        tool = SimpleNamespace(
+            id="tool-coerce-2",
+            tool_name="server:list-mail",
+            server_id="srv-coerce-2",
+            credential_params='["port"]',
+            parameter_schema='{"properties": {"port": {"type": "integer"}}}',
+        )
+        denials: dict[str, str] = {}
+
+        args = await apply_mcp_arg_bindings(tool, {}, user_info=USER, denials=denials)
+
+        assert "port" not in args
+        assert denials["arg:list-mail:port"] == "type_mismatch"
+
+    async def test_declaration_without_schema_behaves_as_before(self):
+        """工具没带 parameter_schema 时按「没声明」处理，老工具不受影响。"""
+        async with AsyncSessionLocal() as session:
+            rec = await center.create_secret(
+                session,
+                owner_id=USER_ID,
+                secret_key="mail.port.legacy",
+                name="邮件端口（老工具）",
+                value='{"port": "465"}',
+                allowed_scenarios=[SCENE_MCP],
+                allowed_hosts=[],
+                value_format="json",
+            )
+            await center.bind_secret(
+                session,
+                secret_id=rec.id,
+                consumer_type="mcp_server",
+                consumer_id="srv-coerce-3",
+                slot="arg:list-mail:port",
+                bound_by_user_id=USER_ID,
+                value_path="port",
+            )
+
+        tool = SimpleNamespace(
+            id="tool-coerce-3",
+            tool_name="server:list-mail",
+            server_id="srv-coerce-3",
+            credential_params='["port"]',
+        )
+
+        args = await apply_mcp_arg_bindings(tool, {}, user_info=USER)
+
+        # 没有 schema 就原样给：改动前是什么样，现在还什么样
+        assert args["port"] == "465"
