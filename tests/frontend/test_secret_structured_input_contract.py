@@ -229,7 +229,11 @@ class TestRegressionGuards:
 
     def test_empty_custom_json_reports_an_error(self):
         source = _read(EDITOR)
-        assert "需要填写一个 JSON 对象" in source
+        # 2026-11-15：自定义 JSON 的默认视图改成键值对表格，空状态提示也得跟着改——
+        # 让用户在表格里看到「去写一个 JSON 对象」只会更困惑。
+        assert "至少填一个字段" in source
+        # 顶层必须是对象的校验仍然在（JSON 视图下输入数组要拦）
+        assert "顶层必须是 JSON 对象" in source
 
     def test_number_input_keeps_raw_text_instead_of_nan(self):
         source = _read(EDITOR)
@@ -341,3 +345,67 @@ class TestCustomJsonValidationMessages:
         source = _read(EDITOR)
         body = source.split("function chooseTemplate(")[1].split("\n}")[0]
         assert "revealed.value = {}" in body
+
+
+class TestCustomJsonKeyValueEditor:
+    """自定义 JSON 从「一个空 textarea」改成「键值对表格 + 可切 JSON」后的契约。
+
+    背景：生产环境里这个模板是别人在用，要求他们先学会 JSON 语法、再自己找
+    语法错在哪，实际是劝退。表格是默认视图，JSON 视图保留给嵌套结构。
+    """
+
+    def test_key_value_view_is_the_default(self):
+        source = _read(EDITOR)
+        assert "const rawView = ref<'kv' | 'json'>('kv')" in source
+
+    def test_number_columns_keep_numeric_type(self):
+        # 端口这类字段必须是 465 而不是 "465"，否则对方的 schema 判类型不符
+        source = _read(EDITOR)
+        assert "Number.isFinite(num) ? num : text" in source
+
+    def test_secret_checkbox_feeds_the_parent(self):
+        # 自定义 JSON 没有模板声明，敏感字段只能来自逐行勾选；
+        # 漏一个就等于让密码进列表摘要
+        source = _read(EDITOR)
+        raw_branch = source.split("if (current.raw) {")[1].split("return current.fields")[0]
+        assert "row.secret" in raw_branch
+
+    def test_row_keys_must_be_unique(self):
+        source = _read(EDITOR)
+        assert "字段名重复" in source
+
+    def test_illegal_secret_field_name_is_blocked(self):
+        # 后端拿同一套正则校验；这里不拦就是保存时才报错，用户不知道该改哪
+        source = _read(EDITOR)
+        assert "敏感字段名只能用字母开头的字母/数字/下划线" in source
+        assert r"/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/" in source
+
+    def test_switching_back_to_table_requires_parsable_json(self):
+        # 半截 JSON 不能覆盖表格：解析失败就留在 JSON 视图
+        source = _read(EDITOR)
+        assert "function switchRawView" in source
+        body = source.split("function switchRawView(")[1].split("\n}")[0]
+        assert "JSON.parse" in body
+        assert "return" in body
+
+    def test_switching_views_keeps_secret_flags(self):
+        # 敏感标记不在 JSON 里，切视图时按字段名沿用，否则每切一次勾选就丢光
+        source = _read(EDITOR)
+        body = source.split("function hydrateRaw(")[1].split("\n}")[0]
+        assert "remembered" in body
+        assert "secret: remembered.get(key)" in body
+
+    def test_row_error_uses_the_same_border_color(self):
+        # 与字段错误同一个色号；两套色号叠加时谁生效取决于 CSS 生成顺序
+        source = _read(EDITOR)
+        assert "'border-rose-400'" not in source
+        assert "rawRowErrors[index] ? 'border-rose-500'" in source
+
+    def test_rotation_locks_the_field_structure(self):
+        """轮换只换值不换结构：加/删字段、改字段名都会让别处的引用失效。"""
+        source = _read(EDITOR)
+        for name in ("addRawRow", "removeRawRow", "switchRawView"):
+            body = source.split(f"function {name}(")[1].split("\n}")[0]
+            assert "props.lockStructure" in body, name
+        assert 'v-if="!lockStructure"' in source
+        assert "轮换中字段结构已锁定，只能改值。" in source
