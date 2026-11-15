@@ -17,7 +17,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from collections.abc import Iterable, Mapping
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -296,6 +296,209 @@ def serialize_secret(row) -> Dict[str, Any]:
     }
 
 
+async def _audit_readable(
+    db: AsyncSession, rows: list
+) -> Dict[str, Dict[str, str]]:
+    """把审计的 ``detail`` JSON 翻译成人话，并补齐「谁」和「绑到哪」。
+
+    审计表存原始 JSON 是对的——迁移、回放、事后取证都靠它。但界面上直接摊 JSON
+    等于没说：用户看到的是一个「绑定」标签和一片空白，既不知道绑到哪，也不知道
+    是谁绑的。``detail`` 里其实有 consumer_id 和 slot，``actor_id`` 也有，
+    只是从来没解析过。这里统一转成三件事：谁 → 对什么 → 做了什么。
+    """
+    parsed: List[Tuple[Any, Dict[str, Any]]] = []
+    consumer_want: Dict[str, set] = {}
+    user_want: set = set()
+
+    for row in rows:
+        try:
+            data = json.loads(row.detail or "{}")
+        except (ValueError, TypeError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        parsed.append((row, data))
+        consumer_id = data.get("consumer_id")
+        consumer_type = data.get("consumer_type")
+        if consumer_id and consumer_type:
+            consumer_want.setdefault(str(consumer_type), set()).add(str(consumer_id))
+        if row.actor_id:
+            user_want.add(str(row.actor_id))
+        # 授权对象的真实姓名也要查，否则「授权给 12」等于没写
+        if data.get("grantee_type") in ("user", "dept") and data.get("grantee_id"):
+            user_want.add(str(data["grantee_id"]))
+
+    from sqlalchemy import select
+
+    target_names: Dict[Tuple[str, str], str] = {}
+    if consumer_want:
+        from app.models.mcp import McpServer
+        from app.models.script_tool import SysScriptTool
+        from app.models.tool import SysApiTool
+
+        for consumer_type, model, name_column in (
+            ("mcp_server", McpServer, "server_name"),
+            ("api_tool", SysApiTool, "name"),
+            ("script_tool", SysScriptTool, "name"),
+        ):
+            wanted = consumer_want.get(consumer_type) or set()
+            if not wanted:
+                continue
+            named = (
+                await db.execute(
+                    select(model.id, getattr(model, name_column)).where(
+                        model.id.in_(wanted)
+                    )
+                )
+            ).all()
+            for row_id, row_name in named:
+                target_names[(consumer_type, str(row_id))] = str(row_name or "")
+
+    user_labels: Dict[str, str] = {}
+    if user_want:
+        from app.models.user import User
+
+        try:
+            people = (
+                await db.execute(
+                    select(User.id, User.user_name, User.real_name).where(
+                        User.id.in_(user_want)
+                    )
+                )
+            ).all()
+            for row_id, user_name, real_name in people:
+                user_labels[str(row_id)] = str(real_name or user_name or row_id)
+        except Exception as exc:  # noqa: BLE001 —— 查不到名字不该让整页 500
+            logger.warning("[SecretAudit] 解析用户姓名失败 %s: %s", user_want, exc)
+
+    def _target(data: Dict[str, Any]) -> str:
+        key = (str(data.get("consumer_type") or ""), str(data.get("consumer_id") or ""))
+        return target_names.get(key) or (data.get("consumer_id") or "")
+
+    def _who(grantee_type: Any, grantee_id: Any) -> str:
+        if grantee_type == "all":
+            return "全体用户"
+        if grantee_type == "dept":
+            return f"部门 {user_labels.get(str(grantee_id), grantee_id)}"
+        if grantee_type == "user":
+            return user_labels.get(str(grantee_id)) or f"用户 {grantee_id}"
+        return str(grantee_type or "")
+
+    out: Dict[str, Dict[str, str]] = {}
+    for row, data in parsed:
+        actor = (
+            row.actor_name
+            or user_labels.get(str(row.actor_id))
+            or (f"用户 {row.actor_id}" if row.actor_id else "系统")
+        )
+        target = _target(data)
+        slot = str(data.get("slot") or "")
+        where = f"{target} · {slot}" if (target and slot) else (target or slot)
+        action = row.action or ""
+
+        if action == "bind":
+            text = where
+            value_path = data.get("value_path")
+            # 槽位末段就是参数名时不用再说一遍「取 x 字段」，那是废话
+            if value_path and slot and not slot.endswith(str(value_path)):
+                text += f"（取 {value_path} 字段）"
+            if data.get("global"):
+                text += " · 全局"
+            elif data.get("batched"):
+                text += " · 我绑的"
+        elif action == "unbind":
+            text = f"从 {where} 解绑" if where else "解绑"
+        elif action == "bind_rule":
+            text = f"{where} 的规则" if where else "规则变更"
+        elif action == "grant":
+            text = f"授权给 {_who(data.get('grantee_type'), data.get('grantee_id'))}"
+            if data.get("expires_at"):
+                text += f"，到期 {data['expires_at']}"
+        elif action == "revoke":
+            text = f"取消 {_who(data.get('grantee_type'), data.get('grantee_id'))} 的授权"
+        elif action == "create":
+            scenarios = "、".join(data.get("allowed_scenarios") or [])
+            text = f"创建（{data.get('secret_type') or '凭据'}）"
+            if scenarios:
+                text += f"，场景 {scenarios}"
+        elif action == "update":
+            changed = [str(k) for k in data.keys() if k != "updated"]
+            text = f"修改 {'、'.join(changed)}" if changed else "修改配置"
+        elif action == "rotate":
+            value_format = data.get("value_format")
+            template = data.get("value_template")
+            text = "轮换值"
+            if value_format or template:
+                text += f"（{'/'.join(str(item) for item in (value_format, template) if item)}）"
+        elif action == "enable":
+            text = "启用"
+        elif action == "disable":
+            text = "停用"
+        elif action == "delete":
+            text = "删除凭据"
+        else:
+            text = ""
+
+        out[str(row.id)] = {"actor_label": str(actor), "detail_text": text}
+    return out
+
+
+async def _rule_shadow_map(
+    db: AsyncSession, bindings: list
+) -> Dict[Tuple[str, str, str], str]:
+    """同槽位上存在 rule 绑定时，fixed 绑定被压制的程度。
+
+    ``on_miss`` 决定 fixed 到底还有没有机会被选中：
+
+    - ``fail``：规则未命中就整条失败，**不会**回退到 fixed —— 这条 fixed 是死数据
+    - ``fallback_fixed``：规则未命中时才回退到它
+    - ``model``：只有模型在编号字段里指定了这才用它
+
+    不标出来的后果是「已绑定 N 处」看着像一定在用，实际一条都不会生效，
+    用户只能翻流水表才发现。个人端与管理端共用一份计算，避免两边口径不一致。
+    """
+    from sqlalchemy import select
+
+    from app.models.secret import SecretBinding
+
+    fixed_slots = {
+        (binding.consumer_type, str(binding.consumer_id), binding.slot)
+        for binding in bindings
+        if (getattr(binding, "strategy", None) or "fixed") == "fixed"
+    }
+    if not fixed_slots:
+        return {}
+
+    rule_rows = (
+        await db.execute(
+            select(
+                SecretBinding.consumer_type,
+                SecretBinding.consumer_id,
+                SecretBinding.slot,
+                SecretBinding.rule_json,
+            )
+            .where(SecretBinding.strategy == "rule")
+            .where(SecretBinding.consumer_type.in_({item[0] for item in fixed_slots}))
+            .where(SecretBinding.slot.in_({item[2] for item in fixed_slots}))
+        )
+    ).all()
+
+    shadow: Dict[Tuple[str, str, str], str] = {}
+    for row_type, row_consumer, row_slot, rule_json in rule_rows:
+        key = (row_type, str(row_consumer), row_slot)
+        if key not in fixed_slots:
+            continue
+        try:
+            on_miss = (json.loads(rule_json or "{}") or {}).get("on_miss") or "fail"
+        except (ValueError, TypeError):
+            # 规则写坏时按最严格处理：宁可提示「不会生效」，也不要说成「会用上」
+            on_miss = "fail"
+        # 同槽位多条规则取最严格的一条：只要有一条能挡住，就不该说「会用上」
+        if shadow.get(key) != "fail":
+            shadow[key] = on_miss
+    return shadow
+
+
 async def _usage_stats(db: AsyncSession, secret_ids: list[str]) -> Dict[str, Dict[str, Any]]:
     """按凭据聚合「绑了几个」「最近用过没有」「近 7 天成功/失败」。
 
@@ -504,6 +707,8 @@ async def list_usage(
                 "target_host": r.target_host,
                 "result": r.result,
                 "trace_id": r.trace_id,
+                # 排查「这条凭据是不是那次对话用的」要靠它；trace_id 只够定位单次调用
+                "conversation_id": r.conversation_id,
                 "created_at": _iso(r.created_at),
             }
             for r in rows
@@ -552,6 +757,7 @@ async def list_audit(
         actor_id=None if is_admin else user_id,
         limit=limit,
     )
+    readable = await _audit_readable(db, rows)
     return {
         "code": 0,
         "data": [
@@ -562,7 +768,11 @@ async def list_audit(
                 "owner_scope": r.owner_scope,
                 "actor_id": r.actor_id,
                 "actor_name": r.actor_name,
+                # 解析后的操作人：actor_name 常为空（历史数据），得靠 id 反查
+                "actor_label": (readable.get(str(r.id)) or {}).get("actor_label"),
                 "action": r.action,
+                # 一句话说清「对什么做了什么」，避免前端各自解析 detail JSON
+                "detail_text": (readable.get(str(r.id)) or {}).get("detail_text"),
                 "detail": r.detail,
                 "created_at": _iso(r.created_at),
             }
@@ -788,6 +998,42 @@ async def get_bindings(
         )
     rows = (await db.execute(stmt)).all()
     user_id, _ = _user_ctx(user_info)
+
+    # 槽位只有工具短名（``arg:send_mail:host``），光看它分不出是哪台 MCP 服务——
+    # 同一个工具名可能出现在多台服务下，用户看到「MCP 服务 · arg:send_mail:host」
+    # 根本不知道该去哪解绑。批量取名，查不到退回 id：目标可能已被删除，
+    # 但至少还能定位。
+    names: Dict[Tuple[str, str], str] = {}
+    ids_by_type: Dict[str, set] = {}
+    for binding, _secret in rows:
+        ids_by_type.setdefault(binding.consumer_type, set()).add(
+            str(binding.consumer_id)
+        )
+    if ids_by_type:
+        from app.models.mcp import McpServer
+        from app.models.script_tool import SysScriptTool
+        from app.models.tool import SysApiTool
+
+        for consumer_type, model, name_column in (
+            ("mcp_server", McpServer, "server_name"),
+            ("api_tool", SysApiTool, "name"),
+            ("script_tool", SysScriptTool, "name"),
+        ):
+            wanted = ids_by_type.get(consumer_type) or set()
+            if not wanted:
+                continue
+            named = (
+                await db.execute(
+                    select(model.id, getattr(model, name_column)).where(
+                        model.id.in_(wanted)
+                    )
+                )
+            ).all()
+            for row_id, row_name in named:
+                names[(consumer_type, str(row_id))] = str(row_name or "")
+
+    rule_on_miss = await _rule_shadow_map(db, [binding for binding, _secret in rows])
+
     return {
         "code": 0,
         "data": [
@@ -820,6 +1066,23 @@ async def get_bindings(
                 "value_path": getattr(binding, "value_path", "") or "",
                 "consumer_type": binding.consumer_type,
                 "consumer_id": binding.consumer_id,
+                # 绑定到哪台服务/哪个工具的名字。没有它，界面只能显示
+                # 消费者类型和槽位，用户无法判断该去哪解绑
+                "consumer_name": names.get(
+                    (binding.consumer_type, str(binding.consumer_id))
+                )
+                or str(binding.consumer_id),
+                # 同槽位存在 rule 绑定时的压制程度（仅对 fixed 有意义）：
+                #   fail          → 规则未命中直接失败，这条 fixed 永远不会被选中
+                #   fallback_fixed→ 规则未命中时才回退到它
+                #   model         → 只有模型指定了编号字段才用它
+                "rule_shadow": (
+                    rule_on_miss.get(
+                        (binding.consumer_type, str(binding.consumer_id), binding.slot)
+                    )
+                    if (getattr(binding, "strategy", None) or "fixed") == "fixed"
+                    else None
+                ),
                 # 别人做的个人绑定不该被看见
                 "bound_by_me": binding.bound_by_user_id == user_id,
                 # 和凭据详情（``/{secret_id}``）保持同一个字段名：前端区分「全局绑定」
@@ -1645,6 +1908,8 @@ async def admin_list(
     for binding in bindings:
         by_binding.setdefault(binding.secret_id, []).append(binding)
 
+    admin_rule_shadow = await _rule_shadow_map(db, bindings)
+
     # consumer_id 是 uuid，直接摊在界面上等于没说「绑到哪了」。
     # 三类消费者各查一次名字，绑定者同样解析成用户名——这里只有管理员能看，
     # 展示真实身份不构成越权。
@@ -1710,6 +1975,14 @@ async def admin_list(
                             (b.consumer_type, str(b.consumer_id))
                         )
                         or str(b.consumer_id),
+                        # 同槽位有规则时，这条固定绑定还能不能被选中（见 _rule_shadow_map）
+                        "rule_shadow": (
+                            admin_rule_shadow.get(
+                                (b.consumer_type, str(b.consumer_id), b.slot)
+                            )
+                            if (getattr(b, "strategy", None) or "fixed") == "fixed"
+                            else None
+                        ),
                         "bound_by_user_id": b.bound_by_user_id,
                         "bound_by_name": (
                             user_names.get(str(b.bound_by_user_id))

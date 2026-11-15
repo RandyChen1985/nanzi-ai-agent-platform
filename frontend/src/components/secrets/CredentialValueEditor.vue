@@ -28,8 +28,16 @@ const props = withDefaults(
   defineProps<{
     /** 只影响提示文案：变量可读可复制，凭证建完不可读 */
     secretType?: 'credential' | 'variable'
+    /**
+     * 轮换态：结构由既有凭据定死。
+     *
+     * 换模板会换掉整个字段集合，切回单值会把 JSON 拍平成一段文本——两者都会让
+     * 别处已经写好的 `${secret:标识.字段}` 引用在无人察觉的情况下失效。轮换只
+     * 该换值，不该换形状。
+     */
+    lockStructure?: boolean
   }>(),
-  { secretType: 'credential' },
+  { secretType: 'credential', lockStructure: false },
 )
 
 /** 最终提交的那个字符串 */
@@ -263,6 +271,7 @@ const filteredTemplates = computed(() => {
 })
 
 function chooseTemplate(id: string) {
+  if (props.lockStructure) return
   const next = findCredentialTemplate(id)
   if (!next) return
   const previous = values.value
@@ -293,6 +302,7 @@ function chooseTemplate(id: string) {
 }
 
 function clearTemplate() {
+  if (props.lockStructure) return
   template.value = null
   values.value = {}
   value.value = ''
@@ -302,6 +312,7 @@ function clearTemplate() {
 }
 
 function clearFields() {
+  if (props.lockStructure) return
   const current = tpl.value
   if (!current) return
   // 先清状态再分支：raw 分支会提前 return，写在末尾就漏了
@@ -374,6 +385,7 @@ function fillTemplate(templateId: string, source: Record<string, unknown>) {
 }
 
 function switchFormat(next: 'text' | 'json') {
+  if (props.lockStructure) return
   if (next === format.value) return
   notice.value = ''
 
@@ -543,7 +555,11 @@ defineExpose({ recognize })
       <span class="text-xs font-medium text-gray-700">
         凭据值 <span class="text-rose-500">*</span>
       </span>
-      <div class="inline-flex rounded-lg border border-gray-200 bg-gray-100 p-0.5">
+      <div v-if="lockStructure" class="text-[11px] text-gray-500">
+        {{ format === 'json' ? '结构化（模板）' : '自由输入' }}
+        <span class="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">轮换中不可改结构</span>
+      </div>
+      <div v-else class="inline-flex rounded-lg border border-gray-200 bg-gray-100 p-0.5">
         <button
           type="button"
           class="rounded-md px-2.5 py-1 text-[11px]"
@@ -637,8 +653,10 @@ defineExpose({ recognize })
             <span class="block truncate text-[11.5px] font-semibold text-gray-900">{{ tpl.name }}</span>
             <span class="block truncate text-[10.5px] text-gray-500">{{ tpl.desc }}</span>
           </span>
-          <button type="button" class="shrink-0 rounded border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50" @click="clearTemplate">换模板</button>
-          <button type="button" class="shrink-0 rounded border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50" @click="clearFields">清空</button>
+          <template v-if="!lockStructure">
+            <button type="button" class="shrink-0 rounded border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50" @click="clearTemplate">换模板</button>
+            <button type="button" class="shrink-0 rounded border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50" @click="clearFields">清空</button>
+          </template>
         </div>
 
         <!-- 自定义 JSON：直接手编 -->

@@ -393,6 +393,23 @@ def _current_trace_id() -> str | None:
         return None
 
 
+def _current_conversation_id() -> str | None:
+    """当前会话 id。
+
+    使用流水里 trace_id 只能定位到「哪一次调用」，排查「用户说这条凭据用不了」
+    真正需要的是回到那次对话——而这条链路之前**从来没传过** conversation_id，
+    表里那一列对注入产生的水流永远是 NULL。凭据详情的「使用记录」因此只能
+    显示时间，点不回会话。
+    """
+    try:
+        from app.core.context import get_current_agent_context
+
+        context = get_current_agent_context()
+        return getattr(context, "conversation_id", None) if context else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def _max_inject_per_call() -> int:
     """单次调用最多注入几条凭据（平台策略 ``secret_policy_max_inject_per_call``）。
 
@@ -442,6 +459,7 @@ async def apply_api_tool_bindings(
 
     target = host_of(getattr(config, "url_template", None))
     trace_id = _current_trace_id()
+    conversation_id = _current_conversation_id()
     resolved = dict(headers)
     limit = await _max_inject_per_call()
     injected = 0
@@ -465,6 +483,7 @@ async def apply_api_tool_bindings(
                 slot=f"header:{name}",
                 target_host=target,
                 trace_id=trace_id,
+                conversation_id=conversation_id,
                 dept_code=dept_code,
                 user_attrs=user_attrs,
                 plain_cache=plain_cache,
@@ -639,6 +658,7 @@ async def apply_api_tool_param_bindings(
     url_template = getattr(config, "url_template", None)
     target = host_of(url_template)
     trace_id = _current_trace_id()
+    conversation_id = _current_conversation_id()
     resolved = dict(params)
     limit = await _max_inject_per_call()
     injected = 0
@@ -680,6 +700,7 @@ async def apply_api_tool_param_bindings(
                 slot=slot,
                 target_host=target,
                 trace_id=trace_id,
+                conversation_id=conversation_id,
                 dept_code=dept_code,
                 # 参数级注入：模型填的其余参数就是规则的匹配来源。
                 # 去掉凭据参数自身——用一条凭据决定另一条会形成依赖环。
@@ -820,6 +841,7 @@ async def apply_mcp_bindings(
 
     target = host_of(getattr(server, "sse_url", None))
     trace_id = _current_trace_id()
+    conversation_id = _current_conversation_id()
     resolved = dict(headers or {})
     limit = await _max_inject_per_call()
     injected = 0
@@ -844,6 +866,7 @@ async def apply_mcp_bindings(
                 slot=slot,
                 target_host=target,
                 trace_id=trace_id,
+                conversation_id=conversation_id,
                 dept_code=dept_code,
                 user_attrs=user_attrs,
                 plain_cache=plain_cache,
@@ -1043,6 +1066,7 @@ async def apply_mcp_arg_bindings(
 
     target = await _mcp_server_host(server_id)
     trace_id = _current_trace_id()
+    conversation_id = _current_conversation_id()
     resolved = dict(arguments)
     limit = await _max_inject_per_call()
 
@@ -1077,6 +1101,7 @@ async def apply_mcp_arg_bindings(
                 slot=slot,
                 target_host=target,
                 trace_id=trace_id,
+                conversation_id=conversation_id,
                 dept_code=dept_code,
                 # 参数级注入：模型填的其余参数就是规则的匹配来源。
                 # 去掉凭据参数自身——用一条凭据决定另一条会形成依赖环。
@@ -1247,6 +1272,8 @@ async def apply_script_env_bindings(
         return {}
 
     trace_id = _current_trace_id()
+
+    conversation_id = _current_conversation_id()
     resolved: dict[str, str] = {}
     limit = await _max_inject_per_call()
     if len(slots) > limit:
@@ -1271,6 +1298,7 @@ async def apply_script_env_bindings(
                 consumer_id=tool_id,
                 slot=slot,
                 trace_id=trace_id,
+                conversation_id=conversation_id,
                 dept_code=dept_code,
                 user_attrs=user_attrs,
                 plain_cache=plain_cache,

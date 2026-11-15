@@ -71,6 +71,12 @@ interface UsageRow {
   user_email: string | null
   target_host: string | null
   consumer_type: string | null
+  /** 槽位：知道是哪台服务的哪个参数位取的 */
+  slot?: string | null
+  /** 单次调用的追踪号 */
+  trace_id?: string | null
+  /** 会话 id：点回去才能看清当时在干什么 */
+  conversation_id?: string | null
   created_at: string | null
 }
 
@@ -524,6 +530,10 @@ type AuditRow = {
   secret_key: string | null
   action: string
   actor_id: string | null
+  /** 后端解析好的操作人显示名（actor_name 历史数据常为空） */
+  actor_label?: string | null
+  /** 后端把 detail JSON 翻译成的一句话，前端不再各自解析 */
+  detail_text?: string | null
   detail: string | null
   created_at: string
 }
@@ -684,8 +694,23 @@ async function unbindFrom(row: any) {
 // ── 选中项的绑定列表（右侧详情内嵌，不再单开弹窗）──────────────────
 const selectedBindings = ref<any[]>([])
 const selectedBindingsBusy = ref(false)
+/**
+ * 绑定清单默认只露前几条。
+ *
+ * 一条结构化凭据很容易被同一台 MCP 服务的多个参数位各绑一次（host / port /
+ * username / password …），全量平铺会把右侧详情撑成一整屏，反而盖住下面的
+ * 「使用概况」——那才是判断这条凭据该不该留的依据。
+ */
+const BINDING_PREVIEW_COUNT = 3
+const selectedBindingsExpanded = ref(false)
+const shownBindings = computed(() =>
+  selectedBindingsExpanded.value
+    ? selectedBindings.value
+    : selectedBindings.value.slice(0, BINDING_PREVIEW_COUNT),
+)
 
 async function loadBindingsOf(item: SecretItem | null) {
+  selectedBindingsExpanded.value = false
   if (!item) {
     selectedBindings.value = []
     return
@@ -1175,18 +1200,40 @@ onMounted(load)
             </p>
             <div v-else class="mt-1 space-y-1">
               <div
-                v-for="row in selectedBindings"
+                v-for="row in shownBindings"
                 :key="row.id"
                 class="flex items-center gap-1.5 rounded-lg bg-gray-50 px-2 py-1.5"
+                :class="row.rule_shadow === 'fail' ? 'opacity-60' : ''"
               >
                 <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-white text-[10px] font-semibold text-gray-600">
                   {{ (CONSUMER_LABEL[row.consumer_type] || '?').slice(0, 1) }}
                 </span>
                 <div class="min-w-0 flex-1">
-                  <p class="truncate text-[10px] font-medium text-gray-700">
-                    {{ CONSUMER_LABEL[row.consumer_type] || row.consumer_type }}
+                  <!-- 先报名字：槽位只有工具短名，多台服务下同名工具根本分不清该去哪解绑 -->
+                  <p class="truncate text-[10px] font-medium text-gray-700" :title="row.consumer_name">
+                    {{ row.consumer_name || CONSUMER_LABEL[row.consumer_type] || row.consumer_type }}
                   </p>
-                  <p class="truncate font-mono text-[10px] text-gray-400">{{ row.slot }}</p>
+                  <p class="truncate font-mono text-[10px] text-gray-400" :title="row.slot">
+                    <span class="text-gray-300">{{ CONSUMER_LABEL[row.consumer_type] || row.consumer_type }}</span>
+                    · {{ row.slot }}
+                  </p>
+                  <!-- 同一槽位还有 rule 绑定时，这条 fixed 是否真的会被选中取决于 on_miss。
+                       不标出来，用户会以为「已绑定」=「在用」，只能翻流水表才发现是死数据。 -->
+                  <p
+                    v-if="row.rule_shadow === 'fail'"
+                    class="truncate text-[9px] text-gray-400"
+                    title="同一槽位上还有一条规则绑定，且规则设了 on_miss=fail：规则未命中时会整条失败，不会回退到这条固定绑定。所以这条目前不会生效——想让它生效，先删掉那个槽位的规则绑定。"
+                  >规则优先，这条不会生效</p>
+                  <p
+                    v-else-if="row.rule_shadow === 'fallback_fixed'"
+                    class="truncate text-[9px] text-amber-600"
+                    title="同一槽位有规则绑定；只有规则未命中时才会回退到这条固定绑定。"
+                  >规则未命中时才用它</p>
+                  <p
+                    v-else-if="row.rule_shadow === 'model'"
+                    class="truncate text-[9px] text-sky-600"
+                    title="同一槽位有规则绑定；只有模型在编号字段里指定了这条凭据时才会用它。"
+                  >需模型指定才用</p>
                 </div>
                 <span
                   class="shrink-0 rounded px-1 py-0.5 text-[9px]"
@@ -1200,6 +1247,16 @@ onMounted(load)
                   @click.stop="unbindFrom(row)"
                 >移除</button>
               </div>
+              <button
+                v-if="selectedBindings.length > BINDING_PREVIEW_COUNT"
+                type="button"
+                class="w-full rounded-lg border border-dashed border-gray-200 px-2 py-1 text-[10px] text-gray-500 hover:border-gray-300 hover:text-gray-700"
+                @click="selectedBindingsExpanded = !selectedBindingsExpanded"
+              >
+                {{ selectedBindingsExpanded
+                  ? '收起'
+                  : `展开其余 ${selectedBindings.length - BINDING_PREVIEW_COUNT} 条` }}
+              </button>
             </div>
           </div>
 
@@ -1556,14 +1613,28 @@ onMounted(load)
                 <div
                   v-for="row in auditRows"
                   :key="row.id"
-                  class="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600"
+                  class="rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600"
                 >
-                  <code class="text-gray-800">{{ row.secret_key || '已删除' }}</code>
-                  <span
-                    class="rounded px-1.5 py-0.5 font-medium ring-1 ring-inset"
-                    :class="secretActionStyle(row.action)"
-                  >{{ secretActionLabel(row.action) }}</span>
-                  <span class="ml-auto text-gray-400">{{ shortTime(row.created_at) }}</span>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <code class="text-gray-800">{{ row.secret_key || '已删除' }}</code>
+                    <span
+                      class="rounded px-1.5 py-0.5 font-medium ring-1 ring-inset"
+                      :class="secretActionStyle(row.action)"
+                    >{{ secretActionLabel(row.action) }}</span>
+                    <!-- 谁做的：审计只存 actor_id，历史数据里 actor_name 是空的 -->
+                    <span
+                      v-if="row.actor_label || row.actor_id"
+                      class="text-gray-600"
+                      :title="row.actor_id ? `操作人 ID：${row.actor_id}` : ''"
+                    >{{ row.actor_label || row.actor_id }}</span>
+                    <span class="ml-auto text-gray-400">{{ shortTime(row.created_at) }}</span>
+                  </div>
+                  <!-- 对什么做了什么：绑到哪台服务的哪个槽位，原来这格是空的 -->
+                  <p
+                    v-if="row.detail_text"
+                    class="mt-0.5 truncate font-mono text-[10px] text-gray-400"
+                    :title="row.detail_text"
+                  >{{ row.detail_text }}</p>
                 </div>
               </div>
             </template>
@@ -1592,7 +1663,18 @@ onMounted(load)
                 >
                   {{ RESULT_LABEL[row.result] || row.result }}
                 </span>
+                <span v-if="row.slot" class="font-mono text-[10px] text-gray-400">{{ row.slot }}</span>
                 <span v-if="row.target_host" class="text-gray-400">{{ row.target_host }}</span>
+                <!-- 会话是排查的落点：trace_id 只能定位单次调用，回不到对话就说不清「当时在做什么」 -->
+                <a
+                  v-if="row.conversation_id"
+                  :href="`/dashboard/chat?conversation_id=${row.conversation_id}`"
+                  target="_blank"
+                  rel="noopener"
+                  class="text-emerald-600 hover:underline"
+                  :title="`打开这次会话：${row.conversation_id}`"
+                >会话 {{ String(row.conversation_id).slice(0, 8) }}</a>
+                <span v-else class="text-gray-300" title="这条流水没有记录会话（注入链路在 2026-11-15 之前不传 conversation_id）">无会话</span>
                 <!-- 个人中心虽然都是自己的记录，但仍显示身份：多账号 / 被授权他人凭据时，
                      「这条到底是哪个账号在调用」是排查的第一步 -->
                 <span
@@ -1986,8 +2068,8 @@ onMounted(load)
                 class="mt-1 text-[11px] text-blue-700"
               >
                 这条是结构化凭据（{{ credentialTemplateLabel(rotateTarget.value_template) }}），
-                默认沿用同一套模板。切回单值会让 `${secret:标识.字段}` 引用全部失效，
-                请确认没有别处在按字段取用。
+                结构已锁定：轮换只换值、不换模板。换模板会让别处已写好的
+                <code class="rounded bg-blue-50 px-1">${secret:标识.字段}</code> 引用全部失效。
               </p>
               <div class="mt-3">
                 <CredentialValueEditor
@@ -1997,6 +2079,7 @@ onMounted(load)
                   v-model:secretFields="rotateSecretFields"
                   v-model:valid="rotateValid"
                   :secret-type="rotateTarget.secret_type"
+                  :lock-structure="true"
                 />
               </div>
               <div class="mt-3 space-y-1.5 rounded-lg border border-gray-200 bg-gray-50/70 p-3">

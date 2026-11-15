@@ -51,6 +51,11 @@ interface SecretBindingRef {
   is_global?: boolean
   /** MCP 参数槽位里的工具短名 */
   tool_name?: string | null
+  /**
+   * 同槽位存在 rule 绑定时，这条 fixed 绑定被压制的程度（仅 fixed 有值）：
+   * `fail` 永远轮不到 / `fallback_fixed` 规则未命中才回退 / `model` 需模型指定。
+   */
+  rule_shadow?: 'fail' | 'fallback_fixed' | 'model' | null
 }
 
 interface SystemSecret {
@@ -141,6 +146,22 @@ interface BindingGroup {
 }
 
 /** 把绑定按消费者类型分组；混在一起看不出「被哪几类地方用」。 */
+/**
+ * 同一槽位上还有规则绑定时，这条固定绑定还能不能被选中。
+ *
+ * `on_miss=fail` 的规则一旦未命中就整条失败，**不会**回退到固定绑定——
+ * 这种固定绑定是死数据，界面上必须能看出来，否则「已绑定 N 处」等于骗人。
+ */
+function bindingShadowHint(binding: SecretBindingRef): string {
+  const shadow = binding.rule_shadow
+  if (shadow === 'fail') {
+    return '\n⚠ 同槽位有规则绑定且 on_miss=fail：规则未命中时会整条失败，不回退到这条固定绑定，所以它目前不会生效'
+  }
+  if (shadow === 'fallback_fixed') return '\n同槽位有规则绑定：只有规则未命中时才会回退到这条'
+  if (shadow === 'model') return '\n同槽位有规则绑定：只有模型指定了这条凭据才会用到'
+  return ''
+}
+
 function groupBindings(bindings: SecretBindingRef[]): BindingGroup[] {
   const buckets = new Map<string, SecretBindingRef[]>()
   for (const binding of bindings) {
@@ -160,6 +181,35 @@ function groupBindings(bindings: SecretBindingRef[]): BindingGroup[] {
       style: BINDING_TYPE_STYLE[type] || 'bg-gray-100 text-gray-600',
       items,
     }))
+}
+
+/**
+ * 绑定 chip 默认每组只露前几条。
+ *
+ * 一条结构化凭据常被同一台 MCP 服务的多个参数位各绑一次（host / port /
+ * username / password …），全量平铺会把卡片撑得很高，同屏能看的凭据条数
+ * 直接掉一半——扫列表时更需要的恰恰是「有几张卡」。
+ */
+const BINDING_PREVIEW_COUNT = 3
+const expandedBindingGroups = ref<string[]>([])
+
+const bindingGroupKey = (itemId: string, type: string) => `${itemId}:${type}`
+
+function isBindingGroupExpanded(itemId: string, type: string): boolean {
+  return expandedBindingGroups.value.includes(bindingGroupKey(itemId, type))
+}
+
+function toggleBindingGroup(itemId: string, type: string): void {
+  const key = bindingGroupKey(itemId, type)
+  expandedBindingGroups.value = expandedBindingGroups.value.includes(key)
+    ? expandedBindingGroups.value.filter((value) => value !== key)
+    : [...expandedBindingGroups.value, key]
+}
+
+function shownBindingItems(itemId: string, group: BindingGroup): SecretBindingRef[] {
+  return isBindingGroupExpanded(itemId, group.type)
+    ? group.items
+    : group.items.slice(0, BINDING_PREVIEW_COUNT)
 }
 
 const DEPRECATED_SCENES = new Set(['scheduled_task'])
@@ -303,6 +353,10 @@ type AuditRow = {
   secret_key: string | null
   action: string
   actor_id: string | null
+  /** 后端解析好的操作人显示名（actor_name 历史数据常为空） */
+  actor_label?: string | null
+  /** 后端把 detail JSON 翻译成的一句话 */
+  detail_text?: string | null
   detail: string | null
   created_at: string
 }
@@ -325,6 +379,10 @@ type UsageRow = {
   slot: string | null
   target_host: string | null
   result: string
+  /** 会话 id：排查时要点回那次对话 */
+  conversation_id?: string | null
+  /** 单次调用的追踪号 */
+  trace_id?: string | null
   created_at: string
 }
 const usageRows = ref<UsageRow[]>([])
@@ -863,10 +921,11 @@ onMounted(load)
             </div>
           </div>
 
-          <div class="flex shrink-0 items-center gap-1">
+          <!-- 加了边框之后按钮更占宽，工具名长时允许自己折行，别把标题挤出去 -->
+          <div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
             <button
               type="button"
-              class="rounded-md px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
+              class="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 shadow-sm transition-colors hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
               title="只看这条凭据的使用记录"
               @click="openUsage(item.id)"
             >
@@ -874,7 +933,7 @@ onMounted(load)
             </button>
             <button
               type="button"
-              class="rounded-md px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
+              class="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 shadow-sm transition-colors hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
               title="改名称、场景、域名白名单（值只能轮换）"
               @click="openEdit(item)"
             >
@@ -882,7 +941,7 @@ onMounted(load)
             </button>
             <button
               type="button"
-              class="rounded-md px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
+              class="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 shadow-sm transition-colors hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
               title="换掉这条凭据的值，旧值保留 7 天"
               @click="openRotate(item)"
             >
@@ -890,7 +949,7 @@ onMounted(load)
             </button>
             <button
               type="button"
-              class="rounded-md px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
+              class="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 shadow-sm transition-colors hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
               @click="openGrant(item)"
             >
               授权
@@ -898,7 +957,7 @@ onMounted(load)
             <button
               v-if="item.status === 'active'"
               type="button"
-              class="rounded-md px-2 py-1 text-xs text-rose-600 hover:bg-rose-50"
+              class="rounded-md border border-rose-200 bg-white px-2 py-1 text-xs text-rose-600 shadow-sm transition-colors hover:border-rose-300 hover:bg-rose-50"
               @click="disableTarget = item"
             >
               强制停用
@@ -943,10 +1002,13 @@ onMounted(load)
               :class="group.style"
             >{{ group.label }}</span>
             <span
-              v-for="binding in group.items"
+              v-for="binding in shownBindingItems(item.id, group)"
               :key="binding.id"
-              class="inline-flex items-center gap-1 rounded bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-700"
-              :title="`${group.label}：${binding.consumer_name || binding.consumer_id}\n槽位：${binding.slot}\n绑定者：${binding.is_global ? '全局' : (binding.bound_by_name || binding.bound_by_user_id)}`"
+              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-gray-700"
+              :class="binding.rule_shadow === 'fail'
+                ? 'bg-gray-50 opacity-60 ring-1 ring-dashed ring-gray-300'
+                : 'bg-gray-50'"
+              :title="`${group.label}：${binding.consumer_name || binding.consumer_id}\n槽位：${binding.slot}\n绑定者：${binding.is_global ? '全局' : (binding.bound_by_name || binding.bound_by_user_id)}${bindingShadowHint(binding)}`"
             >
               <span class="font-medium">{{ binding.consumer_name || binding.consumer_id }}</span>
               <code class="font-mono text-gray-500">{{ slotLabel(binding) }}</code>
@@ -954,6 +1016,18 @@ onMounted(load)
                 {{ binding.is_global ? '全局' : (binding.bound_by_name || binding.bound_by_user_id) }}
               </span>
             </span>
+            <!-- 超出预览条数才给展开：多出来的本身就说明「这条凭据被一堆参数位用着」 -->
+            <button
+              v-if="group.items.length > BINDING_PREVIEW_COUNT"
+              type="button"
+              class="rounded px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+              :title="isBindingGroupExpanded(item.id, group.type) ? '收起' : `展开其余 ${group.items.length - BINDING_PREVIEW_COUNT} 条`"
+              @click="toggleBindingGroup(item.id, group.type)"
+            >
+              {{ isBindingGroupExpanded(item.id, group.type)
+                ? '收起'
+                : `+${group.items.length - BINDING_PREVIEW_COUNT}` }}
+            </button>
           </div>
         </div>
 
@@ -1466,15 +1540,27 @@ onMounted(load)
               <div
                 v-for="row in auditRows"
                 :key="row.id"
-                class="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600"
+                class="rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600"
               >
-                <code class="text-gray-800">{{ row.secret_key || '已删除' }}</code>
-                <span
-                  class="rounded px-1.5 py-0.5 font-medium ring-1 ring-inset"
-                  :class="secretActionStyle(row.action)"
-                >{{ secretActionLabel(row.action) }}</span>
-                <span v-if="row.actor_id" class="text-gray-400">{{ row.actor_id }}</span>
-                <span class="ml-auto text-gray-400">{{ shortTime(row.created_at) }}</span>
+                <div class="flex flex-wrap items-center gap-2">
+                  <code class="text-gray-800">{{ row.secret_key || '已删除' }}</code>
+                  <span
+                    class="rounded px-1.5 py-0.5 font-medium ring-1 ring-inset"
+                    :class="secretActionStyle(row.action)"
+                  >{{ secretActionLabel(row.action) }}</span>
+                  <!-- 谁做的：原来直接摊 actor_id，管理员看不出是谁 -->
+                  <span
+                    v-if="row.actor_label || row.actor_id"
+                    class="text-gray-600"
+                    :title="row.actor_id ? `操作人 ID：${row.actor_id}` : ''"
+                  >{{ row.actor_label || row.actor_id }}</span>
+                  <span class="ml-auto text-gray-400">{{ shortTime(row.created_at) }}</span>
+                </div>
+                <p
+                  v-if="row.detail_text"
+                  class="mt-0.5 truncate font-mono text-[10px] text-gray-400"
+                  :title="row.detail_text"
+                >{{ row.detail_text }}</p>
               </div>
             </div>
           </div>
@@ -1509,8 +1595,8 @@ onMounted(load)
             </p>
             <p v-if="rotateTarget?.value_format === 'json'" class="mt-1 text-[11px] text-blue-700">
               这条是结构化凭据（{{ credentialTemplateLabel(rotateTarget?.value_template) }}），
-              默认沿用同一套模板。切回单值会让 `${secret:标识.字段}` 引用全部失效，
-              请确认没有别处在按字段取用。
+              结构已锁定：轮换只换值、不换模板。换模板会让别处已写好的
+              <code class="rounded bg-blue-50 px-1">${secret:标识.字段}</code> 引用全部失效。
             </p>
           </div>
 
@@ -1522,6 +1608,7 @@ onMounted(load)
               v-model:secretFields="rotateSecretFields"
               v-model:valid="rotateValid"
               :secret-type="rotateTarget?.secret_type || 'credential'"
+              :lock-structure="true"
             />
             <div class="space-y-1.5 rounded-lg border border-gray-200 bg-gray-50/70 p-3">
               <div class="flex items-center justify-between gap-2">
@@ -1789,6 +1876,22 @@ onMounted(load)
                 <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[10px] text-gray-400">
                   <span v-if="row.slot">{{ row.slot }}</span>
                   <span v-if="row.target_host">{{ row.target_host }}</span>
+                  <!-- 回到那次对话才查得动「用户说这条凭据用不了」；trace_id 只够定位单次调用。
+                       历史流水这一列是 NULL（注入链路过去没传），所以显式说「无会话」而不是留空。 -->
+                  <a
+                    v-if="row.conversation_id"
+                    :href="`/dashboard/chat?conversation_id=${row.conversation_id}`"
+                    target="_blank"
+                    rel="noopener"
+                    class="text-blue-600 hover:underline"
+                    :title="`打开这次会话：${row.conversation_id}`"
+                  >会话 {{ String(row.conversation_id).slice(0, 8) }}</a>
+                  <span v-else class="text-gray-300" title="这条流水没有记录会话（注入链路在 2026-11-15 之前不传 conversation_id）">无会话</span>
+                  <span
+                    v-if="row.trace_id"
+                    class="text-gray-400"
+                    :title="`trace：${row.trace_id}`"
+                  >trace {{ String(row.trace_id).slice(0, 8) }}</span>
                 </div>
               </div>
             </div>
