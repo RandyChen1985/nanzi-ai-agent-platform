@@ -4701,13 +4701,21 @@ onMounted(fetchServers)
                     >
                       <td class="py-2 pr-3">
                         <code class="break-all font-mono text-xs text-gray-800">{{ name }}</code>
-                        <!-- 槽位是实现概念（参数「写到哪里 + 叫什么」），
-                             摊在界面上只会让人问「这是啥」。hover 才给排查用。 -->
-                        <div
-                          v-if="paramDraft[name] !== 'model'"
-                          class="mt-0.5 cursor-help break-all font-mono text-[10px] text-gray-400"
-                          :title="`绑定位置：${paramSlot(paramMarkTarget.tool, name)}`"
-                        >{{ paramDraft[name] === 'rule' ? '按规则定位' : '由凭据提供' }}</div>
+                        <!-- 每一行都要有来源徽标，包括「模型填写」：
+                             凭据参数已经从模型可见的 schema 里移除了，但界面上看不出来，
+                             留空时用户分不清「这条是模型填的」还是「我漏配了」。
+                             槽位是实现概念（参数「写到哪里 + 叫什么」），摊在界面上只会
+                             让人问「这是啥」，所以放 title 里，hover 才给排查用。 -->
+                        <span
+                          v-if="paramDraft[name] === 'model'"
+                          class="mt-1 inline-block rounded bg-gray-100 px-1 py-0.5 text-[10px] font-medium text-gray-600"
+                          title="模型可见，由模型在调用时自行填写"
+                        >模型填写</span>
+                        <span
+                          v-else
+                          class="mt-1 inline-block cursor-help rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-medium text-emerald-700"
+                          :title="`服务端注入，模型看不到这个值 · 绑定位置：${paramSlot(paramMarkTarget.tool, name)}`"
+                        >服务端注入{{ paramDraft[name] === 'rule' ? ' · 规则' : '' }}</span>
                       </td>
                       <td class="py-2 align-top">
                         <!-- 下拉与凭据控件放在同一行：一格只占一个控件高度，行距更紧，

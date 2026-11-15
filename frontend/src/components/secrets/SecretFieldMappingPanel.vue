@@ -456,10 +456,23 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
           <tr v-for="name in params" :key="name" :class="picks[name] ? 'bg-blue-50/50' : ''">
             <td class="px-3 py-1.5">
               <code class="font-mono text-gray-800">{{ name }}</code>
+              <!-- 来源徽标：这个参数的值到底谁给。
+                   凭据参数已经从模型可见的 schema 里移除了，但界面上看不出来，
+                   用户只能靠猜「这个要模型填还是要配凭据」。 -->
               <span
-                v-if="!picks[name] && takenByOther[name]"
+                v-if="picks[name]"
+                class="ml-1.5 rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-medium text-emerald-700"
+                title="运行时由平台解密并注入，模型看不到这个值"
+              >服务端注入</span>
+              <span
+                v-else-if="takenByOther[name]"
                 class="ml-1.5 rounded bg-amber-50 px-1 py-0.5 text-[10px] font-medium text-amber-700"
               >现由 {{ takenByOther[name] }} 提供</span>
+              <span
+                v-else
+                class="ml-1.5 rounded bg-gray-100 px-1 py-0.5 text-[10px] font-medium text-gray-600"
+                title="模型可见，由模型在调用时自行填写"
+              >模型填写</span>
             </td>
             <td class="px-3 py-1.5">
               <select

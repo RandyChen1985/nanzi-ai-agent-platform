@@ -723,3 +723,56 @@ class TestRuleResaveKeepsHandTypedFields:
         assert source.index("if (!ruleFields.value.length) {") < source.index(
             "!ruleFields.value.some((f) => f.name === picks.value[name])"
         )
+
+
+class TestEveryParamShowsWhereItsValueComesFrom:
+    """每个参数都要有一个来源徽标，包括「模型填写」。
+
+    凭据参数已经从模型可见的 schema 里移除了，但界面上看不出来。只给「已配」的行
+    加标记时，留空的行既可能是「就该模型填」也可能是「我漏配了」，用户得逐行回想。
+    """
+
+    def test_multi_value_table_labels_all_three_states(self):
+        source = _read(ROOT / "frontend/src/components/secrets/SecretFieldMappingPanel.vue")
+        assert "服务端注入</span>" in source
+        assert ">模型填写</span>" in source
+        # 被别的凭据占着的行不能说成「模型填写」，那是第三种状态
+        assert "现由 {{ takenByOther[name] }} 提供" in source
+
+    def test_single_value_table_labels_model_rows_too(self):
+        source = _read(MCP_REGISTRY)
+        # 徽标必须在「模型填写」分支就渲染，不能只在非 model 时出现
+        assert 'v-if="paramDraft[name] === \'model\'"' in source
+        assert ">模型填写</span>" in source
+        assert "服务端注入" in source
+
+    def test_credential_rows_say_the_model_cannot_see_it(self):
+        """「服务端注入」的含义是模型压根看不到这个值，title 里要说清。"""
+        mapping = _read(ROOT / "frontend/src/components/secrets/SecretFieldMappingPanel.vue")
+        assert "模型看不到这个值" in mapping
+        registry = _read(MCP_REGISTRY)
+        assert "模型看不到这个值" in registry
+
+
+class TestNewToolModalStartsClean:
+    """新建工具时不能继承上一次编辑留下的「未绑定参数」。
+
+    `paramUnboundNames` 只有表单分支的 `ToolParamEditor` 会更新，向导分支没绑这个
+    事件。于是在「编辑 A 工具 → 发现 A 有参数没绑 → 关窗 → 新建 B 工具」之后，
+    按钮被一个跟 B 毫无关系的列表禁用，提示还写着 A 的参数名。
+    """
+
+    def test_open_modal_resets_unbound_names(self):
+        source = _read(ROOT / "frontend/src/components/system/ToolRegistry.vue")
+        assert "paramUnboundNames.value = []" in source
+        # 必须在 openModal 里，且与其它「开窗重置」放在一起
+        open_modal = source[source.index("const openModal"):source.index("const cloneTool")]
+        assert "paramUnboundNames.value = []" in open_modal
+
+    def test_wizard_does_not_feed_the_flag(self):
+        """向导里的参数编辑器没接这个事件，这正是上面那条重置必须存在的原因。
+
+        哪天给向导补上事件透传，这条会红——那时可以重新评估要不要保留重置。
+        """
+        wizard = _read(ROOT / "frontend/src/components/system/ToolWizard.vue")
+        assert "unbound-changed" not in wizard
