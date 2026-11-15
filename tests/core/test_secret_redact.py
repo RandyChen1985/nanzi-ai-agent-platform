@@ -207,3 +207,85 @@ class TestOldestValuesAreEvicted:
             register_injected(f"sk-evict-{index:04d}-abcdef")
         assert not looks_like_leak("sk-evict-0000-abcdef"), "最旧的应该被淘汰"
         assert looks_like_leak(f"sk-evict-{MAX_VALUES:04d}-abcdef")
+
+
+class TestTraceStorageNeedsBothLayers:
+    """Trace / 会话历史落库必须「redact + scanner」两层。
+
+    `scanner` 的凭据来源是 `registry._collect()`，它只采**配置里的密钥**和
+    **MCP 固定 Token**——凭据中心的 `sys_secrets` 不在里面。所以远端把凭据回显在
+    响应里时，只过 scanner 等于没脱敏，明文会随 `tool_output` 进 `AgentExecutionTrace`。
+
+    能认出那些值的只有 `redact`：它读的是注入时 `register_injected()` 登记的明文，
+    生命周期就是这一次请求。`outbound_audit` 一直是两层，ai/audit 原来只有一层。
+    """
+
+    def test_registry_does_not_load_credential_center(self):
+        """这条断言是「为什么必须两层」的依据，不是实现细节。"""
+        from pathlib import Path
+
+        source = (Path(__file__).parents[2] / "app/services/secrets/registry.py").read_text(
+            encoding="utf-8"
+        )
+        collect = source[source.index("async def _collect"):source.index("async def _from_system_configs")]
+        assert "_from_system_configs" in collect
+        assert "_from_mcp_servers" in collect
+        # 一旦这里开始采 sys_secrets，上面两层就可以退化成一层了
+        assert "sys_secrets" not in collect and "UserSecret" not in collect
+
+    def test_trace_writes_go_through_both(self):
+        from pathlib import Path
+
+        source = (Path(__file__).parents[2] / "app/services/ai/audit.py").read_text(
+            encoding="utf-8"
+        )
+        assert "from app.services.secrets.redact import redact_text, redact_value" in source
+        # 四个落库字段都要叠：入参、出参、错误信息、元数据
+        assert source.count("redact_value(log.") == 2
+        assert "redact_value(getattr(log, 'meta_info', None)" in source
+        assert "redact_text(log.error_message" in source
+        # 顺序：先 redact 认注入值，再 scanner 认配置值
+        assert "scanner.mask_data(redact_value(" in source
+
+    def test_shared_guard_entry_does_both(self):
+        """统一入口自己就得是两层——否则每个调用方都得记得补，迟早漏一个。
+
+        `guard.sanitize_for_storage` 的 docstring 一直写着「三个出口共用同一份逻辑」，
+        实际只有 scanner 一层：Redis 运行态快照（30 天 TTL，不进数据库备份、没有
+        审计留痕）就是这么漏的。
+        """
+        from pathlib import Path
+
+        source = (Path(__file__).parents[2] / "app/services/secrets/guard.py").read_text(
+            encoding="utf-8"
+        )
+        assert "scanner.mask_data(redact_value(data, log_hits=False))" in source
+        # 降级分支也要擦：取快照失败时更容易漏
+        assert "mask_sensitive_data(redact_value(data, log_hits=False))" in source
+
+    def test_state_store_keeps_using_the_shared_entry(self):
+        """快照存储不要自己拼脱敏——它走的就该是那个统一入口。"""
+        from pathlib import Path
+
+        source = (
+            Path(__file__).parents[2]
+            / "app/services/ai/runtime/agentscope/state_store.py"
+        ).read_text(encoding="utf-8")
+        assert 'sanitize_for_storage(serialized_state, field="agent_state")' in source
+
+    def test_history_writes_go_through_both_too(self):
+        """`save_history` 与 `save_trace_logs` 必须同口径。
+
+        摘要和推理过程是模型写的散文，没有「敏感键名」给 scanner 判断；凭据中心的值
+        又不在 scanner 的采集范围里。只过 scanner 等于没脱敏，而这里看起来「擦过了」。
+        """
+        from pathlib import Path
+
+        source = (Path(__file__).parents[2] / "app/services/ai/audit.py").read_text(
+            encoding="utf-8"
+        )
+        history = source[source.index("async def save_history"):]
+        assert "redact_text(query" in history
+        assert "redact_text(summary" in history
+        assert "redact_text(reasoning_content" in history
+        assert "redact_value(process_timeline" in history
