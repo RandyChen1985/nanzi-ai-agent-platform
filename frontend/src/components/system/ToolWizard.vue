@@ -21,6 +21,20 @@ import ToolSigningEditor from './ToolSigningEditor.vue'
 
 const emit = defineEmits<{ (e: 'dirty-change', value: boolean): void }>()
 
+/**
+ * 向导里配的凭据绑定要能交出去。
+ *
+ * 新建工具时还没有 id，绑定先记在 `ToolSystemParamEditor` 内部的 pending 里，
+ * 等父组件创建成功、拿到 id 之后才补写。父组件拿不到这个 ref 的话，那批 pending
+ * 会随组件卸载一起消失——界面走完向导、试跑也过了，实际一条都没存下来。
+ */
+const paramEditorRef = ref<{ flushPending: (consumerId: string) => Promise<string[]> } | null>(null)
+
+const flushPending = (consumerId: string): Promise<string[]> =>
+  paramEditorRef.value?.flushPending(consumerId) ?? Promise.resolve([] as string[])
+
+defineExpose({ flushPending })
+
 const props = defineProps<{
     toolForm: {
         id?: string
@@ -321,6 +335,7 @@ const goToStep = (target: number) => {
       </p>
 
       <ToolParamEditor
+        ref="paramEditorRef"
         v-model="toolForm.parameter_schema_str"
         mode="wizard"
         :locations="locationMap"

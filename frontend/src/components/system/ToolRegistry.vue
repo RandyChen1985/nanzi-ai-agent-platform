@@ -54,6 +54,10 @@ const fieldErrors = ref<Partial<Record<'name' | 'url_template' | 'headers_str' |
 const paramEditorRef = ref<{
     flushPending: (consumerId: string) => Promise<string[]>
 } | null>(null)
+/** 向导模式下的那一份：新建默认走向导，走这里才拿得到新建态记下的凭据绑定 */
+const wizardRef = ref<{
+    flushPending: (consumerId: string) => Promise<string[]>
+} | null>(null)
 const headersEditorRef = ref<{
   flushPending: (consumerId: string) => Promise<string[]>
 } | null>(null)
@@ -723,9 +727,14 @@ const saveTool = async () => {
                 if (headersEditorRef.value) {
                     failed.push(...await headersEditorRef.value.flushPending(newId))
                 }
-                // 参数位的凭据也是新建态先记账，这里一起补写
+                // 参数位的凭据也是新建态先记账，这里一起补写。
+                // 两条分支互斥（向导 / 表单），哪条在渲染就补哪条——
+                // 新建默认走向导，漏了它等于向导里配的绑定全丢。
                 if (paramEditorRef.value) {
                     failed.push(...await paramEditorRef.value.flushPending(newId))
+                }
+                if (wizardRef.value) {
+                    failed.push(...await wizardRef.value.flushPending(newId))
                 }
                 if (failed.length) {
                     showToast(
@@ -1283,6 +1292,7 @@ onBeforeUnmount(() => {
                 <!-- 向导模式：4 步引导，写的是同一份 toolForm -->
                 <ToolWizard
                     v-if="editorMode === 'wizard'"
+                    ref="wizardRef"
                     :tool-form="toolForm"
                     @dirty-change="wizardDirty = $event"
                 />

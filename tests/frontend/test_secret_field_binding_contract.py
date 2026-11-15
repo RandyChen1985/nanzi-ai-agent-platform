@@ -776,3 +776,31 @@ class TestNewToolModalStartsClean:
         """
         wizard = _read(ROOT / "frontend/src/components/system/ToolWizard.vue")
         assert "unbound-changed" not in wizard
+
+
+class TestWizardPendingBindingsSurviveSave:
+    """向导里配的凭据绑定要跟着新建的工具一起落库。
+
+    新建时工具还没有 id，绑定先记在 `ToolSystemParamEditor` 的 pending 里，等父组件
+    创建成功拿到 id 再补写。向导是默认的新建路径，但父组件原来只持有**表单分支**
+    那个 ref——`paramEditorRef.value` 是 null，补写这一步直接跳过，pending 随组件
+    卸载消失。表现是：走完向导、试跑通过、保存成功，打开一看凭据一条没绑。
+    """
+
+    def test_wizard_exposes_flush_pending(self):
+        wizard = _read(ROOT / "frontend/src/components/system/ToolWizard.vue")
+        assert 'ref="paramEditorRef"' in wizard
+        assert "defineExpose({ flushPending })" in wizard
+
+    def test_registry_flushes_the_wizard_too(self):
+        source = _read(ROOT / "frontend/src/components/system/ToolRegistry.vue")
+        assert 'ref="wizardRef"' in source
+        # 两条分支互斥，必须都补；只留 paramEditorRef 那条等于向导白配
+        assert "wizardRef.value.flushPending(newId)" in source
+        assert "paramEditorRef.value.flushPending(newId)" in source
+
+    def test_wizard_editor_falls_back_to_api_tool_defaults(self):
+        """向导不传 consumerType / isGlobal，靠默认值兜底——默认值错了会绑错表。"""
+        editor = _read(ROOT / "frontend/src/components/system/ToolParamEditor.vue")
+        assert "consumerType: 'api_tool'" in editor
+        assert "isGlobal: true" in editor
