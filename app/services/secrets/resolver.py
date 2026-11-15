@@ -150,6 +150,7 @@ class SecretResolver:
         rule_args: Mapping[str, Any] | None = None,
         preferred_secret_id: str | None = None,
         plain_cache: dict[str, str] | None = None,
+        record_usage: bool = True,
     ) -> ResolveResult:
         """解析一个槽位。返回 ``ok=False`` 时调用方应走自己的默认值。
 
@@ -197,19 +198,20 @@ class SecretResolver:
                 if record.is_system:
                     granted = await self._has_grant(session, record.id, user_id, dept_code, now)
                     if not granted:
-                        await self._log_usage(
-                            session,
-                            record,
-                            user_id=user_id,
-                            scene=scene,
-                            consumer_type=consumer_type,
-                            consumer_id=consumer_id,
-                            slot=slot,
-                            target_host=target_host,
-                            trace_id=trace_id,
-                            conversation_id=conversation_id,
-                            result=DENY_GRANT,
-                        )
+                        if record_usage:
+                            await self._log_usage(
+                                session,
+                                record,
+                                user_id=user_id,
+                                scene=scene,
+                                consumer_type=consumer_type,
+                                consumer_id=consumer_id,
+                                slot=slot,
+                                target_host=target_host,
+                                trace_id=trace_id,
+                                conversation_id=conversation_id,
+                                result=DENY_GRANT,
+                            )
                         return ResolveResult(
                             ok=False,
                             secret_id=record.id,
@@ -232,19 +234,20 @@ class SecretResolver:
 
                 denial = evaluate_secret(record, context, now=now)
                 if denial:
-                    await self._log_usage(
-                        session,
-                        record,
-                        user_id=user_id,
-                        scene=scene,
-                        consumer_type=consumer_type,
-                        consumer_id=consumer_id,
-                        slot=slot,
-                        target_host=target_host,
-                        trace_id=trace_id,
-                        conversation_id=conversation_id,
-                        result=denial,
-                    )
+                    if record_usage:
+                        await self._log_usage(
+                            session,
+                            record,
+                            user_id=user_id,
+                            scene=scene,
+                            consumer_type=consumer_type,
+                            consumer_id=consumer_id,
+                            slot=slot,
+                            target_host=target_host,
+                            trace_id=trace_id,
+                            conversation_id=conversation_id,
+                            result=denial,
+                        )
                     return ResolveResult(
                         ok=False,
                         secret_id=record.id,
@@ -270,21 +273,25 @@ class SecretResolver:
                     if plain_cache is not None:
                         plain_cache[record.id] = plaintext
 
-                usage_id = await self._log_usage(
-                    session,
-                    record,
-                    user_id=user_id,
-                    scene=scene,
-                    consumer_type=consumer_type,
-                    consumer_id=consumer_id,
-                    slot=slot,
-                    target_host=target_host,
-                    trace_id=trace_id,
-                    conversation_id=conversation_id,
-                    # 回退命中单独记一个结果：事后能查出「规则其实一直没命中」。
-                    result=(
-                        RESULT_SUCCESS_FALLBACK if located.fallback_used else "success"
-                    ),
+                usage_id = (
+                    await self._log_usage(
+                        session,
+                        record,
+                        user_id=user_id,
+                        scene=scene,
+                        consumer_type=consumer_type,
+                        consumer_id=consumer_id,
+                        slot=slot,
+                        target_host=target_host,
+                        trace_id=trace_id,
+                        conversation_id=conversation_id,
+                        # 回退命中单独记一个结果：事后能查出「规则其实一直没命中」。
+                        result=(
+                            RESULT_SUCCESS_FALLBACK if located.fallback_used else "success"
+                        ),
+                    )
+                    if record_usage
+                    else None
                 )
 
                 return ResolveResult(

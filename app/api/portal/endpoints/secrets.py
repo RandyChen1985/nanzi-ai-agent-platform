@@ -83,6 +83,7 @@ class UpdateSecretRequest(BaseModel):
 class RotateRequest(BaseModel):
     value: str
     expires_at: Optional[datetime] = None
+    clear_expires_at: bool = False
     overlap_days: int = Field(default=7, ge=0, le=30)
     #: 不传则沿用记录原来的形态；传了才允许在换代时切换单值/结构化。
     value_format: Optional[str] = None
@@ -170,6 +171,7 @@ class BindItem(BaseModel):
     secret_id: str = ""
     rule: Dict[str, Any] | None = None
     value_path: str = ""
+    allow_whole: bool = False
 
 
 class BindBatchRequest(BaseModel):
@@ -838,6 +840,7 @@ class CheckBindingRequest(BaseModel):
     slot: str
     scene: str = "mcp"
     target_host: str | None = None
+    rule_args: Dict[str, Any] | None = None
 
 
 @router.post("/check-binding", summary="现在这个槽位能取到凭据吗（只校验，不出站）")
@@ -865,6 +868,8 @@ async def check_binding(
         target_host=payload.target_host,
         dept_code=dept_code,
         user_attrs=_identity_attrs(user_info),
+        rule_args=payload.rule_args,
+        record_usage=False,
     )
     return {
         "code": 0,
@@ -898,6 +903,7 @@ async def list_platform_credential_targets(
     from app.models.tool import SysApiTool
     from app.services.ai.tools.system_params import credential_param_names
     from app.services.ai.tools.tool_credentials import is_credential_placeholder
+    from app.services.secrets.injection import is_header_value_unfilled
 
     user_id, _ = _user_ctx(user_info)
 
@@ -946,6 +952,8 @@ async def list_platform_credential_targets(
             select(SecretBinding, UserSecret).outerjoin(UserSecret, UserSecret.id == SecretBinding.secret_id)
         )
     ).all()
+    # 先遍历全局绑定再遍历个人绑定，确保同一槽位同时存在全局与个人条目时由个人绑定覆盖全局绑定
+    rows = sorted(rows, key=lambda pair: 0 if not pair[0].bound_by_user_id else 1)
     # 固定与规则分开两个 map：同一个 key（消费者+槽位）现在可能两条都在，
     # 塞进同一个 dict 必然互相覆盖。
     bindings: Dict[str, Dict[str, Any]] = {}
@@ -1075,7 +1083,7 @@ async def list_platform_credential_targets(
         bindable = [
             name
             for name, value in headers.items()
-            if not str(value or "").strip() or is_credential_placeholder(value)
+            if not str(value or "").strip() or is_credential_placeholder(value) or is_header_value_unfilled(value)
         ]
         # 参数位：参数定义里标了 source=credential 的，落到 path / query / body。
         # 这些槽位和 header 一样能被个人绑定，漏掉它们的话用户在面板里看不到、
@@ -1250,6 +1258,7 @@ async def create_bindings_batch(
                 "secret_id": item.secret_id,
                 "rule": item.rule,
                 "value_path": item.value_path,
+                "allow_whole": bool(item.allow_whole),
             }
         )
         if strategy == "rule":
@@ -1293,6 +1302,7 @@ async def create_bindings_batch(
                 dept_code=dept_code,
                 actor_id=_actor_id(user_info),
                 value_path=item.value_path,
+                allow_whole=bool(item.allow_whole),
                 dry_run=True,
                 allow_global=is_admin,
             )
@@ -1391,6 +1401,7 @@ async def create_bindings_batch(
             dept_code=dept_code,
             actor_id=_actor_id(user_info),
             value_path=item["value_path"],
+            allow_whole=item["allow_whole"],
             # 提交推迟到整批写完：中途失败时全部回滚，不留半张映射表
             commit=False,
             # 审计同理：提交成功后再写，不记没发生过的操作
@@ -1956,6 +1967,9 @@ async def update_secret(
     db: AsyncSession = Depends(get_db_session),
 ):
     user_id, _ = _user_ctx(user_info)
+    clear_expires_at = (
+        "expires_at" in payload.model_fields_set and payload.expires_at is None
+    )
     try:
         row = await center.update_secret(
             db,
@@ -1967,6 +1981,7 @@ async def update_secret(
             category=payload.category,
             remark=payload.remark,
             expires_at=payload.expires_at,
+            clear_expires_at=clear_expires_at,
             actor_is_admin=_is_admin(user_info),
         )
     except SecretPermissionError:
@@ -2014,6 +2029,7 @@ async def rotate_secret(
             rotated_by=user_id,
             overlap_days=payload.overlap_days,
             expires_at=payload.expires_at,
+            clear_expires_at=payload.clear_expires_at,
             actor_is_admin=_is_admin(user_info),
             value_format=payload.value_format,
             value_template=payload.value_template,

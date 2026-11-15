@@ -63,12 +63,16 @@ class TestSseResultReachesAudit:
 
 
 class TestApiToolEndpointsRefreshCache:
-    """API 工具增改后要清注册表缓存，和脚本工具、MCP 服务保持一致。"""
+    """API 工具增改分删后要清注册表缓存，和脚本工具、MCP 服务保持一致。"""
 
     def test_create_and_update_clear_cache(self):
         source = _src("app/api/portal/endpoints/tools.py")
-        assert source.count("ToolRegistry.clear_db_tool_cache()") == 2
+        assert source.count("ToolRegistry.clear_db_tool_cache()") == 4
         create = source[source.index("async def create_tool"):source.index("async def update_tool")]
-        update = source[source.index("async def update_tool"):]
+        update = source[source.index("async def update_tool"):source.index("async def batch_set_tool_group")]
+        batch = source[source.index("async def batch_set_tool_group"):source.index("async def delete_tool")]
+        delete = source[source.index("async def delete_tool"):]
         assert "ToolRegistry.clear_db_tool_cache()" in create
         assert "ToolRegistry.clear_db_tool_cache()" in update
+        assert "ToolRegistry.clear_db_tool_cache()" in batch
+        assert "ToolRegistry.clear_db_tool_cache()" in delete

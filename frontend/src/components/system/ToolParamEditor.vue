@@ -209,7 +209,14 @@ watch(systemParams, () => {
 // 外部改写文本（换工具、向导重新生成参数、编辑已有工具）时，可视化行必须跟着重解析，
 // 否则下一次行内改动会把外部刚写进来的内容整个覆盖掉。
 watch(() => props.modelValue, (next) => {
-    if (schemaEditorMode.value !== 'visual') return
+    if (schemaEditorMode.value !== 'visual') {
+        // JSON 模式下也要保持隐藏着的系统参数校验/绑定状态同步
+        const parsed = parseToolSchema(next)
+        if (parsed) {
+            systemParams.value = parsed.systemParams.map((param) => ({ ...param }))
+        }
+        return
+    }
     if (next === buildSchemaJson()) return
     loadVisualFromJson()
 })
@@ -296,7 +303,7 @@ const locationLabel = (name: string): string => {
       @input="onJsonInput"
     ></textarea>
 
-    <div v-else class="mt-1 space-y-2 rounded-md border border-gray-200 bg-gray-50/60 p-2">
+    <div v-show="schemaEditorMode === 'visual'" class="mt-1 space-y-2 rounded-md border border-gray-200 bg-gray-50/60 p-2">
       <!-- 系统级参数优先级高于普通参数：它们由平台强制注入、模型不可见，放在最前面让配置者先看到。 -->
       <ToolSystemParamEditor
         v-if="scope !== 'script'"

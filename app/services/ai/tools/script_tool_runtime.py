@@ -115,6 +115,8 @@ class ScriptRunResult:
     timed_out: bool = False
     artifacts: List[str] = field(default_factory=list)
     message: str = ""
+    #: 凭据未能写入脚本环境变量时的可读原因列表（不含任何明文）
+    credential_denials: str = ""
 
 
 def code_fingerprint(code: str) -> str:
@@ -342,7 +344,13 @@ class ScriptToolRunner:
             _write_private(requirements_path, "\n".join(self.config.requirements) + "\n")
         return script_path, params_path, requirements_path
 
-    async def materialize_secret_env(self, stem: str, run_id: str) -> Optional[Path]:
+    async def materialize_secret_env(
+        self,
+        stem: str,
+        run_id: str,
+        *,
+        denials_out: Optional[List[str]] = None,
+    ) -> Optional[Path]:
         """把绑定的凭据写成环境变量文件，返回路径；没有可注入的返回 None。
 
         三条设计约束：
@@ -356,6 +364,7 @@ class ScriptToolRunner:
 
         解析失败只降级不中断：凭据取不到时脚本照常跑，只是少了那几个变量。
         """
+        self._credential_denials = ""
         try:
             # 必须带上执行身份：解析要按用户过滤绑定、按用户查脚本开关，
             # 少了它 `_current_user` 拿到空 user_id 会直接返回 {} —— 注入静默失效，
@@ -381,6 +390,8 @@ class ScriptToolRunner:
                 "[ScriptTool] %s 的凭据环境变量没有注入：%s", self.config.name, detail
             )
             self._credential_denials = detail
+            if denials_out is not None:
+                denials_out.append(detail)
         if not env:
             return None
 
@@ -484,7 +495,11 @@ class ScriptToolRunner:
         script_rel = _relative_for_command(script_path, self.workdir)
         params_rel = _relative_for_command(params_path, self.workdir)
 
-        secret_env = await self.materialize_secret_env(stem, run_id)
+        run_denials: List[str] = []
+        secret_env = await self.materialize_secret_env(
+            stem, run_id, denials_out=run_denials
+        )
+        denial_note = run_denials[0] if run_denials else ""
         env_prelude = ""
         if secret_env is not None:
             env_rel = _relative_for_command(secret_env, self.workdir)
@@ -518,15 +533,21 @@ class ScriptToolRunner:
                 duration_ms=duration_ms,
                 timed_out=True,
                 message=message,
+                credential_denials=denial_note,
             )
 
         ok = shell_result.exit_code == 0
+        fail_msg = ""
+        if not ok and denial_note and not shell_result.stderr.strip():
+            fail_msg = f"凭据环境变量未注入：{denial_note}"
         result = ScriptRunResult(
             ok=ok,
             exit_code=shell_result.exit_code,
             stdout=shell_result.stdout,
             stderr=shell_result.stderr,
             duration_ms=duration_ms,
+            message=fail_msg,
+            credential_denials=denial_note,
         )
         result.artifacts = _extract_artifacts(shell_result.stdout)
         return result
@@ -759,9 +780,10 @@ async def render_result_for_model(result: ScriptRunResult, *, workdir: Path) -> 
 
 async def _render_result(result: ScriptRunResult, *, workdir: Path) -> str:
     if result.timed_out:
-        return redact_text(
-            result.message or "脚本执行超时，已终止", where="脚本工具输出"
-        )
+        msg = result.message or "脚本执行超时，已终止"
+        if result.credential_denials:
+            msg += f"\n凭据环境变量未注入：{result.credential_denials}"
+        return redact_text(msg, where="脚本工具输出")
 
     if not result.ok:
         code = "未知" if result.exit_code is None else str(result.exit_code)
@@ -771,6 +793,9 @@ async def _render_result(result: ScriptRunResult, *, workdir: Path) -> str:
         )
         stderr = _truncate(safe_stderr)
         head = f"脚本执行失败（退出码 {code}）"
+        if result.credential_denials:
+            safe_denials = redact_text(result.credential_denials, where="脚本工具输出")
+            head += f"\n凭据环境变量未注入：{safe_denials}"
         if result.stdout.strip():
             safe_stdout = redact_text(result.stdout.strip(), where="脚本工具输出")
             return (
@@ -783,12 +808,21 @@ async def _render_result(result: ScriptRunResult, *, workdir: Path) -> str:
         return head + "\n--- stderr ---\n" + stderr
 
     published = await publish_artifacts(result.artifacts, workdir=workdir) if result.artifacts else []
+    denial_suffix = (
+        f"\n注意：部分凭据环境变量未注入（{redact_text(result.credential_denials, where='脚本工具输出')}）"
+        if result.credential_denials
+        else ""
+    )
     stdout = result.stdout.strip()
     if not stdout:
-        return "脚本执行成功，没有输出。" + (
-            "\n已登记可下载文件：" + "、".join(item["filename"] or item["path"] for item in published)
-            if published
-            else ""
+        return (
+            "脚本执行成功，没有输出。"
+            + (
+                "\n已登记可下载文件：" + "、".join(item["filename"] or item["path"] for item in published)
+                if published
+                else ""
+            )
+            + denial_suffix
         )
 
     try:

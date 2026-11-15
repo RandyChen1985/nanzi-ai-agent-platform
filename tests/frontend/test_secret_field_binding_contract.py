@@ -769,13 +769,17 @@ class TestNewToolModalStartsClean:
         open_modal = source[source.index("const openModal"):source.index("const cloneTool")]
         assert "paramUnboundNames.value = []" in open_modal
 
-    def test_wizard_does_not_feed_the_flag(self):
-        """向导里的参数编辑器没接这个事件，这正是上面那条重置必须存在的原因。
+    def test_wizard_forwards_unbound_and_binding_context(self):
+        """向导里的参数编辑器必须透传 unbound-changed 与编辑态绑定上下文（consumer-id 等）。
 
-        哪天给向导补上事件透传，这条会红——那时可以重新评估要不要保留重置。
+        切换回向导模式「从请求重新识别参数」时才能正确回显与读写已保存绑定，
+        且新建态尚未选完系统凭据时也能像表单模式一样禁掉保存按钮。
         """
         wizard = _read(ROOT / "frontend/src/components/system/ToolWizard.vue")
-        assert "unbound-changed" not in wizard
+        assert "unbound-changed" in wizard
+        assert ':consumer-id="toolForm.id ? String(toolForm.id) : \'\'"' in wizard
+        assert ':method="toolForm.method"' in wizard
+        assert ':url-template="toolForm.url_template"' in wizard
 
 
 class TestWizardPendingBindingsSurviveSave:

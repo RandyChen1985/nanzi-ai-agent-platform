@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch, provide } from 'vue'
 import { toolApi, scriptToolApi, type SysApiTool } from '../../api/tool'
 import { SUPPORTED_HTTP_METHODS } from '../../utils/toolMethods'
 import { parseToolSchema, validateSystemParams } from '../../utils/toolSchema'
@@ -69,6 +69,21 @@ const headersEditorRef = ref<{
  */
 /** 「来自凭据」但还没选凭据的参数名；非空时保存按钮禁用。 */
 const paramUnboundNames = ref<string[]>([])
+const formUnboundNames = ref<string[]>([])
+const wizardUnboundNames = ref<string[]>([])
+/**
+ * 弹窗内跨填写模式（向导 ↔ 表单）共享的新建态参数凭据/规则草稿与修订版本号：
+ * 切页不丢未保存选择，且编辑态一边改了绑定另一边能同步重载。
+ */
+const draftParamBindings = ref<Record<string, any>>({})
+const draftParamRules = ref<Record<string, any>>({})
+const paramBindingRevision = ref(0)
+provide('apiToolDraftParamPending', {
+    bindings: draftParamBindings,
+    rules: draftParamRules,
+    revision: paramBindingRevision,
+    bumpRevision: () => { paramBindingRevision.value += 1 },
+})
 
 const suppressFormWatch = ref(false)
 const wizardDirty = ref(false)
@@ -448,6 +463,21 @@ const toolPendingCredentials = (tool: SysApiTool) => pendingCredentialHeaders(to
 // saveTool() 也仍然只有一条保存路径。
 const editorMode = ref<'form' | 'wizard'>('form')
 
+const syncParamUnboundNames = () => {
+    paramUnboundNames.value = editorMode.value === 'wizard'
+        ? wizardUnboundNames.value
+        : formUnboundNames.value
+}
+const onWizardUnboundChanged = (names: string[]) => {
+    wizardUnboundNames.value = names
+    if (editorMode.value === 'wizard') paramUnboundNames.value = names
+}
+const onFormUnboundChanged = (names: string[]) => {
+    formUnboundNames.value = names
+    if (editorMode.value === 'form') paramUnboundNames.value = names
+}
+watch(editorMode, syncParamUnboundNames)
+
 const openModal = (tool?: SysApiTool, isClone = false) => {
     if (tool) {
         isEditing.value = !isClone
@@ -490,10 +520,11 @@ const openModal = (tool?: SysApiTool, isClone = false) => {
     }
     // 新建优先走向导；编辑已有工具走完整表单，避免用户每次都被迫从第 1 步开始。
     editorMode.value = tool && !isClone ? 'form' : 'wizard'
-    // 上一次编辑留下的「未绑定参数」必须清掉。
-    // 它只有表单分支的 ToolParamEditor 会更新，向导分支不绑定这个事件——
-    // 残留在这里的直接后果是：新建工具走完向导、试跑也过了，保存按钮仍是灰的，
-    // 而提示写着上一次那工具的参数名。
+    // 上一次编辑留下的「未绑定参数」必须清掉；同时清空新建态共享的暂存凭据与规则。
+    formUnboundNames.value = []
+    wizardUnboundNames.value = []
+    draftParamBindings.value = {}
+    draftParamRules.value = {}
     paramUnboundNames.value = []
     clearFormErrors()
     advancedOpen.value = false
@@ -728,13 +759,12 @@ const saveTool = async () => {
                     failed.push(...await headersEditorRef.value.flushPending(newId))
                 }
                 // 参数位的凭据也是新建态先记账，这里一起补写。
-                // 两条分支互斥（向导 / 表单），哪条在渲染就补哪条——
-                // 新建默认走向导，漏了它等于向导里配的绑定全丢。
-                if (paramEditorRef.value) {
-                    failed.push(...await paramEditorRef.value.flushPending(newId))
-                }
-                if (wizardRef.value) {
+                // 向导与表单通过 v-show 保活且共享同一份新建态 pending，
+                // 按当前激活模式调用 flushPending(newId) 即可，避免同一份 pending 重复提交两次。
+                if (editorMode.value === 'wizard' && wizardRef.value) {
                     failed.push(...await wizardRef.value.flushPending(newId))
+                } else if (paramEditorRef.value) {
+                    failed.push(...await paramEditorRef.value.flushPending(newId))
                 }
                 if (failed.length) {
                     showToast(
@@ -1289,15 +1319,16 @@ onBeforeUnmount(() => {
                     {{ formError }}
                 </div>
               
-                <!-- 向导模式：4 步引导，写的是同一份 toolForm -->
+                <!-- 向导模式：4 步引导，写的是同一份 toolForm；v-show 保活防止切回表单时步骤与暂存状态丢失 -->
                 <ToolWizard
-                    v-if="editorMode === 'wizard'"
+                    v-show="editorMode === 'wizard'"
                     ref="wizardRef"
                     :tool-form="toolForm"
                     @dirty-change="wizardDirty = $event"
+                    @unbound-changed="onWizardUnboundChanged"
                 />
 
-                <div v-else class="space-y-4">
+                <div v-show="editorMode === 'form'" class="space-y-4">
                     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div>
                            <label for="tool-name" class="block text-sm font-medium text-gray-700">工具名称 (唯一标识)</label>
@@ -1346,7 +1377,7 @@ onBeforeUnmount(() => {
                             :consumer-id="isEditing && toolForm.id ? String(toolForm.id) : ''"
                             :consumer-type="'api_tool'"
                             :is-global="true"
-                            @unbound-changed="paramUnboundNames = $event"
+                            @unbound-changed="onFormUnboundChanged"
                         />
                         <p v-if="fieldErrors.parameter_schema_str" class="mt-1 text-xs text-red-600">{{ fieldErrors.parameter_schema_str }}</p>
                     </div>

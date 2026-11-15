@@ -610,6 +610,7 @@ const authHeadersTouched = ref(false)
 const authorizationEnabled = ref(false)
 const authorizationEditing = ref(false)
 const authorizationToken = ref('')
+const hasSavedAuthorizationToken = ref(false)
 // 编辑态记录已保存地址：地址未变时连接测试可复用已保存凭据，地址变更后必须重新输入 Token。
 const savedSseUrl = ref('')
 
@@ -630,7 +631,7 @@ const verifyAddressChanged = computed(() => (
 const updateAuthorizationEnabled = (enabled: boolean) => {
   authorizationEnabled.value = enabled
   if (enabled) {
-    authorizationEditing.value = true
+    authorizationEditing.value = !isEditing.value || !hasSavedAuthorizationToken.value
   } else {
     authorizationEditing.value = false
     authorizationToken.value = ''
@@ -660,6 +661,16 @@ const handleAuthorizationInput = (event: Event) => {
 // 服务还没入库就没有可绑的对象，所以只在编辑态出现。
 /** 鉴权来源：固定 Token（服务级默认值）或来自凭据中心（每人用自己的）。 */
 const authSource = ref<'token' | 'credential'>('token')
+
+watch(authSource, (mode) => {
+  if (
+    mode === 'token'
+    && authorizationEnabled.value
+    && (!isEditing.value || !hasSavedAuthorizationToken.value)
+  ) {
+    authorizationEditing.value = true
+  }
+})
 
 /** 一个参数的三种值来源 */
 type ParamSource = 'model' | 'cred' | 'rule'
@@ -857,8 +868,9 @@ async function loadMcpBinding() {
         value_template: hit.value_template,
       }
       mcpBindingValuePath.value = hit.value_path || ''
-      // 有绑定就默认落在「来自凭据」——否则界面显示的是固定 Token，
-      // 实际调用走的却是绑定，用户看不出当前生效的是哪一个。
+      // 仅凭据绑定、没有固定 Token 的服务在 openEditModal 时 authorization_configured 为 false；
+      // 回显出 Authorization 开启并落在「来自凭据中心」，才能看见当前生效绑定并继续编辑。
+      authorizationEnabled.value = true
       authSource.value = 'credential'
     }
   } catch {
@@ -1062,10 +1074,43 @@ async function saveHeaderBind() {
   }
 }
 
+function syncPendingAuthFromPicker() {
+  if (editingId.value || authSource.value !== 'credential') return
+  const next = { ...pendingBindings.value }
+  const picked = mcpBindingSecretId.value ? mcpBindingPicked.value : null
+  if (!picked) {
+    if ('header:Authorization' in next) {
+      delete next['header:Authorization']
+      pendingBindings.value = next
+      mcpBinding.value = null
+    }
+    return
+  }
+  if (mcpBindingNeedsField.value && !mcpBindingValuePath.value) return
+  next['header:Authorization'] = {
+    secret_id: picked.id,
+    secret_key: picked.secret_key,
+    secret_name: mcpBinding.value?.secret_name || picked.secret_key,
+    value_path: mcpBindingValuePath.value,
+    owner_scope: picked.owner_scope,
+    value_format: picked.value_format,
+    value_template: picked.value_template,
+  }
+  pendingBindings.value = next
+  mcpBinding.value = {
+    secret_key: picked.secret_key,
+    secret_name: picked.secret_key,
+    value_format: picked.value_format,
+    value_template: picked.value_template,
+    value_path: mcpBindingValuePath.value,
+  }
+}
+
 function onMcpBindingPicked(item: PickedSecret | null) {
   mcpBindingPicked.value = item
   // 换凭据就清掉上一个凭据的字段路径：字段名在另一条凭据里通常不存在
   if (item?.id !== mcpBindingSecretId.value) mcpBindingValuePath.value = ''
+  if (!editingId.value && !item) syncPendingAuthFromPicker()
 }
 
 watch(editingId, () => void loadMcpBinding(), { immediate: true })
@@ -1148,7 +1193,15 @@ const buildServerPayload = (server: any) => {
 
   if (isFormPayload) {
     payload.authorization_enabled = authorizationEnabled.value
-    if (authorizationEnabled.value && authorizationEditing.value && authorizationToken.value.trim()) {
+    if (authorizationEnabled.value) {
+      payload.auth_source = authSource.value
+    }
+    if (
+      authorizationEnabled.value
+      && authSource.value === 'token'
+      && authorizationEditing.value
+      && authorizationToken.value.trim()
+    ) {
       payload.fixed_token = authorizationToken.value.trim()
     }
 
@@ -2001,6 +2054,7 @@ const resetWizard = () => {
   authorizationEnabled.value = false
   authorizationEditing.value = false
   authorizationToken.value = ''
+  hasSavedAuthorizationToken.value = false
   savedSseUrl.value = ''
   // 没保存就关掉的向导，选的凭据也不该留着——下次新建时突然冒出一条绑定会很怪
   pendingBindings.value = {}
@@ -2108,6 +2162,7 @@ const openEditModal = (server: any) => {
     user_assertion_issuer: server.user_assertion_issuer || 'nanzi-platform',
   }
   authorizationEnabled.value = Boolean(server.authorization_configured)
+  hasSavedAuthorizationToken.value = Boolean(server.authorization_configured)
   authorizationEditing.value = false
   authorizationToken.value = ''
   savedSseUrl.value = String(server.sse_url || '').trim()
@@ -2325,6 +2380,20 @@ const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
     return
   }
   
+  if (!isEditing.value) {
+    syncPendingAuthFromPicker()
+  }
+  if (
+    authorizationEnabled.value
+    && authSource.value === 'credential'
+    && mcpBindingSecretId.value
+    && mcpBindingNeedsField.value
+    && !mcpBindingValuePath.value
+  ) {
+    showToast('Authorization 选中的是结构化凭据，请先选择要取用的字段', 'warning')
+    return
+  }
+
   // 第 1 步没有名字输入框（展示名在验证成功后的第 2 步才渲染），但探测请求需要它：
   // 新建态先按地址推导默认后缀，避免「连接并发现工具」被后端判成参数校验失败。
   // 编辑态绝不参与推导——无前缀的历史服务名（如平台 Echo）会被重拼成当前前缀，等于静默改名。
@@ -2333,6 +2402,21 @@ const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
   verifying.value = true
   try {
     const payload = buildServerPayload(newServer.value)
+    const verifyBindings: Record<string, { secret_id: string; value_path: string }> = {}
+    for (const [slot, item] of Object.entries(pendingBindings.value)) {
+      if (item?.secret_id) {
+        verifyBindings[slot] = { secret_id: item.secret_id, value_path: item.value_path || '' }
+      }
+    }
+    if (authorizationEnabled.value && authSource.value === 'credential' && mcpBindingSecretId.value) {
+      verifyBindings['header:Authorization'] = {
+        secret_id: mcpBindingSecretId.value,
+        value_path: mcpBindingValuePath.value || '',
+      }
+    }
+    if (Object.keys(verifyBindings).length) {
+      payload.pending_secret_bindings = verifyBindings
+    }
     if (options?.skipUserAssertion) {
       // 未保存的透传配置还没有私钥：本次只验证地址与 Token，断言等保存后再测。
       payload.user_assertion_enabled = false
@@ -2375,9 +2459,27 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
     showToast('请填写完整信息', 'warning')
     return false
   }
-  if (authorizationEnabled.value && authorizationEditing.value && !authorizationToken.value.trim()) {
+  if (
+    authorizationEnabled.value
+    && authSource.value === 'token'
+    && authorizationEditing.value
+    && !authorizationToken.value.trim()
+  ) {
     showToast('请输入 Authorization Token', 'warning')
     return false
+  }
+  if (
+    authorizationEnabled.value
+    && authSource.value === 'credential'
+    && mcpBindingSecretId.value
+    && mcpBindingNeedsField.value
+    && !mcpBindingValuePath.value
+  ) {
+    showToast('Authorization 选中的是结构化凭据，请先选择要取用的字段', 'warning')
+    return false
+  }
+  if (!isEditing.value) {
+    syncPendingAuthFromPicker()
   }
   if (headerMode.value === 'advanced') {
     try {
@@ -2391,6 +2493,13 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
   try {
     const payload = buildServerPayload(newServer.value)
     if (isEditing.value) {
+      if (authorizationEnabled.value && authSource.value === 'credential' && mcpBindingSecretId.value) {
+        const currentAuth = headerBindings.value['header:Authorization']
+        const nextPath = mcpBindingValuePath.value || ''
+        if (!currentAuth || currentAuth.secret_id !== mcpBindingSecretId.value || (currentAuth.value_path || '') !== nextPath) {
+          await writeBinding('header:Authorization', mcpBindingSecretId.value, nextPath)
+        }
+      }
       await axios.put(`/api/portal/mcp/servers/${editingId.value}`, payload)
       savedUserAssertionEnabled.value = Boolean(payload.user_assertion_enabled)
       showToast(

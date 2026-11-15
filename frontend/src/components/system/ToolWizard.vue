@@ -19,7 +19,10 @@ import ToolParamEditor from './ToolParamEditor.vue'
 import ApiToolTester from './ApiToolTester.vue'
 import ToolSigningEditor from './ToolSigningEditor.vue'
 
-const emit = defineEmits<{ (e: 'dirty-change', value: boolean): void }>()
+const emit = defineEmits<{
+    (e: 'dirty-change', value: boolean): void
+    (e: 'unbound-changed', names: string[]): void
+}>()
 
 /**
  * 向导里配的凭据绑定要能交出去。
@@ -345,6 +348,12 @@ const goToStep = (target: number) => {
         v-model="toolForm.parameter_schema_str"
         mode="wizard"
         :locations="locationMap"
+        :method="toolForm.method"
+        :url-template="toolForm.url_template"
+        :consumer-id="toolForm.id ? String(toolForm.id) : ''"
+        :consumer-type="'api_tool'"
+        :is-global="true"
+        @unbound-changed="emit('unbound-changed', $event)"
       />
 
       <details v-if="draftParams.length" class="rounded-lg border border-gray-200 px-3 py-2">
@@ -359,6 +368,12 @@ const goToStep = (target: number) => {
 
     <!-- ④ 试跑一次 -->
     <section v-show="step === 4" class="space-y-3">
+      <p
+        v-if="!toolForm.id && liveSchema?.systemParams?.some((p) => p.source === 'credential' || p.source === 'rule')"
+        class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+      >
+        系统级参数里的「固定凭据 / 按规则匹配」会在首次保存工具后写入绑定；当前为新建草稿态，试跑请求不会自动注入这些系统凭据。若依赖它们鉴权，请先保存工具后再进入编辑态试跑。
+      </p>
       <ToolSigningEditor
         v-model:enabled="toolForm.signing_enabled"
         v-model:key-id="toolForm.signing_key_id"

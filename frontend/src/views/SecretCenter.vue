@@ -23,6 +23,11 @@ import {
   secretActionLabel,
   secretActionStyle,
 } from '../utils/secretAudit'
+import {
+  formatLocalDateTimeSummary,
+  isoToLocalDateTimeInput,
+  localDateTimeInputToIso,
+} from '../utils/secretExpiry'
 
 interface SecretItem {
   id: string
@@ -94,6 +99,7 @@ const editForm = ref({
   allowed_hosts: '',
   category: '',
   remark: '',
+  expires_at: '',
 })
 
 function openEdit() {
@@ -105,6 +111,7 @@ function openEdit() {
     allowed_hosts: (item.allowed_hosts || []).join(', '),
     category: item.category || '',
     remark: item.remark || '',
+    expires_at: isoToLocalDateTimeInput(item.expires_at),
   }
   editOpen.value = true
 }
@@ -131,6 +138,7 @@ async function saveEdit() {
       allowed_hosts: hosts,
       category: editForm.value.category.trim() || null,
       remark: editForm.value.remark.trim() || null,
+      expires_at: localDateTimeInputToIso(editForm.value.expires_at),
     })
     showToast('已保存', 'ok')
     editOpen.value = false
@@ -277,6 +285,7 @@ const form = ref({
   allowed_hosts: '',
   category: '',
   remark: '',
+  expires_at: '',
   // 值形态与模板标识：只在「结构化」档下写库，单值档一律回落 text
   value_format: 'text' as 'text' | 'json',
   value_template: null as string | null,
@@ -296,6 +305,7 @@ function openCreate() {
     allowed_hosts: '',
     category: '',
     remark: '',
+    expires_at: '',
     value_format: 'text',
     value_template: null,
     value_secret_fields: [],
@@ -345,6 +355,7 @@ async function submitCreate() {
         .filter(Boolean),
       category: form.value.category.trim() || null,
       remark: form.value.remark.trim() || null,
+      expires_at: localDateTimeInputToIso(form.value.expires_at),
       // 单值档不写模板：后端会忽略，但这里先清掉，避免库里留下误导性的标识
       value_format: form.value.value_format,
       value_template: form.value.value_format === 'json' ? form.value.value_template : null,
@@ -369,6 +380,8 @@ const rotateFormat = ref<'text' | 'json'>('text')
 const rotateTemplate = ref<string | null>(null)
 const rotateSecretFields = ref<string[]>([])
 const rotateValid = ref(false)
+const rotateExpiresAt = ref('')
+const rotateClearExpires = ref(false)
 
 function openRotate(item: SecretItem) {
   rotateTarget.value = item
@@ -377,6 +390,8 @@ function openRotate(item: SecretItem) {
   rotateTemplate.value = item.value_template || null
   rotateSecretFields.value = []
   rotateValid.value = false
+  rotateExpiresAt.value = ''
+  rotateClearExpires.value = false
 }
 
 async function submitRotate() {
@@ -386,6 +401,8 @@ async function submitRotate() {
     await axios.post(`/api/portal/secrets/${rotateTarget.value.id}/rotate`, {
       value: rotateValue.value,
       overlap_days: 7,
+      expires_at: rotateClearExpires.value ? null : localDateTimeInputToIso(rotateExpiresAt.value),
+      clear_expires_at: rotateClearExpires.value,
       value_format: rotateFormat.value,
       // 沿用原模板：结构化凭据换成单值等于把结构丢了，摘要也会跟着失效
       value_template: rotateFormat.value === 'json' ? rotateTemplate.value : null,
@@ -1417,6 +1434,26 @@ onMounted(load)
                 />
               </label>
             </div>
+
+            <div>
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-gray-700">有效期截止（本地时间）</span>
+                <button
+                  v-if="editForm.expires_at"
+                  type="button"
+                  class="text-[11px] text-blue-600 hover:underline"
+                  @click="editForm.expires_at = ''"
+                >设为长期有效</button>
+              </div>
+              <input
+                v-model="editForm.expires_at"
+                type="datetime-local"
+                class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-primary focus:ring-primary"
+              />
+              <p class="mt-0.5 text-[11px] text-gray-400">
+                留空表示长期有效；到期后运行时会自动拦截并写入失效记录。
+              </p>
+            </div>
           </div>
 
           <div class="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
@@ -1817,6 +1854,26 @@ onMounted(load)
                 </span>
               </label>
 
+              <div>
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-medium text-gray-700">有效期截止（可选，本地时间）</span>
+                  <button
+                    v-if="form.expires_at"
+                    type="button"
+                    class="text-[11px] text-blue-600 hover:underline"
+                    @click="form.expires_at = ''"
+                  >设为长期有效</button>
+                </div>
+                <input
+                  v-model="form.expires_at"
+                  type="datetime-local"
+                  class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                />
+                <span class="mt-1 block text-[11px] text-gray-400">
+                  留空表示长期有效；过期后调用方会拒绝注入并保留记录。
+                </span>
+              </div>
+
               <div class="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 text-[11px] leading-relaxed text-blue-800">
                 <b>不勾任何场景</b> = 这条凭据建完只是个仓库条目，任何工具都取不到。
                 绑定是白名单，不是黑名单。
@@ -1858,6 +1915,10 @@ onMounted(load)
                 <div class="flex items-start gap-3 px-3 py-2">
                   <dt class="w-20 shrink-0 text-gray-500">域名</dt>
                   <dd class="font-mono text-gray-900">{{ form.allowed_hosts || '仅平台内部' }}</dd>
+                </div>
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <dt class="w-20 shrink-0 text-gray-500">有效期</dt>
+                  <dd class="text-gray-900">{{ formatLocalDateTimeSummary(form.expires_at) }}</dd>
                 </div>
               </dl>
 
@@ -1937,6 +1998,33 @@ onMounted(load)
                   v-model:valid="rotateValid"
                   :secret-type="rotateTarget.secret_type"
                 />
+              </div>
+              <div class="mt-3 space-y-1.5 rounded-lg border border-gray-200 bg-gray-50/70 p-3">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-xs font-medium text-gray-700">新凭据有效期（可选，本地时间）</span>
+                  <span class="text-[11px] text-gray-500">
+                    原有效期：{{ rotateTarget.expires_at ? shortTime(rotateTarget.expires_at) : '长期有效' }}
+                  </span>
+                </div>
+                <input
+                  v-model="rotateExpiresAt"
+                  type="datetime-local"
+                  :disabled="rotateClearExpires"
+                  class="block w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:text-gray-400"
+                  @input="rotateClearExpires = false"
+                />
+                <label class="flex items-center gap-1.5 text-[11px] text-gray-600">
+                  <input
+                    v-model="rotateClearExpires"
+                    type="checkbox"
+                    class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    @change="rotateClearExpires && (rotateExpiresAt = '')"
+                  />
+                  <span>清除原截止时间，转为长期有效</span>
+                </label>
+                <p class="text-[11px] text-gray-400">
+                  留空且不勾选时默认沿用原截止时间（若原凭据已过期或将在 7 天过渡窗内到期，则自动清为长期有效）。
+                </p>
               </div>
               <div class="mt-4 flex justify-end gap-2">
                 <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100" @click="rotateTarget = null">

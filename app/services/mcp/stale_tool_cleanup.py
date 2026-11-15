@@ -111,6 +111,27 @@ async def cleanup_stale_tools(
     stale_ids = [tool.id for tool in stale_tools]
     await db.execute(delete(McpToolCache).where(McpToolCache.id.in_(stale_ids)))
 
+    # 同步清除远端已删除工具遗留的参数级凭据绑定（slot 格式为 `arg:<短工具名>:<参数名>`），
+    # 防止孤儿绑定长期滞留在「我的 MCP → 平台服务」及凭据详情里。
+    from sqlalchemy import or_
+    from app.models.secret import SecretBinding
+
+    prefixes = []
+    for full_name in dead_names:
+        short = full_name.split(":", 1)[1] if ":" in full_name else full_name
+        if not short:
+            continue
+        escaped = short.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        prefixes.append(SecretBinding.slot.like(f"arg:{escaped}:%", escape="\\"))
+    if prefixes:
+        await db.execute(
+            delete(SecretBinding).where(
+                SecretBinding.consumer_type == "mcp_server",
+                SecretBinding.consumer_id == server_id,
+                or_(*prefixes),
+            )
+        )
+
     affected_versions = await prune_agent_versions_by_names(db, dead_names)
     await db.commit()
     try:

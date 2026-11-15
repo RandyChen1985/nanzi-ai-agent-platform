@@ -22,7 +22,7 @@ from app.services.ai.tools.tool_credentials import (
 from app.services.secrets.injection import apply_mcp_bindings
 from app.services.secrets.redact import redact_value
 from app.services.mcp.outbound_audit import record_outbound_audit_log
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 logger = logging.getLogger(__name__)
 
@@ -742,10 +742,12 @@ class McpClientService:
         ephemeral_session = False
         session_key: Optional[str] = None
         auth_headers: Optional[Dict[str, str]] = None
-        if user_info:
+        is_verify_temp = server_id.startswith("verify_") and server_id in cls._sessions
+        if user_info and not is_verify_temp:
             server = await cls._load_server(server_id)
-            if bool(getattr(server, "user_assertion_enabled", False)):
-                user_id = str((user_info or {}).get("user_id") or "").strip()
+            signed_user_enabled = bool(getattr(server, "user_assertion_enabled", False))
+            user_id = str((user_info or {}).get("user_id") or "").strip()
+            if signed_user_enabled:
                 if not user_id:
                     raise ValueError("MCP UserContext requires an authenticated user_id")
                 auth_headers = build_mcp_headers(
@@ -758,6 +760,40 @@ class McpClientService:
                 )
                 session_key = f"{server_id}:sync:user:{user_id}:{uuid.uuid4().hex}"
                 ephemeral_session = True
+            else:
+                auth_headers = resolve_mcp_auth_headers(server)
+
+            mcp_denials: dict[str, str] = {}
+            mcp_used: dict[str, Any] = {}
+            auth_headers = await apply_mcp_bindings(
+                server,
+                auth_headers or {},
+                user_info=user_info,
+                denials=mcp_denials,
+                used=mcp_used,
+            )
+            if mcp_denials:
+                raise McpCredentialDeniedError(
+                    str(getattr(server, "server_name", "") or server_id), mcp_denials
+                )
+            pending_refs = unresolved_credential_headers(auth_headers)
+            if pending_refs:
+                raise McpCredentialDeniedError(
+                    str(getattr(server, "server_name", "") or server_id),
+                    {
+                        f"header:{name}": unbound_reason(auth_headers.get(name))
+                        or "reference_unbound"
+                        for name in pending_refs
+                    },
+                )
+            if not signed_user_enabled:
+                if mcp_used.get("slots"):
+                    session_key = f"{server_id}:sync:bind:{user_id or 'u'}:{uuid.uuid4().hex}"
+                    ephemeral_session = True
+                else:
+                    # 无签名且未命中动态凭据时沿用静态会话连接池
+                    auth_headers = None
+                    session_key = None
 
         session_mgr = await cls.get_session(
             server_id,
@@ -1419,6 +1455,7 @@ class McpClientService:
             remote_tool_names = set()
             stale_unpublished = 0
             remote_deleted_count = 0
+            stale_arg_slots: list[str] = []
 
             for t in tools:
                 t_name = t.name if hasattr(t, "name") else t.get("name")
@@ -1447,6 +1484,22 @@ class McpClientService:
                     existing.is_available = True
                     existing.tool_description = t_desc
                     existing.parameter_schema = json.dumps(schema_payload)
+                    raw_creds = getattr(existing, "credential_params", None)
+                    if raw_creds:
+                        try:
+                            old_creds = json.loads(raw_creds) if isinstance(raw_creds, str) else list(raw_creds)
+                        except (ValueError, TypeError):
+                            old_creds = []
+                        if isinstance(old_creds, list) and old_creds:
+                            props = schema_payload.get("properties")
+                            new_props = {str(k) for k in props.keys()} if isinstance(props, dict) else set()
+                            kept_creds = [p for p in old_creds if isinstance(p, str) and p in new_props]
+                            removed_creds = [p for p in old_creds if isinstance(p, str) and p not in new_props]
+                            if removed_creds:
+                                existing.credential_params = (
+                                    json.dumps(kept_creds, ensure_ascii=False) if kept_creds else None
+                                )
+                                stale_arg_slots.extend(f"arg:{t_name}:{param}" for param in removed_creds)
                 else:
                     created = McpToolCache(
                         id=str(uuid.uuid4()),
@@ -1466,6 +1519,17 @@ class McpClientService:
                 raise McpSyncGuardError(
                     f"远端返回 0 个工具，但本地仍有 {cached_available} 个可用工具；"
                     "已拒绝本次同步以避免误下线。若确认远端确实已清空，请使用强制同步。"
+                )
+
+            if stale_arg_slots:
+                from app.models.secret import SecretBinding
+
+                await db.execute(
+                    delete(SecretBinding).where(
+                        SecretBinding.consumer_type == "mcp_server",
+                        SecretBinding.consumer_id == server_id,
+                        SecretBinding.slot.in_(stale_arg_slots),
+                    )
                 )
 
             server.last_sync_at = datetime.now()

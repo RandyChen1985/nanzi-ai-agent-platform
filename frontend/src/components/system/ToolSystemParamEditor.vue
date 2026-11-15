@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { KeyIcon } from '@heroicons/vue/24/outline'
 import axios from '../../utils/axios'
 import PermissionVariableMenu from '../metadata/PermissionVariableMenu.vue'
@@ -83,8 +83,17 @@ const openMenuIndex = ref<number | null>(null)
 
 // ── 凭据绑定 ────────────────────────────────────────────────────────
 // 槽位由后端推（path / query / body 取决于 URL 和方法），这里只认参数名。
+// 由 ToolRegistry 弹窗提供的共享草稿：向导模式与表单模式共用同一份新建态 pending，
+// 切换填写方式时绑定不会丢失，也不会因各自维护一份状态而互相锁住保存按钮。
+const injectedDraft = inject<{
+  bindings: Ref<Record<string, BoundSecret>>
+  rules: Ref<Record<string, LocatorRule>>
+  revision?: Ref<number>
+  bumpRevision?: () => void
+} | null>('apiToolDraftParamPending', null)
+
 const bindings = ref<Record<string, BoundSecret>>({})
-const pending = ref<Record<string, BoundSecret>>({})
+const pending = injectedDraft ? injectedDraft.bindings : ref<Record<string, BoundSecret>>({})
 const pickingName = ref<string | null>(null)
 const pickerSecretId = ref<string | null>(null)
 const pickerItem = ref<CredentialPickerItem | null>(null)
@@ -116,7 +125,7 @@ const pickerNeedsField = ref(false)
 /** 参数名 → 已保存的规则 */
 const ruleDrafts = ref<Record<string, LocatorRule | null>>({})
 /** 新建态（工具还没有 id）下暂存的规则，保存后补写 */
-const pendingRules = ref<Record<string, LocatorRule>>({})
+const pendingRules = injectedDraft ? injectedDraft.rules : ref<Record<string, LocatorRule>>({})
 /** 正在编辑规则的参数名；非空时显示编辑器 */
 const locatorName = ref<string | null>(null)
 
@@ -183,7 +192,7 @@ async function loadBindings() {
 }
 
 watch(
-  () => [props.consumerId, props.consumerType],
+  () => [props.consumerId, props.consumerType, injectedDraft?.revision?.value],
   () => { void loadBindings() },
   { immediate: true },
 )
@@ -293,6 +302,7 @@ async function confirmPick() {
       // 两个 map 都要清：解绑后只要任一还留着 key，界面就还显示「已绑定」
       delete bindings.value[name]
       delete pending.value[name]
+      injectedDraft?.bumpRevision?.()
     } else {
       await axios.post('/api/portal/secrets/bindings', {
         secret_id: picked.id,
@@ -318,6 +328,7 @@ async function confirmPick() {
       }
       // 已经落库了，待写记录没有意义；留着会在保存时又写一遍
       delete pending.value[name]
+      injectedDraft?.bumpRevision?.()
     }
     closePicker()
   } catch (e: any) {
@@ -402,6 +413,7 @@ function onMappingSaved(payload: { bound: string[]; freed: string[] }) {
   })
   if (changed) emit('update:modelValue', next)
   void loadBindings()
+  injectedDraft?.bumpRevision?.()
   if (changed) {
     mappingHint.value = '参数来源已同步，保存工具后生效'
     window.setTimeout(() => { mappingHint.value = '' }, 4000)
@@ -450,6 +462,7 @@ async function applyRule(rule: LocatorRule) {
       is_global: props.isGlobal,
     })
     ruleDrafts.value[name] = rule
+    injectedDraft?.bumpRevision?.()
   } catch (e: any) {
     pickerError.value = e?.response?.data?.detail || '保存规则失败'
   } finally {

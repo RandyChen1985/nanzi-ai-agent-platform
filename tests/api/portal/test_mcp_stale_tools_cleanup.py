@@ -97,8 +97,8 @@ async def test_cleanup_deletes_only_stale_rows_and_prunes_agent_version_refs():
     assert result["affected_agent_versions"] == 2
     assert result["removed_tool_names"] == ["wtoe:old_query", "wtoe:old_report"]
 
-    # 1 次 select 失效工具 + 1 次 DELETE + 1 次 select 版本 + 2 次 UPDATE 命中版本
-    assert db.execute.await_count == 5
+    # 1 select 失效工具 + DELETE 工具缓存 + DELETE 参数级绑定 + 1 select 版本 + 2 UPDATE
+    assert db.execute.await_count == 6
     db.commit.assert_awaited_once()
 
     # 第一个 update 是剔除引用，不应命中无死引用的 version-clean
@@ -118,9 +118,39 @@ async def test_cleanup_keeps_empty_list_when_all_refs_are_pruned():
 
     await cleanup_stale_tools(db, "server-1")
 
-    # 0 = select 失效行，1 = DELETE，2 = select 版本，3 = 唯一一次 UPDATE
-    update_stmt = db.execute.await_args_list[3].args[0]
+    # 0 = select 失效行，1 = DELETE 工具缓存，2 = DELETE 参数级绑定，
+    # 3 = select 版本，4 = 唯一一次 UPDATE
+    update_stmt = db.execute.await_args_list[4].args[0]
     assert update_stmt.compile().params["tools"] == []
+
+
+async def test_cleanup_removes_orphaned_arg_bindings():
+    """工具下线后，它的参数级凭据绑定要一起清掉。
+
+    slot 形如 `arg:<短工具名>:<参数名>`，所以只能按前缀删；工具名里的 `%` `_` `\\`
+    要转义，否则一个叫 `a_b` 的工具会顺带删掉 `axb` 的绑定。
+    """
+    stale = [_stale_tool("tool-1", "wtoe:old_query")]
+    db = _fake_db([_scalars_result(stale), _rows_result([])])
+
+    await cleanup_stale_tools(db, "server-1")
+
+    statements = [c.args[0] for c in db.execute.await_args_list]
+    binding_deletes = [
+        stmt for stmt in statements
+        if str(stmt).upper().lstrip().startswith("DELETE")
+        and "sys_secret_bindings" in str(stmt)
+    ]
+    assert len(binding_deletes) == 1, "没有清理参数级绑定"
+    compiled = binding_deletes[0].compile()
+    params = {str(v) for v in compiled.params.values()}
+    # 消费方指向这台服务，且按 `arg:old_query:%` 前缀匹配
+    assert "mcp_server" in params
+    assert "server-1" in params
+    # `_` 被转义成 `\_`：不转义的话 `a_b` 的前缀会连 `axb` 的绑定一起删掉
+    like_values = [str(v) for v in params if not isinstance(v, bool)]
+    assert any(v.startswith("arg:old") for v in like_values), like_values
+    assert any("\\_" in v for v in like_values if "old" in v), like_values
 
 
 async def test_cleanup_tolerates_legacy_non_list_tools_config():
@@ -137,8 +167,8 @@ async def test_cleanup_tolerates_legacy_non_list_tools_config():
 
     assert result["removed_count"] == 1
     assert result["affected_agent_versions"] == 0
-    # select 失效 + DELETE + select 版本，没有 UPDATE
-    assert db.execute.await_count == 3
+    # select 失效 + DELETE 工具缓存 + DELETE 参数级绑定 + select 版本，没有 UPDATE
+    assert db.execute.await_count == 4
 
 
 def test_cleanup_route_is_registered_with_delete_permission():

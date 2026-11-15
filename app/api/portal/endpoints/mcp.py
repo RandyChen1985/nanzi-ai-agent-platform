@@ -20,7 +20,12 @@ from app.core.dependencies import (
 from app.models.mcp import McpServer, McpToolCache, McpOutboundAuditLog
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.tool_credentials import unresolved_credential_headers
-from app.services.ai.tools.mcp_client import McpClientService, McpSseSession, McpSyncGuardError
+from app.services.ai.tools.mcp_client import (
+    McpClientService,
+    McpCredentialDeniedError,
+    McpSseSession,
+    McpSyncGuardError,
+)
 from app.services.ai.tools.mcp_factory import McpToolFactory
 from app.services.ai.tools.tool_compat import resolve_tool_invocation_result
 from app.services.mcp.curl_snippet import build_mcp_curl_snippet
@@ -163,6 +168,7 @@ class McpServerWrite(McpServerBase):
     auth_headers: Optional[str] = Field(default="{}", max_length=20000)
     fixed_token: Optional[str] = Field(default=None, max_length=4096, exclude=True)
     authorization_enabled: Optional[bool] = None
+    auth_source: Optional[Literal["token", "credential"]] = Field(default=None, exclude=True)
     auth_headers_patch: Optional[Dict[str, Optional[str]]] = None
 
     @model_validator(mode="after")
@@ -184,6 +190,7 @@ class McpVerifyRequest(McpServerWrite):
 
     server_id: Optional[str] = None
     server_name: Optional[str] = Field(default=None, max_length=100)
+    pending_secret_bindings: Optional[Dict[str, Dict[str, Any]]] = Field(default=None, exclude=True)
 
     @field_validator("server_name")
     @classmethod
@@ -476,7 +483,7 @@ def _apply_mcp_auth_update(
         else:
             _set_header_case_insensitive(headers, normalized_key, str(value))
 
-    if data.authorization_enabled is False:
+    if data.authorization_enabled is False or data.auth_source == "credential":
         _remove_header_case_insensitive(headers, "Authorization")
         server.fixed_token_encrypted = None
     elif data.fixed_token is not None:
@@ -597,6 +604,115 @@ def _build_verify_user_assertion_headers(
         raise HTTPException(status_code=400, detail=f"用户身份传递配置无效: {exc}")
 
 
+async def _resolve_pending_verify_bindings(
+    pending_bindings: Dict[str, Dict[str, Any]],
+    *,
+    headers: Dict[str, str],
+    sse_url: Optional[str],
+    user: Dict[str, Any],
+    authorization_disabled: bool,
+) -> None:
+    """为探测请求解析向导/表单尚未落库的凭据草稿绑定。
+
+    仍完整经过可见性/授权/场景(mcp)/域名白名单校验并登记脱敏池，禁止越权借探测外泄他人凭据。
+    """
+    from datetime import datetime
+    from app.core.orm import AsyncSessionLocal
+    from app.models.secret import UserSecret
+    from app.services.secrets.injection import (
+        _get_case_insensitive,
+        _keep_auth_scheme,
+        _render_reference,
+        _set_case_insensitive,
+        denial_hint,
+        denial_text,
+        host_of,
+    )
+    from app.services.secrets.policy import SCENE_MCP, SecretContext, evaluate_secret
+    from app.services.secrets.redact import register_injected
+    from app.services.secrets.resolver import SecretResolver, _to_record
+
+    user_id = str(_get_user_id(user) or "").strip()
+    dept_code = str(user.get("dept_code") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=400, detail="无法识别当前用户，无法解析凭据绑定")
+
+    target_host = host_of(sse_url)
+    now = datetime.utcnow()
+    platform_script, platform_external, _ = await SecretResolver._platform_flags()
+
+    async with AsyncSessionLocal() as session:
+        user_script = await SecretResolver._user_allows_script_env(session, user_id)
+        for slot, cfg in pending_bindings.items():
+            if not isinstance(cfg, dict) or not str(slot).startswith("header:"):
+                continue
+            header_name = str(slot).partition(":")[2].strip()
+            if not header_name:
+                continue
+            if authorization_disabled and header_name.casefold() == "authorization":
+                continue
+            secret_id = str(cfg.get("secret_id") or "").strip()
+            if not secret_id:
+                continue
+            value_path = str(cfg.get("value_path") or "").strip()
+
+            row = await session.get(UserSecret, secret_id)
+            if row is None:
+                raise HTTPException(status_code=400, detail=f"请求头 {header_name} 绑定的凭据不存在或无权使用")
+            record = _to_record(row)
+            if not record.is_system and record.owner_id != user_id:
+                raise HTTPException(status_code=400, detail=f"请求头 {header_name} 绑定的凭据不存在或无权使用")
+            if record.is_system:
+                granted = await SecretResolver._has_grant(session, record.id, user_id, dept_code or None, now)
+                if not granted:
+                    raise HTTPException(status_code=400, detail=f"请求头 {header_name} 的凭据尚未授权给你")
+
+            context = SecretContext(
+                user_id=user_id,
+                scene=SCENE_MCP,
+                target_host=target_host,
+                dept_code=dept_code or None,
+                allow_script_env=platform_script and user_script,
+                allow_external_host=platform_external,
+            )
+            denial = evaluate_secret(record, context, now=now)
+            if denial:
+                reason = denial_text(denial)
+                hint = denial_hint(denial)
+                detail = f"请求头 {header_name} 的凭据不可用（{reason}）"
+                if hint:
+                    detail += f"。{hint}"
+                raise HTTPException(status_code=400, detail=detail)
+
+            ciphertext = SecretResolver._pick_ciphertext(row, now)
+            if not ciphertext:
+                raise HTTPException(status_code=400, detail=f"请求头 {header_name} 的凭据缺少可用密文")
+            plain = SecretResolver._decrypt(ciphertext)
+            register_injected(plain)
+
+            orig = _get_case_insensitive(headers, header_name)
+            denials: dict[str, str | None] = {}
+            rendered = _render_reference(
+                orig,
+                plain,
+                secret_key=record.secret_key,
+                slot=slot,
+                denials=denials,
+                value_path=value_path,
+                value_format=row.value_format or "text",
+            )
+            if rendered is None:
+                # 回退按 value_path 取用（_render_reference 内已尝试；若存在拒绝说明直接报错）
+                why = denials.get(slot) or "reference_unresolved"
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"请求头 {header_name} 解析凭据字段失败（{denial_text(why)}）",
+                )
+            if header_name.lower() == "authorization":
+                rendered = _keep_auth_scheme(rendered, orig)
+            _set_case_insensitive(headers, header_name, rendered)
+
+
 # 连接测试是「新建」与「编辑」共用的第一步（向导第 1 步必须调它），所以 create / edit
 # 任一权限即可；它只做探测、不落库，不构成写操作。
 @router.post(
@@ -624,17 +740,73 @@ async def verify_mcp_server(
     auth_headers = _build_verify_auth_headers(saved_server, data)
     auth_headers.update(_build_verify_user_assertion_headers(saved_server, data, user))
 
+    # 1) 编辑态注入已持久化的凭据绑定（复用当前探测地址做域名白名单检验）
+    if saved_server is not None:
+        from types import SimpleNamespace
+        from app.services.secrets.injection import apply_mcp_bindings, denial_hint, denial_text
+
+        verify_target = SimpleNamespace(
+            id=saved_server.id,
+            server_name=data.server_name or saved_server.server_name,
+            sse_url=data.sse_url or saved_server.sse_url,
+        )
+        # 用户若显式在表单传入固定 Token 测试或关闭 Authorization，保护 Authorization 不被旧绑定反向覆写
+        explicit_auth_token = bool(data.fixed_token) and data.auth_source != "credential"
+        saved_auth_header = next(
+            (v for k, v in auth_headers.items() if str(k).strip().casefold() == "authorization"),
+            None,
+        )
+        verify_denials: dict[str, str | None] = {}
+        auth_headers = await apply_mcp_bindings(
+            verify_target,
+            auth_headers,
+            user_info=_mcp_user_context(user),
+            denials=verify_denials,
+        )
+        if data.authorization_enabled is False:
+            _remove_header_case_insensitive(auth_headers, "Authorization")
+            verify_denials.pop("header:Authorization", None)
+        elif explicit_auth_token and saved_auth_header is not None:
+            _set_header_case_insensitive(auth_headers, "Authorization", saved_auth_header)
+            verify_denials.pop("header:Authorization", None)
+
+        # 如果前端传了尚未保存的草稿绑定覆写某槽位，则先移除对应已保存拒因，交由下面草稿分支解析
+        pending_slots = set((data.pending_secret_bindings or {}).keys())
+        effective_denials = {k: v for k, v in verify_denials.items() if k not in pending_slots}
+        if effective_denials:
+            detail = "；".join(
+                f"{slot.partition(':')[2] or slot}（{denial_text(why)}）"
+                for slot, why in effective_denials.items()
+            )
+            hints: list[str] = []
+            for why in effective_denials.values():
+                hint = denial_hint(why)
+                if hint and hint not in hints:
+                    hints.append(hint)
+            message = f"凭据不可用（{detail}）"
+            if hints:
+                message += "。" + "；".join(hints)
+            raise HTTPException(status_code=400, detail=message)
+
+    # 2) 注入向导/编辑草稿中的未保存凭据绑定
+    if data.pending_secret_bindings:
+        await _resolve_pending_verify_bindings(
+            data.pending_secret_bindings,
+            headers=auth_headers,
+            sse_url=data.sse_url,
+            user=user,
+            authorization_disabled=data.authorization_enabled is False,
+        )
+
     pending_refs = unresolved_credential_headers(auth_headers)
     if pending_refs:
-        # 测试台是「连一下就看看」，最容易手写 `${secret:...}` 试字段名。但这条链路
-        # 不做绑定注入，字面量会被原样发给对方服务器——所以先在本地拦下说清楚。
+        # 仍未解析的占位符（如手写未绑定的 ${secret:...} / ${CREDENTIAL:...}）在本地直接报错，避免原样外发
         raise HTTPException(
             status_code=400,
             detail=(
                 "这些请求头里的凭据还没有被解析："
                 + "、".join(pending_refs)
-                + "。连通性测试不解析凭据绑定：要么把值改成真实值再测，"
-                "要么先在服务里绑定凭据并保存，然后用真实调用验证。"
+                + "。请在「来自凭据中心」选择并绑定对应凭据，或填入真实值后再测试。"
             ),
         )
 
@@ -1146,7 +1318,7 @@ async def create_mcp_server(
 
     user_id = _get_user_id(user) if target_scope == "personal" else None
     server_id = str(uuid.uuid4())
-    server_data = data.model_dump(exclude={"fixed_token", "authorization_enabled", "auth_headers_patch"})
+    server_data = data.model_dump(exclude={"fixed_token", "authorization_enabled", "auth_headers_patch", "auth_source"})
     auth_headers = _parse_auth_headers(data.auth_headers)
     raw_authorization = next(
         (
@@ -1156,7 +1328,7 @@ async def create_mcp_server(
         ),
         None,
     )
-    if data.authorization_enabled is False:
+    if data.authorization_enabled is False or data.auth_source == "credential":
         _remove_header_case_insensitive(auth_headers, "Authorization")
     elif data.fixed_token:
         _remove_header_case_insensitive(auth_headers, "Authorization")
@@ -1168,7 +1340,7 @@ async def create_mcp_server(
     server_data["scope"] = target_scope
     server_data["user_id"] = user_id
     
-    if data.fixed_token:
+    if data.fixed_token and data.auth_source != "credential":
         server_data["fixed_token_encrypted"] = get_api_key_manager().encrypt_api_key(data.fixed_token)
     if data.user_assertion_enabled:
         server_data["user_assertion_audience"] = (
@@ -1328,7 +1500,7 @@ async def update_mcp_server(
     )
     pub = (await db.execute(pub_stmt)).scalar() or 0
     
-    response_data = data.model_dump(exclude={"fixed_token", "auth_headers"})
+    response_data = data.model_dump(exclude={"fixed_token", "auth_headers", "auth_source"})
     response_data["server_name"] = server_name
     response_data["user_assertion_audience"] = server.user_assertion_audience
     response_data["user_assertion_key_id"] = server.user_assertion_key_id
@@ -1496,6 +1668,8 @@ async def sync_mcp_tools(
         }
     except McpSyncGuardError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except McpCredentialDeniedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as e:
         logger.warning("MCP sync failed for server %s: %s", server_id, e, exc_info=True)
         raise HTTPException(
@@ -1665,12 +1839,17 @@ async def execute_mcp_tool(
             denial_hint,
             denial_text,
         )
+        from app.services.secrets.locator import choice_field
+        from app.services.ai.tools.mcp_factory import credential_param_names
 
         arguments = dict(req.arguments or {})
         arg_denials: dict[str, str | None] = {}
         arguments = await apply_mcp_arg_bindings(
             tool, arguments, user_info=user, denials=arg_denials
         )
+        # 编号字段仅供凭据定位使用，绝不能传给远端 MCP，且需在两个分支前统一剥除
+        for _name in credential_param_names(tool):
+            arguments.pop(choice_field(_name), None)
         if arg_denials:
             # denials 存的是**原始 code**，必须过 denial_text()——直接拼进去
             # 会把 denied_by_host 这种内部常量抛到界面上。
@@ -1688,24 +1867,25 @@ async def execute_mcp_tool(
                 message += "。" + "；".join(hints)
             raise HTTPException(status_code=400, detail=message)
 
+        test_user_info = {
+            key: user.get(key)
+            for key in (
+                "user_id",
+                "user_name",
+                "real_name",
+                "email",
+                "dept_code",
+                "org_path",
+                "extra_data",
+            )
+            if user.get(key) is not None
+        }
+        raw_tool_name = tool.tool_name.split(":", 1)[-1]
         signed_user_mode = bool(server.user_assertion_enabled)
         if signed_user_mode:
-            test_user_info = {
-                key: user.get(key)
-                for key in (
-                    "user_id",
-                    "user_name",
-                    "real_name",
-                    "email",
-                    "dept_code",
-                    "org_path",
-                    "extra_data",
-                )
-                if user.get(key) is not None
-            }
             result = await McpClientService.call_remote_tool(
                 server_id=tool.server_id,
-                tool_name=tool.tool_name.split(":", 1)[-1],
+                tool_name=raw_tool_name,
                 arguments=arguments,
                 user_info=test_user_info,
                 agent_info={
@@ -1723,9 +1903,18 @@ async def execute_mcp_tool(
                 "key_id": server.user_assertion_key_id,
             }
         else:
-            lc_tool = McpToolFactory.create_tool(tool)
-            result = await resolve_tool_invocation_result(
-                await lc_tool.ainvoke(arguments)
+            # 非签名分支同样走 call_remote_tool：前面已完成参数注入与 choice_field 剥离，
+            # 避免经由 McpToolFactory 二次执行 apply_mcp_arg_bindings 产生双倍解密与双份流水
+            result = await McpClientService.call_remote_tool(
+                server_id=tool.server_id,
+                tool_name=raw_tool_name,
+                arguments=arguments,
+                user_info=test_user_info,
+                agent_info={
+                    "agent_id": "mcp-tool-tester",
+                    "agent_name": "MCP 工具测试台",
+                },
+                request_id=str(uuid.uuid4()),
             )
         return {"status": "success", "result": result, "mcp_auth": mcp_auth}
     except HTTPException:

@@ -19,7 +19,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Sequence
 from urllib.parse import parse_qsl, urlsplit
 
@@ -54,6 +54,15 @@ ROTATION_OVERLAP_DAYS = 7
 VALID_SCOPES = frozenset({SCOPE_USER, SCOPE_SYSTEM})
 VALID_TYPES = frozenset({TYPE_CREDENTIAL, TYPE_VARIABLE})
 VALID_CONSUMER_TYPES = frozenset({"mcp_server", "api_tool", "script_tool", "agent"})
+
+
+def _to_naive_utc(value: datetime | None) -> datetime | None:
+    """库里时间戳一律存 naive UTC；前端若传带时区 ISO 字符串，先折算成 UTC 再去 tzinfo。"""
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
 
 #: 每种消费者**实际会被注入**的槽位前缀。
 #
@@ -539,7 +548,7 @@ async def create_secret(
         allowed_hosts=_validate_hosts(allowed_hosts),
         allowed_scenarios=_validate_scenarios(allowed_scenarios),
         status="active",
-        expires_at=expires_at,
+        expires_at=_to_naive_utc(expires_at),
         category=category,
         remark=remark,
         created_by=created_by or owner_id or None,
@@ -553,6 +562,7 @@ async def create_secret(
             "secret_type": secret_type,
             "allowed_scenarios": list(row.allowed_scenarios or []),
             "allowed_hosts": list(row.allowed_hosts or []),
+            "expires_at": row.expires_at.isoformat(timespec="seconds") if row.expires_at else None,
         },
     )
     await session.commit()
@@ -570,6 +580,7 @@ async def rotate_secret(
     rotated_by: str | None = None,
     overlap_days: int = ROTATION_OVERLAP_DAYS,
     expires_at: datetime | None = None,
+    clear_expires_at: bool = False,
     actor_is_admin: bool = False,
     value_format: str | None = None,
     value_template: str | None = None,
@@ -621,6 +632,7 @@ async def rotate_secret(
     row.value_format = fmt
     row.value_template = template
     row.value_summary = summary
+    expires_at = _to_naive_utc(expires_at)
     row.last_rotated_at = now
     if expires_at is not None:
         row.expires_at = expires_at
@@ -629,6 +641,17 @@ async def rotate_secret(
         # 更糟的是 _pick_ciphertext 会因此判定新值不可用，回退到 previous 里那份
         # 刚被替换掉的旧密文，整个双写窗口用的都是旧值。清掉过期时间，
         # 让它作为一份不过期的新凭据生效；真要限期由调用方显式传。
+        row.expires_at = None
+    elif clear_expires_at:
+        row.expires_at = None
+    elif (
+        row.expires_at is not None
+        and row.previous_expires_at is not None
+        and row.expires_at <= row.previous_expires_at
+    ):
+        # 虽尚未过期，但原截止时间落在本轮过渡窗口结束前：若继续沿用，
+        # 新密文会在旧值过渡期结束前先失效、导致 _pick_ciphertext 倒退回旧密文，
+        # 直接清掉过期时间避免“换完新值反而用旧值”（如需限期请显式传 expires_at）。
         row.expires_at = None
     await _audit(
         action="rotate",
@@ -639,6 +662,7 @@ async def rotate_secret(
             "overlap_days": overlap_days,
             "value_format": fmt,
             "value_template": template,
+            "expires_at": row.expires_at.isoformat(timespec="seconds") if row.expires_at else None,
         },
     )
     await session.commit()
@@ -1514,6 +1538,7 @@ async def update_secret(
     category: str | None = None,
     remark: str | None = None,
     expires_at: datetime | None = None,
+    clear_expires_at: bool = False,
     actor_is_admin: bool = False,
 ) -> UserSecret:
     """改元数据。**不能**改值——改值必须走 ``rotate_secret``（留轮换痕迹）。
@@ -1539,8 +1564,10 @@ async def update_secret(
         row.category = category
     if remark is not None:
         row.remark = remark[:500]
-    if expires_at is not None:
-        row.expires_at = expires_at
+    if clear_expires_at:
+        row.expires_at = None
+    elif expires_at is not None:
+        row.expires_at = _to_naive_utc(expires_at)
 
     await _audit(
         action="update",

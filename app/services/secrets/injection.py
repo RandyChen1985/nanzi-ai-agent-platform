@@ -188,6 +188,10 @@ def _looks_unfilled(value: Any) -> bool:
     return bool(text) and set(text) <= {"*", "•"}
 
 
+# 公开别名：给 /platform-targets 等外围展示口径复用，确保「可绑定空位」与运行时注入口径一致
+is_header_value_unfilled = _looks_unfilled
+
+
 def _render_reference(
     original: Any,
     plain: str,
