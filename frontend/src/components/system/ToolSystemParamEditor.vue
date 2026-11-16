@@ -193,6 +193,15 @@ const multiManagedFixedOf = (name: string): { groupId: string; size: number } | 
   return group && group.size > 1 ? group : null
 }
 
+/** 单值页里有多少参数由多值组统一管理（只用于提示，不影响保存路径） */
+const multiManagedCount = computed(
+  () =>
+    props.modelValue.filter((p) => {
+      const name = String(p.name || '').trim()
+      return !!name && !!(multiManagedRuleOf(name) || multiManagedFixedOf(name))
+    }).length,
+)
+
 /** 按参数名取「固定凭据」那条：规则行没有 secret_key，混用会显示空白 */
 const fixedBindingOf = (name: string): BoundSecret | null => {
   const binding = bindingOf(name)
@@ -739,6 +748,12 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
           class="rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50"
           @click="addParam"
         >+ 添加系统级参数</button>
+        <!-- 一条凭据供多个参数时，单值页这几行是只读的：说清为什么改不了 -->
+        <span
+          v-if="paramTab === 'single' && multiManagedCount"
+          class="inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700"
+          :title="`${multiManagedCount} 个参数由多值凭据统一管理（一条凭据供多个参数各取一个字段）。要改其中某个参数，请到「多值凭据」页整组修改；在这一页单独改会把组拆散。`"
+        >多值管理 {{ multiManagedCount }}</span>
         <!-- 配错时逐个改回「固定值」要 N 次操作，还容易漏掉某个参数 -->
         <button
           v-if="paramTab === 'single' && boundParamCount"

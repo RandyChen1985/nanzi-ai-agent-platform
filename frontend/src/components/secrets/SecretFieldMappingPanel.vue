@@ -117,6 +117,11 @@ const needsSourceFirst = computed(() =>
   source.value === 'rule' ? !ruleDraft.value : !secretId.value,
 )
 
+/** 「让模型挑」的规则没有取值来源，判定与 SecretLocatorEditor 的 mode 同口径 */
+const ruleIsModelChoice = computed(
+  () => !!ruleDraft.value && !ruleDraft.value.key_source && ruleDraft.value.on_miss === 'model',
+)
+
 const ruleSummaryText = computed(() => {
   const rule = ruleDraft.value
   if (!rule) return ''
@@ -125,12 +130,33 @@ const ruleSummaryText = computed(() => {
     rule.target === 'field'
       ? `字段 ${rule.target_field || '?'}`
       : rule.target || '?'
+  if (ruleIsModelChoice.value) {
+    return rule.value_template ? `模板 ${rule.value_template}` : '不限模板'
+  }
   const parts = [
     `按 ${rule.key_source || '?'} 匹配凭据的 ${targetLabel}`,
     rule.match === 'exact' ? '精确' : rule.match || '',
     rule.value_template ? `模板 ${rule.value_template}` : '不限模板',
   ]
   return parts.filter(Boolean).join(' · ')
+})
+
+/**
+ * 「挑不到时」的策略。
+ *
+ * 这一条决定的是**失败形态**：直接报错、回退到固定凭据、还是把选择权交给
+ * 模型。它不进 ``ruleSummaryText``（那条说的是「怎么挑」），单独一行显示，
+ * 因为它才是用户排查「为什么这次调用挂了」时最需要看见的一句。
+ */
+const ruleMissText = computed(() => {
+  switch (ruleDraft.value?.on_miss) {
+    case 'model':
+      return '让模型在可见候选里挑一条'
+    case 'fallback_fixed':
+      return '回退到同一层级的固定凭据'
+    default:
+      return '直接报错，这次调用失败'
+  }
 })
 
 /** 单值页已配、本页没选的参数：保存会把它们改回模型填写，要提醒 */
@@ -154,6 +180,15 @@ const pendingChanges = computed(() => {
  * ``pendingChanges`` 只比字段映射：改了来源或规则、但字段恰好一个没动时它是空的。
  * 那种情况同样要保存（运行时读的是规则本身），不提示的话用户关掉弹窗就以为生效了。
  */
+/**
+ * 已经选了字段的参数个数。
+ *
+ * 0 个时「保存映射」不该可点：那时提交上去等于把整组绑定都删掉（全部回到
+ * 模型填写），而这件事有专门的「清空全部」——它带确认框、文案也说得明白。
+ * 让「保存」在这个状态下静默清空，是配错一次就丢一整组配置的入口。
+ */
+const mappedCount = computed(() => props.params.filter((n) => picks.value[n]).length)
+
 const pendingChangeCount = computed(() =>
   pendingChanges.value.length || (touched.value ? 1 : 0)
 )
@@ -581,8 +616,16 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
         </p>
         <template v-else>
           <p class="text-gray-700">
-            <span class="mr-1 rounded bg-violet-50 px-1 py-0.5 font-medium text-violet-700">规则</span>
+            <span class="mr-1 rounded bg-violet-50 px-1 py-0.5 font-medium text-violet-700">{{ ruleIsModelChoice ? '配法' : '规则' }}</span>
             {{ ruleSummaryText }}
+          </p>
+          <p v-if="ruleIsModelChoice" class="mt-1 text-indigo-700">
+            <span class="mr-1 rounded bg-indigo-50 px-1 py-0.5 font-medium text-indigo-700">怎么挑</span>
+            由模型在可见凭据里挑一条（没有精确匹配规则，确定性低于按字段匹配）
+          </p>
+          <p v-else class="mt-1 text-gray-600">
+            <span class="mr-1 rounded bg-amber-50 px-1 py-0.5 font-medium text-amber-700">挑不到时</span>
+            {{ ruleMissText }}
           </p>
           <p class="mt-1 text-gray-600">
             <span class="mr-1 rounded bg-indigo-50 px-1 py-0.5 font-medium text-indigo-700">取用字段</span>
@@ -609,7 +652,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
         </span>
         <div class="ml-auto flex items-center gap-2">
           <span class="text-[11px] text-gray-500">
-            已映射 {{ params.filter((n) => picks[n]).length }} / {{ params.length }}
+            已映射 {{ mappedCount }} / {{ params.length }}
           </span>
           <button
             type="button"
@@ -680,10 +723,12 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
 
     <div class="mt-3 flex items-center gap-2">
       <span class="text-[11px] text-gray-500">
-        保存后：{{ params.filter((n) => picks[n]).length }} 个参数由凭据提供，
+        保存后：{{ mappedCount }} 个参数由凭据提供，
         {{ params.filter((n) => !picks[n]).length }} 个回到模型填写
         <template v-if="pendingChangeCount">
-          <span class="font-medium text-amber-600">· 有 {{ pendingChangeCount }} 处未保存</span>
+          <span class="font-medium text-amber-600">
+            · 有 {{ pendingChangeCount }} 处未保存<template v-if="!mappedCount">（还没给参数选字段，选一个才能保存）</template>
+          </span>
         </template>
       </span>
       <div class="ml-auto flex items-center gap-2">
@@ -698,10 +743,14 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
         <button
           type="button"
           class="rounded-lg px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
-          :class="pendingChangeCount
-            ? 'bg-indigo-600 ring-2 ring-amber-400 ring-offset-1'
-            : 'bg-indigo-600'"
-          :disabled="busy || !params.length"
+          :class="[
+            pendingChangeCount ? 'ring-2 ring-amber-400 ring-offset-1' : '',
+            mappedCount ? 'bg-indigo-600' : 'bg-indigo-600/40',
+          ]"
+          :disabled="busy || !params.length || !mappedCount"
+          :title="mappedCount
+            ? ''
+            : '一个参数都没选字段。保存等于把整组凭据配置清空——要清空请用左边的「清空全部」，它带确认。'"
           @click="save"
         >{{ busy
           ? '保存中…'

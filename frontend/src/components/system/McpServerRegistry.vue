@@ -1664,6 +1664,25 @@ const multiManagedFixedOfSlot = (slot: string): HeaderBinding | null => {
 }
 
 /**
+ * 这个槽位是不是由多值凭据统一管理（规则型或固定型都算）。
+ *
+ * 单值页按「单值草稿整表提交」，一旦把组内槽位一起提交，等于用单值视角重写
+ * 整组的 value_path / 规则——值看起来没变，但组的语义（一条凭据供 N 个参数
+ * 各取一个字段）就散了，而且从界面上看不出来。所以保存时要把这些槽位**排除
+ * 在外**，让它们原样留在库里。
+ */
+const multiManagedSlotOf = (slot: string) => multiManagedRuleOfSlot(slot) || multiManagedFixedOfSlot(slot)
+
+/** 单值页里有多少参数是由多值组统一管理的（界面提示用） */
+const paramMultiManagedCount = computed(() => {
+  const tool = paramMarkTarget.value?.tool
+  if (!tool) return 0
+  return Object.keys(paramDraft.value).filter((name) =>
+    multiManagedSlotOf(paramSlot(tool, name))
+  ).length
+})
+
+/**
  * 这份配置是**多值配法**吗（一次保存、一条规则/凭据供多个参数）。
  *
  * 依据是组标识：多值保存会写一个 ``binding_group_id`` 给整批，单值页逐条配出来的
@@ -2040,8 +2059,10 @@ async function clearParamMark() {
     showToast('这个工具当前没有由凭据提供的参数', 'info')
     return
   }
-  const grouped = Object.keys(paramDraft.value).filter(
-    (name) => multiManagedRuleOfSlot(paramSlot(target.tool, name))
+  // 固定凭据型也算：多值页选「固定凭据」铺 N 个参数时同样是一组，
+  // 只统计规则型会让确认框漏掉这句提醒
+  const grouped = Object.keys(paramDraft.value).filter((name) =>
+    multiManagedSlotOf(paramSlot(target.tool, name))
   ).length
   const ok = await confirm({
     title: '清空全部凭据配置',
@@ -2085,6 +2106,14 @@ async function submitParamMark() {
     // 原来是循环 POST 每条绑定、最后单独 PUT 一次清单——中间任何一步失败就会留下
     // 「绑定有了、清单没有」的半保存状态：界面显示已映射，运行时模型照旧自己填
     // 密码，服务端只回 credentials_rejected，排查方向全错。
+    // 注意：这里**不能**把多值组管理的槽位过滤掉。
+    //
+    // 后端会用本批 items 里 strategy != none 的名字**全量覆盖**「由凭据提供」
+    // 的清单（_sync_mcp_credential_params）。过滤掉组内槽位 → 它们从清单里消失
+    // → 运行时模型重新看见 host/password 并自己填，而界面还显示已映射。
+    //
+    // 提交它们本身是安全的：草稿里这些参数带着库里那份 secret_id 与 value_path
+    // 原样回来，提交后组会被分配一个新的 group_id，语义完全等价。
     const items = Object.entries(paramDraft.value).map(([name, source]) => {
       const slot = paramSlot(tool, name)
       if (source === 'rule') {
@@ -5207,7 +5236,9 @@ onMounted(fetchServers)
                 v-if="paramTab === 'single'"
                 class="flex items-center gap-2 border-t border-gray-100 px-5 py-3"
               >
-                <span class="text-[11px] text-gray-400">
+                <!-- 信息区必须能收缩（min-w-0 + flex-1）：这里文案会随状态变长，
+                     不设边界就会把右侧按钮挤成竖排——「取 消」「保 存」那样。 -->
+                <div class="min-w-0 flex-1 text-[11px] text-gray-400">
                   <template v-if="draftCredentialCount">
                     {{ draftCredentialCount }} 个参数由凭据提供
                   </template>
@@ -5218,6 +5249,13 @@ onMounted(fetchServers)
                     有 {{ paramChangeCount }} 处来源改动未保存，点「保存」才生效
                   </span>
                   <span v-else class="text-gray-400">选凭据即刻生效，来源改动需点「保存」</span>
+                  <!-- 长句不进正文：它只在这一页「什么都改不了」时才出现，
+                       而那一页正文已经够长，塞进去会顶掉按钮 -->
+                  <span
+                    v-if="paramMultiManagedCount"
+                    class="ml-1.5 inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-700"
+                    :title="`${paramMultiManagedCount} 个参数由多值凭据统一管理（一条凭据供多个参数各取一个字段）。要改其中某个参数，请到「多值凭据」页整组修改；在这一页单独改会把组拆散。`"
+                  >多值管理 {{ paramMultiManagedCount }}</span>
                   <span v-if="draftMissingCred.length" class="text-red-600">
                     <span class="text-gray-300"> · </span>
                     {{ draftMissingCred.join('、') }} 还没选凭据
@@ -5226,31 +5264,35 @@ onMounted(fetchServers)
                     <span class="text-gray-300"> · </span>
                     {{ draftMissingRule.join('、') }} 还没配规则
                   </span>
-                </span>
-                <div class="ml-auto flex items-center gap-2">
+                </div>
+                <div class="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap">
                   <!-- 配错时逐个改回「模型填写」要 N 次操作，还容易漏掉某个参数 -->
                   <button
                     type="button"
                     :disabled="paramMarkBusy || paramBindingsLoading || !paramBoundCount"
-                    class="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    class="shrink-0 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
                     title="清除这个工具所有参数的凭据配置（固定凭据与规则都会删除）"
                     @click="clearParamMark"
                   >清空全部</button>
                   <button
                     type="button"
-                    class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+                    class="shrink-0 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
                     @click="closeParamMark"
                   >取消</button>
                   <button
                     type="button"
-                    :disabled="paramMarkBusy || paramBindingsLoading || draftUnboundNames.length > 0"
+                    :disabled="paramMarkBusy || paramBindingsLoading || draftUnboundNames.length > 0 || !paramChangeCount"
                     :title="draftUnboundNames.length
                       ? [
                           draftMissingCred.length ? draftMissingCred.join('、') + ' 还没选凭据' : '',
                           draftMissingRule.length ? draftMissingRule.join('、') + ' 还没配规则' : '',
                         ].filter(Boolean).join('；')
-                      : ''"
-                    class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      : (paramChangeCount
+                        ? (paramMultiManagedCount
+                          ? `${paramMultiManagedCount} 个参数由多值凭据统一管理，保存不会改动它们`
+                          : '')
+                        : '没有改动可保存')"
+                    class="shrink-0 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                     :class="paramChangeCount ? 'ring-2 ring-amber-400 ring-offset-1' : ''"
                     @click="submitParamMark"
                   >

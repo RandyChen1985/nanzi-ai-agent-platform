@@ -85,7 +85,7 @@ export function ruleSummary(rule: LocatorRule | null | undefined): string {
 import { computed, ref, watch } from 'vue'
 import axios from '@/utils/axios'
 import { CREDENTIAL_TEMPLATES, findCredentialTemplate } from '@/utils/credentialTemplates'
-import { XMarkIcon } from '@heroicons/vue/24/outline'
+import { ChevronDownIcon, XMarkIcon } from '@heroicons/vue/24/outline'
 
 
 const props = withDefaults(
@@ -197,6 +197,52 @@ const draft = ref<LocatorRule>(blankRule())
 const busy = ref(false)
 const errorText = ref('')
 
+/**
+ * 两种配法。
+ *
+ * `rule` 是「按字段精确匹配」：从某个值算出 key，再拿去和凭据比。
+ * `model` 是「让模型挑」：没有可算的 key，运行时把可见凭据列给模型由它选。
+ *
+ * 后者原先只能靠 `on_miss=model`（藏在第⑥步「挑不到时」）实现，读起来像补救
+ * 措施，于是所有人都默认「必须配一条匹配规则」，然后随手挑一个入参——取不到
+ * 值就报「规则未命中」，而界面上完全看不出配错了。分成两个 tab 是为了让
+ * 「我不知道该用哪个入参」这件事有地方可说。
+ */
+type LocatorMode = 'rule' | 'model'
+/** 「让模型挑」的说明默认折叠：它只在选这个 tab 时需要读一遍，之后就是噪音 */
+const modelHelpOpen = ref(false)
+
+const MODES: { value: LocatorMode; label: string; hint: string }[] = [
+  { value: 'rule', label: '按字段匹配', hint: '用一个值去精确匹配凭据的 key / 名称 / 字段值' },
+  { value: 'model', label: '让模型挑', hint: '不配匹配规则，运行时把可见凭据列给模型由它选' },
+]
+
+/**
+ * 当前是哪种配法。以草稿内容为准而不是另存一个开关：外部传进来的既有规则
+ * （`on_miss=model` 且没有 key_source）打开时就该落在「让模型挑」上。
+ */
+const mode = computed<LocatorMode>(() =>
+  !draft.value.key_source && draft.value.on_miss === 'model' ? 'model' : 'rule',
+)
+
+function switchMode(next: LocatorMode) {
+  if (next === mode.value) return
+  const fallback = blankRule()
+  if (next === 'model') {
+    // 清掉来源是这套配法的定义：后端要求 on_miss=model 才允许空的 key_source
+    draft.value.key_source = ''
+    draft.value.on_miss = 'model'
+    // 这条只在旧规则里出现过，留着会被提交上去
+    draft.value.target_field = ''
+  } else {
+    // 切回来要给出可用的默认值，否则 validate 会立刻拦住一个空来源
+    draft.value.key_source = fallback.key_source
+    draft.value.on_miss = 'fail'
+  }
+  errorText.value = ''
+  preview.value = null
+}
+
 // 每次打开都按传入值重置：上一个槽位的规则不能漏到下一个槽位
 watch(
   () => props.open,
@@ -280,7 +326,8 @@ function toggleTransform(value: string, checked: boolean) {
 
 function validate(): string {
   const r = draft.value
-  if (!r.key_source) return '请选择用哪个值去匹配'
+  // 「让模型挑」没有取值来源：它压根不算 key，不该被这条拦住
+  if (mode.value === 'rule' && !r.key_source) return '请选择用哪个值去匹配'
   if (r.key_source.startsWith('arg:') && !r.key_source.slice(4)) return '请选择一个入参'
   if (!r.templates.length) return '至少要有一条模板'
   if (r.templates.some((t) => !t.includes('{value}'))) return '每条模板都必须包含 {value}'
@@ -403,6 +450,62 @@ function save() {
         </div>
 
         <div class="max-h-[70vh] space-y-3 overflow-y-auto px-5 py-4">
+          <!-- 两种配法：有明确的取值来源就用规则精确匹配，没有就交给模型挑 -->
+          <div class="flex gap-1 rounded-lg bg-gray-100 p-1">
+            <button
+              v-for="m in MODES"
+              :key="m.value"
+              type="button"
+              class="flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+              :class="mode === m.value
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'"
+              :title="m.hint"
+              @click="switchMode(m.value)"
+            >{{ m.label }}</button>
+          </div>
+
+          <!-- 「让模型挑」：把边界讲清楚比省字重要，但整段常驻会把「模板约束」挤到
+               折叠线以下。默认收起，标题说清里面有什么。 -->
+          <div v-if="mode === 'model'" class="rounded-lg border border-amber-200 bg-amber-50 text-[11px] text-amber-900">
+            <button
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left font-medium"
+              @click="modelHelpOpen = !modelHelpOpen"
+            >
+              <span>怎么挑 · 什么时候可能不准 · 边界</span>
+              <ChevronDownIcon
+                class="ml-auto h-3.5 w-3.5 shrink-0 transition-transform"
+                :class="modelHelpOpen ? 'rotate-180' : ''"
+              />
+            </button>
+            <div v-if="modelHelpOpen" class="space-y-1 border-t border-amber-200/70 px-3 py-2 leading-relaxed">
+            <p class="font-semibold">运行时怎么挑</p>
+            <p class="mt-1">
+              把<strong>你能用的凭据</strong>列给模型（只有编号 <code>c1</code>/<code>c2</code>、名称、备注和模板，
+              <strong>没有任何值</strong>），由模型读这次调用的上下文自己选一条，再把编号填进
+              <code>secret_choice_&lt;参数名&gt;</code>。
+            </p>
+            <p class="mt-1.5 font-semibold">什么时候可能不准</p>
+            <ul class="mt-1 list-disc space-y-0.5 pl-4">
+              <li>候选里有多条看起来都像的（名称含糊、没有备注）——模型只能猜</li>
+              <li>这次调用本身没有能判断身份的线索（比如只说「发一封邮件」）</li>
+              <li>模型没主动去查候选、或忘了回填编号——这次调用会失败，不会静默用错凭据</li>
+            </ul>
+            <p class="mt-1.5 font-semibold">边界</p>
+            <ul class="mt-1 list-disc space-y-0.5 pl-4">
+              <li>只有「工具参数」这一级可用（MCP 服务参数、API 工具参数）；Header 级不支持</li>
+              <li>模型填的编号不在可见集合内会被直接拒绝，越不了权</li>
+              <li>确定性低于按字段匹配：命名规范稳定的场景，用左边那个 tab 更可靠</li>
+            </ul>
+            <p class="mt-1.5">
+              下面的<strong>模板约束</strong>尤其重要：不限定的话，模型可能挑到一条结构完全不同的凭据，
+              取字段时才失败。
+            </p>
+            </div>
+          </div>
+
+          <template v-if="mode === 'rule'">
           <!-- ① 用哪个值 -->
           <div class="grid grid-cols-[76px_minmax(0,1fr)] items-start gap-3">
             <label class="pt-1.5 text-xs text-gray-500">① 用哪个值</label>
@@ -507,6 +610,8 @@ function save() {
             </div>
           </div>
 
+          </template>
+
           <!-- ⑤ 结构约束：模板与取用字段是两个开关，见 showValueTemplate / showValuePath。
                挤在一起用一个开关，关掉其中一个会连带关掉另一个。 -->
           <div
@@ -557,8 +662,8 @@ function save() {
             </div>
           </div>
 
-          <!-- ⑥ 匹配不上时 -->
-          <div class="grid grid-cols-[76px_minmax(0,1fr)] items-start gap-3">
+          <!-- ⑥ 匹配不上时。「让模型挑」没有匹配这一步，自然也没有「挑不到」 -->
+          <div v-if="mode === 'rule'" class="grid grid-cols-[76px_minmax(0,1fr)] items-start gap-3">
             <label class="pt-1.5 text-xs text-gray-500">⑥ 挑不到时</label>
             <div class="min-w-0">
               <select
@@ -580,8 +685,18 @@ function save() {
             </div>
           </div>
 
-          <!-- 试算 -->
-          <div class="rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-3">
+          <!-- 「让模型挑」没法试算：选哪条凭据是模型在真实调用时决定的，
+               这里能验的只有「模板约束下有几条候选」——写清楚比给个必定未命中的
+               结果强。
+               试算 -->
+          <div
+            v-if="mode === 'model'"
+            class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-[11px] leading-relaxed text-gray-600"
+          >
+            这一页没法试算：选哪条凭据要在真实调用时才知道。想先确认候选范围，
+            填上模板约束后去「凭据中心」看该模板下有几条凭据。
+          </div>
+          <div v-else class="rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <span class="text-xs font-semibold text-gray-700">试算（不发真实请求、不写流水；按字段值匹配需解密比较）</span>
               <span class="text-[10px] text-gray-400">身份固定为当前登录人，不代表别人</span>
@@ -640,9 +755,16 @@ function save() {
             </div>
           </div>
 
+          <!-- 安全边界说明，两种配法都要有，但主体不同：规则是「怎么找」，模型挑是「谁来挑」 -->
           <p class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] leading-relaxed text-gray-500">
-            规则里没有凭据 ID，它只描述「怎么找」。命中之后仍要过四道闸门（你能否看到 → 是否授权 → 状态与有效期 → 解密与流水），
-            所以改规则永远不等于能读别人的凭据。
+            <template v-if="mode === 'model'">
+              模型只能从<strong>你能看到的凭据</strong>里挑，编号不在这个集合内会被直接拒绝。
+              选中之后仍要过状态与有效期、解密与流水，所以让它挑也读不到别人的凭据。
+            </template>
+            <template v-else>
+              规则里没有凭据 ID，它只描述「怎么找」。命中之后仍要过四道闸门（你能否看到 → 是否授权 → 状态与有效期 → 解密与流水），
+              所以改规则永远不等于能读别人的凭据。
+            </template>
           </p>
         </div>
 

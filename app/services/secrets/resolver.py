@@ -27,6 +27,38 @@ from sqlalchemy import and_, or_, select
 from app.core.orm import AsyncSessionLocal
 from app.models.secret import SecretBinding, SecretGrant, SecretUsageLog, SecretUserPref, UserSecret
 from app.services.secrets.references import stringify_field_value
+
+#: 入参名里出现这些片段就当作敏感值，不进错误信息
+_SENSITIVE_ARG_HINTS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "credential",
+    "private",
+)
+
+
+def _is_sensitive_arg(name: str) -> bool:
+    """这个入参名是不是「值不该外露」的那类（密码、token …）。"""
+    lowered = (name or "").lower()
+    return any(hint in lowered for hint in _SENSITIVE_ARG_HINTS)
+
+
+def _preview_arg(name: str, raw: Any) -> str:
+    """把入参值渲染成错误信息里能看的样子。
+
+    「值为什么没匹配上」必须能看见值本身，否则用户只能靠猜。但这个值可能来自
+    任意入参名（password / token / api_key …），而错误信息会进会话正文、日志和
+    前端弹窗——所以敏感名一律打码，过长截断，避免把凭据明文顺手写出去。
+    """
+    text = stringify_field_value(raw)
+    if _is_sensitive_arg(name):
+        return "***"
+    return text if len(text) <= 64 else text[:61] + "…"
 from app.services.secrets.policy import (
     DENY_BINDING,
     DENY_GRANT,
@@ -540,13 +572,51 @@ class SecretResolver:
                     preferred_secret_id,
                 )
 
-            target = wanted[0] if wanted else (spec.key_source if spec is not None else "?")
             return Located(
                 denial=DENY_RULE_MISS,
-                detail=f"规则未命中（要找 {target}），可见候选 {len(visible or [])} 条",
+                detail=self._miss_detail(spec, wanted, args, visible),
             )
 
         return Located(denial=None)
+
+    @staticmethod
+    def _miss_detail(
+        spec: Any,
+        wanted: list[str],
+        args: Any,
+        visible: Any,
+    ) -> str:
+        """规则未命中时给用户看的那句话。
+
+        「要找 arg:username」这种说法只在**有值**时成立；入参根本没提供时，
+        用户看到的应该是「入参 username 没有值」，而不是一个参数名——后者读起来
+        像「系统拿 username 去找了但没找到」，实际是压根没拿到可以比的东西。
+        多值凭据下这条尤其常见：规则的来源参数如果本身是凭据参数，它被移出了
+        模型可见参数，入参里永远不会有值。
+        """
+        count = len(visible or [])
+        if spec is None:
+            return "规则不合法，按未命中处理（请重新配置这条规则）"
+        if spec.is_arg_key:
+            arg_name = spec.arg_name or ""
+            raw = (args or {}).get(arg_name) if arg_name else None
+            if raw is None or raw == "":
+                # 候选数在这里没有意义：没有值就根本没去查可见集合，
+                # 说「可见候选 0 条」会让用户以为库里真的没有凭据。
+                return (
+                    f"规则未命中：入参 {arg_name or '?'} 没有值，没有可比较的东西。"
+                    f"如果这个参数由凭据提供，它不会出现在入参里——规则要从"
+                    f"模型填写的参数取值"
+                )
+            # 加引号：值为空格/空串时，裸着显示就是一片空白，看不出问题在哪
+            shown = f"{arg_name}={_preview_arg(arg_name, raw)!r}"
+            if not wanted:
+                return f"规则未命中：入参 {shown} 变形后为空，没有可比较的东西"
+            # 「要找」是从同一个值变形来的，入参敏感时它也是明文，一起打码
+            target = "***" if _is_sensitive_arg(arg_name) else wanted[0]
+            return f"规则未命中（入参 {shown} → 要找 {target}），可见候选 {count} 条"
+        target = wanted[0] if wanted else spec.key_source
+        return f"规则未命中（要找 {target}），可见候选 {count} 条"
 
     @staticmethod
     async def _pick_binding(

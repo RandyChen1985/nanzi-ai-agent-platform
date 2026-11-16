@@ -346,3 +346,105 @@ async def test_send_mail_default_mode_stays_pure_mock():
     assert out["message"] == "已模拟给 a@b.com 发送邮件"
     assert out["smtp"]["password"]["fingerprint"] == _fingerprint("secret")
     assert "secret" not in str(out["smtp"]["password"])
+
+
+class TestRuleMissMessageShowsTheValue:
+    """规则未命中时，错误信息要说清「拿什么去找的、找的是什么」。
+
+    用户拿到「要找 arg:username」这种句子是没法排查的：它可能意味着「拿入参
+    username 的值去找了但没命中」，也可能意味着「username 这个入参压根没有值」，
+    两者的修法完全不同（换规则来源 vs 改绑定）。
+    """
+
+    @staticmethod
+    def _spec(key_source: str):
+        from app.services.secrets.locator import parse_rule
+
+        return parse_rule({
+            "key_source": key_source,
+            "transforms": ["trim"],
+            "templates": ["{value}"],
+            "target": "secret_key",
+            "match": "exact_ci",
+            "on_miss": "fail",
+        })
+
+    def test_missing_argument_says_it_has_no_value(self):
+        from app.services.secrets.resolver import SecretResolver
+
+        detail = SecretResolver._miss_detail(
+            self._spec("arg:username"), [], {"to": "a@b.com"}, None
+        )
+        assert "username" in detail
+        assert "没有值" in detail
+        # 这句是给「把凭据参数当规则来源」的人看的：他们最常踩这个坑
+        assert "不会出现在入参里" in detail
+        # 没查可见集合就不能报候选数，否则用户以为库里真的没有凭据
+        assert "可见候选" not in detail
+
+    def test_value_case_shows_argument_value_and_target(self):
+        from app.services.secrets.resolver import SecretResolver
+
+        detail = SecretResolver._miss_detail(
+            self._spec("arg:to"), ["cexlong@cexlong.com"], {"to": "cexlong@cexlong.com"}, [1, 2]
+        )
+        assert "to='cexlong@cexlong.com'" in detail       # 传进来的值
+        assert "要找 cexlong@cexlong.com" in detail        # 变形后实际去比的 key
+        assert "可见候选 2 条" in detail
+
+    def test_blank_value_is_visible_as_quoted_blanks(self):
+        from app.services.secrets.resolver import SecretResolver
+
+        detail = SecretResolver._miss_detail(self._spec("arg:to"), [], {"to": "   "}, None)
+        assert "to='   '" in detail
+        assert "变形后为空" in detail
+
+    def test_sensitive_argument_value_is_masked(self):
+        from app.services.secrets.resolver import SecretResolver
+
+        detail = SecretResolver._miss_detail(
+            self._spec("arg:password"), ["hunter2"], {"password": "hunter2"}, [1]
+        )
+        # 入参值和由它变形出来的「要找」都会进会话正文与日志，两处都不能是明文
+        assert "hunter2" not in detail
+        assert "***" in detail
+
+    def test_identity_key_source_keeps_old_phrasing(self):
+        from app.services.secrets.resolver import SecretResolver
+
+        detail = SecretResolver._miss_detail(self._spec("user.email"), [], {}, [])
+        assert "要找 user.email" in detail
+
+
+class TestModelChoiceMode:
+    """「让模型挑」是一种独立配法，不是「规则未命中后的兜底」。
+
+    它没有「拿什么去比」这一步，所以规则里 `key_source` 为空——这在别的配法下
+    是坏配置（算不出候选、必然未命中），只在 `on_miss=model` 时成立。
+    """
+
+    def test_empty_key_source_is_allowed_when_model_chooses(self):
+        from app.services.secrets.locator import build_candidates, parse_rule
+
+        spec = parse_rule({"key_source": "", "on_miss": "model", "value_template": "smtp"})
+        assert spec.key_source == ""
+        assert spec.on_miss == "model"
+        # 不算 key，但也不能崩：resolver 靠「候选为空」走到 on_miss 分支
+        assert build_candidates(spec, args={"to": "a@b.com"}) == []
+
+    def test_empty_key_source_is_rejected_without_model_choice(self):
+        from app.services.secrets.locator import RuleError, parse_rule
+
+        with pytest.raises(RuleError) as err:
+            parse_rule({"key_source": "", "on_miss": "fail"})
+        # 报错要指出该怎么办，否则用户只知道少了个字段
+        assert "on_miss" in str(err.value)
+
+    def test_summary_says_model_chooses(self):
+        from app.services.secrets.locator import parse_rule, rule_summary
+
+        spec = parse_rule({"key_source": "", "on_miss": "model", "value_template": "smtp"})
+        summary = rule_summary(spec)
+        assert "模型" in summary
+        # 不能渲染成「（取）」——那是来源为空时的占位残渣
+        assert "取）" not in summary
