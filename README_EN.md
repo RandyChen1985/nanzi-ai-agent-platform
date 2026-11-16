@@ -88,19 +88,16 @@ The platform revolves around the following core capability matrix:
 
 ## 🖼️ Interface Snapshots
 
-| 📊 Overview Dashboard | 💬 AI Chat |
+> Real product screenshots. The left column is for everyday use, the right column is for building and governing agents on the platform.
+
+| 🧭 Everyday | 🛠️ Build & Govern |
 | :---: | :---: |
-| ![Overview Dashboard](docs/snapshot/overview.png) | ![AI Chat](docs/snapshot/ai-chat.png) |
-| **🧠 Memory & LTM** | **🔍 Memory Management Console** |
-| ![Memory & Preference](docs/snapshot/chat-with-memory.png) | ![Memory Console](docs/snapshot/memory-manage.png) |
-| **🛠️ Trace Timeline Debug** | **📚 Knowledge Hub** |
-| ![Trace Timeline](docs/snapshot/chat-debug.png) | ![Knowledge Hub](docs/snapshot/knowledge.png) |
-| **🤖 Agent Studio** | **📝 Prompt Playground** |
-| ![Agent Studio](docs/snapshot/bot-list.png) | ![Prompt Studio](docs/snapshot/prompt_studio.png) |
-| **🔌 Physical Data Sources** | **📊 Metadata Builder** |
-| ![Data Sources](docs/snapshot/datasource.png) | ![Metadata](docs/snapshot/meta-list.png) |
-| **⚡ Dynamic Agent Skills** | **⚙️ System Settings** |
-| ![Skills](docs/snapshot/skills-manage.png) | ![System Settings](docs/snapshot/system.png) |
+| **💬 AI Chat**<br/>Go straight to an expert: `@` to pick an agent, `/` to invoke a skill, with smart delegation and auto-approval<br/><img src="docs/snapshot/chat.png" width="100%" alt="AI Chat" /> | **🤖 Agent Hub**<br/>Card-based expert management with tool/skill quotas and publish state at a glance<br/><img src="docs/snapshot/agent-management.png" width="100%" alt="Agent Hub" /> |
+| **🏠 My Workbench**<br/>Today's to-dos, recent activity, my resources and favourite assistants in one place<br/><img src="docs/snapshot/workbench.png" width="100%" alt="My Workbench" /> | **⚡ Skill Studio**<br/>Platform / mine / pending-review / published skills flowing through four states, toggled in one click<br/><img src="docs/snapshot/skills-management.png" width="100%" alt="Skill Studio" /> |
+| **🗂️ Workspace**<br/>Uploads, generated reports and session artifacts managed together, ready to open<br/><img src="docs/snapshot/workspace.png" width="100%" alt="Workspace" /> | **🔌 MCP Toolset**<br/>External services over SSE / Streamable HTTP, with tools auto-discovered and bound to agents<br/><img src="docs/snapshot/mcp.png" width="100%" alt="MCP Toolset" /> |
+| **⏰ Scheduled Tasks**<br/>Task list and run history, with periodic inspection and report subscriptions<br/><img src="docs/snapshot/task.png" width="100%" alt="Scheduled Tasks" /> | **📚 Knowledge Base**<br/>Knowledge overview, recent updates, health checks and RAGFlow engine quota<br/><img src="docs/snapshot/knowledge-manage.png" width="100%" alt="Knowledge Base" /> |
+| **👤 Profile Center**<br/>Account details, API keys, password rotation reminders and permission self-check<br/><img src="docs/snapshot/personal.png" width="100%" alt="Profile Center" /> | **📊 System Overview**<br/>API success rate, token consumption, tool-call distribution and latency trends<br/><img src="docs/snapshot/dashboard.png" width="100%" alt="System Overview" /> |
+| **🎛️ Dual-Mode UI**<br/>User mode keeps only tasks and knowledge; professional mode unlocks the full workbench<br/><img src="docs/snapshot/user_model.png" width="100%" alt="Dual-Mode UI" /> | **⚙️ System Settings & Diagnostics**<br/>Model management, parameter config, branding, diagnostics and trace timeline<br/><img src="docs/snapshot/system.png" width="100%" alt="System Settings" /> |
 
 ---
 
