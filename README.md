@@ -94,19 +94,16 @@
 
 ## 🖼️ 界面预览 (Interface Snapshots)
 
-|        📊 仪表盘概览 (Overview Dashboard)        |             💬 智能助手对话 (AI Chat)             |
-| :-----------------------------------------------: | :------------------------------------------------: |
-|     ![仪表盘概览](docs/snapshot/overview.png)     |       ![智能助手](docs/snapshot/ai-chat.png)       |
-|  **🧠 长期记忆与无感回忆 (Memory & LTM)**  |    **🔍 记忆管理控制台 (Memory Manage)**    |
-| ![记忆与偏好](docs/snapshot/chat-with-memory.png) | ![记忆管理控制台](docs/snapshot/memory-manage.png) |
-|   **🛠️ 决策链路调试 (Trace Timeline)**   |     **📚 知识库工作台 (Knowledge Hub)**     |
-|     ![调试链路](docs/snapshot/chat-debug.png)     |       ![知识库](docs/snapshot/knowledge.png)       |
-|      **🤖 智能体编排 (Agent Studio)**      |   **📝 提示词游乐场 (Prompt Playground)**   |
-|       ![智能体](docs/snapshot/bot-list.png)       |     ![提示词](docs/snapshot/prompt_studio.png)     |
-|    **🔌 直连物理数据源 (Data Sources)**    |       **📊 元数据智能构建 (Metadata)**       |
-|      ![数据源](docs/snapshot/datasource.png)      |       ![元数据](docs/snapshot/meta-list.png)       |
-|    **⚡ 智能体动态技能 (Agent Skills)**    |   **⚙️ 系统管理设置 (System Settings)**   |
-|     ![技能](docs/snapshot/skills-manage.png)     |       ![系统配置](docs/snapshot/system.png)       |
+> 真实运行界面截图。左列是日常使用入口，右列是智能体与平台的搭建治理界面。
+
+| 🧭 日常使用 (Everyday) | 🛠️ 建设与治理 (Build & Govern) |
+| :---: | :---: |
+| **💬 智能助手对话**<br/>一句话直达专家：`@` 选专家、`/` 调技能，智能委派 + 自动批准<br/><img src="docs/snapshot/chat.png" width="100%" alt="智能助手对话" /> | **🤖 智能体中心**<br/>专家卡片式管理，工具/技能配额与配置发布状态一屏可见<br/><img src="docs/snapshot/agent-management.png" width="100%" alt="智能体中心" /> |
+| **🏠 我的工作台**<br/>今日待办、最近活动、我的资源与常用助手集中收敛<br/><img src="docs/snapshot/workbench.png" width="100%" alt="我的工作台" /> | **⚡ 技能工作台**<br/>平台技能 / 我的技能 / 待审核 / 已发布四态流转，一键启停<br/><img src="docs/snapshot/skills-management.png" width="100%" alt="技能工作台" /> |
+| **🗂️ 工作空间**<br/>AI 上传的资料、生成的报告与会话中间产物集中管理，随开随用<br/><img src="docs/snapshot/workspace.png" width="100%" alt="工作空间" /> | **🔌 MCP 工具集**<br/>SSE / Streamable HTTP 接入外部服务，工具自动识别并绑定智能体<br/><img src="docs/snapshot/mcp.png" width="100%" alt="MCP 工具集" /> |
+| **⏰ 定时任务**<br/>任务列表与执行记录，按周期自动巡检、报表订阅<br/><img src="docs/snapshot/task.png" width="100%" alt="定时任务" /> | **📚 知识库管理**<br/>知识库概览、最近更新、健康诊断与 RAGFlow 引擎配额<br/><img src="docs/snapshot/knowledge-manage.png" width="100%" alt="知识库管理" /> |
+| **👤 个人中心**<br/>账号资料、API Key、密码安全周期与权限自查<br/><img src="docs/snapshot/personal.png" width="100%" alt="个人中心" /> | **📊 系统概览**<br/>接口成功率、Token 消耗、工具调用分布与执行耗时趋势<br/><img src="docs/snapshot/dashboard.png" width="100%" alt="系统概览" /> |
+| **🎛️ 双模式界面**<br/>用户模式只留任务与知识库，专业模式放开完整工作台<br/><img src="docs/snapshot/user_model.png" width="100%" alt="双模式界面" /> | **⚙️ 系统配置与诊断**<br/>模型管理、参数配置、品牌个性化、系统诊断与链路追踪<br/><img src="docs/snapshot/system.png" width="100%" alt="系统配置与诊断" /> |
 
 ---
 
