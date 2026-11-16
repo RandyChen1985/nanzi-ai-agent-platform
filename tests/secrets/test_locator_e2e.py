@@ -325,3 +325,24 @@ async def test_send_mail_reports_every_smtp_field():
     # 只声明不传 = 明确「没收到」，不能和「收到空串」混为一谈
     assert out["mailkey"]["present"] is False
     assert "Whq7mT2026smtp" not in json.dumps(out, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_send_mail_default_mode_stays_pure_mock():
+    """mode 缺省必须是纯模拟：键集不变、不带 real，避免既有验收用例误判。
+
+    ``mode`` 是后加的能力，既有注入验收都依赖「不传 mode 就等于今天的行为」；
+    一旦默认值变成 verify/send，这些用例会真的去连 smtp.exmail.qq.com。
+    """
+    from app.services.mcp.echo_server import send_mail
+
+    out = await send_mail(
+        None, "a@b.com", "hi", "smtp.qq.com", 465, "ssl",
+        "ops@b.com", "secret", "运维", "sk-alpha-111111",
+    )
+
+    assert set(out) == {"ok", "to", "subject", "smtp", "mailkey", "message"}
+    assert "real" not in out
+    assert out["message"] == "已模拟给 a@b.com 发送邮件"
+    assert out["smtp"]["password"]["fingerprint"] == _fingerprint("secret")
+    assert "secret" not in str(out["smtp"]["password"])
