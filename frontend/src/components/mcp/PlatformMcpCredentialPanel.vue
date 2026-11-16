@@ -175,6 +175,8 @@ async function clearRuleById(consumerType: string, consumerId: string, slot: str
       data: { consumer_type: consumerType, consumer_id: consumerId, slot, strategy: 'rule' },
     })
     await load()
+    // 删成功了才关规则窗（编辑器不再自己关）
+    locatorCtx.value = null
   } catch (e: any) {
     locatorError.value = e?.response?.data?.detail || '解除规则失败'
   } finally {

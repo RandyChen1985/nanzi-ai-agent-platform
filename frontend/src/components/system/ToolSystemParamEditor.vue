@@ -394,17 +394,30 @@ async function flushPending(consumerId: string) {
  * （``generic_api`` 只注入 ``source === 'credential'`` 的行）。不同步的话，
  * 库里绑好了、界面上也看不到绑定标签，调用时参数照旧是固定值或空。
  */
-function onMappingSaved(payload: { bound: string[]; freed: string[] }) {
+function onMappingSaved(payload: {
+  bound: string[]
+  freed: string[]
+  /** 这次存的是固定凭据还是匹配规则——决定参数该标成 credential 还是 rule */
+  source?: 'fixed' | 'rule'
+}) {
   const bound = new Set(payload.bound)
   const freed = new Set(payload.freed)
+  // 按规则保存时必须标 `rule`。原来一律标 `credential`，而规则参数没有固定绑定，
+  // 下面 unboundNames 用 fixedBindingOf 一查就是空 → 红字「未选，保存会被拦住」→
+  // 底部「保存」按钮直接禁用，用户配完规则反而存不了工具。
+  const boundSource: SystemParam['source'] =
+    payload.source === 'rule' ? 'rule' : 'credential'
   let changed = false
   const next = props.modelValue.map((p) => {
     const name = (p.name || '').trim()
-    if (bound.has(name) && p.source !== 'credential') {
+    if (bound.has(name) && p.source !== boundSource) {
       changed = true
-      return { ...p, source: 'credential' as SystemParam['source'] }
+      return { ...p, source: boundSource }
     }
-    if (freed.has(name) && p.source === 'credential') {
+    // 两种来源都要能退回 literal：只判 credential 的话，原本按规则匹配的参数
+    // 改回「模型填写」后 source 还停在 rule，ruleDrafts 又被 loadBindings 清空，
+    // 同样会被判成未绑定而锁死保存。
+    if (freed.has(name) && (p.source === 'credential' || p.source === 'rule')) {
       changed = true
       // 系统级参数不会交给模型，清空后回到固定值（literal），由用户自己补
       return { ...p, source: 'literal' as SystemParam['source'] }
@@ -429,6 +442,8 @@ function openLocator(name: string) {
     pickerError.value = '先给这个参数起个名字，再配规则'
     return
   }
+  // 清掉上一次的报错：否则打开就顶着一条红字，看着像这次又失败了
+  pickerError.value = ''
   locatorName.value = key
 }
 
@@ -441,12 +456,18 @@ function locatorArgOptions(self: string): string[] {
 
 async function applyRule(rule: LocatorRule) {
   const name = locatorName.value
-  locatorName.value = null
-  if (!name) return
+  // 先别关弹窗：原来在这里就置 null，保存失败（400/500）时弹窗直接消失，
+  // 用户填的一整条规则没了，而 pickerError 只在「选凭据」弹窗里渲染，
+  // 配规则时根本看不到——表现就是点了保存什么都没发生。
+  if (!name) {
+    locatorName.value = null
+    return
+  }
   // 还没有 id：先记账，保存工具后由 flushPending 补写
   if (!props.consumerId) {
     pendingRules.value[name] = rule
     ruleDrafts.value[name] = rule
+    locatorName.value = null
     return
   }
   pickerBusy.value = true
@@ -466,6 +487,8 @@ async function applyRule(rule: LocatorRule) {
     })
     ruleDrafts.value[name] = rule
     injectedDraft?.bumpRevision?.()
+    // 存成功了才关：开头不再无条件置 null，失败时留着弹窗让用户改
+    locatorName.value = null
   } catch (e: any) {
     pickerError.value = e?.response?.data?.detail || '保存规则失败'
   } finally {
@@ -796,7 +819,22 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
   <!-- 规则编辑器必须和「绑定凭据」弹窗平级：嵌进 v-if="pickingName" 里面的话，
        点「配规则」只设 locatorName、不动 pickingName，整个子树不渲染 → 点了没反应 -->
   <!-- show-value-path=false：同上，参数入口整段注入，不需要选字段 -->
-  <SecretLocatorEditor
+  <!-- 绑定/规则保存失败要能看见：pickerError 原来只在「选凭据」弹窗里渲染，
+     配规则时那个弹窗是关着的，报错等于被吞掉。 -->
+<Teleport to="body">
+  <div
+    v-if="pickerError && !pickingName"
+    class="fixed inset-x-0 top-4 z-[130] mx-auto w-fit max-w-2xl rounded-md border border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700 shadow-lg"
+    role="alert"
+  >
+    {{ pickerError }}
+    <button class="ml-3 font-semibold text-rose-500 hover:text-rose-700" @click="pickerError = ''">
+      知道了
+    </button>
+  </div>
+</Teleport>
+
+<SecretLocatorEditor
     :open="Boolean(locatorName)"
     :rule="locatorName ? (ruleDrafts[locatorName] || null) : null"
     :slot="locatorName || ''"

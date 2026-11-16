@@ -1,5 +1,6 @@
 """``_locate`` 的顺序与 on_miss 语义。用 fake session，跑得比真库快且无副作用。"""
 import json
+from datetime import datetime
 
 import pytest
 
@@ -215,3 +216,69 @@ async def test_fallback_hit_logs_success_fallback_result(monkeypatch):
     )
     assert result.ok is True
     assert logged == ["success_fallback"]
+
+
+def _with_meta(row, *, expires=None, prev=None, prev_expires=None, scenarios=None):
+    """给测试替身挂上可用性判定要读的字段。"""
+    row.expires_at = expires
+    row.previous_value_encrypted = prev
+    row.previous_expires_at = prev_expires
+    row.allowed_scenarios = scenarios
+    return row
+
+
+@pytest.mark.asyncio
+async def test_expired_credential_does_not_shadow_the_live_one():
+    """同 name 的过期凭据排在前面时，必须跳过它命中后面那条。
+
+    不预过滤的话，过期的先胜出、随后被 evaluate_secret 判过期拒绝，用户只看到
+    「凭据不可用」，完全想不到是被一条不该参与匹配的抢了位置。
+    """
+    r = SecretResolver()
+    rows = [_Row("g-rule", "", strategy="rule", rule=rule(), bound_by="")]
+    visible = [
+        _with_meta(_Row("old", "A", name="老邮箱"), expires=datetime(2020, 1, 1)),
+        _with_meta(_Row("live", "A", name="新邮箱")),
+    ]
+    located = await r._locate(
+        None, consumer_type="mcp_server", consumer_id="c", slot="s",
+        user_id="u1", dept_code=None, identity={}, args={"to": "A"}, rows=rows,
+        visible=visible,
+    )
+    assert located.secret_id == "live"
+
+
+@pytest.mark.asyncio
+async def test_credential_for_another_scene_does_not_shadow():
+    """只授权给别的场景的同 name 凭据，同样不该抢占位置。"""
+    r = SecretResolver()
+    rows = [_Row("g-rule", "", strategy="rule", rule=rule(), bound_by="")]
+    visible = [
+        _with_meta(_Row("api-only", "A", name="只给接口用"), scenarios=["api_tool"]),
+        _with_meta(_Row("mcp-ok", "A", name="给MCP用"), scenarios=["mcp"]),
+    ]
+    located = await r._locate(
+        None, consumer_type="mcp_server", consumer_id="c", slot="s",
+        user_id="u1", dept_code=None, identity={}, args={"to": "A"}, rows=rows,
+        visible=visible,
+        scene="mcp",
+    )
+    assert located.secret_id == "mcp-ok"
+
+
+@pytest.mark.asyncio
+async def test_only_unusable_candidates_misses():
+    """全都不可用时按未命中处理，而不是挑一条用过再拒。"""
+    r = SecretResolver()
+    rows = [_Row("g-rule", "", strategy="rule", rule=rule(), bound_by="")]
+    visible = [
+        _with_meta(_Row("old", "A", name="过期"), expires=datetime(2020, 1, 1)),
+        _with_meta(_Row("api", "A", name="只给接口用"), scenarios=["api_tool"]),
+    ]
+    located = await r._locate(
+        None, consumer_type="mcp_server", consumer_id="c", slot="s",
+        user_id="u1", dept_code=None, identity={}, args={"to": "A"}, rows=rows,
+        visible=visible,
+        scene="mcp",
+    )
+    assert located.secret_id is None

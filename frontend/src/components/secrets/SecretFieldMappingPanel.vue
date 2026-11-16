@@ -46,6 +46,8 @@ const emit = defineEmits<{
     payload: {
       saved: number
       removed: number
+      /** 这次存的是固定凭据还是匹配规则，调用方据此标注参数来源 */
+      source: 'fixed' | 'rule'
       bound: string[]
       freed: string[]
       /** 后端同批写回的「由凭据提供」清单；没带 mcpToolId 时为 null */
@@ -237,7 +239,12 @@ async function load() {
     }
     for (const [name, row] of byNameFixed) {
       if (mine[name] || taken[name]) continue
-      if (row.secret_id && row.secret_id !== boundId) {
+      // 规则模式下 `boundId` 不代表「本页要用的那条固定凭据」（本页存的是规则），
+      // 它只是从 fixed 绑定里挑出来出现最多的那个。照旧拿它比 `secret_id`，绑着
+      // 其他凭据的参数就不会被标出来——行内显示「模型填写」，而保存是**整页覆盖**，
+      // 未选字段的参数一律提交 none，用户看着「模型填写」点保存，实际把那条绑定删了。
+      const occupied = source.value === 'rule' || row.secret_id !== boundId
+      if (row.secret_id && occupied) {
         taken[name] = row.secret_key || '其他凭据'
       }
     }
@@ -356,6 +363,10 @@ async function save() {
     emit('saved', {
       saved: data.saved || 0,
       removed: data.removed || 0,
+      // 必须带上「这次存的是哪种来源」：调用方要据此把参数的 source 标成
+      // credential 还是 rule。只报告 bound 名字的话，按规则保存的参数会被标成
+      // credential，而它没有固定绑定——父组件立刻把它判成「未绑定」并锁死保存。
+      source: source.value,
       bound: props.params.filter((n) => picks.value[n]),
       freed: props.params.filter((n) => !picks.value[n]),
       credentialParams: Array.isArray(data.credential_params) ? data.credential_params : null,

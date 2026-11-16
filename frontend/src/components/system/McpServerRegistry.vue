@@ -1715,7 +1715,10 @@ function locatorArgOptions(tool: any, self: string): string[] {
 }
 
 function openParamMark(tool: any, param = '') {
-  if (!canManageTool(tool) || !canPublishMcp) return
+  // canPublishMcp 是 computed，漏写 .value 时 `!ref` 恒为 false，等于这道权限守卫
+  // 根本不存在：卡片上虽然按 ref 自动解包隐藏了按钮，但每个参数的 `<code>` 芯片
+  // 也绑了点击/回车打开这个弹窗，无 publish 权限一样能进来。
+  if (!canManageTool(tool) || !canPublishMcp.value) return
   void reloadParamMark(tool, param)
 }
 

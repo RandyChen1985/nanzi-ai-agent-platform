@@ -153,6 +153,23 @@ async def _audit_batch_rows(
                 actor_id=actor,
                 detail=detail,
             )
+            if item.get("cleared_own_fixed"):
+                # 同槽位里操作人自己那条降级 fixed 被规则顶掉了
+                await center._audit(  # noqa: SLF001
+                    enabled=True,
+                    action="unbind",
+                    secret=None,
+                    actor_id=actor,
+                    detail={
+                        "consumer_type": consumer_type,
+                        "consumer_id": consumer_id,
+                        "slot": item["slot"],
+                        "strategy": "fixed",
+                        "global": False,
+                        "batched": True,
+                        "reason": "changed_to_rule",
+                    },
+                )
             if item.get("cleared_rule"):
                 # 同一行还顺手删了这条槽位上原有的规则：用户表达的是「改成固定
                 # 凭据」，规则是被动消失的，所以要单独留一笔，否则事后查不到
@@ -1607,6 +1624,48 @@ async def _unbind_all_layers(
     return removed
 
 
+async def _mcp_tool_readable(
+    db: AsyncSession,
+    tool_id: str,
+    server_id: str,
+    user_info: Dict[str, Any],
+):
+    """只读地判断「这个人能不能看这个 MCP 工具的凭据清单」。
+
+    权限口径与 ``_sync_mcp_credential_params`` 一致：平台级服务只有管理员能看，
+    私有服务只有所有者能看。不一致的话，任何登录用户拿别人的 ``mcp_tool_id``
+    就能把它「哪些参数由凭据提供」读回去。
+
+    这里一律返回 ``None`` 而不是 4xx：这只是一次为了字段形状的只读回填，
+    不该让整次保存失败，也不该用状态码泄露「这个 id 存在、只是不归你」。
+    """
+    from sqlalchemy import select
+
+    from app.models.mcp import McpServer, McpToolCache
+
+    tool = (
+        await db.execute(select(McpToolCache).where(McpToolCache.id == tool_id))
+    ).scalar_one_or_none()
+    if tool is None:
+        return None
+    if str(tool.server_id or "") != str(server_id):
+        return None
+    server = (
+        await db.execute(select(McpServer).where(McpServer.id == tool.server_id))
+    ).scalar_one_or_none()
+    if server is None:
+        return None
+    user_id, _dept = _user_ctx(user_info)
+    if _is_admin(user_info):
+        return tool
+    if server.scope == "global":
+        return None
+    # 按字符串比，理由同 _sync_mcp_credential_params：server.user_id 是 int 列
+    if str(server.user_id or "") != user_id:
+        return None
+    return tool
+
+
 async def _sync_mcp_credential_params(
     db: AsyncSession,
     *,
@@ -1718,7 +1777,27 @@ async def create_bindings_batch(
     """
     user_id, dept_code = _user_ctx(user_info)
     if not payload.items:
-        return {"code": 0, "message": "没有需要保存的绑定", "data": {"saved": 0, "removed": 0}}
+        # 空 items 也要把清单的**形状**返回：前端按 `Array.isArray(credential_params)`
+        # 判断这次保存有没有同步清单，缺这个字段会被当成「清单没改成功」去弹警告——
+        # 新建工具还没参数时就保存映射，会白吓用户一跳。
+        # 这里**不**顺手清空清单：空数组的语义是「没有要存的」，不是「清空所有参数」，
+        # 混在一起的话，一次误传的空 items 就能把清单洗掉。
+        current: list[str] | None = None
+        if payload.mcp_tool_id and payload.consumer_type == "mcp_server":
+            tool = await _mcp_tool_readable(
+                db, payload.mcp_tool_id, payload.consumer_id, user_info
+            )
+            if tool is not None:
+                try:
+                    parsed = json.loads(tool.credential_params or "[]")
+                except (TypeError, ValueError):
+                    parsed = []
+                current = parsed if isinstance(parsed, list) else []
+        return {
+            "code": 0,
+            "message": "没有需要保存的绑定",
+            "data": {"saved": 0, "removed": 0, "credential_params": current},
+        }
 
     # 不在这里对 `is_global` 一刀切：接口层看不到每条凭据的作用域。
     # 「管理员拿个人凭据绑平台级工具」是正常操作（先用自己的账号跑通），
@@ -1879,6 +1958,31 @@ async def create_bindings_batch(
                 removed += deleted
             continue
         if item["strategy"] == "rule":
+            # 同槽位上「操作人自己的降级 fixed」必须一起清掉。
+            # 场景：管理员先在平台级工具上绑自己的个人凭据（bind_secret 会把它降级成
+            # bound_by_user_id=本人 的个人层 fixed），之后改成全局规则。_locate 是逐层扫的，
+            # 个人层有 fixed 没 rule 就直接返回那条 fixed，永远走不到全局规则——
+            # 管理员自测看到的是旧个人凭据，全平台看到的却是规则，两边完全对不上。
+            # 只清本人那一层，别人的个人覆盖不动。
+            if bound_by is None:
+                actor = _actor_id(user_info)
+                if actor:
+                    cleared_own = await center.unbind_slot(
+                        db,
+                        consumer_type=payload.consumer_type,
+                        consumer_id=payload.consumer_id,
+                        slot=slot,
+                        bound_by_user_id=actor,
+                        strategy="fixed",
+                        commit=False,
+                        # 同批延后写审计：整批回滚时不能留下没发生过的操作
+                        audit=False,
+                    )
+                    if cleared_own:
+                        # 真删到了才打标记：这是用户没直接表达的删除（他说的是
+                        # 「改成规则」），不补一笔的话，事后看到某人槽位上的固定
+                        # 绑定凭空消失，审计里查不出时间和原因。
+                        item["cleared_own_fixed"] = True
             await center.bind_rule(
                 db,
                 consumer_type=payload.consumer_type,
@@ -2015,6 +2119,7 @@ async def create_binding(
     # 规则绑定没有凭据可校验，走单独的函数；固定绑定保持原路径
     if payload.strategy == "rule":
         try:
+            # 先写规则、再做清理，而且两边都不提交：规则不合法时压根不该动旧绑定。
             binding = await center.bind_rule(
                 db,
                 consumer_type=payload.consumer_type,
@@ -2027,6 +2132,7 @@ async def create_binding(
                 # 非管理员不能写全局规则：漏了这一条，任何普通用户
                 # 传 is_global + strategy=rule 就能改掉全平台的取数规则。
                 allow_global=is_admin,
+                commit=False,
             )
         except SecretPermissionError as exc:
             if "管理员" in str(exc):
@@ -2034,6 +2140,47 @@ async def create_binding(
             raise HTTPException(status_code=404, detail="凭据不存在")
         except SecretValidationError as exc:
             raise _fail(exc)
+
+        # 和批量接口同样的道理：管理员先在单值页用自己的个人凭据跑通（bind_secret
+        # 把它降级成本人层的 fixed），再原地改成规则时，那条个人 fixed 会抢在规则
+        # 前面命中——_locate 逐层扫，个人层有 fixed 无 rule 就直接返回。
+        # 只在写全局规则时清，且只清本人那一层。
+        #
+        # 归属必须走 `_actor_id` 并判非空：`_user_ctx` 取不到时返回的是**空串**，
+        # 而 `unbind_slot` 把空 bound_by_user_id 当作「全局层」（匹配 NULL 或 ""），
+        # 直接传 user_id 会在身份缺失时把全平台的固定回退凭据删掉。
+        actor = _actor_id(user_info)
+        if bound_by is None and is_admin and actor:
+            cleared_own = await center.unbind_slot(
+                db,
+                consumer_type=payload.consumer_type,
+                consumer_id=payload.consumer_id,
+                slot=slot,
+                bound_by_user_id=actor,
+                strategy="fixed",
+                commit=False,
+                audit=False,
+            )
+            if cleared_own:
+                # 用户说的是「改成规则」，这条固定绑定是被动消失的：不补一笔的话，
+                # 事后查不到它是什么时候、被谁弄没的。
+                await center._audit(  # noqa: SLF001
+                    enabled=True,
+                    action="unbind",
+                    secret=None,
+                    actor_id=actor,
+                    detail={
+                        "consumer_type": payload.consumer_type,
+                        "consumer_id": payload.consumer_id,
+                        "slot": slot,
+                        "strategy": "fixed",
+                        "global": False,
+                        "batched": False,
+                        "reason": "changed_to_rule",
+                    },
+                )
+        await db.commit()
+        await db.refresh(binding)
         return {
             "code": 0,
             "message": "已保存规则",
@@ -2735,9 +2882,23 @@ async def locate_preview(
 
     # 模板约束参与**候选筛选**，不是挑中之后才否掉。运行时（resolver）就是这么做的，
     # 试算不跟着做会出现「试算说命中这条，真跑却未命中」——同一份规则两种答案。
-    pool = visible
+    # 与运行时同口径：先把「这个场景用不了 / 已过期」的候选剔掉，再谈模板约束和匹配。
+    # 不这么做的话，试算会把一条抢到位置但注定被拒的凭据算成「命中」，或者反过来
+    # 报「未命中」而真实调用能命中——两种都是同一类误导。
+    scene_for_preview = _scene_of_consumer(payload.consumer_type)
+    from app.services.secrets.resolver import _record_is_candidate
+
+    pool = [
+        r
+        for r in visible
+        if _record_is_candidate(r, datetime.utcnow(), scene_for_preview)
+    ]
+    if len(pool) != len(visible):
+        steps.append(
+            {"step": "可用性过滤", "detail": f"{len(visible)} → {len(pool)} 条"}
+        )
     if spec.value_template:
-        pool = [r for r in visible if (r.value_template or "") == spec.value_template]
+        pool = [r for r in pool if (r.value_template or "") == spec.value_template]
         steps.append(
             {"step": "模板约束", "detail": f"{spec.value_template} 命中 {len(pool)} 条"}
         )

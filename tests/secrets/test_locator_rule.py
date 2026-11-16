@@ -1,4 +1,6 @@
 """规则定位：纯函数 + 模型字段的最小断言（无 DB、无网络）。"""
+from pathlib import Path
+
 import pytest
 
 from app.models.secret import SecretBinding
@@ -251,3 +253,82 @@ class TestMatchByCredentialField:
         )
 
         assert hit is secret
+
+
+class TestCandidateStringifyMatchesCredentialSide:
+    """入参和凭据字段必须走同一套字符串化。
+
+    `field_value_resolver` 用 `stringify_field_value`（True → "true"、465.0 → "465"），
+    而 `build_candidates` 原来写的是裸 `str()`（True → "True"、465.0 → "465.0"）。
+    模型/调用方传 JSON 原生布尔或浮点时，两边算出来的字符串永远不相等——试算里手打
+    的是字符串所以显示命中，真实调用却未命中。
+    """
+
+    def test_boolean_matches_lowercase_true(self):
+        spec = parse_rule(
+            {
+                "key_source": "arg:enabled",
+                "target": "field",
+                "target_field": "flag",
+                "match": "exact",
+            }
+        )
+        assert build_candidates(spec, args={"enabled": True}) == ["true"]
+
+    def test_integral_float_drops_the_trailing_zero(self):
+        spec = parse_rule(
+            {
+                "key_source": "arg:port",
+                "target": "field",
+                "target_field": "port",
+                "match": "exact",
+            }
+        )
+        assert build_candidates(spec, args={"port": 465.0}) == ["465"]
+
+
+class TestCandidatePoolSkipsUnusableCredentials:
+    """场景不符 / 已过期的凭据不该进入候选池，任何 target 都一样。
+
+    只在 `target="field"` 里判是不够的：按 name / category / secret_key 匹配时，
+    一条不可用的凭据同样会先胜出、随后被判 DENY_SCENARIO / DENY_EXPIRED，
+    把后面真正能用的那条挡住。
+    """
+
+    def test_pool_filters_before_matching(self):
+        src = (
+            Path(__file__).parents[2] / "app/services/secrets/resolver.py"
+        ).read_text(encoding="utf-8")
+        # 候选池用「场景 + 未过期」判定，且输入必须是可见集合
+        assert "if _record_is_candidate(record, _now_utc(), scene)" in src
+        assert "for record in visible" in src
+        # 候选判定不能要求密文非空：元数据匹配不碰值，要求密文会把
+        # 元数据完全匹配的凭据无声跳过
+        assert "def _record_is_candidate(" in src
+
+
+class TestPlainCacheIsSharedWithFieldResolver:
+    """明文缓存必须穿透到按字段取值的路径。
+
+    一次工具调用里若有好几个参数都配了 `target="field"` 的规则，`resolve` 里那份
+    `plain_cache` 不传下去的话，每条规则都会把所有可见候选重新解密一遍——而且
+    缓存 key 必须用原始 `record.id`，用 `str()` 过的 id 去查永远 miss。
+    """
+
+    def test_field_resolver_accepts_the_cache(self):
+        import inspect
+
+        from app.services.secrets.resolver import SecretResolver, field_value_resolver
+
+        params = inspect.signature(field_value_resolver).parameters
+        assert "plain_cache" in params
+        assert "plain_cache" in inspect.signature(SecretResolver._locate).parameters
+
+    def test_cache_key_is_the_raw_record_id(self):
+        from pathlib import Path
+
+        src = (
+            Path(__file__).parents[2] / "app/services/secrets/resolver.py"
+        ).read_text(encoding="utf-8")
+        assert "plain = plain_cache.get(raw_id)" in src
+        assert "plain_cache[raw_id] = plain" in src

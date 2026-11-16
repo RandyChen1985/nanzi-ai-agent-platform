@@ -343,7 +343,10 @@ class TestRuleBindingTakesField:
     def test_rule_payload_excludes_value_path(self):
         """value_path 落在绑定记录上；混进 rule JSON 会被后端判未知字段。"""
         src = _read(ROOT / "frontend/src/components/secrets/SecretLocatorEditor.vue")
-        assert "const { value_path: _path, ...ruleBody } = draft.value" in src
+        # 2026-11-16：取值前先过 normalizeForSubmit()（它把隐藏开关对应的
+        # value_path/value_template 清空），断言随之更新；钉住的仍是「value_path
+        # 属于绑定记录、不能混进 rule JSON」这件事。
+        assert "const { value_path: _path, ...ruleBody } = normalizeForSubmit()" in src
 
     def test_callers_split_value_path_out_of_rule(self):
         for path in (MCP_REGISTRY, PARAMS, MCP_PANEL):
@@ -527,7 +530,7 @@ class TestSingleValueRuleHasNoFieldPicker:
         不显式清空的话，展开提交会把用户看不见的配置又写回去。
         """
         source = _read(ROOT / "frontend/src/components/secrets/SecretLocatorEditor.vue")
-        assert "value_path: props.showValuePath ? draft.value.value_path : ''" in source
+        assert "rule.value_path = props.showValuePath ? rule.value_path : ''" in source
 
 
 class TestNewStateReopenKeepsMeta:
@@ -662,7 +665,9 @@ class TestTemplateAndFieldAreSeparateSwitches:
     def test_hidden_template_is_cleared_on_save(self):
         """藏起来的控件不能把旧值写回去——和 value_path 同一个道理。"""
         source = _read(ROOT / "frontend/src/components/secrets/SecretLocatorEditor.vue")
-        assert "value_template: props.showValueTemplate ? draft.value.value_template : ''" in source
+        assert (
+            "rule.value_template = props.showValueTemplate ? rule.value_template : ''" in source
+        )
 
 
 class TestOwnerScopeFlowsThroughLocalState:

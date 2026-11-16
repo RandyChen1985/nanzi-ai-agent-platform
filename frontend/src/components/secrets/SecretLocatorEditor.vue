@@ -365,8 +365,9 @@ function close() {
 }
 
 function removeRule() {
+  // 不在这里关窗：交给父组件在删除成功后关。失败时如果已经关了，用户只会看到
+  // 一条横幅，重开才知道规则还在；留着窗更直观，也不会误以为删掉了。
   emit('remove')
-  emit('update:open', false)
 }
 
 function save() {

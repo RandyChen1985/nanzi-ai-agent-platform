@@ -414,3 +414,29 @@ class TestFieldTargetIsVisibleInSummaries:
         ).read_text(encoding="utf-8")
         assert "Object.values(picks.value).some(Boolean)" in panel
         assert "Object.keys(picks.value).length" not in panel
+
+
+class TestRemoveWaitsForTheParent:
+    """删除规则由父组件在成功后才关窗。
+
+    编辑器自己 emit('remove') 之后立刻 `emit('update:open', false)` 的话，删除接口
+    失败时窗已经关了：用户只看到一条横幅，重开才知道规则还在，很容易以为删掉了。
+    """
+
+    def test_editor_does_not_close_itself_on_remove(self):
+        src = (ROOT / "frontend/src/components/secrets/SecretLocatorEditor.vue").read_text(
+            encoding="utf-8"
+        )
+        start = src.index("function removeRule()")
+        body = src[start : start + 260]
+        assert "emit('remove')" in body
+        assert "emit('update:open', false)" not in body
+
+    def test_panel_closes_only_after_the_delete_succeeds(self):
+        src = (
+            ROOT / "frontend/src/components/mcp/PlatformMcpCredentialPanel.vue"
+        ).read_text(encoding="utf-8")
+        start = src.index("async function clearRuleById")
+        body = src[start : start + 900]
+        # 成功分支里关窗，且必须在 await load() 之后
+        assert body.index("locatorCtx.value = null") > body.index("await load()")

@@ -75,7 +75,11 @@ def test_locate_matches_only_within_visible_set():
     # 2026-11-16：调用多了一个 field_value 回调（target=field 时按字段值匹配要解密），
     # 但「候选池来自 visible」这条不变，所以断言放宽到前缀。
     assert "pick_match(spec, wanted, pool" in resolver_src
-    assert "pool = visible" in resolver_src
+    # 2026-11-16：pool 不再是 `visible` 本身——先按「场景放行 + 未过期」剔一遍，
+    # 否则一条注定被拒的凭据会先胜出、把后面可用的挡住。断言改成「过滤的输入
+    # 必须是 visible」，别有人绕过可见集合另起来源。
+    assert "for record in visible" in resolver_src
+    assert "if _record_is_candidate(record, _now_utc(), scene)" in resolver_src
     assert "UserSecret.secret_key" not in resolver_src
 
 

@@ -200,6 +200,12 @@ def _apply_transforms(value: str, transforms: Sequence[str]) -> str:
     return value
 
 
+def _stringify(raw: Any) -> str:
+    from app.services.secrets.references import stringify_field_value
+
+    return stringify_field_value(raw)
+
+
 def build_candidates(
     spec: RuleSpec,
     *,
@@ -215,7 +221,10 @@ def build_candidates(
         raw = identity.get(spec.key_source.partition(".")[2])
     if raw is None or raw == "":
         return []
-    value = _apply_transforms(str(raw), spec.transforms)
+    # 和凭据字段侧用同一个转换函数（resolver.field_value_resolver 走 stringify_field_value）：
+    # 入参是 JSON 原生 true / 465.0 时，裸 str() 会算出 "True" / "465.0"，
+    # 而凭据字段是 "true" / "465"——两边各自算，结果就是「试算命中、真跑未命中」。
+    value = _apply_transforms(_stringify(raw), spec.transforms)
     if not value:
         return []
     return [tpl.replace("{value}", value) for tpl in spec.templates]

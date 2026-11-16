@@ -182,6 +182,7 @@ class SecretResolver:
                     args=rule_args,
                     preferred_secret_id=preferred_secret_id,
                     scene=scene,
+                    plain_cache=plain_cache,
                 )
                 if located.denial:
                     return ResolveResult(
@@ -358,6 +359,7 @@ class SecretResolver:
         rows: Sequence[Any] | None = None,
         visible: Sequence[Any] | None = None,
         scene: str | None = None,
+        plain_cache: dict[str, str] | None = None,
     ) -> Located:
         """选出这次要用的凭据。**层间**个人优先，**层内**规则优先。
 
@@ -420,15 +422,26 @@ class SecretResolver:
                     # 约束要参与**候选筛选**而不是挑中后再否掉：按 name 匹配时可能有多条
                     # 同名不同模板的凭据，先挑中一条再判不符，会让本该命中的那条永远轮不到。
                     tpl_wanted = getattr(spec, "value_template", "") or ""
-                    pool = visible
+                    # 先剔掉「这个场景用不了」和「已经过期」的候选，再做模板约束与匹配。
+                    # 只在 field 分支里判是不够的：target=name / category / secret_key
+                    # 一样会让一条不可用的凭据先胜出、随后被判 DENY_SCENARIO /
+                    # DENY_EXPIRED，把后面真正能用的那条挡住——用户只看到「凭据不可用」，
+                    # 完全想不到是被一条根本不该参与匹配的抢了位置。
+                    pool = [
+                        record
+                        for record in visible
+                        if _record_is_candidate(record, _now_utc(), scene)
+                    ]
                     if tpl_wanted:
                         pool = [
                             record
-                            for record in visible
+                            for record in pool
                             if (getattr(record, "value_template", None) or "") == tpl_wanted
                         ]
                     field_value = (
-                        field_value_resolver(spec.target_field, scene=scene)
+                        field_value_resolver(
+                            spec.target_field, scene=scene, plain_cache=plain_cache
+                        )
                         if getattr(spec, "target", "") == "field"
                         else None
                     )
@@ -743,7 +756,11 @@ class SecretResolver:
 # 就会一律按未命中报——真实调用却命中——把配置者彻底带偏。
 
 
-def field_value_resolver(field: str, scene: str | None = None) -> Callable[[Any], str | None]:
+def field_value_resolver(
+    field: str,
+    scene: str | None = None,
+    plain_cache: dict[str, str] | None = None,
+) -> Callable[[Any], str | None]:
     """按凭据内某个字段的值匹配时用的取值器：解密 → 解析 JSON → 取字段。
 
     只有 ``target="field"`` 才走这里。key / name / category 都是凭据表上的列，
@@ -762,6 +779,9 @@ def field_value_resolver(field: str, scene: str | None = None) -> Callable[[Any]
 
     结果按凭据 id 记忆：一条规则最多 3 个模板，每个模板都会重放一遍候选列表，
     不记的话同一批凭据会被反复解密三遍。
+
+    ``plain_cache`` 与 ``resolve`` 是同一份（明文按凭据 id）：一次工具调用里若有好几个
+    参数都配了按字段匹配的规则，不共用的话每条规则都会把所有候选重新解密一遍。
     """
     key = (field or "").strip()
     cache: dict[str, str | None] = {}
@@ -791,7 +811,14 @@ def field_value_resolver(field: str, scene: str | None = None) -> Callable[[Any]
             ciphertext = SecretResolver._pick_ciphertext(record, now)
             if not ciphertext:
                 return _remember(record_id, None)
-            plain = SecretResolver._decrypt(ciphertext)
+            # 与 resolve 共用明文缓存。key 用原始 record.id（resolve 那边就是它），
+            # 不能拿下面 str() 过的 record_id 去查——类型不同，永远 miss。
+            raw_id = getattr(record, "id", None)
+            plain = plain_cache.get(raw_id) if plain_cache is not None else None
+            if plain is None:
+                plain = SecretResolver._decrypt(ciphertext)
+                if plain_cache is not None and raw_id is not None:
+                    plain_cache[raw_id] = plain
         except Exception:  # noqa: BLE001 - 单条坏数据不该让整次匹配失败
             logger.debug("[SecretLocator] 候选凭据解密失败，跳过", exc_info=True)
             return _remember(record_id, None)
@@ -820,6 +847,34 @@ def field_value_resolver(field: str, scene: str | None = None) -> Callable[[Any]
         return _remember(record_id, stringify_field_value(node))
 
     return resolve
+
+
+def _now_utc() -> datetime:
+    """库里所有 datetime 都是 naive UTC，比较前统一到同一个口径。"""
+    return datetime.utcnow()
+
+
+def _record_is_candidate(row: Any, now: datetime, scene: str | None = None) -> bool:
+    """这条凭据值不值得参与匹配：场景放行 + 至少有一份没过期的密文。
+
+    与 ``_record_is_usable`` 的区别：**不要求密文非空**。按 name / category /
+    secret_key 匹配只读元数据，跟值解不解得开无关；把密文也要求上，会让一条
+    元数据完全匹配的凭据被无声跳过。
+    """
+    if scene:
+        scopes = getattr(row, "allowed_scenarios", None) or []
+        if not isinstance(scopes, (list, tuple)) or scene not in [
+            str(s) for s in scopes if s
+        ]:
+            return False
+    expires = getattr(row, "expires_at", None)
+    if expires is None or expires > now:
+        return True
+    # 轮换双写窗口：新值过期但旧值还在有效期内，凭据整体仍可用
+    prev_expires = getattr(row, "previous_expires_at", None)
+    return bool(getattr(row, "previous_value_encrypted", None)) and (
+        prev_expires is None or prev_expires > now
+    )
 
 
 def _record_is_usable(row: Any, now: datetime, scene: str | None = None) -> bool:

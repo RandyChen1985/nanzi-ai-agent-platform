@@ -431,3 +431,43 @@ class TestApiToolMappingReminder:
     def test_hint_has_a_manual_dismiss(self):
         source = _read(ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue")
         assert '@click="mappingHint = \'\'"' in source
+
+
+class TestRuleSavedParamsAreMarkedAsRule:
+    """多值面板按规则保存后，参数来源必须标成 `rule`。
+
+    原来 `onMappingSaved` 一律把 `bound` 里的参数标成 `credential`（注释还停在
+    「generic_api 只注入 source==='credential' 的行」，而后端早就支持 `'rule'` 了）。
+    后果是连环的：`unboundNames` 按 `credential` 去查 `fixedBindingOf`——规则参数
+    没有固定绑定——判成「未选，保存会被拦住」并红字提示，`ToolRegistry` 底部
+    「保存」按钮随之禁用，用户配完规则反而存不了工具。
+    """
+
+    def test_panel_reports_which_source_was_saved(self):
+        panel = (ROOT / "frontend/src/components/secrets/SecretFieldMappingPanel.vue").read_text(encoding="utf-8")
+        assert "source: source.value," in panel
+
+    def test_editor_maps_bound_params_to_the_right_source(self):
+        editor = (ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue").read_text(encoding="utf-8")
+        assert "payload.source === 'rule' ? 'rule' : 'credential'" in editor
+        # 退回 literal 要覆盖两种来源，否则原本按规则匹配的参数改回模型填写后
+        # 还停在 rule，同样会被判未绑定
+        assert "(p.source === 'credential' || p.source === 'rule')" in editor
+
+    def test_rule_save_failure_is_visible(self):
+        """规则保存失败时弹窗不能提前关闭，错误也必须能被看到。"""
+        editor = (ROOT / "frontend/src/components/system/ToolSystemParamEditor.vue").read_text(encoding="utf-8")
+        # pickerError 原来只在 pickingName 弹窗里渲染，配规则时那个弹窗是关着的
+        assert 'v-if="pickerError && !pickingName"' in editor
+
+
+class TestMcpParamMarkPermissionGuard:
+    def test_guard_dereferences_the_computed(self):
+        """`!canPublishMcp` 对 ComputedRef 恒为 false —— 守卫等于不存在。
+
+        卡片上的按钮靠模板自动解包隐藏了，但每个参数的 `<code>` 芯片也绑了
+        点击/回车打开这个弹窗，漏写 `.value` 时无 publish 权限一样能进来。
+        """
+        registry = (ROOT / "frontend/src/components/system/McpServerRegistry.vue").read_text(encoding="utf-8")
+        assert "!canPublishMcp.value" in registry
+        assert "!canPublishMcp)" not in registry

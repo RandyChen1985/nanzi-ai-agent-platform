@@ -1664,3 +1664,196 @@ class TestLocatePreviewAgreesWithRuntime:
         )
         assert as_api.status_code == 200, as_api.text
         assert as_api.json()["data"]["ok"] is True, "场景放行却没有命中"
+
+
+class TestEmptyItemsDoesNotLeakTheCredentialParams:
+    """空 items 的只读回填要有权限校验。
+
+    这个分支是为了让返回体形状一致（前端按 `Array.isArray` 判断清单有没有同步），
+    但它读的是别人工具的 `credential_params`。不校验归属的话，任何登录用户拿一个
+    别人的 `mcp_tool_id`、配 `items: []`，就能把它「哪些参数由凭据提供」读回去。
+    """
+
+    async def test_other_users_private_tool_returns_nothing(
+        self, client, clean_secrets, valid_api_key, admin_api_key
+    ):
+        from sqlalchemy import select
+
+        from app.core.orm import AsyncSessionLocal
+        from app.models.mcp import McpServer
+        from app.models.mcp import McpToolCache
+        from app.services.auth_service import AuthService
+
+        async with AsyncSessionLocal() as session:
+            admin_info = await AuthService.verify_api_key(admin_api_key, session)
+        owner_id = int(admin_info["user_id"])
+        server_id = f"srv-{uuid.uuid4().hex[:8]}"
+        tool_id = f"tool-{uuid.uuid4().hex[:8]}"
+
+        async with AsyncSessionLocal() as session:
+            session.add(
+                McpServer(
+                    id=server_id,
+                    server_name=f"mcp-private-{uuid.uuid4().hex[:6]}",
+                    sse_url="https://mail.example.com/mcp",
+                    scope="personal",
+                    user_id=owner_id,
+                    enabled_status=1,
+                )
+            )
+            session.add(
+                McpToolCache(
+                    id=tool_id,
+                    server_id=server_id,
+                    tool_name="send_mail",
+                    credential_params=json.dumps(["password"]),
+                )
+            )
+            await session.commit()
+
+        # 普通用户拿着别人的工具 id 来探
+        resp = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json={
+                "consumer_type": "mcp_server",
+                "consumer_id": server_id,
+                "mcp_tool_id": tool_id,
+                "items": [],
+            },
+            headers=_headers(valid_api_key),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["credential_params"] is None, resp.text
+
+        # 所有者自己问是能拿到的（对照组，确认上面不是永远返回 None）
+        own = await client.post(
+            f"{PREFIX}/bindings/batch",
+            json={
+                "consumer_type": "mcp_server",
+                "consumer_id": server_id,
+                "mcp_tool_id": tool_id,
+                "items": [],
+            },
+            headers=_headers(admin_api_key),
+        )
+        assert own.status_code == 200, own.text
+        assert own.json()["data"]["credential_params"] == ["password"], own.text
+
+
+class TestSingleRuleBindingClearsOnlyMyDowngradedFixed:
+    """单值页改成全局规则时，只清本人那一层，且不能碰全局层。
+
+    `_user_ctx` 取不到身份时返回**空串**，而 `unbind_slot` 把空的
+    `bound_by_user_id` 当作「全局层」（匹配 NULL 或 ""）。这里传的是 `_actor_id`
+    且判了非空，就是为了避免身份缺失时把全平台的固定回退凭据删掉。
+    """
+
+    async def test_global_fixed_survives_while_my_own_is_cleared(
+        self, client, clean_secrets, valid_api_key, admin_api_key
+    ):
+        from sqlalchemy import select
+
+        from app.core.orm import AsyncSessionLocal
+        from app.models.secret import SecretBinding
+
+        sadm = await client.post(
+            f"{PREFIX}/admin",
+            json={
+                "secret_key": f"sys.rule.{uuid.uuid4().hex[:6]}",
+                "name": "平台邮箱",
+                "value": json.dumps({"password": "pw"}),
+                "secret_type": "credential",
+                "allowed_scenarios": ["api_tool"],
+                "allowed_hosts": [],
+                "value_format": "json",
+                "value_template": "smtp",
+                "owner_scope": "system",
+            },
+            headers=_headers(admin_api_key),
+        )
+        assert sadm.status_code == 200, sadm.text
+        shared_secret = sadm.json()["data"]["id"]
+
+        consumer_id = f"tool-{uuid.uuid4().hex[:6]}"
+        slot = "query:token"
+
+        # 全局层先有一条 fixed 回退
+        g = await client.post(
+            f"{PREFIX}/bindings",
+            json={
+                "consumer_type": "api_tool",
+                "consumer_id": consumer_id,
+                "slot": slot,
+                "strategy": "fixed",
+                "secret_id": shared_secret,
+                "value_path": "password",
+                "is_global": True,
+            },
+            headers=_headers(admin_api_key),
+        )
+        assert g.status_code == 200, g.text
+
+        # 管理员自己再写一条个人层 fixed（模拟「先用自己的凭据跑通」）
+        personal = await _create_secret(
+            client,
+            admin_api_key,
+            secret_key=f"mine.rule.{uuid.uuid4().hex[:6]}",
+            value=json.dumps({"password": "mine"}),
+        )
+        p = await client.post(
+            f"{PREFIX}/bindings",
+            json={
+                "consumer_type": "api_tool",
+                "consumer_id": consumer_id,
+                "slot": slot,
+                "strategy": "fixed",
+                "secret_id": personal["id"],
+                "value_path": "password",
+            },
+            headers=_headers(admin_api_key),
+        )
+        assert p.status_code == 200, p.text
+
+        # 原地改成全局规则
+        rule_resp = await client.post(
+            f"{PREFIX}/bindings",
+            json={
+                "consumer_type": "api_tool",
+                "consumer_id": consumer_id,
+                "slot": slot,
+                "strategy": "rule",
+                "is_global": True,
+                "rule": {
+                    "key_source": "arg:to",
+                    "templates": ["{value}"],
+                    "target": "secret_key",
+                    "on_miss": "fail",
+                },
+            },
+            headers=_headers(admin_api_key),
+        )
+        assert rule_resp.status_code == 200, rule_resp.text
+
+        async with AsyncSessionLocal() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(SecretBinding).where(
+                            SecretBinding.consumer_type == "api_tool",
+                            SecretBinding.consumer_id == consumer_id,
+                            SecretBinding.slot == slot,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        by_layer = {
+            ((r.bound_by_user_id or ""), (r.strategy or "fixed")): r for r in rows
+        }
+        # 全局 fixed 还在（没被空身份误删）
+        assert ("", "fixed") in by_layer, list(by_layer)
+        # 全局规则写上了
+        assert ("", "rule") in by_layer, list(by_layer)
+        # 本人那条降级 fixed 被清掉
+        assert not any(k[0] not in ("",) and k[1] == "fixed" for k in by_layer), list(by_layer)
