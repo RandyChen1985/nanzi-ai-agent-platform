@@ -160,7 +160,13 @@ def _flag_unresolved_references(
         seen.add(slot_key.lower())
 
 
-def _record(denials: dict[str, str] | None, slot: str, reason: str | None) -> None:
+def _record(
+    denials: dict[str, str] | None,
+    slot: str,
+    reason: str | None,
+    detail: str = "",
+    details: dict[str, str] | None = None,
+) -> None:
     """把「这个槽位为什么没注入」记下来，由调用方决定怎么报。
 
     **不记「没有绑定」**：那是常态（绝大多数 header 本来就不绑凭据），记下来会
@@ -172,6 +178,11 @@ def _record(denials: dict[str, str] | None, slot: str, reason: str | None) -> No
     # 存**原始 code**：调用方可能想按原因给不同的修复建议（域名白名单 vs 场景勾选），
     # 存成人话就再也分不出来了。展示时用 denial_text()。
     denials[slot] = reason
+    # 规则未命中时 `detail` 里写着「要找的是什么值」（如 mail.a@b.com）。
+    # 不带出去的话，用户只看到「匹配规则没有找到对应凭据」，完全想不到是自己的
+    # 入参拼出来跟凭据 key 对不上。
+    if details is not None and detail:
+        details[slot] = detail
 
 
 def _looks_unfilled(value: Any) -> bool:
@@ -440,6 +451,7 @@ async def apply_api_tool_bindings(
     *,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    denial_details: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """把绑定的凭据填进 API 工具的请求头。
 
@@ -532,7 +544,13 @@ async def apply_api_tool_bindings(
                 )
             # 原因要带回调用层：停用/过期和「没绑」看起来都是「值是空的」，
             # 但用户要做的动作完全不同。
-            _record(denials, f"header:{name}", result.denial)
+            _record(
+                denials,
+                f"header:{name}",
+                result.denial,
+                detail=getattr(result, "detail", "") or "",
+                details=denial_details,
+            )
 
     return resolved
 
@@ -711,6 +729,7 @@ async def apply_api_tool_param_bindings(
     method: str,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    denial_details: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """把「声明为来自凭据」的参数补上值。
 
@@ -840,7 +859,11 @@ async def apply_api_tool_param_bindings(
                     "[SecretInject] API 工具 %s 的参数 %s 被拒绝: %s",
                     getattr(config, "name", "?"), name, result.denial,
                 )
-            _record(denials, slot, result.denial)
+            _record(
+                denials, slot, result.denial,
+                detail=getattr(result, "detail", "") or "",
+                details=denial_details,
+            )
 
     return resolved
 
@@ -876,6 +899,7 @@ async def apply_mcp_bindings(
     *,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    denial_details: dict[str, str] | None = None,
     used: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """把绑定的凭据填进 MCP 出站请求头。
@@ -992,7 +1016,11 @@ async def apply_mcp_bindings(
             _set_case_insensitive(resolved, name, rendered)
             injected += 1
         else:
-            _record(denials, slot, result.denial)
+            _record(
+                denials, slot, result.denial,
+                detail=getattr(result, "detail", "") or "",
+                details=denial_details,
+            )
 
     _flag_unresolved_references(resolved, denials)
     return resolved
@@ -1121,6 +1149,7 @@ async def apply_mcp_arg_bindings(
     *,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    denial_details: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """把凭据填进 MCP 工具调用的 ``arguments``。
 
@@ -1250,6 +1279,12 @@ async def apply_mcp_arg_bindings(
                 # 直接存 code，不走 _record：那是 header 侧的助手，会跳过「没绑定」，
                 # 而参数级里没有值就是缺参数，任何原因都得报出来。
                 denials[slot] = coerce_error
+                # detail 是给调用方拼错误信息用的（比如「要找 mail.a@b.com」）。
+                # 这里同样绕开 _record，所以得自己记一份。
+                if denial_details is not None:
+                    detail = getattr(result, "detail", "") or ""
+                    if detail:
+                        denial_details[slot] = detail
                 await secret_resolver.mark_usage_failed(
                     getattr(result, "usage_id", None), coerce_error
                 )
@@ -1260,6 +1295,11 @@ async def apply_mcp_arg_bindings(
             # 那是常态。参数级正相反——声明过就必须有值，没绑同样是缺参数。
             if denials is not None:
                 denials[slot] = result.denial
+            # 同上：绕开 _record 就得自己记 detail，否则调用方只能报一个 code
+            if denial_details is not None:
+                detail = getattr(result, "detail", "") or ""
+                if detail:
+                    denial_details[slot] = detail
 
     return resolved
 
@@ -1349,6 +1389,7 @@ async def apply_script_env_bindings(
     *,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    denial_details: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """解析脚本工具要注入的环境变量，返回 ``{变量名: 值}``。
 
@@ -1440,5 +1481,9 @@ async def apply_script_env_bindings(
                 continue
             resolved[name] = picked
         else:
-            _record(denials, slot, result.denial)
+            _record(
+                denials, slot, result.denial,
+                detail=getattr(result, "detail", "") or "",
+                details=denial_details,
+            )
     return resolved

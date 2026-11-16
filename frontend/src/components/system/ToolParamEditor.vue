@@ -67,13 +67,18 @@ const emit = defineEmits<{
 const systemParamRef = ref<{
   flushPending: (consumerId: string) => Promise<string[]>
   hasPending: () => boolean
+  hasUnsavedMapping?: () => boolean
 } | null>(null)
 
 /** 保存工具后补写新建态暂存的凭据绑定。 */
 const flushPending = (consumerId: string) =>
   systemParamRef.value?.flushPending(consumerId) ?? Promise.resolve([] as string[])
 
-defineExpose({ flushPending })
+/** 多值凭据页有没保存的字段映射：工具保存不会带上它，调用方要先问一句 */
+const hasUnsavedMapping = (): boolean =>
+  systemParamRef.value?.hasUnsavedMapping?.() ?? false
+
+defineExpose({ flushPending, hasUnsavedMapping })
 
 type VisualParam = SchemaParam & { key: string }
 

@@ -839,6 +839,9 @@ async def bind_secret(
     #: 权限判断放在这里而不是接口层：接口层看不到凭据作用域，只能对整批一刀切，
     #: 于是「管理员拿个人凭据绑平台级工具」也会被当成越权拒掉。
     allow_global: bool = True,
+    #: 多值配法的组标识：一次整表保存生成一个，整批共享；单值配法为 None。
+    #: 调用方（bindings/batch）传，其它入口不传。
+    binding_group_id: str | None = None,
 ) -> SecretBinding | None:
     """把一个槽位绑到一条凭据上。同一槽位重复绑定视为「改绑」。
 
@@ -959,6 +962,7 @@ async def bind_secret(
         slot=slot,
         bound_by_user_id=owner_key,
         value_path=value_path,
+        binding_group_id=binding_group_id,
     )
     session.add(binding)
     # 全局绑定时 bound_by_user_id 为 None，若不显式透传 actor_id 会丢失操作人。
@@ -1076,6 +1080,8 @@ async def bind_rule(
     #: 调用方是不是管理员。规则不指向凭据，但「全局规则」照样影响所有人，
     #: 必须同样受权限约束——否则普通用户一句请求就能改掉全平台的取数规则。
     allow_global: bool = True,
+    #: 多值配法的组标识；单值配法为 None。与 ``bind_secret`` 同义。
+    binding_group_id: str | None = None,
 ) -> SecretBinding | None:
     """把一个槽位绑到「一条定位规则」上（``strategy='rule'``，无 ``secret_id``）。
 
@@ -1174,6 +1180,10 @@ async def bind_rule(
         existing.rule_json = payload
         existing.secret_id = None
         existing.value_path = path
+        # 组标识跟着这次写入走：单值入口传 None 就退组，多值入口传 uuid 就归组。
+        # 不改的话，一条原本属于多值组的规则被单值页改写后仍挂着旧 group_id，
+        # 单值页会继续把它当「由多值统一管理」锁成只读——再也改不回来了。
+        existing.binding_group_id = binding_group_id
         if commit:
             await session.commit()
         else:
@@ -1197,6 +1207,7 @@ async def bind_rule(
         strategy="rule",
         rule_json=payload,
         value_path=path,
+        binding_group_id=binding_group_id,
     )
     session.add(binding)
     await _audit(

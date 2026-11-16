@@ -3,6 +3,7 @@ import { ref, onMounted, watch, computed, nextTick } from 'vue'
 import axios from '@/utils/axios'
 import { copyToClipboard } from '@/utils/clipboard'
 import { useToast } from '@/composables/useToast'
+import { useConfirm } from '@/composables/useConfirm'
 import { useUser } from '@/composables/useUser'
 import ConfirmModal from '../../components/ConfirmModal.vue'
 import Switch from '../Switch.vue'
@@ -74,6 +75,8 @@ const emit = defineEmits<{
 }>()
 
 const { showToast } = useToast()
+/** 确认框：替代 window.confirm，用产品自己的弹层（原生弹窗在容器里标题会变成域名） */
+const { confirm } = useConfirm()
 const { userInfo, hasPermission } = useUser()
 
 // MCP 写操作已按动作分码校验（见 app/api/portal/endpoints/mcp.py），
@@ -698,6 +701,13 @@ type HeaderBinding = {
    * 不带回的话提示会消失，用户以为配的是全平台共用的。
    */
   owner_scope?: string
+  /**
+   * 多值配法的组标识。有值说明这条规则是「多值凭据」一次保存生成的
+   * （N 个参数共用同一条规则、各取不同字段），不是单值页逐条配的。
+   */
+  binding_group_id?: string | null
+  /** 同组共有几个槽位，界面要说清「统一管理（5 个参数）」 */
+  binding_group_size?: number
 }
 
 const bindingIssue = (binding: HeaderBinding | null): string => {
@@ -841,6 +851,8 @@ async function loadMcpBinding() {
         owner_scope: row.owner_scope,
         value_format: row.value_format || 'text',
         value_template: row.value_template || null,
+        binding_group_id: row.binding_group_id || null,
+        binding_group_size: row.binding_group_size || 0,
       }
       // 规则行单独放：同槽位还能有一条固定凭据（规则未命中时的回退目标），
       // 混在一张表里会互相覆盖，见 slotRules 的注释。
@@ -1453,6 +1465,20 @@ const paramBindingsLoading = ref(false)
  * 后两者都会从模型可见的参数里移除，区别只在于「谁来选这条凭据」。
  */
 const paramDraft = ref<Record<string, ParamSource>>({})
+/**
+ * 草稿基线：``buildParamDraft`` 之后拍一张，用来算「有几处改动没保存」。
+ *
+ * 拍结构化快照而不是序列化整串：要按参数报数（「保存（3 处改动）」），
+ * 光知道「有变化」不够。
+ *
+ * 只比「来源 + 规则」：这一页选凭据走的是独立请求（``submitParamBind`` 立刻
+ * POST /bindings），已经落库，不该算成待保存；``pendingBindings`` 是 Header 与
+ * 服务向导那边的内存草稿，不属于这一页。
+ */
+const paramDraftBaseline = ref<{
+  draft: Record<string, ParamSource>
+  rules: Record<string, string>
+} | null>(null)
 /** 参数名 → 草稿里的规则（只有 ``rule`` 才有值，没填过就是 null） */
 const paramRuleDraft = ref<Record<string, LocatorRule | null>>({})
 /**
@@ -1574,6 +1600,11 @@ async function loadBindingsFor(serverId: string) {
         owner_scope: row.owner_scope,
         value_format: row.value_format || 'text',
         value_template: row.value_template || null,
+        // 和 loadMcpBinding 那份 entry 必须一个字不差：这两个函数读的是同一个接口，
+        // 漏掉字段就会「后端返回了、界面拿不到」。参数设置弹窗走的是这个函数——
+        // 少了组标识，多值配法会被当成 N 条独立规则，默认 tab 也回落到单值页。
+        binding_group_id: row.binding_group_id || null,
+        binding_group_size: row.binding_group_size || 0,
       }
       if ((row.strategy || 'fixed') === 'rule') rules[row.slot] = entry
       else map[row.slot] = entry
@@ -1602,6 +1633,50 @@ const ruleBindingOfSlot = (slot: string): HeaderBinding | null => {
 const fixedBindingOfSlot = (slot: string): HeaderBinding | null => {
   const binding = headerBindings.value[slot] || pendingBindings.value[slot] || null
   return binding && (binding.strategy || 'fixed') !== 'rule' ? binding : null
+}
+
+/**
+ * 这个槽位的规则是不是「多值凭据统一配的」。
+ *
+ * 多值保存会写成「N 个 slot 各一条 rule 绑定」，与单值页逐条配出来的**完全同形**。
+ * 以前没有组标识，单值页只能看到「这个参数也有规则」，于是把一条规则映射多个字段
+ * 的配置显示成 N 条独立规则；更糟的是每行都有「改规则」——改一行只改一个 slot，
+ * 其余 N-1 个还是旧规则，多值结构被悄悄拆散，而系统不知道原本是一组。
+ */
+const multiManagedRuleOfSlot = (slot: string): HeaderBinding | null => {
+  const rule = ruleBindingOfSlot(slot)
+  // 组里只有一个参数时不算多值：那不是「一条规则供一组」，锁成只读只会让用户
+  // 在单值页改不了它，还得先回多值页或整表清空。
+  if (!rule || !rule.binding_group_id || (rule.binding_group_size || 0) < 2) return null
+  return rule
+}
+
+/**
+ * 这个槽位的**固定凭据**是不是「多值凭据统一配的」（一条凭据铺了多个参数）。
+ *
+ * 和规则型一样要锁：多值页选固定凭据铺 N 个参数时，N 行 fixed 共享一个组标识，
+ * 在这里单独「换凭据」只会让其中一行指向别的凭据，组还在、语义已经散了。
+ */
+const multiManagedFixedOfSlot = (slot: string): HeaderBinding | null => {
+  const binding = fixedBindingOfSlot(slot)
+  if (!binding || !binding.binding_group_id || (binding.binding_group_size || 0) < 2) return null
+  return binding
+}
+
+/**
+ * 这份配置是**多值配法**吗（一次保存、一条规则/凭据供多个参数）。
+ *
+ * 依据是组标识：多值保存会写一个 ``binding_group_id`` 给整批，单值页逐条配出来的
+ * 永远是 NULL。别用「几个参数的 rule_json 是否相同」推断——用户单独改过其中一个
+ * 参数之后那个推断就不成立了。
+ */
+const hasMultiValueConfig = (): boolean => {
+  const grouped = (binding: HeaderBinding) =>
+    !!binding.binding_group_id && (binding.binding_group_size || 0) > 1
+  return (
+    Object.values(slotRules.value).some(grouped) ||
+    Object.values(headerBindings.value).some(grouped)
+  )
 }
 
 /** 正在为哪个参数挑凭据；非空时显示绑定弹窗。和 Header 那个是同一套选择器。 */
@@ -1815,6 +1890,9 @@ async function reloadParamMark(tool: any, param = '') {
   // 拉的过程中用户可能已经关了弹窗、或点了另一个工具的参数设置
   if (paramMarkTarget.value?.tool !== tool) return
   buildParamDraft(tool)
+  // 默认落在哪一页按**配置本身**定，不是固定单值页：多值配法的人重开弹窗，
+  // 单值页只会显示「每个参数一条规则」，看起来像配置被拆散了。
+  paramTab.value = hasMultiValueConfig() ? 'multi' : 'single'
 }
 
 /** 按「刚拉回来的绑定」算草稿：有规则就以规则为准，其次固定凭据，最后才是模型填写 */
@@ -1837,11 +1915,154 @@ function buildParamDraft(tool: any) {
   }
   paramDraft.value = draft
   paramRuleDraft.value = rules
+  snapshotParamDraft()
+}
+
+function snapshotParamDraft() {
+  paramDraftBaseline.value = {
+    draft: { ...paramDraft.value },
+    rules: Object.fromEntries(
+      Object.entries(paramRuleDraft.value).map(([name, rule]) => [name, JSON.stringify(rule ?? null)])
+    ),
+  }
+}
+
+/**
+ * 有几处来源/规则改动还没保存。
+ *
+ * 这一页两个动作是分开落库的：选凭据立刻生效，**改来源与规则要按保存**。
+ * 只在底部写一句「需点保存」用户看不出来到底改了没有、改了哪几个，
+ * 于是关掉弹窗就以为生效了——运行时还是旧配置。
+ */
+const paramChangeCount = computed(() => {
+  const base = paramDraftBaseline.value
+  if (!base) return 0
+  let changed = 0
+  const names = new Set([...Object.keys(paramDraft.value), ...Object.keys(base.draft)])
+  for (const name of names) {
+    const nowSource = paramDraft.value[name] || 'model'
+    const beforeSource = base.draft[name] || 'model'
+    const nowRule = JSON.stringify(paramRuleDraft.value[name] ?? null)
+    const beforeRule = base.rules[name] || 'null'
+    if (nowSource !== beforeSource || nowRule !== beforeRule) changed += 1
+  }
+  return changed
+})
+
+const singleTabDirty = computed(() => paramChangeCount.value > 0)
+
+/** 多值面板的脏状态由它自己算（字段映射 + 来源/规则改动） */
+const multiPanelRef = ref<{ isDirty?: boolean } | null>(null)
+const multiTabDirty = computed(() => !!multiPanelRef.value?.isDirty)
+
+/**
+ * 切换「单值凭据 / 多值凭据」。
+ *
+ * 两个标签页写的是**同一份绑定数据**：单值页按参数逐条配，多值页一次整表覆盖。
+ * 页面一换，两边显示的内容可能对不上（多值面板是 v-if 挂载的，切走即销毁，没保存
+ * 的映射会无声消失；单值草稿却是父组件的 ref，切走再切回还留着）。用户切一次就
+ * 可能丢配置或看到过期的对照表，所以：有未保存改动先问一句，确认后统一从服务端
+ * 重载，让两页看到的是同一份事实。
+ */
+async function switchParamTab(tab: 'single' | 'multi') {
+  if (tab === paramTab.value) return
+  const dirty = paramTab.value === 'single' ? singleTabDirty.value : multiTabDirty.value
+  if (dirty) {
+    const label = paramTab.value === 'single' ? '单值凭据' : '多值凭据'
+    const ok = await confirm({
+      title: `切换会丢弃「${label}」页的改动`,
+      message: '这一页还有没保存的改动，切到另一页就没了。确定要切换吗？',
+      confirmText: '切换',
+      danger: true,
+    })
+    if (!ok) return
+  }
+  paramTab.value = tab
+  // 无论有没有丢改动都重载：另一个标签页的保存会整表覆盖绑定，
+  // 带着旧草稿切过去就是一份过期对照表。
+  const tool = paramMarkTarget.value?.tool
+  if (tool && !paramBindingsLoading.value) {
+    paramBindingsLoading.value = true
+    try {
+      await loadBindingsFor(String(tool.server_id || ''))
+    } finally {
+      paramBindingsLoading.value = false
+    }
+    if (paramMarkTarget.value?.tool === tool) buildParamDraft(tool)
+  }
+}
+
+/** 单值页里真正来自凭据的参数个数（判「有没有东西可清」） */
+const paramBoundCount = computed(() =>
+  Object.values(paramDraft.value).filter((source) => source !== 'model').length
+)
+
+/**
+ * 关闭参数设置弹窗。
+ *
+ * 多值面板是 ``v-if`` 挂载的，关掉即销毁，没保存的字段映射会无声消失；
+ * 单值页的来源改动同理（它要按保存才生效）。所以关之前先问一句。
+ */
+async function closeParamMark() {
+  if (paramTab.value === 'multi' && multiPanelRef.value?.isDirty) {
+    if (!(await confirm({
+      title: '关闭会丢弃未保存的映射',
+      message: '多值凭据页还有没保存的字段映射，关闭后就没了。确定要关闭吗？',
+      confirmText: '关闭',
+      danger: true,
+    }))) return
+  } else if (paramTab.value === 'single' && paramChangeCount.value) {
+    if (!(await confirm({
+      title: '关闭会丢弃未保存的改动',
+      message: `单值凭据页还有 ${paramChangeCount.value} 处来源改动没保存，关闭后就没了。确定要关闭吗？`,
+      confirmText: '关闭',
+      danger: true,
+    }))) return
+  }
+  paramMarkTarget.value = null
+}
+
+/**
+ * 一键清空：所有参数回到「模型填写」。
+ *
+ * 复用 ``submitParamMark`` 而不是另写一条提交路径：它把 model 参数提交成
+ * ``strategy='none'``，后端会把该槽位的 fixed 与 rule 两条都删掉，这正是「清空」。
+ *
+ * 文档里要提醒的是：多值配法写的也是 slot 级绑定，所以这里的清空对
+ * 「由多值凭据统一管理的参数」同样生效——它们是只读（防单条改坏整组），
+ * 但清空是另一个动作。
+ */
+async function clearParamMark() {
+  const target = paramMarkTarget.value
+  if (!target || paramMarkBusy.value || paramBindingsLoading.value) return
+  const total = Object.keys(paramDraft.value).length
+  if (!paramBoundCount.value) {
+    showToast('这个工具当前没有由凭据提供的参数', 'info')
+    return
+  }
+  const grouped = Object.keys(paramDraft.value).filter(
+    (name) => multiManagedRuleOfSlot(paramSlot(target.tool, name))
+  ).length
+  const ok = await confirm({
+    title: '清空全部凭据配置',
+    message:
+      `将清除这个工具全部 ${total} 个参数的凭据配置（固定凭据与规则都会删除，参数回到「模型填写」）。` +
+      (grouped ? `\n其中 ${grouped} 个参数由多值凭据统一管理，也会一并清除。` : ''),
+    confirmText: '清空',
+    danger: true,
+  })
+  if (!ok) return
+  for (const name of Object.keys(paramDraft.value)) paramDraft.value[name] = 'model'
+  paramRuleDraft.value = {}
+  await submitParamMark()
 }
 
 async function submitParamMark() {
   const target = paramMarkTarget.value
   if (!target || paramMarkBusy.value) return
+  // 多值页有它自己的保存（SecretFieldMappingPanel 整表覆盖）。这里再挡一次：
+  // 按单值草稿提交会把多值配置的组打散。
+  if (paramTab.value !== 'single') return
   // 绑定还没回来时草稿是空的，这时候保存会把所有来源清成「模型填写」
   if (paramBindingsLoading.value) return
   // 按钮已经禁用了，这里再兜一次：快捷键/程序触发绕过 disabled 时也要挡住
@@ -4751,7 +4972,7 @@ onMounted(fetchServers)
           <div
             v-if="paramMarkTarget"
             class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
-            @click.self="paramMarkTarget = null"
+            @click.self="closeParamMark"
           >
             <div class="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
               <div class="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
@@ -4764,7 +4985,7 @@ onMounted(fetchServers)
                 <button
                   type="button"
                   class="shrink-0 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                  @click="paramMarkTarget = null"
+                  @click="closeParamMark"
                 >
                   <XMarkIcon class="h-4 w-4" />
                 </button>
@@ -4780,8 +5001,16 @@ onMounted(fetchServers)
                   :class="paramTab === tab
                     ? 'border-indigo-600 font-semibold text-indigo-700'
                     : 'border-transparent text-gray-500 hover:text-gray-700'"
-                  @click="paramTab = tab"
-                >{{ tab === 'single' ? '单值凭据' : '多值凭据' }}</button>
+                  @click="switchParamTab(tab)"
+                >
+                  {{ tab === 'single' ? '单值凭据' : '多值凭据' }}
+                  <!-- 有没保存的改动时点个圆点：切换会丢弃，先让人看见 -->
+                  <span
+                    v-if="(tab === 'single' && singleTabDirty) || (tab === 'multi' && multiTabDirty)"
+                    class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle"
+                    title="这一页有没保存的改动，切换会丢弃"
+                  ></span>
+                </button>
               </div>
 
               <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
@@ -4792,6 +5021,7 @@ onMounted(fetchServers)
                 </p>
                 <SecretFieldMappingPanel
                   v-if="!paramBindingsLoading && paramTab === 'multi'"
+                  ref="multiPanelRef"
                   :consumer-type="'mcp_server'"
                   :consumer-id="String(paramMarkTarget?.tool?.server_id || '')"
                   :is-global="isGlobalBinding"
@@ -4839,7 +5069,11 @@ onMounted(fetchServers)
                           v-else
                           class="mt-1 inline-block cursor-help rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-medium text-emerald-700"
                           :title="`服务端注入，模型看不到这个值 · 绑定位置：${paramSlot(paramMarkTarget.tool, name)}`"
-                        >服务端注入{{ paramDraft[name] === 'rule' ? ' · 规则' : '' }}</span>
+                        >服务端注入{{
+                          paramDraft[name] === 'rule'
+                            ? (multiManagedRuleOfSlot(paramSlot(paramMarkTarget.tool, name)) ? ' · 多值规则' : ' · 规则')
+                            : ''
+                        }}</span>
                       </td>
                       <td class="py-2 align-top">
                         <!-- 下拉与凭据控件放在同一行：一格只占一个控件高度，行距更紧，
@@ -4855,27 +5089,60 @@ onMounted(fetchServers)
                           </select>
                           <!-- 按规则匹配：不选具体凭据，只配「怎么找」 -->
                           <template v-if="paramDraft[name] === 'rule'">
-                            <button
-                              type="button"
-                              class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shadow-sm transition-colors"
-                              :class="paramRuleDraft[name]
-                                ? 'border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50'
-                                : 'bg-emerald-600 text-white hover:bg-emerald-700'"
-                              @click.stop="openLocator(paramMarkTarget.tool, name)"
-                            >
-                              <KeyIcon class="h-3 w-3" />
-                              {{ paramRuleDraft[name] ? '改规则' : '配规则' }}
-                            </button>
-                            <!-- 摘要独占一行（basis-full）：它通常三十来个字符，
-                                 和下拉、按钮挤在同一行会被压掉开头，变成「ecret_key = …」 -->
-                            <span
-                              v-if="paramRuleDraft[name]"
-                              class="min-w-0 basis-full break-all text-[10px] text-emerald-700"
-                            >{{ ruleSummary(paramRuleDraft[name]) }}</span>
-                            <span v-else class="text-[10px] text-gray-400">未配</span>
+                            <!-- 这条规则是多值凭据统一配的：不给「改规则」。
+                                 改了只影响这一个参数，组里其余参数还是旧规则，多值
+                                 结构被悄悄拆散——而且从这一页根本看不出来。 -->
+                            <template v-if="multiManagedRuleOfSlot(paramSlot(paramMarkTarget.tool, name))">
+                              <span
+                                class="inline-flex shrink-0 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-medium text-indigo-700"
+                                title="这条规则由「多值凭据」一次性配置，组内所有参数共用同一条规则、各取不同字段。要改请到多值凭据页整组修改，在这里单独改会把它拆散。"
+                              >
+                                由多值凭据统一管理{{
+                                  multiManagedRuleOfSlot(paramSlot(paramMarkTarget.tool, name))
+                                    ?.binding_group_size
+                                    ? `（${multiManagedRuleOfSlot(paramSlot(paramMarkTarget.tool, name))?.binding_group_size} 个参数）`
+                                    : ''
+                                }}
+                              </span>
+                              <span
+                                v-if="paramRuleDraft[name]"
+                                class="min-w-0 basis-full break-all text-[10px] text-indigo-600"
+                              >{{ ruleSummary(paramRuleDraft[name]) }}</span>
+                            </template>
+                            <template v-else>
+                              <button
+                                type="button"
+                                class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shadow-sm transition-colors"
+                                :class="paramRuleDraft[name]
+                                  ? 'border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50'
+                                  : 'bg-emerald-600 text-white hover:bg-emerald-700'"
+                                @click.stop="openLocator(paramMarkTarget.tool, name)"
+                              >
+                                <KeyIcon class="h-3 w-3" />
+                                {{ paramRuleDraft[name] ? '改规则' : '配规则' }}
+                              </button>
+                              <!-- 摘要独占一行（basis-full）：它通常三十来个字符，
+                                   和下拉、按钮挤在同一行会被压掉开头，变成「ecret_key = …」 -->
+                              <span
+                                v-if="paramRuleDraft[name]"
+                                class="min-w-0 basis-full break-all text-[10px] text-emerald-700"
+                              >{{ ruleSummary(paramRuleDraft[name]) }}</span>
+                              <span v-else class="text-[10px] text-gray-400">未配</span>
+                            </template>
                           </template>
                           <template v-else-if="paramDraft[name] === 'cred'">
+                            <!-- 这条凭据是多值凭据统一选的：不给「换凭据」。
+                                 换了只影响这一个参数，组里其余参数还指向原凭据，
+                                 组标识还在但语义已经散了，从这一页看不出来。 -->
+                            <span
+                              v-if="multiManagedFixedOfSlot(paramSlot(paramMarkTarget.tool, name))"
+                              class="inline-flex shrink-0 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-medium text-indigo-700"
+                              title="这条凭据由「多值凭据」一次性选好、供组内多个参数各取一个字段。要换请到多值凭据页整组换，在这里单独换会把它拆散。"
+                            >
+                              由多值凭据统一管理（{{ multiManagedFixedOfSlot(paramSlot(paramMarkTarget.tool, name))?.binding_group_size }} 个参数）
+                            </span>
                             <button
+                              v-else
                               type="button"
                               class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shadow-sm transition-colors"
                               :class="fixedBindingOfSlot(paramSlot(paramMarkTarget.tool, name))
@@ -4932,7 +5199,14 @@ onMounted(fetchServers)
                 </p>
               </div>
 
-              <div class="flex items-center gap-2 border-t border-gray-100 px-5 py-3">
+              <!-- 底栏只服务单值页。多值页有自己的一套（清空全部 / 保存映射），
+                   而这里的「保存」走 submitParamMark——按**单值草稿**整表提交。
+                   摆到多值页上，一点就把多值配置（一条规则供多个参数、共享组标识）
+                   重写成单值视角的形状，组会被打散。 -->
+              <div
+                v-if="paramTab === 'single'"
+                class="flex items-center gap-2 border-t border-gray-100 px-5 py-3"
+              >
                 <span class="text-[11px] text-gray-400">
                   <template v-if="draftCredentialCount">
                     {{ draftCredentialCount }} 个参数由凭据提供
@@ -4940,7 +5214,10 @@ onMounted(fetchServers)
                   <template v-else>全部由模型填写</template>
                   <!-- 两个动作是分开落库的，不讲清楚会以为「选完凭据就好了」 -->
                   <span class="text-gray-300"> · </span>
-                  <span class="text-gray-400">选凭据即刻生效，来源改动需点「保存」</span>
+                  <span v-if="paramChangeCount" class="font-medium text-amber-600">
+                    有 {{ paramChangeCount }} 处来源改动未保存，点「保存」才生效
+                  </span>
+                  <span v-else class="text-gray-400">选凭据即刻生效，来源改动需点「保存」</span>
                   <span v-if="draftMissingCred.length" class="text-red-600">
                     <span class="text-gray-300"> · </span>
                     {{ draftMissingCred.join('、') }} 还没选凭据
@@ -4951,10 +5228,18 @@ onMounted(fetchServers)
                   </span>
                 </span>
                 <div class="ml-auto flex items-center gap-2">
+                  <!-- 配错时逐个改回「模型填写」要 N 次操作，还容易漏掉某个参数 -->
+                  <button
+                    type="button"
+                    :disabled="paramMarkBusy || paramBindingsLoading || !paramBoundCount"
+                    class="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    title="清除这个工具所有参数的凭据配置（固定凭据与规则都会删除）"
+                    @click="clearParamMark"
+                  >清空全部</button>
                   <button
                     type="button"
                     class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
-                    @click="paramMarkTarget = null"
+                    @click="closeParamMark"
                   >取消</button>
                   <button
                     type="button"
@@ -4966,9 +5251,12 @@ onMounted(fetchServers)
                         ].filter(Boolean).join('；')
                       : ''"
                     class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    :class="paramChangeCount ? 'ring-2 ring-amber-400 ring-offset-1' : ''"
                     @click="submitParamMark"
                   >
-                    {{ paramMarkBusy ? '保存中…' : '保存' }}
+                    {{ paramMarkBusy
+                      ? '保存中…'
+                      : (paramChangeCount ? `保存（${paramChangeCount} 处改动）` : '保存') }}
                   </button>
                 </div>
               </div>

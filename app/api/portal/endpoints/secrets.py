@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1057,6 +1059,30 @@ async def patch_prefs(
     return {"code": 0, "message": "已保存", "data": {"allow_script_env": payload.allow_script_env}}
 
 
+def _count_groups(rows: Sequence[Any]) -> Counter:
+    """先数一遍各组的槽位数，供 ``_group_size_of`` O(1) 查。
+
+    逐行扫 rows 也能算对，但那是 O(n²)：几百条绑定无所谓，几千条时这一个字段
+    就能把列表接口拖慢。反正 rows 已经查出来了，多走一遍换每行一次字典查很划算。
+    """
+    return Counter(
+        getattr(row, "binding_group_id", None)
+        for row, _secret in rows
+        if getattr(row, "binding_group_id", None)
+    )
+
+
+def _group_size_of(binding: Any, group_sizes: Counter) -> int:
+    """这条绑定所属的多值组里有几个槽位；单值绑定返回 0。
+
+    只查预统计好的计数，不额外查库、也不再扫一遍结果集。
+    """
+    group_id = getattr(binding, "binding_group_id", None)
+    if not group_id:
+        return 0
+    return int(group_sizes.get(group_id, 0))
+
+
 @router.get("/bindings", summary="绑定情况：按消费者查，或按凭据查")
 async def get_bindings(
     consumer_type: str | None = Query(None),
@@ -1132,6 +1158,9 @@ async def get_bindings(
 
     rule_on_miss = await _rule_shadow_map(db, [binding for binding, _secret in rows])
 
+    # 组大小要按整批结果统计，先数一遍；否则每行都扫全量 rows 是 O(n²)
+    group_sizes = _count_groups(rows)
+
     return {
         "code": 0,
         "data": [
@@ -1187,6 +1216,13 @@ async def get_bindings(
                 # 与「我绑的」全靠它。少了这个字段时，管理端编辑平台 MCP 服务会把
                 # 全局绑定整行过滤掉——界面显示「未选」，连解绑按钮都不出现。
                 "is_global": not binding.bound_by_user_id,
+                # 多值配法的组标识 + 同组几个槽位。单值页据此把「由多值统一管理」
+                # 的参数锁成只读：不锁的话改其中一行只改这一个 slot，其余 N-1 个
+                # 还是旧规则，多值结构被悄悄拆散而没人知道。
+                # 组大小让界面能说出「统一管理（5 个参数）」，只说「多值管理」
+                # 用户判断不了要不要去多值页看。
+                "binding_group_id": getattr(binding, "binding_group_id", None),
+                "binding_group_size": _group_size_of(binding, group_sizes),
             }
             for binding, secret in rows
             # 全局绑定迁移后是空串，迁移前是 NULL，两种都算「可见」
@@ -1931,6 +1967,23 @@ async def create_bindings_batch(
     if not resolved:
         raise HTTPException(status_code=400, detail="没有需要保存的参数")
 
+    # 这一批是「一次多值配置」：生成一个组标识，整批共享。
+    #
+    # 单值配法和多值配法落库同形（都是 N 个 slot 各一条绑定），没有这个标识，
+    # 下游只能靠「几个 slot 的 rule_json 是否相同」去猜——用户单独改过其中一条
+    # 之后那个推断就不成立了。有了它：单值页能认出「这个参数由多值统一管理」
+    # 并锁成只读。
+    #
+    # 只在**整表保存**这里生成；单条 POST /bindings（单值配法）不传，保持 NULL。
+    #
+    # 实际写入的槽位只有 1 个时不生成：那不是「一条凭据供一组」，锁成只读
+    # 反而让用户没法在单值页改它，还得先回多值页或整表清空。
+    binding_group_id = (
+        str(uuid.uuid4())
+        if len([item for item in resolved if item["strategy"] != "none"]) > 1
+        else None
+    )
+
     # —— 第二轮：真正写入 ——
     saved = 0
     removed = 0
@@ -1997,6 +2050,7 @@ async def create_bindings_batch(
                 commit=False,
                 audit=False,
                 allow_global=is_admin,
+                binding_group_id=binding_group_id,
             )
             saved += 1
             continue
@@ -2034,6 +2088,7 @@ async def create_bindings_batch(
             # 审计同理：提交成功后再写，不记没发生过的操作
             audit=False,
             allow_global=is_admin,
+            binding_group_id=binding_group_id,
         )
         saved += 1
 

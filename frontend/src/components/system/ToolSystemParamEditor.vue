@@ -2,6 +2,7 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { KeyIcon } from '@heroicons/vue/24/outline'
 import axios from '../../utils/axios'
+import { useConfirm } from '@/composables/useConfirm'
 import PermissionVariableMenu from '../metadata/PermissionVariableMenu.vue'
 import CredentialPicker from '../secrets/CredentialPicker.vue'
 import SecretFieldSelect from '../secrets/SecretFieldSelect.vue'
@@ -41,6 +42,8 @@ const bindingIssue = (binding: BoundSecret | null): string => {
   if (binding.secret_status === 'expired') return '凭据已过期'
   return '凭据不可用'
 }
+
+const { confirm } = useConfirm()
 
 const props = withDefaults(defineProps<{
     /**
@@ -111,6 +114,34 @@ const singleValueParams = computed(() => {
 
 /** 两种配法分开摆：单值凭据一个参数一条，多值凭据一条供一组 */
 const paramTab = ref<'single' | 'multi'>('single')
+/** 已经为哪个 consumer 定过默认页；同一个工具不重复决定（否则手动切的 tab 会被顶回来） */
+const tabDecidedFor = ref<string | null>(null)
+
+/** 多值面板的脏状态由它自己算（字段映射 + 来源/规则改动） */
+const multiPanelRef = ref<{ isDirty?: boolean } | null>(null)
+
+/**
+ * 切换「单值凭据 / 多值凭据」。
+ *
+ * 多值面板是 ``v-if`` 挂载的，切走即销毁，没保存的字段映射会**静默消失**；
+ * 而单值页的绑定是即时落库的，切走再切回还在。两边行为反着来，用户切一次就
+ * 可能丢掉刚配好的一半映射，所以有未保存改动先问一句。
+ */
+async function switchParamTab(tab: 'single' | 'multi') {
+  if (tab === paramTab.value) return
+  if (paramTab.value === 'multi' && multiPanelRef.value?.isDirty) {
+    const ok = await confirm({
+      title: '切换会丢弃未保存的映射',
+      message: '多值凭据页还有没保存的字段映射，切到单值页就没了。确定要切换吗？',
+      confirmText: '切换',
+      danger: true,
+    })
+    if (!ok) return
+  }
+  paramTab.value = tab
+  // 多值页保存会整表覆盖绑定，单值页那边的已绑定状态要按库里的事实重算
+  await loadBindings()
+}
 /** 批量映射保存后的行内提示（这个组件没有全局 toast） */
 const mappingHint = ref('')
 const pickerBusy = ref(false)
@@ -124,6 +155,20 @@ const pickerNeedsField = ref(false)
 // 与固定凭据分开存：两者是同槽位的两条独立绑定，共用一个 key 会互相覆盖。
 /** 参数名 → 已保存的规则 */
 const ruleDrafts = ref<Record<string, LocatorRule | null>>({})
+/**
+ * 参数名 → 这条规则是不是「多值凭据统一配的」。
+ *
+ * 多值保存会写成「N 个参数各一条 rule 绑定」，与单值页逐条配出来的**完全同形**。
+ * 没有这个信息时，单值页只能看到「这个参数也有规则」，于是把一条规则映射多个字段
+ * 显示成 N 条独立规则；更糟的是每行都有「改规则」——改一行只改一个参数，其余
+ * N-1 个还是旧规则，多值结构被悄悄拆散。
+ *
+ * 单独存而不塞进 ``ruleDrafts``：那是要原样提交给后端的规则本体，
+ * 多一个字段 ``parse_rule`` 会直接拒掉。
+ */
+const ruleGroups = ref<Record<string, { groupId: string; size: number }>>({})
+/** 参数名 → 这条**固定凭据**是不是多值页铺出来的（一条凭据供多个参数） */
+const fixedGroups = ref<Record<string, { groupId: string; size: number }>>({})
 /** 新建态（工具还没有 id）下暂存的规则，保存后补写 */
 const pendingRules = injectedDraft ? injectedDraft.rules : ref<Record<string, LocatorRule>>({})
 /** 正在编辑规则的参数名；非空时显示编辑器 */
@@ -133,6 +178,19 @@ const bindingOf = (name: string): BoundSecret | null => {
   const key = String(name || '').trim()
   if (!key) return null
   return bindings.value[key] || pending.value[key] || null
+}
+
+/** 这个参数的规则是不是多值凭据统一配的 */
+const multiManagedRuleOf = (name: string): { groupId: string; size: number } | null => {
+  const group = ruleGroups.value[String(name || '').trim()]
+  // 组里只有一个参数不算多值：锁成只读只会让用户在单值页改不了
+  return group && group.size > 1 ? group : null
+}
+
+/** 这条**固定凭据**是不是多值页铺出来的（一条凭据供多个参数各取一个字段） */
+const multiManagedFixedOf = (name: string): { groupId: string; size: number } | null => {
+  const group = fixedGroups.value[String(name || '').trim()]
+  return group && group.size > 1 ? group : null
 }
 
 /** 按参数名取「固定凭据」那条：规则行没有 secret_key，混用会显示空白 */
@@ -153,6 +211,8 @@ async function loadBindings() {
     })
     const next: Record<string, BoundSecret> = {}
     const nextRules: Record<string, LocatorRule | null> = {}
+    const nextGroups: Record<string, { groupId: string; size: number }> = {}
+    const nextFixedGroups: Record<string, { groupId: string; size: number }> = {}
     for (const row of res.data?.data || []) {
       const slot = String(row.slot || '')
       // header:X-Key 属于请求头，不是参数位
@@ -168,6 +228,12 @@ async function loadBindings() {
       // 规则单独记到 ruleDrafts，避免互相覆盖。
       if (strategy === 'rule') {
         nextRules[name] = withRulePath(row.rule, row.value_path)
+        if (row.binding_group_id) {
+          nextGroups[name] = {
+            groupId: row.binding_group_id,
+            size: row.binding_group_size || 0,
+          }
+        }
         continue
       }
       next[name] = {
@@ -182,9 +248,30 @@ async function loadBindings() {
         value_template: row.value_template || '',
         strategy,
       }
+      // 固定凭据也可能是多值页铺出来的，同样要认出来
+      if (row.binding_group_id) {
+        nextFixedGroups[name] = {
+          groupId: row.binding_group_id,
+          size: row.binding_group_size || 0,
+        }
+      }
     }
     bindings.value = next
     ruleDrafts.value = nextRules
+    ruleGroups.value = nextGroups
+    fixedGroups.value = nextFixedGroups
+
+    // 默认落在哪一页按**配置本身**定：有多值组标识就说明这份配置是多值配法，
+    // 打开时落到单值页只会显示「每个参数一条规则」，看着像配置被拆散了。
+    //
+    // 固定凭据型也要算进来：多值页选「固定凭据」铺 N 个参数时 N 行 fixed 共享
+    // 一个组标识，只判规则型的话这类配置打开会落到单值页——和 MCP 那边
+    // hasMultiValueConfig 的口径不一致。组里只有 1 个参数的不算（那不是多值）。
+    if (tabDecidedFor.value !== String(props.consumerId || '')) {
+      tabDecidedFor.value = String(props.consumerId || '')
+      const grouped = [...Object.values(nextGroups), ...Object.values(nextFixedGroups)]
+      paramTab.value = grouped.some((g) => g.size > 1) ? 'multi' : 'single'
+    }
   } catch {
     // 拉不到就按「未绑」显示，别挡住参数编辑
     bindings.value = {}
@@ -196,6 +283,72 @@ watch(
   () => { void loadBindings() },
   { immediate: true },
 )
+
+/**
+ * 多值凭据页有没有没保存的字段映射。
+ *
+ * 工具保存（``toolApi.update``）只写工具定义，**不会**带上面板里的映射草稿——
+ * 那份草稿要用户自己点「保存映射」才落库。不拦一下的话，用户改完映射直接点
+ * 「保存工具」，看到「更新成功」就以为全存了，实际运行时用的还是旧映射。
+ *
+ * 只看多值页：单值页选凭据是即时 POST/DELETE 落库的，不存在"待保存的映射"。
+ */
+const hasUnsavedMapping = (): boolean =>
+  paramTab.value === 'multi' && !!multiPanelRef.value?.isDirty
+
+/** 有多少参数的来源是凭据或规则（判「有没有东西可清」） */
+const boundParamCount = computed(
+  () => props.modelValue.filter((p) => p.source === 'credential' || p.source === 'rule').length
+)
+
+/**
+ * 一键清空：删掉这个工具所有参数的凭据绑定与规则，来源改回「固定值」。
+ *
+ * 参数本身（名字、类型）是工具配置的一部分，不在清空范围内——用户要的是
+ * 「别再从凭据取值了」，不是把参数删了。
+ *
+ * 网上走 ``bindings/batch`` 全 ``strategy='none'``：后端按槽位把固定与规则
+ * 两条一起删，所以多值凭据统一配的那组也会一并清掉。
+ */
+async function clearParamBindings() {
+  const names = props.modelValue.map((p) => String(p.name || '').trim()).filter(Boolean)
+  if (!names.length) return
+  const grouped = names.filter((name) => multiManagedRuleOf(name)).length
+  const ok = await confirm({
+    title: '清空全部凭据配置',
+    message:
+      `将清除这个工具全部 ${names.length} 个参数的凭据绑定与规则（参数本身保留，来源改回「固定值」）。` +
+      (grouped ? `\n其中 ${grouped} 个参数由多值凭据统一管理，也会一并清除。` : ''),
+    confirmText: '清空',
+    danger: true,
+  })
+  if (!ok) return
+  // 新建态（工具还没有 id）：只清本地记账，保存工具时才真正落库
+  if (!props.consumerId) {
+    pending.value = {}
+    pendingRules.value = {}
+    for (const p of props.modelValue) p.source = 'literal'
+    return
+  }
+  try {
+    await axios.post('/api/portal/secrets/bindings/batch', {
+      consumer_type: props.consumerType,
+      consumer_id: props.consumerId,
+      is_global: props.isGlobal,
+      // API 工具的槽位由后端按参数名推算，这里不给 slot
+      items: names.map((name) => ({ name, strategy: 'none' as const })),
+    })
+    bindings.value = {}
+    ruleDrafts.value = {}
+    ruleGroups.value = {}
+    fixedGroups.value = {}
+    for (const p of props.modelValue) p.source = 'literal'
+    await loadBindings()
+    mappingHint.value = '已清空全部凭据配置'
+  } catch (e: any) {
+    pickerError.value = e?.response?.data?.detail || '清空失败'
+  }
+}
 
 function openPicker(name: string) {
   const key = String(name || '').trim()
@@ -486,6 +639,10 @@ async function applyRule(rule: LocatorRule) {
       is_global: props.isGlobal,
     })
     ruleDrafts.value[name] = rule
+    // 单条保存的规则**不带**组标识，后端会把这个槽位的 binding_group_id 写回 NULL——
+    // 也就是说它从「多值组的一员」变成了单值配法。前端不同步清掉的话，
+    // 界面还会显示「由多值凭据统一管理」，可实际上组已经散了。
+    delete ruleGroups.value[name]
     injectedDraft?.bumpRevision?.()
     // 存成功了才关：开头不再无条件置 null，失败时留着弹窗让用户改
     locatorName.value = null
@@ -510,6 +667,7 @@ const unboundNames = computed(() => props.modelValue
 watch(unboundNames, (names) => emit('unbound-changed', names), { immediate: true })
 
 defineExpose({
+  hasUnsavedMapping,
   flushPending,
   hasPending: () => Object.keys(pending.value).length > 0
     || Object.keys(pendingRules.value).length > 0,
@@ -581,6 +739,14 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
           class="rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50"
           @click="addParam"
         >+ 添加系统级参数</button>
+        <!-- 配错时逐个改回「固定值」要 N 次操作，还容易漏掉某个参数 -->
+        <button
+          v-if="paramTab === 'single' && boundParamCount"
+          type="button"
+          class="rounded-md border border-rose-200 bg-white px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+          title="清除这个工具所有参数的凭据绑定与规则（参数本身保留）"
+          @click="clearParamBindings"
+        >清空全部</button>
       </div>
     </div>
 
@@ -594,7 +760,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
         :class="paramTab === tab
           ? 'border-indigo-600 font-semibold text-indigo-700'
           : 'border-transparent text-indigo-500 hover:text-indigo-700'"
-        @click="paramTab = tab"
+        @click="switchParamTab(tab)"
       >{{ tab === 'single' ? '单值凭据' : '多值凭据' }}</button>
     </div>
 
@@ -632,7 +798,15 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
       <!-- 来自凭据：就地选，不再跳去「高级请求配置」 -->
       <div v-if="p.source === 'credential'" class="flex flex-wrap items-center gap-1.5">
+        <!-- 多值页铺出来的固定凭据不给「换」：换了只影响这一个参数，
+             组里其余参数还指向原凭据，组标识还在但语义已经散了 -->
+        <span
+          v-if="multiManagedFixedOf(p.name)"
+          class="inline-flex shrink-0 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-700"
+          title="这条凭据由「多值凭据」一次性选好、供组内多个参数各取一个字段。要换请到多值凭据页整组换，在这里单独换会把它拆散。"
+        >由多值凭据统一管理（{{ multiManagedFixedOf(p.name)?.size }} 个参数）</span>
         <button
+          v-else
           type="button"
           class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium shadow-sm transition-colors"
           :class="fixedBindingOf(p.name)
@@ -676,23 +850,38 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
             <!-- 按规则匹配：不选具体凭据，只配「怎么找」 -->
       <div v-else-if="p.source === 'rule'" class="flex flex-wrap items-center gap-1.5">
-        <button
-          type="button"
-          class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium shadow-sm transition-colors"
-          :class="ruleDrafts[p.name.trim()]
-            ? 'border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50'
-            : 'bg-emerald-600 text-white hover:bg-emerald-700'"
-          @click.stop="openLocator(p.name)"
-        >
-          <KeyIcon class="h-3 w-3" />
-          {{ ruleDrafts[p.name.trim()] ? '改规则' : '配规则' }}
-        </button>
-        <span
-          v-if="ruleDrafts[p.name.trim()]"
-          class="max-w-[16rem] truncate text-[11px] text-emerald-700"
-          :title="ruleDrafts[p.name.trim()]?.key_source"
-        >{{ ruleSummary(ruleDrafts[p.name.trim()]) }}</span>
-        <span v-else class="text-[11px] text-red-600">未配，保存会被拦住</span>
+        <!-- 多值凭据统一配的规则不给「改规则」：改了只影响这一个参数，
+             组里其余参数还是旧规则，多值结构被悄悄拆散，而这一页看不出来 -->
+        <template v-if="multiManagedRuleOf(p.name)">
+          <span
+            class="inline-flex shrink-0 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-700"
+            title="这条规则由「多值凭据」一次性配置，组内所有参数共用同一条规则、各取不同字段。要改请到多值凭据页整组修改，在这里单独改会把它拆散。"
+          >由多值凭据统一管理{{ multiManagedRuleOf(p.name)?.size ? `（${multiManagedRuleOf(p.name)?.size} 个参数）` : '' }}</span>
+          <span
+            v-if="ruleDrafts[p.name.trim()]"
+            class="max-w-[16rem] truncate text-[11px] text-indigo-600"
+            :title="ruleDrafts[p.name.trim()]?.key_source"
+          >{{ ruleSummary(ruleDrafts[p.name.trim()]) }}</span>
+        </template>
+        <template v-else>
+          <button
+            type="button"
+            class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium shadow-sm transition-colors"
+            :class="ruleDrafts[p.name.trim()]
+              ? 'border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50'
+              : 'bg-emerald-600 text-white hover:bg-emerald-700'"
+            @click.stop="openLocator(p.name)"
+          >
+            <KeyIcon class="h-3 w-3" />
+            {{ ruleDrafts[p.name.trim()] ? '改规则' : '配规则' }}
+          </button>
+          <span
+            v-if="ruleDrafts[p.name.trim()]"
+            class="max-w-[16rem] truncate text-[11px] text-emerald-700"
+            :title="ruleDrafts[p.name.trim()]?.key_source"
+          >{{ ruleSummary(ruleDrafts[p.name.trim()]) }}</span>
+          <span v-else class="text-[11px] text-red-600">未配，保存会被拦住</span>
+        </template>
         <span
           v-if="!consumerId && pendingRules[p.name.trim()]"
           class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700"
@@ -748,6 +937,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
       </p>
       <SecretFieldMappingPanel
         v-else
+        ref="multiPanelRef"
         :consumer-type="consumerType"
         :consumer-id="consumerId"
         :is-global="isGlobal"

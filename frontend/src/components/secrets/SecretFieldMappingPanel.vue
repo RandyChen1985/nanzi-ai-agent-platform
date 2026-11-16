@@ -10,10 +10,13 @@
  * 「这张表就是这个工具的参数配置」比「只改动过的」更符合这里的心理模型。
  */
 import { computed, ref, watch } from 'vue'
+import { useConfirm } from '@/composables/useConfirm'
 import axios from '@/utils/axios'
 import type { CredentialPickerItem } from '@/utils/credentialPicker'
 import { findCredentialTemplate } from '@/utils/credentialTemplates'
 import SecretLocatorEditor, { type LocatorRule } from './SecretLocatorEditor.vue'
+
+const { confirm } = useConfirm()
 
 const props = withDefaults(
   defineProps<{
@@ -72,6 +75,12 @@ const original = ref<Record<string, string>>({})
 /** 被别的凭据或规则占着的参数（参数名 → 来源名） */
 const takenByOther = ref<Record<string, string>>({})
 const ruleDraft = ref<LocatorRule | null>(null)
+/**
+ * 用户有没有动过「来源」或「规则」。字段映射的改动可以直接拿 ``picks`` 和
+ * ``original`` 比，但「把来源从固定凭据切成按规则」「改了一条规则」并不一定
+ * 改变已选字段，光比 ``picks`` 会漏掉——切换标签页时就可能把这类改动悄悄丢掉。
+ */
+const touched = ref(false)
 const ruleOpen = ref(false)
 const busy = ref(false)
 const errorText = ref('')
@@ -94,6 +103,18 @@ const ruleFields = computed<FieldMeta[]>(() => {
 
 const candidateFields = computed(() =>
   source.value === 'rule' ? ruleFields.value : liveFields.value,
+)
+
+/**
+ * 还没选凭据 / 还没配规则。
+ *
+ * 这时字段候选必然是空的，但**不该**因此退回手填框：多值配法的顺序是先有
+ * 一条凭据（或一条规则）才谈得上「把它的字段分给各参数」，直接给个空输入框
+ * 等于让用户凭空猜字段名。真正需要手填的是「不限定结构」的规则（模板没约束
+ * 字段集），那种情况 ruleDraft 存在，走不到这里。
+ */
+const needsSourceFirst = computed(() =>
+  source.value === 'rule' ? !ruleDraft.value : !secretId.value,
 )
 
 const ruleSummaryText = computed(() => {
@@ -126,6 +147,16 @@ const pendingChanges = computed(() => {
   }
   return changed
 })
+
+/**
+ * 需要点保存才会生效的改动数。
+ *
+ * ``pendingChanges`` 只比字段映射：改了来源或规则、但字段恰好一个没动时它是空的。
+ * 那种情况同样要保存（运行时读的是规则本身），不提示的话用户关掉弹窗就以为生效了。
+ */
+const pendingChangeCount = computed(() =>
+  pendingChanges.value.length || (touched.value ? 1 : 0)
+)
 
 /** 参数 → 槽位。MCP 必须给（``arg:短工具名:参数``），API 工具留空由后端推算。 */
 function slotOf(name: string): string {
@@ -252,6 +283,7 @@ async function load() {
 
     original.value = { ...mine }
     picks.value = { ...mine }
+    touched.value = false
 
     secretId.value = boundId || structured.value[0]?.id || ''
     await fetchFields(secretId.value)
@@ -262,17 +294,48 @@ async function load() {
   }
 }
 
+/**
+ * 这一页有没有没保存的改动。
+ *
+ * 父组件切换「单值 / 多值」标签页时会问它：多值面板是 ``v-if`` 挂载的，切走即销毁，
+ * 没保存的映射会无声消失；而单值页的草稿是父组件自己的 ref，切走再切回还在。
+ * 两边行为不一致，用户切一次就可能丢配置，所以切换前必须问一句。
+ */
+const isDirty = computed(() => {
+  if (touched.value) return true
+  const names = new Set([...Object.keys(picks.value), ...Object.keys(original.value)])
+  for (const name of names) {
+    if ((picks.value[name] || '') !== (original.value[name] || '')) return true
+  }
+  return false
+})
+
+defineExpose({ isDirty })
+
+function pickSource(next: 'fixed' | 'rule') {
+  if (source.value === next) return
+  source.value = next
+  touched.value = true
+}
+
 /** 手动换凭据：字段名属于旧凭据，全部清掉重选 */
 async function changeSecret() {
   picks.value = {}
   original.value = {}
   takenByOther.value = {}
+  // original 被一起清空了，只比 picks 与 original 的话换完凭据反而判成「没改动」。
+  // 换凭据本身就意味着「这一组要重新配字段」，必须算脏。
+  touched.value = true
   await fetchFields(secretId.value)
 }
 
 function onRuleSaved(rule: LocatorRule) {
   ruleDraft.value = rule
   source.value = 'rule'
+  // 必须算脏：新规则的字段集和旧的一样时（只改了 match / key_source / target），
+  // 下面的 picks 不会变，只比 picks 的话这里判不出改动——切 tab 或关弹窗时
+  // 规则草稿会被静默丢掉，而它恰恰要「保存映射」才生效。
+  touched.value = true
   // 模板换了，旧字段名通常不存在了——但只在**真的能列出字段**时才清理。
   // 选「不限定结构」时 ruleFields 是空的，照清不误会把用户手填的字段名全抹掉：
   // 那个场景下没有下拉可选，手填是唯一途径，清掉等于让他重填一遍。
@@ -301,6 +364,63 @@ function autoMatch() {
   autoHint.value = matched
     ? `按名字对上了 ${matched} 个，剩下的自己选`
     : '没有参数名和字段名撞上，得手动选'
+}
+
+/**
+ * 一键清空：把这个工具所有参数的凭据配置（固定凭据与规则）全部清掉。
+ *
+ * 为什么要单独一条路径而不是「把字段全清空再点保存」：``save`` 有两道守卫
+ * （没选凭据 / 没配规则就报错），它们挡的正是「配置残缺时误保存」，而清空
+ * 恰恰是主动、完整的动作——硬塞进 save 就得给守卫开后门。
+ *
+ * 不提「单值/多值」概念：后端 ``strategy='none'`` 会把该槽位的 fixed 与 rule
+ * **两条都删掉**，所以对用户来说结果只有一个——参数回到「模型填写」。
+ */
+async function clearAll() {
+  if (!props.consumerId || busy.value) return
+  const count = props.params.length
+  const ok = await confirm({
+    title: '清空全部凭据配置',
+    message: `将清除这个工具全部 ${count} 个参数的凭据配置（固定凭据与规则都会删除），参数回到「模型填写」。`,
+    confirmText: '清空',
+    danger: true,
+  })
+  if (!ok) return
+  busy.value = true
+  errorText.value = ''
+  try {
+    const items = props.params.map((name) => ({
+      slot: props.slots?.[name] || '',
+      name,
+      strategy: 'none' as const,
+    }))
+    const res = await axios.post('/api/portal/secrets/bindings/batch', {
+      consumer_type: props.consumerType,
+      consumer_id: props.consumerId,
+      is_global: props.isGlobal,
+      items,
+      mcp_tool_id: props.mcpToolId || undefined,
+    })
+    const data = res.data?.data || { saved: 0, removed: 0 }
+    picks.value = {}
+    original.value = {}
+    ruleDraft.value = null
+    source.value = 'fixed'
+    touched.value = false
+    await load()
+    emit('saved', {
+      saved: data.saved || 0,
+      removed: data.removed || 0,
+      source: 'fixed',
+      bound: [],
+      freed: props.params.slice(),
+      credentialParams: Array.isArray(data.credential_params) ? data.credential_params : null,
+    })
+  } catch (e: any) {
+    errorText.value = e?.response?.data?.detail || '清空失败'
+  } finally {
+    busy.value = false
+  }
 }
 
 async function save() {
@@ -360,6 +480,8 @@ async function save() {
     // 而那时用户已经以为配好了——排查方向会全错。
     await load()
     original.value = { ...picks.value }
+    // 保存成功即成为新基线，这个时候不该再算「有未保存改动」
+    touched.value = false
     emit('saved', {
       saved: data.saved || 0,
       removed: data.removed || 0,
@@ -384,7 +506,9 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
 <template>
   <div>
     <p class="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-700">
-      先定一条凭据（或一条挑凭据的规则），再把它的字段分给各参数。
+      <span class="font-semibold">①</span> 定一条凭据（或一条挑凭据的规则）
+      → <span class="font-semibold">②</span> 把它的字段分给各参数
+      → <span class="font-semibold">③</span> 保存映射。
       <strong>没选字段的参数保存后回到「模型填写」</strong>。
     </p>
 
@@ -399,7 +523,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
         type="button"
         class="flex-1 rounded-lg border px-3 py-2 text-left transition-colors"
         :class="source === 'fixed' ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-gray-300 bg-white hover:border-gray-400'"
-        @click="source = 'fixed'"
+        @click="pickSource('fixed')"
       >
         <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-900">
           固定凭据
@@ -411,7 +535,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
         type="button"
         class="flex-1 rounded-lg border px-3 py-2 text-left transition-colors"
         :class="source === 'rule' ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-gray-300 bg-white hover:border-gray-400'"
-        @click="source = 'rule'"
+        @click="pickSource('rule')"
       >
         <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-900">
           按规则匹配
@@ -480,7 +604,9 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
     <!-- 映射表 -->
     <div class="rounded-lg border border-gray-200">
       <div class="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
-        <span class="text-xs font-semibold text-gray-800">参数 → 字段</span>
+        <span class="text-xs font-semibold text-gray-800">
+          <span class="mr-1 text-gray-400">②</span>参数 → 字段
+        </span>
         <div class="ml-auto flex items-center gap-2">
           <span class="text-[11px] text-gray-500">
             已映射 {{ params.filter((n) => picks[n]).length }} / {{ params.length }}
@@ -533,6 +659,10 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
                   {{ f.name }}{{ f.sensitive ? '（敏感）' : '' }}
                 </option>
               </select>
+              <span
+                v-else-if="needsSourceFirst"
+                class="text-[11px] text-gray-400"
+              >先在上面{{ source === 'rule' ? '配一条规则' : '选一条凭据' }}，这里会列出可选字段</span>
               <input
                 v-else
                 v-model="picks[name]"
@@ -552,15 +682,30 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
       <span class="text-[11px] text-gray-500">
         保存后：{{ params.filter((n) => picks[n]).length }} 个参数由凭据提供，
         {{ params.filter((n) => !picks[n]).length }} 个回到模型填写
-        <template v-if="pendingChanges.length">（本次改动 {{ pendingChanges.length }} 个）</template>
+        <template v-if="pendingChangeCount">
+          <span class="font-medium text-amber-600">· 有 {{ pendingChangeCount }} 处未保存</span>
+        </template>
       </span>
-      <div class="ml-auto">
+      <div class="ml-auto flex items-center gap-2">
+        <!-- 一键清空：配错时逐个改回「模型填写」太麻烦，且容易漏掉某个参数 -->
         <button
           type="button"
-          class="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+          class="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-40"
+          :disabled="busy || !params.length"
+          title="清除这个工具所有参数的凭据配置（固定凭据与规则都会删除）"
+          @click="clearAll"
+        >清空全部</button>
+        <button
+          type="button"
+          class="rounded-lg px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+          :class="pendingChangeCount
+            ? 'bg-indigo-600 ring-2 ring-amber-400 ring-offset-1'
+            : 'bg-indigo-600'"
           :disabled="busy || !params.length"
           @click="save"
-        >{{ busy ? '保存中…' : '保存映射' }}</button>
+        >{{ busy
+          ? '保存中…'
+          : (pendingChangeCount ? `保存映射（${pendingChangeCount} 处改动）` : '保存映射') }}</button>
       </div>
     </div>
 

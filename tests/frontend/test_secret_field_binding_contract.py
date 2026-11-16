@@ -799,7 +799,11 @@ class TestWizardPendingBindingsSurviveSave:
     def test_wizard_exposes_flush_pending(self):
         wizard = _read(ROOT / "frontend/src/components/system/ToolWizard.vue")
         assert 'ref="paramEditorRef"' in wizard
-        assert "defineExpose({ flushPending })" in wizard
+        # 暴露两件事：保存后补写新建态绑定，以及「多值页有没保存的映射」——
+        # 工具保存不会带上后者，父组件要靠它拦一下。
+        assert "flushPending" in wizard
+        assert "hasUnsavedMapping" in wizard
+        assert "defineExpose({" in wizard
 
     def test_step_three_is_kept_alive(self):
         """第 3 步不能随步骤切换卸载，否则 pending 跟着没。

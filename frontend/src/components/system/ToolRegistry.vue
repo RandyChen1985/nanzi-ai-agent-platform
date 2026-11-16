@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch, provide } from 'vue'
 import { toolApi, scriptToolApi, type SysApiTool } from '../../api/tool'
+import { useConfirm } from '@/composables/useConfirm'
 import { SUPPORTED_HTTP_METHODS } from '../../utils/toolMethods'
 import { parseToolSchema, validateSystemParams } from '../../utils/toolSchema'
 import { computeGroupTabs, matchesToolFilters, toolGroupName } from '../../utils/toolGroupTabs'
@@ -53,10 +54,12 @@ const fieldErrors = ref<Partial<Record<'name' | 'url_template' | 'headers_str' |
  */
 const paramEditorRef = ref<{
     flushPending: (consumerId: string) => Promise<string[]>
+    hasUnsavedMapping?: () => boolean
 } | null>(null)
 /** 向导模式下的那一份：新建默认走向导，走这里才拿得到新建态记下的凭据绑定 */
 const wizardRef = ref<{
     flushPending: (consumerId: string) => Promise<string[]>
+    hasUnsavedMapping?: () => boolean
 } | null>(null)
 const headersEditorRef = ref<{
   flushPending: (consumerId: string) => Promise<string[]>
@@ -712,6 +715,8 @@ const clearSelectedGroup = () => {
     showGroupClearConfirm.value = true
 }
 
+const { confirm } = useConfirm()
+
 const saveTool = async () => {
     if (saving.value) return
     saving.value = true
@@ -721,6 +726,25 @@ const saveTool = async () => {
         saving.value = false
         void nextTick(() => { suppressFormWatch.value = false })
         return
+    }
+
+    // 多值凭据页的字段映射是**单独保存**的，工具保存不会带上它。不拦一下的话，
+    // 用户改完映射直接点保存，看到「更新成功」就以为全存了，运行时还是旧映射。
+    const unsavedMapping = editorMode.value === 'wizard'
+        ? (wizardRef.value?.hasUnsavedMapping?.() ?? false)
+        : (paramEditorRef.value?.hasUnsavedMapping?.() ?? false)
+    if (unsavedMapping) {
+        const ok = await confirm({
+            title: '多值凭据页有未保存的映射',
+            message: '保存工具不会带上这些字段映射（要另点「保存映射」）。仍要继续保存工具吗？',
+            confirmText: '继续保存',
+            danger: true,
+        })
+        if (!ok) {
+            saving.value = false
+            void nextTick(() => { suppressFormWatch.value = false })
+            return
+        }
     }
 
     try {

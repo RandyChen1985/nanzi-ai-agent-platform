@@ -108,6 +108,19 @@ class SecretBinding(Base):
     #: 共享同一份规则，「取哪一段」各记各的。规则里的 ``value_template`` 负责把
     #: 结构不符的凭据判成未命中，所以路径不会钉在别的结构上。
     value_path = Column(String(255), nullable=False, default="", server_default="")
+    #: 多值配法的组标识：一次整表保存（``bindings/batch``）生成一个，该批各行共享；
+    #: 单值是 NULL。
+    #:
+    #: 单值配法和多值配法**落库同形**——都是「N 个 slot 各一条绑定」，所以没有这一列
+    #: 时只能靠「几个 slot 的 rule_json 是否相同」去猜，而用户单独改过其中一条之后
+    #: 这个推断就不成立了。它要解决的三件事：参数设置的单值页认出「这个参数由多值
+    #: 统一管理」并改成只读（否则改一行就悄悄拆散了整组）、多值页重开时能精确复原、
+    #: 以及**预留**给「注入时同组只定位一次」（同一条规则不必按 slot 重复执行 N 遍）。
+    #:
+    #: 第三件目前只落库、**没有**被注入链路消费：injection/resolver/locator 都不读它，
+    #: 实际解析仍是按 slot 逐个执行。做这件事只省查询次数——同一份规则同样的入参必然
+    #: 选出同一条凭据，结果不会变——所以先留着标识，需要时再接。
+    binding_group_id = Column(String(36), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

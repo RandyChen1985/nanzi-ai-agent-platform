@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ToastContainer from './components/ToastContainer.vue'
+import ConfirmHost from './components/common/ConfirmHost.vue'
 import { onMounted } from 'vue'
 import { loadBranding } from './composables/useBranding'
 import { initializeTheme } from './composables/useAppTheme'
@@ -17,6 +18,8 @@ onMounted(() => {
 
 <template>
   <ToastContainer />
+  <!-- 全局确认框：替代 window.confirm，业务组件用 useConfirm() 唤起 -->
+  <ConfirmHost />
   <router-view></router-view>
 </template>
 

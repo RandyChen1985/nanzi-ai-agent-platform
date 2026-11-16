@@ -406,8 +406,13 @@ class McpToolFactory:
             # 是远端原始参数名，不是本地安全别名。
             if _credential_args:
                 arg_denials: Dict[str, str] = {}
+                arg_denial_details: Dict[str, str] = {}
                 kwargs = await apply_mcp_arg_bindings(
-                    tool_record, kwargs, user_info=user_info, denials=arg_denials
+                    tool_record,
+                    kwargs,
+                    user_info=user_info,
+                    denials=arg_denials,
+                    denial_details=arg_denial_details,
                 )
                 # 编号字段是给平台看的，绝不能发给远端：远端收到未知参数会报错。
                 # 必须在上面的注入之后剥——注入层要从这里读模型的选择。
@@ -419,9 +424,23 @@ class McpToolFactory:
                 if arg_denials:
                     # 声明了却取不到，就是缺必需参数。必须报错，不能带着空值发出去：
                     # 远端只会回一个 401，用户看不懂缺的是哪个绑定。
-                    detail = "；".join(
-                        f"{slot}（{denial_text(why)}）" for slot, why in arg_denials.items()
-                    )
+                    # 同一个原因合并成一条：多值凭据下 5 个参数共用一条规则，
+                    # 规则没命中时 5 个槽位的原因和「要找什么」完全一样，逐条罗列
+                    # 只是把同一句话说五遍，反而把关键信息淹掉。
+                    grouped: Dict[tuple, list] = {}
+                    for slot, why in arg_denials.items():
+                        key = (why, arg_denial_details.get(slot, ""))
+                        grouped.setdefault(key, []).append(slot.rsplit(":", 1)[-1])
+                    parts = []
+                    for (why, why_detail), names in grouped.items():
+                        text = denial_text(why)
+                        # `detail` 里写着「要找的是什么值」（如 mail.a@b.com）。
+                        # 不带出去，用户只看到「匹配规则没有找到对应凭据」，完全
+                        # 想不到是自己的入参拼出来跟凭据 key 对不上。
+                        if why_detail:
+                            text = f"{text}：{why_detail}"
+                        parts.append(f"{'、'.join(names)}（{text}）")
+                    detail = "；".join(parts)
                     hints: list[str] = []
                     for reason in arg_denials.values():
                         hint = denial_hint(reason)
