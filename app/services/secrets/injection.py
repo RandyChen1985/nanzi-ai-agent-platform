@@ -471,6 +471,9 @@ async def apply_api_tool_bindings(
     # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
     # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
     plain_cache: dict[str, str] = {}
+    # 可见集合在同一层内对每个槽位都一样，查一次就够了。多值配法下「一条凭据
+    # 供 5 个参数」原本要跑 5 次同样的权限过滤查询。
+    visible_cache: dict[tuple[str, str], list] = {}
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
@@ -506,6 +509,7 @@ async def apply_api_tool_bindings(
                 dept_code=dept_code,
                 user_attrs=user_attrs,
                 plain_cache=plain_cache,
+                visible_cache=visible_cache,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] API 工具 %s 的 %s 解析失败: %s", getattr(config, "name", "?"), name, exc)
@@ -753,6 +757,9 @@ async def apply_api_tool_param_bindings(
     # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
     # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
     plain_cache: dict[str, str] = {}
+    # 可见集合在同一层内对每个槽位都一样，查一次就够了。多值配法下「一条凭据
+    # 供 5 个参数」原本要跑 5 次同样的权限过滤查询。
+    visible_cache: dict[tuple[str, str], list] = {}
     names = credential_param_names(getattr(config, "parameter_schema", None))
     if not names:
         return params
@@ -815,6 +822,7 @@ async def apply_api_tool_param_bindings(
                 user_attrs=user_attrs,
                 preferred_secret_id=preferred.get(name),
                 plain_cache=plain_cache,
+                visible_cache=visible_cache,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -933,6 +941,9 @@ async def apply_mcp_bindings(
     # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
     # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
     plain_cache: dict[str, str] = {}
+    # 可见集合在同一层内对每个槽位都一样，查一次就够了。多值配法下「一条凭据
+    # 供 5 个参数」原本要跑 5 次同样的权限过滤查询。
+    visible_cache: dict[tuple[str, str], list] = {}
     server_id = str(getattr(server, "id", "") or "")
     if not server_id:
         _flag_unresolved_references(headers, denials)
@@ -982,6 +993,7 @@ async def apply_mcp_bindings(
                 dept_code=dept_code,
                 user_attrs=user_attrs,
                 plain_cache=plain_cache,
+                visible_cache=visible_cache,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] MCP %s 的 %s 解析失败: %s", server_id, slot, exc)
@@ -1183,6 +1195,9 @@ async def apply_mcp_arg_bindings(
     # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
     # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
     plain_cache: dict[str, str] = {}
+    # 可见集合在同一层内对每个槽位都一样，查一次就够了。多值配法下「一条凭据
+    # 供 5 个参数」原本要跑 5 次同样的权限过滤查询。
+    visible_cache: dict[tuple[str, str], list] = {}
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
@@ -1237,6 +1252,7 @@ async def apply_mcp_arg_bindings(
                 user_attrs=user_attrs,
                 preferred_secret_id=preferred.get(name),
                 plain_cache=plain_cache,
+                visible_cache=visible_cache,
             )
         except Exception as exc:  # noqa: BLE001 - 凭据中心挂了不该炸掉工具调用
             logger.warning(
@@ -1412,6 +1428,9 @@ async def apply_script_env_bindings(
     # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
     # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
     plain_cache: dict[str, str] = {}
+    # 可见集合在同一层内对每个槽位都一样，查一次就够了。多值配法下「一条凭据
+    # 供 5 个参数」原本要跑 5 次同样的权限过滤查询。
+    visible_cache: dict[tuple[str, str], list] = {}
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
@@ -1458,6 +1477,7 @@ async def apply_script_env_bindings(
                 dept_code=dept_code,
                 user_attrs=user_attrs,
                 plain_cache=plain_cache,
+                visible_cache=visible_cache,
             )
         except Exception:  # noqa: BLE001
             logger.warning("[SecretInject] 脚本 %s 的 %s 解析失败", tool_id, slot, exc_info=True)

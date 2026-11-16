@@ -21,6 +21,19 @@ export const RESULT_LABEL: Record<string, string> = {
   rule_miss: '规则未命中',
   // 凭据值转不成参数声明的类型（端口写成「四百六十五」这种）
   type_mismatch: '类型不符',
+  // 下面 7 条是「引用语法 / 取字段」这一类的失败。文案与后端
+  // `app/services/secrets/injection.py::DENIAL_REASONS` 逐字一致：同一件事在
+  // 调用错误信息里是中文、在流水页却是英文码，排查的人会对不上号。
+  // 刻意都不复用「凭据没填」——那会让人去重新绑一次，而真正要改的是引用里的
+  // key 或字段名。
+  reference_mismatch: '引用里的凭据与这个槽位绑定的不是同一条',
+  reference_field_missing: '引用指向的字段在凭据里不存在',
+  reference_not_json: '凭据值是单值，不能按字段取用',
+  reference_bad_syntax: '引用语法写错了',
+  reference_unbound: '这个请求头里的凭据引用没有绑定',
+  credential_unbound: '这个请求头里的凭据占位符没有绑定',
+  structured_without_path: '这条凭据是结构化的，但没指定取哪个字段',
+  reference_unresolved: '凭据取到了，但没取出要注入的值',
   // 历史流水里出现过不带前缀的写法，留着才能正常显示老记录
   disabled: '已停用',
   expired: '已过期',

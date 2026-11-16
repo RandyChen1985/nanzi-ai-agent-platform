@@ -185,6 +185,7 @@ class SecretResolver:
         rule_args: Mapping[str, Any] | None = None,
         preferred_secret_id: str | None = None,
         plain_cache: dict[str, str] | None = None,
+        visible_cache: dict[tuple[str, str], list[Any]] | None = None,
         record_usage: bool = True,
     ) -> ResolveResult:
         """解析一个槽位。返回 ``ok=False`` 时调用方应走自己的默认值。
@@ -193,6 +194,12 @@ class SecretResolver:
         解密只做一次。传同一个 dict 进来即可，作用域是单次调用——**不要**做成进程级缓存，
         那会让改完凭据后旧明文继续生效，也让明文在内存里留得比必要的久。
         定位、场景、域名、授权、审计每次都照跑，缓存的只有解密这一步。
+
+        ``visible_cache``：一次工具调用内「我能看见哪些凭据」不会变（主键是
+        user + dept），但每个槽位都会重新查一遍。多值配法下一个组 5 个参数就是
+        5 次同样的查询，每次还带权限过滤与场景过滤——这是「一条凭据供多个参数」
+        最明显的浪费点。同样只活在单次调用里：它缓的是**可见集合**，不含明文，
+        也不含任何解密结果，所以不存在「改完凭据还拿着旧值」的问题。
         """
         if not user_id or not consumer_type or not consumer_id or not slot:
             return ResolveResult(ok=False, denial=DENY_BINDING, detail="missing identity")
@@ -215,6 +222,7 @@ class SecretResolver:
                     preferred_secret_id=preferred_secret_id,
                     scene=scene,
                     plain_cache=plain_cache,
+                    visible_cache=visible_cache,
                 )
                 if located.denial:
                     return ResolveResult(
@@ -392,6 +400,7 @@ class SecretResolver:
         visible: Sequence[Any] | None = None,
         scene: str | None = None,
         plain_cache: dict[str, str] | None = None,
+        visible_cache: dict[tuple[str, str], list[Any]] | None = None,
     ) -> Located:
         """选出这次要用的凭据。**层间**个人优先，**层内**规则优先。
 
@@ -411,6 +420,20 @@ class SecretResolver:
             )
         if not rows:
             return Located(denial=None)  # 交给调用方按「无绑定」处理
+
+        async def _visible() -> Sequence[Any]:
+            """可见集合：一次调用内只查一遍。
+
+            它只取决于 (user_id, dept_code)，和槽位无关；多值配法下同一个组里
+            5 个参数会走到这里 5 次，每次都是同样的权限过滤查询。
+            """
+            key = (user_id, dept_code or "")
+            if visible_cache is not None and key in visible_cache:
+                return visible_cache[key]
+            got = await self._visible_records(session, user_id, dept_code)
+            if visible_cache is not None:
+                visible_cache[key] = list(got)
+            return got
 
         layers: list[list[Any]] = []
         mine = [b for b in rows if (b.bound_by_user_id or "") == user_id]
@@ -446,7 +469,7 @@ class SecretResolver:
                 wanted = build_candidates(spec, identity=identity, args=args)
                 if wanted:
                     if visible is None:
-                        visible = await self._visible_records(session, user_id, dept_code)
+                        visible = await _visible()
                     # 规则声明的模板约束：结构不符当作**没命中**，绝不拿另一种结构的
                     # 凭据去按字段取值——那只会在取字段时失败，或者更糟：恰好同名但
                     # 含义不同的字段被静默注进去。
@@ -540,7 +563,7 @@ class SecretResolver:
                 )
             if on_miss == "model" and preferred_secret_id:
                 if visible is None:
-                    visible = await self._visible_records(session, user_id, dept_code)
+                    visible = await _visible()
                 chosen = next(
                     (s for s in visible if getattr(s, "id", None) == preferred_secret_id),
                     None,

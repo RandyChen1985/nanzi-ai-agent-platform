@@ -1124,6 +1124,24 @@ async def bind_rule(
     except RuleError as exc:
         raise SecretValidationError(str(exc)) from exc
 
+    # ── 槽位能力校验 ────────────────────────────────────────────────
+    # 有些配法在某个位点上**根本不可能生效**。存进库只会变成「配好了但永远
+    # 不命中」，而界面上一切正常——这类错误必须在保存时就说出来。
+    #
+    # 依据在注入层：`apply_script_env_bindings` 不传 rule_args（环境变量没有
+    # 「这次调用的入参」可以拿来比）；两个 Header 级函数不传 preferred_secret_id
+    # （模型回填的编号字段是工具参数，请求头里没有地方放它）。
+    if slot.startswith("env:"):
+        raise SecretValidationError(
+            "脚本环境变量不支持按规则匹配：环境变量没有「这次调用的入参」可以拿来比，"
+            "规则永远算不出候选。请改用固定凭据"
+        )
+    if slot.startswith("header:") and spec.on_miss == "model":
+        raise SecretValidationError(
+            "Header 级不支持「挑不到时让模型挑」：模型回填的编号字段是工具参数，"
+            "请求头里没有地方放它。请改回「直接报错」或「回退到固定凭据」"
+        )
+
     if dry_run:
         # 与 bind_secret 同口径：批量保存要先确认每一条都合法，再一起写。
         # 规则不指向具体凭据，所以这里没有「凭据是否存在」这类校验。

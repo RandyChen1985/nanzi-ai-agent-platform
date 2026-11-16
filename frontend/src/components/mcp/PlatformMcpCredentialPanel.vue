@@ -593,6 +593,7 @@ onMounted(load)
       :slot="locatorCtx ? locatorCtx.slot : ''"
       :consumer-type="locatorCtx ? locatorCtx.consumerType : ''"
       :arg-options="locatorCtx ? locatorCtx.argOptions : []"
+      :allow-model-choice="locatorCtx ? !locatorCtx.slot.startsWith('header:') : true"
       :title="locatorCtx ? `凭据匹配规则 · ${locatorCtx.title}` : '凭据匹配规则'"
       @update:open="(value: boolean) => { if (!value) locatorCtx = null }"
       removable

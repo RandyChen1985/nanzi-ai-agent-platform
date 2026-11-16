@@ -9,6 +9,7 @@
 用真实 DB 而不是 mock，因为要证明的东西恰恰是「查库、解密、规则匹配」这一串协作是否正确。
 """
 import hashlib
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -448,3 +449,86 @@ class TestModelChoiceMode:
         assert "模型" in summary
         # 不能渲染成「（取）」——那是来源为空时的占位残渣
         assert "取）" not in summary
+
+
+class TestSlotCapabilityRejectsImpossibleConfigs:
+    """有些配法在某个位点上不可能生效，必须保存时就拒。
+
+    存进库的代价是静默的：界面显示配好了，运行时永远不命中。依据在注入层——
+    `apply_script_env_bindings` 不传 rule_args，两个 Header 级函数不传
+    preferred_secret_id。
+    """
+
+    @staticmethod
+    async def _bind(slot: str, consumer_type: str, rule: dict):
+        from app.services.secrets import center
+
+        await center.bind_rule(
+            None,
+            consumer_type=consumer_type,
+            consumer_id="t1",
+            slot=slot,
+            rule=rule,
+            bound_by_user_id="u1",
+            dry_run=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_header_slot_rejects_model_choice(self):
+        from app.services.secrets.center import SecretValidationError
+
+        with pytest.raises(SecretValidationError) as err:
+            await self._bind(
+                "header:Authorization", "mcp_server",
+                {"key_source": "user.email", "on_miss": "model"},
+            )
+        assert "Header" in str(err.value)
+
+    @pytest.mark.asyncio
+    async def test_header_slot_still_allows_fail_and_fallback(self):
+        for on_miss in ("fail", "fallback_fixed"):
+            await self._bind(
+                "header:Authorization", "mcp_server",
+                {"key_source": "user.email", "on_miss": on_miss},
+            )
+
+    @pytest.mark.asyncio
+    async def test_script_env_rejects_rule(self):
+        from app.services.secrets.center import SecretValidationError
+
+        with pytest.raises(SecretValidationError) as err:
+            await self._bind("env:API_TOKEN", "script_tool", {"key_source": "user.email"})
+        assert "环境变量" in str(err.value)
+
+
+class TestVisibleCacheIsPerCallOnly:
+    """可见集合缓存必须只在一次调用内有效，且不缓存明文。
+
+    「一条凭据供多个参数」时，每个槽位都会重新查一遍可见集合（带权限与场景
+    过滤）。它只取决于 (user_id, dept_code)，与槽位无关，所以按这个键缓存。
+    风险在于作用域：一旦跨调用复用，改完凭据（或撤销授权）之后旧结果还会生效。
+    这里直接断言「不传就不缓存」——缓存的载体是调用方传进来的 dict，没有它
+    就每次现查，这是作用域正确的结构保证。
+    """
+
+    def test_resolve_accepts_visible_cache_and_defaults_to_none(self):
+        import inspect
+
+        from app.services.secrets.resolver import SecretResolver
+
+        params = inspect.signature(SecretResolver.resolve).parameters
+        assert "visible_cache" in params
+        assert params["visible_cache"].default is None
+
+    def test_visible_cache_keyed_by_identity_not_slot(self):
+        src = (Path(__file__).resolve().parents[2] / "app/services/secrets/resolver.py").read_text(encoding="utf-8")
+        # 键必须只由身份构成：把 slot 掺进去就退化成「每个槽位一份缓存」，
+        # 多值组等于没优化
+        assert 'key = (user_id, dept_code or "")' in src
+        assert "visible_cache[key] = list(got)" in src
+
+    def test_injection_entries_share_one_cache_per_call(self):
+        src = (Path(__file__).resolve().parents[2] / "app/services/secrets/injection.py").read_text(encoding="utf-8")
+        # 每个注入入口各声明一份（单次调用作用域），并且都传给 resolve
+        assert src.count("visible_cache: dict[tuple[str, str], list] = {}") == 5
+        assert src.count("visible_cache=visible_cache") == 5

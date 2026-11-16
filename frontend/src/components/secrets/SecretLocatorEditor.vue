@@ -129,6 +129,14 @@ const props = withDefaults(
      * 模板下拉也一起消失了，新配的规则再也没法限定结构，字段只能手填。
      */
     showValueTemplate?: boolean
+    /**
+     * 这个槽位能不能用 `on_miss=model`（让模型挑）。
+     *
+     * Header 级不能：模型回填编号用的 `secret_choice_<参数名>` 是工具参数，
+     * 请求头里没有地方放它。后端 `bind_rule` 也会拒，但等弹窗提交才报错时，
+     * 用户已经填完一整张规则表——选项在这里就不该出现。
+     */
+    allowModelChoice?: boolean
   }>(),
   {
     rule: null,
@@ -138,6 +146,7 @@ const props = withDefaults(
     removable: false,
     showValuePath: true,
     showValueTemplate: true,
+    allowModelChoice: true,
   },
 )
 
@@ -403,7 +412,9 @@ function normalizeForSubmit() {
   if (rule.target !== 'field') rule.target_field = ''
   rule.templates = rule.templates.map((t) => t.trim()).filter(Boolean)
   rule.value_path = props.showValuePath ? rule.value_path : ''
-  rule.value_template = props.showValueTemplate ? rule.value_template : ''
+  // `value_template` **不能**这么清。它决定字段集合，是规则本身的一部分；
+  // 多值页把控件藏起来（模板改在映射表那里选），藏起来不等于要把值抹掉——
+  // 抹掉之后保存规则会静默地把用户选的模板清空，字段下拉随即退回手输。
   return rule
 }
 
@@ -499,8 +510,8 @@ function save() {
               <li>确定性低于按字段匹配：命名规范稳定的场景，用左边那个 tab 更可靠</li>
             </ul>
             <p class="mt-1.5">
-              下面的<strong>模板约束</strong>尤其重要：不限定的话，模型可能挑到一条结构完全不同的凭据，
-              取字段时才失败。
+              {{ showValueTemplate ? '下面的' : '映射表那里的' }}<strong>凭证内容模板</strong>尤其重要：
+              不限定的话，模型可能挑到一条结构完全不同的凭据，取字段时才失败。
             </p>
             </div>
           </div>
@@ -619,7 +630,7 @@ function save() {
             class="grid grid-cols-[76px_minmax(0,1fr)] items-start gap-3"
           >
             <label class="pt-1.5 text-xs text-gray-500">
-              {{ showValuePath ? '⑤ 取用字段' : '⑤ 模板约束' }}
+              {{ showValuePath ? '⑤ 取用字段' : '⑤ 凭证内容模板' }}
             </label>
             <div class="min-w-0 space-y-2">
               <select
@@ -627,16 +638,15 @@ function save() {
                 v-model="draft.value_template"
                 class="w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
               >
-                <option value="">不限定结构（字段只能手填）</option>
+                <option value="">不限定（字段只能手填）</option>
                 <option v-for="t in TEMPLATE_OPTIONS" :key="t.value" :value="t.value">{{ t.label }}</option>
               </select>
               <p
                 v-if="showValueTemplate"
                 class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] leading-relaxed text-gray-600"
               >
-                规则挑的是「哪一条凭据」，运行时才知道。声明一个模板就是声明「命中的凭据都长这样」：
-                字段集合随之确定，下面可以直接选；挑到模板不符的凭据按<b>未命中</b>处理，
-                不会拿另一种结构去取值。
+                挑的是「哪一条凭据」，运行时才知道。声明一个模板就是声明「命中的凭据都长这样」：
+                字段集合随之确定，下面可以直接选；模板不符的凭据按<b>未命中</b>处理，不会拿另一种结构去取值。
               </p>
 
               <select
@@ -664,7 +674,9 @@ function save() {
 
           <!-- ⑥ 匹配不上时。「让模型挑」没有匹配这一步，自然也没有「挑不到」 -->
           <div v-if="mode === 'rule'" class="grid grid-cols-[76px_minmax(0,1fr)] items-start gap-3">
-            <label class="pt-1.5 text-xs text-gray-500">⑥ 挑不到时</label>
+            <label class="pt-1.5 text-xs text-gray-500">
+              {{ (showValueTemplate || showValuePath) ? '⑥ 挑不到时' : '⑤ 挑不到时' }}
+            </label>
             <div class="min-w-0">
               <select
                 v-model="draft.on_miss"
@@ -672,7 +684,7 @@ function save() {
               >
                 <option value="fail">直接报错，这次调用失败</option>
                 <option value="fallback_fixed">回退到同一层级的固定凭据</option>
-                <option value="model">让模型在可见候选里挑一条</option>
+                <option v-if="allowModelChoice" value="model">让模型在可见候选里挑一条</option>
               </select>
               <p
                 class="mt-1.5 rounded-lg border px-3 py-2 text-[11px] leading-relaxed"

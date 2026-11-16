@@ -13,7 +13,7 @@ import { computed, ref, watch } from 'vue'
 import { useConfirm } from '@/composables/useConfirm'
 import axios from '@/utils/axios'
 import type { CredentialPickerItem } from '@/utils/credentialPicker'
-import { findCredentialTemplate } from '@/utils/credentialTemplates'
+import { CREDENTIAL_TEMPLATES, findCredentialTemplate } from '@/utils/credentialTemplates'
 import SecretLocatorEditor, { type LocatorRule } from './SecretLocatorEditor.vue'
 
 const { confirm } = useConfirm()
@@ -89,6 +89,38 @@ const autoHint = ref('')
 const structured = computed(() =>
   secrets.value.filter((s) => (s.value_format || 'text') === 'json'),
 )
+
+const TEMPLATE_OPTIONS = CREDENTIAL_TEMPLATES.map((t) => ({ value: t.id, label: `${t.name} · ${t.id}` }))
+
+/**
+ * 改「凭证内容模板」就是改字段集合——这件事发生在看映射表的时候，而不是配规则的时候。
+ *
+ * 原来它只在规则弹窗的第⑤步：那时用户还没看到有哪些参数要映射，选模板等于
+ * 盲选一个自己不知道影响什么的选项。移到映射表标题行后，「选模板 → 字段下拉
+ * 随之确定」这个因果关系就在同一屏里。
+ *
+ * 写的是同一份 `ruleDraft`，所以点「保存映射」时规则会跟着一起提交
+ * （items 里 strategy='rule' 带 ruleBody），不需要额外再存一次规则。
+ */
+const ruleTemplate = computed({
+  get: () => ruleDraft.value?.value_template || '',
+  set: (value: string) => {
+    if (!ruleDraft.value) return
+    const before = ruleDraft.value.value_template || ''
+    ruleDraft.value.value_template = value
+    if (before === value) return
+    // 换了模板 = 字段集合变了。旧的下拉值可能在新集合里不存在（smtp.host 之于
+    // 另一种结构），留着会提交一个取不到的字段名，运行时报「字段不存在」，
+    // 而界面上那一行看起来是选好的。
+    const allowed = new Set(
+      (findCredentialTemplate(value)?.fields || []).map((f) => f.key),
+    )
+    for (const param of Object.keys(picks.value)) {
+      if (picks.value[param] && !allowed.has(picks.value[param])) delete picks.value[param]
+    }
+    touched.value = true
+  },
+})
 
 /** 规则模式下字段集来自模板约束：没有它，字段名无从得知，只能靠手输 */
 const ruleFields = computed<FieldMeta[]>(() => {
@@ -576,7 +608,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
           按规则匹配
           <span class="rounded bg-violet-50 px-1 py-0.5 text-[10px] font-medium text-violet-700">按身份挑</span>
         </div>
-        <div class="mt-0.5 text-[11px] text-gray-600">配一条规则决定用谁的凭据，模板约束决定字段集</div>
+        <div class="mt-0.5 text-[11px] text-gray-600">配一条规则决定用谁的凭据，凭证内容模板决定字段集</div>
       </button>
     </div>
 
@@ -632,8 +664,8 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
             每条参数各自指定（见下表）
           </p>
           <p v-if="!ruleDraft.value_template" class="mt-2 rounded bg-amber-50 px-2 py-1.5 text-amber-800">
-            规则没声明模板约束，字段名无从得知，下表只能靠手输。
-            在规则里选一个模板，字段就能下拉。
+            还没选凭证内容模板，字段名无从得知，下表只能靠手输。
+            在下面「参数 → 字段」标题行里选一个模板，字段就能下拉。
           </p>
         </template>
       </div>
@@ -644,19 +676,45 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
       这条凭据读不出字段（值不是 JSON 对象？）
     </p>
 
+    <p class="mb-2 text-[11px] leading-relaxed text-gray-500">
+      保存后：<strong class="font-medium text-gray-700">{{ mappedCount }}</strong> 个参数由凭据提供，
+      {{ params.filter((n) => !picks[n]).length }} 个回到模型填写
+      <template v-if="pendingChangeCount">
+        <span class="font-medium text-amber-600">
+          · 有 {{ pendingChangeCount }} 处未保存<template v-if="!mappedCount">（还没给参数选字段，选一个才能保存）</template>
+        </span>
+      </template>
+    </p>
+
     <!-- 映射表 -->
     <div class="rounded-lg border border-gray-200">
       <div class="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
         <span class="text-xs font-semibold text-gray-800">
           <span class="mr-1 text-gray-400">②</span>参数 → 字段
         </span>
-        <div class="ml-auto flex items-center gap-2">
+        <!-- 模板决定「有哪些字段可选」，放在这里才和下面的字段下拉形成因果关系。
+             固定凭据的字段来自凭据本身，不需要也不允许在这里换模板。 -->
+        <label
+          v-if="source === 'rule'"
+          class="ml-3 flex min-w-0 items-center gap-1.5 text-[11px] text-gray-500"
+          title="声明「命中的凭据都长这样」：选了模板，下面每一行的字段下拉就有了确定的候选；模板不符的凭据按未命中处理"
+        >
+          <span class="shrink-0">凭证内容模板</span>
+          <select
+            v-model="ruleTemplate"
+            class="min-w-0 rounded-md border-gray-300 py-0.5 text-[11px] shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+          >
+            <option value="">不限定（字段只能手填）</option>
+            <option v-for="t in TEMPLATE_OPTIONS" :key="t.value" :value="t.value">{{ t.label }}</option>
+          </select>
+        </label>
+        <div class="ml-auto flex shrink-0 items-center gap-2">
           <span class="text-[11px] text-gray-500">
             已映射 {{ mappedCount }} / {{ params.length }}
           </span>
           <button
             type="button"
-            class="rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
+            class="shrink-0 rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
             @click="autoMatch"
           >按名字自动匹配</button>
         </div>
@@ -721,48 +779,41 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
     <p v-if="autoHint" class="mt-2 text-[11px] text-gray-500">{{ autoHint }}</p>
     <p v-if="errorText" class="mt-2 text-[11px] text-rose-600">{{ errorText }}</p>
 
-    <div class="mt-3 flex items-center gap-2">
-      <span class="text-[11px] text-gray-500">
-        保存后：{{ mappedCount }} 个参数由凭据提供，
-        {{ params.filter((n) => !picks[n]).length }} 个回到模型填写
-        <template v-if="pendingChangeCount">
-          <span class="font-medium text-amber-600">
-            · 有 {{ pendingChangeCount }} 处未保存<template v-if="!mappedCount">（还没给参数选字段，选一个才能保存）</template>
-          </span>
-        </template>
-      </span>
-      <div class="ml-auto flex items-center gap-2">
-        <!-- 一键清空：配错时逐个改回「模型填写」太麻烦，且容易漏掉某个参数 -->
-        <button
-          type="button"
-          class="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-40"
-          :disabled="busy || !params.length"
-          title="清除这个工具所有参数的凭据配置（固定凭据与规则都会删除）"
-          @click="clearAll"
-        >清空全部</button>
-        <button
-          type="button"
-          class="rounded-lg px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
-          :class="[
-            pendingChangeCount ? 'ring-2 ring-amber-400 ring-offset-1' : '',
-            mappedCount ? 'bg-indigo-600' : 'bg-indigo-600/40',
-          ]"
-          :disabled="busy || !params.length || !mappedCount"
-          :title="mappedCount
-            ? ''
-            : '一个参数都没选字段。保存等于把整组凭据配置清空——要清空请用左边的「清空全部」，它带确认。'"
-          @click="save"
-        >{{ busy
-          ? '保存中…'
-          : (pendingChangeCount ? `保存映射（${pendingChangeCount} 处改动）` : '保存映射') }}</button>
-      </div>
+    <!-- 底栏只放按钮。状态说明原来挤在按钮左边，一长就把「清空全部」和
+         「保存映射（N 处改动）」压成两行；挪到表格上方后既有整行宽度，
+         也不用跟按钮抢横向空间。 -->
+    <div class="mt-3 flex items-center justify-end gap-2">
+      <!-- 一键清空：配错时逐个改回「模型填写」太麻烦，且容易漏掉某个参数 -->
+      <button
+        type="button"
+        class="shrink-0 whitespace-nowrap rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-40"
+        :disabled="busy || !params.length"
+        title="清除这个工具所有参数的凭据配置（固定凭据与规则都会删除）"
+        @click="clearAll"
+      >清空全部</button>
+      <button
+        type="button"
+        class="shrink-0 whitespace-nowrap rounded-lg px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+        :class="[
+          pendingChangeCount ? 'ring-2 ring-amber-400 ring-offset-1' : '',
+          mappedCount ? 'bg-indigo-600' : 'bg-indigo-600/40',
+        ]"
+        :disabled="busy || !params.length || !mappedCount"
+        :title="mappedCount
+          ? ''
+          : '一个参数都没选字段。保存等于把整组凭据配置清空——要清空请用「清空全部」，它带确认。'"
+        @click="save"
+      >{{ busy
+        ? '保存中…'
+        : (pendingChangeCount ? `保存映射（${pendingChangeCount} 处改动）` : '保存映射') }}</button>
     </div>
 
     <!--
-      只要模板约束，不要取用字段：
-      · 模板约束必须在这里——它声明「命中的凭据都长这样」，外面的映射表据此把
-        字段做成下拉。关掉它，规则就只能手填字段名。
-      · 取用字段**不能**在这里。规则是共享的一条，而「取哪一段」是每个参数各自的，
+      「凭证内容模板」和「取用字段」都不在这里：
+      · 模板移到映射表标题行。它决定字段集合，而用户是在看映射表的时候才需要
+        决定字段集合；留在弹窗里等于让人在看不到参数的情况下盲选。两处都摆会让
+        人怀疑是不是两份配置（其实是同一份 ruleDraft）。
+      · 取用字段**不能**在弹窗里。规则是共享的一条，而「取哪一段」是每个参数各自的，
         所以它只能在下表逐行选。放进弹窗就得有个落地点，而任何「兜底填给所有行」
         的做法都会误伤：留空的行本来是「模型填写」，会被悄悄绑上这个字段。
     -->
@@ -774,7 +825,7 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
       :arg-options="params"
       :title="subject ? `凭据匹配规则 · ${subject}` : '凭据匹配规则'"
       :show-value-path="false"
-      :show-value-template="true"
+      :show-value-template="false"
       @update:open="(value: boolean) => { if (!value) ruleOpen = false }"
       @save="onRuleSaved"
     />

@@ -508,18 +508,23 @@ class TestSingleValueRuleHasNoFieldPicker:
             source = _read(path)
             assert ':show-value-path="false"' in source, path.name
 
-    def test_multi_value_rule_keeps_template_only(self):
-        """多值页要模板约束，不要取用字段。
+    def test_multi_value_edits_template_in_the_mapping_header(self):
+        """多值页要「凭证内容模板」，但选择器在映射表标题行，不在规则弹窗里。
 
-        取用字段若放进弹窗，就必须有个落地点。我试过「当所有行的默认值」，
-        后果是灾难性的：`load()` 会把第一条规则行的路径回填进来，于是
-        「某个参数绑了 password」会让所有留空（= 模型填写）的参数在下次保存时
-        全被绑上 password，而界面还显示它们已经回到模型填写。
-        它只能在下表逐行选——那里每行本来就有自己的下拉。
+        模板决定字段集合，而用户是在看映射表的时候才需要决定字段集合。放在弹窗
+        里等于让人在看不到参数的情况下盲选；两处都摆则会让人以为是两份配置
+        （其实是同一份 ruleDraft）。
+
+        取用字段仍然只能在弹窗之外——它若进了弹窗就必须有个落地点，而任何
+        「当所有行的默认值」的做法都会误伤留空的行。
         """
         source = _read(ROOT / "frontend/src/components/secrets/SecretFieldMappingPanel.vue")
         assert ':show-value-path="false"' in source
-        assert ':show-value-template="true"' in source
+        # 弹窗不再重复一份模板选择
+        assert ':show-value-template="false"' in source
+        # 但模板本身必须可选，且写回的是同一份 ruleDraft
+        assert 'v-model="ruleTemplate"' in source
+        assert "ruleDraft.value.value_template = value" in source
         # 留空一律回落模型填写，不能被某个「默认字段」兜底
         assert "defaultPath" not in source
         assert "const path = picks.value[name] || ''" in source
@@ -650,8 +655,8 @@ class TestTemplateAndFieldAreSeparateSwitches:
 
     def test_each_call_site_picks_its_own_combination(self):
         panel = _read(ROOT / "frontend/src/components/secrets/SecretFieldMappingPanel.vue")
-        # 多值页只要模板约束（定字段集）；取用字段在下表逐行选
-        assert ':show-value-template="true"' in panel
+        # 多值页两个控件都不进弹窗：模板在映射表标题行，取用字段在下表逐行选
+        assert ':show-value-template="false"' in panel
         assert ':show-value-path="false"' in panel
         for path in (
             MCP_REGISTRY,
@@ -662,12 +667,15 @@ class TestTemplateAndFieldAreSeparateSwitches:
             assert ':show-value-template="false"' in source, path.name
             assert ':show-value-path="false"' in source, path.name
 
-    def test_hidden_template_is_cleared_on_save(self):
-        """藏起来的控件不能把旧值写回去——和 value_path 同一个道理。"""
+    def test_hidden_template_is_not_cleared_on_save(self):
+        """藏起来的**模板**控件不能反过来把值清掉。
+
+        与 value_path 相反：`value_path` 是绑定记录上的列，控件不显示时清空是对的；
+        而 `value_template` 是规则本身的一部分，多值页把控件移到映射表之后，
+        规则弹窗再保存一次就会静默抹掉用户刚选的模板，字段下拉随即退回手输。
+        """
         source = _read(ROOT / "frontend/src/components/secrets/SecretLocatorEditor.vue")
-        assert (
-            "rule.value_template = props.showValueTemplate ? rule.value_template : ''" in source
-        )
+        assert "rule.value_template = props.showValueTemplate" not in source
 
 
 class TestOwnerScopeFlowsThroughLocalState:
