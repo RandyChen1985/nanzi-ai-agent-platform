@@ -31,12 +31,19 @@ const emit = defineEmits<{
  * 等父组件创建成功、拿到 id 之后才补写。父组件拿不到这个 ref 的话，那批 pending
  * 会随组件卸载一起消失——界面走完向导、试跑也过了，实际一条都没存下来。
  */
-const paramEditorRef = ref<{ flushPending: (consumerId: string) => Promise<string[]> } | null>(null)
+const paramEditorRef = ref<{
+  flushPending: (consumerId: string) => Promise<string[]>
+  hasUnsavedMapping?: () => boolean
+} | null>(null)
 
 const flushPending = (consumerId: string): Promise<string[]> =>
   paramEditorRef.value?.flushPending(consumerId) ?? Promise.resolve([] as string[])
 
-defineExpose({ flushPending })
+/** 多值凭据页有没保存的字段映射（工具保存不会带上它） */
+const hasUnsavedMapping = (): boolean =>
+  paramEditorRef.value?.hasUnsavedMapping?.() ?? false
+
+defineExpose({ flushPending, hasUnsavedMapping })
 
 const props = defineProps<{
     toolForm: {

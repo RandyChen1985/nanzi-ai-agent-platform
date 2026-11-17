@@ -77,7 +77,13 @@ class UnresolvedCredentialError(Exception):
     #: 却让用户去改 header」，真正的原因（规则未命中 / 过期 / 停用）全被吞掉。
     SLOT_PREFIXES = ("header:", "query:", "body:", "path:", "")
 
-    def __init__(self, tool_name: str, names: list[str], denials: dict[str, str] | None = None):
+    def __init__(
+        self,
+        tool_name: str,
+        names: list[str],
+        denials: dict[str, str] | None = None,
+        denial_details: dict[str, str] | None = None,
+    ):
         self.tool_name = tool_name
         self.names = list(names)
         #: 兼容旧名：它原本只表示 header 名，现在也可能是凭据参数名
@@ -85,10 +91,21 @@ class UnresolvedCredentialError(Exception):
         # 有拒绝原因时要说清是「过期了」还是「被停用了」——这两种情况用户要做的事
         # 完全不同（轮换 vs 找管理员恢复），都笼统说成「还没填」等于没说。
         denials = denials or {}
+        # 「为什么没找到」和「没找到」是两件事：`denials` 给的是错误码
+        # （rule_miss / denied_expired …），`denial_details` 给的是注入层从
+        # resolver 带回来的一句话（「入参 to='a@b' → 要找 a@b，可见候选 2 条」
+        # 或「入参 username 没有值」）。只拼码的话，用户看到「匹配规则没有找到
+        # 对应凭据」就去翻凭据状态了，而真正要改的是入参或规则。
+        details = denial_details or {}
         reasons: dict[str, str] = {}
+        whys: dict[str, str] = {}
         for name in self.names:
             for prefix in self.SLOT_PREFIXES:
-                text = denials.get(f"{prefix}{name}") if prefix else denials.get(name)
+                slot = f"{prefix}{name}" if prefix else name
+                text = denials.get(slot)
+                why = details.get(slot)
+                if why and name not in whys:
+                    whys[name] = why
                 if text:
                     reasons[name] = text
                     break
@@ -96,7 +113,10 @@ class UnresolvedCredentialError(Exception):
             from app.services.secrets.injection import denial_hint, denial_text
 
             detail = "；".join(
-                f"{name}（{denial_text(reason)}）" for name, reason in reasons.items()
+                f"{name}（{denial_text(reason)}"
+                + (f"：{whys[name]}" if whys.get(name) else "")
+                + "）"
+                for name, reason in reasons.items()
             )
             self.reasons = reasons
             # 按原因给具体的修复动作：域名白名单不对时凭据状态是正常的，
@@ -310,13 +330,24 @@ class GenericApiToolFactory:
         credential_params = credential_param_names(getattr(config, "parameter_schema", None))
         if credential_params:
             param_denials: dict[str, str] = {}
+            # 与 `denials`（错误码）分开收：这一份是注入层从 resolver 带回来的
+            # 「拿什么值去找、为什么没找到」。只给码的话，用户看到的是通用的
+            # 「匹配规则没有找到对应凭据」，完全想不到是自己的入参拼出来对不上。
+            param_denial_details: dict[str, str] = {}
             params = await apply_api_tool_param_bindings(
-                config, params, method=method, user_info=user_info, denials=param_denials
+                config,
+                params,
+                method=method,
+                user_info=user_info,
+                denials=param_denials,
+                denial_details=param_denial_details,
             )
             unresolved_params = [name for name in credential_params if name not in params]
             if unresolved_params:
                 # 和 header 一样的口径：宁可在这里说清楚，也不要发出去换一个 401
-                raise UnresolvedCredentialError(config.name, unresolved_params, param_denials)
+                raise UnresolvedCredentialError(
+                    config.name, unresolved_params, param_denials, param_denial_details
+                )
             # 编号字段是给平台看的，绝不能进 query/body：远端收到未知参数会报错，
             # 模型在挑哪条凭据也没有理由告诉对方。必须在上面的注入之后剥——
             # 注入层正是从这里读模型的选择。
@@ -358,13 +389,20 @@ class GenericApiToolFactory:
         # 必须在 unresolved_credential_headers 之前——否则占位符会先被判为
         # 「未填」而抛错，绑定过的凭据根本没机会生效。
         auth_denials: dict[str, str] = {}
+        auth_denial_details: dict[str, str] = {}
         headers = await apply_api_tool_bindings(
-            config, headers or {}, user_info=user_info, denials=auth_denials
+            config,
+            headers or {},
+            user_info=user_info,
+            denials=auth_denials,
+            denial_details=auth_denial_details,
         )
         pending = unresolved_credential_headers(headers)
         if pending:
             # 导入工具默认没有凭据；发出去只会换来对方的 401，不如在这里说清楚
-            raise UnresolvedCredentialError(config.name, pending, auth_denials)
+            raise UnresolvedCredentialError(
+                config.name, pending, auth_denials, auth_denial_details
+            )
 
         # 3. Request
         signing = parse_signing_config(config)

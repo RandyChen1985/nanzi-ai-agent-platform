@@ -27,6 +27,38 @@ from sqlalchemy import and_, or_, select
 from app.core.orm import AsyncSessionLocal
 from app.models.secret import SecretBinding, SecretGrant, SecretUsageLog, SecretUserPref, UserSecret
 from app.services.secrets.references import stringify_field_value
+
+#: 入参名里出现这些片段就当作敏感值，不进错误信息
+_SENSITIVE_ARG_HINTS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "credential",
+    "private",
+)
+
+
+def _is_sensitive_arg(name: str) -> bool:
+    """这个入参名是不是「值不该外露」的那类（密码、token …）。"""
+    lowered = (name or "").lower()
+    return any(hint in lowered for hint in _SENSITIVE_ARG_HINTS)
+
+
+def _preview_arg(name: str, raw: Any) -> str:
+    """把入参值渲染成错误信息里能看的样子。
+
+    「值为什么没匹配上」必须能看见值本身，否则用户只能靠猜。但这个值可能来自
+    任意入参名（password / token / api_key …），而错误信息会进会话正文、日志和
+    前端弹窗——所以敏感名一律打码，过长截断，避免把凭据明文顺手写出去。
+    """
+    text = stringify_field_value(raw)
+    if _is_sensitive_arg(name):
+        return "***"
+    return text if len(text) <= 64 else text[:61] + "…"
 from app.services.secrets.policy import (
     DENY_BINDING,
     DENY_GRANT,
@@ -153,6 +185,7 @@ class SecretResolver:
         rule_args: Mapping[str, Any] | None = None,
         preferred_secret_id: str | None = None,
         plain_cache: dict[str, str] | None = None,
+        visible_cache: dict[tuple[str, str], list[Any]] | None = None,
         record_usage: bool = True,
     ) -> ResolveResult:
         """解析一个槽位。返回 ``ok=False`` 时调用方应走自己的默认值。
@@ -161,6 +194,12 @@ class SecretResolver:
         解密只做一次。传同一个 dict 进来即可，作用域是单次调用——**不要**做成进程级缓存，
         那会让改完凭据后旧明文继续生效，也让明文在内存里留得比必要的久。
         定位、场景、域名、授权、审计每次都照跑，缓存的只有解密这一步。
+
+        ``visible_cache``：一次工具调用内「我能看见哪些凭据」不会变（主键是
+        user + dept），但每个槽位都会重新查一遍。多值配法下一个组 5 个参数就是
+        5 次同样的查询，每次还带权限过滤与场景过滤——这是「一条凭据供多个参数」
+        最明显的浪费点。同样只活在单次调用里：它缓的是**可见集合**，不含明文，
+        也不含任何解密结果，所以不存在「改完凭据还拿着旧值」的问题。
         """
         if not user_id or not consumer_type or not consumer_id or not slot:
             return ResolveResult(ok=False, denial=DENY_BINDING, detail="missing identity")
@@ -183,6 +222,7 @@ class SecretResolver:
                     preferred_secret_id=preferred_secret_id,
                     scene=scene,
                     plain_cache=plain_cache,
+                    visible_cache=visible_cache,
                 )
                 if located.denial:
                     return ResolveResult(
@@ -360,6 +400,7 @@ class SecretResolver:
         visible: Sequence[Any] | None = None,
         scene: str | None = None,
         plain_cache: dict[str, str] | None = None,
+        visible_cache: dict[tuple[str, str], list[Any]] | None = None,
     ) -> Located:
         """选出这次要用的凭据。**层间**个人优先，**层内**规则优先。
 
@@ -379,6 +420,20 @@ class SecretResolver:
             )
         if not rows:
             return Located(denial=None)  # 交给调用方按「无绑定」处理
+
+        async def _visible() -> Sequence[Any]:
+            """可见集合：一次调用内只查一遍。
+
+            它只取决于 (user_id, dept_code)，和槽位无关；多值配法下同一个组里
+            5 个参数会走到这里 5 次，每次都是同样的权限过滤查询。
+            """
+            key = (user_id, dept_code or "")
+            if visible_cache is not None and key in visible_cache:
+                return visible_cache[key]
+            got = await self._visible_records(session, user_id, dept_code)
+            if visible_cache is not None:
+                visible_cache[key] = list(got)
+            return got
 
         layers: list[list[Any]] = []
         mine = [b for b in rows if (b.bound_by_user_id or "") == user_id]
@@ -414,7 +469,7 @@ class SecretResolver:
                 wanted = build_candidates(spec, identity=identity, args=args)
                 if wanted:
                     if visible is None:
-                        visible = await self._visible_records(session, user_id, dept_code)
+                        visible = await _visible()
                     # 规则声明的模板约束：结构不符当作**没命中**，绝不拿另一种结构的
                     # 凭据去按字段取值——那只会在取字段时失败，或者更糟：恰好同名但
                     # 含义不同的字段被静默注进去。
@@ -508,7 +563,7 @@ class SecretResolver:
                 )
             if on_miss == "model" and preferred_secret_id:
                 if visible is None:
-                    visible = await self._visible_records(session, user_id, dept_code)
+                    visible = await _visible()
                 chosen = next(
                     (s for s in visible if getattr(s, "id", None) == preferred_secret_id),
                     None,
@@ -540,13 +595,82 @@ class SecretResolver:
                     preferred_secret_id,
                 )
 
-            target = wanted[0] if wanted else (spec.key_source if spec is not None else "?")
+            # 「让模型挑」没挑成时也要查一次可见集合：不查的话下面报出来的
+            # 候选数恒为 0，而用户看到的却是「你能看见 3 条凭据」——两者对不上。
+            if getattr(spec, "on_miss", "") == "model" and visible is None:
+                visible = await _visible()
             return Located(
                 denial=DENY_RULE_MISS,
-                detail=f"规则未命中（要找 {target}），可见候选 {len(visible or [])} 条",
+                detail=self._miss_detail(
+                    spec, wanted, args, visible, chosen=preferred_secret_id
+                ),
             )
 
         return Located(denial=None)
+
+    @staticmethod
+    def _miss_detail(
+        spec: Any,
+        wanted: list[str],
+        args: Any,
+        visible: Any,
+        chosen: str | None = None,
+    ) -> str:
+        """规则未命中时给用户看的那句话。
+
+        「要找 arg:username」这种说法只在**有值**时成立；入参根本没提供时，
+        用户看到的应该是「入参 username 没有值」，而不是一个参数名——后者读起来
+        像「系统拿 username 去找了但没找到」，实际是压根没拿到可以比的东西。
+        多值凭据下这条尤其常见：规则的来源参数如果本身是凭据参数，它被移出了
+        模型可见参数，入参里永远不会有值。
+        """
+        count = len(visible or [])
+        if spec is None:
+            return "规则不合法，按未命中处理（请重新配置这条规则）"
+        # 只对**纯模型挑选**（没有 key_source）走这一支。
+        # 「按 arg:to 匹配、挑不到时让模型挑」也是 on_miss=model，但它有明确的
+        # 匹配动作——此时最该说的是「入参 to 是什么值、为什么没对上」，把它盖成
+        # 「让模型挑没挑成」等于把唯一的排查线索扔掉。
+        if getattr(spec, "on_miss", "") == "model" and not getattr(spec, "key_source", ""):
+            # 这一支没有「要找什么」：值来自模型的编号字段，不是从入参变形的。
+            # 走下面那条通用分支会拼出「（要找 ）」——一个空占位，用户看不出
+            # 是「模型没挑」还是「挑的没用」，只能去翻日志。
+            if chosen:
+                return (
+                    f"规则未命中：模型挑了凭据 {chosen}，但它不在你可见（且模板相符）的"
+                    f"候选里，可见候选 {count} 条。可能是编号填错、那条凭据已停用/过期，"
+                    f"或者模板对不上"
+                )
+            if count:
+                return (
+                    f"规则未命中：这条绑定配的是「让模型挑」，但这次调用没有给出选择"
+                    f"（可见候选 {count} 条）。模型侧应该回填一个编号字段；"
+                    f"如果不想让模型参与，把「挑不到时」改成直接报错或回退固定凭据"
+                )
+            return (
+                "规则未命中：这条绑定配的是「让模型挑」，但你能看到的凭据里没有"
+                "符合模板的候选，模型也就无从挑。请检查这条规则选的内容模板"
+            )
+        if spec.is_arg_key:
+            arg_name = spec.arg_name or ""
+            raw = (args or {}).get(arg_name) if arg_name else None
+            if raw is None or raw == "":
+                # 候选数在这里没有意义：没有值就根本没去查可见集合，
+                # 说「可见候选 0 条」会让用户以为库里真的没有凭据。
+                return (
+                    f"规则未命中：入参 {arg_name or '?'} 没有值，没有可比较的东西。"
+                    f"如果这个参数由凭据提供，它不会出现在入参里——规则要从"
+                    f"模型填写的参数取值"
+                )
+            # 加引号：值为空格/空串时，裸着显示就是一片空白，看不出问题在哪
+            shown = f"{arg_name}={_preview_arg(arg_name, raw)!r}"
+            if not wanted:
+                return f"规则未命中：入参 {shown} 变形后为空，没有可比较的东西"
+            # 「要找」是从同一个值变形来的，入参敏感时它也是明文，一起打码
+            target = "***" if _is_sensitive_arg(arg_name) else wanted[0]
+            return f"规则未命中（入参 {shown} → 要找 {target}），可见候选 {count} 条"
+        target = wanted[0] if wanted else spec.key_source
+        return f"规则未命中（要找 {target}），可见候选 {count} 条"
 
     @staticmethod
     async def _pick_binding(

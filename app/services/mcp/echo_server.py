@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import hmac
+import ipaddress
 import json
+import smtplib
+import socket
+import ssl
+import time
 import uuid
 from contextlib import asynccontextmanager
 from collections.abc import Mapping
-from typing import Any
+from email.message import EmailMessage
+from email.utils import formataddr
+from typing import Any, Literal
 
 import jwt
 from mcp.server.mcpserver import Context, MCPServer
@@ -38,12 +46,14 @@ ECHO_TOOL_DESCRIPTION = "验证 MCP 请求是否收到，以及 NanZi 用户身�
 ECHO_MAIL_TOOL_LOCAL_NAME = "send_mail"
 ECHO_MAIL_TOOL_NAME = f"{ECHO_SERVER_NAME}:{ECHO_MAIL_TOOL_LOCAL_NAME}"
 ECHO_MAIL_TOOL_DESCRIPTION = (
-    "模拟给某个用户发一封邮件。参数名与「邮箱 SMTP 发送」凭据模板的字段一一对齐"
+    "测试邮件工具，三档 ``mode``：默认 ``mock`` 只回显参数（不发信）；"
+    "``verify`` 用注入的 SMTP 参数真连并登录（不发信，可反复测）；"
+    "``send`` 真发一封到 ``to``。参数名与「邮箱 SMTP 发送」凭据模板字段一一对齐"
     "（host / port / security / username / password / from_name），一条结构化凭据就能"
-    "把这几个参数一次铺满；``mailkey`` 则留给单值凭据验收。把它们标成「来自凭据」后"
-    "模型看不到，由平台按 ``to`` 匹配后注入。返回每个参数的到达情况：非敏感的给明文"
-    "（一眼看出映射对不对），敏感的只给掩码与指纹（验证「不同 to 取到了不同的值」，"
-    "但看不到明文）。"
+    "把这几个参数一次铺满；``mailkey`` 留给单值凭据验收。标成「来自凭据」后模型看不到"
+    "这些值，由平台按 ``to`` 匹配后注入。返回每个参数的到达情况（非敏感给明文、敏感只给"
+    "掩码与指纹）与真实连接结果（阶段 / 应答码 / 失败原因）。"
+    "**只有用户明确要求「真发 / 真连测试」时才传 verify 或 send**。"
 )
 # 个人 Echo 与平台 Echo 共用同一个 FastMCP 端点，靠路径里的 server_id 区分实例。
 ECHO_SERVER_ID_HEADER = "X-Nanzi-Echo-Server"
@@ -71,6 +81,11 @@ def personal_echo_tool_name(server_name: str) -> str:
 def personal_echo_slow_tool_name(server_name: str) -> str:
     """个人 Echo 的进度测试工具名，与 ``personal_echo_tool_name`` 同一命名空间。"""
     return f"{server_name}:{ECHO_SLOW_TOOL_NAME}"
+
+
+def personal_echo_mail_tool_name(server_name: str) -> str:
+    """个人 Echo 的发信测试工具名，同上。"""
+    return f"{server_name}:{ECHO_MAIL_TOOL_LOCAL_NAME}"
 
 
 def build_echo_server_url(base_url: str, server_id: str) -> str:
@@ -382,6 +397,488 @@ ECHO_SLOW_TOOL_DESCRIPTION = (
 ECHO_SLOW_DEFAULT_INTERVAL_MS = 800
 
 
+REAL_MAIL_MODES = ("verify", "send")
+DEFAULT_MAIL_MODE = "mock"
+_SMTP_SECURITY_MODES = ("ssl", "starttls", "none")
+_SMTP_CONNECT_TIMEOUT = 10
+_SMTP_SEND_TIMEOUT = 30
+_SMTP_SERVER_TEXT_LIMIT = 300
+_MAX_SMTP_HOST_LENGTH = 255
+# 与 app/services/mcp/url_policy.py 的 _BLOCKED_IP_NETWORKS 同源，但**策略不同**：
+# 那边明确放行私网与 loopback（MCP 服务常部署在内网），SMTP 侧必须更严格。
+# 注意 Python 3.11 里 100.100.100.200（阿里云元数据）的 is_private 为 False，
+# 所以这些网段必须显式列出，不能只靠 is_private。
+_BLOCKED_MAIL_IP_NETWORKS = (
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("ff00::/8"),
+    ipaddress.ip_network("224.0.0.0/4"),
+    ipaddress.ip_network("0.0.0.0/32"),
+    ipaddress.ip_network("::/128"),
+    ipaddress.ip_network("100.100.100.200/32"),
+    ipaddress.ip_network("168.63.129.16/32"),
+    ipaddress.ip_network("fd00:ec2::254/128"),
+)
+
+
+def _normalize_smtp_host(host: Any) -> str:
+    """去掉方括号、首尾空白与结尾点号（``[::1]`` / ``smtp.qq.com.`` 都见过）。"""
+    text = str(host or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1].strip()
+    return text.lower().rstrip(".")
+
+
+def _host_has_illegal_chars(host: str) -> bool:
+    """主机名不可能出现的字符：控制字符、空白、路径分隔符、``@``。"""
+    for char in host:
+        code = ord(char)
+        if code < 0x20 or code == 0x7F:
+            return True
+        if char in {" ", "\t", "\r", "\n", "\\", "/", "@"}:
+            return True
+    return False
+
+
+def _looks_like_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_blocked_mail_ip(ip: "ipaddress._BaseAddress") -> bool:
+    """回环 / 私网 / 链路本地 / 保留 / 组播 / 未指定，以及云元数据地址。
+
+    ``::ffff:a.b.c.d``（IPv4-mapped IPv6）必须先拆回 IPv4 再判。Python 3.11 里
+    这类地址 ``is_private`` / ``is_reserved`` 全是 False，而它的 ``version`` 是 6，
+    会跳过下面那张 IPv4 网段表——一条 DNS AAAA 记录就能把元数据地址送进来。
+    实测 ``_is_blocked_mail_ip(::ffff:100.100.100.200)`` 曾返回 False，而同一个
+    地址写成 IPv4 是 True。`url_policy` 那边一直是对的，这份守卫漏了。
+    """
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _is_blocked_mail_ip(mapped)
+    if (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        return True
+    for network in _BLOCKED_MAIL_IP_NETWORKS:
+        # 混版本（IPv4 地址 vs IPv6 网段）的 ``in`` 在 3.11 返回 False，
+        # 但显式比版本更清楚，也避免依赖该实现细节。
+        if ip.version == network.version and ip in network:
+            return True
+    return False
+
+
+def _resolve_host_addresses(host: str, port: int) -> list[str]:
+    """同步解析，调用方负责丢线程池。返回去重后的全部 A/AAAA 地址。"""
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    addresses: list[str] = []
+    for info in infos:
+        address = str(info[4][0])
+        if address not in addresses:
+            addresses.append(address)
+    return addresses
+
+
+def _validate_real_mail_params(
+    *,
+    to: Any,
+    host: Any,
+    port: Any,
+    security: Any,
+    username: Any,
+    password: Any,
+) -> dict[str, Any]:
+    """真实模式的参数校验分级。
+
+    区分 ``missing_params``（值没到 → 大概率绑定没生效）与 ``invalid_params``
+    （值到了但用法不对 → 配置写错），两者排查方向完全不同。
+    """
+    missing: list[str] = []
+    for name, value in (("host", host), ("username", username), ("password", password)):
+        if not str(value or "").strip():
+            missing.append(name)
+    if missing:
+        return {
+            "ok": False,
+            "reason": "missing_params",
+            "missing": missing,
+            "message": (
+                f"真实模式缺少参数：{', '.join(missing)}。"
+                "请检查该参数是否已标成「来自凭据」并且绑定已生效"
+            ),
+        }
+
+    normalized_host = _normalize_smtp_host(host)
+    if not normalized_host:
+        return {"ok": False, "reason": "invalid_params", "message": "SMTP 主机为空"}
+    if len(normalized_host) > _MAX_SMTP_HOST_LENGTH or _host_has_illegal_chars(normalized_host):
+        return {
+            "ok": False,
+            "reason": "invalid_params",
+            "message": f"SMTP 主机名不合法：{normalized_host!r}",
+        }
+
+    recipient = str(to or "").strip()
+    if (
+        not recipient
+        or "," in recipient
+        or ";" in recipient
+        or "@" not in recipient
+        or any(char.isspace() for char in recipient)
+    ):
+        return {
+            "ok": False,
+            "reason": "invalid_params",
+            "message": f"收件人不合法：{to!r}。真实模式只支持单个邮箱地址",
+        }
+
+    from app.services.email_delivery_service import EmailDeliveryService
+
+    raw_port = port
+    if raw_port is None or str(raw_port).strip() == "":
+        raw_port = 465 if str(security or "").strip().lower() == "ssl" else 587
+    # `int(True) == 1` 会顺着下面那条范围校验溜过去，最后表现成「连接端口 1
+    # 失败」——把一个类型错误伪装成网络错误。凭据里 JSON 写成 `"port": true`
+    # 就是这么来的，必须在这里按类型拒掉。
+    if isinstance(raw_port, bool):
+        return {
+            "ok": False,
+            "reason": "invalid_params",
+            "message": f"端口不合法：{port!r}，应为 1-65535 的整数",
+        }
+    try:
+        normalized_port = int(raw_port)
+    except (TypeError, ValueError):
+        return {
+            "ok": False,
+            "reason": "invalid_params",
+            "message": f"端口不合法：{port!r}，应为 1-65535 的整数",
+        }
+    if not 1 <= normalized_port <= 65535:
+        return {
+            "ok": False,
+            "reason": "invalid_params",
+            "message": f"端口不合法：{port!r}，应为 1-65535 的整数",
+        }
+
+    raw_security = str(security or "").strip().lower()
+    if raw_security and raw_security not in _SMTP_SECURITY_MODES:
+        return {
+            "ok": False,
+            "reason": "invalid_params",
+            "message": (
+                f"加密方式不合法：{raw_security!r}，"
+                f"只支持 {' / '.join(_SMTP_SECURITY_MODES)}"
+            ),
+        }
+    # 缺省时与个人中心「测试发信」同源推断：465 → ssl，其余 → starttls。
+    normalized_security = EmailDeliveryService.infer_security(
+        {"security": raw_security}, normalized_port
+    )
+
+    return {
+        "ok": True,
+        "reason": "ok",
+        "normalized": {
+            "host": normalized_host,
+            "port": normalized_port,
+            "security": normalized_security,
+            "username": str(username).strip(),
+            "password": str(password),
+            "to": recipient,
+        },
+    }
+
+
+async def _guard_smtp_host(host: str, port: int) -> dict[str, Any]:
+    """出站地址守卫：拦住回环 / 私网 / 保留 / 云元数据地址。
+
+    只看「解析出来的地址」，不看 hostname 语义——SMTP 服务器的域名毫无规律
+    （``smtp.内网域名`` 之类），按域名猜必然误伤。DNS 在线程池执行，不阻塞事件循环。
+    """
+    normalized = _normalize_smtp_host(host)
+    if not normalized:
+        return {"ok": False, "reason": "invalid_params", "message": "SMTP 主机为空"}
+    if len(normalized) > _MAX_SMTP_HOST_LENGTH or _host_has_illegal_chars(normalized):
+        return {
+            "ok": False,
+            "reason": "invalid_params",
+            "message": f"SMTP 主机名不合法：{normalized!r}",
+        }
+
+    if _looks_like_ip(normalized):
+        candidates = [normalized]
+        source = "literal"
+    else:
+        loop = asyncio.get_running_loop()
+        try:
+            candidates = await loop.run_in_executor(
+                None, _resolve_host_addresses, normalized, port
+            )
+        except (socket.gaierror, OSError) as exc:
+            return {
+                "ok": False,
+                "reason": "dns_failed",
+                "message": f"SMTP 主机解析失败：{normalized}（{exc}）",
+            }
+        source = "dns"
+        if not candidates:
+            return {
+                "ok": False,
+                "reason": "dns_failed",
+                "message": f"SMTP 主机没有解析出任何地址：{normalized}",
+            }
+
+    blocked: list[str] = []
+    for candidate in candidates:
+        try:
+            ip = ipaddress.ip_address(candidate)
+        except ValueError:
+            return {
+                "ok": False,
+                "reason": "dns_failed",
+                "message": f"SMTP 主机解析出无法识别的地址：{candidate}",
+            }
+        if _is_blocked_mail_ip(ip):
+            blocked.append(candidate)
+    if blocked:
+        return {
+            "ok": False,
+            "reason": "blocked_address",
+            "blocked": blocked,
+            "message": (
+                f"SMTP 主机指向内网 / 回环 / 保留地址（{', '.join(blocked)}），"
+                "真实模式已拒绝连接；这是安全拦截，不是凭据问题"
+            ),
+        }
+
+    return {"ok": True, "reason": None, "addresses": candidates, "source": source}
+
+
+def _build_real_mail_message(
+    *, to: str, subject: str, body: str, username: str, from_name: str
+) -> EmailMessage:
+    message = EmailMessage()
+    message["From"] = formataddr((from_name, username)) if from_name else username
+    message["To"] = to
+    message["Subject"] = subject or "NanZi Echo 注入验收"
+    message.set_content(body)
+    return message
+
+
+def _build_default_mail_body(
+    *, mode: str, host: str, port: int, security: str, username: str, password: str
+) -> str:
+    fingerprint = hashlib.sha256(password.encode("utf-8")).hexdigest()[:12]
+    return "\n".join(
+        [
+            "这是一封由 NanZi 平台 Echo 测试 MCP 发出的真实测试邮件。",
+            "",
+            f"模式：{mode}",
+            f"SMTP：{host}:{port}（{security}）",
+            f"登录账号：{username}",
+            f"密码指纹：{fingerprint}（明文不会被回显）",
+            "",
+            "收到这封邮件说明：凭据注入链路与 SMTP 认证都是真实可用的。",
+        ]
+    )
+
+
+def _smtp_transaction(
+    *,
+    host: str,
+    port: int,
+    security: str,
+    username: str,
+    password: str,
+    to: str,
+    subject: str,
+    body: str,
+    from_name: str,
+    mode: str,
+) -> dict[str, Any]:
+    """阻塞式阶段机，调用方必须丢线程池。
+
+    每个阶段先落 ``stage`` 再执行，异常时按「当前阶段 + 异常类型」映射 reason，
+    这样 ``login`` 失败（凭据错）与 ``connect`` 失败（网络错）能被明确区分。
+    """
+    from app.services.email_delivery_service import EmailDeliveryService
+
+    def _text(value: Any) -> str:
+        if isinstance(value, (bytes, bytearray)):
+            return value.decode("utf-8", errors="replace")
+        return str(value or "")
+
+    def mask(text: Any) -> str:
+        return EmailDeliveryService.sanitize_error_text(_text(text), password)
+
+    started = time.monotonic()
+    state: dict[str, Any] = {"stage": "connect", "code": None, "server": ""}
+    connection: smtplib.SMTP | None = None
+
+    def finish(ok: bool, reason: str, message: str) -> dict[str, Any]:
+        return {
+            "ok": ok,
+            "reason": reason,
+            "message": message,
+            "stage": state["stage"],
+            "code": state["code"],
+            "server": str(state["server"])[:_SMTP_SERVER_TEXT_LIMIT],
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        }
+
+    try:
+        context = ssl.create_default_context()
+        if security == "ssl":
+            connection = smtplib.SMTP_SSL(
+                host, port, timeout=_SMTP_CONNECT_TIMEOUT, context=context
+            )
+        else:
+            connection = smtplib.SMTP(host, port, timeout=_SMTP_CONNECT_TIMEOUT)
+
+        state["stage"] = "ehlo"
+        code, server_text = connection.ehlo()
+        state["code"], state["server"] = code, _text(server_text)
+
+        if security == "starttls":
+            state["stage"] = "starttls"
+            code, server_text = connection.starttls(context=context)
+            state["code"], state["server"] = code, _text(server_text)
+            code, server_text = connection.ehlo()
+            state["code"], state["server"] = code, _text(server_text)
+
+        state["stage"] = "login"
+        code, server_text = connection.login(username, password)
+        state["code"], state["server"] = code, _text(server_text)
+
+        if mode == "verify":
+            state["stage"] = "authenticated"
+            # QUIT 失败不该把「已认证成功」翻成失败，忽略即可（finally 会 close）
+            try:
+                connection.quit()
+            except Exception:
+                pass
+            return finish(
+                True,
+                "ok",
+                "真实校验通过：已用注入参数登录成功（未发送邮件）",
+            )
+
+        state["stage"] = "sendmail"
+        # smtplib.SMTP 没有 settimeout()（那是 socket 的方法），发信阶段单独放宽超时
+        if connection.sock is not None:
+            connection.sock.settimeout(_SMTP_SEND_TIMEOUT)
+        message = _build_real_mail_message(
+            to=to, subject=subject, body=body, username=username, from_name=from_name
+        )
+        connection.sendmail(username, [to], message.as_string())
+        state["stage"] = "sent"
+        try:
+            connection.quit()
+        except Exception:
+            pass
+        return finish(True, "ok", f"已用注入参数真实发送 1 封邮件到 {to}")
+
+    except smtplib.SMTPAuthenticationError as exc:
+        state["code"] = exc.smtp_code
+        state["server"] = mask(exc.smtp_error)
+        # 535 是「值到了但服务器不认」——这一点必须说死，否则用户会一直怀疑
+        # 绑定有没有生效、注入有没有通。能走到 login 说明 host/port/TLS 全对，
+        # 账号也送到了服务器，剩下的只有「这个账号 + 这个密码」不被接受。
+        #
+        # 按概率列出原因，是因为这几种在回执上长得一模一样，用户没法自己区分：
+        # 最常见的是邮箱后台根本没开 SMTP 服务（授权码再对也报 535），其次是
+        # 把登录密码当授权码填（163/126 只认单独生成的授权码）。
+        head = "真实校验失败" if mode == "verify" else "真实发送失败"
+        # 认不出来码就用 535：`SMTPAuthenticationError` 也会被 530/534 触发，
+        # 写死码会让用户对着一个错的原因排查。
+        code = exc.smtp_code or 535
+        return finish(
+            False,
+            "auth_failed",
+            f"{head}：SMTP 认证被拒（{code}）。"
+            "注入链路是通的——主机、端口、TLS 都通了，账号也已送达服务器，"
+            "问题出在「这个账号 + 这个密码」不被接受，重试不会变。按概率排查："
+            "① 邮箱后台没开启 POP3/SMTP 服务（163/126/QQ 必须手动开启，"
+            "没开时授权码填得再对也是 535）；"
+            "② 密码栏填的是登录密码而不是授权码（163/126 需要单独生成授权码，"
+            "重新生成后旧的立即失效，只有新的能用）；"
+            "③ 授权码首尾带了空格或换行（粘贴时容易带入，看不出但一定失败）；"
+            "④ 账号要写完整邮箱地址（只写前缀服务器认不出）；"
+            "⑤ 新注册、长期未登录或异地登录被风控。",
+        )
+    except (
+        smtplib.SMTPRecipientsRefused,
+        smtplib.SMTPSenderRefused,
+        smtplib.SMTPDataError,
+    ) as exc:
+        # SMTPRecipientsRefused 没有 smtp_code/smtp_error（它只带 recipients 字典），
+        # 拒收码要从 {收件人: (code, msg)} 里取，否则结果里 code 永远是 None。
+        refused_recipients = getattr(exc, "recipients", None) or {}
+        first_refusal = None
+        for value in refused_recipients.values():
+            first_refusal = value
+            break
+        refused_code = None
+        refused_text = None
+        if first_refusal is not None:
+            try:
+                refused_code = int(first_refusal[0])
+            except (TypeError, ValueError, IndexError):
+                refused_code = None
+            try:
+                refused_text = first_refusal[1]
+            except (TypeError, IndexError):
+                refused_text = None
+        state["code"] = getattr(exc, "smtp_code", None) or refused_code
+        state["server"] = mask(
+            getattr(exc, "smtp_error", None) or refused_text or exc
+        )
+        return finish(
+            False,
+            "send_rejected",
+            f"邮件被服务器拒绝（{state['code'] or '无应答码'}）：{state['server']}",
+        )
+    except ssl.SSLCertVerificationError as exc:
+        return finish(False, "cert_error", f"TLS 证书校验失败：{mask(exc)}")
+    except smtplib.SMTPServerDisconnected as exc:
+        return finish(False, "connect_failed", f"SMTP 服务器提前断开连接：{mask(exc)}")
+    except smtplib.SMTPResponseException as exc:
+        state["code"] = getattr(exc, "smtp_code", None)
+        state["server"] = mask(getattr(exc, "smtp_error", exc))
+        reason = "auth_failed" if state["stage"] == "login" else "send_rejected"
+        return finish(False, reason, f"SMTP 拒绝（{state['code']}）：{state['server']}")
+    except (socket.timeout, TimeoutError) as exc:
+        return finish(False, "timeout", f"SMTP 在 {state['stage']} 阶段超时：{mask(exc)}")
+    except socket.gaierror as exc:
+        return finish(False, "dns_failed", f"SMTP 主机解析失败：{mask(exc)}")
+    except OSError as exc:
+        return finish(False, "connect_failed", f"无法连接 SMTP 服务器：{mask(exc)}")
+    except Exception as exc:  # 兜底：绝不把异常抛给模型侧，否则拿不到回执
+        if state["stage"] == "login":
+            fallback_reason = "auth_failed"
+        elif state["stage"] in {"sendmail", "sent"}:
+            fallback_reason = "send_rejected"
+        else:
+            fallback_reason = "connect_failed"
+        return finish(False, fallback_reason, f"SMTP 调用异常：{mask(exc)}")
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+
 def _receipt(name: str, value: Any, *, sensitive: bool) -> dict[str, Any]:
     """一个注入参数的「回执」：到了没有、是什么。
 
@@ -415,8 +912,10 @@ async def send_mail(
     password: str | None = None,
     from_name: str | None = None,
     mailkey: str | None = None,
+    mode: Literal["mock", "verify", "send"] = DEFAULT_MAIL_MODE,
+    body: str | None = None,
 ) -> dict[str, Any]:
-    """模拟发一封邮件，并把每个 SMTP 参数回显出来。
+    """模拟 / 真实校验 / 真实发送邮件，并回显每个 SMTP 参数的到达情况。
 
     参数名**刻意与内置「邮箱 SMTP 发送」模板的字段一一对齐**（``host`` / ``port`` /
     ``security`` / ``username`` / ``password`` / ``from_name``）：凭据多字段映射面板
@@ -434,9 +933,15 @@ async def send_mail(
         password: 密码 / 授权码。敏感，只回显掩码与指纹。
         from_name: 发件人显示名。凭据参数。
         mailkey: 单值凭据的注入验收位。模型侧看不到，由平台注入。
+        mode: ``mock``（默认，只回显不发信）/ ``verify``（真连 + 真登录，不发信）/
+            ``send``（真发一封到 ``to``）。真实档位用**注入进来的**参数连接，
+            因此能证明「值不仅到了，而且能用」。
+        body: 仅 ``send`` 使用；留空用内置测试正文。
+
+    真实模式的失败一律以 ``ok: False`` + ``real.reason`` 返回，不抛异常——否则调用方
+    拿不到参数回执，分不清「注入没到位」还是「凭据无效」。
     """
-    return {
-        "ok": True,
+    base: dict[str, Any] = {
         "to": to,
         "subject": subject,
         "smtp": {
@@ -449,12 +954,133 @@ async def send_mail(
         },
         # 单值凭据走的也是这条：整段就是一个值，没有字段可拆
         "mailkey": _receipt("mailkey", mailkey, sensitive=True),
-        "message": f"已模拟给 {to} 发送邮件",
+    }
+
+    normalized_mode = str(mode or DEFAULT_MAIL_MODE).strip().lower()
+    if normalized_mode not in (DEFAULT_MAIL_MODE, *REAL_MAIL_MODES):
+        return {
+            "ok": False,
+            "mode": normalized_mode,
+            **base,
+            "real": {
+                "attempted": False,
+                "host": host,
+                "port": port,
+                "security": security,
+                "reason": "invalid_params",
+            },
+            "message": (
+                f"mode 不合法：{normalized_mode!r}，"
+                f"只支持 {DEFAULT_MAIL_MODE} / {' / '.join(REAL_MAIL_MODES)}"
+            ),
+        }
+
+    if normalized_mode == DEFAULT_MAIL_MODE:
+        # 键集必须与改造前完全一致：既有凭据注入验收测试依赖它。
+        return {"ok": True, **base, "message": f"已模拟给 {to} 发送邮件"}
+
+    validation = _validate_real_mail_params(
+        to=to,
+        host=host,
+        port=port,
+        security=security,
+        username=username,
+        password=password,
+    )
+    real: dict[str, Any] = {
+        "attempted": False,
+        "host": host,
+        "port": port,
+        "security": security,
+    }
+    if not validation["ok"]:
+        real["reason"] = validation["reason"]
+        return {
+            "ok": False,
+            "mode": normalized_mode,
+            **base,
+            "real": real,
+            "message": validation["message"],
+        }
+
+    normalized = validation["normalized"]
+    guard = await _guard_smtp_host(normalized["host"], normalized["port"])
+    if not guard["ok"]:
+        real.update(
+            {
+                "host": normalized["host"],
+                "port": normalized["port"],
+                "security": normalized["security"],
+                "reason": guard["reason"],
+                "blocked": guard.get("blocked", []),
+            }
+        )
+        return {
+            "ok": False,
+            "mode": normalized_mode,
+            **base,
+            "real": real,
+            "message": guard["message"],
+        }
+
+    real.update(
+        {
+            "attempted": True,
+            "host": normalized["host"],
+            "port": normalized["port"],
+            "security": normalized["security"],
+        }
+    )
+    mail_body = body or _build_default_mail_body(
+        mode=normalized_mode,
+        host=normalized["host"],
+        port=normalized["port"],
+        security=normalized["security"],
+        username=normalized["username"],
+        password=normalized["password"],
+    )
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        functools.partial(
+            _smtp_transaction,
+            host=normalized["host"],
+            port=normalized["port"],
+            security=normalized["security"],
+            username=normalized["username"],
+            password=normalized["password"],
+            to=normalized["to"],
+            subject=subject,
+            body=mail_body,
+            from_name=str(from_name or "").strip(),
+            mode=normalized_mode,
+        ),
+    )
+    real.update(
+        {
+            "stage": result["stage"],
+            "code": result["code"],
+            "server": result["server"],
+            "duration_ms": result["duration_ms"],
+            "reason": result["reason"],
+        }
+    )
+    return {
+        "ok": result["ok"],
+        "mode": normalized_mode,
+        **base,
+        "real": real,
+        "message": result["message"],
     }
 
 
 def send_mail_tool_schema() -> str:
-    """返回 ``send_mail`` 的稳定 JSON Schema，供 MCP 管理页缓存。"""
+    """返回 ``send_mail`` 的稳定 JSON Schema，供 MCP 管理页缓存。
+
+    注意：模型实际看到的 schema 由 FastMCP 按 ``send_mail`` 的签名自动生成，
+    本函数只是「服务连不上时管理页展示参数」的副本，签名一改必须同步，
+    否则两份漂移（``mode`` / ``body`` 就是本次同步的对象）。
+    """
     return json.dumps(
         {
             "type": "object",
@@ -478,6 +1104,19 @@ def send_mail_tool_schema() -> str:
                 "mailkey": {
                     "type": "string",
                     "description": "单值凭据的注入验收位：标成「来自凭据」后由平台注入。",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["mock", "verify", "send"],
+                    "default": "mock",
+                    "description": (
+                        "mock 只回显参数不发信；verify 真连并登录（不发信）；"
+                        "send 真发一封到 to"
+                    ),
+                },
+                "body": {
+                    "type": "string",
+                    "description": "仅 send 使用：邮件正文，留空则用内置测试正文",
                 },
             },
             "required": ["to"],

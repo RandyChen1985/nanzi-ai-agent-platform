@@ -110,9 +110,17 @@ def parse_rule(raw: str | bytes | Mapping[str, Any] | None) -> RuleSpec:
         raise RuleError(f"未知字段：{', '.join(sorted(unknown))}")
 
     key_source = str(data.get("key_source") or "").strip()
+    # 空 key_source 是合法形态，但**只在**「让模型挑」下成立：那套配法没有
+    # 「拿什么去比」这一步，候选由模型从可见集合里挑（on_miss=model）。
+    # 其余情况仍必须给出值来源，否则规则算不出候选、必然未命中，
+    # 让这种规则存进库只会变成运行时才发现的坏配置。
     if not key_source:
-        raise RuleError("缺少 key_source（用哪个值去匹配）")
-    if key_source.startswith("arg:"):
+        if str(data.get("on_miss") or "").strip() != "model":
+            raise RuleError(
+                "缺少 key_source（用哪个值去匹配）；"
+                "想交给模型挑请把 on_miss 设成 model"
+            )
+    elif key_source.startswith("arg:"):
         if not key_source[4:].strip():
             raise RuleError("key_source 写成 arg: 时必须给出参数名，例如 arg:to")
     elif key_source not in USER_KEY_SOURCES:
@@ -290,6 +298,9 @@ def rule_summary(spec: RuleSpec) -> str:
     target = _TARGET_LABEL.get(spec.target, spec.target)
     if spec.target == "field" and spec.target_field:
         target = f"字段 {spec.target_field}"
+    if not spec.key_source:
+        # 「让模型挑」没有取值来源，摘要要说明这件事，否则会渲染成「（取）」
+        return "由模型在可见凭据里挑一条"
     return f"{target} = {spec.templates[0]}（取{source}）"
 
 

@@ -1857,3 +1857,126 @@ class TestSingleRuleBindingClearsOnlyMyDowngradedFixed:
         assert ("", "rule") in by_layer, list(by_layer)
         # 本人那条降级 fixed 被清掉
         assert not any(k[0] not in ("",) and k[1] == "fixed" for k in by_layer), list(by_layer)
+
+
+class TestSingleValuePageDoesNotCreateGroups:
+    """单值页整表保存不能被当成「一次多值配置」。
+
+    后端早先按「非 none 条目 > 1」推断多值配法，而 MCP 的单值凭据页也走
+    ``bindings/batch``（它必须整表提交，否则清单同步会把没提交的槽位从
+    「由凭据提供」里抹掉）。于是用户在单值页给两个参数各配一条互不相干的凭据，
+    保存后两条被打上同一个 ``binding_group_id``；下次打开弹窗被判成多值配置，
+    切回单值页后两处都显示「由多值凭据统一管理」、改规则与换凭据的按钮全部消失。
+
+    修法是把「要不要建组」交给调用方声明（``as_group``），不再靠条目数猜。
+    """
+
+    @staticmethod
+    async def _save(client, api_key, consumer_id, items, as_group: bool):
+        return await _batch(
+            client,
+            api_key,
+            items,
+            consumer_type="mcp_server",
+            consumer_id=consumer_id,
+            as_group=as_group,
+        )
+
+    @staticmethod
+    async def _groups(client, api_key, consumer_id) -> dict[str, str | None]:
+        listed = await client.get(
+            f"{PREFIX}/bindings",
+            params={"consumer_type": "mcp_server", "consumer_id": consumer_id},
+            headers=_headers(api_key),
+        )
+        return {row["slot"]: row.get("binding_group_id") for row in listed.json()["data"]}
+
+    async def test_two_independent_fixed_bindings_get_no_group(
+        self, client, clean_secrets, valid_api_key
+    ):
+        a = await _create_secret(client, valid_api_key, allowed_scenarios=["mcp"])
+        b = await _create_secret(client, valid_api_key, allowed_scenarios=["mcp"])
+        consumer_id = f"srv-{uuid.uuid4().hex[:6]}"
+        resp = await self._save(
+            client, valid_api_key, consumer_id,
+            [
+                {"slot": "arg:t:host", "name": "host", "secret_id": a["id"], "value_path": "host"},
+                {"slot": "arg:t:user", "name": "user", "secret_id": b["id"], "value_path": "username"},
+            ],
+            as_group=False,
+        )
+        assert resp.status_code == 200, resp.text
+        assert await self._groups(client, valid_api_key, consumer_id) == {
+            "arg:t:host": None,
+            "arg:t:user": None,
+        }
+
+    async def test_multi_value_save_still_shares_one_group(
+        self, client, clean_secrets, valid_api_key
+    ):
+        secret = await _create_secret(client, valid_api_key, allowed_scenarios=["mcp"])
+        consumer_id = f"srv-{uuid.uuid4().hex[:6]}"
+        resp = await self._save(
+            client, valid_api_key, consumer_id,
+            [
+                {"slot": "arg:t:host", "name": "host", "secret_id": secret["id"], "value_path": "host"},
+                {"slot": "arg:t:user", "name": "user", "secret_id": secret["id"], "value_path": "username"},
+            ],
+            as_group=True,
+        )
+        assert resp.status_code == 200, resp.text
+        groups = set((await self._groups(client, valid_api_key, consumer_id)).values())
+        assert len(groups) == 1 and None not in groups
+
+    async def test_single_page_keeps_existing_group_and_leaves_new_param_alone(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """最容易写错的一条：整表提交是必须的，但组标识要逐条透传。
+
+        `as_group=False` + 每条自带 `binding_group_id`：组内槽位维持原组，
+        同一批里新增的独立参数不能跟着进组。
+        """
+        shared = await _create_secret(client, valid_api_key, allowed_scenarios=["mcp"])
+        own = await _create_secret(client, valid_api_key, allowed_scenarios=["mcp"])
+        consumer_id = f"srv-{uuid.uuid4().hex[:6]}"
+        await self._save(
+            client, valid_api_key, consumer_id,
+            [
+                {"slot": "arg:t:host", "name": "host", "secret_id": shared["id"], "value_path": "host"},
+                {"slot": "arg:t:user", "name": "user", "secret_id": shared["id"], "value_path": "username"},
+            ],
+            as_group=True,
+        )
+        group_id = (await self._groups(client, valid_api_key, consumer_id))["arg:t:host"]
+        assert group_id
+
+        resp = await self._save(
+            client, valid_api_key, consumer_id,
+            [
+                {"slot": "arg:t:host", "name": "host", "secret_id": shared["id"],
+                 "value_path": "host", "binding_group_id": group_id},
+                {"slot": "arg:t:user", "name": "user", "secret_id": shared["id"],
+                 "value_path": "username", "binding_group_id": group_id},
+                {"slot": "arg:t:port", "name": "port", "secret_id": own["id"], "value_path": "port"},
+            ],
+            as_group=False,
+        )
+        assert resp.status_code == 200, resp.text
+        groups = await self._groups(client, valid_api_key, consumer_id)
+        assert groups["arg:t:host"] == group_id
+        assert groups["arg:t:user"] == group_id
+        assert groups["arg:t:port"] is None
+
+    async def test_as_group_with_single_effective_row_creates_no_group(
+        self, client, clean_secrets, valid_api_key
+    ):
+        """只落一条时不该建组：一个参数的「组」锁成只读只会让人改不了。"""
+        secret = await _create_secret(client, valid_api_key, allowed_scenarios=["mcp"])
+        consumer_id = f"srv-{uuid.uuid4().hex[:6]}"
+        resp = await self._save(
+            client, valid_api_key, consumer_id,
+            [{"slot": "arg:t:host", "name": "host", "secret_id": secret["id"], "value_path": "host"}],
+            as_group=True,
+        )
+        assert resp.status_code == 200, resp.text
+        assert (await self._groups(client, valid_api_key, consumer_id)) == {"arg:t:host": None}

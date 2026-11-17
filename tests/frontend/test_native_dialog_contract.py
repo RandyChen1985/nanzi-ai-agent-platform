@@ -32,12 +32,22 @@ _NATIVE = re.compile(
     r"|(?<![\w.$])(?:prompt|alert|confirm)\s*\("
 )
 
+#: 项目自建确认框的调用与定义形态：`await confirm({...})` / `function confirm(...)`。
+#: 它和原生 `confirm("...")` 在字面上都是 `confirm(`，正则分不出来——但**来源**能分：
+#: 文件里出现了 `useConfirm`，说明这个 `confirm` 是 from '@/composables/useConfirm'
+#: 拿到的，恰恰是这条棘轮鼓励的方向。真正的原生调用仍被 `window.confirm(` 那条硬拦。
+_OWN_CONFIRM = re.compile(r"(?<![\w.$])confirm\s*\(")
+_WINDOW_CONFIRM = re.compile(r"\bwindow\s*\.\s*confirm\s*\(")
+
 
 def _native_dialog_sites(path: Path) -> list[str]:
     """返回文件中真正调用原生弹窗的 `相对路径:行号`（注释与文档字符串不算）。"""
     sites = []
     in_block_comment = False
-    for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+    text = path.read_text(encoding="utf-8")
+    # 引入过自建确认框的文件，裸 `confirm(` 是它的调用/定义，不是原生弹窗
+    uses_own_confirm = "useConfirm" in text
+    for number, line in enumerate(text.split("\n"), 1):
         stripped = line.strip()
         if in_block_comment:
             if "*/" in stripped:
@@ -50,6 +60,12 @@ def _native_dialog_sites(path: Path) -> list[str]:
         if stripped.startswith(("//", "*")):
             continue
         if _NATIVE.search(line):
+            if (
+                uses_own_confirm
+                and not _WINDOW_CONFIRM.search(line)
+                and _OWN_CONFIRM.search(line)
+            ):
+                continue
             sites.append(f"{path.relative_to(FRONTEND)}:{number}")
     return sites
 

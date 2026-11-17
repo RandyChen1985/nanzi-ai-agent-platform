@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -212,6 +214,14 @@ class BindItem(BaseModel):
     rule: Dict[str, Any] | None = None
     value_path: str = ""
     allow_whole: bool = False
+    #: 这一条**原来就属于**哪个多值组；没有就是单值绑定。
+    #:
+    #: 只在 ``as_group=False`` 时被采用。单值页整表保存会把组内槽位一起提交
+    #: （不提交它们，清单同步就会把它们从「由凭据提供」里抹掉），透传能让那几行
+    #: 保持原组，而同一批里真正独立的参数不被牵连。
+    #: 库里的列是 ``VARCHAR(36)``；不设上限的话，超长入参在写库那一步才炸成 500，
+    #: 而这时候整批已经写了一半（虽然会回滚，但用户只看到一句服务器错误）。
+    binding_group_id: str = Field(default="", max_length=36)
 
 
 class BindBatchRequest(BaseModel):
@@ -235,6 +245,16 @@ class BindBatchRequest(BaseModel):
     #: 映射，运行时模型照旧自己填，服务端只回一句 credentials_rejected，排查方向
     #: 全错。带上这个字段就把两份数据放进同一个事务。
     mcp_tool_id: str = ""
+    #: 这一批是不是「一次多值配置」（一条凭据/一条规则铺 N 个参数）。
+    #:
+    #: 必须由调用方显式声明，不能靠「非 none 条目 > 1」推断：MCP 的**单值凭据页**
+    #: 也走同一个接口，用户在那一页给两个参数各配一条互不相干的凭据时，条目数同样
+    #: 是 2——按条目数建组会把它们锁成「由多值凭据统一管理」，从此在单值页既改不了
+    #: 也换不了（按钮被替换成只读徽标），只能整表清空重来。
+    #:
+    #: ``True`` 时整批共用一个新生成的组标识（组每次重配都会换 id，语义不变）；
+    #: ``False`` 时逐条采用各自传入的 ``binding_group_id``，没有就不建组。
+    as_group: bool = False
 
 
 class BindRequest(BaseModel):
@@ -1057,6 +1077,30 @@ async def patch_prefs(
     return {"code": 0, "message": "已保存", "data": {"allow_script_env": payload.allow_script_env}}
 
 
+def _count_groups(rows: Sequence[Any]) -> Counter:
+    """先数一遍各组的槽位数，供 ``_group_size_of`` O(1) 查。
+
+    逐行扫 rows 也能算对，但那是 O(n²)：几百条绑定无所谓，几千条时这一个字段
+    就能把列表接口拖慢。反正 rows 已经查出来了，多走一遍换每行一次字典查很划算。
+    """
+    return Counter(
+        getattr(row, "binding_group_id", None)
+        for row, _secret in rows
+        if getattr(row, "binding_group_id", None)
+    )
+
+
+def _group_size_of(binding: Any, group_sizes: Counter) -> int:
+    """这条绑定所属的多值组里有几个槽位；单值绑定返回 0。
+
+    只查预统计好的计数，不额外查库、也不再扫一遍结果集。
+    """
+    group_id = getattr(binding, "binding_group_id", None)
+    if not group_id:
+        return 0
+    return int(group_sizes.get(group_id, 0))
+
+
 @router.get("/bindings", summary="绑定情况：按消费者查，或按凭据查")
 async def get_bindings(
     consumer_type: str | None = Query(None),
@@ -1132,6 +1176,9 @@ async def get_bindings(
 
     rule_on_miss = await _rule_shadow_map(db, [binding for binding, _secret in rows])
 
+    # 组大小要按整批结果统计，先数一遍；否则每行都扫全量 rows 是 O(n²)
+    group_sizes = _count_groups(rows)
+
     return {
         "code": 0,
         "data": [
@@ -1187,6 +1234,13 @@ async def get_bindings(
                 # 与「我绑的」全靠它。少了这个字段时，管理端编辑平台 MCP 服务会把
                 # 全局绑定整行过滤掉——界面显示「未选」，连解绑按钮都不出现。
                 "is_global": not binding.bound_by_user_id,
+                # 多值配法的组标识 + 同组几个槽位。单值页据此把「由多值统一管理」
+                # 的参数锁成只读：不锁的话改其中一行只改这一个 slot，其余 N-1 个
+                # 还是旧规则，多值结构被悄悄拆散而没人知道。
+                # 组大小让界面能说出「统一管理（5 个参数）」，只说「多值管理」
+                # 用户判断不了要不要去多值页看。
+                "binding_group_id": getattr(binding, "binding_group_id", None),
+                "binding_group_size": _group_size_of(binding, group_sizes),
             }
             for binding, secret in rows
             # 全局绑定迁移后是空串，迁移前是 NULL，两种都算「可见」
@@ -1848,6 +1902,8 @@ async def create_bindings_batch(
                 "rule": item.rule,
                 "value_path": item.value_path,
                 "allow_whole": bool(item.allow_whole),
+                # 原组：``as_group=True`` 时会被整批的新组覆盖，否则按这一行保留
+                "binding_group_id": str(item.binding_group_id or "").strip(),
             }
         )
         if strategy == "rule":
@@ -1931,6 +1987,39 @@ async def create_bindings_batch(
     if not resolved:
         raise HTTPException(status_code=400, detail="没有需要保存的参数")
 
+    # 这一批是「一次多值配置」：生成一个组标识，整批共享。
+    #
+    # 单值配法和多值配法落库同形（都是 N 个 slot 各一条绑定），没有这个标识，
+    # 下游只能靠「几个 slot 的 rule_json 是否相同」去猜——用户单独改过其中一条
+    # 之后那个推断就不成立了。有了它：单值页能认出「这个参数由多值统一管理」
+    # 并锁成只读。
+    #
+    # 只在**整表保存**这里生成；单条 POST /bindings（单值配法）不传，保持 NULL。
+    #
+    # 实际写入的槽位只有 1 个时不生成：那不是「一条凭据供一组」，锁成只读
+    # 反而让用户没法在单值页改它，还得先回多值页或整表清空。
+    # 只有调用方声明了「这是一次多值配置」才建组。
+    #
+    # 早先按「非 none 条目 > 1」推断，把 MCP 单值凭据页也算了进去——那一页一次
+    # 保存同样提交多条（用户给几个参数各配一条独立凭据，或整表提交以同步清单），
+    # 于是两个互不相干的绑定被打上同一个组标识。下次打开弹窗被判成多值配置，
+    # 切回单值页后两处都显示「由多值凭据统一管理」、改规则与换凭据的按钮全部消失。
+    _effective = len([item for item in resolved if item["strategy"] != "none"])
+    binding_group_id = (
+        str(uuid.uuid4()) if payload.as_group and _effective > 1 else None
+    )
+
+    def _group_of(item: dict) -> str | None:
+        """这一行最终落到哪个多值组。
+
+        ``as_group=True``：整批共用一个新标识（多值页整组重配，旧的作废）。
+        ``as_group=False``：保留这一行原本的组，独立参数继续没有组——单值页
+        保存时组内槽位会被一起提交，靠它维持原来的分组不被拆散。
+        """
+        if payload.as_group:
+            return binding_group_id
+        return item.get("binding_group_id") or None
+
     # —— 第二轮：真正写入 ——
     saved = 0
     removed = 0
@@ -1997,6 +2086,7 @@ async def create_bindings_batch(
                 commit=False,
                 audit=False,
                 allow_global=is_admin,
+                binding_group_id=_group_of(item),
             )
             saved += 1
             continue
@@ -2034,6 +2124,7 @@ async def create_bindings_batch(
             # 审计同理：提交成功后再写，不记没发生过的操作
             audit=False,
             allow_global=is_admin,
+            binding_group_id=_group_of(item),
         )
         saved += 1
 

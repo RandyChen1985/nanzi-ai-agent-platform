@@ -160,7 +160,13 @@ def _flag_unresolved_references(
         seen.add(slot_key.lower())
 
 
-def _record(denials: dict[str, str] | None, slot: str, reason: str | None) -> None:
+def _record(
+    denials: dict[str, str] | None,
+    slot: str,
+    reason: str | None,
+    detail: str = "",
+    details: dict[str, str] | None = None,
+) -> None:
     """把「这个槽位为什么没注入」记下来，由调用方决定怎么报。
 
     **不记「没有绑定」**：那是常态（绝大多数 header 本来就不绑凭据），记下来会
@@ -172,6 +178,11 @@ def _record(denials: dict[str, str] | None, slot: str, reason: str | None) -> No
     # 存**原始 code**：调用方可能想按原因给不同的修复建议（域名白名单 vs 场景勾选），
     # 存成人话就再也分不出来了。展示时用 denial_text()。
     denials[slot] = reason
+    # 规则未命中时 `detail` 里写着「要找的是什么值」（如 mail.a@b.com）。
+    # 不带出去的话，用户只看到「匹配规则没有找到对应凭据」，完全想不到是自己的
+    # 入参拼出来跟凭据 key 对不上。
+    if details is not None and detail:
+        details[slot] = detail
 
 
 def _looks_unfilled(value: Any) -> bool:
@@ -440,6 +451,7 @@ async def apply_api_tool_bindings(
     *,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    denial_details: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """把绑定的凭据填进 API 工具的请求头。
 
@@ -459,6 +471,9 @@ async def apply_api_tool_bindings(
     # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
     # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
     plain_cache: dict[str, str] = {}
+    # 可见集合在同一层内对每个槽位都一样，查一次就够了。多值配法下「一条凭据
+    # 供 5 个参数」原本要跑 5 次同样的权限过滤查询。
+    visible_cache: dict[tuple[str, str], list] = {}
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
@@ -494,6 +509,7 @@ async def apply_api_tool_bindings(
                 dept_code=dept_code,
                 user_attrs=user_attrs,
                 plain_cache=plain_cache,
+                visible_cache=visible_cache,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] API 工具 %s 的 %s 解析失败: %s", getattr(config, "name", "?"), name, exc)
@@ -532,7 +548,13 @@ async def apply_api_tool_bindings(
                 )
             # 原因要带回调用层：停用/过期和「没绑」看起来都是「值是空的」，
             # 但用户要做的动作完全不同。
-            _record(denials, f"header:{name}", result.denial)
+            _record(
+                denials,
+                f"header:{name}",
+                result.denial,
+                detail=getattr(result, "detail", "") or "",
+                details=denial_details,
+            )
 
     return resolved
 
@@ -711,6 +733,7 @@ async def apply_api_tool_param_bindings(
     method: str,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    denial_details: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """把「声明为来自凭据」的参数补上值。
 
@@ -734,6 +757,9 @@ async def apply_api_tool_param_bindings(
     # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
     # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
     plain_cache: dict[str, str] = {}
+    # 可见集合在同一层内对每个槽位都一样，查一次就够了。多值配法下「一条凭据
+    # 供 5 个参数」原本要跑 5 次同样的权限过滤查询。
+    visible_cache: dict[tuple[str, str], list] = {}
     names = credential_param_names(getattr(config, "parameter_schema", None))
     if not names:
         return params
@@ -796,6 +822,7 @@ async def apply_api_tool_param_bindings(
                 user_attrs=user_attrs,
                 preferred_secret_id=preferred.get(name),
                 plain_cache=plain_cache,
+                visible_cache=visible_cache,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -840,7 +867,11 @@ async def apply_api_tool_param_bindings(
                     "[SecretInject] API 工具 %s 的参数 %s 被拒绝: %s",
                     getattr(config, "name", "?"), name, result.denial,
                 )
-            _record(denials, slot, result.denial)
+            _record(
+                denials, slot, result.denial,
+                detail=getattr(result, "detail", "") or "",
+                details=denial_details,
+            )
 
     return resolved
 
@@ -876,6 +907,7 @@ async def apply_mcp_bindings(
     *,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    denial_details: dict[str, str] | None = None,
     used: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """把绑定的凭据填进 MCP 出站请求头。
@@ -909,6 +941,9 @@ async def apply_mcp_bindings(
     # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
     # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
     plain_cache: dict[str, str] = {}
+    # 可见集合在同一层内对每个槽位都一样，查一次就够了。多值配法下「一条凭据
+    # 供 5 个参数」原本要跑 5 次同样的权限过滤查询。
+    visible_cache: dict[tuple[str, str], list] = {}
     server_id = str(getattr(server, "id", "") or "")
     if not server_id:
         _flag_unresolved_references(headers, denials)
@@ -958,6 +993,7 @@ async def apply_mcp_bindings(
                 dept_code=dept_code,
                 user_attrs=user_attrs,
                 plain_cache=plain_cache,
+                visible_cache=visible_cache,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SecretInject] MCP %s 的 %s 解析失败: %s", server_id, slot, exc)
@@ -992,7 +1028,11 @@ async def apply_mcp_bindings(
             _set_case_insensitive(resolved, name, rendered)
             injected += 1
         else:
-            _record(denials, slot, result.denial)
+            _record(
+                denials, slot, result.denial,
+                detail=getattr(result, "detail", "") or "",
+                details=denial_details,
+            )
 
     _flag_unresolved_references(resolved, denials)
     return resolved
@@ -1121,6 +1161,7 @@ async def apply_mcp_arg_bindings(
     *,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    denial_details: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """把凭据填进 MCP 工具调用的 ``arguments``。
 
@@ -1154,6 +1195,9 @@ async def apply_mcp_arg_bindings(
     # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
     # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
     plain_cache: dict[str, str] = {}
+    # 可见集合在同一层内对每个槽位都一样，查一次就够了。多值配法下「一条凭据
+    # 供 5 个参数」原本要跑 5 次同样的权限过滤查询。
+    visible_cache: dict[tuple[str, str], list] = {}
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
@@ -1208,6 +1252,7 @@ async def apply_mcp_arg_bindings(
                 user_attrs=user_attrs,
                 preferred_secret_id=preferred.get(name),
                 plain_cache=plain_cache,
+                visible_cache=visible_cache,
             )
         except Exception as exc:  # noqa: BLE001 - 凭据中心挂了不该炸掉工具调用
             logger.warning(
@@ -1250,6 +1295,12 @@ async def apply_mcp_arg_bindings(
                 # 直接存 code，不走 _record：那是 header 侧的助手，会跳过「没绑定」，
                 # 而参数级里没有值就是缺参数，任何原因都得报出来。
                 denials[slot] = coerce_error
+                # detail 是给调用方拼错误信息用的（比如「要找 mail.a@b.com」）。
+                # 这里同样绕开 _record，所以得自己记一份。
+                if denial_details is not None:
+                    detail = getattr(result, "detail", "") or ""
+                    if detail:
+                        denial_details[slot] = detail
                 await secret_resolver.mark_usage_failed(
                     getattr(result, "usage_id", None), coerce_error
                 )
@@ -1260,6 +1311,11 @@ async def apply_mcp_arg_bindings(
             # 那是常态。参数级正相反——声明过就必须有值，没绑同样是缺参数。
             if denials is not None:
                 denials[slot] = result.denial
+            # 同上：绕开 _record 就得自己记 detail，否则调用方只能报一个 code
+            if denial_details is not None:
+                detail = getattr(result, "detail", "") or ""
+                if detail:
+                    denial_details[slot] = detail
 
     return resolved
 
@@ -1349,6 +1405,7 @@ async def apply_script_env_bindings(
     *,
     user_info: Mapping[str, Any] | None = None,
     denials: dict[str, str] | None = None,
+    denial_details: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """解析脚本工具要注入的环境变量，返回 ``{变量名: 值}``。
 
@@ -1371,6 +1428,9 @@ async def apply_script_env_bindings(
     # 「一条凭据供多个参数」时，同一份凭据在一次调用里只解密一次。
     # 作用域是这次调用：不进进程级缓存，改完凭据立刻生效，明文也不留在内存里。
     plain_cache: dict[str, str] = {}
+    # 可见集合在同一层内对每个槽位都一样，查一次就够了。多值配法下「一条凭据
+    # 供 5 个参数」原本要跑 5 次同样的权限过滤查询。
+    visible_cache: dict[tuple[str, str], list] = {}
     user_id, dept_code = _current_user(user_info)
     user_attrs = _current_user_attrs(user_info)
     if not user_id:
@@ -1417,6 +1477,7 @@ async def apply_script_env_bindings(
                 dept_code=dept_code,
                 user_attrs=user_attrs,
                 plain_cache=plain_cache,
+                visible_cache=visible_cache,
             )
         except Exception:  # noqa: BLE001
             logger.warning("[SecretInject] 脚本 %s 的 %s 解析失败", tool_id, slot, exc_info=True)
@@ -1440,5 +1501,9 @@ async def apply_script_env_bindings(
                 continue
             resolved[name] = picked
         else:
-            _record(denials, slot, result.denial)
+            _record(
+                denials, slot, result.denial,
+                detail=getattr(result, "detail", "") or "",
+                details=denial_details,
+            )
     return resolved

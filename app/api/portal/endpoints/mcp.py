@@ -71,6 +71,11 @@ from app.services.mcp.echo_server import (
     ECHO_SLOW_TOOL_NAME,
     echo_slow_tool_schema,
     personal_echo_slow_tool_name,
+    ECHO_MAIL_TOOL_DESCRIPTION,
+    ECHO_MAIL_TOOL_LOCAL_NAME,
+    ECHO_MAIL_TOOL_NAME,
+    send_mail_tool_schema,
+    personal_echo_mail_tool_name,
     echo_tool_schema,
     personal_echo_server_id,
     personal_echo_tool_name,
@@ -1028,6 +1033,13 @@ async def create_echo_test_mcp(
         if is_personal
         else str(uuid.uuid5(uuid.NAMESPACE_URL, "nanzi:mcp:echo:tool:echo_slow"))
     )
+    # 发信验收工具同理。它不在最初那批硬编码里，于是「新建 Echo → 只看到 2 个工具」
+    # 一直存在：`send_mail` 只在有人手动点过「重新同步远端工具列表」之后才出现。
+    mail_tool_id = (
+        str(uuid.uuid5(uuid.NAMESPACE_URL, f"nanzi:mcp:echo:personal:{owner_id}:tool:send_mail"))
+        if is_personal
+        else str(uuid.uuid5(uuid.NAMESPACE_URL, "nanzi:mcp:echo:tool:send_mail"))
+    )
     manager = get_api_key_manager()
     server = (
         await db.execute(select(McpServer).where(McpServer.id == server_id))
@@ -1090,6 +1102,27 @@ async def create_echo_test_mcp(
                 ),
                 tool_description=ECHO_SLOW_TOOL_DESCRIPTION,
                 parameter_schema=echo_slow_tool_schema(),
+                is_published=True,
+                is_available=True,
+            )
+        )
+        # 发信验收工具。远端 echo 服务一直有它（`send_mail`），但这里只预置了
+        # `echo` / `echo_slow` 两个，于是「刚建好的 Echo 只有 2 个工具、
+        # 点一下「重新同步远端工具列表」才变成 3 个」——新建到手动同步之间，
+        # 用户看到的清单是缺的，还会以为发信工具没做出来。
+        # 预置成已发布：Echo 的全部工具都是「零配置就能用」的验收工具，
+        # 漏一个不发，用户就得自己去发布一次。
+        db.add(
+            McpToolCache(
+                id=mail_tool_id,
+                server_id=server_id,
+                tool_name=(
+                    personal_echo_mail_tool_name(server_name)
+                    if is_personal
+                    else ECHO_MAIL_TOOL_NAME
+                ),
+                tool_description=ECHO_MAIL_TOOL_DESCRIPTION,
+                parameter_schema=send_mail_tool_schema(),
                 is_published=True,
                 is_available=True,
             )
@@ -1243,10 +1276,58 @@ async def create_echo_test_mcp(
             slow_tool.is_published = True
             slow_tool.is_available = True
 
+        # 同一个幂等补齐：老环境（Echo 只有 2 个工具时建的）重新点一次入口就能
+        # 拿到发信工具，不用先去别处手动同步。
+        mail_tool_name = (
+            personal_echo_mail_tool_name(server.server_name)
+            if is_personal
+            else ECHO_MAIL_TOOL_NAME
+        )
+        mail_tool = (
+            await db.execute(
+                select(McpToolCache).where(
+                    McpToolCache.server_id == server_id,
+                    McpToolCache.tool_name == mail_tool_name,
+                )
+            )
+        ).scalar_one_or_none()
+        if mail_tool is None:
+            # 与上面两个同一处理：服务改过名之后，工具行还挂在固定主键上、名字是旧的。
+            mail_stale = (
+                await db.execute(
+                    select(McpToolCache).where(
+                        McpToolCache.server_id == server_id,
+                        McpToolCache.id == mail_tool_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if mail_stale is not None:
+                mail_stale.tool_name = mail_tool_name
+                mail_tool = mail_stale
+        if mail_tool is None:
+            db.add(
+                McpToolCache(
+                    id=mail_tool_id,
+                    server_id=server_id,
+                    tool_name=mail_tool_name,
+                    tool_description=ECHO_MAIL_TOOL_DESCRIPTION,
+                    parameter_schema=send_mail_tool_schema(),
+                    is_published=True,
+                    is_available=True,
+                )
+            )
+        else:
+            mail_tool.tool_description = ECHO_MAIL_TOOL_DESCRIPTION
+            mail_tool.parameter_schema = send_mail_tool_schema()
+            mail_tool.is_published = True
+            mail_tool.is_available = True
+
     await db.commit()
     _clear_runtime_tool_cache()
     response = McpServerResponse.model_validate(server)
-    echo_tool_total = 2  # echo + echo_slow（进度验收工具）
+    # 三个工具：echo + echo_slow（进度验收）+ send_mail（发信验收）。
+    # 这个数写死是有意的——Echo 是内置服务，清单由平台决定，与远端是否已同步无关。
+    echo_tool_total = 3
     response.tool_count = echo_tool_total
     response.published_tool_count = echo_tool_total
     response.stale_tool_count = 0

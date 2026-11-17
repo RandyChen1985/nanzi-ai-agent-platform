@@ -1780,6 +1780,31 @@ class TestDenialReasonWithoutCollector:
             body = source.split(f"async def {name}(")[1].split("\nasync def ")[0]
             assert "if denials is None:" in body, f"{name} 没有给 denials 兜底"
 
+    def test_denial_details_is_wired_not_just_declared(self):
+        """``denial_details`` 必须真的写进函数体，不能只是签名上的一个形参。
+
+        只声明不使用的后果已经踩过：``mcp_factory`` 用这个字典拼「规则未命中时
+        要找哪个 key」，字典恒空 → 拼出来的错误信息只有一句码，用户照着改不了。
+        所以这里按函数体逐一检查——加形参却不接线，比不加更容易误导。
+        """
+        from pathlib import Path
+
+        source = Path("app/services/secrets/injection.py").read_text(encoding="utf-8")
+        entries = [
+            "apply_api_tool_bindings",
+            "apply_api_tool_param_bindings",
+            "apply_mcp_bindings",
+            "apply_mcp_arg_bindings",
+            "apply_script_env_bindings",
+        ]
+        for name in entries:
+            body = source.split(f"async def {name}(")[1].split("\nasync def ")[0]
+            # 丢掉签名，只看签名之后的函数体
+            func_body = body.split(") ->", 1)[-1]
+            assert "denial_details" in func_body, (
+                f"{name} 声明了 denial_details 却没用它，调用方拿到的永远是空字典"
+            )
+
     def test_missing_field_records_a_specific_reason(self):
         """真实拒因是具体的，不是通用码。"""
         from app.services.secrets.injection import _apply_value_path
