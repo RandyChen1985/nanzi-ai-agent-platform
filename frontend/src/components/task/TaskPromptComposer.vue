@@ -794,7 +794,7 @@ watch(
       :value="prompt"
       rows="5"
       class="w-full resize-y border-0 px-3 pt-3 pb-2 text-sm outline-none focus:ring-0"
-      placeholder="例如：帮我查一下华东一号机房昨天的 PUE 峰值..."
+      placeholder="例如：查华东一号机房昨天的 PUE 峰值与均值，列出告警次数 Top3。"
       @input="emit('update:prompt', ($event.target as HTMLTextAreaElement).value)"
     />
 

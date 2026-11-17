@@ -380,6 +380,64 @@ const showEditModal = ref(false)
 const showPromptHelpModal = ref(false)
 const showConstraintsHelpModal = ref(false)
 const taskConstraints = ref('')
+/**
+ * 第 2 栏「输出有什么要求」的常驻快捷项：点一下追加一句，解决「不知道写什么」。
+ * 文案都是可直接进 system 段的祈使句，不与第 1 栏的任务描述重复。
+ */
+const constraintPresets = [
+  { label: '移动端列表', text: '用无序列表呈现，按移动端阅读习惯分行，不要使用宽表格' },
+  { label: '只要结论', text: '只输出结论和关键数据，不要过程说明，不要追加反问或建议' },
+  { label: '不要图表', text: '不要输出图表代码块（chart / ECharts）' },
+  { label: '金额统一万元', text: '金额一律以万元为单位，保留两位小数' },
+  { label: '只看华东区', text: '仅统计华东区，排除测试与内部账号' },
+] as const
+/**
+ * 「像是输出要求」的判定：只认明确的祈使 + 形态要求，避免把「查一下图表访问量」这类
+ * 正常业务描述误报成格式要求。宁可漏报，也不打断用户写任务。
+ */
+const PROMPT_FORMAT_ADVICE_RE =
+  /((不要|禁止|不允许|别|勿)[^。；;\n]{0,10}(图表|表格|画图|echart|代码块|寒暄|反问|废话|过程说明|猜测|臆测))|((用|按|以|改成)[^。；;\n]{0,6}(无序列表|列表|纯文本|移动端)[^。；;\n]{0,6}(呈现|输出|排版|分行|展示))|((单位|金额)[^。；;\n]{0,6}(统一|一律))|(保留[一二两三四0-9]{1,2}位小数)/i
+/** 用户点过「忽略」的那一句：只抑制同一句的提示，内容变了会重新评估，不做持久化 */
+const dismissedAdviceSentence = ref('')
+const promptFormatAdviceSentence = computed(() => {
+  const text = String(editingTask.value.prompt || '')
+  if (!text.trim()) return ''
+  // 宁可漏报不可乱报：「图表」「表格」单独出现不算（查询图表数据也是正常业务），
+  // 必须有祈使前缀或「按列表 / 统一单位 / 保留X位小数」这类形态要求才提示。
+  const hit = text
+    .split(/[\n。；;]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .find((part) => PROMPT_FORMAT_ADVICE_RE.test(part))
+  if (!hit || hit === dismissedAdviceSentence.value) return ''
+  return hit
+})
+const promptFormatAdviceVisible = computed(
+  () => Boolean(promptFormatAdviceSentence.value) && String(editingTask.value.prompt || '').trim().length > 0,
+)
+const moveAdviceToConstraints = () => {
+  const sentence = promptFormatAdviceSentence.value
+  if (!sentence) return
+  const rest = String(editingTask.value.prompt || '')
+    .split(/[\n。；;]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => part !== sentence)
+  editingTask.value.prompt = rest.length ? `${rest.join('。')}。` : ''
+  appendConstraintPreset(sentence.replace(/^[，,、]\s*/, ''))
+  showToast('已移到「输出有什么要求」')
+}
+const appendConstraintPreset = (text: string) => {
+  const raw = String(text || '').trim()
+  if (!raw) return
+  const current = String(taskConstraints.value || '').trim()
+  if (current.includes(raw)) {
+    showToast('这条已经在输出要求里了', 'warning')
+    return
+  }
+  const base = current.replace(/[；;。]\s*$/, '')
+  taskConstraints.value = base ? `${base}；${raw}。` : `${raw}。`
+}
 const showLogsDrawer = ref(false)
 const editingTask = ref<Partial<AgentTask>>({})
 const notificationChannelOptions = [
@@ -564,13 +622,13 @@ const promptExamples = [
   },
   {
     title: '机房巡检简报',
-    tip: '查数类任务写清对象、时间范围与输出格式即可',
+    tip: '查数类任务写清对象、时间范围与要什么结论即可',
     text: `查询华东一号机房昨天的 PUE 峰值与均值，并列出告警次数 Top3。
-用简洁 Markdown 输出：核心结论 + 关键指标表格。`,
+要什么结论：核心结论 + 关键指标对比。`,
   },
   {
     title: '仅业务指令（推荐）',
-    tip: '通知渠道请用下方「结果通知」勾选，执行指令专注业务本身',
+    tip: '通知渠道请用下方「结果通知」勾选，第 1 栏专注业务本身',
     text: `汇总本周任务失败次数，按失败原因分组，给出可执行的改进建议（3 条以内）。`,
   },
 ] as const
@@ -609,17 +667,18 @@ const applyConstraintExample = (text: string) => {
 const promptTemplates = [
   {
     title: '通用结构',
-    desc: '目标 / 范围 / 输出要求四段骨架',
+    desc: '目标 / 范围 / 结果形式四段骨架',
     text: `【任务目标】____（要做什么，如：查询 / 统计 / 汇总…）
 【数据范围】时间：____（如：昨天 / 本周）；对象：____（如：某机房 / 某项目）
-【输出要求】____（如：Markdown 输出，核心结论 + 关键指标表格）
-【其他说明】____（可选，如：超过阈值请重点标注；不需要可删除本行）`,
+【结果形式】____（要什么结论，如：核心结论 + 关键指标对比）
+【其他说明】____（可选，如：超过阈值请重点标注；不需要可删除本行）
+※ 排版 / 单位 / 不要图表这类要求请写到下方「输出有什么要求」，那边才会强制生效。`,
   },
   {
     title: '数据查询 / 报表',
     desc: '查数出报表，含环比对比',
     text: `查询 ____（对象，如：华东一号机房）在 ____（时间范围，如：昨天）的 ____（指标，如：PUE 峰值与均值）。
-用 Markdown 输出：核心结论先行 + 关键指标表格，并与上一周期对比说明变化。`,
+要说清的结论：核心结论先行 + 关键指标对比上一周期的变化。`,
   },
   {
     title: '监控巡检 / 告警',
@@ -648,7 +707,7 @@ const applyPromptTemplate = (text: string) => {
 }
 const clearTaskPrompt = () => {
   editingTask.value.prompt = ''
-  showToast('已清空执行指令')
+  showToast('已清空任务内容')
 }
 const applyOptimizedPrompt = (content: string) => {
   editingTask.value.prompt = content
@@ -1770,7 +1829,7 @@ onMounted(async () => {
                   <span
                     v-if="String(task.config?.task_constraints || '').trim()"
                     class="px-2 py-0.5 bg-sky-50 text-sky-700 text-[9px] font-black rounded-full border border-sky-200 flex-shrink-0"
-                    title="该任务已配置任务约束指令"
+                    title="该任务已配置输出要求（任务约束）"
                   >约束</span>
                   <span class="px-2 py-0.5 text-[9px] font-black rounded-full border flex items-center flex-shrink-0" :class="taskHealthMeta(task).class">
                     <span class="w-1.5 h-1.5 rounded-full mr-1" :class="taskHealthMeta(task).dot"></span>
@@ -2654,7 +2713,9 @@ onMounted(async () => {
 
           <div>
             <div class="mb-1 flex items-center gap-1.5">
-              <label class="text-xs font-bold text-gray-400 uppercase tracking-widest">执行指令 (Prompt)</label>
+              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-primary text-[10px] font-black text-white">1</span>
+              <label class="text-xs font-bold text-gray-700">要做什么</label>
+              <span class="text-[10px] font-bold text-gray-400">必填 · 执行指令</span>
               <button
                 type="button"
                 class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-400 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
@@ -2667,7 +2728,7 @@ onMounted(async () => {
                   v-if="String(editingTask.prompt || '').trim()"
                   type="button"
                   class="px-2.5 py-1 text-[11px] font-semibold rounded-md text-gray-400 hover:bg-red-50 hover:text-red-600"
-                  title="清空执行指令"
+                  title="清空任务内容"
                   @click="clearTaskPrompt"
                 >清空</button>
                 <div v-else ref="promptTemplateDropdownRef" class="relative">
@@ -2700,12 +2761,16 @@ onMounted(async () => {
                   :content="String(editingTask.prompt || '')"
                   endpoint="/api/portal/prompts/optimize/task-instruction"
                   :require-permission="false"
-                  confirm-message="AI 将针对当前执行指令生成 3 个侧重点不同的优化版本（结构化完整 / 精简直达 / 输出契约），大约需要几秒钟。是否开始？"
+                  confirm-message="AI 将针对当前任务内容生成 3 个侧重点不同的优化版本（结构化完整 / 精简直达 / 输出契约），大约需要几秒钟。是否开始？"
                   loading-hint="正在为您生成 3 个差异化方案"
                   @apply="applyOptimizedPrompt"
                   @toast="onOptimizeToast"
                 />
               </div>
+            </div>
+            <div class="mb-1.5 flex items-start gap-1.5 rounded-lg border border-blue-100 bg-blue-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-blue-800">
+              <span class="shrink-0 font-black">①</span>
+              <span>一句话说清<b>查什么、什么范围、要什么结果</b>。格式 / 篇幅 / 口径 / 不要图表这类要求请写下面第 2 栏，那边才会强制生效。</span>
             </div>
             <TaskPromptComposer
               :prompt="String(editingTask.prompt || '')"
@@ -2724,12 +2789,31 @@ onMounted(async () => {
               @update:reasoning-effort-override="taskReasoningEffortOverride = $event"
               @update:temperature-override="taskTemperatureOverride = $event"
             />
+            <div
+              v-if="promptFormatAdviceVisible"
+              class="mt-1.5 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-700"
+            >
+              <span class="shrink-0">⚠</span>
+              <span class="min-w-0 flex-1">这段像是<b>输出要求</b>（「{{ promptFormatAdviceSentence }}」），写在第 1 栏不会强制生效。</span>
+              <button
+                type="button"
+                class="shrink-0 rounded-md border border-amber-200 bg-white px-2 py-0.5 text-[10px] font-bold text-amber-700 hover:bg-amber-100"
+                @click="moveAdviceToConstraints"
+              >移到第 2 栏</button>
+              <button
+                type="button"
+                class="shrink-0 text-[10px] font-bold text-amber-500 hover:text-amber-700"
+                title="这条提示先收起，内容改动后会重新判断"
+                @click="dismissedAdviceSentence = promptFormatAdviceSentence"
+              >忽略</button>
+            </div>
           </div>
 
           <div>
             <div class="mb-1 flex items-center gap-1.5">
-              <label class="text-xs font-bold text-gray-400 uppercase tracking-widest">任务约束指令</label>
-              <span class="text-[10px] font-bold text-gray-300">可选</span>
+              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-gray-300 text-[10px] font-black text-white">2</span>
+              <label class="text-xs font-bold text-gray-700">输出有什么要求</label>
+              <span class="text-[10px] font-bold text-gray-400">选填 · 任务约束，留空不影响任务</span>
               <button
                 type="button"
                 class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-400 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
@@ -2738,16 +2822,30 @@ onMounted(async () => {
                 @click="showConstraintsHelpModal = true"
               >?</button>
             </div>
+            <div class="mb-1.5 flex items-start gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-gray-600">
+              <span class="shrink-0 font-black text-gray-400">②</span>
+              <span>只写<b>规矩</b>，不写任务。没有特别要求就<b>直接留空</b> —— 留空时任务行为与不加约束完全一致。</span>
+            </div>
             <textarea
               v-model="taskConstraints"
               rows="3"
               maxlength="2000"
               class="w-full resize-y rounded-xl border border-gray-200 px-3 py-2 text-xs leading-relaxed text-gray-700 placeholder:text-gray-300 focus:border-primary focus:ring-2 focus:ring-primary/20"
-              placeholder="例如：用无序列表呈现、按移动端阅读排版；禁止输出图表代码块；金额单位统一为万元；只看华东区。"
+              placeholder="例如：用无序列表，不要图表；金额统一按万元、保留两位小数。"
             ></textarea>
-            <p class="mt-1 text-[10px] leading-relaxed text-gray-400">
-              写<b>怎么做</b>的约束：输出格式、禁止项、业务口径、数据范围。冲突时优先于智能体自身设定；<b>要做什么</b>请填在上面的执行指令里。
-            </p>
+            <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span class="text-[10px] text-gray-400">不知道写什么？点一下直接加：</span>
+              <button
+                v-for="preset in constraintPresets"
+                :key="preset.label"
+                type="button"
+                class="inline-flex items-center gap-0.5 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                :title="preset.text"
+                @click="appendConstraintPreset(preset.text)"
+              >
+                <span class="font-black text-gray-400">+</span>{{ preset.label }}
+              </button>
+            </div>
           </div>
 
           <div>
@@ -2811,7 +2909,7 @@ onMounted(async () => {
                 </button>
               </p>
               <p v-if="promptOverlapsNotificationChannels" class="text-[10px] text-amber-600 leading-relaxed">
-                执行指令里已提到通知渠道；勾选渠道将与之合并，同一渠道运行时只发送一次。
+                任务内容里已提到通知渠道；勾选渠道将与之合并，同一渠道运行时只发送一次。
               </p>
             </div>
           </div>
@@ -2850,14 +2948,14 @@ onMounted(async () => {
 
     <Modal
       v-if="showPromptHelpModal"
-      title="执行指令填写示例"
+      title="要做什么 · 填写示例"
       size="max-w-md"
       :z-index="80"
       @close="showPromptHelpModal = false"
     >
       <div class="space-y-3">
         <p class="text-[11px] leading-relaxed text-gray-500">
-          写清「做什么、用什么、输出什么」。通知优先勾选下方「结果通知」。
+          写清「<b>查什么、什么范围、要什么结果</b>」。通知请用下方「结果通知」勾选；格式 / 篇幅 / 单位这类要求请写到第 2 栏「输出有什么要求」，那边才会强制生效。
         </p>
         <div
           v-for="example in promptExamples"
@@ -2885,16 +2983,50 @@ onMounted(async () => {
 
     <Modal
       v-if="showConstraintsHelpModal"
-      title="任务约束指令填写说明"
-      size="max-w-md"
+      title="输出要求 · 填写说明"
+      size="max-w-2xl"
       :z-index="80"
       @close="showConstraintsHelpModal = false"
     >
       <div class="space-y-3">
         <p class="text-[11px] leading-relaxed text-gray-500">
-          执行指令决定「<b>做什么</b>」，任务约束决定「<b>怎么做</b>」。<br />
+          第 1 栏「要做什么」决定「<b>做什么</b>」，这里决定「<b>怎么做</b>」。<br />
           这里填写的内容会作为<b>高优先级约束</b>合并进智能体的系统提示词——当它与智能体自身的输出习惯（例如默认要求画图表、要求固定表格）冲突时，<b>以这里为准</b>。
         </p>
+        <div class="overflow-hidden rounded-xl border border-gray-100">
+          <p class="border-b border-gray-100 bg-gray-50/70 px-2.5 py-1.5 text-xs font-black text-gray-800">同一件事，两栏分别写</p>
+          <table class="w-full text-left text-[11px] leading-relaxed">
+            <thead>
+              <tr class="bg-gray-50/40 text-[10px] font-bold text-gray-400">
+                <th class="px-2.5 py-1.5 font-bold">场景</th>
+                <th class="px-2.5 py-1.5 font-bold">① 要做什么</th>
+                <th class="px-2.5 py-1.5 font-bold">② 输出有什么要求</th>
+              </tr>
+            </thead>
+            <tbody class="text-gray-600">
+              <tr class="border-t border-gray-50 align-top">
+                <td class="px-2.5 py-1.5"><b class="text-gray-800">机房能效周报</b><br /><span class="text-[10px] text-gray-400">移动端看，不想看图表</span></td>
+                <td class="px-2.5 py-1.5">查华东一号机房上周的 PUE 均值与峰值，列出告警次数 Top3。</td>
+                <td class="px-2.5 py-1.5">用无序列表，不要图表；PUE 保留两位小数。</td>
+              </tr>
+              <tr class="border-t border-gray-50 align-top">
+                <td class="px-2.5 py-1.5"><b class="text-gray-800">任务失败盘点</b><br /><span class="text-[10px] text-gray-400">只想要结论，不要过程</span></td>
+                <td class="px-2.5 py-1.5">汇总本周平台定时任务的失败次数，按失败原因分组。</td>
+                <td class="px-2.5 py-1.5">只输出结论和关键数据，不要过程说明；改进建议最多 3 条。</td>
+              </tr>
+              <tr class="border-t border-gray-50 align-top">
+                <td class="px-2.5 py-1.5"><b class="text-gray-800">项目进度简报</b><br /><span class="text-[10px] text-gray-400">口径固定、范围收窄</span></td>
+                <td class="px-2.5 py-1.5">汇总本周研发一部的项目进度，标注延期项。</td>
+                <td class="px-2.5 py-1.5">仅统计华东区项目，排除已归档；进度按百分比整数；金额按万元。</td>
+              </tr>
+              <tr class="border-t border-gray-50 align-top">
+                <td class="px-2.5 py-1.5"><b class="text-gray-800">天气巡检</b><br /><span class="text-[10px] text-gray-400">没有特别要求</span></td>
+                <td class="px-2.5 py-1.5">用 get_current_weather 查询上海实时天气与温度，整理成简报。</td>
+                <td class="px-2.5 py-1.5 text-gray-400">（留空）—— 没要求就别写</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <div class="rounded-xl border border-gray-100 bg-gray-50/70 p-2.5 space-y-1.5">
           <p class="text-xs font-black text-gray-800">可以用来约束什么</p>
           <p class="text-[11px] leading-relaxed text-gray-600"><b>输出形态</b>：列表 / 表格 / 纯文本、禁止图表代码块、按移动端排版。</p>
@@ -2924,7 +3056,7 @@ onMounted(async () => {
           <b>留空即不生效</b> —— 不填写时任务行为与不加约束完全一致。
         </p>
         <p class="text-[11px] leading-relaxed text-amber-600">
-          <b>需要强制生效的格式要求，请写在这里。</b>写在「执行指令」里的格式要求不会获得同等优先级。
+          <b>需要强制生效的格式要求，请写在这里。</b>写在第 1 栏「要做什么」里的格式要求不会获得同等优先级。
         </p>
         <div class="flex justify-end">
           <button type="button" class="px-3 py-1.5 text-xs font-bold text-gray-400 hover:text-gray-600" @click="showConstraintsHelpModal = false">关闭</button>

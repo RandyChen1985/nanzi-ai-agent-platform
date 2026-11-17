@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="prototype-kind" content="方案对比" />
+<title>任务中心 · 执行指令与任务约束两个字段的填写引导</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --blue:#2563eb; --blue-50:#eff6ff; --blue-100:#dbeafe; --blue-700:#1d4ed8;
+    --indigo:#4f46e5; --indigo-50:#eef2ff; --indigo-100:#e0e7ff; --indigo-700:#4338ca;
+    --amber:#b45309; --amber-50:#fffbeb; --amber-100:#fef3c7; --amber-700:#b45309;
+    --rose:#e11d48; --rose-50:#fff1f2; --rose-100:#ffe4e6; --rose-600:#e11d48;
+    --emerald:#059669; --emerald-50:#ecfdf5; --emerald-100:#d1fae5; --emerald-700:#047857;
+    --violet:#7c3aed; --violet-50:#f5f3ff; --violet-100:#ede9fe; --violet-700:#6d28d9;
+    --g900:#111827; --g800:#1f2937; --g700:#374151; --g600:#4b5563; --g500:#6b7280;
+    --g400:#9ca3af; --g300:#d1d5db; --g200:#e5e7eb; --g100:#f3f4f6; --g50:#f9fafb;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f6f8fb;color:var(--g800);font-size:13px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1240px;margin:0 auto;padding:26px 22px 70px}
+
+  .eyebrow{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--blue)}
+  h1{font-size:23px;font-weight:650;margin-top:5px;letter-spacing:-.01em}
+  .sub{margin-top:7px;color:var(--g600);max-width:920px}
+
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}
+  .card{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:13px 14px}
+  .card .k{font-size:11px;font-weight:600;color:var(--blue);letter-spacing:.03em}
+  .card h3{font-size:13.5px;font-weight:650;margin:5px 0 4px}
+  .card p{font-size:11.5px;color:var(--g600);line-height:1.65}
+  .card.warn{background:var(--rose-50);border-color:var(--rose-100)}
+  .card.warn .k{color:var(--rose-600)}
+
+  .tabs{display:flex;gap:2px;margin-top:20px;border-bottom:1px solid var(--g200);flex-wrap:wrap}
+  .tab{
+    border:0;background:transparent;font:inherit;font-size:13px;color:var(--g500);
+    padding:9px 15px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;
+    display:flex;align-items:center;gap:7px;
+  }
+  .tab:hover{color:var(--g800)}
+  .tab.on{color:var(--blue-700);font-weight:650;border-bottom-color:var(--blue)}
+  .tab .tag{font-size:10px;background:var(--g100);color:var(--g600);border-radius:9px;padding:0 6px;font-weight:600}
+  .tab.on .tag{background:var(--blue-50);color:var(--blue-700)}
+  .tab .rec{font-size:9.5px;background:var(--emerald-50);color:var(--emerald-700);border-radius:4px;padding:0 4px;font-weight:700}
+  .view{display:none}
+  .view.on{display:grid;grid-template-columns:660px minmax(0,1fr);gap:20px;align-items:start;padding-top:20px}
+
+  /* ── 模拟弹窗 ── */
+  .dialog{background:#fff;border:1px solid var(--g200);border-radius:14px;overflow:hidden;box-shadow:0 8px 28px rgba(15,23,42,.07)}
+  .dialog-h{padding:14px 18px;border-bottom:1px solid var(--g100);display:flex;align-items:center;gap:10px}
+  .dialog-h h2{font-size:15px;font-weight:650}
+  .dialog-h .step{margin-left:auto;font-size:11px;color:var(--g400)}
+  .dialog-b{padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+  .field{position:relative}
+
+  .lbl-row{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+  .lbl-main{font-size:12.5px;font-weight:650;color:var(--g700)}
+  .lbl-sub{font-size:10px;color:var(--g400);font-weight:600}
+  .lbl-opt{font-size:9.5px;font-weight:700;color:var(--g400);border:1px solid var(--g200);border-radius:4px;padding:0 4px}
+  .q{width:15px;height:15px;border-radius:50%;border:1px solid var(--g300);background:#fff;color:var(--g400);
+     font-size:9.5px;font-weight:800;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+  .q:hover{border-color:#60a5fa;background:var(--blue-50);color:var(--blue-600)}
+  .lbl-act{margin-left:auto;display:flex;gap:4px;font-size:10.5px;color:var(--g400)}
+  .lbl-act span{border-radius:5px;padding:1px 6px;border:1px dashed var(--g200)}
+
+  /* 现状标签样式：等权重的两个"指令" */
+  .legacy-lbl{font-size:11px;font-weight:700;color:var(--g400);letter-spacing:.1em;text-transform:uppercase}
+
+  textarea{
+    width:100%;border:1px solid var(--g200);border-radius:12px;padding:9px 11px;
+    font:inherit;font-size:12px;color:var(--g700);resize:vertical;outline:none;line-height:1.65;
+  }
+  textarea::placeholder{color:var(--g300)}
+  textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+  .composer{border:1px solid var(--g200);border-radius:12px;overflow:hidden}
+  .composer textarea{border:0;border-radius:0}
+  .composer textarea:focus{box-shadow:none}
+  .bar{display:flex;flex-wrap:wrap;gap:4px;background:var(--g50);border-top:1px solid var(--g100);padding:6px 8px}
+  .chip{font-size:10.5px;font-weight:600;border:1px solid var(--g200);background:#fff;color:var(--g600);border-radius:999px;padding:2px 9px}
+  .chip.on{border-color:var(--blue-100);background:var(--blue-50);color:var(--blue-700)}
+  .tip{font-size:10.5px;color:var(--g400);margin-top:5px;line-height:1.6}
+  .tip b{color:var(--g600)}
+
+  /* 新增：常驻提示条 */
+  .guide{
+    display:flex;gap:7px;border-radius:9px;padding:7px 10px;font-size:11px;line-height:1.6;
+    background:var(--blue-50);color:#1e40af;border:1px solid var(--blue-100);margin-bottom:6px;
+  }
+  .guide.gray{background:var(--g50);color:var(--g600);border-color:var(--g200)}
+  .guide .ic{font-weight:800;flex-shrink:0}
+  .guide b{color:#1e3a8a}
+
+  /* 新增：序号 */
+  .num{
+    width:16px;height:16px;border-radius:5px;background:var(--blue);color:#fff;font-size:10px;font-weight:800;
+    display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+  }
+  .num.gray{background:var(--g300)}
+
+  /* 新增：空态快捷 chip */
+  .presets{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+  .preset{
+    font:inherit;font-size:10.5px;border:1px solid var(--g200);background:#fff;color:var(--g600);
+    border-radius:999px;padding:2px 9px;cursor:pointer;display:inline-flex;gap:3px;align-items:center;
+  }
+  .preset:hover{border-color:var(--blue-100);background:var(--blue-50);color:var(--blue-700)}
+  .preset .plus{color:var(--g400);font-weight:800}
+  .preset:hover .plus{color:var(--blue-600)}
+
+  /* 新增：冲突检测提示 */
+  .detect{
+    display:none;align-items:flex-start;gap:8px;margin-top:6px;border-radius:9px;
+    background:var(--amber-50);border:1px solid var(--amber-100);padding:7px 10px;font-size:11px;color:var(--amber-700);
+  }
+  .detect b{color:#92400e}
+  .detect .move{
+    margin-left:auto;flex-shrink:0;font:inherit;font-size:10.5px;font-weight:700;border:1px solid var(--amber-100);
+    background:#fff;color:var(--amber-700);border-radius:6px;padding:2px 8px;cursor:pointer;
+  }
+  .detect .move:hover{background:var(--amber-100)}
+
+  /* ── 问题标注（现状视图） ── */
+  .flag{
+    margin-top:6px;font-size:10.5px;color:var(--rose-600);line-height:1.6;
+    background:var(--rose-50);border:1px dashed var(--rose-100);border-radius:8px;padding:6px 9px;
+  }
+  code{font-family:var(--mono);font-size:10.5px;background:var(--g100);border-radius:4px;padding:0 4px;color:var(--g700)}
+  .flag b{color:var(--rose-600)}
+
+  /* ── 右侧说明 ── */
+  .side{display:flex;flex-direction:column;gap:12px}
+  .pane{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:13px 15px}
+  .pane h3{font-size:12.5px;font-weight:650;margin-bottom:7px;display:flex;align-items:center;gap:6px}
+  .pane h3 .dot{width:6px;height:6px;border-radius:50%;background:var(--blue)}
+  .pane h3 .dot.a{background:var(--emerald)}
+  .pane h3 .dot.r{background:var(--rose)}
+  .pane ul{list-style:none;display:flex;flex-direction:column;gap:6px}
+  .pane li{font-size:11.5px;color:var(--g600);line-height:1.6;padding-left:13px;position:relative}
+  .pane li:before{content:"";position:absolute;left:3px;top:7px;width:4px;height:4px;border-radius:50%;background:var(--g300)}
+  .pane li b{color:var(--g800)}
+  .pane code{font-family:var(--mono);font-size:10.5px;background:var(--g100);border-radius:4px;padding:0 4px;color:var(--g700)}
+  .pane .cost{margin-top:8px;padding-top:8px;border-top:1px dashed var(--g200);font-size:11px;color:var(--g500)}
+  .pane .cost b{color:var(--amber-700)}
+  .need{background:var(--violet-50);border-color:var(--violet-100)}
+  .need h3{color:var(--violet-700)}
+  .need li:before{background:var(--violet-100)}
+  .need b{color:var(--violet-700)!important}
+
+  table{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:2px}
+  th{text-align:left;font-size:10.5px;font-weight:600;color:var(--g500);padding:6px 9px;background:var(--g50);border-bottom:1px solid var(--g200);white-space:nowrap}
+  td{padding:7px 9px;border-bottom:1px solid var(--g100);vertical-align:top;color:var(--g600)}
+  tr:last-child td{border-bottom:0}
+  td b{color:var(--g800)}
+  .ok{color:var(--emerald-700);font-weight:600}
+  .bad{color:var(--rose-600);font-weight:600}
+
+  .footer{margin-top:22px;padding-top:14px;border-top:1px solid var(--g200);font-size:11.5px;color:var(--g500)}
+  .footer b{color:var(--g700)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">任务中心 · 新建/编辑定时任务</p>
+  <h1>两个指令字段怎么填 —— 现状问题与三套引导改法</h1>
+  <p class="sub">
+    用户的困惑不是「字太小」，而是三个字段层面的问题：<b>名字是内部术语</b>（执行指令 / 任务约束指令）、<b>两栏看起来平级</b>（像要写两遍指令）、
+    <b>占位符是术语堆叠而不是示范</b>。下面三套方案按改动量递增，都能在一个 HTML 里点开对比。
+  </p>
+
+  <div class="cards">
+    <div class="card warn">
+      <p class="k">问题 1 · 命名</p>
+      <h3>「执行指令」「约束指令」长得一样</h3>
+      <p>两个都叫「指令」，用户读不出「一个是写任务、一个是写规矩」。字段名的实际含义是 <code>要做什么</code> / <code>怎么做</code>，但页面上没有一个字这么说。</p>
+    </div>
+    <div class="card warn">
+      <p class="k">问题 2 · 占位符</p>
+      <h3>给的是术语碎片，不是示范句</h3>
+      <p>约束框写着「用无序列表呈现、按移动端阅读排版；禁止输出图表代码块…」，四个维度并列，用户读到的是<b>名词列表</b>，学不到「我该写一句话还是写一排」。</p>
+    </div>
+    <div class="card warn">
+      <p class="k">问题 3 · 分工说明</p>
+      <h3>关键解释藏在 10px 浅灰小字里</h3>
+      <p>「要做什么填上面、怎么做填这里」放在输入框下方、字号最小、颜色最浅，还必须点 <span class="q" style="cursor:default">?</span> 才能看到完整版。填的时候眼睛在框里，看不到它。</p>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab on" data-v="v0">现状 <span class="tag">问题复现</span></button>
+    <button class="tab" data-v="v1">方案 A <span class="tag">只改文案</span></button>
+    <button class="tab" data-v="v2">方案 B <span class="rec">推荐</span></button>
+    <button class="tab" data-v="v3">方案 C <span class="tag">合并单框</span></button>
+    <button class="tab" data-v="v4">分工对照 <span class="tag">示例</span></button>
+  </div>
+
+  <!-- ══════════ 现状 ══════════ -->
+  <section class="view on" id="v0">
+    <div class="dialog">
+      <div class="dialog-h">
+        <h2>新建定时任务</h2>
+        <span class="step">当前线上形态</span>
+      </div>
+      <div class="dialog-b">
+
+        <div class="field">
+          <div class="lbl-row">
+            <label class="legacy-lbl">执行指令 (PROMPT)</label>
+            <button class="q">?</button>
+            <div class="lbl-act"><span>清空</span><span>插入模板</span><span>AI 优化</span></div>
+          </div>
+          <div class="composer">
+            <textarea rows="3" placeholder="例如：帮我查一下华东一号机房昨天的 PUE 峰值..."></textarea>
+            <div class="bar">
+              <span class="chip">默认模型</span><span class="chip on">🛡 自动批准</span>
+              <span class="chip">数据集</span><span class="chip">知识库</span><span class="chip">技能</span><span class="chip">MCP</span>
+            </div>
+          </div>
+          <p class="tip">可限定本任务仅访问所选数据集 / 知识库 / 技能 / MCP，避免扩散到全部资源。</p>
+          <div class="flag"><b>① 名字不带信息。</b>「指令」听起来像写系统命令或规则，实际只需要写业务目标。</div>
+        </div>
+
+        <div class="field">
+          <div class="lbl-row">
+            <label class="legacy-lbl">任务约束指令</label>
+            <span class="lbl-opt">可选</span>
+            <button class="q">?</button>
+          </div>
+          <textarea rows="2" placeholder="例如：用无序列表呈现、按移动端阅读排版；禁止输出图表代码块；金额单位统一为万元；只看华东区。"></textarea>
+          <p class="tip">写<b>怎么做</b>的约束：输出格式、禁止项、业务口径、数据范围。冲突时优先于智能体自身设定；<b>要做什么</b>请填在上面的执行指令里。</p>
+          <div class="flag"><b>② 占位符是四段术语</b>拼在一行，看不出「该写几条、写成什么样」。<br><b>③ 分工说明</b>是最浅最小的那行字，且和标签同色，读不到。</div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="pane">
+        <h3><span class="dot r"></span>为什么用户会卡住</h3>
+        <ul>
+          <li><b>两个字段是平级的两个「指令」</b>：视觉权重相同、都用大写字母标签，用户第一反应是「要写两遍吗」。</li>
+          <li><b>占位符在教「维度」而不是「写法」</b>：四个维度并列给到人，等于没给示范。执行指令那句「帮我查一下…」又像随手聊天，和旁边「插入模板 / AI 优化 / 资源限定」这些重装备相互矛盾。</li>
+          <li><b>「可选」只是一枚灰标签</b>：用户不清楚不填会不会任务失效，于是倾向硬凑内容，反而更容易和平台规范打架。</li>
+          <li><b>分工说明位置错误</b>：解释放在框下方 10px 浅灰处，而完整仲裁说明要主动点 <span class="q" style="cursor:default">?</span>。填的时候看不到。</li>
+        </ul>
+        <p class="cost">
+          影响面：这两处文案在 <code>TaskCenter.vue</code> 表单里，以及 <code>TaskPromptComposer.vue</code> 的占位符；
+          后端术语（<code>config.task_constraints</code> / 「任务执行指令」）不需要跟着改。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ 方案 A ══════════ -->
+  <section class="view" id="v1">
+    <div class="dialog">
+      <div class="dialog-h">
+        <h2>新建定时任务</h2>
+        <span class="step">方案 A · 只改文案</span>
+      </div>
+      <div class="dialog-b">
+
+        <div class="field">
+          <div class="lbl-row">
+            <span class="lbl-main">要做什么</span>
+            <span class="lbl-sub">执行指令 · 必填</span>
+            <button class="q">?</button>
+            <div class="lbl-act"><span>清空</span><span>插入模板</span><span>AI 优化</span></div>
+          </div>
+          <div class="composer">
+            <textarea rows="3" placeholder="查什么 + 什么时间范围 + 要什么结果。例如：查华东一号机房昨天的 PUE 峰值与均值，列出告警次数 Top3。"></textarea>
+            <div class="bar">
+              <span class="chip">默认模型</span><span class="chip on">🛡 自动批准</span>
+              <span class="chip">数据集</span><span class="chip">知识库</span><span class="chip">技能</span><span class="chip">MCP</span>
+            </div>
+          </div>
+          <p class="tip">格式、篇幅、口径这类要求请写到下面「输出有什么要求」，那边优先级更高。</p>
+        </div>
+
+        <div class="field">
+          <div class="lbl-row">
+            <span class="lbl-main">输出有什么要求</span>
+            <span class="lbl-sub">任务约束 · 选填，不填就不生效</span>
+            <button class="q">?</button>
+          </div>
+          <textarea rows="2" placeholder="只写「规矩」，不写「任务」。例如：用无序列表，不要图表；金额统一按万元、保留两位小数。"></textarea>
+          <p class="tip">写交付规矩：输出形态、口径单位、数据范围、禁止事项。同一个任务，上面写「查什么」，这里写「怎么给」。</p>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="pane">
+        <h3><span class="dot a"></span>方案 A 改了什么</h3>
+        <ul>
+          <li><b>标签改成人话</b>：主标签 <code>要做什么</code> / <code>输出有什么要求</code>，旧术语降为浅色副标（<code>执行指令</code> / <code>任务约束</code>），文档和老用户还能对上号。</li>
+          <li><b>占位符改成示范句</b>：先说「写什么结构」，再给一整句真实例子，用户可以直接照抄改字。</li>
+          <li><b>「可选」写成后果</b>：从灰标签 <code>可选</code> 改成 <code>选填，不填就不生效</code>，消除「不填会不会废」的顾虑。</li>
+          <li><b>分工说明上移并改双向指引</b>：第一栏末尾指向第二栏（格式要求去哪儿），第二栏末尾指回第一栏（任务写哪儿）。</li>
+        </ul>
+        <p class="cost">
+          <b>代价：低。</b>纯文案替换，不动结构、不动数据。需同步更新 <code>tests/frontend/test_task_constraints_contract.py</code> 里锁定的几句文案断言。
+        </p>
+      </div>
+      <div class="pane">
+        <h3><span class="dot"></span>局限</h3>
+        <ul>
+          <li>两栏<b>依然平级</b>，没有先后关系；顺序感靠读文字建立，不是靠视觉。</li>
+          <li>用户仍然要自己判断「这属于格式还是属于任务」，判断错了没有反馈。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ 方案 B ══════════ -->
+  <section class="view" id="v2">
+    <div class="dialog">
+      <div class="dialog-h">
+        <h2>新建定时任务</h2>
+        <span class="step">方案 B · 文案 + 引导结构（推荐）</span>
+      </div>
+      <div class="dialog-b">
+
+        <div class="field">
+          <div class="lbl-row">
+            <span class="num">1</span>
+            <span class="lbl-main">要做什么</span>
+            <span class="lbl-sub">必填 · 执行指令</span>
+            <button class="q">?</button>
+            <div class="lbl-act"><span>清空</span><span>插入模板</span><span>AI 优化</span></div>
+          </div>
+          <div class="guide">
+            <span class="ic">①</span>
+            <span>一句话说清<b>查什么、什么范围、要什么结果</b>。格式 / 篇幅 / 口径 / 禁画图这类要求请写下面第 2 栏，那边会强制生效。</span>
+          </div>
+          <div class="composer">
+            <textarea id="b-task" rows="3" oninput="detectConflict()" placeholder="例如：查华东一号机房昨天的 PUE 峰值与均值，列出告警次数 Top3。"></textarea>
+            <div class="bar">
+              <span class="chip">默认模型</span><span class="chip on">🛡 自动批准</span>
+              <span class="chip">数据集</span><span class="chip">知识库</span><span class="chip">技能</span><span class="chip">MCP</span>
+            </div>
+          </div>
+          <div class="detect" id="b-detect">
+            <span>⚠</span>
+            <span>这段像是<b>输出要求</b>（「<span id="b-detect-text"></span>」），写在第 1 栏不会强制生效。</span>
+            <button class="move" onclick="moveToConstraints()">移到第 2 栏</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="lbl-row">
+            <span class="num gray">2</span>
+            <span class="lbl-main">输出有什么要求</span>
+            <span class="lbl-sub">选填 · 任务约束，留空不影响任务</span>
+            <button class="q">?</button>
+          </div>
+          <div class="guide gray">
+            <span class="ic">②</span>
+            <span>只写<b>规矩</b>，不写任务。没特别要求就<b>直接留空</b>——留空时任务行为与不加约束完全一致。</span>
+          </div>
+          <textarea id="b-cons" rows="2" placeholder="例如：用无序列表，不要图表；金额统一按万元、保留两位小数。"></textarea>
+          <div class="presets">
+            <span style="font-size:10.5px;color:var(--g400);align-self:center">不知道写什么？点一下直接加：</span>
+            <button class="preset" onclick="addPreset(this)"><span class="plus">+</span>移动端列表</button>
+            <button class="preset" onclick="addPreset(this)"><span class="plus">+</span>只要结论</button>
+            <button class="preset" onclick="addPreset(this)"><span class="plus">+</span>不要图表</button>
+            <button class="preset" onclick="addPreset(this)"><span class="plus">+</span>金额统一万元</button>
+            <button class="preset" onclick="addPreset(this)"><span class="plus">+</span>只看华东区</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="pane">
+        <h3><span class="dot a"></span>方案 B = A 的全部 + 三件事</h3>
+        <ul>
+          <li><b>序号 1 / 2 建立先后</b>：不再像两个并列的「指令」，而是「先写任务，再写要求」。第 2 栏用灰序号 + 「留空不影响任务」，弱化它的存在感。</li>
+          <li><b>常驻提示条贴在输入框上方</b>：不再靠下方小灰字和 <span class="q" style="cursor:default">?</span> 弹窗。第 1 栏的提示条直接点明「格式类要求去第 2 栏」。</li>
+          <li><b>空态一键加常用约束</b>：不会写就点，最典型的是「不要图表」——这正是当初做这个字段的起因。</li>
+          <li><b>写错位置的实时纠偏</b>（试着在第 1 栏输入「不要画图表」）：检测到格式类措辞就提示并支持一键搬移。</li>
+        </ul>
+        <p class="cost">
+          <b>代价：中。</b>只动前端一个文件（<code>TaskCenter.vue</code>）+ 契约测试；不动后端、不动数据结构。
+        </p>
+      </div>
+      <div class="pane need">
+        <h3><span class="dot r" style="background:var(--violet)"></span>两处需要你拍板</h3>
+        <ul>
+          <li><b>「移到第 2 栏」纠偏提示</b>：设计文档里曾把「老任务约束迁移辅助」定为<b>不做</b>（理由：改为文案引导即可）。本次反馈正好说明纯文案不够，建议重启这一项，但范围收窄为「实时提示 + 一键搬移」，不做历史任务批量迁移。</li>
+          <li><b>空态常用约束 chip</b>：设计文档里「约束模板下拉」也定为不做（理由：和帮助弹窗示例重复）。这里改成<b>框内一键加</b>、不开弹窗，不重复；但确实新增了交互，需你确认接受。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ 方案 C ══════════ -->
+  <section class="view" id="v3">
+    <div class="dialog">
+      <div class="dialog-h">
+        <h2>新建定时任务</h2>
+        <span class="step">方案 C · 合并成一个框</span>
+      </div>
+      <div class="dialog-b">
+        <div class="field">
+          <div class="lbl-row">
+            <span class="lbl-main">这个任务要做什么</span>
+            <span class="lbl-sub">想到什么写什么，保存时自动拆分</span>
+          </div>
+          <div class="composer">
+            <textarea rows="4">查华东一号机房昨天的 PUE 峰值和均值，顺便列出告警次数前三。别给我画图，用列表发我，金额按万元算。</textarea>
+            <div class="bar">
+              <span class="chip">默认模型</span><span class="chip on">🛡 自动批准</span><span class="chip">数据集</span><span class="chip">知识库</span>
+              <span class="chip" style="margin-left:auto;color:var(--violet-700);border-color:var(--violet-100);background:var(--violet-50)">✨ 已自动识别 2 条输出要求</span>
+            </div>
+          </div>
+          <p class="tip" style="color:var(--violet-700)">保存时拆成「任务内容」+ 3 条「输出要求」：不要图表 / 用列表 / 金额按万元。可在保存前展开微调。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="pane">
+        <h3><span class="dot r"></span>方案 C 的做法与代价</h3>
+        <ul>
+          <li><b>认知负担最低</b>：用户只面对一个框，不用判断「这句该写哪儿」。</li>
+          <li><b>代价 1 · 多一次 LLM 调用</b>：每次保存都要拆分，定时任务量大的租户会产生不可忽视的调用量。</li>
+          <li><b>代价 2 · 拆错就是静默错</b>：把业务口径拆进任务层，或把任务动作拆进约束层，用户不展开看根本发现不了，反而比现在更难排查。</li>
+          <li><b>代价 3 · 兼容面大</b>：已有任务两栏数据要能回填进单框；<code>create_recurring_task</code> 工具写入的路径也要跟着改。</li>
+          <li><b>代价 4 · 与「优先级」的产品叙事冲突</b>：这个字段的价值就在于「我明确知道它进了 system」，自动拆分让这件事变得不可见。</li>
+        </ul>
+        <p class="cost"><b>结论：不推荐。</b>除非后续确认「两栏」本身就是错的抽象。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ 对照示例 ══════════ -->
+  <section class="view" id="v4">
+    <div class="dialog">
+      <div class="dialog-h"><h2>同一件事，两栏分别写</h2><span class="step">可直接做成帮助弹窗里的对照卡</span></div>
+      <div class="dialog-b">
+        <table>
+          <thead>
+            <tr><th style="width:220px">场景</th><th>① 要做什么</th><th>② 输出有什么要求</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>机房能效周报</b><br><span style="color:var(--g400)">移动端查看，不想看图表</span></td>
+              <td>查华东一号机房上周的 PUE 均值与峰值，列出告警次数 Top3。</td>
+              <td>用无序列表，不要图表；PUE 保留两位小数。</td>
+            </tr>
+            <tr>
+              <td><b>任务失败盘点</b><br><span style="color:var(--g400)">只想要结论，不要过程</span></td>
+              <td>汇总本周平台定时任务的失败次数，按失败原因分组。</td>
+              <td>只输出结论和关键数据，不要过程说明；改进建议最多 3 条。</td>
+            </tr>
+            <tr>
+              <td><b>项目进度简报</b><br><span style="color:var(--g400)">口径固定、范围收窄</span></td>
+              <td>汇总本周研发一部的项目进度，标注延期项。</td>
+              <td>仅统计华东区项目，排除已归档；进度按百分比整数；金额按万元。</td>
+            </tr>
+            <tr>
+              <td><b>天气巡检</b><br><span style="color:var(--g400)">没有特别要求</span></td>
+              <td>用 get_current_weather 查询上海实时天气与温度，整理成简报。</td>
+              <td style="color:var(--g400)">（留空）—— 没要求就别写</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="pane">
+        <h3><span class="dot"></span>怎么用这张表</h3>
+        <ul>
+          <li>替换现有 <span class="q" style="cursor:default">?</span> 弹窗里那四条「输出形态 / 业务口径 / 数据范围 / 禁止事项」抽象条目 —— 用户能对号入座，而不是读定义。</li>
+          <li>最后一行的<b>留空</b>示例很关键：明确告诉用户「不是每栏都必须填」。</li>
+          <li>左边「场景」列写的是人的目的（移动端看、只想要结论），不是字段术语。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <p class="footer">
+    <b>一句话取舍：</b>如果只想低成本止血，选方案 A（半天内可交付、零结构改动）；
+    如果按这次反馈认真解决「不知道怎么填」，选方案 B（A 的全部 + 序号 + 常驻提示 + 一键加 + 位置纠偏），其中「一键加」和「位置纠偏」两处属于之前设计定案里明确不做的项，需要你点头。
+    方案 C 只在「两栏本身就是错的抽象」这个前提下才值得讨论。
+  </p>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('.tab');
+  const views = document.querySelectorAll('.view');
+  tabs.forEach((t) => t.addEventListener('click', () => {
+    tabs.forEach((x) => x.classList.remove('on'));
+    views.forEach((x) => x.classList.remove('on'));
+    t.classList.add('on');
+    document.getElementById(t.dataset.v).classList.add('on');
+  }));
+
+  const PRESET_TEXT = {
+    '移动端列表': '用无序列表呈现，按移动端阅读习惯分行，不要使用宽表格',
+    '只要结论': '只输出结论和关键数据，不要过程说明，不要追加反问或建议',
+    '不要图表': '不要输出图表代码块（chart / ECharts）',
+    '金额统一万元': '金额一律以万元为单位，保留两位小数',
+    '只看华东区': '仅统计华东区，排除测试与内部账号',
+  };
+
+  function addPreset(btn) {
+    const key = btn.textContent.replace('+', '').trim();
+    const text = PRESET_TEXT[key];
+    if (!text || btn.dataset.used === '1') return;
+    const ta = document.getElementById('b-cons');
+    const cur = ta.value.trim();
+    ta.value = cur ? cur.replace(/[；;。]\s*$/, '') + '；' + text + '。' : text + '。';
+    btn.dataset.used = '1';
+    btn.style.opacity = '.45';
+    btn.style.pointerEvents = 'none';
+    btn.querySelector('.plus').textContent = '✓';
+  }
+
+  const FORMAT_RE = /(禁止|不要|不允许|别用|别给|图表|echart|echarts|排版|单位|格式|字数|篇幅|用列表|按列表)/i;
+  let pendingSentence = '';
+
+  function detectConflict() {
+    const ta = document.getElementById('b-task');
+    const box = document.getElementById('b-detect');
+    const parts = ta.value.split(/[\n。；;]/).map((s) => s.trim()).filter(Boolean);
+    const hit = parts.find((s) => FORMAT_RE.test(s));
+    if (hit) {
+      pendingSentence = hit;
+      document.getElementById('b-detect-text').textContent = hit;
+      box.style.display = 'flex';
+    } else {
+      pendingSentence = '';
+      box.style.display = 'none';
+    }
+  }
+
+  function moveToConstraints() {
+    if (!pendingSentence) return;
+    const ta = document.getElementById('b-task');
+    const cons = document.getElementById('b-cons');
+    const rest = ta.value.split(/[\n。；;]/).map((s) => s.trim()).filter(Boolean)
+      .filter((s) => s !== pendingSentence);
+    ta.value = rest.join('。') + (rest.length ? '。' : '');
+    const cur = cons.value.trim();
+    const moved = pendingSentence.replace(/^[，,]/, '');
+    cons.value = cur ? cur.replace(/[；;。]\s*$/, '') + '；' + moved + '。' : moved + '。';
+    cons.focus();
+    detectConflict();
+  }
+</script>
+</body>
+</html>

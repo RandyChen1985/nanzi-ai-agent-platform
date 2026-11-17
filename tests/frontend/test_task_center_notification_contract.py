@@ -24,7 +24,7 @@ def test_task_center_modal_supports_visual_notification_channels():
     assert "去个人中心配置消息通知" in page
     assert "tab: 'notifications'" in page
     assert "showPromptHelpModal" in page
-    assert "执行指令填写示例" in page
+    assert "要做什么 · 填写示例" in page
     assert "填入示例" in page or "填入" in page
     assert 'size="max-w-md"' in page
     assert "showAgentDropdown" in page
