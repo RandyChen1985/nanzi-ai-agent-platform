@@ -1513,11 +1513,96 @@ export function upsertTimelineLog(
   target.processTimeline.push(log);
 }
 
+function cloneNestedTimelineValue<T>(
+  value: T,
+  seen: WeakMap<object, unknown>,
+): T {
+  if (!value || typeof value !== "object") return value;
+  const cached = seen.get(value as unknown as object) as T | undefined;
+  if (cached !== undefined) return cached;
+  if (Array.isArray(value)) {
+    const copy: unknown[] = [];
+    seen.set(value as unknown as object, copy);
+    for (const entry of value) {
+      copy.push(cloneNestedTimelineValue(entry, seen));
+    }
+    return copy as unknown as T;
+  }
+  const copy: Record<string, unknown> = {};
+  seen.set(value as unknown as object, copy);
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    copy[k] = cloneNestedTimelineValue(v, seen);
+  }
+  return copy as T;
+}
+
+function cloneTimelineLogItemsForMerge(
+  items: ProcessTimelineLogItem[],
+  clonedMap: WeakMap<object, unknown>,
+): ProcessTimelineLogItem[] {
+  return items.map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const existing = clonedMap.get(item) as ProcessTimelineLogItem | undefined;
+    if (existing) return existing;
+    const clonedLog: ProcessTimelineLogItem = {
+      ...item,
+      subagent: item.subagent ? cloneNestedTimelineValue(item.subagent, clonedMap) : undefined,
+      file_metadata: item.file_metadata ? cloneNestedTimelineValue(item.file_metadata, clonedMap) : undefined,
+      user_question: item.user_question ? cloneNestedTimelineValue(item.user_question, clonedMap) : item.user_question,
+      children: undefined,
+    };
+    clonedMap.set(item, clonedLog);
+    if (Array.isArray(item.children)) {
+      clonedLog.children = cloneTimelineLogItemsForMerge(item.children, clonedMap);
+    }
+    return clonedLog;
+  });
+}
+
+function cloneTimelineItemsForMerge(
+  items: ProcessTimelineItem[],
+  clonedMap: WeakMap<object, unknown> = new WeakMap(),
+): ProcessTimelineItem[] {
+  return items.map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const existing = clonedMap.get(item) as ProcessTimelineItem | undefined;
+    if (existing) return existing;
+    if (item.kind === "text") {
+      const clonedText: ProcessTimelineTextItem = {
+        ...item,
+        mergedReasoning: item.mergedReasoning
+          ? cloneNestedTimelineValue(item.mergedReasoning, clonedMap)
+          : undefined,
+        children: undefined,
+      };
+      clonedMap.set(item, clonedText);
+      if (Array.isArray(item.children)) {
+        clonedText.children = cloneTimelineLogItemsForMerge(item.children, clonedMap);
+      }
+      return clonedText;
+    }
+    if (item.kind === "todo") {
+      const clonedTodo: ProcessTimelineTodoItem = {
+        ...item,
+        todos: Array.isArray(item.todos) ? item.todos.map((t) => ({ ...t })) : [],
+        counts: item.counts ? { ...item.counts } : item.counts,
+      };
+      clonedMap.set(item, clonedTodo);
+      return clonedTodo;
+    }
+    return cloneTimelineLogItemsForMerge([item], clonedMap)[0]!;
+  });
+}
+
 /**
  * Merge the authoritative event timeline with logs produced by legacy paths.
  * Some router/agent events already enter processTimeline while later tool
  * events still only update msg.logs; dropping the latter makes the card look
  * like it ends and then continues outside the card.
+ *
+ * 渲染层（Vue computed）调用必须传 `{ clone: true }`：否则直接改写 `props.timeline`
+ * 上的响应式 Proxy 节点，一旦同一条卡片在合并过程中被两条日志先后改写字段，
+ * 会反复失效 computed 并触发微任务渲染死循环。直接单元测试维持原位语义以兼容已有契约。
  */
 export function mergeTimelineLogs(
   timeline: ProcessTimelineItem[] | undefined,
@@ -1544,8 +1629,11 @@ export function mergeTimelineLogs(
     subagent?: SubagentTraceMeta;
     reasoning?: boolean;
   }> | undefined,
+  options?: { clone?: boolean },
 ): ProcessTimelineItem[] {
-  const items = [...(timeline || [])];
+  const items = options?.clone
+    ? cloneTimelineItemsForMerge(timeline || [])
+    : [...(timeline || [])];
   // 全树 id → 节点索引。原实现对**每条** log 都跑一次 findTimelineLog 深度遍历，
   // 委派时 logs（子代理桥接的每一步）和时间线节点都不少，是稳定的 O(n²)；
   // 这里一次建索引 O(n)，之后每条 log O(1)。

@@ -3230,26 +3230,97 @@ const formatTimeLabel = (isoStr: string): string => {
   } catch (e) { return ""; }
 };
 
+const streamBodyCache = new WeakMap<object, { content: string; role: string; result: string }>();
+
 function visibleStreamBody(msg: Message): string {
-  return msg.role === "agent"
-    ? stripInternalContextBlocks(msg.content || "")
-    : (msg.content || "");
+  const content = msg.content || "";
+  const cached = streamBodyCache.get(msg);
+  if (cached && cached.content === content && cached.role === msg.role) {
+    return cached.result;
+  }
+  const result = msg.role === "agent"
+    ? stripInternalContextBlocks(content)
+    : content;
+  streamBodyCache.set(msg, { content, role: msg.role, result });
+  return result;
 }
 
+const skillFlowBadgeCache = new WeakMap<
+  object,
+  {
+    allMessagesRef: Message[];
+    allLen: number;
+    msgIdx: number;
+    prevUserIdx: number;
+    rawUserFiles: ChatFile[] | undefined;
+    filesLen: number;
+    logsLen: number;
+    lastLog: any;
+    result: SkillFlowBadge[];
+  }
+>();
+
 function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): SkillFlowBadge[] {
-  if (msg.role !== 'agent') return [];
-  const idx = allMessages.findIndex(m => m.id === msg.id);
+  if (msg.role !== "agent") return [];
+  const logs = msg.logs || [];
+  const cached = skillFlowBadgeCache.get(msg);
+  const canReusePositionedUserFiles =
+    cached
+    && cached.allMessagesRef === allMessages
+    && cached.allLen === allMessages.length
+    && allMessages[cached.msgIdx]?.id === msg.id;
+  const isSettledMessage =
+    msg !== allMessages[allMessages.length - 1]
+    || (!msg.isThinking && Boolean((msg as any).status));
+
+  if (canReusePositionedUserFiles) {
+    const rawUserFiles = cached.prevUserIdx >= 0 ? allMessages[cached.prevUserIdx]?.files : undefined;
+    const filesLen = rawUserFiles?.length || 0;
+    const filesUnchanged = rawUserFiles === cached.rawUserFiles && filesLen === cached.filesLen;
+    if (
+      isSettledMessage
+      && filesUnchanged
+      && cached.logsLen === logs.length
+      && cached.lastLog === logs[logs.length - 1]
+    ) {
+      return cached.result;
+    }
+    if (filesUnchanged) {
+      const result = buildSkillFlowBadges(rawUserFiles || [], logs);
+      cached.logsLen = logs.length;
+      cached.lastLog = logs[logs.length - 1];
+      cached.result = result;
+      return result;
+    }
+  }
+
+  const idx = allMessages.findIndex((m) => m.id === msg.id);
   if (idx <= 0) return [];
-  let files: ChatFile[] = [];
+  let prevUserIdx = -1;
+  let rawUserFiles: ChatFile[] | undefined;
   for (let i = idx - 1; i >= 0; i--) {
     const prev = allMessages[i];
     if (!prev) continue;
-    if (prev.role === 'user') {
-      files = prev.files || [];
+    if (prev.role === "user") {
+      prevUserIdx = i;
+      rawUserFiles = prev.files;
       break;
     }
   }
-  return buildSkillFlowBadges(files, msg.logs || []);
+  const files = rawUserFiles || [];
+  const result = buildSkillFlowBadges(files, logs);
+  skillFlowBadgeCache.set(msg, {
+    allMessagesRef: allMessages,
+    allLen: allMessages.length,
+    msgIdx: idx,
+    prevUserIdx,
+    rawUserFiles,
+    filesLen: files.length,
+    logsLen: logs.length,
+    lastLog: logs[logs.length - 1],
+    result,
+  });
+  return result;
 }
 
 // Helper: Format Timestamp for Bubbles (Smart Date)
@@ -12977,6 +13048,60 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   // 立刻落盘一次（即使此时还没有任何可见输出）：快照会记下本轮提问，覆盖
   // 「发出后到首片正文/时间线到达之前刷新」这段最容易丢提问的窗口。
   maybePersistStreamSnapshot(true);
+  // 首片思考立即显示，后续高频思考增量按 ~80ms 合并刷入时间线，降低 DOM 与 Markdown 重渲染压力。
+  const REASONING_FLUSH_INTERVAL_MS = 80;
+  let pendingReasoningBuffer = "";
+  let reasoningFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const flushReasoningBuffer = () => {
+    if (reasoningFlushTimer !== null) {
+      clearTimeout(reasoningFlushTimer);
+      reasoningFlushTimer = null;
+    }
+    if (pendingReasoningBuffer) {
+      const batchedReasoning = pendingReasoningBuffer;
+      pendingReasoningBuffer = "";
+      dispatchAgentscopeStreamEvent(
+        agentMsg.value,
+        { type: "reasoning_content", content: batchedReasoning },
+        addEmbedLogFromStream,
+        messages.value,
+        handleBashEnvEvent,
+      );
+      scrollToBottom();
+      maybePersistStreamSnapshot();
+    }
+  };
+
+  const queueReasoningDelta = (piece: string) => {
+    if (!piece) return;
+    if (!agentMsg.value.reasoningContent && !pendingReasoningBuffer) {
+      dispatchAgentscopeStreamEvent(
+        agentMsg.value,
+        { type: "reasoning_content", content: piece },
+        addEmbedLogFromStream,
+        messages.value,
+        handleBashEnvEvent,
+      );
+      scrollToBottom();
+      maybePersistStreamSnapshot();
+      return;
+    }
+    pendingReasoningBuffer += piece;
+    if (reasoningFlushTimer === null) {
+      reasoningFlushTimer = setTimeout(flushReasoningBuffer, REASONING_FLUSH_INTERVAL_MS);
+    }
+  };
+
+  const handleBufferedReasoningEvent = (data: Record<string, any>): boolean => {
+    if (data.type !== "reasoning_content") return false;
+    const piece = String(data.content || "");
+    if (piece) {
+      queueReasoningDelta(piece);
+    }
+    return true;
+  };
+
   // 首片正文立即显示，后续正文按帧合并更新。
   let pendingContentBuffer = "";
   let contentRafId: number | null = null;
@@ -13013,6 +13138,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   // 撤回使缓冲失效；其他事件先刷出正文，保持 SSE 顺序。
   const handleBufferedBodyEvent = (data: Record<string, any>): boolean => {
     if (data.type === "retraction") {
+      flushReasoningBuffer();
       pendingContentBuffer = "";
       if (contentRafId !== null) {
         cancelAnimationFrame(contentRafId);
@@ -13021,6 +13147,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       return false;
     }
     if (data.type === "answer" || data.type === "answer_delta") {
+      flushReasoningBuffer();
       const piece = data.type === "answer_delta"
         ? String(data.content || "")
         : sanitizeStreamContent(String(data.content || ""));
@@ -13030,6 +13157,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       }
       return true;
     }
+    if (data.type && data.type !== "reasoning_content") flushReasoningBuffer();
     if (data.type) flushContentBuffer();
     return false;
   };
@@ -13153,8 +13281,11 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
           applyStreamTraceId(agentMsg.value, data);
           if (handleBufferedBodyEvent(data)) {
             // 已进入正文缓冲。
+          } else if (handleBufferedReasoningEvent(data)) {
+            // 已进入思考缓冲。
           } else if (data.type === "duplicate_request") {
             receivedDuplicateRequest = true;
+            flushReasoningBuffer();
             flushContentBuffer();
             agentMsg.value.isThinking = false;
             (agentMsg.value as any).status = "duplicate_request";
@@ -13162,6 +13293,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
             markRunStarted();
             void refreshCurrentRunStatus();
           } else if (data.type === "run_status") {
+            flushReasoningBuffer();
             flushContentBuffer();
             agentMsg.value.isThinking = false;
             clearStallTimer();
@@ -13268,6 +13400,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
           } else if (data.type === "error" || data.status === "error") {
             // 错误块可能只带 status:"error" + content；必须先于 content 分支，
             // 否则错误文案会被当成正常回答增量渲染，且永远不进入错误态。
+            flushReasoningBuffer();
             flushContentBuffer();
             agentMsg.value.isThinking = false;
             (agentMsg.value as any).status = "error";
@@ -13294,7 +13427,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
               agentMsg.value.isThinking = false;
             }
           }
-          if (!pendingContentBuffer) {
+          if (!pendingContentBuffer && !pendingReasoningBuffer) {
             scrollToBottom();
           }
         } catch (e) {
@@ -13317,6 +13450,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
         const data = JSON.parse(dataStr);
         applyStreamTraceId(agentMsg.value, data);
         if (handleBufferedBodyEvent(data)) continue;
+        if (handleBufferedReasoningEvent(data)) continue;
         if (applyReusableResultStatusEvent(agentMsg.value, data)) continue;
         if (data.type === "log") addEmbedLogFromStream(agentMsg.value, data);
         else if (mergeStreamCitations(agentMsg.value, data)) continue;
@@ -13326,6 +13460,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
         console.error("Failed to parse final SSE event:", dataStr, e);
       }
     }
+    flushReasoningBuffer();
     flushContentBuffer();
     // 流已正常读完（收到 [DONE]）：本轮草稿不再是「在途」，清掉引用。
     // 否则在「SSE 已结束、run-status 尚未翻回 false」的时间窗里，运行恢复器会把它
@@ -13343,6 +13478,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       }
     }
   } catch (e: any) {
+    flushReasoningBuffer();
     flushContentBuffer();
     if (e.name === "AbortError") {
       if (streamAbortReason) {
@@ -13373,6 +13509,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     // 组件已卸载时不再执行收尾副作用：否则 abort 后的 refreshCurrentRunStatus 会在
     // 已销毁的实例上重启会话轮询与网络请求。结果由下次挂载时的运行恢复器取回。
     if (!embedUnmounted) {
+      flushReasoningBuffer();
       flushContentBuffer();
       // 锁态是全局的：只有本轮仍是当前会话时才用本轮的权限态覆盖它。切走后若照写，
       // 会把目标会话刚算好的锁态冲掉，或用本轮的 pending 权限把它误锁住。
@@ -13395,6 +13532,17 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       // Final cleanup: stop any remaining log spinners
       finalizeAllPendingStreamLogs(agentMsg.value);
       scrollToBottom();
+    } else {
+      if (reasoningFlushTimer !== null) {
+        clearTimeout(reasoningFlushTimer);
+        reasoningFlushTimer = null;
+      }
+      pendingReasoningBuffer = "";
+      if (contentRafId !== null) {
+        cancelAnimationFrame(contentRafId);
+        contentRafId = null;
+      }
+      pendingContentBuffer = "";
     }
   }
 };

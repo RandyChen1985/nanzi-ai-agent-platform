@@ -65,6 +65,17 @@ def _find_log(items: List[Dict[str, Any]], log_id: Any) -> Optional[Dict[str, An
     return None
 
 
+def _is_subagent_reasoning_log(log: Optional[Dict[str, Any]]) -> bool:
+    """识别子代理思考日志（`subagent_reasoning:{run_id}:{seq}`），避免误认成委派容器。"""
+    if not isinstance(log, dict):
+        return False
+    if log.get("reasoning") is True:
+        return True
+    if log.get("category") == "reasoning":
+        return True
+    return str(log.get("id") or "").startswith("subagent_reasoning:")
+
+
 def _find_subagent_container(
     items: List[Dict[str, Any]],
     subagent: Dict[str, Any],
@@ -73,6 +84,8 @@ def _find_subagent_container(
     target_child_trace_id = subagent.get("child_trace_id")
 
     def match(log: Dict[str, Any]) -> bool:
+        if _is_subagent_reasoning_log(log):
+            return False
         if target_run_id and log.get("id") == f"subagent_{target_run_id}":
             return True
         log_sub = log.get("subagent") or {}
@@ -105,6 +118,8 @@ def _is_tool_log(data: Dict[str, Any]) -> bool:
         return False
     title = str(data.get("title") or "").lower()
     if any(token in title for token in ("权限", "permission", "确认", "外部执行")):
+        return False
+    if _is_subagent_reasoning_log(data):
         return False
     id_str = str(data.get("id") or "").lower()
     if id_str.startswith("subagent_"):
@@ -549,12 +564,16 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
     # Deduplicate sub_agent_call tool completion into existing subagent container if already present
     if "sub_agent_call" in title_str:
         for item in reversed(state):
-            if item.get("kind") == "log" and str(item.get("id") or "").startswith("subagent_"):
+            if (
+                item.get("kind") == "log"
+                and not _is_subagent_reasoning_log(item)
+                and str(item.get("id") or "").startswith("subagent_")
+            ):
                 _update_log(item, chunk)
                 return
             if item.get("kind") == "text":
                 for c in item.get("children") or []:
-                    if str(c.get("id") or "").startswith("subagent_"):
+                    if not _is_subagent_reasoning_log(c) and str(c.get("id") or "").startswith("subagent_"):
                         _update_log(c, chunk)
                         return
 
@@ -597,7 +616,10 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
             return
 
     # If this is an inner step of a subagent
-    is_subagent_container = str(log_id).startswith("subagent_") or "sub_agent_call" in title_str
+    is_subagent_container = (
+        not _is_subagent_reasoning_log(chunk)
+        and (str(log_id).startswith("subagent_") or "sub_agent_call" in title_str)
+    )
     subagent_meta = chunk.get("subagent")
     if isinstance(subagent_meta, dict) and not is_subagent_container:
         container = _find_subagent_container(state, subagent_meta)
@@ -663,6 +685,8 @@ def _finalize_log(item: Dict[str, Any]) -> Dict[str, Any]:
     # 「本会话已授权」是审计留痕：定稿丢掉的话，刷新/回放就看不到这条免确认凭证。
     if item.get("auto_approved") is True:
         copied["auto_approved"] = True
+    if item.get("reasoning") is True:
+        copied["reasoning"] = True
     if item.get("children"):
         copied["children"] = [_finalize_log(child) for child in item["children"]]
     return copied

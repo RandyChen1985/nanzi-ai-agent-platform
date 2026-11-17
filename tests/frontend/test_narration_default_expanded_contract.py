@@ -29,9 +29,12 @@ def test_narration_is_expanded_by_default():
 
 
 def test_user_can_still_collapse_manually():
-    """默认展开不等于不能收起：点标题行仍然切换。"""
+    """默认展开不等于不能收起：点标题行通过 toggleNarrationBody 切换。"""
     source = _component()
-    assert '@click="item.contentExpanded = !isNarrationBodyOpen(item)"' in source
+    assert '@click="toggleNarrationBody(item)"' in source
+    fn = source[source.index("function toggleNarrationBody"):]
+    fn = fn[: fn.index("\n}")]
+    assert "recordUiOverride(item, { contentExpanded: !isNarrationBodyOpen(item) });" in fn
 
 
 def test_collapse_affordance_stays_for_long_narration():
@@ -57,9 +60,12 @@ def test_long_narration_is_not_height_limited():
 
 
 def test_bulk_toggle_still_covers_narration():
-    """「全部展开 / 收起」对长旁白依然生效。"""
+    """「全部展开 / 收起」对长旁白依然生效，且通过 uiNodeOverrides 生效而不写回 props。"""
     source = _component()
-    assert 'if (it.textKind === "reasoning" || narrationNeedsCollapse(it)) it.contentExpanded = target;' in source
+    fn = source[source.index("function toggleAllDetails"):]
+    fn = fn[: fn.index("\nfunction ")]
+    assert 'if (it.textKind === "reasoning" || narrationNeedsCollapse(it)) patch.contentExpanded = target;' in fn
+    assert "if (Object.keys(patch).length) recordUiOverride(it, patch);" in fn
 
 
 def test_reasoning_default_untouched():

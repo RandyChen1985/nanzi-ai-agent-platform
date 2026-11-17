@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useRouter, useRoute } from "vue-router";
-import { computed, ref, onMounted, onUnmounted, watch, nextTick } from "vue";
+import { computed, ref, onMounted, onUnmounted, onErrorCaptured, watch, nextTick } from "vue";
 import axios from "../utils/axios";
 import Toast from "../components/Toast.vue";
 import { useBranding } from "../composables/useBranding";
@@ -16,6 +16,12 @@ import UserModeSidebar from "../components/layout/UserModeSidebar.vue";
 import AccountMenu from "../components/layout/AccountMenu.vue";
 import { useUiMode } from "../composables/useUiMode";
 import { collectUserModePaths } from "../constants/userModeMenu";
+import {
+  clearChunkRecoveryFallback,
+  isDynamicImportChunkError,
+  onChunkRecoveryFallback,
+  recoverFromChunkError,
+} from "../utils/chunkLoadRecovery";
 
 const router = useRouter();
 const route = useRoute();
@@ -469,9 +475,57 @@ const handleAccountLogout = () => {
   logout();
 };
 
-// 换页就收掉弹层：菜单里的每一项都会跳转，留着会盖在新页面上
+const routeRenderError = ref<string | null>(null);
+const routeChunkError = ref(false);
+const retryingRouteView = ref(false);
+
+const retryRouteView = async () => {
+  retryingRouteView.value = true;
+  routeRenderError.value = null;
+  routeChunkError.value = false;
+  clearChunkRecoveryFallback();
+  await nextTick();
+  retryingRouteView.value = false;
+};
+
+const reloadBrowserPage = () => {
+  clearChunkRecoveryFallback();
+  window.location.reload();
+};
+
+onErrorCaptured((err, _instance, info) => {
+  if (isDynamicImportChunkError(err)) {
+    if (recoverFromChunkError(route.fullPath)) {
+      return false;
+    }
+    routeChunkError.value = true;
+    routeRenderError.value = "系统刚刚发布新版本，当前页面资源已更新，请刷新浏览器后继续操作。";
+    return false;
+  }
+  const infoText = String(info || "").toLowerCase();
+  const isFatalLifecycle =
+    !infoText
+    || infoText.includes("setup")
+    || infoText.includes("render")
+    || infoText.includes("async")
+    || infoText.includes("mount");
+  if (isFatalLifecycle) {
+    console.error("[Dashboard] 路由视图渲染失败:", info, err);
+    routeChunkError.value = false;
+    routeRenderError.value =
+      err instanceof Error && err.message
+        ? err.message
+        : "页面加载时遇到意外异常，请重试或刷新浏览器。";
+    return false;
+  }
+});
+
+// 换页就收掉弹层与旧路由错误态：菜单里的每一项都会跳转，留着会盖在新页面上
 watch(() => route.fullPath, () => {
   if (accountMenuOpen.value) accountMenuOpen.value = false;
+  routeRenderError.value = null;
+  routeChunkError.value = false;
+  clearChunkRecoveryFallback();
 });
 
 const handleEscape = (e: KeyboardEvent) => {
@@ -486,14 +540,22 @@ const handleEscape = (e: KeyboardEvent) => {
   }
 };
 
+let stopChunkFallbackListener: (() => void) | null = null;
+
 onMounted(() => {
   document.addEventListener("keydown", handleEscape);
+  stopChunkFallbackListener = onChunkRecoveryFallback(({ message }) => {
+    routeChunkError.value = true;
+    routeRenderError.value = message;
+  });
 });
 
 onUnmounted(() => {
   document.removeEventListener("keydown", handleEscape);
   window.removeEventListener("user-info-updated", handleUserInfoUpdated);
   stopOnlineUsersRefresh();
+  stopChunkFallbackListener?.();
+  stopChunkFallbackListener = null;
 });
 
 // 监听路由变化，移动端下自动收起侧边栏
@@ -1315,7 +1377,38 @@ onMounted(() => {
         :class="dashboardContentSpacing"
       >
         <router-view v-slot="{ Component }">
-          <transition name="page">
+          <div
+            v-if="routeRenderError"
+            class="flex items-center justify-center min-h-[24rem] p-6"
+            role="alert"
+          >
+            <div class="max-w-md w-full rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 text-center shadow-sm">
+              <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100">
+                {{ routeChunkError ? "页面资源已更新" : "页面加载异常" }}
+              </h3>
+              <p class="mt-2 text-sm text-gray-500 dark:text-gray-400 break-words">
+                {{ routeRenderError }}
+              </p>
+              <div class="mt-5 flex items-center justify-center gap-3">
+                <button
+                  v-if="!routeChunkError"
+                  type="button"
+                  @click="retryRouteView"
+                  class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-100 transition-colors"
+                >
+                  重试当前页
+                </button>
+                <button
+                  type="button"
+                  @click="reloadBrowserPage"
+                  class="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-white hover:opacity-90 transition-opacity"
+                >
+                  刷新页面
+                </button>
+              </div>
+            </div>
+          </div>
+          <transition v-else-if="!retryingRouteView" name="page">
             <Suspense>
               <template #default>
                 <!-- pageReloadToken：用户模式点「新建任务」时 +1，强制重挂载聊天页拿到干净会话 -->

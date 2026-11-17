@@ -502,3 +502,66 @@ def test_tool_summary_survives_process_timeline_persistence():
 
     assert direct is not None and len(direct) == 1
     assert direct[0]["tool_summary"] == "查看容器状态"
+
+
+def test_subagent_reasoning_log_attached_to_container_children_and_preserves_reasoning_flag():
+    """子代理思考日志不得误判为委派容器或顶层平级项，且定稿后必须保留 reasoning=True。"""
+    items = _run(
+        [
+            {
+                "type": "log",
+                "id": "subagent_run-1",
+                "title": "委派智能体 · 数据分析专家",
+                "details": "开始分析季度报表",
+                "status": "pending",
+                "category": "agent",
+                "subagent": {"run_id": "run-1", "target_agent_name": "数据专家"},
+            },
+            {
+                "type": "log",
+                "id": "tool_run1_1",
+                "title": "调用工具: execute_sql_query",
+                "details": "SELECT 1",
+                "status": "success",
+                "category": "tool",
+                "subagent": {"run_id": "run-1"},
+            },
+            {
+                "type": "log",
+                "id": "subagent_reasoning:run-1:1",
+                "title": "子代理思考",
+                "details": "分析数据结构并规划查询步骤",
+                "status": "success",
+                "category": "reasoning",
+                "reasoning": True,
+                "subagent": {"run_id": "run-1"},
+            },
+            {
+                "type": "log",
+                "id": "tool_call_sub_agent_finish",
+                "title": "工具完成: sub_agent_call",
+                "details": "委派完成汇总结果",
+                "status": "success",
+                "category": "agent",
+                "subagent": {"run_id": "run-1"},
+            },
+        ]
+    )
+
+    assert items is not None
+    # 顶层只能有 1 个真正的委派容器，思考日志不得自立门户或与容器并列
+    assert len(items) == 1
+    container = items[0]
+    assert container["id"] == "subagent_run-1"
+    assert container["status"] == "success"
+    assert container["details"] == "委派完成汇总结果"
+
+    children = container.get("children") or []
+    child_ids = [c.get("id") for c in children]
+    assert "tool_run1_1" in child_ids
+    assert "subagent_reasoning:run-1:1" in child_ids
+
+    reasoning_node = next(c for c in children if c.get("id") == "subagent_reasoning:run-1:1")
+    assert reasoning_node.get("reasoning") is True
+    assert reasoning_node.get("title") == "子代理思考"
+

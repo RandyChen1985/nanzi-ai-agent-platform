@@ -107,17 +107,16 @@ export function buildSkillFlowBadges(
       });
     });
 
-  logs
-    .map(extractLogBadge)
-    .filter((badge): badge is SkillFlowBadge => Boolean(badge))
-    .filter((badge) => badge.kind === "enabled")
-    .forEach(addBadge);
-
-  logs
-    .map(extractLogBadge)
-    .filter((badge): badge is SkillFlowBadge => Boolean(badge))
-    .filter((badge) => badge.kind === "candidate")
-    .forEach(addBadge);
+  const enabledBadges: SkillFlowBadge[] = [];
+  const candidateBadges: SkillFlowBadge[] = [];
+  for (const log of logs) {
+    const badge = extractLogBadge(log);
+    if (!badge) continue;
+    if (badge.kind === "enabled") enabledBadges.push(badge);
+    else if (badge.kind === "candidate") candidateBadges.push(badge);
+  }
+  enabledBadges.forEach(addBadge);
+  candidateBadges.forEach(addBadge);
 
   return badges;
 }

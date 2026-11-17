@@ -136,7 +136,7 @@
                   type="button"
                   class="mb-0.5 flex w-full items-center gap-2 text-left text-[10px] hover:text-gray-600 dark:hover:text-gray-300"
                   :aria-expanded="isReasoningBodyOpen(item)"
-                  @click="item.contentExpanded = isReasoningBodyOpen(item) ? false : true"
+                  @click="toggleReasoningBody(item)"
                 >
                   <CpuChipIcon class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   <span class="shrink-0">深度思考</span>
@@ -202,7 +202,7 @@
                     type="button"
                     class="mb-0.5 flex w-full items-center gap-2 text-left text-[10px] text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
                     :aria-expanded="isNarrationBodyOpen(item)"
-                    @click="item.contentExpanded = !isNarrationBodyOpen(item)"
+                    @click="toggleNarrationBody(item)"
                   >
                     <span class="narration-preview min-w-0 flex-1 truncate">{{ narrationPreviewOf(item) }}</span>
                     <span class="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-500 dark:bg-gray-700 dark:text-gray-400">{{ narrationCharCountOf(item) }} 字</span>
@@ -222,7 +222,7 @@
                 type="button"
                 class="mb-0 flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
                 :aria-expanded="isChildrenOpen(item)"
-                @click="item.childrenExpanded = item.childrenExpanded === false"
+                @click="toggleTextChildren(item)"
               >
                 <svg class="h-3 w-3 transition-transform" :class="{ 'rotate-180': isChildrenOpen(item) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
@@ -390,7 +390,7 @@
                             </svg>
                           </button>
                           <div
-                            v-if="subStep.reasoning"
+                            v-if="isSubagentReasoningLog(subStep)"
                             class="reasoning-md border-l-2 border-gray-200 pl-2.5 pr-6 text-gray-600 dark:border-gray-700 dark:text-gray-400"
                           >
                             <div class="reasoning-md-body" v-html="reasoningDetailsHtml(subStep.details)" />
@@ -419,7 +419,7 @@
                         </svg>
                       </button>
                       <div
-                        v-if="child.reasoning"
+                        v-if="isSubagentReasoningLog(child)"
                         class="reasoning-md mt-1 border-l-2 border-gray-200 pl-2.5 pr-6 text-gray-600 dark:border-gray-700 dark:text-gray-400"
                       >
                         <div class="reasoning-md-body" v-html="reasoningDetailsHtml(child.details)" />
@@ -707,7 +707,7 @@
                       </svg>
                     </button>
                     <div
-                      v-if="subStep.reasoning"
+                      v-if="isSubagentReasoningLog(subStep)"
                       class="reasoning-md border-l-2 border-gray-200 pl-2.5 pr-6 text-gray-600 dark:border-gray-700 dark:text-gray-400"
                     >
                       <div class="reasoning-md-body" v-html="reasoningDetailsHtml(subStep.details)" />
@@ -736,7 +736,7 @@
                   </svg>
                 </button>
                 <div
-                  v-if="item.reasoning"
+                  v-if="isSubagentReasoningLog(item)"
                   class="reasoning-md mt-1 border-l-2 border-gray-200 pl-2.5 pr-6 text-gray-600 dark:border-gray-700 dark:text-gray-400"
                 >
                   <div class="reasoning-md-body" v-html="reasoningDetailsHtml(item.details)" />
@@ -757,7 +757,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
 import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import TimelineToolArgsBlock from "@/components/chat/TimelineToolArgsBlock.vue";
@@ -960,14 +960,85 @@ function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineIt
   });
 }
 
+type TimelineUiOverride = {
+  isExpanded?: boolean;
+  childrenExpanded?: boolean;
+  contentExpanded?: boolean;
+  userToggled?: boolean;
+};
+
+/**
+ * 组件级节点展开状态覆盖表：避免 `computed` 内合并 `props.timeline` 时把用户的
+ * 折叠/展开操作冲掉，也不把 UI 交互态直接耦合到响应式流数据上。
+ */
+const uiNodeOverrides = reactive<Record<string, TimelineUiOverride>>({});
+
+function uiOverrideKey(node: { kind?: string; id?: string | number }): string {
+  return `${node.kind || "log"}:${String(node.id ?? "")}`;
+}
+
+function recordUiOverride(
+  node: ProcessTimelineItem,
+  patch: TimelineUiOverride,
+): void {
+  const key = uiOverrideKey(node);
+  uiNodeOverrides[key] = { ...(uiNodeOverrides[key] || {}), ...patch };
+  Object.assign(node, patch);
+}
+
+function applyUiOverridesToLog(
+  log: ProcessTimelineLogItem,
+  visited: WeakSet<object>,
+): void {
+  if (!log || visited.has(log)) return;
+  visited.add(log);
+  const override = uiNodeOverrides[uiOverrideKey(log)];
+  if (override) {
+    if (override.isExpanded !== undefined) log.isExpanded = override.isExpanded;
+    if (override.childrenExpanded !== undefined) log.childrenExpanded = override.childrenExpanded;
+    if (override.userToggled !== undefined) log.userToggled = override.userToggled;
+  }
+  for (const child of log.children || []) {
+    applyUiOverridesToLog(child, visited);
+  }
+}
+
+function applyUiOverrides(list: ProcessTimelineItem[]): ProcessTimelineItem[] {
+  const visited = new WeakSet<object>();
+  for (const item of list) {
+    if (!item || visited.has(item)) continue;
+    visited.add(item);
+    const override = uiNodeOverrides[uiOverrideKey(item)];
+    if (item.kind === "text") {
+      if (override) {
+        if (override.contentExpanded !== undefined) item.contentExpanded = override.contentExpanded;
+        if (override.childrenExpanded !== undefined) item.childrenExpanded = override.childrenExpanded;
+      }
+      for (const child of item.children || []) {
+        applyUiOverridesToLog(child, visited);
+      }
+    } else if (item.kind === "log") {
+      if (override) {
+        if (override.isExpanded !== undefined) item.isExpanded = override.isExpanded;
+        if (override.childrenExpanded !== undefined) item.childrenExpanded = override.childrenExpanded;
+        if (override.userToggled !== undefined) item.userToggled = override.userToggled;
+      }
+      for (const child of item.children || []) {
+        applyUiOverridesToLog(child, visited);
+      }
+    }
+  }
+  return list;
+}
+
 const timelineItems = computed(() => {
   const merged = props.timeline.length
-    ? mergeTimelineLogs(props.timeline, props.logs)
+    ? mergeTimelineLogs(props.timeline, props.logs, { clone: true })
     : buildLegacyProcessTimeline(props);
   const visibleItems = props.suppressPermissionLogs ? suppressPermissionLogs(merged) : merged;
   // 当前轮由 banner 负责时隐藏清单，其余情况（含没有 settled 标记的旧快照）
   // 都归档到执行过程里，保证历史消息仍然查得到。
-  return selectTimelineRenderableItems(visibleItems, { hideTodo: props.hideTodo });
+  return applyUiOverrides(selectTimelineRenderableItems(visibleItems, { hideTodo: props.hideTodo }));
 });
 
 /**
@@ -1075,14 +1146,18 @@ function toggleAllDetails() {
   compactRoundsOpen.value = target;
   function setExpand(it: any) {
     if (it.kind === "text") {
-      if (it.textKind === "reasoning" || narrationNeedsCollapse(it)) it.contentExpanded = target;
-      if (it.children?.length) it.childrenExpanded = target;
+      const patch: TimelineUiOverride = {};
+      if (it.textKind === "reasoning" || narrationNeedsCollapse(it)) patch.contentExpanded = target;
+      if (it.children?.length) patch.childrenExpanded = target;
+      if (Object.keys(patch).length) recordUiOverride(it, patch);
     } else if (it.kind === "log") {
-      it.isExpanded = target;
-      if (it.children?.length) it.childrenExpanded = target;
       // 「全部展开/收起」是明确的用户意图，一并保护起来：否则随后跑完的工具
       // 会被自动折叠掉，和刚点下的「全部展开」自相矛盾。
-      it.userToggled = true;
+      recordUiOverride(it, {
+        isExpanded: target,
+        ...(it.children?.length ? { childrenExpanded: target } : {}),
+        userToggled: true,
+      });
     }
     if (it.children?.length) {
       it.children.forEach(setExpand);
@@ -1332,10 +1407,12 @@ function expandReasoningFull(item: ProcessTimelineTextItem): void {
 /**
  * 思考正文的 HTML。
  *
- * 已落定的内容做结果缓存：折叠别的 item、工具状态变化都会触发整条时间线重渲染，
- * 不缓存就每次都重跑一遍 markdown-it。进行中不缓存——内容还在长，缓存会锁在旧版本。
+ * 按 `item.id` 缓存在有界 Map 中，而不是绑死对象引用：时间线合并现在会在 computed
+ * 内生成克隆对象，用 id 索引才能跨帧复用；同时在 `item.pending` 期间若原文未变
+ * （如 500ms 秒表 tick 或其他工具事件驱动重渲），也能直接复用已渲染结果。
  */
-const reasoningHtmlCache = new WeakMap<ProcessTimelineTextItem, { source: string; html: string }>();
+const REASONING_HTML_CACHE_MAX_ENTRIES = 200;
+const reasoningHtmlCache = new Map<string, { source: string; html: string }>();
 
 /**
  * 把流式光标塞进最后一个块级元素的**内部**末尾。
@@ -1352,14 +1429,21 @@ function withReasoningCaret(html: string): string {
 
 function reasoningHtml(item: ProcessTimelineTextItem): string {
   const source = visibleTimelineText(item.content);
-  if (item.pending) {
-    return withReasoningCaret(renderMarkdown(source));
+  const cacheKey = String(item.id || "");
+  const cached = cacheKey ? reasoningHtmlCache.get(cacheKey) : undefined;
+  let html: string;
+  if (cached && cached.source === source) {
+    html = cached.html;
+  } else {
+    html = renderMarkdown(source);
+    if (cacheKey) {
+      if (reasoningHtmlCache.size >= REASONING_HTML_CACHE_MAX_ENTRIES) {
+        reasoningHtmlCache.clear();
+      }
+      reasoningHtmlCache.set(cacheKey, { source, html });
+    }
   }
-  const cached = reasoningHtmlCache.get(item);
-  if (cached && cached.source === source) return cached.html;
-  const html = renderMarkdown(source);
-  reasoningHtmlCache.set(item, { source, html });
-  return html;
+  return item.pending ? withReasoningCaret(html) : html;
 }
 
 /**
@@ -1575,9 +1659,10 @@ function isToolTimelineItem(item: ProcessTimelineLogItem): boolean {
  * `childrenExpanded` 改成 false 的一次性副作用——时间线对象在流式合并与历史恢复时
  * 会被重建，一次性标志会被冲掉，表现为「跑完了还摊着」。
  */
-function isChildrenOpen(item: ProcessTimelineLogItem): boolean {
+function isChildrenOpen(item: ProcessTimelineTextItem | ProcessTimelineLogItem): boolean {
   if (
-    shouldCollapsePreparationChildren({
+    item.kind === "log"
+    && shouldCollapsePreparationChildren({
       isPreparation: isPreparationParent(item),
       userToggled: item.userToggled,
       status: item.status,
@@ -1600,6 +1685,18 @@ function isTimelineItemDetailsOpen(item: ProcessTimelineLogItem): boolean {
   return item.isExpanded === true;
 }
 
+function toggleReasoningBody(item: ProcessTimelineTextItem): void {
+  recordUiOverride(item, { contentExpanded: isReasoningBodyOpen(item) ? false : true });
+}
+
+function toggleNarrationBody(item: ProcessTimelineTextItem): void {
+  recordUiOverride(item, { contentExpanded: !isNarrationBodyOpen(item) });
+}
+
+function toggleTextChildren(item: ProcessTimelineTextItem): void {
+  recordUiOverride(item, { childrenExpanded: item.childrenExpanded === false });
+}
+
 function toggleTimelineItem(item: ProcessTimelineLogItem): void {
   if (isRouteGroup(item)) {
     routeGroupExpanded.value = !routeGroupExpanded.value;
@@ -1614,14 +1711,12 @@ function toggleTimelineItem(item: ProcessTimelineLogItem): void {
     : item.isExpanded === true;
   const nextOpen = !currentOpen;
 
-  if (hasKids) {
-    item.childrenExpanded = nextOpen;
-  }
-  if (hasSelf) {
-    item.isExpanded = nextOpen;
-  }
   // 手动点过就标记：执行完的自动折叠会跳过它，避免正看着结果时被收走。
-  item.userToggled = true;
+  recordUiOverride(item, {
+    ...(hasKids ? { childrenExpanded: nextOpen } : {}),
+    ...(hasSelf ? { isExpanded: nextOpen } : {}),
+    userToggled: true,
+  });
 }
 
 function isChildDetailsOpen(child: ProcessTimelineLogItem): boolean {
@@ -1641,14 +1736,12 @@ function toggleChildItem(child: ProcessTimelineLogItem): void {
     : child.isExpanded === true;
   const nextOpen = !currentOpen;
 
-  if (hasKids) {
-    child.childrenExpanded = nextOpen;
-  }
-  if (hasSelf) {
-    child.isExpanded = nextOpen;
-  }
   // 同上：子层也要标记，否则只有顶层被保护、子步骤照样在跑完后被收起。
-  child.userToggled = true;
+  recordUiOverride(child, {
+    ...(hasKids ? { childrenExpanded: nextOpen } : {}),
+    ...(hasSelf ? { isExpanded: nextOpen } : {}),
+    userToggled: true,
+  });
 }
 
 // 子步骤（第三层）与 child（第二层）的展开语义必须完全一致：subStep 下有更深子步骤时，
@@ -1688,7 +1781,7 @@ function iconFor(item: ProcessTimelineLogItem): string {
 
 function timelineIconFor(item: ProcessTimelineLogItem): any {
   // 子代理思考用 CpuChip（与主代理思考同图标），避免被当成一次工具调用读过去。
-  if (item.reasoning) return CpuChipIcon;
+  if (isSubagentReasoningLog(item)) return CpuChipIcon;
   if (item.category === "tool_resolution") return item.status === "error" ? ExclamationTriangleIcon : MapIcon;
   if (item.status === "error") return ExclamationTriangleIcon;
   // 降级/重置这类提醒既不是错误也不是普通步骤：默认气泡图标会让人以为只是又一步。
