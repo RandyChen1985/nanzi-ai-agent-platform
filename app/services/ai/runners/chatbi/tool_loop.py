@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
+from app.services.ai.runtime.tool_loop_detector import (
+    LOOP_DETECTION_EXEMPT_TOOL_NAMES,
+    ToolLoopDetector,
+)
 from app.services.ai.runners.chatbi.constants import (
     FAILED_SQL_REPEAT_THRESHOLD,
     TOOL_LOOP_FUSE_THRESHOLD,
@@ -67,6 +70,11 @@ def record_tool_call_signature(
     tool_args: dict[str, Any] | None,
 ) -> None:
     if not tool_name or state.tool_loop_fuse_triggered:
+        return
+    # 与通用链路同一份白名单：记账类工具不占额度、不判熔断。
+    # 单独早退是为了连 `state.tool_call_signatures` 也不记——那张表是 ChatBI
+    # 自己的计数，只豁免 detector 会留下一半记账、一半不记的矛盾状态。
+    if tool_name in LOOP_DETECTION_EXEMPT_TOOL_NAMES:
         return
     signature = tool_call_signature(tool_name, tool_args)
     if tool_call_made_progress(state, tool_name):
