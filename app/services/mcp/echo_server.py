@@ -83,6 +83,11 @@ def personal_echo_slow_tool_name(server_name: str) -> str:
     return f"{server_name}:{ECHO_SLOW_TOOL_NAME}"
 
 
+def personal_echo_mail_tool_name(server_name: str) -> str:
+    """个人 Echo 的发信测试工具名，同上。"""
+    return f"{server_name}:{ECHO_MAIL_TOOL_LOCAL_NAME}"
+
+
 def build_echo_server_url(base_url: str, server_id: str) -> str:
     """平台 Echo 保持历史路径；个人 Echo 把 server_id 编进路径供服务端选择配置。"""
     base = str(base_url or "").rstrip("/")
