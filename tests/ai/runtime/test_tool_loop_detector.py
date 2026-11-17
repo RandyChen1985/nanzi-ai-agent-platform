@@ -190,3 +190,91 @@ def test_workspace_action_observation_cycle_exempt_from_ping_pong():
     assert verdict.fused is False
     assert verdict.reason_code != "ping_pong"
 
+
+
+class TestLoopDetectionExemptTools:
+    """循环检测白名单：记账类工具对检测器完全透明。
+
+    ``todo_write`` 的提示词要求「每完成、失败或取消一个阶段都更新清单」，一个
+    5 步任务本来就要调五六次——这是设计要求，不是空转。而它每次的 status 都在变、
+    签名也就每次不同，同参重复根本拦不住；反过来它若留在调用序列里，
+    ``todo_write ↔ 某个业务工具`` 这种最正常的多步推进还会被凑成 ping-pong 把整轮
+    误熔断。两头都不对，所以只能是「完全不参与」。
+    """
+
+    def test_exempt_tools_do_not_consume_global_quota(self):
+        """白名单工具的调用次数不进 total_calls，也就吃不掉全局额度。"""
+        detector = ToolLoopDetector(threshold=99, enabled=True, global_limit=3)
+
+        for index in range(10):
+            verdict = detector.record("todo_write", {"todos": [{"status": "pending", "content": str(index)}]})
+            assert verdict.fused is False
+
+        assert detector.total_calls == 0
+
+        # 额度必须原封不动留给真正的业务工具
+        assert detector.record("fetch", {"i": 1}).fused is False
+        assert detector.record("fetch", {"i": 2}).fused is False
+        third = detector.record("fetch", {"i": 3})
+        assert third.fused is True
+        assert third.reason_code == "circuit_breaker"
+
+    def test_exempt_tool_never_fuses_on_any_rule(self):
+        """同参重复、全局总量、ping-pong 三类都不能把白名单工具判掉。"""
+        detector = ToolLoopDetector(
+            threshold=1, enabled=True, global_limit=1, ping_pong_threshold=2
+        )
+        same_args = {"todos": [{"status": "in_progress", "content": "跑查询"}]}
+
+        for _ in range(20):
+            assert detector.record("todo_write", same_args).fused is False
+
+        assert detector.total_calls == 0
+        assert detector._signatures == {}
+
+    def test_exempt_tool_does_not_pollute_ping_pong(self):
+        """最常见的多步推进：更新清单 ↔ 调业务工具 ↔ 更新清单…
+
+        白名单工具不进序列，所以不会和那个业务工具凑成「两个工具严格交替」。
+        """
+        detector = ToolLoopDetector(
+            threshold=99, enabled=True, global_limit=0, ping_pong_threshold=6
+        )
+
+        for index in range(8):
+            assert detector.record("todo_write", {"todos": [{"status": "pending", "content": str(index)}]}).fused is False
+            assert detector.record("search", {"q": str(index)}).fused is False
+
+        # 序列里只剩 search，长度 8 但不算交替
+        assert detector._sequence == ["search"] * 8
+
+    def test_real_ping_pong_still_fuses(self):
+        """对照：两个业务工具真交替时照常熔断。"""
+        detector = ToolLoopDetector(
+            threshold=99, enabled=True, global_limit=0, ping_pong_threshold=6
+        )
+        verdict = None
+        for index in range(8):
+            detector.record("fetch_a", {"i": index})
+            verdict = detector.record("fetch_b", {"i": index})
+
+        assert verdict is not None
+        assert verdict.fused is True
+        assert verdict.reason_code == "ping_pong"
+
+    def test_exempt_tool_still_reports_fused_after_round_is_fused(self):
+        """整轮已经熔断时，调白名单工具不能假装还能继续。
+
+        豁免的范围是「不参与判定」，不是「绕过已生效的熔断」。
+        """
+        detector = ToolLoopDetector(threshold=1, enabled=True)
+        assert detector.record("search", {"q": "x"}).fused is True
+
+        verdict = detector.record("todo_write", {})
+        assert verdict.fused is True
+        assert verdict.reason_code == "repeat"
+
+    def test_whitelist_contains_todo_write(self):
+        from app.services.ai.runtime.tool_loop_detector import LOOP_DETECTION_EXEMPT_TOOL_NAMES
+
+        assert "todo_write" in LOOP_DETECTION_EXEMPT_TOOL_NAMES

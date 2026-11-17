@@ -1825,7 +1825,7 @@ OpenAI、DeepSeek、Claude 等大模型具备 KV 提示词缓存（Prompt Cache�
     'multimodal_model_name': '会话当前模型不支持识图时，用该默认多模态模型解析本轮图片为文字，再交给原模型继续回答。留空则直接提示用户当前模型不支持图片理解。',
     'agent_max_iterations': 'ReAct 智能体单次对话的最大思考与工具调用轮数限制。建议设定在 10-20 之间，过小可能导致任务未完成便终止，过大可能因死循环消耗过多 Token。',
     'agent_max_toolcall_timeout': '单次 Agent 工具调用的全局超时时间（秒），默认 180 秒，范围 1-3600；版本级配置优先于全局配置。',
-    'agent_tool_loop_global_limit': '单次对话所有工具调用的总次数上限，默认 50 次，范围 1-3600，用于防止工具循环空转。',
+    'agent_tool_loop_global_limit': '单次对话所有工具调用的总次数上限，默认 50 次，范围 1-3600，用于防止工具循环空转。任务清单（todo_write）这类只记录进展、不向外取数的记账工具不占这个额度。',
     'agent_max_context_turns': '智能体能够保留的最大历史上下文轮数。设置合理的值能防止发送给大模型的消息体过长，从而节约 Token 并加速模型响应。',
     'external_sql_api_url': '用于远程安全沙箱中执行生成 SQL 查询的 API 服务网关地址。直连物理执行模式（local）下此配置项将被忽略。',
     'external_sql_api_key': '用于调用远程安全 SQL 执行服务的身份验证 Token，请确保保密。',

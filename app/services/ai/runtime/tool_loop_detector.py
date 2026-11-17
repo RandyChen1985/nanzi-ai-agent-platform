@@ -19,6 +19,22 @@ MAX_GLOBAL_LIMIT = 3600
 DEFAULT_PING_PONG_THRESHOLD = 6
 # 仅保留最近若干次调用用于序列模式识别，避免内存无界增长。
 _MAX_SEQUENCE_LEN = 64
+
+#: 循环检测白名单：这类工具对检测器**完全透明**——不占全局调用额度、不进调用
+#: 序列、不参与同参重复与 ping-pong 的任何一类判定。
+#:
+#: 收录标准只有一条：**它做的是「把已有进展记下来」，不是「往外取东西」**。
+#:
+#: ``todo_write`` 在名单里，是因为提示词要求模型「每完成、失败或取消一个阶段都
+#: 更新清单」——一个 5 步任务本来就要调五六次，这是设计要求不是空转。而它每次
+#: 的 ``status`` 都在变、签名也就每次不同，同参重复根本拦不住；反过来它若留在
+#: 调用序列里，``todo_write ↔ 某个业务工具`` 这种最正常的多步推进还会被凑成
+#: ping-pong 把整轮误熔断。两头都不对，只能是透明。
+#:
+#: 放它进来的代价要认：这类工具不再受任何单轮计数约束。之所以可接受，是它每
+#: 次调用都要吐一份完整清单（还有 ≤20 项、content 不重复等校验），空刷没有收益；
+#: 真正的空转——反复调同一个业务工具——仍然被上面三道全部拦住。
+LOOP_DETECTION_EXEMPT_TOOL_NAMES = frozenset({"todo_write"})
 # 取时/相对日期解析：参数差异通常无意义，按工具名聚合并在更低阈值熔断。
 _TIME_ANCHOR_TOOL_NAMES = frozenset({"get_current_time", "resolve_relative_dates"})
 _TIME_ANCHOR_REPEAT_THRESHOLD = 2
@@ -199,6 +215,12 @@ class ToolLoopDetector:
                 message=self.fuse_reason,
                 reason_code=self.fuse_reason_code,
             )
+
+        # 白名单工具在这里直接返回：不 total_calls += 1、不进 _signatures、
+        # 不进 _sequence。放在 `fused` 判断之后是有意的——整轮已经熔断时，调白名单
+        # 工具也不该让调用方以为「还能继续」，那不是豁免范围。
+        if tool_name in LOOP_DETECTION_EXEMPT_TOOL_NAMES:
+            return ToolLoopVerdict(fused=False, count=0)
 
         if tool_name.startswith("browser_"):
             self._has_browser_tools = True
