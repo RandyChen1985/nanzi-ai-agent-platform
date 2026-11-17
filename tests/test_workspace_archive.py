@@ -402,3 +402,51 @@ def test_extract_endpoint_over_http_keeps_request_contract(tmp_path, monkeypatch
     assert payload["path"] == str(out / "pkg")
     assert payload["skipped"] == []
     assert (out / "pkg" / "a.md").read_bytes() == b"hi"
+
+
+def test_file_count_limit_is_normalized_to_200000():
+    """文件数上限只有一份口径：工作空间解压与技能目录共用 200000。"""
+    from app.core import upload_limits
+    from app.services import workspace_archive as wa
+
+    assert upload_limits.MAX_FILES_PER_DIRECTORY == 200_000
+    assert upload_limits.SKILL_DIR_MAX_FILES == upload_limits.MAX_FILES_PER_DIRECTORY
+    assert wa.DEFAULT_MAX_ENTRIES == upload_limits.MAX_FILES_PER_DIRECTORY
+
+
+def test_extract_counts_files_already_in_target_dir(tmp_path):
+    """累计口径：目标目录**已有**的文件也要计入上限。
+
+    此前只数本次归档的条目数，于是「解一次 4000 个、再解一次 4000 个」可以无限累计，
+    上限形同虚设。这里目标目录先放一个文件，再解一个 2 文件归档、上限 2：
+    1 + 2 > 2 必须中止，且**既有文件不能被回滚删掉**。
+    """
+    from app.services.workspace_archive import ArchiveExtractError, extract_archive
+
+    archive = _make_zip(tmp_path / "two.zip", {"a.txt": b"1", "b.txt": b"2"})
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "existing.txt").write_bytes(b"keep")
+
+    with pytest.raises(ArchiveExtractError) as exc:
+        # subdir="" = 直接解到目标目录本身，既有文件参与累计
+        extract_archive(str(archive), str(out), subdir="", max_entries=2)
+
+    assert exc.value.status_code == 413
+    assert (out / "existing.txt").read_bytes() == b"keep"
+    assert sorted(p.name for p in out.iterdir()) == ["existing.txt"]
+
+
+def test_extract_allows_when_existing_plus_incoming_within_limit(tmp_path):
+    """边界：已有 1 + 本次 2 = 3，上限 3 应当放行（不能把 ``<=`` 写成 ``<``）。"""
+    from app.services.workspace_archive import extract_archive
+
+    archive = _make_zip(tmp_path / "two.zip", {"a.txt": b"1", "b.txt": b"2"})
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "existing.txt").write_bytes(b"keep")
+
+    result = extract_archive(str(archive), str(out), subdir="", max_entries=3)
+
+    assert result.file_count == 2
+    assert (out / "a.txt").read_bytes() == b"1"

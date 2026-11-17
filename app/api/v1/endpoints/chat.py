@@ -17,6 +17,7 @@ from app.services.ai.export_service import ExportService
 from app.services.config_service import ConfigService
 from app.core.context import set_execution_options_context
 from app.core.dependencies import require_admin, require_api_key
+from app.core.upload_limits import MAX_FILES_PER_DIRECTORY, count_files_under
 from app.schemas.response import StandardResponse, ListResponse
 from app.schemas.agent import TraceLogResponse, AgentExecutionHistoryListResponse
 from app.utils.fs_access import get_user_uploads_dir, open_upload_storage_file
@@ -3910,6 +3911,17 @@ async def upload_chat_file(
     if not upload_dir:
         raise HTTPException(status_code=403, detail="无法解析用户工作目录，上传失败。")
     os.makedirs(upload_dir, exist_ok=True)
+
+    # 文件个数预算与工作空间、技能目录同一份口径（目录累计）。
+    existing_files = count_files_under(upload_dir, stop_above=MAX_FILES_PER_DIRECTORY)
+    if existing_files + 1 > MAX_FILES_PER_DIRECTORY:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"附件目录文件数已达上限（{MAX_FILES_PER_DIRECTORY} 个），"
+                "请先清理不再需要的附件后再上传"
+            ),
+        )
     
     # 落盘默认用原文件名，所以写失败必须自己清掉半成品：否则会留下一个和用户
     # 真实附件同名的 0 字节文件，后续同名上传被迫改名，AI 还可能把它当真实资料读。

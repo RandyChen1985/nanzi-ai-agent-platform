@@ -20,7 +20,12 @@ from app.utils.skill_metadata import (
     parse_skill_frontmatter,
     set_skill_group_in_file,
 )
-from app.core.upload_limits import SKILL_PACKAGE_MAX_BYTES, SKILL_PACKAGE_MAX_MB
+from app.core.upload_limits import (
+    MAX_FILES_PER_DIRECTORY,
+    SKILL_PACKAGE_MAX_BYTES,
+    SKILL_PACKAGE_MAX_MB,
+    count_files_under,
+)
 from app.core.orm import get_db_session
 from app.services.ai.skill_resolver import (
     get_user_personal_skills_dir,
@@ -673,6 +678,22 @@ async def upload_personal_skill_file(
         target_path = _validate_personal_skill_path(
             user, skill_id, os.path.join(sub_dir, file_name)
         )
+
+        # 与平台技能同一份文件数预算（目录累计口径）：单文件上传不判累计时，
+        # 循环上传可以无限往一个技能目录里堆文件。
+        skill_root = _validate_personal_skill_path(user, skill_id)
+        existing_files = count_files_under(skill_root, stop_above=MAX_FILES_PER_DIRECTORY)
+        # 覆盖同名文件不新增 inode，不该被文件数上限拦住
+        incoming_files = 0 if os.path.exists(target_path) else 1
+        if existing_files + incoming_files > MAX_FILES_PER_DIRECTORY:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"技能 {skill_id} 文件数已达上限（{MAX_FILES_PER_DIRECTORY} 个），"
+                    "请先清理不再需要的文件后再上传"
+                ),
+            )
+
         content = await file.read()
         if len(content) > 10 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="上传文件大小超出 10MB 限制")

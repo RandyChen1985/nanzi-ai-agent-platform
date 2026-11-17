@@ -1148,3 +1148,67 @@ async def test_list_prefer_user_root_applies_to_admin(db_session, admin_api_key)
         assert base_resp.status_code == 200, base_resp.text
         assert base_resp.json()["data"]["current_path"] == os.path.normpath(base)
 
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_when_target_dir_file_count_reached_limit(
+    db_session, valid_api_key, monkeypatch
+):
+    """目标目录文件数达到上限后，单文件上传必须被拒（不能无限往上堆）。"""
+    from app.api.v1.endpoints import fs as fs_module
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        target = await _user_workspace_dir(client, valid_api_key)
+        # 目标目录里已经有文件（工作区初始化产物也算）
+        if not os.listdir(target):
+            with open(os.path.join(target, "existing.txt"), "w", encoding="utf-8") as fh:
+                fh.write("x")
+        before = set(os.listdir(target))
+        monkeypatch.setattr(
+            fs_module, "MAX_FILES_PER_DIRECTORY", len(before), raising=False
+        )
+
+        resp = await client.post(
+            "/api/v1/chat/fs/upload",
+            params={"parent_path": target},
+            files={"file": ("one.bin", b"payload", "application/octet-stream")},
+            headers={"X-API-Key": valid_api_key},
+        )
+
+    assert resp.status_code == 413, resp.text
+    assert "文件数" in resp.json()["detail"]
+    assert set(os.listdir(target)) == before
+
+
+@pytest.mark.asyncio
+async def test_create_entry_rejects_when_target_dir_file_count_reached_limit(
+    db_session, valid_api_key, monkeypatch
+):
+    """「新建文件」同样是往目录里加文件，受同一份个数预算约束。"""
+    from app.api.v1.endpoints import fs as fs_module
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        target = await _user_workspace_dir(client, valid_api_key)
+        if not os.listdir(target):
+            with open(os.path.join(target, "existing.txt"), "w", encoding="utf-8") as fh:
+                fh.write("x")
+        before = set(os.listdir(target))
+        # 以当前文件数作为上限：再新建一个就必然超限
+        monkeypatch.setattr(
+            fs_module, "MAX_FILES_PER_DIRECTORY", len(before), raising=False
+        )
+
+        resp = await client.post(
+            "/api/v1/chat/fs/create-entry",
+            json={
+                "parent_path": target,
+                "name": f"note_{uuid.uuid4().hex[:8]}.txt",
+                "kind": "file",
+                "content": "hi",
+            },
+            headers={"X-API-Key": valid_api_key},
+        )
+
+    assert resp.status_code == 413, resp.text
+    assert "文件数" in resp.json()["detail"]
+    assert set(os.listdir(target)) == before

@@ -120,10 +120,11 @@ class Settings(BaseSettings):
     # 调大前需同步确认磁盘配额；若前置了反向代理，还需对齐其 body 上限。
     WORKSPACE_UPLOAD_MAX_MB: int = 200
 
-    # 工作空间「解压压缩包」上限：解压后总字节数（MB）与条目数。
+    # 工作空间「解压压缩包」上限：解压后总字节数（MB）与文件个数（目录累计口径）。
+    # 文件个数默认值与技能目录共用 app.core.upload_limits.MAX_FILES_PER_DIRECTORY；
     # 压缩炸弹防护：两者任一超限即中止并回滚本次已写出的文件。
     WORKSPACE_EXTRACT_MAX_MB: int = 1024
-    WORKSPACE_EXTRACT_MAX_ENTRIES: int = 5000
+    WORKSPACE_EXTRACT_MAX_ENTRIES: int = 200_000
 
     # Security - API Key Encryption
     # Fernet Key (32 url-safe base64-encoded bytes)

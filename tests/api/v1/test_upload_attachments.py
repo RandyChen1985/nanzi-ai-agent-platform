@@ -289,3 +289,34 @@ async def test_conversation_history_persistence_and_echo(db_session, valid_api_k
         assert user_msg["files"][0]["filename"] == "doc.pdf"
         assert user_msg["files"][0]["url"] == "/static/uploads/98765_doc.pdf"
         assert user_msg["files"][0]["ext"] == "pdf"
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_when_uploads_dir_file_count_reached_limit(
+    db_session, valid_api_key, monkeypatch
+):
+    """会话附件目录也要受同一份文件个数预算约束（目录累计口径）。"""
+    from app.api.v1.endpoints import chat as chat_module
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # 先成功传一份，顺便拿到真实附件目录，再把它当前的文件数当成上限
+        seed = await client.post(
+            "/api/v1/chat/upload",
+            files={"file": (f"seed_{uuid.uuid4().hex[:8]}.txt", b"seed", "text/plain")},
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert seed.status_code == 200, seed.text
+        upload_dir = os.path.dirname(seed.json()["data"]["url"])
+        before = set(os.listdir(upload_dir))
+
+        monkeypatch.setattr(chat_module, "MAX_FILES_PER_DIRECTORY", len(before), raising=False)
+
+        resp = await client.post(
+            "/api/v1/chat/upload",
+            files={"file": (f"note_{uuid.uuid4().hex[:8]}.txt", b"hello", "text/plain")},
+            headers={"X-API-Key": valid_api_key},
+        )
+
+    assert resp.status_code == 413, resp.text
+    assert "文件数" in resp.json()["detail"]
+    assert set(os.listdir(upload_dir)) == before

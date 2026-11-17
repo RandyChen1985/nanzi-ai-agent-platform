@@ -161,3 +161,32 @@ def test_import_personal_skill_writes_to_personal_directory():
                 assert payload["status"] == "success"
                 assert (personal_root / "imported-personal" / "SKILL.md").exists()
                 assert not (global_dir / "imported-personal").exists()
+
+
+def test_personal_single_file_upload_respects_file_count_limit(tmp_path, monkeypatch):
+    """个人技能单文件上传同样受目录文件数预算约束（与平台技能同一口径）。"""
+    import asyncio
+    from io import BytesIO
+
+    from fastapi import HTTPException, UploadFile
+
+    monkeypatch.setattr(personal_skills, "_get_personal_skills_root", lambda user: str(tmp_path))
+    monkeypatch.setattr(personal_skills, "MAX_FILES_PER_DIRECTORY", 2)
+
+    skill_dir = tmp_path / "cap-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# t", encoding="utf-8")
+    (skill_dir / "a.txt").write_text("a", encoding="utf-8")
+
+    upload = UploadFile(filename="b.txt", file=BytesIO(b"b"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            personal_skills.upload_personal_skill_file(
+                "cap-skill", folder=None, file=upload, user={"user_id": 1, "user_name": "tester"}
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "文件数" in exc_info.value.detail
+    assert not (skill_dir / "b.txt").exists()
