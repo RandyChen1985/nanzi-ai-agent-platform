@@ -809,6 +809,7 @@ import {
   formatTimelineTitle,
   groupRouteTimelineItems,
   isReasoningContentExpanded,
+  isSubagentReasoningLog,
   isToolTimeoutNearLimit,
   mergeTimelineLogs,
   resolveLiveTimerDurationMs,
@@ -1415,6 +1416,9 @@ function isNarrationBodyOpen(item: ProcessTimelineTextItem): boolean {
  * 批量委派又是另一个 tool_name。任何一条漏掉，那条委派就会退化成普通工具行。
  */
 function isSubagentLog(log: ProcessTimelineLogItem): boolean {
+  // 思考日志先排除：它的 id 前缀同样以 `subagent_` 开头、也带 `subagent` 元数据，
+  // 但它渲染成容器内的子步骤，不是委派容器本身。
+  if (isSubagentReasoningLog(log)) return false;
   const id = String(log.id || "");
   const title = log.title || "";
   return id.startsWith("subagent_")

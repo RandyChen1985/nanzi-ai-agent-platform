@@ -772,6 +772,9 @@ function isToolLog(data: { title?: string; category?: string; id?: string | numb
   ) {
     return false;
   }
+  // 思考日志不是工具执行：新数据靠 category="reasoning" 在更上面就返回了，
+  // 这里挡住没有 category 的老快照——否则会被前缀判成工具行。
+  if (isSubagentReasoningLog(data)) return false;
   const idStr = String(data.id || "").toLowerCase();
   if (idStr.startsWith("subagent_")) return true;
   return title.includes("工具") || title.includes("tool") || title.includes("子代理");
@@ -1222,6 +1225,46 @@ export function applyTimelineLogProgress(
   return true;
 }
 
+/**
+ * 子代理思考日志的判定（`subagent_reasoning:{run_id}:{seq}`，后端见
+ * `agent_delegate_tool.flush_subagent_reasoning`）。
+ *
+ * **必须比「认委派容器」先判**。它的 id 前缀和委派容器的 `subagent_*` 撞在一起，
+ * 三处按前缀认容器的地方（`upsertTimelineLog` 的生命周期合并、`reorganizeSubagentItems`
+ * 的 `isContainer`、Vue 层的 `isSubagentLog`）都会把它当成容器，后果是它被合并进
+ * 已有委派卡并把卡片改写：`status` 被思考的 success 覆盖（委派还在跑，卡上已经变绿）、
+ * `details` 被最多 4000 字的思考全文覆盖、标题被改成「委派智能体 · [某某] 子代理思考」。
+ *
+ * 它本来该是个**子步骤**：带 `subagent` 元数据、标题以 `[` 开头，归进
+ * `activeContainer.children`，前端默认折叠。
+ */
+export function isSubagentReasoningLog(log: {
+  id?: unknown;
+  reasoning?: boolean;
+  category?: string;
+} | null | undefined): boolean {
+  if (!log) return false;
+  if (log.reasoning === true) return true;
+  if (log.category === "reasoning") return true;
+  return String(log.id ?? "").startsWith("subagent_reasoning:");
+}
+
+/**
+ * 「这一条像不像委派容器」，给 `sub_agent_call` 工具事件找已有容器用。
+ *
+ * 与 `reorganizeSubagentItems` 的 `isContainer` 同口径但更窄：只认 id 前缀和两种
+ * 标题，不认 `tool_name`（这个函数本身就在判断"要不要找一个容器来合并"，
+ * 把自己也当成候选会形成自指）。
+ */
+function isDelegationContainerLike(log: ProcessTimelineLogItem): boolean {
+  if (isSubagentReasoningLog(log)) return false;
+  return (
+    String(log.id).startsWith("subagent_") ||
+    log.title.includes("调用子代理") ||
+    log.title.includes("委派智能体")
+  );
+}
+
 export function upsertTimelineLog(
   target: ProcessTimelineTarget,
   data: {
@@ -1305,9 +1348,12 @@ export function upsertTimelineLog(
   }
 
   // Deduplicate / merge sub_agent_call tool and subagent lifecycle container into a single container
+  // 思考日志排除在外：它也带 subagent 元数据，但它是挂在容器里的子步骤，
+  // 不是容器本身（见 isSubagentReasoningLog 的注释）。
   const isIncomingSubagentLifecycle =
-    String(data.id).startsWith("subagent_") ||
-    (Boolean(data.subagent) && (data.category === "agent" || Boolean(data.title && data.title.includes("调用子代理"))));
+    !isSubagentReasoningLog(data) &&
+    (String(data.id).startsWith("subagent_") ||
+      (Boolean(data.subagent) && (data.category === "agent" || Boolean(data.title && data.title.includes("调用子代理")))));
 
   const isIncomingSubagentTool =
     data.tool_name === "sub_agent_call" ||
@@ -1368,11 +1414,9 @@ export function upsertTimelineLog(
 
   if (isIncomingSubagentTool) {
     const existingContainer = [...target.processTimeline].reverse().find((item) => {
-      if (item.kind === "log" && (String(item.id).startsWith("subagent_") || item.title.includes("调用子代理") || item.title.includes("委派智能体"))) return true;
+      if (item.kind === "log" && isDelegationContainerLike(item)) return true;
       if (item.kind === "text") {
-        return (item.children || []).some((c) =>
-          String(c.id).startsWith("subagent_") || c.title.includes("调用子代理") || c.title.includes("委派智能体")
-        );
+        return (item.children || []).some((c) => isDelegationContainerLike(c as ProcessTimelineLogItem));
       }
       return false;
     });
@@ -1382,7 +1426,7 @@ export function upsertTimelineLog(
         containerLog = existingContainer;
       } else if (existingContainer.kind === "text") {
         containerLog = (existingContainer.children || []).find((c: ProcessTimelineLogItem) =>
-          String(c.id).startsWith("subagent_") || c.title.includes("调用子代理") || c.title.includes("委派智能体")
+          isDelegationContainerLike(c)
         );
       }
       if (containerLog) {
@@ -1435,11 +1479,15 @@ export function upsertTimelineLog(
   }
 
   // If this is an inner step of a subagent (subagent metadata present, but not the subagent container itself)
+  // 思考日志必须算「内部步骤」：它带 subagent 元数据、id 前缀又和容器撞车，
+  // 一旦在这里被判成容器，就进不了下面的 `if (data.subagent && !isSubagentContainer)`，
+  // 于是本该折进委派卡的思考落到顶层，成了和委派卡并列的一行。
   const isSubagentContainer =
-    String(data.id).startsWith("subagent_") ||
-    Boolean(data.title && (data.title.includes("sub_agent_call") || data.title.includes("委派智能体") || data.title.includes("调用子代理"))) ||
-    data.tool_name === "sub_agent_call" ||
-    data.tool_name === "sub_agent_batch_call";
+    !isSubagentReasoningLog(data) &&
+    (String(data.id).startsWith("subagent_") ||
+      Boolean(data.title && (data.title.includes("sub_agent_call") || data.title.includes("委派智能体") || data.title.includes("调用子代理"))) ||
+      data.tool_name === "sub_agent_call" ||
+      data.tool_name === "sub_agent_batch_call");
   if (data.subagent && !isSubagentContainer) {
     const subagentContainer = findSubagentContainerLog(target.processTimeline, data.subagent);
     if (subagentContainer) {
@@ -1703,12 +1751,13 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
   const result: ProcessTimelineItem[] = [];
 
   const isContainer = (log: ProcessTimelineLogItem): boolean =>
-    String(log.id).startsWith("subagent_") ||
-    log.title.includes("调用子代理") ||
-    log.title.includes("委派智能体") ||
-    log.title.includes("sub_agent_call") ||
-    log.tool_name === "sub_agent_call" ||
-    log.tool_name === "sub_agent_batch_call";
+    !isSubagentReasoningLog(log) &&
+    (String(log.id).startsWith("subagent_") ||
+      log.title.includes("调用子代理") ||
+      log.title.includes("委派智能体") ||
+      log.title.includes("sub_agent_call") ||
+      log.tool_name === "sub_agent_call" ||
+      log.tool_name === "sub_agent_batch_call");
 
   const isNoiseHeartbeatStep = (log: ProcessTimelineLogItem): boolean =>
     /(?:\[.*?\]\s*)?[✨\s]*开始生成回复\s*$/.test(log.title);
