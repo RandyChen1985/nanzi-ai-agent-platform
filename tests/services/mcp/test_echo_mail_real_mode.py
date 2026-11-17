@@ -57,6 +57,20 @@ class TestValidateRealMailParams:
         assert result["reason"] == "invalid_params"
         assert str(port) in result["message"]
 
+    @pytest.mark.parametrize("port", [True, False])
+    def test_boolean_port_is_rejected_not_coerced(self, port):
+        """`int(True) == 1` 会顺着 1..65535 的范围校验溜过去。
+
+        凭据里 JSON 写成 `"port": true` 时，最终表现成「连接端口 1 失败」——
+        把一个类型错误伪装成网络错误，排查方向全错。
+        """
+        result = echo_server._validate_real_mail_params(
+            to="a@b.com", host="smtp.qq.com", port=port, security="ssl",
+            username="ops@b.com", password="secret",
+        )
+        assert result["ok"] is False
+        assert result["reason"] == "invalid_params"
+
     def test_invalid_security_is_invalid_params(self):
         result = echo_server._validate_real_mail_params(
             to="a@b.com", host="smtp.qq.com", port=465, security="obsolete",
@@ -104,7 +118,10 @@ class TestGuardSmtpHost:
     @pytest.mark.parametrize(
         "host",
         ["127.0.0.1", "10.0.0.5", "192.168.1.10", "169.254.169.254",
-         "100.100.100.200", "0.0.0.0", "::1", "fd00::1", "[::1]"],
+         "100.100.100.200", "0.0.0.0", "::1", "fd00::1", "[::1]",
+         # IPv4-mapped IPv6：3.11 里 is_private / is_reserved 全是 False，且
+         # version == 6 会跳过 IPv4 网段表——一条 AAAA 记录就能把元数据送进来
+         "::ffff:100.100.100.200", "::ffff:168.63.129.16", "::ffff:127.0.0.1"],
     )
     async def test_blocks_loopback_private_and_metadata(self, host):
         result = await echo_server._guard_smtp_host(host, 25)
@@ -297,6 +314,19 @@ class TestSmtpTransaction:
         assert result["reason"] == "auth_failed"
         assert result["code"] == 535
         assert "注入链路是通的" in result["message"]
+        # 535 的几种原因在回执上长得一样，用户没法自己区分，所以文案要列出来。
+        # 「没开 SMTP 服务」和「填了登录密码而不是授权码」占了绝大多数。
+        for hint in ("POP3/SMTP 服务", "授权码", "空格", "完整邮箱地址"):
+            assert hint in result["message"], hint
+
+    def test_auth_failure_wording_adapts_to_mode(self):
+        """verify 是「校验失败」，send 是「发送失败」，别混着说。"""
+        with FakeSmtpServer(auth_ok=False) as server:
+            verified = self._run(port=server.port, mode="verify")
+        with FakeSmtpServer(auth_ok=False) as server:
+            sent = self._run(port=server.port, mode="send")
+        assert verified["message"].startswith("真实校验失败")
+        assert sent["message"].startswith("真实发送失败")
 
     def test_rejected_recipient_is_send_rejected(self):
         with FakeSmtpServer(reject_recipient=True) as server:

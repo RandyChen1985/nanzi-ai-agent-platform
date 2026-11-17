@@ -53,6 +53,11 @@ const USER_KEY_LABEL: Record<string, string> = {
  */
 export function ruleSummary(rule: LocatorRule | null | undefined): string {
   if (!rule) return ''
+  // 「让模型挑」没有取值来源，走下面会把空串拼成「（取）」——后端
+  // `rule_summary` 和多值面板都判了这一支，只有这里漏了
+  if (!rule.key_source && rule.on_miss === 'model') {
+    return rule.value_template ? `由模型挑 · 模板 ${rule.value_template}` : '由模型在可见凭据里挑一条'
+  }
   const target =
     rule.target === 'field' && rule.target_field
       ? `字段 ${rule.target_field}`
@@ -227,6 +232,17 @@ const MODES: { value: LocatorMode; label: string; hint: string }[] = [
 ]
 
 /**
+ * 当前槽位能选的配法。
+ *
+ * `allowModelChoice=false` 时必须把整个 tab 拿掉，不能只藏 ⑥ 里的那个 option：
+ * 藏了 option 而 tab 还在，用户照样能切进来填完一整张表再被后端 400——比一开始
+ * 就不给这个入口差得多。
+ */
+const visibleModes = computed(() =>
+  props.allowModelChoice ? MODES : MODES.filter((m) => m.value !== 'model'),
+)
+
+/**
  * 当前是哪种配法。以草稿内容为准而不是另存一个开关：外部传进来的既有规则
  * （`on_miss=model` 且没有 key_source）打开时就该落在「让模型挑」上。
  */
@@ -241,6 +257,13 @@ function switchMode(next: LocatorMode) {
     // 清掉来源是这套配法的定义：后端要求 on_miss=model 才允许空的 key_source
     draft.value.key_source = ''
     draft.value.on_miss = 'model'
+    // `target` 也要带回默认值：第④步（拿什么去比）在「让模型挑」下整块隐藏，
+    // 如果它停在 `field`，`validate` 仍会要求填 `target_field`——而界面上根本
+    // 没有那个输入框，用户填完了也永远存不下去。
+    draft.value.target = fallback.target
+    // ②③ 同理整块隐藏。残留的模板可能不含 `{value}`（用户在上一页清空或改坏过），
+    // 而 `validate` 会拿它拦下保存，同样看不到可以改的地方。
+    draft.value.templates = [...fallback.templates]
     // 这条只在旧规则里出现过，留着会被提交上去
     draft.value.target_field = ''
   } else {
@@ -338,12 +361,16 @@ function validate(): string {
   // 「让模型挑」没有取值来源：它压根不算 key，不该被这条拦住
   if (mode.value === 'rule' && !r.key_source) return '请选择用哪个值去匹配'
   if (r.key_source.startsWith('arg:') && !r.key_source.slice(4)) return '请选择一个入参'
-  if (!r.templates.length) return '至少要有一条模板'
-  if (r.templates.some((t) => !t.includes('{value}'))) return '每条模板都必须包含 {value}'
+  // ②③ 只在「按字段匹配」里出现；「让模型挑」没有取值来源，也就没有模板
+  if (mode.value === 'rule') {
+    if (!r.templates.length) return '至少要有一条模板'
+    if (r.templates.some((t) => !t.includes('{value}'))) return '每条模板都必须包含 {value}'
+  }
   if (r.templates.length > 3) return '模板最多 3 条'
   // 按字段值匹配必须说清是哪个字段。不拦的话后端会拒，但错误出现在一个已经填了
   // 一堆东西的表单下面，用户得自己找是哪一项没填。
-  if (r.target === 'field') {
+  // 「让模型挑」没有第④步，target_field 无从填写；按配法跳过，而不是按残留值
+  if (mode.value === 'rule' && r.target === 'field') {
     const field = (r.target_field || '').trim()
     if (!field) return '选了「凭据里的字段值」，还得填是哪个字段（例如 username）'
     // 与 parse_rule 的正则同口径；在这里拦一道，用户能立刻看到哪一项不对，
@@ -464,7 +491,7 @@ function save() {
           <!-- 两种配法：有明确的取值来源就用规则精确匹配，没有就交给模型挑 -->
           <div class="flex gap-1 rounded-lg bg-gray-100 p-1">
             <button
-              v-for="m in MODES"
+              v-for="m in visibleModes"
               :key="m.value"
               type="button"
               class="flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
@@ -734,8 +761,6 @@ function save() {
               </button>
             </div>
 
-            <p v-if="errorText" class="mt-2 text-[11px] text-rose-600">{{ errorText }}</p>
-
             <div v-if="preview" class="mt-2 space-y-1.5">
               <div
                 class="rounded-md border px-2.5 py-1.5 text-[11px]"
@@ -766,6 +791,11 @@ function save() {
               </div>
             </div>
           </div>
+
+          <!-- 报错必须放在两个分支**外面**：原先它在「按字段匹配」那一支里面，
+               于是「让模型挑」时保存失败既不关窗、界面上也一个字都看不到，
+               只剩「点了没反应」；也不能插在 v-if 与 v-else 中间，否则会拆散配对。 -->
+          <p v-if="errorText" class="text-[11px] text-rose-600">{{ errorText }}</p>
 
           <!-- 安全边界说明，两种配法都要有，但主体不同：规则是「怎么找」，模型挑是「谁来挑」 -->
           <p class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] leading-relaxed text-gray-500">

@@ -214,6 +214,14 @@ class BindItem(BaseModel):
     rule: Dict[str, Any] | None = None
     value_path: str = ""
     allow_whole: bool = False
+    #: 这一条**原来就属于**哪个多值组；没有就是单值绑定。
+    #:
+    #: 只在 ``as_group=False`` 时被采用。单值页整表保存会把组内槽位一起提交
+    #: （不提交它们，清单同步就会把它们从「由凭据提供」里抹掉），透传能让那几行
+    #: 保持原组，而同一批里真正独立的参数不被牵连。
+    #: 库里的列是 ``VARCHAR(36)``；不设上限的话，超长入参在写库那一步才炸成 500，
+    #: 而这时候整批已经写了一半（虽然会回滚，但用户只看到一句服务器错误）。
+    binding_group_id: str = Field(default="", max_length=36)
 
 
 class BindBatchRequest(BaseModel):
@@ -237,6 +245,16 @@ class BindBatchRequest(BaseModel):
     #: 映射，运行时模型照旧自己填，服务端只回一句 credentials_rejected，排查方向
     #: 全错。带上这个字段就把两份数据放进同一个事务。
     mcp_tool_id: str = ""
+    #: 这一批是不是「一次多值配置」（一条凭据/一条规则铺 N 个参数）。
+    #:
+    #: 必须由调用方显式声明，不能靠「非 none 条目 > 1」推断：MCP 的**单值凭据页**
+    #: 也走同一个接口，用户在那一页给两个参数各配一条互不相干的凭据时，条目数同样
+    #: 是 2——按条目数建组会把它们锁成「由多值凭据统一管理」，从此在单值页既改不了
+    #: 也换不了（按钮被替换成只读徽标），只能整表清空重来。
+    #:
+    #: ``True`` 时整批共用一个新生成的组标识（组每次重配都会换 id，语义不变）；
+    #: ``False`` 时逐条采用各自传入的 ``binding_group_id``，没有就不建组。
+    as_group: bool = False
 
 
 class BindRequest(BaseModel):
@@ -1884,6 +1902,8 @@ async def create_bindings_batch(
                 "rule": item.rule,
                 "value_path": item.value_path,
                 "allow_whole": bool(item.allow_whole),
+                # 原组：``as_group=True`` 时会被整批的新组覆盖，否则按这一行保留
+                "binding_group_id": str(item.binding_group_id or "").strip(),
             }
         )
         if strategy == "rule":
@@ -1978,11 +1998,27 @@ async def create_bindings_batch(
     #
     # 实际写入的槽位只有 1 个时不生成：那不是「一条凭据供一组」，锁成只读
     # 反而让用户没法在单值页改它，还得先回多值页或整表清空。
+    # 只有调用方声明了「这是一次多值配置」才建组。
+    #
+    # 早先按「非 none 条目 > 1」推断，把 MCP 单值凭据页也算了进去——那一页一次
+    # 保存同样提交多条（用户给几个参数各配一条独立凭据，或整表提交以同步清单），
+    # 于是两个互不相干的绑定被打上同一个组标识。下次打开弹窗被判成多值配置，
+    # 切回单值页后两处都显示「由多值凭据统一管理」、改规则与换凭据的按钮全部消失。
+    _effective = len([item for item in resolved if item["strategy"] != "none"])
     binding_group_id = (
-        str(uuid.uuid4())
-        if len([item for item in resolved if item["strategy"] != "none"]) > 1
-        else None
+        str(uuid.uuid4()) if payload.as_group and _effective > 1 else None
     )
+
+    def _group_of(item: dict) -> str | None:
+        """这一行最终落到哪个多值组。
+
+        ``as_group=True``：整批共用一个新标识（多值页整组重配，旧的作废）。
+        ``as_group=False``：保留这一行原本的组，独立参数继续没有组——单值页
+        保存时组内槽位会被一起提交，靠它维持原来的分组不被拆散。
+        """
+        if payload.as_group:
+            return binding_group_id
+        return item.get("binding_group_id") or None
 
     # —— 第二轮：真正写入 ——
     saved = 0
@@ -2050,7 +2086,7 @@ async def create_bindings_batch(
                 commit=False,
                 audit=False,
                 allow_global=is_admin,
-                binding_group_id=binding_group_id,
+                binding_group_id=_group_of(item),
             )
             saved += 1
             continue
@@ -2088,7 +2124,7 @@ async def create_bindings_batch(
             # 审计同理：提交成功后再写，不记没发生过的操作
             audit=False,
             allow_global=is_admin,
-            binding_group_id=binding_group_id,
+            binding_group_id=_group_of(item),
         )
         saved += 1
 

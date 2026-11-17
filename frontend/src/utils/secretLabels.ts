@@ -8,6 +8,9 @@
 
 export const RESULT_LABEL: Record<string, string> = {
   success: '成功',
+  // 规则未命中但回退到了同一层级的固定凭据：调用是成功的，但配置里有该修的东西。
+  // 混进「成功」会让「配错了却一直能跑」的规则永远没人发现。
+  success_fallback: '成功（规则未命中，已回退固定凭据）',
   denied_by_binding: '未绑定',
   denied_by_grant: '未授权',
   denied_by_host: '域名不符',

@@ -193,13 +193,19 @@ const multiManagedFixedOf = (name: string): { groupId: string; size: number } | 
   return group && group.size > 1 ? group : null
 }
 
+/**
+ * 这个参数是不是由多值组统一管理——规则型和固定凭据型都算。
+ *
+ * 只判规则型会漏掉「多值页选固定凭据铺 N 个参数」这种配法，而它同样是组：
+ * 清空、提示、禁用判断都该一视同仁。MCP 侧对应的是 ``multiManagedSlotOf``。
+ */
+const isMultiManaged = (name: string): boolean =>
+  !!name && !!(multiManagedRuleOf(name) || multiManagedFixedOf(name))
+
 /** 单值页里有多少参数由多值组统一管理（只用于提示，不影响保存路径） */
 const multiManagedCount = computed(
   () =>
-    props.modelValue.filter((p) => {
-      const name = String(p.name || '').trim()
-      return !!name && !!(multiManagedRuleOf(name) || multiManagedFixedOf(name))
-    }).length,
+    props.modelValue.filter((p) => isMultiManaged(String(p.name || '').trim())).length,
 )
 
 /** 按参数名取「固定凭据」那条：规则行没有 secret_key，混用会显示空白 */
@@ -322,7 +328,9 @@ const boundParamCount = computed(
 async function clearParamBindings() {
   const names = props.modelValue.map((p) => String(p.name || '').trim()).filter(Boolean)
   if (!names.length) return
-  const grouped = names.filter((name) => multiManagedRuleOf(name)).length
+  // 固定凭据型也要算：多值页选「固定凭据」铺 N 个参数时同样是一组，只统计
+  // 规则型会让确认框漏掉这句提醒（MCP 侧 ``clearParamMark`` 已经两样都算了）
+  const grouped = names.filter(isMultiManaged).length
   const ok = await confirm({
     title: '清空全部凭据配置',
     message:
@@ -346,6 +354,8 @@ async function clearParamBindings() {
       is_global: props.isGlobal,
       // API 工具的槽位由后端按参数名推算，这里不给 slot
       items: names.map((name) => ({ name, strategy: 'none' as const })),
+      // 全是 none，本来也建不出组；显式声明是为了不依赖后端那条判断
+      as_group: false,
     })
     bindings.value = {}
     ruleDrafts.value = {}
@@ -790,9 +800,15 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
       :key="index"
       class="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-white p-2 shadow-sm"
     >
+      <!-- 多值组里的参数不许改名：绑定的槽位是按参数名算出来的，改了名保存后
+           旧槽位那条绑定就成了孤儿——清单里也没了它，运行时既不注入也不报错 -->
       <input
         v-model="p.name"
-        class="w-40 rounded-md border-gray-300 text-xs font-mono shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+        :disabled="isMultiManaged(String(p.name || '').trim())"
+        :title="isMultiManaged(String(p.name || '').trim())
+          ? '这个参数由「多值凭据」统一管理，参数名不能在这里单独改。要调整请到多值凭据页整组处理。'
+          : ''"
+        class="w-40 rounded-md border-gray-300 text-xs font-mono shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
         placeholder="参数名"
       />
       <select
@@ -801,10 +817,15 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
       >
         <option v-for="option in SYSTEM_PARAM_TYPES" :key="option" :value="option">{{ option }}</option>
       </select>
+      <!-- 多值组里的参数不许单独改来源：只藏右侧控件的话，这里改成「固定值」
+           保存后这个槽位的绑定会被删掉，组被拆散而界面上看不出异常 -->
       <select
         v-model="p.source"
-        class="w-28 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-        :title="'值的来源：固定值，或按当前用户从凭据中心解析'"
+        :disabled="isMultiManaged(String(p.name || '').trim())"
+        class="w-28 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+        :title="isMultiManaged(String(p.name || '').trim())
+          ? '这个参数由「多值凭据」统一管理，来源不能在这里单独改。要调整请到多值凭据页整组修改。'
+          : '值的来源：固定值，或按当前用户从凭据中心解析'"
       >
         <option v-for="option in SYSTEM_PARAM_SOURCES" :key="option" :value="option">
           {{ option === 'credential' ? '固定凭据' : option === 'rule' ? '按规则匹配' : '固定值' }}
@@ -934,8 +955,11 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
       />
       <button
         type="button"
-        class="rounded-md p-1 text-gray-400 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30"
-        :title="`删除系统级参数 ${p.name || index + 1}`"
+        :disabled="isMultiManaged(String(p.name || '').trim())"
+        class="rounded-md p-1 text-gray-400 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-gray-400"
+        :title="isMultiManaged(String(p.name || '').trim())
+          ? '这个参数由「多值凭据」统一管理，删掉会在库里留下孤儿绑定。要调整请到多值凭据页整组处理。'
+          : `删除系统级参数 ${p.name || index + 1}`"
         :aria-label="`删除系统级参数 ${p.name || index + 1}`"
         @click="removeParam(index)"
       >

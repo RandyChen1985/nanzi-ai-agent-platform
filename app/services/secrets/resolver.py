@@ -595,9 +595,15 @@ class SecretResolver:
                     preferred_secret_id,
                 )
 
+            # 「让模型挑」没挑成时也要查一次可见集合：不查的话下面报出来的
+            # 候选数恒为 0，而用户看到的却是「你能看见 3 条凭据」——两者对不上。
+            if getattr(spec, "on_miss", "") == "model" and visible is None:
+                visible = await _visible()
             return Located(
                 denial=DENY_RULE_MISS,
-                detail=self._miss_detail(spec, wanted, args, visible),
+                detail=self._miss_detail(
+                    spec, wanted, args, visible, chosen=preferred_secret_id
+                ),
             )
 
         return Located(denial=None)
@@ -608,6 +614,7 @@ class SecretResolver:
         wanted: list[str],
         args: Any,
         visible: Any,
+        chosen: str | None = None,
     ) -> str:
         """规则未命中时给用户看的那句话。
 
@@ -620,6 +627,30 @@ class SecretResolver:
         count = len(visible or [])
         if spec is None:
             return "规则不合法，按未命中处理（请重新配置这条规则）"
+        # 只对**纯模型挑选**（没有 key_source）走这一支。
+        # 「按 arg:to 匹配、挑不到时让模型挑」也是 on_miss=model，但它有明确的
+        # 匹配动作——此时最该说的是「入参 to 是什么值、为什么没对上」，把它盖成
+        # 「让模型挑没挑成」等于把唯一的排查线索扔掉。
+        if getattr(spec, "on_miss", "") == "model" and not getattr(spec, "key_source", ""):
+            # 这一支没有「要找什么」：值来自模型的编号字段，不是从入参变形的。
+            # 走下面那条通用分支会拼出「（要找 ）」——一个空占位，用户看不出
+            # 是「模型没挑」还是「挑的没用」，只能去翻日志。
+            if chosen:
+                return (
+                    f"规则未命中：模型挑了凭据 {chosen}，但它不在你可见（且模板相符）的"
+                    f"候选里，可见候选 {count} 条。可能是编号填错、那条凭据已停用/过期，"
+                    f"或者模板对不上"
+                )
+            if count:
+                return (
+                    f"规则未命中：这条绑定配的是「让模型挑」，但这次调用没有给出选择"
+                    f"（可见候选 {count} 条）。模型侧应该回填一个编号字段；"
+                    f"如果不想让模型参与，把「挑不到时」改成直接报错或回退固定凭据"
+                )
+            return (
+                "规则未命中：这条绑定配的是「让模型挑」，但你能看到的凭据里没有"
+                "符合模板的候选，模型也就无从挑。请检查这条规则选的内容模板"
+            )
         if spec.is_arg_key:
             arg_name = spec.arg_name or ""
             raw = (args or {}).get(arg_name) if arg_name else None

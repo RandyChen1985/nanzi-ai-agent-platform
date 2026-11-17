@@ -444,7 +444,17 @@ def _looks_like_ip(value: str) -> bool:
 
 
 def _is_blocked_mail_ip(ip: "ipaddress._BaseAddress") -> bool:
-    """回环 / 私网 / 链路本地 / 保留 / 组播 / 未指定，以及云元数据地址。"""
+    """回环 / 私网 / 链路本地 / 保留 / 组播 / 未指定，以及云元数据地址。
+
+    ``::ffff:a.b.c.d``（IPv4-mapped IPv6）必须先拆回 IPv4 再判。Python 3.11 里
+    这类地址 ``is_private`` / ``is_reserved`` 全是 False，而它的 ``version`` 是 6，
+    会跳过下面那张 IPv4 网段表——一条 DNS AAAA 记录就能把元数据地址送进来。
+    实测 ``_is_blocked_mail_ip(::ffff:100.100.100.200)`` 曾返回 False，而同一个
+    地址写成 IPv4 是 True。`url_policy` 那边一直是对的，这份守卫漏了。
+    """
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _is_blocked_mail_ip(mapped)
     if (
         ip.is_loopback
         or ip.is_private
@@ -531,6 +541,15 @@ def _validate_real_mail_params(
     raw_port = port
     if raw_port is None or str(raw_port).strip() == "":
         raw_port = 465 if str(security or "").strip().lower() == "ssl" else 587
+    # `int(True) == 1` 会顺着下面那条范围校验溜过去，最后表现成「连接端口 1
+    # 失败」——把一个类型错误伪装成网络错误。凭据里 JSON 写成 `"port": true`
+    # 就是这么来的，必须在这里按类型拒掉。
+    if isinstance(raw_port, bool):
+        return {
+            "ok": False,
+            "reason": "invalid_params",
+            "message": f"端口不合法：{port!r}，应为 1-65535 的整数",
+        }
     try:
         normalized_port = int(raw_port)
     except (TypeError, ValueError):
@@ -767,11 +786,30 @@ def _smtp_transaction(
     except smtplib.SMTPAuthenticationError as exc:
         state["code"] = exc.smtp_code
         state["server"] = mask(exc.smtp_error)
+        # 535 是「值到了但服务器不认」——这一点必须说死，否则用户会一直怀疑
+        # 绑定有没有生效、注入有没有通。能走到 login 说明 host/port/TLS 全对，
+        # 账号也送到了服务器，剩下的只有「这个账号 + 这个密码」不被接受。
+        #
+        # 按概率列出原因，是因为这几种在回执上长得一模一样，用户没法自己区分：
+        # 最常见的是邮箱后台根本没开 SMTP 服务（授权码再对也报 535），其次是
+        # 把登录密码当授权码填（163/126 只认单独生成的授权码）。
+        head = "真实校验失败" if mode == "verify" else "真实发送失败"
+        # 认不出来码就用 535：`SMTPAuthenticationError` 也会被 530/534 触发，
+        # 写死码会让用户对着一个错的原因排查。
+        code = exc.smtp_code or 535
         return finish(
             False,
             "auth_failed",
-            "真实校验失败：SMTP 认证被拒。注入链路是通的（主机与账号已到达），"
-            "请检查凭据里的账号或授权码是否有效",
+            f"{head}：SMTP 认证被拒（{code}）。"
+            "注入链路是通的——主机、端口、TLS 都通了，账号也已送达服务器，"
+            "问题出在「这个账号 + 这个密码」不被接受，重试不会变。按概率排查："
+            "① 邮箱后台没开启 POP3/SMTP 服务（163/126/QQ 必须手动开启，"
+            "没开时授权码填得再对也是 535）；"
+            "② 密码栏填的是登录密码而不是授权码（163/126 需要单独生成授权码，"
+            "重新生成后旧的立即失效，只有新的能用）；"
+            "③ 授权码首尾带了空格或换行（粘贴时容易带入，看不出但一定失败）；"
+            "④ 账号要写完整邮箱地址（只写前缀服务器认不出）；"
+            "⑤ 新注册、长期未登录或异地登录被风控。",
         )
     except (
         smtplib.SMTPRecipientsRefused,

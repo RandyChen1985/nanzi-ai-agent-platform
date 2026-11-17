@@ -109,6 +109,13 @@ const ruleTemplate = computed({
     const before = ruleDraft.value.value_template || ''
     ruleDraft.value.value_template = value
     if (before === value) return
+    // 选「不限定」不是「换了个空模板」：它的语义是「字段放开手填」，现有值全部
+    // 仍然合法。这里如果照下面那套过滤走，`allowed` 是空集，会把用户已经填好的
+    // 字段全部删光——`onRuleSaved` 里特意防过同一个坑，两处必须一致。
+    if (!value) {
+      touched.value = true
+      return
+    }
     // 换了模板 = 字段集合变了。旧的下拉值可能在新集合里不存在（smtp.host 之于
     // 另一种结构），留着会提交一个取不到的字段名，运行时报「字段不存在」，
     // 而界面上那一行看起来是选好的。
@@ -466,6 +473,8 @@ async function clearAll() {
       consumer_id: props.consumerId,
       is_global: props.isGlobal,
       items,
+      // 全部清空没有「组」可言：声明成非多值，免得后端按条目数建一个空组
+      as_group: false,
       mcp_tool_id: props.mcpToolId || undefined,
     })
     const data = res.data?.data || { saved: 0, removed: 0 }
@@ -538,6 +547,9 @@ async function save() {
       consumer_id: props.consumerId,
       is_global: props.isGlobal,
       items,
+      // 这一页的语义就是「一条凭据/一条规则铺 N 个参数」，必须显式声明：
+      // 后端不再按条目数猜（MCP 单值凭据页也走这个接口，猜就会把独立绑定锁成一组）
+      as_group: true,
       // 清单和绑定必须同批写：分两次请求的话，第一次成功第二次失败就是「绑了却不注入」
       mcp_tool_id: props.mcpToolId || undefined,
     })
@@ -702,7 +714,9 @@ watch(() => props.consumerId, () => { void load() }, { immediate: true })
           <span class="shrink-0">凭证内容模板</span>
           <select
             v-model="ruleTemplate"
-            class="min-w-0 rounded-md border-gray-300 py-0.5 text-[11px] shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+            :disabled="!ruleDraft"
+            :title="ruleDraft ? '' : '先在上面加一条规则，模板要写在规则上'"
+            class="min-w-0 rounded-md border-gray-300 py-0.5 text-[11px] shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
           >
             <option value="">不限定（字段只能手填）</option>
             <option v-for="t in TEMPLATE_OPTIONS" :key="t.value" :value="t.value">{{ t.label }}</option>

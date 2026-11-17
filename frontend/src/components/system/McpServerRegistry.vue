@@ -2114,33 +2114,44 @@ async function submitParamMark() {
     //
     // 提交它们本身是安全的：草稿里这些参数带着库里那份 secret_id 与 value_path
     // 原样回来，提交后组会被分配一个新的 group_id，语义完全等价。
+    // 每条带上它原本所属的多值组。
+    //
+    // 单值页必须把组内槽位一起提交（不提交，清单同步会把它们从「由凭据提供」里
+    // 抹掉，模型重新看见 host/password），所以这一批里既有组内槽位也有独立参数。
+    // 后端只按 ``as_group`` 决定建不建组，逐条的原组标识靠这里透传：
+    // 组内槽位维持原组，独立参数继续没有组——两边都不被牵连。
     const items = Object.entries(paramDraft.value).map(([name, source]) => {
       const slot = paramSlot(tool, name)
+      const groupId = multiManagedSlotOf(slot)?.binding_group_id || ''
+      const base = { slot, name, binding_group_id: groupId }
       if (source === 'rule') {
         const rule = paramRuleDraft.value[name] || null
-        if (!rule) return { slot, name, strategy: 'none' as const }
+        if (!rule) return { ...base, strategy: 'none' as const }
         const { value_path: rulePath = '', ...ruleBody } = rule
-        return { slot, name, strategy: 'rule' as const, rule: ruleBody, value_path: rulePath }
+        return { ...base, strategy: 'rule' as const, rule: ruleBody, value_path: rulePath }
       }
       if (source === 'cred') {
         const fixed = fixedBindingOfSlot(slot)
         if (fixed?.secret_id) {
           return {
-            slot,
-            name,
+            ...base,
             strategy: 'fixed' as const,
             secret_id: fixed.secret_id,
             value_path: fixed.value_path || '',
           }
         }
       }
-      return { slot, name, strategy: 'none' as const }
+      return { ...base, strategy: 'none' as const }
     })
     const res = await axios.post('/api/portal/secrets/bindings/batch', {
       consumer_type: 'mcp_server',
       consumer_id: serverId,
       is_global: isGlobalBinding.value,
       items,
+      // 这是**单值**页：给几个参数各配一条独立凭据时不该被当成一次多值配置。
+      // 原来后端按「条目数 > 1」推断，于是两个互不相干的绑定被打上同一个组标识，
+      // 下次打开被判成多值配置、切回单值页后两处都锁成只读，改不了也换不了。
+      as_group: false,
       mcp_tool_id: String(tool.id || ''),
     })
     // 用后端回的真实值，别拿本地草稿当结果——不一致时界面会一直显示旧状态。
@@ -5108,9 +5119,17 @@ onMounted(fetchServers)
                         <!-- 下拉与凭据控件放在同一行：一格只占一个控件高度，行距更紧，
                              右侧也才有整列宽度可用 -->
                         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <!-- 多值组里的参数不许在这里改来源。
+                               只把右侧按钮换成只读徽标是不够的：下拉还开着，改成
+                               「模型填写」保存后这个槽位的绑定会被删掉，组就被
+                               悄悄拆散了一个，而界面上看不出任何异常。 -->
                           <select
                             v-model="paramDraft[name]"
-                            class="w-32 shrink-0 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                            :disabled="!!multiManagedSlotOf(paramSlot(paramMarkTarget.tool, name))"
+                            :title="multiManagedSlotOf(paramSlot(paramMarkTarget.tool, name))
+                              ? '这个参数由「多值凭据」统一管理，来源不能在这里单独改。要调整请到多值凭据页整组修改。'
+                              : ''"
+                            class="w-32 shrink-0 rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
                           >
                             <option value="model">模型填写</option>
                             <option value="cred">固定凭据</option>

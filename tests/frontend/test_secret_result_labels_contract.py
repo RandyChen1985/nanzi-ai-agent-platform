@@ -31,6 +31,24 @@ def _frontend_codes() -> set[str]:
     return set(re.findall(r"^\s*([a-z_]+):", block.group(1), re.M))
 
 
+#: 后端会写进流水 `result` 列、但不在 `DENIAL_REASONS` 里的成功态取值。
+#: 它们是「配错了但还能跑」的信号，混进「成功」就永远没人发现。
+_RESULT_CODES_OUTSIDE_DENIALS = {
+    "success",
+    "success_fallback",
+}
+
+
+def test_success_states_also_have_labels():
+    """`success_fallback` 是补出来的：后端 resolver 会写它，前端原来没映射。
+
+    只断言 `DENIAL_REASONS` 不够——失败原因之外还有成功态，一样会以英文码
+    出现在流水页上。
+    """
+    missing = sorted(_RESULT_CODES_OUTSIDE_DENIALS - _frontend_codes())
+    assert not missing, "这些结果码前端没有映射，流水页会直接显示英文：" + "、".join(missing)
+
+
 def test_every_backend_denial_has_a_frontend_label():
     missing = sorted(_backend_codes() - _frontend_codes())
     assert not missing, (
