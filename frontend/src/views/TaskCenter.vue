@@ -17,7 +17,7 @@ import MetadataCronInspectionModal from '../components/metadata/MetadataCronInsp
 import HoverTip from '../components/HoverTip.vue'
 import CronAdvancedBuilder from '@/components/task/CronAdvancedBuilder.vue'
 import CronFieldLegend from '@/components/common/CronFieldLegend.vue'
-import { validateCronExpression } from '@/utils/cronSchedule'
+import { formatCronRunTime, nextCronRunTimes, validateCronExpression } from '@/utils/cronSchedule'
 import { describeScene, inferScene } from '@/utils/cronScenes'
 import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
 import TaskFlowGuideBanner from '@/components/task/TaskFlowGuideBanner.vue'
@@ -440,6 +440,89 @@ const appendConstraintPreset = (text: string) => {
 }
 const showLogsDrawer = ref(false)
 const editingTask = ref<Partial<AgentTask>>({})
+/**
+ * 方案 C：新建任务时先选模板。
+ *
+ * 解决的是「不知道该填什么」——用户不会写提示词，但会认「我要一份日报」。
+ * 模板只做**预填**：选完落到正常表单，每一栏都能改；占位符统一写成【】，
+ * 提示用户把对象换掉（不改也能保存，只是提示词里会留着【】）。
+ */
+const taskTemplates = [
+  {
+    id: 'report',
+    icon: '📊',
+    title: '每日 / 每周指标报表',
+    desc: '查指定指标，出核心结论 + 关键数据，按周期推送。',
+    name: '【指标】日报',
+    cronExpr: '0 8 * * *',
+    summary: '每天 08:00 · 站内消息',
+    prompt: '查【华东一号机房】昨天的【PUE 均值与峰值】，列出告警次数 Top3。',
+    constraints: '用无序列表呈现，不要输出图表代码块；关键数字保留两位小数。',
+  },
+  {
+    id: 'inspection',
+    icon: '🚨',
+    title: '阈值巡检 / 告警',
+    desc: '异常显著标注，正常一句话简报，避免天天收长报告。',
+    name: '【核心业务库】巡检',
+    cronExpr: '0 */1 * * *',
+    summary: '每小时 · 站内消息',
+    prompt: '检查【核心业务库】的【连接数与慢查询】，超过阈值的项显著标出；无异常时只回一句「本次巡检正常」。',
+    constraints: '异常项放最前面并加粗，正常项一句话带过；不要输出图表。',
+  },
+  {
+    id: 'digest',
+    icon: '📝',
+    title: '周期汇总简报',
+    desc: '按「总体结论 → 分项明细 → 风险建议」结构输出周报。',
+    name: '【运维组】周报',
+    cronExpr: '0 9 * * 1',
+    summary: '每周一 09:00 · 站内消息',
+    prompt: '汇总【运维组】上周的【告警单】，按「总体结论 → 分项明细 → 风险建议」三段输出。',
+    constraints: '用无序列表，不要输出图表；只写结论和关键数据，不要过程说明。',
+  },
+  {
+    id: 'retro',
+    icon: '🔍',
+    title: '失败盘点 / 质量复查',
+    desc: '汇总本周失败记录，按原因分组并给改进建议。',
+    name: '【定时任务】失败盘点',
+    cronExpr: '0 18 * * 5',
+    summary: '每周五 18:00 · 站内消息',
+    prompt: '盘点本周【定时任务】的执行失败记录，按失败原因分组，给出改进建议。',
+    constraints: '按原因分组，每组给条数与占比；不要输出图表。',
+  },
+  {
+    id: 'external',
+    icon: '🌤',
+    title: '外部信息巡检',
+    desc: '调用工具查天气 / 汇率 / 公告，整理成简报。',
+    name: '【上海】天气与预警',
+    cronExpr: '30 7 * * *',
+    summary: '每天 07:30 · 站内消息',
+    prompt: '查【上海】今天的【天气与空气质量】，以及【机房所在区】的高温预警。',
+    constraints: '三行以内，直接给结论；不要过程说明。',
+  },
+] as const
+/** 新建流程的门槛页：true 时弹窗显示模板卡，选完或点「从空白开始」才进表单 */
+const showTemplatePicker = ref(false)
+const applyTaskTemplate = (template: (typeof taskTemplates)[number]) => {
+  editingTask.value.name = template.name
+  editingTask.value.prompt = template.prompt
+  editingTask.value.cron_expr = template.cronExpr
+  taskConstraints.value = template.constraints
+  // 让「运行周期」区的人话控件与 cron 对齐（每天/每周/间隔/高级）
+  parseCronToUI(template.cronExpr)
+  showTemplatePicker.value = false
+  showToast('已套用模板，把【】里的内容换成你的对象就行', 'success')
+}
+const startBlankTask = () => {
+  showTemplatePicker.value = false
+}
+const closeEditModal = () => {
+  showEditModal.value = false
+  showTemplatePicker.value = false
+}
 const notificationChannelOptions = [
   { value: 'portal', label: '站内消息' },
   { value: 'dingtalk', label: '钉钉' },
@@ -936,6 +1019,46 @@ const cronDescription = computed(() => {
   }
 })
 
+/**
+ * 「接下来三次运行」：文字翻译（Auto-Translate）证明不了日期，用户没法确认自己
+ * 填的是本周四还是下周四。这里直接把未来的具体时间点摆出来，用平台业务时区渲染
+ * （与后端调度同一时区口径，见 utils/cronSchedule 的注释）。
+ */
+const cronNextRuns = computed(() => {
+  const expr = String(editingTask.value?.cron_expr || '').trim()
+  if (!cronExprValidation.value.valid) return []
+  return nextCronRunTimes(expr, 3).map((date) => formatCronRunTime(date))
+})
+
+/** 重试策略是低频技术项，默认收起，避免和第 1 栏抢视线 */
+const showAdvancedRetry = ref(false)
+
+/**
+ * 保存前的复核面：把散在 6 个字段里的意图拼成一句话。
+ * 只做展示，不参与保存 —— 措辞必须与真实行为一致，不确定的一律不写。
+ */
+const taskSummaryText = computed(() => {
+  const prompt = String(editingTask.value?.prompt || '').trim()
+  const firstSentence = prompt
+    ? (prompt.split(/[\n。；;]/).map((part) => part.trim()).filter(Boolean)[0] || '')
+    : ''
+  const channels = notificationChannels.value
+    .map((value) => notificationChannelOptions.find((option) => option.value === value)?.label ?? '')
+    .filter(Boolean)
+  return {
+    when: cronDescription.value,
+    whenValid: Boolean(String(editingTask.value?.cron_expr || '').trim()) && cronExprValidation.value.valid,
+    agent: selectedEditingAgent.value?.display_name || '',
+    what: firstSentence,
+    constraints: String(taskConstraints.value || '')
+      .split(/[；;。\n]/)
+      .map((part) => part.trim())
+      .filter(Boolean),
+    channels,
+  }
+})
+const taskSummaryNext = computed(() => cronNextRuns.value[0] || '')
+
 // Filtered Tasks
 const scopedTasks = computed(() => {
   if (props.personalOnly) {
@@ -1012,6 +1135,8 @@ const openCreateModal = async () => {
   syncAgentTab()
   cronMode.value = 'daily'
   cronConfig.value = { time: '08:00', weekday: 1, day: 1, intervalValue: 30, intervalUnit: 'minutes' }
+  // 新建先过一层模板门槛（方案 C）；编辑已有任务不进模板页
+  showTemplatePicker.value = true
   showEditModal.value = true
   await refreshNotificationAvailability()
 }
@@ -1044,6 +1169,7 @@ const openEditModal = async (task: AgentTask) => {
   agentSearchQuery.value = ''
   syncAgentTab()
   parseCronToUI(task.cron_expr || '')
+  showTemplatePicker.value = false
   showEditModal.value = true
   await refreshNotificationAvailability()
 }
@@ -2298,13 +2424,78 @@ onMounted(async () => {
     <Modal 
       v-if="showEditModal" 
       :title="editingTask.id ? '编辑定时任务' : '新建定时任务'" 
-      @close="showEditModal = false" 
-      size="max-w-2xl"
+      @close="closeEditModal" 
+      size="max-w-[1080px]"
       class="transition-all"
       :class="isMobile ? 'inset-0 !m-0 !max-w-none !rounded-none h-full' : ''"
     >
-      <div class="space-y-5 h-full flex flex-col">
-        <div class="flex-1 overflow-y-auto space-y-5 px-1 p-1">
+      <div class="h-full flex flex-col">
+        <!-- 方案 C：新建先选模板。模板只预填，每一栏选完都能改 -->
+        <div v-if="showTemplatePicker" class="min-h-0 flex-1 space-y-3 overflow-y-auto px-1 p-1">
+          <div class="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2.5">
+            <p class="text-xs font-bold text-blue-900">先选一个起点，再改对象和时间</p>
+            <p class="mt-1 text-[11px] leading-relaxed text-blue-700">
+              选模板会预填任务名、执行时间、要做什么、输出要求和通知渠道；<b>【】里的内容需要你换成自己的对象</b>，其余都能继续改。
+            </p>
+          </div>
+          <div class="grid gap-2.5 sm:grid-cols-3">
+            <button
+              v-for="tpl in taskTemplates"
+              :key="tpl.id"
+              type="button"
+              class="flex flex-col items-start gap-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-left transition hover:-translate-y-px hover:border-blue-200 hover:bg-blue-50/40"
+              @click="applyTaskTemplate(tpl)"
+            >
+              <span class="text-base leading-none">{{ tpl.icon }}</span>
+              <span class="text-xs font-bold text-gray-800">{{ tpl.title }}</span>
+              <span class="text-[10px] leading-relaxed text-gray-500">{{ tpl.desc }}</span>
+              <span class="mt-1 rounded border border-blue-100 bg-blue-50 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700">{{ tpl.summary }}</span>
+            </button>
+            <button
+              type="button"
+              class="flex flex-col items-start gap-1 rounded-xl border border-dashed border-gray-300 bg-white px-3 py-2.5 text-left transition hover:border-gray-400 hover:bg-gray-50"
+              @click="startBlankTask"
+            >
+              <span class="text-base leading-none">✏️</span>
+              <span class="text-xs font-bold text-gray-800">从空白开始</span>
+              <span class="text-[10px] leading-relaxed text-gray-500">不预填任何内容，自己写全部字段。</span>
+              <span class="mt-1 rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[9px] font-semibold text-gray-500">完全自定义</span>
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-else
+          class="grid min-h-0 flex-1"
+          :class="isMobile ? 'grid-cols-1' : 'grid-cols-[minmax(0,1fr)_290px]'"
+        >
+        <div class="min-h-0 overflow-y-auto space-y-5 px-1 p-1">
+          <!-- 复核面：这条任务意图原本散在 6 个字段里，保存前没有任何地方能一眼确认。
+               宽屏时挪到右侧粘性栏（见本区块下方 aside），窄屏才留在表单顶部 -->
+          <div v-if="isMobile" class="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
+            <div class="mb-1 flex items-center gap-1.5">
+              <span class="text-[10px] font-black text-gray-400">📋 这个任务会这样跑</span>
+              <span v-if="taskSummaryNext" class="ml-auto rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-700">
+                下次 {{ taskSummaryNext }}
+              </span>
+            </div>
+            <p class="text-xs leading-relaxed text-gray-600">
+              <span class="font-bold text-gray-800">{{ taskSummaryText.whenValid ? taskSummaryText.when : '（还没选执行时间）' }}</span>
+              <template v-if="taskSummaryText.agent">，让 <span class="font-bold text-amber-700">{{ taskSummaryText.agent }}</span> 执行</template>
+              <template v-if="taskSummaryText.what">「<span class="text-gray-800">{{ taskSummaryText.what }}</span>」</template>
+              <span v-else class="text-gray-400">（还没写「要做什么」）</span>
+              <template v-if="taskSummaryText.constraints.length">
+                ，并按 <span class="font-bold text-gray-800">{{ taskSummaryText.constraints.length }} 条交付要求</span>输出
+              </template>
+              <template v-if="taskSummaryText.channels.length">，结果发到 <span class="font-bold text-gray-800">{{ taskSummaryText.channels.join(' + ') }}</span></template>
+              <span class="text-gray-500">。</span>
+            </p>
+          </div>
+
+          <div class="flex items-baseline gap-2 border-b border-dashed border-gray-200 pb-1">
+            <span class="text-[11px] font-black text-primary tracking-wide">做什么</span>
+            <span class="text-[10px] text-gray-400">一句话说清目标与交付</span>
+          </div>
           <div>
             <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">任务基本信息</label>
             <input v-model="editingTask.name" placeholder="任务名称 (e.g. PUE日报)" class="w-full px-3 py-2 border rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" />
@@ -2575,6 +2766,149 @@ onMounted(async () => {
             </div>
           </div>
 
+
+          <div>
+            <div class="mb-1 flex items-center gap-1.5">
+              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-primary text-[10px] font-black text-white">1</span>
+              <label class="text-xs font-bold text-gray-700">要做什么</label>
+              <span class="text-[10px] font-bold text-gray-400">必填 · 执行指令</span>
+              <button
+                type="button"
+                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-400 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
+                title="查看填写示例"
+                aria-label="查看填写示例"
+                @click="showPromptHelpModal = true"
+              >?</button>
+              <div class="ml-auto flex items-center gap-1">
+                <button
+                  v-if="String(editingTask.prompt || '').trim()"
+                  type="button"
+                  class="px-2.5 py-1 text-[11px] font-semibold rounded-md text-gray-400 hover:bg-red-50 hover:text-red-600"
+                  title="清空任务内容"
+                  @click="clearTaskPrompt"
+                >清空</button>
+                <div v-else ref="promptTemplateDropdownRef" class="relative">
+                  <button
+                    type="button"
+                    class="px-2.5 py-1 text-[11px] font-semibold rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-0.5"
+                    title="选择结构模板插入，骨架仅供参考"
+                    @click.stop="showPromptTemplateDropdown = !showPromptTemplateDropdown"
+                  >
+                    插入模板
+                    <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                  </button>
+                  <div
+                    v-if="showPromptTemplateDropdown"
+                    class="absolute right-0 top-full mt-1 z-50 w-60 rounded-xl border border-gray-100 bg-white py-1 shadow-xl"
+                  >
+                    <button
+                      v-for="tpl in promptTemplates"
+                      :key="tpl.title"
+                      type="button"
+                      class="w-full px-3 py-2 text-left hover:bg-indigo-50/60 transition-colors"
+                      @click="applyPromptTemplate(tpl.text)"
+                    >
+                      <div class="text-xs font-semibold text-gray-700">{{ tpl.title }}</div>
+                      <div class="text-[10px] text-gray-400 mt-0.5">{{ tpl.desc }}</div>
+                    </button>
+                  </div>
+                </div>
+                <PromptAiOptimize
+                  :content="String(editingTask.prompt || '')"
+                  endpoint="/api/portal/prompts/optimize/task-instruction"
+                  :require-permission="false"
+                  confirm-message="AI 将针对当前任务内容生成 3 个侧重点不同的优化版本（结构化完整 / 精简直达 / 输出契约），大约需要几秒钟。是否开始？"
+                  loading-hint="正在为您生成 3 个差异化方案"
+                  @apply="applyOptimizedPrompt"
+                  @toast="onOptimizeToast"
+                />
+              </div>
+            </div>
+            <div class="mb-1.5 flex items-start gap-1.5 rounded-lg border border-blue-100 bg-blue-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-blue-800">
+              <span class="shrink-0 font-black">①</span>
+              <span>一句话说清<b>查什么、什么范围、要什么结果</b>。格式 / 篇幅 / 口径 / 不要图表请写第 2 栏，那边才会强制生效。</span>
+            </div>
+            <TaskPromptComposer
+              :prompt="String(editingTask.prompt || '')"
+              :model="taskModel"
+              :approval-mode="taskApprovalMode"
+              :resource-scope="taskResourceScope"
+              :thinking-enable-override="taskThinkingEnableOverride"
+              :reasoning-effort-override="taskReasoningEffortOverride"
+              :temperature-override="taskTemperatureOverride"
+              :agent-id="editingTask.agent_id"
+              @update:prompt="editingTask.prompt = $event"
+              @update:model="handleTaskModelSelection"
+              @update:approval-mode="taskApprovalMode = $event"
+              @update:resource-scope="taskResourceScope = $event"
+              @update:thinking-enable-override="taskThinkingEnableOverride = $event"
+              @update:reasoning-effort-override="taskReasoningEffortOverride = $event"
+              @update:temperature-override="taskTemperatureOverride = $event"
+            />
+            <div
+              v-if="promptFormatAdviceVisible"
+              class="mt-1.5 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-700"
+            >
+              <span class="shrink-0">⚠</span>
+              <span class="min-w-0 flex-1">这段像是<b>输出要求</b>（「{{ promptFormatAdviceSentence }}」），写在第 1 栏不会强制生效。</span>
+              <button
+                type="button"
+                class="shrink-0 rounded-md border border-amber-200 bg-white px-2 py-0.5 text-[10px] font-bold text-amber-700 hover:bg-amber-100"
+                @click="moveAdviceToConstraints"
+              >移到第 2 栏</button>
+              <button
+                type="button"
+                class="shrink-0 text-[10px] font-bold text-amber-500 hover:text-amber-700"
+                title="这条提示先收起，内容改动后会重新判断"
+                @click="dismissedAdviceSentence = promptFormatAdviceSentence"
+              >忽略</button>
+            </div>
+          </div>
+
+          <div>
+            <div class="mb-1 flex items-center gap-1.5">
+              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-gray-300 text-[10px] font-black text-white">2</span>
+              <label class="text-xs font-bold text-gray-700">输出有什么要求</label>
+              <span class="text-[10px] font-bold text-gray-400">选填 · 任务约束，留空不影响任务</span>
+              <button
+                type="button"
+                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-400 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
+                title="查看填写说明与示例"
+                aria-label="查看填写说明与示例"
+                @click="showConstraintsHelpModal = true"
+              >?</button>
+            </div>
+            <div class="mb-1.5 flex items-start gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-gray-600">
+              <span class="shrink-0 font-black text-gray-400">②</span>
+              <span>只写<b>规矩</b>，不写任务。没有特别要求就<b>直接留空</b> —— 留空时任务行为与不加约束完全一致。</span>
+            </div>
+            <textarea
+              v-model="taskConstraints"
+              rows="3"
+              maxlength="2000"
+              class="w-full resize-y rounded-xl border border-gray-200 px-3 py-2 text-xs leading-relaxed text-gray-700 placeholder:text-gray-300 focus:border-primary focus:ring-2 focus:ring-primary/20"
+              placeholder="例如：用无序列表，不要图表；金额统一按万元、保留两位小数。"
+            ></textarea>
+            <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span class="text-[10px] text-gray-400">可直接在上面的框里写，或点一下追加：</span>
+              <button
+                v-for="preset in constraintPresets"
+                :key="preset.label"
+                type="button"
+                class="inline-flex items-center gap-0.5 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                :title="preset.text"
+                @click="appendConstraintPreset(preset.text)"
+              >
+                <span class="font-black text-gray-400">+</span>{{ preset.label }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 方案 A：「什么时候跑」整组前移到「做什么」之后；字段与绑定未改动 -->
+          <div class="flex items-baseline gap-2 border-b border-dashed border-gray-200 pb-1">
+            <span class="text-[11px] font-black text-primary tracking-wide">什么时候跑</span>
+            <span class="text-[10px] text-gray-400">按人话选，随时能看到下次运行时间</span>
+          </div>
           <div>
             <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex justify-between items-center">
               <span>运行周期配置</span>
@@ -2678,11 +3012,34 @@ onMounted(async () => {
                 :class="cronExprValidation.valid ? 'text-blue-700' : 'text-rose-600'"
               >{{ cronDescription }}</p>
             </div>
+
+            <div
+              v-if="cronNextRuns.length"
+              class="mt-2 flex flex-wrap items-center gap-1.5 rounded-xl border border-emerald-100 bg-emerald-50/70 px-2.5 py-2"
+            >
+              <span class="text-[10px] font-black text-emerald-700">接下来三次运行</span>
+              <span
+                v-for="(run, index) in cronNextRuns"
+                :key="run"
+                class="rounded border border-emerald-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-700"
+              >{{ run }}<span v-if="index === 0" class="ml-1 font-sans text-[9px] font-black text-emerald-500">下次</span></span>
+            </div>
           </div>
 
           <div>
-            <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">执行失败策略</label>
-            <div class="rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-3 space-y-3">
+            <button
+              type="button"
+              class="mb-1 flex w-full items-center gap-1.5 text-left"
+              :aria-expanded="showAdvancedRetry ? 'true' : 'false'"
+              @click="showAdvancedRetry = !showAdvancedRetry"
+            >
+              <span class="text-[10px] font-black text-gray-400">{{ showAdvancedRetry ? '▾' : '▸' }}</span>
+              <span class="text-xs font-bold text-gray-400 uppercase tracking-widest">执行失败策略</span>
+              <span class="text-[10px] text-gray-400">
+                {{ taskMaxRetries > 0 ? `失败重试 ${taskMaxRetries} 次 / 间隔 ${taskRetryDelayMinutes} 分钟` : '默认不重试' }}
+              </span>
+            </button>
+            <div v-show="showAdvancedRetry" class="rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-3 space-y-3">
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label class="flex flex-col gap-1 text-xs font-bold text-gray-600">
                   最大重试次数
@@ -2711,143 +3068,10 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div>
-            <div class="mb-1 flex items-center gap-1.5">
-              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-primary text-[10px] font-black text-white">1</span>
-              <label class="text-xs font-bold text-gray-700">要做什么</label>
-              <span class="text-[10px] font-bold text-gray-400">必填 · 执行指令</span>
-              <button
-                type="button"
-                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-400 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
-                title="查看填写示例"
-                aria-label="查看填写示例"
-                @click="showPromptHelpModal = true"
-              >?</button>
-              <div class="ml-auto flex items-center gap-1">
-                <button
-                  v-if="String(editingTask.prompt || '').trim()"
-                  type="button"
-                  class="px-2.5 py-1 text-[11px] font-semibold rounded-md text-gray-400 hover:bg-red-50 hover:text-red-600"
-                  title="清空任务内容"
-                  @click="clearTaskPrompt"
-                >清空</button>
-                <div v-else ref="promptTemplateDropdownRef" class="relative">
-                  <button
-                    type="button"
-                    class="px-2.5 py-1 text-[11px] font-semibold rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 flex items-center gap-0.5"
-                    title="选择结构模板插入，骨架仅供参考"
-                    @click.stop="showPromptTemplateDropdown = !showPromptTemplateDropdown"
-                  >
-                    插入模板
-                    <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-                  </button>
-                  <div
-                    v-if="showPromptTemplateDropdown"
-                    class="absolute right-0 top-full mt-1 z-50 w-60 rounded-xl border border-gray-100 bg-white py-1 shadow-xl"
-                  >
-                    <button
-                      v-for="tpl in promptTemplates"
-                      :key="tpl.title"
-                      type="button"
-                      class="w-full px-3 py-2 text-left hover:bg-indigo-50/60 transition-colors"
-                      @click="applyPromptTemplate(tpl.text)"
-                    >
-                      <div class="text-xs font-semibold text-gray-700">{{ tpl.title }}</div>
-                      <div class="text-[10px] text-gray-400 mt-0.5">{{ tpl.desc }}</div>
-                    </button>
-                  </div>
-                </div>
-                <PromptAiOptimize
-                  :content="String(editingTask.prompt || '')"
-                  endpoint="/api/portal/prompts/optimize/task-instruction"
-                  :require-permission="false"
-                  confirm-message="AI 将针对当前任务内容生成 3 个侧重点不同的优化版本（结构化完整 / 精简直达 / 输出契约），大约需要几秒钟。是否开始？"
-                  loading-hint="正在为您生成 3 个差异化方案"
-                  @apply="applyOptimizedPrompt"
-                  @toast="onOptimizeToast"
-                />
-              </div>
-            </div>
-            <div class="mb-1.5 flex items-start gap-1.5 rounded-lg border border-blue-100 bg-blue-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-blue-800">
-              <span class="shrink-0 font-black">①</span>
-              <span>一句话说清<b>查什么、什么范围、要什么结果</b>。格式 / 篇幅 / 口径 / 不要图表这类要求请写下面第 2 栏，那边才会强制生效。</span>
-            </div>
-            <TaskPromptComposer
-              :prompt="String(editingTask.prompt || '')"
-              :model="taskModel"
-              :approval-mode="taskApprovalMode"
-              :resource-scope="taskResourceScope"
-              :thinking-enable-override="taskThinkingEnableOverride"
-              :reasoning-effort-override="taskReasoningEffortOverride"
-              :temperature-override="taskTemperatureOverride"
-              :agent-id="editingTask.agent_id"
-              @update:prompt="editingTask.prompt = $event"
-              @update:model="handleTaskModelSelection"
-              @update:approval-mode="taskApprovalMode = $event"
-              @update:resource-scope="taskResourceScope = $event"
-              @update:thinking-enable-override="taskThinkingEnableOverride = $event"
-              @update:reasoning-effort-override="taskReasoningEffortOverride = $event"
-              @update:temperature-override="taskTemperatureOverride = $event"
-            />
-            <div
-              v-if="promptFormatAdviceVisible"
-              class="mt-1.5 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-700"
-            >
-              <span class="shrink-0">⚠</span>
-              <span class="min-w-0 flex-1">这段像是<b>输出要求</b>（「{{ promptFormatAdviceSentence }}」），写在第 1 栏不会强制生效。</span>
-              <button
-                type="button"
-                class="shrink-0 rounded-md border border-amber-200 bg-white px-2 py-0.5 text-[10px] font-bold text-amber-700 hover:bg-amber-100"
-                @click="moveAdviceToConstraints"
-              >移到第 2 栏</button>
-              <button
-                type="button"
-                class="shrink-0 text-[10px] font-bold text-amber-500 hover:text-amber-700"
-                title="这条提示先收起，内容改动后会重新判断"
-                @click="dismissedAdviceSentence = promptFormatAdviceSentence"
-              >忽略</button>
-            </div>
+          <div class="flex items-baseline gap-2 border-b border-dashed border-gray-200 pb-1">
+            <span class="text-[11px] font-black text-primary tracking-wide">结果发到哪</span>
+            <span class="text-[10px] text-gray-400">站内消息始终可用</span>
           </div>
-
-          <div>
-            <div class="mb-1 flex items-center gap-1.5">
-              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-gray-300 text-[10px] font-black text-white">2</span>
-              <label class="text-xs font-bold text-gray-700">输出有什么要求</label>
-              <span class="text-[10px] font-bold text-gray-400">选填 · 任务约束，留空不影响任务</span>
-              <button
-                type="button"
-                class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-black text-gray-400 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
-                title="查看填写说明与示例"
-                aria-label="查看填写说明与示例"
-                @click="showConstraintsHelpModal = true"
-              >?</button>
-            </div>
-            <div class="mb-1.5 flex items-start gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-gray-600">
-              <span class="shrink-0 font-black text-gray-400">②</span>
-              <span>只写<b>规矩</b>，不写任务。没有特别要求就<b>直接留空</b> —— 留空时任务行为与不加约束完全一致。</span>
-            </div>
-            <textarea
-              v-model="taskConstraints"
-              rows="3"
-              maxlength="2000"
-              class="w-full resize-y rounded-xl border border-gray-200 px-3 py-2 text-xs leading-relaxed text-gray-700 placeholder:text-gray-300 focus:border-primary focus:ring-2 focus:ring-primary/20"
-              placeholder="例如：用无序列表，不要图表；金额统一按万元、保留两位小数。"
-            ></textarea>
-            <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
-              <span class="text-[10px] text-gray-400">不知道写什么？点一下直接加：</span>
-              <button
-                v-for="preset in constraintPresets"
-                :key="preset.label"
-                type="button"
-                class="inline-flex items-center gap-0.5 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-                :title="preset.text"
-                @click="appendConstraintPreset(preset.text)"
-              >
-                <span class="font-black text-gray-400">+</span>{{ preset.label }}
-              </button>
-            </div>
-          </div>
-
           <div>
             <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">结果通知</label>
             <div class="rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-3 space-y-2">
@@ -2915,8 +3139,61 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="flex justify-end space-x-3 pt-4 pb-safe-area border-t border-gray-50">
-          <button @click="showEditModal = false" class="px-4 py-2 text-sm font-bold text-gray-400 hover:text-gray-600">取消</button>
+        <!-- 右栏：任务摘要（宽屏常驻，粘性跟随滚动）-->
+        <aside
+          v-if="!isMobile"
+          class="min-h-0 space-y-2.5 overflow-y-auto border-l border-gray-100 bg-gray-50/40 p-3"
+        >
+          <div class="rounded-xl border border-gray-200 bg-white px-3 py-2.5">
+            <div class="mb-1 flex items-center gap-1.5">
+              <span class="text-[10px] font-black text-gray-400">📋 这个任务会这样跑</span>
+              <span class="ml-auto text-[9px] font-bold text-gray-300">随填随更新</span>
+            </div>
+            <p class="text-xs leading-relaxed text-gray-600">
+              <span class="font-bold text-gray-800">{{ taskSummaryText.whenValid ? taskSummaryText.when : '（还没选执行时间）' }}</span>
+              <template v-if="taskSummaryText.agent">，让 <span class="font-bold text-amber-700">{{ taskSummaryText.agent }}</span> 执行</template>
+              <template v-if="taskSummaryText.what">「<span class="text-gray-800">{{ taskSummaryText.what }}</span>」</template>
+              <span v-else class="text-gray-400">（还没写「要做什么」）</span>
+              <template v-if="taskSummaryText.constraints.length">
+                ，并按 <span class="font-bold text-gray-800">{{ taskSummaryText.constraints.length }} 条交付要求</span>输出
+              </template>
+              <template v-if="taskSummaryText.channels.length">，结果发到 <span class="font-bold text-gray-800">{{ taskSummaryText.channels.join(' + ') }}</span></template>
+              <span class="text-gray-500">。</span>
+            </p>
+          </div>
+
+          <div class="rounded-xl border border-gray-200 bg-white px-3 py-2.5 space-y-1.5">
+            <div class="flex items-baseline gap-2 text-[11px]">
+              <span class="w-14 shrink-0 text-gray-400">下次运行</span>
+              <span v-if="taskSummaryNext" class="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-700">{{ taskSummaryNext }}</span>
+              <span v-else class="text-gray-400">—</span>
+            </div>
+            <div class="flex items-baseline gap-2 text-[11px]">
+              <span class="w-14 shrink-0 text-gray-400">任务名</span>
+              <span class="min-w-0 flex-1 truncate font-semibold text-gray-700">{{ String(editingTask.name || '').trim() || '未命名任务' }}</span>
+            </div>
+            <div class="flex items-baseline gap-2 text-[11px]">
+              <span class="w-14 shrink-0 text-gray-400">交付要求</span>
+              <span class="font-semibold text-gray-700">{{ taskSummaryText.constraints.length ? `${taskSummaryText.constraints.length} 条` : '未填写' }}</span>
+            </div>
+            <div class="flex items-baseline gap-2 text-[11px]">
+              <span class="w-14 shrink-0 text-gray-400">结果发到</span>
+              <span class="min-w-0 flex-1 font-semibold text-gray-700">{{ taskSummaryText.channels.length ? taskSummaryText.channels.join(' + ') : '未选择' }}</span>
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[10px] leading-relaxed text-amber-700">
+            <b>自动批准</b>：定时任务无人值守，会直接执行查询类工具、不会停下来等确认；危险操作仍会被拦截。
+          </div>
+
+          <p class="px-1 text-[10px] leading-relaxed text-gray-400">
+            保存后可在任务列表里点「立即执行」试跑一次，验证「要做什么」与交付要求写得对不对。立即执行不会自动重试。
+          </p>
+        </aside>
+        </div>
+
+        <div v-if="!showTemplatePicker" class="flex justify-end space-x-3 pt-4 pb-safe-area border-t border-gray-50">
+          <button @click="closeEditModal" class="px-4 py-2 text-sm font-bold text-gray-400 hover:text-gray-600">取消</button>
           <button @click="saveTask" class="px-8 py-2 bg-primary text-white rounded-xl shadow-lg shadow-primary/20 hover:bg-primary-dark transition-all font-bold text-sm">确认保存</button>
         </div>
       </div>
