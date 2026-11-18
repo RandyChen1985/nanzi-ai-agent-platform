@@ -2564,18 +2564,23 @@ const groupedMcpTools = computed(() => {
   return groups;
 });
 
-const collapsedMcpGroups = ref<Set<string>>(new Set());
+// MCP 分组与系统工具同口径：记「已展开」，默认空集 = 全部收起。
+// 以前记的是「已折叠」，默认空集 = 全都摊开 —— 进「工具能力」的 MCP 页签就是几十张
+// 工具卡片，与系统工具页签「先看分组标题、再点开」的观感不一致（用户反馈）。
+// 改用展开集合还有一层好处：默认状态与 mcpTools 的异步加载时序无关，不需要在数据
+// 到位后回填一次折叠集合，也不会把用户手动展开的组又盖回去。
+const expandedMcpGroups = ref<Set<string>>(new Set());
 
-const isMcpGroupCollapsed = (serverName: string) => collapsedMcpGroups.value.has(serverName);
+const isMcpGroupCollapsed = (serverName: string) => !expandedMcpGroups.value.has(serverName);
 
 const toggleMcpGroupCollapse = (serverName: string) => {
-  const next = new Set(collapsedMcpGroups.value);
+  const next = new Set(expandedMcpGroups.value);
   if (next.has(serverName)) {
     next.delete(serverName);
   } else {
     next.add(serverName);
   }
-  collapsedMcpGroups.value = next;
+  expandedMcpGroups.value = next;
 };
 
 // 一键展开 / 一键折叠：作用于 MCP 页签的**全部分组**（不区分「平台 MCP / 我的 MCP」
@@ -2583,11 +2588,11 @@ const toggleMcpGroupCollapse = (serverName: string) => {
 // 悄悄缩小作用范围，清空搜索后又冒出一堆展开着的分组。
 // 绝不能换成 currentScopeGroupedMcpTools——那是搜索过滤后的视图。
 const expandAllMcpGroups = () => {
-  collapsedMcpGroups.value = new Set();
+  expandedMcpGroups.value = new Set(Object.keys(groupedMcpTools.value));
 };
 
 const collapseAllMcpGroups = () => {
-  collapsedMcpGroups.value = new Set(Object.keys(groupedMcpTools.value));
+  expandedMcpGroups.value = new Set();
 };
 
 const getMcpGroupSelectedCount = (tools: any[]) => {
@@ -2955,7 +2960,8 @@ let versionToolHealthRequestSeq = 0;
 const resetVersionEditorUi = () => {
   versionConfigStep.value = 'model';
   toolSearchQuery.value = '';
-  collapsedMcpGroups.value = new Set();
+  // 两个页签都是「记已展开」：清空即回到全部分组折叠，与首次进入的默认状态一致。
+  expandedMcpGroups.value = new Set();
   expandedStaticGroups.value = new Set();
   versionToolHealth.value = [];
   versionToolHealthLoading.value = false;

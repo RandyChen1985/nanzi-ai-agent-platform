@@ -36,6 +36,29 @@ def test_gear_button_lights_up_with_count_badge_and_summary():
     assert "getToolCustomConfig" not in drawer
 
 
+def test_mcp_tool_cards_expose_advanced_config_entry():
+    """MCP 工具卡片也必须能打开工具级高级配置。
+
+    实测缺口（2026-11-18）：后端早已支持 MCP 工具级超时——版本 tools JSON 里的
+    ``timeout_seconds`` 经 ``collect_tool_timeouts`` / ``_lookup_tool_timeout``
+    按 ``server:tool`` 全名命中，再经 ``resolve_mcp_tool_timeout`` 一路传到
+    ``call_remote_tool(timeout_seconds=…)``——但抽屉只给内置工具卡片挂了齿轮，
+    MCP 页签的卡片一个入口都没有：用户界面上配不了，只能退回调版本级，
+    连带把所有工具的超时一起放大。这条断言锁住「两个页签同口径」。
+    """
+    drawer = _source(DRAWER)
+    marker = "v-else-if=\"toolTab === 'mcp'\""
+    start = drawer.index(marker)
+    block = drawer[start:drawer.index("<!-- Skills -->", start)]
+
+    assert "emit('openToolRuntimeConfig', tool.name)" in block
+    assert "getToolAdvancedConfigSummary(tool.name)" in block
+    assert "tool-advanced-line" in block
+    assert "tool-action-count" in block
+    # 齿轮必须放在 @click.stop 容器里：否则点齿轮会顺带切换该工具的勾选状态
+    assert 'class="flex gap-1 mt-1.5" @click.stop' in block
+
+
 def test_summary_counts_only_tool_level_parameters():
     management = _source(MANAGEMENT)
     assert "const getToolAdvancedConfigSummary" in management
