@@ -1661,16 +1661,48 @@ async def list_audit(
     *,
     secret_id: str | None = None,
     actor_id: str | None = None,
+    keyword: str | None = None,
+    actions: Iterable[str] | None = None,
     limit: int = 100,
 ) -> Sequence:
-    """变更审计。管理员传 ``actor_id=None`` 且 ``secret_id=None`` 看全局。"""
+    """变更审计。管理员传 ``actor_id=None`` 且 ``secret_id=None`` 看全局。
+
+    ``keyword`` 同时搜三处，因为三种情况下人记的东西不一样：
+
+    * 凭据标识（``secret_key_snapshot``）——「那条 corp.wecom.secret 谁改的」；
+    * 操作人——记的往往是姓名，而日志里只有 ``actor_id`` 和可能为空的姓名快照，
+      所以先借 ``match_usage_user_ids`` 把「这个人是谁」翻成一组 id 再比；
+    * ``detail`` 文本——排查「谁把这条规则删了」时，人记得的是槽位名
+      （``arg:list-mail:password``），它在 detail JSON 里，不在任何单独列上。
+    """
+    from sqlalchemy import or_
+
     from app.models.secret import SecretAuditLog
 
-    stmt = select(SecretAuditLog).order_by(SecretAuditLog.created_at.desc()).limit(limit)
+    stmt = select(SecretAuditLog)
     if secret_id:
         stmt = stmt.where(SecretAuditLog.secret_id == secret_id)
     if actor_id:
         stmt = stmt.where(SecretAuditLog.actor_id == actor_id)
+
+    kw = str(keyword or "").strip()
+    if kw:
+        like = f"%{kw}%"
+        clauses = [
+            SecretAuditLog.secret_key_snapshot.like(like),
+            SecretAuditLog.actor_name.like(like),
+            SecretAuditLog.detail.like(like),
+        ]
+        matched_actors = await match_usage_user_ids(session, kw)
+        if matched_actors:
+            clauses.append(SecretAuditLog.actor_id.in_(matched_actors))
+        stmt = stmt.where(or_(*clauses))
+
+    wanted_actions = [str(item).strip() for item in (actions or []) if str(item).strip()]
+    if wanted_actions:
+        stmt = stmt.where(SecretAuditLog.action.in_(wanted_actions))
+
+    stmt = stmt.order_by(SecretAuditLog.created_at.desc()).limit(limit)
     return (await session.execute(stmt)).scalars().all()
 
 

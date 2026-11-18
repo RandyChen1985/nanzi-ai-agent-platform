@@ -144,3 +144,68 @@ def test_check_binding_passes_user_attrs_and_identity_attrs_skips_bool():
         {"user_id": 42, "email": "u@corp.cn", "dept_code": True}
     )
     assert attrs == {"user_id": "42", "email": "u@corp.cn"}
+
+
+# --------------------------------------------------------------------------- #
+# 授权范围的显示名
+#
+# 卡片里原来渲染成「用户 · 62」——管理员拿这个数字判断不了是谁，得先去用户表
+# 反查，而这一栏问的恰恰是「这条凭据给了谁」。后端负责解析名字，前端负责排版，
+# 所以这里锁的是「后端给的是名字、拿不到才留空」。
+# --------------------------------------------------------------------------- #
+
+
+class _Grant:
+    """只带 `_grantee_name` 需要的字段，避免为一条纯函数测试起来整张表。"""
+
+    def __init__(self, grantee_type: str, grantee_id: str):
+        self.grantee_type = grantee_type
+        self.grantee_id = grantee_id
+
+
+def test_grantee_name_prefers_real_name():
+    assert (
+        secrets_endpoint._grantee_name(_Grant("user", "62"), {"62": "张三"}, {}) == "张三"
+    )
+
+
+def test_grantee_name_for_department():
+    assert (
+        secrets_endpoint._grantee_name(_Grant("dept", "DEPT-DATA"), {}, {"DEPT-DATA": "数据部"})
+        == "数据部"
+    )
+
+
+def test_grantee_name_for_all_users():
+    """全体授权的 grantee_id 是空串，照样要有人话名字。"""
+    assert secrets_endpoint._grantee_name(_Grant("all", ""), {}, {}) == "全体用户"
+
+
+def test_grantee_name_returns_none_instead_of_inventing():
+    """解析不到就留 None：授权对象被删后 id 是唯一还能定位的线索，不能编名字。"""
+    assert secrets_endpoint._grantee_name(_Grant("user", "62"), {}, {}) is None
+    assert secrets_endpoint._grantee_name(_Grant("dept", "DEPT-X"), {}, {}) is None
+    # 空 ref 不能去查表（不小心会命中空字符串 key）
+    assert secrets_endpoint._grantee_name(_Grant("user", ""), {"": "空"}, {}) is None
+
+
+def test_grantee_name_does_not_leak_between_types():
+    """同一串 id 在两张表里都有时不能串：用户 id 与部门 code 各自查各自的表。"""
+    grant = _Grant("user", "7")
+    assert secrets_endpoint._grantee_name(grant, {"7": "李四"}, {"7": "数据部"}) == "李四"
+    assert secrets_endpoint._grantee_name(_Grant("dept", "7"), {"7": "李四"}, {"7": "数据部"}) == "数据部"
+
+
+def test_admin_list_emits_grantee_name():
+    """序列化里必须带上这个字段，前端才有东西可显示。"""
+    src = inspect.getsource(secrets_endpoint.admin_list)
+    assert '"grantee_name": _grantee_name(g, user_names, dept_names)' in src
+
+
+def test_admin_list_resolves_grant_users_from_the_same_query():
+    """绑定者与被授权用户合并成一次查询：glue 成两次是同一张表的重复往返。"""
+    src = inspect.getsource(secrets_endpoint.admin_list)
+    assert "grant.grantee_type == GRANTEE_USER" in src
+    # 用户名字查询不能再被 `if bindings:` 包着——没有绑定的凭据照样要显示授权对象
+    body = src[src.index("owners = "):]
+    assert "for b in bindings if b.bound_by_user_id" in body

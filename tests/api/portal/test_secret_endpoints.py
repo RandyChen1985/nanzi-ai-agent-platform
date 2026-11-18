@@ -599,3 +599,188 @@ class TestAdminListVisibility:
         assert item["bindings"] == []
         assert item["usage_7d"] == 0
         assert item["last_used_at"] is None
+
+    async def test_admin_list_resolves_grantee_names(
+        self, client, clean_secrets, admin_api_key
+    ):
+        """授权范围要显示成人能看懂的名字，而不是「用户 · 62」。
+
+        断言用的是库里**真实存在**的用户与部门：这两张表不由凭据测试维护，
+        清表等于破坏开发环境，所以这里只读、不造数据；缺数据就跳过。
+        """
+        from sqlalchemy import select
+
+        from app.core.orm import AsyncSessionLocal
+        from app.models.department import Department
+        from app.models.user import User
+
+        async with AsyncSessionLocal() as session:
+            user_row = (
+                await session.execute(
+                    select(User.id, User.user_name, User.real_name).order_by(User.id).limit(1)
+                )
+            ).first()
+            dept_row = (
+                await session.execute(
+                    select(Department.code, Department.name).order_by(Department.id).limit(1)
+                )
+            ).first()
+        if user_row is None or dept_row is None:
+            pytest.skip("开发库里没有用户或部门数据，无法验证授权对象名字解析")
+
+        user_id, user_name, real_name = user_row
+        dept_code, dept_name = dept_row
+
+        created = (
+            await client.post(
+                PREFIX + "/admin",
+                json=_payload(secret_key=f"corp.grantname.{uuid.uuid4().hex[:8]}"),
+                headers=_admin_headers(admin_api_key),
+            )
+        ).json()["data"]
+
+        for grantee in (
+            {"grantee_type": "user", "grantee_id": str(user_id)},
+            {"grantee_type": "dept", "grantee_id": dept_code},
+            {"grantee_type": "all", "grantee_id": ""},
+        ):
+            resp = await client.post(
+                f"{PREFIX}/admin/{created['id']}/grants",
+                json=grantee,
+                headers=_admin_headers(admin_api_key),
+            )
+            assert resp.status_code == 200, resp.text
+
+        listing = await client.get(PREFIX + "/admin", headers=_admin_headers(admin_api_key))
+        item = next(i for i in listing.json()["data"] if i["id"] == created["id"])
+        names = {grant["grantee_type"]: grant["grantee_name"] for grant in item["grants"]}
+
+        # 姓名 > 用户名 > 裸 id，与后端同一套兜底顺序
+        assert names["user"] == (real_name or user_name or str(user_id))
+        assert names["dept"] == dept_name
+        assert names["all"] == "全体用户"
+        # id 仍然原样保留：撤销授权与查审计都靠它
+        ids = {grant["grantee_type"]: grant["grantee_id"] for grant in item["grants"]}
+        assert ids["user"] == str(user_id)
+        assert ids["dept"] == dept_code
+
+
+class TestAuditSearch:
+    """变更记录的搜索与动作过滤。
+
+    审计页一屏几十条，靠眼睛筛「这条凭据谁轮换过」「谁把这条规则删了」不现实。
+    这里验证过滤真的落到 SQL 上，而不是取回 100 条再在内存里挑。
+    """
+
+    async def test_keyword_matches_the_secret_key(
+        self, client, clean_secrets, admin_api_key
+    ):
+        key = f"corp.auditsearch.{uuid.uuid4().hex[:8]}"
+        created = (
+            await client.post(
+                PREFIX + "/admin",
+                json=_payload(secret_key=key),
+                headers=_admin_headers(admin_api_key),
+            )
+        ).json()["data"]
+        # 造一条不属于本次搜索的记录，证明过滤真的在过滤
+        await client.post(
+            PREFIX + "/admin",
+            json=_payload(secret_key=f"corp.auditnoise.{uuid.uuid4().hex[:8]}"),
+            headers=_admin_headers(admin_api_key),
+        )
+        await client.post(
+            f"{PREFIX}/{created['id']}/rotate",
+            json={"value": "rotated-value", "overlap_days": 7},
+            headers=_admin_headers(admin_api_key),
+        )
+
+        resp = await client.get(
+            PREFIX + "/audit",
+            params={"keyword": key, "limit": 100},
+            headers=_admin_headers(admin_api_key),
+        )
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()["data"]
+
+        assert rows, "至少应有 create 与 rotate 两条"
+        assert all(row["secret_key"] == key for row in rows)
+        assert {row["action"] for row in rows} >= {"create", "rotate"}
+
+    async def test_action_filter_accepts_comma_separated_values(
+        self, client, clean_secrets, admin_api_key
+    ):
+        keys = [f"corp.auditaction.{uuid.uuid4().hex[:8]}" for _ in range(2)]
+        created = []
+        for key in keys:
+            created.append(
+                (
+                    await client.post(
+                        PREFIX + "/admin",
+                        json=_payload(secret_key=key),
+                        headers=_admin_headers(admin_api_key),
+                    )
+                ).json()["data"]
+            )
+        await client.post(
+            f"{PREFIX}/{created[0]['id']}/rotate",
+            json={"value": "rotated-value", "overlap_days": 7},
+            headers=_admin_headers(admin_api_key),
+        )
+
+        # axios 会把数组发成 action[]=，FastAPI 的 List 查询不认，所以前端发逗号分隔
+        resp = await client.get(
+            PREFIX + "/audit",
+            params={"keyword": keys[0], "action": "rotate"},
+            headers=_admin_headers(admin_api_key),
+        )
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()["data"]
+        assert rows
+        assert {row["action"] for row in rows} == {"rotate"}
+
+        both = await client.get(
+            PREFIX + "/audit",
+            params={"keyword": keys[0], "action": "create,rotate"},
+            headers=_admin_headers(admin_api_key),
+        )
+        actions = {row["action"] for row in both.json()["data"]}
+        assert actions == {"create", "rotate"}
+
+    async def test_secret_id_scope_returns_only_that_secret(
+        self, client, clean_secrets, admin_api_key
+    ):
+        """卡片上的「变更记录」进来看的必须是这一条。"""
+        created = (
+            await client.post(
+                PREFIX + "/admin",
+                json=_payload(secret_key=f"corp.auditscope.{uuid.uuid4().hex[:8]}"),
+                headers=_admin_headers(admin_api_key),
+            )
+        ).json()["data"]
+        await client.post(
+            PREFIX + "/admin",
+            json=_payload(secret_key=f"corp.auditother.{uuid.uuid4().hex[:8]}"),
+            headers=_admin_headers(admin_api_key),
+        )
+
+        resp = await client.get(
+            PREFIX + "/audit",
+            params={"secret_id": created["id"]},
+            headers=_admin_headers(admin_api_key),
+        )
+        rows = resp.json()["data"]
+        assert rows
+        assert {row["secret_id"] for row in rows} == {created["id"]}
+
+    async def test_no_match_returns_empty_list(
+        self, client, clean_secrets, admin_api_key
+    ):
+        """筛完没匹配要给空数组，而不是把上一页结果留在界面上。"""
+        resp = await client.get(
+            PREFIX + "/audit",
+            params={"keyword": f"no-such-secret-{uuid.uuid4().hex}"},
+            headers=_admin_headers(admin_api_key),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"] == []

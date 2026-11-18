@@ -29,11 +29,15 @@ const props = withDefaults(
     /** 只影响提示文案：变量可读可复制，凭证建完不可读 */
     secretType?: 'credential' | 'variable'
     /**
-     * 轮换态：结构由既有凭据定死。
+     * 轮换态：**档位与模板**由既有凭据定死。
      *
      * 换模板会换掉整个字段集合，切回单值会把 JSON 拍平成一段文本——两者都会让
      * 别处已经写好的 `${secret:标识.字段}` 引用在无人察觉的情况下失效。轮换只
      * 该换值，不该换形状。
+     *
+     * **不锁「录值」**：自定义 JSON 没有固定结构，它的键集合就是值本身，所以
+     * 增删键、切「写 JSON」、粘贴一段新 JSON 在轮换态都必须可用。这条边界最初
+     * 写得过大，导致自定义 JSON 的轮换弹窗里一个能输入的地方都没有。
      */
     lockStructure?: boolean
   }>(),
@@ -170,14 +174,20 @@ function hydrateRaw(text: string) {
   rawRevealed.value = {}
 }
 
+/**
+ * 加一行字段。
+ *
+ * **轮换态也放行**：`lockStructure` 锁的是「档位与模板」——换成别的模板、切回
+ * 单值，都会让别处写好的 `${secret:标识.字段}` 引用失效。而「自定义 JSON」本身
+ * 就没有固定结构，它的键集合**就是值的一部分**。早先这里一并锁死，导致值又
+ * 不可读、又不许加行，轮换弹窗打开后一个能输入的地方都没有，「至少填一个字段」
+ * 永远消不掉。
+ */
 function addRawRow() {
-  // 轮换只换值不换结构：加字段等于改模板，别处写好的 ${secret:key.field} 会失效
-  if (props.lockStructure) return
   rawRows.value = [...rawRows.value, { key: '', type: 'text', value: '', secret: false }]
 }
 
 function removeRawRow(index: number) {
-  if (props.lockStructure) return
   rawRows.value = rawRows.value.filter((_, position) => position !== index)
   rawRevealed.value = {}
   pushRawOut()
@@ -193,8 +203,8 @@ function onRawTypeChange(row: RawFieldRow) {
 
 function switchRawView(next: 'kv' | 'json') {
   if (next === rawView.value) return
-  // 锁定结构时留在表格：JSON 视图能直接改字段名，等于开了个后门
-  if (props.lockStructure) return
+  // 轮换态同样允许切「写 JSON」：这是把一整段新值贴进来的最短路径，
+  // 锁掉它等于逼用户逐行敲，而 lockdown 的本意是防换模板、不是防录值。
   if (next === 'kv') {
     // 回到表格前先确认文本能解析：解析不了就留在 JSON 视图，别拿半截数据覆盖表格
     const text = value.value.trim()
@@ -210,6 +220,23 @@ function switchRawView(next: 'kv' | 'json') {
   }
   rawView.value = next
 }
+
+/**
+ * 轮换态的「自定义 JSON」开局补一行空行。
+ *
+ * 轮换不回读旧值（值本来就不可读），所以 rawRows 必然是空的；不补的话表格区
+ * 一片空白，「+ 添加字段」又落在底部——用户第一眼看到的是「没有字段」加一条
+ * 「至少填一个字段」的红字，明明能填却看不出来能填。
+ */
+watch(
+  [() => props.lockStructure, isRaw],
+  ([locked, raw]) => {
+    if (!locked || !raw) return
+    if (rawRows.value.length) return
+    rawRows.value = [{ key: '', type: 'text', value: '', secret: false }]
+  },
+  { immediate: true },
+)
 
 /** 行级错误：比一句「JSON 语法错误」有用得多——能指出是第几行的哪个字段 */
 const rawRowErrors = computed<(string | null)[]>(() => {
@@ -697,10 +724,27 @@ function applyPasted() {
     return
   }
   const source = parsed as Record<string, unknown>
+  // 当前就是「自定义 JSON」：直接铺进键值对编辑器，别再走「识别模板」——
+  // 这类值本来就没有对应模板，识别只会落到「没匹配到」的错误态。轮换态更需要
+  // 这条路：模板已被锁定，换不了模板，但值必须录得进去。
+  if (isRaw.value) {
+    hydrateRaw(text)
+    pushRawOut()
+    pasteError.value = false
+    pasteMsg.value = `已填入 ${Object.keys(source).length} 个键，可以直接改值`
+    return
+  }
   const matched = recognize(text)
   if (!matched) {
     pasteError.value = true
     pasteMsg.value = '没有匹配到内置模板——可以用「自定义 JSON」把这段结构直接存下来'
+    return
+  }
+  // 轮换只换值、不换模板：命中的是另一个模板就拦下，否则字段集会悄悄变掉
+  if (props.lockStructure && matched !== template.value) {
+    const matchedName = findCredentialTemplate(matched)?.name || '另一个模板'
+    pasteError.value = true
+    pasteMsg.value = `这段 JSON 命中的是「${matchedName}」，与当前模板不同；轮换不能换模板，请按原结构逐字段填写`
     return
   }
   fillTemplate(matched, source)
@@ -889,16 +933,12 @@ defineExpose({ recognize })
                     type="text"
                     placeholder="字段名"
                     spellcheck="false"
-                    :disabled="lockStructure"
-                    :title="lockStructure ? '轮换中不可改结构' : ''"
                     class="w-24 shrink-0 rounded-md border px-1.5 py-1 font-mono text-[11px] font-semibold focus:outline-none"
                     :class="rawRowErrors[index] ? 'border-rose-500' : 'border-gray-300 focus:border-blue-500'"
                     @input="pushRawOut"
                   />
                   <select
                     v-model="row.type"
-                    :disabled="lockStructure"
-                    :title="lockStructure ? '轮换中不可改结构' : ''"
                     class="w-16 shrink-0 rounded-md border border-gray-300 px-1 py-1 text-[10.5px] focus:border-blue-500 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                     @change="onRawTypeChange(row)"
                   >
@@ -932,7 +972,6 @@ defineExpose({ recognize })
                     敏感
                   </label>
                   <button
-                    v-if="!lockStructure"
                     type="button"
                     class="shrink-0 rounded px-1 text-sm leading-none text-gray-300 hover:bg-rose-50 hover:text-rose-600"
                     title="删除这个字段"
@@ -945,13 +984,13 @@ defineExpose({ recognize })
               </div>
             </div>
             <button
-              v-if="!lockStructure"
               type="button"
               class="mt-1.5 w-full rounded-md border border-dashed border-gray-300 py-1 text-[10.5px] text-gray-500 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600"
               @click="addRawRow"
             >+ 添加字段</button>
-            <p v-else class="mt-1.5 text-[10px] text-gray-400">
-              轮换中字段结构已锁定，只能改值。
+            <p v-if="lockStructure" class="mt-1.5 text-[10px] leading-relaxed text-gray-400">
+              轮换只换值：键名请与原来保持一致，否则别处写好的
+              <code>${secret:标识.字段}</code> 引用会失效。
             </p>
           </template>
 

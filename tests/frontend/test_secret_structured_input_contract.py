@@ -401,14 +401,30 @@ class TestCustomJsonKeyValueEditor:
         assert "'border-rose-400'" not in source
         assert "rawRowErrors[index] ? 'border-rose-500'" in source
 
-    def test_rotation_locks_the_field_structure(self):
-        """轮换只换值不换结构：加/删字段、改字段名都会让别处的引用失效。"""
+    def test_rotation_allows_editing_keys_but_warns_about_broken_references(self):
+        """轮换不换结构——但这句话原来是用「锁死编辑器」实现的，反而把功能锁坏了。
+
+        锁死之后，「自定义 JSON」的凭据在轮换时连字段都改不了：键名写错改不回来、
+        新增一个字段也加不上，只能取消重来。所以现在改成**可编辑 + 说清代价**：
+        键名能改，但界面明说改掉键名会让别处写好的 `{{ secret:标识.字段 }}` 引用失效。
+
+        锁住的只剩「档位与模板」——换模板等于换掉一整份结构，那是另一回事。
+        """
         source = _read(EDITOR)
-        for name in ("addRawRow", "removeRawRow", "switchRawView"):
+
+        # 行级增删不再被锁
+        for name in ("addRawRow", "removeRawRow"):
             body = source.split(f"function {name}(")[1].split("\n}")[0]
-            assert "props.lockStructure" in body, name
-        assert 'v-if="!lockStructure"' in source
-        assert "轮换中字段结构已锁定，只能改值。" in source
+            assert "props.lockStructure" not in body, f"{name} 不该再因轮换早退"
+
+        # 但代价必须写在原地，不能只靠用户自己想到
+        assert "引用会失效" in source
+        assert "键名请与原来保持一致" in source
+
+        # 模板与档位仍然锁住
+        assert "function chooseTemplate(id: string) {\n  if (props.lockStructure) return" in source
+        assert "function switchFormat(next: 'text' | 'json') {\n  if (props.lockStructure) return" in source
+        assert "轮换不能换模板" in source
 
 
 class TestApiToolMappingReminder:

@@ -17,9 +17,11 @@ import { shortTime } from '../utils/date'
 import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
 import CredentialValueEditor from '../components/secrets/CredentialValueEditor.vue'
 import SecretFormatBadge from '../components/secrets/SecretFormatBadge.vue'
+import SecretKeyChip from '../components/secrets/SecretKeyChip.vue'
 import { credentialTemplateLabel } from '../utils/credentialTemplates'
 import { RESULT_LABEL } from '../utils/secretLabels'
 import {
+  SECRET_ACTION_LABEL,
   secretActionLabel,
   secretActionStyle,
 } from '../utils/secretAudit'
@@ -544,6 +546,19 @@ type AuditRow = {
   created_at: string
 }
 const auditRows = ref<AuditRow[]>([])
+/**
+ * 变更记录的搜索条件。
+ *
+ * 记录一多，靠眼睛在一屏里捞「谁把这条规则删了」是不现实的——个人这边问的
+ * 更是「我自己上个月动过什么」。与管理员端同一套：一个框搜凭据标识 / 操作人 /
+ * detail 里的槽位与规则，动作可多选。
+ */
+const auditKeyword = ref('')
+const auditActions = ref<string[]>([])
+const auditFiltered = computed(
+  () => Boolean(auditKeyword.value.trim() || auditActions.value.length),
+)
+const AUDIT_ACTIONS = Object.keys(SECRET_ACTION_LABEL)
 /** 展开了参数明细的流水行（按行 id 记，切凭据时整体清空） */
 const expandedUsageKeys = ref<string[]>([])
 
@@ -567,6 +582,12 @@ async function loadRecords(tab: RecordTab) {
     if (usageScope.value === 'secret' && usageSecretId.value) {
       params.secret_id = usageSecretId.value
     }
+    if (tab === 'audit') {
+      const keyword = auditKeyword.value.trim()
+      if (keyword) params.keyword = keyword
+      // 逗号分隔而不是数组：axios 会发成 action[]=，FastAPI 的 List 查询不认
+      if (auditActions.value.length) params.action = auditActions.value.join(',')
+    }
     const res = await axios.get(url, { params })
     if (tab === 'usage') {
       usageRows.value = res.data?.data || []
@@ -589,6 +610,22 @@ async function openUsage() {
   await loadRecords('usage')
 }
 
+/**
+ * 「这条凭据的变更记录」。
+ *
+ * 与 `openUsage` 同一个弹窗，只是直接落在 audit 页签并带上这条的 secret_id——
+ * 卡片上问的是「这条谁改过」，不该让用户进去之后再自己切页签、自己选范围。
+ */
+async function openAudit() {
+  usageSecretId.value = selected.value?.id || ''
+  usageScope.value = usageSecretId.value ? 'secret' : 'all'
+  auditKeyword.value = ''
+  auditActions.value = []
+  usageOpen.value = true
+  recordTab.value = 'audit'
+  await loadRecords('audit')
+}
+
 async function setUsageScope(scope: RecordScope) {
   if (usageScope.value === scope) return
   usageScope.value = scope
@@ -599,6 +636,26 @@ async function setUsageScope(scope: RecordScope) {
 async function switchRecordTab(tab: RecordTab) {
   recordTab.value = tab
   await loadRecords(tab)
+}
+
+let auditTimer: ReturnType<typeof setTimeout> | null = null
+/** 输入即搜要防抖：每敲一个字打一次请求，滚动时会明显卡 */
+function scheduleAuditSearch() {
+  if (auditTimer) clearTimeout(auditTimer)
+  auditTimer = setTimeout(() => void loadRecords('audit'), 250)
+}
+
+function toggleAuditAction(action: string) {
+  auditActions.value = auditActions.value.includes(action)
+    ? auditActions.value.filter((item) => item !== action)
+    : [...auditActions.value, action]
+  void loadRecords('audit')
+}
+
+function clearAuditFilters() {
+  auditKeyword.value = ''
+  auditActions.value = []
+  void loadRecords('audit')
 }
 
 // ── 注入策略 ──────────────────────────────────────────────────────────
@@ -1234,7 +1291,7 @@ onMounted(() => {
                 <SecretFormatBadge :format="item.value_format" :template="item.value_template" />
               </div>
               <p class="truncate text-[11px] text-gray-400">
-                <code class="font-mono">{{ item.secret_key }}</code> · {{ categoryOf(item) }}
+                <SecretKeyChip :secret-key="item.secret_key" /> · {{ categoryOf(item) }}
               </p>
             </div>
           </div>
@@ -1259,7 +1316,7 @@ onMounted(() => {
             >{{ selected.secret_type === 'variable' ? '变' : '凭' }}</span>
             <div class="min-w-0">
               <p class="truncate text-sm font-semibold text-gray-900">{{ selected.name }}</p>
-              <p class="truncate font-mono text-[11px] text-gray-400">{{ selected.secret_key }}</p>
+              <p class="truncate text-[11px] text-gray-400"><SecretKeyChip :secret-key="selected.secret_key" /></p>
             </div>
           </div>
           <div class="mt-2 flex flex-wrap gap-1">
@@ -1526,6 +1583,11 @@ onMounted(() => {
             @click="openUsage"
           >使用记录</button>
           <button
+            type="button"
+            class="rounded-lg border border-gray-300 px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
+            @click="openAudit"
+          >变更记录</button>
+          <button
             v-if="selected.owner_scope === 'user'"
             type="button"
             class="ml-auto rounded-lg border border-rose-200 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
@@ -1652,7 +1714,7 @@ onMounted(() => {
           <div class="border-b border-gray-100 px-5 py-3">
             <h3 class="text-base font-semibold text-gray-900">编辑凭据</h3>
             <p class="mt-0.5 text-xs text-gray-500">
-              <code class="rounded bg-gray-100 px-1 py-0.5">{{ selected?.secret_key }}</code>
+              <SecretKeyChip :secret-key="selected?.secret_key || ''" />
               的值不能改——要换值请用「轮换」，那样会留下记录。
             </p>
           </div>
@@ -1834,8 +1896,49 @@ onMounted(() => {
             <p v-else-if="usageLoading" class="py-8 text-center text-xs text-gray-400">加载中…</p>
 
             <template v-else-if="recordTab === 'audit'">
+              <!-- 搜索与动作筛选：与管理员端同一套交互，两边不用分别学一遍 -->
+              <div class="mb-2 flex flex-wrap items-center gap-1.5">
+                <div class="relative w-full min-w-0 sm:w-64">
+                  <input
+                    v-model="auditKeyword"
+                    type="text"
+                    placeholder="搜凭据标识 / 操作人 / 槽位或规则"
+                    spellcheck="false"
+                    class="w-full rounded-lg border border-gray-300 py-1 pl-2.5 pr-7 text-xs focus:border-primary focus:outline-none"
+                    @input="scheduleAuditSearch"
+                  />
+                  <button
+                    v-if="auditKeyword"
+                    type="button"
+                    class="absolute right-1 top-1/2 -translate-y-1/2 rounded px-1 text-sm leading-none text-gray-400 hover:text-gray-600"
+                    title="清空关键字"
+                    @click="auditKeyword = ''; loadRecords('audit')"
+                  >×</button>
+                </div>
+                <button
+                  v-if="auditFiltered"
+                  type="button"
+                  class="whitespace-nowrap rounded-lg border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50"
+                  @click="clearAuditFilters"
+                >清空筛选</button>
+              </div>
+              <div class="mb-2 flex flex-wrap items-center gap-1">
+                <button
+                  v-for="action in AUDIT_ACTIONS"
+                  :key="action"
+                  type="button"
+                  class="rounded-full px-2 py-0.5 text-[11px] ring-1 ring-inset transition-colors"
+                  :class="auditActions.includes(action)
+                    ? 'bg-slate-900 text-white ring-slate-900'
+                    : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50'"
+                  @click="toggleAuditAction(action)"
+                >{{ secretActionLabel(action) }}</button>
+              </div>
               <p v-if="!auditRows.length" class="py-8 text-center text-xs text-gray-400">
-                还没有变更记录
+                <template v-if="auditFiltered">
+                  没有匹配的变更记录——换个关键字，或清掉动作筛选再看
+                </template>
+                <template v-else>还没有变更记录</template>
               </p>
               <div v-else class="space-y-1.5">
                 <div
