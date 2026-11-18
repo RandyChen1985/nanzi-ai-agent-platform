@@ -10,7 +10,10 @@ import SessionTraceModal from '../components/SessionTraceModal.vue'
 import axios from '../utils/axios'
 import { 
   PlayCircleIcon,
-  PauseCircleIcon
+  PauseCircleIcon,
+  PencilSquareIcon,
+  ClockIcon,
+  PaperAirplaneIcon,
 } from '@heroicons/vue/24/outline'
 import { useRoute, useRouter } from 'vue-router'
 import MetadataCronInspectionModal from '../components/metadata/MetadataCronInspectionModal.vue'
@@ -2565,6 +2568,7 @@ onMounted(async () => {
           <TaskFormSection
             v-model="showWhatSection"
             :section-id="TASK_SECTION_IDS.what"
+            :icon="PencilSquareIcon"
             title="做什么"
             hint="一句话说清目标与交付"
             :summary="taskSectionSummary.what"
@@ -2984,6 +2988,7 @@ onMounted(async () => {
           <TaskFormSection
             v-model="showWhenSection"
             :section-id="TASK_SECTION_IDS.when"
+            :icon="ClockIcon"
             title="什么时候跑"
             hint="按人话选，随时能看到下次运行时间"
             :summary="taskSectionSummary.when"
@@ -3152,6 +3157,7 @@ onMounted(async () => {
           <TaskFormSection
             v-model="showResultSection"
             :section-id="TASK_SECTION_IDS.result"
+            :icon="PaperAirplaneIcon"
             title="结果发到哪"
             hint="站内消息始终可用"
             :summary="taskSectionSummary.result"

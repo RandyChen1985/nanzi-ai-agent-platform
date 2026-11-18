@@ -120,3 +120,22 @@ def test_save_expands_first_invalid_section_before_toasting():
     assert source.index("expandSection('what')") < source.index("expandSection('when')")
     assert "请填写任务名称" in source
     assert "请填写「要做什么」" in source
+
+
+def test_section_title_has_leading_icon_and_chevron_indicator():
+    source = _source(SECTION)
+
+    # 标题前有语义图标（由调用方传入，组件不硬编码业务含义）
+    assert "icon?: Component" in source
+    assert ":is=\"icon\"" in source
+    # 收起/展开用 chevron 图标 + 旋转，而不是纯字符，视觉上更明确
+    assert "ChevronDownIcon" in source
+    assert "rotate-180" in source
+
+
+def test_task_center_passes_semantic_icons_to_three_sections():
+    source = _source(TASK_CENTER)
+
+    for token in ("PencilSquareIcon", "ClockIcon", "PaperAirplaneIcon"):
+        assert token in source, f"缺少图标 {token}"
+    assert source.count(":icon=") >= 3

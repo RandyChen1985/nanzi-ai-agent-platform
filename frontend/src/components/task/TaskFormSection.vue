@@ -8,6 +8,13 @@
       :aria-controls="sectionId"
       @click="emit('update:modelValue', !modelValue)"
     >
+      <!-- 语义图标由调用方传入：组件不替业务决定「做什么」该配什么图标 -->
+      <component
+        :is="icon"
+        v-if="icon"
+        class="h-4 w-4 shrink-0 text-primary"
+        aria-hidden="true"
+      />
       <span class="text-[11px] font-black text-primary tracking-wide">{{ title }}</span>
       <span v-if="hint" class="text-[10px] text-gray-400">{{ hint }}</span>
       <span
@@ -15,8 +22,12 @@
         class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-red-500 text-[9px] font-black leading-none text-white"
         aria-hidden="true"
       >!</span>
-      <span class="ml-auto flex items-center gap-1 text-[10px] font-black text-gray-400">
-        <span aria-hidden="true">{{ modelValue ? '▾' : '▸' }}</span>
+      <span class="ml-auto flex shrink-0 items-center gap-1 text-gray-400">
+        <ChevronDownIcon
+          class="h-3.5 w-3.5 transition-transform duration-200"
+          :class="{ 'rotate-180': modelValue }"
+          aria-hidden="true"
+        />
         <span class="sr-only">{{ modelValue ? '收起本节' : '展开本节' }}</span>
       </span>
     </button>
@@ -39,10 +50,15 @@
 </template>
 
 <script setup lang="ts">
+import type { Component } from 'vue'
+import { ChevronDownIcon } from '@heroicons/vue/24/outline'
+
 defineProps<{
   /** 内容区 id，供 aria-controls 与保存失败时的滚动定位共用 */
   sectionId: string
   title: string
+  /** 标题前的语义图标，由调用方传入 */
+  icon?: Component
   hint?: string
   /** 收起态的一行摘要 */
   summary?: string
