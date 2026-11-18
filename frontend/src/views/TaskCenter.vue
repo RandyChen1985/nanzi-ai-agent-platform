@@ -21,6 +21,13 @@ import { formatCronRunTime, nextCronRunTimes, validateCronExpression } from '@/u
 import { describeScene, inferScene } from '@/utils/cronScenes'
 import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
 import TaskFlowGuideBanner from '@/components/task/TaskFlowGuideBanner.vue'
+import TaskFormSection from '@/components/task/TaskFormSection.vue'
+import {
+  buildTaskSectionSummaries,
+  resolveTaskSectionIssues,
+  TASK_SECTION_IDS,
+  type TaskSectionKey,
+} from '@/utils/taskFormSections'
 import TaskPromptComposer, {
   type TaskApprovalMode,
   type TaskResourceScope,
@@ -1030,6 +1037,26 @@ const cronNextRuns = computed(() => {
   return nextCronRunTimes(expr, 3).map((date) => formatCronRunTime(date))
 })
 
+/**
+ * 三段折叠：默认全展开。已确认「打开就要看全貌，想收再收」，
+ * 因此不做持久化、不跨弹窗记忆；编辑已有任务同样全展开。
+ */
+const showWhatSection = ref(true)
+const showWhenSection = ref(true)
+const showResultSection = ref(true)
+
+const expandSection = (key: TaskSectionKey | null) => {
+  if (!key) return
+  if (key === 'what') showWhatSection.value = true
+  else if (key === 'when') showWhenSection.value = true
+  else showResultSection.value = true
+  if (typeof document !== 'undefined') {
+    document
+      .getElementById(TASK_SECTION_IDS[key])
+      ?.scrollIntoView({ block: 'nearest' })
+  }
+}
+
 /** 重试策略是低频技术项，默认收起，避免和第 1 栏抢视线 */
 const showAdvancedRetry = ref(false)
 
@@ -1058,6 +1085,30 @@ const taskSummaryText = computed(() => {
   }
 })
 const taskSummaryNext = computed(() => cronNextRuns.value[0] || '')
+
+const taskSectionSummary = computed(() =>
+  buildTaskSectionSummaries({
+    name: String(editingTask.value?.name || ''),
+    agent: taskSummaryText.value.agent,
+    firstSentence: taskSummaryText.value.what,
+    when: taskSummaryText.value.when,
+    whenValid: taskSummaryText.value.whenValid,
+    nextRun: taskSummaryNext.value,
+    channels: taskSummaryText.value.channels,
+  }),
+)
+
+const taskSectionIssues = computed(() =>
+  resolveTaskSectionIssues({
+    name: String(editingTask.value?.name || ''),
+    prompt: String(editingTask.value?.prompt || ''),
+    cronExpr: String(editingTask.value?.cron_expr || ''),
+    cronValid: cronExprValidation.value.valid,
+  }),
+)
+
+/** 保存失败时展开出错的组并滚到可见——收起草稿里报错等于让用户找不到。 */
+
 
 // Filtered Tasks
 const scopedTasks = computed(() => {
@@ -1181,13 +1232,32 @@ const getTaskEditTitle = (task: AgentTask) => (
 
 const saveTask = async () => {
   try {
+    // 名称与提示词在后端是必填（422）；前端前移校验，否则收起态下报错位置不可见
+    const sectionIssues = resolveTaskSectionIssues({
+      name: String(editingTask.value?.name || ''),
+      prompt: String(editingTask.value?.prompt || ''),
+      cronExpr: String(editingTask.value?.cron_expr || ''),
+      cronValid: cronExprValidation.value.valid,
+    })
+    if (sectionIssues.issues.what) {
+      expandSection('what')
+      showToast(
+        String(editingTask.value?.name || '').trim()
+          ? '请填写「要做什么」'
+          : '请填写任务名称',
+        'error',
+      )
+      return
+    }
     // 非法表达式就地拦截：后端会返回 422，但原因埋在 detail 里，不如直接说明是哪一段错了
     const cronExpr = String(editingTask.value?.cron_expr || '').trim()
     if (!cronExpr) {
+      expandSection('when')
       showToast('请输入 Cron 表达式', 'error')
       return
     }
     if (!cronExprValidation.value.valid) {
+      expandSection('when')
       showToast(cronExprValidation.value.message, 'error')
       return
     }
@@ -2492,10 +2562,14 @@ onMounted(async () => {
             </p>
           </div>
 
-          <div class="flex items-baseline gap-2 border-b border-dashed border-gray-200 pb-1">
-            <span class="text-[11px] font-black text-primary tracking-wide">做什么</span>
-            <span class="text-[10px] text-gray-400">一句话说清目标与交付</span>
-          </div>
+          <TaskFormSection
+            v-model="showWhatSection"
+            :section-id="TASK_SECTION_IDS.what"
+            title="做什么"
+            hint="一句话说清目标与交付"
+            :summary="taskSectionSummary.what"
+            :has-error="taskSectionIssues.issues.what"
+          >
           <div>
             <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">任务基本信息</label>
             <input v-model="editingTask.name" placeholder="任务名称 (e.g. PUE日报)" class="w-full px-3 py-2 border rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" />
@@ -2904,11 +2978,17 @@ onMounted(async () => {
             </div>
           </div>
 
+          </TaskFormSection>
+
           <!-- 方案 A：「什么时候跑」整组前移到「做什么」之后；字段与绑定未改动 -->
-          <div class="flex items-baseline gap-2 border-b border-dashed border-gray-200 pb-1">
-            <span class="text-[11px] font-black text-primary tracking-wide">什么时候跑</span>
-            <span class="text-[10px] text-gray-400">按人话选，随时能看到下次运行时间</span>
-          </div>
+          <TaskFormSection
+            v-model="showWhenSection"
+            :section-id="TASK_SECTION_IDS.when"
+            title="什么时候跑"
+            hint="按人话选，随时能看到下次运行时间"
+            :summary="taskSectionSummary.when"
+            :has-error="taskSectionIssues.issues.when"
+          >
           <div>
             <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex justify-between items-center">
               <span>运行周期配置</span>
@@ -3067,11 +3147,16 @@ onMounted(async () => {
               </p>
             </div>
           </div>
+          </TaskFormSection>
 
-          <div class="flex items-baseline gap-2 border-b border-dashed border-gray-200 pb-1">
-            <span class="text-[11px] font-black text-primary tracking-wide">结果发到哪</span>
-            <span class="text-[10px] text-gray-400">站内消息始终可用</span>
-          </div>
+          <TaskFormSection
+            v-model="showResultSection"
+            :section-id="TASK_SECTION_IDS.result"
+            title="结果发到哪"
+            hint="站内消息始终可用"
+            :summary="taskSectionSummary.result"
+            :has-error="taskSectionIssues.issues.result"
+          >
           <div>
             <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">结果通知</label>
             <div class="rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-3 space-y-2">
@@ -3137,6 +3222,7 @@ onMounted(async () => {
               </p>
             </div>
           </div>
+          </TaskFormSection>
         </div>
 
         <!-- 右栏：任务摘要（宽屏常驻，粘性跟随滚动）-->
