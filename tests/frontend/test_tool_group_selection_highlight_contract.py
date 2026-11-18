@@ -13,11 +13,13 @@ pytestmark = pytest.mark.no_infrastructure
 
 DRAWER = Path("frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text()
 
+# 分组视图后来多了一层「业务分组过滤」（visibleScopeGroupedMcpTools），
+# 模板 v-for 渲染的才是最终可见的那份，切片锚点跟着它走。
 MCP_GROUPS = DRAWER.split(
-    'v-for="(tools, serverName) in currentScopeGroupedMcpTools"', 1
+    'v-for="(tools, serverName) in visibleScopeGroupedMcpTools"', 1
 )[1]
 STATIC_GROUPS = DRAWER.split('v-for="group in filteredGroupedTools"', 1)[1].split(
-    "currentScopeGroupedMcpTools", 1
+    "visibleScopeGroupedMcpTools", 1
 )[0]
 
 

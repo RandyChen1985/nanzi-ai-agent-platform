@@ -2602,6 +2602,9 @@ const getMcpGroupSelectedCount = (tools: any[]) => {
 type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'welcome' | 'review';
 const versionConfigStep = ref<VersionConfigStep>('model');
 const toolSearchQuery = ref('');
+// 「仅看已选」：三个页签共用。勾选 36/172 之后，想回头核对「我到底选了哪几个」
+// 是高频操作，靠搜索框一个个搜太慢——直接过滤成只看已勾选的行。
+const onlySelectedTools = ref(false);
 const isCreatingAgent = ref(false);
 const isPersistingNewAgent = ref(false);
 const isLocalCreationEngine = computed(() => (agentForm.value.engine_type || 'LOCAL') === 'LOCAL');
@@ -2777,13 +2780,15 @@ const handleVersionConfigStepChange = (step: VersionConfigStep) => {
 
 const filteredGroupedTools = computed(() => {
   const q = toolSearchQuery.value.trim().toLowerCase();
+  const onlySelected = onlySelectedTools.value;
   return groupedTools.value
     .map((group) => ({
       ...group,
       tools: group.tools.filter((tool) =>
-        !q ||
-        tool.name.toLowerCase().includes(q) ||
-        (tool.description || '').toLowerCase().includes(q)
+        (!onlySelected || isToolSelected(tool.name)) &&
+        (!q ||
+          tool.name.toLowerCase().includes(q) ||
+          (tool.description || '').toLowerCase().includes(q))
       ),
     }))
     .filter((group) => group.tools.length > 0);
@@ -2792,15 +2797,20 @@ const filteredGroupedTools = computed(() => {
 const filteredGroupedMcpTools = computed(() => {
   const q = toolSearchQuery.value.trim().toLowerCase();
   const groups = groupedMcpTools.value;
-  if (!q) return groups;
+  const onlySelected = onlySelectedTools.value;
+  if (!q && !onlySelected) return groups;
   const result: Record<string, any[]> = {};
   for (const [serverName, tools] of Object.entries(groups)) {
-    const filtered = tools.filter((tool) =>
-      tool.name.toLowerCase().includes(q) ||
-      (tool.description || '').toLowerCase().includes(q) ||
-      (tool.server_remark || '').toLowerCase().includes(q) ||
-      serverName.toLowerCase().includes(q)
-    );
+    const filtered = tools.filter((tool) => {
+      if (onlySelected && !isToolSelected(tool.name)) return false;
+      if (!q) return true;
+      return (
+        tool.name.toLowerCase().includes(q) ||
+        (tool.description || '').toLowerCase().includes(q) ||
+        (tool.server_remark || '').toLowerCase().includes(q) ||
+        serverName.toLowerCase().includes(q)
+      );
+    });
     if (filtered.length > 0) result[serverName] = filtered;
   }
   return result;
@@ -2808,11 +2818,14 @@ const filteredGroupedMcpTools = computed(() => {
 
 const filteredEnabledSkills = computed(() => {
   const q = toolSearchQuery.value.trim().toLowerCase();
-  return enabledGlobalSkills.value.filter((skill) =>
-    !q ||
-    String(skill.id || '').toLowerCase().includes(q) ||
-    String(skill.name || '').toLowerCase().includes(q) ||
-    String(skill.description || '').toLowerCase().includes(q)
+  const onlySelected = onlySelectedTools.value;
+  return enabledGlobalSkills.value.filter(
+    (skill) =>
+      (!onlySelected || isSkillSelected(skill.id)) &&
+      (!q ||
+        String(skill.id || '').toLowerCase().includes(q) ||
+        String(skill.name || '').toLowerCase().includes(q) ||
+        String(skill.description || '').toLowerCase().includes(q))
   );
 });
 
@@ -2846,6 +2859,22 @@ const getStaticGroupSelectedCount = (tools: any[]) => {
 
 const getStaticGroupTools = (label: string) => {
   return groupedTools.value.find((group) => group.label === label)?.tools || [];
+};
+
+/**
+ * 分组头计数一律用**全量**分组算，不用过滤后的视图。
+ *
+ * 「仅看已选」把分组收窄成只剩已勾选的行，若分子分母都取视图，(2/2) 会让人以为
+ * 这组本来只有 2 个工具；分母保持全量才看得出「这组我只选了 2 个」。
+ */
+const staticGroupCounts = (label: string) => {
+  const tools = getStaticGroupTools(label);
+  return { selected: getStaticGroupSelectedCount(tools), total: tools.length };
+};
+
+const mcpGroupCounts = (serverName: string) => {
+  const tools = groupedMcpTools.value[serverName] || [];
+  return { selected: getMcpGroupSelectedCount(tools), total: tools.length };
 };
 
 const getSelectableStaticGroupTools = (label: string) => {
@@ -2960,6 +2989,7 @@ let versionToolHealthRequestSeq = 0;
 const resetVersionEditorUi = () => {
   versionConfigStep.value = 'model';
   toolSearchQuery.value = '';
+  onlySelectedTools.value = false;
   // 两个页签都是「记已展开」：清空即回到全部分组折叠，与首次进入的默认状态一致。
   expandedMcpGroups.value = new Set();
   expandedStaticGroups.value = new Set();
@@ -3367,6 +3397,7 @@ const startAgentCreation = () => {
   };
   fetchTools();
   toolSearchQuery.value = "";
+  onlySelectedTools.value = false;
   versionConfigStep.value = "agent";
   showVersionModal.value = true;
   resetAgentNameCheckState();
@@ -3816,6 +3847,7 @@ const continueAgentOnboarding = async (agent: AIAgent) => {
     resetAgentNameCheckState();
     fetchTools();
     toolSearchQuery.value = "";
+    onlySelectedTools.value = false;
     // BASIC 副本要先改名/换头像，直接落到「智能体信息」；
     // 已经到 VERSION/RESOURCE 的继续从模型策略往下走。
     versionConfigStep.value = agent.onboarding_step === "BASIC" ? "agent" : "model";
@@ -8028,6 +8060,10 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :can-edit-version="canEditVersion"
       :tool-tab="toolTab"
       :tool-search-query="toolSearchQuery"
+      :only-selected-tools="onlySelectedTools"
+      :grouped-mcp-tools="groupedMcpTools"
+      :static-group-counts="staticGroupCounts"
+      :mcp-group-counts="mcpGroupCounts"
       :version-config-step="versionConfigStep"
       :version-config-steps="versionConfigSteps"
       :version-config-progress="versionConfigProgress"
@@ -8073,6 +8109,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @publish="publishVersionFromEditor"
       @update:tool-tab="toolTab = $event"
       @update:tool-search-query="toolSearchQuery = $event"
+      @update:only-selected-tools="onlySelectedTools = $event"
       @update:version-config-step="handleVersionConfigStepChange"
       @toggle-tool="toggleTool"
       @toggle-skill="toggleSkill"

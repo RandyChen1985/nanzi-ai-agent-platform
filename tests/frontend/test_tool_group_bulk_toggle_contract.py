@@ -171,10 +171,19 @@ def test_bulk_buttons_expose_accessible_names_and_focus_ring():
 
 
 def test_collapsed_groups_expand_while_searching():
+    """两种过滤态（搜索 /「仅看已选」）都强制展开分组。
+
+    判据后来合并成 ``isFiltering``：它 = isSearching || onlySelectedTools。
+    两者都会把分组收窄到只剩几条，折叠着等于看不到东西。
+    """
     source = _source(DRAWER)
     assert "const isSearching = computed" in source
-    assert re.search(r"!isStaticGroupCollapsed\(group\.label\)\s*\|\|\s*isSearching", source)
-    assert re.search(r"!isMcpGroupCollapsed\(serverName\)\s*\|\|\s*isSearching", source)
+    assert re.search(
+        r"const isFiltering = computed\(\(\) => isSearching\.value \|\| props\.onlySelectedTools\)",
+        source,
+    )
+    assert re.search(r"!isStaticGroupCollapsed\(group\.label\)\s*\|\|\s*isFiltering", source)
+    assert re.search(r"!isMcpGroupCollapsed\(serverName\)\s*\|\|\s*isFiltering", source)
 
 
 def test_group_header_toggle_is_disabled_while_searching():
@@ -185,7 +194,7 @@ def test_group_header_toggle_is_disabled_while_searching():
         "emit('toggleMcpGroupCollapse', serverName)",
     ):
         tag = _element_tag(source, needle)
-        assert ':disabled="isSearching"' in tag, tag
+        assert ':disabled="isFiltering"' in tag, tag
 
 
 @pytest.mark.parametrize("name", BULK_HANDLERS)
