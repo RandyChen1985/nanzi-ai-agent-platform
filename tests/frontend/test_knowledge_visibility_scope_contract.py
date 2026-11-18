@@ -295,3 +295,20 @@ def test_private_dataset_creation_skips_creator_grant():
 
     assert "_grant_dataset_to_creator" in block
     assert "VISIBILITY_PRIVATE" in block
+
+
+def test_child_nodes_indent_with_their_department_level():
+    """部门头与它下面的知识库节点必须用同一个缩进来源。
+
+    原来只有部门头带 `marginLeft: level * 10`，库节点所在的容器写死 `ml-1.5`：
+    第三层部门（A1子部门，头缩进 20px）下面的库只缩进 16px，比父部门头还靠左，
+    看上去既没缩进、又像退回到了上一级。层级越深越错。
+    """
+    page = _page()
+
+    assert "function deptIndent(level: number" in page
+    # 头与容器同源
+    assert ':style="{ marginLeft: deptIndent(group.level) }"' in page
+    assert "deptIndent(group.level, 6)" in page
+    # 容器不能再退回固定的 ml-1.5（那就是「子节点不跟随层级」的老写法）
+    assert "'ml-1.5 border-l" not in page

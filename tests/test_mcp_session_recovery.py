@@ -2,8 +2,14 @@ import asyncio
 import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
-from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
+from app.services.ai.tools.mcp_client import (
+    McpClientService,
+    McpSseSession,
+    _is_transport_error,
+)
 from httpx import Response
+from mcp.shared.exceptions import MCPError
+from mcp_types import CONNECTION_CLOSED, INTERNAL_ERROR
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -417,3 +423,178 @@ async def test_connect_propagates_caller_cancellation():
 
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+# ---------------------------------------------------------------------------
+# 传输层死连接：mcp 2.x 在本地写流已关闭时抛 MCPError(-32000 Connection closed)
+# ---------------------------------------------------------------------------
+
+
+def _connection_closed() -> MCPError:
+    return MCPError(CONNECTION_CLOSED, "Connection closed")
+
+
+def _mock_tool_result(text: str = "ok") -> SimpleNamespace:
+    return SimpleNamespace(
+        content=[SimpleNamespace(text=text)],
+        isError=False,
+        structuredContent=None,
+    )
+
+
+def test_connection_closed_is_transport_failure_but_protocol_error_is_not():
+    """CONNECTION_CLOSED 属于传输断开；协议类错误码不能混进来。
+
+    混进来的代价是把一次工具自身的失败当成断线重发（写操作执行两遍），
+    并且每次调用都拆掉连接、引发重连风暴。
+    """
+    assert _is_transport_error(_connection_closed()) is True
+    assert _is_transport_error(MCPError(INTERNAL_ERROR, "Internal error")) is False
+    assert _is_transport_error(MCPError(-32601, "Method not found")) is False
+    assert _is_transport_error(ConnectionError("stream closed")) is True
+
+
+@pytest.mark.asyncio
+async def test_sse_tool_call_reconnects_after_connection_closed(mock_session):
+    """写流已关闭时必须重连重试，而不是把整段错误直接甩给用户。
+
+    修复前 ``MCPError`` 既不在 ``_TRANSPORT_ERROR_TYPES`` 里、也不是
+    ``OSError`` 子类，判定为「业务错误」→ 不 close、不 connect、不淘汰缓存，
+    后续每次调用都撞同一条死流（用户侧：一次报错后全部报错）。
+    """
+    stale_client = MagicMock()
+    stale_client.call_tool = AsyncMock(side_effect=_connection_closed())
+    fresh_client = MagicMock()
+    fresh_client.call_tool = AsyncMock(return_value=_mock_tool_result())
+    mock_session.is_direct_http = False
+    mock_session.session = stale_client
+    mock_session.close = AsyncMock(side_effect=lambda: setattr(mock_session, "session", None))
+    mock_session.connect = AsyncMock(side_effect=lambda: setattr(mock_session, "session", fresh_client))
+
+    with patch.object(
+        McpClientService,
+        "get_session",
+        AsyncMock(return_value=mock_session),
+    ):
+        result = await McpClientService.call_remote_tool(SERVER_ID, "text_generate_image", {})
+
+    assert result == "ok"
+    mock_session.close.assert_awaited_once()
+    mock_session.connect.assert_awaited_once()
+    fresh_client.call_tool.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_transport_failure_evicts_dead_cached_session(mock_session):
+    """重连也失败（远端仍未恢复）时，死会话必须从共享缓存里移除。
+
+    留在缓存里会让下一次 ``get_session`` 的幂等短路直接返回它，
+    表现就是「报错之后再也不会自愈」。
+    """
+    dead_client = MagicMock()
+    dead_client.call_tool = AsyncMock(side_effect=_connection_closed())
+    mock_session.is_direct_http = False
+    mock_session.session = dead_client
+    mock_session.close = AsyncMock(side_effect=lambda: setattr(mock_session, "session", None))
+    # 重连后拿到的还是同一条死连接：本次调用注定失败
+    mock_session.connect = AsyncMock(
+        side_effect=lambda: setattr(mock_session, "session", dead_client)
+    )
+
+    McpClientService._sessions[SERVER_ID] = mock_session
+    try:
+        with patch.object(
+            McpClientService,
+            "get_session",
+            AsyncMock(return_value=mock_session),
+        ):
+            with pytest.raises(RuntimeError, match="Connection closed"):
+                await McpClientService.call_remote_tool(SERVER_ID, "text_generate_image", {})
+        assert SERVER_ID not in McpClientService._sessions
+    finally:
+        McpClientService._sessions.pop(SERVER_ID, None)
+
+
+@pytest.mark.asyncio
+async def test_sse_tool_call_marks_request_in_flight(mock_session):
+    """SSE 调用也要计入在途请求，否则空闲回收会关掉正在生成图片的连接。"""
+    seen = {}
+
+    async def _call_tool(name, arguments=None, **kwargs):
+        seen["in_flight"] = mock_session._active_requests
+        return _mock_tool_result()
+
+    client = MagicMock()
+    client.call_tool = AsyncMock(side_effect=_call_tool)
+    mock_session.is_direct_http = False
+    mock_session.session = client
+
+    with patch.object(
+        McpClientService,
+        "get_session",
+        AsyncMock(return_value=mock_session),
+    ):
+        await McpClientService.call_remote_tool(SERVER_ID, "lookup", {})
+
+    assert seen["in_flight"] == 1
+    assert mock_session._active_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_idle_sweep_keeps_going_after_one_session_close_fails():
+    """单个会话关不掉不能连累整轮回收，更不能让循环停摆。"""
+    bad = McpSseSession("bad-server", SSE_URL, AUTH_HEADERS)
+    good = McpSseSession("good-server", SSE_URL, AUTH_HEADERS)
+    bad.last_used_at = 0
+    good.last_used_at = 0
+    bad.close = AsyncMock(side_effect=RuntimeError("cancel scope closed"))
+    good.close = AsyncMock()
+
+    McpClientService._sessions.clear()
+    McpClientService._sessions.update({"bad-server": bad, "good-server": good})
+    try:
+        closed = await McpClientService._sweep_idle_sessions()
+    finally:
+        McpClientService._sessions.clear()
+
+    assert closed == 1
+    good.close.assert_awaited_once()
+    assert "bad-server" not in McpClientService._sessions
+    assert "good-server" not in McpClientService._sessions
+
+
+@pytest.mark.asyncio
+async def test_idle_cleanup_loop_survives_sweep_failure():
+    """一轮回收抛异常后循环必须继续，否则死会话再也不会有机会被淘汰。"""
+    calls = {"n": 0}
+
+    async def _sweep():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        raise asyncio.CancelledError
+
+    with patch.object(McpClientService, "_sweep_idle_sessions", _sweep), patch(
+        "app.services.ai.tools.mcp_client.asyncio.sleep", AsyncMock(return_value=None)
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await McpClientService._idle_cleanup_loop()
+
+    assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_close_swallows_anyio_scope_cancellation(mock_session):
+    """anyio 跨 task 退出抛的取消不是调用方取消，不能把宿主循环带崩。"""
+    exit_stack = MagicMock()
+    exit_stack.aclose = AsyncMock(
+        side_effect=asyncio.CancelledError("Cancelled via cancel scope 0x1")
+    )
+    mock_session._exit_stack = exit_stack
+    mock_session.session = MagicMock()
+
+    with patch.object(McpSseSession, "_clear_internal_cancellation"):
+        await mock_session.close()
+
+    assert mock_session.session is None
+    assert mock_session._exit_stack is None

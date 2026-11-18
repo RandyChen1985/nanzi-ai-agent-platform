@@ -12,7 +12,11 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 PERSONAL_CENTER = ROOT / "frontend/src/views/PersonalCenter.vue"
@@ -750,14 +754,25 @@ class TestAdminSecretCenterUsage:
         admin = _read(ROOT / self.ADMIN)
         assert "resultLabel" in admin
 
-    def test_cards_render_two_per_row(self):
+    def test_cards_render_three_per_row(self):
+        """三列：动作收进 ⋯ 之后，卡片头部只剩「名称 + 徽标 + ⋯」。
+
+        原来是两列——那时每张卡平铺六七个按钮，一列放不下。收进菜单后
+        每列 ~440px（1440 屏）已经够放摘要与授权 chip，1280 以下才回两列。
+        """
         source = _read(ROOT / self.ADMIN)
-        assert "grid gap-3 lg:grid-cols-2" in source
+        assert "grid gap-3 md:grid-cols-2 xl:grid-cols-3" in source
 
     def test_status_is_visible_at_a_glance(self):
-        """两列之后卡片挨得近，靠文字读状态太慢，左边给一道色条。"""
+        """卡片挨得近，靠文字读状态太慢，左边给一道色条。
+
+        色条现在按时效分三档（生效绿 / 快过期或已过期琥珀 / 停用灰）：
+        「生效中但下周就过期」和「能长期用」是两回事，同一道绿条会看漏。
+        """
         source = _read(ROOT / self.ADMIN)
-        assert "border-l-4 border-l-emerald-400" in source
+        assert "['border-l-4', cardAccent(item)]" in source
+        assert "function cardAccent(item: SystemSecret): string" in source
+        assert "border-l-amber-500" in source
 
     def test_usage_dialog_is_teleported(self):
         """Tailwind 覆盖层契约：fixed inset-0 必须 Teleport + z-[100]。"""
@@ -828,9 +843,13 @@ class TestUsageStatsAndFilter:
         assert "全部凭据" in source
 
     def test_card_can_open_its_own_usage(self):
-        """卡片上的入口要带上自己那条的 id，而不是又打开全局列表。"""
+        """卡片上的入口要带上自己那条的 id，而不是又打开全局列表。
+
+        入口从平铺按钮挪进了 ⋯ 菜单，但「带自己的 id」这条不变。
+        """
         source = _read(ROOT / self.ADMIN)
-        assert "@click=\"openUsage(item.id)\"" in source
+        card_section = source.split("<!-- 列表视图")[0]
+        assert '@usage="openUsage(item.id)"' in card_section
 
     def test_stats_panel_shows_the_three_dimensions(self):
         # 渲染在共用组件里，管理端只负责挂上去
@@ -1067,10 +1086,13 @@ class TestEditMetadata:
 
     ADMIN = "frontend/src/views/AdminSecretCenter.vue"
 
-    def test_card_has_an_edit_button(self):
+    def test_card_has_an_edit_entry(self):
+        """编辑入口在卡片的 ⋯ 菜单里（操作项文案由 SecretRowActions 提供）。"""
         source = _read(ROOT / self.ADMIN)
-        assert "@click=\"openEdit(item)\"" in source
-        assert ">编辑</button>" in source or "编辑\n" in source
+        card_section = source.split("<!-- 列表视图")[0]
+        assert '@edit="openEdit(item)"' in card_section
+        row_actions = _read(ROW_ACTIONS)
+        assert ">编辑</button>" in row_actions
 
     def test_edit_uses_patch_not_create(self):
         """PATCH 只改元数据；值必须走轮换，否则没有轮换痕迹。"""
@@ -1123,8 +1145,9 @@ class TestRotateIsReachable:
 
     def test_admin_can_rotate(self):
         source = _read(ROOT / self.ADMIN)
+        card_section = source.split("<!-- 列表视图")[0]
         assert "function openRotate(" in source
-        assert "@click=\"openRotate(item)\"" in source
+        assert '@rotate="openRotate(item)"' in card_section
         assert "`/api/portal/secrets/${target.id}/rotate`" in source
 
     def test_rotate_explains_the_overlap_window(self):
@@ -1448,7 +1471,10 @@ class TestNoPlaintextOnScreen:
             template = source[source.index("<template>") :]
 
             assert "/value" not in template, f"{path.name} 不该调用读明文的接口"
-            assert "clipboard" not in source.lower() or "copyToClipboard" not in source
+            # 复制一律走组件：标识用 SecretKeyChip（只接受 secret_key），
+            # 变量类明文留在 reveal 弹窗里。页面自己不再直接调复制工具，
+            # 免得「顺手给值也加个复制」时没人拦得住。
+            assert "copyToClipboard(" not in source, f"{path.name} 不该直接调复制工具"
             # 值输入框默认掩码，且从不绑定已保存的值。
             # textarea 没有 type="password"，靠 .masked-value（-webkit-text-security）
             # 遮住；「显示」只影响**正在输入的**内容，不会回显已保存的值。
@@ -1877,14 +1903,21 @@ class TestAdminListViewToggle:
         assert "@click=\"openRotate(item)\"" not in list_section
         assert "@usage=\"openUsage(item.id)\"" in list_section
 
-    def test_card_view_keeps_flat_buttons(self):
-        """卡片横向空间够，直点更快——不要顺手把卡片也改成菜单。"""
+    def test_card_view_uses_the_same_menu_as_the_list(self):
+        """卡片也收进 ⋯ 菜单（三列之后，平铺按钮会把信息挤掉）。
+
+        原契约是「卡片横向空间够、平铺更快」。改成三列后这条前提没了：每列只有
+        ~440px，七八个按钮会让名称与摘要各折一行，而且两个视图各维护一份动作清单。
+        现在卡片与列表共用 SecretRowActions，动作清单只有一份。
+        """
         source = _read(ADMIN_SECRET_CENTER)
         card_section = source.split("<!-- 列表视图")[0]
 
-        assert "@click=\"openEdit(item)\"" in card_section
-        assert "@click=\"openRotate(item)\"" in card_section
-        assert "强制停用" in card_section
+        assert "<SecretRowActions" in card_section
+        assert "@click=\"openEdit(item)\"" not in card_section
+        assert "@click=\"openRotate(item)\"" not in card_section
+        # 危险动作同样在菜单里，卡片上不留常显的「强制停用」
+        assert ">强制停用<" not in card_section
 
     def test_list_columns_cover_triage_questions(self):
         source = _read(ADMIN_SECRET_CENTER)
@@ -2034,7 +2067,9 @@ class TestAuditActionBadges:
             source = _read(path)
             assert "secretActionStyle(row.action)" in source, f"{path.name} 未接入配色"
             assert "secretActionLabel(row.action)" in source
-            assert "ACTION_LABEL" not in source, "本地映射应已删除，改由共享模块提供"
+            #: 本地映射应已删除，改由共享模块提供。这里只禁「本地定义」——
+            #: 引用共享的 `SECRET_ACTION_LABEL`（用于生成动作筛选项）是正当用法。
+            assert "const ACTION_LABEL" not in source, "本地映射应已删除，改由共享模块提供"
 
     def test_both_centers_import_shared_badge_style(self):
         """模板里写了不等于能用：`<script setup>` 里没 import 就是 undefined。
@@ -2076,3 +2111,591 @@ class TestParamMarkSaveHonesty:
         src = _read(ROOT / "frontend/src/components/system/McpServerRegistry.vue")
         assert "if (serverId) await fetchTools(serverId)" in src
         assert "if (tool.server_id) await fetchTools(String(tool.server_id))" in src
+
+
+class TestAdminDeleteAndRestore:
+    """系统级凭据的「删除」与「恢复」入口。
+
+    这两个能力后端早就有了，前端却两个都没有入口：
+
+    - `DELETE /api/portal/secrets/{id}` 对系统级只要求调用者是管理员
+      （`center.delete_secret` 里的 `actor_is_admin` 分支），并且显式清
+      `sys_secret_grants` / `sys_secret_bindings`；
+    - `POST /api/portal/secrets/admin/{id}/status` 的 docstring 自己写着
+      「停用必须可逆，否则管理员不敢用它止血」。
+
+    缺入口的后果不是「少个按钮」：系统级凭据只增不减，而误停用之后界面上
+    恢复不了、弹窗还写着「不可恢复」，管理员只能删了重建——连带清掉所有
+    授权与绑定。所以这里同时锁**入口**和**文案**。
+    """
+
+    def test_admin_page_calls_the_delete_endpoint(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        # 系统级删除复用个人页同一个端点：没有 /admin 版 delete 路由，也不需要
+        assert "axios.delete(`/api/portal/secrets/${deleteTarget.value.id}`)" in source
+        assert "async function submitDelete()" in source
+
+    def test_delete_entry_exists_in_both_views(self):
+        """两个视图都得能删，否则换个视图就摸不到。
+
+        卡片原本平铺一个实心红按钮；三列之后与列表统一走 ⋯ 菜单，
+        「不可逆动作要更重」改由菜单内的红色项 + 二次确认弹窗承担。
+        """
+        source = _read(ADMIN_SECRET_CENTER)
+        card_section = source.split("<!-- 列表视图")[0]
+        list_section = source.split("<!-- 列表视图")[1]
+
+        assert '@delete="deleteTarget = item"' in card_section
+        assert '@delete="deleteTarget = item"' in list_section
+
+    def test_row_actions_menu_emits_delete(self):
+        source = _read(ROW_ACTIONS)
+
+        assert "(e: 'delete'): void" in source
+        assert "emit('delete')" in source
+        # 删除排在最后：菜单里它之上每一项都能反悔
+        menu = source[source.index("<template>") :]
+        assert menu.rindex("fire('delete')") > menu.rindex("fire('grant')")
+
+    def test_restore_uses_the_status_endpoint(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "secrets/admin/${item.id}/status" in source
+        assert "status: 'active'" in source
+        assert "async function enableSecret(item: SystemSecret)" in source
+
+    def test_restore_entry_exists_in_both_views(self):
+        source = _read(ADMIN_SECRET_CENTER)
+        card_section = source.split("<!-- 列表视图")[0]
+        list_section = source.split("<!-- 列表视图")[1]
+
+        # 两个视图都通过 SecretRowActions 的 active 属性决定显示「停用」还是「恢复」
+        assert ':active="item.status === \'active\'"' in card_section
+        assert '@enable="enableSecret(item)"' in card_section
+        assert '@enable="enableSecret(item)"' in list_section
+
+    def test_menu_swaps_disable_for_enable(self):
+        """停用 / 恢复是互斥的两项：已经停用的再「强制停用」没有意义。"""
+        source = _read(ROW_ACTIONS)
+
+        assert "(e: 'enable'): void" in source
+        assert 'v-if="active"' in source and "v-else" in source
+        assert "恢复启用" in source
+
+    def test_disable_is_no_longer_described_as_irreversible(self):
+        """停用可逆，删除不可逆——两者混在一句文案里，管理员就不敢用停用止血了。"""
+        source = _read(ADMIN_SECRET_CENTER)
+        header = source[: source.index("import { computed")]
+        disable_dialog = source.split("<!-- 强制停用 -->")[1].split("<!-- 删除确认 -->")[0]
+
+        assert "不能「恢复」被停用的凭据" not in header
+        assert "不可恢复" not in disable_dialog
+        assert "可以恢复" in disable_dialog
+        assert "恢复后即可重新生效" in source  # 停用成功的 toast
+
+    def test_delete_dialog_states_what_breaks(self):
+        """删除确认要说出「绑在几处、授权几条、使用记录保留」，不能只问一句「确定？」。"""
+        source = _read(ADMIN_SECRET_CENTER)
+        dialog = source.split("<!-- 删除确认 -->")[1].split("<!-- 变更记录弹框 -->")[0]
+
+        assert "deleteTarget.binding_count" in dialog
+        assert "deleteTarget.grant_count" in dialog
+        assert "使用记录与变更记录会保留" in dialog
+        # 给了「其实你想要的可能是停用」这条替代路径
+        assert "强制停用" in dialog
+
+    def test_backend_capability_behind_the_entry(self):
+        """前端调的那两个端点确实存在，且系统级删除仍然只对管理员放行。"""
+        routes = _read(ROOT / "app/api/portal/endpoints/secrets.py")
+        center = _read(ROOT / "app/services/secrets/center.py")
+
+        assert '@router.delete("/{secret_id}", summary="删除凭据")' in routes
+        assert '@router.post("/admin/{secret_id}/status"' in routes
+        assert "row.owner_scope == SCOPE_SYSTEM and not actor_is_admin" in center
+
+
+class TestGrantScopeShowsNames:
+    """授权范围要回答「给了谁」，不是「给了几个 id」。
+
+    卡片上原来渲染成「用户 · 62」——管理员拿这个数字判断不了是谁，得先去用户表
+    反查，而这一栏问的恰恰就是这条凭据的授权对象。后端 `admin_list` 现在带上
+    `grantee_name`，前端排成 `姓名（id）`：名字给人看，括号里的 id 留着，因为
+    撤销授权、核对审计日志时只有它是对得上号的（重名的人也靠它区分）。
+    授权对象一多就把卡片撑成一面墙，所以只平铺前几个，其余收进「+N」。
+    """
+
+    def test_card_renders_names_not_bare_ids(self):
+        source = _read(ADMIN_SECRET_CENTER)
+        card = source.split("<!-- 列表视图")[0]
+
+        assert "visibleGrants(item)" in card
+        assert "{{ grantLabel(grant) }}" in card
+        # 旧的「用户 · 62」写法必须消失，否则改了函数也没人用
+        assert "grant.grantee_type === 'dept' ? '部门' : '用户'" not in card
+
+    def test_user_label_is_name_with_id_in_parentheses(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "return `${name}（${id}）`" in source
+        # 名字解析不到时要回退成裸 id，不能显示「（62）」这种残缺形式
+        assert "return `用户 · ${id}`" in source
+
+    def test_department_label_prefers_name(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "return name || `部门 · ${id}`" in source
+
+    def test_all_users_label_survives(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "if (grant.grantee_type === 'all') return '全体用户'" in source
+
+    def test_overflow_folds_into_plus_n(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "const GRANT_PREVIEW_COUNT = 3" in source
+        assert "+{{ hiddenGrantCount(item) }}" in source
+        assert '@click="toggleGrantGroup(item.id)"' in source
+        # 展开是每张卡片独立记的，不能一次全展开
+        assert "expandedGrantIds" in source
+        # 展开后给「收起」，否则展开的卡片再也收不回去
+        assert "收起" in source
+
+    def test_hidden_count_matches_the_preview_slice(self):
+        """「+N」必须与真正被切掉的条数一致，否则点开就是少一条。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "item.grants.slice(0, GRANT_PREVIEW_COUNT)" in source
+        assert "Math.max(0, item.grants.length - GRANT_PREVIEW_COUNT)" in source
+
+    def test_list_summary_and_tooltip_use_the_same_labels(self):
+        """列表视图的摘要与悬停名单要和卡片一致，不能各拼一套。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "return `${grantLabel(first)} 等 ${item.grants.length} 个`" in source
+        assert "if (item.grants.length === 1) return grantLabel(first)" in source
+        assert "item.grants.map((grant) => grantLabel(grant)).join('\\n')" in source
+
+    def test_interface_carries_grantee_name(self):
+        """后端加了字段，前端 interface 不声明的话 `grant.grantee_name` 过不了类型检查。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "grantee_name?: string | null" in source
+
+    def test_grant_hint_carries_expiry(self):
+        """chip 上的文字已经是名字，悬停就该补它放不下的东西：授权到期时间。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert ':title="grantHint(grant)"' in source
+        assert "授权到期：" in source
+
+
+EDITOR = ROOT / "frontend/src/components/secrets/CredentialValueEditor.vue"
+KEY_CHIP = ROOT / "frontend/src/components/secrets/SecretKeyChip.vue"
+SECRET_ENDPOINTS = ROOT / "app/api/portal/endpoints/secrets.py"
+SECRET_CENTER_SERVICE = ROOT / "app/services/secrets/center.py"
+
+
+class TestSecretKeyCopyChip:
+    """标识可复制，值不可复制。
+
+    `corp.wecom.secret` 这类标识不是机密，它是要填到别处（工具参数、脚本环境变量）
+    的**引用名**；以前只能手抄，长标识抄错一位就是「凭据明明在、取不到值」。
+    """
+
+    def test_chip_copies_only_the_key(self):
+        source = _read(KEY_CHIP)
+
+        assert "copyToClipboard(props.secretKey)" in source
+        # 组件只认标识：任何「值」的入口都不该出现在这里（它是复制能力的唯一出口）
+        for leak in ("props.value", "revealedValue", "value_encrypted", "value_preview", "reveal"):
+            assert leak not in source, f"复制组件不该碰值：{leak}"
+
+    def test_chip_needs_no_secure_context(self):
+        """生产常走 HTTP（内网 IP），`navigator.clipboard` 在那里直接不可用。"""
+        source = _read(KEY_CHIP)
+
+        assert "import { copyToClipboard } from '../../utils/clipboard'" in source
+        assert "navigator.clipboard" not in source
+
+    def test_copy_is_reachable_without_hover(self):
+        """悬浮按钮容易做成「鼠标才有」：键盘 Tab 和触屏都得能用。"""
+        source = _read(KEY_CHIP)
+
+        assert "group-hover:opacity-100" in source
+        assert "focus-visible:opacity-100" in source or "group-focus-within:opacity-100" in source
+        assert "max-sm:opacity-100" in source
+        assert "aria-label" in source
+
+    def test_copy_reports_success_in_place(self):
+        source = _read(KEY_CHIP)
+
+        assert "copied.value = true" in source
+        assert "已复制" in source
+
+    def test_both_centers_use_the_chip(self):
+        for path in (SECRET_CENTER, ADMIN_CENTER):
+            source = _read(path)
+
+            assert "import SecretKeyChip from '../components/secrets/SecretKeyChip.vue'" in source
+            assert "<SecretKeyChip :secret-key=" in source
+            # 裸 code 渲染标识的写法要清干净，否则两套并存，新的那套迟早漏改
+            assert ">{{ item.secret_key }}</code>" not in source
+
+    def test_admin_card_and_list_both_get_it(self):
+        source = _read(ADMIN_CENTER)
+
+        assert source.count('<SecretKeyChip :secret-key="item.secret_key" />') == 2
+
+
+class TestAuditSearchAndScope:
+    """变更记录要能「搜」和「只看这一条」。
+
+    全局列表一屏几十条，靠眼睛筛「这条凭据到底经历过什么」或「谁把这条规则删了」
+    都不现实——而这两个问题恰恰是审计页唯一的用途。
+    """
+
+    def test_admin_audit_sends_keyword_and_action(self):
+        source = _read(ADMIN_CENTER)
+
+        assert "auditKeyword" in source
+        assert "if (keyword) params.keyword = keyword" in source
+        assert "auditActions" in source
+        # 逗号分隔而非数组：axios 会把数组发成 action[]=，FastAPI 的 List 查询不认
+        assert "params.action = auditActions.value.join(',')" in source
+
+    def test_search_is_debounced(self):
+        source = _read(ADMIN_CENTER)
+
+        assert "function scheduleAuditSearch" in source
+        assert "setTimeout(() => void loadAudit(), 250)" in source
+
+    def test_action_filter_options_come_from_the_label_table(self):
+        """筛选项直接用文案表的键，避免文案加了一个动作、筛选少一个。"""
+        source = _read(ADMIN_CENTER)
+
+        assert "const AUDIT_ACTIONS = Object.keys(SECRET_ACTION_LABEL)" in source
+        assert "toggleAuditAction" in source
+
+    def test_card_entry_scopes_audit_to_its_own_secret(self):
+        source = _read(ADMIN_CENTER)
+
+        assert 'async function openAudit(secretId = \'\', secretKey = \'\')' in source
+        assert 'if (auditSecretId.value) params.secret_id = auditSecretId.value' in source
+        # 卡片 + 列表行各一个入口
+        assert source.count('openAudit(item.id, item.secret_key)') == 2
+        assert '@audit="openAudit(item.id, item.secret_key)"' in source
+
+    def test_top_entry_stays_global(self):
+        """顶层「变更记录」是全局视角，别被上一条的默认参数吃掉。"""
+        source = _read(ADMIN_CENTER)
+
+        assert '@click="openAudit()"' in source
+
+    def test_scope_can_be_cleared(self):
+        source = _read(ADMIN_CENTER)
+
+        assert "function clearAuditScope" in source
+        assert "只看本条 · 查看全部" in source
+
+    def test_empty_state_tells_filtered_from_empty(self):
+        source = _read(ADMIN_CENTER)
+
+        assert "auditFiltered" in source
+        assert "没有匹配的变更记录" in source
+        assert "还没有变更记录" in source
+
+    def test_backend_accepts_keyword_and_action(self):
+        endpoints = _read(SECRET_ENDPOINTS)
+
+        assert "keyword: Optional[str] = Query(default=None, max_length=128)" in endpoints
+        assert "action: Optional[List[str]] = Query(" in endpoints
+        # 两种序列化都收：逗号分隔与重复键
+        assert "wanted_actions.extend(part.strip() for part in str(raw).split(\",\") if part.strip())" in endpoints
+
+    def test_service_searches_three_places(self):
+        """凭据标识 / 操作人 / detail 里的槽位——人记的东西不一样。"""
+        service = _read(SECRET_CENTER_SERVICE)
+
+        assert "SecretAuditLog.secret_key_snapshot.like(like)" in service
+        assert "SecretAuditLog.actor_name.like(like)" in service
+        assert "SecretAuditLog.detail.like(like)" in service
+        assert "await match_usage_user_ids(session, kw)" in service
+        assert "SecretAuditLog.action.in_(wanted_actions)" in service
+
+
+class TestRotateKeepsRawJsonEditable:
+    """结构化凭据轮换时，值必须录得进去。
+
+    回归点：`lockStructure` 早先连「自定义 JSON」的键值对行一起锁死——而轮换不回
+    读旧值，表格本来就是空的，于是轮换弹窗里一个能输入的地方都没有，
+    「至少填一个字段」永远消不掉，按钮永远灰着。
+    """
+
+    def test_row_editing_is_not_locked(self):
+        source = _read(EDITOR)
+
+        # 三个入口都不能再因 lockStructure 早退
+        assert "function addRawRow() {\n  rawRows.value" in source
+        assert "function removeRawRow(index: number) {\n  rawRows.value" in source
+        assert "function switchRawView(next: 'kv' | 'json') {\n  if (next === rawView.value) return" in source
+
+    def test_only_format_and_template_stay_locked(self):
+        source = _read(EDITOR)
+
+        assert "function switchFormat(next: 'text' | 'json') {\n  if (props.lockStructure) return" in source
+        #: 换模板 / 清模板仍然锁着——那才是会让 `${secret:标识.字段}` 失效的动作
+        assert "function chooseTemplate(id: string) {\n  if (props.lockStructure) return" in source
+
+    def test_old_wording_is_gone(self):
+        """旧文案在说反话：写「只能改值」，实际连值都改不了。"""
+        source = _read(EDITOR)
+
+        assert "轮换中字段结构已锁定，只能改值" not in source
+        assert "轮换只换值：键名请与原来保持一致" in source
+
+    def test_rotate_starts_from_the_existing_structure(self):
+        """轮换开局要按「原结构骨架」铺行，而不是一张空表。
+
+        空表意味着用户得凭记忆默写键名——错一个字母，别处
+        `${secret:标识.字段}` 的引用就静默失效。骨架由后端从既有值里算出来
+        （只有键与类型，没有值），编辑器按它铺行；拿不到骨架才退回一行空行。
+        """
+        source = _read(EDITOR)
+
+        # 依赖里必须带上骨架，否则接口慢回来时不会重铺
+        assert "[() => props.lockStructure, isRaw, () => props.initialJson]" in source
+        assert "if (!locked || !raw) return" in source
+        assert "if (initial) {" in source and "hydrateRaw(initial)" in source
+        # 兜底仍然保留：读不到结构也要能填
+        assert "rawRows.value = [{ key: '', type: 'text', value: '', secret: false }]" in source
+
+    def test_paste_fills_the_current_raw_editor(self):
+        """自定义 JSON 没有对应模板，「识别并套用」只会落到「没匹配到」的错误态。"""
+        source = _read(EDITOR)
+
+        assert "if (isRaw.value) {" in source
+        assert "已填入 ${Object.keys(source).length} 个键，可以直接改值" in source
+
+    def test_paste_cannot_swap_the_template_while_locked(self):
+        source = _read(EDITOR)
+
+        assert "if (props.lockStructure && matched !== template.value) {" in source
+        assert "轮换不能换模板" in source
+
+    def test_personal_center_audit_also_filters(self):
+        """个人那边问的是「我自己上个月动过什么」，同样得能搜、能按动作筛。"""
+        source = _read(SECRET_CENTER)
+
+        assert "auditKeyword" in source
+        assert "if (keyword) params.keyword = keyword" in source
+        assert "params.action = auditActions.value.join(',')" in source
+        assert "const AUDIT_ACTIONS = Object.keys(SECRET_ACTION_LABEL)" in source
+        assert "function scheduleAuditSearch" in source
+
+    def test_personal_audit_entry_lands_on_the_audit_tab(self):
+        """详情里的「变更记录」要直接落在 audit 页签并带上这条的 id。"""
+        source = _read(SECRET_CENTER)
+
+        assert "async function openAudit()" in source
+        assert "recordTab.value = 'audit'" in source
+        assert "usageSecretId.value = selected.value?.id || ''" in source
+        assert '@click="openAudit"' in source
+
+
+class TestAdminCardAttentionSignals:
+    """卡片要能回答「这条现在能不能用」。
+
+    原来卡片只说「生效中」和「已绑定 0 处」：前者是状态位，后者是事实陈述，
+    都不等于「现在能用」。到期与调用失败这两种「配置看起来完好、其实已经坏了」
+    的情况，数据里早就有（`expires_at` / `failed_7d`），界面上一个字都没显示——
+    而它们恰恰是「明明配了却调不通」最难查的原因。
+    """
+
+    def test_metrics_have_icons_and_subtitles(self):
+        """四个数字原来全靠文字区分，扫一眼只看得到「4 / 4 / 4 / 0」。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "凭证 {{ stats.credentials }} · 变量 {{ stats.variables }}" in source
+        assert (
+            "用户 {{ stats.grantUsers }} · 部门 {{ stats.grantDepts }} · 全体 {{ stats.grantAll }}"
+            in source
+        )
+        # 第 4 格从「未授权」改成「需要注意」：两个数字要管理员自己加，等于没给结论
+        assert "需要注意" in source
+        assert "{{ stats.unbound }} 条未绑定 · {{ stats.expiring }} 条 7 天内到期" in source
+        assert source.count("<svg") >= 4, "四张卡各要一个图标"
+
+    def test_expiry_is_seven_days(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "const EXPIRING_SOON_DAYS = 7" in source
+
+    def test_expiry_badge_states_the_consequence(self):
+        """徽标说「几天后到期」，悬停说「过期会怎样」。
+
+        与后端拒绝理由同一口径（`app/services/secrets/injection.py` 的
+        「凭据已过期」）：过期后授权与绑定都还在，只有调用开始失败。
+        """
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "function expiryBadge(item: SystemSecret): string" in source
+        assert "if (left < 0) return '已过期'" in source
+        assert "function expiryHint(item: SystemSecret): string" in source
+        assert "凭据已过期" in source
+
+    def test_expired_secret_is_not_painted_green(self):
+        """「生效中但下周过期」和「能长期用」不是一回事，同一道绿条会看漏。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "function cardAccent(item: SystemSecret): string" in source
+        assert "border-l-amber-500" in source
+        assert "isExpired(item) ? 'bg-rose-100 text-rose-700'" in source
+
+    def test_failed_calls_are_surfaced_in_both_views(self):
+        """换个体视图看，「这条有问题」不能消失。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "{{ item.failed_7d }} 次失败" in source
+        assert "失败 {{ item.failed_7d }}" in source
+
+    def test_unbound_card_says_what_to_do(self):
+        """「已绑定 0 处」是陈述，后果得用户自己推断——而后果是它根本不会被调用。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "还没绑到任何消费者——绑上工具参数后才会真正被调用" in source
+
+    def test_created_at_is_rendered(self):
+        """后端 `serialize_secret` 一直在回 created_at，前端没声明也没显示。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "created_at?: string | null" in source
+        assert "创建于 {{ shortTime(item.created_at) }}" in source
+
+    def test_rotation_time_is_in_the_tooltip(self):
+        """常变的时间不跟不变的时间抢同一行的视觉权重，放悬停里。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "上次轮换：${shortTime(item.last_rotated_at)}" in source
+        assert "这条还没轮换过" in source
+
+    def test_status_filters_share_one_predicate(self):
+        """chip 上的数字必须等于点进去的条数：计数与筛选共用一个判定。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "function matchesStatus(item: SystemSecret, filter: StatusFilter): boolean" in source
+        assert "if (!matchesStatus(item, statusFilter.value)) return false" in source
+        assert "count: stats.value.unbound" in source
+        assert "const STATUS_FILTERS = computed(" in source
+
+    def test_status_filter_covers_the_buckets_that_need_action(self):
+        source = _read(ADMIN_SECRET_CENTER)
+
+        for key in ("'active'", "'disabled'", "'unbound'", "'expiring'", "'failing'"):
+            assert key in source, key
+
+    def test_empty_state_distinguishes_filtered_from_empty(self):
+        """筛空了却说「还没有凭据」，会让人以为数据被删了。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "没有匹配的凭据——换个关键字" in source
+        assert "还没有系统级凭据" in source
+
+    def test_expiry_uses_the_same_reason_as_the_backend(self):
+        """前端说的「过期会被拒」必须真有后端依据，不是吓唬人。"""
+        injection = _read(ROOT / "app/services/secrets/injection.py")
+        resolver = _read(ROOT / "app/services/secrets/resolver.py")
+
+        assert "凭据已过期" in injection
+        assert "row.expires_at is None or row.expires_at > now" in resolver
+
+
+class TestRotatePrefillsOriginalStructure:
+    """轮换弹窗要把「原来的键」摆出来，而不是一张空表。
+
+    现场：结构化凭据点「轮换」，弹窗里没有一个字段行，红字写着「至少填一个字段」。
+    用户只能凭记忆把键名默写一遍——错一个字母，别处写好的
+    `${secret:标识.字段}` 引用就静默失效，而且报错发生在下一次调用时。
+
+    值本来就读不到，所以「带回结构」只能靠后端给骨架：键与类型有，值没有。
+    """
+
+    def test_admin_rotate_reads_structure_from_the_admin_endpoint(self):
+        """管理页不能用 `/fields`：那个端点按「自己 + 被授权」判可见性，
+        管理员轮换自己没被授权的那条会 404，而管理页恰恰要维护全部系统级凭据。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "axios.get(`/api/portal/secrets/admin/${item.id}/structure`)" in source
+        assert ':initial-json="rotateInitialJson"' in source
+
+    def test_personal_rotate_reads_structure_from_fields(self):
+        source = _read(SECRET_CENTER)
+
+        assert "axios.get(`/api/portal/secrets/${encodeURIComponent(item.id)}/fields`)" in source
+        assert ':initial-json="rotateInitialJson"' in source
+
+    def test_structure_is_only_fetched_for_structured_secrets(self):
+        """单值凭据没有键可铺，多打一次请求只是浪费。"""
+        for path in (ADMIN_SECRET_CENTER, SECRET_CENTER):
+            source = _read(path)
+            body = source.split("async function openRotate(")[1].split("\nasync function")[0]
+            assert "if (item.value_format !== 'json') return" in body
+
+    def test_stale_structure_response_is_ignored(self):
+        """弹窗关掉又换了一条时，慢请求回来不能把上一条的结构填进新弹窗。"""
+        for path in (ADMIN_SECRET_CENTER, SECRET_CENTER):
+            source = _read(path)
+            assert "if (rotateTarget.value?.id !== item.id) return" in source
+
+    def test_structure_failure_degrades_with_an_explanation(self):
+        """读不到结构不拦着轮换，但要说清「键名得自己填、要与原来一致」。"""
+        for path in (ADMIN_SECRET_CENTER, SECRET_CENTER):
+            source = _read(path)
+            assert "没能读出原来的字段结构" in source
+            assert "键名要与原来一致" in source
+
+    def test_editor_explains_the_placeholders(self):
+        """骨架里的 0 / 空串是占位，不是原值——不说清就会被原样提交。"""
+        source = _read(EDITOR)
+
+        assert "值不会回显" in source
+        assert "只是占位，请逐个改成新值" in source
+        # 文案只在骨架真的铺上时才说「上面是读出来的字段」：用户先动手填的
+        # 情况下骨架会被放弃，那时候还说这句就是假话
+        assert 'v-if="skeletonAdopted"' in source
+
+    def test_editor_adopts_a_late_skeleton(self):
+        """骨架比弹窗晚到：必须能顶掉那一行空白占位行。
+
+        现场 bug：自定义 JSON 凭据有 user / pwd 两个键，点轮换打开是空的，
+        看起来像 key 被清空了。实际是弹窗一打开先补了一行空白占位，骨架
+        （异步请求）回来时撞上「已有行就不覆盖」的守卫，被挡在门外。
+        判定抽成了 `canAdoptSkeleton`，行为见 tests/frontend/credential_rotate_seed.mjs。
+        """
+        source = _read(EDITOR)
+
+        assert "canAdoptSkeleton(rawRows.value, initial)" in source
+        assert "isUntouchedPlaceholderRow" not in source, "旧的「只看是否单行空行」判定要被替换"
+
+    @pytest.mark.skipif(shutil.which("node") is None, reason="需要 node 才能执行纯函数行为测试")
+    def test_late_skeleton_behaviour_via_node(self):
+        proc = subprocess.run(
+            ["node", "tests/frontend/credential_rotate_seed.mjs"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "credential_rotate_seed 行为测试通过" in proc.stdout
+
+    def test_sensitive_flags_come_back_with_the_skeleton(self):
+        """骨架只有键与类型，敏感与否得单独给：否则用户填密码时那个框明文显示，
+        而且这条值可能被算进列表摘要（`userKey` 这种只有声明才知道的字段）。"""
+        editor = _read(EDITOR)
+        assert "function applySecretFlagsFromServer()" in editor
+
+        for path in (ADMIN_SECRET_CENTER, SECRET_CENTER):
+            source = _read(path)
+            assert "sensitive_fields" in source
+            assert "rotateSecretFields.value = sensitive" in source

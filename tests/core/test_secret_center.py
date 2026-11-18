@@ -639,3 +639,119 @@ class TestDetachConsumer:
 
     async def test_missing_consumer_type_is_noop(self, session):
         assert await center.detach_consumer(session, consumer_type="", consumer_id="x") == 0
+
+
+class TestValueSkeleton:
+    """轮换只换值，但用户不该凭记忆默写键名。
+
+    红过的现场：结构化凭据点「轮换」，弹窗里是一张空表 + 「至少填一个字段」，
+    而原来的键一个都没露出来。用户手抄键名时错一个字母，别处写好的
+    `${secret:标识.字段}` 引用就静默失效——失败发生在下一次调用，不在保存时。
+
+    骨架只给**键与类型**，值一个字节都不回：这条线与「credential 建完不可读」
+    是同一条，不能为了好填就松开。
+    """
+
+    def test_skeleton_keeps_keys_and_types_but_no_values(self):
+        skeleton = center.build_value_skeleton(
+            '{"host":"smtp.163.com","port":465,"use_tls":true,"password":"s3cr3t"}'
+        )
+
+        assert set(skeleton) == {"host", "port", "use_tls", "password"}
+        assert skeleton["host"] == ""
+        assert skeleton["port"] == 0
+        assert skeleton["use_tls"] is False
+        assert skeleton["password"] == ""
+        # 真值一个都不许出现
+        dumped = str(skeleton)
+        assert "smtp.163.com" not in dumped
+        assert "s3cr3t" not in dumped
+        assert "465" not in dumped
+
+    def test_skeleton_keeps_nested_keys(self):
+        skeleton = center.build_value_skeleton(
+            '{"auth":{"username":"u","password":"p"},"note":null,"tags":["a","b"]}'
+        )
+
+        assert skeleton["auth"] == {"username": "", "password": ""}
+        assert skeleton["note"] is None
+        # 数组里有几个元素本身也属于值，不给长度
+        assert skeleton["tags"] == []
+
+    def test_non_object_values_have_no_skeleton(self):
+        assert center.build_value_skeleton("plain-text-token") is None
+        assert center.build_value_skeleton("[1,2,3]") is None
+        assert center.build_value_skeleton("") is None
+
+    async def test_admin_structure_reads_system_secret_without_grant(self, session):
+        """管理页轮换的是**全部**系统级凭据，不能受「有没有授权给自己」限制。
+
+        `/fields` 走 list_visible_secrets，只回「自己 + 被授权」；管理员对自己
+        没授权的那条会 404，于是那类凭据在管理页永远修不好。
+        """
+        row = await _make(
+            session,
+            owner_scope=SCOPE_SYSTEM,
+            owner_id="system",
+            secret_key="pytest.skeleton.rotate",
+            value_format="json",
+            value_template="custom",
+            value='{"host":"10.0.0.1","password":"p","port":3306}',
+        )
+
+        payload = await center.describe_value_structure(session, secret_id=row.id)
+
+        assert payload["format"] == "json"
+        assert payload["secret_key"] == "pytest.skeleton.rotate"
+        assert payload["skeleton"] == {"host": "", "password": "", "port": 0}
+        assert "10.0.0.1" not in str(payload)
+        # 敏感标记要跟着回：否则用户填密码时那个输入框明文显示，
+        # 而且这条值可能被算进列表摘要
+        assert payload["sensitive_fields"] == ["password"]
+
+    async def test_admin_structure_hides_foreign_and_user_secrets(self, session):
+        """别人的用户级凭据不该从管理端读结构——管理端只管系统级。"""
+        row = await _make(session, secret_key="pytest.skeleton.mine")
+
+        with pytest.raises(center.SecretPermissionError):
+            await center.describe_value_structure(session, secret_id=row.id)
+
+    async def test_fields_endpoint_payload_carries_skeleton(self, session):
+        """个人页走同一个 `describe_value_fields`，骨架要一并带上。
+
+        注意 `fields` 里出现非敏感字段的 preview 是**既有且必要**的行为
+        （绑定字段选择器靠它认出「这个是端口」），所以这里只断言骨架不含值——
+        别把「fields 有预览」误判成骨架泄露。
+        """
+        row = await _make(
+            session,
+            secret_key="pytest.skeleton.fields",
+            value_format="json",
+            value_template="custom",
+            value='{"a":111,"b":{"c":"secret-value"}}',
+        )
+
+        payload = await center.describe_value_fields(
+            session, secret_id=row.id, user_id=USER_ID
+        )
+
+        assert payload["skeleton"] == {"a": 0, "b": {"c": ""}}
+        assert "secret-value" not in str(payload["skeleton"])
+        # 名字像密钥的才进敏感清单：c 不敏感，所以这里为空
+        assert payload["sensitive_fields"] == []
+
+    async def test_sensitive_flags_follow_the_key_name_anywhere_in_the_path(self, session):
+        """`auth.apiKey` 这类前缀无关的写法也要命中——只看最后一段会漏。"""
+        row = await _make(
+            session,
+            owner_scope=SCOPE_SYSTEM,
+            owner_id="system",
+            secret_key="pytest.skeleton.sensitive",
+            value_format="json",
+            value_template="custom",
+            value='{"user":"alice","pwd":"p","auth":{"apiKey":"k","note":"n"}}',
+        )
+
+        payload = await center.describe_value_structure(session, secret_id=row.id)
+
+        assert payload["sensitive_fields"] == ["pwd", "auth.apiKey"]

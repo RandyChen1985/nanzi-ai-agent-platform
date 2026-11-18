@@ -1,10 +1,13 @@
 <script setup lang="ts">
 /**
- * 凭据行的「更多操作」菜单。
+ * 凭据的「更多操作」菜单，卡片视图与列表视图共用。
  *
- * 卡片视图把四个动作平铺是合适的——横向空间够，一步点到。列表视图不行：
- * 一行里塞四个文字按钮会把「名称」和「使用情况」挤到看不见，而这两列才
- * 是扫列表时真正要看的东西。
+ * 早期只有列表用它：卡片横向空间够，平铺一步点到更快。改成三列之后这条前提没了
+ * ——每列只有 ~440px，七八个文字按钮会让「名称」和「摘要」各折一行，而那两个
+ * 才是扫卡片时要看的东西。现在两边都走这里，动作清单也就只有一份，不会各长各的。
+ *
+ * 七个动作里只有「删除」是不可逆的（`delete` 会连授权与绑定一起清掉），
+ * 所以它单独用玫瑰色、并放在菜单最末——误点一行的其他操作都能改回来。
  *
  * 定位照 `SavedReportItemCard` 的做法：菜单进 `Teleport`，按触发按钮的位置
  * 算 fixed 坐标，下方放不下就翻到上方。**不能**用 `absolute` 挂在行里——
@@ -13,7 +16,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps<{
-  /** 停用的凭据没有「强制停用」这一项 */
+  /** 停用的凭据没有「强制停用」这一项，换成「恢复启用」 */
   active: boolean
   /** 无障碍标签用的凭据名 */
   name: string
@@ -21,11 +24,16 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'usage'): void
+  (e: 'audit'): void
   (e: 'edit'): void
   (e: 'rotate'): void
   (e: 'grant'): void
   (e: 'disable'): void
+  (e: 'enable'): void
+  (e: 'delete'): void
 }>()
+
+type Action = 'usage' | 'audit' | 'edit' | 'rotate' | 'grant' | 'disable' | 'enable' | 'delete'
 
 const open = ref(false)
 const menuStyle = ref<Record<string, string>>({})
@@ -33,7 +41,9 @@ const menuRef = ref<HTMLElement | null>(null)
 const triggerRef = ref<HTMLElement | null>(null)
 
 const MENU_WIDTH = 160
-const ESTIMATED_HEIGHT = 190
+//: 六到七项（使用记录 / 变更记录 / 编辑 / 轮换 / 授权 / 停用或恢复 / 删除）约 262px。
+//: 只用于展开第一帧的落点，`toggle()` 随后按实测高度再摆一次。
+const ESTIMATED_HEIGHT = 262
 const GAP = 6
 
 function place(rect: DOMRect | undefined, height: number) {
@@ -75,15 +85,18 @@ async function toggle() {
   place(rect, actual)
 }
 
-function fire(action: 'usage' | 'edit' | 'rotate' | 'grant' | 'disable') {
+function fire(action: Action) {
   open.value = false
   // 逐个分发而不是 `emit(action)`：defineEmits 生成的是重载签名，
   // 传联合类型过不了类型检查（每个重载都要求精确的参数类型）。
   if (action === 'usage') emit('usage')
+  else if (action === 'audit') emit('audit')
   else if (action === 'edit') emit('edit')
   else if (action === 'rotate') emit('rotate')
   else if (action === 'grant') emit('grant')
-  else emit('disable')
+  else if (action === 'disable') emit('disable')
+  else if (action === 'enable') emit('enable')
+  else emit('delete')
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -147,17 +160,36 @@ const itemClass =
     <div v-if="open" class="fixed inset-0 z-[320]" role="presentation" @click="open = false">
       <div ref="menuRef" class="rounded-xl border border-gray-200 bg-white p-1 shadow-2xl" :style="menuStyle" role="menu" @click.stop>
         <button type="button" :class="itemClass" role="menuitem" @click="fire('usage')">使用记录</button>
+        <button type="button" :class="itemClass" role="menuitem" @click="fire('audit')">变更记录</button>
         <button type="button" :class="itemClass" role="menuitem" @click="fire('edit')">编辑</button>
         <button type="button" :class="itemClass" role="menuitem" @click="fire('rotate')">轮换</button>
         <button type="button" :class="itemClass" role="menuitem" @click="fire('grant')">授权</button>
         <button
           v-if="active"
           type="button"
-          class="block w-full rounded-md px-2.5 py-1.5 text-left text-xs text-rose-600 hover:bg-rose-50"
+          :class="itemClass"
           role="menuitem"
           @click="fire('disable')"
         >
           强制停用
+        </button>
+        <button
+          v-else
+          type="button"
+          :class="itemClass"
+          role="menuitem"
+          @click="fire('enable')"
+        >
+          恢复启用
+        </button>
+        <!-- 不可逆，永远排在最后：上面的都能反悔，这个不能 -->
+        <button
+          type="button"
+          class="mt-1 block w-full rounded-md border-t border-gray-100 px-2.5 py-1.5 pt-2 text-left text-xs text-rose-600 hover:bg-rose-50"
+          role="menuitem"
+          @click="fire('delete')"
+        >
+          删除
         </button>
       </div>
     </div>

@@ -35,6 +35,9 @@ from app.services.secrets.policy import (
     ALL_SCENES,
     CONSUMER_API_TOOL,
     CONSUMER_MCP,
+    GRANTEE_ALL,
+    GRANTEE_DEPT,
+    GRANTEE_USER,
     SCOPE_SYSTEM,
     SCOPE_USER,
     TYPE_CREDENTIAL,
@@ -707,6 +710,71 @@ def _owner_ids(owners: Iterable[Any]) -> list[int]:
     return sorted({int(item) for item in owners if str(item).isdigit()})
 
 
+def _grantee_name(
+    grant: Any, user_names: Mapping[str, str], dept_names: Mapping[str, str]
+) -> Optional[str]:
+    """授权对象的显示名（「这条凭据给了谁」）。
+
+    解析不到就返回 ``None``，由前端回退显示裸 id —— 这里绝不编一个名字出来：
+    授权对象被删除后仍会留下 ``sys_secret_grants`` 行（那张表刻意不设外键），
+    此时 id 反而是唯一还能定位的线索。
+    """
+    grantee_type = str(getattr(grant, "grantee_type", "") or "")
+    if grantee_type == GRANTEE_ALL:
+        return "全体用户"
+    ref = str(getattr(grant, "grantee_id", "") or "")
+    if not ref:
+        return None
+    table = user_names if grantee_type == GRANTEE_USER else dept_names
+    return table.get(ref)
+
+
+async def _dept_grantee_names(db: AsyncSession, grants: Iterable[Any]) -> Dict[str, str]:
+    """部门授权的 ``grantee_id`` → 部门名。
+
+    **历史上有两种写法并存**，不能只认一种：
+
+    - ``resolver`` 判定部门授权时拿 ``dept_code`` 比对；
+    - 授权弹窗的 ``UserDeptPicker`` 直接传 ``dept:<部门整型 id>``。
+
+    两种都查一遍再合并，code 命中优先。猜错的后果是界面显示成裸数字——
+    那种「看着有值、其实没人看得懂」的展示最难查。
+    """
+    refs = {
+        str(grant.grantee_id)
+        for grant in grants
+        if str(getattr(grant, "grantee_type", "") or "") == GRANTEE_DEPT and grant.grantee_id
+    }
+    if not refs:
+        return {}
+
+    from sqlalchemy import select
+
+    from app.models.department import Department
+
+    resolved: Dict[str, str] = {}
+    code_rows = (
+        await db.execute(
+            select(Department.code, Department.name).where(Department.code.in_(refs))
+        )
+    ).all()
+    for code, dept_name in code_rows:
+        if code:
+            resolved[str(code)] = str(dept_name or "")
+
+    numeric_ids = _owner_ids(refs)
+    if numeric_ids:
+        id_rows = (
+            await db.execute(
+                select(Department.id, Department.name).where(Department.id.in_(numeric_ids))
+            )
+        ).all()
+        for dept_id, dept_name in id_rows:
+            # 同一个 ref 既是 code 又恰好等于某个部门 id 时，以 code 命中的为准
+            resolved.setdefault(str(dept_id), str(dept_name or ""))
+    return resolved
+
+
 def _actor_id(user: Mapping[str, Any] | None) -> str | None:
     """审计操作人。
 
@@ -859,6 +927,14 @@ async def get_usage_stats(
 @router.get("/audit", summary="凭据变更记录（谁在什么时候改了什么）")
 async def list_audit(
     secret_id: Optional[str] = Query(default=None),
+    keyword: Optional[str] = Query(default=None, max_length=128),
+    action: Optional[List[str]] = Query(
+        default=None,
+        description=(
+            "按动作过滤，可传多个：``action=create&action=rotate`` 或逗号分隔 "
+            "``action=create,rotate`` 都行"
+        ),
+    ),
     limit: int = Query(default=100, ge=1, le=500),
     user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
@@ -869,10 +945,17 @@ async def list_audit(
     """
     user_id, _ = _user_ctx(user_info)
     is_admin = _is_admin(user_info)
+    # 两种写法都收：axios 默认把数组序列化成 ``action[]=``，FastAPI 只认重复键，
+    # 所以前端统一发逗号分隔；这里把它们摊平，免得下游为序列化方式分叉。
+    wanted_actions: List[str] = []
+    for raw in action or []:
+        wanted_actions.extend(part.strip() for part in str(raw).split(",") if part.strip())
     rows = await center.list_audit(
         db,
         secret_id=secret_id,
         actor_id=None if is_admin else user_id,
+        keyword=keyword,
+        actions=wanted_actions,
         limit=limit,
     )
     readable = await _audit_readable(db, rows)
@@ -2435,20 +2518,18 @@ async def admin_list(
     admin_rule_shadow = await _rule_shadow_map(db, bindings)
 
     # consumer_id 是 uuid，直接摊在界面上等于没说「绑到哪了」。
-    # 三类消费者各查一次名字，绑定者同样解析成用户名——这里只有管理员能看，
-    # 展示真实身份不构成越权。
+    # 三类消费者各查一次名字；绑定者与被授权的用户同属「id → 姓名」，
+    # 合并成一次 User 查询——这里只有管理员能看，展示真实身份不构成越权。
     names: Dict[tuple[str, str], str] = {}
     user_names: Dict[str, str] = {}
     if bindings:
         ids_by_type: Dict[str, set[str]] = {}
         for b in bindings:
             ids_by_type.setdefault(b.consumer_type, set()).add(str(b.consumer_id))
-        owners = {str(b.bound_by_user_id) for b in bindings if b.bound_by_user_id}
 
         from app.models.mcp import McpServer
         from app.models.script_tool import SysScriptTool
         from app.models.tool import SysApiTool
-        from app.models.user import User
 
         lookups = (
             ("mcp_server", McpServer, "server_name"),
@@ -2467,20 +2548,34 @@ async def admin_list(
             for row_id, row_name in rows_named:
                 names[(consumer_type, str(row_id))] = str(row_name or "")
 
-        if owners:
-            # User.id 是整型主键，bindings 里存的是字符串。MySQL 会隐式转换混过去，
-            # PostgreSQL（asyncpg）直接报 operator does not exist: integer = character
-            # varying，接口 500。center.resolve_usage_users 里是同样的写法，照抄。
-            owner_ids = _owner_ids(owners)
-            user_rows = (
-                await db.execute(
-                    select(User.id, User.user_name, User.real_name).where(
-                        User.id.in_(owner_ids)
-                    )
+    # 「授权范围」原先渲染成「用户 · 62」——管理员拿这个数字判断不了是谁，
+    # 得先去用户表反查，而这一栏问的恰恰是「这条凭据给了谁」。所以 owners 在这里
+    # 是「所有要解析成姓名的用户 id」：绑定者 + 被授权的用户，一次查完。
+    owners = {str(b.bound_by_user_id) for b in bindings if b.bound_by_user_id}
+    owners |= {
+        str(grant.grantee_id)
+        for grant in grants
+        if grant.grantee_type == GRANTEE_USER and grant.grantee_id
+    }
+    if owners:
+        from app.models.user import User
+
+        # User.id 是整型主键，bindings / grants 里存的是字符串。MySQL 会隐式转换
+        # 混过去，PostgreSQL（asyncpg）直接报 operator does not exist: integer =
+        # character varying，接口 500。center.resolve_usage_users 里是同样的写法，照抄。
+        owner_ids = _owner_ids(owners)
+        user_rows = (
+            await db.execute(
+                select(User.id, User.user_name, User.real_name).where(
+                    User.id.in_(owner_ids)
                 )
-            ).all() if owner_ids else []
-            for user_id, user_name, real_name in user_rows:
-                user_names[str(user_id)] = real_name or user_name or str(user_id)
+            )
+        ).all() if owner_ids else []
+        for user_id, user_name, real_name in user_rows:
+            # 姓名 > 用户名 > 裸 id：用户被删了也还能显示点东西
+            user_names[str(user_id)] = real_name or user_name or str(user_id)
+
+    dept_names = await _dept_grantee_names(db, grants)
 
     return {
         "code": 0,
@@ -2531,6 +2626,8 @@ async def admin_list(
                         "id": g.id,
                         "grantee_type": g.grantee_type,
                         "grantee_id": g.grantee_id,
+                        # 解析不到为 None：前端回退显示 id，不编造名字
+                        "grantee_name": _grantee_name(g, user_names, dept_names),
                         "expires_at": _iso(g.expires_at),
                     }
                     for g in by_secret.get(row.id, [])
@@ -2540,6 +2637,30 @@ async def admin_list(
             for row in rows
         ],
     }
+
+
+@router.get(
+    "/admin/{secret_id}/structure",
+    summary="这条系统级凭据是什么形状（管理员，轮换时用）",
+)
+async def admin_secret_structure(
+    secret_id: str,
+    admin: Dict[str, Any] = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """轮换弹窗要的「原来的键」，让用户只改值。
+
+    为什么不能复用 `GET /{secret_id}/fields`：那个端点走 `list_visible_secrets`，
+    只回「自己 + 被授权的系统级」。管理员轮换自己没被授权的那条（这正是最常见的情况）
+    会拿到 404——而管理页恰恰要能维护全部系统级凭据。
+
+    返回值只有骨架（键与类型），没有值；与「credential 建完不可读」是同一条线。
+    """
+    try:
+        data = await center.describe_value_structure(db, secret_id=secret_id)
+    except SecretPermissionError:
+        raise HTTPException(status_code=404, detail="凭据不存在")
+    return {"code": 0, "data": data}
 
 
 @router.post("/admin/{secret_id}/grants", summary="授权系统级凭据（管理员）")

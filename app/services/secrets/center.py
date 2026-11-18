@@ -283,6 +283,65 @@ def parse_structured_value(value: str) -> dict[str, Any]:
     return data
 
 
+def build_value_skeleton(value: str) -> Any | None:
+    """把一段结构化值压成「只有形状、没有值」的骨架。
+
+    轮换的语义是「只换值、不换结构」，可前端一个新值都拿不到：值不可读，弹窗
+    打开时只能给一张空表，用户得凭记忆把键名默写一遍——错一个字母，别处写好的
+    ``${secret:标识.字段}`` 引用就静默失效，而且失败发生在下一次调用时。
+
+    骨架回的是**键与类型**：字符串留空串、数字留 0、布尔留 False、嵌套对象递归
+    保留子键、数组留空数组（元素个数与填法都属于值，交给用户决定）。
+    真实值一个字节都不回——这条线和「credential 建完不可读」是同一条。
+
+    解析不了（不是 JSON 对象）返回 None，由调用方决定怎么提示。
+    """
+    try:
+        data = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return _skeleton_of(data)
+
+
+def _sensitive_paths(node: Any, prefix: str = "") -> list[str]:
+    """把骨架里「按名字就该当敏感」的路径列出来。
+
+    骨架只保留键与类型，敏感标记是另一份信息。不给它的后果很具体：用户填密码时
+    那个输入框明文显示，而且这条值可能被算进列表摘要——``pwd`` / ``password``
+    后端有词表兜底，但 ``userKey`` 这种只有凭据主人知道的字段就漏了。
+    """
+    out: list[str] = []
+    if isinstance(node, dict):
+        for key, item in node.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if _is_sensitive_key(path):
+                out.append(path)
+            out.extend(_sensitive_paths(item, path))
+    elif isinstance(node, list):
+        for index, item in enumerate(node):
+            out.extend(_sensitive_paths(item, f"{prefix}.{index}"))
+    return out
+
+
+def _skeleton_of(node: Any) -> Any:
+    """递归把值换成同类型的空占位。类型保留，值不保留。"""
+    if isinstance(node, dict):
+        return {str(key): _skeleton_of(item) for key, item in node.items()}
+    if isinstance(node, list):
+        # 不按原长度补位：数组里有几个元素本身也是值的信息
+        return []
+    # bool 是 int 的子类，必须先判
+    if isinstance(node, bool):
+        return False
+    if isinstance(node, (int, float)):
+        return 0
+    if node is None:
+        return None
+    return ""
+
+
 #: 摘要里跳过的**键名**：它们描述「怎么连」的模式开关，值通常是 ssl / key /
 #: preferred 这类枚举，占一格却什么也说明不了，真正有辨识度的用户名反被挤掉。
 #:
@@ -712,6 +771,11 @@ async def describe_value_fields(
         "template": row.value_template or "",
         "kind": row.secret_type,
         "fields": [],
+        # 轮换弹窗要靠它把「原来的键」摆出来，让用户只改值。
+        # 单值凭据、或值解不开时保持 None。
+        "skeleton": None,
+        # 铺完骨架后据此勾回「敏感」，与绑定字段选择器同一份判定
+        "sensitive_fields": [],
     }
     if payload["format"] != "json":
         # 单值凭据没有字段可选，前端据此直接隐藏字段选择器
@@ -723,6 +787,9 @@ async def describe_value_fields(
     except Exception:  # noqa: BLE001 - 解不开/不是对象就当「没有可选字段」
         logger.warning("[SecretCenter] 凭据 %s 的字段清单读取失败", secret_id)
         return payload
+
+    # 同一份明文只解一次：字段清单和轮换骨架都从它来，各解一遍就多一份泄露面
+    payload["skeleton"] = _skeleton_of(data)
 
     fields: list[dict[str, Any]] = []
 
@@ -789,6 +856,55 @@ async def describe_value_fields(
 
     walk(data, "", 0)
     payload["fields"] = fields
+    # 轮换弹窗铺完骨架后要据此勾回「敏感」，与选择器用的是同一份判定
+    payload["sensitive_fields"] = [item["name"] for item in fields if item["sensitive"]]
+    return payload
+
+
+async def describe_value_structure(session, *, secret_id: str) -> dict[str, Any]:
+    """管理员版的「这条凭据是什么形状」。
+
+    与 `describe_value_fields` 只差可见性口径：管理页要轮换的是**全部**系统级凭据，
+    而 `list_visible_secrets` 只回「自己 + 被授权的」，管理员对自己没授权的那条会
+    拿到 404——于是那类凭据在管理页永远修不好。这里只按「系统级 + 存在」取，
+    鉴权交给端点（`require_admin`）。
+
+    返回值同样只有骨架，没有值。
+    """
+    row = (
+        (
+            await session.execute(
+                select(UserSecret).where(
+                    UserSecret.id == secret_id,
+                    UserSecret.owner_scope == SCOPE_SYSTEM,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if row is None:
+        raise SecretPermissionError("凭据不存在")
+
+    payload: dict[str, Any] = {
+        "id": row.id,
+        "secret_key": row.secret_key,
+        "name": row.name,
+        "format": row.value_format or "text",
+        "template": row.value_template or "",
+        "kind": row.secret_type,
+        "skeleton": None,
+    }
+    payload["sensitive_fields"] = []
+    if payload["format"] != "json":
+        return payload
+    try:
+        plaintext = get_api_key_manager().decrypt_api_key(row.value_encrypted)
+        data = parse_structured_value(plaintext)
+        payload["skeleton"] = _skeleton_of(data)
+        payload["sensitive_fields"] = _sensitive_paths(data)
+    except Exception:  # noqa: BLE001 - 解不开就不给骨架，前端退回「空表 + 自己填」
+        logger.warning("[SecretCenter] 管理员读取凭据 %s 的结构失败", secret_id)
     return payload
 
 
@@ -1661,16 +1777,48 @@ async def list_audit(
     *,
     secret_id: str | None = None,
     actor_id: str | None = None,
+    keyword: str | None = None,
+    actions: Iterable[str] | None = None,
     limit: int = 100,
 ) -> Sequence:
-    """变更审计。管理员传 ``actor_id=None`` 且 ``secret_id=None`` 看全局。"""
+    """变更审计。管理员传 ``actor_id=None`` 且 ``secret_id=None`` 看全局。
+
+    ``keyword`` 同时搜三处，因为三种情况下人记的东西不一样：
+
+    * 凭据标识（``secret_key_snapshot``）——「那条 corp.wecom.secret 谁改的」；
+    * 操作人——记的往往是姓名，而日志里只有 ``actor_id`` 和可能为空的姓名快照，
+      所以先借 ``match_usage_user_ids`` 把「这个人是谁」翻成一组 id 再比；
+    * ``detail`` 文本——排查「谁把这条规则删了」时，人记得的是槽位名
+      （``arg:list-mail:password``），它在 detail JSON 里，不在任何单独列上。
+    """
+    from sqlalchemy import or_
+
     from app.models.secret import SecretAuditLog
 
-    stmt = select(SecretAuditLog).order_by(SecretAuditLog.created_at.desc()).limit(limit)
+    stmt = select(SecretAuditLog)
     if secret_id:
         stmt = stmt.where(SecretAuditLog.secret_id == secret_id)
     if actor_id:
         stmt = stmt.where(SecretAuditLog.actor_id == actor_id)
+
+    kw = str(keyword or "").strip()
+    if kw:
+        like = f"%{kw}%"
+        clauses = [
+            SecretAuditLog.secret_key_snapshot.like(like),
+            SecretAuditLog.actor_name.like(like),
+            SecretAuditLog.detail.like(like),
+        ]
+        matched_actors = await match_usage_user_ids(session, kw)
+        if matched_actors:
+            clauses.append(SecretAuditLog.actor_id.in_(matched_actors))
+        stmt = stmt.where(or_(*clauses))
+
+    wanted_actions = [str(item).strip() for item in (actions or []) if str(item).strip()]
+    if wanted_actions:
+        stmt = stmt.where(SecretAuditLog.action.in_(wanted_actions))
+
+    stmt = stmt.order_by(SecretAuditLog.created_at.desc()).limit(limit)
     return (await session.execute(stmt)).scalars().all()
 
 

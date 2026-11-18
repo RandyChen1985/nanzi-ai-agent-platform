@@ -3,12 +3,15 @@
  * 凭据中心（系统管理 → 凭据中心）。
  *
  * 与个人中心的「我的凭据」共用同一套表和同一个注入层，差别只在管理面：
- * 管理员能看到全部系统级凭据、能授权/撤销、能强制停用。
+ * 管理员能看到全部系统级凭据、能授权/撤销、能停用/恢复、能删除。
  *
  * **管理员的权限边界**（不是前端限制，是后端就不给）：
  * - 看不到任何明文——`credential` 建完即不可读，管理员也没有解密接口；
- * - 不能「恢复」被停用的凭据，只能重新创建；
  * - 不能停用个人凭据（那是用户自己的资产）。
+ *
+ * 停用与删除是**两档不同强度**的动作，别混用：停用可逆（`/admin/{id}/status`
+ * 随时能恢复），删除不可逆（`DELETE /secrets/{id}` 会连授权和绑定一起清掉，
+ * 只保留使用流水与变更记录）。疑似泄漏先停用，确认为废数据才删除。
  */
 import { computed, onMounted, ref } from 'vue'
 import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
@@ -16,11 +19,12 @@ import CredentialValueEditor from '../components/secrets/CredentialValueEditor.v
 import SecretFormatBadge from '../components/secrets/SecretFormatBadge.vue'
 import { credentialTemplateLabel } from '../utils/credentialTemplates'
 import SecretRowActions from '../components/secrets/SecretRowActions.vue'
+import SecretKeyChip from '../components/secrets/SecretKeyChip.vue'
 import { resultLabel } from '../utils/secretLabels'
 // 变更记录的「动作」文案与配色是共享模块提供的：模板里直接用 secretActionLabel /
 // secretActionStyle，漏了这行 import 不会在构建期报错，只会在打开弹框、真的要渲染
 // 列表时抛 undefined is not a function——表现就是「点了没反应 / 弹框空白」。
-import { secretActionLabel, secretActionStyle } from '../utils/secretAudit'
+import { SECRET_ACTION_LABEL, secretActionLabel, secretActionStyle } from '../utils/secretAudit'
 import UserDeptPicker from '../components/common/UserDeptPicker.vue'
 import { useDismissible } from '../utils/dismissible'
 import axios from '../utils/axios'
@@ -35,6 +39,8 @@ interface Grant {
   id: string
   grantee_type: 'user' | 'dept' | 'all'
   grantee_id: string
+  /** 后端解析好的显示名；解析不到（对象已被删）时为空，界面回退显示 id */
+  grantee_name?: string | null
   expires_at: string | null
 }
 
@@ -78,6 +84,9 @@ interface SystemSecret {
   grant_count: number
   expires_at: string | null
   last_rotated_at: string | null
+  // 后端 serialize_secret 一直在回这两个字段，只是卡片之前没显示
+  created_at?: string | null
+  updated_at?: string | null
   // 后端 admin_list 一次带出来的聚合：绑到哪、用过没有
   bindings: SecretBindingRef[]
   binding_count: number
@@ -239,12 +248,95 @@ function showToast(text: string, type: 'ok' | 'err' = 'ok') {
   window.setTimeout(() => (toast.value = null), 2600)
 }
 
+// ── 到期与失败：卡片上最该先看到的两件事 ──────────────────────────────
+/**
+ * 7 天内到期才算「需要注意」。
+ *
+ * 后端 resolver 在 `expires_at <= now` 时会直接不注入（`injection.py` 里给出的
+ * 理由是「凭据已过期」），所以到期不是提示而是**已经开始坏了**：授权还在、绑定
+ * 还在、调用却全失败。这种「配置看起来完好、就是不生效」最难查，必须提前说。
+ */
+const EXPIRING_SOON_DAYS = 7
+
+/** 距到期还有几天；负数表示已经过期，没有有效期返回 null。 */
+function daysLeft(iso: string | null | undefined): number | null {
+  if (!iso) return null
+  const ts = Date.parse(iso)
+  if (Number.isNaN(ts)) return null
+  return Math.ceil((ts - Date.now()) / 86_400_000)
+}
+
+/**
+ * 卡片右上角的到期徽标文案（短），不需要提醒时返回空串。
+ *
+ * 徽标要挤在名称后面、还要和 ⋯ 并列，所以只给「几天后到期」这种最短形式；
+ * 「过期会怎样」放在 `expiryHint` 里当悬停说明——那句才是真正让人动手的话。
+ */
+function expiryBadge(item: SystemSecret): string {
+  const left = daysLeft(item.expires_at)
+  if (left === null) return ''
+  if (left < 0) return '已过期'
+  if (left === 0) return '今天到期'
+  if (left <= EXPIRING_SOON_DAYS) return `${left} 天后到期`
+  return ''
+}
+
+/** 到期徽标的悬停说明：说清后果与确切时间 */
+function expiryHint(item: SystemSecret): string {
+  const left = daysLeft(item.expires_at)
+  if (left === null) return ''
+  const at = item.expires_at ? shortTime(item.expires_at) : ''
+  if (left < 0) {
+    return `有效期已过（${at}）：授权与绑定还在，但调用会被直接拒绝（「凭据已过期」）。轮换一次即可恢复。`
+  }
+  return `有效期至 ${at}。到期后授权与绑定仍然保留，但调用会被拒绝——过期前轮换一次就行。`
+}
+
+/** 已经过期（不是「快过期」）——徽标颜色分档要用 */
+function isExpired(item: SystemSecret): boolean {
+  const left = daysLeft(item.expires_at)
+  return left !== null && left < 0
+}
+
+/** 左侧色条：生效绿 / 快过期或已过期琥珀 / 停用灰 */
+function cardAccent(item: SystemSecret): string {
+  if (item.status !== 'active') return 'border-l-gray-300'
+  const left = daysLeft(item.expires_at)
+  if (left !== null && left <= EXPIRING_SOON_DAYS) return 'border-l-amber-500'
+  return 'border-l-emerald-400'
+}
+
+// ── 状态筛选 ──────────────────────────────────────────────────────────
+// 顶部指标卡只说「有 4 条未授权」，真正要处理的是**哪几条**。一排 chips 把
+// 「翻卡片找」变成一次点击；计数直接来自同一份数据，不会和指标卡对不上。
+type StatusFilter = 'all' | 'active' | 'disabled' | 'unbound' | 'expiring' | 'failing'
+const statusFilter = ref<StatusFilter>('all')
+
+function matchesStatus(item: SystemSecret, filter: StatusFilter): boolean {
+  switch (filter) {
+    case 'active':
+      return item.status === 'active'
+    case 'disabled':
+      return item.status !== 'active'
+    case 'unbound':
+      // 「未绑定」比「未授权」更接近故障现场：没有消费者用它，就永远不会被调用
+      return item.binding_count === 0
+    case 'expiring':
+      return expiryBadge(item) !== ''
+    case 'failing':
+      return item.failed_7d > 0
+    default:
+      return true
+  }
+}
+
 const filtered = computed(() => {
   const q = keyword.value.trim().toLowerCase()
-  if (!q) return items.value
-  return items.value.filter(
-    (item) => item.name.toLowerCase().includes(q) || item.secret_key.toLowerCase().includes(q),
-  )
+  return items.value.filter((item) => {
+    if (!matchesStatus(item, statusFilter.value)) return false
+    if (!q) return true
+    return item.name.toLowerCase().includes(q) || item.secret_key.toLowerCase().includes(q)
+  })
 })
 
 // ── 视图模式（卡片 / 列表） ────────────────────────────────────────────
@@ -269,22 +361,82 @@ function setViewMode(mode: 'card' | 'list') {
   }
 }
 
+/**
+ * 授权对象的显示名。
+ *
+ * 只写「用户 · 62」等于没写：管理员拿这个数字判断不了是谁，得先去用户表反查，
+ * 而这一栏问的恰恰就是「这条凭据给了谁」。所以用户显示成 `姓名（id）`，
+ * 括号里的 id 留着——它是撤销授权、查审计时唯一能对上号的值，删了就再没有
+ * 定位手段；重名的人也只有 id 能区分。
+ *
+ * 名字拿不到（对象被删、或后端没解析出来）就回退成裸 id，不编造。
+ */
+function grantLabel(grant: Grant): string {
+  if (grant.grantee_type === 'all') return '全体用户'
+  const name = String(grant.grantee_name || '').trim()
+  const id = String(grant.grantee_id || '')
+  if (grant.grantee_type === 'dept') return name || `部门 · ${id}`
+  if (!name) return `用户 · ${id}`
+  return `${name}（${id}）`
+}
+
+/**
+ * 授权 chip 的悬停提示。
+ *
+ * 不再重复一遍可见文字：那个信息已经在 chip 上了，悬停应当补上 chip 放不下的
+ * 部分——授权的到期时间。到期后这条授权就不再匹配，是「明明授过权却取不到值」
+ * 时最先要排除的一环。
+ */
+function grantHint(grant: Grant): string {
+  const label = grantLabel(grant)
+  return grant.expires_at ? `${label}\n授权到期：${shortTime(grant.expires_at)}` : label
+}
+
+//: 卡片里最多平铺几个授权对象，其余收进「+N」。
+//: 一条凭据授权给几十个人是常态，全摊开会把卡片撑成一面墙。
+const GRANT_PREVIEW_COUNT = 3
+
+/** 展开态按凭据 id 记：一个页面里多张卡，不能一次全展开 */
+const expandedGrantIds = ref<string[]>([])
+
+function grantGroupExpanded(secretId: string): boolean {
+  return expandedGrantIds.value.includes(secretId)
+}
+
+function toggleGrantGroup(secretId: string) {
+  expandedGrantIds.value = grantGroupExpanded(secretId)
+    ? expandedGrantIds.value.filter((item) => item !== secretId)
+    : [...expandedGrantIds.value, secretId]
+}
+
+function visibleGrants(item: SystemSecret): Grant[] {
+  if (grantGroupExpanded(item.id) || item.grants.length <= GRANT_PREVIEW_COUNT) {
+    return item.grants
+  }
+  return item.grants.slice(0, GRANT_PREVIEW_COUNT)
+}
+
+function hiddenGrantCount(item: SystemSecret): number {
+  if (grantGroupExpanded(item.id)) return 0
+  return Math.max(0, item.grants.length - GRANT_PREVIEW_COUNT)
+}
+
 /** 列表列宽有限，授权范围只给摘要；完整名单挂在 title 里 */
 function grantSummary(item: SystemSecret): string {
   if (!item.grants.length) return '未授权'
   if (item.grants.some((grant) => grant.grantee_type === 'all')) return '全体用户'
-  return `${item.grants.length} 个对象`
+  // noUncheckedIndexedAccess 下 `grants[0]` 是 `Grant | undefined`，
+  // 上面的 length 判断 TS 不认，得显式收一次
+  const first = item.grants[0]
+  if (!first) return `${item.grants.length} 个对象`
+  // 一个对象时直接把名字写出来，省一次悬停；多个才退化成「首个 等 N 个」
+  if (item.grants.length === 1) return grantLabel(first)
+  return `${grantLabel(first)} 等 ${item.grants.length} 个`
 }
 
 function grantTitle(item: SystemSecret): string {
   if (!item.grants.length) return '尚未授权给任何人，除管理员外不可见'
-  return item.grants
-    .map((grant) =>
-      grant.grantee_type === 'all'
-        ? '全体用户'
-        : `${grant.grantee_type === 'dept' ? '部门' : '用户'} · ${grant.grantee_id}`,
-    )
-    .join('\n')
+  return item.grants.map((grant) => grantLabel(grant)).join('\n')
 }
 
 /** 绑定明细在列表里放不下，收进 title —— 但「绑到哪」恰恰是排错第一步 */
@@ -303,11 +455,60 @@ function bindingTitle(item: SystemSecret): string {
 
 const stats = computed(() => {
   const active = items.value.filter((i) => i.status === 'active').length
+  const credentials = items.value.filter((i) => i.secret_type === 'credential').length
   const grantees = new Set(
     items.value.flatMap((i) => i.grants.map((g) => `${g.grantee_type}:${g.grantee_id}`)),
   )
+  // 授权对象的构成：一个「全体用户」和一个具体用户对排查的意义完全不同
+  const grantUsers = new Set<string>()
+  const grantDepts = new Set<string>()
+  let grantAll = 0
+  for (const item of items.value) {
+    for (const grant of item.grants) {
+      if (grant.grantee_type === 'all') grantAll += 1
+      else if (grant.grantee_type === 'dept') grantDepts.add(grant.grantee_id)
+      else grantUsers.add(grant.grantee_id)
+    }
+  }
   const noGrant = items.value.filter((i) => i.grant_count === 0 && i.status === 'active').length
-  return { total: items.value.length, active, grantees: grantees.size, noGrant }
+  const unbound = items.value.filter((i) => i.binding_count === 0 && i.status === 'active').length
+  const expiring = items.value.filter((i) => i.status === 'active' && expiryBadge(i) !== '').length
+  const failing = items.value.filter((i) => i.failed_7d > 0).length
+  // 第 4 格合成「需要注意」：分开数两个数字，管理员还得自己做加法才知道要不要动手
+  return {
+    total: items.value.length,
+    credentials,
+    variables: items.value.length - credentials,
+    active,
+    disabled: items.value.length - active,
+    grantees: grantees.size,
+    grantUsers: grantUsers.size,
+    grantDepts: grantDepts.size,
+    grantAll,
+    noGrant,
+    unbound,
+    expiring,
+    failing,
+    attention: unbound + expiring,
+  }
+})
+
+/**
+ * 筛选 chip 的清单。
+ *
+ * 计数与 `matchesStatus` 共用同一份数据，所以 chip 上的数字一定等于点进去的条数；
+ * 分开算一次是「点了 3 条却出来 4 条」这类 bug 的常见来源。
+ */
+const STATUS_FILTERS = computed(() => {
+  const list: Array<{ key: StatusFilter; label: string; count: number; warn?: boolean }> = [
+    { key: 'all', label: '全部', count: items.value.length },
+    { key: 'active', label: '生效中', count: stats.value.active },
+    { key: 'disabled', label: '已停用', count: stats.value.disabled },
+    { key: 'unbound', label: '未绑定', count: stats.value.unbound, warn: true },
+    { key: 'expiring', label: '7 天内到期', count: stats.value.expiring, warn: true },
+    { key: 'failing', label: '近 7 天有失败', count: stats.value.failing, warn: true },
+  ]
+  return list
 })
 
 async function load() {
@@ -361,6 +562,25 @@ type AuditRow = {
   created_at: string
 }
 const auditRows = ref<AuditRow[]>([])
+/**
+ * 只看某一条凭据的变更（从卡片进来时带上）。
+ *
+ * 全局列表里翻「这条凭据到底经历过什么」要在一屏几十条里靠眼睛筛，而卡片上
+ * 问的恰恰就是这一条——所以入口要能带 secret_id 进来，而不是让用户自己再过滤。
+ */
+const auditSecretId = ref('')
+const auditSecretKey = ref('')
+/** 关键字：凭据标识 / 操作人 / detail 里的槽位与规则，后端一次搜三处 */
+const auditKeyword = ref('')
+/** 动作多选，空 = 全部 */
+const auditActions = ref<string[]>([])
+/** 用过的筛选条件（用于区分「一条记录都没有」和「筛完没匹配」） */
+const auditFiltered = computed(
+  () => Boolean(auditSecretId.value || auditKeyword.value.trim() || auditActions.value.length),
+)
+
+/** 动作筛选项的候选：文案表就是唯一真源，别在这里再列一遍 */
+const AUDIT_ACTIONS = Object.keys(SECRET_ACTION_LABEL)
 
 // ── 使用记录（管理员看全局） ──────────────────────────────────────────
 // 「近 7 天调用 N 次」只给了个数字，查不到是谁、在哪个场景、成没成功。
@@ -548,10 +768,27 @@ const rotateFormat = ref<'text' | 'json'>('text')
 const rotateTemplate = ref<string | null>(null)
 const rotateSecretFields = ref<string[]>([])
 const rotateValid = ref(false)
+/**
+ * 轮换弹窗要铺出来的「原结构骨架」（只有键与类型，没有值）。
+ *
+ * 值不可读，所以没有它时弹窗只能给一张空表，用户得凭记忆默写键名——错一个字母，
+ * 别处 `${secret:标识.字段}` 的引用就静默失效。骨架由后端从既有值算出来。
+ */
+const rotateInitialJson = ref('')
+const rotateStructureLoading = ref(false)
+/** 结构读失败时的说明：不阻塞轮换，退回空表 + 提示 */
+const rotateStructureError = ref('')
 const rotateExpiresAt = ref('')
 const rotateClearExpires = ref(false)
 
-function openRotate(item: SystemSecret) {
+/**
+ * 打开轮换弹窗，并尽量把「原来的键」摆出来。
+ *
+ * 结构化凭据的键集合就是结构：轮换只该换值，不该让用户重新默写一遍键名。
+ * 走 `/admin/{id}/structure` 而不是 `/fields`——后者按「自己 + 被授权」判可见性，
+ * 管理员轮换自己没被授权的那条会 404，而管理页恰恰要维护全部系统级凭据。
+ */
+async function openRotate(item: SystemSecret) {
   rotateTarget.value = item
   rotateValue.value = ''
   rotateFormat.value = item.value_format === 'json' ? 'json' : 'text'
@@ -560,7 +797,29 @@ function openRotate(item: SystemSecret) {
   rotateValid.value = false
   rotateExpiresAt.value = ''
   rotateClearExpires.value = false
+  rotateInitialJson.value = ''
+  rotateStructureError.value = ''
   rotateOpen.value = true
+
+  if (item.value_format !== 'json') return
+  rotateStructureLoading.value = true
+  try {
+    const res = await axios.get(`/api/portal/secrets/admin/${item.id}/structure`)
+    const skeleton = res.data?.data?.skeleton
+    const sensitive = res.data?.data?.sensitive_fields
+    // 换了目标就不回填：慢请求回来时用户可能已经关掉又开了另一条
+    if (rotateTarget.value?.id !== item.id) return
+    if (Array.isArray(sensitive)) rotateSecretFields.value = sensitive
+    if (skeleton && typeof skeleton === 'object') {
+      rotateInitialJson.value = JSON.stringify(skeleton, null, 2)
+    }
+  } catch {
+    if (rotateTarget.value?.id !== item.id) return
+    // 拿不到结构不拦着轮换，只是退回「自己填键名」，并且说明白
+    rotateStructureError.value = '没能读出原来的字段结构，请自己填写字段名（键名要与原来一致）'
+  } finally {
+    if (rotateTarget.value?.id === item.id) rotateStructureLoading.value = false
+  }
 }
 
 async function submitRotate() {
@@ -591,11 +850,48 @@ async function submitRotate() {
   }
 }
 
-async function openAudit() {
+async function openAudit(secretId = '', secretKey = '') {
+  auditSecretId.value = secretId
+  auditSecretKey.value = secretKey
+  auditKeyword.value = ''
+  auditActions.value = []
   auditOpen.value = true
+  await loadAudit()
+}
+
+let auditTimer: ReturnType<typeof setTimeout> | null = null
+/** 输入即搜要防抖：每敲一个字打一次请求，滚动时会明显卡 */
+function scheduleAuditSearch() {
+  if (auditTimer) clearTimeout(auditTimer)
+  auditTimer = setTimeout(() => void loadAudit(), 250)
+}
+
+function toggleAuditAction(action: string) {
+  auditActions.value = auditActions.value.includes(action)
+    ? auditActions.value.filter((item) => item !== action)
+    : [...auditActions.value, action]
+  void loadAudit()
+}
+
+/** 退出「只看这一条」，回到全局列表（筛选条件一起清） */
+function clearAuditScope() {
+  auditSecretId.value = ''
+  auditSecretKey.value = ''
+  auditKeyword.value = ''
+  auditActions.value = []
+  void loadAudit()
+}
+
+async function loadAudit() {
   auditLoading.value = true
   try {
-    const res = await axios.get('/api/portal/secrets/audit', { params: { limit: 100 } })
+    const params: Record<string, unknown> = { limit: 100 }
+    if (auditSecretId.value) params.secret_id = auditSecretId.value
+    const keyword = auditKeyword.value.trim()
+    if (keyword) params.keyword = keyword
+    // 逗号分隔而不是数组：axios 默认发 action[]=，FastAPI 的 List 查询只认重复键
+    if (auditActions.value.length) params.action = auditActions.value.join(',')
+    const res = await axios.get('/api/portal/secrets/audit', { params })
     auditRows.value = res.data?.data || []
   } catch (e: any) {
     showToast(e?.response?.data?.detail || '加载变更记录失败', 'err')
@@ -765,7 +1061,7 @@ async function submitDisable() {
   try {
     await axios.post(`/api/portal/secrets/admin/${disableTarget.value.id}/disable`)
     disableTarget.value = null
-    showToast('已停用。所有绑定立即失效，且不可恢复')
+    showToast('已停用。所有绑定立即失效，恢复后即可重新生效')
     await load()
   } catch (e: any) {
     showToast(e?.response?.data?.detail || '停用失败', 'err')
@@ -774,30 +1070,127 @@ async function submitDisable() {
   }
 }
 
+// ── 恢复启用 ──────────────────────────────────────────────────────────
+//
+// 停用必须可逆，否则管理员不敢用它止血：误停用一条全体共用的凭据之后，
+// 平台里没有路径能恢复，只能重建——而重建意味着所有绑定都要重新做一遍。
+// 后端一直有 `POST /admin/{id}/status`，这里把入口接上。
+const enableBusyId = ref('')
+
+async function enableSecret(item: SystemSecret) {
+  if (enableBusyId.value) return
+  enableBusyId.value = item.id
+  try {
+    await axios.post(`/api/portal/secrets/admin/${item.id}/status`, { status: 'active' })
+    showToast('已恢复启用，原有授权与绑定继续有效')
+    await load()
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || '恢复失败', 'err')
+  } finally {
+    enableBusyId.value = ''
+  }
+}
+
+// ── 删除 ──────────────────────────────────────────────────────────────
+//
+// 走的是个人页同一个端点 `DELETE /secrets/{id}`：系统级只要求调用者是管理员
+// （`center.delete_secret` 里判 `actor_is_admin`），没必要再造一条 /admin 路由。
+// 后端会显式清 `sys_secret_grants` 与 `sys_secret_bindings`（两张表没有外键，
+// 没人替我们级联），使用流水与变更记录保留。
+const deleteTarget = ref<SystemSecret | null>(null)
+const deleteBusy = ref(false)
+
+async function submitDelete() {
+  if (!deleteTarget.value) return
+  deleteBusy.value = true
+  try {
+    await axios.delete(`/api/portal/secrets/${deleteTarget.value.id}`)
+    deleteTarget.value = null
+    showToast('已删除，授权与绑定一并清除')
+    await load()
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || '删除失败', 'err')
+  } finally {
+    deleteBusy.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
 <template>
   <div class="space-y-4">
-    <!-- 统计 -->
+    <!-- 统计：四个数字原来全靠文字区分，扫一眼只看到「4 / 4 / 4 / 0」。
+         加图标是为了靠形状就能分出「总量 / 可用 / 授权对象 / 待处理」，底色跟着
+         语义走（琥珀 = 需要注意）；副标题说的是**口径**，省得每次都要口头解释。 -->
     <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <div class="rounded-xl border border-gray-200 bg-white p-3">
-        <p class="text-[11px] text-gray-500">系统级凭据</p>
-        <p class="mt-1 text-2xl font-semibold text-gray-900">{{ stats.total }}</p>
+      <div class="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-600">
+          <svg class="h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+            <path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" />
+            <path d="m3 12 9 4.5 9-4.5" />
+            <path d="m3 16.5 9 4.5 9-4.5" />
+          </svg>
+        </span>
+        <div class="min-w-0">
+          <p class="text-[11px] text-gray-500">系统级凭据</p>
+          <p class="mt-0.5 text-2xl font-semibold text-gray-900">{{ stats.total }}</p>
+          <p class="mt-0.5 text-[10.5px] text-gray-400">凭证 {{ stats.credentials }} · 变量 {{ stats.variables }}</p>
+        </div>
       </div>
-      <div class="rounded-xl border border-gray-200 bg-white p-3">
-        <p class="text-[11px] text-gray-500">生效中</p>
-        <p class="mt-1 text-2xl font-semibold text-emerald-600">{{ stats.active }}</p>
+      <div class="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+          <svg class="h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9" />
+            <path d="m8.5 12 2.5 2.5 4.5-5" />
+          </svg>
+        </span>
+        <div class="min-w-0">
+          <p class="text-[11px] text-gray-500">生效中</p>
+          <p class="mt-0.5 text-2xl font-semibold text-emerald-600">{{ stats.active }}</p>
+          <p class="mt-0.5 text-[10.5px] text-gray-400">
+            {{ stats.disabled ? `${stats.disabled} 条已停用` : '没有停用的' }}
+          </p>
+        </div>
       </div>
-      <div class="rounded-xl border border-gray-200 bg-white p-3">
-        <p class="text-[11px] text-gray-500">授权对象</p>
-        <p class="mt-1 text-2xl font-semibold text-gray-900">{{ stats.grantees }}</p>
+      <div class="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
+          <svg class="h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+            <path d="M16 20v-1.5a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4V20" />
+            <circle cx="9" cy="7" r="3.2" />
+            <path d="M22 20v-1.5a4 4 0 0 0-3-3.87" />
+            <path d="M16.5 4.2a3.2 3.2 0 0 1 0 5.6" />
+          </svg>
+        </span>
+        <div class="min-w-0">
+          <p class="text-[11px] text-gray-500">授权对象</p>
+          <p class="mt-0.5 text-2xl font-semibold text-gray-900">{{ stats.grantees }}</p>
+          <p class="mt-0.5 truncate text-[10.5px] text-gray-400">
+            用户 {{ stats.grantUsers }} · 部门 {{ stats.grantDepts }} · 全体 {{ stats.grantAll }}
+          </p>
+        </div>
       </div>
-      <div class="rounded-xl border border-gray-200 bg-white p-3">
-        <p class="text-[11px] text-gray-500">未授权</p>
-        <p class="mt-1 text-2xl font-semibold" :class="stats.noGrant ? 'text-amber-600' : 'text-gray-900'">
-          {{ stats.noGrant }}
-        </p>
+      <div class="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3">
+        <span
+          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+          :class="stats.attention ? 'bg-amber-50 text-amber-600' : 'bg-gray-100 text-gray-400'"
+        >
+          <svg class="h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+            <path d="M10.3 3.8 2.5 17.2A2 2 0 0 0 4.2 20h15.6a2 2 0 0 0 1.7-2.8L13.7 3.8a2 2 0 0 0-3.4 0Z" />
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+          </svg>
+        </span>
+        <div class="min-w-0">
+          <p class="text-[11px] text-gray-500">需要注意</p>
+          <p
+            class="mt-0.5 text-2xl font-semibold"
+            :class="stats.attention ? 'text-amber-600' : 'text-gray-900'"
+          >{{ stats.attention }}</p>
+          <p class="mt-0.5 truncate text-[10.5px] text-gray-400">
+            {{ stats.unbound }} 条未绑定 · {{ stats.expiring }} 条 7 天内到期
+          </p>
+        </div>
       </div>
     </div>
 
@@ -867,7 +1260,7 @@ onMounted(load)
         <button
           type="button"
           class="shrink-0 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-          @click="openAudit"
+          @click="openAudit()"
         >
           变更记录
         </button>
@@ -889,36 +1282,64 @@ onMounted(load)
       </div>
     </div>
 
+    <!-- 状态筛选：指标卡只说「有几条要处理」，这一排说的是**哪几条**。
+         计数和筛选共用同一个判定函数，所以 chip 上的数字一定等于点进去的条数。 -->
+    <div v-if="items.length" class="flex flex-wrap items-center gap-1.5">
+      <button
+        v-for="filter in STATUS_FILTERS"
+        :key="filter.key"
+        type="button"
+        class="rounded-full px-2.5 py-1 text-[11.5px] ring-1 ring-inset transition-colors"
+        :class="statusFilter === filter.key
+          ? 'bg-slate-900 text-white ring-slate-900'
+          : filter.warn && filter.count
+            ? 'bg-amber-50 text-amber-700 ring-amber-200 hover:bg-amber-100'
+            : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50'"
+        @click="statusFilter = filter.key"
+      >
+        {{ filter.label }}
+        <span
+          class="ml-1"
+          :class="statusFilter === filter.key ? 'text-white/65' : 'text-gray-400'"
+        >{{ filter.count }}</span>
+      </button>
+      <button
+        v-if="statusFilter !== 'all'"
+        type="button"
+        class="rounded-full px-2 py-1 text-[11.5px] text-gray-400 hover:text-gray-700"
+        @click="statusFilter = 'all'"
+      >清除筛选</button>
+    </div>
+
     <!-- 列表 -->
     <div v-if="loading" class="py-12 text-center text-sm text-gray-400">加载中…</div>
     <div
       v-else-if="!filtered.length"
       class="rounded-xl border border-dashed border-gray-300 py-14 text-center text-sm text-gray-500"
     >
-      还没有系统级凭据
+      <template v-if="items.length">
+        没有匹配的凭据——换个关键字，或点上面的「全部」看所有记录
+      </template>
+      <template v-else>还没有系统级凭据</template>
     </div>
     <template v-else>
-    <div v-if="viewMode === 'card'" class="grid gap-3 lg:grid-cols-2">
+    <!-- 三列：动作收进 ⋯ 之后，卡片头部只剩「名称 + 徽标 + ⋯」，
+         每列 ~440px（1440 屏）仍放得下摘要与授权 chips。窄屏退两列 / 一列。 -->
+    <div v-if="viewMode === 'card'" class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       <div
         v-for="item in filtered"
         :key="item.id"
         class="rounded-xl border border-gray-200 bg-white p-3.5 transition-shadow hover:shadow-md"
-        :class="item.status === 'active'
-          ? 'border-l-4 border-l-emerald-400'
-          : 'border-l-4 border-l-gray-300'"
+        :class="['border-l-4', cardAccent(item)]"
       >
-        <div class="flex flex-wrap items-start justify-between gap-2">
-          <div class="min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="font-medium text-gray-900">{{ item.name }}</span>
-              <code class="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">{{ item.secret_key }}</code>
+        <div class="flex items-start gap-2">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1.5">
+              <span class="truncate font-medium text-gray-900" :title="item.name">{{ item.name }}</span>
+            </div>
+            <div class="mt-1 flex flex-wrap items-center gap-1.5">
+              <SecretKeyChip :secret-key="item.secret_key" />
               <SecretFormatBadge :format="item.value_format" :template="item.value_template" size="sm" />
-              <span
-                class="rounded px-1.5 py-0.5 text-[11px] font-medium"
-                :class="item.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
-              >
-                {{ item.status === 'active' ? '生效中' : '已停用' }}
-              </span>
             </div>
             <p v-if="item.value_format === 'json'" class="mt-1 break-all font-mono text-[11px] text-indigo-700">
               {{ item.value_summary || '（无摘要）' }}
@@ -938,47 +1359,41 @@ onMounted(load)
             </div>
           </div>
 
-          <!-- 加了边框之后按钮更占宽，工具名长时允许自己折行，别把标题挤出去 -->
-          <div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-            <button
-              type="button"
-              class="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 shadow-sm transition-colors hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
-              title="只看这条凭据的使用记录"
-              @click="openUsage(item.id)"
+          <!-- 卡片上不再平铺动作：三列布局里每列只有 ~440px，七八个按钮会把
+               名称与摘要挤成两行。改成与列表一致的 ⋯ 菜单（同一个组件，动作清单
+               不会各长各的）。恢复「停用 / 恢复」互斥、删除排在最后都由它保证。 -->
+          <div class="flex shrink-0 items-center gap-1">
+            <span
+              v-if="item.failed_7d"
+              class="rounded px-1.5 py-0.5 text-[10.5px] font-medium"
+              :class="'bg-rose-100 text-rose-700'"
+              :title="`近 7 天有 ${item.failed_7d} 次调用失败——点「使用记录」看具体原因`"
+            >{{ item.failed_7d }} 次失败</span>
+            <span
+              v-if="expiryBadge(item)"
+              class="rounded px-1.5 py-0.5 text-[10.5px] font-medium"
+              :class="isExpired(item) ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800'"
+              :title="expiryHint(item)"
+            >{{ expiryBadge(item) }}</span>
+            <span
+              v-else
+              class="rounded px-1.5 py-0.5 text-[10.5px] font-medium"
+              :class="item.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
             >
-              使用记录
-            </button>
-            <button
-              type="button"
-              class="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 shadow-sm transition-colors hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
-              title="改名称、场景、域名白名单（值只能轮换）"
-              @click="openEdit(item)"
-            >
-              编辑
-            </button>
-            <button
-              type="button"
-              class="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 shadow-sm transition-colors hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
-              title="换掉这条凭据的值，旧值保留 7 天"
-              @click="openRotate(item)"
-            >
-              轮换
-            </button>
-            <button
-              type="button"
-              class="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 shadow-sm transition-colors hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
-              @click="openGrant(item)"
-            >
-              授权
-            </button>
-            <button
-              v-if="item.status === 'active'"
-              type="button"
-              class="rounded-md border border-rose-200 bg-white px-2 py-1 text-xs text-rose-600 shadow-sm transition-colors hover:border-rose-300 hover:bg-rose-50"
-              @click="disableTarget = item"
-            >
-              强制停用
-            </button>
+              {{ item.status === 'active' ? '生效中' : '已停用' }}
+            </span>
+            <SecretRowActions
+              :active="item.status === 'active'"
+              :name="item.name"
+              @usage="openUsage(item.id)"
+              @audit="openAudit(item.id, item.secret_key)"
+              @edit="openEdit(item)"
+              @rotate="openRotate(item)"
+              @grant="openGrant(item)"
+              @disable="disableTarget = item"
+              @enable="enableSecret(item)"
+              @delete="deleteTarget = item"
+            />
           </div>
         </div>
 
@@ -987,14 +1402,12 @@ onMounted(load)
           <span class="text-[11px] text-gray-400">授权范围</span>
           <span v-if="!item.grants.length" class="text-[11px] text-amber-600">尚未授权给任何人</span>
           <span
-            v-for="grant in item.grants"
+            v-for="grant in visibleGrants(item)"
             :key="grant.id"
             class="inline-flex items-center gap-1 rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-700"
+            :title="grantHint(grant)"
           >
-            <template v-if="grant.grantee_type === 'all'">全体用户</template>
-            <template v-else>
-              {{ grant.grantee_type === 'dept' ? '部门' : '用户' }} · {{ grant.grantee_id }}
-            </template>
+            {{ grantLabel(grant) }}
             <button
               type="button"
               class="text-gray-400 hover:text-rose-600"
@@ -1004,6 +1417,26 @@ onMounted(load)
               ×
             </button>
           </span>
+          <!-- 授权给几十个人是常态，全摊开会把卡片撑成一面墙；
+               +N 展开、再点收起，完整名单也能悬停看 title -->
+          <button
+            v-if="hiddenGrantCount(item)"
+            type="button"
+            class="rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] text-gray-500 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-800"
+            :title="`展开其余 ${hiddenGrantCount(item)} 个授权对象`"
+            @click="toggleGrantGroup(item.id)"
+          >
+            +{{ hiddenGrantCount(item) }}
+          </button>
+          <button
+            v-else-if="item.grants.length > GRANT_PREVIEW_COUNT"
+            type="button"
+            class="rounded-md px-1.5 py-0.5 text-[11px] text-gray-400 hover:text-gray-700"
+            title="收起授权名单"
+            @click="toggleGrantGroup(item.id)"
+          >
+            收起
+          </button>
         </div>
 
         <!-- 绑定目标：按消费者类型分组——
@@ -1048,9 +1481,24 @@ onMounted(load)
           </div>
         </div>
 
-        <!-- 绑定与使用：建完不等于在用，这两行就是「在跑还是摆着」 -->
+        <!-- 没绑定时给的是下一步，而不是一句「已绑定 0 处」：后者只是陈述，
+             后果要用户自己推断——而后果是「这条凭据当前不会被任何调用用到」。 -->
+        <p
+          v-if="!(item.binding_count || 0)"
+          class="mt-2 flex items-start gap-1 text-[11px] text-amber-700"
+        >
+          <svg class="mt-[2px] h-3 w-3 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M12 9v4m0 4h.01" stroke-linecap="round" />
+            <circle cx="12" cy="12" r="9" />
+          </svg>
+          <span>还没绑到任何消费者——绑上工具参数后才会真正被调用</span>
+        </p>
+
+        <!-- 绑定与使用：建完不等于在用，这几格就是「在跑还是摆着」。
+             两列排布是因为三列布局下横排一行放不下，而竖排又太占高度。
+             创建时间与最近调用并列：一个不变、一个常变，不该混在同一行里读。 -->
         <div
-          class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-gray-100 pt-2.5 text-[11px] text-gray-500"
+          class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-gray-100 pt-2.5 text-[11px] text-gray-500"
         >
           <span>
             已绑定
@@ -1061,9 +1509,12 @@ onMounted(load)
           </span>
           <span>
             近 7 天调用 <b class="font-medium text-gray-700">{{ item.usage_7d || 0 }}</b> 次
+            <span v-if="item.failed_7d" class="text-rose-600">· 失败 {{ item.failed_7d }}</span>
           </span>
-          <span v-if="item.failed_7d" class="text-amber-600">其中失败 {{ item.failed_7d }} 次</span>
           <span>最近一次 {{ shortTime(item.last_used_at) }}</span>
+          <span :title="item.last_rotated_at ? `上次轮换：${shortTime(item.last_rotated_at)}` : '这条还没轮换过'">
+            创建于 {{ shortTime(item.created_at) }}
+          </span>
         </div>
       </div>
     </div>
@@ -1088,7 +1539,7 @@ onMounted(load)
             <td class="px-3 py-2.5">
               <div class="flex flex-wrap items-center gap-1.5">
                 <span class="font-medium text-gray-900">{{ item.name }}</span>
-                <code class="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">{{ item.secret_key }}</code>
+                <SecretKeyChip :secret-key="item.secret_key" />
                 <SecretFormatBadge :format="item.value_format" :template="item.value_template" size="sm" />
               </div>
               <!-- 结构化凭据没有「可看的前缀」，这里显示后端挑出的非敏感摘要 -->
@@ -1104,6 +1555,20 @@ onMounted(load)
               >
                 {{ item.status === 'active' ? '生效中' : '已停用' }}
               </span>
+              <!-- 卡片上已经有的两个异常徽标，列表里也要有：
+                   否则同一个库换个体视图看，「这条有问题」就消失了 -->
+              <div v-if="expiryBadge(item)" class="mt-1">
+                <span
+                  class="rounded px-1 py-0.5 text-[10px] font-medium"
+                  :class="isExpired(item) ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800'"
+                  :title="expiryHint(item)"
+                >{{ expiryBadge(item) }}</span>
+              </div>
+              <div v-if="item.failed_7d" class="mt-1">
+                <span class="rounded bg-rose-100 px-1 py-0.5 text-[10px] font-medium text-rose-700">
+                  失败 {{ item.failed_7d }}
+                </span>
+              </div>
             </td>
             <td class="px-3 py-2.5">
               <div class="flex flex-wrap gap-1">
@@ -1144,10 +1609,13 @@ onMounted(load)
                 :active="item.status === 'active'"
                 :name="item.name"
                 @usage="openUsage(item.id)"
+                @audit="openAudit(item.id, item.secret_key)"
                 @edit="openEdit(item)"
                 @rotate="openRotate(item)"
                 @grant="openGrant(item)"
                 @disable="disableTarget = item"
+                @enable="enableSecret(item)"
+                @delete="deleteTarget = item"
               />
             </td>
           </tr>
@@ -1158,7 +1626,7 @@ onMounted(load)
 
     <div v-if="showPlaintextHint" class="flex items-start gap-2">
       <p class="min-w-0 flex-1 text-[11px] leading-relaxed text-gray-400">
-        管理员也读不到凭据明文——这不是权限设置，是平台没有这个能力。要更换值只能让创建者轮换，或停用后重建。
+        管理员也读不到凭据明文——这不是权限设置，是平台没有这个能力。要更换值只能轮换；确实要作废这条，可以删除后重建（会连带清掉授权与绑定）。
       </p>
       <button
         type="button"
@@ -1506,7 +1974,7 @@ onMounted(load)
             <div class="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
               <h3 class="text-base font-semibold text-gray-900">强制停用？</h3>
               <p class="mt-1 text-xs leading-relaxed text-gray-500">
-                <code>{{ disableTarget.secret_key }}</code> 会立即对所有使用者失效，<strong>不可恢复</strong>。
+                <code>{{ disableTarget.secret_key }}</code> 会立即对所有使用者失效；<strong>可以恢复</strong>，恢复后原有授权与绑定继续有效。
                 这是疑似泄漏时的止损手段；正常轮换请让创建者操作。
               </p>
               <div class="mt-4 flex justify-end gap-2">
@@ -1526,6 +1994,45 @@ onMounted(load)
           </div>
     </Teleport>
 
+    <!-- 删除确认 -->
+    <Teleport to="body">
+          <div
+            v-if="deleteTarget"
+            class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+            @click.self="deleteTarget = null"
+          >
+            <div class="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
+              <h3 class="text-base font-semibold text-gray-900">删除凭据？</h3>
+              <p class="mt-1 text-xs leading-relaxed text-gray-500">
+                <code>{{ deleteTarget.secret_key }}</code> 会被<strong>彻底删除</strong>，这条记录无法找回。
+                <template v-if="deleteTarget.grant_count">
+                  它的 <b class="text-rose-600">{{ deleteTarget.grant_count }}</b> 条授权会一并清除；
+                </template>
+                <template v-if="deleteTarget.binding_count">
+                  它当前绑在 <b class="text-rose-600">{{ deleteTarget.binding_count }}</b> 个地方，这些绑定会一并清除，相关调用立刻开始失败；
+                </template>
+                使用记录与变更记录会保留，能查到「谁在什么时候删了它」。
+              </p>
+              <p class="mt-2 rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-700">
+                只是想让它暂时失效、过阵子再用，请改用「强制停用」——那个可以恢复，删除不行。
+              </p>
+              <div class="mt-4 flex justify-end gap-2">
+                <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100" @click="deleteTarget = null">
+                  取消
+                </button>
+                <button
+                  type="button"
+                  :disabled="deleteBusy"
+                  class="rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-60"
+                  @click="submitDelete"
+                >
+                  {{ deleteBusy ? '删除中…' : '确认删除' }}
+                </button>
+              </div>
+            </div>
+          </div>
+    </Teleport>
+
     <!-- 变更记录弹框 -->
     <Teleport to="body">
       <div
@@ -1534,24 +2041,85 @@ onMounted(load)
         @click.self="auditOpen = false"
       >
         <div class="flex max-h-[calc(100vh-120px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-          <div class="flex items-start justify-between border-b border-gray-100 px-5 py-3">
-            <div>
-              <h3 class="text-base font-semibold text-gray-900">变更记录</h3>
-              <p class="mt-0.5 text-xs text-gray-500">
-                谁在什么时候对哪条凭据做了什么。不记值——凭据删除后记录仍保留。
-              </p>
+          <div class="border-b border-gray-100 px-5 py-3">
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0">
+                <h3 class="flex flex-wrap items-baseline gap-1.5 text-base font-semibold text-gray-900">
+                  变更记录
+                  <span
+                    v-if="auditSecretKey"
+                    class="truncate rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] font-normal text-gray-600"
+                  >{{ auditSecretKey }}</span>
+                </h3>
+                <p class="mt-0.5 text-xs text-gray-500">
+                  {{ auditSecretKey ? '只看这条凭据：谁在什么时候改了什么。' : '谁在什么时候对哪条凭据做了什么。' }}
+                  不记值——凭据删除后记录仍保留。
+                </p>
+              </div>
+              <button
+                type="button"
+                class="shrink-0 rounded-lg px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                @click="auditOpen = false"
+              >✕</button>
             </div>
-            <button
-              type="button"
-              class="rounded-lg px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-              @click="auditOpen = false"
-            >✕</button>
+
+            <!-- 搜索：一个框搜三处——凭据标识、操作人、detail 里的槽位与规则。
+                 记录一多，靠眼睛在一屏几十条里捞「谁把这条规则删了」是不现实的。 -->
+            <div class="mt-2 flex flex-wrap items-center gap-1.5">
+              <div class="relative w-full min-w-0 sm:w-64">
+                <input
+                  v-model="auditKeyword"
+                  type="text"
+                  placeholder="搜凭据标识 / 操作人 / 槽位或规则"
+                  spellcheck="false"
+                  class="w-full rounded-lg border border-gray-300 py-1 pl-2.5 pr-7 text-xs focus:border-primary focus:outline-none"
+                  @input="scheduleAuditSearch"
+                />
+                <button
+                  v-if="auditKeyword"
+                  type="button"
+                  class="absolute right-1 top-1/2 -translate-y-1/2 rounded px-1 text-sm leading-none text-gray-400 hover:text-gray-600"
+                  title="清空关键字"
+                  @click="auditKeyword = ''; loadAudit()"
+                >×</button>
+              </div>
+              <button
+                v-if="auditSecretId"
+                type="button"
+                class="whitespace-nowrap rounded-lg border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50"
+                title="退出「只看这一条」，回到全局变更记录"
+                @click="clearAuditScope"
+              >只看本条 · 查看全部</button>
+            </div>
+
+            <!-- 动作筛选：按后果分组的那套文案直接拿来当筛选项，别另列一份 -->
+            <div class="mt-1.5 flex flex-wrap items-center gap-1">
+              <button
+                v-for="action in AUDIT_ACTIONS"
+                :key="action"
+                type="button"
+                class="rounded-full px-2 py-0.5 text-[11px] ring-1 ring-inset transition-colors"
+                :class="auditActions.includes(action)
+                  ? 'bg-slate-900 text-white ring-slate-900'
+                  : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50'"
+                @click="toggleAuditAction(action)"
+              >{{ secretActionLabel(action) }}</button>
+              <button
+                v-if="auditActions.length"
+                type="button"
+                class="rounded-full px-2 py-0.5 text-[11px] text-gray-400 hover:text-gray-600"
+                @click="auditActions = []; loadAudit()"
+              >清空</button>
+            </div>
           </div>
 
           <div class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
             <p v-if="auditLoading" class="py-8 text-center text-xs text-gray-400">加载中…</p>
             <p v-else-if="!auditRows.length" class="py-8 text-center text-xs text-gray-400">
-              还没有变更记录
+              <template v-if="auditFiltered">
+                没有匹配的变更记录——换个关键字，或清掉动作筛选再看
+              </template>
+              <template v-else>还没有变更记录</template>
             </p>
             <div v-else class="space-y-1.5">
               <div
@@ -1618,6 +2186,8 @@ onMounted(load)
           </div>
 
           <div class="min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-4">
+            <p v-if="rotateStructureLoading" class="text-[11px] text-gray-500">正在读取原来的字段结构…</p>
+            <p v-else-if="rotateStructureError" class="text-[11px] text-amber-700">{{ rotateStructureError }}</p>
             <CredentialValueEditor
               v-model="rotateValue"
               v-model:format="rotateFormat"
@@ -1626,6 +2196,7 @@ onMounted(load)
               v-model:valid="rotateValid"
               :secret-type="rotateTarget?.secret_type || 'credential'"
               :lock-structure="true"
+              :initial-json="rotateInitialJson"
             />
             <div class="space-y-1.5 rounded-lg border border-gray-200 bg-gray-50/70 p-3">
               <div class="flex items-center justify-between gap-2">
@@ -1656,7 +2227,7 @@ onMounted(load)
             </div>
             <p class="text-[11px] leading-relaxed text-amber-700">
               旧值会保留 <b>7 天</b>作为回退窗口——正在跑的任务不会立刻失败；
-              7 天后自动失效。想马上作废旧值，轮换后再点「强制停用」重建。
+              7 天后自动失效。想不等这 7 天就让旧值彻底不起作用，可以先把这条凭据强制停用（可恢复），确认新值跑通再恢复。
             </p>
           </div>
 
