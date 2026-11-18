@@ -41,7 +41,7 @@ const props = withDefaults(defineProps<{
   canEditVersion: boolean;
   toolTab: 'static' | 'mcp' | 'skills';
   toolSearchQuery: string;
-  /** 「仅看已选」：只显示当前版本已勾选的工具 / MCP / Skills；跨三个页签共用 */
+  /** 「已选」：只显示当前版本已勾选的工具 / MCP / Skills；跨三个页签共用 */
   onlySelectedTools?: boolean;
   versionConfigStep: VersionConfigStep;
   versionConfigSteps: { id: VersionConfigStep; label: string }[];
@@ -144,19 +144,19 @@ const emit = defineEmits<{
 // 搜索期间一律展开分组（只读覆盖，不写回折叠集合）：否则搜索命中的工具躲在折叠的
 // 分组里，用户只看到标题与计数；清空搜索即回到原本的折叠状态，无需保存快照。
 const isSearching = computed(() => props.toolSearchQuery.trim().length > 0);
-// 「仅看已选」同理会把每个分组收窄成只剩一两个工具，折叠着等于看不到东西，
+// 「已选」同理会把每个分组收窄成只剩一两个工具，折叠着等于看不到东西，
 // 所以两种过滤态都强制展开，且都不写回折叠集合。
 const isFiltering = computed(() => isSearching.value || props.onlySelectedTools);
 
 /**
  * 过滤后列表为空时的提示。
  *
- * 只写「没有匹配」会把两种情况混在一起：一种是搜索关键词没命中，另一种是「仅看已选」
+ * 只写「没有匹配」会把两种情况混在一起：一种是搜索关键词没命中，另一种是「已选」
  * 而当前版本确实一个都没勾——后者要告诉用户关掉过滤，而不是让他换关键词。
  */
 const filterEmptyHint = (label: string) => {
   if (isSearching.value && props.onlySelectedTools) {
-    return `已勾选的${label}里没有匹配「${props.toolSearchQuery.trim()}」的项，试试清空搜索或关掉「仅看已选」`;
+    return `已勾选的${label}里没有匹配「${props.toolSearchQuery.trim()}」的项，试试清空搜索或关掉「已选」`;
   }
   if (props.onlySelectedTools) return `当前版本还没有勾选任何${label}`;
   return '没有匹配的项，试试换个关键词';
@@ -254,6 +254,13 @@ const AGENT_VERSION_TOOLCALL_TIMEOUT_MAX = 86400;
 const isAgentVersionToolcallTimeoutEnabled = computed(
   () => props.versionForm.toolcall_timeout_seconds != null,
 );
+// 这张卡片默认只占一行：标题 + 当前生效值摘要 + 开关。三行说明与输入框收起来，
+// 需要看细节或改值再展开——工具列表本身已经很长，顶部说明常驻三四行很占空间。
+const timeoutCardExpanded = ref(false);
+// 打开「自定义超时时间」时自动展开：否则开关开了却看不到要填的秒数。
+watch(isAgentVersionToolcallTimeoutEnabled, (enabled) => {
+  if (enabled) timeoutCardExpanded.value = true;
+});
 const getAgentVersionToolcallTimeoutValue = () => {
   const value = Number(props.versionForm.toolcall_timeout_seconds);
   return Number.isInteger(value)
@@ -344,7 +351,7 @@ const scopeGroupsOf = (groups: Record<string, any[]>) => {
   return result;
 };
 
-/** 搜索 /「仅看已选」过滤后的当前 scope 视图 */
+/** 搜索 /「已选」过滤后的当前 scope 视图 */
 const currentScopeGroupedMcpTools = computed(() =>
   scopeGroupsOf(props.filteredGroupedMcpTools || {}),
 );
@@ -378,7 +385,7 @@ const mcpGroupOptions = computed(() => {
     });
 });
 
-/** 应用分组过滤后的服务分组视图（分组过滤是服务级，与工具级的搜索/仅看已选叠加） */
+/** 应用分组过滤后的服务分组视图（分组过滤是服务级，与工具级的搜索/「已选」叠加） */
 const visibleScopeGroupedMcpTools = computed(() => {
   const groups = currentScopeGroupedMcpTools.value;
   const filter = mcpGroupFilter.value;
@@ -1212,27 +1219,42 @@ const externalCreationMissingFields = computed(() => {
               </div>
             </div>
             <div class="mb-4 flex-shrink-0 rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3">
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm font-bold text-gray-800">智能体版本工具调用超时时间</div>
-                  <p class="mt-1 text-[11px] leading-relaxed text-gray-500">
-                    默认使用全局配置；启用后，以当前智能体版本配置为准，不再与全局或工具配置取最大值。
-                  </p>
-                  <p class="mt-1 text-[11px] text-gray-400">当前全局配置：{{ globalAgentToolcallTimeout }} 秒（范围 1–3600）</p>
-                  <p v-if="producerHardTimeout !== null" class="mt-1 text-[11px] text-gray-400">
-                    整轮看门狗 {{ producerHardTimeout }} 秒：从发消息到收尾的总时长上限（含所有工具与模型调用），
-                    版本级配置超过它时本轮会先被强制终止。
-                  </p>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="text-xs font-medium text-gray-600">
-                    {{ isAgentVersionToolcallTimeoutEnabled ? '使用智能体专属配置' : '跟随全局配置' }}
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  @click="timeoutCardExpanded = !timeoutCardExpanded"
+                  :aria-expanded="timeoutCardExpanded"
+                  :title="timeoutCardExpanded ? '收起说明与配置' : '展开说明与超时配置'"
+                  class="flex min-w-0 items-center gap-1.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 rounded"
+                >
+                  <svg
+                    class="h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform"
+                    :class="timeoutCardExpanded ? 'rotate-90' : ''"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                  </svg>
+                  <span class="text-sm font-bold text-gray-800">智能体版本工具调用超时时间</span>
+                  <!-- 收起时把当前生效值压成一行，避免「收起来就看不到配了什么」 -->
+                  <span v-if="!timeoutCardExpanded" class="truncate text-[11px] text-gray-500">
+                    · {{ isAgentVersionToolcallTimeoutEnabled
+                      ? `版本级 ${getAgentVersionToolcallTimeoutValue()} 秒`
+                      : `跟随全局 ${globalAgentToolcallTimeout} 秒` }}
                   </span>
+                </button>
+                <div class="flex items-center gap-2">
+                  <!-- 恒定文案：状态由开关表达。原来按状态切「跟随全局配置 / 使用智能体专属
+                       配置」，和左边摘要的「跟随全局 300 秒」撞车，还容易被读成一个可点的动作。 -->
+                  <span class="text-xs font-medium text-gray-600">自定义超时时间</span>
                   <button
                     type="button"
                     role="switch"
+                    aria-label="自定义超时时间：开启后不跟随全局配置"
                     :aria-checked="isAgentVersionToolcallTimeoutEnabled"
                     :disabled="!canEditVersion"
+                    title="开启后使用当前智能体版本自己配置的超时时间；关闭则跟随全局配置"
                     @click="setAgentVersionToolcallTimeoutEnabled(!isAgentVersionToolcallTimeoutEnabled)"
                     class="relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors"
                     :class="[
@@ -1247,7 +1269,17 @@ const externalCreationMissingFields = computed(() => {
                   </button>
                 </div>
               </div>
-              <div v-if="isAgentVersionToolcallTimeoutEnabled" class="mt-3">
+              <div v-show="timeoutCardExpanded" class="mt-2 space-y-1">
+                <p class="text-[11px] leading-relaxed text-gray-500">
+                  默认使用全局配置；启用后，以当前智能体版本配置为准，不再与全局或工具配置取最大值。
+                </p>
+                <p class="text-[11px] text-gray-400">当前全局配置：{{ globalAgentToolcallTimeout }} 秒（范围 1–3600）</p>
+                <p v-if="producerHardTimeout !== null" class="text-[11px] leading-relaxed text-gray-400">
+                  整轮看门狗 {{ producerHardTimeout }} 秒：从发消息到收尾的总时长上限（含所有工具与模型调用），
+                  版本级配置超过它时本轮会先被强制终止。
+                </p>
+              </div>
+              <div v-if="isAgentVersionToolcallTimeoutEnabled && timeoutCardExpanded" class="mt-3">
                 <div class="flex items-center gap-2">
                 <button
                   type="button"
@@ -1290,7 +1322,9 @@ const externalCreationMissingFields = computed(() => {
                   {{ AGENT_VERSION_TOOLCALL_TIMEOUT_MAX }} 秒。
                 </p>
               </div>
-              <p v-else class="mt-2 text-[11px] text-gray-400">当前跟随全局配置（当前全局值 {{ globalAgentToolcallTimeout }} 秒）</p>
+              <p v-else-if="timeoutCardExpanded" class="mt-2 text-[11px] text-gray-400">
+                当前跟随全局配置（当前全局值 {{ globalAgentToolcallTimeout }} 秒）
+              </p>
             </div>
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4 flex-shrink-0">
               <div class="flex items-center gap-2 flex-1 min-w-[200px]">
@@ -1342,9 +1376,12 @@ const externalCreationMissingFields = computed(() => {
                 <button
                   type="button"
                   @click="emitBulkExpandGroups"
+                  :disabled="isFiltering"
                   aria-label="展开当前页签下的全部分组"
-                  title="展开当前页签下的全部分组"
-                  class="p-1.5 rounded-md text-gray-400 hover:text-primary hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  :title="isFiltering
+                    ? '搜索或「已选」视图下分组固定展开，切回「全部」后可折叠'
+                    : '展开当前页签下的全部分组'"
+                  class="p-1.5 rounded-md text-gray-400 hover:text-primary hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400"
                 >
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7" />
@@ -1353,9 +1390,12 @@ const externalCreationMissingFields = computed(() => {
                 <button
                   type="button"
                   @click="emitBulkCollapseGroups"
+                  :disabled="isFiltering"
                   aria-label="折叠当前页签下的全部分组"
-                  title="折叠当前页签下的全部分组"
-                  class="p-1.5 rounded-md text-gray-400 hover:text-primary hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  :title="isFiltering
+                    ? '搜索或「已选」视图下分组固定展开，切回「全部」后可折叠'
+                    : '折叠当前页签下的全部分组'"
+                  class="p-1.5 rounded-md text-gray-400 hover:text-primary hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400"
                 >
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 11l7-7 7 7M5 19l7-7 7 7" />
@@ -1411,7 +1451,7 @@ const externalCreationMissingFields = computed(() => {
                     type="button"
                     @click="emit('toggleStaticGroupCollapse', group.label)"
                     :disabled="isFiltering"
-                    :title="isFiltering ? '搜索或「仅看已选」状态下分组自动展开，关掉后可折叠' : ''"
+                    :title="isFiltering ? '搜索或「已选」视图下分组固定展开，切回「全部」后可折叠' : ''"
                     :class="isFiltering ? 'cursor-default' : ''"
                     class="flex items-center gap-2 min-w-0 flex-1 text-left"
                   >
@@ -1640,7 +1680,7 @@ const externalCreationMissingFields = computed(() => {
                       ? 'border-b-indigo-100 border-l-indigo-300 bg-indigo-50/80'
                       : 'border-b-indigo-100/50 border-l-transparent bg-indigo-50/60'"
                 >
-                  <button type="button" @click="emit('toggleMcpGroupCollapse', serverName)" :disabled="isFiltering" :title="isFiltering ? '搜索或「仅看已选」状态下分组自动展开，关掉后可折叠' : ''" :class="isFiltering ? 'cursor-default' : ''" class="flex items-center gap-1.5 min-w-0 flex-1 text-left">
+                  <button type="button" @click="emit('toggleMcpGroupCollapse', serverName)" :disabled="isFiltering" :title="isFiltering ? '搜索或「已选」视图下分组固定展开，切回「全部」后可折叠' : ''" :class="isFiltering ? 'cursor-default' : ''" class="flex items-center gap-1.5 min-w-0 flex-1 text-left">
                     <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform shrink-0" :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) || isFiltering }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                     </svg>

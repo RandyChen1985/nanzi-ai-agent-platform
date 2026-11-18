@@ -2602,7 +2602,7 @@ const getMcpGroupSelectedCount = (tools: any[]) => {
 type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'welcome' | 'review';
 const versionConfigStep = ref<VersionConfigStep>('model');
 const toolSearchQuery = ref('');
-// 「仅看已选」：三个页签共用。勾选 36/172 之后，想回头核对「我到底选了哪几个」
+// 「已选」：三个页签共用。勾选 36/172 之后，想回头核对「我到底选了哪几个」
 // 是高频操作，靠搜索框一个个搜太慢——直接过滤成只看已勾选的行。
 const onlySelectedTools = ref(false);
 const isCreatingAgent = ref(false);
@@ -2864,7 +2864,7 @@ const getStaticGroupTools = (label: string) => {
 /**
  * 分组头计数一律用**全量**分组算，不用过滤后的视图。
  *
- * 「仅看已选」把分组收窄成只剩已勾选的行，若分子分母都取视图，(2/2) 会让人以为
+ * 「已选」把分组收窄成只剩已勾选的行，若分子分母都取视图，(2/2) 会让人以为
  * 这组本来只有 2 个工具；分母保持全量才看得出「这组我只选了 2 个」。
  */
 const staticGroupCounts = (label: string) => {

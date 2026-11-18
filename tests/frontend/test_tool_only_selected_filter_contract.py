@@ -1,4 +1,4 @@
-"""工具能力步骤：搜索框右侧的「仅看已选」快速过滤（用户需求）。
+"""工具能力步骤：搜索框右侧的「已选」快速过滤（用户需求）。
 
 背景：一个版本动辄勾 36/172 个工具，事后想核对「我到底选了哪几个」只能靠搜索框
 一个个搜。用户要求在搜索框里加一个开关，只显示已勾选的工具 / MCP（截图红框位置）。
@@ -109,7 +109,7 @@ def test_toggle_is_a_two_segment_text_switch_beside_the_search_box():
 
 
 def test_filtering_state_covers_both_filters():
-    """分组展开的判据必须同时覆盖搜索与「仅看已选」。"""
+    """分组展开的判据必须同时覆盖搜索与「已选」。"""
     drawer = _source(DRAWER)
     assert re.search(
         r"const isFiltering = computed\(\(\) => isSearching\.value \|\| props\.onlySelectedTools\)",
@@ -118,6 +118,27 @@ def test_filtering_state_covers_both_filters():
     template = drawer.split("<template>", 1)[1]
     # 模板里只允许通过 isFiltering 判断，出现裸 isSearching 说明有地方漏改
     assert "isSearching" not in template
+
+
+def _element_tag(source: str, needle: str) -> str:
+    """取包含 ``needle`` 的那个开始标签。"""
+    index = source.index(needle)
+    start = source.rindex("<", 0, index)
+    return source[start : source.index(">", index) + 1]
+
+
+@pytest.mark.parametrize("handler", ["emitBulkExpandGroups", "emitBulkCollapseGroups"])
+def test_bulk_group_buttons_are_disabled_while_filtering(handler: str):
+    """「已选」/搜索视图下分组固定展开，批量展开/折叠按钮必须禁用。
+
+    原来只把分组标题按钮禁用了，工具栏这两个还能点：点了看不出任何变化（分组本来
+    就被强制展开），却把 expandedStaticGroups 清了/填了——切回「全部」才发现折叠
+    状态被改。用户反馈「折叠展开按钮没有效果」，就是这条。
+    """
+    # 锚在模板的 @click 上：handler 名字在 script 里先出现一次，直接用会取到定义处
+    tag = _element_tag(_source(DRAWER), f'@click="{handler}"')
+    assert ':disabled="isFiltering"' in tag, tag
+    assert "disabled:opacity-40" in tag, "禁用态要有可见的视觉反馈，否则用户以为还能点"
 
 
 def test_group_counters_use_full_groups():

@@ -171,7 +171,7 @@ def test_bulk_buttons_expose_accessible_names_and_focus_ring():
 
 
 def test_collapsed_groups_expand_while_searching():
-    """两种过滤态（搜索 /「仅看已选」）都强制展开分组。
+    """两种过滤态（搜索 /「已选」）都强制展开分组。
 
     判据后来合并成 ``isFiltering``：它 = isSearching || onlySelectedTools。
     两者都会把分组收窄到只剩几条，折叠着等于看不到东西。
