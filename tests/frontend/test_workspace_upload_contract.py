@@ -149,3 +149,22 @@ def test_backend_streams_chunks_and_reads_limit_from_config():
 def test_upload_limit_default_is_configurable():
     config = _source("app/core/config.py")
     assert "WORKSPACE_UPLOAD_MAX_MB: int = 200" in config, "上传上限默认值未按设计设为 200MB"
+
+
+def test_task_row_reports_failure_instead_of_nan_progress():
+    """失败/取消的任务必须说出发生了什么，而不是显示 NaN%。
+
+    真实缺陷（vue-tsc 抓到的）：模板判的是 `task.status === 'error'`，而
+    `WorkspaceUploadStatus` 只有 `failed`；进度读的是 `task.progress`，类型里叫
+    `percent`。两个字段名都对不上的结果——上传失败时那一行既不变红、也不显示
+    `task.error`，而是落到 `Math.round(undefined * 100)` 显示 **NaN%**，
+    用户看不出是失败还是卡住。`canceled` 同理，原本也会显示一个进度百分比。
+    """
+    source = _source("frontend/src/views/WorkspaceManage.vue")
+
+    assert "task.status === 'error'" not in source, "状态字面量必须是 'failed'"
+    assert "task.progress" not in source, "进度字段是 percent"
+    assert "task.status === 'failed' ? 'text-red-600'" in source, "失败态要标红"
+    assert "task.error || '失败'" in source, "失败态要显示后端给的原因"
+    assert "task.status === 'canceled' ? '已取消'" in source, "取消态不该显示进度百分比"
+    assert "Math.round(task.percent * 100)" in source

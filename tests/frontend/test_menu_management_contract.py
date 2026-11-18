@@ -256,7 +256,7 @@ def test_write_entry_points_are_hidden_when_the_user_cannot_edit():
 
     # 三组入口（工具栏 / 排序 / 保存删除）都在 canEdit 之下；
     # 树里的排序还多一个「过滤视图下隐藏」的条件，一并计入
-    edit_guards = source.count('v-if="canEdit"') + source.count('v-if="canEdit && !onlyDesktopFilter"')
+    edit_guards = source.count('v-if="canEdit"') + source.count('v-if="canEdit && !desktopOnlyFilter"')
     assert edit_guards >= 4
     # 不再用置灰代替隐藏
     assert ':disabled="!canEdit' not in source
@@ -316,5 +316,22 @@ def test_desktop_only_nodes_are_marked_in_the_tree_and_filterable():
     assert "if (group.desktop_only) return group" in source
     assert ".map((child) => ({ ...child, children: [] }))" in source
 
-    # 过滤时排序箭头必须收起来
-    assert source.count('v-if="canEdit && !onlyDesktopFilter"') == 2
+    # 过滤时排序箭头必须收起来（变量名是 desktopOnlyFilter —— 这里曾把模板里的
+    # 拼写错误 `onlyDesktopFilter` 当成基线钉住，反而让 vue-tsc 的 TS2339 失去意义）
+    assert source.count('v-if="canEdit && !desktopOnlyFilter"') == 2
+
+
+def test_desktop_only_filter_flag_matches_the_script_variable():
+    """「仅桌面」筛选开关必须引用真实存在的变量。
+
+    真实缺陷（vue-tsc 抓到的）：模板写的是 `onlyDesktopFilter`，而脚本里定义的是
+    `desktopOnlyFilter`。Vue 模板对未定义标识符不报错，只编译成 `_ctx.xxx`（值恒为
+    undefined），于是 `canEdit && !onlyDesktopFilter` 恒等于 `canEdit`——开了「仅桌面」
+    之后，本该跟着收起的新建/编辑入口依然显示。
+    """
+    source = _read(MANAGEMENT)
+
+    assert "onlyDesktopFilter" not in source, "变量名应为 desktopOnlyFilter"
+    assert "const desktopOnlyFilter = ref(false)" in source
+    # 两处模板条件都要用真实变量
+    assert source.count("canEdit && !desktopOnlyFilter") == 2
