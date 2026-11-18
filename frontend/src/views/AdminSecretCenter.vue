@@ -768,10 +768,27 @@ const rotateFormat = ref<'text' | 'json'>('text')
 const rotateTemplate = ref<string | null>(null)
 const rotateSecretFields = ref<string[]>([])
 const rotateValid = ref(false)
+/**
+ * 轮换弹窗要铺出来的「原结构骨架」（只有键与类型，没有值）。
+ *
+ * 值不可读，所以没有它时弹窗只能给一张空表，用户得凭记忆默写键名——错一个字母，
+ * 别处 `${secret:标识.字段}` 的引用就静默失效。骨架由后端从既有值算出来。
+ */
+const rotateInitialJson = ref('')
+const rotateStructureLoading = ref(false)
+/** 结构读失败时的说明：不阻塞轮换，退回空表 + 提示 */
+const rotateStructureError = ref('')
 const rotateExpiresAt = ref('')
 const rotateClearExpires = ref(false)
 
-function openRotate(item: SystemSecret) {
+/**
+ * 打开轮换弹窗，并尽量把「原来的键」摆出来。
+ *
+ * 结构化凭据的键集合就是结构：轮换只该换值，不该让用户重新默写一遍键名。
+ * 走 `/admin/{id}/structure` 而不是 `/fields`——后者按「自己 + 被授权」判可见性，
+ * 管理员轮换自己没被授权的那条会 404，而管理页恰恰要维护全部系统级凭据。
+ */
+async function openRotate(item: SystemSecret) {
   rotateTarget.value = item
   rotateValue.value = ''
   rotateFormat.value = item.value_format === 'json' ? 'json' : 'text'
@@ -780,7 +797,27 @@ function openRotate(item: SystemSecret) {
   rotateValid.value = false
   rotateExpiresAt.value = ''
   rotateClearExpires.value = false
+  rotateInitialJson.value = ''
+  rotateStructureError.value = ''
   rotateOpen.value = true
+
+  if (item.value_format !== 'json') return
+  rotateStructureLoading.value = true
+  try {
+    const res = await axios.get(`/api/portal/secrets/admin/${item.id}/structure`)
+    const skeleton = res.data?.data?.skeleton
+    // 换了目标就不回填：慢请求回来时用户可能已经关掉又开了另一条
+    if (rotateTarget.value?.id !== item.id) return
+    if (skeleton && typeof skeleton === 'object') {
+      rotateInitialJson.value = JSON.stringify(skeleton, null, 2)
+    }
+  } catch {
+    if (rotateTarget.value?.id !== item.id) return
+    // 拿不到结构不拦着轮换，只是退回「自己填键名」，并且说明白
+    rotateStructureError.value = '没能读出原来的字段结构，请自己填写字段名（键名要与原来一致）'
+  } finally {
+    if (rotateTarget.value?.id === item.id) rotateStructureLoading.value = false
+  }
 }
 
 async function submitRotate() {
@@ -2147,6 +2184,8 @@ onMounted(load)
           </div>
 
           <div class="min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-4">
+            <p v-if="rotateStructureLoading" class="text-[11px] text-gray-500">正在读取原来的字段结构…</p>
+            <p v-else-if="rotateStructureError" class="text-[11px] text-amber-700">{{ rotateStructureError }}</p>
             <CredentialValueEditor
               v-model="rotateValue"
               v-model:format="rotateFormat"
@@ -2155,6 +2194,7 @@ onMounted(load)
               v-model:valid="rotateValid"
               :secret-type="rotateTarget?.secret_type || 'credential'"
               :lock-structure="true"
+              :initial-json="rotateInitialJson"
             />
             <div class="space-y-1.5 rounded-lg border border-gray-200 bg-gray-50/70 p-3">
               <div class="flex items-center justify-between gap-2">

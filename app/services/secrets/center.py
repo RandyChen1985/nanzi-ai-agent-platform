@@ -283,6 +283,45 @@ def parse_structured_value(value: str) -> dict[str, Any]:
     return data
 
 
+def build_value_skeleton(value: str) -> Any | None:
+    """把一段结构化值压成「只有形状、没有值」的骨架。
+
+    轮换的语义是「只换值、不换结构」，可前端一个新值都拿不到：值不可读，弹窗
+    打开时只能给一张空表，用户得凭记忆把键名默写一遍——错一个字母，别处写好的
+    ``${secret:标识.字段}`` 引用就静默失效，而且失败发生在下一次调用时。
+
+    骨架回的是**键与类型**：字符串留空串、数字留 0、布尔留 False、嵌套对象递归
+    保留子键、数组留空数组（元素个数与填法都属于值，交给用户决定）。
+    真实值一个字节都不回——这条线和「credential 建完不可读」是同一条。
+
+    解析不了（不是 JSON 对象）返回 None，由调用方决定怎么提示。
+    """
+    try:
+        data = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return _skeleton_of(data)
+
+
+def _skeleton_of(node: Any) -> Any:
+    """递归把值换成同类型的空占位。类型保留，值不保留。"""
+    if isinstance(node, dict):
+        return {str(key): _skeleton_of(item) for key, item in node.items()}
+    if isinstance(node, list):
+        # 不按原长度补位：数组里有几个元素本身也是值的信息
+        return []
+    # bool 是 int 的子类，必须先判
+    if isinstance(node, bool):
+        return False
+    if isinstance(node, (int, float)):
+        return 0
+    if node is None:
+        return None
+    return ""
+
+
 #: 摘要里跳过的**键名**：它们描述「怎么连」的模式开关，值通常是 ssl / key /
 #: preferred 这类枚举，占一格却什么也说明不了，真正有辨识度的用户名反被挤掉。
 #:
@@ -712,6 +751,9 @@ async def describe_value_fields(
         "template": row.value_template or "",
         "kind": row.secret_type,
         "fields": [],
+        # 轮换弹窗要靠它把「原来的键」摆出来，让用户只改值。
+        # 单值凭据、或值解不开时保持 None。
+        "skeleton": None,
     }
     if payload["format"] != "json":
         # 单值凭据没有字段可选，前端据此直接隐藏字段选择器
@@ -723,6 +765,9 @@ async def describe_value_fields(
     except Exception:  # noqa: BLE001 - 解不开/不是对象就当「没有可选字段」
         logger.warning("[SecretCenter] 凭据 %s 的字段清单读取失败", secret_id)
         return payload
+
+    # 同一份明文只解一次：字段清单和轮换骨架都从它来，各解一遍就多一份泄露面
+    payload["skeleton"] = _skeleton_of(data)
 
     fields: list[dict[str, Any]] = []
 
@@ -789,6 +834,50 @@ async def describe_value_fields(
 
     walk(data, "", 0)
     payload["fields"] = fields
+    return payload
+
+
+async def describe_value_structure(session, *, secret_id: str) -> dict[str, Any]:
+    """管理员版的「这条凭据是什么形状」。
+
+    与 `describe_value_fields` 只差可见性口径：管理页要轮换的是**全部**系统级凭据，
+    而 `list_visible_secrets` 只回「自己 + 被授权的」，管理员对自己没授权的那条会
+    拿到 404——于是那类凭据在管理页永远修不好。这里只按「系统级 + 存在」取，
+    鉴权交给端点（`require_admin`）。
+
+    返回值同样只有骨架，没有值。
+    """
+    row = (
+        (
+            await session.execute(
+                select(UserSecret).where(
+                    UserSecret.id == secret_id,
+                    UserSecret.owner_scope == SCOPE_SYSTEM,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if row is None:
+        raise SecretPermissionError("凭据不存在")
+
+    payload: dict[str, Any] = {
+        "id": row.id,
+        "secret_key": row.secret_key,
+        "name": row.name,
+        "format": row.value_format or "text",
+        "template": row.value_template or "",
+        "kind": row.secret_type,
+        "skeleton": None,
+    }
+    if payload["format"] != "json":
+        return payload
+    try:
+        plaintext = get_api_key_manager().decrypt_api_key(row.value_encrypted)
+        payload["skeleton"] = _skeleton_of(parse_structured_value(plaintext))
+    except Exception:  # noqa: BLE001 - 解不开就不给骨架，前端退回「空表 + 自己填」
+        logger.warning("[SecretCenter] 管理员读取凭据 %s 的结构失败", secret_id)
     return payload
 
 

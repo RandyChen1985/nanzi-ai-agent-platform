@@ -784,3 +784,81 @@ class TestAuditSearch:
         )
         assert resp.status_code == 200
         assert resp.json()["data"] == []
+
+
+class TestAdminSecretStructure:
+    """管理页轮换弹窗要「原来的键」，否则用户得凭记忆默写字段名。
+
+    端点单独存在的原因：`GET /{id}/fields` 走 `list_visible_secrets`（自己 + 被授权），
+    管理员轮换自己没被授权的那条系统级凭据会 404——而管理页恰恰要维护全部系统级凭据。
+    """
+
+    async def test_returns_skeleton_without_any_value(
+        self, client, clean_secrets, admin_api_key, valid_api_key
+    ):
+        created = (
+            await client.post(
+                PREFIX + "/admin",
+                json=_payload(
+                    secret_key="corp.skeleton.mail",
+                    value='{"host":"smtp.163.com","port":465,"password":"p@ss-9527"}',
+                    value_format="json",
+                    value_template="custom",
+                ),
+                headers=_admin_headers(admin_api_key),
+            )
+        ).json()["data"]
+
+        resp = await client.get(
+            f"{PREFIX}/admin/{created['id']}/structure",
+            headers=_admin_headers(admin_api_key),
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+
+        assert data["format"] == "json"
+        # 键与类型都在，值一个都不在
+        assert data["skeleton"] == {"host": "", "port": 0, "password": ""}
+        body = resp.text
+        assert "smtp.163.com" not in body
+        assert "p@ss-9527" not in body
+
+    async def test_normal_user_gets_403(self, client, clean_secrets, admin_api_key, valid_api_key):
+        created = (
+            await client.post(
+                PREFIX + "/admin",
+                json=_payload(secret_key="corp.skeleton.guard"),
+                headers=_admin_headers(admin_api_key),
+            )
+        ).json()["data"]
+
+        resp = await client.get(
+            f"{PREFIX}/admin/{created['id']}/structure",
+            headers=_user_headers(valid_api_key),
+        )
+        assert resp.status_code == 403, resp.text
+
+    async def test_unknown_id_is_404(self, client, clean_secrets, admin_api_key):
+        resp = await client.get(
+            f"{PREFIX}/admin/not-a-real-id/structure",
+            headers=_admin_headers(admin_api_key),
+        )
+        assert resp.status_code == 404, resp.text
+
+    async def test_single_value_has_no_skeleton(
+        self, client, clean_secrets, admin_api_key
+    ):
+        created = (
+            await client.post(
+                PREFIX + "/admin",
+                json=_payload(secret_key="corp.skeleton.single"),
+                headers=_admin_headers(admin_api_key),
+            )
+        ).json()["data"]
+
+        resp = await client.get(
+            f"{PREFIX}/admin/{created['id']}/structure",
+            headers=_admin_headers(admin_api_key),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["skeleton"] is None

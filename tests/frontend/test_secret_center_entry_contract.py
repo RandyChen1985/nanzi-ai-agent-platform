@@ -2451,11 +2451,21 @@ class TestRotateKeepsRawJsonEditable:
         assert "轮换中字段结构已锁定，只能改值" not in source
         assert "轮换只换值：键名请与原来保持一致" in source
 
-    def test_rotate_starts_with_one_empty_row(self):
+    def test_rotate_starts_from_the_existing_structure(self):
+        """轮换开局要按「原结构骨架」铺行，而不是一张空表。
+
+        空表意味着用户得凭记忆默写键名——错一个字母，别处
+        `${secret:标识.字段}` 的引用就静默失效。骨架由后端从既有值里算出来
+        （只有键与类型，没有值），编辑器按它铺行；拿不到骨架才退回一行空行。
+        """
         source = _read(EDITOR)
 
-        assert "[() => props.lockStructure, isRaw]" in source
+        # 依赖里必须带上骨架，否则接口慢回来时不会重铺
+        assert "[() => props.lockStructure, isRaw, () => props.initialJson]" in source
         assert "if (!locked || !raw) return" in source
+        assert "if (initial) {" in source and "hydrateRaw(initial)" in source
+        # 兜底仍然保留：读不到结构也要能填
+        assert "rawRows.value = [{ key: '', type: 'text', value: '', secret: false }]" in source
 
     def test_paste_fills_the_current_raw_editor(self):
         """自定义 JSON 没有对应模板，「识别并套用」只会落到「没匹配到」的错误态。"""
@@ -2595,3 +2605,55 @@ class TestAdminCardAttentionSignals:
 
         assert "凭据已过期" in injection
         assert "row.expires_at is None or row.expires_at > now" in resolver
+
+
+class TestRotatePrefillsOriginalStructure:
+    """轮换弹窗要把「原来的键」摆出来，而不是一张空表。
+
+    现场：结构化凭据点「轮换」，弹窗里没有一个字段行，红字写着「至少填一个字段」。
+    用户只能凭记忆把键名默写一遍——错一个字母，别处写好的
+    `${secret:标识.字段}` 引用就静默失效，而且报错发生在下一次调用时。
+
+    值本来就读不到，所以「带回结构」只能靠后端给骨架：键与类型有，值没有。
+    """
+
+    def test_admin_rotate_reads_structure_from_the_admin_endpoint(self):
+        """管理页不能用 `/fields`：那个端点按「自己 + 被授权」判可见性，
+        管理员轮换自己没被授权的那条会 404，而管理页恰恰要维护全部系统级凭据。"""
+        source = _read(ADMIN_SECRET_CENTER)
+
+        assert "axios.get(`/api/portal/secrets/admin/${item.id}/structure`)" in source
+        assert ':initial-json="rotateInitialJson"' in source
+
+    def test_personal_rotate_reads_structure_from_fields(self):
+        source = _read(SECRET_CENTER)
+
+        assert "axios.get(`/api/portal/secrets/${encodeURIComponent(item.id)}/fields`)" in source
+        assert ':initial-json="rotateInitialJson"' in source
+
+    def test_structure_is_only_fetched_for_structured_secrets(self):
+        """单值凭据没有键可铺，多打一次请求只是浪费。"""
+        for path in (ADMIN_SECRET_CENTER, SECRET_CENTER):
+            source = _read(path)
+            body = source.split("async function openRotate(")[1].split("\nasync function")[0]
+            assert "if (item.value_format !== 'json') return" in body
+
+    def test_stale_structure_response_is_ignored(self):
+        """弹窗关掉又换了一条时，慢请求回来不能把上一条的结构填进新弹窗。"""
+        for path in (ADMIN_SECRET_CENTER, SECRET_CENTER):
+            source = _read(path)
+            assert "if (rotateTarget.value?.id !== item.id) return" in source
+
+    def test_structure_failure_degrades_with_an_explanation(self):
+        """读不到结构不拦着轮换，但要说清「键名得自己填、要与原来一致」。"""
+        for path in (ADMIN_SECRET_CENTER, SECRET_CENTER):
+            source = _read(path)
+            assert "没能读出原来的字段结构" in source
+            assert "键名要与原来一致" in source
+
+    def test_editor_explains_the_placeholders(self):
+        """骨架里的 0 / 空串是占位，不是原值——不说清就会被原样提交。"""
+        source = _read(EDITOR)
+
+        assert "值不会回显" in source
+        assert "只是占位，请逐个改成新值" in source

@@ -40,8 +40,17 @@ const props = withDefaults(
      * 写得过大，导致自定义 JSON 的轮换弹窗里一个能输入的地方都没有。
      */
     lockStructure?: boolean
+    /**
+     * 轮换态开局要摆出来的**原结构骨架**（只有键与类型，没有值）。
+     *
+     * 值本来就读不到，所以轮换弹窗原本只能给一张空表，用户得凭记忆默写键名——
+     * 错一个字母，别处 `${secret:标识.字段}` 的引用就静默失效。父组件从
+     * `GET /secrets/{id}/fields`（个人页）或 `/secrets/admin/{id}/structure`
+     * （管理页）拿到骨架后传进来，键名由后端给、值由用户填。
+     */
+    initialJson?: string
   }>(),
-  { secretType: 'credential', lockStructure: false },
+  { secretType: 'credential', lockStructure: false, initialJson: '' },
 )
 
 /** 最终提交的那个字符串 */
@@ -222,17 +231,29 @@ function switchRawView(next: 'kv' | 'json') {
 }
 
 /**
- * 轮换态的「自定义 JSON」开局补一行空行。
+ * 轮换态的「自定义 JSON」开局。
  *
- * 轮换不回读旧值（值本来就不可读），所以 rawRows 必然是空的；不补的话表格区
- * 一片空白，「+ 添加字段」又落在底部——用户第一眼看到的是「没有字段」加一条
- * 「至少填一个字段」的红字，明明能填却看不出来能填。
+ * 轮换不回读旧值（值本来就不可读），所以 rawRows 必然是空的。之前只补一行空行：
+ * 不补的话表格区一片空白、红字写着「至少填一个字段」，明明能填却看不出来；
+ * 但只补一行也有问题——用户得凭记忆把原来的键名默写一遍，错一个字母，
+ * 别处 `${secret:标识.字段}` 的引用就静默失效。
+ *
+ * 现在优先按父组件给的原结构骨架铺行（键名与类型由后端从既有值里算出来，
+ * 值留空等用户填）；拿不到骨架（单值、解密失败、接口失败）才退回一行空行。
  */
 watch(
-  [() => props.lockStructure, isRaw],
-  ([locked, raw]) => {
+  [() => props.lockStructure, isRaw, () => props.initialJson],
+  ([locked, raw, initial]) => {
     if (!locked || !raw) return
     if (rawRows.value.length) return
+    if (initial) {
+      hydrateRaw(initial)
+      // 骨架里所有值都是空的，但键名得露出来：这是「只改值」的起点
+      if (rawRows.value.length) {
+        pushRawOut()
+        return
+      }
+    }
     rawRows.value = [{ key: '', type: 'text', value: '', secret: false }]
   },
   { immediate: true },
@@ -989,8 +1010,15 @@ defineExpose({ recognize })
               @click="addRawRow"
             >+ 添加字段</button>
             <p v-if="lockStructure" class="mt-1.5 text-[10px] leading-relaxed text-gray-400">
-              轮换只换值：键名请与原来保持一致，否则别处写好的
-              <code>${secret:标识.字段}</code> 引用会失效。
+              <template v-if="initialJson">
+                上面是从这条凭据里读出来的原有字段：<b>值不会回显</b>。
+                <code>0</code> / 空串 / <code>false</code> 只是占位，请逐个改成新值——
+                想看看需要哪几个字段，切到「写 JSON」能看到完整结构。
+              </template>
+              <template v-else>
+                轮换只换值：键名请与原来保持一致，否则别处写好的
+                <code>${secret:标识.字段}</code> 引用会失效。
+              </template>
             </p>
           </template>
 

@@ -2639,6 +2639,30 @@ async def admin_list(
     }
 
 
+@router.get(
+    "/admin/{secret_id}/structure",
+    summary="这条系统级凭据是什么形状（管理员，轮换时用）",
+)
+async def admin_secret_structure(
+    secret_id: str,
+    admin: Dict[str, Any] = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """轮换弹窗要的「原来的键」，让用户只改值。
+
+    为什么不能复用 `GET /{secret_id}/fields`：那个端点走 `list_visible_secrets`，
+    只回「自己 + 被授权的系统级」。管理员轮换自己没被授权的那条（这正是最常见的情况）
+    会拿到 404——而管理页恰恰要能维护全部系统级凭据。
+
+    返回值只有骨架（键与类型），没有值；与「credential 建完不可读」是同一条线。
+    """
+    try:
+        data = await center.describe_value_structure(db, secret_id=secret_id)
+    except SecretPermissionError:
+        raise HTTPException(status_code=404, detail="凭据不存在")
+    return {"code": 0, "data": data}
+
+
 @router.post("/admin/{secret_id}/grants", summary="授权系统级凭据（管理员）")
 async def admin_grant(
     secret_id: str,

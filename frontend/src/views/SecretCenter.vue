@@ -394,10 +394,21 @@ const rotateFormat = ref<'text' | 'json'>('text')
 const rotateTemplate = ref<string | null>(null)
 const rotateSecretFields = ref<string[]>([])
 const rotateValid = ref(false)
+/** 轮换开局要铺出来的原结构骨架（只有键与类型，没有值） */
+const rotateInitialJson = ref('')
+const rotateStructureLoading = ref(false)
+const rotateStructureError = ref('')
 const rotateExpiresAt = ref('')
 const rotateClearExpires = ref(false)
 
-function openRotate(item: SecretItem) {
+/**
+ * 打开轮换弹窗，并尽量把「原来的键」摆出来。
+ *
+ * 值不可读，所以不铺骨架时用户只能凭记忆默写键名；错一个字母，别处
+ * `${secret:标识.字段}` 的引用就静默失效。走 `/fields`——个人页看到的就是自己的凭据，
+ * 可见性天然满足（与绑定字段选择器同一个端点，同一个「敏感字段只给名字」的口径）。
+ */
+async function openRotate(item: SecretItem) {
   rotateTarget.value = item
   rotateValue.value = ''
   rotateFormat.value = item.value_format === 'json' ? 'json' : 'text'
@@ -406,6 +417,24 @@ function openRotate(item: SecretItem) {
   rotateValid.value = false
   rotateExpiresAt.value = ''
   rotateClearExpires.value = false
+  rotateInitialJson.value = ''
+  rotateStructureError.value = ''
+
+  if (item.value_format !== 'json') return
+  rotateStructureLoading.value = true
+  try {
+    const res = await axios.get(`/api/portal/secrets/${encodeURIComponent(item.id)}/fields`)
+    if (rotateTarget.value?.id !== item.id) return
+    const skeleton = res.data?.data?.skeleton
+    if (skeleton && typeof skeleton === 'object') {
+      rotateInitialJson.value = JSON.stringify(skeleton, null, 2)
+    }
+  } catch {
+    if (rotateTarget.value?.id !== item.id) return
+    rotateStructureError.value = '没能读出原来的字段结构，请自己填写字段名（键名要与原来一致）'
+  } finally {
+    if (rotateTarget.value?.id === item.id) rotateStructureLoading.value = false
+  }
 }
 
 async function submitRotate() {
@@ -2369,6 +2398,8 @@ onMounted(() => {
                 <code class="rounded bg-blue-50 px-1">${secret:标识.字段}</code> 引用全部失效。
               </p>
               <div class="mt-3">
+                <p v-if="rotateStructureLoading" class="mb-1.5 text-[11px] text-gray-500">正在读取原来的字段结构…</p>
+                <p v-else-if="rotateStructureError" class="mb-1.5 text-[11px] text-amber-700">{{ rotateStructureError }}</p>
                 <CredentialValueEditor
                   v-model="rotateValue"
                   v-model:format="rotateFormat"
@@ -2377,6 +2408,7 @@ onMounted(() => {
                   v-model:valid="rotateValid"
                   :secret-type="rotateTarget.secret_type"
                   :lock-structure="true"
+                  :initial-json="rotateInitialJson"
                 />
               </div>
               <div class="mt-3 space-y-1.5 rounded-lg border border-gray-200 bg-gray-50/70 p-3">
