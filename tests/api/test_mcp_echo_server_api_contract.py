@@ -88,7 +88,7 @@ async def test_echo_creation_is_admin_only_and_returns_no_credentials():
     assert response.scope == "global"
     assert response.credential_mode == "fixed_token_signed_user"
     assert response.user_assertion_enabled is True
-    assert response.tool_count == 2  # echo + echo_slow（进度验收工具）
+    assert response.tool_count == 3  # echo + echo_slow（进度验收）+ send_mail（发信验收）
     assert "fixed_token_encrypted" not in response.model_dump()
     assert "user_assertion_private_key_encrypted" not in response.model_dump()
     added = [call.args[0] for call in db.add.call_args_list]
@@ -171,7 +171,10 @@ async def test_echo_creation_reuses_existing_credentials_and_tool():
         side_effect=[
             SimpleNamespace(scalar_one_or_none=lambda: server),
             SimpleNamespace(scalar_one_or_none=lambda: tool),
-            # 平台 Echo 的进度测试工具（echo_slow）：按名查不到，再按固定 tool_id 兜底也没命中 → 插入。
+            # 平台 Echo 的进度测试工具（echo_slow）与发信工具（send_mail）：
+            # 各自按名查不到、再按固定 tool_id 兜底也没命中 → 插入。
+            SimpleNamespace(scalar_one_or_none=lambda: None),
+            SimpleNamespace(scalar_one_or_none=lambda: None),
             SimpleNamespace(scalar_one_or_none=lambda: None),
             SimpleNamespace(scalar_one_or_none=lambda: None),
         ]
@@ -244,7 +247,7 @@ async def test_personal_echo_creation_uses_owner_scoped_id_and_name():
     assert response.id == expected_id
     assert response.scope == "personal"
     assert response.user_id == 7
-    assert response.server_name == "mcp-private-alice-echo"
+    assert response.server_name == "priv-7-echo"
     assert response.sse_url == f"https://nanzi.example.com/mcp/echo/{expected_id}/mcp"
     assert response.user_assertion_audience == f"mcp:{expected_id}"
     assert response.credential_mode == "fixed_token_signed_user"
@@ -258,9 +261,10 @@ async def test_personal_echo_creation_uses_owner_scoped_id_and_name():
         item.tool_name for item in added if isinstance(item, McpToolCache)
     }
     assert tool_names == {
-        "mcp-private-alice-echo:echo",
-        "mcp-private-alice-echo:echo_slow",
-    }, "个人 Echo 也要带进度验收工具，用户不必先分清平台/个人两种 Echo"
+        "priv-7-echo:echo",
+        "priv-7-echo:echo_slow",
+        "priv-7-echo:send_mail",
+    }, "个人 Echo 也要带进度验收与发信验收工具，用户不必先分清平台/个人两种 Echo"
 
 
 @pytest.mark.asyncio
@@ -300,7 +304,9 @@ async def test_personal_echo_migrates_legacy_shared_tool_name():
             SimpleNamespace(scalar_one_or_none=lambda: server),
             SimpleNamespace(scalar_one_or_none=lambda: None),
             SimpleNamespace(scalar_one_or_none=lambda: legacy),
-            # 进度验收工具：按名 + 按 tool_id 都查不到 → 走插入（允许，且只允许这一行）
+            # 进度验收工具与发信工具：按名 + 按 tool_id 都查不到 → 走插入
+            SimpleNamespace(scalar_one_or_none=lambda: None),
+            SimpleNamespace(scalar_one_or_none=lambda: None),
             SimpleNamespace(scalar_one_or_none=lambda: None),
             SimpleNamespace(scalar_one_or_none=lambda: None),
         ]
@@ -324,8 +330,9 @@ async def test_personal_echo_migrates_legacy_shared_tool_name():
     assert response.id == server.id
     added = [call.args[0] for call in db.add.call_args_list]
     assert [item.tool_name for item in added if isinstance(item, McpToolCache)] == [
-        "mcp-private-admin-echo:echo_slow"
-    ], "命中旧 echo 行时不能再插一条同名工具，只允许补进度验收工具"
+        "mcp-private-admin-echo:echo_slow",
+        "mcp-private-admin-echo:send_mail",
+    ], "命中旧 echo 行时不能再插一条同名工具，只允许补进度验收与发信验收工具"
 
 
 @pytest.mark.asyncio

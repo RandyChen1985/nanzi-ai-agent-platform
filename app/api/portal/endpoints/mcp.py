@@ -45,6 +45,7 @@ from app.services.mcp.stale_tool_cleanup import (
 )
 from app.services.mcp.tool_ref_health import configured_tool_names as _configured_tool_names
 from app.utils.group_name import GROUP_NAME_MAX_LEN, normalize_group_name
+from app.services.mcp.naming import validate_server_name_charset
 from app.services.mcp.management_rate_limit import enforce_mcp_management_rate_limit
 from app.services.mcp_share_service import (
     McpShareConflictError,
@@ -54,6 +55,7 @@ from app.services.mcp_share_service import (
     annotate_personal_servers,
     list_received_shares as list_received_mcp_shares,
     list_sent_shares as list_sent_mcp_shares,
+    personal_server_name_prefix,
     reject_share as reject_mcp_share,
     search_share_targets,
     share_menu_counts as mcp_share_menu_counts,
@@ -259,6 +261,10 @@ class McpServerResponse(McpServerBase):
     masked_auth_headers: Dict[str, str] = Field(default_factory=dict)
     scope: str = "global"
     user_id: Optional[int] = None
+    # 创建人展示：服务名里只放 base36(user_id) 编码，人可读的归属要由列表接口补出来，
+    # 否则平台 MCP 视图里看到 priv-4y-hcp 根本不知道是谁建的。
+    owner_user_name: Optional[str] = None
+    owner_display_name: Optional[str] = None
     last_sync_at: Optional[Any] = None
     tool_count: int = 0
     published_tool_count: int = 0
@@ -941,6 +947,7 @@ async def list_mcp_servers(
                 "published": int(row.published_count or 0),
             }
 
+    owner_profiles = await _mcp_owner_profiles(db, {s.user_id for s in servers})
     res = []
     for s in servers:
         counts = counts_by_server.get(str(s.id), {"available": 0, "stale": 0, "published": 0})
@@ -952,13 +959,37 @@ async def list_mcp_servers(
         item.tool_count = counts["available"]
         item.published_tool_count = counts["published"]
         item.stale_tool_count = counts["stale"]
+        owner_name, owner_display = owner_profiles.get(int(s.user_id), (None, None)) if s.user_id else (None, None)
+        item.owner_user_name = owner_name
+        item.owner_display_name = owner_display
         res.append(item)
     return res
 
 
-def _echo_owner_name_part(value: Any) -> str:
-    text = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip()).strip("-")
-    return text or "user"
+async def _mcp_owner_profiles(
+    db: AsyncSession, owner_ids: Any
+) -> Dict[int, tuple[Optional[str], Optional[str]]]:
+    """批量取创建人账号与显示名（(user_name, real_name or user_name)）。
+
+    服务名里只有 base36(user_id) 编码，人可读的归属必须由接口补出来；列表每行都要用，
+    所以一次 IN 查询而不是逐行查（N+1 在服务多时是数量级差距）。
+    """
+    ids = {int(uid) for uid in (owner_ids or ()) if uid}
+    if not ids:
+        return {}
+    from app.models.user import User as PlatformUser
+
+    rows = (
+        await db.execute(
+            select(PlatformUser.id, PlatformUser.user_name, PlatformUser.real_name).where(
+                PlatformUser.id.in_(ids)
+            )
+        )
+    ).all()
+    return {
+        int(uid): (uname, (real or uname))
+        for uid, uname, real in rows
+    }
 
 
 async def _require_echo_scope_access(
@@ -1049,7 +1080,8 @@ async def create_echo_test_mcp(
         if is_personal:
             server_name = await _unique_personal_echo_name(
                 db,
-                f"mcp-private-{_echo_owner_name_part(user.get('user_name'))}-echo",
+                # 与「我的 MCP」新建、接受分享共用同一份前缀规则：priv-<base36(user_id)>-
+                f"{personal_server_name_prefix(owner_id)}echo",
                 server_id,
             )
             remark = "个人 Echo 测试 MCP，用于验证本人调用链路的用户身份透传"
@@ -1416,6 +1448,12 @@ async def create_mcp_server(
     server_name = _normalized_server_name(data.server_name)
     if not server_name:
         raise HTTPException(status_code=400, detail="服务显示名称不能为空")
+    # 新建一律要求 ASCII：名字会进「服务:工具」标识、探测地址与审计流水，
+    # 中文/空格/全角在这些地方都要转义。存量名字不追溯（见 naming 模块说明）。
+    try:
+        server_name = validate_server_name_charset(server_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # The full tool identity is server_name:remote_tool_name, so the server
     # display name must be unique across all scopes.
@@ -1516,6 +1554,13 @@ async def update_mcp_server(
     server_name = _normalized_server_name(data.server_name)
     if not server_name:
         raise HTTPException(status_code=400, detail="服务显示名称不能为空")
+    # 只在「名字确实被改动」时校验字符集：存量服务里有含空格/中文的历史名与平台 Echo
+    # 的中文名，若无条件校验，改个备注都保存不了。
+    if server.server_name != server_name:
+        try:
+            server_name = validate_server_name_charset(server_name, label="新的服务显示名称")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     duplicate_name = await _find_server_with_name(
         db,

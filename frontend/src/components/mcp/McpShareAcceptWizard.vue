@@ -13,6 +13,7 @@ import { useUser } from '@/composables/useUser'
 import {
   buildMcpServerNamePrefix,
   composeMcpServerName,
+  describeMcpServerNameSuffixError,
   stripMcpServerNamePrefix,
 } from '@/utils/mcpServerName'
 import type { McpShareItem } from '@/utils/mcpShare'
@@ -30,8 +31,9 @@ const emit = defineEmits<{
 const { userInfo } = useUser()
 const { showToast } = useToast()
 
+const myUserId = computed(() => userInfo.value?.user_id ?? userInfo.value?.id)
 const myUserName = computed(() => String(userInfo.value?.user_name || ''))
-const namePrefix = computed(() => buildMcpServerNamePrefix('personal', myUserName.value))
+const namePrefix = computed(() => buildMcpServerNamePrefix('personal', myUserId.value))
 
 const nameSuffix = ref('')
 const remark = ref('')
@@ -43,17 +45,21 @@ const reset = () => {
   // 后端算好的默认落地名优先；老分享没有这个字段时退回源名（strip 会剥掉任意私有前缀）
   const suggested = share?.suggested_server_name || share?.server_name || ''
   nameSuffix.value = suggested
-    ? stripMcpServerNamePrefix(suggested, 'personal', myUserName.value)
+    ? stripMcpServerNamePrefix(suggested, 'personal', myUserId.value, myUserName.value)
     : ''
   remark.value = share?.remark || ''
   sseUrl.value = share?.sse_url || ''
 }
 
 const fullName = computed(() =>
-  composeMcpServerName('personal', myUserName.value, nameSuffix.value),
+  composeMcpServerName('personal', myUserId.value, nameSuffix.value),
 )
 const urlValid = computed(() => /^https?:\/\//i.test(sseUrl.value.trim()))
-const canSubmit = computed(() => Boolean(fullName.value) && urlValid.value && !submitting.value)
+// 落地名与「新建 MCP」同一套字符集规则：中文/空格/全角会让名字难复制、难排查
+const nameSuffixError = computed(() => describeMcpServerNameSuffixError(nameSuffix.value))
+const canSubmit = computed(
+  () => Boolean(fullName.value) && urlValid.value && !submitting.value && !nameSuffixError.value,
+)
 
 const handleKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Escape' && !submitting.value) emit('close')
@@ -154,7 +160,7 @@ async function submit() {
             <p class="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
               全名：
               <span class="font-mono text-gray-600 dark:text-gray-300">{{ fullName || '—' }}</span>
-              <span v-if="!nameSuffix.trim()" class="ml-1 text-amber-600 dark:text-amber-400">请填写后缀</span>
+              <span v-if="nameSuffixError" class="ml-1 text-rose-600 dark:text-rose-400">{{ nameSuffixError }}</span>
             </p>
           </div>
 

@@ -31,6 +31,7 @@ from app.services.mcp.mcp_auth_policy import (
 )
 from app.services.mcp.url_policy import McpUrlPolicyError, validate_mcp_outbound_url
 from app.services.mcp.echo_server import is_echo_server_sse_url
+from app.services.mcp.naming import validate_server_name_charset
 from app.services.portal_notification_service import PortalNotificationService
 
 # 与技能分享共用同一套「搜索接收人」实现（纯用户检索，与技能表无关）
@@ -43,8 +44,12 @@ DEFAULT_LIST_LIMIT = 100
 MAX_LIST_LIMIT = 500
 MAX_SERVER_NAME_LENGTH = 100
 PAYLOAD_VERSION = 1
-# mcp-private-<用户名>- / mcp-public-<用户名>-：前端命名约定，接受分享时要按接收人重建
-_SCOPE_NAME_PREFIX_RE = re.compile(r"^mcp-(?:private|public)-[^-]+-", re.IGNORECASE)
+# 归属前缀正则：新格式 ``priv-<base36>-`` / ``pub-<base36>-``（2026-11 起），
+# 以及存量旧格式 ``mcp-private-<用户名>-`` / ``mcp-public-<用户名>-``（含无用户名的
+# ``mcp-public-{suffix}``）。存量名字不迁移，但剥离时必须认，否则分享改名会「前缀套前缀」。
+_SCOPE_NAME_PREFIX_RE = re.compile(
+    r"^(?:priv|pub|mcp-private|mcp-public)-[^-]+-", re.IGNORECASE
+)
 
 
 class McpShareError(Exception):
@@ -72,9 +77,7 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() if isinstance(value, datetime) else None
 
 
-def _suggested_name_from_payload(
-    row: McpServerShare, receiver_user_name: str | None
-) -> str | None:
+def _suggested_name_from_payload(row: McpServerShare) -> str | None:
     if not row.payload:
         return None
     try:
@@ -84,8 +87,9 @@ def _suggested_name_from_payload(
     config = snapshot.get("config") or {}
     return suggested_accepted_name(
         config.get("server_name") or row.server_name,
-        receiver_user_name,
+        row.target_user_id,
         config.get("source_user_name"),
+        row.source_user_id,
     )
 
 
@@ -94,7 +98,6 @@ def _share_payload(
     *,
     source_user: User | None = None,
     target_user: User | None = None,
-    receiver_user_name: str | None = None,
 ) -> dict[str, Any]:
     return {
         "id": row.id,
@@ -114,7 +117,7 @@ def _share_payload(
         "accepted_server_id": row.accepted_server_id,
         # 安装向导弹层预填用：已按接收人账号算好默认落地名
         "suggested_server_name": (
-            _suggested_name_from_payload(row, receiver_user_name)
+            _suggested_name_from_payload(row)
             if row.status == "PENDING"
             else None
         ),
@@ -124,23 +127,77 @@ def _share_payload(
 
 
 # ---------------------------------------------------------------------------
-# 服务名：前缀属于「谁建的」，接受时要换成接收人的账号
+# 服务名：前缀是「谁建的」的稳定派生码，接受时要换成接收人的
 # ---------------------------------------------------------------------------
 
-def _sanitize_name_part(value: str | None, fallback: str = "user") -> str:
-    part = re.sub(r"[^a-zA-Z0-9_-]+", "-", (value or "").strip()).strip("-")
-    return part or fallback
+_BASE36_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz"
+#: 拿不到 user_id（内部调用、异常数据）时的归属段。撞名由全局唯一约束兜底。
+FALLBACK_OWNER_SEGMENT = "user"
 
 
-def shared_name_suffix(server_name: str, source_user_name: str | None = None) -> str:
-    """剥掉 ``mcp-private-<分享人>-`` / ``mcp-public-<分享人>-`` 前缀，只留业务别名。
+def _base36(value: Any) -> str:
+    """整数 → base36 小写串，与前端 ``Number.prototype.toString(36)`` 逐字符一致。
 
-    优先按分享人账号精确切；分享人账号可能含 ``-``，正则兜底只切第一个 ``-`` 之前，
-    所以「知道分享人是谁」时结果更准。手动改成裸名（没有前缀）时原样返回。
+    两侧必须算出同一个前缀：新建时前端拼名字，接受分享 / 个人 Echo 由后端拼名字，
+    算法一旦分叉就会出现「同一用户两种前缀」。
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return ""
+    if number <= 0:
+        return ""
+    out: list[str] = []
+    while number:
+        number, remainder = divmod(number, 36)
+        out.append(_BASE36_DIGITS[remainder])
+    return "".join(reversed(out))
+
+
+def owner_name_segment(user_id: Any) -> str:
+    """名字里的归属段：用户 id 的 base36。
+
+    为什么不用用户名：截断用户名会造成误认（``chenxiaolong`` 与 ``chenxiao`` 都会变成
+    ``chenxiao``，别人看到会以为服务是另一个人的）；为什么不用随机串：同一个用户新建的
+    每个服务、以及分享改名都要算出同一前缀，随机串做不到。
+    """
+    return _base36(user_id) or FALLBACK_OWNER_SEGMENT
+
+
+def personal_server_name_prefix(user_id: Any) -> str:
+    """个人服务前缀 ``priv-<base36(user_id)>-``（新建、个人 Echo、接受分享共用这一份）。"""
+    return f"priv-{owner_name_segment(user_id)}-"
+
+
+def platform_server_name_prefix(user_id: Any) -> str:
+    """平台服务前缀 ``pub-<base36(user_id)>-``。"""
+    return f"pub-{owner_name_segment(user_id)}-"
+
+
+def shared_name_suffix(
+    server_name: str,
+    source_user_name: str | None = None,
+    source_user_id: Any = None,
+) -> str:
+    """剥掉归属前缀，只留业务别名。
+
+    认四套形态：当前的 ``priv-<base36>-`` / ``pub-<base36>-``、2026-11 之前的
+    ``mcp-private-<完整用户名>-`` / ``mcp-public-<用户名>-``。存量不迁移，但分享时
+    必须能正确剥离，否则接收方落地名会变成「前缀套前缀」。
     """
     name = (server_name or "").strip()
+    candidates: list[str] = []
+    if source_user_id is not None:
+        candidates.append(personal_server_name_prefix(source_user_id))
+        candidates.append(platform_server_name_prefix(source_user_id))
     if source_user_name:
-        prefix = f"mcp-private-{source_user_name}-"
+        # 存量旧格式：完整用户名，账号可能含 `-`，所以精确串优先于正则
+        candidates.append(f"mcp-private-{source_user_name}-")
+        candidates.append(f"mcp-public-{source_user_name}-")
+        sanitized = re.sub(r"[^a-zA-Z0-9_-]+", "-", source_user_name).strip("-")
+        if sanitized and sanitized != source_user_name:
+            candidates.append(f"mcp-private-{sanitized}-")
+    for prefix in candidates:
         if name.lower().startswith(prefix.lower()):
             return name[len(prefix):]
     match = _SCOPE_NAME_PREFIX_RE.match(name)
@@ -149,16 +206,16 @@ def shared_name_suffix(server_name: str, source_user_name: str | None = None) ->
 
 def suggested_accepted_name(
     server_name: str,
-    target_user_name: str | None,
+    target_user_id: Any,
     source_user_name: str | None = None,
+    source_user_id: Any = None,
 ) -> str:
-    """接收方落地名：``mcp-private-<接收人>-<业务别名>``。
+    """接收方落地名：``priv-<接收人码>-<业务别名>``。
 
-    直接用源名会让副本看起来像分享人的资产（admin 分享出去的还叫 ``mcp-private-admin-*``），
-    既误导接收人，也让「谁建的」这条约定失效。
+    直接用源名会让副本看起来像分享人的资产，既误导接收人，也让「谁建的」这条约定失效。
     """
-    prefix = f"mcp-private-{_sanitize_name_part(target_user_name)}-"
-    suffix = shared_name_suffix(server_name, source_user_name) or "shared"
+    prefix = personal_server_name_prefix(target_user_id)
+    suffix = shared_name_suffix(server_name, source_user_name, source_user_id) or "shared"
     return f"{prefix}{suffix}"[:MAX_SERVER_NAME_LENGTH]
 
 
@@ -504,7 +561,7 @@ async def list_received_shares(
     return {
         "items": [
             _share_payload(
-                row, source_user=source, receiver_user_name=user.get("user_name")
+                row, source_user=source
             )
             for row, source in rows
         ],
@@ -588,6 +645,11 @@ async def accept_share(
         if ":" in requested:
             # 工具标识是 ``server_name:tool``，名字里带冒号会让命名空间解析出错
             raise McpShareConflictError("服务名不能包含冒号（:），它会破坏「服务:工具」命名")
+        # 手填的落地名与「新建服务」同一套字符集规则：中文/空格/全角会让名字难复制难排查
+        try:
+            requested = validate_server_name_charset(requested, label="服务名")
+        except ValueError as exc:
+            raise McpShareConflictError(str(exc)) from exc
         if await _server_name_taken(session, requested):
             raise McpShareConflictError(f"服务名「{requested}」已存在，请换一个")
         final_name = requested
@@ -597,8 +659,9 @@ async def accept_share(
             session,
             suggested_accepted_name(
                 shared_name,
-                user.get("user_name"),
+                user.get("user_id"),
                 config.get("source_user_name"),
+                row.source_user_id,
             ),
         )
 
