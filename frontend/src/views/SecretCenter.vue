@@ -426,6 +426,8 @@ async function openRotate(item: SecretItem) {
     const res = await axios.get(`/api/portal/secrets/${encodeURIComponent(item.id)}/fields`)
     if (rotateTarget.value?.id !== item.id) return
     const skeleton = res.data?.data?.skeleton
+    const sensitive = res.data?.data?.sensitive_fields
+    if (Array.isArray(sensitive)) rotateSecretFields.value = sensitive
     if (skeleton && typeof skeleton === 'object') {
       rotateInitialJson.value = JSON.stringify(skeleton, null, 2)
     }

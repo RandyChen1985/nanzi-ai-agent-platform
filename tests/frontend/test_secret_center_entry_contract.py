@@ -12,7 +12,11 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 PERSONAL_CENTER = ROOT / "frontend/src/views/PersonalCenter.vue"
@@ -2657,3 +2661,41 @@ class TestRotatePrefillsOriginalStructure:
 
         assert "值不会回显" in source
         assert "只是占位，请逐个改成新值" in source
+        # 文案只在骨架真的铺上时才说「上面是读出来的字段」：用户先动手填的
+        # 情况下骨架会被放弃，那时候还说这句就是假话
+        assert 'v-if="skeletonAdopted"' in source
+
+    def test_editor_adopts_a_late_skeleton(self):
+        """骨架比弹窗晚到：必须能顶掉那一行空白占位行。
+
+        现场 bug：自定义 JSON 凭据有 user / pwd 两个键，点轮换打开是空的，
+        看起来像 key 被清空了。实际是弹窗一打开先补了一行空白占位，骨架
+        （异步请求）回来时撞上「已有行就不覆盖」的守卫，被挡在门外。
+        判定抽成了 `canAdoptSkeleton`，行为见 tests/frontend/credential_rotate_seed.mjs。
+        """
+        source = _read(EDITOR)
+
+        assert "canAdoptSkeleton(rawRows.value, initial)" in source
+        assert "isUntouchedPlaceholderRow" not in source, "旧的「只看是否单行空行」判定要被替换"
+
+    @pytest.mark.skipif(shutil.which("node") is None, reason="需要 node 才能执行纯函数行为测试")
+    def test_late_skeleton_behaviour_via_node(self):
+        proc = subprocess.run(
+            ["node", "tests/frontend/credential_rotate_seed.mjs"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "credential_rotate_seed 行为测试通过" in proc.stdout
+
+    def test_sensitive_flags_come_back_with_the_skeleton(self):
+        """骨架只有键与类型，敏感与否得单独给：否则用户填密码时那个框明文显示，
+        而且这条值可能被算进列表摘要（`userKey` 这种只有声明才知道的字段）。"""
+        editor = _read(EDITOR)
+        assert "function applySecretFlagsFromServer()" in editor
+
+        for path in (ADMIN_SECRET_CENTER, SECRET_CENTER):
+            source = _read(path)
+            assert "sensitive_fields" in source
+            assert "rotateSecretFields.value = sensitive" in source

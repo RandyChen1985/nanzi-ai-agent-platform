@@ -705,6 +705,9 @@ class TestValueSkeleton:
         assert payload["secret_key"] == "pytest.skeleton.rotate"
         assert payload["skeleton"] == {"host": "", "password": "", "port": 0}
         assert "10.0.0.1" not in str(payload)
+        # 敏感标记要跟着回：否则用户填密码时那个输入框明文显示，
+        # 而且这条值可能被算进列表摘要
+        assert payload["sensitive_fields"] == ["password"]
 
     async def test_admin_structure_hides_foreign_and_user_secrets(self, session):
         """别人的用户级凭据不该从管理端读结构——管理端只管系统级。"""
@@ -734,3 +737,21 @@ class TestValueSkeleton:
 
         assert payload["skeleton"] == {"a": 0, "b": {"c": ""}}
         assert "secret-value" not in str(payload["skeleton"])
+        # 名字像密钥的才进敏感清单：c 不敏感，所以这里为空
+        assert payload["sensitive_fields"] == []
+
+    async def test_sensitive_flags_follow_the_key_name_anywhere_in_the_path(self, session):
+        """`auth.apiKey` 这类前缀无关的写法也要命中——只看最后一段会漏。"""
+        row = await _make(
+            session,
+            owner_scope=SCOPE_SYSTEM,
+            owner_id="system",
+            secret_key="pytest.skeleton.sensitive",
+            value_format="json",
+            value_template="custom",
+            value='{"user":"alice","pwd":"p","auth":{"apiKey":"k","note":"n"}}',
+        )
+
+        payload = await center.describe_value_structure(session, secret_id=row.id)
+
+        assert payload["sensitive_fields"] == ["pwd", "auth.apiKey"]

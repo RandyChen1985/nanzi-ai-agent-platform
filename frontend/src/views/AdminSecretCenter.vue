@@ -806,8 +806,10 @@ async function openRotate(item: SystemSecret) {
   try {
     const res = await axios.get(`/api/portal/secrets/admin/${item.id}/structure`)
     const skeleton = res.data?.data?.skeleton
+    const sensitive = res.data?.data?.sensitive_fields
     // 换了目标就不回填：慢请求回来时用户可能已经关掉又开了另一条
     if (rotateTarget.value?.id !== item.id) return
+    if (Array.isArray(sensitive)) rotateSecretFields.value = sensitive
     if (skeleton && typeof skeleton === 'object') {
       rotateInitialJson.value = JSON.stringify(skeleton, null, 2)
     }

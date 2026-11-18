@@ -23,6 +23,7 @@ import {
   type CredentialField,
   type CredentialTemplate,
 } from '../../utils/credentialTemplates'
+import { canAdoptSkeleton } from '../../utils/credentialRotateSeed'
 
 const props = withDefaults(
   defineProps<{
@@ -110,6 +111,8 @@ const rawRows = ref<RawFieldRow[]>([])
 const rawView = ref<'kv' | 'json'>('kv')
 /** 各行「显示」按钮的状态，按行索引记 */
 const rawRevealed = ref<Record<number, boolean>>({})
+/** 原结构骨架是否真的铺上了（用户先动手填时会被放弃，文案要跟着变） */
+const skeletonAdopted = ref(false)
 
 function rawValueTypeOf(value: unknown): RawValueType {
   if (typeof value === 'number') return 'number'
@@ -245,19 +248,48 @@ watch(
   [() => props.lockStructure, isRaw, () => props.initialJson],
   ([locked, raw, initial]) => {
     if (!locked || !raw) return
-    if (rawRows.value.length) return
+
     if (initial) {
-      hydrateRaw(initial)
-      // 骨架里所有值都是空的，但键名得露出来：这是「只改值」的起点
-      if (rawRows.value.length) {
-        pushRawOut()
-        return
+      // 弹窗一打开就先铺了一行空白占位，而骨架是异步回来的：
+      // 判「这一行还没被动过」才允许顶掉，否则那个「已有行就不覆盖」的守卫
+      // 会把骨架挡在门外，用户看到的仍是空表（user / pwd 全部不见）。
+      const canTakeOver = canAdoptSkeleton(rawRows.value, initial)
+      if (canTakeOver) {
+        hydrateRaw(initial)
+        // 骨架里所有值都是空的，但键名得露出来：这是「只改值」的起点
+        if (rawRows.value.length) {
+          applySecretFlagsFromServer()
+          skeletonAdopted.value = true
+          pushRawOut()
+          return
+        }
       }
+      // 已经有内容（用户开始填了）就不动它
+      if (rawRows.value.length) return
     }
+
+    if (rawRows.value.length) return
     rawRows.value = [{ key: '', type: 'text', value: '', secret: false }]
   },
   { immediate: true },
 )
+
+/**
+ * 把后端给的敏感字段标记勾回行上。
+ *
+ * 骨架里只有键与类型，敏感与否是另一份信息（`secret_fields`）。不勾回的后果是
+ * 用户填密码时那个输入框明文显示、且这条值可能被算进列表摘要——`pwd` / `password`
+ * 这类名字后端有词表兜底，但 `userKey` 这种只有声明才知道的字段就漏了。
+ */
+function applySecretFlagsFromServer() {
+  const sensitive = new Set(
+    (secretFields.value || []).map((name: string) => String(name).trim()).filter(Boolean),
+  )
+  if (!sensitive.size) return
+  for (const row of rawRows.value) {
+    row.secret = sensitive.has(row.key.trim())
+  }
+}
 
 /** 行级错误：比一句「JSON 语法错误」有用得多——能指出是第几行的哪个字段 */
 const rawRowErrors = computed<(string | null)[]>(() => {
@@ -1010,7 +1042,7 @@ defineExpose({ recognize })
               @click="addRawRow"
             >+ 添加字段</button>
             <p v-if="lockStructure" class="mt-1.5 text-[10px] leading-relaxed text-gray-400">
-              <template v-if="initialJson">
+              <template v-if="skeletonAdopted">
                 上面是从这条凭据里读出来的原有字段：<b>值不会回显</b>。
                 <code>0</code> / 空串 / <code>false</code> 只是占位，请逐个改成新值——
                 想看看需要哪几个字段，切到「写 JSON」能看到完整结构。

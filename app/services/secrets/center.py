@@ -305,6 +305,26 @@ def build_value_skeleton(value: str) -> Any | None:
     return _skeleton_of(data)
 
 
+def _sensitive_paths(node: Any, prefix: str = "") -> list[str]:
+    """把骨架里「按名字就该当敏感」的路径列出来。
+
+    骨架只保留键与类型，敏感标记是另一份信息。不给它的后果很具体：用户填密码时
+    那个输入框明文显示，而且这条值可能被算进列表摘要——``pwd`` / ``password``
+    后端有词表兜底，但 ``userKey`` 这种只有凭据主人知道的字段就漏了。
+    """
+    out: list[str] = []
+    if isinstance(node, dict):
+        for key, item in node.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if _is_sensitive_key(path):
+                out.append(path)
+            out.extend(_sensitive_paths(item, path))
+    elif isinstance(node, list):
+        for index, item in enumerate(node):
+            out.extend(_sensitive_paths(item, f"{prefix}.{index}"))
+    return out
+
+
 def _skeleton_of(node: Any) -> Any:
     """递归把值换成同类型的空占位。类型保留，值不保留。"""
     if isinstance(node, dict):
@@ -754,6 +774,8 @@ async def describe_value_fields(
         # 轮换弹窗要靠它把「原来的键」摆出来，让用户只改值。
         # 单值凭据、或值解不开时保持 None。
         "skeleton": None,
+        # 铺完骨架后据此勾回「敏感」，与绑定字段选择器同一份判定
+        "sensitive_fields": [],
     }
     if payload["format"] != "json":
         # 单值凭据没有字段可选，前端据此直接隐藏字段选择器
@@ -834,6 +856,8 @@ async def describe_value_fields(
 
     walk(data, "", 0)
     payload["fields"] = fields
+    # 轮换弹窗铺完骨架后要据此勾回「敏感」，与选择器用的是同一份判定
+    payload["sensitive_fields"] = [item["name"] for item in fields if item["sensitive"]]
     return payload
 
 
@@ -871,11 +895,14 @@ async def describe_value_structure(session, *, secret_id: str) -> dict[str, Any]
         "kind": row.secret_type,
         "skeleton": None,
     }
+    payload["sensitive_fields"] = []
     if payload["format"] != "json":
         return payload
     try:
         plaintext = get_api_key_manager().decrypt_api_key(row.value_encrypted)
-        payload["skeleton"] = _skeleton_of(parse_structured_value(plaintext))
+        data = parse_structured_value(plaintext)
+        payload["skeleton"] = _skeleton_of(data)
+        payload["sensitive_fields"] = _sensitive_paths(data)
     except Exception:  # noqa: BLE001 - 解不开就不给骨架，前端退回「空表 + 自己填」
         logger.warning("[SecretCenter] 管理员读取凭据 %s 的结构失败", secret_id)
     return payload
