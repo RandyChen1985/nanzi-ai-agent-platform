@@ -221,3 +221,74 @@ async def test_factory_generator_yields_progress_from_real_server(monkeypatch):
     assert all(c.state == ToolResultState.RUNNING for c in progress_chunks)
     assert items[-1] == "done", "最后一片必须是业务结果本身"
     assert captured["tool_name"] == STREAMABLE_TOOL
+
+
+async def test_connect_passes_relaxed_sse_event_size_limit(monkeypatch):
+    """回归：单个 SSE event 的上限必须显式放宽，不能吃 SDK 默认的 1 MiB。
+
+    图像 / 文件类工具把结果 base64 内联在**一个** SSE event 的 ``data`` 里：
+    一张 1024×1024 的 PNG base64 后就有 2～5 MB，SDK 默认值必然打成
+    「Server-sent event exceeded the 1048576 byte limit」（DashScope
+    ``text_generate_image`` 的实测症状）。该报错外面裹着
+    ``MCP tool call failed:``，看起来像传输故障，实际是结果体积超限。
+
+    这里只锁「参数确实传给了 SDK」——体积行为由 SDK 自己负责，端到端再由
+    真实服务端用例兜底。
+    """
+    from unittest.mock import AsyncMock
+
+    from app.services.ai.tools import mcp_client as mcp_client_module
+    from app.services.ai.tools.mcp_client import DEFAULT_MCP_MAX_SSE_EVENT_SIZE
+
+    captured: dict[str, Any] = {}
+
+    class _FakeCM:
+        def __init__(self, value: Any) -> None:
+            self._value = value
+
+        async def __aenter__(self) -> Any:
+            return self._value
+
+        async def __aexit__(self, *exc_info: Any) -> bool:
+            return False
+
+    class _FakeSession:
+        async def initialize(self) -> None:
+            return None
+
+    def _fake_streamable_http_client(url: str, **kwargs: Any) -> _FakeCM:
+        captured["url"] = url
+        captured.update(kwargs)
+        return _FakeCM(("read", "write"))
+
+    # connect() 先做 TCP 预检，不可达会直接降级、走不到 streamable 分支
+    monkeypatch.setattr(
+        McpSseSession,
+        "_tcp_endpoint_reachable",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        mcp_client_module, "streamable_http_client", _fake_streamable_http_client
+    )
+    monkeypatch.setattr(
+        mcp_client_module,
+        "_create_no_redirect_mcp_http_client",
+        lambda **kwargs: _FakeCM(object()),
+    )
+    monkeypatch.setattr(
+        mcp_client_module,
+        "ClientSession",
+        lambda read, write: _FakeCM(_FakeSession()),
+    )
+
+    session_mgr = McpSseSession("probe", "https://example.test/mcp", {})
+    try:
+        await session_mgr.connect()
+
+        assert session_mgr.is_direct_http is False, "应走 Streamable HTTP 而非降级"
+        assert captured["max_sse_event_size"] == DEFAULT_MCP_MAX_SSE_EVENT_SIZE
+        assert DEFAULT_MCP_MAX_SSE_EVENT_SIZE > 1024 * 1024, (
+            "上限必须大于 SDK 默认的 1 MiB，否则图像类工具照样被打爆"
+        )
+    finally:
+        await session_mgr.close()
