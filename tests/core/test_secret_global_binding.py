@@ -46,16 +46,26 @@ class TestEndpointMapsFlagToEmptyString:
 
     def test_create_passes_none_for_global(self):
         body = self._source(endpoint.create_binding)
-        assert "if payload.is_global:" in body
+        # 全局绑定的落库主体是空串（None → owner_key=""），端点用条件表达式一次算出；
+        # 原来写成 `if payload.is_global: bound_by = None`，重构后用等价的单行表达式。
+        assert "None if payload.is_global else user_id" in body
         assert "bound_by: str | None = None" in body
         assert "bound_by_user_id=bound_by" in body
 
-    def test_create_requires_admin_for_global(self):
+    def test_create_defers_admin_check_to_center(self):
+        """端点不再按 is_global 一刀切，门槛下沉到 center.bind_secret。
+
+        原因见端点注释：管理员拿**自己的个人凭据**绑平台级工具是正常操作（先用自己
+        的账号跑通），端点层一刀切会把它当成越权拒掉。所以按凭据作用域在
+        ``bind_secret`` 里判：系统级凭据 + 全局才要求管理员，个人凭据自动降级成本人绑定。
+        """
         body = self._source(endpoint.create_binding)
-        start = body.find("if payload.is_global:")
-        window = body[start:start + 300]
-        assert "_is_admin(user_info)" in window
-        assert "403" in window
+        assert "None if payload.is_global else user_id" in body
+        assert "权限判断下沉到 bind_secret" in body
+
+        center_body = inspect.getsource(center.bind_secret)
+        assert "只有管理员可以设置全局绑定" in center_body
+        assert "只有系统级凭据可以设为全局绑定" in center_body
 
     def test_delete_mirrors_the_same_rule(self):
         body = self._source(endpoint.delete_binding)
@@ -100,12 +110,19 @@ class TestAdminComponentsSendGlobal:
         writes = len(imports_re.findall(
             r"axios\.(?:post|delete)\(\s*['\"]/api/portal/secrets/bindings", source
         ))
-        flags = source.count("is_global: true")
+        # 组件不再写死 `is_global: true`，改成从 isGlobal prop 取——作用域由消费端声明
+        # （ToolRegistry 传 true；个人入口传 false）。两种写法都算数，关键是每次写入
+        # 都必须显式带上，漏传就会落成个人绑定。
+        flags = len(imports_re.findall(r"is_global:\s*(?:true|props\.isGlobal)", source))
         assert writes > 0, f"{path}: 没找到绑定写入调用"
         assert flags == writes, (
             f"{path}: {writes} 处写入只带了 {flags} 个 is_global —— "
             "漏传的会写成个人绑定，只有管理员自己能用"
         )
+        if "is_global: props.isGlobal" in source:
+            assert imports_re.search(r"isGlobal:\s*true", source), (
+                f"{path}: 用 prop 时默认值必须是 true，否则平台工具会被写成个人绑定"
+            )
 
 
 class TestPersonalScopeStaysPersonal:

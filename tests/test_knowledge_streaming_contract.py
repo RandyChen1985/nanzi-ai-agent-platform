@@ -23,7 +23,15 @@ KNOWLEDGE_RUNNER = ROOT / "app/services/ai/runners/knowledge_agent_runner.py"
 TIMELINE_SNAPSHOT = ROOT / "app/services/ai/runtime/agentscope/process_timeline_snapshot.py"
 
 SYNTHESIS_PENDING_CALL = 'yield self._knowledge_synthesis_event(status="pending"'
-MODEL_EVENT_LOOP = "async for chunk in self._execute_with_agentscope_native_agent(**execute_kwargs):"
+# 模型事件循环现在遍历的是 merged_stream：原生流外面套了一层
+# ``_merge_agent_context_event_stream``（把 agent context 事件并进来）。
+# 断言仍锁同一个循环体，只是入口换名字。
+MODEL_EVENT_LOOP = "async for chunk in merged_stream:"
+# 正文分支的判据从内联的 `if "content" in chunk:` 提取成了具名布尔量
+# ``is_answer_text_chunk``（还要排除 error / 中断 / 非 answer 类型）。
+CONTENT_BRANCH = "if is_answer_text_chunk:"
+#: 循环体终点：错误与人机中断合并成同一个终止判断
+LOOP_END = "if saw_error or saw_interrupt:"
 
 
 def _read(path: Path) -> str:
@@ -41,7 +49,8 @@ def _model_execution_loop_source() -> str:
     """截取网关重试循环内遍历模型事件的循环体。"""
     source = _read(KNOWLEDGE_RUNNER)
     start = source.index(MODEL_EVENT_LOOP)
-    return source[start:source.index("if saw_error:", start)]
+    # 循环体到「错误/中断即终止」的判断为止；该判断后来合并了人机中断分支。
+    return source[start:source.index(LOOP_END, start)]
 
 
 def test_knowledge_synthesis_helper_has_stable_id_title_and_category():
@@ -74,7 +83,7 @@ def test_knowledge_synthesis_details_never_claims_zero_citations():
 def test_only_content_chunks_are_buffered_and_process_events_forwarded():
     loop = _model_execution_loop_source()
 
-    content_branch = loop.index('if "content" in chunk:')
+    content_branch = loop.index(CONTENT_BRANCH)
     else_branch = loop.index("else:", content_branch)
     assert loop.count("chunks_buffer.append(chunk)") == 1, "缓冲区只允许装正文"
     assert loop.index("chunks_buffer.append(chunk)") > content_branch
@@ -89,9 +98,9 @@ def test_error_chunks_use_flag_instead_of_buffer_scan():
     loop = _model_execution_loop_source()
 
     assert "saw_error = True" in loop
-    assert "if saw_error:" in source
+    assert LOOP_END in source
     # error 判定必须在分流之前：带 content 的错误事件（安全拦截）也要被识别
-    assert loop.index("saw_error = True") < loop.index('if "content" in chunk:')
+    assert loop.index("saw_error = True") < loop.index(CONTENT_BRANCH)
     assert 'any(chunk.get("type") == "error" for chunk in chunks_buffer)' not in source, (
         "error chunk 不再进缓冲区，扫缓冲区找 error 会永久失效"
     )
@@ -100,7 +109,7 @@ def test_error_chunks_use_flag_instead_of_buffer_scan():
 def test_first_content_chunk_closes_knowledge_synthesis_item():
     loop = _model_execution_loop_source()
 
-    content_branch = loop.index('if "content" in chunk:')
+    content_branch = loop.index(CONTENT_BRANCH)
     else_branch = loop.index("else:", content_branch)
     body = loop[content_branch:else_branch]
     assert "if synthesis_pending:" in body, "收尾必须在正文分支内（首个正文 chunk 处）"

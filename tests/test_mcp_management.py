@@ -469,22 +469,25 @@ async def test_mcp_tool_execute(client: AsyncClient, admin_api_key: str, db_sess
     ))
     await session.commit()
 
-    # Mock McpToolFactory.create_tool and the runtime tool execution
-    with patch("app.api.portal.endpoints.mcp.McpToolFactory.create_tool") as mock_factory:
-        mock_tool_instance = AsyncMock()
-        mock_tool_instance.ainvoke.return_value = "Hello World"
-        mock_factory.return_value = mock_tool_instance
-
-        # Execute
+    # 端点直连 McpClientService.call_remote_tool（签名/非签名两个分支都是），
+    # 早先 patch 的 McpToolFactory.create_tool 早已不在执行链上——patch 变成空操作，
+    # 于是真的去拨 http://mock-exec 拿 502。mock 必须打在真实链路上。
+    with patch(
+        "app.api.portal.endpoints.mcp.McpClientService.call_remote_tool",
+        new=AsyncMock(return_value="Hello World"),
+    ) as mock_call:
         payload = {"arguments": {"msg": "Hello"}}
         resp = await client.post(f"/api/portal/mcp/tools/{tool_id}/execute", json=payload, headers=headers)
-        
+
         assert resp.status_code == 200
         assert resp.json()["status"] == "success"
         assert resp.json()["result"] == "Hello World"
-        
-        # Verify arguments passed
-        mock_tool_instance.ainvoke.assert_called_once_with({"msg": "Hello"})
+
+        # 远端工具名必须剥掉 `server:` 前缀，参数原样透传
+        kwargs = mock_call.await_args.kwargs
+        assert kwargs["tool_name"] == "echo_tool"
+        assert kwargs["arguments"] == {"msg": "Hello"}
+        assert kwargs["server_id"] == server_id
 
     # Cleanup
     await client.delete(f"/api/portal/mcp/servers/{server_id}", headers=headers)
