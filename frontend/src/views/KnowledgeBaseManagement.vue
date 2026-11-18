@@ -2191,6 +2191,21 @@ const deptDatasetGroups = computed<DeptDatasetGroup[]>(() => {
   return groups
 })
 
+/**
+ * 部门树的缩进量。
+ *
+ * 分组头和**它下面的知识库节点**必须用同一个函数：原来只给头加了
+ * `level * 10`，库节点所在的容器写死 `ml-1.5`（6px）——于是第三层部门
+ * （A1子部门，头缩进 20px）下面的库只缩进 16px，比自己的父部门还靠左，
+ * 看上去既没缩进、又像退回到了上一级。
+ *
+ * `extra` 给子节点容器用：容器还要画那条竖直引导线（`border-l` + `pl-2.5`），
+ * 起点要落在头文字的左边一点，所以比头的缩进再让 6px。
+ */
+function deptIndent(level: number, extra = 0): string {
+  return `${level * 10 + extra}px`
+}
+
 const isDeptGroupCollapsed = (group: DeptDatasetGroup): boolean =>
   !!collapsedDeptGroups.value[group.key]
 
@@ -4459,7 +4474,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 v-if="!group.isFlat && !isDeptGroupHidden(group)"
                 class="group/dept flex h-7 items-center justify-between gap-1.5 rounded-md px-1.5 cursor-pointer select-none transition-colors hover:bg-gray-50"
                 :class="group.isUnassigned ? 'text-gray-500' : 'text-gray-600'"
-                :style="{ marginLeft: `${group.level * 10}px` }"
+                :style="{ marginLeft: deptIndent(group.level) }"
                 :title="group.isUnassigned
                   ? '未关联部门的库（含历史自由文本归属）'
                   : `业务归属部门：${group.label}`"
@@ -4487,10 +4502,12 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 </span>
               </div>
 
+              <!-- 库节点容器必须跟着部门层级缩进，否则子节点会跑到父部门头左边去 -->
               <div
                 v-show="isDeptGroupOpen(group)"
                 class="space-y-0.5"
-                :class="group.isFlat ? '' : 'ml-1.5 border-l border-gray-100 pl-2.5'"
+                :class="group.isFlat ? '' : 'border-l border-gray-100 pl-2.5'"
+                :style="group.isFlat ? undefined : { marginLeft: deptIndent(group.level, 6) }"
               >
                 <div v-for="dataset in visibleGroupDatasets(group)" :key="dataset.ragflow_dataset_id || dataset.id">
               
