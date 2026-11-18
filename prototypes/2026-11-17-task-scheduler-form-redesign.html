@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="prototype-kind" content="方案对比" />
+<title>定时任务 · 新建/编辑表单整页重设计（三方案）</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --blue:#2563eb; --blue-50:#eff6ff; --blue-100:#dbeafe; --blue-700:#1d4ed8;
+    --indigo:#4f46e5; --indigo-50:#eef2ff; --indigo-100:#e0e7ff; --indigo-700:#4338ca;
+    --amber:#b45309; --amber-50:#fffbeb; --amber-100:#fef3c7; --amber-700:#92400e;
+    --rose:#e11d48; --rose-50:#fff1f2; --rose-100:#ffe4e6; --rose-600:#e11d48;
+    --emerald:#059669; --emerald-50:#ecfdf5; --emerald-100:#d1fae5; --emerald-700:#047857;
+    --violet:#7c3aed; --violet-50:#f5f3ff; --violet-100:#ede9fe; --violet-700:#6d28d9;
+    --g900:#111827; --g800:#1f2937; --g700:#374151; --g600:#4b5563; --g500:#6b7280;
+    --g400:#9ca3af; --g300:#d1d5db; --g200:#e5e7eb; --g100:#f3f4f6; --g50:#f9fafb;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f6f8fb;color:var(--g800);font-size:13px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1280px;margin:0 auto;padding:26px 22px 70px}
+
+  .eyebrow{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--blue)}
+  h1{font-size:23px;font-weight:650;margin-top:5px;letter-spacing:-.01em}
+  .sub{margin-top:7px;color:var(--g600);max-width:960px}
+
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-top:16px}
+  .card{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:12px 13px}
+  .card .k{font-size:10.5px;font-weight:700;color:var(--rose-600);letter-spacing:.03em}
+  .card h3{font-size:13px;font-weight:650;margin:4px 0 3px}
+  .card p{font-size:11px;color:var(--g600);line-height:1.6}
+
+  .tabs{display:flex;gap:2px;margin-top:20px;border-bottom:1px solid var(--g200);flex-wrap:wrap}
+  .tab{border:0;background:transparent;font:inherit;font-size:12.5px;color:var(--g500);padding:9px 14px;cursor:pointer;
+    border-bottom:2px solid transparent;margin-bottom:-1px;display:flex;align-items:center;gap:6px}
+  .tab:hover{color:var(--g800)}
+  .tab.on{color:var(--blue-700);font-weight:650;border-bottom-color:var(--blue)}
+  .tab .tag{font-size:10px;background:var(--g100);color:var(--g600);border-radius:9px;padding:0 6px;font-weight:600}
+  .tab.on .tag{background:var(--blue-50);color:var(--blue-700)}
+  .tab .rec{font-size:9.5px;background:var(--emerald-50);color:var(--emerald-700);border-radius:4px;padding:0 4px;font-weight:700}
+  .view{display:none;padding-top:18px}
+  .view.on{display:block}
+
+  /* ── 弹窗外壳 ── */
+  .dialog{background:#fff;border:1px solid var(--g200);border-radius:14px;overflow:hidden;box-shadow:0 8px 30px rgba(15,23,42,.08)}
+  .dialog-h{display:flex;align-items:center;gap:10px;padding:13px 18px;border-bottom:1px solid var(--g100);background:var(--g50)}
+  .dialog-h h2{font-size:15px;font-weight:650}
+  .dialog-h .hint{margin-left:auto;font-size:11px;color:var(--g400)}
+  .dialog-f{display:flex;align-items:center;gap:10px;padding:11px 18px;border-top:1px solid var(--g100);background:var(--g50)}
+  .dialog-f .left{font-size:11px;color:var(--g500)}
+  .dialog-f .right{margin-left:auto;display:flex;gap:8px}
+
+  button{font:inherit;cursor:pointer}
+  .btn{border:1px solid var(--g300);background:#fff;color:var(--g700);font-size:12.5px;font-weight:600;padding:6px 14px;border-radius:9px}
+  .btn:hover{background:var(--g50)}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  .btn.primary:hover{background:var(--blue-700)}
+  .btn.ghost{border-color:transparent;color:var(--g500)}
+  .btn.sm{font-size:11px;padding:3px 9px;border-radius:7px}
+
+  .field{margin-bottom:14px}
+  .lbl{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+  .lbl .t{font-size:12px;font-weight:650;color:var(--g700)}
+  .lbl .s{font-size:10px;color:var(--g400);font-weight:600}
+  .lbl .opt{font-size:9.5px;font-weight:700;color:var(--g400);border:1px solid var(--g200);border-radius:4px;padding:0 4px}
+  .q{width:15px;height:15px;border-radius:50%;border:1px solid var(--g300);background:#fff;color:var(--g400);
+     font-size:9.5px;font-weight:800;line-height:1;display:inline-flex;align-items:center;justify-content:center}
+  input[type=text],input[type=time],select,textarea{
+    width:100%;border:1px solid var(--g200);border-radius:10px;padding:7px 10px;font:inherit;font-size:12px;color:var(--g700);
+    outline:none;background:#fff}
+  input:focus,select:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+  textarea{resize:vertical;line-height:1.65}
+  .guide{display:flex;gap:6px;border-radius:8px;padding:6px 9px;font-size:10.5px;line-height:1.6;margin-bottom:6px;
+    background:var(--blue-50);border:1px solid var(--blue-100);color:#1e40af}
+  .guide.gray{background:var(--g50);border-color:var(--g200);color:var(--g600)}
+  .guide b{color:#1e3a8a}
+  .guide.gray b{color:var(--g700)}
+
+  /* ── 方案 A：两栏 + 粘性摘要 ── */
+  .A-body{display:grid;grid-template-columns:minmax(0,1fr) 322px;gap:0}
+  .A-form{padding:16px 18px 20px;border-right:1px solid var(--g100);max-height:800px;overflow-y:auto}
+  .A-side{background:var(--g50);padding:16px 15px}
+  .sec{margin-bottom:18px}
+  .sec-h{display:flex;align-items:center;gap:7px;margin-bottom:9px;padding-bottom:6px;border-bottom:1px dashed var(--g200)}
+  .sec-h .n{width:19px;height:19px;border-radius:6px;background:var(--blue);color:#fff;font-size:11px;font-weight:800;
+    display:inline-flex;align-items:center;justify-content:center}
+  .sec-h .n.gray{background:var(--g400)}
+  .sec-h .tt{font-size:12.5px;font-weight:700;color:var(--g800)}
+  .sec-h .dd{font-size:10.5px;color:var(--g400)}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .row.three{grid-template-columns:1fr 1fr 1fr}
+  .inline{display:flex;gap:7px;align-items:flex-start}
+  .inline > *{min-width:0}
+
+  .agent-pick{display:flex;align-items:center;gap:8px;border:1px solid var(--g200);border-radius:10px;padding:7px 9px;background:#fff;cursor:pointer}
+  .agent-pick:hover{border-color:var(--g300)}
+  .agent-pick .av{width:26px;height:26px;border-radius:8px;background:var(--amber-50);border:1px solid var(--amber-100);
+    display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
+  .agent-pick .nm{display:block;font-size:12px;font-weight:700;color:var(--g800)}
+  .agent-pick .mt{display:block;font-size:10px;color:var(--g400);font-family:var(--mono);margin-top:1px}
+  .agent-pick .chev{margin-left:auto;color:var(--g400);font-size:11px}
+
+  .chips{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{border:1px solid var(--g200);background:#fff;border-radius:999px;padding:2px 9px;font-size:10.5px;font-weight:600;color:var(--g600)}
+  .chip.on{background:var(--blue-50);border-color:var(--blue-100);color:var(--blue-700)}
+  .chip.add{border-style:dashed;color:var(--g400)}
+  .chip-x{margin-left:4px;color:var(--g300)}
+
+  .adv-toggle{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--g500);
+    background:none;border:0;padding:2px 0}
+  .adv-toggle:hover{color:var(--g800)}
+  .adv{display:none;margin-top:8px;border:1px solid var(--g100);background:var(--g50);border-radius:10px;padding:10px}
+  .adv.on{display:block}
+
+  /* 摘要卡 */
+  .sum{position:sticky;top:0;background:#fff;border:1px solid var(--g200);border-radius:12px;overflow:hidden}
+  .sum-h{padding:9px 12px;border-bottom:1px solid var(--g100);font-size:11px;font-weight:700;color:var(--g500);
+    display:flex;align-items:center;gap:6px;background:var(--g50)}
+  .sum-b{padding:12px}
+  .sum-sentence{font-size:12.5px;line-height:1.75;color:var(--g700)}
+  .sum-sentence b{color:var(--blue-700)}
+  .sum-sentence .agent{color:var(--amber-700);font-weight:700}
+  .sum-meta{margin-top:10px;padding-top:9px;border-top:1px dashed var(--g200);display:flex;flex-direction:column;gap:6px}
+  .sum-row{display:flex;align-items:baseline;gap:6px;font-size:11px;color:var(--g600)}
+  .sum-row .k{color:var(--g400);flex-shrink:0;width:56px}
+  .sum-row .v{font-weight:600;color:var(--g700)}
+  .next{font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--emerald-700);background:var(--emerald-50);
+    border:1px solid var(--emerald-100);border-radius:6px;padding:1px 6px}
+  .risk{margin-top:10px;border-radius:9px;padding:7px 9px;font-size:10.5px;line-height:1.6;
+    background:var(--amber-50);border:1px solid var(--amber-100);color:var(--amber-700)}
+  .risk b{color:var(--amber-700)}
+  .sum-actions{margin-top:10px;display:flex;gap:6px}
+  .sum-actions .btn{flex:1;justify-content:center;display:flex}
+
+  /* ── 方案 B：向导 ── */
+  .steps{display:flex;align-items:center;gap:0;padding:12px 18px;border-bottom:1px solid var(--g100);background:#fff}
+  .step{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--g400)}
+  .step .dot{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--g300);display:flex;align-items:center;
+    justify-content:center;font-size:10.5px;font-weight:800;color:var(--g400);background:#fff}
+  .step.done .dot{background:var(--emerald);border-color:var(--emerald);color:#fff}
+  .step.on .dot{background:var(--blue);border-color:var(--blue);color:#fff}
+  .step.on{color:var(--blue-700);font-weight:700}
+  .step.done{color:var(--g600)}
+  .step-line{flex:1;height:1px;background:var(--g200);margin:0 10px}
+  .B-body{padding:18px;min-height:420px;max-height:600px;overflow-y:auto}
+  .pane{display:none}
+  .pane.on{display:block}
+  .big-q{font-size:16px;font-weight:700;color:var(--g900);margin-bottom:3px}
+  .big-q-sub{font-size:11.5px;color:var(--g500);margin-bottom:14px}
+
+  /* ── 方案 C：模板起步 ── */
+  .tpl-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:16px 18px}
+  .tpl{border:1px solid var(--g200);border-radius:12px;padding:11px 12px;background:#fff;text-align:left;transition:.15s}
+  .tpl:hover{border-color:var(--blue-100);background:var(--blue-50);transform:translateY(-1px)}
+  .tpl .ico{font-size:17px}
+  .tpl h4{font-size:12.5px;font-weight:700;margin:5px 0 3px;color:var(--g800)}
+  .tpl p{font-size:10.5px;color:var(--g500);line-height:1.55}
+  .tpl .pre{margin-top:7px;font-size:10px;color:var(--blue-700);background:var(--blue-50);border:1px solid var(--blue-100);
+    border-radius:6px;padding:2px 6px;display:inline-block}
+
+  /* 对照表 */
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  th{text-align:left;font-size:10.5px;font-weight:600;color:var(--g500);padding:7px 10px;background:var(--g50);
+    border-bottom:1px solid var(--g200);white-space:nowrap}
+  td{padding:8px 10px;border-bottom:1px solid var(--g100);vertical-align:top;color:var(--g600);line-height:1.65}
+  tr:last-child td{border-bottom:0}
+  td b{color:var(--g800)}
+  .ok{color:var(--emerald-700);font-weight:700}
+  .bad{color:var(--rose-600);font-weight:700}
+  .mid{color:var(--amber-700);font-weight:700}
+
+  .note{margin-top:14px;background:#fff;border:1px solid var(--g200);border-radius:12px;padding:13px 15px}
+  .note h3{font-size:12.5px;font-weight:650;margin-bottom:7px}
+  .note ul{list-style:none;display:flex;flex-direction:column;gap:6px}
+  .note li{font-size:11.5px;color:var(--g600);line-height:1.65;padding-left:13px;position:relative}
+  .note li:before{content:"";position:absolute;left:3px;top:7px;width:4px;height:4px;border-radius:50%;background:var(--g300)}
+  .note li b{color:var(--g800)}
+  .note code{font-family:var(--mono);font-size:10.5px;background:var(--g100);border-radius:4px;padding:0 4px}
+  .spacer{height:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">任务中心 · 新建 / 编辑定时任务</p>
+  <h1>整页重设计：把「8 个平铺字段」拆成「意图 → 时间 → 交付」</h1>
+  <p class="sub">
+    现在这一个弹窗里塞了 8 段：任务名称、执行大脑、执行计划、执行失败策略、要做什么、输出有什么要求、结果通知、保存。
+    它们机会均等地从上排到下，用户保存前<b>没有任何地方能一眼复核「这个任务到底会在什么时候、对谁、做什么、发到哪」</b>。
+    下面三套重设计按改造强度递增，都能在一个 HTML 里点开对比。
+  </p>
+
+  <div class="cards">
+    <div class="card">
+      <p class="k">问题 1</p>
+      <h3>没有复核面</h3>
+      <p>意图散落在 6 个字段里（时间在 cron、对象在提示词、格式在约束、去向在通知），保存前无法用一句话确认。</p>
+    </div>
+    <div class="card">
+      <p class="k">问题 2</p>
+      <h3>时间表达门槛高</h3>
+      <p>核心输入是 cron 表达式，靠 `Auto-Translate` 回译成中文。只说「每周一 8 点」，得先学会 `0 8 * * 1`。</p>
+    </div>
+    <div class="card">
+      <p class="k">问题 3</p>
+      <h3>没有下次运行时间</h3>
+      <p>只有文字翻译，没有具体日期。用户无法确认「我是不是填成了下周一还是本周一」。</p>
+    </div>
+    <div class="card">
+      <p class="k">问题 4</p>
+      <h3>低频项占着前排</h3>
+      <p>重试次数 / 间隔与通知、提示词同级平铺，把「要做什么」这个真正的重心挤到弹窗中部。</p>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab on" data-v="vA">方案 A <span class="rec">推荐</span> <span class="tag">两栏 + 实时摘要</span></button>
+    <button class="tab" data-v="vB">方案 B <span class="tag">三步向导</span></button>
+    <button class="tab" data-v="vC">方案 C <span class="tag">模板起步</span></button>
+    <button class="tab" data-v="vD">方案对比 <span class="tag">取舍</span></button>
+  </div>
+
+  <!-- ═══════════ 方案 A ═══════════ -->
+  <section class="view on" id="vA">
+    <div class="dialog">
+      <div class="dialog-h">
+        <h2>新建定时任务</h2>
+        <span class="hint">方案 A · 左侧编辑，右侧实时摘要（可试跑）</span>
+      </div>
+      <div class="A-body">
+        <!-- 左栏 -->
+        <div class="A-form">
+
+          <div class="sec">
+            <div class="sec-h"><span class="n">1</span><span class="tt">做什么</span><span class="dd">一句话说清目标与交付</span></div>
+
+            <div class="field">
+              <div class="lbl"><span class="t">任务名称</span><span class="s">列表里显示的名字</span></div>
+              <input type="text" id="a-name" value="华东一号机房 PUE 日报" oninput="renderA()" />
+            </div>
+
+            <div class="field">
+              <div class="lbl"><span class="t">谁来执行</span><span class="s">智能体决定可用的工具与知识</span></div>
+              <div class="agent-pick" title="点击切换智能体">
+                <span class="av">🌟</span>
+                <span style="min-width:0">
+                  <span class="nm">运维值班助手 <span style="font-size:8px;border:1px solid var(--amber-200);background:var(--amber-50);color:var(--amber-700);border-radius:3px;padding:0 3px;font-weight:700">MAIN</span></span>
+                  <span class="mt">ops-duty-agent · 可用 12 个工具 / 3 个知识库</span>
+                </span>
+                <span class="chev">▾</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="lbl"><span class="t">要做什么</span><span class="s">必填 · 执行指令</span><span class="q">?</span></div>
+              <div class="guide"><span>①</span><span>一句话说清<b>查什么、什么范围、要什么结果</b>。格式 / 篇幅 / 口径 / 不要图表请写下面第 2 栏。</span></div>
+              <textarea id="a-prompt" rows="3" oninput="renderA()">查华东一号机房上周的 PUE 均值与峰值，列出告警次数 Top3。</textarea>
+              <div class="chips" style="margin-top:6px">
+                <button class="chip">默认模型</button>
+                <button class="chip on">🛡 自动批准</button>
+                <button class="chip">数据集 2</button>
+                <button class="chip">知识库 1</button>
+                <button class="chip add">+ 技能</button>
+                <button class="chip add">+ MCP</button>
+              </div>
+            </div>
+
+            <div class="field" style="margin-bottom:0">
+              <div class="lbl"><span class="t">输出有什么要求</span><span class="s">选填 · 任务约束，可自由输入</span><span class="q">?</span></div>
+              <div class="guide gray"><span>②</span><span>只写<b>规矩</b>，不写任务。没有特别要求就<b>直接留空</b> —— 留空时任务行为与不加约束完全一致。</span></div>
+              <textarea id="a-ta" rows="2" oninput="renderA()" placeholder="例如：用无序列表，不要图表；金额统一按万元、保留两位小数。">用无序列表，不要图表；金额一律以万元为单位，保留两位小数。</textarea>
+              <div class="chips" id="a-cons" style="margin-top:6px">
+                <button class="chip add" onclick="addCon('用无序列表呈现，按移动端阅读习惯分行，不要使用宽表格')">+ 移动端列表</button>
+                <button class="chip add" onclick="addCon('只输出结论和关键数据，不要过程说明，不要追加反问或建议')">+ 只要结论</button>
+                <button class="chip add" onclick="addCon('不要输出图表代码块（chart / ECharts）')">+ 不要图表</button>
+                <button class="chip add" onclick="addCon('金额一律以万元为单位，保留两位小数')">+ 金额统一万元</button>
+                <button class="chip add" onclick="addCon('仅统计华东区，排除测试与内部账号')">+ 只看华东区</button>
+              </div>
+              <p style="font-size:10px;color:var(--g400);margin-top:4px">上面的按钮只是往输入框里追加一句话，正文永远可以自己改。</p>
+            </div>
+          </div>
+
+          <div class="sec">
+            <div class="sec-h"><span class="n">2</span><span class="tt">什么时候跑</span><span class="dd">按人话选，cron 自动生成</span></div>
+            <div class="row">
+              <div class="field" style="margin-bottom:0">
+                <div class="lbl"><span class="t">频率</span></div>
+                <select id="a-freq" onchange="renderA()">
+                  <option value="daily">每天</option>
+                  <option value="weekly" selected>每周</option>
+                  <option value="monthly">每月</option>
+                  <option value="cron">自定义 cron</option>
+                </select>
+              </div>
+              <div class="field" style="margin-bottom:0">
+                <div class="lbl"><span class="t">执行时间</span></div>
+                <input type="time" id="a-time" value="08:00" onchange="renderA()" />
+              </div>
+            </div>
+            <div class="field" style="margin-top:9px;margin-bottom:0">
+              <div class="lbl">
+                <span class="t">星期</span>
+                <span class="s" style="margin-left:auto">高级：cron 表达式</span>
+                <code style="font-family:var(--mono);font-size:10.5px;background:var(--g100);padding:1px 5px;border-radius:4px" id="a-cron">0 8 * * 1</code>
+              </div>
+              <div class="chips">
+                <button class="chip" onclick="pickDow(this)">周一</button>
+                <button class="chip" onclick="pickDow(this)">周二</button>
+                <button class="chip" onclick="pickDow(this)">周三</button>
+                <button class="chip on" onclick="pickDow(this)">周四</button>
+                <button class="chip" onclick="pickDow(this)">周五</button>
+                <button class="chip" onclick="pickDow(this)">周六</button>
+                <button class="chip" onclick="pickDow(this)">周日</button>
+              </div>
+            </div>
+            <button class="adv-toggle" onclick="document.getElementById('a-adv').classList.toggle('on')">▸ 执行失败怎么办（重试策略）</button>
+            <div class="adv" id="a-adv">
+              <div class="row">
+                <div>
+                  <div class="lbl"><span class="t" style="font-size:11px">最大重试次数</span></div>
+                  <select><option>0 次（不重试）</option><option>1 次</option><option>2 次</option><option>3 次</option></select>
+                </div>
+                <div>
+                  <div class="lbl"><span class="t" style="font-size:11px">重试间隔（分钟）</span></div>
+                  <input type="text" value="5" />
+                </div>
+              </div>
+              <p style="font-size:10px;color:var(--g500);margin-top:7px">仅定时触发失败时自动重试；「试跑」与立即执行不重试。</p>
+            </div>
+          </div>
+
+          <div class="sec" style="margin-bottom:0">
+            <div class="sec-h"><span class="n gray">3</span><span class="tt">结果发到哪</span><span class="dd">站内消息始终可用</span></div>
+            <div class="chips" id="a-ch" style="margin-bottom:7px">
+              <button class="chip on" onclick="toggleCh(this)">站内消息</button>
+              <button class="chip on" onclick="toggleCh(this)">钉钉 · 运维值班群</button>
+              <button class="chip" onclick="toggleCh(this)">企业微信</button>
+              <button class="chip" onclick="toggleCh(this)">飞书</button>
+              <button class="chip" onclick="toggleCh(this)">邮件</button>
+            </div>
+            <p style="font-size:10.5px;color:var(--g500)">失败时也会推送；同一渠道只发一次。渠道需先在个人中心配置。</p>
+          </div>
+
+        </div>
+
+        <!-- 右栏摘要 -->
+        <div class="A-side">
+          <div class="sum">
+            <div class="sum-h">📋 这个任务会这样跑 <span style="margin-left:auto;font-weight:600;color:var(--g400)">实时更新</span></div>
+            <div class="sum-b">
+              <p class="sum-sentence" id="a-summary"></p>
+              <div class="sum-meta">
+                <div class="sum-row"><span class="k">下次运行</span><span class="v"><span class="next" id="a-next">2026-11-23 08:00</span></span></div>
+                <div class="sum-row"><span class="k">任务名</span><span class="v" id="a-sum-name">华东一号机房 PUE 日报</span></div>
+                <div class="sum-row"><span class="k">交付要求</span><span class="v" id="a-sum-cons">2 条</span></div>
+                <div class="sum-row"><span class="k">结果发到</span><span class="v" id="a-sum-ch">站内消息 + 钉钉</span></div>
+              </div>
+              <div class="risk">⚠ 已选「自动批准」：任务会<b>直接执行查询类工具</b>，不会停下来等确认。危险操作仍会被拦截。</div>
+              <div class="sum-actions">
+                <button class="btn sm">试跑一次</button>
+                <button class="btn sm">查看历史</button>
+              </div>
+            </div>
+          </div>
+          <p style="font-size:10.5px;color:var(--g500);margin-top:10px;line-height:1.6">
+            「试跑一次」= 用当前配置立即执行，结果只发给<b>你自己</b>，不写入正式投递记录 —— 用来验证提示词写没写对。
+          </p>
+        </div>
+      </div>
+      <div class="dialog-f">
+        <span class="left">最后保存于 3 天前 · 已连续成功 12 次</span>
+        <span class="right">
+          <button class="btn ghost">取消</button>
+          <button class="btn">保存并保持停用</button>
+          <button class="btn primary">保存并启用</button>
+        </span>
+      </div>
+    </div>
+
+    <div class="note">
+      <h3>方案 A 的四个关键动作</h3>
+      <ul>
+        <li><b>把「意图」排在第一位</b>：名称 → 谁执行 → 要做什么 → 输出要求，四段连成「做什么」，不再是 8 段里的一段。</li>
+        <li><b>时间从 cron 变成人话选择器</b>：频率 / 时间 / 星期三个控件，cron 只作为「高级」旁注展示；要改表达式仍可点开。</li>
+        <li><b>右侧粘性摘要</b>：一句话拼出「什么时候 / 谁 / 做什么 / 什么格式 / 发到哪」，并给出<b>具体下次运行时间</b>与批准模式的风险提示。</li>
+        <li><b>重试策略折叠</b>：低频技术项收进「执行失败怎么办」，默认收起，需要时才展开。</li>
+      </ul>
+      <p style="margin-top:9px;font-size:11px;color:var(--g500)">代价：弹窗从单列变两栏，窄屏（&lt;1100px）要退回单列并把摘要移到顶部一条通栏，或收成「查看任务摘要」抽屉。</p>
+    </div>
+  </section>
+
+  <!-- ═══════════ 方案 B ═══════════ -->
+  <section class="view" id="vB">
+    <div class="dialog">
+      <div class="dialog-h">
+        <h2>新建定时任务</h2>
+        <span class="hint">方案 B · 三步向导，每步只问一个问题</span>
+      </div>
+      <div class="steps">
+        <div class="step on" id="bs1"><span class="dot">1</span><span>做什么</span></div>
+        <div class="step-line"></div>
+        <div class="step" id="bs2"><span class="dot">2</span><span>什么时候跑</span></div>
+        <div class="step-line"></div>
+        <div class="step" id="bs3"><span class="dot">3</span><span>结果发到哪</span></div>
+        <div class="step-line"></div>
+        <div class="step" id="bs4"><span class="dot">4</span><span>确认</span></div>
+      </div>
+
+      <div class="B-body">
+        <div class="pane on" id="bp1">
+          <p class="big-q">这个任务要做什么？</p>
+          <p class="big-q-sub">先写清楚目标，其他的（时间、通知）后面两步再说。</p>
+          <div class="field">
+            <div class="lbl"><span class="t">任务名称</span><span class="s">列表里显示的名字</span></div>
+            <input type="text" value="华东一号机房 PUE 日报" />
+          </div>
+          <div class="field">
+            <div class="lbl"><span class="t">谁来执行</span></div>
+            <div class="agent-pick">
+              <span class="av">🌟</span>
+              <span style="min-width:0"><span class="nm">运维值班助手</span><span class="mt">ops-duty-agent · 12 个工具</span></span>
+              <span class="chev">▾</span>
+            </div>
+          </div>
+          <div class="field">
+            <div class="lbl"><span class="t">要做什么</span><span class="s">必填</span></div>
+            <div class="guide"><span>①</span><span>写清<b>查什么、什么范围、要什么结果</b>。格式类要求下一步再写。</span></div>
+            <textarea rows="3">查华东一号机房上周的 PUE 均值与峰值，列出告警次数 Top3。</textarea>
+          </div>
+          <div class="field" style="margin-bottom:0">
+            <div class="lbl"><span class="t">输出有什么要求</span><span class="s">选填，可跳过</span></div>
+            <textarea rows="2" placeholder="例如：用无序列表，不要图表；金额统一按万元、保留两位小数。">用无序列表，不要图表。</textarea>
+            <div class="chips" style="margin-top:6px">
+              <button class="chip add">+ 只要结论</button>
+              <button class="chip add">+ 金额统一万元</button>
+              <button class="chip add">+ 只看华东区</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="pane" id="bp2">
+          <p class="big-q">多久跑一次？</p>
+          <p class="big-q-sub">选完立刻看到未来三次的运行时间，确认没选错再往下。</p>
+          <div class="row three">
+            <div class="field">
+              <div class="lbl"><span class="t">频率</span></div>
+              <select><option selected>每周</option><option>每天</option><option>每月</option><option>自定义</option></select>
+            </div>
+            <div class="field">
+              <div class="lbl"><span class="t">星期</span></div>
+              <select><option>周一</option><option selected>周四</option><option>周五</option></select>
+            </div>
+            <div class="field">
+              <div class="lbl"><span class="t">时间</span></div>
+              <input type="time" value="08:00" />
+            </div>
+          </div>
+          <div style="border:1px solid var(--emerald-100);background:var(--emerald-50);border-radius:10px;padding:10px 12px">
+            <p style="font-size:11px;font-weight:700;color:var(--emerald-700);margin-bottom:6px">接下来三次运行</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <span class="next">11-19 周四 08:00</span>
+              <span class="next">11-26 周四 08:00</span>
+              <span class="next">12-03 周四 08:00</span>
+            </div>
+          </div>
+          <p style="font-size:10.5px;color:var(--g500);margin-top:9px">
+            cron 表达式 <code style="font-family:var(--mono);background:var(--g100);padding:1px 4px;border-radius:4px">0 8 * * 4</code> · 如需更复杂规则（每月最后一天 / 工作日）点「自定义」
+          </p>
+        </div>
+
+        <div class="pane" id="bp3">
+          <p class="big-q">结果发到哪里？</p>
+          <p class="big-q-sub">站内消息始终可用；外部渠道需要先在个人中心配置。</p>
+          <div class="chips" style="margin-bottom:10px">
+            <button class="chip on">站内消息</button>
+            <button class="chip on">钉钉 · 运维值班群</button>
+            <button class="chip">企业微信</button>
+            <button class="chip">飞书</button>
+            <button class="chip">邮件</button>
+          </div>
+          <div class="field">
+            <div class="lbl"><span class="t">失败策略</span><span class="s">可选</span></div>
+            <select><option>不重试（默认）</option><option>失败重试 1 次</option><option>失败重试 3 次</option></select>
+          </div>
+          <div class="guide gray"><span>💡</span><span>选了外部渠道后，任务执行失败也会推送一条失败通知，不会静默。</span></div>
+        </div>
+
+        <div class="pane" id="bp4">
+          <p class="big-q">确认一下就建好了</p>
+          <p class="big-q-sub">这几行就是任务的完整定义，有一次读错的机会。</p>
+          <div style="border:1px solid var(--g200);border-radius:12px;overflow:hidden">
+            <div style="padding:12px 14px;background:var(--g50);border-bottom:1px solid var(--g100)">
+              <p style="font-size:13px;line-height:1.8;color:var(--g700)">
+                <b style="color:var(--blue-700)">每周四 08:00</b>，让 <b style="color:var(--amber-700)">运维值班助手</b>
+                查华东一号机房上周的 PUE 均值与峰值、列出告警次数 Top3，
+                <b>用无序列表、不要图表</b>，结果发到<b>站内消息 + 钉钉「运维值班群」</b>。
+              </p>
+            </div>
+            <table>
+              <tr><td style="width:110px;color:var(--g400)">下次运行</td><td><span class="next">11-19 周四 08:00</span></td></tr>
+              <tr><td style="color:var(--g400)">任务名</td><td>华东一号机房 PUE 日报</td></tr>
+              <tr><td style="color:var(--g400)">批准模式</td><td>自动批准 <span style="color:var(--amber-700);font-size:10.5px">（无人值守，危险操作仍拦截）</span></td></tr>
+              <tr><td style="color:var(--g400)">失败重试</td><td>不重试</td></tr>
+            </table>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn">试跑一次（结果只发给我）</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="dialog-f">
+        <span class="left" id="b-left">第 1 / 4 步</span>
+        <span class="right">
+          <button class="btn ghost" onclick="bPrev()" id="b-prev" style="visibility:hidden">上一步</button>
+          <button class="btn primary" onclick="bNext()" id="b-next">下一步</button>
+        </span>
+      </div>
+    </div>
+
+    <div class="note">
+      <h3>方案 B 的取舍</h3>
+      <ul>
+        <li><b>一屏一个问题</b>：首次创建的用户不会被 8 段表单吓退，每步都有「为什么问这个」的一句话。</li>
+        <li><b>时间步给出三次真实运行时间</b>：比 cron 回译更能防止「周四 / 周五」选错。</li>
+        <li><b>第 4 步是纯确认页</b>：一句话复述 + 关键项表格 + 试跑，替代现在的「8 段表单再读一遍」。</li>
+        <li><b>代价</b>：编辑已有任务时不能直接改，需要点「跳到第 2 步」之类的快捷入口；熟练用户会觉得多点了几次。</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ═══════════ 方案 C ═══════════ -->
+  <section class="view" id="vC">
+    <div class="dialog">
+      <div class="dialog-h">
+        <h2>新建定时任务</h2>
+        <span class="hint">方案 C · 先选模板，再改具体对象</span>
+      </div>
+      <div style="padding:14px 18px 0">
+        <p style="font-size:11.5px;color:var(--g500)">大多数定时任务都属于下面几类。选一个，时间、提示词、输出要求、通知都会预填，你只需要改对象和时间。</p>
+      </div>
+      <div class="tpl-grid">
+        <button class="tpl">
+          <div class="ico">📊</div>
+          <h4>每日 / 每周指标报表</h4>
+          <p>查指定指标，出核心结论 + 关键数据，按周期推送。</p>
+          <span class="pre">每天 08:00 · 站内消息</span>
+        </button>
+        <button class="tpl">
+          <div class="ico">🚨</div>
+          <h4>阈值巡检 / 告警</h4>
+          <p>异常显著标注，正常一句话简报，避免天天收长报告。</p>
+          <span class="pre">每小时 · 钉钉</span>
+        </button>
+        <button class="tpl">
+          <div class="ico">📝</div>
+          <h4>周期汇总简报</h4>
+          <p>按「总体结论 → 分项明细 → 风险建议」结构输出周报。</p>
+          <span class="pre">每周一 09:00 · 邮件</span>
+        </button>
+        <button class="tpl">
+          <div class="ico">🔍</div>
+          <h4>失败盘点 / 质量复查</h4>
+          <p>汇总本周失败记录，按原因分组并给改进建议。</p>
+          <span class="pre">每周五 18:00 · 站内消息</span>
+        </button>
+        <button class="tpl">
+          <div class="ico">🌤</div>
+          <h4>外部信息巡检</h4>
+          <p>调用工具查天气 / 汇率 / 公告，整理成简报。</p>
+          <span class="pre">每天 07:30 · 站内消息</span>
+        </button>
+        <button class="tpl" style="border-style:dashed">
+          <div class="ico">✏️</div>
+          <h4>从空白开始</h4>
+          <p>不预填任何内容，进方案 A 的两栏编辑界面。</p>
+          <span class="pre" style="background:var(--g100);color:var(--g500);border-color:var(--g200)">完全自定义</span>
+        </button>
+      </div>
+      <div style="padding:0 18px 16px">
+        <div style="border:1px solid var(--blue-100);background:var(--blue-50);border-radius:11px;padding:11px 13px">
+          <p style="font-size:11.5px;font-weight:700;color:var(--blue-700);margin-bottom:5px">选「每日 / 每周指标报表」后，会预填成这样：</p>
+          <p style="font-size:11px;color:#1e40af;line-height:1.7">
+            要做什么：查 <b>____（对象）</b> 在 <b>____（时间范围）</b> 的 <b>____（指标）</b>，给出核心结论与关键数据。<br>
+            输出要求：<b>用无序列表，不要图表；金额统一按万元</b>（可删改）<br>
+            时间：每天 08:00　·　通知：站内消息
+          </p>
+        </div>
+      </div>
+      <div class="dialog-f">
+        <span class="left">模板只是预填，保存前每一栏都可以改</span>
+        <span class="right"><button class="btn ghost">取消</button><button class="btn primary">用这个模板开始</button></span>
+      </div>
+    </div>
+
+    <div class="note">
+      <h3>方案 C 适合解决什么</h3>
+      <ul>
+        <li><b>「不知道该填什么」的根问题</b>：用户不会写提示词，但会认「我要一份日报」。模板把提示词、约束、cron、通知一次性给到位。</li>
+        <li><b>和方案 A 不冲突</b>：模板选完落到 A 的两栏编辑界面，「从空白开始」也进 A。C 更像 A 的<b>入口页</b>，而不是第三套表单。</li>
+        <li><b>代价</b>：模板内容要有人维护（提示词质量直接决定任务质量）；模板分类过细会变成新的选择负担，建议只保留 4–6 个。</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ═══════════ 对比 ═══════════ -->
+  <section class="view" id="vD">
+    <div class="dialog">
+      <div class="dialog-h"><h2>三方案对比</h2><span class="hint">按「改造成本 / 解决什么 / 是否伤熟练用户」排</span></div>
+      <div style="padding:6px 4px 10px">
+        <table>
+          <thead>
+            <tr><th style="width:150px">维度</th><th>方案 A · 两栏 + 摘要</th><th>方案 B · 三步向导</th><th>方案 C · 模板起步</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><b>解决的核心问题</b></td><td>没有复核面、时间门槛高、低频项占前排</td><td>首次创建时的信息过载</td><td>不知道提示词该写什么</td></tr>
+            <tr><td><b>前端改造量</b></td><td class="mid">中：表单重排 + 摘要组件 + 人话调度器</td><td class="bad">大：分步状态机 + 4 个面板 + 回填</td><td class="ok">小：一个入口页 + 模板常量</td></tr>
+            <tr><td><b>熟练用户的感受</b></td><td class="ok">更好：信息密度更高、少滚动</td><td class="bad">变慢：每次都要点下一步</td><td class="ok">更快：直接套模板</td></tr>
+            <tr><td><b>编辑已有任务</b></td><td class="ok">天然支持，直接改</td><td class="mid">需要「跳到某一步」的快捷入口</td><td class="mid">不适用（只在新建时出现）</td></tr>
+            <tr><td><b>窄屏 / 移动端</b></td><td class="mid">摘要需改成顶部通栏或抽屉</td><td class="ok">天然适合：一屏一个问题</td><td class="ok">模板卡两列即可</td></tr>
+            <tr><td><b>风险</b></td><td>摘要句子由前端拼，措辞要和后端真实行为一致</td><td>步骤间来回跳转易丢焦点，需保留草稿</td><td>模板维护成本、模板与平台规范可能打架</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:0 16px 16px">
+        <div class="note" style="margin-top:0">
+          <h3>我的建议：A 为主体，C 作入口，B 的「三次运行时间」并进 A</h3>
+          <ul>
+            <li><b>主结构用 A</b>：两栏 + 实时摘要，是唯一同时改善「新建」和「编辑」的方案，也不需要把现有字段重做成状态机。</li>
+            <li><b>入口加 C 的模板卡</b>：新建时先给 4–6 个模板，选完落到 A；这对「不知道该填什么」的收益最大，成本最小。</li>
+            <li><b>把 B 的两次借鉴搬过来</b>：① 时间选择器下方直接给<b>接下来三次运行时间</b>；② 保存前给一张<b>一句话复述 + 关键项表格</b>（A 的右侧摘要已经承担了这个职责）。</li>
+            <li><b>B 整页向导暂不做</b>：编辑场景要额外做跳转与草稿保存，而收益主要集中在首次创建，性价比不如 A + C 组合。</li>
+          </ul>
+          <p style="margin-top:9px;font-size:11px;color:var(--g500)">
+            落地顺序建议：① 先做 A 的「人话时间选择器 + 下次/后三次运行时间」（改动最小、见效最快，且不依赖布局调整）；
+            ② 再做 A 的右侧摘要；③ 最后加 C 的模板入口。①单独做也是完整可交付的一步。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  // ── tabs ──
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((x) => x.classList.remove('on'));
+    document.querySelectorAll('.view').forEach((x) => x.classList.remove('on'));
+    t.classList.add('on');
+    document.getElementById(t.dataset.v).classList.add('on');
+  }));
+
+  // ── 方案 A：摘要实时联动 ──
+  const DOW_CN = { '0':'周日','1':'周一','2':'周二','3':'周三','4':'周四','5':'周五','6':'周六' };
+  const NEXT = {
+    '1': '2026-11-23 08:00', '2': '2026-11-24 08:00', '3': '2026-11-18 08:00',
+    '4': '2026-11-19 08:00', '5': '2026-11-20 08:00', '6': '2026-11-21 08:00', '0': '2026-11-22 08:00',
+  };
+  let dow = '4';
+
+  function pickDow(el) {
+    document.querySelectorAll('#vA .sec:nth-of-type(2) .chip').forEach((c) => {
+      if (['周一','周二','周三','周四','周五','周六','周日'].includes(c.textContent.trim())) c.classList.remove('on');
+    });
+    el.classList.add('on');
+    dow = String(['周日','周一','周二','周三','周四','周五','周六'].indexOf(el.textContent.trim()));
+    renderA();
+  }
+  function addCon(text) {
+    const ta = document.getElementById('a-ta');
+    const cur = ta.value.trim().replace(/[；;。]\s*$/, '');
+    if (cur.includes(text)) return;                       // 已在里面就不重复追加
+    ta.value = cur ? cur + '；' + text + '。' : text + '。';
+    renderA();
+  }
+  function toggleCh(el) {
+    el.classList.toggle('on');
+    renderA();
+  }
+
+  function renderA() {
+    const name = document.getElementById('a-name').value.trim() || '未命名任务';
+    const prompt = document.getElementById('a-prompt').value.trim();
+    const freq = document.getElementById('a-freq').value;
+    const time = document.getElementById('a-time').value || '08:00';
+    const cons = document.getElementById('a-ta').value.split(/[；;。\n]/).map((x) => x.trim()).filter(Boolean);
+    const chs = Array.from(document.querySelectorAll('#a-ch .chip.on')).map((c) => c.textContent.trim());
+
+    let when;
+    if (freq === 'daily') when = `每天 ${time}`;
+    else if (freq === 'weekly') when = `每${DOW_CN[dow]} ${time}`;
+    else if (freq === 'monthly') when = `每月 1 号 ${time}`;
+    else when = `按自定义 cron（${time}）`;
+
+    document.getElementById('a-cron').textContent = freq === 'weekly' ? `0 ${parseInt(time,10)} * * ${dow}` : (freq === 'daily' ? `0 ${parseInt(time,10)} * * *` : '0 8 1 * *');
+
+    const first = prompt.split(/[。；;\n]/).map((s) => s.trim()).filter(Boolean)[0] || '（还没写要做什么）';
+    document.getElementById('a-summary').innerHTML =
+      `<b>${when}</b>，让 <span class="agent">运维值班助手</span> ${first}` +
+      (cons.length ? `，<b>${cons.join('、')}</b>` : '') +
+      (chs.length ? `，结果发到<b>${chs.join(' + ')}</b>。` : '。');
+
+    document.getElementById('a-next').textContent = freq === 'weekly' ? (NEXT[dow] || '—') : `下次 ${time}`;
+    document.getElementById('a-sum-name').textContent = name;
+    document.getElementById('a-sum-cons').textContent = cons.length ? `${cons.length} 条` : '未填写';
+    document.getElementById('a-sum-ch').textContent = chs.length ? chs.join(' + ') : '未选择';
+  }
+  renderA();
+
+  // ── 方案 B：步骤切换 ──
+  let step = 1;
+  function bRender() {
+    for (let i = 1; i <= 4; i++) {
+      document.getElementById('bp' + i).classList.toggle('on', i === step);
+      const s = document.getElementById('bs' + i);
+      s.classList.toggle('on', i === step);
+      s.classList.toggle('done', i < step);
+    }
+    document.getElementById('b-left').textContent = `第 ${step} / 4 步`;
+    document.getElementById('b-prev').style.visibility = step === 1 ? 'hidden' : 'visible';
+    document.getElementById('b-next').textContent = step === 4 ? '保存并启用' : '下一步';
+  }
+  function bNext() { if (step < 4) { step++; bRender(); } else { alert('原型演示：这里会保存任务。'); } }
+  function bPrev() { if (step > 1) { step--; bRender(); } }
+  bRender();
+</script>
+</body>
+</html>

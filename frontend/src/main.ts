@@ -5,6 +5,7 @@ import App from '@/App.vue'
 import router from '@/router'
 import { tooltip } from '@/directives/tooltip'
 import { clearUserScopedStorage } from './utils/sessionCleanup'
+import { recoverFromChunkError } from './utils/chunkLoadRecovery'
 
 import axios from 'axios'
 
@@ -91,6 +92,13 @@ app.directive('has-perm', {
     } catch (e) {
       applyDisabled();
     }
+  }
+})
+
+// Vite 预加载静态资源失败（典型于重新部署后旧 chunk 已被替换）：若成功触发重载恢复，则阻止默认抛错
+window.addEventListener('vite:preloadError', (event) => {
+  if (recoverFromChunkError()) {
+    event.preventDefault()
   }
 })
 

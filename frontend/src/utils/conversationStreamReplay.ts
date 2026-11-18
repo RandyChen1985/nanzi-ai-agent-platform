@@ -135,3 +135,41 @@ export function shouldRebindReplayOnConversationSwitch(
   if (!target) return false;
   return !isDraftBoundToConversation({ conversationId: String(draftConversationId || "") }, target);
 }
+
+/**
+ * 合并重放流里连续相邻的纯文本增量帧（`reasoning_content` / `answer_delta` / 同代理 `process_narration`）。
+ *
+ * 切回页面首次拉取或批量事件积压时，事件日志里往往连续堆着几百条几个字的 delta；
+ * 仅合并严格相邻且类型/来源一致的文本帧，不跨越任何非同类事件，事件顺序与终态完全等价，
+ * 同时把数百次拼接与响应式触发压成几次。
+ */
+export function coalesceReplayTextEvents(events: readonly StreamReplayEvent[]): StreamReplayEvent[] {
+  if (!events || events.length <= 1) return [...(events || [])];
+  const result: StreamReplayEvent[] = [];
+  for (const raw of events) {
+    if (!raw || typeof raw !== "object") continue;
+    const type = String(raw.type || "");
+    const last = result[result.length - 1];
+    const lastType = last ? String(last.type || "") : "";
+    const canMerge =
+      last &&
+      type === lastType &&
+      (type === "reasoning_content" ||
+        type === "answer_delta" ||
+        (type === "process_narration" &&
+          String(raw.agent_name || "") === String((last as Record<string, unknown>).agent_name || "")));
+    if (canMerge) {
+      const piece = String(raw.content || "");
+      if (piece) {
+        result[result.length - 1] = {
+          ...last,
+          content: `${String(last.content || "")}${piece}`,
+          ...(raw._seq !== undefined ? { _seq: raw._seq } : {}),
+        };
+      }
+      continue;
+    }
+    result.push(raw);
+  }
+  return result;
+}

@@ -508,3 +508,80 @@ def test_archive_extraction_runs_off_the_event_loop(mock_skills_dir, monkeypatch
 
     assert thread_names, "解压没有被调用"
     assert thread_names[0] != threading.main_thread().name
+
+
+def test_extract_budget_counts_files_already_in_skill_dir(mock_skills_dir, monkeypatch):
+    """累计口径：技能目录已有的文件必须计入解压预算。
+
+    原来只数「本次归档里的文件」，同一个技能反复解包可以无限堆文件，
+    20000（现 200000）这个上限就只是单次限制。
+    """
+    monkeypatch.setattr(skills, "MAX_EXTRACTED_FILES", 3)
+    user = {"user_name": "admin", "role": "admin"}
+    skill_dir = mock_skills_dir / "test-accumulate-count"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Test", encoding="utf-8")
+    (skill_dir / "old1.txt").write_text("a", encoding="utf-8")
+    (skill_dir / "old2.txt").write_text("b", encoding="utf-8")
+
+    zip_bytes = create_in_memory_zip({"new.txt": "x"})
+    upload = UploadFile(filename="one.zip", file=BytesIO(zip_bytes))
+
+    with pytest.raises(HTTPException) as exc_info:
+        run(
+            skills.upload_skill_archive(
+                "test-accumulate-count", folder=None, file=upload, user=user
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "文件数" in exc_info.value.detail
+    # 中止在写盘前：既有文件完好，新文件没落盘
+    assert (skill_dir / "old1.txt").read_text(encoding="utf-8") == "a"
+    assert not (skill_dir / "new.txt").exists()
+
+
+def test_single_file_upload_respects_skill_dir_file_count_limit(mock_skills_dir, monkeypatch):
+    """单文件上传也要受同一份文件数预算约束。
+
+    这是此前的缺口：技能目录的文件数预算只在「解压」与模型侧 ``write_skill_file``
+    上校验，手工单文件上传端点完全没查，循环上传可以突破上限。
+    """
+    monkeypatch.setattr(skills, "MAX_FILES_PER_DIRECTORY", 2)
+    user = {"user_name": "admin", "role": "admin"}
+    skill_dir = mock_skills_dir / "test-single-upload-cap"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Test", encoding="utf-8")
+    (skill_dir / "a.txt").write_text("a", encoding="utf-8")
+
+    upload = UploadFile(filename="b.txt", file=BytesIO(b"b"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        run(skills.upload_skill_file("test-single-upload-cap", folder=None, file=upload, user=user))
+
+    assert exc_info.value.status_code == 400
+    assert "文件数" in exc_info.value.detail
+    assert not (skill_dir / "b.txt").exists()
+
+
+def test_create_skill_asset_respects_file_count_limit(mock_skills_dir, monkeypatch):
+    """「新建空文件」同样是技能目录的写入口，必须与上传/解压共用同一份预算。"""
+    monkeypatch.setattr(skills, "MAX_FILES_PER_DIRECTORY", 2)
+    user = {"user_name": "admin", "role": "admin"}
+    skill_dir = mock_skills_dir / "test-create-cap"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Test", encoding="utf-8")
+    (skill_dir / "a.txt").write_text("a", encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc_info:
+        run(
+            skills.create_skill_asset(
+                "test-create-cap",
+                req=skills.SkillAssetCreateRequest(path="b.txt", type="file"),
+                user=user,
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "文件数" in exc_info.value.detail
+    assert not (skill_dir / "b.txt").exists()

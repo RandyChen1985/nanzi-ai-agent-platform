@@ -772,6 +772,9 @@ function isToolLog(data: { title?: string; category?: string; id?: string | numb
   ) {
     return false;
   }
+  // 思考日志不是工具执行：新数据靠 category="reasoning" 在更上面就返回了，
+  // 这里挡住没有 category 的老快照——否则会被前缀判成工具行。
+  if (isSubagentReasoningLog(data)) return false;
   const idStr = String(data.id || "").toLowerCase();
   if (idStr.startsWith("subagent_")) return true;
   return title.includes("工具") || title.includes("tool") || title.includes("子代理");
@@ -1222,6 +1225,46 @@ export function applyTimelineLogProgress(
   return true;
 }
 
+/**
+ * 子代理思考日志的判定（`subagent_reasoning:{run_id}:{seq}`，后端见
+ * `agent_delegate_tool.flush_subagent_reasoning`）。
+ *
+ * **必须比「认委派容器」先判**。它的 id 前缀和委派容器的 `subagent_*` 撞在一起，
+ * 三处按前缀认容器的地方（`upsertTimelineLog` 的生命周期合并、`reorganizeSubagentItems`
+ * 的 `isContainer`、Vue 层的 `isSubagentLog`）都会把它当成容器，后果是它被合并进
+ * 已有委派卡并把卡片改写：`status` 被思考的 success 覆盖（委派还在跑，卡上已经变绿）、
+ * `details` 被最多 4000 字的思考全文覆盖、标题被改成「委派智能体 · [某某] 子代理思考」。
+ *
+ * 它本来该是个**子步骤**：带 `subagent` 元数据、标题以 `[` 开头，归进
+ * `activeContainer.children`，前端默认折叠。
+ */
+export function isSubagentReasoningLog(log: {
+  id?: unknown;
+  reasoning?: boolean;
+  category?: string;
+} | null | undefined): boolean {
+  if (!log) return false;
+  if (log.reasoning === true) return true;
+  if (log.category === "reasoning") return true;
+  return String(log.id ?? "").startsWith("subagent_reasoning:");
+}
+
+/**
+ * 「这一条像不像委派容器」，给 `sub_agent_call` 工具事件找已有容器用。
+ *
+ * 与 `reorganizeSubagentItems` 的 `isContainer` 同口径但更窄：只认 id 前缀和两种
+ * 标题，不认 `tool_name`（这个函数本身就在判断"要不要找一个容器来合并"，
+ * 把自己也当成候选会形成自指）。
+ */
+function isDelegationContainerLike(log: ProcessTimelineLogItem): boolean {
+  if (isSubagentReasoningLog(log)) return false;
+  return (
+    String(log.id).startsWith("subagent_") ||
+    log.title.includes("调用子代理") ||
+    log.title.includes("委派智能体")
+  );
+}
+
 export function upsertTimelineLog(
   target: ProcessTimelineTarget,
   data: {
@@ -1305,9 +1348,12 @@ export function upsertTimelineLog(
   }
 
   // Deduplicate / merge sub_agent_call tool and subagent lifecycle container into a single container
+  // 思考日志排除在外：它也带 subagent 元数据，但它是挂在容器里的子步骤，
+  // 不是容器本身（见 isSubagentReasoningLog 的注释）。
   const isIncomingSubagentLifecycle =
-    String(data.id).startsWith("subagent_") ||
-    (Boolean(data.subagent) && (data.category === "agent" || Boolean(data.title && data.title.includes("调用子代理"))));
+    !isSubagentReasoningLog(data) &&
+    (String(data.id).startsWith("subagent_") ||
+      (Boolean(data.subagent) && (data.category === "agent" || Boolean(data.title && data.title.includes("调用子代理")))));
 
   const isIncomingSubagentTool =
     data.tool_name === "sub_agent_call" ||
@@ -1368,11 +1414,9 @@ export function upsertTimelineLog(
 
   if (isIncomingSubagentTool) {
     const existingContainer = [...target.processTimeline].reverse().find((item) => {
-      if (item.kind === "log" && (String(item.id).startsWith("subagent_") || item.title.includes("调用子代理") || item.title.includes("委派智能体"))) return true;
+      if (item.kind === "log" && isDelegationContainerLike(item)) return true;
       if (item.kind === "text") {
-        return (item.children || []).some((c) =>
-          String(c.id).startsWith("subagent_") || c.title.includes("调用子代理") || c.title.includes("委派智能体")
-        );
+        return (item.children || []).some((c) => isDelegationContainerLike(c as ProcessTimelineLogItem));
       }
       return false;
     });
@@ -1382,7 +1426,7 @@ export function upsertTimelineLog(
         containerLog = existingContainer;
       } else if (existingContainer.kind === "text") {
         containerLog = (existingContainer.children || []).find((c: ProcessTimelineLogItem) =>
-          String(c.id).startsWith("subagent_") || c.title.includes("调用子代理") || c.title.includes("委派智能体")
+          isDelegationContainerLike(c)
         );
       }
       if (containerLog) {
@@ -1435,11 +1479,15 @@ export function upsertTimelineLog(
   }
 
   // If this is an inner step of a subagent (subagent metadata present, but not the subagent container itself)
+  // 思考日志必须算「内部步骤」：它带 subagent 元数据、id 前缀又和容器撞车，
+  // 一旦在这里被判成容器，就进不了下面的 `if (data.subagent && !isSubagentContainer)`，
+  // 于是本该折进委派卡的思考落到顶层，成了和委派卡并列的一行。
   const isSubagentContainer =
-    String(data.id).startsWith("subagent_") ||
-    Boolean(data.title && (data.title.includes("sub_agent_call") || data.title.includes("委派智能体") || data.title.includes("调用子代理"))) ||
-    data.tool_name === "sub_agent_call" ||
-    data.tool_name === "sub_agent_batch_call";
+    !isSubagentReasoningLog(data) &&
+    (String(data.id).startsWith("subagent_") ||
+      Boolean(data.title && (data.title.includes("sub_agent_call") || data.title.includes("委派智能体") || data.title.includes("调用子代理"))) ||
+      data.tool_name === "sub_agent_call" ||
+      data.tool_name === "sub_agent_batch_call");
   if (data.subagent && !isSubagentContainer) {
     const subagentContainer = findSubagentContainerLog(target.processTimeline, data.subagent);
     if (subagentContainer) {
@@ -1465,11 +1513,153 @@ export function upsertTimelineLog(
   target.processTimeline.push(log);
 }
 
+function cloneNestedTimelineValue<T>(
+  value: T,
+  seen: WeakMap<object, unknown>,
+): T {
+  if (!value || typeof value !== "object") return value;
+  const cached = seen.get(value as unknown as object) as T | undefined;
+  if (cached !== undefined) return cached;
+  if (Array.isArray(value)) {
+    const copy: unknown[] = [];
+    seen.set(value as unknown as object, copy);
+    for (const entry of value) {
+      copy.push(cloneNestedTimelineValue(entry, seen));
+    }
+    return copy as unknown as T;
+  }
+  const copy: Record<string, unknown> = {};
+  seen.set(value as unknown as object, copy);
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    copy[k] = cloneNestedTimelineValue(v, seen);
+  }
+  return copy as T;
+}
+
+const LAZY_LOG_FIELDS = new Set(["progress", "total", "progressMessage"]);
+const LAZY_TEXT_FIELDS = new Set(["content"]);
+
+/**
+ * 在克隆副本上为高频增量字段建立「写隔离 + 惰性读」属性转发。
+ *
+ * 这样在 Vue `computed` 内构建不可变副本时，不会提前读取 `text.content` 或
+ * `log.progress`，避免每次 80ms 思考流式增量或工具进度刷新都导致整棵时间线树
+ * 重新深克隆并击穿下游全部 computed；只有实际渲染该节点文本/进度条的模板才会
+ * 精准订阅对应字段，同时向副本写入新值依然严格与原对象隔离。
+ */
+function defineForwardedField<T extends object, K extends keyof T>(
+  target: T,
+  source: T,
+  key: K,
+): void {
+  let hasOverride = false;
+  let overrideValue: T[K] | undefined;
+  Object.defineProperty(target, key, {
+    enumerable: true,
+    configurable: true,
+    get() {
+      return hasOverride ? overrideValue : source[key];
+    },
+    set(value: T[K]) {
+      hasOverride = true;
+      overrideValue = value;
+    },
+  });
+}
+
+function copyOwnFieldsExcluding<T extends object>(
+  source: T,
+  excludedKeys: ReadonlySet<string>,
+): Record<string, unknown> {
+  const copy: Record<string, unknown> = {};
+  for (const key of Object.keys(source)) {
+    if (excludedKeys.has(key)) continue;
+    copy[key] = (source as Record<string, unknown>)[key];
+  }
+  return copy;
+}
+
+const LOG_CLONE_EXCLUDED_FIELDS = new Set([
+  "subagent",
+  "file_metadata",
+  "user_question",
+  "children",
+  ...LAZY_LOG_FIELDS,
+]);
+
+const TEXT_CLONE_EXCLUDED_FIELDS = new Set([
+  "mergedReasoning",
+  "children",
+  ...LAZY_TEXT_FIELDS,
+]);
+
+function cloneTimelineLogItemsForMerge(
+  items: ProcessTimelineLogItem[],
+  clonedMap: WeakMap<object, unknown>,
+): ProcessTimelineLogItem[] {
+  return items.map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const existing = clonedMap.get(item) as ProcessTimelineLogItem | undefined;
+    if (existing) return existing;
+    const clonedLog = copyOwnFieldsExcluding(item, LOG_CLONE_EXCLUDED_FIELDS) as ProcessTimelineLogItem;
+    clonedLog.subagent = item.subagent ? cloneNestedTimelineValue(item.subagent, clonedMap) : undefined;
+    clonedLog.file_metadata = item.file_metadata ? cloneNestedTimelineValue(item.file_metadata, clonedMap) : undefined;
+    clonedLog.user_question = item.user_question ? cloneNestedTimelineValue(item.user_question, clonedMap) : item.user_question;
+    clonedLog.children = undefined;
+    defineForwardedField(clonedLog, item, "progress");
+    defineForwardedField(clonedLog, item, "total");
+    defineForwardedField(clonedLog, item, "progressMessage");
+    clonedMap.set(item, clonedLog);
+    if (Array.isArray(item.children)) {
+      clonedLog.children = cloneTimelineLogItemsForMerge(item.children, clonedMap);
+    }
+    return clonedLog;
+  });
+}
+
+function cloneTimelineItemsForMerge(
+  items: ProcessTimelineItem[],
+  clonedMap: WeakMap<object, unknown> = new WeakMap(),
+): ProcessTimelineItem[] {
+  return items.map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const existing = clonedMap.get(item) as ProcessTimelineItem | undefined;
+    if (existing) return existing;
+    if (item.kind === "text") {
+      const clonedText = copyOwnFieldsExcluding(item, TEXT_CLONE_EXCLUDED_FIELDS) as ProcessTimelineTextItem;
+      clonedText.mergedReasoning = item.mergedReasoning
+        ? cloneNestedTimelineValue(item.mergedReasoning, clonedMap)
+        : undefined;
+      clonedText.children = undefined;
+      defineForwardedField(clonedText, item, "content");
+      clonedMap.set(item, clonedText);
+      if (Array.isArray(item.children)) {
+        clonedText.children = cloneTimelineLogItemsForMerge(item.children, clonedMap);
+      }
+      return clonedText;
+    }
+    if (item.kind === "todo") {
+      const clonedTodo: ProcessTimelineTodoItem = {
+        ...item,
+        todos: Array.isArray(item.todos) ? item.todos.map((t) => ({ ...t })) : [],
+        counts: item.counts ? { ...item.counts } : item.counts,
+      };
+      clonedMap.set(item, clonedTodo);
+      return clonedTodo;
+    }
+    return cloneTimelineLogItemsForMerge([item], clonedMap)[0]!;
+  });
+}
+
 /**
  * Merge the authoritative event timeline with logs produced by legacy paths.
  * Some router/agent events already enter processTimeline while later tool
  * events still only update msg.logs; dropping the latter makes the card look
  * like it ends and then continues outside the card.
+ *
+ * 渲染层（Vue computed）调用必须传 `{ clone: true }`：否则直接改写 `props.timeline`
+ * 上的响应式 Proxy 节点，一旦同一条卡片在合并过程中被两条日志先后改写字段，
+ * 会反复失效 computed 并触发微任务渲染死循环。直接单元测试维持原位语义以兼容已有契约。
  */
 export function mergeTimelineLogs(
   timeline: ProcessTimelineItem[] | undefined,
@@ -1496,8 +1686,11 @@ export function mergeTimelineLogs(
     subagent?: SubagentTraceMeta;
     reasoning?: boolean;
   }> | undefined,
+  options?: { clone?: boolean },
 ): ProcessTimelineItem[] {
-  const items = [...(timeline || [])];
+  const items = options?.clone
+    ? cloneTimelineItemsForMerge(timeline || [])
+    : [...(timeline || [])];
   // 全树 id → 节点索引。原实现对**每条** log 都跑一次 findTimelineLog 深度遍历，
   // 委派时 logs（子代理桥接的每一步）和时间线节点都不少，是稳定的 O(n²)；
   // 这里一次建索引 O(n)，之后每条 log O(1)。
@@ -1703,12 +1896,13 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
   const result: ProcessTimelineItem[] = [];
 
   const isContainer = (log: ProcessTimelineLogItem): boolean =>
-    String(log.id).startsWith("subagent_") ||
-    log.title.includes("调用子代理") ||
-    log.title.includes("委派智能体") ||
-    log.title.includes("sub_agent_call") ||
-    log.tool_name === "sub_agent_call" ||
-    log.tool_name === "sub_agent_batch_call";
+    !isSubagentReasoningLog(log) &&
+    (String(log.id).startsWith("subagent_") ||
+      log.title.includes("调用子代理") ||
+      log.title.includes("委派智能体") ||
+      log.title.includes("sub_agent_call") ||
+      log.tool_name === "sub_agent_call" ||
+      log.tool_name === "sub_agent_batch_call");
 
   const isNoiseHeartbeatStep = (log: ProcessTimelineLogItem): boolean =>
     /(?:\[.*?\]\s*)?[✨\s]*开始生成回复\s*$/.test(log.title);

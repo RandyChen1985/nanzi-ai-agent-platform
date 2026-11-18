@@ -1251,7 +1251,7 @@ def write_skill_file(
         overwrite: 是否允许覆盖已存在的同名文件。默认 false：目标已存在时**不写任何内容**，
                    返回 NANZI_SKILL_FILE_EXISTS，需先向用户确认再带 overwrite=true 重试。
 
-    单个文件上限 10MB，技能目录总量上限 500MB / 20000 个文件（与解压上传共用同一份预算）。
+    单个文件上限 10MB，技能目录总量上限 500MB / 200000 个文件（与解压、上传共用同一份预算）。
     """
     try:
         try:
@@ -1569,7 +1569,7 @@ def import_skill_from_sandbox(
 
     注意：符号链接不会被跟随（`npx skills` 会为各工具建软链，跟随会收重、也可能越界）；
     `.seed`、`.git`、`node_modules`、`__pycache__` 会被跳过。单技能上限与技能上传共用
-    同一份预算（20000 个文件 / 500MB）。
+    同一份预算（200000 个文件 / 500MB）。
     """
     try:
         import shutil

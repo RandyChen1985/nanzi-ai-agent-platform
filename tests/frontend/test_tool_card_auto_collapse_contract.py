@@ -66,12 +66,17 @@ def test_collapsing_keeps_the_details():
 
 
 def test_click_entries_mark_user_toggled():
-    """所有点击入口都必须置位 userToggled，否则自动折叠会误伤。"""
+    """所有点击入口都必须通过 recordUiOverride 置位 userToggled，否则自动折叠会误伤。"""
     timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(
         encoding="utf-8"
     )
-    # 顶层 toggle、子层 toggle、以及「全部展开/收起」批量操作
-    assert timeline.count("userToggled = true") == 3
+    # 全部展开/收起、顶层 toggle、子层 toggle 三个入口均写入 userToggled: true
+    for fn_name in ("function toggleAllDetails", "function toggleTimelineItem", "function toggleChildItem"):
+        start = timeline.index(fn_name)
+        end = timeline.index("\n}", start)
+        body = timeline[start:end]
+        assert "recordUiOverride(" in body, f"{fn_name} 必须走 recordUiOverride"
+        assert "userToggled: true" in body, f"{fn_name} 必须置位 userToggled: true"
     # 模板里的子步骤点击必须走统一函数，不能直接改 isExpanded（那样不会打标记）
     assert "toggleChildItem(subStep)" in timeline
     assert "toggleChildItem(nestedStep)" in timeline

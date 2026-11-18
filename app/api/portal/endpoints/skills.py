@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shutil
 import logging
@@ -16,10 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.upload_limits import (
+    MAX_FILES_PER_DIRECTORY,
     SKILL_DIR_MAX_BYTES,
     SKILL_DIR_MAX_FILES,
     SKILL_PACKAGE_MAX_BYTES,
     SKILL_PACKAGE_MAX_MB,
+    count_files_under,
 )
 from app.core.dependencies import require_api_key, require_permission
 from app.core.orm import get_db_session
@@ -737,6 +740,22 @@ async def create_skill_asset(
         if os.path.exists(target_path):
             raise HTTPException(status_code=409, detail="同名文件或文件夹已存在")
 
+        # 「新建空文件」同样是技能目录的写入口：不判累计的话，循环建 0 字节文件
+        # 就能绕过解压侧的文件数预算（目录不占文件预算，故只有 file 需要判）。
+        if req.type != "folder":
+            skill_root = validate_secure_skill_path(skill_id)
+            existing_files = await asyncio.to_thread(
+                count_files_under, skill_root, stop_above=MAX_FILES_PER_DIRECTORY
+            )
+            if existing_files + 1 > MAX_FILES_PER_DIRECTORY:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"技能 {skill_id} 文件数已达上限（{MAX_FILES_PER_DIRECTORY} 个），"
+                        "请先清理不再需要的文件后再创建"
+                    ),
+                )
+
         if req.type == "folder":
             os.mkdir(target_path)
         else:
@@ -764,7 +783,27 @@ async def upload_skill_file(
         sub_dir = folder if folder else ""
         file_name = file.filename if file.filename else "uploaded_file"
         target_path = validate_secure_skill_path(skill_id, os.path.join(sub_dir, file_name))
-        
+
+        # 单文件上传是技能目录的第二个写入口：这里不判累计，文件数预算就只剩
+        # 「解压」与模型侧 write_skill_file 在起作用，循环手工上传即可突破。
+        skill_root = validate_secure_skill_path(skill_id)
+        existing_files = await asyncio.to_thread(
+            count_files_under, skill_root, stop_above=MAX_FILES_PER_DIRECTORY
+        )
+        if os.path.exists(target_path):
+            # 覆盖同名文件不新增 inode，不该被文件数上限拦住
+            incoming_files = 0
+        else:
+            incoming_files = 1
+        if existing_files + incoming_files > MAX_FILES_PER_DIRECTORY:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"技能 {skill_id} 文件数已达上限（{MAX_FILES_PER_DIRECTORY} 个），"
+                    "请先清理不再需要的文件后再上传"
+                ),
+            )
+
         # 强行校验文件大小 (10MB)
         # 通过在内存中读取一部分或整体判定大小
         content = await file.read()
@@ -874,16 +913,28 @@ MAX_EXTRACTED_BYTES = SKILL_DIR_MAX_BYTES
 #: 实测 45KB 的 zip 就能解出 500 个空文件（每条约 90 字节归档开销）——按体积上限
 #: 100MB 放行时，条目数可以到百万级。失控的文件数会耗尽 inode（ENOSPC 会连累所有
 #: 上传/DB/日志写入），并让解压耗时按条目数线性增长。
-#: 20000 对正常技能包（几十到几百个文件）有约两个数量级余量，同时仍能拦住几十万级的洪水。
+#:
+#: 口径是**目录累计**（目标目录已有文件数 + 本次归档文件数），不是「单次归档条目数」：
+#: 只数单次的话，对同一个技能反复解包即可无限累计。数值统一到
+#: ``app.core.upload_limits.MAX_FILES_PER_DIRECTORY``（与工作空间解压、各上传入口同一份）。
 MAX_EXTRACTED_FILES = SKILL_DIR_MAX_FILES
 
 
-def _guard_extract_budget(written_bytes: int, written_files: int) -> None:
-    """解压预算校验：超限即中止（避免高压缩比归档撑爆磁盘、或小文件洪水耗尽 inode）。"""
-    if written_files > MAX_EXTRACTED_FILES:
+def _guard_extract_budget(
+    written_bytes: int, written_files: int, existing_files: int = 0
+) -> None:
+    """解压预算校验：超限即中止（避免高压缩比归档撑爆磁盘、或小文件洪水耗尽 inode）。
+
+    ``existing_files`` 是目标目录**解压前**已有的文件数：文件数按「目录累计」判，
+    否则对同一个技能反复解包就能无限累计，上限只拦单次。
+    """
+    if existing_files + written_files > MAX_EXTRACTED_FILES:
         raise HTTPException(
             status_code=400,
-            detail=f"压缩包内文件数超过上限（{MAX_EXTRACTED_FILES} 个）",
+            detail=(
+                f"压缩包解压后技能目录文件数超过上限（{MAX_EXTRACTED_FILES} 个，"
+                f"已有 {existing_files} 个）"
+            ),
         )
     if written_bytes > MAX_EXTRACTED_BYTES:
         raise HTTPException(
@@ -902,7 +953,10 @@ def safe_extract_archive(content: bytes, filename: str, target_dir: str):
     """
     target_dir_abs = os.path.abspath(target_dir)
     os.makedirs(target_dir_abs, exist_ok=True)
-    
+
+    # 累计口径：目标目录解压前已有的文件也占预算（只数本次归档会被反复解包绕过）。
+    existing_files = count_files_under(target_dir_abs, stop_above=MAX_EXTRACTED_FILES)
+
     file_like = BytesIO(content)
     lower_filename = filename.lower()
     
@@ -932,7 +986,7 @@ def safe_extract_archive(content: bytes, filename: str, target_dir: str):
                         # 先按归档里声明的大小拦一道（少写盘），写盘时再按实际字节复核
                         written_files += 1
                         written_bytes += max(0, int(member.file_size or 0))
-                        _guard_extract_budget(written_bytes, written_files)
+                        _guard_extract_budget(written_bytes, written_files, existing_files)
                         os.makedirs(os.path.dirname(target_path), exist_ok=True)
                         actual = 0
                         with zf.open(member) as source, open(target_path, "wb") as target:
@@ -977,7 +1031,7 @@ def safe_extract_archive(content: bytes, filename: str, target_dir: str):
                     elif member.isreg():  # 仅解压普通文件（symlink/hardlink 一律不落盘）
                         written_files += 1
                         written_bytes += max(0, int(member.size or 0))
-                        _guard_extract_budget(written_bytes, written_files)
+                        _guard_extract_budget(written_bytes, written_files, existing_files)
                         os.makedirs(os.path.dirname(target_path), exist_ok=True)
                         fileobj = tf.extractfile(member)
                         if fileobj:

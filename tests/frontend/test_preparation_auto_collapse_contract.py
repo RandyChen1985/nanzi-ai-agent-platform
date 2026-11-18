@@ -128,11 +128,12 @@ def test_template_render_paths_use_the_derived_check():
 
 
 def test_manual_toggle_still_marks_user_intent():
-    """手动点击要留下意图标记，否则下一次渲染会被自动收起覆盖。"""
+    """手动点击要留下意图标记（通过 uiNodeOverrides 置位），否则下一次渲染会被自动收起覆盖。"""
     source = _component()
     body = source[source.index("function toggleTimelineItem"):]
     body = body[: body.index("function isChildDetailsOpen")]
-    assert "item.userToggled = true" in body
+    assert "recordUiOverride(item," in body
+    assert "userToggled: true" in body
 
 
 def test_rule_has_no_pending_branch():

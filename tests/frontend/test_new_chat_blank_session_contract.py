@@ -34,14 +34,16 @@ def _read(path: Path) -> str:
 
 def test_dashboard_replaces_query_before_remounting_chat() -> None:
     source = _read(DASHBOARD)
-    assert 'router.replace({ path: "/dashboard/chat", query: nextQuery }).then(() => {' in source
+    fn = source[source.index("const handleUserModeNewChat"):]
+    fn = fn[: fn.index("\n};", fn.index("router.replace"))]
+    assert 'router.replace({ path: "/dashboard/chat", query: nextQuery }).then(() => {' in fn
     # 重挂载必须在地址栏更新之后，不能出现在 replace 之前
-    replace_at = source.index('router.replace({ path: "/dashboard/chat", query: nextQuery }).then')
-    token_at = source.index("pageReloadToken.value += 1")
+    replace_at = fn.index('router.replace({ path: "/dashboard/chat", query: nextQuery }).then')
+    token_at = fn.index("pageReloadToken.value += 1")
     assert replace_at < token_at
     # 新建时必须清掉上一条会话的定位参数
-    assert "delete nextQuery.conversation_id" in source
-    assert "delete nextQuery.agent_id" in source
+    assert "delete nextQuery.conversation_id" in fn
+    assert "delete nextQuery.agent_id" in fn
 
 
 def test_chat_iframe_is_keyed_so_new_instructions_reload_the_widget() -> None:

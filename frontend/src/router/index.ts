@@ -3,6 +3,12 @@ import { getSnapshotLandingPath } from '../composables/useNavigation'
 import { getCachedUiMode, getCachedUiModeBlocked, resolveInitialUiMode } from '../composables/useUiMode'
 import { isUserModeReachable } from '../constants/userModeMenu'
 import { clearUserSession } from '../utils/userSession'
+import {
+  clearChunkRecoveryFallback,
+  isDynamicImportChunkError,
+  notifyChunkRecoveryFallback,
+  recoverFromChunkError,
+} from '../utils/chunkLoadRecovery'
 
 // 这四个页面此前是**静态** import，等于把整套管理后台（Dashboard 及其依赖）打进
 // 首屏主包——第三方站点嵌入的 `/embed/*` 挂件也得先下载它。改成路由级懒加载后，
@@ -440,5 +446,17 @@ const resolveFallbackPath = (menus: readonly string[]): string => {
   if (landing) return landing
   return '/dashboard/workbench'
 }
+
+// 发版后旧页面切路由触发动态 chunk 404 时，自动重载跳转目标路由拿到最新资源清单；
+// 冷却期内不再自动刷新时通知界面层展示降级提示卡片，避免点击无响应。
+router.onError((error, to) => {
+  if (isDynamicImportChunkError(error) && !recoverFromChunkError(to?.fullPath)) {
+    notifyChunkRecoveryFallback(to?.fullPath)
+  }
+})
+
+router.afterEach(() => {
+  clearChunkRecoveryFallback()
+})
 
 export default router

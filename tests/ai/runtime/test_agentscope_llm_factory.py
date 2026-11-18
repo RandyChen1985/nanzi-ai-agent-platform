@@ -802,9 +802,203 @@ async def test_non_matching_bad_request_does_not_trigger_thinking_tool_choice_fa
 
 
 @pytest.mark.asyncio
+async def test_deepseek_provider_sends_disabled_thinking_for_unlisted_model_name(
+    monkeypatch,
+):
+    """注册表声明了思考能力时，必须真的把「关闭思考」下发到上游。
+
+    以前只有 ``deepseek-v4-pro`` / ``deepseek-v4-flash`` 两个精确模型名会走
+    ``thinking`` 协议，换一个渠道名（如 ``deepseek-v4.1-flash``）就整段不发，
+    上游仍按默认思考运行——这是「本地非思考 + 上游思考」状态错位的源头。
+    """
+    import openai
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    captured = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://gateway.example.com/v1",
+            model="deepseek-v4.1-flash",
+            provider="deepseek",
+            streaming=False,
+            thinking_enable=False,
+            thinking_capable=True,
+        ),
+    )
+
+    await model._call_api(
+        "deepseek-v4.1-flash",
+        messages=[],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_sql_query",
+                    "parameters": {"type": "object"},
+                },
+            },
+        ],
+        tool_choice=ToolChoice(mode="execute_sql_query"),
+    )
+
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert captured["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "execute_sql_query"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_supplier_wording_does_not_support_tool_choice_triggers_fallback(
+    monkeypatch,
+):
+    """第三方网关的文案（无 required/object）也要触发一次降级重试。
+
+    现场 400：``Thinking mode does not support this tool_choice``。旧判定要求
+    文案里同时出现 ``required`` 或 ``object``，导致这条报错既不重试也不留活路。
+    """
+    import openai
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    requests = []
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            requests.append(kwargs)
+            if len(requests) == 1:
+                raise _build_bad_request_error(
+                    "Thinking mode does not support this tool_choice "
+                    "(request_id: d71cdc9a-1739-4e31-b1bd-87e30df1c37a)",
+                )
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://gateway.example.com/v1",
+            model="deepseek-v4.1-flash",
+            provider="deepseek",
+            streaming=False,
+            thinking_enable=False,
+            thinking_capable=True,
+        ),
+    )
+
+    result = await model._call_api(
+        "deepseek-v4.1-flash",
+        messages=[],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_sql_query",
+                    "parameters": {"type": "object"},
+                },
+            },
+        ],
+        tool_choice=ToolChoice(mode="execute_sql_query"),
+    )
+
+    assert result is not None
+    assert len(requests) == 2
+    assert requests[1]["tool_choice"] == "auto"
+    assert requests[1]["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+@pytest.mark.asyncio
+async def test_locally_disabled_thinking_still_retries_forced_tool_choice_rejection(
+    monkeypatch,
+):
+    """本地认为「非思考」时上游仍可能拒收，这条兜底不能绑本地思考开关。"""
+    import openai
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runtime.agentscope.models import (
+        AgentScopeModelConfig,
+        create_openai_chat_model,
+    )
+
+    requests = []
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            requests.append(kwargs)
+            if len(requests) == 1:
+                raise _build_bad_request_error(
+                    "The tool_choice parameter does not support being set to "
+                    "required or object in thinking mode",
+                )
+            return SimpleNamespace(choices=[], usage=None)
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(openai, "AsyncClient", lambda **kwargs: FakeClient())
+    model = create_openai_chat_model(
+        AgentScopeModelConfig(
+            api_key="sk-test",
+            base_url="https://gateway.example.com/v1",
+            model="custom-gateway-model",
+            streaming=False,
+            thinking_enable=False,
+        ),
+    )
+
+    await model._call_api(
+        "custom-gateway-model",
+        messages=[],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_sql_query",
+                    "parameters": {"type": "object"},
+                },
+            },
+        ],
+        tool_choice=ToolChoice(mode="execute_sql_query"),
+    )
+
+    assert len(requests) == 2
+    assert requests[0]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "execute_sql_query"},
+    }
+    assert requests[1]["tool_choice"] == "auto"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("thinking_enable", "tool_choice_mode"),
-    [(True, None), (True, "auto"), (False, "execute_sql_query")],
+    [(True, None), (True, "auto")],
 )
 async def test_matching_bad_request_without_fallback_conditions_is_not_retried(
     monkeypatch,

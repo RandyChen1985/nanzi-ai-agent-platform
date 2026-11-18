@@ -301,7 +301,7 @@ def test_stream_snapshot_storage_is_fail_closed_without_an_identity():
     ]
     assert "const key = streamSnapshotStorageKey(cid);" in persist
     assert "if (!key) return;" in persist
-    assert "sessionStorage.setItem(key, JSON.stringify(snapshot));" in persist
+    assert "sessionStorage.setItem(key, serializeEmbedStreamSnapshot(snapshot));" in persist
 
 
 def test_host_welcome_message_override_survives_identity_change():

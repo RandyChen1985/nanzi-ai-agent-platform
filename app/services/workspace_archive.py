@@ -18,9 +18,12 @@ import zipfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
-# 解压后总字节数上限与条目数上限的兜底默认值（路由层会用 settings 覆盖）。
+from app.core.upload_limits import MAX_FILES_PER_DIRECTORY, count_files_under
+
+# 解压后总字节数上限与文件个数上限的兜底默认值（路由层会用 settings 覆盖）。
 DEFAULT_MAX_TOTAL_BYTES = 1024 * 1024 * 1024
-DEFAULT_MAX_ENTRIES = 5000
+#: 文件个数上限取核心层的同一份口径（与技能目录共用 200000）。
+DEFAULT_MAX_ENTRIES = MAX_FILES_PER_DIRECTORY
 
 # 顺序有意义：先匹配两级后缀，避免 ".tar.gz" 被当成 ".gz" 之类的误判。
 SUPPORTED_SUFFIXES = (".tar.gz", ".tgz", ".tar", ".zip")
@@ -110,10 +113,17 @@ def extract_archive(
     else:
         final_dir = target_root
 
+    entry_limit = max(1, int(max_entries))
+    # 累计口径：目标目录**已有**的文件也占预算。只数本次归档的话，同一个目录
+    # 解两次 4000 条的包就能突破 5000，上限等于没有。
+    existing_files = count_files_under(final_dir, stop_above=entry_limit)
     state = _ExtractState(
         final_dir=final_dir,
         max_total_bytes=max(1, int(max_total_bytes)),
-        max_entries=max(1, int(max_entries)),
+        max_entries=entry_limit,
+        existing_files=existing_files,
+        # 数到「上限+1」就早停了：多出来的部分没数，消息里只能说「超过上限」
+        existing_files_truncated=existing_files > entry_limit,
     )
     try:
         if suffix == ".zip":
@@ -140,6 +150,9 @@ class _ExtractState:
     final_dir: str
     max_total_bytes: int
     max_entries: int
+    existing_files: int = 0
+    # 早停时 existing_files 只是「已超过上限」的哨兵值，真实数量可能大得多
+    existing_files_truncated: bool = False
     file_count: int = 0
     total_bytes: int = 0
     skipped: List[Dict[str, str]] = field(default_factory=list)
@@ -149,6 +162,22 @@ class _ExtractState:
     @property
     def remaining_bytes(self) -> int:
         return self.max_total_bytes - self.total_bytes
+
+    @property
+    def existing_files_hint(self) -> str:
+        """既有文件数的用户可读描述：早停后不能把哨兵值当精确数报出去。"""
+        if self.existing_files_truncated:
+            return f"已有超过 {self.max_entries} 个"
+        return f"已有 {self.existing_files} 个"
+
+    def ensure_entry_headroom(self, incoming: int) -> None:
+        """本归档的文件数 + 目录已有文件数不得越过上限（累计口径）。"""
+        if self.existing_files + incoming > self.max_entries:
+            raise ArchiveExtractError(
+                f"目标目录文件数将超过上限（{self.max_entries} 个，"
+                f"{self.existing_files_hint}），已中止并回滚。",
+                413,
+            )
 
     def skip(self, name: str, reason: str) -> None:
         self.skipped.append({"name": name, "reason": reason})
@@ -280,10 +309,8 @@ def _zip_member_filename(info: zipfile.ZipInfo) -> str:
 def _extract_zip(archive: str, state: _ExtractState) -> None:
     with zipfile.ZipFile(archive) as zf:
         infos = zf.infolist()
-        if len(infos) > state.max_entries:
-            raise ArchiveExtractError(
-                f"压缩包条目数超过上限（{state.max_entries}），已中止并回滚。", 413
-            )
+        # 只数普通文件（目录条目本身不占文件预算），并与目录已有文件累计
+        state.ensure_entry_headroom(sum(1 for info in infos if not info.is_dir()))
         declared = sum(max(info.file_size, 0) for info in infos if not info.is_dir())
         if declared > state.max_total_bytes:
             raise ArchiveExtractError("解压后体积超过上限，已中止并回滚。", 413)
@@ -314,10 +341,7 @@ def _extract_zip(archive: str, state: _ExtractState) -> None:
 def _extract_tar(archive: str, state: _ExtractState) -> None:
     with tarfile.open(archive, "r:*") as tf:
         members = tf.getmembers()
-        if len(members) > state.max_entries:
-            raise ArchiveExtractError(
-                f"压缩包条目数超过上限（{state.max_entries}），已中止并回滚。", 413
-            )
+        state.ensure_entry_headroom(sum(1 for member in members if member.isfile()))
         declared = sum(max(member.size, 0) for member in members if member.isfile())
         if declared > state.max_total_bytes:
             raise ArchiveExtractError("解压后体积超过上限，已中止并回滚。", 413)

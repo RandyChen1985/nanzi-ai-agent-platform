@@ -71,6 +71,24 @@ _AUDIT_TASKS: set[asyncio.Task] = set()
 # ``streamable_http_client`` 内的 ``anyio.create_task_group``）。
 _ANYIO_SCOPE_CANCEL_MARKER = "cancel scope"
 
+#: 单个 SSE event 的字节上限，传给 mcp SDK 的 ``streamable_http_client``。
+#:
+#: mcp 2.x 默认只给 1 MiB（``DEFAULT_MAX_SSE_EVENT_SIZE``，最终落在 httpx2 的
+#: ``EventSource`` 上），而把二进制内联成 base64 的工具（图像生成、文件下载等）
+#: 会把整份结果塞进**一个** SSE event 的 ``data`` 字段：一张 1024×1024 的 PNG
+#: base64 后就有 2～5 MB，1 MiB 必然打成「Server-sent event exceeded the
+#: 1048576 byte limit」。该报错经 ``MCP tool call failed:`` 回显给模型和用户，
+#: 看起来像传输故障，实际是结果体积超限，排查方向完全跑偏（DashScope
+#: ``text_generate_image`` 就是这样被打爆的）。
+#:
+#: 取 32 MiB 而不是 ``None``：``None`` 等于关掉上限，异常远端可以让单个 event
+#: 无限缓冲、把进程内存撑爆；32 MiB 覆盖常规图片/gzip 类结果，又不至于让一次
+#: 恶意响应就吃掉整个 worker 的内存。
+#:
+#: 注意：老 SSE 传输（``sse_client``）的 SDK 签名里没有这个参数，内部
+#: ``sse_within_origin`` 写死 ``1024 * 1024``，因此仍受 1 MiB 限制。
+DEFAULT_MCP_MAX_SSE_EVENT_SIZE = 32 * 1024 * 1024
+
 
 class McpToolCallTimeout(TimeoutError):
     """单次 ``tools/call`` 等不到结果（远端业务执行太慢），**不是**传输断开。
@@ -320,7 +338,11 @@ class McpSseSession:
             _create_no_redirect_mcp_http_client(headers=self.auth_headers)
         )
         read_stream, write_stream = await self._exit_stack.enter_async_context(
-            streamable_http_client(self.sse_url, http_client=http_client)
+            streamable_http_client(
+                self.sse_url,
+                http_client=http_client,
+                max_sse_event_size=DEFAULT_MCP_MAX_SSE_EVENT_SIZE,
+            )
         )
         session = await self._exit_stack.enter_async_context(
             ClientSession(read_stream, write_stream)

@@ -402,3 +402,108 @@ def test_extract_endpoint_over_http_keeps_request_contract(tmp_path, monkeypatch
     assert payload["path"] == str(out / "pkg")
     assert payload["skipped"] == []
     assert (out / "pkg" / "a.md").read_bytes() == b"hi"
+
+
+def test_file_count_limit_is_normalized_to_200000():
+    """文件数上限只有一份口径：工作空间解压与技能目录共用 200000。"""
+    from app.core import upload_limits
+    from app.services import workspace_archive as wa
+
+    assert upload_limits.MAX_FILES_PER_DIRECTORY == 200_000
+    assert upload_limits.SKILL_DIR_MAX_FILES == upload_limits.MAX_FILES_PER_DIRECTORY
+    assert wa.DEFAULT_MAX_ENTRIES == upload_limits.MAX_FILES_PER_DIRECTORY
+
+
+def test_extract_counts_files_already_in_target_dir(tmp_path):
+    """累计口径：目标目录**已有**的文件也要计入上限。
+
+    此前只数本次归档的条目数，于是「解一次 4000 个、再解一次 4000 个」可以无限累计，
+    上限形同虚设。这里目标目录先放一个文件，再解一个 2 文件归档、上限 2：
+    1 + 2 > 2 必须中止，且**既有文件不能被回滚删掉**。
+    """
+    from app.services.workspace_archive import ArchiveExtractError, extract_archive
+
+    archive = _make_zip(tmp_path / "two.zip", {"a.txt": b"1", "b.txt": b"2"})
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "existing.txt").write_bytes(b"keep")
+
+    with pytest.raises(ArchiveExtractError) as exc:
+        # subdir="" = 直接解到目标目录本身，既有文件参与累计
+        extract_archive(str(archive), str(out), subdir="", max_entries=2)
+
+    assert exc.value.status_code == 413
+    assert (out / "existing.txt").read_bytes() == b"keep"
+    assert sorted(p.name for p in out.iterdir()) == ["existing.txt"]
+
+
+def test_extract_reports_truncated_existing_count_when_early_stop_hits(tmp_path):
+    """早停时既有文件数只是哨兵值，消息里不能说成精确数。
+
+    目标目录放 5 个文件、上限 2：count_files_under 数到 3 就早停返回；若把 3 当精确值
+    拼进消息，用户会看到「已有 3 个」，而真实是 5 个。文案必须是「已有超过 2 个」。
+    """
+    from app.services.workspace_archive import ArchiveExtractError, extract_archive
+
+    archive = _make_zip(tmp_path / "one.zip", {"a.txt": b"1"})
+    out = tmp_path / "out"
+    out.mkdir()
+    for i in range(5):
+        (out / f"keep{i}.txt").write_bytes(b"k")
+
+    with pytest.raises(ArchiveExtractError) as exc:
+        extract_archive(str(archive), str(out), subdir="", max_entries=2)
+
+    assert exc.value.status_code == 413
+    assert "已有超过 2 个" in exc.value.message
+    # 既有文件一个都不能少（回滚只清本次写入）
+    assert sorted(p.name for p in out.iterdir()) == [f"keep{i}.txt" for i in range(5)]
+
+
+def test_extract_allows_when_existing_plus_incoming_within_limit(tmp_path):
+    """边界：已有 1 + 本次 2 = 3，上限 3 应当放行（不能把 ``<=`` 写成 ``<``）。"""
+    from app.services.workspace_archive import extract_archive
+
+    archive = _make_zip(tmp_path / "two.zip", {"a.txt": b"1", "b.txt": b"2"})
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "existing.txt").write_bytes(b"keep")
+
+    result = extract_archive(str(archive), str(out), subdir="", max_entries=3)
+
+    assert result.file_count == 2
+    assert (out / "a.txt").read_bytes() == b"1"
+
+
+def test_count_files_under_skips_symlinks_and_stops_above_limit(tmp_path):
+    """scandir 统计按目录项计非目录条目：软链（文件/目录）跳过且不跟随，支持早停。
+
+    口径是「目录项」不是「普通文件」：FIFO 这类非目录条目同样占一个名额。
+    """
+    import os
+    from app.core.upload_limits import count_files_under
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("x", encoding="utf-8")
+
+    root = tmp_path / "root"
+    sub = root / "sub"
+    sub.mkdir(parents=True)
+    (root / "a.txt").write_text("a", encoding="utf-8")
+    (sub / "b.txt").write_text("b", encoding="utf-8")
+    (sub / "c.txt").write_text("c", encoding="utf-8")
+    os.symlink(str(outside / "secret.txt"), str(root / "link_file.txt"))
+    os.symlink(str(outside), str(root / "link_dir"))
+
+    assert count_files_under(str(root)) == 3
+    # 早停只承诺「> stop_above」，精确值由上面那条全量断言保证；
+    # 这里写成 > 而不是 ==，换遍历顺序（BFS/排序）时不会假失败。
+    assert count_files_under(str(root), stop_above=2) > 2
+    assert count_files_under(str(root), stop_above=1) > 1
+    assert count_files_under(str(tmp_path / "not-exists")) == 0
+
+    # 非普通文件（FIFO）也是目录项，要计入——与 affd6cf6 的「目录项累计」口径一致
+    if hasattr(os, "mkfifo"):
+        os.mkfifo(str(root / "pipe"))
+        assert count_files_under(str(root)) == 4

@@ -65,6 +65,7 @@ import {
 import {
   applyStreamTraceId,
   appendAssistantBodyDelta,
+  createBufferedStreamEventPump,
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
   markStalePendingStreamLogs,
@@ -450,10 +451,19 @@ const isGeneralAgentMessage = (msg: Message): boolean => {
   return agent?.agent_type === "GENERAL";
 };
 
+const streamBodyCache = new WeakMap<object, { content: string; role: string; result: string }>();
+
 const visibleStreamBody = (msg: Message): string => {
-  return msg.role === "agent"
-    ? stripInternalContextBlocks(msg.content || "")
-    : (msg.content || "");
+  const content = msg.content || "";
+  const cached = streamBodyCache.get(msg);
+  if (cached && cached.content === content && cached.role === msg.role) {
+    return cached.result;
+  }
+  const result = msg.role === "agent"
+    ? stripInternalContextBlocks(content)
+    : content;
+  streamBodyCache.set(msg, { content, role: msg.role, result });
+  return result;
 };
 
 const SYSTEM_SLASH_COMMANDS = [
@@ -641,20 +651,119 @@ const displayMessages = computed(() => {
   return filtered;
 });
 
-function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): SkillFlowBadge[] {
-  if (msg.role !== 'agent') return [];
-  const idx = allMessages.findIndex(m => m.id === msg.id);
-  if (idx <= 0) return [];
-  let files: ChatFile[] = [];
+const skillFlowBadgeLogVersion = new WeakMap<object, number>();
+
+function bumpSkillFlowBadgeVersion(msg: Message): void {
+  skillFlowBadgeLogVersion.set(msg, (skillFlowBadgeLogVersion.get(msg) ?? 0) + 1);
+}
+
+const skillFlowBadgeCache = new WeakMap<
+  object,
+  {
+    allMessagesRef: Message[];
+    allLen: number;
+    msgIdx: number;
+    prevUserIdx: number;
+    rawUserFiles: ChatFile[] | undefined;
+    filesLen: number;
+    logsRef: LogEntry[] | undefined;
+    logsLen: number;
+    lastLog: any;
+    lastLogTitle?: string;
+    lastLogDetails?: string;
+    logVersion: number;
+    result: SkillFlowBadge[];
+    summary: string;
+  }
+>();
+
+function computeSkillFlowBadgeEntry(msg: Message, allMessages: Message[]) {
+  const logs = msg.logs || [];
+  const lastLog = logs[logs.length - 1];
+  const logVersion = skillFlowBadgeLogVersion.get(msg) ?? 0;
+  const cached = skillFlowBadgeCache.get(msg);
+  const canReusePositionedUserFiles =
+    cached
+    && cached.allMessagesRef === allMessages
+    && cached.allLen === allMessages.length
+    && allMessages[cached.msgIdx]?.id === msg.id;
+
+  if (canReusePositionedUserFiles) {
+    const rawUserFiles = cached.prevUserIdx >= 0 ? allMessages[cached.prevUserIdx]?.files : undefined;
+    const filesLen = rawUserFiles?.length || 0;
+    const filesUnchanged = rawUserFiles === cached.rawUserFiles && filesLen === cached.filesLen;
+    if (
+      filesUnchanged
+      && cached.logsRef === logs
+      && cached.logsLen === logs.length
+      && cached.lastLog === lastLog
+      && cached.lastLogTitle === lastLog?.title
+      && cached.lastLogDetails === lastLog?.details
+      && cached.logVersion === logVersion
+    ) {
+      return cached;
+    }
+    if (filesUnchanged) {
+      const result = buildSkillFlowBadges(rawUserFiles || [], logs);
+      const summary = result.length > 0 ? summarizeSkillFlowBadges(result) : "";
+      cached.logsRef = logs;
+      cached.logsLen = logs.length;
+      cached.lastLog = lastLog;
+      cached.lastLogTitle = lastLog?.title;
+      cached.lastLogDetails = lastLog?.details;
+      cached.logVersion = logVersion;
+      cached.result = result;
+      cached.summary = summary;
+      return cached;
+    }
+  }
+
+  const idx = allMessages.findIndex((m) => m.id === msg.id);
+  if (idx <= 0) return null;
+  let prevUserIdx = -1;
+  let rawUserFiles: ChatFile[] | undefined;
   for (let i = idx - 1; i >= 0; i--) {
     const prev = allMessages[i];
     if (!prev) continue;
-    if (prev.role === 'user') {
-      files = prev.files || [];
+    if (prev.role === "user") {
+      prevUserIdx = i;
+      rawUserFiles = prev.files;
       break;
     }
   }
-  return buildSkillFlowBadges(files, msg.logs || []);
+  const files = rawUserFiles || [];
+  const result = buildSkillFlowBadges(files, logs);
+  const summary = result.length > 0 ? summarizeSkillFlowBadges(result) : "";
+  const entry = {
+    allMessagesRef: allMessages,
+    allLen: allMessages.length,
+    msgIdx: idx,
+    prevUserIdx,
+    rawUserFiles,
+    filesLen: files.length,
+    logsRef: logs,
+    logsLen: logs.length,
+    lastLog,
+    lastLogTitle: lastLog?.title,
+    lastLogDetails: lastLog?.details,
+    logVersion,
+    result,
+    summary,
+  };
+  skillFlowBadgeCache.set(msg, entry);
+  return entry;
+}
+
+const EMPTY_SKILL_FLOW_BADGES: SkillFlowBadge[] = [];
+
+function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): SkillFlowBadge[] {
+  if (msg.role !== "agent") return EMPTY_SKILL_FLOW_BADGES;
+  return computeSkillFlowBadgeEntry(msg, allMessages)?.result ?? EMPTY_SKILL_FLOW_BADGES;
+}
+
+function getSkillFlowSummaryForMessage(msg: Message, allMessages: Message[]): string {
+  if (msg.role !== "agent") return "";
+  return computeSkillFlowBadgeEntry(msg, allMessages)?.summary ?? "";
 }
 const conversationId = ref("");
 const metadataMountableDatasets = ref<Array<{ id: string; name?: string; description?: string; dataset_name?: string }>>([]);
@@ -2686,10 +2795,22 @@ const handleScroll = () => {
   isUserAtBottom.value = scrollHeight - scrollTop - clientHeight < 50;
 };
 
+let scrollToBottomFrame: number | null = null;
+let scrollToBottomForcePending = false;
+
 const scrollToBottom = (force = false) => {
-  if (messagesContainer.value && (isUserAtBottom.value || force)) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
-  }
+  scrollToBottomForcePending = scrollToBottomForcePending || force;
+  if (scrollToBottomFrame !== null) return;
+  scrollToBottomFrame = requestAnimationFrame(() => {
+    scrollToBottomFrame = null;
+    const pendingForce = scrollToBottomForcePending;
+    scrollToBottomForcePending = false;
+    nextTick(() => {
+      if (messagesContainer.value && (isUserAtBottom.value || pendingForce)) {
+        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+      }
+    });
+  });
 };
 
 watch(
@@ -3602,7 +3723,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     "正在组织语言...",
   ];
 
-  // Start Timer
+  // Start Timer (500ms 一跳，与 EmbedChat 对齐，降低高频响应式写盘开销)
   if (thoughtTimer) clearInterval(thoughtTimer);
   let ticks = 0;
   thoughtTimer = setInterval(() => {
@@ -3612,17 +3733,20 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       agentMsg.value.thoughtDuration = duration.toFixed(1);
     }
 
-    // Rotate message every 3 seconds (30 * 100ms)
-    if (ticks % 30 === 0) {
-      const msgIndex = (ticks / 30) % THINKING_MESSAGES.length;
+    // Rotate message every 3 seconds (6 * 500ms)
+    if (ticks % 6 === 0) {
+      const msgIndex = (ticks / 6) % THINKING_MESSAGES.length;
       agentMsg.value.thinkingText = THINKING_MESSAGES[msgIndex];
     }
-    if (ticks % 100 === 0) {
+    // Check stale pending logs every 10 seconds (20 * 500ms)
+    if (ticks % 20 === 0) {
       if (markStalePendingStreamLogs(agentMsg.value)) {
+        // 原地改 status/details 不会变更数组引用，必须显式让徽章缓存失效
+        bumpSkillFlowBadgeVersion(agentMsg.value);
         agentMsg.value.isThinking = false;
       }
     }
-  }, 100);
+  }, 500);
 
   // 3. Call Real API with SSE
   // SSE 可能因切后台/网络变化提前结束；在状态接口确认释放前继续阻止新一轮发送。
@@ -3733,173 +3857,319 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     if (!reader) throw new Error("No response body");
 
     const sseLineParser = createSseLineParser();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
 
-      const chunk = decoder.decode(value, { stream: true });
-      const dataLines = sseLineParser.feed(chunk);
+    // 首片思考立即显示，后续高频思考增量按 ~80ms 合并刷入时间线
+    const REASONING_FLUSH_INTERVAL_MS = 80;
+    let pendingReasoningBuffer = "";
+    let reasoningFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
-      for (const dataStr of dataLines) {
-          if (dataStr === "[DONE]") continue;
-
-          try {
-            const data = JSON.parse(dataStr);
-            if (data?.type === "keepalive") {
-              // 后端静默期心跳帧：仅用于连接保活，无业务负载。
-              continue;
-            }
-            applyStreamTraceId(agentMsg.value, data);
-
-            // Handle Structured Logs
-            if (data.type === "duplicate_request") {
-              agentMsg.value.isThinking = false;
-              (agentMsg.value as any).status = "duplicate_request";
-              agentMsg.value.content = String(data.content || "相同发送请求已提交，请等待原任务完成。\n");
-              markRunStarted();
-              void refreshCurrentRunStatus();
-            } else if (data.type === "run_status") {
-              agentMsg.value.isThinking = false;
-              markOutputCompleted();
-              if (data.status === "success") {
-                (agentMsg.value as any).status = "success";
-              }
-            } else if (data.type === "log") {
-              addRealLog(agentMsg.value, data);
-            }
-            // Handle Router Logic (New)
-            else if (data.type === "router_log") {
-              const thoughtText = data.thought || "No reasoning provided.";
-              const agentName = data.selected_agent || "Unknown";
-              const conf = data.confidence !== undefined ? `(置信度: ${data.confidence})` : "";
-
-              addRealLog(agentMsg.value, {
-                id: data.id || "route:target_selection",
-                parent_id: data.parent_id || "route:target_config",
-                title: "智能路由决策",
-                details: `**思考过程 (Chain of Thought):**\n${thoughtText}\n\n**最终选择:** ${agentName} ${conf}`,
-                status: "success",
-                isDebug: true,
-                isRouter: true // Mark as router log
-              });
-            }
-            // Handle Debug Events
-            else if (data.type === "debug") {
-              if (data.subtype === "raw_prompt") {
-                agentMsg.value.rawPrompt = data.data;
-                agentMsg.value.rawPromptSystem = data.system_prompt ?? "";
-                addRealLog(agentMsg.value, {
-                  title: "Debug: Raw Prompt Captured",
-                  details: 'Click "Raw Prompt" button to view.',
-                  status: "success",
-                  isDebug: true,
-                });
-              }
-            }
-            // Handle Citations (New)
-            else if (mergeStreamCitations(agentMsg.value, data)) {
-              // Citations are merged and de-duplicated by the shared stream normalizer.
-            }
-            // Handle Context Update Events (New)
-            else if (data.type === "context") {
-              addRealLog(agentMsg.value, {
-                title: "✨ Context Updated",
-                details: JSON.stringify(data.data, null, 2),
-                status: "success",
-              });
-              // Update reactive context stack
-              if (data.data) {
-                agentContext.value = { ...agentContext.value, ...data.data };
-              }
-            }
-            else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addRealLog, messages.value)) {
-              if (
-                (data.type === "permission_required" || (data.type === "retraction" && data.final !== false))
-                && thoughtTimer
-              ) {
-                clearInterval(thoughtTimer);
-                thoughtTimer = null;
-              }
-            }
-            // Handle Retraction Event
-            else if (data.type === "retraction") {
-              agentMsg.value.content = stripInternalContextBlocks(String(data.content || ""));
-              if (data.final !== false) {
-                agentMsg.value.isThinking = false;
-                if (thoughtTimer) {
-                  clearInterval(thoughtTimer);
-                  thoughtTimer = null;
-                }
-              }
-            }
-            // Error Event 必须优先于 content 分支判断，防止带 content 的错误帧既按正文追加又再被 applyStreamErrorMessage 写双份。
-            else if (data.type === "error" || data.status === "error") {
-              agentMsg.value.isThinking = false;
-              if (thoughtTimer) {
-                clearInterval(thoughtTimer);
-                thoughtTimer = null;
-              }
-              applyStreamErrorMessage(agentMsg.value, data);
-            }
-            // Handle Content Stream
-            else if (data.type === "answer_delta" || data.content) {
-              const piece = sanitizeStreamContent(String(data.content));
-              if (piece) {
-                if (
-                  agentMsg.value.isThoughtExpanded
-                  && !agentMsg.value.content
-                  && !timelineHasPending(agentMsg.value.processTimeline)
-                ) {
-                  agentMsg.value.isThoughtExpanded = false;
-                }
-                appendAssistantBodyDelta(agentMsg.value, piece);
-                if (agentMsg.value.isThinking) {
-                  agentMsg.value.isThinking = false;
-                  if (thoughtTimer) {
-                    clearInterval(thoughtTimer);
-                    thoughtTimer = null;
-                  }
-                }
-              }
-            }
-            // Handle Meta Info (Agent Name)
-            else if (applyChatBIInsightEvent(agentMsg.value, data) || applyChatBIMetadataGuideEvent(agentMsg.value, data) || applyAgentHandoffEvent(agentMsg.value, data)) {
-              // Additive ChatBI evidence event.
-            }
-            else if (data.type === "meta") {
-              if (data.agent_name) {
-                agentMsg.value.agentName = data.agent_name;
-                if (data.agent_type) agentMsg.value.agentType = data.agent_type;
-                if (data.agent_display_name) {
-                    agentMsg.value.agentDisplayName = data.agent_display_name;
-                }
-              }
-              if (data.rag_retrieval) {
-                ragRetrievalMeta.value = data.rag_retrieval;
-              }
-              if (data.permission_notice) {
-                agentMsg.value.permissionNotice = data.permission_notice;
-              }
-            }
-
-            // Handle Status
-            if (data.status === "generating") {
-              // Only stop thinking if we already have content, otherwise wait for first content chunk
-              if (agentMsg.value.content) {
-                 agentMsg.value.isThinking = false;
-                 if (thoughtTimer) {
-                   clearInterval(thoughtTimer);
-                   thoughtTimer = null;
-                 }
-              }
-            }
-            if (data.intent) {
-              agentMsg.value.intent = data.intent;
-            }
-          } catch (e) {
-            console.warn("Failed to parse SSE chunk", e);
-          }
+    const flushReasoningBuffer = () => {
+      if (reasoningFlushTimer !== null) {
+        clearTimeout(reasoningFlushTimer);
+        reasoningFlushTimer = null;
       }
+      if (pendingReasoningBuffer) {
+        const batchedReasoning = pendingReasoningBuffer;
+        pendingReasoningBuffer = "";
+        dispatchAgentscopeStreamEvent(
+          agentMsg.value,
+          { type: "reasoning_content", content: batchedReasoning },
+          addRealLog,
+          messages.value,
+        );
+      }
+    };
+
+    const queueReasoningDelta = (piece: string) => {
+      if (!piece) return;
+      if (!agentMsg.value.reasoningContent && !pendingReasoningBuffer) {
+        dispatchAgentscopeStreamEvent(
+          agentMsg.value,
+          { type: "reasoning_content", content: piece },
+          addRealLog,
+          messages.value,
+        );
+        return;
+      }
+      pendingReasoningBuffer += piece;
+      if (reasoningFlushTimer === null) {
+        reasoningFlushTimer = setTimeout(flushReasoningBuffer, REASONING_FLUSH_INTERVAL_MS);
+      }
+    };
+
+    const handleBufferedReasoningEvent = (data: Record<string, any>): boolean => {
+      if (data.type !== "reasoning_content") return false;
+      const piece = String(data.content || "");
+      if (piece) {
+        queueReasoningDelta(piece);
+      }
+      return true;
+    };
+
+    // 首片正文立即显示，后续正文按动画帧合并，降低逐 token Markdown 重渲染开销
+    let pendingContentBuffer = "";
+    let contentRafId: number | null = null;
+
+    const flushContentBuffer = () => {
+      if (pendingContentBuffer) {
+        appendAssistantBodyDelta(agentMsg.value, pendingContentBuffer);
+        pendingContentBuffer = "";
+      }
+      if (contentRafId !== null) {
+        cancelAnimationFrame(contentRafId);
+        contentRafId = null;
+      }
+    };
+
+    const queueContentDelta = (piece: string) => {
+      if (!piece) return;
+      if (
+        agentMsg.value.isThoughtExpanded
+        && !agentMsg.value.content
+        && !pendingContentBuffer
+        && !timelineHasPending(agentMsg.value.processTimeline)
+      ) {
+        agentMsg.value.isThoughtExpanded = false;
+      }
+      if (!agentMsg.value.content && !pendingContentBuffer) {
+        appendAssistantBodyDelta(agentMsg.value, piece);
+        return;
+      }
+      pendingContentBuffer += piece;
+      if (contentRafId === null) {
+        contentRafId = requestAnimationFrame(flushContentBuffer);
+      }
+    };
+
+    const handleBufferedBodyEvent = (data: Record<string, any>): boolean => {
+      if (data.type === "retraction") {
+        flushReasoningBuffer();
+        pendingContentBuffer = "";
+        if (contentRafId !== null) {
+          cancelAnimationFrame(contentRafId);
+          contentRafId = null;
+        }
+        return false;
+      }
+      if (data.type === "answer" || data.type === "answer_delta") {
+        flushReasoningBuffer();
+        const piece = data.type === "answer_delta"
+          ? String(data.content || "")
+          : sanitizeStreamContent(String(data.content || ""));
+        if (piece) {
+          queueContentDelta(piece);
+          if (agentMsg.value.isThinking) {
+            agentMsg.value.isThinking = false;
+            if (thoughtTimer) {
+              clearInterval(thoughtTimer);
+              thoughtTimer = null;
+            }
+          }
+        }
+        return true;
+      }
+      if (data.type && data.type !== "reasoning_content") flushReasoningBuffer();
+      if (data.type) flushContentBuffer();
+      return false;
+    };
+
+    const processDebugSseEvent = (data: Record<string, any>) => {
+      applyStreamTraceId(agentMsg.value, data);
+      if (handleBufferedBodyEvent(data)) {
+        return;
+      }
+      if (handleBufferedReasoningEvent(data)) {
+        return;
+      }
+
+      // Handle Structured Logs
+      if (data.type === "duplicate_request") {
+        flushReasoningBuffer();
+        flushContentBuffer();
+        agentMsg.value.isThinking = false;
+        (agentMsg.value as any).status = "duplicate_request";
+        agentMsg.value.content = String(data.content || "相同发送请求已提交，请等待原任务完成。\n");
+        markRunStarted();
+        void refreshCurrentRunStatus();
+      } else if (data.type === "run_status") {
+        flushReasoningBuffer();
+        flushContentBuffer();
+        agentMsg.value.isThinking = false;
+        markOutputCompleted();
+        if (data.status === "success") {
+          (agentMsg.value as any).status = "success";
+        }
+      } else if (data.type === "log") {
+        addRealLog(agentMsg.value, data);
+      }
+      // Handle Router Logic (New)
+      else if (data.type === "router_log") {
+        const thoughtText = data.thought || "No reasoning provided.";
+        const agentName = data.selected_agent || "Unknown";
+        const conf = data.confidence !== undefined ? `(置信度: ${data.confidence})` : "";
+
+        addRealLog(agentMsg.value, {
+          id: data.id || "route:target_selection",
+          parent_id: data.parent_id || "route:target_config",
+          title: "智能路由决策",
+          details: `**思考过程 (Chain of Thought):**\n${thoughtText}\n\n**最终选择:** ${agentName} ${conf}`,
+          status: "success",
+          isDebug: true,
+          isRouter: true // Mark as router log
+        });
+      }
+      // Handle Debug Events
+      else if (data.type === "debug") {
+        if (data.subtype === "raw_prompt") {
+          agentMsg.value.rawPrompt = data.data;
+          agentMsg.value.rawPromptSystem = data.system_prompt ?? "";
+          addRealLog(agentMsg.value, {
+            title: "Debug: Raw Prompt Captured",
+            details: 'Click "Raw Prompt" button to view.',
+            status: "success",
+            isDebug: true,
+          });
+        }
+      }
+      // Handle Citations (New)
+      else if (mergeStreamCitations(agentMsg.value, data)) {
+        // Citations are merged and de-duplicated by the shared stream normalizer.
+      }
+      // Handle Context Update Events (New)
+      else if (data.type === "context") {
+        addRealLog(agentMsg.value, {
+          title: "✨ Context Updated",
+          details: JSON.stringify(data.data, null, 2),
+          status: "success",
+        });
+        // Update reactive context stack
+        if (data.data) {
+          agentContext.value = { ...agentContext.value, ...data.data };
+        }
+      }
+      else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addRealLog, messages.value)) {
+        if (
+          (data.type === "permission_required" || (data.type === "retraction" && data.final !== false))
+          && thoughtTimer
+        ) {
+          clearInterval(thoughtTimer);
+          thoughtTimer = null;
+        }
+      }
+      // Handle Retraction Event
+      else if (data.type === "retraction") {
+        agentMsg.value.content = stripInternalContextBlocks(String(data.content || ""));
+        if (data.final !== false) {
+          agentMsg.value.isThinking = false;
+          if (thoughtTimer) {
+            clearInterval(thoughtTimer);
+            thoughtTimer = null;
+          }
+        }
+      }
+      // Error Event 必须优先于 content 分支判断，防止带 content 的错误帧既按正文追加又再被 applyStreamErrorMessage 写双份。
+      else if (data.type === "error" || data.status === "error") {
+        flushReasoningBuffer();
+        flushContentBuffer();
+        agentMsg.value.isThinking = false;
+        if (thoughtTimer) {
+          clearInterval(thoughtTimer);
+          thoughtTimer = null;
+        }
+        applyStreamErrorMessage(agentMsg.value, data);
+      }
+      // Handle Content Stream
+      else if (data.type === "answer_delta" || data.content) {
+        const piece = sanitizeStreamContent(String(data.content));
+        if (piece) {
+          queueContentDelta(piece);
+          if (agentMsg.value.isThinking) {
+            agentMsg.value.isThinking = false;
+            if (thoughtTimer) {
+              clearInterval(thoughtTimer);
+              thoughtTimer = null;
+            }
+          }
+        }
+      }
+      // Handle Meta Info (Agent Name)
+      else if (applyChatBIInsightEvent(agentMsg.value, data) || applyChatBIMetadataGuideEvent(agentMsg.value, data) || applyAgentHandoffEvent(agentMsg.value, data)) {
+        // Additive ChatBI evidence event.
+      }
+      else if (data.type === "meta") {
+        if (data.agent_name) {
+          agentMsg.value.agentName = data.agent_name;
+          if (data.agent_type) agentMsg.value.agentType = data.agent_type;
+          if (data.agent_display_name) {
+              agentMsg.value.agentDisplayName = data.agent_display_name;
+          }
+        }
+        if (data.rag_retrieval) {
+          ragRetrievalMeta.value = data.rag_retrieval;
+        }
+        if (data.permission_notice) {
+          agentMsg.value.permissionNotice = data.permission_notice;
+        }
+      }
+
+      // Handle Status
+      if (data.status === "generating") {
+        // Only stop thinking if we already have content, otherwise wait for first content chunk
+        if (agentMsg.value.content || pendingContentBuffer) {
+           agentMsg.value.isThinking = false;
+           if (thoughtTimer) {
+             clearInterval(thoughtTimer);
+             thoughtTimer = null;
+           }
+        }
+      }
+      if (data.intent) {
+        agentMsg.value.intent = data.intent;
+      }
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const dataLines = sseLineParser.feed(chunk);
+
+        // 单帧可能含大量委派日志与增量，每处理 20 条让出一个宏任务避免阻塞点击与滚动
+        let frameProcessed = 0;
+        for (const dataStr of dataLines) {
+            frameProcessed += 1;
+            if (frameProcessed % 20 === 0) {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+            if (dataStr === "[DONE]") continue;
+
+            try {
+              const data = JSON.parse(dataStr);
+              if (data?.type === "keepalive") {
+                // 后端静默期心跳帧：仅用于连接保活，无业务负载。
+                continue;
+              }
+              processDebugSseEvent(data);
+            } catch (e) {
+              console.warn("Failed to parse SSE chunk", e);
+            }
+        }
+      }
+      for (const dataStr of sseLineParser.flush()) {
+        if (dataStr === "[DONE]") continue;
+        try {
+          const data = JSON.parse(dataStr);
+          if (data?.type === "keepalive") continue;
+          processDebugSseEvent(data);
+        } catch (e) {
+          console.warn("Failed to parse final SSE chunk", e);
+        }
+      }
+    } finally {
+      flushReasoningBuffer();
+      flushContentBuffer();
     }
 
     // Render final content as markdown - REMOVED to fix Chart Rendering
@@ -3974,6 +4244,7 @@ const addRealLog = (msg: Message, data: any) => {
     if (data.started_at !== undefined) existingLog.started_at = data.started_at;
     if (data.row_filter_applied === true) existingLog.rowFilterApplied = true;
     syncProcessTimelineLog(msg, { ...data, id: logId }, existingLog.category);
+    bumpSkillFlowBadgeVersion(msg);
   } else {
     // Categorization Logic for new logs
     let inferredCategory = (data.category as any) || 'default';
@@ -4015,6 +4286,7 @@ const addRealLog = (msg: Message, data: any) => {
     };
     msg.logs.push(log);
     syncProcessTimelineLog(msg, { ...data, id: logId, category: inferredCategory }, inferredCategory);
+    bumpSkillFlowBadgeVersion(msg);
   }
 };
 
@@ -4033,17 +4305,36 @@ const submitPendingExternalExecution = async (msg: Message) => {
   }
   abortController = resumeAbort;
 
+  const resumeEventPump = createBufferedStreamEventPump(
+    (data) => {
+      if (debugUnmounted) return;
+      applyPermissionStreamEvent(msg, data);
+      if (data.type !== "model_call" && data.type !== "run_config" && data.type !== "keepalive") {
+        scrollToBottom();
+      }
+    },
+    {
+      hasReasoning: () => Boolean(msg.reasoningContent),
+      hasContent: () => Boolean(msg.content),
+      onFlush: () => {
+        if (!debugUnmounted) scrollToBottom();
+      },
+    },
+  );
+
   try {
     await resumeExternalExecutionStream({
       requestId: pending.external_execution_request_id,
       toolCall: pending.tool_call,
       output: pending.outputDraft || "(empty external result)",
       signal: resumeAbort.signal,
-      onEvent: (data) => applyPermissionStreamEvent(msg, data),
+      onEvent: (data) => resumeEventPump.push(data),
     });
   } catch (error: any) {
+    // 先刷缓冲再写提示，否则残留正文会排到失败提示后面
+    resumeEventPump.flush();
     if (error?.name === "AbortError") {
-      msg.content += "\n[已取消提交外部执行结果]";
+      if (!debugUnmounted) msg.content += "\n[已取消提交外部执行结果]";
     } else {
       pending.status = "error";
       msg.content += `\n[外部执行恢复失败: ${error.message || "Unknown error"}]`;
@@ -4051,6 +4342,11 @@ const submitPendingExternalExecution = async (msg: Message) => {
   } finally {
     if (abortController === resumeAbort) {
       abortController = null;
+    }
+    if (!debugUnmounted) {
+      resumeEventPump.flush();
+    } else {
+      resumeEventPump.cancel();
     }
     pending.isSubmitting = false;
     isProcessing.value = msg.pendingExternalExecution?.status === "pending" || msg.pendingPermission?.status === "pending";
@@ -4334,6 +4630,23 @@ const confirmPendingPermission = async (
   }
   abortController = resumeAbort;
 
+  const permissionEventPump = createBufferedStreamEventPump(
+    (data) => {
+      if (debugUnmounted) return;
+      applyPermissionStreamEvent(msg, data);
+      if (data.type !== "model_call" && data.type !== "run_config" && data.type !== "keepalive") {
+        scrollToBottom();
+      }
+    },
+    {
+      hasReasoning: () => Boolean(msg.reasoningContent),
+      hasContent: () => Boolean(msg.content),
+      onFlush: () => {
+        if (!debugUnmounted) scrollToBottom();
+      },
+    },
+  );
+
   try {
     const response = await fetch(`/api/v1/chat/permissions/${pending.permission_request_id}/confirm`, {
       method: "POST",
@@ -4353,18 +4666,22 @@ const confirmPendingPermission = async (
       const { done, value } = await reader.read();
       if (done) break;
       const dataLines = parser.feed(decoder.decode(value, { stream: true }));
+      let permissionFrameProcessed = 0;
       for (const dataStr of dataLines) {
+        permissionFrameProcessed += 1;
+        if (permissionFrameProcessed % 20 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
         if (dataStr === "[DONE]") {
           isPermissionStreamDone = true;
           break;
         }
         try {
-          applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+          permissionEventPump.push(JSON.parse(dataStr));
         } catch (parseErr) {
           console.warn("Failed to parse permission SSE event:", dataStr, parseErr);
         }
       }
-      scrollToBottom();
       if (isPermissionStreamDone) {
         try {
           await reader.cancel();
@@ -4377,15 +4694,17 @@ const confirmPendingPermission = async (
     for (const dataStr of parser.flush()) {
       if (dataStr === "[DONE]") continue;
       try {
-        applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+        permissionEventPump.push(JSON.parse(dataStr));
       } catch (parseErr) {
         console.warn("Failed to parse final permission SSE event:", dataStr, parseErr);
       }
     }
   } catch (error: any) {
+    // 同外部执行恢复：先刷缓冲再写提示
+    permissionEventPump.flush();
     if (error?.name === "AbortError") {
       msg.isThinking = false;
-      msg.content += "\n[已终止工具确认流]";
+      if (!debugUnmounted) msg.content += "\n[已终止工具确认流]";
     } else {
       pending.status = "error";
       msg.isThinking = false;
@@ -4394,6 +4713,11 @@ const confirmPendingPermission = async (
   } finally {
     if (abortController === resumeAbort) {
       abortController = null;
+    }
+    if (!debugUnmounted) {
+      permissionEventPump.flush();
+    } else {
+      permissionEventPump.cancel();
     }
     pending.isSubmitting = false;
     isProcessing.value = Boolean(
@@ -4463,7 +4787,14 @@ const discardPendingPermission = (msg: Message) => {
   pending.expanded = false;
 };
 
+let debugUnmounted = false;
+
 onUnmounted(() => {
+  debugUnmounted = true;
+  if (scrollToBottomFrame !== null) {
+    cancelAnimationFrame(scrollToBottomFrame);
+    scrollToBottomFrame = null;
+  }
   if (abortController) abortController.abort();
 });
 </script>
@@ -5090,7 +5421,7 @@ onUnmounted(() => {
                 :duration="msg.thoughtDuration"
                 :prompt-tokens="msg.prompt_tokens"
                 :completion-tokens="msg.completion_tokens"
-                :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
+                :skill-summary="getSkillFlowSummaryForMessage(msg, messages)"
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
                 :hide-todo="activeTodoTimeline === msg.processTimeline"

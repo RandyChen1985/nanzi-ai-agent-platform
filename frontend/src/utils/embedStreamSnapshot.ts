@@ -73,6 +73,23 @@ const clip = (value: unknown, max: number): string => {
   return text.length > max ? text.slice(0, max) : text;
 };
 
+const serializedSnapshotCache = new WeakMap<object, string>();
+
+const trySerializeWithinLimit = (value: EmbedStreamSnapshot, maxBytes: number): boolean => {
+  try {
+    const raw = JSON.stringify(value);
+    if (!raw || raw.length > maxBytes) return false;
+    serializedSnapshotCache.set(value, raw);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export function serializeEmbedStreamSnapshot(snapshot: EmbedStreamSnapshot): string {
+  return serializedSnapshotCache.get(snapshot) ?? JSON.stringify(snapshot);
+}
+
 const serializedBytes = (value: unknown): number => {
   try {
     return JSON.stringify(value)?.length ?? 0;
@@ -221,7 +238,7 @@ export function buildEmbedStreamSnapshot(
     savedAt: Number.isFinite(input?.now) ? Number(input!.now) : Date.now(),
   };
 
-  if (serializedBytes(base) <= SNAPSHOT_MAX_BYTES) return base;
+  if (trySerializeWithinLimit(base, SNAPSHOT_MAX_BYTES)) return base;
 
   // 体积降级：先丢时间线（最大的那块），再丢思考正文，保证绝不撑爆 sessionStorage。
   // 交互态是「刷新后唯一可点的东西」，降级顺序里必须最后才考虑它。
@@ -229,13 +246,13 @@ export function buildEmbedStreamSnapshot(
     ...base,
     draft: { ...base.draft, processTimeline: [] },
   };
-  if (serializedBytes(withoutTimeline) <= SNAPSHOT_MAX_BYTES) return withoutTimeline;
+  if (trySerializeWithinLimit(withoutTimeline, SNAPSHOT_MAX_BYTES)) return withoutTimeline;
 
   const minimal: EmbedStreamSnapshot = {
     ...base,
     draft: { ...base.draft, processTimeline: [], reasoningContent: "" },
   };
-  return serializedBytes(minimal) <= SNAPSHOT_MAX_BYTES ? minimal : null;
+  return trySerializeWithinLimit(minimal, SNAPSHOT_MAX_BYTES) ? minimal : null;
 }
 
 export function isEmbedStreamSnapshotUsable(
