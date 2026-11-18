@@ -868,17 +868,24 @@ export function syncProcessTimelineTodo<T extends AgentStreamMessage>(
  */
 const narrationDeltaBuffer = new WeakMap<
   object,
-  { at: number; buf: string; sourceId?: string }
+  { at: number; buf: string; sourceId?: string; timer?: ReturnType<typeof setTimeout> | null }
 >();
 
-/** 把缓冲中的旁白增量刷进时间线（切阶段 / 提交 / 提升时都要先刷）。 */
+/** 把缓冲中的旁白增量刷进时间线（切阶段 / 提交 / 提升 / 尾帧定时器到期时都要先刷）。 */
 export function flushTimelineNarrationDelta<T extends AgentStreamMessage>(msg: T): void {
   const state = narrationDeltaBuffer.get(msg);
-  if (!state || !state.buf) return;
+  if (!state) return;
+  if (state.timer != null) {
+    clearTimeout(state.timer);
+    state.timer = null;
+  }
+  if (!state.buf) return;
   const { buf, sourceId } = state;
   state.buf = "";
   state.at = Date.now();
+  msg.processNarrationPending = appendProcessNarrationText(msg.processNarrationPending || "", buf);
   appendTimelineNarrationDelta(msg, buf, sourceId);
+  if (!msg.content) msg.isProcessNarrationExpanded = true;
 }
 
 export function applyProcessNarrationEvent<T extends AgentStreamMessage>(
@@ -890,8 +897,7 @@ export function applyProcessNarrationEvent<T extends AgentStreamMessage>(
   const sourceId = narrationSourceId(data);
   if (eventType === "process_narration") {
     if (piece) {
-      msg.processNarrationPending = appendProcessNarrationText(msg.processNarrationPending || "", piece);
-      const state = narrationDeltaBuffer.get(msg) || { at: 0, buf: "", sourceId };
+      const state = narrationDeltaBuffer.get(msg) || { at: 0, buf: "", sourceId, timer: null };
       // 并行代理切换发言权时必须先把上一段落盘：缓冲只保存一个 sourceId，
       // 合并后整段文本会被挂到最后说话那个 agent 的节点上。
       if (state.buf && state.sourceId !== sourceId) {
@@ -899,14 +905,17 @@ export function applyProcessNarrationEvent<T extends AgentStreamMessage>(
       }
       state.buf += piece;
       state.sourceId = sourceId;
-      if (Date.now() - state.at >= 100) {
-        const buffered = state.buf;
-        state.buf = "";
-        state.at = Date.now();
-        appendTimelineNarrationDelta(msg, buffered, sourceId);
-      }
       narrationDeltaBuffer.set(msg, state);
-      if (!msg.content) msg.isProcessNarrationExpanded = true;
+      if (Date.now() - state.at >= 100) {
+        flushTimelineNarrationDelta(msg);
+      } else if (state.timer == null) {
+        const delay = Math.max(16, 100 - (Date.now() - state.at));
+        state.timer = setTimeout(() => {
+          state.timer = null;
+          flushTimelineNarrationDelta(msg);
+        }, delay);
+        (state.timer as any)?.unref?.();
+      }
     }
     return true;
   }
@@ -1184,7 +1193,12 @@ export async function resumeExternalExecutionStream(options: {
     // createSseLineParser.feed/flush 已剥离 `data: ` 前缀并 trim，
     // 返回的是纯 JSON payload 数组，无需（也不应）再做 data: 前缀二次过滤。
     const lines = parser.feed(decoder.decode(value, { stream: true }));
+    let processed = 0;
     for (const payload of lines) {
+      processed += 1;
+      if (processed % 20 === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
       if (payload === "[DONE]") return;
       try {
         options.onEvent(JSON.parse(payload));
@@ -1201,4 +1215,149 @@ export async function resumeExternalExecutionStream(options: {
       // ignore
     }
   }
+}
+
+export interface BufferedStreamEventPump {
+  push: (data: Record<string, any>) => void;
+  flush: () => void;
+  cancel: () => void;
+}
+
+/**
+ * 为权限确认/外部执行恢复流提供的通用合帧缓冲器：
+ * - 首片思考/正文立即呈现，后续 `reasoning_content` 按 80ms 合并、`answer_delta` 按动画帧合并；
+ * - 遇到 `retraction` 取消挂起的正文缓冲，遇到其余事件先按顺序冲刷再分发，保证时序不乱；
+ * - 兼容无 `requestAnimationFrame` 的测试环境（回退 16ms `setTimeout`）。
+ */
+export function createBufferedStreamEventPump(
+  dispatch: (data: Record<string, any>) => void,
+  options: {
+    reasoningIntervalMs?: number;
+    hasReasoning?: () => boolean;
+    hasContent?: () => boolean;
+    onFlush?: () => void;
+  } = {},
+): BufferedStreamEventPump {
+  const reasoningIntervalMs = options.reasoningIntervalMs ?? 80;
+  let reasoningBuf = "";
+  let reasoningMeta: Record<string, any> | null = null;
+  let reasoningTimer: ReturnType<typeof setTimeout> | null = null;
+
+  let answerBuf = "";
+  let answerMeta: Record<string, any> | null = null;
+  let answerFrameId: number | null = null;
+  let answerFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const scheduleFrame = (fn: () => void) => {
+    if (typeof requestAnimationFrame === "function") {
+      answerFrameId = requestAnimationFrame(fn);
+    } else {
+      answerFallbackTimer = setTimeout(fn, 16);
+    }
+  };
+
+  const cancelFrame = () => {
+    if (answerFrameId !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(answerFrameId);
+      answerFrameId = null;
+    }
+    if (answerFallbackTimer !== null) {
+      clearTimeout(answerFallbackTimer);
+      answerFallbackTimer = null;
+    }
+  };
+
+  const flushReasoning = () => {
+    if (reasoningTimer !== null) {
+      clearTimeout(reasoningTimer);
+      reasoningTimer = null;
+    }
+    if (!reasoningBuf) return;
+    const content = reasoningBuf;
+    const meta = reasoningMeta || {};
+    reasoningBuf = "";
+    reasoningMeta = null;
+    dispatch({ ...meta, type: "reasoning_content", content });
+    options.onFlush?.();
+  };
+
+  const flushAnswer = () => {
+    cancelFrame();
+    if (!answerBuf) return;
+    const content = answerBuf;
+    const meta = answerMeta || {};
+    answerBuf = "";
+    answerMeta = null;
+    dispatch({ ...meta, type: "answer_delta", content });
+    options.onFlush?.();
+  };
+
+  const flush = () => {
+    flushReasoning();
+    flushAnswer();
+  };
+
+  const cancel = () => {
+    if (reasoningTimer !== null) {
+      clearTimeout(reasoningTimer);
+      reasoningTimer = null;
+    }
+    reasoningBuf = "";
+    reasoningMeta = null;
+    cancelFrame();
+    answerBuf = "";
+    answerMeta = null;
+  };
+
+  const push = (data: Record<string, any>) => {
+    if (!data || typeof data !== "object") return;
+    const type = String(data.type || "");
+    if (type === "keepalive") {
+      dispatch(data);
+      return;
+    }
+    if (type === "retraction") {
+      flushReasoning();
+      cancelFrame();
+      answerBuf = "";
+      answerMeta = null;
+      dispatch(data);
+      return;
+    }
+    if (type === "reasoning_content") {
+      const piece = String(data.content || "");
+      if (!piece) return;
+      if (!options.hasReasoning?.() && !reasoningBuf) {
+        dispatch(data);
+        options.onFlush?.();
+        return;
+      }
+      reasoningBuf += piece;
+      reasoningMeta = data;
+      if (reasoningTimer === null) {
+        reasoningTimer = setTimeout(flushReasoning, reasoningIntervalMs);
+      }
+      return;
+    }
+    if (type === "answer_delta") {
+      flushReasoning();
+      const piece = String(data.content || "");
+      if (!piece) return;
+      if (!options.hasContent?.() && !answerBuf) {
+        dispatch(data);
+        options.onFlush?.();
+        return;
+      }
+      answerBuf += piece;
+      answerMeta = data;
+      if (answerFrameId === null && answerFallbackTimer === null) {
+        scheduleFrame(flushAnswer);
+      }
+      return;
+    }
+    flush();
+    dispatch(data);
+  };
+
+  return { push, flush, cancel };
 }

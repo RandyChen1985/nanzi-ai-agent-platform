@@ -1536,6 +1536,63 @@ function cloneNestedTimelineValue<T>(
   return copy as T;
 }
 
+const LAZY_LOG_FIELDS = new Set(["progress", "total", "progressMessage"]);
+const LAZY_TEXT_FIELDS = new Set(["content"]);
+
+/**
+ * 在克隆副本上为高频增量字段建立「写隔离 + 惰性读」属性转发。
+ *
+ * 这样在 Vue `computed` 内构建不可变副本时，不会提前读取 `text.content` 或
+ * `log.progress`，避免每次 80ms 思考流式增量或工具进度刷新都导致整棵时间线树
+ * 重新深克隆并击穿下游全部 computed；只有实际渲染该节点文本/进度条的模板才会
+ * 精准订阅对应字段，同时向副本写入新值依然严格与原对象隔离。
+ */
+function defineForwardedField<T extends object, K extends keyof T>(
+  target: T,
+  source: T,
+  key: K,
+): void {
+  let hasOverride = false;
+  let overrideValue: T[K] | undefined;
+  Object.defineProperty(target, key, {
+    enumerable: true,
+    configurable: true,
+    get() {
+      return hasOverride ? overrideValue : source[key];
+    },
+    set(value: T[K]) {
+      hasOverride = true;
+      overrideValue = value;
+    },
+  });
+}
+
+function copyOwnFieldsExcluding<T extends object>(
+  source: T,
+  excludedKeys: ReadonlySet<string>,
+): Record<string, unknown> {
+  const copy: Record<string, unknown> = {};
+  for (const key of Object.keys(source)) {
+    if (excludedKeys.has(key)) continue;
+    copy[key] = (source as Record<string, unknown>)[key];
+  }
+  return copy;
+}
+
+const LOG_CLONE_EXCLUDED_FIELDS = new Set([
+  "subagent",
+  "file_metadata",
+  "user_question",
+  "children",
+  ...LAZY_LOG_FIELDS,
+]);
+
+const TEXT_CLONE_EXCLUDED_FIELDS = new Set([
+  "mergedReasoning",
+  "children",
+  ...LAZY_TEXT_FIELDS,
+]);
+
 function cloneTimelineLogItemsForMerge(
   items: ProcessTimelineLogItem[],
   clonedMap: WeakMap<object, unknown>,
@@ -1544,13 +1601,14 @@ function cloneTimelineLogItemsForMerge(
     if (!item || typeof item !== "object") return item;
     const existing = clonedMap.get(item) as ProcessTimelineLogItem | undefined;
     if (existing) return existing;
-    const clonedLog: ProcessTimelineLogItem = {
-      ...item,
-      subagent: item.subagent ? cloneNestedTimelineValue(item.subagent, clonedMap) : undefined,
-      file_metadata: item.file_metadata ? cloneNestedTimelineValue(item.file_metadata, clonedMap) : undefined,
-      user_question: item.user_question ? cloneNestedTimelineValue(item.user_question, clonedMap) : item.user_question,
-      children: undefined,
-    };
+    const clonedLog = copyOwnFieldsExcluding(item, LOG_CLONE_EXCLUDED_FIELDS) as ProcessTimelineLogItem;
+    clonedLog.subagent = item.subagent ? cloneNestedTimelineValue(item.subagent, clonedMap) : undefined;
+    clonedLog.file_metadata = item.file_metadata ? cloneNestedTimelineValue(item.file_metadata, clonedMap) : undefined;
+    clonedLog.user_question = item.user_question ? cloneNestedTimelineValue(item.user_question, clonedMap) : item.user_question;
+    clonedLog.children = undefined;
+    defineForwardedField(clonedLog, item, "progress");
+    defineForwardedField(clonedLog, item, "total");
+    defineForwardedField(clonedLog, item, "progressMessage");
     clonedMap.set(item, clonedLog);
     if (Array.isArray(item.children)) {
       clonedLog.children = cloneTimelineLogItemsForMerge(item.children, clonedMap);
@@ -1568,13 +1626,12 @@ function cloneTimelineItemsForMerge(
     const existing = clonedMap.get(item) as ProcessTimelineItem | undefined;
     if (existing) return existing;
     if (item.kind === "text") {
-      const clonedText: ProcessTimelineTextItem = {
-        ...item,
-        mergedReasoning: item.mergedReasoning
-          ? cloneNestedTimelineValue(item.mergedReasoning, clonedMap)
-          : undefined,
-        children: undefined,
-      };
+      const clonedText = copyOwnFieldsExcluding(item, TEXT_CLONE_EXCLUDED_FIELDS) as ProcessTimelineTextItem;
+      clonedText.mergedReasoning = item.mergedReasoning
+        ? cloneNestedTimelineValue(item.mergedReasoning, clonedMap)
+        : undefined;
+      clonedText.children = undefined;
+      defineForwardedField(clonedText, item, "content");
       clonedMap.set(item, clonedText);
       if (Array.isArray(item.children)) {
         clonedText.children = cloneTimelineLogItemsForMerge(item.children, clonedMap);

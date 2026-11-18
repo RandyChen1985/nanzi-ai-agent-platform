@@ -44,12 +44,18 @@ def test_chat_execution_timeline_uses_immutable_clone_and_ui_overrides():
     assert "cloneTimelineLogItemsForMerge" in util
 
     assert "mergeTimelineLogs(props.timeline, props.logs, { clone: true })" in view
+    assert "baseTimelineItems" in view
     assert "uiNodeOverrides" in view
     assert "applyUiOverrides(" in view
+    assert "visitingLogs" in view
     assert "reasoningHtmlCache" in view
+    assert "reasoningMetricsCache" in view
+    assert "narrationMetricsCache" in view
     assert "isSubagentReasoningLog(subStep)" in view
     assert "isSubagentReasoningLog(child)" in view
     assert "isSubagentReasoningLog(item)" in view
+    assert "isSubagentReasoningLog(nestedStep)" in view
+    assert "defineForwardedField" in util
     assert "markOriginalNodeUserToggled" not in view
     assert "item.userToggled = true" not in view
 
@@ -66,7 +72,18 @@ def test_both_chat_surfaces_throttle_reasoning_and_cache_hot_helpers():
         assert "handleBufferedReasoningEvent" in source, f"{label} 缺少 handleBufferedReasoningEvent"
         assert "streamBodyCache = new WeakMap" in source, f"{label} 缺少 visibleStreamBody WeakMap 缓存"
         assert "skillFlowBadgeCache = new WeakMap" in source, f"{label} 缺少技能徽章 WeakMap 缓存"
+        assert "getSkillFlowSummaryForMessage" in source, f"{label} 缺少技能摘要缓存复用"
+        assert "bumpSkillFlowBadgeVersion" in source, f"{label} 缺少技能日志版本追踪"
+        assert "createBufferedStreamEventPump" in source, f"{label} 恢复流缺少缓冲泵"
         assert "logSnapshots" not in source, f"{label} 不应保留每帧全量 logSnapshots 校验"
+
+    assert "serializeEmbedStreamSnapshot" in embed
+    assert "coalesceReplayTextEvents" in embed
+    assert "resolveMessageTimeMeta" in embed
+    assert "getCachedTimeLabelNode" in embed
+    assert "replayedCount % 20 === 0" in embed
+
+    assert "scrollToBottomFrame = requestAnimationFrame" in debug
 
     assert "for (const log of logs)" in badges
     assert "enabledBadges.push" in badges and "candidateBadges.push" in badges

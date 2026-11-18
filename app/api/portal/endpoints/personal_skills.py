@@ -4,6 +4,7 @@
 路由挂载于 /api/portal/skills/personal（在 api.py 中注册为 personal_skills router）。
 """
 
+import asyncio
 import os
 import shutil
 import logging
@@ -682,7 +683,9 @@ async def upload_personal_skill_file(
         # 与平台技能同一份文件数预算（目录累计口径）：单文件上传不判累计时，
         # 循环上传可以无限往一个技能目录里堆文件。
         skill_root = _validate_personal_skill_path(user, skill_id)
-        existing_files = count_files_under(skill_root, stop_above=MAX_FILES_PER_DIRECTORY)
+        existing_files = await asyncio.to_thread(
+            count_files_under, skill_root, stop_above=MAX_FILES_PER_DIRECTORY
+        )
         # 覆盖同名文件不新增 inode，不该被文件数上限拦住
         incoming_files = 0 if os.path.exists(target_path) else 1
         if existing_files + incoming_files > MAX_FILES_PER_DIRECTORY:

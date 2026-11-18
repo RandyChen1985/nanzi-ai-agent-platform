@@ -1,3 +1,4 @@
+import asyncio
 import fnmatch
 import json
 import logging
@@ -708,7 +709,9 @@ async def create_fs_entry(
 
     # 新建文件同样占目录的文件个数预算（目录立不占文件预算）。
     if body.kind == "file":
-        existing_files = count_files_under(parent_writable, stop_above=MAX_FILES_PER_DIRECTORY)
+        existing_files = await asyncio.to_thread(
+            count_files_under, parent_writable, stop_above=MAX_FILES_PER_DIRECTORY
+        )
         if existing_files + 1 > MAX_FILES_PER_DIRECTORY:
             raise HTTPException(
                 status_code=413,
@@ -1062,7 +1065,9 @@ async def upload_to_workspace(
 
     # 文件个数按「目录累计」判：单文件上传没有次数限制，不判累计就等于没有上限
     # （循环上传一万个小文件，体积上限一次都不会触发，但 inode 会被吃光）。
-    existing_files = count_files_under(parent, stop_above=MAX_FILES_PER_DIRECTORY)
+    existing_files = await asyncio.to_thread(
+        count_files_under, parent, stop_above=MAX_FILES_PER_DIRECTORY
+    )
     if existing_files + 1 > MAX_FILES_PER_DIRECTORY:
         raise HTTPException(
             status_code=413,

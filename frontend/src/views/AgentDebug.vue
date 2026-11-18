@@ -65,6 +65,7 @@ import {
 import {
   applyStreamTraceId,
   appendAssistantBodyDelta,
+  createBufferedStreamEventPump,
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
   markStalePendingStreamLogs,
@@ -650,6 +651,12 @@ const displayMessages = computed(() => {
   return filtered;
 });
 
+const skillFlowBadgeLogVersion = new WeakMap<object, number>();
+
+function bumpSkillFlowBadgeVersion(msg: Message): void {
+  skillFlowBadgeLogVersion.set(msg, (skillFlowBadgeLogVersion.get(msg) ?? 0) + 1);
+}
+
 const skillFlowBadgeCache = new WeakMap<
   object,
   {
@@ -659,48 +666,60 @@ const skillFlowBadgeCache = new WeakMap<
     prevUserIdx: number;
     rawUserFiles: ChatFile[] | undefined;
     filesLen: number;
+    logsRef: LogEntry[] | undefined;
     logsLen: number;
     lastLog: any;
+    lastLogTitle?: string;
+    lastLogDetails?: string;
+    logVersion: number;
     result: SkillFlowBadge[];
+    summary: string;
   }
 >();
 
-function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): SkillFlowBadge[] {
-  if (msg.role !== "agent") return [];
+function computeSkillFlowBadgeEntry(msg: Message, allMessages: Message[]) {
   const logs = msg.logs || [];
+  const lastLog = logs[logs.length - 1];
+  const logVersion = skillFlowBadgeLogVersion.get(msg) ?? 0;
   const cached = skillFlowBadgeCache.get(msg);
   const canReusePositionedUserFiles =
     cached
     && cached.allMessagesRef === allMessages
     && cached.allLen === allMessages.length
     && allMessages[cached.msgIdx]?.id === msg.id;
-  const isSettledMessage =
-    msg !== allMessages[allMessages.length - 1]
-    || (!msg.isThinking && Boolean((msg as any).status));
 
   if (canReusePositionedUserFiles) {
     const rawUserFiles = cached.prevUserIdx >= 0 ? allMessages[cached.prevUserIdx]?.files : undefined;
     const filesLen = rawUserFiles?.length || 0;
     const filesUnchanged = rawUserFiles === cached.rawUserFiles && filesLen === cached.filesLen;
     if (
-      isSettledMessage
-      && filesUnchanged
+      filesUnchanged
+      && cached.logsRef === logs
       && cached.logsLen === logs.length
-      && cached.lastLog === logs[logs.length - 1]
+      && cached.lastLog === lastLog
+      && cached.lastLogTitle === lastLog?.title
+      && cached.lastLogDetails === lastLog?.details
+      && cached.logVersion === logVersion
     ) {
-      return cached.result;
+      return cached;
     }
     if (filesUnchanged) {
       const result = buildSkillFlowBadges(rawUserFiles || [], logs);
+      const summary = result.length > 0 ? summarizeSkillFlowBadges(result) : "";
+      cached.logsRef = logs;
       cached.logsLen = logs.length;
-      cached.lastLog = logs[logs.length - 1];
+      cached.lastLog = lastLog;
+      cached.lastLogTitle = lastLog?.title;
+      cached.lastLogDetails = lastLog?.details;
+      cached.logVersion = logVersion;
       cached.result = result;
-      return result;
+      cached.summary = summary;
+      return cached;
     }
   }
 
   const idx = allMessages.findIndex((m) => m.id === msg.id);
-  if (idx <= 0) return [];
+  if (idx <= 0) return null;
   let prevUserIdx = -1;
   let rawUserFiles: ChatFile[] | undefined;
   for (let i = idx - 1; i >= 0; i--) {
@@ -714,18 +733,37 @@ function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): Ski
   }
   const files = rawUserFiles || [];
   const result = buildSkillFlowBadges(files, logs);
-  skillFlowBadgeCache.set(msg, {
+  const summary = result.length > 0 ? summarizeSkillFlowBadges(result) : "";
+  const entry = {
     allMessagesRef: allMessages,
     allLen: allMessages.length,
     msgIdx: idx,
     prevUserIdx,
     rawUserFiles,
     filesLen: files.length,
+    logsRef: logs,
     logsLen: logs.length,
-    lastLog: logs[logs.length - 1],
+    lastLog,
+    lastLogTitle: lastLog?.title,
+    lastLogDetails: lastLog?.details,
+    logVersion,
     result,
-  });
-  return result;
+    summary,
+  };
+  skillFlowBadgeCache.set(msg, entry);
+  return entry;
+}
+
+const EMPTY_SKILL_FLOW_BADGES: SkillFlowBadge[] = [];
+
+function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): SkillFlowBadge[] {
+  if (msg.role !== "agent") return EMPTY_SKILL_FLOW_BADGES;
+  return computeSkillFlowBadgeEntry(msg, allMessages)?.result ?? EMPTY_SKILL_FLOW_BADGES;
+}
+
+function getSkillFlowSummaryForMessage(msg: Message, allMessages: Message[]): string {
+  if (msg.role !== "agent") return "";
+  return computeSkillFlowBadgeEntry(msg, allMessages)?.summary ?? "";
 }
 const conversationId = ref("");
 const metadataMountableDatasets = ref<Array<{ id: string; name?: string; description?: string; dataset_name?: string }>>([]);
@@ -2757,10 +2795,22 @@ const handleScroll = () => {
   isUserAtBottom.value = scrollHeight - scrollTop - clientHeight < 50;
 };
 
+let scrollToBottomFrame: number | null = null;
+let scrollToBottomForcePending = false;
+
 const scrollToBottom = (force = false) => {
-  if (messagesContainer.value && (isUserAtBottom.value || force)) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
-  }
+  scrollToBottomForcePending = scrollToBottomForcePending || force;
+  if (scrollToBottomFrame !== null) return;
+  scrollToBottomFrame = requestAnimationFrame(() => {
+    scrollToBottomFrame = null;
+    const pendingForce = scrollToBottomForcePending;
+    scrollToBottomForcePending = false;
+    nextTick(() => {
+      if (messagesContainer.value && (isUserAtBottom.value || pendingForce)) {
+        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+      }
+    });
+  });
 };
 
 watch(
@@ -3691,6 +3741,8 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     // Check stale pending logs every 10 seconds (20 * 500ms)
     if (ticks % 20 === 0) {
       if (markStalePendingStreamLogs(agentMsg.value)) {
+        // 原地改 status/details 不会变更数组引用，必须显式让徽章缓存失效
+        bumpSkillFlowBadgeVersion(agentMsg.value);
         agentMsg.value.isThinking = false;
       }
     }
@@ -4192,6 +4244,7 @@ const addRealLog = (msg: Message, data: any) => {
     if (data.started_at !== undefined) existingLog.started_at = data.started_at;
     if (data.row_filter_applied === true) existingLog.rowFilterApplied = true;
     syncProcessTimelineLog(msg, { ...data, id: logId }, existingLog.category);
+    bumpSkillFlowBadgeVersion(msg);
   } else {
     // Categorization Logic for new logs
     let inferredCategory = (data.category as any) || 'default';
@@ -4233,6 +4286,7 @@ const addRealLog = (msg: Message, data: any) => {
     };
     msg.logs.push(log);
     syncProcessTimelineLog(msg, { ...data, id: logId, category: inferredCategory }, inferredCategory);
+    bumpSkillFlowBadgeVersion(msg);
   }
 };
 
@@ -4251,17 +4305,36 @@ const submitPendingExternalExecution = async (msg: Message) => {
   }
   abortController = resumeAbort;
 
+  const resumeEventPump = createBufferedStreamEventPump(
+    (data) => {
+      if (debugUnmounted) return;
+      applyPermissionStreamEvent(msg, data);
+      if (data.type !== "model_call" && data.type !== "run_config" && data.type !== "keepalive") {
+        scrollToBottom();
+      }
+    },
+    {
+      hasReasoning: () => Boolean(msg.reasoningContent),
+      hasContent: () => Boolean(msg.content),
+      onFlush: () => {
+        if (!debugUnmounted) scrollToBottom();
+      },
+    },
+  );
+
   try {
     await resumeExternalExecutionStream({
       requestId: pending.external_execution_request_id,
       toolCall: pending.tool_call,
       output: pending.outputDraft || "(empty external result)",
       signal: resumeAbort.signal,
-      onEvent: (data) => applyPermissionStreamEvent(msg, data),
+      onEvent: (data) => resumeEventPump.push(data),
     });
   } catch (error: any) {
+    // 先刷缓冲再写提示，否则残留正文会排到失败提示后面
+    resumeEventPump.flush();
     if (error?.name === "AbortError") {
-      msg.content += "\n[已取消提交外部执行结果]";
+      if (!debugUnmounted) msg.content += "\n[已取消提交外部执行结果]";
     } else {
       pending.status = "error";
       msg.content += `\n[外部执行恢复失败: ${error.message || "Unknown error"}]`;
@@ -4269,6 +4342,11 @@ const submitPendingExternalExecution = async (msg: Message) => {
   } finally {
     if (abortController === resumeAbort) {
       abortController = null;
+    }
+    if (!debugUnmounted) {
+      resumeEventPump.flush();
+    } else {
+      resumeEventPump.cancel();
     }
     pending.isSubmitting = false;
     isProcessing.value = msg.pendingExternalExecution?.status === "pending" || msg.pendingPermission?.status === "pending";
@@ -4552,6 +4630,23 @@ const confirmPendingPermission = async (
   }
   abortController = resumeAbort;
 
+  const permissionEventPump = createBufferedStreamEventPump(
+    (data) => {
+      if (debugUnmounted) return;
+      applyPermissionStreamEvent(msg, data);
+      if (data.type !== "model_call" && data.type !== "run_config" && data.type !== "keepalive") {
+        scrollToBottom();
+      }
+    },
+    {
+      hasReasoning: () => Boolean(msg.reasoningContent),
+      hasContent: () => Boolean(msg.content),
+      onFlush: () => {
+        if (!debugUnmounted) scrollToBottom();
+      },
+    },
+  );
+
   try {
     const response = await fetch(`/api/v1/chat/permissions/${pending.permission_request_id}/confirm`, {
       method: "POST",
@@ -4571,18 +4666,22 @@ const confirmPendingPermission = async (
       const { done, value } = await reader.read();
       if (done) break;
       const dataLines = parser.feed(decoder.decode(value, { stream: true }));
+      let permissionFrameProcessed = 0;
       for (const dataStr of dataLines) {
+        permissionFrameProcessed += 1;
+        if (permissionFrameProcessed % 20 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
         if (dataStr === "[DONE]") {
           isPermissionStreamDone = true;
           break;
         }
         try {
-          applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+          permissionEventPump.push(JSON.parse(dataStr));
         } catch (parseErr) {
           console.warn("Failed to parse permission SSE event:", dataStr, parseErr);
         }
       }
-      scrollToBottom();
       if (isPermissionStreamDone) {
         try {
           await reader.cancel();
@@ -4595,15 +4694,17 @@ const confirmPendingPermission = async (
     for (const dataStr of parser.flush()) {
       if (dataStr === "[DONE]") continue;
       try {
-        applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+        permissionEventPump.push(JSON.parse(dataStr));
       } catch (parseErr) {
         console.warn("Failed to parse final permission SSE event:", dataStr, parseErr);
       }
     }
   } catch (error: any) {
+    // 同外部执行恢复：先刷缓冲再写提示
+    permissionEventPump.flush();
     if (error?.name === "AbortError") {
       msg.isThinking = false;
-      msg.content += "\n[已终止工具确认流]";
+      if (!debugUnmounted) msg.content += "\n[已终止工具确认流]";
     } else {
       pending.status = "error";
       msg.isThinking = false;
@@ -4612,6 +4713,11 @@ const confirmPendingPermission = async (
   } finally {
     if (abortController === resumeAbort) {
       abortController = null;
+    }
+    if (!debugUnmounted) {
+      permissionEventPump.flush();
+    } else {
+      permissionEventPump.cancel();
     }
     pending.isSubmitting = false;
     isProcessing.value = Boolean(
@@ -4681,7 +4787,14 @@ const discardPendingPermission = (msg: Message) => {
   pending.expanded = false;
 };
 
+let debugUnmounted = false;
+
 onUnmounted(() => {
+  debugUnmounted = true;
+  if (scrollToBottomFrame !== null) {
+    cancelAnimationFrame(scrollToBottomFrame);
+    scrollToBottomFrame = null;
+  }
   if (abortController) abortController.abort();
 });
 </script>
@@ -5308,7 +5421,7 @@ onUnmounted(() => {
                 :duration="msg.thoughtDuration"
                 :prompt-tokens="msg.prompt_tokens"
                 :completion-tokens="msg.completion_tokens"
-                :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
+                :skill-summary="getSkillFlowSummaryForMessage(msg, messages)"
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
                 :hide-todo="activeTodoTimeline === msg.processTimeline"

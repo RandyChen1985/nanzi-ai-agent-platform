@@ -113,13 +113,17 @@ def extract_archive(
     else:
         final_dir = target_root
 
+    entry_limit = max(1, int(max_entries))
+    # 累计口径：目标目录**已有**的文件也占预算。只数本次归档的话，同一个目录
+    # 解两次 4000 条的包就能突破 5000，上限等于没有。
+    existing_files = count_files_under(final_dir, stop_above=entry_limit)
     state = _ExtractState(
         final_dir=final_dir,
         max_total_bytes=max(1, int(max_total_bytes)),
-        max_entries=max(1, int(max_entries)),
-        # 累计口径：目标目录**已有**的文件也占预算。只数本次归档的话，同一个目录
-        # 解两次 4000 条的包就能突破 5000，上限等于没有。
-        existing_files=count_files_under(final_dir),
+        max_entries=entry_limit,
+        existing_files=existing_files,
+        # 数到「上限+1」就早停了：多出来的部分没数，消息里只能说「超过上限」
+        existing_files_truncated=existing_files > entry_limit,
     )
     try:
         if suffix == ".zip":
@@ -147,6 +151,8 @@ class _ExtractState:
     max_total_bytes: int
     max_entries: int
     existing_files: int = 0
+    # 早停时 existing_files 只是「已超过上限」的哨兵值，真实数量可能大得多
+    existing_files_truncated: bool = False
     file_count: int = 0
     total_bytes: int = 0
     skipped: List[Dict[str, str]] = field(default_factory=list)
@@ -157,12 +163,19 @@ class _ExtractState:
     def remaining_bytes(self) -> int:
         return self.max_total_bytes - self.total_bytes
 
+    @property
+    def existing_files_hint(self) -> str:
+        """既有文件数的用户可读描述：早停后不能把哨兵值当精确数报出去。"""
+        if self.existing_files_truncated:
+            return f"已有超过 {self.max_entries} 个"
+        return f"已有 {self.existing_files} 个"
+
     def ensure_entry_headroom(self, incoming: int) -> None:
         """本归档的文件数 + 目录已有文件数不得越过上限（累计口径）。"""
         if self.existing_files + incoming > self.max_entries:
             raise ArchiveExtractError(
                 f"目标目录文件数将超过上限（{self.max_entries} 个，"
-                f"已有 {self.existing_files} 个），已中止并回滚。",
+                f"{self.existing_files_hint}），已中止并回滚。",
                 413,
             )
 

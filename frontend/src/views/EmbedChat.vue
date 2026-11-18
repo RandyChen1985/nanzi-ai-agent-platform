@@ -898,7 +898,7 @@
                 :duration="msg.thoughtDuration"
                 :prompt-tokens="msg.prompt_tokens"
                 :completion-tokens="msg.completion_tokens"
-                :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
+                :skill-summary="getSkillFlowSummaryForMessage(msg, messages)"
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
                 :hide-todo="activeTodoTimeline === msg.processTimeline"
@@ -2676,6 +2676,7 @@ import { planHistorySync, shouldKeepRecoverySync } from "@/utils/runRecoverySync
 import { computePinnedDrawerLayout } from "@/utils/pinnedDrawerLayout";
 import { planRecoveryCard, type RecoveryCardState } from "@/utils/recoveryCard";
 import {
+  coalesceReplayTextEvents,
   planStreamReplay,
   resetDraftForReplay,
   shouldResetDraftBeforeReplay,
@@ -2685,6 +2686,7 @@ import {
 import {
   buildEmbedStreamSnapshot,
   isEmbedStreamSnapshotUsable,
+  serializeEmbedStreamSnapshot,
   stripClientStreamErrorSuffix,
   type EmbedStreamSnapshot,
 } from "@/utils/embedStreamSnapshot";
@@ -2965,8 +2967,10 @@ import { usePinnedConversations } from "@/composables/chat/usePinnedConversation
 import {
   applyStreamTraceId,
   appendAssistantBodyDelta,
+  createBufferedStreamEventPump,
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
+  flushTimelineNarrationDelta,
   resolveStreamLogDurationMs,
   finalizeAllPendingStreamLogs,
   markStalePendingStreamLogs,
@@ -3245,6 +3249,12 @@ function visibleStreamBody(msg: Message): string {
   return result;
 }
 
+const skillFlowBadgeLogVersion = new WeakMap<object, number>();
+
+function bumpSkillFlowBadgeVersion(msg: Message): void {
+  skillFlowBadgeLogVersion.set(msg, (skillFlowBadgeLogVersion.get(msg) ?? 0) + 1);
+}
+
 const skillFlowBadgeCache = new WeakMap<
   object,
   {
@@ -3254,48 +3264,60 @@ const skillFlowBadgeCache = new WeakMap<
     prevUserIdx: number;
     rawUserFiles: ChatFile[] | undefined;
     filesLen: number;
+    logsRef: LogEntry[] | undefined;
     logsLen: number;
     lastLog: any;
+    lastLogTitle?: string;
+    lastLogDetails?: string;
+    logVersion: number;
     result: SkillFlowBadge[];
+    summary: string;
   }
 >();
 
-function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): SkillFlowBadge[] {
-  if (msg.role !== "agent") return [];
+function computeSkillFlowBadgeEntry(msg: Message, allMessages: Message[]) {
   const logs = msg.logs || [];
+  const lastLog = logs[logs.length - 1];
+  const logVersion = skillFlowBadgeLogVersion.get(msg) ?? 0;
   const cached = skillFlowBadgeCache.get(msg);
   const canReusePositionedUserFiles =
     cached
     && cached.allMessagesRef === allMessages
     && cached.allLen === allMessages.length
     && allMessages[cached.msgIdx]?.id === msg.id;
-  const isSettledMessage =
-    msg !== allMessages[allMessages.length - 1]
-    || (!msg.isThinking && Boolean((msg as any).status));
 
   if (canReusePositionedUserFiles) {
     const rawUserFiles = cached.prevUserIdx >= 0 ? allMessages[cached.prevUserIdx]?.files : undefined;
     const filesLen = rawUserFiles?.length || 0;
     const filesUnchanged = rawUserFiles === cached.rawUserFiles && filesLen === cached.filesLen;
     if (
-      isSettledMessage
-      && filesUnchanged
+      filesUnchanged
+      && cached.logsRef === logs
       && cached.logsLen === logs.length
-      && cached.lastLog === logs[logs.length - 1]
+      && cached.lastLog === lastLog
+      && cached.lastLogTitle === lastLog?.title
+      && cached.lastLogDetails === lastLog?.details
+      && cached.logVersion === logVersion
     ) {
-      return cached.result;
+      return cached;
     }
     if (filesUnchanged) {
       const result = buildSkillFlowBadges(rawUserFiles || [], logs);
+      const summary = result.length > 0 ? summarizeSkillFlowBadges(result) : "";
+      cached.logsRef = logs;
       cached.logsLen = logs.length;
-      cached.lastLog = logs[logs.length - 1];
+      cached.lastLog = lastLog;
+      cached.lastLogTitle = lastLog?.title;
+      cached.lastLogDetails = lastLog?.details;
+      cached.logVersion = logVersion;
       cached.result = result;
-      return result;
+      cached.summary = summary;
+      return cached;
     }
   }
 
   const idx = allMessages.findIndex((m) => m.id === msg.id);
-  if (idx <= 0) return [];
+  if (idx <= 0) return null;
   let prevUserIdx = -1;
   let rawUserFiles: ChatFile[] | undefined;
   for (let i = idx - 1; i >= 0; i--) {
@@ -3309,18 +3331,76 @@ function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): Ski
   }
   const files = rawUserFiles || [];
   const result = buildSkillFlowBadges(files, logs);
-  skillFlowBadgeCache.set(msg, {
+  const summary = result.length > 0 ? summarizeSkillFlowBadges(result) : "";
+  const entry = {
     allMessagesRef: allMessages,
     allLen: allMessages.length,
     msgIdx: idx,
     prevUserIdx,
     rawUserFiles,
     filesLen: files.length,
+    logsRef: logs,
     logsLen: logs.length,
-    lastLog: logs[logs.length - 1],
+    lastLog,
+    lastLogTitle: lastLog?.title,
+    lastLogDetails: lastLog?.details,
+    logVersion,
     result,
-  });
-  return result;
+    summary,
+  };
+  skillFlowBadgeCache.set(msg, entry);
+  return entry;
+}
+
+const EMPTY_SKILL_FLOW_BADGES: SkillFlowBadge[] = [];
+
+function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): SkillFlowBadge[] {
+  if (msg.role !== "agent") return EMPTY_SKILL_FLOW_BADGES;
+  return computeSkillFlowBadgeEntry(msg, allMessages)?.result ?? EMPTY_SKILL_FLOW_BADGES;
+}
+
+function getSkillFlowSummaryForMessage(msg: Message, allMessages: Message[]): string {
+  if (msg.role !== "agent") return "";
+  return computeSkillFlowBadgeEntry(msg, allMessages)?.summary ?? "";
+}
+
+const messageTimeMetaCache = new WeakMap<
+  object,
+  { timestamp: string; timeMs: number; labelText: string }
+>();
+const TIME_LABEL_NODE_CACHE_MAX = 500;
+const timeLabelNodeCache = new Map<string, Message>();
+
+function resolveMessageTimeMeta(msg: Message): { timeMs: number; labelText: string } | null {
+  const ts = msg.timestamp;
+  if (!ts) return null;
+  const cached = messageTimeMetaCache.get(msg);
+  if (cached && cached.timestamp === ts) {
+    return cached;
+  }
+  const timeMs = new Date(ts).getTime();
+  const labelText = formatTimeLabel(ts);
+  const next = { timestamp: ts, timeMs, labelText };
+  messageTimeMetaCache.set(msg, next);
+  return next;
+}
+
+function getCachedTimeLabelNode(timeMs: number, labelText: string): Message {
+  const key = `${timeMs}:${labelText}`;
+  let node = timeLabelNodeCache.get(key);
+  if (!node) {
+    if (timeLabelNodeCache.size >= TIME_LABEL_NODE_CACHE_MAX) {
+      timeLabelNodeCache.clear();
+    }
+    node = {
+      id: -timeMs,
+      role: "system",
+      content: labelText,
+      isTimeLabel: true,
+    };
+    timeLabelNodeCache.set(key, node);
+  }
+  return node;
 }
 
 // Helper: Format Timestamp for Bubbles (Smart Date)
@@ -3367,25 +3447,20 @@ const displayMessages = computed(() => {
   if (!raw || raw.length === 0) return [];
   const result: Message[] = [];
   let lastTime = 0;
-  const tryAddDateLabel = (currMsg: Message) => {
-    if (currMsg.timestamp) {
-      const currTime = new Date(currMsg.timestamp).getTime();
-      // 5 minutes threshold
-      if (currTime - lastTime > 300000) {
-         result.push({
-           id: -currTime,
-           role: 'system',
-           content: formatTimeLabel(currMsg.timestamp),
-           isTimeLabel: true
-         });
-         lastTime = currTime;
-      }
+  const tryAddDateLabel = (currMsg: Message): number | null => {
+    const meta = resolveMessageTimeMeta(currMsg);
+    if (!meta) return null;
+    // 5 minutes threshold
+    if (meta.timeMs - lastTime > 300000) {
+      result.push(getCachedTimeLabelNode(meta.timeMs, meta.labelText));
+      lastTime = meta.timeMs;
     }
+    return meta.timeMs;
   };
   if (raw[0]) {
-    tryAddDateLabel(raw[0]);
+    const timeMs = tryAddDateLabel(raw[0]);
     result.push(raw[0]);
-    if (raw[0].timestamp) lastTime = new Date(raw[0].timestamp).getTime();
+    if (timeMs !== null) lastTime = timeMs;
   }
   for (let i = 1; i < raw.length; i++) {
     const prev = raw[i - 1];
@@ -3394,9 +3469,9 @@ const displayMessages = computed(() => {
       continue;
     }
     if (curr) {
-       tryAddDateLabel(curr);
-       result.push(curr);
-       if (curr.timestamp) lastTime = new Date(curr.timestamp).getTime();
+      const timeMs = tryAddDateLabel(curr);
+      result.push(curr);
+      if (timeMs !== null) lastTime = timeMs;
     }
   }
   return result;
@@ -6066,7 +6141,7 @@ const persistStreamSnapshot = (
   const key = streamSnapshotStorageKey(cid);
   if (!key) return;
   try {
-    sessionStorage.setItem(key, JSON.stringify(snapshot));
+    sessionStorage.setItem(key, serializeEmbedStreamSnapshot(snapshot));
   } catch {
     // 超配额或隐私模式：放弃本次快照，不影响对话本身。
   }
@@ -6503,9 +6578,23 @@ const pollConversationStreamEvents = async () => {
       // 是否完整，不再决定是否重建（见上）。
       const shouldReplayEvents = !isFirstPoll || replayEvents.length > 0;
       if (shouldReplayEvents) {
-        for (const event of replayEvents) {
+        const batchedReplayEvents = coalesceReplayTextEvents(replayEvents);
+        let replayedCount = 0;
+        for (const event of batchedReplayEvents) {
+          replayedCount += 1;
+          if (replayedCount % 20 === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            if (
+              conversationId.value !== cid
+              || replayGeneration !== streamReplayGeneration
+              || streamInFlight
+            ) {
+              return;
+            }
+          }
           applyPermissionStreamEvent(replayTarget, event, { replay: true });
         }
+        flushTimelineNarrationDelta(replayTarget);
         recoverySyncedEventCount += replayEvents.length;
         if (replayEvents.length) {
           await nextTick();
@@ -7701,6 +7790,9 @@ const startStalePendingTimer = (msg: Message) => {
       return;
     }
     if (markStalePendingStreamLogs(msg)) {
+      // 这个函数是**原地**改 log.status / log.details，既不新增条目也不改数组引用；
+      // 不 bump 版本号的话，徽章缓存会命中旧结果，超时的技能流程会一直显示「运行中」。
+      bumpSkillFlowBadgeVersion(msg);
       msg.isThinking = false;
     }
   }, 10_000);
@@ -12200,6 +12292,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
       execution_time_ms: execution_time_ms ?? currentLog.execution_time_ms,
       started_at: currentLog.started_at ?? data.started_at,
     });
+    bumpSkillFlowBadgeVersion(msg);
     if (isSandboxPrewarmLogId(logId) && currentLog.status !== "pending" && nextStatus === "pending") {
       showToast("正在拉起沙箱运行环境…", "info");
       void refreshSandboxWorkspaceStatus();
@@ -12244,6 +12337,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     rowFilterApplied: data.row_filter_applied === true,
   });
   syncProcessTimelineLog(msg, { ...data, id: logId, category }, category);
+  bumpSkillFlowBadgeVersion(msg);
   if (isSandboxPrewarmLogId(logId) && data.status === "pending") {
     showToast("正在拉起沙箱运行环境…", "info");
     void refreshSandboxWorkspaceStatus();
@@ -12450,6 +12544,28 @@ const submitPendingExternalExecution = async (msg: Message) => {
   msg.thinkingText = "正在提交外部执行结果...";
   resetStallTimer();
 
+  const resumeEventPump = createBufferedStreamEventPump(
+    (data) => {
+      if (liveWriterToken !== resumeToken || embedUnmounted) return;
+      applyPermissionStreamEvent(msg, data);
+      if (data.type !== "keepalive" && data.type !== "reasoning_content" && data.type !== "answer_delta") {
+        maybePersistStreamSnapshot();
+      }
+      if (data.type !== "model_call" && data.type !== "run_config" && data.type !== "keepalive") {
+        scrollToBottom();
+      }
+    },
+    {
+      hasReasoning: () => Boolean(msg.reasoningContent),
+      hasContent: () => Boolean(msg.content),
+      onFlush: () => {
+        if (liveWriterToken !== resumeToken || embedUnmounted) return;
+        scrollToBottom();
+        maybePersistStreamSnapshot();
+      },
+    },
+  );
+
   try {
     await resumeExternalExecutionStream({
       requestId: pending.external_execution_request_id,
@@ -12459,11 +12575,12 @@ const submitPendingExternalExecution = async (msg: Message) => {
       credentials: "include",
       signal: resumeAbort.signal,
       onEvent: (data) => {
-        applyPermissionStreamEvent(msg, data);
-        maybePersistStreamSnapshot();
+        resumeEventPump.push(data);
       },
     });
   } catch (error: any) {
+    // 先把合帧缓冲刷进消息，再追加失败提示：否则残留的正文/思考会排在提示之后，顺序错乱
+    resumeEventPump.flush();
     if (error?.name === "AbortError") {
       if (!embedUnmounted) {
         msg.content += "\n[已取消提交外部执行结果]";
@@ -12481,6 +12598,11 @@ const submitPendingExternalExecution = async (msg: Message) => {
     // 后端可能既不落库也不写审计，提前清快照会让这一轮在刷新后永久消失。收尾统一交给
     // 落库终态同步（syncLatestSessionHistory → planHistorySync → finishRecoveredTurn）。
     if (liveWriterToken === resumeToken) {
+      if (!embedUnmounted) {
+        resumeEventPump.flush();
+      } else {
+        resumeEventPump.cancel();
+      }
       streamInFlight = false;
       isProcessing.value = Boolean(
         msg.pendingExternalExecution?.status === "pending" || msg.pendingPermission?.status === "pending",
@@ -12501,6 +12623,8 @@ const submitPendingExternalExecution = async (msg: Message) => {
       nextTick(() => {
         if (!isMobile.value) chatInputRef.value?.focus();
       });
+    } else {
+      resumeEventPump.cancel();
     }
   }
 };
@@ -12634,6 +12758,28 @@ const confirmPendingPermission = async (
     resetStallTimer();
   }
 
+  const permissionEventPump = createBufferedStreamEventPump(
+    (data) => {
+      if (liveWriterToken !== resumeToken || embedUnmounted) return;
+      applyPermissionStreamEvent(msg, data);
+      if (data.type !== "keepalive" && data.type !== "reasoning_content" && data.type !== "answer_delta") {
+        maybePersistStreamSnapshot();
+      }
+      if (data.type !== "model_call" && data.type !== "run_config" && data.type !== "keepalive") {
+        scrollToBottom();
+      }
+    },
+    {
+      hasReasoning: () => Boolean(msg.reasoningContent),
+      hasContent: () => Boolean(msg.content),
+      onFlush: () => {
+        if (liveWriterToken !== resumeToken || embedUnmounted) return;
+        scrollToBottom();
+        maybePersistStreamSnapshot();
+      },
+    },
+  );
+
   try {
     const response = await fetch(`/api/v1/chat/permissions/${pending.permission_request_id}/confirm`, {
       method: "POST",
@@ -12667,13 +12813,11 @@ const confirmPendingPermission = async (
           break;
         }
         try {
-          applyPermissionStreamEvent(msg, JSON.parse(dataStr));
-          maybePersistStreamSnapshot();
+          permissionEventPump.push(JSON.parse(dataStr));
         } catch (parseErr) {
           console.warn("Failed to parse permission SSE event:", dataStr, parseErr);
         }
       }
-      scrollToBottom();
       if (isPermissionStreamDone) {
         try {
           await reader.cancel();
@@ -12686,13 +12830,14 @@ const confirmPendingPermission = async (
     for (const dataStr of parser.flush()) {
       if (dataStr === "[DONE]") continue;
       try {
-        applyPermissionStreamEvent(msg, JSON.parse(dataStr));
-        maybePersistStreamSnapshot();
+        permissionEventPump.push(JSON.parse(dataStr));
       } catch (parseErr) {
         console.warn("Failed to parse final permission SSE event:", dataStr, parseErr);
       }
     }
   } catch (error: any) {
+    // 同外部执行恢复：先落盘缓冲，再写失败提示，避免「半段正文 + 提示 + 剩下那截正文」
+    permissionEventPump.flush();
     if (error?.name === "AbortError") {
       if (!embedUnmounted) {
         msg.content += "\n[已终止工具确认流]";
@@ -12708,6 +12853,11 @@ const confirmPendingPermission = async (
     pending.isSubmitting = false;
     // 与外部执行恢复同理：不在这里 finishRecoveredTurn，收尾交给落库终态同步。
     if (liveWriterToken === resumeToken) {
+      if (!embedUnmounted) {
+        permissionEventPump.flush();
+      } else {
+        permissionEventPump.cancel();
+      }
       streamInFlight = false;
       isProcessing.value = Boolean(
         msg.pendingPermission?.status === "pending" || msg.pendingExternalExecution?.status === "pending",
@@ -13107,17 +13257,19 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   let contentRafId: number | null = null;
 
   const flushContentBuffer = () => {
+    let flushed = false;
     if (pendingContentBuffer) {
       appendAssistantBodyDelta(agentMsg.value, pendingContentBuffer);
       pendingContentBuffer = "";
       scrollToBottom();
+      flushed = true;
     }
     if (contentRafId !== null) {
       cancelAnimationFrame(contentRafId);
       contentRafId = null;
     }
-    // 每个流事件都会走到这里：按节流频率把草稿落盘，保证切走/刷新后能还原。
-    maybePersistStreamSnapshot();
+    // 仅在真正刷出正文或非思考类事件显式落盘时触发快照，避免高频空缓冲误触发序列化。
+    if (flushed) maybePersistStreamSnapshot();
   };
 
   const queueContentDelta = (piece: string) => {
@@ -13126,6 +13278,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     if (!agentMsg.value.content && !pendingContentBuffer) {
       appendAssistantBodyDelta(agentMsg.value, piece);
       scrollToBottom();
+      maybePersistStreamSnapshot();
       return;
     }
     pendingContentBuffer += piece;
@@ -13157,7 +13310,12 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       }
       return true;
     }
-    if (data.type && data.type !== "reasoning_content") flushReasoningBuffer();
+    if (data.type) {
+      if (data.type !== "reasoning_content") flushReasoningBuffer();
+      // 思考阶段也要落快照：正文还没开始就刷新页面时，已经流出的思考内容不该整段丢失。
+      // maybePersistStreamSnapshot 自带写入间隔节流，高频 reasoning 帧的代价只是一次时间比较。
+      maybePersistStreamSnapshot();
+    }
     if (data.type) flushContentBuffer();
     return false;
   };
@@ -13427,7 +13585,12 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
               agentMsg.value.isThinking = false;
             }
           }
-          if (!pendingContentBuffer && !pendingReasoningBuffer) {
+          if (
+            !pendingContentBuffer
+            && !pendingReasoningBuffer
+            && data.type !== "model_call"
+            && data.type !== "run_config"
+          ) {
             scrollToBottom();
           }
         } catch (e) {

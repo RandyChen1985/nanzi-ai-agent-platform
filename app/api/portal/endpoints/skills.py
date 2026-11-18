@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shutil
 import logging
@@ -743,7 +744,9 @@ async def create_skill_asset(
         # 就能绕过解压侧的文件数预算（目录不占文件预算，故只有 file 需要判）。
         if req.type != "folder":
             skill_root = validate_secure_skill_path(skill_id)
-            existing_files = count_files_under(skill_root, stop_above=MAX_FILES_PER_DIRECTORY)
+            existing_files = await asyncio.to_thread(
+                count_files_under, skill_root, stop_above=MAX_FILES_PER_DIRECTORY
+            )
             if existing_files + 1 > MAX_FILES_PER_DIRECTORY:
                 raise HTTPException(
                     status_code=400,
@@ -784,7 +787,9 @@ async def upload_skill_file(
         # 单文件上传是技能目录的第二个写入口：这里不判累计，文件数预算就只剩
         # 「解压」与模型侧 write_skill_file 在起作用，循环手工上传即可突破。
         skill_root = validate_secure_skill_path(skill_id)
-        existing_files = count_files_under(skill_root, stop_above=MAX_FILES_PER_DIRECTORY)
+        existing_files = await asyncio.to_thread(
+            count_files_under, skill_root, stop_above=MAX_FILES_PER_DIRECTORY
+        )
         if os.path.exists(target_path):
             # 覆盖同名文件不新增 inode，不该被文件数上限拦住
             incoming_files = 0

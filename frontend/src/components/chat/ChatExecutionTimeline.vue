@@ -686,7 +686,13 @@
                         {{ timelineMetaText(nestedStep) }}
                       </div>
                     </div>
-                    <pre v-if="hasVisibleTimelineText(nestedStep.details) && nestedStep.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ visibleTimelineText(nestedStep.details) }}</pre>
+                    <div
+                      v-if="hasVisibleTimelineText(nestedStep.details) && nestedStep.isExpanded && isSubagentReasoningLog(nestedStep)"
+                      class="reasoning-md mt-1 border-l-2 border-gray-200 pl-2.5 pr-6 text-gray-600 dark:border-gray-700 dark:text-gray-400"
+                    >
+                      <div class="reasoning-md-body" v-html="reasoningDetailsHtml(nestedStep.details)" />
+                    </div>
+                    <pre v-else-if="hasVisibleTimelineText(nestedStep.details) && nestedStep.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ visibleTimelineText(nestedStep.details) }}</pre>
                   </div>
                 </div>
                 <!-- 子步骤的工具输出：排在更深子步骤之后（输入 → 过程 → 输出） -->
@@ -988,57 +994,98 @@ function recordUiOverride(
 
 function applyUiOverridesToLog(
   log: ProcessTimelineLogItem,
-  visited: WeakSet<object>,
-): void {
-  if (!log || visited.has(log)) return;
-  visited.add(log);
+  visited: WeakMap<object, ProcessTimelineLogItem>,
+  visiting: WeakSet<object>,
+): ProcessTimelineLogItem {
+  if (!log) return log;
+  const cached = visited.get(log);
+  if (cached) return cached;
+  if (visiting.has(log)) return log;
+  visiting.add(log);
   const override = uiNodeOverrides[uiOverrideKey(log)];
+  let nextChildren = log.children;
+  let childrenChanged = false;
+  if (log.children?.length) {
+    const mapped: ProcessTimelineLogItem[] = [];
+    for (const child of log.children) {
+      const nextChild = applyUiOverridesToLog(child, visited, visiting);
+      if (nextChild !== child) childrenChanged = true;
+      mapped.push(nextChild);
+    }
+    if (childrenChanged) nextChildren = mapped;
+  }
+  visiting.delete(log);
+  if (!override && !childrenChanged) {
+    visited.set(log, log);
+    return log;
+  }
+  // 用原型投影隔离「重算时」的覆盖态：既不原地改 baseTimelineItems，也不 spread 整项
+  // （spread 会把 progress 这类字段登记成依赖，导致每条工具进度都触发整棵树重算）。
+  // 注意 recordUiOverride 在用户点击时仍会把覆盖同步到当前节点上（交互即时反馈），
+  // 那是点击路径，与这里每次重算的投影是两件事。
+  const projected = Object.create(log) as ProcessTimelineLogItem;
   if (override) {
-    if (override.isExpanded !== undefined) log.isExpanded = override.isExpanded;
-    if (override.childrenExpanded !== undefined) log.childrenExpanded = override.childrenExpanded;
-    if (override.userToggled !== undefined) log.userToggled = override.userToggled;
+    if (override.isExpanded !== undefined) projected.isExpanded = override.isExpanded;
+    if (override.childrenExpanded !== undefined) projected.childrenExpanded = override.childrenExpanded;
+    if (override.userToggled !== undefined) projected.userToggled = override.userToggled;
   }
-  for (const child of log.children || []) {
-    applyUiOverridesToLog(child, visited);
-  }
+  if (childrenChanged) projected.children = nextChildren;
+  visited.set(log, projected);
+  return projected;
 }
 
 function applyUiOverrides(list: ProcessTimelineItem[]): ProcessTimelineItem[] {
-  const visited = new WeakSet<object>();
-  for (const item of list) {
-    if (!item || visited.has(item)) continue;
-    visited.add(item);
-    const override = uiNodeOverrides[uiOverrideKey(item)];
-    if (item.kind === "text") {
-      if (override) {
-        if (override.contentExpanded !== undefined) item.contentExpanded = override.contentExpanded;
-        if (override.childrenExpanded !== undefined) item.childrenExpanded = override.childrenExpanded;
-      }
-      for (const child of item.children || []) {
-        applyUiOverridesToLog(child, visited);
-      }
-    } else if (item.kind === "log") {
-      if (override) {
-        if (override.isExpanded !== undefined) item.isExpanded = override.isExpanded;
-        if (override.childrenExpanded !== undefined) item.childrenExpanded = override.childrenExpanded;
-        if (override.userToggled !== undefined) item.userToggled = override.userToggled;
-      }
-      for (const child of item.children || []) {
-        applyUiOverridesToLog(child, visited);
-      }
+  if (Object.keys(uiNodeOverrides).length === 0) return list;
+  const visitedLogs = new WeakMap<object, ProcessTimelineLogItem>();
+  const visitingLogs = new WeakSet<object>();
+  let anyChanged = false;
+  const nextList = list.map((item) => {
+    if (!item) return item;
+    if (item.kind === "log") {
+      const nextItem = applyUiOverridesToLog(item, visitedLogs, visitingLogs);
+      if (nextItem !== item) anyChanged = true;
+      return nextItem;
     }
-  }
-  return list;
+    if (item.kind === "text") {
+      const override = uiNodeOverrides[uiOverrideKey(item)];
+      let nextChildren = item.children;
+      let childrenChanged = false;
+      if (item.children?.length) {
+        const mapped: ProcessTimelineLogItem[] = [];
+        for (const child of item.children) {
+          const nextChild = applyUiOverridesToLog(child, visitedLogs, visitingLogs);
+          if (nextChild !== child) childrenChanged = true;
+          mapped.push(nextChild);
+        }
+        if (childrenChanged) nextChildren = mapped;
+      }
+      if (!override && !childrenChanged) return item;
+      anyChanged = true;
+      const projected = Object.create(item) as ProcessTimelineTextItem;
+      if (override) {
+        if (override.contentExpanded !== undefined) projected.contentExpanded = override.contentExpanded;
+        if (override.childrenExpanded !== undefined) projected.childrenExpanded = override.childrenExpanded;
+      }
+      if (childrenChanged) projected.children = nextChildren;
+      return projected;
+    }
+    return item;
+  });
+  return anyChanged ? nextList : list;
 }
 
-const timelineItems = computed(() => {
+const baseTimelineItems = computed(() => {
   const merged = props.timeline.length
     ? mergeTimelineLogs(props.timeline, props.logs, { clone: true })
     : buildLegacyProcessTimeline(props);
   const visibleItems = props.suppressPermissionLogs ? suppressPermissionLogs(merged) : merged;
   // 当前轮由 banner 负责时隐藏清单，其余情况（含没有 settled 标记的旧快照）
   // 都归档到执行过程里，保证历史消息仍然查得到。
-  return applyUiOverrides(selectTimelineRenderableItems(visibleItems, { hideTodo: props.hideTodo }));
+  return selectTimelineRenderableItems(visibleItems, { hideTodo: props.hideTodo });
+});
+
+const timelineItems = computed(() => {
+  return applyUiOverrides(baseTimelineItems.value);
 });
 
 /**
@@ -1359,14 +1406,40 @@ function toggleCompactRounds(): void {
   compactRoundsOpen.value = !compactRoundsOpen.value;
 }
 
-/** 折叠态摘要；pending 时跟随最新内容。内部上下文块剥离沿用 visibleTimelineText。 */
-function reasoningPreviewOf(item: ProcessTimelineTextItem): ReasoningPreview {
-  return resolveReasoningPreview(visibleTimelineText(item.content), { pending: Boolean(item.pending) });
+const REASONING_METRICS_CACHE_MAX_ENTRIES = 200;
+const reasoningMetricsCache = new Map<
+  string,
+  { charCount: number; previewPending?: ReasoningPreview; previewSettled?: ReasoningPreview }
+>();
+
+function getReasoningMetricsEntry(source: string) {
+  let entry = reasoningMetricsCache.get(source);
+  if (!entry) {
+    if (reasoningMetricsCache.size >= REASONING_METRICS_CACHE_MAX_ENTRIES) {
+      reasoningMetricsCache.clear();
+    }
+    entry = { charCount: reasoningCharCount(source) };
+    reasoningMetricsCache.set(source, entry);
+  }
+  return entry;
 }
 
-/** 折叠态字数胶囊口径，与摘要同源。 */
+/** 折叠态摘要；pending 时跟随最新内容。内部上下文块剥离沿用 visibleTimelineText，并按清洗后文本缓存避免单帧重复切分。 */
+function reasoningPreviewOf(item: ProcessTimelineTextItem): ReasoningPreview {
+  const source = visibleTimelineText(item.content);
+  const entry = getReasoningMetricsEntry(source);
+  if (item.pending) {
+    entry.previewPending ??= resolveReasoningPreview(source, { pending: true });
+    return entry.previewPending;
+  }
+  entry.previewSettled ??= resolveReasoningPreview(source, { pending: false });
+  return entry.previewSettled;
+}
+
+/** 折叠态字数胶囊口径，与摘要同源（缓存避免单次渲染内 6 次重复全局空白正则替换）。 */
 function reasoningCharCountOf(item: ProcessTimelineTextItem): number {
-  return reasoningCharCount(visibleTimelineText(item.content));
+  const source = visibleTimelineText(item.content);
+  return getReasoningMetricsEntry(source).charCount;
 }
 
 /**
@@ -1455,6 +1528,25 @@ function reasoningHtml(item: ProcessTimelineTextItem): string {
  */
 const NARRATION_COLLAPSE_CHAR_THRESHOLD = 120;
 const NARRATION_COLLAPSE_LINE_THRESHOLD = 3;
+const narrationMetricsCache = new Map<string, { needsCollapse: boolean; preview: string }>();
+
+function getNarrationMetricsEntry(text: string) {
+  let entry = narrationMetricsCache.get(text);
+  if (!entry) {
+    if (narrationMetricsCache.size >= REASONING_METRICS_CACHE_MAX_ENTRIES) {
+      narrationMetricsCache.clear();
+    }
+    const needsCollapse =
+      Boolean(text)
+      && (text.length > NARRATION_COLLAPSE_CHAR_THRESHOLD
+        || text.split(/\r?\n/).filter((line) => line.trim()).length > NARRATION_COLLAPSE_LINE_THRESHOLD);
+    const flat = text.replace(/\s+/g, " ").trim();
+    const preview = flat.length > 80 ? `${flat.slice(0, 80)}…` : flat;
+    entry = { needsCollapse, preview };
+    narrationMetricsCache.set(text, entry);
+  }
+  return entry;
+}
 
 function narrationTextOf(item: ProcessTimelineTextItem): string {
   return visibleTimelineText(item.content);
@@ -1463,9 +1555,7 @@ function narrationTextOf(item: ProcessTimelineTextItem): string {
 function narrationNeedsCollapse(item: ProcessTimelineTextItem): boolean {
   const text = narrationTextOf(item);
   if (!text) return false;
-  if (text.length > NARRATION_COLLAPSE_CHAR_THRESHOLD) return true;
-  const lineCount = text.split(/\r?\n/).filter((line) => line.trim()).length;
-  return lineCount > NARRATION_COLLAPSE_LINE_THRESHOLD;
+  return getNarrationMetricsEntry(text).needsCollapse;
 }
 
 function narrationCharCountOf(item: ProcessTimelineTextItem): number {
@@ -1474,8 +1564,9 @@ function narrationCharCountOf(item: ProcessTimelineTextItem): number {
 
 /** 收起态的一行摘要：压平换行后截断，避免摘要本身又占两行。 */
 function narrationPreviewOf(item: ProcessTimelineTextItem): string {
-  const text = narrationTextOf(item).replace(/\s+/g, " ").trim();
-  return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+  const text = narrationTextOf(item);
+  if (!text) return "";
+  return getNarrationMetricsEntry(text).preview;
 }
 
 /**

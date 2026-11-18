@@ -65,22 +65,32 @@ def count_files_under(root: str, *, stop_above: int | None = None) -> int:
     二十几万。命中 ``stop_above`` 后立刻返回（返回值只保证 ``> stop_above``），
     避免每次上传都在一个已经很大的目录上白走一遍完整遍历。
 
-    统计口径是**文件**，不含目录条目：目录本身几乎不耗 inode 之外的成本，
-    真正拖垮文件系统的是文件数；这也让工作空间解压与技能解压的口径一致。
+    统计口径是**目录项里的非目录条目**：目录本身不计数；符号链接（含软链目录）一律
+    跳过且不跟随；其余条目（普通文件、FIFO、socket 等）各计一个。实现用 ``os.scandir``
+    迭代目录项，借系统提供的目录项类型信息避免对每个文件额外发起 ``lstat`` 系统调用。
     """
     limit = stop_above
-    count = 0
     root_str = str(root or "")
     if not root_str or not os.path.isdir(root_str):
         return 0
-    for current, dirnames, filenames in os.walk(root_str, followlinks=False):
-        # 软链目录不进入（followlinks=False 已保证），这里再过滤一次是为了
-        # 让计数口径与「只数普通文件」在实现上自洽。
-        dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(current, d))]
-        for name in filenames:
-            if os.path.islink(os.path.join(current, name)):
-                continue
-            count += 1
-            if limit is not None and count > limit:
-                return count
+    count = 0
+    stack = [root_str]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        else:
+                            count += 1
+                            if limit is not None and count > limit:
+                                return count
+                    except OSError:
+                        continue
+        except OSError:
+            continue
     return count

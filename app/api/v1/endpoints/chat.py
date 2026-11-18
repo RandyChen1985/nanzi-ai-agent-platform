@@ -3913,7 +3913,9 @@ async def upload_chat_file(
     os.makedirs(upload_dir, exist_ok=True)
 
     # 文件个数预算与工作空间、技能目录同一份口径（目录累计）。
-    existing_files = count_files_under(upload_dir, stop_above=MAX_FILES_PER_DIRECTORY)
+    existing_files = await asyncio.to_thread(
+        count_files_under, upload_dir, stop_above=MAX_FILES_PER_DIRECTORY
+    )
     if existing_files + 1 > MAX_FILES_PER_DIRECTORY:
         raise HTTPException(
             status_code=413,

@@ -7,6 +7,16 @@ const { loadModule } = createRequire(import.meta.url)('./ts_module_loader.cjs')
 
 const { mergeTimelineLogs } = loadModule('frontend/src/utils/processTimeline.ts')
 const {
+  buildEmbedStreamSnapshot,
+  serializeEmbedStreamSnapshot,
+} = loadModule('frontend/src/utils/embedStreamSnapshot.ts')
+const { coalesceReplayTextEvents } = loadModule('frontend/src/utils/conversationStreamReplay.ts')
+const {
+  applyProcessNarrationEvent,
+  createBufferedStreamEventPump,
+  flushTimelineNarrationDelta,
+} = loadModule('frontend/src/utils/agentscopeSseHandlers.ts')
+const {
   isDynamicImportChunkError,
   recoverFromChunkError,
   notifyChunkRecoveryFallback,
@@ -187,4 +197,140 @@ const {
   assert.equal(noticesAfterClear.length, 0, '清除之后新订阅不应再收到旧冷却期提示')
   unsub()
   unsub2()
+}
+
+// --- 4. clone 模式惰性转发高频字段，不触发 Vue computed 订阅 content/progress ---
+{
+  const readTextKeys = new Set()
+  const readLogKeys = new Set()
+  const rawText = {
+    kind: 'text',
+    id: 'r-1',
+    textKind: 'reasoning',
+    content: '初始思考',
+    pending: true,
+  }
+  const rawLog = {
+    kind: 'log',
+    id: 'tool-progress-1',
+    title: '调用工具: Bash',
+    details: '',
+    status: 'pending',
+    category: 'tool',
+    progress: 1,
+    total: 10,
+    progressMessage: '1/10',
+  }
+  const proxiedText = new Proxy(rawText, {
+    get(target, prop, receiver) {
+      if (typeof prop === 'string') readTextKeys.add(prop)
+      return Reflect.get(target, prop, receiver)
+    },
+  })
+  const proxiedLog = new Proxy(rawLog, {
+    get(target, prop, receiver) {
+      if (typeof prop === 'string') readLogKeys.add(prop)
+      return Reflect.get(target, prop, receiver)
+    },
+  })
+
+  const cloned = mergeTimelineLogs([proxiedText, proxiedLog], [], { clone: true })
+  assert.equal(readTextKeys.has('content'), false, 'clone 构建阶段不得读取 text.content，避免依赖爆炸')
+  assert.equal(readLogKeys.has('progress'), false, 'clone 构建阶段不得读取 log.progress')
+  assert.equal(readLogKeys.has('total'), false, 'clone 构建阶段不得读取 log.total')
+  assert.equal(readLogKeys.has('progressMessage'), false, 'clone 构建阶段不得读取 log.progressMessage')
+
+  rawText.content = '初始思考 -> 持续增量'
+  rawLog.progress = 5
+  assert.equal(cloned[0].content, '初始思考 -> 持续增量', '渲染读取时应透传原对象的最新 content')
+  assert.equal(cloned[1].progress, 5, '渲染读取时应透传原对象的最新 progress')
+
+  cloned[0].content = '视图层局部覆盖'
+  cloned[1].progress = 99
+  assert.equal(rawText.content, '初始思考 -> 持续增量', '修改克隆体 content 不得反向污染原对象')
+  assert.equal(rawLog.progress, 5, '修改克隆体 progress 不得反向污染原对象')
+}
+
+// --- 5. serializeEmbedStreamSnapshot 复用预算校验时的 JSON 序列化结果 ---
+{
+  const snap = buildEmbedStreamSnapshot({
+    conversationId: 'conv-1',
+    traceId: 'trace-1',
+    draft: { content: '正文内容', reasoningContent: '思考内容' },
+    now: 123456,
+  })
+  assert.ok(snap)
+  const raw = serializeEmbedStreamSnapshot(snap)
+  assert.equal(raw, JSON.stringify(snap))
+}
+
+// --- 6. coalesceReplayTextEvents 合并连续同类型/同来源文本增量 ---
+{
+  const events = [
+    { _seq: 1, type: 'reasoning_content', content: '思' },
+    { _seq: 2, type: 'reasoning_content', content: '考' },
+    { _seq: 3, type: 'process_narration', agent_name: 'A', content: '第1句' },
+    { _seq: 4, type: 'process_narration', agent_name: 'A', content: '续' },
+    { _seq: 5, type: 'process_narration', agent_name: 'B', content: '另起' },
+    { _seq: 6, type: 'log', id: 'tool-1', title: '工具' },
+    { _seq: 7, type: 'answer_delta', content: '答' },
+    { _seq: 8, type: 'answer_delta', content: '案' },
+  ]
+  const batched = coalesceReplayTextEvents(events)
+  assert.deepEqual(
+    batched.map((e) => [e.type, e.content || e.title, e._seq]),
+    [
+      ['reasoning_content', '思考', 2],
+      ['process_narration', '第1句续', 4],
+      ['process_narration', '另起', 5],
+      ['log', '工具', 6],
+      ['answer_delta', '答案', 8],
+    ],
+  )
+}
+
+// --- 7. 旁白缓冲不再逐帧直写 processNarrationPending，且支持恢复流缓冲泵 ---
+{
+  const msg = { content: '', processTimeline: [], processNarrationPending: '' }
+  applyProcessNarrationEvent(msg, { type: 'process_narration', content: '刚到一段', agent_name: 'A' })
+  // 首次（at=0）会立即触发一次刷入
+  assert.equal(msg.processNarrationPending, '刚到一段')
+  applyProcessNarrationEvent(msg, { type: 'process_narration', content: '100ms内碎片1', agent_name: 'A' })
+  applyProcessNarrationEvent(msg, { type: 'process_narration', content: '碎片2', agent_name: 'A' })
+  assert.equal(msg.processNarrationPending, '刚到一段', '100ms 窗口内碎片不得立即写响应式字段')
+  flushTimelineNarrationDelta(msg)
+  assert.equal(msg.processNarrationPending, '刚到一段100ms内碎片1碎片2')
+  assert.equal(msg.processTimeline[0].content, '刚到一段100ms内碎片1碎片2')
+
+  const dispatched = []
+  let hasReasoning = false
+  let hasContent = false
+  const pump = createBufferedStreamEventPump(
+    (d) => {
+      if (d.type === 'reasoning_content') hasReasoning = true
+      if (d.type === 'answer_delta') hasContent = true
+      dispatched.push(d)
+    },
+    { hasReasoning: () => hasReasoning, hasContent: () => hasContent },
+  )
+  pump.push({ type: 'reasoning_content', content: 'R1' })
+  pump.push({ type: 'reasoning_content', content: 'R2' })
+  pump.push({ type: 'reasoning_content', content: 'R3' })
+  pump.push({ type: 'answer_delta', content: 'A1' })
+  pump.push({ type: 'answer_delta', content: 'A2' })
+  pump.push({ type: 'retraction', content: '已撤回' })
+  pump.push({ type: 'answer_delta', content: 'A3' })
+  pump.push({ type: 'answer_delta', content: 'A4' })
+  pump.flush()
+  assert.deepEqual(
+    dispatched.map((e) => [e.type, e.content]),
+    [
+      ['reasoning_content', 'R1'],
+      ['reasoning_content', 'R2R3'],
+      ['answer_delta', 'A1'],
+      ['retraction', '已撤回'],
+      ['answer_delta', 'A3A4'],
+    ],
+  )
+  pump.cancel()
 }
