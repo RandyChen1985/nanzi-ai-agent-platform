@@ -301,11 +301,20 @@
       <template v-else>
         <div v-for="section in taskSections" :key="section.key">
           <!-- 分组标题当「标签」用：字号更小、字距放开、色值压到分组层级，
-               不和会话标题抢同一档亮度 -->
+               不和会话标题抢同一档亮度。后面跟一个计数胶囊：和聊天页历史面板
+               （ChatHistorySidebar）同一套口径，一眼看出这一组有多少条，
+               不用靠滚动条估。计数是「已加载条数」——侧栏是分页加载的。 -->
           <p
-            class="px-2.5 pb-1 pt-2 text-[10.5px] font-semibold tracking-[0.02em]"
+            class="flex items-center gap-1.5 px-2.5 pb-1 pt-2 text-[10.5px] font-semibold tracking-[0.02em]"
             :class="lightTheme ? 'text-slate-500' : 'text-[#5b6472]'"
-          >{{ section.title }}</p>
+            :title="`已加载 ${section.items.length} 条`"
+          >
+            <span>{{ section.title }}</span>
+            <span
+              class="inline-flex h-[15px] min-w-[15px] items-center justify-center rounded-full px-1 text-[10px] font-medium leading-none tabular-nums"
+              :class="lightTheme ? 'bg-slate-100 text-slate-500' : 'bg-white/[0.07] text-[#78828f]'"
+            >{{ section.items.length }}</span>
+          </p>
           <ul class="flex flex-col gap-0.5">
             <li v-for="item in section.items" :key="taskKeyOf(item)">
               <div class="group/item relative">

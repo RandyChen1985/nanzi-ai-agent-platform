@@ -270,21 +270,3 @@ const renderDesc = (text: string) =>
     </div>
   </div>
 </template>
-
-<style scoped>
-/* MarkdownEditor 的同名样式是 scoped 的，这里需要自己声明一份，否则继承到浏览器默认宽滚动条 */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #e5e7eb;
-  border-radius: 10px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #d1d5db;
-}
-</style>

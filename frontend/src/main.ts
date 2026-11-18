@@ -6,6 +6,7 @@ import router from '@/router'
 import { tooltip } from '@/directives/tooltip'
 import { clearUserScopedStorage } from './utils/sessionCleanup'
 import { recoverFromChunkError } from './utils/chunkLoadRecovery'
+import { installScrollbarReveal } from './utils/scrollbarReveal'
 
 import axios from 'axios'
 
@@ -101,6 +102,11 @@ window.addEventListener('vite:preloadError', (event) => {
     event.preventDefault()
   }
 })
+
+// 滚动条「滚动时才出现」：样式在 style.css 的 .custom-scrollbar，显隐靠
+// scroll 事件给容器打 data-scroll-active（纯 CSS 没有「正在滚动」这个状态）。
+// 文档级只挂这一处，别在组件里重复安装。
+installScrollbarReveal()
 
 app.mount('#app')
 

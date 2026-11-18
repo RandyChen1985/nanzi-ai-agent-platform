@@ -952,3 +952,45 @@ def test_menu_scroll_area_signals_more_content_below() -> None:
     # 展开后把这一组的子项滚进视野，否则点了「更多」还是看不到最后一项
     assert ':data-group-body="item.key"' in sidebar
     assert "revealGroupBody(item.key)" in sidebar
+
+
+def test_sidebar_relies_on_the_global_scrollbar_contract() -> None:
+    """侧栏不再自己写滚动条样式，统一交给 style.css。
+
+    真实翻车：模板两处都挂着 `custom-scrollbar`，但组件没有 style 块、全局也没有
+    定义——类名是空的，滚动条退回浏览器原生渲染。暗色侧栏（#0b0f19）上就是右侧
+    一大条灰：原生轨道浅色底 + 深灰滑块 + 整条常显，还把会话列表挤窄一截。
+
+    现在口径收敛到全局唯一一份（见 test_scrollbar_style_contract.py）：
+    平时完全不显示、鼠标进入滚动区才显形。这里只守两件事——模板仍挂着这个类，
+    组件自己别再抄一份（scoped 特异性更高，会把全局口径顶掉）。
+    """
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert ".custom-scrollbar::-webkit-scrollbar" not in sidebar
+    assert "scrollbar-color:" not in sidebar
+    # 两段滚动区（菜单区 + 会话列表）仍须挂着类名，全局样式才落得下去
+    assert sidebar.count("custom-scrollbar") == 2
+
+
+def test_task_group_headers_show_counts() -> None:
+    """分组标题带数量计数：和聊天页历史面板（ChatHistorySidebar）同一套口径。
+
+    会话多起来只有分组标题时，看不出「今天到底几条」——只能靠滚动条估。
+    数字取 `section.items.length`（即已加载条数，侧栏是分页加载的），
+    浅色/深色侧栏各一套胶囊配色。
+    """
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    header = sidebar.split('<p\n            class="flex items-center gap-1.5 px-2.5 pb-1 pt-2', 1)
+    assert len(header) == 2, "未找到带计数胶囊的分组标题容器"
+    block = header[1].split("</p>", 1)[0]
+
+    assert "{{ section.title }}" in block
+    assert "{{ section.items.length }}" in block
+    # 圆角胶囊 + 深浅两套配色
+    assert "rounded-full" in block
+    assert "bg-slate-100 text-slate-500" in block
+    assert "bg-white/[0.07]" in block
+    # 计数是「已加载条数」：悬停时说明清楚，别让人误以为是分组总数
+    assert "已加载 ${section.items.length} 条" in block

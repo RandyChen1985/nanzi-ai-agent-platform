@@ -90,15 +90,4 @@ const clearEntity = (key: string) => {
   opacity: 0;
   transform: translateX(20px);
 }
-
-.custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: rgba(156, 163, 175, 0.3);
-  border-radius: 2px;
-}
 </style>

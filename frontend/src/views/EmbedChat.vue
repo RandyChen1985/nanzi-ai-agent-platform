@@ -14650,16 +14650,6 @@ onUnmounted(() => {
   opacity: 0;
   transform: translateY(-6px);
 }
-.custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: rgba(156, 163, 175, 0.5);
-  border-radius: 2px;
-}
 @keyframes pulse-slow {
   0%,
   100% {

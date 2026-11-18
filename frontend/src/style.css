@@ -112,3 +112,91 @@ input[type="search"]::-webkit-search-cancel-button:hover {
       linear-gradient(105deg, #ffffff 0%, #fdfeff 46%, #f7faff 100%);
   }
 }
+
+/* 统一滚动条：平时完全不显示，滚动时闪一下、停手约 0.6 秒后淡出。
+
+   全站几十个滚动容器都挂着 `custom-scrollbar`，但此前只有一部分组件自己在
+   scoped 样式里定义了一份：宽度 4/5/6px 不等、滑块颜色各不相同（#e5e7eb /
+   #cbd5e1 / 各种半透明灰），另一半只写了类名没写样式——直接退回浏览器原生
+   滚动条。原生滚动条的轨道是一整条浅灰，浅色主题下融进白底看不出来，切到
+   深色侧栏（#0b0f19）就变成截图里那根「大块灰」，还常显占位。
+
+   这里收敛成唯一一份口径：
+   1. 宽度 6px、轨道始终透明 —— 「大块灰」的本体就是原生轨道底色；
+   2. 滑块默认透明，真正滚动时（`utils/scrollbarReveal.ts` 给容器打上
+      `data-scroll-active`）才出现，停手 0.6 秒撤掉。为什么不用 `:hover`：
+       CSS 没有「正在滚动」这个状态，而 `:hover` 在侧栏这类常驻区域等于一直
+       显示；鼠标只是在列表上移动、并没有滚动，不该有滚动条陪跑；
+   3. 深色底（主站 `html[data-theme]`、嵌入页 `html.dark`）用半透明白，
+      浅色底用半透明深灰；
+   4. `scrollbar-gutter: stable` 保留占位：滚动条显隐时内容不左右跳。
+
+   注意：Chromium 121 起，元素上一旦设了标准属性 `scrollbar-width` /
+   `scrollbar-color`，就会整段忽略 `::-webkit-scrollbar`、退回没有圆角的
+   `thin`。所以标准属性只能包在 `@supports (-moz-appearance: none)` 里给
+   Firefox（它不支持伪元素，只有这一条路），不要在别处再写。 */
+.custom-scrollbar {
+  scrollbar-gutter: stable;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 999px;
+  /* 淡入淡出：Chromium 对滚动条伪元素的过渡支持时好时坏，不支持就退化成瞬变，
+     不影响显隐逻辑本身，所以这里不设兜底脚本 */
+  transition: background-color 0.18s ease;
+}
+
+/* 显隐的两个触发条件：
+   ① 正在滚动 —— `utils/scrollbarReveal.ts` 给容器打上 data-scroll-active；
+   ② 悬停在滑块本体上（右侧那 6px）—— 滚动条虽然透明，透明的伪元素照样能被
+      命中，想抓它拖动的人不至于「看不见也摸不着」。
+   下面按「浅色两块 → 深色两块」排：深色规则特异性更高且都在后面，
+   拖动时那一档（:hover）总能在上面再深一层。 */
+.custom-scrollbar[data-scroll-active]::-webkit-scrollbar-thumb,
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(100, 116, 139, 0.3);
+}
+
+.custom-scrollbar[data-scroll-active]::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(71, 85, 105, 0.5);
+}
+
+/* 深色底：换成半透明白，避免深底上出现灰色块 */
+html.dark .custom-scrollbar[data-scroll-active]::-webkit-scrollbar-thumb,
+html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover,
+html[data-theme='dark'] .custom-scrollbar[data-scroll-active]::-webkit-scrollbar-thumb,
+html[data-theme='dark'] .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.22);
+}
+
+html.dark .custom-scrollbar[data-scroll-active]::-webkit-scrollbar-thumb:hover,
+html[data-theme='dark'] .custom-scrollbar[data-scroll-active]::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.38);
+}
+
+/* Firefox：不支持 ::-webkit-scrollbar，只能走标准属性 */
+@supports (-moz-appearance: none) {
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  .custom-scrollbar[data-scroll-active] {
+    scrollbar-color: rgba(100, 116, 139, 0.3) transparent;
+  }
+
+  html.dark .custom-scrollbar[data-scroll-active],
+  html[data-theme='dark'] .custom-scrollbar[data-scroll-active] {
+    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  }
+}

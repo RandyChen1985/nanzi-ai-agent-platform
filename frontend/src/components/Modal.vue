@@ -147,15 +147,4 @@ const toggleMaximize = async () => {
   transform: scale(0.95) translateY(10px);
   opacity: 0;
 }
-
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(0,0,0,0.1);
-  border-radius: 10px;
-}
 </style>

@@ -878,22 +878,6 @@ onMounted(fetchRagFlowConfig)
 </template>
 
 <style scoped>
-/* 结果区滚动条样式；此前引用了其它组件 scoped 里的同名类，实际不生效 */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
 .whitespace-pre-wrap :deep(table) {
   width: 100%;
   border-collapse: collapse;

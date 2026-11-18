@@ -403,13 +403,6 @@ defineExpose({ handleKeydown });
 </template>
 
 <style scoped>
-.custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 2px;
-}
 .animate-fade-in-up {
   animation: fadeInUp 0.2s ease-out;
 }

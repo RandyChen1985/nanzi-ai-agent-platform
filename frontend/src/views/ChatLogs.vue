@@ -1630,11 +1630,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 2px; }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #D1D5DB; }
-
 .line-clamp-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;

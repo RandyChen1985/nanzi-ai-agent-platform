@@ -4287,22 +4287,6 @@ onUnmounted(() => {
   animation: fadeIn 0.2s ease-out forwards;
 }
 
-/* 自定义滚动条 */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
 /* 仅编辑器内部隐藏焦点环；此前是全局 textarea:focus，会压掉其它输入框的 focus:ring */
 .skill-editor-textarea:focus {
   outline: none;

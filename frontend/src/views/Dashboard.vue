@@ -1609,33 +1609,4 @@ onMounted(() => {
   transform: scale(0.9);
   opacity: 0;
 }
-
-/* Keep scrollbar gutter stable; only fade the thumb on hover to avoid layout shift. */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: transparent;
-  border-radius: 10px;
-}
-.custom-scrollbar:hover::-webkit-scrollbar-thumb {
-  background-color: rgba(156, 163, 175, 0.3); /* gray-400 with low opacity */
-}
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(107, 114, 128, 0.5); /* gray-500 */
-}
-
-.custom-scrollbar {
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-}
-.custom-scrollbar:hover {
-  scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
-}
-
 </style>

@@ -776,33 +776,3 @@ onUnmounted(() => {
   clearRestoreTimer();
 });
 </script>
-
-<style scoped>
-/* 与 Dashboard 布局的滚动条保持同一口径：常驻 gutter 避免布局抖动，仅 hover 时显示滑块 */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: transparent;
-  border-radius: 10px;
-}
-.custom-scrollbar:hover::-webkit-scrollbar-thumb {
-  background-color: rgba(156, 163, 175, 0.3);
-}
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(107, 114, 128, 0.5);
-}
-
-.custom-scrollbar {
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-}
-.custom-scrollbar:hover {
-  scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
-}
-</style>

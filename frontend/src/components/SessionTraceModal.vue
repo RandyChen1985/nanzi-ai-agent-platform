@@ -214,9 +214,3 @@ const isMobile = computed(() => windowWidth.value < 640)
   </div>
   </Teleport>
 </template>
-
-<style scoped>
-.custom-scrollbar::-webkit-scrollbar { width: 4px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background-color: #e5e7eb; border-radius: 10px; }
-</style>

@@ -204,6 +204,4 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown, true))
 <style scoped>
 .animate-slide-in-right { animation: slideInRight 0.25s ease-out; }
 @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
-.custom-scrollbar::-webkit-scrollbar { width: 4px; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 4px; }
 </style>
