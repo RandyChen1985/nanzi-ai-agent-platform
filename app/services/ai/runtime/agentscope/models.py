@@ -24,6 +24,21 @@ def _is_forced_tool_choice(tool_choice: Any) -> bool:
     return tool_choice is not None and mode not in {"auto", "none"}
 
 
+#: 上游「拒绝这个 tool_choice」的通用措辞。第三方 OpenAI 兼容网关不说
+#: ``required``/``object``，常见文案是 ``Thinking mode does not support this
+#: tool_choice``，只认前一组关键字会把这类 400 当成无关错误直接上抛。
+_TOOL_CHOICE_REJECTION_MARKERS = (
+    "required",
+    "object",
+    "does not support",
+    "not support",
+    "unsupported",
+    "not allowed",
+    "invalid",
+    "rejected",
+)
+
+
 def _is_thinking_tool_choice_error(error: BaseException) -> bool:
     response = getattr(error, "response", None)
     status_code = getattr(response, "status_code", None)
@@ -38,7 +53,9 @@ def _is_thinking_tool_choice_error(error: BaseException) -> bool:
             marker in error_text
             for marker in ("thinking", "thirking", "reasoning")
         )
-        and any(marker in error_text for marker in ("required", "object"))
+        and any(
+            marker in error_text for marker in _TOOL_CHOICE_REJECTION_MARKERS
+        )
     )
 
 
@@ -85,15 +102,13 @@ def _normalized_provider(config: AgentScopeModelConfig) -> str:
     return str(config.provider or "").strip().lower()
 
 
-def _normalized_model(config: AgentScopeModelConfig) -> str:
-    return str(config.model or "").strip().lower()
+def _is_deepseek_provider(config: AgentScopeModelConfig) -> bool:
+    """DeepSeek 官方与兼容网关统一用 ``thinking.type`` 开关思考。
 
-
-def _is_deepseek_v4(config: AgentScopeModelConfig) -> bool:
-    return _normalized_provider(config) == "deepseek" and _normalized_model(config) in {
-        "deepseek-v4-pro",
-        "deepseek-v4-flash",
-    }
+    这里刻意不看模型名：渠道上可以出现 ``deepseek-v4.1-flash`` 之类未登记
+    名字，按名字白名单判断会让「关闭思考」整段不下发，上游继续按默认思考跑。
+    """
+    return _normalized_provider(config) == "deepseek"
 
 
 def _thinking_protocol(config: AgentScopeModelConfig) -> str | None:
@@ -104,8 +119,8 @@ def _thinking_protocol(config: AgentScopeModelConfig) -> str | None:
     unknown/custom gateways retain the historical template compatibility path.
     """
     provider = _normalized_provider(config)
-    if _is_deepseek_v4(config):
-        return "thinking_type"
+    if _is_deepseek_provider(config):
+        return "thinking_type" if config.thinking_capable else None
     if provider in _THINKING_TYPE_PROVIDERS:
         return "thinking_type" if config.thinking_capable else None
     if provider in _ENABLE_THINKING_PROVIDERS:
@@ -299,7 +314,6 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
         else None
     )
     request_extra_body = _request_extra_body(config)
-    is_deepseek_v4 = _is_deepseek_v4(config)
 
     class PlatformOpenAIChatModel(OpenAIChatModel):
         """Keep native AgentScope parameters and inject request controls."""
@@ -308,7 +322,6 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
             self._chat_template_kwargs = dict(chat_template_kwargs or {})
             self._request_extra_body = copy.deepcopy(request_extra_body or {})
             self._thinking_protocol = thinking_protocol
-            self._is_deepseek_v4 = is_deepseek_v4
             super().__init__(*args, **kwargs)
 
         def _format_tools(self, tools: Any, tool_choice: Any) -> Any:
@@ -327,8 +340,10 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
 
         async def _call_api_once(self, *args: Any, **kwargs: Any) -> Any:
             request_kwargs = dict(kwargs)
+            # 思考协议下上游拒收「强制调用某个工具」：本地已开启思考时，
+            # 这里先把强制约束摘掉，避免整轮请求 400。
             if (
-                self._is_deepseek_v4
+                self._thinking_protocol == "thinking_type"
                 and self.parameters.thinking_enable
                 and _is_forced_tool_choice(request_kwargs.get("tool_choice"))
             ):
@@ -350,9 +365,11 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
                 result = await self._call_api_once(*args, **kwargs)
             except openai.BadRequestError as exc:
                 tool_choice = kwargs.get("tool_choice")
+                # 不绑定 ``parameters.thinking_enable``：本地配置与上游真实状态
+                # 可能错位（例如注册表默认非思考、渠道却按思考运行），那种情况
+                # 恰恰最需要这一次降级重试。
                 if not (
-                    self.parameters.thinking_enable
-                    and _is_forced_tool_choice(tool_choice)
+                    _is_forced_tool_choice(tool_choice)
                     and _is_thinking_tool_choice_error(exc)
                 ):
                     _log_model_call_failure(
