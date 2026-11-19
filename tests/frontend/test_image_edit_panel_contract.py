@@ -362,3 +362,32 @@ def test_mobile_image_panel_survives_plus_menu(chat_input: str):
     assert "showImageParamPop && isMobileViewport" in chat_input
     # 面板打开时隐藏菜单列表，免得叠在一起
     assert 'v-show="!(isMobileViewport && showImageParamPop)"' in chat_input
+
+
+def test_cancel_clears_edit_draft_completely(chat_input: str):
+    """点「取消」必须调 clearEditImage() 同时清掉主图/参考图与 objectURL，避免再次打开裂图。"""
+    start = chat_input.index("const closeImageParamPopSafely")
+    body = chat_input[start : chat_input.index("};", start)]
+    assert "clearEditImage()" in body
+
+
+def test_plus_menu_close_also_closes_image_pop(chat_input: str):
+    """关闭加号菜单或锁定输入时必须同步关闭 showImageParamPop，避免下次点 + 误弹。"""
+    lock_start = chat_input.index("watch(isInteractionLocked")
+    lock_body = chat_input[lock_start : lock_start + 300]
+    assert "showImageParamPop.value = false" in lock_body
+
+    plus_start = chat_input.index("watch(showPlusMenu")
+    plus_body = chat_input[plus_start : plus_start + 260]
+    assert "showImageParamPop.value = false" in plus_body
+
+
+def test_remove_file_syncs_edit_mode_and_has_chip(chat_input: str):
+    """删掉附件要同步退出或降级改图模式，且输入框上方需露出可一键退出的「改图」chip。"""
+    rm_start = chat_input.index("const removeFile = ")
+    rm_body = chat_input[rm_start : rm_start + 450]
+    assert "exitImageEditMode()" in rm_body
+    assert "imageEditHasReference.value = false" in rm_body
+
+    assert "v-if=\"imageEditMode || imageParamChips.length\"" in chat_input
+    assert "@click=\"exitImageEditMode\"" in chat_input

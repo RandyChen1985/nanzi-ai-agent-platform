@@ -648,3 +648,140 @@ async def test_read_source_image_matches_upload_dir_key(tmp_path, monkeypatch):
     mime, data = await tools._read_source_image(str(image), context=context)
     assert mime == "image/png"
     assert data == _PNG_HEAD
+
+
+async def test_preview_edit_500_do_request_failed_explains_unsupported_model(
+    patch_config, monkeypatch
+):
+    """回归：kolors 等只支持文生图的模型改图时回 500 do_request_failed（抛 PermissionError），
+    必须给出「这个模型看起来不支持改图」的换模型引导，不能被前面的 PermissionError 拦截。
+    同时 401 鉴权错误不能被误判为「不支持改图」。
+    """
+    patch_config({"image_model": "kolors"})
+    mode = {"status": 500}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if mode["status"] == 500:
+            return httpx.Response(500, text='{"error":{"code":"do_request_failed"}}')
+        return httpx.Response(401, text='{"error":{"message":"invalid api key"}}')
+
+    _patch_http(monkeypatch, handler)
+    with pytest.raises(ValueError, match="不支持改图"):
+        await tools.preview_image_edit()
+
+    mode["status"] = 401
+    with pytest.raises(ValueError, match="连接图像服务失败"):
+        await tools.preview_image_edit()
+
+
+async def test_preview_edit_omits_size_to_follow_sample(patch_config, monkeypatch):
+    """「测试改图」应不传 size（跟随样图比例），与 edit_image 的默认行为一致。"""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_chat_response())
+
+    _patch_http(monkeypatch, handler)
+    await tools.preview_image_edit()
+    assert "size" not in bodies[0]
+
+
+async def test_read_source_image_rejects_other_users_artifact_url(
+    workspace, patch_context, monkeypatch
+):
+    """按 download_url 反查产物也必须校验位于当前用户 scope 内，禁止跨用户读取。"""
+    other_dir = workspace.root / "other__99" / "generated"
+    other_dir.mkdir(parents=True)
+    other_file = other_dir / "secret.png"
+    other_file.write_bytes(_PNG_HEAD)
+
+    async def _fake_resolve(artifact_id: str, token: str):
+        return SimpleNamespace(path=other_file)
+
+    monkeypatch.setattr(
+        "app.services.ai.tools.generated_file_service.resolve_workspace_artifact",
+        _fake_resolve,
+    )
+    context = SimpleNamespace(user_id=7, user_dimensions={"user_name": "tester"})
+    url = f"https://host/api/v1/chat/generated-files/{'a' * 32}?token=validtok"
+
+    with pytest.raises(ValueError, match="不属于当前用户"):
+        await tools._read_source_image(url, context=context)
+
+
+async def test_list_image_models_ignores_masked_api_key(patch_config, monkeypatch):
+    """传入脱敏密钥（含 ****）时必须回落到库里保存的真实密钥，避免拿脱敏串去 401。"""
+    patch_config({"image_api_key": "real-secret-key"})
+    seen_auth: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_auth.append(request.headers.get("authorization", ""))
+        return httpx.Response(200, json={"data": [{"id": "Qwen-Image-2.1-Turbo"}]})
+
+    _patch_http(monkeypatch, handler)
+    res = await tools.list_image_models(api_key="real****key")
+    assert res["models"] == ["Qwen-Image-2.1-Turbo"]
+    assert seen_auth == ["Bearer real-secret-key"]
+
+
+async def test_chat_protocol_supports_remote_image_url(patch_config, monkeypatch):
+    """聊天协议返回 http(s) 图片外链时，应自动下载回来而不是报「没有返回图片」。"""
+    patch_config({"image_api_format": "openai_chat"})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url).endswith("/chat/completions"):
+            return httpx.Response(
+                200,
+                json={
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": "https://cdn.example/out.png"},
+                                    }
+                                ],
+                            }
+                        }
+                    ],
+                },
+            )
+        if str(request.url) == "https://cdn.example/out.png":
+            return httpx.Response(200, content=_PNG_HEAD)
+        return httpx.Response(404)
+
+    _patch_http(monkeypatch, handler)
+    res = await tools.request_image_once(
+        config=await tools.load_image_generation_config(),
+        prompt="a cat",
+        size="1024x1024",
+        api_key="k",
+    )
+    assert res["mime"] == "image/png"
+    assert res["data"] == _PNG_HEAD
+
+
+def test_image_dimensions_parses_jpeg_and_webp():
+    """无依赖解析 JPEG SOF0 与 WEBP VP8X 宽高，避免改图返回非 PNG 时宽高丢失。"""
+    # 构造最小合法 JPEG（SOI + SOF0: height=480, width=640 + EOI）
+    sof0_payload = bytes([8]) + (480).to_bytes(2, "big") + (640).to_bytes(2, "big") + bytes([3, 1, 0x11, 0])
+    seg_len = (len(sof0_payload) + 2).to_bytes(2, "big")
+    jpeg = b"\xff\xd8\xff\xc0" + seg_len + sof0_payload + b"\xff\xd9"
+    assert tools._image_dimensions(jpeg) == (640, 480)
+
+    # 构造最小合法 WEBP VP8X（width=1280, height=720）
+    vp8x = (
+        b"RIFF"
+        + (22).to_bytes(4, "little")
+        + b"WEBP"
+        + b"VP8X"
+        + (10).to_bytes(4, "little")
+        + b"\x00\x00\x00\x00"
+        + (1280 - 1).to_bytes(3, "little")
+        + (720 - 1).to_bytes(3, "little")
+    )
+    assert tools._image_dimensions(vp8x) == (1280, 720)

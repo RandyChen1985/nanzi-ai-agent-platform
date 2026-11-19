@@ -270,11 +270,7 @@ def _chat_completions_url(base_url: str) -> str:
 
 
 def _png_dimensions(data: bytes) -> tuple[int | None, int | None]:
-    """从 PNG 头部读宽高。
-
-    前端按宽高算占位比例，缺了会跳版；这里自己解析 20 来个字节，不为了两个整数
-    去依赖图像库。
-    """
+    """从 PNG 头部读宽高。"""
     if len(data) < 24 or not data.startswith(_PNG_SIGNATURE):
         return None, None
     try:
@@ -285,6 +281,75 @@ def _png_dimensions(data: bytes) -> tuple[int | None, int | None]:
     if width <= 0 or height <= 0:
         return None, None
     return width, height
+
+
+def _jpeg_dimensions(data: bytes) -> tuple[int | None, int | None]:
+    """无依赖解析 JPEG SOF 段的宽高。"""
+    if len(data) < 4 or not data.startswith(b"\xff\xd8"):
+        return None, None
+    idx = 2
+    length = len(data)
+    sof_markers = {
+        0xC0, 0xC1, 0xC2, 0xC3,
+        0xC5, 0xC6, 0xC7,
+        0xC9, 0xCA, 0xCB,
+        0xCD, 0xCE, 0xCF,
+    }
+    while idx + 1 < length:
+        if data[idx] != 0xFF:
+            idx += 1
+            continue
+        while idx < length and data[idx] == 0xFF:
+            idx += 1
+        if idx >= length:
+            break
+        marker = data[idx]
+        idx += 1
+        if marker in (0xD8, 0xD9, 0x01) or (0xD0 <= marker <= 0xD7):
+            continue
+        if idx + 2 > length:
+            break
+        seg_len = int.from_bytes(data[idx : idx + 2], "big")
+        if seg_len < 2 or idx + seg_len > length:
+            break
+        if marker in sof_markers and seg_len >= 7:
+            height = int.from_bytes(data[idx + 3 : idx + 5], "big")
+            width = int.from_bytes(data[idx + 5 : idx + 7], "big")
+            if width > 0 and height > 0:
+                return width, height
+            return None, None
+        idx += seg_len
+    return None, None
+
+
+def _webp_dimensions(data: bytes) -> tuple[int | None, int | None]:
+    """无依赖解析 WEBP（VP8 / VP8L / VP8X）头部宽高。"""
+    if len(data) < 30 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        return None, None
+    chunk = data[12:16]
+    if chunk == b"VP8X" and len(data) >= 30:
+        width = 1 + int.from_bytes(data[24:27], "little")
+        height = 1 + int.from_bytes(data[27:30], "little")
+        return (width, height) if width > 0 and height > 0 else (None, None)
+    if chunk == b"VP8L" and len(data) >= 25 and data[20] == 0x2F:
+        bits = int.from_bytes(data[21:25], "little")
+        width = (bits & 0x3FFF) + 1
+        height = ((bits >> 14) & 0x3FFF) + 1
+        return (width, height) if width > 0 and height > 0 else (None, None)
+    if chunk == b"VP8 " and len(data) >= 30 and data[23:26] == b"\x9d\x01\x2a":
+        width = int.from_bytes(data[26:28], "little") & 0x3FFF
+        height = int.from_bytes(data[28:30], "little") & 0x3FFF
+        return (width, height) if width > 0 and height > 0 else (None, None)
+    return None, None
+
+
+def _image_dimensions(data: bytes) -> tuple[int | None, int | None]:
+    """从 PNG / JPEG / WEBP 文件头读取宽高，前端据此算占位比例避免跳版。"""
+    for parser in (_png_dimensions, _jpeg_dimensions, _webp_dimensions):
+        width, height = parser(data)
+        if width and height:
+            return width, height
+    return None, None
 
 
 def _parse_data_url(url: str) -> tuple[str, bytes] | None:
@@ -334,6 +399,30 @@ def _extract_images(payload: dict[str, Any]) -> list[tuple[str, bytes]]:
             if parsed:
                 images.append(parsed)
     return images
+
+
+def _extract_chat_image_urls(payload: dict[str, Any]) -> list[str]:
+    """从聊天响应里提取 http(s) 图片外链（兼容部分网关直接回 URL 而非 data URL）。"""
+    urls: list[str] = []
+    choices = payload.get("choices") or []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        content = (choice.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            image_url = part.get("image_url")
+            url = ""
+            if isinstance(image_url, dict):
+                url = str(image_url.get("url") or "").strip()
+            elif isinstance(image_url, str):
+                url = image_url.strip()
+            if url.startswith(("http://", "https://")):
+                urls.append(url)
+    return urls
 
 
 def _response_text(payload: dict[str, Any]) -> str:
@@ -598,6 +687,12 @@ async def request_image_once(
         extracted = _extract_images(payload)
         if extracted:
             mime, data = extracted[0]
+        else:
+            for remote in _extract_chat_image_urls(payload):
+                downloaded = await _download_image_bytes(remote, timeout)
+                if downloaded:
+                    mime, data = downloaded
+                    break
     else:
         for candidate_mime, candidate_data, remote in _extract_image_api_payload(payload):
             if remote:
@@ -667,7 +762,7 @@ async def _publish_image(
             except OSError:  # pragma: no cover - 清理失败不影响出图结果
                 logger.warning("[generate_image] 临时文件清理失败: %s", tmp_path)
 
-    width, height = _png_dimensions(data)
+    width, height = _image_dimensions(data)
     parsed_ok = bool(width and height)
     if not parsed_ok:
         # 前端按宽高算占位比例，缺了会跳版。网关若回的是 jpg/webp，PNG 头解析不出来，
@@ -1026,7 +1121,12 @@ async def _read_source_image(image: str, *, context: Any) -> tuple[str, bytes]:
                 "请让用户重新上传原图，或重新生成一张。"
             )
         path = Path(artifact.path).resolve()
-        if not _path_within(path, root) or not path.is_file():
+        if not _path_within(path, scope):
+            raise ValueError(
+                "这张图已失效或不属于当前用户，没法再改它。"
+                "请让用户重新上传原图，或重新生成一张。"
+            )
+        if not path.is_file():
             raise ValueError("这张图的文件已经不在原位置了，请让用户重新上传或重新生成。")
     else:
         candidate = Path(raw).expanduser()
@@ -1311,7 +1411,7 @@ async def preview_image_generation(
 
     mime = generated["mime"]
     data = generated["data"]
-    width, height = _png_dimensions(data)
+    width, height = _image_dimensions(data)
     return {
         "image": f"data:{mime};base64,{base64.b64encode(data).decode()}",
         "mime_type": mime,
@@ -1369,7 +1469,7 @@ async def preview_image_edit(
 
     sample = base64.b64decode(TEST_EDIT_SAMPLE_PNG_B64)
     # 尺寸跟随样图：不传 size 时模型按原图比例出图，正是改图的常规用法。
-    target_size = config["default_size"]
+    target_size = ""
     instruction = "把背景换成浅蓝色，主体保持不变"
 
     try:
@@ -1385,30 +1485,43 @@ async def preview_image_edit(
             api_key=effective_key,
             source_images=[("image/png", sample)],
         )
-    except (_TransientError, PermissionError) as exc:
-        raise ValueError(f"连接图像服务失败：{exc}") from exc
-    except ValueError as exc:
+    except (_TransientError, PermissionError, ValueError) as exc:
         message = str(exc)
         lowered = message.lower()
-        if any(
+        # 401/403 明确是鉴权/权限问题，不能误判为「模型不支持改图」。
+        is_auth_error = any(
+            token in lowered for token in ("返回 401", "返回 403", "unauthorized", "invalid api key")
+        )
+        # 网关在不支持改图的模型（如 kolors）上会回 500 do_request_failed（抛 PermissionError）
+        # 或 200 但不含图片（抛 ValueError），两条路都要给出换模型的人话引导。
+        if not is_auth_error and any(
             token in lowered
-            for token in ("no image", "没有返回图片", "do_request_failed", "upstream error")
+            for token in (
+                "no image",
+                "没有返回图片",
+                "do_request_failed",
+                "upstream error",
+                "not support",
+                "unsupported",
+            )
         ):
             raise ValueError(
                 f"这个模型看起来不支持改图（{_error_text(exc)}）。"
                 "改图需要能接收图片输入的多模态图像模型，请换一个模型再试。"
             ) from exc
+        if isinstance(exc, (_TransientError, PermissionError)):
+            raise ValueError(f"连接图像服务失败：{exc}") from exc
         raise
 
     mime = generated["mime"]
     data = generated["data"]
-    width, height = _png_dimensions(data)
+    width, height = _image_dimensions(data)
     return {
         "image": f"data:{mime};base64,{base64.b64encode(data).decode()}",
         "mime_type": mime,
         "width": width,
         "height": height,
-        "size": target_size,
+        "size": f"{width}x{height}" if width and height else "跟随原图",
         "model": generated["model"] or effective_model,
         "api_format": effective_format,
         "bytes": len(data),
@@ -1434,6 +1547,8 @@ async def list_image_models(
         raise ValueError("请先填写 API 地址")
 
     target_key = str(api_key or "").strip()
+    if target_key and "****" in target_key:
+        target_key = ""  # 脱敏串不是密钥，回落库里解密后的真实密钥
     if not target_key:
         target_key = _decode_api_key(config["api_key"])
 

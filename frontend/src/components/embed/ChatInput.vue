@@ -767,6 +767,7 @@ watch(() => props.modelValue, (val) => { if (!val && inputRef.value) inputRef.va
 watch(isInteractionLocked, (processing) => {
   if (processing) {
     showPlusMenu.value = false;
+    showImageParamPop.value = false;
     showApprovalMenu.value = false;
     closeContextUsageDetails();
     isDrawerExpanded.value = false;
@@ -1509,6 +1510,7 @@ const handleGlobalClick = (event: MouseEvent) => {
   if (showPlusMenu.value && plusMenuContainerRef.value && !plusMenuContainerRef.value.contains(event.target as Node)) {
     showPlusMenu.value = false;
     showSkillCascade.value = false;
+    showImageParamPop.value = false;
   }
   if (showContextUsageDetails.value && contextUsageContainerRef.value && !contextUsageContainerRef.value.contains(event.target as Node)) {
     closeContextUsageDetails();
@@ -1654,6 +1656,7 @@ onUnmounted(() => {
   document.removeEventListener('keydown', handleGlobalKeydown);
   window.removeEventListener('resize', handleApprovalMenuLayout);
   window.removeEventListener('scroll', handleApprovalMenuLayout, true);
+  clearEditImage();
 });
 const showPlusMenu = ref(false);
 const showSkillCascade = ref(false);
@@ -2074,11 +2077,10 @@ const clearEditRefImage = () => {
  * 而且用户看不见图有没有挂上去；灌进输入框后他还能改词、加话，或者干脆不发。
  */
 const closeImageParamPopSafely = () => {
-  // 取消离开时把草稿一起放掉：objectURL 不释放会一直占着那张图的内存。
-  if (imageEditPreviewUrl.value) {
-    URL.revokeObjectURL(imageEditPreviewUrl.value);
-    imageEditPreviewUrl.value = "";
-  }
+  // 取消离开时把主图、参考图与两个 objectURL 一起清干净：
+  // 曾经只 revoke 主图 previewUrl 却留着 imageEditFile，下次打开面板会直接显示裂图。
+  clearEditImage();
+  imageEditError.value = "";
   closeImageParamPop();
 };
 
@@ -2598,6 +2600,9 @@ const triggerFileInput = () => {
 };
 
 watch(showPlusMenu, (open) => {
+  if (!open) {
+    showImageParamPop.value = false;
+  }
   if (!open && !isMobileViewport.value) {
     showSkillCascade.value = false;
     showMcpCascade.value = false;
@@ -2622,6 +2627,14 @@ const formatSize = (bytes: number) => {
 
 const removeFile = (index: number) => {
   uploadedFiles.value.splice(index, 1);
+  if (imageEditMode.value) {
+    const remainingImages = uploadedFiles.value.filter((f) => isImageAttachment(f)).length;
+    if (remainingImages === 0) {
+      exitImageEditMode();
+    } else if (remainingImages < 2) {
+      imageEditHasReference.value = false;
+    }
+  }
 };
 
 // 核心文件上传逻辑
@@ -2971,8 +2984,22 @@ defineExpose({
               </div>
             </div>
 
-            <!-- 本次生成参数：只在这里露出，正文保持干净 -->
-            <div v-if="imageParamChips.length" class="relative z-10 flex flex-wrap items-center gap-1.5 pb-1.5">
+            <!-- 本次生成参数 / 改图模式标记：只在这里露出，正文保持干净 -->
+            <div v-if="imageEditMode || imageParamChips.length" class="relative z-10 flex flex-wrap items-center gap-1.5 pb-1.5">
+              <span
+                v-if="imageEditMode"
+                class="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[11px] font-medium text-rose-600 dark:border-rose-700/60 dark:bg-rose-900/30 dark:text-rose-300"
+              >
+                {{ imageEditHasReference ? '改图 · 含参考图' : '改图' }}
+                <button
+                  type="button"
+                  class="text-rose-400 transition-colors hover:text-rose-700 dark:hover:text-rose-100"
+                  title="退出改图模式（改为普通问图）"
+                  @click="exitImageEditMode"
+                >
+                  <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+                </button>
+              </span>
               <span
                 v-for="chip in imageParamChips"
                 :key="chip.key"
