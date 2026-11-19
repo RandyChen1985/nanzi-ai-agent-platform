@@ -67,7 +67,11 @@ def test_reference_upload_failure_rolls_back(chat_input: str):
     end = chat_input.index("const exitImageEditMode", start)
     body = chat_input[start:end]
     assert "if (!refUploaded)" in body
-    assert "uploadedFiles.value.pop()" in body
+    # 回滚写法从 pop() 改成「按上传前的长度截断」：上传是异步的，这期间别处也可能
+    # 往附件列表里 push，pop() 假定「刚 push 的一定是最后一个」并不可靠。
+    # 契约关心的是「参考图失败时撤掉主图」，不是用哪种写法撤。
+    assert "rollbackUploads()" in body
+    assert "splice(beforeCount)" in body
 
 
 def test_send_names_which_is_which(chat_input: str):
@@ -166,9 +170,14 @@ def test_panel_footer_is_pinned(chat_input: str):
     # 页脚「完成」所在容器不参与滚动
     assert panel.count("shrink-0 border-t border-gray-100 bg-gray-50/60") == 2, \
         "生成页和改图页的页脚都要固定住"
-    # 正文才是滚动区
-    assert panel.count("min-h-0 flex-1 space-y-3 overflow-y-auto") == 2, \
-        "两页正文都要是可伸缩的滚动区"
+    # 正文才是滚动区。必须是 flex-auto（basis: auto）而不是 flex-1（basis: 0%）：
+    # 面板高度是 max-h + auto，basis 0% 的滚动区在高度未定的容器里拿不到固有高度，
+    # 内容多的一页撞到 max-h 才碰巧正常，内容少的改图页会整块塌成 0 高（线上「改图页
+    # 一片空白」就是这么来的）。两处都必须同构，改回 flex-1 会重新踩这个坑。
+    assert panel.count("min-h-0 flex-auto space-y-3 overflow-y-auto") == 2, \
+        "两页正文都要是可伸缩的滚动区，且 basis 必须是 auto"
+    assert "min-h-0 flex-1 space-y-3 overflow-y-auto" not in panel, \
+        "回到 flex-1 会让内容少的那一页塌成 0 高"
     # 标题栏与 tab 也不该被压缩
     assert "flex shrink-0 items-center gap-2 border-b border-gray-100" in panel
     assert "flex shrink-0 gap-1 border-b border-gray-100" in panel
@@ -302,12 +311,31 @@ def test_edit_mode_carries_style(chat_input: str):
 
 
 def test_edit_image_size_guarded_on_pick(chat_input: str):
-    """上传接口允许 20MB，但改图上限 10MB，选图时就该拦住。"""
+    """上传接口允许 20MB，但改图上限 10MB，选图时就该拦住。
+
+    校验已经抽成一条链：rejectEditImage（判体积/类型）→ acceptEditImage（判不过就
+    写错误区并 toast）→ 三个入口（选文件 / 拖到槽位 / 在指令框粘贴）。断言这条链
+    存在，而不是断言某个字面量落在某个函数后 900 字以内——后者一次正常重构就误报。
+    """
     assert "MAX_EDIT_IMAGE_BYTES" in chat_input
-    start = chat_input.index("const onEditImageChange")
-    body = chat_input[start : start + 900]
-    assert "MAX_EDIT_IMAGE_BYTES" in body
-    assert "showToast" in body
+
+    pick_start = chat_input.index("const onEditImageChange")
+    assert "acceptEditImage(file" in chat_input[pick_start : pick_start + 600]
+
+    accept_start = chat_input.index("const acceptEditImage")
+    accept = chat_input[accept_start : accept_start + 500]
+    assert "rejectEditImage(file" in accept
+    assert "showToast" in accept, "判不过要就地告知，不能静默 return"
+
+    guard_start = chat_input.index("const rejectEditImage")
+    guard = chat_input[guard_start : guard_start + 1200]
+    assert "MAX_EDIT_IMAGE_BYTES" in guard, "校验函数本身要真的比较体积上限"
+    assert "image/" in guard, "还要拦下非图片类型：accept 只是软约束"
+
+    # 每个入口都必须过同一道闸：漏一个，用户就能绕过校验塞进 20MB 或 PDF。
+    for entry in ("onEditImageDrop", "onEditInstructionPaste", "onEditRefImageChange"):
+        start = chat_input.index(f"const {entry}")
+        assert "acceptEditImage(file" in chat_input[start : start + 700], entry
 
 
 def test_edit_tab_falls_back_when_capability_lost(chat_input: str):
@@ -336,3 +364,58 @@ def test_send_clears_chips_without_text(chat_input: str):
     start = chat_input.index("const sendWithImageParams")
     body = chat_input[start : start + 2400]
     assert body.count("resetImageParams()") >= 2, "改图分支与参数分支都要显式收口"
+
+
+def test_edit_instruction_ref_is_declared(chat_input: str):
+    """模板 v-model 与 applyEditParams 用到的 imageEditInstruction 必须真的声明。
+
+    漏声明时 `imageEditInstruction.value.trim()` 抛 ReferenceError，且这行在 try 之外，
+    async 函数静默 reject——「完成」按钮没有任何反应（不转圈、不报错）。
+    """
+    assert "const imageEditInstruction = ref(" in chat_input
+
+
+def test_mobile_image_panel_survives_plus_menu(chat_input: str):
+    """移动端点「图像参数」不能把加号菜单收掉，面板要 Teleport 出去并自带遮罩。
+
+    面板是挂在加号菜单（v-if="showPlusMenu"）里的：openImageParamPop 若在移动端先
+    `showPlusMenu = false`，菜单卸载，面板跟着消失——点了像没反应。
+    """
+    start = chat_input.index("const openImageParamPop")
+    body = chat_input[start : chat_input.index("};", start)]
+    assert "showPlusMenu.value = false" not in body, "打开面板不得收起加号菜单"
+
+    # 移动端 Teleport 到 body（桌面端 disabled 原地渲染），并有点击收起的遮罩
+    assert '<Teleport to="body" :disabled="!isMobileViewport">' in chat_input
+    assert "showImageParamPop && isMobileViewport" in chat_input
+    # 面板打开时隐藏菜单列表，免得叠在一起
+    assert 'v-show="!(isMobileViewport && showImageParamPop)"' in chat_input
+
+
+def test_cancel_clears_edit_draft_completely(chat_input: str):
+    """点「取消」必须调 clearEditImage() 同时清掉主图/参考图与 objectURL，避免再次打开裂图。"""
+    start = chat_input.index("const closeImageParamPopSafely")
+    body = chat_input[start : chat_input.index("};", start)]
+    assert "clearEditImage()" in body
+
+
+def test_plus_menu_close_also_closes_image_pop(chat_input: str):
+    """关闭加号菜单或锁定输入时必须同步关闭 showImageParamPop，避免下次点 + 误弹。"""
+    lock_start = chat_input.index("watch(isInteractionLocked")
+    lock_body = chat_input[lock_start : lock_start + 300]
+    assert "showImageParamPop.value = false" in lock_body
+
+    plus_start = chat_input.index("watch(showPlusMenu")
+    plus_body = chat_input[plus_start : plus_start + 260]
+    assert "showImageParamPop.value = false" in plus_body
+
+
+def test_remove_file_syncs_edit_mode_and_has_chip(chat_input: str):
+    """删掉附件要同步退出或降级改图模式，且输入框上方需露出可一键退出的「改图」chip。"""
+    rm_start = chat_input.index("const removeFile = ")
+    rm_body = chat_input[rm_start : rm_start + 450]
+    assert "exitImageEditMode()" in rm_body
+    assert "imageEditHasReference.value = false" in rm_body
+
+    assert "v-if=\"imageEditMode || imageParamChips.length\"" in chat_input
+    assert "@click=\"exitImageEditMode\"" in chat_input

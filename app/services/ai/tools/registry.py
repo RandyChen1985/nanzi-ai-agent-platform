@@ -582,11 +582,14 @@ class ToolRegistry:
                 "composition. Never put more than one path in either argument."
             )
         current = str(getattr(spec, "description", "") or "")
-        # 工具级超时要跟着实际可能耗时走：单张超时 × 张数（+ 余量），否则会被
-        # 全局 180 秒的 wait_for 提前掐断——用户看到的是「工具超时」这种含糊说法，
-        # 而不是「这张图没出成功」。上限 15 分钟，避免配置写大后无限挂住。
+        # 工具级超时要跟着实际可能耗时走，否则会被全局 wait_for 提前掐断——用户看到的
+        # 是「工具超时」这种含糊说法，而不是「这张图没出成功」。
+        # 单张的最坏路径：主请求（httpx 的连接/写/读各自计时，再叠加一次重试）之后，
+        # 还可能有一次外链下载。原公式只算了「超时 × 张数」，默认 120s 时预算 150s，
+        # 比真实最坏路径（数分钟）小一个量级，慢网关下必然被腰斩并白烧一次计费调用。
         rounds = int(config["max_images_per_call"]) if allow_multi else 1
-        budget = min(float(config["timeout"]) * rounds + 30.0, 900.0)
+        per_round = float(config["timeout"]) * 2 + 30.0
+        budget = min(per_round * rounds + 30.0, 1800.0)
         return replace(spec, description=current + extra, timeout_seconds=budget)
 
     @classmethod

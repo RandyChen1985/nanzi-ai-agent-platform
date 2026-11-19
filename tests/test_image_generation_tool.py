@@ -784,8 +784,13 @@ async def test_image_api_downloads_url_when_no_b64(patch_config, monkeypatch):
 
 
 async def test_image_api_rejects_non_http_url(patch_config):
-    """渠道给的地址不一定是 http(s)：不能拿它去发起任意请求。"""
-    assert await tools._download_image_bytes("file:///etc/passwd", 5.0) is None
+    """渠道给的地址不一定是 http(s)：不能拿它去发起任意请求。
+
+    契约是「失败抛 _DownloadError 并带上原因」——上层要能把「图没取回来」
+    和「模型没出图」分开报，所以这里不能再静默返回 None。
+    """
+    with pytest.raises(tools._DownloadError):
+        await tools._download_image_bytes("file:///etc/passwd", 5.0)
 
 
 async def test_image_api_sniffs_jpeg_mime(patch_config, captured_artifacts, monkeypatch):
@@ -891,4 +896,181 @@ async def test_download_rejects_oversized_response(patch_config, monkeypatch):
         )
 
     _patch_http(monkeypatch, handler)
-    assert await tools._download_image_bytes("https://cdn.example.com/a.png", 5.0) is None
+    with pytest.raises(tools._DownloadError, match="超过"):
+        await tools._download_image_bytes("https://cdn.example.com/a.png", 5.0)
+
+
+# ── 上游错误分类 ─────────────────────────────────────────────
+
+
+async def test_upstream_401_reports_auth_problem(patch_config, patch_context, monkeypatch):
+    """401 要说「密钥无效」，不能笼统报成连接失败——排查方向完全不同。"""
+    _patch_http(
+        monkeypatch,
+        lambda request: httpx.Response(401, text='{"error":"invalid api key"}'),
+    )
+
+    result = await _call_generate(prompt="一只猫")
+
+    assert result["ok"] is False
+    assert "鉴权失败" in result["error"]
+    assert "401" in result["error"]
+
+
+async def test_upstream_404_reports_model_problem(patch_config, patch_context, monkeypatch):
+    _patch_http(
+        monkeypatch, lambda request: httpx.Response(404, text='{"error":"no such model"}')
+    )
+
+    result = await _call_generate(prompt="一只猫")
+
+    assert result["ok"] is False
+    assert "找不到该模型" in result["error"]
+
+
+async def test_upstream_429_is_retried_once(
+    patch_config, patch_context, captured_artifacts, monkeypatch
+):
+    """限流意味着请求在受理层就被拒了，没有出图——重试一次是安全的。"""
+    monkeypatch.setattr(tools, "_UPSTREAM_RETRY_BACKOFF_SECONDS", 0)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if len(calls) == 1:
+            return httpx.Response(429, text='{"error":"rate limited"}')
+        return httpx.Response(200, json=_image_response())
+
+    _patch_http(monkeypatch, handler)
+    result = await _call_generate(prompt="一只猫")
+
+    assert len(calls) == 2, "429 应该退避后重试一次"
+    assert result["ok"] is True, result
+
+
+async def test_retry_path_read_timeout_is_wrapped(
+    patch_config, patch_context, monkeypatch
+):
+    """重试期间的读超时不能逃成裸 ReadTimeout。
+
+    曾经内层 except 只捕获连接类错误，重试时的读超时会直接冒出本函数，
+    「不再自动重发以免重复计费、可调大超时」这段说明整段丢失。
+    """
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if len(calls) == 1:
+            raise httpx.ConnectError("boom")
+        raise httpx.ReadTimeout("slow")
+
+    _patch_http(monkeypatch, handler)
+    result = await _call_generate(prompt="一只猫")
+
+    assert result["ok"] is False
+    assert "超时" in result["error"]
+    assert "不再自动重发" in result["error"]
+    assert "已重试一次" in result["error"], "要说明这是重试阶段失败的"
+
+
+# ── 外链下载与 SSRF ──────────────────────────────────────────
+
+
+def test_download_host_guard_blocks_loopback_and_metadata(patch_config):
+    """回环与云元数据地址一律不代发请求；私网 CDN 要放行，否则私有化部署直接不可用。"""
+    for blocked in (
+        "http://127.0.0.1:6379/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://localhost/x.png",
+        "file:///etc/passwd",
+        "http://[::1]/x.png",
+    ):
+        assert tools._is_blocked_download_host(blocked) is True, blocked
+
+    for allowed in (
+        "https://cdn.example.com/a.png",
+        "http://minio.internal:9000/bucket/a.png",
+        "http://10.0.0.8/a.png",
+        "http://192.168.1.20/a.png",
+    ):
+        assert tools._is_blocked_download_host(allowed) is False, allowed
+
+
+async def test_remote_download_failure_does_not_claim_no_image(
+    patch_config, patch_context, captured_artifacts, monkeypatch
+):
+    """图已生成但外链取不回时，不能报「模型没有返回图片」。
+
+    否则用户被告知「模型没出图」去换模型，而真实原因是网络/CDN，
+    并且这次调用其实已经计费。
+    """
+    patch_config({"image_api_format": "openai_chat"})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url).endswith("/chat/completions"):
+            return httpx.Response(
+                200,
+                json={
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": "https://cdn.example/out.png"},
+                                    }
+                                ],
+                            }
+                        }
+                    ],
+                },
+            )
+        return httpx.Response(403, text="denied")
+
+    _patch_http(monkeypatch, handler)
+    result = await _call_generate(prompt="一只猫")
+
+    assert result["ok"] is False
+    assert "已经生成" in result["error"]
+    assert "没有返回图片" not in result["error"]
+
+
+async def test_gif_product_is_saved_with_gif_extension(
+    patch_config, patch_context, captured_artifacts, monkeypatch
+):
+    """嗅探表认 GIF，扩展名映射也得跟上，否则动图以 .png 落盘、浏览器白块。"""
+    import base64 as _b64
+
+    gif = b"GIF89a" + b"\x00" * 64
+    patch_config({"image_api_format": "openai_chat"})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "test-model",
+                "choices": [
+                    {
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/gif;base64,"
+                                        + _b64.b64encode(gif).decode()
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ],
+            },
+        )
+
+    _patch_http(monkeypatch, handler)
+    result = await _call_generate(prompt="一只猫")
+
+    assert result["ok"] is True
+    assert captured_artifacts[0]["filename"].endswith(".gif")

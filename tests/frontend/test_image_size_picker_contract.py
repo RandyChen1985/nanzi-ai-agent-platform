@@ -146,9 +146,45 @@ def test_both_chat_pages_forward_size_into_execution_options(page: Path):
     source = _read(page)
 
     assert '@update:image-size="' in source
-    assert re.search(r"image_size:\s*imageSizeOverride\.value", source) or re.search(
-        r"debugOptions\.image_size\s*=\s*imageSizeOverride\.value", source
-    ), f"{page.name} 没有把尺寸放进 execution_options"
+    assert "const turnImageSize = imageSizeOverride.value" in source, (
+        f"{page.name} 必须在 sendMessage 开头快照 imageSizeOverride，避免清空输入框触发重置后丢失"
+    )
+    assert re.search(r"image_size:\s*turnImageSize", source) or re.search(
+        r"debugOptions\.image_size\s*=\s*turnImageSize", source
+    ), f"{page.name} 没有把快照后的尺寸放进 execution_options"
+    # 快照必须发生在清空 userInput 之前：否则清空 v-model 会触发 ChatInput 重置 chips，
+    # 等 await nextTick() 后再读 imageSizeOverride.value 已经变成 null/默认。
+    send_start = source.index("const sendMessageInternal = async")
+    send_body = source[send_start : send_start + 3500]
+    assert send_body.index("const turnImageSize = imageSizeOverride.value") < send_body.index(
+        'userInput.value = ""'
+    ), f"{page.name} 必须在清空 userInput 之前快照 imageSizeOverride"
+
+
+def test_send_resets_params_after_emit_send():
+    """回归：sendWithImageParams 不能在 emit('send') 之前调用 resetImageParams()。
+
+    以前在 nextTick(() => emit('send')) 之前就 reset，watch(imageParamSize) 抢在
+    父组件发送前把 imageSizeOverride 清回默认，导致用户选的分辨率永远传不过去。
+    """
+    source = _read(CHAT_INPUT)
+    start = source.index("const sendWithImageParams = () => {")
+    end = source.index("\n};", start)
+    body = source[start:end]
+    # 每次 resetImageParams() 都必须在 emit("send") 之后（同一 nextTick 回调内）
+    assert "resetImageParams();\n    nextTick" not in body
+    assert "resetImageParams();\n  nextTick" not in body
+    assert body.count('emit("send");\n      resetImageParams();') >= 1
+    assert body.count('emit("send");\n    resetImageParams();') >= 1
+
+
+def test_default_size_is_not_emitted_as_override():
+    """默认尺寸不应作为 override 上报，否则会覆盖模型口头选尺寸，也会把改图压成默认方形。"""
+    source = _read(CHAT_INPUT)
+    start = source.index("watch(imageParamSize, (size) => {")
+    body = source[start : start + 300]
+    assert "imageDefaultSize.value" in body
+    assert 'emit("update:image-size"' in body
 
 
 def test_backend_prefers_user_size_over_model_choice():

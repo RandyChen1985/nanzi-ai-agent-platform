@@ -81,6 +81,7 @@ _INHERITED_RUNTIME_OPTION_KEYS = (
     "temperature",
     "thinking_enable",
     "reasoning_effort",
+    "image_size",
 )
 
 #: 兼容旧引用：语义是「默认值」，实际上限请用 getter。

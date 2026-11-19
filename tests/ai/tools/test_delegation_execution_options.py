@@ -137,10 +137,18 @@ async def test_unrelated_parent_options_are_not_forwarded(captured_options):
         assert key not in options
 
 
+@pytest.mark.asyncio
+async def test_image_size_is_forwarded_to_sub_agent(captured_options):
+    """用户在输入框选定的出图分辨率必须透传给委派子代理，否则智能委派生图会退回默认尺寸。"""
+    await _dispatch({"image_size": "1664x928"})
+    assert captured_options["execution_options"]["image_size"] == "1664x928"
+
+
 def test_inherited_keys_are_declared_in_one_place():
     assert delegation._INHERITED_RUNTIME_OPTION_KEYS == (
         "model",
         "temperature",
         "thinking_enable",
         "reasoning_effort",
+        "image_size",
     )

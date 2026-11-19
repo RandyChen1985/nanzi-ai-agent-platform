@@ -618,3 +618,310 @@ async def test_reference_of_non_image_is_rejected(
 
     assert result["ok"] is False
     assert "参考图" in result["error"]
+
+
+async def test_read_source_image_matches_upload_dir_key(tmp_path, monkeypatch):
+    """工作区目录键必须与上传目录一致（{user_name}__{user_id}）。
+
+    回归：AgentContext 没有 user_name 属性，只在 user_dimensions 里。曾经只读属性，
+    目录键退化成纯 user_id，用户刚上传的图被判成「不在自己工作区」。
+    这里**不** stub resolve_workspace_user_key——stub 过它的测试正是这个问题没被发现的原因。
+    """
+    from app.services.ai.runtime.agentscope.workspace import resolve_workspace_user_key
+
+    root = tmp_path / "agent_workspaces"
+    user_key = resolve_workspace_user_key(user_id=7, user_name="tester")
+    assert user_key != "7", "前提：带用户名时目录键应为 name__id"
+    uploads = root / user_key / "uploads"
+    uploads.mkdir(parents=True)
+    image = uploads / "pic.png"
+    image.write_bytes(_PNG_HEAD)
+
+    async def _root(*, ensure_exists: bool = True):
+        return str(root)
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root", _root
+    )
+    context = SimpleNamespace(user_id=7, user_dimensions={"user_name": "tester"})
+
+    mime, data = await tools._read_source_image(str(image), context=context)
+    assert mime == "image/png"
+    assert data == _PNG_HEAD
+
+
+async def test_preview_edit_500_do_request_failed_explains_unsupported_model(
+    patch_config, monkeypatch
+):
+    """回归：kolors 等只支持文生图的模型改图时回 500 do_request_failed（抛 PermissionError），
+    必须给出「这个模型看起来不支持改图」的换模型引导，不能被前面的 PermissionError 拦截。
+    同时 401 鉴权错误不能被误判为「不支持改图」。
+    """
+    patch_config({"image_model": "kolors"})
+    mode = {"status": 500}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if mode["status"] == 500:
+            return httpx.Response(500, text='{"error":{"code":"do_request_failed"}}')
+        return httpx.Response(401, text='{"error":{"message":"invalid api key"}}')
+
+    _patch_http(monkeypatch, handler)
+    with pytest.raises(ValueError, match="不支持改图"):
+        await tools.preview_image_edit()
+
+    mode["status"] = 401
+    with pytest.raises(ValueError, match="连接图像服务失败"):
+        await tools.preview_image_edit()
+
+
+async def test_preview_edit_omits_size_to_follow_sample(patch_config, monkeypatch):
+    """「测试改图」应不传 size（跟随样图比例），与 edit_image 的默认行为一致。"""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_chat_response())
+
+    _patch_http(monkeypatch, handler)
+    await tools.preview_image_edit()
+    assert "size" not in bodies[0]
+
+
+async def test_read_source_image_rejects_other_users_artifact_url(
+    workspace, patch_context, monkeypatch
+):
+    """按 download_url 反查产物也必须校验位于当前用户 scope 内，禁止跨用户读取。"""
+    other_dir = workspace.root / "other__99" / "generated"
+    other_dir.mkdir(parents=True)
+    other_file = other_dir / "secret.png"
+    other_file.write_bytes(_PNG_HEAD)
+
+    async def _fake_resolve(artifact_id: str, token: str):
+        return SimpleNamespace(path=other_file)
+
+    monkeypatch.setattr(
+        "app.services.ai.tools.generated_file_service.resolve_workspace_artifact",
+        _fake_resolve,
+    )
+    context = SimpleNamespace(user_id=7, user_dimensions={"user_name": "tester"})
+    url = f"https://host/api/v1/chat/generated-files/{'a' * 32}?token=validtok"
+
+    with pytest.raises(ValueError, match="不属于当前用户"):
+        await tools._read_source_image(url, context=context)
+
+
+async def test_list_image_models_ignores_masked_api_key(patch_config, monkeypatch):
+    """传入脱敏密钥（含 ****）时必须回落到库里保存的真实密钥，避免拿脱敏串去 401。"""
+    patch_config({"image_api_key": "real-secret-key"})
+    seen_auth: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_auth.append(request.headers.get("authorization", ""))
+        return httpx.Response(200, json={"data": [{"id": "Qwen-Image-2.1-Turbo"}]})
+
+    _patch_http(monkeypatch, handler)
+    res = await tools.list_image_models(api_key="real****key")
+    assert res["models"] == ["Qwen-Image-2.1-Turbo"]
+    assert seen_auth == ["Bearer real-secret-key"]
+
+
+async def test_chat_protocol_supports_remote_image_url(patch_config, monkeypatch):
+    """聊天协议返回 http(s) 图片外链时，应自动下载回来而不是报「没有返回图片」。"""
+    patch_config({"image_api_format": "openai_chat"})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url).endswith("/chat/completions"):
+            return httpx.Response(
+                200,
+                json={
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": "https://cdn.example/out.png"},
+                                    }
+                                ],
+                            }
+                        }
+                    ],
+                },
+            )
+        if str(request.url) == "https://cdn.example/out.png":
+            return httpx.Response(200, content=_PNG_HEAD)
+        return httpx.Response(404)
+
+    _patch_http(monkeypatch, handler)
+    res = await tools.request_image_once(
+        config=await tools.load_image_generation_config(),
+        prompt="a cat",
+        size="1024x1024",
+        api_key="k",
+    )
+    assert res["mime"] == "image/png"
+    assert res["data"] == _PNG_HEAD
+
+
+def test_image_dimensions_parses_jpeg_and_webp():
+    """无依赖解析 JPEG SOF0 与 WEBP VP8X 宽高，避免改图返回非 PNG 时宽高丢失。"""
+    # 构造最小合法 JPEG（SOI + SOF0: height=480, width=640 + EOI）
+    sof0_payload = bytes([8]) + (480).to_bytes(2, "big") + (640).to_bytes(2, "big") + bytes([3, 1, 0x11, 0])
+    seg_len = (len(sof0_payload) + 2).to_bytes(2, "big")
+    jpeg = b"\xff\xd8\xff\xc0" + seg_len + sof0_payload + b"\xff\xd9"
+    assert tools._image_dimensions(jpeg) == (640, 480)
+
+    # 构造最小合法 WEBP VP8X（width=1280, height=720）
+    vp8x = (
+        b"RIFF"
+        + (22).to_bytes(4, "little")
+        + b"WEBP"
+        + b"VP8X"
+        + (10).to_bytes(4, "little")
+        + b"\x00\x00\x00\x00"
+        + (1280 - 1).to_bytes(3, "little")
+        + (720 - 1).to_bytes(3, "little")
+    )
+    assert tools._image_dimensions(vp8x) == (1280, 720)
+
+
+# ══════════════════ 尺寸优先级（改图侧） ══════════════════
+#
+# 「用户选 > 模型传 > 默认」在生图侧有四条测试，改图侧一直是空白——而改图还多一态
+# 「都没传 → 跟随原图比例」，恰恰是最容易被改坏、坏了又最难发现的地方（竖图被压成方形）。
+
+
+def _patch_user_size(monkeypatch, size: str | None):
+    """模拟 execution_options.image_size：有值代表用户在「图像参数」里点过具体尺寸。"""
+
+    def _get(key, default=None):
+        if key == "image_size":
+            return size
+        return default
+
+    monkeypatch.setattr(tools, "get_execution_option", _get)
+
+
+async def test_user_selected_size_wins_for_edit(
+    patch_config, workspace, patch_context, captured_artifacts, monkeypatch
+):
+    source = _make_source(workspace)
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_chat_response())
+
+    _patch_http(monkeypatch, handler)
+    _patch_user_size(monkeypatch, "1664x928")
+
+    await _call_edit(image=str(source), instruction="换个背景")
+
+    assert bodies[0]["size"] == "1664x928"
+
+
+async def test_user_size_outside_whitelist_falls_back_to_source(
+    patch_config, workspace, patch_context, captured_artifacts, monkeypatch
+):
+    """白名单外的尺寸不阻断改图，回落「跟随原图」。
+
+    用户看不到工具返回值，报错只会变成一次莫名其妙的生成失败；而跟着原图出图
+    在多数情况下正是他想要的。
+    """
+    source = _make_source(workspace)
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_chat_response())
+
+    _patch_http(monkeypatch, handler)
+    _patch_user_size(monkeypatch, "999x999")
+
+    result = await _call_edit(image=str(source), instruction="换个背景")
+
+    assert result["ok"] is True
+    assert "size" not in bodies[0]
+
+
+async def test_model_size_outside_whitelist_is_rejected(
+    patch_config, workspace, patch_context, monkeypatch
+):
+    """模型自己编的尺寸要拦下并把可用值告诉它，否则它只会原样重试。"""
+    source = _make_source(workspace)
+
+    result = await _call_edit(
+        image=str(source), instruction="换个背景", size="1920x1080"
+    )
+
+    assert result["ok"] is False
+    assert "不在允许范围内" in result["error"]
+
+
+async def test_model_size_bad_format_is_rejected(
+    patch_config, workspace, patch_context, monkeypatch
+):
+    source = _make_source(workspace)
+
+    result = await _call_edit(image=str(source), instruction="换个背景", size="大一点")
+
+    assert result["ok"] is False
+    assert "格式不对" in result["error"]
+
+
+# ══════════════════ 输入参数校验 ══════════════════
+
+
+async def test_multiple_paths_in_image_are_explained(
+    patch_config, workspace, patch_context, monkeypatch
+):
+    """模型把两张图塞进 image 时要指名说清，否则用户看到「找不到这张图 a.png,b.png」。"""
+    result = await _call_edit(image="a.png,b.png", instruction="把两张拼起来")
+
+    assert result["ok"] is False
+    assert "只能放一张" in result["error"]
+
+
+async def test_total_source_bytes_capped(
+    patch_config, workspace, patch_context, monkeypatch
+):
+    """主图 + 参考图合计超限要在拼请求之前拦下。
+
+    单图 10MB × 2 张 base64 后约 27MB 请求体，而常见网关上限是 20MB，
+    拼出去只会换来一句上游原文报错。
+    """
+    chunk = 7 * 1024 * 1024
+    main = workspace.user_dir / "uploads" / "main.png"
+    ref = workspace.user_dir / "uploads" / "ref.png"
+    main.write_bytes(_PNG_HEAD + b"0" * chunk)
+    ref.write_bytes(_PNG_HEAD + b"0" * chunk)
+
+    result = await _call_edit(image=str(main), instruction="改一下", reference=str(ref))
+
+    assert result["ok"] is False
+    assert "合计" in result["error"]
+
+
+async def test_oversized_source_is_rejected_without_reading(
+    patch_config, workspace, patch_context, monkeypatch
+):
+    """超过上限的图不该先整读进内存再拒绝：上传通道允许 20MB，改图上限 10MB。"""
+    path = workspace.user_dir / "uploads" / "huge.png"
+    path.write_bytes(_PNG_HEAD + b"0" * tools.MAX_SOURCE_IMAGE_BYTES)
+
+    read_calls = {"n": 0}
+    original_read_bytes = Path.read_bytes
+
+    def _counting_read(self):
+        read_calls["n"] += 1
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", _counting_read)
+
+    result = await _call_edit(image=str(path), instruction="改一下")
+
+    assert result["ok"] is False
+    assert "太大" in result["error"]
+    assert read_calls["n"] == 0, "应先 stat 判大小，超限就别读"

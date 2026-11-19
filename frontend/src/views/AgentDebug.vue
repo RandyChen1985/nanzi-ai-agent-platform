@@ -3662,6 +3662,8 @@ const sendMessage = async (overrides: ChatSendOverrides = {}) => runSendExclusiv
 const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   const { content, files } = snapshot;
   const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value];
+  // 尽早快照本轮出图尺寸：避免后续 await / 清空输入框触发 ChatInput 重置后丢失。
+  const turnImageSize = imageSizeOverride.value || undefined;
   if (!content && files.length === 0) return;
   if (isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value) return;
 
@@ -3771,7 +3773,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     };
     if (debugConfig.model) debugOptions.model = debugConfig.model;
     // 出图尺寸：用户在输入框「图像参数」里点了具体分辨率才下发，不进正文。
-    if (imageSizeOverride.value) debugOptions.image_size = imageSizeOverride.value;
+    if (turnImageSize) debugOptions.image_size = turnImageSize;
     if (debugConfig.thinkingEnableOverride !== null) {
       debugOptions.thinking_enable = debugConfig.thinkingEnableOverride;
     }

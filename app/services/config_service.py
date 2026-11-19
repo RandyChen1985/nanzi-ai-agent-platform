@@ -101,6 +101,11 @@ def resolve_effective_sandbox_policy(
     return normalized
 
 
+# 图像尺寸白名单的每项形状：宽x高。允许 * / X / × 三种分隔符，
+# 因为不同渠道文档里写的不是一个符号，管理员照着抄进来很常见。
+_IMAGE_SIZE_SHAPE_RE = re.compile(r"^\d{2,5}\s*[xX*×]\s*\d{2,5}$")
+
+
 def validate_config_update(key: str, value: str) -> None:
     """校验系统配置更新是否合法。"""
     if key == AGENT_MAX_TOOLCALL_TIMEOUT_KEY:
@@ -143,6 +148,18 @@ def validate_config_update(key: str, value: str) -> None:
             int(str(value or "").strip())
         except (TypeError, ValueError) as exc:
             raise ValueError(f"{key} 必须是整数（填 0 表示不限）") from exc
+    elif key == "image_allowed_sizes":
+        # 空白名单在后端语义是「不限制尺寸」（load_image_generation_config 用它当白名单，
+        # 空集合被当成「随便传」）。管理员清空通常只是想重填，但保存下去就整条放行了，
+        # 界面上还看不出来。在写入这一步拦住，比事后查「怎么什么尺寸都过了」便宜。
+        items = [item.strip() for item in str(value or "").split(",") if item.strip()]
+        if not items:
+            raise ValueError("可出图尺寸至少要保留一个，不能清空")
+        bad = [item for item in items if not _IMAGE_SIZE_SHAPE_RE.match(item)]
+        if bad:
+            raise ValueError(
+                f"尺寸「{'、'.join(bad)}」格式不对，必须写成 宽x高（例如 1024x1024）"
+            )
     elif key in SECRET_FLAG_KEYS:
         # 只收 0/1：这三个值最终由 _as_bool 解析，收 "yes"/"on" 会让「界面上只有
         # 开和关」和「库里存了什么」两套口径并存
@@ -662,10 +679,15 @@ class ConfigService:
         return old_value != value
 
     @staticmethod
-    async def bulk_update(updates: List[dict], changed_by: str = "system"):
+    async def bulk_update(updates: List[dict], changed_by: str = "system") -> dict:
         """
         Bulk update configs.
         updates: [{key, value}, ...]
+
+        返回 ``{"updated": [key...], "skipped": [{"key", "reason"}...]}``。
+        ``skipped`` 必须回给前端：``update_config_value`` 遇到「值含 ****」的密钥会
+        直接 return False（保留库里的真实密钥），管理员却只看到「保存成功」，
+        以为密钥已经换成新的了——库里还是旧的，这类不一致靠日志根本查不出来。
         """
         # 先整体校验，避免同一批配置在遇到被禁用的 docker 策略后只写入前半部分。
         for item in updates:
@@ -673,11 +695,28 @@ class ConfigService:
             val = item.get("value")
             if key is not None and val is not None:
                 validate_config_update(str(key), str(val))
+
+        updated: List[str] = []
+        skipped: List[dict] = []
         for item in updates:
             key = item.get('key')
             val = item.get('value')
-            if key is not None and val is not None:
-                await ConfigService.update_config_value(key, val, changed_by=changed_by, change_reason="Bulk update")
+            if key is None or val is None:
+                continue
+            changed = await ConfigService.update_config_value(
+                key, val, changed_by=changed_by, change_reason="Bulk update"
+            )
+            if changed:
+                updated.append(str(key))
+            elif "****" in str(val):
+                # 前端回显的是脱敏串，原样提交回来当然是「没变化」，但真实原因和
+                # 「本来就一样」不同：用户可能真的以为自己填了新密钥。
+                skipped.append(
+                    {"key": str(key), "reason": "这是脱敏后的原密钥，未改动；要更换请完整填写新密钥"}
+                )
+            else:
+                skipped.append({"key": str(key), "reason": "值没有变化"})
+        return {"updated": updated, "skipped": skipped}
 
     # 名字里带这些词的一律当作密钥处理：历史表存的是明文，界面上不该原样回显
     _SECRET_KEY_MARKERS = ("key", "secret", "token", "password", "passwd", "credential")
