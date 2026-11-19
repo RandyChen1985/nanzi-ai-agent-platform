@@ -2225,13 +2225,16 @@ const sendWithImageParams = () => {
       ? "沿用所附两张图片进行修改：第一张是要改的主图，第二张只是参考（只参考它的风格、配色或构图，那张本身不用改）。"
       : "沿用所附图片进行修改：";
     emit("update:modelValue", `${head}${body}${styleNote}`);
-    // 参数已经写进正文，chips 的使命结束了。这里显式清，是因为「只发图片、
-    // 不打字」时 modelValue 从头到尾都是空串，下面那个 watch 等不到「从有到无」。
-    resetImageParams();
+    // 必须等 emit("send") 同步快照完 imageSizeOverride 之后再重置 chips，
+    // 否则 resetImageParams() 触发 watch(imageParamSize) 会抢在 send 之前把父组件的
+    // imageSizeOverride 清回默认，导致用户选的分辨率永远传不过去。
     // 但不清 imageEditMode：发送可能被父组件拒绝（内容仍在），
     // 那时清掉前缀标记会让用户重发一次变成「问答」而不是「改图」。
     // 统一由下面那个 watch 在输入框真被清空时收口。
-    nextTick(() => emit("send"));
+    nextTick(() => {
+      emit("send");
+      resetImageParams();
+    });
     return;
   }
   const prefix = buildImageParamPrefix();
@@ -2241,9 +2244,12 @@ const sendWithImageParams = () => {
   }
   const current = String(props.modelValue || "");
   emit("update:modelValue", `${prefix}\n${current}`);
-  // 同上：纯附件发送时 modelValue 不会变，chips 得自己收。
-  resetImageParams();
-  nextTick(() => emit("send"));
+  // 同上：在 emit("send") 之后再收 chips，既不抢在父组件快照前清掉 imageSizeOverride，
+  // 也能在纯附件发送（modelValue 不变）时把 chips 收干净。
+  nextTick(() => {
+    emit("send");
+    resetImageParams();
+  });
 };
 
 // 输入框被清空 = 这次输入确实发出去了（父组件发送成功后会清空 v-model），
@@ -2276,8 +2282,12 @@ const resetImageParams = () => {
 };
 
 // 尺寸要单独同步给父组件：它不在正文里，父组件组装请求体时得从自己那份状态里取。
+// 只有用户显式选了「非默认」尺寸时才上报覆盖值；默认尺寸报 null：
+// 1) 生成页没选时后端本来就按系统默认出图，同时保留模型按口头要求（如「竖版壁纸」）挑尺寸的能力；
+// 2) 改图页没选时后端不传 size 才能跟随原图比例，不会被默认正方形压扁。
 watch(imageParamSize, (size) => {
-  emit("update:image-size", size || null);
+  const explicit = size && size !== imageDefaultSize.value ? size : null;
+  emit("update:image-size", explicit);
 });
 
 // 进对话就探一次：菜单一打开就能显示「未开启 / 智能体未启用」，不用等用户先点一下才知道。

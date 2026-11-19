@@ -13097,6 +13097,9 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   const forcedDataAgentIdForTurn = forceDataQueryAgentOnce.value ? resolvePreferredDataQueryAgentId() : "";
   forceDataQueryAgentOnce.value = false;
   const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value];
+  // 尽早快照本轮出图尺寸：后面清空 userInput + await nextTick 会触发 ChatInput 重置参数，
+  // 若拖到组装请求体时再读 imageSizeOverride.value，已经被清回 null/默认值。
+  const turnImageSize = imageSizeOverride.value || undefined;
 
   const quotaBlock = await ensureCanSend();
   if (quotaBlock) {
@@ -13348,7 +13351,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
         knowledge_ragflow_metadata_top_k: knowledgeMetadataTopK.value,
         resource_scope: resourceScope.value,
         // 出图尺寸：只有用户在这次「图像参数」里点了具体分辨率才下发。
-        image_size: imageSizeOverride.value || undefined,
+        image_size: turnImageSize,
       },
       permission_options: {
         approval_mode: config.approvalMode || "ask",
