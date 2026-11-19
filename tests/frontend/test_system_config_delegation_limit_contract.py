@@ -75,3 +75,18 @@ def test_migrations_seed_both_keys_for_mysql_and_postgres():
     # 可重跑：已存在时只纠正描述与分组，不覆盖运维调过的值
     assert "ON DUPLICATE KEY UPDATE" in mysql
     assert "ON CONFLICT" in postgres and "DO UPDATE" in postgres
+
+
+def test_delegation_limit_template_reads_range_through_the_safe_helper():
+    """模板里取 min/max/unit 必须走带 fallback 的 helper，不能裸下标。
+
+    同文件已有 `getDelegationLimitRange()`（未知 key 回落 1-20），但 aria-label、
+    单位与范围提示仍是裸 `DELEGATION_LIMIT_RANGES[item.key].min`。一旦后端新增一个
+    限额 key 而这里忘配 range，模板取值即抛错，整页白屏——分支判定
+    `v-else-if="DELEGATION_LIMIT_RANGES[item.key]"` 还在，所以只要没配就会走到。
+    """
+    source = _read("frontend/src/views/SystemConfig.vue")
+    assert "DELEGATION_LIMIT_RANGES[item.key]." not in source
+    assert "getDelegationLimitRange(item).unit" in source
+    assert "getDelegationLimitMin(item)" in source
+    assert "getDelegationLimitMax(item)" in source

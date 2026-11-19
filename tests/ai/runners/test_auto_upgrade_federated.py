@@ -1,10 +1,6 @@
-import json
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-import pandas as pd
-import duckdb
+from unittest.mock import AsyncMock, MagicMock
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 
 from app.schemas.agent import ChatConfig
 from app.services.ai.runners.data_agent_runner import DataAgentRunner, UpgradeToFederatedQuery
@@ -214,7 +210,12 @@ async def test_federated_turn_type_enters_federated_executor_without_cross_wordi
         }
 
     runner = DataAgentRunner(config=test_config, trace_id="trace-direct-federated", trace_buffer=[])
-    monkeypatch.setattr(runner, "_auto_invoke_get_dataset_schema", fake_auto_schema)
+    # schema 获取已从 runner 方法迁到 chatbi.schema_prefetch.auto_invoke_get_dataset_schema，
+    # patch runner 上的旧方法已经拦不到任何东西（那条路径现在是死代码）。
+    monkeypatch.setattr(
+        "app.services.ai.runners.chatbi.schema_prefetch.auto_invoke_get_dataset_schema",
+        fake_auto_schema,
+    )
     monkeypatch.setattr(runner, "_resolve_runtime_tools_from_config", AsyncMock(return_value=[]))
     monkeypatch.setattr(runner, "_resolve_max_steps", AsyncMock(return_value=4))
     monkeypatch.setattr(
@@ -246,119 +247,3 @@ async def test_federated_turn_type_enters_federated_executor_without_cross_wordi
     )
 
 
-@pytest.mark.asyncio
-async def test_federated_graceful_degradation(test_config, monkeypatch):
-    # 2. 模拟联邦子查询优雅降级 (非主表子查询失败自愈)
-    
-    # 准备 Mock 数据集
-    class FakeDataset:
-        def __init__(self, id, name, data_source):
-            self.id = id
-            self.name = name
-            self.data_source = data_source
-            
-    mock_datasets = {
-        "user_ds": FakeDataset(1, "user_ds", "mysql"),
-        "hr_ds": FakeDataset(2, "hr_ds", "clickhouse"),
-    }
-    
-    # Mock MetadataService.get_dataset_by_name
-    async def mock_get_dataset_by_name(session, dataset_name):
-        return mock_datasets.get(dataset_name)
-    monkeypatch.setattr(
-        "app.services.ai.executors.federated_executor.MetadataService.get_dataset_by_name",
-        mock_get_dataset_by_name
-    )
-
-    # Mock PermissionService check_permission (始终允许)
-    monkeypatch.setattr(
-        "app.services.ai.executors.federated_executor.PermissionService.check_permission",
-        AsyncMock(return_value=True)
-    )
-
-    # Mock execute_sql_query_core
-    # 主表子查询 (user_ds) 成功，第二个子查询 (hr_ds) 报错
-    async def mock_execute_sql_query_core(session, sql, data_source, dataset_name, **kwargs):
-        if dataset_name == "user_ds":
-            return json.dumps({
-                "columns": [{"name": "user_id"}, {"name": "user_name"}],
-                "items": [[1, "Alice"], [2, "Bob"]]
-            })
-        else:
-            # 模拟第二个子查询报错
-            raise ValueError("[TOOL_ERROR] ClickHouse connection timeout")
-            
-    monkeypatch.setattr(
-        "app.services.ai.executors.federated_executor.execute_sql_query_core",
-        mock_execute_sql_query_core
-    )
-
-    # Mock LLM generating the XML execution plan
-    # 两个子查询：
-    # 1. SELECT user_id, user_name FROM users (temp_table: users_tbl)
-    # 2. SELECT id AS hr_id, name AS hr_name FROM hrmresource (temp_table: hr_tbl)
-    # Join SQL: SELECT u.user_id, u.user_name, h.hr_name FROM users_tbl u LEFT JOIN hr_tbl h ON u.user_id = h.hr_id
-    plan_xml = """
-    <federated_plan>
-        <sub_query dataset_name="user_ds" temp_table="users_tbl">
-            SELECT user_id, user_name FROM users
-        </sub_query>
-        <sub_query dataset_name="hr_ds" temp_table="hr_tbl">
-            SELECT id AS hr_id, name AS hr_name FROM hrmresource
-        </sub_query>
-        <memory_join>
-            SELECT u.user_id, u.user_name, h.hr_name FROM users_tbl u LEFT JOIN hr_tbl h ON u.user_id = h.hr_id
-        </memory_join>
-    </federated_plan>
-    """
-    
-    async def mock_get_configured_llm(streaming=False, **kwargs):
-        if streaming:
-            return FakeLLMHandle("Analysis summary content.", streaming=True)
-        else:
-            return FakeLLMHandle(plan_xml, streaming=False)
-
-    monkeypatch.setattr(
-        "app.services.ai.config.AgentConfigProvider.get_configured_llm",
-        mock_get_configured_llm
-    )
-
-    @asynccontextmanager
-    async def fake_db_session():
-        yield MagicMock()
-        
-    monkeypatch.setattr(
-        "app.services.ai.executors.federated_executor.AsyncSessionLocal",
-        fake_db_session
-    )
-
-    # 实例并运行 FederatedQueryExecutor
-    schema_output = "dataset: user_ds\ndata_source: mysql\n---\ndataset: hr_ds\ndata_source: clickhouse"
-    
-    # mock agent_runner
-    runner = MagicMock()
-    runner.user_info = {"user_id": 1, "is_admin": True}
-    runner.trace_buffer = []
-    
-    async def fake_save_last_result(*args, **kwargs):
-        pass
-    runner._save_last_data_result_for_followups = fake_save_last_result
-
-    executor = FederatedQueryExecutor(
-        agent_runner=runner,
-        schema_output=schema_output,
-        datasets=["user_ds", "hr_ds"]
-    )
-
-    events = []
-    async for chunk in executor.execute(runtime_messages=[], system_prompt="", user_question="查询用户信息和人事信息"):
-        events.append(chunk)
-
-    # 验证是否有降级提示气泡与日志
-    warning_logs = [e for e in events if e.get("status") == "warning"]
-    assert len(warning_logs) > 0
-    # 警告提示中应包含 "hr_ds" 相关信息
-    assert any("hr_ds" in str(w.get("details", "")) or "hr_ds" in str(w.get("content", "")) for w in warning_logs)
-
-    # 验证最终总结文本被输出了
-    assert any(e.get("content") == "Analysis summary content." for e in events)

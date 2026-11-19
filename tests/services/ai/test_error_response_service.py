@@ -2,7 +2,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.ai.error_response_service import build_error_presentation
+from app.services.ai.error_response_service import (
+    build_error_presentation,
+    sanitize_error_text,
+)
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -184,3 +187,19 @@ async def test_explanation_prompt_receives_structured_safe_diagnostic_context():
     assert "操作：读取工作空间文件" in prompt
     assert "top-secret" not in prompt
     assert primary.generate_text.await_args.kwargs["temperature"] == 0.1
+
+
+def test_internal_framework_markup_never_reaches_the_user():
+    """AgentScope 的内部标记不是错误内容，脱敏阶段就该剥掉。
+
+    整轮被取消时框架会补 `<system-reminder>The tool call has been interrupted by the
+    user.</system-reminder>`；这段文本会经 `sanitize_error_text` 进入用户可见的错误说明
+    和模型解释提示词，留着标签既不可读，也会让模型把标签当指令读。
+    """
+    cleaned = sanitize_error_text(
+        "<system-reminder>The tool call has been interrupted by the user.</system-reminder>"
+    )
+
+    assert "<system-reminder>" not in cleaned
+    assert "</system-reminder>" not in cleaned
+    assert cleaned == "The tool call has been interrupted by the user."

@@ -29,6 +29,12 @@ _EXTENSION_ARTIFACT_TYPES = {
     ".docx": "word",
     ".xlsx": "excel",
     ".xlsm": "excel",
+    # 图片产物：出图工具与「发布已生成文件」都会走这里，缺了会被记成 document，
+    # 产物面板的分类就分不出「这是张图」。
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
 }
 
 

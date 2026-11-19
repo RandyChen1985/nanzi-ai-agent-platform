@@ -83,7 +83,12 @@ async def test_partition_status_expands_table_list_in_clause():
 
 @pytest.mark.asyncio
 async def test_partition_service_prune_expired_logs_partitioned():
-    """验证当表处于分区状态时，prune_expired_logs 正确识别并 Drop 过期分区。"""
+    """验证当表处于分区状态时，prune_expired_logs 正确识别并 Drop 过期分区。
+
+    时间基准必须冻结：用例里的分区边界（2026-05-01 / 2026-06-01）是相对「当前时间」
+    判断过期的，而实现取的是真实 `datetime.now()`。不冻结的话，真实日期一走过
+    2026-07-01，两个分区都会被判过期，断言和环境就一起漂了。
+    """
     mock_db = AsyncMock()
     
     # 1. 模拟表是已分区的
@@ -110,8 +115,15 @@ async def test_partition_service_prune_expired_logs_partitioned():
         AsyncMock()           # execute drop table 2 partition
     ]
     
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            # 对齐用例里的分区边界：当前时间 2026-06-03，保留 30 天 → 阈值 2026-05-04。
+            return datetime(2026, 6, 3, 12, 0, 0, tzinfo=tz)
+
     # 执行 30 天日志保留期清理
-    res = await PartitionService.prune_expired_logs(mock_db, retention_days=30)
+    with patch("app.services.partition_service.datetime", _FrozenDatetime):
+        res = await PartitionService.prune_expired_logs(mock_db, retention_days=30)
     
     assert res["status"] == "success"
     # 两张表都应当成功识别并 Drop 掉 p202604 分区

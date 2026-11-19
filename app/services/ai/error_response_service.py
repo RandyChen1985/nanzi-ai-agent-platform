@@ -42,6 +42,9 @@ _COOKIE_HEADER_RE = re.compile(
 _BEARER_RE = re.compile(r"(\bBearer\s+)[^\s,;]+", re.IGNORECASE)
 _URL_CREDENTIALS_RE = re.compile(r"(://)[^\s/@:]+:[^\s/@]+@")
 _KNOWN_TOKEN_RE = re.compile(r"\b(?:sk|rk)-[A-Za-z0-9_-]{8,}\b")
+#: AgentScope 注入的内部标记（如整轮取消时的 interrupted 提示）。它既不是错误内容，
+#: 也不该出现在用户可见文本或模型解释提示词里——留着会让模型把标签当指令读。
+_INTERNAL_MARKUP_RE = re.compile(r"</?system-reminder>")
 _INTERNAL_PATH_RE = re.compile(
     r"(?:/Users/|/home/|/root/|/private/var/|/var/|/workspace/)[^\s,;)'\"]*"
     r"|(?:[A-Za-z]:\\)[^\s,;)'\"]*"
@@ -95,6 +98,7 @@ def sanitize_error_text(value: object, *, max_length: int = _MAX_RAW_ERROR_LENGT
     )
     text = _BEARER_RE.sub(r"\1[REDACTED]", text)
     text = _KNOWN_TOKEN_RE.sub("[REDACTED]", text)
+    text = _INTERNAL_MARKUP_RE.sub("", text)
     text = _INTERNAL_PATH_RE.sub("[internal path]", text)
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) > max_length:

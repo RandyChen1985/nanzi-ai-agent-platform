@@ -139,6 +139,14 @@ def is_trusted_empty_result(sql: str, state: DataRunState) -> bool:
     sql_upper = " ".join(str(sql or "").upper().split())
     if not sql_upper:
         return False
+    # 诊断/探路 SQL（`SELECT DISTINCT … LIMIT`、`SHOW TABLES`、无 WHERE 的 `COUNT(*)`）
+    # 零行是常态，不能算「可信空」：判成可信空会让 `empty_sql_result` 不置位，后面
+    # 「空结果要不要重查」的门禁整条失效，模型会把「探路没捞到东西」当成
+    # 「业务数据确实为空」直接答复用户。
+    from app.services.ai.runners.chatbi.sql_gates import is_diagnostic_sql
+
+    if is_diagnostic_sql(sql):
+        return False
     complex_markers = (
         " JOIN ",
         " GROUP BY ",

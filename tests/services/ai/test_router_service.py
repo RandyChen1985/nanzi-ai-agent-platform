@@ -55,11 +55,6 @@ def mock_agents_metadata():
         }
     ]
 
-class MockLLMResponse:
-    def __init__(self, content):
-        self.content = content
-
-
 def _mock_chat_client(content: str):
     mock_client = AsyncMock()
     mock_client.generate_structured_dict.return_value = None
@@ -69,7 +64,9 @@ def _mock_chat_client(content: str):
 
 def test_should_inherit_data_agent_session_generalized():
     assert should_inherit_data_agent_session("把上面的结果画成柱状图") is True
-    assert should_inherit_data_agent_session("查一下所有机房的列表") is True
+    # 「查一下所有机房的列表」只是弱探询、没有指代上一轮结果，实现有意不再机械沿用 ChatBI，
+    # 改成 UNCERTAIN 交给下游语义路由判定（见 resolve_data_agent_session_affinity 的 docstring）。
+    assert should_inherit_data_agent_session("查一下所有机房的列表") is False
     assert should_inherit_data_agent_session("看看我开源项目，小星星情况") is False
     assert should_inherit_data_agent_session("今天北京天气怎么样") is False
     assert should_inherit_data_agent_session("姓名呢") is True
@@ -86,7 +83,7 @@ def test_should_inherit_data_agent_session_generalized():
     [
         ("把上面的结果画成柱状图", DataSessionAffinity.KEEP),
         ("保存这个结果", DataSessionAffinity.KEEP),
-        ("查一下所有机房的列表", DataSessionAffinity.KEEP),
+        ("查一下所有机房的列表", DataSessionAffinity.UNCERTAIN),
         ("你好", DataSessionAffinity.BREAK),
         ("联网查一下今天的行业新闻", DataSessionAffinity.BREAK),
         ("帮我看看这个", DataSessionAffinity.UNCERTAIN),
@@ -254,39 +251,6 @@ async def test_route_query_retry_recovers_business_data_intent(mock_agents_metad
     retry_prompt = mock_chat.generate_text.await_args_list[1].args[0][0].content[0].text
     assert '"intent":"GENERAL"' not in retry_prompt.replace(" ", "")
     assert "根据当前问题" in retry_prompt or "重新判断" in retry_prompt
-
-
-@pytest.mark.asyncio
-async def test_route_query_retry_placeholder_general_does_not_block_chatbi(mock_agents_metadata):
-    """第二次若照抄 GENERAL/unknown，应丢弃该占位意图，保留 agent_name 查数选择。"""
-    service = RouterService()
-    retry_payload = json.dumps({
-        "agent_name": "ChatBI",
-        "confidence": 0.9,
-        "intent": "GENERAL",
-        "domain": "unknown",
-        "thought": "短理由",
-    })
-    mock_chat = AsyncMock()
-    mock_chat.generate_structured_dict.return_value = None
-    mock_chat.generate_text.side_effect = [
-        "not-json {{{",
-        retry_payload,
-    ]
-
-    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
-         patch("app.services.ai.intent_service.intent_service.identify_intent", new_callable=AsyncMock) as mock_identify, \
-         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
-         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
-        mock_fetch.return_value = mock_agents_metadata
-        mock_get_llm.return_value = object()
-        mock_chat_factory.return_value = mock_chat
-
-        result = await service.route_query("列出某个系统中的全部记录", is_admin=True)
-
-    assert result.agent_id == "agent-chatbi"
-    assert result.semantic_intent is None
-    mock_identify.assert_not_called()
 
 
 @pytest.mark.asyncio

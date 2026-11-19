@@ -53,6 +53,7 @@ from app.services.ai.tools.credential_catalog_tools import list_my_credentials
 from app.services.ai.tools.user_info_tools import get_myinfo
 from app.services.ai.tools.user_confirmation_tools import request_user_confirmation
 from app.services.ai.tools.user_question_tools import ask_user_question
+from app.services.ai.tools.image_generation_tool import generate_image
 from app.services.ai.tools.session_status import get_runtime_capabilities, session_status
 from app.services.ai.tools.agent_delegate_tool import sub_agent_call, sub_agent_batch_call
 from app.services.ai.tools.todo_tools import todo_write
@@ -341,6 +342,15 @@ class ToolRegistry:
     # Core tools available by default or for recovery
     DEFAULT_TOOL_SET = ["get_dataset_schema", "execute_sql_query"]
 
+    #: 受系统总开关控制的工具：配置项关闭时**整个平台都不下发**。
+    #:
+    #: 为什么在注册表层拦而不是「下发了再报错」：模型看不到这个工具，就不会先规划
+    #: 一步生成、再收到一句「功能未开启」，白烧一轮上下文与 token。这是「工具默认
+    #: 不勾选」之外的第一道闸——系统没开，任何智能体都调不到。
+    CONFIG_GATED_TOOLS: Dict[str, str] = {
+        "generate_image": "image_generation_enabled",
+    }
+
     # Instantiate complex tools once
     _jira_search = JiraSearchTool()
     _jira_create = JiraCreateIssueTool()
@@ -386,6 +396,8 @@ class ToolRegistry:
         # Register System Executive Tools
         "read_file": read_file,
         "read_image": read_image,
+        # 出图：受 image_generation_enabled 总开关门禁（见 CONFIG_GATED_TOOLS）
+        "generate_image": generate_image,
         "write_file": write_file,
         "search_text": search_text,
         "exec_command": exec_command,
@@ -508,8 +520,67 @@ class ToolRegistry:
         return set(cls._registry) | set(AGENTSCOPE_BUILTIN_TOOL_ALIASES)
 
     @classmethod
+    async def _config_gate_open(cls, name: str) -> bool:
+        """总开关是否允许下发这个工具。未受控的工具恒为 True。"""
+        config_key = cls.CONFIG_GATED_TOOLS.get(name)
+        if not config_key:
+            return True
+        try:
+            from app.services.config_service import ConfigService
+
+            raw = await ConfigService.get(config_key, "0")
+        except Exception as exc:  # noqa: BLE001 - 读不到配置时按关闭处理
+            logger.warning("[tool_registry] 读取工具开关 %s 失败: %s", config_key, exc)
+            return False
+        return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    @classmethod
+    async def _augment_image_tool_spec(cls, spec: Any) -> Any:
+        """把当前平台的可用尺寸写进工具描述。
+
+        白名单只存在配置里，模型是看不到的——不在描述里说清楚，它就会自己编一个
+        ``1920x1080``，然后被工具拦下、再重试一次，白烧一轮。这里把「能选哪些、
+        默认是哪个、怎么按意图挑」直接写进说明。
+        """
+        from dataclasses import replace
+
+        try:
+            from app.services.ai.tools.image_generation_tool import (
+                load_image_generation_config,
+            )
+
+            config = await load_image_generation_config()
+        except Exception as exc:  # noqa: BLE001 - 描述补不上不该让工具消失
+            logger.warning("[tool_registry] 读取图像生成配置失败: %s", exc)
+            return spec
+
+        allowed = "、".join(config["allowed_sizes"]) or "（管理员尚未配置可用尺寸）"
+        extra = (
+            "\n\nThis platform only accepts these sizes (format 宽x高): "
+            f"{allowed}. Default: {config['default_size']}. "
+            f"Max images per single call: {config['max_images_per_call']} "
+            "(pass it as the `n` argument only when the user explicitly asks for "
+            "several options of the same picture — each image is billed separately). "
+            "Pick the size whose aspect ratio matches the user's intent "
+            "(横版/大屏/主视觉 → landscape, 竖版/手机推文 → portrait, 方形/头像 → square). "
+            "If the user does not specify, just use the default — do not ask back."
+        )
+        current = str(getattr(spec, "description", "") or "")
+        # 工具级超时要跟着实际可能耗时走：单张超时 × 张数（+ 余量），否则会被
+        # 全局 180 秒的 wait_for 提前掐断——用户看到的是「工具超时」这种含糊说法，
+        # 而不是「这张图没出成功」。上限 15 分钟，避免配置写大后无限挂住。
+        budget = min(
+            float(config["timeout"]) * int(config["max_images_per_call"]) + 30.0,
+            900.0,
+        )
+        return replace(spec, description=current + extra, timeout_seconds=budget)
+
+    @classmethod
     async def get_tool(cls, name: str) -> Optional[Any]:
         """Retrieve a tool by its name (Async)."""
+        if not await cls._config_gate_open(name):
+            return None
+
         # 1. Check static registry
         if name in cls._registry:
             return cls._registry[name]
@@ -653,6 +724,11 @@ class ToolRegistry:
             runtime_tool_spec_from_native_agentscope_tool,
         )
 
+        # 总开关关闭的工具在这里也要挡住：运行链走 get_runtime_tools()，
+        # 只拦 get_tool() 等于没拦。
+        if not await cls._config_gate_open(name):
+            return None
+
         native_tool = cls._create_agentscope_builtin_tool(name)
         if native_tool is not None:
             spec = runtime_tool_spec_from_native_agentscope_tool(native_tool, source_type="system")
@@ -670,6 +746,8 @@ class ToolRegistry:
                 source_type="static",
                 permission_scope=perm_scope,
             )
+            if name == "generate_image":
+                spec = await cls._augment_image_tool_spec(spec)
             return cls._attach_evidence_metadata(name, spec)
 
         db_tool = await cls._load_db_tool_with_source(name)

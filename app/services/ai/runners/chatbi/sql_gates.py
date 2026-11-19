@@ -932,6 +932,71 @@ def build_sql_schema_preflight_error(
     )
 
 
+_IMPLICIT_JOIN_CLAUSE_TERMINATORS = re.compile(
+    r"\b(?:WHERE|GROUP BY|ORDER BY|HAVING|LIMIT|FETCH|UNION|QUALIFY|WINDOW|"
+    r"CONNECT BY|START WITH)\b"
+)
+_WHERE_JOIN_CONDITION_RE = re.compile(
+    r"(<=|>=|<>|!=|=|<|>|\bLIKE\b|\bIN\b|\bBETWEEN\b|\bIS\b)"
+)
+
+
+def _paren_depth_map(text: str) -> list[int]:
+    """每个字符所在括号层的深度；括号本身按「进入前/退出后」记录。"""
+    depths: list[int] = []
+    depth = 0
+    for ch in text:
+        if ch == "(":
+            depths.append(depth)
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+            depths.append(depth)
+        else:
+            depths.append(depth)
+    return depths
+
+
+def _has_implicit_comma_join_without_where(sql_upper: str) -> bool:
+    """``FROM t1 a, t2 b`` 这类隐式逗号连接是否缺少 WHERE 关联条件。
+
+    只看**顶层** FROM 子句里的逗号：SELECT 列表、函数参数、子查询内部的逗号都不是
+    表连接。WHERE 里出现任何比较/LIKE/IN/BETWEEN/IS 就认为关联条件已经写了——宁可
+    漏报也不要误伤历史 SQL 里常见的 ``FROM a, b WHERE a.id = b.id`` 写法。
+    """
+    depths = _paren_depth_map(sql_upper)
+
+    from_pos: int | None = None
+    for match in re.finditer(r"\bFROM\b", sql_upper):
+        if depths[match.start()] == 0:
+            from_pos = match.end()
+            break
+    if from_pos is None:
+        return False
+
+    stops = [
+        match
+        for match in _IMPLICIT_JOIN_CLAUSE_TERMINATORS.finditer(sql_upper, from_pos)
+        if depths[match.start()] == 0
+    ]
+    from_end = stops[0].start() if stops else len(sql_upper)
+    from_body = sql_upper[from_pos:from_end]
+    if not any(ch == "," and depths[from_pos + offset] == 0 for offset, ch in enumerate(from_body)):
+        return False
+
+    where_body = ""
+    for index, match in enumerate(stops):
+        if match.group(0) != "WHERE":
+            continue
+        where_end = stops[index + 1].start() if index + 1 < len(stops) else len(sql_upper)
+        where_body = sql_upper[match.end():where_end]
+        break
+
+    if not where_body:
+        return True
+    return _WHERE_JOIN_CONDITION_RE.search(where_body) is None
+
+
 def detect_sql_static_risk(sql: str) -> str:
     sql_text = str(sql or "").strip()
     if not sql_text:
@@ -954,6 +1019,12 @@ def detect_sql_static_risk(sql: str) -> str:
         if " CROSS JOIN " not in f" {sql_upper} " and " NATURAL JOIN " not in f" {sql_upper} ":
             if not re.search(r"\bJOIN\b[\s\S]{1,400}\b(ON|USING)\b", sql_upper):
                 return "JOIN 缺少明确 ON 或 USING 条件，存在笛卡尔积风险"
+
+    if _has_implicit_comma_join_without_where(sql_upper):
+        return (
+            "FROM 子句用逗号并列了多张表却没有 WHERE 关联条件，存在笛卡尔积风险；"
+            "请改用显式 JOIN ... ON ...，或在 WHERE 中补齐表间关联条件"
+        )
 
     return ""
 

@@ -81,6 +81,9 @@ export function capabilityKeyOf(toolName: unknown): string {
   if (
     includesAny(name, [
       'local_file',
+      // read_image / generate_image 都归这里：一对多模态能力，和管理员的认知一致。
+      // 不加这条的话 generate_image 认不出前缀，会掉进「其他扩展工具」兜底组。
+      'image',
       'system_command',
       'system_process',
       'search_text',

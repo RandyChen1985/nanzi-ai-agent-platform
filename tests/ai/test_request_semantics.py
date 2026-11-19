@@ -149,5 +149,8 @@ def test_chatbi_state_hint_exposes_semantics_and_evidence_metadata():
     assert "semantic_domain: chatbi_business_data" in hint
     assert "reference_mode: new_query" in hint
     assert "result_status: success_non_empty" in hint
-    assert "source_ref: dataset://orders" in hint
-    assert "source_as_of: 2026-07-24T09:59:00+00:00" in hint
+    # source_ref / source_as_of 只透出「有/无」：具体值来自外部证据 metadata，整段贴进
+    # 提示词等于给外部数据开一条注入通道（见
+    # test_chatbi_system_evidence_hint_does_not_embed_external_metadata）。
+    assert "source_ref: available" in hint
+    assert "source_as_of: available" in hint

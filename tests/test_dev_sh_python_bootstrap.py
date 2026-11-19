@@ -133,6 +133,23 @@ exit 0
 
 def _run_dev(repo: Path, fake_bin: Path, home: Path) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
+    # dev.sh 的配置优先级是 `${VAR:-read_env_value ...}`：只要进程环境里已经有这些键，
+    # 就会盖掉本用例精心准备的临时仓库 .env，断言随之漂移（在 pytest 里跑和在裸 shell
+    # 里跑结果不同就是这个原因）。这里显式清掉，确保测的是 .env 读取路径。
+    for key in (
+        "DATABASE_TYPE",
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        "POSTGRES_DB",
+        "MYSQL_HOST",
+        "MYSQL_PORT",
+        "MYSQL_DB",
+        "REDIS_HOST",
+        "REDIS_PORT",
+        "REDIS_DB",
+        "REDIS_ENABLE",
+    ):
+        environment.pop(key, None)
     environment.update(
         {
             "HOME": str(home),

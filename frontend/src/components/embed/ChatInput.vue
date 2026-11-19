@@ -846,7 +846,7 @@ const handleKeydown = (e: KeyboardEvent) => {
   if (e.key === "Enter" && !e.shiftKey) {
     if (!canSend.value) return;
     e.preventDefault();
-    emit('send');
+    sendWithImageParams();
   }
 };
 
@@ -1586,6 +1586,12 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
     }
     if (showExpertCascade.value) {
       showExpertCascade.value = false;
+      // 悬停切换级联时面板要一起收，否则会并排站着两个浮层
+      showImageParamPop.value = false;
+      return;
+    }
+    if (showImageParamPop.value) {
+      showImageParamPop.value = false;
       return;
     }
     if (showSkillCascade.value) {
@@ -1648,6 +1654,253 @@ const showPlusMenu = ref(false);
 const showSkillCascade = ref(false);
 const showMcpCascade = ref(false);
 const showExpertCascade = ref(false);
+
+// ── 图像参数：对话里发起生图的可视化参数入口 ────────────────────────────────
+//
+// 用户不该被问「你要 1664x928 还是 928x1664」——他不知道，也没必要知道。这里只给
+// 比例 / 风格 / 张数三样，像素由后端按白名单换算。选中的项在输入框上方显示成标签，
+// 正文保持干净；真正并进正文只发生在按下发送的那一刻。
+const showImageParamPop = ref(false);
+const imageParamRatio = ref("");
+const imageParamStyle = ref("");
+const imageParamTone = ref("");
+const imageParamCount = ref(1);
+const imageStatusLoading = ref(false);
+const imageFeature = ref<{
+  system_enabled: boolean;
+  agent_enabled: boolean | null;
+  allowed_sizes: string[];
+  default_size: string;
+  max_images: number;
+} | null>(null);
+
+// 「自动」放在第一位：多数人只想说「做张海报」，不该被迫先选比例。
+// 其余项文案带比例数字，比只写「横版」更容易对上心里的画面。
+const IMAGE_RATIO_OPTIONS = [
+  { ratio: "", label: "自动", hint: "由模型按内容判断", boxW: 16, boxH: 16, dashed: true },
+  { ratio: "1:1", label: "1:1 方形", hint: "头像 / 图标", boxW: 14, boxH: 14, dashed: false },
+  { ratio: "16:9", label: "16:9 横版", hint: "大屏 / 主视觉", boxW: 18, boxH: 10, dashed: false },
+  { ratio: "9:16", label: "9:16 竖版", hint: "手机推文", boxW: 10, boxH: 18, dashed: false },
+  { ratio: "4:3", label: "4:3 宽屏", hint: "插图 / 卡片", boxW: 16, boxH: 12, dashed: false }
+];
+// 「不指定」显式列出来：按钮全亮着的面板里，没有它就看不出「我没选」还是「选了没生效」。
+/** 色调。同样只是提示词词汇——一组图要放进同一份 PPT 时，观感统一靠的就是它。
+ *  「不指定」放第一个，理由和风格一样：看得出「我没选」。 */
+const IMAGE_TONE_OPTIONS = [
+  "不指定",
+  "明亮通透",
+  "温暖柔和",
+  "冷色调",
+  "高饱和",
+  "素雅低饱和",
+];
+
+/** 出图风格。本质是往提示词里塞修饰词，不是接口参数——实测网关对 quality/style
+ *  这类字段一律忽略，所以扩充这里不产生任何接口约束，只是让用户少打几个字。
+ *  上限控制在 10 个：再多就要三行，面板会把下面的说明和按钮顶出视野。 */
+const IMAGE_STYLE_OPTIONS = [
+  "不指定",
+  "扁平插画",
+  "写实摄影",
+  "3D 渲染",
+  "极简线条",
+  "动漫二次元",
+  "水彩手绘",
+  "油画质感",
+  "赛博霓虹",
+  "国潮插画",
+];
+
+/** 是否已经拿到过一次状态。未拿到前不下结论，否则会先亮「未开启」再翻成可用。 */
+const imageStatusKnown = ref(false);
+/** 上次成功查询的时间戳：3 秒内不重复打接口，鼠标在菜单上扫过时不该反复翻状态。 */
+let imageStatusFetchedAt = 0;
+
+/** 不可用时给不同说法：一个得找管理员，一个自己勾一下就行。 */
+const imageFeatureBlockReason = computed(() => {
+  // 还没查过：先不给结论。直接当「未开启」会先亮一个徽章再翻成可用，白闪一下。
+  if (!imageStatusKnown.value) return "";
+  const status = imageFeature.value;
+  if (!status) return "未开启";
+  if (!status.system_enabled) return "未开启";
+  if (status.agent_enabled === false) return "智能体未启用";
+  return "";
+});
+const imageFeatureAvailable = computed(
+  () => imageStatusKnown.value && !imageFeatureBlockReason.value
+);
+
+const loadImageFeatureStatus = async (options: { force?: boolean } = {}) => {
+  if (imageStatusLoading.value) return;
+  if (
+    !options.force &&
+    imageStatusKnown.value &&
+    Date.now() - imageStatusFetchedAt < 3000
+  ) {
+    return;
+  }
+  // 已有结果时静默刷新：不显示 loading，也不动已经渲染出来的状态。
+  // 否则每次悬停都会「徽章 → 加载圈 → 徽章」来回翻一次，看起来就是页面抖一下。
+  if (!imageStatusKnown.value) imageStatusLoading.value = true;
+  try {
+    const { data } = await axios.get(
+      "/api/portal/system/configs/image-generation/status",
+      { params: props.agentId ? { agent_id: props.agentId } : {} }
+    );
+    imageFeature.value = {
+      system_enabled: !!data?.system_enabled,
+      agent_enabled: data?.agent_enabled ?? null,
+      allowed_sizes: Array.isArray(data?.allowed_sizes) ? data.allowed_sizes : [],
+      default_size: data?.default_size || "",
+      max_images: Math.max(1, Number(data?.max_images) || 1)
+    };
+  } catch {
+    // 拿不到状态就按「未开启」处理：宁可少一个入口，也不要让用户点了没反应。
+    imageFeature.value = null;
+  } finally {
+    imageStatusLoading.value = false;
+    imageStatusKnown.value = true;
+    imageStatusFetchedAt = Date.now();
+  }
+};
+
+/** 刚手动关掉面板的时间，用于挡住紧随其后的悬停重开（见 hoverOpenImageParamPop）。 */
+let imagePopClosedAt = 0;
+
+const openImageParamPop = () => {
+  if (isMobileViewport.value) showPlusMenu.value = false;
+  showSkillCascade.value = false;
+  showMcpCascade.value = false;
+  showExpertCascade.value = false;
+  showDataKnowledgeCascade.value = false;
+  // 悬停就刷新一次，管理员刚打开开关时用户不用刷新页面就能看到入口可用。
+  // 已有结果时内部走静默刷新 + 3 秒节流，不会把菜单上的状态来回翻。
+  void loadImageFeatureStatus();
+  if (!imageFeatureAvailable.value) {
+    // 不可用时仍然把面板打开——里面写着为什么点不了、该找谁，比一个死按钮有用。
+    showImageParamPop.value = true;
+    return;
+  }
+  showImageParamPop.value = true;
+};
+
+/**
+ * 悬停打开。刚手动关掉的这几百毫秒内不再顶开：鼠标还停在菜单项上时，
+ * 菜单项的一次重渲染就会重新触发 mouseenter，面板立刻又弹出来——
+ * 用户点完「完成」看着像根本没关掉。显式点击走 openImageParamPop，不受此限。
+ */
+const hoverOpenImageParamPop = () => {
+  if (Date.now() - imagePopClosedAt < 400) return;
+  openImageParamPop();
+};
+
+const closeImageParamPop = () => {
+  showImageParamPop.value = false;
+  imagePopClosedAt = Date.now();
+};
+
+/**
+ * 把面板选择收敛成一句出图要求，发送时并进正文。全空则返回空串。
+ *
+ * 措辞必须是「一句人话」而不是 `[生成参数] 比例=4:3` 这种键值串：模型拿到键值串
+ * 有一定概率把它当成要画进图里的文字，出一张印着「生成参数」的图。
+ */
+const buildImageParamPrefix = () => {
+  const parts: string[] = [];
+  if (imageParamRatio.value) parts.push(`比例 ${imageParamRatio.value}`);
+  if (imageParamStyle.value) parts.push(`风格 ${imageParamStyle.value}`);
+  if (imageParamTone.value) parts.push(`色调 ${imageParamTone.value}`);
+  if (imageParamCount.value > 1) parts.push(`数量 ${imageParamCount.value} 张`);
+  return parts.length ? `（本次出图要求：${parts.join("，")}）` : "";
+};
+
+/**
+ * 输入框上方展示的参数标签。
+ *
+ * 参数不进输入框正文：正文是用户自己写的话，混进「比例=4:3」这种机器味的前缀，
+ * 改稿时得先手动删掉才能接着说。标签既让人看见「这次带了什么参数」，也能单独摘掉某一项。
+ */
+const imageParamChips = computed(() => {
+  const chips: Array<{ key: string; label: string; clear: () => void }> = [];
+  const ratioOpt = IMAGE_RATIO_OPTIONS.find((o) => o.ratio && o.ratio === imageParamRatio.value);
+  if (ratioOpt) {
+    chips.push({ key: "ratio", label: ratioOpt.label, clear: () => { imageParamRatio.value = ""; } });
+  }
+  if (imageParamStyle.value) {
+    chips.push({ key: "style", label: imageParamStyle.value, clear: () => { imageParamStyle.value = ""; } });
+  }
+  if (imageParamTone.value) {
+    chips.push({ key: "tone", label: imageParamTone.value, clear: () => { imageParamTone.value = ""; } });
+  }
+  if (imageParamCount.value > 1) {
+    chips.push({ key: "count", label: `${imageParamCount.value} 张`, clear: () => { imageParamCount.value = 1; } });
+  }
+  return chips;
+});
+
+const applyImageParams = () => {
+  // 参数已经在 chips 里了，这里只负责收起面板、把焦点交回输入框。
+  closeImageParamPop();
+  // 「完成」= 这次设置结束，该回输入框打字了，所以连带把加号菜单一起收掉。
+  // 只关面板不关菜单的话，菜单还挂在屏幕上，看着跟没反应一样（面板就贴着它展开）。
+  showPlusMenu.value = false;
+  nextTick(() => {
+    const el = inputRef.value;
+    if (!el) return;
+    el.focus();
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  });
+};
+
+/**
+ * 发送时把参数并进正文最前面，让模型看得到。
+ *
+ * 只有发送这一刻才落地成文本：平时输入框里是干净的，用户想继续说「再好一点」
+ * 不用先清理参数行。发完即清空 chips，下一张图重新选。
+ */
+const sendWithImageParams = () => {
+  const prefix = buildImageParamPrefix();
+  if (!prefix) {
+    emit("send");
+    return;
+  }
+  const current = String(props.modelValue || "");
+  emit("update:modelValue", `${prefix}\n${current}`);
+  nextTick(() => emit("send"));
+};
+
+// 输入框被清空 = 这次输入确实发出去了（父组件发送成功后会清空 v-model），
+// 这时参数任务才算结束，标签一起收掉。父组件拒绝发送时内容仍在，标签也留着，
+// 不会出现「正文里有参数行、标签却消失了」的错位。
+watch(() => props.modelValue, (value) => {
+  if (!String(value || "").trim() && imageParamChips.value.length) {
+    resetImageParams();
+  }
+});
+
+const resetImageParams = () => {
+  imageParamRatio.value = "";
+  imageParamStyle.value = "";
+  imageParamTone.value = "";
+  imageParamCount.value = 1;
+};
+
+// 进对话就探一次：菜单一打开就能显示「未开启 / 智能体未启用」，不用等用户先点一下才知道。
+onMounted(() => {
+  void loadImageFeatureStatus();
+});
+
+// 切换智能体后「有没有勾 generate_image」会变，必须强制重探——
+// 走普通路径会被 3 秒节流挡掉，用户看到的是上一个智能体的状态。
+watch(() => props.agentId, () => {
+  void loadImageFeatureStatus({ force: true });
+  // 上一个智能体选的出图参数不该带过来：新智能体可能根本没勾 generate_image，
+  // 那些标签发出去只会变成一句没人理会的「本次出图要求」。
+  resetImageParams();
+});
+
+
 const showDataKnowledgeCascade = ref(false);
 const dataKnowledgeCascadeRef = ref<InstanceType<typeof DataKnowledgeCascadeMenu> | null>(null);
 const skillCascadeRef = ref<InstanceType<typeof SkillCascadeMenu> | null>(null);
@@ -1789,6 +2042,7 @@ const selectExpertAgent = (agentId: string) => {
 };
 
 const openSkillCascade = () => {
+  showImageParamPop.value = false;
   showExpertCascade.value = false;
   showMcpCascade.value = false;
   showDataKnowledgeCascade.value = false;
@@ -1802,6 +2056,7 @@ const openSkillCascade = () => {
 };
 
 const openMcpCascade = () => {
+  showImageParamPop.value = false;
   showExpertCascade.value = false;
   showSkillCascade.value = false;
   showDataKnowledgeCascade.value = false;
@@ -1815,6 +2070,7 @@ const openMcpCascade = () => {
 };
 
 const openExpertCascade = () => {
+  showImageParamPop.value = false;
   if (props.lockExpertAgent) return;
   showSkillCascade.value = false;
   showMcpCascade.value = false;
@@ -1828,6 +2084,7 @@ const openExpertCascade = () => {
 
 const openDataKnowledgeCascade = () => {
   if (!showDataKnowledgeEntry.value) return;
+  showImageParamPop.value = false;
   showSkillCascade.value = false;
   showMcpCascade.value = false;
   showExpertCascade.value = false;
@@ -1878,6 +2135,8 @@ const closeDataKnowledgeCascade = () => {
 /** 桌面端：悬停到加号菜单的非级联项时，收起技能/MCP/专家/数据&知识库飞出层 */
 const closePlusCascadesOnHover = () => {
   if (isMobileViewport.value) return;
+  // 图像参数面板也是加号菜单的一个浮层，统一在这里一起收。
+  showImageParamPop.value = false;
   showSkillCascade.value = false;
   showMcpCascade.value = false;
   showExpertCascade.value = false;
@@ -2278,6 +2537,25 @@ defineExpose({
                   </div>
                 </div>
               </div>
+            </div>
+
+            <!-- 本次生成参数：只在这里露出，正文保持干净 -->
+            <div v-if="imageParamChips.length" class="relative z-10 flex flex-wrap items-center gap-1.5 pb-1.5">
+              <span
+                v-for="chip in imageParamChips"
+                :key="chip.key"
+                class="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-600 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+              >
+                {{ chip.label }}
+                <button
+                  type="button"
+                  class="text-gray-400 transition-colors hover:text-gray-700 dark:hover:text-gray-100"
+                  :title="`移除${chip.label}`"
+                  @click="chip.clear()"
+                >
+                  <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+                </button>
+              </span>
             </div>
 
             <textarea ref="inputRef" :value="modelValue" :disabled="isInteractionLocked" @input="handleInput" @focus="handleFocus" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed" :class="[
@@ -2865,6 +3143,14 @@ defineExpose({
                                         <span class="font-medium text-left">选择记忆记录</span>
                                     </button>
 
+                                    <!-- 分隔线：上面是「打开页面 / 上传 / 选记忆」这类动作，
+                                         下面全是展开二级面板的项（都带 ›），分组后一眼能分清。 -->
+                                    <div
+                                        class="mx-3 my-1 h-px bg-gray-100 dark:bg-gray-700/60"
+                                        role="separator"
+                                        aria-hidden="true"
+                                    ></div>
+
                                     <!-- 数据 & 知识库：两个 tab 直接挂载，省去打开两个面板 -->
                                     <button
                                       v-if="showDataKnowledgeEntry"
@@ -2944,27 +3230,75 @@ defineExpose({
                                         </svg>
                                     </button>
 
-                                    <!-- Mobile: 新会话 / 历史（桌面端快捷指令栏已有，此处方便移动端触发） -->
-                                    <template v-if="isMobileViewport">
-                                        <button
-                                          type="button"
-                                          @mouseenter="closePlusCascadesOnHover"
-                                          @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('system-command', '/new');"
-                                          class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
-                                        >
-                                            <ChatBubbleLeftRightIcon class="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
-                                            <span class="font-medium text-left">新会话</span>
-                                        </button>
-                                        <button
-                                          type="button"
-                                          @mouseenter="closePlusCascadesOnHover"
-                                          @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('system-command', '/history');"
-                                          class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
-                                        >
-                                            <ClockIcon class="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
-                                            <span class="font-medium text-left">历史</span>
-                                        </button>
-                                    </template>
+                                    <!-- 图像参数：直接排在「专家中心」下面，与它同一组交互 -->
+                                    <button
+                                      type="button"
+                                      class="w-full flex items-center justify-between px-3 py-2 text-sm transition-all duration-150"
+                                      :class="showImageParamPop && !isMobileViewport
+                                        ? 'bg-gray-100 dark:bg-gray-700/80 text-gray-900 dark:text-gray-100'
+                                        : (imageFeatureAvailable
+                                          ? 'text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary'
+                                          : 'text-gray-400 dark:text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700/40')"
+                                      :title="imageFeatureBlockReason
+                                        ? (imageFeatureBlockReason === '未开启'
+                                          ? '平台未开启图像生成：请联系管理员在「系统设置 → 图像生成」打开开关'
+                                          : '当前智能体没有勾选 generate_image：到智能体配置里勾上即可')
+                                        : '选择比例、风格与张数，自动写成一段提示词参数'"
+                                      @mouseenter="!isMobileViewport && hoverOpenImageParamPop()"
+                                      @click.stop="openImageParamPop"
+                                    >
+                                        <div class="flex min-w-0 items-center space-x-3">
+                                            <PhotoIcon
+                                              class="h-5 w-5 shrink-0"
+                                              :class="imageFeatureAvailable ? 'text-rose-500' : 'text-gray-300 dark:text-gray-600'"
+                                              aria-hidden="true"
+                                            />
+                                            <span class="truncate font-medium text-left">图像参数</span>
+                                        </div>
+                                        <!-- 状态区定宽右对齐：加载圈 / 徽章 / 箭头三种状态宽度不同，
+                                             不定宽的话每次切换都会把左边标题推一下，看起来像页面在抖。 -->
+                                        <span class="flex w-[62px] shrink-0 items-center justify-end">
+                                            <span
+                                              v-if="imageStatusLoading && !imageStatusKnown"
+                                              class="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-transparent"
+                                            ></span>
+                                            <span
+                                              v-else-if="imageFeatureBlockReason"
+                                              class="w-full rounded bg-gray-100 px-1.5 py-0.5 text-center text-[10px] font-medium leading-tight text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                                            >{{ imageFeatureBlockReason }}</span>
+                                            <svg v-else class="w-3.5 h-3.5 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                                            </svg>
+                                        </span>
+                                    </button>
+
+                                    <!-- 新会话 / 历史：两端都放「新会话」（会清空当前上下文，属于需要找得到
+                                         又别误触的操作，所以排在菜单最末尾）。「历史」桌面端顶栏已有入口，
+                                         这里只给移动端补一个，免得菜单在桌面上多一项重复的。 -->
+                                    <div
+                                        class="mx-3 my-1 h-px bg-gray-100 dark:bg-gray-700/60"
+                                        role="separator"
+                                        aria-hidden="true"
+                                    ></div>
+                                    <button
+                                      type="button"
+                                      @mouseenter="closePlusCascadesOnHover"
+                                      @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('system-command', '/new');"
+                                      class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
+                                    >
+                                        <ChatBubbleLeftRightIcon class="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
+                                        <span class="font-medium text-left">新会话</span>
+                                    </button>
+                                    <button
+                                      v-if="isMobileViewport"
+                                      type="button"
+                                      @mouseenter="closePlusCascadesOnHover"
+                                      @click="showPlusMenu = false; showSkillCascade = false; showMcpCascade = false; showExpertCascade = false; emit('system-command', '/history');"
+                                      class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
+                                    >
+                                        <ClockIcon class="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
+                                        <span class="font-medium text-left">历史</span>
+                                    </button>
                                 </div>
 
                                 <!-- Desktop flyout: 与左侧加号菜单上下对齐，内部列表滚动 -->
@@ -3011,6 +3345,159 @@ defineExpose({
                                     @refresh="emit('refresh-agents')"
                                     @close="closeExpertCascade"
                                   />
+                                </div>
+
+                                <!-- 图像参数面板：与其它 flyout 同一套定位（贴着加号菜单右边） -->
+                                <div
+                                  v-if="showImageParamPop"
+                                  class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800"
+                                  :class="isMobileViewport
+                                    ? 'fixed inset-x-3 top-1/2 z-[1200] max-h-[85vh] -translate-y-1/2 overflow-y-auto'
+                                    : 'absolute left-full top-0 z-[60] ml-1.5 max-h-[85vh] w-[360px] overflow-y-auto'"
+                                  @click.stop
+                                >
+                                  <div class="flex items-center gap-2 border-b border-gray-100 px-3.5 py-2.5 dark:border-gray-700">
+                                    <PhotoIcon class="h-4 w-4 shrink-0 text-rose-500" />
+                                    <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">图像参数</span>
+                                    <span class="ml-auto text-[10px] text-gray-400">只影响本次生成</span>
+                                    <button
+                                      type="button"
+                                      class="-mr-1 flex h-5 w-5 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700"
+                                      title="关闭"
+                                      @click="closeImageParamPop"
+                                    >
+                                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+                                    </button>
+                                  </div>
+
+                                  <!-- 还没查到状态时单独一支：既不能当成「未开启」，也不能先放出参数控件
+                                       （万一其实没开，加载完会整块换掉）。等结果再决定显示哪一支。 -->
+                                  <div v-if="!imageStatusKnown" class="flex items-center gap-2 px-3.5 py-3.5 text-[11px] text-gray-500">
+                                    <span class="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-transparent"></span>
+                                    正在检查可用状态…
+                                  </div>
+                                  <div v-else-if="!imageFeatureAvailable" class="space-y-2 px-3.5 py-3.5">
+                                    <div class="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
+                                      <template v-if="imageFeatureBlockReason === '未开启'">
+                                        平台还没开启图像生成。请联系管理员到<strong>「系统设置 → 图像生成」</strong>打开开关，并确认当前智能体的工具清单已勾选 <code class="font-mono">generate_image</code>。
+                                      </template>
+                                      <template v-else>
+                                        当前智能体没有启用 <code class="font-mono">generate_image</code> 工具。到智能体配置里勾上它即可用，不需要改平台设置。
+                                      </template>
+                                    </div>
+                                    <div class="flex justify-end">
+                                      <button
+                                        type="button"
+                                        class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                                        @click="closeImageParamPop"
+                                      >知道了</button>
+                                    </div>
+                                  </div>
+
+                                  <template v-else>
+                                    <div class="space-y-3 px-3.5 py-3">
+                                      <div>
+                                        <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">画面比例</div>
+                                        <div class="flex flex-wrap gap-1.5">
+                                          <button
+                                            v-for="opt in IMAGE_RATIO_OPTIONS"
+                                            :key="opt.label"
+                                            type="button"
+                                            class="flex flex-1 flex-col items-center gap-1 rounded-lg border px-1 py-1.5 transition-colors"
+                                            :class="imageParamRatio === opt.ratio
+                                              ? 'border-primary bg-primary/5 text-primary'
+                                              : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
+                                            :title="opt.hint"
+                                            @click="imageParamRatio = opt.ratio"
+                                          >
+                                            <span
+                                              class="block rounded-[3px] border"
+                                              :class="imageParamRatio === opt.ratio ? 'border-primary bg-primary/15' : 'border-gray-400 dark:border-gray-500'"
+                                              :style="{
+                                                width: `${opt.boxW}px`,
+                                                height: `${opt.boxH}px`,
+                                                borderStyle: opt.dashed ? 'dashed' : 'solid',
+                                              }"
+                                            ></span>
+                                            <span class="whitespace-nowrap text-[10px] font-medium leading-none">{{ opt.label }}</span>
+                                          </button>
+                                        </div>
+                                        <p class="mt-1 text-[10px] leading-relaxed text-gray-400">不选则由模型按内容自己判断</p>
+                                      </div>
+
+                                      <div>
+                                        <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">风格</div>
+                                        <div class="flex flex-wrap gap-1.5">
+                                          <button
+                                            v-for="style in IMAGE_STYLE_OPTIONS"
+                                            :key="style"
+                                            type="button"
+                                            class="rounded-full border px-2 py-0.5 text-[11px] transition-colors"
+                                            :class="(imageParamStyle || '不指定') === style
+                                              ? 'border-primary bg-primary text-white'
+                                              : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
+                                            @click="imageParamStyle = style === '不指定' ? '' : style"
+                                          >{{ style }}</button>
+                                        </div>
+                                      </div>
+
+                                      <div>
+                                        <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">色调</div>
+                                        <div class="flex flex-wrap gap-1.5">
+                                          <button
+                                            v-for="tone in IMAGE_TONE_OPTIONS"
+                                            :key="tone"
+                                            type="button"
+                                            class="rounded-full border px-2 py-0.5 text-[11px] transition-colors"
+                                            :class="(imageParamTone || '不指定') === tone
+                                              ? 'border-primary bg-primary text-white'
+                                              : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
+                                            @click="imageParamTone = tone === '不指定' ? '' : tone"
+                                          >{{ tone }}</button>
+                                        </div>
+                                      </div>
+
+                                      <div v-if="(imageFeature?.max_images || 1) > 1">
+                                        <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">张数</div>
+                                        <div class="flex gap-1.5">
+                                          <button
+                                            v-for="count in (imageFeature?.max_images || 1)"
+                                            :key="count"
+                                            type="button"
+                                            class="h-7 w-9 rounded-lg border text-[11px] font-medium transition-colors"
+                                            :class="imageParamCount === count
+                                              ? 'border-primary bg-primary/5 text-primary'
+                                              : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
+                                            @click="imageParamCount = count"
+                                          >{{ count }} 张</button>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div class="border-t border-gray-100 bg-gray-50/60 px-3.5 py-2.5 dark:border-gray-700 dark:bg-gray-800/60">
+                                      <p class="mb-2 text-[10.5px] leading-relaxed text-gray-400 dark:text-gray-500">
+                                        选择会随消息一起发出，输入框里只显示成几个标签，不出现像素值。
+                                      </p>
+                                      <div class="flex items-center gap-2">
+                                        <button
+                                          v-if="imageParamChips.length"
+                                          type="button"
+                                          class="text-[11px] text-gray-500 hover:text-gray-700"
+                                          @click="resetImageParams"
+                                        >清空</button>
+                                        <button
+                                          type="button"
+                                          class="ml-auto rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50"
+                                          @click="closeImageParamPop"
+                                        >取消</button>
+                                        <button
+                                          type="button"
+                                          class="rounded-lg bg-primary px-2.5 py-1 text-[11px] font-bold text-white hover:opacity-90"
+                                          @click="applyImageParams"
+                                        >完成</button>
+                                      </div>
+                                    </div>
+                                  </template>
                                 </div>
 
                                 <!-- Desktop flyout: 数据 & 知识库（两个 tab 直接挂载） -->
@@ -3928,7 +4415,7 @@ defineExpose({
                     </transition>
                 </div>
 
-                <button type="button" @click="isProcessing ? emit('stop') : isSubmitting ? null : emit('send')" :disabled="!isProcessing && (isSubmitting || !canSend)" class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white hover:opacity-90 disabled:opacity-50 transition-all shadow-sm z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }" :title="isProcessing ? '停止生成' : isSubmitting ? '准备发送…' : '发送'">
+                <button type="button" @click="isProcessing ? emit('stop') : isSubmitting ? null : sendWithImageParams()" :disabled="!isProcessing && (isSubmitting || !canSend)" class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white hover:opacity-90 disabled:opacity-50 transition-all shadow-sm z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }" :title="isProcessing ? '停止生成' : isSubmitting ? '准备发送…' : '发送'">
                     <svg v-if="isProcessing" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" /></svg>
                     <svg v-else class="w-4 h-4 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M5 12h14M13 6l6 6-6 6" /></svg>
                 </button>

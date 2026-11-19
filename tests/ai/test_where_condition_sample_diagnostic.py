@@ -246,17 +246,23 @@ def test_build_where_probe_schema_context_for_dataset_filters_by_dataset():
         build_where_probe_schema_context_for_dataset,
     )
 
+    # 列必须写成 schema chunk 的真实结构（name/type/example）；`- 列名 (类型, 例: ...)`
+    # 这种简写解析不出列，函数会返回 (None, None)，看上去像「没按数据集过滤」。
     schema_output = """
 dataset: ds_a
 data_source: oracle
 table_name: VIEW_A
 columns:
-  - contract_end_date (varchar, 例: '2026-01-15')
+  - name: contract_end_date
+    type: varchar
+    example: '2026-01-15'
+---
 dataset: ds_b
 data_source: oracle
 table_name: VIEW_B
 columns:
-  - other_col (varchar)
+  - name: other_col
+    type: varchar
 """
     cols, hints = build_where_probe_schema_context_for_dataset("ds_a", schema_output=schema_output)
     assert cols is not None

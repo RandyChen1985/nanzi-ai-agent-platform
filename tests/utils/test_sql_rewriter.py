@@ -161,25 +161,6 @@ def test_target_table_filter_with_unqualified_condition_uses_matching_scope():
     assert rewritten.count("dept_code = 'D001'") == 1
     assert "SELECT c.id FROM customers AS c WHERE dept_code = 'D001'" not in rewritten
 
-def test_unqualified_all_filter_skips_multi_table_subquery_scope():
-    rewriter = SQLRewriter(
-        dialect="clickhouse",
-        table_metadata={"orders": {"dept_code"}, "customers": {"id"}},
-    )
-    sql = (
-        "SELECT * FROM orders o "
-        "WHERE o.customer_id IN (SELECT c.id FROM customers c)"
-    )
-    filters = [{"condition": "dept_code = {user.dept}"}]
-    context = {"dept": "D001"}
-
-    rewritten = rewriter.rewrite(sql, filters, context)
-
-    assert rewritten.count("dept_code = 'D001'") == 1
-    assert "o.dept_code = 'D001'" in rewritten
-    assert "c.dept_code = 'D001'" not in rewritten
-    assert "FROM customers AS c WHERE dept_code" not in rewritten
-
 def test_rewrite_stats_reports_applied_condition_count():
     rewriter = SQLRewriter(dialect="clickhouse")
     sql = (

@@ -205,7 +205,9 @@ def test_both_chat_surfaces_use_the_shared_tool_permission_card():
 def test_execution_timeline_keeps_error_reason_alongside_prewarm_progress():
     timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
     # A 档在子行插入沙箱预热进度提示时，不能挤占原有"错误原因"展示（回归保护）。
-    assert 'v-if="child.error_reason"' in timeline
-    assert "错误原因：{{ child.error_reason }}" in timeline
+    # 错误原因统一过 formatErrorReason：剥掉 AgentScope 的内部标记并把中断换成人话，
+    # 见 test_timeline_error_reason_display_contract.py。
+    assert 'v-if="formatErrorReason(child.error_reason)"' in timeline
+    assert "错误原因：{{ formatErrorReason(child.error_reason) }}" in timeline
     assert "if (walk(child)) return true;" in timeline
     assert "fileMetadataSummary(child.file_metadata)" in timeline

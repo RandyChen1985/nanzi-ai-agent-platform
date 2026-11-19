@@ -166,6 +166,52 @@ def test_failed_bash_without_stderr_does_not_echo_the_command():
     ) == "命令执行失败（退出码非 0）"
 
 
+def test_interrupted_tool_call_shows_cancellation_not_framework_markup():
+    """整轮被取消时，框架补的 interrupted 结果不能把内部标记当错误原因给用户看。
+
+    AgentScope 在 reply 被 `CancelledError` 收尾时，会给还没拿到结果的工具调用补上
+    `<system-reminder>The tool call has been interrupted by the user.</system-reminder>`。
+    这既不是工具自己报的错、也不一定真是用户点的停止，原样展示既不可读也误导排查。
+    """
+    output = "<system-reminder>The tool call has been interrupted by the user.</system-reminder>"
+
+    assert is_tool_result_error("text_generate_image", output, result_state="interrupted") is True
+    reason = extract_tool_result_error_reason(
+        "text_generate_image",
+        output,
+        result_state="interrupted",
+    )
+    assert reason == "本轮已取消，工具未返回结果"
+    assert "system-reminder" not in reason
+
+
+def test_internal_framework_markup_is_stripped_from_error_reason():
+    """其他路径漏进来的内部标记也要剥掉，别让 XML 出现在「错误原因」里。"""
+    reason = extract_tool_result_error_reason(
+        "some_mcp_tool",
+        "<system-reminder>远端服务无响应</system-reminder>",
+        result_state="error",
+    )
+    assert reason == "远端服务无响应"
+
+
+def test_interrupted_tool_observation_writes_a_readable_reason():
+    """端到端：时间线日志里的 error_reason 也要是那句中文，而不是框架原文。"""
+    result = _runner_for_observation()._build_tool_observation(
+        tool_id="image-1",
+        tool_name="text_generate_image",
+        tool_args={"prompt": "一只猫"},
+        tool_output="<system-reminder>The tool call has been interrupted by the user.</system-reminder>",
+        duration_tool=60,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="interrupted",
+    )
+
+    assert result["log"]["status"] == "error"
+    assert result["log"]["error_reason"] == "本轮已取消，工具未返回结果"
+
+
 @pytest.mark.parametrize(
     ("tool_name", "tool_args", "expected"),
     [

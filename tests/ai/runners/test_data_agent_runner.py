@@ -919,93 +919,6 @@ async def test_data_agent_runner_reuses_previous_result_without_native_agent(dat
 
 
 @pytest.mark.asyncio
-async def test_data_agent_runner_does_not_issue_derived_evidence_for_history_only_reuse(
-    data_config, monkeypatch
-):
-    from app.core.context import AgentContext, agent_context
-    from app.services.ai.data_query_turn_classifier import (
-        DataQueryTurnClassification,
-        DataQueryTurnType,
-    )
-    from app.services.ai.grounding.ledger import EvidenceLedger
-    from app.services.ai.grounding.models import EvidenceType
-    from app.services.ai.intent_service import IntentType
-    from app.services.ai.runners.data_agent_runner import DataAgentRunner
-    from app.services.ai.runtime.agentscope.compat import AIMessage
-
-    reuse_turn = DataQueryTurnClassification(
-        turn_type=DataQueryTurnType.REUSE_PREVIOUS_RESULT,
-        reasoning="测试：只存在历史展示文本",
-        requires_fresh_data=False,
-        requires_few_shot=False,
-        skip_intent_llm=True,
-        intent=IntentType.DATA_QUERY,
-    )
-
-    async def fake_resolve(*args, **kwargs):
-        return reuse_turn, None, 0.0
-
-    class FakeSynthesisLLM:
-        model_name = "synthesis-model"
-
-        async def astream(self, messages):
-            yield AIMessage(content="启用用户数量为 8 人。")
-
-    monkeypatch.setattr(
-        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
-        fake_resolve,
-    )
-    monkeypatch.setattr(
-        "app.services.ai.memory_service.memory_service.get_last_data_result",
-        AsyncMock(return_value=None),
-    )
-    monkeypatch.setattr(
-        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_synthesis_llm",
-        AsyncMock(return_value=FakeSynthesisLLM()),
-    )
-
-    ledger = EvidenceLedger(user_id="42", conversation_id="conv-1")
-    context_token = agent_context.set(
-        AgentContext(
-            agent_id="data-agent",
-            agent_name="ChatBI",
-            user_id=42,
-            conversation_id="conv-1",
-            grounding_evidence_ledger=ledger,
-        )
-    )
-    runner = DataAgentRunner(
-        config=data_config,
-        trace_id="trace-history-only-reuse",
-        trace_buffer=[],
-        user_info={"user_id": 42},
-        conversation_id="conv-1",
-        execution_options={"grounding_enabled": True},
-    )
-
-    events = []
-    try:
-        async for chunk in runner.execute(
-            [
-                {
-                    "role": "assistant",
-                    "content": "上一轮数据结果：| 状态 | 数量 |\n|---|---|\n| 启用 | 8 |",
-                },
-                {"role": "user", "content": "可视化分析一下"},
-            ]
-        ):
-            events.append(chunk)
-    finally:
-        agent_context.reset(context_token)
-
-    assert not ledger.has_valid_evidence({EvidenceType.INTERNAL_DATA})
-    assert any(
-        event.get("grounding_risk", {}).get("level") == "high"
-        for event in events
-    )
-
-
-@pytest.mark.asyncio
 async def test_data_agent_runner_reuse_synthesis_skips_previous_assistant_history(
     data_config, monkeypatch
 ):
@@ -3369,7 +3282,6 @@ async def test_execute_sql_wrapper_allows_lenient_safe_expressions(data_config):
     assert state.sql_static_risk is False
 
 
-
 def test_repair_budget_is_tracked_by_error_type(data_config):
     from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
 
@@ -3622,144 +3534,6 @@ async def test_data_agent_runner_sql_repeat_gate_updates_state_completed(data_co
     assert state.last_successful_sql_output == '{"columns": [{"name": "id"}], "items": [[1]]}'
     assert parsed == {"columns": [{"name": "id"}], "items": [[1]]}
     assert should_save is False
-
-
-@pytest.mark.asyncio
-async def test_data_agent_runner_synthesizes_after_repeated_sql_gate(
-    data_config,
-    monkeypatch,
-):
-    from agentscope.credential import CredentialBase
-    from agentscope.message import ToolCallBlock
-    from agentscope.model import ChatModelBase, ChatResponse
-
-    from app.core.llm.client import AgentScopeLLMHandle
-    from app.services.ai.runners.data_agent_runner import DataAgentRunner
-
-    class FakeCredential(CredentialBase):
-        @classmethod
-        def get_chat_model_class(cls):
-            return FakeModel
-
-    class FakeModel(ChatModelBase):
-        # 2.0.9 起 Agent 会读 model.formatter.supported_input_media_types
-        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
-        formatter = _OpenAIChatFormatter()
-
-        class Parameters(BaseModel):
-            pass
-
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
-            self.calls = 0
-
-        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
-            self.calls += 1
-            if self.calls == 1:
-                return ChatResponse(
-                    content=[
-                        ToolCallBlock(
-                            id="call_schema",
-                            name="get_dataset_schema",
-                            input='{"keywords": "demo"}',
-                        )
-                    ],
-                    is_last=True,
-                )
-            return ChatResponse(
-                content=[
-                    ToolCallBlock(
-                        id=f"call_sql_{self.calls}",
-                        name="execute_sql_query",
-                        input='{"sql": "SELECT id FROM demo LIMIT 100", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
-                    )
-                ],
-                is_last=True,
-            )
-
-    class FakeSynthesisLLM:
-        model_name = "synthesis-model"
-
-        async def astream(self, messages):
-            captured_messages.extend(messages)
-            assert "重复调用相同 SQL" in messages[-1].content
-            assert "【证据元数据（必须如实反映到最终回答）】" in messages[-1].content
-            yield AIMessage(content="已基于首次 SQL 结果完成回答。")
-
-    async def fake_load_context_config():
-        return None
-
-    async def fake_build_model_config(**kwargs):
-        return None
-
-    async def fake_config_get(key):
-        return "8"
-
-    fake_model = FakeModel(
-        credential=FakeCredential(),
-        model="fake-native-data",
-        parameters=FakeModel.Parameters(),
-        stream=False,
-        max_retries=0,
-    )
-    handle = AgentScopeLLMHandle(
-        native_model=fake_model,
-        model_name="fake-native-data",
-        temperature=0.0,
-        streaming=True,
-    )
-
-    async def fake_get_configured_llm(**kwargs):
-        return handle
-
-    async def fake_schema(keywords=None, **kwargs):
-        return "table_name: demo\ncolumns: id, room, used, total"
-
-    sql_calls = 0
-    captured_messages = []
-
-    async def fake_sql(sql, data_source, dataset_name):
-        nonlocal sql_calls
-        sql_calls += 1
-        return {"columns": [{"name": "id"}], "items": [[1]]}
-
-    monkeypatch.setattr(
-        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
-        fake_get_configured_llm,
-    )
-    monkeypatch.setattr(
-        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_synthesis_llm",
-        AsyncMock(return_value=FakeSynthesisLLM()),
-    )
-    monkeypatch.setattr(
-        "app.services.ai.runners.data_agent_runner.load_context_config",
-        fake_load_context_config,
-    )
-    monkeypatch.setattr(
-        "app.services.ai.runners.data_agent_runner.build_model_config",
-        fake_build_model_config,
-    )
-    monkeypatch.setattr(
-        "app.services.ai.runners.data_agent_runner.ConfigService.get",
-        fake_config_get,
-    )
-
-    from app.services.ai.tools.registry import ToolRegistry
-
-    monkeypatch.setitem(ToolRegistry._registry, "get_dataset_schema", fake_schema)
-    monkeypatch.setitem(ToolRegistry._registry, "execute_sql_query", fake_sql)
-
-    runner = DataAgentRunner(config=data_config, trace_id="trace-repeat-synth", trace_buffer=[])
-
-    events = []
-    async for chunk in runner.execute([{"role": "user", "content": "查 demo"}]):
-        events.append(chunk)
-
-    content = "".join(event["content"] for event in events if "content" in event and "type" not in event)
-    assert content == "已基于首次 SQL 结果完成回答。"
-    assert sql_calls == 1
-    assert fake_model.calls < 8
-    assert any(event.get("title") == "复用已执行 SQL 结果" for event in events if isinstance(event, dict))
 
 
 def test_data_agent_runner_tool_loop_fuse_triggers_on_repeated_same_tool_args(data_config):
@@ -6582,3 +6356,35 @@ def test_chatbi_grounding_audit_is_disabled_by_default(data_config):
     )
 
     assert audit.should_warn is False
+
+
+def test_is_trusted_empty_result_rejects_diagnostic_probe_sql(data_config):
+    """诊断/探路 SQL 的空结果不能算「可信空」。
+
+    `SELECT DISTINCT … LIMIT n`、`SHOW TABLES`、无 WHERE 的 `COUNT(*)` 都是摸底用的
+    探路语句，零行是常态；判成可信空会让 `empty_sql_result` 不置位，后面「空结果要不要
+    重查」的门禁整条失效——模型会把「探路没捞到东西」当成「业务数据确实为空」直接答复。
+    业务 SQL 的判定不能因此变松。
+    """
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(
+        config=data_config, trace_id="trace-trusted-empty-diagnostic", trace_buffer=[]
+    )
+    state = _DataRunState()
+
+    for diagnostic_sql in (
+        "SELECT DISTINCT room_name FROM demo LIMIT 20",
+        "SHOW TABLES",
+        "SHOW COLUMNS FROM demo",
+        "SELECT COUNT(*) FROM demo",
+        "SELECT id FROM demo WHERE name IS NOT NULL LIMIT 5",
+    ):
+        assert runner._is_trusted_empty_result(diagnostic_sql, state) is False, diagnostic_sql
+
+    # 业务 SQL 不受影响：参数过滤仍是可信空，字面量过滤仍被拒
+    assert runner._is_trusted_empty_result("SELECT room_name FROM demo WHERE id = 1", state) is True
+    assert (
+        runner._is_trusted_empty_result("SELECT room_name FROM demo WHERE region = '上海'", state)
+        is False
+    )

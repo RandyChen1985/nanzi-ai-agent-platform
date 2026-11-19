@@ -106,6 +106,10 @@ async def test_resolve_effective_limit_batches_role_policies():
         return {1: p1, 2: p2}
 
     service._get_policies_for_scope_ids = fake_batch  # type: ignore[method-assign]
+    # 实现新增了「用户专属政策优先」这一层：不显式声明「没有用户专属政策」，没被 mock 的
+    # _get_policy 会返回 MagicMock（truthy 且 enabled），而 int(MagicMock) 恰好等于 1，
+    # 断言就会退化成 1 == 500000。
+    service._get_policy = AsyncMock(return_value=None)  # type: ignore[method-assign]
 
     limit, source, label = await service._resolve_effective_limit(1, "alice")
     assert limit == 500000

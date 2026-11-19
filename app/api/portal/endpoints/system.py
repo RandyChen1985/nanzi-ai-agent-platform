@@ -2,9 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Body, File, UploadFile
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
-from app.core.dependencies import require_admin, require_permission
+from app.core.dependencies import require_admin, require_permission, require_api_key
 from app.core.config import settings
 from app.core import redis
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.orm import get_db_session
 from app.services.config_service import ConfigService
 from app.schemas.branding import BrandingSettingsUpdate
 from app.services.branding_settings_service import BrandingSettingsService
@@ -863,6 +865,147 @@ async def test_email_service(
     return {"ok": ok, "message": message}
 
 
+class ImageModelsRequest(BaseModel):
+    """拉取图像模型列表的入参。
+
+    两个字段都允许为空：为空时用库里已保存的地址/密钥，这样管理员打开弹窗就能
+    直接看到列表；填了则用当前输入框里的值，便于「先验证再保存」。
+    """
+
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+
+
+@router.post("/configs/image-models", summary="拉取图像模型列表（系统设置 · 图像）")
+async def list_image_models_endpoint(
+    payload: Optional[ImageModelsRequest] = Body(default=None),
+    user: Dict = Depends(require_permission("element", "element:system:config_save")),
+):
+    """代理 ``GET {API 地址}/models``。
+
+    由后端代发而不是让前端直连：密钥只应留在后端，且浏览器直连第三方网关会被跨域拦下。
+    失败时把上游原文回给前端——管理员需要看到「401 密钥无效」这种话，才知道该改哪个字段。
+    """
+    from app.services.ai.tools.image_generation_tool import list_image_models
+
+    body = payload or ImageModelsRequest()
+    try:
+        result = await list_image_models(
+            base_url=body.base_url, api_key=body.api_key
+        )
+    except PermissionError as exc:
+        return {"ok": False, "message": str(exc)}
+    except ValueError as exc:
+        return {"ok": False, "message": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - 兜底，别让弹窗因为异常白屏
+        logging.error(f"Failed to list image models: {exc}")
+        return {"ok": False, "message": f"拉取模型列表失败：{exc}"}
+    return {"ok": True, **result}
+
+
+class ImageTestRequest(BaseModel):
+    """「测试生成」入参。
+
+    三个配置字段都允许为空：空着就用库里已保存的值，填了就用输入框里的当前值，
+    这样「改了地址/模型但还没保存」也能先试通再保存。
+    """
+
+    prompt: str
+    size: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    # 协议也要能覆盖：改了格式没保存就点测试时，测的必须是界面上选的这个协议。
+    api_format: Optional[str] = None
+
+
+@router.post("/configs/image-generation/test", summary="测试生成（系统设置 · 图像）")
+async def test_image_generation(
+    payload: ImageTestRequest,
+    user: Dict = Depends(require_permission("element", "element:system:config_save")),
+):
+    """用当前配置真实调一次图像模型，验证能不能出图。
+
+    **不落盘、不发布产物、不写数据库**：结果以 data URL 直接回给设置页预览。
+    管理员配完地址密钥最需要确认的就是「到底通不通」，而这个答案只有真跑一次才有。
+    业务逻辑在 ``preview_image_generation`` 里，端点只负责权限与错误转成可读文案。
+    """
+    from app.services.ai.tools.image_generation_tool import preview_image_generation
+
+    try:
+        result = await preview_image_generation(
+            prompt=payload.prompt,
+            size=payload.size,
+            base_url=payload.base_url,
+            api_key=payload.api_key,
+            model=payload.model,
+            api_format=payload.api_format,
+        )
+    except (PermissionError, ValueError) as exc:
+        return {"ok": False, "message": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - 设置页要看到原因，不能白屏
+        logging.error(f"Image generation test failed: {exc}")
+        return {"ok": False, "message": f"测试失败：{exc}"}
+    return {"ok": True, **result}
+
+
+@router.get("/configs/image-generation/status", summary="图像生成可用状态（对话页入口用）")
+async def get_image_generation_status(
+    agent_id: Optional[str] = None,
+    user: Dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """给对话输入框的「图像参数」入口判定能不能点。
+
+    两道闸分开返回，前端才能给出不同的处置提示：
+    * ``system_enabled=False`` → 「未开启」，用户得找管理员；
+    * ``agent_enabled=False``  → 「智能体未启用」，用户自己到智能体配置里勾一下就行。
+
+    只回布尔与尺寸白名单，**不回任何密钥**——这个接口普通登录用户可访问。
+    """
+    from app.services.ai.tools.image_generation_tool import (
+        load_image_generation_config,
+    )
+
+    config = await load_image_generation_config()
+    payload: Dict[str, Any] = {
+        "system_enabled": bool(config["enabled"]),
+        "allowed_sizes": config["allowed_sizes"],
+        "default_size": config["default_size"],
+        "max_images": config["max_images_per_call"],
+        "agent_enabled": None,
+    }
+
+    if agent_id:
+        payload["agent_enabled"] = await _agent_has_tool(db, agent_id, "generate_image")
+
+    return payload
+
+
+async def _agent_has_tool(db: AsyncSession, agent_id: str, tool_name: str) -> bool:
+    """判定智能体已发布版本的工具有没有勾上 ``tool_name``。
+
+    取 ``PUBLISHED`` 里版本号最大的那条——与运行时实际下发的版本同一份来源，
+    否则会出现「参数面板可用、对话里却没这个工具」的错位。
+    """
+    from sqlalchemy import select
+
+    from app.models.agent import AIAgentVersion
+    from app.services.mcp.tool_ref_health import configured_tool_names
+
+    result = await db.execute(
+        select(AIAgentVersion.tools)
+        .where(
+            AIAgentVersion.agent_id == agent_id,
+            AIAgentVersion.status == "PUBLISHED",
+        )
+        .order_by(AIAgentVersion.version_number.desc())
+        .limit(1)
+    )
+    tools = result.scalar_one_or_none()
+    return tool_name in configured_tool_names(tools)
+
+
 @router.get("/branding")
 async def get_branding_settings(
     user: Dict = Depends(require_permission("menu", "menu:system:config"))
@@ -940,9 +1083,6 @@ async def reset_branding_icon(
 
 
 # --- Log & Partition Management Endpoints (Admin Only) ---
-
-from app.core.orm import get_db_session
-from sqlalchemy.ext.asyncio import AsyncSession
 
 class LogConfigUpdateRequest(BaseModel):
     audit_log_retention_days: int

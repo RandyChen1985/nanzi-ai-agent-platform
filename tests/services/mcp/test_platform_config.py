@@ -18,6 +18,9 @@ def test_platform_mcp_config_has_singleton_fields_and_safe_defaults():
         "conversation_enabled",
         "knowledge_enabled",
         "metadata_enabled",
+        # 速率限制两个字段后加入单例配置；0 表示不限流（安全默认）。
+        "rate_limit_client_per_minute",
+        "rate_limit_user_per_minute",
     )
     assert PlatformMcpConfigService.to_dict(None) == {
         "platform_enabled": False,
@@ -25,6 +28,8 @@ def test_platform_mcp_config_has_singleton_fields_and_safe_defaults():
         "conversation_enabled": False,
         "knowledge_enabled": False,
         "metadata_enabled": False,
+        "rate_limit_client_per_minute": 0,
+        "rate_limit_user_per_minute": 0,
     }
 
 

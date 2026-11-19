@@ -250,3 +250,23 @@ def test_embedchat_renders_legacy_continue_components_in_desktop_form_only():
     # 反向保护：调试页仍按真实宽度传值，避免联带删掉它的移动端抽屉
     debug = _read("frontend/src/views/AgentDebug.vue")
     assert ':is-mobile="isMobile"' in debug, "调试页仍需移动端形态，不得联带清理"
+
+
+def test_empty_stream_body_cannot_fake_the_continue_entry():
+    """正文为空时不能因 `string | false` 撞上 Boolean prop 的「空串转 true」而露出「继续分析」。
+
+    `:show-generic-continue="… && visibleStreamBody(msg)"` 的表达式类型是 `string | false`
+    （vue-tsc 报 TS2322），而 `MobileMessageActionsSheet` 的 prop 声明是 `boolean`；
+    Vue 对 Boolean prop 会把 `''` 转成 `true`，于是「正文为空」的 agent 消息在手机上多出
+    一个点了没反应的「继续分析」入口。必须用 `Boolean(...)` 显式收缩成布尔。
+    """
+    sheet = _read("frontend/src/components/chat/MobileMessageActionsSheet.vue")
+    assert "showGenericContinue: boolean;" in sheet
+
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    match = re.search(r':show-generic-continue="([^"]+)"', embed)
+    assert match, "EmbedChat 的移动端操作抽屉必须显式传 show-generic-continue"
+    expression = match.group(1)
+    assert "Boolean(visibleStreamBody(msg))" in expression, expression
+    # 反向保护：别把整段表达式直接塞布尔 prop（那就是这条 bug 的成因）
+    assert "&& visibleStreamBody(msg)" not in expression, expression
