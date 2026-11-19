@@ -1003,13 +1003,19 @@ async def test_image_generation(
 async def get_image_generation_status(
     agent_id: Optional[str] = None,
     user: Dict = Depends(require_api_key),
-    db: AsyncSession = Depends(get_db_session),
 ):
     """给对话输入框的「图像参数」入口判定能不能点。
 
-    两道闸分开返回，前端才能给出不同的处置提示：
-    * ``system_enabled=False`` → 「未开启」，用户得找管理员；
-    * ``agent_enabled=False``  → 「智能体未启用」，用户自己到智能体配置里勾一下就行。
+    只看系统层：``system_enabled=False`` → 「未开启」，用户得找管理员。
+
+    **不再回「当前智能体有没有勾 generate_image / edit_image」**。早先按
+    ``agent_id`` 的已发布版本查过，但「智能委派」这类入口智能体只负责往下分发，
+    本身不会勾业务工具，而真正执行的是被委派的子智能体——前端手里那个
+    ``agent_id`` 代表不了它。判错会把「可用」显示成「不可用」，代价远大于
+    让运行时去报错（用户至少知道发生了什么）。
+
+    ``agent_id`` 参数保留：老前端仍在传，将来若要做「按智能体给不同尺寸白名单」
+    还有用。
 
     只回布尔与尺寸白名单，**不回任何密钥**——这个接口普通登录用户可访问。
     """
@@ -1023,44 +1029,13 @@ async def get_image_generation_status(
         "allowed_sizes": config["allowed_sizes"],
         "default_size": config["default_size"],
         "max_images": config["max_images_per_call"],
-        "agent_enabled": None,
         # 系统层面能不能改图：只看总开关，与智能体无关。
         "edit_system_enabled": bool(config["enabled"]),
         # 字段保留：前端已经按它渲染提示，豁免原因将来可能再加（比如换模型）
         "edit_unavailable_reason": "" if config["enabled"] else "图像生成总开关未开启，请联系管理员",
-        # 当前智能体是否勾了 edit_image
-        "agent_edit_enabled": None,
     }
 
-    if agent_id:
-        payload["agent_enabled"] = await _agent_has_tool(db, agent_id, "generate_image")
-        payload["agent_edit_enabled"] = await _agent_has_tool(db, agent_id, "edit_image")
-
     return payload
-
-
-async def _agent_has_tool(db: AsyncSession, agent_id: str, tool_name: str) -> bool:
-    """判定智能体已发布版本的工具有没有勾上 ``tool_name``。
-
-    取 ``PUBLISHED`` 里版本号最大的那条——与运行时实际下发的版本同一份来源，
-    否则会出现「参数面板可用、对话里却没这个工具」的错位。
-    """
-    from sqlalchemy import select
-
-    from app.models.agent import AIAgentVersion
-    from app.services.mcp.tool_ref_health import configured_tool_names
-
-    result = await db.execute(
-        select(AIAgentVersion.tools)
-        .where(
-            AIAgentVersion.agent_id == agent_id,
-            AIAgentVersion.status == "PUBLISHED",
-        )
-        .order_by(AIAgentVersion.version_number.desc())
-        .limit(1)
-    )
-    tools = result.scalar_one_or_none()
-    return tool_name in configured_tool_names(tools)
 
 
 @router.get("/branding")

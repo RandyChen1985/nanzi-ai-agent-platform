@@ -1679,15 +1679,13 @@ const imageParamCount = ref(1);
 const imageStatusLoading = ref(false);
 const imageFeature = ref<{
   system_enabled: boolean;
-  agent_enabled: boolean | null;
   allowed_sizes: string[];
   default_size: string;
   max_images: number;
-  // 改图能力：系统层（总开关 + 接口格式是否为聊天接口）与智能体层分开回。
-  // 两个条件都得满足才能用改图 tab，任一不满足都要给出不同的处置提示。
+  // 改图能力只看系统层（总开关）。接口格式不参与——改图固定走聊天接口。
+  // 不再回智能体是否勾了 edit_image：委派架构下那个判定不可靠。
   edit_system_enabled?: boolean;
   edit_unavailable_reason?: string;
-  agent_edit_enabled?: boolean | null;
 } | null>(null);
 
 // 「不指定」显式列出来：按钮全亮着的面板里，没有它就看不出「我没选」还是「选了没生效」。
@@ -1794,14 +1792,13 @@ const imageStatusKnown = ref(false);
 /** 上次成功查询的时间戳：3 秒内不重复打接口，鼠标在菜单上扫过时不该反复翻状态。 */
 let imageStatusFetchedAt = 0;
 
-/** 不可用时给不同说法：一个得找管理员，一个自己勾一下就行。 */
+/** 不可用时的说法。只剩系统层一种原因——智能体勾没勾工具不再参与判断。 */
 const imageFeatureBlockReason = computed(() => {
   // 还没查过：先不给结论。直接当「未开启」会先亮一个徽章再翻成可用，白闪一下。
   if (!imageStatusKnown.value) return "";
   const status = imageFeature.value;
   if (!status) return "未开启";
   if (!status.system_enabled) return "未开启";
-  if (status.agent_enabled === false) return "智能体未启用";
   return "";
 });
 const imageFeatureAvailable = computed(
@@ -1827,7 +1824,6 @@ const loadImageFeatureStatus = async (options: { force?: boolean } = {}) => {
     );
     imageFeature.value = {
       system_enabled: !!data?.system_enabled,
-      agent_enabled: data?.agent_enabled ?? null,
       allowed_sizes: Array.isArray(data?.allowed_sizes) ? data.allowed_sizes : [],
       default_size: data?.default_size || "",
       max_images: Math.max(1, Number(data?.max_images) || 1)
@@ -1966,11 +1962,20 @@ const imageEditHasReference = ref(false);
  */
 const imageEditMode = ref(false);
 
-/** 改图 tab 能不能点：系统层与智能体层两道，任一不满足就在面板里说清该找谁。 */
+/**
+ * 改图 tab 能不能点：**只看系统开关，不看智能体勾了哪些工具**。
+ *
+ * 早先按 agent 已发布版本的工具清单判过一次，实践中必然误伤——「智能委派」这类
+ * 入口智能体只负责往下分发，它本身不可能勾 edit_image；而真正执行改图的可能是
+ * 任意一个被委派的子智能体，前端手里那个 agent_id 根本代表不了它。
+ *
+ * 所以这里放行：设置参数是用户的事，工具在不在由运行时说了算。真没工具，
+ * 模型会回一句改不了——比一个永远点不亮的 tab 强，至少用户知道发生了什么。
+ */
 const editPanelEnabled = computed(() => {
   const status = imageFeature.value;
   if (!status) return false;
-  return !!status.edit_system_enabled && status.agent_edit_enabled !== false;
+  return !!status.edit_system_enabled;
 });
 
 /** 改图 tab 置灰的原因，直接展示给用户，省得他对着灰按钮猜。 */
@@ -1980,9 +1985,6 @@ const editPanelBlockReason = computed(() => {
   if (!status.system_enabled) return "平台还没开启图像生成，请联系管理员打开开关。";
   if (!status.edit_system_enabled) {
     return status.edit_unavailable_reason || "平台还没开启改图能力，请联系管理员。";
-  }
-  if (status.agent_edit_enabled === false) {
-    return "当前智能体没有勾选 edit_image 工具，到智能体配置里勾上即可。";
   }
   return "";
 });

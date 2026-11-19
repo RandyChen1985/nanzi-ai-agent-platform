@@ -529,18 +529,22 @@ async def test_unrelated_tools_are_not_gated(monkeypatch):
 # ── 状态接口：对话页入口靠它判断两道闸 ──────────────────────────────
 
 
-async def test_status_endpoint_reports_both_gates(monkeypatch):
+async def test_status_endpoint_reports_system_gate_only(monkeypatch):
+    """只回系统层判定。
+
+    早先还会按 agent_id 回「这个智能体勾没勾工具」，但「智能委派」这类入口智能体
+    只负责分发、本身不勾业务工具，而真正执行的是被委派的子智能体——那个判定必然
+    误伤。现在一律不回，让运行时去报错。
+    """
     from app.api.portal.endpoints import system as system_endpoint
 
-    monkeypatch.setattr(
-        system_endpoint, "_agent_has_tool", _make_agent_tool_probe(True)
-    )
     _apply_config(monkeypatch, {"image_generation_enabled": "0"})
     payload = await system_endpoint.get_image_generation_status(
-        agent_id="agent-1", user={"user_id": 1}, db=None
+        agent_id="agent-1", user={"user_id": 1}
     )
     assert payload["system_enabled"] is False
-    assert payload["agent_enabled"] is True
+    assert "agent_enabled" not in payload
+    assert "agent_edit_enabled" not in payload
     # 尺寸白名单要一起回，前端面板不需要再猜
     assert payload["allowed_sizes"] == ["1024x1024", "1664x928", "928x1664"]
     assert payload["default_size"] == "1024x1024"
@@ -549,59 +553,19 @@ async def test_status_endpoint_reports_both_gates(monkeypatch):
     assert "api_key" not in payload and "api_key" not in str(payload)
 
 
-async def test_status_endpoint_without_agent_leaves_agent_gate_unknown(monkeypatch):
+async def test_status_endpoint_ignores_agent_id(monkeypatch):
+    """传不传 agent_id 结果一样——这条已经和智能体无关了。"""
     from app.api.portal.endpoints import system as system_endpoint
 
     _apply_config(monkeypatch, {"image_generation_enabled": "1"})
-    payload = await system_endpoint.get_image_generation_status(
-        agent_id=None, user={"user_id": 1}, db=None
+    with_agent = await system_endpoint.get_image_generation_status(
+        agent_id="agent-1", user={"user_id": 1}
     )
-    assert payload["system_enabled"] is True
-    assert payload["agent_enabled"] is None
-
-
-def _make_agent_tool_probe(value):
-    async def _probe(db, agent_id, tool_name):
-        return value
-
-    return _probe
-
-
-class _FakeResult:
-    def __init__(self, value):
-        self._value = value
-
-    def scalar_one_or_none(self):
-        return self._value
-
-
-class _FakeDB:
-    def __init__(self, tools):
-        self.tools = tools
-
-    async def execute(self, _stmt):
-        return _FakeResult(self.tools)
-
-
-async def test_agent_has_tool_reads_published_version_tools():
-    from app.api.portal.endpoints.system import _agent_has_tool
-
-    # tools 里既有字符串也有 dict 形态，解析要都能认
-    db = _FakeDB(["read_image", {"name": "generate_image"}])
-    assert await _agent_has_tool(db, "agent-1", "generate_image") is True
-
-
-async def test_agent_has_tool_false_when_not_checked():
-    from app.api.portal.endpoints.system import _agent_has_tool
-
-    db = _FakeDB(["read_image", "web_search"])
-    assert await _agent_has_tool(db, "agent-1", "generate_image") is False
-
-
-async def test_agent_has_tool_false_when_no_published_version():
-    from app.api.portal.endpoints.system import _agent_has_tool
-
-    assert await _agent_has_tool(_FakeDB(None), "agent-1", "generate_image") is False
+    without_agent = await system_endpoint.get_image_generation_status(
+        agent_id=None, user={"user_id": 1}
+    )
+    assert with_agent["system_enabled"] is True
+    assert with_agent == without_agent
 
 
 async def test_partial_success_keeps_first_image(

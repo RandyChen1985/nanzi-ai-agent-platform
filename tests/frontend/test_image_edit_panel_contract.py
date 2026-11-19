@@ -112,7 +112,8 @@ def test_edit_tab_blocked_with_reason(chat_input: str):
     assert "editPanelEnabled" in chat_input
     assert "editPanelBlockReason" in chat_input
     assert "edit_system_enabled" in chat_input
-    assert "agent_edit_enabled" in chat_input
+    # 委派架构下「当前智能体是否勾了 edit_image」判不准，不再据此置灰
+    assert "status.agent_edit_enabled" not in chat_input
 
 
 def test_style_only_in_edit_page(chat_input: str):
