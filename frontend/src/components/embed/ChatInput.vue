@@ -1728,19 +1728,28 @@ const imageSizeChoices = computed(() =>
     })),
 );
 
-/** 3 列网格，折叠态固定两行 6 格：「自动」1 + 尺寸 4 + 「更多」1。
- *  不折叠时最多摆 5 个尺寸（自动 + 5 = 6 格，也是两行），所以超过 5 个才值得折。
+/** 后端配置的默认尺寸。第一格直接把具体像素显示出来，不再用笼统的「自动 / 默认」——
+ *  「默认 512x512」和「自动」是两种确定性，后者要用户点开面板挨个比才知道出多大。 */
+const imageDefaultSize = computed(() => String(imageFeature.value?.default_size || "").trim());
+
+/** 默认尺寸已经独占第一格，列表里不再重复出现同一个值。 */
+const otherImageSizeChoices = computed(() =>
+  imageSizeChoices.value.filter((opt) => opt.size !== imageDefaultSize.value),
+);
+
+/** 3 列网格，折叠态固定两行 6 格：「默认」1 + 尺寸 4 + 「更多」1。
+ *  不折叠时最多摆 5 个尺寸（默认 + 5 = 6 格，也是两行），所以超过 5 个才值得折。
  *  管理员把预设全勾上时白名单能有八个十个，全摊开会把「张数」和底部按钮挤出面板。 */
 const IMAGE_SIZE_VISIBLE_COUNT = 4;
 const IMAGE_SIZE_COLLAPSE_THRESHOLD = 5;
 const imageSizeCollapsed = ref(true);
 
 const imageSizeNeedsCollapse = computed(
-  () => imageSizeChoices.value.length > IMAGE_SIZE_COLLAPSE_THRESHOLD,
+  () => otherImageSizeChoices.value.length > IMAGE_SIZE_COLLAPSE_THRESHOLD,
 );
 
 const visibleImageSizeChoices = computed(() => {
-  const all = imageSizeChoices.value;
+  const all = otherImageSizeChoices.value;
   if (!imageSizeNeedsCollapse.value || !imageSizeCollapsed.value) return all;
   const head = all.slice(0, IMAGE_SIZE_VISIBLE_COUNT);
   // 选中的尺寸落在折叠区时，用最后一格把它顶出来：面板收着却看不见自己选了什么，
@@ -1753,7 +1762,7 @@ const visibleImageSizeChoices = computed(() => {
 });
 
 const hiddenImageSizeCount = computed(
-  () => imageSizeChoices.value.length - visibleImageSizeChoices.value.length,
+  () => otherImageSizeChoices.value.length - visibleImageSizeChoices.value.length,
 );
 
 
@@ -1816,6 +1825,11 @@ const loadImageFeatureStatus = async (options: { force?: boolean } = {}) => {
       default_size: data?.default_size || "",
       max_images: Math.max(1, Number(data?.max_images) || 1)
     };
+    // 「默认」那一格就是后台配的尺寸，用户还没动过就让它直接亮起来——
+    // 否则第一眼看不出这次会出多大，还得先点一下才知道。
+    if (!imageParamSize.value) {
+      imageParamSize.value = String(data?.default_size || "").trim();
+    }
   } catch {
     // 拿不到状态就按「未开启」处理：宁可少一个入口，也不要让用户点了没反应。
     imageFeature.value = null;
@@ -1890,8 +1904,10 @@ const imageParamChips = computed(() => {
   if (imageParamStyle.value) {
     chips.push({ key: "style", label: imageParamStyle.value, clear: () => { imageParamStyle.value = ""; } });
   }
-  if (imageParamSize.value) {
-    chips.push({ key: "size", label: imageParamSize.value, clear: () => { imageParamSize.value = ""; } });
+  // 尺寸和默认值一样时不挂标签：每轮都挂一个「512x512」只是噪音，
+  // 面板第一格的高亮已经说明了这次会出多大；真正改过才有必要提示「这次不是默认的」。
+  if (imageParamSize.value && imageParamSize.value !== imageDefaultSize.value) {
+    chips.push({ key: "size", label: imageParamSize.value, clear: () => { imageParamSize.value = imageDefaultSize.value; } });
   }
   if (imageParamCount.value > 1) {
     chips.push({ key: "count", label: `${imageParamCount.value} 张`, clear: () => { imageParamCount.value = 1; } });
@@ -1941,7 +1957,7 @@ watch(() => props.modelValue, (value) => {
 
 const resetImageParams = () => {
   imageParamStyle.value = "";
-  imageParamSize.value = "";
+  imageParamSize.value = imageDefaultSize.value || "";
   imageParamCount.value = 1;
   // 下一轮重新进入面板时回到折叠态：展开状态是「正在挑尺寸」的临时态，不该跨轮留着。
   imageSizeCollapsed.value = true;
@@ -3487,21 +3503,27 @@ defineExpose({
                                              所以面板里不再单独放一排画面比例——两套控件表达同一件事，
                                              选「1:1」又选「1664x928」时还会互相打架。 -->
                                         <div class="grid grid-cols-3 gap-1.5">
+                                          <!-- 第一格直接显示后台配的默认尺寸并默认选中：写「自动」的话，
+                                               用户得点开面板挨个比才知道这次到底出多大。 -->
                                           <button
                                             type="button"
                                             class="flex flex-col items-center gap-1 rounded-lg border px-1 py-1.5 transition-colors"
-                                            :class="imageParamSize === ''
+                                            :class="imageDefaultSize && imageParamSize === imageDefaultSize
                                               ? 'border-primary bg-primary/5 text-primary'
                                               : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
-                                            title="不指定，用后台配置的默认尺寸"
-                                            @click="imageParamSize = ''"
+                                            :title="imageDefaultSize ? `后台配置的默认尺寸：${imageDefaultSize}` : '后台还没配置默认尺寸'"
+                                            @click="imageParamSize = imageDefaultSize"
                                           >
                                             <span
-                                              class="block rounded-[3px] border border-dashed"
-                                              :class="imageParamSize === '' ? 'border-primary bg-primary/15' : 'border-gray-400 dark:border-gray-500'"
-                                              style="width: 14px; height: 14px"
+                                              class="block rounded-[3px] border"
+                                              :class="imageDefaultSize && imageParamSize === imageDefaultSize
+                                                ? 'border-primary bg-primary/15'
+                                                : 'border-gray-400 dark:border-gray-500'"
+                                              :style="imageDefaultSize
+                                                ? imageSizeBoxStyle(imageDefaultSize)
+                                                : { width: '14px', height: '14px', borderStyle: 'dashed' }"
                                             ></span>
-                                            <span class="whitespace-nowrap text-[10px] font-medium leading-none">自动</span>
+                                            <span class="font-mono text-[10px] font-medium leading-none tracking-tight">{{ imageDefaultSize || '默认' }}</span>
                                             <span class="text-[9px] leading-none opacity-70">默认</span>
                                           </button>
                                           <button
@@ -3550,7 +3572,7 @@ defineExpose({
                                         </div>
                                         <p class="mt-1 text-[10px] leading-relaxed text-gray-400">
                                           <template v-if="imageSizeChoices.length">
-                                            来自「系统设置 → 图像生成」的白名单；不选则用默认 {{ imageFeature?.default_size || '尺寸' }}。
+                                            来自「系统设置 → 图像生成」的白名单；第一格是后台配置的默认尺寸。
                                           </template>
                                           <template v-else>
                                             后台还没配置可选分辨率，只能用默认尺寸。

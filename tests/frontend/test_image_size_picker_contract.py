@@ -54,6 +54,42 @@ def test_size_group_exists_and_reads_backend_whitelist():
         assert hardcoded not in code, f"界面里不该写死尺寸 {hardcoded}"
 
 
+def test_default_size_card_shows_backend_value_and_is_prechecked():
+    """第一格必须显示后端配的默认尺寸，并且默认就亮着。
+
+    写「自动 / 默认」的话，后端明明配了 512x512，界面上却只有两个字「默认」，
+    用户得点开面板挨个比才知道这次到底出多大。
+    """
+    source = _read(CHAT_INPUT)
+
+    assert "const imageDefaultSize = computed(" in source
+    # 第一格文案是具体像素，不是笼统的「自动」
+    assert "{{ imageDefaultSize || '默认' }}" in source
+
+    # 状态查回来就选上，不必用户先点一次
+    status_start = source.index("const loadImageFeatureStatus")
+    status_body = source[status_start : source.index("\n};", status_start)]
+    assert "imageParamSize.value = String(data?.default_size" in status_body
+
+    # 每轮重置回默认尺寸，而不是清成「不指定」——否则发完第一张，第二张又变回没选
+    reset_start = source.index("const resetImageParams = () => {")
+    reset_body = source[reset_start : source.index("\n};", reset_start)]
+    assert "imageParamSize.value = imageDefaultSize.value" in reset_body
+
+
+def test_default_size_is_not_duplicated_in_the_grid():
+    """默认尺寸独占第一格，列表里要过滤掉它，否则同一个值同时出现两次。"""
+    source = _read(CHAT_INPUT)
+
+    start = source.index("const otherImageSizeChoices = computed(")
+    body = source[start : source.index("\n);", start)]
+    assert "opt.size !== imageDefaultSize.value" in body
+
+    # 折叠与可见集都必须基于过滤后的列表，否则「更多 +N」会多算一个
+    assert "otherImageSizeChoices.value.length > IMAGE_SIZE_COLLAPSE_THRESHOLD" in source
+    assert "const all = otherImageSizeChoices.value" in source
+
+
 def test_closing_panel_collapses_the_whole_flyout():
     """X 只收面板、把加号菜单留在屏幕上 = 关了一半，用户还得再点一次空白处。
 

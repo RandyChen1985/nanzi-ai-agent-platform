@@ -362,21 +362,32 @@
     { size:'768x1344',  ratio:'4:7',  box:[9,16] },
     { size:'1344x768',  ratio:'7:4',  box:[16,9] }
   ];
-  var SIZE_VISIBLE = 4;   // 折叠态：自动 + 4 + 更多 = 3 列 × 2 行
+  var DEFAULT_SIZE = '512x512';  // 后台配置的默认尺寸，独占第一格
+  var SIZE_VISIBLE = 4;   // 折叠态：默认 + 4 + 更多 = 3 列 × 2 行
   var SIZE_MAX_FLAT = 5;  // 不超过 5 个尺寸时全部摊开也是两行，不必折
   var STYLES = ['不指定','扁平插画','写实摄影','3D 渲染','极简线条','动漫二次元','水彩手绘','油画质感','赛博霓虹','国潮插画'];
 
   var state = {
-    a: { style:'', size:'', count:1, collapsed:true },
+    a: { style:'', size:DEFAULT_SIZE, count:1, collapsed:true },
     // B 默认选的是第 8 个尺寸，用来演示「选中项即使在折叠区也必须露出来」
-    b: { style:'', size:'1344x768', count:1, collapsed:true }
+    b: { style:'', size:DEFAULT_SIZE, count:1, collapsed:true }
   };
 
   /** 折叠时露出的那一段；选中项若落在折叠区，用最后一格把它顶出来。 */
+  function sizeMeta(size){
+    return SIZES.filter(function(s){ return s.size === size; })[0] || { size:size, ratio:'', box:[14,14] };
+  }
+
+  /** 默认尺寸已经独占第一格，列表里不再重复出现同一个值。 */
+  function sizesOther(){
+    return SIZES.filter(function(s){ return s.size !== DEFAULT_SIZE; });
+  }
+
   function sizeVisible(st){
-    if (!st.collapsed || SIZES.length <= SIZE_MAX_FLAT) return SIZES;
-    var head = SIZES.slice(0, SIZE_VISIBLE);
-    var sel = SIZES.filter(function(s){ return s.size === st.size; })[0];
+    var all = sizesOther();
+    if (!st.collapsed || all.length <= SIZE_MAX_FLAT) return all;
+    var head = all.slice(0, SIZE_VISIBLE);
+    var sel = all.filter(function(s){ return s.size === st.size; })[0];
     if (sel && !head.some(function(s){ return s.size === sel.size; })) {
       return head.slice(0, SIZE_VISIBLE - 1).concat([sel]);
     }
@@ -385,13 +396,14 @@
 
   /** 「更多 / 收起」格：与尺寸卡片同一套骨架（14px 图标位 + 两行小字），高度才对得齐。 */
   function sizeMoreBtn(sc, st){
-    if (SIZES.length <= SIZE_MAX_FLAT) return '';
-    var hidden = SIZES.length - sizeVisible(st).length;
+    var all = sizesOther();
+    if (all.length <= SIZE_MAX_FLAT) return '';
+    var hidden = all.length - sizeVisible(st).length;
     var icon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="transition:transform .15s' + (st.collapsed ? '' : ';transform:rotate(180deg)') + '"><path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
     return '<button class="size-card more" data-sc="'+sc+'" data-k="collapse" data-v="">' +
       '<span class="ico">'+icon+'</span>' +
       '<span class="n">'+(st.collapsed ? '更多' : '收起')+'</span>' +
-      '<span class="r">'+(st.collapsed ? '+'+hidden : '共 '+SIZES.length)+'</span></button>';
+      '<span class="r">'+(st.collapsed ? '+'+hidden : '共 '+(all.length+1))+'</span></button>';
   }
 
   function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];}); }
@@ -409,13 +421,13 @@
 
   function sizePills(sc, st){
     var h = '<div><div class="grp-lb">分辨率</div><div class="size-pills">';
-    h += '<button class="size-pill'+(st.size===''?' on':'')+'" data-sc="'+sc+'" data-k="size" data-v=""><span class="n">自动</span><span class="r">默认 1024x1024</span></button>';
+    h += '<button class="size-pill'+(st.size===DEFAULT_SIZE?' on':'')+'" data-sc="'+sc+'" data-k="size" data-v="'+DEFAULT_SIZE+'"><span class="n mono">'+DEFAULT_SIZE+'</span><span class="r">默认</span></button>';
     sizeVisible(st).forEach(function(s){
       h += '<button class="size-pill'+(st.size===s.size?' on':'')+'" data-sc="'+sc+'" data-k="size" data-v="'+s.size+'">' +
            '<span class="n mono">'+s.size+'</span><span class="r">'+s.ratio+'</span></button>';
     });
-    if (SIZES.length > SIZE_MAX_FLAT) {
-      var hid = SIZES.length - sizeVisible(st).length;
+    if (sizesOther().length > SIZE_MAX_FLAT) {
+      var hid = sizesOther().length - sizeVisible(st).length;
       h += '<button class="size-pill" data-sc="'+sc+'" data-k="collapse" data-v="" style="border-style:dashed">' +
            '<span class="n">'+(st.collapsed ? '更多 +'+hid : '收起')+'</span></button>';
     }
@@ -425,9 +437,10 @@
 
   function sizeCards(sc, st){
     var h = '<div><div class="grp-lb">分辨率</div><div class="size-cards">';
-    h += '<button class="size-card'+(st.size===''?' on':'')+'" data-sc="'+sc+'" data-k="size" data-v="">' +
-         '<span class="box" style="width:14px;height:14px;border-style:dashed"></span>' +
-         '<span class="n">自动</span><span class="r">默认 1024x1024</span></button>';
+    var meta = sizeMeta(DEFAULT_SIZE);
+    h += '<button class="size-card'+(st.size===DEFAULT_SIZE?' on':'')+'" data-sc="'+sc+'" data-k="size" data-v="'+DEFAULT_SIZE+'">' +
+         '<span class="box" style="'+boxStyle(meta.box)+'"></span>' +
+         '<span class="n mono">'+DEFAULT_SIZE+'</span><span class="r">默认</span></button>';
     sizeVisible(st).forEach(function(s){
       h += '<button class="size-card'+(st.size===s.size?' on':'')+'" data-sc="'+sc+'" data-k="size" data-v="'+s.size+'">' +
            '<span class="box" style="'+boxStyle(s.box)+'"></span>' +
@@ -457,8 +470,8 @@
 
   function chips(sc){
     var st = state[sc], out = '';
-    if (st.size) out += chip(st.size, true);
-    if (st.size === '' && !st.style) return '<span class="chip ghost">未指定 · 由模型自己判断</span>';
+    if (st.size && st.size !== DEFAULT_SIZE) out += chip(st.size, true);
+    if (st.size === DEFAULT_SIZE && !st.style) return '';
     if (st.style) out += chip(st.style);
     if (st.count > 1) out += chip(st.count + ' 张');
     return out || '<span class="chip ghost">未指定 · 由模型自己判断</span>';
@@ -473,7 +486,7 @@
   function payload(sc){
     var st = state[sc];
     var size = st.size ? '<span class="s">"'+st.size+'"</span>' : '<span class="n">null</span>';
-    var note = st.size ? '' : '  <span class="c">// 不选 → 用后台默认尺寸</span>';
+    var note = st.size === DEFAULT_SIZE ? '  <span class="c">// 第一格的默认尺寸，照样下发，出图尺寸确定</span>' : '';
     return '{\n' +
       '  <span class="k">"messages"</span>: [ … ],\n' +
       '  <span class="k">"execution_options"</span>: {\n' +
@@ -509,7 +522,7 @@
     }
     if (ev.target.closest('[data-act="clear"]') || ev.target.closest('[data-act="clear-b"]')) {
       var sc2 = ev.target.closest('[data-act="clear"]') ? 'a' : 'b';
-      state[sc2] = { style:'', size:'', count:1, collapsed:true };
+      state[sc2] = { style:'', size:DEFAULT_SIZE, count:1, collapsed:true };
       paint(sc2); return;
     }
     if (ev.target.closest('[data-act="apply"]')) {
