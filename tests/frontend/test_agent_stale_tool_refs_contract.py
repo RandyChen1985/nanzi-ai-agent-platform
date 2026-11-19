@@ -111,9 +111,10 @@ def test_stale_refs_card_sits_at_top_of_tools_step():
     ——看不到就等于「无解」，因为它是用户唯一的解绑入口。
     """
     card_at = DRAWER.index("项已失效的工具引用")
-    timeout_card_at = DRAWER.index(
-        '<div class="text-sm font-bold text-gray-800">智能体版本工具调用超时时间</div>'
-    )
+    # 锚在标题文案本身，不锚外层标签：`153c2bac`（超时卡片支持折叠）把标题从
+    # `<div class="text-sm font-bold text-gray-800">` 改成了 `<span class="…">`，
+    # 写死标签名的断言于是假红，而这条用例真正要守的是「先后顺序」。
+    timeout_card_at = DRAWER.index("智能体版本工具调用超时时间")
     static_tab_at = DRAWER.index('v-if="toolTab === \'static\'"')
     mcp_tab_at = DRAWER.index('v-else-if="toolTab === \'mcp\'"')
     skills_tab_at = DRAWER.index('v-else class="flex-1 overflow-y-auto space-y-3 pr-1 version-editor-scroll"')

@@ -97,6 +97,15 @@ const props = withDefaults(defineProps<{
 }>(), {
   onlySelectedTools: false,
   groupedMcpTools: () => ({}),
+  // 两个计数函数在模板里被**直接调用**（`staticGroupCounts(group.label).selected`），
+  // 拿到 undefined 时 Vue 会抛 `$props.staticGroupCounts is not a function`，整个
+  // 「智能体中心」走进「页面加载异常」错误边界。父级现在都传了，但少传一次就是白屏，
+  // 所以给个 0/0 的兜底。
+  //
+  // 注意必须写成「工厂返回函数」的双层箭头：函数类型的 default 会被 withDefaults 当成
+  // 工厂执行，写成 `() => ({ selected: 0, total: 0 })` 时默认值就成了**对象**，调用照样报错。
+  staticGroupCounts: () => () => ({ selected: 0, total: 0 }),
+  mcpGroupCounts: () => () => ({ selected: 0, total: 0 }),
   staleToolRefs: () => [],
   staleToolRefsLoading: false,
   staleToolRefsError: '',

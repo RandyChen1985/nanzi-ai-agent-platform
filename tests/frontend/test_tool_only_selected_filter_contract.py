@@ -167,3 +167,56 @@ def test_toggle_resets_with_the_editor():
     source = _source(MANAGEMENT)
     assert _body(source, "resetVersionEditorUi").count("onlySelectedTools.value = false") == 1
     assert source.count("onlySelectedTools.value = false") >= 3
+
+
+def test_management_wires_group_counter_props_into_the_drawer():
+    """分组计数函数必须真的传进抽屉——漏传就是运行时崩，不是少个数字。
+
+    抽屉模板里是**直接调用** `staticGroupCounts(group.label)` /
+    `mcpGroupCounts(serverName)`，prop 没传下来时 Vue 抛
+    `$props.staticGroupCounts is not a function`，整个「智能体中心」进「页面加载异常」
+    错误边界。此前只测了两个函数的**实现口径**（分子分母取全量），没有一条盯着
+    「父级是否传」，漏传照样全绿——这条补上接线。
+    """
+    template = _source(MANAGEMENT)
+    start = template.index("<AgentVersionEditorDrawer")
+    tag = template[start : template.index("/>", start)]
+    assert ':static-group-counts="staticGroupCounts"' in tag, tag
+    assert ':mcp-group-counts="mcpGroupCounts"' in tag, tag
+    # 同一标签末尾若出现 v-bind，后写的会整体覆盖上面传的函数，等于白传
+    assert "v-bind=" not in tag
+
+
+def test_group_counter_props_are_declared_as_functions():
+    """两个 prop 要按函数声明，模板按 .selected/.total 取值。"""
+    drawer = _source(DRAWER)
+    props_block = drawer[drawer.index("defineProps<{"): drawer.index("}>(), {")]
+    assert re.search(
+        r"staticGroupCounts:\s*\(label: string\) => \{ selected: number; total: number \}",
+        props_block,
+    ), props_block
+    assert re.search(
+        r"mcpGroupCounts:\s*\(serverName: string\) => \{ selected: number; total: number \}",
+        props_block,
+    ), props_block
+    template = drawer[drawer.index("<template>"):]
+    assert "staticGroupCounts(group.label).selected" in template
+    assert "mcpGroupCounts(serverName).selected" in template
+
+
+def test_group_counter_props_fall_back_to_zero_counts():
+    """父级漏传时要降级成 0/0，而不是把整页打进错误边界。
+
+    函数型 prop 的默认值必须是「工厂返回函数」的双层写法：写成
+    `staticGroupCounts: () => ({ selected: 0, total: 0 })` 时，`withDefaults` 会把
+    外层工厂的**返回值**当成函数本身（因为函数类型的 default 被识别为工厂），默认值
+    于是成了对象，调用照样报错。必须 `() => () => ({...})`。
+    """
+    drawer = _source(DRAWER)
+    defaults = drawer[drawer.index("}>(), {"):]
+    defaults = defaults[: defaults.index("});")]
+    for name in ("staticGroupCounts", "mcpGroupCounts"):
+        assert re.search(
+            rf"{name}:\s*\(\)\s*=>\s*\(\)\s*=>\s*\(\{{\s*selected: 0, total: 0\s*\}}\)",
+            defaults,
+        ), defaults
