@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="交互原型">
+<title>生图 / 改图 · 消息区占位骨架（生成中到底该看到什么）</title>
+<style>
+  :root{
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af;
+    --g500:#6b7280; --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --em50:#ecfdf5; --em200:#a7f3d0; --em600:#059669; --em700:#047857;
+    --am50:#fffbeb; --am200:#fde68a; --am700:#b45309;
+    --rose50:#fff1f2; --rose200:#fecdd3; --rose600:#e11d48; --rose700:#be123c;
+    --sky50:#f0f9ff; --sky200:#bae6fd; --sky700:#0369a1;
+    --slate900:#0f172a;
+    --skel: #eef0f3;
+    --skel-hi: rgba(255,255,255,.78);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f5f6f8;color:var(--g900);font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  svg{display:block}
+
+  .page{max-width:1240px;margin:0 auto;padding:20px 24px 72px}
+  .proto-head h1{font-size:20px;margin:0 0 6px;font-weight:650}
+  .proto-head p{margin:0;color:var(--g500);font-size:12.5px;max-width:1040px;line-height:1.75}
+  .proto-head b{color:var(--g700);font-weight:600}
+  .proto-head .kbd{
+    display:inline-block;padding:1px 5px;border:1px solid var(--g300);border-bottom-width:2px;
+    border-radius:4px;background:#fff;font-size:11px;color:var(--g600)
+  }
+
+  .tabs{display:flex;gap:6px;margin:16px 0 14px;flex-wrap:wrap;align-items:center}
+  .tab{
+    display:flex;align-items:center;gap:7px;border:1px solid var(--g200);background:#fff;
+    border-radius:10px;padding:7px 13px;font-size:12.5px;color:var(--g600);transition:.14s;
+  }
+  .tab:hover{border-color:var(--g300);color:var(--g800)}
+  .tab .no{
+    display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
+    border-radius:5px;background:var(--g100);font-size:10.5px;font-weight:700;color:var(--g500)
+  }
+  .tab.on{border-color:var(--slate900);background:var(--slate900);color:#fff}
+  .tab.on .no{background:rgba(255,255,255,.18);color:#fff}
+  .scene{display:none}
+  .scene.on{display:block}
+
+  .win{
+    background:#fff;border:1px solid var(--g200);border-radius:14px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -12px rgba(15,23,42,.10);
+  }
+  .win-bar{
+    display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--g200);
+    background:linear-gradient(#fcfcfd,#f7f8fa);font-size:12px;color:var(--g500)
+  }
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--g300)}
+  .win-body{padding:16px 18px 22px}
+
+  .note{
+    margin:12px 0 0;padding:9px 12px;border-left:3px solid var(--g300);background:#fff;
+    border-radius:0 8px 8px 0;font-size:12px;color:var(--g600);line-height:1.7
+  }
+  .note b{color:var(--g800)}
+  .note.warn{border-left-color:var(--am200);background:var(--am50);color:var(--am700)}
+  .note.warn b{color:#92400e}
+  .note.good{border-left-color:var(--em200);background:var(--em50);color:var(--em700)}
+  .note.good b{color:#065f46}
+
+  /* ── 助手气泡 / 消息区 ───────────────────────────── */
+  .msg{display:flex;gap:10px;max-width:760px}
+  .avatar{
+    width:26px;height:26px;border-radius:8px;flex:0 0 auto;margin-top:2px;
+    background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;font-size:12px;font-weight:700;
+    display:flex;align-items:center;justify-content:center
+  }
+  .msg-main{min-width:0;flex:1}
+  .msg-name{font-size:12px;color:var(--g500);margin-bottom:6px}
+  .msg-text{font-size:13.5px;color:var(--g800);line-height:1.75;margin-bottom:10px}
+  .caret{
+    display:inline-block;width:7px;height:14px;vertical-align:-2px;margin-left:2px;
+    background:var(--g500);border-radius:1px;animation:blink 1.1s steps(1) infinite
+  }
+  @keyframes blink{50%{opacity:0}}
+
+  /* ── 执行过程卡（现状截图里的那个） ───────────────── */
+  .exec{border:1px solid var(--g200);border-radius:12px;background:#fff;overflow:hidden}
+  .exec-hd{display:flex;align-items:center;gap:8px;padding:10px 12px;font-size:12.5px;font-weight:600}
+  .exec-hd .pill{
+    font-weight:600;font-size:11px;color:var(--g600);background:var(--g100);
+    border-radius:6px;padding:1px 6px
+  }
+  .exec-bd{padding:0 12px 10px}
+  .exec-row{
+    display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12.5px;color:var(--g700)
+  }
+  .exec-row .lead{width:9px;height:9px;border-radius:50%;background:var(--g300);flex:0 0 auto}
+  .exec-row.running .lead{background:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.16)}
+  .exec-row .time{margin-left:auto;font-size:11px;color:var(--g400);font-variant-numeric:tabular-nums}
+  .spin{
+    width:11px;height:11px;border-radius:50%;border:2px solid var(--sky200);
+    border-top-color:var(--sky700);animation:spin .8s linear infinite
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ── 骨架（核心） ─────────────────────────────── */
+  .skel{
+    position:relative;overflow:hidden;background:var(--skel);border-radius:12px;
+    border:1px solid var(--g200);
+  }
+  .skel::after{
+    content:"";position:absolute;inset:0;
+    background:linear-gradient(100deg,transparent 18%,var(--skel-hi) 50%,transparent 82%);
+    transform:translateX(-100%);animation:shimmer 1.7s infinite;
+  }
+  @keyframes shimmer{100%{transform:translateX(100%)}}
+
+  /* 骨架外框：宽 = 目标比例，最大 420，移动端 100% */
+  .frame{
+    position:relative;border-radius:13px;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .frame .skel{position:absolute;inset:0;border-radius:0;border:0}
+  .frame .fx{position:relative;z-index:2;text-align:center;padding:10px}
+
+  /* 变体 2：水彩晕染隐喻 */
+  .frame.watercolor .skel{background:#eef0f3}
+  .frame.watercolor .blob{
+    position:absolute;border-radius:50%;filter:blur(18px);opacity:.55;z-index:1;
+    animation:float 6.5s ease-in-out infinite alternate;
+  }
+  .frame.watercolor .b1{width:46%;aspect-ratio:1;left:8%;top:12%;background:#bfdbfe}
+  .frame.watercolor .b2{width:40%;aspect-ratio:1;right:10%;top:22%;background:#fbcfe8;animation-delay:-2.2s}
+  .frame.watercolor .b3{width:36%;aspect-ratio:1;left:30%;bottom:8%;background:#fde68a;animation-delay:-4.1s}
+  @keyframes float{to{transform:translate3d(6%,-7%,0) scale(1.12)}}
+
+  /* 不确定进度条：不给百分比，只表示"在动" */
+  .indet{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(15,23,42,.06);z-index:3;overflow:hidden}
+  .indet i{position:absolute;top:0;bottom:0;width:38%;background:#3b82f6;border-radius:2px;
+    animation:indet 1.5s ease-in-out infinite}
+  @keyframes indet{
+    0%{left:-38%}55%{left:100%}100%{left:100%}
+  }
+
+  .stage{
+    font-size:12.5px;font-weight:600;color:var(--g700);letter-spacing:.1px;
+    display:flex;align-items:center;justify-content:center;gap:6px
+  }
+  .stage .s-time{font-variant-numeric:tabular-nums;color:var(--g400);font-weight:500}
+  .stage-sub{font-size:11px;color:var(--g500);margin-top:3px;line-height:1.6}
+  .stage-box{
+    position:relative;z-index:2;background:rgba(255,255,255,.86);border:1px solid var(--g200);
+    border-radius:10px;padding:7px 11px;backdrop-filter:blur(3px);
+    box-shadow:0 2px 10px -6px rgba(15,23,42,.25)
+  }
+
+  .cap{display:flex;align-items:center;gap:6px;margin-top:7px;font-size:11px;color:var(--g500)}
+  .cap .tag{
+    border:1px solid var(--g200);background:#fff;border-radius:6px;padding:0 5px;font-size:10.5px;color:var(--g600)
+  }
+
+  /* ── 结果：淡入 ───────────────────────────────── */
+  .result{width:100%;height:100%;object-fit:cover;display:block}
+  .fade-in{animation:fadeIn .45s ease both}
+  @keyframes fadeIn{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+
+  /* ── 网格（多图） ─────────────────────────────── */
+  .grid{display:grid;gap:8px;max-width:420px}
+  .grid.g2{grid-template-columns:1fr 1fr}
+  .grid.g4{grid-template-columns:1fr 1fr}
+  .cell{aspect-ratio:1;border-radius:10px}
+
+  /* ── 失败卡 ───────────────────────────────────── */
+  .fail{
+    max-width:420px;border:1px solid var(--rose200);background:var(--rose50);border-radius:12px;
+    padding:12px 14px;color:var(--rose700);font-size:12.5px;line-height:1.7
+  }
+  .fail h4{margin:0 0 4px;font-size:13px;color:var(--rose600);display:flex;align-items:center;gap:6px}
+  .fail p{margin:0 0 9px;color:#9f1239;font-size:12px}
+  .fail .acts{display:flex;gap:8px;flex-wrap:wrap}
+  .btn-s{
+    border:1px solid var(--rose200);background:#fff;border-radius:8px;padding:5px 11px;
+    font-size:12px;color:var(--rose700);font-weight:600
+  }
+  .btn-s.ghost{border-color:var(--g200);color:var(--g600);font-weight:500}
+
+  /* ── 控制条 ───────────────────────────────────── */
+  .ctl{
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 14px;padding:10px 12px;
+    background:#fff;border:1px solid var(--g200);border-radius:12px
+  }
+  .ctl .lbl{font-size:11.5px;color:var(--g500);margin-right:2px}
+  .seg{display:flex;border:1px solid var(--g200);border-radius:9px;overflow:hidden;background:#fff}
+  .seg button{padding:5px 11px;font-size:12px;color:var(--g600);border-right:1px solid var(--g200)}
+  .seg button:last-child{border-right:0}
+  .seg button.on{background:var(--slate900);color:#fff}
+  .btn{
+    border:1px solid var(--g300);background:#fff;border-radius:9px;padding:6px 12px;
+    font-size:12.5px;color:var(--g700);font-weight:550
+  }
+  .btn:hover{background:var(--g50)}
+  .btn.dark{background:var(--slate900);border-color:var(--slate900);color:#fff}
+  .btn.dark:hover{opacity:.92}
+
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin:14px 0 0;font-size:12px;color:var(--g600)}
+  .legend div{display:flex;gap:6px;align-items:flex-start;max-width:330px;line-height:1.65}
+  .legend .num{
+    flex:0 0 auto;width:17px;height:17px;border-radius:5px;background:var(--g100);color:var(--g600);
+    font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px
+  }
+
+  /* ── 深色 ─────────────────────────────────────── */
+  body.dark{background:#0b0f16;color:#e5e7eb;--skel:#242b36;--skel-hi:rgba(255,255,255,.09)}
+  body.dark .win{background:#11161f;border-color:#232a35;box-shadow:none}
+  body.dark .win-bar{background:#0f141c;border-color:#232a35;color:#8b93a1}
+  body.dark .note{background:#11161f;border-left-color:#2b333f;color:#9aa3b0}
+  body.dark .note b{color:#cfd6e0}
+  body.dark .note.warn{background:#241a08;border-left-color:#4a3510;color:#e0b871}
+  body.dark .note.good{background:#0c1f17;border-left-color:#12442f;color:#7dd3a8}
+  body.dark .exec,body.dark .ctl,body.dark .cap .tag{background:#11161f;border-color:#232a35}
+  body.dark .exec-hd,body.dark .exec-row,body.dark .msg-text{color:#cfd6e0}
+  body.dark .stage-box{background:rgba(17,22,31,.88);border-color:#2b333f}
+  body.dark .stage{color:#cfd6e0}
+  body.dark .stage-sub{color:#8b93a1}
+  body.dark .fail{background:#20121a;border-color:#4c1d2b;color:#fda4af}
+  body.dark .fail h4{color:#fb7185}
+  body.dark .fail p{color:#fda4af}
+  body.dark .btn-s{background:#11161f;border-color:#4c1d2b;color:#fda4af}
+  body.dark .btn,body.dark .seg{background:#11161f;border-color:#2b333f;color:#cfd6e0}
+  body.dark .seg button{border-color:#2b333f;color:#9aa3b0}
+  body.dark .seg button.on{background:#e5e7eb;color:#0f172a}
+  body.dark .btn.dark{background:#e5e7eb;color:#0f172a;border-color:#e5e7eb}
+  body.dark .legend .num{background:#1c222c;color:#9aa3b0}
+  body.dark .tabs .tab{background:#11161f;border-color:#232a35;color:#9aa3b0}
+  body.dark .tabs .tab.on{background:#e5e7eb;border-color:#e5e7eb;color:#0f172a}
+  body.dark .msg-name{color:#8b93a1}
+  body.dark .skel{border-color:#232a35}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="proto-head">
+    <h1>生图 / 改图 · 消息区占位骨架</h1>
+    <p>
+      现在生成一张图，界面上唯一的变化是折叠着的「执行过程」里那行
+      <b>调用工具 · generate_image</b> 在走秒表；消息区<b>完全空白</b>，只有一句「AI 正在努力生成回复中」。
+      图什么时候出来、要出几张、什么比例、会不会失败——用户完全不知道。
+      这个原型讨论：<b>要不要在消息区放一个占位骨架</b>，放什么形态、分几个阶段、失败怎么收场。
+      切换上面的标签看不同场景，第二个场景可以点按钮真跑一遍。
+    </p>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-scene="s0"><span class="no">0</span>现状（为什么需要）</button>
+    <button class="tab" data-scene="s1"><span class="no">1</span>可交互 Demo</button>
+    <button class="tab" data-scene="s2"><span class="no">2</span>三种形态对比</button>
+    <button class="tab" data-scene="s3"><span class="no">3</span>改图 / 多图 / 失败</button>
+    <button class="tab" data-scene="s4"><span class="no">4</span>落地要点</button>
+    <button class="tab" id="themeBtn" style="margin-left:auto"><span class="no">◐</span>切换深色</button>
+  </div>
+
+  <!-- ══════════ 场景 0 · 现状 ══════════ -->
+  <section class="scene on" id="s0">
+    <div class="win">
+      <div class="win-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span style="margin-left:6px">对话页 · 生成一张图（当前实现）</span></div>
+      <div class="win-body">
+
+        <div class="exec" style="max-width:760px;margin-bottom:14px">
+          <div class="exec-hd">
+            <span class="spin"></span>执行过程 <span class="pill">12 步骤</span>
+            <span class="pill">耗时 6.0s</span>
+          </div>
+          <div class="exec-bd">
+            <div class="exec-row" style="opacity:.55"><span class="lead"></span>鉴权及上下文与能力准备<span class="time">203ms</span></div>
+            <div class="exec-row" style="opacity:.55"><span class="lead"></span>会话运行时准备<span class="time">75ms</span></div>
+            <div class="exec-row running">
+              <span class="lead"></span>主专家开始处理
+            </div>
+            <div class="exec-row" style="padding-left:20px">
+              <span class="spin"></span>
+              <span class="mono" style="font-size:12px">调用工具 · generate_image</span>
+              <span class="time">3.8s / 150s</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg">
+          <div class="avatar">AI</div>
+          <div class="msg-main">
+            <div class="msg-name">主助手(Main)</div>
+            <div class="msg-text">我会按水彩手绘风格生成一只猫咪插画<span class="caret"></span></div>
+            <!-- 关键：这里什么都没有 -->
+            <div style="
+              display:flex;align-items:center;justify-content:center;
+              border:1px dashed var(--g200);border-radius:12px;height:150px;max-width:420px;
+              color:var(--g400);font-size:12px;background:repeating-linear-gradient(45deg,#fcfcfd,#fcfcfd 8px,#f9fafb 8px,#f9fafb 16px)">
+              消息区在这里是空的
+            </div>
+            <div class="cap"><span class="tag">图来了之后</span>这一块会突然长出一张 420px 高的图，把下面的输入框顶下去</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="legend">
+      <div><span class="num">1</span><span><b>没有「要出图」的预告</b>：用户只看到工具名 generate_image，那是给开发看的，不是给人看的。</span></div>
+      <div><span class="num">2</span><span><b>不知道要等多久</b>：3.8s / 150s 里的 150s 是超时预算，不是预计时长，容易被误读成「还要等 146 秒」。</span></div>
+      <div><span class="num">3</span><span><b>布局会跳</b>：图在几秒后突然插入，正在读的文字被推走，滚动位置也跟着跑。</span></div>
+      <div><span class="num">4</span><span><b>失败没有落点</b>：图生成失败时，消息区仍然空白，错误只在执行过程里，收起状态就完全看不到。</span></div>
+    </div>
+
+    <p class="note warn">
+      <b>结论先说：值得做。</b>生图和改图是本平台唯一「一次工具调用可能花十几秒、且要花一次钱」的操作，
+      中间没有任何视觉反馈，用户能做的只有盯着一个折叠卡片。骨架不是为了好看，是为了<b>让等待可解释</b>——
+      告诉用户「在出图」「还有几张」「大概多长」「失败了怎么办」。
+    </p>
+  </section>
+
+  <!-- ══════════ 场景 1 · 可交互 Demo ══════════ -->
+  <section class="scene" id="s1">
+    <div class="ctl">
+      <span class="lbl">场景</span>
+      <div class="seg" id="modeSeg">
+        <button data-mode="single" class="on">文生图 1 张</button>
+        <button data-mode="grid">文生图 4 张</button>
+        <button data-mode="edit">改图</button>
+      </div>
+      <span class="lbl" style="margin-left:8px">形态</span>
+      <div class="seg" id="styleSeg">
+        <button data-style="plain" class="on">A 骨架</button>
+        <button data-style="watercolor">C 水彩晕染</button>
+      </div>
+      <button class="btn dark" id="runBtn" style="margin-left:auto">▶ 模拟生成</button>
+      <button class="btn" id="failBtn">模拟失败</button>
+    </div>
+
+    <div class="win">
+      <div class="win-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span style="margin-left:6px">对话页 · 生成中（建议方案）</span></div>
+      <div class="win-body">
+        <div class="msg">
+          <div class="avatar">AI</div>
+          <div class="msg-main">
+            <div class="msg-name">主助手(Main)</div>
+            <div class="msg-text" id="msgText">我会按水彩手绘风格生成一只猫咪插画，稍等<span class="caret"></span></div>
+            <div id="stageArea"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <div><span class="num">1</span><span><b>比例先用对</b>：骨架按请求的 size 摆放（1664×928 → 16:9），图落地时不会突然变形。</span></div>
+      <div><span class="num">2</span><span><b>只显示阶段，不显示假百分比</b>：不确定进度条 + 已用秒数；编出来的「67%」会在 40 秒时崩掉信任。</span></div>
+      <div><span class="num">3</span><span><b>图落地即替换</b>：骨架淡出、图片淡入，位置不动，滚动不跳。</span></div>
+      <div><span class="num">4</span><span><b>阶段文案来自真实进度</b>：提交 → 绘制 → 取回，三段用秒表推开只是兜底，接入真实事件更准。</span></div>
+    </div>
+
+    <p class="note">
+      <b>移动端：</b>骨架宽度 100%、最大 340px，高度按比例；<b>不要</b>用固定 420px 高度，
+      否则竖图（928×1664）在手机上会被裁掉一半。
+    </p>
+  </section>
+
+  <!-- ══════════ 场景 2 · 三种形态 ══════════ -->
+  <section class="scene" id="s2">
+    <div class="win">
+      <div class="win-body" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px">
+        <div>
+          <div style="font-size:12.5px;font-weight:650;margin-bottom:8px">A · 纯骨架 + 阶段文案</div>
+          <div class="frame" style="width:100%;aspect-ratio:16/9">
+            <div class="skel"></div>
+            <div class="fx">
+              <div class="stage-box">
+                <div class="stage">正在绘制<span class="s-time">6.2s</span></div>
+                <div class="stage-sub">1664×928 · 水彩手绘</div>
+              </div>
+            </div>
+            <div class="indet"><i></i></div>
+          </div>
+          <p class="note good" style="margin-top:10px">
+            <b>推荐。</b>零素材、零歧义，深色模式天然适配，失败时同一块位置直接换成错误卡。
+          </p>
+        </div>
+
+        <div>
+          <div style="font-size:12.5px;font-weight:650;margin-bottom:8px">B · 骨架 + 模型/耗时/张数</div>
+          <div class="frame" style="width:100%;aspect-ratio:16/9">
+            <div class="skel"></div>
+            <div class="fx">
+              <div class="stage-box" style="text-align:left;min-width:190px">
+                <div class="stage" style="justify-content:flex-start">正在绘制<span class="s-time">6.2s</span></div>
+                <div class="stage-sub">第 1 / 4 张 · flux-dev</div>
+                <div class="stage-sub">通常 10–30 秒</div>
+              </div>
+            </div>
+          </div>
+          <p class="note">
+            信息更足，但「通常 10–30 秒」是我编的——要么按渠道历史实测给区间，要么别写。
+          </p>
+        </div>
+
+        <div>
+          <div style="font-size:12.5px;font-weight:650;margin-bottom:8px">C · 水彩晕染隐喻</div>
+          <div class="frame watercolor" style="width:100%;aspect-ratio:16/9">
+            <div class="skel"></div>
+            <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+            <div class="fx">
+              <div class="stage-box"><div class="stage">正在调和颜色…</div></div>
+            </div>
+          </div>
+          <p class="note warn">
+            氛围好，但只对「水彩/插画」这种风格成立。写实、商品图、证件照场景里会显得滑稽，
+            而且晕染色块容易被误读成「图已经出来了，只是糊」。<b>不建议默认启用。</b>
+          </p>
+        </div>
+      </div>
+    </div>
+    <p class="note">
+      三种都可以做，差别只在「要不要额外信息」和「要不要风格化」。默认用 <b>A</b>；
+      B 的信息（第几张、模型名）在 <b>多图</b> 时才有价值，可以只在 <code>n &gt; 1</code> 时出现。
+    </p>
+  </section>
+
+  <!-- ══════════ 场景 3 · 改图 / 多图 / 失败 ══════════ -->
+  <section class="scene" id="s3">
+    <div class="win">
+      <div class="win-body">
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:26px">
+
+          <div>
+            <div style="font-size:12.5px;font-weight:650;margin-bottom:10px">改图：原图在旁边，骨架占结果位</div>
+            <div style="display:flex;gap:10px;align-items:flex-start">
+              <div style="flex:0 0 42%">
+                <div style="aspect-ratio:3/4;border-radius:11px;overflow:hidden;border:1px solid var(--g200);position:relative;background:linear-gradient(160deg,#dbeafe,#e0e7ff 45%,#fae8ff)">
+                  <div style="position:absolute;left:6px;top:6px;background:rgba(255,255,255,.92);border-radius:6px;padding:0 5px;font-size:10px;font-weight:700;color:var(--g600)">原图</div>
+                  <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#6366f1;opacity:.5;font-size:11px">用户上传</div>
+                </div>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div class="frame" style="width:100%;aspect-ratio:3/4">
+                  <div class="skel"></div>
+                  <div class="fx">
+                    <div class="stage-box">
+                      <div class="stage">正在重绘<span class="s-time">4.1s</span></div>
+                      <div class="stage-sub">跟随原图 3:4</div>
+                    </div>
+                  </div>
+                  <div class="indet"><i></i></div>
+                </div>
+              </div>
+            </div>
+            <p class="note good" style="margin-top:10px">
+              改图的关键是<b>「保留原图比例」</b>：骨架用原图比例，用户就知道「它不会把我的竖图压成方图」。
+              原图缩略放左边，还能让用户确认「改的是这张」。
+            </p>
+          </div>
+
+          <div>
+            <div style="font-size:12.5px;font-weight:650;margin-bottom:10px">多图 4 张：格子先摆好，逐张填</div>
+            <div class="grid g4" style="max-width:100%">
+              <div class="cell frame" style="aspect-ratio:1">
+                <div class="skel"></div>
+                <div class="fx"><div class="stage-box" style="padding:4px 8px"><div class="stage" style="font-size:11px">第 1 张<span class="s-time">2.3s</span></div></div></div>
+                <div class="indet"><i></i></div>
+              </div>
+              <div class="cell frame" style="aspect-ratio:1"><div class="skel"></div>
+                <div class="fx"><div class="stage" style="font-size:11px;color:var(--g400)">等待 2</div></div></div>
+              <div class="cell frame" style="aspect-ratio:1"><div class="skel"></div>
+                <div class="fx"><div class="stage" style="font-size:11px;color:var(--g400)">等待 3</div></div></div>
+              <div class="cell frame" style="aspect-ratio:1"><div class="skel"></div>
+                <div class="fx"><div class="stage" style="font-size:11px;color:var(--g400)">等待 4</div></div></div>
+            </div>
+            <p class="note" style="margin-top:10px">
+              张数是<b>请求里就确定的</b>（<code>n=4</code>），所以格子可以一开始全摆出来。
+              只有「当前这张」在动，其余静止——比四个一起闪更少干扰。
+            </p>
+          </div>
+
+          <div>
+            <div style="font-size:12.5px;font-weight:650;margin-bottom:10px">失败：同一位置换成可行动的卡</div>
+            <div class="fail">
+              <h4>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg>
+                出图失败
+              </h4>
+              <p>上游网关 502（已自动重试 1 次）。这次调用<b>可能已计费</b>。</p>
+              <div class="acts">
+                <button class="btn-s">用同样要求重试</button>
+                <button class="btn-s ghost">换个模型试试</button>
+              </div>
+            </div>
+            <p class="note warn" style="margin-top:10px">
+              这条与后端这轮修的文案对齐：<b>「已经生成但取不回来」和「根本没出图」要分开说</b>，
+              并且明确告知可能已计费——否则用户会以为重试是免费的。
+            </p>
+          </div>
+
+          <div>
+            <div style="font-size:12.5px;font-weight:650;margin-bottom:10px">成功：骨架原地淡出，图片淡入</div>
+            <div class="frame" style="width:100%;aspect-ratio:16/9;background:#fff">
+              <div class="result fade-in" id="demoResult" style="
+                background:
+                  radial-gradient(120% 90% at 20% 20%, #bfdbfe 0%, transparent 55%),
+                  radial-gradient(110% 90% at 85% 70%, #fbcfe8 0%, transparent 60%),
+                  radial-gradient(90% 80% at 45% 95%, #fde68a 0%, transparent 65%),
+                  #eef2f7;
+                display:flex;align-items:center;justify-content:center;color:#475569;font-size:12px">
+                <span>（示例占位纹理 · 真实情况这里是生成的图）</span>
+              </div>
+            </div>
+            <p class="note good" style="margin-top:10px">
+              骨架高度 = 最终图片高度（因为比例一致），所以<b>整段对话不会跳动</b>。
+              图片加 <code>fade-in</code> 就够，不要做缩放弹跳。
+            </p>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ 场景 4 · 落地要点 ══════════ -->
+  <section class="scene" id="s4">
+    <div class="win">
+      <div class="win-body">
+        <div style="font-size:13px;font-weight:650;margin-bottom:10px">技术上能不能做到：能，而且是现成的数据</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead>
+            <tr style="text-align:left;color:var(--g500);font-size:11.5px">
+              <th style="padding:6px 8px;border-bottom:1px solid var(--g200)">需要的信息</th>
+              <th style="padding:6px 8px;border-bottom:1px solid var(--g200)">现在有没有</th>
+              <th style="padding:6px 8px;border-bottom:1px solid var(--g200)">说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100)">正在跑生图/改图</td>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100);color:var(--em700);font-weight:600">已有</td>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100);color:var(--g600)">
+                时间线里工具项 <code>status === 'pending'</code> 且工具名是 <code>generate_image</code> / <code>edit_image</code>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100)">尺寸比例</td>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100);color:var(--em700);font-weight:600">已有</td>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100);color:var(--g600)">
+                <code>tool_args</code> 里有 <code>size</code>；改图没传就跟随原图（原图比例前端也能读到）
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100)">张数</td>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100);color:var(--em700);font-weight:600">已有</td>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100);color:var(--g600)">配置 <code>max_images_per_call</code> / 工具参数</td>
+            </tr>
+            <tr>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100)">已用时长</td>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100);color:var(--em700);font-weight:600">已有</td>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100);color:var(--g600)">时间线那套 500ms 心跳秒表</td>
+            </tr>
+            <tr>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100)">「提交 / 绘制 / 取回」阶段</td>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100);color:var(--am700);font-weight:600">要加</td>
+              <td style="padding:7px 8px;border-bottom:1px solid var(--g100);color:var(--g600)">
+                时间线项已有 <code>progressMessage</code> 字段，在图像工具里上报即可（约 10 行）；不上报就用秒表推断兜底
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:7px 8px">失败原因</td>
+              <td style="padding:7px 8px;color:var(--em700);font-weight:600">已有</td>
+              <td style="padding:7px 8px;color:var(--g600)">本轮已修：错误分类文案、「已生成但取不回」、失败不回滚</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div style="font-size:13px;font-weight:650;margin:22px 0 8px">改动范围（估计）</div>
+        <ul class="legend" style="display:block;margin:0">
+          <div style="max-width:none;margin-bottom:8px"><span class="num">1</span><span>
+            新增一个 <code>ImageGenerationPlaceholder.vue</code>（骨架 + 阶段文案 + 比例），约 150 行，纯展示、无状态。</span></div>
+          <div style="max-width:none;margin-bottom:8px"><span class="num">2</span><span>
+            在消息渲染处加一个条件插槽：从时间线派生 <code>activeImageTool</code>，有值就渲染占位，工具结束且拿到产物就撤掉。</span></div>
+          <div style="max-width:none;margin-bottom:8px"><span class="num">3</span><span>
+            可选：图像工具里上报 3 条 <code>progressMessage</code>（提交/绘制/取回），阶段文案就从推断变真实。</span></div>
+        </ul>
+
+        <div class="note warn" style="margin-top:16px">
+          <b>三个必须守住的红线：</b><br>
+          ① <b>不要编百分比</b>。后端没有真实进度，编出来的数字会在长尾上打脸；只给「阶段 + 已用秒数」。<br>
+          ② <b>骨架必须与结果同比例</b>，否则图片落地时整段对话跳动，比没有骨架更糟。<br>
+          ③ <b>骨架不占「重试预算」的便宜</b>：它只是视觉占位，不能改请求行为，也不能因为存在就延长超时。
+        </div>
+
+        <div class="note" style="margin-top:12px">
+          <b>建议的推进顺序：</b>先只做场景 1 的 A 形态（单图/改图，秒表推断阶段），
+          观察一两周；多图格子与真实阶段上报作为第二步。原因是——
+          <b>先解决「什么都没发生」这个最大的感知空洞</b>，再谈精致度。
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+/* ── 标签切换 ─────────────────────────────── */
+const tabs = document.getElementById('tabs');
+tabs.addEventListener('click', (e) => {
+  const btn = e.target.closest('.tab');
+  if (!btn) return;
+  if (btn.id === 'themeBtn') {
+    document.body.classList.toggle('dark');
+    btn.querySelector('.no').textContent = document.body.classList.contains('dark') ? '◑' : '◐';
+    return;
+  }
+  tabs.querySelectorAll('.tab[data-scene]').forEach(t => t.classList.toggle('on', t === btn));
+  document.querySelectorAll('.scene').forEach(s => s.classList.toggle('on', s.id === btn.dataset.scene));
+});
+
+/* ── Demo ─────────────────────────────────── */
+const stageArea = document.getElementById('stageArea');
+const msgText = document.getElementById('msgText');
+const runBtn = document.getElementById('runBtn');
+const failBtn = document.getElementById('failBtn');
+
+let mode = 'single';
+let style = 'plain';
+let timer = null;
+let elapsed = 0;
+
+document.getElementById('modeSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  mode = b.dataset.mode;
+  document.querySelectorAll('#modeSeg button').forEach(x => x.classList.toggle('on', x === b));
+  reset();
+});
+document.getElementById('styleSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  style = b.dataset.style;
+  document.querySelectorAll('#styleSeg button').forEach(x => x.classList.toggle('on', x === b));
+  reset();
+});
+
+/** 按请求尺寸/原图给比例：这是骨架不跳动的关键。 */
+function ratioFor() {
+  if (mode === 'edit') return '3 / 4';
+  if (mode === 'grid') return '1 / 1';
+  return '1664 / 928';
+}
+function stageText(s) {
+  if (s < 3) return '正在提交请求';
+  if (s < 9) return '正在绘制';
+  return '正在取回图片';
+}
+
+function frameHtml() {
+  const wc = style === 'watercolor' ? ' watercolor' : '';
+  const blobs = style === 'watercolor'
+    ? '<div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>' : '';
+  const sub = mode === 'edit'
+    ? '跟随原图 3:4'
+    : (mode === 'grid' ? '1024×1024 · 4 张' : '1664×928 · 水彩手绘');
+  return `
+    <div class="frame${wc}" style="width:100%;max-width:420px;aspect-ratio:${ratioFor()}">
+      <div class="skel"></div>${blobs}
+      <div class="fx">
+        <div class="stage-box">
+          <div class="stage"><span class="js-stage">正在提交请求</span><span class="s-time js-time">0.0s</span></div>
+          <div class="stage-sub">${sub}</div>
+        </div>
+      </div>
+      <div class="indet"><i></i></div>
+    </div>`;
+}
+
+function gridHtml() {
+  let cells = '';
+  for (let i = 1; i <= 4; i++) {
+    const active = i === 1;
+    cells += `
+      <div class="cell frame" style="aspect-ratio:1">
+        <div class="skel"></div>
+        <div class="fx"><div class="stage-box" style="padding:4px 8px">
+          <div class="stage" style="font-size:11px">
+            <span>${active ? '第 1 张' : '等待 ' + i}</span>
+            ${active ? '<span class="s-time js-time">0.0s</span>' : ''}
+          </div>
+        </div></div>
+        ${active ? '<div class="indet"><i></i></div>' : ''}
+      </div>`;
+  }
+  return `<div class="grid g4" style="max-width:420px">${cells}</div>`;
+}
+
+function render() {
+  if (mode === 'grid') {
+    stageArea.innerHTML = gridHtml();
+  } else if (mode === 'edit') {
+    stageArea.innerHTML = `
+      <div style="display:flex;gap:10px;align-items:flex-start;max-width:420px">
+        <div style="flex:0 0 42%">
+          <div style="aspect-ratio:3/4;border-radius:11px;overflow:hidden;border:1px solid var(--g200);position:relative;background:linear-gradient(160deg,#dbeafe,#e0e7ff 45%,#fae8ff)">
+            <div style="position:absolute;left:6px;top:6px;background:rgba(255,255,255,.92);border-radius:6px;padding:0 5px;font-size:10px;font-weight:700;color:#475569">原图</div>
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#6366f1;opacity:.5;font-size:11px">用户上传</div>
+          </div>
+        </div>
+        <div style="flex:1;min-width:0">${frameHtml().replace('max-width:420px;', '')}</div>
+      </div>`;
+  } else {
+    stageArea.innerHTML = frameHtml();
+  }
+}
+
+function reset() {
+  if (timer) { clearInterval(timer); timer = null; }
+  elapsed = 0;
+  msgText.innerHTML = '我会按水彩手绘风格生成一只猫咪插画，稍等<span class="caret"></span>';
+  render();
+  runBtn.disabled = false; runBtn.textContent = '▶ 模拟生成'; runBtn.style.opacity = 1;
+  failBtn.disabled = false; failBtn.style.opacity = 1;
+}
+
+function tick() {
+  elapsed += 0.1;
+  stageArea.querySelectorAll('.js-time').forEach(el => {
+    el.textContent = elapsed.toFixed(1) + 's';
+  });
+  stageArea.querySelectorAll('.js-stage').forEach(el => {
+    el.textContent = stageText(Math.floor(elapsed));
+  });
+}
+
+function finishOk() {
+  clearInterval(timer); timer = null;
+  if (mode === 'grid') {
+    const paint = (i) => `background:
+        radial-gradient(120% 90% at 20% 20%, #bfdbfe 0%, transparent 55%),
+        radial-gradient(110% 90% at 85% 70%, #fbcfe8 0%, transparent 60%),
+        radial-gradient(90% 80% at 45% 95%, #fde68a 0%, transparent 65%), #eef2f7;`;
+    stageArea.innerHTML = `
+      <div class="grid g4" style="max-width:420px">
+        ${[1, 2, 3, 4].map(i => `
+          <div class="cell fade-in" style="position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--g200);${paint(i)}">
+            <span style="position:absolute;left:5px;bottom:4px;font-size:10px;color:#475569">第 ${i} 张</span>
+          </div>`).join('')}
+      </div>
+      <div class="cap"><span class="tag">已用 ${elapsed.toFixed(1)}s</span><span>4 张 · 点「模拟生成」再来一次</span></div>`;
+    runBtn.disabled = false; runBtn.textContent = '▶ 模拟生成'; runBtn.style.opacity = 1;
+    failBtn.disabled = false; failBtn.style.opacity = 1;
+    return;
+  }
+  const frame = stageArea.querySelector('.frame');
+  const size = frame ? frame.getAttribute('style') : 'aspect-ratio:1664 / 928';
+  const ar = (size.match(/aspect-ratio:([^;"]+)/) || [])[1] || '1664 / 928';
+  stageArea.innerHTML = `
+    <div class="frame" style="width:100%;max-width:420px;aspect-ratio:${ar};background:#fff">
+      <div class="result fade-in" style="
+        background:
+          radial-gradient(120% 90% at 20% 20%, #bfdbfe 0%, transparent 55%),
+          radial-gradient(110% 90% at 85% 70%, #fbcfe8 0%, transparent 60%),
+          radial-gradient(90% 80% at 45% 95%, #fde68a 0%, transparent 65%),
+          #eef2f7;display:flex;align-items:center;justify-content:center;color:#475569;font-size:11.5px">
+        <span>（此处是生成的图 · 位置与骨架完全一致）</span>
+      </div>
+    </div>
+    <div class="cap">
+      <span class="tag">已用 ${elapsed.toFixed(1)}s</span>
+      <span>点「模拟生成」再来一次</span>
+    </div>`;
+  msgText.innerHTML = '我会按水彩手绘风格生成一只猫咪插画，稍等<span class="caret"></span>';
+  runBtn.disabled = false; runBtn.textContent = '▶ 模拟生成'; runBtn.style.opacity = 1;
+  failBtn.disabled = false; failBtn.style.opacity = 1;
+}
+
+function finishFail() {
+  clearInterval(timer); timer = null;
+  stageArea.innerHTML = `
+    <div class="fail" style="max-width:420px">
+      <h4>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg>
+        出图失败
+      </h4>
+      <p>上游网关 502（已自动重试 1 次）。这次调用<b>可能已计费</b>。</p>
+      <div class="acts">
+        <button class="btn-s" onclick="document.getElementById('runBtn').click()">用同样要求重试</button>
+        <button class="btn-s ghost">换个模型试试</button>
+      </div>
+    </div>`;
+  runBtn.disabled = false; runBtn.textContent = '▶ 模拟生成'; runBtn.style.opacity = 1;
+  failBtn.disabled = false; failBtn.style.opacity = 1;
+}
+
+function start(willFail) {
+  if (timer) { clearInterval(timer); }
+  elapsed = 0;
+  render();
+  runBtn.disabled = true; runBtn.textContent = '生成中…'; runBtn.style.opacity = .6;
+  failBtn.disabled = true; failBtn.style.opacity = .6;
+  timer = setInterval(() => {
+    tick();
+    if (elapsed >= 6.0) { willFail ? finishFail() : finishOk(); }
+  }, 100);
+}
+
+runBtn.addEventListener('click', () => start(false));
+failBtn.addEventListener('click', () => start(true));
+
+reset();
+</script>
+</body>
+</html>

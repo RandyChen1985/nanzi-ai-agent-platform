@@ -906,6 +906,9 @@
                 dark-mode
                 @stop="stopGeneration({ notifySuccess: true })"
               />
+              <!-- 生图/改图进行中的占位：图落地后这里自动消失（工具项不再是 pending）。
+                   放在时间线下方、正文上方，与最终图片的位置一致，所以不会来回跳。 -->
+              <ImageGenerationPlaceholder :spec="imagePlaceholderFor(msg)" />
               <ToolPermissionCard
                 v-if="msg.pendingPermission"
                 :payload="msg.pendingPermission"
@@ -2807,6 +2810,7 @@ const handleShareCreated = (_created: any) => {
   historySidebarRef.value?.reloadShares?.();
 };
 import MessageRenderer from "@/components/MessageRenderer.vue";
+import ImageGenerationPlaceholder from "@/components/chat/ImageGenerationPlaceholder.vue";
 import ToolPermissionCard from "@/components/chat/ToolPermissionCard.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
 import BusinessConfirmationCard from "@/components/BusinessConfirmationCard.vue";
@@ -2984,6 +2988,7 @@ import {
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
 import { hydrateHistoryProcessTimeline, resolveBannerTodoTimeline, settlePendingTimelineSteps, timelineHasPending } from "@/utils/processTimeline";
+import { resolveImagePlaceholder } from "@/utils/imageGenerationPlaceholder";
 import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
@@ -3443,6 +3448,19 @@ const messages = ref<Message[]>([]);
 const lastAgentMessage = computed(() => {
     return [...messages.value].reverse().find(m => m.role === 'agent' && !m.isTimeLabel);
 });
+/**
+ * 这条消息此刻是否还在出图：在就返回占位参数，否则 null（组件自己 v-if 掉）。
+ *
+ * 纯派生、不含计时——秒表由占位组件内部走。放在渲染期调用，工具项状态一翻
+ * （从 pending 变成完成/失败）就自动重算，占位随之撤掉，不需要额外的收尾逻辑。
+ */
+const imagePlaceholderFor = (msg: Message) => {
+  // 等用户批准权限时工具还没真正开始跑：这里写「正在绘制」就是假话，
+  // 用户真正该看的是下面那张权限卡。
+  if (msg.pendingPermission) return null;
+  return resolveImagePlaceholder(msg.processTimeline);
+};
+
 const displayMessages = computed(() => {
   const raw = messages.value;
   if (!raw || raw.length === 0) return [];
