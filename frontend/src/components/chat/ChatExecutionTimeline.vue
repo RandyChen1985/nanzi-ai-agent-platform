@@ -295,8 +295,8 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                     </svg>
                   </button>
-                  <div v-if="child.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
-                    错误原因：{{ child.error_reason }}
+                  <div v-if="formatErrorReason(child.error_reason)" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                    错误原因：{{ formatErrorReason(child.error_reason) }}
                   </div>
                   <div v-if="fileMetadataSummary(child.file_metadata)" class="ml-5 truncate text-[10px] text-gray-400 dark:text-gray-500">
                     {{ fileMetadataSummary(child.file_metadata) }}
@@ -355,8 +355,8 @@
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                         </svg>
                       </button>
-                      <div v-if="subStep.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
-                        错误原因：{{ subStep.error_reason }}
+                      <div v-if="formatErrorReason(subStep.error_reason)" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                        错误原因：{{ formatErrorReason(subStep.error_reason) }}
                       </div>
                       <!-- 子步骤自身的入参与元信息：与其它层级一致，参数独立成盒 -->
                       <div v-if="(hasTimelineArgs(subStep) || timelineMetaText(subStep)) && subStep.isExpanded" class="mt-1 border-l-2 border-gray-200/80 pl-2.5 dark:border-gray-700/80">
@@ -558,8 +558,8 @@
               </div>
               <span class="shrink-0 font-mono text-[10px] tabular-nums text-gray-400">{{ toolProgressText(item) }}</span>
             </div>
-            <div v-if="item.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
-              错误原因：{{ item.error_reason }}
+            <div v-if="formatErrorReason(item.error_reason)" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
+              错误原因：{{ formatErrorReason(item.error_reason) }}
             </div>
             <div v-if="fileMetadataSummary(item.file_metadata)" class="ml-5 truncate text-[10px] text-gray-400 dark:text-gray-500">
               {{ fileMetadataSummary(item.file_metadata) }}
@@ -669,8 +669,8 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                       </svg>
                     </button>
-                    <div v-if="nestedStep.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
-                      错误原因：{{ nestedStep.error_reason }}
+                    <div v-if="formatErrorReason(nestedStep.error_reason)" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                      错误原因：{{ formatErrorReason(nestedStep.error_reason) }}
                     </div>
                     <!-- 第四层同样用独立参数盒，元信息留在盒内，与其它层级保持同一套结构 -->
                     <div v-if="(hasTimelineArgs(nestedStep) || timelineMetaText(nestedStep)) && nestedStep.isExpanded" class="mt-1 border-l-2 border-gray-200/80 pl-2.5 dark:border-gray-700/80">
@@ -937,6 +937,17 @@ const isQueueWaitItem = (item: ProcessTimelineItem): boolean =>
 
 // 用户点击终止后本地立即置为「已终止」：后端不会再为该条目推送状态，
 // 不做本地标记的话按钮仍可点、进行中动效也继续转，看起来像没生效。
+const INTERRUPTED_REASON_TEXT = "本轮已取消，工具未返回结果";
+// AgentScope 在整轮被取消时，会给没跑完的工具补一条
+// `<system-reminder>The tool call has been interrupted by the user.</system-reminder>`。
+// 后端已按 interrupted 状态改写成中文，但历史消息里仍然存着脏文本，所以展示前统一清洗：
+// 剥掉内部标记，中断换成人话（取消也可能来自断流或看门狗，不该甩锅给用户）。
+const formatErrorReason = (reason?: string): string => {
+  const text = String(reason ?? "").replace(/<\/?system-reminder>/g, "").trim();
+  if (!text) return "";
+  if (/interrupted by the user/i.test(text)) return INTERRUPTED_REASON_TEXT;
+  return text;
+};
 const stoppedQueueWaitKeys = ref<Set<string>>(new Set());
 const isQueueWaitStopped = (item: ProcessTimelineItem): boolean =>
   item.kind === "log" && stoppedQueueWaitKeys.value.has(String(item.id));

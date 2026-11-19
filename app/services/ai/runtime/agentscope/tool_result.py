@@ -29,6 +29,12 @@ _FAILURE_STATES = frozenset({
     "timed_out",
 })
 _SUCCESS_STATES = frozenset({"success", "succeeded", "finished", "completed"})
+#: 中断（整轮被取消）时给用户看的统一说法。原文来自 AgentScope 的内部提示
+#: `<system-reminder>The tool call has been interrupted by the user.</system-reminder>`，
+#: 而取消也可能来自断流、看门狗或上游中断，不能一口咬定是用户点的停止。
+_INTERRUPTED_TOOL_REASON = "本轮已取消，工具未返回结果"
+#: AgentScope 注入的内部标记，不是工具输出的一部分，展示前必须剥掉。
+_INTERNAL_MARKUP_RE = re.compile(r"</?system-reminder>")
 _BASH_FAILURE_MARKER_RE = re.compile(
     r"(?im)^(?:command\s+(?:failed|timed out)|error\s*:|stderr\s*:|"
     r"permission denied\b|permissiondenied\b)"
@@ -367,7 +373,14 @@ def extract_tool_result_error_reason(
     ):
         return ""
 
-    text = _tool_output_text(output)
+    # 中断不是工具自己报的错：AgentScope 在 reply 被取消时会给还没跑完的调用补一条
+    # `<system-reminder>The tool call has been interrupted by the user.</system-reminder>`。
+    # 直接展示既是一串 XML，又把「取消」一律说成用户点的停止（断流、看门狗、上游中断
+    # 也会走到这里），所以统一换成一句中性说明。
+    if normalize_tool_result_state(result_state) == "interrupted":
+        return _INTERRUPTED_TOOL_REASON
+
+    text = _INTERNAL_MARKUP_RE.sub("", _tool_output_text(output))
     lines = [line.strip() for line in text.splitlines()]
     non_empty = [line for line in lines if line]
     if not non_empty:
