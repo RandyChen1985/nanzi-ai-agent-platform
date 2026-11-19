@@ -788,7 +788,9 @@ async def update_system_configs(
     try:
         updates = [item.model_dump() for item in request.updates]
         # Pass the username to the service for audit logging
-        await ConfigService.bulk_update(updates, changed_by=user.get("user_name", "admin"))
+        result = await ConfigService.bulk_update(
+            updates, changed_by=user.get("user_name", "admin")
+        )
 
         touched_keys = {str(item.get("key") or "") for item in updates}
         if "platform_timezone" in touched_keys:
@@ -817,7 +819,15 @@ async def update_system_configs(
             except Exception as sched_exc:
                 logging.warning(f"Scheduler reload after timezone change failed: {sched_exc}")
 
-        return {"status": "success", "message": "Configurations updated successfully."}
+        # skipped 一定要回给前端：密钥输入框里回显的是脱敏串，原样提交回来会被服务层
+        # 跳过（保留库里的真实密钥）。只回「保存成功」的话，管理员会以为密钥换掉了。
+        skipped = result.get("skipped") or []
+        return {
+            "status": "success",
+            "message": "Configurations updated successfully.",
+            "updated": result.get("updated") or [],
+            "skipped": skipped,
+        }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -917,6 +927,12 @@ class ImageTestRequest(BaseModel):
     model: Optional[str] = None
     # 协议也要能覆盖：改了格式没保存就点测试时，测的必须是界面上选的这个协议。
     api_format: Optional[str] = None
+    # 开关 / 白名单 / 前缀 / 超时同样要能覆盖。少了它们，管理员「先关掉开关测一下会不会被拒」
+    # 「把超时改大再测」这类操作永远测不准：真正跑的还是库里那一套。
+    enabled: Optional[bool] = None
+    allowed_sizes: Optional[List[str]] = None
+    prompt_prefix: Optional[str] = None
+    timeout_seconds: Optional[float] = None
 
 
 class ImageEditTestRequest(BaseModel):
@@ -930,6 +946,10 @@ class ImageEditTestRequest(BaseModel):
     api_key: Optional[str] = None
     model: Optional[str] = None
     api_format: Optional[str] = None
+    # 改图也有自己的超时体验：同一个网关，改图往往比文生图慢一半，
+    # 不改大就得等它自己断。开关同理——测试要能验证「关掉后确实被拒」。
+    enabled: Optional[bool] = None
+    timeout_seconds: Optional[float] = None
 
 
 @router.post(
@@ -956,6 +976,8 @@ async def test_image_edit(
             api_key=payload.api_key,
             model=payload.model,
             api_format=payload.api_format,
+            enabled=payload.enabled,
+            timeout_seconds=payload.timeout_seconds,
         )
     except (PermissionError, ValueError) as exc:
         return {"ok": False, "message": str(exc), "supports_edit": False}
@@ -990,6 +1012,10 @@ async def test_image_generation(
             api_key=payload.api_key,
             model=payload.model,
             api_format=payload.api_format,
+            enabled=payload.enabled,
+            allowed_sizes=payload.allowed_sizes,
+            prompt_prefix=payload.prompt_prefix,
+            timeout_seconds=payload.timeout_seconds,
         )
     except (PermissionError, ValueError) as exc:
         return {"ok": False, "message": str(exc)}

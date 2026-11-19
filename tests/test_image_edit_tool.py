@@ -785,3 +785,143 @@ def test_image_dimensions_parses_jpeg_and_webp():
         + (720 - 1).to_bytes(3, "little")
     )
     assert tools._image_dimensions(vp8x) == (1280, 720)
+
+
+# ══════════════════ 尺寸优先级（改图侧） ══════════════════
+#
+# 「用户选 > 模型传 > 默认」在生图侧有四条测试，改图侧一直是空白——而改图还多一态
+# 「都没传 → 跟随原图比例」，恰恰是最容易被改坏、坏了又最难发现的地方（竖图被压成方形）。
+
+
+def _patch_user_size(monkeypatch, size: str | None):
+    """模拟 execution_options.image_size：有值代表用户在「图像参数」里点过具体尺寸。"""
+
+    def _get(key, default=None):
+        if key == "image_size":
+            return size
+        return default
+
+    monkeypatch.setattr(tools, "get_execution_option", _get)
+
+
+async def test_user_selected_size_wins_for_edit(
+    patch_config, workspace, patch_context, captured_artifacts, monkeypatch
+):
+    source = _make_source(workspace)
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_chat_response())
+
+    _patch_http(monkeypatch, handler)
+    _patch_user_size(monkeypatch, "1664x928")
+
+    await _call_edit(image=str(source), instruction="换个背景")
+
+    assert bodies[0]["size"] == "1664x928"
+
+
+async def test_user_size_outside_whitelist_falls_back_to_source(
+    patch_config, workspace, patch_context, captured_artifacts, monkeypatch
+):
+    """白名单外的尺寸不阻断改图，回落「跟随原图」。
+
+    用户看不到工具返回值，报错只会变成一次莫名其妙的生成失败；而跟着原图出图
+    在多数情况下正是他想要的。
+    """
+    source = _make_source(workspace)
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_chat_response())
+
+    _patch_http(monkeypatch, handler)
+    _patch_user_size(monkeypatch, "999x999")
+
+    result = await _call_edit(image=str(source), instruction="换个背景")
+
+    assert result["ok"] is True
+    assert "size" not in bodies[0]
+
+
+async def test_model_size_outside_whitelist_is_rejected(
+    patch_config, workspace, patch_context, monkeypatch
+):
+    """模型自己编的尺寸要拦下并把可用值告诉它，否则它只会原样重试。"""
+    source = _make_source(workspace)
+
+    result = await _call_edit(
+        image=str(source), instruction="换个背景", size="1920x1080"
+    )
+
+    assert result["ok"] is False
+    assert "不在允许范围内" in result["error"]
+
+
+async def test_model_size_bad_format_is_rejected(
+    patch_config, workspace, patch_context, monkeypatch
+):
+    source = _make_source(workspace)
+
+    result = await _call_edit(image=str(source), instruction="换个背景", size="大一点")
+
+    assert result["ok"] is False
+    assert "格式不对" in result["error"]
+
+
+# ══════════════════ 输入参数校验 ══════════════════
+
+
+async def test_multiple_paths_in_image_are_explained(
+    patch_config, workspace, patch_context, monkeypatch
+):
+    """模型把两张图塞进 image 时要指名说清，否则用户看到「找不到这张图 a.png,b.png」。"""
+    result = await _call_edit(image="a.png,b.png", instruction="把两张拼起来")
+
+    assert result["ok"] is False
+    assert "只能放一张" in result["error"]
+
+
+async def test_total_source_bytes_capped(
+    patch_config, workspace, patch_context, monkeypatch
+):
+    """主图 + 参考图合计超限要在拼请求之前拦下。
+
+    单图 10MB × 2 张 base64 后约 27MB 请求体，而常见网关上限是 20MB，
+    拼出去只会换来一句上游原文报错。
+    """
+    chunk = 7 * 1024 * 1024
+    main = workspace.user_dir / "uploads" / "main.png"
+    ref = workspace.user_dir / "uploads" / "ref.png"
+    main.write_bytes(_PNG_HEAD + b"0" * chunk)
+    ref.write_bytes(_PNG_HEAD + b"0" * chunk)
+
+    result = await _call_edit(image=str(main), instruction="改一下", reference=str(ref))
+
+    assert result["ok"] is False
+    assert "合计" in result["error"]
+
+
+async def test_oversized_source_is_rejected_without_reading(
+    patch_config, workspace, patch_context, monkeypatch
+):
+    """超过上限的图不该先整读进内存再拒绝：上传通道允许 20MB，改图上限 10MB。"""
+    path = workspace.user_dir / "uploads" / "huge.png"
+    path.write_bytes(_PNG_HEAD + b"0" * tools.MAX_SOURCE_IMAGE_BYTES)
+
+    read_calls = {"n": 0}
+    original_read_bytes = Path.read_bytes
+
+    def _counting_read(self):
+        read_calls["n"] += 1
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", _counting_read)
+
+    result = await _call_edit(image=str(path), instruction="改一下")
+
+    assert result["ok"] is False
+    assert "太大" in result["error"]
+    assert read_calls["n"] == 0, "应先 stat 判大小，超限就别读"

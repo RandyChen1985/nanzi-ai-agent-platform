@@ -17,12 +17,15 @@ base64 图片，并且在 ``content[0].image_url.url`` 上给出 ``data:image/pn
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
+import json
 import logging
 import re
 import tempfile
 import time
+import urllib.parse
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,6 +52,15 @@ MAX_IMAGES_HARD_LIMIT = 4
 #: 依赖里没有 Pillow，做不了重编码压缩，只能设一个保守上限并在超限时给出人话提示：
 #: base64 后体积约为原始 1.33 倍，10MB 的图会变成 13MB 请求体，实测 6MB 的图能正常往返。
 MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024
+
+#: 改图一次最多两张源图，这里是**合计**上限。
+#: 单图 10MB × 2 张 → base64 后约 27MB 请求体，而常见网关的请求体上限是 20MB，
+#: 拼出去只会换来一句上游原文报错。合计卡在 12MB，留出 base64 与 JSON 的膨胀余量。
+MAX_TOTAL_SOURCE_BYTES = 12 * 1024 * 1024
+
+#: 「测试生成 / 测试改图」把整图编码成 data URL 回给设置页预览，这是几 MB 级的响应体。
+#: 超过这个体积就不再回图，只回元信息——否则一个没按尺寸出图的上游能把设置页拖死。
+MAX_PREVIEW_DATA_URL_BYTES = 8 * 1024 * 1024
 
 #: 「系统设置 → 测试改图」用的内置样图：256×256，米白背景 + 居中朱红圆（1 KB 的 PNG）。
 #:
@@ -114,6 +126,9 @@ _SIZE_RE = re.compile(r"^\s*(\d{2,5})\s*[xX*×]\s*(\d{2,5})\s*$")
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
+
+#: JPEG 尺寸解析的扫描窗口。SOF 段必然在头部，扫更多只是浪费。
+_JPEG_SCAN_WINDOW_BYTES = 64 * 1024
 
 #: 网关会按上游返回 PNG/JPEG/WEBP，不带 mime 时只能自己嗅探——
 #: 猜成 PNG 而实际是 JPEG 会让浏览器按错误类型解码，产物预览直接白块。
@@ -210,9 +225,11 @@ def _decode_api_key(raw: Any) -> str:
     try:
         return decrypt_model_api_key(str(raw or "").strip()) or ""
     except ModelCredentialError as exc:
-        logger.warning("[generate_image] 图像模型密钥解密失败: %s", exc)
+        logger.warning("[generate_image] 图像模型密钥读取失败: %s", exc)
+        # 不再断言「ENCRYPTION_KEY 变更过」：本配置在库里是明文存储，那个原因对它
+        # 几乎不成立，而密钥恰好以 Z0FB 开头时还会被误判成密文。
         raise ValueError(
-            "图像模型密钥无法解密（可能 ENCRYPTION_KEY 变更过），请到「系统设置 → 图像生成」重新录入"
+            f"图像模型密钥读取失败（{_error_text(exc)}），请到「系统设置 → 图像生成」重新录入"
         ) from exc
 
 
@@ -251,12 +268,6 @@ async def load_image_generation_config() -> dict[str, Any]:
     }
 
 
-async def is_image_generation_available() -> bool:
-    """系统总开关是否打开。工具暴露与前端入口都用这一个判断。"""
-    config = await load_image_generation_config()
-    return bool(config["enabled"])
-
-
 def _chat_completions_url(base_url: str) -> str:
     """拼出 chat/completions 地址。
 
@@ -288,7 +299,10 @@ def _jpeg_dimensions(data: bytes) -> tuple[int | None, int | None]:
     if len(data) < 4 or not data.startswith(b"\xff\xd8"):
         return None, None
     idx = 2
-    length = len(data)
+    # SOF 必然在文件头部附近，所以只扫前 64KB：不设窗口时，一个「首两字节像 JPEG、
+    # 后面全是 0」的响应会被逐字节扫到底（20MB 实测 0.75s），而这段是同步跑在
+    # 事件循环里的，等于一个坏响应卡住整个 worker。
+    length = min(len(data), _JPEG_SCAN_WINDOW_BYTES)
     sof_markers = {
         0xC0, 0xC1, 0xC2, 0xC3,
         0xC5, 0xC6, 0xC7,
@@ -446,8 +460,112 @@ def _error_text(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
 
 
+#: 上游错误体里可能出现凭据：`Bearer xxx`、`api_key: xxx`、`sk-xxx`。
+#: 工具**正常返回**的 `{"ok": False, "error": ...}` 不像异常那样有统一脱敏收口，
+#: 会原样进模型上下文并随消息落库，所以在源头就抹掉。
+_UPSTREAM_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?i)\b(Bearer)\s+[A-Za-z0-9\-._~+/]{6,}=*"), r"\1 ***"),
+    (
+        re.compile(
+            r"(?i)(\"?(?:api[_-]?key|authorization|x-api-key|access[_-]?token|secret)\"?\s*[:=]\s*\"?)"
+            r"([A-Za-z0-9\-._~+/]{6,})"
+        ),
+        r"\1***",
+    ),
+    (re.compile(r"\bsk-[A-Za-z0-9\-_]{8,}"), "sk-***"),
+)
+
+
+def _redact_upstream_text(text: str) -> str:
+    """抹掉上游错误体里的凭据形态。"""
+    cleaned = str(text or "")
+    for pattern, replacement in _UPSTREAM_SECRET_PATTERNS:
+        cleaned = pattern.sub(replacement, cleaned)
+    return cleaned
+
+
 class _TransientError(Exception):
     """网络层可重试错误（连接失败、超时），与「服务端明确拒绝」区分开。"""
+
+
+class _DownloadError(Exception):
+    """渠道给的图片地址下载失败。
+
+    必须带原因：这条路径上的失败意味着「图已经生成、钱已经花了，只是没取回来」，
+    而上游响应里只有链接、没有文字，若不区分就只能报「模型没有返回图片」——
+    把用户和排查者一起引向错误的方向。
+    """
+
+
+#: 上游返回这几类状态码时按「请求已被受理层面拒绝」处理，退避后重试一次。
+#: 与 `_RETRYABLE_ERRORS` 的区别：那几类是请求没送出去，这几类是送到了但被顶回来，
+#: 两者都不会产生第二张计费图。
+_RETRYABLE_UPSTREAM_STATUS: frozenset[int] = frozenset({429, 502, 503, 504})
+
+
+class ImageUpstreamError(PermissionError):
+    """图像服务返回了 ≥400。
+
+    继承 ``PermissionError`` 是为了兼容既有调用方（它们按 PermissionError 捕获），
+    真正的收益是**保留 status_code**：鉴权失败、限流、模型不存在、上游 5xx
+    原先全都压成同一句「接口返回 500：…」，用户不知道该改配置还是该重试。
+    """
+
+    def __init__(self, status_code: int, body: str) -> None:
+        self.status_code = int(status_code)
+        self.body = _redact_upstream_text(body)
+        super().__init__(self._human_message())
+
+    def _human_message(self) -> str:
+        detail = self.body[:600]
+        if self.status_code in (401, 403):
+            return (
+                f"图像模型接口鉴权失败（HTTP {self.status_code}）：密钥无效，或这把密钥"
+                f"没有该模型的权限。请管理员到「系统设置 → 图像生成」重新填写 API 密钥。"
+                f"原文：{detail}"
+            )
+        if self.status_code == 404:
+            return (
+                f"图像模型接口找不到该模型或地址（HTTP 404）：请核对模型 id 与 API 地址。"
+                f"原文：{detail}"
+            )
+        if self.status_code == 429:
+            return f"图像模型接口限流（HTTP 429）：请稍后再试，或降低同时出图的数量。原文：{detail}"
+        if self.status_code >= 500:
+            return (
+                f"图像服务端错误（HTTP {self.status_code}）：上游暂时不可用，"
+                f"可能是模型不支持该操作或服务正在重启。原文：{detail}"
+            )
+        return f"图像模型接口拒绝了这次请求（HTTP {self.status_code}）。原文：{detail}"
+
+
+#: 错误体只需前几 KB 就够定位问题；正常响应体则要装得下一张图。
+_MAX_ERROR_BODY_BYTES = 8 * 1024
+
+
+async def _read_bounded(response: httpx.Response, limit: int) -> bytes:
+    """流式读取响应体并卡上限。
+
+    主响应路径原先直接 ``client.post(...).json()``，等于对上游「读多少算多少」——
+    下载侧（``_MAX_DOWNLOAD_BYTES``）明明设了 64MB 上限并流式累加校验，最主干的
+    POST 反而没有任何限制，一个超大响应就能把 worker 内存打满。
+    """
+    declared = response.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise ValueError(
+            f"图像模型接口的响应体过大（{int(declared) / 1048576:.1f} MB，"
+            f"上限 {limit // 1048576} MB），已中止读取"
+        )
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > limit:
+            raise ValueError(
+                f"图像模型接口的响应体超过 {limit // 1048576} MB 上限，已中止读取"
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 async def _request_once(
@@ -458,17 +576,23 @@ async def _request_once(
     timeout: float,
 ) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        response = await client.post(url, headers=headers, json=body)
-    if response.status_code >= 400:
-        # 原文回给模型：它看到「401 密钥无效」才能直接告诉用户去改配置，
-        # 比工具内部吞掉、只报一句「生成失败」有用得多。
-        raise PermissionError(
-            f"图像模型接口返回 {response.status_code}：{response.text[:600]}"
-        )
+        async with client.stream("POST", url, headers=headers, json=body) as response:
+            if response.status_code >= 400:
+                # 原文回给模型：它看到「401 密钥无效」才能直接告诉用户去改配置，
+                # 比工具内部吞掉、只报一句「生成失败」有用得多。分类交给异常类型，
+                # 原文只是证据——且要先脱敏，它会随工具返回值进对话记录。
+                detail = await _read_bounded(response, _MAX_ERROR_BODY_BYTES)
+                raise ImageUpstreamError(
+                    response.status_code, detail.decode("utf-8", "replace")
+                )
+            raw = await _read_bounded(response, _MAX_DOWNLOAD_BYTES)
     try:
-        return response.json()
+        return json.loads(raw)
     except ValueError as exc:
-        raise ValueError(f"图像模型接口返回的不是合法 JSON：{response.text[:300]}") from exc
+        raise ValueError(
+            "图像模型接口返回的不是合法 JSON："
+            + raw[:300].decode("utf-8", "replace")
+        ) from exc
 
 
 async def _post_generate(
@@ -478,43 +602,85 @@ async def _post_generate(
     body: dict[str, Any],
     timeout: float,
 ) -> dict[str, Any]:
-    """发请求，**只在请求肯定没送达上游时**重试一次。
+    """发请求，**只在确定不会重复出图时**重试一次。
 
-    出图不可重放：一张图计一次费，重发就是再买一张。所以要分清楚两类失败——
+    出图不可重放：一张图计一次费，重发就是再买一张。所以重试条件必须严格：
 
     * 连接没建立起来（ConnectError / ConnectTimeout / PoolTimeout）：请求根本没到上游，
       不可能已经出图计费，重试是安全的；
+    * 上游以 429 / 502 / 503 / 504 顶回来：请求在受理层就被拒绝，同样没有出图；
     * 读超时（ReadTimeout）：请求早就送达了，上游多半已经在出图甚至已出完，这时重发
-      等于用户花了钱买到一张被丢弃的图。写超时同理——请求可能已经发完。
+      等于用户花了钱买到一张被丢弃的图。写超时同理——请求可能已经发完。所以**不重试**。
 
-    原来的实现把 ``httpx.TimeoutException`` 整体当作可重试，读超时也在里面，
-    正是「多付一张钱」的来源。
+    原来只判了第一类；429 与 5xx 一并当成硬失败，用户看到的是一次「上游抖动」导致的
+    白跑。另外重试分支里的内层 ``except`` 只捕获 ``_RETRYABLE_ERRORS``，重试时若发生
+    读超时，异常会**逃出本函数**变成裸 ``ReadTimeout``，下面那段「不自动重发以免重复
+    计费」的说明就丢了——现在任一路径的超时都统一归成 ``_TransientError``。
     """
-    try:
+
+    async def _attempt() -> dict[str, Any]:
         return await _request_once(url=url, headers=headers, body=body, timeout=timeout)
-    except _RETRYABLE_ERRORS as exc:
-        logger.warning("[generate_image] 连接未建立（%s），重试一次", _error_text(exc))
-        try:
-            return await _request_once(
-                url=url, headers=headers, body=body, timeout=timeout
-            )
-        except _RETRYABLE_ERRORS as retry_exc:
-            raise _TransientError(
-                f"连接图像模型服务失败（已重试一次）：{_error_text(retry_exc)}"
-            ) from retry_exc
-    except httpx.TimeoutException as exc:
+
+    def _timeout_error(exc: Exception, note: str = "") -> _TransientError:
         # 读/写超时：请求已经送到上游，重发会重复计费，只报错不重试。
-        raise _TransientError(
+        return _TransientError(
             f"等待图像模型响应超时：{_error_text(exc)}。"
             "图片生成通常需要数秒到数十秒，可调大「单次超时」后重试；"
-            "这里不再自动重发，以免重复生成计费。"
-        ) from exc
+            "这里不再自动重发，以免重复生成计费。" + note
+        )
+
+    retry_reason = ""
+    try:
+        return await _attempt()
+    except _RETRYABLE_ERRORS as exc:
+        logger.warning("[generate_image] 连接未建立（%s），重试一次", _error_text(exc))
+        retry_reason = "连接图像模型服务失败（已重试一次）"
+    except ImageUpstreamError as exc:
+        if exc.status_code not in _RETRYABLE_UPSTREAM_STATUS:
+            raise
+        logger.warning(
+            "[generate_image] 上游返回 %s（请求未被受理），退避后重试一次",
+            exc.status_code,
+        )
+        retry_reason = f"图像服务繁忙（HTTP {exc.status_code}，已重试一次）"
+        await asyncio.sleep(_UPSTREAM_RETRY_BACKOFF_SECONDS)
+    except httpx.TimeoutException as exc:
+        raise _timeout_error(exc) from exc
+
+    try:
+        return await _attempt()
+    except _RETRYABLE_ERRORS as retry_exc:
+        raise _TransientError(f"{retry_reason}：{_error_text(retry_exc)}") from retry_exc
+    except ImageUpstreamError:
+        # 重试仍被拒：状态码与分类照原样交出，不要包成「连接失败」。
+        raise
+    except httpx.TimeoutException as retry_exc:
+        raise _timeout_error(retry_exc, f"（本次为{retry_reason}后的重试）") from retry_exc
 
 
 #: 只包含「请求确定没送达上游」的错误：连接失败/连接超时/连接池等待超时。
 #: 读超时与写超时**不在此列**——那时请求已经发出，重发会重复出图计费。
 #: 单张图片下载上限。实测原生图像格式 1664x928 约 5.9 MB，留足余量但防止被超大响应打爆内存。
 _MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
+
+#: 被 429/5xx 顶回来后的退避时间。只重试一次，退避是为了躲开瞬时抖动。
+_UPSTREAM_RETRY_BACKOFF_SECONDS = 1.5
+
+#: 内网图片外链的取舍：
+#:
+#: 图片地址来自上游响应体，属于不完全可信的输入。但「私网一律拒绝」会误伤合法部署——
+#: 图像网关与对象存储（minio 之类）本来就常在同一内网，外链自然是 10.x/172.16.x/192.168.x。
+#: 所以只挡最危险的那几类：回环、链路本地（含云厂商元数据 169.254.169.254）、
+#: 未指定地址、组播。真正的 SSRF 危害在于用平台身份去读「本机/元数据」，
+#: 而不在于允许内网 CDN。
+_BLOCKED_HOST_PREFIXES: tuple[str, ...] = (
+    "127.",
+    "169.254.",
+    "0.",
+    "::1",
+    "fe80:",
+    "ff0",
+)
 
 _RETRYABLE_ERRORS: tuple[type[BaseException], ...] = (
     httpx.ConnectError,
@@ -559,42 +725,82 @@ def _extract_image_api_payload(payload: dict[str, Any]) -> list[tuple[str, bytes
     return found
 
 
-async def _download_image_bytes(url: str, timeout: float) -> tuple[str, bytes] | None:
-    """把渠道给的图片地址下回来。
+def _is_blocked_download_host(url: str) -> bool:
+    """外链主机是否属于「不该被平台代发请求」的类别。
+
+    只拦回环 / 链路本地（含 ``169.254.169.254`` 云元数据）/ 未指定 / 组播，
+    **私网刻意放行**：内网部署时图像网关与对象存储本来就在 10.x/172.16.x/192.168.x，
+    一律拒绝等于让改图在私有化部署里直接不可用。SSRF 真正要防的是「用平台身份
+    读本机与元数据」，不是「允许内网 CDN」。
+    """
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        return True
+    if parsed.scheme not in ("http", "https"):
+        return True
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return True
+    if host in ("localhost", "metadata.google.internal"):
+        return True
+    return host.startswith(_BLOCKED_HOST_PREFIXES)
+
+
+async def _download_image_bytes(url: str, timeout: float) -> tuple[str, bytes]:
+    """把渠道给的图片地址下回来，成功返回 ``(mime, 字节)``，失败抛 ``_DownloadError``。
 
     这个地址来自上游响应体，属于**不完全可信**的输入，所以要按不可信处理：
 
     * 只接受 http/https —— 否则 ``file://`` 之类会被当成「渠道给的图片」读进来；
-    * 不跟随重定向 —— 否则一个 302 就能把请求引向任意地址（含内网）；
+    * 拒绝回环与链路本地地址 —— 否则一个内网探测地址就能借平台的身份去读元数据；
+    * 不跟随重定向 —— 否则一个 302 就能把请求引向任意地址；
     * ``trust_env=False`` —— 与本模块其它请求一致，不读环境代理；
-    * 限制大小并流式读取 —— 否则一个超大响应就能把 worker 内存占满。
+    * 限制大小并流式读取 —— 否则一个超大响应就能把 worker 内存占满；
+    * 内容用 strict 嗅探 —— 认不出是图片就丢弃，不能兜底成 PNG 当图发出去。
+
+    **失败必须说明原因**：调用方要区分「上游没出图」与「出了但取不回」——
+    后者钱已经花了，报成前者会把用户和排查者一起引向错误方向。
     """
-    if not url.startswith(("http://", "https://")):
-        return None
-    async with httpx.AsyncClient(
-        timeout=timeout, follow_redirects=False, trust_env=False
-    ) as client:
-        async with client.stream("GET", url) as response:
-            if response.status_code != 200:
-                return None
-            declared = response.headers.get("content-length")
-            if declared and declared.isdigit() and int(declared) > _MAX_DOWNLOAD_BYTES:
-                logger.warning(
-                    "[generate_image] 图片响应过大（%s 字节），已放弃下载", declared
-                )
-                return None
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in response.aiter_bytes():
-                total += len(chunk)
-                if total > _MAX_DOWNLOAD_BYTES:
-                    logger.warning(
-                        "[generate_image] 下载超过 %s 字节上限，已中止", _MAX_DOWNLOAD_BYTES
+    if _is_blocked_download_host(url):
+        raise _DownloadError("图片地址指向本机或云元数据地址，出于安全考虑已拒绝下载")
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=False, trust_env=False
+        ) as client:
+            async with client.stream("GET", url) as response:
+                if response.status_code != 200:
+                    raise _DownloadError(f"图片地址返回 HTTP {response.status_code}")
+                declared = response.headers.get("content-length")
+                if (
+                    declared
+                    and declared.isdigit()
+                    and int(declared) > _MAX_DOWNLOAD_BYTES
+                ):
+                    raise _DownloadError(
+                        f"图片体积 {declared} 字节，超过 "
+                        f"{_MAX_DOWNLOAD_BYTES // 1048576} MB 上限"
                     )
-                    return None
-                chunks.append(chunk)
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > _MAX_DOWNLOAD_BYTES:
+                        raise _DownloadError(
+                            f"下载超过 {_MAX_DOWNLOAD_BYTES // 1048576} MB 上限，已中止"
+                        )
+                    chunks.append(chunk)
+    except _DownloadError:
+        raise
+    except (httpx.TransportError, httpx.TimeoutException) as exc:
+        raise _DownloadError(f"下载图片失败（{_error_text(exc)}）") from exc
     raw = b"".join(chunks)
-    return (sniff_image_mime(raw), raw) if raw else None
+    if not raw:
+        raise _DownloadError("图片地址返回了空内容")
+    mime = sniff_image_mime(raw, strict=True)
+    if not mime:
+        raise _DownloadError("图片地址返回的内容不是可识别的图片格式")
+    return mime, raw
 
 
 async def request_image_once(
@@ -683,28 +889,48 @@ async def request_image_once(
 
     mime = ""
     data = b""
+    #: 外链下载失败的原因。必须攒起来：这条路径上「图已生成、钱已花」，
+    #: 若报成「模型没有返回图片」，用户会去换模型，而真正的问题是网络或 CDN。
+    download_errors: list[str] = []
     if use_chat:
         extracted = _extract_images(payload)
         if extracted:
             mime, data = extracted[0]
+            if len(extracted) > 1:
+                logger.warning(
+                    "[generate_image] 上游一次返回了 %d 张图，只取第一张"
+                    "（平台按单张计费，多余的会被丢弃）",
+                    len(extracted),
+                )
         else:
             for remote in _extract_chat_image_urls(payload):
-                downloaded = await _download_image_bytes(remote, timeout)
-                if downloaded:
-                    mime, data = downloaded
+                try:
+                    mime, data = await _download_image_bytes(remote, timeout)
                     break
+                except _DownloadError as exc:
+                    logger.warning("[generate_image] 外链图片下载失败：%s", exc)
+                    download_errors.append(str(exc))
     else:
         for candidate_mime, candidate_data, remote in _extract_image_api_payload(payload):
             if remote:
-                downloaded = await _download_image_bytes(remote, timeout)
-                if downloaded:
-                    mime, data = downloaded
+                try:
+                    mime, data = await _download_image_bytes(remote, timeout)
                     break
+                except _DownloadError as exc:
+                    logger.warning("[generate_image] 外链图片下载失败：%s", exc)
+                    download_errors.append(str(exc))
                 continue
             mime, data = candidate_mime, candidate_data
             break
 
     if not data:
+        if download_errors:
+            raise ValueError(
+                "图片已经生成，但平台没能把它取回来（"
+                + "；".join(download_errors[:2])
+                + "）。这次调用已经产生费用；请让管理员确认网关返回的图片地址能从平台服务器访问，"
+                "或把网关配置成直接返回 base64。"
+            )
         reply = _response_text(payload)
         raise ValueError(
             "图像模型没有返回图片"
@@ -732,6 +958,10 @@ async def _publish_image(
         extension = ".jpg"
     elif "webp" in mime:
         extension = ".webp"
+    elif "gif" in mime:
+        # 嗅探表认 GIF，扩展名映射就得跟上，否则一张动图会以 .png 落盘，
+        # 浏览器按 PNG 解码直接白块。
+        extension = ".gif"
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     filename = f"generated-image-{stamp}-{index + 1}-{uuid.uuid4().hex[:6]}{extension}"
@@ -850,6 +1080,12 @@ async def generate_image(
     text = str(prompt or "").strip()
     if not text:
         return {"ok": False, "error": "缺少 prompt：请给出想要生成的画面描述。"}
+    # 与「测试生成」同一口径：超长描述只会把请求体再撑大一圈，对出图没有帮助。
+    if len(text) > 2000:
+        return {
+            "ok": False,
+            "error": "画面描述过长（上限 2000 字），请精简后重试。",
+        }
 
     allowed_sizes = config["allowed_sizes"]
     target_size = config["default_size"]
@@ -1141,13 +1377,30 @@ async def _read_source_image(image: str, *, context: Any) -> tuple[str, bytes]:
         if not path.is_file():
             raise ValueError(f"找不到这张图：{path.name}，请让用户重新上传。")
 
-    data = path.read_bytes()
-    if len(data) > MAX_SOURCE_IMAGE_BYTES:
-        raise ValueError(
-            f"这张图太大（{len(data) / 1048576:.1f} MB），改图上限 "
+    def _too_large(size: int) -> ValueError:
+        return ValueError(
+            f"这张图太大（{size / 1048576:.1f} MB），改图上限 "
             f"{MAX_SOURCE_IMAGE_BYTES // 1048576} MB（依赖里没有图像编解码库，"
             "平台无法自动压缩）。请让用户换一张更小的图，或先压缩后重新上传。"
         )
+
+    # 先看大小再读：上传通道允许 20MB，改图上限 10MB——先整读等于把注定要被拒绝的
+    # 文件完整读进内存（几个并发就是几百 MB）。读盘也放到线程里，不在事件循环上
+    # 做同步 IO；stat 与 read 之间文件被替换时，由读后的二次复查兜底。
+    try:
+        stat_size = path.stat().st_size
+    except OSError as exc:
+        raise ValueError(f"读取这张图失败：{_error_text(exc)}") from exc
+    if stat_size > MAX_SOURCE_IMAGE_BYTES:
+        raise _too_large(stat_size)
+    try:
+        data = await asyncio.to_thread(path.read_bytes)
+    except OSError as exc:
+        # PermissionError / EIO / ESTALE 都不是 ValueError，任其逃出会破坏
+        # 「工具只返回 dict」的契约，还会被运行时按 denied 记一笔并中断整轮对话。
+        raise ValueError(f"读取这张图失败：{_error_text(exc)}") from exc
+    if len(data) > MAX_SOURCE_IMAGE_BYTES:
+        raise _too_large(len(data))
     mime = sniff_image_mime(data, strict=True)
     if not mime:
         raise ValueError("这个文件不是可识别的图片格式，改图只支持 PNG / JPG / WEBP。")
@@ -1224,6 +1477,24 @@ async def edit_image(
             "ok": False,
             "error": "缺少 instruction：请说明要把这张图改成什么样。",
         }
+    if len(text) > 2000:
+        return {
+            "ok": False,
+            "error": "改图要求过长（上限 2000 字），请精简后重试。",
+        }
+
+    # 模型经常把两张图塞进一个只收一张的参数（工具描述里要求过「任一参数都不要放多个
+    # 路径」，但不保证照做）。不在这里拦，用户看到的会是「找不到这张图：a.png,b.png」，
+    # 只会以为文件丢了。URL 里可能带逗号（签名参数），所以只对路径形态的入参判断。
+    image_text = str(image or "").strip()
+    if "://" not in image_text and _looks_like_multiple(image_text):
+        return {
+            "ok": False,
+            "error": (
+                "image 参数只能放一张图。第一张作为 image 传入，"
+                "需要参考另一张时作为 reference 传入，一次最多两张。"
+            ),
+        }
 
     # get_current_agent_context() 是同步的（读 contextvar），不要 await。
     context = get_current_agent_context()
@@ -1255,6 +1526,18 @@ async def edit_image(
         except ValueError as exc:
             return {"ok": False, "error": f"参考图有问题：{exc}"}
         sources.append((reference_mime, reference_bytes))
+
+    total_source_bytes = sum(len(item[1]) for item in sources)
+    if total_source_bytes > MAX_TOTAL_SOURCE_BYTES:
+        return {
+            "ok": False,
+            "error": (
+                f"主图 + 参考图合计 {total_source_bytes / 1048576:.1f} MB，超过 "
+                f"{MAX_TOTAL_SOURCE_BYTES // 1048576} MB 上限。"
+                "两张图都会以 base64 塞进同一条请求，体积过大会被网关直接拒绝，"
+                "请让用户换小一点的图，或只用一张。"
+            ),
+        }
 
     target_size, size_error = _pick_target_size(
         config, size, follow_source_when_unset=True
@@ -1316,9 +1599,12 @@ async def edit_image(
         ),
     }
     if published.get("actual_size"):
-        result["size_mismatch"] = (
-            f"你请求的尺寸是 {target_size}，但服务端实际返回的是 {published['actual_size']}。"
-            "如实告诉用户实际尺寸。"
+        # 与 generate_image 保持同一形状（bool + 追加到 note）：同一个字段两种类型，
+        # 模型每次看到的契约都不一样。
+        result["size_mismatch"] = True
+        result["note"] = (
+            f"{result['note']} 你请求的尺寸是 {target_size}，"
+            f"但服务端实际返回的是 {published['actual_size']}。如实告诉用户实际尺寸。"
         )
     return result
 
@@ -1332,6 +1618,34 @@ def _value_of(config: dict[str, Any], key: str) -> Any:
     }.get(key, "")
 
 
+def _apply_preview_overrides(
+    config: dict[str, Any],
+    *,
+    enabled: bool | None = None,
+    allowed_sizes: list[str] | None = None,
+    prompt_prefix: str | None = None,
+    timeout_seconds: float | None = None,
+) -> dict[str, Any]:
+    """把设置页上「改了但还没保存」的配置叠到库里那份之上，只对这次测试生效。
+
+    不叠的话，测试通过/失败说的都是上一套配置：管理员把超时从 30 改成 120、
+    点测试仍然 30 秒断，只会得出「改了没用」的结论。
+    """
+    merged = dict(config)
+    if enabled is not None:
+        merged["enabled"] = bool(enabled)
+    if allowed_sizes is not None:
+        # 白名单可能被贴上 ``1024*1024`` / ``1024X1024``，先归一成后端认的写法，
+        # 否则测试会报「尺寸不在允许范围内」，而界面上明明是同一档。
+        normalized = [normalize_size(item) for item in allowed_sizes]
+        merged["allowed_sizes"] = [item for item in normalized if item]
+    if prompt_prefix is not None:
+        merged["prompt_prefix"] = str(prompt_prefix).strip()
+    if timeout_seconds is not None and float(timeout_seconds) > 0:
+        merged["timeout_seconds"] = float(timeout_seconds)
+    return merged
+
+
 async def preview_image_generation(
     *,
     prompt: str,
@@ -1340,6 +1654,11 @@ async def preview_image_generation(
     api_key: str | None = None,
     model: str | None = None,
     api_format: str | None = None,
+    # 「改了还没保存」的覆盖项，见 _apply_preview_overrides。
+    enabled: bool | None = None,
+    allowed_sizes: list[str] | None = None,
+    prompt_prefix: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """「系统设置 → 图像生成 → 测试生成」用的一次性调用：**不落盘、不发布产物**。
 
@@ -1356,7 +1675,13 @@ async def preview_image_generation(
     if len(text) > 2000:
         raise ValueError("画面描述过长（上限 2000 字），请精简后重试")
 
-    config = await load_image_generation_config()
+    config = _apply_preview_overrides(
+        await load_image_generation_config(),
+        enabled=enabled,
+        allowed_sizes=allowed_sizes,
+        prompt_prefix=prompt_prefix,
+        timeout_seconds=timeout_seconds,
+    )
     if not config["enabled"]:
         raise ValueError(
             "图像生成总开关未开启，请先打开开关（测试同样走真实调用，需要开关打开）"
@@ -1411,6 +1736,13 @@ async def preview_image_generation(
 
     mime = generated["mime"]
     data = generated["data"]
+    # 预览要把整图编码成 data URL 塞进 JSON 响应，几 MB 的 base64 会直接把设置页拖慢；
+    # 一个没按尺寸出图的上游更是能回几十 MB。超限就只报错，不把图回给浏览器。
+    if len(data) > MAX_PREVIEW_DATA_URL_BYTES:
+        raise ValueError(
+            f"测试返回的图片过大（{len(data) / 1048576:.1f} MB），超过预览上限 "
+            f"{MAX_PREVIEW_DATA_URL_BYTES // 1048576} MB。请检查网关是否忽略了尺寸参数。"
+        )
     width, height = _image_dimensions(data)
     return {
         "image": f"data:{mime};base64,{base64.b64encode(data).decode()}",
@@ -1433,6 +1765,8 @@ async def preview_image_edit(
     api_key: str | None = None,
     model: str | None = None,
     api_format: str | None = None,
+    enabled: bool | None = None,
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """「系统设置 → 图像生成 → 测试改图」用的一次性调用：**不落盘、不发布产物**。
 
@@ -1443,7 +1777,11 @@ async def preview_image_edit(
     用内置样图，指令固定为换背景——改动肉眼可验。错误按「是不是改图能力问题」分成
     两类回给设置页：能力问题要引导去换模型，其余按普通连通性错误处理。
     """
-    config = await load_image_generation_config()
+    config = _apply_preview_overrides(
+        await load_image_generation_config(),
+        enabled=enabled,
+        timeout_seconds=timeout_seconds,
+    )
     if not config["enabled"]:
         raise ValueError(
             "图像生成总开关未开启，请先打开开关（测试同样走真实调用，需要开关打开）"
@@ -1515,6 +1853,13 @@ async def preview_image_edit(
 
     mime = generated["mime"]
     data = generated["data"]
+    # 预览要把整图编码成 data URL 塞进 JSON 响应，几 MB 的 base64 会直接把设置页拖慢；
+    # 一个没按尺寸出图的上游更是能回几十 MB。超限就只报错，不把图回给浏览器。
+    if len(data) > MAX_PREVIEW_DATA_URL_BYTES:
+        raise ValueError(
+            f"测试返回的图片过大（{len(data) / 1048576:.1f} MB），超过预览上限 "
+            f"{MAX_PREVIEW_DATA_URL_BYTES // 1048576} MB。请检查网关是否忽略了尺寸参数。"
+        )
     width, height = _image_dimensions(data)
     return {
         "image": f"data:{mime};base64,{base64.b64encode(data).decode()}",
@@ -1564,9 +1909,7 @@ async def list_image_models(
         raise ValueError(f"连接失败：{_error_text(exc)}") from exc
 
     if response.status_code >= 400:
-        raise PermissionError(
-            f"接口返回 {response.status_code}：{response.text[:400]}"
-        )
+        raise ImageUpstreamError(response.status_code, response.text[:400])
     try:
         payload = response.json()
     except ValueError as exc:

@@ -67,7 +67,11 @@ def test_reference_upload_failure_rolls_back(chat_input: str):
     end = chat_input.index("const exitImageEditMode", start)
     body = chat_input[start:end]
     assert "if (!refUploaded)" in body
-    assert "uploadedFiles.value.pop()" in body
+    # 回滚写法从 pop() 改成「按上传前的长度截断」：上传是异步的，这期间别处也可能
+    # 往附件列表里 push，pop() 假定「刚 push 的一定是最后一个」并不可靠。
+    # 契约关心的是「参考图失败时撤掉主图」，不是用哪种写法撤。
+    assert "rollbackUploads()" in body
+    assert "splice(beforeCount)" in body
 
 
 def test_send_names_which_is_which(chat_input: str):
@@ -302,12 +306,31 @@ def test_edit_mode_carries_style(chat_input: str):
 
 
 def test_edit_image_size_guarded_on_pick(chat_input: str):
-    """上传接口允许 20MB，但改图上限 10MB，选图时就该拦住。"""
+    """上传接口允许 20MB，但改图上限 10MB，选图时就该拦住。
+
+    校验已经抽成一条链：rejectEditImage（判体积/类型）→ acceptEditImage（判不过就
+    写错误区并 toast）→ 三个入口（选文件 / 拖到槽位 / 在指令框粘贴）。断言这条链
+    存在，而不是断言某个字面量落在某个函数后 900 字以内——后者一次正常重构就误报。
+    """
     assert "MAX_EDIT_IMAGE_BYTES" in chat_input
-    start = chat_input.index("const onEditImageChange")
-    body = chat_input[start : start + 900]
-    assert "MAX_EDIT_IMAGE_BYTES" in body
-    assert "showToast" in body
+
+    pick_start = chat_input.index("const onEditImageChange")
+    assert "acceptEditImage(file" in chat_input[pick_start : pick_start + 600]
+
+    accept_start = chat_input.index("const acceptEditImage")
+    accept = chat_input[accept_start : accept_start + 500]
+    assert "rejectEditImage(file" in accept
+    assert "showToast" in accept, "判不过要就地告知，不能静默 return"
+
+    guard_start = chat_input.index("const rejectEditImage")
+    guard = chat_input[guard_start : guard_start + 1200]
+    assert "MAX_EDIT_IMAGE_BYTES" in guard, "校验函数本身要真的比较体积上限"
+    assert "image/" in guard, "还要拦下非图片类型：accept 只是软约束"
+
+    # 每个入口都必须过同一道闸：漏一个，用户就能绕过校验塞进 20MB 或 PDF。
+    for entry in ("onEditImageDrop", "onEditInstructionPaste", "onEditRefImageChange"):
+        start = chat_input.index(f"const {entry}")
+        assert "acceptEditImage(file" in chat_input[start : start + 700], entry
 
 
 def test_edit_tab_falls_back_when_capability_lost(chat_input: str):

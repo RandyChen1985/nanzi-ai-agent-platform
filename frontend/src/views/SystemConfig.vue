@@ -1478,9 +1478,32 @@ const fetchConfigs = async () => {
   }
 }
 
+/**
+ * 尺寸写法归一。
+ *
+ * 后端把尺寸归一成「宽x高」再跟白名单比字符串，而白名单本身是按原样存的。
+ * 管理员若把某一档写成 1024*1024 / 1024X1024，工具侧归一后是 1024x1024，
+ * 两边就永远对不上，表现为「白名单里有这个尺寸，却报不在允许范围内」。
+ */
+const normalizeImageSizeText = (text: string) =>
+  text
+    .split(',')
+    .map((x) => x.trim().replace(/[*×X]/g, 'x'))
+    .filter(Boolean)
+    .join(',')
+
+const normalizeImageSizeItems = () => {
+  for (const item of configGroups.value['image'] || []) {
+    if (item.key === 'image_allowed_sizes' || item.key === 'image_default_size') {
+      item.value = normalizeImageSizeText(String(item.value || ''))
+    }
+  }
+}
+
 const saveConfigs = async () => {
   saving.value = true
   try {
+    normalizeImageSizeItems()
     const updates: ConfigItem[] = []
     for (const cat in configGroups.value) {
       const items = configGroups.value[cat]
@@ -1497,8 +1520,25 @@ const saveConfigs = async () => {
         saving.value = false
         return
     }
-    await axios.put('/api/portal/system/configs', { updates })
-    showToast(`成功更新 ${updates.length} 项配置`, 'success')
+    const { data } = await axios.put('/api/portal/system/configs', { updates })
+    // 后端会跳过一部分更新（典型是密钥框里回显的脱敏串原样提交回来——写进去会把
+    // 真实密钥覆盖成 "abc****wxyz"，所以服务层保留了旧值）。只报「成功」的话，
+    // 管理员以为密钥换掉了，之后所有调用都 401，却找不到原因。
+    const skipped: { key: string; reason: string }[] = Array.isArray(data?.skipped)
+      ? data.skipped
+      : []
+    const reallySaved = Array.isArray(data?.updated)
+      ? data.updated.length
+      : Math.max(0, updates.length - skipped.length)
+    if (skipped.length) {
+      const names = skipped.map((x) => x.key).join('、')
+      showToast(
+        `已更新 ${reallySaved} 项；${names} 未改动（${skipped[0]?.reason || '值没有变化'}）`,
+        'warning'
+      )
+    } else {
+      showToast(`成功更新 ${reallySaved} 项配置`, 'success')
+    }
     await fetchConfigs()
   } catch (e: any) {
      showToast(`保存失败: ${e.response?.data?.detail || e.message}`, 'error')
@@ -1654,6 +1694,13 @@ const submitEmailTest = async () => {
 const showImageModelModal = ref(false)
 const imageModelLoading = ref(false)
 const imageModelError = ref('')
+/**
+ * 「连上了，但网关没返回任何模型」单独一支状态。
+ *
+ * 塞进 imageModelError 会被渲染成红色的「列表拉取失败 · 常见原因：密钥无效」——
+ * 明明 200 连上了，却把人往排查密钥的方向带。这不是错误，只是这家网关不给列表。
+ */
+const imageModelEmptyHint = ref('')
 const imageModelList = ref<string[]>([])
 const imageModelSearch = ref('')
 const imageModelFilter = ref<'all' | 'image' | 'other'>('all')
@@ -1710,6 +1757,8 @@ const imageTestResult = ref<{
   model: string
   bytes: number
   elapsed_ms: number
+  /** 实际生效的协议：改协议没保存就测试时，这里显示的才是真跑的那一套。 */
+  api_format?: string
 } | null>(null)
 
 /** 总开关当前是否打开（读输入值，不是已保存值），决定测试面板显不显示。 */
@@ -1752,7 +1801,44 @@ const imageEditTestResult = ref<{
 // 曾经按「接口格式是不是 openai_chat」把测试按钮置灰，现在不需要了：
 // 改图的协议是写死的聊天接口（见 request_image_once），和生图用哪个端点无关。
 
+/** 白名单字符串 → 数组，供测试接口覆盖用（后端会再归一一次尺寸写法）。 */
+const imageAllowedSizesForTest = (): string[] =>
+  imageGroupValueOf('image_allowed_sizes')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean)
+
+/**
+ * 把后端/网络错误转成一句人话。
+ *
+ * 422 的 detail 是数组（FastAPI 校验错误），直接塞进模板会渲染成 [object Object]；
+ * 超时和 401 也不该只显示 axios 原文——它们各自有明确的下一步动作。
+ */
+const describeImageError = (e: any, fallback = '测试失败'): string => {
+  const detail = e?.response?.data?.detail
+  if (Array.isArray(detail)) {
+    const text = detail
+      .map((d: any) => (d && typeof d === 'object' ? d.msg : String(d)))
+      .filter(Boolean)
+      .join('；')
+    if (text) return text
+  }
+  if (typeof detail === 'string' && detail.trim()) return detail.trim()
+  const message = String(e?.message || '')
+  if (e?.code === 'ECONNABORTED' || /timeout/i.test(message)) {
+    return '请求超时：网关没在限定时间内返回。可以先把「单次超时」调大再试。'
+  }
+  const status = e?.response?.status
+  if (status === 401 || status === 403) {
+    return '登录状态已失效或没有配置权限，请重新登录后再试。'
+  }
+  return message || fallback
+}
+
 const runImageEditTest = async () => {
+  // 两个测试各自要真调一次付费接口，并发跑既浪费钱又让结果对不上号
+  // （两个面板同时闪结果，用户分不清哪个是哪个）。同一时间只允许一个在跑。
+  if (imageTestLoading.value || imageEditTestLoading.value) return
   imageEditTestLoading.value = true
   imageEditTestError.value = ''
   imageEditTestResult.value = null
@@ -1766,6 +1852,10 @@ const runImageEditTest = async () => {
         api_key: isConfigItemModified('image_api_key')
           ? imageGroupValueOf('image_api_key') || null
           : null,
+        // 开关与超时也传：否则「打开开关还没保存就点测试」测的是库里关着的那套，
+        // 直接报「请先打开开关」，而界面上开关明明是开的。
+        enabled: imageGroupEnabled.value,
+        timeout_seconds: Number(imageGroupValueOf('image_timeout_seconds')) || null,
       }
     )
     if (data?.ok) {
@@ -1774,7 +1864,7 @@ const runImageEditTest = async () => {
       imageEditTestError.value = data?.message || '测试失败'
     }
   } catch (e: any) {
-    imageEditTestError.value = e.response?.data?.detail || e.message || '网络错误'
+    imageEditTestError.value = describeImageError(e)
   } finally {
     imageEditTestLoading.value = false
   }
@@ -1786,6 +1876,8 @@ const runImageTest = async () => {
     imageTestError.value = '请先填写要生成的画面描述'
     return
   }
+  // 与改图测试互斥：两次真实调用并发，钱花了还分不清哪个结果对应哪次点击。
+  if (imageTestLoading.value || imageEditTestLoading.value) return
   imageTestLoading.value = true
   imageTestError.value = ''
   imageTestResult.value = null
@@ -1805,6 +1897,12 @@ const runImageTest = async () => {
         api_key: isConfigItemModified('image_api_key')
           ? imageGroupValueOf('image_api_key') || null
           : null,
+        // 开关/白名单/前缀/超时同样取输入值：这四项决定了后端会不会拒绝、拒绝在哪一步，
+        // 用库里旧值测出来的结论和界面上看到的不一致。
+        enabled: imageGroupEnabled.value,
+        allowed_sizes: imageAllowedSizesForTest(),
+        prompt_prefix: imageGroupValueOf('image_prompt_prefix'),
+        timeout_seconds: Number(imageGroupValueOf('image_timeout_seconds')) || null,
       }
     )
     if (data?.ok) {
@@ -1813,10 +1911,29 @@ const runImageTest = async () => {
       imageTestError.value = data?.message || '测试失败'
     }
   } catch (e: any) {
-    imageTestError.value = e.response?.data?.detail || e.message || '网络错误'
+    imageTestError.value = describeImageError(e)
   } finally {
     imageTestLoading.value = false
   }
+}
+
+/**
+ * 密钥框聚焦即全选。
+ *
+ * 框里回显的是脱敏值（abc****wxyz）。用户想换密钥时若光标落在末尾直接打字，
+ * 会拼成「abc****wxyz新密钥」这种既不是旧值也不是新值的串，保存下去看着成功、
+ * 实际 401。全选之后直接输入就是替换。
+ */
+const focusSecretInput = (key: string, event: FocusEvent) => {
+  if (key !== 'image_api_key') return
+  const input = event.target as HTMLInputElement | null
+  input?.select()
+}
+
+/** 中文/日文输入法组字时按回车是在确认候选词，不该顺手发一次付费请求。 */
+const onImageTestEnter = (event: KeyboardEvent) => {
+  if (event.isComposing) return
+  void runImageTest()
 }
 
 const imageModelField = () =>
@@ -1837,20 +1954,25 @@ const closeImageModelModal = () => {
 const loadImageModels = async () => {
   imageModelLoading.value = true
   imageModelError.value = ''
+  imageModelEmptyHint.value = ''
   imageModelList.value = []
   try {
     const group = configGroups.value['image'] || []
     const pick = (key: string) => (group.find((x) => x.key === key)?.value || '').trim()
     const { data } = await axios.post('/api/portal/system/configs/image-models', {
       base_url: pick('image_api_base_url') || null,
-      // 密钥在列表接口里是掩码，传掩码没有意义：留空让后端用库里的真实值。
-      api_key: null,
+      // 改过密钥就用输入框里的新值：原来这里硬编码 null，等于「新密钥必须先保存
+      // 才能验证」，而没验证过就保存一个坏密钥，模型列表页面对的就是 401。
+      // 后端认得出脱敏串（含 ****）并回落到库里的真实密钥，不用前端判断。
+      api_key: isConfigItemModified('image_api_key')
+        ? pick('image_api_key') || null
+        : null,
     })
     if (data?.ok) {
       imageModelList.value = Array.isArray(data.models) ? data.models : []
       imageModelEndpoint.value = data.endpoint || ''
       if (!imageModelList.value.length) {
-        imageModelError.value = '接口连上了，但没有返回任何模型'
+        imageModelEmptyHint.value = '接口连上了（HTTP 200），但这个地址没有返回任何模型。可直接手填模型 id。'
       }
     } else {
       imageModelError.value = data?.message || '拉取模型列表失败'
@@ -1971,6 +2093,12 @@ const toggleImageSize = (item: ConfigItem, size: string) => {
   const next = current.includes(size)
     ? current.filter((x) => x !== size)
     : [...current, size]
+  // 最后一项不许取消：空白名单在后端等于「不限尺寸」，反而比只留一项更宽松。
+  // 用户想「换成另一档」时，先取消再勾的中间态若被顺手保存，平台就对任意尺寸放行了。
+  if (next.length === 0) {
+    showToast('至少要保留一个可出图尺寸。要换成别的规格，请先勾上新的再取消这个。', 'warning')
+    return
+  }
   item.value = next.join(',')
   syncImageDefaultSize()
 }
@@ -5982,11 +6110,15 @@ onUnmounted(() => {
                              </p>
                           </div>
                           <div v-else-if="item.is_secret && item.key !== 'embed_api_key'" class="relative">
-                             <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
+                             <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" @focus="focusSecretInput(item.key, $event)" />
                              <div @click="toggleSecret(item.key)" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-400">
                                 <EyeIcon v-if="!showSecrets[item.key]" class="h-5 w-5" />
                                 <EyeSlashIcon v-else class="h-5 w-5" />
                              </div>
+                             <p v-if="item.key === 'image_api_key'" class="mt-1.5 text-[11px] leading-relaxed text-gray-500">
+                               框里是脱敏值（形如 <code class="font-mono">abc****wxyz</code>）。点进来会全选，直接输入即可整体替换；
+                               原样不动地保存不会改动已存的密钥。
+                             </p>
                              <div v-if="item.key === 'ragflow_api_key'" class="mt-3 flex flex-wrap items-center gap-3">
                                <button
                                  type="button"
@@ -7148,6 +7280,10 @@ onUnmounted(() => {
                       <div class="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
                         <span class="text-sm font-semibold text-gray-900">测试生成</span>
                         <span class="text-[11px] text-gray-500">用当前填写的配置真实调一次，<strong class="text-gray-700">不落库、不计入统计</strong></span>
+                        <!-- 只读账号：按钮是禁用的，但不说原因等于让人反复点。 -->
+                        <span v-if="!canSave" class="text-[11px] text-amber-700">
+                          当前账号没有「保存配置」权限（element:system:config_save），无法发起真实调用
+                        </span>
                       </div>
                       <div class="flex flex-wrap items-center gap-2">
                         <input
@@ -7156,7 +7292,7 @@ onUnmounted(() => {
                           :disabled="imageTestLoading"
                           placeholder="描述想生成的画面，例如：一只戴圆框眼镜、正在敲键盘的橘猫"
                           class="min-w-[12rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-50 disabled:opacity-70"
-                          @keydown.enter="runImageTest"
+                          @keydown.enter="onImageTestEnter"
                         />
                         <button
                           type="button"
@@ -7203,6 +7339,8 @@ onUnmounted(() => {
                           <div>尺寸：<span class="font-mono text-gray-800">{{ imageTestResult.width || '?' }}×{{ imageTestResult.height || '?' }}</span><span class="ml-1 text-gray-400">（请求 {{ imageTestResult.size }}）</span></div>
                           <div>耗时：<span class="font-mono text-gray-800">{{ (imageTestResult.elapsed_ms / 1000).toFixed(1) }}s</span>　大小：<span class="font-mono text-gray-800">{{ formatBytes(imageTestResult.bytes) }}</span></div>
                           <div class="break-all">模型：<span class="font-mono text-gray-800">{{ imageTestResult.model }}</span></div>
+                          <!-- 协议决定出图体积与画质，也是排查「这次出来的图和上次不一样」时第一个该看的字段 -->
+                          <div v-if="imageTestResult.api_format">协议：<span class="font-mono text-gray-800">{{ imageTestResult.api_format === 'openai_chat' ? '聊天接口（chat/completions）' : '原生图像接口（images/generations）' }}</span></div>
                           <p class="pt-1 text-[10px] leading-relaxed text-emerald-700">测试通过。这张图只用于预览，未保存为产物。</p>
                         </div>
                       </div>
@@ -7220,7 +7358,7 @@ onUnmounted(() => {
                         <div class="min-w-[9rem] space-y-1 text-[11px] text-gray-600">
                           <div class="text-[12px] font-semibold text-emerald-700">✓ 这个模型可以改图</div>
                           <div>输出：<span class="font-mono text-gray-800">{{ imageEditTestResult.width || '?' }}×{{ imageEditTestResult.height || '?' }}</span></div>
-                          <div>耗时：<span class="font-mono text-gray-800">{{ (imageEditTestResult.elapsed_ms / 1000).toFixed(1) }}s</span></div>
+                          <div>耗时：<span class="font-mono text-gray-800">{{ (imageEditTestResult.elapsed_ms / 1000).toFixed(1) }}s</span>　大小：<span class="font-mono text-gray-800">{{ formatBytes(imageEditTestResult.bytes) }}</span></div>
                           <div class="break-all">模型：<span class="font-mono text-gray-800">{{ imageEditTestResult.model }}</span></div>
                           <p class="pt-1 text-[10px] leading-relaxed text-gray-500">
                             指令：{{ imageEditTestResult.instruction }}<br>
@@ -7926,6 +8064,10 @@ onUnmounted(() => {
           <div v-if="imageModelLoading" class="flex items-center justify-center gap-2 py-10 text-xs text-gray-500">
             <span class="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></span>
             正在拉取模型列表…
+          </div>
+          <div v-else-if="imageModelEmptyHint" class="mx-2 my-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">
+            <div class="font-semibold">列表为空</div>
+            <div class="mt-1">{{ imageModelEmptyHint }}</div>
           </div>
           <div v-else-if="imageModelError" class="mx-2 my-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs leading-relaxed text-rose-700">
             <div class="font-semibold">列表拉取失败</div>
