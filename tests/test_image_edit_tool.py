@@ -618,3 +618,33 @@ async def test_reference_of_non_image_is_rejected(
 
     assert result["ok"] is False
     assert "参考图" in result["error"]
+
+
+async def test_read_source_image_matches_upload_dir_key(tmp_path, monkeypatch):
+    """工作区目录键必须与上传目录一致（{user_name}__{user_id}）。
+
+    回归：AgentContext 没有 user_name 属性，只在 user_dimensions 里。曾经只读属性，
+    目录键退化成纯 user_id，用户刚上传的图被判成「不在自己工作区」。
+    这里**不** stub resolve_workspace_user_key——stub 过它的测试正是这个问题没被发现的原因。
+    """
+    from app.services.ai.runtime.agentscope.workspace import resolve_workspace_user_key
+
+    root = tmp_path / "agent_workspaces"
+    user_key = resolve_workspace_user_key(user_id=7, user_name="tester")
+    assert user_key != "7", "前提：带用户名时目录键应为 name__id"
+    uploads = root / user_key / "uploads"
+    uploads.mkdir(parents=True)
+    image = uploads / "pic.png"
+    image.write_bytes(_PNG_HEAD)
+
+    async def _root(*, ensure_exists: bool = True):
+        return str(root)
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root", _root
+    )
+    context = SimpleNamespace(user_id=7, user_dimensions={"user_name": "tester"})
+
+    mime, data = await tools._read_source_image(str(image), context=context)
+    assert mime == "image/png"
+    assert data == _PNG_HEAD

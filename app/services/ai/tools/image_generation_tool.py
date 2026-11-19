@@ -992,10 +992,16 @@ async def _read_source_image(image: str, *, context: Any) -> tuple[str, bytes]:
     except Exception as exc:  # noqa: BLE001
         raise ValueError(f"无法定位用户工作区：{_error_text(exc)}") from exc
 
+    # 用户名必须取 user_dimensions["user_name"]：AgentContext 没有 user_name 属性，
+    # 只读属性会得到 None，算出的目录键退化成纯 user_id，与上传目录
+    # （{user_name}__{user_id}）对不上——于是用户自己刚上传的图被判成「不在自己工作区」。
+    user_name = (getattr(context, "user_dimensions", None) or {}).get(
+        "user_name"
+    ) or getattr(context, "user_name", None)
     try:
         user_key = resolve_workspace_user_key(
             user_id=getattr(context, "user_id", None),
-            user_name=getattr(context, "user_name", None),
+            user_name=user_name,
         )
     except Exception as exc:  # noqa: BLE001
         # 不能退化成「整个工作区根」：那样其他用户的 uploads/generated 全都可读，
