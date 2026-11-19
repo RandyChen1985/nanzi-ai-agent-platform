@@ -446,6 +446,16 @@ _KNOWN_TOOL_METADATA: Mapping[str, ToolMetadata] = {
         idempotent="no",
         nudge_mode="explicit",
     ),
+    # 改图：同样是写侧、同样按次计费，语义与 generate_image 一致。
+    "edit_image": ToolMetadata(
+        capability="content_generation",
+        source="external_service",
+        freshness="realtime",
+        side_effect="write",
+        confirmation="none",
+        idempotent="no",
+        nudge_mode="explicit",
+    ),
     "write_file": ToolMetadata(
         capability="local_file",
         source="user_file",

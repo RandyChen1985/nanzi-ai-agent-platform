@@ -45,6 +45,42 @@ SWITCH_KEY = "image_generation_enabled"
 #: 单次最多张数的硬上限。配置项自身也限制了范围，这里是最后一道，避免写入侧被绕过。
 MAX_IMAGES_HARD_LIMIT = 4
 
+#: 改图时输入图（用户上传的原图 / 上一轮生成的结果）的体积上限。
+#: 依赖里没有 Pillow，做不了重编码压缩，只能设一个保守上限并在超限时给出人话提示：
+#: base64 后体积约为原始 1.33 倍，10MB 的图会变成 13MB 请求体，实测 6MB 的图能正常往返。
+MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024
+
+#: 「系统设置 → 测试改图」用的内置样图：256×256，米白背景 + 居中朱红圆（1 KB 的 PNG）。
+#:
+#: 为什么不读用户文件：这是管理员在配置页点的按钮，没有会话、没有工作区身份，
+#: 也不该要求他先去上传一张图。构图选「背景 + 一个明确主体」，是因为换背景最容易
+#: 肉眼验收——圆还在、背景变了就是改图真的生效了。
+TEST_EDIT_SAMPLE_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAAECklEQVR42u3dMXIiMRRFUTZEQhE6"
+    "9NpZDBlVXoCdG1Sy1Ujd/52qG8944B2pO/Gcvh53KbaTj0AASABIAEgASABIAEgASABIAEgASABI"
+    "AEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgA"
+    "SABIAEgASABIAEgASABIAEgASABIAAgAn8LKPi5nHwIAZce9VT5MALIWzwMAEaO/fV5hAKDs7n/2"
+    "PR4JABxm+pssfsSDLwiA2bufMPp/YPCVAfDe6S/cfb8EXx8AG09/V7vvlOCrBKD+9DEAwPQxAMD0"
+    "MQBgfP0Fpt9m4EsHIGL6GADQu/7C028wAMD0g9bvKgDgnjx9V0E6AOtnIBeA9TOQC8D0OxkAYP0M"
+    "AOCxx+MQANbPAADWzwAAnvu9DwBg/QwAYP0MAGD9DABg/QwAYP0MAGD9DAAAAAAAWD8DAFg/AwDM"
+    "B2CgMw0A4Ph3CQBg/QwA4OHHgxAAjn+XAACOf5cAAI5/lwAAjn+XAACOf5cAAI5/lwAAjn+XAACO"
+    "f5cAAI5/lwAAjn+XAAAAAACA9TMAAAAAAOD116swAI5/lwAAAAAAgOcfT0EAOP5dAgAAAAAAAACQ"
+    "CcALgNcAAKzfJQCAeQEAgAAAQABkAPAG7D0YAOt3CQBgWAAAIAAAEAAACAAABAAAAgAAAQCAAABA"
+    "AAAgAAoAsH4G3AAMWD8AAAAAgAAAQAAAIAAAEAAACAAABAAAAgAAAQCAAPB7geT3AvnNcHL8AyAA"
+    "ABAAAAgA/0OMvAH7P8Lk+AdAAAAgALwGKPAF4EgAXAKOfwAAAAAABjz/ZAJwCTj+AQAAgGAADFg/"
+    "AAAAAAADXn8zAbgEHP8AuAQc/8EAXAKOfwBcAo7/YAAuAcc/AC4Bx38wAJeA4x8Al4DjPxiAS8Dx"
+    "D4BLwPEfDIAB608H4EHIww8ALgHHfzAABqw/HQAD1g8AAAAEA2DA+tMBMGD96QAYsP50AAxYfzoA"
+    "Bqw/HQAD1g/AmYHB9QPAgPUDwID1A+B9wHM/AAxYPwAehzz2AMCA9QPAgPUDcHwDaQx+//MzZ5AL"
+    "IPkqMH0AQq8CBz8AoQxMH4A/G6jB4Om/y9cNQH0Gpg9AKAPTByCUgekDMIPB3iS8+iF9fQC8l8Fa"
+    "CY2fylcGwGwJczC0fwBfEADrGWzrofPv8qUAsF8JDSGDf4KvAIAiGIweAB4sHoAwJD4EACQAJAAk"
+    "ACQAJAAkACQAJAAkACQAJAAkACQAJAAkACQAJAAkACQAJAAkACQAJAAkAASAT0EASABIAEgASABI"
+    "AEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIy/oGdWyCUZ9GNI0AAAAA"
+    "SUVORK5CYII="
+)
+
+#: 平台产物下载链接里的 artifact_id 与 token，用于把模型手里的 markdown 链接还原成本地文件。
+_ARTIFACT_URL_RE = re.compile(r"/generated-files/([0-9a-f]{32})\?[^\s)]*?token=([^&\s)]+)")
+
 #: 原生 OpenAI 图像接口：``/images/generations``，size/n 是正式参数。
 API_FORMAT_OPENAI_IMAGES = "openai_images"
 #: 聊天接口：图片作为消息内容返回，一次一张、尺寸格式不严。
@@ -88,14 +124,22 @@ _MIME_SIGNATURES: tuple[tuple[bytes, str], ...] = (
 )
 
 
-def sniff_image_mime(data: bytes) -> str:
-    """按文件头判断图片格式；认不出时按 PNG 兜底（网关绝大多数返回 PNG）。"""
+def sniff_image_mime(data: bytes, *, strict: bool = False) -> str:
+    """按文件头判断图片格式。
+
+    ``strict=False``（默认）认不出时按 PNG 兜底——网关返回的字节流极少数情况会缺
+    文件头，兜底能让出图流程继续走，比直接失败好。
+
+    ``strict=True`` 认不出时返回空串。**读用户给的文件必须用这一档**：兜底成 PNG
+    等于把任意文件（比如一个 exe 或一份 pdf）当成图片发给模型，既浪费一次计费调用，
+    又把不该外发的内容送了出去。
+    """
     for signature, mime in _MIME_SIGNATURES:
         if data.startswith(signature):
             return mime
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
-    return "image/png"
+    return "" if strict else "image/png"
 
 
 def normalize_api_format(raw: Any) -> str:
@@ -470,6 +514,7 @@ async def request_image_once(
     prompt: str,
     size: str,
     api_key: str,
+    source_images: list[tuple[str, bytes]] | None = None,
 ) -> dict[str, Any]:
     """发一次生成请求，返回 ``{mime, data, model, elapsed_ms}``。
 
@@ -480,6 +525,24 @@ async def request_image_once(
     按 ``config['api_format']`` 分两条协议：原生图像接口（size/n 是正式参数）与
     聊天接口（图片作为消息内容返回）。除了拼请求体和取图位置，其余（超时、
     重试、错误文案）完全共用。
+
+    ``source_images`` 传入 ``[(mime, bytes), ...]`` 时走图生图：把每张图以
+    ``image_url`` 按顺序塞进同一条 user 消息，让模型按 ``prompt`` 修改。
+
+    **多图是网关能力，但要收着用**：实测 1～2 张可靠（跨图取色、按指代区分「第一张/
+    第二张」都准），3 张开始走样，4 张网关照常 200 却会漏内容且顺序错乱，5 张直接
+    500（``At most 4 images are supported by this model``）。所以上限由调用方
+    （``edit_image``）卡在 2 张，这里只负责拼装。
+
+    **带原图时协议强制为聊天接口**，不看 ``config['api_format']``。
+    ``image_api_format`` 这个配置的语义是「生图用哪个端点」，改图没有这个选择权：
+    ``/images/generations`` 不吃图输入（五种传参实测全败）。早先的写法是「格式不对
+    就报错让管理员去切」，但默认格式恰恰就是原生图像接口，等于把改图按钮做成了一个
+    默认永远点不亮的开关。生图和改图共用同一个地址、密钥、模型，只是路径不同，
+    没必要让前者替后者做决定。
+
+    实测：聊天接口的 ``size`` 是**真参数**。把「输出 512x512」写进提示词无效，
+    但 body 里带 ``size=512x512`` 会真的返回 512×512，所以尺寸必须结构化传。
     """
     started = time.monotonic()
     timeout = float(config["timeout"])
@@ -487,16 +550,35 @@ async def request_image_once(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    use_chat = config.get("api_format") == API_FORMAT_OPENAI_CHAT
+    use_chat = (
+        bool(source_images)
+        or config.get("api_format") == API_FORMAT_OPENAI_CHAT
+    )
 
     if use_chat:
+        content: Any = prompt
+        if source_images:
+            # 顺序即语义：调用方约定「第一张是主图，其余是参考图」，
+            # 拼装时保持这个顺序，模型才分得清要改哪张。
+            content = [{"type": "text", "text": prompt}]
+            for image_mime, image_bytes in source_images:
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{image_mime};base64,"
+                            + base64.b64encode(image_bytes).decode("ascii")
+                        },
+                    }
+                )
         body: dict[str, Any] = {
             "model": config["model"],
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": content}],
             # 流式只回 usage 与 [DONE]，拿不到图片，必须非流式。
             "stream": False,
-            "size": size,
         }
+        if size:
+            body["size"] = size
         url = _chat_completions_url(config["api_base_url"])
     else:
         body = {
@@ -604,7 +686,8 @@ async def _publish_image(
     }
     if not parsed_ok:
         payload["size_estimated"] = True
-    if width and height and f"{width}x{height}" != requested_size:
+    # requested_size 为空表示「没指定尺寸、跟随原图」，这时不存在「要的和给的不一致」。
+    if requested_size and width and height and f"{width}x{height}" != requested_size:
         # 网关对不支持的尺寸不会报错，只会静默按默认尺寸出图。记下真实尺寸，
         # 让模型能告诉用户「你要的是 1664x928，实际给的是这张」。
         payload["actual_size"] = f"{width}x{height}"
@@ -813,6 +896,327 @@ async def generate_image(
     return result
 
 
+def _path_within(path: Path, root: Path) -> bool:
+    """``path`` 是否位于 ``root`` 之内（两侧都已 resolve，防 ``..`` 穿越）。"""
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _pick_target_size(
+    config: dict[str, Any],
+    requested: str | None,
+    *,
+    follow_source_when_unset: bool = False,
+) -> tuple[str, str | None]:
+    """决定本次出图尺寸，返回 ``(尺寸, 错误文案)``。
+
+    ``follow_source_when_unset`` 只给改图用：返回空串表示**请求体里不带 size**，
+    让模型按原图比例出图。这一点很关键——原图是 928×1664 的竖版，若这里回落到
+    默认的 1024x1024，用户拿到的就是一张被压成方形的图。
+
+    与 ``generate_image`` 里的判定顺序保持一致：
+    用户在输入框「图像参数」点选的尺寸优先级最高（结构化参数代表明确意图），
+    其次是模型自己传的值，最后回落默认尺寸。不在白名单时**报错并列出可用值**，
+    因为网关对不支持的尺寸不报错、只会静默按默认出图。
+    """
+    allowed_sizes = config["allowed_sizes"]
+    target = config["default_size"]
+
+    preferred = normalize_size(get_execution_option("image_size"))
+    if preferred and (not allowed_sizes or preferred in allowed_sizes):
+        return preferred, None
+    if preferred:
+        logger.warning(
+            "[image_edit] 用户指定尺寸 %s 不在白名单 %s，回落默认尺寸 %s",
+            preferred,
+            allowed_sizes,
+            target,
+        )
+
+    raw = requested.strip() if isinstance(requested, str) and requested.strip() else ""
+    if not raw:
+        return ("", None) if follow_source_when_unset else (target, None)
+    normalized = normalize_size(raw)
+    if normalized is None:
+        return target, (
+            f"尺寸「{raw}」格式不对，必须写成 宽x高（例如 1664x928）。"
+            f"可用尺寸：{'、'.join(allowed_sizes) or '（未配置）'}"
+        )
+    if allowed_sizes and normalized not in allowed_sizes:
+        return target, (
+            f"尺寸「{normalized}」不在允许范围内。可用尺寸：{'、'.join(allowed_sizes)}。"
+            "请从中挑一个最接近用户需求的。"
+        )
+    return normalized, None
+
+
+def _looks_like_multiple(value: str) -> bool:
+    """粗判「把好几张图塞进了一个只收一张的参数」。
+
+    模型经常写成 ``a.png,b.png`` 或换行分隔，直接当成一个路径去读只会得到
+    「找不到文件」，用户还得猜是哪里错了。只查分隔符，不查空格——路径本身
+    可能带空格。
+    """
+    return any(ch in value for ch in ("\n", "\r", ",", "，", "、", ";"))
+
+
+async def _read_source_image(image: str, *, context: Any) -> tuple[str, bytes]:
+    """把图片引用解析成 ``(mime, bytes)``，并做归属、存在性与体积校验。
+
+    两种来源都要支持：
+
+    * 用户上传的附件——消息上下文里给的是工作区绝对路径；
+    * 上一轮生成的成品——模型手里只有带 token 的 ``download_url``，
+      所以要能从链接反查出产物、再回到本地文件。
+
+    **归属校验不能省**：这些路径最终来自用户输入，直接 ``open()`` 等于开了一个
+    读服务器任意文件的口子。范围收紧到「当前用户自己的工作区」。
+    """
+    raw = str(image or "").strip()
+    if not raw:
+        raise ValueError(
+            "缺少 image：请给出一张要修改的图片——用户上传的附件路径，"
+            "或之前生成图片的 download_url（要连 token 一起传）。"
+        )
+
+    from app.services.ai.runtime.agentscope.workspace import (
+        resolve_workspace_root,
+        resolve_workspace_user_key,
+    )
+
+    try:
+        root = Path(await resolve_workspace_root(ensure_exists=False)).resolve()
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"无法定位用户工作区：{_error_text(exc)}") from exc
+
+    try:
+        user_key = resolve_workspace_user_key(
+            user_id=getattr(context, "user_id", None),
+            user_name=getattr(context, "user_name", None),
+        )
+    except Exception as exc:  # noqa: BLE001
+        # 不能退化成「整个工作区根」：那样其他用户的 uploads/generated 全都可读，
+        # 等于把越权读取做成了兜底路径。算不出身份就拒绝，让用户重开会话。
+        raise ValueError(
+            "无法确认当前用户的工作区，出于安全考虑不能读取这张图片。请重新进入会话后再试。"
+        ) from exc
+    if not user_key:
+        raise ValueError("无法确认当前用户的工作区，出于安全考虑不能读取这张图片。")
+    scope = (root / user_key).resolve()
+
+    match = _ARTIFACT_URL_RE.search(raw)
+    if match:
+        from app.services.ai.tools.generated_file_service import (
+            resolve_workspace_artifact,
+        )
+
+        artifact = await resolve_workspace_artifact(match.group(1), match.group(2))
+        if artifact is None:
+            raise ValueError(
+                "这张图已失效或不属于当前用户，没法再改它。"
+                "请让用户重新上传原图，或重新生成一张。"
+            )
+        path = Path(artifact.path).resolve()
+        if not _path_within(path, root) or not path.is_file():
+            raise ValueError("这张图的文件已经不在原位置了，请让用户重新上传或重新生成。")
+    else:
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = scope / candidate
+        path = candidate.resolve()
+        if not _path_within(path, scope):
+            raise ValueError(
+                "只能修改当前用户自己工作区里的图片（uploads/ 或 generated/）。"
+                "如果用户想改的是别处的图片，请让他先上传。"
+            )
+        if not path.is_file():
+            raise ValueError(f"找不到这张图：{path.name}，请让用户重新上传。")
+
+    data = path.read_bytes()
+    if len(data) > MAX_SOURCE_IMAGE_BYTES:
+        raise ValueError(
+            f"这张图太大（{len(data) / 1048576:.1f} MB），改图上限 "
+            f"{MAX_SOURCE_IMAGE_BYTES // 1048576} MB（依赖里没有图像编解码库，"
+            "平台无法自动压缩）。请让用户换一张更小的图，或先压缩后重新上传。"
+        )
+    mime = sniff_image_mime(data, strict=True)
+    if not mime:
+        raise ValueError("这个文件不是可识别的图片格式，改图只支持 PNG / JPG / WEBP。")
+    return mime, data
+
+
+@tool
+async def edit_image(
+    image: str,
+    instruction: str,
+    reference: str | None = None,
+    size: str | None = None,
+) -> dict[str, Any]:
+    """Modify an existing picture according to an instruction, keeping everything else intact.
+
+    Use this when the user wants to change something **inside** a picture they
+    already have——把背景换掉、改画风、加减物件、把草图改成成品，而不是从零画一张新的。
+    If the user wants a brand-new picture and only borrows the style or subject of
+    an existing one, use generate_image instead.
+
+    ``image`` is the picture to modify: the workspace path of an image the user
+    uploaded, or the ``download_url`` of an image produced earlier in this
+    conversation (pass the whole URL, including its ``token`` parameter).
+
+    ``instruction`` is what to change, in the user's own language. Say explicitly
+    what must stay the same when it matters, e.g.
+    "把背景换成浅蓝色，杯子和拉花保持不动"。只说「改得好看点」这类要求没有可执行的结果。
+
+    ``reference`` is an optional second picture that only informs **how** the result
+    should look——配色、风格、光影、构图、材质。它本身不会被修改，也不会原样出现在
+    结果里。典型用法：把「这张杯子的照片」改成「参考这张插画的配色」。
+    只在用户确实给了两张图时才填；用户只给一张就别编一个出来。
+
+    一次最多两张（主图 + 参考图）。这是刻意的限制，不是网关限制：网关虽接受 4 张，
+    但实测 3 张开始走样、4 张会静默漏掉内容，2 张才是可靠区间。
+
+    ``size`` is optional——省略时按原图比例出图，这对「只改内容」的诉求通常最合适。
+    需要换输出尺寸时再从工具描述列出的尺寸里挑一个。
+    """
+    started = time.monotonic()
+
+    config = await load_image_generation_config()
+    if not config["enabled"]:
+        return {
+            "ok": False,
+            "error": (
+                "图像生成功能未开启：请联系管理员在「系统设置 → 图像生成」里打开开关，"
+                "并确认当前智能体的工具清单中已勾选 edit_image。"
+            ),
+        }
+
+    missing = [
+        label
+        for key, label in _FIELD_LABELS.items()
+        if not str(_value_of(config, key) or "").strip()
+    ]
+    if missing:
+        return {
+            "ok": False,
+            "error": (
+                "图像生成配置不完整，缺少：" + "、".join(missing)
+                + "。请管理员到「系统设置 → 图像生成」补齐后再试。"
+            ),
+        }
+
+    try:
+        api_key = _decode_api_key(config["api_key"])
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    text = str(instruction or "").strip()
+    if not text:
+        return {
+            "ok": False,
+            "error": "缺少 instruction：请说明要把这张图改成什么样。",
+        }
+
+    # get_current_agent_context() 是同步的（读 contextvar），不要 await。
+    context = get_current_agent_context()
+    if context is None or getattr(context, "user_id", None) is None:
+        return {"ok": False, "error": "当前会话缺少用户身份，无法保存修改后的图片。"}
+
+    try:
+        source_mime, source_bytes = await _read_source_image(image, context=context)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    # 参考图是可选的第二张。它的错误要指名道姓，否则用户看到「找不到图片」
+    # 会以为是主图丢了，转头去重新上传已经好好的那张。
+    sources: list[tuple[str, bytes]] = [(source_mime, source_bytes)]
+    reference_text = str(reference or "").strip()
+    if reference_text:
+        if _looks_like_multiple(reference_text):
+            return {
+                "ok": False,
+                "error": (
+                    "参考图只能给一张。把要改的那张作为 image 传入，"
+                    "参考的那张作为 reference 传入，一共两张。"
+                ),
+            }
+        try:
+            reference_mime, reference_bytes = await _read_source_image(
+                reference_text, context=context
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": f"参考图有问题：{exc}"}
+        sources.append((reference_mime, reference_bytes))
+
+    target_size, size_error = _pick_target_size(
+        config, size, follow_source_when_unset=True
+    )
+    if size_error:
+        return {"ok": False, "error": size_error}
+
+    # 刻意不加 config['prompt_prefix']：那个前缀是给「从零画」用的风格引导，
+    # 叠到改图的指令上会跟「保持主体不变」打架——用户要的是改一处，
+    # 不是让整张图被重新描述一遍。改图的指令就是 instruction 本身。
+    try:
+        generated = await request_image_once(
+            config=config,
+            prompt=text,
+            size=target_size,
+            api_key=api_key,
+            source_images=sources,
+        )
+    except (_TransientError, PermissionError, ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - 兜底，避免工具抛栈打断整轮
+        logger.exception("[edit_image] 调用图像模型失败")
+        return {"ok": False, "error": f"调用图像模型失败：{_error_text(exc)}"}
+
+    try:
+        published = await _publish_image(
+            generated["mime"],
+            generated["data"],
+            context=context,
+            index=0,
+            requested_size=target_size,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[edit_image] 产物登记失败")
+        return {"ok": False, "error": f"图片已生成但保存失败：{_error_text(exc)}"}
+
+    actual = published.get("actual_size") or (
+        f"{published['width']}x{published['height']}"
+        if published.get("width") and published.get("height")
+        else ""
+    )
+    result: dict[str, Any] = {
+        "ok": True,
+        "model": str(generated["model"] or "").strip() or config["model"],
+        # 空 target_size 表示没强制尺寸、按原图比例出图，如实说明而不是留一个空串。
+        "size": target_size or actual or "跟随原图",
+        "elapsed_ms": int((time.monotonic() - started) * 1000),
+        "source": {"mime_type": source_mime, "bytes": len(source_bytes)},
+        "reference": (
+            {"mime_type": sources[1][0], "bytes": len(sources[1][1])}
+            if len(sources) > 1
+            else None
+        ),
+        "image": published,
+        "note": (
+            "这是基于原图修改的结果，原图没有被覆盖。"
+            "用 markdown 图片语法引用 download_url，并说明改了什么、什么没变。"
+            "若这张还要接着改，把它的 download_url 作为下一次 image 参数传进来。"
+        ),
+    }
+    if published.get("actual_size"):
+        result["size_mismatch"] = (
+            f"你请求的尺寸是 {target_size}，但服务端实际返回的是 {published['actual_size']}。"
+            "如实告诉用户实际尺寸。"
+        )
+    return result
+
+
 def _value_of(config: dict[str, Any], key: str) -> Any:
     """把配置键映射回规范化后的字段名。"""
     return {
@@ -914,6 +1318,97 @@ async def preview_image_generation(
         "api_format": effective_format,
         "bytes": len(data),
         "elapsed_ms": generated["elapsed_ms"],
+    }
+
+
+async def preview_image_edit(
+    *,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+    api_format: str | None = None,
+) -> dict[str, Any]:
+    """「系统设置 → 图像生成 → 测试改图」用的一次性调用：**不落盘、不发布产物**。
+
+    存在的理由：配置一个「能文生图但不能改图」的模型（例如只有 ``openai`` 端点的
+    ``kolors``）是完全合法的，「测试生成」也会通过，但改图会全 500。这一项专门回答
+    「这个模型到底能不能吃图输入」，答案是花一次调用换来的，比事后看用户报错便宜。
+
+    用内置样图，指令固定为换背景——改动肉眼可验。错误按「是不是改图能力问题」分成
+    两类回给设置页：能力问题要引导去换模型，其余按普通连通性错误处理。
+    """
+    config = await load_image_generation_config()
+    if not config["enabled"]:
+        raise ValueError(
+            "图像生成总开关未开启，请先打开开关（测试同样走真实调用，需要开关打开）"
+        )
+
+    effective_base = str(base_url or "").strip().rstrip("/") or config["api_base_url"]
+    if not effective_base:
+        raise ValueError("请先填写 API 地址")
+    effective_model = str(model or "").strip() or config["model"]
+    if not effective_model:
+        raise ValueError("请先填写或选择图像模型")
+
+    # 与 edit_image 一致：改图固定走聊天接口。入参留着只为兼容调用方，
+    # 传什么都不影响——格式配置管生图，管不到改图。
+    effective_format = API_FORMAT_OPENAI_CHAT
+
+    raw_key = str(api_key or "").strip()
+    if raw_key and "****" in raw_key:
+        raw_key = ""  # 脱敏串不是密钥
+    effective_key = _decode_api_key(raw_key or config["api_key"])
+    if not effective_key:
+        raise ValueError("请先填写 API 密钥")
+
+    sample = base64.b64decode(TEST_EDIT_SAMPLE_PNG_B64)
+    # 尺寸跟随样图：不传 size 时模型按原图比例出图，正是改图的常规用法。
+    target_size = config["default_size"]
+    instruction = "把背景换成浅蓝色，主体保持不变"
+
+    try:
+        generated = await request_image_once(
+            config={
+                **config,
+                "api_base_url": effective_base,
+                "model": effective_model,
+                "api_format": effective_format,
+            },
+            prompt=instruction,
+            size=target_size,
+            api_key=effective_key,
+            source_images=[("image/png", sample)],
+        )
+    except (_TransientError, PermissionError) as exc:
+        raise ValueError(f"连接图像服务失败：{exc}") from exc
+    except ValueError as exc:
+        message = str(exc)
+        lowered = message.lower()
+        if any(
+            token in lowered
+            for token in ("no image", "没有返回图片", "do_request_failed", "upstream error")
+        ):
+            raise ValueError(
+                f"这个模型看起来不支持改图（{_error_text(exc)}）。"
+                "改图需要能接收图片输入的多模态图像模型，请换一个模型再试。"
+            ) from exc
+        raise
+
+    mime = generated["mime"]
+    data = generated["data"]
+    width, height = _png_dimensions(data)
+    return {
+        "image": f"data:{mime};base64,{base64.b64encode(data).decode()}",
+        "mime_type": mime,
+        "width": width,
+        "height": height,
+        "size": target_size,
+        "model": generated["model"] or effective_model,
+        "api_format": effective_format,
+        "bytes": len(data),
+        "elapsed_ms": generated["elapsed_ms"],
+        "instruction": instruction,
+        "supports_edit": True,
     }
 
 

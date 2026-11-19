@@ -1,0 +1,1679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="交互原型">
+<title>图生图 · 对话改图 + 生成图二次编辑 + 独立工具开关</title>
+<style>
+  :root{
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af;
+    --g500:#6b7280; --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --em50:#ecfdf5; --em100:#d1fae5; --em200:#a7f3d0; --em600:#059669; --em700:#047857;
+    --am50:#fffbeb; --am100:#fef3c7; --am200:#fde68a; --am600:#d97706; --am700:#b45309;
+    --rose50:#fff1f2; --rose200:#fecdd3; --rose600:#e11d48; --rose700:#be123c;
+    --indigo50:#eef2ff; --indigo100:#e0e7ff; --indigo700:#4338ca;
+    --sky50:#f0f9ff; --sky100:#e0f2fe; --sky700:#0369a1;
+    --viol50:#f5f3ff; --viol100:#ede9fe; --viol700:#6d28d9;
+    --slate900:#0f172a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f5f6f8; color:var(--g900); font-size:14px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  input,select,textarea{font:inherit}
+  svg{display:block}
+
+  .page{max-width:1400px;margin:0 auto;padding:20px 24px 72px}
+  .proto-head h1{font-size:20px;margin:0 0 6px;font-weight:650}
+  .proto-head p{margin:0;color:var(--g500);font-size:12.5px;max-width:1080px;line-height:1.75}
+  .proto-head b{color:var(--g700);font-weight:600}
+
+  .tabs{display:flex;gap:6px;margin:16px 0 14px;flex-wrap:wrap;align-items:center}
+  .tab{
+    display:flex;align-items:center;gap:7px;border:1px solid var(--g200);background:#fff;
+    border-radius:10px;padding:7px 13px;font-size:12.5px;color:var(--g600);transition:.14s;
+  }
+  .tab:hover{border-color:var(--g300);color:var(--g800)}
+  .tab .no{
+    display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
+    border-radius:5px;background:var(--g100);font-size:10.5px;font-weight:700;color:var(--g500)
+  }
+  .tab.on{border-color:var(--slate900);background:var(--slate900);color:#fff}
+  .tab.on .no{background:rgba(255,255,255,.18);color:#fff}
+  .scene{display:none}
+  .scene.on{display:block}
+
+  .win{
+    background:#fff;border:1px solid var(--g200);border-radius:14px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -12px rgba(15,23,42,.10);
+  }
+  .win-bar{
+    display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--g200);
+    background:var(--g50);font-size:12px;color:var(--g500);
+  }
+  .win-bar .dot{width:9px;height:9px;border-radius:50%;background:var(--g300)}
+  .win-body{padding:16px}
+
+  .notice{
+    display:flex;gap:10px;padding:11px 13px;border-radius:10px;font-size:12.5px;line-height:1.7;
+    background:var(--am50);border:1px solid var(--am200);color:var(--am700);margin-bottom:14px;
+  }
+  .notice svg{width:16px;height:16px;flex:none;margin-top:1px}
+  .notice p{margin:0}
+  .notice b{font-weight:650}
+  .notice.ok{background:var(--em50);border-color:var(--em200);color:var(--em700)}
+  .notice.info{background:var(--sky50);border-color:var(--sky100);color:var(--sky700)}
+  .notice.plain{background:var(--g50);border-color:var(--g200);color:var(--g600)}
+
+  /* ── 对话区 ─────────────────────────────────────────── */
+  .chat{display:grid;grid-template-columns:1fr 380px;gap:16px;align-items:start}
+  @media(max-width:1080px){.chat{grid-template-columns:1fr}}
+  .msg-list{display:flex;flex-direction:column;gap:14px;padding:16px;background:#fafbfc;border:1px solid var(--g200);border-radius:14px;min-height:560px}
+  .msg{display:flex;gap:10px}
+  .msg.me{flex-direction:row-reverse}
+  .avatar{width:28px;height:28px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+  .avatar.u{background:var(--indigo100);color:var(--indigo700)}
+  .avatar.a{background:var(--em100);color:var(--em700)}
+  .bubble{max-width:78%;background:#fff;border:1px solid var(--g200);border-radius:12px;padding:9px 12px;font-size:12.5px;line-height:1.7}
+  .msg.me .bubble{background:var(--slate900);color:#fff;border-color:var(--slate900)}
+  .bubble p{margin:0}
+  .bubble p + p{margin-top:6px}
+  .bubble .att{
+    display:flex;align-items:center;gap:8px;margin-top:8px;padding:6px;border-radius:9px;
+    background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.16);
+  }
+  .bubble .att img,.bubble .att .thumb{width:52px;height:52px;border-radius:6px;flex:none;overflow:hidden;background:#fff}
+  .bubble .att .meta{font-size:11px;opacity:.85;line-height:1.5}
+
+  /* 工具卡 */
+  .tool{
+    margin-top:9px;border:1px solid var(--g200);border-radius:10px;overflow:hidden;background:#fff;max-width:82%;
+  }
+  .tool-head{
+    display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--g50);
+    border-bottom:1px solid var(--g200);font-size:11.5px;color:var(--g600);cursor:pointer;
+  }
+  .tool-head .nm{font-weight:650;color:var(--g800)}
+  .tool-head .st{margin-left:auto;display:inline-flex;align-items:center;gap:5px;color:var(--em600);font-weight:600}
+  .tool-head .st b{width:6px;height:6px;border-radius:50%;background:var(--em600)}
+  .tool-body{padding:9px 11px;font-size:11px;line-height:1.8;color:var(--g600)}
+  .tool-body .kv{display:grid;grid-template-columns:74px 1fr;gap:4px 8px}
+  .tool-body .k{color:var(--g400)}
+  .tool-body .v{color:var(--g700);word-break:break-all}
+  .tool-body .v em{font-style:normal;color:var(--indigo700);background:var(--indigo50);padding:0 3px;border-radius:3px}
+
+  /* 图片结果为图 */
+  .result{margin-top:9px;max-width:82%}
+  .result .frame{
+    display:inline-block;border:1px solid var(--g200);border-radius:12px;overflow:hidden;
+    background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.05);
+  }
+  .result .frame img,.result .frame .ph{display:block;height:236px;width:auto}
+  .result .bar{display:flex;align-items:center;gap:10px;margin-top:6px;font-size:11px;color:var(--g400)}
+  .result .bar .act{
+    display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:7px;
+    border:1px solid var(--g200);background:#fff;color:var(--g600);font-size:11px;
+  }
+  .result .bar .act:hover{border-color:var(--g300);color:var(--g800)}
+  .result .bar .act.pri{border-color:var(--indigo100);background:var(--indigo50);color:var(--indigo700);font-weight:600}
+  .ver{
+    display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:5px;
+    background:var(--g100);color:var(--g500);font-size:10px;font-weight:600;
+  }
+  .ver.cur{background:var(--em100);color:var(--em700)}
+
+  /* 右侧参数面板 */
+  .side{display:flex;flex-direction:column;gap:12px}
+  .panel{border:1px solid var(--g200);border-radius:12px;background:#fff;overflow:hidden}
+  .panel-h{
+    display:flex;align-items:center;gap:7px;padding:9px 12px;border-bottom:1px solid var(--g200);
+    font-size:12px;font-weight:650;color:var(--g800);background:var(--g50);
+  }
+  .panel-h .tag{margin-left:auto;font-size:10px;font-weight:600;color:var(--g400);background:#fff;border:1px solid var(--g200);padding:1px 6px;border-radius:5px}
+  .panel-b{padding:12px}
+  .row + .row{margin-top:12px}
+  .row-k{font-size:11px;font-weight:600;color:var(--g500);margin-bottom:6px}
+  .vals{display:flex;flex-wrap:wrap;gap:6px}
+  .opt{
+    border:1px solid var(--g200);background:#fff;border-radius:999px;padding:4px 10px;
+    font-size:11.5px;color:var(--g600);transition:.13s;
+  }
+  .opt:hover{border-color:var(--g300);background:var(--g50)}
+  .opt.on{background:var(--slate900);border-color:var(--slate900);color:#fff;font-weight:600}
+  .opt[disabled]{opacity:.45;cursor:not-allowed;background:var(--g50)}
+  .locked{
+    display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:9px;
+    background:var(--g50);border:1px dashed var(--g300);font-size:11.5px;color:var(--g500);
+  }
+  .locked svg{width:13px;height:13px;flex:none}
+  .hint{font-size:10.5px;color:var(--g400);margin-top:6px;line-height:1.6}
+
+  /* 输入区 */
+  .composer{border:1px solid var(--g200);border-radius:14px;background:#fff;padding:10px;margin-top:14px}
+  .composer .attach-row{display:flex;gap:8px;margin-bottom:9px;flex-wrap:wrap}
+  .chip-att{
+    display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:9px;
+    border:1px solid var(--g200);background:var(--g50);font-size:11px;color:var(--g600);
+  }
+  .chip-att .thumb{width:30px;height:30px;border-radius:5px;overflow:hidden;flex:none}
+  .chip-att .x{width:15px;height:15px;border-radius:50%;background:var(--g300);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center}
+  .composer .line{display:flex;align-items:flex-end;gap:8px}
+  .composer textarea{
+    flex:1;border:none;outline:none;resize:none;font-size:13px;line-height:1.6;
+    min-height:38px;max-height:110px;padding:8px 4px;color:var(--g800);
+  }
+  .send{
+    width:32px;height:32px;border-radius:9px;background:var(--slate900);color:#fff;
+    display:flex;align-items:center;justify-content:center;flex:none;
+  }
+  .area-tools{display:flex;gap:10px;padding:0 4px 6px;font-size:11px;color:var(--g400)}
+  .area-tools span{display:inline-flex;align-items:center;gap:4px}
+
+  /* 加号菜单与参数浮层（入口演示） */
+  .composer-bar{display:flex;align-items:center;gap:8px;padding:5px 4px 0;font-size:11.5px;color:var(--g500)}
+  .plus-btn{
+    width:26px;height:26px;border-radius:8px;border:1px solid var(--g200);background:#fff;
+    display:flex;align-items:center;justify-content:center;color:var(--g500);flex:none;transition:.13s;
+  }
+  .plus-btn:hover{border-color:var(--g300);color:var(--g800)}
+  .plus-btn.on{background:var(--slate900);border-color:var(--slate900);color:#fff}
+  .composer-bar .sep{width:1px;height:14px;background:var(--g200);flex:none}
+  .composer-bar .lbl{display:inline-flex;align-items:center;gap:4px}
+  .flyout-demo{display:flex;gap:10px;align-items:flex-start;margin-top:12px}
+  .plus-menu{
+    width:200px;background:#fff;border:1px solid var(--g200);border-radius:12px;flex:none;
+    box-shadow:0 12px 32px -14px rgba(15,23,42,.25);padding:5px;display:none;
+  }
+  .plus-menu.on{display:block}
+  .mi{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;font-size:12px;color:var(--g700);cursor:pointer}
+  .mi:hover{background:var(--g50)}
+  .mi.on{background:var(--g100);font-weight:650}
+  .mi .sp{margin-left:auto;color:var(--g400);font-size:13px}
+  .mi.dis{color:var(--g300);cursor:not-allowed}
+  .mi.dis:hover{background:none}
+  .mi .ic{width:15px;height:15px;flex:none;color:var(--g400)}
+  .mi.on .ic{color:var(--g700)}
+  .param-pop{
+    width:326px;background:#fff;border:1px solid var(--g200);border-radius:12px;flex:none;
+    box-shadow:0 12px 32px -14px rgba(15,23,42,.25);display:none;overflow:hidden;
+  }
+  .param-pop.on{display:block}
+  .flyout-note{font-size:10.5px;color:var(--g400);line-height:1.75;max-width:210px;padding-top:6px}
+  .flyout-note b{color:var(--g600)}
+  .arrow-inline{display:inline-flex;align-items:center;gap:3px;color:var(--g500);font-size:11px}
+
+  .fix{display:flex;align-items:center;gap:7px;margin-top:7px;flex-wrap:wrap;font-size:11px}
+  .fix .q{color:var(--g400)}
+  .fix button{
+    padding:3px 9px;border-radius:7px;border:1px dashed var(--g300);background:#fff;
+    color:var(--g600);font-size:11px;transition:.13s;
+  }
+  .fix button:hover{border-style:solid;border-color:var(--indigo100);background:var(--indigo50);color:var(--indigo700)}
+  .fix .done{color:var(--em700);font-size:11px;display:none}
+
+  /* 意图消歧：两个变体 */
+  .variant-h{
+    display:flex;align-items:center;gap:8px;font-size:13px;font-weight:650;color:var(--g800);
+    padding-bottom:9px;margin-bottom:11px;border-bottom:1px solid var(--g200);
+  }
+  .variant-h .pill{margin-left:auto}
+  .mini-label{font-size:11px;color:var(--g500);margin:12px 0 7px;display:flex;align-items:center;gap:5px}
+  .mini-label b{color:var(--g700)}
+  .mini-label:first-of-type{margin-top:0}
+
+  /* 改图待命态的附件 chip：紫色描边 + 图标，和普通附件一眼分得开 */
+  .chip-att.edit{border-color:var(--viol100);background:var(--viol50);color:var(--viol700);font-weight:600}
+  .chip-att.edit .x{background:var(--viol700)}
+  .composer.edit-mode{border-color:var(--viol100);box-shadow:0 0 0 3px rgba(109,40,217,.06)}
+  .composer.edit-mode textarea::placeholder{color:var(--viol700);opacity:.75}
+
+  /* 面板里的 tab（方案 B） */
+  .ptabs{display:flex;gap:4px;padding:7px 8px 0;border-bottom:1px solid var(--g200);background:var(--g50)}
+  .ptab{
+    padding:6px 12px;font-size:11.5px;color:var(--g500);border:1px solid transparent;
+    border-bottom:none;border-radius:8px 8px 0 0;margin-bottom:-1px;background:none;
+  }
+  .ptab.on{background:#fff;border-color:var(--g200);color:var(--g900);font-weight:650}
+  .ptab-body{display:none}
+  .ptab-body.on{display:block}
+
+  /* 传图区 */
+  .upload-zone{
+    border:1.5px dashed var(--g300);border-radius:10px;padding:16px 12px;text-align:center;
+    background:var(--g50);font-size:11.5px;color:var(--g500);line-height:1.7;
+  }
+  .upload-zone svg{margin:0 auto 6px;color:var(--g400)}
+  .upload-zone b{color:var(--g700)}
+  .height-note{
+    font-size:10.5px;color:var(--rose600);background:var(--rose50);border:1px solid var(--rose200);
+    border-radius:7px;padding:5px 8px;margin-top:9px;line-height:1.6;
+  }
+  .prefix-demo{
+    font-size:11px;color:var(--g600);background:var(--em50);border:1px solid var(--em200);
+    border-radius:8px;padding:7px 9px;margin-top:9px;line-height:1.7;
+  }
+  .prefix-demo code{background:#fff;border:1px solid var(--em200);padding:0 4px;border-radius:4px;color:var(--em700)}
+
+  .pp-foot{
+    display:flex;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--g200);
+    background:var(--g50);font-size:10.5px;color:var(--g400);line-height:1.5;
+  }
+  .pp-foot .btn-primary{
+    margin-left:auto;background:var(--slate900);color:#fff;border-radius:8px;
+    padding:6px 14px;font-size:12px;font-weight:600;flex:none;
+  }
+  .pp-foot .btn-back{
+    margin-left:auto;border:1px solid var(--g200);background:#fff;border-radius:8px;
+    padding:6px 12px;font-size:12px;color:var(--g600);flex:none;
+  }
+  .req-box{
+    width:100%;border:1px solid var(--g200);border-radius:9px;padding:8px 10px;
+    font-size:12px;resize:none;min-height:58px;outline:none;line-height:1.6;
+    font-family:inherit;color:var(--g800);
+  }
+  .req-box:focus{border-color:var(--viol100);box-shadow:0 0 0 3px rgba(109,40,217,.07)}
+  .param-pop{max-height:86vh;overflow-y:auto}
+
+  .tool.fail{border-color:var(--rose200)}
+  .tool.fail .tool-head{background:var(--rose50);border-bottom-color:var(--rose200);color:var(--rose700)}
+  .tool.fail .tool-head .st{color:var(--rose700)}
+  .tool.fail .tool-head .st b{background:var(--rose600)}
+  .fail-msg{display:flex;gap:8px;padding:9px 11px;font-size:12px;color:var(--rose700);line-height:1.7}
+  .fail-msg svg{width:14px;height:14px;flex:none;margin-top:2px}
+  .fail-act{display:flex;gap:6px;padding:0 11px 10px;flex-wrap:wrap}
+  .fail-act button{
+    border:1px solid var(--g200);background:#fff;border-radius:7px;padding:4px 10px;
+    font-size:11px;color:var(--g600);transition:.13s;
+  }
+  .fail-act button:hover{border-color:var(--g300);color:var(--g800)}
+  .fail-act button.pri{border-color:var(--rose200);background:var(--rose50);color:var(--rose700);font-weight:600}
+  .raw-err{
+    margin:0 11px 10px;padding:6px 9px;border-radius:7px;background:var(--g50);
+    border:1px solid var(--g200);font-size:10.5px;color:var(--g400);font-family:ui-monospace,Menlo,monospace;
+    word-break:break-all;line-height:1.6;
+  }
+
+  /* 移动端演示 */
+  .phone{
+    width:320px;border:8px solid var(--slate900);border-radius:26px;background:#fff;
+    overflow:hidden;flex:none;box-shadow:0 10px 30px -14px rgba(15,23,42,.3);
+  }
+  .phone-bar{
+    height:26px;display:flex;align-items:center;justify-content:center;
+    font-size:10px;color:var(--g400);background:var(--g50);border-bottom:1px solid var(--g200);
+  }
+  .phone-body{padding:10px;background:#fafbfc}
+  .phone-pop{
+    border:1px solid var(--g200);border-radius:12px;background:#fff;overflow:hidden;
+    box-shadow:0 12px 30px -14px rgba(15,23,42,.25);
+  }
+  .phone-scroll{max-height:300px;overflow-y:auto}
+  .scroll-hint{
+    font-size:10px;color:var(--g400);text-align:center;padding:5px 0;
+    background:linear-gradient(transparent,var(--g50));margin-top:-22px;position:relative;
+  }
+
+  /* 主图 + 参考图双槽位 */
+  .slots{display:flex;gap:8px}
+  .slot{
+    position:relative;flex:1;min-width:0;height:78px;border-radius:9px;border:1px solid var(--g200);
+    background:var(--g50);display:flex;align-items:center;justify-content:center;
+    overflow:hidden;cursor:pointer;transition:.13s;
+  }
+  .slot.empty{border-style:dashed;border-color:var(--g300);flex-direction:column;gap:3px;
+    font-size:10px;color:var(--g400);line-height:1.4;text-align:center;padding:4px}
+  .slot.empty:hover{border-color:var(--viol100);background:var(--viol50);color:var(--viol700)}
+  .slot.filled{border-color:var(--viol100);background:var(--viol50)}
+  .slot img,.slot svg.pic{width:100%;height:100%;object-fit:cover;display:block}
+  .slot .badge{
+    position:absolute;left:4px;top:4px;padding:1px 5px;border-radius:4px;
+    font-size:9px;font-weight:650;background:var(--viol700);color:#fff;line-height:1.5;
+  }
+  .slot .badge.ref{background:var(--g600)}
+  .slot .ops{
+    position:absolute;right:3px;top:3px;display:flex;gap:2px;
+  }
+  .slot .ops span{
+    width:16px;height:16px;border-radius:4px;background:rgba(255,255,255,.92);
+    display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--g600);
+    box-shadow:0 1px 3px rgba(15,23,42,.12);
+  }
+  .slots-note{font-size:10px;color:var(--g400);margin-top:6px;line-height:1.65}
+
+  /* 表格 */
+  table.t{border-collapse:collapse;width:100%;font-size:12px}
+  table.t th,table.t td{border:1px solid var(--g200);padding:8px 10px;text-align:left;vertical-align:top}
+  table.t th{background:var(--g50);font-weight:650;color:var(--g700);font-size:11.5px}
+  table.t td.ok{color:var(--em700);font-weight:600}
+  table.t td.bad{color:var(--rose600);font-weight:600}
+  table.t code{background:var(--g100);padding:1px 4px;border-radius:4px;font-size:11px}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:900px){.grid2{grid-template-columns:1fr}}
+  .card{border:1px solid var(--g200);border-radius:12px;background:#fff;padding:14px}
+  .card h3{margin:0 0 8px;font-size:13px;font-weight:650}
+  .card ul{margin:0;padding-left:18px;font-size:12px;color:var(--g600);line-height:1.85}
+  .card li + li{margin-top:3px}
+  .pill{display:inline-block;padding:1px 7px;border-radius:5px;font-size:10.5px;font-weight:650}
+  .pill.y{background:var(--em100);color:var(--em700)}
+  .pill.n{background:var(--rose50);color:var(--rose700)}
+  .pill.q{background:var(--am100);color:var(--am700)}
+
+  /* 工具开关行 */
+  .toolrow{display:flex;align-items:center;gap:12px;padding:11px 13px;border:1px solid var(--g200);border-radius:11px;background:#fff}
+  .toolrow + .toolrow{margin-top:9px}
+  .toolrow .ic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none}
+  .toolrow .nm{font-size:12.5px;font-weight:650;color:var(--g800)}
+  .toolrow .ds{font-size:11px;color:var(--g500);margin-top:1px;line-height:1.55}
+  .toolrow .sw{
+    margin-left:auto;width:34px;height:19px;border-radius:999px;background:var(--g300);
+    position:relative;flex:none;transition:.15s;
+  }
+  .toolrow .sw::after{
+    content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;
+    background:#fff;transition:.15s;
+  }
+  .toolrow .sw.on{background:var(--em600)}
+  .toolrow .sw.on::after{transform:translateX(15px)}
+  .toolrow .dep{font-size:10.5px;color:var(--am700);background:var(--am50);border:1px solid var(--am200);padding:1px 6px;border-radius:5px;margin-left:6px}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="proto-head">
+    <h1>图生图 · 补齐方案</h1>
+    <p>
+      在已有的文生图闭环上加「改图」能力。和前一份原型不同，这次的关键不是画界面，而是
+      <b>先确认网关支持什么</b>——已经用真实网关跑通了，结论见场景 4，界面方案都建立在那些实测事实上。
+    </p>
+  </div>
+
+  <div class="tabs">
+    <button class="tab on" data-scene="s1"><span class="no">1</span>对话里传图改图</button>
+    <button class="tab" data-scene="s2"><span class="no">2</span>生成图上继续改</button>
+    <button class="tab" data-scene="s3"><span class="no">3</span>智能体工具开关</button>
+    <button class="tab" data-scene="s4"><span class="no">4</span>技术底牌与取舍</button>
+    <button class="tab" data-scene="s5"><span class="no">5</span>怎么保证是「改图」不是「读图」</button>
+    <button class="tab" data-scene="s6"><span class="no">6</span>系统设置：测试改图</button>
+    <button class="tab" data-scene="s7"><span class="no">7</span>失败时长什么样</button>
+    <button class="tab" data-scene="s8"><span class="no">8</span>移动端长什么样</button>
+  </div>
+
+  <!-- ════════════ 场景 1 ════════════ -->
+  <section class="scene on" id="s1">
+    <div class="notice ok">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+      <p><b>实测已跑通</b>：把图片以 <code>image_url</code> 塞进 <code>chat/completions</code>，模型会保留主体只改指定部分——同一张咖啡图把背景换成浅蓝，杯身、拉花、杯垫完全没变。耗时 5.7s，输出 951 KB。</p>
+    </div>
+
+    <div class="chat">
+      <div>
+        <div class="msg-list">
+          <div class="msg me">
+            <div class="avatar u">我</div>
+            <div class="bubble">
+              <p>把这张图的背景换成浅蓝色，杯子别动</p>
+              <div class="att">
+                <div class="thumb">
+                  <svg viewBox="0 0 52 52" width="52" height="52"><rect width="52" height="52" fill="#f4dcae"/><ellipse cx="26" cy="44" rx="17" ry="4" fill="#e3c48e"/><path d="M13 24h23v14a7 7 0 0 1-7 7H20a7 7 0 0 1-7-7z" fill="#fffdf7" stroke="#d8d2c4"/><ellipse cx="24.5" cy="24" rx="11.5" ry="4.4" fill="#b5762f"/><ellipse cx="24.5" cy="23.4" rx="7" ry="2.6" fill="#f6e6cf"/></svg>
+                </div>
+                <div class="meta">coffee-flat.png<br>1024 × 1024 · 4.0 MB</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <div class="avatar a">AI</div>
+            <div style="min-width:0">
+              <div class="tool">
+                <div class="tool-head">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg>
+                  <span class="nm">edit_image</span>
+                  <span class="st"><b></b>完成 · 5.7s</span>
+                </div>
+                <div class="tool-body">
+                  <div class="kv">
+                    <div class="k">image</div>
+                    <div class="v"><em>/app/data/agent_workspaces/admin__1/uploads/coffee-flat.png</em></div>
+                    <div class="k">instruction</div>
+                    <div class="v">把这张图的背景换成浅蓝色，杯子别动</div>
+                    <div class="k">返回</div>
+                    <div class="v">generated-image-20261119-120511-1.png · 1024×1024 · 951 KB</div>
+                  </div>
+                </div>
+              </div>
+              <div class="result">
+                <div class="frame">
+                  <svg viewBox="0 0 264 264" width="264" height="264"><rect width="264" height="264" fill="#7ec5ef"/><ellipse cx="132" cy="222" rx="86" ry="18" fill="#5aa9d8"/><path d="M66 122h117v66a36 36 0 0 1-36 36h-46a36 36 0 0 1-36-36z" fill="#fffdf7" stroke="#d8d2c4" stroke-width="1.6"/><ellipse cx="124.5" cy="122" rx="58" ry="22" fill="#b5762f"/><ellipse cx="124.5" cy="119" rx="35" ry="13" fill="#f6e6cf"/><path d="M183 140a20 20 0 0 1 0 40" fill="none" stroke="#d8d2c4" stroke-width="7" stroke-linecap="round"/></svg>
+                </div>
+                <div class="bar">
+                  <span class="ver cur">基于原图修改</span>
+                  <span>1024 × 1024 · 951 KB · PNG</span>
+                  <button class="act pri" data-open-edit="1">
+                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                    继续修改
+                  </button>
+                  <button class="act">下载</button>
+                </div>
+                <!-- 判错时的纠正：不猜意图，让用户一句话掰回来 -->
+                <div class="fix">
+                  <span class="q">不是这个结果？</span>
+                  <button data-fix="edit">我要的是改这张图</button>
+                  <button data-fix="gen">我要的是参考它画新的</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 输入区：真实入口在「＋」里 -->
+        <div class="composer">
+          <div class="attach-row">
+            <div class="chip-att">
+              <div class="thumb">
+                <svg viewBox="0 0 30 30" width="30" height="30"><rect width="30" height="30" fill="#f4dcae"/><path d="M8 14h14v8a4 4 0 0 1-4 4h-6a4 4 0 0 1-4-4z" fill="#fffdf7" stroke="#d8d2c4"/><ellipse cx="15" cy="14" rx="7" ry="2.6" fill="#b5762f"/></svg>
+              </div>
+              <span>coffee-flat.png</span>
+              <span class="x">×</span>
+            </div>
+          </div>
+          <div class="line">
+            <textarea placeholder="说说要改哪里，比如「背景换成浅蓝色」"></textarea>
+            <button class="send">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 12h12M13 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+          <div class="composer-bar">
+            <button class="plus-btn" id="plusBtn" title="点这里打开菜单">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <span class="sep"></span>
+            <span class="lbl">⚡ 智能委派 ▾</span>
+            <span class="lbl">🛡 自动批准</span>
+            <span style="margin-left:auto;color:var(--g400)">图像参数在「＋」菜单里</span>
+          </div>
+        </div>
+
+        <!-- 浮层：点 ＋ 出菜单，点菜单项出面板 -->
+        <div class="flyout-demo">
+          <div class="plus-menu on" id="plusMenu">
+            <div class="mi"><span class="ic">▤</span>打开数据门户</div>
+            <div class="mi"><span class="ic">▤</span>打开知识库中心</div>
+            <div class="mi"><span class="ic">▤</span>上传本地文件</div>
+            <div class="mi"><span class="ic">▤</span>选择记忆记录</div>
+            <div class="mi"><span class="ic">▤</span>数据&amp;知识库 <span class="sp">›</span></div>
+            <div class="mi"><span class="ic">▤</span>技能中心 <span class="sp">›</span></div>
+            <div class="mi"><span class="ic">▤</span>MCP 工具 <span class="sp">›</span></div>
+            <div class="mi on" id="menuImage"><span class="ic">▣</span>图像参数 <span class="sp">›</span></div>
+            <div class="mi"><span class="ic">▤</span>新会话</div>
+          </div>
+
+          <div class="param-pop on" id="paramPop" style="width:342px">
+            <div class="ptabs">
+              <button class="ptab" data-ptab="gen">生成</button>
+              <button class="ptab on" data-ptab="edit">改图</button>
+            </div>
+
+            <!-- 生成 tab：参数内容归分辨率方案，这里不重复画 -->
+            <div class="ptab-body">
+              <div class="panel-b" style="font-size:11.5px;color:var(--g600);line-height:1.85">
+                比例 / 风格 / <b>分辨率</b> / 张数的控件设计以
+                <a href="2026-11-19-image-size-picker.html" style="color:var(--indigo700)">图像参数 · 分辨率方案</a>
+                为准。加 tab 只是给面板分了两件事，生成 tab 里的内容不受影响。
+              </div>
+            </div>
+
+            <!-- 改图 tab -->
+            <div class="ptab-body on">
+              <div class="panel-b">
+                <div class="row">
+                  <div class="row-k">图片</div>
+                  <div class="slots">
+                    <div class="slot filled">
+                      <svg class="pic" viewBox="0 0 100 100"><rect width="100" height="100" fill="#f4dcae"/><path d="M28 44h44v24a11 11 0 0 1-11 11H39a11 11 0 0 1-11-11z" fill="#fffdf7" stroke="#d8d2c4"/><ellipse cx="50" cy="44" rx="22" ry="8" fill="#b5762f"/><ellipse cx="50" cy="43" rx="13" ry="4.5" fill="#f6e6cf"/></svg>
+                      <span class="badge">主图</span>
+                      <span class="ops"><span>换</span><span>×</span></span>
+                    </div>
+                    <div class="slot empty">
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                      <span style="font-weight:600">参考图</span>
+                      <span style="opacity:.7;font-size:9px">可选</span>
+                    </div>
+                  </div>
+                  <div class="slots-note">
+                    <b>主图</b>是要改的那张；<b>参考图</b>只用来提供风格、配色或构图，不会被直接改。
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="row-k">要改哪里</div>
+                  <textarea class="req-box" placeholder="比如：把背景换成浅蓝色，杯子别动"></textarea>
+                </div>
+                <div class="row">
+                  <div class="row-k">风格</div>
+                  <div class="vals">
+                    <button class="opt on">不指定</button>
+                    <button class="opt">扁平插画</button>
+                    <button class="opt">写实摄影</button>
+                    <button class="opt">3D 渲染</button>
+                    <button class="opt">极简线条</button>
+                    <button class="opt">动漫二次元</button>
+                    <button class="opt">水彩手绘</button>
+                    <button class="opt">油画质感</button>
+                    <button class="opt">赛博霓虹</button>
+                    <button class="opt">国潮插画</button>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="row-k">分辨率</div>
+                  <div class="vals">
+                    <button class="opt on">跟随原图</button>
+                    <button class="opt">512x512</button>
+                    <button class="opt">1024x1024</button>
+                    <button class="opt">1664x928</button>
+                  </div>
+                  <div class="hint">选具体尺寸会作为 <code>size</code> 传给工具；「跟随原图」则不传，由模型定（可能被规整到档位）。</div>
+                </div>
+              </div>
+              <div class="pp-foot">
+                <span>完成后图片挂到输入框，确认再发</span>
+                <button class="btn-primary">完成</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="flyout-note">
+            <b>入口就一个</b>：输入框左下角「＋」→ 菜单里「图像参数」。<br>
+            悬停或点击菜单项都会展开右侧面板，鼠标移到别的菜单项就收起。<br><br>
+            <span class="arrow-inline">← 点「＋」出这个菜单</span><br>
+            <span class="arrow-inline">← 点「图像参数」出这个面板</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="side">
+        <div class="panel">
+          <div class="panel-h">这个入口什么时候能用</div>
+          <div class="panel-b" style="font-size:11.5px;color:var(--g600);line-height:1.8">
+            三种状态下菜单项长相不同，避免「点开一片空白不知道找谁」：
+          </div>
+          <div style="padding:0 12px 12px">
+            <table class="t" style="font-size:11px">
+              <tr><th style="width:96px">状态</th><th>菜单项表现</th></tr>
+              <tr>
+                <td class="ok">全部就绪</td>
+                <td>正常可点，面板里比例/风格/色调都可选</td>
+              </tr>
+              <tr>
+                <td>总开关关闭</td>
+                <td>置灰，展开后写明「图像生成未开启，请管理员在系统设置 → 图像生成 打开」</td>
+              </tr>
+              <tr>
+                <td>智能体没勾工具</td>
+                <td>置灰，展开后写明「当前智能体未启用生图工具」，并指出去哪个智能体配置里勾</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-h">图生图不新建入口，也不新建面板</div>
+          <div class="panel-b" style="font-size:11.5px;color:var(--g600);line-height:1.9">
+            <div>· <b>入口同一个</b>：输入框「＋」→「图像参数」，改图时不多一个按钮</div>
+            <div style="margin-top:6px">· <b>面板同一套</b>：比例 / 风格 / 分辨率 / 张数，形态不变</div>
+            <div style="margin-top:6px">· <b>差别只在工具</b>：AI 判成改图就调 <code>edit_image</code> 并把 <code>size</code> 一起传下去，判成生图就调 <code>generate_image</code></div>
+            <div style="margin-top:6px">· <b>所以用户不需要理解两种模式</b>，说人话即可，看结果图标签就知道 AI 做了什么</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-h">参考图：为什么只给两个槽位</div>
+          <div class="panel-b">
+            <div style="font-size:11.5px;color:var(--g600);line-height:1.8;margin-bottom:8px">
+              输入多张图<b>技术上支持</b>，实测过 1～5 张。但通道能力不是产品上限——张数一多，模型开始静默漏内容。
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:10.5px">
+              <tr style="color:var(--g400)">
+                <td style="padding:3px 0;width:52px">张数</td>
+                <td style="padding:3px 0">实测结果</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0;font-weight:650;color:var(--g700)">2 张</td>
+                <td style="padding:4px 0;color:var(--g600);line-height:1.6">取 B 的背景色改 A —— 背景真的变成 B 的深蓝、主体仍是 A 的圆；<b>「只改第一张」也分得清指代</b>。可靠。</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0;font-weight:650;color:var(--g500)">3 张</td>
+                <td style="padding:4px 0;color:var(--g500);line-height:1.6">三个主体都在，但第三张的形状走样了</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0;font-weight:650;color:#b45309">4 张</td>
+                <td style="padding:4px 0;color:#b45309;line-height:1.6">网关照样 200、照样出图，但<b>只画出 3 个颜色、顺序还乱</b>——悄悄漏内容，没有任何错误信号</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0;font-weight:650;color:#be123c">5 张</td>
+                <td style="padding:4px 0;color:#be123c;line-height:1.6">直接 500：<code style="font-size:10px">At most 4 images are supported by this model</code></td>
+              </tr>
+            </table>
+            <div style="margin-top:9px;padding:8px 9px;background:var(--viol50);border-radius:7px;font-size:10.5px;color:var(--viol700);line-height:1.75">
+              <b>所以界面上只给两个槽位</b>（主图 + 可选参考图）。网关的 4 张上限不该变成产品的上限：让用户按 4 张传、拿到一张漏了内容的图，比一开始就告诉他「最多两张」糟得多。
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-h">风格/分辨率在改图时照旧生效</div>
+          <div class="panel-b" style="font-size:11.5px;color:var(--g600);line-height:1.9">
+            风格：实测「保持构图和主体，改成 3D 渲染质感」能让扁平插画整张转成写实摄影而构图不变。<br>
+            尺寸：实测 chat 体里带 <code>size=512x512</code> 就真的输出 512×512，写进提示词反而不生效——所以分辨率必须走结构化参数，不能拼进句子。
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════ 场景 2 ════════════ -->
+  <section class="scene" id="s2">
+    <div class="notice info">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>
+      <p>改图很少一次到位。真实场景是「背景换了 → 再亮一点 → 杯子大一点」，所以要有一条<b>版本链</b>，而不是每改一次就在消息流里重新贴一张互不相干的图。</p>
+    </div>
+
+    <div class="chat">
+      <div class="msg-list">
+        <div class="msg">
+          <div class="avatar a">AI</div>
+          <div style="min-width:0">
+            <div class="result" style="margin-top:0">
+              <div class="frame">
+                <svg viewBox="0 0 264 264" width="200" height="200"><rect width="264" height="264" fill="#7ec5ef"/><ellipse cx="132" cy="222" rx="86" ry="18" fill="#5aa9d8"/><path d="M66 122h117v66a36 36 0 0 1-36 36h-46a36 36 0 0 1-36-36z" fill="#fffdf7" stroke="#d8d2c4" stroke-width="1.6"/><ellipse cx="124.5" cy="122" rx="58" ry="22" fill="#b5762f"/><ellipse cx="124.5" cy="119" rx="35" ry="13" fill="#f6e6cf"/><path d="M183 140a20 20 0 0 1 0 40" fill="none" stroke="#d8d2c4" stroke-width="7" stroke-linecap="round"/></svg>
+              </div>
+              <div class="bar">
+                <span class="ver">v1 · 原图</span>
+                <span class="ver">v2 · 换背景</span>
+                <span class="ver cur">v3 · 提亮</span>
+                <button class="act pri" data-open-edit="2">继续修改</button>
+                <button class="act">回到 v1</button>
+              </div>
+            </div>
+
+            <!-- 继续修改面板（默认收，点按钮展开） -->
+            <div class="panel edit-panel" id="editPanel2" style="margin-top:10px;max-width:520px;display:none">
+              <div class="panel-h">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                基于 v3 继续修改
+                <button class="tag" style="cursor:pointer;margin-left:auto" data-close-edit="2">收起</button>
+              </div>
+              <div class="panel-b" style="padding:10px 12px">
+                <div style="display:flex;gap:8px;align-items:flex-start">
+                  <div class="thumb" style="width:44px;height:44px;border-radius:7px;overflow:hidden;flex:none">
+                    <svg viewBox="0 0 44 44" width="44" height="44"><rect width="44" height="44" fill="#7ec5ef"/><path d="M11 21h20v11a6 6 0 0 1-6 6h-8a6 6 0 0 1-6-6z" fill="#fffdf7" stroke="#d8d2c4"/><ellipse cx="21" cy="21" rx="10" ry="3.6" fill="#b5762f"/></svg>
+                  </div>
+                  <div style="flex:1;min-width:0">
+                    <textarea placeholder="接着说要改什么，比如「整体再亮一点」" style="width:100%;border:1px solid var(--g200);border-radius:8px;padding:7px 9px;font-size:12px;resize:none;min-height:56px;outline:none"></textarea>
+                    <div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">
+                      <button class="opt">再亮一点</button>
+                      <button class="opt">换个背景色</button>
+                      <button class="opt">改成竖版</button>
+                      <button class="opt">换成 3D 风格</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="side">
+        <div class="present" style="display:flex;flex-direction:column;gap:12px">
+          <div class="card">
+            <h3>版本链怎么存</h3>
+            <ul>
+              <li>每次改图都产出<b>新产物</b>（新 <code>artifact_id</code>），不覆盖上一版</li>
+              <li>消息里用 <code>parent_artifact_id</code> 串成链，前端渲染成 v1→v2→v3</li>
+              <li>好处：用户能回退，也不用担心「改坏了原来的图没了」</li>
+              <li>代价：每版都占一份磁盘（现在 4–6 MB/张，要盯容量）</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>「继续修改」比重新上传好在哪</h3>
+            <ul>
+              <li>用户不用再找原图、不用重复上传</li>
+              <li>链路天然带上 <code>parent_artifact_id</code>，版本关系不会断</li>
+              <li>省一次 20 MB 附件上传和一次磁盘写入</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>快捷 chip 只是提示词</h3>
+            <ul>
+              <li>「再亮一点」「换个背景色」本质是往输入框填一句话</li>
+              <li>点了只填字，不直接触发生成——用户还能改词再发</li>
+              <li>避免误点一次就扣一次钱</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════ 场景 3 ════════════ -->
+  <section class="scene" id="s3">
+    <div class="notice plain">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+      <p>做成<b>两个独立工具</b>，而不是给 <code>generate_image</code> 加一个可选参考图参数。理由是成本和风险都不一样，该能分开管。</p>
+    </div>
+
+    <div class="win">
+      <div class="win-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:6px">智能体管理 → 工具配置</span></div>
+      <div class="win-body">
+        <div class="toolrow">
+          <div class="ic" style="background:var(--sky100);color:var(--sky700)">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg>
+          </div>
+          <div>
+            <div class="nm">generate_image <span class="dep">需总开关</span></div>
+            <div class="ds">根据文字描述画一张新图。已上线，默认不勾选，按张计费。</div>
+          </div>
+          <div class="sw on"></div>
+        </div>
+
+        <div class="toolrow">
+          <div class="ic" style="background:var(--viol100);color:var(--viol700)">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+          </div>
+          <div>
+            <div class="nm">edit_image <span class="dep">复用生图配置</span></div>
+            <div class="ds">按指令修改一张已有图片，保留主体只改指定部分。默认不勾选。</div>
+          </div>
+          <div class="sw on"></div>
+        </div>
+
+        <div class="grid2" style="margin-top:16px">
+          <div class="card">
+            <h3>为什么拆成两个</h3>
+            <ul>
+              <li><b>权限可以分开</b>：有些团队愿意让 AI 画新图，但不愿意它改公司现成素材</li>
+              <li><b>成本口径不同</b>：文生图按张计费；改图如果一次不满意会来回改好几轮，账单会更高</li>
+              <li><b>模型不易误用</b>：一个参数<code>参考图</code>要不要填，模型判断错就变成「本想改图结果画了张新的」</li>
+              <li><b>工具描述更聚焦</b>：各自只讲一件事，AgentScope 选工具的准确率更高</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>共用的部分</h3>
+            <ul>
+              <li>网关地址、密钥、模型都复用「图像生成」分组的同一份配置，不新增配置项</li>
+              <li>总开关也是同一个：关掉整个平台都没有图像能力</li>
+              <li>产物发布、超时、重试、尺寸嗅探走同一套实现</li>
+              <li>权限同样默认放行（用户要求改图本身就是授权）</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="notice am" style="margin-top:14px;margin-bottom:0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 16H3l9-16z"/><path d="M12 9v4m0 3h.01"/></svg>
+          <p><b>一个必须做的前置校验</b>：<code>edit_image</code> 只支持 <code>openai_chat</code> 协议（实测 <code>/images/edits</code> 那条路走不通，见场景 4）。所以当管理员把接口格式配成 <code>openai_images</code> 时，这个工具应当<b>不出现在工具清单里</b>，否则勾了也只会报错。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════ 场景 4 ════════════ -->
+  <section class="scene" id="s4">
+    <div class="notice ok">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+      <p>下面全部是<b>真实网关实测</b>结果（Qwen-Image-2.1-Turbo），不是推测。界面能做成什么样，天花板由这些决定。</p>
+      <p style="margin-top:8px">官方文档确实定义了 <code>POST /v1/images/edits</code>，但<b>文档存在 ≠ 这个部署能用</b>：实测该端点会 panic。所以图生图 v1 走 chat 格式，不是绕过标准的取巧，是这个网关唯一能走通的路。若将来网关修好了 edits，可以再加一条通道。</p>
+    </div>
+
+    <div class="win" style="margin-bottom:14px">
+      <div class="win-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:6px">两条技术路线（都在真实网关上打过）</span></div>
+      <div class="win-body">
+        <table class="t">
+          <tr>
+            <th style="width:150px">路线</th><th style="width:90px">结果</th><th>细节</th>
+          </tr>
+          <tr>
+            <td><code>POST /images/edits</code><br><span style="color:var(--g400);font-size:11px">OpenAI 标准编辑端点<br>（new-api 文档已定义）</span></td>
+            <td class="bad">不可用</td>
+            <td>
+              <b>这个部署上的该端点本身是坏的</b>，与传参方式无关，五种打法全失败：<br>
+              · multipart + model 在 form → <code>400 Model name not specified</code>（0.2s 返回，压根没进 multipart 解析）<br>
+              · multipart + model 放 query → <code>400</code> 同一句<br>
+              · multipart 不带 model → <code>400</code> 同一句<br>
+              · JSON body + base64 图 → <code>404 Not Found</code>（被转发后上游不认 JSON 形式）<br>
+              · 空 body → <code>500 Panic: nil pointer dereference</code>，错误里自带 new-api 的 issue 反馈地址，是网关自身的 nil 指针 bug<br>
+              对照组：同一个 key 打 <code>/images/generations</code> 走 JSON 正常 200，说明网关读 JSON 里的 model 没问题，问题出在 edits 这条路由。
+            </td>
+          </tr>
+          <tr>
+            <td><code>chat/completions</code><br><span style="color:var(--g400);font-size:11px">把图当 image_url 传进去</span></td>
+            <td class="ok">200 ✓</td>
+            <td>返回 <code>choices[0].message.content[].image_url.url</code>，是个 data URL。这条就是我们已在用的 <code>openai_chat</code> 协议，<b>不需要新协议</b>。</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+
+    <div class="win" style="margin-bottom:14px">
+      <div class="win-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:6px">实测数据</span></div>
+      <div class="win-body">
+        <table class="t">
+          <tr><th style="width:230px">场景</th><th style="width:110px">输入</th><th style="width:110px">输出</th><th style="width:80px">耗时</th><th>结论</th></tr>
+          <tr>
+            <td>换背景色（「背景换浅蓝，杯子别动」）</td>
+            <td>1024×1024 · 4.0 MB</td>
+            <td>1024×1024 · 951 KB</td>
+            <td>5.7s</td>
+            <td class="ok">杯身/拉花/杯垫完全保留，只换了背景</td>
+          </tr>
+          <tr>
+            <td>换风格（「构图不动，改成 3D 渲染质感」）</td>
+            <td>1024×1024 · 4.0 MB</td>
+            <td>1024×1024 · 1.2 MB</td>
+            <td>5.7s</td>
+            <td class="ok">扁平插画整张转成写实摄影，构图一致</td>
+          </tr>
+          <tr>
+            <td>传 2 张图（取 B 的背景色改 A）</td>
+            <td>1024×1024 · 951 KB</td>
+            <td>1024×1024 · 596 KB</td>
+            <td>5.9s</td>
+            <td class="ok">背景真的变成 B 的深蓝、主体仍是 A 的红圆——<b>两张图都被读到</b>；「只改第一张」也分得清指代</td>
+          </tr>
+          <tr>
+            <td>传 3 张图（三主体合成）</td>
+            <td>三张 128² 色块图</td>
+            <td>1024×1024 · 642 KB</td>
+            <td>6.9s</td>
+            <td>三个主体都出现，但第三张的横条形状走了样</td>
+          </tr>
+          <tr>
+            <td>传 4 张图</td>
+            <td>四张 128² 色块图</td>
+            <td>1024×1024 · 610 KB</td>
+            <td>8.0s</td>
+            <td class="bad">200 成功，但<b>只画出 3 个颜色</b>且顺序错乱——悄悄漏内容，没有任何错误信号</td>
+          </tr>
+          <tr>
+            <td>传 5 张图</td>
+            <td>五张 128² 色块图</td>
+            <td class="bad">无输出</td>
+            <td>0.2s</td>
+            <td class="bad"><code>500 Received 5 input images. At most 4 images are supported by this model.</code>——硬上限 4，报错清晰</td>
+          </tr>
+          <tr>
+            <td>换模型：<code>kolors</code> 改图</td>
+            <td>1024×1024 · 951 KB</td>
+            <td class="bad">无输出</td>
+            <td>—</td>
+            <td class="bad"><code>500 upstream error: do_request_failed</code>——kolors 只做文生图，不吃图输入</td>
+          </tr>
+          <tr>
+            <td>指定输出尺寸（chat 体带 <code>size=512x512</code>）</td>
+            <td>1024×1024 · 951 KB</td>
+            <td><b>512×512</b> · 250 KB</td>
+            <td>—</td>
+            <td class="ok">尺寸可通过结构化参数控制；改用提示词写「输出 512×512」则无效，仍出 1024</td>
+          </tr>
+          <tr>
+            <td>竖版大图（928×1664 · 6 MB）</td>
+            <td>928×1664 · 6.0 MB</td>
+            <td><b>768×1376</b> · 1.0 MB</td>
+            <td>6.2s</td>
+            <td class="bad">长宽比保住了，但<b>分辨率被缩到模型档位</b></td>
+          </tr>
+        </table>
+        <div class="notice am" style="margin:12px 0 0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 16H3l9-16z"/><path d="M12 9v4m0 3h.01"/></svg>
+          <p><b>第三行是这次最该提前说清的限制</b>：改图不是无损编辑，输出会被规整到模型的尺寸档位。928×1664 进来、768×1376 出去，长宽比保住了但像素少了约 17%。如果业务要求「改完还得是原尺寸」，那得在工具里补一步后处理放大，或者直接告诉用户这个事实——<b>不能假装是无损的</b>。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>可以实现（已验证）</h3>
+        <ul>
+          <li><span class="pill y">可以</span> 只换背景 / 只换某个物体，主体不动</li>
+          <li><span class="pill y">可以</span> 整张换风格（插画↔写实↔3D）</li>
+          <li><span class="pill y">可以</span> 保持长宽比</li>
+          <li><span class="pill y">可以</span> 连续多轮改（把上一版结果再喂回去）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>做不到（确定不行）</h3>
+        <ul>
+          <li><span class="pill n">不行</span> 保持原分辨率——会被规整到模型档位</li>
+          <li><span class="pill n">不行</span> 精确复现同一张（没有 seed，每次都有随机性）</li>
+          <li><span class="pill n">不行</span> 只输出蒙版/透明通道（没有 background 参数）</li>
+          <li><span class="pill q">注意</span> 改错地方无法「撤销局部」，只能整张回退到上一版</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="win" style="margin-top:14px">
+      <div class="win-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:6px">模型：复用还是独立配置</span></div>
+      <div class="win-body">
+        <table class="t" style="margin-bottom:12px">
+          <tr><th style="width:190px">网关上的图像模型</th><th style="width:130px">端点</th><th>能否改图</th></tr>
+          <tr>
+            <td><code>Qwen-Image-2.1-Turbo</code></td>
+            <td><code>image-generation</code> + <code>openai</code></td>
+            <td class="ok">能（本文所有实测都用它）</td>
+          </tr>
+          <tr>
+            <td><code>kolors</code></td>
+            <td>仅 <code>openai</code></td>
+            <td class="bad">不能，只做文生图</td>
+          </tr>
+          <tr>
+            <td colspan="3" style="color:var(--g500)">
+              全部 33 个模型里图像生成只有这两个，<b>没有任何专门的编辑模型</b>（<code>*-edit</code> / <code>kontext</code> / <code>nano-banana</code> 之类）。
+              几个 <code>*-VL</code> 是读图理解模型，不是编辑模型。
+            </td>
+          </tr>
+        </table>
+
+        <div class="notice plain" style="margin:0 0 12px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>
+          <p><b>结论：<code>edit_image</code> 直接复用 <code>image_model</code> 配置，不新增配置项。</b>
+          现在没有第二个能改图的模型可选，多一个 <code>image_edit_model</code> 只会让人问「这个填什么」。
+          代码里留扩展点即可——将来真有编辑模型时，做成「留空则回退到 <code>image_model</code>」。</p>
+        </div>
+
+        <div class="notice am" style="margin:0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 16H3l9-16z"/><path d="M12 9v4m0 3h.01"/></svg>
+          <p><b>但这儿有个坑</b>：管理员把 <code>image_model</code> 填成 <code>kolors</code> 是完全合法的——它是图像模型，<b>文生图测试也能通过</b>，
+          可改图会全 500。现有「测试生成」只验文生图，验不出这个差别。<br>
+          建议在「测试生成」旁加一个<b>「测试改图」</b>，用一张内置小图跑一次改图请求。配完就能看出这个模型能不能改图、要不要给智能体勾 <code>edit_image</code>。
+          成本是一次调用，挡住的是「配置看着正常、上线才发现改图全挂」。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="win" style="margin-top:14px">
+      <div class="win-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:6px">还需要定的事</span></div>
+      <div class="win-body">
+        <table class="t">
+          <tr><th style="width:200px">决策点</th><th>建议</th></tr>
+          <tr>
+            <td>大图怎么传</td>
+            <td>附件上限 20 MB，转成 data URL 会膨胀 1.33 倍（6 MB 图 → 8 MB 请求体）。建议工具侧先压到长边 ≤ 1536 再送，既降超时风险也省钱；原图尺寸只用于展示。</td>
+          </tr>
+          <tr>
+            <td>改图能不能改别人上传的文件</td>
+            <td>只允许用户自己工作区内的路径（<code>uploads/</code> 或 <code>generated/</code>），工具侧做路径归属校验，不允许任意绝对路径——否则等于给了一个读服务器任意文件的口子。</td>
+          </tr>
+          <tr>
+            <td>多张参考图</td>
+            <td>v1 只支持单张。Qwen-Image 未见多图融合能力验证，别先做界面。</td>
+          </tr>
+          <tr>
+            <td>和构图/镜头那类维度</td>
+            <td>不进参数面板。改图时用户是在「描述改哪里」，多塞维度会盖掉指令本身。</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════ 场景 5 ════════════ -->
+  <section class="scene" id="s5">
+    <div class="notice ok">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+      <p><b>已定：面板里加 [生成] [改图] 两个 tab</b>。理由是它把「我要干什么」变成用户显式声明过的选择，而不是让模型从一句话里猜；并且最终发给模型的指令会被改写成「沿用所附图片进行修改：…」，误读空间基本为零。</p>
+    </div>
+
+    <div class="win" style="margin-bottom:14px">
+      <div class="win-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:6px">完整链路 · 四步</span></div>
+      <div class="win-body">
+        <div class="grid2">
+
+          <!-- 步骤 1 -->
+          <div class="card">
+            <div class="variant-h"><span class="pill" style="background:var(--g100);color:var(--g600)">01</span> 打开面板，切到「改图」</div>
+            <div class="param-pop on" style="width:100%;max-width:320px">
+              <div class="ptabs">
+                <button class="ptab">生成</button>
+                <button class="ptab on">改图</button>
+              </div>
+              <div class="panel-b" style="font-size:11.5px;color:var(--g600);line-height:1.8">
+                <div class="upload-zone">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0L7 9m5-5l5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                  点此选择，或拖进来
+                </div>
+                <div class="hint">入口没变：还是输入框「＋」→「图像参数」，只是面板里多了两个 tab。<b>tab 记住上次的选择</b>，常改图的用户第二次打开就直接在改图页。</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 步骤 2 -->
+          <div class="card">
+            <div class="variant-h"><span class="pill" style="background:var(--g100);color:var(--g600)">02</span> 选主图（+可参考图）+ 写需求</div>
+            <div class="param-pop on" style="width:100%;max-width:320px">
+              <div class="ptabs">
+                <button class="ptab">生成</button>
+                <button class="ptab on">改图</button>
+              </div>
+              <div class="panel-b">
+                <div class="slots" style="gap:6px">
+                  <div class="slot filled" style="aspect-ratio:auto;height:52px">
+                    <svg class="pic" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice"><rect width="100" height="100" fill="#f4dcae"/><path d="M28 44h44v24a11 11 0 0 1-11 11H39a11 11 0 0 1-11-11z" fill="#fffdf7" stroke="#d8d2c4"/><ellipse cx="50" cy="44" rx="22" ry="8" fill="#b5762f"/><ellipse cx="50" cy="43" rx="13" ry="4.5" fill="#f6e6cf"/></svg>
+                    <span class="badge">主图</span>
+                  </div>
+                  <div class="slot empty" style="aspect-ratio:auto;height:52px">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                    <span>参考图</span>
+                  </div>
+                </div>
+                <div class="slots-note" style="font-size:10px;margin-top:5px">主图必选，参考图可选</div>
+                <div class="row" style="margin-top:9px">
+                  <textarea class="req-box" style="min-height:46px">把背景换成浅蓝色，杯子别动</textarea>
+                </div>
+                <div class="row">
+                  <div class="vals">
+                    <button class="opt on">不指定</button>
+                    <button class="opt">扁平插画</button>
+                    <button class="opt">3D 渲染</button>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="vals">
+                    <button class="opt on">跟随原图</button>
+                    <button class="opt">1024x1024</button>
+                  </div>
+                </div>
+              </div>
+              <div class="pp-foot">
+                <span>完成后挂到输入框</span>
+                <button class="btn-primary">完成</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 步骤 3 -->
+          <div class="card">
+            <div class="variant-h"><span class="pill" style="background:var(--g100);color:var(--g600)">03</span> 点「完成」→ 面板收起，内容挂到输入框</div>
+            <div class="composer edit-mode">
+              <div class="attach-row">
+                <div class="chip-att edit">
+                  <div class="thumb">
+                    <svg viewBox="0 0 30 30" width="30" height="30"><rect width="30" height="30" fill="#f4dcae"/><path d="M8 14h14v8a4 4 0 0 1-4 4h-6a4 4 0 0 1-4-4z" fill="#fffdf7" stroke="#d8d2c4"/><ellipse cx="15" cy="14" rx="7" ry="2.6" fill="#b5762f"/></svg>
+                  </div>
+                  <span>改这张图 · coffee-flat.png</span>
+                  <span class="x">×</span>
+                </div>
+              </div>
+              <div class="line">
+                <textarea>把背景换成浅蓝色，杯子别动</textarea>
+                <button class="send" style="background:var(--viol700)">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 12h12M13 6l6 6-6 6"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="prefix-demo" style="margin-top:9px">
+              面板里点的是<b>「完成」不是「发送」</b>：把图和要求灌进输入框，用户还能改词、加话、或者干脆不发。
+              面板里直接发送会让「手滑点了按钮就扣一次钱」变成可能。
+            </div>
+          </div>
+
+          <!-- 步骤 4 -->
+          <div class="card">
+            <div class="variant-h"><span class="pill" style="background:var(--g100);color:var(--g600)">04</span> 发送 → 指令带上前缀</div>
+            <div class="msg me" style="margin:0">
+              <div class="avatar u">我</div>
+              <div class="bubble" style="max-width:100%">
+                <p><b style="color:#a7f3d0">沿用所附图片进行修改：</b>把背景换成浅蓝色，杯子别动</p>
+                <div class="att">
+                  <div class="thumb">
+                    <svg viewBox="0 0 52 52" width="52" height="52"><rect width="52" height="52" fill="#f4dcae"/><path d="M13 24h23v14a7 7 0 0 1-7 7H20a7 7 0 0 1-7-7z" fill="#fffdf7" stroke="#d8d2c4"/><ellipse cx="24.5" cy="24" rx="11.5" ry="4.4" fill="#b5762f"/><ellipse cx="24.5" cy="23.4" rx="7" ry="2.6" fill="#f6e6cf"/></svg>
+                  </div>
+                  <div class="meta">coffee-flat.png<br>1024 × 1024</div>
+                </div>
+              </div>
+            </div>
+            <div class="prefix-demo" style="margin-top:9px">
+              前缀是<b>系统加的，用户不用打</b>。界面上的 chip 也让「这次是改图」全程可见，发出去以后还能从消息里认出来。
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="win">
+      <div class="win-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:6px">边界与状态</span></div>
+      <div class="win-body">
+        <table class="t">
+          <tr><th style="width:230px">情况</th><th>表现</th></tr>
+          <tr>
+            <td>当前智能体没勾 <code>edit_image</code></td>
+            <td>「改图」tab 置灰。切过去写明「当前智能体未启用改图工具，去智能体配置里勾选」，不让人对着灰 tab 猜</td>
+          </tr>
+          <tr>
+            <td>接口格式是 <code>openai_images</code></td>
+            <td>同样置灰——那条路走不通（见场景 4），勾了也只会报错，不如一开始就不给</td>
+          </tr>
+          <tr>
+            <td>图像生成总开关关闭</td>
+            <td>整个「图像参数」菜单项置灰（沿用现有逻辑），面板打不开</td>
+          </tr>
+          <tr>
+            <td>没传图就点「完成」</td>
+            <td>「完成」置灰，不可点</td>
+          </tr>
+          <tr>
+            <td>传了图但需求为空</td>
+            <td>允许完成，但发送前在输入框提示「说说要改哪里」；空需求的改图没有意义</td>
+          </tr>
+          <tr>
+            <td>上次停在「改图」tab</td>
+            <td>记住。常改图的人第二次打开直接落到改图页，不用每次重切</td>
+          </tr>
+          <tr>
+            <td>输入框直接拖图（不走面板）</td>
+            <td>照旧可用，模型自己判断读图还是改图；判错了用结果图下的「我要的是改这张图」纠正</td>
+          </tr>
+        </table>
+
+        <div class="notice plain" style="margin:12px 0 0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>
+          <p><b>为什么没用「加号菜单加一项『改这张图』」</b>：那个方案不用改面板结构，但意图只在菜单点击那一刻存在，用户回到输入框继续打字后就断了。tab 版把意图状态留在面板里，还能记住上次选择，对反复改图的场景更顺。代价是面板高度增加约 140px、传图入口有两个——面板加了 <code>max-height:86vh</code> 滚动兜底。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════ 场景 6 ════════════ -->
+  <section class="scene" id="s6">
+    <div class="notice am">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 16H3l9-16z"/><path d="M12 9v4m0 3h.01"/></svg>
+      <p><b>为「kolors 那种坑」加的保险</b>：管理员把模型填成只支持文生图的型号时，现有「测试生成」照样通过，改图却会全 500。所以测试区要多一个按钮，用<b>内置样图</b>跑一次真实的改图请求。</p>
+    </div>
+
+    <div class="win">
+      <div class="win-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:6px">系统设置 → 图像生成 → 连通性测试</span></div>
+      <div class="win-body">
+        <div style="border:1px solid var(--g200);border-radius:11px;padding:13px;background:#fff">
+          <div style="font-size:12px;font-weight:650;color:var(--g800);margin-bottom:9px">连通性测试</div>
+
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <span style="font-size:11.5px;color:var(--g500);flex:none">提示词</span>
+            <input class="inp" value="一只戴圆框眼镜、正在敲键盘的橘猫，扁平插画风格" style="flex:1;min-width:240px;border:1px solid var(--g200);border-radius:8px;padding:7px 10px;font-size:12px;color:var(--g700)">
+            <button style="border:1px solid var(--g200);background:#fff;border-radius:8px;padding:7px 13px;font-size:12px;color:var(--g600)">测试生成</button>
+            <button style="border:1px solid var(--viol100);background:var(--viol50);border-radius:8px;padding:7px 13px;font-size:12px;color:var(--viol700);font-weight:600">测试改图</button>
+          </div>
+
+          <div style="font-size:10.5px;color:var(--g400);line-height:1.7">
+            「测试生成」用上面这句提示词文生图；「测试改图」忽略它，用<b>内置样图</b> + 固定指令「把背景换成浅蓝色，主体保持不变」跑一次改图。
+            两者都<b>不落库、不发布产物</b>，看完就丢。
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:6px;margin:16px 0 10px;font-size:11.5px;color:var(--g500)">
+          三种可能的结果
+        </div>
+
+        <div class="grid2">
+          <!-- 结果 A -->
+          <div class="card" style="border-color:var(--em200);background:var(--em50)">
+            <div style="display:flex;gap:10px">
+              <div style="width:64px;height:64px;border-radius:8px;overflow:hidden;flex:none;border:1px solid var(--em200)">
+                <svg viewBox="0 0 64 64" width="64" height="64"><rect width="64" height="64" fill="#7ec5ef"/><path d="M16 30h30v17a9 9 0 0 1-9 9H25a9 9 0 0 1-9-9z" fill="#fffdf7" stroke="#d8d2c4"/><ellipse cx="30" cy="30" rx="14" ry="5.5" fill="#b5762f"/><ellipse cx="30" cy="29" rx="8" ry="3.2" fill="#f6e6cf"/></svg>
+              </div>
+              <div style="min-width:0">
+                <div style="font-size:12px;font-weight:650;color:var(--em700)">✓ 改图可用</div>
+                <div style="font-size:11px;color:var(--em700);opacity:.85;line-height:1.7;margin-top:3px">
+                  Qwen-Image-2.1-Turbo · 5.7s<br>
+                  输出 1024×1024 · 951 KB
+                </div>
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--em700);margin-top:9px;line-height:1.7">
+              可以放心给智能体勾 <code>edit_image</code>。
+            </div>
+          </div>
+
+          <!-- 结果 B -->
+          <div class="card" style="border-color:var(--rose200);background:var(--rose50)">
+            <div style="display:flex;gap:10px">
+              <div style="width:64px;height:64px;border-radius:8px;flex:none;border:1px dashed var(--rose200);display:flex;align-items:center;justify-content:center;color:var(--rose600)">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>
+              </div>
+              <div style="min-width:0">
+                <div style="font-size:12px;font-weight:650;color:var(--rose700)">✗ 这个模型不能改图</div>
+                <div style="font-size:11px;color:var(--rose700);opacity:.85;line-height:1.7;margin-top:3px">
+                  kolors · 500 upstream error<br>
+                  <span class="mono" style="font-size:10px">do_request_failed</span>
+                </div>
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--rose700);margin-top:9px;line-height:1.7">
+              <b>不要甩原始报错。</b>译文：当前图像模型只支持文生图，改图需要多模态图像模型。
+              建议换回 <code>Qwen-Image-2.1-Turbo</code>；在此之前别给智能体勾 <code>edit_image</code>——勾了也只会失败。
+            </div>
+          </div>
+
+          <!-- 结果 C -->
+          <div class="card">
+            <div style="display:flex;gap:10px">
+              <div style="width:64px;height:64px;border-radius:8px;flex:none;border:1px dashed var(--g300);display:flex;align-items:center;justify-content:center;color:var(--g400)">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5m0 3h.01"/></svg>
+              </div>
+              <div style="min-width:0">
+                <div style="font-size:12px;font-weight:650;color:var(--g700)">连接失败</div>
+                <div style="font-size:11px;color:var(--g500);line-height:1.7;margin-top:3px">
+                  超时 / 401 未授权 / DNS 解析失败
+                </div>
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--g600);margin-top:9px;line-height:1.7">
+              按现有「测试生成」的报错分层处理，与改图能力无关。
+            </div>
+          </div>
+
+          <!-- 结果 D -->
+          <div class="card">
+            <div style="display:flex;gap:10px">
+              <div style="width:64px;height:64px;border-radius:8px;flex:none;border:1px dashed var(--g300);display:flex;align-items:center;justify-content:center;color:var(--g400)">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+              </div>
+              <div style="min-width:0">
+                <div style="font-size:12px;font-weight:650;color:var(--g700)">按钮置灰（不可点）</div>
+                <div style="font-size:11px;color:var(--g500);line-height:1.7;margin-top:3px">
+                  接口格式是 <code>openai_images</code> 时
+                </div>
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--g600);margin-top:9px;line-height:1.7">
+              那条协议下改图走不通（见场景 4），测也没意义。旁边一行小字说明「改图需要 <code>openai_chat</code> 格式」。
+            </div>
+          </div>
+        </div>
+
+        <table class="t" style="margin-top:14px">
+          <tr><th style="width:170px">实现细节</th><th>说明</th></tr>
+          <tr>
+            <td>内置样图从哪来</td>
+            <td>代码里内联一张压缩过的 PNG（256×256、几 KB），不依赖用户上传、不打包外部资源。指令固定为「把背景换成浅蓝色，主体保持不变」——改动明显，一眼能看出改图是否真的生效。</td>
+          </tr>
+          <tr>
+            <td>要不要落盘</td>
+            <td>不落盘、不登记产物，与现有「测试生成」一致。返回 data URL 供界面预览。</td>
+          </tr>
+          <tr>
+            <td>怎么判断「不支持改图」</td>
+            <td>上游 500 / <code>do_request_failed</code> / 无图片返回，三种都归为「该模型可能不支持改图」，不要直接透出网关原文。</td>
+          </tr>
+          <tr>
+            <td>失败后要不要自动关掉工具</td>
+            <td>不自动。只是提示——自动改配置会让人以为是平台擅自改了他的设置。但智能体侧勾了 <code>edit_image</code> 时，工具描述里带上「本功能需要管理员在系统设置中测试通过」。</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════ 场景 7 ════════════ -->
+  <section class="scene" id="s7">
+    <div class="notice am">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 16H3l9-16z"/><path d="M12 9v4m0 3h.01"/></svg>
+      <p>改图比文生图更容易失败——它多了一道「读这张图」的环节，还要过内容审核。<b>原则：用户看到的必须是「哪里出了问题 + 我该做什么」，网关原文只作小字附注。</b>甩一句 <code>do_request_failed</code> 出去，用户只会来问客服。</p>
+    </div>
+
+    <div class="grid2" style="align-items:start">
+      <div>
+        <div class="mini-label"><b>示例</b>超时失败时，消息流和输入框各自的样子</div>
+        <div class="msg-list" style="min-height:auto;gap:12px">
+          <div class="msg">
+            <div class="avatar a">AI</div>
+            <div style="min-width:0">
+              <div class="tool fail" style="max-width:100%">
+                <div class="tool-head">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg>
+                  <span class="nm">edit_image</span>
+                  <span class="st"><b></b>失败 · 180s</span>
+                </div>
+                <div class="fail-msg">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 3h.01"/></svg>
+                  <span>等上游返回超时了（180 秒）。这种情况<b>可能已经出图但没传回来</b>，所以平台不会自动重发——重发等于再花一次钱。</span>
+                </div>
+                <div class="raw-err">ReadTimeout: The read operation timed out</div>
+                <div class="fail-act">
+                  <button class="pri">重试</button>
+                  <button>换个说法</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mini-label"><b>同一次失败</b>输入框与附件都没被清掉，可以直接改一下再发</div>
+        <div class="composer edit-mode">
+          <div class="attach-row">
+            <div class="chip-att edit">
+              <div class="thumb">
+                <svg viewBox="0 0 30 30" width="30" height="30"><rect width="30" height="30" fill="#f4dcae"/><path d="M8 14h14v8a4 4 0 0 1-4 4h-6a4 4 0 0 1-4-4z" fill="#fffdf7" stroke="#d8d2c4"/><ellipse cx="15" cy="14" rx="7" ry="2.6" fill="#b5762f"/></svg>
+              </div>
+              <span>改这张图 · coffee-flat.png</span>
+              <span class="x">×</span>
+            </div>
+          </div>
+          <div class="line">
+            <textarea>把背景换成浅蓝色，杯子别动</textarea>
+            <button class="send" style="background:var(--viol700)">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 12h12M13 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+          <div class="area-tools"><span style="color:var(--g400)">失败不清空输入框——否则用户得重新找图、重新打字</span></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="win">
+          <div class="win-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:6px">各类失败与对应文案</span></div>
+          <div class="win-body" style="padding:0">
+            <table class="t" style="border:none">
+              <tr><th style="width:118px">失败原因</th><th>用户看到的文案</th><th style="width:112px">给的出口</th></tr>
+              <tr>
+                <td>超过上传上限</td>
+                <td>图片太大（24.5 MB），上限 20 MB</td>
+                <td>换一张 / 压缩</td>
+              </tr>
+              <tr>
+                <td>格式不支持</td>
+                <td>只支持 PNG / JPG / WEBP，当前是 HEIC</td>
+                <td>换一张</td>
+              </tr>
+              <tr>
+                <td>压缩后仍过大</td>
+                <td>压到长边 1536 后仍有 12 MB，网关拒绝接收</td>
+                <td>换一张</td>
+              </tr>
+              <tr>
+                <td>上游超时</td>
+                <td>等上游返回超时（180s）。可能已出图但没传回，不自动重发以免重复计费</td>
+                <td>重试 / 换说法</td>
+              </tr>
+              <tr>
+                <td>内容审核拒绝</td>
+                <td>上游拒绝了这次修改（涉及敏感内容）</td>
+                <td>换个说法 / 换张图</td>
+              </tr>
+              <tr>
+                <td>模型不支持改图</td>
+                <td>当前图像模型不支持改图，请联系管理员在系统设置 → 图像生成 里先点「测试改图」</td>
+                <td>去系统设置</td>
+              </tr>
+              <tr>
+                <td>网关 5xx</td>
+                <td>网关暂时不可用（502），已重试 1 次</td>
+                <td>重试</td>
+              </tr>
+              <tr>
+                <td>需求为空</td>
+                <td>还没说要把图改成什么样</td>
+                <td>（不发出去）</td>
+              </tr>
+              <tr>
+                <td>图里没可改内容</td>
+                <td>模型没能在这张图里识别出要修改的部分，试试说得更具体</td>
+                <td>换说法</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+
+        <div class="notice plain" style="margin-top:12px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>
+          <p><b>三条硬规则</b>：<br>
+          ① 网关原文只进小字附注，主文案必须是人话；<br>
+          ② 除了「需求为空」，其余失败<b>都不清空输入框和附件</b>，让用户能改一下直接重发；<br>
+          ③ 失败不写进会话产物，也不占用版本链——它压根没产出图。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════ 场景 8 ════════════ -->
+  <section class="scene" id="s8">
+    <div class="notice info">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>
+      <p>桌面端面板是从菜单右侧展开的浮层，<b>移动端放不下</b>——现有实现是 <code>fixed</code> 居中、上方留白、底部可滚动。加了 tab 之后改图页比生成页高，得确认在小屏上没被截断。</p>
+    </div>
+
+    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+      <!-- 手机 1：改图 tab -->
+      <div>
+        <div class="mini-label"><b>①</b> 面板居中弹出，改图页可滚动</div>
+        <div class="phone">
+          <div class="phone-bar">9:41 · 聊天</div>
+          <div class="phone-body" style="position:relative;min-height:420px">
+            <!-- 背景消息（被浮层盖住） -->
+            <div class="msg" style="opacity:.35">
+              <div class="avatar a">AI</div>
+              <div class="bubble" style="font-size:11px">好的，我来改这张图的背景…</div>
+            </div>
+
+            <!-- 浮层 -->
+            <div class="phone-pop" style="margin-top:14px">
+              <div class="ptabs">
+                <button class="ptab">生成</button>
+                <button class="ptab on">改图</button>
+                <span style="margin-left:auto;padding:6px 10px;color:var(--g300);font-size:13px">×</span>
+              </div>
+              <div class="phone-scroll">
+                <div class="panel-b" style="padding:11px">
+                  <div class="row">
+                    <div class="row-k">要改的图片</div>
+                    <div class="upload-zone" style="padding:13px 10px">
+                      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0L7 9m5-5l5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                      点此选择
+                    </div>
+                  </div>
+                  <div class="row">
+                    <div class="row-k">要改哪里</div>
+                    <textarea class="req-box" style="min-height:50px;font-size:11.5px"></textarea>
+                  </div>
+                  <div class="row">
+                    <div class="row-k">风格</div>
+                    <div class="vals" style="gap:5px">
+                      <button class="opt on" style="font-size:11px;padding:3px 8px">不指定</button>
+                      <button class="opt" style="font-size:11px;padding:3px 8px">扁平插画</button>
+                      <button class="opt" style="font-size:11px;padding:3px 8px">写实摄影</button>
+                      <button class="opt" style="font-size:11px;padding:3px 8px">3D 渲染</button>
+                      <button class="opt" style="font-size:11px;padding:3px 8px">极简线条</button>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <div class="row-k">分辨率</div>
+                    <div class="vals" style="gap:5px">
+                      <button class="opt on" style="font-size:11px;padding:3px 8px">跟随原图</button>
+                      <button class="opt" style="font-size:11px;padding:3px 8px">1024x1024</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="scroll-hint">↓ 底部按钮在滚动区外，始终可点</div>
+              </div>
+              <div class="pp-foot" style="padding:8px 11px">
+                <span style="font-size:10px">完成后挂到输入框</span>
+                <button class="btn-primary" style="padding:5px 12px;font-size:11.5px">完成</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 手机 2：结果与续改 -->
+      <div>
+        <div class="mini-label"><b>②</b> 结果图限高，续改入口不挤走</div>
+        <div class="phone">
+          <div class="phone-bar">9:41 · 聊天</div>
+          <div class="phone-body" style="min-height:420px">
+            <div class="msg">
+              <div class="avatar a">AI</div>
+              <div style="min-width:0">
+                <div class="frame" style="display:inline-block;border:1px solid var(--g200);border-radius:10px;overflow:hidden">
+                  <svg viewBox="0 0 264 264" width="150" height="150"><rect width="264" height="264" fill="#7ec5ef"/><ellipse cx="132" cy="222" rx="86" ry="18" fill="#5aa9d8"/><path d="M66 122h117v66a36 36 0 0 1-36 36h-46a36 36 0 0 1-36-36z" fill="#fffdf7" stroke="#d8d2c4" stroke-width="1.6"/><ellipse cx="124.5" cy="122" rx="58" ry="22" fill="#b5762f"/><ellipse cx="124.5" cy="119" rx="35" ry="13" fill="#f6e6cf"/><path d="M183 140a20 20 0 0 1 0 40" fill="none" stroke="#d8d2c4" stroke-width="7" stroke-linecap="round"/></svg>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:10px;color:var(--g400);flex-wrap:wrap">
+                  <span class="ver cur" style="font-size:9.5px">基于原图</span>
+                  <span>1024×1024</span>
+                </div>
+                <div style="display:flex;gap:6px;margin-top:6px">
+                  <button class="act pri" style="font-size:10.5px;padding:3px 8px">继续修改</button>
+                  <button class="act" style="font-size:10.5px;padding:3px 8px">下载</button>
+                </div>
+                <div class="fix" style="margin-top:7px;font-size:10px">
+                  <span class="q" style="font-size:10px">不是这个结果？</span>
+                  <button style="font-size:9.5px;padding:2px 7px">我要的是改这张图</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 说明 -->
+      <div style="flex:1;min-width:280px;max-width:460px;display:flex;flex-direction:column;gap:12px">
+        <div class="card">
+          <h3>移动端要守住的四条</h3>
+          <ul>
+            <li><b>面板占满宽度</b>：<code>inset-x-3</code>，不放右侧浮层——小屏没有「右侧」</li>
+            <li><b>限高 + 内部滚动</b>：<code>max-h-[85vh]</code>，改图页比生成页高，靠滚动兜底</li>
+            <li><b>底部按钮固定在滚动区外</b>：用户滚到哪儿都能点「完成」，不用滑到底找</li>
+            <li><b>结果图继续限高 320px</b>：竖版图（928×1664）在小屏按比例缩到约 178px 宽，不会把「继续修改」挤出屏幕</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>和桌面端的差异</h3>
+          <ul>
+            <li>桌面：面板从菜单项右侧展开，<b>菜单仍可见</b>，悬停别的项面板自动收</li>
+            <li>移动：面板居中覆盖，<b>菜单已收起</b>，靠右上角 × 或点「完成」退出</li>
+            <li>移动端<code>hover</code> 不可用，所以「悬停别的菜单项自动收面板」这条在移动端不生效，改成点遮罩关闭</li>
+          </ul>
+        </div>
+        <div class="notice plain" style="margin:0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>
+          <p>这一屏没有新交互，是<b>把已定的规则在小屏上验一遍</b>。真正要盯的是改图页：传图区 + 需求框 + 两组参数 + 底部按钮，在 320px 宽、约 420px 高的可用区域里会不会挤。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <p class="proto-hint" style="max-width:1080px;margin:16px auto 0;font-size:11.5px;color:var(--g400);line-height:1.75">
+    原型里的图片都是内联 SVG 示意，不是真实产出的图。真实的改图结果已用网关跑过：同一张咖啡插画，换背景那张杯身与拉花完全没变，换风格那张变成了写实质感而构图一致。
+  </p>
+</div>
+
+<script>
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('on'));
+      document.querySelectorAll('.scene').forEach(s => s.classList.remove('on'));
+      tab.classList.add('on');
+      document.getElementById(tab.dataset.scene).classList.add('on');
+    });
+  });
+
+  // 入口演示：点「＋」开合菜单，点「图像参数」开合面板
+  const plusBtn = document.getElementById('plusBtn');
+  const plusMenu = document.getElementById('plusMenu');
+  const paramPop = document.getElementById('paramPop');
+  const menuImage = document.getElementById('menuImage');
+  if (plusBtn) {
+    plusBtn.addEventListener('click', () => {
+      const on = plusMenu.classList.toggle('on');
+      plusBtn.classList.toggle('on', on);
+      if (!on) paramPop.classList.remove('on');
+    });
+  }
+  if (menuImage) {
+    menuImage.addEventListener('click', () => paramPop.classList.toggle('on'));
+    // 悬停别的菜单项收起面板，跟真实实现里「浮层互斥」一致
+    plusMenu.querySelectorAll('.mi').forEach(item => {
+      if (item === menuImage) return;
+      item.addEventListener('mouseenter', () => paramPop.classList.remove('on'));
+    });
+  }
+  // 面板 tab 切换：每个 .ptabs 管自己那一组 body，按顺序对应
+  document.querySelectorAll('.ptabs').forEach(tabs => {
+    const pop = tabs.closest('.param-pop');
+    if (!pop) return;
+    const bodies = pop.querySelectorAll(':scope > .ptab-body');
+    // 场景 5 里那两处是静态示意（只有 tab 头，没有内容区），不绑交互，
+    // 否则点了只改高亮、内容不动，看着像坏了。
+    if (!bodies.length) return;
+    tabs.querySelectorAll('.ptab').forEach((t, i) => {
+      t.addEventListener('click', () => {
+        tabs.querySelectorAll('.ptab').forEach(x => x.classList.remove('on'));
+        t.classList.add('on');
+        bodies.forEach((b, j) => b.classList.toggle('on', i === j));
+      });
+    });
+  });
+
+  // 纠正按钮：点了只给一句确认，真实实现里会带这个意图重跑一次
+  document.querySelectorAll('.fix [data-fix]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const fix = btn.closest('.fix');
+      fix.querySelectorAll('[data-fix]').forEach(b => b.disabled = true);
+      const tip = document.createElement('span');
+      tip.className = 'done';
+      tip.style.display = 'inline';
+      tip.textContent = btn.dataset.fix === 'edit'
+        ? '✓ 已按「直接改这张图」重新生成'
+        : '✓ 已按「参考它画新的」重新生成';
+      fix.appendChild(tip);
+    });
+  });
+
+  // 参数芯片单选（同组互斥）
+  document.querySelectorAll('.vals').forEach(group => {
+    group.querySelectorAll('.opt').forEach(btn => {
+      btn.addEventListener('click', () => {
+        group.querySelectorAll('.opt').forEach(b => b.classList.remove('on'));
+        btn.classList.add('on');
+      });
+    });
+  });
+
+  // 「继续修改」展开面板
+  document.querySelectorAll('[data-open-edit]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = 'editPanel' + btn.dataset.openEdit;
+      const p = document.getElementById(id);
+      if (!p) return;
+      p.style.display = p.style.display === 'none' ? 'block' : 'none';
+      const ta = p.querySelector('textarea');
+      if (ta && p.style.display === 'block') ta.focus();
+    });
+  });
+  document.querySelectorAll('[data-close-edit]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const p = document.getElementById('editPanel' + btn.dataset.closeEdit);
+      if (p) p.style.display = 'none';
+    });
+  });
+
+  // 快捷 chip 只填字，不触发生成
+  document.querySelectorAll('#editPanel2 .opt').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const ta = document.querySelector('#editPanel2 textarea');
+      if (ta) { ta.value = chip.textContent.trim(); ta.focus(); }
+    });
+  });
+
+  // 工具开关
+  document.querySelectorAll('.toolrow .sw').forEach(sw => {
+    sw.addEventListener('click', () => sw.classList.toggle('on'));
+  });
+</script>
+</body>
+</html>
