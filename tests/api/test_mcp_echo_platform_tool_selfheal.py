@@ -61,7 +61,9 @@ async def test_platform_echo_reuses_renamed_tool_row_instead_of_inserting_same_p
             _one(server),
             _one(None),
             _one(renamed_tool),
-            # 平台 Echo 的进度测试工具（echo_slow）：按名查不到 → 再按固定 tool_id 兜底（也没有）
+            # 进度测试工具（echo_slow）与发信工具（send_mail）：按名查不到 → 按固定 tool_id 兜底（也没有）
+            _one(None),
+            _one(None),
             _one(None),
             _one(None),
         ]

@@ -10,7 +10,7 @@ import Switch from '../Switch.vue'
 import McpToolTester from './McpToolTester.vue'
 import {
   buildMcpServerNamePrefix,
-  normalizeMcpServerNameSuffix,
+  describeMcpServerNameSuffixError,
   resolveEditedServerName,
   stripMcpServerNamePrefix,
   suggestUniqueServerNameSuffix,
@@ -91,9 +91,15 @@ const canSave = computed(() => {
   return userInfo.value?.role === 'admin'
 })
 
+const myUserId = computed(() => userInfo.value?.user_id ?? userInfo.value?.id)
+const myUserName = computed(() => String(userInfo.value?.user_name || ''))
+
+// 前缀是 priv-<base36(user_id)>- / pub-<base36(user_id)>-：归属段不可被误认成别人，
+// 人可读的「创建人」由服务列表的 owner_display_name 补出来。
 const namePrefix = computed(() =>
-  buildMcpServerNamePrefix(props.scope, userInfo.value?.user_name),
+  buildMcpServerNamePrefix(props.scope, myUserId.value),
 )
+
 
 // 这个组件同时服务两个入口：系统管理的「平台 MCP」（scope=global）和
 // 个人中心的「我的 MCP」（scope=personal）。绑定语义完全不同——
@@ -101,6 +107,11 @@ const namePrefix = computed(() =>
 // 一律当全局处理的话，个人 MCP 上绑凭据会被后端拒（个人凭据不能全局绑定），
 // 或者更糟：管理员给个人 MCP 配出一条全局绑定。
 const isGlobalBinding = computed(() => props.scope === 'global')
+
+// 平台 MCP 列表里「谁建的」有价值；个人页只有自己，不再重复一行。
+const showOwnerBadge = (server: any) =>
+  props.scope === 'global'
+  && Boolean(server?.owner_display_name || server?.owner_user_name)
 
 const servers = ref<any[]>([])
 const searchQuery = ref('')
@@ -187,7 +198,11 @@ const serversMatchingFilters = computed(() => {
     const toolMatch = Array.isArray(s.tools) && s.tools.some((t: any) =>
       (t.name || '').toLowerCase().includes(query) || (t.description || '').toLowerCase().includes(query)
     )
-    return nameMatch || descMatch || urlMatch || toolMatch
+    // 名字里只剩 base36 归属编码后，「谁建的」这条线索只能靠 owner 字段搜索补回来
+    const ownerMatch =
+      (s.owner_user_name || '').toLowerCase().includes(query) ||
+      (s.owner_display_name || '').toLowerCase().includes(query)
+    return nameMatch || descMatch || urlMatch || toolMatch || ownerMatch
   })
 })
 
@@ -366,6 +381,21 @@ const filteredServers = computed(() => {
 const serverNameSuffix = ref('')
 /** 编辑态回填的原始完整名：用户没改后缀时必须原样保留，绝不重新拼前缀 */
 const editingOriginalName = ref('')
+/**
+ * 后缀字符集校验：中文/空格/全角会让名字进「服务:工具」标识后难复制、难排查。
+ * 回填的存量名（平台 Echo 的中文名、历史带空格名）只要**没被改动**就跳过校验，
+ * 否则管理员改个备注都保存不了——判据与 resolveEditedServerName 完全一致。
+ */
+const serverNameSuffixError = computed(() => {
+  const reason = describeMcpServerNameSuffixError(serverNameSuffix.value)
+  if (!reason) return ''
+  const original = editingOriginalName.value
+  const untouchedSuffix = original
+    ? stripMcpServerNamePrefix(original, props.scope, myUserId.value, myUserName.value)
+    : ''
+  if (original && serverNameSuffix.value.trim() === untouchedSuffix) return ''
+  return reason
+})
 /** 第一步录入方式：手动 / JSON 粘贴 */
 const connectionInputTab = ref<'manual' | 'json'>('manual')
 const mcpJsonPaste = ref('')
@@ -375,8 +405,9 @@ const syncFullServerName = () => {
   newServer.value.server_name = resolveEditedServerName(
     editingOriginalName.value,
     props.scope,
-    userInfo.value?.user_name,
+    myUserId.value,
     serverNameSuffix.value,
+    myUserName.value,
   )
 }
 
@@ -385,7 +416,7 @@ watch(serverNameSuffix, () => {
 })
 
 watch(
-  () => [props.scope, userInfo.value?.user_name] as const,
+  () => [props.scope, myUserId.value, myUserName.value] as const,
   () => {
     syncFullServerName()
   },
@@ -2419,7 +2450,8 @@ const openEditModal = (server: any) => {
   serverNameSuffix.value = stripMcpServerNamePrefix(
     server.server_name,
     props.scope,
-    userInfo.value?.user_name,
+    myUserId.value,
+    myUserName.value,
   )
   newServer.value = {
     server_name: server.server_name,
@@ -2635,14 +2667,16 @@ const applyMcpJsonPaste = (options?: { connect?: boolean }) => {
  * 这里在保存前补齐，避免"唯一的主按钮点了没反应"。
  */
 const ensureServerNameSuffixFromUrl = () => {
-  if (normalizeMcpServerNameSuffix(serverNameSuffix.value)) return false
+  // 判据用「有没有输入」而不是「归一化后是否为空」：用户填了中文时归一化会得到空串，
+  // 那会把他刚输入的内容悄悄换成按地址推导的后缀，看起来像输入被吞了。
+  if (serverNameSuffix.value.trim()) return false
   const existingNames = servers.value
     .filter((server: any) => server.id !== editingId.value)
     .map((server: any) => server.server_name)
   serverNameSuffix.value = suggestUniqueServerNameSuffix(
     newServer.value.sse_url,
     props.scope,
-    userInfo.value?.user_name,
+    myUserId.value,
     existingNames,
   )
   syncFullServerName()
@@ -2725,11 +2759,12 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
     showToast('没有编辑 MCP 服务的权限', 'error')
     return false
   }
-  syncFullServerName()
-  if (!normalizeMcpServerNameSuffix(serverNameSuffix.value)) {
-    showToast('请填写服务名称后缀', 'warning')
+  const suffixError = serverNameSuffixError.value
+  if (suffixError) {
+    showToast(suffixError, 'warning')
     return false
   }
+  syncFullServerName()
   if (!newServer.value.server_name || !newServer.value.sse_url) {
     showToast('请填写完整信息', 'warning')
     return false
@@ -3514,6 +3549,15 @@ onMounted(fetchServers)
                   class="mt-1 line-clamp-2 text-[11px] leading-snug text-gray-500"
                   :title="server.remark"
                 >{{ server.remark }}</p>
+                <!-- 名字里的归属段只是 base36(user_id) 编码，谁建的要靠这个徽标说清 -->
+                <div v-if="showOwnerBadge(server)" class="mt-1 flex flex-wrap items-center gap-1">
+                  <span
+                    class="inline-flex max-w-full items-center gap-1 truncate rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[9px] font-semibold text-gray-600 dark:border-gray-600 dark:bg-gray-700/40 dark:text-gray-300"
+                    :title="`创建人：${server.owner_display_name || server.owner_user_name}（${server.owner_user_name}）`"
+                  >
+                    创建人：{{ server.owner_display_name || server.owner_user_name }}
+                  </span>
+                </div>
               </div>
 
               <!-- 状态只留圆点 + 开关：「运行中」文字与开关是同一件事，重复说反而占位 -->
@@ -4465,16 +4509,20 @@ onMounted(fetchServers)
             <div class="flex items-stretch rounded-lg border border-gray-200 overflow-hidden focus-within:ring-2 focus-within:ring-primary/40">
               <span
                 class="shrink-0 px-2.5 py-2 text-sm font-mono bg-gray-100 text-gray-500 border-r border-gray-200 select-all"
-                :title="namePrefix"
+                :title="`${namePrefix}（归属编码：当前账号 ${myUserName || '未知'}）`"
               >{{ namePrefix }}</span>
               <input
                 v-model="serverNameSuffix"
                 type="text"
                 placeholder="自定义后缀，如 hcp"
                 class="flex-1 min-w-0 border-0 px-3 py-2 text-sm font-mono outline-none focus:ring-0"
+                :aria-invalid="Boolean(serverNameSuffixError)"
                 @keydown.stop
               />
             </div>
+            <p v-if="serverNameSuffixError" class="mt-1.5 text-[11px] font-medium text-rose-600 dark:text-rose-400">
+              {{ serverNameSuffixError }}
+            </p>
             <p class="mt-1.5 text-[10px] text-gray-400 leading-relaxed">
               完整名称：
               <span class="font-mono text-gray-600">{{ newServer.server_name || `${namePrefix}…` }}</span>

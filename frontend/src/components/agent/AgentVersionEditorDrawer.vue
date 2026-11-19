@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import ScopeGateSelect from "./ScopeGateSelect.vue";
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { AIAgent, AIAgentBase, AIAgentVersion, AgentType, StaleToolRef } from '../../api/agent';
 import type { AIModel } from '../../api/model';
 import MarkdownEditor from '../MarkdownEditor.vue';
@@ -41,6 +41,8 @@ const props = withDefaults(defineProps<{
   canEditVersion: boolean;
   toolTab: 'static' | 'mcp' | 'skills';
   toolSearchQuery: string;
+  /** 「已选」：只显示当前版本已勾选的工具 / MCP / Skills；跨三个页签共用 */
+  onlySelectedTools?: boolean;
   versionConfigStep: VersionConfigStep;
   versionConfigSteps: { id: VersionConfigStep; label: string }[];
   versionConfigProgress: number;
@@ -72,6 +74,11 @@ const props = withDefaults(defineProps<{
   isAllStaticGroupSelected: (label: string) => boolean;
   isMcpGroupCollapsed: (serverName: string) => boolean;
   getMcpGroupSelectedCount: (tools: any[]) => number;
+  /** 全量 MCP 分组（按服务名分）：分组 chips 的选项与计数取这一份 */
+  groupedMcpTools?: Record<string, any[]>;
+  /** 分组头的分子/分母：取全量分组，过滤视图下分母不变 */
+  staticGroupCounts: (label: string) => { selected: number; total: number };
+  mcpGroupCounts: (serverName: string) => { selected: number; total: number };
   isStaticGroupCollapsed: (label: string) => boolean;
   getStaticGroupSelectedCount: (tools: any[]) => number;
   getModelDisplayName: (modelId?: string) => string;
@@ -88,6 +95,8 @@ const props = withDefaults(defineProps<{
   staleToolRefsLoading?: boolean;
   staleToolRefsError?: string;
 }>(), {
+  onlySelectedTools: false,
+  groupedMcpTools: () => ({}),
   staleToolRefs: () => [],
   staleToolRefsLoading: false,
   staleToolRefsError: '',
@@ -99,6 +108,7 @@ const emit = defineEmits<{
   publish: [];
   'update:toolTab': [value: 'static' | 'mcp' | 'skills'];
   'update:toolSearchQuery': [value: string];
+  'update:onlySelectedTools': [value: boolean];
   'update:versionConfigStep': [value: VersionConfigStep];
   toggleTool: [name: string];
   toggleSkill: [skillId: string];
@@ -134,6 +144,23 @@ const emit = defineEmits<{
 // 搜索期间一律展开分组（只读覆盖，不写回折叠集合）：否则搜索命中的工具躲在折叠的
 // 分组里，用户只看到标题与计数；清空搜索即回到原本的折叠状态，无需保存快照。
 const isSearching = computed(() => props.toolSearchQuery.trim().length > 0);
+// 「已选」同理会把每个分组收窄成只剩一两个工具，折叠着等于看不到东西，
+// 所以两种过滤态都强制展开，且都不写回折叠集合。
+const isFiltering = computed(() => isSearching.value || props.onlySelectedTools);
+
+/**
+ * 过滤后列表为空时的提示。
+ *
+ * 只写「没有匹配」会把两种情况混在一起：一种是搜索关键词没命中，另一种是「已选」
+ * 而当前版本确实一个都没勾——后者要告诉用户关掉过滤，而不是让他换关键词。
+ */
+const filterEmptyHint = (label: string) => {
+  if (isSearching.value && props.onlySelectedTools) {
+    return `已勾选的${label}里没有匹配「${props.toolSearchQuery.trim()}」的项，试试清空搜索或关掉「已选」`;
+  }
+  if (props.onlySelectedTools) return `当前版本还没有勾选任何${label}`;
+  return '没有匹配的项，试试换个关键词';
+};
 
 // 批量展开 / 折叠按当前页签派发；Skills 页签没有分组，不渲染这两个按钮。
 const emitBulkExpandGroups = () => {
@@ -227,6 +254,13 @@ const AGENT_VERSION_TOOLCALL_TIMEOUT_MAX = 86400;
 const isAgentVersionToolcallTimeoutEnabled = computed(
   () => props.versionForm.toolcall_timeout_seconds != null,
 );
+// 这张卡片默认只占一行：标题 + 当前生效值摘要 + 开关。三行说明与输入框收起来，
+// 需要看细节或改值再展开——工具列表本身已经很长，顶部说明常驻三四行很占空间。
+const timeoutCardExpanded = ref(false);
+// 打开「自定义超时时间」时自动展开：否则开关开了却看不到要填的秒数。
+watch(isAgentVersionToolcallTimeoutEnabled, (enabled) => {
+  if (enabled) timeoutCardExpanded.value = true;
+});
 const getAgentVersionToolcallTimeoutValue = () => {
   const value = Number(props.versionForm.toolcall_timeout_seconds);
   return Number.isInteger(value)
@@ -295,24 +329,96 @@ const normalizeAgentVersionToolcallTimeoutInput = () => {
 
 const mcpSubTab = ref<'global' | 'personal'>('global');
 
-const currentScopeGroupedMcpTools = computed(() => {
-  const result: Record<string, any[]> = {};
+/** 未分组哨兵：与 MCP 管理页（McpServerRegistry）同一个值，两处口径必须一致 */
+const MCP_UNGROUPED_KEY = '__ungrouped__';
+
+/** 服务级业务分组名；空串统一归到「未分组」 */
+const mcpGroupOfServer = (tools: any[] | undefined) =>
+  String(tools?.[0]?.group_name || '').trim() || MCP_UNGROUPED_KEY;
+
+/** 当前页签（全部 / 某个分组 / 未分组） */
+const mcpGroupFilter = ref<string>('');
+
+/** 按「平台 / 我的」拆出某个分组视图；分组键是服务名，scope 由服务决定 */
+const scopeGroupsOf = (groups: Record<string, any[]>) => {
   const targetScope = mcpSubTab.value;
-  
-  Object.entries(props.filteredGroupedMcpTools || {}).forEach(([serverName, tools]) => {
+  const result: Record<string, any[]> = {};
+  Object.entries(groups || {}).forEach(([serverName, tools]) => {
     const isPersonalServer = tools[0]?.scope === 'personal';
-    if (targetScope === 'personal' && isPersonalServer) {
-      result[serverName] = tools;
-    } else if (targetScope === 'global' && !isPersonalServer) {
-      result[serverName] = tools;
-    }
+    if (targetScope === 'personal' && isPersonalServer) result[serverName] = tools;
+    else if (targetScope === 'global' && !isPersonalServer) result[serverName] = tools;
   });
-  
+  return result;
+};
+
+/** 搜索 /「已选」过滤后的当前 scope 视图 */
+const currentScopeGroupedMcpTools = computed(() =>
+  scopeGroupsOf(props.filteredGroupedMcpTools || {}),
+);
+
+/**
+ * 分组 chips 的选项来自**全量**分组，不跟着搜索收窄。
+ *
+ * 否则用户在「出行服务」组里搜关键词、命中变少到该组消失时，选中分组会被悄悄清空，
+ * 变成「明明只加了关键词，分组过滤却自己掉了」。
+ *
+ * 分组是**服务级**属性（``McpServer.group_name``），同一服务的工具必然同组，所以直接
+ * 按 server 归并；计数用工具数而不是服务数——这一屏列的是工具，「出行服务 12」比
+ * 「出行服务 3」更能说明过滤后会剩多少行。排序：有名分组按名称，"未分组"永远垫底。
+ */
+const mcpGroupOptions = computed(() => {
+  const counts = new Map<string, number>();
+  Object.values(scopeGroupsOf(props.groupedMcpTools || {})).forEach((tools) => {
+    const key = mcpGroupOfServer(tools);
+    counts.set(key, (counts.get(key) || 0) + tools.length);
+  });
+  return [...counts.entries()]
+    .map(([key, count]) => ({
+      key,
+      count,
+      label: key === MCP_UNGROUPED_KEY ? '未分组' : key,
+    }))
+    .sort((a, b) => {
+      if (a.key === MCP_UNGROUPED_KEY) return 1;
+      if (b.key === MCP_UNGROUPED_KEY) return -1;
+      return a.label.localeCompare(b.label, 'zh-Hans-CN');
+    });
+});
+
+/** 应用分组过滤后的服务分组视图（分组过滤是服务级，与工具级的搜索/「已选」叠加） */
+const visibleScopeGroupedMcpTools = computed(() => {
+  const groups = currentScopeGroupedMcpTools.value;
+  const filter = mcpGroupFilter.value;
+  if (!filter) return groups;
+  const result: Record<string, any[]> = {};
+  for (const [serverName, tools] of Object.entries(groups)) {
+    if (mcpGroupOfServer(tools) === filter) result[serverName] = tools;
+  }
   return result;
 });
 
 const currentScopeGroupedMcpToolsCount = computed(() => {
-  return Object.keys(currentScopeGroupedMcpTools.value).length;
+  return Object.keys(visibleScopeGroupedMcpTools.value).length;
+});
+
+/** 当前 scope 的工具总数（「全部」chip 的计数，取全量） */
+const mcpScopeToolsTotal = computed(() =>
+  Object.values(scopeGroupsOf(props.groupedMcpTools || {})).reduce(
+    (sum, tools) => sum + tools.length,
+    0,
+  ),
+);
+
+// 切「平台 / 我的」时分组集合完全不同，残留的选分组会让列表变成空；
+// 选中的分组若因搜索/改分组而消失，也回到「全部」。
+watch(mcpSubTab, () => {
+  mcpGroupFilter.value = '';
+});
+watch(mcpGroupOptions, (options) => {
+  const current = mcpGroupFilter.value;
+  if (current && !options.some((option) => option.key === current)) {
+    mcpGroupFilter.value = '';
+  }
 });
 
 /**
@@ -1113,27 +1219,42 @@ const externalCreationMissingFields = computed(() => {
               </div>
             </div>
             <div class="mb-4 flex-shrink-0 rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3">
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm font-bold text-gray-800">智能体版本工具调用超时时间</div>
-                  <p class="mt-1 text-[11px] leading-relaxed text-gray-500">
-                    默认使用全局配置；启用后，以当前智能体版本配置为准，不再与全局或工具配置取最大值。
-                  </p>
-                  <p class="mt-1 text-[11px] text-gray-400">当前全局配置：{{ globalAgentToolcallTimeout }} 秒（范围 1–3600）</p>
-                  <p v-if="producerHardTimeout !== null" class="mt-1 text-[11px] text-gray-400">
-                    整轮看门狗 {{ producerHardTimeout }} 秒：从发消息到收尾的总时长上限（含所有工具与模型调用），
-                    版本级配置超过它时本轮会先被强制终止。
-                  </p>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="text-xs font-medium text-gray-600">
-                    {{ isAgentVersionToolcallTimeoutEnabled ? '使用智能体专属配置' : '跟随全局配置' }}
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  @click="timeoutCardExpanded = !timeoutCardExpanded"
+                  :aria-expanded="timeoutCardExpanded"
+                  :title="timeoutCardExpanded ? '收起说明与配置' : '展开说明与超时配置'"
+                  class="flex min-w-0 items-center gap-1.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 rounded"
+                >
+                  <svg
+                    class="h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform"
+                    :class="timeoutCardExpanded ? 'rotate-90' : ''"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                  </svg>
+                  <span class="text-sm font-bold text-gray-800">智能体版本工具调用超时时间</span>
+                  <!-- 收起时把当前生效值压成一行，避免「收起来就看不到配了什么」 -->
+                  <span v-if="!timeoutCardExpanded" class="truncate text-[11px] text-gray-500">
+                    · {{ isAgentVersionToolcallTimeoutEnabled
+                      ? `版本级 ${getAgentVersionToolcallTimeoutValue()} 秒`
+                      : `跟随全局 ${globalAgentToolcallTimeout} 秒` }}
                   </span>
+                </button>
+                <div class="flex items-center gap-2">
+                  <!-- 恒定文案：状态由开关表达。原来按状态切「跟随全局配置 / 使用智能体专属
+                       配置」，和左边摘要的「跟随全局 300 秒」撞车，还容易被读成一个可点的动作。 -->
+                  <span class="text-xs font-medium text-gray-600">自定义超时时间</span>
                   <button
                     type="button"
                     role="switch"
+                    aria-label="自定义超时时间：开启后不跟随全局配置"
                     :aria-checked="isAgentVersionToolcallTimeoutEnabled"
                     :disabled="!canEditVersion"
+                    title="开启后使用当前智能体版本自己配置的超时时间；关闭则跟随全局配置"
                     @click="setAgentVersionToolcallTimeoutEnabled(!isAgentVersionToolcallTimeoutEnabled)"
                     class="relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors"
                     :class="[
@@ -1148,7 +1269,17 @@ const externalCreationMissingFields = computed(() => {
                   </button>
                 </div>
               </div>
-              <div v-if="isAgentVersionToolcallTimeoutEnabled" class="mt-3">
+              <div v-show="timeoutCardExpanded" class="mt-2 space-y-1">
+                <p class="text-[11px] leading-relaxed text-gray-500">
+                  默认使用全局配置；启用后，以当前智能体版本配置为准，不再与全局或工具配置取最大值。
+                </p>
+                <p class="text-[11px] text-gray-400">当前全局配置：{{ globalAgentToolcallTimeout }} 秒（范围 1–3600）</p>
+                <p v-if="producerHardTimeout !== null" class="text-[11px] leading-relaxed text-gray-400">
+                  整轮看门狗 {{ producerHardTimeout }} 秒：从发消息到收尾的总时长上限（含所有工具与模型调用），
+                  版本级配置超过它时本轮会先被强制终止。
+                </p>
+              </div>
+              <div v-if="isAgentVersionToolcallTimeoutEnabled && timeoutCardExpanded" class="mt-3">
                 <div class="flex items-center gap-2">
                 <button
                   type="button"
@@ -1191,7 +1322,9 @@ const externalCreationMissingFields = computed(() => {
                   {{ AGENT_VERSION_TOOLCALL_TIMEOUT_MAX }} 秒。
                 </p>
               </div>
-              <p v-else class="mt-2 text-[11px] text-gray-400">当前跟随全局配置（当前全局值 {{ globalAgentToolcallTimeout }} 秒）</p>
+              <p v-else-if="timeoutCardExpanded" class="mt-2 text-[11px] text-gray-400">
+                当前跟随全局配置（当前全局值 {{ globalAgentToolcallTimeout }} 秒）
+              </p>
             </div>
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4 flex-shrink-0">
               <div class="flex items-center gap-2 flex-1 min-w-[200px]">
@@ -1207,6 +1340,30 @@ const externalCreationMissingFields = computed(() => {
                     class="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
                   />
                 </div>
+                <!-- 范围切换：三个页签共用。做成文字两段式而不是图标——「已选 / 全部」
+                     一眼就知道当前在看什么，图标要靠 hover 才知道是漏斗。 -->
+                <div
+                  class="flex shrink-0 bg-gray-100 p-0.5 rounded-lg text-xs"
+                  role="group"
+                  aria-label="按勾选状态过滤工具范围"
+                >
+                  <button
+                    type="button"
+                    @click="emit('update:onlySelectedTools', true)"
+                    :aria-pressed="onlySelectedTools"
+                    title="只看当前版本已勾选的工具 / MCP / Skills"
+                    class="px-2.5 py-1 rounded-md transition-all font-medium whitespace-nowrap"
+                    :class="onlySelectedTools ? 'bg-white shadow-sm text-primary' : 'text-gray-400 hover:text-gray-600'"
+                  >已选</button>
+                  <button
+                    type="button"
+                    @click="emit('update:onlySelectedTools', false)"
+                    :aria-pressed="!onlySelectedTools"
+                    title="显示全部可用的工具 / MCP / Skills"
+                    class="px-2.5 py-1 rounded-md transition-all font-medium whitespace-nowrap"
+                    :class="!onlySelectedTools ? 'bg-white shadow-sm text-primary' : 'text-gray-400 hover:text-gray-600'"
+                  >全部</button>
+                </div>
                 <span class="text-xs font-medium text-primary bg-primary/10 px-2.5 py-1 rounded-full whitespace-nowrap">
                   已选 {{ selectedToolsCount }}/{{ allAvailableToolsCount + mcpToolsCount }}
                 </span>
@@ -1219,9 +1376,12 @@ const externalCreationMissingFields = computed(() => {
                 <button
                   type="button"
                   @click="emitBulkExpandGroups"
+                  :disabled="isFiltering"
                   aria-label="展开当前页签下的全部分组"
-                  title="展开当前页签下的全部分组"
-                  class="p-1.5 rounded-md text-gray-400 hover:text-primary hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  :title="isFiltering
+                    ? '搜索或「已选」视图下分组固定展开，切回「全部」后可折叠'
+                    : '展开当前页签下的全部分组'"
+                  class="p-1.5 rounded-md text-gray-400 hover:text-primary hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400"
                 >
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7" />
@@ -1230,9 +1390,12 @@ const externalCreationMissingFields = computed(() => {
                 <button
                   type="button"
                   @click="emitBulkCollapseGroups"
+                  :disabled="isFiltering"
                   aria-label="折叠当前页签下的全部分组"
-                  title="折叠当前页签下的全部分组"
-                  class="p-1.5 rounded-md text-gray-400 hover:text-primary hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  :title="isFiltering
+                    ? '搜索或「已选」视图下分组固定展开，切回「全部」后可折叠'
+                    : '折叠当前页签下的全部分组'"
+                  class="p-1.5 rounded-md text-gray-400 hover:text-primary hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400"
                 >
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 11l7-7 7 7M5 19l7-7 7 7" />
@@ -1267,6 +1430,9 @@ const externalCreationMissingFields = computed(() => {
 
             <!-- Static Tools -->
             <div v-if="toolTab === 'static'" class="flex-1 overflow-y-auto space-y-3 pr-1 version-editor-scroll">
+              <div v-if="!filteredGroupedTools.length" class="p-12 text-center text-sm text-gray-400">
+                {{ filterEmptyHint('系统工具') }}
+              </div>
               <div
                 v-for="group in filteredGroupedTools"
                 :key="group.label"
@@ -1284,12 +1450,12 @@ const externalCreationMissingFields = computed(() => {
                   <button
                     type="button"
                     @click="emit('toggleStaticGroupCollapse', group.label)"
-                    :disabled="isSearching"
-                    :title="isSearching ? '搜索状态下分组自动展开，清空搜索后可折叠' : ''"
-                    :class="isSearching ? 'cursor-default' : ''"
+                    :disabled="isFiltering"
+                    :title="isFiltering ? '搜索或「已选」视图下分组固定展开，切回「全部」后可折叠' : ''"
+                    :class="isFiltering ? 'cursor-default' : ''"
                     class="flex items-center gap-2 min-w-0 flex-1 text-left"
                   >
-                    <svg class="w-3.5 h-3.5 text-gray-400 transition-transform" :class="{ 'rotate-90': !isStaticGroupCollapsed(group.label) || isSearching }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-3.5 h-3.5 text-gray-400 transition-transform" :class="{ 'rotate-90': !isStaticGroupCollapsed(group.label) || isFiltering }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                     </svg>
                     <span class="text-xs">{{ group.icon }}</span>
@@ -1301,7 +1467,7 @@ const externalCreationMissingFields = computed(() => {
                         : staticGroupState(group.tools) === 'some'
                           ? 'bg-primary/10 font-semibold text-primary'
                           : 'text-gray-400'"
-                    >({{ getStaticGroupSelectedCount(group.tools) }}/{{ group.tools.length }})</span>
+                    >({{ staticGroupCounts(group.label).selected }}/{{ staticGroupCounts(group.label).total }})</span>
                   </button>
                   <button
                     v-if="canEditVersion"
@@ -1312,7 +1478,7 @@ const externalCreationMissingFields = computed(() => {
                     {{ isAllStaticGroupSelected(group.label) ? '取消全选' : '全选' }}
                   </button>
                 </div>
-                <div v-show="!isStaticGroupCollapsed(group.label) || isSearching" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
+                <div v-show="!isStaticGroupCollapsed(group.label) || isFiltering" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
                   <div
                     v-for="tool in group.tools"
                     :key="tool.name"
@@ -1451,12 +1617,53 @@ const externalCreationMissingFields = computed(() => {
                 </div>
               </div>
 
+              <!-- 业务分组过滤：与 MCP 管理页同一套口径（服务级 group_name，空白=未分组） -->
+              <div
+                v-if="mcpGroupOptions.length > 1"
+                class="flex flex-wrap items-center gap-1.5"
+              >
+                <button
+                  type="button"
+                  @click="mcpGroupFilter = ''"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+                  :class="mcpGroupFilter === ''
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300'"
+                >全部
+                  <span
+                    class="rounded px-1 font-mono text-[10px]"
+                    :class="mcpGroupFilter === '' ? 'bg-white/20' : 'bg-white text-gray-500 dark:bg-gray-700 dark:text-gray-300'"
+                  >{{ mcpScopeToolsTotal }}</span>
+                </button>
+                <button
+                  v-for="option in mcpGroupOptions"
+                  :key="option.key"
+                  type="button"
+                  @click="mcpGroupFilter = option.key"
+                  :title="option.key === MCP_UNGROUPED_KEY ? '没有填业务分组、或只看未分组的服务' : `只看「${option.label}」分组的 MCP 工具`"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors max-w-[12rem]"
+                  :class="mcpGroupFilter === option.key
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300'"
+                >
+                  <span class="truncate">{{ option.label }}</span>
+                  <span
+                    class="rounded px-1 font-mono text-[10px]"
+                    :class="mcpGroupFilter === option.key ? 'bg-white/20' : 'bg-white text-gray-500 dark:bg-gray-700 dark:text-gray-300'"
+                  >{{ option.count }}</span>
+                </button>
+              </div>
+
               <div v-if="currentScopeGroupedMcpToolsCount === 0" class="p-12 text-center text-gray-400 text-sm">
-                {{ mcpSubTab === 'personal' ? '暂无个人的 MCP 工具，请前往 MCP 工具集 配置。' : '暂无已发布的平台 MCP 工具，请前往 MCP 工具集 配置。' }}
+                <template v-if="mcpGroupFilter">该分组下没有可用的 MCP 工具</template>
+                <template v-else-if="isFiltering">{{ filterEmptyHint('MCP 工具') }}</template>
+                <template v-else>
+                  {{ mcpSubTab === 'personal' ? '暂无个人的 MCP 工具，请前往 MCP 工具集 配置。' : '暂无已发布的平台 MCP 工具，请前往 MCP 工具集 配置。' }}
+                </template>
               </div>
               <div
                 v-else
-                v-for="(tools, serverName) in currentScopeGroupedMcpTools"
+                v-for="(tools, serverName) in visibleScopeGroupedMcpTools"
                 :key="serverName"
                 class="rounded-lg border overflow-hidden transition-colors"
                 :class="mcpGroupState(tools) === 'all'
@@ -1473,8 +1680,8 @@ const externalCreationMissingFields = computed(() => {
                       ? 'border-b-indigo-100 border-l-indigo-300 bg-indigo-50/80'
                       : 'border-b-indigo-100/50 border-l-transparent bg-indigo-50/60'"
                 >
-                  <button type="button" @click="emit('toggleMcpGroupCollapse', serverName)" :disabled="isSearching" :title="isSearching ? '搜索状态下分组自动展开，清空搜索后可折叠' : ''" :class="isSearching ? 'cursor-default' : ''" class="flex items-center gap-1.5 min-w-0 flex-1 text-left">
-                    <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform shrink-0" :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) || isSearching }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <button type="button" @click="emit('toggleMcpGroupCollapse', serverName)" :disabled="isFiltering" :title="isFiltering ? '搜索或「已选」视图下分组固定展开，切回「全部」后可折叠' : ''" :class="isFiltering ? 'cursor-default' : ''" class="flex items-center gap-1.5 min-w-0 flex-1 text-left">
+                    <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform shrink-0" :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) || isFiltering }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                     </svg>
                     <span class="min-w-0 flex-1">
@@ -1501,13 +1708,13 @@ const externalCreationMissingFields = computed(() => {
                         : mcpGroupState(tools) === 'some'
                           ? 'bg-indigo-100 font-semibold text-indigo-700'
                           : 'text-indigo-400'"
-                    >({{ getMcpGroupSelectedCount(tools) }}/{{ tools.length }})</span>
+                    >({{ mcpGroupCounts(serverName).selected }}/{{ mcpGroupCounts(serverName).total }})</span>
                   </button>
                   <button v-if="canEditVersion" type="button" @click.stop="emit('toggleSelectAllMcp', serverName, tools)" class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 ml-2 flex-shrink-0">
                     {{ isAllMcpSelected(serverName, tools) ? '取消全选' : '一键全选' }}
                   </button>
                 </div>
-                <div v-show="!isMcpGroupCollapsed(serverName) || isSearching" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
+                <div v-show="!isMcpGroupCollapsed(serverName) || isFiltering" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
                   <div
                     v-for="tool in tools"
                     :key="tool.id"
@@ -1528,6 +1735,32 @@ const externalCreationMissingFields = computed(() => {
                         {{ mcpToolDisplayName(tool.name, serverName) }}
                       </div>
                       <div class="text-[10px] text-gray-400 mt-0.5 line-clamp-2">{{ tool.description }}</div>
+                      <!-- 已自定义的高级项：与内置工具卡片同一口径。缺这一块时 MCP 工具在界面上
+                           根本找不到工具级超时入口——后端（tools JSON → collect_tool_timeouts →
+                           resolve_mcp_tool_timeout）早已支持，缺的只是这个入口。 -->
+                      <div
+                        v-if="isToolSelected(tool.name) && getToolAdvancedConfigSummary(tool.name).count > 0"
+                        class="tool-advanced-line"
+                      >
+                        {{ getToolAdvancedConfigSummary(tool.name).parts.join(' · ') }}
+                      </div>
+                      <div v-if="isToolSelected(tool.name)" class="flex gap-1 mt-1.5" @click.stop>
+                        <button
+                          type="button"
+                          @click="emit('openToolRuntimeConfig', tool.name)"
+                          class="tool-action-btn"
+                          :class="getToolAdvancedConfigSummary(tool.name).count > 0 ? 'tool-action-btn--active' : ''"
+                          :title="getToolAdvancedConfigSummary(tool.name).count > 0
+                            ? `已配置 ${getToolAdvancedConfigSummary(tool.name).count} 项：${getToolAdvancedConfigSummary(tool.name).parts.join('、')}`
+                            : '高级配置：暂未自定义'"
+                        >
+                          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                          <span
+                            v-if="getToolAdvancedConfigSummary(tool.name).count > 0"
+                            class="tool-action-count"
+                          >{{ getToolAdvancedConfigSummary(tool.name).count }}</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1574,6 +1807,9 @@ const externalCreationMissingFields = computed(() => {
                 </div>
                 <div v-if="enabledGlobalSkillsCount === 0" class="p-12 text-center text-gray-400 text-sm">
                   暂无已启用的公共技能，请前往技能工作台启用。
+                </div>
+                <div v-else-if="isFiltering && !filteredEnabledSkills.length" class="p-12 text-center text-sm text-gray-400">
+                  {{ filterEmptyHint('Skills') }}
                 </div>
                 <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div

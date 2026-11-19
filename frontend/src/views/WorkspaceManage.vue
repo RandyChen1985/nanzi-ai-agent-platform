@@ -401,8 +401,8 @@
       <ul class="max-h-28 space-y-1 overflow-y-auto">
         <li v-for="task in snapshot.tasks" :key="task.id" class="flex items-center gap-2 text-[11px]">
           <span class="min-w-0 flex-1 truncate text-gray-600 dark:text-gray-300">{{ task.name }}</span>
-          <span :class="task.status === 'error' ? 'text-red-600' : 'text-gray-400'">
-            {{ task.status === 'error' ? (task.error || '失败') : task.status === 'done' ? '完成' : `${Math.round(task.progress * 100)}%` }}
+          <span :class="task.status === 'failed' ? 'text-red-600' : 'text-gray-400'">
+            {{ task.status === 'failed' ? (task.error || '失败') : task.status === 'done' ? '完成' : task.status === 'canceled' ? '已取消' : `${Math.round(task.percent * 100)}%` }}
           </span>
         </li>
       </ul>

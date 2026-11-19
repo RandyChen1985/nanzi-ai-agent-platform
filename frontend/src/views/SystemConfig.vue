@@ -953,6 +953,17 @@ const focusConfigSearch = () => {
   configSearchInputRef.value?.focus()
 }
 
+/**
+ * 失焦后延迟收起搜索结果。
+ *
+ * 不能在模板里直接写 `@blur="setTimeout(...)"`：Vue 模板表达式的作用域是组件实例
+ * 代理，而 `setTimeout` 不在模板白名单（白名单只有 Math/JSON/Date/console 这类），
+ * 会被编译成 `_ctx.setTimeout` → 失焦瞬间抛 TypeError，搜索结果反而关不掉。
+ */
+const closeConfigSearchLater = () => {
+  window.setTimeout(() => { configSearchOpen.value = false }, 150)
+}
+
 // 恢复单个参数为原值
 const resetSingleConfigItem = (key: string) => {
   if (!originalConfigs.value || !(key in originalConfigs.value)) return
@@ -4444,7 +4455,7 @@ onUnmounted(() => {
                            placeholder="搜索参数…（⌘K）"
                            class="w-full border-0 bg-transparent p-0 text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-0"
                            @focus="configSearchOpen = true"
-                           @blur="setTimeout(() => (configSearchOpen = false), 150)"
+                           @blur="closeConfigSearchLater"
                            @click="configSearchOpen = true"
                          />
                          <button

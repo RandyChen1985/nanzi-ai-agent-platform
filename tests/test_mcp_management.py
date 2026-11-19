@@ -20,7 +20,7 @@ async def test_mcp_server_name_cannot_duplicate_between_global_and_personal(
     # test_user 没有绑定任何业务角色（真实注册用户会绑 default 角色），拿不到该功能点。
     # 本用例验证「名称跨 scope 唯一」，与操作者角色无关，故统一用管理员账号覆盖。
     personal_headers = headers
-    server_name = f"Shared MCP {uuid.uuid4().hex[:8]}"
+    server_name = f"Shared-MCP-{uuid.uuid4().hex[:8]}"
 
     with patch(
         "app.api.portal.endpoints.mcp.McpClientService.sync_tools",
@@ -61,7 +61,7 @@ async def test_mcp_server_update_rejects_name_used_by_other_scope(
     admin_headers = {"Authorization": f"Bearer {admin_api_key}"}
     # 同上：个人 MCP 的创建/更新受 element:mcp_management:* 约束，测试账号无角色授权。
     personal_headers = admin_headers
-    existing_name = f"Existing MCP {uuid.uuid4().hex[:8]}"
+    existing_name = f"Existing-MCP-{uuid.uuid4().hex[:8]}"
 
     with patch(
         "app.api.portal.endpoints.mcp.McpClientService.sync_tools",
@@ -82,7 +82,7 @@ async def test_mcp_server_update_rejects_name_used_by_other_scope(
         personal_resp = await client.post(
             "/api/portal/mcp/servers",
             json={
-                "server_name": f"Personal MCP {uuid.uuid4().hex[:8]}",
+                "server_name": f"Personal-MCP-{uuid.uuid4().hex[:8]}",
                 "sse_url": f"https://personal.example/{uuid.uuid4().hex}",
                 "scope": "personal",
             },
@@ -125,14 +125,14 @@ async def test_runtime_mcp_visibility_is_global_plus_current_user(
         [
             McpServer(
                 id=global_server_id,
-                server_name=f"Global Visible {suffix}",
+                server_name=f"Global-Visible-{suffix}",
                 sse_url=f"https://global.example/{suffix}",
                 scope="global",
                 enabled_status=1,
             ),
             McpServer(
                 id=personal_server_id,
-                server_name=f"Personal Visible {suffix}",
+                server_name=f"Personal-Visible-{suffix}",
                 sse_url=f"https://personal.example/{suffix}",
                 scope="personal",
                 user_id=current_user.id,
@@ -210,7 +210,7 @@ async def test_mcp_usage_reports_distinct_agents_and_active_published_agents(
         [
             McpServer(
                 id=server_id,
-                server_name=f"Usage Server {suffix}",
+                server_name=f"Usage-Server-{suffix}",
                 sse_url=f"https://usage.example/{suffix}",
                 scope="global",
                 enabled_status=1,
@@ -290,7 +290,7 @@ async def test_mcp_usage_reports_distinct_agents_and_active_published_agents(
 @pytest.mark.asyncio
 async def test_mcp_server_crud(client: AsyncClient, admin_api_key: str):
     # Use random name to avoid potential unique constraints if any
-    unique_name = f"Test Server {uuid.uuid4().hex[:4]}"
+    unique_name = f"Test-Server-{uuid.uuid4().hex[:4]}"
     # 1. Create Server
     payload = {
         "server_name": unique_name,
@@ -320,7 +320,7 @@ async def test_mcp_server_crud(client: AsyncClient, admin_api_key: str):
 
     # 3. Update Server
     update_payload = {
-        "server_name": f"Updated {unique_name}",
+        "server_name": f"Updated-{unique_name}",
         "remark": "更新后的备注",
         "sse_url": payload["sse_url"] + "_v2",
         "auth_headers": '{}',
@@ -329,7 +329,7 @@ async def test_mcp_server_crud(client: AsyncClient, admin_api_key: str):
     resp = await client.put(f"/api/portal/mcp/servers/{server_id}", json=update_payload, headers=headers)
     assert resp.status_code == 200
     updated_data = resp.json()
-    assert updated_data["server_name"] == f"Updated {unique_name}"
+    assert updated_data["server_name"] == f"Updated-{unique_name}"
     assert updated_data.get("remark") == "更新后的备注"
 
     # 4. Delete Server
@@ -349,7 +349,7 @@ async def test_disabling_mcp_server_does_not_trigger_resync(
     admin_api_key: str,
 ):
     headers = {"Authorization": f"Bearer {admin_api_key}"}
-    server_name = f"Disable Server {uuid.uuid4().hex[:8]}"
+    server_name = f"Disable-Server-{uuid.uuid4().hex[:8]}"
 
     with patch(
         "app.api.portal.endpoints.mcp.McpClientService.sync_tools",
@@ -390,7 +390,7 @@ async def test_mcp_tools_sync_and_publish(client: AsyncClient, admin_api_key: st
     # Setup: Create a server
     headers = {"Authorization": f"Bearer {admin_api_key}"}
     create_resp = await client.post("/api/portal/mcp/servers", json={
-        "server_name": f"Tool Server {uuid.uuid4().hex[:4]}",
+        "server_name": f"Tool-Server-{uuid.uuid4().hex[:4]}",
         "sse_url": f"http://mock-mcp/sse/{uuid.uuid4().hex[:4]}"
     }, headers=headers)
     server_id = create_resp.json()["id"]
@@ -452,7 +452,7 @@ async def test_mcp_tool_execute(client: AsyncClient, admin_api_key: str, db_sess
     
     # Setup Server and Tool
     create_resp = await client.post("/api/portal/mcp/servers", json={
-        "server_name": f"Exec Server {uuid.uuid4().hex[:4]}",
+        "server_name": f"Exec-Server-{uuid.uuid4().hex[:4]}",
         "sse_url": f"http://mock-exec/sse/{uuid.uuid4().hex[:4]}"
     }, headers=headers)
     server_id = create_resp.json()["id"]
@@ -469,22 +469,25 @@ async def test_mcp_tool_execute(client: AsyncClient, admin_api_key: str, db_sess
     ))
     await session.commit()
 
-    # Mock McpToolFactory.create_tool and the runtime tool execution
-    with patch("app.api.portal.endpoints.mcp.McpToolFactory.create_tool") as mock_factory:
-        mock_tool_instance = AsyncMock()
-        mock_tool_instance.ainvoke.return_value = "Hello World"
-        mock_factory.return_value = mock_tool_instance
-
-        # Execute
+    # 端点直连 McpClientService.call_remote_tool（签名/非签名两个分支都是），
+    # 早先 patch 的 McpToolFactory.create_tool 早已不在执行链上——patch 变成空操作，
+    # 于是真的去拨 http://mock-exec 拿 502。mock 必须打在真实链路上。
+    with patch(
+        "app.api.portal.endpoints.mcp.McpClientService.call_remote_tool",
+        new=AsyncMock(return_value="Hello World"),
+    ) as mock_call:
         payload = {"arguments": {"msg": "Hello"}}
         resp = await client.post(f"/api/portal/mcp/tools/{tool_id}/execute", json=payload, headers=headers)
-        
+
         assert resp.status_code == 200
         assert resp.json()["status"] == "success"
         assert resp.json()["result"] == "Hello World"
-        
-        # Verify arguments passed
-        mock_tool_instance.ainvoke.assert_called_once_with({"msg": "Hello"})
+
+        # 远端工具名必须剥掉 `server:` 前缀，参数原样透传
+        kwargs = mock_call.await_args.kwargs
+        assert kwargs["tool_name"] == "echo_tool"
+        assert kwargs["arguments"] == {"msg": "Hello"}
+        assert kwargs["server_id"] == server_id
 
     # Cleanup
     await client.delete(f"/api/portal/mcp/servers/{server_id}", headers=headers)
@@ -507,7 +510,7 @@ async def test_mcp_tool_mutations_enforce_platform_permissions_and_runtime_state
         create_resp = await client.post(
             "/api/portal/mcp/servers",
             json={
-                "server_name": f"Permission Server {uuid.uuid4().hex[:8]}",
+                "server_name": f"Permission-Server-{uuid.uuid4().hex[:8]}",
                 "sse_url": f"https://permission.example/{uuid.uuid4().hex}",
                 "scope": "global",
                 "enabled_status": 1,
@@ -598,8 +601,8 @@ async def test_mcp_server_rename_migrates_cached_tools_and_agent_versions(
 ):
     headers = {"Authorization": f"Bearer {admin_api_key}"}
     suffix = uuid.uuid4().hex[:8]
-    old_name = f"Rename Server {suffix}"
-    new_name = f"Renamed Server {suffix}"
+    old_name = f"Rename-Server-{suffix}"
+    new_name = f"Renamed-Server-{suffix}"
     old_tool_name = f"{old_name}:search"
     new_tool_name = f"{new_name}:search"
     agent_id = f"rename-agent-{suffix}"
@@ -696,8 +699,8 @@ async def test_mcp_servers_can_share_same_sse_url_with_different_names(
 ):
     headers = {"Authorization": f"Bearer {admin_api_key}"}
     shared_url = f"https://shared-gateway.example/mcp/{uuid.uuid4().hex}"
-    name_1 = f"Server A {uuid.uuid4().hex[:6]}"
-    name_2 = f"Server B {uuid.uuid4().hex[:6]}"
+    name_1 = f"Server-A-{uuid.uuid4().hex[:6]}"
+    name_2 = f"Server-B-{uuid.uuid4().hex[:6]}"
 
     with patch(
         "app.api.portal.endpoints.mcp.McpClientService.sync_tools",

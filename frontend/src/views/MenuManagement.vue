@@ -120,7 +120,7 @@
                 </span>
                 <span v-if="!group.enabled" class="rounded bg-gray-100 px-1 text-[10px] text-gray-500 dark:bg-gray-800">已停用</span>
               </button>
-              <template v-if="canEdit && !onlyDesktopFilter">
+              <template v-if="canEdit && !desktopOnlyFilter">
                 <button
                   type="button"
                   class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
@@ -163,7 +163,7 @@
                     >{{ item.open_mode === 'embed' ? '内嵌' : '外链' }}</span>
                     <span v-if="!item.enabled" class="rounded bg-gray-100 px-1 text-[10px] text-gray-500 dark:bg-gray-800">已停用</span>
                   </button>
-                  <template v-if="canEdit && !onlyDesktopFilter">
+                  <template v-if="canEdit && !desktopOnlyFilter">
                     <button
                       type="button"
                       class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"

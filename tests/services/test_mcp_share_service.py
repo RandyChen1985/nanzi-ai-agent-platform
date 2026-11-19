@@ -197,34 +197,73 @@ def test_share_payload_carries_tool_snapshot():
 # ---------------------------------------------------------------------------
 
 def test_shared_name_suffix_strips_prefix_by_source_account():
-    """分享人账号含 '-' 时，正则只能切到第一个 '-'，知道账号就能精确切。"""
+    """剥归属前缀只留业务别名。
+
+    四套形态都要认：当前的 ``priv-<base36(user_id)>-`` / ``pub-<base36>-``，
+    以及存量的 ``mcp-private-<完整用户名>-`` / ``mcp-public-<用户名>-``。
+    存量名字不迁移，但分享时若不认旧前缀，接收方落地名会变成「前缀套前缀」。
+    """
+    # 新格式：知道分享人 id 时精确切；不知道时走正则
+    assert svc.shared_name_suffix("priv-4y-hcp", None, 178) == "hcp"
+    assert svc.shared_name_suffix("pub-1-hcp", None, 1) == "hcp"
+    assert svc.shared_name_suffix("priv-4y-hcp") == "hcp"
+    assert svc.shared_name_suffix("priv-4y-nanzi-platform") == "nanzi-platform"
+    # 旧格式：分享人账号含 '-' 时正则只能切到第一段，知道账号才能精确切
     assert svc.shared_name_suffix("mcp-private-ad-min-hcp", "ad-min") == "hcp"
     assert svc.shared_name_suffix("mcp-private-admin-hcp", "admin") == "hcp"
-    # 不知道分享人时退化为正则（只切第一段）
     assert svc.shared_name_suffix("mcp-private-admin-hcp") == "hcp"
     # 手动改成裸名时原样返回
     assert svc.shared_name_suffix("hcp") == "hcp"
 
 
-def test_suggested_accepted_name_uses_receiver_account():
+def test_suggested_accepted_name_uses_receiver_identity():
+    # 落地名装的是**接收人**的 base36(user_id) 段，不是分享人的
     assert (
-        svc.suggested_accepted_name("mcp-private-admin-hcp", "chenxiaolong", "admin")
-        == "mcp-private-chenxiaolong-hcp"
+        svc.suggested_accepted_name("priv-4y-hcp", 1, "chenxiaolong", 178) == "priv-1-hcp"
     )
     # 没前缀的裸名也能装上接收人前缀
+    assert svc.suggested_accepted_name("hcp", 178) == "priv-4y-hcp"
+    # 存量旧名剥净后再装新前缀，不会留下「前缀套前缀」
     assert (
-        svc.suggested_accepted_name("hcp", "chenxiaolong")
-        == "mcp-private-chenxiaolong-hcp"
+        svc.suggested_accepted_name("mcp-private-admin-hcp", 178, "admin")
+        == "priv-4y-hcp"
     )
-    # 接收人账号缺失时退到 user，仍保持 mcp-private- 约定
-    assert svc.suggested_accepted_name("hcp", None) == "mcp-private-user-hcp"
+    # 接收人 id 缺失时退到 user，仍保持 priv- 约定
+    assert svc.suggested_accepted_name("hcp", None) == "priv-user-hcp"
 
 
 def test_suggested_accepted_name_fits_column_width():
     long_suffix = "x" * 200
-    name = svc.suggested_accepted_name(f"mcp-private-admin-{long_suffix}", "bob", "admin")
+    name = svc.suggested_accepted_name(f"mcp-private-admin-{long_suffix}", 9, "admin")
     assert len(name) <= svc.MAX_SERVER_NAME_LENGTH
-    assert name.startswith("mcp-private-bob-")
+    assert name.startswith("priv-9-")
+
+
+def test_personal_server_name_prefix_uses_base36_user_id():
+    """归属段是 user_id 的 base36。
+
+    为什么不是用户名：截断用户名会误认（``chenxiaolong`` 与 ``chenxiao`` 都变成
+    ``chenxiao``，别人看到会以为服务是另一个人的）。
+    """
+    assert svc.personal_server_name_prefix(178) == "priv-4y-"
+    assert svc.owner_name_segment(178) == "4y"
+    assert svc.owner_name_segment(1) == "1"
+    assert svc.personal_server_name_prefix("178") == "priv-4y-"
+    assert svc.platform_server_name_prefix(1) == "pub-1-"
+    # 异常输入退化固定段，撞名交给全局唯一约束
+    assert svc.personal_server_name_prefix(None) == "priv-user-"
+    assert svc.personal_server_name_prefix("not-a-number") == "priv-user-"
+
+
+def test_base36_matches_frontend_to_string_36():
+    """前端 ``Number.prototype.toString(36)`` 与后端必须逐字符一致。
+
+    两侧算法一旦分叉：新建（前端拼）与接受分享 / 个人 Echo（后端拼）会算出不同前缀。
+    """
+    assert svc.owner_name_segment(35) == "z"
+    assert svc.owner_name_segment(36) == "10"
+    assert svc.owner_name_segment(1295) == "zz"
+    assert svc.owner_name_segment(52108) == "147g"
 
 
 async def test_accepted_server_name_appends_suffix_on_conflict():
@@ -261,12 +300,12 @@ async def test_accept_share_installs_independent_copy():
     assert server.scope == "personal"
     assert server.user_id == 9
     # 名字必须换成接收人的前缀，否则看起来像分享人（admin）的资产
-    assert server.server_name == "mcp-private-bob-trends-hub"
+    assert server.server_name == "priv-9-trends-hub"
     assert server.sse_url == "https://example.com/mcp"
     assert len(tools) == 1
     assert tools[0].server_id == server.id
     # 工具标识必须换成副本自己的服务名前缀，否则同步后旧前缀的行会变孤立记录
-    assert tools[0].tool_name == "mcp-private-bob-trends-hub:trend_query"
+    assert tools[0].tool_name == "priv-9-trends-hub:trend_query"
 
     # 地址未改：默认携带快照里的认证配置，接收方才能直接连上
     assert server.auth_headers == "enc:v1:abc"
@@ -278,13 +317,11 @@ async def test_accept_share_installs_independent_copy():
 
 
 def test_suggested_name_from_payload_uses_receiver_account():
-    assert (
-        svc._suggested_name_from_payload(_share_row(), "bob")
-        == "mcp-private-bob-trends-hub"
-    )
+    # 落地名的归属段取分享记录的 target_user_id（9 → "9"），不依赖调用方再传接收人账号
+    assert svc._suggested_name_from_payload(_share_row()) == "priv-9-trends-hub"
     # 终态 / 坏 payload 不猜名字
-    assert svc._suggested_name_from_payload(_share_row(payload=None), "bob") is None
-    assert svc._suggested_name_from_payload(_share_row(payload="{bad json"), "bob") is None
+    assert svc._suggested_name_from_payload(_share_row(payload=None)) is None
+    assert svc._suggested_name_from_payload(_share_row(payload="{bad json")) is None
 
 
 async def test_accept_share_applies_custom_name():
@@ -304,6 +341,23 @@ async def test_accept_share_applies_custom_name():
     assert server.server_name == "my-own-hcp"
     tools = [obj for obj in session.added if isinstance(obj, McpToolCache)]
     assert tools[0].tool_name == "my-own-hcp:trend_query"
+
+
+async def test_accept_share_rejects_chinese_custom_name():
+    """手填落地名与「新建服务」同一套字符集：中文/空格会让名字进工具标识后坏掉。"""
+    row = _share_row()
+    session = _FakeSession(_FakeResult([row]), _FakeResult([]))
+
+    with _notification_mock(), pytest.raises(svc.McpShareConflictError) as exc_info:
+        await svc.accept_share(
+            session,
+            user={"user_id": 9, "user_name": "bob"},
+            share_id="share-1",
+            server_name="my-hcp 测试",
+        )
+
+    assert "英文字母、数字" in str(exc_info.value)
+    assert not [obj for obj in session.added if isinstance(obj, McpServer)]
 
 
 async def test_accept_share_rejects_conflicting_custom_name():

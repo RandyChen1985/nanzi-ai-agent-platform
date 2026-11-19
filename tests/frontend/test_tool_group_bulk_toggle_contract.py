@@ -12,7 +12,9 @@
 3. 搜索关键词非空时，匹配到的分组一律展开（只读覆盖，不写回折叠集合），清空搜索即
    回到用户原本的折叠状态；否则用户搜到了工具，却只能看到折叠的分组标题。搜索期
    分组标题的折叠交互会被展示层覆盖，因此必须禁用，避免「点了没反应却改了状态」；
-4. 折叠状态仍是内存态（重置抽屉由 ``resetVersionEditorUi`` 复位），不引入持久化。
+4. 折叠状态仍是内存态（重置抽屉由 ``resetVersionEditorUi`` 复位），不引入持久化；
+5. 两个页签的分组**默认折叠**：状态一律记「已展开」（空集 = 全收起），进来先看
+   分组标题与各组 x/y，想改哪组再点开——系统工具与 MCP 工具同口径。
 
 断言取体用花括号配平、判定用正则（容忍换行与空格），不用固定字符窗口——否则模板
 格式化或前文加一行注释就会假红，而写错的守卫反而可能假绿。
@@ -106,32 +108,37 @@ def test_management_binds_bulk_handlers(handler: str, kebab: str):
     assert f'@{kebab}="{handler}"' in _source(MANAGEMENT)
 
 
-def test_expand_all_fills_every_static_group():
-    """静态工具分组默认折叠（展开集合默认空），「全部展开」得把全量分组填进去。
+def test_expand_all_fills_every_group():
+    """两个页签的分组默认都折叠（展开集合默认空），「全部展开」得把全量分组填进去。
 
     改用「记录已展开」之后，一键展开与一键折叠的职责互换了：填满 vs 清空。
-    MCP 侧语义没动，仍是「记录已折叠」。
+    静态工具先改，MCP 页签随后对齐——别再一边记折叠、一边记展开，否则两个页签
+    的默认状态会再次分叉（用户反馈的正是「MCP 一进来全展开、系统工具是折叠的」）。
     """
     source = _source(MANAGEMENT)
-    expand = _body(source, "expandAllStaticGroups")
-    assert "groupedTools" in expand
-    assert "filteredGroupedTools" not in expand
-    assert re.search(
-        r"collapsedMcpGroups\.value = new Set(?:<string>)?\(\)",
-        _body(source, "expandAllMcpGroups"),
-    )
+    static_expand = _body(source, "expandAllStaticGroups")
+    mcp_expand = _body(source, "expandAllMcpGroups")
+
+    assert "groupedTools" in static_expand
+    assert "filteredGroupedTools" not in static_expand
+    # MCP 侧必须用全量分组而不是搜索过滤后的视图，否则批量操作会被悄悄缩小范围
+    assert "groupedMcpTools" in mcp_expand
+    assert "filteredGroupedMcpTools" not in mcp_expand
+    assert "expandedMcpGroups.value = new Set" in mcp_expand
+    assert "filter" not in _line_with(mcp_expand, "expandedMcpGroups.value =")
 
 
 def test_collapse_all_clears_the_expanded_set():
-    """「全部折叠」= 清空展开集合；MCP 侧仍写入全量分组 key（不得被搜索框缩小）。"""
+    """「全部折叠」= 清空展开集合，两个页签同口径。"""
     source = _source(MANAGEMENT)
     static_body = _body(source, "collapseAllStaticGroups")
     mcp_body = _body(source, "collapseAllMcpGroups")
 
     assert re.search(r"expandedStaticGroups\.value = new Set(?:<string>)?\(\)", static_body)
+    assert re.search(r"expandedMcpGroups\.value = new Set(?:<string>)?\(\)", mcp_body)
+    # 清空集合不该被搜索框或子 scope 影响，也不该退化成按过滤结果逐组删除
     assert "filteredGroupedMcpTools" not in mcp_body
-    assert "groupedMcpTools" in mcp_body
-    assert "filter" not in _line_with(mcp_body, "collapsedMcpGroups.value =")
+    assert "filter" not in _line_with(mcp_body, "expandedMcpGroups.value =")
 
 
 def test_toolbar_renders_both_buttons_before_the_tabs():
@@ -164,10 +171,19 @@ def test_bulk_buttons_expose_accessible_names_and_focus_ring():
 
 
 def test_collapsed_groups_expand_while_searching():
+    """两种过滤态（搜索 /「已选」）都强制展开分组。
+
+    判据后来合并成 ``isFiltering``：它 = isSearching || onlySelectedTools。
+    两者都会把分组收窄到只剩几条，折叠着等于看不到东西。
+    """
     source = _source(DRAWER)
     assert "const isSearching = computed" in source
-    assert re.search(r"!isStaticGroupCollapsed\(group\.label\)\s*\|\|\s*isSearching", source)
-    assert re.search(r"!isMcpGroupCollapsed\(serverName\)\s*\|\|\s*isSearching", source)
+    assert re.search(
+        r"const isFiltering = computed\(\(\) => isSearching\.value \|\| props\.onlySelectedTools\)",
+        source,
+    )
+    assert re.search(r"!isStaticGroupCollapsed\(group\.label\)\s*\|\|\s*isFiltering", source)
+    assert re.search(r"!isMcpGroupCollapsed\(serverName\)\s*\|\|\s*isFiltering", source)
 
 
 def test_group_header_toggle_is_disabled_while_searching():
@@ -178,7 +194,7 @@ def test_group_header_toggle_is_disabled_while_searching():
         "emit('toggleMcpGroupCollapse', serverName)",
     ):
         tag = _element_tag(source, needle)
-        assert ':disabled="isSearching"' in tag, tag
+        assert ':disabled="isFiltering"' in tag, tag
 
 
 @pytest.mark.parametrize("name", BULK_HANDLERS)
@@ -193,10 +209,12 @@ def test_bulk_toggle_stays_in_memory():
     assert "sessionStorage" not in window
 
 
-def test_static_groups_are_collapsed_by_default():
+def test_tool_groups_are_collapsed_by_default():
     """进「工具能力」先看到一屏分组标题（各组 x/y 一目了然），想改哪组再点开。
 
     以前状态记的是「已折叠」、默认空集 = 全部展开，一进来就是几十张工具卡片。
+    静态工具先改成「记录已展开」；MCP 页签此前仍是旧语义，进 MCP 就是全展开
+    （用户反馈），现在两个页签统一——判折叠一律走 ``!expanded*.has(...)``。
     """
     source = _source(MANAGEMENT)
     assert "const expandedStaticGroups = ref<Set<string>>(new Set())" in source
@@ -204,10 +222,17 @@ def test_static_groups_are_collapsed_by_default():
         "const isStaticGroupCollapsed = (label: string) => !expandedStaticGroups.value.has(label)"
         in source
     )
+    assert "const expandedMcpGroups = ref<Set<string>>(new Set())" in source
+    assert (
+        "const isMcpGroupCollapsed = (serverName: string) => !expandedMcpGroups.value.has(serverName)"
+        in source
+    )
+    # 反方向语义不能再回来：空集 = 全展开
+    assert "collapsedMcpGroups" not in source
 
 
 def test_reset_still_clears_group_collapse_state():
-    """重开版本配置要回到「全部分组收起」：展开集合必须清空。"""
+    """重开版本配置要回到「全部分组收起」：两个展开集合都必须清空。"""
     body = _body(_source(MANAGEMENT), "resetVersionEditorUi")
-    assert re.search(r"collapsedMcpGroups\.value = new Set(?:<string>)?\(\)", body)
+    assert re.search(r"expandedMcpGroups\.value = new Set(?:<string>)?\(\)", body)
     assert re.search(r"expandedStaticGroups\.value = new Set(?:<string>)?\(\)", body)

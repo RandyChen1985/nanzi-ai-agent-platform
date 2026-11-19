@@ -15,8 +15,11 @@ def test_version_tool_timeout_is_at_top_of_tools_step_and_supports_inheritance_a
     timeout_pos = tools_step.index("toolcall_timeout_seconds")
     search_pos = tools_step.index(":value=\"toolSearchQuery\"")
     assert timeout_pos < search_pos
-    assert "使用智能体专属配置" in tools_step
-    assert "跟随全局配置" in tools_step
+    # 开关旁用恒定文案「自定义超时时间」，状态由开关表达；二态文案会与左侧
+    # 摘要「跟随全局 N 秒」撞车，也容易被读成一个可点的动作。
+    assert "自定义超时时间" in tools_step
+    assert "使用智能体专属配置" not in tools_step
+    assert "aria-label=\"自定义超时时间：开启后不跟随全局配置\"" in tools_step
     assert "启用后，以当前智能体版本配置为准，不再与全局或工具配置取最大值" in tools_step
     assert "将与全局及工具配置取最长的超时时间" not in tools_step
     assert "type=\"number\"" in tools_step[timeout_pos:search_pos]

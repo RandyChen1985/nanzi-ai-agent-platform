@@ -254,6 +254,9 @@ async def list_published_mcp_tools(
             "description": t.tool_description,
             "server_name": t.server.server_name if t.server else "Unknown",
             "server_remark": (t.server.remark if t.server else None) or None,
+            # 分组是服务级属性：版本编辑器要按「业务分组」过滤 MCP 工具，
+            # 没有这个字段前端就只能自己再拉一次 MCP 列表去对名字。
+            "group_name": ((t.server.group_name if t.server else None) or None),
             "scope": t.server.scope if (t.server and t.server.scope) else "global",
             "parameter_schema": json.loads(t.parameter_schema or "{}")
         } for t in tools
