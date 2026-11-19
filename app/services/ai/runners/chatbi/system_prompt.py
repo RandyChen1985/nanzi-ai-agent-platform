@@ -8,9 +8,17 @@ from typing import Any, Dict, Optional
 
 from app.services.ai.config import AgentConfigProvider
 from app.services.ai.executors.prompts import DataQueryPrompts
+from app.services.ai.grounding.models import EvidenceStatus, FactFreshness
 from app.services.ai.time_anchor import build_data_query_time_anchor_block
 
 logger = logging.getLogger(__name__)
+
+# `[EVIDENCE_STATE]` 透出的两个状态字段只在枚举全集内透传，集合直接由枚举派生：
+# 写死字面量会和枚举慢慢脱节——上一版白名单里的 "success"/"empty"/"partial" 在
+# `EvidenceStatus` 里根本不存在，导致 `success_non_empty` 这类合法状态被统一降级成
+# unknown，模型读提示词时永远看不到「查询成功且非空」。
+_EVIDENCE_STATUS_VALUES = frozenset(item.value for item in EvidenceStatus)
+_FACT_FRESHNESS_VALUES = frozenset(item.value for item in FactFreshness)
 
 
 async def _load_dataset_menu(runner: Any, *, has_placeholder: bool) -> str:
@@ -102,11 +110,13 @@ def build_data_query_state_hint(
     evidence_metadata = getattr(runner, "_evidence_metadata", {}) or {}
     if not evidence_metadata and isinstance(context_action_result, dict):
         evidence_metadata = {
-            "status": "success",
+            # 复用上下文动作的结果非空，状态取枚举值；写死 "success" 会被下面的
+            # 枚举校验降级成 unknown（该字面量在 EvidenceStatus 里并不存在）。
+            "status": EvidenceStatus.SUCCESS_NON_EMPTY.value,
             "source_ref": "available",
             "observed_at": "available",
             "source_as_of": "available",
-            "freshness": "reuse_previous",
+            "freshness": FactFreshness.REUSE_PREVIOUS.value,
         }
 
     if reusable_result or include_context_action:
@@ -142,11 +152,11 @@ def build_data_query_state_hint(
     lines.append("[/DATA_QUERY_STATE]")
     if evidence_metadata:
         status = str(evidence_metadata.get("status") or "unknown").strip().lower()
-        if status not in {"success", "empty", "partial", "failed", "error", "unknown"}:
-            status = "unknown"
+        if status not in _EVIDENCE_STATUS_VALUES:
+            status = EvidenceStatus.UNKNOWN.value
         freshness = str(evidence_metadata.get("freshness") or "unknown").strip().lower()
-        if freshness not in {"dynamic", "reuse_previous", "unknown", "static"}:
-            freshness = "unknown"
+        if freshness not in _FACT_FRESHNESS_VALUES:
+            freshness = FactFreshness.UNKNOWN.value
         lines.extend(
             [
                 "[EVIDENCE_STATE]",

@@ -6582,3 +6582,35 @@ def test_chatbi_grounding_audit_is_disabled_by_default(data_config):
     )
 
     assert audit.should_warn is False
+
+
+def test_is_trusted_empty_result_rejects_diagnostic_probe_sql(data_config):
+    """诊断/探路 SQL 的空结果不能算「可信空」。
+
+    `SELECT DISTINCT … LIMIT n`、`SHOW TABLES`、无 WHERE 的 `COUNT(*)` 都是摸底用的
+    探路语句，零行是常态；判成可信空会让 `empty_sql_result` 不置位，后面「空结果要不要
+    重查」的门禁整条失效——模型会把「探路没捞到东西」当成「业务数据确实为空」直接答复。
+    业务 SQL 的判定不能因此变松。
+    """
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(
+        config=data_config, trace_id="trace-trusted-empty-diagnostic", trace_buffer=[]
+    )
+    state = _DataRunState()
+
+    for diagnostic_sql in (
+        "SELECT DISTINCT room_name FROM demo LIMIT 20",
+        "SHOW TABLES",
+        "SHOW COLUMNS FROM demo",
+        "SELECT COUNT(*) FROM demo",
+        "SELECT id FROM demo WHERE name IS NOT NULL LIMIT 5",
+    ):
+        assert runner._is_trusted_empty_result(diagnostic_sql, state) is False, diagnostic_sql
+
+    # 业务 SQL 不受影响：参数过滤仍是可信空，字面量过滤仍被拒
+    assert runner._is_trusted_empty_result("SELECT room_name FROM demo WHERE id = 1", state) is True
+    assert (
+        runner._is_trusted_empty_result("SELECT room_name FROM demo WHERE region = '上海'", state)
+        is False
+    )

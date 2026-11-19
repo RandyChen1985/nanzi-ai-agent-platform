@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import app.services.ai.runners.chatbi.system_prompt as system_prompt_module
 from app.services.ai.config import AgentConfigProvider
 from app.services.ai.executors.prompts import DataQueryPrompts
+from app.services.ai.grounding.models import EvidenceStatus, FactFreshness
 from app.services.ai.runners.chatbi.system_prompt import (
     _load_dataset_menu,
     build_context_action_result_message,
@@ -533,3 +534,63 @@ def test_user_is_admin_accepts_both_field_shapes():
     assert user_is_admin({"role": "user"}) is False
     assert user_is_admin({}) is False
     assert user_is_admin(None) is False
+
+
+def _evidence_runner(**metadata):
+    return SimpleNamespace(
+        config=SimpleNamespace(system_prompt="ChatBI system"),
+        user_info=None,
+        _is_sql_plan_enabled=lambda: False,
+        _requires_fresh_data=False,
+        _requires_sql_query=False,
+        turn_decision=None,
+        _evidence_metadata=metadata,
+    )
+
+
+def _state_block(metadata: dict) -> str:
+    import asyncio
+
+    prompt = asyncio.run(
+        build_system_content(_evidence_runner(**metadata), include_context_action=False)
+    )
+    start = prompt.index("[EVIDENCE_STATE]")
+    return prompt[start : prompt.index("[/EVIDENCE_STATE]")] + "[/EVIDENCE_STATE]"
+
+
+_BASE_EVIDENCE = {
+    "source_ref": "available",
+    "observed_at": "available",
+    "source_as_of": "available",
+    "freshness": "dynamic",
+}
+
+
+@pytest.mark.parametrize("status", [item.value for item in EvidenceStatus])
+def test_evidence_state_keeps_every_evidence_status_value(status):
+    """`result_status` 必须原样透出 `EvidenceStatus` 的取值。
+
+    白名单原先写死 `{"success","empty","partial","failed","error","unknown"}`，与枚举
+    （success_non_empty / success_empty / failed / unavailable / denied / unknown）
+    几乎完全对不上——「查询成功且非空」被统一降级成 unknown，模型读这段提示词时永远
+    看不到证据状态，`[EVIDENCE_STATE]` 整块等于没接。参数化从枚举取值生成，将来枚举
+    新增也自动纳入。
+    """
+    block = _state_block({**_BASE_EVIDENCE, "status": status})
+    assert f"result_status: {status}" in block, block
+
+
+@pytest.mark.parametrize("freshness", [item.value for item in FactFreshness])
+def test_evidence_state_keeps_every_fact_freshness_value(freshness):
+    """`freshness` 同样要覆盖枚举全集（原先漏了 historical / realtime）。"""
+    block = _state_block({**_BASE_EVIDENCE, "status": "success_non_empty", "freshness": freshness})
+    assert f"freshness: {freshness}" in block, block
+
+
+def test_evidence_state_still_downgrades_unrecognised_values():
+    """放宽口径不等于什么都透传：旧白名单里的伪值（success/empty/partial）仍降级。"""
+    block = _state_block(
+        {**_BASE_EVIDENCE, "status": "success", "freshness": "reuse"}
+    )
+    assert "result_status: unknown" in block
+    assert "freshness: unknown" in block

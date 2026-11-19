@@ -1381,7 +1381,7 @@
                 :token-label="getMessageTokenAmount(msg)"
                 :can-save-report="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
                 :chatbi-actions="msg.chatbiInsight?.actions || []"
-                :show-generic-continue="checkRole(msg, 'agent') && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && visibleStreamBody(msg)"
+                :show-generic-continue="checkRole(msg, 'agent') && isGeneralAgentMessage(msg) && !msg.chatbiInsight?.actions?.length && !msg.isThinking && Boolean(visibleStreamBody(msg))"
                 @export-data="msg.trace_id && exportData(msg.trace_id, 'xlsx')"
                 @open-reusable-results="openReusableResults(msg.reusableResultStatus?.resultId, msg.trace_id, msg.reusableResultStatus?.status)"
                 @open-artifacts="openMessageArtifacts(msg.trace_id)"

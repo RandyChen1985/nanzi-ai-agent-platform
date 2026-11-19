@@ -6243,7 +6243,7 @@ onUnmounted(() => {
                                @keydown="handleDelegationLimitKeydown"
                                @input="handleDelegationLimitInput(item, $event)"
                                @blur="normalizeDelegationLimitInput(item)"
-                               :aria-label="`${DELEGATION_LIMIT_LABELS[item.key]}（${DELEGATION_LIMIT_RANGES[item.key].min}-${DELEGATION_LIMIT_RANGES[item.key].max}）`"
+                               :aria-label="`${DELEGATION_LIMIT_LABELS[item.key]}（${getDelegationLimitMin(item)}-${getDelegationLimitMax(item)}）`"
                                class="min-w-[5rem] rounded-md border border-gray-300 bg-white disabled:bg-gray-100 px-3 py-2 text-center font-mono text-sm text-gray-700 shadow-sm focus:border-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-70"
                              />
                              <button
@@ -6253,8 +6253,8 @@ onUnmounted(() => {
                                @click="adjustDelegationLimit(item, 1)"
                                class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                              >+</button>
-                             <span class="text-xs text-gray-500">{{ DELEGATION_LIMIT_RANGES[item.key].unit }}</span>
-                             <span class="text-xs text-gray-400">范围 {{ DELEGATION_LIMIT_RANGES[item.key].min }}-{{ DELEGATION_LIMIT_RANGES[item.key].max }}</span>
+                             <span class="text-xs text-gray-500">{{ getDelegationLimitRange(item).unit }}</span>
+                             <span class="text-xs text-gray-400">范围 {{ getDelegationLimitMin(item) }}-{{ getDelegationLimitMax(item) }}</span>
                           </div>
                           <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'chatbi_sample_top_k', 'knowledge_scope_gate_threshold', 'knowledge_scope_gate_ranked_limit'].includes(item.key)">
 	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
