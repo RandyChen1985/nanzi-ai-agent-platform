@@ -383,6 +383,9 @@ const emit = defineEmits<{
   (e: 'update:thinking-enable-override', val: boolean | null): void;
   (e: 'update:reasoning-effort-override', val: ReasoningEffort | null): void;
   (e: 'update:temperature-override', val: number | null): void;
+  /** 出图尺寸（白名单原值，如 512x512）；null = 不指定。父组件把它塞进
+   *  execution_options.image_size 下发，工具侧据此锁定本次出图尺寸。 */
+  (e: 'update:image-size', val: string | null): void;
   (e: 'send'): void;
   (e: 'stop'): void;
   (e: 'system-command', cmd: string): void;
@@ -844,8 +847,10 @@ const handleKeydown = (e: KeyboardEvent) => {
     if (e.key === "Escape") { showCommandMenu.value = false; return; }
   }
   if (e.key === "Enter" && !e.shiftKey) {
-    if (!canSend.value) return;
+    // 先拦默认行为再判能不能发：否则没内容可发时浏览器会照常插入一个换行，
+    // 空输入框里敲回车就多出一行空——想换行的人本来就该用 Shift+Enter。
     e.preventDefault();
+    if (!canSend.value) return;
     sendWithImageParams();
   }
 };
@@ -1657,13 +1662,19 @@ const showExpertCascade = ref(false);
 
 // ── 图像参数：对话里发起生图的可视化参数入口 ────────────────────────────────
 //
-// 用户不该被问「你要 1664x928 还是 928x1664」——他不知道，也没必要知道。这里只给
-// 比例 / 风格 / 张数三样，像素由后端按白名单换算。选中的项在输入框上方显示成标签，
-// 正文保持干净；真正并进正文只发生在按下发送的那一刻。
+// 面板给三样：分辨率 / 风格 / 张数。分辨率直接给具体像素（值全部来自后台白名单），
+// 走 execution_options.image_size 结构化下发——尺寸是白名单精确值，让模型转述一遍再落地，
+// 猜错就整次请求作废，所以这一项必须由用户直接给。风格与张数只是提示词词汇，拼进正文
+// 让模型自己领会即可。
+// 曾经的「画面比例」已删掉：分辨率卡片自带 1:1 / 16:9 小字，两套控件表达同一件事，
+// 而且能互相打架（选「1:1」+「1664x928」，正文说方图、下发的却是横图）。
+// 选中的项在输入框上方显示成标签，正文保持干净；真正并进正文只发生在按下发送的那一刻。
 const showImageParamPop = ref(false);
-const imageParamRatio = ref("");
 const imageParamStyle = ref("");
-const imageParamTone = ref("");
+/** 用户选的出图尺寸（白名单原值，如 512x512）。空串 = 不指定，用后台默认尺寸。
+ *  它不走提示词，而是作为 execution_options.image_size 结构化下发：尺寸必须是白名单里的
+ *  精确值，让模型转述一遍再落地，猜错就整次请求作废——所以这一项必须由用户直接给。 */
+const imageParamSize = ref("");
 const imageParamCount = ref(1);
 const imageStatusLoading = ref(false);
 const imageFeature = ref<{
@@ -1672,28 +1683,95 @@ const imageFeature = ref<{
   allowed_sizes: string[];
   default_size: string;
   max_images: number;
+  // 改图能力：系统层（总开关 + 接口格式是否为聊天接口）与智能体层分开回。
+  // 两个条件都得满足才能用改图 tab，任一不满足都要给出不同的处置提示。
+  edit_system_enabled?: boolean;
+  edit_unavailable_reason?: string;
+  agent_edit_enabled?: boolean | null;
 } | null>(null);
 
-// 「自动」放在第一位：多数人只想说「做张海报」，不该被迫先选比例。
-// 其余项文案带比例数字，比只写「横版」更容易对上心里的画面。
-const IMAGE_RATIO_OPTIONS = [
-  { ratio: "", label: "自动", hint: "由模型按内容判断", boxW: 16, boxH: 16, dashed: true },
-  { ratio: "1:1", label: "1:1 方形", hint: "头像 / 图标", boxW: 14, boxH: 14, dashed: false },
-  { ratio: "16:9", label: "16:9 横版", hint: "大屏 / 主视觉", boxW: 18, boxH: 10, dashed: false },
-  { ratio: "9:16", label: "9:16 竖版", hint: "手机推文", boxW: 10, boxH: 18, dashed: false },
-  { ratio: "4:3", label: "4:3 宽屏", hint: "插图 / 卡片", boxW: 16, boxH: 12, dashed: false }
-];
 // 「不指定」显式列出来：按钮全亮着的面板里，没有它就看不出「我没选」还是「选了没生效」。
-/** 色调。同样只是提示词词汇——一组图要放进同一份 PPT 时，观感统一靠的就是它。
- *  「不指定」放第一个，理由和风格一样：看得出「我没选」。 */
-const IMAGE_TONE_OPTIONS = [
-  "不指定",
-  "明亮通透",
-  "温暖柔和",
-  "冷色调",
-  "高饱和",
-  "素雅低饱和",
-];
+/** 出图尺寸卡片的示意框尺寸：按真实长宽比等比缩放，最长边 14px。
+ *  没有它，一排 `1664x928` / `928x1664` 看着差不多，用户得在脑子里换算谁横谁竖。 */
+const imageSizeBoxStyle = (size: string) => {
+  const m = /^(\d+)x(\d+)$/.exec(String(size || "").trim());
+  if (!m) return { width: "14px", height: "14px" };
+  const w = Number(m[1]) || 1;
+  const h = Number(m[2]) || 1;
+  const scale = 14 / Math.max(w, h);
+  return {
+    width: `${Math.max(6, Math.round(w * scale))}px`,
+    height: `${Math.max(6, Math.round(h * scale))}px`,
+  };
+};
+
+/** 比例标签（18:9 这种不常见的也照样算），卡片上只显示一小行。 */
+const imageSizeRatioLabel = (size: string) => {
+  const m = /^(\d+)x(\d+)$/.exec(String(size || "").trim());
+  if (!m) return "";
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  if (!w || !h) return "";
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  const g = gcd(w, h);
+  const rw = w / g;
+  const rh = h / g;
+  // 比例数字太大时（1000x998 之类）读不出含义，直接给宽高比近似值。
+  if (rw > 40 || rh > 40) return (w / h).toFixed(2).replace(/0+$/, "").replace(/\.$/, "") + ":1";
+  return `${rw}:${rh}`;
+};
+
+/** 后台白名单里的可选尺寸。界面不写死任何尺寸：白名单改了这里跟着变，
+ *  避免出现「界面能选、后端不认」的错位。 */
+const imageSizeChoices = computed(() =>
+  (imageFeature.value?.allowed_sizes || [])
+    .map((size) => String(size || "").trim())
+    .filter(Boolean)
+    .map((size) => ({
+      size,
+      ratio: imageSizeRatioLabel(size),
+      // 最小档在小尺寸出图上普遍受限（如 gpt-image-1 最小只到 1024），悬停时说明一句。
+      hint: size === "512x512" ? "部分上游模型最小只支持 1024×1024" : "",
+    })),
+);
+
+/** 后端配置的默认尺寸。第一格直接把具体像素显示出来，不再用笼统的「自动 / 默认」——
+ *  「默认 512x512」和「自动」是两种确定性，后者要用户点开面板挨个比才知道出多大。 */
+const imageDefaultSize = computed(() => String(imageFeature.value?.default_size || "").trim());
+
+/** 默认尺寸已经独占第一格，列表里不再重复出现同一个值。 */
+const otherImageSizeChoices = computed(() =>
+  imageSizeChoices.value.filter((opt) => opt.size !== imageDefaultSize.value),
+);
+
+/** 3 列网格，折叠态固定两行 6 格：「默认」1 + 尺寸 4 + 「更多」1。
+ *  不折叠时最多摆 5 个尺寸（默认 + 5 = 6 格，也是两行），所以超过 5 个才值得折。
+ *  管理员把预设全勾上时白名单能有八个十个，全摊开会把「张数」和底部按钮挤出面板。 */
+const IMAGE_SIZE_VISIBLE_COUNT = 4;
+const IMAGE_SIZE_COLLAPSE_THRESHOLD = 5;
+const imageSizeCollapsed = ref(true);
+
+const imageSizeNeedsCollapse = computed(
+  () => otherImageSizeChoices.value.length > IMAGE_SIZE_COLLAPSE_THRESHOLD,
+);
+
+const visibleImageSizeChoices = computed(() => {
+  const all = otherImageSizeChoices.value;
+  if (!imageSizeNeedsCollapse.value || !imageSizeCollapsed.value) return all;
+  const head = all.slice(0, IMAGE_SIZE_VISIBLE_COUNT);
+  // 选中的尺寸落在折叠区时，用最后一格把它顶出来：面板收着却看不见自己选了什么，
+  // 用户只会以为没生效，然后再点一次。
+  const selected = all.find((opt) => opt.size === imageParamSize.value);
+  if (selected && !head.some((opt) => opt.size === selected.size)) {
+    return [...head.slice(0, IMAGE_SIZE_VISIBLE_COUNT - 1), selected];
+  }
+  return head;
+});
+
+const hiddenImageSizeCount = computed(
+  () => otherImageSizeChoices.value.length - visibleImageSizeChoices.value.length,
+);
+
 
 /** 出图风格。本质是往提示词里塞修饰词，不是接口参数——实测网关对 quality/style
  *  这类字段一律忽略，所以扩充这里不产生任何接口约束，只是让用户少打几个字。
@@ -1754,6 +1832,11 @@ const loadImageFeatureStatus = async (options: { force?: boolean } = {}) => {
       default_size: data?.default_size || "",
       max_images: Math.max(1, Number(data?.max_images) || 1)
     };
+    // 「默认」那一格就是后台配的尺寸，用户还没动过就让它直接亮起来——
+    // 否则第一眼看不出这次会出多大，还得先点一下才知道。
+    if (!imageParamSize.value) {
+      imageParamSize.value = String(data?.default_size || "").trim();
+    }
   } catch {
     // 拿不到状态就按「未开启」处理：宁可少一个入口，也不要让用户点了没反应。
     imageFeature.value = null;
@@ -1797,19 +1880,22 @@ const hoverOpenImageParamPop = () => {
 const closeImageParamPop = () => {
   showImageParamPop.value = false;
   imagePopClosedAt = Date.now();
+  // 面板是挂在加号菜单右侧的 flyout：只收面板、把菜单留在屏幕上等于只关了一半，
+  // 用户还得再点一次空白处才收得干净。X / 取消 / 知道了 和「完成」统一按整体收起处理。
+  showPlusMenu.value = false;
 };
 
 /**
  * 把面板选择收敛成一句出图要求，发送时并进正文。全空则返回空串。
  *
- * 措辞必须是「一句人话」而不是 `[生成参数] 比例=4:3` 这种键值串：模型拿到键值串
+ * 措辞必须是「一句人话」而不是 `[生成参数] 风格=扁平插画` 这种键值串：模型拿到键值串
  * 有一定概率把它当成要画进图里的文字，出一张印着「生成参数」的图。
  */
 const buildImageParamPrefix = () => {
   const parts: string[] = [];
-  if (imageParamRatio.value) parts.push(`比例 ${imageParamRatio.value}`);
   if (imageParamStyle.value) parts.push(`风格 ${imageParamStyle.value}`);
-  if (imageParamTone.value) parts.push(`色调 ${imageParamTone.value}`);
+  // 尺寸不在这里：它必须是白名单精确值，走 execution_options.image_size 结构化下发。
+  // 比例也不在这里：分辨率已经决定了形状，再写一句比例只会在两者不一致时误导模型。
   if (imageParamCount.value > 1) parts.push(`数量 ${imageParamCount.value} 张`);
   return parts.length ? `（本次出图要求：${parts.join("，")}）` : "";
 };
@@ -1817,20 +1903,18 @@ const buildImageParamPrefix = () => {
 /**
  * 输入框上方展示的参数标签。
  *
- * 参数不进输入框正文：正文是用户自己写的话，混进「比例=4:3」这种机器味的前缀，
+ * 参数不进输入框正文：正文是用户自己写的话，混进「风格=扁平插画」这种机器味的前缀，
  * 改稿时得先手动删掉才能接着说。标签既让人看见「这次带了什么参数」，也能单独摘掉某一项。
  */
 const imageParamChips = computed(() => {
   const chips: Array<{ key: string; label: string; clear: () => void }> = [];
-  const ratioOpt = IMAGE_RATIO_OPTIONS.find((o) => o.ratio && o.ratio === imageParamRatio.value);
-  if (ratioOpt) {
-    chips.push({ key: "ratio", label: ratioOpt.label, clear: () => { imageParamRatio.value = ""; } });
-  }
   if (imageParamStyle.value) {
     chips.push({ key: "style", label: imageParamStyle.value, clear: () => { imageParamStyle.value = ""; } });
   }
-  if (imageParamTone.value) {
-    chips.push({ key: "tone", label: imageParamTone.value, clear: () => { imageParamTone.value = ""; } });
+  // 尺寸和默认值一样时不挂标签：每轮都挂一个「512x512」只是噪音，
+  // 面板第一格的高亮已经说明了这次会出多大；真正改过才有必要提示「这次不是默认的」。
+  if (imageParamSize.value && imageParamSize.value !== imageDefaultSize.value) {
+    chips.push({ key: "size", label: imageParamSize.value, clear: () => { imageParamSize.value = imageDefaultSize.value; } });
   }
   if (imageParamCount.value > 1) {
     chips.push({ key: "count", label: `${imageParamCount.value} 张`, clear: () => { imageParamCount.value = 1; } });
@@ -1838,12 +1922,205 @@ const imageParamChips = computed(() => {
   return chips;
 });
 
+/* ───────────── 改图（图生图）面板 ───────────── */
+
+/** 面板当前在哪一页。记住上次选择对反复改图的用户更顺，所以不做「每次重置成生成」。 */
+const imagePanelTab = ref<"gen" | "edit">("gen");
+
+/**
+ * 改图原图体积上限，必须与后端 `MAX_SOURCE_IMAGE_BYTES` 保持一致（10 MB）。
+ *
+ * 上传接口本身允许 20MB，但改图要把图 base64 后塞进请求体（约 1.33 倍），
+ * 超过 10MB 的图后端会拒绝。在这里先拦一道，避免出现「图传上去了、
+ * 点到完成才失败」这种走到一半才掉链子的体验。
+ */
+const MAX_EDIT_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** 改图页里用户挑的原图。还没提交，所以只留在面板内，不动附件列表。 */
+const imageEditFile = ref<File | null>(null);
+const imageEditFileName = ref("");
+const imageEditPreviewUrl = ref("");
+const imageEditFileInput = ref<HTMLInputElement | null>(null);
+
+/**
+ * 可选的参考图（第二张）。
+ *
+ * 只提供配色/风格/构图，本身不会被改。上限两张是刻意的：网关虽能收 4 张，
+ * 但实测 3 张开始走样、4 张会静默漏内容——与其让用户拿到一张缺了东西的图，
+ * 不如一开始就说清只收两张。
+ */
+const imageEditRefFile = ref<File | null>(null);
+const imageEditRefName = ref("");
+const imageEditRefPreviewUrl = ref("");
+const imageEditRefFileInput = ref<HTMLInputElement | null>(null);
+
+/** 这一轮改图是否带了参考图。发送时据此决定要不要在正文里交代「第二张是参考图」。 */
+const imageEditHasReference = ref(false);
+
+/**
+ * 本次消息是不是走改图。
+ *
+ * 它不是「用户选过的模式」这么虚的东西，而是**发送时要给正文加前缀**的开关：
+ * 平台本来就有读图能力，同一张图配「背景换成蓝色」是改图，配「这张图讲了什么」是分析。
+ * 加上「沿用所附图片进行修改：」之后，模型没有误读这句指令的余地。
+ */
+const imageEditMode = ref(false);
+
+/** 改图 tab 能不能点：系统层与智能体层两道，任一不满足就在面板里说清该找谁。 */
+const editPanelEnabled = computed(() => {
+  const status = imageFeature.value;
+  if (!status) return false;
+  return !!status.edit_system_enabled && status.agent_edit_enabled !== false;
+});
+
+/** 改图 tab 置灰的原因，直接展示给用户，省得他对着灰按钮猜。 */
+const editPanelBlockReason = computed(() => {
+  const status = imageFeature.value;
+  if (!status) return "正在检查可用状态…";
+  if (!status.system_enabled) return "平台还没开启图像生成，请联系管理员打开开关。";
+  if (!status.edit_system_enabled) {
+    return status.edit_unavailable_reason || "平台还没开启改图能力，请联系管理员。";
+  }
+  if (status.agent_edit_enabled === false) {
+    return "当前智能体没有勾选 edit_image 工具，到智能体配置里勾上即可。";
+  }
+  return "";
+});
+
+// 能力变了（换智能体、管理员改接口格式）就把停在改图页的面板拉回生成页，
+// 否则用户下次打开面板看到的是一屏置灰提示，还得自己找回去。
+watch(editPanelEnabled, (enabled) => {
+  if (!enabled && imagePanelTab.value === "edit") {
+    imagePanelTab.value = "gen";
+  }
+});
+
+const pickEditImage = () => {
+  imageEditFileInput.value?.click();
+};
+
+const onEditImageChange = (event: Event) => {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+  target.value = ""; // 允许重复选同一个文件
+  if (!file) return;
+  if (file.size > MAX_EDIT_IMAGE_BYTES) {
+    showToast(
+      `改图的图片不能超过 ${Math.round(MAX_EDIT_IMAGE_BYTES / 1024 / 1024)}MB（这张 ${(file.size / 1024 / 1024).toFixed(1)}MB），请先压缩或换一张`,
+      "error"
+    );
+    return;
+  }
+  if (imageEditPreviewUrl.value) URL.revokeObjectURL(imageEditPreviewUrl.value);
+  imageEditFile.value = file;
+  imageEditFileName.value = file.name;
+  imageEditPreviewUrl.value = URL.createObjectURL(file);
+};
+
+const clearEditImage = () => {
+  if (imageEditPreviewUrl.value) URL.revokeObjectURL(imageEditPreviewUrl.value);
+  imageEditFile.value = null;
+  imageEditFileName.value = "";
+  imageEditPreviewUrl.value = "";
+  clearEditRefImage();
+};
+
+// ── 参考图槽位：与主图同一套体积校验，只是不强制必填 ──
+const pickEditRefImage = () => {
+  imageEditRefFileInput.value?.click();
+};
+
+const onEditRefImageChange = (event: Event) => {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+  target.value = "";
+  if (!file) return;
+  if (file.size > MAX_EDIT_IMAGE_BYTES) {
+    showToast(
+      `参考图不能超过 ${Math.round(MAX_EDIT_IMAGE_BYTES / 1024 / 1024)}MB（这张 ${(file.size / 1024 / 1024).toFixed(1)}MB），请先压缩或换一张`,
+      "error"
+    );
+    return;
+  }
+  if (imageEditRefPreviewUrl.value) URL.revokeObjectURL(imageEditRefPreviewUrl.value);
+  imageEditRefFile.value = file;
+  imageEditRefName.value = file.name;
+  imageEditRefPreviewUrl.value = URL.createObjectURL(file);
+};
+
+const clearEditRefImage = () => {
+  if (imageEditRefPreviewUrl.value) URL.revokeObjectURL(imageEditRefPreviewUrl.value);
+  imageEditRefFile.value = null;
+  imageEditRefName.value = "";
+  imageEditRefPreviewUrl.value = "";
+};
+
+/**
+ * 改图页「完成」：把图交成普通附件、把要求写进输入框，剩下的交给用户按发送键。
+ *
+ * 这里刻意**不直接发出去**。面板里一个「发送」按钮意味着手滑一次就扣一次钱，
+ * 而且用户看不见图有没有挂上去；灌进输入框后他还能改词、加话，或者干脆不发。
+ */
+const closeImageParamPopSafely = () => {
+  // 取消离开时把草稿一起放掉：objectURL 不释放会一直占着那张图的内存。
+  if (imageEditPreviewUrl.value) {
+    URL.revokeObjectURL(imageEditPreviewUrl.value);
+    imageEditPreviewUrl.value = "";
+  }
+  closeImageParamPop();
+};
+
+const applyEditParams = async () => {
+  const file = imageEditFile.value;
+  if (!file) return;
+  const refFile = imageEditRefFile.value;
+  const instruction = imageEditInstruction.value.trim();
+
+  const uploaded = await uploadSingleFile(file);
+  if (!uploaded) {
+    // 上传失败：面板里选的图和写好的要求都留着，让用户换一张或重试，
+    // 而不是把他刚挑好的东西一起清掉。
+    return;
+  }
+
+  if (refFile) {
+    const refUploaded = await uploadSingleFile(refFile);
+    if (!refUploaded) {
+      // 参考图没传上去：主图已经进了附件列表，留着会让用户以为成了。
+      // 刚 push 的就是最后一个，撤掉它，面板保持原样让用户重试。
+      uploadedFiles.value.pop();
+      return;
+    }
+  }
+  // 主图先传、参考图后传，附件顺序就是模型看到的顺序——
+  // 顺序反了，模型会把参考图当成要改的那张。
+  imageEditHasReference.value = !!refFile;
+  imageEditMode.value = true;
+  clearEditImage();
+  imageEditInstruction.value = "";
+  closeImageParamPop();
+
+  if (instruction) emit("update:modelValue", instruction);
+  nextTick(() => {
+    const el = inputRef.value;
+    if (!el) return;
+    el.focus();
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  });
+};
+
+/** 关掉改图模式（用户摘掉了附件、或者这轮已经发完）。 */
+const exitImageEditMode = () => {
+  imageEditMode.value = false;
+  imageEditHasReference.value = false;
+};
+
 const applyImageParams = () => {
   // 参数已经在 chips 里了，这里只负责收起面板、把焦点交回输入框。
+  // 面板与加号菜单一起收（closeImageParamPop 内部统一处理）——「完成」= 这次设置结束，
+  // 该回输入框打字了，菜单不该还挂在屏幕上。
   closeImageParamPop();
-  // 「完成」= 这次设置结束，该回输入框打字了，所以连带把加号菜单一起收掉。
-  // 只关面板不关菜单的话，菜单还挂在屏幕上，看着跟没反应一样（面板就贴着它展开）。
-  showPlusMenu.value = false;
   nextTick(() => {
     const el = inputRef.value;
     if (!el) return;
@@ -1860,6 +2137,38 @@ const applyImageParams = () => {
  * 不用先清理参数行。发完即清空 chips，下一张图重新选。
  */
 const sendWithImageParams = () => {
+  // 改图模式：前缀不是参数而是**动作**——「沿用所附图片进行修改：」。
+  // 平台有读图能力，同一句话配一张图既可能被理解成改图、也可能被理解成分析，
+  // 这句前缀把歧义钉死，比在界面上下赌注可靠得多。
+  if (imageEditMode.value) {
+    // 兜底：用户可能在改图模式下把附件 chip 删了。这时若还带前缀，
+    // 模型会去找一张并不存在的图。没有图片附件就退回普通发送。
+    const hasImageAttachment = uploadedFiles.value.some((f) => isImageAttachment(f));
+    if (!hasImageAttachment) {
+      imageEditMode.value = false;
+      imageEditHasReference.value = false;
+    }
+  }
+  if (imageEditMode.value) {
+    const body = String(props.modelValue || "").trim();
+    // 改图页也有风格选项（实测「保持构图和主体，改成 3D 渲染质感」效果很好），
+    // 但这条分支不走 buildImageParamPrefix，所以得自己把风格带上——
+    // 漏了这一步，用户在改图页点的风格会静默失效，且没有任何提示。
+    const styleNote = imageParamStyle.value ? `（风格 ${imageParamStyle.value}）` : "";
+    // 带参考图时必须点名哪张是哪张，否则模型可能拿参考图当主图改。
+    const head = imageEditHasReference.value
+      ? "沿用所附两张图片进行修改：第一张是要改的主图，第二张只是参考（只参考它的风格、配色或构图，那张本身不用改）。"
+      : "沿用所附图片进行修改：";
+    emit("update:modelValue", `${head}${body}${styleNote}`);
+    // 参数已经写进正文，chips 的使命结束了。这里显式清，是因为「只发图片、
+    // 不打字」时 modelValue 从头到尾都是空串，下面那个 watch 等不到「从有到无」。
+    resetImageParams();
+    // 但不清 imageEditMode：发送可能被父组件拒绝（内容仍在），
+    // 那时清掉前缀标记会让用户重发一次变成「问答」而不是「改图」。
+    // 统一由下面那个 watch 在输入框真被清空时收口。
+    nextTick(() => emit("send"));
+    return;
+  }
   const prefix = buildImageParamPrefix();
   if (!prefix) {
     emit("send");
@@ -1867,24 +2176,44 @@ const sendWithImageParams = () => {
   }
   const current = String(props.modelValue || "");
   emit("update:modelValue", `${prefix}\n${current}`);
+  // 同上：纯附件发送时 modelValue 不会变，chips 得自己收。
+  resetImageParams();
   nextTick(() => emit("send"));
 };
 
 // 输入框被清空 = 这次输入确实发出去了（父组件发送成功后会清空 v-model），
 // 这时参数任务才算结束，标签一起收掉。父组件拒绝发送时内容仍在，标签也留着，
 // 不会出现「正文里有参数行、标签却消失了」的错位。
-watch(() => props.modelValue, (value) => {
-  if (!String(value || "").trim() && imageParamChips.value.length) {
+//
+// 必须是「从有到无」才算清空。只判断当前值为空会误伤：用户在空输入框里敲个回车，
+// modelValue 从 "" 变成 "\n"，trim 之后仍是空串，于是刚选好的「水彩手绘 / 1024x1024」
+// 被当成「这轮发完了」整组清掉——人只是想换行。
+watch(() => props.modelValue, (value, previous) => {
+  const wasFilled = !!String(previous || "").trim();
+  const nowEmpty = !String(value || "").trim();
+  if (!wasFilled || !nowEmpty) return;
+  if (imageParamChips.value.length) {
     resetImageParams();
+  }
+  // 改图模式同理：正文被清空 = 这轮确实发出去了，标记可以撤。
+  if (imageEditMode.value) {
+    imageEditMode.value = false;
+    imageEditHasReference.value = false;
   }
 });
 
 const resetImageParams = () => {
-  imageParamRatio.value = "";
   imageParamStyle.value = "";
-  imageParamTone.value = "";
+  imageParamSize.value = imageDefaultSize.value || "";
   imageParamCount.value = 1;
+  // 下一轮重新进入面板时回到折叠态：展开状态是「正在挑尺寸」的临时态，不该跨轮留着。
+  imageSizeCollapsed.value = true;
 };
+
+// 尺寸要单独同步给父组件：它不在正文里，父组件组装请求体时得从自己那份状态里取。
+watch(imageParamSize, (size) => {
+  emit("update:image-size", size || null);
+});
 
 // 进对话就探一次：菜单一打开就能显示「未开启 / 智能体未启用」，不用等用户先点一下才知道。
 onMounted(() => {
@@ -2219,18 +2548,25 @@ const removeFile = (index: number) => {
 };
 
 // 核心文件上传逻辑
-const uploadSingleFile = async (file: File) => {
-  if (isInteractionLocked.value) return;
+/**
+ * 上传一个文件到工作区，返回**是否真的传上去了**。
+ *
+ * 返回值不是可有可无的：调用方（改图页的「完成」）必须知道图有没有挂上去，
+ * 否则上传失败后仍然进入改图模式，发送出去就是一句「沿用所附图片进行修改」
+ * 配着一片空白——模型找不到图，用户白等一轮还丢了自己选的图。
+ */
+const uploadSingleFile = async (file: File): Promise<boolean> => {
+  if (isInteractionLocked.value) return false;
   if (file.size > 20 * 1024 * 1024) {
     showToast("文件大小不能超过 20MB", "error");
-    return;
+    return false;
   }
   const name = file.name;
   const ext = '.' + name.split('.').pop()?.toLowerCase();
   const forbiddenExts = ['.exe', '.bat', '.sh', '.cmd', '.msi', '.php', '.js', '.html'];
   if (forbiddenExts.includes(ext)) {
     showToast("暂不支持上传该类型的危险脚本文件", "warning");
-    return;
+    return false;
   }
 
   isUploading.value = true;
@@ -2241,12 +2577,13 @@ const uploadSingleFile = async (file: File) => {
     const res = await axios.post("/api/v1/chat/upload", formData);
     if (res.data && res.data.data) {
       uploadedFiles.value.push(res.data.data);
-    } else {
-      throw new Error("上传失败");
+      return true;
     }
+    throw new Error("上传失败");
   } catch (error: any) {
     console.error("Upload error:", error);
     showToast(error.response?.data?.message || error.message || "上传文件时出错，请重试", "error");
+    return false;
   } finally {
     isUploading.value = false;
   }
@@ -2545,6 +2882,7 @@ defineExpose({
                 v-for="chip in imageParamChips"
                 :key="chip.key"
                 class="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-600 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+                :class="chip.key === 'size' ? 'font-mono' : ''"
               >
                 {{ chip.label }}
                 <button
@@ -3395,36 +3733,35 @@ defineExpose({
                                   </div>
 
                                   <template v-else>
-                                    <div class="space-y-3 px-3.5 py-3">
-                                      <div>
-                                        <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">画面比例</div>
-                                        <div class="flex flex-wrap gap-1.5">
-                                          <button
-                                            v-for="opt in IMAGE_RATIO_OPTIONS"
-                                            :key="opt.label"
-                                            type="button"
-                                            class="flex flex-1 flex-col items-center gap-1 rounded-lg border px-1 py-1.5 transition-colors"
-                                            :class="imageParamRatio === opt.ratio
-                                              ? 'border-primary bg-primary/5 text-primary'
-                                              : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
-                                            :title="opt.hint"
-                                            @click="imageParamRatio = opt.ratio"
-                                          >
-                                            <span
-                                              class="block rounded-[3px] border"
-                                              :class="imageParamRatio === opt.ratio ? 'border-primary bg-primary/15' : 'border-gray-400 dark:border-gray-500'"
-                                              :style="{
-                                                width: `${opt.boxW}px`,
-                                                height: `${opt.boxH}px`,
-                                                borderStyle: opt.dashed ? 'dashed' : 'solid',
-                                              }"
-                                            ></span>
-                                            <span class="whitespace-nowrap text-[10px] font-medium leading-none">{{ opt.label }}</span>
-                                          </button>
-                                        </div>
-                                        <p class="mt-1 text-[10px] leading-relaxed text-gray-400">不选则由模型按内容自己判断</p>
-                                      </div>
+                                    <!-- 面板分两件事：生成（从零画）与改图（改已有的一张）。
+                                         两者共用同一套入口与外观，只是改图页多一个传图区，
+                                         并且提交时给正文加「沿用所附图片进行修改：」前缀。 -->
+                                    <div class="flex gap-1 border-b border-gray-100 px-3 pt-2 dark:border-gray-700">
+                                      <button
+                                        type="button"
+                                        class="rounded-t-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+                                        :class="imagePanelTab === 'gen'
+                                          ? 'border-b-2 border-primary text-primary'
+                                          : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
+                                        @click="imagePanelTab = 'gen'"
+                                      >生成</button>
+                                      <button
+                                        type="button"
+                                        class="rounded-t-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
+                                        :class="imagePanelTab === 'edit'
+                                          ? 'border-b-2 border-primary text-primary'
+                                          : (editPanelEnabled
+                                            ? 'text-gray-500 hover:text-gray-700 dark:text-gray-400'
+                                            : 'cursor-not-allowed text-gray-300 dark:text-gray-600')"
+                                        :disabled="!editPanelEnabled"
+                                        :title="editPanelEnabled ? '修改一张已有的图片' : editPanelBlockReason"
+                                        @click="editPanelEnabled && (imagePanelTab = 'edit')"
+                                      >改图</button>
+                                    </div>
 
+                                    <!-- ───── 生成页 ───── -->
+                                    <template v-if="imagePanelTab === 'gen'">
+                                    <div class="space-y-3 px-3.5 py-3">
                                       <div>
                                         <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">风格</div>
                                         <div class="flex flex-wrap gap-1.5">
@@ -3442,19 +3779,91 @@ defineExpose({
                                       </div>
 
                                       <div>
-                                        <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">色调</div>
-                                        <div class="flex flex-wrap gap-1.5">
+                                        <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">分辨率</div>
+                                        <!-- 用卡片而不是胶囊：尺寸是「几何参数」，卡片画得出长宽形状。
+                                             示意框按真实长宽比画，横版竖版不用读数字就能看出来；卡片上的
+                                             比例小字（1:1 / 16:9）同时承担「这张图什么形状」的说明，
+                                             所以面板里不再单独放一排画面比例——两套控件表达同一件事，
+                                             选「1:1」又选「1664x928」时还会互相打架。 -->
+                                        <div class="grid grid-cols-3 gap-1.5">
+                                          <!-- 第一格直接显示后台配的默认尺寸并默认选中：写「自动」的话，
+                                               用户得点开面板挨个比才知道这次到底出多大。 -->
                                           <button
-                                            v-for="tone in IMAGE_TONE_OPTIONS"
-                                            :key="tone"
                                             type="button"
-                                            class="rounded-full border px-2 py-0.5 text-[11px] transition-colors"
-                                            :class="(imageParamTone || '不指定') === tone
-                                              ? 'border-primary bg-primary text-white'
+                                            class="flex flex-col items-center gap-1 rounded-lg border px-1 py-1.5 transition-colors"
+                                            :class="imageDefaultSize && imageParamSize === imageDefaultSize
+                                              ? 'border-primary bg-primary/5 text-primary'
                                               : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
-                                            @click="imageParamTone = tone === '不指定' ? '' : tone"
-                                          >{{ tone }}</button>
+                                            :title="imageDefaultSize ? `后台配置的默认尺寸：${imageDefaultSize}` : '后台还没配置默认尺寸'"
+                                            @click="imageParamSize = imageDefaultSize"
+                                          >
+                                            <span
+                                              class="block rounded-[3px] border"
+                                              :class="imageDefaultSize && imageParamSize === imageDefaultSize
+                                                ? 'border-primary bg-primary/15'
+                                                : 'border-gray-400 dark:border-gray-500'"
+                                              :style="imageDefaultSize
+                                                ? imageSizeBoxStyle(imageDefaultSize)
+                                                : { width: '14px', height: '14px', borderStyle: 'dashed' }"
+                                            ></span>
+                                            <span class="font-mono text-[10px] font-medium leading-none tracking-tight">{{ imageDefaultSize || '默认' }}</span>
+                                            <span class="text-[9px] leading-none opacity-70">默认</span>
+                                          </button>
+                                          <button
+                                            v-for="opt in visibleImageSizeChoices"
+                                            :key="opt.size"
+                                            type="button"
+                                            class="flex flex-col items-center gap-1 rounded-lg border px-1 py-1.5 transition-colors"
+                                            :class="imageParamSize === opt.size
+                                              ? 'border-primary bg-primary/5 text-primary'
+                                              : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
+                                            :title="opt.hint || `${opt.size}（${opt.ratio}）`"
+                                            @click="imageParamSize = opt.size"
+                                          >
+                                            <span
+                                              class="block rounded-[3px] border"
+                                              :class="imageParamSize === opt.size ? 'border-primary bg-primary/15' : 'border-gray-400 dark:border-gray-500'"
+                                              :style="imageSizeBoxStyle(opt.size)"
+                                            ></span>
+                                            <span class="font-mono text-[10px] font-medium leading-none tracking-tight">{{ opt.size }}</span>
+                                            <span class="text-[9px] leading-none opacity-70">{{ opt.ratio }}</span>
+                                          </button>
+                                          <!-- 折叠格用虚线框 + chevron，和尺寸卡片同一套骨架（14px 图标位 + 两行小字），
+                                               高度才对得齐下面那行；纯文字按钮会比旁边矮一截。 -->
+                                          <button
+                                            v-if="imageSizeNeedsCollapse"
+                                            type="button"
+                                            class="flex flex-col items-center gap-1 rounded-lg border border-dashed px-1 py-1.5 transition-colors"
+                                            :class="imageSizeCollapsed
+                                              ? 'border-gray-300 text-gray-500 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400'
+                                              : 'border-gray-200 text-gray-500 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400'"
+                                            :title="imageSizeCollapsed ? `还有 ${hiddenImageSizeCount} 个尺寸` : '收起多余尺寸'"
+                                            @click="imageSizeCollapsed = !imageSizeCollapsed"
+                                          >
+                                            <span class="flex h-[14px] w-[14px] items-center justify-center">
+                                              <svg
+                                                class="h-3 w-3 transition-transform"
+                                                :class="imageSizeCollapsed ? '' : 'rotate-180'"
+                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                                              ><path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>
+                                            </span>
+                                            <span class="whitespace-nowrap text-[10px] font-medium leading-none">{{ imageSizeCollapsed ? '更多' : '收起' }}</span>
+                                            <span class="text-[9px] leading-none opacity-70">
+                                              {{ imageSizeCollapsed ? `+${hiddenImageSizeCount}` : `共 ${imageSizeChoices.length}` }}
+                                            </span>
+                                          </button>
                                         </div>
+                                        <p class="mt-1 text-[10px] leading-relaxed text-gray-400">
+                                          <template v-if="imageSizeChoices.length">
+                                            来自「系统设置 → 图像生成」的白名单；第一格是后台配置的默认尺寸。
+                                          </template>
+                                          <template v-else>
+                                            后台还没配置可选分辨率，只能用默认尺寸。
+                                          </template>
+                                          <span v-if="imageSizeChoices.some(o => o.size === '512x512')" class="block">
+                                            512x512 需要上游模型支持，部分模型最小只到 1024×1024。
+                                          </span>
+                                        </p>
                                       </div>
 
                                       <div v-if="(imageFeature?.max_images || 1) > 1">
@@ -3476,7 +3885,7 @@ defineExpose({
 
                                     <div class="border-t border-gray-100 bg-gray-50/60 px-3.5 py-2.5 dark:border-gray-700 dark:bg-gray-800/60">
                                       <p class="mb-2 text-[10.5px] leading-relaxed text-gray-400 dark:text-gray-500">
-                                        选择会随消息一起发出，输入框里只显示成几个标签，不出现像素值。
+                                        选择会随消息一起发出，输入框里只显示成几个标签；尺寸走结构化参数，不写进正文。
                                       </p>
                                       <div class="flex items-center gap-2">
                                         <button
@@ -3497,6 +3906,141 @@ defineExpose({
                                         >完成</button>
                                       </div>
                                     </div>
+                                    </template>
+
+                                    <!-- ───── 改图页 ───── -->
+                                    <template v-else>
+                                      <!-- 能力不满足时不能只把 tab 弄灰就不管：要说清找谁、做什么 -->
+                                      <div v-if="!editPanelEnabled" class="space-y-2 px-3.5 py-3.5">
+                                        <div class="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
+                                          {{ editPanelBlockReason }}
+                                        </div>
+                                        <div class="flex justify-end">
+                                          <button
+                                            type="button"
+                                            class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                                            @click="imagePanelTab = 'gen'"
+                                          >回到生成</button>
+                                        </div>
+                                      </div>
+
+                                      <template v-else>
+                                        <div class="space-y-3 px-3.5 py-3">
+                                          <div>
+                                            <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">图片</div>
+                                            <input
+                                              ref="imageEditFileInput"
+                                              type="file"
+                                              accept="image/png,image/jpeg,image/jpg,image/webp"
+                                              class="hidden"
+                                              @change="onEditImageChange"
+                                            />
+                                            <input
+                                              ref="imageEditRefFileInput"
+                                              type="file"
+                                              accept="image/png,image/jpeg,image/jpg,image/webp"
+                                              class="hidden"
+                                              @change="onEditRefImageChange"
+                                            />
+
+                                            <!-- 两个槽位并排：左主图（必选）、右参考图（可选）。
+                                                 并排而不是纵向列表，是为了让「只能放两张」这件事不用读字就看得出来。 -->
+                                            <div class="flex items-stretch gap-2">
+                                              <div
+                                                v-if="!imageEditFile"
+                                                class="flex h-[74px] flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-gray-300 px-1 text-center transition-colors hover:border-primary/50 hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700/40"
+                                                @click="pickEditImage"
+                                              >
+                                                <svg class="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+                                                <span class="text-[11px] font-medium text-gray-500">主图</span>
+                                                <span class="text-[9.5px] text-gray-400">必选</span>
+                                              </div>
+                                              <div
+                                                v-else
+                                                class="group relative h-[74px] flex-1 overflow-hidden rounded-lg border border-primary/40 bg-primary/5"
+                                              >
+                                                <img :src="imageEditPreviewUrl" :title="imageEditFileName" class="h-full w-full object-cover" alt="" />
+                                                <span class="absolute left-1 top-1 rounded bg-primary px-1 py-0.5 text-[9px] font-bold leading-tight text-white">主图</span>
+                                                <div class="absolute right-1 top-1 flex gap-0.5">
+                                                  <button type="button" class="rounded bg-white/90 px-1 text-[10px] text-gray-600 shadow-sm hover:bg-white" title="换一张" @click="pickEditImage">换</button>
+                                                  <button type="button" class="rounded bg-white/90 px-1 text-[11px] leading-tight text-gray-500 shadow-sm hover:bg-white" title="移除" @click="clearEditImage">×</button>
+                                                </div>
+                                              </div>
+
+                                              <div
+                                                v-if="!imageEditRefFile"
+                                                class="flex h-[74px] flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-gray-300 px-1 text-center transition-colors hover:border-primary/50 hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700/40"
+                                                @click="pickEditRefImage"
+                                              >
+                                                <svg class="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+                                                <span class="text-[11px] font-medium text-gray-500">参考图</span>
+                                                <span class="text-[9.5px] text-gray-400">可选</span>
+                                              </div>
+                                              <div
+                                                v-else
+                                                class="relative h-[74px] flex-1 overflow-hidden rounded-lg border border-gray-400/60 bg-gray-50 dark:bg-gray-700/40"
+                                              >
+                                                <img :src="imageEditRefPreviewUrl" :title="imageEditRefName" class="h-full w-full object-cover" alt="" />
+                                                <span class="absolute left-1 top-1 rounded bg-gray-600 px-1 py-0.5 text-[9px] font-bold leading-tight text-white">参考图</span>
+                                                <div class="absolute right-1 top-1 flex gap-0.5">
+                                                  <button type="button" class="rounded bg-white/90 px-1 text-[10px] text-gray-600 shadow-sm hover:bg-white" title="换一张" @click="pickEditRefImage">换</button>
+                                                  <button type="button" class="rounded bg-white/90 px-1 text-[11px] leading-tight text-gray-500 shadow-sm hover:bg-white" title="移除" @click="clearEditRefImage">×</button>
+                                                </div>
+                                              </div>
+                                            </div>
+
+                                            <p class="mt-1.5 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
+                                              主图是要改的那张；参考图只提供风格、配色或构图，不会被直接改。
+                                            </p>
+                                          </div>
+
+                                          <div>
+                                            <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">要改哪里</div>
+                                            <textarea
+                                              v-model="imageEditInstruction"
+                                              rows="2"
+                                              placeholder="比如：把背景换成浅蓝色，杯子别动"
+                                              class="w-full resize-none rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] leading-relaxed text-gray-800 outline-none transition-colors focus:border-primary dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                                            ></textarea>
+                                          </div>
+
+                                          <div>
+                                            <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">风格</div>
+                                            <div class="flex flex-wrap gap-1.5">
+                                              <button
+                                                v-for="style in IMAGE_STYLE_OPTIONS"
+                                                :key="'edit-' + style"
+                                                type="button"
+                                                class="rounded-full border px-2 py-0.5 text-[11px] transition-colors"
+                                                :class="(imageParamStyle || '不指定') === style
+                                                  ? 'border-primary bg-primary text-white'
+                                                  : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
+                                                @click="imageParamStyle = style === '不指定' ? '' : style"
+                                              >{{ style }}</button>
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        <div class="border-t border-gray-100 bg-gray-50/60 px-3.5 py-2.5 dark:border-gray-700 dark:bg-gray-800/60">
+                                          <p class="mb-2 text-[10.5px] leading-relaxed text-gray-400 dark:text-gray-500">
+                                            点「完成」后图片会挂到输入框，确认再发送。改图默认跟随原图比例，要换尺寸请到「生成」页选。
+                                          </p>
+                                          <div class="flex items-center gap-2">
+                                            <button
+                                              type="button"
+                                              class="ml-auto rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50"
+                                              @click="closeImageParamPopSafely"
+                                            >取消</button>
+                                            <button
+                                              type="button"
+                                              class="rounded-lg bg-primary px-2.5 py-1 text-[11px] font-bold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                                              :disabled="!imageEditFile"
+                                              @click="applyEditParams"
+                                            >完成</button>
+                                          </div>
+                                        </div>
+                                      </template>
+                                    </template>
                                   </template>
                                 </div>
 

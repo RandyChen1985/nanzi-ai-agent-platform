@@ -163,7 +163,7 @@ READ_ONLY_TOOL_NAMES = {
 #: **只列具体工具名，不要按 ``confirmation="none"`` 批量推导**：tool_policy 里标了 none 的
 #: 58 个工具中混着 browser_download、publish_generated_file 这类确实该把关的写操作，
 #: 按元数据一律放行会一次性开掉一片闸门。
-AUTO_APPROVED_TOOL_NAMES: frozenset[str] = frozenset({"generate_image"})
+AUTO_APPROVED_TOOL_NAMES: frozenset[str] = frozenset({"generate_image", "edit_image"})
 
 
 def _auto_approve_decision(tool_name: str) -> Any:

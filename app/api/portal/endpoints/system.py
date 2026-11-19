@@ -919,6 +919,56 @@ class ImageTestRequest(BaseModel):
     api_format: Optional[str] = None
 
 
+class ImageEditTestRequest(BaseModel):
+    """「测试改图」入参。
+
+    没有 prompt / size：这一项测的是「这个模型能不能吃图输入」，用的是内置样图与
+    固定指令，让不同模型之间可比。配置字段同样允许为空——空着就用库里已保存的值。
+    """
+
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    api_format: Optional[str] = None
+
+
+@router.post(
+    "/configs/image-generation/test-edit",
+    summary="测试改图（系统设置 · 图像）",
+)
+async def test_image_edit(
+    payload: ImageEditTestRequest,
+    user: Dict = Depends(require_permission("element", "element:system:config_save")),
+):
+    """用内置样图真实调一次改图，验证当前模型能不能吃图输入。
+
+    **不落盘、不发布产物、不写数据库**：结果以 data URL 直接回给设置页预览。
+
+    为什么单独一个测试：一个只支持文生图的模型（例如只有 ``openai`` 端点的
+    ``kolors``）在配置上完全合法，「测试生成」也会通过，但改图会全 500。
+    这个差别只有真发一张图过去才看得出来。
+    """
+    from app.services.ai.tools.image_generation_tool import preview_image_edit
+
+    try:
+        result = await preview_image_edit(
+            base_url=payload.base_url,
+            api_key=payload.api_key,
+            model=payload.model,
+            api_format=payload.api_format,
+        )
+    except (PermissionError, ValueError) as exc:
+        return {"ok": False, "message": str(exc), "supports_edit": False}
+    except Exception as exc:  # noqa: BLE001 - 设置页要看到原因，不能白屏
+        logging.error(f"Image edit test failed: {exc}")
+        return {
+            "ok": False,
+            "message": f"测试失败：{exc}",
+            "supports_edit": False,
+        }
+    return {"ok": True, **result}
+
+
 @router.post("/configs/image-generation/test", summary="测试生成（系统设置 · 图像）")
 async def test_image_generation(
     payload: ImageTestRequest,
@@ -963,21 +1013,28 @@ async def get_image_generation_status(
 
     只回布尔与尺寸白名单，**不回任何密钥**——这个接口普通登录用户可访问。
     """
-    from app.services.ai.tools.image_generation_tool import (
-        load_image_generation_config,
-    )
+    from app.services.ai.tools.image_generation_tool import load_image_generation_config
 
     config = await load_image_generation_config()
+    # 改图只看总开关：它自己的协议是写死的聊天接口（见 request_image_once），
+    # 不受「生图用哪个端点」影响，所以这里不再拿 api_format 判一遍。
     payload: Dict[str, Any] = {
         "system_enabled": bool(config["enabled"]),
         "allowed_sizes": config["allowed_sizes"],
         "default_size": config["default_size"],
         "max_images": config["max_images_per_call"],
         "agent_enabled": None,
+        # 系统层面能不能改图：只看总开关，与智能体无关。
+        "edit_system_enabled": bool(config["enabled"]),
+        # 字段保留：前端已经按它渲染提示，豁免原因将来可能再加（比如换模型）
+        "edit_unavailable_reason": "" if config["enabled"] else "图像生成总开关未开启，请联系管理员",
+        # 当前智能体是否勾了 edit_image
+        "agent_edit_enabled": None,
     }
 
     if agent_id:
         payload["agent_enabled"] = await _agent_has_tool(db, agent_id, "generate_image")
+        payload["agent_edit_enabled"] = await _agent_has_tool(db, agent_id, "edit_image")
 
     return payload
 

@@ -1730,6 +1730,56 @@ const formatBytes = (bytes: number) => {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`
 }
 
+// ── 图像分组：测试改图（内置样图，验证模型能不能吃图输入） ──────────────
+//
+// 「测试生成」通过 ≠ 能改图。只支持文生图的模型（例如只有 openai 端点的 kolors）
+// 在配置上完全合法，文生图测起来也正常，但改图会全 500。这个差别只有真发一张图
+// 过去才看得出来，所以单独一个按钮，用内置样图 + 固定指令。
+const imageEditTestLoading = ref(false)
+const imageEditTestError = ref('')
+const imageEditTestResult = ref<{
+  image: string
+  mime_type: string
+  width: number | null
+  height: number | null
+  size: string
+  model: string
+  bytes: number
+  elapsed_ms: number
+  instruction: string
+} | null>(null)
+
+// 曾经按「接口格式是不是 openai_chat」把测试按钮置灰，现在不需要了：
+// 改图的协议是写死的聊天接口（见 request_image_once），和生图用哪个端点无关。
+
+const runImageEditTest = async () => {
+  imageEditTestLoading.value = true
+  imageEditTestError.value = ''
+  imageEditTestResult.value = null
+  try {
+    const { data } = await axios.post(
+      '/api/portal/system/configs/image-generation/test-edit',
+      {
+        base_url: imageGroupValueOf('image_api_base_url') || null,
+        model: imageGroupValueOf('image_model') || null,
+        api_format: imageGroupValueOf('image_api_format') || null,
+        api_key: isConfigItemModified('image_api_key')
+          ? imageGroupValueOf('image_api_key') || null
+          : null,
+      }
+    )
+    if (data?.ok) {
+      imageEditTestResult.value = data
+    } else {
+      imageEditTestError.value = data?.message || '测试失败'
+    }
+  } catch (e: any) {
+    imageEditTestError.value = e.response?.data?.detail || e.message || '网络错误'
+  } finally {
+    imageEditTestLoading.value = false
+  }
+}
+
 const runImageTest = async () => {
   const prompt = imageTestPrompt.value.trim()
   if (!prompt) {
@@ -1859,7 +1909,11 @@ const selectImageFormat = (item: ConfigItem, value: string) => {
   imageFormatOpen.value = false
 }
 
+// 512x512 是最小的一档（图标 / 预览图够用），放在最前保持「由小到大」的阅读顺序。
+// 它默认不勾选：能不能真出 512 取决于上游模型（gpt-image-1 最小只到 1024），
+// 预设里有它是为了让管理员自己按模型能力决定，而不是被写死成不可用。
 const IMAGE_SIZE_PRESETS = [
+  '512x512',
   '1024x1024',
   '1328x1328',
   '1664x928',
@@ -7116,7 +7170,24 @@ onUnmounted(() => {
                           </svg>
                           {{ imageTestLoading ? '生成中…' : '生成' }}
                         </button>
+                        <button
+                          type="button"
+                          :disabled="imageEditTestLoading || !canSave"
+                          title="用内置样图验证这个模型能不能改图"
+                          class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 transition-opacity hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          @click="runImageEditTest"
+                        >
+                          <span v-if="imageEditTestLoading" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-rose-400 border-t-transparent"></span>
+                          <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-3.5 w-3.5">
+                            <path d="M13.5 3a.75.75 0 01.75.75V6h2.25a.75.75 0 010 1.5H14.25v2.25a.75.75 0 01-1.5 0V7.5H10.5a.75.75 0 010-1.5h2.25V3.75A.75.75 0 0113.5 3zM2 12a.75.75 0 01.75-.75h6.5a.75.75 0 010 1.5h-6.5A.75.75 0 012 12z" />
+                          </svg>
+                          {{ imageEditTestLoading ? '测试中…' : '测试改图' }}
+                        </button>
                       </div>
+
+                      <p class="mt-2 text-[11px] leading-relaxed text-gray-500">
+                        「测试改图」用一张内置样图跑一次真改图（把背景换成浅蓝色），验证当前模型能不能接收图片输入——只支持文生图的模型这里会失败。改图固定走 <code class="font-mono">/chat/completions</code>，与上方的接口格式无关。
+                      </p>
 
                       <p v-if="imageTestError" class="mt-2 break-all rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] leading-relaxed text-rose-700">
                         {{ imageTestError }}
@@ -7133,6 +7204,28 @@ onUnmounted(() => {
                           <div>耗时：<span class="font-mono text-gray-800">{{ (imageTestResult.elapsed_ms / 1000).toFixed(1) }}s</span>　大小：<span class="font-mono text-gray-800">{{ formatBytes(imageTestResult.bytes) }}</span></div>
                           <div class="break-all">模型：<span class="font-mono text-gray-800">{{ imageTestResult.model }}</span></div>
                           <p class="pt-1 text-[10px] leading-relaxed text-emerald-700">测试通过。这张图只用于预览，未保存为产物。</p>
+                        </div>
+                      </div>
+
+                      <!-- 改图测试结果单独一块：与生成结果并列会让人误以为是同一张图 -->
+                      <p v-if="imageEditTestError" class="mt-2 break-all rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] leading-relaxed text-rose-700">
+                        {{ imageEditTestError }}
+                      </p>
+                      <div v-if="imageEditTestResult" class="mt-3 flex flex-wrap items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50/50 p-2.5">
+                        <img
+                          :src="imageEditTestResult.image"
+                          alt="改图测试结果"
+                          class="max-h-40 w-auto rounded-lg border border-emerald-200 bg-white object-contain shadow-sm"
+                        />
+                        <div class="min-w-[9rem] space-y-1 text-[11px] text-gray-600">
+                          <div class="text-[12px] font-semibold text-emerald-700">✓ 这个模型可以改图</div>
+                          <div>输出：<span class="font-mono text-gray-800">{{ imageEditTestResult.width || '?' }}×{{ imageEditTestResult.height || '?' }}</span></div>
+                          <div>耗时：<span class="font-mono text-gray-800">{{ (imageEditTestResult.elapsed_ms / 1000).toFixed(1) }}s</span></div>
+                          <div class="break-all">模型：<span class="font-mono text-gray-800">{{ imageEditTestResult.model }}</span></div>
+                          <p class="pt-1 text-[10px] leading-relaxed text-gray-500">
+                            指令：{{ imageEditTestResult.instruction }}<br>
+                            现在可以到智能体配置里勾选 <code class="font-mono">edit_image</code> 了。
+                          </p>
                         </div>
                       </div>
                     </div>

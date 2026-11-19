@@ -3,6 +3,7 @@ import uuid
 import json
 import asyncio
 import gzip
+import logging
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.datastructures import Headers, MutableHeaders
@@ -10,6 +11,39 @@ from app.core import database
 from typing import Optional
 
 from app.services.audit_service import AuditService, MAX_AUDIT_TEXT_BYTES
+
+logger = logging.getLogger(__name__)
+
+# Starlette 的 ``BaseHTTPMiddleware.call_next()`` 在「下游一个响应消息都没发出就结束」时
+# 抛出的 RuntimeError 文本。只精确匹配这一条，避免把其他 RuntimeError 也当成断连吞掉。
+_NO_RESPONSE_RETURNED = "No response returned."
+
+
+def _is_no_response_error(exc: BaseException) -> bool:
+    """是否为「下游没发出响应」导致的 Starlette 中间件错误。
+
+    ``call_next()`` 内部有一层判定：下游真抛了异常时它会原样重新抛出那个异常，只有
+    ``app_exc is None``（下游正常结束、但没发 ``http.response.start``）时才抛
+    ``RuntimeError("No response returned.")``。所以命中这条意味着响应流已断，
+    而不是业务代码出错。
+    """
+    if isinstance(exc, RuntimeError) and _NO_RESPONSE_RETURNED in str(exc):
+        return True
+    # 少数路径下 EndOfStream 会直接冒到这一层。按类名判断，避免为此新增 anyio 依赖。
+    return type(exc).__name__ == "EndOfStream"
+
+
+async def _client_disconnected(request: Request) -> bool:
+    """尽力探测客户端是否已断开。
+
+    Starlette 的 ``is_disconnected()`` 用「立即取消的 cancel scope」去偷看 receive，
+    在真实服务器里往往拿不到消息而返回 False，所以这里只作参考信息写进日志，
+    不作为是否收尾的唯一依据。
+    """
+    try:
+        return await request.is_disconnected()
+    except Exception:  # pragma: no cover - 探测本身不该影响主流程
+        return False
 
 
 def _decode_captured_response_body(
@@ -41,7 +75,26 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # 1. Path Filtering: Only log /api/ requests
         if not request.url.path.startswith("/api/"):
-            return await call_next(request)
+            try:
+                return await call_next(request)
+            except RuntimeError as exc:
+                if not _is_no_response_error(exc):
+                    raise
+                # 客户端在响应写出前就断开（页面刷新、前端路由切换导致动态 import 的
+                # js/css 请求被浏览器取消、代理超时等）时，下游 StaticFiles / 路由
+                # 会被取消并正常结束，一个响应消息都没发出，BaseHTTPMiddleware 的内存
+                # 流随之关闭，于是抛出 "No response returned."。
+                # 这不是服务端故障，但异常会一路冒到 general_exception_handler，刷出
+                # 两条 ERROR traceback（"Unhandled exception" + "Exception in ASGI
+                # application"）。此处按 nginx 的 499 语义收尾：记一条 warning 保留
+                # 可观测性，不产生堆栈，也不污染 5xx。
+                logger.warning(
+                    "客户端在响应前断开，跳过响应: %s %s (disconnected=%s)",
+                    request.method,
+                    request.url.path,
+                    await _client_disconnected(request),
+                )
+                return Response(status_code=499)
 
         # 2. Trace ID Logic
         trace_id = request.headers.get("X-Trace-Id") or str(uuid.uuid4())

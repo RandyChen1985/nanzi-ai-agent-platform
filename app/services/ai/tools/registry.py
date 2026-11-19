@@ -53,7 +53,7 @@ from app.services.ai.tools.credential_catalog_tools import list_my_credentials
 from app.services.ai.tools.user_info_tools import get_myinfo
 from app.services.ai.tools.user_confirmation_tools import request_user_confirmation
 from app.services.ai.tools.user_question_tools import ask_user_question
-from app.services.ai.tools.image_generation_tool import generate_image
+from app.services.ai.tools.image_generation_tool import edit_image, generate_image
 from app.services.ai.tools.session_status import get_runtime_capabilities, session_status
 from app.services.ai.tools.agent_delegate_tool import sub_agent_call, sub_agent_batch_call
 from app.services.ai.tools.todo_tools import todo_write
@@ -349,6 +349,7 @@ class ToolRegistry:
     #: 不勾选」之外的第一道闸——系统没开，任何智能体都调不到。
     CONFIG_GATED_TOOLS: Dict[str, str] = {
         "generate_image": "image_generation_enabled",
+        "edit_image": "image_generation_enabled",
     }
 
     # Instantiate complex tools once
@@ -396,8 +397,9 @@ class ToolRegistry:
         # Register System Executive Tools
         "read_file": read_file,
         "read_image": read_image,
-        # 出图：受 image_generation_enabled 总开关门禁（见 CONFIG_GATED_TOOLS）
+        # 出图 / 改图：受 image_generation_enabled 总开关门禁（见 CONFIG_GATED_TOOLS）
         "generate_image": generate_image,
+        "edit_image": edit_image,
         "write_file": write_file,
         "search_text": search_text,
         "exec_command": exec_command,
@@ -535,7 +537,7 @@ class ToolRegistry:
         return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
 
     @classmethod
-    async def _augment_image_tool_spec(cls, spec: Any) -> Any:
+    async def _augment_image_tool_spec(cls, spec: Any, *, allow_multi: bool = True) -> Any:
         """把当前平台的可用尺寸写进工具描述。
 
         白名单只存在配置里，模型是看不到的——不在描述里说清楚，它就会自己编一个
@@ -555,24 +557,36 @@ class ToolRegistry:
             return spec
 
         allowed = "、".join(config["allowed_sizes"]) or "（管理员尚未配置可用尺寸）"
-        extra = (
-            "\n\nThis platform only accepts these sizes (format 宽x高): "
-            f"{allowed}. Default: {config['default_size']}. "
-            f"Max images per single call: {config['max_images_per_call']} "
-            "(pass it as the `n` argument only when the user explicitly asks for "
-            "several options of the same picture — each image is billed separately). "
-            "Pick the size whose aspect ratio matches the user's intent "
-            "(横版/大屏/主视觉 → landscape, 竖版/手机推文 → portrait, 方形/头像 → square). "
-            "If the user does not specify, just use the default — do not ask back."
-        )
+        if allow_multi:
+            extra = (
+                "\n\nThis platform only accepts these sizes (format 宽x高): "
+                f"{allowed}. Default: {config['default_size']}. "
+                f"Max images per single call: {config['max_images_per_call']} "
+                "(pass it as the `n` argument only when the user explicitly asks for "
+                "several options of the same picture — each image is billed separately). "
+                "Pick the size whose aspect ratio matches the user's intent "
+                "(横版/大屏/主视觉 → landscape, 竖版/手机推文 → portrait, 方形/头像 → square). "
+                "If the user does not specify, just use the default — do not ask back."
+            )
+        else:
+            # 改图一次只出一张：用户心里已有目标画面，多给只是多花钱。
+            extra = (
+                "\n\nThis platform only accepts these sizes (format 宽x高): "
+                f"{allowed}. Default: {config['default_size']}. "
+                "Omit `size` to keep the source image's shape — that is usually what "
+                "the user wants when they only ask to change the content. "
+                "Pass a size from the list above only when they explicitly want a "
+                "different output dimension. Never invent a size. "
+                "At most two pictures per call: the main one as `image`, plus one "
+                "optional `reference` that only informs the result's palette/style/"
+                "composition. Never put more than one path in either argument."
+            )
         current = str(getattr(spec, "description", "") or "")
         # 工具级超时要跟着实际可能耗时走：单张超时 × 张数（+ 余量），否则会被
         # 全局 180 秒的 wait_for 提前掐断——用户看到的是「工具超时」这种含糊说法，
         # 而不是「这张图没出成功」。上限 15 分钟，避免配置写大后无限挂住。
-        budget = min(
-            float(config["timeout"]) * int(config["max_images_per_call"]) + 30.0,
-            900.0,
-        )
+        rounds = int(config["max_images_per_call"]) if allow_multi else 1
+        budget = min(float(config["timeout"]) * rounds + 30.0, 900.0)
         return replace(spec, description=current + extra, timeout_seconds=budget)
 
     @classmethod
@@ -746,8 +760,10 @@ class ToolRegistry:
                 source_type="static",
                 permission_scope=perm_scope,
             )
-            if name == "generate_image":
-                spec = await cls._augment_image_tool_spec(spec)
+            if name in {"generate_image", "edit_image"}:
+                spec = await cls._augment_image_tool_spec(
+                    spec, allow_multi=(name == "generate_image")
+                )
             return cls._attach_evidence_metadata(name, spec)
 
         db_tool = await cls._load_db_tool_with_source(name)

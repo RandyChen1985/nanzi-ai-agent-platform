@@ -1528,6 +1528,7 @@
         @update:thinking-enable-override="thinkingEnableOverride = $event"
         @update:reasoning-effort-override="reasoningEffortOverride = $event"
         @update:temperature-override="temperatureOverride = $event"
+        @update:image-size="imageSizeOverride = $event"
         @send="sendMessage"
         @refresh-context-compactions="refreshEmbedContextCompactions(true)"
         @manual-context-compaction="manualCompactEmbedContext"
@@ -4650,6 +4651,9 @@ const updateBrowserApprovalMode = async (mode: BrowserApprovalMode) => {
 const thinkingEnableOverride = ref<boolean | null>(null);
 const reasoningEffortOverride = ref<ReasoningEffort | null>(null);
 const temperatureOverride = ref<number | null>(null);
+/** 输入框「图像参数」里选的出图尺寸（白名单原值）。它不进正文，随 execution_options 下发，
+ *  由 generate_image 在调用时锁定尺寸；null = 不指定，用后台默认尺寸。 */
+const imageSizeOverride = ref<string | null>(null);
 const welcomeCards = ref<Array<{ icon: string; title: string; subtitle: string; prompt: string }>>([]);
 interface WelcomeRecentConversation {
   conversation_id: string;
@@ -13343,6 +13347,8 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
         knowledge_ragflow_vector_weight: knowledgeVectorWeight.value,
         knowledge_ragflow_metadata_top_k: knowledgeMetadataTopK.value,
         resource_scope: resourceScope.value,
+        // 出图尺寸：只有用户在这次「图像参数」里点了具体分辨率才下发。
+        image_size: imageSizeOverride.value || undefined,
       },
       permission_options: {
         approval_mode: config.approvalMode || "ask",
