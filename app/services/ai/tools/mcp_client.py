@@ -299,6 +299,11 @@ async def _call_tool_with_progress(
 
 class McpSseSession:
     """Manages an MCP connection, supporting both standard SSE and Direct HTTP Post gateways"""
+
+    #: 等 owner task 收尾的上限（秒）。owner 正常时只走一次 ``exit_stack.aclose()``，
+    #: 给足余量是为了不让远端重置连接之类的抖动把 close() 变成无限等待。
+    OWNER_SHUTDOWN_TIMEOUT = 30.0
+
     def __init__(self, server_id: str, sse_url: str, auth_headers: Optional[Dict] = None):
         self.server_id = server_id
         self.sse_url = sse_url
@@ -323,6 +328,25 @@ class McpSseSession:
         self._active_requests: int = 0
         self._active_requests_changed = asyncio.Event()
         self._active_requests_changed.set()
+        # ---- 会话 owner task -------------------------------------------------
+        # mcp 2.x 的传输层（``streamable_http_client`` / ``sse_client``）内部是
+        # ``anyio.create_task_group()``：它把 cancel scope 压在**进入它的那个 task**
+        # 的栈上，直到 ``__aexit__``。而共享会话的生命周期长于任何一次 HTTP 请求，
+        # 于是两种症状都出现过：
+        #   * 在请求 task 里建链、请求结束仍不关闭 → 该 task 收尾时栈顶不是自己的
+        #     scope → "Attempted to exit a cancel scope that isn't the current
+        #     tasks's current cancel scope"（响应已 200 发出，炸在收尾阶段）；
+        #   * 换一个 task 去 aclose() → "Attempted to exit cancel scope in a
+        #     different task than it was entered in"，清理被跳过、底层传输泄漏。
+        # 解法只有一个：建链与关链都发生在**同一个专属 task** 里。请求线程只
+        # ``await`` 就绪信号，碰不到 ``_exit_stack``。
+        self._owner_task: Optional[asyncio.Task] = None
+        self._owner_ready: Optional[asyncio.Event] = None
+        self._owner_stop: Optional[asyncio.Event] = None
+        self._owner_error: Optional[BaseException] = None
+        #: 保护 owner 的启动/接管；与 ``_lock``（保护对外状态）分开放，避免
+        #: 「connect 等就绪」与「close 复位状态」互相等待成环。
+        self._owner_lock = asyncio.Lock()
 
     def get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
@@ -447,10 +471,10 @@ class McpSseSession:
     async def _discard_transport(self, label: str) -> None:
         """丢弃半成品传输；清理阶段的异常只告警，不能盖住真正的连接失败原因。
 
-        ``streamable_http_client`` 的 async generator 可能在另一个 task 里退出，
-        此时 ``aclose()`` 会抛 ``RuntimeError: Attempted to exit cancel scope in
-        a different task than it was entered in``——它与「为什么没连上」无关，
-        吞掉并重置栈即可；否则降级分支会被清理异常打断。
+        降级链路上这一步与「为什么没连上」无关，清理异常必须就地吞掉，否则
+        探测/降级分支会被它打断。现在它总与传输在同一个 task 里（见 ``__init__``
+        的 owner 说明），仍保留兜底：半成品栈可能跨 task 退出，那种情况 anyio 抛
+        ``RuntimeError: ... in a different task``。
         """
         stack, self._exit_stack = self._exit_stack, AsyncExitStack()
         self._transport_ready = False
@@ -472,7 +496,109 @@ class McpSseSession:
             )
 
     async def connect(self):
-        """Initialize a transport; publish SSE state only after its handshake succeeds."""
+        """Initialize a transport; publish SSE state only after its handshake succeeds.
+
+        对外语义不变：**握手完成后才返回**。区别在于握手本身跑到专属 owner task
+        里执行（见 ``__init__`` 中 owner 字段的说明）——请求 task 只等就绪信号，
+        不会把传输层的 anyio cancel scope 挂到自己身上。
+        """
+        async with self._owner_lock:
+            if self.session or self.mcp_session_id or self._transport_ready:
+                return
+
+            owner = self._owner_task
+            if owner is None or owner.done():
+                self._owner_error = None
+                self._owner_ready = asyncio.Event()
+                self._owner_stop = asyncio.Event()
+                self._owner_task = asyncio.create_task(
+                    self._owner_main(),
+                    name=f"mcp-session-{self.server_id}",
+                )
+
+            ready = self._owner_ready
+            try:
+                await ready.wait()
+            except asyncio.CancelledError:
+                # 调用方被取消（客户端断开、上游超时）：owner 没有别的持有者，
+                # 一起收掉，别留下一条没人复用的后台连接。
+                await self._abandon_owner()
+                raise
+
+            if self._owner_error is not None:
+                raise self._owner_error
+            # owner 被外部取消（不是本次调用）时，传输没建成却已经返回就绪：
+            # 显式报错，别把一条没有传输的会话交给调用方。
+            if self._owner_task is not None and self._owner_task.cancelled():
+                raise RuntimeError("MCP session handshake was cancelled")
+
+    async def _owner_main(self) -> None:
+        """会话 owner：唯一被允许进入/退出传输层 anyio scope 的 task。"""
+        try:
+            try:
+                await self._connect_transport()
+            except asyncio.CancelledError:
+                # 被调用方取消：唤醒等待者后退出，传输清理交给下面的 finally。
+                self._owner_ready.set()
+                raise
+            except BaseException as exc:  # noqa: BLE001 - 失败原因原样交给等待方
+                self._owner_error = exc
+                logger.warning(
+                    "[MCP] Session owner failed for %s: %s", self.server_id, exc
+                )
+                self._owner_ready.set()
+                return
+
+            self._owner_ready.set()
+            # Direct HTTP 没有常驻 task group，建完就结束，不占一个空转 task；
+            # 只有真正的 SSE / Streamable HTTP 传输需要 owner 陪着活到 close()。
+            if not self.is_direct_http:
+                stop = self._owner_stop
+                if stop is not None:
+                    await stop.wait()
+        finally:
+            # 正常退出、异常、被取消都要在 owner task 内退出传输层
+            await self._teardown_transport()
+
+    async def _abandon_owner(self) -> None:
+        """取消并回收 owner（只用于 connect 自己被取消时）。"""
+        owner, stop = self._owner_task, self._owner_stop
+        self._owner_task = None
+        self._owner_stop = None
+        self._owner_ready = None
+        if stop is not None:
+            stop.set()
+        if owner is not None and not owner.done():
+            owner.cancel()
+            try:
+                await asyncio.gather(owner, return_exceptions=True)
+            except asyncio.CancelledError:  # pragma: no cover - 再次被取消
+                pass
+
+    async def _teardown_transport(self) -> None:
+        """退出传输层（含 anyio cancel scope）；只允许在 owner task 内调用。
+
+        ``close()`` 里有兜底调用（owner 不存在或已经结束时），那种情况跨 task
+        退出会被 anyio 拒绝——清理阶段的异常一律只告警，不能盖住真正的原因。
+        """
+        stack, self._exit_stack = self._exit_stack, None
+        if stack is None:
+            return
+        try:
+            await stack.aclose()
+        except BaseException as exc:  # noqa: BLE001 - 清理阶段不挑异常类型
+            if isinstance(exc, asyncio.CancelledError):
+                if not _is_anyio_scope_cancellation(exc):
+                    raise
+                self._clear_internal_cancellation()
+            logger.warning(
+                "[MCP] Transport cleanup failed for %s; cached state was cleared: %s",
+                self.server_id,
+                exc,
+            )
+
+    async def _connect_transport(self):
+        """建链主体（原 ``connect()`` 实现）；只允许在 owner task 内调用。"""
         async with self._lock:
             if self.session or self.mcp_session_id or self._transport_ready:
                 return
@@ -599,59 +725,94 @@ class McpSseSession:
                 raise
 
     async def close(self):
-        """Closes the connection"""
-        async with self._lock:
-            exit_stack = self._exit_stack
-            self._exit_stack = None
-            self.session = None
-            self.mcp_session_id = None
-            self._transport_ready = False
-            self._direct_initialized = False
-            http_client = self._http_client
-            self._http_client = None
-            if http_client and not http_client.is_closed:
-                if getattr(self, "_active_requests", 0) > 0:
-                    async def _delayed_close(c: httpx.AsyncClient):
-                        try:
-                            await asyncio.wait_for(
-                                self._active_requests_changed.wait(),
-                                timeout=120.0,
-                            )
-                        except asyncio.TimeoutError:
-                            logger.warning(
-                                "[MCP] Timed out waiting for active requests before closing %s",
-                                self.server_id,
-                            )
-                        if not c.is_closed:
-                            try:
-                                await c.aclose()
-                            except Exception:
-                                pass
-                    asyncio.create_task(_delayed_close(http_client))
-                else:
+        """关闭连接。
+
+        传输层 ``_exit_stack``（含 anyio cancel scope）必须由建立它的 **owner
+        task** 退出，原因见 ``__init__`` 里 owner 字段的说明。这里负责：复位对外
+        状态、发停止信号、等 owner 收尾、关闭 Direct HTTP 客户端；owner 不存在或
+        已经结束（半成品传输、调用方自己塞进来的栈）时才在调用方 task 内兜底关栈。
+
+        整个过程持 ``_owner_lock``：并发的 ``connect()`` 要么在关闭之前完成、要么
+        等关闭结束后重连，不会拿到一条正在拆除的连接。
+        """
+        async with self._owner_lock:
+            async with self._lock:
+                self.session = None
+                self.mcp_session_id = None
+                self._transport_ready = False
+                self._direct_initialized = False
+                http_client = self._http_client
+                self._http_client = None
+
+            owner, stop = self._owner_task, self._owner_stop
+            self._owner_task = None
+            self._owner_stop = None
+            self._owner_ready = None
+            self._owner_error = None
+
+            if stop is not None:
+                stop.set()
+            await self._await_owner_shutdown(owner)
+
+            # 兜底：owner 已经收过尾时这里是 no-op（_exit_stack 已被清空）。只有半成品
+            # 传输、或调用方自己塞进来的栈会走到这里，跨 task 退出会被 anyio 拒绝，
+            # _teardown_transport 内部只告警、不抛出。
+            await self._teardown_transport()
+
+        if http_client and not http_client.is_closed:
+            if getattr(self, "_active_requests", 0) > 0:
+                async def _delayed_close(c: httpx.AsyncClient):
                     try:
-                        await http_client.aclose()
-                    except Exception as exc:
-                        logger.debug("[MCP] HTTP client cleanup failed for %s: %s", self.server_id, exc)
-            if exit_stack:
+                        await asyncio.wait_for(
+                            self._active_requests_changed.wait(),
+                            timeout=120.0,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "[MCP] Timed out waiting for active requests before closing %s",
+                            self.server_id,
+                        )
+                    if not c.is_closed:
+                        try:
+                            await c.aclose()
+                        except Exception:
+                            pass
+                asyncio.create_task(_delayed_close(http_client))
+            else:
                 try:
-                    await exit_stack.aclose()
-                except BaseException as exc:  # noqa: BLE001 - 清理阶段不挑异常类型
-                    # anyio 的传输在**另一个 task** 里建立时，退出抛的是
-                    # CancelledError("Cancelled via cancel scope ...") 或
-                    # RuntimeError("different task")。前者是基类异常，用
-                    # ``except Exception`` 接不住——它会直接冲出 close()，把调用它的
-                    # 空闲回收循环整条带走，之后死会话再也没人清。
-                    if isinstance(exc, asyncio.CancelledError):
-                        if not _is_anyio_scope_cancellation(exc):
-                            raise
-                        self._clear_internal_cancellation()
-                    logger.warning(
-                        "[MCP] Transport cleanup failed for %s; cached state was cleared: %s",
-                        self.server_id,
-                        exc,
-                    )
-            logger.info(f"[MCP] Session closed for {self.server_id}")
+                    await http_client.aclose()
+                except Exception as exc:
+                    logger.debug("[MCP] HTTP client cleanup failed for %s: %s", self.server_id, exc)
+        logger.info(f"[MCP] Session closed for {self.server_id}")
+
+    async def _await_owner_shutdown(self, owner: Optional[asyncio.Task]) -> None:
+        """等 owner task 自己收尾：退出传输层是它的职责，不能在调用方 task 里代劳。"""
+        if owner is None:
+            return
+        if owner.done():
+            # 顺手取走异常，避免 "Task exception was never retrieved" 噪音
+            if not owner.cancelled():
+                try:
+                    owner.exception()
+                except asyncio.CancelledError:  # pragma: no cover - 竞态
+                    pass
+            return
+        try:
+            await asyncio.wait_for(owner, timeout=self.OWNER_SHUTDOWN_TIMEOUT)
+        except asyncio.CancelledError:
+            if owner.cancelled():
+                # owner 自己被取消（例如 connect 侧取消），不是调用方被取消
+                return
+            raise
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[MCP] Timed out waiting for session owner of %s to shut down",
+                self.server_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - 关闭失败不扩散
+            logger.warning(
+                "[MCP] Session owner of %s exited with error: %s", self.server_id, exc
+            )
 
     def update_activity(self):
         self.last_used_at = time.time()
@@ -1704,8 +1865,9 @@ class McpClientService:
     async def _sweep_idle_sessions(cls, idle_seconds: float = 300.0) -> int:
         """回收一轮空闲会话，返回成功关闭的数量。
 
-        每一格会话单独兜异常：一条连接关不掉（跨 task 退出 anyio scope 会抛
-        RuntimeError）不能连累整轮回收，更不能让它留在缓存里继续被复用。
+        每一格会话单独兜异常：一条连接关不掉不能连累整轮回收，更不能让它留在
+        缓存里继续被复用。传输层由会话自己的 owner task 退出（见
+        ``McpSseSession`` 的 owner 说明），所以正常情况下关闭是干净的。
         """
         now = time.time()
         expired: list[tuple[str, "McpSseSession"]] = []
