@@ -1684,8 +1684,12 @@ const imageFeature = ref<{
   max_images: number;
   // 改图能力只看系统层（总开关）。接口格式不参与——改图固定走聊天接口。
   // 不再回智能体是否勾了 edit_image：委派架构下那个判定不可靠。
-  edit_system_enabled?: boolean;
-  edit_unavailable_reason?: string;
+  //
+  // 这两个字段写成必填而不是可选：曾经标成 `?`，于是下面映射时漏掉也没人报错，
+  // 运行期拿到 undefined → 「改图」tab 恒灰，悬停还写「平台还没开启改图能力」。
+  // 现在 vue-tsc 会直接把这个漏赋值拦下来。
+  edit_system_enabled: boolean;
+  edit_unavailable_reason: string;
 } | null>(null);
 
 // 「不指定」显式列出来：按钮全亮着的面板里，没有它就看不出「我没选」还是「选了没生效」。
@@ -1826,7 +1830,11 @@ const loadImageFeatureStatus = async (options: { force?: boolean } = {}) => {
       system_enabled: !!data?.system_enabled,
       allowed_sizes: Array.isArray(data?.allowed_sizes) ? data.allowed_sizes : [],
       default_size: data?.default_size || "",
-      max_images: Math.max(1, Number(data?.max_images) || 1)
+      max_images: Math.max(1, Number(data?.max_images) || 1),
+      // 改图能力与置灰原因必须一起搬过来。少了这两行，「改图」tab 会一直灰着，
+      // 而给出理由永远是兜底那句「平台还没开启改图能力」——和后端实际状态无关。
+      edit_system_enabled: !!data?.edit_system_enabled,
+      edit_unavailable_reason: String(data?.edit_unavailable_reason || ""),
     };
     // 「默认」那一格就是后台配的尺寸，用户还没动过就让它直接亮起来——
     // 否则第一眼看不出这次会出多大，还得先点一下才知道。
@@ -2072,44 +2080,89 @@ const closeImageParamPopSafely = () => {
   closeImageParamPop();
 };
 
-const applyEditParams = async () => {
-  const file = imageEditFile.value;
-  if (!file) return;
-  const refFile = imageEditRefFile.value;
-  const instruction = imageEditInstruction.value.trim();
+/**
+ * 改图提交中。上传是网络请求，图大时要几秒；没有这个状态，按钮点下去
+ * 外观毫无变化，用户只会再点几次，然后报「点完成没反应」。
+ */
+const editSubmitting = ref(false);
+/** 改图页的错误提示：失败原因就地留在面板里，不用追着 toast 看。 */
+const imageEditError = ref("");
 
-  const uploaded = await uploadSingleFile(file);
-  if (!uploaded) {
-    // 上传失败：面板里选的图和写好的要求都留着，让用户换一张或重试，
-    // 而不是把他刚挑好的东西一起清掉。
+const applyEditParams = async () => {
+  // 连点保护：第一次还在 await 上传时，第二次点击不该再发一份。
+  if (editSubmitting.value) return;
+  imageEditError.value = "";
+
+  const file = imageEditFile.value;
+  if (!file) {
+    // 按钮本来就该是禁用的，走到这里说明状态错位了——给句人话，别静默。
+    imageEditError.value = "请先选择要修改的主图";
+    showToast("请先选择要修改的主图", "warning");
     return;
   }
 
-  if (refFile) {
-    const refUploaded = await uploadSingleFile(refFile);
-    if (!refUploaded) {
-      // 参考图没传上去：主图已经进了附件列表，留着会让用户以为成了。
-      // 刚 push 的就是最后一个，撤掉它，面板保持原样让用户重试。
-      uploadedFiles.value.pop();
+  // 生成中不能上传：uploadSingleFile 会被交互锁挡掉。早先这里直接 `return false`
+  // 什么提示都没有，可面板在加号菜单上，锁上时菜单会自动收起、面板却还浮着——
+  // 用户对着一屏完好的界面点「完成」，看不出任何变化，只能来报「点了没反应」。
+  if (isInteractionLocked.value) {
+    imageEditError.value = "正在生成回复，等这一轮结束后再改图";
+    showToast("正在生成回复，等这一轮结束后再改图", "warning");
+    return;
+  }
+
+  const refFile = imageEditRefFile.value;
+  const instruction = imageEditInstruction.value.trim();
+
+  editSubmitting.value = true;
+  try {
+    const uploaded = await uploadSingleFile(file);
+    if (!uploaded) {
+      // 上传失败：面板里选的图和写好的要求都留着，让用户换一张或重试，
+      // 而不是把他刚挑好的东西一起清掉。原因同时落到面板里，
+      // 不用去追那条几秒就消失的 toast。
+      imageEditError.value = lastUploadError.value || "主图上传失败，请重试";
       return;
     }
-  }
-  // 主图先传、参考图后传，附件顺序就是模型看到的顺序——
-  // 顺序反了，模型会把参考图当成要改的那张。
-  imageEditHasReference.value = !!refFile;
-  imageEditMode.value = true;
-  clearEditImage();
-  imageEditInstruction.value = "";
-  closeImageParamPop();
 
-  if (instruction) emit("update:modelValue", instruction);
-  nextTick(() => {
-    const el = inputRef.value;
-    if (!el) return;
-    el.focus();
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 120) + "px";
-  });
+    if (refFile) {
+      const refUploaded = await uploadSingleFile(refFile);
+      if (!refUploaded) {
+        // 参考图没传上去：主图已经进了附件列表，留着会让用户以为成了。
+        // 刚 push 的就是最后一个，撤掉它，面板保持原样让用户重试。
+        uploadedFiles.value.pop();
+        imageEditError.value = lastUploadError.value || "参考图上传失败，请重试";
+        return;
+      }
+    }
+    // 主图先传、参考图后传，附件顺序就是模型看到的顺序——
+    // 顺序反了，模型会把参考图当成要改的那张。
+    imageEditHasReference.value = !!refFile;
+    imageEditMode.value = true;
+    clearEditImage();
+    imageEditInstruction.value = "";
+    closeImageParamPop();
+
+    if (instruction) emit("update:modelValue", instruction);
+    // 「完成」不发送，只准备。而准备成功的证据（面板收起、附件多一张图）都在用户
+    // 视线之外——尤其没写「要改哪里」时输入框是空的，看起来就像什么都没发生。
+    // 所以这里必须说一句下一步动作，否则用户只能猜「我是不是没点上」。
+    showToast(instruction ? "要求已写进输入框，按发送开始改图" : "图片已挂到输入框，写上要改哪里再发送", "success");
+    nextTick(() => {
+      const el = inputRef.value;
+      if (!el) return;
+      el.focus();
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 120) + "px";
+    });
+  } catch (error: any) {
+    // 兜底：上传之外的意外（比如附件列表被并发改动）也不能静默吞掉，
+    // 否则又变成一次「点了没反应」。图和要求都留着，重试即可。
+    console.error("Apply edit params error:", error);
+    imageEditError.value = error?.message || "改图准备失败，请重试";
+    showToast(imageEditError.value, "error");
+  } finally {
+    editSubmitting.value = false;
+  }
 };
 
 /** 关掉改图模式（用户摘掉了附件、或者这轮已经发完）。 */
@@ -2257,6 +2310,8 @@ const updateExpertMenuPosition = () => {
   expertMenuPosition.left = Math.max(gutter, left);
 };
 const isUploading = ref(false);
+/** 最近一次上传失败的原因（人话），供改图页就地展示，不只靠一闪而过的 toast。 */
+const lastUploadError = ref("");
 const fileInputRef = ref<HTMLInputElement | null>(null);
 
 const attachedSkillIds = computed(() =>
@@ -2558,8 +2613,16 @@ const removeFile = (index: number) => {
  * 配着一片空白——模型找不到图，用户白等一轮还丢了自己选的图。
  */
 const uploadSingleFile = async (file: File): Promise<boolean> => {
-  if (isInteractionLocked.value) return false;
+  lastUploadError.value = "";
+  if (isInteractionLocked.value) {
+    // 不能只 `return false`：调用方（改图页「完成」）拿到的是一句「没成功」，
+    // 但屏幕上什么都不会发生，用户只会以为按钮坏了。锁的原因要说出来。
+    lastUploadError.value = "正在生成回复，等这一轮结束后再试";
+    showToast("正在生成回复，等这一轮结束后再上传文件", "warning");
+    return false;
+  }
   if (file.size > 20 * 1024 * 1024) {
+    lastUploadError.value = "文件大小不能超过 20MB";
     showToast("文件大小不能超过 20MB", "error");
     return false;
   }
@@ -2567,6 +2630,7 @@ const uploadSingleFile = async (file: File): Promise<boolean> => {
   const ext = '.' + name.split('.').pop()?.toLowerCase();
   const forbiddenExts = ['.exe', '.bat', '.sh', '.cmd', '.msi', '.php', '.js', '.html'];
   if (forbiddenExts.includes(ext)) {
+    lastUploadError.value = "暂不支持上传该类型的危险脚本文件";
     showToast("暂不支持上传该类型的危险脚本文件", "warning");
     return false;
   }
@@ -2584,7 +2648,16 @@ const uploadSingleFile = async (file: File): Promise<boolean> => {
     throw new Error("上传失败");
   } catch (error: any) {
     console.error("Upload error:", error);
-    showToast(error.response?.data?.message || error.message || "上传文件时出错，请重试", "error");
+    // 后端报错是 FastAPI 的 `{"detail": "..."}`，不是 `message`。以前只读 message，
+    // 于是「文件数已达上限」「禁止上传该类型文件」这些中文原因全都变成了
+    // 「Request failed with status code 413」——排障时等于没说。
+    const reason =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.message ||
+      "上传文件时出错，请重试";
+    lastUploadError.value = String(reason);
+    showToast(String(reason), "error");
     return false;
   } finally {
     isUploading.value = false;
@@ -3687,16 +3760,22 @@ defineExpose({
                                   />
                                 </div>
 
-                                <!-- 图像参数面板：与其它 flyout 同一套定位（贴着加号菜单右边） -->
+                                <!-- 图像参数面板：与其它 flyout 同一套定位（贴着加号菜单右边）
+                                     结构固定为「标题 / tab / 滚动区 / 页脚」四段：只有中间那段滚，
+                                     页脚里的「完成」永远贴在面板底部看得见。整块一起滚的话，
+                                     改图页内容一多，按钮就滚到面板下沿之外，用户以为没有完成键。
+                                     桌面端贴 `bottom-0`（而不是 top-0）向上长：加号菜单本身是往上弹的，
+                                     面板再从菜单顶部往下铺 85vh，下沿就会伸到窗口外面去；高度上限
+                                     再扣掉输入区（输入框最高 120px，加工具栏约 13rem），顶栏也留在窗口内。 -->
                                 <div
                                   v-if="showImageParamPop"
-                                  class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800"
+                                  class="flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800"
                                   :class="isMobileViewport
-                                    ? 'fixed inset-x-3 top-1/2 z-[1200] max-h-[85vh] -translate-y-1/2 overflow-y-auto'
-                                    : 'absolute left-full top-0 z-[60] ml-1.5 max-h-[85vh] w-[360px] overflow-y-auto'"
+                                    ? 'fixed inset-x-3 top-1/2 z-[1200] max-h-[85vh] -translate-y-1/2'
+                                    : 'absolute bottom-0 left-full z-[60] ml-1.5 max-h-[min(85vh,calc(100vh-13rem))] w-[360px]'"
                                   @click.stop
                                 >
-                                  <div class="flex items-center gap-2 border-b border-gray-100 px-3.5 py-2.5 dark:border-gray-700">
+                                  <div class="flex shrink-0 items-center gap-2 border-b border-gray-100 px-3.5 py-2.5 dark:border-gray-700">
                                     <PhotoIcon class="h-4 w-4 shrink-0 text-rose-500" />
                                     <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">图像参数</span>
                                     <span class="ml-auto text-[10px] text-gray-400">只影响本次生成</span>
@@ -3738,7 +3817,7 @@ defineExpose({
                                     <!-- 面板分两件事：生成（从零画）与改图（改已有的一张）。
                                          两者共用同一套入口与外观，只是改图页多一个传图区，
                                          并且提交时给正文加「沿用所附图片进行修改：」前缀。 -->
-                                    <div class="flex gap-1 border-b border-gray-100 px-3 pt-2 dark:border-gray-700">
+                                    <div class="flex shrink-0 gap-1 border-b border-gray-100 px-3 pt-2 dark:border-gray-700">
                                       <button
                                         type="button"
                                         class="rounded-t-lg px-3 py-1.5 text-[12px] font-medium transition-colors"
@@ -3763,7 +3842,7 @@ defineExpose({
 
                                     <!-- ───── 生成页 ───── -->
                                     <template v-if="imagePanelTab === 'gen'">
-                                    <div class="space-y-3 px-3.5 py-3">
+                                    <div class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3.5 py-3">
                                       <div>
                                         <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">风格</div>
                                         <div class="flex flex-wrap gap-1.5">
@@ -3885,10 +3964,7 @@ defineExpose({
                                       </div>
                                     </div>
 
-                                    <div class="border-t border-gray-100 bg-gray-50/60 px-3.5 py-2.5 dark:border-gray-700 dark:bg-gray-800/60">
-                                      <p class="mb-2 text-[10.5px] leading-relaxed text-gray-400 dark:text-gray-500">
-                                        选择会随消息一起发出，输入框里只显示成几个标签；尺寸走结构化参数，不写进正文。
-                                      </p>
+                                    <div class="shrink-0 border-t border-gray-100 bg-gray-50/60 px-3.5 py-2.5 dark:border-gray-700 dark:bg-gray-800/60">
                                       <div class="flex items-center gap-2">
                                         <button
                                           v-if="imageParamChips.length"
@@ -3927,7 +4003,21 @@ defineExpose({
                                       </div>
 
                                       <template v-else>
-                                        <div class="space-y-3 px-3.5 py-3">
+                                        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3.5 py-3">
+                                          <!-- 失败原因就地留下：toast 几秒就没了，而用户往往
+                                               要盯着面板想「刚才到底发生了什么」。 -->
+                                          <div
+                                            v-if="imageEditError"
+                                            class="flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-[11px] leading-relaxed text-rose-700"
+                                          >
+                                            <span class="flex-1">{{ imageEditError }}</span>
+                                            <button
+                                              type="button"
+                                              class="-mr-0.5 shrink-0 rounded px-0.5 text-[11px] text-rose-400 hover:bg-rose-100 hover:text-rose-600"
+                                              title="关闭提示"
+                                              @click="imageEditError = ''"
+                                            >×</button>
+                                          </div>
                                           <div>
                                             <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">图片</div>
                                             <input
@@ -4023,10 +4113,7 @@ defineExpose({
                                           </div>
                                         </div>
 
-                                        <div class="border-t border-gray-100 bg-gray-50/60 px-3.5 py-2.5 dark:border-gray-700 dark:bg-gray-800/60">
-                                          <p class="mb-2 text-[10.5px] leading-relaxed text-gray-400 dark:text-gray-500">
-                                            点「完成」后图片会挂到输入框，确认再发送。改图默认跟随原图比例，要换尺寸请到「生成」页选。
-                                          </p>
+                                        <div class="shrink-0 border-t border-gray-100 bg-gray-50/60 px-3.5 py-2.5 dark:border-gray-700 dark:bg-gray-800/60">
                                           <div class="flex items-center gap-2">
                                             <button
                                               type="button"
@@ -4035,10 +4122,17 @@ defineExpose({
                                             >取消</button>
                                             <button
                                               type="button"
-                                              class="rounded-lg bg-primary px-2.5 py-1 text-[11px] font-bold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-                                              :disabled="!imageEditFile"
+                                              class="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-[11px] font-bold text-white hover:opacity-90 disabled:cursor-not-allowed"
+                                              :class="!imageEditFile ? 'opacity-40' : (editSubmitting ? 'opacity-80' : '')"
+                                              :disabled="!imageEditFile || editSubmitting"
                                               @click="applyEditParams"
-                                            >完成</button>
+                                            >
+                                              <span
+                                                v-if="editSubmitting"
+                                                class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                                              ></span>
+                                              {{ editSubmitting ? '处理中…' : '完成' }}
+                                            </button>
                                           </div>
                                         </div>
                                       </template>

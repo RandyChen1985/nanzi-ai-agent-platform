@@ -116,6 +116,121 @@ def test_edit_tab_blocked_with_reason(chat_input: str):
     assert "status.agent_edit_enabled" not in chat_input
 
 
+def test_status_fields_are_actually_mapped(chat_input: str):
+    """status 接口回的能力字段必须真的灌进 ``imageFeature``，否则 tab 永远灰。
+
+    这条来自真实故障：后端 ``/configs/image-generation/status`` 明明回了
+    ``edit_system_enabled``，前端 ``loadImageFeatureStatus`` 却只映射了
+    ``system_enabled / allowed_sizes / default_size / max_images``。于是
+    ``editPanelEnabled`` 恒为 false，「改图」tab 一直是灰的，悬停还写着
+    「平台还没开启改图能力」——管理员已经把总开关打开了，用户只能去问客服。
+
+    上一条 ``test_edit_tab_blocked_with_reason`` 只查「字段名在文件里出现」，
+    类型声明几行就满足了，抓不到漏映射。
+    """
+    start = chat_input.index("const loadImageFeatureStatus = async")
+    end = chat_input.index("/** 刚手动关掉面板的时间", start)
+    body = chat_input[start:end]
+    assert "edit_system_enabled:" in body, "status 的 edit_system_enabled 没有映射进 imageFeature"
+    assert "edit_unavailable_reason:" in body, "置灰原因要一起带过来，用户才知道该找谁"
+    # 类型声明去掉可选标记：漏赋值时 vue-tsc 直接报错，而不是静默拿到 undefined
+    assert "edit_system_enabled?: boolean" not in chat_input
+
+
+def test_panel_footer_is_pinned(chat_input: str):
+    """「完成」必须常驻面板底部——不能跟着内容滚出可视区。
+
+    这条来自真实反馈：改图页传了主图/参考图、填了要求后，面板高度超过窗口，
+    「完成」被挤到面板下沿之外，用户滚到底还以为没有确认键（截图里只剩一行
+    灰色提示文字被裁断）。根因是整块面板共用一个 ``overflow-y-auto``，
+    标题、tab、正文、按钮一起滚，并且桌面端 `top-0` 往下铺 85vh 会伸出窗口。
+
+    现在的结构约定：面板 ``flex flex-col`` + 只有正文 ``flex-1 overflow-y-auto``，
+    页脚 ``shrink-0`` 固定在底部；桌面端从 `bottom-0` 向上长。
+    """
+    start = chat_input.index('v-if="showImageParamPop"')
+    end = chat_input.index("<!-- Desktop flyout: 数据 & 知识库", start)
+    panel = chat_input[start:end]
+
+    # 面板本身是纵向 flex 且不整体滚动
+    assert "flex flex-col overflow-hidden" in panel
+    assert "top-1/2 -translate-y-1/2 overflow-y-auto" not in panel, "移动端面板不该整体滚"
+    assert "w-[360px] overflow-y-auto" not in panel, "桌面端面板不该整体滚"
+
+    # 桌面端贴底向上长，避免 85vh 把下沿顶出窗口
+    assert "absolute bottom-0 left-full" in panel, "桌面端应从菜单底部向上展开"
+    assert "'absolute left-full top-0 z-[60] ml-1.5 max-h-[85vh] w-[360px] overflow-y-auto'" not in panel
+    # 高度上限扣掉输入区，长输入框时顶栏也别被顶出窗口
+    assert "calc(100vh-13rem)" in panel
+
+    # 页脚「完成」所在容器不参与滚动
+    assert panel.count("shrink-0 border-t border-gray-100 bg-gray-50/60") == 2, \
+        "生成页和改图页的页脚都要固定住"
+    # 正文才是滚动区
+    assert panel.count("min-h-0 flex-1 space-y-3 overflow-y-auto") == 2, \
+        "两页正文都要是可伸缩的滚动区"
+    # 标题栏与 tab 也不该被压缩
+    assert "flex shrink-0 items-center gap-2 border-b border-gray-100" in panel
+    assert "flex shrink-0 gap-1 border-b border-gray-100" in panel
+
+
+def test_panel_footer_has_no_descriptive_copy(chat_input: str):
+    """两个页脚只留按钮，不再放整段说明文字。
+
+    用户原话「这块描述性文字没必要，去掉吧」——它占掉一整行，既把按钮又往下推，
+    说的还是「点完成会怎样」这种点一下就知道的事。
+    """
+    start = chat_input.index('v-if="showImageParamPop"')
+    end = chat_input.index("<!-- Desktop flyout: 数据 & 知识库", start)
+    panel = chat_input[start:end]
+
+    assert "点「完成」后图片会挂到输入框" not in panel
+    assert "尺寸走结构化参数" not in panel
+    # 页脚里不该再有 <p> 说明
+    marker = "shrink-0 border-t border-gray-100 bg-gray-50/60"
+    for chunk in panel.split(marker)[1:]:
+        footer = chunk[: chunk.index("</div>")]
+        assert "<p " not in footer, "页脚只放按钮，说明文字已经按需求删掉"
+
+
+def test_edit_submit_never_fails_silently(chat_input: str):
+    """「完成」点下去必须有可见反应——成功、上传中、失败三种都要看得见。
+
+    这条来自真实反馈「改图点完成没反应」：旧实现里所有失败路径都只是 ``return``，
+    其中 ``uploadSingleFile`` 一进去就 ``if (isInteractionLocked) return false``，
+    既无提示也无 loading。面板是浮在加号菜单上的独立 flyout，交互锁上时菜单收起、
+    面板却还留着，于是用户对着一屏完好的界面点「完成」，屏幕上什么都不会变。
+
+    约定：
+    1. 上传中按钮变「处理中…」并禁用（网络请求要几秒，没有状态就是「没反应」）；
+    2. 交互锁 / 缺图 / 异常都要 showToast，不能静默 return；
+    3. 成功后说清下一步（「完成」不发送，只把图和文字备好）。
+    """
+    start = chat_input.index("const applyEditParams = async")
+    end = chat_input.index("const exitImageEditMode", start)
+    body = chat_input[start:end]
+
+    assert "editSubmitting" in body, "上传期间要有可见状态，否则按钮点下去毫无变化"
+    assert "if (editSubmitting.value) return" in body, "连点保护"
+    assert "isInteractionLocked.value" in body and "showToast" in body, \
+        "交互锁要说明原因，不能静默 return false"
+    assert "catch (error: any)" in body, "意外异常也要提示，不能静默吞掉"
+    assert "finally" in body, "无论成败都要复位 editSubmitting"
+    assert "showToast(" in body and "按发送开始改图" in body, \
+        "成功也要说一句：点完成不等于发送"
+
+    # uploadSingleFile 自己被锁挡住时也不能一声不吭
+    up_start = chat_input.index("const uploadSingleFile = async")
+    up_body = chat_input[up_start : up_start + 1600]
+    lock_idx = up_body.index("if (isInteractionLocked.value)")
+    lock_block = up_body[lock_idx : up_body.index("return false;", lock_idx) + 12]
+    assert "showToast" in lock_block, "被交互锁挡掉要告诉用户，而不是只 return false"
+
+    # 按钮本身要反映处理中
+    assert "editSubmitting ? '处理中…' : '完成'" in chat_input
+    assert ':disabled="!imageEditFile || editSubmitting"' in chat_input
+
+
 def test_style_only_in_edit_page(chat_input: str):
     """改图页复用风格 chips（实测改画风有效），但不放「张数」——一次只出一张。"""
     start = chat_input.index("imagePanelTab === 'gen'")

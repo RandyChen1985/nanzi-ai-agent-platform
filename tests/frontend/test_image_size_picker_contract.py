@@ -162,12 +162,16 @@ def test_backend_prefers_user_size_over_model_choice():
     assert "target_size = preferred_size" in block
 
 
-def test_footnote_no_longer_claims_no_pixel_value():
-    """底部文案原写「不出现像素值」，有了尺寸选择后这句就不成立了。"""
+def test_footnote_copy_removed():
+    """页脚那段说明文字已被用户要求删掉，别再写回去。
+
+    原来写的是「选择会随消息一起发出……尺寸走结构化参数，不写进正文」。
+    真实反馈：面板底部只要按钮就够了，这段解释占掉一整行、把「完成」又往下推。
+    """
     source = _read(CHAT_INPUT)
 
     assert "不出现像素值" not in source
-    assert "尺寸走结构化参数" in source
+    assert "尺寸走结构化参数" not in source
 
 
 # ── 尺寸过多时的「更多」折叠 ──────────────────────────────────
