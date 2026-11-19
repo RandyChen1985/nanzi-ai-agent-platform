@@ -1859,7 +1859,11 @@ const selectImageFormat = (item: ConfigItem, value: string) => {
   imageFormatOpen.value = false
 }
 
+// 512x512 是最小的一档（图标 / 预览图够用），放在最前保持「由小到大」的阅读顺序。
+// 它默认不勾选：能不能真出 512 取决于上游模型（gpt-image-1 最小只到 1024），
+// 预设里有它是为了让管理员自己按模型能力决定，而不是被写死成不可用。
 const IMAGE_SIZE_PRESETS = [
+  '512x512',
   '1024x1024',
   '1328x1328',
   '1664x928',
