@@ -31,9 +31,29 @@ def mock_search_datasets_globally(monkeypatch):
 
 
 
+def _federated_runner() -> MagicMock:
+    """构造联邦执行器可用的 runner 替身（默认值只补「不补就会炸」的钩子）。
+
+    裸 ``MagicMock()`` 的任意属性都是可调用的 Mock，执行器会把它们当真实现用：
+    - ``await agent_runner._resolve_sql_schema_preflight_error(...)``：MagicMock 不可 await，
+      直接抛 ``object MagicMock can't be used in 'await' expression``，子查询在 gate 阶段就失败，
+      测试最后看到的是「局部 repair 失败 / 计划明细」，而不是自己关心的分支；
+    - ``getattr(agent_runner, "execution_options", {})`` 会被当 dict 解包，真值 Mock 解包即报错。
+
+    ``user_info`` / ``_current_user_id`` / ``_current_user_is_admin`` 保持原来的 Mock 行为，
+    由各用例按需覆盖。
+    """
+    runner = MagicMock()
+    runner.execution_options = {}
+    runner._resolve_sql_schema_preflight_error = AsyncMock(return_value=None)
+    runner._detect_duration_anomaly = MagicMock(return_value=(False, ""))
+    runner._save_last_data_result_for_followups = AsyncMock()
+    return runner
+
+
 def test_parse_federated_plan_robustness():
     # 构造一个测试执行器
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {}
     runner.trace_buffer = []
     
@@ -239,7 +259,7 @@ def test_federated_executor_limits_rows_and_maps_duckdb_types():
 
 
 def test_federated_executor_reuses_runner_user_resolvers():
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": "1", "role": "user"}
     runner.trace_buffer = []
     runner._current_user_id.return_value = 42
@@ -254,6 +274,13 @@ def test_federated_executor_reuses_runner_user_resolvers():
 @pytest.mark.asyncio
 async def test_cross_dataset_schema_enrichment_filters_unauthorized_targets(monkeypatch):
     from app.services.chatbi_dataset_schema_service import _enrich_with_cross_dataset_schema
+
+    # 「系统里到底有没有跨数据集关联」有一个全局 Redis 短路标记，会被别的用例写成 0 并留在
+    # Redis 里（测试不 FLUSH），富化于是整段跳过，断言就莫名失败。这里显式声明「有关联」。
+    monkeypatch.setattr(
+        "app.services.chatbi_dataset_schema_service._has_any_relationship",
+        AsyncMock(return_value=True),
+    )
 
     source_table = SimpleNamespace(id=1, physical_name="energy_usage")
     target_dataset = SimpleNamespace(id=2, name="asset_ds", display_name="资产数据", data_source="mysql")
@@ -286,11 +313,17 @@ async def test_cross_dataset_schema_enrichment_filters_unauthorized_targets(monk
     def fake_render_schema(dataset, table, relationships, *, data_source=None):
         return f"dataset: {dataset.name}\ntable_name: {table.physical_name}\ndata_source: {data_source}"
 
-    def fake_format_schema_chunk(index, content):
+    def fake_format_schema_chunk(index, content, **kwargs):
+        # 实现现在会额外传 dataset_id=...；签名不含 **kwargs 会抛 TypeError，
+        # 而富化里的 except 会把它吞成「没有补全」，断言就变成一条假的失败。
         return content
 
-    async def deny_permission(self, user_id, resource_type, resource_id):
-        return False
+    def permissions_with(metadata_ids):
+        return SimpleNamespace(roles=[], permissions=SimpleNamespace(metadata=list(metadata_ids)))
+
+    # 富化改成用 PermissionService.get_user_permissions 一次性取权限集合、
+    # 内存里过滤（不再逐表 check_permission），patch 后者已经拦不住任何东西。
+    mock_get_perms = AsyncMock(return_value=permissions_with([]))
 
     monkeypatch.setattr(
         "app.services.chatbi_dataset_schema_service.MetadataService.get_cross_dataset_related_tables",
@@ -309,8 +342,8 @@ async def test_cross_dataset_schema_enrichment_filters_unauthorized_targets(monk
         fake_format_schema_chunk,
     )
     monkeypatch.setattr(
-        "app.services.permission_service.PermissionService.check_permission",
-        deny_permission,
+        "app.services.permission_service.PermissionService.get_user_permissions",
+        mock_get_perms,
     )
 
     schema_text = "dataset: energy_ds\ntable_name: energy_usage\ncolumns:\n  - name: device_id"
@@ -322,13 +355,7 @@ async def test_cross_dataset_schema_enrichment_filters_unauthorized_targets(monk
     )
     assert "asset_owner" not in enriched_without_permission
 
-    async def allow_permission(self, user_id, resource_type, resource_id):
-        return resource_type == "metadata" and resource_id == "2"
-
-    monkeypatch.setattr(
-        "app.services.permission_service.PermissionService.check_permission",
-        allow_permission,
-    )
+    mock_get_perms.return_value = permissions_with(["2"])
     enriched_with_permission = await _enrich_with_cross_dataset_schema(
         FakeSession(),
         schema_text,
@@ -340,6 +367,11 @@ async def test_cross_dataset_schema_enrichment_filters_unauthorized_targets(monk
 
 @pytest.mark.asyncio
 async def test_cross_dataset_schema_enrichment_respects_configured_dataset_scope(monkeypatch):
+    # 同上：绕开「有没有关联」的全局 Redis 短路标记，保证只验证 scope 过滤本身。
+    monkeypatch.setattr(
+        "app.services.chatbi_dataset_schema_service._has_any_relationship",
+        AsyncMock(return_value=True),
+    )
     from app.services.chatbi_dataset_schema_service import _enrich_with_cross_dataset_schema
 
     source_table = SimpleNamespace(id=1, physical_name="energy_usage")
@@ -387,7 +419,7 @@ async def test_cross_dataset_schema_enrichment_respects_configured_dataset_scope
 @pytest.mark.asyncio
 async def test_federated_executor_execution():
     # 模拟 Runner 及其环境
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 1, "role": "user"}
     runner.trace_buffer = MagicMock()
     
@@ -531,7 +563,7 @@ async def test_federated_executor_execution():
 
 @pytest.mark.asyncio
 async def test_federated_executor_repairs_failed_primary_subquery_before_failing():
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 1, "role": "user"}
     runner.trace_buffer = MagicMock()
     runner._save_last_data_result_for_followups = AsyncMock()
@@ -636,7 +668,7 @@ WHERE FOLLOW_UP_DATE >= DATE '2026-05-01'
 async def test_federated_executor_applies_where_probe_auto_repair_before_llm():
     from app.services.ai.where_condition_sample_diagnostic import AutoWhereFormatRetryResult
 
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 1, "role": "user"}
     runner.trace_buffer = MagicMock()
     runner._save_last_data_result_for_followups = AsyncMock()
@@ -737,7 +769,7 @@ async def test_federated_executor_applies_where_probe_auto_repair_before_llm():
 async def test_federated_executor_applies_empty_filter_auto_repair_on_zero_row_subquery():
     from app.services.ai.empty_result_filter_diagnostic import AutoFilterRetryResult
 
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 1, "role": "user"}
     runner.trace_buffer = MagicMock()
     runner._save_last_data_result_for_followups = AsyncMock()
@@ -832,7 +864,8 @@ async def test_federated_executor_applies_empty_filter_auto_repair_on_zero_row_s
             chunks.append(chunk)
 
     assert mock_llm_client.generate_text.await_count == 1
-    assert any(chunk.get("title") == "平台自动修正筛选并重试" for chunk in chunks)
+    # 标题现在由 format_platform_auto_retry_title 拼上「第 N 次」序号，不能再等号精确比较。
+    assert any("平台自动修正筛选并重试" in str(chunk.get("title") or "") for chunk in chunks)
     assert any(
         chunk.get("title") == "执行子查询 (crm_ds)"
         and chunk.get("status") == "success"
@@ -845,7 +878,7 @@ async def test_federated_executor_applies_empty_filter_auto_repair_on_zero_row_s
 
 @pytest.mark.asyncio
 async def test_federated_executor_passes_agent_context_to_sql_core():
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 7, "role": "user"}
     runner.trace_buffer = []
     runner._current_user_id.return_value = 7
@@ -932,7 +965,7 @@ async def test_federated_executor_passes_agent_context_to_sql_core():
 
 @pytest.mark.asyncio
 async def test_federated_executor_permission_failure_does_not_degrade_secondary_query():
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 1, "role": "user"}
     runner.trace_buffer = []
     runner._current_user_id.return_value = 1
@@ -1002,17 +1035,21 @@ async def test_federated_executor_permission_failure_does_not_degrade_secondary_
 
 @pytest.mark.asyncio
 async def test_federated_executor_repairs_failed_secondary_subquery_before_degrading():
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 1, "role": "user"}
     runner.trace_buffer = []
     runner._current_user_id.return_value = 1
     runner._current_user_is_admin.return_value = False
     runner._save_last_data_result_for_followups = AsyncMock()
 
+    # 子查询必须 SELECT 出 memory_join 用到的 id / name：否则计划级校验会先在生成阶段判定
+    # 「memory_join 引用了子查询未 SELECT 的字段」并整份拒绝，走不到「执行期报错 → 修复」这条路径。
+    # 报错用「表不存在」而不是「列不存在」：后者会被 deterministic 无效字段修复直接改掉，
+    # 根本不经过 LLM repair，本用例要验证的正是 LLM repair 这条链路。
     bad_plan = """
     <multi_dataset_plan>
       <sub_query dataset_name="user_ds" temp_table="t_user">SELECT id FROM users</sub_query>
-      <sub_query dataset_name="hr_ds" temp_table="t_hr">SELECT bad_col FROM hrmresource</sub_query>
+      <sub_query dataset_name="hr_ds" temp_table="t_hr">SELECT id, name FROM hr_shadow</sub_query>
       <memory_join>SELECT u.id, h.name FROM t_user u LEFT JOIN t_hr h ON u.id = h.id</memory_join>
     </multi_dataset_plan>
     """
@@ -1056,12 +1093,23 @@ async def test_federated_executor_repairs_failed_secondary_subquery_before_degra
             pass
 
     user_result = json.dumps({"columns": [{"name": "id"}], "items": [[1]]})
-    hr_error = "[TOOL_ERROR] 本地执行 SQL 失败，错误信息: Unknown column 'bad_col'"
+    hr_error = "[TOOL_ERROR] 本地执行 SQL 失败，错误信息: Unknown table 'hr_shadow'"
     hr_result = json.dumps({"columns": [{"name": "id"}, {"name": "name"}], "items": [[1, "Alice"]]})
 
-    # repair 轮的 user_ds 子查询 SQL 与首轮完全一致，会命中子查询结果缓存而不再重跑，
-    # 因此 execute_sql_query_core 只会被调用 3 次：user_ok -> hr_fail -> (repair) hr_ok。
-    sql_exec_mock = AsyncMock(side_effect=[user_result, hr_error, "[TOOL_ERROR] explain error", hr_result])
+    # 按 SQL 内容分派结果，而不是写死调用序列：repair 轮是否重跑主查询、要不要先跑 EXPLAIN
+    # 都属于实现细节，写死序列会让用例跟着编排变化一起碎。
+    async def fake_sql_exec(session, sql, data_source, dataset_name, **kwargs):
+        text = str(sql)
+        if text.lower().lstrip().startswith("explain"):
+            # EXPLAIN 只是 repair 前的辅助信息，这里给一个可用的空结果，避免它把 repair 挡住。
+            return json.dumps({"columns": [], "items": []})
+        if "hr_shadow" in text:
+            return hr_error
+        if "hrmresource" in text:
+            return hr_result
+        return user_result
+
+    sql_exec_mock = AsyncMock(side_effect=fake_sql_exec)
     with patch("app.services.ai.executors.federated_executor.AgentConfigProvider.get_configured_llm", side_effect=mock_get_llm), \
          patch("app.services.ai.executors.federated_executor.chat_client_from_handle", side_effect=fake_chat_client_from_handle), \
          patch("app.services.ai.executors.federated_executor.AsyncSessionLocal") as mock_session_cls, \
@@ -1075,7 +1123,8 @@ async def test_federated_executor_repairs_failed_secondary_subquery_before_degra
         async for chunk in FederatedQueryExecutor(runner, "", ["user_ds", "hr_ds"]).execute([], "", "test"):
             chunks.append(chunk)
 
-    assert sql_exec_mock.await_count == 4
+    # 至少要跑过「正常子查询 / 失败子查询 / 修复后子查询」，具体次数随缓存与 EXPLAIN 预检变化。
+    assert sql_exec_mock.await_count >= 3
     assert mock_llm_client.generate_text.await_count == 2
     assert any(chunk.get("title") == "修复联邦子查询 SQL" for chunk in chunks)
     assert not any("已自动降级" in str(chunk.get("details") or chunk.get("content") or "") for chunk in chunks)
@@ -1084,7 +1133,7 @@ async def test_federated_executor_repairs_failed_secondary_subquery_before_degra
 
 @pytest.mark.asyncio
 async def test_federated_executor_security_error_does_not_degrade_secondary_query():
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 1, "role": "user"}
     runner.trace_buffer = []
     runner._current_user_id.return_value = 1
@@ -1155,7 +1204,7 @@ async def test_federated_executor_security_error_does_not_degrade_secondary_quer
 
 @pytest.mark.asyncio
 async def test_federated_executor_repairs_performance_blocked_secondary_query():
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 1, "role": "user"}
     runner.trace_buffer = []
     runner._current_user_id.return_value = 1
@@ -1209,8 +1258,9 @@ async def test_federated_executor_repairs_performance_blocked_secondary_query():
             pass
 
     user_result = json.dumps({"columns": [{"name": "id"}], "items": [[1]]})
-    performance_error = "[Performance Blocked] SQL 包含没有关联条件的 JOIN 操作"
     hr_result = json.dumps({"columns": [{"name": "id"}], "items": [[1]]})
+    # 缺 ON 的 JOIN 现在由执行前的静态闸门直接拦下（[SQL_STATIC_GATE]），不再落到执行层返回
+    # [Performance Blocked]，所以真实会执行的 SQL 只有「正常子查询」和「修复后的子查询」两条。
 
     with patch("app.services.ai.executors.federated_executor.AgentConfigProvider.get_configured_llm", side_effect=mock_get_llm), \
          patch("app.services.ai.executors.federated_executor.chat_client_from_handle", side_effect=fake_chat_client_from_handle), \
@@ -1218,7 +1268,8 @@ async def test_federated_executor_repairs_performance_blocked_secondary_query():
          patch("app.services.permission_service.PermissionService.check_permission", side_effect=mock_check_permission), \
          patch("app.services.metadata_service.MetadataService.get_dataset_by_name", side_effect=mock_get_dataset_by_name), \
          patch("app.services.ai.runtime.agentscope.trace_context.TraceSpanContext", FakeTraceSpanContext), \
-         patch("app.services.ai.executors.federated_executor.execute_sql_query_core", AsyncMock(side_effect=[user_result, performance_error, "[TOOL_ERROR] explain error", hr_result])):
+         patch("app.services.ai.executors.federated_executor.execute_sql_query_core", AsyncMock(side_effect=[user_result, "[TOOL_ERROR] explain error", hr_result])):
+
         mock_session_cls.return_value.__aenter__.return_value = MagicMock()
 
         chunks = []
@@ -1233,7 +1284,7 @@ async def test_federated_executor_repairs_performance_blocked_secondary_query():
 
 @pytest.mark.asyncio
 async def test_federated_executor_sandboxes_and_closes_duckdb(monkeypatch):
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 1, "role": "user"}
     runner.trace_buffer = MagicMock()
     runner._save_last_data_result_for_followups = AsyncMock()
@@ -1311,7 +1362,7 @@ async def test_federated_executor_sandboxes_and_closes_duckdb(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_federated_executor_rejects_dangerous_memory_join_before_execute():
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 1, "role": "user"}
     runner.trace_buffer = MagicMock()
     runner._save_last_data_result_for_followups = AsyncMock()
@@ -1400,7 +1451,7 @@ async def test_federated_executor_repairs_subquery_time_range_mismatch_before_ex
     assert detect_time_range_mismatch(user_question, bad_sql, now=fixed_now)
     assert detect_time_range_mismatch(user_question, good_sql, now=fixed_now) == ""
 
-    runner = MagicMock()
+    runner = _federated_runner()
     runner.user_info = {"id": 1, "role": "user"}
     runner.trace_buffer = []
     runner._current_user_id.return_value = 1
@@ -1470,10 +1521,14 @@ async def test_federated_executor_repairs_subquery_time_range_mismatch_before_ex
          patch("app.services.metadata_service.MetadataService.get_dataset_by_name", side_effect=mock_get_dataset_by_name), \
          patch("app.services.ai.runtime.agentscope.trace_context.TraceSpanContext", FakeTraceSpanContext), \
          patch("app.services.ai.executors.federated_executor.execute_sql_query_core", execute_mock), \
-         patch("app.services.ai.executors.federated_executor.detect_time_range_mismatch") as mock_detect:
+         patch("app.services.ai.executors.federated_executor.detect_time_range_mismatch") as mock_detect, \
+         patch("app.services.ai.executors.federated_subquery_gates.detect_time_range_mismatch") as mock_detect_gate:
         mock_detect.side_effect = lambda q, sql, **kwargs: detect_time_range_mismatch(
             q, sql, now=fixed_now
         )
+        # 子查询的时间范围闸门已经搬到 federated_subquery_gates，只在 executor 上冻结时间锚点
+        # 是不够的：闸门仍按真实 now 判定，修好的 SQL 会被判「与 2026-10 无交集」而再修一轮。
+        mock_detect_gate.side_effect = mock_detect.side_effect
         mock_session_cls.return_value.__aenter__.return_value = MagicMock()
 
         chunks = []

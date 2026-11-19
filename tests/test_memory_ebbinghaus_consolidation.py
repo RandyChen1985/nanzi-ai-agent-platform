@@ -180,14 +180,17 @@ async def test_consolidate_user_memories_clustering_and_merging():
         new_callable=AsyncMock,
         return_value=redis
     ), patch(
-        "app.services.ai.memory_index_service.get_llm_async",
+        # memory_index_service 在函数内 import 这两个依赖（重构后模块级不再持有），
+        # 所以必须 patch 它们的定义处，patch 服务模块上的同名属性会直接 AttributeError。
+        "app.core.llm.client.get_llm_async",
         new_callable=AsyncMock,
         return_value=AsyncMock()
     ), patch(
-        "app.services.ai.memory_index_service.chat_client_from_handle",
+        "app.services.ai.runtime.agentscope.chat.chat_client_from_handle",
         return_value=chat_client
     ), patch(
-        "app.services.ai.embedding_client.EmbeddingClient.get_embedding",
+        # 嵌入接口在重构后统一为 embed_text(text, use_global=...)，旧的 get_embedding 已移除。
+        "app.services.ai.embedding_client.EmbeddingClient.embed_text",
         new_callable=AsyncMock,
         return_value=[0.1] * 1536
     ), patch(

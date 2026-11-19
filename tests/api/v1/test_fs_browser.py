@@ -1,6 +1,7 @@
 import pytest
 import os
 import json
+import shutil
 import uuid
 from httpx import AsyncClient, ASGITransport
 from app.main import app
@@ -312,7 +313,10 @@ async def test_list_auto_creates_user_uploads_dir(db_session, valid_api_key):
         assert workspace_root and uploads_dir
         os.makedirs(workspace_root, exist_ok=True)
         if os.path.isdir(uploads_dir):
-            os.rmdir(uploads_dir)
+            # 用 rmtree 而不是 rmdir：uploads 是测试账号的历史产物堆积地（图表、种子
+            # 数据等），几乎不可能是空的，rmdir 会直接抛 "Directory not empty"，
+            # 让这条本该验证「list 自动建目录」的用例变成环境敏感用例。
+            shutil.rmtree(uploads_dir, ignore_errors=True)
         assert not os.path.exists(uploads_dir)
 
         list_resp = await client.get(

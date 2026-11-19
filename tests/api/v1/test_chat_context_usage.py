@@ -51,4 +51,7 @@ async def test_context_usage_endpoint_returns_shared_estimate_and_effective_sand
         **expected,
         "sandbox_policy": "docker",
         "sandbox_runtime_env": "docker",
+        # 端点现在同时回传沙箱预热开关与空闲超时（docker 策略下的默认值）。
+        "sandbox_auto_warm": True,
+        "sandbox_idle_minutes": None,
     }

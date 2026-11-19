@@ -124,7 +124,12 @@ async def test_memory_search_uses_context_user_id():
     ), patch(
         "app.services.ai.tools.memory_search_tool.SessionSummaryService.search_for_user",
         new_callable=AsyncMock,
-        return_value={"summaries": [], "history": []},
+        # 必须返回非空摘要：空结果会触发「关键词没命中就回退最近活跃」的兜底二次检索，
+        # 那与本用例「只用 context 里的 user_id 查一次」的断言冲突（会被记成 2 次调用）。
+        return_value={
+            "summaries": [{"title": "测试摘要", "summary": "一次测试摘要"}],
+            "history": [],
+        },
     ) as mock_search:
         await memory_search_tool.memory_search.ainvoke({"scope": "summary", "query": "test"})
         mock_search.assert_awaited_once()

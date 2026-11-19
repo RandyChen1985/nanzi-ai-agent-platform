@@ -115,6 +115,25 @@ async def test_call_ragflow_api_success():
         assert "[置信度: 0.90]" in result
 # --- Tool Integration Tests ---
 
+def _empty_async_session_local() -> MagicMock:
+    """构造「DB 里什么都查不到」的 AsyncSession 替身。
+
+    直接 ``new_callable=MagicMock`` 造出来的是 AsyncMock 链：``await session.execute(...)``
+    拿到的是 AsyncMock 而不是 Result，实现里 ``result.scalars().all()`` 就会炸
+    ``'coroutine' object has no attribute 'all'``。这里显式给出 Result 的形状：
+    计数 0、``scalars().all()`` 为空列表——等价于「系统里没有任何跨数据集关联」，
+    跨数据集富化按短路径直接返回。
+    """
+    result = MagicMock()
+    result.scalar.return_value = 0
+    result.scalars.return_value.all.return_value = []
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    return MagicMock(return_value=session)
+
+
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
 async def test_get_dataset_schema_tool():
@@ -124,7 +143,7 @@ async def test_get_dataset_schema_tool():
     mock_ds.display_name = "User Stats"
     mock_ds.name = "user_stats"
 
-    with patch("app.core.orm.AsyncSessionLocal", new_callable=MagicMock), \
+    with patch("app.core.orm.AsyncSessionLocal", new=_empty_async_session_local()), \
          patch("app.services.config_service.ConfigService.get", new_callable=AsyncMock) as mock_config, \
          patch("app.services.metadata_service.MetadataService.search_datasets", new_callable=AsyncMock) as mock_search, \
          patch("app.services.metadata_service.MetadataService.export_dataset_yaml", new_callable=AsyncMock) as mock_export, \
@@ -179,7 +198,7 @@ async def test_get_dataset_schema_tool_local_falls_back_to_mysql_like_when_vecto
     matched_ds.display_name = "Order Stats"
     matched_ds.name = "order_stats"
 
-    with patch("app.core.orm.AsyncSessionLocal", new_callable=MagicMock), \
+    with patch("app.core.orm.AsyncSessionLocal", new=_empty_async_session_local()), \
          patch("app.services.config_service.ConfigService.get", new_callable=AsyncMock) as mock_config, \
          patch("app.services.metadata_service.MetadataService.search_datasets", new_callable=AsyncMock) as mock_search, \
          patch("app.services.metadata_service.MetadataService.build_dataset_schema_chunk_contents", new_callable=AsyncMock) as mock_build_chunks, \
@@ -205,14 +224,14 @@ async def test_get_dataset_schema_tool_local_falls_back_to_mysql_like_when_vecto
         assert "table_name: orders" in result
         assert mock_search.await_args_list[0].kwargs["query"] is None
         assert mock_search.await_args_list[1].kwargs["query"] == "order"
-        mock_build_chunks.assert_awaited_once_with(ANY, 2)
+        mock_build_chunks.assert_awaited_once_with(ANY, 2, table_names=None)
 
 
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
 async def test_get_dataset_schema_tool_passes_configured_metadata_dataset_ids():
     """工具高级配置中的元数据集 ID 应传给 Schema 检索核心逻辑。"""
-    with patch("app.core.orm.AsyncSessionLocal", new_callable=MagicMock), \
+    with patch("app.core.orm.AsyncSessionLocal", new=_empty_async_session_local()), \
          patch("app.services.chatbi_dataset_schema_service.fetch_dataset_schema_core", new_callable=AsyncMock) as mock_fetch:
         mock_fetch.return_value = "schema scoped"
 
@@ -230,7 +249,7 @@ async def test_get_dataset_schema_tool_passes_configured_metadata_dataset_ids():
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
 async def test_get_dataset_schema_tool_discards_non_numeric_metadata_dataset_ids():
-    with patch("app.core.orm.AsyncSessionLocal", new_callable=MagicMock), \
+    with patch("app.core.orm.AsyncSessionLocal", new=_empty_async_session_local()), \
          patch("app.services.chatbi_dataset_schema_service.fetch_dataset_schema_core", new_callable=AsyncMock) as mock_fetch:
         mock_fetch.return_value = "schema scoped"
 
@@ -268,7 +287,7 @@ async def test_execute_sql_query_tool_dry_run():
     mock_ctx.user_id = 1
     mock_ctx.is_admin = True
     
-    with patch("app.core.orm.AsyncSessionLocal", new_callable=MagicMock), \
+    with patch("app.core.orm.AsyncSessionLocal", new=_empty_async_session_local()), \
          patch("app.services.metadata_service.MetadataService.get_dataset_by_name", new_callable=AsyncMock) as mock_get_name, \
          patch("app.core.context.get_current_agent_context", return_value=mock_ctx), \
          patch("app.core.context.get_execution_option", return_value=True):
@@ -293,7 +312,7 @@ async def test_execute_sql_query_tool_validation_fail():
     mock_ctx.user_id = 1
     mock_ctx.is_admin = True
     
-    with patch("app.core.orm.AsyncSessionLocal", new_callable=MagicMock), \
+    with patch("app.core.orm.AsyncSessionLocal", new=_empty_async_session_local()), \
          patch("app.services.metadata_service.MetadataService.get_dataset_by_name", new_callable=AsyncMock) as mock_get_name, \
          patch("app.core.context.get_current_agent_context", return_value=mock_ctx):
         

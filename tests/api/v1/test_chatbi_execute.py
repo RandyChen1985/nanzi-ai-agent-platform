@@ -180,6 +180,12 @@ async def test_direct_sql_dataset_inference_rejects_when_row_filter_required(mon
     )
     monkeypatch.setattr(chatbi, "resolve_table_bindings_from_db", fake_resolve_table_bindings_from_db)
     monkeypatch.setattr(chatbi.MetadataService, "get_dataset_by_name", fake_get_dataset_by_name)
+    # 部分表无法唯一绑定时，端点会走「候选数据集」查询；那条路径是函数内 import 的，
+    # 不受上面 patch 影响。这里明确「没有其它候选」，让流程按测试意图用 bindings 判定。
+    monkeypatch.setattr(
+        "app.services.ai.chatbi_sql_query_binding._fetch_table_binding_candidates_from_db",
+        AsyncMock(return_value={}),
+    )
 
     with pytest.raises(HTTPException) as exc_info:
         await chatbi._resolve_direct_sql_dataset_name(
@@ -341,6 +347,13 @@ async def test_chatbi_execute_uses_session_user_for_openclaw_sql_execution(monke
     monkeypatch.setattr(chatbi.AuthService, "resolve_user_by_username", fake_resolve_user_by_username)
     monkeypatch.setattr(chatbi, "execute_sql_query_core", fake_execute_sql_query_core)
     monkeypatch.setattr(chatbi, "resolve_table_bindings_from_db", AsyncMock(return_value={}))
+    # `_collect_candidate_dataset_names` 是函数内 import 候选查询的，patch chatbi 模块上的
+    # `resolve_table_bindings_from_db` 管不到它；不堵住这条路，它就会拿 AsyncMock 当 session
+    # 去真查库，报 `'coroutine' object is not iterable`。
+    monkeypatch.setattr(
+        "app.services.ai.chatbi_sql_query_binding._fetch_table_binding_candidates_from_db",
+        AsyncMock(return_value={}),
+    )
 
     with patch.dict("os.environ", {"SQL_EXECUTION_MODE": "local"}):
         await chatbi.chatbi_sql_execute(body, user_info=api_key_user, db=AsyncMock())

@@ -214,7 +214,12 @@ async def test_federated_turn_type_enters_federated_executor_without_cross_wordi
         }
 
     runner = DataAgentRunner(config=test_config, trace_id="trace-direct-federated", trace_buffer=[])
-    monkeypatch.setattr(runner, "_auto_invoke_get_dataset_schema", fake_auto_schema)
+    # schema 获取已从 runner 方法迁到 chatbi.schema_prefetch.auto_invoke_get_dataset_schema，
+    # patch runner 上的旧方法已经拦不到任何东西（那条路径现在是死代码）。
+    monkeypatch.setattr(
+        "app.services.ai.runners.chatbi.schema_prefetch.auto_invoke_get_dataset_schema",
+        fake_auto_schema,
+    )
     monkeypatch.setattr(runner, "_resolve_runtime_tools_from_config", AsyncMock(return_value=[]))
     monkeypatch.setattr(runner, "_resolve_max_steps", AsyncMock(return_value=4))
     monkeypatch.setattr(

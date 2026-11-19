@@ -69,7 +69,9 @@ def _mock_chat_client(content: str):
 
 def test_should_inherit_data_agent_session_generalized():
     assert should_inherit_data_agent_session("把上面的结果画成柱状图") is True
-    assert should_inherit_data_agent_session("查一下所有机房的列表") is True
+    # 「查一下所有机房的列表」只是弱探询、没有指代上一轮结果，实现有意不再机械沿用 ChatBI，
+    # 改成 UNCERTAIN 交给下游语义路由判定（见 resolve_data_agent_session_affinity 的 docstring）。
+    assert should_inherit_data_agent_session("查一下所有机房的列表") is False
     assert should_inherit_data_agent_session("看看我开源项目，小星星情况") is False
     assert should_inherit_data_agent_session("今天北京天气怎么样") is False
     assert should_inherit_data_agent_session("姓名呢") is True
@@ -86,7 +88,7 @@ def test_should_inherit_data_agent_session_generalized():
     [
         ("把上面的结果画成柱状图", DataSessionAffinity.KEEP),
         ("保存这个结果", DataSessionAffinity.KEEP),
-        ("查一下所有机房的列表", DataSessionAffinity.KEEP),
+        ("查一下所有机房的列表", DataSessionAffinity.UNCERTAIN),
         ("你好", DataSessionAffinity.BREAK),
         ("联网查一下今天的行业新闻", DataSessionAffinity.BREAK),
         ("帮我看看这个", DataSessionAffinity.UNCERTAIN),

@@ -223,11 +223,21 @@ def test_session_status_context_usage_estimates_full_history_against_budget(
     # 无显式模型窗口的 context => 以兜底窗口 4096 扣除 overhead 后得到历史预算。
     _install_context(runtime_model_info={})
     module = importlib.import_module("app.services.ai.tools.session_status")
+    from app.services.ai.runtime.agentscope.tool_result_context import (
+        TOOL_RESULT_CONTEXT_VERSION,
+    )
 
+    # 工具转录只有在带上当前版本的标记时才计入估算（不可信/旧版转录一律忽略），
+    # 缺这个标记 estimated_current_tokens 会少算第 3 条消息的工具输出。
     history = [
         {"role": "user", "content": "你好，我需要一些帮助", "tool_run_text": ""},
         {"role": "assistant", "content": "好的，请说", "tool_run_text": ""},
-        {"role": "assistant", "content": "", "tool_run_text": "tool_call_for_something"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_run_text": "tool_call_for_something",
+            "tool_run_text_version": TOOL_RESULT_CONTEXT_VERSION,
+        },
     ]
     _install_workspace_redis_mocks(tmp_path, monkeypatch)
     _install_infra_mocks(monkeypatch, history=history, budget="4096")
