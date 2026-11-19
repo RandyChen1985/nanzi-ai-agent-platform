@@ -383,6 +383,9 @@ const emit = defineEmits<{
   (e: 'update:thinking-enable-override', val: boolean | null): void;
   (e: 'update:reasoning-effort-override', val: ReasoningEffort | null): void;
   (e: 'update:temperature-override', val: number | null): void;
+  /** 出图尺寸（白名单原值，如 512x512）；null = 不指定。父组件把它塞进
+   *  execution_options.image_size 下发，工具侧据此锁定本次出图尺寸。 */
+  (e: 'update:image-size', val: string | null): void;
   (e: 'send'): void;
   (e: 'stop'): void;
   (e: 'system-command', cmd: string): void;
@@ -1657,13 +1660,19 @@ const showExpertCascade = ref(false);
 
 // ── 图像参数：对话里发起生图的可视化参数入口 ────────────────────────────────
 //
-// 用户不该被问「你要 1664x928 还是 928x1664」——他不知道，也没必要知道。这里只给
-// 比例 / 风格 / 张数三样，像素由后端按白名单换算。选中的项在输入框上方显示成标签，
-// 正文保持干净；真正并进正文只发生在按下发送的那一刻。
+// 面板给三样：分辨率 / 风格 / 张数。分辨率直接给具体像素（值全部来自后台白名单），
+// 走 execution_options.image_size 结构化下发——尺寸是白名单精确值，让模型转述一遍再落地，
+// 猜错就整次请求作废，所以这一项必须由用户直接给。风格与张数只是提示词词汇，拼进正文
+// 让模型自己领会即可。
+// 曾经的「画面比例」已删掉：分辨率卡片自带 1:1 / 16:9 小字，两套控件表达同一件事，
+// 而且能互相打架（选「1:1」+「1664x928」，正文说方图、下发的却是横图）。
+// 选中的项在输入框上方显示成标签，正文保持干净；真正并进正文只发生在按下发送的那一刻。
 const showImageParamPop = ref(false);
-const imageParamRatio = ref("");
 const imageParamStyle = ref("");
-const imageParamTone = ref("");
+/** 用户选的出图尺寸（白名单原值，如 512x512）。空串 = 不指定，用后台默认尺寸。
+ *  它不走提示词，而是作为 execution_options.image_size 结构化下发：尺寸必须是白名单里的
+ *  精确值，让模型转述一遍再落地，猜错就整次请求作废——所以这一项必须由用户直接给。 */
+const imageParamSize = ref("");
 const imageParamCount = ref(1);
 const imageStatusLoading = ref(false);
 const imageFeature = ref<{
@@ -1674,26 +1683,79 @@ const imageFeature = ref<{
   max_images: number;
 } | null>(null);
 
-// 「自动」放在第一位：多数人只想说「做张海报」，不该被迫先选比例。
-// 其余项文案带比例数字，比只写「横版」更容易对上心里的画面。
-const IMAGE_RATIO_OPTIONS = [
-  { ratio: "", label: "自动", hint: "由模型按内容判断", boxW: 16, boxH: 16, dashed: true },
-  { ratio: "1:1", label: "1:1 方形", hint: "头像 / 图标", boxW: 14, boxH: 14, dashed: false },
-  { ratio: "16:9", label: "16:9 横版", hint: "大屏 / 主视觉", boxW: 18, boxH: 10, dashed: false },
-  { ratio: "9:16", label: "9:16 竖版", hint: "手机推文", boxW: 10, boxH: 18, dashed: false },
-  { ratio: "4:3", label: "4:3 宽屏", hint: "插图 / 卡片", boxW: 16, boxH: 12, dashed: false }
-];
 // 「不指定」显式列出来：按钮全亮着的面板里，没有它就看不出「我没选」还是「选了没生效」。
-/** 色调。同样只是提示词词汇——一组图要放进同一份 PPT 时，观感统一靠的就是它。
- *  「不指定」放第一个，理由和风格一样：看得出「我没选」。 */
-const IMAGE_TONE_OPTIONS = [
-  "不指定",
-  "明亮通透",
-  "温暖柔和",
-  "冷色调",
-  "高饱和",
-  "素雅低饱和",
-];
+/** 出图尺寸卡片的示意框尺寸：按真实长宽比等比缩放，最长边 14px。
+ *  没有它，一排 `1664x928` / `928x1664` 看着差不多，用户得在脑子里换算谁横谁竖。 */
+const imageSizeBoxStyle = (size: string) => {
+  const m = /^(\d+)x(\d+)$/.exec(String(size || "").trim());
+  if (!m) return { width: "14px", height: "14px" };
+  const w = Number(m[1]) || 1;
+  const h = Number(m[2]) || 1;
+  const scale = 14 / Math.max(w, h);
+  return {
+    width: `${Math.max(6, Math.round(w * scale))}px`,
+    height: `${Math.max(6, Math.round(h * scale))}px`,
+  };
+};
+
+/** 比例标签（18:9 这种不常见的也照样算），卡片上只显示一小行。 */
+const imageSizeRatioLabel = (size: string) => {
+  const m = /^(\d+)x(\d+)$/.exec(String(size || "").trim());
+  if (!m) return "";
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  if (!w || !h) return "";
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  const g = gcd(w, h);
+  const rw = w / g;
+  const rh = h / g;
+  // 比例数字太大时（1000x998 之类）读不出含义，直接给宽高比近似值。
+  if (rw > 40 || rh > 40) return (w / h).toFixed(2).replace(/0+$/, "").replace(/\.$/, "") + ":1";
+  return `${rw}:${rh}`;
+};
+
+/** 后台白名单里的可选尺寸。界面不写死任何尺寸：白名单改了这里跟着变，
+ *  避免出现「界面能选、后端不认」的错位。 */
+const imageSizeChoices = computed(() =>
+  (imageFeature.value?.allowed_sizes || [])
+    .map((size) => String(size || "").trim())
+    .filter(Boolean)
+    .map((size) => ({
+      size,
+      ratio: imageSizeRatioLabel(size),
+      // 最小档在小尺寸出图上普遍受限（如 gpt-image-1 最小只到 1024），悬停时说明一句。
+      hint: size === "512x512" ? "部分上游模型最小只支持 1024×1024" : "",
+    })),
+);
+
+/** 3 列网格，折叠态固定两行 6 格：「自动」1 + 尺寸 4 + 「更多」1。
+ *  不折叠时最多摆 5 个尺寸（自动 + 5 = 6 格，也是两行），所以超过 5 个才值得折。
+ *  管理员把预设全勾上时白名单能有八个十个，全摊开会把「张数」和底部按钮挤出面板。 */
+const IMAGE_SIZE_VISIBLE_COUNT = 4;
+const IMAGE_SIZE_COLLAPSE_THRESHOLD = 5;
+const imageSizeCollapsed = ref(true);
+
+const imageSizeNeedsCollapse = computed(
+  () => imageSizeChoices.value.length > IMAGE_SIZE_COLLAPSE_THRESHOLD,
+);
+
+const visibleImageSizeChoices = computed(() => {
+  const all = imageSizeChoices.value;
+  if (!imageSizeNeedsCollapse.value || !imageSizeCollapsed.value) return all;
+  const head = all.slice(0, IMAGE_SIZE_VISIBLE_COUNT);
+  // 选中的尺寸落在折叠区时，用最后一格把它顶出来：面板收着却看不见自己选了什么，
+  // 用户只会以为没生效，然后再点一次。
+  const selected = all.find((opt) => opt.size === imageParamSize.value);
+  if (selected && !head.some((opt) => opt.size === selected.size)) {
+    return [...head.slice(0, IMAGE_SIZE_VISIBLE_COUNT - 1), selected];
+  }
+  return head;
+});
+
+const hiddenImageSizeCount = computed(
+  () => imageSizeChoices.value.length - visibleImageSizeChoices.value.length,
+);
+
 
 /** 出图风格。本质是往提示词里塞修饰词，不是接口参数——实测网关对 quality/style
  *  这类字段一律忽略，所以扩充这里不产生任何接口约束，只是让用户少打几个字。
@@ -1797,19 +1859,22 @@ const hoverOpenImageParamPop = () => {
 const closeImageParamPop = () => {
   showImageParamPop.value = false;
   imagePopClosedAt = Date.now();
+  // 面板是挂在加号菜单右侧的 flyout：只收面板、把菜单留在屏幕上等于只关了一半，
+  // 用户还得再点一次空白处才收得干净。X / 取消 / 知道了 和「完成」统一按整体收起处理。
+  showPlusMenu.value = false;
 };
 
 /**
  * 把面板选择收敛成一句出图要求，发送时并进正文。全空则返回空串。
  *
- * 措辞必须是「一句人话」而不是 `[生成参数] 比例=4:3` 这种键值串：模型拿到键值串
+ * 措辞必须是「一句人话」而不是 `[生成参数] 风格=扁平插画` 这种键值串：模型拿到键值串
  * 有一定概率把它当成要画进图里的文字，出一张印着「生成参数」的图。
  */
 const buildImageParamPrefix = () => {
   const parts: string[] = [];
-  if (imageParamRatio.value) parts.push(`比例 ${imageParamRatio.value}`);
   if (imageParamStyle.value) parts.push(`风格 ${imageParamStyle.value}`);
-  if (imageParamTone.value) parts.push(`色调 ${imageParamTone.value}`);
+  // 尺寸不在这里：它必须是白名单精确值，走 execution_options.image_size 结构化下发。
+  // 比例也不在这里：分辨率已经决定了形状，再写一句比例只会在两者不一致时误导模型。
   if (imageParamCount.value > 1) parts.push(`数量 ${imageParamCount.value} 张`);
   return parts.length ? `（本次出图要求：${parts.join("，")}）` : "";
 };
@@ -1817,20 +1882,16 @@ const buildImageParamPrefix = () => {
 /**
  * 输入框上方展示的参数标签。
  *
- * 参数不进输入框正文：正文是用户自己写的话，混进「比例=4:3」这种机器味的前缀，
+ * 参数不进输入框正文：正文是用户自己写的话，混进「风格=扁平插画」这种机器味的前缀，
  * 改稿时得先手动删掉才能接着说。标签既让人看见「这次带了什么参数」，也能单独摘掉某一项。
  */
 const imageParamChips = computed(() => {
   const chips: Array<{ key: string; label: string; clear: () => void }> = [];
-  const ratioOpt = IMAGE_RATIO_OPTIONS.find((o) => o.ratio && o.ratio === imageParamRatio.value);
-  if (ratioOpt) {
-    chips.push({ key: "ratio", label: ratioOpt.label, clear: () => { imageParamRatio.value = ""; } });
-  }
   if (imageParamStyle.value) {
     chips.push({ key: "style", label: imageParamStyle.value, clear: () => { imageParamStyle.value = ""; } });
   }
-  if (imageParamTone.value) {
-    chips.push({ key: "tone", label: imageParamTone.value, clear: () => { imageParamTone.value = ""; } });
+  if (imageParamSize.value) {
+    chips.push({ key: "size", label: imageParamSize.value, clear: () => { imageParamSize.value = ""; } });
   }
   if (imageParamCount.value > 1) {
     chips.push({ key: "count", label: `${imageParamCount.value} 张`, clear: () => { imageParamCount.value = 1; } });
@@ -1840,10 +1901,9 @@ const imageParamChips = computed(() => {
 
 const applyImageParams = () => {
   // 参数已经在 chips 里了，这里只负责收起面板、把焦点交回输入框。
+  // 面板与加号菜单一起收（closeImageParamPop 内部统一处理）——「完成」= 这次设置结束，
+  // 该回输入框打字了，菜单不该还挂在屏幕上。
   closeImageParamPop();
-  // 「完成」= 这次设置结束，该回输入框打字了，所以连带把加号菜单一起收掉。
-  // 只关面板不关菜单的话，菜单还挂在屏幕上，看着跟没反应一样（面板就贴着它展开）。
-  showPlusMenu.value = false;
   nextTick(() => {
     const el = inputRef.value;
     if (!el) return;
@@ -1880,11 +1940,17 @@ watch(() => props.modelValue, (value) => {
 });
 
 const resetImageParams = () => {
-  imageParamRatio.value = "";
   imageParamStyle.value = "";
-  imageParamTone.value = "";
+  imageParamSize.value = "";
   imageParamCount.value = 1;
+  // 下一轮重新进入面板时回到折叠态：展开状态是「正在挑尺寸」的临时态，不该跨轮留着。
+  imageSizeCollapsed.value = true;
 };
+
+// 尺寸要单独同步给父组件：它不在正文里，父组件组装请求体时得从自己那份状态里取。
+watch(imageParamSize, (size) => {
+  emit("update:image-size", size || null);
+});
 
 // 进对话就探一次：菜单一打开就能显示「未开启 / 智能体未启用」，不用等用户先点一下才知道。
 onMounted(() => {
@@ -2545,6 +2611,7 @@ defineExpose({
                 v-for="chip in imageParamChips"
                 :key="chip.key"
                 class="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-600 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+                :class="chip.key === 'size' ? 'font-mono' : ''"
               >
                 {{ chip.label }}
                 <button
@@ -3397,35 +3464,6 @@ defineExpose({
                                   <template v-else>
                                     <div class="space-y-3 px-3.5 py-3">
                                       <div>
-                                        <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">画面比例</div>
-                                        <div class="flex flex-wrap gap-1.5">
-                                          <button
-                                            v-for="opt in IMAGE_RATIO_OPTIONS"
-                                            :key="opt.label"
-                                            type="button"
-                                            class="flex flex-1 flex-col items-center gap-1 rounded-lg border px-1 py-1.5 transition-colors"
-                                            :class="imageParamRatio === opt.ratio
-                                              ? 'border-primary bg-primary/5 text-primary'
-                                              : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
-                                            :title="opt.hint"
-                                            @click="imageParamRatio = opt.ratio"
-                                          >
-                                            <span
-                                              class="block rounded-[3px] border"
-                                              :class="imageParamRatio === opt.ratio ? 'border-primary bg-primary/15' : 'border-gray-400 dark:border-gray-500'"
-                                              :style="{
-                                                width: `${opt.boxW}px`,
-                                                height: `${opt.boxH}px`,
-                                                borderStyle: opt.dashed ? 'dashed' : 'solid',
-                                              }"
-                                            ></span>
-                                            <span class="whitespace-nowrap text-[10px] font-medium leading-none">{{ opt.label }}</span>
-                                          </button>
-                                        </div>
-                                        <p class="mt-1 text-[10px] leading-relaxed text-gray-400">不选则由模型按内容自己判断</p>
-                                      </div>
-
-                                      <div>
                                         <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">风格</div>
                                         <div class="flex flex-wrap gap-1.5">
                                           <button
@@ -3442,19 +3480,85 @@ defineExpose({
                                       </div>
 
                                       <div>
-                                        <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">色调</div>
-                                        <div class="flex flex-wrap gap-1.5">
+                                        <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">分辨率</div>
+                                        <!-- 用卡片而不是胶囊：尺寸是「几何参数」，卡片画得出长宽形状。
+                                             示意框按真实长宽比画，横版竖版不用读数字就能看出来；卡片上的
+                                             比例小字（1:1 / 16:9）同时承担「这张图什么形状」的说明，
+                                             所以面板里不再单独放一排画面比例——两套控件表达同一件事，
+                                             选「1:1」又选「1664x928」时还会互相打架。 -->
+                                        <div class="grid grid-cols-3 gap-1.5">
                                           <button
-                                            v-for="tone in IMAGE_TONE_OPTIONS"
-                                            :key="tone"
                                             type="button"
-                                            class="rounded-full border px-2 py-0.5 text-[11px] transition-colors"
-                                            :class="(imageParamTone || '不指定') === tone
-                                              ? 'border-primary bg-primary text-white'
+                                            class="flex flex-col items-center gap-1 rounded-lg border px-1 py-1.5 transition-colors"
+                                            :class="imageParamSize === ''
+                                              ? 'border-primary bg-primary/5 text-primary'
                                               : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
-                                            @click="imageParamTone = tone === '不指定' ? '' : tone"
-                                          >{{ tone }}</button>
+                                            title="不指定，用后台配置的默认尺寸"
+                                            @click="imageParamSize = ''"
+                                          >
+                                            <span
+                                              class="block rounded-[3px] border border-dashed"
+                                              :class="imageParamSize === '' ? 'border-primary bg-primary/15' : 'border-gray-400 dark:border-gray-500'"
+                                              style="width: 14px; height: 14px"
+                                            ></span>
+                                            <span class="whitespace-nowrap text-[10px] font-medium leading-none">自动</span>
+                                            <span class="text-[9px] leading-none opacity-70">默认</span>
+                                          </button>
+                                          <button
+                                            v-for="opt in visibleImageSizeChoices"
+                                            :key="opt.size"
+                                            type="button"
+                                            class="flex flex-col items-center gap-1 rounded-lg border px-1 py-1.5 transition-colors"
+                                            :class="imageParamSize === opt.size
+                                              ? 'border-primary bg-primary/5 text-primary'
+                                              : 'border-gray-200 text-gray-600 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300'"
+                                            :title="opt.hint || `${opt.size}（${opt.ratio}）`"
+                                            @click="imageParamSize = opt.size"
+                                          >
+                                            <span
+                                              class="block rounded-[3px] border"
+                                              :class="imageParamSize === opt.size ? 'border-primary bg-primary/15' : 'border-gray-400 dark:border-gray-500'"
+                                              :style="imageSizeBoxStyle(opt.size)"
+                                            ></span>
+                                            <span class="font-mono text-[10px] font-medium leading-none tracking-tight">{{ opt.size }}</span>
+                                            <span class="text-[9px] leading-none opacity-70">{{ opt.ratio }}</span>
+                                          </button>
+                                          <!-- 折叠格用虚线框 + chevron，和尺寸卡片同一套骨架（14px 图标位 + 两行小字），
+                                               高度才对得齐下面那行；纯文字按钮会比旁边矮一截。 -->
+                                          <button
+                                            v-if="imageSizeNeedsCollapse"
+                                            type="button"
+                                            class="flex flex-col items-center gap-1 rounded-lg border border-dashed px-1 py-1.5 transition-colors"
+                                            :class="imageSizeCollapsed
+                                              ? 'border-gray-300 text-gray-500 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400'
+                                              : 'border-gray-200 text-gray-500 hover:border-primary/40 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400'"
+                                            :title="imageSizeCollapsed ? `还有 ${hiddenImageSizeCount} 个尺寸` : '收起多余尺寸'"
+                                            @click="imageSizeCollapsed = !imageSizeCollapsed"
+                                          >
+                                            <span class="flex h-[14px] w-[14px] items-center justify-center">
+                                              <svg
+                                                class="h-3 w-3 transition-transform"
+                                                :class="imageSizeCollapsed ? '' : 'rotate-180'"
+                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                                              ><path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>
+                                            </span>
+                                            <span class="whitespace-nowrap text-[10px] font-medium leading-none">{{ imageSizeCollapsed ? '更多' : '收起' }}</span>
+                                            <span class="text-[9px] leading-none opacity-70">
+                                              {{ imageSizeCollapsed ? `+${hiddenImageSizeCount}` : `共 ${imageSizeChoices.length}` }}
+                                            </span>
+                                          </button>
                                         </div>
+                                        <p class="mt-1 text-[10px] leading-relaxed text-gray-400">
+                                          <template v-if="imageSizeChoices.length">
+                                            来自「系统设置 → 图像生成」的白名单；不选则用默认 {{ imageFeature?.default_size || '尺寸' }}。
+                                          </template>
+                                          <template v-else>
+                                            后台还没配置可选分辨率，只能用默认尺寸。
+                                          </template>
+                                          <span v-if="imageSizeChoices.some(o => o.size === '512x512')" class="block">
+                                            512x512 需要上游模型支持，部分模型最小只到 1024×1024。
+                                          </span>
+                                        </p>
                                       </div>
 
                                       <div v-if="(imageFeature?.max_images || 1) > 1">
@@ -3476,7 +3580,7 @@ defineExpose({
 
                                     <div class="border-t border-gray-100 bg-gray-50/60 px-3.5 py-2.5 dark:border-gray-700 dark:bg-gray-800/60">
                                       <p class="mb-2 text-[10.5px] leading-relaxed text-gray-400 dark:text-gray-500">
-                                        选择会随消息一起发出，输入框里只显示成几个标签，不出现像素值。
+                                        选择会随消息一起发出，输入框里只显示成几个标签；尺寸走结构化参数，不写进正文。
                                       </p>
                                       <div class="flex items-center gap-2">
                                         <button

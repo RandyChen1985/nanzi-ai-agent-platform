@@ -1825,6 +1825,9 @@ const isChatContextMessage = (message: Message): boolean => (
 
 // --- Debug Config State ---
 const showHistorySidebar = ref(false);
+/** 输入框「图像参数」里选的出图尺寸（白名单原值）。单独一个 ref 而不是塞进 debugConfig：
+ *  debugConfig 会被持久化到 localStorage，尺寸是白名单值，存下去迟早会跟后台配置对不上。 */
+const imageSizeOverride = ref<string | null>(null);
 const showConfigPanel = ref(true);
 const isConfigPanelFloating = ref(false);
 const debugConfig = reactive({
@@ -3767,6 +3770,8 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       knowledge_ragflow_metadata_top_k: knowledgeMetadataTopK.value,
     };
     if (debugConfig.model) debugOptions.model = debugConfig.model;
+    // 出图尺寸：用户在输入框「图像参数」里点了具体分辨率才下发，不进正文。
+    if (imageSizeOverride.value) debugOptions.image_size = imageSizeOverride.value;
     if (debugConfig.thinkingEnableOverride !== null) {
       debugOptions.thinking_enable = debugConfig.thinkingEnableOverride;
     }
@@ -5773,6 +5778,7 @@ onUnmounted(() => {
           :context-compaction-action-loading="contextCompactionActionLoading"
           :thinking-enable-override="debugConfig.thinkingEnableOverride"
           :reasoning-effort-override="debugConfig.reasoningEffortOverride"
+          @update:image-size="imageSizeOverride = $event"
           :agent-id="agentParams.agent_id"
           :routing-mode="debugMode === 'specific' ? 'expert' : 'auto'"
           :expert-agent-id="agentParams.agent_id || ''"

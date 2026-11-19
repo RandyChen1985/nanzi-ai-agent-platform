@@ -30,7 +30,7 @@ from typing import Any
 
 import httpx
 
-from app.core.context import get_current_agent_context
+from app.core.context import get_current_agent_context, get_execution_option
 from app.services.ai.tools.generated_file_service import (
     publish,
     resolve_delegation_parent_scope,
@@ -674,28 +674,45 @@ async def generate_image(
         return {"ok": False, "error": "缺少 prompt：请给出想要生成的画面描述。"}
 
     allowed_sizes = config["allowed_sizes"]
-    requested_size = size.strip() if isinstance(size, str) and size.strip() else ""
     target_size = config["default_size"]
-    if requested_size:
-        normalized = normalize_size(requested_size)
-        if normalized is None:
-            return {
-                "ok": False,
-                "error": (
-                    f"尺寸「{requested_size}」格式不对，必须写成 宽x高（例如 1664x928）。"
-                    f"可用尺寸：{'、'.join(allowed_sizes) or '（未配置）'}"
-                ),
-            }
-        if allowed_sizes and normalized not in allowed_sizes:
-            # 把可用值直接告诉模型，否则它只会原样重试同一个错误尺寸。
-            return {
-                "ok": False,
-                "error": (
-                    f"尺寸「{normalized}」不在允许范围内。可用尺寸："
-                    f"{'、'.join(allowed_sizes)}。请从中挑一个最接近用户需求的。"
-                ),
-            }
-        target_size = normalized
+
+    # 用户在输入框「图像参数」里点选的尺寸优先级最高：它是 execution_options 里的结构化参数，
+    # 点过就代表明确意图，模型自己挑的值一律让位（否则「勾了 512 却出 1024」就成了玄学）。
+    # 不在白名单时忽略并回落默认，而不是报错：用户看不到工具的返回值，报错只会变成一次
+    # 莫名其妙的生成失败，且模型多半会拿同一个错值重试。
+    preferred_size = normalize_size(get_execution_option("image_size"))
+    if preferred_size and (not allowed_sizes or preferred_size in allowed_sizes):
+        target_size = preferred_size
+        logger.info("[image_generation] 采用用户指定尺寸 %s", preferred_size)
+    else:
+        if preferred_size:
+            logger.warning(
+                "[image_generation] 用户指定尺寸 %s 不在白名单 %s，回落默认尺寸 %s",
+                preferred_size,
+                allowed_sizes,
+                target_size,
+            )
+        requested_size = size.strip() if isinstance(size, str) and size.strip() else ""
+        if requested_size:
+            normalized = normalize_size(requested_size)
+            if normalized is None:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"尺寸「{requested_size}」格式不对，必须写成 宽x高（例如 1664x928）。"
+                        f"可用尺寸：{'、'.join(allowed_sizes) or '（未配置）'}"
+                    ),
+                }
+            if allowed_sizes and normalized not in allowed_sizes:
+                # 把可用值直接告诉模型，否则它只会原样重试同一个错误尺寸。
+                return {
+                    "ok": False,
+                    "error": (
+                        f"尺寸「{normalized}」不在允许范围内。可用尺寸："
+                        f"{'、'.join(allowed_sizes)}。请从中挑一个最接近用户需求的。"
+                    ),
+                }
+            target_size = normalized
 
     max_images = int(config["max_images_per_call"])
     requested_n = 1

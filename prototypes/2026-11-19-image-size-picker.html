@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="方案对比">
+<title>图像参数 · 把「色调」换成分辨率</title>
+<style>
+  :root{
+    --pri:#2563eb;
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af;
+    --g500:#6b7280; --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --rose:#f43f5e; --sky50:#f0f9ff; --sky100:#e0f2fe; --sky700:#0369a1;
+    --em50:#ecfdf5; --em600:#059669; --em700:#047857;
+    --am50:#fffbeb; --am100:#fef3c7; --am700:#b45309;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f5f6f8;color:var(--g900);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit;padding:0}
+  svg{display:block}
+
+  .page{max-width:1420px;margin:0 auto;padding:20px 24px 80px}
+  .proto-head h1{font-size:20px;margin:0 0 8px;font-weight:650}
+  .proto-head p{margin:0 0 6px;color:var(--g600);font-size:12.5px;max-width:1080px;line-height:1.8}
+  .proto-head b{color:var(--g900);font-weight:600}
+  .proto-head code{font-size:11.5px;background:var(--g100);border:1px solid var(--g200);border-radius:4px;padding:1px 5px;color:var(--g700)}
+
+  .tabs{display:flex;gap:6px;margin:16px 0 14px;flex-wrap:wrap;align-items:center}
+  .tab{display:flex;align-items:center;gap:7px;border:1px solid var(--g200);background:#fff;border-radius:10px;padding:7px 13px;font-size:12.5px;color:var(--g600);transition:.14s}
+  .tab:hover{border-color:var(--g300);color:var(--g800)}
+  .tab .no{display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;border-radius:5px;background:var(--g100);font-size:10.5px;font-weight:700;color:var(--g500)}
+  .tab.on{border-color:#0f172a;background:#0f172a;color:#fff}
+  .tab.on .no{background:rgba(255,255,255,.18);color:#fff}
+
+  .scene{display:none}
+  .scene.on{display:block}
+  .stage{display:grid;grid-template-columns:500px minmax(0,1fr);gap:22px;align-items:start}
+  @media (max-width:1000px){.stage{grid-template-columns:minmax(0,1fr)}}
+
+  /* ───────── 面板：按 ChatInput.vue 3350-3499 一比一复刻 ───────── */
+  .panel-wrap{display:flex;gap:10px;align-items:flex-start}
+  .fake-menu{width:116px;flex:0 0 auto;background:#fff;border:1px solid var(--g200);border-radius:12px;box-shadow:0 8px 24px -12px rgba(15,23,42,.16);padding:6px 0;font-size:11px;color:var(--g600)}
+  .fake-menu .mi{display:flex;align-items:center;gap:7px;padding:7px 9px;white-space:nowrap}
+  .fake-menu .mi.hl{background:var(--g100);color:var(--g900);font-weight:600}
+  .fake-menu .mi i{width:13px;height:13px;border-radius:3px;background:var(--g300);display:block;flex:0 0 auto}
+  .fake-menu .mi.hl i{background:var(--rose)}
+
+  .panel{width:360px;flex:0 0 auto;background:#fff;border:1px solid var(--g200);border-radius:12px;overflow:hidden;box-shadow:0 24px 60px -24px rgba(15,23,42,.30),0 2px 8px rgba(15,23,42,.06)}
+  .p-head{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--g100);padding:10px 14px}
+  .p-head .ico{width:16px;height:16px;color:var(--rose);flex:0 0 auto}
+  .p-head .t{font-size:14px;font-weight:600;color:var(--g900)}
+  .p-head .sub{margin-left:auto;font-size:10px;color:var(--g400)}
+  .p-head .x{width:20px;height:20px;margin-right:-4px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--g400)}
+  .p-head .x:hover{background:var(--g100);color:var(--g600)}
+  .p-body{padding:12px 14px;display:flex;flex-direction:column;gap:12px}
+  .grp-lb{margin-bottom:6px;font-size:11px;font-weight:500;color:var(--g500)}
+  .grp-note{margin:4px 0 0;font-size:10px;line-height:1.6;color:var(--g400)}
+
+  /* 画面比例：卡片 + 示意框 */
+  .ratios{display:flex;flex-wrap:wrap;gap:6px}
+  .ratio{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;border:1px solid var(--g200);border-radius:8px;padding:6px 4px;color:var(--g600);transition:.12s}
+  .ratio:hover{border-color:rgba(37,99,235,.4);background:var(--g50)}
+  .ratio .box{display:block;border-radius:3px;border:1px solid var(--g400)}
+  .ratio .lb{font-size:10px;font-weight:500;line-height:1;white-space:nowrap}
+  .ratio.on{border-color:var(--pri);background:rgba(37,99,235,.05);color:var(--pri)}
+  .ratio.on .box{border-color:var(--pri);background:rgba(37,99,235,.15)}
+
+  /* 风格 / 色调：胶囊 */
+  .pills{display:flex;flex-wrap:wrap;gap:6px}
+  .pill{border:1px solid var(--g200);border-radius:999px;padding:2px 8px;font-size:11px;color:var(--g600);transition:.12s}
+  .pill:hover{border-color:rgba(37,99,235,.4);background:var(--g50)}
+  .pill.on{border-color:var(--pri);background:var(--pri);color:#fff}
+
+  /* 分辨率：变体 1（胶囊，与风格同款） */
+  .size-pills{display:flex;flex-wrap:wrap;gap:6px}
+  .size-pill{border:1px solid var(--g200);border-radius:999px;padding:2px 8px 2px 7px;font-size:11px;color:var(--g600);display:inline-flex;align-items:center;gap:4px;transition:.12s}
+  .size-pill:hover{border-color:rgba(37,99,235,.4);background:var(--g50)}
+  .size-pill .n{font-size:10.5px;font-weight:600;letter-spacing:-.01em}
+  .size-pill .r{font-size:9.5px;color:var(--g400);font-weight:600}
+  .size-pill.on{border-color:var(--pri);background:var(--pri);color:#fff}
+  .size-pill.on .r{color:rgba(255,255,255,.66)}
+
+  /* 分辨率：变体 2（三列卡片，像比例那排） */
+  .size-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .size-card{display:flex;flex-direction:column;align-items:center;gap:3px;border:1px solid var(--g200);border-radius:8px;padding:6px 3px;color:var(--g600);transition:.12s}
+  .size-card:hover{border-color:rgba(37,99,235,.4);background:var(--g50)}
+  .size-card .box{display:block;border-radius:2px;border:1px solid var(--g400)}
+  .size-card .n{font-size:10.5px;font-weight:600;line-height:1.15;letter-spacing:-.02em;white-space:nowrap}
+  .size-card .r{font-size:9px;font-weight:600;color:var(--g400);line-height:1}
+  .size-card.on{border-color:var(--pri);background:rgba(37,99,235,.05);color:var(--pri)}
+  .size-card.on .box{border-color:var(--pri);background:rgba(37,99,235,.15)}
+  .size-card.on .r{color:rgba(37,99,235,.7)}
+  .size-card.more{border-style:dashed}
+  .size-card .ico{display:flex;align-items:center;justify-content:center;height:14px;width:14px}
+
+  /* 张数 */
+  .counts{display:flex;gap:6px}
+  .cnt{height:28px;width:36px;border:1px solid var(--g200);border-radius:8px;font-size:11px;font-weight:500;color:var(--g600)}
+  .cnt.on{border-color:var(--pri);background:rgba(37,99,235,.05);color:var(--pri)}
+
+  .p-foot{border-top:1px solid var(--g100);background:rgba(249,250,251,.6);padding:10px 14px}
+  .p-foot p{margin:0 0 8px;font-size:10.5px;line-height:1.7;color:var(--g400)}
+  .p-foot .acts{display:flex;align-items:center;gap:8px}
+  .clear{font-size:11px;color:var(--g500)}
+  .clear:hover{color:var(--g700)}
+  .btn-ghost{margin-left:auto;border:1px solid var(--g200);background:#fff;border-radius:8px;padding:4px 10px;font-size:11px;font-weight:500;color:var(--g600)}
+  .btn-ghost:hover{background:var(--g50)}
+  .btn-pri{background:var(--pri);border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;color:#fff}
+  .btn-pri:hover{opacity:.9}
+
+  /* 输入框 + 标签 */
+  .composer{margin-top:14px;background:#fff;border:1px solid var(--g200);border-radius:12px;padding:10px 11px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:22px;align-items:center}
+  .chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--sky100);background:var(--sky50);color:var(--sky700);border-radius:999px;padding:3px 6px 3px 9px;font-size:11.5px;font-weight:600}
+  .chip .n{font-size:11px}
+  .chip .x{width:15px;height:15px;display:flex;align-items:center;justify-content:center;border-radius:50%;opacity:.65}
+  .chip .x:hover{background:rgba(3,105,161,.12);opacity:1}
+  .chip.ghost{border-style:dashed;border-color:var(--g300);background:#fff;color:var(--g400);font-weight:500}
+  .ta{width:100%;min-height:44px;border:1px solid var(--g200);border-radius:9px;padding:8px 10px;font-size:13px;resize:none;outline:none;color:var(--g800);background:#fff}
+  .winbar{display:flex;align-items:center;gap:6px;margin-bottom:9px;font-size:11px;color:var(--g400)}
+  .winbar .dot{width:8px;height:8px;border-radius:50%;background:var(--g300)}
+
+  /* 右栏 */
+  .side{display:flex;flex-direction:column;gap:12px}
+  .card{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:13px 14px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .card h3{margin:0 0 8px;font-size:12px;font-weight:700;color:var(--g500);letter-spacing:.05em;text-transform:uppercase}
+  .card p{margin:0 0 8px;font-size:12.5px;color:var(--g600);line-height:1.72}
+  .card p:last-child{margin-bottom:0}
+  .card b{color:var(--g900);font-weight:600}
+  .card .good{color:var(--em700);font-weight:600}
+  .card .bad{color:var(--g500);font-weight:600}
+  .card ul{margin:0;padding-left:17px;font-size:12.5px;color:var(--g600);line-height:1.75}
+  .card li{margin-bottom:5px}
+  .card li:last-child{margin-bottom:0}
+  pre{margin:0;background:#0f172a;color:#dbe3ef;border-radius:9px;padding:11px 12px;font-size:11.5px;line-height:1.66;overflow:auto}
+  pre .k{color:#8fb7f0}
+  pre .s{color:#a7e8a7}
+  pre .n{color:#c792ea}
+  pre .c{color:#6b7f99}
+
+  .diff{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:2px}
+  .diff .box{border:1px solid var(--g200);border-radius:9px;padding:9px 10px;font-size:11.5px;line-height:1.7}
+  .diff .box.old{background:var(--g50);color:var(--g400)}
+  .diff .box.new{background:var(--em50);border-color:#a7f3d0;color:#065f46}
+  .diff .box .h{display:block;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;margin-bottom:4px}
+  .diff .box.old .h{color:var(--g400)}
+  .diff .box.new .h{color:var(--em700)}
+  .diff .box .l{display:block}
+
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:6px}
+  .step{border:1px solid var(--g200);background:#fff;border-radius:9px;padding:7px 10px;font-size:11.5px;color:var(--g600)}
+  .step b{display:block;font-size:10px;color:var(--g400);font-weight:600;margin-bottom:1px;letter-spacing:.03em}
+  .step .mono{font-size:11px;color:var(--g800)}
+  .arrow{color:var(--g300);font-size:14px}
+
+  .foot{margin-top:18px;border:1px solid var(--am100);background:var(--am50);border-radius:12px;padding:13px 15px}
+  .foot h3{margin:0 0 7px;font-size:12px;font-weight:700;color:var(--am700);letter-spacing:.04em;text-transform:uppercase}
+  .foot ul{margin:0;padding-left:17px;font-size:12.5px;color:#7c5310;line-height:1.8}
+  .foot li{margin-bottom:3px}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="proto-head">
+    <h1>图像参数 · 把「色调」换成分辨率</h1>
+    <p>
+      按线上面板一比一复刻（字号、间距、圆角、选中色都取自 <code>ChatInput.vue</code>）：原来的
+      <b>画面比例 / 风格 / 色调 / 张数</b>，现在变成 <b>分辨率 / 风格 / 张数</b>——「色调」整组换成「分辨率」，
+      而「画面比例」整组删掉。分辨率的值来自后台白名单，没勾 512x512 的管理员看不到那一项。
+    </p>
+    <p>
+      右下对比了底部那句说明文案：原文「输入框里只显示成几个标签，<b>不出现像素值</b>」在有了尺寸选择后就不成立了，必须改。
+      尺寸超过 5 个时折叠成两行，点「更多」摊开。
+    </p>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab on" data-tab="a"><span class="no">A</span>分辨率用胶囊（与风格同款，改动最小）</button>
+    <button class="tab" data-tab="b"><span class="no">B</span>分辨率用卡片（跟比例那排同款）</button>
+  </nav>
+
+  <!-- ══════════ 变体 A ══════════ -->
+  <section class="scene on" data-scene="a">
+    <div class="stage">
+      <div>
+        <div class="panel-wrap">
+          <div class="fake-menu">
+            <div class="mi"><i></i>上传本地文件</div>
+            <div class="mi"><i></i>选择记忆记录</div>
+            <div class="mi hl"><i></i>图像参数</div>
+            <div class="mi"><i></i>新会话</div>
+          </div>
+
+          <div class="panel">
+            <div class="p-head">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.6" cy="8.6" r="1.6"/><path d="M21 15.5l-4.7-4.7L5 21"/></svg>
+              <span class="t">图像参数</span>
+              <span class="sub">只影响本次生成</span>
+              <button class="x" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+            </div>
+
+            <div class="p-body" data-body="a"></div>
+
+            <div class="p-foot">
+              <p data-footnote>选择会随消息一起发出，输入框里只显示成几个标签；尺寸走结构化参数，不写进正文。</p>
+              <div class="acts">
+                <button class="clear" data-act="clear">清空</button>
+                <button class="btn-ghost">取消</button>
+                <button class="btn-pri" data-act="apply">完成</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="chips" data-chips="a"></div>
+          <textarea class="ta" placeholder="告诉我你想要什么画面">帮我做一张年会主视觉，竖着的那种，发朋友圈用。</textarea>
+        </div>
+      </div>
+
+      <aside class="side">
+        <div class="card">
+          <h3>变体 A · 胶囊</h3>
+          <p>直接把色调那一组换成尺寸，控件样式不变（<b>rounded-full + 11px</b>），视觉上和「风格」并排一致。</p>
+          <ul>
+            <li>每个胶囊 = 尺寸 + 比例小字，例如 <span class="mono">512x512 1:1</span>。</li>
+            <li>360px 面板里 6 个尺寸会排成 2～3 行，和风格那组行数相当。</li>
+            <li class="good">优点：动的地方最少，样式零新增，评审时不引起"面板变样了"的疑问。</li>
+            <li class="bad">缺点：尺寸和比例靠小字区分，粗看容易和「风格」混成一类。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>底部文案改动</h3>
+          <div class="diff">
+            <div class="box old"><span class="h">改前</span><span class="l">选择会随消息一起发出，输入框里只显示成几个标签，<b>不出现像素值</b>。</span></div>
+            <div class="box new"><span class="h">改后</span><span class="l">选择会随消息一起发出，输入框里只显示成几个标签；<b>尺寸走结构化参数，不写进正文</b>。</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>发出时带的东西</h3>
+          <pre data-payload="a"></pre>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ══════════ 变体 B ══════════ -->
+  <section class="scene" data-scene="b">
+    <div class="stage">
+      <div>
+        <div class="panel-wrap">
+          <div class="fake-menu">
+            <div class="mi"><i></i>上传本地文件</div>
+            <div class="mi"><i></i>选择记忆记录</div>
+            <div class="mi hl"><i></i>图像参数</div>
+            <div class="mi"><i></i>新会话</div>
+          </div>
+
+          <div class="panel">
+            <div class="p-head">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.6" cy="8.6" r="1.6"/><path d="M21 15.5l-4.7-4.7L5 21"/></svg>
+              <span class="t">图像参数</span>
+              <span class="sub">只影响本次生成</span>
+              <button class="x" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+            </div>
+
+            <div class="p-body" data-body="b"></div>
+
+            <div class="p-foot">
+              <p>选择会随消息一起发出，输入框里只显示成几个标签；尺寸走结构化参数，不写进正文。</p>
+              <div class="acts">
+                <button class="clear" data-act="clear-b">清空</button>
+                <button class="btn-ghost">取消</button>
+                <button class="btn-pri">完成</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="chips" data-chips="b"></div>
+          <textarea class="ta" placeholder="告诉我你想要什么画面">帮我做一张年会主视觉，竖着的那种，发朋友圈用。</textarea>
+        </div>
+      </div>
+
+      <aside class="side">
+        <div class="card">
+          <h3>变体 B · 卡片</h3>
+          <p>尺寸做成卡片（<b>示意框 + 宽×高 + 比例</b>），一眼能看出这块是"选像素"而不是"选风格"。</p>
+          <ul>
+            <li>三列网格，每个卡片画出该尺寸的长宽形状，选起来更直观。</li>
+            <li class="good">优点：语义层级清楚——卡片画得出长宽形状，比例小字（1:1 / 16:9）顺带把「这张图什么形状」也说清楚了。</li>
+            <li>尺寸超过 5 个时自动折叠成两行 6 格（自动 + 4 个 + 「更多 +N」），点「更多」摊开全部；展开后选中项若被折起来，会用最后一格把它顶出来。</li>
+            <li class="bad">缺点：比胶囊版多占约 30px 高度。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>为什么删掉「画面比例」</h3>
+          <p>比例只描述形状（16:9），分辨率既描述形状又描述大小（1664×928），<b>分辨率包含比例</b>。
+          卡片上那行 <span class="mono">1.79:1</span> 小字已经把形状说清楚了，再放一排比例就是两套控件做同一件事。</p>
+          <p>更实际的理由是<b>它们会打架</b>：选「1:1 方形」又选「1664×928」，正文里拼进「比例 1:1」，
+          而下发的 <span class="mono">image_size</span> 是 1664×928（16:9）。后端以分辨率为准，出图是对的，
+          但那句「比例 1:1」成了喂给模型的错误信息。</p>
+        </div>
+        <div class="card">
+          <h3>为什么不做成下拉框</h3>
+          <p>面板里其它三组都是「所有选项一眼全见」，换成下拉会让用户多点一次、且看不到有哪些可选。
+          八个预设靠折叠就能压进两行，没必要为了省三行高度换成下拉。</p>
+        </div>
+        <div class="card">
+          <h3>发出时带的东西</h3>
+          <pre data-payload="b"></pre>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <div class="card" style="margin-top:16px">
+    <h3>链路（两个变体相同）</h3>
+    <div class="flow">
+      <div class="step"><b>面板</b><span class="mono">选中某种尺寸</span></div>
+      <span class="arrow">→</span>
+      <div class="step"><b>发送</b><span class="mono">execution_options.image_size</span></div>
+      <span class="arrow">→</span>
+      <div class="step"><b>上下文</b><span class="mono">set_execution_options_context</span></div>
+      <span class="arrow">→</span>
+      <div class="step"><b>工具</b><span class="mono">generate_image 读 context</span></div>
+      <span class="arrow">→</span>
+      <div class="step"><b>兜底</b>不在白名单 → 回落默认并记日志</div>
+    </div>
+    <p style="margin-top:11px">
+      <b>风格与张数</b>走正文（只是提示词词汇，说个大概就行），<b>尺寸</b>走结构化参数——因为尺寸必须是白名单里的精确值，猜错整次请求就废了。
+      <b>比例已经不在了</b>：形状由分辨率决定，正文里不再出现「比例 …」。
+    </p>
+  </div>
+
+  <div class="foot">
+    <h3>已定的取舍</h3>
+    <ul>
+      <li><b>选哪个变体</b>：A 改动最小（纯换内容，样式零新增），B 语义更清楚但多吃 30px 高度。</li>
+      <li><b>「自动」要不要保留</b>：两个变体里都留了「自动 / 默认 1024x1024」，等价于「不选，让后端按默认值出」。去掉它就只能二选一，没有"不指定"的退路。</li>
+      <li><b>已定 · 512x512 标「可能不支持」</b>：能不能出取决于上游模型（豆包 Seedream 支持，OpenAI gpt-image-1 最小 1024），卡片悬停给提示，组内再一行小字说明。</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(function(){
+  var SIZES = [
+    { size:'512x512',   ratio:'1:1',  box:[10,10] },
+    { size:'1024x1024', ratio:'1:1',  box:[12,12] },
+    { size:'1328x1328', ratio:'1:1',  box:[13,13] },
+    { size:'1664x928',  ratio:'16:9', box:[17,10] },
+    { size:'928x1664',  ratio:'9:16', box:[9,16] },
+    { size:'1328x1008', ratio:'4:3',  box:[15,11] },
+    { size:'768x1344',  ratio:'4:7',  box:[9,16] },
+    { size:'1344x768',  ratio:'7:4',  box:[16,9] }
+  ];
+  var SIZE_VISIBLE = 4;   // 折叠态：自动 + 4 + 更多 = 3 列 × 2 行
+  var SIZE_MAX_FLAT = 5;  // 不超过 5 个尺寸时全部摊开也是两行，不必折
+  var STYLES = ['不指定','扁平插画','写实摄影','3D 渲染','极简线条','动漫二次元','水彩手绘','油画质感','赛博霓虹','国潮插画'];
+
+  var state = {
+    a: { style:'', size:'', count:1, collapsed:true },
+    // B 默认选的是第 8 个尺寸，用来演示「选中项即使在折叠区也必须露出来」
+    b: { style:'', size:'1344x768', count:1, collapsed:true }
+  };
+
+  /** 折叠时露出的那一段；选中项若落在折叠区，用最后一格把它顶出来。 */
+  function sizeVisible(st){
+    if (!st.collapsed || SIZES.length <= SIZE_MAX_FLAT) return SIZES;
+    var head = SIZES.slice(0, SIZE_VISIBLE);
+    var sel = SIZES.filter(function(s){ return s.size === st.size; })[0];
+    if (sel && !head.some(function(s){ return s.size === sel.size; })) {
+      return head.slice(0, SIZE_VISIBLE - 1).concat([sel]);
+    }
+    return head;
+  }
+
+  /** 「更多 / 收起」格：与尺寸卡片同一套骨架（14px 图标位 + 两行小字），高度才对得齐。 */
+  function sizeMoreBtn(sc, st){
+    if (SIZES.length <= SIZE_MAX_FLAT) return '';
+    var hidden = SIZES.length - sizeVisible(st).length;
+    var icon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="transition:transform .15s' + (st.collapsed ? '' : ';transform:rotate(180deg)') + '"><path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>';
+    return '<button class="size-card more" data-sc="'+sc+'" data-k="collapse" data-v="">' +
+      '<span class="ico">'+icon+'</span>' +
+      '<span class="n">'+(st.collapsed ? '更多' : '收起')+'</span>' +
+      '<span class="r">'+(st.collapsed ? '+'+hidden : '共 '+SIZES.length)+'</span></button>';
+  }
+
+  function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];}); }
+  function boxStyle(b, dashed){ return 'width:'+b[0]+'px;height:'+b[1]+'px;border-style:'+(dashed?'dashed':'solid')+';'; }
+
+  function styleRow(sc, st){
+    var h = '<div><div class="grp-lb">风格</div><div class="pills">';
+    STYLES.forEach(function(s){
+      var on = (st.style || '不指定') === s;
+      h += '<button class="pill'+(on?' on':'')+'" data-sc="'+sc+'" data-k="style" data-v="'+esc(s)+'">'+esc(s)+'</button>';
+    });
+    h += '</div></div>';
+    return h;
+  }
+
+  function sizePills(sc, st){
+    var h = '<div><div class="grp-lb">分辨率</div><div class="size-pills">';
+    h += '<button class="size-pill'+(st.size===''?' on':'')+'" data-sc="'+sc+'" data-k="size" data-v=""><span class="n">自动</span><span class="r">默认 1024x1024</span></button>';
+    sizeVisible(st).forEach(function(s){
+      h += '<button class="size-pill'+(st.size===s.size?' on':'')+'" data-sc="'+sc+'" data-k="size" data-v="'+s.size+'">' +
+           '<span class="n mono">'+s.size+'</span><span class="r">'+s.ratio+'</span></button>';
+    });
+    if (SIZES.length > SIZE_MAX_FLAT) {
+      var hid = SIZES.length - sizeVisible(st).length;
+      h += '<button class="size-pill" data-sc="'+sc+'" data-k="collapse" data-v="" style="border-style:dashed">' +
+           '<span class="n">'+(st.collapsed ? '更多 +'+hid : '收起')+'</span></button>';
+    }
+    h += '</div><p class="grp-note">来自后台「允许的分辨率」白名单，选中后出图尺寸锁定</p></div>';
+    return h;
+  }
+
+  function sizeCards(sc, st){
+    var h = '<div><div class="grp-lb">分辨率</div><div class="size-cards">';
+    h += '<button class="size-card'+(st.size===''?' on':'')+'" data-sc="'+sc+'" data-k="size" data-v="">' +
+         '<span class="box" style="width:14px;height:14px;border-style:dashed"></span>' +
+         '<span class="n">自动</span><span class="r">默认 1024x1024</span></button>';
+    sizeVisible(st).forEach(function(s){
+      h += '<button class="size-card'+(st.size===s.size?' on':'')+'" data-sc="'+sc+'" data-k="size" data-v="'+s.size+'">' +
+           '<span class="box" style="'+boxStyle(s.box)+'"></span>' +
+           '<span class="n mono">'+s.size+'</span><span class="r">'+s.ratio+'</span></button>';
+    });
+    h += sizeMoreBtn(sc, st);
+    h += '</div></div>';
+    return h;
+  }
+
+  function countRow(sc, st){
+    var h = '<div><div class="grp-lb">张数</div><div class="counts">';
+    [1,2].forEach(function(n){
+      h += '<button class="cnt'+(st.count===n?' on':'')+'" data-sc="'+sc+'" data-k="count" data-v="'+n+'">'+n+' 张</button>';
+    });
+    h += '</div></div>';
+    return h;
+  }
+
+  function body(sc){
+    var st = state[sc];
+    var h = styleRow(sc, st);
+    h += sc === 'a' ? sizePills(sc, st) : sizeCards(sc, st);
+    h += countRow(sc, st);
+    return h;
+  }
+
+  function chips(sc){
+    var st = state[sc], out = '';
+    if (st.size) out += chip(st.size, true);
+    if (st.size === '' && !st.style) return '<span class="chip ghost">未指定 · 由模型自己判断</span>';
+    if (st.style) out += chip(st.style);
+    if (st.count > 1) out += chip(st.count + ' 张');
+    return out || '<span class="chip ghost">未指定 · 由模型自己判断</span>';
+
+    function chip(label, mono){
+      return '<span class="chip">' + (mono ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2"/></svg>' : '') +
+        '<span'+(mono?' class="n mono"':'')+'>'+esc(label)+'</span>' +
+        '<button class="x"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>';
+    }
+  }
+
+  function payload(sc){
+    var st = state[sc];
+    var size = st.size ? '<span class="s">"'+st.size+'"</span>' : '<span class="n">null</span>';
+    var note = st.size ? '' : '  <span class="c">// 不选 → 用后台默认尺寸</span>';
+    return '{\n' +
+      '  <span class="k">"messages"</span>: [ … ],\n' +
+      '  <span class="k">"execution_options"</span>: {\n' +
+      '    <span class="k">"image_size"</span>: ' + size + note + '\n' +
+      '  }\n' +
+      '}\n\n' +
+      '<span class="c">// 正文里只剩下：「（本次出图要求：风格 扁平插画）」</span>';
+  }
+
+  function paint(sc){
+    document.querySelector('[data-body="'+sc+'"]').innerHTML = body(sc);
+    document.querySelector('[data-chips="'+sc+'"]').innerHTML = chips(sc);
+    document.querySelector('[data-payload="'+sc+'"]').innerHTML = payload(sc);
+  }
+
+  paint('a'); paint('b');
+
+  var want = new URLSearchParams(location.search).get('s');
+  if (want && (want === 'a' || want === 'b')) {
+    document.querySelectorAll('.tab').forEach(function(x){ x.classList.toggle('on', x.getAttribute('data-tab') === want); });
+    document.querySelectorAll('.scene').forEach(function(x){ x.classList.toggle('on', x.getAttribute('data-scene') === want); });
+  }
+
+  document.addEventListener('click', function(ev){
+    var c = ev.target.closest('[data-sc]');
+    if (c) {
+      var sc = c.getAttribute('data-sc'), k = c.getAttribute('data-k'), v = c.getAttribute('data-v');
+      if (k === 'style') state[sc].style = (v === '不指定' ? '' : v);
+      else if (k === 'count') state[sc].count = Number(v);
+      else if (k === 'collapse') state[sc].collapsed = !state[sc].collapsed;
+      else state[sc][k] = v;
+      paint(sc); return;
+    }
+    if (ev.target.closest('[data-act="clear"]') || ev.target.closest('[data-act="clear-b"]')) {
+      var sc2 = ev.target.closest('[data-act="clear"]') ? 'a' : 'b';
+      state[sc2] = { style:'', size:'', count:1, collapsed:true };
+      paint(sc2); return;
+    }
+    if (ev.target.closest('[data-act="apply"]')) {
+      // 原型里「完成」不做事：真实实现会关掉面板，标签留在输入框上方
+      return;
+    }
+    var t = ev.target.closest('[data-tab]');
+    if (t) {
+      var key = t.getAttribute('data-tab');
+      document.querySelectorAll('.tab').forEach(function(x){ x.classList.toggle('on', x === t); });
+      document.querySelectorAll('.scene').forEach(function(x){ x.classList.toggle('on', x.getAttribute('data-scene') === key); });
+    }
+  });
+})();
+</script>
+</body>
+</html>

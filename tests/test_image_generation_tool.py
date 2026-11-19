@@ -221,6 +221,97 @@ async def test_asterisk_size_format_is_normalized_or_rejected(patch_config, patc
     assert result["ok"] is False
 
 
+# ── 用户在输入框里选定的尺寸 ──────────────────────────────────
+# 独立于「模型传什么」的一条链路：面板上勾了 928x1664，就必须出 928x1664。
+
+
+def _patch_user_size(monkeypatch, size: str | None):
+    """模拟 execution_options.image_size：有值代表用户在「图像参数」里点过具体尺寸。"""
+
+    def _get(key, default=None):
+        if key == "image_size":
+            return size
+        return default
+
+    monkeypatch.setattr(tools, "get_execution_option", _get)
+
+
+async def test_user_selected_size_wins_over_model_choice(
+    patch_config, patch_context, monkeypatch
+):
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json=_image_response())
+
+    _patch_http(monkeypatch, handler)
+    _patch_user_size(monkeypatch, "928x1664")
+
+    # 模型自己传了 1024x1024，用户的明确选择必须覆盖它
+    result = await _call_generate(prompt="一张竖版海报", size="1024x1024")
+
+    assert result["ok"] is True, result
+    assert seen[0]["size"] == "928x1664"
+
+
+async def test_user_selected_size_ignores_invalid_model_size(
+    patch_config, patch_context, monkeypatch
+):
+    """模型传了白名单外的尺寸时不该整单失败——用户已经指定了合法尺寸。"""
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json=_image_response())
+
+    _patch_http(monkeypatch, handler)
+    _patch_user_size(monkeypatch, "1664x928")
+
+    result = await _call_generate(prompt="一张横版海报", size="999x999")
+
+    assert result["ok"] is True, result
+    assert seen[0]["size"] == "1664x928"
+
+
+async def test_user_selected_size_outside_whitelist_falls_back_silently(
+    patch_config, patch_context, monkeypatch
+):
+    """白名单外的尺寸（后台刚删、前端缓存还没刷）回落默认，而不是让用户看到一次失败。"""
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json=_image_response())
+
+    _patch_http(monkeypatch, handler)
+    _patch_user_size(monkeypatch, "777x777")
+
+    result = await _call_generate(prompt="一只猫")
+
+    assert result["ok"] is True, result
+    assert seen[0]["size"] == "1024x1024"
+
+
+async def test_no_user_size_keeps_model_choice(
+    patch_config, patch_context, monkeypatch
+):
+    """没在面板里选尺寸时行为不变：模型传的合法尺寸照用。"""
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json=_image_response())
+
+    _patch_http(monkeypatch, handler)
+    _patch_user_size(monkeypatch, None)
+
+    result = await _call_generate(prompt="一只猫", size="1664x928")
+
+    assert result["ok"] is True, result
+    assert seen[0]["size"] == "1664x928"
+
+
 # ── 正常路径 ──────────────────────────────────────────────────
 
 
