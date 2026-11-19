@@ -336,3 +336,12 @@ def test_send_clears_chips_without_text(chat_input: str):
     start = chat_input.index("const sendWithImageParams")
     body = chat_input[start : start + 2400]
     assert body.count("resetImageParams()") >= 2, "改图分支与参数分支都要显式收口"
+
+
+def test_edit_instruction_ref_is_declared(chat_input: str):
+    """模板 v-model 与 applyEditParams 用到的 imageEditInstruction 必须真的声明。
+
+    漏声明时 `imageEditInstruction.value.trim()` 抛 ReferenceError，且这行在 try 之外，
+    async 函数静默 reject——「完成」按钮没有任何反应（不转圈、不报错）。
+    """
+    assert "const imageEditInstruction = ref(" in chat_input

@@ -2087,6 +2087,14 @@ const closeImageParamPopSafely = () => {
 const editSubmitting = ref(false);
 /** 改图页的错误提示：失败原因就地留在面板里，不用追着 toast 看。 */
 const imageEditError = ref("");
+/**
+ * 改图页「要改哪里」输入框的内容。
+ *
+ * 必须显式声明：模板 v-model 和 applyEditParams 都在读写它。曾经漏声明，
+ * `imageEditInstruction.value` 在 async 函数里抛 ReferenceError，而这行在 try 之外，
+ * 于是 Promise 静默 reject——按钮既不转圈也不报错，就是「点完成没反应」。
+ */
+const imageEditInstruction = ref("");
 
 const applyEditParams = async () => {
   // 连点保护：第一次还在 await 上传时，第二次点击不该再发一份。
