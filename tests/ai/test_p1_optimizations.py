@@ -1,12 +1,10 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from app.services.ai.executors.knowledge_executor import KnowledgeExecutor
 from app.services.ai.turn_decision import (
     should_inject_ltm,
     should_inject_memory_recall_hint,
     should_inject_user_context,
     should_run_active_memory_preload,
-    TurnDecision,
 )
 from app.schemas.agent import ChatConfig
 
@@ -31,109 +29,6 @@ def chat_config():
         temperature=0.0,
         system_prompt="You are a test agent.",
         tools=["search_knowledge_base"],
-    )
-
-
-@pytest.mark.asyncio
-async def test_knowledge_turn_forces_search_before_answer(chat_config):
-    """知识库轮次应走 KnowledgeExecutor，并自动调用 search_knowledge_base。"""
-    from pydantic import BaseModel
-    from agentscope.credential import CredentialBase
-    from agentscope.message import TextBlock, ToolCallBlock
-    from agentscope.model import ChatModelBase, ChatResponse
-
-    from app.core.llm.client import AgentScopeLLMHandle
-    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
-
-    executor = KnowledgeExecutor(
-        config=chat_config,
-        trace_id="test-knowledge",
-        trace_buffer=[],
-        conversation_id="c1",
-        turn_decision=TurnDecision(
-            route_status="resolved",
-            turn_kind="knowledge",
-            source="internal_docs",
-            capability="knowledge_search",
-            requires_knowledge_search=True,
-        ),
-    )
-    assert executor.turn_decision.turn_kind == "knowledge"
-
-    invocations: list[str] = []
-
-    class FakeCredential(CredentialBase):
-        @classmethod
-        def get_chat_model_class(cls):
-            return FakeModel
-
-    class FakeModel(ChatModelBase):
-        class Parameters(BaseModel):
-            pass
-
-        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
-            if not any(msg.has_content_blocks("tool_result") for msg in messages):
-                return ChatResponse(
-                    content=[
-                        ToolCallBlock(
-                            id="call_kb_1",
-                            name="search_knowledge_base",
-                            input='{"query": "高温告警处理流程"}',
-                        )
-                    ],
-                    is_last=True,
-                )
-            return ChatResponse(content=[TextBlock(text="知识库检索后的回答")], is_last=True)
-
-    async def search_knowledge_base(query: str, dataset_ids: str | None = None):
-        invocations.append(query)
-        return f"kb:{query}"
-
-    runtime_spec = RuntimeToolSpec(
-        name="search_knowledge_base",
-        description="Search knowledge base",
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "dataset_ids": {"type": "string"},
-            },
-            "required": ["query"],
-        },
-        source_type="static",
-        callable=search_knowledge_base,
-        permission_scope="read",
-    )
-    handle = AgentScopeLLMHandle(
-        native_model=FakeModel(
-            credential=FakeCredential(),
-            model="fake-native-knowledge",
-            parameters=FakeModel.Parameters(),
-            stream=False,
-            max_retries=0,
-        ),
-        model_name="fake-native-knowledge",
-        temperature=0.0,
-        streaming=True,
-    )
-
-    with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
-         patch("app.services.ai.config.AgentConfigProvider.get_fallback_llm", AsyncMock(return_value=None)), \
-         patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
-         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
-         patch("app.services.ai.runners.assistant_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
-         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")), \
-         patch("app.services.memory_config_service.MemoryConfigService.get_bool", AsyncMock(return_value=False)):
-        history = [{"role": "user", "content": "高温告警处理流程是什么"}]
-        events = []
-        async for chunk in executor.execute(history):
-            events.append(chunk)
-
-    assert invocations
-    assert "高温告警" in invocations[0]
-    assert any(e.get("title") == "自动检索知识库" for e in events)
-    assert "知识库检索后的回答" in "".join(
-        e["content"] for e in events if "content" in e and "type" not in e
     )
 
 

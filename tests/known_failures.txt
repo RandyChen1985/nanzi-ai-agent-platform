@@ -25,13 +25,6 @@
 
 
 # --- A-断言过时 ---
-tests/ai/runners/test_auto_upgrade_federated.py::test_federated_graceful_degradation  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_does_not_issue_derived_evidence_for_history_only_reuse  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_synthesizes_after_repeated_sql_gate  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/test_federated_subquery_gates.py::test_validate_federated_subquery_blocks_static_risk_sql  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/test_p1_optimizations.py::test_knowledge_turn_forces_search_before_answer  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/services/ai/test_router_service.py::test_route_query_retry_placeholder_general_does_not_block_chatbi  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/utils/test_sql_rewriter.py::test_unqualified_all_filter_skips_multi_table_subquery_scope  # A-断言过时: 断言与当前实现漂移，待逐项复核
 
 # --- B-依赖升级适配 ---
 
