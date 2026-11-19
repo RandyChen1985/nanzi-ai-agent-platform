@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="视觉方案">
+<title>出图骨架视觉 · 六个替代方案（告别一坨纯灰）</title>
+<style>
+  :root{
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af;
+    --g500:#6b7280; --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --primary:#1677ff;
+    --sk: #f1f3f6;
+    --sk2:#e9edf2;
+    --line: rgba(15,23,42,.07);
+    --hi: rgba(255,255,255,.85);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f5f6f8;color:var(--g900);font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  svg{display:block}
+
+  .page{max-width:1180px;margin:0 auto;padding:20px 24px 80px}
+  .head h1{font-size:20px;margin:0 0 6px;font-weight:650}
+  .head p{margin:0;color:var(--g500);font-size:12.5px;max-width:960px;line-height:1.75}
+  .head b{color:var(--g700);font-weight:600}
+
+  .tabs{display:flex;gap:6px;margin:16px 0 14px;flex-wrap:wrap;align-items:center}
+  .tab{
+    display:flex;align-items:center;gap:7px;border:1px solid var(--g200);background:#fff;
+    border-radius:10px;padding:7px 13px;font-size:12.5px;color:var(--g600);transition:.14s;
+  }
+  .tab:hover{border-color:var(--g300);color:var(--g800)}
+  .tab .no{
+    display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
+    border-radius:5px;background:var(--g100);font-size:10.5px;font-weight:700;color:var(--g500)
+  }
+  .tab.on{border-color:#0f172a;background:#0f172a;color:#fff}
+  .tab.on .no{background:rgba(255,255,255,.18);color:#fff}
+
+  .scene{display:none}
+  .scene.on{display:block}
+
+  .card{background:#fff;border:1px solid var(--g200);border-radius:14px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -14px rgba(15,23,42,.10)}
+  .card-body{padding:20px 22px 24px}
+
+  .row{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:22px;align-items:start}
+  @media (max-width:900px){ .row{grid-template-columns:1fr} }
+
+  .samples{display:flex;gap:14px;flex-wrap:wrap}
+  .sample{flex:0 0 auto}
+  .sample .cap{margin-top:6px;font-size:11px;color:var(--g400);text-align:center}
+
+  .note{margin:12px 0 0;padding:9px 12px;border-left:3px solid var(--g200);background:#fcfcfd;
+    border-radius:0 8px 8px 0;font-size:12px;color:var(--g600);line-height:1.7}
+  .note b{color:var(--g800)}
+  .note.warn{border-left-color:#fde68a;background:#fffbeb;color:#92400e}
+  .note.warn b{color:#78350f}
+  .note.good{border-left-color:#a7f3d0;background:#ecfdf5;color:#047857}
+  .note.good b{color:#065f46}
+
+  .verdict h3{margin:0 0 8px;font-size:13px;font-weight:650}
+  .verdict ul{margin:0 0 12px;padding-left:18px;font-size:12px;color:var(--g600);line-height:1.8}
+  .verdict li b{color:var(--g800)}
+  .verdict .tag{
+    display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:6px;
+    background:#ecfdf5;color:#047857;margin-left:6px;vertical-align:1px
+  }
+  .verdict .tag.risk{background:#fffbeb;color:#92400e}
+
+  /* ════════ 通用骨架外壳 ════════ */
+  .frame{
+    position:relative;border-radius:12px;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .frame .txt{
+    position:relative;z-index:3;text-align:center
+  }
+  .frame .stage{
+    display:flex;align-items:center;justify-content:center;gap:6px;
+    font-size:12.5px;font-weight:600;color:var(--g700);letter-spacing:.1px
+  }
+  .frame .stage .t{font-variant-numeric:tabular-nums;color:var(--g400);font-weight:500}
+  .frame .sub{margin-top:2px;font-size:11px;color:var(--g500)}
+
+  @keyframes sweep{ 0%{transform:translateX(-120%)} 100%{transform:translateX(120%)} }
+
+  /* ── 方案 0：现状 ─────────────────────────────── */
+  .v0{background:#f3f4f6;border:1px solid var(--g200)}
+  .v0::after{
+    content:"";position:absolute;inset:0;z-index:1;
+    background:linear-gradient(100deg,transparent 18%,rgba(255,255,255,.8) 50%,transparent 82%);
+    animation:sweep 1.7s linear infinite;
+  }
+  .v0 .box{background:rgba(255,255,255,.88);border:1px solid var(--g200);border-radius:10px;
+    padding:7px 11px;box-shadow:0 2px 10px -6px rgba(15,23,42,.25)}
+
+  /* ── A：柔光呼吸 ─────────────────────────────── */
+  .vA{
+    border:1px solid var(--line);
+    background:
+      radial-gradient(120% 90% at 50% 0%, #ffffff 0%, rgba(255,255,255,0) 62%),
+      linear-gradient(160deg, #fbfcfd 0%, #eef2f7 55%, #e9eef4 100%);
+  }
+  .vA::before{
+    content:"";position:absolute;left:50%;top:50%;width:70%;aspect-ratio:1;z-index:0;
+    transform:translate(-50%,-50%);
+    background:radial-gradient(circle, rgba(22,119,255,.10) 0%, rgba(22,119,255,0) 68%);
+    animation:breathe 4.2s ease-in-out infinite;
+  }
+  @keyframes breathe{ 0%,100%{opacity:.55;transform:translate(-50%,-50%) scale(1)} 50%{opacity:1;transform:translate(-50%,-50%) scale(1.08)} }
+  .vA::after{
+    content:"";position:absolute;inset:0;z-index:1;
+    background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,.55) 50%,transparent 70%);
+    animation:sweep 3.4s ease-in-out infinite;
+  }
+  .vA .stage{color:#334155}
+
+  /* ── B：结构化分层 ───────────────────────────── */
+  .vB{background:#f4f6f9;border:1px solid var(--line)}
+  .vB .layers{position:absolute;inset:0;z-index:0;display:flex;flex-direction:column;gap:6px;padding:10px}
+  .vB .l{position:relative;overflow:hidden;border-radius:6px;background:#eaeef3}
+  .vB .l.hi{flex:0 0 56%;background:#e6ebf1}
+  .vB .l.md{flex:0 0 18%}
+  .vB .l.sm{flex:0 0 10%;width:64%}
+  .vB .l::after{
+    content:"";position:absolute;inset:0;
+    background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.75) 50%,transparent 80%);
+    animation:sweep 2.2s ease-in-out infinite;
+  }
+  .vB .l.md::after{animation-delay:.25s}
+  .vB .l.sm::after{animation-delay:.5s}
+  .vB .txt{background:rgba(244,246,249,.72);backdrop-filter:blur(2px);border-radius:10px;padding:6px 10px}
+
+  /* ── C：画布网格 ─────────────────────────────── */
+  .vC{
+    border:1px solid var(--line);
+    background:
+      linear-gradient(180deg,#fcfdfe,#f0f4f8),
+      #f0f4f8;
+  }
+  .vC .grid{
+    position:absolute;inset:0;z-index:0;
+    background-image:
+      linear-gradient(90deg, rgba(148,163,184,.16) 1px, transparent 1px),
+      linear-gradient(rgba(148,163,184,.16) 1px, transparent 1px);
+    background-size:22px 22px;
+    mask-image:radial-gradient(120% 100% at 50% 50%, #000 30%, transparent 78%);
+  }
+  .vC .glow{
+    position:absolute;left:50%;top:50%;width:60%;aspect-ratio:1;z-index:0;
+    transform:translate(-50%,-50%);
+    background:radial-gradient(circle, rgba(22,119,255,.09), transparent 70%);
+    animation:breathe 5s ease-in-out infinite;
+  }
+  .vC .stage{color:#334155}
+
+  /* ── D：极简近白 ─────────────────────────────── */
+  .vD{background:#fdfdfe;border:1px dashed #d7dde5}
+  .vD .stage{color:#475569}
+  .vD .bar{
+    position:absolute;left:14%;right:14%;bottom:12px;height:2px;z-index:2;border-radius:2px;
+    background:#e6ebf1;overflow:hidden
+  }
+  .vD .bar i{position:absolute;top:0;bottom:0;width:34%;border-radius:2px;background:#1677ff;opacity:.75;
+    animation:slide 1.8s ease-in-out infinite}
+  @keyframes slide{ 0%{left:-34%} 55%{left:100%} 100%{left:100%} }
+
+  /* ── E：低饱和水彩 ───────────────────────────── */
+  .vE{background:#f7f8fb;border:1px solid var(--line)}
+  .vE .b{position:absolute;border-radius:50%;filter:blur(26px);z-index:0;opacity:.42}
+  .vE .b1{width:52%;aspect-ratio:1;left:6%;top:8%;background:#dbeafe;animation:float1 7s ease-in-out infinite alternate}
+  .vE .b2{width:44%;aspect-ratio:1;right:8%;top:18%;background:#f3e8ff;animation:float2 8s ease-in-out infinite alternate}
+  .vE .b3{width:40%;aspect-ratio:1;left:28%;bottom:4%;background:#fef3c7;animation:float3 9s ease-in-out infinite alternate}
+  @keyframes float1{to{transform:translate(8%,-6%) scale(1.1)}}
+  @keyframes float2{to{transform:translate(-9%,7%) scale(1.14)}}
+  @keyframes float3{to{transform:translate(6%,-9%) scale(1.06)}}
+  .vE .txt{background:rgba(255,255,255,.62);backdrop-filter:blur(3px);border-radius:10px;padding:6px 10px}
+
+  /* ── F：描边 + 水印图标 ──────────────────────── */
+  .vF{background:#fbfcfd;border:1px solid var(--line)}
+  .vF .wm{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;color:#94a3b8;opacity:.13}
+  .vF .wm svg{width:38%;height:auto}
+  .vF::after{
+    content:"";position:absolute;inset:0;z-index:2;
+    background:linear-gradient(100deg,transparent 34%,rgba(255,255,255,.5) 50%,transparent 66%);
+    animation:sweep 4.4s ease-in-out infinite;
+  }
+  .vF .stage{color:#475569}
+
+  /* ════════ 深色 ════════ */
+  body.dark{background:#0b0f16;color:#e5e7eb}
+  body.dark .card{background:#11161f;border-color:#232a35;box-shadow:none}
+  body.dark .head p,body.dark .verdict ul,body.dark .sample .cap{color:#8b93a1}
+  body.dark .head b,body.dark .verdict li b{color:#cfd6e0}
+  body.dark .note{background:#11161f;border-left-color:#2b333f;color:#9aa3b0}
+  body.dark .note.warn{background:#241a08;border-left-color:#4a3510;color:#e0b871}
+  body.dark .note.good{background:#0c1f17;border-left-color:#12442f;color:#7dd3a8}
+  body.dark .tab{background:#11161f;border-color:#232a35;color:#9aa3b0}
+  body.dark .tab.on{background:#e5e7eb;border-color:#e5e7eb;color:#0f172a}
+  body.dark .verdict .tag{background:#0c1f17;color:#7dd3a8}
+  body.dark .verdict .tag.risk{background:#241a08;color:#e0b871}
+
+  body.dark .v0{background:#1b2029;border-color:#2b333f}
+  body.dark .v0::after{background:linear-gradient(100deg,transparent 18%,rgba(255,255,255,.07) 50%,transparent 82%)}
+  body.dark .v0 .box{background:rgba(17,22,31,.9);border-color:#2b333f;box-shadow:none}
+  body.dark .frame .stage{color:#cfd6e0}
+  body.dark .frame .sub{color:#8b93a1}
+
+  body.dark .vA{border-color:#232a35;
+    background:radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.05) 0%, rgba(255,255,255,0) 62%),
+      linear-gradient(160deg,#161c25,#111821 55%,#0f1620)}
+  body.dark .vA::before{background:radial-gradient(circle, rgba(56,139,253,.16), transparent 68%)}
+  body.dark .vA::after{background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,.055) 50%,transparent 70%)}
+
+  body.dark .vB{background:#141a23;border-color:#232a35}
+  body.dark .vB .l{background:#1c232d}
+  body.dark .vB .l.hi{background:#232b36}
+  body.dark .vB .l::after{background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.07) 50%,transparent 80%)}
+  body.dark .vB .txt{background:rgba(20,26,35,.72)}
+
+  body.dark .vC{background:linear-gradient(180deg,#12181f,#161d26)}
+  body.dark .vC .grid{background-image:
+    linear-gradient(90deg, rgba(148,163,184,.10) 1px, transparent 1px),
+    linear-gradient(rgba(148,163,184,.10) 1px, transparent 1px)}
+  body.dark .vC .glow{background:radial-gradient(circle, rgba(56,139,253,.14), transparent 70%)}
+
+  body.dark .vD{background:#0f141c;border-color:#2b333f}
+  body.dark .vD .bar{background:#232b36}
+
+  body.dark .vE{background:#12171f;border-color:#232a35}
+  body.dark .vE .b{opacity:.24}
+  body.dark .vE .txt{background:rgba(18,23,31,.66)}
+
+  body.dark .vF{background:#101620;border-color:#232a35}
+  body.dark .vF .wm{color:#e2e8f0;opacity:.08}
+  body.dark .vF::after{background:linear-gradient(100deg,transparent 34%,rgba(255,255,255,.05) 50%,transparent 66%)}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="head">
+    <h1>出图骨架 · 视觉方案</h1>
+    <p>
+      现在的骨架是<b>一整块 #f3f4f6 灰底 + 中心一个白卡片</b>：面积太大、颜色单一、边缘硬，
+      中间那张卡片像贴了块补丁，整体看着廉价。下面是 6 个替代方案，每个都用<b>真实尺寸</b>演示
+      （横图 16:9 / 竖图 3:4，宽 320px），右上角可切深色。
+      目标不变：<b>它必须一眼看出是「占位」而不是「糊掉的图」</b>。
+    </p>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-scene="s0"><span class="no">0</span>现状</button>
+    <button class="tab" data-scene="sA"><span class="no">A</span>柔光呼吸</button>
+    <button class="tab" data-scene="sB"><span class="no">B</span>结构化分层</button>
+    <button class="tab" data-scene="sC"><span class="no">C</span>画布网格</button>
+    <button class="tab" data-scene="sD"><span class="no">D</span>极简近白</button>
+    <button class="tab" data-scene="sE"><span class="no">E</span>低饱和水彩</button>
+    <button class="tab" data-scene="sF"><span class="no">F</span>描边水印</button>
+    <button class="tab" id="themeBtn" style="margin-left:auto"><span class="no">◐</span>深色</button>
+  </div>
+
+  <!-- ══════ 0 现状 ══════ -->
+  <section class="scene on" id="s0">
+    <div class="card"><div class="card-body">
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="frame v0" style="width:320px;aspect-ratio:16/9">
+              <div class="txt"><div class="box">
+                <div class="stage">正在绘制<span class="t">3.2s</span></div>
+                <div class="sub">1664x928</div>
+              </div></div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="frame v0" style="width:200px;aspect-ratio:3/4">
+              <div class="txt"><div class="box">
+                <div class="stage">正在重绘<span class="t">1.1s</span></div>
+                <div class="sub">跟随原图比例</div>
+              </div></div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>问题在哪</h3>
+          <ul>
+            <li><b>面积即观感</b>：一大块均匀灰，没有任何结构，读起来像「加载失败的空白框」。</li>
+            <li><b>颜色太实</b>：#f3f4f6 不透明、不渐变，与白卡片对比生硬。</li>
+            <li><b>中心卡片像补丁</b>：白底 + 边框 + 阴影三层，压在灰上显得突兀。</li>
+            <li><b>扫光太快太亮</b>：1.7s 一个来回、纯白 0.8 透明度，像廉价 loading 条。</li>
+          </ul>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ A 柔光呼吸 ══════ -->
+  <section class="scene" id="sA">
+    <div class="card"><div class="card-body">
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="frame vA" style="width:320px;aspect-ratio:16/9">
+              <div class="txt">
+                <div class="stage">正在绘制<span class="t">3.2s</span></div>
+                <div class="sub">1664x928 · 水彩手绘</div>
+              </div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="frame vA" style="width:200px;aspect-ratio:3/4">
+              <div class="txt">
+                <div class="stage">正在重绘<span class="t">1.1s</span></div>
+                <div class="sub">跟随原图比例</div>
+              </div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>柔光呼吸<span class="tag">推荐</span></h3>
+          <ul>
+            <li>灰底换成<b>斜向微渐变</b>（近白 → 冷灰），顶部再加一道白色柔光，像被光照着的纸。</li>
+            <li>中心一团<b>极淡的蓝色光晕缓慢呼吸</b>（4.2s），让静止的块「活」起来。</li>
+            <li>扫光降到 3.4s、透明度 .55，柔和掠过而不是刷白。</li>
+            <li>文案<b>直接落在底上</b>，去掉白卡片与边框——层次靠明暗，不靠描边。</li>
+          </ul>
+          <p class="note good"><b>最稳的一版。</b>动静幅度小、深色模式天然成立，也不容易被误认为「图已经出来了」。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ B 结构化分层 ══════ -->
+  <section class="scene" id="sB">
+    <div class="card"><div class="card-body">
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="frame vB" style="width:320px;aspect-ratio:16/9">
+              <div class="layers">
+                <div class="l hi"></div><div class="l md"></div><div class="l sm"></div>
+              </div>
+              <div class="txt">
+                <div class="stage">正在绘制<span class="t">3.2s</span></div>
+                <div class="sub">1664x928</div>
+              </div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="frame vB" style="width:200px;aspect-ratio:3/4">
+              <div class="layers">
+                <div class="l hi"></div><div class="l md"></div><div class="l sm"></div>
+              </div>
+              <div class="txt">
+                <div class="stage">正在重绘<span class="t">1.1s</span></div>
+                <div class="sub">跟随原图</div>
+              </div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>结构化分层</h3>
+          <ul>
+            <li>不再是一整块：拆成<b>主体块 + 两条次要块</b>，像一张图正在被「构」出来。</li>
+            <li>三块扫光<b>错开 0.25s 延迟</b>，形成从上往下的层次流动。</li>
+            <li>文案压在很淡的半透明底上，保证小尺寸下也读得清。</li>
+          </ul>
+          <p class="note"><b>信息感最强</b>，最像「内容正在填充」。代价是多了一块视觉噪声：短于 2 秒的等待里，用户可能来不及看出这是分层骨架。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ C 画布网格 ══════ -->
+  <section class="scene" id="sC">
+    <div class="card"><div class="card-body">
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="frame vC" style="width:320px;aspect-ratio:16/9">
+              <div class="grid"></div><div class="glow"></div>
+              <div class="txt">
+                <div class="stage">正在绘制<span class="t">3.2s</span></div>
+                <div class="sub">1664x928</div>
+              </div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="frame vC" style="width:200px;aspect-ratio:3/4">
+              <div class="grid"></div><div class="glow"></div>
+              <div class="txt">
+                <div class="stage">正在重绘<span class="t">1.1s</span></div>
+                <div class="sub">跟随原图</div>
+              </div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>画布网格</h3>
+          <ul>
+            <li>淡淡的<b>22px 网格纸</b>，四周用径向遮罩淡出，像正在作画的画布。</li>
+            <li>中心一团柔光呼吸，网格本身不动——静网格 + 动光晕，节奏舒服。</li>
+            <li>文案直接落在网格上，不加底。</li>
+          </ul>
+          <p class="note warn"><b>隐喻很贴切，但网格线在小尺寸或深色下容易显脏</b>；而且「画布」暗示的是绘画场景，写实/商品图用它会略偏。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ D 极简近白 ══════ -->
+  <section class="scene" id="sD">
+    <div class="card"><div class="card-body">
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="frame vD" style="width:320px;aspect-ratio:16/9">
+              <div class="txt">
+                <div class="stage">正在绘制<span class="t">3.2s</span></div>
+                <div class="sub">1664x928</div>
+              </div>
+              <div class="bar"><i></i></div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="frame vD" style="width:200px;aspect-ratio:3/4">
+              <div class="txt">
+                <div class="stage">正在重绘<span class="t">1.1s</span></div>
+                <div class="sub">跟随原图</div>
+              </div>
+              <div class="bar"><i></i></div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>极简近白</h3>
+          <ul>
+            <li>底色几乎就是白（#fdfdfe），只留一圈<b>极淡虚线边框</b>划出「图将来在这里」。</li>
+            <li>不加扫光，只有底部一条<b>极细的不确定进度条</b>在走。</li>
+            <li>信息密度最低、最安静，长会话里连续出图也不吵。</li>
+          </ul>
+          <p class="note"><b>最不打扰</b>。但也最不像「有东西正在发生」——接近白时，用户可能根本没注意到占位出现，那这次改造就白做了。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ E 低饱和水彩 ══════ -->
+  <section class="scene" id="sE">
+    <div class="card"><div class="card-body">
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="frame vE" style="width:320px;aspect-ratio:16/9">
+              <div class="b b1"></div><div class="b b2"></div><div class="b b3"></div>
+              <div class="txt">
+                <div class="stage">正在调和颜色<span class="t">3.2s</span></div>
+                <div class="sub">1664x928 · 水彩手绘</div>
+              </div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="frame vE" style="width:200px;aspect-ratio:3/4">
+              <div class="b b1"></div><div class="b b2"></div><div class="b b3"></div>
+              <div class="txt">
+                <div class="stage">正在重绘<span class="t">1.1s</span></div>
+                <div class="sub">跟随原图</div>
+              </div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>低饱和水彩</h3>
+          <ul>
+            <li>三个<b>低饱和色块</b>（淡蓝 / 淡紫 / 淡黄）大幅模糊后缓慢漂浮，像颜料在水里化开。</li>
+            <li>比上一版原型的「水彩晕染」更克制：透明度 .42、色更淡，避免像糊掉的图。</li>
+          </ul>
+          <p class="note warn"><b>氛围最好，风险也最大</b>：彩色块容易被理解成「图已经生成、只是很糊」，反而引发「为什么这么糊」的疑问。而且品牌色一入镜，与「AI 正在画」的关系要被解释。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ F 描边水印 ══════ -->
+  <section class="scene" id="sF">
+    <div class="card"><div class="card-body">
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="frame vF" style="width:320px;aspect-ratio:16/9">
+              <div class="wm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+                  <rect x="2.5" y="4" width="19" height="16" rx="2.5"/>
+                  <circle cx="8.5" cy="9.5" r="1.6"/>
+                  <path d="M3 16.5l4.6-4.2a2 2 0 0 1 2.7 0L21 20"/>
+                </svg>
+              </div>
+              <div class="txt">
+                <div class="stage">正在绘制<span class="t">3.2s</span></div>
+                <div class="sub">1664x928</div>
+              </div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="frame vF" style="width:200px;aspect-ratio:3/4">
+              <div class="wm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+                  <rect x="2.5" y="4" width="19" height="16" rx="2.5"/>
+                  <circle cx="8.5" cy="9.5" r="1.6"/>
+                  <path d="M3 16.5l4.6-4.2a2 2 0 0 1 2.7 0L21 20"/>
+                </svg>
+              </div>
+              <div class="txt">
+                <div class="stage">正在重绘<span class="t">1.1s</span></div>
+                <div class="sub">跟随原图</div>
+              </div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>描边水印</h3>
+          <ul>
+            <li>近白底 + 一枚<b>巨大的淡图片图标</b>（不透明度 .13）作为水印，直接说明「这里是一张图」。</li>
+            <li>一道很慢的柔光（4.4s）从左上掠过。</li>
+            <li>语义最明确：不用读文字也知道那是图片位。</li>
+          </ul>
+          <p class="note"><b>语义最清楚</b>，几乎不会被误解。缺点是「图片图标」有点工具感、偏简陋，长期看容易显得旧。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <p class="note" style="margin-top:22px">
+    <b>我的建议：</b>A（柔光呼吸）作为默认，最稳；想要更强「正在发生」的暗示就用 B；F 的图片图标可以只作为
+    A 的水印叠加（水印 0.08 透明度 + 柔光），两者不冲突。<b>D 不建议单独用</b>——太安静，用户可能根本注意不到。
+    <br><br>
+    <b>共同前提（不会变）：</b>比例取自请求尺寸、阶段文案 + 秒表、不编百分比、秒表不进读屏、
+    <code class="mono">prefers-reduced-motion</code> 下关掉所有动画只留静态底与文案。
+  </p>
+
+</div>
+
+<script>
+const tabs = document.getElementById('tabs');
+tabs.addEventListener('click', (e) => {
+  const btn = e.target.closest('.tab');
+  if (!btn) return;
+  if (btn.id === 'themeBtn') {
+    document.body.classList.toggle('dark');
+    btn.querySelector('.no').textContent = document.body.classList.contains('dark') ? '◑' : '◐';
+    return;
+  }
+  tabs.querySelectorAll('.tab[data-scene]').forEach(t => t.classList.toggle('on', t === btn));
+  document.querySelectorAll('.scene').forEach(s => s.classList.toggle('on', s.id === btn.dataset.scene));
+});
+</script>
+</body>
+</html>

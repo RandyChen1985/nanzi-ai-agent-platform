@@ -6,8 +6,12 @@
  * 不发请求、不看配置、不影响超时。尺寸比例与最终图片一致，所以图标出现时
  * 整段对话不会跳动。
  *
+ * 视觉是「白底 + 蓝色点阵 + 一圈亮环向内汇聚」（原型
+ * `prototypes/2026-11-20-image-skeleton-dotmatrix.html` 的 P4）。中间区域整块留给点阵，
+ * 不加卡片也不加描边——底色铺满、文字退到角上，就是为了不再像一块灰色补丁。
+ *
  * 三条自我约束（原型阶段定的）：
- * 1. **不编百分比**。后端没有真实进度，只给阶段文案 + 已用秒数 + 不确定进度条；
+ * 1. **不编百分比**。后端没有真实进度，只给阶段文案 + 已用秒数 + 不确定的跳点；
  * 2. **比例必须对**。宽高比取自请求的 size，给不出时用方形；
  * 3. **秒表不进无障碍播报**。500ms 一次的读屏会盖掉真正要听的东西。
  */
@@ -80,82 +84,160 @@ const frameStyle = computed(() => {
 
 <template>
   <div v-if="spec" class="imgph-root mt-3" role="status" aria-live="polite" aria-busy="true">
-    <div class="imgph-frame relative overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700" :style="frameStyle">
-      <!-- 骨架本体：静止底色 + 一条横扫的高光。 -->
-      <div
-        class="imgph-skel absolute inset-0 bg-gray-100 [--imgph-hi:rgba(255,255,255,0.78)] dark:bg-gray-700/60 dark:[--imgph-hi:rgba(255,255,255,0.10)]"
-        aria-hidden="true"
-      ></div>
+    <div
+      class="imgph-frame relative overflow-hidden rounded-xl border border-gray-200/80 bg-white [--imgph-dot:rgba(22,119,255,0.34)] [--imgph-dot-hi:rgba(22,119,255,0.95)] dark:border-gray-700 dark:bg-gray-900/60 dark:[--imgph-dot:rgba(96,165,250,0.32)] dark:[--imgph-dot-hi:rgba(96,165,250,0.95)]"
+      :style="frameStyle"
+    >
+      <!-- 点阵底色：间距固定 14px，不随容器缩放，大图与缩略图密度感一致。 -->
+      <div class="imgph-dots absolute inset-0" aria-hidden="true"></div>
 
-      <div class="relative z-10 flex h-full w-full items-center justify-center p-3">
-        <div class="rounded-lg border border-gray-200 bg-white/85 px-3 py-1.5 text-center shadow-sm backdrop-blur-sm dark:border-gray-600 dark:bg-gray-800/85">
-          <div class="flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-700 dark:text-gray-200">
-            <span>{{ stageText }}</span>
-            <!-- 秒表每 500ms 变一次，读屏会被刷屏：只给人看。 -->
-            <span class="font-medium tabular-nums text-gray-400 dark:text-gray-500" aria-hidden="true">
-              {{ elapsedText }}
-            </span>
-          </div>
-          <div class="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">{{ detailText }}</div>
+      <!-- 汇聚亮环：两圈错开 1.7s，从外向内收——散落的点被收拢成形。 -->
+      <div class="imgph-dot-hi imgph-gather absolute inset-0" aria-hidden="true"></div>
+      <div class="imgph-dot-hi imgph-gather imgph-gather-alt absolute inset-0" aria-hidden="true"></div>
+
+      <!-- 阶段文案退到左上角，中间完全留给视觉。 -->
+      <div class="absolute left-2.5 top-2 z-10 max-w-[calc(100%-4.5rem)]">
+        <div class="text-[11.5px] font-medium leading-tight text-slate-500 dark:text-slate-400">
+          {{ stageText }}
+        </div>
+        <div v-if="detailText" class="mt-0.5 text-[10.5px] leading-tight text-slate-400 dark:text-slate-500">
+          {{ detailText }}
         </div>
       </div>
 
-      <!-- 不确定进度条：只表达「在动」，不表达「到哪了」。 -->
-      <div class="absolute inset-x-0 bottom-0 z-10 h-0.5 overflow-hidden bg-gray-900/5 dark:bg-white/10" aria-hidden="true">
-        <i class="imgph-bar block h-full w-[38%] rounded-sm bg-primary"></i>
+      <!-- 右下角徽标：跳点表达「在动」，秒表表达「多久」，两个都真实。 -->
+      <div
+        class="absolute bottom-2 right-2 z-10 inline-flex items-center gap-1.5 rounded-full border border-gray-200/80 bg-white px-2.5 py-[3px] text-[11.5px] font-semibold tabular-nums text-primary shadow-sm dark:border-gray-700 dark:bg-gray-800"
+      >
+        <span class="imgph-udots inline-flex items-center gap-[2px]" aria-hidden="true">
+          <i></i><i></i><i></i>
+        </span>
+        <!-- 秒表每 500ms 变一次，读屏会被刷屏：只给人看。 -->
+        <span aria-hidden="true">{{ elapsedText }}</span>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.imgph-skel::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    100deg,
-    transparent 18%,
-    var(--imgph-hi, rgba(255, 255, 255, 0.78)) 50%,
-    transparent 82%
+/* 点阵底：中心不特别提亮，只是整体极淡地呼吸，避免"在闪"的错觉。 */
+.imgph-dots {
+  background-image: radial-gradient(
+    circle,
+    var(--imgph-dot, rgba(22, 119, 255, 0.34)) 1px,
+    transparent 1.5px
   );
-  transform: translateX(-100%);
-  animation: imgph-shimmer 1.7s ease-in-out infinite;
+  background-size: 14px 14px;
+  background-position: -7px -7px;
+  animation: imgph-dot-pulse 3.6s ease-in-out infinite;
 }
 
-@keyframes imgph-shimmer {
+@keyframes imgph-dot-pulse {
+  0%,
   100% {
-    transform: translateX(100%);
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 1;
   }
 }
 
-.imgph-bar {
-  animation: imgph-indeterminate 1.5s ease-in-out infinite;
+/* 亮点阵层：只有被遮罩圈到的区域才显出来，用来做汇聚的环带。 */
+.imgph-dot-hi {
+  background-image: radial-gradient(
+    circle,
+    var(--imgph-dot-hi, rgba(22, 119, 255, 0.95)) 1.15px,
+    transparent 1.7px
+  );
+  background-size: 14px 14px;
+  background-position: -7px -7px;
 }
 
-@keyframes imgph-indeterminate {
+.imgph-gather {
+  transform-origin: 50% 50%;
+  -webkit-mask-image: radial-gradient(
+    circle at 50% 50%,
+    transparent 0%,
+    transparent 26%,
+    #000 42%,
+    transparent 62%
+  );
+  mask-image: radial-gradient(
+    circle at 50% 50%,
+    transparent 0%,
+    transparent 26%,
+    #000 42%,
+    transparent 62%
+  );
+  animation: imgph-gather-in 3.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.imgph-gather-alt {
+  animation-delay: 1.7s;
+}
+
+@keyframes imgph-gather-in {
   0% {
-    margin-left: -38%;
-  }
-  55% {
-    margin-left: 100%;
-  }
-  100% {
-    margin-left: 100%;
-  }
-}
-
-/* 关掉动效偏好下只留静态骨架：转圈和扫光对这类用户是干扰，不是信息。 */
-@media (prefers-reduced-motion: reduce) {
-  .imgph-skel::after {
-    animation: none;
+    transform: scale(1.9);
     opacity: 0;
   }
-  .imgph-bar {
+  18% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(0.35);
+    opacity: 0;
+  }
+}
+
+/* 徽标里的三个跳点：不确定性的表达，不承诺任何进度。 */
+.imgph-udots i {
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.28;
+  animation: imgph-udot 1.15s ease-in-out infinite;
+}
+
+.imgph-udots i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.imgph-udots i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes imgph-udot {
+  0%,
+  100% {
+    opacity: 0.28;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+}
+
+/* 关掉动效偏好下只留静态点阵：点阵本身仍然说明「这里在出图」，只是不再汇聚。 */
+@media (prefers-reduced-motion: reduce) {
+  .imgph-dots {
     animation: none;
-    margin-left: 0;
-    width: 100%;
-    opacity: 0.35;
+    opacity: 0.85;
+  }
+  .imgph-gather {
+    animation: none;
+    opacity: 0.75;
+    transform: scale(0.85);
+  }
+  .imgph-gather-alt {
+    opacity: 0;
+  }
+  .imgph-udots i {
+    animation: none;
+    opacity: 0.75;
   }
 }
 </style>

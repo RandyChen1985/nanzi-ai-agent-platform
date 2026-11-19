@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="视觉方案">
+<title>出图骨架点阵视觉 · 复刻参考图与五个变体</title>
+<style>
+  :root{
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af;
+    --g500:#6b7280; --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --blue:#1677ff; --blue-d:#0958d9;
+    --frame-bg:#ffffff;
+    --frame-line: rgba(15,23,42,.07);
+    --dot: rgba(22,119,255,.34);
+    --dot-hi: rgba(22,119,255,.95);
+    --dot-soft: rgba(148,163,184,.30);
+    --ttl: rgba(71,85,105,.82);
+    --badge-bg:#fff;
+    --badge-line: rgba(15,23,42,.05);
+    --badge-fg: var(--blue);
+    --badge-sh: 0 1px 2px rgba(15,23,42,.05), 0 6px 16px -8px rgba(15,23,42,.22);
+    --dot-step: 14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f5f6f8;color:var(--g900);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  }
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  svg{display:block}
+
+  .page{max-width:1180px;margin:0 auto;padding:20px 24px 80px}
+  .head h1{font-size:20px;margin:0 0 6px;font-weight:650}
+  .head p{margin:0;color:var(--g500);font-size:12.5px;max-width:980px;line-height:1.75}
+  .head b{color:var(--g700);font-weight:600}
+
+  .tabs{display:flex;gap:6px;margin:16px 0 14px;flex-wrap:wrap;align-items:center}
+  .tab{display:flex;align-items:center;gap:7px;border:1px solid var(--g200);background:#fff;
+    border-radius:10px;padding:7px 13px;font-size:12.5px;color:var(--g600);transition:.14s}
+  .tab:hover{border-color:var(--g300);color:var(--g800)}
+  .tab .no{display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
+    border-radius:5px;background:var(--g100);font-size:10.5px;font-weight:700;color:var(--g500)}
+  .tab.on{border-color:#0f172a;background:#0f172a;color:#fff}
+  .tab.on .no{background:rgba(255,255,255,.18);color:#fff}
+
+  .scene{display:none}
+  .scene.on{display:block}
+
+  .card{background:#fff;border:1px solid var(--g200);border-radius:14px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -14px rgba(15,23,42,.10)}
+  .card-body{padding:22px}
+  .row{display:grid;grid-template-columns:minmax(0,1fr) 306px;gap:24px;align-items:start}
+  @media (max-width:920px){ .row{grid-template-columns:1fr} }
+
+  .samples{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+  .sample .cap{margin-top:7px;font-size:11px;color:var(--g400);text-align:center}
+  .refnote{font-size:11.5px;color:var(--g400);margin:0 0 14px;padding-left:2px}
+
+  .verdict h3{margin:0 0 8px;font-size:13px;font-weight:650}
+  .verdict ul{margin:0 0 12px;padding-left:18px;font-size:12px;color:var(--g600);line-height:1.85}
+  .verdict li b{color:var(--g800)}
+  .verdict .tag{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:6px;
+    background:#ecfdf5;color:#047857;margin-left:6px;vertical-align:1px}
+  .verdict .tag.risk{background:#fffbeb;color:#92400e}
+  .note{margin:12px 0 0;padding:9px 12px;border-left:3px solid var(--g200);background:#fcfcfd;
+    border-radius:0 8px 8px 0;font-size:12px;color:var(--g600);line-height:1.75}
+  .note b{color:var(--g800)}
+  .note.good{border-left-color:#a7f3d0;background:#ecfdf5;color:#047857}
+  .note.good b{color:#065f46}
+  .note.warn{border-left-color:#fde68a;background:#fffbeb;color:#92400e}
+  .note.warn b{color:#78350f}
+
+  /* ═════════ 骨架框外壳 ═════════ */
+  .mk{position:relative;border-radius:12px;overflow:hidden;background:var(--frame-bg);
+    border:1px solid var(--frame-line)}
+  .mk .ttl{position:absolute;left:11px;top:9px;z-index:6;font-size:11.5px;font-weight:550;color:var(--ttl);
+    letter-spacing:.1px}
+  .mk .badge{position:absolute;right:9px;bottom:9px;z-index:6;display:inline-flex;align-items:center;gap:5px;
+    background:var(--badge-bg);border:1px solid var(--badge-line);border-radius:999px;padding:3px 10px;
+    font-size:11.5px;font-weight:650;color:var(--badge-fg);font-variant-numeric:tabular-nums;
+    box-shadow:var(--badge-sh)}
+  .mk .badge.center{left:50%;right:auto;bottom:50%;transform:translate(50%,50%)}
+
+  /* 点阵基底层 */
+  .dots{position:absolute;inset:0;z-index:1;
+    background-image:radial-gradient(circle, var(--dot) 1px, transparent 1.5px);
+    background-size:var(--dot-step) var(--dot-step);
+    background-position:calc(var(--dot-step) / -2) calc(var(--dot-step) / -2);
+    animation:dotPulse 3.6s ease-in-out infinite}
+  @keyframes dotPulse{ 0%,100%{opacity:.75} 50%{opacity:1} }
+
+  /* 高亮点阵（用于波纹 / 扫描 / 汇聚等叠加层） */
+  .dot-hi{position:absolute;inset:0;z-index:2;
+    background-image:radial-gradient(circle, var(--dot-hi) 1.15px, transparent 1.7px);
+    background-size:var(--dot-step) var(--dot-step);
+    background-position:calc(var(--dot-step) / -2) calc(var(--dot-step) / -2)}
+
+  /* ── P0 复刻参考：中心扩散波纹 ×3 ─────────────── */
+  .ripple{transform-origin:50% 50%;will-change:transform,opacity;
+    -webkit-mask-image:radial-gradient(circle at 50% 50%, #000 0%, rgba(0,0,0,.9) 30%, rgba(0,0,0,0) 64%);
+    mask-image:radial-gradient(circle at 50% 50%, #000 0%, rgba(0,0,0,.9) 30%, rgba(0,0,0,0) 64%);
+    animation:rippleOut 3s cubic-bezier(.22,.61,.36,1) infinite}
+  .r2{animation-delay:1s}
+  .r3{animation-delay:2s}
+  @keyframes rippleOut{
+    0%{transform:scale(.16);opacity:0}
+    10%{opacity:1}
+    70%{opacity:.35}
+    100%{transform:scale(1.55);opacity:0}
+  }
+
+  /* ── P1 点阵波纹 + 秒表徽标（= P0 换徽标内容） ── */
+
+  /* ── P2 扫描亮带 ─────────────────────────────── */
+  .scan{transform:none;
+    -webkit-mask-image:linear-gradient(180deg, transparent 0%, #000 22%, #000 34%, transparent 56%);
+    mask-image:linear-gradient(180deg, transparent 0%, #000 22%, #000 34%, transparent 56%);
+    -webkit-mask-size:100% 220%; mask-size:100% 220%;
+    -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
+    animation:scanDown 2.9s linear infinite}
+  @keyframes scanDown{
+    0%{-webkit-mask-position:0 -110%; mask-position:0 -110%}
+    100%{-webkit-mask-position:0 110%; mask-position:0 110%}
+  }
+
+  /* ── P3 呼吸：两个不同相位的光斑 ─────────────── */
+  .breath{transform-origin:50% 50%;
+    -webkit-mask-image:radial-gradient(circle at 50% 50%, #000 0%, rgba(0,0,0,.55) 34%, rgba(0,0,0,0) 66%);
+    mask-image:radial-gradient(circle at 50% 50%, #000 0%, rgba(0,0,0,.55) 34%, rgba(0,0,0,0) 66%);
+    animation:breathing 5.2s ease-in-out infinite}
+  .b-alt{left:18%;top:16%;right:auto;bottom:auto;width:46%;aspect-ratio:1;
+    -webkit-mask-image:radial-gradient(circle at 50% 50%, #000 0%, rgba(0,0,0,0) 62%);
+    mask-image:radial-gradient(circle at 50% 50%, #000 0%, rgba(0,0,0,0) 62%);
+    animation-duration:6.4s;animation-delay:-2.6s}
+  @keyframes breathing{
+    0%,100%{transform:scale(.86);opacity:.35}
+    50%{transform:scale(1.04);opacity:1}
+  }
+
+  /* ── P4 汇聚成形：大的空心环向内收 ───────────── */
+  .gather{transform-origin:50% 50%;
+    -webkit-mask-image:radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 26%, #000 42%, rgba(0,0,0,0) 62%);
+    mask-image:radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 26%, #000 42%, rgba(0,0,0,0) 62%);
+    animation:gatherIn 3.4s cubic-bezier(.4,0,.2,1) infinite}
+  .g2{animation-delay:1.7s}
+  @keyframes gatherIn{
+    0%{transform:scale(1.9);opacity:0}
+    18%{opacity:.9}
+    100%{transform:scale(.35);opacity:0}
+  }
+
+  /* ── P5 双色点阵：中心蓝 / 边缘灰 ─────────────── */
+  .mk-p5 .dots{background-image:radial-gradient(circle, var(--dot-soft) 1px, transparent 1.5px);animation:none}
+  .mk-p5 .dot-hi{
+    -webkit-mask-image:radial-gradient(circle at 50% 50%, #000 0%, rgba(0,0,0,.8) 32%, rgba(0,0,0,0) 70%);
+    mask-image:radial-gradient(circle at 50% 50%, #000 0%, rgba(0,0,0,.8) 32%, rgba(0,0,0,0) 70%);
+    animation:hueBreath 4.4s ease-in-out infinite}
+  @keyframes hueBreath{ 0%,100%{opacity:.55} 50%{opacity:1} }
+
+  /* ── P6 星点闪烁：少量点随机亮起 ─────────────── */
+  .stars{position:absolute;inset:0;z-index:3;pointer-events:none}
+  .stars i{position:absolute;display:block;border-radius:50%;background:var(--dot-hi);
+    animation:twinkle 2.6s ease-in-out infinite}
+  @keyframes twinkle{
+    0%,100%{opacity:0;transform:scale(.6)}
+    40%{opacity:1;transform:scale(1.15)}
+    60%{opacity:.85;transform:scale(1)}
+  }
+
+  /* 徽标里的不确定点 */
+  .udots{display:inline-flex;gap:2px;align-items:center}
+  .udots em{display:block;width:3px;height:3px;border-radius:50%;background:currentColor;opacity:.35;
+    animation:ud 1.15s ease-in-out infinite}
+  .udots em:nth-child(2){animation-delay:.16s}
+  .udots em:nth-child(3){animation-delay:.32s}
+  @keyframes ud{ 0%,100%{opacity:.28;transform:translateY(0)} 50%{opacity:1;transform:translateY(-1px)} }
+
+  /* 进度环（P0 的百分比用） */
+  .ring{position:relative;width:12px;height:12px;flex:0 0 auto}
+  .ring svg{width:12px;height:12px;transform:rotate(-90deg)}
+  .ring .bgc{stroke:rgba(22,119,255,.16)}
+  .ring .fgc{stroke:currentColor;stroke-linecap:round;stroke-dasharray:31.4;stroke-dashoffset:23.9;
+    animation:ringSpin 2.8s ease-in-out infinite}
+  @keyframes ringSpin{ 0%{stroke-dashoffset:31.4} 70%,100%{stroke-dashoffset:6} }
+
+  /* ═════════ 深色 ═════════ */
+  body.dark{
+    background:#0b0f16;color:#e5e7eb;
+    --frame-bg:#0f141c; --frame-line:#212936;
+    --dot: rgba(96,165,250,.30); --dot-hi: rgba(96,165,250,.95); --dot-soft: rgba(148,163,184,.20);
+    --ttl: rgba(148,163,184,.85);
+    --badge-bg:#11161f; --badge-line:#242c38; --badge-fg:#60a5fa;
+    --badge-sh: 0 1px 2px rgba(0,0,0,.4), 0 6px 16px -8px rgba(0,0,0,.6);
+  }
+  body.dark .card{background:#11161f;border-color:#232a35;box-shadow:none}
+  body.dark .head p,body.dark .verdict ul,body.dark .sample .cap,body.dark .refnote{color:#8b93a1}
+  body.dark .head b,body.dark .verdict li b{color:#cfd6e0}
+  body.dark .note{background:#11161f;border-left-color:#2b333f;color:#9aa3b0}
+  body.dark .note.good{background:#0c1f17;border-left-color:#12442f;color:#7dd3a8}
+  body.dark .note.warn{background:#241a08;border-left-color:#4a3510;color:#e0b871}
+  body.dark .tab{background:#11161f;border-color:#232a35;color:#9aa3b0}
+  body.dark .tab.on{background:#e5e7eb;border-color:#e5e7eb;color:#0f172a}
+  body.dark .verdict .tag{background:#0c1f17;color:#7dd3a8}
+  body.dark .verdict .tag.risk{background:#241a08;color:#e0b871}
+
+  @media (prefers-reduced-motion: reduce){
+    .dots,.ripple,.scan,.breath,.b-alt,.gather,.mk-p5 .dot-hi,.stars i,.udots em,.ring .fgc{animation:none}
+    .ripple,.scan,.breath,.gather{opacity:.85}
+    .stars i{opacity:.7}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="head">
+    <h1>出图骨架 · 点阵视觉</h1>
+    <p>
+      按你给的参考图重做：<b>白底 + 蓝色点阵 + 波纹从中心扩散 + 右下角胶囊徽标</b>。
+      上一版那六个渐变方案（<code class="mono">2026-11-20-image-skeleton-visual.html</code>）作废，不再考虑。
+      下面是 <b>P0 复刻参考</b> 加 <b>五个变体</b>，都用真实尺寸演示横图 16:9 / 竖图 3:4，右上角可切深色。
+    </p>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-scene="p0"><span class="no">P0</span>复刻参考</button>
+    <button class="tab" data-scene="p1"><span class="no">P1</span>波纹 + 秒表</button>
+    <button class="tab" data-scene="p2"><span class="no">P2</span>扫描亮带</button>
+    <button class="tab" data-scene="p3"><span class="no">P3</span>双光斑呼吸</button>
+    <button class="tab" data-scene="p4"><span class="no">P4</span>汇聚成形</button>
+    <button class="tab" data-scene="p5"><span class="no">P5</span>双色点阵</button>
+    <button class="tab" data-scene="p6"><span class="no">P6</span>星点闪烁</button>
+    <button class="tab" id="themeBtn" style="margin-left:auto"><span class="no">◐</span>深色</button>
+  </div>
+
+  <!-- ══════ P0 复刻参考 ══════ -->
+  <section class="scene on" id="p0">
+    <div class="card"><div class="card-body">
+      <p class="refnote">复刻你给的效果：点阵 + 三圈错时波纹，徽标为「进度环 + 百分比」。</p>
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="mk" style="width:340px;aspect-ratio:16/9">
+              <div class="dots"></div>
+              <div class="dot-hi ripple"></div>
+              <div class="dot-hi ripple r2"></div>
+              <div class="dot-hi ripple r3"></div>
+              <div class="ttl">正在创建图像</div>
+              <div class="badge">
+                <span class="ring">
+                  <svg viewBox="0 0 12 12" fill="none" stroke-width="2">
+                    <circle class="bgc" cx="6" cy="6" r="5"/>
+                    <circle class="fgc" cx="6" cy="6" r="5"/>
+                  </svg>
+                </span>24%
+              </div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="mk" style="width:196px;aspect-ratio:3/4">
+              <div class="dots"></div>
+              <div class="dot-hi ripple"></div>
+              <div class="dot-hi ripple r2"></div>
+              <div class="dot-hi ripple r3"></div>
+              <div class="ttl">正在重绘</div>
+              <div class="badge">
+                <span class="ring">
+                  <svg viewBox="0 0 12 12" fill="none" stroke-width="2">
+                    <circle class="bgc" cx="6" cy="6" r="5"/>
+                    <circle class="fgc" cx="6" cy="6" r="5"/>
+                  </svg>
+                </span>41%
+              </div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>P0 复刻参考</h3>
+          <ul>
+            <li>点阵间距 <b>14px</b>、点径 1px；亮的点 1.15px 且不透明度 0.95——靠<b>点的粗细与浓淡差</b>形成层次，不靠底色。</li>
+            <li>三圈波纹差 <b>1s / 2s</b> 错开，从 scale .16 扩散到 1.55 并淡出，看起来像波在点阵里连续推出去。</li>
+            <li>文字在框内左上、徽标在右下，中间完全留给视觉，没有卡片、没有描边。</li>
+          </ul>
+          <p class="note warn">
+            <b>问题：百分比是假的。</b>后端目前只有阶段文案，没有真实进度上报，写「24%」就是我们一直拒绝的假进度。
+            视觉照抄没问题，<b>数字要换成下面 P1 的秒表</b>，除非先让图像工具上报进度。
+          </p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ P1 波纹 + 秒表 ══════ -->
+  <section class="scene" id="p1">
+    <div class="card"><div class="card-body">
+      <p class="refnote">视觉与 P0 完全一致，只把假百分比换成「不确定点 + 真实秒表」——这是现在就能上的一版。</p>
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="mk" style="width:340px;aspect-ratio:16/9">
+              <div class="dots"></div>
+              <div class="dot-hi ripple"></div>
+              <div class="dot-hi ripple r2"></div>
+              <div class="dot-hi ripple r3"></div>
+              <div class="ttl">正在创建图像</div>
+              <div class="badge">
+                <span class="udots"><em></em><em></em><em></em></span>4.2s
+              </div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="mk" style="width:196px;aspect-ratio:3/4">
+              <div class="dots"></div>
+              <div class="dot-hi ripple"></div>
+              <div class="dot-hi ripple r2"></div>
+              <div class="dot-hi ripple r3"></div>
+              <div class="ttl">正在重绘</div>
+              <div class="badge">
+                <span class="udots"><em></em><em></em><em></em></span>1.1s
+              </div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>P1 波纹 + 秒表<span class="tag">推荐</span></h3>
+          <ul>
+            <li>徽标 = <b>三个跳动的小点 + 秒表</b>：「正在发生」由点承担，时长由数字承担，两者都真实。</li>
+            <li>顶部「正在创建图像 / 正在重绘」继续用现有阶段文案（提交请求 / 绘制 / 取回图片），超 45 秒换「上游较慢，仍在等待」。</li>
+            <li>整体信息密度和参考图几乎一样，但<b>没有一个假数字</b>。</li>
+          </ul>
+          <p class="note good"><b>这就是我建议落地的版本。</b>以后真做了进度上报，只需把徽标内容从「秒表」换成「环 + 百分比」，视觉不用再改。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ P2 扫描亮带 ══════ -->
+  <section class="scene" id="p2">
+    <div class="card"><div class="card-body">
+      <p class="refnote">同样点阵，但动效改成一束柔光自上而下扫过（像打印头 / 扫描仪走一遍）。</p>
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="mk" style="width:340px;aspect-ratio:16/9">
+              <div class="dots"></div>
+              <div class="dot-hi scan"></div>
+              <div class="ttl">正在创建图像</div>
+              <div class="badge"><span class="udots"><em></em><em></em><em></em></span>4.2s</div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="mk" style="width:196px;aspect-ratio:3/4">
+              <div class="dots"></div>
+              <div class="dot-hi scan"></div>
+              <div class="ttl">正在重绘</div>
+              <div class="badge"><span class="udots"><em></em><em></em><em></em></span>1.1s</div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>P2 扫描亮带</h3>
+          <ul>
+            <li>一条 30% 高度的亮带以 2.9s 匀速从上往下推，重复即「一遍遍扫」。</li>
+            <li>方向固定、速度均匀，<b>比波纹更像机器在工作</b>，节奏感更稳。</li>
+            <li>实现最省：一个 mask 位置动画，没有 transform 缩放，点和间距始终不变形。</li>
+          </ul>
+          <p class="note">缺点是单向、单调，长尾（比如 40 秒）会显得机械；波纹那种「一圈圈推出去」更像在生成。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ P3 双光斑呼吸 ══════ -->
+  <section class="scene" id="p3">
+    <div class="card"><div class="card-body">
+      <p class="refnote">没有明显的波，只有两团淡光在点阵上此起彼伏地呼吸（主光斑 + 左上偏移的一团）。</p>
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="mk" style="width:340px;aspect-ratio:16/9">
+              <div class="dots"></div>
+              <div class="dot-hi breath"></div>
+              <div class="dot-hi breath b-alt"></div>
+              <div class="ttl">正在创建图像</div>
+              <div class="badge"><span class="udots"><em></em><em></em><em></em></span>4.2s</div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="mk" style="width:196px;aspect-ratio:3/4">
+              <div class="dots"></div>
+              <div class="dot-hi breath"></div>
+              <div class="dot-hi breath b-alt"></div>
+              <div class="ttl">正在重绘</div>
+              <div class="badge"><span class="udots"><em></em><em></em><em></em></span>1.1s</div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>P3 双光斑呼吸</h3>
+          <ul>
+            <li>两团光斑周期不同（5.2s / 6.4s 且相位差 2.6s），叠出的明暗<b>不会明显重复</b>，看着更自然。</li>
+            <li>没有位移、没有扫动，是最安静的一版：适合一次要等十几秒、又不想让页面一直「动」的场景。</li>
+          </ul>
+          <p class="note warn">安静的另一面是<b>存在感弱</b>：用户可能看不出它在工作，得靠角标秒表跳数字确认。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ P4 汇聚成形 ══════ -->
+  <section class="scene" id="p4">
+    <div class="card"><div class="card-body">
+      <p class="refnote">反过来：一圈亮点从外向内收缩，像散落的点被收拢到中心——「正在成形」。</p>
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="mk" style="width:340px;aspect-ratio:16/9">
+              <div class="dots"></div>
+              <div class="dot-hi gather"></div>
+              <div class="dot-hi gather g2"></div>
+              <div class="ttl">正在创建图像</div>
+              <div class="badge"><span class="udots"><em></em><em></em><em></em></span>4.2s</div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="mk" style="width:196px;aspect-ratio:3/4">
+              <div class="dots"></div>
+              <div class="dot-hi gather"></div>
+              <div class="dot-hi gather g2"></div>
+              <div class="ttl">正在重绘</div>
+              <div class="badge"><span class="udots"><em></em><em></em><em></em></span>1.1s</div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>P4 汇聚成形</h3>
+          <ul>
+            <li>亮环从 scale 1.9 收到 .35，两端都淡出，中间还有一段空心的环带（不透满），像一圈点被吸向中心。</li>
+            <li>语义最贴「图像正在成形」，和扩散波纹正好相反：<b>收缩 = 汇聚，扩散 = 渲染</b>。</li>
+          </ul>
+          <p class="note">很多人看到「向内收」会下意识觉得在「缩小 / 取消」。扩散比收缩更安全，这条建议只作备选。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ P5 双色点阵 ══════ -->
+  <section class="scene" id="p5">
+    <div class="card"><div class="card-body">
+      <p class="refnote">点阵分两层：底色是灰点铺满，中心区域换成蓝点并缓慢明暗——颜色即层次，不靠动效也能看出重点。</p>
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="mk mk-p5" style="width:340px;aspect-ratio:16/9">
+              <div class="dots"></div>
+              <div class="dot-hi"></div>
+              <div class="ttl">正在创建图像</div>
+              <div class="badge"><span class="udots"><em></em><em></em><em></em></span>4.2s</div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="mk mk-p5" style="width:196px;aspect-ratio:3/4">
+              <div class="dots"></div>
+              <div class="dot-hi"></div>
+              <div class="ttl">正在重绘</div>
+              <div class="badge"><span class="udots"><em></em><em></em><em></em></span>1.1s</div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>P5 双色点阵</h3>
+          <ul>
+            <li>灰点（不透明度 .30）铺满 + 蓝点只在中心 70% 半径内，径向遮罩过渡，中心缓慢明暗。</li>
+            <li>即使一帧截图看，也能读出「中间是内容区、四周是留白」，<b>对静态截图 / 首帧最友好</b>。</li>
+          </ul>
+          <p class="note">可以和 P1/P2 叠加使用：这版只管配色与层次，动效再挑一个加上去。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ P6 星点闪烁 ══════ -->
+  <section class="scene" id="p6">
+    <div class="card"><div class="card-body">
+      <p class="refnote">点阵之上再撒 14 颗错时的星点交替亮起，最接近「星星点点」的字面感觉。</p>
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="mk" style="width:340px;aspect-ratio:16/9">
+              <div class="dots"></div>
+              <div class="dot-hi ripple r3" style="opacity:.5"></div>
+              <div class="stars" id="stars1"></div>
+              <div class="ttl">正在创建图像</div>
+              <div class="badge"><span class="udots"><em></em><em></em><em></em></span>4.2s</div>
+            </div>
+            <div class="cap">16:9 横图</div>
+          </div>
+          <div class="sample">
+            <div class="mk" style="width:196px;aspect-ratio:3/4">
+              <div class="dots"></div>
+              <div class="dot-hi ripple r3" style="opacity:.5"></div>
+              <div class="stars" id="stars2"></div>
+              <div class="ttl">正在重绘</div>
+              <div class="badge"><span class="udots"><em></em><em></em><em></em></span>1.1s</div>
+            </div>
+            <div class="cap">3:4 竖图</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>P6 星点闪烁</h3>
+          <ul>
+            <li>14 颗星点随机落位、延迟错开（0–2.6s），每颗 2.6s 一个明灭周期，大小 1.6–2.6px 不等。</li>
+            <li>底噪（点阵波纹）压到 .5 不透明度，让闪烁成为主角。</li>
+          </ul>
+          <p class="note warn">闪烁的随机感最像「AI 在思考」，但<b>也最容易抢注意力</b>，且每帧都在变，长时间盯着会累。若要用，星点数量压到 8 颗以内。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <p class="note" style="margin-top:22px">
+    <b>我的建议组合：</b>P1（点阵 + 中心波纹扩散）× P5（中心蓝 / 边缘灰的双色层次）。
+    动效只保留波纹，徽标用「不确定点 + 秒表」，<b>不出现任何百分比</b>。
+    <br><br>
+    <b>不做的事：</b>不加假进度、不加水印图标、不加卡片描边。文字固定左上、徽标固定右下，
+    中间区域完全留给点阵——这样出图时把 <code class="mono">&lt;img&gt;</code> 铺满同一块区域，画面不跳。
+    <br><br>
+    <b>尺寸相关：</b>点阵间距固定 14px（不随容器缩放），所以大图和缩略图看起来点一样密；
+    硬编在 CSS 变量 <code class="mono">--dot-step</code> 里，手机上如果嫌密可降到 12px。
+  </p>
+
+</div>
+
+<script>
+// 生成星点（P6）：位置与延迟都是固化的伪随机，避免每次刷新都变
+function seedStars(host, count, seed){
+  if(!host) return;
+  let s = seed;
+  const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+  for(let i = 0; i < count; i++){
+    const el = document.createElement('i');
+    const size = 1.6 + rnd() * 1.0;
+    el.style.left = (6 + rnd() * 88) + '%';
+    el.style.top = (8 + rnd() * 84) + '%';
+    el.style.width = size + 'px';
+    el.style.height = size + 'px';
+    el.style.animationDelay = (rnd() * 2.6).toFixed(2) + 's';
+    el.style.animationDuration = (2.2 + rnd() * 1.1).toFixed(2) + 's';
+    host.appendChild(el);
+  }
+}
+seedStars(document.getElementById('stars1'), 14, 1234);
+seedStars(document.getElementById('stars2'), 10, 8899);
+
+const tabs = document.getElementById('tabs');
+tabs.addEventListener('click', (e) => {
+  const btn = e.target.closest('.tab');
+  if (!btn) return;
+  if (btn.id === 'themeBtn') {
+    document.body.classList.toggle('dark');
+    btn.querySelector('.no').textContent = document.body.classList.contains('dark') ? '◑' : '◐';
+    return;
+  }
+  tabs.querySelectorAll('.tab[data-scene]').forEach(t => t.classList.toggle('on', t === btn));
+  document.querySelectorAll('.scene').forEach(s => s.classList.toggle('on', s.id === btn.dataset.scene));
+});
+</script>
+</body>
+</html>

@@ -80,6 +80,35 @@ def test_placeholder_ratio_follows_requested_size():
     assert "1664 / 928" not in util  # 不把某个尺寸写进代码
 
 
+def test_placeholder_uses_dot_matrix_visual():
+    """视觉是「点阵 + 汇聚亮环」，不许退回一大块实心灰底。
+
+    第一版是 #f3f4f6 铺满整块 + 中心白卡片，用户的原话是「只是一个纯灰色？不好看」——
+    大面积均匀灰读起来像加载失败的空白框。现在的层次全部由点阵承担：底是白（深色是暗底），
+    点靠粗细与浓淡区分远近，亮环用径向遮罩挖出环带、靠 scale 从外向内收。
+    """
+    source = _read(COMPONENT)
+
+    # 点阵：radial-gradient 画点，间距固定（不能随容器缩放，否则大图上点会糊成一片）。
+    assert "radial-gradient" in source
+    assert "background-size: 14px 14px" in source, "点阵间距要固定"
+
+    # 汇聚环带：径向遮罩挖出环形，scale 由外向内收。
+    assert ".imgph-gather" in source
+    assert "mask-image" in source, "环带靠遮罩挖出来，不是画一个圆"
+    assert "imgph-gather-in" in source
+
+    # 实心灰底与扫光是上一版被否掉的做法，不能回潮。
+    assert "bg-gray-100" not in source, "骨架底不许再是实心灰块"
+    assert "imgph-skel" not in source, "旧的灰块 + 扫光实现已废弃"
+    assert "imgph-shimmer" not in source
+
+    # 不确定性用跳点表达；颜色/间距走 CSS 变量，深色模式只换变量不换结构。
+    assert "imgph-udots" in source
+    assert "--imgph-dot" in source, "深色模式要靠变量切换点色"
+    assert "--imgph-dot-hi" in source
+
+
 def test_placeholder_has_no_fake_percentage():
     """不编百分比：编出来的数字会在长尾请求上打脸。"""
     util = _read(UTIL)
