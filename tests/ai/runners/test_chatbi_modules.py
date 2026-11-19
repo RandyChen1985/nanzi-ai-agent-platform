@@ -102,6 +102,25 @@ def test_detect_sql_static_risk_join_and_order_by():
     )
 
 
+def test_detect_sql_static_risk_flags_implicit_comma_join():
+    """FROM t1 a, t2 b 是隐式逗号连接，没有 ON 条件时就是笛卡尔积。"""
+    risk = detect_sql_static_risk("SELECT a.*, b.* FROM t1 a, t2 b")
+    assert risk != ""
+    assert "笛卡尔积" in risk
+
+
+def test_detect_sql_static_risk_allows_comma_join_with_where_condition():
+    """老写法的逗号连接只要在 WHERE 里给了关联条件就应当放行。"""
+    assert detect_sql_static_risk("SELECT a.*, b.* FROM t1 a, t2 b WHERE a.id = b.id") == ""
+
+
+def test_detect_sql_static_risk_ignores_commas_outside_top_level_from():
+    """SELECT 列表、函数参数、子查询里的逗号都不是表连接。"""
+    assert detect_sql_static_risk("SELECT a, b FROM t1") == ""
+    assert detect_sql_static_risk("SELECT CONCAT(a, b) AS c FROM t1") == ""
+    assert detect_sql_static_risk("SELECT * FROM (SELECT x FROM t1, t2) s") == ""
+
+
 def test_sql_schema_preflight_allows_order_by_select_alias_multi_table():
     schema = {
         "view_ai_visit_log": ["ID", "FOLLOW_UP_PERSON", "FOLLOW_UP_DATE"],

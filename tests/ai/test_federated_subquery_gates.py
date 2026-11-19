@@ -13,8 +13,16 @@ from app.services.ai.executors.federated_subquery_gates import (
 )
 
 
+def test_federated_failed_sql_repeat_message_has_prefix():
+    message = federated_failed_sql_repeat_message(summary="ORA-00904")
+    assert FAILED_FEDERATED_SQL_REPEAT_PREFIX in message
+    assert "ORA-00904" in message
+
+
 @pytest.mark.asyncio
+@pytest.mark.no_infrastructure
 async def test_validate_federated_subquery_blocks_static_risk_sql():
+    """隐式逗号连接（FROM t1 a, t2 b）是笛卡尔积，必须在执行前被静态 gate 拦住。"""
     runner = MagicMock()
     runner._resolve_sql_schema_preflight_error = AsyncMock(return_value="")
     dataset = MagicMock()
@@ -32,12 +40,6 @@ async def test_validate_federated_subquery_blocks_static_risk_sql():
     )
     assert block is not None
     assert "SQL_STATIC_GATE" in block
-
-
-def test_federated_failed_sql_repeat_message_has_prefix():
-    message = federated_failed_sql_repeat_message(summary="ORA-00904")
-    assert FAILED_FEDERATED_SQL_REPEAT_PREFIX in message
-    assert "ORA-00904" in message
 
 
 @pytest.mark.asyncio
