@@ -1855,7 +1855,9 @@ const loadImageFeatureStatus = async (options: { force?: boolean } = {}) => {
 let imagePopClosedAt = 0;
 
 const openImageParamPop = () => {
-  if (isMobileViewport.value) showPlusMenu.value = false;
+  // 移动端不能收加号菜单：图像参数面板是挂在菜单下面的（Teleport 只改渲染位置，
+  // 不改组件归属），菜单一卸载面板就跟着没了——点了像没反应。菜单列表在面板打开时
+  // 由 v-show 隐藏，收起统一走 closeImageParamPop。
   showSkillCascade.value = false;
   showMcpCascade.value = false;
   showExpertCascade.value = false;
@@ -3508,7 +3510,7 @@ defineExpose({
                     >
                         <div v-if="showPlusMenu" class="absolute bottom-full left-0 mb-2 z-50">
                             <div class="relative">
-                                <div class="w-52 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 py-1.5 animate-fade-in-up">
+                                <div v-show="!(isMobileViewport && showImageParamPop)" class="w-52 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 py-1.5 animate-fade-in-up">
                                     <!-- Data Portal -->
                                     <button
                                       v-if="filteredSystemCommands.some(c => c.id === DATASET_PORTAL_SYSTEM_COMMAND_ID)"
@@ -3774,7 +3776,19 @@ defineExpose({
                                      改图页内容一多，按钮就滚到面板下沿之外，用户以为没有完成键。
                                      桌面端贴 `bottom-0`（而不是 top-0）向上长：加号菜单本身是往上弹的，
                                      面板再从菜单顶部往下铺 85vh，下沿就会伸到窗口外面去；高度上限
-                                     再扣掉输入区（输入框最高 120px，加工具栏约 13rem），顶栏也留在窗口内。 -->
+                                     再扣掉输入区（输入框最高 120px，加工具栏约 13rem），顶栏也留在窗口内。
+
+                                     移动端：Teleport 到 body，与其它移动端抽屉（技能 / MCP / 专家）同一套做法。
+                                     面板原先挂在加号菜单里，而 openImageParamPop 在移动端会先收起加号菜单——
+                                     菜单一收，里面的面板跟着卸载，点「图像参数」就像没反应。现在移动端保持菜单挂载
+                                     （只隐藏列表），面板脱离菜单渲染并自带遮罩，点遮罩或「取消 / 完成」才收起。
+                                     桌面端 disabled，原地渲染，行为不变。 -->
+                                <Teleport to="body" :disabled="!isMobileViewport">
+                                <div
+                                  v-if="showImageParamPop && isMobileViewport"
+                                  class="fixed inset-0 z-[1190] bg-black/40"
+                                  @click="closeImageParamPop"
+                                ></div>
                                 <div
                                   v-if="showImageParamPop"
                                   class="flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800"
@@ -4147,6 +4161,7 @@ defineExpose({
                                     </template>
                                   </template>
                                 </div>
+                                </Teleport>
 
                                 <!-- Desktop flyout: 数据 & 知识库（两个 tab 直接挂载） -->
                                 <div

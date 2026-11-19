@@ -345,3 +345,20 @@ def test_edit_instruction_ref_is_declared(chat_input: str):
     async 函数静默 reject——「完成」按钮没有任何反应（不转圈、不报错）。
     """
     assert "const imageEditInstruction = ref(" in chat_input
+
+
+def test_mobile_image_panel_survives_plus_menu(chat_input: str):
+    """移动端点「图像参数」不能把加号菜单收掉，面板要 Teleport 出去并自带遮罩。
+
+    面板是挂在加号菜单（v-if="showPlusMenu"）里的：openImageParamPop 若在移动端先
+    `showPlusMenu = false`，菜单卸载，面板跟着消失——点了像没反应。
+    """
+    start = chat_input.index("const openImageParamPop")
+    body = chat_input[start : chat_input.index("};", start)]
+    assert "showPlusMenu.value = false" not in body, "打开面板不得收起加号菜单"
+
+    # 移动端 Teleport 到 body（桌面端 disabled 原地渲染），并有点击收起的遮罩
+    assert '<Teleport to="body" :disabled="!isMobileViewport">' in chat_input
+    assert "showImageParamPop && isMobileViewport" in chat_input
+    # 面板打开时隐藏菜单列表，免得叠在一起
+    assert 'v-show="!(isMobileViewport && showImageParamPop)"' in chat_input
