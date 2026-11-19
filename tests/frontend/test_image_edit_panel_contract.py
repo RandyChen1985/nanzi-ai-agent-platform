@@ -170,9 +170,14 @@ def test_panel_footer_is_pinned(chat_input: str):
     # 页脚「完成」所在容器不参与滚动
     assert panel.count("shrink-0 border-t border-gray-100 bg-gray-50/60") == 2, \
         "生成页和改图页的页脚都要固定住"
-    # 正文才是滚动区
-    assert panel.count("min-h-0 flex-1 space-y-3 overflow-y-auto") == 2, \
-        "两页正文都要是可伸缩的滚动区"
+    # 正文才是滚动区。必须是 flex-auto（basis: auto）而不是 flex-1（basis: 0%）：
+    # 面板高度是 max-h + auto，basis 0% 的滚动区在高度未定的容器里拿不到固有高度，
+    # 内容多的一页撞到 max-h 才碰巧正常，内容少的改图页会整块塌成 0 高（线上「改图页
+    # 一片空白」就是这么来的）。两处都必须同构，改回 flex-1 会重新踩这个坑。
+    assert panel.count("min-h-0 flex-auto space-y-3 overflow-y-auto") == 2, \
+        "两页正文都要是可伸缩的滚动区，且 basis 必须是 auto"
+    assert "min-h-0 flex-1 space-y-3 overflow-y-auto" not in panel, \
+        "回到 flex-1 会让内容少的那一页塌成 0 高"
     # 标题栏与 tab 也不该被压缩
     assert "flex shrink-0 items-center gap-2 border-b border-gray-100" in panel
     assert "flex shrink-0 gap-1 border-b border-gray-100" in panel

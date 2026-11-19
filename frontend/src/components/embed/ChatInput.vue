@@ -4112,7 +4112,7 @@ defineExpose({
 
                                     <!-- ───── 生成页 ───── -->
                                     <template v-if="imagePanelTab === 'gen'">
-                                    <div class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3.5 py-3">
+                                    <div class="min-h-0 flex-auto space-y-3 overflow-y-auto overscroll-contain px-3.5 py-3">
                                       <div>
                                         <div class="mb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">风格</div>
                                         <div class="flex flex-wrap gap-1.5">
@@ -4262,8 +4262,7 @@ defineExpose({
                                            `v-if="!editPanelEnabled"` 的一整块说明，但它是**死代码**：
                                            imagePanelTab 只有在 editPanelEnabled 为真时才能变成 'edit'，
                                            能力丢失时 watch 还会把它拉回生成页，所以永远渲染不到。 -->
-                                      <template>
-                                        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3.5 py-3">
+                                        <div class="min-h-0 flex-auto space-y-3 overflow-y-auto overscroll-contain px-3.5 py-3">
                                           <!-- 失败原因就地留下：toast 几秒就没了，而用户往往
                                                要盯着面板想「刚才到底发生了什么」。 -->
                                           <div
@@ -4407,7 +4406,6 @@ defineExpose({
                                             </button>
                                           </div>
                                         </div>
-                                      </template>
                                     </template>
                                   </template>
                                 </div>
