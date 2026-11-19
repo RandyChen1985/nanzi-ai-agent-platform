@@ -74,6 +74,20 @@ function isImageToolName(name: string): name is ImageToolName {
   return (IMAGE_TOOL_NAMES as readonly string[]).includes(name);
 }
 
+/**
+ * 从标题里认出工具名，形如 `调用工具: generate_image` / `调用工具 · generate_image`。
+ *
+ * 这不是「偷懒的兜底」，而是当前唯一的来源：后端「工具开始」事件只下发标题
+ * （`event_stream.py` 的 `start_log`），`tool_name` 要到完成事件才带上——而占位
+ * 恰恰只在「还没完成」这段窗口里才有意义。只认 `tool_name` 的话骨架永远不会出现。
+ */
+const TOOL_NAME_IN_TITLE = /调用工具\s*[:：·]?\s*([A-Za-z0-9_.-]+)/;
+
+export function toolNameFromTitle(title: unknown): string {
+  const hit = TOOL_NAME_IN_TITLE.exec(String(title ?? ""));
+  return hit ? hit[1].trim().toLowerCase() : "";
+}
+
 /** 时间线是树（委派子代理时工具挂在内层），所以要递归收集。 */
 function collectLogs(
   items: readonly ProcessTimelineItem[] | undefined,
@@ -117,7 +131,8 @@ export function resolveImagePlaceholder(
   for (let index = logs.length - 1; index >= 0; index -= 1) {
     const log = logs[index];
     if (log.status !== "pending") continue;
-    const name = String(log.tool_name || "").trim().toLowerCase();
+    // tool_name 优先（完成事件会带），进行中只能靠标题。
+    const name = String(log.tool_name || "").trim().toLowerCase() || toolNameFromTitle(log.title);
     if (!isImageToolName(name)) continue;
 
     const args = parseImageToolArgs(log.tool_args);

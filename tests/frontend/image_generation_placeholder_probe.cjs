@@ -51,6 +51,38 @@ const log = (overrides) => ({
   assert.strictEqual(failed, null, "失败交给错误卡片，占位不能赖着不走");
 }
 
+/* ── 2.5 只有标题、没有 tool_name（线上真实形态）───────── */
+{
+  // 后端 start_log 只给 title，tool_name 要等完成事件才有。占位只在这段窗口里有意义，
+  // 所以「只认 tool_name」等于骨架永远不出现——这条用例就是那次线上没效果的回归。
+  const fromColon = resolveImagePlaceholder([
+    { kind: "log", id: "t1", title: "调用工具: generate_image", details: "", status: "pending",
+      category: "tool", tool_args: '{"size": "1664x928"}' },
+  ]);
+  assert.ok(fromColon, "只有标题时也必须认出占位");
+  assert.strictEqual(fromColon.tool, "generate_image");
+  assert.strictEqual(fromColon.size, "1664x928");
+
+  const fromDot = resolveImagePlaceholder([
+    { kind: "log", id: "t2", title: "调用工具 · edit_image", details: "", status: "pending",
+      category: "tool" },
+  ]);
+  assert.ok(fromDot, "中文中点形态也要认");
+  assert.strictEqual(fromDot.tool, "edit_image");
+
+  const unrelated = resolveImagePlaceholder([
+    { kind: "log", id: "t3", title: "执行步骤", details: "", status: "pending", category: "tool" },
+  ]);
+  assert.strictEqual(unrelated, null, "标题里没有工具名就不能乱认");
+
+  // tool_name 有值时优先，标题只是兜底。
+  const preferField = resolveImagePlaceholder([
+    { kind: "log", id: "t4", title: "调用工具: some_other_tool", details: "", status: "pending",
+      category: "tool", tool_name: "generate_image" },
+  ]);
+  assert.strictEqual(preferField.tool, "generate_image", "字段优先于标题");
+}
+
 /* ── 3. 别的工具不触发 ─────────────────────────────────── */
 {
   const other = resolveImagePlaceholder([log({ tool_name: "web_search" })]);

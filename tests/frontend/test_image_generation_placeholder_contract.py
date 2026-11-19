@@ -90,6 +90,23 @@ def test_placeholder_has_no_fake_percentage():
         assert "width: ${" not in source  # 进度条宽度不随"进度"变化
 
 
+def test_placeholder_recognises_tool_from_title():
+    """工具进行中只有 title、没有 tool_name——只认字段的话骨架永远不会出现。
+
+    这是线上真实踩到的：后端 `start_log` 只下发 `title: "调用工具: generate_image"`，
+    `tool_name` 要等完成事件才有，而占位恰恰只在完成前那段时间需要判断工具名。
+    """
+    util = _read(UTIL)
+    assert "toolNameFromTitle" in util, "标题兜底不能被去掉"
+
+    match = util[util.index("    // tool_name 优先"):][:260]
+    assert "log.tool_name" in match
+    assert "toolNameFromTitle(log.title)" in match, "字段为空时必须回落到标题"
+
+    # 两种标题形态都要认（冒号来自 start_log，中点是前端展示格式）。
+    assert "调用工具" in util
+
+
 def test_placeholder_is_wired_into_the_message_stream():
     """接在时间线下方、正文上方：与最终图片位置一致，图落地不会来回跳。"""
     source = _read(EMBED_CHAT)
