@@ -46,7 +46,9 @@ def test_chat_input_does_not_treat_submission_lock_as_a_cancelable_generation():
     assert "isSubmitting?: boolean;" in source
     assert "const isInteractionLocked = computed" in source
     assert 'type="button"' in source
-    assert "isProcessing ? emit('stop') : isSubmitting ? null : emit('send')" in source
+    # 发送前要过 sendWithImageParams（它把本次生图参数并进正文），但三条分支的语义不变：
+    # 生成中才可停止，提交锁期间既不能停止也不能重发。
+    assert "isProcessing ? emit('stop') : isSubmitting ? null : sendWithImageParams()" in source
     assert ':disabled="!isProcessing && (isSubmitting || !canSend)"' in source
     # 生成中与提交中的提示必须分属不同状态分支（生成分支新增了 grounding 严格核验文案）。
     # 生成中提示按用户要求以句号收尾，不再用省略号。

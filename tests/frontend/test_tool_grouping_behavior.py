@@ -70,7 +70,7 @@ def test_capability_keyword_rules_match_the_agent_page():
 const names = [
   'read_file', 'edit_file', 'write_file', 'search_text', 'glob_files',
   'exec_command', 'list_process', 'manage_process', 'directory_tree_navigator',
-  'code_syntax_linter', 'search_github_repos', 'read_image',
+  'code_syntax_linter', 'search_github_repos', 'read_image', 'generate_image',
   'browser_click', 'browser_navigate',
   'web_search', 'fetch_static_web_url', 'http_request',
   'query_dataset', 'chatbi_report',
@@ -94,6 +94,9 @@ return out;
     # `search_github_repos` 走 `search_` 前缀 → system（不是 knowledge/web）
     assert result["search_github_repos"] == "system"
     assert result["read_image"] == "system", "read_ 前缀 → 系统自治工具"
+    # 出图工具靠 'image' 关键字进 system：它不以 read_/write_ 等前缀开头，
+    # 漏了这条就会掉进「其他扩展工具」兜底组，和 read_image 分家。
+    assert result["generate_image"] == "system", "generate_image 应与 read_image 同组"
     assert result["browser_click"] == "browser"
     assert result["browser_navigate"] == "browser"
     assert result["web_search"] == "web"

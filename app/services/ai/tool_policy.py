@@ -432,6 +432,20 @@ _KNOWN_TOOL_METADATA: Mapping[str, ToolMetadata] = {
         idempotent="yes",
         nudge_mode="evidence",
     ),
+    # 出图：写侧有副作用（每张都计费、且不可撤销），所以 idempotent=no。
+    # confirmation 留 none —— 用户说「画一张」本身就是这次写入的授权，
+    # 再弹一次「确认要画吗」只是多一次点击。
+    # nudge_mode=explicit：什么时候该画由用户语义决定，不该被「有证据才回答」
+    # 那套机制推着模型去调。
+    "generate_image": ToolMetadata(
+        capability="content_generation",
+        source="external_service",
+        freshness="realtime",
+        side_effect="write",
+        confirmation="none",
+        idempotent="no",
+        nudge_mode="explicit",
+    ),
     "write_file": ToolMetadata(
         capability="local_file",
         source="user_file",

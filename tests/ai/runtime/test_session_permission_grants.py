@@ -449,3 +449,43 @@ async def test_grant_written_from_pending_snapshot_conversation():
     assert await session_permission_grants.is_granted(
         "u1", "c-from-snapshot", "Bash"
     )
+
+
+def _auto_approved_tool(name: str = "generate_image", **kwargs) -> AgentScopeRuntimeTool:
+    spec = RuntimeToolSpec(
+        name=name,
+        description="",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=lambda **_: "ok",
+        permission_scope="ask",
+    )
+    return AgentScopeRuntimeTool(spec, **kwargs)
+
+
+async def test_auto_approved_tool_allows_without_any_grant():
+    """generate_image 属于「用户开口就是授权」的工具，不该在无人值守时被 ASK 拦下。"""
+    tool = _auto_approved_tool(user_id="u1", conversation_id="c1")
+
+    decision = await tool.check_permissions({"prompt": "一只猫"}, None)
+
+    assert decision.behavior.name == "ALLOW"
+
+
+async def test_auto_approved_tool_still_respects_deny_approval_mode():
+    """自动放行不能盖过用户/会话显式表达的拒绝。"""
+    tool = _auto_approved_tool(approval_mode="deny")
+
+    decision = await tool.check_permissions({"prompt": "一只猫"}, None)
+
+    assert decision.behavior.name == "DENY"
+
+
+async def test_unlisted_write_tool_still_asks():
+    """白名单只放行点名的工具：同 scope 的其它写操作必须继续 ASK，
+    否则等于按 permission_scope 批量开闸。"""
+    tool = _auto_approved_tool(name="publish_generated_file", user_id="u1", conversation_id="c1")
+
+    decision = await tool.check_permissions({}, None)
+
+    assert decision.behavior.name == "ASK"

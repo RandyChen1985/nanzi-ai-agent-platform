@@ -2316,6 +2316,13 @@ const availableTools: Array<{ name: string; description: string; isSystem: boole
     isSystem: true,
   },
   {
+    // 出图工具：默认不勾选（每张计费）。平台总开关 image_generation_enabled 关闭时，
+    // 这里勾了后端也不会下发——所以描述里点明前置条件，别让人对着「勾了不生效」猜。
+    name: "generate_image",
+    description: "按文字描述生成图片（文生图），出图保存为平台产物；需先在「系统设置 → 图像生成」开启",
+    isSystem: true,
+  },
+  {
     name: "search_qa_examples",
     description: "检索已验证的历史问答优质案例及 SQL",
     isSystem: true,

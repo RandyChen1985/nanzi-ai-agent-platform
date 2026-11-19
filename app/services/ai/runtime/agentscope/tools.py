@@ -155,6 +155,35 @@ READ_ONLY_TOOL_NAMES = {
     "browser_forward",
     "browser_reload",
 }
+#: 平台已认定「用户的下达动作本身就是授权」的写入类工具，执行时不再弹审批。
+#:
+#: 目前只有 generate_image：用户说「画一张」就是这次调用的授权，再问一次只是多一次点击；
+#: 更要紧的是定时任务这类无人值守场景——那里没人能点确认，ASK 等于工具直接不可用。
+#:
+#: **只列具体工具名，不要按 ``confirmation="none"`` 批量推导**：tool_policy 里标了 none 的
+#: 58 个工具中混着 browser_download、publish_generated_file 这类确实该把关的写操作，
+#: 按元数据一律放行会一次性开掉一片闸门。
+AUTO_APPROVED_TOOL_NAMES: frozenset[str] = frozenset({"generate_image"})
+
+
+def _auto_approve_decision(tool_name: str) -> Any:
+    """命中自动放行名单就返回 ALLOW 决策，否则返回 None 让调用方继续走原决策链。
+
+    调用点必须放在 ``dangerous`` 与 ``approval_mode == "deny"`` 之后：前者是不可自动执行的
+    硬拒绝，后者是用户/会话显式表达的拒绝，都不该被这张白名单盖掉。
+    """
+    if tool_name not in AUTO_APPROVED_TOOL_NAMES:
+        return None
+
+    from agentscope.permission import PermissionBehavior, PermissionDecision
+
+    return PermissionDecision(
+        behavior=PermissionBehavior.ALLOW,
+        message=f"Tool '{tool_name}' is auto-approved; the request that triggers it is the authorization.",
+        decision_reason="auto-approved tool: no confirmation required",
+    )
+
+
 NATIVE_TOOL_EVIDENCE_TYPES = {
     "Bash": frozenset({EvidenceType.RUNTIME_STATE}),
     "Read": frozenset({EvidenceType.USER_FILE}),
@@ -881,6 +910,9 @@ class AgentScopeRuntimeTool:
                 decision_reason=f"runtime approval mode: {self.approval_mode}",
                 bypass_immune=True,
             )
+        auto_approved = _auto_approve_decision(self.name)
+        if auto_approved is not None:
+            return auto_approved
         grant_decision = await _session_grant_decision(
             tool_name=self.name,
             user_id=self.user_id,
@@ -1200,6 +1232,9 @@ class AgentScopeNativeApprovalTool:
                 if grant_decision is not None:
                     return grant_decision
                 return result
+        auto_approved = _auto_approve_decision(self.name)
+        if auto_approved is not None:
+            return auto_approved
         grant_decision = await _session_grant_decision(
             tool_name=self.name,
             user_id=self.user_id,

@@ -102,6 +102,37 @@ input[type="search"]::-webkit-search-cancel-button:hover {
    这里刻意**不加** overflow:hidden —— 卡片内的「引擎信息」悬浮 tooltip 是
    absolute top-full 挂出来的，卡片只有 100px 高，一裁就把它的下半截切掉。
    圆角处的溢出由 HeroSilhouette 自己的 clip-path 处理。 */
+/* 消息流里的图片：等比缩放并限制最大高度。
+ *
+ * 之前只有 Tailwind preflight 的 `img { max-width: 100% }`，一张 1664x928 的出图会撑满
+ * 整个对话区宽度、把消息挤出一屏——用户得往下滚才能看到下面的内容。
+ *
+ * 三条约束缺一不可：
+ *   - `max-width: 100%`  → 不溢出消息气泡（preflight 已有，这里显式重申，避免被覆盖）
+ *   - `max-height: 320px` → 大图最多占约三分之一屏高，等比缩下来宽度自然跟着收
+ *   - `width/height: auto` → 小图**不放大**；缺了它，部分浏览器会按 max-height 拉伸小图
+ *
+ * `cursor: zoom-in` 对应「点图片开画布看原图」的既有交互（MessageRenderer 的 open-canvas），
+ * 不写的话用户不知道能点。
+ */
+@layer base {
+  .markdown-body img {
+    max-width: 100%;
+    max-height: 320px;
+    width: auto;
+    height: auto;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    cursor: zoom-in;
+  }
+
+  /* 单独成段的图片给一点垂直呼吸，避免和上下文贴在一起 */
+  .markdown-body p > img:only-child {
+    margin-top: 2px;
+    margin-bottom: 2px;
+  }
+}
+
 @layer components {
   .hero-surface {
     position: relative;

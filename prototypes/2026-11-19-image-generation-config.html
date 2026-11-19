@@ -1,0 +1,2152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="交互原型">
+<title>图像生成 · 系统设置「图像」分组 + 智能体工具调用闭环</title>
+<style>
+  :root{
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af;
+    --g500:#6b7280; --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --em50:#ecfdf5; --em100:#d1fae5; --em200:#a7f3d0; --em600:#059669; --em700:#047857;
+    --am50:#fffbeb; --am100:#fef3c7; --am200:#fde68a; --am600:#d97706; --am700:#b45309;
+    --rose50:#fff1f2; --rose200:#fecdd3; --rose600:#e11d48; --rose700:#be123c;
+    --indigo50:#eef2ff; --indigo100:#e0e7ff; --indigo700:#4338ca;
+    --sky50:#f0f9ff; --sky100:#e0f2fe; --sky700:#0369a1;
+    --viol50:#f5f3ff; --viol100:#ede9fe; --viol700:#6d28d9;
+    --slate900:#0f172a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f5f6f8; color:var(--g900); font-size:14px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  input,select,textarea{font:inherit}
+  svg{display:block}
+
+  /* ── 页面骨架 ─────────────────────────────────────────── */
+  .page{max-width:1400px;margin:0 auto;padding:20px 24px 72px}
+  .proto-head h1{font-size:20px;margin:0 0 6px;font-weight:650}
+  .proto-head p{margin:0;color:var(--g500);font-size:12.5px;max-width:1000px;line-height:1.75}
+  .proto-head b{color:var(--g700);font-weight:600}
+
+  /* ── 场景切换 ─────────────────────────────────────────── */
+  .tabs{display:flex;gap:6px;margin:16px 0 14px;flex-wrap:wrap;align-items:center}
+  .tab{
+    display:flex;align-items:center;gap:7px;border:1px solid var(--g200);background:#fff;
+    border-radius:10px;padding:7px 13px;font-size:12.5px;color:var(--g600);transition:.14s;
+  }
+  .tab:hover{border-color:var(--g300);color:var(--g800)}
+  .tab .no{
+    display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
+    border-radius:5px;background:var(--g100);font-size:10.5px;font-weight:700;color:var(--g500)
+  }
+  .tab.on{border-color:var(--slate900);background:var(--slate900);color:#fff}
+  .tab.on .no{background:rgba(255,255,255,.18);color:#fff}
+  .scene{display:none}
+  .scene.on{display:block}
+
+  /* ── 系统设置窗口 ─────────────────────────────────────── */
+  .win{
+    background:#fff;border:1px solid var(--g200);border-radius:14px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -12px rgba(15,23,42,.10);
+  }
+  .win-bar{
+    display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--g200);
+    background:var(--g50);
+  }
+  .dot{width:9px;height:9px;border-radius:50%}
+  .win-title{font-size:11.5px;color:var(--g500);margin-left:6px}
+
+  .settings-grid{display:grid;grid-template-columns:206px minmax(0,1fr)}
+
+  /* 分组侧栏 */
+  .side{border-right:1px solid var(--g200);background:#fcfcfd;padding:12px 10px}
+  .side-head{
+    font-size:10.5px;font-weight:700;letter-spacing:.06em;color:var(--g400);
+    padding:0 8px;margin-bottom:8px;text-transform:uppercase;
+  }
+  .side-item{
+    display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;
+    font-size:12.5px;color:var(--g600);cursor:pointer;margin-bottom:1px;width:100%;text-align:left;
+  }
+  .side-item:hover{background:var(--g100)}
+  .side-item svg{width:15px;height:15px;flex:none;color:var(--g400)}
+  .side-item.on{background:var(--slate900);color:#fff}
+  .side-item.on svg{color:#fff}
+  .side-item .cnt{
+    margin-left:auto;font-size:10px;color:var(--g400);background:var(--g100);
+    border-radius:5px;padding:0 5px;min-width:18px;text-align:center
+  }
+  .side-item.on .cnt{background:rgba(255,255,255,.16);color:#fff}
+  .side-item.new svg{color:var(--viol700)}
+  .side-item.on.new svg{color:#fff}
+  .tag-new{
+    font-size:9px;font-weight:700;letter-spacing:.04em;padding:1px 4px;border-radius:4px;
+    background:var(--viol100);color:var(--viol700);
+  }
+  .side-item.on .tag-new{background:rgba(255,255,255,.9);color:var(--viol700)}
+
+  /* 内容区 */
+  .main{padding:18px 22px 0;min-height:660px}
+  .card-head{display:flex;align-items:flex-start;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--g200)}
+  .card-head-ic{
+    width:36px;height:36px;border-radius:10px;background:var(--viol50);color:var(--viol700);
+    display:flex;align-items:center;justify-content:center;flex:none;
+  }
+  .card-head-ic svg{width:19px;height:19px}
+  .card-head h2{font-size:15px;margin:0;font-weight:650}
+  .card-head h2 span{font-weight:400;color:var(--g400);font-size:12.5px;margin-left:6px}
+  .card-head p{margin:3px 0 0;font-size:12px;color:var(--g500);line-height:1.65;max-width:760px}
+
+  /* 开关 */
+  .switch{position:relative;width:38px;height:21px;border-radius:999px;background:var(--g300);transition:.16s;flex:none}
+  .switch::after{
+    content:"";position:absolute;top:2.5px;left:2.5px;width:16px;height:16px;border-radius:50%;
+    background:#fff;transition:.16s;box-shadow:0 1px 2px rgba(0,0,0,.18)
+  }
+  .switch.on{background:var(--em600)}
+  .switch.on::after{transform:translateX(17px)}
+  .master{
+    display:flex;align-items:center;gap:12px;padding:13px 14px;margin:14px 0 4px;
+    border:1px solid var(--g200);border-radius:11px;background:var(--g50);
+  }
+  .master-txt{min-width:0}
+  .master-txt b{font-size:13px;display:block}
+  .master-txt span{font-size:11.5px;color:var(--g500);display:block;margin-top:2px;line-height:1.6}
+
+  /* 表单分组 */
+  .fgroup{margin-top:18px}
+  .fgroup-head{display:flex;align-items:center;gap:7px;margin-bottom:2px}
+  .fgroup-head h3{font-size:12.5px;margin:0;font-weight:650}
+  .fgroup-head .hint{font-size:11px;color:var(--g400)}
+  .fgroup-sub{font-size:11.5px;color:var(--g500);margin:2px 0 10px;line-height:1.6}
+
+  .field{
+    display:grid;grid-template-columns:190px minmax(0,1fr);gap:14px;
+    padding:10px 0;border-top:1px dashed var(--g100);align-items:start;
+  }
+  .field:first-of-type{border-top:none}
+  .field-label{padding-top:5px}
+  .field-label .k{font-size:12.5px;color:var(--g800);font-weight:500}
+  .field-label .key{font-size:10px;color:var(--g400);display:block;margin-top:2px}
+  .field-body{min-width:0}
+  .inp{
+    width:100%;border:1px solid var(--g300);border-radius:8px;padding:6px 10px;font-size:12.5px;
+    color:var(--g800);background:#fff;outline:none;transition:.14s
+  }
+  .inp:focus{border-color:var(--slate900);box-shadow:0 0 0 3px rgba(15,23,42,.07)}
+  @keyframes flashbg{0%{background:#dbeafe;border-color:#60a5fa}100%{background:#fff}}
+  .inp.flash{animation:flashbg 1.1s ease-out}
+  .inp.mono{font-size:12px}
+  .inp-sm{width:110px}
+  .desc{font-size:11px;color:var(--g400);margin-top:5px;line-height:1.6}
+  /* 接口格式：下拉选择。原生 select 的 option 无法承载多行排版，
+     所以做成自定义浮层——每个选项两行（格式名 + 路径），应选时技术上还必须看清路径差异。 */
+  .fmt-select{position:relative;max-width:420px}
+  .fmt-trigger{
+    width:100%;display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;
+    border:1px solid var(--g300);border-radius:8px;background:#fff;text-align:left;transition:.14s
+  }
+  .fmt-trigger:hover{border-color:var(--g400)}
+  .fmt-trigger[aria-expanded="true"]{border-color:var(--indigo700);box-shadow:0 0 0 1px var(--indigo700) inset}
+  .fmt-cur{flex:1;min-width:0}
+  .fmt-cur-title{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--g800)}
+  .fmt-cur-path{
+    display:block;margin-top:1px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:10.5px;color:var(--g400);white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+  }
+  .fmt-arrow{flex:none;width:14px;height:14px;color:var(--g400);transition:transform .16s}
+  .fmt-trigger[aria-expanded="true"] .fmt-arrow{transform:rotate(180deg)}
+  .fmt-panel{
+    position:absolute;z-index:30;left:0;right:0;top:calc(100% + 4px);padding:4px;display:none;
+    background:#fff;border:1px solid var(--g200);border-radius:10px;box-shadow:0 14px 32px rgba(15,23,42,.14)
+  }
+  .fmt-panel.show{display:block}
+  .fmt-opt{width:100%;display:block;padding:7px 9px;border:0;border-radius:7px;background:none;cursor:pointer;text-align:left;transition:.12s}
+  .fmt-opt:hover{background:var(--g50)}
+  .fmt-opt.on{background:var(--indigo50)}
+  .fmt-opt-title{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--g800)}
+  .fmt-opt.on .fmt-opt-title{color:var(--indigo700)}
+  .fmt-opt-path{
+    display:block;margin-top:2px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:10.5px;color:var(--g500);word-break:break-all
+  }
+  .fmt-opt-note{display:block;margin-top:2px;font-size:10.5px;color:var(--g400);line-height:1.55}
+  .fmt-badge{font-style:normal;font-size:9.5px;font-weight:600;padding:1px 5px;border-radius:99px;background:var(--em100);color:var(--em700)}
+  .desc code{background:var(--g100);border-radius:4px;padding:0 3px;color:var(--g600);font-size:10.5px}
+  .with-btn{display:flex;gap:6px;align-items:stretch}
+  .eye{
+    border:1px solid var(--g300);border-radius:8px;background:#fff;padding:0 9px;color:var(--g500);
+    display:flex;align-items:center;flex:none
+  }
+  .eye:hover{background:var(--g50);color:var(--g700)}
+  .eye svg{width:15px;height:15px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .with-unit{display:flex;align-items:center;gap:7px}
+  .unit{font-size:11.5px;color:var(--g400);flex:none}
+
+  /* 分辨率 chips */
+  .chips{display:flex;gap:7px;flex-wrap:wrap}
+  .chip{
+    display:flex;align-items:center;gap:6px;border:1px solid var(--g300);background:#fff;
+    border-radius:8px;padding:5px 10px;font-size:11.5px;color:var(--g600)
+  }
+  .chip .box{
+    width:13px;height:13px;border-radius:4px;border:1.5px solid var(--g300);
+    display:flex;align-items:center;justify-content:center;flex:none
+  }
+  .chip.on{border-color:var(--slate900);background:var(--slate900);color:#fff}
+  .chip.on .box{background:#fff;border-color:#fff}
+  .chip.on .box svg{width:9px;height:9px;color:var(--slate900)}
+  .chip .ratio{font-size:10px;opacity:.62}
+
+  /* 测试区 */
+  .tester{
+    margin:16px 0 0;border:1px solid var(--indigo100);background:var(--indigo50);
+    border-radius:11px;padding:13px 14px;
+  }
+  .tester-head{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .tester-head b{font-size:12.5px;color:var(--indigo700)}
+  .tester-head span{font-size:11px;color:#5b61c9}
+  .tester-row{display:flex;gap:8px}
+  .tester-row .inp{background:#fff}
+  .btn-dark{
+    background:var(--slate900);color:#fff;border-radius:8px;padding:0 14px;font-size:12.5px;
+    font-weight:500;flex:none;display:flex;align-items:center;gap:6px
+  }
+  .btn-dark:disabled{opacity:.6;cursor:default}
+  .btn-dark svg{width:14px;height:14px}
+  .test-result{
+    margin-top:11px;display:none;gap:12px;background:#fff;border:1px solid var(--indigo100);
+    border-radius:9px;padding:10px
+  }
+  .test-result.show{display:flex}
+  .test-thumb{
+    width:132px;height:132px;border-radius:7px;overflow:hidden;flex:none;border:1px solid var(--g200);
+    background:var(--g100)
+  }
+  .test-thumb svg{width:100%;height:100%}
+  .test-meta{font-size:11.5px;color:var(--g600);line-height:1.85;min-width:0}
+  .test-meta .ok{color:var(--em700);font-weight:600}
+  .test-meta .kv{color:var(--g400)}
+  .test-meta .url{
+    display:block;margin-top:4px;font-size:10.5px;color:var(--sky700);background:var(--sky50);
+    border:1px solid var(--sky100);border-radius:5px;padding:3px 6px;word-break:break-all
+  }
+  .spinner{
+    width:13px;height:13px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;
+    border-radius:50%;animation:spin .7s linear infinite
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* 空态：开关关闭 */
+  .off-note{
+    display:none;align-items:flex-start;gap:9px;margin-top:14px;padding:12px 14px;
+    border:1px dashed var(--g300);border-radius:10px;background:var(--g50);
+  }
+  .off-note.show{display:flex}
+  .off-note svg{width:16px;height:16px;color:var(--g400);flex:none;margin-top:1px}
+  .off-note p{margin:0;font-size:11.5px;color:var(--g500);line-height:1.7}
+  .off-body{display:none}
+  .off-body.show{display:block}
+
+  .main-foot{
+    position:sticky;bottom:0;display:flex;align-items:center;gap:10px;justify-content:flex-end;
+    margin-top:18px;padding:12px 22px;border-top:1px solid var(--g200);background:#fff;
+  }
+  .dirty{font-size:11.5px;color:var(--am700);margin-right:auto;display:flex;align-items:center;gap:6px}
+  .dirty i{width:6px;height:6px;border-radius:50%;background:var(--am600);display:block}
+  .btn-ghost{border:1px solid var(--g300);background:#fff;border-radius:8px;padding:7px 14px;font-size:12.5px;color:var(--g700)}
+  .btn-primary{background:var(--slate900);color:#fff;border-radius:8px;padding:7px 14px;font-size:12.5px;font-weight:500}
+
+  /* ── 模型选择弹窗 ──────────────────────────────────────── */
+  .pick-btn{
+    display:flex;align-items:center;gap:6px;border:1px solid var(--g300);background:#fff;
+    border-radius:8px;padding:0 11px;font-size:12px;color:var(--g700);flex:none;white-space:nowrap
+  }
+  .pick-btn:hover{background:var(--g50);border-color:var(--g400)}
+  .pick-btn svg{width:14px;height:14px;color:var(--g500)}
+
+  .mask{
+    position:fixed;inset:0;background:rgba(15,23,42,.42);display:none;
+    align-items:center;justify-content:center;padding:24px;z-index:60
+  }
+  .mask.show{display:flex}
+  .modal{
+    width:min(620px,100%);max-height:min(78vh,680px);background:#fff;border-radius:14px;
+    display:flex;flex-direction:column;overflow:hidden;
+    box-shadow:0 24px 64px -16px rgba(15,23,42,.36)
+  }
+  .modal-head{
+    display:flex;align-items:flex-start;gap:12px;padding:16px 18px 13px;border-bottom:1px solid var(--g200)
+  }
+  .modal-head h3{font-size:14.5px;margin:0;font-weight:650}
+  .modal-head p{margin:4px 0 0;font-size:11.5px;color:var(--g500);line-height:1.6}
+  .modal-head p code{
+    background:var(--g100);border-radius:4px;padding:0 4px;font-size:10.5px;color:var(--g700)
+  }
+  .modal-x{
+    margin-left:auto;width:26px;height:26px;border-radius:7px;display:flex;align-items:center;
+    justify-content:center;color:var(--g400);flex:none
+  }
+  .modal-x:hover{background:var(--g100);color:var(--g700)}
+  .modal-x svg{width:15px;height:15px}
+
+  .modal-tools{display:flex;align-items:center;gap:8px;padding:11px 18px;border-bottom:1px solid var(--g100)}
+  .modal-tools .inp{flex:1}
+  .seg{display:flex;border:1px solid var(--g300);border-radius:8px;overflow:hidden;flex:none}
+  .seg button{padding:5px 10px;font-size:11.5px;color:var(--g600);background:#fff;white-space:nowrap}
+  .seg button + button{border-left:1px solid var(--g200)}
+  .seg button.on{background:var(--slate900);color:#fff}
+  .refresh{
+    width:28px;height:28px;border:1px solid var(--g300);border-radius:8px;background:#fff;
+    display:flex;align-items:center;justify-content:center;color:var(--g500);flex:none
+  }
+  .refresh:hover{background:var(--g50);color:var(--g700)}
+  .refresh svg{width:14px;height:14px}
+
+  .modal-list{overflow-y:auto;padding:7px 10px;flex:1;min-height:190px}
+  .m-row{
+    display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 10px;
+    border-radius:8px;border:1px solid transparent
+  }
+  .m-row:hover{background:var(--g50)}
+  .m-row.on{background:var(--sky50);border-color:#bae6fd}
+  .m-dot{
+    width:14px;height:14px;border-radius:50%;border:1.5px solid var(--g300);flex:none;
+    display:flex;align-items:center;justify-content:center
+  }
+  .m-row.on .m-dot{border-color:var(--sky700);background:var(--sky700)}
+  .m-row.on .m-dot::after{content:"";width:4px;height:4px;border-radius:50%;background:#fff}
+  .m-id{font-size:12px;color:var(--g800);font-family:ui-monospace,Menlo,monospace}
+  .m-badge{
+    font-size:9.5px;font-weight:700;border-radius:4px;padding:1px 5px;flex:none;
+    background:var(--g100);color:var(--g500)
+  }
+  .m-badge.image{background:var(--viol100);color:var(--viol700)}
+  .m-badge.vision{background:var(--sky100);color:var(--sky700)}
+  .m-badge.emb{background:var(--em100);color:var(--em700)}
+  .m-up{font-size:10.5px;color:var(--g400);margin-left:auto;flex:none}
+  .m-row .leaf{width:13px;height:13px;color:var(--sky700);flex:none;visibility:hidden}
+  .m-row.on .leaf{visibility:visible}
+
+  .m-state{padding:44px 20px;text-align:center}
+  .m-state .spin2{
+    width:22px;height:22px;border:2.5px solid var(--g200);border-top-color:var(--slate900);
+    border-radius:50%;animation:spin .75s linear infinite;margin:0 auto 12px
+  }
+  .m-state b{font-size:12.5px;display:block;margin-bottom:4px}
+  .m-state span{font-size:11.5px;color:var(--g500);line-height:1.7;display:block;max-width:400px;margin:0 auto}
+  .m-error{
+    display:flex;gap:10px;text-align:left;background:var(--rose50);border:1px solid var(--rose200);
+    border-radius:10px;padding:12px 14px;margin:8px 4px
+  }
+  .m-error svg{width:16px;height:16px;color:var(--rose600);flex:none;margin-top:1px}
+  .m-error b{font-size:12px;color:var(--rose700);display:block;margin-bottom:3px}
+  .m-error p{margin:0;font-size:11.5px;color:#9f1239;line-height:1.7}
+  .m-error code{
+    background:#fff;border-radius:4px;padding:0 4px;font-size:10.5px;color:var(--rose700)
+  }
+
+  .modal-foot{
+    display:flex;align-items:center;gap:8px;padding:11px 18px;border-top:1px solid var(--g200);
+    background:var(--g50)
+  }
+  .modal-hint{font-size:11.5px;color:var(--g500);margin-right:auto;line-height:1.5}
+  .modal-hint.warn{color:var(--am700)}
+  .modal-hint b{color:var(--g800);font-family:ui-monospace,Menlo,monospace;font-weight:600}
+  .demo-link{
+    font-size:10.5px;color:var(--g400);text-decoration:underline;text-underline-offset:2px;
+    margin-right:10px;flex:none
+  }
+  .demo-link:hover{color:var(--g600)}
+  .btn-primary:disabled{opacity:.45;cursor:default}
+
+  /* ── 场景 2：聊天 ─────────────────────────────────────── */
+  .chat-win{max-width:900px}
+  .chat-title{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--g500);margin-left:6px}
+  .chat-body{padding:20px 22px 26px;background:#fff}
+  .msg{display:flex;gap:11px;margin-bottom:18px}
+  .msg.me{flex-direction:row-reverse}
+  .ava{
+    width:30px;height:30px;border-radius:9px;flex:none;display:flex;align-items:center;
+    justify-content:center;font-size:11px;font-weight:650
+  }
+  .ava.u{background:var(--indigo100);color:var(--indigo700)}
+  .ava.a{background:var(--slate900);color:#fff}
+  .ava.a svg{width:16px;height:16px}
+  .bubble{max-width:min(620px,82%);min-width:0}
+  .bubble .who{font-size:10.5px;color:var(--g400);margin-bottom:4px;display:flex;align-items:center;gap:6px}
+  .msg.me .bubble .who{justify-content:flex-end}
+  .bubble .text{
+    font-size:13px;line-height:1.75;color:var(--g800);background:var(--g50);
+    border:1px solid var(--g200);border-radius:2px 11px 11px 11px;padding:10px 13px
+  }
+  .msg.me .bubble .text{background:var(--slate900);border-color:var(--slate900);color:#fff;border-radius:11px 2px 11px 11px}
+
+  /* 工具调用卡 */
+  .tool-card{
+    border:1px solid var(--g200);border-radius:11px;overflow:hidden;background:#fff;
+    margin-bottom:10px
+  }
+  .tool-head{
+    display:flex;align-items:center;gap:9px;padding:9px 12px;cursor:pointer;background:var(--g50);
+    border-bottom:1px solid transparent
+  }
+  .tool-head:hover{background:var(--g100)}
+  .tool-ic{
+    width:24px;height:24px;border-radius:7px;background:var(--viol50);color:var(--viol700);
+    display:flex;align-items:center;justify-content:center;flex:none
+  }
+  .tool-ic svg{width:13px;height:13px}
+  .tool-name{font-size:12px;font-weight:600;color:var(--g800)}
+  .tool-arg{font-size:11px;color:var(--g400);margin-left:2px}
+  .tool-state{
+    margin-left:auto;display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;
+    color:var(--em700);background:var(--em50);border:1px solid var(--em100);border-radius:5px;padding:1px 6px
+  }
+  .tool-state svg{width:11px;height:11px}
+  .chev{width:13px;height:13px;color:var(--g400);transition:.16s}
+  .tool-card.open .chev{transform:rotate(180deg)}
+  .tool-body{display:none;padding:0}
+  .tool-card.open .tool-body{display:block}
+  .code{
+    margin:0;padding:10px 12px;background:#0f172a;color:#d5dde8;font-size:11px;line-height:1.7;
+    overflow-x:auto;white-space:pre
+  }
+  .code .k{color:#93c5fd}
+  .code .s{color:#a5e6a5}
+  .code .n{color:#fcd34d}
+  .code .c{color:#64748b}
+
+  /* 生成结果 */
+  .gen-card{border:1px solid var(--g200);border-radius:12px;overflow:hidden;background:#fff}
+  .gen-img{border-bottom:1px solid var(--g200);background:#0f172a}
+  .gen-img svg{width:100%;display:block}
+  .gen-bar{display:flex;align-items:center;gap:10px;padding:9px 12px;flex-wrap:wrap}
+  .gen-meta{font-size:10.5px;color:var(--g500);display:flex;gap:9px;flex-wrap:wrap}
+  .gen-meta i{font-style:normal;color:var(--g300)}
+  .gen-actions{margin-left:auto;display:flex;gap:6px}
+  .mini{
+    border:1px solid var(--g300);background:#fff;border-radius:7px;padding:4px 9px;
+    font-size:11px;color:var(--g700);display:flex;align-items:center;gap:5px
+  }
+  .mini:hover{background:var(--g50)}
+  .mini svg{width:12px;height:12px}
+  .mini.dark{background:var(--slate900);border-color:var(--slate900);color:#fff}
+  .final-text{margin-top:10px;font-size:13px;line-height:1.8;color:var(--g800)}
+  .final-text code{background:var(--g100);border-radius:4px;padding:0 4px;font-size:11.5px;color:var(--g700)}
+  .artifact-rail{
+    display:flex;align-items:center;gap:8px;margin-top:14px;padding:9px 12px;border-radius:9px;
+    background:var(--sky50);border:1px solid var(--sky100);font-size:11.5px;color:var(--sky700)
+  }
+  .artifact-rail svg{width:14px;height:14px;flex:none}
+
+  /* ── 结果上的微调 chips（第三层：不满意直接点）─────── */
+  .tweak-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .tweak-label{font-size:11px;color:var(--g400);flex:none}
+  .tweak{
+    border:1px solid var(--g300);background:#fff;border-radius:999px;padding:3.5px 10px;
+    font-size:11.5px;color:var(--g700);display:flex;align-items:center;gap:5px
+  }
+  .tweak:hover{background:var(--g50);border-color:var(--g400)}
+  .tweak svg{width:12px;height:12px;color:var(--g500)}
+
+  /* ── 输入区：照 ChatInput.vue 的真实胶囊工具栏还原 ─────── */
+  .composer{border-top:1px solid var(--g200);padding:12px 16px 14px;background:#fcfcfd;position:relative}
+  .param-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+  .param-chips:empty{display:none}
+  .pchip{
+    display:flex;align-items:center;gap:5px;background:#eff6ff;border:1px solid #bfdbfe;
+    color:#1d4ed8;border-radius:6px;padding:2px 7px;font-size:11px
+  }
+  .pchip b{font-weight:600}
+  .pchip button{display:flex;color:#1d4ed8;opacity:.55}
+  .pchip button:hover{opacity:1}
+  .pchip svg{width:10px;height:10px}
+
+  .composer-box{border:1px solid var(--g300);border-radius:12px;background:#fff}
+  .composer-box:focus-within{border-color:#1677ff;box-shadow:0 0 0 3px rgba(22,119,255,.10)}
+  .composer-ta{
+    width:100%;border:none;outline:none;resize:none;padding:10px 12px 2px;font-size:13px;
+    line-height:1.7;color:var(--g800);background:transparent;min-height:50px;
+    border-radius:12px 12px 0 0
+  }
+  .composer-ta::placeholder{color:var(--g400)}
+  .composer-bar{display:flex;align-items:center;gap:4px;padding:4px 7px 7px;min-height:36px}
+
+  /* 加号按钮：真实实现是 w-7 h-7 圆形，展开时旋转 45° */
+  .plus-btn{
+    width:28px;height:28px;border-radius:50%;display:flex;align-items:center;
+    justify-content:center;color:var(--g400);flex:none;transition:transform .2s,background .15s,color .15s
+  }
+  .plus-btn:hover{background:var(--g100);color:#1677ff}
+  .plus-btn.on{background:var(--g100);color:#1677ff;transform:rotate(45deg)}
+  .plus-btn svg{width:17px;height:17px}
+
+  /* 底部胶囊：单行、不换行，所以「图像参数」只能收进加号菜单 */
+  .pill-btn{
+    display:flex;align-items:center;gap:4px;height:26px;padding:0 8px;border-radius:999px;
+    font-size:11.5px;color:var(--g500);white-space:nowrap;flex:none;max-width:8.5rem
+  }
+  .pill-btn:hover{background:var(--g100)}
+  .pill-btn.hl{background:rgba(22,119,255,.10);color:#1677ff;font-weight:600}
+  .pill-btn svg{width:13px;height:13px;flex:none;opacity:.9}
+  .pill-btn span{overflow:hidden;text-overflow:ellipsis}
+  .bar-note{font-size:10.5px;color:var(--g400);margin-left:4px;white-space:nowrap}
+  .model-chip{margin-left:auto;font-size:11px;color:var(--g500);white-space:nowrap;padding:0 4px;flex:none}
+  .send{
+    width:30px;height:30px;border-radius:50%;background:#1677ff;color:#fff;flex:none;
+    display:flex;align-items:center;justify-content:center;box-shadow:0 1px 2px rgba(22,119,255,.35)
+  }
+  .send:hover{opacity:.9}
+  .send svg{width:16px;height:16px}
+  .composer-hint{font-size:10.5px;color:var(--g400);margin:7px 2px 0;line-height:1.6}
+  .demo-toggle{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:10.5px;color:var(--g400);cursor:pointer}
+  .demo-toggle select{
+    font-size:10.5px;color:var(--g600);border:1px solid var(--g300);border-radius:6px;
+    padding:2px 6px;background:#fff;cursor:pointer
+  }
+
+  /* 加号菜单：w-52 = 208px，与真实实现一致 */
+  .plus-menu{
+    position:absolute;left:16px;bottom:calc(100% - 6px);width:208px;background:#fff;
+    border:1px solid var(--g200);border-radius:12px;padding:5px 0;display:none;z-index:30;
+    box-shadow:0 14px 36px -10px rgba(15,23,42,.28)
+  }
+  .plus-menu.show{display:block}
+  .pm-item{
+    display:flex;align-items:center;gap:10px;width:100%;padding:6.5px 12px;
+    font-size:12.5px;color:var(--g700);text-align:left
+  }
+  .pm-item:hover{background:#eff6ff;color:#1677ff}
+  .pm-item svg.pm-ic{width:17px;height:17px;flex:none}
+  .pm-item .pm-trail{margin-left:auto;display:flex;align-items:center;gap:5px;font-size:10px;color:var(--g400);flex:none}
+  .pm-item .pm-trail svg{width:12px;height:12px;opacity:.5}
+  .pm-item.disabled{opacity:.42;cursor:not-allowed}
+  .pm-item.disabled:hover{background:transparent;color:var(--g700)}
+  .pm-item.on{background:#eff6ff;color:#1677ff}
+  .pm-new{
+    font-size:9px;font-weight:700;letter-spacing:.03em;padding:1px 4px;border-radius:4px;
+    background:var(--viol100);color:var(--viol700)
+  }
+  .pm-sep{height:1px;background:var(--g100);margin:4px 10px}
+  .pm-head{
+    font-size:9.5px;font-weight:700;letter-spacing:.06em;color:var(--g400);
+    padding:6px 12px 3px;text-transform:uppercase
+  }
+
+  /* 图像参数 flyout：与技能中心 / MCP 一致，从菜单右侧飞出 */
+  .img-flyout{
+    position:absolute;left:calc(16px + 208px + 6px);bottom:calc(100% - 6px);width:430px;
+    background:#fff;border:1px solid var(--g200);border-radius:12px;display:none;z-index:31;
+    box-shadow:0 18px 44px -12px rgba(15,23,42,.30);overflow:hidden
+  }
+  .img-flyout.show{display:block}
+  .pp-head{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--g200)}
+  .pp-head b{font-size:12.5px}
+  .pp-head span{font-size:10.5px;color:var(--g400)}
+  .pp-head button{margin-left:auto;width:22px;height:22px;display:flex;align-items:center;justify-content:center;color:var(--g400);border-radius:5px}
+  .pp-head button:hover{background:var(--g100);color:var(--g700)}
+  .pp-head svg{width:13px;height:13px}
+  .pp-body{padding:8px 14px 4px}
+  .pp-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px dashed var(--g100)}
+  .pp-row:first-child{border-top:none}
+  .pp-k{font-size:11.5px;color:var(--g500);width:44px;flex:none}
+  .pp-vals{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+
+  .ratio-opt{
+    display:flex;flex-direction:column;align-items:center;gap:4px;border:1px solid var(--g200);
+    background:#fff;border-radius:8px;padding:6px 9px;min-width:54px
+  }
+  .ratio-opt:hover{border-color:var(--g400);background:var(--g50)}
+  .ratio-opt.on{border-color:#1677ff;background:#eff6ff}
+  .ratio-opt.on .ratio-opt-box{border-color:#1677ff}
+  .ratio-opt.on .ratio-opt-txt{color:#1677ff;font-weight:600}
+  .ratio-opt-box{border:1.5px solid var(--g400);border-radius:2px;display:block}
+  .ratio-opt-txt{font-size:10px;color:var(--g500);line-height:1}
+  .opt{
+    border:1px solid var(--g200);background:#fff;border-radius:7px;padding:4px 9px;
+    font-size:11.5px;color:var(--g600)
+  }
+  .opt:hover{background:var(--g50)}
+  .opt.on{border-color:#1677ff;background:#eff6ff;color:#1677ff;font-weight:600}
+  .pp-foot{
+    display:flex;align-items:center;gap:8px;padding:9px 14px;border-top:1px solid var(--g100);
+    background:var(--g50)
+  }
+  .pp-foot span{font-size:10.5px;color:var(--g400);line-height:1.5;margin-right:auto}
+  .pp-foot .btn-primary{background:#1677ff;border-radius:7px;padding:4px 12px;font-size:11.5px}
+
+  /* 系统未开启时的说明条 */
+  .off-tip{display:flex;align-items:flex-start;gap:7px;margin-top:6px;font-size:10.5px;color:var(--g400);line-height:1.6}
+
+  /* ── 场景 3：智能体工具 ───────────────────────────────── */
+  .tb{border:1px solid var(--g200);border-radius:12px;overflow:hidden;background:#fff}
+  .tb-head{
+    display:grid;grid-template-columns:1fr 96px 130px;gap:10px;padding:9px 14px;background:var(--g50);
+    border-bottom:1px solid var(--g200);font-size:10.5px;font-weight:700;color:var(--g400);
+    letter-spacing:.04em;text-transform:uppercase
+  }
+  .tb-row{
+    display:grid;grid-template-columns:1fr 96px 130px;gap:10px;padding:13px 15px;
+    border-bottom:1px solid var(--g100);align-items:center
+  }
+  .tb-row:last-child{border-bottom:none}
+  .tb-row.hl{background:var(--viol50);box-shadow:inset 3px 0 0 var(--viol700)}
+  .tb-row.dim{opacity:.55}
+  .tr-name{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--g800)}
+  .tr-name code{font-size:11px;font-weight:500;color:var(--g600);background:var(--g100);border-radius:4px;padding:1px 5px}
+  .tr-desc{font-size:11px;color:var(--g500);margin-top:4px;line-height:1.75;max-width:560px}
+  .tr-cat{font-size:11px;color:var(--g600)}
+  .tr-cat span{background:var(--g100);border-radius:5px;padding:1px 6px}
+  .notice{
+    display:flex;gap:9px;padding:11px 13px;border-radius:10px;background:var(--am50);
+    border:1px solid var(--am200);margin-bottom:12px
+  }
+  .notice svg{width:15px;height:15px;color:var(--am600);flex:none;margin-top:1px}
+  .notice p{margin:0;font-size:11.5px;color:var(--am700);line-height:1.7}
+  .notice code{background:#fff;border-radius:4px;padding:0 4px;font-size:10.5px}
+
+  /* ── 场景 4：链路 ─────────────────────────────────────── */
+  .flow{
+    display:flex;align-items:stretch;gap:0;flex-wrap:wrap;background:#fff;border:1px solid var(--g200);
+    border-radius:12px;padding:16px;margin-bottom:16px
+  }
+  .step{
+    flex:1 1 0;min-width:132px;border:1px solid var(--g200);border-radius:10px;padding:10px 11px;
+    background:var(--g50);position:relative
+  }
+  .step b{font-size:11.5px;display:block;color:var(--g900)}
+  .step span{font-size:10.5px;color:var(--g500);display:block;margin-top:3px;line-height:1.55}
+  .step .n{
+    position:absolute;top:-7px;left:9px;background:var(--slate900);color:#fff;font-size:9px;
+    font-weight:700;border-radius:4px;padding:0 4px
+  }
+  .arrow{
+    display:flex;align-items:center;color:var(--g300);padding:0 5px;flex:none
+  }
+  .arrow svg{width:14px;height:14px}
+  .dt{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--g200);border-radius:12px;overflow:hidden}
+  .dt caption{
+    text-align:left;font-size:12.5px;font-weight:650;padding:12px 14px;border-bottom:1px solid var(--g200);
+    background:var(--g50)
+  }
+  .dt th{
+    text-align:left;font-size:10.5px;color:var(--g400);font-weight:700;letter-spacing:.04em;
+    text-transform:uppercase;padding:8px 14px;border-bottom:1px solid var(--g200);background:#fcfcfd
+  }
+  .dt td{padding:10px 14px;font-size:12px;color:var(--g700);border-bottom:1px solid var(--g100);vertical-align:top;line-height:1.65}
+  .dt tr:last-child td{border-bottom:none}
+  .dt td.dec{font-weight:600;color:var(--g900);width:200px}
+  .dt code{background:var(--g100);border-radius:4px;padding:1px 4px;font-size:11px;color:var(--g700)}
+  .dt .why{color:var(--g500);font-size:11.5px}
+  .pill{
+    display:inline-block;font-size:10px;font-weight:700;border-radius:5px;padding:1px 6px;margin-right:5px
+  }
+  .pill.ok{background:var(--em50);color:var(--em700);border:1px solid var(--em100)}
+  .pill.no{background:var(--rose50);color:var(--rose700);border:1px solid var(--rose200)}
+  .pill.warn{background:var(--am50);color:var(--am700);border:1px solid var(--am200)}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
+  .panel{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:14px 16px}
+  .panel h3{font-size:12.5px;margin:0 0 8px;font-weight:650}
+  .panel ul{margin:0;padding-left:16px}
+  .panel li{font-size:11.5px;color:var(--g600);line-height:1.85}
+  .panel li code{background:var(--g100);border-radius:4px;padding:0 4px;font-size:10.5px}
+  .panel .sub{font-size:11px;color:var(--g400);margin:0 0 8px;line-height:1.6}
+
+  @media (max-width:1080px){
+    .settings-grid{grid-template-columns:1fr}
+    .side{border-right:none;border-bottom:1px solid var(--g200);display:flex;gap:4px;overflow-x:auto;padding:8px}
+    .side-head{display:none}
+    .side-item{white-space:nowrap;margin:0}
+    .field{grid-template-columns:1fr;gap:6px}
+    .cols{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="proto-head">
+    <h1>图像生成 · 系统设置「图像」分组 + 智能体工具调用闭环</h1>
+    <p>
+      平台目前只有<b>看图</b>能力（<code>read_image</code> 走多模态模型识别），没有<b>画图</b>能力。
+      本原型给出完整闭环：<b>系统设置 → 图像</b>配好模型服务 → 平台自动向智能体暴露 <code>generate_image</code> 工具 →
+      用户在对话里说「画一张…」→ 图片直接渲染在消息里，可预览可下载。
+      四个场景分别是：① 配置界面 ② 对话里实际使用 ③ 智能体里怎么勾选 ④ 调用链路与实测取舍。
+    </p>
+  </div>
+
+  <div class="tabs">
+    <button class="tab on" data-scene="s1"><span class="no">1</span>系统设置 · 图像分组</button>
+    <button class="tab" data-scene="s2"><span class="no">2</span>对话 · 生图闭环</button>
+    <button class="tab" data-scene="s3"><span class="no">3</span>智能体 · 工具启用</button>
+    <button class="tab" data-scene="s4"><span class="no">4</span>调用链路与取舍</button>
+  </div>
+
+  <!-- ════════════════ 场景 1：系统设置 ════════════════ -->
+  <section class="scene on" id="s1">
+    <div class="win">
+      <div class="win-bar">
+        <span class="dot" style="background:#fca5a5"></span>
+        <span class="dot" style="background:#fcd34d"></span>
+        <span class="dot" style="background:#86efac"></span>
+        <span class="win-title">系统管理 → 系统设置 → 参数设置</span>
+      </div>
+
+      <div class="settings-grid">
+        <!-- 分组侧栏 -->
+        <aside class="side">
+          <div class="side-head">参数分组</div>
+          <button class="side-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.5 6h9M4.5 6h2m13 6h-2m-4 0h-7m9 6h4m-13 0h5"/><circle cx="7.5" cy="6" r="1.5"/><circle cx="15.5" cy="12" r="1.5"/><circle cx="12.5" cy="18" r="1.5"/></svg>
+            常规设置<span class="cnt">9</span>
+          </button>
+          <button class="side-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="5" width="14" height="14" rx="2.5"/><path d="M9 9h6v6H9z"/></svg>
+            智能体<span class="cnt">14</span>
+          </button>
+          <button class="side-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12a8 8 0 1 1 8 8"/><path d="M4 12h4"/></svg>
+            上下文管理<span class="cnt">6</span>
+          </button>
+          <button class="side-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v4m0 10v4M3 12h4m10 0h4"/><circle cx="12" cy="12" r="3"/></svg>
+            元数据 &amp; RAG<span class="cnt">11</span>
+          </button>
+          <button class="side-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z"/><path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7"/></svg>
+            知识库<span class="cnt">11</span>
+          </button>
+          <button class="side-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+            智能报表<span class="cnt">7</span>
+          </button>
+          <button class="side-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 8l2.5 8L12 6l4.5 10L19 8"/></svg>
+            安全沙箱<span class="cnt">13</span>
+          </button>
+          <button class="side-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
+            邮件服务<span class="cnt">6</span>
+          </button>
+          <button class="side-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z"/></svg>
+            凭证策略<span class="cnt">2</span>
+          </button>
+          <button class="side-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 6l4 4-9 9H5v-4l9-9z"/><path d="M4 21h16"/></svg>
+            其他参数<span class="cnt">4</span>
+          </button>
+          <!-- 新增分组 -->
+          <button class="side-item on new">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l5-4 4 3 3-2.5 4 3.5"/></svg>
+            图像
+            <span class="tag-new">NEW</span>
+            <span class="cnt">8</span>
+          </button>
+        </aside>
+
+        <!-- 内容区 -->
+        <div>
+          <div class="main">
+            <div class="card-head">
+              <div class="card-head-ic">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l5-4 4 3 3-2.5 4 3.5"/></svg>
+              </div>
+              <div>
+                <h2>图像<span>Image Generation</span></h2>
+                <p>
+                  接入一个 OpenAI 兼容的图像生成服务。启用后平台会向智能体暴露
+                  <code style="background:var(--g100);border-radius:4px;padding:0 4px;font-size:11px">generate_image</code>
+                  工具，用户在对话里说「画一张…」即可出图，图片直接显示在消息中，无需跳转外部页面。
+                </p>
+              </div>
+            </div>
+
+            <!-- 总开关 -->
+            <div class="master">
+              <div class="switch on" id="masterSwitch" role="switch" aria-checked="true" tabindex="0"></div>
+              <div class="master-txt">
+                <b>启用图像生成</b>
+                <span>关闭后 <code style="background:#fff;border:1px solid var(--g200);border-radius:4px;padding:0 4px;font-size:10.5px">generate_image</code> 不会下发给任何智能体，模型看不到这个工具，也不会产生空调用；已生成的图片与产物链接保留。</span>
+              </div>
+            </div>
+
+            <div class="off-note" id="offNote">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v5m0 3h.01"/></svg>
+              <p>图像生成当前<b>已关闭</b>。下面的连接与生成参数会保留但不下发生效，重新打开即可沿用上次配置。</p>
+            </div>
+
+            <!-- 明细 -->
+            <div class="off-body show" id="detailBody">
+
+              <div class="fgroup">
+                <div class="fgroup-head"><h3>模型服务</h3><span class="hint">先定协议，再定地址</span></div>
+                <div class="fgroup-sub">同一个网关往往同时提供多种上游协议，<b>同一个模型可能只支持其中一种</b>。先选格式，地址与模型都按它拼装。</div>
+
+                <div class="field">
+                  <div class="field-label">
+                    <div class="k">接口格式</div>
+                    <span class="key">image_api_format</span>
+                  </div>
+                  <div class="field-body">
+                    <div class="fmt-select" id="fmtSelect">
+                      <button class="fmt-trigger" type="button" id="fmtTrigger" aria-expanded="false">
+                        <span class="fmt-cur">
+                          <span class="fmt-cur-title" id="fmtCurTitle">原生 OpenAI 图像格式</span>
+                          <span class="fmt-cur-path" id="fmtCurPath">POST {API 地址}/images/generations</span>
+                        </span>
+                        <svg class="fmt-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6"/></svg>
+                      </button>
+                      <div class="fmt-panel" id="fmtPanel">
+                        <button class="fmt-opt on" type="button" value="openai_images"
+                                data-title="原生 OpenAI 图像格式" data-path="POST {API 地址}/images/generations">
+                          <span class="fmt-opt-title">原生 OpenAI 图像格式 <em class="fmt-badge">推荐</em></span>
+                          <span class="fmt-opt-path">POST {API 地址}/images/generations</span>
+                          <span class="fmt-opt-note">生图专用接口：size 真实生效并回显 · 支持 n 一次出多张 · 参数写错会明确报错</span>
+                        </button>
+                        <button class="fmt-opt" type="button" value="openai_chat"
+                                data-title="OpenAI 聊天格式" data-path="POST {API 地址}/chat/completions">
+                          <span class="fmt-opt-title">OpenAI 聊天格式</span>
+                          <span class="fmt-opt-path">POST {API 地址}/chat/completions</span>
+                          <span class="fmt-opt-note">兼容性最广、模型 id 宽松匹配 · 一次只能一张 · 尺寸格式不对会被静默忽略</span>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="desc">
+                      选错格式的典型症状：<b>404</b>（路径不对）、<b>Model mismatch</b> 或 <b>No available channel</b>（该渠道不支持这个协议）、
+                      以及「出图了但尺寸/张数没生效」（协议不认识这些参数）。改完点下方「测试生成」立刻验证，不用进对话试。<br>
+                      网关另有 <code>Gemini 原生格式</code> 与 <code>通义千问格式</code>，当前版本未接入：前者缺可验证的渠道（响应体结构未能实测），
+                      后者返回图片 URL 需要二次下载、且同一模型走原生 OpenAI 格式已能正常出图，没有额外收益。
+                    </div>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="field-label">
+                    <div class="k">API 地址</div>
+                    <span class="key">image_api_base_url</span>
+                  </div>
+                  <div class="field-body">
+                    <input class="inp mono" id="baseUrlInput" value="https://api.example.com/v1">
+                    <div class="desc">末尾不要带 <code>/</code>。前两种格式填到<b>含版本号前缀</b>为止（如 <code>https://api.example.com/v1</code>，平台自己接 <code>/images/generations</code> 或 <code>/chat/completions</code>）；Gemini 原生格式填到<b>根地址</b>（如 <code>https://api.example.com</code>，平台拼 <code>/v1beta/models/…</code>）。示例值不是真实网关。</div>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="field-label">
+                    <div class="k">API 密钥</div>
+                    <span class="key">image_api_key</span>
+                  </div>
+                  <div class="field-body">
+                    <div class="with-btn">
+                      <input class="inp mono" type="password" id="apiKey" value="sk-example-placeholder-not-a-real-key" style="flex:1">
+                      <button class="eye" id="eyeBtn" title="显示 / 隐藏">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                      </button>
+                    </div>
+                    <div class="desc">按凭据加密存储（<code>ENCRYPTION_KEY</code>），接口列表中显示为掩码；留空提交表示<b>保持原值不变</b>。此处为原型占位值，不是真实密钥。</div>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="field-label">
+                    <div class="k">模型</div>
+                    <span class="key">image_model</span>
+                  </div>
+                  <div class="field-body">
+                    <div class="with-btn">
+                      <input class="inp mono" id="modelInput" value="qwen-image-21-turbo" style="flex:1">
+                      <button class="pick-btn" id="pickModelBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>
+                        从列表选择
+                      </button>
+                    </div>
+                    <div class="desc">
+                      必须与 <code>GET {API 地址}/models</code> 返回的 <code>id</code> 完全一致——手打容易差一个字母就 404，点右侧按钮直接拉列表选更稳。
+                      部分网关会对模型做<b>别名映射</b>：你填的 id 与响应体 <code>model</code> 字段自报的上游名可能不一致，属正常现象，不影响调用。
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="fgroup">
+                <div class="fgroup-head"><h3>生成参数</h3><span class="hint">下发给模型的默认值</span></div>
+
+                <div class="field">
+                  <div class="field-label">
+                    <div class="k">默认分辨率</div>
+                    <span class="key">image_default_size</span>
+                  </div>
+                  <div class="field-body">
+                    <select class="inp inp-sm" style="width:150px">
+                      <option>1024x1024</option>
+                      <option>1328x1328</option>
+                      <option>1664x928</option>
+                      <option>928x1664</option>
+                    </select>
+                    <div class="desc">
+                      用户没在对话里指定比例时用这个。<b>格式必须是 <code>宽x高</code></b>——实测传 <code>1328*1328</code>（星号）
+                      接口不报错但会静默回退成 1024×1024，平台内部统一按 <code>x</code> 拼接。
+                    </div>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="field-label">
+                    <div class="k">允许的分辨率</div>
+                    <span class="key">image_allowed_sizes</span>
+                  </div>
+                  <div class="field-body">
+                    <div class="chips" id="sizeChips">
+                      <button class="chip on" data-ratio="1:1 · 方形">
+                        <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4"><path d="M5 12l5 5 9-9"/></svg></span>
+                        1024x1024 <span class="ratio">1:1</span>
+                      </button>
+                      <button class="chip on" data-ratio="1:1 · 方形">
+                        <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4"><path d="M5 12l5 5 9-9"/></svg></span>
+                        1328x1328 <span class="ratio">1:1</span>
+                      </button>
+                      <button class="chip on" data-ratio="16:9 · 横版">
+                        <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4"><path d="M5 12l5 5 9-9"/></svg></span>
+                        1664x928 <span class="ratio">16:9</span>
+                      </button>
+                      <button class="chip on" data-ratio="9:16 · 竖版">
+                        <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4"><path d="M5 12l5 5 9-9"/></svg></span>
+                        928x1664 <span class="ratio">9:16</span>
+                      </button>
+                      <button class="chip" data-ratio="4:3 · 横版">
+                        <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4"><path d="M5 12l5 5 9-9"/></svg></span>
+                        1328x1008 <span class="ratio">4:3</span>
+                      </button>
+                    </div>
+                    <div class="desc">勾选的才写进工具说明，模型只能从中挑，避免它编出一个服务端不认的尺寸被静默降级。</div>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="field-label">
+                    <div class="k">请求超时</div>
+                    <span class="key">image_timeout_seconds</span>
+                  </div>
+                  <div class="field-body">
+                    <div class="with-unit">
+                      <input class="inp inp-sm" value="120">
+                      <span class="unit">秒</span>
+                    </div>
+                    <div class="desc">覆盖整次 HTTP 往返。实测单张 1024×1024 约 4~5 秒，横版大图约 6~7 秒；给足余量是为了应对排队。</div>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="field-label">
+                    <div class="k">单次最多张数</div>
+                    <span class="key">image_max_images_per_call</span>
+                  </div>
+                  <div class="field-body">
+                    <div class="with-unit">
+                      <input class="inp inp-sm" value="1">
+                      <span class="unit">张（上限 4）</span>
+                    </div>
+                    <div class="desc">模型在一次工具调用里最多能要几张。设 1 时每张单独出、单独计费，也最容易看清每张的耗时。</div>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <div class="field-label">
+                    <div class="k">风格前缀</div>
+                    <span class="key">image_prompt_prefix</span>
+                  </div>
+                  <div class="field-body">
+                    <input class="inp" placeholder="可留空，例如：企业级扁平插画，主色 #0f172a / #2563eb，留白充足" style="max-width:520px">
+                    <div class="desc">非空时会拼在用户提示词前面，用来统一企业视觉调性。留空则完全按用户描述生成。</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 测试 -->
+              <div class="tester">
+                <div class="tester-head">
+                  <b>测试生成</b>
+                  <span>用当前填写的配置真实调一次，不落库、不计入统计</span>
+                </div>
+                <div class="tester-row">
+                  <input class="inp" id="testPrompt" value="一只戴圆框眼镜、正在敲键盘的橘猫，扁平插画风格，纯色背景" style="flex:1">
+                  <button class="btn-dark" id="testBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M13 2L4.5 13H11l-1 9 8.5-11H12l1-9z"/></svg>
+                    生成
+                  </button>
+                </div>
+                <div class="test-result" id="testResult">
+                  <div class="test-thumb">
+                    <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice">
+                      <rect width="100" height="100" fill="#e6d9c0"/>
+                      <ellipse cx="50" cy="72" rx="26" ry="21" fill="#e89a3c"/>
+                      <path d="M27 46c0-13 10-22 23-22s23 9 23 22-10 22-23 22-23-9-23-22z" fill="#f0a94f"/>
+                      <path d="M30 32l-3-14 13 8z" fill="#f0a94f"/>
+                      <path d="M70 32l3-14-13 8z" fill="#f0a94f"/>
+                      <circle cx="41" cy="45" r="8.6" fill="none" stroke="#2b2b2b" stroke-width="2.4"/>
+                      <circle cx="59" cy="45" r="8.6" fill="none" stroke="#2b2b2b" stroke-width="2.4"/>
+                      <path d="M49.6 45h.8" stroke="#2b2b2b" stroke-width="2.4"/>
+                      <circle cx="41" cy="45" r="3" fill="#3b3b3b"/>
+                      <circle cx="59" cy="45" r="3" fill="#3b3b3b"/>
+                      <path d="M47 56h6l-3 3z" fill="#d97e79"/>
+                      <path d="M50 59v3M50 62c-1.6 2-4.5 2-6 0M50 62c1.6 2 4.5 2 6 0" stroke="#8b6b4a" stroke-width="1.1" fill="none"/>
+                      <rect x="26" y="80" width="48" height="13" rx="3" fill="#33383f"/>
+                      <ellipse cx="42" cy="84" rx="7" ry="4.4" fill="#f7e6c8"/>
+                      <ellipse cx="58" cy="84" rx="7" ry="4.4" fill="#f7e6c8"/>
+                    </svg>
+                  </div>
+                  <div class="test-meta">
+                    <div class="ok">✓ 连接正常，生成成功</div>
+                    <div><span class="kv">模型</span> qwen-image-21-turbo <span style="color:var(--g300)">→</span> 响应体回报上游名（别名映射，正常）</div>
+                    <div><span class="kv">尺寸</span> 1024×1024 &nbsp;·&nbsp; <span class="kv">耗时</span> 4.16s（生成 3.01s）&nbsp;·&nbsp; <span class="kv">大小</span> 891 KB</div>
+                    <div><span class="kv">产物</span> 已发布为带签名的下载链接（30 天有效）</div>
+                    <span class="url">/api/v1/chat/generated-files/7f3b4431a8d24c0e9b71d3f5a2c9e801?token=Xq7vR2...</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <div class="main-foot">
+            <div class="dirty"><i></i>有 2 项未保存</div>
+            <button class="btn-ghost">重置</button>
+            <button class="btn-primary">保存配置</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模型选择弹窗 -->
+    <div class="mask" id="modelMask">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="modal-head">
+          <div>
+            <h3 id="modalTitle">选择模型</h3>
+            <p>
+              即时请求 <code id="modalEndpoint">GET https://api.example.com/v1/models</code>，
+              用上方已填的地址与密钥，无需先保存
+            </p>
+          </div>
+          <button class="modal-x" id="modalClose" aria-label="关闭">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+
+        <div class="modal-tools">
+          <input class="inp" id="modelSearch" placeholder="搜索模型 id，例如 image">
+          <div class="seg" id="modelSeg">
+            <button class="on" data-filter="all">全部 33</button>
+            <button data-filter="image">图像 1</button>
+            <button data-filter="other">其他 32</button>
+          </div>
+          <button class="refresh" id="modalRefresh" title="重新拉取">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+          </button>
+        </div>
+
+        <div class="modal-list" id="modelList"></div>
+
+        <div class="modal-foot">
+          <span class="modal-hint" id="modalHint">选择一个模型</span>
+          <span class="demo-link" id="demoFail" title="演示：密钥失效时的错误态">演示失败态</span>
+          <button class="btn-ghost" id="modalCancel">取消</button>
+          <button class="btn-primary" id="modalUse" disabled>使用该模型</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ 场景 2：对话闭环 ════════════════ -->
+  <section class="scene" id="s2">
+    <div class="win chat-win">
+      <div class="win-bar">
+        <span class="dot" style="background:#fca5a5"></span>
+        <span class="dot" style="background:#fcd34d"></span>
+        <span class="dot" style="background:#86efac"></span>
+        <span class="chat-title">智能体「品牌内容助手」 · DeepSeek-V4-Pro</span>
+      </div>
+      <div class="chat-body">
+
+        <!-- 用户 -->
+        <div class="msg me">
+          <div class="ava u">陈</div>
+          <div class="bubble">
+            <div class="who">陈晓龙 · 15:52</div>
+            <div class="text">帮我出一张年会主视觉：数据流光 + 蓝金配色，要有科技感但别太花，横版给大屏用。</div>
+          </div>
+        </div>
+
+        <!-- 助手 -->
+        <div class="msg">
+          <div class="ava a">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M9 10h.01M15 10h.01M9.5 15c1.6 1.2 3.4 1.2 5 0"/></svg>
+          </div>
+          <div class="bubble">
+            <div class="who">品牌内容助手 · 15:52</div>
+
+            <!-- 工具调用卡 -->
+            <div class="tool-card open">
+              <div class="tool-head" data-toggle>
+                <span class="tool-ic">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M4 17l5-4 4 3 3-2.5 4 3.5"/></svg>
+                </span>
+                <span class="tool-name">generate_image</span>
+                <span class="tool-arg">1664x928 · 1 张</span>
+                <span class="tool-state">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5 9-9"/></svg>
+                  6.4s
+                </span>
+                <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+              <div class="tool-body">
+                <pre class="code"><span class="c">// 入参（平台按系统设置的允许尺寸校验后下发）</span>
+{
+  <span class="k">"prompt"</span>: <span class="s">"年会主视觉：数据流光、蓝金配色、科技感、留白充足、横版"</span>,
+  <span class="k">"size"</span>:   <span class="s">"1664x928"</span>,
+  <span class="k">"n"</span>:      <span class="n">1</span>
+}
+
+<span class="c">// 出参（工具内部已完成：调模型 → base64 落盘 → 发布产物）</span>
+{
+  <span class="k">"ok"</span>: <span class="n">true</span>,
+  <span class="k">"images"</span>: [{
+    <span class="k">"filename"</span>: <span class="s">"annual-gala-kv-20261119-155214.png"</span>,
+    <span class="k">"mime_type"</span>: <span class="s">"image/png"</span>,
+    <span class="k">"size"</span>: <span class="n">2418763</span>,
+    <span class="k">"width"</span>: <span class="n">1664</span>, <span class="k">"height"</span>: <span class="n">928</span>,
+    <span class="k">"download_url"</span>: <span class="s">"/api/v1/chat/generated-files/9c1a...?token=..."</span>
+  }],
+  <span class="k">"model"</span>: <span class="s">"qwen-image-21-turbo"</span>,
+  <span class="k">"elapsed_ms"</span>: <span class="n">6387</span>
+}</pre>
+              </div>
+            </div>
+
+            <!-- 生成结果 -->
+            <div class="gen-card">
+              <div class="gen-img">
+                <svg viewBox="0 0 832 464" preserveAspectRatio="xMidYMid slice">
+                  <defs>
+                    <linearGradient id="bg1" x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0" stop-color="#0b1020"/>
+                      <stop offset="55%" stop-color="#101a3a"/>
+                      <stop offset="100%" stop-color="#1a1230"/>
+                    </linearGradient>
+                    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0" stop-color="#f5c451"/>
+                      <stop offset="100%" stop-color="#fde9a9"/>
+                    </linearGradient>
+                    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0" stop-color="#3b82f6"/>
+                      <stop offset="100%" stop-color="#22d3ee"/>
+                    </linearGradient>
+                    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+                      <stop offset="0" stop-color="#3b82f6" stop-opacity=".55"/>
+                      <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
+                    </radialGradient>
+                  </defs>
+                  <rect width="832" height="464" fill="url(#bg1)"/>
+                  <ellipse cx="620" cy="200" rx="300" ry="220" fill="url(#glow)"/>
+                  <!-- 数据流光曲线 -->
+                  <g fill="none" stroke-linecap="round" opacity=".9">
+                    <path d="M-20 330c120-40 180-150 300-160s200 90 320 50 180-90 260-70" stroke="url(#blue)" stroke-width="2.2"/>
+                    <path d="M-20 370c130-30 190-130 300-140s210 80 330 46 170-80 250-60" stroke="url(#blue)" stroke-width="1.4" opacity=".6"/>
+                    <path d="M-20 290c110-46 170-166 296-176s196 96 316 56 176-96 256-76" stroke="url(#gold)" stroke-width="1.8" opacity=".8"/>
+                  </g>
+                  <!-- 柱状数据 -->
+                  <g opacity=".55">
+                    <rect x="120" y="300" width="9" height="60" rx="4.5" fill="url(#gold)"/>
+                    <rect x="146" y="270" width="9" height="90" rx="4.5" fill="url(#blue)"/>
+                    <rect x="172" y="316" width="9" height="44" rx="4.5" fill="url(#gold)"/>
+                    <rect x="198" y="246" width="9" height="114" rx="4.5" fill="url(#blue)"/>
+                    <rect x="224" y="286" width="9" height="74" rx="4.5" fill="url(#gold)"/>
+                  </g>
+                  <!-- 粒子 -->
+                  <g fill="#fde9a9" opacity=".75">
+                    <circle cx="640" cy="120" r="2.4"/><circle cx="700" cy="180" r="1.8"/>
+                    <circle cx="676" cy="86" r="1.4"/><circle cx="736" cy="120" r="2"/>
+                    <circle cx="590" cy="70" r="1.5"/><circle cx="770" cy="200" r="1.6"/>
+                  </g>
+                  <g fill="#7dd3fc" opacity=".7">
+                    <circle cx="470" cy="96" r="1.8"/><circle cx="520" cy="60" r="1.3"/>
+                    <circle cx="430" cy="140" r="1.5"/><circle cx="556" cy="132" r="1.1"/>
+                  </g>
+                  <!-- 文案区 -->
+                  <g>
+                    <text x="80" y="196" fill="url(#gold)" font-family="-apple-system,PingFang SC,sans-serif" font-size="47" font-weight="700" letter-spacing="3">2026 年度盛典</text>
+                    <text x="82" y="238" fill="#93a4c4" font-family="-apple-system,PingFang SC,sans-serif" font-size="15.5" letter-spacing="4.5">DATA · INTELLIGENCE · TOGETHER</text>
+                    <rect x="82" y="264" width="86" height="2.6" rx="1.3" fill="url(#gold)"/>
+                  </g>
+                  <!-- 网格底纹 -->
+                  <g stroke="#2b3b63" stroke-width=".7" opacity=".35">
+                    <path d="M0 420h832M0 400h832M0 380h832"/>
+                  </g>
+                </svg>
+              </div>
+              <div class="gen-bar">
+                <div class="gen-meta">
+                  <span>annual-gala-kv-20261119-155214.png</span>
+                  <i>·</i>
+                  <span>1664×928</span>
+                  <i>·</i>
+                  <span>2.31 MB</span>
+                  <i>·</i>
+                  <span>6.4s</span>
+                </div>
+                <div class="gen-actions">
+                  <button class="mini">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M15 3h6v6M21 3l-8 8"/><path d="M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/></svg>
+                    放大
+                  </button>
+                  <button class="mini dark">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                    下载
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="final-text">
+              已按 16:9 出图，蓝金主色、左侧留了标题区，直接可以贴到大屏。需要的话我可以再出一版竖版的手机端物料，或者把标题换成具体的年份和 Slogan。
+            </div>
+
+            <div class="tweak-row">
+              <span class="tweak-label">不满意？点一下就行：</span>
+              <button class="tweak" data-fill="再来一版，构图换一个思路，其他不变">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+                再来一版
+              </button>
+              <button class="tweak" data-fill="换成 9:16 竖版，其他保持不变">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="4" width="8" height="16" rx="1.5"/></svg>
+                换成竖版
+              </button>
+              <button class="tweak" data-fill="换成扁平插画风格，配色不变">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="9.5" r="1.2" fill="currentColor"/><circle cx="15" cy="9.5" r="1.2" fill="currentColor"/><path d="M8.5 15c2 1.6 5 1.6 7 0"/></svg>
+                换个风格
+              </button>
+              <button class="tweak" data-fill="背景再简洁一些，主体更突出">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7"/><path d="M12 5a7 7 0 0 1 0 14z" fill="currentColor" stroke="none"/></svg>
+                背景更简洁
+              </button>
+            </div>
+
+            <div class="artifact-rail">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+              这张图已存入「我的产物」，可在右侧产物栏统一查看与下载（同类图片自动归到 <b>图像</b> 分类）。
+            </div>
+          </div>
+        </div>
+
+        <!-- 第二轮 -->
+        <div class="msg me">
+          <div class="ava u">陈</div>
+          <div class="bubble">
+            <div class="who">陈晓龙 · 15:54</div>
+            <div class="text">再来一张竖版，手机端推文用，风格保持一致。</div>
+          </div>
+        </div>
+        <div class="msg">
+          <div class="ava a">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M9 10h.01M15 10h.01M9.5 15c1.6 1.2 3.4 1.2 5 0"/></svg>
+          </div>
+          <div class="bubble">
+            <div class="who">品牌内容助手 · 15:54</div>
+            <div class="tool-card" style="margin-bottom:0">
+              <div class="tool-head" data-toggle>
+                <span class="tool-ic">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M4 17l5-4 4 3 3-2.5 4 3.5"/></svg>
+                </span>
+                <span class="tool-name">generate_image</span>
+                <span class="tool-arg">928x1664 · 1 张</span>
+                <span class="tool-state">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5 9-9"/></svg>
+                  6.6s
+                </span>
+                <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+              <div class="tool-body">
+                <pre class="code">{
+  <span class="k">"prompt"</span>: <span class="s">"同风格竖版：年会主视觉、数据流光、蓝金配色、手机端推文"</span>,
+  <span class="k">"size"</span>:   <span class="s">"928x1664"</span>
+}
+<span class="c">// 尺寸由模型从「允许的分辨率」里挑，超范围的会先被工具拦下并直接告诉模型可用值</span></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 输入区：照真实 ChatInput 还原——底栏是单行胶囊，图像参数收进 + 菜单 -->
+        <div class="composer">
+          <div class="param-chips" id="paramChips"></div>
+
+          <div class="composer-box">
+            <textarea class="composer-ta" id="composerTa" rows="2"
+              placeholder="说说你想要什么图，比如「一张数据平台的新年海报，蓝金配色」——比例、风格不用管，我自己判断。"></textarea>
+            <div class="composer-bar">
+              <button class="plus-btn" id="plusBtn" title="添加附件或上下文">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 4v16m8-8H4"/></svg>
+              </button>
+              <button class="pill-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+                <span>数据 &amp; 知识库</span>
+              </button>
+              <button class="pill-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L4.5 13H11l-1 9 8.5-11H12l1-9z"/></svg>
+                <span>智能委派</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <span class="model-chip">DeepSeek-V4-Pro</span>
+              <button class="send" title="发送">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+              </button>
+            </div>
+          </div>
+          <p class="composer-hint">输入框底栏是单行的（真实实现里就这几个胶囊），加不下新按钮——所以把「图像参数」收进了左下角 <b>+</b> 菜单，紧挨在「专家中心」下面。</p>
+          <label class="demo-toggle">
+            <span>演示用 · 入口可用性：</span>
+            <select id="imgStateSel">
+              <option value="on">系统已开启 + 智能体已勾选</option>
+              <option value="sys-off">系统设置未开启图像</option>
+              <option value="agent-off">系统已开启，但当前智能体没勾这个工具</option>
+            </select>
+          </label>
+
+          <!-- 加号菜单：w-52 = 208px，与 ChatInput.vue 的真实实现一致 -->
+          <div class="plus-menu" id="plusMenu">
+            <button class="pm-item">
+              <svg class="pm-ic" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="1.9"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+              打开数据门户
+            </button>
+            <button class="pm-item">
+              <svg class="pm-ic" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="1.9"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5V5.5z"/><path d="M4 20.5A2.5 2.5 0 0 1 6.5 18H19v3H6.5"/></svg>
+              打开知识库中心
+            </button>
+            <button class="pm-item">
+              <svg class="pm-ic" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.9"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 20h8M12 17v3"/></svg>
+              浏览工作空间
+            </button>
+            <button class="pm-item">
+              <svg class="pm-ic" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.9"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+              上传本地文件
+            </button>
+            <div class="pm-sep"></div>
+            <button class="pm-item">
+              <svg class="pm-ic" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-3-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.3 7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 2.9-1.2V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.6 1z"/></svg>
+              <span>技能中心</span>
+              <span class="pm-trail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"/></svg></span>
+            </button>
+            <button class="pm-item">
+              <svg class="pm-ic" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.9"><path d="M10 4h4v3a2 2 0 0 0 2 2h3v4h-3a2 2 0 0 0-2 2v3h-4v-3a2 2 0 0 0-2-2H5v-4h3a2 2 0 0 0 2-2V4z"/></svg>
+              <span>MCP 工具</span>
+              <span class="pm-trail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"/></svg></span>
+            </button>
+            <button class="pm-item">
+              <svg class="pm-ic" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.9"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-4-.9L3 21l1.9-4.9A8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4z"/></svg>
+              <span>专家中心</span>
+              <span class="pm-trail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"/></svg></span>
+            </button>
+            <!-- 图像参数：紧挨在专家中心下面 -->
+            <button class="pm-item" id="imgParamItem">
+              <svg class="pm-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M4 17l5-4 4 3 3-2.5 4 3.5"/></svg>
+              <span>图像参数</span>
+              <span class="pm-trail" id="imgParamTrail"><span class="pm-new">NEW</span></span>
+            </button>
+            <div class="pm-sep"></div>
+            <button class="pm-item">
+              <svg class="pm-ic" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.9"><path d="M4 12a8 8 0 1 0 8-8"/><path d="M4 12H2m2 0 3-3"/></svg>
+              新会话
+            </button>
+          </div>
+
+          <!-- 图像参数字段浮层：与技能中心 / MCP 一样从菜单右侧飞出 -->
+          <div class="img-flyout" id="paramPop">
+            <div class="pp-head">
+              <b>图像参数</b>
+              <span>只影响本次生成</span>
+              <button id="paramClose">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              </button>
+            </div>
+            <div class="pp-body">
+              <div class="pp-row">
+                <div class="pp-k">比例</div>
+                <div class="pp-vals" id="ratioVals">
+                  <button class="ratio-opt on" data-ratio="auto">
+                    <span class="ratio-opt-box" style="width:18px;height:18px;border-style:dashed"></span>
+                    <span class="ratio-opt-txt">自动</span>
+                  </button>
+                  <button class="ratio-opt" data-ratio="1:1" data-size="1328x1328">
+                    <span class="ratio-opt-box" style="width:17px;height:17px"></span>
+                    <span class="ratio-opt-txt">1:1 方形</span>
+                  </button>
+                  <button class="ratio-opt" data-ratio="16:9" data-size="1664x928">
+                    <span class="ratio-opt-box" style="width:24px;height:13px"></span>
+                    <span class="ratio-opt-txt">16:9 横版</span>
+                  </button>
+                  <button class="ratio-opt" data-ratio="9:16" data-size="928x1664">
+                    <span class="ratio-opt-box" style="width:13px;height:24px"></span>
+                    <span class="ratio-opt-txt">9:16 竖版</span>
+                  </button>
+                  <button class="ratio-opt" data-ratio="4:3" data-size="1328x1008">
+                    <span class="ratio-opt-box" style="width:21px;height:16px"></span>
+                    <span class="ratio-opt-txt">4:3 宽屏</span>
+                  </button>
+                </div>
+              </div>
+              <div class="pp-row">
+                <div class="pp-k">风格</div>
+                <div class="pp-vals" id="styleVals">
+                  <button class="opt on" data-style="">不指定</button>
+                  <button class="opt" data-style="扁平插画">扁平插画</button>
+                  <button class="opt" data-style="写实摄影">写实摄影</button>
+                  <button class="opt" data-style="3D 渲染">3D 渲染</button>
+                  <button class="opt" data-style="极简线条">极简线条</button>
+                  <button class="opt" data-style="动漫二次元">动漫二次元</button>
+                  <button class="opt" data-style="水彩手绘">水彩手绘</button>
+                  <button class="opt" data-style="油画质感">油画质感</button>
+                  <button class="opt" data-style="赛博霓虹">赛博霓虹</button>
+                  <button class="opt" data-style="国潮插画">国潮插画</button>
+                </div>
+              </div>
+              <div class="pp-row">
+                <div class="pp-k">色调</div>
+                <div class="pp-vals" id="toneVals">
+                  <button class="opt on" data-tone="">不指定</button>
+                  <button class="opt" data-tone="明亮通透">明亮通透</button>
+                  <button class="opt" data-tone="温暖柔和">温暖柔和</button>
+                  <button class="opt" data-tone="冷色调">冷色调</button>
+                  <button class="opt" data-tone="高饱和">高饱和</button>
+                  <button class="opt" data-tone="素雅低饱和">素雅低饱和</button>
+                </div>
+              </div>
+              <div class="pp-row">
+                <div class="pp-k">张数</div>
+                <div class="pp-vals" id="countVals">
+                  <button class="opt on" data-count="1">1 张</button>
+                  <button class="opt" data-count="2">2 张</button>
+                </div>
+              </div>
+            </div>
+            <div class="pp-foot">
+              <span>选择会随消息一起发出，界面上只显示成几个标签，不出现像素值。</span>
+              <button class="btn-primary" id="paramDone">完成</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="proto-hint" style="max-width:900px;margin:10px auto 0;font-size:11.5px;color:var(--g400);line-height:1.7">
+      点工具卡可展开入参 / 出参。图片是<b>直接渲染在消息流里</b>的——工具把 PNG 落盘后发布成带签名 token 的
+      <code>/api/v1/chat/generated-files/…</code> 链接，前端 <code>MessageRenderer</code> 会识别这个前缀并挂上下载按钮，不走
+      <code>/static/uploads</code> 那种无鉴权裸链。<br>
+      输入区的参数面板与图片下方的微调胶囊是同一套设计的两个入口：<b>能不说参数就不说</b>，说了也只是「横版 / 竖版」这种话，界面上不出现像素值。<br>
+      这些选项<b>本质都是提示词词汇，不是接口参数</b>——实测网关对 <code>seed</code>、<code>negative_prompt</code>、<code>quality</code>、<code>background</code> 一律静默丢弃，<code>watermark</code> 虽被接受但出图无差异。所以真正可调的只有 <code>prompt</code>、<code>size</code>、<code>n</code>，面板做的只是把「我要一张什么样的图」翻译成模型听得懂的话，并替用户省掉打字。代价是注入的词越多、用户自己的描述占比越低，因此维度只开风格与色调两项。<br>
+      <b>「画面内不要出现文字」曾做过一版开关，因面板过挤被去掉</b>（需求方：选项太多）。但实测结论值得留在这里——同一句「咖啡品牌海报」，不加尾缀会印出一整段乱码（<code>RETAICRUFE / THIHERICUSE</code>），只说「不要文字」只压到剩一个大字（<code>RORON</code>），而写成「构图上只保留插画主体，不要排版任何文字、字母、数字或水印，<b>标题位置留白代替</b>」才能做到零文字。关键在末尾<b>给出替代方案</b>，否则模型会继续拿文字填版面。将来若重新加回，照这句措辞抄。
+    </p>
+  </section>
+
+  <!-- ════════════════ 场景 3：智能体工具 ════════════════ -->
+  <section class="scene" id="s3">
+    <div class="notice">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3l9 16H3l9-16z"/><path d="M12 9v4m0 3h.01"/></svg>
+      <p>
+        工具的可用性有两道闸：<b>系统设置 → 图像 → 启用图像生成</b>是总闸（关了整个平台都没有这个工具），
+        这里勾不勾是<b>每个智能体</b>的开关。总闸关闭时本行置灰，勾了也不会生效，避免配好了却不生效的困惑。<b>新建智能体默认不带这个工具</b>，需要谁用就手动勾谁——生图有成本，不该默认对所有智能体开放。
+      </p>
+    </div>
+
+    <div class="tb">
+      <div class="tb-head">
+        <div>工具</div>
+        <div>分类</div>
+        <div>状态</div>
+      </div>
+      <div class="tb-row">
+        <div>
+          <div class="tr-name"><code>read_image</code> 读取图片</div>
+          <div class="tr-desc">读取本地图片交给多模态模型识别，用于「这张图里是什么」一类问题。已有能力。</div>
+        </div>
+        <div class="tr-cat"><span>系统执行</span></div>
+        <div><div class="switch on"></div></div>
+      </div>
+      <div class="tb-row hl">
+        <div>
+          <div class="tr-name">
+            <code>generate_image</code> 生成图片
+            <span class="tag-new">NEW</span>
+          </div>
+          <div class="tr-desc">
+            按文字描述生成图片。用户在对话里要图（海报、插画、示意图、配图）时调用，结果直接显示在回复里。
+            参数：<code style="font-size:10.5px">prompt</code> / <code style="font-size:10.5px">size</code>（限系统允许的尺寸）/ <code style="font-size:10.5px">n</code>。
+          </div>
+        </div>
+        <div class="tr-cat"><span>内容生成</span></div>
+        <div><div class="switch on"></div></div>
+      </div>
+      <div class="tb-row">
+        <div>
+          <div class="tr-name"><code>write_file</code> 写文件</div>
+          <div class="tr-desc">在工作区写入文本文件，是 Office 产物链路的底层动作。</div>
+        </div>
+        <div class="tr-cat"><span>系统执行</span></div>
+        <div><div class="switch on"></div></div>
+      </div>
+      <div class="tb-row">
+        <div>
+          <div class="tr-name"><code>web_search_baidu</code> 百度搜索</div>
+          <div class="tr-desc">联网检索，生图前可用于查视觉参考、确认品牌元素。</div>
+        </div>
+        <div class="tr-cat"><span>联网检索</span></div>
+        <div><div class="switch"></div></div>
+      </div>
+      <div class="tb-row dim">
+        <div>
+          <div class="tr-name"><code>text_generate_image</code> 文生图（MCP）</div>
+          <div class="tr-desc">
+            这是外部 MCP 服务器提供的同名能力。平台内置 <code>generate_image</code> 上线后建议不勾选，
+            两者并存会让模型在两条链路上犹豫，且 MCP 那条没有统一的尺寸校验与产物托管。
+          </div>
+        </div>
+        <div class="tr-cat"><span>MCP</span></div>
+        <div><div class="switch"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ 场景 4：链路与取舍 ════════════════ -->
+  <section class="scene" id="s4">
+    <div class="flow">
+      <div class="step"><span class="n">1</span><b>用户提问</b><span>「帮我出一张年会主视觉，横版」</span></div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="step"><span class="n">2</span><b>模型选中工具</b><span>看到 generate_image 的说明与允许尺寸，给出 prompt + size</span></div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="step"><span class="n">3</span><b>读配置 + 校验</b><span>开关、密钥解密、尺寸白名单、并发与超时</span></div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="step"><span class="n">4</span><b>按所选格式请求</b><span>原生图像 / 聊天 / Gemini 原生，均非流式</span></div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="step"><span class="n">5</span><b>落盘 + 发布</b><span>base64 解码写 PNG → 产物服务发布带 token 链接</span></div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="step"><span class="n">6</span><b>回给模型</b><span>URL + 尺寸 + 耗时，模型据此写正文与配图</span></div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="step"><span class="n">7</span><b>前端渲染</b><span>识别 generated-files 前缀 → 图片卡 + 放大 / 下载</span></div>
+    </div>
+
+    <table class="dt" style="margin-bottom:16px">
+      <caption>为什么做成「内置工具 + 系统设置开关」，而不是别的形态</caption>
+      <thead>
+        <tr><th>候选形态</th><th>它能解决什么</th><th>为什么这次不选</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="dec"><span class="pill ok">采用</span>内置工具 <code>generate_image</code></td>
+          <td>用户在对话里说一句就出图，图直接进消息流与产物库；配置集中在「系统设置 → 图像」，一处管住密钥与尺寸。</td>
+          <td>—（代价是只在平台对话内可用，但这正是本次要补的缺口）</td>
+        </tr>
+        <tr>
+          <td class="dec">外部 MCP 服务</td>
+          <td>可被 Claude Desktop、Cursor 等外部客户端复用同一套生图能力。</td>
+          <td>配置会散成两处（MCP 管理 + 系统设置），权限和产物托管各一套；平台内还得指望模型自己判断该调 MCP 而不是别的东西。已经有 <code>text_generate_image</code> 这类 MCP 工具在跑，正好说明这条路上手门槛高、体验不统一。</td>
+        </tr>
+        <tr>
+          <td class="dec">独立「绘图工作台」页面</td>
+          <td>适合精细调参、批量出图、反复重绘。</td>
+          <td>用户得离开对话切到另一个页面，做不到「说着话就出图」。可以作为后续增强，但不是第一版的核心场景。</td>
+        </tr>
+        <tr>
+          <td class="dec">技能包（Skill）</td>
+          <td>把行业提示词模板沉淀下来复用。</td>
+          <td>技能本质是提示词 + 脚本，解决不了「从哪调模型」这个问题——底层仍然缺生图能力。等工具上线后，技能可以作为它上面的模板层。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="cols">
+      <div class="panel">
+        <h3>新增的系统配置项（建议 migration V221）</h3>
+        <p class="sub">全部落在 <code>system_configs</code>，<code>category = 'image'</code>，与 knowledge / email 分组同一套机制。</p>
+        <ul>
+          <li><code>image_generation_enabled</code> — 0/1 总开关</li>
+          <li><code>image_api_format</code> — <code>openai_images</code>（默认）/ <code>openai_chat</code> / <code>gemini_native</code></li>
+          <li><code>image_api_base_url</code> — 网关地址（Gemini 原生格式填到根）</li>
+          <li><code>image_api_key</code> — <b>is_secret = 1</b>，加密存储</li>
+          <li><code>image_model</code> — 模型 id</li>
+          <li><code>image_default_size</code> — 默认 WxH</li>
+          <li><code>image_allowed_sizes</code> — 逗号分隔白名单</li>
+          <li><code>image_timeout_seconds</code> — 默认 120</li>
+          <li><code>image_max_images_per_call</code> — 默认 1，上限 4</li>
+          <li><code>image_prompt_prefix</code> — 全局风格前缀，可空</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>需要动到的代码位置</h3>
+        <p class="sub">沿用现有工具的标准接入路径，不引入新框架。</p>
+        <ul>
+          <li><code>app/services/ai/tools/image_generation_tool.py</code> — 新工具主体</li>
+          <li><code>registry.py</code> — TOOL_MAP 注册 + 按开关决定是否暴露</li>
+          <li><code>tool_policy.py</code> — 元数据：<code>side_effect=write</code>、<code>idempotent=no</code>、<code>nudge_mode=explicit</code></li>
+          <li><code>forbidden_catalog.py</code> — 中文说明文案</li>
+          <li><b>复用</b> <code>generated_file_service</code> — 落盘与带 token 链接，不新写一套</li>
+          <li><code>SystemConfig.vue</code> — 分组 label / 图标 / 字段顺序 / 测试按钮</li>
+          <li><code>db-prod/V221-*.sql</code> 与 <code>db-prod-pg/</code> 对应脚本 — 两套迁移都要补</li>
+        </ul>
+      </div>
+    </div>
+
+    <table class="dt">
+      <caption>关键取舍（都来自刚才的实测，不是推测）</caption>
+      <thead>
+        <tr><th>决策点</th><th>选择</th><th>依据 / 原因</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="dec">默认请求通道</td>
+          <td><span class="pill ok">用</span><code>POST {base}/images/generations</code>（原生 OpenAI 图像格式）</td>
+          <td class="why">实测同一模型 <code>Qwen-Image-2.1-Turbo</code>：<code>size</code> 真实生效并回显（<code>1664x928</code> 出图 6.4s，像素尺寸吻合），<code>n=2</code> 一次回两张，参数写错会明确报 <code>invalid size format</code>。这三件事在 chat 通道上都做不到。</td>
+        </tr>
+        <tr>
+          <td class="dec">是否保留 chat 通道</td>
+          <td><span class="pill warn">保留</span>作为可选项</td>
+          <td class="why">chat 通道兼容性更广（模型 id 大小写都能匹配、网关普遍支持）。代价是：尺寸格式错了<b>不报错、静默回退 1024×1024</b>，一次只能出一张，且同一模型出图体积约 0.9 MB（原生格式 5.6 MB，画质细节更足）。</td>
+        </tr>
+        <tr>
+          <td class="dec">为什么做成可配置</td>
+          <td><span class="pill ok">用</span>设置项 <code>image_api_format</code></td>
+          <td class="why">三种格式是同一个网关对不同上游暴露的协议，<b>同一模型未必都支持</b>：实测 <code>qwen-image-21-turbo</code> 走 chat 能出图，走 <code>/images/generations</code> 直接 <code>503 model_not_found</code>（必须精确写 <code>Qwen-Image-2.1-Turbo</code>）。写死一种迟早卡在某个网关上。</td>
+        </tr>
+        <tr>
+          <td class="dec">尺寸格式</td>
+          <td><span class="pill warn">强制</span><code>宽x高</code>，平台侧统一拼装</td>
+          <td class="why">chat 通道下 <code>1328*1328</code> 不报错但静默回退 1024×1024；原生图像格式下则直接报 <code>invalid size format, must be WxH</code>。两种协议表现不同，但都要求 <code>宽x高</code>，所以前端只给勾选项、不让手打。</td>
+        </tr>
+        <tr>
+          <td class="dec">图片怎么给前端</td>
+          <td><span class="pill ok">复用</span><code>generated_file_service</code> 发布 artifact</td>
+          <td class="why">已有 <code>/api/v1/chat/generated-files/&lt;id&gt;?token=…</code> 带签名、30 天有效，<code>MessageRenderer</code> 会识别并渲染。避免新增无鉴权的 <code>/static/uploads</code> 裸链。</td>
+        </tr>
+        <tr>
+          <td class="dec">工具名</td>
+          <td><code>generate_image</code></td>
+          <td class="why">与既有的 <code>read_image</code> 成对，语义一眼可辨；也和外部 MCP 的 <code>text_generate_image</code> 区分开，正好借这次把两条链路收敛到平台内置这条。</td>
+        </tr>
+        <tr>
+          <td class="dec">开关关闭时</td>
+          <td><span class="pill ok">不注册</span>而非注册后报错</td>
+          <td class="why">工具说明会占系统提示词的篇幅，模型也可能对着不可用的工具反复尝试。直接从工具清单里摘掉最省事。</td>
+        </tr>
+        <tr>
+          <td class="dec">失败处理</td>
+          <td>超时读配置；网络错误重试 1 次；其余错误原文回给模型</td>
+          <td class="why">模型看到「401 密钥无效」能直接告诉用户去改配置，比工具内部吞掉错误、只报一句「生成失败」有用得多。</td>
+        </tr>
+        <tr>
+          <td class="dec">用户怎么调参数</td>
+          <td><span class="pill ok">三层</span>默认自动 → 结果上微调 → 显式面板</td>
+          <td class="why">
+            普通用户根本不知道 <code>1664x928</code> 是什么，所以第一层是<b>什么都不选</b>：工具说明里内置「场景 → 尺寸」映射（大屏/主视觉→16:9，手机推文→9:16，头像/图标→1:1），模型按用户的话自己判断。
+            不满意时用第二层——出图后下方直接给「再来一版 / 换成竖版 / 换个风格」几个胶囊按钮，点一下就把追问填进输入框。
+            只有想精确控制的人才展开第三层面板，而且面板里画的是<b>形状和「16:9 横版」这种说法，不出现像素值</b>。
+          </td>
+        </tr>
+        <tr>
+          <td class="dec">面板选的比例怎么传到后端</td>
+          <td><span class="pill ok">走对话</span>拼成结构化前缀随消息发出</td>
+          <td class="why">
+            前端把面板选择渲染成一句带参数的上下文（如 <code>[生成参数] 比例=16:9 风格=扁平插画 张数=2</code>）附在用户消息里，
+            模型据此填 <code>generate_image</code> 的入参。不新增消息协议、不改 runtime，第一版最省事；界面上则只显示成几个可删除的 chip。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="panel" style="margin-top:16px">
+      <h3>已确认的四条口径（本轮评审定的）</h3>
+      <p class="sub">按这个范围实现第一版，不多铺。</p>
+      <ul>
+        <li><b>工具默认不勾选</b>：系统开关打开只是「平台具备这个能力」，具体哪个智能体能用，由管理员在智能体工具清单里手动勾——新建智能体默认不带上。</li>
+        <li><b>第一版只做文生图</b>：不接参考图 / 图生图，参数面收窄到 <code>prompt</code> / <code>size</code> / <code>n</code> 三个。</li>
+        <li><b>不做配额</b>：不限制每日张数，先看实际使用量再决定要不要加。</li>
+        <li><b>分组放在侧栏最末</b>：「其他参数」之后。</li>
+      </ul>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h3>本期不做、但已经留好位置的部分</h3>
+      <p class="sub">接口与结构上都留了扩展位，后续加不改现有形态。</p>
+      <ul>
+        <li><b>参考图 / 图生图</b>：接口本身支持传 <code>image_url</code> 参考图（实测「换雪夜背景 + 加红围巾」能保持原画风），等第二版再把参数面打开。</li>
+        <li><b>提示词增强</b>：用主模型把用户一句话扩写成更完整的绘画提示词，明显提升出图质量，代价是多一次 LLM 调用与延迟——适合放在「高质量模式」开关后面。</li>
+        <li><b>审计日志</b>：谁在哪个会话生成了什么图、耗时多少，接现有审计链路即可。</li>
+        <li><b>配额与计费</b>：如后续需要，按 <code>knowledge_quota_*</code> 的现成范式加，不影响工具本身的接口签名。</li>
+      </ul>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  // ── 场景切换（支持 #s1 / #s2 直达）─────────────────────
+  const activate = (id, smooth) => {
+    const target = document.getElementById(id);
+    if (!target) return false;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.scene === id));
+    document.querySelectorAll('.scene').forEach(s => s.classList.remove('on'));
+    target.classList.add('on');
+    if (smooth) window.scrollTo({ top: 0, behavior: 'smooth' });
+    return true;
+  };
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      activate(tab.dataset.scene, true);
+      history.replaceState(null, '', '#' + tab.dataset.scene);
+    });
+  });
+  if (location.hash && location.hash !== '#s1-modal') activate(location.hash.slice(1), false);
+
+  // ── 总开关 ──────────────────────────────────────────────
+  const master = document.getElementById('masterSwitch');
+  const offNote = document.getElementById('offNote');
+  const detailBody = document.getElementById('detailBody');
+  const syncMaster = () => {
+    const on = master.classList.contains('on');
+    master.setAttribute('aria-checked', String(on));
+    offNote.classList.toggle('show', !on);
+    detailBody.classList.toggle('show', on);
+  };
+  master.addEventListener('click', () => { master.classList.toggle('on'); syncMaster(); });
+  master.addEventListener('keydown', e => {
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); master.click(); }
+  });
+
+  // ── 密钥显示 / 隐藏 ─────────────────────────────────────
+  const apiKey = document.getElementById('apiKey');
+  document.getElementById('eyeBtn').addEventListener('click', () => {
+    apiKey.type = apiKey.type === 'password' ? 'text' : 'password';
+  });
+
+  // ── 尺寸多选 ────────────────────────────────────────────
+  document.querySelectorAll('#sizeChips .chip').forEach(chip => {
+    chip.addEventListener('click', () => chip.classList.toggle('on'));
+  });
+
+  // ── 测试生成 ────────────────────────────────────────────
+  const testBtn = document.getElementById('testBtn');
+  const testResult = document.getElementById('testResult');
+  let testing = false;
+  testBtn.addEventListener('click', () => {
+    if (testing) return;
+    testing = true;
+    testResult.classList.remove('show');
+    const original = testBtn.innerHTML;
+    testBtn.innerHTML = '<span class="spinner"></span> 生成中';
+    testBtn.disabled = true;
+    setTimeout(() => {
+      testBtn.innerHTML = original;
+      testBtn.disabled = false;
+      testing = false;
+      testResult.classList.add('show');
+    }, 1100);
+  });
+
+  // ── 工具卡展开 ──────────────────────────────────────────
+  document.querySelectorAll('[data-toggle]').forEach(head => {
+    head.addEventListener('click', () => {
+      head.closest('.tool-card').classList.toggle('open');
+    });
+  });
+
+  // ── 智能体工具行的开关 ──────────────────────────────────
+  document.querySelectorAll('.tb-row .switch').forEach(sw => {
+    sw.addEventListener('click', () => sw.classList.toggle('on'));
+  });
+
+  // ── 模型选择弹窗 ────────────────────────────────────────
+  // 演示用示意列表：真实环境里这是 GET {base}/models 的返回，各家网关内容都不同。
+  const MODELS = [
+    'qwen-image-21-turbo', 'flux-1-schnell', 'stable-diffusion-3.5-large',
+    'gpt-4o-mini', 'gpt-4o', 'claude-3-5-sonnet', 'deepseek-chat', 'deepseek-reasoner',
+    'llama-3.3-70b-instruct', 'mixtral-8x22b', 'gemma-2-27b',
+    'text-embedding-3-large', 'bge-m3', 'jina-embeddings-v3',
+    'llava-v1.6-34b', 'qwen2-vl-7b-instruct'
+  ];
+  // 网关可能对模型做别名映射（入参名与上游自报名不同）。这里留空，
+  // 不把任何真实网关的内部映射关系写进原型。
+  const UPSTREAM = {};
+
+  const kindOf = (id) => {
+    const s = String(id).toLowerCase();
+    if (s.includes('image') || s.includes('flux') || s.includes('diffusion') || s.startsWith('sd-') || s.includes('dall-e')) return { k: 'image', label: '图像生成' };
+    if (s.includes('embedding') || s.startsWith('bge')) return { k: 'emb', label: '向量' };
+    if (s.includes('-vl') || s.includes('vl-')) return { k: 'vision', label: '视觉' };
+    return { k: 'text', label: '文本' };
+  };
+
+  const modelInput = document.getElementById('modelInput');
+  const baseUrlInput = document.getElementById('baseUrlInput');
+  const modelMask = document.getElementById('modelMask');
+  const modelListEl = document.getElementById('modelList');
+  const modalHint = document.getElementById('modalHint');
+  const modalUse = document.getElementById('modalUse');
+  const modelSearch = document.getElementById('modelSearch');
+
+  let mFilter = 'all';
+  let mSelected = '';
+  let mState = 'ready';
+
+  const renderModelList = () => {
+    if (mState === 'loading') {
+      modelListEl.innerHTML =
+        '<div class="m-state"><div class="spin2"></div><b>正在请求模型列表</b>' +
+        '<span>GET ' + (baseUrlInput.value.trim() || '…') + '/models</span></div>';
+      return;
+    }
+    if (mState === 'error') {
+      modelListEl.innerHTML =
+        '<div class="m-error">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5m0 3h.01"/></svg>' +
+          '<div><b>拉取失败：401 密钥无效</b>' +
+          '<p>服务端返回 <code>Invalid API key</code>。请检查 API 密钥是否正确、是否已开通该模型的访问权限；密钥改好后点右上角刷新重试。</p></div>' +
+        '</div>' +
+        '<div class="m-state" style="padding-top:0"><span>没有可用的模型列表时，也可以直接在输入框里手填模型 id。</span></div>';
+      return;
+    }
+    const q = modelSearch.value.trim().toLowerCase();
+    const rows = MODELS.filter(id => {
+      const kind = kindOf(id);
+      if (mFilter === 'image' && kind.k !== 'image') return false;
+      if (mFilter === 'other' && kind.k === 'image') return false;
+      return !q || id.toLowerCase().includes(q);
+    });
+    // 图像模型排最前：这个字段本来就是选生图模型的，别让用户翻到底部找。
+    rows.sort((a, b) => (kindOf(b).k === 'image' ? 1 : 0) - (kindOf(a).k === 'image' ? 1 : 0));
+    if (!rows.length) {
+      modelListEl.innerHTML =
+        '<div class="m-state"><b>没有匹配的模型</b><span>换个关键词，或把筛选切回「全部」。</span></div>';
+      return;
+    }
+    modelListEl.innerHTML = rows.map(id => {
+      const kind = kindOf(id);
+      const up = UPSTREAM[id] ? '<span class="m-up">上游 ' + UPSTREAM[id] + '</span>' : '';
+      return '<button class="m-row' + (id === mSelected ? ' on' : '') + '" data-id="' + id + '">' +
+        '<span class="m-dot"></span>' +
+        '<span class="m-id">' + id + '</span>' +
+        '<span class="m-badge ' + kind.k + '">' + kind.label + '</span>' +
+        up +
+        '<svg class="leaf" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8"><path d="M5 12l5 5 9-9"/></svg>' +
+      '</button>';
+    }).join('');
+  };
+
+  const syncModalFoot = () => {
+    if (mState === 'error') {
+      // 拉取失败不代表这一项配不下去：手填 id 照样能用，别把「使用」按钮一并锁死。
+      modalUse.disabled = !mSelected;
+      modalHint.className = 'modal-hint warn';
+      modalHint.innerHTML = mSelected
+        ? '列表拉取失败，可继续用当前值 <b>' + mSelected + '</b>，或直接手填 id'
+        : '列表拉取失败，请回到表单手填模型 id';
+      return;
+    }
+    if (!mSelected) {
+      modalHint.className = 'modal-hint';
+      modalHint.textContent = '选择一个模型';
+      modalUse.disabled = true;
+      return;
+    }
+    modalUse.disabled = false;
+    const kind = kindOf(mSelected);
+    if (kind.k === 'image') {
+      modalHint.className = 'modal-hint';
+      modalHint.innerHTML = '已选 <b>' + mSelected + '</b> · 可用于生图';
+    } else {
+      // 网关会把任何模型 id 都返回给你，选错了不报错、只会在生成时空回，这里必须提醒。
+      modalHint.className = 'modal-hint warn';
+      modalHint.innerHTML = '已选 <b>' + mSelected + '</b> · 该模型是「' + kind.label + '」，可能不支持生图';
+    }
+  };
+
+  // 计数跟着列表实际内容走，避免换了数据源之后按钮上的数字对不上。
+  const syncSegCounts = () => {
+    const img = MODELS.filter(m => kindOf(m).k === 'image').length;
+    const btns = document.querySelectorAll('#modelSeg button');
+    btns.forEach(b => {
+      if (b.dataset.filter === 'all') b.textContent = '全部 ' + MODELS.length;
+      if (b.dataset.filter === 'image') b.textContent = '图像 ' + img;
+      if (b.dataset.filter === 'other') b.textContent = '其他 ' + (MODELS.length - img);
+    });
+  };
+
+  const paintModal = () => { syncSegCounts(); renderModelList(); syncModalFoot(); };
+
+  const loadModels = () => {
+    mState = 'loading';
+    paintModal();
+    setTimeout(() => { mState = 'ready'; paintModal(); }, 850);
+  };
+
+  const openModelModal = () => {
+    mSelected = modelInput.value.trim();
+    modelSearch.value = '';
+    mFilter = 'all';
+    document.querySelectorAll('#modelSeg button').forEach(b => b.classList.toggle('on', b.dataset.filter === 'all'));
+    document.getElementById('modalEndpoint').textContent = 'GET ' + (baseUrlInput.value.trim() || '…') + '/models';
+    modelMask.classList.add('show');
+    loadModels();
+  };
+  const closeModelModal = () => modelMask.classList.remove('show');
+
+  /* 接口格式下拉：点开浮层、选一项后回写触发器上的两行文字 */
+  const fmtSelect = document.getElementById('fmtSelect');
+  if (fmtSelect) {
+    const trigger = document.getElementById('fmtTrigger');
+    const panel = document.getElementById('fmtPanel');
+    const curTitle = document.getElementById('fmtCurTitle');
+    const curPath = document.getElementById('fmtCurPath');
+    const setOpen = (open) => {
+      panel.classList.toggle('show', open);
+      trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setOpen(!panel.classList.contains('show'));
+    });
+    panel.querySelectorAll('.fmt-opt').forEach(opt => {
+      opt.addEventListener('click', () => {
+        panel.querySelectorAll('.fmt-opt').forEach(o => o.classList.remove('on'));
+        opt.classList.add('on');
+        curTitle.textContent = opt.dataset.title;
+        curPath.textContent = opt.dataset.path;
+        setOpen(false);
+      });
+    });
+    document.addEventListener('click', (e) => {
+      if (!fmtSelect.contains(e.target)) setOpen(false);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && panel.classList.contains('show')) setOpen(false);
+    });
+  }
+
+  document.getElementById('pickModelBtn').addEventListener('click', openModelModal);
+  document.getElementById('modalClose').addEventListener('click', closeModelModal);
+  document.getElementById('modalCancel').addEventListener('click', closeModelModal);
+  modelMask.addEventListener('click', e => { if (e.target === modelMask) closeModelModal(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modelMask.classList.contains('show')) closeModelModal();
+  });
+
+  document.getElementById('modalRefresh').addEventListener('click', loadModels);
+  document.getElementById('demoFail').addEventListener('click', () => { mState = 'error'; paintModal(); });
+
+  modelSearch.addEventListener('input', renderModelList);
+  document.querySelectorAll('#modelSeg button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      mFilter = btn.dataset.filter;
+      document.querySelectorAll('#modelSeg button').forEach(b => b.classList.toggle('on', b === btn));
+      renderModelList();
+    });
+  });
+
+  modelListEl.addEventListener('click', e => {
+    const row = e.target.closest('.m-row');
+    if (!row) return;
+    mSelected = row.dataset.id;
+    renderModelList();
+    syncModalFoot();
+  });
+
+  modalUse.addEventListener('click', () => {
+    if (!mSelected) return;
+    modelInput.value = mSelected;
+    closeModelModal();
+    modelInput.classList.remove('flash');
+    void modelInput.offsetWidth;
+    modelInput.classList.add('flash');
+  });
+
+  // ── 输入区：加号菜单 + 图像参数浮层 ─────────────────────
+  const plusBtn = document.getElementById('plusBtn');
+  const plusMenu = document.getElementById('plusMenu');
+  const imgParamItem = document.getElementById('imgParamItem');
+  const imgParamTrail = document.getElementById('imgParamTrail');
+  const paramPop = document.getElementById('paramPop');
+  const paramChips = document.getElementById('paramChips');
+  const composerTa = document.getElementById('composerTa');
+  const imgStateSel = document.getElementById('imgStateSel');
+  // 两个独立闸门：系统设置的总闸、当前智能体有没有勾选这个工具。
+  let imageSystemOn = true;
+  let imageAgentOn = true;
+
+  const pState = { ratio: 'auto', ratioText: '自动', style: '', count: 1 };
+
+  const syncOpt = (groupId, key, val) => {
+    document.querySelectorAll('#' + groupId + ' [data-' + key + ']').forEach(b => {
+      b.classList.toggle('on', b.dataset[key] === String(val));
+    });
+  };
+
+  const renderParamChips = () => {
+    const chips = [];
+    if (pState.ratio !== 'auto') chips.push({ k: 'ratio', label: pState.ratioText });
+    if (pState.style) chips.push({ k: 'style', label: pState.style });
+    if (pState.tone) chips.push({ k: 'tone', label: pState.tone });
+    if (pState.count > 1) chips.push({ k: 'count', label: pState.count + ' 张' });
+    // 界面上只出现「16:9 横版」这种说法，不出现 1664x928——用户不需要知道像素。
+    paramChips.innerHTML = chips.map(c =>
+      '<span class="pchip"><b>' + c.label + '</b>' +
+        '<button data-clear="' + c.k + '" aria-label="移除">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 6l12 12M18 6L6 18"/></svg>' +
+        '</button></span>'
+    ).join('');
+  };
+
+  const closeFlyout = () => {
+    paramPop.classList.remove('show');
+    imgParamItem.classList.remove('on');
+  };
+
+  const clearParams = () => {
+    if (pState.ratio === 'auto' && !pState.style && pState.count === 1) return;
+    pState.ratio = 'auto'; pState.ratioText = '自动'; pState.style = ''; pState.tone = ''; pState.count = 1;
+    syncOpt('ratioVals', 'ratio', 'auto');
+    syncOpt('styleVals', 'style', '');
+    syncOpt('toneVals', 'tone', '');
+    syncOpt('countVals', 'count', 1);
+    renderParamChips();
+  };
+
+  const imageEnabled = () => imageSystemOn && imageAgentOn;
+
+  const syncImageEnabled = () => {
+    const on = imageEnabled();
+    imgParamItem.classList.toggle('disabled', !on);
+    // 两种禁用的原因必须分开写：让用户知道是该找管理员，还是该去改这个智能体的工具。
+    if (on) {
+      imgParamTrail.innerHTML = '<span class="pm-new">NEW</span>';
+    } else if (!imageSystemOn) {
+      imgParamTrail.innerHTML = '<span style="color:var(--g400)">未开启</span>';
+    } else {
+      imgParamTrail.innerHTML = '<span style="color:var(--g400)">智能体未启用</span>';
+    }
+    if (!on) { closeFlyout(); clearParams(); }
+  };
+
+
+  plusBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    const open = plusMenu.classList.toggle('show');
+    plusBtn.classList.toggle('on', open);
+    if (!open) closeFlyout();
+  });
+
+  imgParamItem.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!imageEnabled()) return;
+    const open = paramPop.classList.toggle('show');
+    imgParamItem.classList.toggle('on', open);
+  });
+
+  document.getElementById('paramClose').addEventListener('click', closeFlyout);
+  document.getElementById('paramDone').addEventListener('click', () => {
+    closeFlyout();
+    plusMenu.classList.remove('show');
+    plusBtn.classList.remove('on');
+    composerTa.focus();
+  });
+
+  // 点空白处收起菜单与浮层
+  document.addEventListener('click', e => {
+    const inMenu = plusMenu.contains(e.target) || plusBtn.contains(e.target)
+      || paramPop.contains(e.target) || paramChips.contains(e.target);
+    if (inMenu) return;
+    plusMenu.classList.remove('show');
+    plusBtn.classList.remove('on');
+    closeFlyout();
+  });
+
+  imgStateSel.addEventListener('change', () => {
+    imageSystemOn = imgStateSel.value !== 'sys-off';
+    imageAgentOn = imgStateSel.value !== 'agent-off';
+    syncImageEnabled();
+  });
+
+  document.querySelectorAll('#ratioVals .ratio-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pState.ratio = btn.dataset.ratio;
+      pState.ratioText = btn.querySelector('.ratio-opt-txt').textContent;
+      syncOpt('ratioVals', 'ratio', pState.ratio);
+      renderParamChips();
+    });
+  });
+  document.querySelectorAll('#styleVals .opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pState.style = btn.dataset.style;
+      syncOpt('styleVals', 'style', pState.style);
+      renderParamChips();
+    });
+  });
+  document.querySelectorAll('#toneVals .opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pState.tone = btn.dataset.tone || '';
+      syncOpt('toneVals', 'tone', pState.tone);
+      renderParamChips();
+    });
+  });
+  document.querySelectorAll('#countVals .opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pState.count = Number(btn.dataset.count);
+      syncOpt('countVals', 'count', pState.count);
+      renderParamChips();
+    });
+  });
+  paramChips.addEventListener('click', e => {
+    const btn = e.target.closest('[data-clear]');
+    if (!btn) return;
+    e.stopPropagation();
+    const k = btn.dataset.clear;
+    if (k === 'ratio') { pState.ratio = 'auto'; pState.ratioText = '自动'; syncOpt('ratioVals', 'ratio', 'auto'); }
+    if (k === 'style') { pState.style = ''; syncOpt('styleVals', 'style', ''); }
+    if (k === 'tone') { pState.tone = ''; syncOpt('toneVals', 'tone', ''); }
+    if (k === 'count') { pState.count = 1; syncOpt('countVals', 'count', 1); }
+    renderParamChips();
+  });
+
+  syncImageEnabled();
+  renderParamChips();
+
+  // ── 结果上的微调：点一下就把追问填进输入框 ──────────────
+  document.querySelectorAll('.tweak').forEach(btn => {
+    btn.addEventListener('click', () => {
+      composerTa.value = btn.dataset.fill;
+      composerTa.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      composerTa.focus();
+      composerTa.style.background = '#eff6ff';
+      setTimeout(() => { composerTa.style.background = 'transparent'; }, 750);
+    });
+  });
+
+  // #s1-modal 直达：方便评审时直接看到弹窗态
+  if (location.hash === '#s1-modal') {
+    activate('s1', false);
+    openModelModal();
+  }
+  if (location.hash === '#s2-img') {
+    activate('s2', false);
+    plusMenu.classList.add('show');
+    plusBtn.classList.add('on');
+    paramPop.classList.add('show');
+    imgParamItem.classList.add('on');
+  }
+</script>
+</body>
+</html>

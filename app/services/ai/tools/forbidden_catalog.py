@@ -166,6 +166,8 @@ BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "read_local_file": "读取本地文件内容",
     "write_local_file": "写入或覆盖本地文件",
     "read_image": "读取图片并交给模型识别",
+    # 图像生成（有成本：按张计费，且产物会占用工作区）
+    "generate_image": "按文字描述生成图片并保存为可下载的产物（按张计费）",
     # 网络与抓取
     "system_http_request": "发起系统级 HTTP 请求（可带鉴权头）",
     "fetch_static_web_url": "抓取静态网页正文",
