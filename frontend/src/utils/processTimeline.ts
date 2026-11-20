@@ -758,9 +758,19 @@ export function appendProcessNarrationText(existing: string, piece: string): str
   return normalizeProcessNarrationText(prev + next);
 }
 
+/**
+ * 「Agent 回复开始 / 结束」是阶段标记，不是一次工具执行。
+ *
+ * 它们同样带 `category="agent"`，原先被 `isToolLog` 判成工具行，于是在「本轮还没
+ * 有已提交旁白」时和工具一起被吸附进上一轮的旁白 children——用户看到的
+ * 「主专家开始处理」就落在了上一轮末尾（见 attachableNarrationParent 的说明）。
+ */
+const AGENT_LIFECYCLE_TITLE = /^(?:\[.*?\]\s*)?[✨\s]*(?:Agent 回复开始|Agent 回复结束)\s*$/;
+
 function isToolLog(data: { title?: string; category?: string; id?: string | number }): boolean {
   const category = String(data.category || "").toLowerCase();
   if (category === "permission" || category === "external") return false;
+  if (AGENT_LIFECYCLE_TITLE.test(String(data.title || "").trim())) return false;
   if (category === "tool" || category === "sql" || category === "agent" || category === "tool_resolution") return true;
   if (category) return false;
   const title = String(data.title || "").toLowerCase();
@@ -1498,12 +1508,7 @@ export function upsertTimelineLog(
     }
   }
 
-  const parent = isToolLog(data)
-    ? [...target.processTimeline].reverse().find(
-      (item): item is ProcessTimelineTextItem =>
-        item.kind === "text" && item.textKind === "narration" && !item.pending,
-    )
-    : undefined;
+  const parent = isToolLog(data) ? attachableNarrationParent(target.processTimeline) : undefined;
   if (parent) {
     parent.children ||= [];
     parent.children.push(log);
@@ -1511,6 +1516,33 @@ export function upsertTimelineLog(
     return;
   }
   target.processTimeline.push(log);
+}
+
+/**
+ * 找「可以承接工具行的旁白」。
+ *
+ * 规则只有一条：**必须是时间线最后一个顶层条目，且是已提交的旁白**。
+ *
+ * 早先的判定是「最近一条 narration 且 !pending」，没有任何「本轮 / 本阶段」约束，
+ * 于是只要本轮此刻还没有已提交旁白——模型没说就动手、旁白还在流式、或权限确认
+ * 挂起恢复后直接重试——工具行就会被塞进**上一轮**那段旁白的 children 里。位置
+ * 就此冻结在旧区域，而本轮后续到达的准备类事件（准备容器 / 已启用技能 / 工具预检 /
+ * 会话运行时准备 / Agent 回复开始）作为顶层条目继续往后追加。
+ *
+ * 用户看到的就是：一条「调用工具 · Bash 4ms/300s」卡在中间转圈，下面才是刚发生的
+ * 准备序列，像时间倒挂。授权场景尤其容易踩中——需要确认的工具基本都是「不说废话
+ * 直接执行」的那种，而挂起恢复也不会把已经放错的卡片搬回来（同 id 更新只改状态）。
+ *
+ * 收窄成「最后一条」之后，「旁白引出它下面一串工具」的观感不变，跨轮 / 跨阶段的
+ * 吸附被切断；旁白之后只要发生过任何别的事，新工具就老老实实留在顶层。
+ */
+function attachableNarrationParent(
+  items: ProcessTimelineItem[],
+): ProcessTimelineTextItem | undefined {
+  const last = items[items.length - 1];
+  if (!last || last.kind !== "text") return undefined;
+  if (last.textKind !== "narration" || last.pending) return undefined;
+  return last;
 }
 
 function cloneNestedTimelineValue<T>(
