@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="方案对比">
+<title>出图骨架 · 矮宽改造（高度减半 / 宽度加满）</title>
+<style>
+  :root{
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af;
+    --g500:#6b7280; --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --blue:#1677ff;
+    --frame-bg:#ffffff;
+    --frame-line:rgba(15,23,42,.07);
+    --dot:rgba(22,119,255,.34);
+    --dot-hi:rgba(22,119,255,.95);
+    --ttl:rgba(71,85,105,.82);
+    --sub:rgba(148,163,184,.95);
+    --badge-bg:#fff;
+    --badge-line:rgba(15,23,42,.05);
+    --badge-fg:var(--blue);
+    --badge-sh:0 1px 2px rgba(15,23,42,.05), 0 6px 16px -8px rgba(15,23,42,.22);
+    --ghost:rgba(22,119,255,.45);
+    --ghost-fg:rgba(22,119,255,.72);
+    --bubble:#fff;
+    --bubble-line:var(--g100);
+    --dot-step:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f5f6f8;color:var(--g900);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  }
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.94em}
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+
+  .page{max-width:1180px;margin:0 auto;padding:20px 24px 90px}
+  .head h1{font-size:20px;margin:0 0 6px;font-weight:650}
+  .head p{margin:0;color:var(--g500);font-size:12.5px;max-width:960px;line-height:1.8}
+  .head b{color:var(--g700);font-weight:600}
+
+  .facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0 2px}
+  @media (max-width:820px){ .facts{grid-template-columns:1fr} }
+  .fact{background:#fff;border:1px solid var(--g200);border-radius:11px;padding:10px 12px}
+  .fact .k{font-size:10.5px;font-weight:700;color:var(--g400);letter-spacing:.04em}
+  .fact .v{margin-top:3px;font-size:12.5px;color:var(--g700);line-height:1.7}
+  .fact .v b{color:var(--g900)}
+
+  .tabs{display:flex;gap:6px;margin:16px 0 14px;flex-wrap:wrap;align-items:center}
+  .tab{display:flex;align-items:center;gap:7px;border:1px solid var(--g200);background:#fff;
+    border-radius:10px;padding:7px 13px;font-size:12.5px;color:var(--g600);transition:.14s}
+  .tab:hover{border-color:var(--g300);color:var(--g800)}
+  .tab .no{display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
+    border-radius:5px;background:var(--g100);font-size:10.5px;font-weight:700;color:var(--g500)}
+  .tab.on{border-color:#0f172a;background:#0f172a;color:#fff}
+  .tab.on .no{background:rgba(255,255,255,.18);color:#fff}
+
+  .scene{display:none}
+  .scene.on{display:block}
+
+  .card{background:#fff;border:1px solid var(--g200);border-radius:14px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -14px rgba(15,23,42,.10)}
+  .card-body{padding:20px 22px}
+  .row{display:grid;grid-template-columns:minmax(0,1fr) 316px;gap:24px;align-items:start}
+  @media (max-width:960px){ .row{grid-template-columns:1fr} }
+
+  .samples{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+  .sample .cap{margin-top:8px;font-size:11px;color:var(--g400);text-align:center;line-height:1.6}
+  .refnote{font-size:11.5px;color:var(--g400);margin:0 0 16px;padding-left:2px}
+
+  .verdict h3{margin:0 0 8px;font-size:13px;font-weight:650}
+  .verdict ul{margin:0 0 12px;padding-left:18px;font-size:12px;color:var(--g600);line-height:1.85}
+  .verdict li b{color:var(--g800)}
+  .verdict .tag{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:6px;
+    background:#ecfdf5;color:#047857;margin-left:6px;vertical-align:1px}
+  .verdict .tag.risk{background:#fffbeb;color:#92400e}
+  .note{margin:12px 0 0;padding:9px 12px;border-left:3px solid var(--g200);background:#fcfcfd;
+    border-radius:0 8px 8px 0;font-size:12px;color:var(--g600);line-height:1.75}
+  .note b{color:var(--g800)}
+  .note.good{border-left-color:#a7f3d0;background:#ecfdf5;color:#047857}
+  .note.good b{color:#065f46}
+  .note.warn{border-left-color:#fde68a;background:#fffbeb;color:#92400e}
+  .note.warn b{color:#78350f}
+
+  /* ═════════ 聊天气泡（模拟真实消息区） ═════════ */
+  .bubble{background:var(--bubble);border:1px solid var(--bubble-line);
+    border-left:4px solid rgba(22,119,255,.55);border-radius:16px 16px 16px 6px;padding:12px 16px}
+  .tl{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--g400);margin-bottom:10px}
+  .tl .p{width:6px;height:6px;border-radius:50%;background:rgba(22,119,255,.5)}
+  .tl .r{margin-left:auto;font-variant-numeric:tabular-nums}
+
+  .phone{width:344px;border:1px solid var(--g300);border-radius:24px;padding:10px;background:#fff;
+    box-shadow:0 1px 2px rgba(15,23,42,.04)}
+  .phone .bubble{padding:10px 12px}
+  .phone .tl{margin-bottom:8px;font-size:10.5px}
+
+  /* ═════════ 骨架本体 ═════════ */
+  .band{position:relative;overflow:hidden;border-radius:12px;background:var(--frame-bg);
+    border:1px solid var(--frame-line);width:min(100%,560px);height:132px}
+  .band.h120{height:120px}
+  .band.h105{height:105px}
+  .dots{position:absolute;inset:0;z-index:1;
+    background-image:radial-gradient(circle, var(--dot) 1px, transparent 1.5px);
+    background-size:var(--dot-step) var(--dot-step);
+    background-position:calc(var(--dot-step) / -2) calc(var(--dot-step) / -2);
+    animation:dotPulse 3.6s ease-in-out infinite}
+  @keyframes dotPulse{0%,100%{opacity:.75} 50%{opacity:1}}
+  .dot-hi{position:absolute;inset:0;z-index:2;
+    background-image:radial-gradient(circle, var(--dot-hi) 1.15px, transparent 1.7px);
+    background-size:var(--dot-step) var(--dot-step);
+    background-position:calc(var(--dot-step) / -2) calc(var(--dot-step) / -2)}
+  .gather{transform-origin:50% 50%;
+    -webkit-mask-image:radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 26%, #000 42%, rgba(0,0,0,0) 62%);
+    mask-image:radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 26%, #000 42%, rgba(0,0,0,0) 62%);
+    animation:gatherIn 3.4s cubic-bezier(.4,0,.2,1) infinite}
+  .g2{animation-delay:1.7s}
+  @keyframes gatherIn{0%{transform:scale(1.9);opacity:0} 18%{opacity:.9} 100%{transform:scale(.35);opacity:0}}
+
+  .band-in{position:relative;z-index:5;display:flex;align-items:center;gap:14px;height:100%;padding:0 16px}
+  .ghost{flex:0 0 auto;height:72%;aspect-ratio:var(--ar,1/1);max-width:58%;
+    border:1.5px dashed var(--ghost);border-radius:8px;
+    display:flex;align-items:flex-end;justify-content:center;padding-bottom:3px;
+    font-size:9.5px;font-weight:700;color:var(--ghost-fg);letter-spacing:.03em}
+  .band-txt{min-width:0;display:flex;flex-direction:column;gap:3px}
+  .band-txt .t1{font-size:12.5px;font-weight:600;color:#475569;line-height:1.25}
+  .band-txt .t2{font-size:11px;color:var(--sub);line-height:1.3}
+
+  .ttl{position:absolute;left:14px;top:11px;z-index:6;font-size:12.5px;font-weight:600;color:var(--ttl)}
+  .ttl .s{display:block;margin-top:3px;font-size:11px;font-weight:400;color:var(--sub)}
+
+  .badge{position:absolute;right:11px;bottom:10px;z-index:6;display:inline-flex;align-items:center;gap:5px;
+    background:var(--badge-bg);border:1px solid var(--badge-line);border-radius:999px;padding:3px 10px;
+    font-size:11.5px;font-weight:650;color:var(--badge-fg);font-variant-numeric:tabular-nums;
+    box-shadow:var(--badge-sh)}
+  .udots{display:inline-flex;gap:2px;align-items:center}
+  .udots em{display:block;width:3px;height:3px;border-radius:50%;background:currentColor;opacity:.35;
+    animation:ud 1.15s ease-in-out infinite}
+  .udots em:nth-child(2){animation-delay:.16s}
+  .udots em:nth-child(3){animation-delay:.32s}
+  @keyframes ud{0%,100%{opacity:.28;transform:translateY(0)} 50%{opacity:1;transform:translateY(-1px)}}
+
+  /* 尺寸标尺：给人看出到底多高 */
+  .ruler{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:10.5px;color:var(--g400)}
+  .ruler .bar{height:3px;border-radius:2px;background:var(--g200)}
+  .ruler b{color:var(--g500);font-weight:600}
+
+  /* ═════════ 深色 ═════════ */
+  body.dark{
+    background:#0b0f16;color:#e5e7eb;
+    --frame-bg:#0f141c; --frame-line:#212936;
+    --dot:rgba(96,165,250,.30); --dot-hi:rgba(96,165,250,.95);
+    --ttl:rgba(148,163,184,.85); --sub:rgba(100,116,139,.95);
+    --badge-bg:#11161f; --badge-line:#242c38; --badge-fg:#60a5fa;
+    --badge-sh:0 1px 2px rgba(0,0,0,.4), 0 6px 16px -8px rgba(0,0,0,.6);
+    --ghost:rgba(96,165,250,.45); --ghost-fg:rgba(96,165,250,.75);
+    --bubble:#11161f; --bubble-line:#232a35;
+  }
+  body.dark .card,body.dark .fact,body.dark .phone{background:#11161f;border-color:#232a35;box-shadow:none}
+  body.dark .head p,body.dark .verdict ul,body.dark .sample .cap,body.dark .refnote,
+  body.dark .fact .v,body.dark .ruler{color:#8b93a1}
+  body.dark .head b,body.dark .verdict li b,body.dark .fact .v b{color:#cfd6e0}
+  body.dark .band-txt .t1{color:#cbd5e1}
+  body.dark .note{background:#11161f;border-left-color:#2b333f;color:#9aa3b0}
+  body.dark .note.good{background:#0c1f17;border-left-color:#12442f;color:#7dd3a8}
+  body.dark .note.warn{background:#241a08;border-left-color:#4a3510;color:#e0b871}
+  body.dark .tab{background:#11161f;border-color:#232a35;color:#9aa3b0}
+  body.dark .tab.on{background:#e5e7eb;border-color:#e5e7eb;color:#0f172a}
+  body.dark .verdict .tag{background:#0c1f17;color:#7dd3a8}
+  body.dark .verdict .tag.risk{background:#241a08;color:#e0b871}
+  body.dark .phone{background:#0f141c}
+
+  @media (prefers-reduced-motion: reduce){
+    .dots,.gather,.udots em{animation:none}
+    .gather{opacity:.85}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="head">
+    <h1>出图骨架 · 矮宽改造</h1>
+    <p>
+      你的要求是「高度减半、宽度增加」。这块骨架现在真的<b>比成品图还大</b>：桌面方形兜底时是
+      <b>420×420</b>，而消息流里的成品图被 <code class="mono">.markdown-body img</code> 压到
+      <code class="mono">max-height:320px</code>——图落地时是「缩一下」，反过来才自然。
+      下面四屏是现状与三套改法，每套都同时给出<b>桌面气泡</b>与<b>手机 375 视口</b>两栏，答复你问的适配问题。
+    </p>
+  </div>
+
+  <div class="facts">
+    <div class="fact">
+      <div class="k">现在怎么算尺寸</div>
+      <div class="v">
+        宽 = <code class="mono">min(100%, 420px, 60vh×比例)</code><br>
+        高 = 宽 ÷ 比例；给不出比例时用 <b>1:1</b>
+      </div>
+    </div>
+    <div class="fact">
+      <div class="k">成品图真实尺寸</div>
+      <div class="v">
+        <b>max-height: 320px</b>、宽按比例收<br>
+        1664×928 → 574×320 · 928×1664 → 178×320 · 1024² → 320×320
+      </div>
+    </div>
+    <div class="fact">
+      <div class="k">移动端适不适配</div>
+      <div class="v">
+        适配，但只靠「<code class="mono">100%</code> + <code class="mono">60vh</code> 兜底」：宽度跟着气泡收，
+        竖图靠 <b>60vh 反算</b>才不顶出屏幕。没有按屏宽调档位。
+      </div>
+    </div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-scene="cur"><span class="no" style="width:auto;padding:0 5px">线上</span>现状 420 方形</button>
+    <button class="tab" data-scene="v1"><span class="no">V1</span>矮横幅 + 比例幽灵框</button>
+    <button class="tab" data-scene="v2"><span class="no">V2</span>纯矮横幅（改动最小）</button>
+    <button class="tab" data-scene="v3"><span class="no">V3</span>保比例、整体缩小</button>
+    <button class="tab" id="themeBtn" style="margin-left:auto"><span class="no">◐</span>深色</button>
+  </div>
+
+  <!-- ══════ 现状 ══════ -->
+  <section class="scene on" id="cur">
+    <div class="card"><div class="card-body">
+      <p class="refnote">线上现状（截图里那块）：方形兜底 420×420，竖图/横图靠 60vh 反算。</p>
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="bubble" style="width:660px">
+              <div class="tl"><span class="p"></span>调用工具 · edit_image<span class="r">2.2s / 300s</span></div>
+              <div class="band" style="width:min(100%,420px);aspect-ratio:1/1;height:auto">
+                <div class="dots"></div>
+                <div class="dot-hi gather"></div>
+                <div class="dot-hi gather g2"></div>
+                <div class="ttl">正在提交请求<span class="s">跟随原图比例</span></div>
+                <div class="badge"><span class="udots"><em></em><em></em><em></em></span>2.2s</div>
+              </div>
+              <div class="ruler"><span class="bar" style="width:420px;background:rgba(239,68,68,.35)"></span><b>420px</b> 高 · 屏高 734px 的一半</div>
+            </div>
+            <div class="cap">桌面 · 气泡内宽 660px<br>骨架 420×420，右边空了 240px</div>
+          </div>
+          <div class="sample">
+            <div class="phone">
+              <div class="bubble">
+                <div class="tl"><span class="p"></span>调用工具 · edit_image<span class="r">2.2s / 300s</span></div>
+                <div class="band" style="width:100%;aspect-ratio:1/1;height:auto">
+                  <div class="dots"></div>
+                  <div class="dot-hi gather"></div>
+                  <div class="dot-hi gather g2"></div>
+                  <div class="ttl">正在提交请求<span class="s">跟随原图比例</span></div>
+                  <div class="badge"><span class="udots"><em></em><em></em><em></em></span>2.2s</div>
+                </div>
+              </div>
+            </div>
+            <div class="cap">手机 375 视口 · 气泡内宽约 300px<br>宽度自适应 ✓，高度仍要吃掉 300px</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>现状：能适配，但太高、太窄</h3>
+          <ul>
+            <li><b>宽 420 上限</b>：桌面气泡内还有 200+px 空白，骨架像贴在左边的方块。</li>
+            <li><b>高 420</b>：占掉近半屏，下面的输入框和后续文字被顶走。</li>
+            <li><b>比成品还大</b>：成品最高 320px，骨架 420px，图出来时要缩一下——观感是「画面塌了一下」。</li>
+            <li><b>移动端</b>：宽度跟着气泡收（✓），但方形/竖图仍高 300px 上下，靠 60vh 才不会溢出屏幕。</li>
+          </ul>
+          <p class="note warn"><b>顺带一个真相：</b>改图（<code class="mono">edit_image</code>）没传 size 时后端才「跟随原图比例」，前端拿不到原图比例，兜底画的是方形——所以「比例必须一致」这条契约现在只是<b>尽力而为</b>，并非保证。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ V1 ══════ -->
+  <section class="scene" id="v1">
+    <div class="card"><div class="card-body">
+      <p class="refnote">推荐：框固定成一条矮横幅（高 132px、宽 min(100%, 560px)），左边留一个<b>按目标比例画的虚线幽灵框</b>把「这次出的是竖图还是横图」这个信息补回来。</p>
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="bubble" style="width:660px">
+              <div class="tl"><span class="p"></span>调用工具 · edit_image<span class="r">2.2s / 300s</span></div>
+              <div class="band">
+                <div class="dots"></div>
+                <div class="dot-hi gather"></div>
+                <div class="dot-hi gather g2"></div>
+                <div class="band-in">
+                  <div class="ghost" style="--ar:2/3">2:3</div>
+                  <div class="band-txt">
+                    <div class="t1">正在提交请求</div>
+                    <div class="t2">928x1664 · 1 张</div>
+                  </div>
+                </div>
+                <div class="badge"><span class="udots"><em></em><em></em><em></em></span>2.2s</div>
+              </div>
+              <div class="ruler"><span class="bar" style="width:560px"></span><b>560×132</b></div>
+            </div>
+            <div class="cap">桌面 · 竖图 928×1664<br>幽灵框窄高，一眼看出是竖图</div>
+          </div>
+          <div class="sample">
+            <div class="bubble" style="width:660px">
+              <div class="tl"><span class="p"></span>调用工具 · generate_image<span class="r">6.4s / 300s</span></div>
+              <div class="band">
+                <div class="dots"></div>
+                <div class="dot-hi gather"></div>
+                <div class="dot-hi gather g2"></div>
+                <div class="band-in">
+                  <div class="ghost" style="--ar:16/9">16:9</div>
+                  <div class="band-txt">
+                    <div class="t1">正在绘制</div>
+                    <div class="t2">1664x928 · 2 张</div>
+                  </div>
+                </div>
+                <div class="badge"><span class="udots"><em></em><em></em><em></em></span>6.4s</div>
+              </div>
+              <div class="ruler"><span class="bar" style="width:560px"></span><b>560×132</b>（横图也是同一条横幅）</div>
+            </div>
+            <div class="cap">桌面 · 横图 1664×928<br>横幅高度恒定，不随比例变</div>
+          </div>
+          <div class="sample">
+            <div class="phone">
+              <div class="bubble">
+                <div class="tl"><span class="p"></span>调用工具 · edit_image<span class="r">2.2s / 300s</span></div>
+                <div class="band h105" style="width:100%">
+                  <div class="dots"></div>
+                  <div class="dot-hi gather"></div>
+                  <div class="dot-hi gather g2"></div>
+                  <div class="band-in" style="gap:10px;padding:0 12px">
+                    <div class="ghost" style="--ar:1/1">?</div>
+                    <div class="band-txt">
+                      <div class="t1">正在提交请求</div>
+                      <div class="t2">跟随原图比例</div>
+                    </div>
+                  </div>
+                  <div class="badge" style="right:9px;bottom:8px"><span class="udots"><em></em><em></em><em></em></span>2.2s</div>
+                </div>
+              </div>
+            </div>
+            <div class="cap">手机 375 视口 · 宽 100%、高 105px<br>比例未知时幽灵框写「?」，不假装方形</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>V1 矮横幅 + 幽灵框<span class="tag">推荐</span></h3>
+          <ul>
+            <li><b>高度 −69%</b>：420 → 132px；<b>宽度 +33%</b>：420 → 560px 上限，桌面气泡基本铺满。</li>
+            <li><b>信息没丢</b>：阶段 + 尺寸/张数 + 秒表原样保留，另外用幽灵框把「目标比例」可视化。</li>
+            <li><b>比例未知时说真话</b>：虚线框里写「?」，而不是画个方形让用户以为要出方图。</li>
+            <li><b>移动端更稳</b>：高度用 <code class="mono">clamp(104px, 28vw, 132px)</code>，不再依赖 60vh；宽度 100% 自动收。</li>
+            <li><b>汇聚环</b>按短边取半径，在矮横幅里集中在中间一段，视觉仍是「散点往中间收」。</li>
+          </ul>
+          <p class="note warn"><b>代价：</b>框不再与成品同比例，图落地时会有一次「长出来」的变化（小→大，方向是自然的）。需要同步改一条契约测试：现在钉着「骨架必须按 size 定高 + 必带 60vh」。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ V2 ══════ -->
+  <section class="scene" id="v2">
+    <div class="card"><div class="card-body">
+      <p class="refnote">最省事的做法：只把尺寸算式换掉，文案位置、徽标、点阵动画全不动。</p>
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="bubble" style="width:660px">
+              <div class="tl"><span class="p"></span>调用工具 · edit_image<span class="r">2.2s / 300s</span></div>
+              <div class="band h120">
+                <div class="dots"></div>
+                <div class="dot-hi gather"></div>
+                <div class="dot-hi gather g2"></div>
+                <div class="ttl">正在提交请求<span class="s">跟随原图比例</span></div>
+                <div class="badge"><span class="udots"><em></em><em></em><em></em></span>2.2s</div>
+              </div>
+              <div class="ruler"><span class="bar" style="width:560px"></span><b>560×120</b></div>
+            </div>
+            <div class="cap">桌面 · 任何比例都是 560×120</div>
+          </div>
+          <div class="sample">
+            <div class="phone">
+              <div class="bubble">
+                <div class="tl"><span class="p"></span>调用工具 · edit_image<span class="r">2.2s / 300s</span></div>
+                <div class="band h105" style="width:100%">
+                  <div class="dots"></div>
+                  <div class="dot-hi gather"></div>
+                  <div class="dot-hi gather g2"></div>
+                  <div class="ttl" style="left:12px;top:9px;font-size:11.5px">正在提交请求<span class="s" style="font-size:10.5px">跟随原图比例</span></div>
+                  <div class="badge" style="right:9px;bottom:8px"><span class="udots"><em></em><em></em><em></em></span>2.2s</div>
+                </div>
+              </div>
+            </div>
+            <div class="cap">手机 375 视口 · 宽 100%、高 105px</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>V2 纯矮横幅</h3>
+          <ul>
+            <li>实现只有一条：<code class="mono">width: min(100%, 560px); height: clamp(104px, 28vw, 120px)</code>，删掉 aspect-ratio 与 60vh。</li>
+            <li>文案仍挤在左上角、点阵会从字后面穿过——宽了之后这份拥挤更明显。</li>
+            <li>没有任何比例提示：竖图横图看起来一模一样，用户只能从下面那行「928x1664」去读数字。</li>
+          </ul>
+          <p class="note"><b>什么时候选它：</b>只想快点把高度降下来，不想动文案排版和契约测试的量。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ══════ V3 ══════ -->
+  <section class="scene" id="v3">
+    <div class="card"><div class="card-body">
+      <p class="refnote">「保持比例、只缩小」——它会同时满足高度减半，但<b>做不到宽度增加</b>，列出来是为了把取舍摆明。</p>
+      <div class="row">
+        <div class="samples">
+          <div class="sample">
+            <div class="bubble" style="width:660px">
+              <div class="tl"><span class="p"></span>调用工具 · generate_image<span class="r">6.4s / 300s</span></div>
+              <div class="band" style="width:min(100%,240px,calc(200px * 16 / 9));height:auto;aspect-ratio:16/9">
+                <div class="dots"></div>
+                <div class="dot-hi gather"></div>
+                <div class="dot-hi gather g2"></div>
+                <div class="ttl">正在绘制<span class="s">1664x928 · 2 张</span></div>
+                <div class="badge"><span class="udots"><em></em><em></em><em></em></span>6.4s</div>
+              </div>
+              <div class="ruler"><span class="bar" style="width:240px"></span><b>240×135</b> · 横图</div>
+            </div>
+            <div class="cap">桌面 · 横图：高度对了，宽度也只有 240px</div>
+          </div>
+          <div class="sample">
+            <div class="bubble" style="width:660px">
+              <div class="tl"><span class="p"></span>调用工具 · edit_image<span class="r">2.2s / 300s</span></div>
+              <div class="band" style="width:min(100%,240px,calc(200px * 2 / 3));height:auto;aspect-ratio:2/3">
+                <div class="dots"></div>
+                <div class="dot-hi gather"></div>
+                <div class="dot-hi gather g2"></div>
+                <div class="ttl">正在提交请求<span class="s">928x1664</span></div>
+                <div class="badge"><span class="udots"><em></em><em></em><em></em></span>2.2s</div>
+              </div>
+              <div class="ruler"><span class="bar" style="width:133px"></span><b>133×200</b> · 竖图</div>
+            </div>
+            <div class="cap">桌面 · 竖图：宽度缩到 133px，像张缩略图</div>
+          </div>
+          <div class="sample">
+            <div class="phone">
+              <div class="bubble">
+                <div class="tl"><span class="p"></span>调用工具 · edit_image<span class="r">2.2s / 300s</span></div>
+                <div class="band" style="width:min(100%,calc(160px * 2 / 3));height:auto;aspect-ratio:2/3">
+                  <div class="dots"></div>
+                  <div class="dot-hi gather"></div>
+                  <div class="dot-hi gather g2"></div>
+                  <div class="ttl" style="left:10px;top:8px;font-size:10.5px">正在提交<span class="s" style="font-size:10px">928x1664</span></div>
+                  <div class="badge" style="right:8px;bottom:7px;padding:2px 8px;font-size:10.5px"><span class="udots"><em></em><em></em><em></em></span>2.2s</div>
+                </div>
+              </div>
+            </div>
+            <div class="cap">手机 375 视口 · 竖图被压到 107×160</div>
+          </div>
+        </div>
+        <div class="verdict">
+          <h3>V3 保比例缩小</h3>
+          <ul>
+            <li>高度减半 ✓，但宽度跟着缩水：竖图只剩 133px（桌面），比现在的 420 窄了三倍多。</li>
+            <li>框和成品同比例，图落地时<b>不会跳</b>——这是它唯一比 V1 强的地方。</li>
+            <li>和成品尺寸仍不一致（成品 320 高），所以「不跳」本来也只是近似。</li>
+          </ul>
+          <p class="note warn"><b>结论：</b>「高度减半」和「宽度增加」在「框=图同比例」这个前提下数学上矛盾，必须二选一。你要的是窄高变矮宽，那就得放开比例锁定。</p>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+</div>
+
+<script>
+  const tabs = document.getElementById('tabs');
+  tabs.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab[data-scene]');
+    if (!btn) return;
+    tabs.querySelectorAll('.tab[data-scene]').forEach((b) => b.classList.toggle('on', b === btn));
+    document.querySelectorAll('.scene').forEach((s) => s.classList.toggle('on', s.id === btn.dataset.scene));
+  });
+  document.getElementById('themeBtn').addEventListener('click', () => {
+    document.body.classList.toggle('dark');
+  });
+  // 支持 #v1 / #v2 / #v3 直达，方便把某一屏单独发出去看。
+  const hash = location.hash.replace('#', '');
+  if (hash) {
+    const target = tabs.querySelector(`.tab[data-scene="${hash}"]`);
+    if (target) target.click();
+  }
+</script>
+</body>
+</html>

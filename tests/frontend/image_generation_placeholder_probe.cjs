@@ -12,6 +12,7 @@ const mod = loadModule("frontend/src/utils/imageGenerationPlaceholder.ts");
 const {
   resolveImagePlaceholder,
   sizeToAspectRatio,
+  sizeToRatioLabel,
   normalizePlaceholderSize,
   normalizeStartedAtMs,
   imagePlaceholderStageText,
@@ -146,6 +147,21 @@ const log = (overrides) => ({
   assert.strictEqual(sizeToAspectRatio("呵呵"), "1 / 1");
   assert.strictEqual(normalizePlaceholderSize("512 × 512"), "512x512");
   assert.strictEqual(normalizePlaceholderSize("abc"), "");
+}
+
+/* ── 8.5 幽灵框里的比例标签 ────────────────────────────
+ * 标签是写给用户看的，不能是约分后的 29:52。网关给的尺寸常是「近似比例」
+ * （928/1664 = 0.5577，而 9/16 = 0.5625），所以要按容差先匹配常见比例。 */
+{
+  assert.strictEqual(sizeToRatioLabel("928x1664"), "9:16", "竖图不能被约分成 29:52");
+  assert.strictEqual(sizeToRatioLabel("1664x928"), "16:9");
+  assert.strictEqual(sizeToRatioLabel("1024x1024"), "1:1");
+  assert.strictEqual(sizeToRatioLabel("1024x1536"), "2:3", "能整除的直接约分");
+  assert.strictEqual(sizeToRatioLabel("2048x2048"), "1:1");
+  assert.strictEqual(sizeToRatioLabel(""), "", "尺寸未知 → 空串，组件写「?」");
+  assert.strictEqual(sizeToRatioLabel("呵呵"), "");
+  // 约不出小数比例的怪尺寸：给个能读的近似值，而不是 4 位数比 3 位数。
+  assert.strictEqual(sizeToRatioLabel("900x413"), "2.18:1");
 }
 
 /* ── 9. 开始时刻量级归一 ───────────────────────────────── */
