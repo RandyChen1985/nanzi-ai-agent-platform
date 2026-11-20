@@ -6117,11 +6117,15 @@ onUnmounted(() => {
                                 会静默回退成别的尺寸，原生图像格式才会明确报错——白名单是为了两种协议下都不出「看不出来的错」。
                              </p>
                           </div>
-                          <div v-else-if="item.is_secret && item.key !== 'embed_api_key'" class="relative">
-                             <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" @focus="focusSecretInput(item.key, $event)" />
-                             <div @click="toggleSecret(item.key)" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-400">
-                                <EyeIcon v-if="!showSecrets[item.key]" class="h-5 w-5" />
-                                <EyeSlashIcon v-else class="h-5 w-5" />
+                          <div v-else-if="item.is_secret && item.key !== 'embed_api_key'">
+                             <!-- relative 只能裹输入框和眼睛。之前它连下面的说明文字、测试连接按钮
+                                  一起裹着，`inset-y-0` 按整块高度算，眼睛就被推到了输入框下沿。 -->
+                             <div class="relative">
+                                <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" @focus="focusSecretInput(item.key, $event)" />
+                                <div @click="toggleSecret(item.key)" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-400">
+                                   <EyeIcon v-if="!showSecrets[item.key]" class="h-5 w-5" />
+                                   <EyeSlashIcon v-else class="h-5 w-5" />
+                                </div>
                              </div>
                              <p v-if="item.key === 'image_api_key'" class="mt-1.5 text-[11px] leading-relaxed text-gray-500">
                                框里是脱敏值（形如 <code class="font-mono">abc****wxyz</code>）。点进来会全选，直接输入即可整体替换；
