@@ -270,3 +270,20 @@ def test_empty_stream_body_cannot_fake_the_continue_entry():
     assert "Boolean(visibleStreamBody(msg))" in expression, expression
     # 反向保护：别把整段表达式直接塞布尔 prop（那就是这条 bug 的成因）
     assert "&& visibleStreamBody(msg)" not in expression, expression
+
+
+def test_mobile_actions_state_typed_as_message_id():
+    """`mobileActionsMessageId` 存的是 `Message.id`（number），不能声明成 string。
+
+    写错会同时坏两处、且都没有任何报错：
+    ① 赋值处 `mobileActionsMessageId.value = msg.id` 是 number 赋给 string；
+    ② 模板里 `mobileActionsMessageId === msg.id` 变成 'string | null' 与 number 比较，
+       恒为 false —— 移动端「⋯ 更多」抽屉永远打不开。
+
+    真正的门禁是 `cd frontend && vue-tsc -b`（TS2322 + TS2367 会直接指出），
+    但 `dev.sh`/`Dockerfile` 都走 `vite build` 跳过类型检查，这里补一张网。
+    """
+    source = _read("frontend/src/views/EmbedChat.vue")
+    assert "const mobileActionsMessageId = ref<number | null>(null)" in source, (
+        "mobileActionsMessageId 必须与 Message.id 同类型（number）"
+    )

@@ -9676,7 +9676,11 @@ const updateFullScreenStatus = () => {
 };
 
 // —— 移动端操作抽屉（<640px 专用）：一个抽屉、两个入口 ——
-const mobileActionsMessageId = ref<string | null>(null);
+// 存的是 Message.id（number）。原声明写成 string | null 与实际存的 number 不符：
+// 运行时赋值与比较用的是同一个值、=== 照样成立（抽屉能正常弹出），
+// 但类型层面挂着两处红（TS2322 赋值 / TS2367 比较），且一旦有人真按 string 存值
+// （例如给历史消息补一个字符串 id）就会静默失效，故让声明与事实一致。
+const mobileActionsMessageId = ref<number | null>(null);
 const mobileActionsFocus = ref<"data" | null>(null);
 
 const openMobileActions = (msg: Message, focus: "data" | null) => {

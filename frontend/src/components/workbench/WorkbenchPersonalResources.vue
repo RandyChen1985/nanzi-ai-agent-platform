@@ -112,7 +112,7 @@ const getResourceStyle = (key: string) => {
       <div class="flex items-center gap-2.5 lg:gap-3">
         <span
           class="flex shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-110"
-          :class="compact ? 'h-8 w-8 rounded-lg lg:h-9 lg:w-9' : 'h-10 w-10 rounded-xl', getResourceStyle(item.key).iconBg"
+          :class="[compact ? 'h-8 w-8 rounded-lg lg:h-9 lg:w-9' : 'h-10 w-10 rounded-xl', getResourceStyle(item.key).iconBg]"
         >
           <!-- knowledge：书本，与「知识库」页的语义一致 -->
           <svg v-if="item.key === 'knowledge'" :class="compact ? 'h-4 w-4 lg:h-[18px] lg:w-[18px]' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
