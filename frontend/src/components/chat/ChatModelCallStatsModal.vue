@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { formatContextTokens } from "@/composables/useContextUsage";
+import type { MessageImageUsage } from "@/utils/tokenFormat";
 
 const props = defineProps<{
   visible: boolean;
   loading: boolean;
   stats: any[];
   expanded: Record<string, boolean>;
+  /**
+   * 本条消息里图像工具的累计消耗。
+   *
+   * 图像调用**不在** /model_calls 里（那张表只记 LLM 推理），所以不单独列出来，
+   * 用户点开「用量」会以为这次生图没花钱。口径见 `MessageImageUsage`。
+   */
+  imageUsage?: MessageImageUsage | null;
 }>();
 
 const emit = defineEmits<{
@@ -162,6 +170,22 @@ const statsSummary = computed(() => {
           <div class="h-3 bg-gray-100 dark:bg-gray-700 rounded animate-pulse w-5/6"></div>
           <div class="h-3 bg-gray-100 dark:bg-gray-700 rounded animate-pulse w-4/5"></div>
         </div>
+      </div>
+
+      <!-- 图片消耗：图像工具是真正花钱的那次调用，但它不属于「大模型调用」，
+           不在这里列出来就会被当成没花钱。 -->
+      <div
+        v-if="!loading && imageUsage && imageUsage.calls"
+        class="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-amber-900"
+      >
+        <span class="text-[10px] font-black text-amber-700/80 uppercase tracking-wider">图片消耗</span>
+        <span>
+          出图 {{ imageUsage.images }} 张<template v-if="imageUsage.requested > imageUsage.images">（请求 {{ imageUsage.requested }} 张）</template>
+        </span>
+        <span>{{ imageUsage.calls }} 次调用</span>
+        <span v-if="imageUsage.tokens > 0">{{ formatTokens(imageUsage.tokens) }} tok</span>
+        <span v-else class="text-amber-700/70">上游未返回 token 用量</span>
+        <span v-if="imageUsage.size" class="font-mono">{{ imageUsage.size }}</span>
       </div>
 
       <!-- Empty state -->

@@ -803,6 +803,78 @@ async def _download_image_bytes(url: str, timeout: float) -> tuple[str, bytes]:
     return mime, raw
 
 
+def _normalize_upstream_usage(raw: Any) -> dict[str, int] | None:
+    """把上游 ``usage`` 归一成 prompt/completion/total 三个整数。
+
+    图像接口有两套写法：OpenAI 的 images 端点根本不返回 usage，而走 chat 协议的网关
+    （``choices[].message.content[].image_url`` 那种）会返回 token 用量——图片在这里被
+    折算成大量 token，是本次调用成本的主要部分，之前被整个丢掉。
+
+    只认这三个数，别的字段一律不存：这里要的是**能求和的东西**，不是原始报文。
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def _int(key: str) -> int:
+        try:
+            return max(int(raw.get(key) or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    prompt = _int("prompt_tokens") or _int("input_tokens")
+    completion = _int("completion_tokens") or _int("output_tokens")
+    total = _int("total_tokens") or (prompt + completion)
+    if prompt <= 0 and completion <= 0 and total <= 0:
+        return None
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": total,
+    }
+
+
+def _sum_upstream_usage(
+    acc: dict[str, int] | None, more: Any
+) -> dict[str, int] | None:
+    """累加多次请求的 upstream usage：一次调用出多张时，每张分别计费。"""
+    if not isinstance(more, dict):
+        return acc
+    if acc is None:
+        acc = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        try:
+            acc[key] += max(int(more.get(key) or 0), 0)
+        except (TypeError, ValueError):
+            continue
+    return acc
+
+
+def _build_image_usage(
+    *,
+    tool: str,
+    requested_count: int,
+    succeeded_count: int,
+    size: str,
+    model: str,
+    upstream_tokens: dict[str, int] | None,
+    elapsed_ms: int,
+) -> dict[str, Any]:
+    """本次工具调用的计量摘要，写进执行轨迹的 ``meta_info``。
+
+    ``upstream_tokens`` 为 None 是常态（多数图像端点不返回 usage），此时照样记张数与尺寸——
+    「生成了几张、多大、多久」本身就是可核对的成本线索，不该因为拿不到 token 就一起丢掉。
+    """
+    return {
+        "tool": tool,
+        "requested_count": max(int(requested_count or 0), 0),
+        "succeeded_count": max(int(succeeded_count or 0), 0),
+        "size": size or "",
+        "model": model or "",
+        "upstream_tokens": upstream_tokens,
+        "elapsed_ms": max(int(elapsed_ms or 0), 0),
+    }
+
+
 async def request_image_once(
     *,
     config: dict[str, Any],
@@ -941,6 +1013,9 @@ async def request_image_once(
         "data": data,
         "model": str(payload.get("model") or "").strip(),
         "elapsed_ms": int((time.monotonic() - started) * 1000),
+        # 上游给了 usage 就带出来（多数图像端点不给，给的时候通常是 chat 协议网关折算的
+        # 图片 token）；调用方只用来记账，不参与出图逻辑。
+        "usage": _normalize_upstream_usage(payload.get("usage")),
     }
 
 
@@ -1150,11 +1225,25 @@ async def generate_image(
 
     images: list[dict[str, Any]] = []
     upstream_model = ""
+    # 上游 usage 逐张累加。失败也要记：上游返回了 usage 就说明这次已经计费，
+    # 「图没出来但钱花了」恰恰是最该留下痕迹的一种。
+    usage_sum: dict[str, int] | None = None
+
+    def _usage_meta() -> dict[str, Any]:
+        return _build_image_usage(
+            tool="generate_image",
+            requested_count=count,
+            succeeded_count=len(images),
+            size=target_size,
+            model=upstream_model or config["model"],
+            upstream_tokens=usage_sum,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )
 
     def _fail(message: str) -> dict[str, Any]:
         """失败收口：已经出来的图不能因为后面一张失败就一起丢掉。"""
         if not images:
-            return {"ok": False, "error": message}
+            return {"ok": False, "error": message, "image_usage": _usage_meta()}
         return {
             "ok": True,
             "partial": True,
@@ -1162,6 +1251,7 @@ async def generate_image(
             "size": target_size,
             "elapsed_ms": int((time.monotonic() - started) * 1000),
             "images": images,
+            "image_usage": _usage_meta(),
             "warning": message,
             "hint": (
                 "只成功了一部分：如实告诉用户成品有几张、为什么剩下的没出来，"
@@ -1185,6 +1275,7 @@ async def generate_image(
 
         if not upstream_model:
             upstream_model = str(generated["model"] or "").strip()
+        usage_sum = _sum_upstream_usage(usage_sum, generated.get("usage"))
 
         try:
             images.append(
@@ -1206,6 +1297,7 @@ async def generate_image(
         "size": target_size,
         "elapsed_ms": int((time.monotonic() - started) * 1000),
         "images": images,
+        "image_usage": _usage_meta(),
         "hint": (
             "图片已保存为平台产物。请在最终回答里用 markdown 图片语法引用 download_url "
             "（形如 ![描述](download_url)），不要改写或猜测这个地址。"
@@ -1572,7 +1664,20 @@ async def edit_image(
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("[edit_image] 产物登记失败")
-        return {"ok": False, "error": f"图片已生成但保存失败：{_error_text(exc)}"}
+        # 已经出图、上游已经计费，只是落盘失败：这笔消耗必须留痕。
+        return {
+            "ok": False,
+            "error": f"图片已生成但保存失败：{_error_text(exc)}",
+            "image_usage": _build_image_usage(
+                tool="edit_image",
+                requested_count=1,
+                succeeded_count=0,
+                size=target_size or "跟随原图",
+                model=str(generated["model"] or "").strip() or config["model"],
+                upstream_tokens=generated.get("usage"),
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            ),
+        }
 
     actual = published.get("actual_size") or (
         f"{published['width']}x{published['height']}"
@@ -1592,6 +1697,15 @@ async def edit_image(
             else None
         ),
         "image": published,
+        "image_usage": _build_image_usage(
+            tool="edit_image",
+            requested_count=1,
+            succeeded_count=1,
+            size=target_size or actual or "跟随原图",
+            model=str(generated["model"] or "").strip() or config["model"],
+            upstream_tokens=generated.get("usage"),
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        ),
         "note": (
             "这是基于原图修改的结果，原图没有被覆盖。"
             "用 markdown 图片语法引用 download_url，并说明改了什么、什么没变。"

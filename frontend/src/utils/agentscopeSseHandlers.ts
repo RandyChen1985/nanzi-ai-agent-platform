@@ -126,6 +126,8 @@ export interface AgentStreamLog {
   subagent?: SubagentTraceMeta;
 }
 
+import type { MessageImageUsage } from "./tokenFormat";
+
 export interface AgentStreamMessage {
   trace_id?: string;
   agentMaxToolcallTimeoutSeconds?: number;
@@ -146,6 +148,8 @@ export interface AgentStreamMessage {
   turnType?: string;
   prompt_tokens?: number;
   completion_tokens?: number;
+  /** 本条消息里图像工具的累计消耗；不进 total_tokens，见 MessageImageUsage 的说明 */
+  image_usage?: MessageImageUsage;
   pendingPermission?: PendingToolPermission;
   pendingExternalExecution?: PendingExternalExecution;
   toolResultData?: Record<string, ToolResultDataBlock[]>;
@@ -806,6 +810,48 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
     // 子代理思考走日志通道，靠这个标记决定用 Markdown 渲染而不是当工具输出。
     reasoning: data.reasoning === true ? true : undefined,
   });
+
+  // 图像工具的计量单独累加到消息上：消息的「用量」只统计 LLM token，
+  // 图片这次调用的张数与上游 token 不进 total_tokens，但 tooltip 要看得到。
+  accumulateImageUsage(msg, data.image_usage);
+}
+
+/**
+ * 累加一次图像工具调用的消耗。
+ *
+ * 一条消息里可能生好几次图（多轮工具调用），所以是累加而不是覆盖。
+ * 上游不返回 usage 时 tokens 保持 0，但张数照样要记——「生成了几张」本身就是成本线索。
+ */
+export function accumulateImageUsage<T extends AgentStreamMessage>(
+  msg: T,
+  raw: unknown,
+): void {
+  const usage = raw as
+    | {
+        requested_count?: number;
+        succeeded_count?: number;
+        size?: string;
+        upstream_tokens?: { total_tokens?: number } | null;
+      }
+    | null
+    | undefined;
+  if (!usage || typeof usage !== "object") return;
+
+  const succeeded = Number(usage.succeeded_count ?? 0);
+  const requested = Number(usage.requested_count ?? succeeded);
+  const prev = msg.image_usage ?? {
+    calls: 0,
+    images: 0,
+    requested: 0,
+    tokens: 0,
+  };
+  msg.image_usage = {
+    calls: prev.calls + 1,
+    images: prev.images + succeeded,
+    requested: prev.requested + requested,
+    tokens: prev.tokens + Number(usage.upstream_tokens?.total_tokens ?? 0),
+    size: usage.size || prev.size,
+  };
 }
 
 /**

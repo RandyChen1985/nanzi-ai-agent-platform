@@ -925,3 +925,30 @@ async def test_oversized_source_is_rejected_without_reading(
     assert result["ok"] is False
     assert "太大" in result["error"]
     assert read_calls["n"] == 0, "应先 stat 判大小，超限就别读"
+
+
+async def test_usage_is_reported_for_edit(
+    patch_config, workspace, patch_context, captured_artifacts, monkeypatch
+):
+    """改图同样是一次真金白银的调用：上游给了 usage 就要带出来。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                **_chat_response(),
+                "usage": {"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21},
+            },
+        )
+
+    source = _make_source(workspace)
+    _patch_http(monkeypatch, handler)
+    result = await _call_edit(image=str(source), instruction="把背景换成浅蓝色")
+
+    usage = result["image_usage"]
+    assert usage["tool"] == "edit_image"
+    assert usage["requested_count"] == 1
+    assert usage["succeeded_count"] == 1
+    assert usage["upstream_tokens"]["total_tokens"] == 21
+    # 尺寸没指定时是「跟随原图」，计量里也要是这个说法，不能留空串
+    assert usage["size"]

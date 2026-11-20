@@ -7,8 +7,8 @@
 契约钉住四件事：
 
 1. **只在工具真的还在跑时出现**：完成、失败、历史回放都不许挂占位，否则会和真图叠在一起；
-2. **比例必须与结果一致**：宽高比取自请求的 size，给不出时用方形——比例错了图标落地时
-   整段对话会跳一下，比没有占位更难受；
+2. **比例信息不能丢，但不再决定框的高度**：框是一条固定高度的矮横幅（2026-11-20 改），
+   宽高比取自请求的 size、画成框内的虚线幽灵框；给不出时写「?」而不是假装方形；
 3. **不编百分比**：后端没有真实进度，只给「阶段 + 已用秒数 + 不确定进度条」；
 4. **占位是纯视觉**：不发请求、不读配置、不影响超时预算，去掉它功能行为完全不变。
 """
@@ -70,14 +70,37 @@ def test_placeholder_respects_reduced_motion():
     assert "animation: none" in source
 
 
-def test_placeholder_ratio_follows_requested_size():
-    """比例由请求尺寸决定，且竖图不许把输入框顶出屏幕。"""
-    util = _read(UTIL)
-    assert "aspectRatio" in _read(COMPONENT)
-    assert "60vh" in _read(COMPONENT), "竖图要按 60vh 反算宽度，否则手机上骨架比屏幕还高"
+def test_placeholder_band_keeps_ratio_as_ghost():
+    """矮横幅不再按出图比例定高；比例信息改由幽灵框承载，且不再靠 60vh 反算。
 
-    # 归一与比例的实现在 util 里（探针已真跑），这里只钉住「不写死方形」。
+    背景（2026-11-20，用户提「高度减半、宽度增加」）：旧算法 `min(100%, 420px, 60vh×比例)`
+    在方形兜底时桌面就是 420×420，占掉近半屏，而成品图被 `.markdown-body img` 压到最高
+    320px——骨架比成品还大，图落地时是「缩一下」。而「高度减半」与「宽度增加」在
+    「框必须同比例」的前提下数学上矛盾，所以框与比例解耦：框固定一档高度，比例改由框内
+    按目标比例缩放的虚线空框承载。
+    """
+    component = _read(COMPONENT)
+
+    # 框：宽度上限放宽到 560px，高度用 clamp 按屏宽分档，两者都不再由比例决定。
+    assert 'width: min(100%, 560px)' in component, "宽度上限要从 420px 放宽到 560px"
+    assert "height: clamp(" in component, "高度要按屏宽分档，手机上自动收窄"
+    assert "60vh" not in component, "高度改成矮横幅后不该再有 60vh 反算"
+    assert "aspectRatio: ratio," not in component, "框自身不许再按比例定高"
+
+    # 比例信息仍在：幽灵框用请求尺寸画形状，未知时写「?」而不是假装方形。
+    assert "imgph-ghost" in component
+    assert "aspectRatio: ghostRatio" in component, "幽灵框要按请求尺寸定形状"
+    assert 'ratioLabel || "?"' in component, "尺寸未知时写问号，不假装是方图"
+
+    util = _read(UTIL)
+    assert "sizeToRatioLabel" in util
     assert "1664 / 928" not in util  # 不把某个尺寸写进代码
+
+
+def test_ratio_label_is_readable():
+    """比例标签要写给人看：928x1664 应显示 9:16，而不是约分后的 29:52。"""
+    util = _read(UTIL)
+    assert "COMMON_RATIOS" in util, "常见比例对要按容差匹配，不能只做约分"
 
 
 def test_placeholder_uses_dot_matrix_visual():

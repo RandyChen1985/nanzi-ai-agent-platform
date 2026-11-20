@@ -16,6 +16,7 @@ import {
   ListBulletIcon,
 } from "@heroicons/vue/24/outline";
 import { copyToClipboard as copyText } from "@/utils/clipboard";
+import { imageUsageChips, imageUsageFromStep } from "@/utils/traceUsage";
 import {
   formatSubagentTraceSummary,
   normalizeSubagentTraceMeta,
@@ -96,6 +97,7 @@ const fetchLogs = async () => {
         expandedSteps.value[`input-${idx}`] = true;
         expandedSteps.value[`output-${idx}`] = !step.tool_output?.__audit_trace?.truncated;
         expandedSteps.value[`raw-${idx}`] = false;
+        expandedSteps.value[`usage-${idx}`] = false;
       });
     }
   } catch (e: any) {
@@ -261,6 +263,7 @@ const formatStepTime = (iso?: string) => {
 
 const getSubagentMeta = (step: any) =>
   normalizeSubagentTraceMeta(step?.meta_info?.subagent);
+
 </script>
 
 <template>
@@ -539,6 +542,38 @@ const getSubagentMeta = (step: any) =>
                           <dd class="break-all">{{ getSubagentMeta(step)?.tool_filter?.join('、') }}</dd>
                         </template>
                       </dl>
+                    </div>
+                    <!-- 用量：后端把生图/改图的张数、尺寸、上游 token 写进 meta_info.image_usage -->
+                    <div
+                      v-if="imageUsageFromStep(step)"
+                      class="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 space-y-1.5"
+                    >
+                      <div class="flex items-start justify-between gap-2">
+                        <div class="flex flex-wrap items-center gap-1.5">
+                          <span class="text-[10px] font-black text-amber-700/80 uppercase tracking-widest">用量</span>
+                          <span
+                            v-for="chip in imageUsageChips(step)"
+                            :key="`usage-${index}-${chip}`"
+                            class="text-[11px] font-medium text-amber-900 bg-white/80 border border-amber-200 rounded px-1.5 py-0.5"
+                          >
+                            {{ chip }}
+                          </span>
+                        </div>
+                        <button
+                          v-if="step.meta_info"
+                          type="button"
+                          @click.stop="toggleSection(`usage-${index}`)"
+                          class="shrink-0 flex items-center gap-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700/70 hover:text-amber-900 transition-colors"
+                        >
+                          <ChevronRightIcon :class="['w-3 h-3 transition-transform', expandedSteps[`usage-${index}`] ? 'rotate-90' : '']" />
+                          <span>原始</span>
+                        </button>
+                      </div>
+                      <pre
+                        v-if="expandedSteps[`usage-${index}`]"
+                        class="text-[11px] font-mono p-3 rounded-lg bg-[#0d1117] text-slate-100 overflow-x-auto leading-relaxed"
+                        v-html="highlightJsonHtml(step.meta_info)"
+                      />
                     </div>
                     <!-- Tool Input -->
                     <div v-if="step.tool_input" class="space-y-2">

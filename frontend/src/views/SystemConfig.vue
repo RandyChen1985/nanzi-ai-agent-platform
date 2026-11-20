@@ -1707,8 +1707,15 @@ const imageModelFilter = ref<'all' | 'image' | 'other'>('all')
 const imageModelSelected = ref('')
 const imageModelEndpoint = ref('')
 
-/** 按 id 猜用途：`/models` 只回 id，没有类型字段，只能靠命名习惯分。 */
-const IMAGE_MODEL_ID_RE = /image|flux|diffusion|dall-?e|imagen|kolors|seedream|sd[-_]?[0-9x]/i
+/**
+ * 按 id 猜用途：`/models` 只回 id，没有类型字段，只能靠命名习惯分。
+ *
+ * 这份名单现在**决定能不能点选**（非图像模型置灰），所以宁可多认：漏认一个真的出图模型，
+ * 用户就只能手填；多认一个文本模型，代价只是它出现在列表里但点了也出不了图（下面那句
+ * 「地形/命名认不出就手填」的引导兜着）。
+ */
+const IMAGE_MODEL_ID_RE =
+  /image|flux|diffusion|dall-?e|imagen|kolors|seedream|cogview|wanx|wan2|midjourney|mj[-_]|pixart|playground|ideogram|recraft|nano-?banana|t2i|text2image|janus|sd[-_]?[0-9x]/i
 const isImageModelId = (id: string) => IMAGE_MODEL_ID_RE.test(id)
 
 const imageModelCandidates = computed(() => {
@@ -1990,9 +1997,10 @@ const applyImageModel = () => {
   const field = imageModelField()
   if (field) field.value = target
   showImageModelModal.value = false
-  // 选了非图像模型多半是点错：提示一句，但不阻止——有些网关的图生模型名字里不带 image。
+  // 列表里非图像模型已经点不了，能走到这里的只有两条路：手填，或打开弹窗前就是旧值。
+  // 两者都只提示不拦截——手填本来就是「名字认不出的出图模型」的唯一出路。
   if (!isImageModelId(target)) {
-    showToast(`已选择「${target}」：它的名字不像图像模型，请确认能出图`, 'warning')
+    showToast(`已填入「${target}」：它的名字不像图像模型，请用「测试生成」确认能出图`, 'warning')
   }
 }
 
@@ -6109,11 +6117,15 @@ onUnmounted(() => {
                                 会静默回退成别的尺寸，原生图像格式才会明确报错——白名单是为了两种协议下都不出「看不出来的错」。
                              </p>
                           </div>
-                          <div v-else-if="item.is_secret && item.key !== 'embed_api_key'" class="relative">
-                             <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" @focus="focusSecretInput(item.key, $event)" />
-                             <div @click="toggleSecret(item.key)" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-400">
-                                <EyeIcon v-if="!showSecrets[item.key]" class="h-5 w-5" />
-                                <EyeSlashIcon v-else class="h-5 w-5" />
+                          <div v-else-if="item.is_secret && item.key !== 'embed_api_key'">
+                             <!-- relative 只能裹输入框和眼睛。之前它连下面的说明文字、测试连接按钮
+                                  一起裹着，`inset-y-0` 按整块高度算，眼睛就被推到了输入框下沿。 -->
+                             <div class="relative">
+                                <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" @focus="focusSecretInput(item.key, $event)" />
+                                <div @click="toggleSecret(item.key)" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-400">
+                                   <EyeIcon v-if="!showSecrets[item.key]" class="h-5 w-5" />
+                                   <EyeSlashIcon v-else class="h-5 w-5" />
+                                </div>
                              </div>
                              <p v-if="item.key === 'image_api_key'" class="mt-1.5 text-[11px] leading-relaxed text-gray-500">
                                框里是脱敏值（形如 <code class="font-mono">abc****wxyz</code>）。点进来会全选，直接输入即可整体替换；
@@ -8077,12 +8089,32 @@ onUnmounted(() => {
           <div v-else-if="!imageModelCandidates.length" class="py-10 text-center text-xs text-gray-500">
             没有匹配的模型
           </div>
+          <!-- 全部置灰时没有可点项，会让人以为坏了：这里明确指示手填。 -->
+          <div
+            v-else-if="imageModelCandidates.length && !imageModelCounts.image"
+            class="mx-2 my-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800"
+          >
+            <div class="font-semibold">这个网关里没识别到图像生成模型</div>
+            <div class="mt-1">
+              下面按名称置灰了（它们都不是出图模型）。请直接在上方「模型 id」输入框手填网关文档里的出图模型名，
+              再用本页的「测试生成」验证能不能出图。
+            </div>
+          </div>
+          <!-- 非图像模型置灰禁选：这个框填的是 image_model，选错了不会当场报错，
+               只会在真出图时报 404 / Model mismatch，或者网关静默按默认尺寸出图——
+               比「选不到」更难查。名字没被认出来的出图模型走上面输入框手填。 -->
           <button
             v-for="mid in imageModelCandidates"
             :key="mid"
             type="button"
             class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors"
-            :class="imageModelSelected === mid ? 'bg-primary/10' : 'hover:bg-gray-50'"
+            :class="isImageModelId(mid)
+              ? (imageModelSelected === mid ? 'bg-primary/10' : 'hover:bg-gray-50')
+              : 'cursor-not-allowed opacity-45'"
+            :disabled="!isImageModelId(mid)"
+            :title="isImageModelId(mid)
+              ? mid
+              : '该模型不像图像生成模型，选中它也出不了图。如果确认它能出图，请直接在上方「模型 id」输入框手填这个名字。'"
             @click="imageModelSelected = mid"
           >
             <span
@@ -8091,12 +8123,15 @@ onUnmounted(() => {
             >
               <span v-if="imageModelSelected === mid" class="h-2 w-2 rounded-full bg-primary"></span>
             </span>
-            <span class="min-w-0 flex-1 truncate font-mono text-xs text-gray-800">{{ mid }}</span>
+            <span
+              class="min-w-0 flex-1 truncate font-mono text-xs"
+              :class="isImageModelId(mid) ? 'text-gray-800' : 'text-gray-400'"
+            >{{ mid }}</span>
             <span
               v-if="isImageModelId(mid)"
               class="shrink-0 rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700"
             >图像生成</span>
-            <span v-else class="shrink-0 text-[10px] text-gray-400">其他</span>
+            <span v-else class="shrink-0 text-[10px] text-gray-400">其他 · 不可选</span>
           </button>
         </div>
 
