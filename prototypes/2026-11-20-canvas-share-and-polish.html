@@ -53,6 +53,15 @@
   .ico.sh{color:var(--primary)}
   .ico.sel{background:#eff6ff;color:var(--primary)}
   .ico svg{width:15px;height:15px}
+  .cv-top{position:relative}
+  .menu-pop{position:absolute;right:14px;top:48px;z-index:6;width:168px;background:#fff;border:1px solid var(--line);
+            border-radius:11px;box-shadow:0 14px 30px -14px rgba(15,23,42,.4);padding:5px;font-size:12px}
+  .menu-pop .mi{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;color:#374151;cursor:pointer;line-height:1.4}
+  .menu-pop .mi:hover{background:#f4f7fb}
+  .menu-pop .mi.hl{background:#eff6ff;color:var(--primary);font-weight:800}
+  .menu-pop .mi .ic2{width:14px;text-align:center;flex:none;opacity:.75}
+  .menu-pop .sep{height:1px;background:#f1f5f9;margin:4px 2px}
+  .menu-pop .cnt{margin-left:auto;font-size:10px;color:#cbd5e1;letter-spacing:.04em}
   .cv-switch{display:flex;justify-content:center;padding:10px 0 0}
   .sw{display:flex;background:#f3f4f6;border-radius:9px;padding:3px;gap:2px}
   .sw button{border:none;background:none;font-size:11px;font-weight:800;padding:5px 14px;border-radius:7px;color:#9ca3af;cursor:pointer}
@@ -152,7 +161,7 @@
     并顺带整理这个页面本身。<b>核心结论先说</b>：分享是否要先落盘，取决于内容来源——
     已有工作区文件的直接分享，一次磁盘写入都不需要；对话里生成的 markdown / csv / 图片现在
     连手动保存都不支持，所以「自动落盘」不是分享带来的新问题，而是补上一个本来缺的能力。
-    顶栏 6 个图标无分组、类型徽标 8 套配色、路径占一整行，是这次一并收拾的三个点。
+    顶栏 6 个图标无分组、类型徽标 8 套配色、路径占一整行，是这次一并收拾的三个点。<b>顶栏分组已定：</b>对文件做的事（分享 / 下载 / 保存 / 复制）统一收进 <code>⋯</code>，顶栏只留窗口级控制（钉住 / 全屏 / 关闭）。
   </p>
 
   <div class="tabs">
@@ -278,7 +287,8 @@
 
     <div class="h2"><span class="dot"></span>3. 分享入口放哪</div>
     <div class="grid2" style="align-items:start">
-      <div class="canvas">
+      <div>
+      <div class="canvas" style="min-height:270px">
         <div class="cv-top">
           <div class="cv-title" style="flex-direction:column;align-items:flex-start;gap:0">
             <div style="display:flex;align-items:center;gap:8px">
@@ -287,21 +297,21 @@
             </div>
           </div>
           <div class="cv-acts">
-            <button class="ico sv" title="保存到目录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v16m8-8H4"/></svg></button>
-            <button class="ico" title="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg></button>
-            <button class="ico" title="下载"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14"/></svg></button>
-            <button class="ico sh sel" title="分享文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="17" cy="6" r="2.6"/><circle cx="6.5" cy="12" r="2.6"/><circle cx="17" cy="18" r="2.6"/><path d="M8.8 10.7l5.9-3.3M8.8 13.3l5.9 3.3"/></svg></button>
-            <button class="ico" title="钉住"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zm3 10v6"/></svg></button>
+            <button class="ico sel" title="更多操作"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+            <span style="width:1px;height:16px;background:#e5e7eb;margin:0 3px"></span>
+            <button class="ico" title="钉住画布"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zm3 10v6"/></svg></button>
             <button class="ico" title="全屏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg></button>
             <button class="ico" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
           </div>
+          <div class="menu-pop">
+            <div class="mi hl"><span class="ic2">🔗</span>分享文件</div>
+            <div class="mi"><span class="ic2">⬇</span>下载文件</div>
+            <div class="mi"><span class="ic2">＋</span>保存到目录</div>
+            <div class="mi"><span class="ic2">⧉</span>复制内容</div>
+          </div>
         </div>
-        <div class="cv-body" style="padding:16px 18px 20px">
-          <p class="note" style="margin:0">
-            放在<b>下载之后</b>：两者都是「把这份文件交给别人」，紧挨着才不会找错。
-            图标沿用文件菜单里那个 🔗 同一形状（三节点连线），菜单与顶栏一眼是同功能。
-          </p>
-        </div>
+      </div>
+      <p class="note" style="margin-top:10px">放进 ⋯ 的<b>第一项</b>：和下载、保存、复制是同一类「对这份文件做一件事」， 统一收在菜单里，顶栏不再挤第六个图标。 图标沿用文件菜单里那个 🔗 同一形状（三节点连线），菜单与顶栏一眼是同功能。</p>
       </div>
       <div>
         <div class="modal">
@@ -357,10 +367,10 @@
 
   <!-- ============ B 顶栏整理 ============ -->
   <div class="pane" id="p2">
-    <div class="h2"><span class="dot"></span>顶栏：从「一排平铺」到「三组 + 溢出」</div>
+    <div class="h2"><span class="dot"></span>顶栏：从「一排平铺」到「窗口控制在外 + 文件操作进 ⋯」</div>
     <div class="ba">
       <div>
-        <p class="ba-h">现在 · 6 个同级图标</p>
+        <p class="ba-h">现在 · 6 个同级图标，分享根本没有</p>
         <div class="canvas before">
           <div class="cv-top">
             <div class="cv-title" style="flex-direction:column;align-items:flex-start;gap:0">
@@ -382,8 +392,8 @@
         <p class="note">6 个图标 + 类型徽标 + 路径行。窄屏时标题被压到 200px，图标仍然平铺，只能靠横向挤。</p>
       </div>
       <div>
-        <p class="ba-h">建议 · 主操作显性 + 低频收进 ⋯</p>
-        <div class="canvas">
+        <p class="ba-h">建议 · 窗口控制在外，文件操作收进 ⋯</p>
+        <div class="canvas" style="min-height:270px">
           <div class="cv-top">
             <div class="cv-title" style="flex-direction:column;align-items:flex-start;gap:0">
               <div style="display:flex;align-items:center;gap:8px">
@@ -393,23 +403,23 @@
               </div>
             </div>
             <div class="cv-acts">
-              <button class="ico sh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="17" cy="6" r="2.6"/><circle cx="6.5" cy="12" r="2.6"/><circle cx="17" cy="18" r="2.6"/><path d="M8.8 10.7l5.9-3.3M8.8 13.3l5.9 3.3"/></svg></button>
-              <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14"/></svg></button>
-              <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg></button>
+              <button class="ico sel" title="更多操作"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
               <span style="width:1px;height:16px;background:#e5e7eb;margin:0 3px"></span>
-              <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
-              <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+              <button class="ico" title="钉住画布"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zm3 10v6"/></svg></button>
+              <button class="ico" title="全屏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg></button>
+              <button class="ico" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+            </div>
+            <div class="menu-pop">
+              <div class="mi hl"><span class="ic2">🔗</span>分享文件</div>
+              <div class="mi"><span class="ic2">⬇</span>下载文件</div>
+              <div class="mi"><span class="ic2">＋</span>保存到目录</div>
+              <div class="mi"><span class="ic2">⧉</span>复制内容</div>
             </div>
           </div>
-          <div class="cv-body" style="padding:12px 16px 16px">
-            <p class="note" style="margin:0">
-              ⋯ 里是：保存到目录（生成型内容时才有）、钉住、全屏。关闭始终显性。
-              「已保存」降级成标题旁的小徽标，路径进 tooltip 并可点击复制。
-            </p>
-          </div>
         </div>
+        <p class="note" style="margin-top:10px"><b>顶栏只留窗口级控制</b>：⋯ / 钉住 / 全屏 / 关闭 —— 这四个改的是「这块面板本身」。 <b>对文件做的操作全部进 ⋯</b>：分享、下载、保存到目录、复制，一次只做一件事， 不需要在六个图标里辨认哪个是分享。 全屏与钉住留在外面：都是双向开关（全屏 ↔ 半屏、已钉住 ↔ 未钉住）， 藏进菜单就看不出当前状态；全屏时顶栏是唯一可见的操作区，退出不该多点一次。 「已保存」降级成标题旁的小徽标，路径进 tooltip 并可点击复制。</p>
       </div>
-    </div>
+      </div>
 
     <div class="h2"><span class="dot"></span>类型徽标：8 套配色 → 一个中性命色 + 图标</div>
     <div class="card">
@@ -470,10 +480,11 @@
             <button class="rbtn" title="适应行宽">↔</button>
           </div>
           <span style="width:1px;height:16px;background:#e5e7eb;margin:0 4px"></span>
-          <button class="ico sh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="17" cy="6" r="2.6"/><circle cx="6.5" cy="12" r="2.6"/><circle cx="17" cy="18" r="2.6"/><path d="M8.8 10.7l5.9-3.3M8.8 13.3l5.9 3.3"/></svg></button>
-          <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14"/></svg></button>
-          <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
-          <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          <button class="ico sel" title="更多操作"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+          <span style="width:1px;height:16px;background:#e5e7eb;margin:0 3px"></span>
+          <button class="ico" title="钉住画布"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zm3 10v6"/></svg></button>
+          <button class="ico" title="全屏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg></button>
+          <button class="ico" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
         </div>
       </div>
       <div class="cv-switch">
@@ -547,12 +558,17 @@
         <div class="cv-acts">
           <div class="rhead"><button class="rbtn">A−</button><button class="rbtn on">100%</button><button class="rbtn">A+</button></div>
           <span style="width:1px;height:16px;background:#e5e7eb;margin:0 4px"></span>
-          <button class="ico sh" title="分享文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="17" cy="6" r="2.6"/><circle cx="6.5" cy="12" r="2.6"/><circle cx="17" cy="18" r="2.6"/><path d="M8.8 10.7l5.9-3.3M8.8 13.3l5.9 3.3"/></svg></button>
-          <button class="ico" title="下载"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14"/></svg></button>
-          <button class="ico" title="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg></button>
+          <button class="ico sel" title="更多操作"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
           <span style="width:1px;height:16px;background:#e5e7eb;margin:0 3px"></span>
-          <button class="ico" title="更多"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+          <button class="ico" title="钉住画布"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zm3 10v6"/></svg></button>
+          <button class="ico" title="全屏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg></button>
           <button class="ico" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>
+        <div class="menu-pop">
+          <div class="mi hl"><span class="ic2">🔗</span>分享文件</div>
+          <div class="mi"><span class="ic2">⬇</span>下载文件</div>
+          <div class="mi"><span class="ic2">＋</span>保存到目录</div>
+          <div class="mi"><span class="ic2">⧉</span>复制内容</div>
         </div>
       </div>
       <div class="cv-switch">
@@ -586,16 +602,16 @@
       <table>
         <tr><th style="width:34%">批次</th><th style="width:16%">成本</th><th>内容</th></tr>
         <tr>
-          <td><b>第 1 批</b> · 分享入口（本次要做）</td><td>约 0.5 天</td>
-          <td>顶栏分享图标 + 三处宿主挂载 + 有 <code>sourcePath</code> 时直接分享；生成型内容先不开放（按钮置灰并说明「请先保存到工作区」），不引入新能力。</td>
+          <td><b>第 1 批</b> · 顶栏改结构 + 分享入口（本次要做）</td><td>约 0.5 天</td>
+          <td>顶栏收敛为「<code>⋯</code> | 钉住 全屏 关闭」；<code>⋯</code> 首项放「分享文件」，下载 / 保存 / 复制一并迁入（分享本来就依赖这套菜单，不能拆成两批）；三处宿主挂载；有 <code>sourcePath</code> 时直接分享，生成型内容先不开放（菜单项置灰并说明「请先保存到工作区」）。</td>
         </tr>
         <tr>
           <td><b>第 2 批</b> · 可保存范围扩展</td><td>约 0.5 天</td>
           <td><code>canSaveGeneratedContent</code> 扩到 markdown/csv/mermaid/image；分享弹窗内那条蓝色「保存并分享」提示。</td>
         </tr>
         <tr>
-          <td><b>第 3 批</b> · 顶栏整理</td><td>约 0.5 天</td>
-          <td>图标分组 + ⋯ 溢出菜单 + 徽标中性化 + 「已保存」徽标替代路径行 + 标题 tooltip。</td>
+          <td><b>第 3 批</b> · 徽标与标题</td><td>约 0.5 天</td>
+          <td>类型徽标 8 套配色 → 中性命色 + 图标；「已保存」徽标替代路径行（路径进 tooltip）；标题加 tooltip。纯视觉收尾，可与第 2 批并行。</td>
         </tr>
         <tr>
           <td><b>第 4 批</b> · 阅读体验</td><td>约 1 天</td>
@@ -604,7 +620,7 @@
       </table>
     </div>
     <p class="foot">
-      原型仅表达交互与视觉方向，未改动任何实现代码。第 1 批不依赖前几天的后端改动（接口已就绪），
+      原型仅表达交互与视觉方向，未改动任何实现代码。第 1 批不依赖前几天的后端改动（文件分享接口已就绪），
       第 2 批才需要动 <code>canSaveGeneratedContent</code> 判定与保存分支。
     </p>
   </div>

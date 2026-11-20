@@ -117,56 +117,67 @@ def test_chat_canvas_action_footer_is_removed_but_save_dialog_stays():
     assert "<WorkspaceDirectorySaveDialog" in canvas
 
 
-def test_chat_canvas_actions_render_as_header_icon_buttons():
-    """保存/复制/下载改为 header 图标按钮：p-1.5 图标按钮规范 + svg + title/aria-label。"""
-    canvas = _source("frontend/src/components/embed/ChatCanvas.vue")
+def test_chat_canvas_file_actions_live_in_the_more_menu():
+    """保存/复制/下载/分享改为「⋯」菜单项。
 
-    # 原横向按钮文字现在落在 tooltip（:title）上
-    for tooltip in ("保存到目录", "复制链接", "复制代码", "下载文件", "下载数据"):
-        assert tooltip in canvas, tooltip
-    assert "saving ? '保存中...' : '保存到目录'" in canvas
-    assert (
-        "copied ? '已复制！' : (data?.type === 'image' || isDocumentPreview ? '复制链接' : '复制代码')"
-        in canvas
-    )
-
-    anchors = {
-        "保存到目录": '@click="requestSaveToDirectory"',
-        "复制": '@click="copyContent"',
-        "下载": '@click="downloadFile"',
-    }
-    for label, anchor in anchors.items():
-        assert canvas.count(anchor) == 1, label
-        block = canvas.split(anchor)[1].split("</button>")[0]
-        assert "p-1.5" in block, label
-        assert "rounded-lg transition-colors" in block, label
-        assert "<svg" in block, label
-        assert ":title=" in block, label
-        assert ":aria-label=" in block, label
-        assert "flex-1" not in block, label
-
-    # file-viewer 渲染时隐藏下载图标（其工具栏自带下载）：判据 = isFileViewerRendered
-    download_button = canvas.split('v-if="!isFileViewerRendered"')[1].split("</button>")[0]
-    assert '@click="downloadFile"' in download_button
-
-
-def test_chat_canvas_header_actions_precede_pin_button():
-    """三个操作按钮必须插在钉住按钮之前（header 右侧、Pin 前）。
-
-    锚点唯一性：`@click="requestSaveToDirectory"` / `@click="copyContent"` /
-    `@click="downloadFile"` / `@click="pinned = !pinned"` 在源码中各出现 1 次；
-    而「取消钉住」出现 2 次（:title 与 :aria-label），故文案锚点改用唯一的
-    「钉住画布（固定在侧边不遮挡对话）」。
+    上一版它们是指针图标平铺在顶栏（p-1.5 + svg + title + aria-label），加分享后就是 7 个，
+    窄屏挤成一片小点。现在统一进 ⋯ 菜单——**可发现性与无障碍要求不变**：
+    每项仍要有文案、图标与 title，且点击锚点各只出现一次（防止菜单外又冒出一份）。
     """
     canvas = _source("frontend/src/components/embed/ChatCanvas.vue")
 
-    save_at = canvas.index('@click="requestSaveToDirectory"')
-    copy_at = canvas.index('@click="copyContent"')
-    download_at = canvas.index('@click="downloadFile"')
-    pin_at = canvas.index('@click="pinned = !pinned"')
+    menu = canvas.split('<div class="relative" data-canvas-more>')[1]
+    menu = menu.split("</Transition>")[0]
 
-    assert save_at < copy_at < download_at < pin_at
-    assert canvas.index("保存到目录") < canvas.index("钉住画布（固定在侧边不遮挡对话）")
+    # 菜单项文案齐全
+    for label in ("分享文件", "下载数据", "保存到目录"):
+        assert label in menu, label
+    assert "复制链接" in menu and "复制代码" in menu
+    assert "saving ? '保存中…' : '保存到目录'" in menu
+    assert (
+        "copied ? '已复制' : (data?.type === 'image' || isDocumentPreview ? '复制链接' : '复制代码')"
+        in menu
+    )
+
+    # 每项都有图标与无障碍属性
+    for anchor in (
+        '@click="openShare"',
+        '@click="downloadFile"',
+        '@click="requestSaveToDirectory"',
+        '@click="copyContent"',
+    ):
+        assert canvas.count(anchor) == 1, anchor
+        assert "<svg" in menu, "菜单项需要图标"
+        assert "title=" in menu, "菜单项需要 title 说明"
+
+    # 菜单整体要有 role 语义，键盘/读屏用户能识别成一组操作
+    assert 'role="menu"' in menu
+    assert menu.count('role="menuitem"') >= 4
+
+    # file-viewer 渲染时隐藏下载项（其工具栏自带下载）：判据 = isFileViewerRendered
+    download_item = menu.split('v-if="!isFileViewerRendered"')[1].split("</button>")[0]
+    assert '@click="downloadFile"' in download_item
+
+
+def test_chat_canvas_more_menu_precedes_pin_button():
+    """「⋯」必须排在钉住之前（header 右侧、窗口控制组之首）。
+
+    上一版断言的是「保存 < 复制 < 下载 < 钉住」的图标顺序；收敛成菜单后，等价意图是：
+    这组文件操作整体位于钉住 / 全屏 / 关闭之前，而不是散落在窗口控制中间。
+    """
+    canvas = _source("frontend/src/components/embed/ChatCanvas.vue")
+
+    more_at = canvas.index('<div class="relative" data-canvas-more>')
+    pin_at = canvas.index('@click="pinned = !pinned"')
+    fullscreen_at = canvas.index('@click="toggleFullscreen"')
+    close_at = canvas.index('@click="handleClose"')
+
+    assert more_at < pin_at < fullscreen_at < close_at
+
+    # 窗口控制组内不再夹带文件操作
+    window_controls = canvas[pin_at:close_at]
+    for action in ('@click="copyContent"', '@click="downloadFile"', '@click="openShare"'):
+        assert action not in window_controls, action
     # 钉住按钮本身保持原样
     assert ":title=\"pinned ? '取消钉住' : '钉住画布（固定在侧边不遮挡对话）'\"" in canvas
 

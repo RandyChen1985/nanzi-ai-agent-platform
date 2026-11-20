@@ -97,6 +97,9 @@ export function buildGeneratedWorkspaceFilename(
   else if (language === 'shell' || language === 'sh' || language === 'bash') extension = '.sh'
   else if (type === 'html' || language === 'html' || /html|xml/i.test(title)) extension = '.html'
   else if (type === 'markdown' || type === 'md' || /markdown|\.md$/i.test(title)) extension = '.md'
+  else if (type === 'csv') extension = '.csv'
+  else if (type === 'mermaid') extension = '.mmd'
+  else if (type === 'image') extension = '.png'
   else if (language === 'javascript' || language === 'js') extension = '.js'
   else if (language === 'typescript' || language === 'ts') extension = '.ts'
   else if (language === 'sql') extension = '.sql'
@@ -106,8 +109,18 @@ export function buildGeneratedWorkspaceFilename(
   return `${sanitizeGeneratedFilenameBase(title)}${extension}`
 }
 
-export function shouldAttachWorkspaceSourcePath(path: string, name: string): boolean {
-  if (!canWriteWorkspaceFile(name)) return false
+/**
+ * 画布数据要不要带上「源文件路径」。
+ *
+ * 这里曾经先要求 `canWriteWorkspaceFile(name)`——把**「能不能文本编辑并写回」**
+ * 当成了**「是不是工作区文件」**。后果是 .xlsx / .pdf / 图片这类二进制预览文件
+ * 从工作区打开后 sourcePath 为空：画布不显示「已保存」，分享入口被置灰成
+ * 「需先保存」，可它明明就在用户自己的工作区里。
+ *
+ * 能不能写回由 `canSaveWorkspaceFile`（它自己会再查一次文本白名单）单独判定，
+ * 不要在这个函数里重复表达。`name` 参数保留是为了不动三个调用方的签名。
+ */
+export function shouldAttachWorkspaceSourcePath(path: string, _name: string): boolean {
   const normalized = path.replace(/\\/g, '/')
   return normalized.includes('/agent_workspaces/') || normalized.startsWith('/workspace') || normalized.startsWith('workspace/')
 }
@@ -365,6 +378,20 @@ export async function createWorkspaceEntry(options: {
     name: options.name,
     kind: options.kind,
     content: options.content ?? '',
+  })
+}
+
+/**
+ * 把公共只读文件复制一份到本人工作区。
+ *
+ * 公共目录（branding / skills / docs）不在分享支持的范围内——分享记录按
+ * `(workspace_key, rel_path)` 定位文件，只有工作区里的文件进得来。
+ * 与其让用户「下载再上传」，不如给这一步直接通道。
+ */
+export async function copyFileToWorkspace(sourcePath: string, targetDir?: string) {
+  return axios.post('/api/v1/chat/fs/copy-to-workspace', {
+    source_path: sourcePath,
+    target_dir: targetDir || null,
   })
 }
 
