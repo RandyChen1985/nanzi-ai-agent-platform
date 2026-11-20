@@ -1233,46 +1233,6 @@ const overlayBackdropClass = computed(() =>
         </div>
         <div class="flex items-center space-x-1.5 shrink-0">
           <!--
-            阅读控件只对 Markdown 有用（代码/图片/Office 有自己的显示逻辑），
-            所以它跟着「预览」页签出现，收进 ⋯ 反而让调整字号变成两步操作。
-          -->
-          <div
-            v-if="showReaderControls"
-            class="flex items-center gap-0.5 rounded-lg bg-gray-50 p-0.5 dark:bg-gray-700/40"
-          >
-            <button
-              type="button"
-              class="h-6 min-w-6 rounded-md px-1 text-[11px] font-bold text-gray-500 transition-colors hover:bg-white hover:text-gray-700 disabled:opacity-40 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
-              :disabled="readerScale <= 0.9"
-              title="缩小字号"
-              @click="zoomReader(-0.1)"
-            >A−</button>
-            <button
-              type="button"
-              class="h-6 min-w-9 rounded-md px-1 text-[10.5px] font-bold tabular-nums text-gray-600 transition-colors hover:bg-white dark:text-gray-300 dark:hover:bg-gray-700"
-              title="点击重置为 100%"
-              @click="resetReaderScale"
-            >{{ readerScalePercent }}</button>
-            <button
-              type="button"
-              class="h-6 min-w-6 rounded-md px-1 text-[11px] font-bold text-gray-500 transition-colors hover:bg-white hover:text-gray-700 disabled:opacity-40 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
-              :disabled="readerScale >= 1.4"
-              title="放大字号"
-              @click="zoomReader(0.1)"
-            >A+</button>
-            <button
-              type="button"
-              class="h-6 rounded-md px-1.5 text-[11px] font-bold transition-colors"
-              :class="readerNarrow
-                ? 'bg-white text-primary shadow-xs dark:bg-gray-700 dark:text-primary'
-                : 'text-gray-500 hover:bg-white hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700'"
-              :title="readerNarrow ? '当前限宽 68 字符，点击恢复通栏' : '把正文限制在约 68 字符行宽'"
-              :aria-pressed="readerNarrow"
-              @click="toggleReaderNarrow"
-            >↔</button>
-          </div>
-
-          <!--
             「⋯」收纳所有「对这份文件做的事」：分享 / 下载 / 保存到目录 / 复制 / AI 分析。
             顶栏只留改面板本身的三项（钉住 / 全屏 / 关闭）——加分享后原来那排图标是 7 个，
             窄屏必然挤成一片小点，且「分享」「下载」「复制」本就是一回事的不同出口。
@@ -1466,7 +1426,49 @@ const overlayBackdropClass = computed(() =>
       </div>
 
       <!-- HTML / Markdown Preview/Code Tabs Selector -->
-      <div v-if="isHtmlContent || isMarkdownContent || isFileViewerTextPreview" class="px-4 py-2 border-b border-gray-100/50 dark:border-gray-700/50 bg-slate-50/50 dark:bg-gray-900/10 flex-shrink-0 flex items-center justify-center gap-2">
+      <div v-if="isHtmlContent || isMarkdownContent || isFileViewerTextPreview" class="relative px-4 py-2 border-b border-gray-100/50 dark:border-gray-700/50 bg-slate-50/50 dark:bg-gray-900/10 flex-shrink-0 flex items-center justify-center gap-2">
+        <!--
+          字号 / 行宽控件放在页签栏右侧的空白里，而不是顶栏标题行。
+          顶栏挤了标题、类型徽标、已保存徽标和三四个窗口按钮，再塞四个控件就把文件名
+          压成省略号；而这一行左右本来就是空的，控件在语义上也属于「怎么读」而非「这个文件是什么」。
+          绝对定位是为了让中间那组页签保持真正居中，不被控件推偏。
+        -->
+        <div
+          v-if="showReaderControls"
+          class="absolute right-3 flex items-center gap-0.5 rounded-lg bg-white/70 p-0.5 shadow-xs ring-1 ring-gray-200/60 dark:bg-gray-800/70 dark:ring-gray-700/60"
+        >
+          <button
+            type="button"
+            class="h-6 min-w-6 rounded-md px-1 text-[11px] font-bold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+            :disabled="readerScale <= 0.9"
+            title="缩小字号"
+            @click="zoomReader(-0.1)"
+          >A−</button>
+          <button
+            type="button"
+            class="h-6 min-w-9 rounded-md px-1 text-[10.5px] font-bold tabular-nums text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+            title="点击重置为 100%"
+            @click="resetReaderScale"
+          >{{ readerScalePercent }}</button>
+          <button
+            type="button"
+            class="h-6 min-w-6 rounded-md px-1 text-[11px] font-bold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+            :disabled="readerScale >= 1.4"
+            title="放大字号"
+            @click="zoomReader(0.1)"
+          >A+</button>
+          <span class="mx-0.5 h-4 w-px bg-gray-200 dark:bg-gray-600"></span>
+          <button
+            type="button"
+            class="h-6 rounded-md px-1.5 text-[11px] font-bold transition-colors"
+            :class="readerNarrow
+              ? 'bg-primary/10 text-primary dark:bg-primary/20'
+              : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700'"
+            :title="readerNarrow ? '当前限宽 68 字符，点击恢复通栏' : '把正文限制在约 68 字符行宽'"
+            :aria-pressed="readerNarrow"
+            @click="toggleReaderNarrow"
+          >↔</button>
+        </div>
         <div class="bg-gray-150/80 dark:bg-gray-900 p-0.5 rounded-lg flex space-x-1 w-full max-w-[240px] border border-gray-200/20 shadow-inner">
           <button
             @click="activeTab = 'preview'"

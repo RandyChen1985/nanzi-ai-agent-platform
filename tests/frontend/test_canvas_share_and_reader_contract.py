@@ -238,3 +238,24 @@ def test_drawer_preview_carries_source_path_for_every_type():
     assert fn.count("onOpen({") == 1, "分支不得各自调 onOpen，必须走 emitOpen"
     assert fn.count("emitOpen({") == 4, "四条预览分支都要经过统一出口"
     assert "data.sourcePath ?? " in fn, "已带路径时不覆盖，缺失时兜底"
+
+
+def test_reader_controls_live_in_the_tab_bar_not_the_header():
+    """字号 / 行宽控件必须在页签栏，不能回到顶栏标题行。
+
+    顶栏要挤下文件名、类型徽标、已保存徽标和 ⋯/钉住/全屏/关闭四个按钮，再放四个
+    阅读控件会把标题压成省略号。页签栏左右本来是空的，控件在语义上也属于「怎么读」，
+    而不是「这个文件是什么」。
+    """
+    source = _read(CANVAS)
+
+    header_start = source.index('<div class="flex items-center space-x-1.5 shrink-0">')
+    header_end = source.index("</div>\n      </div>", header_start)
+    header = source[header_start:header_end]
+    for marker in ("zoomReader", "readerScalePercent", "toggleReaderNarrow"):
+        assert marker not in header, f"{marker} 不该出现在顶栏"
+
+    tab_bar_at = source.index('class="relative px-4 py-2 border-b')
+    assert source.index("zoomReader(-0.1)") > tab_bar_at, "控件应位于页签栏"
+    # 绝对定位：否则会把中间那组页签推离居中位置
+    assert "absolute right-3 flex items-center" in source[tab_bar_at : tab_bar_at + 2400]
