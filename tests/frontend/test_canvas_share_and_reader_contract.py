@@ -194,3 +194,47 @@ def test_text_write_back_is_judged_separately():
     source = _read(CANVAS)
     block = source.split("const canSaveWorkspaceFile = computed")[1].split("});")[0]
     assert "canWriteWorkspaceFile(effectiveSourcePath.value)" in block
+
+
+def test_every_canvas_preview_branch_carries_source_path():
+    """工作区文件的每条预览分支都必须带 sourcePath。
+
+    这是同一个问题的第二次修正：第一次只改了 shouldAttachWorkspaceSourcePath 的判据，
+    但 useWorkspaceCanvas 里 Office/PDF、图片、CSV、文本是四条各自构造 canvasData 的分支，
+    其中只有文本那条注入了 sourcePath。于是 xlsx 打开后仍然显示「需先保存，无法分享」。
+    注入必须发生在分支汇总处（showCanvas 之前）并做成兜底补，不能每条分支各写一遍。
+    """
+    source = _read("frontend/src/composables/chat/useWorkspaceCanvas.ts")
+    block = source[source.index('canvas://file') :]
+    inject_at = block.index("shouldAttachWorkspaceSourcePath")
+    show_at = block.index("showCanvas()")
+    assert inject_at < show_at, "注入必须发生在统一的 showCanvas 之前"
+    # 兜底补：已经带了就不再覆盖，缺失的才补
+    assert "!canvasData.value.sourcePath" in block
+
+
+def test_share_size_is_not_computed_from_url_content():
+    """Office/PDF/图片的 content 是地址，按它算体积会得到假数字。"""
+    source = _read(CANVAS)
+    fn = source.split("const openShare = () => {")[1].split("};")[0]
+    assert "contentIsUrl" in fn
+    assert "contentIsUrl ? 0 : new Blob([raw]).size" in fn
+
+
+def test_drawer_preview_carries_source_path_for_every_type():
+    """工作区抽屉打开文件的路径（openWorkspaceFileInCanvas）必须对所有类型都带 sourcePath。
+
+    这是同一个问题的第三次修正，也是最关键的一次：用户从右侧「浏览工作空间」抽屉
+    双击 xlsx 走的是这条路径，而不是上面 useWorkspaceCanvas 的 `canvas://file` 分支。
+    该函数内部同样有 Office / PDF / 图片·CSV / 文本四条分支，此前只有文本那条传了
+    sourcePath。只改其中一条路径，用户看到的仍然是「需先保存，无法分享」。
+    """
+    source = _read("frontend/src/utils/workspaceFilePreview.ts")
+    fn = source[
+        source.index("export async function openWorkspaceFileInCanvas") :
+        source.index("export async function downloadWorkspaceFile")
+    ]
+    # 整个函数只允许有一个 onOpen 调用点，即统一出口 emitOpen 内部
+    assert fn.count("onOpen({") == 1, "分支不得各自调 onOpen，必须走 emitOpen"
+    assert fn.count("emitOpen({") == 4, "四条预览分支都要经过统一出口"
+    assert "data.sourcePath ?? " in fn, "已带路径时不覆盖，缺失时兜底"

@@ -201,6 +201,21 @@ type OpenWorkspacePreviewOptions = {
 export async function openWorkspaceFileInCanvas(options: OpenWorkspacePreviewOptions) {
   const { path, name, conversationId, showToast, onOpen, activeBlobUrlRef } = options
 
+  /**
+   * 统一出口：不管哪种预览形态，都把工作区路径带上。
+   *
+   * 此前四个分支各自调 onOpen，只有「取文本」那条传了 sourcePath，Office / PDF /
+   * 图片 / CSV 全部缺失。结果是这些文件在画布里拿不到来源路径：分享入口置灰成
+   * 「需先保存」，「已保存」徽标也不出现——可文件就在用户自己的工作区里。
+   * 与 useWorkspaceCanvas 里 `canvas://file` 分支同一个毛病，那边同样做了兜底。
+   */
+  const emitOpen = (data: CanvasPanelData) => {
+    onOpen({
+      ...data,
+      sourcePath: data.sourcePath ?? (shouldAttachWorkspaceSourcePath(path, name) ? path : undefined),
+    })
+  }
+
   if (!canPreviewWorkspaceFile(name)) {
     showToast('不支持预览该类型的文件', 'error')
     return
@@ -228,7 +243,7 @@ export async function openWorkspaceFileInCanvas(options: OpenWorkspacePreviewOpt
     if (OFFICE_PREVIEW_EXTENSIONS.has(ext)) {
       // 只传鉴权 URL：Blob 由 DocumentViewer 用 axios 获取，
       // 避免 Blob 进入响应式状态，也避免在此处创建对象 URL。
-      onOpen({
+      emitOpen({
         type: 'document',
         title: name,
         content: resolvedUrl,
@@ -256,7 +271,7 @@ export async function openWorkspaceFileInCanvas(options: OpenWorkspacePreviewOpt
 
     if (payload.type === 'pdf') {
       // PDF 同样交给 DocumentViewer，只传 URL，不预取 Blob
-      onOpen({
+      emitOpen({
         type: 'pdf',
         title: name,
         content: resolvedUrl,
@@ -270,7 +285,7 @@ export async function openWorkspaceFileInCanvas(options: OpenWorkspacePreviewOpt
       const response = await axios.get(resolvedUrl, { responseType: 'blob' })
       const blobUrl = URL.createObjectURL(response.data)
       if (activeBlobUrlRef) activeBlobUrlRef.value = blobUrl
-      onOpen({
+      emitOpen({
         type: payload.type,
         title: payload.title,
         content: blobUrl,
@@ -280,11 +295,10 @@ export async function openWorkspaceFileInCanvas(options: OpenWorkspacePreviewOpt
 
     const resText = await axios.get(resolvedUrl).then((res) => res.data)
     const scriptLanguage = resolveWorkspaceScriptLanguage(name)
-    onOpen({
+    emitOpen({
       type: payload.type,
       title: payload.title,
       content: resText,
-      sourcePath: shouldAttachWorkspaceSourcePath(path, name) ? path : undefined,
       langName: scriptLanguage || undefined,
       runnable: !!scriptLanguage,
     })

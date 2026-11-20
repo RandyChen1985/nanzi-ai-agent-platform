@@ -726,10 +726,14 @@ const openShare = () => {
     return;
   }
   const data = props.data;
+  // Office / PDF / 图片 / CSV 的 content 是地址而不是内容，按它算出来的体积是假的
+  // （会显示成一个几十字节的 xlsx）。这类文件交给分享弹窗留空，别显示错数字。
+  const raw = typeof data?.content === 'string' ? data.content : '';
+  const contentIsUrl = /^(blob:|data:|https?:\/\/|\/api\/)/.test(raw);
   shareTarget.value = {
     path,
     name: (data?.title || path.split('/').pop() || 'file').trim(),
-    size: typeof data?.content === 'string' ? new Blob([data.content]).size : 0,
+    size: contentIsUrl ? 0 : new Blob([raw]).size,
   };
 };
 
