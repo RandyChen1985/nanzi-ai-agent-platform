@@ -821,6 +821,7 @@ import {
   resolveLiveTimerDurationMs,
   resolveLiveTimerLogId,
   resolveTimelineCurrentStep,
+  orderTimelineBySeq,
   selectTimelineRenderableItems,
   sortParallelBatchItems,
   timelineHasPending,
@@ -1089,7 +1090,8 @@ const baseTimelineItems = computed(() => {
     : buildLegacyProcessTimeline(props);
   const visibleItems = props.suppressPermissionLogs ? suppressPermissionLogs(merged) : merged;
   // 清单一律不进明细：它只属于输入框上方的横幅（见 selectTimelineRenderableItems）。
-  return selectTimelineRenderableItems(visibleItems);
+  // 再按后端事件序排一次：位置不能只靠「首次到达」，并发/补发会偶发乱序。
+  return orderTimelineBySeq(selectTimelineRenderableItems(visibleItems));
 });
 
 const timelineItems = computed(() => {

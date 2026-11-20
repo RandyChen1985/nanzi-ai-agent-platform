@@ -97,6 +97,14 @@ export type ProcessTimelineLogItem = {
   reasoning?: boolean;
   execution_time_ms?: number | null;
   started_at?: number | null;
+  /**
+   * 后端事件序号（Redis journal 分配的会话维度单调递增值）。
+   *
+   * 时间线位置本来由「首次到达」决定，并发工具 / 断线补发 / 多路事件交错时会偏离
+   * 真实发生顺序。首帧带上它就按它排序（见 `orderTimelineBySeq`）；缺失（本地创建的
+   * 文本项、老快照）则保持原序。
+   */
+  seq?: number;
   subagent?: SubagentTraceMeta;
   /**
    * 远端 MCP 工具上报的进度快照（瞬态，不落库）。
@@ -631,6 +639,65 @@ export function resolveBannerTodoTimeline(
  * 顺带失去的作用：以前这里还会对残留的多条 todo（同一 id 的旧快照）去重，
  * 现在一条都不渲染，去重自然不需要了。
  */
+/**
+ * 同层按事件序号稳定排序（`seq` 由后端 Redis journal 分配，见 `ProcessTimelineLogItem.seq`）。
+ *
+ * - 有 seq 的按 seq 升序；没有 seq 的项（本地创建的旁白/推理文本、老快照）继承
+ *   「前一个已知 seq」跟着它走，不会被甩到别处；
+ * - seq 相同时按原始下标兜底，不依赖运行时 sort 的稳定性；
+ * - 整层都没有 seq、或本来就有序时**返回原数组引用**：渲染层按引用比较，
+ *   没有变化就不该触发重渲染；children 有变化时只复制受影响的那一项。
+ */
+export function orderTimelineBySeq<T extends { seq?: number; children?: T[] }>(
+  items: T[] | undefined,
+): T[] {
+  const list = items || [];
+  if (list.length < 2 && !list.some((item) => (item?.children?.length ?? 0) > 1)) return list;
+
+  let working: T[] = list;
+  for (let index = 0; index < list.length; index += 1) {
+    const item = list[index];
+    const children = item?.children;
+    if (!children || children.length < 2) continue;
+    const orderedChildren = orderTimelineBySeq(children);
+    if (orderedChildren === children) continue;
+    if (working === list) working = [...list];
+    working[index] = { ...item, children: orderedChildren };
+  }
+
+  const ordered = orderTimelineLevelBySeq(working);
+  if (ordered) return ordered;
+  return working;
+}
+
+/** 单层排序；无需变动返回 `undefined`（调用方据此保留原引用）。 */
+function orderTimelineLevelBySeq<T extends { seq?: number }>(items: T[]): T[] | undefined {
+  let lastSeq: number | undefined;
+  let sawSeq = false;
+  const keyed = items.map((item, index) => {
+    let key: number;
+    if (typeof item.seq === "number") {
+      key = item.seq;
+      lastSeq = item.seq;
+      sawSeq = true;
+    } else {
+      key = lastSeq ?? Number.NEGATIVE_INFINITY;
+    }
+    return { item, key, index };
+  });
+  if (!sawSeq) return undefined;
+  let outOfOrder = false;
+  for (let index = 1; index < keyed.length; index += 1) {
+    if ((keyed[index]?.key ?? 0) < (keyed[index - 1]?.key ?? 0)) {
+      outOfOrder = true;
+      break;
+    }
+  }
+  if (!outOfOrder) return undefined;
+  keyed.sort((left, right) => left.key - right.key || left.index - right.index);
+  return keyed.map((entry) => entry.item);
+}
+
 export function selectTimelineRenderableItems(
   items: ProcessTimelineItem[],
 ): ProcessTimelineItem[] {
@@ -1297,6 +1364,8 @@ export function upsertTimelineLog(
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
     started_at?: number | null;
+    /** 后端事件序号（见 `ProcessTimelineLogItem.seq`）。 */
+    _seq?: number;
     subagent?: SubagentTraceMeta;
     /** 子代理思考：决定渲染成 Markdown 正文而不是工具输出。 */
     reasoning?: boolean;
@@ -1332,6 +1401,8 @@ export function upsertTimelineLog(
     if (data.resolution_status !== undefined) existing.resolution_status = data.resolution_status;
     if (data.execution_time_ms !== undefined) existing.execution_time_ms = data.execution_time_ms;
     if (data.started_at !== undefined) existing.started_at = data.started_at;
+    // 位置由首帧决定：已有序号不覆盖，只在缺失时补（首帧可能走在分配序号之前）。
+    if (existing.seq === undefined && typeof data._seq === "number") existing.seq = data._seq;
     if (data.subagent !== undefined) existing.subagent = data.subagent;
     if (data.reasoning !== undefined) existing.reasoning = data.reasoning;
     // 进度是执行期装饰：条目一结束就必须清掉，否则会被 process_timeline 快照
@@ -1472,6 +1543,7 @@ export function upsertTimelineLog(
     // pending 卡必须在创建时刻留下基准，否则「执行中实时秒表」无从计算：
     // msg.logs 侧已在 EmbedChat 里这么做，processTimeline 侧此前一直缺失。
     started_at: data.started_at ?? (data.status === "pending" ? Date.now() : undefined),
+    seq: typeof data._seq === "number" ? data._seq : undefined,
     subagent: data.subagent,
     reasoning: data.reasoning,
     isExpanded: false,

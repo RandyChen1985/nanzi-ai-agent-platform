@@ -136,9 +136,14 @@ class ConversationStreamJournal:
             seq_start = seq_end - batch_size + 1
             payloads: list[str] = []
             for offset, event in enumerate(valid_events):
+                seq = seq_start + offset
                 payload = dict(event)
-                payload["_seq"] = seq_start + offset
+                payload["_seq"] = seq
                 payloads.append(json.dumps(payload, ensure_ascii=False))
+                # 把序号也写回**原事件对象**：实时帧在这之后才入队（见 chat.py
+                # `_producer_task` 里 append → queue.put 的顺序），前端才拿得到排序键。
+                # 改造前只有断线重放（读日志）的帧带 `_seq`，活跃流永远没有。
+                event["_seq"] = seq
             max_events, ttl_seconds = await self._limits()
             async with redis.pipeline() as pipe:
                 pipe.rpush(list_key, *payloads)

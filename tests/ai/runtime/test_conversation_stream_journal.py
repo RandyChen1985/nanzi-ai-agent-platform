@@ -151,6 +151,24 @@ async def test_append_assigns_monotonic_seq_and_reads_after(fake_redis):
     assert tail["next_seq"] == 3
 
 
+async def test_append_stamps_seq_back_onto_live_event(fake_redis):
+    """把分配的 seq 写回原事件对象：实时帧在 append 之后才入队，靠这个字段才带得上排序键。
+
+    改造前只有「读日志重放」的帧带 `_seq`，活跃流期间前端永远拿不到排序键，
+    执行明细只能按到达顺序落位（并发/补发时就偶发乱序）。
+    """
+    journal = _journal()
+
+    event = {"type": "log", "title": "a"}
+    await journal.append("u1", "c1", [event])
+
+    assert event["_seq"] == 1
+
+    second = {"type": "log", "title": "b"}
+    await journal.append("u1", "c1", [second])
+    assert second["_seq"] == 2
+
+
 async def test_read_after_with_no_events_echoes_cursor(fake_redis):
     journal = _journal()
     batch = await journal.read_after("u1", "c1", after_seq=7)
