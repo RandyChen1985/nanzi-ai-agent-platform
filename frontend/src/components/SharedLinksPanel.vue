@@ -2,8 +2,108 @@
   <!-- 作为侧栏的 flex 子项占满剩余高度，内部自己滚动（不依赖父级固定高度） -->
   <div class="flex flex-1 min-h-0 flex-col">
     <div class="flex-1 overflow-y-auto custom-scrollbar px-2.5 py-3">
+      <!-- 会话链接 / 文件链接：两类分享同一套访问控制，但来源完全不同的东西，
+           分开展示比混在一个列表里更好认 -->
+      <div class="mb-2.5 flex gap-1.5 px-0.5">
+        <button
+          v-for="tab in SHARE_TABS"
+          :key="tab.value"
+          class="rounded-lg px-2.5 py-1 text-[11.5px] font-bold transition-colors"
+          :class="view === tab.value
+            ? 'bg-primary text-white'
+            : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'"
+          @click="switchView(tab.value)"
+        >
+          {{ tab.label }}
+        </button>
+      </div>
+
+      <!-- 文件分享分支：与会话分支互斥，各管各的加载状态与空态 -->
+      <div v-if="view === 'file'">
+        <div v-if="fileLoading && fileItems.length === 0" class="space-y-2">
+          <div v-for="n in 3" :key="n" class="h-[92px] animate-pulse rounded-xl bg-gray-100 dark:bg-gray-800"></div>
+        </div>
+
+        <div v-else-if="fileError" class="px-2 py-8 text-center">
+          <p class="text-[11.5px] text-red-500">{{ fileError }}</p>
+          <button class="mt-2 text-[11.5px] font-semibold text-primary" @click="loadFiles()">重试</button>
+        </div>
+
+        <div v-else-if="fileItems.length === 0" class="px-4 py-10 text-center">
+          <div class="mx-auto mb-2 grid h-10 w-10 place-items-center rounded-xl bg-gray-100 text-gray-400 dark:bg-gray-800">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8 7h8M8 11h8M8 15h5" /><rect x="4" y="3.5" width="16" height="17" rx="2.5" />
+            </svg>
+          </div>
+          <p class="text-[12px] font-semibold text-gray-500">还没有分享过文件</p>
+          <p class="mt-1 text-[11px] leading-relaxed text-gray-400">
+            在「工作空间」的文件操作菜单里点「分享文件」，<br />可选公开或密钥访问、设置有效期。
+          </p>
+        </div>
+
+        <div v-else class="space-y-2">
+          <div
+            v-for="item in fileRows"
+            :key="item.share_id"
+            class="rounded-xl border bg-white p-3 dark:bg-gray-800/80"
+            :class="item.state === 'active' ? 'border-gray-100 dark:border-gray-800' : 'border-dashed border-gray-200 opacity-80'"
+          >
+            <p
+              class="line-clamp-2 text-[12.5px] font-bold leading-snug text-gray-800 dark:text-gray-100"
+              :class="{ 'text-gray-400 line-through dark:text-gray-500': item.state !== 'active' }"
+            >
+              {{ item.file_name || '未命名文件' }}
+            </p>
+            <p class="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-400">
+              <span class="rounded px-1.5 py-0.5 font-bold" :class="statusClass(item.state)">{{ statusLabel(item.state) }}</span>
+              <span>{{ item.access_mode === 'secret' ? '密钥' : '公开' }}</span>
+              <span>· 浏览 {{ item.view_count }} · 下载 {{ item.download_count }}</span>
+            </p>
+            <p class="mt-1 text-[11px] text-gray-400">
+              {{ fileExpiryText(item) }} · {{ formatTime(item.created_at) }} 创建
+            </p>
+
+            <div
+              v-if="confirmingFileId === item.share_id"
+              class="mt-2 flex items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5"
+            >
+              <span class="text-[11px] font-bold text-red-600">作废后链接立即失效</span>
+              <span class="flex gap-1.5">
+                <button
+                  class="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600"
+                  @click="confirmingFileId = ''"
+                >取消</button>
+                <button
+                  class="rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-bold text-red-600"
+                  @click="revokeFile(item.share_id)"
+                >确认作废</button>
+              </span>
+            </div>
+
+            <div v-else class="mt-2 flex gap-1.5">
+              <button
+                class="rounded-md border border-gray-200 px-2 py-1 text-[11px] font-semibold text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+                :disabled="item.state !== 'active'"
+                @click="copy(buildShareCopyText({ title: item.file_name, url: item.url, secret: item.secret }), '分享信息')"
+              >复制分享信息</button>
+              <button
+                v-if="item.access_mode === 'secret'"
+                class="rounded-md border border-gray-200 px-2 py-1 text-[11px] font-semibold text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+                :disabled="item.state !== 'active' || !item.secret"
+                @click="copy(item.secret || '', '密码')"
+              >复制密码</button>
+              <button
+                v-if="item.state === 'active'"
+                class="rounded-md border border-red-200 bg-red-50/60 px-2 py-1 text-[11px] font-bold text-red-600 dark:border-red-900/50 dark:bg-red-950/30"
+                @click="confirmingFileId = item.share_id"
+              >作废</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 首屏骨架屏：翻页时保留旧列表，避免整块闪白 -->
-      <div v-if="loading && items.length === 0" class="space-y-2">
+      <div v-else-if="loading && items.length === 0" class="space-y-2">
         <div
           v-for="n in 3"
           :key="n"
@@ -117,6 +217,11 @@ import {
   type AuthHeaders,
   type ShareListItem,
 } from "@/api/chatShare";
+import {
+  listFileShares,
+  revokeFileShare,
+  type FileShareItem,
+} from "@/api/fileShare";
 import { buildShareCopyText } from "@/utils/shareCopy";
 import { deriveShareStatus, formatRemaining, type ShareStatus } from "@/utils/shareExpiry";
 
@@ -135,6 +240,28 @@ const emit = defineEmits<{
 }>();
 
 const PAGE_SIZE = 20;
+
+/** 面板的两个视图：会话链接 / 文件链接。文件是后加的，默认仍停在会话上。 */
+const SHARE_TABS = [
+  { value: "conversation" as const, label: "会话链接" },
+  { value: "file" as const, label: "文件链接" },
+];
+type ShareView = (typeof SHARE_TABS)[number]["value"];
+
+const view = ref<ShareView>("conversation");
+
+const fileItems = ref<FileShareItem[]>([]);
+const fileLoading = ref(false);
+const fileError = ref("");
+const confirmingFileId = ref("");
+const fileLoaded = ref(false);
+
+type FileShareRow = FileShareItem & { state: ShareStatus };
+
+const fileRows = computed<FileShareRow[]>(() =>
+  fileItems.value.map((item) => ({ ...item, state: deriveShareStatus(item) })),
+);
+
 
 const items = ref<ShareListItem[]>([]);
 const total = ref(0);
@@ -244,6 +371,53 @@ async function revoke(shareId: string): Promise<void> {
   } catch (error: any) {
     emit("toast", String(error?.response?.data?.detail || "作废失败"), "error");
   }
+}
+
+function switchView(next: ShareView): void {
+  view.value = next;
+  // 懒加载 + 只成功加载一次：会话列表有分页，反复切换不该重置它
+  if (next === "file" && !fileLoaded.value && !fileLoading.value) {
+    void loadFiles();
+  }
+}
+
+async function loadFiles(): Promise<void> {
+  fileLoading.value = true;
+  fileError.value = "";
+  try {
+    const data = await listFileShares({}, props.authHeaders);
+    fileItems.value = data.items || [];
+    fileLoaded.value = true;
+  } catch {
+    fileError.value = "读取文件分享失败，请稍后重试";
+  } finally {
+    fileLoading.value = false;
+  }
+}
+
+async function revokeFile(shareId: string): Promise<void> {
+  try {
+    await revokeFileShare(shareId, props.authHeaders);
+    confirmingFileId.value = "";
+    emit("toast", "已作废该文件链接", "success");
+    // 就地改状态而不是整表刷新：整表刷新会把用户滚动位置顶回去
+    fileItems.value = fileItems.value.map((item) =>
+      item.share_id === shareId ? { ...item, status: "revoked" as const } : item,
+    );
+  } catch {
+    emit("toast", "作废失败，请稍后重试", "error");
+  }
+}
+
+/** 文件链接的有效期文案：与会话链接同一套措辞。 */
+function fileExpiryText(item: FileShareRow): string {
+  if (item.state === "revoked") {
+    return `${formatTime(item.revoked_at || item.created_at)} 作废`;
+  }
+  if (item.state === "expired") {
+    return item.expires_at ? `${formatTime(item.expires_at)} 已过期` : "已过期";
+  }
+  return formatRemaining(item.expires_at);
 }
 
 onMounted(() => {

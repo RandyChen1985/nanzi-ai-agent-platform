@@ -6,12 +6,12 @@ import { buildWorkspaceActionEntries, buildWorkspaceItemMenuContext, isPublicWor
 
 const keys = (ctx) => buildWorkspaceActionEntries(ctx).map((entry) => entry.key)
 
-// --- 1. 普通文件：6 项，重命名/删除前有分隔线，删除为危险项 ---
+// --- 1. 普通文件：7 项（分享紧跟下载），重命名/删除前有分隔线，删除为危险项 ---
 const file = buildWorkspaceActionEntries({
   scene: 'regular-item',
   target: { name: 'report.md', path: '/w/report.md', isDir: false, isPreviewable: true },
 })
-assert.deepEqual(file.map((e) => e.key), ['preview', 'download', 'copy-path', 'mount', 'rename', 'delete'])
+assert.deepEqual(file.map((e) => e.key), ['preview', 'download', 'share', 'copy-path', 'mount', 'rename', 'delete'])
 assert.equal(file.find((e) => e.key === 'rename').separatorBefore, true)
 assert.equal(file.find((e) => e.key === 'delete').danger, true)
 assert.equal(file.find((e) => e.key === 'delete').separatorBefore, undefined)
@@ -26,7 +26,7 @@ assert.equal(zip.find((e) => e.key === 'preview').disabledHint, '该格式不支
 assert.equal(zip.find((e) => e.key === 'download').disabled, undefined)
 assert.deepEqual(
   zip.map((e) => e.key),
-  ['preview', 'download', 'extract', 'copy-path', 'mount', 'rename', 'delete'],
+  ['preview', 'download', 'share', 'extract', 'copy-path', 'mount', 'rename', 'delete'],
 )
 assert.equal(zip.find((e) => e.key === 'extract').label, '解压到…')
 assert.equal(zip.find((e) => e.key === 'extract').disabled, undefined)
@@ -87,7 +87,7 @@ assert.deepEqual(
     canManage: false,
     target: { name: 'r.md', path: '/w/r.md', isDir: false, isPreviewable: true },
   }),
-  ['preview', 'download', 'copy-path', 'mount'],
+  ['preview', 'download', 'share', 'copy-path', 'mount'],
 )
 
 // --- 4. 公共只读：有表头、无重命名/删除 ---
@@ -97,7 +97,7 @@ const pub = buildWorkspaceActionEntries({
 })
 assert.equal(pub[0].key, 'header')
 assert.equal(pub[0].label, '公共只读资源')
-assert.deepEqual(pub.map((e) => e.key), ['header', 'preview', 'download', 'mount', 'copy-path'])
+assert.deepEqual(pub.map((e) => e.key), ['header', 'preview', 'download', 'share', 'mount', 'copy-path'])
 
 // --- 5. 公共目录（管理员）+ 系统保护目录：无重命名/永久删除 ---
 const admin = buildWorkspaceActionEntries({
@@ -215,7 +215,7 @@ assert.deepEqual(
     userWorkspaceRoot: root,
     isAdminScope: true,
   })),
-  ['preview', 'download', 'copy-path', 'mount', 'rename', 'delete'],
+  ['preview', 'download', 'share', 'copy-path', 'mount', 'rename', 'delete'],
 )
 
 // 回收站优先于公共判定：trash 条目即使路径不在本人工作区内也是 trash-item

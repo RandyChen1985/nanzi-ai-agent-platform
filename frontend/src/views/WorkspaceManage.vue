@@ -323,6 +323,7 @@
                   :user-workspace-root="userWorkspaceRoot"
                   @preview="handlePreview"
                   @download="handleDownload"
+                  @share="openShare"
                   @rename="openRename"
                   @copy-path="handleCopyPath"
                   @extract="askExtract"
@@ -380,6 +381,7 @@
               :user-workspace-root="userWorkspaceRoot"
               @preview="handlePreview"
               @download="handleDownload"
+              @share="openShare"
               @rename="openRename"
               @copy-path="handleCopyPath"
               @extract="askExtract"
@@ -430,6 +432,16 @@
       @close="closeCanvas"
     />
 
+    <ShareFileDialog
+      :visible="!!shareTarget"
+      :file-path="shareTarget?.path || ''"
+      :file-name="shareTarget?.name || ''"
+      :file-size="shareTarget?.size || 0"
+      @close="shareTarget = null"
+      @created="handleShareCreated"
+      @toast="showToast"
+    />
+
     <ConfirmModal
       v-if="confirmAction"
       :title="confirmAction.title"
@@ -452,6 +464,7 @@ import WorkspaceRowActions from "@/components/workspace/WorkspaceRowActions.vue"
 import HeroSilhouette from "@/components/common/HeroSilhouette.vue"
 import ChatCanvas from "@/components/embed/ChatCanvas.vue"
 import { useWorkspaceCanvas } from "@/composables/chat/useWorkspaceCanvas"
+import ShareFileDialog from "@/components/ShareFileDialog.vue"
 import { useToast } from "@/composables/useToast"
 import { useWorkspaceUploadQueue } from "@/composables/useWorkspaceUploadQueue"
 import { isExtractableArchive, isPublicWorkspaceItem } from "@/utils/workspaceActionEntries"
@@ -829,6 +842,17 @@ const handleDownload = (item: FsItem) => {
     name: item.name,
     showToast: (message: string, type?: "success" | "error" | "warning" | "info") => showToast(message, type || "info"),
   })
+}
+
+/** 文件分享：路径原样交给后端解析（绝对路径或相对工作区根都能认）。 */
+const shareTarget = ref<null | { path: string; name: string; size: number }>(null)
+
+const openShare = (item: FsItem) => {
+  shareTarget.value = { path: item.path, name: item.name, size: item.size }
+}
+
+const handleShareCreated = () => {
+  showToast("分享已创建", "success")
 }
 
 const handleCopyPath = async (item: FsItem) => {

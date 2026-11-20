@@ -11,6 +11,7 @@ import WorkspaceActionMenu from '@/components/embed/WorkspaceActionMenu.vue'
 import WorkspaceDirectorySaveDialog from '@/components/embed/WorkspaceDirectorySaveDialog.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { planBatchDelete, selectAllState, toggleSelectAllPaths } from '@/utils/workspaceBatchSelection'
+import ShareFileDialog from '@/components/ShareFileDialog.vue'
 import { buildWorkspaceActionEntries, buildWorkspaceItemMenuContext, isPublicWorkspaceItem } from '@/utils/workspaceActionEntries'
 import type { WorkspaceActionKey, WorkspaceActionTarget, WorkspaceMenuContext } from '@/utils/workspaceActionEntries'
 import { useWorkspaceUploadQueue } from '@/composables/useWorkspaceUploadQueue'
@@ -968,6 +969,9 @@ const runWorkspaceAction = (key: WorkspaceActionKey) => {
     case 'download':
       if (item) void downloadItem(item)
       break
+    case 'share':
+      if (item) openShareDialog(item)
+      break
     case 'extract':
       if (item) openExtractDialog(item)
       break
@@ -1378,6 +1382,20 @@ const downloadItem = async (item: { path: string; name: string }) => {
     name: item.name,
     showToast,
   })
+}
+
+/*
+ * 文件分享：路径原样交给后端解析（绝对路径或相对工作区根都能认）。
+ * 抽屉挂在聊天里，宿主可能是嵌入页——`authHeaders` 由外层传入时透传，门户页不传走 Cookie。
+ */
+const shareTarget = ref<null | { path: string; name: string; size: number }>(null)
+
+const openShareDialog = (item: { path: string; name: string; size?: number }) => {
+  shareTarget.value = { path: item.path, name: item.name, size: Number(item.size || 0) }
+}
+
+const handleShareCreated = () => {
+  showToast('分享已创建', 'success')
 }
 
 const handleSelectRow = (item: any) => {
@@ -2945,6 +2963,17 @@ onUnmounted(() => {
     allow-empty-name
     @close="closeExtractDialog"
     @save="submitExtract"
+  />
+
+  <!-- 文件分享：与会话分享同一个弹窗范式（访问方式 / 密码 / 有效期 → 链接+密码） -->
+  <ShareFileDialog
+    :visible="!!shareTarget"
+    :file-path="shareTarget?.path || ''"
+    :file-name="shareTarget?.name || ''"
+    :file-size="shareTarget?.size || 0"
+    @close="shareTarget = null"
+    @created="handleShareCreated"
+    @toast="showToast"
   />
 
   <!-- 批量删除二次确认：复用仓库通用 ConfirmModal，列出待删项与跳过项，

@@ -15,6 +15,7 @@ export type WorkspaceActionKey =
   | 'open-dir'
   | 'preview'
   | 'download'
+  | 'share'
   | 'extract'
   | 'copy-path'
   | 'mount'
@@ -256,6 +257,8 @@ export function buildWorkspaceActionEntries(ctx: WorkspaceMenuContext): Workspac
     } else {
       entries.push(previewEntry(target))
       entries.push(entry('download', '下载文件', '⬇️'))
+      // 公共资源常常就是「给外面人看的那份」，转发分享是它的主要用法之一
+      entries.push(entry('share', '分享文件', '🔗'))
       // 公共目录只读的是「源」，解压目标另行选择，普通用户也能解到自己的目录
       const extract = extractEntry(target)
       if (extract) entries.push(extract)
@@ -295,6 +298,8 @@ export function buildWorkspaceActionEntries(ctx: WorkspaceMenuContext): Workspac
   const fileEntries: WorkspaceActionEntry[] = [
     previewEntry(target),
     entry('download', '下载文件', '⬇️'),
+    // 分享紧跟下载：都属于「把这份文件交给别人」，挨着放才顺手
+    entry('share', '分享文件', '🔗'),
   ]
   const extract = extractEntry(target)
   if (extract) fileEntries.push(extract)

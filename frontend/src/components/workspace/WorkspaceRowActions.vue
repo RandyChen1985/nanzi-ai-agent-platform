@@ -85,6 +85,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "preview", item: RowItem): void
   (e: "download", item: RowItem): void
+  (e: "share", item: RowItem): void
   (e: "rename", item: RowItem): void
   (e: "copy-path", item: RowItem): void
   (e: "extract", item: RowItem): void
@@ -136,6 +137,9 @@ const run = (key: WorkspaceActionKey) => {
       break
     case "rename":
       emit("rename", props.item)
+      break
+    case "share":
+      emit("share", props.item)
       break
     case "copy-path":
       emit("copy-path", props.item)
