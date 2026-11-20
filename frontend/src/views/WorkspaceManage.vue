@@ -323,6 +323,8 @@
                   :user-workspace-root="userWorkspaceRoot"
                   @preview="handlePreview"
                   @download="handleDownload"
+                  @share="openShare"
+                  @copy-and-share="handleCopyAndShare"
                   @rename="openRename"
                   @copy-path="handleCopyPath"
                   @extract="askExtract"
@@ -380,6 +382,8 @@
               :user-workspace-root="userWorkspaceRoot"
               @preview="handlePreview"
               @download="handleDownload"
+              @share="openShare"
+              @copy-and-share="handleCopyAndShare"
               @rename="openRename"
               @copy-path="handleCopyPath"
               @extract="askExtract"
@@ -430,6 +434,16 @@
       @close="closeCanvas"
     />
 
+    <ShareFileDialog
+      :visible="!!shareTarget"
+      :file-path="shareTarget?.path || ''"
+      :file-name="shareTarget?.name || ''"
+      :file-size="shareTarget?.size || 0"
+      @close="shareTarget = null"
+      @created="handleShareCreated"
+      @toast="showToast"
+    />
+
     <ConfirmModal
       v-if="confirmAction"
       :title="confirmAction.title"
@@ -452,9 +466,11 @@ import WorkspaceRowActions from "@/components/workspace/WorkspaceRowActions.vue"
 import HeroSilhouette from "@/components/common/HeroSilhouette.vue"
 import ChatCanvas from "@/components/embed/ChatCanvas.vue"
 import { useWorkspaceCanvas } from "@/composables/chat/useWorkspaceCanvas"
+import ShareFileDialog from "@/components/ShareFileDialog.vue"
 import { useToast } from "@/composables/useToast"
 import { useWorkspaceUploadQueue } from "@/composables/useWorkspaceUploadQueue"
 import { isExtractableArchive, isPublicWorkspaceItem } from "@/utils/workspaceActionEntries"
+import { copyFileToWorkspace } from "@/utils/workspaceFilePreview"
 import {
   canPreviewWorkspaceFile,
   copyTextToClipboard,
@@ -829,6 +845,48 @@ const handleDownload = (item: FsItem) => {
     name: item.name,
     showToast: (message: string, type?: "success" | "error" | "warning" | "info") => showToast(message, type || "info"),
   })
+}
+
+/** 文件分享：路径原样交给后端解析（绝对路径或相对工作区根都能认）。 */
+const shareTarget = ref<null | { path: string; name: string; size: number }>(null)
+
+const openShare = (item: FsItem) => {
+  shareTarget.value = { path: item.path, name: item.name, size: item.size }
+}
+
+const handleShareCreated = () => {
+  showToast("分享已创建", "success")
+}
+
+/**
+ * 公共文件不能直接分享（分享只覆盖本人工作区内的文件），先复制一份到我的目录再分享。
+ *
+ * 复制成功后直接弹出副本的分享弹窗：用户点这个菜单项就是为了分享，
+ * 再让他自己找到副本、再点一次分享纯属多余。
+ */
+const copyingShareSource = ref<Record<string, boolean>>({})
+const handleCopyAndShare = async (item: FsItem) => {
+  if (copyingShareSource.value[item.path]) return
+  copyingShareSource.value = { ...copyingShareSource.value, [item.path]: true }
+  try {
+    const res = await copyFileToWorkspace(item.path)
+    const created = res.data?.data
+    if (!created?.path) {
+      showToast("复制失败：服务端未返回新文件路径", "error")
+      return
+    }
+    showToast(`已复制到我的目录：${created.name}`, "success")
+    // 列表刷新让副本可见，否则用户只看到一句 toast，找不到文件在哪
+    void fetchDirectory(currentPath.value)
+    openShare({ path: created.path, name: created.name, size: created.size } as FsItem)
+  } catch (err: any) {
+    const msg = err?.response?.data?.detail || err?.message || "复制失败"
+    showToast(msg, "error")
+  } finally {
+    const next = { ...copyingShareSource.value }
+    delete next[item.path]
+    copyingShareSource.value = next
+  }
 }
 
 const handleCopyPath = async (item: FsItem) => {

@@ -44,6 +44,14 @@ const router = createRouter({
       meta: { public: true, title: '会话分享' }
     },
     {
+      // 公开的文件分享页：路径更短（`/s/xxx`），因为文件链接经常被贴进聊天软件与工单，
+      // 越短越不容易被换行截断。下载接口是 `FileResponse`，页面只负责「验密码 → 触发下载」。
+      path: '/s/:shareId',
+      name: 'shared-file',
+      component: () => import('../views/SharedFile.vue'),
+      meta: { public: true, title: '文件分享' }
+    },
+    {
       path: '/no-permission',
       name: 'NoPermission',
       component: NoPermission,

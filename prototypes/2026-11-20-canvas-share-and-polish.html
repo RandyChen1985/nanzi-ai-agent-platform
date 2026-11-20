@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>画布分享入口与顶栏整理 · 加分享按钮、落盘三方案、顶栏/阅读体验优化</title>
+<style>
+  :root{
+    --primary:#3b82f6; --primary-d:#2563eb; --ink:#1f2937; --sub:#6b7280; --faint:#9ca3af;
+    --line:#e5e7eb; --bg:#f6f7fb; --card:#fff; --emerald:#059669; --amber:#b45309; --rose:#e11d48;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 20px 80px}
+  h1.page{font-size:21px;margin:0 0 6px;letter-spacing:-.01em}
+  .lead{color:var(--sub);font-size:13px;line-height:1.85;margin:0 0 18px}
+  .lead b{color:var(--ink)}
+  /* tabs */
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px;position:sticky;top:0;z-index:20;background:var(--bg);padding:10px 0}
+  .tab{border:1px solid var(--line);background:#fff;color:var(--sub);font-size:12.5px;font-weight:700;
+       padding:7px 13px;border-radius:9px;cursor:pointer;transition:.16s}
+  .tab:hover{border-color:#cbd5e1}
+  .tab.on{background:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 3px 10px rgba(59,130,246,.25)}
+  .tab .n{opacity:.6;font-weight:800;margin-right:4px}
+  .pane{display:none}.pane.on{display:block}
+  .sec{margin:0 0 10px}
+  .h2{font-size:14px;font-weight:800;margin:26px 0 10px;display:flex;align-items:center;gap:8px}
+  .h2 .dot{width:6px;height:6px;border-radius:99px;background:var(--primary)}
+  .note{font-size:12px;color:var(--sub);line-height:1.85}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  @media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}}
+  .tag{display:inline-block;font-size:10px;font-weight:800;padding:2px 6px;border-radius:5px;letter-spacing:.03em}
+  .tag.rec{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0}
+  .tag.no{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+  .tag.mid{background:#fffbeb;color:#b45309;border:1px solid #fde68a}
+  /* 画布复刻 */
+  .canvas{background:#fff;border:1px solid var(--line);border-radius:13px;overflow:hidden;box-shadow:0 10px 30px -18px rgba(15,23,42,.35)}
+  .cv-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid #f1f5f9}
+  .cv-title{display:flex;align-items:center;gap:8px;min-width:0}
+  .cv-name{font-size:13.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}
+  .badge{font-size:8px;font-weight:800;padding:2px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:.05em;flex:none}
+  .b-md{background:#e0f2fe;color:#0369a1}
+  .b-neutral{background:#f1f5f9;color:#475569;border:1px solid #e2e8f0}
+  .cv-path{font-size:10px;color:var(--emerald);margin-top:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+           white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
+  .cv-acts{display:flex;align-items:center;gap:2px;flex:none}
+  .ico{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:#9ca3af;cursor:pointer;border:none;background:none;transition:.15s}
+  .ico:hover{background:#f3f4f6;color:#4b5563}
+  .ico.sv{color:#10b981}
+  .ico.sh{color:var(--primary)}
+  .ico.sel{background:#eff6ff;color:var(--primary)}
+  .ico svg{width:15px;height:15px}
+  .cv-top{position:relative}
+  .menu-pop{position:absolute;right:14px;top:48px;z-index:6;width:168px;background:#fff;border:1px solid var(--line);
+            border-radius:11px;box-shadow:0 14px 30px -14px rgba(15,23,42,.4);padding:5px;font-size:12px}
+  .menu-pop .mi{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;color:#374151;cursor:pointer;line-height:1.4}
+  .menu-pop .mi:hover{background:#f4f7fb}
+  .menu-pop .mi.hl{background:#eff6ff;color:var(--primary);font-weight:800}
+  .menu-pop .mi .ic2{width:14px;text-align:center;flex:none;opacity:.75}
+  .menu-pop .sep{height:1px;background:#f1f5f9;margin:4px 2px}
+  .menu-pop .cnt{margin-left:auto;font-size:10px;color:#cbd5e1;letter-spacing:.04em}
+  .cv-switch{display:flex;justify-content:center;padding:10px 0 0}
+  .sw{display:flex;background:#f3f4f6;border-radius:9px;padding:3px;gap:2px}
+  .sw button{border:none;background:none;font-size:11px;font-weight:800;padding:5px 14px;border-radius:7px;color:#9ca3af;cursor:pointer}
+  .sw button.on{background:#fff;color:#1f2937;box-shadow:0 1px 3px rgba(15,23,42,.12)}
+  .cv-body{padding:20px 26px 26px}
+  .cv-body.tight{max-width:660px;margin:0 auto}
+  .doc h1{color:#1d4ed8;font-size:19px;margin:0 0 12px;line-height:1.4}
+  .doc h2{color:#1d4ed8;font-size:15px;margin:20px 0 8px}
+  .doc p{font-size:12.5px;line-height:2;color:#374151;margin:0 0 10px}
+  .doc li{font-size:12.5px;line-height:2;color:#374151}
+  .doc a{color:#2563eb}
+  .doc code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:11px}
+  .imgerr{display:flex;align-items:center;gap:8px;border:1px solid #eef2f7;background:#fafbfc;border-radius:8px;padding:10px 12px;color:#9ca3af;font-size:11.5px;margin:10px 0}
+  /* 标注 */
+  .marker{position:relative;border:1px dashed #fca5a5;border-radius:10px;padding:8px 10px;background:#fff5f5}
+  .mk-list{counter-reset:mk;margin:0;padding:0;list-style:none}
+  .mk-list li{counter-increment:mk;position:relative;padding:6px 0 6px 26px;font-size:12px;line-height:1.8;color:#374151;border-bottom:1px dashed #eef2f7}
+  .mk-list li:last-child{border-bottom:none}
+  .mk-list li::before{content:counter(mk);position:absolute;left:0;top:7px;width:17px;height:17px;border-radius:99px;
+      background:#ef4444;color:#fff;font-size:10px;font-weight:800;display:grid;place-items:center}
+  .mk-list b{color:#b91c1c}
+  /* 表格 */
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top;line-height:1.7}
+  th{background:#f8fafc;font-weight:800;color:#334155;font-size:11px}
+  td code{background:#f1f5f9;padding:1px 4px;border-radius:3px;font-size:10.5px}
+  .yes{color:#047857;font-weight:800}.no{color:#b91c1c;font-weight:800}.maybe{color:#b45309;font-weight:800}
+  /* 方案卡 */
+  .plan{border:1px solid var(--line);border-radius:14px;padding:13px;background:#fff;display:flex;flex-direction:column;gap:8px}
+  .plan.pick{border-color:#a7f3d0;background:linear-gradient(#f6fffb,#fff);box-shadow:0 8px 22px -16px rgba(5,150,105,.6)}
+  .plan h4{margin:0;font-size:12.5px;font-weight:800;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .plan p{margin:0;font-size:11.5px;line-height:1.8;color:var(--sub)}
+  .plan .row{display:flex;gap:6px;font-size:11px;color:var(--faint);flex-wrap:wrap}
+  .plan .fine{display:block;margin:0;font-size:11px;line-height:1.8;color:var(--faint)}
+  /* 弹窗复刻 */
+  .modal{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 24px 60px -28px rgba(15,23,42,.5);overflow:hidden;max-width:430px}
+  .m-top{padding:15px 16px 10px}
+  .m-h{font-size:14px;font-weight:800;margin:0}
+  .m-s{font-size:11.5px;color:var(--sub);margin:5px 0 0;display:flex;align-items:center;gap:6px}
+  .m-b{padding:0 16px 12px}
+  .m-lbl{font-size:11.5px;font-weight:800;margin:12px 0 6px}
+  .m-2{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .opt{border:1px solid var(--line);border-radius:10px;padding:8px 10px;cursor:pointer}
+  .opt.on{border-color:var(--primary);background:#f5f9ff;box-shadow:inset 0 0 0 1px var(--primary)}
+  .opt .t{font-size:12px;font-weight:800;display:flex;align-items:center;gap:5px}
+  .opt .d{font-size:10.5px;color:var(--sub);margin-top:3px;line-height:1.6}
+  .radio{width:13px;height:13px;border-radius:99px;border:1px solid #cbd5e1;display:grid;place-items:center;flex:none}
+  .opt.on .radio{border-color:var(--primary)}
+  .opt.on .radio::after{content:"";width:6px;height:6px;border-radius:99px;background:var(--primary)}
+  .inp{border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:12px;width:100%;font-family:inherit;color:var(--ink)}
+  .chips{display:flex;gap:5px;flex-wrap:wrap}
+  .chip{border:1px solid var(--line);border-radius:7px;padding:4px 9px;font-size:11.5px;color:#475569;cursor:pointer;background:#fff}
+  .chip.on{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:800}
+  .m-f{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid #f1f5f9;background:#fafbfc;padding:11px 16px}
+  .btn{border:none;border-radius:9px;padding:7px 14px;font-size:11.5px;font-weight:800;cursor:pointer;font-family:inherit}
+  .btn.p{background:var(--primary);color:#fff}
+  .btn.g{background:#f1f5f9;color:#475569}
+  /* 落盘提示条 */
+  .savebar{display:flex;gap:8px;align-items:flex-start;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;padding:9px 11px;margin:0 0 2px}
+  .savebar .ic{font-size:13px;line-height:1.2}
+  .savebar .tx{font-size:11.5px;line-height:1.75;color:#1e40af}
+  .savebar .tx b{color:#1e3a8a}
+  .savebar .tx a{color:#2563eb;text-decoration:underline;cursor:pointer}
+  /* before/after */
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  .ba>div{display:flex;flex-direction:column;min-width:0}
+  @media(max-width:900px){.ba{grid-template-columns:1fr}}
+  .ba-h{font-size:11px;font-weight:800;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;margin:0 0 7px}
+  .before{opacity:.92}
+  /* 阅读体验 */
+  .rd{display:flex;gap:14px}
+  .outline{width:150px;flex:none;border-right:1px solid #f1f5f9;padding-right:12px}
+  .outline p{font-size:10px;font-weight:800;color:var(--faint);letter-spacing:.08em;margin:0 0 7px;text-transform:uppercase}
+  .outline a{display:block;font-size:11.5px;color:#475569;padding:4px 7px;border-radius:6px;line-height:1.5;text-decoration:none}
+  .outline a.on{background:#eff6ff;color:var(--primary);font-weight:800}
+  .outline a.lv2{padding-left:17px;color:var(--sub)}
+  .rhead{display:flex;align-items:center;gap:4px}
+  .rbtn{border:1px solid var(--line);background:#fff;border-radius:7px;font-size:11px;font-weight:800;color:#475569;padding:3px 8px;cursor:pointer}
+  .rbtn.on{background:#eff6ff;border-color:#bfdbfe;color:var(--primary)}
+  .cb{border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin:10px 0}
+  .cb-h{display:flex;align-items:center;justify-content:space-between;background:#f8fafc;border-bottom:1px solid #eef2f7;padding:6px 10px;font-size:10.5px;color:#64748b;font-weight:700}
+  .cb-b{background:#0f172a;color:#cbd5e1;padding:10px 12px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.8;overflow-x:auto}
+  .kv{display:flex;gap:8px;font-size:11.5px;line-height:1.9;color:#374151;align-items:flex-start}
+  .kv .k{color:var(--faint);flex:none;width:52px;font-weight:700}
+  .cmp{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:11.5px;align-items:center}
+  .pct{font-size:10px;font-weight:800;color:#fff;background:#94a3b8;border-radius:99px;padding:1px 6px;justify-self:start}
+  .hr{height:1px;background:var(--line);margin:22px 0}
+  .foot{font-size:11px;color:var(--faint);line-height:1.9;margin-top:26px}
+  .kbd{font-family:ui-monospace,Menlo,monospace;font-size:10px;background:#f1f5f9;border:1px solid #e2e8f0;border-bottom-width:2px;border-radius:4px;padding:1px 4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="page">画布分享入口与顶栏整理</h1>
+  <p class="lead">
+    针对工作区文件分享的下一步：把「分享」放进画布顶栏（正在看文件的地方才最想发出去），
+    并顺带整理这个页面本身。<b>核心结论先说</b>：分享是否要先落盘，取决于内容来源——
+    已有工作区文件的直接分享，一次磁盘写入都不需要；对话里生成的 markdown / csv / 图片现在
+    连手动保存都不支持，所以「自动落盘」不是分享带来的新问题，而是补上一个本来缺的能力。
+    顶栏 6 个图标无分组、类型徽标 8 套配色、路径占一整行，是这次一并收拾的三个点。<b>顶栏分组已定：</b>对文件做的事（分享 / 下载 / 保存 / 复制）统一收进 <code>⋯</code>，顶栏只留窗口级控制（钉住 / 全屏 / 关闭）。
+  </p>
+
+  <div class="tabs">
+    <button class="tab on" data-p="p0"><span class="n">0</span>现状</button>
+    <button class="tab" data-p="p1"><span class="n">A</span>分享入口 + 落盘</button>
+    <button class="tab" data-p="p2"><span class="n">B</span>顶栏整理</button>
+    <button class="tab" data-p="p3"><span class="n">C</span>阅读体验</button>
+    <button class="tab" data-p="p4"><span class="n">D</span>组合终态</button>
+  </div>
+
+  <!-- ============ 0 现状 ============ -->
+  <div class="pane on" id="p0">
+    <div class="h2"><span class="dot"></span>现在的画布（FAQ.md 预览）</div>
+    <div class="grid2" style="align-items:start">
+      <div class="canvas">
+        <div class="cv-top">
+          <div class="cv-title" style="flex-direction:column;align-items:flex-start;gap:0">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="cv-name">FAQ.md</span>
+              <span class="badge b-md">Markdown</span>
+            </div>
+            <div class="cv-path">已保存：knowledge/FAQ.md</div>
+          </div>
+          <div class="cv-acts">
+            <button class="ico sv" title="保存到目录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v16m8-8H4"/></svg></button>
+            <button class="ico" title="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg></button>
+            <button class="ico" title="下载"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14"/></svg></button>
+            <button class="ico" title="钉住"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zm3 10v6"/></svg></button>
+            <button class="ico" title="全屏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg></button>
+            <button class="ico" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+        </div>
+        <div class="cv-switch">
+          <div class="sw"><button class="on">👁 效果预览</button><button>&lt;/&gt; 源代码</button></div>
+        </div>
+        <div class="cv-body">
+          <div class="doc">
+            <h1>NanZi AI 开源智能体平台 · 疑难解答与常见问题手册 (FAQ)</h1>
+            <p>欢迎查阅 <b>NanZi AI 开源智能体平台</b> 常见问题与疑难解答手册。本手册按照平台左侧功能菜单结构进行编排分类，包含通俗易懂的原理机制解析、小白用户常见概念混淆答疑，以及各类运行环境配置与异常排查方法。</p>
+            <div class="imgerr">🖼 NanZi AI FAQ Overview</div>
+            <h2>📖 目录导航 (Table of Contents)</h2>
+            <ul>
+              <li><a>一、平台概览与基础环境 (Overview &amp; Environment)</a>
+                <ul><li><a>1.1 推荐运行依赖与系统要求</a></li><li><a>1.2 本地与服务器快速启动指南</a></li></ul>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="h2" style="margin-top:0"><span class="dot"></span>可以优化的地方</div>
+        <ol class="mk-list">
+          <li><b>没有分享入口</b>。看文件最想发出去的时刻，却得退出去、回列表、找到那一行再右键。</li>
+          <li><b>顶栏 6 个图标平铺</b>，无分组、无优先级；窄屏（&lt;640px）只能靠挤，没有溢出菜单。</li>
+          <li><b>颜色语义混乱</b>：保存是绿色、下载/复制/钉住/全屏是灰色、AI 分析是渐变靛蓝，同一排里三套语言。</li>
+          <li><b>类型徽标 8 套配色</b>（蓝/绿/红/琥珀/靛/紫/青/天蓝），颜色只用于「区分」不用于「表达」，用户记不住。</li>
+          <li><b>「已保存：knowledge/FAQ.md」独占一整行</b>，绿色小字，长期显示一个不会变的信息。</li>
+          <li><b>标题最长 320px 就截断</b>，且 <code>span</code> 上没有 <code>title</code>，长文件名看不全也问不到。</li>
+          <li><b>正文撑满画布宽度</b>：宽屏下单行超过 100 字符，眼睛回行容易串行。</li>
+          <li><b>长文没有大纲/搜索/字号调节</b>。FAQ 这种几千字文档只能靠滚轮。</li>
+          <li><b>图片加载失败只显示 alt 文字</b>，没有重试按钮，也不知道是路径错还是权限问题。</li>
+        </ol>
+      </div>
+    </div>
+    <p class="note" style="margin-top:12px">
+      第 1 条是这次的诉求，2–6 是同一屏里顺手能收拾的，7–9 属于阅读体验（工具 B/C 里给方案）。
+      <b>不改的</b>：左侧拖拽调宽、双击重置、钉住与全屏的交互本身没发现问题。
+    </p>
+  </div>
+
+  <!-- ============ A 分享入口 + 落盘 ============ -->
+  <div class="pane" id="p1">
+    <div class="h2"><span class="dot"></span>1. 先回答：创建分享需要自动落盘吗？</div>
+    <p class="note" style="margin-bottom:12px">
+      不需要「一律落盘」。画布里有三种内容，只有后两种碰磁盘——而它们本来就该先保存到工作区，否则用户关掉页面就没了。
+    </p>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <tr><th style="width:23%">内容来源</th><th style="width:26%">判据（现有代码）</th><th style="width:16%">分享要落盘吗</th><th>说明</th></tr>
+        <tr>
+          <td>已打开的工作区文件<br><span style="color:#9ca3af;font-size:10.5px">FAQ.md、图片、Office、PDF</span></td>
+          <td><code>sourcePath</code> 有值</td>
+          <td class="yes">不需要</td>
+          <td>直接把路径交给 <code>POST /api/portal/file-shares</code>，零写入。指纹冻结照旧——将来这个文件被改动，链接失效。</td>
+        </tr>
+        <tr>
+          <td>生成型代码 / HTML</td>
+          <td><code>canSaveGeneratedContent</code></td>
+          <td class="maybe">需要（能力已有）</td>
+          <td>现在就有「保存到目录」（<code>+</code> 图标 → <code>WorkspaceDirectorySaveDialog</code>），分享前复用同一套即可。</td>
+        </tr>
+        <tr>
+          <td>生成的 Markdown / CSV 表格 / Mermaid / Diff / 图片 data-url</td>
+          <td><code>canSaveGeneratedContent === false</code></td>
+          <td class="no">需要（能力缺失）</td>
+          <td><b>这是真缺口</b>：这些内容现在连手动保存都不支持。分享按钮一加就会撞上它，所以顺手把可保存范围扩到这几类。</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="h2"><span class="dot"></span>2. 落盘放在哪一步：三个方案</div>
+    <div class="grid3">
+      <div class="plan">
+        <h4>A · 静默自动落盘 <span class="tag no">不推荐</span></h4>
+        <p>点「分享」→ 后端把内容写成 <code>我的目录/exports/&lt;name&gt;</code> → 创建分享，全程不问。</p>
+        <p class="fine">成本：低（复用现有保存接口）</p>
+        <p class="fine">问题：用户的工作区里<b>凭空多出文件</b>，且路径由系统决定；以后想「别再自动建了」没有开关。</p>
+      </div>
+      <div class="plan pick">
+        <h4>B · 弹窗内确认保存位置 <span class="tag rec">推荐</span></h4>
+        <p>分享弹窗顶部出现一条蓝色提示：「这份内容还没保存到工作区，将保存为 <code>exports/FAQ.md</code> [改路径]」，<b>不保存就不给分享</b>。</p>
+        <p class="fine">成本：中（弹窗加一段 + 复用目录选择）</p>
+        <p class="fine">好处：落盘这件事<b>看得见、可改、可取消</b>；同时顺手补上 markdown/csv 的保存能力。</p>
+      </div>
+      <div class="plan">
+        <h4>C · 隐藏暂存区 <span class="tag mid">备选</span></h4>
+        <p>写到 <code>_share-uploads/&lt;share_id&gt;/</code>，<b>不出现在</b>用户文件列表里，只被分享记录引用。</p>
+        <p class="fine">成本：中高（新目录约定 + 列表过滤 + GC）</p>
+        <p class="fine">好处：用户目录最干净。问题：多一套「幽灵文件」要清理，出事时用户找不到源文件。</p>
+      </div>
+    </div>
+
+    <div class="h2"><span class="dot"></span>3. 分享入口放哪</div>
+    <div class="grid2" style="align-items:start">
+      <div>
+      <div class="canvas" style="min-height:270px">
+        <div class="cv-top">
+          <div class="cv-title" style="flex-direction:column;align-items:flex-start;gap:0">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="cv-name">FAQ.md</span>
+              <span class="badge b-neutral">📄 Markdown</span>
+            </div>
+          </div>
+          <div class="cv-acts">
+            <button class="ico sel" title="更多操作"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+            <span style="width:1px;height:16px;background:#e5e7eb;margin:0 3px"></span>
+            <button class="ico" title="钉住画布"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zm3 10v6"/></svg></button>
+            <button class="ico" title="全屏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg></button>
+            <button class="ico" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <div class="menu-pop">
+            <div class="mi hl"><span class="ic2">🔗</span>分享文件</div>
+            <div class="mi"><span class="ic2">⬇</span>下载文件</div>
+            <div class="mi"><span class="ic2">＋</span>保存到目录</div>
+            <div class="mi"><span class="ic2">⧉</span>复制内容</div>
+          </div>
+        </div>
+      </div>
+      <p class="note" style="margin-top:10px">放进 ⋯ 的<b>第一项</b>：和下载、保存、复制是同一类「对这份文件做一件事」， 统一收在菜单里，顶栏不再挤第六个图标。 图标沿用文件菜单里那个 🔗 同一形状（三节点连线），菜单与顶栏一眼是同功能。</p>
+      </div>
+      <div>
+        <div class="modal">
+          <div class="m-top">
+            <p class="m-h">分享文件</p>
+            <p class="m-s"><b style="color:#1f2937">FAQ.md</b> · 42.1 KB</p>
+          </div>
+          <div class="m-b">
+            <!-- 只在「生成型内容」时出现 -->
+            <div class="savebar">
+              <span class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" style="margin-top:2px"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v6h7V4M8 20v-6h8v6"/></svg></span>
+              <span class="tx">
+                这份内容还没保存到工作区，分享前会先保存为
+                <b>exports/FAQ.md</b> <a>改路径</a><br>
+                <span style="color:#3b82f6">保存后它也会出现在「我的文件」里</span>
+              </span>
+            </div>
+            <p class="m-lbl" style="margin-top:12px">访问方式</p>
+            <div class="m-2">
+              <div class="opt"><div class="t"><span class="radio"></span>公开链接</div><div class="d">拿到链接的人都能直接下载</div></div>
+              <div class="opt on"><div class="t"><span class="radio"></span>密钥访问</div><div class="d">需要输入访问密码才能下载</div></div>
+            </div>
+            <p class="m-lbl">访问密码</p>
+            <div style="display:flex;gap:7px">
+              <input class="inp" style="font-family:ui-monospace,Menlo,monospace;letter-spacing:.14em" value="k7mq2x9f" />
+              <button class="btn g" style="flex:none">换一个</button>
+            </div>
+            <p class="m-lbl">有效期</p>
+            <div class="chips">
+              <span class="chip">1 小时</span><span class="chip">24 小时</span>
+              <span class="chip on">7 天</span><span class="chip">30 天</span><span class="chip">永久</span>
+            </div>
+          </div>
+          <div class="m-f">
+            <span style="font-size:11px;color:#6b7280">7 天后失效（2026-11-27 14:20）</span>
+            <span style="display:flex;gap:7px"><button class="btn g">取消</button><button class="btn p">保存并分享</button></span>
+          </div>
+        </div>
+        <p class="note" style="margin-top:9px">
+          有 <code>sourcePath</code> 时这条蓝条<b>不出现</b>，底部按钮仍是「创建分享」——
+          同一个弹窗，两种来源，只差一行提示与按钮文案。
+        </p>
+      </div>
+    </div>
+
+    <div class="h2"><span class="dot"></span>4. 需要连带改的两处</div>
+    <div class="card">
+      <div class="kv" style="margin-bottom:7px"><span class="k">扩展</span><span><code>canSaveGeneratedContent</code> 从 <code>code|html</code> 扩到 <code>markdown|csv|mermaid|image</code>（图片走 base64 → 二进制写入），复用已有的 <code>buildGeneratedWorkspaceFilename</code>。</span></div>
+      <div class="kv" style="margin-bottom:7px"><span class="k">不可分享</span><span><code>compare</code>（两个文件的 diff）没有单一落盘形态，本期<b>不提供</b>分享入口，而不是假分享一个半成品。</span></div>
+      <div class="kv"><span class="k">宿主</span><span>画布只在三处被使用：文件管理页、聊天页、智能体调试页。分享事件的宿主挂载点与刚才文件菜单完全一样。</span></div>
+    </div>
+  </div>
+
+  <!-- ============ B 顶栏整理 ============ -->
+  <div class="pane" id="p2">
+    <div class="h2"><span class="dot"></span>顶栏：从「一排平铺」到「窗口控制在外 + 文件操作进 ⋯」</div>
+    <div class="ba">
+      <div>
+        <p class="ba-h">现在 · 6 个同级图标，分享根本没有</p>
+        <div class="canvas before">
+          <div class="cv-top">
+            <div class="cv-title" style="flex-direction:column;align-items:flex-start;gap:0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="cv-name">FAQ.md</span><span class="badge b-md">Markdown</span>
+              </div>
+              <div class="cv-path">已保存：knowledge/FAQ.md</div>
+            </div>
+            <div class="cv-acts">
+              <button class="ico sv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v16m8-8H4"/></svg></button>
+              <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg></button>
+              <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14"/></svg></button>
+              <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zm3 10v6"/></svg></button>
+              <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg></button>
+              <button class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+            </div>
+          </div>
+        </div>
+        <p class="note">6 个图标 + 类型徽标 + 路径行。窄屏时标题被压到 200px，图标仍然平铺，只能靠横向挤。</p>
+      </div>
+      <div>
+        <p class="ba-h">建议 · 窗口控制在外，文件操作收进 ⋯</p>
+        <div class="canvas" style="min-height:270px">
+          <div class="cv-top">
+            <div class="cv-title" style="flex-direction:column;align-items:flex-start;gap:0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="cv-name" title="FAQ.md">FAQ.md</span>
+                <span class="badge b-neutral">📄 Markdown</span>
+                <span class="badge" style="background:#ecfdf5;color:#047857">已保存</span>
+              </div>
+            </div>
+            <div class="cv-acts">
+              <button class="ico sel" title="更多操作"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+              <span style="width:1px;height:16px;background:#e5e7eb;margin:0 3px"></span>
+              <button class="ico" title="钉住画布"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zm3 10v6"/></svg></button>
+              <button class="ico" title="全屏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg></button>
+              <button class="ico" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+            </div>
+            <div class="menu-pop">
+              <div class="mi hl"><span class="ic2">🔗</span>分享文件</div>
+              <div class="mi"><span class="ic2">⬇</span>下载文件</div>
+              <div class="mi"><span class="ic2">＋</span>保存到目录</div>
+              <div class="mi"><span class="ic2">⧉</span>复制内容</div>
+            </div>
+          </div>
+        </div>
+        <p class="note" style="margin-top:10px"><b>顶栏只留窗口级控制</b>：⋯ / 钉住 / 全屏 / 关闭 —— 这四个改的是「这块面板本身」。 <b>对文件做的操作全部进 ⋯</b>：分享、下载、保存到目录、复制，一次只做一件事， 不需要在六个图标里辨认哪个是分享。 全屏与钉住留在外面：都是双向开关（全屏 ↔ 半屏、已钉住 ↔ 未钉住）， 藏进菜单就看不出当前状态；全屏时顶栏是唯一可见的操作区，退出不该多点一次。 「已保存」降级成标题旁的小徽标，路径进 tooltip 并可点击复制。</p>
+      </div>
+      </div>
+
+    <div class="h2"><span class="dot"></span>类型徽标：8 套配色 → 一个中性命色 + 图标</div>
+    <div class="card">
+      <div class="cmp" style="grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <p class="ba-h" style="margin-bottom:8px">现在（颜色即分类，8 套）</p>
+          <div style="display:flex;gap:5px;flex-wrap:wrap">
+            <span class="badge" style="background:#dbeafe;color:#2563eb">Application</span>
+            <span class="badge" style="background:#dcfce7;color:#059669">Image</span>
+            <span class="badge" style="background:#ffe4e6;color:#e11d48">PDF</span>
+            <span class="badge" style="background:#fef3c7;color:#b45309">CSV Table</span>
+            <span class="badge" style="background:#e0e7ff;color:#4f46e5">Diagram</span>
+            <span class="badge" style="background:#f3e8ff;color:#7c3aed">File Diff</span>
+            <span class="badge" style="background:#ccfbf1;color:#0d9488">Office</span>
+            <span class="badge" style="background:#e0f2fe;color:#0284c7">Markdown</span>
+            <span class="badge" style="background:#f1f5f9;color:#64748b">Code</span>
+          </div>
+        </div>
+        <div>
+          <p class="ba-h" style="margin-bottom:8px">建议（类型用图标，颜色留给状态）</p>
+          <div style="display:flex;gap:5px;flex-wrap:wrap">
+            <span class="badge b-neutral">🌐 HTML</span>
+            <span class="badge b-neutral">🖼 Image</span>
+            <span class="badge b-neutral">📕 PDF</span>
+            <span class="badge b-neutral">📊 CSV</span>
+            <span class="badge b-neutral">🔀 Diagram</span>
+            <span class="badge b-neutral">± Diff</span>
+            <span class="badge b-neutral">📄 Office</span>
+            <span class="badge b-neutral">📄 Markdown</span>
+            <span class="badge b-neutral">&lt;/&gt; Code</span>
+            <span class="badge" style="background:#ecfdf5;color:#047857">已保存</span>
+            <span class="badge" style="background:#fffbeb;color:#b45309">未保存</span>
+          </div>
+        </div>
+      </div>
+      <p class="note" style="margin-top:10px">
+        理由：那 8 种颜色彼此没有强弱关系，用户不会从「紫色 = 文件差异」学到任何东西，只会觉得花。
+        而<b>「已保存 / 未保存」是真需要一眼看出的状态</b>——颜色应该花在这种地方。
+      </p>
+    </div>
+  </div>
+
+  <!-- ============ C 阅读体验 ============ -->
+  <div class="pane" id="p3">
+    <div class="h2"><span class="dot"></span>长文档阅读：大纲 + 字号 + 行宽 + 代码块工具</div>
+    <div class="canvas">
+      <div class="cv-top">
+        <div class="cv-title" style="flex-direction:column;align-items:flex-start;gap:0">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="cv-name">FAQ.md</span>
+            <span class="badge b-neutral">📄 Markdown</span>
+            <span class="badge" style="background:#ecfdf5;color:#047857">已保存</span>
+          </div>
+        </div>
+        <div class="cv-acts">
+          <div class="rhead">
+            <button class="rbtn">A−</button><button class="rbtn on">100%</button><button class="rbtn">A+</button>
+            <button class="rbtn" title="适应行宽">↔</button>
+          </div>
+          <span style="width:1px;height:16px;background:#e5e7eb;margin:0 4px"></span>
+          <button class="ico sel" title="更多操作"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+          <span style="width:1px;height:16px;background:#e5e7eb;margin:0 3px"></span>
+          <button class="ico" title="钉住画布"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zm3 10v6"/></svg></button>
+          <button class="ico" title="全屏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg></button>
+          <button class="ico" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>
+      </div>
+      <div class="cv-switch">
+        <div class="sw"><button class="on">👁 效果预览</button><button>&lt;/&gt; 源代码</button></div>
+      </div>
+      <div class="cv-body rd">
+        <div class="outline">
+          <p>大纲</p>
+          <a class="on">一、平台概览</a>
+          <a class="lv2">1.1 运行依赖</a>
+          <a class="lv2">1.2 快速启动</a>
+          <a>二、核心机制</a>
+          <a class="lv2">2.1 执行链路</a>
+          <a>三、常见问题</a>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="doc cv-body tight" style="padding:0">
+            <h1>NanZi AI 开源智能体平台 · 疑难解答与常见问题手册</h1>
+            <p>欢迎查阅常见问题与疑难解答手册。本手册按照平台左侧功能菜单结构进行编排分类，包含原理机制解析、概念混淆答疑与异常排查方法。</p>
+            <div class="cb">
+              <div class="cb-h"><span>bash · dev.sh 启动</span><span style="display:flex;gap:8px"><span>复制</span><span>换行:开</span><span>行号:关</span></span></div>
+              <div class="cb-b">$ ./dev.sh --profile dev<br>→ backend :8000 · web :5173</div>
+            </div>
+            <div class="imgerr" style="border-color:#fecaca;background:#fef2f2;color:#b91c1c">
+              ⚠ 图片加载失败：knowledge/assets/faq-overview.png
+              <span style="margin-left:auto;display:flex;gap:6px">
+                <button class="rbtn" style="border-color:#fecaca;color:#b91c1c">重试</button>
+                <button class="rbtn" style="border-color:#fecaca;color:#b91c1c">复制路径</button>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid3" style="margin-top:14px">
+      <div class="plan">
+        <h4>① 大纲侧栏</h4>
+        <p>从 <code>h1–h3</code> 生成，滚动联动高亮，点击跳转。长文档从「只能滚轮」变成「可跳转」。窄屏收起成顶部下拉。</p>
+        <div class="row">仅 markdown/document 类型出现</div>
+      </div>
+      <div class="plan">
+        <h4>② 字号与行宽</h4>
+        <p><code>A− / A+</code> 90%–140%，记忆在 localStorage；<code>↔</code> 把正文限到约 68 字符行宽（<code>max-width:660px</code> 居中）。</p>
+        <div class="row">宽屏下每行 100+ 字符是当前最影响阅读的一点</div>
+      </div>
+      <div class="plan">
+        <h4>③ 代码块头工具</h4>
+        <p>每个 <code>pre</code> 顶部：语言、复制、（命令行时）换行开关、行号开关。现在是整篇一个「复制代码」，只能复制全部。</p>
+        <div class="row">只对 code/html/markdown 生效</div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:10px">
+      图片加载失败从「只剩 alt 文字」改为<b>带原因和动作的错误卡</b>：重试 / 复制路径 / 用默认应用打开。
+      现在的问题是没有区分「文件不存在」与「没权限」，用户只能猜。
+    </p>
+  </div>
+
+  <!-- ============ D 组合终态 ============ -->
+  <div class="pane" id="p4">
+    <div class="h2"><span class="dot"></span>推荐组合（A 的入口 + B 的顶栏 + C 的阅读）</div>
+    <div class="canvas">
+      <div class="cv-top">
+        <div class="cv-title" style="flex-direction:column;align-items:flex-start;gap:0">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="cv-name" title="FAQ.md">FAQ.md</span>
+            <span class="badge b-neutral">📄 Markdown</span>
+            <span class="badge" style="background:#ecfdf5;color:#047857">已保存</span>
+          </div>
+        </div>
+        <div class="cv-acts">
+          <div class="rhead"><button class="rbtn">A−</button><button class="rbtn on">100%</button><button class="rbtn">A+</button></div>
+          <span style="width:1px;height:16px;background:#e5e7eb;margin:0 4px"></span>
+          <button class="ico sel" title="更多操作"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+          <span style="width:1px;height:16px;background:#e5e7eb;margin:0 3px"></span>
+          <button class="ico" title="钉住画布"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zm3 10v6"/></svg></button>
+          <button class="ico" title="全屏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg></button>
+          <button class="ico" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>
+        <div class="menu-pop">
+          <div class="mi hl"><span class="ic2">🔗</span>分享文件</div>
+          <div class="mi"><span class="ic2">⬇</span>下载文件</div>
+          <div class="mi"><span class="ic2">＋</span>保存到目录</div>
+          <div class="mi"><span class="ic2">⧉</span>复制内容</div>
+        </div>
+      </div>
+      <div class="cv-switch">
+        <div class="sw"><button class="on">👁 效果预览</button><button>&lt;/&gt; 源代码</button></div>
+      </div>
+      <div class="cv-body rd">
+        <div class="outline">
+          <p>大纲</p>
+          <a class="on">一、平台概览与环境</a>
+          <a class="lv2">1.1 推荐运行依赖</a>
+          <a class="lv2">1.2 本地快速启动</a>
+          <a class="lv2">1.3 前后端协作</a>
+          <a>二、核心机制</a>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="doc" style="max-width:660px">
+            <h1>NanZi AI 开源智能体平台 · 疑难解答与常见问题手册 (FAQ)</h1>
+            <p>欢迎查阅 <b>NanZi AI 开源智能体平台</b> 常见问题与疑难解答手册。本手册按照平台左侧功能菜单结构进行编排分类，包含通俗易懂的原理机制解析、小白用户常见概念混淆答疑，以及各类运行环境配置与异常排查方法。</p>
+            <h2>📖 目录导航 (Table of Contents)</h2>
+            <ul>
+              <li><a>一、平台概览与基础环境</a></li>
+              <li><a>二、核心机制与执行链路</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="h2"><span class="dot"></span>落地顺序与成本</div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <tr><th style="width:34%">批次</th><th style="width:16%">成本</th><th>内容</th></tr>
+        <tr>
+          <td><b>第 1 批</b> · 顶栏改结构 + 分享入口（本次要做）</td><td>约 0.5 天</td>
+          <td>顶栏收敛为「<code>⋯</code> | 钉住 全屏 关闭」；<code>⋯</code> 首项放「分享文件」，下载 / 保存 / 复制一并迁入（分享本来就依赖这套菜单，不能拆成两批）；三处宿主挂载；有 <code>sourcePath</code> 时直接分享，生成型内容先不开放（菜单项置灰并说明「请先保存到工作区」）。</td>
+        </tr>
+        <tr>
+          <td><b>第 2 批</b> · 可保存范围扩展</td><td>约 0.5 天</td>
+          <td><code>canSaveGeneratedContent</code> 扩到 markdown/csv/mermaid/image；分享弹窗内那条蓝色「保存并分享」提示。</td>
+        </tr>
+        <tr>
+          <td><b>第 3 批</b> · 徽标与标题</td><td>约 0.5 天</td>
+          <td>类型徽标 8 套配色 → 中性命色 + 图标；「已保存」徽标替代路径行（路径进 tooltip）；标题加 tooltip。纯视觉收尾，可与第 2 批并行。</td>
+        </tr>
+        <tr>
+          <td><b>第 4 批</b> · 阅读体验</td><td>约 1 天</td>
+          <td>大纲侧栏、字号/行宽、代码块头工具、图片错误卡。可独立于分享，按需要排期。</td>
+        </tr>
+      </table>
+    </div>
+    <p class="foot">
+      原型仅表达交互与视觉方向，未改动任何实现代码。第 1 批不依赖前几天的后端改动（文件分享接口已就绪），
+      第 2 批才需要动 <code>canSaveGeneratedContent</code> 判定与保存分支。
+    </p>
+  </div>
+</div>
+<script>
+  document.querySelectorAll('.tab').forEach(function (t) {
+    t.addEventListener('click', function () {
+      document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('on'); });
+      document.querySelectorAll('.pane').forEach(function (x) { x.classList.remove('on'); });
+      t.classList.add('on');
+      var p = document.getElementById(t.dataset.p);
+      if (p) p.classList.add('on');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  });
+</script>
+</body>
+</html>

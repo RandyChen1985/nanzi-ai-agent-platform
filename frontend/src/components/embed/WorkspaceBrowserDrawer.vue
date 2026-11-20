@@ -6,11 +6,12 @@ import {
   resolveFileTypeVisual,
   type FileTypeCategory,
 } from '@/utils/fileTypeVisual'
-import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash, extractWorkspaceArchive } from '@/utils/workspaceFilePreview'
+import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash, extractWorkspaceArchive, copyFileToWorkspace } from '@/utils/workspaceFilePreview'
 import WorkspaceActionMenu from '@/components/embed/WorkspaceActionMenu.vue'
 import WorkspaceDirectorySaveDialog from '@/components/embed/WorkspaceDirectorySaveDialog.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { planBatchDelete, selectAllState, toggleSelectAllPaths } from '@/utils/workspaceBatchSelection'
+import ShareFileDialog from '@/components/ShareFileDialog.vue'
 import { buildWorkspaceActionEntries, buildWorkspaceItemMenuContext, isPublicWorkspaceItem } from '@/utils/workspaceActionEntries'
 import type { WorkspaceActionKey, WorkspaceActionTarget, WorkspaceMenuContext } from '@/utils/workspaceActionEntries'
 import { useWorkspaceUploadQueue } from '@/composables/useWorkspaceUploadQueue'
@@ -968,6 +969,12 @@ const runWorkspaceAction = (key: WorkspaceActionKey) => {
     case 'download':
       if (item) void downloadItem(item)
       break
+    case 'share':
+      if (item) openShareDialog(item)
+      break
+    case 'copy-and-share':
+      if (item) void copyAndShare(item)
+      break
     case 'extract':
       if (item) openExtractDialog(item)
       break
@@ -1378,6 +1385,50 @@ const downloadItem = async (item: { path: string; name: string }) => {
     name: item.name,
     showToast,
   })
+}
+
+/*
+ * 文件分享：路径原样交给后端解析（绝对路径或相对工作区根都能认）。
+ * 抽屉挂在聊天里，宿主可能是嵌入页——`authHeaders` 由外层传入时透传，门户页不传走 Cookie。
+ */
+const shareTarget = ref<null | { path: string; name: string; size: number }>(null)
+
+const openShareDialog = (item: { path: string; name: string; size?: number }) => {
+  shareTarget.value = { path: item.path, name: item.name, size: Number(item.size || 0) }
+}
+
+const handleShareCreated = () => {
+  showToast('分享已创建', 'success')
+}
+
+/**
+ * 公共只读文件先复制到本人工作区，再对副本分享。
+ *
+ * 分享记录按 `(workspace_key, rel_path)` 定位文件，只有工作区内的文件进得来；
+ * 公共目录直接分享会在用户填完密码和有效期之后才报「文件不在工作区目录内」。
+ */
+const copyingShareSource = ref<Record<string, boolean>>({})
+const copyAndShare = async (item: { path: string; name: string; size?: number }) => {
+  if (copyingShareSource.value[item.path]) return
+  copyingShareSource.value = { ...copyingShareSource.value, [item.path]: true }
+  try {
+    const res = await copyFileToWorkspace(item.path)
+    const created = res.data?.data
+    if (!created?.path) {
+      showToast('复制失败：服务端未返回新文件路径', 'error')
+      return
+    }
+    showToast(`已复制到我的目录：${created.name}`, 'success')
+    // 刷新当前目录，让副本在原位置可见（用户刚从公共目录跳过来会找不到自己复制了什么）
+    void fetchDirectory(currentPath.value)
+    openShareDialog({ path: created.path, name: created.name, size: created.size })
+  } catch (err: any) {
+    showToast(err?.response?.data?.detail || err?.message || '复制失败', 'error')
+  } finally {
+    const next = { ...copyingShareSource.value }
+    delete next[item.path]
+    copyingShareSource.value = next
+  }
 }
 
 const handleSelectRow = (item: any) => {
@@ -2945,6 +2996,17 @@ onUnmounted(() => {
     allow-empty-name
     @close="closeExtractDialog"
     @save="submitExtract"
+  />
+
+  <!-- 文件分享：与会话分享同一个弹窗范式（访问方式 / 密码 / 有效期 → 链接+密码） -->
+  <ShareFileDialog
+    :visible="!!shareTarget"
+    :file-path="shareTarget?.path || ''"
+    :file-name="shareTarget?.name || ''"
+    :file-size="shareTarget?.size || 0"
+    @close="shareTarget = null"
+    @created="handleShareCreated"
+    @toast="showToast"
   />
 
   <!-- 批量删除二次确认：复用仓库通用 ConfirmModal，列出待删项与跳过项，

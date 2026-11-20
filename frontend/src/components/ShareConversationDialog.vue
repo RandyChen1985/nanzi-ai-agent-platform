@@ -2,7 +2,7 @@
   <Teleport to="body">
     <div
       v-if="visible"
-      class="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-[2px]"
+      class="fixed inset-0 z-[1300] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-[2px]"
       role="dialog"
       aria-modal="true"
       aria-label="分享会话"
@@ -210,6 +210,11 @@
 <script setup lang="ts">
 /**
  * 会话分享弹窗：配置态（访问方式 / 密码 / 有效期）→ 结果态（链接与密码分开复制）。
+ *
+ * **层级是 1300，不是原来的 70**：聊天页里「浏览工作空间」抽屉是 `z-[125]`、它内部弹窗
+ * `z-[131]`、画布拖拽遮罩 `z-[300]`、聊天输入浮层 `z-[1200]`——70 在抽屉打开时会被整块压在
+ * 下面（弹窗只露出左边一截）。1300 同时盖住上述各层，又低于 toast（9950+）。
+ * 文件分享弹窗 `ShareFileDialog` 用的是同一个值，两者视觉层级保持一致。
  *
  * 有效期换算、密码生成都走 `shareExpiry` 里的纯函数，不在这里重算——前端自己算一套
  * 就会出现「弹窗写 7 天、列表显示 6 天后过期」。创建请求统一走 `chatShare` 的

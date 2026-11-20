@@ -13,12 +13,19 @@ def _source(path: str) -> str:
 
 
 def test_canvas_badge_labels_document_type_instead_of_falling_back_to_code():
+    """document 必须有自己的标签，不能落到 'Code' 兜底。
+
+    徽标已从「8 套配色内联三元链」收敛为 canvasTypeMeta（中性色 + 图标），
+    但「别把 Office 显示成 Code」这条意图不变，断言跟着挪到新位置。
+    """
     canvas = _source("frontend/src/components/embed/ChatCanvas.vue")
 
-    # 徽标文案：document 必须有自己的标签，不能落到 'Code' 兜底
-    assert "data?.type === 'document' ? 'Office'" in canvas
-    # 徽标配色：document 必须有自己的色，不能落到灰色兜底
-    assert "data?.type === 'document' ? 'bg-teal-100" in canvas
+    meta = canvas.split("const canvasTypeMeta")[1].split("});")[0]
+    assert "type === 'document'" in meta
+    assert "label: 'Office'" in meta
+    # 兜底分支必须留在最后，且只有它返回 Code
+    assert meta.count("label: 'Code'") == 1
+    assert meta.rindex("label: 'Code'") > meta.index("type === 'document'")
 
 
 def test_canvas_download_button_treats_document_as_file_download():
