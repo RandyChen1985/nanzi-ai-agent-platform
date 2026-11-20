@@ -321,8 +321,9 @@ def should_inject_session_artifact(
     if not has_text and not has_structured:
         return False
     # 系统回执必须优先于「复用结果」：它是把被暂停的流程接着做完，而不是就着上一轮
-    # 结果追问。提问卡回执的固定尾句「请根据以上用户回答继续处理原问题」、业务确认卡
-    # 的「请根据以下已确认字段继续执行」里的「继续」都会命中下面的弱上下文引用判定；
+    # 结果追问。提问卡回执的固定尾句「请继续完成提问前尚未完成的项，不要只处理本次
+    # 提问涉及的那一项」、业务确认卡的「请根据以下已确认字段继续执行」里的「继续」
+    # 都会命中下面的弱上下文引用判定；
     # 一旦判成复用模式，sub_agent_call 会被 REUSABLE_RESULT_ACQUISITION_TOOLS 整类
     # 移除，主助手再也无法用 resume=True 恢复那个停下来的子代理——用户看到的是
     # 「我当前工具集中没有 sub_agent_call」。

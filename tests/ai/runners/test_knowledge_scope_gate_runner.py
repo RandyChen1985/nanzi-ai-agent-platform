@@ -310,7 +310,7 @@ def test_receipt_never_short_circuits_as_followup():
     runner.turn_decision = None
 
     decision = type("D", (), {"mode": "fresh", "reason": ""})()
-    receipt = "【用户回答】\n所选选项: 仅智能体默认 (__scope_bound__)\n请根据以上用户回答继续处理原问题。"
+    receipt = "【用户回答】\n所选选项: 仅智能体默认 (__scope_bound__)\n请继续完成提问前尚未完成的项，不要只处理本次提问涉及的那一项。"
 
     skipped = runner._should_skip_knowledge_prefetch(
         is_catalog_query=False,

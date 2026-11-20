@@ -302,6 +302,12 @@ watch(
               <span class="text-[10px] font-semibold uppercase tracking-wide opacity-60">{{ isPending ? "需要确认执行" : "工具执行结果" }}</span>
               <h3 class="truncate text-xs font-bold leading-5 sm:text-sm">{{ cardTitle }}</h3>
               <span
+                v-if="payload.subagent?.display_name"
+                class="shrink-0 rounded-full border border-violet-200 bg-violet-100 px-1.5 py-0.2 text-[10px] font-semibold text-violet-700 dark:border-violet-800 dark:bg-violet-900/40 dark:text-violet-300"
+              >
+                来自子智能体 {{ payload.subagent.display_name }}
+              </span>
+              <span
                 class="shrink-0 rounded-full border px-1.5 py-0.2 text-[10px] font-semibold"
                 :class="isPending
                   ? (display.riskTone === 'low'

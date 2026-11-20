@@ -68,6 +68,11 @@ return {
     assert "排除退款" in result["receipt"]
     assert "cancelled: true" in result["cancelledReceipt"]
     assert "停止当前任务" in result["cancelledReceipt"]
+    # 尾注不能把范围收窄到这张卡：提问前那批任务里没被追问的项会被当成「已办完」。
+    assert result["receipt"].rstrip().endswith(
+        "请继续完成提问前尚未完成的项，不要只处理本次提问涉及的那一项。"
+    )
+    assert "继续处理原问题" not in result["receipt"]
 
 
 def test_user_question_frontend_wiring_is_independent_from_business_confirmation():

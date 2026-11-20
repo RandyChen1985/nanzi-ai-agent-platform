@@ -204,6 +204,25 @@ def _sync_published_download_urls_from_context(state: Dict[str, Any], context: A
     state["published_download_urls"] = combined
 
 
+def _deletion_blocks_session_grant(tool_name: str, tool_args: Any) -> bool:
+    """删除类调用不给「本会话总是允许」。
+
+    这类确认由安全策略发出并标记 `bypass_immune`，任何会话/一次性授权之外的
+    记忆都不生效（一次性令牌按命令指纹放行是唯一例外）。给了按钮就是骗用户：
+    授权写进去了，下次同样的命令照样弹。
+    """
+    from app.services.ai.runtime.agentscope.tools import (
+        shell_deletion_needs_confirmation,
+    )
+
+    if not isinstance(tool_args, dict):
+        return False
+    try:
+        return shell_deletion_needs_confirmation(tool_name, tool_args)
+    except Exception:  # pragma: no cover - 判定异常时按可授权处理，保持旧行为
+        return False
+
+
 def _supports_session_grant(
     tool_name: str,
     *containers: Any,
@@ -229,6 +248,24 @@ def _supports_session_grant(
                 if getattr(tool, "name", None) == tool_name:
                     return supports_session_grant(tool)
     return False
+
+
+def _subagent_delegation_metadata(context: Any) -> Dict[str, Any]:
+    """子智能体上下文的委派来源；主会话返回空 dict。
+
+    只认 `parent_conversation_id`：委派层创建子上下文时才会写这个字段，主会话链路
+    天然没有父会话。挂起快照带上它，确认接口才能判断「这次确认属于某个子智能体」，
+    并把授权结果交回父会话，而不是在内部子会话里继续。
+    """
+    parent_conversation_id = str(getattr(context, "parent_conversation_id", "") or "")
+    if not parent_conversation_id:
+        return {}
+    return {
+        "parent_conversation_id": parent_conversation_id,
+        "run_id": str(getattr(context, "delegation_run_id", "") or ""),
+        "agent_name": str(getattr(context, "agent_name", "") or ""),
+        "depth": int(getattr(context, "delegation_depth", 0) or 0),
+    }
 
 
 async def stream_pending_tool_interrupt(
@@ -301,6 +338,7 @@ async def stream_pending_tool_interrupt(
                 system_content=state.get("system_content", ""),
                 max_steps=int(state.get("max_steps", 5)),
             ),
+            delegation=_subagent_delegation_metadata(get_current_agent_context()),
         )
         yield {
             "type": sse_type,
@@ -327,6 +365,10 @@ async def stream_pending_tool_interrupt(
                     tools,
                     getattr(runner, "tools", None),
                 )
+                # 删除类确认是 bypass_immune 的：AgentScope 语义里连 allow 规则都覆盖
+                # 不了它，写了会话授权也不会生效。这里如实不给按钮，免得用户点了
+                # 「本会话总是允许」却发现下次照样弹。
+                and not _deletion_blocks_session_grant(tool_name, tool_args)
             ),
             "tool_call": {
                 "id": tool_id,

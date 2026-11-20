@@ -30,6 +30,10 @@ class PendingAgentScopeSnapshot:
     stream_state: dict[str, Any]
     runner_context: dict[str, Any]
     evidence_receipts: list[dict[str, Any]] = field(default_factory=list)
+    # 委派来源：子智能体自己发起的权限确认要记住「哪个父会话的哪个子智能体」，
+    # 确认后才可能把授权结果交回父会话继续，而不是在内部子会话里自生自灭。
+    # 主会话自身的确认没有这一层，一律为空 dict（旧快照读回同样落到空 dict）。
+    delegation: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
 
     def is_expired(self, now: float | None = None) -> bool:
@@ -210,6 +214,7 @@ class PendingAgentScopeStore:
                 stream_state=dict(data.get("stream_state") or {}),
                 runner_context=dict(data.get("runner_context") or {}),
                 evidence_receipts=list(data.get("evidence_receipts") or []),
+                delegation=dict(data.get("delegation") or {}),
                 created_at=float(data.get("created_at", time.time())),
             )
         except Exception as exc:

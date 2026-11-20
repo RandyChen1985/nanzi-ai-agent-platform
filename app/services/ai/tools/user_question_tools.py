@@ -45,7 +45,14 @@ class AskUserQuestionArgs(BaseModel):
     options: list[QuestionOption] = Field(description="供用户选择的选项列表，至少两项")
     is_multi_select: bool = Field(default=False, description="是否支持多选")
     allow_custom_input: bool = Field(default=True, description="是否允许用户补充说明")
-    context: str | None = Field(default=None, description="问题背景说明")
+    context: str | None = Field(
+        default=None,
+        description=(
+            "提问前的任务进度：已完成哪些项、还剩哪些项待办、缺的是什么信息。"
+            "按「已完成 A…；待办 B、C…」写清，模型回答后据此把整批任务收口，"
+            "只写提问理由会导致未被追问的项在下一轮丢失。"
+        ),
+    )
     purpose: str | None = Field(default=None, description="受控恢复用途标识，普通提问无需填写")
 
     @field_validator("question")

@@ -477,14 +477,14 @@ def _user_question_receipt():
         "question_id: uq_f28dca64d3f1d785\n"
         'selected_option_ids: ["today"]\n'
         "custom_input: \n"
-        "请根据以上用户回答继续处理原问题。"
+        "请继续完成提问前尚未完成的项，不要只处理本次提问涉及的那一项。"
     )
 
 
 def test_user_question_receipt_is_not_treated_as_result_followup():
     """提问回执是「把暂停的任务接着做完」，不是「就着上一轮结果追问」。
 
-    回执固定尾句「请根据以上用户回答继续处理原问题」里的「继续」会命中弱上下文
+    回执固定尾句「请继续完成提问前尚未完成的项，不要只处理本次提问涉及的那一项」里的「继续」会命中弱上下文
     引用判定。一旦误判成可复用结果模式，``sub_agent_call`` 会被
     ``REUSABLE_RESULT_ACQUISITION_TOOLS`` 裁掉，主助手就再也无法用
     ``resume=True`` 恢复被暂停的子代理——用户实际看到的是
@@ -622,7 +622,7 @@ def _answer_receipt(custom_input: str = "") -> str:
         "question_id: uq_receipt01\n"
         'selected_option_ids: ["today"]\n'
         f"custom_input: {custom_input}\n"
-        "请根据以上用户回答继续处理原问题。"
+        "请继续完成提问前尚未完成的项，不要只处理本次提问涉及的那一项。"
     )
 
 

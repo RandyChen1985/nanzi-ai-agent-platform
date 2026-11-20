@@ -24,10 +24,30 @@ _HISTORICAL_CONTEXT_NOTICE_LINES = (
 # 摘录正文前的固定说明行前缀（从历史摘录里剥离，避免跨轮重复叠加污染正文）。
 _PRELUDE_PREFIX = "以下是更早轮次对话的要点"
 
-# 单条消息在摘录中的最大字符数，超过则截断。
+# 单条消息在摘录中的字符数**下限**：总量很小时兜底，也是历史写死值的沿用。
 _DEFAULT_PER_MESSAGE_CHARS = 120
 # 整段摘录的最大字符数。
 _DEFAULT_MAX_CHARS = 1200
+# 单条消息配额占整段预算的比例：1/8（2000 → 250 字符/条，3000 → 375）。
+_PER_MESSAGE_CHAR_RATIO = 8
+
+
+def per_message_chars_for(max_chars: int) -> int:
+    """单条消息在摘录中的配额：跟随整段预算按 1/8 分配，且不低于 120。
+
+    历史实现把单条写死成 120，于是 130~250 字符的任务请求会被切在半句上——实测
+    「登记 3 项扣款…B、C 我确认一下再给你」只剩前半段，后半句连同待办线索一起消失；
+    工具结论文本走同一个配额，同样被截。改为跟随 ``agent_context_compaction_max_chars``
+    后，管理员调大总量即可自动放宽单条，不需要再引入一个配置键。
+
+    下限 120 保证总量很小时（配置下限 200）不会把早期消息压成碎片。代价要说清楚：
+    总量不变时单条变长，能装下的条数就变少，所以调这个派生值时要一起看总量配置。
+    """
+    try:
+        total = int(max_chars)
+    except (TypeError, ValueError):
+        total = _DEFAULT_MAX_CHARS
+    return max(_DEFAULT_PER_MESSAGE_CHARS, total // _PER_MESSAGE_CHAR_RATIO)
 
 
 def _extract_digest_body(content: Optional[str]) -> str:
@@ -187,6 +207,10 @@ def build_overflow_digest(
     返回 ``{"role": "system", "content": ...}``；若无可用内容则返回 ``None``。
     纯文本拼接，不调用任何模型。最新的旧消息排在摘录末尾（更贴近当前上下文）。
 
+    ``per_message_chars``：单条消息能保留的字符数。生产链路走
+    :func:`per_message_chars_for`（跟随 ``max_chars`` 按 1/8 分配、不低于 120），
+    这里保留默认值 120 只是让直接调用方行为稳定。
+
     ``prev_digest``：上一轮持久化的摘录文本（B 项跨轮累积）。非空时，其要点正文
     作为「更早」的锚点叠加到新摘录最前；受 ``max_chars`` 整体限制，优先保留
     更贴近当前的新丢弃片段。
@@ -288,6 +312,7 @@ def apply_context_compaction(
     digest = build_overflow_digest(
         dropped,
         max_chars=max_chars,
+        per_message_chars=per_message_chars_for(max_chars),
         prev_digest=prev_digest,
     )
     if not digest:

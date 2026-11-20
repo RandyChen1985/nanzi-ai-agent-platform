@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from typing import Any
@@ -22,6 +24,140 @@ logger = logging.getLogger(__name__)
 
 SESSION_GRANT_TTL_SECONDS = 24 * 60 * 60
 SESSION_GRANT_KEY_TEMPLATE = "{prefix}:{user_id}:session_grant:{conversation_id}"
+
+# 「允许这一次」的有效期：用户在卡片上点完之后，父会话要先续聊子智能体、子智能体
+# 再跑到同一个调用，全程得来得及。给两分钟足够，过期就当没授权过重新问。
+ONCE_GRANT_TTL_SECONDS = 120
+ONCE_GRANT_KEY_TEMPLATE = "{prefix}:{user_id}:perm_once:{scope}:{tool_name}:{fingerprint}"
+
+
+def delegation_grant_scope(
+    parent_conversation_id: Any,
+    agent_name: Any,
+) -> str:
+    """子智能体的授权作用域键；主会话返回空串。
+
+    授权必须按「父会话 + 哪个子智能体」隔离：只按父会话记，会让 A 子代理拿到的
+    放行顺带放行 B 子代理，用户看到的却是「我只授权了资产导出那一个」。
+    """
+    parent = str(parent_conversation_id or "").strip()
+    if not parent:
+        return ""
+    agent = str(agent_name or "").strip()
+    return f"{parent}::sub::{agent}"
+
+
+def tool_args_fingerprint(tool_input: Any) -> str:
+    """工具参数指纹：授权只对这一份参数生效，防止批了 `ls` 却放行 `rm`。"""
+    try:
+        payload = json.dumps(
+            tool_input,
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+    except Exception:
+        payload = str(tool_input)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+class OncePermissionGrantStore:
+    """一次性放行令牌：Redis 优先、进程内存兜底，消费即删。"""
+
+    def __init__(self) -> None:
+        self._memory_fallback: dict[str, float] = {}
+
+    def _key(
+        self,
+        user_id: Any,
+        scope: Any,
+        tool_name: Any,
+        fingerprint: Any,
+    ) -> str | None:
+        try:
+            resolved_user = require_user_id(user_id)
+        except Exception:
+            return None
+        resolved_scope = str(scope or "").strip()
+        resolved_tool = str(tool_name or "").strip()
+        resolved_fingerprint = str(fingerprint or "").strip()
+        if not resolved_scope or not resolved_tool or not resolved_fingerprint:
+            return None
+        return ONCE_GRANT_KEY_TEMPLATE.format(
+            prefix=memory_service.KEY_PREFIX,
+            user_id=resolved_user,
+            scope=resolved_scope,
+            tool_name=resolved_tool,
+            fingerprint=resolved_fingerprint,
+        )
+
+    async def grant(
+        self,
+        user_id: Any,
+        scope: Any,
+        tool_name: Any,
+        fingerprint: Any,
+    ) -> bool:
+        key = self._key(user_id, scope, tool_name, fingerprint)
+        if key is None:
+            return False
+
+        try:
+            from app.core.redis import get_redis
+
+            redis = await get_redis()
+        except Exception as exc:  # pragma: no cover - 连接异常按不可用处理
+            logger.warning("[OncePermissionGrant] Redis unavailable: %s", exc)
+            redis = None
+
+        if redis is None:
+            # 没有 Redis 时退回进程内存，与 session grant 同口径：单实例仍可用。
+            self._memory_fallback[key] = time.time() + ONCE_GRANT_TTL_SECONDS
+            return True
+
+        try:
+            await redis.set(key, "1", ex=ONCE_GRANT_TTL_SECONDS)
+            # 写入成功就清掉内存项，避免同一令牌在 Redis 与内存里各存一份。
+            self._memory_fallback.pop(key, None)
+            return True
+        except Exception as exc:  # pragma: no cover - Redis 异常
+            logger.warning("[OncePermissionGrant] Redis grant failed: %s", exc)
+            # 跨进程读不到这条记录就别假装授权成功：卡片若显示「已允许」而续聊的
+            # 子智能体在另一个 worker 上仍被拦，用户会以为平台坏了。
+            self._memory_fallback.pop(key, None)
+            return False
+
+    async def consume(
+        self,
+        user_id: Any,
+        scope: Any,
+        tool_name: Any,
+        fingerprint: Any,
+    ) -> bool:
+        """取用令牌；命中即删除，返回是否放行。"""
+        key = self._key(user_id, scope, tool_name, fingerprint)
+        if key is None:
+            return False
+
+        try:
+            from app.core.redis import get_redis
+
+            redis = await get_redis()
+            if redis:
+                # GETDEL 原子取删：并发两个同名调用时只有一个能拿到令牌，
+                # 不会出现「一次授权放行两次执行」。
+                removed = await redis.getdel(key)
+                return bool(removed)
+        except Exception as exc:  # pragma: no cover - Redis 异常走内存兜底
+            logger.warning("[OncePermissionGrant] Redis consume failed: %s", exc)
+
+        expires_at = self._memory_fallback.pop(key, None)
+        if expires_at is None:
+            return False
+        return expires_at > time.time()
+
+    def clear(self) -> None:
+        self._memory_fallback.clear()
 
 
 class SessionPermissionGrantStore:
@@ -211,9 +347,15 @@ class SessionPermissionGrantStore:
 
 
 session_permission_grants = SessionPermissionGrantStore()
+once_permission_grants = OncePermissionGrantStore()
 
 __all__ = [
+    "ONCE_GRANT_TTL_SECONDS",
     "SESSION_GRANT_TTL_SECONDS",
+    "OncePermissionGrantStore",
     "SessionPermissionGrantStore",
+    "delegation_grant_scope",
+    "once_permission_grants",
     "session_permission_grants",
+    "tool_args_fingerprint",
 ]

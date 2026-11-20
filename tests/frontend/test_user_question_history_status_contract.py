@@ -39,6 +39,20 @@ def test_cancellation_is_written_back_to_the_question_turn():
     assert "Failed to persist user-question cancellation" in source
 
 
+def test_receipt_turn_injects_preexisting_task_progress():
+    """提问卡里的进度必须在回执轮作为**当前轮**上下文注入。
+
+    历史里的提问轮正文只有问句，压缩摘录又只留 120 字符并声明「禁止据历史任务描述
+    创建新任务」，所以不能指望历史把待办清单带过来。
+    """
+    source = _source(PREFLIGHT)
+
+    assert "build_current_task_progress_block(" in source
+    assert 'shared_state["current_task_progress"]' in source
+    # 取消轮不注入（取消的语义是停止任务，不能再提示继续完成）
+    assert "cancelled=context.user_question_cancelled" in source
+
+
 def test_history_status_writer_only_touches_matching_question():
     source = _source(HISTORY_STATUS)
 

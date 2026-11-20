@@ -271,12 +271,20 @@ def _batch_result_status(content: str) -> str:
     # 把那张没人回答过的提问卡当成已经办好了。
     if normalized.startswith(NEEDS_USER_INPUT_SUB_AGENT_RESULT_MESSAGE):
         return "needs_user_input"
+    # 「等待工具授权」同理：确认卡已经弹到主会话，用户在点之前这一路既没完成也没失败。
+    # 算成 failed 会让父专家宣称子智能体执行失败，用户以为没救了。
+    if normalized.startswith(PERMISSION_PENDING_SUB_AGENT_RESULT_MESSAGE):
+        return "needs_user_input"
     return "completed"
+
+PERMISSION_PENDING_SUB_AGENT_RESULT_MESSAGE = "子智能体请求执行受控工具，已暂停等待你授权。"
 
 DELEGATION_INTERRUPT_MESSAGES = {
     "permission_required": (
-        "错误：子智能体执行过程中需要用户确认工具权限，当前委派模式无法在子流程中完成确认。"
-        "请直接打开对应子智能体对话，或联系管理员调整工具自动执行策略。"
+        f"{PERMISSION_PENDING_SUB_AGENT_RESULT_MESSAGE}"
+        "确认卡已发到本会话，请在卡片上选择「允许这一次」「总是允许」或「拒绝」；"
+        "在你点选之前子智能体不会继续跑。本轮请勿重复委派同一任务，也不要替用户点选——"
+        "用户授权后，用 sub_agent_call(resume=True) 让同一子智能体接着上次的进度继续。"
     ),
     "external_execution_required": (
         "错误：子智能体需要外部执行确认，当前委派模式不支持。请直接打开对应子智能体对话。"
@@ -1474,6 +1482,27 @@ async def _consume_sub_agent_stream(
                 # 错误事件是终止信号，保留其真实内容供上层工具结果展示；
                 # 不能继续把后续正文拼成一次成功委派的输出。
                 full_output = _extract_delegation_text(chunk)
+                logger.warning(
+                    "[Delegation] Sub-agent '%s' interrupted with %s during delegation",
+                    sub_display_name,
+                    chunk_type,
+                )
+                break
+            if chunk_type == "permission_required":
+                # 权限确认必须交回主会话：子智能体没有自己的用户交互面，把事件转发进
+                # 父流，确认卡才会在主会话弹出来。这里只「暂停」不「失败」——挂起快照
+                # 已在子流内部登记（TTL 内有效），用户点选后由父专家 resume 继续。
+                chunk["source_agent_display_name"] = sub_display_name
+                if subagent_metadata is not None:
+                    chunk["subagent"] = dict(subagent_metadata)
+                if main_ctx.event_queue:
+                    await main_ctx.event_queue.put(chunk)
+                logger.info(
+                    "[Delegation] Sub-agent '%s' is waiting for tool permission; "
+                    "confirmation card forwarded to parent session",
+                    sub_display_name,
+                )
+                break
             logger.warning(
                 "[Delegation] Sub-agent '%s' interrupted with %s during delegation",
                 sub_display_name,
@@ -2180,8 +2209,10 @@ async def sub_agent_call(
             interrupt_status = SubAgentResultStatus.NEEDS_USER_INPUT
             interrupt_reason = SubAgentStopReason.NEEDS_USER_INPUT
         elif interrupt_type == "permission_required":
-            interrupt_status = SubAgentResultStatus.PERMISSION_DENIED
-            interrupt_reason = SubAgentStopReason.PERMISSION_DENIED
+            # 不是拒绝：确认卡已弹到主会话，等用户点选。按「等用户输入」归类，
+            # 批次统计与前端才不会把它显示成子智能体执行失败。
+            interrupt_status = SubAgentResultStatus.NEEDS_USER_INPUT
+            interrupt_reason = SubAgentStopReason.NEEDS_USER_INPUT
         else:
             interrupt_status = SubAgentResultStatus.INTERRUPTED
             interrupt_reason = SubAgentStopReason.INTERRUPTED
@@ -2237,17 +2268,32 @@ async def sub_agent_call(
                 answer=f"（向用户确认）{asked_question}" if asked_question else None,
                 resume=resume,
             )
+        elif interrupt_type == "permission_required":
+            # 停在授权点同样要缓存：父专家按续聊指令 resume 时若读到空缓存，会降级成
+            # 全新会话——子智能体丢掉原始任务，也复现不出同一份工具参数，一次性授权
+            # 按参数指纹匹配就永远命不中，用户刚点的「允许」等于白点。
+            await _record_sub_session_history(
+                main_ctx,
+                agent_key=history_cache_key,
+                query=delegation_request.query,
+                answer="（等待用户授权工具调用）",
+                resume=resume,
+            )
         _put_subagent_lifecycle_log(
             main_ctx,
             log_id=lifecycle_log_id,
             metadata=subagent_metadata,
-            status="success" if interrupt_type == "user_question" else "error",
+            status="success" if interrupt_type in {"user_question", "permission_required"} else "error",
             # 时间线是给用户看的：interrupt_message 是写给模型的协议指令
             # （「本轮请勿重复提问…用 resume=True…」），不能原样展示给用户。
             details=(
                 "已向用户提问，等待回答"
                 if interrupt_type == "user_question"
-                else interrupt_message
+                else (
+                    "已请求工具授权，等待用户在确认卡上点选"
+                    if interrupt_type == "permission_required"
+                    else interrupt_message
+                )
             ),
             started_at=lifecycle_started_at,
         )
@@ -2258,7 +2304,7 @@ async def sub_agent_call(
             content=interrupt_message,
             error_code=(
                 None
-                if interrupt_type == "user_question"
+                if interrupt_type in {"user_question", "permission_required"}
                 else ("stream_error" if interrupt_type == "error" else "interrupted")
             ),
             interrupt_type=interrupt_type,
