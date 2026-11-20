@@ -471,6 +471,7 @@ import { useToast } from "@/composables/useToast"
 import { useWorkspaceUploadQueue } from "@/composables/useWorkspaceUploadQueue"
 import { isExtractableArchive, isPublicWorkspaceItem } from "@/utils/workspaceActionEntries"
 import { copyFileToWorkspace } from "@/utils/workspaceFilePreview"
+import { parentDirectoryOf } from "@/utils/workspacePath"
 import {
   canPreviewWorkspaceFile,
   copyTextToClipboard,
@@ -876,8 +877,9 @@ const handleCopyAndShare = async (item: FsItem) => {
       return
     }
     showToast(`已复制到我的目录：${created.name}`, "success")
-    // 列表刷新让副本可见，否则用户只看到一句 toast，找不到文件在哪
-    void fetchDirectory(currentPath.value)
+    // 副本落在本人工作区根（target_dir 未指定），而此刻用户看的是公共目录——
+    // 刷新当前目录永远看不到副本，必须跳到副本所在目录才算「让副本可见」。
+    void load(parentDirectoryOf(created.path))
     openShare({ path: created.path, name: created.name, size: created.size } as FsItem)
   } catch (err: any) {
     const msg = err?.response?.data?.detail || err?.message || "复制失败"

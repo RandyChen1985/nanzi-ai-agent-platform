@@ -7,6 +7,7 @@ import {
   type FileTypeCategory,
 } from '@/utils/fileTypeVisual'
 import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash, extractWorkspaceArchive, copyFileToWorkspace } from '@/utils/workspaceFilePreview'
+import { parentDirectoryOf } from '@/utils/workspacePath'
 import WorkspaceActionMenu from '@/components/embed/WorkspaceActionMenu.vue'
 import WorkspaceDirectorySaveDialog from '@/components/embed/WorkspaceDirectorySaveDialog.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
@@ -1419,8 +1420,9 @@ const copyAndShare = async (item: { path: string; name: string; size?: number })
       return
     }
     showToast(`已复制到我的目录：${created.name}`, 'success')
-    // 刷新当前目录，让副本在原位置可见（用户刚从公共目录跳过来会找不到自己复制了什么）
-    void fetchDirectory(currentPath.value)
+    // 副本落在本人工作区根（target_dir 未指定），而此刻用户看的是公共目录——
+    // 刷新当前目录看不到副本，跳到副本所在目录才让它在列表里出现。
+    void fetchDirectory(parentDirectoryOf(created.path))
     openShareDialog({ path: created.path, name: created.name, size: created.size })
   } catch (err: any) {
     showToast(err?.response?.data?.detail || err?.message || '复制失败', 'error')

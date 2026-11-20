@@ -97,7 +97,7 @@ const pub = buildWorkspaceActionEntries({
 })
 assert.equal(pub[0].key, 'header')
 assert.equal(pub[0].label, '公共只读资源')
-assert.deepEqual(pub.map((e) => e.key), ['header', 'preview', 'download', 'share', 'mount', 'copy-path'])
+assert.deepEqual(pub.map((e) => e.key), ['header', 'preview', 'download', 'copy-and-share', 'mount', 'copy-path'])
 
 // --- 5. 公共目录（管理员）+ 系统保护目录：无重命名/永久删除 ---
 const admin = buildWorkspaceActionEntries({
