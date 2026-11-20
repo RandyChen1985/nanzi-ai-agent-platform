@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
 
@@ -15,6 +16,29 @@ from app.services.ai.runtime.session_run_lane import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _tool_input_from_snapshot(pending: Any) -> Any:
+    """从挂起快照还原工具参数，供一次性授权计算指纹。
+
+    快照里存的是模型原始输出的 JSON 字符串，运行时 `check_permissions` 拿到的
+    却是解析后的 dict。两边必须还原成同一形状，否则令牌永远命不中——用户点了
+    「允许这一次」，子智能体续聊时却又弹一次卡。
+    """
+    snapshot = getattr(pending, "snapshot", None)
+    tool_call = getattr(snapshot, "tool_call", None) or {}
+    if not isinstance(tool_call, dict):
+        return {}
+    raw = tool_call.get("input")
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return {"input": raw}
+        return parsed if isinstance(parsed, dict) else {"input": parsed}
+    return {}
 
 
 class AgentScopeResumeHandler:
@@ -185,6 +209,22 @@ class AgentScopeResumeHandler:
                 # 确认真正持有会话锁且快照有效后，再回调清理/开启运行日志，避免并发请求互相清日志。
                 if on_lane_acquired is not None:
                     await on_lane_acquired()
+
+                # 子智能体发起的确认先分流：授权要落到「父会话 + 子智能体」作用域，
+                # 不能走下面的 `_grant_session_permission`——那个用的是快照里的会话
+                # （子智能体的内部子会话），写进去是一条永远不会被查询到的脏记录。
+                delegation = dict(getattr(pending.snapshot, "delegation", None) or {})
+                if not is_external and delegation:
+                    async for chunk in cls._handoff_subagent_permission(
+                        pending,
+                        request_id=request_id,
+                        delegation=delegation,
+                        confirmed=confirmed,
+                        grant_scope=grant_scope,
+                        user_id=lane_user_id,
+                    ):
+                        yield chunk
+                    return
 
                 session_grant: Optional[Dict[str, Any]] = None
                 if not is_external and confirmed and grant_scope == "session":
@@ -512,6 +552,126 @@ class AgentScopeResumeHandler:
             restored_urls = _restore_published_download_urls_from_pending(pending)
             if restored_urls:
                 context.published_download_urls = restored_urls
+
+    @classmethod
+    async def _handoff_subagent_permission(
+        cls,
+        pending: Any,
+        *,
+        request_id: str,
+        delegation: Dict[str, Any],
+        confirmed: bool,
+        grant_scope: str,
+        user_id: Any,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """子智能体的权限确认：写授权，再把「续聊子智能体」的指令交回主会话。
+
+        为什么确认后不直接 resume 子智能体：挂起快照属于内部子会话
+        （`child_session_*`），直接恢复只会在那个内部会话里跑完——用户在主会话里
+        既看不到回答，父专家也没有汇总的机会。授权写进「父会话 + 子智能体」作用域
+        后，由父会话自己用 `sub_agent_call(resume=True)` 续聊；子智能体重跑到同一个
+        调用时命中授权（一次性令牌按工具名 + 参数指纹精确匹配，会话授权按工具名）。
+        """
+        from app.services.ai.runtime.agentscope.session_permission_grants import (
+            delegation_grant_scope,
+            once_permission_grants,
+            session_permission_grants,
+            tool_args_fingerprint,
+        )
+
+        parent_conversation_id = str(delegation.get("parent_conversation_id") or "")
+        agent_name = str(
+            delegation.get("agent_name") or getattr(pending.snapshot, "agent_name", "") or ""
+        )
+        tool_name = str(getattr(pending.tool_call, "name", "") or "")
+        tool_call_id = getattr(pending.tool_call, "id", None)
+        scope = delegation_grant_scope(parent_conversation_id, agent_name)
+        session_scope = str(grant_scope or "").strip().lower() == "session"
+
+        # 快照只消费一次：连点确认不应该重复写授权，也不该留下第二份令牌。
+        await pending_agentscope_confirmations.pop_async(request_id, user_id=user_id)
+
+        granted = False
+        if confirmed and scope and tool_name:
+            if session_scope:
+                granted = await session_permission_grants.grant(user_id, scope, tool_name)
+            else:
+                granted = await once_permission_grants.grant(
+                    user_id,
+                    scope,
+                    tool_name,
+                    tool_args_fingerprint(_tool_input_from_snapshot(pending)),
+                )
+
+        if confirmed and not granted:
+            # 授权没落库还让父专家续聊，子智能体会在同一个调用上再被拦一次，
+            # 用户看到的是一张卡反复弹。这里如实告诉模型「授权没成功」。
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "授权记录未能写入（可能是存储不可用），请重试或改用「自动批准」模式重发。",
+                "permission_request_id": request_id,
+            }
+            yield {
+                "type": "run_status",
+                "status": "error",
+                "trace_id": str(getattr(pending, "trace_id", "") or ""),
+            }
+            return
+
+        yield {
+            "type": "permission_result",
+            "status": "success" if confirmed else "rejected",
+            "permission_request_id": request_id,
+            "tool_call_id": tool_call_id,
+            "session_grant": (
+                {
+                    "granted": True,
+                    "tool_name": tool_name,
+                    "conversation_id": scope,
+                }
+                if confirmed and session_scope
+                else None
+            ),
+        }
+
+        resume_hint = (
+            f'请用 sub_agent_call(agent_name="{agent_name}", resume=True) 让同一个子智能体'
+            "接着上次的进度继续完成任务"
+        )
+        if confirmed:
+            directive = (
+                f"【用户授权】子智能体「{agent_name}」请求执行的工具 {tool_name} 已获允许"
+                f"（{'本会话内有效' if session_scope else '仅这一次'}）。"
+                f"{resume_hint}，不要从头重跑，也不要重复申请同一授权。"
+            )
+        else:
+            directive = (
+                f"【用户拒绝】用户拒绝子智能体「{agent_name}」执行工具 {tool_name} 的请求。"
+                f"{resume_hint}，并让子智能体改用不需要该工具权限的方式完成任务；"
+                "不要重复申请同一授权。"
+            )
+
+        yield {
+            "type": "subagent_permission_handoff",
+            "status": "approved" if confirmed else "rejected",
+            "permission_request_id": request_id,
+            "parent_conversation_id": parent_conversation_id,
+            "subagent": {
+                "display_name": agent_name,
+                "run_id": str(delegation.get("run_id") or ""),
+            },
+            "grant": {
+                "scope": "session" if session_scope else "once",
+                "granted": bool(granted),
+            },
+            "directive": directive,
+        }
+        yield {
+            "type": "run_status",
+            "status": "success" if confirmed else "rejected",
+            "trace_id": str(getattr(pending, "trace_id", "") or ""),
+        }
 
     @classmethod
     async def _grant_session_permission(

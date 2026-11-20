@@ -231,6 +231,24 @@ def _supports_session_grant(
     return False
 
 
+def _subagent_delegation_metadata(context: Any) -> Dict[str, Any]:
+    """子智能体上下文的委派来源；主会话返回空 dict。
+
+    只认 `parent_conversation_id`：委派层创建子上下文时才会写这个字段，主会话链路
+    天然没有父会话。挂起快照带上它，确认接口才能判断「这次确认属于某个子智能体」，
+    并把授权结果交回父会话，而不是在内部子会话里继续。
+    """
+    parent_conversation_id = str(getattr(context, "parent_conversation_id", "") or "")
+    if not parent_conversation_id:
+        return {}
+    return {
+        "parent_conversation_id": parent_conversation_id,
+        "run_id": str(getattr(context, "delegation_run_id", "") or ""),
+        "agent_name": str(getattr(context, "agent_name", "") or ""),
+        "depth": int(getattr(context, "delegation_depth", 0) or 0),
+    }
+
+
 async def stream_pending_tool_interrupt(
     *,
     event: Any,
@@ -301,6 +319,7 @@ async def stream_pending_tool_interrupt(
                 system_content=state.get("system_content", ""),
                 max_steps=int(state.get("max_steps", 5)),
             ),
+            delegation=_subagent_delegation_metadata(get_current_agent_context()),
         )
         yield {
             "type": sse_type,

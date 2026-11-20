@@ -119,6 +119,7 @@ class PendingAgentScopeConfirmationRegistry:
         agent_name: str,
         state: dict[str, Any] | None = None,
         runner_context: dict[str, Any] | None = None,
+        delegation: dict[str, Any] | None = None,
     ) -> PendingAgentScopeConfirmation:
         await self.prune()
         request_id = pending_agentscope_store.new_request_id()
@@ -163,6 +164,7 @@ class PendingAgentScopeConfirmationRegistry:
                 if evidence_ledger is not None
                 else []
             ),
+            delegation=dict(delegation or {}),
         )
         await pending_agentscope_store.register(snapshot)
         request = PendingAgentScopeConfirmation(

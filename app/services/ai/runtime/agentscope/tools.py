@@ -940,10 +940,19 @@ class AgentScopeRuntimeTool:
         auto_approved = _auto_approve_decision(self.name)
         if auto_approved is not None:
             return auto_approved
-        grant_decision = await _session_grant_decision(
+        once_grant = await _delegation_once_grant_decision(
             tool_name=self.name,
             user_id=self.user_id,
             conversation_id=self.conversation_id,
+            tool_input=tool_input,
+            context=context,
+        )
+        if once_grant is not None:
+            return once_grant
+        grant_decision = await _session_grant_decision(
+            tool_name=self.name,
+            user_id=self.user_id,
+            conversation_id=_grant_scope_conversation_id(self.conversation_id),
         )
         if grant_decision is not None:
             return grant_decision
@@ -1244,6 +1253,9 @@ class AgentScopeNativeApprovalTool:
                 decision_reason=f"runtime approval mode: {self.approval_mode}",
                 bypass_immune=True,
             )
+        # 原生判定在前：它自己的 safety ASK（`bypass_immune`）与 DONT_ASK 语义不能
+        # 被任何授权覆盖。一次性令牌与会话授权的降级都收在 `_session_grant_override`
+        # 内部统一把关，所以这里不再是「排在后面就命中不到」的处境。
         native_check = getattr(self.native_tool, "check_permissions", None)
         if native_check:
             result = native_check(tool_input, context)
@@ -1255,7 +1267,8 @@ class AgentScopeNativeApprovalTool:
                     context=context,
                     tool_name=self.name,
                     user_id=self.user_id,
-                    conversation_id=self.conversation_id,
+                    conversation_id=_grant_scope_conversation_id(self.conversation_id),
+                    tool_input=tool_input,
                 )
                 if grant_decision is not None:
                     return grant_decision
@@ -1263,10 +1276,19 @@ class AgentScopeNativeApprovalTool:
         auto_approved = _auto_approve_decision(self.name)
         if auto_approved is not None:
             return auto_approved
-        grant_decision = await _session_grant_decision(
+        once_grant = await _delegation_once_grant_decision(
             tool_name=self.name,
             user_id=self.user_id,
             conversation_id=self.conversation_id,
+            tool_input=tool_input,
+            context=context,
+        )
+        if once_grant is not None:
+            return once_grant
+        grant_decision = await _session_grant_decision(
+            tool_name=self.name,
+            user_id=self.user_id,
+            conversation_id=_grant_scope_conversation_id(self.conversation_id),
         )
         if grant_decision is not None:
             return grant_decision
@@ -2048,6 +2070,96 @@ def consume_session_grant_auto_approved(tool_name: str) -> bool:
     return True
 
 
+async def _delegation_once_grant_decision(
+    *,
+    tool_name: str,
+    user_id: Any,
+    conversation_id: Any,
+    tool_input: Any,
+    context: Any,
+) -> Any:
+    """父会话「允许这一次」在子智能体续聊时的落地。
+
+    子智能体没有自己的用户交互面：确认卡在主会话上弹出，授权写进父会话作用域的
+    一次性令牌，等父专家 resume 子智能体、子智能体重跑到同一个调用时才被消费。
+    只放行签名完全一致的那一次（工具名 + 参数指纹），用过即删。
+
+    主会话自身的确认不走这里：它的恢复流里 `confirmed` 已经是事实，无需令牌。
+    """
+
+    # 委派身份只能从平台上下文取：check_permissions 的 `context` 参数是 AgentScope 的
+    # PermissionContext（只有 mode / rules / working_directories），上面没有父会话。
+    from app.core.context import get_current_agent_context
+
+    agent_ctx = get_current_agent_context()
+    parent_conversation_id = str(getattr(agent_ctx, "parent_conversation_id", "") or "")
+    if not parent_conversation_id:
+        return None
+
+    # 无人值守（定时任务 / 后台运行）不认交互式授权：一次性令牌来自用户当场点卡片，
+    # 而 DONT_ASK 语义是「没人能回答就别问」，放行等于放宽无人值守的安全边界。
+    try:
+        from agentscope.permission import PermissionMode
+
+        if getattr(context, "mode", None) == PermissionMode.DONT_ASK:
+            return None
+    except Exception:
+        pass
+
+    from agentscope.permission import PermissionBehavior, PermissionDecision
+
+    from app.services.ai.runtime.agentscope.session_permission_grants import (
+        delegation_grant_scope,
+        once_permission_grants,
+        tool_args_fingerprint,
+    )
+
+    scope = delegation_grant_scope(
+        parent_conversation_id,
+        getattr(agent_ctx, "agent_name", "") or conversation_id,
+    )
+    if not scope:
+        return None
+    consumed = await once_permission_grants.consume(
+        user_id,
+        scope,
+        tool_name,
+        tool_args_fingerprint(tool_input),
+    )
+    if not consumed:
+        return None
+    return PermissionDecision(
+        behavior=PermissionBehavior.ALLOW,
+        message=f"Tool '{tool_name}' was approved once by the user in the parent session.",
+        decision_reason="delegation_once_grant",
+    )
+
+
+def _grant_scope_conversation_id(tool_conversation_id: Any) -> str:
+    """授权查询用的会话作用域：子智能体落到「父会话 + 子智能体」，主会话保持不变。
+
+    父会话与子代理名只能从平台 `AgentContext` 取：`check_permissions` 收到的
+    `context` 是 AgentScope 的 `PermissionContext`，没有委派信息，据此判断会一路
+    退回 `child_session_*`，子代理的「本会话总是允许」在续聊里永远查不到。
+    """
+    from app.core.context import get_current_agent_context
+
+    agent_ctx = get_current_agent_context()
+    parent_conversation_id = str(getattr(agent_ctx, "parent_conversation_id", "") or "")
+    if parent_conversation_id:
+        from app.services.ai.runtime.agentscope.session_permission_grants import (
+            delegation_grant_scope,
+        )
+
+        scope = delegation_grant_scope(
+            parent_conversation_id,
+            getattr(agent_ctx, "agent_name", "") or tool_conversation_id,
+        )
+        if scope:
+            return scope
+    return str(tool_conversation_id or "")
+
+
 async def _session_grant_decision(
     *,
     tool_name: str,
@@ -2092,6 +2204,7 @@ async def _session_grant_override(
     tool_name: str,
     user_id: Any,
     conversation_id: Any,
+    tool_input: Any = None,
 ) -> Any:
     """原生工具的决策是否可以被会话授权降级为 ALLOW。
 
@@ -2121,6 +2234,17 @@ async def _session_grant_override(
         return None
     if getattr(context, "mode", None) == PermissionMode.DONT_ASK:
         return None
+    # 一次性授权走同一道门禁：它同样是「把 ASK/PASSTHROUGH 降级成 ALLOW」，
+    # 不能绕过 bypass_immune 的 safety ASK 与无人值守的 DONT_ASK。
+    once_decision = await _delegation_once_grant_decision(
+        tool_name=tool_name,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        tool_input=tool_input,
+        context=context,
+    )
+    if once_decision is not None:
+        return once_decision
     return await _session_grant_decision(
         tool_name=tool_name,
         user_id=user_id,
