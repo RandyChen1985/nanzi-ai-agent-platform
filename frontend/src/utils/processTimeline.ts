@@ -617,23 +617,24 @@ export function resolveBannerTodoTimeline(
 /**
  * 执行过程时间线要渲染的项。
  *
- * - 当前轮由 banner 卡片负责时传 `hideTodo: true`，避免同一份清单渲染两遍；
- * - 归档视图保留清单（含没有 `settled` 的旧快照与提问轮）——否则这些轮次的
- *   清单既不在 banner 也不在时间线，等于永久丢失；
- * - 旧快照可能残留多条 todo 项（同一 id），只保留最后一份，避免重复卡片和
- *   Vue `:key` 冲突。
+ * **任务清单一律不进执行明细**，只保留过程记录：
+ *
+ * - 清单是任务级概览，明细是过程记录，两个层级不该混。它唯一的正式位置是输入框
+ *   上方那张横幅（进行中 / 等待用户 / 终态回顾，见 `resolveBannerTodoTimeline`）。
+ * - 以前靠 `hideTodo` 开关做到「横幅显示时明细让位」，但横幅只服务**最后一条**回答：
+ *   历史轮次的清单就常驻在链路第一条、还带着「N 项未完成」，看着像整轮没收尾；
+ *   提问轮更糟——它不会被结算成终态（本轮还可能被回执接着跑），按 `settled` 判断
+ *   等于没生效，往回翻永远能看到那张卡。用户两次实测反馈都指向这里。
+ * - 代价：历史轮次的清单在界面上**完全不可见**——横幅只服务最后一轮，明细也不渲染。
+ *   过程信息不缺（`工具完成 · todo_write` 那条记录仍在明细里），清单快照仍在库里。
+ *
+ * 顺带失去的作用：以前这里还会对残留的多条 todo（同一 id 的旧快照）去重，
+ * 现在一条都不渲染，去重自然不需要了。
  */
 export function selectTimelineRenderableItems(
   items: ProcessTimelineItem[],
-  options: { hideTodo?: boolean } = {},
 ): ProcessTimelineItem[] {
-  const list = items || [];
-  if (options.hideTodo) return list.filter((item) => item.kind !== "todo");
-  let lastTodoIndex = -1;
-  list.forEach((item, index) => {
-    if (item.kind === "todo") lastTodoIndex = index;
-  });
-  return list.filter((item, index) => item.kind !== "todo" || index === lastTodoIndex);
+  return (items || []).filter((item) => item.kind !== "todo");
 }
 
 /**

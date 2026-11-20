@@ -5,6 +5,13 @@ import type { UserQuestionState } from "@/utils/userQuestion";
 const props = defineProps<{
   payload: UserQuestionState;
   disabled?: boolean;
+  /**
+   * 消息正文已经用「任务进度 / 待你确认」小节展示过问题与进度。
+   *
+   * 此时卡片只留选项：否则同一段文字在正文一遍、卡片一遍，一段 200 多字的进度会
+   * 在一屏里出现两次（见 userQuestion.ts 的 splitUserQuestionBody）。
+   */
+  summaryRendered?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -132,7 +139,7 @@ async function cancel() {
   <section
     class="mt-2.5 w-full min-w-0 max-w-[42rem] lg:max-w-[48rem] 2xl:max-w-[52rem] rounded-xl border border-violet-200/90 bg-violet-50/60 p-2.5 sm:p-3 text-xs text-violet-950 shadow-sm dark:border-violet-900/40 dark:bg-violet-950/20 dark:text-violet-100 transition-all"
     role="group"
-    :aria-label="payload.question || 'AI 提问'"
+    :aria-label="props.summaryRendered ? '需要你的补充' : payload.question || 'AI 提问'"
   >
     <div class="flex items-start gap-2 sm:gap-2.5">
       <div class="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
@@ -157,7 +164,7 @@ async function cancel() {
             >来自：{{ sourceLabel }}</span>
             <!-- Collapsed summary preview -->
             <span
-              v-if="!expanded && payload.question"
+              v-if="!expanded && payload.question && !props.summaryRendered"
               class="min-w-0 flex-1 truncate text-[11px] text-violet-700/70 dark:text-violet-300/70 font-normal"
             >
               {{ payload.question }}
@@ -195,8 +202,8 @@ async function cancel() {
 
         <!-- Expanded Content -->
         <div v-show="expanded" class="mt-2 space-y-2">
-          <!-- Question & Context -->
-          <div>
+          <!-- Question & Context：正文已用「任务进度 / 待你确认」小节展示过时不再重复一遍 -->
+          <div v-if="!props.summaryRendered">
             <p class="break-words text-xs sm:text-[13px] font-semibold text-violet-950 dark:text-violet-100 leading-snug">
               {{ payload.question }}
             </p>

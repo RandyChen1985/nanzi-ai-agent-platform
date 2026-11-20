@@ -300,36 +300,50 @@ def test_chat_surfaces_use_shared_banner_resolver():
 EXECUTION_TIMELINE = ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue"
 
 
-def test_running_checklist_is_not_duplicated_inside_execution_timeline():
-    """banner 正在展示的当前轮清单，时间线里不再重复渲染。"""
+def test_running_checklist_never_enters_execution_timeline():
+    """运行中的清单由横幅承载，明细里不再出现（这条曾是 `hideTodo` 开关，现已无条件）。"""
     result = _run(
         """
 const items = api.selectTimelineRenderableItems([
+  { kind: 'log', id: 'tool_1', title: '检索', status: 'success' },
   { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '执行步骤', status: 'in_progress' }], counts: { pending: 0, in_progress: 1, completed: 0 } }
-], { hideTodo: true });
+]);
 return items.map(item => item.kind);
 """
     )
 
-    assert result == []
+    assert result == ["log"]
 
 
-def test_settled_checklist_yields_to_banner_inside_execution_timeline():
-    """终态清单已在横幅常驻时，执行明细不再重复渲染同一张卡。"""
+def test_unsettled_checklist_in_history_is_hidden_too():
+    """历史消息里没有 settled 的清单也不显示。
+
+    用户实测反馈：往回翻到上一次提问的那一轮，执行明细里还挂着「任务清单 2 项未完成」。
+    提问轮不会把清单结算成终态（本轮还可能被回执接着跑），所以「按 settled 判断」
+    在历史里等于没生效——清单属于任务级概览，历史消息不该再拿它占一行。
+    """
     result = _run(
         """
 const items = api.selectTimelineRenderableItems([
-  { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '执行步骤', status: 'completed' }], counts: { pending: 0, in_progress: 0, completed: 1 }, settled: true, settledStatus: 'success' }
-], { hideTodo: true });
+  { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '剩余步骤', status: 'pending' }], counts: { total: 3, pending: 2, in_progress: 0, completed: 1 } },
+  { kind: 'log', id: 'tool_1', title: '工具完成 · todo_write', status: 'success' },
+  { kind: 'log', id: 'tool_2', title: '需要用户回答', status: 'pending' }
+]);
 return items.map(item => item.kind);
 """
     )
 
-    assert result == []
+    assert result == ["log", "log"]
 
 
-def test_settled_checklist_archives_into_execution_timeline():
-    """已终结的清单要能从历史消息里查回来，不能被一并过滤掉。"""
+def test_settled_checklist_is_hidden_from_execution_timeline():
+    """已终结的清单不再进执行明细。
+
+    用户实测反馈：任务跑完了，清单还挂在「执行明细链路」第一条，看着像没收尾。
+    清单是**任务级概览**，明细是**过程记录**，两个层级不该混；终结后由输入框上方
+    那张卡片负责终态回顾（见 `resolveBannerTodoTimeline`），过程信息里
+    `工具完成 · todo_write` 那条仍在，不缺什么。
+    """
     result = _run(
         """
 const items = api.selectTimelineRenderableItems([
@@ -340,7 +354,24 @@ return items.map(item => item.kind);
 """
     )
 
-    assert result == ["log", "todo"]
+    assert result == ["log"]
+
+
+def test_settled_checklist_hidden_even_when_banner_serves_other_turn():
+    """横幅只服务最后一条回答，但别的轮次终结后也不该把清单留在明细里。
+
+    这正是用户截图那一幕：往上翻到的历史轮次，清单没有横幅接手，于是常驻在
+    执行明细第一条，还带着「1 项未完成」。
+    """
+    result = _run(
+        """
+const settled = { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '剩余步骤', status: 'pending' }], counts: { total: 2, pending: 1, in_progress: 0, completed: 1 }, settled: true, settledStatus: 'completed' };
+const timeline = [settled, { kind: 'log', id: 'tool_1', title: '步骤一', status: 'success' }];
+return api.selectTimelineRenderableItems(timeline).map(item => item.kind);
+"""
+    )
+
+    assert result == ["log"]
 
 
 def test_execution_timeline_renders_settled_todo_card():
@@ -350,20 +381,20 @@ def test_execution_timeline_renders_settled_todo_card():
     assert "ChatTodoCard" in source
 
 
-def test_archived_checklist_is_deduplicated_in_execution_timeline():
-    """旧快照可能残留多条 todo 项：归档时只保留最后一份，避免重复卡片与 key 冲突。"""
+def test_select_keeps_only_non_todo_items_in_order():
+    """明细只留过程记录，且顺序原样不动（清单的增删不影响其它项的相对次序）。"""
     result = _run(
         """
 const items = api.selectTimelineRenderableItems([
-  { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '旧步骤', status: 'in_progress' }], counts: { pending: 0, in_progress: 1, completed: 0 }, settled: true, settledStatus: 'error' },
-  { kind: 'log', id: 'tool_1', title: '检索', status: 'success' },
-  { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '新步骤', status: 'completed' }], counts: { pending: 0, in_progress: 0, completed: 1 }, settled: true, settledStatus: 'success' }
+  { kind: 'log', id: 'tool_1', title: '步骤一', status: 'success' },
+  { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '新步骤', status: 'in_progress' }], counts: { pending: 0, in_progress: 1, completed: 0 } },
+  { kind: 'log', id: 'tool_2', title: '步骤二', status: 'success' }
 ]);
-return items.map(item => item.kind === 'todo' ? item.todos[0].content : item.kind);
+return items.map(item => item.id);
 """
     )
 
-    assert result == ["log", "新步骤"]
+    assert result == ["tool_1", "tool_2"]
 
 
 def test_checklist_is_not_counted_as_an_execution_step():
@@ -380,19 +411,20 @@ return api.countTimelineSteps([
     assert result == 1
 
 
-def test_unsettled_checklist_still_archives_when_not_the_live_turn():
-    """旧快照或提问轮没有 settled：banner 已隐藏，执行过程里必须还能查到。"""
+def test_multi_todo_snapshots_all_hidden():
+    """旧快照可能残留多条 todo：现在一条都不进明细（去重逻辑随之一并失效）。"""
     result = _run(
         """
 const items = api.selectTimelineRenderableItems([
+  { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '旧步骤', status: 'in_progress' }], counts: { pending: 0, in_progress: 1, completed: 0 } },
   { kind: 'log', id: 'tool_1', title: '检索', status: 'success' },
-  { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '老数据步骤', status: 'in_progress' }], counts: { pending: 0, in_progress: 1, completed: 0 } }
+  { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '新步骤', status: 'in_progress' }], counts: { pending: 0, in_progress: 1, completed: 0 } }
 ]);
 return items.map(item => item.kind);
 """
     )
 
-    assert result == ["log", "todo"]
+    assert result == ["log"]
 
 
 def test_settled_checklist_does_not_drive_current_step_label():
