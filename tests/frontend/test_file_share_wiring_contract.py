@@ -22,10 +22,23 @@ def _read(rel: str) -> str:
 
 
 def test_share_key_is_declared_and_used_in_both_scenes():
+    """普通项直接分享；公共项走「复制并分享」。
+
+    公共目录不在分享支持的路径范围内（分享记录按 `(workspace_key, rel_path)` 定位文件），
+    原来的 `entry('share', ...)` 会让用户在填完密码、有效期后才吃到「文件不在工作区目录内」。
+    两个场景都必须给出分享入口，但公共项多出「先落到本人工作区」这一步。
+    """
     source = _read("frontend/src/utils/workspaceActionEntries.ts")
     assert "| 'share'" in source
-    # 普通项与公共项都要有：公共只读资源「转发给外部」正是它的主要用法
-    assert source.count("entry('share', '分享文件', '🔗')") == 2
+    assert "| 'copy-and-share'" in source
+    assert source.count("entry('share', '分享文件', '🔗')") == 1
+    assert source.count("entry('copy-and-share', '复制并分享', '🔗')") == 1
+
+    # 公共项不能再出现「直接分享」：那正是这次要修掉的失败路径
+    public_start = source.index("if (scene === 'public-item') {")
+    public_block = source[public_start : source.index("// regular-item：用户自己的文件/目录")]
+    assert "entry('share'" not in public_block
+    assert "copy-and-share" in public_block
 
 
 def test_share_sits_right_after_download():

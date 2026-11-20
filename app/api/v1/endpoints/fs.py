@@ -405,6 +405,20 @@ class FileWriteResponse(BaseModel):
     mtime: float = Field(..., description="写入后修改时间戳")
 
 
+class CopyToWorkspaceRequest(BaseModel):
+    source_path: str = Field(..., description="要复制的文件绝对路径（本人可读即可，含公共只读目录）")
+    target_dir: Optional[str] = Field(
+        None,
+        description="目标目录绝对路径，须在本人工作区内；不传则落在本人工作区根目录",
+    )
+
+
+class CopyToWorkspaceResponse(BaseModel):
+    path: str = Field(..., description="复制后新文件的绝对路径")
+    name: str = Field(..., description="复制后新文件名（重名时会带短后缀）")
+    size: int = Field(..., description="文件大小（字节）")
+
+
 class FileEntryCreateRequest(BaseModel):
     parent_path: str = Field(..., description="父目录绝对路径，须在本人工作目录内")
     name: str = Field(..., description="新建文件或文件夹名称")
@@ -1039,6 +1053,102 @@ async def empty_trash(
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"清空回收站失败: {exc}") from exc
     return StandardResponse(data=FileEmptyTrashResponse(deleted_count=deleted_count))
+
+
+@router.post(
+    "/copy-to-workspace",
+    response_model=StandardResponse[CopyToWorkspaceResponse],
+    summary="把公共只读文件复制到本人工作区",
+    description=(
+        "公共目录（branding / skills / docs 等）只读，分享只支持本人工作区内的文件。"
+        "本接口把公共文件复制一份到本人工作区，让「复制后分享」成为一步可达的操作，"
+        "而不是逼用户先下载再上传。源文件不受影响，复制得到独立副本。"
+    ),
+)
+async def copy_to_workspace(
+    body: CopyToWorkspaceRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    import shutil
+
+    source = assert_path_allowed(body.source_path, user_info)
+    # 先单独判存在：assert_path_allowed 只校验前缀归属，不校验存在性，
+    # 否则不存在的路径会一路走到下面的 isfile 判断，被误报成「不能复制目录」。
+    if not os.path.exists(source):
+        raise HTTPException(status_code=404, detail="源文件不存在。")
+    # 只处理文件：目录复制涉及递归遍历与体积预算，不在这个「复制后分享」的场景里
+    if not os.path.isfile(source):
+        raise HTTPException(status_code=400, detail="只能复制文件，不能复制目录。")
+
+    # 目标只能落在**本人**私有工作区内——这是本接口的语义（「复制到我的工作区」）。
+    # 不能复用 _resolve_writable_entry_path：它对 admin 直接放行，会允许管理员把文件
+    # 复制进公共目录，那就和「公共目录只读」自相矛盾了。
+    private_root = get_user_private_workspace_root(user_info)
+    if not private_root:
+        raise HTTPException(status_code=403, detail="当前账号没有私有工作区。")
+    private_norm = os.path.normpath(private_root)
+    if body.target_dir:
+        target_dir = os.path.normpath(assert_path_allowed(body.target_dir, user_info))
+        if target_dir != private_norm and not target_dir.startswith(private_norm + os.sep):
+            raise HTTPException(status_code=403, detail="只能复制到本人工作区内。")
+        target_dir = assert_path_writable(target_dir, user_info)
+    else:
+        target_dir = assert_path_writable(private_root, user_info)
+
+    if not os.path.isdir(target_dir):
+        raise HTTPException(status_code=400, detail="目标路径不是目录。")
+
+    size = os.path.getsize(source)
+    if size > _workspace_upload_max_bytes():
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件大小超出 {_format_size_limit(_workspace_upload_max_bytes())} 上限",
+        )
+
+    existing_files = await asyncio.to_thread(
+        count_files_under, target_dir, stop_above=MAX_FILES_PER_DIRECTORY
+    )
+    if existing_files + 1 > MAX_FILES_PER_DIRECTORY:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"目标目录文件数已达上限（{MAX_FILES_PER_DIRECTORY} 个），"
+                "请先清理不再需要的文件后再复制"
+            ),
+        )
+
+    source_name = os.path.basename(source)
+    ext = os.path.splitext(source_name)[1].lower()
+    if ext in FORBIDDEN_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=403, detail=f"禁止复制该类型文件: {ext}")
+
+    # 复用上传的命名分配：原名优先、重名追加短后缀、排他创建保证不覆盖已有文件
+    try:
+        target, handle = open_upload_storage_file(target_dir, source_name)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"复制失败: {exc}") from exc
+
+    try:
+        with handle:
+            # 分块拷贝：公共目录里可能有几十 MB 的手册，不该整个读进内存
+            with open(source, "rb") as src_handle:
+                shutil.copyfileobj(src_handle, handle, length=UPLOAD_CHUNK_BYTES)
+        stat = os.stat(target)
+    except OSError as exc:
+        # 半途失败要清掉残留，否则用户会看到 0 字节的「副本」
+        try:
+            os.remove(target)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail=f"复制失败: {exc}") from exc
+
+    return StandardResponse(
+        data=CopyToWorkspaceResponse(
+            path=target,
+            name=os.path.basename(target),
+            size=stat.st_size,
+        )
+    )
 
 
 @router.post(

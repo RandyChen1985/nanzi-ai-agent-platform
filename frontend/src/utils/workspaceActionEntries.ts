@@ -16,6 +16,7 @@ export type WorkspaceActionKey =
   | 'preview'
   | 'download'
   | 'share'
+  | 'copy-and-share'
   | 'extract'
   | 'copy-path'
   | 'mount'
@@ -257,8 +258,10 @@ export function buildWorkspaceActionEntries(ctx: WorkspaceMenuContext): Workspac
     } else {
       entries.push(previewEntry(target))
       entries.push(entry('download', '下载文件', '⬇️'))
-      // 公共资源常常就是「给外面人看的那份」，转发分享是它的主要用法之一
-      entries.push(entry('share', '分享文件', '🔗'))
+      // 公共目录只读，且不在分享支持的路径范围内（分享记录按工作区内的相对路径定位文件），
+      // 直接「分享文件」会在填完密码和有效期之后才报「文件不在工作区目录内」。
+      // 改成「复制并分享」：先落到本人工作区，再对副本分享，一步可达。
+      entries.push(entry('copy-and-share', '复制并分享', '🔗'))
       // 公共目录只读的是「源」，解压目标另行选择，普通用户也能解到自己的目录
       const extract = extractEntry(target)
       if (extract) entries.push(extract)

@@ -324,6 +324,7 @@
                   @preview="handlePreview"
                   @download="handleDownload"
                   @share="openShare"
+                  @copy-and-share="handleCopyAndShare"
                   @rename="openRename"
                   @copy-path="handleCopyPath"
                   @extract="askExtract"
@@ -382,6 +383,7 @@
               @preview="handlePreview"
               @download="handleDownload"
               @share="openShare"
+              @copy-and-share="handleCopyAndShare"
               @rename="openRename"
               @copy-path="handleCopyPath"
               @extract="askExtract"
@@ -468,6 +470,7 @@ import ShareFileDialog from "@/components/ShareFileDialog.vue"
 import { useToast } from "@/composables/useToast"
 import { useWorkspaceUploadQueue } from "@/composables/useWorkspaceUploadQueue"
 import { isExtractableArchive, isPublicWorkspaceItem } from "@/utils/workspaceActionEntries"
+import { copyFileToWorkspace } from "@/utils/workspaceFilePreview"
 import {
   canPreviewWorkspaceFile,
   copyTextToClipboard,
@@ -853,6 +856,37 @@ const openShare = (item: FsItem) => {
 
 const handleShareCreated = () => {
   showToast("分享已创建", "success")
+}
+
+/**
+ * 公共文件不能直接分享（分享只覆盖本人工作区内的文件），先复制一份到我的目录再分享。
+ *
+ * 复制成功后直接弹出副本的分享弹窗：用户点这个菜单项就是为了分享，
+ * 再让他自己找到副本、再点一次分享纯属多余。
+ */
+const copyingShareSource = ref<Record<string, boolean>>({})
+const handleCopyAndShare = async (item: FsItem) => {
+  if (copyingShareSource.value[item.path]) return
+  copyingShareSource.value = { ...copyingShareSource.value, [item.path]: true }
+  try {
+    const res = await copyFileToWorkspace(item.path)
+    const created = res.data?.data
+    if (!created?.path) {
+      showToast("复制失败：服务端未返回新文件路径", "error")
+      return
+    }
+    showToast(`已复制到我的目录：${created.name}`, "success")
+    // 列表刷新让副本可见，否则用户只看到一句 toast，找不到文件在哪
+    void fetchDirectory(currentPath.value)
+    openShare({ path: created.path, name: created.name, size: created.size } as FsItem)
+  } catch (err: any) {
+    const msg = err?.response?.data?.detail || err?.message || "复制失败"
+    showToast(msg, "error")
+  } finally {
+    const next = { ...copyingShareSource.value }
+    delete next[item.path]
+    copyingShareSource.value = next
+  }
 }
 
 const handleCopyPath = async (item: FsItem) => {
