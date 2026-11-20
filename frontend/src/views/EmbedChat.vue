@@ -901,7 +901,6 @@
                 :skill-summary="getSkillFlowSummaryForMessage(msg, messages)"
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
-                :hide-todo="activeTodoTimeline === msg.processTimeline"
                 :tool-timeout-seconds="msg.agentMaxToolcallTimeoutSeconds"
                 dark-mode
                 @stop="stopGeneration({ notifySuccess: true })"
@@ -1054,8 +1053,28 @@
                                                                   </svg>
                                                                   <span>{{ msg.permissionNotice.message || '已按你的数据权限自动过滤结果' }}</span>
                                                                 </div>
+                                                                <!-- 提问轮补全正文：拆成「任务进度 / 待你确认」两个小节，默认展开、可收起 -->
+                                                                <template
+                                                                  v-if="questionBodyParts(msg) && !msg.groundingBlocked && !msg.datasetNavigation?.groups?.length"
+                                                                >
+                                                                  <UserQuestionBodyBlock
+                                                                    v-if="questionBodyParts(msg)?.progress"
+                                                                    label="任务进度"
+                                                                    tone="progress"
+                                                                    :text="questionBodyParts(msg)?.progress || ''"
+                                                                    :collapsed="msg.userQuestionProgressCollapsed === true"
+                                                                    @toggle="toggleUserQuestionBodyBlock(msg, 'progress')"
+                                                                  />
+                                                                  <UserQuestionBodyBlock
+                                                                    label="待你确认"
+                                                                    tone="pending"
+                                                                    :text="questionBodyParts(msg)?.question || ''"
+                                                                    :collapsed="msg.userQuestionPendingCollapsed === true"
+                                                                    @toggle="toggleUserQuestionBodyBlock(msg, 'pending')"
+                                                                  />
+                                                                </template>
                                                                 <MessageRenderer
-                                                                  v-if="!msg.groundingBlocked && !msg.datasetNavigation?.groups?.length"
+                                                                  v-else-if="!msg.groundingBlocked && !msg.datasetNavigation?.groups?.length"
                                                                   :content="visibleStreamBody(msg)"
                                                                   :theme="config.markdownTheme"
                                                                   :conversation-id="conversationId"
@@ -1101,6 +1120,7 @@
                 v-if="msg.userQuestion"
                 :payload="msg.userQuestion"
                 :disabled="isProcessing"
+                :summary-rendered="Boolean(questionBodyParts(msg))"
                 @submit="(payload) => submitUserQuestion(msg, payload)"
                 @option-action="handleUserQuestionOptionAction"
               />
@@ -2816,6 +2836,7 @@ import ToolPermissionCard from "@/components/chat/ToolPermissionCard.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
 import BusinessConfirmationCard from "@/components/BusinessConfirmationCard.vue";
 import UserQuestionCard from "@/components/UserQuestionCard.vue";
+import UserQuestionBodyBlock from "@/components/chat/UserQuestionBodyBlock.vue";
 import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
 import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
@@ -3003,7 +3024,9 @@ import {
   buildUserQuestionUserMessage,
   markUserQuestionTimelineResolved,
   parseUserQuestionReceipt,
+  splitUserQuestionBody,
   userQuestionStatesFromTimeline,
+  type UserQuestionBodyParts,
   type UserQuestionReceipt,
   type UserQuestionState,
 } from "@/utils/userQuestion";
@@ -3204,6 +3227,10 @@ interface Message {
   };
   businessConfirmation?: BusinessConfirmationState;
   userQuestion?: UserQuestionState;
+  /** 补全正文拆成小节时，「任务进度」小节是否被用户收起（默认展开）。 */
+  userQuestionProgressCollapsed?: boolean;
+  /** 补全正文拆成小节时，「待你确认」小节是否被用户收起（默认展开）。 */
+  userQuestionPendingCollapsed?: boolean;
   _hasSilentlyRefreshed?: boolean;
 }
 
@@ -3256,6 +3283,41 @@ function visibleStreamBody(msg: Message): string {
     : content;
   streamBodyCache.set(msg, { content, role: msg.role, result });
   return result;
+}
+
+/**
+ * 提问轮补全正文的拆分结果缓存。
+ *
+ * 模板要按它决定「渲染两个小节还是普通正文」，一次渲染会取值多次；正文可能上千字，
+ * 每帧重跑前缀/后缀比较没有必要，按「正文 + 提问卡字段」做 key 缓存一份。
+ */
+const questionBodyCache = new WeakMap<
+  object,
+  { key: string; parts: UserQuestionBodyParts | null }
+>();
+
+/**
+ * 这条消息的正文是不是「提问轮补全模板」的产物；是则给出进度与问句两段。
+ *
+ * 拆分口径见 `splitUserQuestionBody`：内容取提问卡的结构化字段，正文只用来确认身份。
+ * 认不出时返回 null，正文照常走 markdown 渲染 —— 宁可重复，不能把正常回答误拆。
+ */
+function questionBodyParts(msg: Message): UserQuestionBodyParts | null {
+  const content = visibleStreamBody(msg);
+  const key = `${content}\u0000${msg.userQuestion?.question_id || ""}\u0000${msg.userQuestion?.context || ""}`;
+  const cached = questionBodyCache.get(msg);
+  if (cached && cached.key === key) return cached.parts;
+  const parts = splitUserQuestionBody(content, msg.userQuestion);
+  questionBodyCache.set(msg, { key, parts });
+  return parts;
+}
+
+function toggleUserQuestionBodyBlock(msg: Message, which: "progress" | "pending"): void {
+  if (which === "pending") {
+    msg.userQuestionPendingCollapsed = msg.userQuestionPendingCollapsed !== true;
+  } else {
+    msg.userQuestionProgressCollapsed = msg.userQuestionProgressCollapsed !== true;
+  }
 }
 
 const skillFlowBadgeLogVersion = new WeakMap<object, number>();

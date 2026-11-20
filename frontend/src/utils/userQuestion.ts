@@ -307,3 +307,94 @@ export function applyUserQuestionReceipts<
     markUserQuestionTimelineResolved(message.processTimeline as unknown[], question.question_id);
   }
 }
+
+/**
+ * 提问轮补全正文里「任务进度」段的字数上限。
+ *
+ * 必须与后端 `app/services/ai/user_question.py` 的 `_FALLBACK_PROGRESS_MAX_CHARS`
+ * 保持一致：界面靠「正文 === 按同一规则合成的串」来确认这条正文是模板产物，
+ * 两边口径不同就会认不出。
+ */
+const FALLBACK_PROGRESS_MAX_CHARS = 300;
+
+/** 后端补全正文的固定标签。 */
+const FALLBACK_PROGRESS_LABEL = "任务进度：";
+const FALLBACK_QUESTION_LABEL = "待你确认：";
+/** 提问卡没有 context 时后端只写这一句。 */
+const FALLBACK_NO_PROGRESS_PREFIX = "我需要你补充确认：";
+
+/** 补全正文拆出来的两段：提问前的任务进度、待确认的问题。 */
+export interface UserQuestionBodyParts {
+  progress: string;
+  question: string;
+}
+
+/**
+ * 把提问卡的 `context` 压成一行（换行折叠成「；」、超长截断）。
+ *
+ * 与后端 `_flatten_progress_text` 同口径。为什么非得复现：提问卡上下文常常带换行，
+ * 后端落库的是折叠后的版本，前端按原始 `context` 合成就会差几个「；」而认不出正文。
+ */
+function flattenProgressText(text: unknown, limit = FALLBACK_PROGRESS_MAX_CHARS): string {
+  const parts = String(text ?? "")
+    .split(/\r\n|\r|\n/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  let collapsed = parts.join("；");
+  if (limit > 0 && collapsed.length > limit) {
+    collapsed = `${collapsed.slice(0, Math.max(1, limit - 1)).trimEnd()}…`;
+  }
+  return collapsed;
+}
+
+/**
+ * 按后端模板合成提问轮补全正文：进度在前（压缩按头部截断，进度才留得住），问题在后。
+ *
+ * 提问卡没有进度时返回 `我需要你补充确认：<问题>`。
+ */
+export function composeUserQuestionFallbackBody(progress: unknown, question: unknown): string {
+  const target = String(question ?? "").trim();
+  const folded = flattenProgressText(progress);
+  if (folded) return `${FALLBACK_PROGRESS_LABEL}${folded}\n${FALLBACK_QUESTION_LABEL}${target}`;
+  return `${FALLBACK_NO_PROGRESS_PREFIX}${target}`;
+}
+
+/**
+ * 认出「这条正文是提问卡补全模板的产物」，拆成可分别渲染的两段；认不出返回 null。
+ *
+ * 为什么要拆：这条正文是给下一轮模型读的（必须带进度，见 user_question.py 的注释），
+ * 但在界面上它与展开的提问卡整段重复 —— 正文一遍「进度 + 问句」，卡片再一遍
+ * 「问句 + 进度」。拆成两块之后：正文区显示「任务进度」块与「待你确认」块
+ * （默认展开、可收起），卡片只留选项。
+ *
+ * **内容一律取提问卡的结构化字段**（`question` / `context`），正文只用来确认身份，
+ * 不从正文里抠内容 —— 模型换个措辞、正文被改写几个换行，显示都不会坏。
+ * 认不出时返回 null，调用方按普通正文渲染；宁可重复，也不能把正常回答误拆成两段。
+ */
+export function splitUserQuestionBody(
+  content: string | null | undefined,
+  payload?: UserQuestionState | null,
+): UserQuestionBodyParts | null {
+  const body = String(content ?? "").trim();
+  const question = String(payload?.question ?? "").trim();
+  if (!body || !question) return null;
+  // 模板产物一定以问题结尾：这一条同时挡掉「模型正文里恰好提到任务进度」的误判。
+  if (!body.endsWith(question)) return null;
+
+  const progress = String(payload?.context ?? "").trim();
+  if (!progress) {
+    if (body === `${FALLBACK_NO_PROGRESS_PREFIX}${question}`.trim()) {
+      return { progress: "", question };
+    }
+    return null;
+  }
+
+  if (body === composeUserQuestionFallbackBody(progress, question).trim()) {
+    return { progress, question };
+  }
+  // 空白/换行层面的细微差异不该让用户又看到一遍重复，标签对了就认。
+  if (body.startsWith(FALLBACK_PROGRESS_LABEL) || body.startsWith("【任务进度】")) {
+    return { progress, question };
+  }
+  return null;
+}

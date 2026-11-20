@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="方案对比">
+<title>思考时间线 · 修复「进行中的工具卡跑到上面」的前后对照</title>
+<style>
+  :root{
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af;
+    --g500:#6b7280; --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --blue:#1677ff; --green:#16a34a; --red:#dc2626; --amber:#d97706;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f5f6f8;color:var(--g900);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  }
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+  .page{max-width:1180px;margin:0 auto;padding:22px 24px 90px}
+  .head h1{font-size:20px;margin:0 0 6px;font-weight:650}
+  .head p{margin:0;color:var(--g500);font-size:12.5px;max-width:940px;line-height:1.85}
+  .head b{color:var(--g700);font-weight:600}
+  .head code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:11.5px}
+
+  .toolbar{display:flex;gap:8px;margin:16px 0 14px;flex-wrap:wrap;align-items:center}
+  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--g200);background:#fff;
+    border-radius:9px;padding:7px 13px;font-size:12.5px;color:var(--g600);transition:.14s}
+  .btn:hover{border-color:var(--g300);color:var(--g800)}
+  .btn.primary{border-color:#0f172a;background:#0f172a;color:#fff}
+  .btn.primary:hover{background:#1e293b;color:#fff}
+  .btn.on{border-color:var(--blue);color:var(--blue);background:#eff6ff}
+  .spacer{flex:1}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  @media (max-width:900px){ .cols{grid-template-columns:1fr} }
+  body.only-before .cols{grid-template-columns:1fr}
+  body.only-before #col-after{display:none}
+  body.only-after .cols{grid-template-columns:1fr}
+  body.only-after #col-before{display:none}
+
+  .col-head{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+  .col-head .tag{font-size:11px;font-weight:700;letter-spacing:.03em;border-radius:6px;padding:3px 8px}
+  .tag.bad{background:#fee2e2;color:#b91c1c}
+  .tag.good{background:#dcfce7;color:#15803d}
+  .col-head .note{font-size:11.5px;color:var(--g500)}
+
+  .card{background:#fff;border:1px solid var(--g200);border-radius:12px;overflow:hidden}
+  .card-top{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--g100);
+    font-size:12px;color:var(--g500)}
+  .card-top .ttl{color:var(--g700);font-weight:600}
+  .card-top .dot{width:7px;height:7px;border-radius:50%;background:var(--blue)}
+  .card-body{padding:8px 10px 12px}
+
+  .row{display:flex;align-items:center;gap:7px;padding:3px 4px;border-radius:6px;position:relative;min-height:24px}
+  .row .ico{width:14px;height:14px;flex:none;display:flex;align-items:center;justify-content:center}
+  .row .ttl{flex:1;min-width:0;font-size:12px;color:var(--g700);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .sub{color:var(--g400);font-size:11px;margin-left:5px}
+  .row .meta{flex:none;font-size:10.5px;color:var(--g400);font-variant-numeric:tabular-nums}
+  .row .chev{width:12px;height:12px;flex:none;color:var(--g300)}
+  .row.pending .ttl{color:var(--g900);font-weight:600}
+
+  .ico .ok{width:13px;height:13px;border-radius:50%;border:1px solid #cbd5e1;color:#94a3b8;
+    font-size:8.5px;display:flex;align-items:center;justify-content:center;background:#fff}
+  .ico .gear{width:13px;height:13px;border-radius:4px;border:1px solid #cbd5e1;background:#f8fafc;
+    display:flex;align-items:center;justify-content:center;font-size:8px;color:#94a3b8}
+  .ico .say{width:13px;height:13px;border-radius:50%;border:1px solid #cbd5e1;background:#f8fafc;
+    display:flex;align-items:center;justify-content:center;font-size:7.5px;color:#94a3b8}
+  .ico .run{width:12px;height:12px;border-radius:50%;border:2px solid #bbf7d0;border-top-color:var(--green);
+    animation:spin .9s linear infinite}
+  .ico .skill{width:13px;height:13px;color:#a78bfa;font-size:10px;display:flex;align-items:center;justify-content:center}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* 缩进子树：旁白 children / 准备容器 children 共用同一套轨道 */
+  .kids{margin-left:7px;padding-left:12px;border-left:1px solid var(--g200)}
+  .kids.dim{border-left-color:#e2e8f0}
+
+  /* 轮次分隔：把「上一轮」和「新一轮」在视觉上切开，错位才看得出来 */
+  .stage-sep{display:flex;align-items:center;gap:8px;margin:8px 0 6px;color:#2563eb;font-size:10.5px;font-weight:600}
+  .stage-sep::before,.stage-sep::after{content:"";height:0;border-top:1px dashed #bfdbfe;flex:1}
+  .stage-sep span{white-space:nowrap;background:#eff6ff;border-radius:999px;padding:2px 9px}
+
+  .narration{border-radius:8px;padding:4px 6px 2px;margin-bottom:2px}
+  .narration.hl{background:#fff7ed;box-shadow:inset 0 0 0 1px #fed7aa}
+  .narration .text{font-size:12px;color:var(--g600);line-height:1.7;padding:2px 0 4px}
+
+  /* 标注 */
+  .mark{position:relative}
+  .mark.bad{box-shadow:0 0 0 2px rgba(220,38,38,.55);border-radius:6px;background:#fef2f2}
+  .mark.good{box-shadow:0 0 0 2px rgba(22,163,74,.5);border-radius:6px;background:#f0fdf4}
+  .callout{display:flex;align-items:flex-start;gap:6px;margin:6px 0 2px;padding:6px 8px;border-radius:8px;
+    font-size:11px;line-height:1.6}
+  .callout.red{background:#fef2f2;color:#b91c1c}
+  .callout.green{background:#f0fdf4;color:#15803d}
+  .callout .a{font-weight:700}
+  .callout b{font-weight:700}
+
+  .perm{margin-top:10px;border:1px solid var(--g200);border-radius:11px;padding:9px 11px;background:#fff;
+    display:flex;align-items:center;gap:9px;font-size:12px}
+  .perm .chip{width:20px;height:20px;border-radius:50%;background:#dcfce7;color:#15803d;display:flex;
+    align-items:center;justify-content:center;font-size:11px;font-weight:700;flex:none}
+  .perm .k{font-weight:600;color:var(--g800)}
+  .perm .d{color:var(--g400);font-size:11px;margin-top:1px}
+  .perm .badge{margin-left:auto;font-size:10.5px;color:#15803d;background:#dcfce7;border-radius:999px;padding:3px 9px}
+
+  .why{margin-top:10px;border:1px dashed var(--g300);border-radius:10px;padding:9px 11px;
+    font-size:11.5px;line-height:1.75;color:var(--g600);background:#fcfcfd}
+  .why b{color:var(--g800)}
+  .why code{background:#eef1f6;border-radius:4px;padding:1px 4px;font-size:11px}
+
+  .hidden{display:none}
+  .fade{animation:fade .22s ease-out}
+  @keyframes fade{from{opacity:0;transform:translateY(-2px)}to{opacity:1;transform:none}}
+
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin:14px 0 0;font-size:11.5px;color:var(--g500)}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <h1>思考时间线 · 「进行中的工具卡跑到上面」修复前后对照</h1>
+    <p>
+      同一个事件序列，左边是修复前的渲染结果，右边是修复后。关键差异只有一条：
+      <b>工具行会不会被吸附进「最近一段已提交的旁白」的 children</b>。修复前它只要找到
+      最近一段 narration 就挂上去（不管那是上一轮的还是本阶段的），于是本轮刚开始、
+      还没有自己旁白的那条「调用工具 · Bash」被塞进了<b>上一轮旁白</b>里，位置就此冻结；
+      而本轮刚发生的准备序列只能作为顶层条目往后追加 —— 看起来就是「进行中的跑到上面去了」。
+      修复后：只有旁白是<b>时间线最后一个顶层条目</b>时才承接工具行，否则留在顶层。
+    </p>
+  </header>
+
+  <div class="toolbar">
+    <button class="btn primary" id="replay">▶ 重放事件顺序</button>
+    <button class="btn" id="all" data-mode="both">并排</button>
+    <button class="btn" data-mode="before">只看修复前</button>
+    <button class="btn" data-mode="after">只看修复后</button>
+    <div class="spacer"></div>
+    <span style="font-size:11.5px;color:#9ca3af">重放时两列按<b>同一个事件时间序</b>逐行出现，位置差异会自己暴露出来</span>
+  </div>
+
+  <div class="cols">
+    <!-- ============ 修复前 ============ -->
+    <section id="col-before">
+      <div class="col-head">
+        <span class="tag bad">修复前</span>
+        <span class="note">进行中的卡片停在中段，准备序列在它下面</span>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="dot"></span><span class="ttl">思考过程</span><span>· 16 步</span></div>
+        <div class="card-body">
+
+          <!-- 上一轮的旁白 + 它引出的工具（含被吸进来的本轮 pending 卡） -->
+          <div class="row" data-step="1">
+            <span class="ico"><span class="say">💬</span></span>
+            <span class="ttl">我先看看沙箱里的脚本，然后执行插入规则。</span>
+            <span class="meta">182 字</span>
+            <span class="chev">⌄</span>
+          </div>
+          <div class="kids narration hl" data-step-wrap="1">
+            <div class="row" data-step="2">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · Bash</span>
+              <span class="meta">749ms</span>
+            </div>
+            <div class="row" data-step="3">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · Edit<span class="sub">编辑脚本</span></span>
+              <span class="meta">532ms</span>
+            </div>
+            <div class="row" data-step="4">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · Bash<span class="sub">再次执行插入脚本</span></span>
+              <span class="meta">724ms</span>
+            </div>
+
+            <div class="callout red" data-step="16" style="margin-top:4px">
+              <span class="a">↓</span>
+              <span><b>本轮</b>刚发出的「调用工具 · Bash」被挂到了<b>上一轮旁白</b>的 children 里 ——
+                它在这段旁白下面转圈，看起来像上一轮的收尾动作。</span>
+            </div>
+            <div class="row pending mark bad" data-step="16">
+              <span class="ico"><span class="run"></span></span>
+              <span class="ttl">调用工具 · Bash</span>
+              <span class="meta" data-live="1">4ms / 300s</span>
+            </div>
+          </div>
+
+          <!-- 本轮真正的准备序列：只能追加到末尾 -->
+          <div class="stage-sep" data-step="5"><span>用户发了新消息 · 新一轮开始</span></div>
+          <div class="row" data-step="5">
+            <span class="ico"><span class="gear">⚙</span></span>
+            <span class="ttl">权限及上下文与能力准备</span>
+            <span class="meta">已完成 · 8 项准备 · 277ms</span>
+            <span class="chev">⌄</span>
+          </div>
+          <div class="kids dim">
+            <div class="row" data-step="6">
+              <span class="ico"><span class="skill">✦</span></span>
+              <span class="ttl">已启用技能: CMDB/ITAM/Campus 数据查询规范与技巧</span>
+            </div>
+            <div class="row" data-step="7">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具可用性检查</span>
+              <span class="chev">⌄</span>
+            </div>
+            <div class="row" data-step="8">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">会话运行时准备</span>
+              <span class="meta">1.5s</span>
+            </div>
+            <div class="row" data-step="9">
+              <span class="ico"><span class="say">💬</span></span>
+              <span class="ttl">主专家开始处理</span>
+            </div>
+            <div class="row" data-step="10">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · todo_write</span>
+              <span class="meta">62ms</span>
+            </div>
+            <div class="row" data-step="11">
+              <span class="ico"><span class="say">💬</span></span>
+              <span class="ttl">汇总工具结果</span>
+            </div>
+            <div class="row" data-step="12">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · read_skill_instruction</span>
+              <span class="meta">104ms</span>
+            </div>
+            <div class="row" data-step="13">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · todo_write</span>
+              <span class="meta">60ms</span>
+            </div>
+            <div class="row" data-step="14">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · Bash<span class="sub">定位技能文件在沙箱中的实际路径</span></span>
+              <span class="meta">1.3s</span>
+            </div>
+            <div class="row" data-step="15">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · Bash<span class="sub">查看容器根目录与工作区布局</span></span>
+              <span class="meta">589ms</span>
+            </div>
+          </div>
+
+          <div class="callout red" data-step="16" style="margin-top:8px">
+            <span class="a">!</span>
+            <span>这就是截图里的观感：<b>上面</b>那行还在转圈（4ms），
+              <b>下面</b>却已经跑完 11 个步骤 —— 时间看上去是倒的。</span>
+          </div>
+
+          <div class="perm" data-step="16">
+            <span class="chip">✓</span>
+            <span>
+              <div class="k">工具执行结果 · 执行 Bash</div>
+              <div class="d">已允许本次执行，任务正在继续。</div>
+            </span>
+            <span class="badge">已允许</span>
+          </div>
+
+          <div class="why">
+            <b>为什么会这样：</b>工具行找父节点的是「最近一条 narration 且 <code>!pending</code>」，
+            没有本轮 / 本阶段约束。权限确认让这件事更容易发生 —— 需要确认的工具基本是「不说废话直接执行」的那类，
+            本轮此刻没有自己的已提交旁白；而挂起恢复也不会把已经放错的卡片搬回来（同 id 更新只改状态）。
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 修复后 ============ -->
+    <section id="col-after">
+      <div class="col-head">
+        <span class="tag good">修复后</span>
+        <span class="note">进行中的卡片回到最底部，与真实发生顺序一致</span>
+      </div>
+      <div class="card">
+        <div class="card-top"><span class="dot"></span><span class="ttl">思考过程</span><span>· 16 步</span></div>
+        <div class="card-body">
+
+          <div class="row" data-step="1">
+            <span class="ico"><span class="say">💬</span></span>
+            <span class="ttl">我先看看沙箱里的脚本，然后执行插入规则。</span>
+            <span class="meta">182 字</span>
+            <span class="chev">⌄</span>
+          </div>
+          <div class="kids narration" data-step-wrap="1">
+            <div class="row" data-step="2">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · Bash</span>
+              <span class="meta">749ms</span>
+            </div>
+            <div class="row" data-step="3">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · Edit<span class="sub">编辑脚本</span></span>
+              <span class="meta">532ms</span>
+            </div>
+            <div class="row" data-step="4">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · Bash<span class="sub">再次执行插入脚本</span></span>
+              <span class="meta">724ms</span>
+            </div>
+          </div>
+
+          <div class="stage-sep" data-step="5"><span>用户发了新消息 · 新一轮开始</span></div>
+          <div class="row" data-step="5">
+            <span class="ico"><span class="gear">⚙</span></span>
+            <span class="ttl">权限及上下文与能力准备</span>
+            <span class="meta">已完成 · 8 项准备 · 277ms</span>
+            <span class="chev">⌄</span>
+          </div>
+          <div class="kids dim">
+            <div class="row" data-step="6">
+              <span class="ico"><span class="skill">✦</span></span>
+              <span class="ttl">已启用技能: CMDB/ITAM/Campus 数据查询规范与技巧</span>
+            </div>
+            <div class="row" data-step="7">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具可用性检查</span>
+              <span class="chev">⌄</span>
+            </div>
+            <div class="row" data-step="8">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">会话运行时准备</span>
+              <span class="meta">1.5s</span>
+            </div>
+            <div class="row" data-step="9">
+              <span class="ico"><span class="say">💬</span></span>
+              <span class="ttl">主专家开始处理</span>
+            </div>
+            <div class="row" data-step="10">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · todo_write</span>
+              <span class="meta">62ms</span>
+            </div>
+            <div class="row" data-step="11">
+              <span class="ico"><span class="say">💬</span></span>
+              <span class="ttl">汇总工具结果</span>
+            </div>
+            <div class="row" data-step="12">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · read_skill_instruction</span>
+              <span class="meta">104ms</span>
+            </div>
+            <div class="row" data-step="13">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · todo_write</span>
+              <span class="meta">60ms</span>
+            </div>
+            <div class="row" data-step="14">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · Bash<span class="sub">定位技能文件在沙箱中的实际路径</span></span>
+              <span class="meta">1.3s</span>
+            </div>
+            <div class="row" data-step="15">
+              <span class="ico"><span class="ok">✓</span></span>
+              <span class="ttl">工具完成 · Bash<span class="sub">查看容器根目录与工作区布局</span></span>
+              <span class="meta">589ms</span>
+            </div>
+          </div>
+
+          <div class="callout green" data-step="16" style="margin-top:8px">
+            <span class="a">↓</span>
+            <span>旁白之后已经发生过别的事（准备阶段、模型调用、权限卡），
+              所以这条工具<b>留在顶层</b>，落在真实的时间位置上。</span>
+          </div>
+          <div class="row pending mark good" data-step="16">
+            <span class="ico"><span class="run"></span></span>
+            <span class="ttl">调用工具 · Bash</span>
+            <span class="meta" data-live="1">4ms / 300s</span>
+          </div>
+
+          <div class="perm" data-step="16">
+            <span class="chip">✓</span>
+            <span>
+              <div class="k">工具执行结果 · 执行 Bash</div>
+              <div class="d">已允许本次执行，任务正在继续。</div>
+            </span>
+            <span class="badge">已允许</span>
+          </div>
+
+          <div class="why">
+            <b>判定规则：</b>只有「时间线最后一个顶层条目」且是已提交旁白时才承接工具行（<code>attachableNarrationParent</code>），
+            否则一律 push 到顶层。另外「Agent 回复开始 / 结束」这类阶段行不再被 <code>isToolLog</code> 当成工具行，
+            因此「主专家开始处理」也稳定留在顶层。
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="legend">
+    <span><i style="background:#bbf7d0;border:2px solid #16a34a"></i>进行中（缺口圆环 + 实时秒表）</span>
+    <span><i style="background:#fff;border:1px solid #cbd5e1"></i>已完成</span>
+    <span><i style="background:#fff7ed;border:1px solid #fed7aa"></i>旁白及其 children 区间</span>
+    <span><i style="background:#fef2f2;border:2px solid rgba(220,38,38,.55)"></i>错位条目</span>
+    <span><i style="background:#f0fdf4;border:2px solid rgba(22,163,74,.5)"></i>修复后位置</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  var rows = function () { return Array.prototype.slice.call(document.querySelectorAll('[data-step]')); };
+  var timer = null;
+  var replayTimer = null;
+
+  function stopLive() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  function startLive() {
+    stopLive();
+    var started = Date.now();
+    timer = setInterval(function () {
+      var rows = document.querySelectorAll('[data-live]');
+      var ms = 4 + (Date.now() - started);
+      var text = ms < 1000 ? ms + 'ms / 300s' : (ms / 1000).toFixed(1) + 's / 300s';
+      Array.prototype.forEach.call(rows, function (el) { el.textContent = text; });
+    }, 120);
+  }
+
+  function showAll() {
+    rows().forEach(function (el) { el.classList.remove('hidden'); });
+    startLive();
+  }
+
+  function replay() {
+    stopLive();
+    if (replayTimer) { clearTimeout(replayTimer); replayTimer = null; }
+    var all = rows();
+    all.forEach(function (el) { el.classList.add('hidden'); });
+
+    var steps = [];
+    all.forEach(function (el) {
+      var n = Number(el.getAttribute('data-step'));
+      if (steps.indexOf(n) === -1) steps.push(n);
+    });
+    steps.sort(function (a, b) { return a - b; });
+
+    var i = 0;
+    (function next() {
+      if (i >= steps.length) { startLive(); return; }
+      var n = steps[i++];
+      all.forEach(function (el) {
+        if (Number(el.getAttribute('data-step')) === n) {
+          el.classList.remove('hidden');
+          el.classList.add('fade');
+        }
+      });
+      // 两侧同时揭示同一个事件，位置差异一眼可见
+      replayTimer = setTimeout(next, n === 1 ? 520 : 240);
+    })();
+  }
+
+  document.getElementById('replay').addEventListener('click', replay);
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-mode]'), function (btn) {
+    btn.addEventListener('click', function () {
+      document.body.classList.remove('only-before', 'only-after');
+      if (btn.dataset.mode === 'before') document.body.classList.add('only-before');
+      if (btn.dataset.mode === 'after') document.body.classList.add('only-after');
+      Array.prototype.forEach.call(document.querySelectorAll('[data-mode]'), function (b) {
+        b.classList.toggle('on', b === btn);
+      });
+    });
+  });
+
+  showAll();
+})();
+</script>
+</body>
+</html>

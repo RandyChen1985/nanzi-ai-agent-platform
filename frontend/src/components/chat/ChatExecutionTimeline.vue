@@ -821,6 +821,7 @@ import {
   resolveLiveTimerDurationMs,
   resolveLiveTimerLogId,
   resolveTimelineCurrentStep,
+  orderTimelineBySeq,
   selectTimelineRenderableItems,
   sortParallelBatchItems,
   timelineHasPending,
@@ -879,8 +880,6 @@ const props = withDefaults(defineProps<{
   darkMode?: boolean;
   /** 权限卡已承载确认详情时，隐藏其上方重复的权限时间线行。 */
   suppressPermissionLogs?: boolean;
-  /** 当前轮的清单正由输入框上方的 banner 卡片展示时，时间线内不再重复渲染。 */
-  hideTodo?: boolean;
   /**
    * 本轮工具调用的实际超时上限（秒，版本级优先、否则全局）。
    * 挂起中的工具行显示「已耗时 / 上限」，让用户知道还要等多久才算超时。
@@ -1090,9 +1089,9 @@ const baseTimelineItems = computed(() => {
     ? mergeTimelineLogs(props.timeline, props.logs, { clone: true })
     : buildLegacyProcessTimeline(props);
   const visibleItems = props.suppressPermissionLogs ? suppressPermissionLogs(merged) : merged;
-  // 当前轮由 banner 负责时隐藏清单，其余情况（含没有 settled 标记的旧快照）
-  // 都归档到执行过程里，保证历史消息仍然查得到。
-  return selectTimelineRenderableItems(visibleItems, { hideTodo: props.hideTodo });
+  // 清单一律不进明细：它只属于输入框上方的横幅（见 selectTimelineRenderableItems）。
+  // 再按后端事件序排一次：位置不能只靠「首次到达」，并发/补发会偶发乱序。
+  return orderTimelineBySeq(selectTimelineRenderableItems(visibleItems));
 });
 
 const timelineItems = computed(() => {

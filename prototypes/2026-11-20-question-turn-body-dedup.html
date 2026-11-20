@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="方案对比">
+<title>提问轮正文 · 进度块与标签化（现状 / C0 / C1 / C2）</title>
+<style>
+  :root{
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af;
+    --g500:#6b7280; --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --blue:#1677ff; --violet:#7c3aed; --violet-bg:#faf8ff; --violet-line:#ddd6fe;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f5f6f8;color:var(--g900);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  }
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:11.5px}
+
+  .page{max-width:1080px;margin:0 auto;padding:22px 24px 80px}
+  .head h1{font-size:20px;margin:0 0 6px;font-weight:650}
+  .head p{margin:0;color:var(--g500);font-size:12.5px;max-width:950px;line-height:1.85}
+  .head b{color:var(--g700);font-weight:600}
+
+  .tabs{display:flex;gap:6px;margin:16px 0 12px;flex-wrap:wrap;align-items:center}
+  .tab{display:flex;align-items:center;gap:7px;border:1px solid var(--g200);background:#fff;
+    border-radius:10px;padding:7px 13px;font-size:12.5px;color:var(--g600);transition:.14s}
+  .tab:hover{border-color:var(--g300);color:var(--g800)}
+  .tab .no{display:inline-flex;min-width:18px;height:18px;align-items:center;justify-content:center;
+    border-radius:5px;background:var(--g100);font-size:10.5px;font-weight:700;color:var(--g500);padding:0 4px}
+  .tab.on{border-color:#0f172a;background:#0f172a;color:#fff}
+  .tab.on .no{background:rgba(255,255,255,.18);color:#fff}
+  .tab .rec{font-size:9.5px;font-weight:700;color:#15803d;background:#dcfce7;border-radius:999px;padding:1px 6px}
+  .tab.on .rec{background:#166534;color:#dcfce7}
+
+  .scene{display:none}
+  .scene.on{display:block;animation:fade .18s ease-out}
+  @keyframes fade{from{opacity:0;transform:translateY(-2px)}to{opacity:1;transform:none}}
+
+  .summary{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 10px}
+  .chip{font-size:11px;border-radius:999px;padding:3px 9px;font-weight:600}
+  .chip.cut{background:#fee2e2;color:#b91c1c}
+  .chip.keep{background:#dcfce7;color:#15803d}
+  .chip.info{background:#eff6ff;color:#1d4ed8}
+  .chip.warn{background:#fef3c7;color:#b45309}
+
+  /* ===== 消息区 ===== */
+  .bubble{background:#fff;border:1px solid var(--g200);border-radius:14px;padding:14px 16px 16px}
+  .who{display:flex;align-items:center;gap:8px;margin:0 0 12px}
+  .who .avatar{width:26px;height:26px;border-radius:50%;background:#1677ff;color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:13px;flex:none;box-shadow:0 2px 6px rgba(22,119,255,.3)}
+  .who .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--g200);background:#fff;
+    border-radius:999px;padding:3px 11px;font-size:11.5px;color:var(--g600)}
+  .who .pill b{color:var(--g800);font-weight:600}
+
+  .exec{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+  .exec .ok{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--g200);background:#fff;
+    border-radius:8px;padding:4px 10px;font-size:11.5px;color:var(--g700)}
+  .exec .ok i{width:14px;height:14px;border-radius:4px;background:#dcfce7;color:#15803d;
+    display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-style:normal}
+  .exec .m{font-size:11.5px;color:var(--g500)}
+  .exec .skill{display:inline-flex;align-items:center;gap:5px;border:1px solid #fde68a;background:#fffbeb;
+    border-radius:999px;padding:3px 10px;font-size:11.5px;color:#b45309;font-weight:600}
+
+  /* 现状：整段流水正文 */
+  .body-text{font-size:14px;line-height:1.95;color:var(--g800);white-space:pre-wrap;word-break:break-word}
+  .body-text .lbl{color:var(--g500)}
+  .mark{background:#fef2f2;box-shadow:0 0 0 2px rgba(220,38,38,.45);border-radius:5px;padding:1px 3px}
+  .strike{text-decoration:line-through;color:#b91c1c;text-decoration-thickness:1.5px}
+
+  /* ===== 进度块（标签化，默认展开） ===== */
+  .block{border:1px solid var(--g200);border-radius:10px;background:#fbfcfd;margin:0 0 10px;overflow:hidden}
+  .block.blue{border-color:#dbeafe;background:#f8fbff}
+  .block.amber{border-color:#fde68a;background:#fffdf5}
+  .block-head{display:flex;align-items:center;gap:8px;padding:8px 11px;cursor:pointer;user-select:none}
+  .block-head:hover{background:rgba(15,23,42,.02)}
+  .tagchip{display:inline-flex;align-items:center;gap:5px;border-radius:6px;padding:2px 8px;
+    font-size:10.5px;font-weight:700;letter-spacing:.02em}
+  .tagchip.blue{background:#dbeafe;color:#1d4ed8}
+  .tagchip.amber{background:#fef3c7;color:#b45309}
+  .tagchip .d{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.75}
+  .block-head .hint{font-size:11px;color:var(--g400)}
+  .block-head .caret{margin-left:auto;font-size:11px;color:var(--g400);transition:transform .16s}
+  .block.collapsed .caret{transform:rotate(-90deg)}
+  .block-body{padding:0 12px 10px 12px;font-size:13px;line-height:1.9;color:var(--g700);white-space:pre-wrap;word-break:break-word}
+  .block.collapsed .block-body{display:none}
+  .block-body .k{color:var(--g500)}
+
+  /* ===== 提问卡 ===== */
+  .qcard{margin-top:14px;border:1px solid var(--violet-line);background:var(--violet-bg);border-radius:12px;padding:11px 13px}
+  .qcard .qhead{display:flex;align-items:center;gap:8px}
+  .qcard .qico{width:22px;height:22px;border-radius:50%;background:#ede9fe;color:var(--violet);
+    display:flex;align-items:center;justify-content:center;font-size:11px;flex:none}
+  .qcard .qtitle{font-size:12px;font-weight:700;color:#5b21b6}
+  .qcard .qst{margin-left:auto;font-size:10.5px;font-weight:600;color:#047857;background:#d1fae5;border-radius:999px;padding:2px 8px}
+  .qcard .caret{color:#a78bfa;font-size:12px;margin-left:4px}
+  .qcard .qbody{margin-top:9px}
+  .qcard .q{font-size:13px;font-weight:600;color:#3b0764;line-height:1.7}
+  .qcard .ctx{margin-top:3px;font-size:11px;color:#6d28d9;opacity:.82;line-height:1.7}
+  .opts{margin-top:10px;display:flex;flex-direction:column;gap:7px}
+  .opt{display:flex;gap:9px;border:1px solid var(--g200);background:#fff;border-radius:10px;padding:9px 11px}
+  .opt.sel{border-color:#8b5cf6;box-shadow:0 0 0 1px #8b5cf6 inset}
+  .opt .radio{width:14px;height:14px;border-radius:50%;border:1.5px solid #cbd5e1;flex:none;margin-top:2px}
+  .opt.sel .radio{border:4px solid var(--violet)}
+  .opt .t{font-size:12.5px;font-weight:600;color:var(--g800)}
+  .opt .d{font-size:11px;color:var(--g500);margin-top:2px;line-height:1.6}
+
+  .note{margin-top:12px;border:1px dashed var(--g300);border-radius:10px;padding:10px 12px;
+    font-size:11.5px;line-height:1.85;color:var(--g600);background:#fcfcfd}
+  .note b{color:var(--g800)}
+  .note .row{margin:0 0 4px}
+  .note .row:last-child{margin:0}
+  .note .code{display:block;background:#0f172a;color:#e2e8f0;border-radius:8px;padding:9px 11px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.75;
+    white-space:pre-wrap;margin:6px 0}
+  .note .code .tag{color:#93c5fd}
+  .note .risk{color:#b45309;font-weight:600}
+  .note .ok{color:#15803d;font-weight:600}
+
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin:16px 0 0;font-size:11.5px;color:var(--g500)}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <p style="margin:0 0 4px"><a href="./index.html" style="color:#1677ff;font-size:11.5px;text-decoration:none">← 原型总览</a></p>
+    <h1>提问轮正文 · 进度块与标签化</h1>
+    <p>
+      提问轮模型通常只调工具、不输出正文，后端会用提问卡内容补一条正文
+      （<code>build_user_question_fallback_content</code>），这条正文要进历史、给下一轮的模型读。
+      但在界面上它和展开的提问卡<b>整段重复</b>：正文一遍「进度 + 问句」，卡片再一遍「问句 + 进度」。
+      下面按你的意见改成：<b>进度/待确认各自成块、带标签、默认展开、可手动收起</b>，并且不默认折叠。
+    </p>
+  </header>
+
+  <div class="tabs">
+    <button class="tab" data-scene="now"><span class="no">0</span>现状</button>
+    <button class="tab" data-scene="c0"><span class="no">C0</span>摘要 + 默认折叠</button>
+    <button class="tab on" data-scene="c1"><span class="no">C1</span>进度块（默认展开）<span class="rec">推荐</span></button>
+    <button class="tab" data-scene="c2"><span class="no">C2</span>进度块 + 待确认块</button>
+  </div>
+
+  <!-- ==================== 现状 ==================== -->
+  <section class="scene" data-scene="now">
+    <div class="summary">
+      <span class="chip cut">红框：同一段内容出现两遍</span>
+      <span class="chip info">正文 = 进度 + 问句</span>
+      <span class="chip info">卡片 = 问句 + 进度</span>
+    </div>
+    <div class="bubble">
+      <div class="who"><span class="avatar">🤖</span><span class="pill"><b>主助手 (Main)</b> · 为您服务</span></div>
+      <div class="exec">
+        <span class="ok"><i>✓</i>执行完成</span><span class="m">16 步骤</span><span class="m">耗时 6.6s</span>
+        <span class="skill">✦ 1 个候选技能</span><span class="m">⌄</span>
+      </div>
+
+      <div class="body-text"><span class="mark"><span class="lbl">任务进度：</span>已完成：读取 cmdb-itam-query-guide 技能全文（13590 字符），定位到需要修改的位置——3.2 空间层级、6.4 台账完整性核查模板、7 常见坑位、8.1 数据质量章节均缺少「机柜/仓库互斥」口径。待办：按您确认的范围写入技能并更新版本记录。
+<span class="lbl">待你确认：</span>「设备不在机柜就在仓库，位置信息二选一」这条规则，我准备写入 cmdb-itam-query-guide 技能。请确认要覆盖的范围：</span></div>
+
+      <div class="qcard">
+        <div class="qhead"><span class="qico">💬</span><span class="qtitle">需要你的补充</span><span class="qst">已提交</span><span class="caret">⌃</span></div>
+        <div class="qbody">
+          <div class="q"><span class="mark">「设备不在机柜就在仓库，位置信息二选一」这条规则，我准备写入 cmdb-itam-query-guide 技能。请确认要覆盖的范围：</span></div>
+          <div class="ctx"><span class="mark">已完成：读取 cmdb-itam-query-guide 技能全文（13590 字符），定位到需要修改的位置——3.2 空间层级、6.4 台账完整性核查模板、7 常见坑位、8.1 数据质量章节均缺少「机柜/仓库互斥」口径。待办：按您确认的范围写入技能并更新版本记录。</span></div>
+        </div>
+        <div class="opts">
+          <div class="opt sel"><span class="radio"></span><span><div class="t">完整写入（推荐）</div><div class="d">新增「位置信息二选一」专节 + 修正 6.4 核查模板（区分真缺失与正常在库）+ 补充坑位 + 更新数据质量章节与版本记录</div></span></div>
+          <div class="opt"><span class="radio"></span><span><div class="t">只加坑位和一句说明</div><div class="d">仅在第七节坑位表加一条、8.1 补一句，不改查询模板</div></span></div>
+          <div class="opt"><span class="radio"></span><span><div class="t">只记录规则本身</div><div class="d">新增一节说明互斥规则，其余章节不动</div></span></div>
+        </div>
+      </div>
+
+      <div class="note">
+        <div class="row">正文与卡片内容<b>完全等价</b>，只是顺序不同：同一个 200 多字的进度段在屏幕上出现两次，正文末尾的问句又正好接在卡片之前，读起来像话没说完。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== C0 ==================== -->
+  <section class="scene" data-scene="c0">
+    <div class="summary">
+      <span class="chip cut">正文收成一行摘要</span>
+      <span class="chip warn">默认收起 → 想看原文得点一下（你不想要这个）</span>
+    </div>
+    <div class="bubble">
+      <div class="who"><span class="avatar">🤖</span><span class="pill"><b>主助手 (Main)</b> · 为您服务</span></div>
+      <div class="exec">
+        <span class="ok"><i>✓</i>执行完成</span><span class="m">16 步骤</span><span class="m">耗时 6.6s</span>
+        <span class="skill">✦ 1 个候选技能</span><span class="m">⌄</span>
+      </div>
+
+      <div class="block collapsed" data-block="c0p">
+        <div class="block-head">
+          <span class="tagchip blue"><span class="d"></span>任务进度</span>
+          <span class="hint">已完成 4 处定位 · 待办 1 项</span>
+          <span class="caret">⌄</span>
+        </div>
+        <div class="block-body">已完成：读取 cmdb-itam-query-guide 技能全文（13590 字符），定位到需要修改的位置——3.2 空间层级、6.4 台账完整性核查模板、7 常见坑位、8.1 数据质量章节均缺少「机柜/仓库互斥」口径。待办：按您确认的范围写入技能并更新版本记录。</div>
+      </div>
+
+      <div class="qcard">
+        <div class="qhead"><span class="qico">💬</span><span class="qtitle">需要你的补充</span><span class="qst">已提交</span><span class="caret">⌃</span></div>
+        <div class="qbody"><div class="q">「设备不在机柜就在仓库，位置信息二选一」这条规则，我准备写入 cmdb-itam-query-guide 技能。请确认要覆盖的范围：</div></div>
+        <div class="opts">
+          <div class="opt sel"><span class="radio"></span><span><div class="t">完整写入（推荐）</div><div class="d">新增「位置信息二选一」专节 + 修正 6.4 核查模板 + 补充坑位 + 更新版本记录</div></span></div>
+          <div class="opt"><span class="radio"></span><span><div class="t">只加坑位和一句说明</div><div class="d">仅在第七节坑位表加一条、8.1 补一句</div></span></div>
+          <div class="opt"><span class="radio"></span><span><div class="t">只记录规则本身</div><div class="d">新增一节说明互斥规则，其余章节不动</div></span></div>
+        </div>
+      </div>
+
+      <div class="note">
+        <div class="row"><b>这是上一轮的方案，你否掉了「默认折叠」。</b>折叠对界面是减噪，但进度原文默认看不见了，
+        而且右侧那句「已完成 4 处 · 待办 1 项」得靠前端从正文里解析「已完成/待办」字样，模型换个写法就退化。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== C1 ==================== -->
+  <section class="scene on" data-scene="c1">
+    <div class="summary">
+      <span class="chip cut">正文换成进度块（默认展开）</span>
+      <span class="chip cut">正文不再抄问句，交给卡片</span>
+      <span class="chip keep">卡片不重复进度</span>
+      <span class="chip info">进度全屏只出现一次</span>
+    </div>
+    <div class="bubble">
+      <div class="who"><span class="avatar">🤖</span><span class="pill"><b>主助手 (Main)</b> · 为您服务</span></div>
+      <div class="exec">
+        <span class="ok"><i>✓</i>执行完成</span><span class="m">16 步骤</span><span class="m">耗时 6.6s</span>
+        <span class="skill">✦ 1 个候选技能</span><span class="m">⌄</span>
+      </div>
+
+      <div class="block blue" data-block="c1p">
+        <div class="block-head">
+          <span class="tagchip blue"><span class="d"></span>任务进度</span>
+          <span class="caret">⌄</span>
+        </div>
+        <div class="block-body">已完成：读取 cmdb-itam-query-guide 技能全文（13590 字符），定位到需要修改的位置——3.2 空间层级、6.4 台账完整性核查模板、7 常见坑位、8.1 数据质量章节均缺少「机柜/仓库互斥」口径。待办：按您确认的范围写入技能并更新版本记录。</div>
+      </div>
+
+      <div class="qcard">
+        <div class="qhead"><span class="qico">💬</span><span class="qtitle">需要你的补充</span><span class="qst">已提交</span><span class="caret">⌃</span></div>
+        <div class="qbody"><div class="q">「设备不在机柜就在仓库，位置信息二选一」这条规则，我准备写入 cmdb-itam-query-guide 技能。请确认要覆盖的范围：</div></div>
+        <div class="opts">
+          <div class="opt sel"><span class="radio"></span><span><div class="t">完整写入（推荐）</div><div class="d">新增「位置信息二选一」专节 + 修正 6.4 核查模板（区分真缺失与正常在库）+ 补充坑位 + 更新数据质量章节与版本记录</div></span></div>
+          <div class="opt"><span class="radio"></span><span><div class="t">只加坑位和一句说明</div><div class="d">仅在第七节坑位表加一条、8.1 补一句，不改查询模板</div></span></div>
+          <div class="opt"><span class="radio"></span><span><div class="t">只记录规则本身</div><div class="d">新增一节说明互斥规则，其余章节不动</div></span></div>
+        </div>
+      </div>
+
+      <div class="note">
+        <div class="row"><b>看效果：</b>点一下「任务进度」那一行进能收起（默认是展开的）。</div>
+        <div class="row"><b>正文实际存什么</b>（落库 + 给下一轮的模型读）：</div>
+        <div class="code"><span class="tag">【任务进度】</span>已完成：读取 cmdb-itam-query-guide 技能全文（13590 字符），定位到需要修改的位置——3.2 空间层级、6.4 台账完整性核查模板、7 常见坑位、8.1 数据质量章节均缺少「机柜/仓库互斥」口径。待办：按您确认的范围写入技能并更新版本记录。</div>
+        <div class="row"><b>前端渲染来源：</b>优先用提问卡的结构化字段（<code>user_question.question</code> / <code>.context</code>），
+        <b>不解析正文</b>；只有在拿不到结构化数据的降级场景（老消息、导出的纯文本、子代理转述）才回退到按 <code>【…】</code> 标签切分。</div>
+        <div class="row"><span class="ok">防丢项不变：</span>进度仍在正文最前面，压缩按头部截断也保得住。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== C2 ==================== -->
+  <section class="scene" data-scene="c2">
+    <div class="summary">
+      <span class="chip cut">两个块都在正文：进度 + 待确认</span>
+      <span class="chip keep">卡片只剩选项，最干净</span>
+      <span class="chip warn">正文变长（问句进正文，与卡片标题并列存在）</span>
+    </div>
+    <div class="bubble">
+      <div class="who"><span class="avatar">🤖</span><span class="pill"><b>主助手 (Main)</b> · 为您服务</span></div>
+      <div class="exec">
+        <span class="ok"><i>✓</i>执行完成</span><span class="m">16 步骤</span><span class="m">耗时 6.6s</span>
+        <span class="skill">✦ 1 个候选技能</span><span class="m">⌄</span>
+      </div>
+
+      <div class="block blue" data-block="c2p">
+        <div class="block-head">
+          <span class="tagchip blue"><span class="d"></span>任务进度</span>
+          <span class="caret">⌄</span>
+        </div>
+        <div class="block-body">已完成：读取 cmdb-itam-query-guide 技能全文（13590 字符），定位到需要修改的位置——3.2 空间层级、6.4 台账完整性核查模板、7 常见坑位、8.1 数据质量章节均缺少「机柜/仓库互斥」口径。待办：按您确认的范围写入技能并更新版本记录。</div>
+      </div>
+      <div class="block amber" data-block="c2q">
+        <div class="block-head">
+          <span class="tagchip amber"><span class="d"></span>待你确认</span>
+          <span class="caret">⌄</span>
+        </div>
+        <div class="block-body">「设备不在机柜就在仓库，位置信息二选一」这条规则，我准备写入 cmdb-itam-query-guide 技能。请确认要覆盖的范围：</div>
+      </div>
+
+      <div class="qcard">
+        <div class="qhead"><span class="qico">💬</span><span class="qtitle">需要你的补充</span><span class="qst">已提交</span><span class="caret">⌃</span></div>
+        <div class="opts">
+          <div class="opt sel"><span class="radio"></span><span><div class="t">完整写入（推荐）</div><div class="d">新增「位置信息二选一」专节 + 修正 6.4 核查模板（区分真缺失与正常在库）+ 补充坑位 + 更新数据质量章节与版本记录</div></span></div>
+          <div class="opt"><span class="radio"></span><span><div class="t">只加坑位和一句说明</div><div class="d">仅在第七节坑位表加一条、8.1 补一句，不改查询模板</div></span></div>
+          <div class="opt"><span class="radio"></span><span><div class="t">只记录规则本身</div><div class="d">新增一节说明互斥规则，其余章节不动</div></span></div>
+        </div>
+      </div>
+
+      <div class="note">
+        <div class="row"><b>正文实际存什么：</b></div>
+        <div class="code"><span class="tag">【任务进度】</span>已完成：… 待办：……
+<span class="tag">【待你确认】</span>「设备不在机柜就在仓库，位置信息二选一」这条规则……请确认要覆盖的范围：</div>
+        <div class="row"><b>好处：</b>纯文本（导出、分享、README 里贴日志）也能看明白「哪段是进度、哪段是待确认」，标签同时是前端兜底解析的锚点。</div>
+        <div class="row"><span class="risk">代价：</span>问句在正文块里出现一次、卡片 header 下面其实没有第二遍了（C2 里卡片已不渲染问题），
+          所以不算重复；但正文整体比 C1 长 —— 若同一个问题卡片先折叠再展开，用户会先读到正文块再看到选项，节奏略绕。</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="legend">
+    <span><i style="background:#fef2f2;box-shadow:0 0 0 2px rgba(220,38,38,.45)"></i>界面上的重复段落</span>
+    <span><i style="background:#dbeafe"></i>任务进度标签</span>
+    <span><i style="background:#fef3c7"></i>待你确认标签</span>
+    <span><i style="background:#dcfce7"></i>保留（防丢项依据）</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  var scenes = Array.prototype.slice.call(document.querySelectorAll('.scene'));
+
+  function activate(name) {
+    var hit = tabs.some(function (t) { return t.dataset.scene === name; });
+    if (!hit) name = 'c1';
+    tabs.forEach(function (t) { t.classList.toggle('on', t.dataset.scene === name); });
+    scenes.forEach(function (s) { s.classList.toggle('on', s.dataset.scene === name); });
+  }
+
+  tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      activate(tab.dataset.scene);
+      if (history.replaceState) history.replaceState(null, '', '#' + tab.dataset.scene);
+    });
+  });
+
+  // 支持 #now / #c0 / #c1 / #c2 直达（截图与分享都方便）
+  activate(String(location.hash || '').replace(/^#/, '') || 'c1');
+
+  // 进度块：默认展开，点标题行收起
+  Array.prototype.forEach.call(document.querySelectorAll('.block'), function (block) {
+    var head = block.querySelector('.block-head');
+    if (!head) return;
+    head.addEventListener('click', function () { block.classList.toggle('collapsed'); });
+  });
+})();
+</script>
+</body>
+</html>

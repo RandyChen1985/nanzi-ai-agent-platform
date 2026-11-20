@@ -818,6 +818,9 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
         ? undefined
         : Number(data.temperature),
     tool_result_state: data.tool_result_state === undefined ? undefined : String(data.tool_result_state),
+    // 事件序号：后端 journal 分配的会话维度单调递增值，执行明细按它稳定排序
+    // （见 processTimeline.orderTimelineBySeq）。缺失时排序层保持原序。
+    _seq: typeof data._seq === "number" ? data._seq : undefined,
     // 这条调用真实的超时（工具级可能把 180s 收紧成 10s）。这里是一层显式字段映射：
     // 漏一个字段，后端下发了也进不了时间线条目，界面只能退回版本级快照。
     timeout_seconds:

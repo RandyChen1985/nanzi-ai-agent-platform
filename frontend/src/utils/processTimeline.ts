@@ -97,6 +97,14 @@ export type ProcessTimelineLogItem = {
   reasoning?: boolean;
   execution_time_ms?: number | null;
   started_at?: number | null;
+  /**
+   * 后端事件序号（Redis journal 分配的会话维度单调递增值）。
+   *
+   * 时间线位置本来由「首次到达」决定，并发工具 / 断线补发 / 多路事件交错时会偏离
+   * 真实发生顺序。首帧带上它就按它排序（见 `orderTimelineBySeq`）；缺失（本地创建的
+   * 文本项、老快照）则保持原序。
+   */
+  seq?: number;
   subagent?: SubagentTraceMeta;
   /**
    * 远端 MCP 工具上报的进度快照（瞬态，不落库）。
@@ -617,23 +625,83 @@ export function resolveBannerTodoTimeline(
 /**
  * 执行过程时间线要渲染的项。
  *
- * - 当前轮由 banner 卡片负责时传 `hideTodo: true`，避免同一份清单渲染两遍；
- * - 归档视图保留清单（含没有 `settled` 的旧快照与提问轮）——否则这些轮次的
- *   清单既不在 banner 也不在时间线，等于永久丢失；
- * - 旧快照可能残留多条 todo 项（同一 id），只保留最后一份，避免重复卡片和
- *   Vue `:key` 冲突。
+ * **任务清单一律不进执行明细**，只保留过程记录：
+ *
+ * - 清单是任务级概览，明细是过程记录，两个层级不该混。它唯一的正式位置是输入框
+ *   上方那张横幅（进行中 / 等待用户 / 终态回顾，见 `resolveBannerTodoTimeline`）。
+ * - 以前靠 `hideTodo` 开关做到「横幅显示时明细让位」，但横幅只服务**最后一条**回答：
+ *   历史轮次的清单就常驻在链路第一条、还带着「N 项未完成」，看着像整轮没收尾；
+ *   提问轮更糟——它不会被结算成终态（本轮还可能被回执接着跑），按 `settled` 判断
+ *   等于没生效，往回翻永远能看到那张卡。用户两次实测反馈都指向这里。
+ * - 代价：历史轮次的清单在界面上**完全不可见**——横幅只服务最后一轮，明细也不渲染。
+ *   过程信息不缺（`工具完成 · todo_write` 那条记录仍在明细里），清单快照仍在库里。
+ *
+ * 顺带失去的作用：以前这里还会对残留的多条 todo（同一 id 的旧快照）去重，
+ * 现在一条都不渲染，去重自然不需要了。
  */
+/**
+ * 同层按事件序号稳定排序（`seq` 由后端 Redis journal 分配，见 `ProcessTimelineLogItem.seq`）。
+ *
+ * - 有 seq 的按 seq 升序；没有 seq 的项（本地创建的旁白/推理文本、老快照）继承
+ *   「前一个已知 seq」跟着它走，不会被甩到别处；
+ * - seq 相同时按原始下标兜底，不依赖运行时 sort 的稳定性；
+ * - 整层都没有 seq、或本来就有序时**返回原数组引用**：渲染层按引用比较，
+ *   没有变化就不该触发重渲染；children 有变化时只复制受影响的那一项。
+ */
+export function orderTimelineBySeq<T extends { seq?: number; children?: T[] }>(
+  items: T[] | undefined,
+): T[] {
+  const list = items || [];
+  if (list.length < 2 && !list.some((item) => (item?.children?.length ?? 0) > 1)) return list;
+
+  let working: T[] = list;
+  for (let index = 0; index < list.length; index += 1) {
+    const item = list[index];
+    const children = item?.children;
+    if (!children || children.length < 2) continue;
+    const orderedChildren = orderTimelineBySeq(children);
+    if (orderedChildren === children) continue;
+    if (working === list) working = [...list];
+    working[index] = { ...item, children: orderedChildren };
+  }
+
+  const ordered = orderTimelineLevelBySeq(working);
+  if (ordered) return ordered;
+  return working;
+}
+
+/** 单层排序；无需变动返回 `undefined`（调用方据此保留原引用）。 */
+function orderTimelineLevelBySeq<T extends { seq?: number }>(items: T[]): T[] | undefined {
+  let lastSeq: number | undefined;
+  let sawSeq = false;
+  const keyed = items.map((item, index) => {
+    let key: number;
+    if (typeof item.seq === "number") {
+      key = item.seq;
+      lastSeq = item.seq;
+      sawSeq = true;
+    } else {
+      key = lastSeq ?? Number.NEGATIVE_INFINITY;
+    }
+    return { item, key, index };
+  });
+  if (!sawSeq) return undefined;
+  let outOfOrder = false;
+  for (let index = 1; index < keyed.length; index += 1) {
+    if ((keyed[index]?.key ?? 0) < (keyed[index - 1]?.key ?? 0)) {
+      outOfOrder = true;
+      break;
+    }
+  }
+  if (!outOfOrder) return undefined;
+  keyed.sort((left, right) => left.key - right.key || left.index - right.index);
+  return keyed.map((entry) => entry.item);
+}
+
 export function selectTimelineRenderableItems(
   items: ProcessTimelineItem[],
-  options: { hideTodo?: boolean } = {},
 ): ProcessTimelineItem[] {
-  const list = items || [];
-  if (options.hideTodo) return list.filter((item) => item.kind !== "todo");
-  let lastTodoIndex = -1;
-  list.forEach((item, index) => {
-    if (item.kind === "todo") lastTodoIndex = index;
-  });
-  return list.filter((item, index) => item.kind !== "todo" || index === lastTodoIndex);
+  return (items || []).filter((item) => item.kind !== "todo");
 }
 
 /**
@@ -758,9 +826,19 @@ export function appendProcessNarrationText(existing: string, piece: string): str
   return normalizeProcessNarrationText(prev + next);
 }
 
+/**
+ * 「Agent 回复开始 / 结束」是阶段标记，不是一次工具执行。
+ *
+ * 它们同样带 `category="agent"`，原先被 `isToolLog` 判成工具行，于是在「本轮还没
+ * 有已提交旁白」时和工具一起被吸附进上一轮的旁白 children——用户看到的
+ * 「主专家开始处理」就落在了上一轮末尾（见 attachableNarrationParent 的说明）。
+ */
+const AGENT_LIFECYCLE_TITLE = /^(?:\[.*?\]\s*)?[✨\s]*(?:Agent 回复开始|Agent 回复结束)\s*$/;
+
 function isToolLog(data: { title?: string; category?: string; id?: string | number }): boolean {
   const category = String(data.category || "").toLowerCase();
   if (category === "permission" || category === "external") return false;
+  if (AGENT_LIFECYCLE_TITLE.test(String(data.title || "").trim())) return false;
   if (category === "tool" || category === "sql" || category === "agent" || category === "tool_resolution") return true;
   if (category) return false;
   const title = String(data.title || "").toLowerCase();
@@ -1286,6 +1364,8 @@ export function upsertTimelineLog(
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
     started_at?: number | null;
+    /** 后端事件序号（见 `ProcessTimelineLogItem.seq`）。 */
+    _seq?: number;
     subagent?: SubagentTraceMeta;
     /** 子代理思考：决定渲染成 Markdown 正文而不是工具输出。 */
     reasoning?: boolean;
@@ -1321,6 +1401,8 @@ export function upsertTimelineLog(
     if (data.resolution_status !== undefined) existing.resolution_status = data.resolution_status;
     if (data.execution_time_ms !== undefined) existing.execution_time_ms = data.execution_time_ms;
     if (data.started_at !== undefined) existing.started_at = data.started_at;
+    // 位置由首帧决定：已有序号不覆盖，只在缺失时补（首帧可能走在分配序号之前）。
+    if (existing.seq === undefined && typeof data._seq === "number") existing.seq = data._seq;
     if (data.subagent !== undefined) existing.subagent = data.subagent;
     if (data.reasoning !== undefined) existing.reasoning = data.reasoning;
     // 进度是执行期装饰：条目一结束就必须清掉，否则会被 process_timeline 快照
@@ -1461,6 +1543,7 @@ export function upsertTimelineLog(
     // pending 卡必须在创建时刻留下基准，否则「执行中实时秒表」无从计算：
     // msg.logs 侧已在 EmbedChat 里这么做，processTimeline 侧此前一直缺失。
     started_at: data.started_at ?? (data.status === "pending" ? Date.now() : undefined),
+    seq: typeof data._seq === "number" ? data._seq : undefined,
     subagent: data.subagent,
     reasoning: data.reasoning,
     isExpanded: false,
@@ -1498,12 +1581,7 @@ export function upsertTimelineLog(
     }
   }
 
-  const parent = isToolLog(data)
-    ? [...target.processTimeline].reverse().find(
-      (item): item is ProcessTimelineTextItem =>
-        item.kind === "text" && item.textKind === "narration" && !item.pending,
-    )
-    : undefined;
+  const parent = isToolLog(data) ? attachableNarrationParent(target.processTimeline) : undefined;
   if (parent) {
     parent.children ||= [];
     parent.children.push(log);
@@ -1511,6 +1589,33 @@ export function upsertTimelineLog(
     return;
   }
   target.processTimeline.push(log);
+}
+
+/**
+ * 找「可以承接工具行的旁白」。
+ *
+ * 规则只有一条：**必须是时间线最后一个顶层条目，且是已提交的旁白**。
+ *
+ * 早先的判定是「最近一条 narration 且 !pending」，没有任何「本轮 / 本阶段」约束，
+ * 于是只要本轮此刻还没有已提交旁白——模型没说就动手、旁白还在流式、或权限确认
+ * 挂起恢复后直接重试——工具行就会被塞进**上一轮**那段旁白的 children 里。位置
+ * 就此冻结在旧区域，而本轮后续到达的准备类事件（准备容器 / 已启用技能 / 工具预检 /
+ * 会话运行时准备 / Agent 回复开始）作为顶层条目继续往后追加。
+ *
+ * 用户看到的就是：一条「调用工具 · Bash 4ms/300s」卡在中间转圈，下面才是刚发生的
+ * 准备序列，像时间倒挂。授权场景尤其容易踩中——需要确认的工具基本都是「不说废话
+ * 直接执行」的那种，而挂起恢复也不会把已经放错的卡片搬回来（同 id 更新只改状态）。
+ *
+ * 收窄成「最后一条」之后，「旁白引出它下面一串工具」的观感不变，跨轮 / 跨阶段的
+ * 吸附被切断；旁白之后只要发生过任何别的事，新工具就老老实实留在顶层。
+ */
+function attachableNarrationParent(
+  items: ProcessTimelineItem[],
+): ProcessTimelineTextItem | undefined {
+  const last = items[items.length - 1];
+  if (!last || last.kind !== "text") return undefined;
+  if (last.textKind !== "narration" || last.pending) return undefined;
+  return last;
 }
 
 function cloneNestedTimelineValue<T>(

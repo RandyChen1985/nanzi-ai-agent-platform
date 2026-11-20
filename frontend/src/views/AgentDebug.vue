@@ -5431,7 +5431,6 @@ onUnmounted(() => {
                 :skill-summary="getSkillFlowSummaryForMessage(msg, messages)"
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
-                :hide-todo="activeTodoTimeline === msg.processTimeline"
                 :tool-timeout-seconds="msg.agentMaxToolcallTimeoutSeconds"
                 bordered
                 @stop="stopGeneration({ notifySuccess: true })"
