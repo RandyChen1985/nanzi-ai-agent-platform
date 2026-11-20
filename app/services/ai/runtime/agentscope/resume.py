@@ -591,16 +591,27 @@ class AgentScopeResumeHandler:
         # 快照只消费一次：连点确认不应该重复写授权，也不该留下第二份令牌。
         await pending_agentscope_confirmations.pop_async(request_id, user_id=user_id)
 
+        # 删除类确认带 bypass_immune，会话授权对它无效。用户点「本会话总是允许」时
+        # 若照写会话授权，只会留下一条永远不生效的记录，下次照样弹——所以这类一律
+        # 退化成一次性令牌（按参数指纹绑定，正好对应「就这条命令、就这一次」）。
+        from app.services.ai.runtime.agentscope.tools import (
+            shell_deletion_needs_confirmation,
+        )
+
+        tool_input_for_grant = _tool_input_from_snapshot(pending)
+        deletion_only_once = shell_deletion_needs_confirmation(tool_name, tool_input_for_grant)
+        effective_session = session_scope and not deletion_only_once
+
         granted = False
         if confirmed and scope and tool_name:
-            if session_scope:
+            if effective_session:
                 granted = await session_permission_grants.grant(user_id, scope, tool_name)
             else:
                 granted = await once_permission_grants.grant(
                     user_id,
                     scope,
                     tool_name,
-                    tool_args_fingerprint(_tool_input_from_snapshot(pending)),
+                    tool_args_fingerprint(tool_input_for_grant),
                 )
 
         if confirmed and not granted:
@@ -630,7 +641,7 @@ class AgentScopeResumeHandler:
                     "tool_name": tool_name,
                     "conversation_id": scope,
                 }
-                if confirmed and session_scope
+                if confirmed and effective_session
                 else None
             ),
         }
@@ -640,9 +651,15 @@ class AgentScopeResumeHandler:
             "接着上次的进度继续完成任务"
         )
         if confirmed:
+            if deletion_only_once:
+                # 别让模型以为「已获本会话允许」：删除类只认这一次，重发同一条命令
+                # 还会再弹一张卡。
+                grant_phrase = "仅这一次（删除类命令每次都需要确认，本会话不记忆）"
+            else:
+                grant_phrase = "本会话内有效" if effective_session else "仅这一次"
             directive = (
                 f"【用户授权】子智能体「{agent_name}」请求执行的工具 {tool_name} 已获允许"
-                f"（{'本会话内有效' if session_scope else '仅这一次'}）。"
+                f"（{grant_phrase}）。"
                 f"{resume_hint}，不要从头重跑，也不要重复申请同一授权。"
             )
         else:
@@ -662,8 +679,9 @@ class AgentScopeResumeHandler:
                 "run_id": str(delegation.get("run_id") or ""),
             },
             "grant": {
-                "scope": "session" if session_scope else "once",
+                "scope": "session" if effective_session else "once",
                 "granted": bool(granted),
+                "deletion_only_once": deletion_only_once,
             },
             "directive": directive,
         }

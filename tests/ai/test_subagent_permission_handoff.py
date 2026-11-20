@@ -409,7 +409,12 @@ async def test_once_grant_belongs_to_the_agent_that_was_granted():
     assert decision.behavior == PermissionBehavior.ASK
 
 
-def _subagent_pending(*, command: str = "python export.py", conversation_id: str = "child_session_z"):
+def _subagent_pending(
+    *,
+    command: str = "python export.py",
+    conversation_id: str = "child_session_z",
+    parent: str = "conv_handoff",
+):
     from types import SimpleNamespace
 
     from app.services.ai.runtime.agentscope.pending_store import PendingAgentScopeSnapshot
@@ -431,7 +436,7 @@ def _subagent_pending(*, command: str = "python export.py", conversation_id: str
         stream_state={},
         runner_context={},
         delegation={
-            "parent_conversation_id": "conv_handoff",
+            "parent_conversation_id": parent,
             "run_id": "subrun_h",
             "agent_name": "资产导出",
             "depth": 1,
@@ -494,7 +499,7 @@ async def test_handoff_approve_once_writes_token_and_tells_parent_to_resume():
 
     # 令牌按「父会话 + 子智能体」作用域 + 参数指纹写入，子智能体续聊时能消费到。
     scope = delegation_grant_scope("conv_handoff", "资产导出")
-    assert handoff["grant"] == {"scope": "once", "granted": True}
+    assert handoff["grant"] == {"scope": "once", "granted": True, "deletion_only_once": False}
     assert await await_once_token_consumed(scope, {"command": "python export.py"}) is True
     assert await await_once_token_consumed(scope, {"command": "python export.py"}) is False
 
@@ -554,7 +559,11 @@ async def test_handoff_session_scope_grants_only_that_subagent():
         chunks = await _collect_handoff(pending, confirmed=True, grant_scope="session")
 
     handoff = next(c for c in chunks if c["type"] == "subagent_permission_handoff")
-    assert handoff["grant"] == {"scope": "session", "granted": True}
+    assert handoff["grant"] == {
+        "scope": "session",
+        "granted": True,
+        "deletion_only_once": False,
+    }
 
     own_scope = delegation_grant_scope("conv_handoff", "资产导出")
     other_scope = delegation_grant_scope("conv_handoff", "知识库助手")
@@ -620,3 +629,120 @@ async def test_permission_pause_records_sub_session_history_for_resume():
     assert cached[0]["role"] == "user"
     assert "导出资产明细" in cached[0]["content"]
     assert any("等待用户授权" in str(item.get("content") or "") for item in cached)
+
+
+# ---------------------------------------------------------------------------
+# 删除类命令（bypass_immune 的确认）：只认「允许这一次」，不认会话授权
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_deletion_ask_accepts_once_token_but_never_session_grant():
+    """删除保护：会话授权永远不生效，一次性令牌按命令指纹放行一次。
+
+    这是子智能体交接的关键一环——父专家 resume 后子代理会重跑同一条命令，
+    若令牌也穿不过删除保护，用户就会陷入「点允许 → 又弹 → 再点」的死循环。
+    """
+    from agentscope.permission import PermissionBehavior
+
+    from app.services.ai.runtime.agentscope.session_permission_grants import (
+        delegation_grant_scope,
+        once_permission_grants,
+        session_permission_grants,
+        tool_args_fingerprint,
+    )
+
+    from uuid import uuid4
+
+    # 作用域带随机后缀：会话授权 TTL 24h，复用固定 id 会让上一轮的残留污染断言。
+    parent = f"conv_del_{uuid4().hex[:8]}"
+    tool_input = {"command": "rmdir /tmp/handoff-probe"}
+    scope = delegation_grant_scope(parent, "tt")
+    ctx = _child_ctx(parent=parent, agent_name="tt")
+
+    # 1) 会话授权：仍然要确认（bypass_immune 连 allow 规则都覆盖不了）
+    await session_permission_grants.grant(7, scope, "Bash")
+    session_only = await _check(tool_input, ctx)
+    assert session_only.behavior == PermissionBehavior.ASK
+    assert session_only.decision_reason == "shell_deletion_requires_confirmation"
+
+    # 2) 一次性令牌：放行一次，第二次再问
+    await once_permission_grants.grant(7, scope, "Bash", tool_args_fingerprint(tool_input))
+    first = await _check(tool_input, ctx)
+    second = await _check(tool_input, ctx)
+    assert first.behavior == PermissionBehavior.ALLOW
+    assert first.decision_reason == "delegation_once_grant"
+    assert second.behavior == PermissionBehavior.ASK
+
+    # 3) 指纹不匹配的令牌不能放行另一条删除命令
+    await once_permission_grants.grant(7, scope, "Bash", tool_args_fingerprint(tool_input))
+    other = await _check({"command": "rmdir /tmp/other"}, ctx)
+    assert other.behavior == PermissionBehavior.ASK
+
+
+@pytest.mark.asyncio
+async def test_deletion_token_not_consumed_in_unattended_mode():
+    """无人值守下删除命令的令牌不消费、也不放行。"""
+    from agentscope.permission import PermissionBehavior
+
+    from app.services.ai.runtime.agentscope.session_permission_grants import (
+        delegation_grant_scope,
+        once_permission_grants,
+        tool_args_fingerprint,
+    )
+
+    from uuid import uuid4
+
+    parent = f"conv_del2_{uuid4().hex[:8]}"
+    tool_input = {"command": "rmdir /tmp/handoff-probe"}
+    scope = delegation_grant_scope(parent, "tt")
+    fingerprint = tool_args_fingerprint(tool_input)
+    await once_permission_grants.grant(7, scope, "Bash", fingerprint)
+
+    decision = await _check(tool_input, _child_ctx(parent=parent, agent_name="tt"), mode="dont_ask")
+    assert decision.behavior == PermissionBehavior.ASK
+    assert await once_permission_grants.consume(7, scope, "Bash", fingerprint) is True
+
+
+def test_deletion_call_hides_session_grant_button():
+    """删除类调用不给「本会话总是允许」——给了就是假按钮。"""
+    from app.services.ai.runtime.agentscope.event_stream import (
+        _deletion_blocks_session_grant,
+    )
+
+    assert _deletion_blocks_session_grant("Bash", {"command": "rmdir /tmp/x"}) is True
+    assert _deletion_blocks_session_grant("Bash", {"command": "rm -rf ./build"}) is True
+    assert _deletion_blocks_session_grant("Bash", {"command": "mkdir -p /tmp/x"}) is False
+    assert _deletion_blocks_session_grant("Read", {"path": "/tmp/x"}) is False
+
+
+@pytest.mark.asyncio
+async def test_handoff_downgrades_session_grant_for_deletion_call():
+    """点「本会话总是允许」遇到的若是删除类命令，只能落一次性令牌并如实说明。"""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.ai.runtime.agentscope.session_permission_grants import (
+        delegation_grant_scope,
+        once_permission_grants,
+        session_permission_grants,
+        tool_args_fingerprint,
+    )
+
+    from uuid import uuid4
+
+    parent = f"conv_handoff_{uuid4().hex[:8]}"
+    pending = _subagent_pending(command="rmdir /tmp/handoff-probe", parent=parent)
+    with patch(
+        "app.services.ai.runtime.agentscope.confirmations.pending_agentscope_confirmations.pop_async",
+        new=AsyncMock(return_value=None),
+    ):
+        chunks = await _collect_handoff(pending, confirmed=True, grant_scope="session")
+
+    handoff = next(c for c in chunks if c["type"] == "subagent_permission_handoff")
+    scope = delegation_grant_scope(parent, "资产导出")
+
+    # 不写会话授权（写了也永不生效），落一次性令牌
+    assert await session_permission_grants.is_granted(9, scope, "Bash") is False
+    assert handoff["grant"] == {"scope": "once", "granted": True, "deletion_only_once": True}
+    assert "每次都需要确认" in handoff["directive"]
+    assert await await_once_token_consumed(scope, {"command": "rmdir /tmp/handoff-probe"}) is True

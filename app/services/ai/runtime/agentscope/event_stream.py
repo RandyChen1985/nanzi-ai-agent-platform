@@ -204,6 +204,25 @@ def _sync_published_download_urls_from_context(state: Dict[str, Any], context: A
     state["published_download_urls"] = combined
 
 
+def _deletion_blocks_session_grant(tool_name: str, tool_args: Any) -> bool:
+    """删除类调用不给「本会话总是允许」。
+
+    这类确认由安全策略发出并标记 `bypass_immune`，任何会话/一次性授权之外的
+    记忆都不生效（一次性令牌按命令指纹放行是唯一例外）。给了按钮就是骗用户：
+    授权写进去了，下次同样的命令照样弹。
+    """
+    from app.services.ai.runtime.agentscope.tools import (
+        shell_deletion_needs_confirmation,
+    )
+
+    if not isinstance(tool_args, dict):
+        return False
+    try:
+        return shell_deletion_needs_confirmation(tool_name, tool_args)
+    except Exception:  # pragma: no cover - 判定异常时按可授权处理，保持旧行为
+        return False
+
+
 def _supports_session_grant(
     tool_name: str,
     *containers: Any,
@@ -346,6 +365,10 @@ async def stream_pending_tool_interrupt(
                     tools,
                     getattr(runner, "tools", None),
                 )
+                # 删除类确认是 bypass_immune 的：AgentScope 语义里连 allow 规则都覆盖
+                # 不了它，写了会话授权也不会生效。这里如实不给按钮，免得用户点了
+                # 「本会话总是允许」却发现下次照样弹。
+                and not _deletion_blocks_session_grant(tool_name, tool_args)
             ),
             "tool_call": {
                 "id": tool_id,

@@ -886,6 +886,20 @@ class AgentScopeRuntimeTool:
             return blacklist_decision
 
         if deletion_decision:
+            # 删除类确认带 bypass_immune：AgentScope 语义里连 allow 规则都覆盖不了，
+            # 所以「本会话总是允许」对它无效（卡片也不该给这个按钮）。但「允许这一次」
+            # 必须有效——子智能体的交接是「写令牌 → 父专家 resume → 子代理重跑同一
+            # 调用」，令牌若也穿不过这层，用户会陷入「点允许 → 又弹 → 再点」的死循环。
+            # 令牌绑定工具名 + 参数指纹，语义正是「就这一条命令、就这一次」。
+            once_decision = await _delegation_once_grant_decision(
+                tool_name=self.name,
+                user_id=getattr(self, "user_id", None),
+                conversation_id=self.conversation_id,
+                tool_input=tool_input,
+                context=context,
+            )
+            if once_decision is not None:
+                return once_decision
             return deletion_decision
 
         if self.name in {
@@ -1212,6 +1226,17 @@ class AgentScopeNativeApprovalTool:
             return blacklist_decision
 
         if deletion_decision:
+            # 同 RuntimeTool：删除保护不接受会话授权，但必须认「允许这一次」的令牌，
+            # 否则子智能体续聊后重跑同一条删除命令会再次被拦，卡就一直在弹。
+            once_decision = await _delegation_once_grant_decision(
+                tool_name=self.name,
+                user_id=self.user_id,
+                conversation_id=self.conversation_id,
+                tool_input=tool_input,
+                context=context,
+            )
+            if once_decision is not None:
+                return once_decision
             return deletion_decision
 
         path_checker = getattr(self.native_tool, "check_path_access", None)
@@ -2012,6 +2037,34 @@ def _shell_deletion_permission_decision(
             bypass_immune=True,
         )
     return None
+
+
+def shell_deletion_needs_confirmation(
+    tool_name: str,
+    tool_input: Any,
+    *,
+    cwd: str | None = None,
+) -> bool:
+    """该调用是否命中删除保护（`bypass_immune` 的那类确认）。
+
+    `bypass_immune` 在 AgentScope 语义里连 allow 规则都覆盖不了，所以：
+
+    - 「本会话总是允许」对它永远无效 —— 卡片不该给这个按钮（见 event_stream 的
+      `supports_session_grant`）；
+    - 确认端点不能把「总是允许」写成会话授权，那会留下一条永不生效的记录
+      （见 resume 的 `_handoff_subagent_permission`）。
+
+    「允许这一次」是例外：令牌绑定工具名 + 参数指纹，语义正是「就这一条命令、
+    就这一次」，能穿过删除保护。
+    """
+    if not is_shell_like_tool_name(tool_name):
+        return False
+
+    from app.services.ai.runtime.shell_deletion_policy import assess_shell_deletion
+
+    command = str((tool_input or {}).get("command", "") if isinstance(tool_input, dict) else "")
+    assessment = assess_shell_deletion(command, cwd=cwd or os.getcwd())
+    return assessment.action in {"ask", "deny"}
 
 
 def resolve_tool_conversation_id(explicit: Any = None) -> str | None:
