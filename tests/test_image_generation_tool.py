@@ -1074,3 +1074,117 @@ async def test_gif_product_is_saved_with_gif_extension(
 
     assert result["ok"] is True
     assert captured_artifacts[0]["filename"].endswith(".gif")
+
+
+# ── 成本留痕（计量）────────────────────────────────────────────
+
+
+class TestImageUsageTelemetry:
+    """一次生图出了几张、多大、上游多少 token，要能查到。
+
+    背景：平台原来只统计 LLM token，而**真正花钱的图像接口那次调用零留痕**——
+    `request_image_once` 连 `usage` 都不解析，走 chat 协议的网关明明返回了图片折算的
+    token（一张图往往折算成上千 token），也被整个丢掉。这里钉住「解析 → 汇总 →
+    挂进结果供轨迹收取」这条链。
+    """
+
+    def test_upstream_usage_is_normalised(self):
+        """两套字段名都要认；拿不到就返回 None，绝不拿 0 混进统计。"""
+        assert tools._normalize_upstream_usage(
+            {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+        ) == {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+        # 也有网关用 input/output 这套写法
+        assert tools._normalize_upstream_usage(
+            {"input_tokens": 5, "output_tokens": 7}
+        ) == {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12}
+        # 只给总数的
+        assert tools._normalize_upstream_usage({"total_tokens": 9}) == {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 9,
+        }
+        # 没有 / 脏数据：None 比 0 诚实，0 会被当成「这次没花钱」
+        assert tools._normalize_upstream_usage(None) is None
+        assert tools._normalize_upstream_usage({}) is None
+        assert tools._normalize_upstream_usage([]) is None
+        assert tools._normalize_upstream_usage({"prompt_tokens": "abc"}) is None
+
+    async def test_usage_is_summed_across_images(
+        self, patch_config, patch_context, captured_artifacts, monkeypatch
+    ):
+        """一次要两张就是两次计费：上游 usage 必须累加，不能只留最后一张。"""
+        patch_config({"image_max_images_per_call": "2"})
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    **_image_response(),
+                    "usage": {
+                        "prompt_tokens": 11,
+                        "completion_tokens": 22,
+                        "total_tokens": 33,
+                    },
+                },
+            )
+
+        _patch_http(monkeypatch, handler)
+        result = await _call_generate(prompt="两只猫", n=2)
+
+        assert result["ok"] is True
+        usage = result["image_usage"]
+        assert usage["tool"] == "generate_image"
+        assert usage["requested_count"] == 2
+        assert usage["succeeded_count"] == 2
+        assert usage["upstream_tokens"] == {
+            "prompt_tokens": 22,
+            "completion_tokens": 44,
+            "total_tokens": 66,
+        }
+        assert usage["model"] == "upstream-name"
+
+    async def test_usage_missing_keeps_count_and_size(
+        self, patch_config, patch_context, captured_artifacts, monkeypatch
+    ):
+        """多数图像端点不返回 usage：张数与尺寸照样要记，否则等于什么都没留。"""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_image_response())
+
+        _patch_http(monkeypatch, handler)
+        result = await _call_generate(prompt="一只猫", size="1664x928")
+
+        usage = result["image_usage"]
+        assert usage["upstream_tokens"] is None
+        assert usage["succeeded_count"] == 1
+        assert usage["size"] == "1664x928"
+        assert usage["elapsed_ms"] >= 0
+
+    async def test_partial_failure_still_reports_usage(
+        self, patch_config, patch_context, captured_artifacts, monkeypatch
+    ):
+        """图没出全但钱已经花了：这种最该留痕，不能让异常把用量一起吞掉。"""
+        patch_config({"image_max_images_per_call": "2"})
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        **_image_response(),
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11},
+                    },
+                )
+            return httpx.Response(400, json={"error": {"message": "上游拒绝"}})
+
+        _patch_http(monkeypatch, handler)
+        result = await _call_generate(prompt="两只猫", n=2)
+
+        assert result["ok"] is True and result.get("partial") is True
+        usage = result["image_usage"]
+        assert usage["succeeded_count"] == 1
+        assert usage["requested_count"] == 2
+        # 第一张的消耗必须留下
+        assert usage["upstream_tokens"]["total_tokens"] == 11

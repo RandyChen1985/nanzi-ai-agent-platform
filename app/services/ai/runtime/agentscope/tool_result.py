@@ -12,9 +12,11 @@ from app.services.ai.grounding.ledger import classify_evidence_result
 from app.services.ai.grounding.models import EvidenceStatus, ToolResultEnvelope
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
 from app.services.ai.runtime.agentscope.tool_result_context import (
+    IMAGE_USAGE_METADATA_KEY,
     TOOL_CALL_ID_METADATA_KEY,
     TOOL_RESULT_CONTEXT_VERSION,
     attach_tool_call_id_metadata,
+    image_usage_from_metadata,
     is_trusted_tool_result_context,
     tool_call_id_from_metadata,
 )

@@ -93,6 +93,7 @@ from app.services.ai.runtime.agentscope.tool_result import (
     build_final_tool_result_context,
     build_tool_result_envelope,
     extract_tool_result_error_reason,
+    image_usage_from_metadata,
     is_tool_result_error,
     normalize_tool_result_state,
     tool_call_id_from_metadata,
@@ -2879,6 +2880,9 @@ class AssistantAgentRunner(BaseExecutor):
                 tool_result_state=tool_result_state,
                 sandbox_policy=display_sandbox_policy,
                 logical_root=display_logical_root,
+                # 图像类工具把「出了几张、多大、上游多少 token」挂在结果元数据上
+                # （不进模型上下文），这里原样带进轨迹，按调用维度可查。
+                image_usage=image_usage_from_metadata(event),
             )
             if result.get("log"):
                 log_chunk = result["log"]
@@ -3973,6 +3977,7 @@ class AssistantAgentRunner(BaseExecutor):
         tool_result_state: Any = None,
         sandbox_policy: str | None = None,
         logical_root: str = "/workspace",
+        image_usage: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         is_error = is_tool_result_error(
             tool_name,
@@ -4029,10 +4034,18 @@ class AssistantAgentRunner(BaseExecutor):
             model=t_model, temperature=t_temp, tool_name=tool_name, tool_input=tool_args,
             tool_output=tool_output if isinstance(tool_output, (dict, list)) else {"raw": str(tool_output)},
             execution_time_ms=duration_tool, status="success" if not is_error else "error",
+            # 超时来源与用量都写进 meta_info：一个是「这次为什么等这么久」，
+            # 一个是「这次花了多少」，排查成本与超时都从这一列入手。
             meta_info=(
-                {"timeout_seconds": t_timeout, "timeout_source": t_timeout_source}
-                if t_timeout is not None
-                else None
+                {
+                    **(
+                        {"timeout_seconds": t_timeout, "timeout_source": t_timeout_source}
+                        if t_timeout is not None
+                        else {}
+                    ),
+                    **({"image_usage": image_usage} if image_usage else {}),
+                }
+                or None
             ),
             timestamp=datetime.fromtimestamp(time.time() - duration_tool / 1000)
         )

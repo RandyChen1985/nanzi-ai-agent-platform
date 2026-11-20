@@ -25,6 +25,7 @@ from app.services.ai.runtime.agentscope.tool_timeout import (
 )
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
 from app.services.ai.runtime.agentscope.tool_result import (
+    IMAGE_USAGE_METADATA_KEY,
     attach_tool_call_id_metadata,
     build_tool_result_envelope,
     is_tool_execution_success,
@@ -91,6 +92,32 @@ def _format_runtime_tool_result(result: Any) -> str:
         except (TypeError, ValueError):
             text = str(result)
     return truncate_for_context(text)
+
+
+def _split_image_usage(result: Any) -> tuple[Any, dict[str, Any] | None]:
+    """把计量字段从工具结果里摘出来，改由 ToolChunk 元数据带走。
+
+    返回 ``(干净结果, 计量字典)``。不是 dict、或没这个键时原样返回，多一次拷贝都不做。
+    """
+    if not isinstance(result, dict) or IMAGE_USAGE_METADATA_KEY not in result:
+        return result, None
+    usage = result.get(IMAGE_USAGE_METADATA_KEY)
+    clean = {
+        key: value for key, value in result.items() if key != IMAGE_USAGE_METADATA_KEY
+    }
+    if not isinstance(usage, dict) or not usage:
+        return clean, None
+    return clean, usage
+
+
+def _tool_chunk_metadata(
+    call_id: str, image_usage: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """ToolChunk 元数据：凭证 ID 必带，计量信息有才带。"""
+    metadata: dict[str, Any] = {"nanzi_call_id": call_id}
+    if image_usage:
+        metadata[IMAGE_USAGE_METADATA_KEY] = image_usage
+    return metadata
 
 
 def _new_tool_call_id(tool_name: str) -> str:
@@ -1071,10 +1098,11 @@ class AgentScopeRuntimeTool:
                 )
                 return
 
-            result = attach_tool_call_id_metadata(
-                final_result if has_result else None,
-                call_id,
+            # 先把计量摘走，再交给格式化：模型看到的结果里不该有用量字段。
+            clean_result, image_usage = _split_image_usage(
+                final_result if has_result else None
             )
+            result = attach_tool_call_id_metadata(clean_result, call_id)
             result_ok = await self.spec.finish_streamed(
                 result,
                 call_id=call_id,
@@ -1087,7 +1115,7 @@ class AgentScopeRuntimeTool:
                 ],
                 state=ToolResultState.SUCCESS if result_ok else ToolResultState.ERROR,
                 is_last=True,
-                metadata={"nanzi_call_id": call_id},
+                metadata=_tool_chunk_metadata(call_id, image_usage),
             )
         finally:
             reset_active_tool_timeout_seconds(timeout_token)
