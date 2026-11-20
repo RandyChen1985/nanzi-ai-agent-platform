@@ -117,6 +117,7 @@ class PreflightStep(BasePipelineStep):
             else None
         )
         from app.services.ai.user_question import (
+            build_current_task_progress_block,
             is_user_question_receipt_message,
             looks_like_receipt_body,
             metadata_dataset_ids_from_user_question_record,
@@ -177,6 +178,24 @@ class PreflightStep(BasePipelineStep):
                         logger.warning(
                             "[Preflight] Failed to persist user-question cancellation: %s", exc
                         )
+                # 提问卡里的「提问前任务进度」只存在于这条记录里：提问轮的历史正文只有
+                # 问句，压缩摘录对单条消息又有字数配额、并声明「禁止据历史任务描述创建新任务」。
+                # 所以把它作为**当前轮**上下文注入，回执轮才不会把「答完这一项」当成
+                # 「整批办完」——未被追问的那些项全靠这一段才留得下来。
+                progress_block = build_current_task_progress_block(
+                    submitted_question,
+                    selected_option_ids=receipt["selected_option_ids"],
+                    custom_input=receipt["custom_input"],
+                    cancelled=context.user_question_cancelled,
+                )
+                if progress_block:
+                    # 插在回执之前：它在原始消息序里紧挨当前轮，normalize 阶段仍会被
+                    # 合并进系统区（见 executors.common.normalize_messages_for_llm）。
+                    context.messages.insert(
+                        max(0, len(context.messages) - 1),
+                        {"role": "system", "content": progress_block},
+                    )
+                    context.shared_state["current_task_progress"] = progress_block
                 restored_dataset_ids = metadata_dataset_ids_from_user_question_record(
                     submitted_question
                 )

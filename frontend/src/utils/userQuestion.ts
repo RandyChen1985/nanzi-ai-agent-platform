@@ -102,7 +102,9 @@ export function buildUserQuestionUserMessage(
   if (cancelled) {
     lines.push("cancelled: true", "用户取消了本次提问，请停止当前任务，不要再次询问同一个问题。");
   } else {
-    lines.push("请根据以上用户回答继续处理原问题。");
+    // 尾注只写「继续处理原问题」会把范围收窄到这张卡上：用户在提问前交给智能体的
+    // 整批任务里、没被追问的那些项，回执轮会被当成「已经办完」。
+    lines.push("请继续完成提问前尚未完成的项，不要只处理本次提问涉及的那一项。");
   }
   return lines.join("\n");
 }

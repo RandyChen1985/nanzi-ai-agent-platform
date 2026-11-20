@@ -912,7 +912,7 @@ async def test_effective_prompt_tool_names_keep_delegation_tool_on_receipt_even_
         "question_id: uq_f28dca64d3f1d785\n"
         'selected_option_ids: ["today"]\n'
         "custom_input: \n"
-        "请根据以上用户回答继续处理原问题。"
+        "请继续完成提问前尚未完成的项，不要只处理本次提问涉及的那一项。"
     )
     config = SimpleNamespace(
         agent_name="TestAgent",
