@@ -6,6 +6,7 @@ from app.services.ai.agent_service import AgentService
 from app.services.ai.agent_service import _apply_context_snapshot
 from app.services.ai.context_compaction import (
     COMPACTION_MARKER,
+    _DEFAULT_MAX_CHARS,
     apply_context_compaction,
     build_overflow_digest,
 )
@@ -202,6 +203,54 @@ def test_apply_context_compaction_prepends_digest_on_overflow():
     assert COMPACTION_MARKER in out[0]["content"]
     # 原窗口顺序保持
     assert out[1:] == window
+
+
+# ---------------------------------------------------------------------------
+# 单条摘录配额：跟随 agent_context_compaction_max_chars，不再写死 120
+# ---------------------------------------------------------------------------
+
+
+def test_per_message_quota_follows_total_budget():
+    """单条配额按总量的 1/8 分配，最低 120。"""
+    from app.services.ai.context_compaction import per_message_chars_for
+
+    assert per_message_chars_for(2000) == 250
+    assert per_message_chars_for(3000) == 375
+    assert per_message_chars_for(4000) == 500
+    # 总量很小时兜底，避免把早期消息压成碎片
+    assert per_message_chars_for(1200) == 150
+    assert per_message_chars_for(600) == 120
+    assert per_message_chars_for(200) == 120
+    # 非法值不能被当成 0 计算
+    assert per_message_chars_for(None) == _DEFAULT_MAX_CHARS // 8
+    assert per_message_chars_for("bad") == _DEFAULT_MAX_CHARS // 8
+
+
+def test_apply_context_compaction_keeps_a_medium_request_whole():
+    """130 字符的任务请求不能再被切在半句上。
+
+    生产事故里「登记 3 项扣款」的请求正好这个长度：写死 120 时摘录只剩前半段，后半句
+    连同待办线索一起消失，模型回执轮以为整批办完了。
+    """
+    request = (
+        "帮我把这 3 项其他扣款登记一下：A. 快速路摩托车抓拍 · 违规外联 · 5 次；"
+        "B. 铁路沿线 · 违规外联 · 4 次；C. 铁路沿线 · 设备损毁 · 20 次；"
+        "归属单位都按上次口径，A 项上次是上海电科，B、C 我确认一下再给你，另外回执时间也记上。"
+    )
+    assert len(request) > 120
+    hist = [{"role": "user", "content": request}, {"role": "assistant", "content": "好的"}]
+    window = [{"role": "user", "content": "本轮新消息"}]
+
+    out = apply_context_compaction(full_history=hist + window, window=window, max_chars=2000)
+    digest = out[0]["content"]
+
+    assert request in digest, "单条配额 250 时这条请求必须完整保留"
+
+    # 同一段历史在总量很小时仍按 120 兜底截断（下限行为不能被顺手改掉）
+    small = apply_context_compaction(
+        full_history=hist + window, window=window, max_chars=600
+    )
+    assert request not in small[0]["content"]
 
 
 # ---------------------------------------------------------------------------
