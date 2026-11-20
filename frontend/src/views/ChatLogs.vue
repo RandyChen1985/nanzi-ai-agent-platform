@@ -52,6 +52,7 @@ import {
   normalizeSubagentTraceMeta,
   subagentDisplayName,
 } from '@/utils/subagentTrace'
+import { imageUsageChips, imageUsageFromStep } from '@/utils/traceUsage'
 
 const { showToast } = useToast()
 const { hasPermission } = useUser()
@@ -1477,6 +1478,20 @@ onMounted(() => {
                           <dd class="break-all">{{ getSubagentMeta(step)?.tool_filter?.join('、') }}</dd>
                         </template>
                       </dl>
+                    </div>
+                    <!-- 图像用量：后端把生图/改图的张数与尺寸写进 meta_info.image_usage -->
+                    <div
+                      v-if="imageUsageFromStep(step)"
+                      class="flex flex-wrap items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50/70 px-2.5 py-1.5"
+                    >
+                      <span class="text-[10px] font-black text-amber-700/80 uppercase tracking-wider">用量</span>
+                      <span
+                        v-for="chip in imageUsageChips(step)"
+                        :key="`usage-${idx}-${chip}`"
+                        class="text-[11px] font-medium text-amber-900 bg-white/80 border border-amber-200 rounded px-1.5 py-0.5"
+                      >
+                        {{ chip }}
+                      </span>
                     </div>
                     <div v-if="step.tool_name" class="text-xs font-bold text-gray-700">
                       <code class="px-2 py-0.5 bg-white border border-gray-200 rounded-md font-mono text-primary text-[11px]">

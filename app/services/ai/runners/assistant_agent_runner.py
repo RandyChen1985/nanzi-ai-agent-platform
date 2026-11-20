@@ -4073,6 +4073,10 @@ class AssistantAgentRunner(BaseExecutor):
         if t_timeout is not None:
             log_event["timeout_seconds"] = t_timeout
             log_event["timeout_source"] = t_timeout_source
+        if image_usage:
+            # 图片这次调用的张数与上游 token 单独上报：它不进 LLM 的 total_tokens
+            # （那个数驱动月度配额），但消息的「用量」tooltip 要看得到真实消耗。
+            log_event["image_usage"] = image_usage
         # 工具入参单独承载（Bash 即命令原文），不占用 details 的输出截断预算。
         display_args = format_tool_args_for_display(tool_args, tool_name=tool_name)
         if display_args:

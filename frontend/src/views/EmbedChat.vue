@@ -2455,6 +2455,7 @@
       :loading="loadingStats"
       :stats="currentStats"
       :expanded="expandedStats"
+      :image-usage="currentImageUsage"
       @close="showStatsModal = false"
       @toggle="toggleStatExpand"
     />
@@ -2843,8 +2844,10 @@ import { useKnowledgePortal } from "@/composables/useKnowledgePortal";
 import CitationPopover from "@/components/CitationPopover.vue";
 import { copyToClipboard as copyTextSecure } from "@/utils/clipboard";
 import {
+  formatImageUsageLine,
   formatTokenUsageAmount,
   formatTokenUsageTooltip,
+  type MessageImageUsage,
 } from "@/utils/tokenFormat";
 import {
   applyStreamErrorMessage,
@@ -3441,7 +3444,14 @@ const getMessageTokenAmount = (msg: any): string => {
 };
 
 const getMessageTokenTooltip = (msg: any): string => {
-  return formatTokenUsageTooltip(msg?.prompt_tokens, msg?.completion_tokens, msg?.total_tokens);
+  // 图片消耗由 formatTokenUsageTooltip 单独一行带出：它不计入 total_tokens
+  // （那个数驱动月度配额），但用户得知道这条消息还花了图片钱。
+  return formatTokenUsageTooltip(
+    msg?.prompt_tokens,
+    msg?.completion_tokens,
+    msg?.total_tokens,
+    formatImageUsageLine(msg?.image_usage),
+  );
 };
 // --- State ---
 const messages = ref<Message[]>([]);
@@ -3874,6 +3884,8 @@ const attachedMemoryConversationIds = computed(() => {
 const showStatsModal = ref(false);
 const loadingStats = ref(false);
 const currentStats = ref<any[]>([]);
+/** 打开明细弹窗时对应消息的图片消耗，随 currentStats 一起切换。 */
+const currentImageUsage = ref<MessageImageUsage | null>(null);
 const expandedStats = ref<Record<string, boolean>>({});
 
 const toggleStatExpand = (callIndex: number) => {
@@ -11473,6 +11485,7 @@ const handleFeedback = async (msg: Message, type: "up" | "down") => {
 
 const openModelCallStats = async (msg: any) => {
   currentStats.value = [];
+  currentImageUsage.value = msg?.image_usage ?? null;
   showStatsModal.value = true;
   loadingStats.value = true;
   try {
