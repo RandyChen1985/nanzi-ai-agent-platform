@@ -53,11 +53,28 @@ export interface PendingToolPermission {
   supports_session_grant?: boolean;
   /** 用户已点过「撤销本会话授权」：卡片据此给一句明确回执。 */
   sessionGrantRevoked?: boolean;
+  /**
+   * 这条「本会话总是允许」写在了哪个作用域上。
+   *
+   * 子智能体授权落在 `父会话::sub::子代理`，撤销时必须用这个键——沿用主会话 ID
+   * 会删除一个根本不存在的记录，界面却显示撤销成功，用户以为授权已经收回。
+   */
+  sessionGrantScope?: string;
   /** 挂起确认的绝对过期时间（unix 秒）：刷新/恢复后仍能判断卡片是否已失效。 */
   expires_at?: number;
   expires_in_seconds?: number;
   /** 用户主动「放弃本轮」：命令没有执行，卡片显示放弃回执而不是「已拒绝」。 */
   discarded?: boolean;
+  /**
+   * 这条确认来自子智能体：卡片要写清是哪个子代理在请求授权，
+   * 因为授权对象是「父会话 + 该子代理」，用户得知道自己在放行谁。
+   */
+  subagent?: {
+    display_name?: string;
+    run_id?: string;
+  };
+  /** 确认后要发回父会话的续聊指令（子智能体场景）。 */
+  resumeDirective?: string;
 }
 
 export interface PendingExternalExecution {
@@ -234,11 +251,17 @@ export function handlePermissionRequired<T extends AgentStreamMessage>(
     status: "pending",
     expanded: true,
     supports_session_grant: Boolean(data.supports_session_grant),
+    subagent: data.subagent as PendingToolPermission["subagent"],
   };
   msg.isThinking = false;
+  const subagentLabel = String(
+    (data.subagent as { display_name?: string } | undefined)?.display_name || "",
+  );
   addLog(msg, {
     id: `permission_${requestId}`,
-    title: String(data.title || "工具调用需要确认"),
+    title: subagentLabel
+      ? `[${subagentLabel}] ${String(data.title || "工具调用需要确认")}`
+      : String(data.title || "工具调用需要确认"),
     details: String(data.details || ""),
     status: "pending",
     category: "permission",
@@ -1059,7 +1082,7 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
       return true;
     case "permission_result": {
       const sessionGrant = data.session_grant as
-        | { granted?: boolean; tool_name?: string }
+        | { granted?: boolean; tool_name?: string; conversation_id?: string }
         | undefined;
       if (msg.pendingPermission) {
         if (data.status === "rejected") {
@@ -1068,6 +1091,10 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
           msg.pendingPermission.status = "approved_session";
         } else {
           msg.pendingPermission.status = "approved";
+        }
+        if (sessionGrant?.conversation_id) {
+          // 撤销入口据此回到真正写入授权的作用域（子智能体是 `父会话::sub::子代理`）。
+          msg.pendingPermission.sessionGrantScope = String(sessionGrant.conversation_id);
         }
         msg.pendingPermission.expanded = false;
         // 回执一到就解除卡片的提交态：后续还要跑完整个 Agent 轮次，流可能持续

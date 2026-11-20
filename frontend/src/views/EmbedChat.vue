@@ -5194,6 +5194,16 @@ const onModeChange = (mode: string) => {
 };
 const conversationId = ref("");
 /**
+ * 组件是否已卸载：延迟发送（如子智能体的续聊指令轮询）必须据此收手。
+ *
+ * 卸载后 `conversationId` 还在、值也没变，只比对会话 ID 检测不到「页面已经走了」，
+ * 定时器里的 `sendMessage` 会对着一个已销毁的界面发请求。
+ */
+const embedDisposed = ref(false);
+onUnmounted(() => {
+  embedDisposed.value = true;
+});
+/**
  * 临时历史条目的时间锚点：切换会话时重置。
  *
  * 不能每次都取「现在」——`pendingHistoryItem` 会因为任意依赖变化重算，时间戳跟着跳动，
@@ -12414,6 +12424,26 @@ const applyPermissionStreamEvent = (
 
   if (applyReusableResultStatusEvent(msg, data)) return;
 
+  if (data?.type === "subagent_permission_handoff") {
+    // 子智能体的授权已落到「父会话 + 该子代理」作用域，后端把续聊指令一并送回来。
+    // 收在这里、等流收尾再发：直接在这里发会被 isProcessing / 提交态锁挡住。
+    if (msg.pendingPermission) {
+      if (
+        data.subagent
+        && typeof data.subagent === "object"
+        && !msg.pendingPermission.subagent?.display_name
+      ) {
+        // 只在还没有展示名时补：续聊回执里的 agent_name 是标识名，
+        // 覆盖上去会让卡片徽章从「资产导出」跳成英文 ID。
+        msg.pendingPermission.subagent = data.subagent;
+      }
+      if (typeof data.directive === "string" && data.directive.trim()) {
+        msg.pendingPermission.resumeDirective = data.directive;
+      }
+    }
+    return;
+  }
+
   if (data?.type === "run_status") {
     // 恢复流（权限确认 / 外部执行）在末尾发射 run_status 作为终态，其 status 为
     // success / rejected / error 等真实执行结果。按终态映射状态，避免把“用户拒绝”
@@ -12910,6 +12940,14 @@ const confirmPendingPermission = async (
         });
       }
       scrollToBottom();
+      // 子智能体的权限确认：授权已在后端落库，这里把续聊指令发回父会话，父专家才会
+      // 用 sub_agent_call(resume=True) 让子智能体接着跑完。指令发完即清空——不清空的话
+      // 任何一次重渲染都会再发一遍，等于无限续聊。
+      const resumeDirective = pending.resumeDirective;
+      if (resumeDirective && !pending.discarded) {
+        pending.resumeDirective = undefined;
+        void dispatchResumeDirective(msg, resumeDirective);
+      }
       nextTick(() => {
         if (!isMobile.value) chatInputRef.value?.focus();
       });
@@ -12920,7 +12958,9 @@ const confirmPendingPermission = async (
 /** 撤销「本会话总是允许」：撤销后该工具在会话内重新逐次确认。 */
 const revokeSessionPermission = async (msg: Message) => {
   const pending = msg.pendingPermission;
-  const conversation = String(conversationId.value || "").trim();
+  // 子智能体的授权写在 `父会话::sub::子代理` 上，后端已在回执里带回该作用域。
+  // 沿用主会话 ID 会删一条不存在的记录，界面显示撤销成功而授权其实还在。
+  const conversation = String(pending?.sessionGrantScope || conversationId.value || "").trim();
   const toolName = String(pending?.tool_call?.name || "").trim();
   if (!pending || !toolName) return;
   if (!conversation) {
@@ -13112,6 +13152,40 @@ const SANDBOX_HEALTH_REPORT_PROMPT = [
 const sendSandboxHealthReport = () => {
   if (isProcessing.value || remoteRunBusy.value) return;
   void sendMessage({ content: SANDBOX_HEALTH_REPORT_PROMPT });
+};
+
+/**
+ * 把子智能体的续聊指令发回父会话。
+ *
+ * 不能直接 `void sendMessage(...)`：确认流收尾时父专家那一轮可能还在输出
+ * （`isProcessing` / `remoteRunBusy` 仍为 true），`sendMessage` 会静默 return，
+ * 而指令此刻已经被清空——用户点了允许，子智能体却再也没被叫醒。
+ * 这里短暂轮询等运行态释放；始终等不到就把「再做一步」说给用户，别静默丢。
+ */
+const dispatchResumeDirective = async (msg: Message, directive: string) => {
+  const originConversationId = String(conversationId.value || "");
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    // 用户可能在这几秒里切走会话或关掉页面：指令属于原会话那一段，发到别处
+    // 会把「继续」塞进另一段对话。宁可丢这条指令（用户还能手动说「继续」）。
+    if (embedDisposed.value) return;
+    if (String(conversationId.value || "") !== originConversationId) return;
+    const busy =
+      isProcessing.value
+      || remoteRunBusy.value
+      || recoveryLocking.value
+      || pendingPermissionLocking.value
+      || sendLocked.value;
+    if (!busy) {
+      if (embedDisposed.value) return;
+      if (String(conversationId.value || "") !== originConversationId) return;
+      await sendMessage({ content: directive });
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  if (embedDisposed.value) return;
+  msg.content +=
+    "\n\n[授权已记录，但本轮仍在运行，没能自动唤回子智能体。请稍等片刻后发送「继续」，子智能体会接着跑完。]";
 };
 
 const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
