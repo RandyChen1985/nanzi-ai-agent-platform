@@ -1261,37 +1261,46 @@ const overlayBackdropClass = computed(() =>
       <!-- Header -->
       <div class="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center flex-shrink-0">
         <div class="min-w-0 flex-1">
-          <div class="flex items-center space-x-2 min-w-0">
+          <!--
+            标题独占一行，类型徽标与保存状态落到第二行。
+            三者挤同一行时，标题会被两个徽标顶掉、只剩
+            `generated-image-20261120-013808-1-d0c8…`，而标题恰恰是
+            「我打开的是哪个文件」的唯一线索；徽标只是补充信息，让它先让位。
+            标题也就此不再需要 max-w 硬截断——那个限制原本就是为了给徽标腾地方。
+          -->
+          <div class="flex min-w-0 flex-col gap-1">
             <!-- 标题被窄面板截断是常态，tooltip 里给全名，否则用户无从判断打开的是哪个文件 -->
             <span
-              class="text-sm font-bold text-gray-800 dark:text-gray-200 truncate max-w-[220px] sm:max-w-[360px]"
+              class="truncate text-sm font-bold text-gray-800 dark:text-gray-200"
               :title="data?.title || '画布'"
             >
               {{ data?.title || '画布' }}
             </span>
-            <span
-              class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold bg-gray-100 text-gray-600 dark:bg-gray-700/60 dark:text-gray-300"
-              :title="`类型：${canvasTypeMeta.label}`"
-            >
-              <span class="text-[10px] leading-none">{{ canvasTypeMeta.glyph }}</span>
-              <span class="uppercase tracking-wide">{{ canvasTypeMeta.label }}</span>
-            </span>
-            <!--
-              已保存状态不再占一整行路径（路径可复制，没必要常驻）。
-              颜色留给它：绿=已保存、灰=未保存，这才是真需要一眼看出的信息。
-            -->
-            <button
-              v-if="effectiveSourcePath"
-              type="button"
-              class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold bg-emerald-50 text-emerald-600 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50 transition-colors"
-              :title="`已保存：${effectiveSourcePath}（点击复制路径）`"
-              @click="copySourcePath"
-            >
-              <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              已保存
-            </button>
+            <div class="flex min-w-0 items-center gap-1.5">
+              <span
+                class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold bg-gray-100 text-gray-600 dark:bg-gray-700/60 dark:text-gray-300"
+                :title="`类型：${canvasTypeMeta.label}`"
+              >
+                <span class="text-[10px] leading-none">{{ canvasTypeMeta.glyph }}</span>
+                <span class="uppercase tracking-wide">{{ canvasTypeMeta.label }}</span>
+              </span>
+              <!--
+                已保存状态不再占一整行路径（路径可复制，没必要常驻）。
+                颜色留给它：绿=已保存、灰=未保存，这才是真需要一眼看出的信息。
+              -->
+              <button
+                v-if="effectiveSourcePath"
+                type="button"
+                class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold bg-emerald-50 text-emerald-600 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50 transition-colors"
+                :title="`已保存：${effectiveSourcePath}（点击复制路径）`"
+                @click="copySourcePath"
+              >
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                已保存
+              </button>
+            </div>
           </div>
         </div>
         <div class="flex items-center space-x-1.5 shrink-0">
