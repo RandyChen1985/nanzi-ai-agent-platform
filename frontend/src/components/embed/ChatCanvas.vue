@@ -10,7 +10,8 @@ import ShareFileDialog from '@/components/ShareFileDialog.vue';
 import ConfirmModal from '@/components/ConfirmModal.vue';
 import PivotTable from '@/components/embed/PivotTable.vue';
 import { useToast } from '@/composables/useToast';
-import { buildGeneratedWorkspaceFilename, canWriteWorkspaceFile, createWorkspaceEntry, downloadWorkspaceFile, isDirectRenderableUrl, resolveHighlightLanguage, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent, shouldPreviewWithFileViewerInCanvas, uploadToWorkspaceDir } from '@/utils/workspaceFilePreview';
+import { buildGeneratedWorkspaceFilename, canWriteWorkspaceFile, createWorkspaceEntry, downloadWorkspaceFile, isDirectRenderableUrl, relocateGeneratedArtifact, resolveHighlightLanguage, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent, shouldPreviewWithFileViewerInCanvas, uploadToWorkspaceDir } from '@/utils/workspaceFilePreview';
+import { extractArtifactId } from '@/utils/generatedArtifact';
 import { buildArtifactDownloadUrl } from '@/utils/generatedFilePreviewPlan';
 import { copyToClipboard } from '@/utils/clipboard';
 import { highlightCsvCell } from '@/utils/csvHighlight';
@@ -65,8 +66,25 @@ const outputCopied = ref(false);
 const editorContent = ref('');
 const savedContent = ref('');
 const saving = ref(false);
-const pendingOverwrite = ref<{ path: string; content: string } | null>(null);
+/**
+ * 覆盖确认。两种来源：
+ * - `content`：写文本内容（代码/HTML/CSV/Markdown）；
+ * - `artifactId`：产物迁址撞上同名文件，确认后重发一次带 overwrite 的移动。
+ * 图片走迁址，绝不能落到「写文本」那条分支上——那会把图片文件写坏。
+ */
+const pendingOverwrite = ref<
+  | { kind: 'content'; path: string; content: string }
+  | { kind: 'relocate'; path: string; artifactId: string; parentPath: string; name: string }
+  | null
+>(null);
 const effectiveSourcePath = ref('');
+/**
+ * 当前画布内容对应的生成产物 ID（从 download_url 里解析）。
+ *
+ * 产物已在 `<user_key>/generated/` 下，但路径从没出过后端：有这个 ID 就能分享，
+ * 也能让「保存到目录」走移动而不是再复制一份。
+ */
+const artifactRef = ref('');
 const showSaveDialog = ref(false);
 /**
  * 顶栏「⋯」菜单状态。
@@ -125,7 +143,7 @@ const readerScalePercent = computed(() => `${Math.round(readerScale.value * 100)
 /** 字号与限宽只对 Markdown 阅读有意义：代码、图片、Office 有自己的显示逻辑 */
 const showReaderControls = computed(() => isMarkdownContent.value && activeTab.value === 'preview');
 /** 分享目标：只有拿到工作区路径才能分享，所以这里是一个可空对象而不是 boolean */
-const shareTarget = ref<{ path: string; name: string; size: number } | null>(null);
+const shareTarget = ref<{ path: string; name: string; size: number; artifactId: string } | null>(null);
 const isMobile = ref(
   typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
 );
@@ -667,6 +685,7 @@ const syncEditorFromData = () => {
   editorContent.value = text;
   savedContent.value = text;
   effectiveSourcePath.value = props.data?.sourcePath || '';
+  artifactRef.value = extractArtifactId(String(props.data?.content || ''));
   showSaveDialog.value = false;
 };
 
@@ -721,7 +740,8 @@ const closeMoreMenu = () => {
 const openShare = () => {
   closeMoreMenu();
   const path = effectiveSourcePath.value;
-  if (!path) {
+  const artifactId = artifactRef.value;
+  if (!path && !artifactId) {
     showToast('请先保存到工作区，再分享', 'info');
     return;
   }
@@ -734,10 +754,18 @@ const openShare = () => {
     path,
     name: (data?.title || path.split('/').pop() || 'file').trim(),
     size: contentIsUrl ? 0 : new Blob([raw]).size,
+    artifactId,
   };
 };
 
-const canShareFile = computed(() => !!effectiveSourcePath.value);
+/**
+ * 能分享的条件：拿到了工作区路径，或者拿到了产物 ID。
+ *
+ * 生成类产物落盘在 `generated/` 下，但前端只有 download_url——过去因此把它当成
+ * 「未落盘」，分享一直置灰（提示「需先保存」，其实文件早就在工作区里了）。
+ * 现在凭 ID 交给后端反查路径。
+ */
+const canShareFile = computed(() => !!effectiveSourcePath.value || !!artifactRef.value);
 
 const handleShareCreated = () => {
   // 弹窗自己会展示结果态；这里只留一个轻提示，避免用户以为没成功
@@ -757,8 +785,21 @@ const handleDirectorySave = async (payload: { parentPath: string; name: string }
   saving.value = true;
   try {
     if (isImageGeneratedContent.value) {
+      // 产物本来就在工作区 generated/ 里：移动即可，别再下载再上传白占一份磁盘
+      if (artifactRef.value) {
+        const response = await relocateGeneratedArtifact(
+          artifactRef.value,
+          parentPath,
+          payload.name,
+        );
+        const savedPath = response.data?.data?.path || fullPath;
+        markContentSaved(savedPath, '');
+        showSaveDialog.value = false;
+        return;
+      }
+      // 没有产物 ID 的图片（外部链接等）只能走上传：
       // create-entry 只收文本（后端按 TEXT_PREVIEW_EXTENSIONS 白名单拒绝二进制），
-      // 图片必须走 upload：直接写文本会把图片存成坏文件。
+      // 直接写文本会把图片存成坏文件。
       const blob = await resolveGeneratedImageBlob();
       if (!blob) {
         showToast('图片内容读取失败，无法保存', 'error');
@@ -782,7 +823,16 @@ const handleDirectorySave = async (payload: { parentPath: string; name: string }
     showSaveDialog.value = false;
   } catch (err: any) {
     if (err.response?.status === 409) {
-      pendingOverwrite.value = { path: fullPath, content };
+      pendingOverwrite.value =
+        isImageGeneratedContent.value && artifactRef.value
+          ? {
+              kind: 'relocate',
+              path: fullPath,
+              artifactId: artifactRef.value,
+              parentPath,
+              name: payload.name,
+            }
+          : { kind: 'content', path: fullPath, content };
     } else if (err.response?.status !== 409) {
       const errMsg = err.response?.data?.detail || err.response?.data?.message || err.message || '保存失败';
       showToast(errMsg, 'error');
@@ -798,6 +848,19 @@ const confirmOverwrite = async () => {
   pendingOverwrite.value = null;
   saving.value = true;
   try {
+    if (pending.kind === 'relocate') {
+      // 产物迁址的覆盖：重发一次移动，带上 overwrite
+      const response = await relocateGeneratedArtifact(
+        pending.artifactId,
+        pending.parentPath,
+        pending.name,
+        { overwrite: true },
+      );
+      const savedPath = response.data?.data?.path || pending.path;
+      markContentSaved(savedPath, '');
+      showSaveDialog.value = false;
+      return;
+    }
     await saveWorkspaceFileContent({
       path: pending.path,
       content: pending.content,
@@ -1963,6 +2026,7 @@ const overlayBackdropClass = computed(() =>
   <ShareFileDialog
     :visible="!!shareTarget"
     :file-path="shareTarget?.path || ''"
+    :artifact-id="shareTarget?.artifactId || ''"
     :file-name="shareTarget?.name || ''"
     :file-size="shareTarget?.size || 0"
     @close="shareTarget = null"

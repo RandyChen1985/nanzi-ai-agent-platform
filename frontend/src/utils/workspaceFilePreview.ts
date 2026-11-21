@@ -409,6 +409,27 @@ export async function copyFileToWorkspace(sourcePath: string, targetDir?: string
   })
 }
 
+/**
+ * 把生成产物从 `generated/` 挪到指定目录（画布「保存到目录」用）。
+ *
+ * 产物本来就在工作区里，移动即可。过去是「取 blob 再上传」：同一张 5–6MB 的图会在
+ * `generated/` 和目标目录各留一份，中间还要过一遍浏览器内存。
+ *
+ * `overwrite` 只在用户点了「确认覆盖」之后传 true；默认后端会以 409 拒绝，不静默替换。
+ */
+export async function relocateGeneratedArtifact(
+  artifactId: string,
+  parentPath: string,
+  name?: string,
+  options: { overwrite?: boolean } = {},
+) {
+  return axios.post(`/api/v1/chat/generated-files/${artifactId}/relocate`, {
+    parent_path: parentPath,
+    name: name || null,
+    overwrite: !!options.overwrite,
+  })
+}
+
 export async function renameWorkspaceEntry(path: string, newName: string) {
   return axios.post('/api/v1/chat/fs/rename-entry', { path, new_name: newName })
 }

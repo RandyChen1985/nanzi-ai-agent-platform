@@ -34,7 +34,15 @@ export interface ShareExpiryPayload {
 }
 
 export interface CreateFileSharePayload {
-  path: string;
+  /**
+   * 工作区路径。与 `artifact_id` 二选一。
+   *
+   * 产物（生成的图片/导出件）落盘在 `<user_key>/generated/` 下，但工具交给前端的只有
+   * `download_url`，路径从没出过后端——所以产物场景改传 ID，由后端反查路径。
+   */
+  path?: string;
+  /** 产物 ID（download_url 里的 32 位 hex）。 */
+  artifact_id?: string;
   access_mode: 'public' | 'secret';
   secret?: string;
   expiry?: ShareExpiryPayload;

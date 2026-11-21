@@ -247,6 +247,11 @@ const props = withDefaults(
     visible: boolean
     /** 工作区路径（绝对路径或相对工作区根），原样交给后端解析与校验。 */
     filePath: string
+    /**
+     * 产物 ID。生成的图片只有 `download_url`、没有工作区路径，此时用 ID 让后端反查，
+     * 与 `filePath` 二选一即可。
+     */
+    artifactId?: string
     fileName: string
     fileSize?: number
     /** 嵌入场景由调用方注入 Bearer / X-API-Key，门户页不传（走 Cookie）。 */
@@ -254,6 +259,7 @@ const props = withDefaults(
   }>(),
   {
     fileSize: 0,
+    artifactId: '',
     authHeaders: undefined,
   },
 )
@@ -396,7 +402,7 @@ function openPreview(): void {
 }
 
 async function submit(): Promise<void> {
-  if (!props.filePath) {
+  if (!props.filePath && !props.artifactId) {
     errorMessage.value = '缺少文件路径，无法分享'
     return
   }
@@ -419,7 +425,8 @@ async function submit(): Promise<void> {
   try {
     const created = await createFileShare(
       {
-        path: props.filePath,
+        path: props.filePath || undefined,
+        artifact_id: props.artifactId || undefined,
         access_mode: accessMode.value,
         secret: accessMode.value === 'secret' ? secret.value.trim() : undefined,
         expiry,
