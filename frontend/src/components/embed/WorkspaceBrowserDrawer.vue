@@ -1836,7 +1836,9 @@ const submitBatchDelete = async () => {
   if (plan.skipped.length > 0) summary.push(`${plan.skipped.length} 项只读已跳过`)
   if (summary.length > 0) showToast(summary.join('，'), 'success')
   if (failed.length > 0) {
-    showToast(`${failed.length} 项删除失败：${failed[0].name} — ${failed[0].error}`, 'error')
+    // failed.length 已 > 0，取首项只是让索引访问的类型成立
+    const first = failed[0]
+    showToast(`${failed.length} 项删除失败：${first?.name} — ${first?.error}`, 'error')
   }
 
   await fetchDirectory(currentPath.value, { preserveSearch: true })

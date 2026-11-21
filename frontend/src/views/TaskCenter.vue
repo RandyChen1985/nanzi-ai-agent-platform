@@ -922,8 +922,9 @@ watch([cronMode, cronConfig], () => {
   try {
       let expr = ''
       const [h, m] = (time || '00:00').split(':').map(Number)
-      // 若 time 被清空或格式非法，h/m 可能是 NaN，直接 bail out
-      if (isNaN(h) || isNaN(m)) {
+      // 若 time 被清空或格式非法，h/m 可能是 NaN 或缺失，直接 bail out。
+      // 下标访问在 noUncheckedIndexedAccess 下是 `number | undefined`，先判一下。
+      if (h === undefined || m === undefined || isNaN(h) || isNaN(m)) {
         console.warn('Invalid time value, skipping cron build')
         return
       }
@@ -1149,7 +1150,7 @@ const filteredTasks = computed(() => {
 })
 
 const toastState = ref({ show: false, message: '', type: 'success' as any })
-const showToast = (message: string, type: 'success' | 'error' | 'warning' = 'success') => {
+const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'success') => {
   toastState.value = { show: true, message, type }
 }
 

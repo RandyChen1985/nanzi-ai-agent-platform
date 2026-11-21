@@ -5,6 +5,7 @@
  * 这样 EmbedChat 与 AgentDebug 能共用同一份逻辑。
  */
 import axiosDefault from "axios";
+import type { AxiosInstance } from "axios";
 import { ref } from "vue";
 
 import type { PinnedConversationSnapshot } from "./useChatHistoryGroups";
@@ -28,7 +29,7 @@ export function usePinnedConversations(options: {
    * HTTP 客户端。宿主页面传 `@/utils/axios`（带超时与统一错误处理）；
    * 挂件不传，保持原来直接走裸 axios 的行为。
    */
-  client?: typeof axiosDefault;
+  client?: typeof axiosDefault | AxiosInstance;
 } = {}) {
   const client = options.client ?? axiosDefault;
   const pinned = ref<PinnedConversationSnapshot[]>([]);

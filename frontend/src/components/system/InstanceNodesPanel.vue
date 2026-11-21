@@ -24,7 +24,6 @@ import {
   CheckCircleIcon,
   CircleStackIcon,
   CpuChipIcon,
-  ClockIcon,
   ChevronDownIcon,
   InformationCircleIcon
 } from '@heroicons/vue/24/outline'
@@ -146,7 +145,8 @@ const fetchedAt = ref(Date.now())
 // 详情抽屉
 const selectedHost = ref<string | null>(null)
 const detailSeries = ref<SeriesPoint[]>([])
-const detailRange = ref<24>(24)
+// 用 number 而不是字面量 24：changeRange 会把小时数改成其它档位
+const detailRange = ref<number>(24)
 const detailLoading = ref(false)
 
 // 别名编辑

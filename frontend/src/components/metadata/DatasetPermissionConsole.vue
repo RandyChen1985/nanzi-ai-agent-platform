@@ -298,7 +298,8 @@ const clearColRule = (tableId: number) => {
 const pruneColRules = () => {
   const alive = new Set(draftActiveTables.value.map((t) => t.id))
   Object.keys(draft.columns).forEach((key) => {
-    if (!alive.has(Number(key))) delete draft.columns[key]
+    // columns 是以数字为键的表，key 来自 Object.keys 是字符串
+    if (!alive.has(Number(key))) delete draft.columns[Number(key)]
   })
   if (colDetailTableId.value !== null && !alive.has(colDetailTableId.value)) {
     colDetailTableId.value = null
@@ -744,7 +745,8 @@ const columnScopeStats = computed(() => {
     grantsWithRules += 1
     for (const key of keys) {
       tableIds.add(Number(key))
-      if (rules[Number(key)].mode === 'include') includeTables += 1
+      const rule = rules[Number(key)]
+      if (rule?.mode === 'include') includeTables += 1
       else excludeTables += 1
     }
   }
@@ -1665,7 +1667,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
                     <template v-if="expiryFallback.definite">
                       届时改由<strong>{{ expiryFallback.fallback }}</strong>接管 ——
                       <template v-if="expiryFallback.tableWider">
-                        现在是 {{ expiryFallback.tableCount }} 张表，到期后是<strong>{{ expiryFallback.certain.replace('全员授权', '') }}</strong>。
+                        现在是 {{ expiryFallback.tableCount }} 张表，到期后是<strong>{{ (expiryFallback.certain || '').replace('全员授权', '') }}</strong>。
                       </template>
                       <template v-if="expiryFallback.rowWider">
                         现在配的自定义行级条件也会失效，回落到接管方的行级策略。

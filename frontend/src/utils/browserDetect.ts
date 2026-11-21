@@ -28,6 +28,17 @@ export const MIN_RECOMMENDED_VERSIONS: Record<string, number> = {
 }
 
 /**
+ * 取正则的首个捕获组。
+ *
+ * `noUncheckedIndexedAccess` 下 `match[1]` 是 `string | undefined`，而下面的分支
+ * 都已在「match 命中」之内，捕获组必然存在。用一个取值函数收口，比在十几处写
+ * 非空断言或 `?? ''` 更清楚。
+ */
+function capture(match: RegExpMatchArray | null, group = 1): string {
+  return match?.[group] ?? '';
+}
+
+/**
  * 解析用户代理字符串，提取浏览器名称和版本
  */
 export function parseBrowserInfo(userAgent: string): { name: string; version: string; majorVersion: number } {
@@ -38,8 +49,8 @@ export function parseBrowserInfo(userAgent: string): { name: string; version: st
     let ver = '11.0'
     const msieMatch = ua.match(/MSIE\s([0-9.]+)/i)
     const rvMatch = ua.match(/rv:([0-9.]+)/i)
-    if (msieMatch) ver = msieMatch[1]
-    else if (rvMatch) ver = rvMatch[1]
+    if (msieMatch) ver = capture(msieMatch)
+    else if (rvMatch) ver = capture(rvMatch)
     const major = parseInt(ver, 10) || 11
     return { name: 'Internet Explorer', version: ver, majorVersion: major }
   }
@@ -47,7 +58,7 @@ export function parseBrowserInfo(userAgent: string): { name: string; version: st
   // 2. Microsoft Edge (Edg/ or Edge/)
   const edgeMatch = ua.match(/Edg(?:e)?\/([0-9.]+)/i)
   if (edgeMatch) {
-    const ver = edgeMatch[1]
+    const ver = capture(edgeMatch)
     const major = parseInt(ver, 10) || 0
     return { name: 'Edge', version: ver, majorVersion: major }
   }
@@ -55,7 +66,7 @@ export function parseBrowserInfo(userAgent: string): { name: string; version: st
   // 3. Opera (OPR/)
   const operaMatch = ua.match(/OPR\/([0-9.]+)/i)
   if (operaMatch) {
-    const ver = operaMatch[1]
+    const ver = capture(operaMatch)
     const major = parseInt(ver, 10) || 0
     return { name: 'Opera', version: ver, majorVersion: major }
   }
@@ -63,7 +74,7 @@ export function parseBrowserInfo(userAgent: string): { name: string; version: st
   // 4. Firefox
   const firefoxMatch = ua.match(/(?:Firefox|FxiOS)\/([0-9.]+)/i)
   if (firefoxMatch) {
-    const ver = firefoxMatch[1]
+    const ver = capture(firefoxMatch)
     const major = parseInt(ver, 10) || 0
     return { name: 'Firefox', version: ver, majorVersion: major }
   }
@@ -71,7 +82,7 @@ export function parseBrowserInfo(userAgent: string): { name: string; version: st
   // 5. Chrome / Chromium (需在 Edge, Opera 等之后判定)
   const chromeMatch = ua.match(/(?:Chrome|CriOS)\/([0-9.]+)/i)
   if (chromeMatch) {
-    const ver = chromeMatch[1]
+    const ver = capture(chromeMatch)
     const major = parseInt(ver, 10) || 0
     return { name: 'Chrome', version: ver, majorVersion: major }
   }
@@ -79,7 +90,7 @@ export function parseBrowserInfo(userAgent: string): { name: string; version: st
   // 6. Safari (排除 Chrome/CriOS/Android 伪装)
   const safariMatch = ua.match(/Version\/([0-9.]+).*Safari/i)
   if (safariMatch && !/Chrome|Android|CriOS/i.test(ua)) {
-    const ver = safariMatch[1]
+    const ver = capture(safariMatch)
     const major = parseInt(ver, 10) || 0
     return { name: 'Safari', version: ver, majorVersion: major }
   }

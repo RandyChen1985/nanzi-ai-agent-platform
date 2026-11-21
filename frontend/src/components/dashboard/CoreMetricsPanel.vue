@@ -1,7 +1,7 @@
 <template>
   <div class="flex flex-col">
     <div
-      v-for="(item, index) in items"
+      v-for="item in items"
       :key="item.label"
       class="flex items-center justify-between gap-3 border-b border-dashed border-[#e8edf3] py-3 last:border-b-0 last:pb-0.5 first:pt-0.5"
     >

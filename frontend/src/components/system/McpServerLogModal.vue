@@ -8,7 +8,6 @@ import {
   ArrowPathIcon,
   ClipboardDocumentIcon,
   CheckIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
   ClockIcon,
   CheckCircleIcon,

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && node --max-old-space-size=4096 ./node_modules/vite/bin/vite.js build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "vue-tsc -b"
   },
   "dependencies": {
     "@codemirror/lang-python": "^6.2.1",

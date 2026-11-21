@@ -1795,6 +1795,11 @@ interface Message {
   agentType?: string;
   isSavedReportResult?: boolean;
   isThoughtExpanded?: boolean; // Toggle for the logs block
+  /**
+   * 本次工具调用的生效超时秒数（后端 `agent_max_toolcall_timeout_seconds` 三级解析后的值）。
+   * agentscopeSseHandlers 在收到 run_config 时写到消息上，时间线据此显示「超时 x 秒」。
+   */
+  agentMaxToolcallTimeoutSeconds?: number;
   thoughtStartTime?: number; // Timestamp when thinking started
   thoughtDuration?: string; // Duration in seconds (formatted)
   thinkingText?: string; // Dynamic thinking text
@@ -2001,13 +2006,6 @@ const clearContext = (key?: string) => {
 const openFullLogs = (traceId: string) => {
   activeTraceId.value = traceId;
   showFullLogViewer.value = true;
-};
-
-const openRawPrompt = (msg: Message) => {
-  if (msg.rawPrompt) {
-    selectedRawPrompt.value = msg.rawPrompt;
-    showRawPromptModal.value = true;
-  }
 };
 
 const openExecutionDetail = (msg: Message) => {
@@ -2964,7 +2962,15 @@ const handleChatBIResultAction = async (
   }
 };
 
-const handleQuickQuestion = async (question: string, action: "send" | "fill" = "send", sourceContent?: string) => {
+const handleQuickQuestion = async (
+  // MessageRenderer 在消息带 quickContext 时发的是
+  // `{ question, quick_context }` 对象而不是裸字符串。这里只收字符串的话，
+  // 对象会被当成问题正文直接发出去——所以按联合类型收，再取出 question。
+  payload: string | { question: string; quick_context?: unknown },
+  action: "send" | "fill" = "send",
+  sourceContent?: string,
+) => {
+  const question = typeof payload === "string" ? payload : payload.question;
   if (!question) return;
   if (action === "send" && (isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value || sendLocked.value)) return;
   const selectedSource = sourceContent?.trim();

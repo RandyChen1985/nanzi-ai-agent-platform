@@ -486,7 +486,9 @@ export const metadataApi = {
 
   // DB Connection Configs
   // 复制新建：实时查重（name + display_name 全平台唯一）
-  checkDatasetUnique: (params: { name: string; display_name?: string; exclude_id?: number }) =>
+  // 后端两个参数都是 Query 默认空串（只查 display_name 时传它即可，
+  // name 缺省会返回「请填写元数据 ID」的不可用结果）
+  checkDatasetUnique: (params: { name?: string; display_name?: string; exclude_id?: number }) =>
     axios.get<{ code: number; data: CloneUniqueResult }>(`${API_BASE}/datasets/check-unique`, { params }),
 
   // 复制新建：按向导草稿一次性建出数据集与全部子资源（单事务）

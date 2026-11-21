@@ -64,6 +64,8 @@ export interface FileShareItem {
   revoked_at: string | null;
   download_count: number;
   last_downloaded_at: string | null;
+  /** 在线预览次数：后端每渲染一次链接就 +1（file_shares.view_count） */
+  view_count?: number;
 }
 
 export interface FileShareListResponse {

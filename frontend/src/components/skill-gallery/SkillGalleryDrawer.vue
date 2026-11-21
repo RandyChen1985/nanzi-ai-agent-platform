@@ -68,14 +68,17 @@ function renderMarkdown(source: string): string {
   return blocks
     .map((block) => {
       const lines = block.split('\n')
-      if (/^### /.test(lines[0] || '')) {
-        return `<h3>${lines[0].slice(4)}</h3>${renderParagraph(lines.slice(1))}`
+      // 首行单独取出来：下标访问是 `string | undefined`，原先只在校验处补了 `|| ''`，
+      // 紧接着的 slice 仍会报「可能 undefined」
+      const head = lines[0] ?? ''
+      if (/^### /.test(head)) {
+        return `<h3>${head.slice(4)}</h3>${renderParagraph(lines.slice(1))}`
       }
-      if (/^## /.test(lines[0] || '')) {
-        return `<h3>${lines[0].slice(3)}</h3>${renderParagraph(lines.slice(1))}`
+      if (/^## /.test(head)) {
+        return `<h3>${head.slice(3)}</h3>${renderParagraph(lines.slice(1))}`
       }
-      if (/^# /.test(lines[0] || '')) {
-        return `<h2>${lines[0].slice(2)}</h2>${renderParagraph(lines.slice(1))}`
+      if (/^# /.test(head)) {
+        return `<h2>${head.slice(2)}</h2>${renderParagraph(lines.slice(1))}`
       }
       if (lines.every((line) => /^[-*] /.test(line))) {
         const items = lines.map((line) => `<li>${inline(line.slice(2))}</li>`).join('')
@@ -243,7 +246,7 @@ watch(
             {{ detail.summary }}
           </p>
 
-          <template v-if="detail.highlights.length">
+          <template v-if="detail.highlights?.length">
             <h3 class="mb-1.5 mt-5 text-[11px] font-bold uppercase tracking-wider text-gray-400">
               这个技能能做什么
             </h3>

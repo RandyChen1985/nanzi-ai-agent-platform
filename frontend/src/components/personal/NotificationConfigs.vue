@@ -850,7 +850,16 @@ const GUIDE_DATA: Record<string, ChannelGuide> = {
   }
 }
 
-const activeGuide = computed(() => GUIDE_DATA[currentGuideChannel.value] || GUIDE_DATA.dingtalk)
+/**
+ * 兜底指南。
+ *
+ * `GUIDE_DATA` 声明成 `Record<string, ChannelGuide>`，索引访问在
+ * `noUncheckedIndexedAccess` 下永远是 `ChannelGuide | undefined`——`|| GUIDE_DATA.dingtalk`
+ * 也带着 undefined，于是模板里 10 处 `activeGuide.xxx` 全部报「可能为 undefined」。
+ * 在这里断言一次，模板就不用处处补可选链。
+ */
+const GUIDE_FALLBACK = GUIDE_DATA.dingtalk as ChannelGuide
+const activeGuide = computed<ChannelGuide>(() => GUIDE_DATA[currentGuideChannel.value] ?? GUIDE_FALLBACK)
 
 const openGuide = (channel: 'dingtalk' | 'wechat_work' | 'feishu' | 'email') => {
   currentGuideChannel.value = channel

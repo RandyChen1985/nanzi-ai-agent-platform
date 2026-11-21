@@ -2445,6 +2445,15 @@ const connect = async () => {
       detected?: boolean;
       action?: string;
       detail?: string;
+      // captcha_trace：验证码解算的逐阶段轨迹（后端 browser_runtime._broadcast_captcha_trace）
+      at?: string;
+      phase?: string;
+      attempt?: number;
+      max_attempts?: number;
+      // captcha：AI 已放弃自动解算、需要人工接管（后端 set_ai_action "captcha_human_required"）
+      requires_human?: boolean;
+      // ai_action：结构化过程数据（目标坐标、滑块起点与拖动轨迹等）
+      extra?: Record<string, unknown> | null;
     };
     try {
       payload = JSON.parse(event.data) as {

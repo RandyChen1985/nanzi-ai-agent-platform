@@ -92,15 +92,6 @@ const createItem = (
   };
 };
 
-const compareFields = (
-  fields: Array<[string, string]>,
-  source: AIAgentVersion,
-  published: AIAgentVersion,
-): VersionDiffItem[] =>
-  fields.map(([key, label]) =>
-    createItem(key, label, source[key as keyof AIAgentVersion], published[key as keyof AIAgentVersion]),
-  );
-
 const normalizedNamedCollection = (value: unknown): Map<string, unknown> => {
   const result = new Map<string, unknown>();
   for (const entry of Array.isArray(value) ? value : []) {

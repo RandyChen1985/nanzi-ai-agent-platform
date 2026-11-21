@@ -96,7 +96,9 @@ export const listMountableDataSources = (rows: MountableItemLike[]): string[] =>
 export const countByVisibility = (rows: MountableItemLike[]): Record<string, number> => {
   const counts: Record<string, number> = { public: 0, team: 0, private: 0 };
   rows.forEach((item) => {
-    counts[visibilityOf(item)] += 1;
+    // 索引访问在 noUncheckedIndexedAccess 下是 `number | undefined`
+    const key = visibilityOf(item);
+    counts[key] = (counts[key] ?? 0) + 1;
   });
   return counts;
 };

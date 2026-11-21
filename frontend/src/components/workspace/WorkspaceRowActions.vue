@@ -59,7 +59,6 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import {
   buildWorkspaceActionEntries,
   buildWorkspaceItemMenuContext,
-  isExtractableArchive,
 } from "@/utils/workspaceActionEntries"
 import type { WorkspaceActionKey } from "@/utils/workspaceActionEntries"
 
@@ -67,6 +66,15 @@ interface RowItem {
   name: string
   path: string
   is_dir: boolean
+  /**
+   * 大小与修改时间。
+   *
+   * 行操作本身用不到它们，但页面把 `FsItem` 直接传进来，而下载 / 重命名 / 删除等
+   * 处理函数的签名都收 `FsItem`。缺这两个字段，RowItem 就不是 FsItem 的子类型，
+   * 参数逆变检查会让两处调用的 18 个事件绑定全部报「类型不兼容」。
+   */
+  size: number
+  mtime: number
   is_public?: boolean
   is_user_workspace?: boolean
 }

@@ -122,7 +122,6 @@ const persistReaderPrefs = () => {
   }
 };
 
-const READER_SCALE_STEP = 0.1;
 const zoomReader = (delta: number) => {
   const next = Math.min(1.4, Math.max(0.9, Number((readerScale.value + delta).toFixed(2))));
   readerScale.value = next;

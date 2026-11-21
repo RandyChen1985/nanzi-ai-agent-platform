@@ -155,7 +155,10 @@ const onPointerDown = (event: PointerEvent) => {
 
 const jump = (kind: "first" | "last") => {
   if (suppressClick) return;
-  emit(kind === "first" ? "jump-first" : "jump-last");
+  // emit 的 overload 按事件名区分，传联合类型匹配不到任何一个：
+  // 必须分支调用，让每次调用落到具体那个重载上
+  if (kind === "first") emit("jump-first");
+  else emit("jump-last");
 };
 
 onMounted(() => {

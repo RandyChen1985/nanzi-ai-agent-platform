@@ -1744,7 +1744,10 @@ const imageSizeChoices = computed(() =>
       // 判据用边长而不是写死某个值：白名单是管理员配的，写死一个尺寸迟早对不上。
       hint: (() => {
         const [w, h] = size.split(/[x*X×]/).map((n) => Number(n));
-        return Number.isFinite(w) && Number.isFinite(h) && Math.min(w, h) < 1024
+        // 下标访问是 `number | undefined`；多写一个维度缺失时按「不判定」处理
+        return (
+          w !== undefined && h !== undefined && Number.isFinite(w) && Number.isFinite(h) && Math.min(w, h) < 1024
+        )
           ? "边长小于 1024 的尺寸需要上游模型支持"
           : "";
       })(),

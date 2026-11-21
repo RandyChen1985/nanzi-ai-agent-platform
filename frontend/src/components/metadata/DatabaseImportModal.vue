@@ -115,6 +115,16 @@ const dbTypes = [
 
 const dbTypeIcon = (type: string) => dbTypes.find((item) => item.id === type)?.icon || CircleStackIcon
 const isDbTypeImage = (icon: unknown): icon is string => typeof icon === 'string'
+/**
+ * 可直接作为 `<img src>` 的图标地址。
+ *
+ * `dbTypeIcon` 可能返回组件（内置数据源没有图片），而 `:src` 只接受字符串。
+ * 组件型统一返回空串——模板里 v-if 已经把它分流到 `<component :is>` 了。
+ */
+const dbTypeIconSrc = (type: string): string => {
+  const icon = dbTypeIcon(type)
+  return typeof icon === 'string' ? icon : ''
+}
 
 // ─── 从数据源填充导入连接 ────────────────────────────────────────────────────────
 const applyDataSource = (c: DbConnectionConfig) => {
@@ -793,7 +803,7 @@ const dbTypeColor = (type: string) => {
                 :class="selectedConfigId === c.id ? 'border-primary bg-primary/5 shadow-sm' : 'border-gray-100 bg-white hover:border-gray-200 hover:bg-gray-50'"
               >
                 <div class="w-10 h-10 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center text-lg shrink-0">
-                  <img v-if="isDbTypeImage(dbTypeIcon(c.db_type))" :src="dbTypeIcon(c.db_type)" :alt="c.db_type" class="h-5 w-5 object-contain" />
+                  <img v-if="isDbTypeImage(dbTypeIcon(c.db_type))" :src="dbTypeIconSrc(c.db_type)" :alt="c.db_type" class="h-5 w-5 object-contain" />
                   <component v-else :is="dbTypeIcon(c.db_type)" class="w-5 h-5 text-slate-600" />
                 </div>
                 <div class="flex-1 min-w-0">
@@ -871,7 +881,7 @@ const dbTypeColor = (type: string) => {
             class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-100 shrink-0 text-[11px] min-w-0"
             title="追加导入仅允许从该数据源选表，不可切换其他数据源"
           >
-            <img v-if="isDbTypeImage(dbTypeIcon(lockedConfig?.db_type || config.type))" :src="dbTypeIcon(lockedConfig?.db_type || config.type)" :alt="lockedConfig?.db_type || config.type" class="h-4 w-4 shrink-0 object-contain" />
+            <img v-if="isDbTypeImage(dbTypeIcon(lockedConfig?.db_type || config.type))" :src="dbTypeIconSrc(lockedConfig?.db_type || config.type)" :alt="lockedConfig?.db_type || config.type" class="h-4 w-4 shrink-0 object-contain" />
             <component v-else :is="dbTypeIcon(lockedConfig?.db_type || config.type)" class="w-4 h-4 text-slate-600 shrink-0" />
             <span class="font-bold text-blue-800 shrink-0">数据源已锁定</span>
             <span class="text-blue-200 shrink-0">|</span>

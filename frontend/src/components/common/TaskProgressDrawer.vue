@@ -270,7 +270,9 @@ const startStream = async (url: string) => {
 }
 
 watch(
-  () => [props.open, props.streamUrl],
+  // `as const` 让 watch 源是元组而不是联合数组：否则 url 会被推断成
+  // `string | boolean`，收窄后仍是 `string | true`，传不进 startStream(url: string)
+  () => [props.open, props.streamUrl] as const,
   ([isOpen, url]) => {
     abortCurrent()
     if (isOpen && url) {

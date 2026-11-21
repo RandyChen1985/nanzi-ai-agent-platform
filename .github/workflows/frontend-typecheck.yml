@@ -1,0 +1,56 @@
+name: Frontend Typecheck
+
+# 前端类型门禁。
+#
+# 为什么需要单独一道：`frontend/package.json` 的 `build` 脚本里本来就有
+# `vue-tsc -b`，但 dev.sh / Dockerfile / docker/_build_common.sh 三处构建都直接跑
+# `npx vite build`，把它绕过去了；在仓库根跑 `vue-tsc --noEmit` 又是 project
+# references（files: []），什么都不查却 exit 0。于是 153 条类型错误长期无人拦。
+#
+# 现在基线是 0，这条流水线就是那道真正会红的门。
+
+on:
+  push:
+    branches: [main, dev-agentscope-mcp2.x]
+    paths:
+      - "frontend/**"
+      - "tests/frontend/**"
+      - ".github/workflows/frontend-typecheck.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "tests/frontend/**"
+      - ".github/workflows/frontend-typecheck.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: frontend-typecheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # 全量类型检查必须走 `vue-tsc -b`（project references 的增量构建）。
+      # 注意不要改回 `vue-tsc --noEmit`：根 tsconfig 是 files: [] + references，
+      # 那样跑等于什么都不检查。
+      - name: Typecheck (vue-tsc -b)
+        working-directory: frontend
+        # 类型检查比 vite 构建更吃堆内存，默认 2GB 在 CI 上会 OOM
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: npm run typecheck

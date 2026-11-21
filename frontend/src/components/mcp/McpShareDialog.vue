@@ -56,7 +56,7 @@ const urlEmbedsCredential = computed(() => {
   const [pathPart, queryPart = ''] = withoutOrigin.split('?')
   const looksSecret = (segment: string) =>
     /^[0-9a-f]{12,}$/i.test(segment) || /^[A-Za-z0-9_-]{24,}$/.test(segment)
-  if (pathPart.split('/').filter(Boolean).some(looksSecret)) return true
+  if ((pathPart ?? '').split('/').filter(Boolean).some(looksSecret)) return true
   const params = new URLSearchParams(queryPart)
   for (const key of ['token', 'access_token', 'key', 'apikey', 'api_key', 'sig', 'signature']) {
     if (params.get(key)) return true
