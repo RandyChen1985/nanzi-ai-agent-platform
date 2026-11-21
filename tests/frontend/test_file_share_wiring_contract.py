@@ -62,8 +62,13 @@ def test_directory_has_no_share():
     source = _read("frontend/src/utils/workspaceActionEntries.ts")
     # 只看 regular-item 分支里的目录返回块：切到 public-item 会把它的文件分支一起框进来
     start = source.index("if (isDir) {\n    return [\n      entry('open-dir', '打开目录', '📂'),")
-    end = source.index("const fileEntries", start)
-    assert "share" not in source[start:end]
+    # 切到目录 return 块的收尾，而不是「下一个变量声明」：文件分支前面会先算
+    # `shareable`（判断归属），用变量名当边界会把文件分支的 share 一起框进来。
+    end = source.index("\n    ]\n  }", start)
+    block = source[start:end]
+    # 断言精确到菜单项，而不是「块里不含 share 这个子串」——后者会被注释或变量名误伤
+    assert "entry('share'" not in block
+    assert 'entry("share"' not in block
 
 
 def test_row_actions_emits_share():
