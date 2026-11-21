@@ -301,11 +301,11 @@
                 @click="navigate(item.path)"
               >
                 <span class="text-base leading-none">📁</span>
-                <span class="truncate font-medium text-gray-800 hover:text-primary dark:text-gray-200">{{ item.name }}</span>
+                <span class="truncate font-medium text-gray-800 hover:text-primary dark:text-gray-200">{{ displayFileName(item.name) }}</span>
               </button>
               <div v-else class="flex min-w-0 items-center gap-2">
                 <span class="text-base leading-none">{{ fileEmoji(item.name) }}</span>
-                <span class="truncate text-gray-800 dark:text-gray-200" :title="item.path">{{ item.name }}</span>
+                <span class="truncate text-gray-800 dark:text-gray-200" :title="item.path">{{ displayFileName(item.name) }}</span>
               </div>
             </td>
             <td class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
@@ -360,8 +360,21 @@
               :title="item.path"
               @click="item.is_dir ? navigate(item.path) : handlePreview(item)"
             >
-              <div class="text-2xl leading-none">{{ item.is_dir ? "📁" : fileEmoji(item.name) }}</div>
-              <p class="mt-2 truncate text-xs font-medium text-gray-800 dark:text-gray-100">{{ item.name }}</p>
+              <div
+                class="mb-2 flex h-16 w-full items-center justify-center overflow-hidden rounded-lg bg-gray-50 dark:bg-gray-800/60"
+              >
+                <img
+                  v-if="isImageItem(item) && !thumbFailed[item.path]"
+                  :src="resolveFsPreviewUrl(item.path)"
+                  :alt="displayFileName(item.name)"
+                  loading="lazy"
+                  decoding="async"
+                  class="h-full w-full object-cover"
+                  @error="onThumbError(item.path)"
+                />
+                <span v-else class="text-2xl leading-none">{{ item.is_dir ? "📁" : fileEmoji(item.name) }}</span>
+              </div>
+              <p class="mt-2 truncate text-xs font-medium text-gray-800 dark:text-gray-100">{{ displayFileName(item.name) }}</p>
               <p class="mt-0.5 text-[10px] text-gray-400">{{ item.is_dir ? "文件夹" : formatSize(item.size) }}</p>
             </button>
             <input
@@ -472,7 +485,9 @@ import { useWorkspaceUploadQueue } from "@/composables/useWorkspaceUploadQueue"
 import { isExtractableArchive, isPublicWorkspaceItem } from "@/utils/workspaceActionEntries"
 import { copyFileToWorkspace } from "@/utils/workspaceFilePreview"
 import { parentDirectoryOf } from "@/utils/workspacePath"
+import { displayFileName } from "@/utils/workspaceFileName"
 import {
+  IMAGE_EXTENSIONS,
   canPreviewWorkspaceFile,
   copyTextToClipboard,
   createWorkspaceEntry,
@@ -553,6 +568,26 @@ const TYPE_GROUPS: Record<string, string[]> = {
 }
 
 const extOf = (name: string) => (name.split(".").pop() || "").toLowerCase()
+
+/**
+ * 卡片缩略图只对后端 preview 真正放行的图片类型出图。
+ *
+ * 用 `IMAGE_EXTENSIONS` 而不是 `fileEmoji` 里那份更宽的表：那张表含 svg，
+ * 但 `/fs/preview` 的白名单（`IMAGE_PREVIEW_EXTENSIONS`）里没有它，给 svg 出图
+ * 只会换来一串注定失败的请求。
+ */
+const isImageItem = (item: FsItem) => !item.is_dir && IMAGE_EXTENSIONS.has(`.${extOf(item.name)}`)
+
+/**
+ * 读取失败的缩略图退回 emoji。
+ *
+ * 坏文件、被移走的文件、以及不属于当前用户的路径都会让 preview 返回错误；
+ * 不兜这一下，卡片里就会留一块空白，用户不知道那里到底有没有文件。
+ */
+const thumbFailed = ref<Record<string, boolean>>({})
+const onThumbError = (path: string) => {
+  thumbFailed.value = { ...thumbFailed.value, [path]: true }
+}
 
 const visibleItems = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
@@ -837,13 +872,13 @@ const handlePreview = (item: Pick<FsItem, "path" | "name">) => {
     showToast("该格式不支持预览，请下载后查看", "warning")
     return
   }
-  void handleOpenCanvas(buildWorkspaceCanvasPayload(item.path, item.name))
+  void handleOpenCanvas(buildWorkspaceCanvasPayload(item.path, displayFileName(item.name)))
 }
 
 const handleDownload = (item: FsItem) => {
   void downloadWorkspaceFile({
     path: item.path,
-    name: item.name,
+    name: displayFileName(item.name),
     showToast: (message: string, type?: "success" | "error" | "warning" | "info") => showToast(message, type || "info"),
   })
 }
@@ -852,7 +887,7 @@ const handleDownload = (item: FsItem) => {
 const shareTarget = ref<null | { path: string; name: string; size: number }>(null)
 
 const openShare = (item: FsItem) => {
-  shareTarget.value = { path: item.path, name: item.name, size: item.size }
+  shareTarget.value = { path: item.path, name: displayFileName(item.name), size: item.size }
 }
 
 const handleShareCreated = () => {
@@ -967,7 +1002,7 @@ const askExtract = (item: FsItem) => {
   }
   confirmAction.value = {
     title: "解压",
-    message: `将「${item.name}」解压到当前目录下的同名文件夹。`,
+    message: `将「${displayFileName(item.name)}」解压到当前目录下的同名文件夹。`,
     confirmText: "解压",
     run: async () => {
       const subdir = item.name.replace(/\.(tar\.gz|tgz|tar|zip)$/i, "")
@@ -1000,7 +1035,7 @@ const askDelete = (item: FsItem) => {
   confirmAction.value = permanent
     ? {
         title: "永久删除",
-        message: `「${item.name}」属于公共目录，删除后无法恢复，也不会进入回收站。`,
+        message: `「${displayFileName(item.name)}」属于公共目录，删除后无法恢复，也不会进入回收站。`,
         confirmText: "永久删除",
         run: async () => {
           await deleteWorkspaceEntry(item.path)
@@ -1010,7 +1045,7 @@ const askDelete = (item: FsItem) => {
       }
     : {
         title: "移到回收站",
-        message: `「${item.name}」会被移到回收站，可以再还原回来。`,
+        message: `「${displayFileName(item.name)}」会被移到回收站，可以再还原回来。`,
         confirmText: "移到回收站",
         run: async () => {
           await deleteWorkspaceEntry(item.path)
@@ -1023,7 +1058,7 @@ const askDelete = (item: FsItem) => {
 const askPurge = (item: FsItem) => {
   confirmAction.value = {
     title: "彻底删除",
-    message: `「${item.name}」将无法恢复，确定删除吗？`,
+    message: `「${displayFileName(item.name)}」将无法恢复，确定删除吗？`,
     confirmText: "彻底删除",
     run: async () => {
       await purgeWorkspaceEntry(item.path)
