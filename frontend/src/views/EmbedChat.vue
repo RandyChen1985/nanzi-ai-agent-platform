@@ -3115,7 +3115,9 @@ interface ChatSendOverrides {
 interface QuickQuestionContext {
   source: "chatbi_result";
   result_id?: string;
-  requires_fresh_data: true;
+  // 与 MessageRenderer 的 quickContext 对齐：那边声明的是 boolean，
+  // 写死成 true 会让「带快捷上下文的问题」这件事在类型上对不上
+  requires_fresh_data: boolean;
 }
 
 interface QuickQuestionPayload {
@@ -3186,6 +3188,11 @@ interface Message {
   processTimeline?: import("@/utils/processTimeline").ProcessTimelineItem[];
   isProcessNarrationExpanded?: boolean;
   isCitationsExpanded?: boolean;
+  /**
+   * 本次工具调用的生效超时秒数（后端 `agent_max_toolcall_timeout_seconds` 三级解析后的值）。
+   * agentscopeSseHandlers 在收到 run_config 时写到消息上，时间线据此显示「超时 x 秒」。
+   */
+  agentMaxToolcallTimeoutSeconds?: number;
   thoughtStartTime?: number;
   thoughtDuration?: string;
   thinkingText?: string;
@@ -6297,6 +6304,8 @@ const currentStreamAgentMessage = (): Message | null => {
   if (activeStreamDraft?.msg) return activeStreamDraft.msg;
   for (let index = messages.value.length - 1; index >= 0; index -= 1) {
     const candidate = messages.value[index];
+    // index 从 length-1 递减，越界不可能；守卫只为让索引访问的类型成立
+    if (!candidate) continue;
     // 首屏历史末尾是 system 分隔符（"以上是历史会话…"），不是本轮助手消息；
     // 收尾绝不能落到它身上。
     if (candidate.role === "system") continue;
@@ -6308,7 +6317,8 @@ const currentStreamAgentMessage = (): Message | null => {
 
 const currentStreamUserMessage = (): Message | undefined => {
   for (let index = messages.value.length - 1; index >= 0; index -= 1) {
-    if (messages.value[index].role === "user") return messages.value[index];
+    const candidate = messages.value[index];
+    if (candidate?.role === "user") return candidate;
   }
   return undefined;
 };
@@ -6923,7 +6933,9 @@ const settleRecoveredTimeline = () => {
       });
     }
     msg.isThinking = false;
-    msg.processNarrationPending = false;
+    // 该字段是 string（与 agentscopeSseHandlers 里清空时的 "" 一致），
+    // 原先赋 false 会把它变成非字符串，下游按字符串处理时语义不确定
+    msg.processNarrationPending = "";
   }
   if (thoughtTimer) {
     clearInterval(thoughtTimer);
@@ -7107,7 +7119,6 @@ watch(conversationId, () => {
 const { contextUsage, refreshContextUsage } = useContextUsage();
 const {
   sandboxWorkspaceStatus,
-  sandboxWorkspaceStatusLoaded,
   sandboxWorkspaceError,
   sandboxWorkspaceInstanceId,
   sandboxWorkspaceStartedAt,
@@ -7117,22 +7128,20 @@ const {
   sandboxWarmHintSubtitle,
   dismissSandboxWarmHint,
   showSandboxWarmHint,
-  effectiveSandboxPolicy,
   sandboxBackend,
+  // 策略徽标（docker / k8s）与「是否沙箱工作区」的判定还没接到 UI 上，
+  // 但状态机与端点已由 useSandboxWorkspace 抽出，解构保留作为后续接线的入口。
+  effectiveSandboxPolicy,
   isSandboxWorkspacePolicy,
   showSandboxStopConfirm,
   showDockerTerminal,
   showK8sTerminal,
-  resetSandboxWorkspaceState,
   refreshSandboxWorkspaceStatus,
   sandboxWorkspaceRefreshing,
-  pollSandboxWorkspaceUntilRunning,
-  maybeAutoWarmSandbox,
   ensureSandboxWorkspace,
   openDockerTerminal,
   handleStopSandboxWorkspaceRequest,
   confirmStopSandboxWorkspace,
-  stopSandboxWorkspace,
   restartSandboxWorkspace,
 } = useSandboxWorkspace({
   conversationId,
@@ -7143,6 +7152,11 @@ const {
   preferToast: computed(() => windowWidth.value < 640),
   showToast,
 });
+
+// 显式消费上面两个尚未接线的值：只看不用的解构会被类型检查判成「声明未使用」，
+// 而它们确实是接线入口（见 useSandboxWorkspace 的注释放置处），不能直接删。
+void effectiveSandboxPolicy;
+void isSandboxWorkspacePolicy;
 const {
   contextCompactions,
   contextCompactionCount,
@@ -7302,10 +7316,6 @@ const checkConversationAdoption = async (
   }
   return 'unknown';
 };
-
-/** 仅用于「能否采用」的布尔判断（不采用即返回 false）。 */
-const isConversationAdoptable = async (cid: string): Promise<boolean> =>
-  (await checkConversationAdoption(cid)) === 'adoptable';
 
 /** 宿主下发的欢迎语覆盖文案：换身份时用于恢复「宿主口径」，而不是恢复上一位用户的姓名。 */
 let welcomeMessageFromHost = "";
@@ -9676,7 +9686,11 @@ const updateFullScreenStatus = () => {
 };
 
 // —— 移动端操作抽屉（<640px 专用）：一个抽屉、两个入口 ——
-const mobileActionsMessageId = ref<string | null>(null);
+// 存的是 Message.id（number）。原声明写成 string | null 与实际存的 number 不符：
+// 运行时赋值与比较用的是同一个值、=== 照样成立（抽屉能正常弹出），
+// 但类型层面挂着两处红（TS2322 赋值 / TS2367 比较），且一旦有人真按 string 存值
+// （例如给历史消息补一个字符串 id）就会静默失效，故让声明与事实一致。
+const mobileActionsMessageId = ref<number | null>(null);
 const mobileActionsFocus = ref<"data" | null>(null);
 
 const openMobileActions = (msg: Message, focus: "data" | null) => {
@@ -14457,7 +14471,8 @@ onMounted(() => {
           // 补内容，绝不能顺手清掉本轮仍在途的草稿。
           const lastLocalUserIndex = (() => {
             for (let index = messages.value.length - 1; index >= 0; index -= 1) {
-              if (messages.value[index].role === "user") return index;
+              const item = messages.value[index];
+              if (item?.role === "user") return index;
             }
             return -1;
           })();
@@ -14479,7 +14494,8 @@ onMounted(() => {
         const latestTrace = String(latestServerItem?.trace_id || "");
         let lastLocalUserIndex = -1;
         for (let index = messages.value.length - 1; index >= 0; index -= 1) {
-          if (messages.value[index].role === "user") {
+          const item = messages.value[index];
+          if (item?.role === "user") {
             lastLocalUserIndex = index;
             break;
           }
@@ -14496,7 +14512,7 @@ onMounted(() => {
           latestSyncedIndex > lastLocalUserIndex &&
           Boolean(latestServerItem?.query) &&
           Boolean(lastLocalUser) &&
-          String(lastLocalUser.content || "") === String(latestServerItem.query || "");
+          String(lastLocalUser?.content || "") === String(latestServerItem.query || "");
         if (latestSyncedIndex !== -1 && isLatestTurn) {
           if (activeStreamDraft) {
             finishRecoveredTurn();

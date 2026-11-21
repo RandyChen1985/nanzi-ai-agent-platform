@@ -152,6 +152,30 @@ def split_workspace_path(rel_from_root: str) -> Tuple[str, str]:
     return head, tail
 
 
+def assert_share_path_belongs_to_owner(workspace_key: str, owner_key: str) -> None:
+    """分享只能落在**本人**工作区目录下。
+
+    为什么光校验「在 workspace_root 之内」不够：``workspace_root`` 是**所有用户**工作区的
+    共同父目录（``data/agent_workspaces/``），里面的 ``owner__1``、``owner__2`` 是并列的。
+    只做前缀校验时，两种入参都能指向别人的文件：
+
+    - 绝对路径 ``/data/agent_workspaces/other__2/docs/a.xlsx``；
+    - 相对路径 ``other__2/docs/a.xlsx``（首段目录存在时不会被补成本人目录名）。
+
+    结果是任何登录用户只要知道路径，就能把他人文件做成**公开可访问**的分享链接，
+    而且分享人还会被记成他自己。
+
+    管理员持有 ``admin_all`` 的**浏览**范围，但浏览不等于可以生成公开链接：
+    要分享他人/公共内容，走「复制到我的工作区再分享」这条既有路径。
+
+    用严格相等而不是前缀比较：``admin__1`` 与 ``admin__10``、``admin__1x`` 是不同用户。
+    """
+    if not owner_key:
+        raise FileShareTargetError("无法确定分享人")
+    if workspace_key != owner_key:
+        raise FileShareTargetError("只能分享本人工作区内的文件")
+
+
 def compute_sha256(abs_path: str) -> str:
     """分块计算文件内容指纹：大文件也不会一次性读进内存。"""
     digest = hashlib.sha256()
@@ -269,14 +293,53 @@ async def _resolve_shared_file_path(
     return abs_path
 
 
+async def _artifact_storage_path(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    artifact_id: str,
+) -> str:
+    """按产物 ID 找回它在工作区里的真实路径。
+
+    生成类产物（图片、导出件）落盘在 ``<user_key>/generated/`` 下，但工具交给模型/前端的
+    只有 ``download_url``（带 artifact_id + token），路径本身从没出过后端。前端因此把它
+    判成「未落盘」，分享入口置灰——文件其实早就在工作区里了。这里让后端自己认 ID，
+    既补上这段链路，也不必把服务器路径暴露给浏览器。
+
+    归属不符与不存在报同一句话：不能拿 artifact_id 试探别人的产物。
+    """
+    from app.models.artifact import AiArtifact
+
+    artifact_key = str(artifact_id or "").strip()
+    if not artifact_key:
+        raise FileShareTargetError("产物 ID 为空")
+
+    try:
+        owner_id = int(user_id)
+    except (TypeError, ValueError) as exc:
+        raise FileShareTargetError("无法确定分享人") from exc
+
+    result = await db.execute(
+        select(AiArtifact.storage_path).where(
+            AiArtifact.id == artifact_key,
+            AiArtifact.owner_user_id == owner_id,
+        )
+    )
+    storage_path = result.scalar_one_or_none()
+    if not storage_path:
+        raise FileShareTargetError("产物不存在或不属于当前用户")
+    return str(storage_path)
+
+
 async def create_share(
     db: AsyncSession,
     *,
     user_info: Dict[str, Any],
-    raw_path: str,
+    raw_path: Optional[str] = None,
     access_mode: str = "secret",
     secret: Optional[str] = None,
     expiry: Optional[Dict[str, Any]] = None,
+    artifact_id: Optional[str] = None,
 ) -> FileShare:
     """创建一条文件分享。
 
@@ -285,6 +348,9 @@ async def create_share(
     - 绝对路径，且必须位于工作区根之内；
     - 相对工作区根的路径，如 ``admin__1/docs/报表.xlsx`` 或 ``docs/报表.xlsx``（后者按
       当前用户的目录名补齐）。
+
+    ``artifact_id`` 是另一条入口：生成类产物由前端只拿到 ``download_url``，后端按 ID 反查
+    ``ai_artifacts.storage_path`` 得到同一个绝对路径，后面走完全相同的校验。两者给其一即可。
     """
     from app.services.ai.runtime.agentscope.workspace import (
         extract_workspace_identity,
@@ -298,8 +364,22 @@ async def create_share(
         raise FileShareTargetError("无法确定分享人")
 
     raw_text = str(raw_path or "").strip().replace("\\", "/")
-    if not raw_text:
+    if artifact_id:
+        # 产物形态：前端只有 download_url，路径由后端自己查
+        raw_text = await _artifact_storage_path(db, user_id=user_id, artifact_id=artifact_id)
+    elif not raw_text:
         raise FileShareTargetError("路径为空")
+
+    # 本人工作区目录名：两种路径形态都要用它做归属校验，所以先算出来
+    resolved_id, resolved_name = extract_workspace_identity(
+        user_id=user_id,
+        user_name=str((user_info or {}).get("username") or "") or None,
+        user_info=user_info,
+    )
+    owner_key = resolve_workspace_user_key(
+        user_id=resolved_id,
+        user_name=resolved_name,
+    )
 
     if os.path.isabs(raw_text):
         real_root = os.path.realpath(workspace_root)
@@ -314,18 +394,11 @@ async def create_share(
             raise FileShareTargetError("路径必须指向文件")
         user_root_prefixed = os.path.join(workspace_root, rel_from_root.split("/")[0])
         if not os.path.isdir(user_root_prefixed):
-            resolved_id, resolved_name = extract_workspace_identity(
-                user_id=user_id,
-                user_name=str((user_info or {}).get("username") or "") or None,
-                user_info=user_info,
-            )
-            user_key = resolve_workspace_user_key(
-                user_id=resolved_id,
-                user_name=resolved_name,
-            )
-            rel_from_root = f"{user_key}/{rel_from_root}"
+            rel_from_root = f"{owner_key}/{rel_from_root}"
 
     workspace_key, rel_path = split_workspace_path(rel_from_root)
+    # 过了「在 workspace_root 之内」还不够：root 是所有用户的共同父目录
+    assert_share_path_belongs_to_owner(workspace_key, owner_key)
 
     abs_path = resolve_share_abs_path(
         workspace_root=workspace_root,

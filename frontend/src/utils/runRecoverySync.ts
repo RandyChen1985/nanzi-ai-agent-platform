@@ -110,10 +110,12 @@ const readTime = (value: unknown): number | null => {
  */
 const localWatermark = (messages: HistorySyncMessage[]): HistorySyncMessage | null => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (isSystemMessage(messages[index])) return messages[index];
+    const item = messages[index];
+    if (item && isSystemMessage(item)) return item;
   }
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.isHistory === true) return messages[index];
+    const item = messages[index];
+    if (item?.isHistory === true) return item;
   }
   return null;
 };

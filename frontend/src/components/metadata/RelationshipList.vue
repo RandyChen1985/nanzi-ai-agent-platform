@@ -98,10 +98,13 @@ const targetColumns = computed(() => {
 type SelectOption = { value: string | number; label: string; keywords: string[] };
 type SelectGroup = { label?: string; options: SelectOption[] };
 
-const tableOption = (t: Table): SelectOption => ({
-  value: t.id as number,
+// 只依赖这三个字段：本地表的 Table 与跨数据集返回的表结构不完全一致，
+// 按最小结构声明比要求完整 Table 更合适
+const tableOption = (t: { id?: number; physical_name: string; term?: string }): SelectOption => ({
+  // 表没有 id 时无法作为下拉选项；调用方已先 filter 掉，这里兜个 0 只为止住类型
+  value: t.id ?? 0,
   label: `${t.physical_name}${t.term ? ` (${t.term})` : ""}`,
-  keywords: [t.physical_name, t.term].filter(Boolean),
+  keywords: [t.physical_name, t.term ?? ""].filter(Boolean),
 });
 
 const columnOption = (col: { physical_name: string; term: string }): SelectOption => ({
@@ -118,7 +121,7 @@ const sourceTableGroups = computed<SelectGroup[]>(() => [
 const targetTableGroups = computed<SelectGroup[]>(() => {
   const localIds = new Set(props.tables.map((t) => t.id));
   const groups: SelectGroup[] = [
-    { label: "当前数据集", options: sourceTableGroups.value[0].options },
+    { label: "当前数据集", options: sourceTableGroups.value[0]?.options ?? [] },
   ];
   for (const ds of allTablesList.value) {
     const options = ds.tables

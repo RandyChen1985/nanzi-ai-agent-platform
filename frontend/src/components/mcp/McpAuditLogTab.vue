@@ -16,7 +16,6 @@ import {
   DocumentTextIcon,
   ServerIcon,
   MagnifyingGlassIcon,
-  FunnelIcon,
 } from '@heroicons/vue/24/outline'
 
 const { showToast } = useToast()

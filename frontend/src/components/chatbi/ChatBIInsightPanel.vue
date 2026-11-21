@@ -499,10 +499,6 @@ function openExportMenu() {
   exportMenuOpen.value = !exportMenuOpen.value;
 }
 
-function closeExportMenu() {
-  exportMenuOpen.value = false;
-}
-
 async function pickExportFormat(fmt: ExportFormat) {
   const m = props.meta;
   if (!m?.final_sql || exportingDetail.value) return;

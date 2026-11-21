@@ -47,6 +47,14 @@ export interface WorkspaceMenuContext {
   scene: WorkspaceMenuScene
   target?: WorkspaceActionTarget
   isAdminScope?: boolean
+  /**
+   * 本人私有工作区根。
+   *
+   * 管理员的范围是 `admin_all`，能浏览任何人的目录，但「能看」不等于「能分享」：
+   * 分享链接在 public_router 上公开可读、access_mode 还能选 public 免密码，
+   * 后端因此把分享收紧成 owner 严格相等。场景判定要拿它区分「我的」与「别人的」。
+   */
+  userWorkspaceRoot?: string | null
   /** 系统保护目录（docs / skills / branding / agent_workspaces）不可重命名或删除。 */
   isSystemProtected?: boolean
   /** 当前条目是否可管理（用户工作区根目录本身不可重命名/删除）。缺省视为可管理。 */
@@ -92,6 +100,21 @@ export function isPathUnderRoot(path: string, root: string): boolean {
   const base = normalizeComparablePath(root)
   if (!target || !base) return false
   return target === base || target.startsWith(`${base}/`)
+}
+
+/**
+ * 条目是否落在本人工作区根下——只有这种文件才允许分享。
+ *
+ * 判不出来（没有本人工作区根）时返回 true：宁可让后端拒绝，也不能凭空
+ * 禁掉用户分享自己的文件。
+ */
+export function canShareOwnedItem(
+  target: { path?: string } | null | undefined,
+  userWorkspaceRoot?: string | null,
+): boolean {
+  if (!target?.path) return false
+  if (!normalizeComparablePath(userWorkspaceRoot || '')) return true
+  return isPathUnderRoot(target.path, userWorkspaceRoot || '')
 }
 
 export interface WorkspacePublicityItem {
@@ -157,17 +180,19 @@ export interface WorkspaceItemMenuInput {
  */
 export function buildWorkspaceItemMenuContext(input: WorkspaceItemMenuInput): WorkspaceMenuContext {
   const { item, target } = input
-  if (input.isTrashRoot) return { scene: 'trash-root', target }
-  if (input.inTrash) return { scene: 'trash-item', target }
+  const userWorkspaceRoot = input.userWorkspaceRoot
+  if (input.isTrashRoot) return { scene: 'trash-root', target, userWorkspaceRoot }
+  if (input.inTrash) return { scene: 'trash-item', target, userWorkspaceRoot }
   if (isPublicWorkspaceItem(item, input.userWorkspaceRoot)) {
     return {
       scene: 'public-item',
       target,
+      userWorkspaceRoot,
       isAdminScope: !!input.isAdminScope,
       isSystemProtected: !!input.isSystemProtected,
     }
   }
-  return { scene: 'regular-item', target, canManage: input.canManage !== false }
+  return { scene: 'regular-item', target, userWorkspaceRoot, canManage: input.canManage !== false }
 }
 
 function mountEntry(isDir: boolean): WorkspaceActionEntry {
@@ -298,11 +323,20 @@ export function buildWorkspaceActionEntries(ctx: WorkspaceMenuContext): Workspac
     ]
   }
 
+  // 管理员浏览他人工作区时也走 regular-item（`is_public_fs_path` 只认公共目录，
+  // 别人的私有目录一律 false），所以分享权限必须在这里再判一次归属——
+  // 否则菜单可点、点完才收到「只能分享本人工作区的文件」。
+  const shareable = canShareOwnedItem(target, ctx.userWorkspaceRoot)
   const fileEntries: WorkspaceActionEntry[] = [
     previewEntry(target),
     entry('download', '下载文件', '⬇️'),
     // 分享紧跟下载：都属于「把这份文件交给别人」，挨着放才顺手
-    entry('share', '分享文件', '🔗'),
+    shareable
+      ? entry('share', '分享文件', '🔗')
+      : entry('share', '分享文件', '🔗', {
+          disabled: true,
+          disabledHint: '只能分享本人工作区的文件；要分享他人或公共内容，先复制到我的工作区',
+        }),
   ]
   const extract = extractEntry(target)
   if (extract) fileEntries.push(extract)

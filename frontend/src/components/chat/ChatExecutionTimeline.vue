@@ -827,6 +827,7 @@ import {
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
   isWorkspacePrewarmPending,
+  timelineItemChildren,
   type FileToolMetadata,
   type ProcessTimelineItem,
   type ProcessTimelineLogItem,
@@ -963,12 +964,15 @@ function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineIt
   // timelineItems 的依赖，导致每条工具进度都触发整棵时间线重算。
   return items.flatMap((item): ProcessTimelineItem[] => {
     if (item.kind === "log" && item.category === "permission") return [];
-    const children = item.children;
-    if (children?.length) {
-      const suppressed = suppressPermissionLogs(children as ProcessTimelineItem[]);
+    const children = timelineItemChildren(item);
+    if (children.length) {
+      const suppressed = suppressPermissionLogs(children);
       if (suppressed !== children) {
-        const projection = Object.create(item) as ProcessTimelineItem;
-        projection.children = suppressed;
+        // 仍然用原型投影（展开运算符会把 progress 登记成依赖）；topic 项的 children
+        // 只在投影对象上出现，因此赋值走 Object.assign 而不是直接写属性。
+        const projection = Object.assign(Object.create(item), {
+          children: suppressed,
+        }) as ProcessTimelineItem;
         return [projection];
       }
     }
@@ -1333,7 +1337,7 @@ function findWorkspacePrewarmPending(items: ProcessTimelineItem[]): boolean {
   // 因此不能只检查前两层，需递归检查每个 text/log 节点及其所有后代。
   const walk = (node: ProcessTimelineItem): boolean => {
     if (isWorkspacePrewarmPending(node)) return true;
-    for (const child of node.children || []) {
+    for (const child of timelineItemChildren(node)) {
       if (walk(child)) return true;
     }
     return false;

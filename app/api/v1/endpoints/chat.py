@@ -269,6 +269,56 @@ async def download_generated_file(
     )
 
 
+class RelocateGeneratedFilePayload(BaseModel):
+    """把产物挪到工作区目录：``parent_path`` 支持空 / 相对本人目录 / 相对工作区根。"""
+
+    parent_path: str = Field(default="", max_length=1024)
+    name: Optional[str] = Field(default=None, max_length=255)
+    #: 仅在用户确认覆盖后由前端传 true；默认不静默替换已有文件
+    overwrite: bool = False
+
+
+@router.post(
+    "/generated-files/{artifact_id}/relocate",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="把生成产物移动到工作区目录",
+    description=(
+        "画布「保存到目录」用：产物已在 <user_key>/generated/ 下，直接移动比"
+        "「下载再上传」省一份磁盘和一次浏览器内存往返，并同步更新 storage_path，"
+        "旧 download_url 继续可用。"
+    ),
+)
+async def relocate_generated_file(
+    artifact_id: str,
+    payload: RelocateGeneratedFilePayload,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    from app.services.ai.tools.generated_file_service import (
+        ArtifactRelocateConflict,
+        ArtifactRelocateError,
+        relocate_artifact,
+    )
+
+    owner_id = _require_numeric_chat_user_id(user_info)
+    try:
+        saved_path = await relocate_artifact(
+            db,
+            artifact_id=artifact_id,
+            owner_user_id=owner_id,
+            user_name=str(user_info.get("username") or user_info.get("user_name") or "") or None,
+            target_dir=payload.parent_path,
+            filename=payload.name,
+            overwrite=payload.overwrite,
+        )
+    except ArtifactRelocateConflict as exc:
+        # 前端已有 409 → 「确认覆盖」的既有流程，这里保持同一语义
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ArtifactRelocateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StandardResponse(data={"path": saved_path})
+
+
 class ArtifactListItem(BaseModel):
     id: str
     filename: str

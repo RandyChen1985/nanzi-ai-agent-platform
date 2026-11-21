@@ -58,6 +58,9 @@ export const tokenizeShellLike = (text: string): string[] => {
 
     for (let i = 0; i < text.length; i += 1) {
         const char = text[i]
+        // `text[i]` 在 noUncheckedIndexedAccess 下是 string | undefined；
+        // 循环条件已保证下标在界内，这里收口一次，后面就不用处处断言。
+        if (char === undefined) break
         if (quote) {
             if (char === quote) {
                 quote = null
@@ -143,7 +146,8 @@ const parseUrl = (
 
     const pathParams: string[] = []
     for (const found of `${path || ''}`.matchAll(PLACEHOLDER_RE)) {
-        if (!pathParams.includes(found[1])) pathParams.push(found[1])
+        const placeholder = found[1]
+        if (placeholder && !pathParams.includes(placeholder)) pathParams.push(placeholder)
     }
 
     const queryParams: ParsedQueryParam[] = []
@@ -196,6 +200,8 @@ const parseCurl = (text: string): ParsedRequest | ParseFailure => {
 
     for (let i = 0; i < rest.length; i += 1) {
         const token = rest[i]
+        // 同 text[i]：循环条件保证在界内，收口一次免得后面三处各写断言
+        if (token === undefined) continue
         const next = rest[i + 1]
 
         if (token === '-X' || token === '--request') {

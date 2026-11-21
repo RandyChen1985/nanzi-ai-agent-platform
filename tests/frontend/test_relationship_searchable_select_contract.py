@@ -84,8 +84,10 @@ def test_relationship_modal_uses_searchable_select_for_all_four_pickers():
     # 跨数据集分组语义保留
     assert '"当前数据集"' in source
     assert "[跨数据集]" in source
-    # 中文业务名参与搜索，否则只能搜英文物理名
-    assert "keywords: [t.physical_name, t.term]" in source
+    # 中文业务名参与搜索，否则只能搜英文物理名。
+    # term 在 Table 类型上是可选的，源码用 `?? ""` 兜底后再 filter(Boolean)，
+    # 这里只断言「两个字段都进了 keywords」，不锁死兜底写法。
+    assert "keywords: [t.physical_name, t.term" in source
     assert "keywords: [col.physical_name, col.term]" in source
 
 

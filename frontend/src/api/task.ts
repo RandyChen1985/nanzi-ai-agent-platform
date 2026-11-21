@@ -2,6 +2,11 @@ import axios from '../utils/axios'
 import type { StandardResponse, ListResponse } from './common'
 
 export interface AgentTask {
+  /**
+   * cron 表达式是否合法（后端 TaskResponse 计算后下发）。
+   * `false` 时任务仍在列表里，但前端要标红提示「离线时不推送」。
+   */
+  cron_valid?: boolean;
   id: number
   name: string
   agent_id: string

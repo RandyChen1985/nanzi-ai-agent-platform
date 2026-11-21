@@ -150,6 +150,14 @@ export type ProcessTimelineTodo = {
 
 export type ProcessTimelineTodoItem = {
   kind: "todo";
+  /**
+   * 后端事件序号。
+   *
+   * 清单项实际不参与事件序排序，但这里必须声明：`SeqOrderableNode` 的字段全是可选，
+   * 一个字段都不沾的 todo 会触发 TS 的弱类型检测（「no properties in common」），
+   * 连带让 `orderTimelineBySeq(ProcessTimelineItem[])` 的整条调用链失败。
+   */
+  seq?: number;
   id: string;
   title: string;
   todos: ProcessTimelineTodo[];
@@ -161,6 +169,17 @@ export type ProcessTimelineTodoItem = {
 };
 
 export type ProcessTimelineItem = ProcessTimelineTextItem | ProcessTimelineLogItem | ProcessTimelineTodoItem;
+
+/**
+ * 树遍历用的子节点读取。
+ *
+ * `children` 只声明在 text / log 两个变体上（todo 项当前不挂子节点），
+ * 直接写 `item.children` 在 union 上不合法。把「哪些变体有子节点」收在这里，
+ * 递归遍历的代码就不必每处窄化。
+ */
+export function timelineItemChildren(item: ProcessTimelineItem): ProcessTimelineItem[] {
+  return item.kind === "todo" ? [] : item.children ?? [];
+}
 
 export const PREPARATION_TIMELINE_PARENT_ID = "preparation:auth_context_capability";
 
@@ -648,7 +667,19 @@ export function resolveBannerTodoTimeline(
  * - 整层都没有 seq、或本来就有序时**返回原数组引用**：渲染层按引用比较，
  *   没有变化就不该触发重渲染；children 有变化时只复制受影响的那一项。
  */
-export function orderTimelineBySeq<T extends { seq?: number; children?: T[] }>(
+/**
+ * 可参与事件序排序的树节点：只要求 `seq` 与 `children`。
+ *
+ * 原先把约束写成 `children?: T[]`，`ProcessTimelineItem` 这种 union 推断不出 T，
+ * 约束校验随之失败（报「参数字段不兼容」）。用递归接口描述结构后，
+ * text / log 的 `children?: ProcessTimelineLogItem[]` 都能结构化匹配。
+ */
+export interface SeqOrderableNode {
+  seq?: number;
+  children?: SeqOrderableNode[];
+}
+
+export function orderTimelineBySeq<T extends SeqOrderableNode>(
   items: T[] | undefined,
 ): T[] {
   const list = items || [];
@@ -1198,20 +1229,24 @@ function isEligibleLiveTimerLog(item: ProcessTimelineLogItem): boolean {
 export function resolveLiveTimerLogId(
   items: ProcessTimelineItem[] | undefined,
 ): string | null {
-  let lastPending: ProcessTimelineLogItem | null = null;
-
-  const walk = (list: ProcessTimelineItem[] | undefined) => {
+  // 用递归返回值而不是在闭包里共享 lastPending：TS 不跟踪闭包内的赋值，
+  // 会一直把它当成 `null`，后面就报 `Property 'id' does not exist on type 'never'`。
+  // 顺带把 `children` 的读取收进 timelineItemChildren（todo 项没有该字段）。
+  const findLastPending = (
+    list: ProcessTimelineItem[] | undefined,
+  ): ProcessTimelineLogItem | null => {
+    let found: ProcessTimelineLogItem | null = null;
     for (const item of list || []) {
       if (!item) continue;
-      if (item.kind === "log" && item.status === "pending") {
-        lastPending = item;
-      }
-      walk(item.children as ProcessTimelineItem[] | undefined);
+      if (item.kind === "log" && item.status === "pending") found = item;
+      // 子树的挂起项更深，按视觉顺序它才是「最后一条」
+      const deeper = findLastPending(timelineItemChildren(item));
+      if (deeper) found = deeper;
     }
+    return found;
   };
 
-  walk(items);
-
+  const lastPending = findLastPending(items);
   if (!lastPending) return null;
   if (!isEligibleLiveTimerLog(lastPending)) return null;
   return String(lastPending.id);

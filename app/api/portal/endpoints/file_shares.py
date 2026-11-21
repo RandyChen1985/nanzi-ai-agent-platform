@@ -13,7 +13,7 @@ import logging
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_api_key
@@ -39,12 +39,26 @@ class ExpiryPayload(BaseModel):
 
 
 class CreateFileSharePayload(BaseModel):
-    """创建文件分享：路径按工作区语义传（绝对路径或相对工作区根均可）。"""
+    """创建文件分享：路径按工作区语义传（绝对路径或相对工作区根均可）。
 
-    path: str = Field(min_length=1, max_length=1024)
+    ``artifact_id`` 是给生成类产物用的第二条入口：图片/导出件的产物落在
+    ``<user_key>/generated/`` 下，但前端只拿得到 ``download_url``、没有工作区路径，
+    于是把已经在工作区里的文件误判成「未落盘」。传 ID 让后端自己反查路径，
+    既不必暴露服务器路径，也不用前端拼路径猜。
+    """
+
+    path: Optional[str] = Field(default=None, max_length=1024)
+    artifact_id: Optional[str] = Field(default=None, max_length=64)
     access_mode: Literal["public", "secret"] = "secret"
     secret: Optional[str] = None
     expiry: ExpiryPayload = Field(default_factory=ExpiryPayload)
+
+    @model_validator(mode="after")
+    def _require_one_source(self):
+        """``path`` 与 ``artifact_id`` 至少给一个，否则后端只能回一句「路径为空」。"""
+        if not (self.path or self.artifact_id):
+            raise ValueError("path 与 artifact_id 至少提供一个")
+        return self
 
 
 def _current_user(user_info: Dict[str, Any]) -> tuple[str, str]:
@@ -106,6 +120,7 @@ async def create_share(
             db,
             user_info=user_info,
             raw_path=payload.path,
+            artifact_id=payload.artifact_id,
             access_mode=payload.access_mode,
             secret=payload.secret,
             expiry=payload.expiry.model_dump(),

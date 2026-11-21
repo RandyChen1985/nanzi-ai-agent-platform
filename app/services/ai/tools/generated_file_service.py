@@ -507,3 +507,122 @@ async def resolve_workspace_artifact(artifact_id: str, token: str) -> GeneratedF
         )
     except (OSError, ValueError, TypeError):
         return None
+
+
+class ArtifactRelocateError(ValueError):
+    """产物迁址失败：入参或当前状态不允许这次移动。"""
+
+
+class ArtifactRelocateConflict(ArtifactRelocateError):
+    """目标目录已有同名文件——交给前端「覆盖」二次确认，不在这里静默替换。"""
+
+
+def _resolve_target_dir(
+    workspace_root: Path,
+    user_root: Path,
+    user_key: str,
+    target_dir: str,
+) -> Path:
+    """把前端给的目标目录解析成绝对路径，并收紧到本人工作区之内。
+
+    接受三种写法：空（本人工作区根）、相对本人目录（``docs``）、相对工作区根
+    （``admin__1/docs``）。绝对路径也收，但同样要落在本人目录下。
+    """
+    raw = str(target_dir or "").strip().replace("\\", "/")
+    if raw in ("", ".", "/"):
+        return user_root
+
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    elif raw.split("/")[0] == user_key:
+        resolved = (workspace_root / raw).resolve()
+    else:
+        resolved = (user_root / raw).resolve()
+
+    if not _path_under(resolved, user_root):
+        raise ArtifactRelocateError("目标目录必须是本人工作区内的目录")
+    return resolved
+
+
+async def relocate_artifact(
+    db,
+    *,
+    artifact_id: str,
+    owner_user_id: int | str,
+    user_name: str | None,
+    target_dir: str,
+    filename: str | None = None,
+    overwrite: bool = False,
+) -> str:
+    """把已登记的产物从 ``generated/`` 移到用户指定目录，返回新的绝对路径。
+
+    为什么不是「下载再上传」：图片产物常见 5–6MB，前端取 blob 再上传等于同一份内容
+    在磁盘上存两份（``generated/`` 那份还留着），中间还要在浏览器里过一次内存。
+    产物本来就在工作区里，移动即可。
+
+    移动后同步更新 ``ai_artifacts.storage_path``，所以旧的 ``download_url`` 继续可用
+    ——下载端点按库里的 storage_path 读文件，不认死路径。
+    """
+    from app.services.ai.runtime.agentscope.workspace import resolve_workspace_user_key
+
+    key = str(artifact_id or "").strip()
+    if len(key) != 32 or any(ch not in "0123456789abcdef" for ch in key):
+        raise ArtifactRelocateError("产物 ID 无效")
+
+    record = await db.get(AiArtifact, key)
+    if record is None:
+        raise ArtifactRelocateError("产物不存在")
+
+    try:
+        owner_id = int(owner_user_id)
+    except (TypeError, ValueError) as exc:
+        raise ArtifactRelocateError("无法确定产物归属") from exc
+    if int(record.owner_user_id or 0) != owner_id:
+        # 别人的产物与不存在同一句话，不给试探空间
+        raise ArtifactRelocateError("产物不存在")
+
+    workspace_root = (await _workspace_root()).resolve()
+    user_key = resolve_workspace_user_key(user_id=owner_id, user_name=user_name)
+    user_root = (workspace_root / user_key).resolve()
+
+    source = Path(str(record.storage_path or "")).resolve()
+    if not source.is_file():
+        raise ArtifactRelocateError("产物文件已不存在")
+    if not _path_under(source, workspace_root):
+        raise ArtifactRelocateError("产物文件不在工作区内")
+
+    target_parent = _resolve_target_dir(workspace_root, user_root, user_key, target_dir)
+    safe_name = Path(filename or record.filename or "").name
+    if not safe_name or safe_name in {".", ".."}:
+        raise ArtifactRelocateError("目标文件名无效")
+
+    destination = target_parent / safe_name
+    if not _path_under(destination.resolve(), user_root):
+        raise ArtifactRelocateError("目标位置不在本人工作区内")
+    if destination == source:
+        return str(source)
+    if destination.exists():
+        if not overwrite:
+            # 由前端做「确认覆盖」二次确认，后端不静默替换用户已有文件
+            raise ArtifactRelocateConflict("目标目录已有同名文件")
+        try:
+            destination.unlink()
+        except OSError as exc:
+            raise ArtifactRelocateError(f"无法替换已有文件：{exc}") from exc
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # shutil.move 自带跨设备（EXDEV）回退：工作区可能在挂载盘上
+        shutil.move(str(source), str(destination))
+    except OSError as exc:
+        raise ArtifactRelocateError(f"移动文件失败：{exc}") from exc
+
+    record.storage_path = str(destination)
+    record.filename = safe_name
+    try:
+        record.size = destination.stat().st_size
+    except OSError:
+        pass
+    await db.commit()
+    return str(destination)

@@ -54,7 +54,8 @@ export const parseRowFilterCondition = (condition: unknown): RowFilterBuilderPar
   const matched = CONDITION_RE.exec(text)
   if (!matched) return null
 
-  const op = normalizeOperator(matched[4])
+  // 捕获组下标访问是 `string | undefined`，未命中时按空串处理（随后 !op 会返回）
+  const op = normalizeOperator(matched[4] ?? '')
   if (!op) return null
 
   const table = (matched[2] || '').trim()

@@ -834,7 +834,9 @@ const realizedActiveCategory = computed(() => {
   const cats = orderedCategories.value
   if (!cats.length) return ''
   if (cats.includes(activeConfigCategory.value)) return activeConfigCategory.value
-  return cats[0]
+  // 下标访问是 `string | undefined`；模板拿它当索引用（configGroups[category]），
+  // 缺省成空串表示「没有可展示的分组」
+  return cats[0] ?? ''
 })
 /**
  * 把当前分组卡片滚到它所在滚动容器的顶部。
@@ -2124,7 +2126,9 @@ const syncImageDefaultSize = () => {
   const allowed = allowedItem ? imageSizeList(allowedItem) : []
   if (!defaultItem || allowed.length === 0) return
   if (!allowed.includes(String(defaultItem.value || '').trim())) {
-    defaultItem.value = allowed[0]
+    // allowed 在这里已非空（上面 return 过），取首项只是让索引访问的类型成立
+    const first = allowed[0]
+    if (first) defaultItem.value = first
   }
 }
 

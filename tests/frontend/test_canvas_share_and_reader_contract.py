@@ -62,10 +62,22 @@ def test_more_menu_offers_share_as_first_item():
     assert menu.index("分享文件") < menu.index("下载数据")
 
 
-def test_share_requires_a_workspace_path():
-    """没有 sourcePath 就不能分享——后端按路径 + 指纹分享，凭空的内容没有可分享的对象。"""
+def test_share_requires_a_workspace_path_or_artifact_id():
+    """分享需要「后端能定位到的真实文件」。
+
+    原先只认 `sourcePath`（工作区路径）。但生成类产物落在 `<user_key>/generated/` 下时，
+    前端手里只有 `download_url`、没有路径，于是分享被误判成「未落盘」永久置灰——
+    文件其实早就在工作区里。现在多认一个 `artifactRef`（从 download_url 解析出的产物 ID），
+    由后端反查 `ai_artifacts.storage_path` 后再走同一套归属与指纹校验。
+
+    凭空的内容（既无路径也无产物 ID）仍然不能分享。
+    """
     source = _read(CANVAS)
-    assert "const canShareFile = computed(() => !!effectiveSourcePath.value)" in source
+    gate = re.search(r"const canShareFile = computed\((.+?)\);", source, re.S)
+    assert gate, "找不到 canShareFile 定义"
+    body = gate.group(1)
+    assert "!!effectiveSourcePath.value" in body
+    assert "!!artifactRef.value" in body
     assert "请先保存到工作区，再分享" in source
     # 菜单项要置灰而不是点了才报错
     assert ':disabled="!canShareFile"' in source

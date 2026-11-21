@@ -594,7 +594,6 @@
     ></div>
     <div
       v-if="filterPanelOpen"
-      ref="filterPanelRef"
       data-conversation-filter-panel
       class="fixed z-[80] rounded-2xl border border-gray-200/80 bg-white p-3 shadow-xl dark:border-gray-700/80 dark:bg-gray-900"
       :class="mobile ? 'inset-x-0 bottom-0 rounded-b-none' : ''"
@@ -901,7 +900,6 @@ const taskKeyword = ref("")
 const taskFilters = ref<ChatHistoryFilters>({ ...DEFAULT_HISTORY_FILTERS })
 const filterPanelOpen = ref(false)
 const filterButtonRef = ref<HTMLElement | null>(null)
-const filterPanelRef = ref<HTMLElement | null>(null)
 const filterPanelStyle = ref<Record<string, string>>({})
 const agentOptions = ref<Array<{ id: string; display_name: string; avatar_url?: string }>>([])
 /** 智能体列表只在首次打开面板时拉一次；失败下次还能重试 */
@@ -962,7 +960,7 @@ const loadTasks = async () => {
   try {
     const data = await fetchTaskPage(1)
     if (serial !== loadSerial) return
-    const items = Array.isArray(data.items) ? data.items : []
+    const items: ChatHistoryItem[] = Array.isArray(data.items) ? data.items : []
     tasks.value = items
     taskTotal.value = Number(data.total ?? items.length) || items.length
     // 不足一页 = 没有更多了
@@ -1090,8 +1088,8 @@ const loadMoreTasks = async () => {
     const data = await fetchTaskPage(tasksPage.value)
     // 期间换过关键词 / 重新加载过：这页数据属于旧查询，直接丢弃
     if (serial !== loadSerial) return
-    const items = Array.isArray(data.items) ? data.items : []
-    const seen = new Set(tasks.value.map((item) => taskKeyOf(item)))
+    const items: ChatHistoryItem[] = Array.isArray(data.items) ? data.items : []
+    const seen = new Set(tasks.value.map((item: ChatHistoryItem) => taskKeyOf(item)))
     const fresh = items.filter((item) => !seen.has(taskKeyOf(item)))
     tasks.value = [...tasks.value, ...fresh]
     taskTotal.value = Number(data.total ?? taskTotal.value) || taskTotal.value

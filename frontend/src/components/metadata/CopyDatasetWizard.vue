@@ -267,7 +267,9 @@ async function open() {
     // 默认名与显示名：先占位成候选，再用一次查重确认是否真的可用
     draft.name = `${props.dataset.name}_copy`
     draft.display_name = `${props.dataset.display_name || props.dataset.name}（副本）`
-    expanded.value = tables.length ? { [tables[0].physical_name]: true } : {}
+    // 下标访问是 `PhysicalTable | undefined`，先取出再判断
+    const firstTable = tables[0]
+    expanded.value = firstTable ? { [firstTable.physical_name]: true } : {}
 
     await Promise.all([loadDataSources(), confirmSuggestedNames()])
     await runCheck()
@@ -536,16 +538,24 @@ function toggleTable(name: string) {
 }
 
 function startEditTable(index: number) {
+  const table = draft.tables[index]
+  // 索引来自行内按钮，正常不会越界；守卫让索引访问的类型成立
+  if (!table) return
   editingTableIndex.value = index
-  editBuf.term = draft.tables[index].term
-  editBuf.description = draft.tables[index].description || ''
+  editBuf.term = table.term
+  editBuf.description = table.description || ''
 }
 
 function saveEditTable() {
   const index = editingTableIndex.value
   if (index === null) return
-  draft.tables[index].term = editBuf.term.trim() || draft.tables[index].physical_name
-  draft.tables[index].description = editBuf.description
+  const table = draft.tables[index]
+  if (!table) {
+    editingTableIndex.value = null
+    return
+  }
+  table.term = editBuf.term.trim() || table.physical_name
+  table.description = editBuf.description
   editingTableIndex.value = null
 }
 
@@ -728,6 +738,9 @@ function openMetric(index: number | null) {
     return
   }
   const metric = draft.metrics[index]
+  // 索引来自本组件的内部状态，正常不会越界；守卫只为让后续 6 处访问的类型成立，
+  // 顺带把「越界即崩溃」降级成「什么都不做」。
+  if (!metric) return
   metricBuf.name = metric.name
   metricBuf.display_name = metric.display_name
   metricBuf.description = metric.description || ''

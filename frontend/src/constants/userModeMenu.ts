@@ -32,6 +32,10 @@ export type UserModeIconKey =
   | "token_stats"
   | "user_circle"
   | "system"
+  // 下面两个 menuIcons 里早就有，联合类型漏了：用户模式的「技能」「连接器」
+  // 用它俩做子项图标，之前一直靠类型错误挂着。
+  | "skills"
+  | "link"
 
 export interface UserModeMenuChild {
   key: string
@@ -228,10 +232,14 @@ export function resolveUserModeMenu(
       continue
     }
 
+    // 走到这里的条目没有可解析的子项（有子项的在上面的分支里 continue 了）。
+    // 展开 item 会带上 `children?: UserModeMenuChild[]`，而 ResolvedUserModeItem
+    // 要求的是 `ResolvedUserModeChild[]`（多一个 locked），直接展开类型对不上，
+    // 这里显式清空——语义上也正是「没有子项」。
     if (hasPerm(item.permission)) {
-      resolved.push({ ...item, locked: false })
+      resolved.push({ ...item, locked: false, children: undefined })
     } else if (item.onDenied === "lock") {
-      resolved.push({ ...item, locked: true })
+      resolved.push({ ...item, locked: true, children: undefined })
     }
   }
   return resolved

@@ -182,6 +182,14 @@ const enterDir = (row: PickerRow) => {
   void loadDir(row.path);
 };
 
+/**
+ * 当前目录对应的面包屑（根视图为 undefined）。
+ *
+ * `breadcrumbs.value[len - 1]` 在 `noUncheckedIndexedAccess` 下是 `Crumb | undefined`，
+ * 直接取 `.path` 三处都报「可能为 undefined」。收口成一个取值函数。
+ */
+const lastCrumb = () => breadcrumbs.value[breadcrumbs.value.length - 1];
+
 const goToCrumb = (index: number) => {
   // index < 0 表示回到根视图（虚拟根：公共目录 + 本人工作区）
   breadcrumbs.value = index < 0 ? [] : breadcrumbs.value.slice(0, index + 1);
@@ -191,7 +199,9 @@ const goToCrumb = (index: number) => {
     activeIndex.value = 0;
     return;
   }
-  void loadDir(breadcrumbs.value[index].path);
+  const crumb = breadcrumbs.value[index];
+  // 索引来自 UI 点击，正常不会越界；守卫让类型成立，越界时退化为不跳转
+  if (crumb) void loadDir(crumb.path);
 };
 
 const runSearch = async (query: string) => {
@@ -217,7 +227,7 @@ const runSearch = async (query: string) => {
 const currentDirItems = () =>
   breadcrumbs.value.length === 0
     ? (dirCache.get("") ?? [])
-    : (dirCache.get(breadcrumbs.value[breadcrumbs.value.length - 1].path) ?? []);
+    : (dirCache.get(lastCrumb()?.path ?? "") ?? []);
 
 watch(keyword, (value) => {
   if (searchTimer) clearTimeout(searchTimer);
@@ -238,8 +248,9 @@ const handleReset = () => {
     void runSearch(keyword.value.trim());
     return;
   }
-  if (breadcrumbs.value.length > 0) {
-    void loadDir(breadcrumbs.value[breadcrumbs.value.length - 1].path);
+  const crumb = lastCrumb();
+  if (crumb) {
+    void loadDir(crumb.path);
     return;
   }
   void loadRoot();

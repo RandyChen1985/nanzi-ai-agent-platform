@@ -165,8 +165,6 @@ const currentLoading = computed(() => (metaDatasetTab.value ? loadingDatasets.va
 const currentError = computed(() => (metaDatasetTab.value ? datasetError.value : knowledgeError.value))
 const currentItems = computed(() => (metaDatasetTab.value ? filteredDatasets.value : filteredKnowledgeBases.value))
 
-/** 当前页签的完整列表（未过滤），用于「筛选出 N / 共 M」 */
-const currentSourceItems = computed(() => (metaDatasetTab.value ? scopedDatasets.value : scopedKnowledgeBases.value))
 
 const dataSourceOptions = computed(() => listMountableDataSources(scopedDatasets.value))
 const visibilityCounts = computed(() => countByVisibility(scopedKnowledgeBases.value))

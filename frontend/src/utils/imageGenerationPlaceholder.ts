@@ -132,8 +132,11 @@ function isImageToolName(name: string): name is ImageToolName {
 const TOOL_NAME_IN_TITLE = /调用工具\s*[:：·]?\s*([A-Za-z0-9_.-]+)/;
 
 export function toolNameFromTitle(title: unknown): string {
-  const hit = TOOL_NAME_IN_TITLE.exec(String(title ?? ""));
-  return hit ? hit[1].trim().toLowerCase() : "";
+  const matched = TOOL_NAME_IN_TITLE.exec(String(title ?? ""));
+  // 捕获组下标访问在 noUncheckedIndexedAccess 下是 `string | undefined`；
+  // 正则只有一组时它必然存在，这里显式兜一层，避免把「必有」写成非空断言。
+  const name = matched?.[1];
+  return name ? name.trim().toLowerCase() : "";
 }
 
 /** 时间线是树（委派子代理时工具挂在内层），所以要递归收集。 */
@@ -178,7 +181,8 @@ export function resolveImagePlaceholder(
 
   for (let index = logs.length - 1; index >= 0; index -= 1) {
     const log = logs[index];
-    if (log.status !== "pending") continue;
+    // index 由 length-1 递减，越界不可能发生；守卫只为让索引访问的类型成立。
+    if (!log || log.status !== "pending") continue;
     // tool_name 优先（完成事件会带），进行中只能靠标题。
     const name = String(log.tool_name || "").trim().toLowerCase() || toolNameFromTitle(log.title);
     if (!isImageToolName(name)) continue;

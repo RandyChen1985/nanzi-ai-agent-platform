@@ -32,14 +32,6 @@ const emit = defineEmits<{
   (e: "saved", policy: any): void;
 }>();
 
-const MODE_LABELS: Record<string, string> = {
-  readonly: "只读",
-  granted: "仅被授权的人可编辑",
-  all_viewers: "所有可见者都可编辑",
-  team_members: "本部门成员可编辑",
-  selected: "指定成员可编辑",
-};
-
 const visibility = computed(() => {
   const raw = String(props.dataset?.visibility || "public").toLowerCase();
   return raw === "team" || raw === "private" ? raw : "public";

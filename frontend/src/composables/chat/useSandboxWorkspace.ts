@@ -3,9 +3,27 @@ import axios from "axios";
 
 export type SandboxWorkspaceStatus = "idle" | "starting" | "stopping" | "running" | "error";
 
+/** 沙箱策略只消费这三个字段。 */
+type SandboxUsageSlice = {
+  // 宿主的快照里这些字段可能是 null（后端未配置时回 null），按可空声明
+  sandbox_policy?: string | null;
+  sandbox_auto_warm?: boolean | null;
+  sandbox_idle_minutes?: number | null;
+};
+
+/**
+ * contextUsage 的只读视图。
+ *
+ * 宿主传的是完整的 token 用量快照（十几个字段），而 `Ref<T>` 的 value 可写、
+ * 类型不协变，宽对象的 Ref 赋不进窄对象的 Ref。这里只用只读结构声明，
+ * 天然按协变匹配——宿主不必为自己的 Ref 改类型。
+ * 本文件对它是只读消费（仅 `.value?.xxx`），所以只读视图足够。
+ */
+type ContextUsageView = { readonly value: SandboxUsageSlice | null | undefined };
+
 export interface UseSandboxWorkspaceOptions {
   conversationId: Ref<string | null | undefined>;
-  contextUsage: Ref<{ sandbox_policy?: string; sandbox_auto_warm?: boolean; sandbox_idle_minutes?: number | null } | null | undefined>;
+  contextUsage: ContextUsageView;
   /** 凭据渲染回调；门户认证已由同源 HttpOnly Cookie 承载，调用方可不再提供 */
   authHeaders?: () => Record<string, string> | undefined;
   isProcessing?: Ref<boolean>;

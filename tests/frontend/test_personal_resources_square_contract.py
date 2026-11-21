@@ -67,3 +67,20 @@ def test_value_and_unit_share_one_row():
 def test_knowledge_management_points_to_square():
     page = _read(KB_MGMT)
     assert "我的工作台 › 资源广场" in page
+
+
+def test_resource_icon_class_is_an_array_not_a_comma_expression():
+    """图标 :class 必须是数组：写成 `A, B` 时逗号操作符只取最后一个值。
+
+    历史缺陷：`class="..." :class="compact ? 'h-8 w-8' : 'h-10 w-10', getResourceStyle(item.key).iconBg"`
+    —— 尺寸/圆角整段被丢弃，只剩 iconBg 生效，方块图标大小恒为默认值，且不报错。
+    vue-tsc 的 TS2695（逗号左侧无副作用）会指出，但构建链路跳过了类型检查。
+    """
+    grid = _read(GRID)
+    marker = "getResourceStyle(item.key).iconBg"
+    assert marker in grid
+    line = next(l for l in grid.splitlines() if marker in l)
+    stripped = line.strip()
+    assert stripped.startswith(':class="['), (
+        "资源图标的 :class 必须是数组形式，当前是：" + stripped
+    )
