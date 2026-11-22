@@ -1,0 +1,410 @@
+<!--
+  微信公众号排版 HTML — NanZi AI 智能体平台 v1.0.24.0
+  风格：深蓝渐变科技风 / 现代化精编版（卡片式阴影、微渐变、导读浅析）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等排版工具）
+  2. 封面图可在微信公众号后台直接使用 docs/release/1.0.24/release-cover-info.md 中的素材生成
+  3. 全部采用内联 style 样式，兼容微信图文排版规范
+-->
+
+<section style="box-sizing:border-box;max-width:760px;margin:0 auto;padding:0 2px;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;word-break:break-word;overflow-wrap:break-word;">
+
+  <!-- 标题区：科技感深蓝微渐变 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:linear-gradient(135deg,#060c1f 0%,#0f172a 48%,#1e293b 100%);box-shadow:0 4px 24px rgba(6,182,212,0.15);border-radius:6px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#38bdf8;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NanZi 开源智能体平台 v1.0.24.0</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#cbd5e1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">结构化凭据与字段级引用 · 文生图与图生图 · 管理员群发与文件分享 · 定时任务表单重做 · 子智能体授权回到主会话 · 类型门禁首次清零</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e2e8f0;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#0f172a;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#0f172a;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发与商用。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习、持续打磨生产级 AI 智能体技术栈。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #0284c7;background:#f0f9ff;border-radius:0 4px 4px 0;">
+    <p style="margin:0;font-size:14px;color:#0369a1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#0c4a6e;">GitHub 仓库：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#0284c7;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 24px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      NanZi 开源智能体平台正式发布 <strong style="color:#0f172a;">v1.0.24.0</strong> 版本！这是一次以<strong>凭据从一整段文本变成可拆字段的结构化凭据、平台长出文生图与图生图、管理员能把公告一次发给全员、工作区文件能生成可控的分享链接、定时任务表单从「填一堆字段」变成「说清这一件事」、子智能体的权限确认回到你面前</strong>为核心驱动，并第一次把<strong>前端类型错误清零、后端已知失败基线清零</strong>的版本。
+    </p>
+    <p style="margin:0;font-size:14px;color:#64748b;line-height:1.75;">
+      本次变更自 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">2920e9ad</code> 至 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">472e6452</code>，共 <strong>130 个提交</strong>（114 个非 Merge 提交、16 个合并），变更 <strong>455 个文件</strong>，<strong>73,017 行新增</strong>、<strong>3,732 行删除</strong>。
+    </p>
+  </section>
+
+  <!-- 升级提示 -->
+  <section style="margin:0 0 28px 0;padding:14px 16px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 4px 4px 0;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#92400e;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      ⚠️ 升级核心须知 (Upgrade Notes)
+    </p>
+    <p style="margin:10px 0 6px 0;font-size:13px;font-weight:bold;color:#92400e;letter-spacing:0.3px;">🚨 必须先做（顺序不能错）</p>
+    <ul style="margin:0 0 8px 0;padding-left:18px;font-size:13px;color:#78350f;line-height:1.8;">
+      <li style="margin-bottom:7px;"><strong>1. 5 组迁移跑完，再启动新代码</strong>：MySQL <code style="background:#fff7ed;padding:1px 4px;border-radius:2px;">V218</code> ~ <code style="background:#fff7ed;padding:1px 4px;border-radius:2px;">V222</code>、PostgreSQL <code style="background:#fff7ed;padding:1px 4px;border-radius:2px;">V118</code> ~ <code style="background:#fff7ed;padding:1px 4px;border-radius:2px;">V122</code>，两套一一对应、不可跳号，覆盖群发记录、凭据值形态与字段路径、多值配法组标识、图像生成配置、文件分享。新代码会读这些新增的列与配置，迁移没跑完会直接报错。执行 <code style="background:#fff7ed;padding:1px 4px;border-radius:2px;">bash db-prod/apply-sql.sh</code>（MySQL）或 <code style="background:#fff7ed;padding:1px 4px;border-radius:2px;">bash db-prod-pg/apply-sql.sh</code>（PostgreSQL），脚本自带进度、断点续跑与结构校验。</li>
+      <li style="margin-bottom:7px;"><strong>2. 存量「多值凭据」配置需要在多值页重新保存一次</strong>：本版给绑定加了「属于哪一次多值配置」的组标识，历史数据这一列为空。不重新保存也不报错，但界面仍会把「一条规则供多个字段各取一个」的配置显示成 N 条独立规则，改其中一行就会把整组悄悄拆散。打开该工具的参数设置、在多值页点一次保存即可。</li>
+    </ul>
+    <p style="margin:10px 0 6px 0;font-size:13px;font-weight:bold;color:#92400e;letter-spacing:0.3px;">🔧 视环境处理</p>
+    <ul style="margin:0 0 8px 0;padding-left:18px;font-size:13px;color:#78350f;line-height:1.8;">
+      <li style="margin-bottom:7px;"><strong>3. MCP 服务的命名规则变了，但存量不迁移</strong>：新服务名是「私有/公开 + 用户编号」的短标识，只允许英文数字，长度从三十来个字符降到十来个，卡片上会显示创建人并支持按创建人搜索。历史名字不动、也不会被强制改，只有改名那一刻才校验——老环境升级后的动作与之前完全一致。</li>
+      <li style="margin-bottom:7px;"><strong>4. 建议把「上下文摘录总量」从 2000 调到 3000</strong>：摘录的单条配额改为跟随总量（总量 ÷ 8，下限 120 字符），此前单条写死 120 字符、长任务请求会被切在半句上。只调总量不调这个数也能跑，只是总量没放大时摘录条数会少约 15%。</li>
+      <li style="margin-bottom:7px;"><strong>5. 三件与部署形态有关的小事</strong>：老环境点一次「创建内置测试 MCP」即可补齐第三个工具（发信），内网 SMTP 会被出站守卫拦截、需另加白名单；前端类型门禁接在 CI（推主分支、开发分支与提 PR 时跑），部署脚本与镜像构建仍走原来的打包命令、没有接入类型检查；站内信按平台策略保留 30 天，群发公告同样适用，但每次群发的发送记录永久保留。</li>
+    </ul>
+  </section>
+
+  <!-- 章节一：核心特性 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🚀 核心特性 (Key Features)
+    </p>
+
+    <!-- 特性卡片 1 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #0284c7;padding-left:10px;">
+        01 · 凭据中心：一条凭据拆成字段，谁用哪个字段说得清
+      </p>
+      <p style="margin:0 0 10px 0;font-size:14px;color:#334155;line-height:1.8;">
+        接一个邮箱、FTP、数据库工具，过去要手写一整段 JSON，绑定也只能整段给；现在选模板填表，字段可以分开用。
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>先说模板再填表</strong>：29 个内置模板分 9 组——邮件、FTP、数据库、云存储、机器人、鉴权、证书、中间件、AI，选好逐项填，不用记 JSON 的键名；想自己组织就从空白开始，改成键值对表格逐行加字段（名、类型、值），敏感字段逐行勾选，随时能切回手写。</li>
+        <li><strong>一条凭据分给多个参数</strong>：同一台服务器的地址、端口、账号、密码一次配好，分别绑给一个工具的四个参数，不必为每个参数各建一条凭据、也不必在每条里塞重复的值。</li>
+        <li><strong>绑定会说「取哪个字段」</strong>：选完凭据还能指定只取某一个字段（嵌套路径也认）。取不到就直接报错告诉你缺哪个字段，绝不会把整段 JSON 原样注进参数让远端去报错。</li>
+        <li><strong>规则也能按字段值找人</strong>：调用方传来的是一个邮箱、一个实例名时，规则可以拿它去比凭据里的某个字段，命中最贴合的那条；规则编辑器把「按字段匹配」与「让模型在候选里挑」并列摆出来，不再把后者藏成兜底选项。未命中时会说清「拿什么去找、跟什么比、候选几条」，入参没值会直接点出、敏感入参打码。</li>
+        <li><strong>看得懂、查得到、改得回来</strong>：列表能看出这条是单值还是结构化，并给出「主机:端口 · 账号」这种只由非敏感字段拼成的摘要；使用记录按一次操作聚合（一次调用注入五个参数只占一行，可展开看明细）并带上会话入口；变更记录可按键词搜索、按动作筛选，标识一键复制；轮换结构化凭据会带出原来的字段名与类型，不必凭记忆默写键名。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：凭据录入的模板选择与键值对编辑器、参数设置里的字段级绑定（含「取哪个字段」）、列表摘要与使用记录聚合、规则编辑器的「按字段匹配 / 让模型挑」</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 2 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #8b5cf6;padding-left:10px;">
+        02 · 图像生成：会画图，也算得清花了多少
+      </p>
+      <p style="margin:0 0 10px 0;font-size:14px;color:#334155;line-height:1.8;">
+        平台此前只有「看图」没有「出图」，这一版把生成与改图都长出来了，而且默认是关着的。
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>一句「画一张」就出图</strong>：模型判断你要图时自行调用出图工具，图直接渲染在消息里并落盘成产物，不需要审批，也不用切到另一个页面。</li>
+        <li><strong>生成与改图两个入口</strong>：传一张图再加一句要求就是改图，可附参考图；改图面板与对话共用同一份参数，手机上也能打开。分辨率第一格直接显示后端配置的默认尺寸并默认选中。</li>
+        <li><strong>出图期间有占位</strong>：消息区先出现一条占位横幅，写着当前阶段、走了几秒，并按目标比例画一个虚线框；图落地时高度不跳版，长对话不会被顶得乱跑。</li>
+        <li><strong>张数、尺寸、用量都留痕</strong>：每次出图的张数、尺寸、上游返回的 token 与耗时写进执行轨迹，也在消息的「用量」与调用明细里可见。这一块刻意不并入消息 token 与月度配额——混进去会让「界面显示的用量」和「实际扣的配额」变成两套算法。</li>
+        <li><strong>设置页管得住成本</strong>：系统设置多了「图像」分组，地址、密钥、模型、允许的分辨率、超时、单次张数都在这里，还带一次「测试生成」；总开关默认关闭，关闭时工具根本不发给模型，开启后还要在每个智能体里勾一次。分辨率只从白名单里挑，避免接口对不认识的尺寸静默回退；模型选择器会把非图像模型置灰，选错不会等到出图那一刻才暴露。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：对话里出图与占位横幅、改图面板、系统设置「图像」分组与分辨率白名单、执行轨迹里的图片用量</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 3 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #10b981;padding-left:10px;">
+        03 · 群发与分享：一次通知到全员，一个链接给对的人
+      </p>
+      <p style="margin:0 0 10px 0;font-size:14px;color:#334155;line-height:1.8;">
+        站内信过去只能发给自己；工作区里的文件想给别人看，只能整份下载再发出去。
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>管理员能按人、按部门、按角色发公告</strong>：三种范围取并集去重，只发给启用账号，部门自动含下级；入口在「系统诊断」里，仅管理员可见。</li>
+        <li><strong>发之前先看命中谁</strong>：预览给出人数与抽样名单；真正发送时必须带上预览时的人数，人数变了会被拦下并要求重新预览——不会出现「预览 128 人、实际发 300 人」。</li>
+        <li><strong>群发有账可查、可重发</strong>：每次群发的范围、标题、正文与条数都留一条记录，历史列表可回看正文；重发只是把表单填回去再预览一遍，仍然要你亲手点发送，不做绕过确认的直发通道。收件人那边，铃铛把这条显示成「公告」并标出发件人。</li>
+        <li><strong>文件能生成分享链接</strong>：按类型在线预览（网页、图片、PDF、文本）而不必先下载，可设访问密码与有效期，预览次数与真正下载次数分开计数——「看了一眼」和「存走了」不是一回事。链接冻结的是路径、大小与内容指纹，源文件被改写后旧链接自动失效，不会出现「副本与原件各自漂移」。</li>
+        <li><strong>只分享你自己的工作区</strong>：此前只要知道路径、文件又挂在公共目录下，就能把别人的文件分享出去；现在归属校验收到本人。公共目录里的文件想分享走「复制并分享」，一步拿到副本的分享框并跳到副本所在目录；出图、跑表产出的文件也能直接分享，不必先手动保存。工作区卡片还出了缩略图，产物文件名去掉了前面那串 UUID，画布顶栏收成「⋯」菜单、字号与行宽控件移到页签栏，把顶栏空间还给标题。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：群发范围选择与人数预览、发送历史与一键重发、文件分享链接设置（密码 / 有效期 / 预览与下载计数）、工作区卡片缩略图</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 4 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #f59e0b;padding-left:10px;">
+        04 · 定时任务：从「填一堆字段」到「说清这一件事」
+      </p>
+      <p style="margin:0 0 10px 0;font-size:14px;color:#334155;line-height:1.8;">
+        最关键的「要做什么」和「输出有什么要求」并排两栏、长得一模一样，用户读不出一个写任务、一个写规矩。
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>两栏改成一句人话</strong>：「要做什么」必填、「输出有什么要求」选填，两栏各有常驻提示条说明分工；往必填栏里写了格式类要求时，会提示「这段像是输出要求」并支持一键搬过去，也可以选择忽略。</li>
+        <li><strong>第 2 栏给现成写法</strong>：移动端列表、只要结论、不要图表、金额统一万元、只看华东区五个常用要求一点就追加，重复点不会重复写。</li>
+        <li><strong>整页按三组重排</strong>：做什么 → 什么时候跑 → 结果发到哪，右侧多了一条随填随更新的摘要，把散在六个字段里的意图拼成一句话，并给出下一次运行时间、交付要求条数与通知渠道。</li>
+        <li><strong>先选模板再填空</strong>：新建时先给五个业务模板（指标报表、阈值巡检、周期简报、失败盘点、外部巡检）与「从空白开始」，套用后字段预填但不锁死，需要替换的地方统一用方括号标出并提示你替换。</li>
+        <li><strong>该折叠的都折起来</strong>：三组章节可整组收起、标题带语义图标；失败重试策略默认收起，收起时行内仍显示当前策略（重试几次、间隔多久，或默认不重试）；「接下来三次运行」直接给出具体时间，第一项标「下次」，不再只有一个看不懂的表达式。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：模板起步页、两栏指令与提示条 / 位置纠偏、三组分区与右侧摘要栏、「接下来三次运行」徽条</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 5 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #f43f5e;padding-left:10px;">
+        05 · 多智能体协作：授权回到你面前，进度不再丢
+      </p>
+      <p style="margin:0 0 10px 0;font-size:14px;color:#334155;line-height:1.8;">
+        团队模式里子智能体要用受控工具，过去只能失败收场；它反问过你一句之后，答完却只办了被问的那一项。
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>子智能体请求权限时，确认卡发到主会话</strong>：不再当作失败终止，而是暂停等你在卡片上点选；确认后自动唤回同一个子智能体接着上次的进度跑，不用重新委派一次。卡片上标出「来自某个子智能体」，过程日志也带着它的名字。</li>
+        <li><strong>授权范围收得很紧</strong>：「允许这一次」只覆盖同一工具、同一参数的那一次调用，两分钟内有效；批准列目录不会顺手放行删除，给资产导出授权也不会放行另一个助手，无人值守场景一律不放行。</li>
+        <li><strong>删除类命令不再有假按钮</strong>：「本会话总是允许」对这类命令已撤掉（此前点了也不生效，下次照样弹）；用「允许这一次」也不再陷入「点允许—又弹—再点」的死循环，卡片会说明这类命令每次都要确认。</li>
+        <li><strong>反问之后不再丢任务</strong>：提问轮会带上「提问前任务进度」并写在问题之前，你答完后的回执里明确要求「继续完成提问前尚未完成的项」；即使中间发生过上下文压缩，进度也会作为当前轮的状态重新注入，不再只剩一句问句加一个选项。</li>
+        <li><strong>答完能看见它在想什么</strong>：子智能体的思考默认折在委派卡里，不再和主回答抢位置，也不会挤掉结论。长时间线与长回复的渲染也做了合帧：思考按帧合并、正文按渲染帧合并，两万个文件的大目录计数从 93 毫秒降到 16 毫秒。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：子智能体授权确认卡（含「来自子智能体」徽标）、删除类命令的确认说明、提问轮的任务进度、委派卡内折叠的思考</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 6 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #06b6d4;padding-left:10px;">
+        06 · 工具链与工程门禁：该连的连上，该拦的拦住
+      </p>
+      <p style="margin:0 0 10px 0;font-size:14px;color:#334155;line-height:1.8;">
+        这一版顺手补掉一批「看起来能用、其实一直没生效」的链路，并把质量门禁真正接上。
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>图像类 MCP 工具不再必然失败</strong>：单个流式事件的体积上限从 1 MiB 放宽到 32 MiB，此前返回一张图就直接超限报错。</li>
+        <li><strong>连接断开能自己恢复</strong>：一次调用失败后，全站相关工具会一直报「连接已关闭」、只能重启解决；现在能识别成链路断开、淘汰旧会话并重连。共享会话的建立与关闭也收到专属线程，不再出现收尾抛异常、连接泄漏，关闭也设了 30 秒上限、不再无限等待。</li>
+        <li><strong>MCP 服务名短了、也看得清是谁建的</strong>：新名字是「私有/公开 + 用户编号」的短标识，只允许英文数字，长度从三十来个字符降到十来个；卡片上显示创建人并支持按创建人搜索。存量老名字不迁移，改名时才校验。</li>
+        <li><strong>每个工具能单独定超时</strong>：MCP 工具卡片上有了工具级超时入口，不必为了一个慢工具把整个版本一起放大；工具勾选多了「已选 / 全部」切换与按业务分组过滤，工具分组默认折叠，超时卡片也能收起。</li>
+        <li><strong>质量门禁第一次真正生效</strong>：前端类型错误从 153 条清到 0 条，没有用忽略注解糊过去——其中三处是类型检查一直掩盖着的真缺陷（上传失败时进度显示成无效数字、参数搜索框失焦就报错且下拉关不掉、「仅桌面」筛选挡不住排序入口）。同时新增 CI 类型门禁：推主分支、开发分支或提 PR 时有错即红。后端的「已知失败基线」也从 36 条压到 7 条、再清到 0 条，机制保留、清单为空；另有 10 条历史红测试被修掉（9 条断言锚点过期，1 条是真缺口：凭据取不到值时补了修复建议）。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：MCP 服务卡片（短名 + 创建人）、工具级超时入口、工具勾选的「已选 / 全部」与分组过滤、CI 类型门禁的通过记录</p>
+      </section>
+    </section>
+
+  </section>
+
+  <!-- 章节二：问题修复 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🐛 问题修复 (Bug Fixes)
+    </p>
+
+    <section style="margin:0 0 16px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        ⏰ 调度、定时任务与 Cron
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">套用模板后运行周期与表达式对不上</strong>：模板回填的是表达式，人话控件没跟着同步，会出现「控件显示每天、实际是每周」。现在套用后两者一起更新。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">折叠了失败策略就不知道还生效吗</strong>：收起后行内直接写明当前策略——失败重试几次、间隔多久，或者默认不重试。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">只知道有任务、不知道什么时候跑</strong>：执行计划下面原本只有一句表达式，现在直接列出接下来三次的具体时间，第一项标「下次」。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">编辑已有任务却先进了模板页</strong>：新建与编辑的弹窗状态会互相残留。现在编辑直接进表单，关闭时统一复位。</p>
+    </section>
+
+    <section style="margin:0 0 16px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        💬 会话、时间线与交互
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">「进行中的步骤跑到上面去了」</strong>：工具卡片会被吸附到上一轮旁白下面，看起来顺序错乱。现在按后端事件序号稳定排序，工具卡不再挪位。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">长时间线越用越卡、长回答越输出越顿</strong>：思考与正文各自按帧合并渲染，历史重放时相邻文本帧也做压缩，大目录的文件计数移出主线程。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">提问轮正文与卡片内容重复</strong>：正文里又贴一遍问题与选项，任务清单还混进执行明细。现在正文拆成「任务进度」与「待你确认」两小节，清单不再进明细。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">编辑器发版后，停在旧页面点菜单没反应</strong>：前端资源已换、页面还是旧的，点菜单报找不到模块，只能手动刷新。现在检测到后自动刷新一次，仍失败就给一张明确的提示卡。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">被中断的工具结果显示成一串内部标记</strong>：界面上出现的是框架内部的错误标签。现在显示「本轮已取消，工具未返回结果」。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">子智能体的思考被当成委派卡片</strong>：委派卡提前变绿、思考一条都看不到。现在思考归位到委派卡内并默认折叠。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">浏览器提前关闭时刷出两条服务器错误</strong>：每次关页面都记两条堆栈，把真故障埋掉。现在只记一条无堆栈的告警。</p>
+    </section>
+
+    <section style="margin:0 0 16px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🔐 平台、权限与登录
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">批量绑定凭据能绕过权限</strong>：批量接口对全局层绑定的校验比单条松，非管理员可以把公用凭据绑成全局规则。现在与单条一致，非管理员一律拒绝。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">知道路径就能分享别人的文件</strong>：归属校验只查到公共父目录就放行。现在只允许分享本人工作区里的文件。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">管理员浏览他人文件时，「分享」点下去才报错</strong>：现在直接置灰，不再让人点了才知道不行。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">凭据流水里一串英文原因码</strong>：与报错弹窗里的中文对不上，用户不知道该补什么。现在两边逐字一致，并把「拿什么去找、跟什么比、候选几条」写清楚。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">上传失败时进度显示成无效数字</strong>：类型检查一直掩盖着这类分支，失败态下进度被算成空值。现在显示明确的失败状态。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">同一处参数配置改了一行，其余几条静默失效</strong>：一条规则未命中就直接失败、不回退到同层的固定绑定，界面也没标出压制关系。现在按程度标注，一眼能看出哪条被哪条压住。</p>
+    </section>
+
+    <section style="margin:0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🛠️ 工具、沙箱与嵌入
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">MCP 调一次失败，之后所有相关工具都报连接已关闭</strong>：旧会话被当成活的反复复用。现在识别为传输断开并淘汰缓存会话，下一次自动重连。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">凭据提供的 Token 注入后仍然 401</strong>：认证方案前缀被当成普通值一起替换掉了。现在缺方案时自动补全，远端要求的格式保持原样。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">脚本工具读环境变量永远是空、却报成功</strong>：取消费方标识时读了一个配置里根本没有的项，第一道判断就返回了。现在能真正注入。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">工具一个请求头都没配置时，凭据注入整段被跳过</strong>：界面上写着「来自凭据」，请求里却没有这个头。现在照常注入。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">改完 API 类工具，智能体在缓存期内看不到</strong>：现在改动即失效缓存，流式调用的审计也补上了出参。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">上传可以绕过文件数上限</strong>：单次上传有上限，但循环上传单个文件、反复解包能无限累计。现在统一按目录累计（默认 20 万个），各入口口径一致。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">多表查询可能把数据库打爆</strong>：隐式逗号连接在没有关联条件时会生成笛卡尔积。现在静态校验会拦下这类语句并提示风险，带等值条件的传统写法仍然放行。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">内置测试服务的发信工具一直是模拟的</strong>：现在支持真实连通验证与真实发信（默认仍是模拟），老环境再点一次创建即可补齐第三个工具。</p>
+    </section>
+
+  </section>
+
+  <!-- 章节三：数据库与配置变更 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🗄️ 数据库迁移清单
+    </p>
+
+    <p style="margin:0 0 10px 0;font-size:12px;color:#94a3b8;line-height:1.6;">📱 下方表格较宽，移动端可<b>左右滑动</b>查看完整内容</p>
+    <section style="margin:0 0 18px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #e2e8f0;border-radius:4px;">
+      <table style="width:100%;min-width:680px;table-layout:fixed;border-collapse:collapse;font-size:13px;line-height:1.7;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <colgroup>
+          <col style="width:120px;">
+          <col style="width:320px;">
+          <col style="width:240px;">
+        </colgroup>
+        <thead>
+          <tr style="background:#0f172a;">
+            <th style="padding:10px;border:1px solid #1e293b;color:#e2e8f0;font-weight:bold;text-align:left;font-size:13px;">版本号</th>
+            <th style="padding:10px;border:1px solid #1e293b;color:#e2e8f0;font-weight:bold;text-align:left;font-size:13px;">变更内容</th>
+            <th style="padding:10px;border:1px solid #1e293b;color:#e2e8f0;font-weight:bold;text-align:left;font-size:13px;">迁移文件</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V218 / V118</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">新增管理员群发的发送记录表：每次群发的范围、标题、正文快照与实际条数；只存范围不存最终名单，重发时重新预览</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V218-create-portal-broadcast-records.sql<br>
+              PG: V118-create-portal-broadcast-records.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V219 / V119</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">凭据支持结构化值：值形态、模板标识、列表摘要三类描述列，绑定表增加「取哪个字段」的字段路径；只加描述、不改存储与加密链路，存量默认单值、无需回填</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V219-add-secret-value-format.sql<br>
+              PG: V119-add-secret-value-format.sql
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V220 / V120</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">绑定表增加「多值配法」组标识：区分「每个参数各配一次」与「一次保存、多个参数共用一份凭据」；存量为空即单值配法，<strong>重新保存一次即可补上</strong></td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V220-add-secret-binding-group-id.sql<br>
+              PG: V120-add-secret-binding-group-id.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V221 / V121</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">系统设置新增「图像」分组：总开关（默认关闭）、地址、密钥、模型、允许的分辨率白名单、超时、单次张数、风格前缀</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V221-add-image-generation-configs.sql<br>
+              PG: V121-add-image-generation-configs.sql
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V222 / V122</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">新增工作区文件在线分享表：冻结路径、大小与内容指纹，含访问密码、失效时间、预览与下载分开计数；不复制文件本体</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V222-create-ai-file-shares.sql<br>
+              PG: V122-create-ai-file-shares.sql
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7;">
+      💡 升级提示：MySQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod/apply-sql.sh</code>，PostgreSQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod-pg/apply-sql.sh</code>，具备完整的幂等性检查、断点续跑与结构校验。本版 <strong style="color:#b45309;">5 组迁移按版本号顺序执行即可，无先后依赖</strong>；两套脚本不可混用。本版无预留编号。
+    </p>
+  </section>
+
+  <!-- 章节四：平滑升级指南 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      📖 平滑升级指南 (Upgrade Guide)
+    </p>
+    <p style="margin:0 0 14px 0;font-size:14px;color:#334155;line-height:1.8;">
+      遵循以下标准步骤即可平滑无缝升级至 <strong style="color:#0f172a;">v1.0.24.0</strong>。请务必注意：本版本新增 5 组数据库迁移必须按序执行，本版无依赖升级。
+    </p>
+
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式一：源码拉取升级（开发与虚机部署）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 同步拉取主分支最新代码</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">git fetch origin &amp;&amp; git checkout main &amp;&amp; git pull origin main</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 执行数据库结构平滑迁移 (MySQL / PG，务必按序)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 更新依赖环境并启动本地服务（本版无依赖升级）</p>
+        <p style="margin:0;color:#38bdf8;">poetry install --no-root &amp;&amp; ./dev.sh</p>
+      </section>
+    </section>
+
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式二：Docker 容器化升级（生产环境推荐）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 执行数据库增量升级 (宿主或临时容器)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 导入官方 Release 镜像归档（x86_64 / ARM64 按架构选择）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.24.0_linux-amd64_*.tar</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.24.0_linux-arm64_*.tar</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 重启容器服务</p>
+        <p style="margin:0;color:#38bdf8;">./start-nanzi-ai-agent.sh</p>
+      </section>
+    </section>
+
+    <section style="margin:0 0 12px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式三：升级后自检
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 确认 5 组迁移全部应用（群发记录、分享表已存在）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # 重复执行会跳过已应用的版本</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 打开凭据中心，新建一条结构化凭据（选模板填表）并绑定到任一工具参数</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;"># 3. 在多值页重新保存一次存量多值配置，确认单值页显示为只读徽标</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 4. 管理员打开图像生成总开关并配好地址密钥模型，测试生成一次</p>
+        <p style="margin:0;color:#38bdf8;"># 5. 在工作区生成一个文件分享链接，确认预览与下载分别计数</p>
+      </section>
+    </section>
+
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7;">
+      ✅ 升级后请依次自检：① 凭据列表能看到「单值 / 结构化」与摘要；② 参数设置里能给某个参数指定「取哪个字段」；③ 系统设置出现「图像」分组、出图工具按开关与勾选两道闸生效；④ 「系统诊断」里管理员能看到群发入口与发送历史；⑤ 工作区文件的「分享」能生成链接并按类型在线预览；⑥ 子智能体请求权限时确认卡出现在主会话、点完能自动续跑。
+    </p>
+  </section>
+
+  <!-- 统计指标卡片 -->
+  <section style="margin:0 0 28px 0;padding:16px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#0f172a;line-height:1.5;">📊 版本统计速览 (Release Metrics)</p>
+    <div style="font-size:13px;color:#475569;line-height:1.9;">
+      <div>• <strong>版本编号</strong>：v1.0.24.0</div>
+      <div>• <strong>Commit 范围</strong>：<code style="background:#e2e8f0;padding:1px 4px;border-radius:2px;">2920e9ad</code> ... <code style="background:#e2e8f0;padding:1px 4px;border-radius:2px;">472e6452</code>（v1.0.23 发布点之后）</div>
+      <div>• <strong>累计提交</strong>：130 个 Commits（114 个非 Merge 提交、16 个合并 PR：#317 ~ #332）</div>
+      <div>• <strong>变更文件</strong>：455 个文件（+73,017 行新增，-3,732 行删除）</div>
+      <div>• <strong>数据库迁移</strong>：MySQL V218~V222（5 组）/ PG V118~V122（5 组）</div>
+      <div>• <strong>依赖升级</strong>：本版无依赖变更</div>
+      <div>• <strong>测试覆盖</strong>：前端契约 5,501 项通过（1 项跳过）；后端 tests/ai 3,469 项通过、tests/services 2,134 项通过（3 项跳过、1 项预期失败）</div>
+      <div>• <strong>质量门禁</strong>：前端类型错误 153 → 0 并接入 CI；后端已知失败基线 36 → 0</div>
+    </div>
+  </section>
+
+  <!-- 结语区 -->
+  <section style="margin:24px 0 10px 0;text-align:center;">
+    <p style="margin:0 0 8px 0;font-size:15px;color:#0f172a;font-weight:bold;">
+      致敬每一位在生产级 AI 道路上砥砺前行的开发者！
+    </p>
+    <p style="margin:0;font-size:13.5px;color:#64748b;line-height:1.8;">
+      欢迎在 GitHub Star 关注我们，参与社群交流与代码共建。
+    </p>
+  </section>
+
+</section>
