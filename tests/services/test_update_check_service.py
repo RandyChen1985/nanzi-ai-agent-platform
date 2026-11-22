@@ -191,6 +191,24 @@ def test_payload_carries_body_for_the_dialog() -> None:
     assert payload["body"].startswith("## 更新内容")
 
 
+def test_payload_carries_both_repo_urls() -> None:
+    """Gitee 与 GitHub 两边的发布页都要给：弹层里让用户挑能打开的那个。"""
+
+    upstream = {
+        "latest": "1.0.24",
+        "latest_normalized": "1.0.24",
+        "published_at": "2026-11-22T13:38:28+08:00",
+        "release_url": f"{svc.GITEE_WEB_BASE}/releases/tag/1.0.24",
+        "github_release_url": f"{svc.GITHUB_WEB_BASE}/releases/tag/1.0.24",
+        "notes": [],
+        "body": "",
+        "has_migrations": False,
+    }
+    payload = svc._build_payload("1.0.23.0", upstream, source="live")
+    assert payload["release_url"].startswith("https://gitee.com/")
+    assert payload["github_release_url"].startswith("https://github.com/")
+
+
 def test_has_migrations_matches_chinese_and_english() -> None:
     assert svc._has_migrations("## 数据库迁移清单") is True
     assert svc._has_migrations("Migrations: V218~V222") is True

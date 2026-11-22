@@ -45,6 +45,12 @@ GITEE_OWNER = "randychen1985"
 GITEE_REPO = "nanzi-ai-agent-platform"
 GITEE_WEB_BASE = f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPO}"
 GITEE_API_BASE = f"https://gitee.com/api/v5/repos/{GITEE_OWNER}/{GITEE_REPO}"
+# 同一个仓库在 GitHub 上也有一份（origin），两边发版说明内容一致。
+# 弹层里两个地址都给：有人习惯 GitHub，有人在内网只能开其中一个。
+GITHUB_OWNER = "RandyChen1985"
+GITHUB_REPO = "nanzi-ai-agent-platform"
+GITHUB_WEB_BASE = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}"
+
 TAGS_URL = f"{GITEE_API_BASE}/tags"
 RELEASES_URL = f"{GITEE_API_BASE}/releases"
 
@@ -280,6 +286,7 @@ async def fetch_upstream_info() -> Dict[str, Any]:
     # 发行说明是「锦上添花」：拿不到不影响「有没有新版本」的主结论
     body = ""
     release_url = f"{GITEE_WEB_BASE}/releases/tag/{tag_name}"
+    github_release_url = f"{GITHUB_WEB_BASE}/releases/tag/{tag_name}"
     try:
         releases_resp = await client.get(
             RELEASES_URL, params={"per_page": 20}, timeout=REQUEST_TIMEOUT_SECONDS
@@ -297,6 +304,7 @@ async def fetch_upstream_info() -> Dict[str, Any]:
         "latest_normalized": normalize_version(tag_name),
         "published_at": commit.get("date") or "",
         "release_url": release_url,
+        "github_release_url": github_release_url,
         "notes": _extract_notes(body),
         "body": _truncate_body(body),
         "has_migrations": _has_migrations(body),
@@ -428,6 +436,7 @@ def _build_payload(
         "reason": result.reason,
         "published_at": upstream.get("published_at") or "",
         "release_url": upstream.get("release_url") or "",
+        "github_release_url": upstream.get("github_release_url") or "",
         "notes": upstream.get("notes") or [],
         "body": upstream.get("body") or "",
         "has_migrations": bool(upstream.get("has_migrations")),
@@ -457,6 +466,7 @@ async def check_for_update(current: Optional[str] = None, *, force: bool = False
             payload["current"] = current_version
             # 兼容升级前写入的老缓存（当时还没存正文），别让前端拿到 undefined
             payload.setdefault("body", "")
+            payload.setdefault("github_release_url", "")
             # 缓存里存的是上次比较结果；当前版本可能变了（就地升级），重算一次
             result = compare_versions(current_version, payload.get("latest"))
             payload["has_update"] = result.has_update
@@ -471,6 +481,7 @@ async def check_for_update(current: Optional[str] = None, *, force: bool = False
             payload["current"] = current_version
             # 兼容升级前写入的老缓存（当时还没存正文），别让前端拿到 undefined
             payload.setdefault("body", "")
+            payload.setdefault("github_release_url", "")
             result = compare_versions(current_version, payload.get("latest"))
             payload["has_update"] = result.has_update
             payload["reason"] = result.reason
@@ -488,6 +499,7 @@ async def check_for_update(current: Optional[str] = None, *, force: bool = False
             "reason": "throttled",
             "published_at": "",
             "release_url": "",
+            "github_release_url": "",
             "notes": [],
             "body": "",
             "has_migrations": False,
@@ -510,6 +522,7 @@ async def check_for_update(current: Optional[str] = None, *, force: bool = False
                 "reason": "error",
                 "published_at": "",
                 "release_url": "",
+                "github_release_url": "",
                 "notes": [],
                 "body": "",
                 "has_migrations": False,
@@ -533,6 +546,7 @@ async def check_for_update(current: Optional[str] = None, *, force: bool = False
             "reason": "error",
             "published_at": "",
             "release_url": "",
+            "github_release_url": "",
             "notes": [],
             "body": "",
             "has_migrations": False,

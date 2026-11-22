@@ -177,11 +177,16 @@ def test_dialog_closes_on_escape_and_backdrop(dialog: str) -> None:
     assert '@click.self="emit(\'close\')"' in dialog
 
 
-def test_dialog_does_not_add_a_redundant_repo_link(dialog: str) -> None:
-    """正文本身带仓库链接，底部再挂一条「在 Gitee 打开」是重复入口（用户要求去掉）。"""
+def test_dialog_offers_both_repo_links(dialog: str) -> None:
+    """弹层正文是我们缓存的副本（超长还会截断），要留外链核对原文。
 
-    assert "在 Gitee 打开" not in dialog
-    assert "releaseUrl" not in dialog
+    Gitee 与 GitHub 两个地址都给：内网环境里常常只有其中一个能通。
+    """
+
+    assert "在 Gitee 打开 ↗" in dialog
+    assert "在 GitHub 打开 ↗" in dialog
+    assert ':href="releaseUrl"' in dialog
+    assert ':href="githubUrl"' in dialog
 
 
 def test_clicking_check_does_not_close_the_menu(menu: str) -> None:
@@ -250,3 +255,17 @@ def test_check_button_is_always_visible(menu: str) -> None:
     """结果块与动作行互不挤占：任何状态都能看到「检查更新」。"""
 
     assert 'v-if="repoUrl" class="mt-1 flex items-center gap-2"' in menu
+
+
+def test_changelog_opens_dialog_only_when_already_latest(menu: str) -> None:
+    """已是最新时「更新日志」就地弹层；落后时保留外链。
+
+    后端只缓存最新那次发行说明的正文，所以只有「当前版本 == 上游最新 tag」时，
+    弹层里的内容才是这个版本对应的；落后时这个入口指向历史版本，
+    拿最新版说明冒充旧版说明比跳一次浏览器糟糕得多。
+    """
+
+    assert "changelogOpensNotes" in menu
+    assert "normalizeVersion(updateData.value.latest" in menu
+    # 回落分支仍在：落后 / 开发版时指向历史 tag 或 Releases 列表
+    assert ':href="changelogUrl"' in menu

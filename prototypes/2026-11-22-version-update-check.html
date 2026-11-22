@@ -173,6 +173,7 @@
     border-radius:4px;background:rgba(255,255,255,.07)}
   .notes-foot{display:flex;align-items:center;gap:12px;padding:10px 16px;border-top:1px solid rgba(255,255,255,.1)}
   .notes-foot a{font-size:12px;color:#93c5fd;text-decoration:underline;text-underline-offset:2px}
+  .notes-foot a + a{margin-left:14px}
   .notes-foot button{margin-left:auto;padding:5px 14px;font:inherit;font-size:12.5px;border-radius:8px;
     border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);color:var(--text);cursor:pointer}
 
@@ -243,7 +244,7 @@
                   <span id="a-status" style="margin-left:auto"></span>
                 </div>
                 <div id="a-action" style="margin-top:7px"></div>
-                                <p style="margin:4px 0 0"><a>更新日志：v1.0.23 ↗</a></p>
+                                <p style="margin:4px 0 0"><a id="a-changelog" onclick="openNotes()" title="已是最新时点开就是这一版的说明；落后时仍跳仓库">更新日志：v1.0.23</a></p>
               </div>
             </div>
             <div class="divider"></div>
@@ -268,6 +269,7 @@
         <p class="lead" style="margin:0">
           若选 A：<code>AccountMenu.vue</code> 的 <code>about-box</code> 内加一行状态 + 「检查更新」按钮，
           复用已有的 <code>changelogTag</code> 做三元组归一；有更新时把「更新日志」链接换成最新 tag。
+          已是最新时「更新日志」改为就地弹层（缓存里那份正文正是这一版），落后时仍走外链（历史版本的说明我们没缓存）。
         </p>
       </div>
     </div>
@@ -511,6 +513,8 @@
       <p>升级前先执行迁移脚本，再启动新代码；顺序不能反。</p>
     </div>
     <div class="notes-foot">
+      <a href="https://gitee.com/randychen1985/nanzi-ai-agent-platform/releases/tag/1.0.24" target="_blank" rel="noopener noreferrer">在 Gitee 打开 ↗</a>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.24" target="_blank" rel="noopener noreferrer">在 GitHub 打开 ↗</a>
       <button onclick="closeNotes()">知道了</button>
     </div>
   </div>
@@ -626,6 +630,12 @@ function setStateA(name){
   // 折叠着也能看见「有新版本」：一个小橙点，不占版面
   const pend = document.getElementById("a-pending");
   if (pend) pend.style.display = name === "outdated" ? "inline-block" : "none";
+  // 已是最新时：当前版本就是最新 tag，更新日志点开看这一版（无外链箭头）
+  const curLatest = "v1.0.24.0";
+  if (cur) cur.textContent = name === "dev" ? "dev" : (name === "latest" ? curLatest : "v1.0.23.0");
+  if (cur2) cur2.textContent = name === "dev" ? "dev" : (name === "latest" ? "v1.0.24.0" : "v1.0.23.0");
+  const cl = document.getElementById("a-changelog");
+  if (cl) cl.textContent = name === "latest" ? "更新日志：v1.0.24" : "更新日志：v1.0.23";
   document.getElementById("a-status").innerHTML = s.status;
   document.getElementById("a-action").innerHTML = s.action;
 }

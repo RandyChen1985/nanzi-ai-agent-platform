@@ -334,7 +334,17 @@
             <!-- 「代码仓库」入口已去掉：它与下面的「更新日志」指向同一个仓库，
                  两条并排是重复入口，只留更新日志（那边正好落在对应 tag 上）。 -->
             <p v-if="repoUrl" class="mt-0.5">
+              <!-- 已是最新时，缓存的发行说明正是这个版本的内容，就地弹层看；
+                   落后时这个入口指向历史版本，缓存里没有那份正文，保留外链。 -->
+              <button
+                v-if="changelogOpensNotes"
+                type="button"
+                class="font-medium underline underline-offset-2"
+                :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+                @click="notesOpen = true"
+              >更新日志：{{ changelogLabel }}</button>
               <a
+                v-else
                 :href="changelogUrl"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -368,6 +378,8 @@
         :published-at="publishedDate"
         :has-migrations="Boolean(updateData?.has_migrations)"
         :body="updateData?.body || ''"
+        :release-url="updateData?.release_url || ''"
+        :github-url="updateData?.github_release_url || ''"
         :light-theme="lightTheme"
         @close="notesOpen = false"
       />
@@ -492,6 +504,21 @@ const updateComparable = computed(() => normalizeVersion(props.version) !== "")
 const updateUncomparable = computed(
   () => !updateComparable.value && Boolean(updateData.value?.latest),
 )
+
+/**
+ * 「更新日志」能否用弹层看。
+ *
+ * 后端只缓存了**最新那次**发行说明的正文。所以只有当上游最新 tag 与当前版本
+ * 是同一个版本（即「已是最新」）时，缓存里的正文才是这个版本的内容；
+ * 落后时这个入口指向的是历史版本，我们手上没有那份正文，只能回落到外链——
+ * 宁可跳一次浏览器，也不能拿最新版的说明冒充旧版的。
+ */
+const changelogOpensNotes = computed(() => {
+  if (!updateData.value?.body) return false
+  const latest = normalizeVersion(updateData.value.latest || "")
+  const current = normalizeVersion(changelogTag.value || "")
+  return Boolean(latest) && latest === current
+})
 
 const updateStatusText = computed(() => {
   // 检查中 / 失败与版本号能否比较无关，先给状态

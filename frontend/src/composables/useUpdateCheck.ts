@@ -33,6 +33,8 @@ export interface UpdateCheckData {
   notes: string[]
   /** 发行说明正文（markdown）。老缓存里可能没有这个字段，所以可选 */
   body?: string
+  /** 同一版本在 GitHub 镜像上的发布页（内网里常有只有一个能通的情况） */
+  github_release_url?: string
   /** 本次请求被 60 秒节流挡下：结论仍是上次那份，只是没刷新 */
   throttled?: boolean
   has_migrations: boolean

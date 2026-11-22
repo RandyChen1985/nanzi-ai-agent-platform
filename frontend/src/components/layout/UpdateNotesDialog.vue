@@ -38,8 +38,26 @@
           <p v-else class="update-notes-empty">这次发行没有填写说明，可以到仓库发行版页查看历史版本。</p>
         </div>
 
-        <!-- 底部只留「知道了」：正文本身带仓库链接，再挂一条外链是重复入口 -->
+        <!-- 两条仓库外链：弹层正文是我们缓存的副本（超长还会截断），想核对原文
+             或把链接发给别人时需要它。Gitee 与 GitHub 两边都给——内网里常常只有
+             其中一个通。 -->
         <footer class="update-notes-foot">
+          <div class="update-notes-links">
+            <a
+              v-if="releaseUrl"
+              :href="releaseUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="update-notes-link"
+            >在 Gitee 打开 ↗</a>
+            <a
+              v-if="githubUrl"
+              :href="githubUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="update-notes-link"
+            >在 GitHub 打开 ↗</a>
+          </div>
           <button type="button" class="update-notes-primary" @click="emit('close')">知道了</button>
         </footer>
       </div>
@@ -69,6 +87,8 @@ const props = withDefaults(
     publishedAt?: string
     hasMigrations?: boolean
     body?: string
+    releaseUrl?: string
+    githubUrl?: string
     lightTheme?: boolean
   }>(),
   {
@@ -76,6 +96,8 @@ const props = withDefaults(
     publishedAt: "",
     hasMigrations: false,
     body: "",
+    releaseUrl: "",
+    githubUrl: "",
     lightTheme: false,
   },
 )
@@ -234,6 +256,20 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKeydown, true))
   gap: 12px;
   padding: 10px 16px;
   border-top: 1px solid var(--notes-line);
+}
+
+.update-notes-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.update-notes-link {
+  font-size: 12px;
+  color: var(--notes-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .update-notes-primary {
