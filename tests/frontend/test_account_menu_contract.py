@@ -132,7 +132,10 @@ def test_changelog_tag_uses_three_segments(menu: str) -> None:
 def test_menu_closes_on_outside_click_and_escape(menu: str) -> None:
     assert "const onDocumentClick" in menu
     assert 'if (target.closest("[data-account-trigger]")) return' in menu
-    assert 'event.key === "Escape"' in menu
+    # Esc 分支后来加了「弹层优先」：先关更新内容弹层，再按一次才收菜单。
+    # 这里断言语义（Esc 仍会收菜单）而不是当初那句字面量。
+    assert 'event.key !== "Escape"' in menu
+    assert "  close()\n}" in menu
     assert '@click="close"' in menu
     assert "document.addEventListener(\"click\", onDocumentClick)" in menu
 

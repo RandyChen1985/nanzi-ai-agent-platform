@@ -195,7 +195,10 @@
           >
             <svg class="h-[17px] w-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" :class="iconClass"><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><circle cx="12" cy="7.8" r="0.7" fill="currentColor" stroke="none" /></svg>
             关于
-            <span class="ml-auto text-[11px]" :class="mutedClass">{{ version }}</span>
+            <span class="ml-auto flex items-center gap-1.5 text-[11px]" :class="mutedClass">
+              <span v-if="hasPendingUpdate" class="update-badge-dot" :title="`有新版本 ${updateData?.latest || ''}`" />
+              {{ version }}
+            </span>
             <svg
               class="ml-1 h-3 w-3 flex-shrink-0 transition-transform"
               :class="[mutedClass, aboutOpen ? 'rotate-180' : '']"
@@ -211,15 +214,125 @@
             class="mx-1 mb-1 rounded-lg px-2.5 py-2 text-[11px] leading-relaxed"
             :class="lightTheme ? 'bg-gray-50 text-gray-500' : 'bg-white/[0.04] text-slate-400'"
           >
-            <p>当前版本 {{ version }}</p>
-            <a
-              v-if="repoUrl"
-              :href="repoUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="mt-0.5 inline-block font-medium underline underline-offset-2"
-              :class="lightTheme ? 'text-primary' : 'text-blue-300'"
-            >代码仓库</a>
+            <p class="flex items-center gap-1.5">
+              <span>当前版本 {{ version }}</span>
+              <!-- 版本检测：只有配置了仓库地址（白标未关闭版本入口）时才出现。
+                   判定全在后端，这里只把结果翻译成一个点 + 一句话。 -->
+              <span
+                v-if="repoUrl && updateStatusText"
+                class="ml-auto inline-flex flex-shrink-0 items-center gap-1"
+                :class="updateStatusClass"
+              >
+                <svg
+                  v-if="updateState === 'checking'"
+                  class="h-2.5 w-2.5 animate-spin"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  aria-hidden="true"
+                ><circle cx="12" cy="12" r="9" stroke-opacity=".25" /><path d="M21 12a9 9 0 0 0-9-9" stroke-linecap="round" /></svg>
+                <span v-else class="update-status-dot" aria-hidden="true" />
+                {{ updateStatusText }}
+              </span>
+            </p>
+
+            <!-- 有新版本：窄面板放不下完整 changelog，只给一句摘要 + 三个动作 -->
+            <div
+              v-if="updateState === 'outdated' && updateData"
+              class="mt-1.5 rounded-md border px-2 py-1.5"
+              :class="lightTheme ? 'border-amber-300/70 bg-amber-50' : 'border-amber-400/30 bg-amber-400/10'"
+            >
+              <p class="font-medium" :class="lightTheme ? 'text-amber-700' : 'text-amber-300'">
+                {{ updateData.latest }}<span v-if="publishedDate"> · {{ publishedDate }} 发布</span>
+              </p>
+              <p
+                v-if="updateNotes.length"
+                class="mt-0.5 max-h-[34px] overflow-hidden"
+                :class="lightTheme ? 'text-amber-800/80' : 'text-amber-100/70'"
+              >{{ updateNotes.join(" · ") }}</p>
+              <p v-if="updateData.has_migrations" class="mt-0.5" :class="lightTheme ? 'text-amber-700/90' : 'text-amber-200/70'">
+                本次更新含数据库迁移，升级前请先执行迁移脚本
+              </p>
+              <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <button
+                  v-if="updateData.body"
+                  type="button"
+                  class="font-medium underline underline-offset-2"
+                  :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+                  @click="notesOpen = true"
+                >查看更新内容</button>
+                <!-- 正文没缓存下来（上游没填发行说明 / 老缓存）时退回新标签打开仓库 -->
+                <a
+                  v-else
+                  :href="updateData.release_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="font-medium underline underline-offset-2"
+                  :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+                >查看更新内容 ↗</a>
+                <button type="button" class="update-link" @click="onDeferUpdate">稍后</button>
+                <button type="button" class="update-link" :disabled="ignoringUpdate" @click="onIgnoreUpdate">忽略此版本</button>
+              </div>
+              <p v-if="ignoreError" class="mt-1" :class="lightTheme ? 'text-rose-600' : 'text-rose-300'">{{ ignoreError }}</p>
+            </div>
+
+            <!-- 开发版：本地没有可比的版本号，判不出「是不是最新」，但上游现在是多少
+                 是明确的。给一块和「有新版本」同形态的提示，让使用者自己决定要不要拉。 -->
+            <div
+              v-else-if="updateUncomparable && updateData"
+              class="mt-1.5 rounded-md border px-2 py-1.5"
+              :class="lightTheme ? 'border-sky-300/70 bg-sky-50' : 'border-sky-400/25 bg-sky-400/10'"
+            >
+              <p class="font-medium" :class="lightTheme ? 'text-sky-700' : 'text-sky-300'">
+                上游最新 {{ updateData.latest }}<span v-if="publishedDate"> · {{ publishedDate }} 发布</span>
+              </p>
+              <p class="mt-0.5" :class="lightTheme ? 'text-sky-800/80' : 'text-sky-100/70'">
+                当前是开发版，判断不了是否落后，请自行确认
+              </p>
+              <p v-if="updateData.has_migrations" class="mt-0.5" :class="lightTheme ? 'text-sky-700/90' : 'text-sky-200/70'">
+                该版本含数据库迁移，同步代码后请先执行迁移脚本
+              </p>
+              <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <button
+                  v-if="updateData.body"
+                  type="button"
+                  class="font-medium underline underline-offset-2"
+                  :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+                  @click="notesOpen = true"
+                >查看更新内容</button>
+                <a
+                  v-else
+                  :href="updateData.release_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="font-medium underline underline-offset-2"
+                  :class="lightTheme ? 'text-primary' : 'text-blue-300'"
+                >查看更新内容 ↗</a>
+              </div>
+            </div>
+
+            <!-- 已忽略 / 已稍后：给条恢复入口，别让用户以为提示坏了 -->
+            <p v-else-if="updateState === 'ignored' && updateData" class="mt-1">
+              已忽略 <span :class="lightTheme ? 'text-gray-700' : 'text-slate-300'">{{ updateData.latest }}</span> 的提示
+              · <button type="button" class="update-link" @click="onRestoreUpdate">恢复提示</button>
+            </p>
+
+            <!-- 检查按钮常驻：上面是「结果」，这里是「动作」，两者互不挤占。
+                 检查中只置灰不移除，节点不消失位置就不会跳。 -->
+            <div v-if="repoUrl" class="mt-1 flex items-center gap-2">
+              <button
+                type="button"
+                class="update-link font-medium"
+                :disabled="updateState === 'checking'"
+                @click="onCheckUpdate"
+              >{{ updateActionLabel }}</button>
+              <span v-if="updateFailure" class="truncate" :class="lightTheme ? 'text-rose-600' : 'text-rose-300'">{{ updateFailure }}</span>
+              <span v-else-if="throttleHint" class="truncate">{{ throttleHint }}</span>
+            </div>
+
+            <!-- 「代码仓库」入口已去掉：它与下面的「更新日志」指向同一个仓库，
+                 两条并排是重复入口，只留更新日志（那边正好落在对应 tag 上）。 -->
             <p v-if="repoUrl" class="mt-0.5">
               <a
                 :href="changelogUrl"
@@ -248,12 +361,32 @@
           <span class="ml-auto text-[11px] opacity-70">需要重新登录</span>
         </button>
       </div>
+      <!-- 更新内容弹层：Teleport 到 body，不受菜单层级与裁剪影响 -->
+      <UpdateNotesDialog
+        :visible="notesOpen"
+        :version="updateData?.latest || ''"
+        :published-at="publishedDate"
+        :has-migrations="Boolean(updateData?.has_migrations)"
+        :body="updateData?.body || ''"
+        :light-theme="lightTheme"
+        @close="notesOpen = false"
+      />
     </div>
   </transition>
 </template>
 
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import UpdateNotesDialog from "./UpdateNotesDialog.vue"
+import {
+  checkForUpdate,
+  deferUpdateVersion,
+  ensureUpdateChecked,
+  ignoreUpdateVersion,
+  normalizeVersion,
+  restoreUpdatePrompt,
+  useUpdateCheck,
+} from "@/composables/useUpdateCheck"
 
 /**
  * 账户菜单：专业模式与用户模式共用同一份内容。
@@ -328,6 +461,116 @@ const changelogUrl = computed(() => {
   const base = props.repoUrl.replace(/\/+$/, "")
   return changelogTag.value ? `${base}/releases/tag/${changelogTag.value}` : `${base}/releases`
 })
+
+/**
+ * 版本检测：当前版本与上游最新 tag。
+ *
+ * 判定与缓存都在后端（`useUpdateCheck` 只是取数 + 展示），这里不重写比较逻辑——
+ * 四段版本与三段 tag 的补零比较一旦两处各写一份，就一定会有一天对不上。
+ *
+ * 只有「有新版且没被忽略/稍后」才渲染那块提示；其余状态都收成一行，不打扰。
+ */
+const {
+  data: updateData,
+  state: updateState,
+  notes: updateNotes,
+  failure: updateFailure,
+  throttleHint,
+  hasPendingUpdate,
+  publishedDate,
+} = useUpdateCheck()
+
+const ignoringUpdate = ref(false)
+const ignoreError = ref("")
+/** 更新内容弹层是否打开（正文来自后端缓存的发行说明） */
+const notesOpen = ref(false)
+
+/** dev 构建没有可比版本号：不显示「已是最新」这种没有意义的结论。 */
+const updateComparable = computed(() => normalizeVersion(props.version) !== "")
+
+/** 开发版且已拿到上游版本：能说「最新是多少」，但判定不了「要不要更新」 */
+const updateUncomparable = computed(
+  () => !updateComparable.value && Boolean(updateData.value?.latest),
+)
+
+const updateStatusText = computed(() => {
+  // 检查中 / 失败与版本号能否比较无关，先给状态
+  if (updateState.value === "checking") return "检查中"
+  if (updateState.value === "failed") return "检查失败"
+  if (!updateComparable.value) {
+    // dev 构建没有可比版本，判不出「是不是最新」；但「上游现在是多少」仍然有用，
+    // 否则用户点了半天看到的是一片空白，会以为按钮没生效。
+    const latest = updateData.value?.latest
+    return latest ? `开发版 · 最新 ${latest}` : ""
+  }
+  switch (updateState.value) {
+    case "latest":
+      return "已是最新"
+    case "outdated":
+      return updateData.value?.latest ? `有新版本 ${updateData.value.latest}` : "有新版本"
+    default:
+      // ignored：下面那行「已忽略 · 恢复提示」已经说清楚了，这里不重复
+      return ""
+  }
+})
+
+const updateStatusClass = computed(() => {
+  switch (updateState.value) {
+    case "outdated":
+      return props.lightTheme ? "text-amber-600" : "text-amber-300"
+    case "latest":
+      return props.lightTheme ? "text-emerald-600" : "text-emerald-300"
+    case "failed":
+      return props.lightTheme ? "text-rose-600" : "text-rose-300"
+    default:
+      return props.lightTheme ? "text-gray-400" : "text-slate-500"
+  }
+})
+
+const updateActionLabel = computed(() => {
+  if (updateState.value === "failed") return "重试"
+  if (updateState.value === "latest" && updateComparable.value) return "重新检查"
+  return "检查更新"
+})
+
+// 打开菜单就静默取一次结果：折叠着的「关于」行也要能亮出「有新版本」小点，
+// 否则用户必须点开才会发现自己在旧版本上。
+// 后端 GET 优先读 24h 缓存（每天 04:00 的定时任务已经预热），基本不碰 Gitee；
+// ensureUpdateChecked 自身幂等，展开/收起反复触发也不会重复请求。
+watch(
+  () => props.visible,
+  (visible) => {
+    if (!visible || !props.repoUrl) return
+    ignoreError.value = ""
+    void ensureUpdateChecked(props.version)
+  },
+)
+
+const onCheckUpdate = () => {
+  ignoreError.value = ""
+  void checkForUpdate(props.version)
+}
+
+/** 「稍后」只记在 sessionStorage：本次会话不再出现，下次打开还会提示。 */
+const onDeferUpdate = () => {
+  const target = updateData.value?.latest_normalized || updateData.value?.latest || ""
+  if (target) deferUpdateVersion(target)
+}
+
+/** 「忽略此版本」写账号偏好；上游出现更大的 tag 时会自动重新提示。 */
+const onIgnoreUpdate = async () => {
+  const target = updateData.value?.latest_normalized || updateData.value?.latest || ""
+  if (!target) return
+  ignoringUpdate.value = true
+  ignoreError.value = ""
+  const ok = await ignoreUpdateVersion(target)
+  ignoringUpdate.value = false
+  if (!ok) ignoreError.value = "忽略失败，请稍后重试"
+}
+
+const onRestoreUpdate = () => {
+  void restoreUpdatePrompt()
+}
 
 /** 当前账号能用的模式；字段缺失时按「两种都能用」兜底（旧登录快照） */
 const usableModes = computed<Array<"user" | "pro">>(() =>
@@ -418,9 +661,16 @@ const onDocumentClick = (event: MouseEvent) => {
   if (!props.visible) return
   const target = event.target as HTMLElement | null
   if (!target) return
+  // 点「检查更新」后状态立刻切到「检查中」，模板会把按钮节点换掉；事件冒泡到
+  // document 时 target 已经脱离文档，contains() 必然为 false，于是被当成
+  // 「点了菜单外面」——表现就是「点一下检查，整个菜单关了」。
+  // 已脱离文档的点击一律不算点外面。
+  if (!document.body.contains(target)) return
   if (rootRef.value?.contains(target)) return
   // 触发按钮自己负责 toggle，这里跳过，否则「点开→document 又关掉」会闪
   if (target.closest("[data-account-trigger]")) return
+  // 更新内容弹层被 Teleport 到 body，不在 rootRef 内：点它只是看文档，不该关菜单
+  if (target.closest("[data-update-notes]")) return
   close()
 }
 
@@ -435,6 +685,8 @@ watch(
         ?.querySelector<HTMLElement>('[role="menuitem"], [role="menuitemradio"]')
         ?.focus()
     } else {
+      // 菜单关掉时弹层必须一起收：否则它被 Teleport 到 body，会孤零零留在屏幕上
+      notesOpen.value = false
       // 关闭后把焦点还给头像，键盘用户不会掉到页面顶部
       lastFocused?.focus?.()
       lastFocused = null
@@ -443,7 +695,13 @@ watch(
 )
 
 const onDocumentKeydown = (event: KeyboardEvent) => {
-  if (event.key === "Escape" && props.visible) close()
+  if (event.key !== "Escape" || !props.visible) return
+  // 弹层盖在菜单之上：Esc 先关弹层，用户再按一次才收菜单
+  if (notesOpen.value) {
+    notesOpen.value = false
+    return
+  }
+  close()
 }
 
 onMounted(() => {
@@ -476,6 +734,41 @@ onBeforeUnmount(() => {
 .account-menu-item:focus-visible {
   outline: 2px solid rgba(22, 119, 255, 0.55);
   outline-offset: -2px;
+}
+
+/* 版本检测的状态点：颜色继承父级的 text-*，深浅主题共用一套 */
+.update-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: 0 0 5px;
+}
+
+/* 菜单里的文字按钮：与旁边的链接同样式，避免原生 button 的默认外观 */
+.update-badge-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 999px;
+  background: #f59e0b;
+}
+
+.update-link {
+  font: inherit;
+  line-height: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.update-link:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .account-menu-layer {
