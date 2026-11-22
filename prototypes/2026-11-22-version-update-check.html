@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>版本检测 · 新版本提示与每日自动检查原型</title>
+<meta name="prototype-kind" content="方案对比">
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111b2e; --panel-2:#16233a; --line:rgba(148,163,184,.18);
+    --text:#e2e8f0; --muted:#94a3b8; --dim:#64748b;
+    --blue:#3b82f6; --blue-soft:rgba(59,130,246,.14);
+    --green:#10b981; --green-soft:rgba(16,185,129,.14);
+    --amber:#f59e0b; --amber-soft:rgba(245,158,11,.14);
+    --rose:#f43f5e; --rose-soft:rgba(244,63,94,.14);
+    --violet:#8b5cf6;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:
+      radial-gradient(1100px 520px at 12% -10%, rgba(59,130,246,.16), transparent 60%),
+      radial-gradient(900px 480px at 96% 0%, rgba(139,92,246,.12), transparent 62%),
+      var(--bg);
+    color:var(--text);
+    font:14px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:34px 22px 70px}
+  h1{font-size:24px;line-height:1.35;margin:0 0 8px}
+  h2{font-size:16px;margin:0 0 12px}
+  h3{font-size:13.5px;margin:0 0 8px;color:var(--muted);font-weight:600;letter-spacing:.2px}
+  p{margin:0 0 10px}
+  .lead{color:var(--muted);font-size:13.5px;max-width:900px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
+    background:rgba(148,163,184,.14);padding:1px 5px;border-radius:4px;color:#cbd5e1}
+  .badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+  .eyebrow{font-size:11px;letter-spacing:2px;color:#60a5fa;font-weight:600;margin:0 0 10px}
+
+  /* 顶部 tab */
+  .tabs{display:flex;gap:8px;margin:24px 0 18px;flex-wrap:wrap}
+  .tab{
+    appearance:none;cursor:pointer;border:1px solid var(--line);background:rgba(255,255,255,.03);
+    color:var(--muted);padding:9px 15px;border-radius:10px;font-size:13px;font-family:inherit;
+    transition:.15s;line-height:1.3;text-align:left;
+  }
+  .tab strong{display:block;color:var(--text);font-size:13px;font-weight:600}
+  .tab span{font-size:11.5px;color:var(--dim)}
+  .tab:hover{border-color:rgba(148,163,184,.4);color:var(--text)}
+  .tab[aria-selected="true"]{background:var(--blue-soft);border-color:rgba(59,130,246,.55);color:#dbeafe}
+  .tab[aria-selected="true"] span{color:#93c5fd}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+  .grid{display:grid;gap:18px}
+  .two{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  @media (max-width:920px){.two{grid-template-columns:1fr}}
+
+  /* 状态切换条 */
+  .states{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 14px}
+  .states button{
+    appearance:none;cursor:pointer;font-family:inherit;font-size:12px;padding:5px 11px;border-radius:999px;
+    border:1px solid var(--line);background:transparent;color:var(--muted);transition:.15s
+  }
+  .states button:hover{color:var(--text);border-color:rgba(148,163,184,.45)}
+  .states button[aria-pressed="true"]{background:rgba(59,130,246,.18);border-color:rgba(59,130,246,.5);color:#bfdbfe}
+
+  /* ===== 方案 A：关于面板内联（复刻截图里的用户模式菜单） ===== */
+  .phone{
+    width:352px;max-width:100%;margin:0 auto;background:#0a0f1c;border:1px solid var(--line);
+    border-radius:22px;padding:10px;box-shadow:0 30px 60px -30px rgba(0,0,0,.9)
+  }
+  .sheet{background:#141a26;border-radius:16px;overflow:hidden}
+  .sheet-head{display:flex;align-items:center;gap:10px;padding:14px 14px 12px;border-bottom:1px solid rgba(148,163,184,.12)}
+  .avatar{width:38px;height:38px;border-radius:999px;background:linear-gradient(140deg,#22c55e,#0ea5e9);display:grid;place-items:center;font-weight:700;color:#04140c}
+  .sheet-head .who{font-weight:600;font-size:14px;line-height:1.3}
+  .sheet-head .sub{font-size:11.5px;color:var(--dim)}
+  .sheet-head .right{margin-left:auto;font-size:11.5px;color:var(--dim)}
+  .mode-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 14px 10px}
+  .mode{border:1px solid rgba(148,163,184,.16);border-radius:10px;padding:9px 10px;font-size:12px;color:var(--muted)}
+  .mode.on{border-color:rgba(59,130,246,.6);background:rgba(59,130,246,.14);color:#dbeafe}
+  .mode b{display:block;font-size:12.5px;color:inherit;margin-bottom:2px}
+  .mode small{font-size:10.5px;color:var(--dim)}
+  .menu{padding:6px 8px 10px}
+  .item{display:flex;align-items:center;gap:10px;padding:9px 8px;border-radius:9px;font-size:13px;color:#cbd5e1;cursor:pointer}
+  .item:hover{background:rgba(255,255,255,.045)}
+  .item .ico{width:17px;height:17px;color:#94a3b8;flex:0 0 17px}
+  .item .tail{margin-left:auto;font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:6px}
+  .divider{height:1px;background:rgba(148,163,184,.12);margin:6px 8px}
+  .about-box{margin:2px 8px 8px;border-radius:10px;background:rgba(255,255,255,.04);padding:10px 11px;font-size:11.5px;color:#94a3b8}
+  .about-box .row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .about-box a{color:#93c5fd;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  .dot{width:6px;height:6px;border-radius:999px;background:var(--dim);flex:0 0 6px}
+  .newline{margin:9px 0 0;padding:9px 10px;border-radius:9px;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.1)}
+  .newline .v{color:#fcd34d;font-weight:600}
+  .newline .actions{display:flex;gap:8px;margin-top:7px;flex-wrap:wrap}
+  .mini{
+    appearance:none;cursor:pointer;font-family:inherit;font-size:11px;padding:4px 9px;border-radius:7px;
+    border:1px solid rgba(148,163,184,.3);background:rgba(255,255,255,.04);color:#cbd5e1
+  }
+  .mini:hover{background:rgba(255,255,255,.09)}
+  .mini.primary{background:rgba(59,130,246,.22);border-color:rgba(59,130,246,.55);color:#dbeafe}
+  .mini:disabled{opacity:.55;cursor:default}
+  .spin{display:inline-block;width:11px;height:11px;border-radius:999px;border:1.6px solid rgba(148,163,184,.35);border-top-color:#93c5fd;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* ===== 方案 B：独立「版本与更新」页 ===== */
+  .page{background:#0e1626;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .page-top{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid rgba(148,163,184,.12);background:rgba(255,255,255,.02)}
+  .page-top b{font-size:13.5px}
+  .page-top .path{font-size:11.5px;color:var(--dim)}
+  .page-body{padding:16px;display:grid;gap:14px;grid-template-columns:minmax(0,300px) minmax(0,1fr)}
+  @media (max-width:860px){.page-body{grid-template-columns:1fr}}
+  .kv{display:grid;gap:9px}
+  .kv .r{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;color:var(--muted);border-bottom:1px dashed rgba(148,163,184,.16);padding-bottom:8px}
+  .kv .r b{color:var(--text);font-weight:600}
+  .release{border:1px solid rgba(148,163,184,.16);border-radius:10px;padding:12px;background:rgba(255,255,255,.025)}
+  .release+.release{margin-top:10px}
+  .release .head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .release .tag{font-weight:700;color:#bfdbfe;font-size:13px}
+  .release .date{font-size:11.5px;color:var(--dim);margin-left:auto}
+  .release ul{margin:6px 0 0;padding-left:17px;font-size:12.5px;color:#b6c2d4}
+  .release li{margin-bottom:3px}
+  .release .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .pill{font-size:10.5px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+  .switchrow{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted);padding-top:10px;border-top:1px solid rgba(148,163,184,.12)}
+  .switch{margin-left:auto;width:38px;height:21px;border-radius:999px;background:rgba(148,163,184,.3);position:relative;cursor:pointer;transition:.18s;flex:0 0 38px}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:999px;background:#e2e8f0;transition:.18s}
+  .switch.on{background:rgba(16,185,129,.55)}
+  .switch.on::after{left:19px;background:#ecfdf5}
+
+  /* ===== 方案 C：横幅 ===== */
+  .banner{border-radius:11px;border:1px solid rgba(245,158,11,.4);background:linear-gradient(90deg,rgba(245,158,11,.16),rgba(245,158,11,.06));
+    padding:11px 13px;display:flex;align-items:center;gap:11px;font-size:12.5px;color:#fde68a}
+  .banner .x{margin-left:auto;display:flex;gap:7px;align-items:center}
+  .banner .link{color:#fcd34d;text-decoration:underline;text-underline-offset:2px;cursor:pointer;font-size:11.5px}
+  .mini-banner{margin-top:10px;border-radius:9px;border:1px dashed rgba(148,163,184,.28);background:rgba(255,255,255,.03);
+    padding:8px 11px;font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:8px}
+
+  /* 规则表 */
+  table.rule{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.rule th,table.rule td{padding:8px 10px;border-bottom:1px solid rgba(148,163,184,.14);text-align:left;vertical-align:top}
+  table.rule th{color:var(--dim);font-weight:600;font-size:11.5px;letter-spacing:.3px}
+  table.rule td b{color:var(--text)}
+  .verdict{font-size:11.5px;padding:1px 8px;border-radius:999px;white-space:nowrap}
+  .v-yes{background:var(--amber-soft);color:#fcd34d;border:1px solid rgba(245,158,11,.4)}
+  .v-no{background:var(--green-soft);color:#6ee7b7;border:1px solid rgba(16,185,129,.4)}
+  .v-skip{background:rgba(148,163,184,.14);color:#cbd5e1;border:1px solid var(--line)}
+  .v-bad{background:var(--rose-soft);color:#fda4af;border:1px solid rgba(244,63,94,.4)}
+  .hint{font-size:12px;color:var(--dim);margin-top:10px}
+  .callout{border-left:3px solid rgba(59,130,246,.6);background:rgba(59,130,246,.08);padding:10px 13px;border-radius:0 8px 8px 0;font-size:12.5px;color:#c7d2e3}
+  .hidden{display:none !important}
+  /* ===== 更新内容弹层（已在实现里落地） ===== */
+  .notes-layer{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;
+    padding:16px;background:rgba(8,12,20,.55);backdrop-filter:blur(2px)}
+  .notes-layer.open{display:flex}
+  .notes-card{width:100%;max-width:720px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;
+    border-radius:14px;border:1px solid rgba(255,255,255,.1);background:#171d27;color:var(--text);
+    box-shadow:0 28px 70px -24px rgba(2,6,23,.7)}
+  .notes-head{display:flex;align-items:flex-start;gap:12px;padding:14px 16px 12px;border-bottom:1px solid rgba(255,255,255,.1)}
+  .notes-title{margin:0;font-size:15px;font-weight:600}
+  .notes-sub{margin:3px 0 0;font-size:11.5px;color:var(--muted)}
+  .notes-close{margin-left:auto;width:28px;height:28px;border-radius:8px;border:0;background:transparent;
+    color:var(--muted);font-size:16px;cursor:pointer}
+  .notes-close:hover{background:rgba(255,255,255,.07)}
+  .notes-body{flex:1 1 auto;min-height:120px;overflow-y:auto;padding:14px 18px;font-size:13px;line-height:1.75}
+  .notes-body h1{font-size:17px;margin:6px 0 10px}
+  .notes-body h2{font-size:15px;margin:18px 0 8px;padding-bottom:5px;border-bottom:1px solid rgba(255,255,255,.1)}
+  .notes-body h3{font-size:13.5px;margin:14px 0 6px}
+  .notes-body ul{margin:6px 0;padding-left:20px}
+  .notes-body li{margin:2px 0}
+  .notes-body blockquote{margin:8px 0;padding:4px 0 4px 10px;border-left:3px solid rgba(245,158,11,.5);color:var(--muted)}
+  .notes-body code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;padding:1px 5px;
+    border-radius:4px;background:rgba(255,255,255,.07)}
+  .notes-foot{display:flex;align-items:center;gap:12px;padding:10px 16px;border-top:1px solid rgba(255,255,255,.1)}
+  .notes-foot a{font-size:12px;color:#93c5fd;text-decoration:underline;text-underline-offset:2px}
+  .notes-foot button{margin-left:auto;padding:5px 14px;font:inherit;font-size:12.5px;border-radius:8px;
+    border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);color:var(--text);cursor:pointer}
+
+  footer{margin-top:30px;color:var(--dim);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">PROTOTYPE · 版本检测</p>
+  <h1>版本检测 · 当前版本 vs Gitee 最新 tag，缺口一处提示</h1>
+  <p class="lead">
+    目标：让「有没有新版本」变成一次点击就能回答的问题，而不是让用户自己去仓库翻 tag。
+    数据源用 Gitee OpenAPI v5（<code>/tags</code> 取最新 tag，<code>/releases</code> 取发行说明），
+    由服务端代理请求并缓存，前端只读接口。原型里内置了一个<strong>真实可跑的版本比较函数</strong>，下方「边界用例」按钮会把 12 条用例真跑一遍。
+  </p>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" aria-selected="true" data-panel="a"><strong>方案 A · 关于面板内联</strong><span>改动最小，就在你现在点的位置</span></button>
+    <button class="tab" role="tab" aria-selected="false" data-panel="b"><strong>方案 B · 独立「版本与更新」页</strong><span>能看完整更新内容与自动检查设置</span></button>
+    <button class="tab" role="tab" aria-selected="false" data-panel="c"><strong>方案 C · 轻量横幅 + 关于面板</strong><span>不主动找也能看见，可「稍后」「忽略此版本」</span></button>
+  </div>
+
+  <!-- ================= 方案 A ================= -->
+  <section class="panel" id="panel-a">
+    <div class="grid two">
+      <div class="card">
+        <h2>A · 关于面板里加一行状态</h2>
+        <p class="lead" style="margin-bottom:14px">截图里「关于」展开后只有版本号与更新日志两条（用户已要求去掉多余的「代码仓库」入口）。A 方案只在这块加「检查更新」与一行结果，不改菜单结构。</p>
+
+        <div class="states" data-states="a">
+          <button data-state="idle" aria-pressed="true">未检查</button>
+          <button data-state="checking" aria-pressed="false">检查中</button>
+          <button data-state="latest" aria-pressed="false">已是最新</button>
+          <button data-state="outdated" aria-pressed="false">有新版本</button>
+          <button data-state="dev" aria-pressed="false">开发版</button>
+          <button data-state="failed" aria-pressed="false">检查失败</button>
+        </div>
+
+        <div class="phone">
+          <div class="sheet">
+            <div class="sheet-head">
+              <div class="avatar">n</div>
+              <div>
+                <div class="who">admin</div>
+                <div class="sub">@admin · 管理员</div>
+              </div>
+              <div class="right">个人中心 ›</div>
+            </div>
+            <div class="mode-row">
+              <div class="mode on"><b>▦ 用户模式</b><small>只留任务与知识库</small></div>
+              <div class="mode"><b>▤ 专业模式</b><small>完整工作台与权限</small></div>
+            </div>
+            <div class="menu">
+              <div class="item">👤 个人中心<span class="tail">资料 · 安全 · 偏好 ›</span></div>
+              <div class="item">🛡 我的权限<span class="tail">菜单与功能 ›</span></div>
+              <div class="item">🔒 我的凭据<span class="tail">密钥与令牌 ›</span></div>
+              <div class="item">📊 Token 用量<span class="tail">本月消耗 ›</span></div>
+              <div class="divider"></div>
+              <div class="item">🔔 通知设置<span class="tail">站内消息 ›</span></div>
+              <div class="item">◐ 外观<span class="tail">浅色 · 深色</span></div>
+              <div class="item">ⓘ 关于<span class="tail"><span class="dot" id="a-pending" style="display:none;background:#f59e0b" title="有新版本"></span><b id="a-current2" style="font-weight:400;color:var(--dim)">v1.0.23.0</b> ⌃</span></div>
+
+              <!-- 关于展开区：A 方案唯一改动点 -->
+              <div class="about-box" id="a-about">
+                <div class="row">
+                  <span>当前版本 <b id="a-current" style="color:#e2e8f0">v1.0.23.0</b></span>
+                  <span id="a-status" style="margin-left:auto"></span>
+                </div>
+                <div id="a-action" style="margin-top:7px"></div>
+                                <p style="margin:4px 0 0"><a>更新日志：v1.0.23 ↗</a></p>
+              </div>
+            </div>
+            <div class="divider"></div>
+            <div class="item" style="color:#fb7185">↪ 退出登录<span class="tail">需要重新登录</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>这个方案的取舍</h2>
+        <h3>优点</h3>
+        <p class="lead">零新增页面与菜单项；用户本来就会点「关于」看版本号，把结果放在同一行，认知成本最低。</p>
+        <h3>代价</h3>
+        <p class="lead">空间窄（面板宽约 300px）：只能放一句话 + 最多两个动作，「更新了哪些内容」放不下，要看明细得跳出去。</p>
+        <p class="lead">折叠态看不见：用户不点开「关于」就发现不了自己落后。补偿办法是折叠行加一个小橙点（打开账户菜单时静默读一次 24h 缓存），已实现。</p>
+        <h3>关键判定</h3>
+        <div class="callout">
+          只有「最新 tag &gt; 当前版本」才提示。<code>1.0.23.0</code> 与 tag <code>1.0.23</code> 归一化后<strong>相等</strong>，
+          所以你现在这个版本升级后<strong>不会</strong>误报「有新版本」——这是本需求最容易踩的坑。
+        </div>
+        <h3 style="margin-top:16px">建议落点</h3>
+        <p class="lead" style="margin:0">
+          若选 A：<code>AccountMenu.vue</code> 的 <code>about-box</code> 内加一行状态 + 「检查更新」按钮，
+          复用已有的 <code>changelogTag</code> 做三元组归一；有更新时把「更新日志」链接换成最新 tag。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 方案 B ================= -->
+  <section class="panel hidden" id="panel-b">
+    <div class="card" style="margin-bottom:18px">
+      <div class="states" data-states="b">
+        <button data-state="idle" aria-pressed="true">未检查</button>
+        <button data-state="checking" aria-pressed="false">检查中</button>
+        <button data-state="latest" aria-pressed="false">已是最新</button>
+        <button data-state="outdated" aria-pressed="false">有新版本</button>
+        <button data-state="failed" aria-pressed="false">检查失败</button>
+      </div>
+
+      <div class="page">
+        <div class="page-top">
+          <b>版本与更新</b><span class="path">系统设置 → 关于</span>
+          <span id="b-status" style="margin-left:auto;font-size:11.5px;color:#94a3b8"></span>
+        </div>
+        <div class="page-body">
+          <div>
+            <div class="release" style="background:rgba(59,130,246,.07);border-color:rgba(59,130,246,.3)">
+              <div class="head"><span class="tag">当前版本 v1.0.23.0</span></div>
+              <div class="kv" style="margin-top:8px">
+                <div class="r"><span>构建标识</span><b>2026-11-14 · main</b></div>
+                <div class="r"><span>最新 tag（Gitee）</span><b id="b-latest">1.0.24</b></div>
+                <div class="r"><span>发布时间</span><b>2026-11-22 13:38</b></div>
+                <div class="r"><span>最近检查</span><b id="b-lastcheck">今天 09:12（自动）</b></div>
+              </div>
+              <div style="margin-top:11px;display:flex;gap:8px;flex-wrap:wrap">
+                <button class="mini primary" id="b-btn">检查更新</button>
+                <button class="mini">打开发行版 ↗</button>
+              </div>
+              <div class="switchrow" style="margin-top:12px">
+                <span>每天自动检查一次</span>
+                <div class="switch on" id="b-switch" role="switch" aria-checked="true" tabindex="0"></div>
+              </div>
+              <p style="margin:8px 0 0;font-size:11px;color:#64748b" id="b-next">下次自动检查：明天 09:12 · 失败不重试，次日再查</p>
+            </div>
+            <div class="mini-banner">🔒 白标部署关闭版本入口时，本页与自动检查一并隐藏</div>
+          </div>
+
+          <div>
+            <h3 style="margin-bottom:9px">发行说明（来自 Gitee releases）</h3>
+            <div class="release">
+              <div class="head"><span class="tag">1.0.24</span><span class="badge" id="b-newbadge">可升级</span><span class="date">2026-11-22 13:38</span></div>
+              <ul>
+                <li>凭据从一整段文本变成可拆字段的结构化凭据，一条凭据的字段可分给多个参数</li>
+                <li>新增文生图与图生图，出图占位、用量留痕都在消息流里</li>
+                <li>管理员可按人 / 部门 / 角色群发站内信，发前预览命中人数</li>
+                <li>工作区文件可生成带密码与有效期的分享链接，按类型在线预览</li>
+                <li>定时任务表单重排为「做什么 / 什么时候跑 / 结果发到哪」三组</li>
+                <li>子智能体请求工具授权时确认卡回到主会话，点完自动续跑</li>
+                <li>前端类型错误 153 → 0 并接入 CI；后端已知失败基线清零</li>
+              </ul>
+              <div class="tags"><span class="pill">含 5 组迁移</span><span class="pill">MySQL V218~V222</span><span class="pill">PG V118~V122</span></div>
+            </div>
+            <div class="release" style="opacity:.72">
+              <div class="head"><span class="tag">1.0.23</span><span class="badge">已安装</span><span class="date">2026-11-14 10:13</span></div>
+              <p style="margin:4px 0 0;font-size:12px;color:#8fa0b6">凭据中心与业务分组、工具级运行时参数、子代理提问、多实例运维视图。</p>
+            </div>
+            <p class="hint">只列最近 5 个 tag；点「打开发行版」看全部。发行说明正文过长时折叠为前 6 条 + 「展开全部」。</p>
+            <p class="hint" style="color:#7c8ca3">演示假设：除「已是最新」态假设当前为 v1.0.24.0 外，其余状态都按当前 v1.0.23.0 演示。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid two">
+      <div class="card">
+        <h2>这个方案的取舍</h2>
+        <h3>优点</h3>
+        <p class="lead">能完整回答三件事：有没有新版本、新版本改了什么、要不要现在升级（含迁移组数提示）。自动检查开关与「最近/下次检查时间」有地方放。</p>
+        <h3>代价</h3>
+        <p class="lead">新增一个页面与入口；普通用户其实只想知道「有没有」，不一定想看 changelog。</p>
+        <h3>折中</h3>
+        <p class="lead" style="margin:0">关于面板（方案 A 的形态）只放一行状态 + 「查看详情」，详情落到这一页。A 与 B 可以同时存在，不是二选一。</p>
+      </div>
+      <div class="card">
+        <h2>自动检查怎么跑</h2>
+        <div class="callout" style="margin-bottom:12px">不建议浏览器直连 Gitee：会吃 CORS、吃限流，且 N 个用户 = N 次请求。</div>
+        <p class="lead">服务端侧：一个每日一次的任务（沿用现有调度）请求 <code>/tags</code>，结果写缓存（24h 有效）+ 记录「最近检查时间 / 失败原因」，前端只 GET 一个只读接口。</p>
+        <div class="kv">
+          <div class="r"><span>请求频率</span><b>每实例每天 1 次</b></div>
+          <div class="r"><span>缓存 TTL</span><b>24 小时</b></div>
+          <div class="r"><span>失败策略</span><b>不重试，次日再查</b></div>
+          <div class="r"><span>手动检查节流</span><b>60 秒 1 次</b></div>
+          <div class="r"><span>离线环境</span><b>显示「无法获取，可忽略」</b></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 方案 C ================= -->
+  <section class="panel hidden" id="panel-c">
+    <div class="card" style="margin-bottom:18px">
+      <h2>C · 不主动找也能看见：一次性横幅</h2>
+      <p class="lead" style="margin-bottom:14px">自动检查发现有新版本时，在用户模式的首页顶部（或右下角）出一条可关闭的横幅；「稍后」当次消失，「忽略此版本」写进用户偏好，直到出现更新的 tag 才再提示。</p>
+
+      <div class="states" data-states="c">
+        <button data-state="outdated" aria-pressed="true">有新版本</button>
+        <button data-state="dismissed" aria-pressed="false">已忽略此版本（同版本不再提示）</button>
+        <button data-state="latest" aria-pressed="false">已是最新（无横幅）</button>
+        <button data-state="failed" aria-pressed="false">检查失败（不打扰）</button>
+      </div>
+
+      <div class="banner" id="c-banner">
+        <span style="font-size:15px">⬆</span>
+        <span id="c-text">发现新版本 <b style="color:#fcd34d">1.0.24</b>（当前 v1.0.23.0，2026-11-22 发布）</span>
+        <span class="x">
+          <button class="mini primary" id="c-detail">看看更新了什么</button>
+          <span class="link" id="c-later">稍后</span>
+          <span class="link" id="c-ignore">忽略此版本</span>
+        </span>
+      </div>
+
+      <div class="mini-banner" style="margin-top:14px">
+        首页内容区（示意）：横幅贴在内容区顶部，滚动时固定在内容区而不是整页顶栏，避免和平台顶栏抢高度。
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card" style="background:var(--panel-2)">
+          <h3>交互细节</h3>
+          <p class="lead" style="margin:0">
+            「稍后」= 本次会话不再出现（sessionStorage），下次打开还会提示；「忽略此版本」= 写进用户偏好，
+            只在出现比 <code>1.0.24</code> 更大的 tag 时才重新提示。两条动作的区别必须在文案上写清，
+            否则用户会以为「稍后」等于不再提示。
+          </p>
+        </div>
+        <div class="card" style="background:var(--panel-2)">
+          <h3>为什么不做强提示</h3>
+          <p class="lead" style="margin:0">
+            升级动作是运维的事（要跑迁移、重启服务），普通用户点「升级」也做不了什么。
+            所以横幅只负责「告知 + 指向发行说明」，不提供「一键升级」这类点了会失望的按钮。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 规则与用例 ================= -->
+  <section class="card" style="margin-top:22px">
+    <h2>判定规则（三条，缺一不可）</h2>
+    <div class="grid two">
+      <div>
+        <p class="lead" style="margin-bottom:8px"><b style="color:#e2e8f0">1. 归一化</b>：去掉 <code>v</code>/<code>V</code> 前缀与首尾空白，四段版本与三段 tag 一律<strong>右补 0 到四段</strong>再比。</p>
+        <p class="lead" style="margin-bottom:8px"><b style="color:#e2e8f0">2. 逐段数值比较</b>：按数字比，不按字符串比——<code>1.0.9 &lt; 1.0.10</code>，字符串比会判反。</p>
+        <p class="lead" style="margin-bottom:0"><b style="color:#e2e8f0">3. 只认「严格大于」</b>：相等、本地更新（打补丁构建）、预发布 tag、<code>dev</code> 构建，一律不提示。</p>
+      </div>
+      <div class="callout" style="align-self:start">
+        <b>为什么不能只比前 3 段</b>：现在 <code>1.0.24.0</code> 与 tag <code>1.0.24</code> 相等是对的；但一旦本地出现
+        <code>1.0.24.1</code>（补丁构建），只比前 3 段会把它判成「和 1.0.24 一样」。补零后逐段比，<code>1.0.24.1 &gt; 1.0.24.0</code>，
+        既不误报也能容纳补丁号。
+      </div>
+    </div>
+
+    <h3 style="margin:18px 0 8px">边界用例（点按钮真跑一遍这个函数）</h3>
+    <div style="display:flex;gap:9px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <button class="mini primary" id="run-cases">跑一遍 12 条用例</button>
+      <span class="hint" id="run-summary" style="margin:0"></span>
+    </div>
+    <table class="rule" id="case-table">
+      <thead><tr><th style="width:130px">当前版本</th><th style="width:130px">最新 tag</th><th>期望</th><th style="width:90px">实跑</th><th>说明</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- ================= 接口草案 ================= -->
+  <section class="card" style="margin-top:18px">
+    <h2>接口草案（供实现时对齐，原型不调用）</h2>
+    <div class="grid two">
+      <div>
+        <h3>后端</h3>
+        <p class="lead" style="margin-bottom:6px"><code>GET /api/v1/system/update-check</code> → 只读，任何人可调</p>
+        <pre style="margin:0;background:#0a1220;border:1px solid var(--line);border-radius:9px;padding:11px;overflow:auto;font-size:11.5px;line-height:1.7;color:#cbd5e1">{
+  "current": "1.0.23.0",
+  "latest": "1.0.24",
+  "has_update": true,
+  "published_at": "2026-11-22T13:38:28+08:00",
+  "release_url": "https://gitee.com/.../releases/1.0.24",
+  "notes": [ "…6 条要点…" ],
+  "migrations": { "mysql": "V218~V222", "pg": "V118~V122" },
+  "checked_at": "2026-11-22T09:12:03+08:00",
+  "source": "scheduled",
+  "error": null
+}</pre>
+      </div>
+      <div>
+        <h3>手动检查</h3>
+        <p class="lead" style="margin-bottom:6px"><code>POST /api/v1/system/update-check</code> → 立即查一次，60 秒节流</p>
+        <p class="lead">失败也返回 200，用 <code>error</code> 字段承载原因（网络不可达 / 上游限流 / 解析失败），前端展示成一句人话，不让用户看到堆栈。</p>
+        <h3 style="margin-top:14px">配置项</h3>
+        <div class="kv">
+          <div class="r"><span>仓库地址</span><b>复用 branding 配置</b></div>
+          <div class="r"><span>检查开关</span><b>默认开启（可关）</b></div>
+          <div class="r"><span>Gitee token</span><b>可选，仅提额用</b></div>
+        </div>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:12px">注意：Gitee 与 GitHub 双托管时，以「配置的仓库地址」为准；本原型按 Gitee 设计，源地址可换成 GitHub（字段一致）。</p>
+  </section>
+
+  <footer>原型仅用于方案评审，数据均为示例；未改动任何实现代码。</footer>
+</div>
+
+<!-- 更新内容弹层：点「查看更新内容」打开，正文来自后端缓存的发行说明 -->
+<div class="notes-layer" id="notes-layer" onclick="if(event.target===this)closeNotes()">
+  <div class="notes-card" role="dialog" aria-modal="true" aria-labelledby="notes-title">
+    <div class="notes-head">
+      <div>
+        <h2 class="notes-title" id="notes-title">更新内容 1.0.24</h2>
+        <p class="notes-sub">2026-11-22 发布 · 含数据库迁移，升级前请先执行迁移脚本</p>
+      </div>
+      <button class="notes-close" aria-label="关闭" onclick="closeNotes()">×</button>
+    </div>
+    <div class="notes-body">
+      <h1>🎉 NanZi AI Agent Platform v1.0.24.0</h1>
+      <blockquote>从「一整段凭据文本」到「可拆字段的结构化凭据」，从「只能聊」到「能出图」，从「逐个通知」到「一次发全员」。</blockquote>
+
+      <h2>🚀 核心特性</h2>
+      <h3>1. 凭据中心：一条凭据拆成字段，谁用哪个字段说得清</h3>
+      <ul>
+        <li>一条凭据可以按业务拆成多个字段，不同智能体只取自己那一段</li>
+        <li>字段级引用让「值变了但没人知道」变成历史可查</li>
+      </ul>
+      <h3>2. 图像生成：会画图，也算得清花了多少</h3>
+      <ul>
+        <li>对话里直接文生图与图生图，出图占位、用量留痕都在消息流里</li>
+        <li>图像用量单独计量，不并入消息 token 与月度配额</li>
+      </ul>
+      <h3>3. 群发与分享：一次通知到全员，一个链接给对的人</h3>
+      <ul>
+        <li>按人 / 部门 / 角色群发站内信，发前预览命中人数</li>
+        <li>工作区文件生成带密码与有效期的分享链接，按类型在线预览</li>
+      </ul>
+
+      <h2>🗄️ 数据库迁移</h2>
+      <blockquote>MySQL <code>V218</code>~<code>V222</code>、PostgreSQL <code>V118</code>~<code>V122</code>，两套一一对应、不可跳号。</blockquote>
+      <p>升级前先执行迁移脚本，再启动新代码；顺序不能反。</p>
+    </div>
+    <div class="notes-foot">
+      <button onclick="closeNotes()">知道了</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   版本比较：归一化 → 右补 0 到 4 段 → 逐段数值比较
+   只认「最新 tag 严格大于当前版本」
+   ============================================================ */
+function parseVersion(input){
+  const raw = String(input == null ? "" : input).trim().replace(/^v/i, "");
+  if (!raw) return { ok:false, reason:"empty" };
+  if (/^dev/i.test(raw)) return { ok:false, reason:"dev" };
+  // 预发布后缀（-rc1 / -beta.2 / +build）单独剥离，避免 "1.0.24-rc1" 被判成 1.0.24.rc1
+  const [core, ...rest] = raw.split(/[-+]/);
+  const parts = core.split(".");
+  if (!parts.every(p => /^\d+$/.test(p))) return { ok:false, reason:"malformed" };
+  if (parts.length > 4) return { ok:false, reason:"malformed" };
+  const nums = parts.map(Number);
+  while (nums.length < 4) nums.push(0);
+  return { ok:true, nums, prerelease: rest.length > 0 };
+}
+
+function compareVersions(current, latest){
+  const c = parseVersion(current);
+  const l = parseVersion(latest);
+  if (!c.ok) return { verdict:"skip", why:`当前版本不可比较（${c.reason}）` };
+  if (!l.ok) return { verdict:"skip", why:`最新 tag 不可比较（${l.reason}）` };
+  if (l.prerelease && !c.prerelease) return { verdict:"skip", why:"最新 tag 是预发布版，不提示" };
+  for (let i = 0; i < 4; i++){
+    if (l.nums[i] > c.nums[i]) return { verdict:"update", why:`第 ${i+1} 段 ${l.nums[i]} > ${c.nums[i]}` };
+    if (l.nums[i] < c.nums[i]) return { verdict:"none", why:`本地更新（第 ${i+1} 段更大）` };
+  }
+  return { verdict:"none", why:"归一化后相等" };
+}
+
+/* ---------------- 用例表 ---------------- */
+const CASES = [
+  ["1.0.24.0", "1.0.24",   "none",   "四段 vs 三段：补零后相等，不能误报有新版本"],
+  ["1.0.23.0", "1.0.24",   "update", "主流程：tag 更大，提示升级"],
+  ["1.0.9.0",  "1.0.10",   "update", "逐段数值比较：10 > 9（字符串比会判反）"],
+  ["1.0.24.1", "1.0.24",   "none",   "本地补丁构建更新，不提示"],
+  ["v1.0.24.0","v1.0.25",  "update", "带 v 前缀：先剥前缀再比"],
+  ["1.0.24.0", "1.0.24-rc1","skip",  "预发布 tag 不提示（避免催人上升级到 rc）"],
+  ["dev",      "1.0.24",   "skip",   "开发构建：不比较、不提示"],
+  ["1.0.24.0", "1.0.24.0", "none",   "完全相同"],
+  ["2.0.0.0",  "1.9.9",    "none",   "大版本落后于本地：不提示"],
+  ["1.0.24.0", "",         "skip",   "上游返回空：判为不可比较"],
+  ["1.0.24.0", "release-1", "skip",  "tag 不规范：跳过而不是报错"],
+  ["1.0.24.0", "1.1",      "update", "缺段补零：1.1.0.0 > 1.0.24.0"]
+];
+
+const VERDICT_TEXT = { update:"提示有新版本", none:"不提示（已最新）", skip:"跳过比较" };
+const VERDICT_CLASS = { update:"v-yes", none:"v-no", skip:"v-skip" };
+
+function runCases(){
+  const tbody = document.querySelector("#case-table tbody");
+  tbody.innerHTML = "";
+  let pass = 0;
+  CASES.forEach(([cur, tag, expect, note]) => {
+    const r = compareVersions(cur, tag);
+    const ok = r.verdict === expect;
+    if (ok) pass++;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><code>${cur}</code></td>
+      <td><code>${tag || "（空）"}</code></td>
+      <td><span class="verdict ${VERDICT_CLASS[expect]}">${VERDICT_TEXT[expect]}</span></td>
+      <td><span class="verdict ${ok ? "v-no" : "v-bad"}">${ok ? "✓ 通过" : "✗ 不符"}</span></td>
+      <td style="color:#8fa0b6">${note}${ok ? "" : `（实跑：${r.why}）`}</td>`;
+    tbody.appendChild(tr);
+  });
+  document.getElementById("run-summary").textContent =
+    `${pass}/${CASES.length} 条与预期一致${pass === CASES.length ? " · 规则自洽" : " · 有偏差，需回头改规则"}`;
+}
+
+/* ---------------- 方案 A 状态机 ---------------- */
+const A_STATES = {
+  idle: () => ({ status:'<span style="display:inline-flex;align-items:center;gap:6px;color:#94a3b8"><span class="dot"></span>未检查</span>', action:'<a>检查更新</a>' }),
+  checking: () => ({ status:'<span style="display:inline-flex;align-items:center;gap:6px;color:#93c5fd"><span class="spin"></span>检查中…</span>', action:'<button class="mini" disabled>正在请求 Gitee</button>' }),
+  latest: () => ({ status:'<span style="display:inline-flex;align-items:center;gap:6px;color:#6ee7b7"><span class="dot" style="background:#10b981"></span>已是最新</span>', action:'<span style="color:#64748b">刚刚检查 · 最新 tag 1.0.24</span>' }),
+  outdated: () => ({ status:'<span style="display:inline-flex;align-items:center;gap:6px;color:#fcd34d"><span class="dot" style="background:#f59e0b"></span>有新版本</span>', action:`
+      <div class="newline">
+        <div>新版本 <span class="v">1.0.24</span> · 2026-11-22 发布</div>
+        <div class="actions">
+          <button class="mini primary" onclick="openNotes()">查看更新内容</button>
+          <button class="mini">稍后</button>
+        </div>
+        <div style="margin-top:6px;font-size:10.5px;color:#a16207">含 5 组迁移，升级前请先跑 SQL</div>
+      </div>
+      <div style="margin-top:6px"><a>检查更新</a> <span style="color:#64748b;font-size:10.5px">刚刚检查过</span></div>` }),
+  // 开发版：没有可比版本号，判不出「是不是最新」，但上游现在是多少是明确的
+  dev: () => ({ status:'<span style="display:inline-flex;align-items:center;gap:6px;color:#7dd3fc"><span class="dot" style="background:#38bdf8"></span>开发版 · 最新 1.0.24</span>', action:`
+      <div class="newline" style="border-color:rgba(56,189,248,.3);background:rgba(56,189,248,.08)">
+        <div><span style="color:#7dd3fc">上游最新</span> <span class="v">1.0.24</span> · 2026-11-22 发布</div>
+        <div style="margin-top:4px;font-size:10.5px;color:#94a3b8">当前是开发版，判断不了是否落后，请自行确认</div>
+        <div class="actions">
+          <button class="mini primary" onclick="openNotes()">查看更新内容</button>
+        </div>
+        <div style="margin-top:6px;font-size:10.5px;color:#7dd3fc">该版本含数据库迁移，同步代码后请先执行迁移脚本</div>
+      </div>
+      <div style="margin-top:6px"><a>检查更新</a></div>` }),
+  failed: () => ({ status:'<span style="display:inline-flex;align-items:center;gap:6px;color:#fda4af"><span class="dot" style="background:#f43f5e"></span>检查失败</span>', action:'<span style="color:#fda4af;font-size:11px">网络不可达 · <a>重试</a></span>' })
+};
+function setStateA(name){
+  const s = A_STATES[name]();
+  // 演示自洽：开发版状态下没有再比版本号，当前版本就显示 dev
+  const cur = document.getElementById("a-current");
+  if (cur) cur.textContent = name === "dev" ? "dev" : "v1.0.23.0";
+  const cur2 = document.getElementById("a-current2");
+  if (cur2) cur2.textContent = name === "dev" ? "dev" : "v1.0.23.0";
+  // 折叠着也能看见「有新版本」：一个小橙点，不占版面
+  const pend = document.getElementById("a-pending");
+  if (pend) pend.style.display = name === "outdated" ? "inline-block" : "none";
+  document.getElementById("a-status").innerHTML = s.status;
+  document.getElementById("a-action").innerHTML = s.action;
+}
+
+/* ---------------- 方案 B 状态机 ---------------- */
+function setStateB(name){
+  const status = document.getElementById("b-status");
+  const btn = document.getElementById("b-btn");
+  const badge = document.getElementById("b-newbadge");
+  const last = document.getElementById("b-lastcheck");
+  const latestTag = document.getElementById("b-latest");
+  // [状态文案, 按钮文案, 徽标, 最近检查, 最新 tag 显示]
+  const map = {
+    idle:     ['未检查', '检查更新', '', '尚未检查', '—'],
+    checking: ['检查中…', '正在检查', '', '刚刚（手动）', '检查中…'],
+    latest:   ['已是最新 · 刚刚检查', '检查更新', '', '刚刚（手动）', '1.0.24'],
+    outdated: ['有新版本 · 刚刚检查', '检查更新', '可升级', '刚刚（手动）', '1.0.24'],
+    failed:   ['检查失败：网络不可达', '重试', '', '今天 09:12（自动，失败）', '—']
+  }[name];
+  status.textContent = map[0];
+  btn.textContent = map[1];
+  btn.disabled = name === 'checking';
+  badge.textContent = map[2];
+  badge.style.display = map[2] ? 'inline-block' : 'none';
+  last.textContent = map[3];
+  latestTag.textContent = map[4];
+  latestTag.style.color = map[4] === '1.0.24' ? '#fcd34d' : '';
+}
+
+/* ---------------- 方案 C 状态机 ---------------- */
+function setStateC(name){
+  const banner = document.getElementById("c-banner");
+  const text = document.getElementById("c-text");
+  if (name === 'outdated'){
+    banner.classList.remove('hidden');
+    banner.style.borderColor = 'rgba(245,158,11,.4)';
+    banner.style.background = 'linear-gradient(90deg,rgba(245,158,11,.16),rgba(245,158,11,.06))';
+    banner.style.color = '#fde68a';
+    text.innerHTML = '发现新版本 <b style="color:#fcd34d">1.0.24</b>（当前 v1.0.23.0，2026-11-22 发布）';
+  } else if (name === 'dismissed'){
+    banner.classList.remove('hidden');
+    banner.style.borderColor = 'rgba(148,163,184,.3)';
+    banner.style.background = 'rgba(255,255,255,.03)';
+    banner.style.color = '#94a3b8';
+    text.innerHTML = '已忽略 <b style="color:#cbd5e1">1.0.24</b>：只有出现比它更新的 tag 才会再提示（此处仅为演示该状态）';
+  } else if (name === 'latest'){
+    banner.classList.add('hidden');
+  } else {
+    banner.classList.add('hidden');
+  }
+}
+
+/* ---------------- 通用事件绑定 ---------------- */
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t === tab)));
+    document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'));
+    document.getElementById('panel-' + tab.dataset.panel).classList.remove('hidden');
+  });
+});
+document.querySelectorAll('[data-states]').forEach(group => {
+  const which = group.dataset.states;
+  group.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      group.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+      const st = btn.dataset.state;
+      if (which === 'a') setStateA(st);
+      if (which === 'b') setStateB(st);
+      if (which === 'c') setStateC(st);
+    });
+  });
+});
+document.getElementById('run-cases').addEventListener('click', runCases);
+document.getElementById('b-switch').addEventListener('click', e => {
+  const el = e.currentTarget;
+  const on = !el.classList.contains('on');
+  el.classList.toggle('on', on);
+  el.setAttribute('aria-checked', String(on));
+  document.getElementById('b-next').textContent = on
+    ? '下次自动检查：明天 09:12 · 失败不重试，次日再查'
+    : '自动检查已关闭，只能手动点「检查更新」';
+});
+[['c-detail','outdated'],['c-later','latest'],['c-ignore','dismissed']].forEach(([id, st]) => {
+  document.getElementById(id).addEventListener('click', () => {
+    document.querySelectorAll('[data-states="c"] button').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.state === st)));
+    setStateC(st);
+  });
+});
+
+/* 更新内容弹层 */
+function openNotes(){
+  document.getElementById("notes-layer").classList.add("open");
+  setStateA('outdated');
+  document.querySelectorAll('[data-states="a"] button').forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.state === 'outdated')));
+}
+function closeNotes(){ document.getElementById("notes-layer").classList.remove("open"); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeNotes(); });
+
+/* 初始态 */
+setStateA('idle'); setStateB('idle'); setStateC('outdated'); runCases();
+if (new URLSearchParams(location.search).has("notes")) openNotes();
+
+/* 支持 #a / #b / #c 直接打开某个方案（评审时方便发链接） */
+function openPanel(key){
+  const tab = document.querySelector(`.tab[data-panel="${key}"]`);
+  if (tab) tab.click();
+}
+if (/^#[abc]$/.test(location.hash)) openPanel(location.hash.slice(1));
+window.addEventListener('hashchange', () => {
+  if (/^#[abc]$/.test(location.hash)) openPanel(location.hash.slice(1));
+});
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  history.replaceState(null, '', '#' + t.dataset.panel);
+}));
+</script>
+</body>
+</html>

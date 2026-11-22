@@ -1243,6 +1243,22 @@ async def _system_knowledge_metrics_sync_job():
         logger.error(f"❌ Failed to run system knowledge metrics sync job: {e}", exc_info=True)
 
 
+async def _system_update_check_job():
+    """系统级定时任务：每天凌晨 4:00 检查上游是否发布了新版本。
+
+    结果落在 Redis（``agent:update_check:latest``，TTL 24h），前端打开「关于」
+    读缓存即可——所以这个任务只负责「把最新结论刷新掉」，不需要通知任何人。
+    锁与刷新逻辑都在 service 里（``refresh_daily``），这里只兜异常：
+    检查失败不该让调度器刷一屏堆栈。
+    """
+    try:
+        from app.services.update_check_service import refresh_daily
+
+        await refresh_daily()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"⚠️ Failed to run system update check job: {e}", exc_info=True)
+
+
 async def _system_third_party_user_sync_job():
     """系统级定时任务：从第三方数据源同步用户。"""
     logger.info("⏰ Starting third-party user sync job...")
@@ -1496,6 +1512,15 @@ class TaskSchedulerService:
             _system_knowledge_metrics_sync_job,
             CronTrigger(hour=3, minute=30, timezone=tz),
             id="system_knowledge_metrics_sync",
+            replace_existing=True
+        )
+
+        # 注册平台版本检测任务，每日凌晨 4:00 运行
+        # （错开上面三条常驻任务，别在同一个时间窗口抢外部请求与 DB IO）
+        self._scheduler.add_job(
+            _system_update_check_job,
+            CronTrigger(hour=4, minute=0, timezone=tz),
+            id="system_update_check",
             replace_existing=True
         )
 

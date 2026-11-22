@@ -82,6 +82,9 @@ class PortalPrefs(BaseModel):
     # 空字符串 = 用户从未选过，读取时按角色给默认值（管理员 pro / 其他 user）。
     # 不用 Literal 是为了兼容历史 JSON 里可能出现的空值。
     ui_mode: str = Field(default="", description="界面模式：user（用户模式）/ pro（专业模式）")
+    # 空字符串 = 从未忽略过任何版本。存归一化后的三段（1.0.24），
+    # 上游出现更大的 tag 时自然失配，「忽略此版本」就自动失效——不是永久静音。
+    ignored_update_version: str = Field(default="", description="用户已忽略提示的版本号（三段，如 1.0.24）")
     agent_avatar: str = Field(default="", description="[历史保留] 旧版个人头像偏好；读取时一律以全局键 agent:branding:default_agent_avatar 为准，写入时恒为空")
     routing_mode: Literal["auto", "expert"] = Field(default="auto", description="Embed 路由模式")
     expert_agent_id: str = Field(default="", description="Embed 默认智能体 ID")
@@ -843,6 +846,68 @@ async def update_markdown_theme(
         )
 
     return {"code": 0, "data": {"markdown_theme": prefs.markdown_theme}, "message": "样式偏好已保存"}
+
+
+class IgnoredUpdateVersionUpdate(BaseModel):
+    """「忽略此版本」：存归一化后的三段版本号，空串表示取消忽略。"""
+
+    version: str = Field(default="", max_length=32, description="已忽略的版本号（三段，如 1.0.24）；空串表示清除")
+
+
+@router.put(
+    "/ignored-update-version",
+    response_model=Dict[str, Any],
+    summary="更新当前用户已忽略的新版本提示",
+)
+async def update_ignored_update_version(
+    body: IgnoredUpdateVersionUpdate,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """单独一个端点，理由与 ui_mode / markdown_theme 相同：
+
+    全量偏好 PUT 会用请求体里的空值覆盖其他字段，只想「忽略这个版本」不该
+    连带把置顶、侧栏状态写回旧值。
+    """
+
+    from app.services.update_check_service import normalize_version
+
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Redis 服务不可用",
+        )
+
+    user_id = int(user_info["user_id"])
+    key = _redis_key(user_id)
+
+    prefs = PortalPrefs()
+    try:
+        raw = await redis.get(key)
+        if raw:
+            prefs = _parse_portal_prefs(raw)
+    except Exception as e:
+        logger.warning("Failed to read existing portal prefs before ignored-version update: %s", e)
+
+    # 统一存三段归一化形态：四段的 1.0.24.0 与 tag 的 1.0.24 是同一个版本，
+    # 若原样存四段，下次比对（与 tag 的三段比）就永远不相等，忽略会失效。
+    prefs.ignored_update_version = normalize_version(body.version)
+
+    try:
+        # 与全量偏好一致：不设 TTL，长期保留
+        await redis.set(key, prefs.model_dump_json())
+    except Exception as e:
+        logger.error("Failed to save ignored update version to Redis: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="保存忽略版本失败",
+        ) from e
+
+    return {
+        "code": 0,
+        "data": {"ignored_update_version": prefs.ignored_update_version},
+        "message": "已忽略该版本的更新提示" if prefs.ignored_update_version else "已恢复更新提示",
+    }
 
 
 class AgentAvatarUpdate(BaseModel):

@@ -20,6 +20,8 @@ import time
 import json
 import httpx
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 BRANDING_UPLOAD_DIR = "data/branding"
@@ -1288,3 +1290,97 @@ async def update_system_config_tour(
     )
     await redis_client.set(SYSTEM_CONFIG_TOUR_KEY, state.model_dump_json())
     return {"code": 0, "data": state.model_dump()}
+
+
+# ── 版本检测（当前版本 vs Gitee 最新 tag）────────────────────────────────
+#
+# 任何人登录后都能看到「有没有新版本」：普通用户升不了级，但「我用的是不是旧版」
+# 本身不该只对管理员可见。升级动作仍在运维手里，接口不提供也不引导一键升级。
+
+PORTAL_PREFS_KEY = "agent:portal_prefs:{user_id}"
+
+
+class UpdateCheckRequest(BaseModel):
+    """手动检查的入参。
+
+    ``current`` 由前端传它正在展示的版本号：界面显示什么，就按什么判断，
+    避免出现「界面写着 1.0.23 却说你已是最新」这种自相矛盾。
+    不传则退回后端 APP_VERSION。
+    """
+
+    current: Optional[str] = None
+
+
+async def _read_ignored_update_version(user_id: int) -> str:
+    """读用户「忽略此版本」偏好。
+
+    与 portal_prefs 同键同结构（整个账号偏好是一个 JSON），这里只取一个字段，
+    所以不引入那套模型解析，读不到就当作没忽略。
+    """
+
+    redis_client = await redis.get_redis()
+    if not redis_client:
+        return ""
+    try:
+        raw = await redis_client.get(PORTAL_PREFS_KEY.format(user_id=user_id))
+        if not raw:
+            return ""
+        decoded = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        parsed = json.loads(decoded)
+        if not isinstance(parsed, dict):
+            return ""
+        return str(parsed.get("ignored_update_version") or "").strip()
+    except Exception as exc:  # noqa: BLE001 - 偏好读失败不该让版本检测整体失败
+        logger.warning("Failed to read ignored update version: %s", exc)
+        return ""
+
+
+def _with_user_prefs(payload: Dict[str, Any], ignored_version: str) -> Dict[str, Any]:
+    """把「用户忽略过哪个版本」合并进结果。
+
+    只按**归一化后的三段版本**比对：忽略 1.0.24 之后，上游出现 1.0.25 会重新提示，
+    这正是「忽略此版本」该有的语义——不是永久静音。
+    """
+
+    latest_normalized = str(payload.get("latest_normalized") or "").strip()
+    ignored = bool(ignored_version) and ignored_version == latest_normalized
+    result = dict(payload)
+    result["ignored_version"] = ignored_version
+    result["ignored"] = ignored
+    result["should_prompt"] = bool(payload.get("has_update")) and not ignored
+    return result
+
+
+@router.get("/update-check", summary="读取平台版本检测结果（有新版本时提示）")
+async def get_update_check(
+    current: Optional[str] = None,
+    user: Dict = Depends(require_api_key),
+):
+    """读缓存结果，缓存缺失时才回源一次 Gitee。
+
+    打开菜单就回源会让「看一眼版本号」变成每次一个外部请求，因此这里默认读缓存；
+    想立刻刷新走 POST。
+    """
+
+    from app.services.update_check_service import check_for_update
+
+    payload = await check_for_update(current)
+    ignored_version = await _read_ignored_update_version(int(user["user_id"]))
+    return {"code": 0, "data": _with_user_prefs(payload, ignored_version)}
+
+
+@router.post("/update-check", summary="立即检查是否有新版本")
+async def post_update_check(
+    body: Optional[UpdateCheckRequest] = Body(default=None),
+    user: Dict = Depends(require_api_key),
+):
+    """用户点「检查更新」时调用：绕过 24h 缓存，受 60 秒节流约束。
+
+    上游失败也返回 200 —— 失败原因放在 ``data.error`` 里交给前端展示成一句人话。
+    """
+
+    from app.services.update_check_service import check_for_update
+
+    payload = await check_for_update(getattr(body, "current", None), force=True)
+    ignored_version = await _read_ignored_update_version(int(user["user_id"]))
+    return {"code": 0, "data": _with_user_prefs(payload, ignored_version)}
