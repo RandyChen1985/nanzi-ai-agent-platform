@@ -659,3 +659,45 @@ async def test_bash_tolerates_unknown_cache_key_shape():
     tool._real_tool = AsyncMock(return_value="ran")
     proxy._sandbox_cache_key = "fake_cache_key"
     assert await tool(command="echo hi") == "ran"
+
+
+@pytest.mark.asyncio
+async def test_ensure_docker_workspace_forwards_skills_scope(monkeypatch, tmp_path):
+    """★ 预热（ensure）必须把会话的技能范围传给 get_local_workspace。
+
+    沙箱身份 = 用户 + 技能集合令牌，预热漏了这两项就会按全量技能另建一台容器：用户
+    看到「沙箱已经 warm 起来了」却仍然在「工作区准备 → 沙箱获取」等十几秒，而预热那台
+    空占到空闲回收。
+    """
+    from app.services.ai.runtime.agentscope import workspace as _ws
+
+    seen: dict = {}
+
+    async def fake_get_local_workspace(**kwargs):
+        seen.update(kwargs)
+
+        class _Bound:
+            _platform_sandbox_policy = "docker"
+
+        return (_Bound(), object())
+
+    monkeypatch.setattr(_ws, "get_local_workspace", fake_get_local_workspace)
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get", AsyncMock(return_value="docker")
+    )
+    monkeypatch.setattr(
+        "app.services.config_service.resolve_effective_sandbox_policy",
+        lambda value, default: "docker",
+    )
+
+    await _ws.ensure_docker_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="conv-123",
+        skills_custom=True,
+        allowed_global_skills=["skill-alpha"],
+    )
+
+    assert seen["skills_custom"] is True
+    assert seen["allowed_global_skills"] == ["skill-alpha"]
+    assert seen["lazy_sandbox"] is False, "预热就是要当场把容器拉起来"

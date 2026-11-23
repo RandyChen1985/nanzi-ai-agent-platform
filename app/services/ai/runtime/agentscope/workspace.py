@@ -5107,12 +5107,21 @@ async def ensure_docker_workspace(
     conversation_id: str | None,
     user_name: str | None = None,
     user_info: dict[str, Any] | None = None,
+    skills_custom: bool = False,
+    allowed_global_skills: list[str] | None = None,
 ) -> Any:
     """Ensure the current user's Docker workspace container is running.
 
     This is a lifecycle-only operation: it initializes or reuses the same
     process-local workspace used by the chat runner and never executes a tool
     command inside the container.
+
+    ``skills_custom`` / ``allowed_global_skills`` **必须与之后的对话构建同源**：
+    沙箱身份（缓存键、容器名、技能目录）都由技能集合令牌决定（见
+    :func:`_sandbox_workspace_id`）。预热时按默认的全量技能建一台、构建时按智能体的
+    白名单再建一台，用户看到的就是「沙箱已经 warm 起来了，可这轮工作区准备还是花了
+    十几秒」——预热的那台压根不是这台，白建还会占资源。调用方（``/sandbox/.../ensure``
+    端点）按会话当前使用的智能体解析这两个值再传进来。
     """
     if not str(conversation_id or "").strip():
         raise DockerSandboxUnavailableError(
@@ -5154,6 +5163,9 @@ async def ensure_docker_workspace(
         conversation_id=str(conversation_id).strip(),
         user_name=user_name,
         user_info=user_info,
+        # 与对话构建同源的技能范围：少了它，预热会按全量技能另建一台用不上的容器。
+        skills_custom=bool(skills_custom),
+        allowed_global_skills=list(allowed_global_skills or []),
         lazy_sandbox=False,
     )
     sandbox_ws, _local_ws = _normalize_workspace_pair(workspace_pair)
@@ -6107,11 +6119,15 @@ async def ensure_k8s_workspace(
     conversation_id: str | None,
     user_name: str | None = None,
     user_info: dict[str, Any] | None = None,
+    skills_custom: bool = False,
+    allowed_global_skills: list[str] | None = None,
 ) -> dict[str, Any]:
     """Start (warm up) or reuse the current user's K8s sandbox workspace.
 
     Mirrors ``ensure_docker_workspace``: goes through ``get_local_workspace``
-    so the Pod shares the exact cache key with the next chat turn.
+    so the Pod shares the exact cache key with the next chat turn — including
+    the skill-set token in ``skills_custom`` / ``allowed_global_skills``, or
+    the warm-up spins up a Pod the coming turn cannot use.
     """
     user_key = await _k8s_runtime_guard(
         user_id=user_id,
@@ -6126,6 +6142,9 @@ async def ensure_k8s_workspace(
         conversation_id=str(conversation_id).strip(),
         user_name=user_name,
         user_info=user_info,
+        # 同 docker 侧：技能集合令牌参与 Pod 身份，预热必须与构建同源。
+        skills_custom=bool(skills_custom),
+        allowed_global_skills=list(allowed_global_skills or []),
         lazy_sandbox=False,
     )
     sandbox_ws, _local_ws = _normalize_workspace_pair(workspace_pair)

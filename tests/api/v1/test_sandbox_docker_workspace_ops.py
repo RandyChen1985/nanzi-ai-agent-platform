@@ -3,6 +3,7 @@ from app.api.v1.endpoints.sandbox import (
     DockerWorkspaceEnsureRequest,
     DockerWorkspaceExecRequest,
     ensure_docker_workspace_endpoint,
+    ensure_k8s_workspace_endpoint,
     stop_docker_workspace_endpoint,
     restart_docker_workspace_endpoint,
     exec_docker_workspace_endpoint,
@@ -325,3 +326,158 @@ async def test_exec_docker_rejects_stale_skills_snapshot(monkeypatch, tmp_path):
     assert exc_info.value.reason_code == "docker_sandbox_skills_stale"
     assert "重新" in exc_info.value.user_message or "重置" in exc_info.value.user_message
     assert evicted == [stale_key], "过期的沙箱必须被逐出，而不是留着继续可用"
+
+
+@pytest.mark.asyncio
+async def test_ensure_endpoint_forwards_session_skills_scope(monkeypatch):
+    """★ 预热必须按会话所属智能体的技能范围建沙箱，否则预热出来的不是这台会话的容器。
+
+    沙箱身份 = 用户 + 技能集合令牌（缓存键 / 容器名 / 技能目录都由它派生）。预热请求体
+    里只有 conversation_id，若按默认全量技能建一台，等构建时用智能体的白名单再算一次
+    令牌，就会再建一台——现象是「沙箱已经 warm 起来了，工作区准备还是花了十几秒」，
+    预热那台还白占资源到空闲回收。
+    """
+    captured = {}
+
+    async def fake_scope(conversation_id, user_info):
+        captured["scope_conversation"] = conversation_id
+        return True, ["skill-alpha", "skill-beta"]
+
+    async def fake_ensure(**kwargs):
+        captured.update(kwargs)
+        return {"status": "running", "execution_backend": "docker", "workspace_id": "alice__1"}
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sandbox._resolve_session_skills_scope", fake_scope
+    )
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sandbox.ensure_docker_workspace_runtime", fake_ensure
+    )
+
+    await ensure_docker_workspace_endpoint(
+        body=DockerWorkspaceEnsureRequest(conversation_id="conv-123"),
+        user_info={"id": 1, "username": "alice"},
+    )
+
+    assert captured["scope_conversation"] == "conv-123"
+    assert captured["skills_custom"] is True
+    assert captured["allowed_global_skills"] == ["skill-alpha", "skill-beta"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_endpoint_forwards_scope_for_k8s(monkeypatch):
+    """K8s 的 Pod 名同样含技能集合令牌，预热口径必须与 docker 侧一致。"""
+    captured = {}
+
+    async def fake_scope(conversation_id, user_info):
+        return False, []
+
+    async def fake_ensure(**kwargs):
+        captured.update(kwargs)
+        return {"status": "running", "execution_backend": "k8s", "pod_name": "as-ws-alice"}
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sandbox._resolve_session_skills_scope", fake_scope
+    )
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sandbox.ensure_k8s_workspace_runtime", fake_ensure
+    )
+
+    await ensure_k8s_workspace_endpoint(
+        body=DockerWorkspaceEnsureRequest(conversation_id="conv-123"),
+        user_info={"id": 1, "username": "alice"},
+    )
+
+    assert captured["skills_custom"] is False
+    assert captured["allowed_global_skills"] == []
+
+
+class _FakeResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+class _FakeSession:
+    def __init__(self, agent_id):
+        self._agent_id = agent_id
+        self.executed = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+    async def execute(self, stmt):
+        self.executed.append(stmt)
+        return _FakeResult(self._agent_id)
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_skills_scope_uses_last_executed_agent(monkeypatch):
+    """会话 → 智能体按最近一次执行记录取，再取该智能体的 skills_custom / skills。"""
+    from types import SimpleNamespace
+
+    from app.api.v1.endpoints.sandbox import _resolve_session_skills_scope
+
+    session = _FakeSession(agent_id="agent-data")
+    monkeypatch.setattr("app.core.orm.AsyncSessionLocal", lambda: session)
+
+    seen = {}
+
+    async def fake_config(_session, *, agent_id=None, agent_name=None):
+        seen["agent_id"] = agent_id
+        return SimpleNamespace(skills_custom=True, skills=["skill-alpha", " "])
+
+    monkeypatch.setattr(
+        "app.services.ai.agent_manager.AgentManagerService.get_active_agent_config",
+        fake_config,
+    )
+
+    assert await _resolve_session_skills_scope("conv-123", {"id": 1}) == (
+        True,
+        ["skill-alpha"],
+    )
+    assert seen["agent_id"] == "agent-data"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_skills_scope_falls_back_to_main_agent(monkeypatch):
+    """新会话还没有执行记录时按构建侧的默认主智能体解析，口径与路由兜底一致。"""
+    from types import SimpleNamespace
+
+    from app.api.v1.endpoints.sandbox import _resolve_session_skills_scope
+    from app.services.ai.context_manager import DEFAULT_MAIN_AGENT_ID
+
+    session = _FakeSession(agent_id=None)
+    monkeypatch.setattr("app.core.orm.AsyncSessionLocal", lambda: session)
+
+    seen = {}
+
+    async def fake_config(_session, *, agent_id=None, agent_name=None):
+        seen["agent_id"] = agent_id
+        return SimpleNamespace(skills_custom=False, skills=["ignored"])
+
+    monkeypatch.setattr(
+        "app.services.ai.agent_manager.AgentManagerService.get_active_agent_config",
+        fake_config,
+    )
+
+    assert await _resolve_session_skills_scope("conv-new", {"id": 1}) == (False, ["ignored"])
+    assert seen["agent_id"] == DEFAULT_MAIN_AGENT_ID
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_skills_scope_degrades_to_full_catalog(monkeypatch):
+    """解析失败只能回落到「全量技能」，绝不能让预热本身失败。"""
+    from app.api.v1.endpoints.sandbox import _resolve_session_skills_scope
+
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("app.core.orm.AsyncSessionLocal", boom)
+
+    assert await _resolve_session_skills_scope("conv-123", {"id": 1}) == (False, [])

@@ -260,6 +260,65 @@ async def stream_docker_prebuild(
     )
 
 
+async def _resolve_session_skills_scope(
+    conversation_id: str,
+    user_info: Dict[str, Any],
+) -> tuple[bool, list[str]]:
+    """解析该会话当前使用的智能体的技能范围（``skills_custom`` / ``skills``）。
+
+    **为什么预热必须用它**：沙箱身份 = 用户 + 技能集合令牌（缓存键、容器名、技能目录
+    都由令牌派生）。预热请求体里只有 ``conversation_id``，拿不到智能体的技能白名单；
+    若按默认的全量技能建一台，等真正构建时用白名单算出另一个令牌，就会再建一台——用户
+    看到的现象正是「沙箱已经 warm 起来了，工作区准备还是花了十几秒」，而预热那台空占
+    资源到空闲回收。
+
+    会话用的智能体按「该会话最近一次执行的 ``agent_id``」取；新会话还没有执行记录时
+    回落到构建侧的默认主智能体（``DEFAULT_MAIN_AGENT_ID``），与
+    :meth:`AgentContextManager.resolve_agent_config` 的兜底口径一致。任何一步失败都
+    回落到「全量技能」，绝不因为解析不了就让预热失败。
+    """
+    conversation = str(conversation_id or "").strip()
+    if not conversation:
+        return False, []
+    try:
+        from sqlalchemy import desc, select
+
+        from app.core.orm import AsyncSessionLocal
+        from app.models.audit import AgentExecutionHistory
+        from app.services.ai.agent_manager import AgentManagerService
+        from app.services.ai.context_manager import DEFAULT_MAIN_AGENT_ID
+
+        async with AsyncSessionLocal() as session:
+            agent_id = (
+                await session.execute(
+                    select(AgentExecutionHistory.agent_id)
+                    .where(AgentExecutionHistory.conversation_id == conversation)
+                    .order_by(
+                        desc(AgentExecutionHistory.created_at),
+                        desc(AgentExecutionHistory.id),
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            config = await AgentManagerService.get_active_agent_config(
+                session,
+                agent_id=agent_id or DEFAULT_MAIN_AGENT_ID,
+            )
+            if config is None:
+                return False, []
+            return (
+                bool(getattr(config, "skills_custom", False)),
+                [str(item) for item in (getattr(config, "skills", None) or []) if str(item).strip()],
+            )
+    except Exception as exc:  # noqa: BLE001 - 预热不能因为解析技能范围而失败
+        logger.warning(
+            "Failed to resolve skills scope for sandbox warm-up (conversation=%s): %s",
+            conversation,
+            exc,
+        )
+        return False, []
+
+
 class DockerWorkspaceEnsureRequest(BaseModel):
     """当前用户手动启动 Docker 工作区所需的会话标识。"""
 
@@ -301,12 +360,18 @@ async def ensure_docker_workspace_endpoint(
             message="自动预热已关闭（sandbox_auto_warm=false），未启动沙箱，可手动启动。",
         )
 
+    skills_custom, allowed_global_skills = await _resolve_session_skills_scope(
+        conversation_id, user_info
+    )
     try:
         workspace = await ensure_docker_workspace_runtime(
             user_id=user_info.get("user_id") or user_info.get("id"),
             user_name=user_info.get("user_name") or user_info.get("username"),
             user_info=user_info,
             conversation_id=conversation_id,
+            # 与会话构建同一个技能集合令牌，预热出来的才是这台会话要的那台沙箱
+            skills_custom=skills_custom,
+            allowed_global_skills=allowed_global_skills,
         )
     except DockerSandboxUnavailableError as exc:
         status_code = (
@@ -509,12 +574,18 @@ async def ensure_k8s_workspace_endpoint(
             message="自动预热已关闭（sandbox_auto_warm=false），未启动沙箱，可手动启动。",
         )
 
+    skills_custom, allowed_global_skills = await _resolve_session_skills_scope(
+        conversation_id, user_info
+    )
     try:
         result = await ensure_k8s_workspace_runtime(
             user_id=user_info.get("user_id") or user_info.get("id"),
             user_name=user_info.get("user_name") or user_info.get("username"),
             user_info=user_info,
             conversation_id=conversation_id,
+            # 同 docker 侧：Pod 身份也含技能集合令牌
+            skills_custom=skills_custom,
+            allowed_global_skills=allowed_global_skills,
         )
     except K8sSandboxUnavailableError as exc:
         status_code = 409 if exc.reason_code == "k8s_policy_not_effective" else 503

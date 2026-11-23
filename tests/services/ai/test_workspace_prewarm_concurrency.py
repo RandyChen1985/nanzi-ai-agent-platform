@@ -195,3 +195,83 @@ async def test_preflight_workspace_prewarm_handles_none_user_info(monkeypatch):
     assert seen.get("conversation_id") == "conv-none-user"
     assert seen.get("user_id") is None
     assert seen.get("user_name") is None
+
+
+@pytest.mark.asyncio
+async def test_preflight_prewarms_docker_instead_of_skipping(monkeypatch):
+    """★ docker/k8s 同样要预热，不能因为「缓存键算不出来」就整段跳过。
+
+    早先这里用手写的 ``{workdir}::{custom:…|all}::{policy}`` 去查真实缓存键
+    ``{root}::{user_key}::{技能集合令牌}::docker``，两套格式永远对不上 → 判「未缓存」
+    → docker/k8s 预热一律 return None，页面/首轮的预热对容器策略从未生效。
+    现在直接调 ``get_local_workspace``：命中缓存是几十毫秒，未命中拿惰性代理（不建容器）。
+    """
+    seen: dict = {}
+
+    async def fake_get_local_workspace(**kwargs):
+        seen.update(kwargs)
+        return (None, MagicMock())
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.get_local_workspace",
+        fake_get_local_workspace,
+    )
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        AsyncMock(return_value="docker"),
+    )
+    service = AgentService()
+    monkeypatch.setattr(service, "_inject_skills", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        service, "_load_memory_context", AsyncMock(return_value=(None, None, None, None))
+    )
+    monkeypatch.setattr(
+        service, "_build_user_context_msg", AsyncMock(return_value={"content": "用户画像信息"})
+    )
+    monkeypatch.setattr(
+        "app.services.ai.prompt_assembler.resolve_effective_prompt_tool_names_for_turn",
+        AsyncMock(return_value=[]),
+    )
+
+    await _call_preflight(service, conversation_id="conv-docker")
+
+    assert seen.get("conversation_id") == "conv-docker"
+    assert seen.get("lazy_sandbox") is True, "预热本身不能建容器，容器交给惰性代理"
+
+
+@pytest.mark.asyncio
+async def test_preflight_records_cache_hit_from_prepare_trace(monkeypatch):
+    """预热「是否命中缓存」由 prepare_trace 实测：stages 空 = 走了缓存命中路径。"""
+    from app.services.ai.runtime.agentscope.workspace import WorkspacePrepareTrace
+
+    seen: dict = {}
+
+    async def fake_get_local_workspace(**kwargs):
+        seen.update(kwargs)
+        return (None, MagicMock())
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.get_local_workspace",
+        fake_get_local_workspace,
+    )
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        AsyncMock(return_value="local"),
+    )
+    service = AgentService()
+    monkeypatch.setattr(service, "_inject_skills", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        service, "_load_memory_context", AsyncMock(return_value=(None, None, None, None))
+    )
+    monkeypatch.setattr(
+        service, "_build_user_context_msg", AsyncMock(return_value={"content": "用户画像信息"})
+    )
+    monkeypatch.setattr(
+        "app.services.ai.prompt_assembler.resolve_effective_prompt_tool_names_for_turn",
+        AsyncMock(return_value=[]),
+    )
+
+    await _call_preflight(service, conversation_id="conv-trace")
+
+    trace = seen.get("prepare_trace")
+    assert isinstance(trace, WorkspacePrepareTrace), "预热必须把 trace 传进去才能判断是否命中"
