@@ -2,7 +2,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete, desc, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 
 from app.models.task import AgentScheduledTask
@@ -116,7 +116,81 @@ class TaskCenterService:
             attach_task_metrics(task_obj)
             tasks.append(task_obj)
             
+        await TaskCenterService.attach_recent_runs(db, tasks)
         return tasks
+
+    @staticmethod
+    async def attach_recent_runs(
+        db: AsyncSession,
+        tasks: List[Any],
+        limit: int = 7,
+        days: int = 60,
+    ) -> None:
+        """给任务对象挂上「最近 N 次执行」的状态序列，供列表页画健康趋势。
+
+        为什么单独查：列表接口只有聚合计数（成功率），看不出「成功率 98% 但最近三次全失败」。
+        逐次结果在 ``ai_agent_execution_history``，按会话前缀聚合（与执行记录页同一口径），
+        所以这里一次性把这批任务的会话全部捞回来，再在内存里按任务分组取前 N 条。
+        """
+        if not tasks:
+            return
+
+        exact_to_task: Dict[str, int] = {}
+        prefix_to_task: Dict[str, int] = {}
+        for task in tasks:
+            conversation_id = getattr(task, "conversation_id", None)
+            if not conversation_id:
+                continue
+            exact_to_task[str(conversation_id)] = task.id
+            prefix = _task_run_conversation_prefix(str(conversation_id))
+            if prefix:
+                prefix_to_task[prefix] = task.id
+
+        if not exact_to_task and not prefix_to_task:
+            return
+
+        filters = [AgentExecutionHistory.conversation_id == cid for cid in exact_to_task]
+        filters += [
+            AgentExecutionHistory.conversation_id.like(f"{prefix}_run_%")
+            for prefix in prefix_to_task
+        ]
+
+        # 时间下界把扫描量钉住：列表只关心「最近」的表现，更早的历史在这里没有展示价值。
+        since = datetime.now() - timedelta(days=days)
+        stmt = (
+            select(
+                AgentExecutionHistory.conversation_id,
+                AgentExecutionHistory.status,
+                AgentExecutionHistory.created_at,
+            )
+            .where(or_(*filters), AgentExecutionHistory.created_at >= since)
+            .order_by(desc(AgentExecutionHistory.created_at))
+            .limit(limit * len(tasks) * 4)
+        )
+        rows = (await db.execute(stmt)).all()
+
+        buckets: Dict[int, List[Dict[str, Any]]] = {}
+        for conversation_id, status, created_at in rows:
+            conversation_id = conversation_id or ""
+            task_id = exact_to_task.get(conversation_id)
+            if task_id is None:
+                for prefix, mapped_id in prefix_to_task.items():
+                    if conversation_id.startswith(f"{prefix}_run_"):
+                        task_id = mapped_id
+                        break
+            if task_id is None:
+                continue
+            bucket = buckets.setdefault(task_id, [])
+            if len(bucket) >= limit:
+                continue
+            bucket.append({
+                "status": str(status or "unknown").lower(),
+                "at": created_at.isoformat() if created_at else None,
+            })
+
+        for task in tasks:
+            # 查询按时间倒序，展示要「旧 → 新」，这里翻回正序
+            task.recent_runs = list(reversed(buckets.get(task.id, [])))
 
     @staticmethod
     async def get_task(db: AsyncSession, task_id: int) -> Optional[AgentScheduledTask]:

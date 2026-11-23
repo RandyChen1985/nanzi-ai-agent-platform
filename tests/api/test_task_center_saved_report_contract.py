@@ -41,9 +41,15 @@ def test_task_center_has_type_tabs_with_counts():
 
 
 def test_report_subscription_rows_use_readable_schedule_and_actions():
+    """报表订阅行要展示可读周期、可读下次运行时间，并保留专属操作入口。
+
+    2026-11-23「我的任务」重构：`formatNextRunCompact` 被 `nextRunCell` 取代
+    （后者额外区分「暂停 → 已暂停」与「无计划」），断言随之换成新函数；
+    「可读周期 + 可读下次运行 + 订阅专属操作」这组不变量不变。
+    """
     view = (ROOT / "frontend/src/views/TaskCenter.vue").read_text(encoding="utf-8")
     assert "formatTaskSchedule" in view
-    assert "formatNextRunCompact" in view
+    assert "nextRunCell" in view
     assert "每天" in view
     assert "订阅设置" in view
     assert "report_detail_tab" in view

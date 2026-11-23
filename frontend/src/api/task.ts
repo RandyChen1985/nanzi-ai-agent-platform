@@ -43,6 +43,11 @@ export interface AgentTask {
   }
   last_run_id?: string
   last_run_at?: string
+  /**
+   * 最近 7 次执行状态（时间正序，旧 → 新）。后端按任务会话前缀从执行历史聚合，
+   * 报表订阅等无执行记录的任务会是空数组。
+   */
+  recent_runs?: Array<{ status: string; at?: string | null }>
   next_run_at?: string
   created_at: string
   updated_at: string

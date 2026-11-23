@@ -1,0 +1,1249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="方案对比">
+<title>我的任务 · 列表与卡片信息架构重构（三方案）</title>
+<style>
+  :root{
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af;
+    --g500:#6b7280; --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --blue:#2563eb; --blue50:#eff6ff; --blue100:#dbeafe; --blue200:#bfdbfe; --blue700:#1d4ed8;
+    --em50:#ecfdf5; --em100:#d1fae5; --em200:#a7f3d0; --em600:#059669; --em700:#047857;
+    --am50:#fffbeb; --am100:#fef3c7; --am200:#fde68a; --am600:#d97706; --am700:#b45309;
+    --rose50:#fef2f2; --rose100:#fee2e2; --rose200:#fecaca; --rose600:#dc2626; --rose700:#b91c1c;
+    --slate900:#0f172a;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f5f6f8;color:var(--g900);font-size:14px;line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  input,select{font:inherit}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .page{max-width:1360px;margin:0 auto;padding:22px 24px 90px}
+
+  /* ── 原型头 ─────────────────────────────────────────── */
+  .proto-head h1{font-size:20px;margin:0 0 7px;font-weight:650;letter-spacing:-.2px}
+  .proto-head p{margin:0 0 6px;color:var(--g500);font-size:12.5px;max-width:1000px;line-height:1.85}
+  .proto-head b{color:var(--g700);font-weight:600}
+  .proto-head code{background:var(--g100);padding:1px 5px;border-radius:4px;font-size:11.5px;color:var(--g700)}
+
+  /* ── 通用面板 ───────────────────────────────────────── */
+  .panel{border:1px solid var(--g200);border-radius:var(--radius);background:#fff;overflow:hidden;margin:16px 0}
+  .panel-h{display:flex;align-items:baseline;gap:10px;padding:11px 16px;border-bottom:1px solid var(--g100);background:var(--g50)}
+  .panel-h b{font-size:13px}
+  .panel-h span{font-size:11.5px;color:var(--g500)}
+
+  /* ── 问题诊断表 ─────────────────────────────────────── */
+  table.diag{width:100%;border-collapse:collapse;font-size:12px}
+  table.diag th{text-align:left;font-weight:600;color:var(--g500);font-size:11px;letter-spacing:.02em;
+    padding:7px 12px;background:var(--g50);border-bottom:1px solid var(--g100);white-space:nowrap}
+  table.diag td{padding:8px 12px;border-bottom:1px solid var(--g100);vertical-align:top;color:var(--g600);line-height:1.65}
+  table.diag tr:last-child td{border-bottom:none}
+  table.diag td.no{width:26px;color:var(--g400);font-weight:700;font-variant-numeric:tabular-nums}
+  table.diag td.sym{width:29%;color:var(--g800)}
+  table.diag td.fix{width:30%;color:var(--g700)}
+  table.diag b{color:var(--g900);font-weight:600}
+  table.diag .who{display:inline-block;font-size:10px;font-weight:700;border-radius:4px;padding:0 4px;margin-right:4px;
+    background:var(--g100);color:var(--g500)}
+  table.diag .who.a{background:var(--blue50);color:var(--blue700)}
+  table.diag .who.b{background:#f5f3ff;color:#6d28d9}
+
+  /* ── 方案 tab ───────────────────────────────────────── */
+  .tabs{display:flex;gap:6px;margin:18px 0 14px;flex-wrap:wrap;align-items:center}
+  .tab{display:flex;align-items:center;gap:7px;border:1px solid var(--g200);background:#fff;
+    border-radius:10px;padding:7px 13px;font-size:12.5px;color:var(--g600);transition:.14s}
+  .tab:hover{border-color:var(--g300);color:var(--g800)}
+  .tab .no{display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
+    border-radius:5px;background:var(--g100);font-size:10.5px;font-weight:700;color:var(--g500)}
+  .tab.on{border-color:var(--slate900);background:var(--slate900);color:#fff}
+  .tab.on .no{background:rgba(255,255,255,.18);color:#fff}
+  .tab-hint{font-size:11.5px;color:var(--g400);margin-left:6px}
+  .scene{display:none}
+  .scene.on{display:block}
+  .scene-note{display:flex;gap:10px;align-items:flex-start;border:1px dashed var(--g300);border-radius:10px;
+    padding:9px 13px;font-size:12px;color:var(--g600);background:#fff;margin-bottom:12px;line-height:1.7}
+  .scene-note .tag{flex:0 0 auto;font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 6px;
+    background:var(--slate900);color:#fff}
+  .scene-note em{font-style:normal;color:var(--g800);font-weight:600}
+
+  /* ── 应用窗口壳 ─────────────────────────────────────── */
+  .win{border:1px solid var(--g200);border-radius:14px;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.05);
+    max-width:var(--win-w,1360px);overflow:hidden;position:relative}
+  .app{padding:18px 20px 22px}
+  .app-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .app-title{font-size:19px;font-weight:700;letter-spacing:-.3px;margin:0}
+  .app-title-sub{font-size:11px;color:var(--g400);font-weight:500;margin-left:2px}
+  .app-head .spacer{flex:1}
+  .search{position:relative;width:250px}
+  .search input{width:100%;border:1px solid var(--g300);border-radius:8px;padding:7px 10px 7px 29px;font-size:12.5px;
+    outline:none;background:#fff;color:var(--g800)}
+  .search input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+  .search svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--g400)}
+  .sel{border:1px solid var(--g300);border-radius:8px;background:#fff;padding:7px 8px;font-size:12.5px;color:var(--g700);outline:none}
+  .seg{display:flex;gap:2px;padding:2px;border:1px solid var(--g300);border-radius:8px;background:var(--g100)}
+  .seg button{padding:4px 7px;border-radius:6px;color:var(--g500);display:flex;align-items:center}
+  .seg button.on{background:#fff;color:var(--blue);box-shadow:0 1px 2px rgba(16,24,40,.1)}
+  .seg svg{width:14px;height:14px}
+  .icon-btn{width:30px;height:30px;border:1px solid var(--g300);border-radius:8px;background:#fff;
+    display:inline-flex;align-items:center;justify-content:center;color:var(--g500);transition:.13s}
+  .icon-btn:hover{color:var(--blue);border-color:var(--blue200);background:var(--blue50)}
+  .icon-btn svg{width:14px;height:14px}
+
+  .btn-primary{background:var(--blue);color:#fff;border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:600;
+    display:inline-flex;align-items:center;gap:5px;transition:.13s;box-shadow:0 1px 2px rgba(37,99,235,.3)}
+  .btn-primary:hover{background:var(--blue700)}
+  .btn-primary.sm{padding:5px 10px;font-size:11.5px;border-radius:7px;box-shadow:none}
+  .btn-ghost{border:1px solid var(--g200);background:#fff;border-radius:7px;padding:5px 10px;font-size:11.5px;
+    color:var(--g600);transition:.13s}
+  .btn-ghost:hover{border-color:var(--g300);color:var(--g900);background:var(--g50)}
+
+  /* 概览条 */
+  .overview{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:9px;font-size:12px;color:var(--g500)}
+  .ov{display:inline-flex;align-items:center;gap:5px;cursor:pointer;border-radius:6px;padding:1px 5px;transition:.13s}
+  .ov:hover{background:var(--g100);color:var(--g800)}
+  .ov b{color:var(--g900);font-weight:700;font-variant-numeric:tabular-nums}
+  .ov.next b{color:var(--blue700)}
+  .ov .dot{width:6px;height:6px;border-radius:50%}
+
+  /* 一级 tab */
+  .tabs-line{display:flex;align-items:flex-end;gap:2px;border-bottom:1px solid var(--g200);margin:16px 0 0}
+  .tabs-line button{padding:8px 12px;font-size:13px;color:var(--g500);border-bottom:2px solid transparent;
+    margin-bottom:-1px;display:inline-flex;align-items:center;gap:6px;transition:.13s;white-space:nowrap}
+  .tabs-line button:hover{color:var(--g800)}
+  .tabs-line button.on{color:var(--blue700);border-bottom-color:var(--blue);font-weight:600}
+  .tabs-line .cnt{font-size:10.5px;font-weight:700;background:var(--g100);color:var(--g500);border-radius:999px;
+    padding:0 5px;min-width:17px;text-align:center}
+  .tabs-line button.on .cnt{background:var(--blue100);color:var(--blue700)}
+  .tabs-line .spacer{flex:1}
+  .tabs-line .right-act{padding:8px 10px;font-size:12.5px;color:var(--g500)}
+  .tabs-line .right-act:hover{color:var(--blue700)}
+
+  /* 提醒条 */
+  .alert{margin-top:14px;display:flex;align-items:flex-start;gap:9px;border:1px solid var(--rose200);
+    background:var(--rose50);border-radius:10px;padding:9px 12px;font-size:12px;color:var(--rose700);line-height:1.7}
+  .alert .ai{flex:0 0 auto;font-weight:700}
+  .alert a{margin-left:auto;color:var(--rose700);font-weight:700;text-decoration:none;white-space:nowrap;cursor:pointer}
+  .alert a:hover{text-decoration:underline}
+
+  /* ── 卡片网格 ───────────────────────────────────────── */
+  .grid{display:grid;gap:12px;margin-top:14px;
+    grid-template-columns:repeat(auto-fill,minmax(318px,1fr))}
+  .card{border:1px solid var(--g200);border-radius:12px;background:#fff;padding:13px 14px 11px;
+    display:flex;flex-direction:column;gap:8px;transition:.15s;position:relative}
+  .card:hover{border-color:var(--g300);box-shadow:0 4px 14px rgba(16,24,40,.07)}
+  .card.is-error{border-left:3px solid var(--rose600)}
+  .card.is-off{background:#fcfcfd}
+  .card-top{display:flex;align-items:flex-start;gap:7px}
+  .card-top .dot{margin-top:6px;flex:0 0 auto}
+  .card-top h3{margin:0;font-size:13.5px;font-weight:650;line-height:1.4;color:var(--g900);
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+  .card-top .more{margin-left:auto;flex:0 0 auto;color:var(--g300);padding:0 2px;font-size:16px;line-height:1}
+  .card-top .more:hover{color:var(--g700)}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+  .d-on{background:var(--em600);box-shadow:0 0 0 3px var(--em100)}
+  .d-off{background:var(--g300)}
+  .d-error{background:var(--rose600);box-shadow:0 0 0 3px var(--rose100)}
+  .d-warn{background:var(--am600);box-shadow:0 0 0 3px var(--am100)}
+
+  .card-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--g500)}
+  .card-meta .agent{color:var(--blue700);background:var(--blue50);border-radius:5px;padding:1px 5px;font-weight:600}
+  .card-meta .cron{color:var(--g700);font-weight:600;border-bottom:1px dashed var(--g300);cursor:help}
+  .badge{font-size:10px;font-weight:700;border-radius:999px;padding:1px 7px;border:1px solid transparent;white-space:nowrap}
+  .st-on{background:var(--em50);color:var(--em700);border-color:var(--em200)}
+  .st-off{background:var(--g100);color:var(--g500);border-color:var(--g200)}
+  .st-error{background:var(--rose50);color:var(--rose700);border-color:var(--rose200)}
+  .st-warn{background:var(--am50);color:var(--am700);border-color:var(--am200)}
+
+  .prompt{margin:0;font-size:11.5px;color:var(--g500);line-height:1.6;overflow:hidden;text-overflow:ellipsis;
+    display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}
+  .note{margin:0;font-size:11px;line-height:1.55;border-radius:7px;padding:5px 8px;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .note.warn{background:var(--am50);color:var(--am700);border:1px solid var(--am100)}
+  .note.err{background:var(--rose50);color:var(--rose700);border:1px solid var(--rose100)}
+
+  .metrics{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--g500)}
+  .metrics b{color:var(--g900);font-weight:700;font-variant-numeric:tabular-nums}
+  .times{display:flex;gap:14px;font-size:11.5px;color:var(--g500);border-top:1px dashed var(--g100);padding-top:7px}
+  .times .k{color:var(--g400);margin-right:4px}
+  .times .v{color:var(--g700);font-weight:600}
+  .times .v.muted{color:var(--g400);font-weight:500}
+  .times .v b{color:var(--blue700);font-weight:700}
+  .times em{font-style:normal;color:var(--g400);font-weight:500;margin-left:4px}
+  .card-foot{display:flex;align-items:center;gap:6px;margin-top:auto;padding-top:9px;border-top:1px solid var(--g100)}
+  .card-foot .spacer{flex:1}
+
+  /* ── 列表表格 ───────────────────────────────────────── */
+  .tablewrap{margin-top:14px;border:1px solid var(--g200);border-radius:12px;overflow:hidden}
+  table.list{width:100%;border-collapse:collapse;font-size:12.5px;table-layout:fixed}
+  table.list thead th{text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--g400);background:var(--g50);padding:8px 12px;border-bottom:1px solid var(--g200);white-space:nowrap}
+  table.list thead th.sortable{cursor:pointer}
+  table.list thead th.sortable:hover{color:var(--g700)}
+  table.list tbody td{padding:10px 12px;border-bottom:1px solid var(--g100);vertical-align:middle}
+  table.list tbody tr:last-child td{border-bottom:none}
+  table.list tbody tr:hover{background:var(--blue50)}
+  .cell-name{display:flex;align-items:flex-start;gap:7px;min-width:0}
+  .cell-name .dot{margin-top:6px;flex:0 0 auto}
+  .cell-name b{display:block;font-size:12.5px;font-weight:650;color:var(--g900);line-height:1.4;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cell-name small{display:block;font-size:11px;color:var(--g400);margin-top:1px}
+  .mini{display:flex;gap:2px;align-items:flex-end;height:14px}
+  .mini i{width:4px;border-radius:1px;display:block;background:var(--em200)}
+  .mini i.f{background:var(--rose600);height:12px}
+  .mini i.s{background:var(--g300);height:6px}
+  .mini i.ok{height:9px}
+  .rate{font-variant-numeric:tabular-nums;font-weight:700;color:var(--g800)}
+  .rate.low{color:var(--rose700)}
+  .row-act{display:flex;justify-content:flex-end;gap:5px;align-items:center}
+
+  /* 宽度切换 */
+  .widthbar{display:flex;align-items:center;gap:7px;margin-top:12px;font-size:11.5px;color:var(--g500);flex-wrap:wrap}
+  .widthbar .lbl{font-weight:600;color:var(--g700)}
+  .wbtn{border:1px solid var(--g200);background:#fff;border-radius:6px;padding:3px 8px;font-size:11px;color:var(--g600)}
+  .wbtn.on{background:var(--slate900);color:#fff;border-color:var(--slate900)}
+
+  /* ── 方案 B：KPI + 分组行 ───────────────────────────── */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:14px}
+  .kpi{border:1px solid var(--g200);border-radius:11px;padding:10px 12px;background:#fff;cursor:pointer;transition:.14s}
+  .kpi:hover{border-color:var(--g300);box-shadow:0 2px 10px rgba(16,24,40,.06)}
+  .kpi .k{font-size:11px;color:var(--g500);display:flex;align-items:center;gap:5px}
+  .kpi .v{font-size:20px;font-weight:700;letter-spacing:-.5px;margin-top:2px;font-variant-numeric:tabular-nums}
+  .kpi .sub{font-size:10.5px;color:var(--g400)}
+  .kpi.err{border-color:var(--rose200);background:linear-gradient(180deg,var(--rose50),#fff)}
+  .kpi.err .v{color:var(--rose700)}
+
+  .group{margin-top:16px}
+  .group-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--g700);margin-bottom:7px}
+  .group-h .cnt{font-size:10.5px;font-weight:700;background:var(--g100);color:var(--g500);border-radius:999px;padding:0 6px}
+  .group-h .line{flex:1;height:1px;background:var(--g100)}
+  .group-h .fold{font-size:11px;font-weight:500;color:var(--g400)}
+  .grow{display:flex;align-items:center;gap:12px;border:1px solid var(--g200);border-radius:11px;background:#fff;
+    padding:10px 12px 10px 0;margin-bottom:7px;transition:.14s;position:relative;overflow:hidden}
+  .grow:hover{border-color:var(--g300);box-shadow:0 2px 10px rgba(16,24,40,.06)}
+  .grow .gbar{position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--g300)}
+  .grow.on .gbar{background:var(--em600)}
+  .grow.error{border-color:var(--rose200);background:linear-gradient(90deg,var(--rose50),#fff 55%)}
+  .grow.error .gbar{background:var(--rose600)}
+  .grow.warn .gbar{background:var(--am600)}
+  .grow .cbx{margin-left:10px;display:flex;align-items:center}
+  .grow .cbx input{width:14px;height:14px;accent-color:var(--blue);cursor:pointer}
+  .gmain{flex:1;min-width:0}
+  .gmain .t{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .gmain .t b{font-size:13px;font-weight:650;color:var(--g900)}
+  .gmain .sub{font-size:11px;color:var(--g500);margin-top:2px}
+  .gmain .sub .agent{color:var(--blue700)}
+  .gmain .err{font-size:11px;color:var(--rose700);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fig{flex:0 0 auto;text-align:left;min-width:82px}
+  .fig .k{display:block;font-size:10px;color:var(--g400)}
+  .fig b{font-size:12px;color:var(--g800);font-variant-numeric:tabular-nums}
+  .fig b.off{color:var(--g400);font-weight:500}
+  .fig.rate-fig b.low{color:var(--rose700)}
+  .gact{flex:0 0 auto;display:flex;gap:5px;margin-left:auto;padding-right:2px}
+
+  /* 批量条 */
+  .bulk{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;display:none;align-items:center;gap:10px;
+    background:var(--slate900);color:#fff;border-radius:11px;padding:8px 12px;font-size:12px;
+    box-shadow:0 8px 26px rgba(15,23,42,.28);z-index:5}
+  .bulk.show{display:flex}
+  .bulk .n{font-weight:700}
+  .bulk .bbtn{border:1px solid rgba(255,255,255,.22);border-radius:7px;padding:4px 9px;font-size:11.5px;color:#fff}
+  .bulk .bbtn:hover{background:rgba(255,255,255,.12)}
+  .bulk .bbtn.danger{border-color:rgba(248,113,113,.5);color:#fca5a5}
+
+  /* 抽屉 */
+  .scrim{position:absolute;inset:0;background:rgba(15,23,42,.28);opacity:0;pointer-events:none;transition:.18s;z-index:8}
+  .scrim.show{opacity:1;pointer-events:auto}
+  .drawer{position:absolute;top:0;right:0;bottom:0;width:min(460px,92%);background:#fff;border-left:1px solid var(--g200);
+    transform:translateX(100%);transition:transform .2s ease;z-index:9;display:flex;flex-direction:column;overflow:hidden}
+  .drawer.show{transform:translateX(0)}
+  .drawer-h{padding:14px 16px;border-bottom:1px solid var(--g100);display:flex;align-items:flex-start;gap:9px}
+  .drawer-h h3{margin:0;font-size:14.5px;font-weight:700;line-height:1.45}
+  .drawer-h .x{margin-left:auto;color:var(--g400);font-size:18px;line-height:1}
+  .drawer-b{padding:14px 16px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:13px}
+  .drawer-f{padding:11px 16px;border-top:1px solid var(--g100);display:flex;gap:7px;align-items:center;background:var(--g50)}
+  .dsec .dk{font-size:10.5px;font-weight:700;color:var(--g400);letter-spacing:.04em;text-transform:uppercase;margin-bottom:5px}
+  .dsec p{margin:0;font-size:12px;color:var(--g600);line-height:1.75}
+  .kv{display:grid;grid-template-columns:78px 1fr;gap:5px 10px;font-size:12px}
+  .kv dt{color:var(--g400)}
+  .kv dd{margin:0;color:var(--g700);font-weight:550}
+  .nextlist{list-style:none;margin:0;padding:0;font-size:12px}
+  .nextlist li{display:flex;justify-content:space-between;color:var(--g600);padding:3px 0;border-bottom:1px dashed var(--g100)}
+  .nextlist li:last-child{border-bottom:none}
+  .nextlist b{color:var(--g800);font-variant-numeric:tabular-nums}
+  .runs{border:1px solid var(--g100);border-radius:9px;overflow:hidden}
+  .runs .rr{display:grid;grid-template-columns:1fr 74px 60px;gap:8px;font-size:11.5px;padding:6px 10px;
+    border-bottom:1px solid var(--g100);color:var(--g600);align-items:center}
+  .runs .rr:last-child{border-bottom:none}
+  .runs .rr.ok .s{color:var(--em700);font-weight:700}
+  .runs .rr.fail .s{color:var(--rose700);font-weight:700}
+  .runs .rr .dur{color:var(--g400);text-align:right;font-variant-numeric:tabular-nums}
+
+  /* ── 方案 C：密表 + 展开 ────────────────────────────── */
+  table.dense{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+  table.dense th{text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+    color:var(--g400);padding:7px 9px;background:var(--g50);border-bottom:1px solid var(--g200);white-space:nowrap}
+  table.dense th.s{cursor:pointer}
+  table.dense th.s:hover{color:var(--g700)}
+  table.dense td{padding:7px 9px;border-bottom:1px solid var(--g100);vertical-align:middle;color:var(--g600)}
+  table.dense tbody tr.r-main:hover{background:var(--blue50);cursor:pointer}
+  .dname{display:flex;align-items:center;gap:6px;min-width:0}
+  .dname span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--g800)}
+  tr.detail td{background:var(--g50);padding:0}
+  .detail-in{padding:11px 14px 13px;display:grid;grid-template-columns:1.4fr .8fr;gap:16px;font-size:11.5px}
+  .detail-in .dk{font-size:10px;font-weight:700;color:var(--g400);text-transform:uppercase;margin-bottom:4px}
+  .detail-in p{margin:0;color:var(--g600);line-height:1.7}
+  .hidden{display:none}
+
+  /* ── 取舍对比 ──────────────────────────────────────── */
+  table.cmp{width:100%;border-collapse:collapse;font-size:12px}
+  table.cmp th{text-align:left;font-size:11px;font-weight:600;color:var(--g500);padding:8px 12px;
+    background:var(--g50);border-bottom:1px solid var(--g100)}
+  table.cmp td{padding:9px 12px;border-bottom:1px solid var(--g100);color:var(--g600);line-height:1.7;vertical-align:top}
+  table.cmp tr:last-child td{border-bottom:none}
+  table.cmp td.name{font-weight:650;color:var(--g900);width:150px}
+  .pill{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;margin-right:4px}
+  .pill.low{background:var(--em50);color:var(--em700)}
+  .pill.mid{background:var(--am50);color:var(--am700)}
+  .pill.high{background:var(--rose50);color:var(--rose700)}
+  .foot{margin-top:22px;font-size:11.5px;color:var(--g400);line-height:1.8}
+  @media (max-width:720px){
+    .page{padding:14px 12px 60px}
+    .search{width:100%}
+    table.diag{font-size:11px}
+    .detail-in{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="proto-head">
+    <h1>我的任务 · 重构原型（方案 A / B / C）</h1>
+    <p>
+      目标是让这一屏在一秒内回答三个问题：<b>哪些任务在跑</b>、<b>下次什么时候跑</b>、<b>哪个出问题了</b>。
+      当前实现（<code>TaskCenter.vue</code>，grid/list 双视图）信息是齐的，但状态语义、指标口径和徽章密度让它读起来很费劲。
+    </p>
+    <p>
+      下面三个方案共用同一份假数据（你截图里的 4 条任务 + 8 条补的中等量级场景，共 <b>12 条</b>，用来模拟你说的「15 条以上」）。
+      方案 A 里点「容器宽度：900」可以复现你第二张截图里卡片被裁切的样子——根因是固定 <code>lg:grid-cols-3</code>。
+    </p>
+  </header>
+
+  <section class="panel">
+    <div class="panel-h"><b>现版本的 12 处问题</b><span>左边是截图/代码里的事实，右边是本原型对应的改法</span></div>
+    <table class="diag">
+      <thead><tr><th>#</th><th>现象</th><th>后果</th><th>改法</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="no">1</td>
+          <td class="sym">卡片头部堆了 5 个徽章：来源图标、<b>我创建的</b>、约束、健康、周期；顶部还有「个人私有」</td>
+          <td>在「我的任务」里每条都是自己创建的，「我创建的」是零信息量；徽章不换行把右侧挤出去（截图 2 被切掉的绿标签、开关）</td>
+          <td class="fix"><span class="who a">A</span>删掉「我创建的」「个人私有」；徽章最多 2 个并允许换行，标题占满剩余宽度</td>
+        </tr>
+        <tr>
+          <td class="no">2</td>
+          <td class="sym">状态只有两态：<code>task.status === 1 ? '活跃' : '停止'</code>，而后端 <code>status</code> 是 0 停 / 1 跑 / <b>2 错误</b></td>
+          <td>出错被停的任务显示成「停止」，看着像是用户自己关的，异常被藏起来</td>
+          <td class="fix"><span class="who a">A</span><span class="who b">B</span>合成一个优先级状态：<b>异常 &gt; 需核对 &gt; 活跃 &gt; 已暂停</b>，hover 解释原因</td>
+        </tr>
+        <tr>
+          <td class="no">3</td>
+          <td class="sym">第 4 条任务「健康」标签旁边写着 <b>失败 2</b>，两个信号互相矛盾</td>
+          <td>健康判定的阈值不可见，用户不知道该信哪个标签</td>
+          <td class="fix"><span class="who a">A</span>健康不再单独成徽章，只有亚健康才出现；阈值写进 tooltip</td>
+        </tr>
+        <tr>
+          <td class="no">4</td>
+          <td class="sym">卡片是「触发 / 成功 / 失败 / 跳过」四宫格，列表是「执行次数（=成功数）+ 失败 x」</td>
+          <td>同一个任务换个视图数字就变了；触发 1 / 成功 1 / 失败 0 / 跳过 0 这种组合占了一整行却没说清任何事</td>
+          <td class="fix"><span class="who a">A</span><span class="who b">B</span>统一为<b>「运行 N 次 · 成功率 x%」</b>，四宫格明细进详情/抽屉</td>
+        </tr>
+        <tr>
+          <td class="no">5</td>
+          <td class="sym">4 条任务里 3 条「预计下次运行：暂无计划」，只在第 4 条（活跃）有值</td>
+          <td>分不清「因为暂停所以没有下次」和「配置坏了没有下次」，这是两种完全不同的处置</td>
+          <td class="fix"><span class="who a">A</span>暂停任务在「下次」位直接写<b>已暂停</b>，tooltip 给「停止前周期」；异常任务红字写原因</td>
+        </tr>
+        <tr>
+          <td class="no">6</td>
+          <td class="sym">「每日工作晨间提醒」显示 <b>每隔 23 分钟运行一次</b>，但指令写的是「每天早上 9 点」</td>
+          <td>配置和意图已经不一致，页面却只当正常任务展示</td>
+          <td class="fix"><span class="who a">A</span><span class="who b">B</span>加一条低成本启发式：周期含分钟级、指令含「每天 N 点」→ 标<b>需核对</b></td>
+        </tr>
+        <tr>
+          <td class="no">7</td>
+          <td class="sym">操作列并排 6 个图标：立即执行、历史、巡检配置、编辑、启停、删除，全部同一视觉权重</td>
+          <td>危险操作和常用操作同级、靠 title 才认得出，误删风险高；hover 才 100% 不透明的设计又降低了可发现性</td>
+          <td class="fix"><span class="who a">A</span>主操作做成文字按钮（立即执行），其余收进 <b>⋯ 菜单</b>，删除在菜单里标红</td>
+        </tr>
+        <tr>
+          <td class="no">8</td>
+          <td class="sym">卡片右上角开关 + 底部播放/暂停图标按钮，是同一个 <code>toggleStatus</code></td>
+          <td>同一个动作两个入口，用户不确定哪个生效</td>
+          <td class="fix"><span class="who a">A</span>只留开关一处，底部给「暂停/恢复」文字按钮做可达性补充</td>
+        </tr>
+        <tr>
+          <td class="no">9</td>
+          <td class="sym">卡片固定 <code>lg:grid-cols-3</code>，个人中心容器只有约 900–1100px</td>
+          <td>卡片被压到 300px 以下，标签、开关被切出边界（截图 2）</td>
+          <td class="fix"><span class="who a">A</span><code>repeat(auto-fill, minmax(318px, 1fr))</code>，窄容器自动降 2 列/1 列</td>
+        </tr>
+        <tr>
+          <td class="no">10</td>
+          <td class="sym">「任务列表 | 执行记录」一级 tab 下面又有一排「全部 / 智能体 / 报表订阅 / 元数据巡检」pill，两处都带计数</td>
+          <td>两层筛选、两套计数，看不出自己现在在哪一层</td>
+          <td class="fix"><span class="who a">A</span>类型合并成一级 tab，执行记录挪到右侧作为独立入口</td>
+        </tr>
+        <tr>
+          <td class="no">11</td>
+          <td class="sym">不能排序、不能多选、没有「只看有问题的」</td>
+          <td>任务一多只能肉眼扫；巡检心态下没有入口</td>
+          <td class="fix"><span class="who b">B</span>状态分组 + KPI 卡直达；<span class="who b">B</span>勾选后浮出批量条（暂停/恢复/删除）</td>
+        </tr>
+        <tr>
+          <td class="no">12</td>
+          <td class="sym">时间三种写法混用：<code>11/24 09:00</code>、<code>10/31 22:24</code>、<code>09/04 17:39</code>（无年份）</td>
+          <td>「多久没跑了」要靠心算；跨年任务会误判</td>
+          <td class="fix"><span class="who a">A</span><span class="who b">B</span>相对时间打头（<b>明天 09:00</b>）+ 绝对时间兜底，超 7 天补年份</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <nav class="tabs">
+    <button class="tab on" data-scene="a"><span class="no">A</span>精修现有双视图</button>
+    <button class="tab" data-scene="b"><span class="no">B</span>状态分组 + 详情抽屉</button>
+    <button class="tab" data-scene="c"><span class="no">C</span>密集表 + 行内展开</button>
+    <span class="tab-hint">三个方案用的是同一份数据，可以直接互相对照</span>
+  </nav>
+
+  <!-- ══════════ 方案 A ══════════ -->
+  <section class="scene on" id="scene-a">
+    <div class="scene-note">
+      <span class="tag">方案 A</span>
+      <div>
+        骨架不动：仍然是<b>卡片 / 列表</b>双视图，只做减法和语义修正。改动全部落在 <em>TaskCenter.vue</em> 的模板与两个 computed 上，
+        不新增接口。适合「先止血、别动结构」的节奏。<br>
+        因为你的任务量在 15 条以上，A 里<b>列表视图是主力</b>：默认「需处理优先」排序（异常 → 需核对 → 活跃 → 已暂停，
+        组内按下次运行时间升序），表头点「任务 / 预计下次运行 / 成功率 / 状态」可切换排序；卡片视图保留给任务少的场景。
+      </div>
+    </div>
+
+    <div class="win" id="win-a">
+      <div class="app">
+        <div class="app-head">
+          <h1 class="app-title">我的任务</h1>
+          <div class="spacer"></div>
+          <label class="search">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <input placeholder="搜索任务名称或指令…">
+          </label>
+          <select class="sel" id="status-a">
+            <option value="all">状态：全部</option>
+            <option value="on">仅运行中</option>
+            <option value="off">仅已暂停</option>
+            <option value="attn">仅需处理（1）</option>
+          </select>
+          <div class="seg" id="view-a">
+            <button class="on" data-v="grid" title="卡片视图">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+            </button>
+            <button data-v="list" title="列表视图">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+          </div>
+          <button class="icon-btn" title="刷新列表">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          </button>
+          <button class="btn-primary">＋ 新建任务</button>
+        </div>
+
+        <div class="overview">
+          <span class="ov" data-quick="on"><span class="dot d-on"></span><b id="ov-on">—</b> 个运行中</span>
+          <span class="ov" data-quick="off"><span class="dot d-off"></span><b id="ov-off">—</b> 个已暂停</span>
+          <span class="ov" id="ov-attn" data-quick="attn"><span class="dot d-error"></span><b id="ov-attn-n">—</b> 个需处理</span>
+          <span class="ov next">下次执行 <b id="ov-next">—</b></span>
+          <span style="margin-left:auto;color:var(--g400)">共 <b id="ov-total">—</b> 个任务</span>
+        </div>
+
+        <div class="tabs-line" id="tabs-a">
+          <button class="on" data-t="all">全部任务 <span class="cnt" data-c="all">—</span></button>
+          <button data-t="agent">智能体任务 <span class="cnt" data-c="agent">—</span></button>
+          <button data-t="saved_report">报表订阅 <span class="cnt" data-c="saved_report">—</span></button>
+          <button data-t="metadata_inspection">元数据巡检 <span class="cnt" data-c="metadata_inspection">—</span></button>
+          <span class="spacer"></span>
+          <button class="right-act" data-noop="执行记录视图本次不改，沿用现有表格">执行记录 →</button>
+        </div>
+
+        <div class="alert" id="alert-a">
+          <span class="ai">⚠</span>
+          <span><b>每周经营数据周报</b> 连续失败 2 次：数据源 sales_dw 连接超时（10s）。下次 11-30 09:00 会自动重试。</span>
+          <a data-filter-attn>只看它</a>
+        </div>
+
+        <div id="body-a"></div>
+
+        <div class="widthbar">
+          <span class="lbl">容器宽度</span>
+          <button class="wbtn on" data-w="full">全宽 1360</button>
+          <button class="wbtn" data-w="1080">1080（个人中心实际）</button>
+          <button class="wbtn" data-w="900">900（截图 2 的情形）</button>
+          <span>← 切成 900 就能看到固定三列时被切掉的徽章和开关</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ 方案 B ══════════ -->
+  <section class="scene" id="scene-b">
+    <div class="scene-note">
+      <span class="tag">方案 B</span>
+      <div>
+        信息架构重做：<b>KPI 直达 + 按状态分组 + 详情抽屉</b>。列表变成整行卡片，宽度自适应，从根上消除裁切；
+        每个任务的完整信息（指令全文、cron、下次三次时间、最近执行记录）放进右侧抽屉，列表只保留决策所需的 5 个字段。
+        适合任务会越来越多的场景，新增后端字段只有一个：下次三次运行时间（也可以前端用 cron 算）。
+      </div>
+    </div>
+
+    <div class="win" id="win-b">
+      <div class="app">
+        <div class="app-head">
+          <h1 class="app-title">我的任务</h1>
+          <div class="spacer"></div>
+          <label class="search">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <input placeholder="搜索任务名称或指令…">
+          </label>
+          <select class="sel">
+            <option>排序：需处理优先</option>
+            <option>排序：最近运行</option>
+            <option>排序：下次运行</option>
+          </select>
+          <button class="btn-primary">＋ 新建任务</button>
+        </div>
+
+        <div class="kpis" id="kpis-b"></div>
+        <div id="body-b"></div>
+
+        <div class="bulk" id="bulk-b">
+          <span>已选 <span class="n" id="bulk-n">0</span> 项</span>
+          <button class="bbtn">批量暂停</button>
+          <button class="bbtn">批量恢复</button>
+          <button class="bbtn danger">批量删除</button>
+          <button class="bbtn" id="bulk-clear">取消</button>
+        </div>
+      </div>
+
+      <div class="scrim" id="scrim-b"></div>
+      <aside class="drawer" id="drawer-b">
+        <div class="drawer-h" id="drawer-h"></div>
+        <div class="drawer-b" id="drawer-body"></div>
+        <div class="drawer-f" id="drawer-f"></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ══════════ 方案 C ══════════ -->
+  <section class="scene" id="scene-c">
+    <div class="scene-note">
+      <span class="tag">方案 C</span>
+      <div>
+        只留一张表，没有卡片。列可排序、行可展开（指令 + 最近执行 + 通知渠道），一屏能看十几条。
+        <b>适合任务数 ≥ 15 的重度用户</b>；如果你日常只有 4–8 个任务，它会显得比方案 A 更冷。
+        它的价值主要在「横向对比」：谁的成功率最低、谁的下次运行最靠后，一眼扫得出来。
+      </div>
+    </div>
+
+    <div class="win">
+      <div class="app">
+        <div class="app-head">
+          <h1 class="app-title">我的任务<span class="app-title-sub">6 个任务 · 1 个需处理</span></h1>
+          <div class="spacer"></div>
+          <label class="search">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <input placeholder="搜索任务名称或指令…">
+          </label>
+          <button class="icon-btn" title="刷新">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          </button>
+          <button class="btn-primary">＋ 新建任务</button>
+        </div>
+
+        <div class="tabs-line" id="tabs-c">
+          <button class="on" data-t="all">全部任务 <span class="cnt" data-cc="all">—</span></button>
+          <button data-t="agent">智能体任务 <span class="cnt" data-cc="agent">—</span></button>
+          <button data-t="saved_report">报表订阅 <span class="cnt" data-cc="saved_report">—</span></button>
+          <button data-t="metadata_inspection">元数据巡检 <span class="cnt" data-cc="metadata_inspection">—</span></button>
+        </div>
+
+        <div class="tablewrap">
+          <table class="dense" id="table-c">
+            <colgroup>
+              <col style="width:26%"><col style="width:11%"><col style="width:12%"><col style="width:13%">
+              <col style="width:12%"><col style="width:9%"><col style="width:9%"><col style="width:8%">
+            </colgroup>
+            <thead>
+              <tr>
+                <th>任务</th>
+                <th>执行对象</th>
+                <th>运行周期</th>
+                <th class="s" data-sort="next">预计下次运行 <span id="sort-next">↕</span></th>
+                <th>最近 7 次</th>
+                <th class="s" data-sort="rate">成功率 <span id="sort-rate">↕</span></th>
+                <th>状态</th>
+                <th style="text-align:right">操作</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-c"></tbody>
+          </table>
+        </div>
+        <div class="widthbar">
+          <span class="lbl">提示</span>
+          <span>点表头「预计下次运行」「成功率」可排序；点任意一行展开指令与最近执行记录。</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ 取舍 ══════════ -->
+  <section class="panel">
+    <div class="panel-h"><b>三个方案怎么选</b><span>我推荐先把 A 做掉，把 B 的抽屉留作下一步</span></div>
+    <table class="cmp">
+      <thead><tr><th>方案</th><th>改动量 / 风险</th><th>解决什么</th><th>代价</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="name">A 精修双视图</td>
+          <td><span class="pill low">低</span>只动模板 + 状态/指标 computed，接口不变</td>
+          <td>12 条问题里的 10 条：状态语义、指标口径、徽章减法、操作收敛、窄容器、tab 层级、相对时间</td>
+          <td>仍然是「每张卡都塞满」，任务超过 10 个后依然需要滚动找</td>
+        </tr>
+        <tr>
+          <td class="name">B 分组 + 抽屉</td>
+          <td><span class="pill mid">中</span>重写列表部分，新增抽屉与批量操作</td>
+          <td>「巡检」心态：出问题的永远在最上面；列表只留 5 个决策字段，详情不占列表空间</td>
+          <td>抽屉里要能完成全部操作，否则会来回开关；批量操作要接后端批量接口</td>
+        </tr>
+        <tr>
+          <td class="name">C 密集表</td>
+          <td><span class="pill mid">中</span>一张表 + 展开行，代码最少但要接排序</td>
+          <td>多任务的横向对比；一屏看十几条</td>
+          <td>4–8 个任务时信息密度过剩，卡片带来的「任务感」丢失</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="foot">
+    原型用途：需求评审。所有交互（切方案 / 切视图 / 筛选 / 宽度 / 勾选 / 抽屉 / 排序 / 展开）都可以点。
+    确认方向后再改 <span class="mono">frontend/src/views/TaskCenter.vue</span>，本次不动后端。
+  </div>
+</div>
+
+<script>
+// ────────── 假数据（取自截图 + 两条补充场景） ──────────
+const NOW_LABEL = '今天 16:52';
+const TASKS = [
+  {
+    id: 1, name: 'nanzi-ai-agent-platform 发版监控', agent: 'xlAgent', type: 'agent',
+    cron: '0 9 * * *', cronText: '每天 09:00', enabled: false, health: 'ok',
+    trigger: 1, success: 1, fail: 0, skip: 0,
+    lastText: '11-01 09:00', nextText: null, nextAbs: null, offNote: '停止前周期：每天 09:00',
+    runs: ['ok'], created: '10-31 22:24',
+    prompt: '检查 GitHub 仓库 RandyChen1985/nanzi-ai-agent-platform 是否发布了新版本。【基线（2026-10-31）：最新 tag v2.3.1】有新版则整理更新摘要并推送钉钉群。',
+    channels: ['钉钉'], dur: '1分12秒'
+  },
+  {
+    id: 2, name: '晋景新能(01783) 通函刊发监控', agent: '主助手(Main)', type: 'agent',
+    cron: '0 18 * * *', cronText: '每天 18:00', enabled: false, health: 'ok',
+    trigger: 2, success: 2, fail: 0, skip: 0,
+    lastText: '10-27 18:00', nextText: null, nextAbs: null, offNote: '停止前周期：每天 18:00',
+    runs: ['ok', 'ok'], created: '10-26 15:39',
+    prompt: '检查港交所「披露易」上晋景新能（股份代号 01783）是否已刊发「非常重大收购事项」的通函，有则摘录要点并推送站内通知。',
+    channels: ['站内'], dur: '2分03秒'
+  },
+  {
+    id: 3, name: '每日工作晨间提醒', agent: '主助手(Main)', type: 'agent',
+    cron: '*/23 * * * *', cronText: '每 23 分钟', enabled: false, health: 'warn',
+    trigger: 26, success: 24, fail: 0, skip: 2,
+    lastText: '11-19 17:39', nextText: null, nextAbs: null, offNote: '停止前周期：每 23 分钟',
+    warnNote: '周期与指令不符：指令要求「每天 9 点」，实际 cron 是每 23 分钟',
+    runs: ['ok', 'ok', 's', 'ok', 'ok', 'ok', 'ok'], created: '08-23 00:02',
+    prompt: '每天早上 9 点，为用户生成一份当日工作提醒清单，内容包括：1) 回顾昨日未完成事项；2) 列出今日重点。',
+    channels: ['站内'], dur: '38秒'
+  },
+  {
+    id: 4, name: '每日追踪 GitHub 项目 Star 情况', agent: '主助手(Main)', type: 'agent',
+    cron: '0 9 * * *', cronText: '每天 09:00', enabled: true, health: 'ok',
+    trigger: 97, success: 94, fail: 2, skip: 1,
+    lastText: '11-23 09:00', nextText: '明天 09:00', nextAbs: '11-24 09:00',
+    runs: ['ok', 'ok', 'f', 'ok', 'ok', 'ok', 'ok'], created: '08-12 10:11',
+    prompt: '统计 nanzi-ai-agent-platform 与 agent-scope 两个仓库今日 Star 增长，输出 Top 变化仓库与趋势判断。',
+    channels: ['站内', '邮件'], dur: '1分45秒'
+  },
+  {
+    id: 5, name: '每周经营数据周报', agent: '主助手(Main)', type: 'saved_report',
+    cron: '0 9 * * MON', cronText: '每周一 09:00', enabled: true, health: 'error',
+    trigger: 12, success: 9, fail: 3, skip: 0, consecutive: 2,
+    lastText: '11-23 09:00', nextText: '下周一 09:00', nextAbs: '11-30 09:00',
+    lastError: '数据源 sales_dw 连接超时（10s），已连续失败 2 次',
+    runs: ['f', 'f', 'ok', 'ok', 'f', 'ok', 'ok'], created: '09-01 11:20',
+    prompt: '汇总上周数据集 sales_dw 的 GMV、订单量、退款率，生成经营周报并推送至经营分析钉钉群与订阅邮箱。',
+    channels: ['钉钉', '邮件'], dur: '—'
+  },
+  {
+    id: 6, name: '知识库 freshness 巡检', agent: '元数据巡检', type: 'metadata_inspection',
+    cron: '0 2 * * *', cronText: '每天 02:00', enabled: true, health: 'ok',
+    trigger: 41, success: 41, fail: 0, skip: 0,
+    lastText: '11-23 02:00', nextText: '明天 02:00', nextAbs: '11-24 02:00',
+    runs: ['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok'], created: '08-20 09:00',
+    prompt: '扫描全部知识库文档的更新时效，标记超过 90 天未更新且被高频引用的文档，输出巡检报告。',
+    channels: ['站内'], dur: '4分10秒'
+  },
+  // —— 以下 6 条用于演示「任务 15 个以上」时的列表密度 ——
+  {
+    id: 7, name: '竞品 Agent 框架周报', agent: '主助手(Main)', type: 'saved_report',
+    cron: '0 10 * * WED', cronText: '每周三 10:00', enabled: true, health: 'ok',
+    trigger: 9, success: 9, fail: 0, skip: 0,
+    lastText: '11-19 10:00', nextText: '周三 10:00', nextAbs: '11-25 10:00',
+    runs: ['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok'], created: '09-14 14:02',
+    prompt: '汇总 LangGraph / AutoGen / AgentScope 三个框架近一周的 release 与 issue 热点，输出对比周报。',
+    channels: ['邮件'], dur: '2分40秒'
+  },
+  {
+    id: 8, name: '数据集 ods_order 增量校验', agent: '主助手(Main)', type: 'agent',
+    cron: '30 6 * * *', cronText: '每天 06:30', enabled: true, health: 'ok',
+    trigger: 63, success: 62, fail: 1, skip: 0,
+    lastText: '11-23 06:30', nextText: '明天 06:30', nextAbs: '11-24 06:30',
+    runs: ['ok', 'ok', 'ok', 'f', 'ok', 'ok', 'ok'], created: '07-30 08:15',
+    prompt: '校验 ods_order 昨日增量分区行数与上游 Kafka 消费条数是否一致，偏差超过 0.5% 则告警。',
+    channels: ['站内', '钉钉'], dur: '1分02秒'
+  },
+  {
+    id: 9, name: '客服工单 T+1 汇总', agent: '主助手(Main)', type: 'agent',
+    cron: '0 8 * * *', cronText: '每天 08:00', enabled: false, health: 'ok',
+    trigger: 18, success: 17, fail: 1, skip: 0,
+    lastText: '11-06 08:00', nextText: null, nextAbs: null, offNote: '停止前周期：每天 08:00',
+    runs: ['ok', 'ok', 'f', 'ok', 'ok', 'ok', 'ok'], created: '09-22 10:40',
+    prompt: '汇总前一日客服工单量、首次响应时长、一次解决率，按业务线拆分输出 Markdown 表格。',
+    channels: ['站内'], dur: '55秒'
+  },
+  {
+    id: 10, name: '港股公告关键字扫描（复牌/停牌）', agent: '主助手(Main)', type: 'agent',
+    cron: '*/30 9-18 * * MON-FRI', cronText: '交易时段每 30 分钟', enabled: true, health: 'ok',
+    trigger: 486, success: 484, fail: 0, skip: 2,
+    lastText: '今天 16:30', nextText: '明天 09:00', nextAbs: '11-24 09:00',
+    runs: ['ok', 'ok', 's', 'ok', 'ok', 'ok', 'ok'], created: '06-11 09:30',
+    prompt: '扫描披露易当日公告标题，命中「复牌」「停牌」「短暂停牌」关键字时摘录公告要点并立即推送。',
+    channels: ['钉钉', '企微'], dur: '22秒'
+  },
+  {
+    id: 11, name: '知识库月度归档清理', agent: '元数据巡检', type: 'metadata_inspection',
+    cron: '0 3 1 * *', cronText: '每月 1 日 03:00', enabled: true, health: 'ok',
+    trigger: 4, success: 4, fail: 0, skip: 0,
+    lastText: '11-01 03:00', nextText: '12-01 03:00', nextAbs: '12-01 03:00',
+    runs: ['ok', 'ok', 'ok', 'ok'], created: '07-01 11:00',
+    prompt: '归档 180 天未访问的知识库文档到冷存储分区，并输出归档清单与可恢复指引。',
+    channels: ['站内'], dur: '6分30秒'
+  },
+  {
+    id: 12, name: '供应链价格异动预警', agent: '主助手(Main)', type: 'agent',
+    cron: '0 7 * * *', cronText: '每天 07:00', enabled: false, health: 'warn',
+    trigger: 33, success: 30, fail: 3, skip: 0,
+    lastText: '11-12 07:00', nextText: null, nextAbs: null, offNote: '停止前周期：每天 07:00',
+    warnNote: '已连续失败 3 次后自动停用，需要人工确认数据源',
+    runs: ['f', 'f', 'f', 'ok', 'ok', 'ok', 'ok'], created: '08-05 16:20',
+    prompt: '监控重点物料近 7 日均价波动，单日涨跌幅超过 5% 时输出异动清单与可能原因。',
+    channels: ['邮件', '钉钉'], dur: '—'
+  }
+];
+
+// ────────── 工具 ──────────
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+function rateOf(t) {
+  const total = t.success + t.fail;
+  if (!total) return null;
+  return Math.round((t.success / total) * 100);
+}
+function rateText(t) {
+  const r = rateOf(t);
+  return r === null ? '—' : r + '%';
+}
+function statusOf(t) {
+  if (t.health === 'error') return { key: 'error', label: '异常', cls: 'st-error', dot: 'd-error' };
+  if (t.health === 'warn') return { key: 'warn', label: '需核对', cls: 'st-warn', dot: 'd-warn' };
+  if (t.enabled) return { key: 'on', label: '活跃', cls: 'st-on', dot: 'd-on' };
+  return { key: 'off', label: '已暂停', cls: 'st-off', dot: 'd-off' };
+}
+function statusTip(t) {
+  const st = statusOf(t);
+  if (st.key === 'error') return '调度仍在运行，但最近执行失败（连续 ' + (t.consecutive || 1) + ' 次）';
+  if (st.key === 'warn') return '调度已暂停，且周期配置与指令意图不一致';
+  if (st.key === 'on') return '调度运行中';
+  return '调度已暂停，不会自动执行';
+}
+function nextCell(t) {
+  if (!t.enabled) return '<span class="v muted" title="' + (t.offNote || '') + '">已暂停</span>';
+  return '<span class="v"><b>' + t.nextText + '</b>' +
+    '<em style="font-style:normal;color:var(--g400);font-weight:500;margin-left:5px">' + t.nextAbs + '</em></span>';
+}
+function spark(runs) {
+  return runs.map(function (r) {
+    const c = r === 'f' ? 'f' : r === 's' ? 's' : 'ok';
+    return '<i class="' + c + '"></i>';
+  }).join('');
+}
+function byType(t, type) {
+  if (type === 'all') return true;
+  return t.type === type;
+}
+
+// ────────── 排序 & 计数 ──────────
+const STATUS_RANK = { error: 0, warn: 1, on: 2, off: 3 };
+
+function sortTasks(list, key, dir) {
+  const k = key || 'attn';
+  const d = dir || 1;
+  const arr = list.slice();
+  const nx = function (t) { return t.enabled ? (t.nextAbs || '9') : 'zzz'; };
+  arr.sort(function (a, b) {
+    if (k === 'attn') {
+      const ra = STATUS_RANK[statusOf(a).key], rb = STATUS_RANK[statusOf(b).key];
+      if (ra !== rb) return ra - rb;
+      return nx(a) < nx(b) ? -1 : nx(a) > nx(b) ? 1 : 0;
+    }
+    if (k === 'next') return (nx(a) < nx(b) ? -1 : nx(a) > nx(b) ? 1 : 0) * d;
+    if (k === 'rate') {
+      const ra = rateOf(a), rb = rateOf(b);
+      return ((ra === null ? -1 : ra) - (rb === null ? -1 : rb)) * d;
+    }
+    if (k === 'last') {
+      const la = a.lastText || '', lb = b.lastText || '';
+      return (la < lb ? -1 : la > lb ? 1 : 0) * d;
+    }
+    if (k === 'name') return a.name.localeCompare(b.name, 'zh') * d;
+    return 0;
+  });
+  return arr;
+}
+
+function syncCounts() {
+  const cnt = { all: TASKS.length, agent: 0, saved_report: 0, metadata_inspection: 0 };
+  const st = { on: 0, off: 0, attn: 0 };
+  TASKS.forEach(function (t) {
+    if (cnt[t.type] !== undefined) cnt[t.type]++;
+    const k = statusOf(t).key;
+    if (k === 'on') st.on++;
+    else if (k === 'off') st.off++;
+    else st.attn++;
+  });
+  $$('[data-c]').forEach(function (s) { s.textContent = cnt[s.dataset.c]; });
+  $$('[data-cc]').forEach(function (s) { s.textContent = cnt[s.dataset.cc]; });
+  $('#ov-on').textContent = st.on;
+  $('#ov-off').textContent = st.off;
+  $('#ov-attn-n').textContent = st.attn;
+  $('#ov-total').textContent = TASKS.length;
+  const nextT = TASKS.filter(function (t) { return t.enabled && t.nextAbs; })
+    .sort(function (a, b) { return a.nextAbs < b.nextAbs ? -1 : 1; })[0];
+  $('#ov-next').textContent = nextT ? nextT.nextText + '（' + nextT.name + '）' : '—';
+}
+
+// ────────── 方案 A ──────────
+const A = { view: 'grid', type: 'all', status: 'all', sort: null, dir: 1 };
+
+function renderA() {
+  let list = TASKS.filter(function (t) { return byType(t, A.type); });
+  if (A.status === 'on') list = list.filter(function (t) { return statusOf(t).key === 'on'; });
+  if (A.status === 'off') list = list.filter(function (t) { return statusOf(t).key === 'off'; });
+  if (A.status === 'attn') list = list.filter(function (t) {
+    const k = statusOf(t).key;
+    return k === 'error' || k === 'warn';
+  });
+  list = sortTasks(list, A.sort, A.dir);
+
+  const host = $('#body-a');
+  if (!list.length) {
+    host.innerHTML = '<div class="tablewrap" style="padding:38px 16px;text-align:center;color:var(--g400);font-size:12.5px">' +
+      '这个筛选下没有任务。<button class="btn-ghost" style="margin-left:8px" data-reset-a>清空筛选</button></div>';
+    return;
+  }
+  host.innerHTML = A.view === 'grid' ? gridA(list) : listA(list);
+}
+
+function cardA(t) {
+  const st = statusOf(t);
+  const r = rateOf(t);
+  return '' +
+  '<article class="card ' + (st.key === 'error' ? 'is-error' : '') + ' ' + (!t.enabled ? 'is-off' : '') + '">' +
+    '<div class="card-top">' +
+      '<span class="dot ' + st.dot + '" title="' + statusTip(t) + '"></span>' +
+      '<h3 title="' + t.name + '">' + t.name + '</h3>' +
+      '<button class="more" title="更多操作：编辑 / 复制 / 删除">⋯</button>' +
+    '</div>' +
+    '<div class="card-meta">' +
+      '<span class="agent">' + t.agent + '</span>' +
+      '<span class="cron" title="Cron：' + t.cron + '">' + t.cronText + '</span>' +
+      '<span class="badge ' + st.cls + '" title="' + statusTip(t) + '">' + st.label + '</span>' +
+    '</div>' +
+    '<p class="prompt" title="' + t.prompt + '">' + t.prompt + '</p>' +
+    (t.warnNote ? '<p class="note warn">⚠ ' + t.warnNote + '</p>' : '') +
+    (t.lastError ? '<p class="note err">⚠ ' + t.lastError + '</p>' : '') +
+    '<div class="metrics"><span>运行 <b>' + t.trigger + '</b> 次</span><span style="color:var(--g300)">·</span>' +
+      '<span>成功率 <b' + (r !== null && r < 90 ? ' style="color:var(--rose700)"' : '') + '>' + rateText(t) + '</b></span></div>' +
+    '<div class="times">' +
+      '<div><span class="k">上次</span><span class="v">' + t.lastText + '</span></div>' +
+      '<div><span class="k">下次</span>' + nextCell(t) + '</div>' +
+    '</div>' +
+    '<div class="card-foot">' +
+      '<button class="btn-primary sm">立即执行</button>' +
+      '<button class="btn-ghost sm">历史</button>' +
+      '<span class="spacer"></span>' +
+      '<button class="btn-ghost sm" title="' + (t.enabled ? '暂停后不再自动执行' : '恢复调度') + '">' + (t.enabled ? '暂停' : '恢复') + '</button>' +
+    '</div>' +
+  '</article>';
+}
+
+function gridA(list) {
+  return '<div class="grid">' + list.map(cardA).join('') + '</div>';
+}
+
+function listA(list) {
+  const arrow = function (k) { return A.sort === k ? (A.dir === 1 ? ' ↑' : ' ↓') : ' ↕'; };
+  const th = function (k, label, extra) {
+    return '<th class="sortable" data-sort="' + k + '" title="点击排序"' + (extra || '') + '>' +
+      label + arrow(k) + '</th>';
+  };
+  const head = '' +
+  '<div class="tablewrap"><table class="list">' +
+    '<colgroup><col style="width:30%"><col style="width:13%"><col style="width:17%">' +
+      '<col style="width:13%"><col style="width:9%"><col style="width:8%"><col style="width:10%"></colgroup>' +
+    '<thead><tr>' + th('name', '任务') + '<th>执行对象</th>' + th('next', '预计下次运行') +
+      '<th>最近 7 次</th>' + th('rate', '成功率') + th('attn', '状态') + '<th></th></tr></thead>' +
+    '<tbody>' + list.map(function (t) {
+      const st = statusOf(t);
+      const r = rateOf(t);
+      return '<tr>' +
+        '<td><div class="cell-name"><span class="dot ' + st.dot + '"></span><div style="min-width:0">' +
+          '<b title="' + t.name + '">' + t.name + '</b>' +
+          '<small>' + t.cronText + ' · 运行 ' + t.trigger + ' 次 · 上次 ' + t.lastText + '</small>' +
+        '</div></div></td>' +
+        '<td style="color:var(--g600)">' + t.agent + '</td>' +
+        '<td>' + nextCell(t).replace('class="v"', 'class="v" style="font-size:12px"') + '</td>' +
+        '<td><span class="mini">' + spark(t.runs) + '</span></td>' +
+        '<td><span class="rate' + (r !== null && r < 90 ? ' low' : '') + '">' + rateText(t) + '</span></td>' +
+        '<td><span class="badge ' + st.cls + '" title="' + statusTip(t) + '">' + st.label + '</span></td>' +
+        '<td><div class="row-act"><button class="btn-primary sm">执行</button>' +
+          '<button class="icon-btn" style="width:26px;height:26px" title="更多操作">⋯</button></div></td>' +
+      '</tr>';
+    }).join('') + '</tbody></table></div>';
+  return head;
+}
+
+// ────────── 方案 B ──────────
+const B = { selected: new Set() };
+
+function renderB() {
+  const attn = TASKS.filter(function (t) { return t.health !== 'ok'; });
+  const on = TASKS.filter(function (t) { return t.enabled && t.health === 'ok'; });
+  const off = TASKS.filter(function (t) { return !t.enabled; });
+
+  $('#kpis-b').innerHTML = '' +
+    kpi('运行中', on.length, '近 7 天成功率 96%', '') +
+    kpi('已暂停', off.length, '不会自动执行', '') +
+    kpi('需处理', attn.length, '1 个异常 · 1 个待核对', 'err') +
+    kpi('本周执行', 176, '失败 5 次', '');
+
+  let html = '';
+  if (attn.length) html += group('需处理', attn, 'error', false);
+  if (on.length) html += group('运行中', on, 'on', false);
+  if (off.length) html += group('已暂停', off, 'off', false);
+  $('#body-b').innerHTML = html;
+}
+
+function kpi(k, v, sub, cls) {
+  return '<div class="kpi ' + cls + '"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="sub">' + sub + '</div></div>';
+}
+
+function group(title, list, kind, folded) {
+  const rows = folded ? '' : list.map(function (t) { return rowB(t, kind); }).join('');
+  return '<div class="group">' +
+    '<div class="group-h"><span>' + title + '</span><span class="cnt">' + list.length + '</span>' +
+      '<span class="line"></span><span class="fold">' + (folded ? '已折叠' : '') + '</span></div>' +
+    rows + '</div>';
+}
+
+function rowB(t, kind) {
+  const st = statusOf(t);
+  const r = rateOf(t);
+  const cls = st.key === 'error' ? 'error' : st.key === 'warn' ? 'warn' : st.key === 'on' ? 'on' : 'off';
+  return '<div class="grow ' + cls + '">' +
+    '<span class="gbar"></span>' +
+    '<label class="cbx"><input type="checkbox" data-sel="' + t.id + '"' + (B.selected.has(t.id) ? ' checked' : '') + '></label>' +
+    '<div class="gmain">' +
+      '<div class="t"><b>' + t.name + '</b><span class="badge ' + st.cls + '" title="' + statusTip(t) + '">' + st.label + '</span>' +
+        (t.warnNote && st.key !== 'warn' ? '<span class="badge st-warn">周期不符</span>' : '') + '</div>' +
+      '<div class="sub"><span class="agent">' + t.agent + '</span> · ' + t.cronText + ' · 运行 ' + t.trigger + ' 次 · 上次 ' + t.lastText + '</div>' +
+      (t.lastError ? '<div class="err">⚠ ' + t.lastError + '</div>' : '') +
+    '</div>' +
+    '<div class="fig"><span class="k">下次</span>' + (t.enabled ? '<b>' + t.nextText + '</b>' : '<b class="off">已暂停</b>') + '</div>' +
+    '<div class="fig"><span class="k">最近 7 次</span><span class="mini">' + spark(t.runs) + '</span></div>' +
+    '<div class="fig rate-fig"><span class="k">成功率</span><b class="' + (r !== null && r < 90 ? 'low' : '') + '">' + rateText(t) + '</b></div>' +
+    '<div class="gact">' +
+      '<button class="btn-ghost sm" data-open="' + t.id + '">详情</button>' +
+      '<button class="btn-primary sm">立即执行</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function drawerOpen(id) {
+  const t = TASKS.filter(function (x) { return x.id === Number(id); })[0];
+  if (!t) return;
+  const st = statusOf(t);
+  $('#drawer-h').innerHTML = '<span class="dot ' + st.dot + '" style="margin-top:6px"></span>' +
+    '<div><h3>' + t.name + '</h3>' +
+    '<div style="font-size:11.5px;color:var(--g500);margin-top:2px">' + t.agent + ' · <span class="badge ' + st.cls + '">' + st.label + '</span></div></div>' +
+    '<button class="x" id="drawer-x">×</button>';
+
+  const next3 = t.enabled
+    ? [t.nextAbs, '12-01 09:00', '12-02 09:00']
+    : [];
+  $('#drawer-body').innerHTML = '' +
+    '<div class="dsec"><div class="dk">指令</div><p>' + t.prompt + '</p></div>' +
+    (t.lastError ? '<div class="note err" style="display:block">⚠ ' + t.lastError + '</div>' : '') +
+    (t.warnNote ? '<div class="note warn" style="display:block">⚠ ' + t.warnNote + '</div>' : '') +
+    '<div class="dsec"><div class="dk">调度</div>' +
+      '<dl class="kv"><dt>周期</dt><dd>' + t.cronText + ' <span class="mono" style="color:var(--g400);font-size:11px">' + t.cron + '</span></dd>' +
+      '<dt>状态</dt><dd>' + st.label + ' · ' + statusTip(t) + '</dd>' +
+      '<dt>通知</dt><dd>' + t.channels.join(' + ') + '</dd>' +
+      '<dt>创建</dt><dd>' + t.created + '</dd></dl></div>' +
+    (next3.length ? '<div class="dsec"><div class="dk">接下来 3 次</div><ul class="nextlist">' +
+      next3.map(function (n, i) { return '<li><span>' + (i === 0 ? '下一次' : '再往后') + '</span><b>' + n + '</b></li>'; }).join('') +
+      '</ul></div>' : '') +
+    '<div class="dsec"><div class="dk">最近执行</div><div class="runs">' +
+      t.runs.slice().reverse().slice(0, 5).map(function (r2, i) {
+        const fail = r2 === 'f';
+        return '<div class="rr ' + (fail ? 'fail' : 'ok') + '">' +
+          '<span>' + t.lastText + (i === 0 ? '' : ' 之前') + '</span>' +
+          '<span class="s">' + (fail ? '失败' : '成功') + '</span>' +
+          '<span class="dur">' + (fail ? '—' : t.dur) + '</span></div>';
+      }).join('') + '</div></div>';
+
+  $('#drawer-f').innerHTML = '<button class="btn-primary sm">立即执行</button>' +
+    '<button class="btn-ghost">' + (t.enabled ? '暂停调度' : '恢复调度') + '</button>' +
+    '<button class="btn-ghost">编辑</button>' +
+    '<span style="flex:1"></span>' +
+    '<button class="btn-ghost" style="color:var(--rose700);border-color:var(--rose200)">删除</button>';
+
+  $('#drawer-b').classList.add('show');
+  $('#scrim-b').classList.add('show');
+  $('#drawer-x').onclick = drawerClose;
+}
+function drawerClose() {
+  $('#drawer-b').classList.remove('show');
+  $('#scrim-b').classList.remove('show');
+}
+
+function syncBulk() {
+  const n = B.selected.size;
+  $('#bulk-b').classList.toggle('show', n > 0);
+  $('#bulk-n').textContent = n;
+}
+
+// ────────── 方案 C ──────────
+const C = { type: 'all', sort: null, dir: 1, open: new Set() };
+
+function renderC() {
+  let list = TASKS.filter(function (t) { return byType(t, C.type); });
+  if (C.sort === 'rate') {
+    list = list.slice().sort(function (a, b) {
+      const ra = rateOf(a), rb = rateOf(b);
+      return ((ra === null ? -1 : ra) - (rb === null ? -1 : rb)) * C.dir;
+    });
+  } else if (C.sort === 'next') {
+    list = list.slice().sort(function (a, b) {
+      const ka = a.enabled ? a.nextAbs || '' : 'zzz';
+      const kb = b.enabled ? b.nextAbs || '' : 'zzz';
+      return (ka < kb ? -1 : ka > kb ? 1 : 0) * C.dir;
+    });
+  }
+  $('#sort-next').textContent = C.sort === 'next' ? (C.dir === 1 ? '↑' : '↓') : '↕';
+  $('#sort-rate').textContent = C.sort === 'rate' ? (C.dir === 1 ? '↑' : '↓') : '↕';
+
+  $('#tbody-c').innerHTML = list.map(function (t) {
+    const st = statusOf(t);
+    const r = rateOf(t);
+    const open = C.open.has(t.id);
+    return '<tr class="r-main" data-toggle="' + t.id + '">' +
+      '<td><div class="dname"><span class="dot ' + st.dot + '"></span><span title="' + t.name + '">' + t.name + '</span>' +
+        (open ? '<span style="color:var(--g400);font-size:10px">▾</span>' : '') + '</div></td>' +
+      '<td>' + t.agent + '</td>' +
+      '<td title="Cron：' + t.cron + '">' + t.cronText + '</td>' +
+      '<td>' + (t.enabled ? '<b style="color:var(--blue700)">' + t.nextText + '</b>' : '<span style="color:var(--g400)">已暂停</span>') + '</td>' +
+      '<td><span class="mini">' + spark(t.runs) + '</span></td>' +
+      '<td><span class="rate' + (r !== null && r < 90 ? ' low' : '') + '">' + rateText(t) + '</span></td>' +
+      '<td><span class="badge ' + st.cls + '" title="' + statusTip(t) + '">' + st.label + '</span></td>' +
+      '<td><div class="row-act"><button class="btn-ghost sm" data-keep="1">执行</button>' +
+        '<button class="icon-btn" style="width:26px;height:26px" data-keep="1" title="更多">⋯</button></div></td>' +
+    '</tr>' +
+    (open ? '<tr class="detail"><td colspan="8"><div class="detail-in">' +
+      '<div><div class="dk">指令</div><p>' + t.prompt + '</p>' +
+        (t.lastError ? '<p style="color:var(--rose700);margin-top:6px">⚠ ' + t.lastError + '</p>' : '') +
+        (t.warnNote ? '<p style="color:var(--am700);margin-top:6px">⚠ ' + t.warnNote + '</p>' : '') + '</div>' +
+      '<div><div class="dk">调度与统计</div>' +
+        '<p>周期 ' + t.cronText + ' · 通知 ' + t.channels.join(' + ') + '<br>' +
+        '触发 ' + t.trigger + ' · 成功 ' + t.success + ' · 失败 ' + t.fail + ' · 跳过 ' + t.skip + '<br>' +
+        '上次 ' + t.lastText + ' · ' + (t.enabled ? '下次 ' + t.nextAbs : '已暂停') + '</p></div>' +
+      '</div></td></tr>' : '');
+  }).join('');
+}
+
+// ────────── 初始化 ──────────
+syncCounts(); renderA(); renderB(); renderC();
+
+// 方案切换（同时把 #a / #b / #c 写进地址，方便直接分享某一屏）
+function showScene(key) {
+  $$('.tab').forEach(function (b) { b.classList.toggle('on', b.dataset.scene === key); });
+  $$('.scene').forEach(function (s) { s.classList.remove('on'); });
+  const el = $('#scene-' + key);
+  if (el) el.classList.add('on');
+}
+function applyWidth(w) {
+  const b = $('#win-a .wbtn[data-w="' + w + '"]');
+  if (!b) return;
+  $$('#win-a .wbtn').forEach(function (x) { x.classList.remove('on'); });
+  b.classList.add('on');
+  $('#win-a').style.setProperty('--win-w', w === 'full' ? '1360px' : w + 'px');
+}
+$$('.tab').forEach(function (btn) {
+  btn.onclick = function () {
+    showScene(btn.dataset.scene);
+    try { history.replaceState(null, '', '#' + btn.dataset.scene); } catch (err) {}
+  };
+});
+(function initFromHash() {
+  const h = (location.hash || '').replace('#', '');
+  if (!h) return;
+  const scene = (h.match(/^([abc])/) || [])[1];
+  const width = (h.match(/w(900|1080|full)/) || [])[1];
+  if (scene) showScene(scene);
+  if (width) applyWidth(width);
+  if (/list/.test(h)) {
+    A.view = 'list';
+    $$('#view-a button').forEach(function (x) { x.classList.toggle('on', x.dataset.v === 'list'); });
+    renderA();
+  }
+})();
+
+// 方案 A 交互
+$('#view-a').onclick = function (e) {
+  const b = e.target.closest('button[data-v]');
+  if (!b) return;
+  A.view = b.dataset.v;
+  $$('#view-a button').forEach(function (x) { x.classList.toggle('on', x === b); });
+  renderA();
+};
+$('#status-a').onchange = function (e) { A.status = e.target.value; renderA(); };
+$('#tabs-a').onclick = function (e) {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.noop) { alert(b.dataset.noop); return; }
+  if (b.dataset.t) {
+    A.type = b.dataset.t;
+    $$('#tabs-a button').forEach(function (x) { x.classList.toggle('on', x === b); });
+    renderA();
+  }
+};
+function setAStatus(v) {
+  A.status = v;
+  $('#status-a').value = v;
+  renderA();
+}
+$$('#scene-a [data-quick]').forEach(function (el) {
+  el.onclick = function () { setAStatus(el.dataset.quick); };
+});
+$('#alert-a').onclick = function (e) {
+  if (!e.target.dataset.filterAttn) return;
+  setAStatus('attn');
+};
+$('#body-a').onclick = function (e) {
+  if (e.target.dataset.resetA !== undefined) {
+    A.status = 'all'; A.type = 'all'; $('#status-a').value = 'all';
+    $$('#tabs-a button').forEach(function (x) { x.classList.toggle('on', x.dataset.t === 'all'); });
+    renderA();
+    return;
+  }
+  const th = e.target.closest('th.sortable');
+  if (th) {
+    const k = th.dataset.sort;
+    if (A.sort === k) A.dir = -A.dir;
+    else { A.sort = k; A.dir = 1; }
+    renderA();
+  }
+};
+$$('#win-a .wbtn').forEach(function (b) {
+  b.onclick = function () {
+    $$('#win-a .wbtn').forEach(function (x) { x.classList.remove('on'); });
+    b.classList.add('on');
+    const w = b.dataset.w === 'full' ? '1360px' : b.dataset.w + 'px';
+    $('#win-a').style.setProperty('--win-w', w);
+  };
+});
+
+// 方案 B 交互
+$('#body-b').onclick = function (e) {
+  const openBtn = e.target.closest('[data-open]');
+  if (openBtn) { drawerOpen(openBtn.dataset.open); return; }
+  const row = e.target.closest('.grow');
+  if (row && !e.target.closest('input')) {
+    const cb = row.querySelector('input[data-sel]');
+    if (cb) drawerOpen(cb.dataset.sel);
+  }
+};
+$('#body-b').onchange = function (e) {
+  const cb = e.target.closest('input[data-sel]');
+  if (!cb) return;
+  const id = Number(cb.dataset.sel);
+  if (cb.checked) B.selected.add(id); else B.selected.delete(id);
+  syncBulk();
+};
+$('#bulk-clear').onclick = function () {
+  B.selected.clear();
+  $$('#body-b input[data-sel]').forEach(function (c) { c.checked = false; });
+  syncBulk();
+};
+$('#scrim-b').onclick = drawerClose;
+
+// 方案 C 交互
+$('#tabs-c').onclick = function (e) {
+  const b = e.target.closest('button[data-t]');
+  if (!b) return;
+  C.type = b.dataset.t;
+  $$('#tabs-c button').forEach(function (x) { x.classList.toggle('on', x === b); });
+  renderC();
+};
+$$('#table-c th.s').forEach(function (th) {
+  th.onclick = function () {
+    if (C.sort === th.dataset.sort) C.dir = -C.dir;
+    else { C.sort = th.dataset.sort; C.dir = 1; }
+    renderC();
+  };
+});
+$('#tbody-c').onclick = function (e) {
+  if (e.target.closest('[data-keep]')) return;
+  const tr = e.target.closest('tr[data-toggle]');
+  if (!tr) return;
+  const id = Number(tr.dataset.toggle);
+  if (C.open.has(id)) C.open.delete(id); else C.open.add(id);
+  renderC();
+};
+</script>
+</body>
+</html>

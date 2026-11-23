@@ -22,7 +22,7 @@ import CronAdvancedBuilder from '@/components/task/CronAdvancedBuilder.vue'
 import CronFieldLegend from '@/components/common/CronFieldLegend.vue'
 import { formatCronRunTime, nextCronRunTimes, validateCronExpression } from '@/utils/cronSchedule'
 import { describeScene, inferScene } from '@/utils/cronScenes'
-import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
+import { formatInPlatformTimezoneCompact, getPlatformTimezone } from '@/utils/platformTimezone'
 import TaskFlowGuideBanner from '@/components/task/TaskFlowGuideBanner.vue'
 import TaskFormSection from '@/components/task/TaskFormSection.vue'
 import {
@@ -172,7 +172,7 @@ const mainViewTab = ref<'tasks' | 'history'>('tasks')
 // View & Filter States
 const viewMode = ref<'grid' | 'list'>((localStorage.getItem('task_center_view_mode') as 'grid' | 'list') || 'grid')
 const searchQuery = ref('')
-const statusFilter = ref<'all' | 'running' | 'stopped'>('all')
+const statusFilter = ref<'all' | 'running' | 'stopped' | 'attn'>('all')
 const taskTypeFilter = ref<'all' | 'agent' | 'saved_report' | 'metadata_inspection'>('all')
 const taskTypeTabs = [
   { value: 'all' as const, label: '全部任务' },
@@ -793,6 +793,13 @@ const handlePromptTemplateOutsideClick = (e: MouseEvent) => {
     showPromptTemplateDropdown.value = false
   }
 }
+
+/** 行操作菜单（⋯）点空白处收起 */
+const handleTaskMenuOutsideClick = (e: MouseEvent) => {
+  if (taskMenuId.value === null) return
+  const target = e.target as HTMLElement | null
+  if (!target?.closest?.('[data-task-menu]')) taskMenuId.value = null
+}
 const applyPromptTemplate = (text: string) => {
   editingTask.value.prompt = text
   showPromptTemplateDropdown.value = false
@@ -846,7 +853,26 @@ const handleTaskBannerAction = (type: 'create' | 'history') => {
 // Mobile State
 const windowWidth = ref(window.innerWidth)
 const isMobile = computed(() => windowWidth.value < 768)
-const currentViewMode = computed(() => isMobile.value ? 'grid' : viewMode.value)
+
+/**
+ * 用「容器宽度」而不是「窗口宽度」决定列表能不能放得下。
+ *
+ * 个人中心把 TaskCenter 嵌进约 900–1100px 的窄容器里，此时窗口可能很宽、
+ * 但表格（至少 820px + 横向滚动）在容器里必然溢出，用户得左右拖才能看到状态列；
+ * 反过来窗口很窄、容器却更窄时 `isMobile` 也判不出来。ResizeObserver 量容器
+ * 才是唯一可靠的依据。
+ */
+const rootRef = ref<HTMLElement | null>(null)
+const containerWidth = ref(0)
+let containerObserver: ResizeObserver | null = null
+
+const containerIsNarrow = computed(() => containerWidth.value > 0 && containerWidth.value < 760)
+const showAgentColumn = computed(() => containerWidth.value === 0 || containerWidth.value >= 980)
+const showRateColumn = computed(() => containerWidth.value === 0 || containerWidth.value >= 880)
+
+const currentViewMode = computed(() =>
+  isMobile.value || containerIsNarrow.value ? 'grid' : viewMode.value,
+)
 
 const handleWindowResize = () => {
   windowWidth.value = window.innerWidth
@@ -876,6 +902,14 @@ onMounted(() => {
   window.addEventListener('resize', handleWindowResize)
   document.addEventListener('click', handleAgentDropdownOutsideClick)
   document.addEventListener('click', handlePromptTemplateOutsideClick)
+  document.addEventListener('click', handleTaskMenuOutsideClick)
+  if (rootRef.value && typeof ResizeObserver !== 'undefined') {
+    containerObserver = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) containerWidth.value = entry.contentRect.width
+    })
+    containerObserver.observe(rootRef.value)
+  }
 })
 onUnmounted(() => {
   if (historyFilterTimer !== undefined) window.clearTimeout(historyFilterTimer)
@@ -883,6 +917,11 @@ onUnmounted(() => {
   window.removeEventListener('resize', handleWindowResize)
   document.removeEventListener('click', handleAgentDropdownOutsideClick)
   document.removeEventListener('click', handlePromptTemplateOutsideClick)
+  document.removeEventListener('click', handleTaskMenuOutsideClick)
+  if (containerObserver) {
+    containerObserver.disconnect()
+    containerObserver = null
+  }
 })
 
 // Cron Builder Logic
@@ -1143,10 +1182,68 @@ const filteredTasks = computed(() => {
     result = result.filter(t => t.name.toLowerCase().includes(q) || t.prompt.toLowerCase().includes(q))
   }
   if (statusFilter.value !== 'all') {
-    const isRunning = statusFilter.value === 'running'
-    result = result.filter(t => t.status === (isRunning ? 1 : 0))
+    if (statusFilter.value === 'attn') {
+      result = result.filter(t => {
+        const key = taskStatusMeta(t).key
+        return key === 'error' || key === 'warn'
+      })
+    } else {
+      const wantOn = statusFilter.value === 'running'
+      result = result.filter(t => (taskStatusMeta(t).key === 'on') === wantOn)
+    }
   }
-  return result
+  return sortTaskList(result)
+})
+
+/** 顶部概览：三类状态互斥计数 + 最近一次待执行任务，替代原先只能靠肉眼扫的列表 */
+const statusSummary = computed(() => {
+  const list = scopedTasks.value
+  let on = 0
+  let off = 0
+  let attn = 0
+  list.forEach((task) => {
+    const key = taskStatusMeta(task).key
+    if (key === 'on') on += 1
+    else if (key === 'off') off += 1
+    else attn += 1
+  })
+  const upcoming = list
+    .filter(task => task.status === 1 && task.next_run_at)
+    .sort((a, b) => String(a.next_run_at).localeCompare(String(b.next_run_at)))[0]
+  return { on, off, attn, total: list.length, upcoming }
+})
+
+/**
+ * 顶部风险提醒：从需处理的任务里挑最严重的一条说清楚「哪个任务、为什么、什么时候重试」。
+ *
+ * 列表有 15+ 条时，异常任务混在中间很容易漏看；红色提醒条把「连续失败 N 次 + 原因 + 下次重试」
+ * 提到最上面，比让用户逐行扫状态徽章可靠。
+ */
+const attentionHeadline = computed(() => {
+  const candidates = scopedTasks.value
+    .map((task) => ({ task, meta: taskStatusMeta(task) }))
+    .filter((item) => item.meta.key === 'error' || item.meta.key === 'warn')
+  if (!candidates.length) return null
+
+  const severity = (item: { task: AgentTask; meta: { key: string } }) =>
+    (item.meta.key === 'error' ? 1000 : 0) + Number(item.task.consecutive_failures || 0)
+  candidates.sort((a, b) => severity(b) - severity(a))
+  const top = candidates[0]
+  const task = top.task
+
+  const rawReason = task.last_error
+    ? `${Number(task.consecutive_failures || 0) > 1 ? `连续失败 ${task.consecutive_failures} 次：` : ''}${task.last_error}`
+    : (taskScheduleMismatch(task) || taskStatusTip(task))
+  const reason = rawReason.length > 90 ? `${rawReason.slice(0, 90)}…` : rawReason
+  const next = nextRunCell(task)
+
+  return {
+    task,
+    reason,
+    count: candidates.length,
+    isError: top.meta.key === 'error',
+    retryHint: next.muted ? '' : `${next.text}会自动重试。`,
+  }
 })
 
 const toastState = ref({ show: false, message: '', type: 'success' as any })
@@ -1228,11 +1325,6 @@ const openEditModal = async (task: AgentTask) => {
   showEditModal.value = true
   await refreshNotificationAvailability()
 }
-
-const getTaskEditTitle = (task: AgentTask) => (
-  task.task_type === 'saved_report' ? '订阅设置' : '编辑'
-)
-
 
 const saveTask = async () => {
   try {
@@ -1562,11 +1654,6 @@ const formatDurationMs = (ms: number | null | undefined) => {
   return `${minutes}分${seconds}秒`
 }
 
-const formatNextRunCompact = (d: string | undefined) => {
-  if (!d) return '暂无计划'
-  return formatInPlatformTimezoneCompact(d)
-}
-
 const formatTaskSchedule = (cron: string) => {
   const text = String(cron || '').trim()
   if (!text) return '未配置'
@@ -1591,22 +1678,351 @@ const cronScheduleTip = (cron: string) => {
   return full === text ? `Cron: ${text}` : `${full}；Cron: ${text}`
 }
 
-const taskHealthMeta = (task: AgentTask) => {
-  const status = task.health_status || 'unknown'
-  if (status === 'healthy') {
-    return { label: '健康', class: 'bg-green-50 text-green-700 border-green-100', dot: 'bg-green-500' }
+/**
+ * 合成展示状态：把一个任务的「调度开关」(status) 和「执行健康」(health_status) 压成一个
+ * 用户能直接决策的信号。优先级 异常 > 需核对 > 活跃 > 已暂停。
+ *
+ * 之前列表只写 `status === 1 ? '活跃' : '停止'`，而后端 status 是 0 停 / 1 跑 / 2 错误，
+ * 出错被停的任务会显示成「停止」，看起来像用户自己关的；健康徽章又单独出现，
+ * 于是出现「健康 + 失败 2」这种自相矛盾的组合。
+ */
+type TaskDisplayStatusKey = 'error' | 'warn' | 'on' | 'off'
+
+const taskStatusMeta = (task: AgentTask): {
+  key: TaskDisplayStatusKey
+  label: string
+  class: string
+  dot: string
+  rank: number
+} => {
+  const health = String(task.health_status || 'unknown')
+  if (health === 'error') {
+    return { key: 'error', label: '异常', class: 'bg-red-50 text-red-700 border-red-200', dot: 'bg-red-500', rank: 0 }
   }
-  if (status === 'warning') {
-    return { label: '需关注', class: 'bg-amber-50 text-amber-700 border-amber-100', dot: 'bg-amber-500' }
+  if (health === 'warning') {
+    return { key: 'warn', label: '需核对', class: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-500', rank: 1 }
   }
-  if (status === 'error') {
-    return { label: '异常', class: 'bg-red-50 text-red-700 border-red-100', dot: 'bg-red-500' }
+  if (task.status === 1) {
+    return { key: 'on', label: '活跃', class: 'bg-green-50 text-green-700 border-green-200', dot: 'bg-green-500', rank: 2 }
   }
-  if (status === 'skipped') {
-    return { label: '已跳过', class: 'bg-slate-50 text-slate-600 border-slate-100', dot: 'bg-slate-400' }
+  if (task.status === 2) {
+    return { key: 'error', label: '异常', class: 'bg-red-50 text-red-700 border-red-200', dot: 'bg-red-500', rank: 0 }
   }
-  return { label: '未运行', class: 'bg-gray-50 text-gray-500 border-gray-100', dot: 'bg-gray-300' }
+  return { key: 'off', label: '已暂停', class: 'bg-gray-100 text-gray-500 border-gray-200', dot: 'bg-gray-400', rank: 3 }
 }
+
+const taskStatusTip = (task: AgentTask) => {
+  const meta = taskStatusMeta(task)
+  if (meta.key === 'error') {
+    const times = Number(task.consecutive_failures || 0)
+    const tail = task.last_error ? `：${task.last_error}` : ''
+    return times > 0 ? `调度仍在运行，但已连续失败 ${times} 次${tail}` : `最近一次执行失败${tail}`
+  }
+  if (meta.key === 'warn') {
+    return String(task.last_error || task.last_message || '健康状态需要关注，建议查看最近执行记录')
+  }
+  if (meta.key === 'on') return '调度运行中，会按周期自动执行'
+  return '调度已暂停，不会自动执行'
+}
+
+/** 成功率：成功 / (成功 + 失败)；一次都没跑过时返回 null，由调用方显示「—」 */
+const taskRateNum = (task: AgentTask): number | null => {
+  const success = Number(task.success_count ?? task.run_count ?? 0)
+  const fail = Number(task.failure_count ?? 0)
+  const total = success + fail
+  if (!total) return null
+  return Math.round((success / total) * 100)
+}
+
+const taskRateText = (task: AgentTask) => {
+  const rate = taskRateNum(task)
+  return rate === null ? '—' : `${rate}%`
+}
+
+/** 卡片/列表统一的「运行 N 次 · 成功率 x%」口径，替代卡片四宫格与列表里两套算法 */
+const taskMetricText = (task: AgentTask) => {
+  const runs = Number(task.trigger_count ?? task.success_count ?? task.run_count ?? 0)
+  return { runs, rate: taskRateText(task), rateNum: taskRateNum(task) }
+}
+
+// ── 下次运行：相对时间打头，绝对时间兜底 ───────────────────────────────
+/**
+ * Intl.DateTimeFormat 构造开销不小，而列表里每张卡片会算 3~4 次时间文案，
+ * 所以按平台时区缓存 formatter 实例，只在时区变化时重建。
+ */
+let clockFormatterCache: {
+  tz: string
+  parts: Intl.DateTimeFormat
+  weekday: Intl.DateTimeFormat
+} | null = null
+
+const clockFormatters = () => {
+  const tz = getPlatformTimezone()
+  if (!clockFormatterCache || clockFormatterCache.tz !== tz) {
+    clockFormatterCache = {
+      tz,
+      parts: new Intl.DateTimeFormat('zh-CN', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }),
+      weekday: new Intl.DateTimeFormat('zh-CN', { timeZone: tz, weekday: 'short' }),
+    }
+  }
+  return clockFormatterCache
+}
+
+const platformClockParts = (date: Date) => {
+  const formatters = clockFormatters()
+  const parts = formatters.parts.formatToParts(date)
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return {
+    ymd: `${pick('year')}-${pick('month')}-${pick('day')}`,
+    hhmm: `${pick('hour')}:${pick('minute')}`,
+    weekday: formatters.weekday.format(date),
+  }
+}
+
+/**
+ * 「明天 09:00 / 周三 10:00 / 11-30 09:00」，配合绝对时间一起展示。
+ * 只写 `11/24 09:00` 时，用户判断「多久之后」要靠心算，跨年还会误判。
+ */
+const formatRunRelative = (value?: string): string => {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const target = new Date(raw)
+  if (Number.isNaN(target.getTime())) return formatInPlatformTimezoneCompact(raw)
+  const targetParts = platformClockParts(target)
+  const nowParts = platformClockParts(new Date())
+  const diffDays = Math.round(
+    (Date.parse(`${targetParts.ymd}T00:00:00Z`) - Date.parse(`${nowParts.ymd}T00:00:00Z`)) / 86400000,
+  )
+  if (diffDays === 0) return `今天 ${targetParts.hhmm}`
+  if (diffDays === 1) return `明天 ${targetParts.hhmm}`
+  if (diffDays === 2) return `后天 ${targetParts.hhmm}`
+  if (diffDays > 2 && diffDays <= 6) return `${targetParts.weekday} ${targetParts.hhmm}`.trim()
+  return formatInPlatformTimezoneCompact(raw)
+}
+
+/** 暂停任务不再写「暂无计划」——那和「配置有问题的没有下次」长得一模一样 */
+const nextRunCell = (task: AgentTask) => {
+  if (task.status !== 1) {
+    return {
+      text: '已暂停',
+      abs: '',
+      muted: true,
+      tip: task.cron_expr ? `停止前周期：${formatTaskSchedule(task.cron_expr)}（恢复后重新排期）` : '任务已暂停',
+    }
+  }
+  const raw = String(task.next_run_at || '').trim()
+  if (!raw) {
+    return { text: '待排期', abs: '', muted: true, tip: '调度已开启但还没有下一次运行时间，可尝试刷新' }
+  }
+  return {
+    text: formatRunRelative(raw),
+    abs: formatInPlatformTimezoneCompact(raw),
+    muted: false,
+    tip: cronScheduleTip(task.cron_expr),
+  }
+}
+
+// ── 周期与指令意图是否一致（低成本启发式，纯前端，不阻断保存）───────────────
+const DAILY_TIME_INTENT = /(每天|每日|每晚|每天早上|每日早上|每天早上|工作日)\s*(?:早上|上午|下午|晚上)?\s*(\d{1,2})\s*[点时:：]/
+const cronFiresMoreThanOncePerDay = (expr: string) => {
+  const parts = String(expr || '').trim().split(/\s+/)
+  if (parts.length < 5) return false
+  const wildish = (field: string) => /[*/,]|-/.test(field)
+  // 分钟或小时不固定 → 一天内会跑多次
+  return wildish(parts[0]) || wildish(parts[1])
+}
+
+const taskScheduleMismatch = (task: AgentTask): string => {
+  if (task.cron_valid === false) return ''
+  const prompt = String(task.prompt || '')
+  const intent = prompt.match(DAILY_TIME_INTENT)
+  if (!intent) return ''
+  if (!cronFiresMoreThanOncePerDay(task.cron_expr)) return ''
+  return `周期与指令不符：指令要求「每天 ${intent[2]} 点」，实际是「${formatTaskSchedule(task.cron_expr)}」`
+}
+
+// ── 排序 ────────────────────────────────────────────────────────────
+type TaskSortKey = 'priority' | 'name' | 'next' | 'rate' | 'last'
+const sortKey = ref<TaskSortKey>('priority')
+const sortDir = ref<1 | -1>(1)
+
+const RECENT_RUN_SLOTS = 7
+/**
+ * 「最近 7 次」的槽位：后端按时间正序下发，这里换成等宽色块。
+ * 不足 7 次时在左侧补空槽——左边是更早的时间，留白比伪造绿色诚实。
+ */
+const recentRunSlots = (task: AgentTask) => {
+  const runs = Array.isArray(task.recent_runs) ? task.recent_runs.slice(-RECENT_RUN_SLOTS) : []
+  const slots = runs.map((run, index) => {
+    const value = String(run?.status || '').toLowerCase()
+    const succeeded = value === 'success'
+    const failed = value === 'failed' || value === 'error' || value === 'timeout'
+    return {
+      key: `${task.id}-run-${index}`,
+      cls: succeeded ? 'bg-emerald-400' : failed ? 'bg-red-500' : 'bg-gray-300',
+      tip: `${succeeded ? '成功' : failed ? '失败' : value || '未知'}${run?.at ? ' · ' + formatRunRelative(run.at) : ''}`,
+      empty: false,
+    }
+  })
+  const padding = RECENT_RUN_SLOTS - slots.length
+  for (let i = 0; i < padding; i += 1) {
+    slots.unshift({ key: `${task.id}-empty-${i}`, cls: 'bg-gray-100', tip: '暂无更早的执行记录', empty: true })
+  }
+  return slots
+}
+
+const sortRank = (task: AgentTask) => taskStatusMeta(task).rank
+const sortNextValue = (task: AgentTask) => {
+  if (task.status !== 1) return Number.MAX_SAFE_INTEGER
+  const time = Date.parse(String(task.next_run_at || ''))
+  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time
+}
+const sortLastValue = (task: AgentTask) => {
+  const time = Date.parse(String(task.last_attempt_at || task.last_run_at || ''))
+  return Number.isNaN(time) ? 0 : time
+}
+
+/**
+ * 默认「需处理优先」：异常 → 需核对 → 活跃 → 已暂停，组内按下次运行时间升序。
+ * 任务数上了十几个以后，这一条比任何视觉优化都管用。
+ */
+const sortTaskList = (list: AgentTask[]) => {
+  const dir = sortDir.value
+  const key = sortKey.value
+  const sorted = [...list]
+  sorted.sort((a, b) => {
+    if (key === 'priority') {
+      const rankDiff = sortRank(a) - sortRank(b)
+      if (rankDiff !== 0) return rankDiff
+      return sortNextValue(a) - sortNextValue(b)
+    }
+    if (key === 'name') return a.name.localeCompare(b.name, 'zh') * dir
+    if (key === 'next') return (sortNextValue(a) - sortNextValue(b)) * dir
+    if (key === 'last') return (sortLastValue(a) - sortLastValue(b)) * dir
+    const rateA = taskRateNum(a)
+    const rateB = taskRateNum(b)
+    return ((rateA ?? -1) - (rateB ?? -1)) * dir
+  })
+  return sorted
+}
+
+const toggleSort = (key: TaskSortKey) => {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 1 ? -1 : 1
+    return
+  }
+  sortKey.value = key
+  sortDir.value = 1
+}
+
+const sortIndicator = (key: TaskSortKey) => {
+  if (sortKey.value !== key) return '↕'
+  return sortDir.value === 1 ? '↑' : '↓'
+}
+
+// ── 批量启停（串行调用现有单条接口，逐条汇总，不新增后端接口）──────────────
+const selectedTaskIds = ref<Set<number>>(new Set())
+const bulkRunning = ref(false)
+const selectableTasks = computed(() => filteredTasks.value.filter(task => canManageTask(task)))
+const selectedTasks = computed(() => scopedTasks.value.filter(task => selectedTaskIds.value.has(task.id)))
+const allSelected = computed(() =>
+  selectableTasks.value.length > 0 && selectableTasks.value.every(task => selectedTaskIds.value.has(task.id)),
+)
+
+const toggleTaskSelection = (id: number) => {
+  const next = new Set(selectedTaskIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedTaskIds.value = next
+}
+
+const toggleSelectAll = () => {
+  if (allSelected.value) {
+    selectedTaskIds.value = new Set()
+    return
+  }
+  selectedTaskIds.value = new Set(selectableTasks.value.map(task => task.id))
+}
+
+const clearSelection = () => {
+  selectedTaskIds.value = new Set()
+}
+
+const resetTaskFilters = () => {
+  searchQuery.value = ''
+  statusFilter.value = 'all'
+  taskTypeFilter.value = 'all'
+  clearSelection()
+}
+
+const bulkToggleStatus = async (target: 0 | 1) => {
+  const targets = selectedTasks.value.filter(task => {
+    if (task.task_type === 'metadata_inspection') return false
+    if (target === 1) return task.status !== 1
+    return task.status === 1
+  })
+  if (!targets.length) {
+    showToast(target === 1 ? '所选任务都已在运行中' : '所选任务都已暂停', 'info')
+    return
+  }
+  bulkRunning.value = true
+  let ok = 0
+  const failed: string[] = []
+  // 串行执行：并发打同一批接口容易触发后端限流，且失败时说不清是哪条没成功
+  for (const task of targets) {
+    try {
+      if (task.task_type === 'saved_report' && task.subscription_id) {
+        await taskApi.updateReportSubscriptionStatus(task.subscription_id, target === 1)
+      } else {
+        await taskApi.update(task.id, { status: target })
+      }
+      ok += 1
+    } catch {
+      failed.push(task.name)
+    }
+  }
+  bulkRunning.value = false
+  clearSelection()
+  await fetchTasks(true)
+  const verb = target === 1 ? '恢复' : '暂停'
+  if (!failed.length) {
+    showToast(`已${verb} ${ok} 个任务`)
+    return
+  }
+  showToast(`已${verb} ${ok} 个，失败 ${failed.length} 个：${failed.slice(0, 2).join('、')}${failed.length > 2 ? '…' : ''}`, 'warning')
+}
+
+// ── 行操作菜单（⋯）：把编辑 / 历史 / 删除从一排同级图标里收进来 ──────────────
+const taskMenuId = ref<number | null>(null)
+/** 列表末尾几行的菜单要向上弹：表格容器是 overflow-x-auto，向下展开会被容器底边裁掉 */
+const taskMenuOpensUp = ref(false)
+const toggleTaskMenu = (id: number, opensUp = false) => {
+  if (taskMenuId.value === id) {
+    taskMenuId.value = null
+    return
+  }
+  taskMenuId.value = id
+  taskMenuOpensUp.value = opensUp
+}
+/** 末尾 3 行以内就把菜单向上展开（一份菜单约两行高，向上必然有空间） */
+const isNearListEnd = (task: AgentTask) => {
+  const list = filteredTasks.value
+  const index = list.findIndex((item) => item.id === task.id)
+  return index >= 0 && index >= list.length - 3
+}
+
+const closeTaskMenu = () => {
+  taskMenuId.value = null
+}
+
 
 const logStatusMeta = (status: string | undefined) => {
   const value = String(status || '').toLowerCase()
@@ -1645,7 +2061,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-5">
+  <div ref="rootRef" class="space-y-5">
     <!-- Header：标题一行；窄屏搜索通栏，状态+刷新并排，新建通栏 -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="flex items-center space-x-3">
@@ -1655,12 +2071,6 @@ onMounted(async () => {
         >
           {{ personalOnly ? '我的任务' : '任务调度台' }}
         </h1>
-        <span
-          v-if="personalOnly"
-          class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700"
-        >
-          个人私有
-        </span>
         <button
           v-if="!personalOnly"
           type="button"
@@ -1707,7 +2117,8 @@ onMounted(async () => {
           >
             <option value="all">状态：全部</option>
             <option value="running">状态：运行中</option>
-            <option value="stopped">状态：已停止</option>
+            <option value="stopped">状态：已暂停</option>
+            <option value="attn">状态：需处理</option>
           </select>
 
           <div class="hidden shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5 md:flex">
@@ -1771,66 +2182,85 @@ onMounted(async () => {
       />
     </div>
 
-    <!-- 主 Tab：管理员为「任务列表 | 执行记录」；否则直接显示类型筛选 -->
-    <div class="border-b border-gray-200 -mt-1">
-      <div class="flex gap-1 overflow-x-auto -mb-px" style="-webkit-overflow-scrolling: touch;">
-        <template v-if="showHistoryTab">
-          <button
-            type="button"
-            class="inline-flex shrink-0 items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
-            :class="mainViewTab === 'tasks' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-            @click="mainViewTab = 'tasks'"
-          >任务列表</button>
-          <button
-            type="button"
-            class="inline-flex shrink-0 items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
-            :class="mainViewTab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-            @click="mainViewTab = 'history'"
-          >执行记录</button>
-        </template>
-        <template v-else>
-          <button
-            v-for="tab in taskTypeTabs"
-            :key="tab.value"
-            type="button"
-            class="inline-flex shrink-0 items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
-            :class="taskTypeFilter === tab.value ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-            @click="taskTypeFilter = tab.value"
-          >
-            <span>{{ tab.label }}</span>
-            <span
-              class="min-w-5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-center"
-              :class="taskTypeFilter === tab.value ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'"
-            >
-              {{ taskTypeCounts[tab.value] }}
-            </span>
-          </button>
-        </template>
-      </div>
-    </div>
-
-    <!-- 任务列表下的类型二级筛选（仅管理员主 Tab 模式下需要） -->
+    <!-- 概览：三类状态互斥计数（可点击直达筛选）+ 最近一次待执行任务 -->
     <div
-      v-if="showHistoryTab && mainViewTab === 'tasks'"
-      class="flex gap-1.5 overflow-x-auto -mt-1 pt-2"
-      style="-webkit-overflow-scrolling: touch;"
+      v-if="mainViewTab === 'tasks' && !loading && statusSummary.total > 0"
+      class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-500"
     >
       <button
-        v-for="tab in taskTypeTabs"
-        :key="'sub-' + tab.value"
         type="button"
-        class="inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap"
-        :class="taskTypeFilter === tab.value
-          ? 'border-blue-200 bg-blue-50 text-blue-700'
-          : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:text-gray-700'"
-        @click="taskTypeFilter = tab.value"
+        class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors hover:bg-gray-100 hover:text-gray-800"
+        :class="statusFilter === 'running' ? 'bg-gray-100 text-gray-900' : ''"
+        title="只看运行中的任务"
+        @click="statusFilter = statusFilter === 'running' ? 'all' : 'running'"
       >
-        <span>{{ tab.label }}</span>
-        <span
-          class="min-w-4 rounded-full px-1 text-[10px]"
-          :class="taskTypeFilter === tab.value ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'"
-        >{{ taskTypeCounts[tab.value] }}</span>
+        <span class="h-1.5 w-1.5 rounded-full bg-green-500"></span>
+        <b class="font-bold text-gray-900">{{ statusSummary.on }}</b> 个运行中
       </button>
+      <button
+        type="button"
+        class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors hover:bg-gray-100 hover:text-gray-800"
+        :class="statusFilter === 'stopped' ? 'bg-gray-100 text-gray-900' : ''"
+        title="只看已暂停的任务"
+        @click="statusFilter = statusFilter === 'stopped' ? 'all' : 'stopped'"
+      >
+        <span class="h-1.5 w-1.5 rounded-full bg-gray-400"></span>
+        <b class="font-bold text-gray-900">{{ statusSummary.off }}</b> 个已暂停
+      </button>
+      <button
+        type="button"
+        class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors hover:bg-gray-100 hover:text-gray-800"
+        :class="[
+          statusSummary.attn > 0 ? 'text-red-600' : 'text-gray-500',
+          statusFilter === 'attn' ? 'bg-red-50' : '',
+        ]"
+        title="只看异常 / 需核对的任务"
+        @click="statusFilter = statusFilter === 'attn' ? 'all' : 'attn'"
+      >
+        <span class="h-1.5 w-1.5 rounded-full" :class="statusSummary.attn > 0 ? 'bg-red-500' : 'bg-gray-300'"></span>
+        <b class="font-bold" :class="statusSummary.attn > 0 ? 'text-red-600' : 'text-gray-900'">{{ statusSummary.attn }}</b> 个需处理
+      </button>
+      <span v-if="statusSummary.upcoming" class="inline-flex min-w-0 items-center gap-1.5">
+        <span class="shrink-0 text-gray-400">下次执行</span>
+        <b class="shrink-0 font-bold text-primary">{{ formatRunRelative(statusSummary.upcoming.next_run_at) }}</b>
+        <span class="truncate text-gray-400">（{{ statusSummary.upcoming.name }}）</span>
+      </span>
+      <span class="ml-auto hidden shrink-0 text-gray-400 sm:inline">共 {{ statusSummary.total }} 个任务</span>
+    </div>
+
+    <!-- 一级 tab：类型筛选 + 右侧「执行记录」入口（不再有第二层 pill 筛选） -->
+    <div class="border-b border-gray-200 -mt-1">
+      <div class="flex items-center gap-1 overflow-x-auto -mb-px" style="-webkit-overflow-scrolling: touch;">
+        <button
+          v-for="tab in taskTypeTabs"
+          :key="'main-' + tab.value"
+          type="button"
+          class="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors sm:px-4"
+          :class="mainViewTab === 'tasks' && taskTypeFilter === tab.value
+            ? 'border-blue-600 text-blue-600'
+            : 'border-transparent text-gray-500 hover:text-gray-700'"
+          @click="taskTypeFilter = tab.value; mainViewTab = 'tasks'"
+        >
+          <span>{{ tab.label }}</span>
+          <span
+            class="min-w-5 rounded-full px-1.5 py-0.5 text-center text-[10px] font-semibold"
+            :class="mainViewTab === 'tasks' && taskTypeFilter === tab.value ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'"
+          >
+            {{ taskTypeCounts[tab.value] }}
+          </span>
+        </button>
+        <span class="flex-1"></span>
+        <button
+          v-if="showHistoryTab"
+          type="button"
+          class="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-sm font-medium transition-colors sm:px-4"
+          :class="mainViewTab === 'history'
+            ? 'border-b-2 border-blue-600 text-blue-600'
+            : 'text-gray-500 hover:text-blue-700'"
+          title="查看全部任务的执行记录"
+          @click="mainViewTab = 'history'"
+        >执行记录 →</button>
+      </div>
     </div>
 
     <!-- 管理员全局执行记录 -->
@@ -1986,307 +2416,431 @@ onMounted(async () => {
     </div>
 
     <template v-if="mainViewTab === 'tasks'">
+    <!-- 风险提醒：最严重的一条提到最上面，「只看需处理」一键收窄 -->
+    <div
+      v-if="!loading && attentionHeadline"
+      class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-3 py-2 text-xs leading-relaxed"
+      :class="attentionHeadline.isError
+        ? 'border-red-200 bg-red-50 text-red-700'
+        : 'border-amber-200 bg-amber-50 text-amber-800'"
+    >
+      <span class="shrink-0">⚠</span>
+      <span class="min-w-0 flex-1">
+        <b class="font-bold">{{ attentionHeadline.task.name }}</b>
+        {{ attentionHeadline.reason }}{{ attentionHeadline.retryHint ? ' ' + attentionHeadline.retryHint : '' }}
+        <span v-if="attentionHeadline.count > 1" class="opacity-70">（另有 {{ attentionHeadline.count - 1 }} 个任务需处理）</span>
+      </span>
+      <button
+        type="button"
+        class="shrink-0 cursor-pointer rounded-md border border-black/10 px-2 py-0.5 font-bold transition-opacity hover:opacity-70"
+        @click="statusFilter = statusFilter === 'attn' ? 'all' : 'attn'"
+      >{{ statusFilter === 'attn' ? '显示全部' : '只看需处理' }}</button>
+    </div>
+
     <!-- Loading State -->
     <div v-if="loading" class="py-20 text-center">
       <div class="animate-spin h-10 w-10 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
       <p class="text-gray-500">加载任务列表中...</p>
     </div>
 
-    <!-- Empty State -->
-    <div v-else-if="filteredTasks.length === 0" class="py-20 text-center bg-white rounded-xl border border-dashed border-gray-200">
-      <p class="text-gray-500">没有找到匹配的任务</p>
-    </div>
-
-    <!-- Grid View -->
-    <div v-else-if="currentViewMode === 'grid'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-      <div 
-        v-for="task in filteredTasks" 
-        :key="task.id"
-        class="bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all group overflow-hidden"
+    <!-- Empty State：区分「一个任务都没有」和「筛选没命中」，前者直接给创建入口 -->
+    <div v-else-if="filteredTasks.length === 0" class="rounded-xl border border-dashed border-gray-200 bg-white px-6 py-16 text-center">
+      <p class="text-sm font-semibold text-gray-700">
+        {{ scopedTasks.length === 0 ? '还没有任务' : '没有匹配的任务' }}
+      </p>
+      <p class="mt-1 text-xs text-gray-400">
+        {{ scopedTasks.length === 0
+          ? '定时任务可以让智能体按周期自动跑：监控发版、巡检数据、推送日报。'
+          : '当前搜索或筛选条件下没有任务，试试放宽条件。' }}
+      </p>
+      <button
+        v-if="scopedTasks.length === 0 && canManage"
+        type="button"
+        class="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-dark"
+        @click="openCreateModal"
       >
-        <div class="p-5">
-          <div class="flex justify-between items-start mb-4">
-            <div class="flex items-center space-x-3">
-              <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl shadow-inner relative">
-                🕒
-                <!-- Source Badge -->
-                <div 
-                  class="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm text-[10px]"
-                  :class="task.task_type === 'metadata_inspection' ? 'bg-purple-600 text-white' : task.task_type === 'saved_report' ? 'bg-emerald-500 text-white' : task.source === 'agent' ? 'bg-indigo-500 text-white' : 'bg-amber-500 text-white'"
-                  :title="task.task_type === 'metadata_inspection' ? '元数据巡检' : task.task_type === 'saved_report' ? '报表订阅' : task.source === 'agent' ? '智能体创建' : '手动创建'"
-                >
-                  {{ task.task_type === 'metadata_inspection' ? '⚡' : task.task_type === 'saved_report' ? '📊' : task.source === 'agent' ? '🤖' : '👤' }}
-                </div>
-              </div>
-              <div class="min-w-0">
-                <div class="flex items-center space-x-2">
-                  <h3 class="font-bold text-gray-900 truncate">{{ task.name }}</h3>
-                  <span v-if="task.task_type === 'metadata_inspection'" class="px-2 py-0.5 bg-purple-50 text-purple-700 text-[9px] font-black rounded-full border border-purple-200">系统 · 元数据巡检</span>
-                  <span v-if="task.task_type === 'saved_report'" class="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-black rounded-full border border-emerald-100">报表订阅</span>
-                  <span v-if="String(task.user_id) === String(userInfo?.user_id)" class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black rounded-full border border-amber-200 flex-shrink-0">
-                    我创建的
-                  </span>
-                  <span
-                    v-if="String(task.config?.task_constraints || '').trim()"
-                    class="px-2 py-0.5 bg-sky-50 text-sky-700 text-[9px] font-black rounded-full border border-sky-200 flex-shrink-0"
-                    title="该任务已配置输出要求（任务约束）"
-                  >约束</span>
-                  <span class="px-2 py-0.5 text-[9px] font-black rounded-full border flex items-center flex-shrink-0" :class="taskHealthMeta(task).class">
-                    <span class="w-1.5 h-1.5 rounded-full mr-1" :class="taskHealthMeta(task).dot"></span>
-                    {{ taskHealthMeta(task).label }}
-                  </span>
-                </div>
-                <div class="flex items-center mt-1">
-                  <span class="text-[10px] text-primary font-bold mr-2 bg-primary/5 px-1.5 py-0.5 rounded">{{ task.agent_name }}</span>
-                  <span 
-                    class="w-2 h-2 rounded-full mr-2"
-                    :class="task.status === 1 ? 'bg-green-500 animate-pulse' : 'bg-gray-300'"
-                  ></span>
-                  <HoverTip
-                    v-if="task.cron_valid === false"
-                    class="mr-1"
-                    :text="`无效 Cron：${task.cron_expr}`"
-                    :width="280"
-                  >
-                    <span class="text-[10px] font-bold text-red-500 bg-red-50 px-1.5 py-0.5 rounded">⚠️ Cron无效</span>
-                  </HoverTip>
-                  <HoverTip v-else :text="cronScheduleTip(task.cron_expr)" :width="300">
-                    <span class="inline-block max-w-[220px] truncate align-middle text-[10px] font-bold text-blue-600">{{ formatTaskSchedule(task.cron_expr) }}</span>
-                  </HoverTip>
-                </div>
-              </div>
-            </div>
-            
-            <!-- Switch UI Replacement -->
-            <button 
-              v-if="canManageTask(task)"
-              @click="toggleStatus(task)"
-              class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200"
-              :class="task.status === 1 ? 'bg-green-500' : 'bg-gray-200'"
-            >
-              <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200" :class="task.status === 1 ? 'translate-x-4' : 'translate-x-0'"></span>
-            </button>
-            <div v-else class="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent" :class="task.status === 1 ? 'bg-green-500/50' : 'bg-gray-200'">
-               <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow" :class="task.status === 1 ? 'translate-x-4' : 'translate-x-0'"></span>
-            </div>
-          </div>
-
-          <div class="space-y-3">
-            <div class="p-3 bg-gray-50 rounded-lg border border-gray-100 min-h-[60px]">
-              <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">{{ task.task_type === 'saved_report' ? '报表说明' : '指令' }}</p>
-              <p class="text-xs text-gray-600 line-clamp-2 italic leading-relaxed">"{{ task.prompt }}"</p>
-            </div>
-            <div class="grid grid-cols-4 gap-2 text-[10px]">
-              <div>
-                <p class="text-gray-400 mb-0.5">触发</p>
-                <p class="text-gray-900 font-black text-xs">{{ metricValue(task.trigger_count) }}</p>
-              </div>
-              <div>
-                <p class="text-gray-400 mb-0.5">成功</p>
-                <p class="text-green-700 font-black text-xs">{{ metricValue(task.success_count || task.run_count) }}</p>
-              </div>
-              <div>
-                <p class="text-gray-400 mb-0.5">失败</p>
-                <p class="text-red-600 font-black text-xs">{{ metricValue(task.failure_count) }}</p>
-              </div>
-              <div>
-                <p class="text-gray-400 mb-0.5">跳过</p>
-                <p class="text-slate-600 font-black text-xs">{{ metricValue(task.skipped_count) }}</p>
-              </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-2 text-[10px]">
-              <div>
-                <p class="text-gray-400 mb-0.5">上次尝试</p>
-                <p class="text-gray-700 font-medium">{{ formatDate(task.last_attempt_at || task.last_run_at) }}</p>
-              </div>
-              <div>
-                <p class="text-gray-400 mb-0.5">预计下次</p>
-                <p class="whitespace-nowrap text-primary font-bold">{{ formatNextRunCompact(task.next_run_at) }}</p>
-              </div>
-            </div>
-
-            <div v-if="task.last_error" class="text-[10px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-2 py-1.5 line-clamp-2">
-              {{ task.consecutive_failures ? `连续失败 ${task.consecutive_failures} 次：` : '' }}{{ task.last_error }}
-            </div>
-            
-            <!-- Audit Info -->
-            <div class="pt-3 border-t border-gray-50 flex items-center justify-between text-[9px] text-gray-400">
-              <span class="flex items-center">
-                <span class="mr-1">👤</span>
-                {{ task.creator_name || '系统' }}
-              </span>
-              <span>{{ formatDate(task.created_at) }} 创建</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="bg-gray-50/50 px-5 py-3 border-t border-gray-100 flex items-center justify-between opacity-80 group-hover:opacity-100 transition-opacity">
-          <div class="flex items-center space-x-1">
-            <button @click="openLogs(task)" class="p-1.5 text-gray-400 hover:text-primary hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="执行历史">
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            </button>
-            <button
-              v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
-              @click="showCronInspectionModal = true"
-              class="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100 cursor-pointer"
-              title="巡检配置与监控"
-            >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
-            <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" :title="task.task_type === 'saved_report' ? '订阅设置' : '编辑'">
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-            </button>
-            <button v-if="canManageTask(task)" @click="toggleStatus(task)" class="p-1.5 text-gray-400 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" :class="task.status === 1 ? 'hover:text-orange-600' : 'hover:text-green-600'" :title="task.status === 1 ? '停止' : '激活'">
-              <PauseCircleIcon v-if="task.status === 1" class="w-4 h-4" />
-              <PlayCircleIcon v-else class="w-4 h-4" />
-            </button>
-            <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="删除">
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-            </button>
-          </div>
-          <button 
-            v-if="canManageTask(task)"
-            @click="runTaskNow(task)"
-            :disabled="runningTaskIds.has(task.id)"
-            class="text-[10px] font-bold flex items-center px-2 py-1 rounded bg-white border border-gray-200 shadow-sm hover:border-primary hover:text-primary transition-all disabled:opacity-50"
-          >
-            <span v-if="runningTaskIds.has(task.id)" class="mr-1 animate-spin">⌛</span>
-            {{ runningTaskIds.has(task.id) ? '正在触发' : '立即执行' }}
-          </button>
-        </div>
-      </div>
+        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+        </svg>
+        新建第一个任务
+      </button>
+      <button
+        v-else-if="scopedTasks.length > 0"
+        type="button"
+        class="mt-4 rounded-lg border border-gray-200 px-3.5 py-2 text-xs font-semibold text-gray-600 transition-colors hover:border-gray-300 hover:text-gray-900"
+        @click="resetTaskFilters"
+      >清空筛选</button>
     </div>
 
-    <!-- List View -->
-    <div v-else class="bg-white rounded-xl border border-gray-200 overflow-x-auto shadow-sm">
-      <table class="w-full min-w-[1080px] table-fixed text-left border-collapse">
-        <thead>
-          <tr class="bg-gray-50/50 border-b border-gray-200">
-            <th class="w-[28%] px-5 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">任务名称</th>
-            <th class="w-[11%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">执行对象</th>
-            <th class="w-[8%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center">执行次数</th>
-            <th class="w-[15%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider hidden md:table-cell">运行周期</th>
-            <th class="w-[12%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">预计下次运行</th>
-            <th class="w-[8%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center">状态</th>
-            <th class="w-[18%] px-5 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-right">操作</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-          <tr v-for="task in filteredTasks" :key="task.id" class="hover:bg-blue-50/30 transition-colors group">
-            <td class="px-5 py-4">
-              <div class="flex items-start space-x-3">
-                <span 
-                  class="w-6 h-6 rounded-lg flex items-center justify-center text-xs shadow-inner"
-                  :class="task.task_type === 'metadata_inspection' ? 'bg-purple-50 text-purple-600' : task.task_type === 'saved_report' ? 'bg-emerald-50 text-emerald-600' : task.source === 'agent' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'"
-                  :title="task.task_type === 'metadata_inspection' ? '元数据巡检' : task.task_type === 'saved_report' ? '报表订阅' : task.source === 'agent' ? '智能体创建' : '手动创建'"
-                >
-                  {{ task.task_type === 'metadata_inspection' ? '⚡' : task.task_type === 'saved_report' ? '📊' : task.source === 'agent' ? '🤖' : '👤' }}
-                </span>
-                <div class="min-w-0 flex-1">
-                  <p class="text-sm font-bold leading-5 text-gray-900 group-hover:text-primary line-clamp-2" :title="task.name">{{ task.name }}</p>
-                  <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <span v-if="task.task_type === 'metadata_inspection'" class="whitespace-nowrap px-2 py-0.5 bg-purple-50 text-purple-700 text-[8px] font-black rounded-full border border-purple-200">系统 · 元数据巡检</span>
-                    <span v-if="task.task_type === 'saved_report'" class="whitespace-nowrap px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[8px] font-black rounded-full border border-emerald-100">报表订阅</span>
-                    <span v-if="String(task.user_id) === String(userInfo?.user_id)" class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[8px] font-black rounded-full border border-amber-200">
-                      我创建的
-                    </span>
-                    <span class="px-2 py-0.5 text-[8px] font-black rounded-full border flex items-center" :class="taskHealthMeta(task).class">
-                      <span class="w-1 h-1 rounded-full mr-1" :class="taskHealthMeta(task).dot"></span>
-                      {{ taskHealthMeta(task).label }}
-                    </span>
+    <!-- Grid View：auto-fill 自适应列宽，窄容器（个人中心约 900px）自动降 2 列，不再把徽章和开关挤出卡片 -->
+    <div
+      v-else-if="currentViewMode === 'grid'"
+      class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3"
+    >
+      <article
+        v-for="task in filteredTasks"
+        :key="task.id"
+        class="group relative flex flex-col gap-2 rounded-xl border bg-white p-3.5 transition-all hover:shadow-md"
+        :class="taskStatusMeta(task).key === 'error'
+          ? 'border-red-200 border-l-[3px] border-l-red-500'
+          : (task.status === 1 ? 'border-gray-200' : 'border-gray-200 bg-gray-50/40')"
+      >
+        <!-- 标题行：状态点 + 标题（两行截断，占满剩余宽度）+ ⋯ 菜单 -->
+        <div class="flex items-start gap-2">
+          <span
+            class="mt-1.5 h-2 w-2 shrink-0 rounded-full"
+            :class="taskStatusMeta(task).dot"
+            :title="taskStatusTip(task)"
+          ></span>
+          <h3
+            class="line-clamp-2 min-w-0 flex-1 break-words text-sm font-bold leading-snug text-gray-900"
+            :title="task.name"
+          >{{ task.name }}</h3>
+          <div class="relative shrink-0" data-task-menu>
+            <button
+              type="button"
+              class="-mr-1 -mt-1 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-base leading-none text-gray-300 transition-colors hover:bg-gray-100 hover:text-gray-700"
+              title="更多操作"
+              @click.stop="toggleTaskMenu(task.id)"
+            >⋯</button>
+            <div
+              v-if="taskMenuId === task.id"
+              class="absolute right-0 top-full z-20 mt-1 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 text-left shadow-lg"
+            >
+              <!-- 报表订阅专属操作：订阅走自己的设置弹窗，且不按任务归属拦（与重构前一致） -->
+              <button
+                v-if="task.task_type === 'saved_report'"
+                type="button"
+                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                @click="closeTaskMenu(); openSavedReportSubscriptionSettings(task)"
+              >订阅设置</button>
+              <button
+                v-else-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
+                type="button"
+                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                @click="closeTaskMenu(); openEditModal(task)"
+              >编辑任务</button>
+              <button
+                type="button"
+                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                @click="closeTaskMenu(); openLogs(task)"
+              >{{ task.task_type === 'saved_report' ? '运行历史' : '执行历史' }}</button>
+              <button
+                v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
+                type="button"
+                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                @click="closeTaskMenu(); showCronInspectionModal = true"
+              >巡检配置</button>
+              <button
+                v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
+                type="button"
+                class="mt-0.5 block w-full cursor-pointer border-t border-gray-100 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50"
+                @click="closeTaskMenu(); deleteTask(task)"
+              >{{ task.task_type === 'saved_report' ? '删除订阅' : '删除任务' }}</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 元信息：执行对象 · 周期 · 一个合成状态（不再出现「健康 + 失败 2」并排） -->
+        <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500">
+          <span class="rounded bg-primary/5 px-1.5 py-0.5 font-bold text-primary">{{ task.agent_name }}</span>
+          <HoverTip :text="cronScheduleTip(task.cron_expr)" :width="300">
+            <span class="cursor-help border-b border-dashed border-gray-300 font-semibold text-gray-700">{{ formatTaskSchedule(task.cron_expr) }}</span>
+          </HoverTip>
+          <span
+            class="rounded-full border px-2 py-0.5 text-[10px] font-black"
+            :class="taskStatusMeta(task).class"
+            :title="taskStatusTip(task)"
+          >{{ taskStatusMeta(task).label }}</span>
+          <span
+            v-if="task.task_type === 'saved_report'"
+            class="rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700"
+          >报表订阅</span>
+          <span
+            v-else-if="task.task_type === 'metadata_inspection'"
+            class="rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[10px] font-black text-purple-700"
+          >元数据巡检</span>
+        </div>
+
+        <p class="line-clamp-1 text-[11px] leading-relaxed text-gray-400" :title="task.prompt">"{{ task.prompt }}"</p>
+
+        <p
+          v-if="taskScheduleMismatch(task)"
+          class="line-clamp-2 rounded-md border border-amber-100 bg-amber-50 px-2 py-1 text-[11px] leading-snug text-amber-700"
+          :title="taskScheduleMismatch(task)"
+        >⚠ {{ taskScheduleMismatch(task) }}</p>
+        <p
+          v-else-if="task.last_error"
+          class="line-clamp-2 rounded-md border border-red-100 bg-red-50 px-2 py-1 text-[11px] leading-snug text-red-700"
+          :title="task.last_error"
+        >⚠ {{ task.consecutive_failures ? '连续失败 ' + task.consecutive_failures + ' 次：' : '' }}{{ task.last_error }}</p>
+
+        <!-- 指标：卡片与列表同一套口径「运行 N 次 · 成功率 x%」，四宫格明细进 tooltip -->
+        <div
+          class="flex items-center gap-1.5 text-[11px] text-gray-500"
+          :title="'触发 ' + metricValue(task.trigger_count) + ' · 成功 ' + metricValue(task.success_count || task.run_count) + ' · 失败 ' + metricValue(task.failure_count) + ' · 跳过 ' + metricValue(task.skipped_count)"
+        >
+          <span>运行 <b class="font-black text-gray-900">{{ taskMetricText(task).runs }}</b> 次</span>
+          <span class="text-gray-300">·</span>
+          <span>
+            成功率
+            <b
+              class="font-black"
+              :class="taskMetricText(task).rateNum !== null && taskMetricText(task).rateNum < 90 ? 'text-red-600' : 'text-gray-900'"
+            >{{ taskMetricText(task).rate }}</b>
+          </span>
+          <span
+            v-if="String(task.config?.task_constraints || '').trim()"
+            class="ml-auto shrink-0 rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700"
+            title="该任务已配置输出要求（任务约束）"
+          >约束</span>
+        </div>
+
+        <!-- 时间：相对时间打头，绝对时间兜底；暂停任务写「已暂停」而不是「暂无计划」 -->
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-dashed border-gray-100 pt-2 text-[11px]">
+          <div class="flex items-center gap-1">
+            <span class="text-gray-400">上次</span>
+            <span class="font-semibold text-gray-700">{{ formatDate(task.last_attempt_at || task.last_run_at) }}</span>
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="text-gray-400">下次</span>
+            <span v-if="nextRunCell(task).muted" class="font-medium text-gray-400" :title="nextRunCell(task).tip">{{ nextRunCell(task).text }}</span>
+            <span v-else class="font-bold text-primary" :title="nextRunCell(task).tip">
+              {{ nextRunCell(task).text }}<span class="ml-1 font-medium text-gray-400">{{ nextRunCell(task).abs }}</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- 操作：主操作文字按钮 + 启停一处，其余进 ⋯ 菜单 -->
+        <div class="mt-auto flex items-center gap-1.5 border-t border-gray-100 pt-2">
+          <button
+            v-if="canManageTask(task)"
+            type="button"
+            class="rounded-md bg-primary px-2.5 py-1 text-[11px] font-bold text-white transition-colors hover:bg-primary-dark disabled:opacity-50"
+            :disabled="runningTaskIds.has(task.id)"
+            @click="runTaskNow(task)"
+          >{{ runningTaskIds.has(task.id) ? '正在触发' : '立即执行' }}</button>
+          <button
+            type="button"
+            class="rounded-md border border-gray-200 px-2.5 py-1 text-[11px] font-semibold text-gray-600 transition-colors hover:border-primary/40 hover:text-primary"
+            @click="openLogs(task)"
+          >历史</button>
+          <span class="flex-1"></span>
+          <button
+            v-if="canManageTask(task)"
+            type="button"
+            class="rounded-md px-2 py-1 text-[11px] font-semibold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+            :title="task.status === 1 ? '暂停后不再自动执行' : '恢复调度'"
+            @click="toggleStatus(task)"
+          >{{ task.status === 1 ? '暂停' : '恢复' }}</button>
+        </div>
+      </article>
+    </div>
+
+    <!-- List View：任务多（10+）时的主力视图，默认「需处理优先」排序，表头可排序 -->
+    <!-- 不用 overflow-x-auto：<980px 已隐藏次要列、<760px 直接降级卡片，表格在能走到这里的容器宽度下不会溢出；
+         而 overflow 会建裁剪上下文，把行内 ⋯ 菜单的弹层裁在表格底边。 -->
+    <div v-else class="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <table class="w-full min-w-[760px] table-fixed border-collapse text-left">
+          <thead>
+            <tr class="border-b border-gray-200 bg-gray-50/60">
+              <th class="w-10 px-2 py-2.5">
+                <input
+                  type="checkbox"
+                  class="h-3.5 w-3.5 cursor-pointer accent-primary"
+                  title="全选当前筛选下的可管理任务"
+                  :checked="allSelected"
+                  @change="toggleSelectAll"
+                />
+              </th>
+              <th class="px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                <button type="button" class="inline-flex cursor-pointer items-center gap-1 hover:text-gray-700" @click="toggleSort('name')">
+                  任务 <span class="text-[9px] text-gray-400">{{ sortIndicator('name') }}</span>
+                </button>
+              </th>
+              <th
+                v-if="showAgentColumn"
+                class="w-[120px] px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400"
+              >执行对象</th>
+              <th class="w-[176px] px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                <button type="button" class="inline-flex cursor-pointer items-center gap-1 hover:text-gray-700" @click="toggleSort('next')">
+                  预计下次运行 <span class="text-[9px] text-gray-400">{{ sortIndicator('next') }}</span>
+                </button>
+              </th>
+              <th
+                v-if="showRateColumn"
+                class="w-[84px] px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400"
+              >
+                <button type="button" class="inline-flex cursor-pointer items-center gap-1 hover:text-gray-700" @click="toggleSort('rate')">
+                  成功率 <span class="text-[9px] text-gray-400">{{ sortIndicator('rate') }}</span>
+                </button>
+              </th>
+              <th class="w-[96px] px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">最近 7 次</th>
+              <th class="w-[92px] px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                <button type="button" class="inline-flex cursor-pointer items-center gap-1 hover:text-gray-700" @click="toggleSort('priority')">
+                  状态 <span class="text-[9px] text-gray-400">{{ sortIndicator('priority') }}</span>
+                </button>
+              </th>
+              <th class="w-[132px] px-3 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-gray-400">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <tr
+              v-for="task in filteredTasks"
+              :key="task.id"
+              class="group transition-colors hover:bg-blue-50/30"
+              :class="selectedTaskIds.has(task.id) ? 'bg-blue-50/40' : ''"
+            >
+              <td class="px-2 py-3 align-middle">
+                <input
+                  v-if="canManageTask(task)"
+                  type="checkbox"
+                  class="h-3.5 w-3.5 cursor-pointer accent-primary"
+                  :checked="selectedTaskIds.has(task.id)"
+                  @change="toggleTaskSelection(task.id)"
+                />
+              </td>
+              <td class="px-3 py-3">
+                <div class="flex items-start gap-2">
+                  <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" :class="taskStatusMeta(task).dot" :title="taskStatusTip(task)"></span>
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1.5">
+                      <p class="truncate text-sm font-bold leading-5 text-gray-900 group-hover:text-primary" :title="task.name">{{ task.name }}</p>
+                      <span
+                        v-if="task.task_type === 'saved_report'"
+                        class="shrink-0 rounded-full border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-black text-emerald-700"
+                      >报表</span>
+                      <span
+                        v-else-if="task.task_type === 'metadata_inspection'"
+                        class="shrink-0 rounded-full border border-purple-200 bg-purple-50 px-1.5 py-0.5 text-[9px] font-black text-purple-700"
+                      >巡检</span>
+                    </div>
+                    <p class="mt-0.5 max-w-full truncate text-[11px] text-gray-400">
+                      {{ formatTaskSchedule(task.cron_expr) }} · 运行 {{ taskMetricText(task).runs }} 次 · 上次 {{ formatDate(task.last_attempt_at || task.last_run_at) }}
+                    </p>
                   </div>
-                  <span class="block text-[10px] text-gray-400 line-clamp-1 mt-1">
-                    {{ task.creator_name }} · 触发 {{ metricValue(task.trigger_count) }} / 成功 {{ metricValue(task.success_count || task.run_count) }} / 失败 {{ metricValue(task.failure_count) }}
-                  </span>
                 </div>
-              </div>
-            </td>
-            <td class="px-4 py-4">
-              <span class="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-gray-600"><span>{{ task.task_type === 'saved_report' ? '📊' : '🤖' }}</span>{{ task.agent_name }}</span>
-            </td>
-            <td class="px-4 py-4 text-center">
-              <div class="flex flex-col items-center">
-                <span class="text-xs font-black text-gray-900">{{ metricValue(task.success_count || task.run_count) }}</span>
-                <span v-if="metricValue(task.failure_count)" class="text-[9px] text-red-500 mt-0.5">失败 {{ metricValue(task.failure_count) }}</span>
-              </div>
-            </td>
-            <td class="px-4 py-4 hidden md:table-cell">
-              <template v-if="task.cron_valid === false">
-                <HoverTip :text="`无效 Cron：${task.cron_expr}`" :width="280">
-                  <span
-                    class="inline-flex whitespace-nowrap rounded-lg bg-red-50 px-2 py-1 text-[11px] font-bold text-red-600"
-                  >⚠️ Cron无效</span>
-                </HoverTip>
-              </template>
-              <template v-else>
-                <HoverTip class="w-full" :text="cronScheduleTip(task.cron_expr)" :width="320">
-                  <span class="inline-block max-w-full truncate rounded-lg bg-blue-50 px-2 py-1 align-middle text-[11px] font-bold text-blue-700">
-                    {{ formatTaskSchedule(task.cron_expr) }}
-                  </span>
-                </HoverTip>
-              </template>
-            </td>
-            <td class="px-4 py-4">
-              <span class="whitespace-nowrap text-xs font-medium text-gray-600">{{ formatNextRunCompact(task.next_run_at) }}</span>
-            </td>
-            <td class="px-4 py-4">
-              <div class="flex justify-center">
-                <span 
-                  class="px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center whitespace-nowrap flex-shrink-0"
-                  :class="task.status === 1 ? 'bg-green-50 text-green-600 border-green-100' : 'bg-gray-100 text-gray-400 border-gray-200'"
-                >
-                  <span class="w-1.5 h-1.5 rounded-full mr-1.5 flex-shrink-0" :class="task.status === 1 ? 'bg-green-500 animate-pulse' : 'bg-gray-400'"></span>
-                  {{ task.status === 1 ? '活跃' : '停止' }}
+              </td>
+              <td v-if="showAgentColumn" class="truncate px-3 py-3 text-xs text-gray-600" :title="task.agent_name">{{ task.agent_name }}</td>
+              <td class="px-3 py-3">
+                <span v-if="nextRunCell(task).muted" class="text-xs font-medium text-gray-400" :title="nextRunCell(task).tip">{{ nextRunCell(task).text }}</span>
+                <span v-else class="text-xs" :title="nextRunCell(task).tip">
+                  <b class="font-bold text-primary">{{ nextRunCell(task).text }}</b>
+                  <span class="ml-1 text-gray-400">{{ nextRunCell(task).abs }}</span>
                 </span>
-              </div>
-            </td>
-            <td class="px-5 py-4 text-right">
-              <!-- 报表订阅专属操作 -->
-              <div v-if="task.task_type === 'saved_report'" class="flex items-center justify-end gap-1.5">
-                <button class="whitespace-nowrap rounded-lg border border-blue-100 bg-blue-50 px-2 py-1.5 text-[10px] font-bold text-blue-600 hover:bg-blue-100" @click="openSavedReportSubscriptionSettings(task)">订阅设置</button>
-                <button class="whitespace-nowrap rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-bold text-gray-600 hover:border-blue-200 hover:text-blue-600" @click="openLogs(task)">运行历史</button>
-                <button v-if="canManageTask(task)" class="whitespace-nowrap rounded-lg border border-emerald-100 bg-emerald-50 px-2 py-1.5 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50" :disabled="runningTaskIds.has(task.id)" @click="runTaskNow(task)">{{ runningTaskIds.has(task.id) ? '执行中' : '立即执行' }}</button>
-                <button v-if="canManageTask(task)" class="whitespace-nowrap rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-bold text-gray-500 hover:text-orange-600" @click="toggleStatus(task)">{{ task.status === 1 ? '暂停' : '恢复' }}</button>
-                <button v-if="canManageTask(task)" class="rounded-lg p-1.5 text-gray-300 hover:bg-red-50 hover:text-red-500" title="删除订阅" @click="deleteTask(task)"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
-              </div>
-              <div v-else class="flex items-center justify-end space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                <button v-if="canManageTask(task)" @click="runTaskNow(task)" :disabled="runningTaskIds.has(task.id)" class="p-1.5 text-primary hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="立即执行">
-                  <svg v-if="!runningTaskIds.has(task.id)" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
-                  <span v-else class="animate-spin text-[10px]">⌛</span>
-                </button>
-                <button @click="openLogs(task)" class="p-1.5 text-gray-400 hover:text-primary hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="历史">
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                </button>
-                <button
-                  v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
-                  @click="showCronInspectionModal = true"
-                  class="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100 cursor-pointer"
-                  title="巡检配置与监控"
-                >
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </button>
-                <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" :title="getTaskEditTitle(task)">
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                </button>
-                <button v-if="canManageTask(task)" @click="toggleStatus(task)" class="p-1.5 text-gray-400 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" :class="task.status === 1 ? 'hover:text-orange-600' : 'hover:text-green-600'" :title="task.status === 1 ? '停止' : '激活'">
-                  <PauseCircleIcon v-if="task.status === 1" class="w-4 h-4" />
-                  <PlayCircleIcon v-else class="w-4 h-4" />
-                </button>
-                <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="删除">
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+              </td>
+              <td v-if="showRateColumn" class="px-3 py-3">
+                <span
+                  class="text-xs font-black tabular-nums"
+                  :class="taskMetricText(task).rateNum !== null && taskMetricText(task).rateNum < 90 ? 'text-red-600' : 'text-gray-800'"
+                >{{ taskMetricText(task).rate }}</span>
+              </td>
+              <td class="px-3 py-3">
+                <div class="flex h-4 items-end gap-[3px]">
+                  <span
+                    v-for="slot in recentRunSlots(task)"
+                    :key="slot.key"
+                    class="w-[6px] rounded-sm"
+                    :class="[slot.cls, slot.empty ? 'h-2' : 'h-3.5']"
+                    :title="slot.tip"
+                  ></span>
+                </div>
+              </td>
+              <td class="px-3 py-3">
+                <span class="rounded-full border px-2 py-0.5 text-[10px] font-black" :class="taskStatusMeta(task).class" :title="taskStatusTip(task)">
+                  {{ taskStatusMeta(task).label }}
+                </span>
+              </td>
+              <td class="px-3 py-3">
+                <div class="flex items-center justify-end gap-1">
+                  <button
+                    v-if="canManageTask(task)"
+                    type="button"
+                    class="rounded-md bg-primary px-2.5 py-1 text-[11px] font-bold text-white transition-colors hover:bg-primary-dark disabled:opacity-50"
+                    :disabled="runningTaskIds.has(task.id)"
+                    title="立即执行一次"
+                    @click="runTaskNow(task)"
+                  >{{ runningTaskIds.has(task.id) ? '触发中' : '执行' }}</button>
+                  <div class="relative" data-task-menu>
+                    <button
+                      type="button"
+                      class="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-gray-200 text-base leading-none text-gray-400 transition-colors hover:border-gray-300 hover:text-gray-700"
+                      title="更多操作"
+                      @click.stop="toggleTaskMenu(task.id, isNearListEnd(task))"
+                    >⋯</button>
+                    <div
+                      v-if="taskMenuId === task.id"
+                      class="absolute right-0 z-20 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 text-left shadow-lg"
+                      :class="taskMenuOpensUp ? 'bottom-full mb-1' : 'top-full mt-1'"
+                    >
+                        <!-- 报表订阅专属操作：订阅走自己的设置弹窗，且不按任务归属拦（与重构前一致） -->
+                        <button
+                          v-if="task.task_type === 'saved_report'"
+                          type="button"
+                          class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                          @click="closeTaskMenu(); openSavedReportSubscriptionSettings(task)"
+                        >订阅设置</button>
+                        <button
+                          v-else-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
+                          type="button"
+                          class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                          @click="closeTaskMenu(); openEditModal(task)"
+                        >编辑任务</button>
+                        <button
+                          type="button"
+                          class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                          @click="closeTaskMenu(); openLogs(task)"
+                        >{{ task.task_type === 'saved_report' ? '运行历史' : '执行历史' }}</button>
+                      <button
+                        v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
+                        type="button"
+                        class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                        @click="closeTaskMenu(); showCronInspectionModal = true"
+                      >巡检配置</button>
+                      <button
+                        v-if="canManageTask(task)"
+                        type="button"
+                        class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                        @click="closeTaskMenu(); toggleStatus(task)"
+                      >{{ task.status === 1 ? '暂停调度' : '恢复调度' }}</button>
+                      <button
+                        v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
+                        type="button"
+                        class="mt-0.5 block w-full cursor-pointer border-t border-gray-100 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50"
+                        @click="closeTaskMenu(); deleteTask(task)"
+                      >{{ task.task_type === 'saved_report' ? '删除订阅' : '删除任务' }}</button>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+    </div>
+
+    <!-- 批量操作条：勾选后浮出，串行调用现有单条接口并逐条汇总结果 -->
+    <div
+      v-if="selectedTaskIds.size > 0"
+      class="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-xl bg-gray-900 px-4 py-2.5 text-xs text-white shadow-2xl"
+    >
+      <span>已选 <b class="font-bold">{{ selectedTaskIds.size }}</b> 项</span>
+      <button
+        type="button"
+        class="cursor-pointer rounded-md border border-white/25 px-2.5 py-1 font-semibold transition-colors hover:bg-white/10 disabled:opacity-50"
+        :disabled="bulkRunning"
+        @click="bulkToggleStatus(0)"
+      >批量暂停</button>
+      <button
+        type="button"
+        class="cursor-pointer rounded-md border border-white/25 px-2.5 py-1 font-semibold transition-colors hover:bg-white/10 disabled:opacity-50"
+        :disabled="bulkRunning"
+        @click="bulkToggleStatus(1)"
+      >批量恢复</button>
+      <button
+        type="button"
+        class="cursor-pointer rounded-md px-2 py-1 font-semibold text-gray-300 transition-colors hover:text-white"
+        @click="clearSelection"
+      >取消</button>
     </div>
     </template>
 
