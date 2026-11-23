@@ -2191,12 +2191,21 @@ class AgentService:
                     err,
                 )
                 is_sandbox = policy in ("docker", "k8s", "e2b", "ssh")
+                # 预热超时不再等于「白干了」：工作区构建跑在独立任务里（单飞），
+                # 构建段会接续同一次工作。这里说清楚，别让用户以为链路坏了。
+                if isinstance(err, asyncio.TimeoutError):
+                    error_message = (
+                        f"预热 {elapsed_ms / 1000:.1f}s 未完成，工作区仍在后台准备，"
+                        "本轮构建会自动接续"
+                    )
+                else:
+                    error_message = str(err)
                 return _build_workspace_sandbox_log(
                     policy=policy,
                     is_sandbox=is_sandbox,
                     cached=False,
                     status="error",
-                    error_message=str(err),
+                    error_message=error_message,
                     execution_time_ms=elapsed_ms,
                 )
         matched_skills_to_log: List[tuple] = []

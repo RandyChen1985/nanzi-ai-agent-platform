@@ -105,6 +105,63 @@ def test_format_build_details_appends_extra_lines_verbatim():
     assert "\n\n" not in details  # 空行被丢弃
 
 
+def test_record_does_not_move_the_clock_cursor():
+    """``record`` 记的是外部实测值：不能推进游标，否则父阶段会被子行重复计数。"""
+    timer = BuildStageTimer(clock=_clock([0.0, 1.0, 2.0]))
+    timer.mark("config")
+    timer.record("workspace:sandbox", 61000.0)
+    # 游标仍在 config 之后的位置：这一段 1000ms 属于 workspace，而不是被 record 吃掉
+    assert timer.mark("workspace") == pytest.approx(1000.0)
+    assert timer.stages()["workspace"] == pytest.approx(1000.0)
+    assert timer.stages()["workspace:sandbox"] == pytest.approx(61000.0)
+
+
+def test_record_accumulates_and_ignores_blank_or_negative():
+    timer = BuildStageTimer(clock=_clock([0.0]))
+    timer.record("workspace:preseed", 12.0)
+    timer.record("workspace:preseed", 8.0)
+    timer.record("", 999.0)
+    timer.record("workspace:preseed", -5.0)
+    assert timer.stages() == pytest.approx({"workspace:preseed": 20.0})
+
+
+def test_format_build_details_indents_declared_sub_stages_in_order():
+    """工作区准备的子项按声明顺序缩进展示，父行仍是本段墙钟。"""
+    stages = {
+        "workspace": 61700.0,
+        "workspace:sandbox": 61600.0,
+        "workspace:skills": 4.0,
+        "workspace:preseed": 96.0,
+        "tool_bind": 1.0,
+    }
+    lines = format_build_details(stages, 61708.0).splitlines()
+
+    assert lines[0] == "工作区准备 61700ms"
+    assert lines[1] == "  · 技能发现 4ms"
+    assert lines[2] == "  · 沙箱获取 61600ms"
+    assert lines[3] == "  · 技能快照播种 96ms"
+    # 子项不会作为「未知阶段」再露一遍
+    assert sum(1 for line in lines if "沙箱获取" in line) == 1
+    assert lines[4] == "工具绑定 1ms"
+
+
+def test_format_build_details_keeps_undeclared_sub_stage_visible():
+    """新增子阶段却忘了配文案：缩进露原始 key，不能让时间凭空消失。"""
+    details = format_build_details(
+        {"workspace": 10.0, "workspace:brand_new": 7.0}, 10.0
+    )
+    assert "  · workspace:brand_new 7ms" in details
+
+
+def test_format_build_details_renders_reused_inflight_build_line():
+    """接续别人的构建：父行只是本轮等待，子行写明那次构建的真实成本。"""
+    details = format_build_details(
+        {"workspace": 2100.0, "workspace:joined": 58000.0}, 2100.0
+    )
+    assert "工作区准备 2100ms" in details
+    assert "  · 接续预热中的构建 58000ms" in details
+
+
 def test_build_progress_event_uses_stable_id_for_frontend_merge():
     event = build_progress_event(status="success", details="合计 1ms")
     assert event["type"] == "log"

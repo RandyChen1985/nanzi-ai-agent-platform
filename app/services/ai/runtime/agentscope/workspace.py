@@ -15,10 +15,11 @@ import shutil
 import tempfile
 import time
 import uuid
-from collections.abc import Mapping
-from dataclasses import replace
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
 
+from app.services.ai.runtime.agentscope.build_progress import BuildStageTimer
 from app.services.ai.runtime.agentscope.tool_timeout import (
     apply_sandbox_gateway_timeout,
 )
@@ -52,9 +53,97 @@ _k8s_workspace_locks: dict[str, asyncio.Lock] = {}
 _k8s_workspace_last_used: dict[str, float] = {}
 _k8s_workspace_reaper_task: asyncio.Task[None] | None = None
 _workspace_sandbox_refs: dict[str, str] = {}
+#: 未命中的工作区准备按 cache_key 单飞（见 :func:`_await_workspace_build`）：preflight
+#: 预热与构建段会打到同一个键上，同一份工作只该干一次。
+_workspace_inflight: dict[str, asyncio.Task[Any]] = {}
+#: 最近一次构建的分段测量（cache_key → :class:`WorkspacePrepareTrace`）。
+#: 只用于展示与日志，不参与任何判断。
+_workspace_prepare_traces: dict[str, "WorkspacePrepareTrace"] = {}
 _docker_workspace_reaper_task: asyncio.Task[None] | None = None
 #: 用户级（``<root>/<user_key>``）宿主机准备锁：见 :func:`_sandbox_host_prepare_lock`。
 _sandbox_host_prepare_locks: dict[str, asyncio.Lock] = {}
+
+
+#: 工作区准备分段测量的子阶段名 → 摘要里的展示名（顺序即摘要顺序）。
+_WORKSPACE_TRACE_STAGE_LABELS: dict[str, str] = {
+    "config": "配置与会话目录",
+    "skills": "技能发现",
+    "sandbox": "沙箱获取",
+    "preseed": "技能快照播种",
+    "session": "会话工作区初始化",
+}
+#: 摘要里 notes 的展示名。
+_WORKSPACE_TRACE_NOTE_LABELS: dict[str, str] = {
+    "policy": "策略",
+    "skills": "技能",
+    "sandbox": "沙箱",
+    "copied": "新播种",
+    "refreshed": "换版",
+    "pruned": "清理",
+}
+#: 沙箱获取结果 → 摘要文案。
+_WORKSPACE_TRACE_SANDBOX_TEXT: dict[str, str] = {
+    "lazy": "待按需拉起",
+    "reused": "复用存活沙箱",
+    "created": "本轮新建",
+    "none": "无（宿主工作区）",
+}
+#: 超过这个时长就以 WARNING 打一条带分解的日志（首 token 前的静默期要能追）。
+_WORKSPACE_PREPARE_SLOW_WARN_MS = 3000.0
+
+
+@dataclass
+class WorkspacePrepareTrace:
+    """工作区准备的「花在哪、遇到了什么」的测量结果。
+
+    单独一个对象而不是直接往构建计时器里写，是因为这段准备可能**不是本轮发起的**：
+    preflight 预热先跑，本轮构建只是接续同一次工作（见
+    :func:`_await_workspace_build`）。子阶段耗时属于那次构建，本轮等待时间可能只有
+    几百毫秒，所以两者分开记录，由调用方决定怎么展示——绝不把父阶段墙钟改写成子阶段
+    之和，那是在编数据。
+
+    ``Workflow``：由 :func:`get_local_workspace` 内部创建并测量，调用方传入一个空对象
+    接收（:meth:`absorb`），随后自行决定怎么用（时间线明细 / 日志 / 卡片 details）。
+    """
+
+    #: ``(子阶段名, 毫秒)``，按真实执行顺序。
+    stages: list[tuple[str, float]] = field(default_factory=list)
+    #: 关键事实：沙箱策略、技能数量、沙箱是本轮新建还是复用。
+    notes: dict[str, Any] = field(default_factory=dict)
+    #: 那次构建的真实总耗时（毫秒）。
+    total_ms: float = 0.0
+    #: 本轮是否只是接续了一次已经在跑的构建（预热先发起）。
+    joined_inflight: bool = False
+
+    def absorb(self, other: "WorkspacePrepareTrace", *, joined: bool) -> None:
+        """拷贝另一次构建的测量结果（``joined`` 标记本轮是否只是接续它）。"""
+        self.stages = list(other.stages)
+        self.notes = dict(other.notes)
+        self.total_ms = other.total_ms
+        self.joined_inflight = joined
+
+    def summary(self) -> str:
+        """一行中文摘要，给日志与 ``workspace:prepare`` 卡片的 details 用。"""
+        parts: list[str] = []
+        if self.joined_inflight:
+            parts.append(f"接续预热中的构建（该次构建共 {self.total_ms:.0f}ms）")
+        for key, value in self.notes.items():
+            if value is None or value == "":
+                continue
+            if key == "sandbox":
+                parts.append(
+                    f"{_WORKSPACE_TRACE_NOTE_LABELS.get(key, key)}="
+                    f"{_WORKSPACE_TRACE_SANDBOX_TEXT.get(str(value), value)}"
+                )
+                continue
+            parts.append(f"{_WORKSPACE_TRACE_NOTE_LABELS.get(key, key)}={value}")
+        slowest = max(self.stages, key=lambda item: item[1], default=None)
+        if slowest is not None and self.total_ms >= 1000.0:
+            parts.append(
+                f"最慢：{_WORKSPACE_TRACE_STAGE_LABELS.get(slowest[0], slowest[0])} "
+                f"{slowest[1]:.0f}ms"
+            )
+        return "；".join(parts)
 
 
 def _sandbox_host_prepare_lock(host_workdir: str) -> asyncio.Lock:
@@ -896,8 +985,15 @@ async def _prune_forbidden_session_skills(workdir: str, user_info: dict | None) 
     if not os.path.isfile(index_path) and not os.path.isfile(legacy_index_path):
         return
     prune_index_path = index_path if os.path.isfile(index_path) else legacy_index_path
-    # ③ 与权限无关，先做：即便权限查询失败也不影响"源已删除"这条硬事实
-    _prune_removed_session_skills_from_ledger(workdir, prune_index_path, user_info)
+    # ③ 与权限无关，先做：即便权限查询失败也不影响"源已删除"这条硬事实。
+    # 这里到函数末尾全是同步磁盘 IO（读账本、删副本、走目录），放在协程里会卡住
+    # 整个 worker 的事件循环——缓存命中路径每轮都会走到，所以一律放线程里。
+    await asyncio.to_thread(
+        _prune_removed_session_skills_from_ledger,
+        workdir,
+        prune_index_path,
+        user_info,
+    )
     try:
         from app.services.ai.skills.policy import get_forbidden_skill_ids
 
@@ -906,24 +1002,32 @@ async def _prune_forbidden_session_skills(workdir: str, user_info: dict | None) 
         logger.warning("[workspace] Failed to resolve forbidden skills for pruning: %s", exc)
         forbidden_skill_ids = set()
     # ② 管理端禁用只解析账本里出现过的 id，不做全库扫描
-    ledger_ids = _read_session_skills_ledger(workdir)
+    ledger_ids = await asyncio.to_thread(_read_session_skills_ledger, workdir)
     unavailable_ids = {
         str(item).strip() for item in (forbidden_skill_ids or ()) if str(item).strip()
     }
-    unavailable_ids |= _disabled_platform_skill_ids(
-        str((entry or {}).get("skill_id") or "").strip()
-        for entry in ledger_ids.values()
+    unavailable_ids |= await asyncio.to_thread(
+        _disabled_platform_skill_ids,
+        [
+            str((entry or {}).get("skill_id") or "").strip()
+            for entry in ledger_ids.values()
+        ],
     )
     if not unavailable_ids:
         return
-    _prune_stale_session_skills(
-        skill_root,
-        prune_index_path,
-        _forbidden_skill_hashes(unavailable_ids),
-        unavailable_ids,
-        personal_hashes=_personal_skill_hash_index(user_info),
-    )
-    _prune_session_skill_partitions(workdir)
+
+    def _prune_sync() -> int:
+        """同步清理：哈希索引进线程里现算，别在主线程读一遍目录。"""
+        return _prune_stale_session_skills(
+            skill_root,
+            prune_index_path,
+            _forbidden_skill_hashes(unavailable_ids),
+            unavailable_ids,
+            personal_hashes=_personal_skill_hash_index(user_info),
+        )
+
+    await asyncio.to_thread(_prune_sync)
+    await asyncio.to_thread(_prune_session_skill_partitions, workdir)
 
 
 def _session_skill_seed_dir(workdir: str) -> str:
@@ -1056,8 +1160,13 @@ def _preseed_session_skills(
     skill_paths: list[str],
     forbidden_skill_ids: Iterable[str] | None = None,
     user_info: dict | None = None,
-) -> None:
+) -> dict[str, int]:
     """把平台技能快照铺进 ``<workdir>/skills/.seed``（AgentScope 的 seed 模板）。
+
+    返回本次的统计（``total`` / ``copied`` / ``refreshed`` / ``pruned`` / ``removed``）：
+    这段是**每会话一份真实副本**的同步磁盘 IO，是「工作区准备」忽快忽慢的主要变量之一，
+    没有这些数字就只能靠猜。调用方（:func:`get_local_workspace`）把它放线程里跑并把
+    统计带进 :class:`WorkspacePrepareTrace`。
 
     AgentScope 的 ``LocalWorkspace.initialize`` 会把 ``skill_paths`` 逐个 ``copytree`` 进会话
     目录（每会话一份完整物理副本），并在这一过程中把平铺技能迁移进 ``.seed``、顺手丢掉平台
@@ -1087,6 +1196,15 @@ def _preseed_session_skills(
     ledger_moved = os.path.isfile(legacy_index_path) and not os.path.isfile(index_path)
     migrated = _migrate_flat_session_skills(workdir)
     os.makedirs(seed_dir, exist_ok=True)
+    #: 本次播种的统计（调用方带进分段测量，见 WorkspacePrepareTrace）。
+    stats: dict[str, int] = {
+        "total": 0,
+        "copied": 0,
+        "refreshed": 0,
+        "pruned": 0,
+        "removed": 0,
+        "migrated": int(migrated),
+    }
 
     # 先清掉"禁用之前"铺进来的技能（直接读文件即可绕过禁用），再走下面的 hash 差集——不能
     # 早退。早退会让新增/改版技能只能等 AgentScope 自己复制，而它按 frontmatter name 命名，
@@ -1211,6 +1329,7 @@ def _preseed_session_skills(
             entry["hash"] = skill_hash
             entry["skill_id"] = skill_id
             updated = True
+            stats["refreshed"] += 1
             continue
 
         # Resolve agent-facing name conflict (mirror AgentScope loop)
@@ -1251,6 +1370,7 @@ def _preseed_session_skills(
             "skill_name": agent_name,
             "skill_id": skill_id,
         }
+        stats["copied"] += 1
         existing_hashes.add(skill_hash)
         existing_agent_names.add(agent_name)
         existing_dir_names.add(dir_name)
@@ -1313,6 +1433,12 @@ def _preseed_session_skills(
         # pruned 也要算：只清 .seed 不清分区，被禁技能的副本会继续留在会话目录里可读。
         if updated or migrated or pruned:
             _prune_session_skill_partitions(workdir)
+
+    stats["total"] = len(existing)
+    stats["pruned"] = int(pruned)
+    # ``_prune_removed_session_skills`` 返回被删掉的**目录名列表**（不是条数）。
+    stats["removed"] = len(removed or ())
+    return stats
 
 
 SANDBOX_POLICY_LOCAL = "local"
@@ -2951,6 +3077,8 @@ def _drop_docker_workspace_entry_locked(cache_key: str) -> tuple[Any, list[Any]]
             continue
         cached = _workspace_cache.pop(workspace_cache_key, None)
         _workspace_sandbox_refs.pop(workspace_cache_key, None)
+        # 分段测量只服务展示：条目摘掉时一并清，避免下一轮读到上一次构建的读数。
+        _workspace_prepare_traces.pop(workspace_cache_key, None)
         if cached is not None:
             pairs.append(cached)
     return sandbox, pairs
@@ -3145,6 +3273,7 @@ def _drop_k8s_workspace_entry_locked(cache_key: str) -> tuple[Any, list[Any]]:
             continue
         cached = _workspace_cache.pop(workspace_cache_key, None)
         _workspace_sandbox_refs.pop(workspace_cache_key, None)
+        _workspace_prepare_traces.pop(workspace_cache_key, None)
         if cached is not None:
             pairs.append(cached)
     return sandbox, pairs
@@ -4529,6 +4658,65 @@ class LazySandboxWorkspaceProxy:
         return None
 
 
+async def _build_outcome(builder: Callable[[], Awaitable[Any]]) -> Any:
+    """把构建结果包成 ``(pair, error)``，让多个等待者共享同一次失败。
+
+    这里刻意不往上抛：等待者可能不止一个，同一个异常实例被反复 ``raise`` 会让
+    traceback 相互串联；包成元组后由各等待者自行抛出，类型与
+    ``reason_code`` 等属性一个都不丢。
+    """
+    try:
+        return await builder(), None
+    except asyncio.CancelledError:
+        # 取消不是「构建失败」，必须原样传播，否则等待者会把取消当成成功。
+        raise
+    except BaseException as exc:  # noqa: BLE001 - 由等待者决定怎么处理
+        return None, exc
+
+
+def _discard_inflight_build(task: "asyncio.Task[Any]", key: str) -> None:
+    """构建任务结束后从单飞表里摘掉自己（只摘自己，别误删并发方新建的那条）。"""
+    if _workspace_inflight.get(key) is task:
+        _workspace_inflight.pop(key, None)
+
+
+async def _await_workspace_build(
+    cache_key: str,
+    builder: Callable[[], Awaitable[Any]],
+    prepare_trace: WorkspacePrepareTrace | None,
+) -> Any:
+    """按 ``cache_key`` 单飞执行「缓存未命中」的工作区准备。
+
+    **为什么必须单飞**：preflight 预热用 ``asyncio.wait_for``（docker/local 10s、
+    e2b/ssh 60s）包着同一个 ``get_local_workspace``。超时只应该结束「这一方不再等」，
+    但此前那次构建会连同已经铺好的技能快照一起被取消、作废，随后构建段从头再干一遍
+    ——用户白等两轮（预热 10s + 构建 60s）。现在构建跑在独立 task 里、等待者用
+    ``shield`` 等：超时只是这一方退出，活儿照旧只干一遍，构建段接续同一次工作。
+
+    同理，同一会话被并发触发（重新生成、多个子代理共用会话）时也只会建一份。
+    """
+    task = _workspace_inflight.get(cache_key)
+    joined = task is not None
+    if task is None:
+        # 并发方可能刚好在「判未命中」之后把结果填好了：再查一次，别重复建。
+        done = _workspace_cache.get(cache_key)
+        if done is not None:
+            return done
+        task = asyncio.ensure_future(_build_outcome(builder))
+        _workspace_inflight[cache_key] = task
+        task.add_done_callback(
+            lambda finished, key=cache_key: _discard_inflight_build(finished, key)
+        )
+        joined = False
+    pair, error = await asyncio.shield(task)
+    if error is not None:
+        raise error
+    recorded = _workspace_prepare_traces.get(cache_key)
+    if prepare_trace is not None and recorded is not None:
+        prepare_trace.absorb(recorded, joined=joined)
+    return pair
+
+
 async def get_local_workspace(
     *,
     user_id: str | int | None,
@@ -4538,6 +4726,7 @@ async def get_local_workspace(
     skills_custom: bool = False,
     allowed_global_skills: list[str] | None = None,
     lazy_sandbox: bool = False,
+    prepare_trace: WorkspacePrepareTrace | None = None,
 ) -> tuple[Any, Any] | None:
     """Return ``(sandbox_ws, local_ws)`` for the conversation.
 
@@ -4553,6 +4742,9 @@ async def get_local_workspace(
       - docker/e2b/ssh policy   -> ``(sandbox_ws, LocalWorkspace)``
       - no id                   -> ``None``
       - Docker init failure     -> ``DockerSandboxUnavailableError`` (fail-closed)
+
+    ``prepare_trace``：传入一个空 :class:`WorkspacePrepareTrace` 即可拿到分段耗时与
+    关键事实（谁慢、沙箱是新建还是复用）；不传则完全不记录，行为与改造前一致。
     """
     if not conversation_id:
         from app.services.config_service import (
@@ -4584,6 +4776,9 @@ async def get_local_workspace(
         resolve_effective_sandbox_policy,
     )
 
+    # 分段计时从这里开始：配置/目录、技能发现、沙箱获取、技能播种、会话初始化。
+    # 只在真正构建时才有内容（缓存命中走上方的早退，通常几十毫秒）。
+    prepare = BuildStageTimer()
     root = await resolve_workspace_root()
     workdir = resolve_session_workdir(
         root=root,
@@ -4605,6 +4800,7 @@ async def get_local_workspace(
     if policy not in KNOWN_SANDBOX_POLICIES:
         logger.warning("[workspace] Unknown sandbox_policy=%r, falling back to local", policy)
         policy = SANDBOX_POLICY_LOCAL
+    prepare.mark("config")
     # Ensure each (workdir, skills, policy) caches independently so an in-flight
     # policy switch never hands back a workspace built under another strategy.
     #
@@ -4615,12 +4811,16 @@ async def get_local_workspace(
     from app.services.ai.skills.policy import get_forbidden_skill_ids
 
     forbidden_skill_ids = await get_forbidden_skill_ids(_resolve_identity_user_id(user_info))
-    skill_paths = discover_platform_skill_paths(
+    # 技能发现要逐个目录读 SKILL.md 解析 frontmatter（同步 IO，随技能库线性增长），
+    # 同样放线程里，别在首 token 前的关键路径上占着事件循环。
+    skill_paths = await asyncio.to_thread(
+        discover_platform_skill_paths,
         user_info=user_info,
         skills_custom=skills_custom,
         allowed_global_skills=allowed_global_skills,
         forbidden_skill_ids=forbidden_skill_ids,
     )
+    prepare.mark("skills")
 
     cache_key = f"{workdir}::{skills_fp}::{policy}"
 
@@ -4695,135 +4895,183 @@ async def get_local_workspace(
         SANDBOX_POLICY_SSH,
     )
 
-    sandbox_ws = None
-    sandbox_cache_key: str | None = None
-    sandbox_user_key: str | None = None
-    try:
-        if is_sandbox:
-            if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S):
-                sandbox_user_key = _resolve_sandbox_user_key(
-                    user_id=user_id,
-                    user_name=user_name,
-                    user_info=user_info,
-                )
-                if not sandbox_user_key:
-                    raise RuntimeError(
-                        f"{policy.upper()} sandbox requires an authenticated user identity"
+    async def _build_pair() -> Any:
+        """构建并缓存 ``(sandbox_ws, local_ws)``；异常语义与改造前完全一致。"""
+        sandbox_ws = None
+        sandbox_cache_key: str | None = None
+        sandbox_user_key: str | None = None
+        skills_stats: dict[str, Any] = {}
+        #: 沙箱这一格的结果（摘要用）：none / lazy / reused / created。
+        sandbox_outcome = "none"
+        try:
+            if is_sandbox:
+                if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S):
+                    sandbox_user_key = _resolve_sandbox_user_key(
+                        user_id=user_id,
+                        user_name=user_name,
+                        user_info=user_info,
                     )
+                    if not sandbox_user_key:
+                        raise RuntimeError(
+                            f"{policy.upper()} sandbox requires an authenticated user identity"
+                        )
 
-                # 用与 _acquire_* 完全相同的算键函数判定「沙箱已经活着」：手写键格式
-                # （此前少了技能集合令牌）会恒不命中，结果是一律走 lazy 代理，连
-                # 「建会话即持有引用」的语义都丢了——没用过 Bash 的会话 refcount 为 0，
-                # 别的会话释放/回收就能把它关掉。
-                is_already_alive = False
-                if policy == SANDBOX_POLICY_DOCKER:
-                    d_key = _docker_workspace_cache_key(root, sandbox_user_key, skill_paths)
-                    existing_dk = _docker_workspace_cache.get(d_key)
-                    if existing_dk is not None and getattr(existing_dk, "is_alive", True) is not False:
-                        is_already_alive = True
-                elif policy == SANDBOX_POLICY_K8S:
-                    k_key = _k8s_workspace_cache_key(root, sandbox_user_key, skill_paths)
-                    existing_k8s = _k8s_workspace_cache.get(k_key)
-                    if existing_k8s is not None and getattr(existing_k8s, "is_alive", True) is not False:
-                        is_already_alive = True
-
-                if lazy_sandbox and not is_already_alive:
-                    sandbox_ws = LazySandboxWorkspaceProxy(
-                        policy=policy,
-                        root=root,
-                        user_key=sandbox_user_key,
-                        skill_paths=skill_paths,
-                        cache_key=cache_key,
-                    )
-                else:
+                    # 用与 _acquire_* 完全相同的算键函数判定「沙箱已经活着」：手写键格式
+                    # （此前少了技能集合令牌）会恒不命中，结果是一律走 lazy 代理，连
+                    # 「建会话即持有引用」的语义都丢了——没用过 Bash 的会话 refcount 为 0，
+                    # 别的会话释放/回收就能把它关掉。
+                    is_already_alive = False
                     if policy == SANDBOX_POLICY_DOCKER:
-                        sandbox_ws, sandbox_cache_key = await _acquire_docker_workspace(
+                        d_key = _docker_workspace_cache_key(root, sandbox_user_key, skill_paths)
+                        existing_dk = _docker_workspace_cache.get(d_key)
+                        if existing_dk is not None and getattr(existing_dk, "is_alive", True) is not False:
+                            is_already_alive = True
+                    elif policy == SANDBOX_POLICY_K8S:
+                        k_key = _k8s_workspace_cache_key(root, sandbox_user_key, skill_paths)
+                        existing_k8s = _k8s_workspace_cache.get(k_key)
+                        if existing_k8s is not None and getattr(existing_k8s, "is_alive", True) is not False:
+                            is_already_alive = True
+
+                    if lazy_sandbox and not is_already_alive:
+                        sandbox_ws = LazySandboxWorkspaceProxy(
+                            policy=policy,
                             root=root,
                             user_key=sandbox_user_key,
                             skill_paths=skill_paths,
+                            cache_key=cache_key,
                         )
+                        sandbox_outcome = "lazy"
                     else:
-                        sandbox_ws, sandbox_cache_key = await _acquire_k8s_workspace(
-                            root=root,
-                            user_key=sandbox_user_key,
-                            skill_paths=skill_paths,
-                        )
-            elif policy == SANDBOX_POLICY_E2B:
-                sandbox_ws = await _policy_e2b_workspace(skill_paths)
-            else:
-                sandbox_ws = await _policy_ssh_workspace(skill_paths)
-        else:
-            sandbox_ws = None
-
-        # Host local workspace serving file tools (Read/Write/Edit/Glob/Grep).
-        # For the local policy this is the sole workspace; for sandbox policies
-        # it backs the file tools against the user's host session workdir.
-        from agentscope.workspace import LocalWorkspace
-
-        # Pre-seed session skills/ with real copies + matching .skills index so
-        # AgentScope's initialize() hash-skips all copies instead of duplicating
-        # every skill into each session directory.
-        _preseed_session_skills(workdir, skill_paths, forbidden_skill_ids, user_info)
-        local_ws = LocalWorkspace(
-            workdir=workdir,
-            skill_paths=skill_paths,
-        )
-        if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S) and sandbox_user_key:
-            local_ws.workspace_user_root = os.path.join(root, sandbox_user_key)
-            if sandbox_ws is not None and not isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
-                sandbox_ws._platform_sandbox_file_tool_mount_mappings = (
-                    _build_sandbox_file_tool_mount_mappings(
-                        local_ws.workspace_user_root,
-                        public_docs_mounted=bool(
-                            getattr(
-                                sandbox_ws,
-                                "_platform_sandbox_public_docs_mounted",
-                                False,
+                        # 走到这里不是「复用」就是「本轮现场重建」，两者代价差两个数量级，
+                        # 摘要里必须分开写清楚（重建通常意味着容器被回收/镜像要重新构建）。
+                        sandbox_outcome = "reused" if is_already_alive else "created"
+                        if policy == SANDBOX_POLICY_DOCKER:
+                            sandbox_ws, sandbox_cache_key = await _acquire_docker_workspace(
+                                root=root,
+                                user_key=sandbox_user_key,
+                                skill_paths=skill_paths,
                             )
-                        ),
-                    )
-                )
-        await local_ws.initialize()
-        if sandbox_ws is not None:
-            if isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
-                sandbox_ws.local_ws = local_ws
+                        else:
+                            sandbox_ws, sandbox_cache_key = await _acquire_k8s_workspace(
+                                root=root,
+                                user_key=sandbox_user_key,
+                                skill_paths=skill_paths,
+                            )
+                elif policy == SANDBOX_POLICY_E2B:
+                    sandbox_ws = await _policy_e2b_workspace(skill_paths)
+                    sandbox_outcome = "created"
+                else:
+                    sandbox_ws = await _policy_ssh_workspace(skill_paths)
+                    sandbox_outcome = "created"
             else:
-                sandbox_ws._platform_sandbox_policy = policy
-                sandbox_ws._platform_execution_backend = policy
-    except Exception as exc:
-        if sandbox_cache_key is not None:
-            await _release_sandbox_workspace(
-                sandbox_cache_key,
-                reason="host LocalWorkspace initialization failure",
-            )
-        elif sandbox_ws is not None:
-            await _close_workspace_safely(
-                sandbox_ws,
-                reason="host LocalWorkspace initialization failure",
-            )
-        logger.warning("[workspace] Failed to initialize %s workspace workdir=%s: %s", policy, workdir, exc)
-        if policy == SANDBOX_POLICY_DOCKER:
-            if isinstance(exc, DockerSandboxUnavailableError):
-                raise
-            raise DockerSandboxUnavailableError(
-                str(exc),
-                reason_code=_docker_init_reason_code(exc),
-            ) from exc
-        if policy == SANDBOX_POLICY_K8S:
-            from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
-            if isinstance(exc, K8sSandboxUnavailableError):
-                raise
-            raise K8sSandboxUnavailableError(
-                str(exc),
-                reason_code="k8s_workspace_start_failed",
-            ) from exc
-        return None
+                sandbox_ws = None
+            prepare.mark("sandbox")
 
-    pair = (sandbox_ws, local_ws)
-    _workspace_cache[cache_key] = pair
-    if sandbox_cache_key is not None:
-        _workspace_sandbox_refs[cache_key] = sandbox_cache_key
-    return pair
+            # Host local workspace serving file tools (Read/Write/Edit/Glob/Grep).
+            # For the local policy this is the sole workspace; for sandbox policies
+            # it backs the file tools against the user's host session workdir.
+            from agentscope.workspace import LocalWorkspace
+
+            # Pre-seed session skills/ with real copies + matching .skills index so
+            # AgentScope's initialize() hash-skips all copies instead of duplicating
+            # every skill into each session directory.
+            #
+            # 这段是**同步磁盘 IO**（每会话一份真实副本）：直接在协程里跑会把整个
+            # worker 的事件循环卡住，别的会话的 SSE 一起停摆，所以放线程里。
+            skills_stats = await asyncio.to_thread(
+                _preseed_session_skills,
+                workdir,
+                skill_paths,
+                forbidden_skill_ids,
+                user_info,
+            )
+            prepare.mark("preseed")
+            local_ws = LocalWorkspace(
+                workdir=workdir,
+                skill_paths=skill_paths,
+            )
+            if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S) and sandbox_user_key:
+                local_ws.workspace_user_root = os.path.join(root, sandbox_user_key)
+                if sandbox_ws is not None and not isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
+                    sandbox_ws._platform_sandbox_file_tool_mount_mappings = (
+                        _build_sandbox_file_tool_mount_mappings(
+                            local_ws.workspace_user_root,
+                            public_docs_mounted=bool(
+                                getattr(
+                                    sandbox_ws,
+                                    "_platform_sandbox_public_docs_mounted",
+                                    False,
+                                )
+                            ),
+                        )
+                    )
+            await local_ws.initialize()
+            prepare.mark("session")
+            if sandbox_ws is not None:
+                if isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
+                    sandbox_ws.local_ws = local_ws
+                else:
+                    sandbox_ws._platform_sandbox_policy = policy
+                    sandbox_ws._platform_execution_backend = policy
+        except Exception as exc:
+            if sandbox_cache_key is not None:
+                await _release_sandbox_workspace(
+                    sandbox_cache_key,
+                    reason="host LocalWorkspace initialization failure",
+                )
+            elif sandbox_ws is not None:
+                await _close_workspace_safely(
+                    sandbox_ws,
+                    reason="host LocalWorkspace initialization failure",
+                )
+            logger.warning("[workspace] Failed to initialize %s workspace workdir=%s: %s", policy, workdir, exc)
+            if policy == SANDBOX_POLICY_DOCKER:
+                if isinstance(exc, DockerSandboxUnavailableError):
+                    raise
+                raise DockerSandboxUnavailableError(
+                    str(exc),
+                    reason_code=_docker_init_reason_code(exc),
+                ) from exc
+            if policy == SANDBOX_POLICY_K8S:
+                from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+                if isinstance(exc, K8sSandboxUnavailableError):
+                    raise
+                raise K8sSandboxUnavailableError(
+                    str(exc),
+                    reason_code="k8s_workspace_start_failed",
+                ) from exc
+            return None
+
+        pair = (sandbox_ws, local_ws)
+        _workspace_cache[cache_key] = pair
+        if sandbox_cache_key is not None:
+            _workspace_sandbox_refs[cache_key] = sandbox_cache_key
+        recorded = WorkspacePrepareTrace(
+            stages=list(prepare.stages().items()),
+            notes={
+                "policy": policy,
+                "skills": len(skill_paths),
+                "sandbox": sandbox_outcome,
+            }
+            | {
+                key: skills_stats[key]
+                for key in ("copied", "refreshed", "pruned")
+                if skills_stats.get(key)
+            },
+            total_ms=prepare.elapsed_ms(),
+        )
+        _workspace_prepare_traces[cache_key] = recorded
+        if recorded.total_ms >= _WORKSPACE_PREPARE_SLOW_WARN_MS:
+            # 这一段是「首 token 前的静默期」最主要的变量：慢的时候必须能一眼看出
+            # 慢在沙箱、技能播种还是会话初始化，否则只能靠猜（排查见 FAQ 7.3.5 Q7）。
+            logger.warning(
+                "[workspace] 工作区准备耗时 %.0fms（%s）",
+                recorded.total_ms,
+                recorded.summary(),
+            )
+        return pair
+
+    return await _await_workspace_build(cache_key, _build_pair, prepare_trace)
 
 
 async def ensure_docker_workspace(
@@ -6043,13 +6291,22 @@ async def build_host_only_workspace(
     from app.services.ai.skills.policy import get_forbidden_skill_ids
 
     forbidden_skill_ids = await get_forbidden_skill_ids(_resolve_identity_user_id(user_info))
-    skill_paths = discover_platform_skill_paths(
+    # 降级路径同样在首 token 之前，且沙箱刚失败时用户已经在等，别再拿同步 IO 卡住
+    # 事件循环（与 get_local_workspace 保持同一口径）。
+    skill_paths = await asyncio.to_thread(
+        discover_platform_skill_paths,
         user_info=user_info,
         skills_custom=skills_custom,
         allowed_global_skills=allowed_global_skills,
         forbidden_skill_ids=forbidden_skill_ids,
     )
-    _preseed_session_skills(workdir, skill_paths, forbidden_skill_ids, user_info)
+    await asyncio.to_thread(
+        _preseed_session_skills,
+        workdir,
+        skill_paths,
+        forbidden_skill_ids,
+        user_info,
+    )
     local_ws = LocalWorkspace(workdir=workdir, skill_paths=skill_paths)
     await local_ws.initialize()
     return local_ws
@@ -6088,6 +6345,8 @@ async def delete_workspace_for_session(
     for key in list(_workspace_cache.keys()):
         if key == workdir or (isinstance(key, str) and key.startswith(prefix)):
             cached = _workspace_cache.pop(key, None)
+            # 分段测量只用于展示：会话被删除时一并摘掉，别让它按会话数永续累积。
+            _workspace_prepare_traces.pop(key, None)
             if cached is not None:
                 cached_workspaces.append(
                     (cached, _workspace_sandbox_refs.pop(key, None))
@@ -6119,6 +6378,10 @@ async def delete_workspace_for_session(
 def clear_workspace_cache() -> None:
     _workspace_cache.clear()
     _workspace_sandbox_refs.clear()
+    # 单飞表与分段测量只服务于「正在进行/刚完成」的那次构建：缓存都清了，它们留下的
+    # 记录只会让下一次调用误判「有人正在建」。任务本身不在这里取消——取消由持有者负责。
+    _workspace_inflight.clear()
+    _workspace_prepare_traces.clear()
     _docker_workspace_cache.clear()
     _docker_workspace_refcounts.clear()
     _docker_workspace_locks.clear()

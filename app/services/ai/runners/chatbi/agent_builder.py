@@ -12,6 +12,7 @@ from app.services.ai.runtime.agentscope.build_progress import (
 from app.services.ai.runtime.agentscope.tools import (
     RuntimeToolSpec,
 )
+from app.services.ai.runtime.agentscope.workspace import WorkspacePrepareTrace
 from app.services.ai.tool_capability import AgentScopeToolConsumer
 from app.services.ai.tools.registry import ToolRegistry
 
@@ -59,6 +60,8 @@ async def build_native_agent(
         details="正在装配工作区、工具与会话状态…",
     )
     tools = filter_redundant_time_tools(tools, system_content)
+    # 与助手路径同口径：工作区准备的分段测量（沙箱获取 / 技能播种 / 会话初始化）。
+    prepare_trace = WorkspacePrepareTrace()
     workspace = await dar.get_local_workspace(
         user_id=runner._current_user_id(),
         user_name=runner._runtime_user_name(),
@@ -67,8 +70,13 @@ async def build_native_agent(
         skills_custom=bool(getattr(runner.config, "skills_custom", False)),
         allowed_global_skills=list(getattr(runner.config, "skills", None) or []),
         lazy_sandbox=True,
+        prepare_trace=prepare_trace,
     )
     build_timer.mark("workspace")
+    for _stage_name, _stage_ms in prepare_trace.stages:
+        build_timer.record(f"workspace:{_stage_name}", _stage_ms)
+    if prepare_trace.joined_inflight:
+        build_timer.record("workspace:joined", prepare_trace.total_ms)
     from app.services.ai.runtime.agentscope.workspace import (
         bind_configured_tools_to_workspace,
         get_workspace_execution_backend,

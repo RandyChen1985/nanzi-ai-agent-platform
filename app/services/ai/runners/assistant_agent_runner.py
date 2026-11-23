@@ -115,6 +115,7 @@ from app.services.ai.runtime.agentscope.session_lock import (
 )
 from app.services.ai.runtime.agentscope.workspace import (
     DockerSandboxUnavailableError,
+    WorkspacePrepareTrace,
     _workspace_native_name_for_spec,
     bind_configured_tools_to_workspace,
     build_host_only_workspace,
@@ -154,6 +155,16 @@ _FILE_TOOL_OPERATIONS = {
     "Glob": "search",
     "Grep": "search",
 }
+
+
+def _workspace_trace_details(trace: WorkspacePrepareTrace | None) -> str:
+    """把工作区准备的分段摘要拼成卡片 details 的后缀（没有内容就不加）。
+
+    卡片右侧显示的是整段墙钟，但「为什么这么慢」只有分段摘要能回答：沙箱现场重建、
+    技能全量播种、会话初始化三者代价差两个数量级。
+    """
+    summary = trace.summary() if trace is not None else ""
+    return f"（{summary}）" if summary else ""
 
 
 def _extract_agentscope_tool_call_input(agent: Any, tool_id: str) -> Any:
@@ -2577,6 +2588,9 @@ class AssistantAgentRunner(BaseExecutor):
         # 真建连，所有策略都要做技能播种与 LocalWorkspace.initialize，整体被 90s 的
         # wait_for 兜着。这段时间执行时间线一个字都不会动，所以先挂一张进度卡。
         prepare_started_at = time.monotonic()
+        # 分段测量：慢在沙箱获取、技能播种还是会话初始化，必须能一眼看出来——这段是
+        # 首 token 前最长、也最不稳定的一段（容器被回收时可能是分钟级）。
+        prepare_trace = WorkspacePrepareTrace()
         await self._emit_workspace_prepare_log(status="pending")
         try:
             workspace = await asyncio.wait_for(
@@ -2588,6 +2602,7 @@ class AssistantAgentRunner(BaseExecutor):
                     skills_custom=bool(getattr(self.config, "skills_custom", False)),
                     allowed_global_skills=list(getattr(self.config, "skills", None) or []),
                     lazy_sandbox=True,
+                    prepare_trace=prepare_trace,
                 ),
                 timeout=90.0,
             )
@@ -2637,7 +2652,11 @@ class AssistantAgentRunner(BaseExecutor):
             await self._emit_workspace_prepare_log(
                 status="error",
                 started_at=prepare_started_at,
-                details="沙箱当前不可用，本轮已降级为本地执行（Bash 与脚本工具不可用），沙箱恢复后自动恢复。",
+                details=(
+                    "沙箱当前不可用，本轮已降级为本地执行（Bash 与脚本工具不可用），"
+                    "沙箱恢复后自动恢复。"
+                    + _workspace_trace_details(prepare_trace)
+                ),
             )
             workspace = (
                 None,
@@ -2664,9 +2683,15 @@ class AssistantAgentRunner(BaseExecutor):
             await self._emit_workspace_prepare_log(
                 status="success",
                 started_at=prepare_started_at,
-                details="工作区已就绪。",
+                details=f"工作区已就绪。{_workspace_trace_details(prepare_trace)}",
             )
         build_timer.mark("workspace")
+        # 工作区准备的内部实测（沙箱获取 / 技能播种 / 会话初始化）：父行是本段墙钟，
+        # 子行是那次构建的分段，两者刻意不强求相加相等（见 format_build_details）。
+        for _stage_name, _stage_ms in prepare_trace.stages:
+            build_timer.record(f"workspace:{_stage_name}", _stage_ms)
+        if prepare_trace.joined_inflight:
+            build_timer.record("workspace:joined", prepare_trace.total_ms)
         # 仅挂载 agent 后端配置的工具；已配置的 Bash/Read 等换成会话 workdir 版本，不额外注入未绑定的内置工具。
         tools = await bind_configured_tools_to_workspace(
             workspace,
