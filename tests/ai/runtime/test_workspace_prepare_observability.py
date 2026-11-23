@@ -7,7 +7,10 @@
    技能数、沙箱是新建还是复用）都要能被调用方拿到，并且慢的时候日志里能看出来；
 2. **单飞**：preflight 预热用 10s/60s 超时包着同一个调用，超时只应结束「这一方不再
    等」，绝不能把已经铺好的技能快照一起作废、让构建段从头再干一遍；
-3. **不阻塞事件循环**：技能发现与技能播种是同步磁盘 IO，必须在工作线程里跑。
+3. **不阻塞事件循环**：技能发现与技能播种是同步磁盘 IO，必须在工作线程里跑；
+4. **不为用不上的沙箱付首 token 延迟**：只有「刚确认活着」（存活探测窗口内）的
+   docker 缓存条目才直接复用，否则一律给惰性代理，把建容器的十几秒推到真正需要
+   Bash 的那一刻。
 """
 
 from __future__ import annotations
@@ -255,6 +258,104 @@ async def test_cancelled_waiter_keeps_build_alive_for_later_callers(tmp_path, mo
 
     pair = await _prepare()
     assert pair is not None
+
+
+# ── 2.5 只有「刚确认活着」的沙箱才在首 token 前付代价 ─────────
+
+
+def _seed_stale_docker_entry(tmp_path, monkeypatch, *, verified_ago: float | None):
+    """在缓存里放一条 docker 沙箱条目，可选地标记「多久之前验证过活着」."""
+    from unittest.mock import MagicMock
+
+    fake_ws = MagicMock()
+    fake_ws.is_alive = True
+    fake_ws._platform_sandbox_policy = SANDBOX_POLICY_DOCKER
+    user_key = ws._resolve_sandbox_user_key(
+        user_id="101",
+        user_name="tester",
+        user_info={"user_id": 101, "user_name": "tester"},
+    )
+    docker_key = ws._docker_workspace_cache_key(str(tmp_path), user_key, [])
+    ws._docker_workspace_cache[docker_key] = fake_ws
+    if verified_ago is not None:
+        ws._docker_workspace_verified_at[docker_key] = time.monotonic() - verified_ago
+    return fake_ws, docker_key
+
+
+@pytest.mark.asyncio
+async def test_stale_cache_entry_does_not_rebuild_before_first_token(tmp_path, monkeypatch):
+    """缓存里只剩一条 is_alive=True 的旧条目时不许 eager 探测/重建。
+
+    这是「工作区准备 13 秒」的主因：容器早被空闲回收，``is_alive`` 仍是 True，
+    eager 路径会当场重建一台容器，而这一轮往往压根不调用 Bash。
+    """
+    _patch_common(monkeypatch, tmp_path, policy=SANDBOX_POLICY_DOCKER)
+    monkeypatch.setattr(ws, "_preseed_session_skills", lambda *a, **k: _empty_stats())
+    _seed_stale_docker_entry(tmp_path, monkeypatch, verified_ago=3600.0)
+    acquire = AsyncMock()
+    monkeypatch.setattr(ws, "_acquire_docker_workspace", acquire)
+
+    trace = WorkspacePrepareTrace()
+    pair = await _prepare(lazy_sandbox=True, prepare_trace=trace)
+
+    assert isinstance(pair[0], ws.LazySandboxWorkspaceProxy)
+    assert not acquire.await_count, "过期条目触发了 eager 探测/重建"
+    assert trace.notes["sandbox"] == "lazy"
+    assert "待按需拉起" in trace.summary()
+
+
+@pytest.mark.asyncio
+async def test_entry_without_probe_record_is_treated_as_stale(tmp_path, monkeypatch):
+    """连验证记录都没有（别的路径塞进来的条目）同样按「未确认」处理。"""
+    _patch_common(monkeypatch, tmp_path, policy=SANDBOX_POLICY_DOCKER)
+    monkeypatch.setattr(ws, "_preseed_session_skills", lambda *a, **k: _empty_stats())
+    _seed_stale_docker_entry(tmp_path, monkeypatch, verified_ago=None)
+    acquire = AsyncMock()
+    monkeypatch.setattr(ws, "_acquire_docker_workspace", acquire)
+
+    pair = await _prepare(lazy_sandbox=True)
+
+    assert isinstance(pair[0], ws.LazySandboxWorkspaceProxy)
+    acquire.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recently_verified_entry_is_reused_eagerly(tmp_path, monkeypatch):
+    """刚确认过活着的沙箱仍然直接复用（不走代理、不重建）。"""
+    _patch_common(monkeypatch, tmp_path, policy=SANDBOX_POLICY_DOCKER)
+    monkeypatch.setattr(ws, "_preseed_session_skills", lambda *a, **k: _empty_stats())
+    fake_ws, docker_key = _seed_stale_docker_entry(tmp_path, monkeypatch, verified_ago=1.0)
+    acquire = AsyncMock(return_value=(fake_ws, docker_key))
+    monkeypatch.setattr(ws, "_acquire_docker_workspace", acquire)
+
+    trace = WorkspacePrepareTrace()
+    pair = await _prepare(lazy_sandbox=True, prepare_trace=trace)
+
+    assert pair[0] is fake_ws
+    assert not isinstance(pair[0], ws.LazySandboxWorkspaceProxy)
+    acquire.assert_awaited_once()
+    assert trace.notes["sandbox"] == "reused"
+    assert "复用存活沙箱" in trace.summary()
+
+
+@pytest.mark.asyncio
+async def test_stale_entry_is_rebuilt_only_when_bash_actually_needs_it(tmp_path, monkeypatch):
+    """代价被推迟到「真的要用沙箱」那一刻，而不是消失。"""
+    _patch_common(monkeypatch, tmp_path, policy=SANDBOX_POLICY_DOCKER)
+    monkeypatch.setattr(ws, "_preseed_session_skills", lambda *a, **k: _empty_stats())
+    fake_ws, docker_key = _seed_stale_docker_entry(tmp_path, monkeypatch, verified_ago=3600.0)
+    acquire = AsyncMock(return_value=(fake_ws, docker_key))
+    monkeypatch.setattr(ws, "_acquire_docker_workspace", acquire)
+
+    pair = await _prepare(lazy_sandbox=True)
+    proxy = pair[0]
+    acquire.assert_not_awaited()
+
+    # 首次真的需要沙箱（Bash / 脚本工具）时才拉起，并接到同一台容器上
+    real = await proxy.ensure_ready()
+
+    assert real is fake_ws
+    acquire.assert_awaited_once()
 
 
 # ── 3. 同步磁盘 IO 必须离开事件循环 ────────────────────────────

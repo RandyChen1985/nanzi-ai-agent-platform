@@ -3084,6 +3084,27 @@ def _drop_docker_workspace_entry_locked(cache_key: str) -> tuple[Any, list[Any]]
     return sandbox, pairs
 
 
+def _docker_sandbox_confirmed_alive(cache_key: str) -> bool:
+    """缓存里的 docker 沙箱是否**刚被确认还活着**（存活探测窗口之内）。
+
+    ``is_alive`` 只是普通布尔属性，容器被回收 / ``docker rm`` / 别的实例
+    ``create_or_replace`` 之后它仍是 ``True``。所以「缓存里有条目」不等于「容器还在」：
+    真正确认只有两种来源——刚刚建好，或最近 :data:`DOCKER_WORKSPACE_ALIVE_PROBE_TTL_SECONDS`
+    内做过一次 ``container.show()``（两者都会写 ``_docker_workspace_verified_at``）。
+
+    **为什么这点很关键**：构建路径（``lazy_sandbox=True``）只有在沙箱「确认活着」时才
+    直接复用缓存条目。否则一旦进程里残留着一条旧条目（``is_alive`` 还是 True、容器其实
+    早被空闲回收），就会走 eager 路径去探测，探测判死后**当场重建一台容器**——十几秒
+    全记在首 token 之前，而多数轮次根本不会调用 Bash。给惰性代理则把这笔钱推到真正
+    需要 Bash 的那一刻（代理的 ``ensure_ready`` 会走同一个 ``_acquire_docker_workspace``，
+    探测、重建、引用计数一样不少）。
+    """
+    verified_at = _docker_workspace_verified_at.get(cache_key, 0.0)
+    if not verified_at:
+        return False
+    return (time.monotonic() - verified_at) < DOCKER_WORKSPACE_ALIVE_PROBE_TTL_SECONDS
+
+
 async def _acquire_docker_workspace(
     *,
     root: str,
@@ -4924,7 +4945,13 @@ async def get_local_workspace(
                     if policy == SANDBOX_POLICY_DOCKER:
                         d_key = _docker_workspace_cache_key(root, sandbox_user_key, skill_paths)
                         existing_dk = _docker_workspace_cache.get(d_key)
-                        if existing_dk is not None and getattr(existing_dk, "is_alive", True) is not False:
+                        # 必须「刚确认活着」才复用：只剩一个 is_alive 属性为 True 的旧条目，
+                        # 容器很可能早被回收，走 eager 就会在首 token 前当场重建一台。
+                        if (
+                            existing_dk is not None
+                            and getattr(existing_dk, "is_alive", True) is not False
+                            and _docker_sandbox_confirmed_alive(d_key)
+                        ):
                             is_already_alive = True
                     elif policy == SANDBOX_POLICY_K8S:
                         k_key = _k8s_workspace_cache_key(root, sandbox_user_key, skill_paths)
