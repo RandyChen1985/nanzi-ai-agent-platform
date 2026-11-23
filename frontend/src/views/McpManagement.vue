@@ -233,15 +233,6 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
           个人私有
         </span>
       </div>
-      <!-- 窄屏隐藏：这行有 40 多个字，一张卡片的位置只换来一句介绍，
-           而且它撑高页头后会把下面的二级 tab 挤出可视区 -->
-      <p class="mcp-page-desc hidden text-xs leading-relaxed text-gray-500 dark:text-gray-400 sm:block sm:text-sm">
-        {{
-          personalOnly
-            ? '登记并管理仅对自己可见的 MCP，可在对话中挂载使用'
-            : '接入并管理外部 MCP 远程服务（SSE / Streamable HTTP），自动识别工具集并无缝绑定至智能体生态'
-        }}
-      </p>
     </div>
 
     <!-- MCP 5 步全生命周期指引横幅 -->
