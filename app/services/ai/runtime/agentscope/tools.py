@@ -1003,14 +1003,22 @@ class AgentScopeRuntimeTool:
                     call_id=call_id,
                     arguments=kwargs,
                 )
+            # 与流式路径同一套处理：先把计量摘走，再交给格式化。
+            #
+            # 这条是**普通 async 工具**的返回路径，`generate_image` / `edit_image`
+            # 走的正是它。原来这里直接 `_format_runtime_tool_result(res)` 就返回了，
+            # 于是用量跟着结果整段进了模型上下文（白花 token），却没进元数据——
+            # 轨迹的 meta_info、消息上的用量、Token 统计页的图片用量因此全是空的，
+            # 而且不报错。两条路径必须共用同一套摘取与元数据组装。
+            clean_result, image_usage = _split_image_usage(res)
             return ToolChunk(
-                content=[TextBlock(text=_format_runtime_tool_result(res))],
+                content=[TextBlock(text=_format_runtime_tool_result(clean_result))],
                 state=(
                     ToolResultState.SUCCESS
                     if is_tool_execution_success(res)
                     else ToolResultState.ERROR
                 ),
-                metadata={"nanzi_call_id": call_id},
+                metadata=_tool_chunk_metadata(call_id, image_usage),
             )
         except Exception as exc:
             if isinstance(exc, PermissionError):

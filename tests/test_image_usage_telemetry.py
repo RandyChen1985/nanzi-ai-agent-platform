@@ -127,3 +127,52 @@ def test_runner_writes_usage_into_trace_meta_info():
     assert 'meta_info=' in window
     assert '"timeout_seconds": t_timeout' in window
     assert '"image_usage": image_usage' in window
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_tool_call_carries_usage_in_metadata():
+    """非流式工具（generate_image / edit_image 走的就是这条）同样要把计量挂到元数据上。
+
+    真实故障（2026-11-23 14:10 那次生图）：轨迹的 `tool_output.raw` 里明明有
+    `image_usage`，`meta_info` 却只有 timeout —— 因为 `AgentScopeRuntimeTool.__call__`
+    有两条返回路径，只有「流式生成器」那条摘了计量，普通 async 工具这条直接
+    `_format_runtime_tool_result(res)` 就返回了。后果是三重静默失效：用量跟着结果进了
+    模型上下文（白花 token）、轨迹里查不到、Token 统计页的图片用量恒为 0。
+    """
+    from app.services.ai.runtime.agentscope.tools import (
+        AgentScopeRuntimeTool,
+        RuntimeToolSpec,
+    )
+
+    async def _generate_image(**_kwargs):
+        return {
+            "ok": True,
+            "images": [{"filename": "generated-image-1.png"}],
+            "image_usage": _USAGE,
+            "hint": "用 markdown 图片语法引用 download_url",
+        }
+
+    spec = RuntimeToolSpec(
+        name="generate_image",
+        description="画一张图",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=_generate_image,
+        permission_scope="read",
+    )
+    tool = AgentScopeRuntimeTool(spec, approval_mode="allow")
+
+    chunk = await tool()
+
+    # 1) 计量必须挂在元数据上，才能一路带到执行轨迹的 meta_info
+    assert chunk.metadata[IMAGE_USAGE_METADATA_KEY] == _USAGE
+    # 2) 凭证 ID 不能因为这次改动丢掉
+    assert chunk.metadata["nanzi_call_id"]
+
+    text = "".join(str(getattr(block, "text", "")) for block in chunk.content)
+    # 3) 计量不许进模型上下文
+    assert "image_usage" not in text
+    assert "succeeded_count" not in text
+    # 4) 业务字段一个都不能少
+    assert "generated-image-1.png" in text
+    assert "download_url" in text

@@ -2994,6 +2994,7 @@ import {
 } from "@/composables/chat/useChatHistoryGroups";
 import { usePinnedConversations } from "@/composables/chat/usePinnedConversations";
 import {
+  accumulateImageUsage,
   applyStreamTraceId,
   appendAssistantBodyDelta,
   createBufferedStreamEventPump,
@@ -11181,7 +11182,7 @@ const fetchConversationHistory = async (
               // 提问卡实时渲染依赖消息对象上的 userQuestion（不落库），历史回放需从
               // process_timeline 快照重建，否则卡片只剩一行「需要用户回答」。
               const persistedQuestions = userQuestionStatesFromTimeline(hydratedTimeline);
-              newHistoryBatch.push({
+              const restoredAgentMessage: Message = {
                   id: Date.now() + idx * 2 + 1 + offset,
                   trace_id: item.trace_id,
                   role: 'agent',
@@ -11209,7 +11210,16 @@ const fetchConversationHistory = async (
                       }
                     : undefined,
                   timestamp: item.created_at
-              });
+              };
+              // 图片用量：后端回填的是**原始单次记录**数组，这里用实时链路同一个累加
+              // 函数聚合。聚合规则（calls / images / requested / tokens / size）只该有
+              // 一份实现，否则「刷新前后同一条消息」会显示两个不同的数。
+              if (Array.isArray(item.image_usage)) {
+                  for (const usage of item.image_usage) {
+                      accumulateImageUsage(restoredAgentMessage, usage);
+                  }
+              }
+              newHistoryBatch.push(restoredAgentMessage);
           }
       });
       // 首屏历史必须无条件覆盖：空结果同样要清空。否则「本会话没有任何属于当前用户
