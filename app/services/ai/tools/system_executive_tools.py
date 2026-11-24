@@ -348,14 +348,58 @@ def _is_forbidden_shell_command(command: str) -> str | None:
     return None
 
 
+#: 技能清单单次默认返回条数 / 硬上限。
+#:
+#: 清单是「全序枚举」：模型靠"列表里有没有它"判断某个技能是否存在，因此一旦被截断
+#: 而模型不知道，就会把"没看到"断言成"不存在"。默认值与上限要保证正常规模的清单
+#: 一次就能拿全，超出时必须靠 ``truncated`` 让模型知道还有未展示的条目。
+_SKILL_LIST_LIMIT_DEFAULT = 50
+_SKILL_LIST_LIMIT_MAX = 200
+
+
+def _coerce_skill_list_limit(limit: Optional[int]) -> int:
+    """把 ``limit`` 规范化成 ``[1, _SKILL_LIST_LIMIT_MAX]``；非法值退回默认。"""
+    try:
+        value = int(limit)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return _SKILL_LIST_LIMIT_DEFAULT
+    if value <= 0:
+        return _SKILL_LIST_LIMIT_DEFAULT
+    return min(value, _SKILL_LIST_LIMIT_MAX)
+
+
+def _skill_matches_keyword(item: dict, needle: str) -> bool:
+    """技能是否命中 keyword（匹配 id / 名称 / 描述，不区分大小写）。"""
+    if not needle:
+        return True
+    haystack = " ".join(
+        str(item.get(key) or "") for key in ("id", "name", "description")
+    ).lower()
+    return needle in haystack
+
+
 @tool
-async def list_available_skills() -> str:
-    """
-    列出当前会话可用的技能摘要（已启用），供智能体按 name/description 判断是否需要读取具体技能。
+async def list_available_skills(
+    keyword: Optional[str] = None,
+    limit: Optional[int] = _SKILL_LIST_LIMIT_DEFAULT,
+) -> str:
+    """列出当前会话可用的技能摘要（已启用），供智能体按 id/描述判断是否需要读取具体技能。
+
+    返回 JSON 对象：`{"total": N, "returned": M, "truncated": bool, "skills": [...]}`，
+    每个技能含 id / name / description / scope。
+    - `total` 是当前会话可见技能总数，`returned` 是本次实际返回条数。
+    - `truncated=true` 表示还有未展示的技能（`note` 会说明有多少条）。此时**必须**用
+      `keyword` 收窄或调大 `limit` 再查一次，**不能**因为这次没看到某个技能就断言它不存在。
+    - 清单较长时优先用 `keyword` 定位（匹配 id / 名称 / 描述，不区分大小写）。
+
     规则与运行时一致：未自定义时=全部已启用公共技能+当前用户个人技能；
     自定义开启时=智能体勾选的公共技能+当前用户个人技能；
     两种情况都还要再扣掉权限侧禁用（forbidden_skills）的公共技能。
     只返回技能 ID、名称、描述与 scope，不读取完整 SKILL.md。
+
+    Args:
+        keyword: 可选。按技能 id / 名称 / 描述模糊匹配（不区分大小写），用于在长清单里定位。
+        limit: 可选。本次最多返回多少条，默认 50，最大 200。
     """
     try:
         from app.core.context import get_current_agent_context
@@ -375,11 +419,11 @@ async def list_available_skills() -> str:
             allowed_global_skills=allowed if skills_custom else None,
             excluded_skill_ids=forbidden_skill_ids,
         )
-        skills = []
+        visible = []
         for meta in metas:
             if not is_skill_enabled(meta):
                 continue
-            skills.append(
+            visible.append(
                 {
                     "id": meta.get("id"),
                     "name": meta.get("name") or meta.get("id"),
@@ -387,9 +431,127 @@ async def list_available_skills() -> str:
                     "scope": meta.get("scope") or "global",
                 }
             )
-        return json.dumps(skills, ensure_ascii=False, indent=2)
+
+        needle = str(keyword or "").strip().lower()
+        page_size = _coerce_skill_list_limit(limit)
+        matched = [item for item in visible if _skill_matches_keyword(item, needle)]
+        page = matched[:page_size]
+
+        payload: dict = {
+            "total": len(matched),
+            "returned": len(page),
+            "truncated": len(matched) > len(page),
+            "skills": page,
+        }
+        if needle:
+            payload["keyword"] = needle
+        if payload["truncated"]:
+            payload["note"] = (
+                f"另有 {len(matched) - len(page)} 个技能未展示；请用 keyword 收窄或调大 "
+                f"limit（最大 {_SKILL_LIST_LIMIT_MAX}）再查，未展示不等于不存在。"
+            )
+        elif not matched:
+            payload["note"] = (
+                f"没有技能匹配 keyword={needle!r}；可去掉 keyword 查看全部技能。"
+                if needle
+                else "当前会话没有可见技能。"
+            )
+        return json.dumps(payload, ensure_ascii=False)
     except Exception as e:
         return f"错误：列出技能失败，原因: {str(e)}"
+
+
+def _normalize_skill_id_token(value: str) -> str:
+    """技能 id 的宽松归一：忽略大小写与分隔符差异（``dsapi_admin`` vs ``dsapi-admin``）。"""
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def _closest_skill_ids(skill_id: str, candidates: list[str], limit: int = 3) -> list[str]:
+    """给出最接近的技能 id，帮模型自查拼写，而不是靠猜"是不是被禁用了"。"""
+    if not skill_id or not candidates:
+        return []
+    import difflib
+
+    target = _normalize_skill_id_token(skill_id)
+    if not target:
+        return []
+    by_token: dict[str, str] = {}
+    for candidate in candidates:
+        token = _normalize_skill_id_token(candidate)
+        # 只排除"和传入 id 完全相同"的那个；归一化后相同（下划线 vs 中划线这类常见手误）
+        # 恰恰是最该提示的候选，不能一起排掉。
+        if token and candidate != skill_id:
+            by_token.setdefault(token, candidate)
+    hits: list[str] = []
+    if target in by_token:
+        hits.append(by_token[target])
+    for token in difflib.get_close_matches(target, list(by_token), n=limit, cutoff=0.6):
+        candidate = by_token[token]
+        if candidate not in hits:
+            hits.append(candidate)
+        if len(hits) >= limit:
+            break
+    return hits[:limit]
+
+
+def _describe_skill_lookup_failure(
+    skill_id: str,
+    *,
+    user_info,
+    skills_custom: bool,
+    forbidden_skill_ids,
+) -> str:
+    """说明「技能读不到」的具体原因，并给出最接近的候选 id。
+
+    旧文案把「不存在 / 已禁用 / 不在智能体范围 / 被权限禁用」压成一句三选一
+    （"不存在、已禁用，或不在当前智能体可用 Skills 范围内"）。实测模型会把它读成
+    "该技能被移出范围了"，据此向用户报告一个不存在的问题。这四种原因的处理动作
+    完全不同（改 id / 找管理员启用 / 调整智能体白名单 / 联系管理员解禁），必须分开说。
+    """
+    from app.services.ai.skill_resolver import list_skill_metas
+
+    try:
+        # 不带过滤参数的全量清单：只有它才能区分"根本没这个技能"与"被过滤掉了"。
+        all_metas = list_skill_metas(user_info=user_info)
+    except Exception as e:  # noqa: BLE001 - 诊断信息拿不到也不能盖掉原始错误
+        logger.debug("[Skills] Failed to build lookup diagnostics for %s: %s", skill_id, e)
+        all_metas = []
+    known = {str(meta.get("id") or ""): meta for meta in all_metas}
+    forbidden = {str(item).strip() for item in (forbidden_skill_ids or set()) if str(item).strip()}
+
+    meta = known.get(skill_id)
+    if meta is not None:
+        if not is_skill_enabled(meta):
+            reason = (
+                f"技能 {skill_id} 存在，但它在 SKILL.md 里的 enabled 不是 true（已被停用），"
+                "因此不会加载。需要启用请到技能管理里打开该技能。"
+            )
+        elif skill_id in forbidden:
+            reason = (
+                f"技能 {skill_id} 在公共技能库里存在，但被权限规则禁用（forbidden_skills），"
+                "当前用户不可读。需要解禁请让管理员调整权限。"
+            )
+        elif skills_custom:
+            reason = (
+                f"技能 {skill_id} 是公共技能，但当前智能体开启了「自定义技能」，"
+                "而它的白名单里没有这个技能。请改用白名单内的技能，或让管理员把该智能体"
+                "的技能配置改回全部可用。"
+            )
+        else:
+            reason = f"技能 {skill_id} 当前不可读（可见性过滤后未命中）。"
+    else:
+        reason = (
+            f"技能 {skill_id} 不存在：公共技能库里没有它，当前用户的个人技能目录里也没有。"
+        )
+
+    suggestions = _closest_skill_ids(skill_id, list(known))
+    if suggestions:
+        reason += f" 最接近的候选 id：{', '.join(suggestions)}。"
+    reason += (
+        " 请先用 list_available_skills 核对 id（只能用小写英文、数字、中划线），"
+        "确认无误后原样传入重试一次；单次读取失败不代表该技能已被删除或禁用。"
+    )
+    return f"错误：{reason}"
 
 
 @tool
@@ -433,9 +595,11 @@ async def read_skill_instruction(skill_id: str, path: Optional[str] = None) -> s
             None,
         )
         if not matched:
-            return (
-                f"错误：技能 {safe_skill_id} 不存在、已禁用，"
-                "或不在当前智能体可用 Skills 范围内。"
+            return _describe_skill_lookup_failure(
+                safe_skill_id,
+                user_info=user_info,
+                skills_custom=skills_custom,
+                forbidden_skill_ids=forbidden_skill_ids,
             )
 
         skill_md_path = matched.get("skill_md_path")

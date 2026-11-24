@@ -193,7 +193,7 @@ async def test_skill_tools_hide_and_reject_forbidden_skills(skills_env, monkeypa
         assert '"alpha"' in listing
 
         rejected = await system_executive_tools.read_skill_instruction.func("beta")
-        assert "不在当前智能体可用" in rejected
+        assert "被权限规则禁用" in rejected
     finally:
         current_user_info.reset(token)
 

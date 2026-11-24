@@ -284,7 +284,11 @@ async def test_list_available_skills_surfaces_seeded_personal_skill(tmp_path, mo
     raw = await list_available_skills.ainvoke({})
     data = json.loads(raw)
 
-    personal = [item for item in data if item.get("scope") == "personal"]
+    # 返回结构是 {total, returned, truncated, skills}：调用方（与模型）必须能区分
+    # 「一共几条」与「这次给了几条」，否则截断会被误读成「该技能不存在」。
+    assert data["total"] == len(data["skills"])
+    assert data["truncated"] is False
+    personal = [item for item in data["skills"] if item.get("scope") == "personal"]
     assert [item["id"] for item in personal] == ["seed-skill"], (
         "个人技能躺在 .seed 里时，工具必须仍然列出它，而不是返回 []"
     )
