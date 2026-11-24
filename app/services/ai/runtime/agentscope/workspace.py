@@ -7835,6 +7835,32 @@ class _ScriptCredentialBashNativeTool:
             return "no-workdir"
         return None
 
+    def _record_status(self, reason: str) -> None:
+        """把注入失败的原因落到工作区 ``.nanzi/last-error.txt``。
+
+        为什么落文件而不只写日志：这个功能失效时用户看到的唯一现象就是
+        ``command not found``，会误以为是「没装这个命令」；而平台日志在服务端，
+        用户未必看得到。落盘之后 ``cat .nanzi/last-error.txt`` 就能看到原因，
+        不用去猜，也不用依赖模型照指令执行。
+        """
+        if not self._workdir:
+            return
+        try:
+            directory = os.path.join(self._workdir, DIR_NAME_FOR_HELPER)
+            os.makedirs(directory, mode=0o700, exist_ok=True)
+            with open(
+                os.path.join(directory, "last-error.txt"), "w", encoding="utf-8"
+            ) as handle:
+                handle.write(f"{self._timestamp()} {reason}\n")
+        except OSError as exc:  # noqa: BLE001 - 落盘失败只能记日志
+            logger.warning("[ScriptCredential] 写诊断文件失败: %s", exc)
+
+    @staticmethod
+    def _timestamp() -> str:
+        from datetime import datetime
+
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     # ── 准备 / 清理 ───────────────────────────────────────────────
 
     async def _prepare(
@@ -7932,6 +7958,7 @@ class _ScriptCredentialBashNativeTool:
 
         reason = self._skip_reason()
         if reason is not None:
+            self._record_status(reason)
             return await self._invoke_plain(_with_credential_status(kwargs, reason))
 
         identity = self._identity()
@@ -7943,9 +7970,9 @@ class _ScriptCredentialBashNativeTool:
 
         ctx, prepare_error = await self._prepare(identity, helper_dir)
         if ctx is None:
-            return await self._invoke_plain(
-                _with_credential_status(kwargs, f"prepare-failed:{prepare_error}")
-            )
+            reason = f"prepare-failed:{prepare_error}"
+            self._record_status(reason)
+            return await self._invoke_plain(_with_credential_status(kwargs, reason))
 
         decorated = dict(kwargs)
         decorated["command"] = self._decorate(command, helper_dir, ctx)
