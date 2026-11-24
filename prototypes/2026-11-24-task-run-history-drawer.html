@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>执行历史抽屉 · 重设计与三方案</title>
+<meta name="prototype-kind" content="方案对比">
+<style>
+  :root{
+    --pri:#1677ff; --pri-bg:#e8f1ff;
+    --ok:#10b981; --ok-bg:#ecfdf5;
+    --warn:#f59e0b; --warn-bg:#fffbeb;
+    --err:#ef4444; --err-bg:#fef2f2;
+    --g900:#111827; --g700:#374151; --g500:#6b7280; --g400:#9ca3af; --g300:#d1d5db;
+    --bd:#e5e7eb; --bd2:#eef0f3; --bg:#f6f7f9;
+    --drawer-w:672px;
+  }
+  *{box-sizing:border-box}
+  button{border:0;background:none;font:inherit;padding:0;margin:0;cursor:pointer}
+  body{
+    margin:0;padding:26px 20px 60px;background:var(--bg);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    color:var(--g900);-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1320px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--g500);font-size:13px;margin:0 0 22px;max-width:900px}
+  .sub code{background:#eef0f3;border-radius:4px;padding:1px 5px;font-size:11.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#b91c1c}
+  .sec{margin:0 0 12px;font-size:13px;font-weight:700;color:var(--g700);display:flex;align-items:center;gap:8px}
+  .sec .tag{font-size:10px;font-weight:700;color:var(--g500);background:#fff;border:1px solid var(--bd);border-radius:999px;padding:2px 7px}
+
+  /* ── 诊断表 ── */
+  .diag{background:#fff;border:1px solid var(--bd);border-radius:12px;overflow:hidden;margin-bottom:26px}
+  .diag table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .diag th{background:#fafbfc;text-align:left;padding:9px 14px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--g400);border-bottom:1px solid var(--bd)}
+  .diag td{padding:10px 14px;border-bottom:1px solid var(--bd2);vertical-align:top}
+  .diag tr:last-child td{border-bottom:0}
+  .diag td:first-child{white-space:nowrap;color:var(--g400);font-variant-numeric:tabular-nums;width:34px}
+  .diag b{color:var(--g900)}
+  .diag .bad{color:#b91c1c;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:#fef2f2;border-radius:4px;padding:1px 4px}
+
+  /* ── tabs / toolbar ── */
+  .tabs{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
+  .tabs button{border:1px solid var(--bd);background:#fff;border-radius:999px;padding:6px 14px;font-size:12.5px;font-weight:600;color:var(--g500);transition:.15s}
+  .tabs button:hover{color:var(--g900);border-color:var(--g300)}
+  .tabs button.on{background:var(--g900);border-color:var(--g900);color:#fff}
+  .toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px;font-size:12px;color:var(--g500)}
+  .toolbar .grp{display:flex;gap:4px;align-items:center;background:#fff;border:1px solid var(--bd);border-radius:8px;padding:3px}
+  .toolbar .grp button{font-size:11.5px;font-weight:600;color:var(--g500);padding:4px 9px;border-radius:6px}
+  .toolbar .grp button.on{background:var(--g900);color:#fff}
+  .toolbar .hint{color:var(--g400)}
+
+  /* ── 抽屉舞台 ── */
+  .stage{position:relative;background:#fff;border:1px solid var(--bd);border-radius:14px;padding:0;overflow:hidden;margin-bottom:10px;min-height:520px}
+  .stage .fake-bg{position:absolute;inset:0;background:var(--bg);filter:blur(1px);opacity:.85}
+  .stage .fake-bg::after{content:"";position:absolute;inset:0;background:
+    repeating-linear-gradient(0deg,#fff 0 60px,#f3f4f6 60px 61px);opacity:.5}
+  .drawer{
+    position:relative;margin-left:auto;width:var(--drawer-w);max-width:100%;background:#fff;
+    height:640px;display:flex;flex-direction:column;box-shadow:-8px 0 24px rgba(16,24,40,.08);
+    border-left:1px solid var(--bd);
+  }
+
+  /* 抽屉头 */
+  .dhead{padding:16px 20px 12px;border-bottom:1px solid var(--bd);background:#fff}
+  .dhead .t1{display:flex;align-items:center;gap:8px}
+  .dhead h2{font-size:15px;margin:0;font-weight:800;letter-spacing:-.01em}
+  .dhead .close{margin-left:auto;width:26px;height:26px;border-radius:999px;color:var(--g400);display:grid;place-items:center;font-size:16px}
+  .dhead .close:hover{background:var(--bd2);color:var(--g700)}
+  .dhead .t2{margin:4px 0 0;font-size:11.5px;color:var(--g400);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .dhead .t2 .name{color:var(--g700);font-weight:700;font-size:12px}
+  .dhead .t2 .dot{width:3px;height:3px;background:var(--g300);border-radius:50%}
+
+  /* 概览 + 筛选 */
+  .dsum{display:flex;align-items:center;gap:10px;padding:9px 20px;border-bottom:1px solid var(--bd2);background:#fcfcfd;flex-wrap:wrap}
+  .dsum .stat{font-size:11.5px;color:var(--g500)}
+  .dsum .stat b{color:var(--g900);font-weight:800;font-variant-numeric:tabular-nums}
+  .dsum .stat.fail b{color:var(--err)}
+  .dsum .sp{width:1px;height:12px;background:var(--bd)}
+  .dsum .filters{margin-left:auto;display:flex;gap:4px}
+  .dsum .filters button{font-size:11px;font-weight:700;color:var(--g500);padding:3px 8px;border-radius:6px}
+  .dsum .filters button:hover{background:var(--bd2)}
+  .dsum .filters button.on{background:var(--g900);color:#fff}
+
+  .dbody{flex:1;overflow-y:auto;padding:14px 20px 28px}
+
+  /* ══════ 方案 A：时间轴 ══════ */
+  .tl{position:relative}
+  .tl .item{display:flex;gap:11px;position:relative}
+  .tl .rail{flex:0 0 14px;display:flex;flex-direction:column;align-items:center;padding-top:7px}
+  .tl .rail i{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--ok-bg);flex:0 0 auto}
+  .tl .item.fail .rail i{background:var(--err);box-shadow:0 0 0 3px var(--err-bg)}
+  .tl .rail s{flex:1;width:1px;background:var(--bd);text-decoration:none;margin:4px 0 0}
+  .tl .item:last-child .rail s{display:none}
+  .tl .card{flex:1;min-width:0;padding-bottom:12px}
+
+  .runhead{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;margin-bottom:6px}
+  .runhead .when{font-size:12.5px;font-weight:800;letter-spacing:-.01em}
+  .runhead .abs{font-size:11px;color:var(--g400);font-variant-numeric:tabular-nums}
+  .runhead .badge{font-size:10px;font-weight:800;border-radius:5px;padding:1px 6px}
+  .runhead .badge.ok{background:var(--ok-bg);color:#047857;border:1px solid #a7f3d0}
+  .runhead .badge.fail{background:var(--err-bg);color:#b91c1c;border:1px solid #fecaca}
+  .runhead .right{margin-left:auto;display:flex;align-items:center;gap:9px;font-size:11px;color:var(--g400)}
+  .runhead .right .dur{font-variant-numeric:tabular-nums}
+
+  /* 渲染后的 markdown（关键改动） */
+  .md{border:1px solid var(--bd);border-radius:10px;background:#fff;padding:10px 12px;font-size:12.5px;line-height:1.65;color:var(--g700);position:relative}
+  .md.clip{max-height:132px;overflow:hidden}
+  .md.clip:after{content:"";position:absolute;left:0;right:0;bottom:0;height:34px;background:linear-gradient(transparent,#fff)}
+  .md h3{font-size:13px;margin:0 0 6px;color:var(--g900);font-weight:800}
+  .md p{margin:0 0 7px}
+  .md b{color:var(--g900);font-weight:800}
+  .md table{width:100%;border-collapse:collapse;font-size:11.5px;margin:6px 0}
+  .md th{background:#fafbfc;text-align:left;padding:4px 7px;color:var(--g400);font-weight:700;border-bottom:1px solid var(--bd);font-size:10.5px;letter-spacing:.03em}
+  .md td{padding:4px 7px;border-bottom:1px solid var(--bd2)}
+  .md td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;color:var(--g900)}
+  .md .up{color:#047857;font-weight:800}
+  .md .flat{color:var(--g400)}
+  .md ul{margin:4px 0 6px;padding-left:16px}
+  .md li{margin:2px 0}
+  .md code{background:#f3f4f6;border-radius:3px;padding:0 4px;font-size:11px;font-family:ui-monospace,Menlo,monospace}
+  .md .errbox{background:var(--err-bg);border:1px solid #fecaca;border-radius:8px;padding:8px 10px;color:#b91c1c;font-size:12px}
+  .md .errbox b{color:#991b1b}
+
+  .runfoot{display:flex;align-items:center;gap:6px;margin-top:7px;flex-wrap:wrap}
+  .runfoot .fbtn{font-size:11px;font-weight:700;color:var(--g500);padding:3px 8px;border-radius:6px;border:1px solid transparent}
+  .runfoot .fbtn:hover{background:var(--bd2);color:var(--g900)}
+  .runfoot .fbtn.ghost{border:1px dashed var(--bd);color:var(--g400)}
+  .runfoot .trace{margin-left:auto;color:var(--pri);font-weight:700}
+  .runfoot .trace:hover{text-decoration:underline}
+
+  .steps{margin-top:8px;border-left:2px solid var(--pri-bg);padding:2px 0 2px 10px;display:none}
+  .steps.show{display:block}
+  .step{background:#fafbfc;border:1px solid var(--bd2);border-radius:8px;padding:6px 8px;margin-bottom:5px}
+  .step .sh{display:flex;align-items:center;gap:6px;font-size:10px;margin-bottom:3px}
+  .step .ev{font-weight:800;padding:1px 5px;border-radius:4px;letter-spacing:.02em}
+  .step .ev.thought{background:#dbeafe;color:#1d4ed8}
+  .step .ev.tool{background:#fef3c7;color:#b45309}
+  .step .ev.final{background:#d1fae5;color:#047857}
+  .step .tn{font-family:ui-monospace,Menlo,monospace;font-weight:700;color:var(--g700)}
+  .step .ms{margin-left:auto;color:var(--g400);font-variant-numeric:tabular-nums}
+  .step .sc{font-size:11px;color:var(--g500);line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+
+  /*
+   * 日期分组头：做成有底色的分节条，并随滚动吸顶。
+   * 上一版只用 11.5px 灰字 + 小箭头，跟条目的视觉重量几乎一样，翻起来分不清"这是分组还是记录"。
+   */
+  .grp + .grp { margin-top: 4px; }
+  .ghead {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 7px; width: 100%;
+    padding: 6px 9px; margin-bottom: 5px;
+    background: rgba(243, 244, 246, .96);
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+    border: 1px solid var(--bd); border-radius: 8px;
+    font-size: 11.5px; color: var(--g500); text-align: left;
+  }
+  .ghead:hover { background: #eceef1; }
+  .ghead b {
+    font-size: 13px; font-weight: 800; color: var(--g900); letter-spacing: -.01em;
+  }
+  .ghead.closed b { color: var(--g700); }
+  .ghead .cr { width: 9px; color: var(--g400); font-size: 9px; flex: 0 0 auto; }
+  .ghead .gc { color: var(--g500); font-weight: 700; }
+  .ghead .go { color: #047857; font-weight: 800; }
+  .ghead .gf { color: var(--err); font-weight: 800; }
+  .ghead .ghint { margin-left: auto; color: var(--g400); font-size: 10.5px; font-weight: 600; }
+
+  /* 紧凑行：一屏能扫十几条 */
+  .crow {
+    display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 7px;
+    font-size: 11.5px; color: var(--g700); cursor: pointer;
+  }
+  .crow:hover { background: #fafbfc; }
+  .crow i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); flex: 0 0 auto; }
+  .crow.fail i { background: var(--err); }
+  .crow .ct { font-weight: 800; color: var(--g900); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+  .crow .cb {
+    font-size: 10px; font-weight: 800; padding: 0 5px; border-radius: 4px;
+    background: var(--ok-bg); color: #047857; flex: 0 0 auto;
+  }
+  .crow.fail .cb { background: var(--err-bg); color: #b91c1c; }
+  .crow .cd { color: var(--g400); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+  .crow .cp { color: var(--g400); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+  /* 密度切换 */
+  .dsum .density { display: flex; gap: 4px; }
+  .dsum .density button {
+    font-size: 11px; font-weight: 700; color: var(--g500); padding: 3px 8px; border-radius: 6px;
+    white-space: nowrap;
+  }
+  .dsum .density button:hover { background: var(--bd2); }
+  .dsum .density button.on { background: var(--pri-bg); color: var(--pri); }
+
+  /* ══════ 方案 B：分栏 ══════ */
+  .split{display:flex;gap:0;height:100%}
+  .split .list{flex:0 0 236px;border-right:1px solid var(--bd);overflow-y:auto}
+  .split .li{padding:9px 12px;border-bottom:1px solid var(--bd2);cursor:pointer}
+  .split .li:hover{background:#fafbfc}
+  .split .li.on{background:var(--pri-bg);box-shadow:inset 2px 0 0 var(--pri)}
+  .split .li .l1{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700}
+  .split .li .l1 i{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+  .split .li.fail .l1 i{background:var(--err)}
+  .split .li .l2{font-size:10.5px;color:var(--g400);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .split .detail{flex:1;min-width:0;overflow-y:auto;padding:14px 16px}
+  .split .detail .md.clip{max-height:none}
+  .split .detail .md.clip:after{display:none}
+
+  /* ══════ 方案 C：紧凑表 ══════ */
+  .ctable{width:100%;border-collapse:collapse;font-size:12px}
+  .ctable th{text-align:left;padding:6px 8px;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--g400);border-bottom:1px solid var(--bd);font-weight:700}
+  .ctable td{padding:8px;border-bottom:1px solid var(--bd2);vertical-align:middle}
+  .ctable tr.row{cursor:pointer}
+  .ctable tr.row:hover{background:#fafbfc}
+  .ctable .t{font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .ctable .s{white-space:nowrap}
+  .ctable .s i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:5px}
+  .ctable .s.fail{color:var(--err)} .ctable .s.fail i{background:var(--err)}
+  .ctable .d{color:var(--g400);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .ctable .sum{color:var(--g700);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:1px}
+  .ctable .exp td{background:#fcfcfd;border-bottom:1px solid var(--bd)}
+  .ctable .exp .inner{padding:2px 0 6px}
+
+  /* ── 说明 / 对比 ── */
+  .notes{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:14px 16px;margin:14px 0 26px;font-size:12.5px;color:var(--g700)}
+  .notes h4{margin:0 0 8px;font-size:12px;color:var(--g400);letter-spacing:.04em;text-transform:uppercase;font-weight:700}
+  .notes ul{margin:0;padding-left:18px}
+  .notes li{margin:0 0 5px}
+  .notes code{background:#f3f4f6;border-radius:4px;padding:1px 5px;font-size:11.5px;color:#b91c1c;font-family:ui-monospace,Menlo,monospace}
+  .cmp{background:#fff;border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+  .cmp table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .cmp th{background:#fafbfc;text-align:left;padding:9px 14px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--g400);border-bottom:1px solid var(--bd)}
+  .cmp td{padding:11px 14px;border-bottom:1px solid var(--bd2);vertical-align:top}
+  .cmp tr:last-child td{border-bottom:0}
+  .cmp td:first-child{font-weight:700;white-space:nowrap}
+  .pill{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;background:var(--pri-bg);color:var(--pri)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>执行历史抽屉 · 重设计</h1>
+  <p class="sub">
+    点任务卡片的「历史」打开的就是这个抽屉。现在它最大的问题不是排版——是把 <code>summary</code>
+    的 <b>markdown 源码</b>直接塞进段落里给用户看：<code>##</code>、<code>**</code>、<code>|</code> 表格分隔符全部裸露，
+    一条本来有结构的 Star 追踪日报，在抽屉里变成一整块乱码。<b>方案 A 已按你的选择落地</b>（真实效果需在本地 dev 里打开抽屉查看）；本次追加：日期分组折叠 + 一键折叠 / 一键展开。
+  </p>
+
+  <div class="sec">诊断 <span class="tag">对着代码和数据逐条核过</span></div>
+  <div class="diag">
+    <table>
+      <thead><tr><th>#</th><th>问题</th><th>证据 / 为什么难用</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><b>正文是 markdown 源码</b></td>
+          <td>模板里直接 <span class="bad">{{ log.summary || log.query }}</span> 丢进 <span class="bad">&lt;p&gt;</span>。<code>## 星标追踪日报</code>、<code>**总览**</code>、<code>| 项目 | Star |</code> 全部当纯文本显示。项目里已有 <code>MessageRenderer</code>（markdown-it），这里根本没用。</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td><b>内容断在句子中间</b></td>
+          <td><code>line-clamp-3</code> 按行截断，不看语义。截图里第三条断在 <code>| nanozi-ai-agent-platform | **246** | **+3**</code>，正好把表格切断。</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td><b>整段被引号包住</b></td>
+          <td>模板写了 <span class="bad">"{{ … }}"</span>，把 markdown 当引用语。可它是一份报告，不是谁说的话。</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td><b>会话 hash 占显眼位</b></td>
+          <td><code>611bdbc2...</code> 放在标题行左侧，用户根本不认识；真正该看的是「什么时候跑的、跑了多久」。</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td><b>每张卡都「成功」</b></td>
+          <td>连续 3 条绿色徽章不提供任何信息。只有出现失败时状态才有意义，那时又和成功卡混在一起，要靠颜色找。</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td><b>卡片太高</b></td>
+          <td>一条约 250px，3 条就占满 640px 抽屉。翻 10 次历史要滚 5 屏，而这些内容大段是重复的模板日报。</td>
+        </tr>
+        <tr>
+          <td>7</td>
+          <td><b>没有概览</b></td>
+          <td>「最近 10 次成功几次、失败几次、平均多久」全靠自己数。而任务卡片上只有一个总数成功率。</td>
+        </tr>
+        <tr>
+          <td>8</td>
+          <td><b>没有筛选</b></td>
+          <td>只想看失败那几次，得逐条往下翻。而「失败」恰恰是用户打开这个抽屉最常见的原因。</td>
+        </tr>
+        <tr>
+          <td>9</td>
+          <td><b>英文大写排版误用</b></td>
+          <td>副标题 <code>uppercase tracking-widest font-mono</code>：「每日追踪 GITHUB 项目 STAR 情况 · LOGS」。中文用字距拉开 + 全大写，读起来像乱码。</td>
+        </tr>
+        <tr>
+          <td>10</td>
+          <td><b>步骤是 JSON 切片</b></td>
+          <td>展开后把 <code>tool_input</code> 直接 <code>JSON.stringify</code> 塞两行，读不出这步在干什么。</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sec">方案 <span class="tag">点 tab 切换 · 卡片里可展开</span></div>
+  <div class="tabs" id="tabs">
+    <button data-p="a" class="on">A 时间轴 + 渲染正文（推荐）</button>
+    <button data-p="b">B 左列表右详情</button>
+    <button data-p="c">C 紧凑表格</button>
+    <button data-p="cur">现状</button>
+  </div>
+
+  <div class="toolbar">
+    <span>抽屉宽度</span>
+    <span class="grp" id="width">
+      <button data-w="672" class="on">672（现在）</button>
+      <button data-w="768">768</button>
+      <button data-w="880">880（分栏需要）</button>
+    </span>
+    <span class="hint" id="hint"></span>
+  </div>
+
+  <div class="stage">
+    <div class="fake-bg"></div>
+    <div class="drawer">
+      <div class="dhead">
+        <div class="t1">
+          <h2>执行历史</h2>
+          <button class="close" title="关闭">✕</button>
+        </div>
+        <p class="t2">
+          <span class="name">每日追踪 GitHub 项目 Star 情况</span>
+          <span class="dot"></span>
+          <span>主助手(Main)</span>
+          <span class="dot"></span>
+          <span>最近 12 次</span>
+        </p>
+      </div>
+      <div id="body" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
+    </div>
+  </div>
+
+  <div class="notes" id="notes"></div>
+
+  <div class="sec">对比</div>
+  <div class="cmp">
+    <table>
+      <thead><tr><th>方案</th><th>解决什么</th><th>改动量</th><th>代价</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>A 时间轴 <span class="pill">推荐</span></td>
+          <td>正文渲染成真 markdown（表格、加粗、列表）；按时间串起来，一眼看出「连续成功 / 什么时候断的」；顶部概览 + 只看失败</td>
+          <td>抽屉模板重写；引入 <code>MessageRenderer</code>；673 行左右</td>
+          <td>渲染 markdown 有成本，长报告要先折叠</td>
+        </tr>
+        <tr>
+          <td>B 分栏</td>
+          <td>左边扫时间线、右边读全文，翻历史最快</td>
+          <td>抽屉要加宽到 880，模板重写</td>
+          <td>个人中心窄屏放不下，得退回单栏；等于维护两套布局</td>
+        </tr>
+        <tr>
+          <td>C 紧凑表</td>
+          <td>一屏看 10 条，行内展开详情</td>
+          <td>模板重写，最小</td>
+          <td>摘要只能单行，长报告要展开才看得见；不像「回溯」像「日志表」</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+/* ── 数据：贴近真实的一次 Star 追踪日报（markdown 原文已渲染成 HTML） ── */
+const RUNS = [
+  {
+    id: '611bdbc2', day: '今天', rel: '09:04', abs: '11/24 09:00', dur: '18 秒', ok: true,
+    md: `<h3>Star 追踪日报 · 2026-11-24</h3>
+      <p><b>总览：</b>4 个原创项目共 <b>358</b> Star、<b>103</b> Fork、<b>2</b> 个未关议题；较上次基线净增 <b>1</b>。</p>
+      <table>
+        <thead><tr><th>项目</th><th style="text-align:right">Star</th><th style="text-align:right">Fork</th><th style="text-align:right">Issues</th><th style="text-align:right">变化</th></tr></thead>
+        <tbody>
+          <tr><td>nanzi-ai-agent-platform</td><td class="num">246</td><td class="num">47</td><td class="num">1</td><td class="num up">+1</td></tr>
+          <tr><td>ds-agent-hub</td><td class="num">72</td><td class="num">38</td><td class="num">1</td><td class="num flat">0</td></tr>
+          <tr><td>sql-copilot-kit</td><td class="num">28</td><td class="num">12</td><td class="num">0</td><td class="num flat">0</td></tr>
+          <tr><td>rag-flow-bridge</td><td class="num">12</td><td class="num">6</td><td class="num">0</td><td class="num flat">0</td></tr>
+        </tbody>
+      </table>
+      <ul><li>唯一增长来自 <b>nanzi-ai-agent-platform</b>（245 → 246），并同步新增 1 个 Fork（46 → 47）。</li>
+      <li>该仓库开放 Issue 由 1 降为 0，昨日唯一「负向消失」的项。</li></ul>`,
+    steps: [
+      { ev: 'thought', ms: 1240, text: '先取 4 个原创项目的实时数据，与上次记录基线对比。' },
+      { ev: 'tool', name: 'github_api.star_history', ms: 3820, text: '拉取 RandyChen1985 名下 4 个仓库的 star/fork/issue 实时值' },
+      { ev: 'final', ms: 2210, text: '生成对比表格与变化归因，输出日报正文。' },
+    ],
+  },
+  {
+    id: 'f91451e9', day: '昨天', rel: '19:04', abs: '11/23 09:00', dur: '18 秒', ok: true,
+    md: `<h3>Star 追踪日报 · 2026-11-23</h3>
+      <p><b>总览：</b>4 个原创项目共 <b>357</b> Star，较昨日 <b>356 → 357</b>，净增 <b>1</b>（+0.28%）。</p>
+      <p>唯一增长来自 <b>nanzi-ai-agent-platform</b>（246 → 247，+1），并同步新增 <b>1</b> 个 Fork（77 → 73）。</p>
+      <p>该仓库开放 Issue 由 <b>1</b> 降为 <b>0</b>，是昨日全部指标中唯一「负向减少」的项。</p>`,
+    steps: [
+      { ev: 'tool', name: 'github_api.star_history', ms: 4120, text: '拉取 4 个仓库实时数据' },
+      { ev: 'final', ms: 1890, text: '输出对比结论。' },
+    ],
+  },
+  {
+    id: 'a1c9f204', day: '11/22', rel: '18:16', abs: '11/22 09:00', dur: '4 秒', ok: false,
+    md: `<div class="errbox"><b>执行失败：</b>GitHub API 返回 403 rate limit exceeded（剩余 0 / 60）。<br>
+      已用尽本小时未认证配额，需等待配额重置（约 41 分钟后）或配置 <code>GITHUB_TOKEN</code>。</div>
+      <p style="margin-top:7px">本次未产出日报。下一次定时执行：<b>11/23 09:00</b>。</p>`,
+    steps: [
+      { ev: 'tool', name: 'github_api.star_history', ms: 3960, text: 'HTTP 403 · rate limit exceeded · remaining=0' },
+    ],
+  },
+  {
+    id: '884fccc3', day: '11/21', rel: '09:00', abs: '11/21 09:00', dur: '26 秒', ok: true,
+    md: `<h3>Star 追踪日报 · 2026-11-21</h3>
+      <p><b>总览：</b>4 个原创项目共 <b>356</b> Star、<b>101</b> Fork。</p>
+      <p>nanzi-ai-agent-platform 的 Star 与 Fork 均无变化；ds-agent-hub 新增 2 个 Fork。</p>`,
+    steps: [
+      { ev: 'tool', name: 'github_api.star_history', ms: 5000, text: '拉取实时数据' },
+      { ev: 'final', ms: 2100, text: '输出结论。' },
+    ],
+  },
+];
+
+const TOTAL = 12, OK = 10, FAIL = 2;
+const state = {
+  plan: 'a', width: 672, filter: 'all',
+  density: 'normal',   // compact 只留标题行 / normal 折叠 132px / expanded 全部展开
+  expanded: {},        // 单条覆盖：用户点过就以点过的为准
+  groups: {},          // 日期分组折叠
+  steps: {}, selected: 0,
+};
+
+const $ = (s) => document.querySelector(s);
+const visible = () => (state.filter === 'fail' ? RUNS.filter((r) => !r.ok) : RUNS);
+
+function evClass(ev) {
+  if (ev === 'thought') return 'thought';
+  if (ev === 'tool') return 'tool';
+  if (ev === 'final' || ev === 'synthesis' || ev === 'final_answer') return 'final';
+  return 'tool';
+}
+function evLabel(ev) {
+  return { thought: '思考', tool: '工具', final: '生成', router: '路由', error: '错误' }[ev] || ev;
+}
+
+function stepsHtml(run) {
+  return run.steps.map((s) => `
+    <div class="step">
+      <div class="sh">
+        <span class="ev ${evClass(s.ev)}">${evLabel(s.ev)}</span>
+        ${s.name ? `<span class="tn">${s.name}</span>` : ''}
+        <span class="ms">${s.ms}ms</span>
+      </div>
+      <div class="sc">${s.text}</div>
+    </div>`).join('');
+}
+
+/* ══════ A：时间轴（按日期分组 + 三档密度） ══════ */
+function groupRuns(list) {
+  const order = [];
+  const map = {};
+  list.forEach((r) => {
+    if (!map[r.day]) { map[r.day] = []; order.push(r.day); }
+    map[r.day].push(r);
+  });
+  return order.map((day) => ({
+    day,
+    runs: map[day],
+    ok: map[day].filter((r) => r.ok).length,
+    fail: map[day].filter((r) => !r.ok).length,
+  }));
+}
+
+const isExpanded = (run) => (run.id in state.expanded ? state.expanded[run.id] : state.density === 'expanded');
+
+function plainOf(run) {
+  return run.md.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/* 紧凑行：时间 + 状态 + 耗时 + 正文首行，一屏能扫 15 条 */
+function compactRow(run) {
+  return `
+    <div class="crow ${run.ok ? '' : 'fail'}" data-expand-run="${run.id}" title="点击展开这一条">
+      <i></i>
+      <span class="ct">${run.rel}</span>
+      <span class="cb">${run.ok ? '成功' : '失败'}</span>
+      <span class="cd">${run.dur}</span>
+      <span class="cp">${plainOf(run).slice(0, 46)}${plainOf(run).length > 46 ? '…' : ''}</span>
+    </div>`;
+}
+
+function cardRun(run, isLast) {
+  const open = isExpanded(run);
+  return `
+    <div class="item ${run.ok ? '' : 'fail'}">
+      <div class="rail"><i></i>${isLast ? '' : '<s></s>'}</div>
+      <div class="card">
+        <div class="runhead">
+          <span class="when">${run.rel}</span>
+          <span class="abs">${run.abs}</span>
+          <span class="badge ${run.ok ? 'ok' : 'fail'}">${run.ok ? '成功' : '失败'}</span>
+          <span class="right"><span class="dur">耗时 ${run.dur}</span></span>
+        </div>
+        <div class="md ${open ? '' : 'clip'}">${run.md}</div>
+        <div class="runfoot">
+          <button class="fbtn" data-toggle-md="${run.id}">${open ? '收起' : '展开全文'}</button>
+          <button class="fbtn ghost" data-toggle-steps="${run.id}">执行步骤 ${run.steps.length} ${state.steps[run.id] ? '⌃' : '⌄'}</button>
+          <button class="fbtn trace" data-trace="${run.id}">完整链路 →</button>
+        </div>
+        <div class="steps ${state.steps[run.id] ? 'show' : ''}">${stepsHtml(run)}</div>
+      </div>
+    </div>`;
+}
+
+function planA() {
+  const groups = groupRuns(visible());
+  const html = groups.map((g) => {
+    const closed = !!state.groups[g.day];
+    const body = g.runs
+      .map((r, i) => (
+        state.density === 'compact' && !(r.id in state.expanded)
+          ? compactRow(r)
+          : cardRun(r, i === g.runs.length - 1)
+      ))
+      .join('');
+    return `
+      <div class="grp">
+        <button class="ghead ${closed ? 'closed' : ''}" data-toggle-group="${g.day}">
+          <span class="cr">${closed ? '▸' : '▾'}</span>
+          <b>${g.day}</b>
+          <span class="gc">${g.runs.length} 次</span>
+          ${g.ok ? `<span class="go">成功 ${g.ok}</span>` : ''}
+          ${g.fail ? `<span class="gf">失败 ${g.fail}</span>` : ''}
+          <span class="ghint">${closed ? '已收起' : ''}</span>
+        </button>
+        ${closed ? '' : `<div class="gbody">${body}</div>`}
+      </div>`;
+  }).join('');
+  return { sum: true, html: `<div class="dbody"><div class="tl">${html}</div></div>` };
+}
+
+/* ══════ B：左列表右详情 ══════ */
+function planB() {
+  const sel = visible()[Math.min(state.selected, visible().length - 1)] || visible()[0];
+  const list = visible().map((run, i) => `
+    <div class="li ${run.ok ? '' : 'fail'} ${sel.id === run.id ? 'on' : ''}" data-sel="${i}">
+      <div class="l1"><i></i>${run.rel}</div>
+      <div class="l2">${run.ok ? run.md.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 26) : 'GitHub API 403 rate limit'}</div>
+    </div>`).join('');
+  return {
+    sum: true,
+    html: `<div class="split">
+      <div class="list">${list}</div>
+      <div class="detail">
+        <div class="runhead">
+          <span class="when">${sel.rel}</span>
+          <span class="abs">${sel.abs}</span>
+          <span class="badge ${sel.ok ? 'ok' : 'fail'}">${sel.ok ? '成功' : '失败'}</span>
+          <span class="right"><span class="dur">耗时 ${sel.dur}</span></span>
+        </div>
+        <div class="md">${sel.md}</div>
+        <div class="runfoot">
+          <button class="fbtn ghost" data-toggle-steps="sel">执行步骤 ${sel.steps.length} ${state.steps.sel ? '⌃' : '⌄'}</button>
+          <button class="fbtn trace" data-trace="${sel.id}">完整链路 →</button>
+        </div>
+        <div class="steps ${state.steps.sel ? 'show' : ''}">${stepsHtml(sel)}</div>
+      </div>
+    </div>`,
+  };
+}
+
+/* ══════ C：紧凑表 ══════ */
+function planC() {
+  const rows = visible().map((run) => {
+    const open = state.expanded[run.id];
+    const plain = run.md.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    return `
+      <tr class="row" data-toggle-md="${run.id}">
+        <td class="t">${run.rel}</td>
+        <td class="s ${run.ok ? '' : 'fail'}"><i></i>${run.ok ? '成功' : '失败'}</td>
+        <td class="d">${run.dur}</td>
+        <td class="sum">${plain.slice(0, 60)}${plain.length > 60 ? '…' : ''}</td>
+      </tr>
+      ${open ? `<tr class="exp"><td colspan="4"><div class="inner">
+        <div class="md">${run.md}</div>
+        <div class="runfoot">
+          <button class="fbtn ghost" data-toggle-steps="${run.id}">执行步骤 ${run.steps.length} ${state.steps[run.id] ? '⌃' : '⌄'}</button>
+          <button class="fbtn trace" data-trace="${run.id}">完整链路 →</button>
+        </div>
+        <div class="steps ${state.steps[run.id] ? 'show' : ''}">${stepsHtml(run)}</div>
+      </div></td></tr>` : ''}`;
+  }).join('');
+  return {
+    sum: true,
+    html: `<div class="dbody">
+      <table class="ctable">
+        <thead><tr><th>时间</th><th>状态</th><th>耗时</th><th>结果摘要</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`,
+  };
+}
+
+/* ══════ 现状复刻 ══════ */
+function planCur() {
+  const raw = (run) => `<p style="font-size:12px;color:var(--g500);line-height:1.6;background:#f9fafb;border:1px solid var(--bd2);border-radius:10px;padding:10px;max-height:76px;overflow:hidden;margin:0 0 10px">"${run.raw}"</p>`;
+  const rows = RUNS.slice(0, 3).map((run) => `
+    <div style="border:1px solid var(--bd);border-radius:14px;padding:12px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="badge ok" style="font-size:9px;font-weight:800;background:#dcfce7;color:#15803d;border-radius:999px;padding:1px 7px">成功</span>
+          <span style="font-size:10px;color:var(--g300);font-family:ui-monospace,Menlo,monospace">${run.id}...</span>
+        </div>
+        <span style="font-size:10px;color:var(--g400)">${run.abs}</span>
+      </div>
+      ${raw(run)}
+      <div style="font-size:10px;font-weight:800;color:var(--g400);letter-spacing:.08em;text-transform:uppercase">⌄ 执行步骤 (STEPS)</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;margin-top:8px;border-top:1px solid #f9fafb">
+        <span style="font-size:9px;color:var(--g300)">时长: ${run.dur}</span>
+        <span style="font-size:10px;color:var(--pri);font-weight:800;letter-spacing:.08em;text-transform:uppercase">完整链路 (TRACE) ›</span>
+      </div>
+    </div>`).join('');
+  return { sum: false, html: `<div class="dbody">${rows}</div>` };
+}
+
+const RAW = {
+  '611bdbc2': `"我先获取这四个原创项目在 GitHub 上的实时数据，再与上次记录的基线对比。 ## Star 追踪日报 - 2026-11-24 **总览**：4 个原创项目共 **358 Star**、**103 Fork**、**2 个未关议题**；较上次基线（11-23, 357 Star）净增 **1 Star**，Fork 与议题数无变化。 ### 各项目当前数据与变化 | 项目 | 语…`,
+  'f91451e9': `"## RandyChen1985 · Star 追踪日报 **统计时间：2026-11-23 09:00 (Asia/Shanghai) | 对比基线：2026-11-22** ## 一、核心结论 - 四个原创项目合计 **357 ⭐️**，较昨日 **356 → 357**，净增 1 星 (+0.28%)。 - 唯一增长来自 **nanzi-ai-agent-platform** (246 → 247, +1)，并同步新增 **1 个 Fork** (77 → 73)。 - 该仓库 **开放 Issue 由 1 降为 0**，是昨日全部指标中唯一"负向减少"的项。`,
+  'a1c9f204': `"GitHub API 返回 403 rate limit exceeded（剩余 0 / 60）。已用尽本小时未认证配额，需等待配额重置（约 41 分钟后）或配置 GITHUB_TOKEN。本次未产出日报。"`,
+};
+RUNS.forEach((r) => { r.raw = RAW[r.id] || r.md.replace(/<[^>]+>/g, '').trim(); });
+
+const NOTES = {
+  a: `<h4>方案 A 要点</h4><ul>
+    <li><b>正文必须渲染成真 markdown</b>——这是这个抽屉最核心的修复。表格就是表格、加粗就是加粗，项目 Star 变化一眼可见。项目里已有 <code>MessageRenderer</code>，直接复用，不用引新库。</li>
+    <li><b>时间轴串起来</b>：连续成功是一条顺滑的绿线，失败那条一眼跳出来（红点 + 红框）。「历史」的价值是看趋势，不是看一堆等价的卡片。</li>
+    <li><b>三层折叠，各管各的</b>：① 日期分组（今天 / 昨天 / 11/22）点标题整组收起；② 一键密度（右上「全部折叠 / 全部展开」）；
+        ③ 单条「展开全文」。三层互不干扰，点过单条就以单条为准，再点一键按钮统一覆盖。</li>
+    <li><b>三档密度</b>：<code>全部折叠</code> = 每条压成一行（时间 + 状态 + 耗时 + 结果首行），一屏扫十几条；
+        <code>标准</code>（再点一次同一个按钮）= 折叠 132px + 渐隐；<code>全部展开</code> = 正文一次性全展开。</li>
+    <li><b>默认折叠到 4 行左右 + 渐隐</b>，点「展开全文」看完整报告，避免一条日报占掉半屏。</li>
+    <li>深链：<a href="#a">#a</a> 标准 · <a href="#a-compact">#a-compact</a> 全部折叠 · <a href="#a-expanded">#a-expanded</a> 全部展开。</li>
+    <li><b>顶部概览 + 只看失败</b>：<code>最近 12 次 · 成功 10 · 失败 2 · 平均 22 秒</code>，失败可一键筛出来。</li>
+    <li><b>去掉会话 hash</b>，换成「今天 09:00 + 11/24 09:00」双时间；trace 入口保留但弱化成右下角链接。</li>
+  </ul>`,
+  b: `<h4>方案 B 要点</h4><ul>
+    <li>左边扫时间线（时间 + 摘要首行），右边读全文，翻 12 次历史最快。</li>
+    <li>代价：需要 <b>880px</b> 宽度才放得下两栏（切上面「880」看）；个人中心窄屏必须退回单栏，等于维护两套布局。</li>
+  </ul>`,
+  c: `<h4>方案 C 要点</h4><ul>
+    <li>一屏 10 条，点行展开详情。适合「查日志」而不是「读报告」。</li>
+    <li>代价：摘要只能单行截断，长报告的结论（比如「净增 1 Star」）经常被切掉。</li>
+  </ul>`,
+  cur: `<h4>现状</h4><ul>
+    <li>正文是 markdown 源码，被引号包住，<code>line-clamp-3</code> 按行截断。</li>
+    <li>会话 hash 在标题行，状态徽章每条都是「成功」，卡片约 250px 高。</li>
+  </ul>`,
+};
+
+function summaryBar() {
+  return `<div class="dsum">
+    <span class="stat">最近 ${TOTAL} 次</span>
+    <span class="sp"></span>
+    <span class="stat">成功 <b>${OK}</b></span>
+    <span class="stat fail">失败 <b>${FAIL}</b></span>
+    <span class="sp"></span>
+    <span class="stat">平均耗时 <b>22 秒</b></span>
+    <div class="filters">
+      <button data-filter="all" class="${state.filter === 'all' ? 'on' : ''}">全部</button>
+      <button data-filter="fail" class="${state.filter === 'fail' ? 'on' : ''}">只看失败 ${FAIL}</button>
+    </div>
+    <span class="sp"></span>
+    <div class="density">
+      <button data-density="compact" class="${state.density === 'compact' ? 'on' : ''}" title="所有记录压成一行，一屏扫完">⌃ 全部折叠</button>
+      <button data-density="expanded" class="${state.density === 'expanded' ? 'on' : ''}" title="所有正文一次性展开">⌄ 全部展开</button>
+    </div>
+  </div>`;
+}
+
+function render() {
+  const out = ({ a: planA, b: planB, c: planC, cur: planCur })[state.plan]();
+  $('#body').innerHTML = (out.sum && state.plan !== 'cur' ? summaryBar() : '') + out.html;
+  $('#notes').innerHTML = NOTES[state.plan] || '';
+  document.documentElement.style.setProperty('--drawer-w', state.width + 'px');
+  $('#hint').textContent = state.plan === 'b' && state.width < 880
+    ? '← 分栏在 672 下会挤扁，建议切到 880'
+    : (state.width >= 880 && state.plan !== 'b' ? '← 单栏方案用不到这么宽' : '');
+}
+
+document.addEventListener('click', (e) => {
+  const tab = e.target.closest('#tabs button');
+  if (tab) {
+    state.plan = tab.dataset.p;
+    [...$('#tabs').children].forEach((x) => x.classList.toggle('on', x === tab));
+    if (state.plan === 'b' && state.width < 880) {
+      state.width = 880;
+      [...$('#width').children].forEach((x) => x.classList.toggle('on', x.dataset.w === '880'));
+    }
+    render(); location.hash = state.plan; return;
+  }
+  const w = e.target.closest('#width button');
+  if (w) {
+    state.width = Number(w.dataset.w);
+    [...$('#width').children].forEach((x) => x.classList.toggle('on', x === w));
+    render(); return;
+  }
+  const f = e.target.closest('[data-filter]');
+  if (f) { state.filter = f.dataset.filter; render(); return; }
+  const g = e.target.closest('[data-toggle-group]');
+  if (g) { const k = g.dataset.toggleGroup; state.groups[k] = !state.groups[k]; render(); return; }
+  const d = e.target.closest('[data-density]');
+  if (d) {
+    // 再点一次同一个按钮就回到「标准」：折叠 132px
+    state.density = state.density === d.dataset.density ? 'normal' : d.dataset.density;
+    state.expanded = {};
+    render(); return;
+  }
+  const cr = e.target.closest('[data-expand-run]');
+  if (cr) { state.expanded[cr.dataset.expandRun] = true; render(); return; }
+  const md = e.target.closest('[data-toggle-md]');
+  if (md) { const k = md.dataset.toggleMd; state.expanded[k] = !state.expanded[k]; render(); return; }
+  const st = e.target.closest('[data-toggle-steps]');
+  if (st) { const k = st.dataset.toggleSteps; state.steps[k] = !state.steps[k]; render(); return; }
+  const sel = e.target.closest('[data-sel]');
+  if (sel) { state.selected = Number(sel.dataset.sel); render(); return; }
+});
+
+(function boot() {
+  const raw = (location.hash || '').replace('#', '');
+  const [p, density] = raw.split('-');
+  if (['compact', 'expanded'].includes(density)) state.density = density;
+  if (['a', 'b', 'c', 'cur'].includes(p)) {
+    state.plan = p;
+    [...$('#tabs').children].forEach((x) => x.classList.toggle('on', x.dataset.p === p));
+    if (p === 'b') {
+      state.width = 880;
+      [...$('#width').children].forEach((x) => x.classList.toggle('on', x.dataset.w === '880'));
+    }
+  }
+  render();
+})();
+</script>
+</body>
+</html>

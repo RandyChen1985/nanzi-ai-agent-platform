@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>我的任务 · 顶部概览条重设计（四方案）</title>
+<meta name="prototype-kind" content="方案对比">
+<style>
+  :root{
+    --pri:#1677ff; --pri-bg:#e8f1ff;
+    --ok:#10b981; --ok-bg:#ecfdf5;
+    --warn:#f59e0b; --warn-bg:#fffbeb;
+    --err:#ef4444; --err-bg:#fef2f2;
+    --g900:#111827; --g700:#374151; --g500:#6b7280; --g400:#9ca3af; --g300:#d1d5db;
+    --bd:#e5e7eb; --bd2:#eef0f3; --bg:#f6f7f9;
+    --win-w:1280px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:28px 20px 60px; background:var(--bg);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    color:var(--g900); -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1360px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--g500);font-size:13px;margin:0 0 22px}
+  .sec{margin:0 0 12px;font-size:13px;font-weight:700;color:var(--g700);display:flex;align-items:center;gap:8px}
+  .sec .tag{font-size:10px;font-weight:700;color:var(--g500);background:#fff;border:1px solid var(--bd);border-radius:999px;padding:2px 7px}
+
+  /* ── 现状复刻 ── */
+  .current{
+    background:#fff;border:1px solid var(--bd);border-radius:12px;padding:14px 16px;margin-bottom:10px;position:relative;
+  }
+  .current .row{display:flex;flex-wrap:wrap;align-items:center;gap:16px;font-size:12px;color:var(--g500)}
+  .current .row b{color:var(--g900);font-weight:700}
+  .current .row .dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:1px}
+  .current .row .next{margin-left:4px}
+  .current .row .total{margin-left:auto;color:var(--g400)}
+  .mark{position:absolute;color:var(--err);font-size:11px;font-weight:700}
+
+  /* ── 诊断表 ── */
+  .diag{background:#fff;border:1px solid var(--bd);border-radius:12px;overflow:hidden;margin-bottom:26px}
+  .diag table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .diag th{background:#fafbfc;text-align:left;padding:9px 14px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--g400);border-bottom:1px solid var(--bd)}
+  .diag td{padding:10px 14px;border-bottom:1px solid var(--bd2);vertical-align:top}
+  .diag tr:last-child td{border-bottom:0}
+  .diag td:first-child{white-space:nowrap;color:var(--g400);font-variant-numeric:tabular-nums;width:34px}
+  .diag b{color:var(--g900)}
+
+  /* ── tabs ── */
+  .tabs{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
+  .tabs button{
+    border:1px solid var(--bd);background:#fff;border-radius:999px;padding:6px 14px;font-size:12.5px;
+    font-weight:600;color:var(--g500);cursor:pointer;font-family:inherit;transition:.15s;
+  }
+  .tabs button:hover{color:var(--g900);border-color:var(--g300)}
+  .tabs button.on{background:var(--g900);border-color:var(--g900);color:#fff}
+
+  /* ── 工具条 ── */
+  .toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px;font-size:12px;color:var(--g500)}
+  .toolbar .grp{display:flex;gap:4px;align-items:center;background:#fff;border:1px solid var(--bd);border-radius:8px;padding:3px}
+  .toolbar .grp button{border:0;background:transparent;font:inherit;font-size:11.5px;font-weight:600;color:var(--g500);padding:4px 9px;border-radius:6px;cursor:pointer}
+  .toolbar .grp button.on{background:var(--g900);color:#fff}
+  .toolbar .hint{color:var(--g400)}
+
+  /* ── 舞台：模拟真实容器宽度 ── */
+  .stage{background:#fff;border:1px solid var(--bd);border-radius:14px;padding:18px;margin-bottom:8px}
+  .canvas{width:var(--win-w);max-width:100%;margin:0 auto;background:var(--bg);border-radius:10px;padding:16px}
+
+  /* ── 通用：任务 tab 行（给概览条提供上下文） ── */
+  .tabline{display:flex;gap:18px;align-items:center;font-size:13px;color:var(--g500);border-bottom:1px solid var(--bd);padding-bottom:9px;margin-bottom:14px;flex-wrap:wrap}
+  .tabline .it{font-weight:600}
+  .tabline .it.on{color:var(--pri);position:relative}
+  .tabline .it.on:after{content:"";position:absolute;left:0;right:0;bottom:-10px;height:2px;background:var(--pri);border-radius:2px}
+  .tabline .cnt{font-size:11px;color:var(--g400);font-weight:600}
+  .tabline .right{margin-left:auto;color:var(--g500);font-size:12.5px;font-weight:600}
+
+  /* ══════════ 方案 A：指标卡 ══════════ */
+  .kpiWrap{display:flex;align-items:stretch;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+  .kpiBox{
+    display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--bd);border-radius:10px;
+    padding:8px 14px 8px 11px;position:relative;overflow:hidden;cursor:pointer;transition:.15s;min-width:104px;
+  }
+  .kpiBox:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--g300)}
+  .kpiBox:hover{border-color:var(--g300);box-shadow:0 1px 3px rgba(16,24,40,.06)}
+  .kpiBox .n{font-size:22px;font-weight:800;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .kpiBox .lb{font-size:11.5px;color:var(--g500);font-weight:600;line-height:1.2}
+  .kpiBox.on:before{background:var(--ok)} .kpiBox.on .n{color:var(--g900)}
+  .kpiBox.off:before{background:var(--g300)} .kpiBox.off .n{color:var(--g700)}
+  .kpiBox.attn:before{background:var(--err)} .kpiBox.attn .n{color:var(--err)} .kpiBox.attn{border-color:#fecaca;background:var(--err-bg)}
+  .kpiBox.attn.zero:before{background:var(--g300)} .kpiBox.attn.zero .n{color:var(--g400)} .kpiBox.attn.zero{border-color:var(--bd);background:#fff}
+  .kpiBox.attn.zero .lb{color:var(--g400)}
+  .kpiNext{
+    margin-left:auto;display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--bd);
+    border-radius:10px;padding:8px 14px;min-width:0;
+  }
+  .kpiNext .cap{font-size:10.5px;font-weight:700;color:var(--g400);letter-spacing:.04em;white-space:nowrap}
+  .kpiNext .t{font-size:13px;font-weight:800;color:var(--pri);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .kpiNext .nm{font-size:11.5px;color:var(--g500);max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kpiNext.none .t{color:var(--g400);font-weight:600}
+
+  /* 少任务时：压扁 */
+  .kpiWrap.compact .kpiBox{padding:5px 11px 5px 9px;min-width:0;gap:8px}
+  .kpiWrap.compact .kpiBox .n{font-size:17px}
+  .kpiWrap.compact .kpiBox .lb{font-size:11px}
+  .kpiWrap.compact .kpiNext{padding:5px 11px}
+
+  /* ══════════ 方案 B：占比条 ══════════ */
+  .barWrap{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:12px 14px;margin-bottom:14px}
+  .barTop{display:flex;align-items:baseline;gap:10px;margin-bottom:9px;flex-wrap:wrap}
+  .barTop .hl{font-size:13px;font-weight:800}
+  .barTop .hl em{font-style:normal;color:var(--g400);font-weight:600;font-size:11.5px}
+  .barTop .next{margin-left:auto;font-size:12px;color:var(--g500)}
+  .barTop .next b{color:var(--pri);font-weight:800;font-variant-numeric:tabular-nums}
+  .bar{display:flex;height:8px;border-radius:99px;overflow:hidden;background:var(--bd2);gap:2px}
+  .bar i{display:block;height:100%}
+  .bar i.on{background:var(--ok)} .bar i.off{background:var(--g300)} .bar i.attn{background:var(--err)}
+  .legend{display:flex;gap:14px;margin-top:9px;font-size:11.5px;color:var(--g500);flex-wrap:wrap}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .legend s{width:7px;height:7px;border-radius:2px;display:inline-block;text-decoration:none}
+
+  /* ══════════ 方案 C：胶囊行 ══════════ */
+  .chips{display:flex;align-items:center;gap:7px;margin-bottom:14px;flex-wrap:wrap}
+  .chip{
+    display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--bd);
+    border-radius:999px;padding:5px 12px 5px 10px;font-size:12px;color:var(--g500);font-weight:600;
+    cursor:pointer;transition:.15s;white-space:nowrap;
+  }
+  .chip b{color:var(--g900);font-weight:800;font-variant-numeric:tabular-nums}
+  .chip i{width:7px;height:7px;border-radius:50%;display:inline-block}
+  .chip:hover{border-color:var(--g300);background:#fcfcfd}
+  .chip.on i{background:var(--ok)} .chip.off i{background:var(--g400)}
+  .chip.attn{border-color:#fecaca;background:var(--err-bg);color:var(--err);font-weight:700}
+  .chip.attn i{background:var(--err)}
+  .chip.attn.zero{border-color:var(--bd);background:#fff;color:var(--g400);font-weight:600}
+  .chip.attn.zero i{background:var(--g300)}
+  .chips .sep{width:1px;height:16px;background:var(--bd);margin:0 3px}
+  .chipNext{
+    display:inline-flex;align-items:center;gap:7px;border:1px dashed var(--bd);border-radius:999px;
+    padding:5px 12px;font-size:12px;color:var(--g500);background:#fff;min-width:0;
+  }
+  .chipNext .cap{font-size:10.5px;font-weight:700;color:var(--g400);letter-spacing:.04em}
+  .chipNext b{color:var(--pri);font-weight:800;font-variant-numeric:tabular-nums}
+  .chipNext .nm{color:var(--g400);max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chips .total{margin-left:auto;font-size:11.5px;color:var(--g400)}
+
+  /* ══════════ 方案 D：标题式 ══════════ */
+  .hero{margin-bottom:14px}
+  .hero .line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .hero .big{font-size:19px;font-weight:800;letter-spacing:-.01em}
+  .hero .big em{font-style:normal;color:var(--pri)}
+  .hero .big.red em{color:var(--err)}
+  .hero .aside{color:var(--g400);font-size:12px}
+  .hero .next{margin-left:auto;font-size:12.5px;color:var(--g500)}
+  .hero .next b{color:var(--pri);font-weight:800;font-variant-numeric:tabular-nums}
+  .hero .track{display:flex;gap:2px;height:4px;border-radius:99px;overflow:hidden;background:var(--bd2);margin-top:11px}
+  .hero .track i{display:block;height:100%}
+  .hero .track i.on{background:var(--ok)} .hero .track i.off{background:var(--g300)} .hero .track i.attn{background:var(--err)}
+
+  /* ── 说明区 ── */
+  .notes{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:14px 16px;margin:14px 0 26px;font-size:12.5px;color:var(--g700)}
+  .notes h4{margin:0 0 8px;font-size:12px;color:var(--g400);letter-spacing:.04em;text-transform:uppercase;font-weight:700}
+  .notes ul{margin:0;padding-left:18px}
+  .notes li{margin:0 0 5px}
+  .notes code{background:#f3f4f6;border-radius:4px;padding:1px 5px;font-size:11.5px;color:#b91c1c;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  /* ── 对比表 ── */
+  .cmp{background:#fff;border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+  .cmp table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .cmp th{background:#fafbfc;text-align:left;padding:9px 14px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--g400);border-bottom:1px solid var(--bd)}
+  .cmp td{padding:11px 14px;border-bottom:1px solid var(--bd2);vertical-align:top}
+  .cmp tr:last-child td{border-bottom:0}
+  .cmp td:first-child{font-weight:700;white-space:nowrap}
+  .cmp .rec{color:var(--ok);font-weight:800}
+  .pill{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;background:var(--pri-bg);color:var(--pri)}
+  .pill.gray{background:#f3f4f6;color:var(--g500)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>我的任务 · 顶部概览条重设计</h1>
+  <p class="sub">红框那条现在是一行 <code style="font-family:ui-monospace,monospace;font-size:11.5px">text-xs</code> 灰字平铺：四个计数、下次执行、总数，字号字重颜色全一样。它不是设计，是把数据念了一遍。占比条方案（B）已按你的选择落地：默认折成一行，需要时再展开。</p>
+
+  <div class="sec">现状 <span class="tag">你现在看到的样子</span></div>
+  <div class="current">
+    <div class="row">
+      <span><i class="dot" style="background:var(--ok)"></i><b>1</b> 个运行中</span>
+      <span><i class="dot" style="background:var(--g400)"></i><b>3</b> 个已暂停</span>
+      <span><i class="dot" style="background:var(--g300)"></i><b>0</b> 个需处理</span>
+      <span class="next">下次执行 <b style="color:var(--pri)">今天 09:00</b>（每日追踪 GitHub 项目 Star 情况）</span>
+      <span class="total">共 4 个任务</span>
+    </div>
+  </div>
+
+  <div class="diag">
+    <table>
+      <thead><tr><th>#</th><th>问题</th><th>为什么难读</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td><b>数字和标签一样重</b></td><td><b>1</b> 个运行中 —— 数字该跳出来，标签该退后。现在全是 12px 同色同重，扫视时抓不到重点。</td></tr>
+        <tr><td>2</td><td><b>「0 个需处理」占着最贵的位置</b></td><td>没有异常时它仍然占一格，用灰点糊弄。零值是好消息，但这里读起来像"这项坏了/不可用"。</td></tr>
+        <tr><td>3</td><td><b>「下次执行」任务名撑开整行</b></td><td>括号里塞完整任务名，宽度不受控；任务名一长就把左边三个计数挤走，且和计数抢同一个视觉层级。</td></tr>
+        <tr><td>4</td><td><b>和下面 tab 栏重复「分类」</b></td><td>上一行说"几个运行中/暂停"，下一行说"全部 4 / 智能体 4 / 报表 0"，两行都在讲构成，中间没有分隔，像一段没排版的文字。</td></tr>
+        <tr><td>5</td><td><b>不可点，也不像能点</b></td><td>计数其实是筛选入口（点了会过滤），但长得和静态文字一样，没有任何按钮暗示。</td></tr>
+        <tr><td>6</td><td><b>好状态没有回报</b></td><td>「0 个需处理 + 100% 成功率」本该让用户安心，现在这条只是更灰的一段字，没有任何"一切正常"的正向信号。</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sec">方案 <span class="tag">点 tab 切换 · 切换任务量看降级</span></div>
+  <div class="tabs" id="tabs">
+    <button data-p="a" class="on">A 指标卡（推荐）</button>
+    <button data-p="b">B 占比条</button>
+    <button data-p="b2">B 收起态</button>
+    <button data-p="c">C 胶囊行</button>
+    <button data-p="d">D 标题式</button>
+    <button data-p="cur">现状</button>
+  </div>
+
+  <div class="toolbar">
+    <span>任务规模</span>
+    <span class="grp" id="scale">
+      <button data-s="small" class="on">4 条（你现在）</button>
+      <button data-s="big">12 条</button>
+    </span>
+    <span>容器宽度</span>
+    <span class="grp" id="width">
+      <button data-w="1280" class="on">1280</button>
+      <button data-w="1080">1080 个人中心</button>
+      <button data-w="900">900</button>
+    </span>
+    <span class="hint" id="hint"></span>
+  </div>
+
+  <div class="stage">
+    <div class="canvas">
+      <div class="tabline">
+        <span class="it on">全部任务 <span class="cnt" id="t-all">4</span></span>
+        <span class="it">智能体任务 <span class="cnt" id="t-agent">4</span></span>
+        <span class="it">报表订阅 <span class="cnt">0</span></span>
+        <span class="it">元数据巡检 <span class="cnt">0</span></span>
+        <span class="right">执行记录 →</span>
+      </div>
+      <div id="body"></div>
+      <div id="cards"></div>
+    </div>
+  </div>
+
+  <div class="notes" id="notes"></div>
+
+  <div class="sec">对比</div>
+  <div class="cmp">
+    <table>
+      <thead><tr><th>方案</th><th>一眼看什么</th><th>高度</th><th>代价</th><th>什么时候用</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>A 指标卡 <span class="pill">推荐</span></td>
+          <td>三个状态各占一块，数字最大；下次执行独立靠右</td>
+          <td>+28px（4 条任务时自动压扁成 +14px）</td>
+          <td>比现在占地方；`kpiBox` 要按数量切 compact</td>
+          <td>任务多（10+）时总览感最强，这也是你说的主要场景</td>
+        </tr>
+        <tr>
+          <td>B 占比条</td>
+          <td>健康构成的比例，异常一旦出现条上立刻有红色缺口</td>
+          <td>+34px</td>
+          <td>任务少于 6 条时条形图没有意义，必须降级；多一层图例要读</td>
+          <td>任务很多（20+）且关心"整体健康度趋势"</td>
+        </tr>
+        <tr>
+          <td>C 胶囊行</td>
+          <td>和现状一样一行，但每个计数是明确的按钮</td>
+          <td>0（与现状等高）</td>
+          <td>没有 A 那么强的总览感；胶囊边框多，略显碎</td>
+          <td>想尽量少改、保持轻量</td>
+        </tr>
+        <tr>
+          <td>D 标题式</td>
+          <td>一句话总结 + 一条细进度，最安静</td>
+          <td>+10px</td>
+          <td>计数变成句子，快速扫数值不如 A 方便</td>
+          <td>想让页面更"呼吸"，把重点留给列表</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const DATA = {
+  small: {
+    on: 1, off: 3, attn: 0, total: 4,
+    next: { time: '今天 09:00', name: '每日追踪 GitHub 项目 Star 情况' },
+    cards: [
+      { name: '每日追踪 GitHub 项目 Star 情况', st: 'on', sched: '每天 09:00', runs: '97 次', rate: '98%' },
+      { name: 'nanzi-ai-agent-platform 发版监控', st: 'off', sched: '每天 09:00', runs: '1 次', rate: '100%' },
+      { name: '晋景新能(01783) 通函刊发监控', st: 'off', sched: '每天 18:00', runs: '3 次', rate: '100%' },
+      { name: '每日工作晨间提醒', st: 'off', sched: '每隔 23 分钟运行一次', runs: '26 次', rate: '100%' }
+    ]
+  },
+  big: {
+    on: 6, off: 3, attn: 3, total: 12,
+    next: { time: '明天 02:00', name: '知识库 freshness 巡检' },
+    cards: [
+      { name: '知识库 freshness 巡检', st: 'on', sched: '每天 02:00', runs: '41 次', rate: '100%' },
+      { name: '数据集 ods_order 增量校验', st: 'on', sched: '每天 06:30', runs: '63 次', rate: '98%' },
+      { name: '每周经营数据周报', st: 'attn', sched: '每周一 09:00', runs: '9 次', rate: '89%' },
+      { name: '港股公告关键词扫描', st: 'on', sched: '交易时段每 30 分钟', runs: '486 次', rate: '100%' }
+    ]
+  }
+};
+
+const ST = {
+  on:   { dot: 'var(--ok)',   label: '活跃',   cls: 's-on',   cls2: 'chip on' },
+  off:  { dot: 'var(--g400)', label: '已暂停', cls: 's-off',  cls2: 'chip off' },
+  attn: { dot: 'var(--err)',  label: '需处理', cls: 's-attn', cls2: 'chip attn' }
+};
+
+const state = { plan: 'a', scale: 'small', width: 1280 };
+const $ = (s) => document.querySelector(s);
+
+function plans(d) {
+  const attnZero = d.attn === 0;
+  const pct = (n) => (d.total ? (n / d.total) * 100 : 0);
+  const compact = d.total <= 5;
+
+  return {
+    /* A：三个指标卡 + 右对齐的下次执行 */
+    a: `
+      <div class="kpiWrap ${compact ? 'compact' : ''}">
+        <div class="kpiBox on" title="点击只看运行中">
+          <span class="n">${d.on}</span><span class="lb">运行中</span>
+        </div>
+        <div class="kpiBox off" title="点击只看已暂停">
+          <span class="n">${d.off}</span><span class="lb">已暂停</span>
+        </div>
+        <div class="kpiBox attn ${attnZero ? 'zero' : ''}" title="${attnZero ? '当前没有需要处理的任务' : '点击只看需处理'}">
+          <span class="n">${d.attn}</span><span class="lb">${attnZero ? '全部正常' : '需处理'}</span>
+        </div>
+        <div class="kpiNext">
+          <span class="cap">下一次</span>
+          <span class="t">${d.next.time}</span>
+          <span class="nm">${d.next.name}</span>
+        </div>
+      </div>`,
+
+    /* B：占比条 + 图例 */
+    b: compact ? `
+      <div class="barWrap">
+        <div class="barTop">
+          <span class="hl">${d.total} 个任务 <em>· 任务较少，用计数代替占比条</em></span>
+          <span class="next">下一次 <b>${d.next.time}</b></span>
+        </div>
+        <div class="legend">
+          <span><s style="background:var(--ok)"></s>运行中 ${d.on}</span>
+          <span><s style="background:var(--g300)"></s>已暂停 ${d.off}</span>
+          <span><s style="background:${attnZero ? 'var(--g300)' : 'var(--err)'}"></s>需处理 ${d.attn}</span>
+        </div>
+      </div>` : `
+      <div class="barWrap">
+        <div class="barTop">
+          <span class="hl">${Math.round(pct(d.on))}% 在运行 <em>· 共 ${d.total} 个任务</em></span>
+          <span class="next">下一次 <b>${d.next.time}</b> · ${d.next.name}</span>
+        </div>
+        <div class="bar">
+          <i class="on" style="width:${pct(d.on)}%"></i>
+          <i class="off" style="width:${pct(d.off)}%"></i>
+          <i class="attn" style="width:${pct(d.attn)}%"></i>
+        </div>
+        <div class="legend">
+          <span><s style="background:var(--ok)"></s>运行中 ${d.on}</span>
+          <span><s style="background:var(--g300)"></s>已暂停 ${d.off}</span>
+          <span><s style="background:var(--err)"></s>需处理 ${d.attn}</span>
+        </div>
+      </div>`,
+
+    /* B 收起态：一行说完，不拿「省空间」换掉筛选能力 */
+    b2: `
+      <div class="barWrap" style="padding:8px 14px">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:0 12px">
+          <span style="font-size:13px;font-weight:800">${compact
+            ? `共 ${d.total} 个任务`
+            : `${Math.round(pct(d.on))}% 在运行 <span style="margin-left:6px;font-size:11px;font-weight:700;color:var(--g400)">共 ${d.total} 个</span>`}
+          </span>
+          <span style="display:flex;gap:4px;align-items:center">
+            <span class="chip on" style="padding:3px 9px 3px 8px"><i></i>运行中 <b>${d.on}</b></span>
+            <span class="chip off" style="padding:3px 9px 3px 8px"><i></i>已暂停 <b>${d.off}</b></span>
+            <span class="chip attn ${attnZero ? 'zero' : ''}" style="padding:3px 9px 3px 8px"><i></i>${attnZero ? '全部正常' : '需处理 <b>' + d.attn + '</b>'}</span>
+          </span>
+          <span style="margin-left:auto;font-size:12px;color:var(--g500)">
+            <span style="font-weight:700;color:var(--g400);font-size:10.5px">下一次</span>
+            <b style="color:var(--pri);font-weight:800">${d.next.time}</b>
+            <span style="color:var(--g400)">${d.next.name}</span>
+          </span>
+          <span style="font-size:11.5px;font-weight:700;color:var(--g400);cursor:pointer">展开 ⌄</span>
+        </div>
+      </div>`,
+
+    /* C：胶囊行，与现状等高 */
+    c: `
+      <div class="chips">
+        <span class="chip on"><i></i>运行中 <b>${d.on}</b></span>
+        <span class="chip off"><i></i>已暂停 <b>${d.off}</b></span>
+        <span class="chip attn ${attnZero ? 'zero' : ''}"><i></i>${attnZero ? '全部正常' : '需处理 <b>' + d.attn + '</b>'}</span>
+        <span class="sep"></span>
+        <span class="chipNext"><span class="cap">下一次</span><b>${d.next.time}</b><span class="nm">${d.next.name}</span></span>
+        <span class="total">共 ${d.total} 个任务</span>
+      </div>`,
+
+    /* D：标题句 + 细进度条 */
+    d: `
+      <div class="hero">
+        <div class="line">
+          <span class="big ${attnZero ? '' : 'red'}">${d.total} 个任务 · <em>${attnZero ? d.on + ' 个在跑' : d.attn + ' 个要处理'}</em></span>
+          <span class="aside">${attnZero ? `已暂停 ${d.off} 个，其余正常` : `运行中 ${d.on} 个，已暂停 ${d.off} 个`}</span>
+          <span class="next">下一次 <b>${d.next.time}</b> ${d.next.name}</span>
+        </div>
+        <div class="track">
+          <i class="on" style="width:${pct(d.on)}%"></i>
+          <i class="off" style="width:${pct(d.off)}%"></i>
+          <i class="attn" style="width:${pct(d.attn)}%"></i>
+        </div>
+      </div>`,
+
+    /* 现状复刻 */
+    cur: `
+      <div style="font-size:12px;color:var(--g500);display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin-bottom:14px">
+        <span><i style="width:6px;height:6px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:6px"></i><b style="color:var(--g900)">${d.on}</b> 个运行中</span>
+        <span><i style="width:6px;height:6px;border-radius:50%;background:var(--g400);display:inline-block;margin-right:6px"></i><b style="color:var(--g900)">${d.off}</b> 个已暂停</span>
+        <span><i style="width:6px;height:6px;border-radius:50%;background:var(--g300);display:inline-block;margin-right:6px"></i><b style="color:var(--g900)">${d.attn}</b> 个需处理</span>
+        <span>下次执行 <b style="color:var(--pri)">${d.next.time}</b>（${d.next.name}）</span>
+        <span style="margin-left:auto;color:var(--g400)">共 ${d.total} 个任务</span>
+      </div>`
+  };
+}
+
+const NOTES = {
+  a: `<h4>方案 A 要点</h4><ul>
+    <li><b>数字跳出来、标签退后</b>：<code>22px/800</code> 的数字配 <code>11.5px</code> 灰标签，扫视时先看到 1 / 3 / 0。</li>
+    <li><b>零值改语义</b>：没有异常时第三块写「全部正常」并转成灰描边，而不是拿灰点敷衍「0 个需处理」——零值是好消息，就该读成好消息。</li>
+    <li><b>下次执行独立成块</b>：标签 + 时间 + 任务名三段，任务名 <code>max-width:190px</code> 截断，永远不会把左边计数挤走。</li>
+    <li><b>任务 ≤5 条自动压扁</b>（切换「4 条」看）：padding 和字号下调一档，避免 4 条任务顶着三个大卡片。</li>
+    <li>每块都是筛选入口，hover 有边框反馈，暗示可点。</li>
+  </ul>`,
+  b: `<h4>方案 B 要点</h4><ul>
+    <li><b>异常立刻可见</b>：需处理占比一出现，条上就是一道红色缺口，比数字更早被眼睛捕捉。</li>
+    <li><b>任务少必须降级</b>：切「4 条」看——4 个任务画占比条没有意义，退成计数 + 图例。</li>
+    <li>代价是多一层图例要读，且不说清「几个」只说「百分之几」，对日常操作不太够用。</li>
+  </ul>`,
+  b2: `<h4>B 收起态要点</h4><ul>
+    <li><b>一行 50px 收完</b>（展开态 96px），任务少或已经心里有数时不用整天顶着一块大卡。</li>
+    <li><b>不拿省空间换能力</b>：三个计数照样是筛选入口，只是把占比条藏起来。</li>
+    <li><b>默认就是收起态</b>——概览是「扫一眼」用的，不该天天占着一块大卡；想看得更细再点「展开」。</li>
+    <li>收起 / 展开的选择记在 localStorage，刷新后保持，不会每次弹回来。</li>
+  </ul>`,
+  c: `<h4>方案 C 要点</h4><ul>
+    <li><b>与现状等高</b>，只把裸文字换成有边框的胶囊，可点性立刻成立。</li>
+    <li>「下一次」用虚线胶囊和状态胶囊区分开：一个是筛选，一个是信息。</li>
+    <li>缺点：胶囊边框多，一行里五六个描边元素略碎；总览的冲击力不如 A。</li>
+  </ul>`,
+  d: `<h4>方案 D 要点</h4><ul>
+    <li><b>最安静</b>：一句话说清局面（「12 个任务 · 3 个要处理」），细进度条当装饰兼示意。</li>
+    <li>有问题时主句变红，把注意力直接推到「3 个要处理」上。</li>
+    <li>缺点：计数藏进句子，想快速对比 1 / 3 / 0 不如 A 直观。</li>
+  </ul>`,
+  cur: `<h4>现状</h4><ul>
+    <li>这行是 <code>text-xs</code> 灰色平铺，四个计数 + 下次执行 + 总数同重同色。</li>
+    <li>「0 个需处理」的灰点在视觉上像禁用态；任务名括号全展开，长名字会挤掉左边内容。</li>
+  </ul>`
+};
+
+function cards(d) {
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
+    ${d.cards.map((c) => `
+      <div style="background:#fff;border:1px solid var(--bd);border-radius:12px;padding:13px;display:flex;flex-direction:column;gap:7px">
+        <div style="display:flex;align-items:center;gap:7px">
+          <i style="width:7px;height:7px;border-radius:50%;background:${ST[c.st].dot};flex:0 0 auto"></i>
+          <b style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.name}</b>
+        </div>
+        <div style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--g500)">
+          <span style="background:var(--pri-bg);color:var(--pri);border-radius:4px;padding:1px 6px;font-weight:700">主助手(Main)</span>
+          <span style="font-weight:600;color:var(--g700)">${c.sched}</span>
+          <span style="border-radius:999px;padding:1px 7px;font-weight:800;font-size:10px;border:1px solid ${c.st === 'attn' ? '#fecaca' : c.st === 'on' ? '#a7f3d0' : 'var(--bd)'};background:${c.st === 'attn' ? 'var(--err-bg)' : c.st === 'on' ? 'var(--ok-bg)' : '#f9fafb'};color:${c.st === 'attn' ? 'var(--err)' : c.st === 'on' ? '#047857' : 'var(--g500)'}">${ST[c.st].label}</span>
+        </div>
+        <div style="font-size:11px;color:var(--g500)">运行 <b style="color:var(--g900)">${c.runs}</b> · 成功率 <b style="color:var(--g900)">${c.rate}</b></div>
+      </div>`).join('')}
+  </div>`;
+}
+
+function render() {
+  const d = DATA[state.scale];
+  const html = plans(d)[state.plan];
+  $('#body').innerHTML = html;
+  $('#cards').innerHTML = cards(d);
+  $('#notes').innerHTML = NOTES[state.plan] || '';
+  $('#t-all').textContent = d.total;
+  $('#t-agent').textContent = d.total;
+  document.documentElement.style.setProperty('--win-w', state.width + 'px');
+  $('#hint').textContent = state.width <= 900
+    ? '← 900 时注意「下一次」的任务名要截断，别把左侧计数挤掉'
+    : '';
+}
+
+$('#tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-p]');
+  if (!b) return;
+  state.plan = b.dataset.p;
+  [...$('#tabs').children].forEach((x) => x.classList.toggle('on', x === b));
+  render();
+  location.hash = state.plan;
+});
+
+$('#scale').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-s]');
+  if (!b) return;
+  state.scale = b.dataset.s;
+  [...$('#scale').children].forEach((x) => x.classList.toggle('on', x === b));
+  render();
+});
+
+$('#width').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-w]');
+  if (!b) return;
+  state.width = Number(b.dataset.w);
+  [...$('#width').children].forEach((x) => x.classList.toggle('on', x === b));
+  render();
+});
+
+/* 深链：#a / #b / #c / #d / #cur，可拼 -big 表示 12 条 */
+(function boot() {
+  const raw = (location.hash || '').replace('#', '');
+  if (!raw) return render();
+  const [plan, scale] = raw.split('-');
+  if (['a', 'b', 'b2', 'c', 'd', 'cur'].includes(plan)) {
+    state.plan = plan;
+    [...$('#tabs').children].forEach((x) => x.classList.toggle('on', x.dataset.p === plan));
+  }
+  if (scale === 'big') {
+    state.scale = 'big';
+    [...$('#scale').children].forEach((x) => x.classList.toggle('on', x.dataset.s === 'big'));
+  }
+  render();
+})();
+</script>
+</body>
+</html>

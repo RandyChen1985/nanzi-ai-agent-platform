@@ -37,6 +37,10 @@ import TaskPromptComposer, {
 } from '@/components/task/TaskPromptComposer.vue'
 import PromptAiOptimize from '@/components/PromptAiOptimize.vue'
 import type { ReasoningEffort } from '@/api/model'
+// 历史抽屉复用聊天页渲染器：summary 里存的是 markdown 原文（表格、加粗、列表），
+// 直接丢进 <p> 会显示成 ## / ** / | 的裸源码。只读模式不接引用面板与产物下载。
+import MessageRenderer from '@/components/MessageRenderer.vue'
+import '@/styles/messageMarkdownHost.css'
 
 const emptyResourceScope = (): TaskResourceScope => ({
   project_name: '',
@@ -1210,7 +1214,43 @@ const statusSummary = computed(() => {
   const upcoming = list
     .filter(task => task.status === 1 && task.next_run_at)
     .sort((a, b) => String(a.next_run_at).localeCompare(String(b.next_run_at)))[0]
-  return { on, off, attn, total: list.length, upcoming }
+  const pctOf = (n: number) => (list.length ? Math.round((n / list.length) * 100) : 0)
+  return {
+    on,
+    off,
+    attn,
+    total: list.length,
+    upcoming,
+    onPct: pctOf(on),
+    offPct: pctOf(off),
+    attnPct: pctOf(attn),
+    // 4~5 个任务画占比条没有意义（每段都是一大块），少于 6 条退化成纯计数
+    compact: list.length < 6,
+  }
+})
+
+/** 概览条默认收起（一行说完），只有用户主动展开过才保持展开，别每次刷新又弹回来 */
+const overviewCollapsed = ref(localStorage.getItem('task_center_overview_collapsed') !== '0')
+const toggleOverview = () => {
+  overviewCollapsed.value = !overviewCollapsed.value
+  localStorage.setItem('task_center_overview_collapsed', overviewCollapsed.value ? '1' : '0')
+}
+
+/** 三个状态计数，折叠态与展开态共用一套渲染 */
+const statusChips = computed(() => {
+  const summary = statusSummary.value
+  return [
+    { key: 'running' as const, dot: 'bg-emerald-500', label: '运行中', count: summary.on, clickable: true, title: '只看运行中的任务' },
+    { key: 'stopped' as const, dot: 'bg-gray-300', label: '已暂停', count: summary.off, clickable: true, title: '只看已暂停的任务' },
+    {
+      key: 'attn' as const,
+      dot: summary.attn > 0 ? 'bg-red-500' : 'bg-gray-300',
+      label: summary.attn > 0 ? '需处理' : '全部正常',
+      count: summary.attn,
+      clickable: summary.attn > 0,
+      title: summary.attn > 0 ? '只看异常 / 需核对的任务' : '当前没有需要处理的任务',
+    },
+  ]
 })
 
 /**
@@ -1563,9 +1603,12 @@ const fetchLogs = async (append = false) => {
     const res = await taskApi.logs(selectedTask.value.id, { page: logsPage.value, page_size: 10 })
     const newItems = (res.data.data.items || []).map((item: any) => ({
         ...item,
-        isExpanded: false,
+        isExpanded: false,       // 执行步骤展开
         steps: [],
-        stepsLoading: false
+        stepsLoading: false,
+        mdExpanded: null,        // 正文展开：null 跟随全局密度，true/false 为单条覆盖
+        // 短摘要不值得给「展开全文」按钮
+        mdExpandable: String(item.summary || item.query || '').length > 180,
     }))
     
     if (append) {
@@ -1576,6 +1619,110 @@ const fetchLogs = async (append = false) => {
     logsTotal.value = res.data.data.total
   } catch (e) { showToast('获取日志失败', 'error') } finally { logsLoading.value = false }
 }
+
+/** 历史抽屉：只看失败（打开这个抽屉最常见的原因就是「刚才那次怎么失败了」） */
+const logsFilter = ref<'all' | 'fail'>('all')
+/** 历史抽屉：「原文」开关，渲染异常时就地自查，不必让用户去猜 markdown 长什么样 */
+const showRawMarkdown = ref(false)
+
+const isLogOk = (log: any) => String(log?.status || '').toLowerCase() === 'success'
+
+/** 历史按天分组：今天 / 昨天 / 前天 / 11-22（同年省略年份，跨年才带年） */
+const logDayLabel = (value?: string): string => {
+  const raw = String(value || '').trim()
+  if (!raw) return '未知时间'
+  const target = new Date(raw)
+  if (Number.isNaN(target.getTime())) return raw.slice(0, 10)
+  const targetParts = platformClockParts(target)
+  const nowParts = platformClockParts(new Date())
+  const diffDays = Math.round(
+    (Date.parse(`${targetParts.ymd}T00:00:00Z`) - Date.parse(`${nowParts.ymd}T00:00:00Z`)) / 86400000,
+  )
+  if (diffDays === 0) return '今天'
+  if (diffDays === -1) return '昨天'
+  if (diffDays === -2) return '前天'
+  const [year, month, day] = targetParts.ymd.split('-')
+  return year === nowParts.ymd.split('-')[0] ? `${month}-${day}` : `${year}-${month}-${day}`
+}
+
+/** 组内只显示时刻，日期由分组头交代，不必每条重复「今天」 */
+const logClock = (value?: string): string => {
+  const raw = String(value || '').trim()
+  if (!raw) return '—'
+  const target = new Date(raw)
+  if (Number.isNaN(target.getTime())) return ''
+  return platformClockParts(target).hhmm
+}
+
+/** 紧凑行的一句话摘要：去掉 markdown 标记，只留能扫读的文字 */
+const logPreview = (log: any, max = 64): string => {
+  const text = String(log?.summary || log?.query || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[#*`>|_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!text) return '（无摘要）'
+  return text.length > max ? `${text.slice(0, max)}…` : text
+}
+
+/**
+ * 抽屉密度：compact 每条压成一行 / normal 正文折叠 132px / expanded 全部展开。
+ * 记在本地；单条点过之后以单条为准（mdExpanded 非 null），一键按钮会把单条选择清掉统一覆盖。
+ */
+const logsDensity = ref<'compact' | 'normal' | 'expanded'>(
+  (localStorage.getItem('task_center_logs_density') as 'compact' | 'normal' | 'expanded') || 'normal',
+)
+const setLogsDensity = (mode: 'compact' | 'expanded') => {
+  const next = logsDensity.value === mode ? 'normal' : mode
+  logsDensity.value = next
+  localStorage.setItem('task_center_logs_density', next)
+  logs.value.forEach((log: any) => { log.mdExpanded = null })
+}
+
+const logShowsBody = (log: any): boolean => {
+  if (log?.mdExpanded === true) return true
+  if (log?.mdExpanded === false) return false
+  return logsDensity.value === 'expanded'
+}
+const logIsCompactRow = (log: any): boolean => logsDensity.value === 'compact' && log?.mdExpanded !== true
+
+const logsGroupCollapsed = ref<Record<string, boolean>>({})
+const toggleLogsGroup = (day: string) => {
+  logsGroupCollapsed.value = { ...logsGroupCollapsed.value, [day]: !logsGroupCollapsed.value[day] }
+}
+
+const groupedLogs = computed(() => {
+  const order: string[] = []
+  const buckets: Record<string, any[]> = {}
+  filteredLogs.value.forEach((log: any) => {
+    const day = logDayLabel(log.created_at)
+    if (!buckets[day]) {
+      buckets[day] = []
+      order.push(day)
+    }
+    buckets[day].push(log)
+  })
+  return order.map((day) => {
+    const runs = buckets[day]
+    const ok = runs.filter(isLogOk).length
+    return { day, runs, ok, fail: runs.length - ok }
+  })
+})
+
+const filteredLogs = computed(() => (
+  logsFilter.value === 'fail' ? logs.value.filter((log: any) => !isLogOk(log)) : logs.value
+))
+
+/** 概览只统计已加载的这批（接口按页返回，没加载的不该算进来） */
+const logsSummary = computed(() => {
+  const items = logs.value as any[]
+  const ok = items.filter(isLogOk).length
+  const durations = items
+    .map((log) => Number(log.execution_time_ms || 0))
+    .filter((ms) => ms > 0)
+  const avg = durations.length ? durations.reduce((a, b) => a + b, 0) / durations.length : 0
+  return { loaded: items.length, ok, fail: items.length - ok, avg: avg ? formatDurationMs(avg) : '—' }
+})
 
 const toggleLogSteps = async (log: any) => {
     log.isExpanded = !log.isExpanded
@@ -2182,50 +2329,136 @@ onMounted(async () => {
       />
     </div>
 
-    <!-- 概览：三类状态互斥计数（可点击直达筛选）+ 最近一次待执行任务 -->
+    <!-- 概览：健康构成占比条 + 可点击计数；可折叠成一行，选择记在本地 -->
     <div
       v-if="mainViewTab === 'tasks' && !loading && statusSummary.total > 0"
-      class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-500"
+      class="rounded-xl border border-gray-200 bg-white px-4 shadow-sm transition-all"
+      :class="overviewCollapsed ? 'py-2' : 'py-2.5'"
     >
-      <button
-        type="button"
-        class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors hover:bg-gray-100 hover:text-gray-800"
-        :class="statusFilter === 'running' ? 'bg-gray-100 text-gray-900' : ''"
-        title="只看运行中的任务"
-        @click="statusFilter = statusFilter === 'running' ? 'all' : 'running'"
-      >
-        <span class="h-1.5 w-1.5 rounded-full bg-green-500"></span>
-        <b class="font-bold text-gray-900">{{ statusSummary.on }}</b> 个运行中
-      </button>
-      <button
-        type="button"
-        class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors hover:bg-gray-100 hover:text-gray-800"
-        :class="statusFilter === 'stopped' ? 'bg-gray-100 text-gray-900' : ''"
-        title="只看已暂停的任务"
-        @click="statusFilter = statusFilter === 'stopped' ? 'all' : 'stopped'"
-      >
-        <span class="h-1.5 w-1.5 rounded-full bg-gray-400"></span>
-        <b class="font-bold text-gray-900">{{ statusSummary.off }}</b> 个已暂停
-      </button>
-      <button
-        type="button"
-        class="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors hover:bg-gray-100 hover:text-gray-800"
-        :class="[
-          statusSummary.attn > 0 ? 'text-red-600' : 'text-gray-500',
-          statusFilter === 'attn' ? 'bg-red-50' : '',
-        ]"
-        title="只看异常 / 需核对的任务"
-        @click="statusFilter = statusFilter === 'attn' ? 'all' : 'attn'"
-      >
-        <span class="h-1.5 w-1.5 rounded-full" :class="statusSummary.attn > 0 ? 'bg-red-500' : 'bg-gray-300'"></span>
-        <b class="font-bold" :class="statusSummary.attn > 0 ? 'text-red-600' : 'text-gray-900'">{{ statusSummary.attn }}</b> 个需处理
-      </button>
-      <span v-if="statusSummary.upcoming" class="inline-flex min-w-0 items-center gap-1.5">
-        <span class="shrink-0 text-gray-400">下次执行</span>
-        <b class="shrink-0 font-bold text-primary">{{ formatRunRelative(statusSummary.upcoming.next_run_at) }}</b>
-        <span class="truncate text-gray-400">（{{ statusSummary.upcoming.name }}）</span>
-      </span>
-      <span class="ml-auto hidden shrink-0 text-gray-400 sm:inline">共 {{ statusSummary.total }} 个任务</span>
+      <!-- 收起态：一行说完，计数照样能点，不拿「省空间」换掉筛选能力 -->
+      <div v-if="overviewCollapsed" class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <p class="text-sm font-bold text-gray-900">
+          <template v-if="statusSummary.compact">共 {{ statusSummary.total }} 个任务</template>
+          <template v-else>
+            {{ statusSummary.onPct }}% 在运行
+            <span class="ml-1.5 text-[11px] font-semibold text-gray-400">共 {{ statusSummary.total }} 个</span>
+          </template>
+        </p>
+        <div class="flex flex-wrap items-center gap-1">
+          <button
+            v-for="chip in statusChips"
+            :key="'c-' + chip.key"
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-semibold transition-colors"
+            :class="[
+              statusFilter === chip.key
+                ? (chip.clickable ? 'cursor-pointer bg-gray-900 text-white' : 'cursor-default bg-gray-900 text-white')
+                : (chip.clickable
+                    ? (chip.key === 'attn' ? 'cursor-pointer text-red-600 hover:bg-red-50' : 'cursor-pointer text-gray-500 hover:bg-gray-100 hover:text-gray-800')
+                    : 'cursor-default text-gray-400'),
+            ]"
+            :disabled="!chip.clickable"
+            :title="chip.title"
+            @click="statusFilter = statusFilter === chip.key ? 'all' : chip.key"
+          >
+            <span class="h-1.5 w-1.5 rounded-sm" :class="statusFilter === chip.key ? 'bg-white' : chip.dot"></span>
+            {{ chip.label }}
+            <b
+              v-if="chip.count > 0 || chip.clickable"
+              class="font-black tabular-nums"
+              :class="statusFilter === chip.key ? 'text-white' : (chip.key === 'attn' ? 'text-red-600' : 'text-gray-900')"
+            >{{ chip.count }}</b>
+          </button>
+        </div>
+        <div v-if="statusSummary.upcoming" class="ml-auto flex min-w-0 items-baseline gap-1.5 text-xs">
+          <span class="shrink-0 font-bold text-gray-400">下一次</span>
+          <b class="shrink-0 font-bold tabular-nums text-primary">{{ nextRunCell(statusSummary.upcoming).text }}</b>
+          <span class="truncate text-gray-400">{{ statusSummary.upcoming.name }}</span>
+        </div>
+        <button
+          type="button"
+          class="shrink-0 cursor-pointer rounded-md px-1.5 py-0.5 text-xs font-semibold text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+          title="展开：看健康构成占比条"
+          @click="toggleOverview"
+        >展开 ⌄</button>
+      </div>
+
+      <!-- 展开态 -->
+      <template v-else>
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <p class="text-sm font-bold text-gray-900">
+            <template v-if="statusSummary.compact">共 {{ statusSummary.total }} 个任务</template>
+            <template v-else>{{ statusSummary.onPct }}% 在运行</template>
+            <span v-if="!statusSummary.compact" class="ml-1.5 text-[11px] font-semibold text-gray-400">
+              共 {{ statusSummary.total }} 个任务
+            </span>
+          </p>
+          <div v-if="statusSummary.upcoming" class="ml-auto flex min-w-0 items-baseline gap-1.5 text-xs">
+            <span class="shrink-0 font-bold text-gray-400">下一次</span>
+            <b class="shrink-0 font-bold tabular-nums text-primary">{{ nextRunCell(statusSummary.upcoming).text }}</b>
+            <span class="truncate text-gray-400">{{ statusSummary.upcoming.name }}</span>
+          </div>
+        </div>
+
+        <!-- 占比条：异常一出现就是一道红色缺口，比数字更早被眼睛抓到 -->
+        <div
+          v-if="!statusSummary.compact"
+          class="mt-2 flex h-2 gap-[2px] overflow-hidden rounded-full bg-gray-100"
+        >
+          <span
+            v-if="statusSummary.on"
+            class="h-full bg-emerald-500"
+            :style="{ width: statusSummary.onPct + '%' }"
+            :title="`运行中 ${statusSummary.on} 个 · ${statusSummary.onPct}%`"
+          ></span>
+          <span
+            v-if="statusSummary.off"
+            class="h-full bg-gray-300"
+            :style="{ width: statusSummary.offPct + '%' }"
+            :title="`已暂停 ${statusSummary.off} 个 · ${statusSummary.offPct}%`"
+          ></span>
+          <span
+            v-if="statusSummary.attn"
+            class="h-full bg-red-500"
+            :style="{ width: statusSummary.attnPct + '%' }"
+            :title="`需处理 ${statusSummary.attn} 个 · ${statusSummary.attnPct}%`"
+          ></span>
+        </div>
+
+        <!-- 图例同时是筛选入口；右侧空白用收起按钮填上 -->
+        <div class="mt-1.5 flex flex-wrap items-center gap-1">
+          <button
+            v-for="chip in statusChips"
+            :key="'e-' + chip.key"
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-semibold transition-colors"
+            :class="[
+              statusFilter === chip.key
+                ? 'bg-gray-900 text-white'
+                : (chip.clickable
+                    ? (chip.key === 'attn' ? 'cursor-pointer text-red-600 hover:bg-red-50' : 'cursor-pointer text-gray-500 hover:bg-gray-100 hover:text-gray-800')
+                    : 'cursor-default text-gray-400'),
+            ]"
+            :disabled="!chip.clickable"
+            :title="chip.title"
+            @click="statusFilter = statusFilter === chip.key ? 'all' : chip.key"
+          >
+            <span class="h-1.5 w-1.5 rounded-sm" :class="statusFilter === chip.key ? 'bg-white' : chip.dot"></span>
+            {{ chip.label }}
+            <b
+              v-if="chip.count > 0 || chip.clickable"
+              class="font-black tabular-nums"
+              :class="statusFilter === chip.key ? 'text-white' : (chip.key === 'attn' ? 'text-red-600' : 'text-gray-900')"
+            >{{ chip.count }}</b>
+          </button>
+          <button
+            type="button"
+            class="ml-auto shrink-0 cursor-pointer rounded-md px-1.5 py-0.5 text-xs font-semibold text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+            title="收起成一行"
+            @click="toggleOverview"
+          >收起 ⌃</button>
+        </div>
+      </template>
     </div>
 
     <!-- 一级 tab：类型筛选 + 右侧「执行记录」入口（不再有第二层 pill 筛选） -->
@@ -2893,7 +3126,7 @@ onMounted(async () => {
           <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
              <!-- Tab 1: Workflow Flow -->
              <div v-if="activeSpecsTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-                <div class="bg-gradient-to-r from-orange-50 to-amber-50 border-l-4 border-orange-600 p-4 rounded-r-xl shadow-2xs">
+                <div class="bg-gradient-to-r from-orange-50 to-amber-50 border-l-4 border-orange-600 p-4 rounded-r-xl shadow-sm">
                    <h3 class="font-bold text-orange-900 mb-1">任务调度 5 步全生命周期自动化体系</h3>
                    <p class="text-xs text-orange-700 leading-relaxed">
                       基于分布式调度引擎。定义目标智能体与 Cron 周期，限定资源沙箱与审批模式，配置钉钉/企微/邮件触达，支持时序 Trace 全景观测。
@@ -3004,13 +3237,13 @@ onMounted(async () => {
 
              <!-- Tab 2: Context & Specs -->
              <div v-else-if="activeSpecsTab === 'context'" class="space-y-4 max-w-4xl mx-auto">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">自动化上下文注入与处理规范</h4>
                    <div class="space-y-3">
                       <p class="text-xs text-gray-600">
                          每次调度执行时，系统在 <code>user_info</code> 中自动注入以下上下文元数据，智能体可通过这些标识识别定时自动化场景：
                       </p>
-                      <div class="bg-gray-50 rounded-xl p-4 border border-gray-150 font-mono text-[11px] space-y-1.5">
+                      <div class="bg-gray-50 rounded-xl p-4 border border-gray-200 font-mono text-[11px] space-y-1.5">
                          <div class="flex"><span class="text-blue-600 w-36 font-semibold">is_scheduled_task:</span><span class="text-emerald-600 font-bold">true</span><span class="text-gray-400 ml-auto">// 标识当前为定时自动化任务</span></div>
                          <div class="flex"><span class="text-blue-600 w-36 font-semibold">task_name:</span><span class="text-emerald-600 font-bold">"数据巡检与周报"</span><span class="text-gray-400 ml-auto">// 当前执行的任务名称</span></div>
                          <div class="flex"><span class="text-blue-600 w-36 font-semibold">user_id / role:</span><span class="text-emerald-600 font-bold">"admin" / "1"</span><span class="text-gray-400 ml-auto">// 模拟创建者的身份与权限</span></div>
@@ -3025,7 +3258,7 @@ onMounted(async () => {
 
              <!-- Tab 3: Approval & Scope -->
              <div v-else-if="activeSpecsTab === 'approval'" class="space-y-4 max-w-4xl mx-auto">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">安全审批策略与资源沙箱限定</h4>
                    <div class="space-y-3 text-xs">
                       <div class="p-3.5 bg-green-50/60 rounded-xl border border-green-100 space-y-1">
@@ -3988,118 +4221,268 @@ onMounted(async () => {
       </div>
     </Modal>
 
-    <!-- Execution History Logs Drawer -->
+    <!-- 执行历史抽屉：时间轴 + 渲染后的 markdown（原来把 summary 的 markdown 源码当纯文本显示） -->
     <Teleport to="body">
       <div v-if="showLogsDrawer" class="fixed inset-0 z-[100] flex justify-end">
         <div class="fixed inset-0 bg-black/20 backdrop-blur-sm" @click="showLogsDrawer = false"></div>
-        <div class="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col animate-slide-in-right"
-             :class="isMobile ? 'max-w-none' : ''"
+        <div
+          class="relative flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl animate-slide-in-right"
+          :class="isMobile ? 'max-w-none' : ''"
         >
-          <div class="p-6 border-b flex items-center justify-between bg-gray-50/50">
-            <div>
-              <h2 class="text-xl font-bold text-gray-900">执行历史回溯</h2>
-              <p class="text-xs text-gray-400 mt-1 uppercase tracking-widest font-mono">{{ selectedTask?.name }} · Logs</p>
+          <!-- 头部 -->
+          <div class="border-b border-gray-200 px-5 pb-2.5 pt-4">
+            <div class="flex items-center gap-2">
+              <h2 class="text-[15px] font-extrabold tracking-tight text-gray-900">执行历史</h2>
+              <button
+                type="button"
+                class="ml-auto grid h-7 w-7 cursor-pointer place-items-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                title="关闭"
+                @click="showLogsDrawer = false"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
             </div>
-            <button @click="showLogsDrawer = false" class="p-2 hover:bg-gray-200 rounded-full transition-colors text-gray-400">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
+            <p class="mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-gray-400">
+              <span class="text-[12px] font-bold text-gray-700">{{ selectedTask?.name || '任务' }}</span>
+              <span class="h-[3px] w-[3px] rounded-full bg-gray-300"></span>
+              <span>{{ selectedTask?.agent_name || selectedTask?.agent_id || '—' }}</span>
+              <span class="h-[3px] w-[3px] rounded-full bg-gray-300"></span>
+              <span>共 {{ logsTotal }} 次执行</span>
+            </p>
           </div>
-        
-          <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
+
+          <!-- 概览 + 筛选 -->
+          <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-gray-100 bg-[#fcfcfd] px-5 py-2">
+            <span class="text-[11.5px] text-gray-500">最近 <b class="font-extrabold tabular-nums text-gray-900">{{ logsSummary.loaded }}</b> 次</span>
+            <span class="h-3 w-px bg-gray-200"></span>
+            <span class="text-[11.5px] text-gray-500">成功 <b class="font-extrabold tabular-nums text-gray-900">{{ logsSummary.ok }}</b></span>
+            <span class="text-[11.5px] text-gray-500">
+              失败 <b class="font-extrabold tabular-nums" :class="logsSummary.fail ? 'text-red-600' : 'text-gray-900'">{{ logsSummary.fail }}</b>
+            </span>
+            <span class="h-3 w-px bg-gray-200"></span>
+            <span class="text-[11.5px] text-gray-500">平均耗时 <b class="font-extrabold tabular-nums text-gray-900">{{ logsSummary.avg }}</b></span>
+            <div class="ml-auto flex items-center gap-1">
+              <button
+                type="button"
+                class="cursor-pointer rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors"
+                :class="logsFilter === 'all' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100'"
+                @click="logsFilter = 'all'"
+              >全部</button>
+              <button
+                type="button"
+                class="cursor-pointer rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors disabled:cursor-default disabled:opacity-40"
+                :class="logsFilter === 'fail' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100'"
+                :disabled="logsSummary.fail === 0"
+                @click="logsFilter = 'fail'"
+              >只看失败 {{ logsSummary.fail }}</button>
+              <span class="mx-1 h-3 w-px bg-gray-200"></span>
+              <button
+                type="button"
+                class="cursor-pointer whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors"
+                :class="logsDensity === 'compact' ? 'bg-blue-50 text-primary' : 'text-gray-500 hover:bg-gray-100'"
+                title="所有记录压成一行，一屏扫完（再点一次回到标准）"
+                @click="setLogsDensity('compact')"
+              >⌃ 全部折叠</button>
+              <button
+                type="button"
+                class="cursor-pointer whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors"
+                :class="logsDensity === 'expanded' ? 'bg-blue-50 text-primary' : 'text-gray-500 hover:bg-gray-100'"
+                title="所有正文一次性展开（再点一次回到标准）"
+                @click="setLogsDensity('expanded')"
+              >⌄ 全部展开</button>
+              <button
+                type="button"
+                class="ml-1 cursor-pointer rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors"
+                :class="showRawMarkdown ? 'bg-amber-100 text-amber-700' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700'"
+                title="切换显示 markdown 原文，排查渲染问题用"
+                @click="showRawMarkdown = !showRawMarkdown"
+              >原文</button>
+            </div>
+          </div>
+
+          <!-- 时间轴 -->
+          <div class="custom-scrollbar flex-1 overflow-y-auto px-5 pb-7 pt-3.5">
             <div v-if="logsLoading && logs.length === 0" class="flex flex-col items-center justify-center py-20">
-              <div class="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mb-4"></div>
+              <div class="mb-4 h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
               <p class="text-sm text-gray-400">正在拉取审计轨迹...</p>
             </div>
-            <div v-else-if="logs.length === 0" class="text-center py-20 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+            <div v-else-if="logs.length === 0" class="rounded-2xl border border-dashed border-gray-200 bg-gray-50 py-20 text-center">
               <p class="text-gray-400">暂无执行记录</p>
             </div>
-            <div v-else class="space-y-4">
-              <div v-for="log in logs" :key="log.id" class="p-4 border rounded-2xl hover:border-primary/30 transition-all hover:shadow-sm bg-white overflow-hidden">
-                <div class="flex justify-between items-start mb-3">
-                  <div class="flex items-center space-x-2">
-                    <span class="px-2 py-0.5 rounded-full text-[9px] font-black tracking-tighter" :class="logStatusMeta(log.status).class">{{ logStatusMeta(log.status).label }}</span>
-                    <span class="text-[10px] text-gray-300 font-mono">{{ log.trace_id.split('-')[0] }}...</span>
-                  </div>
-                  <span class="text-[10px] text-gray-400 font-medium">{{ formatDate(log.created_at) }}</span>
-                </div>
-              
-                <!-- Result Content -->
-                <p class="text-xs text-gray-600 line-clamp-3 mb-4 leading-relaxed font-medium bg-gray-50 p-3 rounded-xl border border-gray-100">"{{ log.summary || log.query }}"</p>
-              
-                <!-- Steps Accordion -->
-                <div class="mb-4">
-                    <button 
-                      @click="toggleLogSteps(log)"
-                      class="flex items-center space-x-2 text-[10px] font-black text-gray-400 uppercase tracking-widest hover:text-primary transition-colors group"
+            <div v-else-if="filteredLogs.length === 0" class="rounded-2xl border border-dashed border-gray-200 bg-gray-50 py-12 text-center">
+              <p class="text-gray-400">最近 {{ logsSummary.loaded }} 次里没有失败记录</p>
+              <button type="button" class="mt-2 cursor-pointer text-xs font-bold text-primary hover:underline" @click="logsFilter = 'all'">显示全部</button>
+            </div>
+
+            <div v-else>
+              <div v-for="group in groupedLogs" :key="group.day" class="mb-3">
+                <!-- 分组头：有底色的分节条 + 吸顶。只靠灰字和小箭头时，它跟条目的视觉重量几乎一样，翻起来分不清「分组还是记录」 -->
+                <button
+                  type="button"
+                  class="sticky top-0 z-10 mb-1.5 flex w-full cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-gray-100/95 px-2.5 py-1.5 text-left backdrop-blur-sm transition-colors hover:bg-gray-200/70"
+                  :title="logsGroupCollapsed[group.day] ? '展开这一组' : '收起这一组'"
+                  @click="toggleLogsGroup(group.day)"
+                >
+                  <span class="w-2.5 shrink-0 text-[9px] text-gray-400">{{ logsGroupCollapsed[group.day] ? '▸' : '▾' }}</span>
+                  <b class="text-[13px] font-extrabold tracking-tight text-gray-900">{{ group.day }}</b>
+                  <span class="text-[11px] font-bold text-gray-500">{{ group.runs.length }} 次</span>
+                  <span v-if="group.ok" class="text-[11px] font-bold text-emerald-600">成功 {{ group.ok }}</span>
+                  <span v-if="group.fail" class="text-[11px] font-bold text-red-600">失败 {{ group.fail }}</span>
+                  <span v-if="logsGroupCollapsed[group.day]" class="ml-auto text-[10.5px] font-semibold text-gray-400">已收起</span>
+                </button>
+
+                <template v-if="!logsGroupCollapsed[group.day]">
+                  <div v-for="(log, idx) in group.runs" :key="log.id">
+                    <!-- 紧凑行：时间 + 状态 + 耗时 + 摘要首行，一屏能扫十几条 -->
+                    <div
+                      v-if="logIsCompactRow(log)"
+                      class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-[11.5px] transition-colors hover:bg-gray-50"
+                      title="点击展开这一条"
+                      @click="(log as any).mdExpanded = true"
                     >
-                      <div class="flex items-center">
-                          <div v-if="(log as any).stepsLoading" class="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin mr-2"></div>
-                          <svg class="w-4 h-4 transform transition-transform duration-300" :class="{ 'rotate-180': (log as any).isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
-                      </div>
-                      <span>执行步骤 (Steps)</span>
-                      <span v-if="(log as any).steps?.length" class="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full text-[8px] ml-1 group-hover:bg-primary/10 group-hover:text-primary transition-colors">{{ (log as any).steps.length }}</span>
-                    </button>
-
-                    <div v-show="(log as any).isExpanded" class="mt-3 pl-4 border-l-2 border-primary/10 space-y-3 animate-fade-in">
-                        <div v-if="(log as any).stepsLoading" class="py-4 flex justify-center">
-                            <div class="animate-pulse flex space-x-2 items-center">
-                                <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
-                                <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
-                                <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
-                            </div>
-                        </div>
-                        <div v-else-if="(log as any).steps && (log as any).steps.length > 0" class="space-y-3">
-                            <div v-for="(step, sIdx) in (log as any).steps" :key="sIdx" class="bg-gray-50/50 p-2.5 rounded-xl border border-gray-100/50 group/step relative">
-                                <div class="flex justify-between items-center mb-1.5">
-                                    <div class="flex items-center space-x-2">
-                                        <span 
-                                          class="text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter"
-                                          :class="{
-                                              'bg-blue-100 text-blue-700': (step as any).event_type === 'thought',
-                                              'bg-purple-100 text-purple-700': (step as any).event_type === 'router',
-                                              'bg-amber-100 text-amber-700': (step as any).event_type === 'tool_call',
-                                              'bg-green-100 text-green-700': (step as any).event_type === 'synthesis' || (step as any).event_type === 'final_answer',
-                                              'bg-red-100 text-red-700': (step as any).event_type === 'error'
-                                          }"
-                                        >
-                                          {{ (step as any).event_type }}
-                                        </span>
-                                        <span v-if="(step as any).tool_name" class="text-[9px] font-bold text-gray-700 font-mono">{{ (step as any).tool_name }}</span>
-                                    </div>
-                                    <span class="text-[8px] text-gray-300 font-mono italic">{{ (step as any).execution_time_ms?.toFixed(0) }}ms</span>
-                                </div>
-                              
-                                <!-- Simplified Content Preview -->
-                                <div class="text-[10px] text-gray-500 leading-relaxed break-words line-clamp-2 italic opacity-80 group-hover/step:opacity-100 transition-opacity">
-                                    {{ (step as any).tool_input ? (typeof (step as any).tool_input === 'string' ? (step as any).tool_input : JSON.stringify((step as any).tool_input)) : '' }}
-                                    {{ (step as any).tool_output?.content || (step as any).raw_log || '' }}
-                                </div>
-                            </div>
-                        </div>
-                        <div v-else class="py-2 text-[10px] text-gray-400 italic">未记录详细步骤</div>
+                      <span class="h-1.5 w-1.5 shrink-0 rounded-full" :class="isLogOk(log) ? 'bg-emerald-500' : 'bg-red-500'"></span>
+                      <span class="shrink-0 font-extrabold tabular-nums text-gray-900">{{ logClock((log as any).created_at) }}</span>
+                      <span
+                        class="shrink-0 rounded px-1 text-[10px] font-extrabold"
+                        :class="isLogOk(log) ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'"
+                      >{{ logStatusMeta((log as any).status).label }}</span>
+                      <span class="shrink-0 tabular-nums text-gray-400">{{ formatDurationMs((log as any).execution_time_ms) }}</span>
+                      <span class="min-w-0 truncate text-gray-400">{{ logPreview(log) }}</span>
                     </div>
-                </div>
 
-                <!-- Footer Actions -->
-                <div class="flex justify-between items-center pt-2 border-t border-gray-50">
-                  <span class="text-[9px] text-gray-300 font-medium" :title="`${Math.round(log.execution_time_ms)}ms`">时长: {{ formatDurationMs(log.execution_time_ms) }}</span>
-                  <button @click="viewTrace(log.trace_id)" class="text-[10px] text-primary font-black flex items-center hover:underline uppercase tracking-widest">
-                    完整链路 (Trace)
-                    <svg class="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M14 5l7 7-7 7" /></svg>
-                  </button>
-                </div>
+                    <div v-else class="flex gap-2.5">
+                      <!-- 时间轴轨道：连续成功是一条顺滑的线，失败那条一眼跳出来 -->
+                      <div class="flex w-3.5 shrink-0 flex-col items-center pt-1.5">
+                        <i
+                          class="h-2.5 w-2.5 shrink-0 rounded-full"
+                          :class="isLogOk(log) ? 'bg-emerald-500 ring-[3px] ring-emerald-50' : 'bg-red-500 ring-[3px] ring-red-50'"
+                        ></i>
+                        <s v-if="idx !== group.runs.length - 1" class="mt-1 w-px flex-1 bg-gray-200"></s>
+                      </div>
+
+                      <div class="min-w-0 flex-1 pb-3">
+                        <!-- 时间 / 状态 / 耗时（日期由分组头交代，这里只留时刻） -->
+                        <div class="mb-1.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                          <span class="text-[12.5px] font-extrabold tabular-nums text-gray-900">{{ logClock((log as any).created_at) }}</span>
+                          <span class="text-[11px] tabular-nums text-gray-400">{{ formatDate((log as any).created_at) }}</span>
+                          <span
+                            class="rounded-[5px] border px-1.5 py-px text-[10px] font-extrabold"
+                            :class="isLogOk(log)
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : 'border-red-200 bg-red-50 text-red-700'"
+                          >{{ logStatusMeta((log as any).status).label }}</span>
+                          <span class="ml-auto whitespace-nowrap text-[11px] text-gray-400">
+                            耗时 <span class="tabular-nums">{{ formatDurationMs((log as any).execution_time_ms) }}</span>
+                          </span>
+                        </div>
+
+                        <!-- 正文：summary 是 markdown，必须渲染，不能当纯文本 -->
+                        <div class="relative rounded-[10px] border border-gray-200 bg-white px-3 py-2.5">
+                          <div v-if="!(log as any).summary && !(log as any).query" class="text-xs text-gray-400">
+                            （本次执行没有产出摘要）
+                          </div>
+                          <pre
+                            v-else-if="showRawMarkdown"
+                            class="max-h-[132px] overflow-hidden whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-gray-600"
+                          >{{ (log as any).summary || (log as any).query }}</pre>
+                          <div
+                            v-else
+                            class="message-host log-md max-w-none break-words text-gray-800"
+                            :class="logShowsBody(log) ? '' : 'max-h-[132px] overflow-hidden'"
+                          >
+                            <MessageRenderer
+                              :content="(log as any).summary || (log as any).query"
+                              theme="default"
+                              hide-quick-buttons
+                              readonly
+                            />
+                          </div>
+                          <div
+                            v-if="!showRawMarkdown && !logShowsBody(log) && (log as any).mdExpandable"
+                            class="pointer-events-none absolute inset-x-0 bottom-0 h-8 rounded-b-[10px] bg-gradient-to-t from-white to-transparent"
+                          ></div>
+                        </div>
+
+                        <!-- 操作：展开全文 / 执行步骤 / 完整链路 -->
+                        <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <button
+                            v-if="(log as any).mdExpandable"
+                            type="button"
+                            class="cursor-pointer rounded-md px-2 py-0.5 text-[11px] font-bold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                            @click="(log as any).mdExpanded = logShowsBody(log) ? false : true"
+                          >{{ logShowsBody(log) ? '收起' : '展开全文' }}</button>
+                          <button
+                            type="button"
+                            class="inline-flex cursor-pointer items-center gap-1 rounded-md border border-dashed border-gray-200 px-2 py-0.5 text-[11px] font-bold text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-700"
+                            @click="toggleLogSteps(log)"
+                          >
+                            <span v-if="(log as any).stepsLoading" class="h-3 w-3 animate-spin rounded-full border-2 border-primary/30 border-t-primary"></span>
+                            执行步骤
+                            <span v-if="(log as any).steps?.length" class="rounded-full bg-gray-100 px-1 text-[10px] font-black text-gray-500">{{ (log as any).steps.length }}</span>
+                            <span class="text-[9px]">{{ (log as any).isExpanded ? '⌃' : '⌄' }}</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="ml-auto cursor-pointer whitespace-nowrap text-[11px] font-bold text-primary hover:underline"
+                            @click="viewTrace((log as any).trace_id)"
+                          >完整链路 →</button>
+                        </div>
+
+                        <!-- 执行步骤 -->
+                        <div v-show="(log as any).isExpanded" class="mt-2 border-l-2 border-blue-100 pl-2.5">
+                          <div v-if="(log as any).stepsLoading" class="py-3">
+                            <div class="flex animate-pulse items-center gap-1.5">
+                              <div class="h-1 w-1 rounded-full bg-primary/40"></div>
+                              <div class="h-1 w-1 rounded-full bg-primary/40"></div>
+                              <div class="h-1 w-1 rounded-full bg-primary/40"></div>
+                            </div>
+                          </div>
+                          <template v-else-if="(log as any).steps && (log as any).steps.length > 0">
+                            <div
+                              v-for="(step, sIdx) in (log as any).steps"
+                              :key="sIdx"
+                              class="mb-1.5 rounded-lg border border-gray-100 bg-[#fafbfc] px-2 py-1.5"
+                            >
+                              <div class="mb-1 flex items-center gap-1.5 text-[10px]">
+                                <span
+                                  class="rounded px-1 py-px font-extrabold"
+                                  :class="{
+                                    'bg-blue-100 text-blue-700': (step as any).event_type === 'thought',
+                                    'bg-purple-100 text-purple-700': (step as any).event_type === 'router',
+                                    'bg-amber-100 text-amber-700': (step as any).event_type === 'tool_call',
+                                    'bg-emerald-100 text-emerald-700': (step as any).event_type === 'synthesis' || (step as any).event_type === 'final_answer',
+                                    'bg-red-100 text-red-700': (step as any).event_type === 'error',
+                                  }"
+                                >{{ (step as any).event_type }}</span>
+                                <span v-if="(step as any).tool_name" class="font-mono font-bold text-gray-700">{{ (step as any).tool_name }}</span>
+                                <span class="ml-auto tabular-nums text-gray-400">{{ (step as any).execution_time_ms?.toFixed(0) }}ms</span>
+                              </div>
+                              <div class="line-clamp-2 text-[11px] leading-relaxed text-gray-500">
+                                {{ (step as any).tool_input ? (typeof (step as any).tool_input === 'string' ? (step as any).tool_input : JSON.stringify((step as any).tool_input)) : '' }}
+                                {{ (step as any).tool_output?.content || (step as any).raw_log || '' }}
+                              </div>
+                            </div>
+                          </template>
+                          <div v-else class="py-1.5 text-[11px] italic text-gray-400">未记录详细步骤</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
-              <div v-if="logsHasMore" class="pt-4 pb-8 flex justify-center">
-                   <button 
-                      @click="loadMoreLogs" 
-                      :disabled="logsLoading"
-                      class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-bold rounded-lg transition-colors disabled:opacity-50 flex items-center"
-                   >
-                      <svg v-if="logsLoading" class="w-3 h-3 mr-2 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                      加载更多日志...
-                   </button>
-              </div>
+
+            <div v-if="logsHasMore" class="flex justify-center pb-8 pt-4">
+              <button
+                type="button"
+                class="flex cursor-pointer items-center rounded-lg bg-gray-100 px-4 py-2 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-200 disabled:opacity-50"
+                :disabled="logsLoading"
+                @click="loadMoreLogs"
+              >
+                <span v-if="logsLoading" class="mr-2 h-3 w-3 animate-spin rounded-full border-2 border-gray-400 border-t-transparent"></span>
+                加载更多日志...
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -4160,6 +4543,44 @@ onMounted(async () => {
 }
 .drawer-slide-enter-from, .drawer-slide-leave-to {
   transform: translateX(100%);
+}
+
+/*
+ * 历史抽屉里的 markdown 比聊天页更紧凑。
+ * 聊天页是沉浸阅读（14px / space-y-4），抽屉里是回溯列表，行距和段距都收一档，
+ * 否则一条日报就能占掉半个抽屉。
+ */
+.log-md :deep(.message-renderer.space-y-4 > * + *) {
+  margin-top: 0.5rem;
+}
+.log-md :deep(.markdown-body) {
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.log-md :deep(.markdown-body p) {
+  margin-bottom: 0.5rem;
+}
+.log-md :deep(.markdown-body h1),
+.log-md :deep(.markdown-body h2),
+.log-md :deep(.markdown-body h3),
+.log-md :deep(.markdown-body h4) {
+  margin-top: 0.6rem;
+  margin-bottom: 0.3rem;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.log-md :deep(.markdown-body table) {
+  font-size: 11.5px;
+  margin: 0.35rem 0;
+}
+.log-md :deep(.markdown-body th),
+.log-md :deep(.markdown-body td) {
+  padding: 4px 8px;
+}
+.log-md :deep(.markdown-body ul),
+.log-md :deep(.markdown-body ol) {
+  padding-left: 1.1rem;
+  margin: 0.3rem 0;
 }
 
 .line-clamp-2 {
