@@ -18,13 +18,15 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_subtitle_is_hidden_on_mobile():
-    """副标题窄屏隐藏：一行 40 多字换不来任何操作，却会把二级 tab 顶出首屏。"""
+def test_header_subtitle_is_gone():
+    """页头不再挂介绍副标题（2026-11-23 用户要求删除，理由是多余）。
+
+    原先这行 40 多字换不来任何操作，窄屏还会把二级 tab 顶出首屏；后来改成窄屏隐藏，
+    最终整段删掉。断言「不存在」而不是删掉用例：防止以后又被加回来。
+    """
     source = _read(MCP_VIEW)
-    idx = source.index("mcp-page-desc")
-    tag = source[source.rindex("<p", 0, idx) : source.index(">", idx)]
-    assert "hidden" in tag, "副标题必须窄屏隐藏"
-    assert "sm:block" in tag, "桌面端仍要显示"
+    assert "mcp-page-desc" not in source, "页头副标题已删除，不要再加回来"
+    assert "接入并管理外部 MCP 远程服务" not in source
 
 
 def test_personal_menu_variants_are_never_squashed():

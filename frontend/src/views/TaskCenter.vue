@@ -9,8 +9,6 @@ import cronstrue from 'cronstrue/i18n'
 import SessionTraceModal from '../components/SessionTraceModal.vue'
 import axios from '../utils/axios'
 import { 
-  PlayCircleIcon,
-  PauseCircleIcon,
   PencilSquareIcon,
   ClockIcon,
   PaperAirplaneIcon,
@@ -22,7 +20,7 @@ import CronAdvancedBuilder from '@/components/task/CronAdvancedBuilder.vue'
 import CronFieldLegend from '@/components/common/CronFieldLegend.vue'
 import { formatCronRunTime, nextCronRunTimes, validateCronExpression } from '@/utils/cronSchedule'
 import { describeScene, inferScene } from '@/utils/cronScenes'
-import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
+import { formatInPlatformTimezoneCompact, getPlatformTimezone } from '@/utils/platformTimezone'
 import TaskFlowGuideBanner from '@/components/task/TaskFlowGuideBanner.vue'
 import TaskFormSection from '@/components/task/TaskFormSection.vue'
 import {
@@ -37,6 +35,10 @@ import TaskPromptComposer, {
 } from '@/components/task/TaskPromptComposer.vue'
 import PromptAiOptimize from '@/components/PromptAiOptimize.vue'
 import type { ReasoningEffort } from '@/api/model'
+// 历史抽屉复用聊天页渲染器：summary 里存的是 markdown 原文（表格、加粗、列表），
+// 直接丢进 <p> 会显示成 ## / ** / | 的裸源码。只读模式不接引用面板与产物下载。
+import MessageRenderer from '@/components/MessageRenderer.vue'
+import '@/styles/messageMarkdownHost.css'
 
 const emptyResourceScope = (): TaskResourceScope => ({
   project_name: '',
@@ -172,7 +174,7 @@ const mainViewTab = ref<'tasks' | 'history'>('tasks')
 // View & Filter States
 const viewMode = ref<'grid' | 'list'>((localStorage.getItem('task_center_view_mode') as 'grid' | 'list') || 'grid')
 const searchQuery = ref('')
-const statusFilter = ref<'all' | 'running' | 'stopped'>('all')
+const statusFilter = ref<'all' | 'running' | 'stopped' | 'attn'>('all')
 const taskTypeFilter = ref<'all' | 'agent' | 'saved_report' | 'metadata_inspection'>('all')
 const taskTypeTabs = [
   { value: 'all' as const, label: '全部任务' },
@@ -793,6 +795,13 @@ const handlePromptTemplateOutsideClick = (e: MouseEvent) => {
     showPromptTemplateDropdown.value = false
   }
 }
+
+/** 行操作菜单（⋯）点空白处收起 */
+const handleTaskMenuOutsideClick = (e: MouseEvent) => {
+  if (taskMenuId.value === null) return
+  const target = e.target as HTMLElement | null
+  if (!target?.closest?.('[data-task-menu]')) taskMenuId.value = null
+}
 const applyPromptTemplate = (text: string) => {
   editingTask.value.prompt = text
   showPromptTemplateDropdown.value = false
@@ -846,7 +855,26 @@ const handleTaskBannerAction = (type: 'create' | 'history') => {
 // Mobile State
 const windowWidth = ref(window.innerWidth)
 const isMobile = computed(() => windowWidth.value < 768)
-const currentViewMode = computed(() => isMobile.value ? 'grid' : viewMode.value)
+
+/**
+ * 用「容器宽度」而不是「窗口宽度」决定列表能不能放得下。
+ *
+ * 个人中心把 TaskCenter 嵌进约 900–1100px 的窄容器里，此时窗口可能很宽、
+ * 但表格（至少 820px + 横向滚动）在容器里必然溢出，用户得左右拖才能看到状态列；
+ * 反过来窗口很窄、容器却更窄时 `isMobile` 也判不出来。ResizeObserver 量容器
+ * 才是唯一可靠的依据。
+ */
+const rootRef = ref<HTMLElement | null>(null)
+const containerWidth = ref(0)
+let containerObserver: ResizeObserver | null = null
+
+const containerIsNarrow = computed(() => containerWidth.value > 0 && containerWidth.value < 760)
+const showAgentColumn = computed(() => containerWidth.value === 0 || containerWidth.value >= 980)
+const showRateColumn = computed(() => containerWidth.value === 0 || containerWidth.value >= 880)
+
+const currentViewMode = computed(() =>
+  isMobile.value || containerIsNarrow.value ? 'grid' : viewMode.value,
+)
 
 const handleWindowResize = () => {
   windowWidth.value = window.innerWidth
@@ -876,6 +904,14 @@ onMounted(() => {
   window.addEventListener('resize', handleWindowResize)
   document.addEventListener('click', handleAgentDropdownOutsideClick)
   document.addEventListener('click', handlePromptTemplateOutsideClick)
+  document.addEventListener('click', handleTaskMenuOutsideClick)
+  if (rootRef.value && typeof ResizeObserver !== 'undefined') {
+    containerObserver = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) containerWidth.value = entry.contentRect.width
+    })
+    containerObserver.observe(rootRef.value)
+  }
 })
 onUnmounted(() => {
   if (historyFilterTimer !== undefined) window.clearTimeout(historyFilterTimer)
@@ -883,6 +919,11 @@ onUnmounted(() => {
   window.removeEventListener('resize', handleWindowResize)
   document.removeEventListener('click', handleAgentDropdownOutsideClick)
   document.removeEventListener('click', handlePromptTemplateOutsideClick)
+  document.removeEventListener('click', handleTaskMenuOutsideClick)
+  if (containerObserver) {
+    containerObserver.disconnect()
+    containerObserver = null
+  }
 })
 
 // Cron Builder Logic
@@ -1143,10 +1184,103 @@ const filteredTasks = computed(() => {
     result = result.filter(t => t.name.toLowerCase().includes(q) || t.prompt.toLowerCase().includes(q))
   }
   if (statusFilter.value !== 'all') {
-    const isRunning = statusFilter.value === 'running'
-    result = result.filter(t => t.status === (isRunning ? 1 : 0))
+    if (statusFilter.value === 'attn') {
+      result = result.filter(t => {
+        const key = taskStatusMeta(t).key
+        return key === 'error' || key === 'warn'
+      })
+    } else {
+      const wantOn = statusFilter.value === 'running'
+      result = result.filter(t => (taskStatusMeta(t).key === 'on') === wantOn)
+    }
   }
-  return result
+  return sortTaskList(result)
+})
+
+/** 顶部概览：三类状态互斥计数 + 最近一次待执行任务，替代原先只能靠肉眼扫的列表 */
+const statusSummary = computed(() => {
+  const list = scopedTasks.value
+  let on = 0
+  let off = 0
+  let attn = 0
+  list.forEach((task) => {
+    const key = taskStatusMeta(task).key
+    if (key === 'on') on += 1
+    else if (key === 'off') off += 1
+    else attn += 1
+  })
+  const upcoming = list
+    .filter(task => task.status === 1 && task.next_run_at)
+    .sort((a, b) => String(a.next_run_at).localeCompare(String(b.next_run_at)))[0]
+  const pctOf = (n: number) => (list.length ? Math.round((n / list.length) * 100) : 0)
+  return {
+    on,
+    off,
+    attn,
+    total: list.length,
+    upcoming,
+    onPct: pctOf(on),
+    offPct: pctOf(off),
+    attnPct: pctOf(attn),
+    // 4~5 个任务画占比条没有意义（每段都是一大块），少于 6 条退化成纯计数
+    compact: list.length < 6,
+  }
+})
+
+/** 概览条默认收起（一行说完），只有用户主动展开过才保持展开，别每次刷新又弹回来 */
+const overviewCollapsed = ref(localStorage.getItem('task_center_overview_collapsed') !== '0')
+const toggleOverview = () => {
+  overviewCollapsed.value = !overviewCollapsed.value
+  localStorage.setItem('task_center_overview_collapsed', overviewCollapsed.value ? '1' : '0')
+}
+
+/** 三个状态计数，折叠态与展开态共用一套渲染 */
+const statusChips = computed(() => {
+  const summary = statusSummary.value
+  return [
+    { key: 'running' as const, dot: 'bg-emerald-500', label: '运行中', count: summary.on, clickable: true, title: '只看运行中的任务' },
+    { key: 'stopped' as const, dot: 'bg-gray-300', label: '已暂停', count: summary.off, clickable: true, title: '只看已暂停的任务' },
+    {
+      key: 'attn' as const,
+      dot: summary.attn > 0 ? 'bg-red-500' : 'bg-gray-300',
+      label: summary.attn > 0 ? '需处理' : '全部正常',
+      count: summary.attn,
+      clickable: summary.attn > 0,
+      title: summary.attn > 0 ? '只看异常 / 需核对的任务' : '当前没有需要处理的任务',
+    },
+  ]
+})
+
+/**
+ * 顶部风险提醒：从需处理的任务里挑最严重的一条说清楚「哪个任务、为什么、什么时候重试」。
+ *
+ * 列表有 15+ 条时，异常任务混在中间很容易漏看；红色提醒条把「连续失败 N 次 + 原因 + 下次重试」
+ * 提到最上面，比让用户逐行扫状态徽章可靠。
+ */
+const attentionHeadline = computed(() => {
+  const candidates = scopedTasks.value
+    .map((task) => ({ task, meta: taskStatusMeta(task) }))
+    .filter((item) => item.meta.key === 'error' || item.meta.key === 'warn')
+  const severity = (item: { task: AgentTask; meta: { key: string } }) =>
+    (item.meta.key === 'error' ? 1000 : 0) + Number(item.task.consecutive_failures || 0)
+  candidates.sort((a, b) => severity(b) - severity(a))
+  const top = candidates[0]
+  if (!top) return null
+  const task = top.task
+
+  const rawReason = task.last_error
+    ? `${Number(task.consecutive_failures || 0) > 1 ? `连续失败 ${task.consecutive_failures} 次：` : ''}${task.last_error}`
+    : (taskScheduleMismatch(task) || taskStatusTip(task))
+  const reason = rawReason.length > 90 ? `${rawReason.slice(0, 90)}…` : rawReason
+  const next = nextRunCell(task)
+
+  return {
+    task,
+    reason,
+    count: candidates.length,
+    isError: top.meta.key === 'error',
+    retryHint: next.muted ? '' : `${next.text}会自动重试。`,
+  }
 })
 
 const toastState = ref({ show: false, message: '', type: 'success' as any })
@@ -1228,11 +1362,6 @@ const openEditModal = async (task: AgentTask) => {
   showEditModal.value = true
   await refreshNotificationAvailability()
 }
-
-const getTaskEditTitle = (task: AgentTask) => (
-  task.task_type === 'saved_report' ? '订阅设置' : '编辑'
-)
-
 
 const saveTask = async () => {
   try {
@@ -1471,9 +1600,12 @@ const fetchLogs = async (append = false) => {
     const res = await taskApi.logs(selectedTask.value.id, { page: logsPage.value, page_size: 10 })
     const newItems = (res.data.data.items || []).map((item: any) => ({
         ...item,
-        isExpanded: false,
+        isExpanded: false,       // 执行步骤展开
         steps: [],
-        stepsLoading: false
+        stepsLoading: false,
+        mdExpanded: null,        // 正文展开：null 跟随全局密度，true/false 为单条覆盖
+        // 短摘要不值得给「展开全文」按钮
+        mdExpandable: String(item.summary || item.query || '').length > 180,
     }))
     
     if (append) {
@@ -1484,6 +1616,110 @@ const fetchLogs = async (append = false) => {
     logsTotal.value = res.data.data.total
   } catch (e) { showToast('获取日志失败', 'error') } finally { logsLoading.value = false }
 }
+
+/** 历史抽屉：只看失败（打开这个抽屉最常见的原因就是「刚才那次怎么失败了」） */
+const logsFilter = ref<'all' | 'fail'>('all')
+/** 历史抽屉：「原文」开关，渲染异常时就地自查，不必让用户去猜 markdown 长什么样 */
+const showRawMarkdown = ref(false)
+
+const isLogOk = (log: any) => String(log?.status || '').toLowerCase() === 'success'
+
+/** 历史按天分组：今天 / 昨天 / 前天 / 11-22（同年省略年份，跨年才带年） */
+const logDayLabel = (value?: string): string => {
+  const raw = String(value || '').trim()
+  if (!raw) return '未知时间'
+  const target = new Date(raw)
+  if (Number.isNaN(target.getTime())) return raw.slice(0, 10)
+  const targetParts = platformClockParts(target)
+  const nowParts = platformClockParts(new Date())
+  const diffDays = Math.round(
+    (Date.parse(`${targetParts.ymd}T00:00:00Z`) - Date.parse(`${nowParts.ymd}T00:00:00Z`)) / 86400000,
+  )
+  if (diffDays === 0) return '今天'
+  if (diffDays === -1) return '昨天'
+  if (diffDays === -2) return '前天'
+  const [year, month, day] = targetParts.ymd.split('-')
+  return year === nowParts.ymd.split('-')[0] ? `${month}-${day}` : `${year}-${month}-${day}`
+}
+
+/** 组内只显示时刻，日期由分组头交代，不必每条重复「今天」 */
+const logClock = (value?: string): string => {
+  const raw = String(value || '').trim()
+  if (!raw) return '—'
+  const target = new Date(raw)
+  if (Number.isNaN(target.getTime())) return ''
+  return platformClockParts(target).hhmm
+}
+
+/** 紧凑行的一句话摘要：去掉 markdown 标记，只留能扫读的文字 */
+const logPreview = (log: any, max = 64): string => {
+  const text = String(log?.summary || log?.query || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[#*`>|_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!text) return '（无摘要）'
+  return text.length > max ? `${text.slice(0, max)}…` : text
+}
+
+/**
+ * 抽屉密度：compact 每条压成一行 / normal 正文折叠 132px / expanded 全部展开。
+ * 记在本地；单条点过之后以单条为准（mdExpanded 非 null），一键按钮会把单条选择清掉统一覆盖。
+ */
+const logsDensity = ref<'compact' | 'normal' | 'expanded'>(
+  (localStorage.getItem('task_center_logs_density') as 'compact' | 'normal' | 'expanded') || 'normal',
+)
+const setLogsDensity = (mode: 'compact' | 'expanded') => {
+  const next = logsDensity.value === mode ? 'normal' : mode
+  logsDensity.value = next
+  localStorage.setItem('task_center_logs_density', next)
+  logs.value.forEach((log: any) => { log.mdExpanded = null })
+}
+
+const logShowsBody = (log: any): boolean => {
+  if (log?.mdExpanded === true) return true
+  if (log?.mdExpanded === false) return false
+  return logsDensity.value === 'expanded'
+}
+const logIsCompactRow = (log: any): boolean => logsDensity.value === 'compact' && log?.mdExpanded !== true
+
+const logsGroupCollapsed = ref<Record<string, boolean>>({})
+const toggleLogsGroup = (day: string) => {
+  logsGroupCollapsed.value = { ...logsGroupCollapsed.value, [day]: !logsGroupCollapsed.value[day] }
+}
+
+const groupedLogs = computed(() => {
+  const order: string[] = []
+  const buckets: Record<string, any[]> = {}
+  filteredLogs.value.forEach((log: any) => {
+    const day = logDayLabel(log.created_at)
+    if (!buckets[day]) {
+      buckets[day] = []
+      order.push(day)
+    }
+    buckets[day].push(log)
+  })
+  return order.map((day) => {
+    const runs = buckets[day] || []
+    const ok = runs.filter(isLogOk).length
+    return { day, runs, ok, fail: runs.length - ok }
+  })
+})
+
+const filteredLogs = computed(() => (
+  logsFilter.value === 'fail' ? logs.value.filter((log: any) => !isLogOk(log)) : logs.value
+))
+
+/** 概览只统计已加载的这批（接口按页返回，没加载的不该算进来） */
+const logsSummary = computed(() => {
+  const items = logs.value as any[]
+  const ok = items.filter(isLogOk).length
+  const durations = items
+    .map((log) => Number(log.execution_time_ms || 0))
+    .filter((ms) => ms > 0)
+  const avg = durations.length ? durations.reduce((a, b) => a + b, 0) / durations.length : 0
+  return { loaded: items.length, ok, fail: items.length - ok, avg: avg ? formatDurationMs(avg) : '—' }
+})
 
 const toggleLogSteps = async (log: any) => {
     log.isExpanded = !log.isExpanded
@@ -1562,11 +1798,6 @@ const formatDurationMs = (ms: number | null | undefined) => {
   return `${minutes}分${seconds}秒`
 }
 
-const formatNextRunCompact = (d: string | undefined) => {
-  if (!d) return '暂无计划'
-  return formatInPlatformTimezoneCompact(d)
-}
-
 const formatTaskSchedule = (cron: string) => {
   const text = String(cron || '').trim()
   if (!text) return '未配置'
@@ -1591,22 +1822,357 @@ const cronScheduleTip = (cron: string) => {
   return full === text ? `Cron: ${text}` : `${full}；Cron: ${text}`
 }
 
-const taskHealthMeta = (task: AgentTask) => {
-  const status = task.health_status || 'unknown'
-  if (status === 'healthy') {
-    return { label: '健康', class: 'bg-green-50 text-green-700 border-green-100', dot: 'bg-green-500' }
+/**
+ * 合成展示状态：把一个任务的「调度开关」(status) 和「执行健康」(health_status) 压成一个
+ * 用户能直接决策的信号。优先级 异常 > 需核对 > 活跃 > 已暂停。
+ *
+ * 之前列表只写 `status === 1 ? '活跃' : '停止'`，而后端 status 是 0 停 / 1 跑 / 2 错误，
+ * 出错被停的任务会显示成「停止」，看起来像用户自己关的；健康徽章又单独出现，
+ * 于是出现「健康 + 失败 2」这种自相矛盾的组合。
+ */
+type TaskDisplayStatusKey = 'error' | 'warn' | 'on' | 'off'
+
+const taskStatusMeta = (task: AgentTask): {
+  key: TaskDisplayStatusKey
+  label: string
+  class: string
+  dot: string
+  rank: number
+} => {
+  const health = String(task.health_status || 'unknown')
+  if (health === 'error') {
+    return { key: 'error', label: '异常', class: 'bg-red-50 text-red-700 border-red-200', dot: 'bg-red-500', rank: 0 }
   }
-  if (status === 'warning') {
-    return { label: '需关注', class: 'bg-amber-50 text-amber-700 border-amber-100', dot: 'bg-amber-500' }
+  if (health === 'warning') {
+    return { key: 'warn', label: '需核对', class: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-500', rank: 1 }
   }
-  if (status === 'error') {
-    return { label: '异常', class: 'bg-red-50 text-red-700 border-red-100', dot: 'bg-red-500' }
+  if (task.status === 1) {
+    return { key: 'on', label: '活跃', class: 'bg-green-50 text-green-700 border-green-200', dot: 'bg-green-500', rank: 2 }
   }
-  if (status === 'skipped') {
-    return { label: '已跳过', class: 'bg-slate-50 text-slate-600 border-slate-100', dot: 'bg-slate-400' }
+  if (task.status === 2) {
+    return { key: 'error', label: '异常', class: 'bg-red-50 text-red-700 border-red-200', dot: 'bg-red-500', rank: 0 }
   }
-  return { label: '未运行', class: 'bg-gray-50 text-gray-500 border-gray-100', dot: 'bg-gray-300' }
+  return { key: 'off', label: '已暂停', class: 'bg-gray-100 text-gray-500 border-gray-200', dot: 'bg-gray-400', rank: 3 }
 }
+
+const taskStatusTip = (task: AgentTask) => {
+  const meta = taskStatusMeta(task)
+  if (meta.key === 'error') {
+    const times = Number(task.consecutive_failures || 0)
+    const tail = task.last_error ? `：${task.last_error}` : ''
+    return times > 0 ? `调度仍在运行，但已连续失败 ${times} 次${tail}` : `最近一次执行失败${tail}`
+  }
+  if (meta.key === 'warn') {
+    return String(task.last_error || task.last_message || '健康状态需要关注，建议查看最近执行记录')
+  }
+  if (meta.key === 'on') return '调度运行中，会按周期自动执行'
+  return '调度已暂停，不会自动执行'
+}
+
+/** 成功率：成功 / (成功 + 失败)；一次都没跑过时返回 null，由调用方显示「—」 */
+const taskRateNum = (task: AgentTask): number | null => {
+  const success = Number(task.success_count ?? task.run_count ?? 0)
+  const fail = Number(task.failure_count ?? 0)
+  const total = success + fail
+  if (!total) return null
+  return Math.round((success / total) * 100)
+}
+
+const taskRateText = (task: AgentTask) => {
+  const rate = taskRateNum(task)
+  return rate === null ? '—' : `${rate}%`
+}
+
+/** 卡片/列表统一的「运行 N 次 · 成功率 x%」口径，替代卡片四宫格与列表里两套算法 */
+const taskMetricText = (task: AgentTask) => {
+  const runs = Number(task.trigger_count ?? task.success_count ?? task.run_count ?? 0)
+  return { runs, rate: taskRateText(task), rateNum: taskRateNum(task) }
+}
+
+/** 成功率跌破 90% 才标红；没有分母时（rateNum 为 null）不判红 */
+const taskRateIsLow = (task: AgentTask): boolean => {
+  const rate = taskMetricText(task).rateNum
+  return rate !== null && rate < 90
+}
+
+// ── 下次运行：相对时间打头，绝对时间兜底 ───────────────────────────────
+/**
+ * Intl.DateTimeFormat 构造开销不小，而列表里每张卡片会算 3~4 次时间文案，
+ * 所以按平台时区缓存 formatter 实例，只在时区变化时重建。
+ */
+let clockFormatterCache: {
+  tz: string
+  parts: Intl.DateTimeFormat
+  weekday: Intl.DateTimeFormat
+} | null = null
+
+const clockFormatters = () => {
+  const tz = getPlatformTimezone()
+  if (!clockFormatterCache || clockFormatterCache.tz !== tz) {
+    clockFormatterCache = {
+      tz,
+      parts: new Intl.DateTimeFormat('zh-CN', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }),
+      weekday: new Intl.DateTimeFormat('zh-CN', { timeZone: tz, weekday: 'short' }),
+    }
+  }
+  return clockFormatterCache
+}
+
+const platformClockParts = (date: Date) => {
+  const formatters = clockFormatters()
+  const parts = formatters.parts.formatToParts(date)
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return {
+    ymd: `${pick('year')}-${pick('month')}-${pick('day')}`,
+    hhmm: `${pick('hour')}:${pick('minute')}`,
+    weekday: formatters.weekday.format(date),
+  }
+}
+
+/**
+ * 「明天 09:00 / 周三 10:00 / 11-30 09:00」，配合绝对时间一起展示。
+ * 只写 `11/24 09:00` 时，用户判断「多久之后」要靠心算，跨年还会误判。
+ */
+const formatRunRelative = (value?: string): string => {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const target = new Date(raw)
+  if (Number.isNaN(target.getTime())) return formatInPlatformTimezoneCompact(raw)
+  const targetParts = platformClockParts(target)
+  const nowParts = platformClockParts(new Date())
+  const diffDays = Math.round(
+    (Date.parse(`${targetParts.ymd}T00:00:00Z`) - Date.parse(`${nowParts.ymd}T00:00:00Z`)) / 86400000,
+  )
+  if (diffDays === 0) return `今天 ${targetParts.hhmm}`
+  if (diffDays === 1) return `明天 ${targetParts.hhmm}`
+  if (diffDays === 2) return `后天 ${targetParts.hhmm}`
+  if (diffDays > 2 && diffDays <= 6) return `${targetParts.weekday} ${targetParts.hhmm}`.trim()
+  return formatInPlatformTimezoneCompact(raw)
+}
+
+/** 暂停任务不再写「暂无计划」——那和「配置有问题的没有下次」长得一模一样 */
+const nextRunCell = (task: AgentTask) => {
+  if (task.status !== 1) {
+    return {
+      text: '已暂停',
+      abs: '',
+      muted: true,
+      tip: task.cron_expr ? `停止前周期：${formatTaskSchedule(task.cron_expr)}（恢复后重新排期）` : '任务已暂停',
+    }
+  }
+  const raw = String(task.next_run_at || '').trim()
+  if (!raw) {
+    return { text: '待排期', abs: '', muted: true, tip: '调度已开启但还没有下一次运行时间，可尝试刷新' }
+  }
+  return {
+    text: formatRunRelative(raw),
+    abs: formatInPlatformTimezoneCompact(raw),
+    muted: false,
+    tip: cronScheduleTip(task.cron_expr),
+  }
+}
+
+// ── 周期与指令意图是否一致（低成本启发式，纯前端，不阻断保存）───────────────
+const DAILY_TIME_INTENT = /(每天|每日|每晚|每天早上|每日早上|每天早上|工作日)\s*(?:早上|上午|下午|晚上)?\s*(\d{1,2})\s*[点时:：]/
+const cronFiresMoreThanOncePerDay = (expr: string) => {
+  const parts = String(expr || '').trim().split(/\s+/)
+  if (parts.length < 5) return false
+  const wildish = (field: string) => /[*/,]|-/.test(field)
+  // 分钟或小时不固定 → 一天内会跑多次
+  return wildish(parts[0] || '') || wildish(parts[1] || '')
+}
+
+const taskScheduleMismatch = (task: AgentTask): string => {
+  if (task.cron_valid === false) return ''
+  const prompt = String(task.prompt || '')
+  const intent = prompt.match(DAILY_TIME_INTENT)
+  if (!intent) return ''
+  if (!cronFiresMoreThanOncePerDay(task.cron_expr)) return ''
+  return `周期与指令不符：指令要求「每天 ${intent[2]} 点」，实际是「${formatTaskSchedule(task.cron_expr)}」`
+}
+
+// ── 排序 ────────────────────────────────────────────────────────────
+type TaskSortKey = 'priority' | 'name' | 'next' | 'rate' | 'last'
+const sortKey = ref<TaskSortKey>('priority')
+const sortDir = ref<1 | -1>(1)
+
+const RECENT_RUN_SLOTS = 7
+/**
+ * 「最近 7 次」的槽位：后端按时间正序下发，这里换成等宽色块。
+ * 不足 7 次时在左侧补空槽——左边是更早的时间，留白比伪造绿色诚实。
+ */
+const recentRunSlots = (task: AgentTask) => {
+  const runs = Array.isArray(task.recent_runs) ? task.recent_runs.slice(-RECENT_RUN_SLOTS) : []
+  const slots = runs.map((run, index) => {
+    const value = String(run?.status || '').toLowerCase()
+    const succeeded = value === 'success'
+    const failed = value === 'failed' || value === 'error' || value === 'timeout'
+    return {
+      key: `${task.id}-run-${index}`,
+      cls: succeeded ? 'bg-emerald-400' : failed ? 'bg-red-500' : 'bg-gray-300',
+      tip: `${succeeded ? '成功' : failed ? '失败' : value || '未知'}${run?.at ? ' · ' + formatRunRelative(run.at) : ''}`,
+      empty: false,
+    }
+  })
+  const padding = RECENT_RUN_SLOTS - slots.length
+  for (let i = 0; i < padding; i += 1) {
+    slots.unshift({ key: `${task.id}-empty-${i}`, cls: 'bg-gray-100', tip: '暂无更早的执行记录', empty: true })
+  }
+  return slots
+}
+
+const sortRank = (task: AgentTask) => taskStatusMeta(task).rank
+const sortNextValue = (task: AgentTask) => {
+  if (task.status !== 1) return Number.MAX_SAFE_INTEGER
+  const time = Date.parse(String(task.next_run_at || ''))
+  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time
+}
+const sortLastValue = (task: AgentTask) => {
+  const time = Date.parse(String(task.last_attempt_at || task.last_run_at || ''))
+  return Number.isNaN(time) ? 0 : time
+}
+
+/**
+ * 默认「需处理优先」：异常 → 需核对 → 活跃 → 已暂停，组内按下次运行时间升序。
+ * 任务数上了十几个以后，这一条比任何视觉优化都管用。
+ */
+const sortTaskList = (list: AgentTask[]) => {
+  const dir = sortDir.value
+  const key = sortKey.value
+  const sorted = [...list]
+  sorted.sort((a, b) => {
+    if (key === 'priority') {
+      const rankDiff = sortRank(a) - sortRank(b)
+      if (rankDiff !== 0) return rankDiff
+      return sortNextValue(a) - sortNextValue(b)
+    }
+    if (key === 'name') return a.name.localeCompare(b.name, 'zh') * dir
+    if (key === 'next') return (sortNextValue(a) - sortNextValue(b)) * dir
+    if (key === 'last') return (sortLastValue(a) - sortLastValue(b)) * dir
+    const rateA = taskRateNum(a)
+    const rateB = taskRateNum(b)
+    return ((rateA ?? -1) - (rateB ?? -1)) * dir
+  })
+  return sorted
+}
+
+const toggleSort = (key: TaskSortKey) => {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 1 ? -1 : 1
+    return
+  }
+  sortKey.value = key
+  sortDir.value = 1
+}
+
+const sortIndicator = (key: TaskSortKey) => {
+  if (sortKey.value !== key) return '↕'
+  return sortDir.value === 1 ? '↑' : '↓'
+}
+
+// ── 批量启停（串行调用现有单条接口，逐条汇总，不新增后端接口）──────────────
+const selectedTaskIds = ref<Set<number>>(new Set())
+const bulkRunning = ref(false)
+const selectableTasks = computed(() => filteredTasks.value.filter(task => canManageTask(task)))
+const selectedTasks = computed(() => scopedTasks.value.filter(task => selectedTaskIds.value.has(task.id)))
+const allSelected = computed(() =>
+  selectableTasks.value.length > 0 && selectableTasks.value.every(task => selectedTaskIds.value.has(task.id)),
+)
+
+const toggleTaskSelection = (id: number) => {
+  const next = new Set(selectedTaskIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedTaskIds.value = next
+}
+
+const toggleSelectAll = () => {
+  if (allSelected.value) {
+    selectedTaskIds.value = new Set()
+    return
+  }
+  selectedTaskIds.value = new Set(selectableTasks.value.map(task => task.id))
+}
+
+const clearSelection = () => {
+  selectedTaskIds.value = new Set()
+}
+
+const resetTaskFilters = () => {
+  searchQuery.value = ''
+  statusFilter.value = 'all'
+  taskTypeFilter.value = 'all'
+  clearSelection()
+}
+
+const bulkToggleStatus = async (target: 0 | 1) => {
+  const targets = selectedTasks.value.filter(task => {
+    if (task.task_type === 'metadata_inspection') return false
+    if (target === 1) return task.status !== 1
+    return task.status === 1
+  })
+  if (!targets.length) {
+    showToast(target === 1 ? '所选任务都已在运行中' : '所选任务都已暂停', 'info')
+    return
+  }
+  bulkRunning.value = true
+  let ok = 0
+  const failed: string[] = []
+  // 串行执行：并发打同一批接口容易触发后端限流，且失败时说不清是哪条没成功
+  for (const task of targets) {
+    try {
+      if (task.task_type === 'saved_report' && task.subscription_id) {
+        await taskApi.updateReportSubscriptionStatus(task.subscription_id, target === 1)
+      } else {
+        await taskApi.update(task.id, { status: target })
+      }
+      ok += 1
+    } catch {
+      failed.push(task.name)
+    }
+  }
+  bulkRunning.value = false
+  clearSelection()
+  await fetchTasks(true)
+  const verb = target === 1 ? '恢复' : '暂停'
+  if (!failed.length) {
+    showToast(`已${verb} ${ok} 个任务`)
+    return
+  }
+  showToast(`已${verb} ${ok} 个，失败 ${failed.length} 个：${failed.slice(0, 2).join('、')}${failed.length > 2 ? '…' : ''}`, 'warning')
+}
+
+// ── 行操作菜单（⋯）：把编辑 / 历史 / 删除从一排同级图标里收进来 ──────────────
+const taskMenuId = ref<number | null>(null)
+/** 列表末尾几行的菜单要向上弹：表格容器是 overflow-x-auto，向下展开会被容器底边裁掉 */
+const taskMenuOpensUp = ref(false)
+const toggleTaskMenu = (id: number, opensUp = false) => {
+  if (taskMenuId.value === id) {
+    taskMenuId.value = null
+    return
+  }
+  taskMenuId.value = id
+  taskMenuOpensUp.value = opensUp
+}
+/** 末尾 3 行以内就把菜单向上展开（一份菜单约两行高，向上必然有空间） */
+const isNearListEnd = (task: AgentTask) => {
+  const list = filteredTasks.value
+  const index = list.findIndex((item) => item.id === task.id)
+  return index >= 0 && index >= list.length - 3
+}
+
+const closeTaskMenu = () => {
+  taskMenuId.value = null
+}
+
 
 const logStatusMeta = (status: string | undefined) => {
   const value = String(status || '').toLowerCase()
@@ -1645,7 +2211,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-5">
+  <div ref="rootRef" class="space-y-5">
     <!-- Header：标题一行；窄屏搜索通栏，状态+刷新并排，新建通栏 -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="flex items-center space-x-3">
@@ -1655,12 +2221,6 @@ onMounted(async () => {
         >
           {{ personalOnly ? '我的任务' : '任务调度台' }}
         </h1>
-        <span
-          v-if="personalOnly"
-          class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700"
-        >
-          个人私有
-        </span>
         <button
           v-if="!personalOnly"
           type="button"
@@ -1707,7 +2267,8 @@ onMounted(async () => {
           >
             <option value="all">状态：全部</option>
             <option value="running">状态：运行中</option>
-            <option value="stopped">状态：已停止</option>
+            <option value="stopped">状态：已暂停</option>
+            <option value="attn">状态：需处理</option>
           </select>
 
           <div class="hidden shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5 md:flex">
@@ -1771,66 +2332,171 @@ onMounted(async () => {
       />
     </div>
 
-    <!-- 主 Tab：管理员为「任务列表 | 执行记录」；否则直接显示类型筛选 -->
-    <div class="border-b border-gray-200 -mt-1">
-      <div class="flex gap-1 overflow-x-auto -mb-px" style="-webkit-overflow-scrolling: touch;">
-        <template v-if="showHistoryTab">
+    <!-- 概览：健康构成占比条 + 可点击计数；可折叠成一行，选择记在本地 -->
+    <div
+      v-if="mainViewTab === 'tasks' && !loading && statusSummary.total > 0"
+      class="rounded-xl border border-gray-200 bg-white px-4 shadow-sm transition-all"
+      :class="overviewCollapsed ? 'py-2' : 'py-2.5'"
+    >
+      <!-- 收起态：一行说完，计数照样能点，不拿「省空间」换掉筛选能力 -->
+      <div v-if="overviewCollapsed" class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <p class="text-sm font-bold text-gray-900">
+          <template v-if="statusSummary.compact">共 {{ statusSummary.total }} 个任务</template>
+          <template v-else>
+            {{ statusSummary.onPct }}% 在运行
+            <span class="ml-1.5 text-[11px] font-semibold text-gray-400">共 {{ statusSummary.total }} 个</span>
+          </template>
+        </p>
+        <div class="flex flex-wrap items-center gap-1">
           <button
+            v-for="chip in statusChips"
+            :key="'c-' + chip.key"
             type="button"
-            class="inline-flex shrink-0 items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
-            :class="mainViewTab === 'tasks' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-            @click="mainViewTab = 'tasks'"
-          >任务列表</button>
-          <button
-            type="button"
-            class="inline-flex shrink-0 items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
-            :class="mainViewTab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-            @click="mainViewTab = 'history'"
-          >执行记录</button>
-        </template>
-        <template v-else>
-          <button
-            v-for="tab in taskTypeTabs"
-            :key="tab.value"
-            type="button"
-            class="inline-flex shrink-0 items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
-            :class="taskTypeFilter === tab.value ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-            @click="taskTypeFilter = tab.value"
+            class="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-semibold transition-colors"
+            :class="[
+              statusFilter === chip.key
+                ? (chip.clickable ? 'cursor-pointer bg-gray-900 text-white' : 'cursor-default bg-gray-900 text-white')
+                : (chip.clickable
+                    ? (chip.key === 'attn' ? 'cursor-pointer text-red-600 hover:bg-red-50' : 'cursor-pointer text-gray-500 hover:bg-gray-100 hover:text-gray-800')
+                    : 'cursor-default text-gray-400'),
+            ]"
+            :disabled="!chip.clickable"
+            :title="chip.title"
+            @click="statusFilter = statusFilter === chip.key ? 'all' : chip.key"
           >
-            <span>{{ tab.label }}</span>
-            <span
-              class="min-w-5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-center"
-              :class="taskTypeFilter === tab.value ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'"
-            >
-              {{ taskTypeCounts[tab.value] }}
-            </span>
+            <span class="h-1.5 w-1.5 rounded-sm" :class="statusFilter === chip.key ? 'bg-white' : chip.dot"></span>
+            {{ chip.label }}
+            <b
+              v-if="chip.count > 0 || chip.clickable"
+              class="font-black tabular-nums"
+              :class="statusFilter === chip.key ? 'text-white' : (chip.key === 'attn' ? 'text-red-600' : 'text-gray-900')"
+            >{{ chip.count }}</b>
           </button>
-        </template>
+        </div>
+        <div v-if="statusSummary.upcoming" class="ml-auto flex min-w-0 items-baseline gap-1.5 text-xs">
+          <span class="shrink-0 font-bold text-gray-400">下一次</span>
+          <b class="shrink-0 font-bold tabular-nums text-primary">{{ nextRunCell(statusSummary.upcoming).text }}</b>
+          <span class="truncate text-gray-400">{{ statusSummary.upcoming.name }}</span>
+        </div>
+        <button
+          type="button"
+          class="shrink-0 cursor-pointer rounded-md px-1.5 py-0.5 text-xs font-semibold text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+          title="展开：看健康构成占比条"
+          @click="toggleOverview"
+        >展开 ⌄</button>
       </div>
+
+      <!-- 展开态 -->
+      <template v-else>
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <p class="text-sm font-bold text-gray-900">
+            <template v-if="statusSummary.compact">共 {{ statusSummary.total }} 个任务</template>
+            <template v-else>{{ statusSummary.onPct }}% 在运行</template>
+            <span v-if="!statusSummary.compact" class="ml-1.5 text-[11px] font-semibold text-gray-400">
+              共 {{ statusSummary.total }} 个任务
+            </span>
+          </p>
+          <div v-if="statusSummary.upcoming" class="ml-auto flex min-w-0 items-baseline gap-1.5 text-xs">
+            <span class="shrink-0 font-bold text-gray-400">下一次</span>
+            <b class="shrink-0 font-bold tabular-nums text-primary">{{ nextRunCell(statusSummary.upcoming).text }}</b>
+            <span class="truncate text-gray-400">{{ statusSummary.upcoming.name }}</span>
+          </div>
+        </div>
+
+        <!-- 占比条：异常一出现就是一道红色缺口，比数字更早被眼睛抓到 -->
+        <div
+          v-if="!statusSummary.compact"
+          class="mt-2 flex h-2 gap-[2px] overflow-hidden rounded-full bg-gray-100"
+        >
+          <span
+            v-if="statusSummary.on"
+            class="h-full bg-emerald-500"
+            :style="{ width: statusSummary.onPct + '%' }"
+            :title="`运行中 ${statusSummary.on} 个 · ${statusSummary.onPct}%`"
+          ></span>
+          <span
+            v-if="statusSummary.off"
+            class="h-full bg-gray-300"
+            :style="{ width: statusSummary.offPct + '%' }"
+            :title="`已暂停 ${statusSummary.off} 个 · ${statusSummary.offPct}%`"
+          ></span>
+          <span
+            v-if="statusSummary.attn"
+            class="h-full bg-red-500"
+            :style="{ width: statusSummary.attnPct + '%' }"
+            :title="`需处理 ${statusSummary.attn} 个 · ${statusSummary.attnPct}%`"
+          ></span>
+        </div>
+
+        <!-- 图例同时是筛选入口；右侧空白用收起按钮填上 -->
+        <div class="mt-1.5 flex flex-wrap items-center gap-1">
+          <button
+            v-for="chip in statusChips"
+            :key="'e-' + chip.key"
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-semibold transition-colors"
+            :class="[
+              statusFilter === chip.key
+                ? 'bg-gray-900 text-white'
+                : (chip.clickable
+                    ? (chip.key === 'attn' ? 'cursor-pointer text-red-600 hover:bg-red-50' : 'cursor-pointer text-gray-500 hover:bg-gray-100 hover:text-gray-800')
+                    : 'cursor-default text-gray-400'),
+            ]"
+            :disabled="!chip.clickable"
+            :title="chip.title"
+            @click="statusFilter = statusFilter === chip.key ? 'all' : chip.key"
+          >
+            <span class="h-1.5 w-1.5 rounded-sm" :class="statusFilter === chip.key ? 'bg-white' : chip.dot"></span>
+            {{ chip.label }}
+            <b
+              v-if="chip.count > 0 || chip.clickable"
+              class="font-black tabular-nums"
+              :class="statusFilter === chip.key ? 'text-white' : (chip.key === 'attn' ? 'text-red-600' : 'text-gray-900')"
+            >{{ chip.count }}</b>
+          </button>
+          <button
+            type="button"
+            class="ml-auto shrink-0 cursor-pointer rounded-md px-1.5 py-0.5 text-xs font-semibold text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+            title="收起成一行"
+            @click="toggleOverview"
+          >收起 ⌃</button>
+        </div>
+      </template>
     </div>
 
-    <!-- 任务列表下的类型二级筛选（仅管理员主 Tab 模式下需要） -->
-    <div
-      v-if="showHistoryTab && mainViewTab === 'tasks'"
-      class="flex gap-1.5 overflow-x-auto -mt-1 pt-2"
-      style="-webkit-overflow-scrolling: touch;"
-    >
-      <button
-        v-for="tab in taskTypeTabs"
-        :key="'sub-' + tab.value"
-        type="button"
-        class="inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap"
-        :class="taskTypeFilter === tab.value
-          ? 'border-blue-200 bg-blue-50 text-blue-700'
-          : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:text-gray-700'"
-        @click="taskTypeFilter = tab.value"
-      >
-        <span>{{ tab.label }}</span>
-        <span
-          class="min-w-4 rounded-full px-1 text-[10px]"
-          :class="taskTypeFilter === tab.value ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'"
-        >{{ taskTypeCounts[tab.value] }}</span>
-      </button>
+    <!-- 一级 tab：类型筛选 + 右侧「执行记录」入口（不再有第二层 pill 筛选） -->
+    <div class="border-b border-gray-200 -mt-1">
+      <div class="flex items-center gap-1 overflow-x-auto -mb-px" style="-webkit-overflow-scrolling: touch;">
+        <button
+          v-for="tab in taskTypeTabs"
+          :key="'main-' + tab.value"
+          type="button"
+          class="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition-colors sm:px-4"
+          :class="mainViewTab === 'tasks' && taskTypeFilter === tab.value
+            ? 'border-blue-600 text-blue-600'
+            : 'border-transparent text-gray-500 hover:text-gray-700'"
+          @click="taskTypeFilter = tab.value; mainViewTab = 'tasks'"
+        >
+          <span>{{ tab.label }}</span>
+          <span
+            class="min-w-5 rounded-full px-1.5 py-0.5 text-center text-[10px] font-semibold"
+            :class="mainViewTab === 'tasks' && taskTypeFilter === tab.value ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'"
+          >
+            {{ taskTypeCounts[tab.value] }}
+          </span>
+        </button>
+        <span class="flex-1"></span>
+        <button
+          v-if="showHistoryTab"
+          type="button"
+          class="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-sm font-medium transition-colors sm:px-4"
+          :class="mainViewTab === 'history'
+            ? 'border-b-2 border-blue-600 text-blue-600'
+            : 'text-gray-500 hover:text-blue-700'"
+          title="查看全部任务的执行记录"
+          @click="mainViewTab = 'history'"
+        >执行记录 →</button>
+      </div>
     </div>
 
     <!-- 管理员全局执行记录 -->
@@ -1986,307 +2652,426 @@ onMounted(async () => {
     </div>
 
     <template v-if="mainViewTab === 'tasks'">
+    <!-- 风险提醒：最严重的一条提到最上面，「只看需处理」一键收窄 -->
+    <div
+      v-if="!loading && attentionHeadline"
+      class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-3 py-2 text-xs leading-relaxed"
+      :class="attentionHeadline.isError
+        ? 'border-red-200 bg-red-50 text-red-700'
+        : 'border-amber-200 bg-amber-50 text-amber-800'"
+    >
+      <span class="shrink-0">⚠</span>
+      <span class="min-w-0 flex-1">
+        <b class="font-bold">{{ attentionHeadline.task.name }}</b>
+        {{ attentionHeadline.reason }}{{ attentionHeadline.retryHint ? ' ' + attentionHeadline.retryHint : '' }}
+        <span v-if="attentionHeadline.count > 1" class="opacity-70">（另有 {{ attentionHeadline.count - 1 }} 个任务需处理）</span>
+      </span>
+      <button
+        type="button"
+        class="shrink-0 cursor-pointer rounded-md border border-black/10 px-2 py-0.5 font-bold transition-opacity hover:opacity-70"
+        @click="statusFilter = statusFilter === 'attn' ? 'all' : 'attn'"
+      >{{ statusFilter === 'attn' ? '显示全部' : '只看需处理' }}</button>
+    </div>
+
     <!-- Loading State -->
     <div v-if="loading" class="py-20 text-center">
       <div class="animate-spin h-10 w-10 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
       <p class="text-gray-500">加载任务列表中...</p>
     </div>
 
-    <!-- Empty State -->
-    <div v-else-if="filteredTasks.length === 0" class="py-20 text-center bg-white rounded-xl border border-dashed border-gray-200">
-      <p class="text-gray-500">没有找到匹配的任务</p>
-    </div>
-
-    <!-- Grid View -->
-    <div v-else-if="currentViewMode === 'grid'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-      <div 
-        v-for="task in filteredTasks" 
-        :key="task.id"
-        class="bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all group overflow-hidden"
+    <!-- Empty State：区分「一个任务都没有」和「筛选没命中」，前者直接给创建入口 -->
+    <div v-else-if="filteredTasks.length === 0" class="rounded-xl border border-dashed border-gray-200 bg-white px-6 py-16 text-center">
+      <p class="text-sm font-semibold text-gray-700">
+        {{ scopedTasks.length === 0 ? '还没有任务' : '没有匹配的任务' }}
+      </p>
+      <p class="mt-1 text-xs text-gray-400">
+        {{ scopedTasks.length === 0
+          ? '定时任务可以让智能体按周期自动跑：监控发版、巡检数据、推送日报。'
+          : '当前搜索或筛选条件下没有任务，试试放宽条件。' }}
+      </p>
+      <button
+        v-if="scopedTasks.length === 0 && canManage"
+        type="button"
+        class="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-dark"
+        @click="openCreateModal"
       >
-        <div class="p-5">
-          <div class="flex justify-between items-start mb-4">
-            <div class="flex items-center space-x-3">
-              <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl shadow-inner relative">
-                🕒
-                <!-- Source Badge -->
-                <div 
-                  class="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm text-[10px]"
-                  :class="task.task_type === 'metadata_inspection' ? 'bg-purple-600 text-white' : task.task_type === 'saved_report' ? 'bg-emerald-500 text-white' : task.source === 'agent' ? 'bg-indigo-500 text-white' : 'bg-amber-500 text-white'"
-                  :title="task.task_type === 'metadata_inspection' ? '元数据巡检' : task.task_type === 'saved_report' ? '报表订阅' : task.source === 'agent' ? '智能体创建' : '手动创建'"
-                >
-                  {{ task.task_type === 'metadata_inspection' ? '⚡' : task.task_type === 'saved_report' ? '📊' : task.source === 'agent' ? '🤖' : '👤' }}
-                </div>
-              </div>
-              <div class="min-w-0">
-                <div class="flex items-center space-x-2">
-                  <h3 class="font-bold text-gray-900 truncate">{{ task.name }}</h3>
-                  <span v-if="task.task_type === 'metadata_inspection'" class="px-2 py-0.5 bg-purple-50 text-purple-700 text-[9px] font-black rounded-full border border-purple-200">系统 · 元数据巡检</span>
-                  <span v-if="task.task_type === 'saved_report'" class="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-black rounded-full border border-emerald-100">报表订阅</span>
-                  <span v-if="String(task.user_id) === String(userInfo?.user_id)" class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black rounded-full border border-amber-200 flex-shrink-0">
-                    我创建的
-                  </span>
-                  <span
-                    v-if="String(task.config?.task_constraints || '').trim()"
-                    class="px-2 py-0.5 bg-sky-50 text-sky-700 text-[9px] font-black rounded-full border border-sky-200 flex-shrink-0"
-                    title="该任务已配置输出要求（任务约束）"
-                  >约束</span>
-                  <span class="px-2 py-0.5 text-[9px] font-black rounded-full border flex items-center flex-shrink-0" :class="taskHealthMeta(task).class">
-                    <span class="w-1.5 h-1.5 rounded-full mr-1" :class="taskHealthMeta(task).dot"></span>
-                    {{ taskHealthMeta(task).label }}
-                  </span>
-                </div>
-                <div class="flex items-center mt-1">
-                  <span class="text-[10px] text-primary font-bold mr-2 bg-primary/5 px-1.5 py-0.5 rounded">{{ task.agent_name }}</span>
-                  <span 
-                    class="w-2 h-2 rounded-full mr-2"
-                    :class="task.status === 1 ? 'bg-green-500 animate-pulse' : 'bg-gray-300'"
-                  ></span>
-                  <HoverTip
-                    v-if="task.cron_valid === false"
-                    class="mr-1"
-                    :text="`无效 Cron：${task.cron_expr}`"
-                    :width="280"
-                  >
-                    <span class="text-[10px] font-bold text-red-500 bg-red-50 px-1.5 py-0.5 rounded">⚠️ Cron无效</span>
-                  </HoverTip>
-                  <HoverTip v-else :text="cronScheduleTip(task.cron_expr)" :width="300">
-                    <span class="inline-block max-w-[220px] truncate align-middle text-[10px] font-bold text-blue-600">{{ formatTaskSchedule(task.cron_expr) }}</span>
-                  </HoverTip>
-                </div>
-              </div>
-            </div>
-            
-            <!-- Switch UI Replacement -->
-            <button 
-              v-if="canManageTask(task)"
-              @click="toggleStatus(task)"
-              class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200"
-              :class="task.status === 1 ? 'bg-green-500' : 'bg-gray-200'"
-            >
-              <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200" :class="task.status === 1 ? 'translate-x-4' : 'translate-x-0'"></span>
-            </button>
-            <div v-else class="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent" :class="task.status === 1 ? 'bg-green-500/50' : 'bg-gray-200'">
-               <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow" :class="task.status === 1 ? 'translate-x-4' : 'translate-x-0'"></span>
-            </div>
-          </div>
-
-          <div class="space-y-3">
-            <div class="p-3 bg-gray-50 rounded-lg border border-gray-100 min-h-[60px]">
-              <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">{{ task.task_type === 'saved_report' ? '报表说明' : '指令' }}</p>
-              <p class="text-xs text-gray-600 line-clamp-2 italic leading-relaxed">"{{ task.prompt }}"</p>
-            </div>
-            <div class="grid grid-cols-4 gap-2 text-[10px]">
-              <div>
-                <p class="text-gray-400 mb-0.5">触发</p>
-                <p class="text-gray-900 font-black text-xs">{{ metricValue(task.trigger_count) }}</p>
-              </div>
-              <div>
-                <p class="text-gray-400 mb-0.5">成功</p>
-                <p class="text-green-700 font-black text-xs">{{ metricValue(task.success_count || task.run_count) }}</p>
-              </div>
-              <div>
-                <p class="text-gray-400 mb-0.5">失败</p>
-                <p class="text-red-600 font-black text-xs">{{ metricValue(task.failure_count) }}</p>
-              </div>
-              <div>
-                <p class="text-gray-400 mb-0.5">跳过</p>
-                <p class="text-slate-600 font-black text-xs">{{ metricValue(task.skipped_count) }}</p>
-              </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-2 text-[10px]">
-              <div>
-                <p class="text-gray-400 mb-0.5">上次尝试</p>
-                <p class="text-gray-700 font-medium">{{ formatDate(task.last_attempt_at || task.last_run_at) }}</p>
-              </div>
-              <div>
-                <p class="text-gray-400 mb-0.5">预计下次</p>
-                <p class="whitespace-nowrap text-primary font-bold">{{ formatNextRunCompact(task.next_run_at) }}</p>
-              </div>
-            </div>
-
-            <div v-if="task.last_error" class="text-[10px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-2 py-1.5 line-clamp-2">
-              {{ task.consecutive_failures ? `连续失败 ${task.consecutive_failures} 次：` : '' }}{{ task.last_error }}
-            </div>
-            
-            <!-- Audit Info -->
-            <div class="pt-3 border-t border-gray-50 flex items-center justify-between text-[9px] text-gray-400">
-              <span class="flex items-center">
-                <span class="mr-1">👤</span>
-                {{ task.creator_name || '系统' }}
-              </span>
-              <span>{{ formatDate(task.created_at) }} 创建</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="bg-gray-50/50 px-5 py-3 border-t border-gray-100 flex items-center justify-between opacity-80 group-hover:opacity-100 transition-opacity">
-          <div class="flex items-center space-x-1">
-            <button @click="openLogs(task)" class="p-1.5 text-gray-400 hover:text-primary hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="执行历史">
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            </button>
-            <button
-              v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
-              @click="showCronInspectionModal = true"
-              class="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100 cursor-pointer"
-              title="巡检配置与监控"
-            >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
-            <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" :title="task.task_type === 'saved_report' ? '订阅设置' : '编辑'">
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-            </button>
-            <button v-if="canManageTask(task)" @click="toggleStatus(task)" class="p-1.5 text-gray-400 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" :class="task.status === 1 ? 'hover:text-orange-600' : 'hover:text-green-600'" :title="task.status === 1 ? '停止' : '激活'">
-              <PauseCircleIcon v-if="task.status === 1" class="w-4 h-4" />
-              <PlayCircleIcon v-else class="w-4 h-4" />
-            </button>
-            <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="删除">
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-            </button>
-          </div>
-          <button 
-            v-if="canManageTask(task)"
-            @click="runTaskNow(task)"
-            :disabled="runningTaskIds.has(task.id)"
-            class="text-[10px] font-bold flex items-center px-2 py-1 rounded bg-white border border-gray-200 shadow-sm hover:border-primary hover:text-primary transition-all disabled:opacity-50"
-          >
-            <span v-if="runningTaskIds.has(task.id)" class="mr-1 animate-spin">⌛</span>
-            {{ runningTaskIds.has(task.id) ? '正在触发' : '立即执行' }}
-          </button>
-        </div>
-      </div>
+        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+        </svg>
+        新建第一个任务
+      </button>
+      <button
+        v-else-if="scopedTasks.length > 0"
+        type="button"
+        class="mt-4 rounded-lg border border-gray-200 px-3.5 py-2 text-xs font-semibold text-gray-600 transition-colors hover:border-gray-300 hover:text-gray-900"
+        @click="resetTaskFilters"
+      >清空筛选</button>
     </div>
 
-    <!-- List View -->
-    <div v-else class="bg-white rounded-xl border border-gray-200 overflow-x-auto shadow-sm">
-      <table class="w-full min-w-[1080px] table-fixed text-left border-collapse">
-        <thead>
-          <tr class="bg-gray-50/50 border-b border-gray-200">
-            <th class="w-[28%] px-5 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">任务名称</th>
-            <th class="w-[11%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">执行对象</th>
-            <th class="w-[8%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center">执行次数</th>
-            <th class="w-[15%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider hidden md:table-cell">运行周期</th>
-            <th class="w-[12%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">预计下次运行</th>
-            <th class="w-[8%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center">状态</th>
-            <th class="w-[18%] px-5 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-right">操作</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-          <tr v-for="task in filteredTasks" :key="task.id" class="hover:bg-blue-50/30 transition-colors group">
-            <td class="px-5 py-4">
-              <div class="flex items-start space-x-3">
-                <span 
-                  class="w-6 h-6 rounded-lg flex items-center justify-center text-xs shadow-inner"
-                  :class="task.task_type === 'metadata_inspection' ? 'bg-purple-50 text-purple-600' : task.task_type === 'saved_report' ? 'bg-emerald-50 text-emerald-600' : task.source === 'agent' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'"
-                  :title="task.task_type === 'metadata_inspection' ? '元数据巡检' : task.task_type === 'saved_report' ? '报表订阅' : task.source === 'agent' ? '智能体创建' : '手动创建'"
-                >
-                  {{ task.task_type === 'metadata_inspection' ? '⚡' : task.task_type === 'saved_report' ? '📊' : task.source === 'agent' ? '🤖' : '👤' }}
-                </span>
-                <div class="min-w-0 flex-1">
-                  <p class="text-sm font-bold leading-5 text-gray-900 group-hover:text-primary line-clamp-2" :title="task.name">{{ task.name }}</p>
-                  <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <span v-if="task.task_type === 'metadata_inspection'" class="whitespace-nowrap px-2 py-0.5 bg-purple-50 text-purple-700 text-[8px] font-black rounded-full border border-purple-200">系统 · 元数据巡检</span>
-                    <span v-if="task.task_type === 'saved_report'" class="whitespace-nowrap px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[8px] font-black rounded-full border border-emerald-100">报表订阅</span>
-                    <span v-if="String(task.user_id) === String(userInfo?.user_id)" class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[8px] font-black rounded-full border border-amber-200">
-                      我创建的
-                    </span>
-                    <span class="px-2 py-0.5 text-[8px] font-black rounded-full border flex items-center" :class="taskHealthMeta(task).class">
-                      <span class="w-1 h-1 rounded-full mr-1" :class="taskHealthMeta(task).dot"></span>
-                      {{ taskHealthMeta(task).label }}
-                    </span>
+    <!-- Grid View：auto-fill 自适应列宽，窄容器（个人中心约 900px）自动降 2 列，不再把徽章和开关挤出卡片 -->
+    <div
+      v-else-if="currentViewMode === 'grid'"
+      class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3"
+    >
+      <article
+        v-for="task in filteredTasks"
+        :key="task.id"
+        class="group relative flex flex-col gap-2 rounded-xl border bg-white p-3.5 transition-all hover:shadow-md"
+        :class="taskStatusMeta(task).key === 'error'
+          ? 'border-red-200 border-l-[3px] border-l-red-500'
+          : (task.status === 1 ? 'border-gray-200' : 'border-gray-200 bg-gray-50/40')"
+      >
+        <!-- 标题行：状态点 + 标题（两行截断，占满剩余宽度）+ ⋯ 菜单 -->
+        <div class="flex items-start gap-2">
+          <span
+            class="mt-1.5 h-2 w-2 shrink-0 rounded-full"
+            :class="taskStatusMeta(task).dot"
+            :title="taskStatusTip(task)"
+          ></span>
+          <h3
+            class="line-clamp-2 min-w-0 flex-1 break-words text-sm font-bold leading-snug text-gray-900"
+            :title="task.name"
+          >{{ task.name }}</h3>
+          <div class="relative shrink-0" data-task-menu>
+            <button
+              type="button"
+              class="-mr-1 -mt-1 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-base leading-none text-gray-300 transition-colors hover:bg-gray-100 hover:text-gray-700"
+              title="更多操作"
+              @click.stop="toggleTaskMenu(task.id)"
+            >⋯</button>
+            <div
+              v-if="taskMenuId === task.id"
+              class="absolute right-0 top-full z-20 mt-1 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 text-left shadow-lg"
+            >
+              <!-- 报表订阅专属操作：订阅走自己的设置弹窗，且不按任务归属拦（与重构前一致） -->
+              <button
+                v-if="task.task_type === 'saved_report'"
+                type="button"
+                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                @click="closeTaskMenu(); openSavedReportSubscriptionSettings(task)"
+              >订阅设置</button>
+              <button
+                v-else-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
+                type="button"
+                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                @click="closeTaskMenu(); openEditModal(task)"
+              >编辑任务</button>
+              <button
+                type="button"
+                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                @click="closeTaskMenu(); openLogs(task)"
+              >{{ task.task_type === 'saved_report' ? '运行历史' : '执行历史' }}</button>
+              <button
+                v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
+                type="button"
+                class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                @click="closeTaskMenu(); showCronInspectionModal = true"
+              >巡检配置</button>
+              <button
+                v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
+                type="button"
+                class="mt-0.5 block w-full cursor-pointer border-t border-gray-100 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50"
+                @click="closeTaskMenu(); deleteTask(task)"
+              >{{ task.task_type === 'saved_report' ? '删除订阅' : '删除任务' }}</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 元信息：执行对象 · 周期 · 一个合成状态（不再出现「健康 + 失败 2」并排） -->
+        <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500">
+          <span class="rounded bg-primary/5 px-1.5 py-0.5 font-bold text-primary">{{ task.agent_name }}</span>
+          <HoverTip :text="cronScheduleTip(task.cron_expr)" :width="300">
+            <span class="cursor-help border-b border-dashed border-gray-300 font-semibold text-gray-700">{{ formatTaskSchedule(task.cron_expr) }}</span>
+          </HoverTip>
+          <span
+            class="rounded-full border px-2 py-0.5 text-[10px] font-black"
+            :class="taskStatusMeta(task).class"
+            :title="taskStatusTip(task)"
+          >{{ taskStatusMeta(task).label }}</span>
+          <span
+            v-if="task.task_type === 'saved_report'"
+            class="rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700"
+          >报表订阅</span>
+          <span
+            v-else-if="task.task_type === 'metadata_inspection'"
+            class="rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[10px] font-black text-purple-700"
+          >元数据巡检</span>
+        </div>
+
+        <p class="line-clamp-1 text-[11px] leading-relaxed text-gray-400" :title="task.prompt">"{{ task.prompt }}"</p>
+
+        <p
+          v-if="taskScheduleMismatch(task)"
+          class="line-clamp-2 rounded-md border border-amber-100 bg-amber-50 px-2 py-1 text-[11px] leading-snug text-amber-700"
+          :title="taskScheduleMismatch(task)"
+        >⚠ {{ taskScheduleMismatch(task) }}</p>
+        <p
+          v-else-if="task.last_error"
+          class="line-clamp-2 rounded-md border border-red-100 bg-red-50 px-2 py-1 text-[11px] leading-snug text-red-700"
+          :title="task.last_error"
+        >⚠ {{ task.consecutive_failures ? '连续失败 ' + task.consecutive_failures + ' 次：' : '' }}{{ task.last_error }}</p>
+
+        <!-- 指标：卡片与列表同一套口径「运行 N 次 · 成功率 x%」，四宫格明细进 tooltip -->
+        <div
+          class="flex items-center gap-1.5 text-[11px] text-gray-500"
+          :title="'触发 ' + metricValue(task.trigger_count) + ' · 成功 ' + metricValue(task.success_count || task.run_count) + ' · 失败 ' + metricValue(task.failure_count) + ' · 跳过 ' + metricValue(task.skipped_count)"
+        >
+          <span>运行 <b class="font-black text-gray-900">{{ taskMetricText(task).runs }}</b> 次</span>
+          <span class="text-gray-300">·</span>
+          <span>
+            成功率
+            <b
+              class="font-black"
+              :class="taskRateIsLow(task) ? 'text-red-600' : 'text-gray-900'"
+            >{{ taskMetricText(task).rate }}</b>
+          </span>
+        </div>
+
+        <!-- 时间：相对时间打头，绝对时间兜底；暂停任务写「已暂停」而不是「暂无计划」 -->
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-dashed border-gray-100 pt-2 text-[11px]">
+          <div class="flex items-center gap-1">
+            <span class="text-gray-400">上次</span>
+            <span class="font-semibold text-gray-700">{{ formatDate(task.last_attempt_at || task.last_run_at) }}</span>
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="text-gray-400">下次</span>
+            <span v-if="nextRunCell(task).muted" class="font-medium text-gray-400" :title="nextRunCell(task).tip">{{ nextRunCell(task).text }}</span>
+            <span v-else class="font-bold text-primary" :title="nextRunCell(task).tip">
+              {{ nextRunCell(task).text }}<span class="ml-1 font-medium text-gray-400">{{ nextRunCell(task).abs }}</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- 操作：主操作文字按钮 + 启停一处，其余进 ⋯ 菜单 -->
+        <div class="mt-auto flex items-center gap-1.5 border-t border-gray-100 pt-2">
+          <button
+            v-if="canManageTask(task)"
+            type="button"
+            class="rounded-md bg-primary px-2.5 py-1 text-[11px] font-bold text-white transition-colors hover:bg-primary-dark disabled:opacity-50"
+            :disabled="runningTaskIds.has(task.id)"
+            @click="runTaskNow(task)"
+          >{{ runningTaskIds.has(task.id) ? '正在触发' : '立即执行' }}</button>
+          <button
+            type="button"
+            class="rounded-md border border-gray-200 px-2.5 py-1 text-[11px] font-semibold text-gray-600 transition-colors hover:border-primary/40 hover:text-primary"
+            @click="openLogs(task)"
+          >历史</button>
+          <span class="flex-1"></span>
+          <button
+            v-if="canManageTask(task)"
+            type="button"
+            class="rounded-md px-2 py-1 text-[11px] font-semibold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+            :title="task.status === 1 ? '暂停后不再自动执行' : '恢复调度'"
+            @click="toggleStatus(task)"
+          >{{ task.status === 1 ? '暂停' : '恢复' }}</button>
+        </div>
+      </article>
+    </div>
+
+    <!-- List View：任务多（10+）时的主力视图，默认「需处理优先」排序，表头可排序 -->
+    <!-- 不用 overflow-x-auto：<980px 已隐藏次要列、<760px 直接降级卡片，表格在能走到这里的容器宽度下不会溢出；
+         而 overflow 会建裁剪上下文，把行内 ⋯ 菜单的弹层裁在表格底边。 -->
+    <div v-else class="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <table class="w-full min-w-[760px] table-fixed border-collapse text-left">
+          <thead>
+            <tr class="border-b border-gray-200 bg-gray-50/60">
+              <th class="w-10 px-2 py-2.5">
+                <input
+                  type="checkbox"
+                  class="h-3.5 w-3.5 cursor-pointer accent-primary"
+                  title="全选当前筛选下的可管理任务"
+                  :checked="allSelected"
+                  @change="toggleSelectAll"
+                />
+              </th>
+              <th class="px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                <button type="button" class="inline-flex cursor-pointer items-center gap-1 hover:text-gray-700" @click="toggleSort('name')">
+                  任务 <span class="text-[9px] text-gray-400">{{ sortIndicator('name') }}</span>
+                </button>
+              </th>
+              <th
+                v-if="showAgentColumn"
+                class="w-[120px] px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400"
+              >执行对象</th>
+              <th class="w-[176px] px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                <button type="button" class="inline-flex cursor-pointer items-center gap-1 hover:text-gray-700" @click="toggleSort('next')">
+                  预计下次运行 <span class="text-[9px] text-gray-400">{{ sortIndicator('next') }}</span>
+                </button>
+              </th>
+              <th
+                v-if="showRateColumn"
+                class="w-[84px] px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400"
+              >
+                <button type="button" class="inline-flex cursor-pointer items-center gap-1 hover:text-gray-700" @click="toggleSort('rate')">
+                  成功率 <span class="text-[9px] text-gray-400">{{ sortIndicator('rate') }}</span>
+                </button>
+              </th>
+              <th class="w-[96px] px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">最近 7 次</th>
+              <th class="w-[92px] px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                <button type="button" class="inline-flex cursor-pointer items-center gap-1 hover:text-gray-700" @click="toggleSort('priority')">
+                  状态 <span class="text-[9px] text-gray-400">{{ sortIndicator('priority') }}</span>
+                </button>
+              </th>
+              <th class="w-[132px] px-3 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-gray-400">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <tr
+              v-for="task in filteredTasks"
+              :key="task.id"
+              class="group transition-colors hover:bg-blue-50/30"
+              :class="selectedTaskIds.has(task.id) ? 'bg-blue-50/40' : ''"
+            >
+              <td class="px-2 py-3 align-middle">
+                <input
+                  v-if="canManageTask(task)"
+                  type="checkbox"
+                  class="h-3.5 w-3.5 cursor-pointer accent-primary"
+                  :checked="selectedTaskIds.has(task.id)"
+                  @change="toggleTaskSelection(task.id)"
+                />
+              </td>
+              <td class="px-3 py-3">
+                <div class="flex items-start gap-2">
+                  <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" :class="taskStatusMeta(task).dot" :title="taskStatusTip(task)"></span>
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1.5">
+                      <p class="truncate text-sm font-bold leading-5 text-gray-900 group-hover:text-primary" :title="task.name">{{ task.name }}</p>
+                      <span
+                        v-if="task.task_type === 'saved_report'"
+                        class="shrink-0 rounded-full border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-black text-emerald-700"
+                      >报表</span>
+                      <span
+                        v-else-if="task.task_type === 'metadata_inspection'"
+                        class="shrink-0 rounded-full border border-purple-200 bg-purple-50 px-1.5 py-0.5 text-[9px] font-black text-purple-700"
+                      >巡检</span>
+                    </div>
+                    <p class="mt-0.5 max-w-full truncate text-[11px] text-gray-400">
+                      {{ formatTaskSchedule(task.cron_expr) }} · 运行 {{ taskMetricText(task).runs }} 次 · 上次 {{ formatDate(task.last_attempt_at || task.last_run_at) }}
+                    </p>
                   </div>
-                  <span class="block text-[10px] text-gray-400 line-clamp-1 mt-1">
-                    {{ task.creator_name }} · 触发 {{ metricValue(task.trigger_count) }} / 成功 {{ metricValue(task.success_count || task.run_count) }} / 失败 {{ metricValue(task.failure_count) }}
-                  </span>
                 </div>
-              </div>
-            </td>
-            <td class="px-4 py-4">
-              <span class="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-gray-600"><span>{{ task.task_type === 'saved_report' ? '📊' : '🤖' }}</span>{{ task.agent_name }}</span>
-            </td>
-            <td class="px-4 py-4 text-center">
-              <div class="flex flex-col items-center">
-                <span class="text-xs font-black text-gray-900">{{ metricValue(task.success_count || task.run_count) }}</span>
-                <span v-if="metricValue(task.failure_count)" class="text-[9px] text-red-500 mt-0.5">失败 {{ metricValue(task.failure_count) }}</span>
-              </div>
-            </td>
-            <td class="px-4 py-4 hidden md:table-cell">
-              <template v-if="task.cron_valid === false">
-                <HoverTip :text="`无效 Cron：${task.cron_expr}`" :width="280">
-                  <span
-                    class="inline-flex whitespace-nowrap rounded-lg bg-red-50 px-2 py-1 text-[11px] font-bold text-red-600"
-                  >⚠️ Cron无效</span>
-                </HoverTip>
-              </template>
-              <template v-else>
-                <HoverTip class="w-full" :text="cronScheduleTip(task.cron_expr)" :width="320">
-                  <span class="inline-block max-w-full truncate rounded-lg bg-blue-50 px-2 py-1 align-middle text-[11px] font-bold text-blue-700">
-                    {{ formatTaskSchedule(task.cron_expr) }}
-                  </span>
-                </HoverTip>
-              </template>
-            </td>
-            <td class="px-4 py-4">
-              <span class="whitespace-nowrap text-xs font-medium text-gray-600">{{ formatNextRunCompact(task.next_run_at) }}</span>
-            </td>
-            <td class="px-4 py-4">
-              <div class="flex justify-center">
-                <span 
-                  class="px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center whitespace-nowrap flex-shrink-0"
-                  :class="task.status === 1 ? 'bg-green-50 text-green-600 border-green-100' : 'bg-gray-100 text-gray-400 border-gray-200'"
-                >
-                  <span class="w-1.5 h-1.5 rounded-full mr-1.5 flex-shrink-0" :class="task.status === 1 ? 'bg-green-500 animate-pulse' : 'bg-gray-400'"></span>
-                  {{ task.status === 1 ? '活跃' : '停止' }}
+              </td>
+              <td v-if="showAgentColumn" class="truncate px-3 py-3 text-xs text-gray-600" :title="task.agent_name">{{ task.agent_name }}</td>
+              <td class="px-3 py-3">
+                <span v-if="nextRunCell(task).muted" class="text-xs font-medium text-gray-400" :title="nextRunCell(task).tip">{{ nextRunCell(task).text }}</span>
+                <span v-else class="text-xs" :title="nextRunCell(task).tip">
+                  <b class="font-bold text-primary">{{ nextRunCell(task).text }}</b>
+                  <span class="ml-1 text-gray-400">{{ nextRunCell(task).abs }}</span>
                 </span>
-              </div>
-            </td>
-            <td class="px-5 py-4 text-right">
-              <!-- 报表订阅专属操作 -->
-              <div v-if="task.task_type === 'saved_report'" class="flex items-center justify-end gap-1.5">
-                <button class="whitespace-nowrap rounded-lg border border-blue-100 bg-blue-50 px-2 py-1.5 text-[10px] font-bold text-blue-600 hover:bg-blue-100" @click="openSavedReportSubscriptionSettings(task)">订阅设置</button>
-                <button class="whitespace-nowrap rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-bold text-gray-600 hover:border-blue-200 hover:text-blue-600" @click="openLogs(task)">运行历史</button>
-                <button v-if="canManageTask(task)" class="whitespace-nowrap rounded-lg border border-emerald-100 bg-emerald-50 px-2 py-1.5 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50" :disabled="runningTaskIds.has(task.id)" @click="runTaskNow(task)">{{ runningTaskIds.has(task.id) ? '执行中' : '立即执行' }}</button>
-                <button v-if="canManageTask(task)" class="whitespace-nowrap rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-bold text-gray-500 hover:text-orange-600" @click="toggleStatus(task)">{{ task.status === 1 ? '暂停' : '恢复' }}</button>
-                <button v-if="canManageTask(task)" class="rounded-lg p-1.5 text-gray-300 hover:bg-red-50 hover:text-red-500" title="删除订阅" @click="deleteTask(task)"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
-              </div>
-              <div v-else class="flex items-center justify-end space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                <button v-if="canManageTask(task)" @click="runTaskNow(task)" :disabled="runningTaskIds.has(task.id)" class="p-1.5 text-primary hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="立即执行">
-                  <svg v-if="!runningTaskIds.has(task.id)" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
-                  <span v-else class="animate-spin text-[10px]">⌛</span>
-                </button>
-                <button @click="openLogs(task)" class="p-1.5 text-gray-400 hover:text-primary hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="历史">
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                </button>
-                <button
-                  v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
-                  @click="showCronInspectionModal = true"
-                  class="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100 cursor-pointer"
-                  title="巡检配置与监控"
-                >
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </button>
-                <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" :title="getTaskEditTitle(task)">
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                </button>
-                <button v-if="canManageTask(task)" @click="toggleStatus(task)" class="p-1.5 text-gray-400 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" :class="task.status === 1 ? 'hover:text-orange-600' : 'hover:text-green-600'" :title="task.status === 1 ? '停止' : '激活'">
-                  <PauseCircleIcon v-if="task.status === 1" class="w-4 h-4" />
-                  <PlayCircleIcon v-else class="w-4 h-4" />
-                </button>
-                <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="删除">
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+              </td>
+              <td v-if="showRateColumn" class="px-3 py-3">
+                <span
+                  class="text-xs font-black tabular-nums"
+                  :class="taskRateIsLow(task) ? 'text-red-600' : 'text-gray-800'"
+                >{{ taskMetricText(task).rate }}</span>
+              </td>
+              <td class="px-3 py-3">
+                <div class="flex h-4 items-end gap-[3px]">
+                  <span
+                    v-for="slot in recentRunSlots(task)"
+                    :key="slot.key"
+                    class="w-[6px] rounded-sm"
+                    :class="[slot.cls, slot.empty ? 'h-2' : 'h-3.5']"
+                    :title="slot.tip"
+                  ></span>
+                </div>
+              </td>
+              <td class="px-3 py-3">
+                <span class="rounded-full border px-2 py-0.5 text-[10px] font-black" :class="taskStatusMeta(task).class" :title="taskStatusTip(task)">
+                  {{ taskStatusMeta(task).label }}
+                </span>
+              </td>
+              <td class="px-3 py-3">
+                <div class="flex items-center justify-end gap-1">
+                  <button
+                    v-if="canManageTask(task)"
+                    type="button"
+                    class="rounded-md bg-primary px-2.5 py-1 text-[11px] font-bold text-white transition-colors hover:bg-primary-dark disabled:opacity-50"
+                    :disabled="runningTaskIds.has(task.id)"
+                    title="立即执行一次"
+                    @click="runTaskNow(task)"
+                  >{{ runningTaskIds.has(task.id) ? '触发中' : '执行' }}</button>
+                  <div class="relative" data-task-menu>
+                    <button
+                      type="button"
+                      class="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-gray-200 text-base leading-none text-gray-400 transition-colors hover:border-gray-300 hover:text-gray-700"
+                      title="更多操作"
+                      @click.stop="toggleTaskMenu(task.id, isNearListEnd(task))"
+                    >⋯</button>
+                    <div
+                      v-if="taskMenuId === task.id"
+                      class="absolute right-0 z-20 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 text-left shadow-lg"
+                      :class="taskMenuOpensUp ? 'bottom-full mb-1' : 'top-full mt-1'"
+                    >
+                        <!-- 报表订阅专属操作：订阅走自己的设置弹窗，且不按任务归属拦（与重构前一致） -->
+                        <button
+                          v-if="task.task_type === 'saved_report'"
+                          type="button"
+                          class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                          @click="closeTaskMenu(); openSavedReportSubscriptionSettings(task)"
+                        >订阅设置</button>
+                        <button
+                          v-else-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
+                          type="button"
+                          class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                          @click="closeTaskMenu(); openEditModal(task)"
+                        >编辑任务</button>
+                        <button
+                          type="button"
+                          class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                          @click="closeTaskMenu(); openLogs(task)"
+                        >{{ task.task_type === 'saved_report' ? '运行历史' : '执行历史' }}</button>
+                      <button
+                        v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
+                        type="button"
+                        class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                        @click="closeTaskMenu(); showCronInspectionModal = true"
+                      >巡检配置</button>
+                      <button
+                        v-if="canManageTask(task)"
+                        type="button"
+                        class="block w-full cursor-pointer px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                        @click="closeTaskMenu(); toggleStatus(task)"
+                      >{{ task.status === 1 ? '暂停调度' : '恢复调度' }}</button>
+                      <button
+                        v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'"
+                        type="button"
+                        class="mt-0.5 block w-full cursor-pointer border-t border-gray-100 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50"
+                        @click="closeTaskMenu(); deleteTask(task)"
+                      >{{ task.task_type === 'saved_report' ? '删除订阅' : '删除任务' }}</button>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+    </div>
+
+    <!-- 批量操作条：勾选后浮出，串行调用现有单条接口并逐条汇总结果 -->
+    <div
+      v-if="selectedTaskIds.size > 0"
+      class="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-xl bg-gray-900 px-4 py-2.5 text-xs text-white shadow-2xl"
+    >
+      <span>已选 <b class="font-bold">{{ selectedTaskIds.size }}</b> 项</span>
+      <button
+        type="button"
+        class="cursor-pointer rounded-md border border-white/25 px-2.5 py-1 font-semibold transition-colors hover:bg-white/10 disabled:opacity-50"
+        :disabled="bulkRunning"
+        @click="bulkToggleStatus(0)"
+      >批量暂停</button>
+      <button
+        type="button"
+        class="cursor-pointer rounded-md border border-white/25 px-2.5 py-1 font-semibold transition-colors hover:bg-white/10 disabled:opacity-50"
+        :disabled="bulkRunning"
+        @click="bulkToggleStatus(1)"
+      >批量恢复</button>
+      <button
+        type="button"
+        class="cursor-pointer rounded-md px-2 py-1 font-semibold text-gray-300 transition-colors hover:text-white"
+        @click="clearSelection"
+      >取消</button>
     </div>
     </template>
 
@@ -2339,7 +3124,7 @@ onMounted(async () => {
           <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
              <!-- Tab 1: Workflow Flow -->
              <div v-if="activeSpecsTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-                <div class="bg-gradient-to-r from-orange-50 to-amber-50 border-l-4 border-orange-600 p-4 rounded-r-xl shadow-2xs">
+                <div class="bg-gradient-to-r from-orange-50 to-amber-50 border-l-4 border-orange-600 p-4 rounded-r-xl shadow-sm">
                    <h3 class="font-bold text-orange-900 mb-1">任务调度 5 步全生命周期自动化体系</h3>
                    <p class="text-xs text-orange-700 leading-relaxed">
                       基于分布式调度引擎。定义目标智能体与 Cron 周期，限定资源沙箱与审批模式，配置钉钉/企微/邮件触达，支持时序 Trace 全景观测。
@@ -2450,13 +3235,13 @@ onMounted(async () => {
 
              <!-- Tab 2: Context & Specs -->
              <div v-else-if="activeSpecsTab === 'context'" class="space-y-4 max-w-4xl mx-auto">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">自动化上下文注入与处理规范</h4>
                    <div class="space-y-3">
                       <p class="text-xs text-gray-600">
                          每次调度执行时，系统在 <code>user_info</code> 中自动注入以下上下文元数据，智能体可通过这些标识识别定时自动化场景：
                       </p>
-                      <div class="bg-gray-50 rounded-xl p-4 border border-gray-150 font-mono text-[11px] space-y-1.5">
+                      <div class="bg-gray-50 rounded-xl p-4 border border-gray-200 font-mono text-[11px] space-y-1.5">
                          <div class="flex"><span class="text-blue-600 w-36 font-semibold">is_scheduled_task:</span><span class="text-emerald-600 font-bold">true</span><span class="text-gray-400 ml-auto">// 标识当前为定时自动化任务</span></div>
                          <div class="flex"><span class="text-blue-600 w-36 font-semibold">task_name:</span><span class="text-emerald-600 font-bold">"数据巡检与周报"</span><span class="text-gray-400 ml-auto">// 当前执行的任务名称</span></div>
                          <div class="flex"><span class="text-blue-600 w-36 font-semibold">user_id / role:</span><span class="text-emerald-600 font-bold">"admin" / "1"</span><span class="text-gray-400 ml-auto">// 模拟创建者的身份与权限</span></div>
@@ -2471,7 +3256,7 @@ onMounted(async () => {
 
              <!-- Tab 3: Approval & Scope -->
              <div v-else-if="activeSpecsTab === 'approval'" class="space-y-4 max-w-4xl mx-auto">
-                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                    <h4 class="font-bold text-gray-900 text-base">安全审批策略与资源沙箱限定</h4>
                    <div class="space-y-3 text-xs">
                       <div class="p-3.5 bg-green-50/60 rounded-xl border border-green-100 space-y-1">
@@ -3434,118 +4219,268 @@ onMounted(async () => {
       </div>
     </Modal>
 
-    <!-- Execution History Logs Drawer -->
+    <!-- 执行历史抽屉：时间轴 + 渲染后的 markdown（原来把 summary 的 markdown 源码当纯文本显示） -->
     <Teleport to="body">
       <div v-if="showLogsDrawer" class="fixed inset-0 z-[100] flex justify-end">
         <div class="fixed inset-0 bg-black/20 backdrop-blur-sm" @click="showLogsDrawer = false"></div>
-        <div class="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col animate-slide-in-right"
-             :class="isMobile ? 'max-w-none' : ''"
+        <div
+          class="relative flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl animate-slide-in-right"
+          :class="isMobile ? 'max-w-none' : ''"
         >
-          <div class="p-6 border-b flex items-center justify-between bg-gray-50/50">
-            <div>
-              <h2 class="text-xl font-bold text-gray-900">执行历史回溯</h2>
-              <p class="text-xs text-gray-400 mt-1 uppercase tracking-widest font-mono">{{ selectedTask?.name }} · Logs</p>
+          <!-- 头部 -->
+          <div class="border-b border-gray-200 px-5 pb-2.5 pt-4">
+            <div class="flex items-center gap-2">
+              <h2 class="text-[15px] font-extrabold tracking-tight text-gray-900">执行历史</h2>
+              <button
+                type="button"
+                class="ml-auto grid h-7 w-7 cursor-pointer place-items-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                title="关闭"
+                @click="showLogsDrawer = false"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
             </div>
-            <button @click="showLogsDrawer = false" class="p-2 hover:bg-gray-200 rounded-full transition-colors text-gray-400">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
+            <p class="mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-gray-400">
+              <span class="text-[12px] font-bold text-gray-700">{{ selectedTask?.name || '任务' }}</span>
+              <span class="h-[3px] w-[3px] rounded-full bg-gray-300"></span>
+              <span>{{ selectedTask?.agent_name || selectedTask?.agent_id || '—' }}</span>
+              <span class="h-[3px] w-[3px] rounded-full bg-gray-300"></span>
+              <span>共 {{ logsTotal }} 次执行</span>
+            </p>
           </div>
-        
-          <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
+
+          <!-- 概览 + 筛选 -->
+          <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-gray-100 bg-[#fcfcfd] px-5 py-2">
+            <span class="text-[11.5px] text-gray-500">最近 <b class="font-extrabold tabular-nums text-gray-900">{{ logsSummary.loaded }}</b> 次</span>
+            <span class="h-3 w-px bg-gray-200"></span>
+            <span class="text-[11.5px] text-gray-500">成功 <b class="font-extrabold tabular-nums text-gray-900">{{ logsSummary.ok }}</b></span>
+            <span class="text-[11.5px] text-gray-500">
+              失败 <b class="font-extrabold tabular-nums" :class="logsSummary.fail ? 'text-red-600' : 'text-gray-900'">{{ logsSummary.fail }}</b>
+            </span>
+            <span class="h-3 w-px bg-gray-200"></span>
+            <span class="text-[11.5px] text-gray-500">平均耗时 <b class="font-extrabold tabular-nums text-gray-900">{{ logsSummary.avg }}</b></span>
+            <div class="ml-auto flex items-center gap-1">
+              <button
+                type="button"
+                class="cursor-pointer rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors"
+                :class="logsFilter === 'all' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100'"
+                @click="logsFilter = 'all'"
+              >全部</button>
+              <button
+                type="button"
+                class="cursor-pointer rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors disabled:cursor-default disabled:opacity-40"
+                :class="logsFilter === 'fail' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100'"
+                :disabled="logsSummary.fail === 0"
+                @click="logsFilter = 'fail'"
+              >只看失败 {{ logsSummary.fail }}</button>
+              <span class="mx-1 h-3 w-px bg-gray-200"></span>
+              <button
+                type="button"
+                class="cursor-pointer whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors"
+                :class="logsDensity === 'compact' ? 'bg-blue-50 text-primary' : 'text-gray-500 hover:bg-gray-100'"
+                title="所有记录压成一行，一屏扫完（再点一次回到标准）"
+                @click="setLogsDensity('compact')"
+              >⌃ 全部折叠</button>
+              <button
+                type="button"
+                class="cursor-pointer whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors"
+                :class="logsDensity === 'expanded' ? 'bg-blue-50 text-primary' : 'text-gray-500 hover:bg-gray-100'"
+                title="所有正文一次性展开（再点一次回到标准）"
+                @click="setLogsDensity('expanded')"
+              >⌄ 全部展开</button>
+              <button
+                type="button"
+                class="ml-1 cursor-pointer rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors"
+                :class="showRawMarkdown ? 'bg-amber-100 text-amber-700' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700'"
+                title="切换显示 markdown 原文，排查渲染问题用"
+                @click="showRawMarkdown = !showRawMarkdown"
+              >原文</button>
+            </div>
+          </div>
+
+          <!-- 时间轴 -->
+          <div class="custom-scrollbar flex-1 overflow-y-auto px-5 pb-7 pt-3.5">
             <div v-if="logsLoading && logs.length === 0" class="flex flex-col items-center justify-center py-20">
-              <div class="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mb-4"></div>
+              <div class="mb-4 h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
               <p class="text-sm text-gray-400">正在拉取审计轨迹...</p>
             </div>
-            <div v-else-if="logs.length === 0" class="text-center py-20 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+            <div v-else-if="logs.length === 0" class="rounded-2xl border border-dashed border-gray-200 bg-gray-50 py-20 text-center">
               <p class="text-gray-400">暂无执行记录</p>
             </div>
-            <div v-else class="space-y-4">
-              <div v-for="log in logs" :key="log.id" class="p-4 border rounded-2xl hover:border-primary/30 transition-all hover:shadow-sm bg-white overflow-hidden">
-                <div class="flex justify-between items-start mb-3">
-                  <div class="flex items-center space-x-2">
-                    <span class="px-2 py-0.5 rounded-full text-[9px] font-black tracking-tighter" :class="logStatusMeta(log.status).class">{{ logStatusMeta(log.status).label }}</span>
-                    <span class="text-[10px] text-gray-300 font-mono">{{ log.trace_id.split('-')[0] }}...</span>
-                  </div>
-                  <span class="text-[10px] text-gray-400 font-medium">{{ formatDate(log.created_at) }}</span>
-                </div>
-              
-                <!-- Result Content -->
-                <p class="text-xs text-gray-600 line-clamp-3 mb-4 leading-relaxed font-medium bg-gray-50 p-3 rounded-xl border border-gray-100">"{{ log.summary || log.query }}"</p>
-              
-                <!-- Steps Accordion -->
-                <div class="mb-4">
-                    <button 
-                      @click="toggleLogSteps(log)"
-                      class="flex items-center space-x-2 text-[10px] font-black text-gray-400 uppercase tracking-widest hover:text-primary transition-colors group"
+            <div v-else-if="filteredLogs.length === 0" class="rounded-2xl border border-dashed border-gray-200 bg-gray-50 py-12 text-center">
+              <p class="text-gray-400">最近 {{ logsSummary.loaded }} 次里没有失败记录</p>
+              <button type="button" class="mt-2 cursor-pointer text-xs font-bold text-primary hover:underline" @click="logsFilter = 'all'">显示全部</button>
+            </div>
+
+            <div v-else>
+              <div v-for="group in groupedLogs" :key="group.day" class="mb-3">
+                <!-- 分组头：有底色的分节条 + 吸顶。只靠灰字和小箭头时，它跟条目的视觉重量几乎一样，翻起来分不清「分组还是记录」 -->
+                <button
+                  type="button"
+                  class="sticky top-0 z-10 mb-1.5 flex w-full cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-gray-100/95 px-2.5 py-1.5 text-left backdrop-blur-sm transition-colors hover:bg-gray-200/70"
+                  :title="logsGroupCollapsed[group.day] ? '展开这一组' : '收起这一组'"
+                  @click="toggleLogsGroup(group.day)"
+                >
+                  <span class="w-2.5 shrink-0 text-[9px] text-gray-400">{{ logsGroupCollapsed[group.day] ? '▸' : '▾' }}</span>
+                  <b class="text-[13px] font-extrabold tracking-tight text-gray-900">{{ group.day }}</b>
+                  <span class="text-[11px] font-bold text-gray-500">{{ group.runs.length }} 次</span>
+                  <span v-if="group.ok" class="text-[11px] font-bold text-emerald-600">成功 {{ group.ok }}</span>
+                  <span v-if="group.fail" class="text-[11px] font-bold text-red-600">失败 {{ group.fail }}</span>
+                  <span v-if="logsGroupCollapsed[group.day]" class="ml-auto text-[10.5px] font-semibold text-gray-400">已收起</span>
+                </button>
+
+                <template v-if="!logsGroupCollapsed[group.day]">
+                  <div v-for="(log, idx) in group.runs" :key="log.id">
+                    <!-- 紧凑行：时间 + 状态 + 耗时 + 摘要首行，一屏能扫十几条 -->
+                    <div
+                      v-if="logIsCompactRow(log)"
+                      class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-[11.5px] transition-colors hover:bg-gray-50"
+                      title="点击展开这一条"
+                      @click="(log as any).mdExpanded = true"
                     >
-                      <div class="flex items-center">
-                          <div v-if="(log as any).stepsLoading" class="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin mr-2"></div>
-                          <svg class="w-4 h-4 transform transition-transform duration-300" :class="{ 'rotate-180': (log as any).isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
-                      </div>
-                      <span>执行步骤 (Steps)</span>
-                      <span v-if="(log as any).steps?.length" class="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full text-[8px] ml-1 group-hover:bg-primary/10 group-hover:text-primary transition-colors">{{ (log as any).steps.length }}</span>
-                    </button>
-
-                    <div v-show="(log as any).isExpanded" class="mt-3 pl-4 border-l-2 border-primary/10 space-y-3 animate-fade-in">
-                        <div v-if="(log as any).stepsLoading" class="py-4 flex justify-center">
-                            <div class="animate-pulse flex space-x-2 items-center">
-                                <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
-                                <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
-                                <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
-                            </div>
-                        </div>
-                        <div v-else-if="(log as any).steps && (log as any).steps.length > 0" class="space-y-3">
-                            <div v-for="(step, sIdx) in (log as any).steps" :key="sIdx" class="bg-gray-50/50 p-2.5 rounded-xl border border-gray-100/50 group/step relative">
-                                <div class="flex justify-between items-center mb-1.5">
-                                    <div class="flex items-center space-x-2">
-                                        <span 
-                                          class="text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter"
-                                          :class="{
-                                              'bg-blue-100 text-blue-700': (step as any).event_type === 'thought',
-                                              'bg-purple-100 text-purple-700': (step as any).event_type === 'router',
-                                              'bg-amber-100 text-amber-700': (step as any).event_type === 'tool_call',
-                                              'bg-green-100 text-green-700': (step as any).event_type === 'synthesis' || (step as any).event_type === 'final_answer',
-                                              'bg-red-100 text-red-700': (step as any).event_type === 'error'
-                                          }"
-                                        >
-                                          {{ (step as any).event_type }}
-                                        </span>
-                                        <span v-if="(step as any).tool_name" class="text-[9px] font-bold text-gray-700 font-mono">{{ (step as any).tool_name }}</span>
-                                    </div>
-                                    <span class="text-[8px] text-gray-300 font-mono italic">{{ (step as any).execution_time_ms?.toFixed(0) }}ms</span>
-                                </div>
-                              
-                                <!-- Simplified Content Preview -->
-                                <div class="text-[10px] text-gray-500 leading-relaxed break-words line-clamp-2 italic opacity-80 group-hover/step:opacity-100 transition-opacity">
-                                    {{ (step as any).tool_input ? (typeof (step as any).tool_input === 'string' ? (step as any).tool_input : JSON.stringify((step as any).tool_input)) : '' }}
-                                    {{ (step as any).tool_output?.content || (step as any).raw_log || '' }}
-                                </div>
-                            </div>
-                        </div>
-                        <div v-else class="py-2 text-[10px] text-gray-400 italic">未记录详细步骤</div>
+                      <span class="h-1.5 w-1.5 shrink-0 rounded-full" :class="isLogOk(log) ? 'bg-emerald-500' : 'bg-red-500'"></span>
+                      <span class="shrink-0 font-extrabold tabular-nums text-gray-900">{{ logClock((log as any).created_at) }}</span>
+                      <span
+                        class="shrink-0 rounded px-1 text-[10px] font-extrabold"
+                        :class="isLogOk(log) ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'"
+                      >{{ logStatusMeta((log as any).status).label }}</span>
+                      <span class="shrink-0 tabular-nums text-gray-400">{{ formatDurationMs((log as any).execution_time_ms) }}</span>
+                      <span class="min-w-0 truncate text-gray-400">{{ logPreview(log) }}</span>
                     </div>
-                </div>
 
-                <!-- Footer Actions -->
-                <div class="flex justify-between items-center pt-2 border-t border-gray-50">
-                  <span class="text-[9px] text-gray-300 font-medium" :title="`${Math.round(log.execution_time_ms)}ms`">时长: {{ formatDurationMs(log.execution_time_ms) }}</span>
-                  <button @click="viewTrace(log.trace_id)" class="text-[10px] text-primary font-black flex items-center hover:underline uppercase tracking-widest">
-                    完整链路 (Trace)
-                    <svg class="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M14 5l7 7-7 7" /></svg>
-                  </button>
-                </div>
+                    <div v-else class="flex gap-2.5">
+                      <!-- 时间轴轨道：连续成功是一条顺滑的线，失败那条一眼跳出来 -->
+                      <div class="flex w-3.5 shrink-0 flex-col items-center pt-1.5">
+                        <i
+                          class="h-2.5 w-2.5 shrink-0 rounded-full"
+                          :class="isLogOk(log) ? 'bg-emerald-500 ring-[3px] ring-emerald-50' : 'bg-red-500 ring-[3px] ring-red-50'"
+                        ></i>
+                        <s v-if="idx !== group.runs.length - 1" class="mt-1 w-px flex-1 bg-gray-200"></s>
+                      </div>
+
+                      <div class="min-w-0 flex-1 pb-3">
+                        <!-- 时间 / 状态 / 耗时（日期由分组头交代，这里只留时刻） -->
+                        <div class="mb-1.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                          <span class="text-[12.5px] font-extrabold tabular-nums text-gray-900">{{ logClock((log as any).created_at) }}</span>
+                          <span class="text-[11px] tabular-nums text-gray-400">{{ formatDate((log as any).created_at) }}</span>
+                          <span
+                            class="rounded-[5px] border px-1.5 py-px text-[10px] font-extrabold"
+                            :class="isLogOk(log)
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : 'border-red-200 bg-red-50 text-red-700'"
+                          >{{ logStatusMeta((log as any).status).label }}</span>
+                          <span class="ml-auto whitespace-nowrap text-[11px] text-gray-400">
+                            耗时 <span class="tabular-nums">{{ formatDurationMs((log as any).execution_time_ms) }}</span>
+                          </span>
+                        </div>
+
+                        <!-- 正文：summary 是 markdown，必须渲染，不能当纯文本 -->
+                        <div class="relative rounded-[10px] border border-gray-200 bg-white px-3 py-2.5">
+                          <div v-if="!(log as any).summary && !(log as any).query" class="text-xs text-gray-400">
+                            （本次执行没有产出摘要）
+                          </div>
+                          <pre
+                            v-else-if="showRawMarkdown"
+                            class="max-h-[132px] overflow-hidden whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-gray-600"
+                          >{{ (log as any).summary || (log as any).query }}</pre>
+                          <div
+                            v-else
+                            class="message-host log-md max-w-none break-words text-gray-800"
+                            :class="logShowsBody(log) ? '' : 'max-h-[132px] overflow-hidden'"
+                          >
+                            <MessageRenderer
+                              :content="(log as any).summary || (log as any).query"
+                              theme="default"
+                              hide-quick-buttons
+                              readonly
+                            />
+                          </div>
+                          <div
+                            v-if="!showRawMarkdown && !logShowsBody(log) && (log as any).mdExpandable"
+                            class="pointer-events-none absolute inset-x-0 bottom-0 h-8 rounded-b-[10px] bg-gradient-to-t from-white to-transparent"
+                          ></div>
+                        </div>
+
+                        <!-- 操作：展开全文 / 执行步骤 / 完整链路 -->
+                        <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <button
+                            v-if="(log as any).mdExpandable"
+                            type="button"
+                            class="cursor-pointer rounded-md px-2 py-0.5 text-[11px] font-bold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                            @click="(log as any).mdExpanded = logShowsBody(log) ? false : true"
+                          >{{ logShowsBody(log) ? '收起' : '展开全文' }}</button>
+                          <button
+                            type="button"
+                            class="inline-flex cursor-pointer items-center gap-1 rounded-md border border-dashed border-gray-200 px-2 py-0.5 text-[11px] font-bold text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-700"
+                            @click="toggleLogSteps(log)"
+                          >
+                            <span v-if="(log as any).stepsLoading" class="h-3 w-3 animate-spin rounded-full border-2 border-primary/30 border-t-primary"></span>
+                            执行步骤
+                            <span v-if="(log as any).steps?.length" class="rounded-full bg-gray-100 px-1 text-[10px] font-black text-gray-500">{{ (log as any).steps.length }}</span>
+                            <span class="text-[9px]">{{ (log as any).isExpanded ? '⌃' : '⌄' }}</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="ml-auto cursor-pointer whitespace-nowrap text-[11px] font-bold text-primary hover:underline"
+                            @click="viewTrace((log as any).trace_id)"
+                          >完整链路 →</button>
+                        </div>
+
+                        <!-- 执行步骤 -->
+                        <div v-show="(log as any).isExpanded" class="mt-2 border-l-2 border-blue-100 pl-2.5">
+                          <div v-if="(log as any).stepsLoading" class="py-3">
+                            <div class="flex animate-pulse items-center gap-1.5">
+                              <div class="h-1 w-1 rounded-full bg-primary/40"></div>
+                              <div class="h-1 w-1 rounded-full bg-primary/40"></div>
+                              <div class="h-1 w-1 rounded-full bg-primary/40"></div>
+                            </div>
+                          </div>
+                          <template v-else-if="(log as any).steps && (log as any).steps.length > 0">
+                            <div
+                              v-for="(step, sIdx) in (log as any).steps"
+                              :key="sIdx"
+                              class="mb-1.5 rounded-lg border border-gray-100 bg-[#fafbfc] px-2 py-1.5"
+                            >
+                              <div class="mb-1 flex items-center gap-1.5 text-[10px]">
+                                <span
+                                  class="rounded px-1 py-px font-extrabold"
+                                  :class="{
+                                    'bg-blue-100 text-blue-700': (step as any).event_type === 'thought',
+                                    'bg-purple-100 text-purple-700': (step as any).event_type === 'router',
+                                    'bg-amber-100 text-amber-700': (step as any).event_type === 'tool_call',
+                                    'bg-emerald-100 text-emerald-700': (step as any).event_type === 'synthesis' || (step as any).event_type === 'final_answer',
+                                    'bg-red-100 text-red-700': (step as any).event_type === 'error',
+                                  }"
+                                >{{ (step as any).event_type }}</span>
+                                <span v-if="(step as any).tool_name" class="font-mono font-bold text-gray-700">{{ (step as any).tool_name }}</span>
+                                <span class="ml-auto tabular-nums text-gray-400">{{ (step as any).execution_time_ms?.toFixed(0) }}ms</span>
+                              </div>
+                              <div class="line-clamp-2 text-[11px] leading-relaxed text-gray-500">
+                                {{ (step as any).tool_input ? (typeof (step as any).tool_input === 'string' ? (step as any).tool_input : JSON.stringify((step as any).tool_input)) : '' }}
+                                {{ (step as any).tool_output?.content || (step as any).raw_log || '' }}
+                              </div>
+                            </div>
+                          </template>
+                          <div v-else class="py-1.5 text-[11px] italic text-gray-400">未记录详细步骤</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
-              <div v-if="logsHasMore" class="pt-4 pb-8 flex justify-center">
-                   <button 
-                      @click="loadMoreLogs" 
-                      :disabled="logsLoading"
-                      class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-bold rounded-lg transition-colors disabled:opacity-50 flex items-center"
-                   >
-                      <svg v-if="logsLoading" class="w-3 h-3 mr-2 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                      加载更多日志...
-                   </button>
-              </div>
+
+            <div v-if="logsHasMore" class="flex justify-center pb-8 pt-4">
+              <button
+                type="button"
+                class="flex cursor-pointer items-center rounded-lg bg-gray-100 px-4 py-2 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-200 disabled:opacity-50"
+                :disabled="logsLoading"
+                @click="loadMoreLogs"
+              >
+                <span v-if="logsLoading" class="mr-2 h-3 w-3 animate-spin rounded-full border-2 border-gray-400 border-t-transparent"></span>
+                加载更多日志...
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -3606,6 +4541,44 @@ onMounted(async () => {
 }
 .drawer-slide-enter-from, .drawer-slide-leave-to {
   transform: translateX(100%);
+}
+
+/*
+ * 历史抽屉里的 markdown 比聊天页更紧凑。
+ * 聊天页是沉浸阅读（14px / space-y-4），抽屉里是回溯列表，行距和段距都收一档，
+ * 否则一条日报就能占掉半个抽屉。
+ */
+.log-md :deep(.message-renderer.space-y-4 > * + *) {
+  margin-top: 0.5rem;
+}
+.log-md :deep(.markdown-body) {
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.log-md :deep(.markdown-body p) {
+  margin-bottom: 0.5rem;
+}
+.log-md :deep(.markdown-body h1),
+.log-md :deep(.markdown-body h2),
+.log-md :deep(.markdown-body h3),
+.log-md :deep(.markdown-body h4) {
+  margin-top: 0.6rem;
+  margin-bottom: 0.3rem;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.log-md :deep(.markdown-body table) {
+  font-size: 11.5px;
+  margin: 0.35rem 0;
+}
+.log-md :deep(.markdown-body th),
+.log-md :deep(.markdown-body td) {
+  padding: 4px 8px;
+}
+.log-md :deep(.markdown-body ul),
+.log-md :deep(.markdown-body ol) {
+  padding-left: 1.1rem;
+  margin: 0.3rem 0;
 }
 
 .line-clamp-2 {

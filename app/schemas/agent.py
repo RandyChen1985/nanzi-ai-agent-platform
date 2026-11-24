@@ -409,6 +409,11 @@ class AgentExecutionHistoryResponse(BaseModel):
     agent_avatar_url: Optional[str] = None
     # 知识库引用详情（Redis 旁路存储，见 knowledge_citation_store）；缺失表示已过期
     citations: Optional[list] = None
+    # 本轮图像工具（生图/改图）的**原始**用量记录数组，字段与
+    # `meta_info.image_usage`、SSE 的 `image_usage` 事件完全一致。
+    # 刻意不在后端聚合：`{calls, images, requested, tokens, size}` 那套累加规则
+    # 只该由前端 `accumulateImageUsage` 一处实现，否则实时链路与历史回填会算出两个数。
+    image_usage: Optional[list] = None
 
     model_config = ConfigDict(from_attributes=True)
 

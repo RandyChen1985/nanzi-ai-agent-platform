@@ -46,6 +46,13 @@ class TaskUpdate(BaseModel):
     def validate_cron_expr(cls, v: Optional[str]) -> Optional[str]:
         return _validate_cron_expr(v)
 
+class TaskRunBrief(BaseModel):
+    """列表页「最近 N 次」的一格：只带状态与发生时间，够画趋势和 tooltip 即可。"""
+
+    status: str = "unknown"
+    at: Optional[str] = None
+
+
 class TaskResponse(TaskBase):
     # 覆盖父类严格校验：从 DB 读取时宽容处理历史非法 cron，不崩溃列表页
     @field_validator("cron_expr", mode="before")
@@ -92,6 +99,9 @@ class TaskResponse(TaskBase):
     last_finished_at: Optional[str] = None
     last_alert_at: Optional[str] = None
     last_delivery_status: Optional[str] = None
+    # 最近 N 次执行的原始状态（时间正序，最多 7 条）。由 TaskCenterService.attach_recent_runs 填充，
+    # 缺失时为空数组——前端据此显示「暂无执行」而不是假装健康。
+    recent_runs: List[TaskRunBrief] = Field(default_factory=list)
     last_delivery_error: Optional[str] = None
     last_delivery_at: Optional[str] = None
     last_run_id: Optional[str] = None

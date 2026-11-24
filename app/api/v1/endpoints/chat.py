@@ -3170,6 +3170,80 @@ async def _load_history_resource_scopes(
     ]
 
 
+#: 图片用量里允许回填给前端的键。
+#:
+#: 白名单而不是黑名单：`meta_info` 是公共字段，谁往里塞东西都不会通知到这里，
+#: 用黑名单早晚会漏（`timeout_seconds`、决策快照就是塞在同一个字段里的）。
+_IMAGE_USAGE_KEYS = (
+    "tool",
+    "requested_count",
+    "succeeded_count",
+    "size",
+    "model",
+    "upstream_tokens",
+    "elapsed_ms",
+)
+
+
+async def _load_image_usage_by_trace(
+    db: AsyncSession, trace_ids: List[str]
+) -> Dict[str, List[Dict[str, Any]]]:
+    """按 trace 批量取图像工具用量（原始单次记录，不聚合）。
+
+    为什么不复用 `/dashboard/token-stats/image-usage` 那套聚合：那里是运营报表
+    口径（按人/按智能体汇总），这里要喂给消息气泡，必须与 SSE 推送的单次事件
+    同构，否则前端得为「实时」和「历史」维护两套渲染。
+    """
+    if not trace_ids:
+        return {}
+
+    from sqlalchemy import case, or_, select
+
+    from app.models.audit import AgentExecutionTrace
+    from app.utils.image_usage import IMAGE_USAGE_TOOL_NAMES, image_usage_from_tool_output
+
+    # 只取 image_usage 这一个 JSON 键：meta_info 里还有决策快照等大对象，
+    # 整列拖回来只为抽一个小字典不划算。
+    usage_col = AgentExecutionTrace.meta_info["image_usage"]
+    is_image_tool = AgentExecutionTrace.tool_name.in_(sorted(IMAGE_USAGE_TOOL_NAMES))
+    stmt = (
+        select(
+            AgentExecutionTrace.trace_id,
+            usage_col.label("image_usage"),
+            # 历史兜底要读整段工具输出，但只有图像工具需要——用 CASE 把别的工具
+            # （尤其是 model_call 的大响应）挡掉，别为了几个字段把整列拖回来。
+            case((is_image_tool, AgentExecutionTrace.tool_output), else_=None).label(
+                "tool_output"
+            ),
+        )
+        .where(
+            AgentExecutionTrace.trace_id.in_(trace_ids),
+            or_(usage_col.isnot(None), is_image_tool),
+        )
+        .order_by(AgentExecutionTrace.trace_id, AgentExecutionTrace.step_number)
+    )
+
+    rows = (await db.execute(stmt)).all()
+    by_trace: Dict[str, List[Dict[str, Any]]] = {}
+    for trace_id, raw, tool_output in rows:
+        usage: Any = raw
+        if isinstance(usage, (str, bytes, bytearray)):
+            try:
+                usage = json.loads(usage)
+            except (TypeError, ValueError):
+                usage = None
+        if not isinstance(usage, dict) or not usage:
+            # 修复前的轨迹把量留在了工具输出里（见 app/utils/image_usage 的说明）
+            usage = image_usage_from_tool_output(tool_output)
+        if not isinstance(usage, dict):
+            continue
+        cleaned = {key: usage[key] for key in _IMAGE_USAGE_KEYS if key in usage}
+        if not cleaned:
+            continue
+        by_trace.setdefault(str(trace_id), []).append(cleaned)
+    return by_trace
+
+
 async def _build_chat_history_response(
     *,
     params: "_ChatHistoryQueryParams",
@@ -3331,6 +3405,20 @@ async def _build_chat_history_response(
             items = [
                 item.model_copy(update={"citations": citations_by_trace[str(item.trace_id)]})
                 if str(item.trace_id or "") in citations_by_trace
+                else item
+                for item in items
+            ]
+
+    # 图片用量同理批量回填。不回填的话刷新页面后消息底部的「图片：出图 2 张 …」
+    # 就消失（那行只来自本轮 SSE），用户会以为图片没计量、或者以为账单是错的。
+    if items:
+        image_usage_by_trace = await _load_image_usage_by_trace(
+            db, [str(item.trace_id) for item in items if item.trace_id]
+        )
+        if image_usage_by_trace:
+            items = [
+                item.model_copy(update={"image_usage": image_usage_by_trace[str(item.trace_id)]})
+                if str(item.trace_id or "") in image_usage_by_trace
                 else item
                 for item in items
             ]

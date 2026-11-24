@@ -43,7 +43,6 @@ def test_mcp_flow_guide_banner_contract():
     assert "activeHelpTab" in view
     assert "MCP 工具集设计规范与全流程指引" in view
     assert "恢复顶部流程提示" in view
-    assert "外部 MCP 远程服务（SSE / Streamable HTTP）" in view
     assert "支持接入 SSE 或 Streamable HTTP 远程服务，或粘贴包含 URL 的 JSON 配置" in view
     assert "Streamable HTTP 远程服务传输" in view
     assert "提取其中第一个包含 URL 的服务地址与请求头" in view

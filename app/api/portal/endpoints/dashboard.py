@@ -1,13 +1,19 @@
 """
 Dashboard API endpoints for statistics and overview data.
 """
+import csv
+import io
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, case, text, or_
 from app.core.dependencies import require_api_key, require_admin
 from app.core.orm import get_db_session
 from app.core.redis import get_redis
 from app.models.audit import AccessLog, AgentExecutionTrace, AgentExecutionHistory
+from app.utils.image_usage import IMAGE_USAGE_TOOL_NAMES, image_usage_from_tool_output
 from app.models.user import User
 from app.models.agent import AIAgent
 from app.services.online_presence_service import OnlinePresenceService
@@ -842,3 +848,383 @@ async def get_token_stats_users(
         x["ratio"] = round((x["total_tokens"] / total_all * 100), 2) if total_all > 0 else 0
         
     return results
+
+
+# --------------------------------------------------------------------------- #
+# 图片用量（生图 / 改图）
+#
+# 图像接口的计量留痕在轨迹的 `meta_info.image_usage` 里（见
+# `image_generation_tool._build_image_usage`：张数 / 尺寸 / 模型 / 上游折算 token /
+# 耗时），并且**刻意不进 `total_tokens`** —— 那个数驱动月度配额，混进去会让
+# 「消息显示的用量」和「配额实际消耗」变成两套算法。
+#
+# 代价是现场只统计 Token 的页面里看不到图片，只能一轮一轮点进轨迹查。这段从轨迹表
+# 直接聚合，**零 DDL、零新采集**。
+#
+# 三条刻意的口径，改之前先确认需求：
+# 1. 上游没返回 usage 是常态（OpenAI images 端点根本不返回），记 0 会被读成「这次
+#    没花钱」，所以单独计数 `tokens_missing_calls`；
+# 2. 失败张数 = `requested - succeeded`：一次要 2 张只出 1 张，那一张也真扣了钱；
+# 3. 用量必须能归属到某个用户/会话才展示：轨迹表没有 username，靠 trace_id 关联
+#    历史表（INNER JOIN）。关联不上的（如历史未落库的极端轮次）不计入——宁可少算
+#    也不能把别人的消耗记到当前用户名下。
+# --------------------------------------------------------------------------- #
+
+def _json_obj(raw: Any) -> Optional[Dict[str, Any]]:
+    """JSON 列在不同方言/驱动下回出来可能是 dict、str 或 bytes，统一成 dict。"""
+    if isinstance(raw, (str, bytes, bytearray)):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _usage_int(value: Any) -> int:
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _new_usage_bucket() -> Dict[str, Any]:
+    return {
+        "calls": 0,
+        "images": 0,
+        "requested": 0,
+        "failed": 0,
+        "upstream_tokens": 0,
+        "tokens_missing_calls": 0,
+        "_elapsed_sum": 0,
+        "last_at": None,
+    }
+
+
+def _accumulate_usage(
+    bucket: Dict[str, Any],
+    usage: Dict[str, Any],
+    elapsed_ms: Any,
+    created_at: Any,
+) -> None:
+    """把一次工具调用的 `image_usage` 并入一个聚合桶。"""
+    succeeded = _usage_int(usage.get("succeeded_count"))
+    # 老轨迹只写了 succeeded 时，请求张数按已出张数兜底，不能凭空记 0 个请求
+    requested_raw = usage.get("requested_count")
+    requested = succeeded if requested_raw is None else _usage_int(requested_raw)
+
+    bucket["calls"] += 1
+    bucket["images"] += succeeded
+    bucket["requested"] += requested
+    bucket["failed"] += max(requested - succeeded, 0)
+
+    upstream = _json_obj(usage.get("upstream_tokens"))
+    if upstream:
+        bucket["upstream_tokens"] += _usage_int(upstream.get("total_tokens"))
+    else:
+        bucket["tokens_missing_calls"] += 1
+
+    bucket["_elapsed_sum"] += _usage_int(elapsed_ms)
+    if created_at and (bucket["last_at"] is None or created_at > bucket["last_at"]):
+        bucket["last_at"] = created_at
+
+
+def _finalize_usage_bucket(
+    bucket: Dict[str, Any],
+    *,
+    key: Optional[str] = None,
+    label: Optional[str] = None,
+) -> Dict[str, Any]:
+    calls = bucket["calls"]
+    payload: Dict[str, Any] = {
+        "images": bucket["images"],
+        "requested": bucket["requested"],
+        "failed": bucket["failed"],
+        "calls": calls,
+        "upstream_tokens": bucket["upstream_tokens"],
+        # 0 不等于「没花钱」：这些调用上游压根没回 usage，界面上要单独说明
+        "tokens_missing_calls": bucket["tokens_missing_calls"],
+        "avg_elapsed_ms": round(bucket["_elapsed_sum"] / calls) if calls else 0,
+        "last_at": bucket["last_at"].isoformat() if bucket["last_at"] else None,
+    }
+    if key is not None:
+        payload = {"key": key, "label": label or key, **payload}
+    return payload
+
+
+def _image_usage_row(row: Any, usage: Optional[dict]) -> Dict[str, Any]:
+    """把一行查询结果压成聚合循环需要的扁平结构。"""
+    return {
+        "usage": usage,
+        "elapsed_ms": getattr(row, "execution_time_ms", None),
+        "created_at": getattr(row, "created_at", None),
+        "username": getattr(row, "username", None),
+        "agent_id": getattr(row, "agent_id", None),
+        "agent_name": getattr(row, "agent_name", None),
+        "agent_display_name": getattr(row, "agent_display_name", None),
+    }
+
+
+async def _load_image_usage_rows(
+    db: AsyncSession,
+    *,
+    range_start: datetime,
+    range_end: datetime,
+    username: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """拉取区间内的图像用量行（只取聚合需要的那几列）。
+
+    `meta_info` 里还有决策快照等大对象，整列拖回来只为抽一个小 JSON 不划算，
+    所以只 select `meta_info['image_usage']` 这一个键——SQLAlchemy 会按方言生成
+    `JSON_EXTRACT(...)` 或 `->`，两套主库都不用分支。
+
+    分两段查：先取 `meta_info` 里已经有量的正常轨迹；再把「只在 `tool_output` 里留了量」
+    的历史轨迹回捞一遍（见 `app/utils/image_usage`）。历史那段的过滤条件里带
+    `meta_info.image_usage IS NULL`，所以同一次调用不可能被算两次。
+    """
+    usage_col = AgentExecutionTrace.meta_info["image_usage"]
+    base_columns = (
+        AgentExecutionTrace.trace_id,
+        AgentExecutionTrace.tool_name,
+        AgentExecutionTrace.execution_time_ms,
+        AgentExecutionTrace.created_at,
+        AgentExecutionHistory.username,
+        AgentExecutionHistory.agent_id,
+        AgentExecutionHistory.agent_name,
+        AgentExecutionHistory.agent_display_name,
+    )
+
+    def _stmt(*where: Any):
+        stmt = (
+            select(*base_columns)
+            .join(
+                AgentExecutionHistory,
+                AgentExecutionHistory.trace_id == AgentExecutionTrace.trace_id,
+            )
+            .where(
+                AgentExecutionTrace.created_at >= range_start,
+                AgentExecutionTrace.created_at <= range_end,
+                *where,
+            )
+        )
+        if username:
+            stmt = stmt.where(AgentExecutionHistory.username == username)
+        return stmt
+
+    rows: List[Dict[str, Any]] = []
+    live_stmt = _stmt(usage_col.isnot(None)).add_columns(usage_col.label("image_usage"))
+    for row in (await db.execute(live_stmt)).all():
+        usage = _json_obj(getattr(row, "image_usage", None))
+        if usage:
+            rows.append(_image_usage_row(row, usage))
+
+    # 历史轨迹：只有 tool_output 里留着量的那些图像调用
+    legacy_stmt = _stmt(
+        usage_col.is_(None),
+        AgentExecutionTrace.tool_name.in_(sorted(IMAGE_USAGE_TOOL_NAMES)),
+        AgentExecutionTrace.tool_output.isnot(None),
+    ).add_columns(AgentExecutionTrace.tool_output)
+    for row in (await db.execute(legacy_stmt)).all():
+        usage = image_usage_from_tool_output(getattr(row, "tool_output", None))
+        if usage:
+            rows.append(_image_usage_row(row, usage))
+
+    return rows
+
+
+async def _build_image_usage_stats(
+    db: AsyncSession,
+    *,
+    user: dict,
+    range_start: datetime,
+    range_end: datetime,
+    span_days: int,
+    group_by: str,
+) -> Dict[str, Any]:
+    """汇总 + 按天趋势 + 分组明细。
+
+    页面与 CSV 导出共用这一个函数：两边各写一套聚合，迟早会变成「页面数字和导出
+    数字对不上」的工单。
+    """
+    admin_flag = is_admin(user)
+    rows = await _load_image_usage_rows(
+        db,
+        range_start=range_start,
+        range_end=range_end,
+        username=None if admin_flag else user.get("user_name"),
+    )
+
+    summary_bucket = _new_usage_bucket()
+    day_buckets: Dict[str, Dict[str, Any]] = {}
+    group_buckets: Dict[str, Dict[str, Any]] = {}
+    group_labels: Dict[str, str] = {}
+
+    for row in rows:
+        usage = row["usage"]
+        elapsed = row["elapsed_ms"]
+        created_at = row["created_at"]
+        _accumulate_usage(summary_bucket, usage, elapsed, created_at)
+
+        day_key = created_at.strftime("%Y-%m-%d") if created_at else ""
+        _accumulate_usage(day_buckets.setdefault(day_key, _new_usage_bucket()), usage, elapsed, created_at)
+
+        if group_by == "user":
+            group_key = row["username"] or ""
+            group_label = row["username"] or "未知用户"
+        else:
+            group_key = row["agent_id"] or ""
+            group_label = (
+                row["agent_display_name"]
+                or row["agent_name"]
+                or row["agent_id"]
+                or "未知智能体"
+            )
+        _accumulate_usage(group_buckets.setdefault(group_key, _new_usage_bucket()), usage, elapsed, created_at)
+        group_labels[group_key] = group_label
+
+    # 趋势必须按天补齐空档：缺的天直接不返回，前端会把 3 天画成 1 天
+    trends: List[Dict[str, Any]] = []
+    for i in range(max(span_days, 1)):
+        day = range_start + timedelta(days=i)
+        if day > range_end:
+            break
+        day_key = day.strftime("%Y-%m-%d")
+        trends.append(
+            {"date": day_key, **_finalize_usage_bucket(day_buckets.get(day_key) or _new_usage_bucket())}
+        )
+
+    groups = [
+        _finalize_usage_bucket(bucket, key=key, label=group_labels.get(key))
+        for key, bucket in group_buckets.items()
+    ]
+    # 出图多的排前面；同为 0 张时按调用次数，最后按名字稳定排序（避免刷新跳动）
+    groups.sort(key=lambda item: (-item["images"], -item["calls"], item["label"] or ""))
+
+    return {
+        "range": {
+            "start_date": range_start.strftime("%Y-%m-%d"),
+            "end_date": range_end.strftime("%Y-%m-%d"),
+        },
+        "group_by": group_by,
+        "summary": _finalize_usage_bucket(summary_bucket),
+        "trends": trends,
+        "groups": groups,
+    }
+
+
+def _resolve_image_usage_window(
+    days: int, start_date: Optional[str], end_date: Optional[str]
+) -> tuple[datetime, datetime, int]:
+    """图像用量的时间窗；半开区间视为调用错误。
+
+    直接套 `_resolve_token_stats_range` 会把「只给了开始日期」静默当成「最近 days
+    天」——用户以为区间生效了，实际看到的是另一段数据。
+    """
+    if bool(start_date) != bool(end_date):
+        raise HTTPException(status_code=400, detail="start_date 与 end_date 必须同时提供")
+    return _resolve_token_stats_range(days, start_date, end_date)
+
+
+@router.get("/token-stats/image-usage")
+async def get_image_usage_stats(
+    days: int = Query(30, ge=1, le=90),
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    group_by: str = Query("agent", pattern="^(agent|user)$", description="分组维度"),
+    user: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """图片用量汇总（生图/改图的张数、上游折算 token、耗时）。
+
+    图片不计入 `total_tokens`，也不会体现在月度配额消耗里——本接口是查看它的唯一
+    汇总入口。非管理员只能看到自己的消耗。
+    """
+    if group_by == "user" and not is_admin(user):
+        raise HTTPException(status_code=400, detail="按用户分组仅管理员可用")
+
+    range_start, range_end, span_days = _resolve_image_usage_window(days, start_date, end_date)
+    return await _build_image_usage_stats(
+        db,
+        user=user,
+        range_start=range_start,
+        range_end=range_end,
+        span_days=span_days,
+        group_by=group_by,
+    )
+
+
+@router.get("/token-stats/image-usage/export")
+async def export_image_usage_stats(
+    days: int = Query(30, ge=1, le=90),
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    group_by: str = Query("agent", pattern="^(agent|user)$", description="分组维度"),
+    user: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """把图片用量明细导成 CSV（与页面同一套聚合口径）。"""
+    if group_by == "user" and not is_admin(user):
+        raise HTTPException(status_code=400, detail="按用户分组仅管理员可用")
+
+    range_start, range_end, span_days = _resolve_image_usage_window(days, start_date, end_date)
+    stats = await _build_image_usage_stats(
+        db,
+        user=user,
+        range_start=range_start,
+        range_end=range_end,
+        span_days=span_days,
+        group_by=group_by,
+    )
+
+    dimension = "用户" if group_by == "user" else "智能体"
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            dimension,
+            "出图张数",
+            "请求张数",
+            "失败张数",
+            "调用次数",
+            "上游Token",
+            "上游未返回次数",
+            "平均耗时ms",
+            "最近一次",
+        ]
+    )
+    for row in stats["groups"]:
+        writer.writerow(
+            [
+                row["label"],
+                row["images"],
+                row["requested"],
+                row["failed"],
+                row["calls"],
+                row["upstream_tokens"],
+                row["tokens_missing_calls"],
+                row["avg_elapsed_ms"],
+                (row["last_at"] or "").replace("T", " ")[:19],
+            ]
+        )
+    summary = stats["summary"]
+    writer.writerow(
+        [
+            "合计",
+            summary["images"],
+            summary["requested"],
+            summary["failed"],
+            summary["calls"],
+            summary["upstream_tokens"],
+            summary["tokens_missing_calls"],
+            summary["avg_elapsed_ms"],
+            (summary["last_at"] or "").replace("T", " ")[:19],
+        ]
+    )
+
+    # BOM 是为了 Excel 打开中文表头不乱码；不带它 Excel 会按 GBK 解读
+    body = "\ufeff" + buffer.getvalue()
+    filename = f"image-usage-{stats['range']['start_date']}_{stats['range']['end_date']}.csv"
+    return Response(
+        content=body.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

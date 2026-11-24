@@ -49,9 +49,6 @@
           <span>{{ busy ? '刷新中' : '刷新' }}</span>
         </button>
       </div>
-      <p class="mt-0.5 truncate text-sm text-gray-500 dark:text-gray-400">
-        先处理今天值得关注的事情，再继续最近的工作。
-      </p>
     </header>
 
     <nav class="flex gap-6 border-b border-gray-100 dark:border-gray-800" aria-label="工作台视图">

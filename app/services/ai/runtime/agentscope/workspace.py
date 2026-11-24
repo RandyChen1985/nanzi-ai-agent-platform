@@ -67,6 +67,10 @@ _sandbox_host_prepare_locks: dict[str, asyncio.Lock] = {}
 #: 工作区准备分段测量的子阶段名 → 摘要里的展示名（顺序即摘要顺序）。
 _WORKSPACE_TRACE_STAGE_LABELS: dict[str, str] = {
     "config": "配置与会话目录",
+    # 权限禁用集合与技能扫描都会改变 skill_paths，但开销来源完全不同：前者是一次
+    # 权限查询（Redis 命中后还可能补一次明细聚合，未命中直接走 DB），后者是逐个目录
+    # 读 SKILL.md 的纯磁盘 IO。合成一格时「15s」无法判断该优化谁，故拆开测。
+    "forbidden": "权限禁用集合",
     "skills": "技能发现",
     "sandbox": "沙箱获取",
     "preseed": "技能快照播种",
@@ -385,18 +389,33 @@ def discover_platform_skill_paths(
     paths: list[str] = []
     from app.utils.skill_metadata import is_skill_enabled, parse_skill_frontmatter
 
-    for entry in sorted(os.listdir(skills_root)):
-        skill_dir = os.path.join(skills_root, entry)
-        if os.path.isdir(skill_dir) and os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
-            if allowlist is not None and entry not in allowlist:
-                continue
-            if entry in forbidden:
-                continue
-            # 过滤禁用的技能
-            meta = parse_skill_frontmatter(entry, os.path.join(skill_dir, "SKILL.md"))
-            if not is_skill_enabled(meta):
-                continue
-            paths.append(os.path.abspath(skill_dir))
+    # 用 scandir 而不是 listdir + isdir：目录项类型由 readdir 的 d_type 直接给出，
+    # 省掉「每个条目一次 stat」。技能库上千条时这一项就是秒级差距（网络盘/同步盘上
+    # 单次 stat 可达毫秒量级）。白名单/禁用过滤放在读 SKILL.md 之前——只有真正入选的
+    # 技能才需要 open + 解析 frontmatter。
+    try:
+        with os.scandir(skills_root) as scan:
+            entries = sorted(scan, key=lambda item: item.name)
+    except OSError as exc:
+        logger.warning("[workspace] Failed to scan skills root %s: %s", skills_root, exc)
+        return []
+
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        name = entry.name
+        if allowlist is not None and name not in allowlist:
+            continue
+        if name in forbidden:
+            continue
+        skill_md = os.path.join(entry.path, "SKILL.md")
+        if not os.path.isfile(skill_md):
+            continue
+        # 过滤禁用的技能
+        meta = parse_skill_frontmatter(name, skill_md)
+        if not is_skill_enabled(meta):
+            continue
+        paths.append(os.path.abspath(entry.path))
 
     # 追加用户个人技能路径
     if user_info:
@@ -3084,6 +3103,27 @@ def _drop_docker_workspace_entry_locked(cache_key: str) -> tuple[Any, list[Any]]
     return sandbox, pairs
 
 
+def _docker_sandbox_confirmed_alive(cache_key: str) -> bool:
+    """缓存里的 docker 沙箱是否**刚被确认还活着**（存活探测窗口之内）。
+
+    ``is_alive`` 只是普通布尔属性，容器被回收 / ``docker rm`` / 别的实例
+    ``create_or_replace`` 之后它仍是 ``True``。所以「缓存里有条目」不等于「容器还在」：
+    真正确认只有两种来源——刚刚建好，或最近 :data:`DOCKER_WORKSPACE_ALIVE_PROBE_TTL_SECONDS`
+    内做过一次 ``container.show()``（两者都会写 ``_docker_workspace_verified_at``）。
+
+    **为什么这点很关键**：构建路径（``lazy_sandbox=True``）只有在沙箱「确认活着」时才
+    直接复用缓存条目。否则一旦进程里残留着一条旧条目（``is_alive`` 还是 True、容器其实
+    早被空闲回收），就会走 eager 路径去探测，探测判死后**当场重建一台容器**——十几秒
+    全记在首 token 之前，而多数轮次根本不会调用 Bash。给惰性代理则把这笔钱推到真正
+    需要 Bash 的那一刻（代理的 ``ensure_ready`` 会走同一个 ``_acquire_docker_workspace``，
+    探测、重建、引用计数一样不少）。
+    """
+    verified_at = _docker_workspace_verified_at.get(cache_key, 0.0)
+    if not verified_at:
+        return False
+    return (time.monotonic() - verified_at) < DOCKER_WORKSPACE_ALIVE_PROBE_TTL_SECONDS
+
+
 async def _acquire_docker_workspace(
     *,
     root: str,
@@ -4811,6 +4851,7 @@ async def get_local_workspace(
     from app.services.ai.skills.policy import get_forbidden_skill_ids
 
     forbidden_skill_ids = await get_forbidden_skill_ids(_resolve_identity_user_id(user_info))
+    prepare.mark("forbidden")
     # 技能发现要逐个目录读 SKILL.md 解析 frontmatter（同步 IO，随技能库线性增长），
     # 同样放线程里，别在首 token 前的关键路径上占着事件循环。
     skill_paths = await asyncio.to_thread(
@@ -4924,7 +4965,13 @@ async def get_local_workspace(
                     if policy == SANDBOX_POLICY_DOCKER:
                         d_key = _docker_workspace_cache_key(root, sandbox_user_key, skill_paths)
                         existing_dk = _docker_workspace_cache.get(d_key)
-                        if existing_dk is not None and getattr(existing_dk, "is_alive", True) is not False:
+                        # 必须「刚确认活着」才复用：只剩一个 is_alive 属性为 True 的旧条目，
+                        # 容器很可能早被回收，走 eager 就会在首 token 前当场重建一台。
+                        if (
+                            existing_dk is not None
+                            and getattr(existing_dk, "is_alive", True) is not False
+                            and _docker_sandbox_confirmed_alive(d_key)
+                        ):
                             is_already_alive = True
                     elif policy == SANDBOX_POLICY_K8S:
                         k_key = _k8s_workspace_cache_key(root, sandbox_user_key, skill_paths)
@@ -5080,12 +5127,21 @@ async def ensure_docker_workspace(
     conversation_id: str | None,
     user_name: str | None = None,
     user_info: dict[str, Any] | None = None,
+    skills_custom: bool = False,
+    allowed_global_skills: list[str] | None = None,
 ) -> Any:
     """Ensure the current user's Docker workspace container is running.
 
     This is a lifecycle-only operation: it initializes or reuses the same
     process-local workspace used by the chat runner and never executes a tool
     command inside the container.
+
+    ``skills_custom`` / ``allowed_global_skills`` **必须与之后的对话构建同源**：
+    沙箱身份（缓存键、容器名、技能目录）都由技能集合令牌决定（见
+    :func:`_sandbox_workspace_id`）。预热时按默认的全量技能建一台、构建时按智能体的
+    白名单再建一台，用户看到的就是「沙箱已经 warm 起来了，可这轮工作区准备还是花了
+    十几秒」——预热的那台压根不是这台，白建还会占资源。调用方（``/sandbox/.../ensure``
+    端点）按会话当前使用的智能体解析这两个值再传进来。
     """
     if not str(conversation_id or "").strip():
         raise DockerSandboxUnavailableError(
@@ -5127,6 +5183,9 @@ async def ensure_docker_workspace(
         conversation_id=str(conversation_id).strip(),
         user_name=user_name,
         user_info=user_info,
+        # 与对话构建同源的技能范围：少了它，预热会按全量技能另建一台用不上的容器。
+        skills_custom=bool(skills_custom),
+        allowed_global_skills=list(allowed_global_skills or []),
         lazy_sandbox=False,
     )
     sandbox_ws, _local_ws = _normalize_workspace_pair(workspace_pair)
@@ -6080,11 +6139,15 @@ async def ensure_k8s_workspace(
     conversation_id: str | None,
     user_name: str | None = None,
     user_info: dict[str, Any] | None = None,
+    skills_custom: bool = False,
+    allowed_global_skills: list[str] | None = None,
 ) -> dict[str, Any]:
     """Start (warm up) or reuse the current user's K8s sandbox workspace.
 
     Mirrors ``ensure_docker_workspace``: goes through ``get_local_workspace``
-    so the Pod shares the exact cache key with the next chat turn.
+    so the Pod shares the exact cache key with the next chat turn — including
+    the skill-set token in ``skills_custom`` / ``allowed_global_skills``, or
+    the warm-up spins up a Pod the coming turn cannot use.
     """
     user_key = await _k8s_runtime_guard(
         user_id=user_id,
@@ -6099,6 +6162,9 @@ async def ensure_k8s_workspace(
         conversation_id=str(conversation_id).strip(),
         user_name=user_name,
         user_info=user_info,
+        # 同 docker 侧：技能集合令牌参与 Pod 身份，预热必须与构建同源。
+        skills_custom=bool(skills_custom),
+        allowed_global_skills=list(allowed_global_skills or []),
         lazy_sandbox=False,
     )
     sandbox_ws, _local_ws = _normalize_workspace_pair(workspace_pair)

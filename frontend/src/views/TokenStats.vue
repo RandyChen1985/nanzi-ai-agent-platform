@@ -33,6 +33,26 @@
       </div>
     </div>
 
+    <!-- 二级 Tab：两个 Tab 共用页头同一个时间选择器，切 Tab 不重置区间 -->
+    <div class="flex items-center gap-1 border-b border-gray-200">
+      <button
+        v-for="tab in statsTabs"
+        :key="tab.key"
+        type="button"
+        class="-mb-px border-b-2 px-3.5 py-2 text-sm transition-colors"
+        :class="
+          activeTab === tab.key
+            ? 'border-primary font-bold text-gray-900'
+            : 'border-transparent text-gray-500 hover:text-gray-800'
+        "
+        @click="activeTab = tab.key"
+      >
+        {{ tab.label }}
+      </button>
+    </div>
+
+    <template v-if="activeTab === 'token'">
+
     <!-- Statistics Cards -->
     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
       <!-- Token 主卡：总量 + 输入/输出两行 -->
@@ -260,6 +280,16 @@
         </table>
       </div>
     </div>
+    </template>
+
+    <!-- 图片用量：独立的聚合端点，数据源是轨迹的 meta_info.image_usage -->
+    <ImageUsagePanel
+      v-else
+      :date-range="dateRange"
+      :range-label="rangeLabel"
+      :refresh-tick="refreshTick"
+      :is-admin="userInfo?.role === 'admin'"
+    />
   </div>
 </template>
 
@@ -267,6 +297,7 @@
 import { ref, onMounted, computed } from "vue";
 import axios from "../utils/axios";
 import DateRangePicker from "@/components/common/DateRangePicker.vue";
+import ImageUsagePanel from "@/components/usage/ImageUsagePanel.vue";
 import { addDays, formatDayKey } from "@/utils/dateRange";
 import { useToast } from "@/composables/useToast";
 import {
@@ -299,6 +330,21 @@ const { showToast } = useToast();
 
 const API_BASE = "";
 const userInfo = ref<any>(null);
+
+/**
+ * 页面二级 Tab。
+ *
+ * 「大模型 Token」= 原来那三块（趋势 / 智能体分布 / 用户账单），全部按 total_tokens 聚合；
+ * 「图片用量」= 生图与改图，走独立聚合端点 —— 它刻意不计入 total_tokens（那个数驱动月度
+ * 配额），所以任何按 Token 聚合的视图里都不会出现图片，必须有独立入口。
+ */
+const statsTabs = [
+  { key: "token", label: "大模型 Token" },
+  { key: "image", label: "图片用量" },
+] as const;
+const activeTab = ref<"token" | "image">("token");
+/** 页头「刷新」按钮同样要刷新图片 Tab：递增这个计数交给子组件监听 */
+const refreshTick = ref(0);
 const loading = ref(false);
 
 /** 统计区间：默认最近 7 天（含今天），由日历面板改写 */
@@ -376,6 +422,7 @@ let statsRequestVersion = 0;
 
 const refreshAll = async () => {
   const requestVersion = ++statsRequestVersion;
+  refreshTick.value += 1;
   loading.value = true;
   try {
     // 三个接口共用同一个区间：以前趋势传 days、分布传 period，两套口径天然差半天，

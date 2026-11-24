@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,6 +19,7 @@ from app.services.ai.runtime.agentscope.workspace import (
     ensure_k8s_workspace,
     get_local_workspace,
     _docker_workspace_cache,
+    _docker_workspace_verified_at,
     _k8s_workspace_cache,
 )
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
@@ -215,6 +217,10 @@ async def test_lazy_sandbox_reuses_already_alive_sandbox(tmp_path, monkeypatch):
     )
     docker_key = _docker_workspace_cache_key(str(tmp_path), user_key, wanted_skills)
     _docker_workspace_cache[docker_key] = fake_alive_ws
+    # 「刚确认活着」是直接复用的前提：只有存活探测窗口内的条目才会走 eager。
+    # 只剩 is_alive=True 的旧条目（容器可能早被空闲回收）一律交惰性代理，否则会在
+    # 首 token 之前当场重建一台容器——那正是「工作区准备十几秒」的来源。
+    _docker_workspace_verified_at[docker_key] = time.monotonic()
 
     pair = await get_local_workspace(
         user_id="101",
@@ -653,3 +659,45 @@ async def test_bash_tolerates_unknown_cache_key_shape():
     tool._real_tool = AsyncMock(return_value="ran")
     proxy._sandbox_cache_key = "fake_cache_key"
     assert await tool(command="echo hi") == "ran"
+
+
+@pytest.mark.asyncio
+async def test_ensure_docker_workspace_forwards_skills_scope(monkeypatch, tmp_path):
+    """★ 预热（ensure）必须把会话的技能范围传给 get_local_workspace。
+
+    沙箱身份 = 用户 + 技能集合令牌，预热漏了这两项就会按全量技能另建一台容器：用户
+    看到「沙箱已经 warm 起来了」却仍然在「工作区准备 → 沙箱获取」等十几秒，而预热那台
+    空占到空闲回收。
+    """
+    from app.services.ai.runtime.agentscope import workspace as _ws
+
+    seen: dict = {}
+
+    async def fake_get_local_workspace(**kwargs):
+        seen.update(kwargs)
+
+        class _Bound:
+            _platform_sandbox_policy = "docker"
+
+        return (_Bound(), object())
+
+    monkeypatch.setattr(_ws, "get_local_workspace", fake_get_local_workspace)
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get", AsyncMock(return_value="docker")
+    )
+    monkeypatch.setattr(
+        "app.services.config_service.resolve_effective_sandbox_policy",
+        lambda value, default: "docker",
+    )
+
+    await _ws.ensure_docker_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="conv-123",
+        skills_custom=True,
+        allowed_global_skills=["skill-alpha"],
+    )
+
+    assert seen["skills_custom"] is True
+    assert seen["allowed_global_skills"] == ["skill-alpha"]
+    assert seen["lazy_sandbox"] is False, "预热就是要当场把容器拉起来"

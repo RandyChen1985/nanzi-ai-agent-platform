@@ -2087,17 +2087,12 @@ class AgentService:
                 )
                 from app.services.ai.runtime.agentscope.workspace import (
                     get_local_workspace,
+                    WorkspacePrepareTrace,
                     SANDBOX_POLICY_LOCAL,
                     SANDBOX_POLICY_DOCKER,
                     SANDBOX_POLICY_K8S,
                     SANDBOX_POLICY_E2B,
                     SANDBOX_POLICY_SSH,
-                    _docker_workspace_cache,
-                    _k8s_workspace_cache,
-                    _workspace_cache,
-                    resolve_workspace_root,
-                    resolve_session_workdir,
-                    _resolve_sandbox_user_key,
                 )
 
                 policy = resolve_effective_sandbox_policy(
@@ -2119,46 +2114,13 @@ class AgentService:
                     str(raw_user_name).strip() if raw_user_name is not None else None
                 )
 
-                was_cached = False
-                try:
-                    root = await resolve_workspace_root()
-                    if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S):
-                        sandbox_user_key = _resolve_sandbox_user_key(
-                            user_id=runtime_user_id,
-                            user_name=runtime_user_name,
-                            user_info=user_info,
-                        )
-                        if sandbox_user_key:
-                            cache_dict = _docker_workspace_cache if policy == SANDBOX_POLICY_DOCKER else _k8s_workspace_cache
-                            sandbox_cache_key = f"{os.path.abspath(root)}::{sandbox_user_key}::{policy}"
-                            cached_ws = cache_dict.get(sandbox_cache_key)
-                            if cached_ws is not None and getattr(cached_ws, "is_alive", True):
-                                was_cached = True
-                    else:
-                        workdir = resolve_session_workdir(
-                            root=root,
-                            user_id=runtime_user_id,
-                            user_name=runtime_user_name,
-                            user_info=user_info,
-                            conversation_id=conversation_id,
-                        )
-                        skills_custom = bool(getattr(agent_config, "skills_custom", False))
-                        allowed_global_skills = list(getattr(agent_config, "skills", None) or [])
-                        skills_fp = (
-                            f"custom:{','.join(sorted(str(s) for s in allowed_global_skills if str(s).strip()))}"
-                            if skills_custom
-                            else "all"
-                        )
-                        cache_key = f"{workdir}::{skills_fp}::{policy}"
-                        if cache_key in _workspace_cache:
-                            was_cached = True
-                except Exception:
-                    pass
-
-                # 按需拉起策略：若为 Docker/K8s 且沙箱尚未存活，本轮不再提前拉起沙箱，
-                # 静默跳过并等待后续具体调用 Bash 工具时按需拉起并推流。
-                if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S) and not was_cached:
-                    return None
+                # 不再自判「缓存里有没有」：真实缓存键是
+                # ``{root}::{user_key}::{技能集合令牌}::{policy}``，早先手写的
+                # ``{workdir}::{custom:…}::{policy}`` 与之格式不同、永远不命中，等于把
+                # docker/k8s 的预热整段跳过。现在直接调 ``get_local_workspace``：命中
+                # 缓存是几十毫秒，未命中拿到的是惰性代理（不建容器），两种情况都不需要
+                # 这层预判；「是否命中」由这次的 prepare_trace 如实反映。
+                prewarm_trace = WorkspacePrepareTrace()
 
                 # E2B/SSH 远程云沙箱需保留更长建连超时，Docker/K8s/Local 10s 即可
                 prewarm_timeout = 60.0 if policy in (SANDBOX_POLICY_E2B, SANDBOX_POLICY_SSH) else 10.0
@@ -2172,9 +2134,12 @@ class AgentService:
                             skills_custom=bool(getattr(agent_config, "skills_custom", False)),
                             allowed_global_skills=list(getattr(agent_config, "skills", None) or []),
                             lazy_sandbox=True,
+                            prepare_trace=prewarm_trace,
                         ),
                         timeout=prewarm_timeout,
                     )
+                # stages 为空 = 走的是缓存命中路径，没进 _build_pair
+                was_cached = not prewarm_trace.stages
                 elapsed_ms = (time.monotonic() - start_time) * 1000.0
                 return _build_workspace_sandbox_log(
                     policy=policy,

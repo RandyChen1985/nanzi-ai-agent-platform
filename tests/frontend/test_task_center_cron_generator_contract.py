@@ -75,8 +75,13 @@ def test_scheduler_semantics_untouched():
 
 
 def test_schedule_column_truncates_and_uses_custom_tooltip():
+    """周期文本必须能截断并配自定义 tooltip，否则长周期会把所在列撑开。
+
+    2026-11-23「我的任务」重构：运行周期不再单独占 15% 列，改为并入任务名下方的
+    元信息行（`周期 · 运行 N 次 · 上次 …`），所以不再断言 `w-[15%]`；
+    截断 + `cronScheduleTip` tooltip 这两条不变量保留。
+    """
     assert "cronScheduleTip" in TASK_CENTER
     assert "formatTaskScheduleFull" in TASK_CENTER
     assert "HoverTip" in TASK_CENTER
     assert "max-w-full truncate" in TASK_CENTER
-    assert "w-[15%]" in TASK_CENTER

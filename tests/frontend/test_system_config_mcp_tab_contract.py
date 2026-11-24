@@ -27,11 +27,14 @@ def test_mcp_management_remains_a_standalone_dashboard_page():
     assert "name: 'McpManagement'" in router_source
 
 
-def test_mcp_management_header_description_does_not_squeeze_wrap():
-    """说明文案不应再挤在右侧 max-w-md 里把「生态」折成单独一行。"""
+def test_mcp_management_header_has_no_description_paragraph():
+    """页头说明整段已移除（2026-11-23 用户要求），只留协议徽标。
+
+    这行先在右侧 max-w-md 里把「生态」折行、后来改成整行，最终整段删掉。
+    用例保留并改为断言「不存在」：页头文案再被加回来时应该有人问一句为什么。
+    """
     source = MCP_MANAGEMENT.read_text(encoding="utf-8")
 
-    assert "mcp-page-desc" in source
-    assert "智能体生态" in source
-    assert "sm:max-w-md" not in source
-    assert "sm:text-right" not in source
+    assert "mcp-page-desc" not in source
+    assert "智能体生态" not in source
+    assert "Model Context Protocol" in source

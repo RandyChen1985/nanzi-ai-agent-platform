@@ -117,11 +117,9 @@ def test_task_center_persists_constraints_in_config():
     assert "cfg.task_constraints" in text
 
 
-def test_task_center_marks_tasks_with_constraints():
-    text = _task_center_text()
-
-    assert "task.config?.task_constraints" in text
-    assert "该任务已配置输出要求（任务约束）" in text
+# 卡片上刻意不标「已配置输出要求」：试过「约束」小标和灰字两种写法，都是列表里的噪声——
+# 输出要求属于配置细节，用户要核对时进编辑弹窗看那一栏即可。约束本身仍然照常持久化，
+# 由上面的 test_task_center_persists_constraints_in_config 保证。
 
 
 def test_task_api_config_type_declares_constraints():

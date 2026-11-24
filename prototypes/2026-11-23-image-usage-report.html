@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="方案对比">
+<title>图片用量 · 计量落在哪几处（汇总入口与现有留痕点）</title>
+<style>
+  :root{
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af;
+    --g500:#6b7280; --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --am50:#fffbeb; --am100:#fef3c7; --am200:#fde68a; --am600:#d97706; --am700:#b45309;
+    --rose50:#fff1f2; --rose200:#fecdd3; --rose600:#e11d48; --rose700:#be123c;
+    --em50:#ecfdf5; --em200:#a7f3d0; --em600:#059669; --em700:#047857;
+    --blue:#2563eb; --blue50:#eff6ff; --blue200:#bfdbfe; --blue700:#1d4ed8;
+    --slate900:#0f172a;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:#f5f6f8; color:var(--g900); font-size:14px; line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  svg{display:block}
+  .page{max-width:1320px;margin:0 auto;padding:22px 24px 80px}
+
+  /* ── 原型头 ───────────────────────────────────────────── */
+  .proto-head h1{font-size:20px;margin:0 0 7px;font-weight:650;letter-spacing:-.2px}
+  .proto-head p{margin:0;color:var(--g500);font-size:12.5px;max-width:980px;line-height:1.8}
+  .proto-head b{color:var(--g700);font-weight:600}
+  .proto-head code{background:var(--g100);padding:1px 5px;border-radius:4px;font-size:11.5px;color:var(--g700)}
+
+  /* ── 落点总览 ─────────────────────────────────────────── */
+  .map{margin:16px 0 4px;border:1px solid var(--g200);border-radius:var(--radius);background:#fff;overflow:hidden}
+  .map-h{display:flex;align-items:baseline;gap:10px;padding:12px 16px;border-bottom:1px solid var(--g100);background:var(--g50)}
+  .map-h b{font-size:13px}
+  .map-h span{font-size:11.5px;color:var(--g500)}
+  .map-row{
+    display:grid;grid-template-columns:34px 1.35fr 1.5fr 120px 92px;gap:12px;align-items:center;
+    padding:10px 16px;border-bottom:1px solid var(--g100);cursor:pointer;transition:.13s;
+  }
+  .map-row:last-child{border-bottom:none}
+  .map-row:hover{background:var(--blue50)}
+  .map-row .no{
+    width:22px;height:22px;border-radius:6px;background:var(--g100);color:var(--g600);
+    font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center
+  }
+  .map-row .where{font-size:12.5px;color:var(--g800);font-weight:550}
+  .map-row .what{font-size:11.5px;color:var(--g500)}
+  .map-row .go{font-size:11px;color:var(--blue);text-align:right}
+
+  /* ── 场景 tab ─────────────────────────────────────────── */
+  .tabs{display:flex;gap:6px;margin:16px 0 14px;flex-wrap:wrap}
+  .tab{
+    display:flex;align-items:center;gap:7px;border:1px solid var(--g200);background:#fff;
+    border-radius:10px;padding:7px 13px;font-size:12.5px;color:var(--g600);transition:.14s;
+  }
+  .tab:hover{border-color:var(--g300);color:var(--g800)}
+  .tab .no{
+    display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
+    border-radius:5px;background:var(--g100);font-size:10.5px;font-weight:700;color:var(--g500)
+  }
+  .tab.on{border-color:var(--slate900);background:var(--slate900);color:#fff}
+  .tab.on .no{background:rgba(255,255,255,.18);color:#fff}
+  .scene{display:none}
+  .scene.on{display:block}
+
+  /* ── 应用窗口壳 ───────────────────────────────────────── */
+  .win{border:1px solid var(--g200);border-radius:14px;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.04);overflow:hidden}
+  .win-bar{
+    display:flex;align-items:center;gap:8px;padding:9px 16px;background:var(--g50);
+    border-bottom:1px solid var(--g200);font-size:11.5px;color:var(--g500)
+  }
+  .win-bar .crumb b{color:var(--g700);font-weight:600}
+  .win-bar .spacer{flex:1}
+  .win-bar .env{font-size:10.5px;color:var(--g400);border:1px dashed var(--g300);border-radius:999px;padding:1px 8px}
+  .win-body{padding:18px 18px 20px}
+
+  /* ── 页面标题行 ───────────────────────────────────────── */
+  .ph{display:flex;align-items:flex-start;gap:14px;margin-bottom:14px}
+  .ph h2{font-size:16px;margin:0;font-weight:650}
+  .ph p{margin:2px 0 0;font-size:12px;color:var(--g500)}
+  .ph .right{margin-left:auto;display:flex;gap:8px;align-items:center}
+
+  /* 页内二级 tab（Token 统计页的大模型 / 图片） */
+  .subtabs{display:flex;gap:2px;border-bottom:1px solid var(--g200);margin-bottom:16px}
+  .stab{
+    position:relative;padding:8px 13px;font-size:12.5px;color:var(--g500);
+    border-bottom:2px solid transparent;margin-bottom:-1px;transition:.13s
+  }
+  .stab:hover{color:var(--g800)}
+  .stab.on{color:var(--slate900);font-weight:600;border-bottom-color:var(--slate900)}
+  .stab .new{
+    display:inline-block;margin-left:5px;font-size:9.5px;font-weight:700;letter-spacing:.4px;
+    color:#fff;background:var(--am600);border-radius:4px;padding:0 4px;vertical-align:1px
+  }
+
+  /* ── 按钮 ─────────────────────────────────────────────── */
+  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--g200);background:#fff;
+    border-radius:9px;padding:6px 11px;font-size:12px;color:var(--g700);transition:.13s}
+  .btn:hover{border-color:var(--g300);background:var(--g50)}
+  .btn-dark{background:var(--slate900);border-color:var(--slate900);color:#fff}
+  .btn-dark:hover{background:#1e293b;border-color:#1e293b}
+  .btn svg{width:13px;height:13px}
+
+  /* ── 筛选条 ───────────────────────────────────────────── */
+  .filterbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:16px}
+  .sel{
+    display:inline-flex;align-items:center;gap:6px;border:1px solid var(--g200);border-radius:9px;
+    background:#fff;padding:6px 10px;font-size:12px;color:var(--g700)
+  }
+  .sel b{font-weight:600}
+  .sel .caret{color:var(--g400);font-size:9px}
+  .filterbar .spacer{flex:1}
+
+  /* ── KPI ──────────────────────────────────────────────── */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+  .kpi{border:1px solid var(--g200);border-radius:11px;padding:11px 13px;background:#fff}
+  .kpi.l{background:linear-gradient(180deg,#fffdf7,#fff);border-color:var(--am200)}
+  .kpi .k-l{font-size:11px;color:var(--g500)}
+  .kpi .k-v{font-size:19px;font-weight:700;letter-spacing:-.4px;margin-top:3px}
+  .kpi .k-v em{font-style:normal;font-size:11.5px;font-weight:500;color:var(--g400);margin-left:3px}
+  .kpi .k-s{font-size:10.5px;color:var(--g400);margin-top:2px}
+  .kpi .k-s i{font-style:normal;color:var(--rose600);font-weight:600}
+  .kpi .k-s b{color:var(--em700);font-weight:600}
+
+  /* ── 面板通用 ─────────────────────────────────────────── */
+  .panel{border:1px solid var(--g200);border-radius:var(--radius);background:#fff;overflow:hidden}
+  .panel + .panel{margin-top:14px}
+  .panel-h{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--g100)}
+  .panel-h b{font-size:12.5px}
+  .panel-h .hint{font-size:11px;color:var(--g400)}
+  .panel-h .spacer{flex:1}
+  .panel-b{padding:14px}
+
+  /* ── 柱状趋势 ─────────────────────────────────────────── */
+  .chart{display:flex;align-items:flex-end;gap:5px;height:132px;padding:0 2px}
+  .col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:1px;height:100%}
+  .col:hover .col-hi{outline:2px solid rgba(37,99,235,.25);outline-offset:1px}
+  .b-s{background:linear-gradient(180deg,#fbbf24,#d97706);border-radius:3px 3px 0 0}
+  .b-f{background:#fca5a5;border-radius:0}
+  .col-today .b-s{background:linear-gradient(180deg,#2563eb,#1d4ed8)}
+  .axis{display:flex;gap:5px;margin-top:6px}
+  .axis span{flex:1;text-align:center;font-size:9.5px;color:var(--g400)}
+  .legend{display:flex;gap:12px;align-items:center;font-size:10.5px;color:var(--g500)}
+  .legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:0}
+
+  /* ── 表格 ─────────────────────────────────────────────── */
+  .tbl{width:100%;border-collapse:collapse;font-size:12px}
+  .tbl th{
+    text-align:left;font-size:10.5px;font-weight:600;color:var(--g500);letter-spacing:.3px;
+    padding:7px 10px;background:var(--g50);border-bottom:1px solid var(--g200);white-space:nowrap
+  }
+  .tbl td{padding:9px 10px;border-bottom:1px solid var(--g100);vertical-align:middle}
+  .tbl tbody tr:hover{background:#fcfdff}
+  .tbl tbody tr:last-child td{border-bottom:none}
+  .tbl .num{text-align:right;font-variant-numeric:tabular-nums}
+  .tbl .who{font-weight:550;color:var(--g800)}
+  .tbl .sub{font-size:10.5px;color:var(--g400)}
+  .tbl .link{color:var(--blue);font-size:11.5px}
+  .tbl .link:hover{text-decoration:underline}
+  .grp{display:inline-flex;align-items:center;gap:5px}
+  .ico{width:20px;height:20px;border-radius:6px;background:var(--g100);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--g600)}
+
+  /* ── 小徽标 ───────────────────────────────────────────── */
+  .pill{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;padding:1px 7px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+  .pill-ok{background:var(--em50);color:var(--em700);border-color:var(--em200)}
+  .pill-warn{background:var(--am50);color:var(--am700);border-color:var(--am200);font-weight:600}
+  .pill-err{background:var(--rose50);color:var(--rose700);border-color:var(--rose200)}
+  .pill-mute{background:var(--g100);color:var(--g500);border-color:var(--g200)}
+
+  /* ── 说明块 ───────────────────────────────────────────── */
+  .note{
+    display:flex;gap:9px;align-items:flex-start;margin-top:12px;padding:10px 13px;
+    border:1px solid var(--am200);background:var(--am50);border-radius:10px;
+    font-size:11.5px;color:var(--am700);line-height:1.75
+  }
+  .note b{font-weight:700}
+  .note .ni{
+    flex:none;width:16px;height:16px;border-radius:50%;background:var(--am200);color:var(--am700);
+    display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;margin-top:1px
+  }
+  .anno{margin-top:12px;padding:12px 14px;border:1px dashed var(--g300);border-radius:10px;background:#fff}
+  .anno h4{margin:0 0 6px;font-size:11.5px;color:var(--g700);letter-spacing:.2px}
+  .anno ul{margin:0;padding-left:17px;font-size:11.5px;color:var(--g500);line-height:1.85}
+  .anno li b{color:var(--g700);font-weight:600}
+  .anno code{background:var(--g100);padding:1px 4px;border-radius:3px;font-size:10.5px;color:var(--g600)}
+
+  .cols2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:14px}
+  .cols2-tight{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+
+  /* ── 聊天日志列表 ─────────────────────────────────────── */
+  .loglist{padding:6px}
+  .logrow{display:flex;gap:10px;padding:10px 11px;border-radius:9px;border:1px solid transparent;cursor:pointer;transition:.13s}
+  .logrow:hover{background:var(--g50)}
+  .logrow.on{background:var(--blue50);border-color:var(--blue200)}
+  .logrow .av{flex:none;width:26px;height:26px;border-radius:8px;background:var(--g100);
+    display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--g600);font-weight:600}
+  .logrow .lz{min-width:0;flex:1}
+  .logrow .lt{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--g800);font-weight:550}
+  .logrow .lt .time{font-weight:400;color:var(--g400);font-size:10.5px;font-variant-numeric:tabular-nums}
+  .logrow .lq{font-size:11.5px;color:var(--g500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+  .logrow .lm{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:10.5px;color:var(--g400)}
+
+  /* ── 轨迹步骤 ─────────────────────────────────────────── */
+  .trace{padding:12px 14px}
+  .step{border:1px solid var(--g200);border-radius:10px;padding:11px 12px;background:#fff}
+  .step + .step{margin-top:9px}
+  .step-h{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--g500)}
+  .step-h .n{width:18px;height:18px;border-radius:5px;background:var(--g100);color:var(--g600);
+    font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .step-h .tn{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--blue700);
+    background:var(--blue50);border:1px solid var(--blue200);border-radius:5px;padding:0 5px}
+  .step-h .spacer{flex:1}
+  .step-h .ms{font-variant-numeric:tabular-nums;color:var(--g400);font-size:10.5px}
+  .chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:9px;padding:7px 9px;
+    border:1px solid var(--am200);background:rgba(255,251,235,.75);border-radius:8px}
+  .chips .lab{font-size:9.5px;font-weight:800;letter-spacing:1px;color:#b45309;opacity:.85}
+  .chip{font-size:11px;color:#78350f;background:rgba(255,255,255,.85);border:1px solid var(--am200);
+    border-radius:5px;padding:1px 6px;font-variant-numeric:tabular-nums}
+  .chip.dim{color:var(--g500);background:#fff;border-color:var(--g200)}
+  .rawbox{margin-top:9px;border:1px solid var(--g200);border-radius:8px;background:var(--g50);padding:9px 11px}
+  .rawbox .raw-h{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--g500);margin-bottom:6px}
+  .raw{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;line-height:1.7;color:var(--g600);white-space:pre;overflow-x:auto;margin:0}
+  .raw .k{color:#7c3aed}
+  .raw .s{color:#047857}
+  .raw .n{color:#b45309}
+
+  /* ── 对话消息 + 用量 tooltip ──────────────────────────── */
+  .chatbox{border:1px solid var(--g200);border-radius:12px;background:var(--g50);padding:16px}
+  .msg{display:flex;gap:10px}
+  .msg .mav{flex:none;width:28px;height:28px;border-radius:9px;background:var(--slate900);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+  .msg .mbody{min-width:0}
+  .mtext{font-size:12.5px;color:var(--g800);line-height:1.8}
+  .mtext .imgs{display:flex;gap:8px;margin:9px 0 2px}
+  .thumb{width:96px;height:72px;border-radius:8px;border:1px solid var(--g200);
+    background:linear-gradient(135deg,#eef2ff,#e0f2fe 45%,#fef3c7);display:flex;align-items:center;
+    justify-content:center;font-size:9.5px;color:var(--g500)}
+  .mact{display:flex;align-items:center;gap:2px;margin-top:9px;color:var(--g400);font-size:11px}
+  .mact .a{display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:6px}
+  .mact .a:hover{background:var(--g100);color:var(--g600)}
+  .mact .a.on{background:var(--g100);color:var(--g700)}
+  .mact .a svg{width:13px;height:13px}
+  .mact .stamp{margin-left:6px;font-size:10px;color:var(--g400)}
+  /* 静态展示的 hover 浮层 */
+  /* 浮层要落在消息卡操作栏下方，否则会压住「复制 / 重新生成」 */
+  .tiplayer{position:relative;margin-left:96px;margin-top:34px}
+  .tiplayer .dash{position:absolute;left:-96px;top:18px;width:96px;border-top:1px dashed var(--g300)}
+  .tip{
+    position:relative;background:#1f2937;color:#e5e7eb;border-radius:8px;padding:8px 11px;
+    font-size:11px;line-height:1.9;box-shadow:0 6px 20px rgba(15,23,42,.18);max-width:400px
+  }
+  .tip .t-arrow{position:absolute;left:-5px;top:14px;width:9px;height:9px;background:#1f2937;transform:rotate(45deg)}
+  .tip .t-1{color:#cbd5e1}
+  .tip .t-2{color:#fcd34d;font-weight:600}
+  .tip .t-3{color:#94a3b8;font-size:10px}
+  .tip-lab{font-size:10px;color:var(--g400);margin:6px 0 0}
+
+  /* ── 明细弹窗 ─────────────────────────────────────────── */
+  .modal{margin-top:16px;border:1px solid var(--g200);border-radius:12px;background:#fff;
+    box-shadow:0 14px 40px rgba(15,23,42,.10);overflow:hidden;max-width:560px}
+  .modal-h{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--g100)}
+  .modal-h b{font-size:12.5px}
+  .modal-h .x{margin-left:auto;color:var(--g400);font-size:15px;line-height:1}
+  .modal-b{padding:13px 14px}
+  .imgcost{display:flex;flex-wrap:wrap;align-items:center;gap:5px 12px;border:1px solid var(--am200);
+    background:rgba(255,251,235,.7);border-radius:9px;padding:9px 11px;font-size:11px;color:#78350f}
+  .imgcost .lab{font-size:9.5px;font-weight:800;letter-spacing:1px;color:#b45309;opacity:.85}
+  .imgcost .mono{font-size:11px}
+  .statrow{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:11px;text-align:center}
+  .statrow .s{border:1px solid var(--g100);background:var(--g50);border-radius:8px;padding:7px 4px}
+  .statrow .s .l{font-size:9.5px;color:var(--g400)}
+  .statrow .s .v{font-size:12px;font-weight:700;color:var(--g700);margin-top:2px;font-variant-numeric:tabular-nums}
+  .callrow{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--g100);font-size:11px;color:var(--g600)}
+  .callrow .idx{width:16px;height:16px;border-radius:4px;background:var(--g100);color:var(--g500);
+    font-size:9.5px;display:flex;align-items:center;justify-content:center}
+  .callrow .m{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--g600)}
+  .callrow .spacer{flex:1}
+  .callrow .tok{font-variant-numeric:tabular-nums;color:var(--g500)}
+
+  /* ── 额度/口径说明场景 ────────────────────────────────── */
+  .quotacard{border:1px solid var(--g200);border-radius:12px;padding:14px 15px;background:#fff}
+  .quotacard .qh{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600}
+  .quotacard .qh .badge{font-size:9.5px;font-weight:700;color:var(--em700);background:var(--em50);
+    border:1px solid var(--em200);border-radius:999px;padding:0 6px}
+  .quotacard .period{font-size:10.5px;color:var(--g400);margin-top:2px}
+  .qgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:11px;text-align:center}
+  .qgrid .q{border:1px solid var(--g100);border-radius:9px;padding:8px 4px;background:var(--g50)}
+  .qgrid .q .l{font-size:10px;color:var(--g400)}
+  .qgrid .q .v{font-size:14px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+  .qbar{height:6px;border-radius:999px;background:var(--g100);margin-top:12px;overflow:hidden}
+  .qbar i{display:block;height:100%;width:34%;border-radius:999px;background:linear-gradient(90deg,#60a5fa,#2563eb)}
+  .divider{height:1px;background:var(--g100);margin:12px 0}
+  .colexp{font-size:11.5px;color:var(--g500);line-height:1.8;display:flex;gap:8px;align-items:flex-start}
+  .colexp .ic{flex:none;width:15px;height:15px;border-radius:50%;border:1.5px solid var(--g300);
+    color:var(--g400);display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;margin-top:2px}
+  .colexp b{color:var(--g700);font-weight:600}
+  .fakeinput{margin-top:10px;border:1px solid var(--g200);border-radius:9px;padding:8px 10px;font-size:12px;color:var(--g700);background:#fff}
+  .fakeinput .caret-line{display:flex;align-items:center;gap:6px}
+
+  /* toast */
+  .toast{
+    position:fixed;left:50%;bottom:34px;transform:translate(-50%,14px);opacity:0;pointer-events:none;
+    background:var(--slate900);color:#fff;font-size:12px;padding:9px 15px;border-radius:10px;
+    box-shadow:0 10px 28px rgba(15,23,42,.24);transition:.22s;z-index:99
+  }
+  .toast.on{opacity:1;transform:translate(-50%,0)}
+  .hidescroll{scrollbar-width:none}
+  .hidescroll::-webkit-scrollbar{display:none}
+
+  @media (max-width:1080px){
+    .kpis{grid-template-columns:repeat(2,1fr)}
+    .cols2,.cols2-tight{grid-template-columns:1fr}
+    .map-row{grid-template-columns:28px 1fr 110px;grid-auto-rows:auto}
+    .map-row .what{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="proto-head">
+    <h1>图片用量 · 计量落在哪几处</h1>
+    <p>
+      生图/改图的用量现在<strong>已经留痕了</strong>（写在 <code>ai_agent_execution_traces.meta_info.image_usage</code>：张数、尺寸、模型、上游折算 token、耗时），
+      但它<strong>刻意不进 <code>total_tokens</code></strong> —— 那个数驱动月度配额，混进去会让「消息显示的用量」和「配额实际消耗」变成两套算法。
+      代价是：<b>任何按 Token 聚合的页面都不会出现图片，也没有任何汇总视图</b>，所以现在只能一轮一轮点进轨迹里看。
+      下面四个落点是补这个缺口的候选，点顶部 tab 或下面的总览行逐个看效果。
+    </p>
+  </div>
+
+  <!-- ══════════ 落点总览 ══════════ -->
+  <div class="map">
+    <div class="map-h">
+      <b>落点总览</b>
+      <span>同一个需求的四块拼图，可以只做其中几块</span>
+    </div>
+    <div class="map-row" data-goto="1">
+      <div class="no">A</div>
+      <div class="where">日志与统计 → Token 统计 → 「图片用量」Tab</div>
+      <div class="what">按人 / 按智能体 / 按天汇总张数与上游 token，可导出 CSV</div>
+      <div><span class="pill pill-warn">建议新增</span></div>
+      <div class="go">查看效果 →</div>
+    </div>
+    <div class="map-row" data-goto="2">
+      <div class="no">B</div>
+      <div class="where">聊天日志列表徽标 + 轨迹「用量」条</div>
+      <div class="what">轨迹里已经有；列表缺一个「这轮含图片」的入口标记</div>
+      <div><span class="pill pill-mute">补一小块</span></div>
+      <div class="go">查看效果 →</div>
+    </div>
+    <div class="map-row" data-goto="3">
+      <div class="no">C</div>
+      <div class="where">对话消息「用量」tooltip + 调用明细弹窗</div>
+      <div class="what">已有，但刷新页面后图片那行会消失（history 不回传）</div>
+      <div><span class="pill pill-mute">修一个缺口</span></div>
+      <div class="go">查看效果 →</div>
+    </div>
+    <div class="map-row" data-goto="4">
+      <div class="no">D</div>
+      <div class="where">额度弹窗 / 个人中心 / 系统配置「图像」分组</div>
+      <div class="what">一句话写明「图片不计入本额度」，避免被当成漏计</div>
+      <div><span class="pill pill-mute">补一句文案</span></div>
+      <div class="go">查看效果 →</div>
+    </div>
+  </div>
+
+  <!-- ══════════ tabs ══════════ -->
+  <div class="tabs">
+    <button class="tab on" data-scene="1"><span class="no">A</span>图片用量汇总 Tab</button>
+    <button class="tab" data-scene="2"><span class="no">B</span>聊天日志入口</button>
+    <button class="tab" data-scene="3"><span class="no">C</span>消息与明细弹窗</button>
+    <button class="tab" data-scene="4"><span class="no">D</span>额度口径说明</button>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       场景 A · Token 统计页新增「图片用量」Tab
+       ══════════════════════════════════════════════════════ -->
+  <section class="scene on" id="scene-1">
+    <div class="win">
+      <div class="win-bar">
+        <span class="crumb">日志与统计 / <b>Token 统计</b></span>
+        <span class="spacer"></span>
+        <span class="env">menu:token_stats · 仅管理员</span>
+      </div>
+      <div class="win-body">
+
+        <div class="ph">
+          <div>
+            <h2>Token 统计</h2>
+            <p>本月 2026-11-01 ~ 2026-11-23 · 数据源 <code class="mono">ai_agent_execution_traces</code></p>
+          </div>
+        </div>
+
+        <div class="subtabs">
+          <button class="stab">大模型 Token</button>
+          <button class="stab on">图片用量<span class="new">新</span></button>
+        </div>
+
+        <div class="filterbar">
+          <span class="sel"><b>本月</b><span class="caret">▼</span></span>
+          <span class="sel">全部智能体<span class="caret">▼</span></span>
+          <span class="sel">全部用户<span class="caret">▼</span></span>
+          <span class="sel">生图 + 改图<span class="caret">▼</span></span>
+          <span class="spacer"></span>
+          <button class="btn" id="btn-export">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>
+            导出 CSV
+          </button>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi l">
+            <div class="k-l">出图张数</div>
+            <div class="k-v">128<em>张</em></div>
+            <div class="k-s">请求 136 张 · 其中 <i>8 张失败</i></div>
+          </div>
+          <div class="kpi l">
+            <div class="k-l">上游折算 Token</div>
+            <div class="k-v">1.42<em>M</em></div>
+            <div class="k-s">按 <b>gateway usage</b> 原样累加，未折算价格</div>
+          </div>
+          <div class="kpi">
+            <div class="k-l">工具调用次数</div>
+            <div class="k-v">96<em>次</em></div>
+            <div class="k-s">生图 75 次 · 改图 21 次</div>
+          </div>
+          <div class="kpi">
+            <div class="k-l">平均单张耗时</div>
+            <div class="k-v">8.1<em>s</em></div>
+            <div class="k-s">P90 15.4s · 最长 41.2s（超时未自动重发）</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-h">
+            <b>按天出图</b>
+            <span class="hint">11-01 ~ 11-23</span>
+            <span class="spacer"></span>
+            <span class="legend"><i style="background:linear-gradient(180deg,#fbbf24,#d97706)"></i>成功<i style="background:#fca5a5"></i>失败<i style="background:#2563eb"></i>今天</span>
+          </div>
+          <div class="panel-b">
+            <div class="chart" id="chart"></div>
+            <div class="axis" id="axis"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-h">
+            <b>用量明细</b>
+            <span class="spacer"></span>
+            <span class="sel" style="padding:3px 8px;font-size:11px">
+              按智能体<span class="caret">▼</span>
+            </span>
+          </div>
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>智能体 / 工具</th>
+                <th class="num">请求 → 出图</th>
+                <th class="num">上游 Token</th>
+                <th class="num">平均耗时</th>
+                <th>最近一次</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <span class="grp"><span class="ico">通</span>
+                    <span><span class="who">通用助手</span><span class="sub" style="display:block">generate_image</span></span>
+                  </span>
+                </td>
+                <td class="num">104 → <b>96</b></td>
+                <td class="num">1,082,340</td>
+                <td class="num">7.4s</td>
+                <td><span class="sub">11-23 13:12 · 张磊</span></td>
+                <td><a class="link" href="#scene-2" data-goto="2">看轨迹</a></td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="grp"><span class="ico">设</span>
+                    <span><span class="who">设计助理</span><span class="sub" style="display:block">edit_image</span></span>
+                  </span>
+                </td>
+                <td class="num">21 → <b>21</b></td>
+                <td class="num"><span class="pill pill-mute">上游未返回</span></td>
+                <td class="num">9.6s</td>
+                <td><span class="sub">11-22 18:40 · 李骁</span></td>
+                <td><a class="link" href="#scene-2" data-goto="2">看轨迹</a></td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="grp"><span class="ico">析</span>
+                    <span><span class="who">数据分析助手</span><span class="sub" style="display:block">generate_image</span></span>
+                  </span>
+                </td>
+                <td class="num">11 → <b>9</b></td>
+                <td class="num">132,420</td>
+                <td class="num">12.8s</td>
+                <td><span class="sub">11-21 10:05 · 陈默</span></td>
+                <td><a class="link" href="#scene-2" data-goto="2">看轨迹</a></td>
+              </tr>
+              <tr>
+                <td>
+                  <span class="grp"><span class="ico">通</span>
+                    <span><span class="who">通用助手（嵌入版）</span><span class="sub" style="display:block">generate_image</span></span>
+                  </span>
+                </td>
+                <td class="num">— → <b>2</b></td>
+                <td class="num"><span class="pill pill-mute">上游未返回</span></td>
+                <td class="num">6.2s</td>
+                <td><span class="sub">11-19 15:22 · 赵敏</span></td>
+                <td><a class="link" href="#scene-2" data-goto="2">看轨迹</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          <span class="ni">i</span>
+          <div>
+            <b>这里只统计、不计费。</b>平台没有接上游单价，所以「上游 Token」是网关原样返回的 token 数累加，
+            <b>不是人民币</b>；并且它<b>不并入月度配额</b>——下方额度页也就不会因此扣减。要看钱，得拿这张表和上游账单对。
+          </div>
+        </div>
+
+        <div class="anno">
+          <h4>落点 A · 改什么</h4>
+          <ul>
+            <li>后端加一个只读聚合接口（<code>GET /api/portal/usage/image-summary</code>），数据源就是现有轨迹表，<b>零 DDL、零新采集</b>：<code>meta_info.image_usage</code> 已经含全部字段。</li>
+            <li>聚合维度：日期 × 用户 × 智能体 × 工具；「上游未返回」单独成一类，<b>不能显示 0</b>（会读成「这次没花钱」）。</li>
+            <li>导出 CSV 走同一接口带 <code>format=csv</code>，避免页面和导出两套口径。</li>
+            <li>权限沿用 <code>menu:token_stats</code>；普通用户看自己的，管理员可跨用户（与聊天日志同一套 <code>admin</code> / <code>self</code> 端点分治）。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════
+       场景 B · 聊天日志入口
+       ══════════════════════════════════════════════════════ -->
+  <section class="scene" id="scene-2">
+    <div class="win">
+      <div class="win-bar">
+        <span class="crumb">日志与统计 / <b>聊天日志</b></span>
+        <span class="spacer"></span>
+        <span class="env">menu:chat_logs</span>
+      </div>
+      <div class="win-body">
+
+        <div class="cols2">
+          <!-- 左侧：列表 -->
+          <div class="panel" style="margin:0">
+            <div class="panel-h"><b>会话记录</b><span class="spacer"></span><span class="hint">11-23</span></div>
+            <div class="loglist">
+              <div class="logrow on">
+                <div class="av">张</div>
+                <div class="lz">
+                  <div class="lt">张磊 <span class="time">13:12</span>
+                    <span class="pill pill-warn" style="margin-left:auto">图片 2</span>
+                  </div>
+                  <div class="lq">帮我画一张数据中台的架构示意图，16:9</div>
+                  <div class="lm">通用助手 · 2 张出图 · 12.4k tok</div>
+                </div>
+              </div>
+              <div class="logrow">
+                <div class="av">王</div>
+                <div class="lz">
+                  <div class="lt">王芳 <span class="time">11:47</span>
+                    <span class="pill pill-warn" style="margin-left:auto">图片 1</span>
+                  </div>
+                  <div class="lq">把这张截图里的表格改成深色主题</div>
+                  <div class="lm">通用助手 · 1 张改图 · 8.1k tok</div>
+                </div>
+              </div>
+              <div class="logrow">
+                <div class="av">陈</div>
+                <div class="lz">
+                  <div class="lt">陈默 <span class="time">10:05</span>
+                    <span class="pill pill-err" style="margin-left:auto">出图失败</span>
+                  </div>
+                  <div class="lq">生成一张 Q3 GMV 趋势图，要横向的</div>
+                  <div class="lm">数据分析助手 · 请求 2 张 0 成功</div>
+                </div>
+              </div>
+              <div class="logrow">
+                <div class="av">赵</div>
+                <div class="lz">
+                  <div class="lt">赵敏 <span class="time">昨天 15:22</span></div>
+                  <div class="lq">帮我把这份周报里的数据做成柱状图</div>
+                  <div class="lm">通用助手 · 未调用图像工具</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧：轨迹 -->
+          <div class="panel" style="margin:0">
+            <div class="panel-h">
+              <b>轨迹</b>
+              <span class="hint">trace 7f3a…c21</span>
+              <span class="spacer"></span>
+              <span class="pill pill-ok">成功</span>
+            </div>
+            <div class="trace">
+              <div class="step">
+                <div class="step-h">
+                  <span class="n">6</span>
+                  <span>模型决策</span>
+                  <span class="tn">generate_image</span>
+                  <span class="spacer"></span>
+                  <span class="ms">1.2s</span>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-h">
+                  <span class="n">7</span>
+                  <span>工具完成</span>
+                  <span class="tn">generate_image</span>
+                  <span class="spacer"></span>
+                  <span class="ms">8.2s</span>
+                </div>
+                <!-- 用量条：现状已有，口径见 frontend/src/utils/traceUsage.ts -->
+                <div class="chips">
+                  <span class="lab">用量</span>
+                  <span class="chip">出图 2 张</span>
+                  <span class="chip">1024x1024</span>
+                  <span class="chip">8,762 tokens</span>
+                  <span class="chip">8.2s</span>
+                  <span class="chip dim">gpt-image-1</span>
+                </div>
+                <div class="rawbox">
+                  <div class="raw-h">
+                    <span>原始</span>
+                    <span>·</span>
+                    <span class="mono" style="font-size:10px">meta_info</span>
+                  </div>
+<pre class="raw">{
+  <span class="k">"timeout_seconds"</span>: <span class="n">180</span>, <span class="k">"timeout_source"</span>: <span class="s">"tool_spec"</span>,
+  <span class="k">"image_usage"</span>: {
+    <span class="k">"tool"</span>: <span class="s">"generate_image"</span>,
+    <span class="k">"requested_count"</span>: <span class="n">2</span>, <span class="k">"succeeded_count"</span>: <span class="n">2</span>,
+    <span class="k">"size"</span>: <span class="s">"1024x1024"</span>, <span class="k">"model"</span>: <span class="s">"gpt-image-1"</span>,
+    <span class="k">"upstream_tokens"</span>: { <span class="k">"total_tokens"</span>: <span class="n">8762</span> },
+    <span class="k">"elapsed_ms"</span>: <span class="n">8206</span>
+  }
+}</pre>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-h">
+                  <span class="n">8</span>
+                  <span>工具完成</span>
+                  <span class="tn">write_file</span>
+                  <span class="spacer"></span>
+                  <span class="ms">0.3s</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="anno">
+          <h4>落点 B · 改什么</h4>
+          <ul>
+            <li><b>轨迹里的「用量」条已经能用</b>（<code>ChatLogs.vue</code> 与 <code>TraceLogViewer.vue</code> 共用 <code>traceUsage.ts</code> 的口径），这块不用动。</li>
+            <li>缺的是<b>列表层的入口</b>：不点进去根本不知道这轮碰过图片。加一个小徽标「图片 2」/「出图失败」即可。</li>
+            <li>徽标数据只能来自轨迹（历史行不存图片用量），所以列表接口要顺带 <code>LEFT JOIN</code> 一次轨迹做「是否含 image_usage」的存在性判断，别把整段 meta_info 拉回来。</li>
+            <li>为什么值得做：<b>用户按「我那张图呢」来查</b>，凭时间翻列表比让他们先猜哪轮调过生图要快。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════
+       场景 C · 消息 tooltip + 明细弹窗
+       ══════════════════════════════════════════════════════ -->
+  <section class="scene" id="scene-3">
+    <div class="win">
+      <div class="win-bar">
+        <span class="crumb">对话 / <b>与通用助手的会话</b></span>
+        <span class="spacer"></span>
+        <span class="env">EmbedChat</span>
+      </div>
+      <div class="win-body">
+        <div class="cols2-tight">
+          <div>
+            <div class="chatbox">
+              <div class="msg">
+                <div class="mav">AI</div>
+                <div class="mbody">
+                  <div class="mtext">
+                    架构图已经画好了，按 16:9 出的两张：一张偏「数据流转」，一张偏「分层部署」。
+                    <div class="imgs">
+                      <div class="thumb">架构图 A</div>
+                      <div class="thumb">架构图 B</div>
+                    </div>
+                  </div>
+                  <div class="mact">
+                    <span class="a">复制</span>
+                    <span class="a">重新生成</span>
+                    <span class="a on">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+                      用量 3.4k
+                    </span>
+                    <span class="stamp">13:12</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- hover 浮层：静态摆出来，方便看 -->
+            <div class="tiplayer">
+              <div class="dash"></div>
+              <div class="tip">
+                <span class="t-arrow"></span>
+                <div class="t-1">Token 用量：3,412 tok（输入: 1,208 / 输出: 2,204）</div>
+                <div class="t-2">图片：出图 2 张 · 2 次调用 · 8,762 tok · 1024x1024</div>
+                <div class="t-3">点击查看详细统计指标</div>
+              </div>
+              <div class="tip-lab">↑ 悬停「用量」时的样子（黄色那行就是图片）</div>
+            </div>
+          </div>
+
+          <div>
+            <div class="modal">
+              <div class="modal-h">
+                <b>模型调用明细</b>
+                <span class="pill pill-mute">trace 7f3a…c21</span>
+                <span class="x">✕</span>
+              </div>
+              <div class="modal-b">
+                <div class="imgcost">
+                  <span class="lab">图片消耗</span>
+                  <span>出图 2 张</span>
+                  <span>2 次调用</span>
+                  <span class="mono">8,762 tok</span>
+                  <span class="mono">1024x1024</span>
+                </div>
+                <div class="statrow">
+                  <div class="s"><div class="l">调用次数</div><div class="v">3</div></div>
+                  <div class="s"><div class="l">总耗时</div><div class="v">11.4s</div></div>
+                  <div class="s"><div class="l">总输入</div><div class="v">1,208</div></div>
+                  <div class="s"><div class="l">总输出</div><div class="v">2,204</div></div>
+                </div>
+                <div style="margin-top:11px">
+                  <div class="callrow"><span class="idx">1</span><span class="m">claude-sonnet-4.5</span><span class="spacer"></span><span class="tok">812 / 96</span></div>
+                  <div class="callrow"><span class="idx">2</span><span class="m">claude-sonnet-4.5</span><span class="spacer"></span><span class="tok">228 / 1,884</span></div>
+                  <div class="callrow"><span class="idx">3</span><span class="m">claude-sonnet-4.5</span><span class="spacer"></span><span class="tok">168 / 224</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="tip-lab" style="margin-top:8px">↑ 点「用量」打开的弹窗，琥珀色块是图片（不进上面的 3,412 tok）</div>
+          </div>
+        </div>
+
+        <div class="note">
+          <span class="ni">!</span>
+          <div>
+            <b>这块现在有个缺口：刷新就没了。</b>
+            图片那行来自本轮 SSE 推送的 <code>image_usage</code>，而 <code>/chat/history</code> 不回传这个字段——
+            所以一旦刷新页面、或从历史里翻回这条消息，「图片：…」那行就消失，用户会以为图片没计量。
+            修法：history 接口用 <code>trace_id</code> 回查轨迹补上 <code>image_usage</code>（一次批量查询，按 trace 分组）。
+          </div>
+        </div>
+
+        <div class="anno">
+          <h4>落点 C · 改什么</h4>
+          <ul>
+            <li>tooltip 与明细弹窗<b>已经实现</b>（<code>formatImageUsageLine</code> / <code>ChatModelCallStatsModal</code>），维持不动。</li>
+            <li>要补的只有历史回填：<code>GET /chat/history</code> 批量取本轮 <code>image_usage</code> 并随消息返回，字段名与 SSE 一致，前端零改动即可复用累加逻辑。</li>
+            <li>注意<b>不要</b>顺手把它加进 <code>total_tokens</code>：那个数现在正被配额拦截读着，动它会同时改掉所有人的额度消耗。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════
+       场景 D · 额度口径说明
+       ══════════════════════════════════════════════════════ -->
+  <section class="scene" id="scene-4">
+    <div class="win">
+      <div class="win-bar">
+        <span class="crumb">用户管理 / <b>张磊 · 额度</b>　·　个人中心 / 我的 Token 用量</span>
+        <span class="spacer"></span>
+        <span class="env">同一句口径，三处复用</span>
+      </div>
+      <div class="win-body">
+
+        <div class="cols2-tight">
+          <!-- 额度编辑弹窗 -->
+          <div class="panel" style="margin:0">
+            <div class="panel-h"><b>用户额度</b><span class="spacer"></span><span class="hint">ai_agent_quota_policies</span></div>
+            <div class="panel-b">
+              <div style="font-size:11.5px;color:var(--g500);margin-bottom:8px">
+                周期 <b style="color:var(--g700)">按月</b> · 范围 <b style="color:var(--g700)">该用户</b>
+              </div>
+              <div class="fakeinput">
+                <div class="caret-line"><span class="mono" style="font-size:11px;color:var(--g500)">limit_tokens</span>
+                  <span style="margin-left:auto;font-variant-numeric:tabular-nums;font-weight:600">5,000,000</span></div>
+              </div>
+              <div class="fakeinput">
+                <div class="caret-line"><span class="mono" style="font-size:11px;color:var(--g500)">action_on_exceed</span>
+                  <span style="margin-left:auto">拦截本次请求</span></div>
+              </div>
+              <div class="divider"></div>
+              <div class="colexp">
+                <span class="ic">i</span>
+                <div>
+                  本额度只统计<b>大模型 Token</b> 消耗。图片生成/改图<b>按张单独计费</b>（每张一次上游调用），
+                  不占用本额度，也不参与超限拦截；用量在<b>日志与统计 → Token 统计 → 图片用量</b> 查看。
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 个人中心卡片 -->
+          <div>
+            <div class="quotacard">
+              <div class="qh">我的 Token 用量 <span class="badge">管理员绕过</span></div>
+              <div class="period">2026-11-01 ~ 2026-11-30 · 用户级额度</div>
+              <div class="qgrid">
+                <div class="q"><div class="l">已用</div><div class="v">1.70M</div></div>
+                <div class="q"><div class="l">额度</div><div class="v">5.00M</div></div>
+                <div class="q"><div class="l">剩余</div><div class="v" style="color:var(--em700)">3.30M</div></div>
+              </div>
+              <div class="qbar"><i></i></div>
+              <div class="divider"></div>
+              <div class="colexp">
+                <span class="ic">i</span>
+                <div>不包含图片：本月你还有 <b>58 张</b>出图、<b>642.3k</b> 上游折算 token，在图片用量里单独统计。</div>
+              </div>
+            </div>
+
+            <div class="panel" style="margin-top:14px">
+              <div class="panel-h"><b>系统配置 · 图像</b><span class="spacer"></span><span class="hint">image_generation_enabled</span></div>
+              <div class="panel-b">
+                <div class="colexp">
+                  <span class="ic">i</span>
+                  <div>该分组控制<b>能不能出图</b>；出了多少张在
+                    <a href="#scene-1" data-goto="1" style="color:var(--blue)">Token 统计 → 图片用量</a>
+                    看。按张计费，建议先只给需要的智能体勾选工具。</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="anno">
+          <h4>落点 D · 改什么</h4>
+          <ul>
+            <li>纯文案，零逻辑：额度弹窗、个人中心卡片、系统配置「图像」分组各加一句，<b>文案抽成同一处常量</b>，避免三处各说一套。</li>
+            <li>为什么值得做：「额度没涨但上游账单涨了」是最容易被当成 bug 报上来的问题，一句说明省掉一轮排查。</li>
+            <li>个人中心那句带上下月数字时，需要落点 A 的聚合接口（至少 <code>self</code> 维度），所以 <b>A → D</b> 是顺序依赖。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="anno" style="margin-top:18px;border-style:solid;border-color:var(--g200);background:var(--g50)">
+    <h4>最小可交付组合（我的建议）</h4>
+    <ul>
+      <li><b>先做 A</b>：这是「哪里能看到记录」的直接答案，且零 DDL、数据现成，做完这一个问题就算解决。</li>
+      <li><b>C 一起做</b>：history 回填很小，但不做的话刷新即丢，用户会反复来问同一件事。</li>
+      <li>B / D 属于顺手补的体验项，可以放同一批，也可以等前两项上线后看反馈。</li>
+    </ul>
+  </div>
+
+</div>
+
+<div class="toast" id="toast">已开始导出 96 条记录…</div>
+
+<script>
+(function () {
+  /* ── 场景切换 ─────────────────────────────────────── */
+  const tabs = Array.from(document.querySelectorAll('.tab'));
+  const scenes = Array.from(document.querySelectorAll('.scene'));
+
+  function apply(n) {
+    n = String(n);
+    tabs.forEach(t => t.classList.toggle('on', t.dataset.scene === n));
+    scenes.forEach(s => s.classList.toggle('on', s.id === 'scene-' + n));
+  }
+
+  /** mode: 'top' 滚到页首 / 'tabs' 滚到 tab 条 / 省略则保持当前位置（深链接用） */
+  function show(n, mode) {
+    apply(n);
+    if (mode === 'top') window.scrollTo({ top: 0, behavior: 'smooth' });
+    else if (mode === 'tabs') {
+      const anchor = document.querySelector('.tabs');
+      if (anchor) window.scrollTo({ top: anchor.offsetTop - 12, behavior: 'smooth' });
+    }
+  }
+
+  tabs.forEach(t => t.addEventListener('click', () => show(t.dataset.scene, 'top')));
+  document.querySelectorAll('[data-goto]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.preventDefault();
+      show(el.dataset.goto, 'top');
+    });
+  });
+  // 深链接优先用 ?s=N（不会触发浏览器原生锚点滚动，截图/分享都更稳）；
+  // #scene-N 也兼容，代价是浏览器会顺带滚到那个区块。
+  const q = location.search.match(/[?&]s=([1-4])/);
+  if (q) apply(q[1]);
+  else if (/^#scene-[1-4]$/.test(location.hash)) apply(location.hash.slice(7));
+
+  /* ── 按天柱状图 ───────────────────────────────────── */
+  // 与页面上的总数对齐：成功 128 张、失败 8 张
+  const days = [
+    { d: 1, s: 4, f: 0 }, { d: 2, s: 6, f: 0 }, { d: 3, s: 3, f: 1 },
+    { d: 4, s: 9, f: 0 }, { d: 5, s: 12, f: 0 }, { d: 6, s: 7, f: 2 },
+    { d: 7, s: 2, f: 0 }, { d: 8, s: 8, f: 0 }, { d: 9, s: 11, f: 0 },
+    { d: 10, s: 14, f: 0 }, { d: 11, s: 5, f: 1 }, { d: 12, s: 3, f: 0 },
+    { d: 13, s: 7, f: 0 }, { d: 14, s: 10, f: 0 }, { d: 15, s: 6, f: 0 },
+    { d: 16, s: 4, f: 2 }, { d: 17, s: 9, f: 0 }, { d: 18, s: 13, f: 0 },
+    { d: 19, s: 8, f: 1 }, { d: 20, s: 5, f: 0 }, { d: 21, s: 7, f: 0 },
+    { d: 22, s: 12, f: 1 }, { d: 23, s: 6, f: 0 }
+  ];
+  const maxV = Math.max(...days.map(x => x.s + x.f));
+  const chart = document.getElementById('chart');
+  const axis = document.getElementById('axis');
+  days.forEach(x => {
+    const total = x.s + x.f;
+    const hS = Math.round((x.s / maxV) * 118);
+    const hF = Math.round((x.f / maxV) * 118);
+    const col = document.createElement('div');
+    col.className = 'col' + (x.d === 23 ? ' col-today' : '');
+    col.title = `11-${String(x.d).padStart(2, '0')} · 成功 ${x.s} 张${x.f ? ` / 失败 ${x.f} 张` : ''}`;
+    if (hF > 0) {
+      const f = document.createElement('div');
+      f.className = 'b-f col-hi';
+      f.style.height = hF + 'px';
+      col.appendChild(f);
+    }
+    if (hS > 0) {
+      const s = document.createElement('div');
+      s.className = 'b-s col-hi';
+      s.style.height = hS + 'px';
+      col.appendChild(s);
+    }
+    if (total === 0) {
+      const z = document.createElement('div');
+      z.style.height = '2px';
+      z.style.background = 'var(--g200)';
+      z.style.borderRadius = '2px';
+      col.appendChild(z);
+    }
+    chart.appendChild(col);
+
+    const lab = document.createElement('span');
+    lab.textContent = (x.d === 1 || x.d % 5 === 0 || x.d === 23) ? x.d : '';
+    lab.style.fontWeight = x.d === 23 ? '700' : '400';
+    lab.style.color = x.d === 23 ? 'var(--blue)' : '';
+    axis.appendChild(lab);
+  });
+
+  /* ── 导出 toast ───────────────────────────────────── */
+  const toast = document.getElementById('toast');
+  let timer = null;
+  document.getElementById('btn-export').addEventListener('click', () => {
+    toast.textContent = '已开始导出 96 条记录（本月 · 全部智能体）…';
+    toast.classList.add('on');
+    clearTimeout(timer);
+    timer = setTimeout(() => toast.classList.remove('on'), 2200);
+  });
+})();
+</script>
+</body>
+</html>

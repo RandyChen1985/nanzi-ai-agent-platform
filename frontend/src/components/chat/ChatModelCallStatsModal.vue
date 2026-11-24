@@ -173,7 +173,10 @@ const statsSummary = computed(() => {
       </div>
 
       <!-- 图片消耗：图像工具是真正花钱的那次调用，但它不属于「大模型调用」，
-           不在这里列出来就会被当成没花钱。 -->
+           不在这里列出来就会被当成没花钱。
+           注意这里是**独立**的 v-if，不能与下面的空态 / 明细组成 v-if / v-else 链：
+           一条消息完全可能既有模型调用又有生图调用，两者必须同时可见。
+           （曾经写成链，结果带图片的消息一打开弹窗就只剩这一行，明细整块不渲染。） -->
       <div
         v-if="!loading && imageUsage && imageUsage.calls"
         class="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-amber-900"
@@ -188,8 +191,11 @@ const statsSummary = computed(() => {
         <span v-if="imageUsage.size" class="font-mono">{{ imageUsage.size }}</span>
       </div>
 
-      <!-- Empty state -->
-      <div v-else-if="stats.length === 0" class="text-center py-8 text-gray-400 dark:text-gray-500 text-sm">
+      <!-- Empty state：只说明「没有大模型调用明细」，与上面的图片块互不影响 -->
+      <div
+        v-if="!loading && stats.length === 0"
+        class="text-center py-8 text-gray-400 dark:text-gray-500 text-sm"
+      >
         <svg class="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
         </svg>
@@ -197,7 +203,7 @@ const statsSummary = computed(() => {
       </div>
 
       <!-- Content -->
-      <div v-else class="space-y-4">
+      <div v-if="!loading && stats.length > 0" class="space-y-4">
         <!-- Summary stats -->
         <div class="grid grid-cols-5 gap-1.5 sm:gap-2 text-center">
           <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
