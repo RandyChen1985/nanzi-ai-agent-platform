@@ -115,6 +115,97 @@ def test_budget_path_keeps_metadata_while_llm_path_strips_it():
     assert llm_message["seq"] == 1
 
 
+def test_superseded_assistant_snapshots_collapse_to_the_complete_answer():
+    """审批挂起轮与恢复轮会在同一 trace 留下两条 assistant，只能有一条进模型上下文。
+
+    挂起轮先写入半截回答、恢复轮再写合并后的完整回答（见 resume 的 prior snapshot 合并）。
+    不收敛的话前半段正文会随两条消息各进一次上下文，模型会以为自己复述过一遍。
+    """
+    from app.services.ai.context.compactor import history_messages_for_token_budget
+
+    history = [
+        {"role": "user", "content": "查一下并跑脚本", "trace_id": "trace-1"},
+        {
+            "role": "assistant",
+            "content": "我先查到 2 条记录。",
+            "trace_id": "trace-1",
+            "status": "awaiting_permission",
+        },
+        {
+            "role": "assistant",
+            "content": "我先查到 2 条记录。\n\n命令已执行完成。",
+            "trace_id": "trace-1",
+            "status": "success",
+            "tool_run_text": "ok",
+        },
+    ]
+
+    context = agent_service.history_messages_for_llm(history)
+
+    assert [message["role"] for message in context] == ["user", "assistant"]
+    # 恢复轮写的是合并后的全文，不能再把前半段拼第二次
+    assert context[1]["content"] == "我先查到 2 条记录。\n\n命令已执行完成。"
+    assert context[1]["tool_run_text"] == "ok"
+    # 预算路径必须与进模型路径看到同样的消息集合
+    budget_view = [m.get("content") for m in history_messages_for_token_budget(history)]
+    assert budget_view == [m.get("content") for m in context]
+
+
+def test_superseded_assistant_snapshots_concatenate_disjoint_parts():
+    """两次审批各写一段互不包含的正文时拼接保留，不能只取最长而丢内容。"""
+    history = [
+        {"role": "user", "content": "跑两步", "trace_id": "trace-2"},
+        {"role": "assistant", "content": "第一步完成。", "trace_id": "trace-2"},
+        {"role": "assistant", "content": "第二步完成。", "trace_id": "trace-2"},
+    ]
+
+    context = agent_service.history_messages_for_llm(history)
+
+    assert len(context) == 2
+    assert context[1]["content"] == "第一步完成。\n\n第二步完成。"
+
+
+def test_trace_collapse_skips_messages_without_trace_id():
+    """缺 trace_id 的老数据一律不合并，否则会把无关轮次揉成一条。"""
+    history = [
+        {"role": "user", "content": "Q1"},
+        {"role": "assistant", "content": "A1"},
+        {"role": "user", "content": "Q2"},
+        {"role": "assistant", "content": "A2"},
+    ]
+
+    context = agent_service.history_messages_for_llm(history)
+
+    assert [message["content"] for message in context] == ["Q1", "A1", "Q2", "A2"]
+
+
+def test_trace_collapse_keeps_distinct_traces_apart():
+    """不同轮次的 assistant 各自成条，收敛只在同一 trace 内生效。"""
+    history = [
+        {"role": "user", "content": "Q1", "trace_id": "trace-a"},
+        {"role": "assistant", "content": "A1", "trace_id": "trace-a"},
+        {"role": "user", "content": "Q2", "trace_id": "trace-b"},
+        {"role": "assistant", "content": "A2", "trace_id": "trace-b"},
+    ]
+
+    context = agent_service.history_messages_for_llm(history)
+
+    assert [message["content"] for message in context] == ["Q1", "A1", "Q2", "A2"]
+
+
+def test_unfinished_turn_is_dropped_before_trace_collapse():
+    """先剔断轮再收敛：cancelled 的半截快照不能占住「该轮最后一份快照」的位置。"""
+    history = [
+        {"role": "user", "content": "问题", "trace_id": "trace-3"},
+        {"role": "assistant", "content": "完整回答", "trace_id": "trace-3", "status": "success"},
+        {"role": "assistant", "content": "半截回答", "trace_id": "trace-3", "status": "cancelled"},
+    ]
+
+    context = agent_service.history_messages_for_llm(history)
+
+    assert [message["content"] for message in context] == ["问题", "完整回答"]
+
+
 def test_chat_history_boundary_prompt_marks_only_latest_user_as_current():
     prompt = agent_service.build_chat_history_boundary_prompt("原有系统提示")
 

@@ -12,6 +12,7 @@ from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.ai.config import RuntimeModelInfo
 from app.services.ai.context_compaction_log_service import context_compaction_log_service
 from app.services.ai.memory_service import memory_service, MemoryService
+from app.services.ai.runtime.agentscope.process_timeline_snapshot import merge_text_contents
 from app.services.ai.runtime.agentscope.tool_result_context import is_trusted_tool_result_context
 from app.services.config_service import ConfigService
 from app.services.schema_chunk_format import estimate_text_tokens
@@ -38,6 +39,68 @@ def trusted_tool_run_text(message: Dict[str, Any]) -> str:
     return str(message.get("tool_run_text") or "")
 
 
+def _collapse_superseded_assistant_snapshots(
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """把同一 ``trace_id`` 的多条 assistant 快照收敛成一条，只保留最后一条的位置。
+
+    为什么会有多条：审批挂起轮（``awaiting_permission`` / ``awaiting_external_execution``）
+    先把已生成的一半回答写进会话历史，恢复轮结束再写一条完整回答；单轮连续多次审批或
+    取消重试都会继续往后追加，同一个 ``trace_id`` 于是留下多条 assistant。审计表落库
+    延后到恢复轮、只写一行，所以这是 Redis 会话历史独有的形态。
+
+    不收敛的后果：前半段正文会随「半截快照」和「完整快照」**各进一次模型上下文**，
+    模型会以为自己已经复述过那段话，既浪费 token 也干扰续写判断。
+
+    收敛规则：
+    - 只在同一 ``trace_id`` 内收敛，缺 ``trace_id`` 的老数据一律不合并（否则会把无关
+      轮次揉成一条）。
+    - 正文按先后顺序幂等拼接：后一条通常已包含前一条（恢复轮写的是合并后的全文），
+      此时直接取后一条；只有两条互不包含时才拼接，避免丢内容。
+    - 其余字段（``tool_run_text`` / ``files`` / ``agent_*``）取最后一条非空值，即最终态。
+    - 承载者仍是该轮**最后一条** assistant 的位置，保证 ``user → assistant`` 顺序不乱。
+    """
+    positions: Dict[str, List[int]] = {}
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        trace = str(message.get("trace_id") or "").strip()
+        if not trace:
+            continue
+        positions.setdefault(trace, []).append(index)
+
+    duplicated = {trace: idxs for trace, idxs in positions.items() if len(idxs) > 1}
+    if not duplicated:
+        return messages
+
+    drop: Set[int] = set()
+    merged: Dict[int, Dict[str, Any]] = {}
+    for indexes in duplicated.values():
+        snapshots = [messages[index] for index in indexes]
+        keeper_index = indexes[-1]
+        keeper = dict(messages[keeper_index])
+        merged_content = merge_text_contents(
+            [snapshot.get("content") for snapshot in snapshots]
+        )
+        if merged_content:
+            # 全部快照都没有正文时保留原值（可能是 None），不要改写成空串。
+            keeper["content"] = merged_content
+        for field in ("tool_run_text", "files", "agent_name", "agent_display_name"):
+            for snapshot in reversed(snapshots):
+                if snapshot.get(field):
+                    keeper[field] = snapshot[field]
+                    break
+        merged[keeper_index] = keeper
+        drop.update(indexes[:-1])
+
+    collapsed: List[Dict[str, Any]] = []
+    for index, message in enumerate(messages):
+        if index in drop:
+            continue
+        collapsed.append(merged.get(index, message))
+    return collapsed
+
+
 def drop_unfinished_turns(
     history: List[Dict[str, Any]],
     *,
@@ -57,8 +120,13 @@ def drop_unfinished_turns(
     两条路径上剔除的消息集合不同，压缩卡片上的丢弃/保留条数也会对不上。两处现在共用
     本函数，且统一到「进模型」的口径（预算本来就是为预测模型输入体积服务的）。
 
+    剔除完断轮后还会把同一 ``trace_id`` 的多条 assistant 快照收敛成一条，见
+    ``_collapse_superseded_assistant_snapshots``。顺序不能反：先收敛的话，``cancelled``
+    的那条会被当成「该轮最后一份快照」留下来占位，真正完整的那条反而被丢掉。
+
     ``filter_fields`` 非空时只保留这些字段（进模型路径用），为空时原样返回消息
-    （Token 预算路径需要保留 ``seq``/``status`` 等元数据）。
+    （Token 预算路径需要保留 ``seq``/``status`` 等元数据）。注意收敛必须在字段过滤
+    **之前**：进模型的字段白名单里没有 ``trace_id``，过滤后就无从判断它们同属一轮。
     """
     result: List[Dict[str, Any]] = []
     for message in history or []:
@@ -71,10 +139,14 @@ def drop_unfinished_turns(
             if result and result[-1].get("role") == "user":
                 result.pop()
             continue
-        if filter_fields:
-            result.append({key: message[key] for key in filter_fields if key in message})
-        else:
-            result.append(message)
+        result.append(message)
+
+    result = _collapse_superseded_assistant_snapshots(result)
+    if filter_fields:
+        return [
+            {key: message[key] for key in filter_fields if key in message}
+            for message in result
+        ]
     return result
 
 
