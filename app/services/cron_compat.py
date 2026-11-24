@@ -14,8 +14,10 @@ nanzi 的 cron 表达式在数据库、前端可视化生成器（``cronScenes.t
 * 数字基准不同 —— APScheduler 里 ``1`` 是周二，``7`` 直接越界报错；
 * 数字与别名可混用但不会报错 —— ``1,mon`` 在 crontab 里是周一，在 APScheduler 里
   会变成「周二 + 周一」，属于静默偏移，比报错更难发现；
-* 跨周范围 —— crontab 的 ``sun-mon`` 合法，APScheduler 会报
-  ``minimum value in a range must not be higher than the maximum``。
+* 含周日的连续范围 —— crontab 里 ``0-2`` / ``sun-tue`` 合法，但 APScheduler 内部顺序是
+  ``mon=0 … sun=6``，直接写 ``sun-tue`` 会报
+  ``minimum value in a range must not be higher than the maximum``，因此输出时需展开为逗号列表；
+  另外前后端统一要求输入范围的起点不大于终点（跨周请拆写为列表，如 ``6,0,1`` 或 ``sat,sun,mon``）。
 """
 
 from typing import Iterable, Set

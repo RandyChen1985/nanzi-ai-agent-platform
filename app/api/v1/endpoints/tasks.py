@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app.core.orm import get_db_session
 from app.core.dependencies import require_api_key
@@ -165,9 +165,12 @@ async def create_task(
     await _ensure_agent_selectable(db, user_info, task_in.agent_id)
     owner_info = await _task_owner_info(db, user_id)
     config = await _sanitize_task_config(db, owner_info, task_in.config)
-    task = await TaskCenterService.create_task(
-        db, user_id, task_in.name, task_in.agent_id, task_in.cron_expr, task_in.prompt, source="web", config=config
-    )
+    try:
+        task = await TaskCenterService.create_task(
+            db, user_id, task_in.name, task_in.agent_id, task_in.cron_expr, task_in.prompt, source="web", config=config
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return StandardResponse(data=TaskResponse.from_orm(task))
 
 @router.get("/", response_model=StandardResponse[List[TaskResponse]])
@@ -185,12 +188,22 @@ async def list_tasks(
     return StandardResponse(data=[TaskResponse.from_orm(t) for t in tasks])
 
 
+def _extract_user_id(user_info: Dict[str, Any]) -> int:
+    raw = user_info.get("user_id") if user_info.get("user_id") is not None else user_info.get("id")
+    if raw is None:
+        raise HTTPException(status_code=401, detail="无法识别当前用户")
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="用户标识格式无效") from exc
+
+
 @router.get("/report-subscriptions")
 async def list_report_subscriptions(
     user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ):
-    user_id = int(user_info["user_id"])
+    user_id = _extract_user_id(user_info)
     stmt = (
         select(PortalSavedReportSubscription, PortalSavedReport, User)
         .join(PortalSavedReport, PortalSavedReport.id == PortalSavedReportSubscription.report_id)
@@ -200,14 +213,34 @@ async def list_report_subscriptions(
         stmt = stmt.where(PortalSavedReportSubscription.user_id == user_id)
     rows = (await db.execute(stmt.order_by(PortalSavedReportSubscription.created_at.desc()))).all()
     from app.services.ai.scheduler_service import scheduler_service
+
+    # 一次性 GROUP BY + CASE WHEN 聚合：消除 N+1 查询，且兼容 PostgreSQL（PG 不支持 SUM(boolean)）。
+    counts_by_sub: Dict[int, tuple[int, int, int]] = {}
+    sub_ids = [int(subscription.id) for subscription, _, _ in rows]
+    if sub_ids:
+        agg_stmt = (
+            select(
+                PortalSavedReportRun.task_id,
+                func.count(PortalSavedReportRun.id),
+                func.sum(case((PortalSavedReportRun.status == "success", 1), else_=0)),
+                func.sum(case((PortalSavedReportRun.status == "error", 1), else_=0)),
+            )
+            .where(PortalSavedReportRun.task_id.in_(sub_ids))
+            .group_by(PortalSavedReportRun.task_id)
+        )
+        for tid, total_c, ok_c, err_c in (await db.execute(agg_stmt)).all():
+            if tid is not None:
+                counts_by_sub[int(tid)] = (
+                    int(total_c or 0),
+                    int(ok_c or 0),
+                    int(err_c or 0),
+                )
+
     items = []
     for subscription, report, owner in rows:
-        counts = (await db.execute(select(
-            func.count(PortalSavedReportRun.id),
-            func.sum(PortalSavedReportRun.status == "success"),
-            func.sum(PortalSavedReportRun.status == "error"),
-        ).where(PortalSavedReportRun.task_id == subscription.id))).one()
-        trigger_count, success_count, failure_count = (int(value or 0) for value in counts)
+        trigger_count, success_count, failure_count = counts_by_sub.get(
+            int(subscription.id), (0, 0, 0)
+        )
         items.append({
             "id": -int(subscription.id),
             "subscription_id": int(subscription.id),
@@ -234,7 +267,12 @@ async def list_report_subscriptions(
             "last_attempt_at": subscription.last_run_at.isoformat() if subscription.last_run_at else None,
             "last_run_at": subscription.last_run_at,
             "last_run_id": str(subscription.last_run_id) if subscription.last_run_id else None,
-            "next_run_at": scheduler_service.get_saved_report_subscription_next_run_time(subscription.id) or subscription.next_run_at,
+            "next_run_at": scheduler_service.get_saved_report_subscription_next_run_time(
+                subscription.id,
+                cron_expr=subscription.cron_expr,
+                status=subscription.status,
+                timezone_name=subscription.timezone,
+            ) or subscription.next_run_at,
             "created_at": subscription.created_at,
             "updated_at": subscription.updated_at,
             "report_id": report.id,
@@ -248,7 +286,9 @@ async def _owned_report_subscription(db: AsyncSession, subscription_id: int, use
     ))).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="报表订阅不存在")
-    if int(row.user_id) != int(user_info["user_id"]):
+    if user_info.get("role") == "admin":
+        return row
+    if int(row.user_id) != _extract_user_id(user_info):
         raise HTTPException(status_code=403, detail="只有订阅所有者可以执行此操作")
     return row
 
@@ -261,7 +301,12 @@ async def update_report_subscription_status(subscription_id: int, payload: Dict[
     from app.services.ai.scheduler_service import scheduler_service
     if row.status == "active":
         await scheduler_service.upsert_saved_report_subscription(row)
-        row.next_run_at = scheduler_service.get_saved_report_subscription_next_run_time(row.id)
+        row.next_run_at = scheduler_service.get_saved_report_subscription_next_run_time(
+            row.id,
+            cron_expr=row.cron_expr,
+            status=row.status,
+            timezone_name=row.timezone,
+        )
     else:
         await scheduler_service.remove_saved_report_subscription(row.id)
         row.next_run_at = None
@@ -272,9 +317,11 @@ async def update_report_subscription_status(subscription_id: int, payload: Dict[
 @router.post("/report-subscriptions/{subscription_id}/run")
 async def run_report_subscription(subscription_id: int, user_info=Depends(require_api_key), db: AsyncSession = Depends(get_db_session)):
     await _owned_report_subscription(db, subscription_id, user_info)
-    import asyncio
-    from app.services.ai.scheduler_service import _saved_report_subscription_wrapper
-    asyncio.create_task(_saved_report_subscription_wrapper(subscription_id, is_manual=True))
+    from app.services.ai.scheduler_service import _saved_report_subscription_wrapper, spawn_background_task
+    spawn_background_task(
+        _saved_report_subscription_wrapper(subscription_id, is_manual=True),
+        label=f"manual_saved_report_subscription_{subscription_id}",
+    )
     return StandardResponse(data={"message": "报表订阅已触发"})
 
 
@@ -380,7 +427,10 @@ async def update_task(
     if "config" in payload:
         payload["config"] = await _sanitize_task_config(db, owner_info, payload["config"])
 
-    updated = await TaskCenterService.update_task(db, task_id, payload)
+    try:
+        updated = await TaskCenterService.update_task(db, task_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return StandardResponse(data=TaskResponse.from_orm(updated))
 
 @router.delete("/{task_id}", response_model=StandardResponse[Dict[str, bool]])
@@ -410,7 +460,7 @@ async def run_task_immediately(
     """
     Manually trigger a task execution now.
     """
-    from app.services.ai.scheduler_service import scheduler_service
+    from app.services.ai.scheduler_service import scheduler_service, spawn_background_task
     
     task = await TaskCenterService.get_task(db, task_id)
     if not task:
@@ -418,9 +468,11 @@ async def run_task_immediately(
     
     _check_task_ownership(task, user_info)
     
-    # Trigger async
-    import asyncio
-    asyncio.create_task(scheduler_service.run_task(task_id, is_manual=True))
+    # Trigger async（保活强引用 + 异常日志）
+    spawn_background_task(
+        scheduler_service.run_task(task_id, is_manual=True),
+        label=f"manual_task_{task_id}",
+    )
     
     return StandardResponse(data={"message": "Task triggered successfully"})
 

@@ -123,7 +123,12 @@ async def create_chatbi_monitor(
     await db.flush()
     from app.services.ai.scheduler_service import scheduler_service
     await scheduler_service.upsert_saved_report_subscription(subscription)
-    subscription.next_run_at = scheduler_service.get_saved_report_subscription_next_run_time(subscription.id)
+    subscription.next_run_at = scheduler_service.get_saved_report_subscription_next_run_time(
+        subscription.id,
+        cron_expr=subscription.cron_expr,
+        status=subscription.status,
+        timezone_name=getattr(subscription, "timezone", None),
+    )
     return StandardResponse(data={
         "report_id": report_id,
         "subscription_id": subscription.id,
