@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>用户数据资产授权 · 角色已有资源只读标记（五页签统一）</title>
+<meta name="prototype-kind" content="交互原型">
+<style>
+  :root{
+    --pri:#2563eb; --pri-bg:#eff6ff; --pri-line:#93c5fd;
+    --ok:#047857; --ok-bg:#ecfdf5;
+    --warn:#b45309; --warn-bg:#fffbeb;
+    --err:#dc2626; --err-bg:#fef2f2;
+    --role:#4338ca; --role-bg:#eef2ff; --role-line:#a5b4fc; --role-cb:#818cf8;
+    --g900:#111827; --g800:#1f2937; --g700:#374151; --g600:#4b5563; --g500:#6b7280; --g400:#9ca3af; --g300:#d1d5db;
+    --bd:#e5e7eb; --bd2:#eef0f3; --bg:#f6f7f9;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:30px 20px 70px; background:var(--bg); color:var(--g900);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1340px;margin:0 auto}
+  h1{font-size:21px;margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--g500);font-size:13px;margin:0 0 24px}
+  .sub code,.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:#eef2f7;border-radius:4px;padding:1px 5px;color:#334155}
+
+  .sec{margin:0 0 10px;font-size:13px;font-weight:700;color:var(--g700);display:flex;align-items:center;gap:8px}
+  .sec .tag{font-size:10px;font-weight:700;color:var(--g500);background:#fff;border:1px solid var(--bd);border-radius:999px;padding:2px 8px}
+  .sec .tag.red{color:var(--err);border-color:#fecaca;background:var(--err-bg)}
+  .sec .tag.blue{color:var(--role);border-color:#c7d2fe;background:var(--role-bg)}
+
+  /* ── 核实结论表 ── */
+  .diag{background:#fff;border:1px solid var(--bd);border-radius:12px;overflow:hidden;margin-bottom:14px}
+  .diag table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .diag th{background:#fafbfc;text-align:left;padding:9px 14px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--g400);border-bottom:1px solid var(--bd);font-weight:700}
+  .diag td{padding:10px 14px;border-bottom:1px solid var(--bd2);vertical-align:top;color:var(--g600)}
+  .diag tr:last-child td{border-bottom:0}
+  .diag td b{color:var(--g900);font-weight:700}
+  .diag .no{color:var(--err);font-weight:700}
+  .diag .yes{color:var(--ok);font-weight:700}
+  .diag .mid{color:var(--warn);font-weight:700}
+  .diag code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:#f1f5f9;border-radius:4px;padding:1px 4px;color:#334155}
+
+  .alert{border-radius:10px;padding:11px 14px;font-size:12.5px;line-height:1.65;margin-bottom:24px;display:flex;gap:9px;align-items:flex-start}
+  .alert.err{background:var(--err-bg);border:1px solid #fecaca;color:#7f1d1d}
+  .alert.warn{background:var(--warn-bg);border:1px solid #fde68a;color:#78350f}
+  .alert b{font-weight:800}
+  .alert .ic{flex:0 0 auto;font-size:14px;line-height:1.3}
+
+  /* ── 工具栏 ── */
+  .toolbar{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:12px;font-size:12px;color:var(--g500)}
+  .toolbar .grp{display:flex;gap:3px;align-items:center;background:#fff;border:1px solid var(--bd);border-radius:9px;padding:3px}
+  .toolbar .grp button{border:0;background:transparent;font:inherit;font-size:12px;font-weight:600;color:var(--g500);padding:5px 11px;border-radius:7px;cursor:pointer;font-family:inherit}
+  .toolbar .grp button.on{background:var(--g900);color:#fff}
+  .toolbar .grp button:disabled{opacity:.4;cursor:not-allowed}
+  .toolbar .lab{font-weight:700;color:var(--g700)}
+  .toolbar .note{color:var(--g400)}
+
+  /* ── 舞台：模拟「编辑用户」弹窗 ── */
+  .stage{background:#fff;border:1px solid var(--bd);border-radius:14px;padding:16px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .modal{max-width:1180px;margin:0 auto;border:1px solid var(--bd);border-radius:12px;background:#fff;overflow:hidden}
+  .modal-hd{padding:14px 22px 12px;font-size:19px;font-weight:800;letter-spacing:-.01em}
+  .ptabs{display:flex;gap:26px;padding:0 22px;border-bottom:1px solid var(--bd);font-size:14px;font-weight:700;color:var(--g500)}
+  .ptabs .it{padding:9px 2px;position:relative;cursor:default}
+  .ptabs .it.on{color:var(--pri)}
+  .ptabs .it.on:after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--pri);border-radius:2px}
+  .ptabs .it.dim{color:var(--g400)}
+  .modal-bd{padding:18px 22px 16px}
+
+  .subtabs{display:flex;gap:22px;border-bottom:1px solid var(--bd);font-size:13.5px;font-weight:700;color:var(--g500);margin-bottom:14px}
+  .subtabs .it{padding:7px 2px;position:relative;cursor:default}
+  .subtabs .it.on{color:var(--pri)}
+  .subtabs .it.on:after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--pri);border-radius:2px}
+
+  /* ── 资源页签行 ── */
+  .restabs{display:flex;align-items:flex-end;gap:2px;border-bottom:1px solid var(--bd);margin-bottom:12px;overflow-x:auto;padding-bottom:0}
+  .restab{
+    display:flex;align-items:center;gap:7px;padding:8px 12px 9px;border:0;border-bottom:2px solid transparent;background:transparent;
+    font:inherit;font-size:12.5px;font-weight:800;color:var(--g500);cursor:pointer;white-space:nowrap;font-family:inherit;
+  }
+  .restab .ic{font-size:13px;line-height:1}
+  .restab.on{border-bottom-color:currentColor}
+  .restab[data-t="agents"].on{color:#2563eb}
+  .restab[data-t="departments"].on{color:#059669}
+  .restab[data-t="metadata"].on{color:#ea580c}
+  .restab[data-t="apis"].on{color:#7c3aed}
+  .restab[data-t="models"].on{color:#4f46e5}
+  .restab[data-t="forbidden"].on{color:#dc2626}
+  .restab.dim{color:var(--g400);cursor:default}
+  .cnt{
+    font-size:10.5px;font-weight:800;line-height:1;min-width:20px;text-align:center;padding:3px 6px;border-radius:999px;
+    background:#f1f5f9;color:var(--g600);display:inline-flex;align-items:center;gap:3px;
+  }
+  .cnt .split{font-weight:700;color:var(--role);background:var(--role-bg);border-radius:999px;padding:1px 4px;font-size:9.5px}
+
+  /* ── 说明条 ── */
+  .banner{display:flex;gap:9px;align-items:flex-start;border-radius:9px;padding:10px 12px;font-size:11.5px;line-height:1.6;margin-bottom:12px}
+  .banner.blue{background:var(--pri-bg);border:1px solid #dbeafe;color:#1e40af}
+  .banner.role{background:var(--role-bg);border:1px solid #e0e7ff;color:#3730a3}
+  .banner.err{background:var(--err-bg);border:1px solid #fecaca;color:#7f1d1d}
+  .banner b{font-weight:800}
+  .banner .t{font-weight:800;display:block;margin-bottom:1px}
+  .banner .ic{flex:0 0 auto;font-size:13px;line-height:1.4}
+  .banner .row+.row{margin-top:6px;padding-top:6px;border-top:1px dashed rgba(67,56,202,.25)}
+
+  /* ── 来源汇总（方案 B）── */
+  .srcbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#fff;border:1px solid var(--bd);border-radius:9px;padding:8px 11px;font-size:11.5px;color:var(--g500);margin-bottom:10px}
+  .srcbar b{color:var(--g900);font-weight:800}
+  .chip{border:1px solid var(--bd);background:#fff;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700;color:var(--g500);cursor:pointer;font-family:inherit}
+  .chip.on{background:var(--g900);border-color:var(--g900);color:#fff}
+  .chip .n{opacity:.7;font-weight:700}
+
+  /* ── 卡片网格 ── */
+  .panel{background:#f9fafb;border:1px solid var(--bd);border-radius:10px;padding:12px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{
+    display:flex;align-items:flex-start;gap:9px;background:#fff;border:1px solid var(--bd);border-radius:9px;
+    padding:10px 11px;cursor:pointer;transition:.12s;position:relative;
+  }
+  .card:hover{background:#fcfcfd;border-color:var(--g300)}
+  .card.selected{border-color:var(--pri-line);background:#fbfdff}
+  .card.muted{opacity:.72;background:#fcfcfc;cursor:not-allowed;border-color:var(--bd)}
+  .card.muted:hover{background:#fcfcfc;border-color:var(--bd)}
+  /* 继承态：灰勾 + 淡底 + 左侧色条 */
+  .card.inherited{background:#f8fafc;border-color:#e2e8f0;cursor:not-allowed;padding-left:14px}
+  .card.inherited:hover{background:#f8fafc;border-color:#e2e8f0}
+  .card.inherited:before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:var(--role-line)}
+  /* 方案 B：只弱标记 —— 灰勾 + 不可点，卡片本体保持原样 */
+  .card.weak{background:#fff;border-color:var(--bd);cursor:not-allowed}
+  .card.weak:hover{background:#fff;border-color:var(--bd)}
+  .card.weak .cb{cursor:not-allowed}
+  .card.weak .cb:checked{background:var(--role-cb);border-color:var(--role-cb)}
+  .card.ghost{border-style:dashed;background:#fbfbfd}
+
+  .cb{
+    appearance:none;-webkit-appearance:none;width:16px;height:16px;flex:0 0 auto;margin:2px 0 0;border-radius:4px;
+    border:1.5px solid var(--g300);background:#fff;position:relative;cursor:pointer;transition:.12s;
+  }
+  .cb:checked{background:var(--pri);border-color:var(--pri)}
+  .cb:checked:after{content:"";position:absolute;left:4.5px;top:1px;width:5px;height:9px;border:2px solid #fff;border-top:0;border-left:0;transform:rotate(42deg)}
+  .card.inherited .cb{cursor:not-allowed}
+  .card.inherited .cb:checked{background:var(--role-cb);border-color:var(--role-cb)}
+  .card.muted .cb{cursor:not-allowed;background:#f3f4f6}
+  .card.muted .cb:checked:after{opacity:.45}
+
+  .cmain{min-width:0;flex:1}
+  .cline{display:flex;align-items:center;gap:6px;min-width:0}
+  .cname{font-size:13px;font-weight:800;color:var(--g900);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cid{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--g400);margin:1px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .badge{flex:0 0 auto;font-size:9.5px;font-weight:800;line-height:1;padding:3px 6px;border-radius:999px;white-space:nowrap}
+  .badge.role{background:var(--role-bg);color:var(--role);display:inline-flex;align-items:center;gap:3px}
+  .badge.all{background:#f1f5f9;color:#475569;display:inline-flex;align-items:center;gap:3px;border:1px solid #e2e8f0}
+  .badge.team{background:#f5f3ff;color:#6d28d9}
+  .badge.private{background:var(--warn-bg);color:var(--warn)}
+  .badge.missing{background:var(--warn-bg);color:var(--warn)}
+  .badge.off{background:#f1f5f9;color:var(--g500)}
+  .badge.method{font-family:ui-monospace,Menlo,monospace;font-weight:800;font-size:9px}
+  .badge.GET{background:var(--ok-bg);color:var(--ok)}
+  .badge.POST{background:var(--pri-bg);color:#1d4ed8}
+  .badge.PUT{background:#fef3c7;color:#92400e}
+
+  /* ── 底部统计 ── */
+  .foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;font-size:11.5px;color:var(--g500);flex-wrap:wrap}
+  .foot b{color:var(--pri);font-weight:800}
+  .foot .rolepart{color:var(--role);font-weight:800}
+  .foot .act{font-weight:800;color:var(--pri);background:transparent;border:0;font-family:inherit;font-size:11.5px;cursor:pointer;padding:4px 8px;border-radius:6px}
+  .foot .act:hover{background:var(--pri-bg)}
+
+  /* ── 来源明细折叠 ── */
+  .srcbox{border:1px solid #e0e7ff;background:#fbfbff;border-radius:9px;margin-top:10px;overflow:hidden}
+  .srcbox summary{cursor:pointer;padding:9px 12px;font-size:11.5px;font-weight:800;color:var(--role);list-style:none;display:flex;align-items:center;gap:6px}
+  .srcbox summary::-webkit-details-marker{display:none}
+  .srcbox summary .arw{transition:.15s;display:inline-block}
+  .srcbox[open] summary .arw{transform:rotate(90deg)}
+  .srcbox .in{padding:0 12px 11px;font-size:11.5px;color:var(--g600);line-height:1.7}
+  .srcbox .line{display:flex;gap:8px;align-items:baseline;padding:3px 0;border-top:1px dashed #e5e7f5}
+  .srcbox .line:first-child{border-top:0}
+  .srcbox .who{flex:0 0 auto;font-weight:800;color:var(--g800);min-width:132px}
+  .srcbox .items{min-width:0}
+  .srcbox .tip{margin-top:8px;padding-top:8px;border-top:1px solid #e5e7f5;color:var(--warn);font-size:11px}
+
+  /* ── 下方说明区 ── */
+  .notes{margin-top:30px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:980px){.notes{grid-template-columns:1fr}}
+  .note{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:14px 16px}
+  .note h3{margin:0 0 8px;font-size:12.5px;font-weight:800;color:var(--g800);display:flex;align-items:center;gap:7px}
+  .note h3 .k{font-size:10px;font-weight:800;background:#f1f5f9;color:var(--g500);border-radius:5px;padding:2px 6px;letter-spacing:.04em}
+  .note ol,.note ul{margin:0;padding-left:18px;font-size:12px;color:var(--g600);line-height:1.8}
+  .note li b{color:var(--g900)}
+  .note code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f1f5f9;border-radius:4px;padding:1px 4px;color:#334155}
+  .note .why{color:var(--g500);font-size:11.5px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--bd)}
+  .note.full{grid-column:1/-1}
+
+  .toast{
+    position:fixed;left:50%;bottom:30px;transform:translate(-50%,16px);background:#111827;color:#fff;
+    font-size:12.5px;padding:9px 15px;border-radius:10px;opacity:0;pointer-events:none;transition:.22s;z-index:99;
+    box-shadow:0 8px 24px rgba(16,24,40,.18);max-width:460px;text-align:center;line-height:1.5;
+  }
+  .toast.on{opacity:1;transform:translate(-50%,0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>编辑用户 · 权限配置 · 数据资产 —— 让「角色已有」的资源显示出来</h1>
+  <p class="sub">
+    核实结论：<b>5 个页签（智能体 / 知识库 / 数据集 / 外部 API / 可用模型）是同一个机制问题</b>，与「界面访问」「禁用资源」已有的继承展示不同步。
+    下面的原型把 5 个页签统一成「勾选 + 不可选 + 角色/全员已有徽标」，并做了「现状 / 建议」对照开关。
+  </p>
+  <p class="sub" style="margin-top:-14px">
+    <b>定稿（2026-11-24）：</b>采用<b>方案 B</b>（卡片保持原样，顶部汇总 + 「仅角色已有」筛选）；
+    徽标文案统一用笼统的<b>「角色/全员已有」</b>——前端只拿得到「并集 − 直配」，分不清某一项是业务角色
+    给的还是全员基线给的，标错来源比不标更难排查。本轮<b>不改后端</b>；需要精确到角色名时再补
+    <code>inherited_sources[]</code>。方案 A 保留在此仅作对照。
+    实现在此之上多两处口径（原型未画）：① 角色授予的资源若已下线/被删除，计数含它而列表没有卡片，
+    真实页面在汇总条用「另有 N 项未在列表展示」提示（本原型用虚线条目表达同一件事）；
+    ② 「本页全选」只作用于当前筛选可见的可直配项，候选为空时不动作（否则一次点击会清掉看不见的直配）。
+  </p>
+
+  <!-- ══════════ 核实结论 ══════════ -->
+  <div class="sec">核实结论 <span class="tag">代码排查 · 未改实现</span></div>
+  <div class="diag">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:150px">页签</th>
+          <th style="width:190px">后端返回</th>
+          <th style="width:230px">当前前端行为</th>
+          <th>结论</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>智能体</b> · <code>agent</code></td>
+          <td rowspan="5">
+            都早已具备两级数据：<br>
+            <code>permissions</code>＝用户 ∪ 角色 ∪ 全员基线<br>
+            <code>direct_permissions</code>＝仅用户直配<br>
+            <span class="yes">差集即「角色已有」，前端就能算</span>
+          </td>
+          <td>只回显 <code>direct_permissions</code></td>
+          <td class="no">角色已给的智能体在页面上完全不出现，看着像「什么都没配」</td>
+        </tr>
+        <tr>
+          <td><b>知识库</b> · <code>dataset</code></td>
+          <td>同上</td>
+          <td class="no">同问题；且失联 / 私有库的既有徽标无法与「角色已有」区分</td>
+        </tr>
+        <tr>
+          <td><b>数据集</b> · <code>metadata</code></td>
+          <td>同上</td>
+          <td class="no">同问题；这一类的继承来源里还会混入「全员基线」（<code>subject_type='all'</code>），徽标不能只写「角色」</td>
+        </tr>
+        <tr>
+          <td><b>外部 API</b> · <code>api</code></td>
+          <td>同上（两端都做了 <code>normalize_api_permission_ids</code>，可比）</td>
+          <td class="no">同问题；角色授权指向已下线的 API 时，页面上没有任何痕迹</td>
+        </tr>
+        <tr>
+          <td><b>可用模型</b> · <code>model</code></td>
+          <td>同上（白名单：空 = 不限制）</td>
+          <td class="mid">最危险：角色把白名单收窄成 2 个模型，用户页仍显示「未配置」，看起来像不限制</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="alert err">
+    <span class="ic">⚠️</span>
+    <div>
+      <b>这不只是「看着别扭」，还有一个真实的数据风险。</b>
+      <code>update_user_permissions</code> 只对 <code>forbidden_tool / forbidden_command / forbidden_skill</code> 剔除了「角色派生项」；
+      <b>agents / datasets / metadata / apis / models 这五类并不剔除</b>。
+      所以管理员看到「明明是空的」就手动再勾一遍，会把角色继承项写成<b>用户直配行</b>：
+      之后在角色页取消该授权，这个用户仍然保留权限，而且页面上再也解释不清是谁给的。
+      <br>换言之：把继承项显示出来（勾上 + 禁用 + 徽标）既解决「看不见」，也顺手堵住「重复勾选导致固化」。
+    </div>
+  </div>
+
+  <!-- ══════════ 原型 ══════════ -->
+  <div class="sec">交互原型 <span class="tag blue">可点：切页签 / 勾选 / 切模式 / 切方案</span></div>
+
+  <div class="toolbar">
+    <span class="lab">视图</span>
+    <div class="grp" id="modes">
+      <button data-mode="before">现状（当前实现）</button>
+      <button data-mode="after" class="on">建议（标记角色已有）</button>
+    </div>
+    <span class="lab">方案</span>
+    <div class="grp" id="plans">
+      <button data-plan="A">A · 卡片内灰勾 + 徽标（未采用）</button>
+      <button data-plan="B" class="on">B · 顶部汇总 + 筛选（定稿）</button>
+    </div>
+    <span class="note" id="planNote">—</span>
+  </div>
+
+  <div class="stage">
+    <div class="modal">
+      <div class="modal-hd">编辑用户</div>
+      <div class="ptabs">
+        <div class="it dim">基本信息</div>
+        <div class="it on">权限配置</div>
+        <div class="it dim">额度</div>
+      </div>
+      <div class="modal-bd">
+        <div class="subtabs">
+          <div class="it on">数据资产</div>
+          <div class="it dim">界面访问</div>
+        </div>
+
+        <div class="restabs" id="restabs"></div>
+        <div id="banners"></div>
+        <div id="srcbar"></div>
+
+        <div class="panel">
+          <div class="grid" id="grid"></div>
+        </div>
+
+        <div id="srcboxWrap"></div>
+
+        <div class="foot">
+          <span id="footLeft">—</span>
+          <button class="act" id="selectAll">本页全选</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 说明 ══════════ -->
+  <div class="notes">
+    <div class="note">
+      <h3>计数口径 <span class="k">页签徽标</span></h3>
+      <ul>
+        <li>徽标 = <b>直配 + 角色已有</b>，也就是「这个用户实际能用几项」，与页签语义一致。</li>
+        <li>右上角小号数字 = 其中角色授予的条数；悬停显示拆分（如「直配 1 · 角色 3」）。</li>
+        <li><b>禁用资源</b>页签口径不变——它是黑名单计数，已有「来自角色（只读）」专块，不要混进这套数字。</li>
+      </ul>
+      <div class="why">原因：现在徽标只算直配，角色给了一堆资源的用户，在「智能体」页签上显示 0，管理员会以为他没权限。</div>
+    </div>
+
+    <div class="note">
+      <h3>「本页全选」必须跳过继承项 <span class="k">防固化</span></h3>
+      <ul>
+        <li><code>toggleSelectAll</code> 现在把 <code>selectableResources</code> 全塞进直配——加上继承项后，全选会把它们写成用户直配。</li>
+        <li>按钮文案改为<b>「本页全选（不含角色已有）」</b>；「全部取消」只清直配。</li>
+        <li>同理，提交 payload 仍然只由直配构建（<code>buildUserPermissionPayload</code> 已如此）。</li>
+      </ul>
+      <div class="why">后端只在命令 / 工具 / 技能上做了角色派生剔除，资产五类没有兜底，前端这一关必须自己守住。</div>
+    </div>
+
+    <div class="note">
+      <h3>可用模型页要单独说清楚 <span class="k">方向相反</span></h3>
+      <ul>
+        <li>模型是<b>白名单</b>：未配置 = 不限制；一旦有值，只能在这些模型里切换。</li>
+        <li>角色已选的模型会并入白名单——用户页<b>取消勾选也不会生效</b>（后端按并集算），所以必须禁用、并给出「去角色页调整」的出口。</li>
+        <li>页签说明补一句：本页显示的是「直配 + 角色」的合并白名单。</li>
+      </ul>
+      <div class="why">这是唯一一个「角色授予会收紧而不是放宽」的资源类型，文案照抄其它页签会误导。</div>
+    </div>
+
+    <div class="note">
+      <h3>徽标要区分来源 <span class="k">角色 / 全员基线</span></h3>
+      <ul>
+        <li>数据集页的继承项里会混入 <code>subject_type='all'</code> 的全员基线授权，标成「角色已有」是错的。</li>
+        <li>低成本做法：徽标写<b>「角色 / 全员已有」</b>，tooltip 说明「由角色或全员基线授予，只读」。</li>
+        <li>要精确到「哪个角色」，需要后端新增按来源拆分的字段（如 <code>inherited_sources[]</code>），前端单独做不了。</li>
+      </ul>
+      <div class="why">本轮若不想动后端，先用笼统徽标；来源明细那块在原型里已画出效果，标了「需后端补字段」。</div>
+    </div>
+
+    <div class="note">
+      <h3>旧后端降级 <span class="k">usingEffectiveFallback</span></h3>
+      <ul>
+        <li>响应里没有 <code>direct_permissions</code> 时，整块按并集处理，此时<b>无法区分继承</b>。</li>
+        <li>这种形势下必须<b>关闭</b>徽标与灰勾（否则会把用户的直配项全标成"角色给的"），回落到当前行为。</li>
+        <li>已有 <code>resolveUserPermissionEditState().usingEffectiveFallback</code> 可直接用。</li>
+      </ul>
+      <div class="why">宁可不显示，也不能标错来源——标错比不标更难排查。</div>
+    </div>
+
+    <div class="note">
+      <h3>列表过滤不能把继承项藏掉 <span class="k">失联 / 私有 / 搜索</span></h3>
+      <ul>
+        <li>「隐藏失联知识库」默认开、模型搜索会过滤、私有库被禁用——<b>继承项也不能被这些过滤隐藏</b>，否则用户有权限却查不到来源。</li>
+        <li>优先级：私有库（永不参与授权）＞ 失联（保留但提示）＞ 角色已有（只读）。</li>
+        <li>角色授权指向的资源已被删除/下线时，渲染一条虚线「列表外」提示项，别静默吞掉。</li>
+      </ul>
+      <div class="why">原型里「外部 API」页放了一个已下线的例子，可以看到虚线卡片的处理方式。</div>
+    </div>
+
+    <div class="note full">
+      <h3>改哪个文件 <span class="k">实现时（本轮不动代码）</span></h3>
+      <ol>
+        <li><code>frontend/src/utils/permissionLists.ts</code>：给 <code>UserPermissionEditState</code> 增加 <code>inheritedAssets</code>（5 类差集，复用现成的 <code>diffInheritedIds</code>），新增 <code>isInheritedAsset</code> 判定。</li>
+        <li><code>frontend/src/views/Users.vue</code>：新增 <code>inheritedAssets</code> ref；卡片渲染三态（直配 / 继承 / 普通）；<code>resourceTabCount</code> 两段式；<code>toggleSelectAll</code> 与 <code>selectableResources</code> 排除继承项；模型页文案。</li>
+        <li><code>tests/frontend/</code>：新增契约测试（继承项不进 payload、全选跳过继承、usingEffectiveFallback 时关闭徽标）。</li>
+        <li>后端<b>不需要改</b>——两级数据早就在响应里了；只有「来源精确到角色名」才需要新字段。</li>
+      </ol>
+      <div class="why">和「界面访问」的 <code>inheritedMenus / inheritedElements</code>、「禁用资源」的 <code>inheritedForbidden</code> 走同一套口径，三处展示逻辑就能对齐。</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ── 假数据：一个真实感的用户（林清和 / 数据分析师 + 平台运营）────────────────
+  // direct = 用户直配（可改、会进 payload）；src = 角色 / 全员基线授予（只读）
+  const DATA = {
+    agents: {
+      icon: "🤖", label: "智能体",
+      items: [
+        { id: "74c4b19f-650a-4cc88-b32a-6d26cc7ddb6c", name: "DS-Token 平台管理助手", direct: true },
+        { id: "sys-agent-chat", name: "主助手(Main)", src: { kind: "role", who: "数据分析师" } },
+        { id: "sys-agent-chatbi", name: "数据智能助手", src: { kind: "role", who: "数据分析师" } },
+        { id: "f010c2fc-3a46-4df9-8647-13a22f9c42b8", name: "FAQ 助手", src: { kind: "role", who: "平台运营" } },
+        { id: "sys-agent-kb", name: "知识库助手" },
+        { id: "f06bb022-fe6a-4e35-af60-f03ad7c7815e", name: "浏览器自动化专家" }
+      ]
+    },
+    datasets: {
+      icon: "📚", label: "知识库",
+      items: [
+        { id: "kb_cs_playbook", name: "客服知识库", direct: true, badges: [{ t: "授权可见", c: "team" }] },
+        { id: "kb_product_manual", name: "产品手册库", direct: true, badges: [{ t: "授权可见", c: "team" }] },
+        { id: "kb_rd_spec", name: "研发规范知识库", src: { kind: "role", who: "数据分析师" }, badges: [{ t: "TEAM 级", c: "team" }] },
+        { id: "kb_contract_tpl", name: "合同模板库", src: { kind: "role", who: "平台运营" } },
+        { id: "kb_market_research", name: "市场调研库" },
+        { id: "kb_draft_mine", name: "个人草稿库", muted: { why: "个人私有知识库不参与授权：只有创建人自己可见" }, badges: [{ t: "个人私有", c: "private" }] },
+        { id: "kb_aftersale_faq", name: "售后 FAQ 库", badges: [{ t: "失联", c: "missing" }], muted: { why: "该知识库已在 RAGFlow 失联，不可分配权限" } }
+      ]
+    },
+    metadata: {
+      icon: "💾", label: "数据集",
+      items: [
+        { id: "ds_sales_wide", name: "销售明细宽表", direct: true },
+        { id: "ds_customer_master", name: "客户主数据表", src: { kind: "role", who: "数据分析师" } },
+        { id: "ds_order_fact", name: "订单事实表", src: { kind: "all" } },
+        { id: "ds_inventory_snap", name: "库存快照" },
+        { id: "ds_channel_daily", name: "渠道投放日报" }
+      ]
+    },
+    apis: {
+      icon: "🔗", label: "外部 API",
+      items: [
+        { id: "api_weather", name: "天气查询 API", direct: true, method: "GET" },
+        { id: "api_company_verify", name: "企业工商核验 API", src: { kind: "role", who: "平台运营" }, method: "POST" },
+        { id: "api_fx_rate", name: "汇率换算 API", method: "GET" },
+        { id: "api_sms_send", name: "短信发送 API", method: "POST" },
+        { id: "api_invoice_check", name: "发票验真 API", method: "PUT" },
+        // 列表里拿不到、但角色仍授权：不能静默吞掉
+        { id: "api_legacy_crm", name: "旧版 CRM 同步 API", src: { kind: "role", who: "平台运营" }, method: "POST", ghost: true,
+          badges: [{ t: "已下线", c: "off" }] }
+      ]
+    },
+    models: {
+      icon: "🧠", label: "可用模型",
+      items: [
+        { id: "deepseek-chat", name: "deepseek-chat" },
+        { id: "deepseek-reasoner", name: "deepseek-reasoner", src: { kind: "role", who: "数据分析师" } },
+        { id: "qwen2.5-72b-instruct", name: "qwen2.5-72b-instruct", src: { kind: "role", who: "数据分析师" } },
+        { id: "gpt-4.1", name: "gpt-4.1", badges: [{ t: "已停用", c: "off" }] },
+        { id: "claude-sonnet-4", name: "claude-sonnet-4" }
+      ]
+    }
+  };
+
+  const TABS = [
+    { k: "agents", t: "agents" },
+    { k: "datasets", t: "departments" },
+    { k: "metadata", t: "metadata" },
+    { k: "apis", t: "apis" },
+    { k: "models", t: "models" },
+    { k: "forbidden", t: "forbidden" }
+  ];
+
+  const state = {
+    mode: "after",       // before = 当前实现 / after = 建议
+    plan: "B",           // B（定稿）顶部汇总 + 筛选 / A 卡片内灰勾 + 徽标（未采用，保留对照）
+    tab: "agents",
+    filter: "all",       // 仅方案 B 用：all | direct | role
+    // 直配勾选（继承项永不进这里，正是实现要守住的口径）
+    direct: {}
+  };
+  Object.keys(DATA).forEach((k) => {
+    state.direct[k] = DATA[k].items.filter((i) => i.direct).map((i) => i.id);
+  });
+
+  const $ = (id) => document.getElementById(id);
+  const toastEl = $("toast");
+  let toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("on"), 2400);
+  }
+
+  const isInherited = (it) => Boolean(it.src);
+  const isMuted = (it) => Boolean(it.muted);
+  const isGhost = (it) => Boolean(it.ghost);
+
+  function counts(key) {
+    const items = DATA[key].items;
+    const direct = items.filter((i) => !isInherited(i) && state.direct[key].includes(i.id)).length;
+    const inherited = items.filter(isInherited).length;
+    const roleCount = items.filter((i) => isInherited(i) && i.src.kind === "role").length;
+    const allCount = items.filter((i) => isInherited(i) && i.src.kind === "all").length;
+    return { direct, inherited, roleCount, allCount, total: items.length };
+  }
+
+  // ── 页签 ────────────────────────────────────────────────────────────────
+  function renderTabs() {
+    const html = TABS.map((t) => {
+      const isForbidden = t.k === "forbidden";
+      const on = state.tab === t.k;
+      if (isForbidden) {
+        return '<button class="restab dim" data-t="' + t.t + '"><span class="ic">🚫</span>禁用资源'
+          + '<span class="cnt">1</span></button>';
+      }
+      const c = counts(t.k);
+      const shown = state.mode === "after" ? c.direct + c.inherited : c.direct;
+      let badge = '<span class="cnt" title="' + (state.mode === "after"
+        ? "直配 " + c.direct + " · 角色授予 " + c.inherited
+        : "仅统计用户直配 " + c.direct + " 项") + '">' + shown;
+      if (state.mode === "after" && c.inherited > 0) {
+        badge += '<span class="split">' + c.inherited + '</span>';
+      }
+      badge += "</span>";
+      return '<button class="restab' + (on ? " on" : "") + '" data-t="' + t.t + '" data-k="' + t.k + '">'
+        + '<span class="ic">' + DATA[t.k].icon + "</span>" + DATA[t.k].label + badge + "</button>";
+    }).join("");
+    $("restabs").innerHTML = html;
+    Array.prototype.forEach.call($("restabs").querySelectorAll("[data-k]"), (btn) => {
+      btn.addEventListener("click", () => {
+        state.tab = btn.getAttribute("data-k");
+        state.filter = "all";
+        render();
+      });
+    });
+  }
+
+  // ── 说明条 ──────────────────────────────────────────────────────────────
+  function renderBanners() {
+    const key = state.tab;
+    const c = counts(key);
+    const parts = [];
+
+    if (state.mode === "before") {
+      parts.push('<div class="banner err"><span class="ic">🔴</span><div>'
+        + "<span class='t'>当前实现：角色授予的 " + c.inherited + " 项在这一页完全看不到</span>"
+        + "管理员会以为「这个用户没被授权」，于是再手动勾一遍 —— 而这五类资产后端<b>不剔除</b>角色派生项，"
+        + "勾完就写成了用户直配：角色页之后取消授权，该用户仍然保留。"
+        + "</div></div>");
+    }
+
+    if (key === "agents") {
+      parts.push('<div class="banner blue"><span class="ic">ⓘ</span><div>'
+        + "<span class='t'>自动授权说明</span>"
+        + "个人创建的智能体自动拥有权限，此处仅配置“系统级”公共智能体。"
+        + (state.mode === "after"
+          ? '<div class="row">🔒 的<b>「角色/全员已有」</b>项由所属角色或全员基线授予，只读；要调整请到「角色管理」改角色权限。</div>'
+          : "")
+        + "</div></div>");
+    }
+    if (key === "models") {
+      parts.push('<div class="banner ' + (state.mode === "after" ? "role" : "blue") + '"><span class="ic">ⓘ</span><div>'
+        + "<span class='t'>白名单说明</span>"
+        + "未配置 = 不限制；配置后只能在勾选的模型（与其角色白名单取并集）中手动切换。"
+        + (state.mode === "after" && c.inherited > 0
+          ? '<div class="row">本页合并白名单共 <b>' + (c.direct + c.inherited) + "</b> 个模型，其中 <b>"
+            + c.inherited + "</b> 个由角色授予 —— 在用户页<b>取消勾选不会生效</b>（后端按并集计算），"
+            + "要收窄或放宽请到「角色管理」调整。</div>"
+          : "")
+        + "</div></div>");
+    }
+    if (key === "datasets" || key === "metadata") {
+      // 这类资源会出现「全员基线」来源，专门提示一次
+      if (state.mode === "after" && c.allCount > 0) {
+        parts.push('<div class="banner role"><span class="ic">👥</span><div>'
+          + "<span class='t'>有 " + c.allCount + " 项来自「全员基线」</span>"
+          + "全员基线授权（<b>subject_type = all</b>）对每个成员都生效，同样只能在数据集授权页调整，用户页只读。"
+          + "</div></div>");
+      }
+    }
+    $("banners").innerHTML = parts.join("");
+  }
+
+  // ── 方案 B 的来源汇总 + 筛选 ────────────────────────────────────────────
+  function renderSrcbar() {
+    if (state.mode !== "after" || state.plan !== "B") {
+      $("srcbar").innerHTML = "";
+      return;
+    }
+    const c = counts(state.tab);
+    const total = state.tab === "models"
+      ? (c.direct + c.inherited)
+      : (c.direct + c.inherited);
+    $("srcbar").innerHTML =
+      '<div class="srcbar">'
+      + '<span>本页对这个用户生效 <b>' + total + "</b> 项：直配 <b>" + c.direct + "</b> · 角色/全员已有 <b>" + c.inherited + "</b></span>"
+      + '<span style="margin-left:auto;display:flex;gap:5px">'
+      + '<button class="chip' + (state.filter === "all" ? " on" : "") + '" data-f="all">全部 <span class="n">' + c.total + "</span></button>"
+      + '<button class="chip' + (state.filter === "direct" ? " on" : "") + '" data-f="direct">仅直配 <span class="n">' + c.direct + "</span></button>"
+      + '<button class="chip' + (state.filter === "role" ? " on" : "") + '" data-f="role">仅角色已有 <span class="n">' + c.inherited + "</span></button>"
+      + "</span></div>";
+    Array.prototype.forEach.call($("srcbar").querySelectorAll("[data-f]"), (b) => {
+      b.addEventListener("click", () => { state.filter = b.getAttribute("data-f"); render(); });
+    });
+  }
+
+  // ── 卡片 ────────────────────────────────────────────────────────────────
+  function badgeHtml(b) {
+    const map = { team: "", private: "", missing: "", off: "" };
+    return '<span class="badge ' + (map[b.c] !== undefined ? b.c : "off") + '">' + b.t + "</span>";
+  }
+
+  function cardHtml(key, it) {
+    const inherited = isInherited(it) && state.mode === "after";
+    // 方案 B 只做「弱标记」：不加淡底与左侧色条，仅灰勾禁用 + 小徽标（识别靠顶部筛选条）
+    const weak = inherited && state.plan === "B";
+    const muted = isMuted(it);
+    const ghost = isGhost(it);
+    const checked = inherited || (!muted && state.direct[key].includes(it.id));
+
+    const cls = ["card"];
+    if (inherited && !weak) cls.push("inherited");
+    else if (muted) cls.push("muted");
+    else if (checked) cls.push("selected");
+    if (weak) cls.push("weak");
+    if (ghost) cls.push("ghost");
+
+    // 徽标：方案 A 用完整徽标说明来源；方案 B 用弱化小徽标
+    let badges = "";
+    if (inherited && !weak) {
+      const label = it.src.kind === "role" ? "🔒 角色/全员已有" : "👥 角色/全员已有";
+      const cls2 = it.src.kind === "role" ? "role" : "all";
+      const tip = it.src.kind === "role"
+        ? "由角色「" + it.src.who + "」授予 · 只读（本页保存不会改动它）"
+        : "由全员基线授权授予 · 只读（本页保存不会改动它）";
+      badges += '<span class="badge ' + cls2 + '" title="' + tip + '">' + label + "</span>";
+    }
+    if (it.method) {
+      badges += '<span class="badge method ' + it.method + '">' + it.method + "</span>";
+    }
+    (it.badges || []).forEach((b) => { badges += badgeHtml(b); });
+
+    const title = inherited
+      ? (it.src.kind === "role"
+        ? "由角色「" + it.src.who + "」授予，只能到「角色管理」调整；本页保存不会改动它"
+        : "由全员基线授权授予，只能到数据集授权页调整；本页保存不会改动它")
+      : (muted ? it.muted.why : (ghost ? "该资源已下线，但角色的授权记录仍然存在" : ""));
+
+    return '<label class="' + cls.join(" ") + '" data-id="' + it.id + '"'
+      + (title ? ' title="' + title.replace(/"/g, "&quot;") + '"' : "")
+      + ' data-kind="' + (inherited ? "inherited" : (muted ? "muted" : "normal")) + '">'
+      + '<input class="cb" type="checkbox"' + (checked ? " checked" : "")
+      + (inherited || muted ? " disabled" : "") + ">"
+      + '<div class="cmain"><div class="cline"><p class="cname">' + it.name + "</p>"
+      + (weak
+          // 定稿：文案不区分业务角色 / 全员基线（前端拿不到来源），与实现一致
+          ? '<span class="badge role" title="由所属角色或全员基线授予 · 只读，需到「角色管理」调整">角色/全员已有</span>'
+          : "")
+      + badges
+      + '</div><p class="cid">' + it.id + "</p></div></label>";
+  }
+
+  function renderGrid() {
+    const key = state.tab;
+    let items = DATA[key].items.slice();
+
+    // 方案 B 的筛选：仅直配 / 仅角色已有
+    if (state.mode === "after" && state.plan === "B" && state.filter !== "all") {
+      items = items.filter((it) => state.filter === "role" ? isInherited(it)
+        : (!isInherited(it) && state.direct[key].includes(it.id)));
+    }
+
+    $("grid").innerHTML = items.map((it) => cardHtml(key, it)).join("") ||
+      '<div style="grid-column:1/-1;text-align:center;color:#6b7280;font-size:12px;padding:14px">没有匹配的资源</div>';
+
+    Array.prototype.forEach.call($("grid").querySelectorAll(".card"), (el) => {
+      el.addEventListener("click", (ev) => {
+        const kind = el.getAttribute("data-kind");
+        const id = el.getAttribute("data-id");
+        if (kind === "inherited") {
+          ev.preventDefault();
+          const it = DATA[key].items.filter((x) => x.id === id)[0];
+          toast(it.src.kind === "role"
+            ? "该资源由角色「" + it.src.who + "」授予，需到「角色管理」调整；这里只读"
+            : "该资源由全员基线授权授予，需到数据集授权页调整；这里只读");
+          return;
+        }
+        if (kind === "muted") {
+          ev.preventDefault();
+          const it = DATA[key].items.filter((x) => x.id === id)[0];
+          toast(it.muted.why);
+          return;
+        }
+        ev.preventDefault();
+        const list = state.direct[key];
+        const at = list.indexOf(id);
+        if (at >= 0) list.splice(at, 1); else list.push(id);
+        render();
+      });
+    });
+  }
+
+  // ── 底部统计 + 全选 ────────────────────────────────────────────────────
+  function renderFoot() {
+    const key = state.tab;
+    const c = counts(key);
+    const directSel = state.direct[key].length;
+
+    if (state.mode === "before") {
+      $("footLeft").innerHTML = "已勾选: <b>" + directSel + "</b>"
+        + '<span style="color:#dc2626;margin-left:8px">（角色另有 ' + c.inherited + " 项未显示）</span>";
+      $("selectAll").textContent = "本页全选";
+      $("selectAll").disabled = false;
+      $("selectAll").style.opacity = "1";
+      return;
+    }
+
+    if (key === "models") {
+      $("footLeft").innerHTML = c.direct + c.inherited === 0
+        ? "未配置 = 不限制；当前无直配也无角色白名单"
+        : "合并白名单 <b>" + (c.direct + c.inherited) + "</b> 个（直配 <b>" + c.direct + "</b> · "
+          + '<span class="rolepart">角色 ' + c.inherited + "</span>）";
+      $("selectAll").textContent = "本页全选（不含角色已有）";
+      $("selectAll").style.opacity = "1";
+      return;
+    }
+
+    $("footLeft").innerHTML = c.inherited > 0
+      ? "已勾选 <b>" + (c.direct + c.inherited) + "</b>（直配 <b>" + c.direct + "</b> · "
+        + '<span class="rolepart">角色/全员已有 ' + c.inherited + "，只读</span>）"
+      : "已勾选: <b>" + c.direct + "</b>";
+    $("selectAll").textContent = c.inherited > 0 ? "本页全选（不含角色已有）" : "本页全选";
+    $("selectAll").style.opacity = "1";
+  }
+
+  // ── 来源明细（方案 A 的补充面板）────────────────────────────────────────
+  function renderSrcbox() {
+    const key = state.tab;
+    const c = counts(key);
+    const wrap = $("srcboxWrap");
+    if (state.mode !== "after" || c.inherited === 0) { wrap.innerHTML = ""; return; }
+
+    const groups = {};
+    DATA[key].items.filter(isInherited).forEach((it) => {
+      const who = it.src.kind === "role" ? "角色「" + it.src.who + "」" : "全员基线授权";
+      (groups[who] = groups[who] || []).push(it.name);
+    });
+    const lines = Object.keys(groups).map((who) =>
+      '<div class="line"><span class="who">' + who + "</span><span class=\"items\">"
+      + groups[who].join("、") + "（" + groups[who].length + "）</span></div>").join("");
+
+    wrap.innerHTML = '<details class="srcbox"><summary><span class="arw">▸</span>这些勾是由谁给的？看来源明细（'
+      + c.inherited + " 项）</summary><div class=\"in\">" + lines
+      + '<div class="tip">⚠ 精确到「哪个角色给了哪几项」需要后端新增按来源拆分的字段（如 <code>inherited_sources[]</code>）；'
+      + "本轮若不改后端，前端只能笼统标「角色 / 全员已有」。</div></div></details>";
+  }
+
+  // ── 主渲染 ──────────────────────────────────────────────────────────────
+  function render() {
+    renderTabs();
+    renderBanners();
+    renderSrcbar();
+    renderGrid();
+    renderFoot();
+    renderSrcbox();
+    renderPlanNote();
+  }
+
+  function renderPlanNote() {
+    const note = $("planNote");
+    if (state.mode === "before") {
+      note.innerHTML = "现状模式：勾选行为与线上一致，用来对照。";
+      return;
+    }
+    note.innerHTML = state.plan === "A"
+      ? "A（未采用）：把「角色/全员已有」直接画在卡片上（勾 + 禁用 + 徽标 + 淡底）——一眼看出哪几条不是自己给的。"
+      : "B（定稿）：卡片保持原样，只在顶部汇总 + 提供「仅角色已有」筛选——改动最小，需要核对时再筛出来看。";
+  }
+
+  // ── 工具栏事件 ──────────────────────────────────────────────────────────
+  Array.prototype.forEach.call($("modes").querySelectorAll("button"), (b) => {
+    b.addEventListener("click", () => {
+      state.mode = b.getAttribute("data-mode");
+      state.filter = "all";
+      Array.prototype.forEach.call($("modes").querySelectorAll("button"), (x) => x.classList.toggle("on", x === b));
+      const planBtns = $("plans").querySelectorAll("button");
+      Array.prototype.forEach.call(planBtns, (x) => { x.disabled = state.mode === "before"; });
+      render();
+    });
+  });
+  Array.prototype.forEach.call($("plans").querySelectorAll("button"), (b) => {
+    b.addEventListener("click", () => {
+      if (state.mode === "before") return;
+      state.plan = b.getAttribute("data-plan");
+      state.filter = "all";
+      Array.prototype.forEach.call($("plans").querySelectorAll("button"), (x) => x.classList.toggle("on", x === b));
+      render();
+    });
+  });
+
+  $("selectAll").addEventListener("click", () => {
+    const key = state.tab;
+    // 只作用于「当前筛选下可见」的项：筛选在「仅角色已有」时点全选，不该动看不见的项
+    const visible = (it) => state.mode !== "after" || state.plan !== "B" || state.filter === "all"
+      ? true
+      : state.filter === "role" ? isInherited(it) : !isInherited(it);
+    // 关键口径：继承项与私有项永不进入直配
+    const pickable = DATA[key].items
+      .filter(visible)
+      .filter((it) => !isInherited(it) && !isMuted(it) && !isGhost(it))
+      .map((it) => it.id);
+    if (!pickable.length) {
+      toast("当前筛选下没有可直配的项，切回「全部」再操作");
+      return;
+    }
+    const allPicked = pickable.every((id) => state.direct[key].includes(id));
+    // 候选之外的既有直配原样保留（例如已失联但仍保留授权的库）
+    const rest = state.direct[key].filter((id) => pickable.indexOf(id) < 0);
+    state.direct[key] = allPicked ? rest : rest.concat(pickable);
+    toast(allPicked ? "已清空本页直配（角色已有的项未受影响）" : "已全选本页可直配项；角色已有的项不会写入直配");
+    render();
+  });
+
+  // 键盘：1-5 切页签方便评审
+  document.addEventListener("keydown", (e) => {
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= 5) {
+      state.tab = TABS[n - 1].k;
+      state.filter = "all";
+      render();
+    }
+  });
+
+  // URL hash 直达某个视图，方便评审时贴链接：
+  //   #tab=metadata&mode=before&plan=B
+  (function applyHash() {
+    const h = (location.hash || "").replace(/^#/, "");
+    if (!h) return;
+    const q = {};
+    h.split("&").forEach((kv) => {
+      const i = kv.indexOf("=");
+      if (i > 0) q[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1));
+    });
+    if (q.tab && DATA[q.tab]) state.tab = q.tab;
+    if (q.mode === "before" || q.mode === "after") state.mode = q.mode;
+    if (q.plan === "A" || q.plan === "B") state.plan = q.plan;
+    if (q.filter === "all" || q.filter === "direct" || q.filter === "role") state.filter = q.filter;
+    Array.prototype.forEach.call($("modes").querySelectorAll("button"), (x) => {
+      x.classList.toggle("on", x.getAttribute("data-mode") === state.mode);
+    });
+    Array.prototype.forEach.call($("plans").querySelectorAll("button"), (x) => {
+      x.classList.toggle("on", x.getAttribute("data-plan") === state.plan);
+      x.disabled = state.mode === "before";
+    });
+  })();
+
+  render();
+})();
+</script>
+</body>
+</html>

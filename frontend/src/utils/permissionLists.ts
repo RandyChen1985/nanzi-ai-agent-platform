@@ -56,6 +56,25 @@ export type ForbiddenListKey = (typeof FORBIDDEN_LIST_KEYS)[number]
 /** 角色来源的禁用项：界面只读展示，永远不进 payload。 */
 export type InheritedForbiddenLists = Record<ForbiddenListKey, string[]>
 
+/**
+ * 数据资产五类：与「界面访问」的 `menus / elements`、「禁用资源」的 `forbidden_*` 并列的
+ * 第三处「直配 vs 角色继承」。
+ *
+ * 为什么单独约一层：这五类资源在编辑用户页是「卡片勾选」形态，没有权限树可挂灰勾，
+ * 原先只回显 `direct_permissions`，于是角色已授予的智能体 / 知识库 / 数据集 / API / 模型
+ * 在页面上完全不出现——管理员会以为「没配过」而再手动勾一遍。
+ *
+ * 危险在于后端 `update_user_permissions` **只对 `forbidden_*` 剔除角色派生项**，
+ * 这五类不剔除：重复勾选会把继承项写成用户直配，角色侧之后取消授权时该用户仍保留。
+ * 所以这里必须把「并集 − 直配」算出来交给界面做只读展示。
+ */
+export const ASSET_LIST_KEYS = ['agents', 'datasets', 'metadata', 'apis', 'models'] as const
+
+export type AssetListKey = (typeof ASSET_LIST_KEYS)[number]
+
+/** 角色 / 全员基线授予的资产：界面只读展示，永远不进 payload。 */
+export type InheritedAssets = Record<AssetListKey, string[]>
+
 export interface UserPermissionEditState {
   /** 可编辑、且将作为 PUT payload 的直配项 */
   direct: PermissionLists
@@ -65,6 +84,8 @@ export interface UserPermissionEditState {
   inheritedMenus: string[]
   /** 并集里有、直配里没有的功能点（「来自角色」，只读展示） */
   inheritedElements: string[]
+  /** 并集里有、直配里没有的资产（角色 / 全员基线授予，只读展示） */
+  inheritedAssets: InheritedAssets
   /** true = 后端没给可用的 `direct_permissions`，已回退成并集，此时无法区分继承 */
   usingEffectiveFallback: boolean
 }
@@ -92,6 +113,10 @@ export function emptyPermissionLists(): PermissionLists {
 
 function emptyInheritedForbidden(): InheritedForbiddenLists {
   return { forbidden_tools: [], forbidden_commands: [], forbidden_skills: [] }
+}
+
+export function emptyInheritedAssets(): InheritedAssets {
+  return { agents: [], datasets: [], metadata: [], apis: [], models: [] }
 }
 
 export function normalizePermissionLists(raw: unknown): PermissionLists {
@@ -130,6 +155,64 @@ export function diffInheritedForbidden(
     inherited[key] = diffInheritedIds(effective?.[key], direct?.[key])
   })
   return inherited
+}
+
+/**
+ * 数据资产的「并集 − 直配」：这五类资源的角色 / 全员基线授予项。
+ *
+ * 前端拿不到「哪一项来自角色、哪一项来自全员基线」——`permissions` 是并集，
+ * `direct_permissions` 只有直配，两者相减只剩「不是用户自己配的」这一层信息。
+ * 因此徽标文案统一写「角色 / 全员已有」，不做来源细分：标错来源比不标更难排查。
+ * 要做到「具体是哪个角色给的」需要后端新增按来源拆分的字段。
+ */
+export function diffInheritedAssets(
+  effective: PermissionLists,
+  direct: PermissionLists,
+): InheritedAssets {
+  const inherited = emptyInheritedAssets()
+  ASSET_LIST_KEYS.forEach((key) => {
+    inherited[key] = diffInheritedIds(effective?.[key], direct?.[key])
+  })
+  return inherited
+}
+
+/**
+ * 该资产是否「由角色 / 全员基线授予」——这类卡片必须勾上并禁用。
+ *
+ * 判定与后端保存口径对齐：后端对五类资产**不**做角色派生剔除，
+ * 所以前端一旦放行勾选，就会写出冗余直配行（角色侧取消后用户仍保留）。
+ */
+export function isInheritedAssetId(
+  id: unknown,
+  inherited: readonly unknown[] | null | undefined,
+): boolean {
+  const want = String(id ?? '').trim()
+  if (!want) return false
+  return (inherited || []).some((item) => String(item ?? '').trim() === want)
+}
+
+export interface AssetGrantCounts {
+  /** 用户直配（可编辑、会进 payload） */
+  direct: number
+  /** 角色 / 全员基线授予（只读） */
+  inherited: number
+  /** 该用户对这一类资源实际可用的条数 —— 页签徽标用它 */
+  total: number
+}
+
+/**
+ * 页签徽标与底部统计的唯一口径：直配 + 继承。
+ *
+ * 直配与继承互为差集（继承是「并集 − 直配」算出来的），不会重叠，直接相加即去重后的总数。
+ * 徽标只算直配时，一个全靠角色授权的用户在页签上显示 0，管理员会以为他没有任何资源。
+ */
+export function countAssetGrants(
+  directIds: readonly unknown[] | null | undefined,
+  inheritedIds: readonly unknown[] | null | undefined,
+): AssetGrantCounts {
+  const direct = (directIds || []).length
+  const inherited = (inheritedIds || []).length
+  return { direct, inherited, total: direct + inherited }
 }
 
 /**
@@ -173,6 +256,9 @@ export function resolveUserPermissionEditState(payload: unknown): UserPermission
       inherited: emptyInheritedForbidden(),
       inheritedMenus: [],
       inheritedElements: [],
+      // 无法区分继承时一律不给只读资产项：把用户的直配标成「角色已有」会让管理员
+      // 放弃调整一个他其实能改的授权，比不显示更难排查。
+      inheritedAssets: emptyInheritedAssets(),
       usingEffectiveFallback: true,
     }
   }
@@ -182,6 +268,7 @@ export function resolveUserPermissionEditState(payload: unknown): UserPermission
     inherited: diffInheritedForbidden(effective, direct),
     inheritedMenus: diffInheritedIds(effective.menus, direct.menus),
     inheritedElements: diffInheritedIds(effective.elements, direct.elements),
+    inheritedAssets: diffInheritedAssets(effective, direct),
     usingEffectiveFallback: false,
   }
 }
@@ -520,4 +607,30 @@ export function countLeafElements(node: PermissionNode): number {
       total + (child.id.startsWith('element:') ? 1 : countLeafElements(child)),
     0,
   )
+}
+
+/**
+ * 资产页「本页全选 / 清空本页直配」对直配缓冲的变更——只作用于**候选集合**。
+ *
+ * 候选集合是「当前可见且可直配」的那批 id（调用方已经排除角色/全员已有、私有库、
+ * 未授权失联库与筛选隐藏项）。两条边界必须在这里守住，否则就是在用户看不见的地方改数据：
+ *
+ *   - 候选为空：原样返回，**绝不清空**。旧实现走 `permissionData[type] = []`，
+ *     筛选停在「仅角色已有」时点一下就把全部直配删了；
+ *   - 清空 / 全选都不整份覆盖：候选之外的既有直配（例如已失联但仍保留授权的库）要留下，
+ *     旧实现整份替换，会把这些授权一并抹掉。
+ */
+export function applyAssetSelectAll(
+  current: readonly unknown[] | null | undefined,
+  candidateIds: readonly unknown[] | null | undefined,
+  clearAll: boolean,
+): string[] {
+  const keep = normalizePermissionList(current)
+  const candidates = normalizePermissionList(candidateIds)
+  if (!candidates.length) return keep
+  const candidateSet = new Set(candidates)
+  const rest = keep.filter((id) => !candidateSet.has(id))
+  if (clearAll) return rest
+  const restSet = new Set(rest)
+  return [...rest, ...candidates.filter((id) => !restSet.has(id))]
 }

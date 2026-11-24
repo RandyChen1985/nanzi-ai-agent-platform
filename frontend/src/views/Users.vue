@@ -1425,10 +1425,22 @@
                         {{ resourceConfig[type].label }}
 
                         <span
-                          class="text-[10px] leading-none min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600"
+                          class="text-[10px] leading-none min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600 flex items-center gap-1"
                           :class="activeResTab === type ? 'bg-gray-50' : ''"
+                          :title="
+                            type === 'forbidden_configs'
+                              ? '禁用资源条数'
+                              : `直配 ${resourceTabCount(type) - resourceTabInheritedCount(type)} · 角色/全员已有 ${resourceTabInheritedCount(type)}`
+                          "
                         >
                           {{ resourceTabCount(type) }}
+                          <!-- 徽标里的小数字 = 其中角色/全员已有的条数；两个数字相加即「实际可用」 -->
+                          <span
+                            v-if="resourceTabInheritedCount(type) > 0"
+                            class="rounded-full bg-indigo-50 px-1 py-0.5 text-[9px] font-bold leading-none text-indigo-600"
+                          >
+                            {{ resourceTabInheritedCount(type) }}
+                          </span>
                         </span>
                       </button>
                     </div>
@@ -1439,6 +1451,13 @@
                     class="mb-2 text-[10px] sm:text-xs text-gray-500 leading-tight"
                   >
                     未配置 = 不限制；配置后只能在勾选的模型（与其角色白名单取并集）中手动切换。
+                    <template v-if="currentAssetCounts.inherited > 0">
+                      本页合并白名单共
+                      <b class="text-gray-700">{{ currentAssetCounts.total }}</b>
+                      个，其中
+                      <b class="text-indigo-600">{{ currentAssetCounts.inherited }}</b>
+                      个由角色授予 —— 在用户页取消勾选不会生效（后端按并集计算），要收窄或放宽请到「角色管理」调整。
+                    </template>
                   </div>
                   <!-- 可用模型搜索：只在模型较多时出现；命中之外，已勾选项也会置顶保留 -->
                   <div
@@ -1481,6 +1500,61 @@
                           个人创建的智能体自动拥有权限，此处仅配置“系统级”公共智能体。
                         </p>
                       </div>
+                    </div>
+
+                    <!--
+                      来源汇总条（「角色已有」的可发现入口）。
+                      以前这里只回显用户直配，角色已授予的资产在页面上完全不出现，管理员会以为
+                      「没配过」再手动勾一遍——而这五类资产后端不剔除角色派生项，勾完就固化成
+                      用户直配，角色侧之后取消授权时该用户仍然保留。所以先把「总共几项、其中几项
+                      不是自己配的」摆在最显眼的位置，再给一个「仅角色已有」的筛选去逐条核对。
+                    -->
+                    <div
+                      v-if="
+                        activeResTab !== 'forbidden_configs' &&
+                        currentAssetCounts.inherited > 0
+                      "
+                      class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[10px] sm:text-[11px] text-gray-500"
+                    >
+                      <span>
+                        本页对
+                        <b class="text-gray-800">{{ formData.user_name || "该用户" }}</b>
+                        生效
+                        <b class="text-gray-800">{{ currentAssetCounts.total }}</b>
+                        项：直配
+                        <b class="text-blue-600">{{ currentAssetCounts.direct }}</b>
+                        ·
+                        <span class="text-indigo-600">
+                          角色/全员已有
+                          <b>{{ currentAssetCounts.inherited }}</b>
+                        </span>
+                      </span>
+                      <!-- 角色授予的项里可能有资源已下线/被删除：不计入列表却计入总数，
+                           必须说明，否则「生效 4 项」与看得见的 3 张卡片对不上 -->
+                      <span
+                        v-if="missingInheritedAssetCount > 0"
+                        class="rounded bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700"
+                        title="这些资源已下线、被删除，或不在本页展示范围内；只能到「角色管理」清理授权"
+                      >
+                        另有 {{ missingInheritedAssetCount }} 项未在列表展示
+                      </span>
+                      <span class="ml-auto flex items-center gap-1">
+                        <button
+                          v-for="opt in assetScopeOptions"
+                          :key="opt.value"
+                          type="button"
+                          class="rounded-full border px-2 py-0.5 font-bold transition-colors"
+                          :class="
+                            assetScopeFilter === opt.value
+                              ? 'border-gray-800 bg-gray-800 text-white'
+                              : 'border-gray-200 bg-white text-gray-500 hover:text-gray-800'
+                          "
+                          @click="assetScopeFilter = opt.value"
+                        >
+                          {{ opt.label }}
+                          <span class="opacity-70">{{ opt.count }}</span>
+                        </button>
+                      </span>
                     </div>
 
                     <div
@@ -1581,32 +1655,42 @@
                         :class="
                           isPrivateKnowledgeBase(res)
                             ? 'opacity-70 cursor-not-allowed border-gray-200 bg-gray-50/60'
-                            : isMissingKnowledgeBase(res)
-                              ? isSelectedDatasetResource(res)
-                                // 已授权 + 失联：保持可读、可取消，不做灰化
-                                ? 'border-amber-300 bg-amber-50/60 cursor-pointer'
-                                : 'opacity-70 cursor-not-allowed border-amber-200 bg-amber-50/40'
-                              : 'hover:bg-gray-50 cursor-pointer'
+                            : isInheritedAsset(res)
+                              // 角色/全员已有：只读。不灰化卡片本体（还能看清名称去角色页核对），
+                              // 靠「灰勾 + 角色/全员已有」徽标区分，也不给 hover 反馈，避免误以为能点
+                              ? 'cursor-not-allowed border-gray-200 bg-white'
+                              : isMissingKnowledgeBase(res)
+                                ? isSelectedDatasetResource(res)
+                                  // 已授权 + 失联：保持可读、可取消，不做灰化
+                                  ? 'border-amber-300 bg-amber-50/60 cursor-pointer'
+                                  : 'opacity-70 cursor-not-allowed border-amber-200 bg-amber-50/40'
+                                : 'hover:bg-gray-50 cursor-pointer'
                         "
                         :title="
-                          isPrivateKnowledgeBase(res)
-                            ? '个人私有知识库不参与授权：只有创建人自己可见，勾选后对方也不会获得访问权'
-                            : isMissingKnowledgeBase(res)
-                              ? isSelectedDatasetResource(res)
-                                ? '该知识库已在 RAGFlow 失联：此前分配的授权仍保留，库恢复后自动生效；取消勾选并保存即可移除'
-                                : '该知识库已在 RAGFlow 失联，不可分配权限'
-                              : undefined
+                          isInheritedAsset(res)
+                            ? '该资源由所属角色或全员基线授予：只读，需到「角色管理」调整；本页保存不会改动它'
+                            : isPrivateKnowledgeBase(res)
+                              ? '个人私有知识库不参与授权：只有创建人自己可见，勾选后对方也不会获得访问权'
+                              : isMissingKnowledgeBase(res)
+                                ? isSelectedDatasetResource(res)
+                                  ? '该知识库已在 RAGFlow 失联：此前分配的授权仍保留，库恢复后自动生效；取消勾选并保存即可移除'
+                                  : '该知识库已在 RAGFlow 失联，不可分配权限'
+                                : undefined
                         "
+                        @click="onAssetCardClick(res, $event)"
                       >
                         <input
                           type="checkbox"
                           :value="res.id"
-                          v-model="(permissionData as any)[activeResTab]"
-                          :disabled="
-                            isPrivateKnowledgeBase(res) ||
-                            (isMissingKnowledgeBase(res) && !isSelectedDatasetResource(res))
+                          :checked="isAssetChecked(res)"
+                          :disabled="isAssetDisabled(res)"
+                          class="mt-1 h-4 w-4 rounded focus:ring-blue-500 disabled:cursor-not-allowed"
+                          :class="
+                            isInheritedAsset(res)
+                              ? 'text-indigo-500 disabled:opacity-70'
+                              : 'text-blue-600 disabled:opacity-50'
                           "
-                          class="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                          @change="toggleAssetResource(res)"
                         />
                         <div class="ml-2 min-w-0 flex-1">
                           <div class="flex items-center gap-1.5 min-w-0">
@@ -1615,6 +1699,11 @@
                             >
                               {{ res.platform_name || res.display_name || res.name }}
                             </p>
+                            <span
+                              v-if="isInheritedAsset(res)"
+                              class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-semibold leading-none ring-1 ring-indigo-100"
+                              >角色/全员已有</span
+                            >
                             <span
                               v-if="res.method"
                               class="flex-shrink-0 text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none"
@@ -1677,7 +1766,20 @@
                     v-if="activeResTab !== 'forbidden_configs'"
                     class="flex justify-between items-center mt-2 text-[10px] text-gray-500"
                   >
-                    <span
+                    <!-- 口径与页签徽标一致：直配 + 角色/全员已有 = 这个用户实际能用的条数 -->
+                    <span v-if="currentAssetCounts.inherited > 0">
+                      已勾选
+                      <b class="text-blue-600">{{ currentAssetCounts.total }}</b>
+                      <span class="ml-1 text-gray-400">
+                        （直配
+                        <b class="text-blue-600">{{ currentAssetCounts.direct }}</b>
+                        ·
+                        <span class="text-indigo-600"
+                          >角色/全员已有 {{ currentAssetCounts.inherited }}，只读</span
+                        >）
+                      </span>
+                    </span>
+                    <span v-else
                       >已勾选:
                       <b class="text-blue-600">{{
                         (permissionData as any)[activeResTab].length
@@ -1685,9 +1787,25 @@
                     >
                     <button
                       @click="toggleSelectAll"
-                      class="font-black text-blue-600 hover:underline px-2 py-1"
+                      class="font-black text-blue-600 hover:underline px-2 py-1 disabled:cursor-not-allowed disabled:text-gray-300 disabled:no-underline"
+                      :disabled="selectableResources.length === 0"
+                      :title="
+                        selectableResources.length === 0
+                          ? '当前筛选下没有可直配的项：切回「全部」再操作'
+                          : currentAssetCounts.inherited > 0
+                            ? '角色/全员已有的项只读，全选不会把它们写成用户直配'
+                            : undefined
+                      "
                     >
-                      {{ isAllSelected ? "全部取消" : "本页全选" }}
+                      {{
+                        isAllSelected
+                          ? currentAssetCounts.inherited > 0
+                            ? "清空本页直配"
+                            : "全部取消"
+                          : currentAssetCounts.inherited > 0
+                            ? "本页全选（不含角色/全员已有）"
+                            : "本页全选"
+                      }}
                     </button>
                   </div>
                 </div>
@@ -2855,12 +2973,18 @@ import {
   type ForbiddenCatalogSnapshot,
 } from "../utils/forbiddenCatalogCache";
 import {
+  applyAssetSelectAll,
   applyMenuCascadeToggle,
   applyElementToggle,
   applyMenuEntryToggle,
   buildUserPermissionPayload,
+  countAssetGrants,
+  emptyInheritedAssets,
   emptyPermissionLists,
+  isInheritedAssetId,
   resolveUserPermissionEditState,
+  type AssetListKey,
+  type InheritedAssets,
   type InheritedForbiddenLists,
   type MenuCascadeMode,
 } from "../utils/permissionLists";
@@ -3683,6 +3807,26 @@ const inheritedForbidden = ref<InheritedForbiddenLists>({
 const inheritedMenus = ref<string[]>([]);
 const inheritedElements = ref<string[]>([]);
 
+/**
+ * 角色 / 全员基线授予的**数据资产**（智能体 / 知识库 / 数据集 / 外部 API / 可用模型）。
+ *
+ * 这五类资源是「卡片勾选」形态，没有权限树可以挂灰勾：此前只回显直配，角色已给的资源
+ * 在页面上完全不出现，管理员会以为「没配过」再手动勾一遍——而后端对这五类**不**剔除
+ * 角色派生项，勾完就变成用户直配，角色侧之后取消授权时该用户仍保留。
+ * 这里存「并集 − 直配」，界面以「勾上 + 禁用 + 角色/全员已有」呈现，永不进 payload。
+ */
+const inheritedAssets = ref<InheritedAssets>(emptyInheritedAssets());
+
+/**
+ * 顶部筛选（「全部 / 仅直配 / 仅角色已有」）。
+ *
+ * 声明刻意放在 `resetPermissionBuffers` **之前**：关闭弹窗 / 切换用户时要在那里复位，
+ * 否则上一个用户的「仅角色已有」会留到下一个用户身上——若新用户没有角色授予项，
+ * 汇总条与筛选按钮整块不渲染，列表却被过滤成空，管理员既看不到资源也无从切回「全部」。
+ */
+type AssetScopeFilter = "all" | "direct" | "inherited";
+const assetScopeFilter = ref<AssetScopeFilter>("all");
+
 /** 汇总条：直配与角色来源不重叠（后者是差集），直接相加即去重后的授予总数。 */
 const grantedMenuCount = computed(
   () => permissionData.value.menus.length + inheritedMenus.value.length,
@@ -3738,9 +3882,21 @@ onUnmounted(() => {
   unsubscribeForbiddenCatalog = null;
 });
 
+/** 某一类资产的直配 / 继承 / 合计：页签徽标与底部统计共用同一口径。 */
+const inheritedAssetCounts = (type: AssetListKey) =>
+  countAssetGrants(
+    (permissionData.value as any)[type],
+    (inheritedAssets.value as any)[type],
+  );
+
 /**
- * tab 徽标口径：禁用资源 = 工具条目数 + 命令条目数 + 技能条目数（用户视角，一个别名组算 1），
- * 其余 tab = 已勾选资产数。计数与角色页共用同一个纯函数，避免两页数字对不上。
+ * tab 徽标口径：
+ *   - 禁用资源 = 工具条目数 + 命令条目数 + 技能条目数（用户视角，一个别名组算 1），
+ *     这一格是**黑名单**计数，与下面的白名单口径无关，不要混进来；
+ *   - 其余 tab = **直配 + 角色/全员已有**，即「这个用户实际能用到几项」。
+ *
+ * 只算直配时，一个全靠角色授权的用户在页签上显示 0，管理员会以为他没有任何资源，
+ * 于是手动再勾一遍 —— 而这五类资产后端不剔除角色派生项，勾完就固化成用户直配。
  */
 const resourceTabCount = (type: string) =>
   type === "forbidden_configs"
@@ -3751,7 +3907,11 @@ const resourceTabCount = (type: string) =>
         forbiddenSkills: permissionData.value.forbidden_skills,
         skillCandidates: forbiddenCatalogSnapshot.value.skillCandidates,
       })
-    : ((permissionData.value as any)[type]?.length || 0);
+    : inheritedAssetCounts(type as AssetListKey).total;
+
+/** 页签徽标里的「其中角色/全员已有」小数字；禁用资源页签恒为 0。 */
+const resourceTabInheritedCount = (type: string) =>
+  type === "forbidden_configs" ? 0 : inheritedAssetCounts(type as AssetListKey).inherited;
 
 /**
  * 打开对话框时冻结的「真实身份」：权限只对"后端返回的就是普通用户"的账号有意义。
@@ -3800,6 +3960,10 @@ const resetPermissionBuffers = () => {
   };
   inheritedMenus.value = [];
   inheritedElements.value = [];
+  inheritedAssets.value = emptyInheritedAssets();
+  // 筛选也要复位：上一个用户选的「仅角色已有」会让下一个用户的列表直接空掉，
+  // 而新用户没有继承项时筛选按钮整块不渲染，管理员连切回「全部」的入口都没有。
+  assetScopeFilter.value = "all";
   forbiddenCommandsText.value = "";
   permissionsLoaded.value = false;
   permissionsLoadError.value = "";
@@ -3966,6 +4130,55 @@ const activeAssignableResourceType = computed<AssignableResourceType | null>(() 
 );
 
 /**
+ * 当前页签下「由角色 / 全员基线授予」的资产 id。
+ *
+ * 徽标文案统一写「角色/全员已有」而非细分来源：`permissions` 是并集、`direct_permissions`
+ * 只有直配，两者相减只剩「不是用户自己配的」这层信息。标错来源比不标更难排查，
+ * 要精确到角色名需要后端新增按来源拆分的字段。
+ */
+const inheritedAssetIds = computed<string[]>(() =>
+  activeAssignableResourceType.value
+    ? (inheritedAssets.value[activeAssignableResourceType.value] as string[]) || []
+    : [],
+);
+
+/** 该资产是否由角色 / 全员基线授予：卡片要勾上并禁用，且永不写入直配缓冲。 */
+const isInheritedAsset = (res: any) =>
+  isInheritedAssetId(res?.id, inheritedAssetIds.value);
+
+/** 当前页签的直配 / 继承 / 合计，供顶部汇总条与底部统计使用。 */
+const currentAssetCounts = computed(() =>
+  activeAssignableResourceType.value
+    ? inheritedAssetCounts(activeAssignableResourceType.value)
+    : { direct: 0, inherited: 0, total: 0 },
+);
+
+
+/**
+ * 该资产是否通过当前筛选（只影响可见性与「全选」的作用范围，不改变任何提交口径）。
+ */
+const matchesAssetScope = (res: any) => {
+  if (assetScopeFilter.value === "all") return true;
+  const inherited = isInheritedAsset(res);
+  return assetScopeFilter.value === "inherited" ? inherited : !inherited;
+};
+
+/**
+ * 筛选按钮的标签与计数。
+ *
+ * 「全部」用的是**列表条数**（含尚未勾选的普通项），不是「实际生效条数」：
+ * 两者混用会让「全部 6 / 仅直配 1 / 仅角色已有 2」看起来像统计错误。
+ */
+const assetScopeOptions = computed(() => {
+  const counts = currentAssetCounts.value;
+  return [
+    { value: "all" as AssetScopeFilter, label: "全部", count: currentResources.value.length },
+    { value: "direct" as AssetScopeFilter, label: "仅直配", count: counts.direct },
+    { value: "inherited" as AssetScopeFilter, label: "仅角色已有", count: counts.inherited },
+  ];
+});
+
+/**
  * 「可用模型」候选：只列 llm / multimodal。
  *
  * 已勾选但已停用的模型保留在列表里（标注「已停用」），否则保存时会静默丢掉白名单配置。
@@ -3975,7 +4188,14 @@ const availableModels = computed(() => {
   const selected = permissionData.value.models || [];
   return (allResources.value.models || [])
     .filter((m: any) => m?.type === "llm" || m?.type === "multimodal")
-    .filter((m: any) => m?.is_active !== false || selected.includes(m?.model_id))
+    .filter(
+      (m: any) =>
+        m?.is_active !== false ||
+        selected.includes(m?.model_id) ||
+        // 角色授予的已停用模型同样要留在列表里：它仍在该用户的白名单内，
+        // 藏起来会让「合并白名单」少掉一项，管理员也无从知道要去角色页清理。
+        inheritedAssetIds.value.includes(m?.model_id),
+    )
     .map((m: any) => ({
       id: m.model_id,
       name: m.name || m.model_id,
@@ -3990,9 +4210,11 @@ const showModelSearch = computed(() =>
   shouldShowModelSearch(availableModels.value.length),
 );
 
-// 切换资源 Tab 时清空搜索词，避免把上一页的过滤条件带到新列表
+// 切换资源 Tab 时清空搜索词与来源筛选，避免把上一页的过滤条件带到新列表
+// （「仅角色已有」在下一页可能是 0 条，留着会让列表看起来空了）
 watch(activeResTab, () => {
   modelSearchQuery.value = "";
+  assetScopeFilter.value = "all";
 });
 
 // 智能体 tab 可见时按需补齐各已勾选智能体的已禁数量角标（勾选变化后也要对齐）
@@ -4006,12 +4228,21 @@ watch(
   { deep: true },
 );
 
-/** models 页的分组：已选一段、其余一段（其它资源页不使用） */
+/**
+ * models 页的分组：已生效一段、其余一段（其它资源页不使用）。
+ *
+ * 「已选」段要算上角色/全员已有：它们同样在这个用户的白名单内。只传直配的话，
+ * 继承项会落进「其余」段（一排勾着的"未选"），而且搜索不命中时会被直接过滤掉。
+ */
 const modelResourceGroups = computed(() =>
   groupPermissionModels(
     availableModels.value,
     modelSearchQuery.value,
-    permissionData.value.models,
+    // 用 concat 而不是展开语法：仓库有一条契约禁止整份展开 permissionData（payload 只能
+    // 走构建器），这里只是拼一份 id 列表给分组用。
+    (permissionData.value.models || []).concat(
+      inheritedAssets.value.models || [],
+    ),
   ),
 );
 
@@ -4027,27 +4258,57 @@ const currentResources = computed(() => {
 });
 
 /**
+ * 角色/全员基线授予、但当前页签列表里找不到的资源条数（已下线、被删除，或类型不符）。
+ *
+ * 必须显式说出来：否则「直配 1 · 角色/全员已有 2」与列表里只看得见 1 张卡片对不上，
+ * 管理员会反复刷新、以为页面丢数据。这类项只能去角色页清理，用户页无法操作。
+ */
+const missingInheritedAssetCount = computed(() => {
+  const type = activeAssignableResourceType.value;
+  if (!type) return 0;
+  const known = new Set(
+    (currentResources.value || []).map((res: any) => String(res?.id ?? "")),
+  );
+  return ((inheritedAssets.value[type] as string[]) || []).filter(
+    (id) => !known.has(String(id)),
+  ).length;
+});
+
+/**
  * 列表渲染条目：models 页插入两段小标题，其它资源页保持平铺。
  *
  * item 就是模型/资源对象本身（外加 entryType / entryKey 两个渲染用字段），
  * 这样卡片模板里的 res.* 绑定与既有契约完全不变。
  */
 const modelResourceEntries = computed<any[]>(() => {
+  // 顶部「仅直配 / 仅角色已有」筛选只影响可见性：不进 permissionData，也不改变提交口径。
   if (activeResTab.value !== "models") {
-    // 走 visibleResources：失联知识库按开关隐藏，已授权的除外
+    // 走 visibleResources：失联知识库按开关隐藏，已授权的（含角色授予的）除外
     return visibleResources.value.map((res: any) => ({
       ...res,
       entryType: "item",
       entryKey: res.id,
-    }));
+    })).filter((res: any) => matchesAssetScope(res));
   }
   const { selected, others } = modelResourceGroups.value;
+  // 筛选态下两段小标题会与「只剩 N 个」矛盾，直接平铺
+  if (assetScopeFilter.value !== "all") {
+    return [...selected, ...others]
+      .map((res: any) => ({
+        ...res,
+        entryType: "item",
+        entryKey: res.id,
+      }))
+      .filter((res: any) => matchesAssetScope(res));
+  }
   const entries: any[] = [];
   if (selected.length) {
     entries.push({
       entryType: "header",
       entryKey: "header-selected",
-      label: `已选 ${selected.length} 个`,
+      label: inheritedAssetIds.value.length
+        ? `已选 ${selected.length} 个（含角色/全员已有）`
+        : `已选 ${selected.length} 个`,
     });
     selected.forEach((res: any) =>
       entries.push({ ...res, entryType: "item", entryKey: res.id }),
@@ -4068,6 +4329,12 @@ const modelResourceEntries = computed<any[]>(() => {
 
 /** 空列表文案：区分「搜索没命中」与「本来就没有可用资源」。 */
 const emptyResourceText = computed(() => {
+  // 筛选把列表清空时最优先说明原因，否则会被读成「这个用户没有资源可分配」
+  if (assetScopeFilter.value !== "all") {
+    return assetScopeFilter.value === "inherited"
+      ? "当前筛选下没有角色/全员已有的资源，点「全部」查看"
+      : "当前筛选下没有用户直配的资源，点「全部」查看";
+  }
   if (activeResTab.value === "models" && modelSearchQuery.value.trim()) {
     return "没有匹配的模型";
   }
@@ -4093,9 +4360,17 @@ const missingDatasetCount = computed(() =>
     : 0,
 )
 
-/** 该资源是否已被授权：已授权的失联库必须保留，否则用户看不到自己配过什么 */
+/**
+ * 该资源对当前用户「已生效」：直配或由角色/全员基线授予。
+ *
+ * 已生效的失联库必须保留，否则用户看不到自己配过什么；继承项同理——角色给了它，
+ * 藏起来只会让管理员以为角色没配。
+ */
 const isSelectedDatasetResource = (res: any) =>
-  Boolean(((permissionData.value as any)[activeResTab.value] as string[] | undefined)?.includes(res.id))
+  Boolean(
+    ((permissionData.value as any)[activeResTab.value] as string[] | undefined)?.includes(res.id) ||
+      isInheritedAsset(res),
+  )
 
 /**
  * 实际渲染的资源：隐藏失联知识库。
@@ -4141,6 +4416,59 @@ const isPrivateKnowledgeBase = (res: any) =>
 const isDisabledModel = (res: any) =>
   activeResTab.value === "models" && res?.is_active === false;
 
+/** 卡片勾选态：用户直配、或由角色/全员基线授予，都算「对这一项已生效」。 */
+const isAssetChecked = (res: any) => {
+  const type = activeAssignableResourceType.value;
+  if (!type) return false;
+  return (
+    isInheritedAsset(res) ||
+    Boolean((permissionData.value[type] as string[] | undefined)?.includes(res.id))
+  );
+};
+
+/**
+ * 卡片是否禁用勾选。
+ *
+ * 继承项必须禁用：后端对这五类资产不做角色派生剔除，一旦放行就会写出冗余直配行
+ * ——角色侧之后取消授权，这个用户仍然保留，且页面上再也解释不清是谁给的。
+ */
+const isAssetDisabled = (res: any) =>
+  isInheritedAsset(res) ||
+  isPrivateKnowledgeBase(res) ||
+  (isMissingKnowledgeBase(res) && !isSelectedDatasetResource(res));
+
+/** 切换卡片勾选：只写直配缓冲，继承项/私有库/失联库一律不动。 */
+const toggleAssetResource = (res: any) => {
+  if (isAssetDisabled(res)) {
+    if (isInheritedAsset(res)) {
+      showToast(
+        "该资源由角色或全员基线授予，需到「角色管理」调整；本页保存不会改动它",
+        "warning",
+      );
+    }
+    return;
+  }
+  const type = activeAssignableResourceType.value;
+  if (!type) return;
+  const list = permissionData.value[type] as string[];
+  const index = list.indexOf(res.id);
+  if (index >= 0) list.splice(index, 1);
+  else list.push(res.id);
+};
+
+/**
+ * 点到「角色/全员已有」的卡片：只提示，不改任何状态。
+ * 卡片禁用后 input 不会再派发 change，提示必须挂在 label 上，否则点了毫无反馈。
+ */
+const onAssetCardClick = (res: any, event?: MouseEvent) => {
+  if (!isInheritedAsset(res)) return;
+  event?.preventDefault();
+  showToast(
+    "该资源由角色或全员基线授予，需到「角色管理」调整；本页保存不会改动它",
+    "warning",
+  );
+};
+
 // 停用标注文案：成员列表里也有同名徽章，这里集中定义，避免两处字面量互相干扰
 const DISABLED_MODEL_LABEL = "已停用";
 
@@ -4168,8 +4496,18 @@ const methodBadgeClass = (method: string) => {
 const selectableResources = computed(() =>
   // 私有库不能参与「全选」：它在卡片上是 disabled 的，一旦被全选写进
   // permissionData 就会出现「置灰却被勾上」的矛盾状态，且保存时被后端静默剔除。
+  //
+  // 角色/全员已有的项同样排除：后端对这五类资产不做角色派生剔除，全选会把它们
+  // 写成用户直配 —— 角色侧之后取消授权，这个用户仍然保留，且页面上再也解释不清。
+  //
+  // 还要尊重当前来源筛选：正在看「仅角色已有」时点「本页全选」，若作用于筛选外的
+  // 隐藏项，等于在用户看不见的地方改数据（旧实现甚至会清空整份直配）。
   currentResources.value.filter(
-    (r: any) => !isMissingKnowledgeBase(r) && !isPrivateKnowledgeBase(r),
+    (r: any) =>
+      !isMissingKnowledgeBase(r) &&
+      !isPrivateKnowledgeBase(r) &&
+      !isInheritedAsset(r) &&
+      matchesAssetScope(r),
   ),
 );
 
@@ -4394,6 +4732,12 @@ const fetchResources = async () => {
         permissionData.value.datasets = (
           permissionData.value.datasets || []
         ).filter((id: string) => !privateIds.has(id));
+        // 继承集合同样要过一遍：`fetchResources` 与 `fetchUserPermissions` 是并行的，
+        // 拉权限那一刻知识库列表可能还没回来，`collectPrivateDatasetIds()` 是空集，
+        // 于是角色授予的私有库会以「角色/全员已有」留在列表里，看着像对方真有权限。
+        inheritedAssets.value.datasets = (
+          inheritedAssets.value.datasets || []
+        ).filter((id: string) => !privateIds.has(id));
       }
     } catch (ragErr) {
       console.warn(
@@ -4443,7 +4787,15 @@ const fetchUserPermissions = async (userId: number) => {
     inheritedForbidden.value = state.inherited;
     inheritedMenus.value = state.inheritedMenus;
     inheritedElements.value = state.inheritedElements;
+    // 私有知识库的授权在判定时会被直接跳过，展示成「角色已有」会让管理员误以为
+    // 对方能访问；历史脏数据里若出现，一并剔除。
+    inheritedAssets.value = {
+      ...state.inheritedAssets,
+      datasets: state.inheritedAssets.datasets.filter((id: string) => !privateIds.has(id)),
+    };
     forbiddenCommandsText.value = (state.direct.forbidden_commands || []).join(", ");
+    // 重新拉取等于换了份数据（409 冲突重拉也走这里）：来源筛选残留会让列表直接空掉
+    assetScopeFilter.value = "all";
     permissionsLoaded.value = true;
   } catch (e: any) {
     // 这里原先连 toast 都没有，只把 permissionData 清空——用户看到空配置，
@@ -5026,16 +5378,27 @@ const closeRegenerateDialog = () => {
   showRegenerateDialog.value = false;
   userToRegenerate.value = null;
 };
+/**
+ * 「本页全选 / 清空本页直配」。
+ *
+ * 只作用于**当前可见且可直配**的项：`selectableResources` 已排除角色/全员已有、私有库、
+ * 未授权的失联库，以及被「仅直配 / 仅角色已有」筛选隐藏的项。两条边界都是为了不在用户
+ * 看不见的地方改数据：
+ *   - 候选为空时直接返回。筛选停在「仅角色已有」时，点它，旧实现会走 else 分支把整份直配
+ *     赋成空数组 —— 一次点击静默删掉全部直配授权；
+ *   - 清空只去掉这批项的直配，其余（比如已失联但仍保留授权的库）原样留下，旧实现是整份
+ *     覆盖，会把这类授权一起抹掉。
+ */
 const toggleSelectAll = () => {
   const type = activeAssignableResourceType.value;
   if (!type) return;
-  if (isAllSelected.value) {
-    permissionData.value[type] = [];
-  } else {
-    permissionData.value[type] = selectableResources.value.map(
-      (r: any) => r.id,
-    );
-  }
+  const ids = selectableResources.value.map((r: any) => String(r.id));
+  // 边界（空候选不清空、筛选外的既有直配保留）由纯函数统一守住，便于单测
+  permissionData.value[type] = applyAssetSelectAll(
+    permissionData.value[type] as string[],
+    ids,
+    isAllSelected.value,
+  );
 };
 const formatDate = (dateStr: string) =>
   dateStr ? new Date(dateStr).toLocaleString() : "-";
