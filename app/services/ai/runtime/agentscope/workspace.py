@@ -7946,16 +7946,19 @@ class _ScriptCredentialBashNativeTool:
             view_dir = self._helper_dir_in_command_view()
             if view_dir and view_dir.startswith(f"{DOCKER_WORKSPACE_LOGICAL_ROOT}/"):
                 fallback_view = (
-                    f' [ -d "$NANZI_H" ] || {{ [ -d {shlex.quote(view_dir)} ] '
-                    f'&& NANZI_H={shlex.quote(view_dir)}; }};'
+                    f'if [ ! -d "$NANZI_H" ] && [ -d {shlex.quote(view_dir)} ]; then '
+                    f"NANZI_H={shlex.quote(view_dir)}; fi; "
                 )
+        # 全部用 if/then/fi，不用 `[ -d x ] || { ...; }`：后者在候选都不存在时
+        # 返回非零，用户脚本若带 `set -e` 会被这行前缀直接打断。取凭据找不到
+        # helper 只该让 helper 报错，不该让本来无关的命令失败。
         prelude = (
             'NANZI_H="$(pwd)/.nanzi"; '
-            '[ -d "$NANZI_H" ] || { NANZI_D="$(pwd)"; '
+            'if [ ! -d "$NANZI_H" ]; then NANZI_D="$(pwd)"; '
             'while [ "$NANZI_D" != "/" ] && [ -n "$NANZI_D" ]; do '
-            '[ -d "$NANZI_D/.nanzi" ] && { NANZI_H="$NANZI_D/.nanzi"; break; }; '
-            'NANZI_D="$(dirname "$NANZI_D")"; done; };'
-            f"{fallback_view} "
+            'if [ -d "$NANZI_D/.nanzi" ]; then NANZI_H="$NANZI_D/.nanzi"; break; fi; '
+            'NANZI_D="$(dirname "$NANZI_D")"; done; fi; '
+            f"{fallback_view}"
             f"export NANZI_PLATFORM_URL={shlex.quote(ctx.platform_url)}; "
             f'export NANZI_TICKET_FILE="$NANZI_H/{TICKET_FILE_PREFIX}{ctx.jti}"; '
             'export PATH="$NANZI_H:$PATH";'

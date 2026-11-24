@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -244,6 +245,53 @@ def test_helper_dir_is_anchored_on_pwd(tmp_path, fake_platform, monkeypatch):
         # 平台侧绝对路径不该出现在命令里
         assert session not in decorated, "宿主绝对路径不该进容器执行的命令"
         assert decorated.rstrip().endswith("echo hi")
+
+
+
+def test_command_still_runs_when_helper_dir_missing(tmp_path):
+    """helper 目录找不到时，命令本身必须照常跑完。
+
+    前缀里若写 `[ -d x ] || { ...; }`，候选都不存在时整行返回非零，带 `set -e`
+    的用户脚本会被这行前缀直接打断——取凭据找不到 helper 只该让 helper 报错，
+    不该让无关命令失败。
+    """
+    from app.services.ai.runtime.agentscope.workspace import (
+        TICKET_FILE_PREFIX,
+        _ScriptCredentialBashContext,
+        _ScriptCredentialBashNativeTool,
+    )
+
+    class _Stub:
+        name = "Bash"
+
+    session = tmp_path / "session"
+    session.mkdir()
+    helper_dir = session / ".nanzi"  # 故意不创建
+
+    tool = _ScriptCredentialBashNativeTool(
+        _Stub(),
+        workdir=str(session),
+        host_root=None,
+        sandboxed=False,
+        user_info={"user_id": "u1", "dept_code": ""},
+        conversation_id="c1",
+    )
+    ctx = _ScriptCredentialBashContext(
+        jti="abc123",
+        platform_url="http://platform:8001",
+        ticket_path=str(helper_dir / f"{TICKET_FILE_PREFIX}abc123"),
+        workdir=str(session),
+    )
+    decorated = tool._decorate("echo alive", str(helper_dir), ctx)
+
+    result = subprocess.run(
+        ["bash", "-e", "-c", decorated],
+        capture_output=True,
+        text=True,
+        cwd=str(session),
+    )
+    assert result.returncode == 0, f"前缀不该中断命令: {result.stderr}"
+    assert result.stdout.strip() == "alive"
 
 
 def test_parallel_bash_does_not_share_ticket_file(tmp_path, fake_platform, monkeypatch):
