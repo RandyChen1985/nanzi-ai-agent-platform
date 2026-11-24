@@ -7695,6 +7695,9 @@ class _SandboxSessionBashNativeTool:
 #: 票据文件名前缀。带上 jti 才能让同一会话的并行 Bash 互不覆盖。
 TICKET_FILE_PREFIX = "ticket."
 
+#: helper 目录名，与 sandbox_helper.DIR_NAME 保持一致（这里避免循环导入而写字面量）。
+DIR_NAME_FOR_HELPER = ".nanzi"
+
 #: 注入没成功时导出的诊断变量。没有它，取不到凭据的唯一表现就是
 #: `nanzi-credential: command not found`——用户会去查 PATH、查安装，全都不对。
 #: 跑一句 `echo $NANZI_CREDENTIAL_STATUS` 就能看到真正的原因。
@@ -7830,8 +7833,6 @@ class _ScriptCredentialBashNativeTool:
             return "no-conversation-id"
         if not self._workdir:
             return "no-workdir"
-        if self._helper_dir_in_command_view() is None:
-            return "no-helper-path"
         return None
 
     # ── 准备 / 清理 ───────────────────────────────────────────────
@@ -7890,11 +7891,16 @@ class _ScriptCredentialBashNativeTool:
         # 沙箱里只挂载了 /workspace，宿主路径在容器中不存在，helper 会报「票据
         # 不存在」——而且这个错看起来像权限问题，排查方向会被带偏。
         # ctx.ticket_path 留给宿主侧的 _cleanup 删文件用。
-        ticket_in_view = f"{helper_dir}/{TICKET_FILE_PREFIX}{ctx.jti}"
+        # **helper 目录用 `$(pwd)` 现算，不用宿主转容器算出来的绝对路径。**
+        # 平台的 workdir 是「平台侧」路径，容器里挂到哪一层取决于部署方式
+        # （DooD 下还要过 HOST_DATA_DIR 映射），推错一层就是全链路失效、而现象
+        # 只是 `command not found`。Bash 的初始 cwd 一定就是会话目录
+        # （_SandboxSessionBashNativeTool 保证），所以 `$(pwd)` 是唯一可靠的锚点。
         prelude = (
+            'NANZI_H="$(pwd)/.nanzi"; '
             f"export NANZI_PLATFORM_URL={shlex.quote(ctx.platform_url)}; "
-            f"export NANZI_TICKET_FILE={shlex.quote(ticket_in_view)}; "
-            f"export PATH={shlex.quote(helper_dir)}:\"$PATH\";"
+            f'export NANZI_TICKET_FILE="$NANZI_H/{TICKET_FILE_PREFIX}{ctx.jti}"; '
+            'export PATH="$NANZI_H:$PATH";'
         )
         return f"{prelude}\n{command}"
 
@@ -7929,11 +7935,11 @@ class _ScriptCredentialBashNativeTool:
             return await self._invoke_plain(_with_credential_status(kwargs, reason))
 
         identity = self._identity()
-        helper_dir = self._helper_dir_in_command_view()
-        if identity is None or helper_dir is None:  # pragma: no cover - 与上面同源
+        if identity is None:  # pragma: no cover - 与 _skip_reason 同源
             return await self._invoke_plain(
-                _with_credential_status(kwargs, "no-helper-path")
+                _with_credential_status(kwargs, "no-identity")
             )
+        helper_dir = os.path.join(self._workdir or "", DIR_NAME_FOR_HELPER)
 
         ctx, prepare_error = await self._prepare(identity, helper_dir)
         if ctx is None:

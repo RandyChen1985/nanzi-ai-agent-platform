@@ -174,3 +174,90 @@ def test_non_json_catalog_output_falls_back_to_plain_truncation():
     rendered = build_final_tool_result_context(_meta("list_available_skills", plain_text))
     assert "… [输出已截断]" in rendered
     assert len(rendered) <= CATALOG_TOOL_OUTPUT_MAX_CHARS + 200
+
+
+def test_catalog_without_keyword_param_does_not_suggest_keyword():
+    """不支持 keyword 参数的清单工具被裁剪时，不得误导模型传 keyword。"""
+    kbs = [
+        {"id": f"kb-{i}", "name": f"知识库{i}", "description": "说明" * 60}
+        for i in range(40)
+    ]
+    listing = json.dumps({"knowledge_bases": kbs, "total": 40}, ensure_ascii=False)
+    rendered = build_final_tool_result_context(
+        _meta("list_accessible_knowledge_bases", listing)
+    )
+    payload, note = _payload_of(rendered)
+    assert payload["truncated"] is True
+    assert "keyword" not in note
+    assert "list_accessible_knowledge_bases" in note
+
+
+def test_multiple_catalogs_drop_whole_second_line_without_mid_json_cut():
+    """一轮多个超长清单工具超总预算时整行淘汰，绝不硬切第二条的 JSON。"""
+    meta = {
+        "tool_names": {"c1": "list_available_skills", "c2": "list_accessible_datasets"},
+        "tool_args_text": {"c1": "{}", "c2": "{}"},
+        "tool_outputs": {
+            "c1": _skill_listing(60, desc_len=120),
+            "c2": _skill_listing(60, desc_len=120),
+        },
+        "tool_data": {},
+        "tool_result_states": {"c1": "success", "c2": "success"},
+    }
+    rendered = build_final_tool_result_context(meta, max_total_chars=4000)
+    assert "list_accessible_datasets:" not in rendered
+    assert "另有 1 条工具结果因上下文长度未保留" in rendered
+    # 第一条清单正文仍是合法 JSON
+    first_part = rendered.split("\n… [另有", 1)[0]
+    payload, _ = _payload_of(first_part)
+    assert payload["truncated"] is True
+
+
+def test_catalog_preserves_keyword_and_handles_dual_list_agents():
+    """裁剪带 keyword 的清单要保留 keyword；双列表（items/blocked）不能静默丢分组。"""
+    narrowed = json.dumps(
+        {
+            "keyword": "ops",
+            "total": 40,
+            "returned": 40,
+            "truncated": False,
+            "skills": [
+                {"id": f"ops-{i}", "name": f"运维{i}", "description": "描述" * 60}
+                for i in range(40)
+            ],
+        },
+        ensure_ascii=False,
+    )
+    rendered = build_final_tool_result_context(_meta("list_available_skills", narrowed))
+    payload, _ = _payload_of(rendered)
+    assert payload["keyword"] == "ops"
+
+    # list_available_agents：items 为空、blocked 很长时走结构化裁剪而非字符硬切
+    agents_payload = json.dumps(
+        {
+            "scope": "delegable_agents",
+            "delegation_available": False,
+            "items": [],
+            "blocked": [
+                {"agent_name": f"agent-{i}", "description": "职责" * 80}
+                for i in range(30)
+            ],
+        },
+        ensure_ascii=False,
+    )
+    rendered_agents = build_final_tool_result_context(
+        _meta("list_available_agents", agents_payload)
+    )
+    agents_json, agents_note = _payload_of(rendered_agents)
+    assert isinstance(agents_json["blocked"], list)
+    assert agents_json["truncated"] is True
+    assert "keyword" not in agents_note
+
+
+def test_single_oversized_line_does_not_claim_extra_omitted_lines():
+    """只有 1 条工具结果超总预算时，不得误报「另有 1 条未保留」。"""
+    rendered = build_final_tool_result_context(
+        _meta("exec_command", "a" * 800), max_total_chars=200
+    )
+    assert "… [输出已截断]" in rendered
+    assert "另有" not in rendered

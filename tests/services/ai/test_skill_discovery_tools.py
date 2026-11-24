@@ -495,3 +495,46 @@ def test_read_skill_instruction_suggests_closest_id_on_typo(tmp_path):
     assert "不存在" in message
     assert "dsapi-admin" in message, "拼写变体必须给出最接近的候选 id"
     assert "list_available_skills" in message
+
+
+def test_read_skill_instruction_does_not_leak_forbidden_or_disabled_in_suggestions(
+    tmp_path, monkeypatch
+):
+    """被权限禁用或已停用的技能不得出现在「最接近的候选 id」里，且明确拒因不再自相矛盾。"""
+    from app.services.ai.tools.system_executive_tools import read_skill_instruction
+
+    async def _forbidden(*_args, **_kwargs):
+        return {"secret-ops"}
+
+    monkeypatch.setattr(
+        "app.services.ai.skills.policy.get_forbidden_skill_ids", _forbidden
+    )
+    _write_skill(tmp_path / "secret-ops", name="SecretOps")
+    _write_skill(tmp_path / "paused-ops", name="PausedOps", enabled=False)
+
+    with _patch_skills_dir(tmp_path) as mock_skills_dir:
+        mock_skills_dir.return_value = str(tmp_path)
+
+        # 用近似拼写探测：不得把被禁/停用的技能 id 当候选吐出来
+        probe_forbidden = read_skill_instruction.invoke({"skill_id": "secret_ops"})
+        assert "secret-ops" not in probe_forbidden
+
+        probe_disabled = read_skill_instruction.invoke({"skill_id": "paused_ops"})
+        assert "paused-ops" not in probe_disabled
+
+        # 命中明确拒因时，不再追加「单次读取失败不代表该技能已被删除或禁用」的自相矛盾尾巴
+        denied = read_skill_instruction.invoke({"skill_id": "secret-ops"})
+        assert "被权限规则禁用" in denied
+        assert "不代表该技能已被删除或禁用" not in denied
+
+        disabled = read_skill_instruction.invoke({"skill_id": "paused-ops"})
+        assert "已被停用" in disabled
+        assert "不代表该技能已被删除或禁用" not in disabled
+
+
+def test_list_available_skills_rejects_bool_limit(tmp_path):
+    """bool 是 int 子类：limit=True 不得被当成 limit=1。"""
+    from app.services.ai.tools.system_executive_tools import _coerce_skill_list_limit
+
+    assert _coerce_skill_list_limit(True) == 50
+    assert _coerce_skill_list_limit(False) == 50

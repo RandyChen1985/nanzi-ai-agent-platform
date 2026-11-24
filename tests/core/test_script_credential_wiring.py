@@ -201,12 +201,12 @@ def test_plain_command_output_is_untouched(tmp_path, fake_platform, monkeypatch)
     assert _chunk_text(chunks).strip() == "plain-ok"
 
 
-def test_sandbox_ticket_path_is_translated_to_command_view(tmp_path, fake_platform, monkeypatch):
-    """沙箱里 ``NANZI_TICKET_FILE`` 必须是容器内路径。
+def test_helper_dir_is_anchored_on_pwd(tmp_path, fake_platform, monkeypatch):
+    """helper 目录必须由命令自己用 ``pwd`` 定位，而不是平台算好的绝对路径。
 
-    宿主路径（如 ``/data/.../.nanzi/ticket.abc``）在容器里不存在，helper 会报
-    「票据不存在」——看着像权限问题，实际是路径没换算。这条断言盯的是**前缀**，
-    因为它不由容器里的任何东西兜底。
+    平台的 workdir 是「平台侧」路径，在容器里挂到哪一层取决于部署方式（DooD 下
+    还要过 HOST_DATA_DIR 映射）。推错一层，整个功能失效而现象只是
+    ``command not found``——所以这里认的是「命令自己能算对」，不是「平台算得对」。
     """
     from app.services.ai.runtime.agentscope.workspace import (
         TICKET_FILE_PREFIX,
@@ -221,28 +221,29 @@ def test_sandbox_ticket_path_is_translated_to_command_view(tmp_path, fake_platfo
     session = os.path.join(host_root, "conv-1")
     os.makedirs(session, exist_ok=True)
 
-    tool = _ScriptCredentialBashNativeTool(
-        _Stub(),
-        workdir=session,
-        host_root=host_root,
-        sandboxed=True,
-        user_info={"user_id": "u1", "dept_code": ""},
-        conversation_id="c1",
-    )
-    helper_dir = tool._helper_dir_in_command_view()
-    assert helper_dir == "/workspace/conv-1/.nanzi"
-
-    ctx = _ScriptCredentialBashContext(
-        jti="abc123",
-        platform_url="http://platform:8001",
-        ticket_path=os.path.join(session, ".nanzi", f"{TICKET_FILE_PREFIX}abc123"),
-        workdir=session,
-    )
-    decorated = tool._decorate("echo hi", helper_dir, ctx)
-    # shlex.quote 只在需要时加引号，这里断言「路径本身」而不是引号形态
-    assert f"NANZI_TICKET_FILE=/workspace/conv-1/.nanzi/{TICKET_FILE_PREFIX}abc123" in decorated
-    assert host_root not in decorated, "宿主绝对路径不该出现在容器里执行的命令中"
-    assert "echo hi" in decorated
+    for sandboxed in (True, False):
+        tool = _ScriptCredentialBashNativeTool(
+            _Stub(),
+            workdir=session,
+            host_root=host_root,
+            sandboxed=sandboxed,
+            user_info={"user_id": "u1", "dept_code": ""},
+            conversation_id="c1",
+        )
+        helper_dir = os.path.join(session, ".nanzi")
+        ctx = _ScriptCredentialBashContext(
+            jti="abc123",
+            platform_url="http://platform:8001",
+            ticket_path=os.path.join(helper_dir, f"{TICKET_FILE_PREFIX}abc123"),
+            workdir=session,
+        )
+        decorated = tool._decorate("echo hi", helper_dir, ctx)
+        assert 'NANZI_H="$(pwd)/.nanzi"' in decorated
+        assert f'export PATH="$NANZI_H:$PATH"' in decorated
+        assert f'"$NANZI_H/{TICKET_FILE_PREFIX}abc123"' in decorated
+        # 平台侧绝对路径不该出现在命令里
+        assert session not in decorated, "宿主绝对路径不该进容器执行的命令"
+        assert decorated.rstrip().endswith("echo hi")
 
 
 def test_parallel_bash_does_not_share_ticket_file(tmp_path, fake_platform, monkeypatch):

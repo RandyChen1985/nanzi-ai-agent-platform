@@ -280,6 +280,18 @@ CATALOG_TOOL_NAMES = frozenset(
     }
 )
 
+#: 清单工具中真正支持 ``keyword`` 参数的子集。
+#:
+#: 其余无参或只按枚举筛选的清单工具（知识库/智能体/目录/消息群）若被提示「用 keyword
+#: 收窄」，会诱导模型传非法参数报错。
+CATALOG_KEYWORD_TOOL_NAMES = frozenset(
+    {
+        "list_available_skills",
+        "list_accessible_datasets",
+        "list_my_credentials",
+    }
+)
+
 #: 单个清单型工具在跨轮上下文里的正文上限（字符）。
 #:
 #: 必须给 ``build_final_tool_result_context`` 的 ``max_total_chars``（默认 4000）留出
@@ -298,29 +310,41 @@ _CATALOG_LIST_KEYS = (
     "credentials",
     "channels",
     "results",
+    "blocked",
 )
 
-#: 跨轮重建时不保留的容器标量字段：它们描述**上一层**的截断/过滤状态，跨轮后会误导
-#: 模型以为自己还在看一份被收窄或已被解释过的清单；这三个字段由下面重新生成。
-_CATALOG_DROPPED_EXTRAS = frozenset({"total", "returned", "truncated", "note", "keyword"})
+#: 跨轮重建时不保留的容器标量字段：它们描述**上一层**的截断状态，由下面重新生成。
+#: ``keyword`` 必须保留：它标明 ``total`` 是该 keyword 过滤后的总数而非全量。
+_CATALOG_DROPPED_EXTRAS = frozenset({"total", "returned", "truncated", "note"})
 
 
 def _catalog_payload_parts(parsed: Any) -> tuple[str, list[Any], dict[str, Any] | None]:
     """取出（承载列表的键名，条目列表，原始容器）。
 
     兼容两种返回形态：裸数组（``[ {...}, ... ]``）与对象（``{"skills": [...], ...}``）。
+    对双列表容器（如 ``list_available_agents`` 的 ``items`` + ``blocked``），优先选
+    首个**非空**列表，避免 ``items`` 为空但 ``blocked`` 很长时退回字符硬切。
     """
     if isinstance(parsed, list):
         return "items", parsed, None
     if isinstance(parsed, dict):
+        first_empty: tuple[str, list[Any], dict[str, Any]] | None = None
         for key in _CATALOG_LIST_KEYS:
             value = parsed.get(key)
             if isinstance(value, list):
-                return key, value, parsed
+                if value:
+                    return key, value, parsed
+                if first_empty is None:
+                    first_empty = (key, value, parsed)
         # 兜底：任意一个 list 字段都算清单（工具名各异，不硬编码全部字段名）。
         for key, value in parsed.items():
             if isinstance(value, list):
-                return str(key), value, parsed
+                if value:
+                    return str(key), value, parsed
+                if first_empty is None:
+                    first_empty = (str(key), value, parsed)
+        if first_empty is not None:
+            return first_empty
     return "", [], None
 
 
@@ -349,16 +373,26 @@ def _clip_catalog_payload(text: str, *, tool_name: str, max_chars: int) -> str:
     # 否则模型看到的"共 N 条"比实际更少，又变成一种无声的信息丢失。
     if isinstance(container, dict):
         declared_total = container.get("total")
-        if isinstance(declared_total, int) and declared_total > total:
+        if (
+            isinstance(declared_total, int)
+            and not isinstance(declared_total, bool)
+            and declared_total > total
+        ):
             total = declared_total
-    # 容器上的少量标量字段（如 scope）保留：它们解释清单本身，比条目更省字符。
-    # note/keyword 必须丢弃——它们描述的是**上一层**的截断与过滤，跨轮后会误导模型
-    # 以为自己还在看一份被 keyword 收窄或已被解释过的清单。
+    # 容器上的少量标量字段（如 scope / keyword）保留：它们解释清单本身，比条目更省字符。
+    # 旧的 total/returned/truncated/note 由下面重新生成。
     extras = {
         str(k): v
         for k, v in (container or {}).items()
         if str(k) != key and not isinstance(v, (list, dict))
     }
+    # 记录被省略的其它非空列表字段名（如 list_available_agents 的 blocked），避免静默消失。
+    omitted_list_keys = [
+        str(k)
+        for k, v in (container or {}).items()
+        if str(k) != key and isinstance(v, list) and v
+    ]
+    supports_keyword = tool_name in CATALOG_KEYWORD_TOOL_NAMES
 
     def _render(kept: list[str], kept_count: int) -> tuple[str, str]:
         # key 走 json.dumps 转义：它是工具提供的字段名，直接拼进字符串会破坏 JSON 语法。
@@ -370,16 +404,27 @@ def _clip_catalog_payload(text: str, *, tool_name: str, max_chars: int) -> str:
                 json.dumps(extra_key, ensure_ascii=False),
                 json.dumps(extra_value, ensure_ascii=False),
             )
+        is_truncated = kept_count < total or bool(omitted_list_keys)
         payload += ',"total":%d,"returned":%d,"truncated":%s}' % (
             total,
             kept_count,
-            "true" if kept_count < total else "false",
+            "true" if is_truncated else "false",
+        )
+        if not is_truncated:
+            return payload, ""
+        extra_hint = (
+            f"；另有分组 {', '.join(omitted_list_keys)} 未展开"
+            if omitted_list_keys
+            else ""
+        )
+        action_hint = (
+            f"需要未展示的条目请再次调用 {tool_name} 并用 keyword 收窄"
+            if supports_keyword
+            else f"需要完整列表请再次调用 {tool_name} 查看"
         )
         note = (
-            f"\n（共 {total} 条，本次上下文仅保留前 {kept_count} 条；"
-            f"需要未展示的条目请再次调用 {tool_name} 并用 keyword 收窄）"
-            if kept_count < total
-            else ""
+            f"\n（共 {total} 条，本次上下文仅保留前 {kept_count} 条"
+            f"{extra_hint}；{action_hint}）"
         )
         return payload, note
 
@@ -405,12 +450,17 @@ def _clip_catalog_payload(text: str, *, tool_name: str, max_chars: int) -> str:
     return truncate_for_context(raw, max_len=max_chars)
 
 
-def _join_tool_result_lines(lines: list[str], *, max_total_chars: int) -> str:
-    """按整行拼装多条工具结果，避免把某一行正文拦腰截断。
+def _join_tool_result_lines(
+    lines: list[str],
+    *,
+    max_total_chars: int,
+) -> str:
+    """按整行拼装多条工具结果，避免把任何一行正文拦腰截断。
 
     旧实现是 ``"\\n".join(lines)[:max_total_chars]``：整段硬切会在任意位置断开，
-    恰好落在 JSON 中时模型就拿到一份"看起来完整"的残缺清单。现在改为整行淘汰，
-    并对最后一条做带说明的软截断，让"少了多少条"始终可见。
+    恰好落在 JSON 中时模型就拿到一份"看起来完整"的残缺清单。现在改为整行淘汰：
+    已保留至少一条时，放不下的后续行直接整行省略并准确标明「另有 N 条未保留」；
+    仅当首行自身就超过总预算时才对首行做软截断。
     """
     if not lines:
         return ""
@@ -423,16 +473,15 @@ def _join_tool_result_lines(lines: list[str], *, max_total_chars: int) -> str:
             used += cost
             continue
         remaining = len(lines) - index
-        room = max_total_chars - used - (1 if kept else 0)
-        if room >= 120:
-            kept.append(
-                line[: room - 60].rstrip()
-                + f"\n… [输出已截断，另有 {remaining} 条工具结果未保留]"
-            )
-            return "\n".join(kept)
         if kept:
             return "\n".join(kept) + f"\n… [另有 {remaining} 条工具结果因上下文长度未保留]"
-        return line[:max_total_chars] + "\n… [输出已截断]"
+        others = remaining - 1
+        suffix = (
+            f"\n… [输出已截断，另有 {others} 条工具结果未保留]"
+            if others > 0
+            else "\n… [输出已截断]"
+        )
+        return line[:max_total_chars].rstrip() + suffix
     return "\n".join(kept)
 
 
@@ -456,6 +505,13 @@ def build_final_tool_result_context(
     result_states = meta.get("tool_result_states") or {}
     if not isinstance(tool_names, dict):
         return ""
+
+    # 单条清单预算不得超过总预算，否则总预算较小时单条清单也会被二次硬切。
+    catalog_max_chars = (
+        max(120, min(CATALOG_TOOL_OUTPUT_MAX_CHARS, max_total_chars - 120))
+        if max_total_chars > 240
+        else max(1, max_total_chars)
+    )
 
     catalog_lines: list[str] = []
     plain_lines: list[str] = []
@@ -489,7 +545,7 @@ def build_final_tool_result_context(
                 _clip_catalog_payload(
                     output,
                     tool_name=name,
-                    max_chars=CATALOG_TOOL_OUTPUT_MAX_CHARS,
+                    max_chars=catalog_max_chars,
                 )
             )
             catalog_lines.append(f"{name}: {arg_preview} -> {rendered}{block_note}")

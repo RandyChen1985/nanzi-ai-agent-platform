@@ -359,6 +359,8 @@ _SKILL_LIST_LIMIT_MAX = 200
 
 def _coerce_skill_list_limit(limit: Optional[int]) -> int:
     """把 ``limit`` 规范化成 ``[1, _SKILL_LIST_LIMIT_MAX]``；非法值退回默认。"""
+    if isinstance(limit, bool):
+        return _SKILL_LIST_LIMIT_DEFAULT
     try:
         value = int(limit)  # type: ignore[arg-type]
     except (TypeError, ValueError):
@@ -500,18 +502,23 @@ def _describe_skill_lookup_failure(
     user_info,
     skills_custom: bool,
     forbidden_skill_ids,
+    visible_skill_ids: Optional[list[str]] = None,
 ) -> str:
-    """说明「技能读不到」的具体原因，并给出最接近的候选 id。
+    """说明「技能读不到」的具体原因，并在拼写错误时从可见集合给出最接近的候选 id。
 
     旧文案把「不存在 / 已禁用 / 不在智能体范围 / 被权限禁用」压成一句三选一
     （"不存在、已禁用，或不在当前智能体可用 Skills 范围内"）。实测模型会把它读成
     "该技能被移出范围了"，据此向用户报告一个不存在的问题。这四种原因的处理动作
     完全不同（改 id / 找管理员启用 / 调整智能体白名单 / 联系管理员解禁），必须分开说。
+
+    候选建议**只能**从当前会话可见且已启用的技能里挑，绝不把被权限禁用、已停用或
+    不在白名单里的技能 id 当候选暴露给模型；已明确判定为停用/禁用/白名单外时，
+    也不再追加「不代表已被禁用，请重试」这类自相矛盾的提示。
     """
     from app.services.ai.skill_resolver import list_skill_metas
 
     try:
-        # 不带过滤参数的全量清单：只有它才能区分"根本没这个技能"与"被过滤掉了"。
+        # 不带过滤参数的全量清单：只用来区分"根本没这个技能"与"被过滤掉了"，不作为候选对外暴露。
         all_metas = list_skill_metas(user_info=user_info)
     except Exception as e:  # noqa: BLE001 - 诊断信息拿不到也不能盖掉原始错误
         logger.debug("[Skills] Failed to build lookup diagnostics for %s: %s", skill_id, e)
@@ -521,17 +528,18 @@ def _describe_skill_lookup_failure(
 
     meta = known.get(skill_id)
     if meta is not None:
+        is_personal = (meta.get("scope") or "global") == "personal"
         if not is_skill_enabled(meta):
             reason = (
                 f"技能 {skill_id} 存在，但它在 SKILL.md 里的 enabled 不是 true（已被停用），"
                 "因此不会加载。需要启用请到技能管理里打开该技能。"
             )
-        elif skill_id in forbidden:
+        elif not is_personal and skill_id in forbidden:
             reason = (
                 f"技能 {skill_id} 在公共技能库里存在，但被权限规则禁用（forbidden_skills），"
                 "当前用户不可读。需要解禁请让管理员调整权限。"
             )
-        elif skills_custom:
+        elif not is_personal and skills_custom:
             reason = (
                 f"技能 {skill_id} 是公共技能，但当前智能体开启了「自定义技能」，"
                 "而它的白名单里没有这个技能。请改用白名单内的技能，或让管理员把该智能体"
@@ -539,12 +547,13 @@ def _describe_skill_lookup_failure(
             )
         else:
             reason = f"技能 {skill_id} 当前不可读（可见性过滤后未命中）。"
-    else:
-        reason = (
-            f"技能 {skill_id} 不存在：公共技能库里没有它，当前用户的个人技能目录里也没有。"
-        )
+        return f"错误：{reason}"
 
-    suggestions = _closest_skill_ids(skill_id, list(known))
+    reason = (
+        f"技能 {skill_id} 不存在：公共技能库里没有它，当前用户的个人技能目录里也没有。"
+    )
+    candidates = [str(item) for item in (visible_skill_ids or []) if str(item)]
+    suggestions = _closest_skill_ids(skill_id, candidates)
     if suggestions:
         reason += f" 最接近的候选 id：{', '.join(suggestions)}。"
     reason += (
@@ -595,11 +604,17 @@ async def read_skill_instruction(skill_id: str, path: Optional[str] = None) -> s
             None,
         )
         if not matched:
+            visible_ids = [
+                str(m.get("id") or "")
+                for m in metas
+                if is_skill_enabled(m) and m.get("id")
+            ]
             return _describe_skill_lookup_failure(
                 safe_skill_id,
                 user_info=user_info,
                 skills_custom=skills_custom,
                 forbidden_skill_ids=forbidden_skill_ids,
+                visible_skill_ids=visible_ids,
             )
 
         skill_md_path = matched.get("skill_md_path")
