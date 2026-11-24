@@ -288,6 +288,13 @@ thought 不超过 40 个汉字。只返回下列 JSON，不要 Markdown 或额�
         early_context: 跨轮持久化的早期轮次压缩摘录（早于当前窗口被压缩溢出的历史要点），
         随路由上下文一并交给路由模型，使多轮后路由判断仍基于完整会话背景。
         """
+        from app.utils.skill_metadata import extract_plain_user_query
+
+        # 剥离平台前端/后端在 \n\n---\n\n 之后拼接的附件提示块，避免挂载技能提示污染路由与启发式。
+        plain_input = extract_plain_user_query(user_input)
+        if plain_input:
+            user_input = plain_input
+
         current_time = time.time()
 
         # 1. Fetch Agents (with Caching)

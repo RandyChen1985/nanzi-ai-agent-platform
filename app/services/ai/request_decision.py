@@ -266,7 +266,9 @@ def _resolve_request_decision(
     判定顺序按“强边界优先”排列：平台自服务、公网、运行环境、通用问答等先拦截，
     内部知识库/ChatBI 业务数据只在有明确来源证据时才打开。
     """
-    q = (query or "").strip()
+    from app.utils.skill_metadata import extract_plain_user_query
+
+    q = extract_plain_user_query(query)
     semantic_name = _intent_name(semantic_intent)
     semantic_score = _coerce_confidence(semantic_confidence)
     turn_name = _intent_name(turn_intent)

@@ -1198,19 +1198,21 @@ class AssistantAgentRunner(BaseExecutor):
         from app.services.ai.memory_recall_policy import (
             looks_like_cross_session_recall_query,
         )
+        from app.utils.skill_metadata import extract_plain_user_query
 
+        plain_query = extract_plain_user_query(user_query)
         signal_contracts = (
-            (looks_like_strong_business_data_request(user_query), EvidenceType.INTERNAL_DATA),
+            (looks_like_strong_business_data_request(plain_query), EvidenceType.INTERNAL_DATA),
             (
-                looks_like_web_search_query(user_query)
-                or looks_like_dynamic_public_fact_query(user_query)
-                or looks_like_public_profile_lookup(user_query),
+                looks_like_web_search_query(plain_query)
+                or looks_like_dynamic_public_fact_query(plain_query)
+                or looks_like_public_profile_lookup(plain_query),
                 EvidenceType.PUBLIC_WEB,
             ),
-            (looks_like_runtime_diagnostic_query(user_query), EvidenceType.RUNTIME_STATE),
-            (looks_like_knowledge_query(user_query), EvidenceType.INTERNAL_KNOWLEDGE),
+            (looks_like_runtime_diagnostic_query(plain_query), EvidenceType.RUNTIME_STATE),
+            (looks_like_knowledge_query(plain_query), EvidenceType.INTERNAL_KNOWLEDGE),
             (
-                looks_like_cross_session_recall_query(user_query),
+                looks_like_cross_session_recall_query(plain_query),
                 EvidenceType.CONVERSATION_MEMORY,
             ),
         )
@@ -1324,11 +1326,14 @@ class AssistantAgentRunner(BaseExecutor):
         self,
         history: List[Dict[str, str]]
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.utils.skill_metadata import extract_plain_user_query
+
         user_query = self._current_user_query(history)
+        plain_user_query = extract_plain_user_query(user_query)
         grounding_enabled = self._grounding_enabled()
         run_data_guard = (
             grounding_enabled
-            and self._should_run_data_hallucination_guard(user_query)
+            and self._should_run_data_hallucination_guard(plain_user_query)
         )
         ctx = self._ensure_agent_context()
         shared_ledger = (
@@ -1345,7 +1350,7 @@ class AssistantAgentRunner(BaseExecutor):
         # 才能把正文里的引用反查回正确的切片，避免多次检索导致引用错配。
         new_turn_knowledge_citation_ledger(ctx)
         grounding_requirement = (
-            self._resolve_turn_grounding_requirement(user_query, ctx)
+            self._resolve_turn_grounding_requirement(plain_user_query, ctx)
             if grounding_enabled
             else FactRequirement(required=False, accepted_types=frozenset())
         )
@@ -1884,6 +1889,9 @@ class AssistantAgentRunner(BaseExecutor):
             tools_include_memory_search,
         )
         from app.services.memory_config_service import MemoryConfigService
+        from app.utils.skill_metadata import extract_plain_user_query
+
+        _preflight_user_query = extract_plain_user_query(user_query)
 
         memory_search_available = tools_include_memory_search(tools)
         recall_query_pending = False
@@ -1891,11 +1899,11 @@ class AssistantAgentRunner(BaseExecutor):
             try:
                 enabled = await MemoryConfigService.get_bool("memory_service_enabled", True)
                 recall_query_pending = enabled and looks_like_cross_session_recall_query(
-                    user_query
+                    _preflight_user_query
                 )
             except Exception:
                 recall_query_pending = looks_like_cross_session_recall_query(
-                    user_query
+                    _preflight_user_query
                 )
 
         native_system_content = system_content
@@ -1910,12 +1918,18 @@ class AssistantAgentRunner(BaseExecutor):
         # 模式 agent_tool_preflight_mode：off=关闭；soft=普通工具注入便签；hard=便签+首步强制调用。
         # 证据型只读工具即使在 soft 模式也必须首步取证，避免模型凭上下文直接生成动态事实。
         preflight_tool_choice = None
-        _preflight_user_query = user_query
         from app.services.ai.tool_nudge_policy import (
+            extract_active_skill_state,
             is_automatic_delivery_context,
             is_tool_meta_query,
             looks_like_explicit_user_question_request,
         )
+
+        (
+            _has_active_skills,
+            _has_full_preloaded_skill,
+            _summary_only_skill_ids,
+        ) = extract_active_skill_state(system_content)
 
         _preflight_ctx = self._ensure_agent_context()
         grounding_request_decision = self._resolve_grounding_request_decision(_preflight_user_query)
@@ -1999,9 +2013,13 @@ class AssistantAgentRunner(BaseExecutor):
                             force_first_call=True,
                         )
                     else:
-                        evidence_plan = resolve_tool_nudge_plan(
-                            _preflight_user_query,
-                            tools,
+                        evidence_plan = (
+                            None
+                            if _has_full_preloaded_skill
+                            else resolve_tool_nudge_plan(
+                                _preflight_user_query,
+                                tools,
+                            )
                         )
                         if evidence_plan is not None:
                             evidence_contracts = tuple(
@@ -2014,7 +2032,7 @@ class AssistantAgentRunner(BaseExecutor):
                             )
                         else:
                             tool_nudge = resolve_tool_nudge(
-                                user_query,
+                                _preflight_user_query,
                                 tools,
                                 available_sub_agent_names=available_sub_agent_names,
                                 sub_agent_candidates_by_capability=sub_agent_candidates_by_capability,
@@ -2029,6 +2047,9 @@ class AssistantAgentRunner(BaseExecutor):
                                     else None
                                 ),
                                 allow_explicit_question=interactive_question_allowed,
+                                has_active_skills=_has_active_skills,
+                                has_full_preloaded_skill=_has_full_preloaded_skill,
+                                summary_only_skill_ids=_summary_only_skill_ids,
                             )
                     if tool_nudge is None and grounding_requires_tool:
                         capability_name = next(

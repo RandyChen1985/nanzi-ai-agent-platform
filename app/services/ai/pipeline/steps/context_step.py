@@ -19,6 +19,8 @@ from app.services.ai.agent_service import (
 from app.services.ai.memory_service import memory_service
 from app.utils.skill_metadata import (
     enrich_messages_with_skill_meta,
+    is_skill_enabled,
+    sanitize_disabled_skill_context,
     sanitize_forbidden_skill_context,
     upgrade_legacy_skill_mount_hints,
 )
@@ -62,6 +64,30 @@ class ContextStep(BasePipelineStep):
         )
         if forbidden_skill_ids:
             sanitize_forbidden_skill_context(messages, forbidden_skill_ids)
+
+        # 同样清洗已停用（enabled=false）技能的挂载附件与假预载提示，防止落库或误导模型以为已预载。
+        try:
+            from app.services.ai.skills.injector import SkillInjector
+
+            disabled_mount_ids: set[str] = set()
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                for item in msg.get("files") or []:
+                    if not isinstance(item, dict) or item.get("type") != "skill":
+                        continue
+                    skill_id = str(item.get("url") or "").strip()
+                    if not skill_id:
+                        continue
+                    meta = SkillInjector.resolve_mount_meta(
+                        item, skill_id, context.user_info
+                    )
+                    if not is_skill_enabled(meta):
+                        disabled_mount_ids.add(skill_id)
+            if disabled_mount_ids:
+                sanitize_disabled_skill_context(messages, disabled_mount_ids)
+        except Exception as disabled_err:
+            logger.debug("[Skills] Disabled skill mount sanitize skipped: %s", disabled_err)
 
         # 老会话里"带 SKILL.md 死路径"的挂载提示就地升级成新文案（只改内存快照、不回写库）：
         # 那条路径对个人技能与 Docker/K8s 沙箱都不成立，模型每轮都可能照抄着读一次。

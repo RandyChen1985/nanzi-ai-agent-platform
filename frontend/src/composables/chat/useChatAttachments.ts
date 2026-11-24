@@ -69,7 +69,8 @@ export const useChatAttachments = ({
     // 技能附带的脚本/资源一律走 read_skill_instruction 的资源清单 + path 参数按需读取。
     let hint =
       `用户本轮已调用生态技能工作流：${skillName}${idText}。` +
-      "其 SKILL.md 正文已随本轮上下文预载，本轮直接按预载指令执行，无需再读取技能文件；" +
+      "其 SKILL.md 正文已随本轮上下文预载（以 System Prompt 中 [Active Skills Loaded] " +
+      "的实际状态为准：已预载则直接按指令执行，若因数量上限仅加载摘要则按提示读取完整说明后再执行）；" +
       "如需读取该技能附带的脚本或资源（references/、scripts/ 等），请调用 read_skill_instruction " +
       '获取该技能的资源清单，再用 path 参数按需读取（例如 path="references/rules.md"）；' +
       "技能目录布局不保证可由技能 ID 推导，不要猜测固定路径。";
