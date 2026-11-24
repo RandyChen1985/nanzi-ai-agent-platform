@@ -558,6 +558,13 @@ app.include_router(v1_router, prefix="/api/v1")
 # 挂载流程控制门户路由 (管理控制台)
 app.include_router(portal_router, prefix="/api/portal")
 
+# 沙箱/工作区里的脚本回连平台取凭据。走独立前缀是因为它既没有 v1 的 API Key、
+# 也没有 portal 的登录态——唯一的门是平台签发的短期票据（`secrets/sandbox_ticket`）。
+# 部署侧还要在网关层限制 /internal 只对内网可达，见该模块 docstring。
+from app.api.internal.script_credential import router as internal_script_credential_router  # noqa: E402
+
+app.include_router(internal_script_credential_router, prefix="/internal")
+
 # 内置 HTTP 回显（验收 API 工具的凭据注入用）。只在非生产环境挂载：
 # 生产里多一个能回显请求头的端点没有任何好处。
 if not settings.is_production:

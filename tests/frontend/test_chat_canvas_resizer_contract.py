@@ -116,8 +116,12 @@ def test_canvas_pin_default_depends_on_open_source():
     )
 
     # showCanvas 必须能按来源指定是否钉住，且移动端始终不钉住
+    # 独立工作空间页需要「从工作空间打开也不钉住」：默认值由 options.defaultPinned 决定，
+    # 未传时仍回退到 true —— 聊天页的既有行为不能被这次改动带偏。
+    assert "defaultPinned?: boolean" in composable
     assert "const showCanvas = (pinByDefault = true)" in composable
-    assert "canvasPinned.value = pinByDefault && !mobile" in composable
+    assert "const allowDefaultPin = options.defaultPinned ?? true" in composable
+    assert "canvasPinned.value = pinByDefault && !mobile && allowDefaultPin" in composable
 
     # 工作空间预览：显式传 false
     workspace_block = composable.split("const handleWorkspaceFilePreview =")[1].split(

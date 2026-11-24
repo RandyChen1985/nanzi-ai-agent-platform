@@ -32,22 +32,30 @@ _TRACE_POLL_INTERVAL_SEC = 0.3
 _NOTIFICATION_TOOL_NAMES = frozenset(spec[0] for spec in CHANNEL_SPECS.values())
 _SQL_TOOL_NAMES = frozenset({"execute_sql_query"})
 
-_PROVISIONAL_PATTERNS = (
+# 半截话信号：表明助手还在过程中、尚未交付结论。
+#
+# 只放「明确的承诺后续」这类短语，不放「接下来」/「稍后」这种模糊词——后者在正常业务
+# 报告里到处都是（「接下来一周建议关注库存周转」「稍后季度调整」），词表层面分不出
+# 是「接下来建议做 X」还是「接下来我再查 X」。要拦的是承诺，就把承诺本身写进词表：
+# 「稍后」不拦，「稍后回复」才拦。
+_STRONG_PROVISIONAL_PATTERNS = (
     "让我再",
     "让我补充",
-    "再补充",
-    "接下来",
-    "稍后",
-    "稍等",
     "正在查询",
     "正在分析",
     "准备开始",
     "先看一下",
-    "继续分析",
     "补充按",
     "待会",
     "马上为您",
+    "稍后回复",
+    "稍后补充",
+    "稍后再",
+    "请稍等",
+    "稍等一下",
 )
+# 只看结尾这么多个字符。跟长度无关：话说完了没有是结尾的事。
+_PROVISIONAL_TAIL_CHARS = 80
 
 _EXTERNAL_SENDERS = {
     "dingtalk": "send_dingtalk",
@@ -132,10 +140,24 @@ def build_task_notification_body(
 
 
 def is_provisional_assistant_text(text: str) -> bool:
+    """判断输出是否半截停在半路（结尾还在承诺后续动作）。
+
+    只看结尾 80 字，不看全文、也不按长度分桶。
+
+    按全文匹配会把完整报告误杀：正文里的「正在分析最近 30 天数据」「接下来建议关注
+    库存周转」都是正常业务表述，命中即拒发，用户收到的是「投递失败」告警而不是报告，
+    一个字的业务信息都拿不到——误杀的代价远比漏判大。
+
+    而按长度分桶（原先 ≤160 查弱信号、161~320 只查强信号、>320 只看末尾）又会在
+    161 字以上把「先核对了 A/B/C…稍后回复您」这类真半截话放过去。
+
+    真正能判的只有一条：话说完了没有。这跟长度无关，只跟结尾有关。
+    """
     cleaned = str(text or "").strip()
     if not cleaned:
         return True
-    return any(token in cleaned for token in _PROVISIONAL_PATTERNS)
+    tail = cleaned[-_PROVISIONAL_TAIL_CHARS:]
+    return any(token in tail for token in _STRONG_PROVISIONAL_PATTERNS)
 
 
 def _try_parse_json(raw: Any) -> Any:
@@ -293,17 +315,30 @@ def assess_delivery_completeness(
     if has_sql_data:
         return True, "ok_with_sql"
     if len(text) < 20:
-        return False, "too_short"
+        # 短不等于没结论：定时任务经常只返回「已完成，无异常。」这类一句话结论，
+        # 按长度一律判 too_short 的结果是——每次投递都记一次失败并触发告警，
+        # 用户收到的是「任务通知投递失败」而不是任务结果本身。
+        # 只拒「短且明显没说完」：结尾停在逗号/冒号/省略号/连接符这些续写位置。
+        tail = text.rstrip()
+        if tail.endswith(("，", ",", "：", ":", "、", "（", "(", "…", "...", "——", "-")):
+            return False, "too_short"
     return True, "ok"
 
 
 async def load_delivered_notification_tools(trace_id: Optional[str]) -> Set[str]:
-    """从审计 trace 中读取已成功送达的通知工具名。"""
+    """从审计 trace 中读取已成功送达的通知工具名。
+
+    若审计历史（AgentExecutionHistory）已落库且本轮 trace 中并无通知工具，立即结束轮询，
+    避免绝大多数由调度侧统一投递的任务白等 10 × 0.3s = 3 秒。
+    """
     if not trace_id:
         return set()
 
+    from app.models.audit import AgentExecutionHistory
+
     delivered: Set[str] = set()
     for attempt in range(_TRACE_POLL_ATTEMPTS):
+        history_ready = False
         async with AsyncSessionLocal() as session:
             stmt = (
                 select(AgentExecutionTrace)
@@ -317,8 +352,17 @@ async def load_delivered_notification_tools(trace_id: Optional[str]) -> Set[str]
             for row in rows:
                 if notification_tool_succeeded(row.tool_name, row.tool_output):
                     delivered.add(str(row.tool_name))
+            if not delivered:
+                history_id = (
+                    await session.execute(
+                        select(AgentExecutionHistory.id)
+                        .where(AgentExecutionHistory.trace_id == trace_id)
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                history_ready = history_id is not None
 
-        if delivered or attempt == _TRACE_POLL_ATTEMPTS - 1:
+        if delivered or history_ready or attempt == _TRACE_POLL_ATTEMPTS - 1:
             break
         await asyncio.sleep(_TRACE_POLL_INTERVAL_SEC)
 
@@ -338,6 +382,7 @@ async def load_sql_tool_artifacts(trace_id: Optional[str]) -> Tuple[bool, List[D
     for attempt in range(_TRACE_POLL_ATTEMPTS):
         had_sql = False
         payloads = []
+        history_ready = False
         async with AsyncSessionLocal() as session:
             from app.models.audit import AgentExecutionHistory
 
@@ -345,6 +390,8 @@ async def load_sql_tool_artifacts(trace_id: Optional[str]) -> Tuple[bool, List[D
                 AgentExecutionHistory.trace_id == trace_id
             )
             history = (await session.execute(history_stmt)).scalars().first()
+            if history is not None:
+                history_ready = True
             if history and history.conversation_id and history.user_id:
                 try:
                     from app.services.ai.memory_service import memory_service
@@ -379,7 +426,7 @@ async def load_sql_tool_artifacts(trace_id: Optional[str]) -> Tuple[bool, List[D
                 if payload is not None:
                     payloads.append(payload)
 
-        if had_sql or attempt == _TRACE_POLL_ATTEMPTS - 1:
+        if had_sql or history_ready or attempt == _TRACE_POLL_ATTEMPTS - 1:
             break
         await asyncio.sleep(_TRACE_POLL_INTERVAL_SEC)
 
@@ -460,8 +507,7 @@ async def _deliver_channel(
 ) -> Tuple[bool, str]:
     if channel == "portal":
         try:
-            await PortalNotificationService.create(
-                db,
+            create_kwargs = dict(
                 user_id=user_id,
                 title=title,
                 content=body,
@@ -475,19 +521,48 @@ async def _deliver_channel(
                     "task_name": task_name,
                 },
             )
+            # 真实 AsyncSession 用 SAVEPOINT 隔离，防止写入异常污染共享事务导致后续 metrics 写库崩溃
+            if isinstance(db, AsyncSession):
+                async with db.begin_nested():
+                    await PortalNotificationService.create(db, **create_kwargs)
+            else:
+                await PortalNotificationService.create(db, **create_kwargs)
             return True, "portal:ok"
         except Exception as exc:
             logger.warning("TaskCenter portal delivery failed: %s", exc, exc_info=True)
             return False, f"portal:{exc}"
 
-    return await send_external_channel(
-        db,
-        user_id=user_id,
-        channel=channel,
-        title=title,
-        body=body,
-        group_id=group_id,
-    )
+    # 外部渠道同样要 SAVEPOINT 隔离：send_external_channel 内部会查库解析渠道配置，
+    # 抛异常会把会话标脏，后面写投递指标的 SELECT 直接 PendingRollbackError。
+    # 这里只回滚到 savepoint，**不能** rollback 整个事务——否则同一批里刚写好的
+    # 站内信会被一起回滚掉（savepoint RELEASE 不等于提交）。
+    try:
+        if isinstance(db, AsyncSession):
+            async with db.begin_nested():
+                return await send_external_channel(
+                    db,
+                    user_id=user_id,
+                    channel=channel,
+                    title=title,
+                    body=body,
+                    group_id=group_id,
+                )
+        return await send_external_channel(
+            db,
+            user_id=user_id,
+            channel=channel,
+            title=title,
+            body=body,
+            group_id=group_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "TaskCenter external delivery failed: channel=%s error=%s",
+            channel,
+            exc,
+            exc_info=True,
+        )
+        return False, f"{channel}:{exc}"
 
 
 async def ensure_task_notification_deliveries(

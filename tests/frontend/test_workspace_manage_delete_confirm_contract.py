@@ -92,9 +92,11 @@ def test_manage_page_rows_use_the_same_scene_builder_as_the_drawer():
 
     assert "buildWorkspaceItemMenuContext" in rows
     assert 'scene: props.inTrash ? "trash-item" : "regular-item"' not in rows
-    # 列表与卡片两个视图都要把管理员视图 / 保护目录 / 本人工作区根传下去
+    # 列表与卡片两个视图都要把管理员视图 / 保护目录 / 回收站根 / 可管理态 / 本人工作区根传下去
     assert page.count(":is-admin-scope=\"scope === 'admin_all'\"") == 2
-    assert page.count(':is-system-protected="SYSTEM_PROTECTED.has(item.name)"') == 2
+    assert page.count(':is-system-protected="isSystemProtectedItem(item)"') == 2
+    assert page.count(':is-trash-root="isTrashRootItem(item)"') == 2
+    assert page.count(':can-manage="canManageItem(item)"') == 2
     assert page.count(':user-workspace-root="userWorkspaceRoot"') == 2
 
 

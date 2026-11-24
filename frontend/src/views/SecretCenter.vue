@@ -14,6 +14,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import axios from '../utils/axios'
 import { useDismissible } from '../utils/dismissible'
 import { shortTime } from '../utils/date'
+import CodeSnippet from '../components/secrets/CodeSnippet.vue'
 import SecretUsageStats from '../components/secrets/SecretUsageStats.vue'
 import CredentialValueEditor from '../components/secrets/CredentialValueEditor.vue'
 import SecretFormatBadge from '../components/secrets/SecretFormatBadge.vue'
@@ -93,7 +94,7 @@ interface UsageRow {
 const SCENES = [
   { key: 'mcp', label: 'MCP 服务', hint: '出站请求头', desc: '作为连接头的值，在建立 MCP 连接时注入', wired: true },
   { key: 'api_tool', label: 'API 工具', hint: '请求头 / 参数', desc: '填进工具的请求头，只补没填的位置；手填了真实值的不覆盖', wired: true },
-  { key: 'script_env', label: '脚本环境变量', hint: '默认关，需平台 + 个人都开', desc: '以环境变量形式进子进程，脚本里可直接读；stdout 会被指纹扫描', wired: true },
+  { key: 'script_env', label: '脚本可用', hint: '默认关，需平台 + 个人都开', desc: '两条通道：平台脚本工具读环境变量；skill 里的脚本用 nanzi-credential 取值。值会离开平台——脚本能打印、能外发，平台只留调用记录', wired: true },
   { key: 'agent', label: '智能体', hint: '暂未接入，勾了也不会注入', desc: '暂未接入，勾了也不会注入', wired: false },
 ]
 
@@ -295,7 +296,7 @@ const form = ref({
   name: '',
   value: '',
   secret_type: 'credential' as 'credential' | 'variable',
-  allowed_scenarios: ['mcp'] as string[],
+  allowed_scenarios: ['mcp', 'script_env'] as string[],
   allowed_hosts: '',
   category: '',
   remark: '',
@@ -315,7 +316,7 @@ function openCreate() {
     name: '',
     value: '',
     secret_type: 'credential',
-    allowed_scenarios: ['mcp'],
+    allowed_scenarios: ['mcp', 'script_env'],
     allowed_hosts: '',
     category: '',
     remark: '',
@@ -535,6 +536,32 @@ const CONSUMER_LABEL: Record<string, string> = {
 const usageOpen = ref(false)
 /** 「这些凭据会被用在哪里」——这层信息原来只在代码里，界面上看不到 */
 const usageHelpOpen = ref(false)
+//: 帮助弹窗的两个页签：讲「用在哪」和讲「代码里怎么写」。后者是这次脚本通道上线
+//: 补的——只写「脚本可用」而不给可复制的命令，用户只能去翻文档或猜。
+const usageHelpTab = ref<'where' | 'how'>('where')
+//: 代码示例刻意用**已实测跑通**的形态：helper 直接在 PATH 里，值走 stdout。
+//: 换成 os.environ 会是错的——skill 的脚本走 Bash，没有环境变量注入。
+const SNIPPET_BASH = `# 先看看有哪些可用的（只给标识和名称，不含值）
+nanzi-credential list
+
+# 取一条，值走 stdout
+KEY=$(nanzi-credential get weather.api.key)
+curl -s -H "Authorization: Bearer $KEY" https://api.example.com/v1/weather`
+
+const SNIPPET_PYTHON = `import subprocess
+
+def get_secret(key: str) -> str:
+    # 失败时 helper 返回 exit 1，stderr 是可以直接给人看的中文
+    result = subprocess.run(
+        ["nanzi-credential", "get", key],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"取凭据失败：{key}")
+    return result.stdout.strip()
+
+key = get_secret("weather.api.key")`
+
 const usageLoading = ref(false)
 const usageRows = ref<UsageRow[]>([])
 
@@ -1157,15 +1184,29 @@ onMounted(() => {
                 与上面的平台策略取交集——两层都开才真正生效。
               </p>
             </div>
-            <button
-              type="button"
-              :disabled="policyBusy"
-              class="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-medium disabled:opacity-60"
-              :class="prefs.allow_script_env ? 'bg-gray-200 text-gray-700' : 'bg-blue-600 text-white'"
-              @click="savePrefs(!prefs.allow_script_env)"
-            >
-              {{ prefs.allow_script_env ? '改为禁止' : '允许' }}
-            </button>
+            <!-- 状态与动作分成两件事：上面两行同一位置放的是「已开启/已关闭」，
+                 这里如果只放一个「改为禁止」按钮，用户读不出当前到底是开还是关。 -->
+            <div class="flex shrink-0 items-center gap-2">
+              <span
+                class="rounded-md px-2 py-0.5 text-[11px] font-medium"
+                :class="prefs.allow_script_env ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
+              >
+                {{ prefs.allow_script_env ? '已开启' : '已关闭' }}
+              </span>
+              <button
+                type="button"
+                :disabled="policyBusy"
+                class="rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-60"
+                :class="
+                  prefs.allow_script_env
+                    ? 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                    : 'border-blue-600 bg-white text-blue-700 hover:bg-blue-50'
+                "
+                @click="savePrefs(!prefs.allow_script_env)"
+              >
+                {{ prefs.allow_script_env ? '禁止' : '允许' }}
+              </button>
+            </div>
           </div>
           <!-- 平台关着的时候点「允许」什么也不会发生，不说明就是让人白点 -->
           <p
@@ -1649,7 +1690,29 @@ onMounted(() => {
             >✕</button>
           </div>
 
-          <div class="flex-1 space-y-4 overflow-y-auto px-5 py-4 text-sm">
+          <!-- 两个页签：一个讲「用在哪」，一个讲「代码里怎么写」。
+               后者是脚本通道上线后补的——只说「脚本可用」而不给能复制的命令，
+               用户只能自己猜 helper 怎么调，猜错了还以为是权限问题。 -->
+          <div class="flex shrink-0 gap-1 border-b border-gray-100 px-5">
+            <button
+              type="button"
+              class="-mb-px border-b-2 px-2 py-2 text-xs font-medium transition-colors"
+              :class="usageHelpTab === 'where'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-gray-500 hover:text-gray-700'"
+              @click="usageHelpTab = 'where'"
+            >会被用在哪里</button>
+            <button
+              type="button"
+              class="-mb-px border-b-2 px-2 py-2 text-xs font-medium transition-colors"
+              :class="usageHelpTab === 'how'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-gray-500 hover:text-gray-700'"
+              @click="usageHelpTab = 'how'"
+            >怎么在代码里用</button>
+          </div>
+
+          <div v-show="usageHelpTab === 'where'" class="flex-1 space-y-4 overflow-y-auto px-5 py-4 text-sm">
             <div>
               <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">会注入</p>
               <div class="space-y-2">
@@ -1687,12 +1750,29 @@ onMounted(() => {
                     具体落到 path 还是 query / body，由工具的 URL 和方法决定（URL 里有 <code>{"{参数名}"}</code> 就是 path，否则 GET 走 query、其余方法走 body），改配置时会跟着迁移。
                   </p>
                 </div>
-                <div class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
                   <div class="flex items-baseline justify-between gap-2">
-                    <span class="font-medium text-gray-800">脚本工具 · 环境变量</span>
-                    <code class="text-[11px] text-gray-500">env:</code>
+                    <span class="font-medium text-gray-800">脚本 · 两条通道</span>
+                    <code class="text-[11px] text-gray-500">env: · nanzi-credential</code>
                   </div>
-                  <p class="mt-1 text-xs leading-relaxed text-gray-500">平台和用户两层默认都关，两边都打开才能用。</p>
+                  <div class="mt-1.5 space-y-1.5 text-xs leading-relaxed text-gray-600">
+                    <p>
+                      <b class="text-gray-800">① 平台脚本工具</b>：以环境变量注入子进程，脚本里
+                      <code>os.environ["NAME"]</code> 直接读。绑定槽位写 <code>env:NAME</code>。
+                    </p>
+                    <p>
+                      <b class="text-gray-800">② skill / 任意 bash</b>：用 helper 按需取，
+                      <code>KEY=$(nanzi-credential get weather.api.key)</code>；不知道有哪些可用的就先跑
+                      <code>nanzi-credential list</code>。
+                    </p>
+                    <p class="border-t border-emerald-200/70 pt-1.5">
+                      <b class="text-amber-700">前提</b>：这条凭据勾上「脚本可用」，且平台策略与你的偏好里脚本开关都打开（两层默认都关）。
+                    </p>
+                    <p>
+                      <b class="text-red-700">边界</b>：前面几项都是平台代发，出站目标受域名白名单约束；脚本是自己发请求，
+                      <b>值一旦交给脚本，平台拦不住它被打印或发到别处</b>，只留调用记录。所以按凭据逐条勾，别拿一条万能 key 全开。
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1727,7 +1807,46 @@ onMounted(() => {
             </div>
 
             <p class="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800">
-              值是加密存的，只在注入那一刻解密，不落日志、不进对话历史。你自己在页面上点「查看」也会留一条读取记录。
+              值是加密存的，不落日志、不进对话历史。前面几项「注入」只在代发那一刻解密；<b>脚本通道不属于注入</b>——值会真的交到脚本手上，平台只留一条调用记录。你在页面上点「查看」同样会留记录。
+            </p>
+          </div>
+
+          <div v-show="usageHelpTab === 'how'" class="flex-1 space-y-4 overflow-y-auto px-5 py-4 text-sm">
+            <p class="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              <b>先分清通道：</b>技能（skill）里的 <code>.py</code> / <code>.js</code> 是被 Bash 执行的，
+              <b>没有环境变量注入</b>——<code>os.environ["MY_KEY"]</code> 拿不到任何东西。
+              脚本工具（工具集里配的那种）才读环境变量。下面两种都按 Bash 通道写。
+            </p>
+
+            <CodeSnippet
+              label="Bash / Shell"
+              hint="值走 stdout，可直接 $( ) 接住"
+              :code="SNIPPET_BASH"
+            />
+
+            <CodeSnippet
+              label="Python"
+              hint="失败时 exit 1，stderr 是中文"
+              :code="SNIPPET_PYTHON"
+            />
+
+            <div>
+              <p class="mb-1.5 text-xs font-semibold text-gray-700">取不到时，先看是哪一层</p>
+              <div class="space-y-1.5 text-xs leading-relaxed text-gray-600">
+                <p class="flex gap-2"><span class="shrink-0 text-gray-400">·</span>
+                  <span><b class="text-gray-800">command not found</b>：这条命令不在 Bash 工具里跑（定时任务等其它执行路径没有 helper）。</span></p>
+                <p class="flex gap-2"><span class="shrink-0 text-gray-400">·</span>
+                  <span><b class="text-gray-800">「平台或你的偏好关闭了…」</b>：上面「三道闸门」里的 ① 或 ② 没开。</span></p>
+                <p class="flex gap-2"><span class="shrink-0 text-gray-400">·</span>
+                  <span><b class="text-gray-800">「没有授权给当前场景」</b>：③ 这条凭据没勾「脚本可用」。</span></p>
+                <p class="flex gap-2"><span class="shrink-0 text-gray-400">·</span>
+                  <span><b class="text-gray-800">「没有这条凭据」</b>：标识拼错——先跑 <code>nanzi-credential list</code> 核对。</span></p>
+              </div>
+            </div>
+
+            <p class="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800">
+              helper 只能由平台在 Bash 里准备：票据每次执行前写入、执行完删除，所以它<b>不能</b>拿去本地或别的机器跑。
+              值拿到之后平台就拦不住了，边界见「会被用在哪里」那一页。
             </p>
           </div>
         </div>

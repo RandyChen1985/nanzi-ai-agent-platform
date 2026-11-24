@@ -242,7 +242,7 @@ class AgentServicePrompts:
         (("update_user_preference", "has_all"), "| 用户要求「记住…」 | **update_user_preference**（勿虚构已写入） |"),
         (("search_knowledge_base", "has_all"), "| 制度/SOP/操作指引、已选知识库 | **search_knowledge_base**（未绑定则不得编造文档内容） |"),
         (("read_skill_instruction", "has_all"), "| 已匹配技能（**[Active Skills Loaded]**） | 若技能块已预载完整指令，直接按该指令执行；若仅有摘要，必须先 **read_skill_instruction(skill_id)** 读全文再执行 |"),
-        (("list_available_skills+read_skill_instruction", "has_all"), "| 可能需要技能但未匹配 | **list_available_skills** → **read_skill_instruction** |"),
+        (("list_available_skills+read_skill_instruction", "has_all"), "| 可能需要技能但未匹配 | **list_available_skills** → **read_skill_instruction**；返回 `truncated=true` 或没看到目标技能时，先用 `keyword` 收窄再查一次，**未列出不等于不存在** |"),
     )
 
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
@@ -263,7 +263,7 @@ class AgentServicePrompts:
         "update_user_preference": "写入用户长期偏好",
         "search_knowledge_base": "知识库文档检索",
         "read_skill_instruction": "读取技能 SKILL.md 全文；传 path 可按需读取技能包内资源文件（references/、scripts/ 等）",
-        "list_available_skills": "列出可用技能摘要",
+        "list_available_skills": "列出可用技能摘要（返回 total/returned/truncated；truncated=true 时用 keyword 收窄，未展示不代表不存在）",
         "get_dataset_schema": "获取数据集/表/字段元数据",
         "execute_sql_query": "执行 SQL 查数",
         "Read": "读取文件内容（不清楚公共手册或个人目录映射时先调用 list_accessible_directories）",
@@ -1022,6 +1022,8 @@ class AgentServicePrompts:
             f"系统可用技能库目录：{skills_dir}\n"
             "当用户的问题可能需要特定方法论、领域流程、脚本模板或专门操作规范时，"
             "如果当前工具集中提供 list_available_skills，请先用它查看技能摘要；"
+            "返回里 `truncated=true` 表示还有技能未展示，必须用 `keyword` 收窄后再判断——"
+            "**没出现在清单里不等于技能不存在**，不得据此断言技能被删除或禁用；"
             "根据 name/description 判断适用后，再对**最具体匹配**的一个技能调用 read_skill_instruction；"
             "禁止未选定前连续 read 多个技能全文。"
             "如果这些工具不可用，不要声称已检查技能库，也不要编造不存在的技能。普通问答无需查询技能。"

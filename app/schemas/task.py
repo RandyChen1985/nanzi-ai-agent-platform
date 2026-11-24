@@ -31,14 +31,15 @@ class TaskBase(BaseModel):
         return _validate_cron_expr(v)  # type: ignore[return-value]
 
 class TaskCreate(TaskBase):
-    pass
+    name: str = Field(..., min_length=1, max_length=100, description="任务名称")
+    prompt: str = Field(..., min_length=1, description="执行指令")
 
 class TaskUpdate(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     agent_id: Optional[str] = None
     cron_expr: Optional[str] = None
-    prompt: Optional[str] = None
-    status: Optional[int] = None
+    prompt: Optional[str] = Field(default=None, min_length=1)
+    status: Optional[int] = Field(default=None, ge=0, le=2)
     config: Optional[Dict[str, Any]] = None
 
     @field_validator("cron_expr")

@@ -42,7 +42,7 @@ def normalize_reasoning_effort(raw: Any) -> Optional[str]:
 
 def normalize_temperature(raw: Any) -> Optional[float]:
     """规范化任务配置中的采样温度，有效范围 0.0 ~ 2.0，四舍五入保留两位小数。"""
-    if raw is None or raw == "":
+    if raw is None or raw == "" or isinstance(raw, bool):
         return None
     try:
         val = float(raw)

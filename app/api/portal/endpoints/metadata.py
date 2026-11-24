@@ -1724,7 +1724,9 @@ async def get_cron_inspection_config(conn: AsyncSession = Depends(get_db_session
             last_error=None,
         )
 
-    next_run = scheduler_service.get_next_run_time(task.id)
+    next_run = scheduler_service.get_next_run_time(
+        task.id, cron_expr=task.cron_expr, status=task.status
+    )
     task_cfg = task.config if isinstance(task.config, dict) else {}
     metrics = task_cfg.get("metrics", {})
     channels = list(task_cfg.get("notification_channels") or ["portal"])
@@ -1819,7 +1821,9 @@ async def update_cron_inspection_config(
 
     await scheduler_service.upsert_task(task)
 
-    next_run = scheduler_service.get_next_run_time(task.id)
+    next_run = scheduler_service.get_next_run_time(
+        task.id, cron_expr=task.cron_expr, status=task.status
+    )
     metrics = (task.config or {}).get("metrics", {}) if isinstance(task.config, dict) else {}
 
     return CronInspectionConfigResponse(

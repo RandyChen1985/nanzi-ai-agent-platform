@@ -1,3 +1,4 @@
+import json
 from unittest.mock import PropertyMock, patch
 
 import pytest
@@ -95,7 +96,7 @@ def test_list_available_skills_respects_agent_custom_allowlist(tmp_path, monkeyp
             ok = read_skill_instruction.invoke({"skill_id": "beta"})
             assert "Beta" in ok
             denied = read_skill_instruction.invoke({"skill_id": "alpha"})
-            assert "不在当前智能体可用 Skills 范围内" in denied or "不存在" in denied
+            assert "白名单" in denied and "自定义技能" in denied
             personal_ok = read_skill_instruction.invoke({"skill_id": "mine"})
             assert "Mine" in personal_ok
     finally:
@@ -358,7 +359,9 @@ def test_read_skill_resource_respects_allowlist_and_personal_scope(tmp_path, mon
 
             # 白名单外的公共技能：读正文与读资源都必须被拒
             denied_md = read_skill_instruction.invoke({"skill_id": "alpha"})
-            assert "不在当前智能体可用 Skills 范围内" in denied_md
+            # 必须点明是「自定义技能白名单」问题，不能与「不存在」混成一句模糊提示
+            assert "白名单" in denied_md and "自定义技能" in denied_md
+            assert "不存在" not in denied_md
             denied_resource = read_skill_instruction.invoke(
                 {"skill_id": "alpha", "path": "references/alpha.md"}
             )
@@ -400,8 +403,138 @@ def test_read_skill_instruction_rejects_forbidden_skill_resource(tmp_path, monke
         mock_skills_dir.return_value = str(tmp_path)
 
         denied_md = read_skill_instruction.invoke({"skill_id": "blocked"})
-        assert "不存在、已禁用" in denied_md
+        # 被权限禁用要单独说清，不能退化成「不存在、已禁用，或不在范围内」的三选一
+        assert "被权限规则禁用" in denied_md
+        assert "不存在" not in denied_md
         denied_resource = read_skill_instruction.invoke(
             {"skill_id": "blocked", "path": "references/secret.md"}
         )
         assert "secret-rules" not in denied_resource
+
+
+# --------------------------------------------------------------------------- #
+# 清单结构：total / returned / truncated 必须可感知
+# --------------------------------------------------------------------------- #
+#
+# 「没看到 ≠ 不存在」这件事不能只靠提示词约束：工具的返回结构本身必须让模型看得出
+# 清单是否被截断。旧实现返回裸数组，截断后与"本来就只有这几条"完全无法区分。
+
+
+def test_list_available_skills_reports_total_and_truncation(tmp_path):
+    from app.services.ai.tools.system_executive_tools import list_available_skills
+
+    for index in range(6):
+        _write_skill(tmp_path / f"skill-{index}", name=f"技能{index}")
+
+    with _patch_skills_dir(tmp_path) as mock_skills_dir:
+        mock_skills_dir.return_value = str(tmp_path)
+
+        page = json.loads(list_available_skills.invoke({"limit": 2}))
+        assert page["total"] == 6, "total 必须是过滤后的真实总数，不是本次返回条数"
+        assert page["returned"] == 2
+        assert page["truncated"] is True
+        assert len(page["skills"]) == 2
+        assert "未展示不等于不存在" in page["note"]
+
+        full = json.loads(list_available_skills.invoke({}))
+        assert full["total"] == full["returned"] == 6
+        assert full["truncated"] is False
+        # 没被截断就不该出现解释性 note，避免模型以为还有未展示条目
+        assert "note" not in full
+
+
+def test_list_available_skills_keyword_narrows_but_keeps_total(tmp_path):
+    from app.services.ai.tools.system_executive_tools import list_available_skills
+
+    for index in range(6):
+        _write_skill(tmp_path / f"skill-{index}", name=f"技能{index}")
+
+    with _patch_skills_dir(tmp_path) as mock_skills_dir:
+        mock_skills_dir.return_value = str(tmp_path)
+
+        narrowed = json.loads(list_available_skills.invoke({"keyword": "skill-3"}))
+        assert [item["id"] for item in narrowed["skills"]] == ["skill-3"]
+        assert narrowed["total"] == 1
+        assert narrowed["truncated"] is False
+        assert narrowed["keyword"] == "skill-3"
+
+        # 匹配不到时也要说清是"keyword 没命中"，而不是"没有技能"
+        empty = json.loads(list_available_skills.invoke({"keyword": "nope"}))
+        assert empty["total"] == 0
+        assert empty["skills"] == []
+        assert "keyword" in empty["note"]
+
+
+def test_list_available_skills_empty_catalog_is_explained(tmp_path):
+    from app.services.ai.tools.system_executive_tools import list_available_skills
+
+    empty_root = tmp_path / "empty_skills"
+    empty_root.mkdir()
+
+    with _patch_skills_dir(empty_root) as mock_skills_dir:
+        mock_skills_dir.return_value = str(empty_root)
+
+        payload = json.loads(list_available_skills.invoke({}))
+        assert payload["total"] == 0
+        assert payload["truncated"] is False
+        assert payload["skills"] == []
+        assert payload["note"] == "当前会话没有可见技能。"
+
+
+def test_read_skill_instruction_suggests_closest_id_on_typo(tmp_path):
+    from app.services.ai.tools.system_executive_tools import read_skill_instruction
+
+    _write_skill(tmp_path / "dsapi-admin", name="DSAPI")
+
+    with _patch_skills_dir(tmp_path) as mock_skills_dir:
+        mock_skills_dir.return_value = str(tmp_path)
+
+        # 下划线/中划线手误：旧文案只会说"不存在、已禁用，或不在范围内"，模型无从自查
+        message = read_skill_instruction.invoke({"skill_id": "dsapi_admin"})
+
+    assert "不存在" in message
+    assert "dsapi-admin" in message, "拼写变体必须给出最接近的候选 id"
+    assert "list_available_skills" in message
+
+
+def test_read_skill_instruction_does_not_leak_forbidden_or_disabled_in_suggestions(
+    tmp_path, monkeypatch
+):
+    """被权限禁用或已停用的技能不得出现在「最接近的候选 id」里，且明确拒因不再自相矛盾。"""
+    from app.services.ai.tools.system_executive_tools import read_skill_instruction
+
+    async def _forbidden(*_args, **_kwargs):
+        return {"secret-ops"}
+
+    monkeypatch.setattr(
+        "app.services.ai.skills.policy.get_forbidden_skill_ids", _forbidden
+    )
+    _write_skill(tmp_path / "secret-ops", name="SecretOps")
+    _write_skill(tmp_path / "paused-ops", name="PausedOps", enabled=False)
+
+    with _patch_skills_dir(tmp_path) as mock_skills_dir:
+        mock_skills_dir.return_value = str(tmp_path)
+
+        # 用近似拼写探测：不得把被禁/停用的技能 id 当候选吐出来
+        probe_forbidden = read_skill_instruction.invoke({"skill_id": "secret_ops"})
+        assert "secret-ops" not in probe_forbidden
+
+        probe_disabled = read_skill_instruction.invoke({"skill_id": "paused_ops"})
+        assert "paused-ops" not in probe_disabled
+
+        # 命中明确拒因时，不再追加「单次读取失败不代表该技能已被删除或禁用」的自相矛盾尾巴
+        denied = read_skill_instruction.invoke({"skill_id": "secret-ops"})
+        assert "被权限规则禁用" in denied
+        assert "不代表该技能已被删除或禁用" not in denied
+
+        disabled = read_skill_instruction.invoke({"skill_id": "paused-ops"})
+        assert "已被停用" in disabled
+        assert "不代表该技能已被删除或禁用" not in disabled
+
+
+def test_list_available_skills_rejects_bool_limit(tmp_path):
+    """bool 是 int 子类：limit=True 不得被当成 limit=1。"""
+    from app.services.ai.tools.system_executive_tools import _coerce_skill_list_limit
+
+    assert _coerce_skill_list_limit(True) == 50
+    assert _coerce_skill_list_limit(False) == 50

@@ -60,8 +60,11 @@ def _preview_arg(name: str, raw: Any) -> str:
         return "***"
     return text if len(text) <= 64 else text[:61] + "…"
 from app.services.secrets.policy import (
+    CONSUMER_SCRIPT,
+    SCENE_SANDBOX_SCRIPT,
     DENY_BINDING,
     DENY_GRANT,
+    DENY_NOT_FOUND,
     DENY_RULE_MISS,
     GRANTEE_ALL,
     GRANTEE_DEPT,
@@ -361,6 +364,231 @@ class SecretResolver:
                 exc,
             )
             return ResolveResult(ok=False, denial=DENY_BINDING, detail="resolver error")
+
+    async def list_keys_for_script(self, *, user_id: str, dept_code: str | None = None) -> list[dict[str, str]]:
+        """列出这个用户在脚本里**取得到**的凭据标识。
+
+        只给标识与显示名，不带任何值——否则一条 ``list`` 就把整池明文拉走了。
+        过滤口径与 :meth:`resolve_by_key` 完全一致（可见集合 + 场景 + 两层开关 +
+        状态 + 有效期），避免出现「list 里有、get 却拒绝」这种自相矛盾。
+
+        为什么要它：脚本作者不可能记得住凭据标识的拼写，没有这个命令就只能靠猜，
+        猜错的提示是「没有这条凭据」，看着像权限问题。
+        """
+        if not user_id:
+            return []
+        now = datetime.utcnow()
+        try:
+            async with AsyncSessionLocal() as session:
+                visible = await self._visible_records(session, user_id, dept_code)
+                platform_script, platform_external, _ = await self._platform_flags()
+                user_script = await self._user_allows_script_env(session, user_id)
+                context = SecretContext(
+                    user_id=user_id,
+                    scene=SCENE_SANDBOX_SCRIPT,
+                    target_host=None,
+                    dept_code=dept_code,
+                    allow_script_env=platform_script and user_script,
+                    allow_external_host=platform_external,
+                )
+                items: list[dict[str, str]] = []
+                seen: set[str] = set()
+                for row in visible:
+                    record = _to_record(row)
+                    # 同名 key（我的 + 授权给我的）在脚本里是**同一个名字**，
+                    # 列两行只会让人以为可以二选一。与 resolve_by_key 同一口径：
+                    # 任一候选通过就说明这个 key 可用。
+                    if record.secret_key in seen:
+                        continue
+                    if record.is_system:
+                        if not await self._has_grant(session, record.id, user_id, dept_code, now):
+                            continue
+                    if evaluate_secret(record, context, now=now):
+                        continue
+                    seen.add(record.secret_key)
+                    items.append(
+                        {
+                            "key": record.secret_key,
+                            "name": getattr(row, "name", "") or "",
+                            "type": record.secret_type,
+                        }
+                    )
+                items.sort(key=lambda item: item["key"])
+                return items
+        except Exception as exc:  # noqa: BLE001 - list 失败就当没有可用凭据
+            logger.warning("[SecretResolver] 列出脚本可用凭据失败 user=%s: %s", user_id, exc)
+            return []
+
+    async def resolve_by_key(
+        self,
+        *,
+        user_id: str,
+        secret_key: str,
+        scene: str,
+        trace_id: str | None = None,
+        conversation_id: str | None = None,
+        dept_code: str | None = None,
+        record_usage: bool = True,
+    ) -> ResolveResult:
+        """按 ``secret_key`` 直接取一条凭据——脚本通道专用。
+
+        与 :meth:`resolve` 的差别只有「怎么定位」，其余全部复用：
+
+        * 绑定表定位不了脚本。``sys_secret_bindings`` 的 ``consumer_id`` 是工具 id，
+          而 skill 里的脚本没有这个身份；就算有，一个 skill 改名就失效。
+        * 所以在**可见集合**里按 key 查（本人的 + 被授权给我的系统级），
+          授权判定、解密、审计走同一条路径——两套取值逻辑早晚漂移。
+
+        ``scene`` 由调用方给（脚本通道是 ``sandbox_script``），判定时与
+        ``script_env`` 等价：勾了任一个都算「允许脚本用」。
+
+        ``record_usage=False``：Bash 执行后为了脱敏会按 key **再取一次**（值不落任何
+        存储，只在内存里过一遍做掩码）。那一次不是用户行为，记流水会把统计搞乱。
+        """
+        if not user_id or not secret_key:
+            return ResolveResult(ok=False, denial=DENY_BINDING, detail="missing identity")
+
+        # naive UTC，与库里所有 datetime 同一口径（见 resolve 里的说明）。
+        now = datetime.utcnow()
+
+        # 列宽是硬约束：slot 是 String(128)，而 secret_key 本身就能有 128 字符，
+        # 拼上 "key:" 就超了；consumer_id 是 String(36)，会话 id 可以更长。
+        # 溢出会被 _log_usage 吞掉，表现为**审计流水静默丢失**。
+        usage_consumer_id = (conversation_id or "")[:36]
+        slot = f"key:{secret_key}"[:128]
+
+        try:
+            async with AsyncSessionLocal() as session:
+                visible = await self._visible_records(session, user_id, dept_code)
+                # 同一个 key 可能既有我自己的、又有管理员授权给我的（`list_visible_secrets`
+                # 已按「个人优先」排好）。**逐条判定、取第一条能通过的**——只取第一条就
+                # 下结论会出现「list 里看得到、get 却拒绝」，两者必须同一套规则。
+                candidates = [
+                    item
+                    for item in visible
+                    if getattr(item, "secret_key", None) == secret_key
+                ]
+                if not candidates:
+                    # 不写流水：连凭据都没定位到，写了也只是 noise，且 secret_id 无从填。
+                    return ResolveResult(
+                        ok=False, denial=DENY_NOT_FOUND, detail="secret not visible"
+                    )
+
+                platform_script, platform_external, _ = await self._platform_flags()
+                user_script = await self._user_allows_script_env(session, user_id)
+
+                context = SecretContext(
+                    user_id=user_id,
+                    scene=scene,
+                    # 脚本自己发请求，平台没有出站可校验：target_host 恒为 None，
+                    # 域名白名单在这个场景里不适用（见 policy.evaluate_secret）。
+                    target_host=None,
+                    dept_code=dept_code,
+                    allow_script_env=platform_script and user_script,
+                    allow_external_host=platform_external,
+                )
+
+                last_denial: str | None = None
+                last_record: SecretRecord | None = None
+
+                for row in candidates:
+                    record = _to_record(row)
+
+                    if record.is_system:
+                        granted = await self._has_grant(
+                            session, record.id, user_id, dept_code, now
+                        )
+                        if not granted:
+                            last_denial, last_record = DENY_GRANT, record
+                            continue
+
+                    denial = evaluate_secret(record, context, now=now)
+                    if denial:
+                        last_denial, last_record = denial, record
+                        continue
+
+                    ciphertext = self._pick_ciphertext(row, now)
+                    if not ciphertext:
+                        last_denial, last_record = DENY_BINDING, record
+                        continue
+
+                    plaintext = self._decrypt(ciphertext)
+                    usage_id = (
+                        await self._log_usage(
+                            session,
+                            record,
+                            user_id=user_id,
+                            scene=scene,
+                            consumer_type=CONSUMER_SCRIPT,
+                            consumer_id=usage_consumer_id,
+                            slot=slot,
+                            target_host=None,
+                            trace_id=trace_id,
+                            conversation_id=conversation_id,
+                            result="success",
+                        )
+                        if record_usage
+                        else None
+                    )
+                    return ResolveResult(
+                        ok=True,
+                        secret_id=record.id,
+                        secret_key=record.secret_key,
+                        value=SensitiveValue(plaintext),
+                        value_format=(getattr(row, "value_format", None) or "text"),
+                        value_template=(getattr(row, "value_template", "") or ""),
+                        usage_id=usage_id,
+                    )
+
+                # 同名候选全部被拒：只记一条流水（挂着「最后看的那条」），
+                # 逐条记会把一次失败写成好几行。
+                final_denial = last_denial or DENY_NOT_FOUND
+                if last_record is not None and record_usage:
+                    await self._log_usage(
+                        session,
+                        last_record,
+                        user_id=user_id,
+                        scene=scene,
+                        consumer_type=CONSUMER_SCRIPT,
+                        consumer_id=usage_consumer_id,
+                        slot=slot,
+                        target_host=None,
+                        trace_id=trace_id,
+                        conversation_id=conversation_id,
+                        result=final_denial,
+                    )
+                return ResolveResult(
+                    ok=False,
+                    secret_id=(last_record.id if last_record is not None else None),
+                    secret_key=secret_key,
+                    denial=final_denial,
+                )
+        except Exception as exc:  # noqa: BLE001 - 同 resolve：fail-closed
+            logger.warning(
+                "[SecretResolver] 按 key 取值失败，按无凭据处理 key=%s user=%s: %s",
+                secret_key,
+                user_id,
+                exc,
+            )
+            return ResolveResult(ok=False, denial=DENY_BINDING, detail="resolver error")
+
+    async def script_channel_open(self, *, user_id: str) -> bool:
+        """脚本通道的两层开关是否都开着。
+
+        给 ``/internal/script-credential/list`` 用：返回空列表时，用户分不清是
+        「一条凭据都没有」还是「开关没开」。两者要做的事完全不同，所以接口得能
+        把原因说出来，而不是只给一个空结果。
+        """
+        if not user_id:
+            return False
+        try:
+            async with AsyncSessionLocal() as session:
+                platform_script, _, _ = await self._platform_flags()
+                user_script = await self._user_allows_script_env(session, user_id)
+                return bool(platform_script and user_script)
+        except Exception as exc:  # noqa: BLE001 - 查不到就按「关闭」处理
+            logger.warning("[SecretResolver] 读取脚本通道开关失败: %s", exc)
+            return False
 
     async def mark_usage_failed(self, usage_id: str | None, reason: str) -> None:
         """把一条已经写成 success 的流水改成失败。

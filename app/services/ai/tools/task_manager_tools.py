@@ -8,6 +8,18 @@ from app.core.orm import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
+_MAX_TASK_NAME_LENGTH = 100
+
+
+def _is_task_owner_or_admin(task, ctx) -> bool:
+    if bool(getattr(ctx, "is_admin", False)):
+        return True
+    try:
+        return int(task.user_id) == int(ctx.user_id)
+    except (TypeError, ValueError):
+        return str(task.user_id) == str(ctx.user_id)
+
+
 @tool
 async def create_recurring_task(
     name: str,
@@ -29,12 +41,24 @@ async def create_recurring_task(
         prompt: The specific business instruction for the AI to execute periodically.
             Prefer putting only the work to do here; delivery channels can use notification_channels.
         notification_channels: Optional delivery channels when the user explicitly asks to notify.
-            Allowed values: portal (站内消息/铃铛), dingtalk (钉钉), wechat_work (企业微信), email (邮件).
+            Allowed values: portal (站内消息/铃铛), dingtalk (钉钉), wechat_work (企业微信), feishu (飞书), email (邮件).
             Example: ["portal"] or ["portal", "dingtalk"]. Leave empty if the user did not ask for delivery.
     """
     ctx = get_current_agent_context()
     if not ctx or not ctx.user_id:
         return "Error: User context not found. Cannot create task."
+    if not getattr(ctx, "agent_id", None):
+        return "Error: Agent context not found. Cannot create task without an agent_id."
+
+    clean_name = str(name or "").strip()
+    if not clean_name:
+        return "Error: Task name cannot be empty."
+    if len(clean_name) > _MAX_TASK_NAME_LENGTH:
+        return f"Error: Task name is too long ({len(clean_name)} characters, max {_MAX_TASK_NAME_LENGTH})."
+
+    clean_prompt = str(prompt or "").strip()
+    if not clean_prompt:
+        return "Error: Task prompt cannot be empty."
 
     try:
         from app.services.task_notification_channels import merge_notification_channels_into_config
@@ -44,10 +68,10 @@ async def create_recurring_task(
             task = await TaskCenterService.create_task(
                 db=db,
                 user_id=ctx.user_id,
-                name=name,
+                name=clean_name,
                 agent_id=ctx.agent_id,
                 cron_expr=cron,
-                prompt=prompt,
+                prompt=clean_prompt,
                 source="agent",
                 config=config or None,
             )
@@ -56,7 +80,7 @@ async def create_recurring_task(
             if channels:
                 channel_note = f" Notification channels: {', '.join(channels)}."
             return (
-                f"Successfully created scheduled task '{name}' (ID: {task.id}). "
+                f"Successfully created scheduled task '{clean_name}' (ID: {task.id}). "
                 f"Next run: {task.next_run_at}.{channel_note}"
             )
     except Exception as e:
@@ -110,7 +134,7 @@ async def cancel_task(task_id: int) -> str:
             if not task:
                 return f"Task with ID {task_id} not found."
             
-            if task.user_id != ctx.user_id and not ctx.is_admin:
+            if not _is_task_owner_or_admin(task, ctx):
                 return "Permission denied: You can only cancel your own tasks."
             
             await TaskCenterService.delete_task(db, task_id)
@@ -136,7 +160,7 @@ async def start_task(task_id: int) -> str:
             if not task:
                 return f"Task with ID {task_id} not found."
             
-            if task.user_id != ctx.user_id and not ctx.is_admin:
+            if not _is_task_owner_or_admin(task, ctx):
                 return "Permission denied."
             
             await TaskCenterService.update_task(db, task_id, {"status": 1})
@@ -162,7 +186,7 @@ async def pause_task(task_id: int) -> str:
             if not task:
                 return f"Task with ID {task_id} not found."
             
-            if task.user_id != ctx.user_id and not ctx.is_admin:
+            if not _is_task_owner_or_admin(task, ctx):
                 return "Permission denied."
             
             await TaskCenterService.update_task(db, task_id, {"status": 0})
@@ -183,20 +207,30 @@ async def run_task_manually(task_id: int) -> str:
         return "Error: User context not found."
 
     try:
-        from app.services.ai.scheduler_service import scheduler_service
+        # spawn_background_task 是**模块级函数**，不是 TaskSchedulerService 的方法；
+        # 写成 scheduler_service.spawn_background_task 会 AttributeError，被下面的
+        # except 吞成「Error triggering task」，即 AI 侧手动运行任务恒定失败。
+        from app.services.ai.scheduler_service import scheduler_service, spawn_background_task
         async with AsyncSessionLocal() as db:
             task = await TaskCenterService.get_task(db, task_id)
             if not task:
                 return f"Task with ID {task_id} not found."
             
             # Check permission
-            if task.user_id != ctx.user_id and not ctx.is_admin:
+            if not _is_task_owner_or_admin(task, ctx):
                 return "Permission denied."
             
-            # Use scheduler_service to run it in background or directly
-            # Here we call it directly as it's an async wrapper
-            await scheduler_service.run_task(task_id, is_manual=True)
-            return f"Successfully triggered task {task_id} ('{task.name}') manually."
+            # 异步后台触发，避免长任务同步阻塞当前对话或触发工具调用超时
+            spawn_background_task(
+                scheduler_service.run_task(task_id, is_manual=True),
+                label=f"tool_manual_task_{task_id}",
+            )
+            # 后台化后本次拿不到执行结果，必须说清楚去哪看，否则用户以为「已触发」就没事了
+            return (
+                f"已在后台触发任务 {task_id}（'{task.name}'）。"
+                "本次调用不会返回执行结果，进度与结果请查看任务详情的执行历史，"
+                "失败时会发送站内信通知。"
+            )
     except Exception as e:
         logger.error(f"Error running task {task_id} manually: {e}", exc_info=True)
         return f"Error triggering task: {str(e)}"

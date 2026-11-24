@@ -1162,26 +1162,32 @@ async def test_upload_rejects_when_target_dir_file_count_reached_limit(
     from app.api.v1.endpoints import fs as fs_module
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        target = await _user_workspace_dir(client, valid_api_key)
-        # 目标目录里已经有文件（工作区初始化产物也算）
-        if not os.listdir(target):
+        workspace = await _user_workspace_dir(client, valid_api_key)
+        # 用一次性子目录当靶子：工作区根里会累积历史测试产物与 docs/.trash 等子目录，
+        # 直接拿根目录当靶子会让「顶层条目数」与「递归文件数」两个口径错位（假失败）。
+        target = os.path.join(workspace, f"limit_test_{uuid.uuid4().hex[:8]}")
+        os.makedirs(target, exist_ok=True)
+        try:
             with open(os.path.join(target, "existing.txt"), "w", encoding="utf-8") as fh:
                 fh.write("x")
-        before = set(os.listdir(target))
-        monkeypatch.setattr(
-            fs_module, "MAX_FILES_PER_DIRECTORY", len(before), raising=False
-        )
+            before = set(os.listdir(target))
+            monkeypatch.setattr(
+                fs_module, "MAX_FILES_PER_DIRECTORY", len(before), raising=False
+            )
 
-        resp = await client.post(
-            "/api/v1/chat/fs/upload",
-            params={"parent_path": target},
-            files={"file": ("one.bin", b"payload", "application/octet-stream")},
-            headers={"X-API-Key": valid_api_key},
-        )
+            resp = await client.post(
+                "/api/v1/chat/fs/upload",
+                params={"parent_path": target},
+                files={"file": ("one.bin", b"payload", "application/octet-stream")},
+                headers={"X-API-Key": valid_api_key},
+            )
+            after = set(os.listdir(target))
+        finally:
+            shutil.rmtree(target, ignore_errors=True)
 
     assert resp.status_code == 413, resp.text
     assert "文件数" in resp.json()["detail"]
-    assert set(os.listdir(target)) == before
+    assert after == before
 
 
 @pytest.mark.asyncio
@@ -1192,27 +1198,163 @@ async def test_create_entry_rejects_when_target_dir_file_count_reached_limit(
     from app.api.v1.endpoints import fs as fs_module
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        target = await _user_workspace_dir(client, valid_api_key)
-        if not os.listdir(target):
+        workspace = await _user_workspace_dir(client, valid_api_key)
+        # 与上传用例同理：用一次性子目录，避免工作区根里的历史产物把计数口径搅乱
+        target = os.path.join(workspace, f"limit_test_{uuid.uuid4().hex[:8]}")
+        os.makedirs(target, exist_ok=True)
+        try:
             with open(os.path.join(target, "existing.txt"), "w", encoding="utf-8") as fh:
                 fh.write("x")
-        before = set(os.listdir(target))
-        # 以当前文件数作为上限：再新建一个就必然超限
-        monkeypatch.setattr(
-            fs_module, "MAX_FILES_PER_DIRECTORY", len(before), raising=False
-        )
+            before = set(os.listdir(target))
+            # 以当前文件数作为上限：再新建一个就必然超限
+            monkeypatch.setattr(
+                fs_module, "MAX_FILES_PER_DIRECTORY", len(before), raising=False
+            )
 
-        resp = await client.post(
-            "/api/v1/chat/fs/create-entry",
-            json={
-                "parent_path": target,
-                "name": f"note_{uuid.uuid4().hex[:8]}.txt",
-                "kind": "file",
-                "content": "hi",
-            },
-            headers={"X-API-Key": valid_api_key},
-        )
+            resp = await client.post(
+                "/api/v1/chat/fs/create-entry",
+                json={
+                    "parent_path": target,
+                    "name": f"note_{uuid.uuid4().hex[:8]}.txt",
+                    "kind": "file",
+                    "content": "hi",
+                },
+                headers={"X-API-Key": valid_api_key},
+            )
+            after = set(os.listdir(target))
+        finally:
+            shutil.rmtree(target, ignore_errors=True)
 
     assert resp.status_code == 413, resp.text
     assert "文件数" in resp.json()["detail"]
-    assert set(os.listdir(target)) == before
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_reserved_workspace_dirs_and_roots_cannot_be_deleted_or_renamed(
+    db_session, valid_api_key, admin_api_key
+):
+    """用户私有根、根级系统保留目录（docs/uploads 等）及公共根不可删改，但项目子目录同名放行。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_root = await _user_workspace_dir(client, valid_api_key)
+        docs_dir = os.path.join(user_root, "docs")
+        os.makedirs(docs_dir, exist_ok=True)
+        # 在子项目里自建同名 docs 目录，应当允许正常重命名/删除
+        nested_project = os.path.join(user_root, f"proj_{uuid.uuid4().hex[:8]}")
+        nested_docs = os.path.join(nested_project, "docs")
+        os.makedirs(nested_docs, exist_ok=True)
+
+        try:
+            # 1. 普通用户不能删/改自己的工作区根目录与根级保留 docs 目录
+            del_root = await client.post(
+                "/api/v1/chat/fs/delete-entry",
+                json={"path": user_root},
+                headers={"X-API-Key": valid_api_key},
+            )
+            assert del_root.status_code == 400, del_root.text
+
+            rename_docs = await client.post(
+                "/api/v1/chat/fs/rename-entry",
+                json={"path": docs_dir, "new_name": "docs_renamed"},
+                headers={"X-API-Key": valid_api_key},
+            )
+            assert rename_docs.status_code == 400, rename_docs.text
+
+            del_docs = await client.post(
+                "/api/v1/chat/fs/delete-entry",
+                json={"path": docs_dir},
+                headers={"X-API-Key": valid_api_key},
+            )
+            assert del_docs.status_code == 400, del_docs.text
+
+            # 2. 管理员也不能删掉用户工作区根目录或平台 data 根下的 agent_workspaces / docs
+            admin_del_user_root = await client.post(
+                "/api/v1/chat/fs/delete-entry",
+                json={"path": user_root},
+                headers={"X-API-Key": admin_api_key},
+            )
+            assert admin_del_user_root.status_code == 400, admin_del_user_root.text
+
+            data_base = get_data_base_dir()
+            workspaces_root = os.path.join(data_base, "agent_workspaces")
+            admin_del_ws_root = await client.post(
+                "/api/v1/chat/fs/delete-entry",
+                json={"path": workspaces_root},
+                headers={"X-API-Key": admin_api_key},
+            )
+            assert admin_del_ws_root.status_code == 400, admin_del_ws_root.text
+
+            # 3. 项目子目录下的同名 docs 目录可以正常删除（不误伤）
+            del_nested = await client.post(
+                "/api/v1/chat/fs/delete-entry",
+                json={"path": nested_docs},
+                headers={"X-API-Key": valid_api_key},
+            )
+            assert del_nested.status_code == 200, del_nested.text
+            trashed = del_nested.json()["data"]["trashed_path"]
+            if trashed and os.path.exists(trashed):
+                shutil.rmtree(trashed, ignore_errors=True)
+        finally:
+            shutil.rmtree(nested_project, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_forbidden_platform_skill_hidden_in_list_and_search(
+    db_session, valid_api_key, admin_api_key, tmp_path, monkeypatch
+):
+    """被禁用的平台技能目录在 /fs/list 与 /fs/search 中不应对普通用户暴露目录名。"""
+    from app.utils import fs_access
+
+    skills_root = tmp_path / "skills"
+    allowed_dir = skills_root / "public-alpha-skill"
+    blocked_dir = skills_root / "secret-beta-skill"
+    allowed_dir.mkdir(parents=True)
+    blocked_dir.mkdir(parents=True)
+    (allowed_dir / "SKILL.md").write_text("# alpha", encoding="utf-8")
+    (blocked_dir / "SKILL.md").write_text("# beta", encoding="utf-8")
+
+    monkeypatch.setattr(fs_access, "get_platform_skills_root", lambda: str(skills_root))
+    monkeypatch.setattr(
+        fs_access,
+        "is_forbidden_platform_skill_path",
+        lambda path, user_info: (not fs_access.is_fs_admin(user_info)) and ("secret-beta-skill" in str(path)),
+    )
+    from app.api.v1.endpoints import fs as fs_module
+
+    monkeypatch.setattr(
+        fs_module,
+        "is_forbidden_platform_skill_path",
+        lambda path, user_info: (not fs_access.is_fs_admin(user_info)) and ("secret-beta-skill" in str(path)),
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # 普通用户 list skills/：只见 public-alpha-skill，不见 secret-beta-skill
+        list_resp = await client.get(
+            "/api/v1/chat/fs/list",
+            params={"path": str(skills_root)},
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        names = [item["name"] for item in list_resp.json()["data"]["items"]]
+        assert "public-alpha-skill" in names
+        assert "secret-beta-skill" not in names
+
+        # 普通用户 search：搜不到 secret-beta-skill 目录或内部文件
+        search_resp = await client.get(
+            "/api/v1/chat/fs/search",
+            params={"q": "secret-beta", "path": str(skills_root)},
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert search_resp.status_code == 200, search_resp.text
+        assert search_resp.json()["data"]["items"] == []
+
+        # 管理员 list skills/：两个技能都可见
+        admin_list = await client.get(
+            "/api/v1/chat/fs/list",
+            params={"path": str(skills_root)},
+            headers={"X-API-Key": admin_api_key},
+        )
+        assert admin_list.status_code == 200, admin_list.text
+        admin_names = [item["name"] for item in admin_list.json()["data"]["items"]]
+        assert "public-alpha-skill" in admin_names
+        assert "secret-beta-skill" in admin_names

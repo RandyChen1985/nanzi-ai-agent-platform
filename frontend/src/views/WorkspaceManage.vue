@@ -2,30 +2,30 @@
   工作空间（独立页）。
 
   与聊天页右侧「浏览工作空间」抽屉共用同一套文件接口（`/api/v1/chat/fs/*`）与工具函数
-  （`utils/workspaceFilePreview`、`useWorkspaceUploadQueue`）。能力对齐清单：
+  （`utils/workspaceFilePreview`、`useWorkspaceUploadQueue`、`utils/workspaceBatchSelection`）。能力对齐清单：
 
-  - 浏览：面包屑 / 返回上级 / 快捷导航 / 最近文件 / 列表-卡片切换 / 排序 / 类型筛选
+  - 浏览：面包屑 / 返回上级 / 快捷导航 / 最近文件（读写同步） / 列表-卡片切换 / 排序 / 类型筛选
   - 落点：默认直接进入本人的「我的目录」（后端 `prefer=user_root`），公共目录走「公共资源」入口
   - 搜索：默认过滤当前目录，输入 ≥2 字可切「全目录」走服务端 `/fs/search`
-  - 文件：预览 / 下载 / 重命名 / 复制路径 / 解压 / 删除（移入回收站）
-  - 目录：打开 / 新建文件夹 / 新建文件 / 上传（点选 + 拖拽）
+  - 文件：画布浮层预览（复用 `ChatCanvas`）/ 下载 / 分享（公共文件支持复制并分享）/ 重命名 / 复制路径 / 解压到指定目录 / 删除（移入回收站）
+  - 目录：打开 / 新建文件夹 / 新建文件 / 上传（点选 + 拖拽，支持取消/重试与进度展示）
   - 回收站：还原 / 永久删除 / 清空
-  - 批量：多选 / 全选 / 批量删除
+  - 批量：多选 / 半选与全选 / 批量删除（支持当前目录与全目录搜索结果）
 
   刻意不提供（与抽屉的差异）：
   1. 「挂载到会话」——需要目标会话，只属于聊天；
   2. 「本会话目录」快捷入口——同上；
-  3. 画布内预览——画布是聊天页的宿主能力，这里用新窗口只读预览；
-  4. 钉住 / 拖拽宽度——页面不需要。
+  3. 钉住 / 拖拽宽度——独立页以浮层预览，避免与主工作区争抢宽度。
 
   也没有直接复用抽屉组件：它是 teleport 到 body 的抽屉，带拖拽宽度与 pinned 停靠，
   和聊天布局强耦合，强行页面化会破坏现有功能（抽屉文件保持零改动）。
 -->
 <template>
-  <!-- 间距只由 Dashboard 的 main 统一给（与知识库同口径）：这里再叠加一层
-       px-4/py-4，会让工作空间的左右、上下留白比知识库明显大一截。 -->
+  <!-- 宽度口径与知识库一致：两边都只由 Dashboard 的 main 给内外边距，页面自身铺满。
+       之前这里带着 `max-w-[1200px]`，在 1440+ 的宽屏上右侧会空出一大片，
+       和知识库页并排看就是「一个铺满一个缩着」。 -->
   <div
-    class="relative flex h-full w-full max-w-[1200px] flex-col gap-3"
+    class="relative flex h-full w-full flex-col gap-3"
     @dragenter.prevent="onDragEnter"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
@@ -43,87 +43,87 @@
     <div class="hero-surface relative overflow-hidden rounded-2xl border border-gray-200/80 p-4 shadow-sm sm:p-5">
       <HeroSilhouette variant="cards" :height="44" />
       <div class="relative z-10 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-      <div class="min-w-0">
-        <h1 class="text-xl font-bold tracking-tight text-gray-900 sm:text-2xl">工作空间</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          AI 干活时的文件都放这里：上传的资料、生成的报告、会话中间产物，都能直接打开看。
-        </p>
-      </div>
+        <div class="min-w-0">
+          <h1 class="text-xl font-bold tracking-tight text-gray-900 dark:text-gray-100 sm:text-2xl">工作空间</h1>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            AI 干活时的文件都放这里：上传的资料、生成的报告、会话中间产物，都能直接打开看。
+          </p>
+        </div>
 
-      <div class="flex flex-shrink-0 items-center gap-2">
-        <!-- 最近文件 -->
-        <div ref="recentMenuRef" class="relative">
-          <button
-            type="button"
-            class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
-            title="最近打开的文件"
-            @click="toggleRecentMenu"
-          >
-            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <circle cx="12" cy="12" r="8.5" />
-              <path stroke-linecap="round" d="M12 7.4V12l3.1 1.9" />
-            </svg>
-            最近
-          </button>
-          <div
-            v-if="recentOpen"
-            class="absolute right-0 z-30 mt-1 w-64 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl dark:border-gray-700 dark:bg-gray-800"
-          >
-            <p v-if="!recentFiles.length" class="px-3 py-3 text-xs text-gray-400">还没有打开过文件</p>
+        <div class="flex flex-shrink-0 items-center gap-2">
+          <!-- 最近文件 -->
+          <div ref="recentMenuRef" class="relative">
             <button
-              v-for="recent in recentFiles.slice(0, 8)"
-              :key="recent.path"
               type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/60"
-              :title="recent.path"
-              @click="openRecent(recent)"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+              title="最近打开的文件"
+              @click="toggleRecentMenu"
             >
-              <span>{{ fileEmoji(recent.name) }}</span>
-              <span class="min-w-0 flex-1 truncate">{{ recent.name }}</span>
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="12" cy="12" r="8.5" />
+                <path stroke-linecap="round" d="M12 7.4V12l3.1 1.9" />
+              </svg>
+              最近
             </button>
+            <div
+              v-if="recentOpen"
+              class="absolute right-0 z-30 mt-1 w-64 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl dark:border-gray-700 dark:bg-gray-800"
+            >
+              <p v-if="!recentFiles.length" class="px-3 py-3 text-xs text-gray-400">还没有打开过文件</p>
+              <button
+                v-for="recent in recentFiles.slice(0, 8)"
+                :key="recent.path"
+                type="button"
+                class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/60"
+                :title="recent.path"
+                @click="openRecent(recent)"
+              >
+                <span>{{ fileEmoji(recent.name) }}</span>
+                <span class="min-w-0 flex-1 truncate">{{ displayFileName(recent.name) }}</span>
+              </button>
+            </div>
           </div>
-        </div>
 
-        <!-- 新建：文件夹 / 文件 -->
-        <div ref="createMenuRef" class="relative">
+          <!-- 新建：文件夹 / 文件 -->
+          <div ref="createMenuRef" class="relative">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+              :disabled="!canCreateHere"
+              @click="toggleCreateMenu"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+              </svg>
+              新建
+            </button>
+            <div
+              v-if="createOpen"
+              class="absolute right-0 z-30 mt-1 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl dark:border-gray-700 dark:bg-gray-800"
+            >
+              <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/60" @click="openCreate('dir')">
+                📁 新建文件夹
+              </button>
+              <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/60" @click="openCreate('file')">
+                📄 新建文件
+              </button>
+            </div>
+          </div>
+
           <button
             type="button"
-            class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
-            :disabled="!canCreateHere"
-            @click="createOpen = !createOpen"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-primary-hover disabled:opacity-50"
+            :disabled="!canCreateHere || uploading"
+            @click="fileInputRef?.click()"
           >
             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4M7.5 8.5 12 4l4.5 4.5" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 16v3.5h15V16" />
             </svg>
-            新建
+            {{ uploading ? "上传中…" : "上传文件" }}
           </button>
-          <div
-            v-if="createOpen"
-            class="absolute right-0 z-30 mt-1 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl dark:border-gray-700 dark:bg-gray-800"
-          >
-            <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/60" @click="openCreate('dir')">
-              📁 新建文件夹
-            </button>
-            <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/60" @click="openCreate('file')">
-              📄 新建文件
-            </button>
-          </div>
+          <input ref="fileInputRef" type="file" multiple class="hidden" @change="onPickFiles" />
         </div>
-
-        <button
-          type="button"
-          class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-primary-hover disabled:opacity-50"
-          :disabled="!canCreateHere || uploading"
-          @click="fileInputRef?.click()"
-        >
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4M7.5 8.5 12 4l4.5 4.5" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 16v3.5h15V16" />
-          </svg>
-          {{ uploading ? "上传中…" : "上传文件" }}
-        </button>
-        <input ref="fileInputRef" type="file" multiple class="hidden" @change="onPickFiles" />
-      </div>
       </div>
     </div>
 
@@ -132,7 +132,7 @@
       <button
         type="button"
         class="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-gray-800"
-        :disabled="!parentPath || isRoot || searchAll"
+        :disabled="!parentPath || isRoot || searchMode === 'all'"
         title="返回上级目录"
         @click="navigate(parentPath)"
       >
@@ -143,13 +143,13 @@
       </button>
 
       <nav class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-xs text-gray-400">
-        <span v-for="(seg, index) in pathSegments" :key="seg.path" class="flex flex-shrink-0 items-center gap-1">
-          <span v-if="index > 0" class="text-gray-300">/</span>
+        <span v-for="(seg, index) in pathSegments" :key="`${index}:${seg.path}`" class="flex flex-shrink-0 items-center gap-1">
+          <span v-if="index > 0" class="text-gray-300 dark:text-gray-600">/</span>
           <button
             type="button"
-            class="max-w-[160px] truncate rounded px-1 py-0.5 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
+            class="max-w-[160px] truncate rounded px-1 py-0.5 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
             :class="index === pathSegments.length - 1 ? 'font-semibold text-gray-700 dark:text-gray-200' : ''"
-            :title="seg.path"
+            :title="seg.path || seg.label"
             @click="navigate(seg.path)"
           >{{ seg.label }}</button>
         </span>
@@ -190,11 +190,14 @@
       <button
         v-if="inTrash"
         type="button"
-        class="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
+        class="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-100 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-400 dark:hover:bg-red-950/60"
         @click="askEmptyTrash"
       >清空回收站</button>
 
-      <span v-if="scope === 'admin_all' && !isInsideOwnWorkspace" class="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
+      <span
+        v-if="scope === 'admin_all' && !isInsideOwnWorkspace"
+        class="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+      >
         管理员视图 · 全部用户
       </span>
 
@@ -240,11 +243,11 @@
     <!-- 批量操作条 -->
     <div
       v-if="selectedPaths.size && !inTrash"
-      class="flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-blue-700"
+      class="flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300"
     >
       <span>已选 {{ selectedPaths.size }} 项</span>
       <button type="button" class="font-semibold hover:underline" @click="askBatchDelete">批量删除</button>
-      <button type="button" class="text-blue-500 hover:underline" @click="clearSelection">取消选择</button>
+      <button type="button" class="text-blue-500 hover:underline dark:text-blue-400" @click="clearSelection">取消选择</button>
     </div>
 
     <!-- 列表视图 -->
@@ -256,7 +259,8 @@
               <input
                 type="checkbox"
                 class="rounded border-gray-300 text-primary focus:ring-primary/30"
-                :checked="allSelected"
+                :checked="selectionState === 'all'"
+                :indeterminate="selectionState === 'partial'"
                 :disabled="!selectableItems.length"
                 @change="toggleSelectAll"
               />
@@ -268,12 +272,14 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-if="loading">
-            <td colspan="5" class="px-3 py-10 text-center text-xs text-gray-400">正在加载…</td>
+          <tr v-if="loading || searching">
+            <td colspan="5" class="px-3 py-10 text-center text-xs text-gray-400">
+              {{ searching ? "正在搜索…" : "正在加载…" }}
+            </td>
           </tr>
           <tr v-else-if="!visibleItems.length">
             <td colspan="5" class="px-3 py-10 text-center text-xs text-gray-400">
-              {{ keyword ? "没有匹配的文件" : "这个目录还是空的，上传一个文件试试" }}
+              {{ loadFailed ? "目录读取失败，请重试" : keyword ? "没有匹配的文件" : "这个目录还是空的，上传一个文件试试" }}
             </td>
           </tr>
           <tr
@@ -298,7 +304,8 @@
                 v-if="item.is_dir"
                 type="button"
                 class="flex min-w-0 items-center gap-2 text-left"
-                @click="navigate(item.path)"
+                @click.stop="navigate(item.path)"
+                @dblclick.stop
               >
                 <span class="text-base leading-none">📁</span>
                 <span class="truncate font-medium text-gray-800 hover:text-primary dark:text-gray-200">{{ displayFileName(item.name) }}</span>
@@ -318,8 +325,10 @@
                   v-if="!isVirtualRoot"
                   :item="item"
                   :in-trash="inTrash"
+                  :is-trash-root="isTrashRootItem(item)"
                   :is-admin-scope="scope === 'admin_all'"
-                  :is-system-protected="SYSTEM_PROTECTED.has(item.name)"
+                  :is-system-protected="isSystemProtectedItem(item)"
+                  :can-manage="canManageItem(item)"
                   :user-workspace-root="userWorkspaceRoot"
                   @preview="handlePreview"
                   @download="handleDownload"
@@ -331,6 +340,7 @@
                   @delete="askDelete"
                   @restore="handleRestore"
                   @purge="askPurge"
+                  @empty-trash="askEmptyTrash"
                 />
               </div>
             </td>
@@ -341,69 +351,86 @@
 
     <!-- 卡片视图 -->
     <div v-else class="min-h-0 flex-1 overflow-auto rounded-xl bg-white p-2 dark:bg-gray-900">
-      <p v-if="loading" class="py-10 text-center text-xs text-gray-400">正在加载…</p>
-      <p v-else-if="!visibleItems.length" class="py-10 text-center text-xs text-gray-400">
-        {{ keyword ? "没有匹配的文件" : "这个目录还是空的，上传一个文件试试" }}
+      <p v-if="loading || searching" class="py-10 text-center text-xs text-gray-400">
+        {{ searching ? "正在搜索…" : "正在加载…" }}
       </p>
-      <div v-else class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+      <p v-else-if="!visibleItems.length" class="py-10 text-center text-xs text-gray-400">
+        {{ loadFailed ? "目录读取失败，请重试" : keyword ? "没有匹配的文件" : "这个目录还是空的，上传一个文件试试" }}
+      </p>
+      <!-- 大图相册风：aspect-[4/3] 满宽媒体区 + 左上悬浮勾选 + 紧凑信息底栏（文件名与 ⋮ 并排） -->
+      <div v-else class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
         <div
           v-for="item in visibleItems"
           :key="item.path"
-          class="group flex flex-col gap-1 rounded-xl border border-gray-200 bg-white p-3 transition-colors hover:border-primary/40 dark:border-gray-800 dark:bg-gray-800/60"
-          :class="selectedPaths.has(item.path) ? 'ring-1 ring-primary' : ''"
+          class="group flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white transition-all hover:border-primary/40 hover:shadow-sm dark:border-gray-800 dark:bg-gray-800/60"
+          :class="selectedPaths.has(item.path) ? 'border-primary/50 ring-2 ring-primary/70' : ''"
+          :title="item.is_dir ? '双击进入目录' : '双击打开预览'"
           @dblclick.stop="openItem(item)"
         >
-          <div class="flex items-start justify-between gap-1">
-            <button
-              type="button"
-              class="min-w-0 flex-1 text-left"
-              :title="item.path"
-              @click="item.is_dir ? navigate(item.path) : handlePreview(item)"
-            >
-              <div
-                class="mb-2 flex h-16 w-full items-center justify-center overflow-hidden rounded-lg bg-gray-50 dark:bg-gray-800/60"
-              >
-                <img
-                  v-if="isImageItem(item) && !thumbFailed[item.path]"
-                  :src="resolveFsPreviewUrl(item.path)"
-                  :alt="displayFileName(item.name)"
-                  loading="lazy"
-                  decoding="async"
-                  class="h-full w-full object-cover"
-                  @error="onThumbError(item.path)"
-                />
-                <span v-else class="text-2xl leading-none">{{ item.is_dir ? "📁" : fileEmoji(item.name) }}</span>
-              </div>
-              <p class="mt-2 truncate text-xs font-medium text-gray-800 dark:text-gray-100">{{ displayFileName(item.name) }}</p>
-              <p class="mt-0.5 text-[10px] text-gray-400">{{ item.is_dir ? "文件夹" : formatSize(item.size) }}</p>
-            </button>
-            <input
+          <div
+            class="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-gray-50 dark:bg-gray-800/80"
+            :title="item.path"
+          >
+            <img
+              v-if="isImageItem(item) && !thumbFailed[item.path]"
+              :src="resolveFsPreviewUrl(item.path)"
+              :alt="displayFileName(item.name)"
+              loading="lazy"
+              decoding="async"
+              class="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+              @error="onThumbError(item.path)"
+            />
+            <span v-else class="select-none text-4xl leading-none">{{ item.is_dir ? "📁" : fileEmoji(item.name) }}</span>
+
+            <label
               v-if="canSelect(item)"
-              type="checkbox"
-              class="mt-0.5 rounded border-gray-300 text-primary focus:ring-primary/30"
-              :checked="selectedPaths.has(item.path)"
-              @change="toggleSelect(item.path)"
-            />
+              class="absolute left-2 top-2 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md bg-white/85 shadow-sm backdrop-blur-sm transition-opacity dark:bg-gray-900/80"
+              :class="selectedPaths.has(item.path) ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100'"
+              @click.stop
+              @dblclick.stop
+            >
+              <input
+                type="checkbox"
+                class="rounded border-gray-300 text-primary focus:ring-primary/30"
+                :checked="selectedPaths.has(item.path)"
+                @change="toggleSelect(item.path)"
+              />
+            </label>
           </div>
-          <div class="flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
-            <WorkspaceRowActions
-              v-if="!isVirtualRoot"
-              :item="item"
-              :in-trash="inTrash"
-              :is-admin-scope="scope === 'admin_all'"
-              :is-system-protected="SYSTEM_PROTECTED.has(item.name)"
-              :user-workspace-root="userWorkspaceRoot"
-              @preview="handlePreview"
-              @download="handleDownload"
-              @share="openShare"
-              @copy-and-share="handleCopyAndShare"
-              @rename="openRename"
-              @copy-path="handleCopyPath"
-              @extract="askExtract"
-              @delete="askDelete"
-              @restore="handleRestore"
-              @purge="askPurge"
-            />
+
+          <div class="flex items-center justify-between gap-1.5 border-t border-gray-100 px-2.5 py-2 dark:border-gray-700/60">
+            <div class="min-w-0 flex-1" :title="item.path">
+              <p class="truncate text-xs font-medium text-gray-800 dark:text-gray-100">{{ displayFileName(item.name) }}</p>
+              <p class="mt-0.5 text-[10px] text-gray-400">{{ item.is_dir ? "文件夹" : formatSize(item.size) }}</p>
+            </div>
+            <div
+              class="flex-shrink-0 transition-opacity"
+              :class="openActionPath === item.path ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100'"
+              @dblclick.stop
+            >
+              <WorkspaceRowActions
+                v-if="!isVirtualRoot"
+                :item="item"
+                :in-trash="inTrash"
+                :is-trash-root="isTrashRootItem(item)"
+                :is-admin-scope="scope === 'admin_all'"
+                :is-system-protected="isSystemProtectedItem(item)"
+                :can-manage="canManageItem(item)"
+                :user-workspace-root="userWorkspaceRoot"
+                @preview="handlePreview"
+                @download="handleDownload"
+                @share="openShare"
+                @copy-and-share="handleCopyAndShare"
+                @rename="openRename"
+                @copy-path="handleCopyPath"
+                @extract="askExtract"
+                @delete="askDelete"
+                @restore="handleRestore"
+                @purge="askPurge"
+                @empty-trash="askEmptyTrash"
+                @open-change="(isOpen) => onCardMenuOpenChange(item.path, isOpen)"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -413,14 +440,31 @@
     <div v-if="showUploadPanel" class="rounded-xl border border-gray-200 bg-gray-50/70 px-3 py-2 dark:border-gray-800 dark:bg-gray-800/50">
       <div class="mb-1 flex items-center justify-between text-xs text-gray-600 dark:text-gray-300">
         <span>上传进度 {{ snapshot.aggregate.done }} / {{ snapshot.aggregate.total }}</span>
-        <button type="button" class="text-gray-400 hover:text-gray-700" @click="clearFinishedUploads">清除已完成</button>
+        <button type="button" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" @click="clearFinishedUploads">清除已完成</button>
       </div>
       <ul class="max-h-28 space-y-1 overflow-y-auto">
         <li v-for="task in snapshot.tasks" :key="task.id" class="flex items-center gap-2 text-[11px]">
-          <span class="min-w-0 flex-1 truncate text-gray-600 dark:text-gray-300">{{ task.name }}</span>
-          <span :class="task.status === 'failed' ? 'text-red-600' : 'text-gray-400'">
-            {{ task.status === 'failed' ? (task.error || '失败') : task.status === 'done' ? '完成' : task.status === 'canceled' ? '已取消' : `${Math.round(task.percent * 100)}%` }}
+          <span class="min-w-0 flex-1 truncate text-gray-600 dark:text-gray-300" :title="task.storedName || task.name">
+            {{ task.name }}
+            <span v-if="task.storedName && task.storedName !== task.name" class="text-gray-400">
+              → {{ task.storedName }}
+            </span>
           </span>
+          <span :class="task.status === 'failed' ? 'text-red-600 dark:text-red-400' : 'text-gray-400'">
+            {{ task.status === 'failed' ? (task.error || '失败') : task.status === 'done' ? '完成' : task.status === 'canceled' ? '已取消' : task.status === 'committing' ? '写入中…' : task.status === 'queued' ? '排队中' : `${Math.round(task.percent)}%` }}
+          </span>
+          <button
+            v-if="task.status === 'queued' || task.status === 'transferring'"
+            type="button"
+            class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+            @click="cancelUpload(task.id)"
+          >取消</button>
+          <button
+            v-else-if="task.status === 'failed' || task.status === 'canceled'"
+            type="button"
+            class="text-primary hover:underline"
+            @click="retryUpload(task.id)"
+          >重试</button>
         </li>
       </ul>
     </div>
@@ -437,6 +481,21 @@
       @cancel="closeDialog"
     />
 
+    <!-- 解压目标目录选择器：与聊天抽屉复用同一套目录树，公共压缩包也能解到本人工作区 -->
+    <WorkspaceDirectorySaveDialog
+      :visible="!!extractDialog"
+      :default-filename="extractDialog?.defaultName || ''"
+      :default-path="extractDialog?.parentPath || null"
+      :submitting="extractSubmitting"
+      :allow-empty-name="true"
+      title="解压到目录"
+      subtitle="选择解压目标目录（仅可解压到当前用户的 AI 工作区）"
+      name-label="子文件夹名（留空直接解到所选目录）"
+      submit-label="解压"
+      @close="extractDialog = null"
+      @save="submitExtract"
+    />
+
     <!-- 预览复用聊天页的 Canvas：markdown 渲染 / 代码高亮 / CSV 透视 / 文档查看器全都在这里，
          自己再写一套预览只会出现「同一个文件两种样子」 -->
     <ChatCanvas
@@ -445,6 +504,7 @@
       :data="canvasData"
       dock-side="right"
       @close="closeCanvas"
+      @content-saved="handleCanvasSaved"
     />
 
     <ShareFileDialog
@@ -462,7 +522,7 @@
       :title="confirmAction.title"
       :message="confirmAction.message"
       :confirm-text="confirmAction.confirmText"
-      type="danger"
+      :type="confirmAction.type || 'danger'"
       :loading="confirmSubmitting"
       @confirm="runConfirmAction"
       @cancel="confirmAction = null"
@@ -476,15 +536,25 @@ import axios from "@/utils/axios"
 import InputModal from "@/components/InputModal.vue"
 import ConfirmModal from "@/components/ConfirmModal.vue"
 import WorkspaceRowActions from "@/components/workspace/WorkspaceRowActions.vue"
+import WorkspaceDirectorySaveDialog from "@/components/embed/WorkspaceDirectorySaveDialog.vue"
 import HeroSilhouette from "@/components/common/HeroSilhouette.vue"
 import ChatCanvas from "@/components/embed/ChatCanvas.vue"
 import { useWorkspaceCanvas } from "@/composables/chat/useWorkspaceCanvas"
 import ShareFileDialog from "@/components/ShareFileDialog.vue"
 import { useToast } from "@/composables/useToast"
 import { useWorkspaceUploadQueue } from "@/composables/useWorkspaceUploadQueue"
+import { shouldAutoDismissUploads } from "@/utils/workspaceUploadQueue"
 import { isExtractableArchive, isPublicWorkspaceItem } from "@/utils/workspaceActionEntries"
+import { planBatchDelete, selectAllState, toggleSelectAllPaths } from "@/utils/workspaceBatchSelection"
 import { copyFileToWorkspace } from "@/utils/workspaceFilePreview"
-import { parentDirectoryOf } from "@/utils/workspacePath"
+import {
+  WORKSPACE_ROOT_PROTECTED_NAMES,
+  buildWorkspaceBreadcrumbs,
+  isProtectedWorkspaceEntry,
+  isWithinDirectory,
+  normalizeWorkspacePath,
+  parentDirectoryOf,
+} from "@/utils/workspacePath"
 import { displayFileName } from "@/utils/workspaceFileName"
 import {
   IMAGE_EXTENSIONS,
@@ -510,10 +580,45 @@ interface FsItem {
   mtime: number
   is_public?: boolean
   is_user_workspace?: boolean
+  readonly?: boolean
 }
 
+const PREFS_STORAGE_KEY = "workspace_manage_prefs_v1"
+const MAX_RECENT_FILES = 20
+
+type ViewMode = "list" | "grid"
+type SortKey = "mtime" | "name" | "size"
+type TypeFilterKey = "all" | "doc" | "sheet" | "image" | "archive" | "code"
+
+const SORT_KEYS: readonly SortKey[] = ["mtime", "name", "size"]
+const TYPE_FILTER_KEYS: readonly TypeFilterKey[] = ["all", "doc", "sheet", "image", "archive", "code"]
+
+/**
+ * 视图偏好：视图模式 / 排序 / 类型筛选。
+ *
+ * 三项都存 localStorage，刷新后原样恢复。没有改用后端 `/fs/browser-prefs`：
+ * 那份存的抽屉的偏好（是否含子目录、类型筛选），语义与独立页的表格/卡片取舍并不等价，
+ * 硬接会让两个界面的偏好互相覆盖。
+ */
+const readStoredPrefs = (): { viewMode?: ViewMode; sortBy?: SortKey; typeFilter?: TypeFilterKey } => {
+  try {
+    const raw = localStorage.getItem(PREFS_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return {
+      viewMode: parsed?.viewMode === "grid" ? "grid" : parsed?.viewMode === "list" ? "list" : undefined,
+      sortBy: SORT_KEYS.find((key) => key === parsed?.sortBy),
+      typeFilter: TYPE_FILTER_KEYS.find((key) => key === parsed?.typeFilter),
+    }
+  } catch {
+    return {}
+  }
+}
+
+const storedPrefs = readStoredPrefs()
+
 const { showToast } = useToast()
-const { snapshot, enqueue, clearFinished } = useWorkspaceUploadQueue()
+const { snapshot, enqueue, cancel: cancelUpload, retry: retryUpload, clearFinished } = useWorkspaceUploadQueue()
 
 const items = ref<FsItem[]>([])
 const currentPath = ref("")
@@ -524,50 +629,81 @@ const isVirtualRoot = ref(false)
 const writable = ref(false)
 const scope = ref<"user_scoped" | "admin_all">("user_scoped")
 const loading = ref(false)
+const searching = ref(false)
+/** 最近一次目录读取失败：路径保持旧值，列表不能被清空伪装成「空目录」。 */
+const loadFailed = ref(false)
 const keyword = ref("")
 const searchAll = ref(false)
 const recursiveItems = ref<FsItem[]>([])
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const viewMode = ref<"list" | "grid">("list")
-const sortBy = ref<"mtime" | "name" | "size">("mtime")
-const typeFilter = ref<"all" | "doc" | "sheet" | "image" | "archive" | "code">("all")
+const viewMode = ref<ViewMode>(storedPrefs.viewMode || "list")
+const sortBy = ref<SortKey>(storedPrefs.sortBy || "mtime")
+const typeFilter = ref<TypeFilterKey>(storedPrefs.typeFilter || "all")
 const selectedPaths = reactive(new Set<string>())
 const dragging = ref(false)
 const createOpen = ref(false)
 const recentOpen = ref(false)
+const openActionPath = ref("")
 const recentFiles = ref<Array<{ path: string; name: string; mtime: number }>>([])
 const recentMenuRef = ref<HTMLElement | null>(null)
 const createMenuRef = ref<HTMLElement | null>(null)
 
-const SYSTEM_PROTECTED = new Set(["docs", "skills", "branding", "agent_workspaces", ".trash", "sessions", "uploads", "sandbox"])
+const SYSTEM_PROTECTED = WORKSPACE_ROOT_PROTECTED_NAMES
+
+watch([viewMode, sortBy, typeFilter], ([nextView, nextSort, nextFilter]) => {
+  try {
+    localStorage.setItem(
+      PREFS_STORAGE_KEY,
+      JSON.stringify({ viewMode: nextView, sortBy: nextSort, typeFilter: nextFilter }),
+    )
+  } catch {
+    /* ignore storage quota or private mode errors */
+  }
+})
 
 const uploading = computed(() => snapshot.value.aggregate.active)
-const showUploadPanel = computed(() => snapshot.value.tasks.length > 0 && (uploading.value || snapshot.value.aggregate.failed > 0))
-const inTrash = computed(() => Boolean(userWorkspaceRoot.value) && currentPath.value === `${userWorkspaceRoot.value}/.trash`)
+const showUploadPanel = computed(
+  () =>
+    snapshot.value.tasks.length > 0 &&
+    (uploading.value || snapshot.value.aggregate.failed > 0 || snapshot.value.aggregate.canceled > 0),
+)
+/**
+ * 回收站按「子树」判定。
+ *
+ * 删掉的是文件夹时，它会整个躺在 `.trash/` 里；用户点进去之后如果还按普通目录处理，
+ * 行菜单会退化成「重命名 / 删除」，后端也只拦 `.trash` 根，等于能把条目再套一层移进回收站。
+ * 覆盖整棵子树后，里面的条目仍然是「恢复 / 永久删除」，且不允许再勾选批量删除。
+ */
+const inTrash = computed(
+  () =>
+    Boolean(userWorkspaceRoot.value) &&
+    isWithinDirectory(currentPath.value, `${userWorkspaceRoot.value}/.trash`),
+)
 // 管理员默认落在自己的私有工作区：那里不是「全部用户」视图，别让徽标误导。
-const isInsideOwnWorkspace = computed(() => {
-  const root = userWorkspaceRoot.value
-  if (!root || !currentPath.value) return false
-  return currentPath.value === root || currentPath.value.startsWith(`${root}/`)
-})
+const isInsideOwnWorkspace = computed(() => isWithinDirectory(currentPath.value, userWorkspaceRoot.value))
+const searchMode = computed<"current" | "all">(() => (searchAll.value && keyword.value.trim().length >= 2 ? "all" : "current"))
 // 虚拟根（「公共资源」）是授权根汇总，不是真实可写目录：新建/上传/勾选都必须关掉，
 // 否则按钮点下去只会吃后端 403。
 const canCreateHere = computed(
-  () => !inTrash.value && !loading.value && Boolean(currentPath.value) && !searchAll.value && writable.value,
+  () => !inTrash.value && !loading.value && Boolean(currentPath.value) && searchMode.value !== "all" && writable.value,
 )
 
-const searchMode = computed(() => (searchAll.value && keyword.value.trim().length >= 2 ? "all" : "current"))
 const sourceItems = computed(() => (searchMode.value === "all" ? recursiveItems.value : items.value))
 
 const TYPE_GROUPS: Record<string, string[]> = {
-  doc: ["md", "txt", "doc", "docx", "pdf", "rtf", "epub", "html"],
-  sheet: ["xls", "xlsx", "csv", "tsv"],
+  doc: ["md", "txt", "doc", "docx", "pdf", "rtf", "epub", "html", "htm", "ppt", "pptx"],
+  sheet: ["xls", "xlsx", "xlsm", "csv", "tsv"],
   image: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"],
   archive: ["zip", "tar", "gz", "tgz", "7z", "rar"],
   code: ["py", "sh", "js", "ts", "json", "yaml", "yml", "sql", "go", "java", "c", "cpp", "css"],
 }
 
-const extOf = (name: string) => (name.split(".").pop() || "").toLowerCase()
+/** 取文件扩展名（不含点号）。无后缀文件或以点开头的纯隐藏名返回空串，避免把文件名本身误当扩展名。 */
+const extOf = (name: string) => {
+  const idx = name.lastIndexOf(".")
+  if (idx <= 0 || idx === name.length - 1) return ""
+  return name.slice(idx + 1).toLowerCase()
+}
 
 /**
  * 卡片缩略图只对后端 preview 真正放行的图片类型出图。
@@ -589,6 +725,31 @@ const onThumbError = (path: string) => {
   thumbFailed.value = { ...thumbFailed.value, [path]: true }
 }
 
+const isTrashRootItem = (item: FsItem) =>
+  Boolean(userWorkspaceRoot.value) &&
+  normalizeWorkspacePath(item.path) === normalizeWorkspacePath(`${userWorkspaceRoot.value}/.trash`)
+
+/**
+ * 系统保护目录判定：结合目录层级（只保护根级保留目录与用户工作区根目录），
+ * 避免误伤用户在项目子目录下自建的同名 `docs` / `uploads` 目录。
+ * `is_user_workspace`（本人或其他用户的工作区根）由 `isProtectedWorkspaceEntry` 内部覆盖。
+ */
+const isSystemProtectedItem = (item: FsItem) =>
+  isProtectedWorkspaceEntry(item, userWorkspaceRoot.value, SYSTEM_PROTECTED)
+
+const canManageItem = (item: FsItem) => {
+  if (inTrash.value || isVirtualRoot.value) return false
+  if (isTrashRootItem(item) || isSystemProtectedItem(item) || item.is_user_workspace) return false
+  if (isPublicWorkspaceItem(item, userWorkspaceRoot.value)) {
+    return scope.value === "admin_all"
+  }
+  if (item.readonly && scope.value !== "admin_all") return false
+  if (!userWorkspaceRoot.value) return false
+  return scope.value === "admin_all" || isWithinDirectory(item.path, userWorkspaceRoot.value)
+}
+
+const canSelect = (item: FsItem) => !inTrash.value && !isVirtualRoot.value && canManageItem(item)
+
 const visibleItems = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   let list = [...sourceItems.value]
@@ -602,7 +763,7 @@ const visibleItems = computed(() => {
   }
   list.sort((a, b) => {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1
-    if (sortBy.value === "name") return a.name.localeCompare(b.name, "zh-CN")
+    if (sortBy.value === "name") return displayFileName(a.name).localeCompare(displayFileName(b.name), "zh-CN")
     if (sortBy.value === "size") return (b.size || 0) - (a.size || 0)
     return (b.mtime || 0) - (a.mtime || 0)
   })
@@ -610,27 +771,28 @@ const visibleItems = computed(() => {
 })
 
 const selectableItems = computed(() => visibleItems.value.filter((item) => canSelect(item)))
-const allSelected = computed(
-  () => selectableItems.value.length > 0 && selectableItems.value.every((item) => selectedPaths.has(item.path)),
-)
+const selectablePaths = computed(() => selectableItems.value.map((item) => item.path))
+const selectionState = computed(() => selectAllState(selectablePaths.value, selectedPaths))
+
+// 筛选/搜索变化导致部分已选项不再可见时，自动清理隐藏勾选，防止批量删除误删看不见的文件。
+watch(selectablePaths, (nextPaths) => {
+  const allowed = new Set(nextPaths)
+  for (const path of [...selectedPaths]) {
+    if (!allowed.has(path)) selectedPaths.delete(path)
+  }
+})
 
 const pathSegments = computed(() => {
-  const root = userWorkspaceRoot.value
   if (searchMode.value === "all") return [{ label: `全目录搜索：${keyword.value.trim()}`, path: currentPath.value }]
   // 虚拟根不是真实目录，面包屑只留一级「公共资源」（空 path 即回到汇总）。
   if (isVirtualRoot.value) return [{ label: "公共资源", path: "" }]
-  if (!currentPath.value) return []
-  const relative = root && currentPath.value.startsWith(root)
-    ? currentPath.value.slice(root.length).replace(/^\/+/, "")
-    : currentPath.value
-  const segments: Array<{ label: string; path: string }> = []
-  if (root) segments.push({ label: "我的目录", path: root })
-  let acc = root
-  for (const part of relative.split("/").filter(Boolean)) {
-    acc = acc ? `${acc}/${part}` : part
-    segments.push({ label: part, path: acc })
-  }
-  return segments
+  return buildWorkspaceBreadcrumbs({
+    currentPath: currentPath.value,
+    userWorkspaceRoot: userWorkspaceRoot.value,
+    isVirtualRoot: isVirtualRoot.value,
+    searchMode: searchMode.value,
+    keyword: keyword.value,
+  })
 })
 
 const currentLabel = computed(() => pathSegments.value[pathSegments.value.length - 1]?.label || "我的目录")
@@ -638,6 +800,8 @@ const currentLabel = computed(() => pathSegments.value[pathSegments.value.length
 const quickNavLinks = computed(() => {
   const root = userWorkspaceRoot.value
   if (!root) return []
+  const normCurrent = normalizeWorkspacePath(currentPath.value)
+  const isAtPublicRoot = isVirtualRoot.value || (scope.value === "admin_all" && isRoot.value)
   return [
     { key: "home", label: "我的目录", path: root },
     { key: "docs", label: "我的文档", path: `${root}/docs` },
@@ -646,9 +810,11 @@ const quickNavLinks = computed(() => {
     { key: "public", label: "公共资源", path: "" },
   ].map((link) => ({
     ...link,
-    active: link.key === "public"
-      ? isVirtualRoot.value
-      : !isVirtualRoot.value && currentPath.value === link.path && !searchAll.value,
+    active:
+      searchMode.value !== "all" &&
+      (link.key === "public"
+        ? isAtPublicRoot
+        : !isAtPublicRoot && normCurrent === normalizeWorkspacePath(link.path)),
   }))
 })
 
@@ -672,21 +838,17 @@ const formatTime = (timestamp: number) => {
 
 const fileEmoji = (name: string) => {
   const ext = extOf(name)
-  if (["md", "txt", "doc", "docx", "pdf"].includes(ext)) return "📄"
-  if (["xls", "xlsx", "csv"].includes(ext)) return "📊"
+  if (["md", "txt", "doc", "docx", "pdf", "ppt", "pptx"].includes(ext)) return "📄"
+  if (["xls", "xlsx", "xlsm", "csv"].includes(ext)) return "📊"
   if (["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext)) return "🖼️"
   if (["zip", "tar", "gz", "tgz", "7z", "rar"].includes(ext)) return "🗜️"
   if (["py", "sh", "js", "ts", "json", "yaml", "yml"].includes(ext)) return "📜"
   return "📄"
 }
 
-const canSelect = (item: FsItem) => !inTrash.value && !isVirtualRoot.value && !SYSTEM_PROTECTED.has(item.name)
-
-const canManageItem = (item: FsItem) => {
-  if (SYSTEM_PROTECTED.has(item.name)) return false
-  if (!userWorkspaceRoot.value) return false
-  return currentPath.value !== userWorkspaceRoot.value || !item.is_user_workspace
-}
+let loadSeq = 0
+let searchSeq = 0
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
  * 读取目录。
@@ -696,12 +858,21 @@ const canManageItem = (item: FsItem) => {
  * 「公共资源」入口走默认空 path，拿到的就是授权根汇总。
  */
 const load = async (path = "", options: { preferUserRoot?: boolean } = {}) => {
+  const seq = ++loadSeq
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+    searchTimer = null
+  }
+  searchSeq += 1
+  searching.value = false
   loading.value = true
+  loadFailed.value = false
   clearSelection()
   try {
     const params: Record<string, string> = { path }
     if (options.preferUserRoot) params.prefer = "user_root"
     const res = await axios.get("/api/v1/chat/fs/list", { params })
+    if (seq !== loadSeq) return
     const data = res.data?.data
     if (!data) return
     currentPath.value = data.current_path || ""
@@ -711,15 +882,18 @@ const load = async (path = "", options: { preferUserRoot?: boolean } = {}) => {
     writable.value = Boolean(data.writable)
     scope.value = data.scope === "admin_all" ? "admin_all" : "user_scoped"
     items.value = Array.isArray(data.items) ? data.items : []
+    thumbFailed.value = {}
     if (data.user_workspace_root) userWorkspaceRoot.value = data.user_workspace_root
     keyword.value = ""
     searchAll.value = false
     recursiveItems.value = []
   } catch {
+    if (seq !== loadSeq) return
+    loadFailed.value = true
     showToast("读取目录失败，请稍后重试", "error")
-    items.value = []
+    // 刻意不清空 items：currentPath 仍是旧目录，清空会让旧目录看起来「空了」。
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -730,11 +904,34 @@ const navigate = (path: string | null | undefined) => {
 }
 
 /* ---------------- 搜索 ---------------- */
-let searchTimer: ReturnType<typeof setTimeout> | null = null
+const runRecursiveSearch = async (kw: string) => {
+  const seq = ++searchSeq
+  searching.value = true
+  try {
+    const res = await axios.get("/api/v1/chat/fs/search", {
+      params: { q: kw, path: currentPath.value, max_results: 100 },
+    })
+    if (seq !== searchSeq) return
+    const found = res.data?.data?.items
+    recursiveItems.value = Array.isArray(found) ? found : []
+  } catch {
+    if (seq !== searchSeq) return
+    recursiveItems.value = []
+    showToast("搜索失败，请稍后重试", "error")
+  } finally {
+    if (seq === searchSeq) searching.value = false
+  }
+}
+
 const onKeywordInput = () => {
-  if (searchTimer) clearTimeout(searchTimer)
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+    searchTimer = null
+  }
   const kw = keyword.value.trim()
   if (!searchAll.value || kw.length < 2) {
+    searchSeq += 1
+    searching.value = false
     recursiveItems.value = []
     return
   }
@@ -743,17 +940,27 @@ const onKeywordInput = () => {
   }, 300)
 }
 
-const runRecursiveSearch = async (kw: string) => {
-  try {
-    const res = await axios.get("/api/v1/chat/fs/search", {
-      params: { q: kw, path: currentPath.value, max_results: 100 },
-    })
-    const found = res.data?.data?.items
-    recursiveItems.value = Array.isArray(found) ? found : []
-  } catch {
-    recursiveItems.value = []
-    showToast("搜索失败，请稍后重试", "error")
+/** 保持当前视图模式刷新：全目录搜索态下重跑搜索，普通态下重读当前目录。 */
+const refreshCurrentView = () => {
+  if (searchMode.value === "all") {
+    void runRecursiveSearch(keyword.value.trim())
+    return
   }
+  void load(currentPath.value)
+}
+
+/**
+ * 等刷新完成再返回（批量删除用）。
+ *
+ * 删除失败的条目还留在原处，刷新后要重新勾上，用户点一次「批量删除」就能重试；
+ * 而 `load()` 自己会清空选择，所以必须拿到「刷新已完成」的时点。
+ */
+const refreshCurrentViewAsync = async () => {
+  if (searchMode.value === "all") {
+    await runRecursiveSearch(keyword.value.trim())
+    return
+  }
+  await load(currentPath.value)
 }
 
 /* ---------------- 选择 ---------------- */
@@ -762,8 +969,9 @@ const toggleSelect = (path: string) => {
   else selectedPaths.add(path)
 }
 const toggleSelectAll = () => {
-  if (allSelected.value) clearSelection()
-  else selectableItems.value.forEach((item) => selectedPaths.add(item.path))
+  const next = toggleSelectAllPaths(selectablePaths.value, selectedPaths)
+  selectedPaths.clear()
+  for (const path of next) selectedPaths.add(path)
 }
 const clearSelection = () => selectedPaths.clear()
 
@@ -778,11 +986,16 @@ const onPickFiles = (event: Event) => {
 
 const clearFinishedUploads = () => {
   clearFinished()
-  void load(currentPath.value)
+  refreshCurrentView()
 }
 
 watch(uploading, (now, before) => {
-  if (before && !now) void load(currentPath.value)
+  if (before && !now) {
+    refreshCurrentView()
+    if (shouldAutoDismissUploads(snapshot.value.aggregate)) {
+      clearFinished()
+    }
+  }
 })
 
 let dragDepth = 0
@@ -792,7 +1005,9 @@ const onDragEnter = (event: DragEvent) => {
   dragging.value = true
 }
 const onDragOver = (event: DragEvent) => {
-  if (canCreateHere.value && event.dataTransfer) event.dataTransfer.dropEffect = "copy"
+  if (canCreateHere.value && event.dataTransfer?.types.includes("Files")) {
+    event.dataTransfer.dropEffect = "copy"
+  }
 }
 const onDragLeave = () => {
   dragDepth = Math.max(0, dragDepth - 1)
@@ -801,6 +1016,7 @@ const onDragLeave = () => {
 const onDrop = (event: DragEvent) => {
   dragDepth = 0
   dragging.value = false
+  if (!event.dataTransfer?.types.includes("Files")) return
   if (!canCreateHere.value) {
     showToast("当前目录不支持上传", "warning")
     return
@@ -819,10 +1035,31 @@ const loadRecent = async () => {
   }
 }
 
+const recordRecentFile = async (item: Pick<FsItem, "path" | "name">) => {
+  const norm = normalizeWorkspacePath(item.path)
+  if (!norm || norm.includes("/.trash/") || norm.endsWith("/.trash")) return
+  const nextEntry = { path: norm, name: item.name, mtime: Date.now() / 1000 }
+  const merged = [
+    nextEntry,
+    ...recentFiles.value.filter((entry) => normalizeWorkspacePath(entry.path) !== norm),
+  ].slice(0, MAX_RECENT_FILES)
+  recentFiles.value = merged
+  try {
+    await axios.put("/api/v1/chat/fs/recent-files", { items: merged })
+  } catch {
+    /* 最近文件记录失败不影响主预览/下载流程 */
+  }
+}
+
 const toggleRecentMenu = async () => {
   createOpen.value = false
   recentOpen.value = !recentOpen.value
   if (recentOpen.value) await loadRecent()
+}
+
+const toggleCreateMenu = () => {
+  recentOpen.value = false
+  createOpen.value = !createOpen.value
 }
 
 const openRecent = (recent: { path: string; name: string }) => {
@@ -830,10 +1067,20 @@ const openRecent = (recent: { path: string; name: string }) => {
   handlePreview({ path: recent.path, name: recent.name })
 }
 
+const onCardMenuOpenChange = (path: string, isOpen: boolean) => {
+  if (isOpen) openActionPath.value = path
+  else if (openActionPath.value === path) openActionPath.value = ""
+}
+
 const onDocumentClick = (event: MouseEvent) => {
   const target = event.target as Node
   if (recentMenuRef.value && !recentMenuRef.value.contains(target)) recentOpen.value = false
   if (createMenuRef.value && !createMenuRef.value.contains(target)) createOpen.value = false
+}
+
+const onRowActionsOpen = () => {
+  recentOpen.value = false
+  createOpen.value = false
 }
 
 /* ---------------- 文件操作 ---------------- */
@@ -843,7 +1090,7 @@ const onDocumentClick = (event: MouseEvent) => {
  * 关键：`buildWorkspaceCanvasPayload()` 产出的是 `canvas://file?path=...` 这种**协议字符串**，
  * 必须交给 `useWorkspaceCanvas.handleOpenCanvas()` 解析成真实内容（文本/图片/PDF/Office 分流、
  * CSV 透视、旧版 .ppt 降级为下载），再把结果喂给 `ChatCanvas` 渲染。
- * 直接把 payload 塞进 canvas，画布拿到的只是一串 `canvas://`，所以什么都显示不出来。
+ * 独立页传入 `defaultPinned: false`，避免预览默认钉住右侧把列表操作列盖死。
  */
 const {
   canvasVisible,
@@ -856,9 +1103,20 @@ const {
   getConversationId: () => "",
   resolveFileUrl: (url: string) => resolveFsPreviewUrl(url, null),
   showToast,
+  defaultPinned: false,
 })
 
-/** 双击/单击送达的统一入口：目录进去，文件开预览 */
+const handleCanvasSaved = (payload: { path: string; content: string }) => {
+  if (!payload?.path) return
+  if (
+    searchMode.value === "all" ||
+    normalizeWorkspacePath(parentDirectoryOf(payload.path)) === normalizeWorkspacePath(currentPath.value)
+  ) {
+    refreshCurrentView()
+  }
+}
+
+/** 双击送达的统一入口：目录进去，文件开预览 */
 const openItem = (item: FsItem) => {
   if (item.is_dir) {
     navigate(item.path)
@@ -872,10 +1130,12 @@ const handlePreview = (item: Pick<FsItem, "path" | "name">) => {
     showToast("该格式不支持预览，请下载后查看", "warning")
     return
   }
+  void recordRecentFile(item)
   void handleOpenCanvas(buildWorkspaceCanvasPayload(item.path, displayFileName(item.name)))
 }
 
 const handleDownload = (item: FsItem) => {
+  void recordRecentFile(item)
   void downloadWorkspaceFile({
     path: item.path,
     name: displayFileName(item.name),
@@ -976,6 +1236,10 @@ const submitDialog = async (value: string) => {
     showToast("请输入名称", "warning")
     return
   }
+  if (dialog.value === "rename" && renameTarget.value && name === renameTarget.value.name) {
+    closeDialog()
+    return
+  }
   dialogSubmitting.value = true
   try {
     if (dialog.value === "dir" || dialog.value === "file") {
@@ -986,7 +1250,7 @@ const submitDialog = async (value: string) => {
       showToast("已重命名", "success")
     }
     closeDialog()
-    void load(currentPath.value)
+    refreshCurrentView()
   } catch (error: any) {
     showToast(error?.response?.data?.detail || "操作失败，请稍后重试", "error")
   } finally {
@@ -995,31 +1259,58 @@ const submitDialog = async (value: string) => {
 }
 
 /* ---------------- 解压 ---------------- */
+const extractDialog = ref<{ item: FsItem; parentPath: string; defaultName: string } | null>(null)
+const extractSubmitting = ref(false)
+
 const askExtract = (item: FsItem) => {
   if (!isExtractableArchive(item.name)) {
     showToast("暂不支持 rar / 7z，请先转成 zip", "warning")
     return
   }
-  confirmAction.value = {
-    title: "解压",
-    message: `将「${displayFileName(item.name)}」解压到当前目录下的同名文件夹。`,
-    confirmText: "解压",
-    run: async () => {
-      const subdir = item.name.replace(/\.(tar\.gz|tgz|tar|zip)$/i, "")
-      const res = await extractWorkspaceArchive({
-        archivePath: item.path,
-        targetDir: currentPath.value,
-        subdir,
-      })
-      const count = Number(res.data?.data?.file_count ?? 0)
-      showToast(`已解压 ${count} 个文件`, "success")
-      void load(currentPath.value)
-    },
+  const defaultTargetDir =
+    !inTrash.value && isWithinDirectory(currentPath.value, userWorkspaceRoot.value)
+      ? currentPath.value
+      : userWorkspaceRoot.value
+  extractDialog.value = {
+    item,
+    parentPath: defaultTargetDir,
+    defaultName: displayFileName(item.name).replace(/\.(tar\.gz|tgz|tar|zip)$/i, ""),
+  }
+}
+
+const submitExtract = async (payload: { parentPath: string; name: string }) => {
+  if (!extractDialog.value || extractSubmitting.value) return
+  extractSubmitting.value = true
+  try {
+    const res = await extractWorkspaceArchive({
+      archivePath: extractDialog.value.item.path,
+      targetDir: payload.parentPath,
+      subdir: payload.name,
+    })
+    const data = res.data?.data
+    const count = Number(data?.file_count ?? 0)
+    showToast(`已解压 ${count} 个文件`, "success")
+    extractDialog.value = null
+    if (normalizeWorkspacePath(payload.parentPath) === normalizeWorkspacePath(currentPath.value)) {
+      refreshCurrentView()
+    } else {
+      void load(payload.parentPath)
+    }
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "解压失败，请稍后重试", "error")
+  } finally {
+    extractSubmitting.value = false
   }
 }
 
 /* ---------------- 删除 / 回收站 ---------------- */
-const confirmAction = ref<{ title: string; message: string; confirmText: string; run: () => Promise<void> } | null>(null)
+const confirmAction = ref<{
+  title: string
+  message: string
+  confirmText: string
+  type?: "danger" | "primary" | "warning"
+  run: () => Promise<void>
+} | null>(null)
 const confirmSubmitting = ref(false)
 
 /**
@@ -1037,20 +1328,22 @@ const askDelete = (item: FsItem) => {
         title: "永久删除",
         message: `「${displayFileName(item.name)}」属于公共目录，删除后无法恢复，也不会进入回收站。`,
         confirmText: "永久删除",
+        type: "danger",
         run: async () => {
           await deleteWorkspaceEntry(item.path)
           showToast("已永久删除", "success")
-          void load(currentPath.value)
+          refreshCurrentView()
         },
       }
     : {
         title: "移到回收站",
         message: `「${displayFileName(item.name)}」会被移到回收站，可以再还原回来。`,
         confirmText: "移到回收站",
+        type: "danger",
         run: async () => {
           await deleteWorkspaceEntry(item.path)
           showToast("已移到回收站", "success")
-          void load(currentPath.value)
+          refreshCurrentView()
         },
       }
 }
@@ -1060,10 +1353,11 @@ const askPurge = (item: FsItem) => {
     title: "彻底删除",
     message: `「${displayFileName(item.name)}」将无法恢复，确定删除吗？`,
     confirmText: "彻底删除",
+    type: "danger",
     run: async () => {
       await purgeWorkspaceEntry(item.path)
       showToast("已彻底删除", "success")
-      void load(currentPath.value)
+      refreshCurrentView()
     },
   }
 }
@@ -1073,18 +1367,21 @@ const askEmptyTrash = () => {
     title: "清空回收站",
     message: "回收站里的文件将全部永久删除，无法恢复。",
     confirmText: "清空",
+    type: "danger",
     run: async () => {
       await emptyWorkspaceTrash()
       showToast("回收站已清空", "success")
-      void load(currentPath.value)
+      refreshCurrentView()
     },
   }
 }
 
 const askBatchDelete = () => {
-  const deletable = Array.from(selectedPaths)
-    .map((path) => items.value.find((entry) => entry.path === path))
-    .filter((item): item is FsItem => !!item && canManageItem(item))
+  const byPath = new Map(sourceItems.value.map((entry) => [entry.path, entry]))
+  const selectedItems = Array.from(selectedPaths)
+    .map((path) => byPath.get(path))
+    .filter((item): item is FsItem => !!item)
+  const { deletable, skipped } = planBatchDelete(selectedItems, canManageItem)
   if (!deletable.length) {
     showToast("选中的项目都不能删除", "warning")
     return
@@ -1098,20 +1395,38 @@ const askBatchDelete = () => {
   const lines: string[] = []
   if (trashedCount > 0) lines.push(`${trashedCount} 项将被移到回收站，可以再还原回来。`)
   if (permanentCount > 0) lines.push(`${permanentCount} 项属于公共目录，将被永久删除且不会进入回收站。`)
+  if (skipped.length > 0) lines.push(`另有 ${skipped.length} 项受保护或只读，将自动跳过。`)
   confirmAction.value = {
     title: "批量删除",
     message: lines.join("\n"),
     confirmText: permanentCount > 0 ? "永久删除" : "移到回收站",
+    type: "danger",
     run: async () => {
+      let trashedOk = 0
+      let permanentOk = 0
+      const failedPaths: string[] = []
       for (const item of deletable) {
-        await deleteWorkspaceEntry(item.path)
+        const isPermanent = scope.value === "admin_all" && isPublicWorkspaceItem(item, userWorkspaceRoot.value)
+        try {
+          await deleteWorkspaceEntry(item.path)
+          selectedPaths.delete(item.path)
+          if (isPermanent) permanentOk += 1
+          else trashedOk += 1
+        } catch {
+          failedPaths.push(item.path)
+        }
       }
+      const failedCount = failedPaths.length
       const summary: string[] = []
-      if (trashedCount > 0) summary.push(`${trashedCount} 项已移到回收站`)
-      if (permanentCount > 0) summary.push(`${permanentCount} 项已永久删除`)
-      showToast(summary.join("，"), "success")
-      clearSelection()
-      void load(currentPath.value)
+      if (trashedOk > 0) summary.push(`${trashedOk} 项已移到回收站`)
+      if (permanentOk > 0) summary.push(`${permanentOk} 项已永久删除`)
+      if (failedCount > 0) summary.push(`${failedCount} 项删除失败`)
+      if (summary.length) {
+        showToast(summary.join("，"), failedCount > 0 ? "warning" : "success")
+      }
+      await refreshCurrentViewAsync()
+      // 失败的条目仍在原处：刷新后把勾选补回来，用户点一次就能重试
+      failedPaths.forEach((path) => selectedPaths.add(path))
     },
   }
 }
@@ -1134,7 +1449,7 @@ const handleRestore = async (item: FsItem) => {
   try {
     await restoreWorkspaceEntry(item.path)
     showToast("已还原", "success")
-    void load(currentPath.value)
+    refreshCurrentView()
   } catch (error: any) {
     showToast(error?.response?.data?.detail || "还原失败，请稍后重试", "error")
   }
@@ -1142,13 +1457,16 @@ const handleRestore = async (item: FsItem) => {
 
 onMounted(() => {
   document.addEventListener("click", onDocumentClick)
+  window.addEventListener("workspace-row-actions-open", onRowActionsOpen)
   // 首屏直接落「我的目录」（后端 prefer=user_root 解析到本人私有工作区），
   // 公共目录走侧栏「公共资源」入口。
   void load("", { preferUserRoot: true })
+  void loadRecent()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener("click", onDocumentClick)
+  window.removeEventListener("workspace-row-actions-open", onRowActionsOpen)
   if (searchTimer) clearTimeout(searchTimer)
 })
 </script>

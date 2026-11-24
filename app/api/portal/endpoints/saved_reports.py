@@ -2080,7 +2080,14 @@ async def put_saved_report_subscription(report_id: str, body: SavedReportSubscri
     await db.flush()
     from app.services.ai.scheduler_service import scheduler_service
     await scheduler_service.upsert_saved_report_subscription(row)
-    row.next_run_at = scheduler_service.get_saved_report_subscription_next_run_time(row.id)
+    # 传 cron/status：关闭本地 scheduler 的节点上不传就恒得 None，随后 flush 会把
+    # 已算好的 next_run_at 清成 NULL（原本只是不刷新，现在会清空落库）
+    row.next_run_at = scheduler_service.get_saved_report_subscription_next_run_time(
+        row.id,
+        cron_expr=row.cron_expr,
+        status=row.status,
+        timezone_name=getattr(row, "timezone", None),
+    )
     await db.flush()
     return StandardResponse(data=_saved_report_subscription_data(row))
 
@@ -2108,7 +2115,14 @@ async def resume_saved_report_subscription(report_id: str, user_info=Depends(req
     row.status = "active"
     from app.services.ai.scheduler_service import scheduler_service
     await scheduler_service.upsert_saved_report_subscription(row)
-    row.next_run_at = scheduler_service.get_saved_report_subscription_next_run_time(row.id)
+    # 传 cron/status：关闭本地 scheduler 的节点上不传就恒得 None，随后 flush 会把
+    # 已算好的 next_run_at 清成 NULL（原本只是不刷新，现在会清空落库）
+    row.next_run_at = scheduler_service.get_saved_report_subscription_next_run_time(
+        row.id,
+        cron_expr=row.cron_expr,
+        status=row.status,
+        timezone_name=getattr(row, "timezone", None),
+    )
     await db.flush()
     return StandardResponse(data=_saved_report_subscription_data(row))
 

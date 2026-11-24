@@ -10,6 +10,7 @@ import inspect
 import json
 import logging
 import os
+import shlex
 import re
 import shutil
 import tempfile
@@ -5037,6 +5038,10 @@ async def get_local_workspace(
                 workdir=workdir,
                 skill_paths=skill_paths,
             )
+            # 上游 LocalWorkspace 没有 conversation_id 属性：必须显式挂上，否则
+            # 脚本凭据通道（_ScriptCredentialBashNativeTool）与脚本工具（_bind_script_tool_spec）
+            # 都会拿到 None，导致脚本凭据每次都因 no-conversation-id 静默跳过注入。
+            local_ws.conversation_id = str(conversation_id or "").strip()
             if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S) and sandbox_user_key:
                 local_ws.workspace_user_root = os.path.join(root, sandbox_user_key)
                 if sandbox_ws is not None and not isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
@@ -6374,6 +6379,7 @@ async def build_host_only_workspace(
         user_info,
     )
     local_ws = LocalWorkspace(workdir=workdir, skill_paths=skill_paths)
+    local_ws.conversation_id = str(conversation_id or "").strip()
     await local_ws.initialize()
     return local_ws
 
@@ -7066,6 +7072,10 @@ class _SandboxLogicalWorkspaceNativeTool:
         self.name = getattr(native_tool, "name", "")
 
     def __getattr__(self, attribute: str) -> Any:
+        # 少这个判断，任何在 `_native_tool` 赋值前发生的属性访问（深拷贝、pickle
+        # 还原、调试器打印）都会在这里无限递归到 RecursionError。
+        if attribute in ("_native_tool", "__setstate__", "__deepcopy__"):
+            raise AttributeError(attribute)
         return getattr(self._native_tool, attribute)
 
     def _map(self, tool_input: Mapping[str, Any]) -> dict[str, Any]:
@@ -7515,6 +7525,10 @@ class _WorkspaceFileAccessNativeTool:
         self.name = getattr(native_tool, "name", "")
 
     def __getattr__(self, attribute: str) -> Any:
+        # 少这个判断，任何在 `_native_tool` 赋值前发生的属性访问（深拷贝、pickle
+        # 还原、调试器打印）都会在这里无限递归到 RecursionError。
+        if attribute in ("_native_tool", "__setstate__", "__deepcopy__"):
+            raise AttributeError(attribute)
         return getattr(self._native_tool, attribute)
 
     def _map(self, tool_input: Mapping[str, Any]) -> dict[str, Any]:
@@ -7655,6 +7669,10 @@ class _SandboxSessionBashNativeTool:
         self.name = getattr(native_tool, "name", "")
 
     def __getattr__(self, attribute: str) -> Any:
+        # 少这个判断，任何在 `_native_tool` 赋值前发生的属性访问（深拷贝、pickle
+        # 还原、调试器打印）都会在这里无限递归到 RecursionError。
+        if attribute in ("_native_tool", "__setstate__", "__deepcopy__"):
+            raise AttributeError(attribute)
         return getattr(self._native_tool, attribute)
 
     def _default_cwd(self) -> str:
@@ -7679,6 +7697,519 @@ class _SandboxSessionBashNativeTool:
         return result
 
 
+#: 票据文件名前缀。带上 jti 才能让同一会话的并行 Bash 互不覆盖。
+TICKET_FILE_PREFIX = "ticket."
+
+#: helper 目录名，与 sandbox_helper.DIR_NAME 保持一致（这里避免循环导入而写字面量）。
+DIR_NAME_FOR_HELPER = ".nanzi"
+
+#: 注入没成功时导出的诊断变量。没有它，取不到凭据的唯一表现就是
+#: `nanzi-credential: command not found`——用户会去查 PATH、查安装，全都不对。
+#: 跑一句 `echo $NANZI_CREDENTIAL_STATUS` 就能看到真正的原因。
+CREDENTIAL_STATUS_VAR = "NANZI_CREDENTIAL_STATUS"
+
+
+class _ScriptCredentialBashContext:
+    """一次带凭据的 Bash 执行的全部状态。"""
+
+    __slots__ = (
+        "jti",
+        "platform_url",
+        "ticket_path",
+        "workdir",
+        "registered",
+        "peek_broken",
+    )
+
+    def __init__(
+        self, *, jti: str, platform_url: str, ticket_path: str, workdir: str
+    ) -> None:
+        self.jti = jti
+        self.platform_url = platform_url
+        self.ticket_path = ticket_path
+        self.workdir = workdir
+        #: 已解密登记过的 key，避免每个 chunk 重复查一遍。
+        self.registered: set[str] = set()
+        #: Redis 读失败过一次就不再逐 chunk 重试：输出有多少块就会刷多少条告警，
+        #: 而脱敏本来也拿不到值了，重复尝试没有收益。
+        self.peek_broken = False
+
+
+class _ScriptCredentialBashNativeTool:
+    """在 Bash 命令前后接上「按需取凭据」的 helper。
+
+    为什么是一层包装而不是改各自的实现：Bash 有两条路径——沙箱（MCP bash）与本机
+    （宿主子进程），两者命令都在 ``kwargs["command"]``，装配时统一包一次，口径不会漂移。
+
+    **四条踩过的坑，改这里之前先读完**：
+
+    1. **返回值是异步生成器，不是 await 出来的结果**。``await tool(command=...)``
+       拿到的仍是一个**尚未开始执行的** async generator（``LocalWorkspace`` 的 Bash
+       与沙箱 MCP Bash 都是这个形态）。所以清理票据必须放进生成器内部的
+       ``finally``——放在 ``__call__`` 里会在命令真正跑起来之前就删票，脚本一取
+       凭据就是「票据不存在」。
+    2. **chunk 的正文是 ``list[TextBlock]``**，不是 ``str``。只认 ``str`` 会让脱敏
+       在真实结构上永远命中不了，明文静默进模型上下文。
+    3. **路径要在「命令的视角」里**。沙箱命令看到的是 ``/workspace/<会话目录>``，
+       宿主绝对路径在容器里不存在。
+    4. **票据文件按 jti 命名**。同一会话可能并行跑两条 Bash，共用一个固定文件名会
+       互删——慢的那条中途丢票，并且消费记录会挂到另一条上导致漏脱敏。
+    """
+
+    def __init__(
+        self,
+        native_tool: Any,
+        *,
+        workdir: str | None,
+        host_root: str | None,
+        sandboxed: bool,
+        user_info: Any,
+        conversation_id: str | None,
+    ) -> None:
+        self._native_tool = native_tool
+        self._workdir = workdir
+        self._host_root = host_root
+        self._sandboxed = sandboxed
+        self._user_info = user_info
+        self._conversation_id = conversation_id
+        self.name = getattr(native_tool, "name", "")
+
+    def __getattr__(self, attribute: str) -> Any:
+        # 少这个判断，任何在 `_native_tool` 赋值前发生的属性访问（深拷贝、pickle
+        # 还原、调试器打印）都会在这里无限递归到 RecursionError。
+        if attribute in ("_native_tool", "__setstate__", "__deepcopy__"):
+            raise AttributeError(attribute)
+        return getattr(self._native_tool, attribute)
+
+    # ── 身份与路径 ────────────────────────────────────────────────
+
+    def _resolved_conversation_id(self) -> str:
+        """取当前会话 id：优先用绑定时传入的，缺省时从运行时 AgentContext 兜底。"""
+        cid = str(self._conversation_id or "").strip()
+        if cid:
+            return cid
+        try:
+            from app.core.context import get_current_agent_context
+
+            agent_ctx = get_current_agent_context()
+            if agent_ctx is not None:
+                return str(getattr(agent_ctx, "conversation_id", "") or "").strip()
+        except Exception:  # noqa: BLE001 - 上下文不可读时按缺失处理
+            pass
+        return ""
+
+    def _identity(self) -> tuple[str, str, str] | None:
+        """(user_id, conversation_id, dept_code)。缺前两个就签不出票，跳过注入。
+
+        ``dept_code`` 必须一起带上：部门授权的系统级凭据只在它非空时才匹配得上，
+        丢了它这类凭据在脚本里「列不出来也取不到」。
+        """
+        info = self._user_info
+        if not isinstance(info, dict):
+            return None
+        user_id = str(info.get("user_id") or info.get("id") or "")
+        conversation_id = self._resolved_conversation_id()
+        if not user_id or not conversation_id or not self._workdir:
+            return None
+        return user_id, conversation_id, str(info.get("dept_code") or "")
+
+    def _helper_dir_in_command_view(self) -> str | None:
+        """helper 目录在**命令执行时**的路径。
+
+        沙箱：``/workspace`` 下与会话目录的相对位置相同（Docker 与 K8s 的沙箱内根
+        都是 ``/workspace``，宿主根只用于换算）。本机：直接用宿主绝对路径。
+        """
+        from app.services.secrets.sandbox_helper import DIR_NAME
+
+        workdir = self._workdir
+        if not workdir:
+            return None
+        if not self._sandboxed:
+            return os.path.join(workdir, DIR_NAME)
+        if not self._host_root:
+            # 换算不出容器内位置时宁可不注入：猜一个错路径会让每条命令多一行
+            # "command not found"。
+            return None
+        try:
+            relative = os.path.relpath(
+                os.path.abspath(workdir), os.path.abspath(self._host_root)
+            )
+        except ValueError:
+            return None
+        if relative == ".":
+            return f"{DOCKER_WORKSPACE_LOGICAL_ROOT}/{DIR_NAME}"
+        if relative.startswith(".."):
+            return None
+        return f"{DOCKER_WORKSPACE_LOGICAL_ROOT}/{relative}/{DIR_NAME}"
+
+    def _skip_reason(self) -> str | None:
+        """不能注入的原因；``None`` 表示可以注入。"""
+        info = self._user_info
+        if not isinstance(info, dict):
+            return "no-user-info"
+        if not str(info.get("user_id") or info.get("id") or ""):
+            return "no-user-id"
+        if not self._resolved_conversation_id():
+            return "no-conversation-id"
+        if not self._workdir:
+            return "no-workdir"
+        return None
+
+    def _record_status(self, reason: str) -> None:
+        """把注入失败的原因落到工作区 ``.nanzi/last-error.txt``。
+
+        为什么落文件而不只写日志：这个功能失效时用户看到的唯一现象就是
+        ``command not found``，会误以为是「没装这个命令」；而平台日志在服务端，
+        用户未必看得到。落盘之后 ``cat .nanzi/last-error.txt`` 就能看到原因，
+        不用去猜，也不用依赖模型照指令执行。
+        """
+        if not self._workdir:
+            return
+        try:
+            directory = os.path.join(self._workdir, DIR_NAME_FOR_HELPER)
+            os.makedirs(directory, mode=0o700, exist_ok=True)
+            with open(
+                os.path.join(directory, "last-error.txt"), "w", encoding="utf-8"
+            ) as handle:
+                handle.write(f"{self._timestamp()} {reason}\n")
+        except OSError as exc:  # noqa: BLE001 - 落盘失败只能记日志
+            logger.warning("[ScriptCredential] 写诊断文件失败: %s", exc)
+
+    @staticmethod
+    def _timestamp() -> str:
+        from datetime import datetime
+
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # ── 准备 / 清理 ───────────────────────────────────────────────
+
+    async def _prepare(
+        self, identity: tuple[str, str, str], helper_dir: str
+    ) -> tuple[_ScriptCredentialBashContext | None, str]:
+        """签票 + 写 helper。任何一步失败都返回 None（命令按原样执行）。"""
+        from app.services.secrets.sandbox_helper import (
+            resolve_platform_url,
+            write_credential_helper,
+        )
+        from app.services.secrets.sandbox_ticket import issue_ticket, verify_ticket
+
+        user_id, conversation_id, dept_code = identity
+        try:
+            platform_url = await resolve_platform_url(sandboxed=self._sandboxed)
+            ticket = issue_ticket(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                dept_code=dept_code,
+                sandbox_id=(
+                    ""
+                    if not self._sandboxed
+                    else str(getattr(self._native_tool, "sandbox_id", "") or "")
+                ),
+            )
+            claims = verify_ticket(ticket)
+            if claims is None:
+                logger.warning("[ScriptCredential] 刚签发的票据验签失败，跳过注入")
+                return None, "ticket-verify-failed"
+            written = write_credential_helper(
+                self._workdir or "",
+                ticket=ticket,
+                platform_url=platform_url,
+                ticket_name=f"{TICKET_FILE_PREFIX}{claims.jti}",
+            )
+        except Exception as exc:  # noqa: BLE001 - 不能因为取凭据拦住无关命令
+            logger.warning(
+                "[ScriptCredential] 准备取凭据的 helper 失败，本次命令按原样执行: %s", exc
+            )
+            # 原因串要短且能一眼认出类型；详细栈在服务端日志里。
+            return None, f"{type(exc).__name__}:{str(exc)[:120]}"
+
+        return _ScriptCredentialBashContext(
+            jti=claims.jti,
+            platform_url=platform_url,
+            ticket_path=str(written.ticket_path),
+            workdir=self._workdir or "",
+        ), ""
+
+    def _decorate(
+        self, command: str, helper_dir: str, ctx: _ScriptCredentialBashContext
+    ) -> str:
+        # **票据路径必须是「命令视角」的**，不能用 ctx.ticket_path（宿主绝对路径）：
+        # 沙箱里只挂载了 /workspace，宿主路径在容器中不存在，helper 会报「票据
+        # 不存在」——而且这个错看起来像权限问题，排查方向会被带偏。
+        # ctx.ticket_path 留给宿主侧的 _cleanup 删文件用。
+        # **helper 目录用 `$(pwd)` 现算，并兼容子目录 `cwd` 与跨目录 `cwd`。**
+        # 1. 常规（无 cwd）：初始 cwd 就是会话目录，`$(pwd)/.nanzi` 直接命中；
+        # 2. 子目录 cwd（如 skills/xxx）：沿父目录向上回溯找到 `.nanzi`；
+        # 3. 沙箱跨目录 cwd（如 /tmp）：若可换算出容器内 `/workspace/.../.nanzi`，作为最后兜底。
+        fallback_view = ""
+        if self._sandboxed:
+            view_dir = self._helper_dir_in_command_view()
+            if view_dir and view_dir.startswith(f"{DOCKER_WORKSPACE_LOGICAL_ROOT}/"):
+                fallback_view = (
+                    f'if [ ! -d "$NANZI_H" ] && [ -d {shlex.quote(view_dir)} ]; then '
+                    f"NANZI_H={shlex.quote(view_dir)}; fi; "
+                )
+        # 全部用 if/then/fi，不用 `[ -d x ] || { ...; }`：后者在候选都不存在时
+        # 返回非零，用户脚本若带 `set -e` 会被这行前缀直接打断。取凭据找不到
+        # helper 只该让 helper 报错，不该让本来无关的命令失败。
+        prelude = (
+            'NANZI_H="$(pwd)/.nanzi"; '
+            'if [ ! -d "$NANZI_H" ]; then NANZI_D="$(pwd)"; '
+            'while [ "$NANZI_D" != "/" ] && [ -n "$NANZI_D" ]; do '
+            'if [ -d "$NANZI_D/.nanzi" ]; then NANZI_H="$NANZI_D/.nanzi"; break; fi; '
+            'NANZI_D="$(dirname "$NANZI_D")"; done; fi; '
+            f"{fallback_view}"
+            f"export NANZI_PLATFORM_URL={shlex.quote(ctx.platform_url)}; "
+            f'export NANZI_TICKET_FILE="$NANZI_H/{TICKET_FILE_PREFIX}{ctx.jti}"; '
+            'export PATH="$NANZI_H:$PATH";'
+        )
+        return f"{prelude}\n{command}"
+
+    async def _cleanup(self, ctx: _ScriptCredentialBashContext) -> None:
+        """删票 + 清掉这次执行在 Redis 里留下的取用记录。
+
+        异常只记日志：命令结果比清理更要紧。记录里只有 key 名、没有值，即便删失败
+        也只是留 900 秒的 TTL，不构成泄漏；但不清会让「本次执行取过什么」在 Redis
+        里滞留，排查时容易把两次执行看串。
+        """
+        from app.services.secrets.sandbox_helper import remove_ticket_file
+        from app.services.secrets.sandbox_ticket import take_consumed_keys
+
+        try:
+            remove_ticket_file(ctx.ticket_path)
+        except OSError as exc:  # noqa: BLE001
+            logger.warning("[ScriptCredential] 删除票据失败: %s", exc)
+        try:
+            await take_consumed_keys(ctx.jti)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[ScriptCredential] 清理取用记录失败: %s", exc)
+
+    # ── 执行 ─────────────────────────────────────────────────────
+
+    async def __call__(self, **kwargs: Any) -> Any:
+        command = kwargs.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return await self._invoke_plain(kwargs)
+
+        reason = self._skip_reason()
+        if reason is not None:
+            self._record_status(reason)
+            return await self._invoke_plain(_with_credential_status(kwargs, reason))
+
+        identity = self._identity()
+        if identity is None:  # pragma: no cover - 与 _skip_reason 同源
+            return await self._invoke_plain(
+                _with_credential_status(kwargs, "no-identity")
+            )
+        helper_dir = os.path.join(self._workdir or "", DIR_NAME_FOR_HELPER)
+
+        ctx, prepare_error = await self._prepare(identity, helper_dir)
+        if ctx is None:
+            reason = f"prepare-failed:{prepare_error}"
+            self._record_status(reason)
+            return await self._invoke_plain(_with_credential_status(kwargs, reason))
+
+        decorated = dict(kwargs)
+        decorated["command"] = self._decorate(command, helper_dir, ctx)
+
+        try:
+            result = self._native_tool(**decorated)
+            if inspect.isawaitable(result):
+                result = await result
+        except BaseException:
+            await self._cleanup(ctx)
+            raise
+
+        # 流式：清理与脱敏都必须在生成器内部——此刻命令还没开始跑。
+        if inspect.isasyncgen(result):
+            return self._stream_with_redaction(result, ctx)
+
+        try:
+            return await _redact_result(result, ctx)
+        finally:
+            await self._cleanup(ctx)
+
+    async def _invoke_plain(self, kwargs: dict[str, Any]) -> Any:
+        result = self._native_tool(**kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    def _stream_with_redaction(
+        self, agen: Any, ctx: _ScriptCredentialBashContext
+    ) -> Any:
+        cleanup = self._cleanup  # bound 方法，供生成器内部 await
+
+        async def _stream() -> Any:
+            from app.services.secrets.redact import (
+                injected_values,
+                merge_injected,
+                redact_text,
+                reset_injected,
+            )
+
+            # 快照 + 恢复：这里清的是整条执行流共用的 ContextVar，直接 reset 会把
+            # 同一执行流里先前登记的其它凭据值一并抹掉。
+            before = injected_values()
+            try:
+                async with contextlib.aclosing(agen):
+                    async for chunk in agen:
+                        await _register_consumed_values(ctx)
+                        if isinstance(chunk, str):
+                            # 裸字符串没法就地改，只能换一个 yield 出去。
+                            chunk = redact_text(chunk, where="Bash")
+                        else:
+                            _redact_chunk_inplace(chunk)
+                        yield chunk
+            finally:
+                reset_injected()
+                merge_injected(before)
+                await cleanup(ctx)
+
+        return _stream()
+
+
+def _with_credential_status(kwargs: dict[str, Any], reason: str) -> dict[str, Any]:
+    """给没法注入 helper 的命令加一个诊断变量。
+
+    命令仍然照常执行（不能因为取凭据失败就拦住无关命令），但会把原因挂在
+    ``$NANZI_CREDENTIAL_STATUS`` 上：否则用户能看到的唯一线索就是
+    ``nanzi-credential: command not found``，而那个提示会把人引向「是不是没装」。
+    """
+    command = kwargs.get("command")
+    if not isinstance(command, str):
+        return kwargs
+    decorated = dict(kwargs)
+    decorated["command"] = (
+        f"export {CREDENTIAL_STATUS_VAR}={shlex.quote(reason)};\n{command}"
+    )
+    return decorated
+
+
+async def _register_consumed_values(ctx: _ScriptCredentialBashContext) -> None:
+    """把这张票**到目前为止**取过的凭据值登记进掩码集合（幂等）。
+
+    为什么每个 chunk 前都要刷一次：消费记录是脚本调用 helper 时才写进去的，而输出
+    是边跑边流出来的。只在整个流结束后才登记，值早就 yield 给上层了。
+
+    为什么不用「取走即删」：流还没结束，后面可能还有值要登记。真正的删除在
+    ``take_consumed_keys``（由清理阶段调用，这里不碰）。
+    """
+    from app.services.secrets.redact import register_injected
+    from app.services.secrets.sandbox_ticket import peek_consumed_keys
+
+    if ctx.peek_broken:
+        return
+    try:
+        entries = await peek_consumed_keys(ctx.jti)
+    except Exception as exc:  # noqa: BLE001 - 脱敏是补强，不能阻断输出
+        ctx.peek_broken = True
+        logger.warning(
+            "[ScriptCredential] 读取取用记录失败，本次执行不再尝试脱敏: %s", exc
+        )
+        return
+
+    fresh = [
+        entry
+        for entry in entries
+        if entry.get("key") and entry["key"] not in ctx.registered
+    ]
+    if not fresh:
+        return
+
+    from app.services.secrets.policy import SCENE_SANDBOX_SCRIPT
+    from app.services.secrets.resolver import secret_resolver
+
+    for entry in fresh:
+        # 先标记再取值：单条失败不该让后面每个 chunk 都重试一遍它。
+        ctx.registered.add(entry["key"])
+        try:
+            resolved = await secret_resolver.resolve_by_key(
+                user_id=entry.get("user_id") or "",
+                secret_key=entry["key"],
+                scene=SCENE_SANDBOX_SCRIPT,
+                conversation_id=entry.get("conversation_id") or None,
+                dept_code=entry.get("dept_code") or None,
+                record_usage=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[ScriptCredential] 复现凭据值失败 key=%s: %s", entry["key"], exc
+            )
+            continue
+        if resolved.ok and resolved.value is not None:
+            register_injected(resolved.value.reveal())
+
+
+def _chunk_text_targets(chunk: Any) -> list[Any]:
+    """列出 chunk 里所有「带 text 属性的对象」，用来就地改写。
+
+    AgentScope 2.x 的工具输出是 ``ToolChunk(content=[TextBlock, ...])``，正文在
+    ``TextBlock.text`` 里。同时兼容裸 ``str``（测试替身与部分后端）。
+    """
+    if isinstance(chunk, str):
+        return [chunk]
+    content = getattr(chunk, "content", None)
+    if isinstance(content, list):
+        return [
+            block
+            for block in content
+            if isinstance(getattr(block, "text", None), str)
+        ]
+    if isinstance(content, str):
+        return [content]  # 由 _redact_chunk_inplace 回写 chunk.content
+    if isinstance(getattr(chunk, "text", None), str):
+        return [chunk]
+    return []
+
+
+def _redact_chunk_inplace(chunk: Any) -> None:
+    """就地掩码一个 chunk（改写 ``TextBlock.text``）。
+
+    **已知边界**：值若被切在两个 chunk 之间，任何单块都不完整，扫不到。实际输出里
+    TextBlock 基本是完整段落，跨块切断属于极端情况；这里拦的是「整段 print 出来」。
+    """
+    from app.services.secrets.redact import redact_text
+
+    for target in _chunk_text_targets(chunk):
+        if isinstance(target, str):
+            # chunk.content 本身是字符串（不是 TextBlock）：只能回写到对象上。
+            masked = redact_text(target, where="Bash")
+            if masked != target and getattr(chunk, "content", None) is target:
+                try:
+                    chunk.content = masked
+                except (AttributeError, TypeError, ValueError):
+                    pass
+            continue
+        masked = redact_text(target.text, where="Bash")
+        if masked != target.text:
+            try:
+                target.text = masked
+            except (AttributeError, TypeError, ValueError):
+                pass
+
+
+async def _redact_result(result: Any, ctx: _ScriptCredentialBashContext) -> Any:
+    """非流式结果的一次性脱敏。就地改对象，尽量不改变调用方拿到的类型。"""
+    from app.services.secrets.redact import (
+        injected_values,
+        merge_injected,
+        redact_text,
+        reset_injected,
+    )
+
+    before = injected_values()
+    try:
+        await _register_consumed_values(ctx)
+        if isinstance(result, str):
+            return redact_text(result, where="Bash")
+        _redact_chunk_inplace(result)
+        return result
+    finally:
+        reset_injected()
+        merge_injected(before)
+
+
 class _CanonicalWorkspaceNativeTool:
     """Expose an MCP-backed workspace tool under the platform tool name."""
 
@@ -7687,6 +8218,10 @@ class _CanonicalWorkspaceNativeTool:
         self.name = name
 
     def __getattr__(self, attribute: str) -> Any:
+        # 少这个判断，任何在 `_native_tool` 赋值前发生的属性访问（深拷贝、pickle
+        # 还原、调试器打印）都会在这里无限递归到 RecursionError。
+        if attribute in ("_native_tool", "__setstate__", "__deepcopy__"):
+            raise AttributeError(attribute)
         return getattr(self._native_tool, attribute)
 
     def __call__(self, **kwargs: Any) -> Any:
@@ -8189,6 +8724,25 @@ async def bind_configured_tools_to_workspace(
                 workspace_tool,
                 sandbox_host_root,
                 local_ws.workdir,
+            )
+        if native_name == "Bash" and workspace_tool is not None:
+            # 脚本通道：给每条 Bash 命令接上「按需取凭据」的 helper。放在 canonical
+            # 包装之前，是为了让 name / description / schema 的补全照旧只做一次。
+            # 沙箱与本机两条路径共用这一层，口径不会漂移。
+            workspace_tool = _ScriptCredentialBashNativeTool(
+                workspace_tool,
+                # 沙箱策略下 local_ws 可能是 None，但沙箱必然挂了某个宿主目录
+                # （sandbox_host_root → /workspace）。没有 workdir 兜底，整个脚本
+                # 取凭据能力在沙箱里会**静默失效**——而沙箱正是主要使用场景。
+                workdir=getattr(local_ws, "workdir", None) or sandbox_host_root,
+                # 沙箱：session 目录相对宿主工作区根的位置，用来换算容器内路径。
+                host_root=sandbox_host_root,
+                sandboxed=sandbox_ws is not None,
+                user_info=user_info,
+                conversation_id=(
+                    getattr(local_ws, "conversation_id", None)
+                    or getattr(workspace, "conversation_id", None)
+                ),
             )
         if (
             native_name == "Bash"

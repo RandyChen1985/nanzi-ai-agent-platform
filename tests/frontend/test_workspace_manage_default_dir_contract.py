@@ -33,7 +33,8 @@ def test_virtual_root_stays_read_only_in_page():
     text = _read(PAGE)
     assert 'if (isVirtualRoot.value) return [{ label: "公共资源", path: "" }]' in text
     assert "&& writable.value" in text, "新建/上传必须看后端下发的 writable"
-    assert "!isVirtualRoot.value && !SYSTEM_PROTECTED.has(item.name)" in text
+    assert "!isVirtualRoot.value && canManageItem(item)" in text
+    assert "isProtectedWorkspaceEntry(" in text
     assert text.count('v-if="!isVirtualRoot"') == 2, "列表与卡片视图的行操作都要在虚拟根隐藏"
 
 

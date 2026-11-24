@@ -75,16 +75,48 @@ SCHEDULER_RECONCILE_INTERVAL_SEC = 30
 # 站内信保留天数：随每日 system_audit_log_maintenance 任务一并清理，写死为 30 天
 PORTAL_NOTIFICATION_RETENTION_DAYS = 30
 
-# 执行期互斥锁：执行期间持有、结束释放（不再是「同一分钟去重」），手动触发同样受锁保护
+# 执行期互斥锁：短 TTL + 周期心跳续期，进程存活期间不掉锁，崩溃/重启后最多 180 秒自动解锁
 _TASK_EXEC_LOCK_PREFIX = "lock:task_exec:"
+_SAVED_REPORT_LOCK_PREFIX = "lock:saved_report_sub:"
 _TASK_EXEC_LOCK_TTL_BUFFER_SEC = 300
+_TASK_EXEC_LOCK_HEARTBEAT_TTL_SEC = 180
+_TASK_EXEC_LOCK_RENEW_INTERVAL_SEC = 60
 _RELEASE_LOCK_SCRIPT = (
     "if redis.call('get', KEYS[1]) == ARGV[1] then "
     "return redis.call('del', KEYS[1]) else return 0 end"
 )
+_RENEW_LOCK_SCRIPT = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] then "
+    "return redis.call('expire', KEYS[1], tonumber(ARGV[2])) else return 0 end"
+)
+
+#: 后台异步任务强引用集合：避免 Python GC 回收未完成任务，并记录未捕获异常。
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def spawn_background_task(coro: Any, *, label: str = "background_task") -> asyncio.Task:
+    """安全拉起后台协程：保活强引用并在结束时清理与记错。"""
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+
+    def _on_done(done_task: asyncio.Task) -> None:
+        _BACKGROUND_TASKS.discard(done_task)
+        if done_task.cancelled():
+            return
+        try:
+            exc = done_task.exception()
+        except Exception:  # noqa: BLE001
+            return
+        if exc is not None:
+            logger.error("❌ Background task '%s' failed: %s", label, exc, exc_info=exc)
+
+    task.add_done_callback(_on_done)
+    return task
 
 
 def _clamp_int(raw: Any, *, default: int, minimum: int, maximum: int) -> int:
+    if isinstance(raw, bool):
+        return default
     try:
         value = int(raw)
     except (TypeError, ValueError):
@@ -139,29 +171,88 @@ def _saved_report_subscription_id_from_job_id(job_id: str) -> Optional[int]:
         return None
 
 
-async def _acquire_task_execution_lock(task_id: int, ttl_sec: int) -> Optional[str]:
-    """获取任务执行期互斥锁。返回锁 token；Redis 不可用时降级为不加锁（返回空 token）。"""
+def _saved_report_lock_key(subscription_id: int) -> str:
+    return f"{_SAVED_REPORT_LOCK_PREFIX}{subscription_id}"
+
+
+async def _acquire_redis_lock(lock_key: str, ttl_sec: int, *, label: str) -> Optional[str]:
+    """获取具名 Redis 互斥锁。返回锁 token；Redis 不可用时降级为不加锁（返回空串）。"""
     if redis.redis_client is None:
-        logger.warning("Redis unavailable, task %s runs without execution lock.", task_id)
+        logger.warning("Redis unavailable, %s runs without execution lock.", label)
         return ""
     token = uuid.uuid4().hex
     try:
-        acquired = await redis.redis_client.set(
-            _task_execution_lock_key(task_id), token, ex=ttl_sec, nx=True
-        )
+        acquired = await redis.redis_client.set(lock_key, token, ex=ttl_sec, nx=True)
     except Exception as lock_err:
-        logger.warning("Failed to acquire execution lock for task %s: %s", task_id, lock_err)
+        logger.warning("Failed to acquire execution lock for %s: %s", label, lock_err)
         return ""
     return token if acquired else None
 
 
-async def _release_task_execution_lock(task_id: int, token: Optional[str]) -> None:
+async def _renew_redis_lock(lock_key: str, token: Optional[str], ttl_sec: int) -> bool:
+    if not token or redis.redis_client is None:
+        return False
+    try:
+        renewed = await redis.redis_client.eval(_RENEW_LOCK_SCRIPT, 1, lock_key, token, str(ttl_sec))
+        return bool(renewed)
+    except Exception as renew_err:
+        logger.warning("Failed to renew execution lock %s: %s", lock_key, renew_err)
+        return True  # 网络抖动时不立刻停止续期，下次继续尝试
+
+
+async def _release_redis_lock(lock_key: str, token: Optional[str], *, label: str) -> None:
     if not token or redis.redis_client is None:
         return
     try:
-        await redis.redis_client.eval(_RELEASE_LOCK_SCRIPT, 1, _task_execution_lock_key(task_id), token)
+        await redis.redis_client.eval(_RELEASE_LOCK_SCRIPT, 1, lock_key, token)
     except Exception as unlock_err:
-        logger.warning("Failed to release execution lock for task %s: %s", task_id, unlock_err)
+        logger.warning("Failed to release execution lock for %s: %s", label, unlock_err)
+
+
+def _start_lock_heartbeat(lock_key: str, token: Optional[str], ttl_sec: int) -> Optional[asyncio.Task]:
+    if not token:
+        return None
+    interval = max(10, min(_TASK_EXEC_LOCK_RENEW_INTERVAL_SEC, max(10, ttl_sec // 3)))
+
+    async def _loop() -> None:
+        while True:
+            await asyncio.sleep(interval)
+            still_held = await _renew_redis_lock(lock_key, token, ttl_sec)
+            if not still_held:
+                # 续期失败 = 锁已过期或被别的节点拿走，当前执行已失去互斥保护。
+                # 不打日志的话，双跑在现场只表现为「用户收到两条通知」，事后无从追查。
+                logger.warning(
+                    "⚠️ Lost task execution lock %s (ttl=%ss); another worker may now run "
+                    "the same task concurrently.",
+                    lock_key,
+                    ttl_sec,
+                )
+                return
+
+    return asyncio.create_task(_loop())
+
+
+async def _stop_lock_heartbeat(heartbeat: Optional[asyncio.Task]) -> None:
+    if heartbeat is None:
+        return
+    heartbeat.cancel()
+    try:
+        await heartbeat
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+async def _acquire_task_execution_lock(task_id: int, ttl_sec: int) -> Optional[str]:
+    """获取任务执行期互斥锁。返回锁 token；Redis 不可用时降级为不加锁（返回空 token）。"""
+    return await _acquire_redis_lock(
+        _task_execution_lock_key(task_id), ttl_sec, label=f"task {task_id}"
+    )
+
+
+async def _release_task_execution_lock(task_id: int, token: Optional[str]) -> None:
+    await _release_redis_lock(
+        _task_execution_lock_key(task_id), token, label=f"task {task_id}"
+    )
 
 
 def _task_permission_options(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -199,7 +290,13 @@ async def _write_task_metrics(
     task: AgentScheduledTask,
     metrics: Dict[str, Any],
 ) -> None:
-    config = _task_config(task)
+    # 写入前重读最新 config，避免任务执行/投递期间用户在前端 PATCH 的新配置被旧快照覆盖
+    latest_config = (
+        await session.execute(
+            select(AgentScheduledTask.config).where(AgentScheduledTask.id == task.id)
+        )
+    ).scalar_one_or_none()
+    config = dict(latest_config) if isinstance(latest_config, dict) else _task_config(task)
     config[TASK_METRICS_KEY] = metrics
     await session.execute(
         update(AgentScheduledTask)
@@ -266,13 +363,18 @@ async def _mark_task_skipped(
     task: AgentScheduledTask,
     *,
     reason: str,
+    preserve_running: bool = False,
 ) -> Dict[str, Any]:
     metrics = _task_metrics(task)
     metrics["skipped_count"] += 1
-    metrics["health_status"] = "skipped"
-    metrics["last_status"] = "skipped"
-    metrics["last_message"] = reason
-    metrics["last_finished_at"] = _now_iso()
+    if preserve_running and metrics.get("last_status") == "running":
+        # 另一实例正在执行时只记录跳过次数，不把正在运行的状态覆写成 skipped
+        metrics["last_skipped_at"] = _now_iso()
+    else:
+        metrics["health_status"] = "skipped"
+        metrics["last_status"] = "skipped"
+        metrics["last_message"] = reason
+        metrics["last_finished_at"] = _now_iso()
     await _write_task_metrics(session, task, metrics)
     return metrics
 
@@ -490,11 +592,15 @@ async def _send_task_failure_alert(
         if not alerted:
             return
 
-        metrics["last_alert_at"] = _now_iso()
+        alert_at = _now_iso()
+        metrics["last_alert_at"] = alert_at
         async with AsyncSessionLocal() as db:
             latest = (await db.execute(select(AgentScheduledTask).where(AgentScheduledTask.id == task.id))).scalar_one_or_none()
             if latest:
-                await _write_task_metrics(db, latest, metrics)
+                # 基于库内最新 metrics 只更新 last_alert_at，避免发告警期间若有新触发被旧 metrics 覆盖
+                latest_metrics = _task_metrics(latest)
+                latest_metrics["last_alert_at"] = alert_at
+                await _write_task_metrics(db, latest, latest_metrics)
     except Exception as alert_err:
         logger.warning("Task failure alert failed for task %s: %s", task.id, alert_err, exc_info=True)
 
@@ -526,7 +632,7 @@ def _schedule_task_retry(task_id: int, retry_attempt: int, delay_sec: int) -> bo
         asyncio.get_running_loop()
     except RuntimeError:
         return False
-    asyncio.create_task(_delayed_retry())
+    spawn_background_task(_delayed_retry(), label=f"task_{task_id}_retry_{retry_attempt}")
     return True
 
 
@@ -597,11 +703,11 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
 
     # 阶段 0 连接已归还连接池。
 
-    # ── 阶段 1：执行期互斥锁（Redis，无需 DB 连接）──
-    # 获取到锁后，直到本函数结束前都必须释放锁，使用 try/finally 兜底。
-    lock_token = await _acquire_task_execution_lock(
-        task_id_snapshot, execution_timeout + _TASK_EXEC_LOCK_TTL_BUFFER_SEC
-    )
+    # ── 阶段 1：执行期互斥锁（Redis 短 TTL + 后台心跳续期，无需 DB 连接）──
+    # 崩溃/重启后最多 180s 自动释放，不再像固定长 TTL 那样卡死 35~125 分钟。
+    lock_key = _task_execution_lock_key(task_id_snapshot)
+    lock_ttl = _TASK_EXEC_LOCK_HEARTBEAT_TTL_SEC
+    lock_token = await _acquire_task_execution_lock(task_id_snapshot, lock_ttl)
     if lock_token is None:
         logger.warning(f"⏩ Task {task_id} skipped: an execution is already in progress (locked).")
         async with AsyncSessionLocal() as locked_session:
@@ -611,9 +717,15 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                 )
             ).scalar_one_or_none()
             if locked_task is not None:
-                await _mark_task_skipped(locked_session, locked_task, reason="任务正在执行中，本次触发已跳过")
+                await _mark_task_skipped(
+                    locked_session,
+                    locked_task,
+                    reason="任务正在执行中，本次触发已跳过",
+                    preserve_running=True,
+                )
         return
 
+    lock_heartbeat = _start_lock_heartbeat(lock_key, lock_token, lock_ttl)
     try:
 
         # ── 阶段 1.1：用户/Agent 元数据 + 标记「已开始」（短连接，写后即释放）──
@@ -1087,7 +1199,6 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                 try:
                     from app.services.task_notification_delivery import ensure_task_notification_deliveries
 
-                    await asyncio.sleep(0.5)
                     delivery_ok, delivery_notes = await ensure_task_notification_deliveries(
                         session,
                         user_id=task_user_id,
@@ -1101,6 +1212,15 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                 except Exception as delivery_err:
                     logger.error(f"❌ Task {task_id} notification delivery raised: {delivery_err}", exc_info=True)
                     delivery_notes = [str(delivery_err)]
+                    # 投递可能把共享会话弄脏（各渠道内部的 flush 已失败）。不在这里回滚，
+                    # 下面 _record_task_delivery_result 的 SELECT 会直接 PendingRollbackError，
+                    # 把「通知没发出去」升级成「连失败都记不下来、告警也发不出」。
+                    try:
+                        await session.rollback()
+                    except Exception as rollback_err:  # noqa: BLE001 - 连接已坏时回滚也会失败
+                        logger.warning(
+                            "Task %s delivery rollback failed: %s", task_id, rollback_err
+                        )
                 logger.info(
                     "📬 Task %s notification delivery trace=%s ok=%s notes=%s",
                     task_id,
@@ -1117,10 +1237,8 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                         task_user_id, fresh_task, trace_id=trace_id, error=error,
                         metrics=delivery_metrics, kind="delivery",
                     )
-
-            # Allow logs to flush
-            await asyncio.sleep(0.5)
     finally:
+        await _stop_lock_heartbeat(lock_heartbeat)
         await _release_task_execution_lock(task_id_snapshot, lock_token)
 
 
@@ -1193,9 +1311,18 @@ async def _system_memory_consolidation_job():
     
     # 1. 分布式锁 (ex=3600 nx=True)
     lock_key = f"lock:system_memory_consolidation:{datetime.now().strftime('%Y%m%d%H%M')}"
-    if not await redis.redis_client.set(lock_key, "locked", ex=3600, nx=True):
-        logger.warning("⏩ System memory consolidation skipped: lock already acquired by another node.")
-        return
+    if redis.redis_client is not None:
+        try:
+            if not await redis.redis_client.set(lock_key, "locked", ex=3600, nx=True):
+                logger.warning("⏩ System memory consolidation skipped: lock already acquired by another node.")
+                return
+        except Exception as lock_err:
+            # 拿不到锁 ≠ 不能干活。这是日频维护任务，锁只为省掉多节点重复劳动；
+            # Redis 一挂就整天不跑，记忆不再整理且没人会发现。重复跑一遍最坏是浪费 CPU。
+            logger.warning(
+                "System memory consolidation: redis lock unavailable, running without lock: %s",
+                lock_err,
+            )
         
     try:
         from app.services.ai.memory_index_service import MemoryIndexService
@@ -1228,12 +1355,18 @@ async def _system_knowledge_metrics_sync_job():
     logger.info("⏰ Starting system knowledge metrics sync job...")
     
     lock_key = f"lock:system_knowledge_metrics_sync:{datetime.now().strftime('%Y%m%d%H%M')}"
-    try:
-        if not await redis.redis_client.set(lock_key, "locked", ex=300, nx=True):
-            logger.warning("⏩ System knowledge metrics sync skipped: lock already acquired by another node.")
-            return
-    except Exception as lock_err:
-        logger.warning(f"Failed to acquire redis lock: {lock_err}")
+    # 判空是必须的：不判的话 redis_client 为 None 时 .set 抛 AttributeError，被下面
+    # except 接住后「碰巧」放行——行为是对的，但每天白打一条 warning，且语义靠意外成立。
+    if redis.redis_client is not None:
+        try:
+            if not await redis.redis_client.set(lock_key, "locked", ex=300, nx=True):
+                logger.warning("⏩ System knowledge metrics sync skipped: lock already acquired by another node.")
+                return
+        except Exception as lock_err:
+            logger.warning(
+                "System knowledge metrics sync: redis lock unavailable, running without lock: %s",
+                lock_err,
+            )
         
     try:
         from app.services.knowledge_metrics_service import KnowledgeMetricsService
@@ -1264,9 +1397,17 @@ async def _system_third_party_user_sync_job():
     logger.info("⏰ Starting third-party user sync job...")
 
     lock_key = f"lock:system_third_party_user_sync:{datetime.now().strftime('%Y%m%d%H%M')}"
-    if not await redis.redis_client.set(lock_key, "locked", ex=3600, nx=True):
-        logger.warning("⏩ Third-party user sync skipped: lock already acquired by another node.")
-        return
+    if redis.redis_client is not None:
+        try:
+            if not await redis.redis_client.set(lock_key, "locked", ex=3600, nx=True):
+                logger.warning("⏩ Third-party user sync skipped: lock already acquired by another node.")
+                return
+        except Exception as lock_err:
+            # 同上：同步是 upsert，重复执行安全，宁可多跑也不要整天不同步。
+            logger.warning(
+                "Third-party user sync: redis lock unavailable, running without lock: %s",
+                lock_err,
+            )
 
     try:
         from app.services.user_sync_service import UserSyncService
@@ -1296,6 +1437,13 @@ async def _system_scheduler_reconcile_job():
         logger.info("🔄 Scheduler task definitions reconciled from database.")
     except Exception as exc:
         logger.warning("Failed to reconcile scheduler task definitions: %s", exc, exc_info=True)
+    # 残留 running 状态也必须周期清理：只在 start() 里清一次时，重启那次清理几乎
+    # 必然被「死进程残留的锁还没到期」挡掉，之后再没有第二次机会，任务状态会永远
+    # 停在「执行中」。这里每 30 秒重试，锁 TTL 到期后的下一轮就能收拾掉。
+    try:
+        await scheduler_service._cleanup_stale_running_tasks()
+    except Exception as exc:
+        logger.warning("Failed to clean up stale running tasks: %s", exc, exc_info=True)
 
 
 async def _saved_report_subscription_wrapper(subscription_id: int, is_manual: bool = False):
@@ -1308,6 +1456,20 @@ async def _saved_report_subscription_wrapper(subscription_id: int, is_manual: bo
         render_mobile_markdown,
     )
     trigger_label = "手动触发" if is_manual else "定时触发"
+
+    lock_key = _saved_report_lock_key(subscription_id)
+    lock_ttl = _TASK_EXEC_LOCK_HEARTBEAT_TTL_SEC
+    lock_token = await _acquire_redis_lock(
+        lock_key, lock_ttl, label=f"saved_report_subscription {subscription_id}"
+    )
+    if lock_token is None:
+        logger.warning(
+            "⏩ Saved report subscription %s skipped: an execution is already in progress (locked).",
+            subscription_id,
+        )
+        return
+
+    lock_heartbeat = _start_lock_heartbeat(lock_key, lock_token, lock_ttl)
 
     async def send_external(db, subscription, user_id, title, content, *, failure: bool):
         if failure and not (subscription.consecutive_failures == 1 or subscription.consecutive_failures % 3 == 0):
@@ -1325,52 +1487,55 @@ async def _saved_report_subscription_wrapper(subscription_id: int, is_manual: bo
                 if not ok:
                     logger.warning("Saved report external notification failed: channel=%s error=%s", channel, error)
 
-    async with AsyncSessionLocal() as db:
-        subscription = (await db.execute(select(PortalSavedReportSubscription).where(
-            PortalSavedReportSubscription.id == subscription_id
-        ))).scalar_one_or_none()
-        if subscription is None or (subscription.status != "active" and not is_manual):
-            return
-        report = (await db.execute(select(PortalSavedReport).where(
-            PortalSavedReport.id == subscription.report_id
-        ))).scalar_one_or_none()
-        user = (await db.execute(select(User).where(User.id == subscription.user_id))).scalar_one_or_none()
-        if report is None or user is None or user.status != 1 or int(report.owner_user_id) != int(subscription.user_id):
-            subscription.status = "error"
-            subscription.last_error = "报表所有权或订阅用户状态已失效"
-            await db.commit()
-            return
+    try:
+        async with AsyncSessionLocal() as db:
+            subscription = (await db.execute(select(PortalSavedReportSubscription).where(
+                PortalSavedReportSubscription.id == subscription_id
+            ))).scalar_one_or_none()
+            if subscription is None or (subscription.status != "active" and not is_manual):
+                return
+            report = (await db.execute(select(PortalSavedReport).where(
+                PortalSavedReport.id == subscription.report_id
+            ))).scalar_one_or_none()
+            user = (await db.execute(select(User).where(User.id == subscription.user_id))).scalar_one_or_none()
+            if report is None or user is None or user.status != 1 or int(report.owner_user_id) != int(subscription.user_id):
+                subscription.status = "error"
+                subscription.last_error = "报表所有权或订阅用户状态已失效"
+                await db.commit()
+                return
 
-        user_info = {
-            "user_id": str(user.id), "user_name": user.user_name, "real_name": user.real_name,
-            "role": user.role, "dept_code": user.dept_code, "org_path": user.org_path,
-            "extra_data": user.extra_data,
-            "is_subscription_task": True,
-            "quick_suggestions_forbidden": True,
-        }
-        try:
-            await _execute_saved_report_impl(
-                report.id, ExecuteReportRequest(params=subscription.params or {}), None, user_info, db,
-                trigger_type="scheduled", task_id=subscription.id,
-            )
-            run = (await db.execute(select(PortalSavedReportRun).where(
-                PortalSavedReportRun.report_id == report.id,
-                PortalSavedReportRun.task_id == subscription.id,
-            ).order_by(PortalSavedReportRun.id.desc()).limit(1))).scalar_one_or_none()
-            subscription.last_run_id = run.id if run else None
-            subscription.last_run_at = datetime.now()
-            subscription.consecutive_failures = 0
-            subscription.last_error = None
-            from app.services.saved_report_subscription_service import evaluate_alert_condition
-            alert_evaluation = evaluate_alert_condition(
-                getattr(subscription, "alert_condition", None),
-                run.result_snapshot if run else None,
-                getattr(subscription, "alert_state", None),
-            )
-            subscription.alert_state = alert_evaluation.next_state
-            if subscription.notify_on_success and alert_evaluation.hit:
-                try:
-                    async with db.begin_nested():
+            user_info = {
+                "user_id": str(user.id), "user_name": user.user_name, "real_name": user.real_name,
+                "role": user.role, "dept_code": user.dept_code, "org_path": user.org_path,
+                "extra_data": user.extra_data,
+                "is_subscription_task": True,
+                "quick_suggestions_forbidden": True,
+            }
+            try:
+                await _execute_saved_report_impl(
+                    report.id, ExecuteReportRequest(params=subscription.params or {}), None, user_info, db,
+                    trigger_type="scheduled", task_id=subscription.id,
+                )
+                run = (await db.execute(select(PortalSavedReportRun).where(
+                    PortalSavedReportRun.report_id == report.id,
+                    PortalSavedReportRun.task_id == subscription.id,
+                ).order_by(PortalSavedReportRun.id.desc()).limit(1))).scalar_one_or_none()
+                subscription.last_run_id = run.id if run else None
+                subscription.last_run_at = datetime.now()
+                subscription.consecutive_failures = 0
+                subscription.last_error = None
+                from app.services.saved_report_subscription_service import evaluate_alert_condition
+                alert_evaluation = evaluate_alert_condition(
+                    getattr(subscription, "alert_condition", None),
+                    run.result_snapshot if run else None,
+                    getattr(subscription, "alert_state", None),
+                )
+                subscription.alert_state = alert_evaluation.next_state
+                # 先提交报表执行结果与告警状态，避免后续 AI 摘要/外部通知耗时拖长主事务
+                await db.commit()
+
+                if subscription.notify_on_success and alert_evaluation.hit:
+                    try:
                         digest = build_deterministic_digest(report, run, subscription.params or {})
                         digest = await enrich_digest_with_ai(
                             digest,
@@ -1382,72 +1547,78 @@ async def _saved_report_subscription_wrapper(subscription_id: int, is_manual: bo
                             f"{public_base}/dashboard/chat?dataset_portal=1&report_id={report.id}&run_id={run.id}"
                             if public_base and run else ""
                         )
-                        title, content = render_mobile_markdown(digest, report_url, "inbox")
-                        await PortalNotificationService.create(
-                            db, user_id=user.id, title=title, content=content, level="success",
-                            resource_type="saved_report_run", resource_id=str(run.id) if run else None,
-                            metadata={
-                                "report_id": report.id,
-                                "report_title": report.title,
-                                "subscription_id": subscription.id,
-                                "digest_mode": digest.get("generation_mode"),
-                                "trigger_evidence": alert_evaluation.evidence,
-                            },
-                        )
-                        if run:
-                            db.add(PortalSavedReportDigestDelivery(
-                                run_id=run.id, subscription_id=subscription.id, channel="inbox",
-                                digest_payload=digest, trigger_evidence=alert_evaluation.evidence,
-                                title=title, content=content, status="success",
-                                ai_status=digest.get("ai_status") or "disabled", sent_at=datetime.now(),
-                            ))
-                        senders = {
-                            "dingtalk": NotificationService.send_dingtalk,
-                            "wechat_work": NotificationService.send_wechat_work,
-                            "feishu": NotificationService.send_feishu,
-                            "email": NotificationService.send_email,
-                        }
-                        for channel in subscription.external_channels or []:
-                            sender = senders.get(channel)
-                            if sender is None:
-                                continue
-                            channel_title, channel_content = render_mobile_markdown(digest, report_url, channel)
-                            ok, error = await sender(db, user.id, channel_title, channel_content)
+                        async with db.begin_nested():
+                            title, content = render_mobile_markdown(digest, report_url, "inbox")
+                            await PortalNotificationService.create(
+                                db, user_id=user.id, title=title, content=content, level="success",
+                                resource_type="saved_report_run", resource_id=str(run.id) if run else None,
+                                metadata={
+                                    "report_id": report.id,
+                                    "report_title": report.title,
+                                    "subscription_id": subscription.id,
+                                    "digest_mode": digest.get("generation_mode"),
+                                    "trigger_evidence": alert_evaluation.evidence,
+                                },
+                            )
                             if run:
                                 db.add(PortalSavedReportDigestDelivery(
-                                    run_id=run.id, subscription_id=subscription.id, channel=channel,
+                                    run_id=run.id, subscription_id=subscription.id, channel="inbox",
                                     digest_payload=digest, trigger_evidence=alert_evaluation.evidence,
-                                    title=channel_title, content=channel_content,
-                                    status="success" if ok else "failed",
-                                    error_message=None if ok else error,
-                                    ai_status=digest.get("ai_status") or "disabled",
-                                    sent_at=datetime.now(),
+                                    title=title, content=content, status="success",
+                                    ai_status=digest.get("ai_status") or "disabled", sent_at=datetime.now(),
                                 ))
-                            if not ok:
-                                logger.warning("Saved report digest delivery failed: channel=%s error=%s", channel, error)
-                except Exception as digest_error:
-                    logger.exception("Saved report digest generation or audit failed: %s", type(digest_error).__name__)
-            await db.commit()
-        except Exception as exc:
-            subscription.last_run_at = datetime.now()
-            subscription.consecutive_failures = int(subscription.consecutive_failures or 0) + 1
-            subscription.last_error = str(getattr(exc, "detail", exc))[:10000]
-            run = (await db.execute(select(PortalSavedReportRun).where(
-                PortalSavedReportRun.report_id == report.id,
-                PortalSavedReportRun.task_id == subscription.id,
-            ).order_by(PortalSavedReportRun.id.desc()).limit(1))).scalar_one_or_none()
-            subscription.last_run_id = run.id if run else None
-            title = f"报表运行失败：{report.title}"
-            failure_content = f"触发方式：{trigger_label}\n{subscription.last_error}"
-            await PortalNotificationService.create(
-                db, user_id=user.id, title=title,
-                content=failure_content, level="error", resource_type="saved_report_run",
-                resource_id=str(run.id) if run else None,
-                metadata={"report_id": report.id, "report_title": report.title, "subscription_id": subscription.id},
-            )
-            if subscription.notify_on_failure:
-                await send_external(db, subscription, user.id, title, failure_content, failure=True)
-            await db.commit()
+                            senders = {
+                                "dingtalk": NotificationService.send_dingtalk,
+                                "wechat_work": NotificationService.send_wechat_work,
+                                "feishu": NotificationService.send_feishu,
+                                "email": NotificationService.send_email,
+                            }
+                            for channel in subscription.external_channels or []:
+                                sender = senders.get(channel)
+                                if sender is None:
+                                    continue
+                                channel_title, channel_content = render_mobile_markdown(digest, report_url, channel)
+                                ok, error = await sender(db, user.id, channel_title, channel_content)
+                                if run:
+                                    db.add(PortalSavedReportDigestDelivery(
+                                        run_id=run.id, subscription_id=subscription.id, channel=channel,
+                                        digest_payload=digest, trigger_evidence=alert_evaluation.evidence,
+                                        title=channel_title, content=channel_content,
+                                        status="success" if ok else "failed",
+                                        error_message=None if ok else error,
+                                        ai_status=digest.get("ai_status") or "disabled",
+                                        sent_at=datetime.now(),
+                                    ))
+                                if not ok:
+                                    logger.warning("Saved report digest delivery failed: channel=%s error=%s", channel, error)
+                        await db.commit()
+                    except Exception as digest_error:
+                        logger.exception("Saved report digest generation or audit failed: %s", type(digest_error).__name__)
+            except Exception as exc:
+                subscription.last_run_at = datetime.now()
+                subscription.consecutive_failures = int(subscription.consecutive_failures or 0) + 1
+                subscription.last_error = str(getattr(exc, "detail", exc))[:10000]
+                run = (await db.execute(select(PortalSavedReportRun).where(
+                    PortalSavedReportRun.report_id == report.id,
+                    PortalSavedReportRun.task_id == subscription.id,
+                ).order_by(PortalSavedReportRun.id.desc()).limit(1))).scalar_one_or_none()
+                subscription.last_run_id = run.id if run else None
+                title = f"报表运行失败：{report.title}"
+                failure_content = f"触发方式：{trigger_label}\n{subscription.last_error}"
+                await PortalNotificationService.create(
+                    db, user_id=user.id, title=title,
+                    content=failure_content, level="error", resource_type="saved_report_run",
+                    resource_id=str(run.id) if run else None,
+                    metadata={"report_id": report.id, "report_title": report.title, "subscription_id": subscription.id},
+                )
+                if subscription.notify_on_failure:
+                    await send_external(db, subscription, user.id, title, failure_content, failure=True)
+                await db.commit()
+    finally:
+        await _stop_lock_heartbeat(lock_heartbeat)
+        await _release_redis_lock(
+            lock_key, lock_token, label=f"saved_report_subscription {subscription_id}"
+        )
 
 
 class TaskSchedulerService:
@@ -1548,9 +1719,12 @@ class TaskSchedulerService:
         await self._cleanup_stale_running_tasks()
 
     async def _cleanup_stale_running_tasks(self):
-        """启动时清理残留的 running 状态：进程崩溃/重启会让 metrics 永远停在「正在执行」。
+        """清理残留的 running 状态：进程崩溃/重启会让 metrics 永远停在「正在执行」。
 
-        若 Redis 执行锁仍被其他节点持有则视为真在执行，跳过。
+        启动时调一次，之后由 30 秒周期的对账 Job 反复调用——只清一次的话，重启那次
+        几乎总会被「死进程的锁还没到期」挡掉，之后再无人收拾。
+
+        若 Redis 执行锁仍被持有（本节点正在跑，或其他节点正在跑）则视为真在执行，跳过。
         """
         try:
             async with AsyncSessionLocal() as session:
@@ -1574,7 +1748,7 @@ class TaskSchedulerService:
                     await _write_task_metrics(session, task, metrics)
                     cleaned += 1
                 if cleaned:
-                    logger.info("🧹 Cleaned up %s stale 'running' task metric(s) after restart.", cleaned)
+                    logger.info("🧹 Cleaned up %s stale 'running' task metric(s).", cleaned)
         except Exception as exc:
             logger.warning("Failed to clean up stale running tasks: %s", exc, exc_info=True)
 
@@ -1680,11 +1854,38 @@ class TaskSchedulerService:
         if self._scheduler.get_job(job_id):
             self._scheduler.remove_job(job_id)
 
-    def get_saved_report_subscription_next_run_time(self, subscription_id: int) -> Optional[datetime]:
-        if not self._scheduler:
+    @staticmethod
+    def _compute_next_fire_time(
+        cron_expr: Optional[str],
+        *,
+        timezone_name: Optional[str] = None,
+    ) -> Optional[datetime]:
+        """多节点下本节点未启用本地调度器时，直接用 CronTrigger 兜底计算下次执行时间。"""
+        if not cron_expr:
             return None
-        job = self._scheduler.get_job(f"saved_report_subscription_{subscription_id}")
-        return job.next_run_time if job else None
+        try:
+            from pytz import timezone as pytz_timezone
+
+            tz = pytz_timezone(timezone_name or get_cached_platform_timezone())
+            trigger = CronTrigger.from_crontab(to_apscheduler_crontab(cron_expr), timezone=tz)
+            return trigger.get_next_fire_time(None, datetime.now(tz))
+        except Exception:  # noqa: BLE001 - 非法表达式返回 None，不阻断列表
+            return None
+
+    def get_saved_report_subscription_next_run_time(
+        self,
+        subscription_id: int,
+        *,
+        cron_expr: Optional[str] = None,
+        status: Optional[str] = None,
+        timezone_name: Optional[str] = None,
+    ) -> Optional[datetime]:
+        if self._scheduler:
+            job = self._scheduler.get_job(f"saved_report_subscription_{subscription_id}")
+            return job.next_run_time if job else None
+        if status == "active" and cron_expr:
+            return self._compute_next_fire_time(cron_expr, timezone_name=timezone_name)
+        return None
 
     async def _add_job_to_memory(self, task: AgentScheduledTask):
         if not self._scheduler:
@@ -1739,9 +1940,8 @@ class TaskSchedulerService:
         if task.status == 1:
             await self._add_job_to_memory(task)
         else:
-            job_id = f"task_{task.id}"
-            if self._scheduler.get_job(job_id):
-                self._scheduler.remove_job(job_id)
+            # 暂停/停用时同步摘掉可能待触发的重试 Job，避免残留
+            await self.remove_task(task.id)
 
     async def remove_task(self, task_id: int):
         """彻底摘除任务的调度 Job（含未执行的重试 Job），用于删除任务/删除用户。"""
@@ -1754,11 +1954,19 @@ class TaskSchedulerService:
             if self._scheduler.get_job(job_id):
                 self._scheduler.remove_job(job_id)
 
-    def get_next_run_time(self, task_id: int) -> Optional[datetime]:
-        if not self._scheduler:
-            return None
-        job = self._scheduler.get_job(f"task_{task_id}")
-        return job.next_run_time if job else None
+    def get_next_run_time(
+        self,
+        task_id: int,
+        *,
+        cron_expr: Optional[str] = None,
+        status: Optional[int] = None,
+    ) -> Optional[datetime]:
+        if self._scheduler:
+            job = self._scheduler.get_job(f"task_{task_id}")
+            return job.next_run_time if job else None
+        if status == 1 and cron_expr:
+            return self._compute_next_fire_time(cron_expr)
+        return None
 
     async def reschedule_third_party_user_sync(self, config=None):
         """根据第三方用户同步配置注册/移除定时任务。"""

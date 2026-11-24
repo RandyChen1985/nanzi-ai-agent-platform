@@ -17,6 +17,11 @@ from app.models.audit import AgentExecutionHistory
 logger = logging.getLogger(__name__)
 
 
+def _escape_like(value: str) -> str:
+    """转义 SQL LIKE 通配符，防止搜索关键词中的 % / _ 变成通配匹配。"""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def attach_task_metrics(task: AgentScheduledTask) -> AgentScheduledTask:
     cfg = task.config if isinstance(task.config, dict) else {}
     metrics = cfg.get("task_metrics") if isinstance(cfg.get("task_metrics"), dict) else {}
@@ -77,7 +82,11 @@ class TaskCenterService:
         # Sync to scheduler
         await scheduler_service.upsert_task(new_task)
         # 回填下次执行时间，让 Web 响应与 AI 工具返回值能反映调度是否真的生效
-        new_task.next_run_at = scheduler_service.get_next_run_time(new_task.id)
+        new_task.next_run_at = scheduler_service.get_next_run_time(
+            new_task.id,
+            cron_expr=new_task.cron_expr,
+            status=new_task.status,
+        )
         
         return new_task
 
@@ -112,7 +121,11 @@ class TaskCenterService:
             # We attach creator_name and agent_name attribute for Pydantic to pick up
             task_obj.creator_name = real_name or user_name or f"User:{task_obj.user_id}"
             task_obj.agent_name = agent_name or task_obj.agent_id or "Unknown Agent"
-            task_obj.next_run_at = scheduler_service.get_next_run_time(task_obj.id)
+            task_obj.next_run_at = scheduler_service.get_next_run_time(
+                task_obj.id,
+                cron_expr=task_obj.cron_expr,
+                status=task_obj.status,
+            )
             attach_task_metrics(task_obj)
             tasks.append(task_obj)
             
@@ -198,7 +211,11 @@ class TaskCenterService:
         result = await db.execute(stmt)
         task = result.scalar_one_or_none()
         if task:
-            task.next_run_at = scheduler_service.get_next_run_time(task.id)
+            task.next_run_at = scheduler_service.get_next_run_time(
+                task.id,
+                cron_expr=task.cron_expr,
+                status=task.status,
+            )
             attach_task_metrics(task)
         return task
 
@@ -210,9 +227,9 @@ class TaskCenterService:
     ) -> Optional[AgentScheduledTask]:
         if "cron_expr" in updates:
             validate_standard_crontab(str(updates.get("cron_expr") or ""))
-        if updates.get("status") == 1:
-            # 启动前确认库内表达式可调度：历史脏数据若直接启用，调度器只会打日志跳过，
-            # 用户（或 AI）会以为「已启动」而任务永远不跑。
+        elif updates.get("status") == 1:
+            # 仅在未同时提交新 cron_expr 时才校验库内旧表达式：
+            # 否则「同时把历史脏 cron 改合法并启用」会被旧值挡死，永远修不好。
             current_cron = (
                 await db.execute(
                     select(AgentScheduledTask.cron_expr).where(AgentScheduledTask.id == task_id)
@@ -243,6 +260,12 @@ class TaskCenterService:
         updated_task = await TaskCenterService.get_task(db, task_id)
         if updated_task:
             await scheduler_service.upsert_task(updated_task)
+            # 必须在 upsert_task 之后刷新 next_run_at，否则响应体返回的是修改前的旧调度时间
+            updated_task.next_run_at = scheduler_service.get_next_run_time(
+                updated_task.id,
+                cron_expr=updated_task.cron_expr,
+                status=updated_task.status,
+            )
         return updated_task
 
     @staticmethod
@@ -389,12 +412,12 @@ class TaskCenterService:
         if end_at is not None:
             stmt = stmt.where(AgentExecutionHistory.created_at <= end_at)
         if keyword:
-            like = f"%{keyword}%"
+            like = f"%{_escape_like(keyword)}%"
             history_text_match = or_(
-                AgentExecutionHistory.query.like(like),
-                AgentExecutionHistory.summary.like(like),
-                AgentExecutionHistory.trace_id.like(like),
-                AgentExecutionHistory.username.like(like),
+                AgentExecutionHistory.query.like(like, escape="\\"),
+                AgentExecutionHistory.summary.like(like, escape="\\"),
+                AgentExecutionHistory.trace_id.like(like, escape="\\"),
+                AgentExecutionHistory.username.like(like, escape="\\"),
             )
             if keyword_matched_task_ids:
                 matched_conv_filters = []

@@ -61,8 +61,10 @@ DENIAL_REASONS = {
     "denied_by_scenario": "这条凭据没有授权给当前场景",
     "denied_by_host": "目标域名不在白名单里",
     "denied_by_grant": "凭据还没有授权给你",
-    "denied_by_script_policy": "平台或你的偏好关闭了脚本环境变量注入",
+    "denied_by_script_policy": "平台或你的偏好关闭了「允许脚本读取凭据」",
     "denied_by_binding": "没有找到绑定",
+    # 脚本 helper 按名字取值时找不到：名字写错，或者这条凭据不在你的可见集合里。
+    "not_found": "没有这条凭据，或它不在你可见的范围内",
     # 规则没匹配上：这不是「没绑」，也不是「凭据坏了」，而是「按这次的值找不到
     # 对应的那条」——文案要说清是哪一步，否则用户只会去翻凭据状态。
     "rule_miss": "匹配规则没有找到对应凭据",
@@ -95,7 +97,8 @@ DENIAL_HINTS = {
     "denied_by_grant": "请管理员把这条凭据授权给你（部门或全体）",
     "disabled": "请到凭据中心把它重新启用",
     "expired": "请轮换或重新创建这条凭据",
-    "denied_by_script_policy": "请在注入策略里打开脚本环境变量注入",
+    "denied_by_script_policy": "请让管理员打开平台的脚本读取策略，并在你的偏好里也打开",
+    "not_found": "核对凭据标识是否写错；用 nanzi-credential list 看看有哪些可用的",
     "rule_miss": (
         "请检查这条参数的匹配规则：这次入参的值要和某条凭据的 key 一致；"
         "也可以在规则里把「挑不到时」改成回退固定凭据"

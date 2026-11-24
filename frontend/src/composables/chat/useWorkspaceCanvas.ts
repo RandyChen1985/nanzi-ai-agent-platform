@@ -27,6 +27,8 @@ export interface UseWorkspaceCanvasOptions {
   normalizeDirectPayloadTitle?: boolean;
   /** 窄屏：画布全屏置顶遮罩，不自动钉住侧栏（工作区可保持打开） */
   isMobile?: () => boolean;
+  /** `handleOpenCanvas` 默认是否钉住侧栏：聊天页默认 true，独立工作空间页传 false 以浮层打开 */
+  defaultPinned?: boolean;
 }
 
 export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
@@ -63,7 +65,8 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
    */
   const showCanvas = (pinByDefault = true) => {
     const mobile = options.isMobile?.() ?? false;
-    canvasPinned.value = pinByDefault && !mobile;
+    const allowDefaultPin = options.defaultPinned ?? true;
+    canvasPinned.value = pinByDefault && !mobile && allowDefaultPin;
     canvasVisible.value = true;
   };
 
