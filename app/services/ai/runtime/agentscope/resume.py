@@ -281,7 +281,9 @@ class AgentScopeResumeHandler:
                 async def _finalize_persisted_turn(
                     *,
                     status_value: str,
+                    final_content: str,
                     final_timeline: Optional[List[Dict[str, Any]]],
+                    final_reasoning: Optional[str],
                     should_persist: bool,
                     p_tokens: int,
                     c_tokens: int,
@@ -300,7 +302,7 @@ class AgentScopeResumeHandler:
                         persist_coro = _persist_assistant_message_and_summary(
                             user_id=persist_user_id,
                             conversation_id=conversation_id,
-                            content=full_response_content,
+                            content=final_content,
                             trace_id=pending.trace_id,
                             agent_name=handled_by,
                             agent_type=_public_agent_type(agent_config),
@@ -310,7 +312,7 @@ class AgentScopeResumeHandler:
                             prompt_tokens=p_tokens,
                             completion_tokens=c_tokens,
                             total_tokens=t_tokens,
-                            reasoning_content=full_reasoning_content or None,
+                            reasoning_content=final_reasoning or None,
                             process_timeline=final_timeline,
                             tool_run_text=tool_run_text,
                             merge_summary=status_value == "success",
@@ -333,13 +335,13 @@ class AgentScopeResumeHandler:
                         pending.trace_id,
                         agent_config,
                         user_query,
-                        full_response_content,
+                        final_content,
                         user_info,
                         status_value,
                         duration,
                         trace_buffer,
                         conversation_id=conversation_id,
-                        reasoning_content=full_reasoning_content or None,
+                        reasoning_content=final_reasoning or None,
                         process_timeline=final_timeline,
                     )
                     if cancelling:
@@ -382,12 +384,25 @@ class AgentScopeResumeHandler:
                     # 被中断/取消时保留挂起快照（不 pop），用户仍可在断线/取消后检查或重试。
                     cancelling = current_task_cancelling()
                     final_timeline = _final_process_timeline(process_timeline_state)
+                    final_reasoning = full_reasoning_content or None
+                    final_content = full_response_content
+                    if not cancelling:
+                        final_timeline, final_reasoning, final_content = (
+                            await cls._merge_prior_turn_snapshot(
+                                user_id=persist_user_id,
+                                conversation_id=conversation_id,
+                                trace_id=pending.trace_id,
+                                current_timeline=final_timeline,
+                                current_reasoning=final_reasoning,
+                                current_content=final_content,
+                            )
+                        )
                     should_persist = bool(
                         conversation_id
                         and _should_persist_turn_history(
-                            full_response_content,
+                            final_content,
                             final_timeline,
-                            full_reasoning_content,
+                            final_reasoning or "",
                         )
                     )
                     if not cancelling:
@@ -399,7 +414,9 @@ class AgentScopeResumeHandler:
                         }
                     await _finalize_persisted_turn(
                         status_value="cancelled",
+                        final_content=final_content,
                         final_timeline=final_timeline,
+                        final_reasoning=final_reasoning,
                         should_persist=should_persist,
                         p_tokens=0,
                         c_tokens=0,
@@ -459,12 +476,24 @@ class AgentScopeResumeHandler:
                     }
 
                 final_process_timeline = _final_process_timeline(process_timeline_state)
+                (
+                    final_process_timeline,
+                    merged_reasoning_content,
+                    merged_response_content,
+                ) = await cls._merge_prior_turn_snapshot(
+                    user_id=persist_user_id,
+                    conversation_id=conversation_id,
+                    trace_id=pending.trace_id,
+                    current_timeline=final_process_timeline,
+                    current_reasoning=full_reasoning_content or None,
+                    current_content=full_response_content,
+                )
                 should_persist_history = bool(
                     conversation_id
                     and _should_persist_turn_history(
-                        full_response_content,
+                        merged_response_content,
                         final_process_timeline,
-                        full_reasoning_content,
+                        merged_reasoning_content or "",
                     )
                 )
                 yield {
@@ -476,7 +505,9 @@ class AgentScopeResumeHandler:
                 # 落库与审计留在同一把会话锁内完成，防止下一轮并发消息在历史尚未写入前读库或清日志。
                 audit_persisted = await _finalize_persisted_turn(
                     status_value=execution_status,
+                    final_content=merged_response_content,
                     final_timeline=final_process_timeline,
+                    final_reasoning=merged_reasoning_content,
                     should_persist=should_persist_history,
                     p_tokens=p_tokens,
                     c_tokens=c_tokens,
@@ -503,6 +534,89 @@ class AgentScopeResumeHandler:
                 "content": "当前会话正在处理中，请稍后再试。",
             }
             return
+
+    @classmethod
+    async def _merge_prior_turn_snapshot(
+        cls,
+        *,
+        user_id: Any,
+        conversation_id: Optional[str],
+        trace_id: Optional[str],
+        current_timeline: Optional[List[Dict[str, Any]]],
+        current_reasoning: Optional[str],
+        current_content: str = "",
+    ) -> tuple[Optional[List[Dict[str, Any]]], Optional[str], str]:
+        """落库前回捞同一 `trace_id` 挂起前已写入会话历史的时间线、思考正文与回答正文并合并。
+
+        挂起轮（`awaiting_permission` / `awaiting_external_execution`）已把前半段过程明细、
+        思考正文与已输出正文写入 Redis 会话历史，但审计表落库延后至恢复轮；若恢复轮直接用
+        仅含后半段的快照写审计表，前端终态同步与历史回放会把审批前步骤及前半段正文整体
+        抹掉。这里按顺序归并最近窗口内同 `trace_id` 的全部前序 assistant 快照（兼容单轮内
+        多次审批），任何读取异常仅告警并回退当前阶段快照，绝不阻断落库。
+        """
+        if not user_id or not conversation_id or not trace_id:
+            return current_timeline, current_reasoning, current_content
+        try:
+            from app.services.ai.memory_service import memory_service
+            from app.services.ai.runtime.agentscope.process_timeline_snapshot import (
+                merge_process_timeline_sequence,
+                merge_reasoning_contents,
+                merge_text_contents,
+            )
+
+            # 同 trace 挂起消息必在会话尾部，限定窗口为 20 条即可覆盖单轮连续多次审批，
+            # 避免长会话每次恢复都全量反序列化 100 条历史消息。
+            history = await memory_service.get_history(
+                str(user_id),
+                conversation_id,
+                limit=20,
+            )
+        except Exception as exc:  # noqa: BLE001 - 回捞失败不得阻断落库与审计
+            logger.warning(
+                "[AgentScopeResume] 回捞同 trace 前序时间线失败 conversation=%s trace_id=%s: %s",
+                conversation_id,
+                trace_id,
+                exc,
+            )
+            return current_timeline, current_reasoning, current_content
+
+        target_trace = str(trace_id)
+        prior_timelines: List[List[Dict[str, Any]]] = []
+        prior_reasonings: List[str] = []
+        prior_contents: List[str] = []
+        for entry in history or []:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("role") != "assistant":
+                continue
+            if str(entry.get("trace_id") or "") != target_trace:
+                continue
+            timeline = entry.get("process_timeline")
+            if isinstance(timeline, list) and timeline:
+                prior_timelines.append(timeline)
+            reasoning = entry.get("reasoning_content")
+            if isinstance(reasoning, str) and reasoning.strip():
+                prior_reasonings.append(reasoning)
+            content = entry.get("content")
+            if isinstance(content, str) and content.strip():
+                prior_contents.append(content)
+
+        merged_timeline = (
+            merge_process_timeline_sequence([*prior_timelines, current_timeline])
+            if prior_timelines
+            else current_timeline
+        )
+        merged_reasoning = (
+            merge_reasoning_contents([*prior_reasonings, current_reasoning])
+            if prior_reasonings
+            else current_reasoning
+        )
+        merged_content = (
+            merge_text_contents([*prior_contents, current_content])
+            if prior_contents
+            else current_content
+        )
+        return merged_timeline, merged_reasoning, merged_content
 
     @classmethod
     async def restore_runner_execution_context(

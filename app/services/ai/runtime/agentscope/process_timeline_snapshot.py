@@ -1,12 +1,14 @@
 """Compact thinking-card snapshot from SSE chunks for history replay."""
 from __future__ import annotations
 
+import copy
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 DETAILS_MAX_CHARS = 2000
 TODO_STATUSES = {"pending", "in_progress", "completed"}
 _AGENT_LIFECYCLE_TITLE = re.compile(r"^(?:\[.*?\]\s*)?[✨\s]*(?:Agent 回复开始|Agent 回复结束)\s*$")
+_SYNTHETIC_LOG_ID_RE = re.compile(r"^log_\d+$")
 
 
 def _normalize_text(text: str, trim_boundary: bool = False) -> str:
@@ -618,6 +620,9 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
             parent.setdefault("children", []).append(log)
             parent.setdefault("childrenExpanded", True)
             return
+        # 恢复流等局部快照里父节点可能位于审批前的前序时间线中：
+        # 暂存孤儿节点的 parent_id，供落库合并阶段把子步骤挂回原父节点下方。
+        log["parent_id"] = parent_id
 
     # If this is an inner step of a subagent
     is_subagent_container = (
@@ -692,6 +697,8 @@ def _finalize_log(item: Dict[str, Any]) -> Dict[str, Any]:
         copied["auto_approved"] = True
     if item.get("reasoning") is True:
         copied["reasoning"] = True
+    if item.get("parent_id") is not None:
+        copied["parent_id"] = item.get("parent_id")
     if item.get("children"):
         copied["children"] = [_finalize_log(child) for child in item["children"]]
     return copied
@@ -760,3 +767,273 @@ def finalize_process_timeline(state: Optional[List[Dict[str, Any]]]) -> Optional
             copied["sourceLabel"] = item.get("sourceLabel") or item.get("sourceId")
         items.append(copied)
     return items or None
+
+
+def _merge_log_node(existing: Dict[str, Any], incoming: Dict[str, Any]) -> None:
+    """将恢复阶段的同 id 日志字段合并到已有节点上，保留前序已记录的入参/摘要等只增字段。"""
+    if incoming.get("title"):
+        existing["title"] = str(incoming["title"])
+    if incoming.get("status"):
+        existing["status"] = str(incoming["status"])
+    # 后阶段非空详情覆盖前序详情（例如工具输出覆盖占位/空串）；空串不洗掉已有详情。
+    incoming_details = incoming.get("details")
+    if isinstance(incoming_details, str) and incoming_details:
+        existing["details"] = incoming_details
+    if incoming.get("execution_time_ms") is not None:
+        existing["execution_time_ms"] = incoming["execution_time_ms"]
+    if incoming.get("category") is not None:
+        existing["category"] = incoming["category"]
+    if incoming.get("file_metadata") is not None:
+        existing["file_metadata"] = copy.deepcopy(incoming["file_metadata"])
+    if incoming.get("user_question") is not None:
+        existing["user_question"] = copy.deepcopy(incoming["user_question"])
+    if incoming.get("subagent") is not None:
+        existing["subagent"] = copy.deepcopy(incoming["subagent"])
+    if incoming.get("tool_args"):
+        existing["tool_args"] = str(incoming["tool_args"])
+    if incoming.get("tool_summary"):
+        existing["tool_summary"] = str(incoming["tool_summary"])
+    if incoming.get("model"):
+        existing["model"] = str(incoming["model"])
+    if incoming.get("temperature") is not None:
+        existing["temperature"] = incoming["temperature"]
+    if incoming.get("tool_result_state"):
+        existing["tool_result_state"] = str(incoming["tool_result_state"])
+    if incoming.get("auto_approved") is True:
+        existing["auto_approved"] = True
+    if incoming.get("reasoning") is True:
+        existing["reasoning"] = True
+
+    incoming_children = incoming.get("children")
+    if isinstance(incoming_children, list) and incoming_children:
+        target_children = existing.setdefault("children", [])
+        for child in incoming_children:
+            if not isinstance(child, dict):
+                continue
+            child_copy = copy.deepcopy(child)
+            child_copy.pop("parent_id", None)
+            child_id = child_copy.get("id")
+            existing_child = _find_log(target_children, child_id) if child_id is not None else None
+            if existing_child is not None:
+                _merge_log_node(existing_child, child_copy)
+            else:
+                target_children.append(child_copy)
+
+
+def _allocate_unique_text_id(items: List[Dict[str, Any]], text_kind: str) -> str:
+    used_ids = {
+        str(entry.get("id"))
+        for entry in items
+        if isinstance(entry, dict) and entry.get("id") is not None
+    }
+    prefix = text_kind or "narration"
+    index = len(items) + 1
+    while f"{prefix}_{index}" in used_ids:
+        index += 1
+    return f"{prefix}_{index}"
+
+
+def _collect_all_ids(items: List[Dict[str, Any]]) -> set[str]:
+    used: set[str] = set()
+
+    def walk(nodes: List[Dict[str, Any]]) -> None:
+        for entry in nodes:
+            if not isinstance(entry, dict):
+                continue
+            raw_id = entry.get("id")
+            if raw_id is not None:
+                used.add(str(raw_id))
+            children = entry.get("children")
+            if isinstance(children, list) and children:
+                walk(children)
+
+    walk(items)
+    return used
+
+
+def _allocate_unique_log_id(items: List[Dict[str, Any]]) -> str:
+    used_ids = _collect_all_ids(items)
+    index = len(items) + 1
+    while f"log_{index}" in used_ids:
+        index += 1
+    return f"log_{index}"
+
+
+def _merge_log_into_timeline(merged: List[Dict[str, Any]], raw_log: Dict[str, Any]) -> None:
+    log_copy = copy.deepcopy(raw_log)
+    log_id = log_copy.get("id")
+    if log_id is not None:
+        existing = _find_log(merged, log_id)
+        if existing is not None:
+            # 仅对 _next_id(state, "log") 自动生成的兜底合成 id（log_1/log_2…）在标题不同时
+            # 重分配唯一 id，避免两段快照各自从空列表起算而误合并两个无关步骤；
+            # 真实业务 id（工具/权限/子代理等）在挂起前后标题本来就不同，必须按 id 原位更新。
+            if (
+                isinstance(log_id, str)
+                and _SYNTHETIC_LOG_ID_RE.match(log_id)
+                and str(existing.get("title") or "") != str(log_copy.get("title") or "")
+            ):
+                log_copy["id"] = _allocate_unique_log_id(merged)
+                log_id = log_copy["id"]
+            else:
+                _merge_log_node(existing, log_copy)
+                return
+
+    parent_id = log_copy.get("parent_id")
+    if parent_id is not None and parent_id != log_id:
+        parent = _find_log(merged, parent_id)
+        if parent is not None:
+            log_copy.pop("parent_id", None)
+            parent_children = parent.setdefault("children", [])
+            existing_child = _find_log(parent_children, log_id) if log_id is not None else None
+            if existing_child is not None:
+                _merge_log_node(existing_child, log_copy)
+            else:
+                parent_children.append(log_copy)
+            return
+
+    merged.append(log_copy)
+
+
+def merge_process_timelines(
+    base: Optional[List[Dict[str, Any]]],
+    incoming: Optional[List[Dict[str, Any]]],
+) -> Optional[List[Dict[str, Any]]]:
+    """将挂起前（`base`）与恢复阶段（`incoming`）的终稿时间线做结构合并。
+
+    规则：
+    - `log`：先全树递归按 `id` 查找，命中则原位更新状态/结果/耗时并递归合并 `children`
+      （保留前序已记录的 `tool_args`/`tool_summary`）；未命中且带 `parent_id` 时尝试挂回
+      前序父节点（例如恢复轮才拉起的 `workspace:sandbox:<bash_id>`）；否则追加末尾。
+    - `todo`：后阶段清单视为最新快照，原位替换旧清单并保证最多保留一份。
+    - `text`：同 `(id, textKind, content)` 视为同一段旁白（保证多次审批归并幂等）；
+      不同内容的旁白若因各自从空列表起算而撞 id，则重分配唯一 id 追加末尾，绝不覆盖旧旁白。
+    """
+    merged: List[Dict[str, Any]] = [
+        copy.deepcopy(item) for item in (base or []) if isinstance(item, dict)
+    ]
+    for raw_item in incoming or []:
+        if not isinstance(raw_item, dict):
+            continue
+        kind = raw_item.get("kind")
+        if kind == "todo":
+            todo_copy = copy.deepcopy(raw_item)
+            todo_indexes = [i for i, entry in enumerate(merged) if entry.get("kind") == "todo"]
+            if todo_indexes:
+                merged[todo_indexes[0]] = todo_copy
+                for index in reversed(todo_indexes[1:]):
+                    merged.pop(index)
+            else:
+                merged.append(todo_copy)
+            continue
+
+        if kind == "log":
+            _merge_log_into_timeline(merged, raw_item)
+            continue
+
+        if kind == "text":
+            text_copy = copy.deepcopy(raw_item)
+            text_kind = str(text_copy.get("textKind") or "narration")
+            content = str(text_copy.get("content") or "")
+            raw_id = text_copy.get("id")
+            children = [c for c in (text_copy.get("children") or []) if isinstance(c, dict)]
+
+            existing_text = next(
+                (
+                    entry
+                    for entry in merged
+                    if entry.get("kind") == "text"
+                    and entry.get("id") == raw_id
+                    and str(entry.get("textKind") or "narration") == text_kind
+                    and str(entry.get("content") or "") == content
+                ),
+                None,
+            )
+            if existing_text is not None:
+                if not text_copy.get("interrupted"):
+                    existing_text.pop("interrupted", None)
+                existing_children = existing_text.setdefault("children", [])
+                for child in children:
+                    child_id = child.get("id")
+                    hit = _find_log(merged, child_id) if child_id is not None else None
+                    if hit is not None:
+                        _merge_log_node(hit, child)
+                    else:
+                        child.pop("parent_id", None)
+                        existing_children.append(child)
+                continue
+
+            # 若新旁白自带的子工具在前面已建过卡（极少见），原位更新并去重，防止整棵树出现双卡。
+            remaining_children: List[Dict[str, Any]] = []
+            for child in children:
+                child_id = child.get("id")
+                hit = _find_log(merged, child_id) if child_id is not None else None
+                if hit is not None:
+                    _merge_log_node(hit, child)
+                else:
+                    remaining_children.append(child)
+            text_copy["children"] = remaining_children
+
+            id_collision = raw_id is not None and any(
+                entry.get("kind") == "text" and entry.get("id") == raw_id for entry in merged
+            )
+            if id_collision or raw_id is None:
+                text_copy["id"] = _allocate_unique_text_id(merged, text_kind)
+            merged.append(text_copy)
+            continue
+
+        merged.append(copy.deepcopy(raw_item))
+
+    return merged or None
+
+
+def merge_process_timeline_sequence(
+    timelines: Sequence[Optional[List[Dict[str, Any]]]],
+) -> Optional[List[Dict[str, Any]]]:
+    """按先后顺序依次归并同一轮多次挂起/恢复的时间线快照。"""
+    combined: Optional[List[Dict[str, Any]]] = None
+    for timeline in timelines:
+        if not timeline:
+            continue
+        combined = merge_process_timelines(combined, timeline)
+    return combined
+
+
+def merge_reasoning_contents(contents: Sequence[Optional[str]]) -> Optional[str]:
+    """按顺序幂等拼接同一轮多次挂起/恢复的深度思考正文。"""
+    acc = ""
+    for raw in contents:
+        piece = str(raw or "").strip()
+        if not piece:
+            continue
+        if not acc:
+            acc = piece
+        elif piece == acc or acc.endswith(piece):
+            continue
+        elif piece.startswith(acc):
+            acc = piece
+        else:
+            acc = f"{acc}\n\n{piece}"
+    return acc or None
+
+
+def merge_text_contents(contents: Sequence[Optional[str]]) -> str:
+    """按顺序幂等拼接同一轮多次挂起/恢复的助手回答正文（保留原文换行格式）。"""
+    acc = ""
+    for raw in contents:
+        piece = str(raw or "")
+        piece_stripped = piece.strip()
+        if not piece_stripped:
+            continue
+        if not acc:
+            acc = piece
+            continue
+        acc_stripped = acc.strip()
+        if piece_stripped == acc_stripped or acc_stripped.endswith(piece_stripped):
+            continue
+        if piece_stripped.startswith(acc_stripped):
+            acc = piece
+            continue
+        separator = "" if (acc.endswith("\n") or piece.startswith("\n")) else "\n\n"
+        acc = f"{acc}{separator}{piece}"
+    return acc

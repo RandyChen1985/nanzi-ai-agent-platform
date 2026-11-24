@@ -6306,10 +6306,11 @@ let activeStreamDraft: {
   msg: Message;
   lastAppliedSeq?: number;
   /**
-   * 本轮正文由「不写事件日志的恢复流」（权限确认 / 外部执行恢复）写出。
+   * 本轮正文由恢复流（权限确认 / 外部执行恢复）独占写出。
    *
-   * 这类流只转发 SSE，事件日志里仍只有挂起前的事件；此时按日志首拉重建会把恢复流
-   * 刚写出的正文换回挂起前的旧内容（内容回退）。置位后本轮不再启动续显。
+   * 虽然恢复流现在也写事件日志（且保留 `:seq`），但高频增量帧（`answer_delta` /
+   * `reasoning_content`）走合并窗口、实时 SSE 帧发出时尚未带序号，前端无法精确推进
+   * `lastAppliedSeq`。因此恢复期仍暂不启用事件续显（避免重放叠字），等落库终态同步收敛。
    */
   resumeOwned?: boolean;
 } | null = null;
@@ -6650,7 +6651,8 @@ const pollConversationStreamEvents = async () => {
     // 草稿槽被清空后恢复器/输入锁判据要立刻跟上，避免残留的 recoveryPending 继续轮询。
     refreshRecoveryCard();
   }
-  // 本轮正文由恢复流（不写事件日志）写出：日志无法描述它，重放只会把正文重建回挂起前。
+  // 本轮正文由恢复流独占写出：高频增量帧实时下发时不带序号、无法精确推进 lastAppliedSeq，
+  // 暂不启用事件续显以避免正文重复，等落库终态同步收敛。
   if (activeStreamDraft?.resumeOwned) return;
   streamReplayInFlight = true;
   try {
@@ -6775,7 +6777,8 @@ const scheduleStreamReplay = () => {
   }
   clearStreamReplayTimer();
   if (document.visibilityState !== "visible") return;
-  // 本轮正文由恢复流（不写事件日志）写出：按日志重建只会把它换回挂起前的旧内容。
+  // 本轮正文由恢复流独占写出：高频增量帧实时下发时不带序号、无法精确推进 lastAppliedSeq，
+  // 暂不启用事件续显以避免正文重复，等落库终态同步收敛。
   if (activeStreamDraft?.resumeOwned) return;
   // 续显接管意味着 SSE 已不再推进（切页面回来 / 流已结束）。提示交给恢复卡片：
   // 它装得下后台状态、执行阶段与同步进度，并且可以被用户手动关闭。
@@ -12689,7 +12692,7 @@ const submitPendingExternalExecution = async (msg: Message) => {
   const pending = msg.pendingExternalExecution;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
-  // 这段恢复流直接写这条消息，而事件日志并不记录它（恢复接口只转发 SSE）：
+  // 这段恢复流直接独占写这条消息（高频增量帧实时下发时不带序号，暂不与事件续显混写）：
   // 既要停掉可能还在跑的续显（两路同写会重复正文），也要让恢复器在它运行期间认
   // 「流在途」，不去补占位 / 拉续显。
   stopReplayForLiveStream();
@@ -12917,7 +12920,7 @@ const confirmPendingPermission = async (
   const pending = msg.pendingPermission;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
-  // 与外部执行恢复同理：这段恢复流直接写这条消息，事件日志不记录它。先让续显让位，
+  // 与外部执行恢复同理：这段恢复流独占写这条消息（暂不与事件续显混写）。先让续显让位，
   // 再把自己标记为「流在途」，恢复器在此期间不会补占位或启动续显。
   stopReplayForLiveStream();
   // 取消上一轮残留的历史同步轮询与 run-status 助推（awaiting_permission 不落库会让旧轮询
