@@ -64,3 +64,33 @@ def test_stream_events_exposes_run_availability():
     source = _source()
     assert "run_available" in source
     assert "ConversationStreamEventsResponse(**payload)" in source
+
+
+def test_resume_producer_clears_journal_preserving_seq():
+    """审批/外部执行恢复流清理事件日志时必须保留 `:seq` 计数器。
+
+    恢复流事件会继续追加到挂起前的同一条消息时间线，若把 `:seq` 一并删掉归零，
+    新事件会拿到比审批前更小的 `_seq`，前端按 `seq` 排序时会把新卡片插队到旧卡片前面。
+    """
+    source = _source()
+    start = source.index("async def _build_resume_background_sse_response(")
+    end = source.index('@router.post(\n    "/permissions/{permission_request_id}/confirm"', start)
+    resume_block = source[start:end]
+
+    assert "conversation_stream_journal.clear(" in resume_block
+    assert "preserve_seq=True" in resume_block
+
+
+def test_resume_producer_records_event_before_enqueuing_sse_chunk():
+    """恢复流必须先写事件日志（回写 `_seq`），再把 chunk 放入 SSE 队列。
+
+    若顺序颠倒，实时下发给前端的恢复流帧将丢失 `_seq`，排序契约会在测试全绿的情况下静默退化。
+    """
+    source = _source()
+    start = source.index("async def _build_resume_background_sse_response(")
+    end = source.index('@router.post(\n    "/permissions/{permission_request_id}/confirm"', start)
+    resume_block = source[start:end]
+
+    record_pos = resume_block.index("await _record_resume_event(chunk)")
+    enqueue_pos = resume_block.index('await queue.put(("chunk", chunk))')
+    assert record_pos < enqueue_pos

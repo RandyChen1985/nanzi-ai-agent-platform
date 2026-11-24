@@ -77,7 +77,13 @@ import {
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
-import { hydrateHistoryProcessTimeline, resolveBannerTodoTimeline, timelineHasPending } from "@/utils/processTimeline";
+import {
+  createResumeSeqNormalizer,
+  hydrateHistoryProcessTimeline,
+  maxTimelineSeq,
+  resolveBannerTodoTimeline,
+  timelineHasPending,
+} from "@/utils/processTimeline";
 import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
@@ -4339,10 +4345,11 @@ const submitPendingExternalExecution = async (msg: Message) => {
   }
   abortController = resumeAbort;
 
+  const normalizeResumeSeq = createResumeSeqNormalizer(maxTimelineSeq(msg.processTimeline));
   const resumeEventPump = createBufferedStreamEventPump(
     (data) => {
       if (liveWriterToken !== resumeToken || debugUnmounted) return;
-      applyPermissionStreamEvent(msg, data);
+      applyPermissionStreamEvent(msg, normalizeResumeSeq(data));
       if (data.type !== "model_call" && data.type !== "run_config" && data.type !== "keepalive") {
         scrollToBottom();
       }
@@ -4721,10 +4728,11 @@ const confirmPendingPermission = async (
   }
   abortController = resumeAbort;
 
+  const normalizeResumeSeq = createResumeSeqNormalizer(maxTimelineSeq(msg.processTimeline));
   const permissionEventPump = createBufferedStreamEventPump(
     (data) => {
       if (liveWriterToken !== resumeToken || debugUnmounted) return;
-      applyPermissionStreamEvent(msg, data);
+      applyPermissionStreamEvent(msg, normalizeResumeSeq(data));
       if (data.type !== "model_call" && data.type !== "run_config" && data.type !== "keepalive") {
         scrollToBottom();
       }

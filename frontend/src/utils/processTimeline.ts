@@ -729,6 +729,73 @@ function orderTimelineLevelBySeq<T extends { seq?: number }>(items: T[]): T[] | 
   return keyed.map((entry) => entry.item);
 }
 
+/**
+ * 递归读取当前时间线中已记录的最大后端事件序号（无则返回 0）。
+ *
+ * 用于权限确认 / 外部执行恢复流启动时记录挂起前的序号上限：正常情况下后端恢复流
+ * 会保留 `:seq` 继续单调递增，但若等待确认期间 Redis 过期或重启导致序号从 1 起算，
+ * 前端可用此上限把恢复流的新序号平移到挂起前之后，避免 `orderTimelineBySeq` 把新卡片
+ * 插队到审批前步骤前面。
+ *
+ * 注意：若用户在审批确认前刷新过页面，历史快照本身不持久化 `seq`，此处会返回 `0`、
+ * `createResumeSeqNormalizer(0)` 退化为透传；但此时旧节点在 `orderTimelineLevelBySeq`
+ * 中均使用 `-Infinity` 作为排序键，新节点（`seq >= 1`）仍稳定排在旧节点之后，不会乱序。
+ */
+export function maxTimelineSeq(items: ProcessTimelineItem[] | undefined): number {
+  let max = 0;
+  const visited = new WeakSet<object>();
+  const walk = (list: ProcessTimelineItem[] | undefined) => {
+    for (const item of list || []) {
+      if (!item || visited.has(item)) continue;
+      visited.add(item);
+      if ("seq" in item && typeof item.seq === "number" && Number.isFinite(item.seq) && item.seq > max) {
+        max = item.seq;
+      }
+      const children = timelineItemChildren(item);
+      if (children.length) walk(children);
+    }
+  };
+  walk(items);
+  return max;
+}
+
+/**
+ * 为单次恢复流构造 `_seq` 防回退归一化器。
+ *
+ * - 后端正常保留 `:seq`（收到 `_seq > baseSeq`）时零偏移透传，保持恢复流内并发乱序可被
+ *   `orderTimelineBySeq` 正常纠偏；
+ * - 若因 Redis TTL 过期 / 重启导致后端序号回退到 `<= baseSeq`，则锁定平移偏移量，把本段
+ *   恢复流事件整体平移到 `baseSeq` 之后，既保留恢复流内部相对顺序，也防止新步骤插队到
+ *   审批前旧步骤前面。
+ */
+export function createResumeSeqNormalizer(
+  baseSeq: number,
+): <T extends Record<string, any>>(data: T) => T {
+  const floor = Number.isFinite(baseSeq) && baseSeq > 0 ? baseSeq : 0;
+  if (floor <= 0) {
+    return <T extends Record<string, any>>(data: T): T => data;
+  }
+  let rebaseOffset: number | null = null;
+  let maxSeenSeq = floor;
+
+  return <T extends Record<string, any>>(data: T): T => {
+    if (!data || typeof data !== "object") return data;
+    const rawSeq = data._seq;
+    if (typeof rawSeq !== "number" || !Number.isFinite(rawSeq)) return data;
+
+    if (rebaseOffset === null) {
+      rebaseOffset = rawSeq <= floor ? floor : 0;
+    } else if (rebaseOffset === 0 && rawSeq <= floor) {
+      rebaseOffset = Math.max(floor, maxSeenSeq);
+    }
+
+    const effectiveSeq = rebaseOffset > 0 ? rawSeq + rebaseOffset : rawSeq;
+    if (effectiveSeq > maxSeenSeq) maxSeenSeq = effectiveSeq;
+    if (rebaseOffset === 0) return data;
+    return { ...data, _seq: effectiveSeq };
+  };
+}
+
 export function selectTimelineRenderableItems(
   items: ProcessTimelineItem[],
 ): ProcessTimelineItem[] {

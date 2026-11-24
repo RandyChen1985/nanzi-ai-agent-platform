@@ -416,3 +416,43 @@ async def test_append_drops_batch_of_only_transient_events(fake_redis):
     batch = await journal.read_after("u1", "c1", after_seq=0)
     assert batch["events"] == []
     assert batch["next_seq"] == 0, "没有落库事件时不应消耗序号"
+
+
+async def test_clear_with_preserve_seq_keeps_monotonic_counter(fake_redis):
+    """审批/外部执行恢复流清旧列表时保留 `:seq` 计数器：
+    恢复流事件必须紧接挂起前序号单调递增，避免前端 `orderTimelineBySeq` 把新卡片插队到旧卡片前面，
+    同时确保恢复期增量续显 `after_seq` 不会把新事件误判为旧事件。
+    """
+    journal = _journal()
+
+    await journal.append(
+        "u1",
+        "c1",
+        [
+            {"type": "log", "id": "prep", "title": "鉴权及上下文与能力准备"},
+            {"type": "log", "id": "grep", "title": "工具完成: Grep"},
+            {"type": "log", "id": "bash_1", "title": "调用工具: Bash"},
+        ],
+    )
+    before = await journal.read_after("u1", "c1", after_seq=0)
+    assert before["next_seq"] == 3
+
+    await journal.clear("u1", "c1", preserve_seq=True)
+    cleared = await journal.read_after("u1", "c1", after_seq=0)
+    assert cleared["events"] == [], "旧事件列表必须已清空"
+
+    resumed_event = {"type": "log", "id": "summary", "title": "汇总工具结果"}
+    await journal.append("u1", "c1", [resumed_event])
+    assert resumed_event["_seq"] == 4, "恢复流序号必须紧接挂起前递增，不能归零从 1 起算"
+
+    # 切页续显按挂起前游标拉取，应完整拉到恢复流事件
+    after = await journal.read_after("u1", "c1", after_seq=3)
+    assert [event["id"] for event in after["events"]] == ["summary"]
+    assert [event["_seq"] for event in after["events"]] == [4]
+    assert after["next_seq"] == 4
+
+    # 默认 preserve_seq=False（全新一轮）仍会重置序号从 1 起算
+    await journal.clear("u1", "c1")
+    new_turn_event = {"type": "log", "id": "prep_next", "title": "新一轮准备"}
+    await journal.append("u1", "c1", [new_turn_event])
+    assert new_turn_event["_seq"] == 1

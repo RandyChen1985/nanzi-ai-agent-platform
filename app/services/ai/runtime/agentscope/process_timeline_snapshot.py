@@ -1,10 +1,12 @@
 """Compact thinking-card snapshot from SSE chunks for history replay."""
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 DETAILS_MAX_CHARS = 2000
 TODO_STATUSES = {"pending", "in_progress", "completed"}
+_AGENT_LIFECYCLE_TITLE = re.compile(r"^(?:\[.*?\]\s*)?[✨\s]*(?:Agent 回复开始|Agent 回复结束)\s*$")
 
 
 def _normalize_text(text: str, trim_boundary: bool = False) -> str:
@@ -112,7 +114,9 @@ def _is_tool_log(data: Dict[str, Any]) -> bool:
     category = str(data.get("category") or "").lower()
     if category in {"permission", "external"}:
         return False
-    if category in {"tool", "sql", "agent"}:
+    if _AGENT_LIFECYCLE_TITLE.match(str(data.get("title") or "").strip()):
+        return False
+    if category in {"tool", "sql", "agent", "tool_resolution"}:
         return True
     if category:
         return False
@@ -628,15 +632,16 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
             return
 
     parent = None
-    if _is_tool_log(chunk):
-        for item in reversed(state):
-            if (
-                item.get("kind") == "text"
-                and item.get("textKind") == "narration"
-                and not item.get("pending")
-            ):
-                parent = item
-                break
+    if _is_tool_log(chunk) and state:
+        # 与前端 attachableNarrationParent 保持同一口径：只认「最后一条顶层条目且是已提交旁白」，
+        # 避免跨阶段（例如权限确认恢复或准备步骤之后）把新工具吸回旧旁白下方造成时间倒挂。
+        last_item = state[-1]
+        if (
+            last_item.get("kind") == "text"
+            and last_item.get("textKind") == "narration"
+            and not last_item.get("pending")
+        ):
+            parent = last_item
     if parent is not None:
         parent.setdefault("children", []).append(log)
         return

@@ -2821,7 +2821,14 @@ async def _build_resume_background_sse_response(
         if lane_acquired:
             return
         if conversation_id and lane_user_id:
-            await conversation_stream_journal.clear(lane_user_id, conversation_id)
+            # 权限确认 / 外部执行恢复与挂起前同属一轮思考卡片：只清旧事件列表、保留
+            # `:seq` 单调递增，避免恢复流新事件从 1 重新编号后在前端 `orderTimelineBySeq`
+            # 中插队到审批前步骤之前，也为后续放开恢复期事件续显保持游标连续。
+            await conversation_stream_journal.clear(
+                lane_user_id,
+                conversation_id,
+                preserve_seq=True,
+            )
         lane_acquired = True
 
     async def _producer_task() -> None:

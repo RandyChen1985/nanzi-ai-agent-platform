@@ -3012,7 +3012,14 @@ import {
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
-import { hydrateHistoryProcessTimeline, resolveBannerTodoTimeline, settlePendingTimelineSteps, timelineHasPending } from "@/utils/processTimeline";
+import {
+  createResumeSeqNormalizer,
+  hydrateHistoryProcessTimeline,
+  maxTimelineSeq,
+  resolveBannerTodoTimeline,
+  settlePendingTimelineSteps,
+  timelineHasPending,
+} from "@/utils/processTimeline";
 import { resolveImagePlaceholder } from "@/utils/imageGenerationPlaceholder";
 import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
@@ -12724,10 +12731,11 @@ const submitPendingExternalExecution = async (msg: Message) => {
   msg.thinkingText = "正在提交外部执行结果...";
   resetStallTimer();
 
+  const normalizeResumeSeq = createResumeSeqNormalizer(maxTimelineSeq(msg.processTimeline));
   const resumeEventPump = createBufferedStreamEventPump(
     (data) => {
       if (liveWriterToken !== resumeToken || embedUnmounted) return;
-      applyPermissionStreamEvent(msg, data);
+      applyPermissionStreamEvent(msg, normalizeResumeSeq(data));
       if (data.type !== "keepalive" && data.type !== "reasoning_content" && data.type !== "answer_delta") {
         maybePersistStreamSnapshot();
       }
@@ -12949,10 +12957,11 @@ const confirmPendingPermission = async (
     resetStallTimer();
   }
 
+  const normalizeResumeSeq = createResumeSeqNormalizer(maxTimelineSeq(msg.processTimeline));
   const permissionEventPump = createBufferedStreamEventPump(
     (data) => {
       if (liveWriterToken !== resumeToken || embedUnmounted) return;
-      applyPermissionStreamEvent(msg, data);
+      applyPermissionStreamEvent(msg, normalizeResumeSeq(data));
       if (data.type !== "keepalive" && data.type !== "reasoning_content" && data.type !== "answer_delta") {
         maybePersistStreamSnapshot();
       }

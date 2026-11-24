@@ -565,3 +565,60 @@ def test_subagent_reasoning_log_attached_to_container_children_and_preserves_rea
     assert reasoning_node.get("reasoning") is True
     assert reasoning_node.get("title") == "子代理思考"
 
+
+def test_tool_after_non_narration_step_does_not_attach_to_stale_narration():
+    """与前端 attachableNarrationParent 口径一致：旁白之后若已出现其他顶层步骤（如权限确认），
+    后续工具调用不得跨阶段吸回旧旁白 children，必须作为顶层步骤按真实顺序留在后面。
+    """
+    items = _run(
+        [
+            {"type": "process_narration", "content": "我先确认文档目录。"},
+            {"type": "process_narration_commit", "content": "我先确认文档目录。"},
+            {
+                "type": "log",
+                "id": "glob_1",
+                "title": "工具完成: Glob",
+                "status": "success",
+                "category": "tool",
+            },
+            {
+                "type": "permission_result",
+                "permission_request_id": "perm_1",
+                "status": "success",
+            },
+            {
+                "type": "log",
+                "id": "bash_after_confirm",
+                "title": "工具完成: Bash",
+                "status": "success",
+                "category": "tool",
+            },
+        ]
+    )
+
+    assert items is not None
+    top_ids = [item.get("id") for item in items]
+    assert top_ids == ["narration_1", "permission_perm_1", "bash_after_confirm"]
+    assert [c.get("id") for c in items[0]["children"]] == ["glob_1"]
+
+
+def test_agent_lifecycle_log_does_not_attach_to_narration():
+    """「Agent 回复开始 / 结束」是阶段标记，不得被吸附进上一条旁白的 children。"""
+    items = _run(
+        [
+            {"type": "process_narration", "content": "先检查一下。"},
+            {"type": "process_narration_commit", "content": "先检查一下。"},
+            {
+                "type": "log",
+                "id": "agent_reply_1",
+                "title": "Agent 回复开始",
+                "status": "success",
+                "category": "agent",
+            },
+        ]
+    )
+
+    assert items is not None
+    assert [item.get("id") for item in items] == ["narration_1", "agent_reply_1"]
+    assert items[0].get("children") == []
+
