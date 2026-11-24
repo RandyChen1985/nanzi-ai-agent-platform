@@ -56,7 +56,12 @@ def test_rename_dialog_keeps_the_real_name():
 def test_logic_still_uses_the_real_name():
     """搜索、扩展名、系统保护、归档判定都不能被展示层改写。"""
     source = _read()
-    assert "SYSTEM_PROTECTED.has(item.name)" in source
+    # 系统保护判定改由 isProtectedWorkspaceEntry 结合目录层级做，但比对用的仍是真实 name
+    assert (
+        "isProtectedWorkspaceEntry(item, userWorkspaceRoot.value, SYSTEM_PROTECTED)" in source
+    )
+    helper = (ROOT / "frontend/src/utils/workspacePath.ts").read_text(encoding="utf-8")
+    assert "protectedNames.has(item.name)" in helper
     assert "extOf(item.name)" in source
     assert "canPreviewWorkspaceFile(item.name)" in source
     assert "isExtractableArchive(item.name)" in source

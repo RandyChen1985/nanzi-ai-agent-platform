@@ -358,12 +358,35 @@ def test_provisional_check_does_not_reject_complete_long_report_mentioning_next_
     assert len(long_report) > 320
     assert tnd.is_provisional_assistant_text(long_report) is False
 
+    # 正文中段出现强信号、但结尾是结论 —— 不该误杀（这是按全文匹配时的典型误杀）
+    mid_signal = (
+        "本周已完成对最近 30 天全部告警数据的核对与归类。正在分析的 12 条告警均已闭环，"
+        "其中 7 条为容量水位临时越界，5 条为上游接口超时重试导致，均无需人工介入。"
+        "数据库层面无慢查询堆积，缓存命中率保持 98% 以上，消息队列无积压。"
+        "整体可用性 99.98%，符合 SLA 要求，本轮无需额外处理或跟进。"
+    )
+    assert len(mid_signal) > 80
+    assert tnd.is_provisional_assistant_text(mid_signal) is False
+
     # 短半截话依然拦截
     assert tnd.is_provisional_assistant_text("我先查一下数据，稍后回复您。") is True
     # 长文本末尾若出现强半截话信号依然拦截
     trailing_provisional = ("这是一段较长的前置说明内容。" * 25) + "请稍候，我正在查询最新报表数据..."
     assert len(trailing_provisional) > 320
     assert tnd.is_provisional_assistant_text(trailing_provisional) is True
+
+    # 超过 160 字、但结尾仍在承诺后续 —— 原先按长度分桶会漏判，现在必须拦住
+    long_then_promise = (
+        "先核对了 A、B、C 三项配置与近三日的调用日志，均无异常。" * 8 + "稍后回复您。"
+    )
+    assert len(long_then_promise) > 160
+    assert tnd.is_provisional_assistant_text(long_then_promise) is True
+
+    # 正常报告里的「接下来」「稍后」不再作为任何依据：
+    # 词表只留明确的承诺短语（稍后回复/稍后补充/稍后再/请稍等），
+    # 分不出「接下来建议做 X」（结论）和「接下来我再查 X」（承诺），索性只拦后者。
+    assert tnd.is_provisional_assistant_text("接下来建议在下周维护窗口做一次分区归档。") is False
+    assert tnd.is_provisional_assistant_text("稍后季度调整时可再统一评估容量规划。") is False
 
 
 @pytest.mark.asyncio
@@ -533,3 +556,86 @@ async def test_reconcile_job_also_cleans_stale_running(monkeypatch):
     await sched_mod._system_scheduler_reconcile_job()
 
     assert "cleanup_running" in called
+
+
+# ---------------------------------------------------------------------------
+# 8. 系统维护任务的 Redis 锁：拿不到锁不等于不能干活
+# ---------------------------------------------------------------------------
+
+
+class _BoomRedisClient:
+    """模拟 Redis 键都在、但 SET 直接连不上。"""
+
+    async def set(self, *args, **kwargs):
+        raise ConnectionError("redis unreachable")
+
+
+def _make_body_hit(monkeypatch, reached: list[str], label: str):
+    """把任务主体第一处依赖换成「一碰就记一笔」，用来判断它到底跑没跑。"""
+
+    class BodyHit(RuntimeError):
+        pass
+
+    def fake_session():
+        reached.append(label)
+        raise BodyHit("body reached")
+
+    monkeypatch.setattr(sched_mod, "AsyncSessionLocal", fake_session)
+
+
+@pytest.mark.asyncio
+async def test_memory_consolidation_runs_when_redis_lock_unavailable(monkeypatch):
+    """Redis 拿不到锁时记忆整合照跑。
+
+    这是日频维护任务，锁只为省掉多节点重复劳动。Redis 一挂就整天不跑，记忆不再
+    整理、而且没人会发现；重复跑一遍最坏是浪费 CPU。
+    """
+    reached: list[str] = []
+    monkeypatch.setattr(sched_mod.redis, "redis_client", _BoomRedisClient())
+    _make_body_hit(monkeypatch, reached, "memory")
+
+    await sched_mod._system_memory_consolidation_job()
+
+    assert reached == ["memory"]
+
+
+@pytest.mark.asyncio
+async def test_third_party_user_sync_runs_when_redis_lock_unavailable(monkeypatch):
+    """同步是 upsert，重复执行安全，宁可多跑也不要整天不同步。"""
+    from app.services.user_sync_service import UserSyncService
+
+    reached: list[str] = []
+
+    async def boom_body_hit():
+        reached.append("sync")
+        raise RuntimeError("body reached")
+
+    monkeypatch.setattr(sched_mod.redis, "redis_client", _BoomRedisClient())
+    # 主体第一处依赖是 get_config（staticmethod），拿它当「进没进主体」的探针
+    monkeypatch.setattr(UserSyncService, "get_config", boom_body_hit)
+
+    await sched_mod._system_third_party_user_sync_job()
+
+    assert reached == ["sync"]
+
+
+@pytest.mark.asyncio
+async def test_knowledge_metrics_sync_tolerates_none_redis_client(monkeypatch):
+    """redis_client 为 None 时不能靠 AttributeError 撞进 except 才放行。"""
+    from app.services.knowledge_metrics_service import KnowledgeMetricsService
+
+    reached: list[str] = []
+
+    async def boom_body_hit(cls):
+        reached.append("metrics")
+        raise RuntimeError("body reached")
+
+    monkeypatch.setattr(sched_mod.redis, "redis_client", None)
+    # 主体只有一句 sync_redis_metrics_to_db()，拿它当探针
+    monkeypatch.setattr(
+        KnowledgeMetricsService, "sync_redis_metrics_to_db", classmethod(boom_body_hit)
+    )
+
+    await sched_mod._system_knowledge_metrics_sync_job()
+
+    assert reached == ["metrics"]

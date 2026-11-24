@@ -32,7 +32,12 @@ _TRACE_POLL_INTERVAL_SEC = 0.3
 _NOTIFICATION_TOOL_NAMES = frozenset(spec[0] for spec in CHANNEL_SPECS.values())
 _SQL_TOOL_NAMES = frozenset({"execute_sql_query"})
 
-# 强半截话信号：高度表明助手仍在执行过程中尚未交付结论
+# 半截话信号：表明助手还在过程中、尚未交付结论。
+#
+# 只放「明确的承诺后续」这类短语，不放「接下来」/「稍后」这种模糊词——后者在正常业务
+# 报告里到处都是（「接下来一周建议关注库存周转」「稍后季度调整」），词表层面分不出
+# 是「接下来建议做 X」还是「接下来我再查 X」。要拦的是承诺，就把承诺本身写进词表：
+# 「稍后」不拦，「稍后回复」才拦。
 _STRONG_PROVISIONAL_PATTERNS = (
     "让我再",
     "让我补充",
@@ -43,18 +48,14 @@ _STRONG_PROVISIONAL_PATTERNS = (
     "补充按",
     "待会",
     "马上为您",
+    "稍后回复",
+    "稍后补充",
+    "稍后再",
+    "请稍等",
+    "稍等一下",
 )
-# 弱信号：在正常长业务报告中很常见（如「接下来一周建议关注…」），仅在短文本中判为半截话
-_WEAK_PROVISIONAL_PATTERNS = (
-    "再补充",
-    "接下来",
-    "稍后",
-    "稍等",
-    "继续分析",
-)
-_PROVISIONAL_PATTERNS = _STRONG_PROVISIONAL_PATTERNS + _WEAK_PROVISIONAL_PATTERNS
-_SHORT_PROVISIONAL_MAX_CHARS = 160
-_MEDIUM_PROVISIONAL_MAX_CHARS = 320
+# 只看结尾这么多个字符。跟长度无关：话说完了没有是结尾的事。
+_PROVISIONAL_TAIL_CHARS = 80
 
 _EXTERNAL_SENDERS = {
     "dingtalk": "send_dingtalk",
@@ -139,20 +140,23 @@ def build_task_notification_body(
 
 
 def is_provisional_assistant_text(text: str) -> bool:
-    """判断文本是否为未完成的半截过程话术。
+    """判断输出是否半截停在半路（结尾还在承诺后续动作）。
 
-    对长业务报告避免误杀：正文里出现「接下来一周建议…」或「稍后季度调整」属于正常表述，
-    仅短文本匹配弱信号；超过 320 字的完整正文只检查末尾收尾段是否落入强半截话。
+    只看结尾 80 字，不看全文、也不按长度分桶。
+
+    按全文匹配会把完整报告误杀：正文里的「正在分析最近 30 天数据」「接下来建议关注
+    库存周转」都是正常业务表述，命中即拒发，用户收到的是「投递失败」告警而不是报告，
+    一个字的业务信息都拿不到——误杀的代价远比漏判大。
+
+    而按长度分桶（原先 ≤160 查弱信号、161~320 只查强信号、>320 只看末尾）又会在
+    161 字以上把「先核对了 A/B/C…稍后回复您」这类真半截话放过去。
+
+    真正能判的只有一条：话说完了没有。这跟长度无关，只跟结尾有关。
     """
     cleaned = str(text or "").strip()
     if not cleaned:
         return True
-    length = len(cleaned)
-    if length <= _SHORT_PROVISIONAL_MAX_CHARS:
-        return any(token in cleaned for token in _PROVISIONAL_PATTERNS)
-    if length <= _MEDIUM_PROVISIONAL_MAX_CHARS:
-        return any(token in cleaned for token in _STRONG_PROVISIONAL_PATTERNS)
-    tail = cleaned[-80:]
+    tail = cleaned[-_PROVISIONAL_TAIL_CHARS:]
     return any(token in tail for token in _STRONG_PROVISIONAL_PATTERNS)
 
 

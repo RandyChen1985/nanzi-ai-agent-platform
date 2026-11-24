@@ -164,7 +164,9 @@ def test_task_row_reports_failure_instead_of_nan_progress():
 
     assert "task.status === 'error'" not in source, "状态字面量必须是 'failed'"
     assert "task.progress" not in source, "进度字段是 percent"
-    assert "task.status === 'failed' ? 'text-red-600'" in source, "失败态要标红"
+    assert "task.status === 'failed' ? 'text-red-600" in source, "失败态要标红"
     assert "task.error || '失败'" in source, "失败态要显示后端给的原因"
     assert "task.status === 'canceled' ? '已取消'" in source, "取消态不该显示进度百分比"
-    assert "Math.round(task.percent * 100)" in source
+    assert "task.status === 'committing' ? '写入中…'" in source, "服务端落盘态应提示写入中"
+    assert "Math.round(task.percent * 100)" not in source, "percent 已是 0-100，禁止再乘 100（会显示 5000%）"
+    assert "${Math.round(task.percent)}%" in source

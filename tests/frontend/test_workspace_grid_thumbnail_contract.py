@@ -76,10 +76,10 @@ def test_only_previewable_extensions_get_a_thumbnail():
 
 
 def test_media_area_keeps_card_heights_uniform():
-    """图片是 64px 高，文件夹与文档不能还是 32px，否则同一行卡片高低不齐。"""
+    """大图相册风：图片、文件夹与文档共用同一个 aspect-[4/3] 满宽媒体区，保证同一行卡片等高。"""
     grid = _grid_block(_read())
-    assert "h-16 w-full items-center justify-center overflow-hidden rounded-lg" in grid
+    assert "aspect-[4/3] w-full" in grid
     # emoji 走同一个媒体区，不再单独占一行
-    media = re.search(r'class="mb-2 flex h-16.*?</div>', grid, re.S)
+    media = re.search(r'class="relative flex aspect-\[4/3\].*?</div>', grid, re.S)
     assert media, "找不到媒体区容器"
     assert 'fileEmoji(item.name)' in media.group(0)

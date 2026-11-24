@@ -11,20 +11,24 @@ from typing import List, Optional, Dict, Any, Literal
 from fastapi import APIRouter, HTTPException, Depends, Query, File, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from app.schemas.response import StandardResponse
 from app.core.dependencies import require_api_key
 from app.core.redis import get_redis
 from app.core.upload_limits import MAX_FILES_PER_DIRECTORY, count_files_under
 from app.utils.fs_paths import get_data_base_dir, normalize_under_base
 from app.utils.fs_access import (
+    USER_WORKSPACE_RESERVED_DIR_NAMES,
     assert_path_allowed,
     assert_path_writable,
     get_allowed_fs_roots,
+    get_public_fs_roots,
     get_user_docs_dir,
     get_user_private_workspace_root,
     get_user_sessions_dir,
     get_user_uploads_dir,
     open_upload_storage_file,
+    is_forbidden_platform_skill_path,
     is_session_workdir_path,
     is_fs_admin,
     is_fs_virtual_root,
@@ -164,6 +168,8 @@ def _list_directory_entries(target_path: str, user_info: Dict[str, Any]) -> List
         with os.scandir(target_path) as entries:
             for entry in entries:
                 if entry.name.startswith("."):
+                    continue
+                if is_forbidden_platform_skill_path(entry.path, user_info):
                     continue
                 try:
                     stat = entry.stat()
@@ -837,6 +843,51 @@ def _assert_not_trash_root(path: str, user_info: Dict[str, Any]) -> str:
     return safe_path
 
 
+def _is_protected_root_entry(norm_path: str, user_info: Dict[str, Any]) -> bool:
+    """判断路径是否为系统根目录、用户工作区根目录或根级系统保留目录。
+
+    只拦截根级结构，不误伤用户在项目子目录下自建的同名 `docs`/`uploads` 等目录。
+    """
+    norm_base = os.path.normpath(get_base_dir())
+    workspaces_root = os.path.normpath(os.path.join(norm_base, "agent_workspaces"))
+    public_roots = {os.path.normpath(root) for root in get_public_fs_roots(norm_base)}
+
+    if norm_path in {norm_base, workspaces_root} or norm_path in public_roots:
+        return True
+
+    parent = os.path.dirname(norm_path)
+    # 任意用户的私有工作区根目录（agent_workspaces/<user_key>）本身不可删改
+    if parent == workspaces_root:
+        return True
+
+    private_root = get_user_private_workspace_root(user_info)
+    norm_private = os.path.normpath(private_root) if private_root else None
+    if norm_private and norm_path == norm_private:
+        return True
+
+    # 根级系统保留目录不可删改：本人/他人工作区根的直接子级，以及平台 data 根的直接子级
+    # （data 根下的 docs / skills 已由 public_roots 覆盖，这里补上 uploads / sessions / sandbox，
+    #  它们在 data 根下是平台级目录，与前端 WORKSPACE_ROOT_PROTECTED_NAMES 保持同一口径）
+    basename = os.path.basename(norm_path)
+    if basename in USER_WORKSPACE_RESERVED_DIR_NAMES:
+        if (
+            (norm_private and parent == norm_private)
+            or parent == norm_base
+            or os.path.dirname(parent) == workspaces_root
+        ):
+            return True
+    return False
+
+
+def _assert_mutable_entry_path(path: str, user_info: Dict[str, Any]) -> str:
+    """校验待重命名/删除路径：先保留回收站根专属提示，再拦截系统保留目录与用户根目录。"""
+    _assert_not_trash_root(path, user_info)
+    source = _resolve_writable_entry_path(path, user_info)
+    if _is_protected_root_entry(os.path.normpath(source), user_info):
+        raise HTTPException(status_code=400, detail="系统保留目录或工作区根目录不可重命名或删除。")
+    return source
+
+
 def _assert_trash_entry_path(path: str, user_info: Dict[str, Any]) -> str:
     safe_path = assert_path_allowed(path, user_info)
     if not _is_trash_path(safe_path, user_info):
@@ -895,8 +946,7 @@ async def rename_fs_entry(
     body: FileRenameRequest,
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
-    _assert_not_trash_root(body.path, user_info)
-    source = _resolve_writable_entry_path(body.path, user_info)
+    source = _assert_mutable_entry_path(body.path, user_info)
     if not os.path.exists(source):
         raise HTTPException(status_code=404, detail="文件或目录不存在。")
     new_name = _validate_new_entry_basename(body.new_name)
@@ -918,6 +968,13 @@ async def rename_fs_entry(
     )
 
 
+def _remove_path_sync(path: str) -> None:
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+    else:
+        os.remove(path)
+
+
 @router.post(
     "/delete-entry",
     response_model=StandardResponse[FileDeleteResponse],
@@ -927,18 +984,14 @@ async def delete_fs_entry(
     body: FileDeleteRequest,
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
-    _assert_not_trash_root(body.path, user_info)
-    source = _resolve_writable_entry_path(body.path, user_info)
+    source = _assert_mutable_entry_path(body.path, user_info)
     if not os.path.exists(source):
         raise HTTPException(status_code=404, detail="文件或目录不存在。")
 
     # admin 删除公共目录内容时直接永久删除（公共目录不属于任何人的回收站）
     if is_fs_admin(user_info) and is_public_fs_path(source):
         try:
-            if os.path.isdir(source):
-                shutil.rmtree(source)
-            else:
-                os.remove(source)
+            await run_in_threadpool(_remove_path_sync, source)
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"删除失败: {exc}") from exc
         return StandardResponse(
@@ -950,7 +1003,7 @@ async def delete_fs_entry(
     trashed_name = f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{basename}"
     trashed_path = os.path.normpath(os.path.join(trash_dir, trashed_name))
     try:
-        shutil.move(source, trashed_path)
+        await run_in_threadpool(shutil.move, source, trashed_path)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"删除失败: {exc}") from exc
     return StandardResponse(
@@ -1028,6 +1081,22 @@ async def purge_fs_entry(
     return StandardResponse(data=FilePurgeResponse(path=source))
 
 
+def _empty_trash_sync(trash_dir: str) -> int:
+    deleted_count = 0
+    for name in os.listdir(trash_dir):
+        if name.startswith("."):
+            continue
+        entry = os.path.join(trash_dir, name)
+        if os.path.isdir(entry):
+            shutil.rmtree(entry)
+        elif os.path.isfile(entry) or os.path.islink(entry):
+            os.remove(entry)
+        else:
+            continue
+        deleted_count += 1
+    return deleted_count
+
+
 @router.post(
     "/empty-trash",
     response_model=StandardResponse[FileEmptyTrashResponse],
@@ -1037,19 +1106,8 @@ async def empty_trash(
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
     trash_dir = _trash_dir_for(user_info)
-    deleted_count = 0
     try:
-        for name in os.listdir(trash_dir):
-            if name.startswith("."):
-                continue
-            entry = os.path.join(trash_dir, name)
-            if os.path.isdir(entry):
-                shutil.rmtree(entry)
-            elif os.path.isfile(entry) or os.path.islink(entry):
-                os.remove(entry)
-            else:
-                continue
-            deleted_count += 1
+        deleted_count = await run_in_threadpool(_empty_trash_sync, trash_dir)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"清空回收站失败: {exc}") from exc
     return StandardResponse(data=FileEmptyTrashResponse(deleted_count=deleted_count))
@@ -1123,30 +1181,32 @@ async def copy_to_workspace(
         raise HTTPException(status_code=403, detail=f"禁止复制该类型文件: {ext}")
 
     # 复用上传的命名分配：原名优先、重名追加短后缀、排他创建保证不覆盖已有文件
-    try:
+    def _copy_file_sync() -> tuple[str, int]:
         target, handle = open_upload_storage_file(target_dir, source_name)
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"复制失败: {exc}") from exc
+        try:
+            with handle:
+                # 分块拷贝：公共目录里可能有几十 MB 的手册，不该整个读进内存
+                with open(source, "rb") as src_handle:
+                    shutil.copyfileobj(src_handle, handle, length=UPLOAD_CHUNK_BYTES)
+            return target, os.stat(target).st_size
+        except OSError:
+            # 半途失败要清掉残留，否则用户会看到 0 字节的「副本」
+            try:
+                os.remove(target)
+            except OSError:
+                pass
+            raise
 
     try:
-        with handle:
-            # 分块拷贝：公共目录里可能有几十 MB 的手册，不该整个读进内存
-            with open(source, "rb") as src_handle:
-                shutil.copyfileobj(src_handle, handle, length=UPLOAD_CHUNK_BYTES)
-        stat = os.stat(target)
+        target, copied_size = await run_in_threadpool(_copy_file_sync)
     except OSError as exc:
-        # 半途失败要清掉残留，否则用户会看到 0 字节的「副本」
-        try:
-            os.remove(target)
-        except OSError:
-            pass
         raise HTTPException(status_code=500, detail=f"复制失败: {exc}") from exc
 
     return StandardResponse(
         data=CopyToWorkspaceResponse(
             path=target,
             name=os.path.basename(target),
-            size=stat.st_size,
+            size=copied_size,
         )
     )
 
@@ -1347,40 +1407,53 @@ async def search_files(
     if not search_roots:
         raise HTTPException(status_code=404, detail="没有可搜索的授权目录。")
 
-    results: List[FileItem] = []
-    truncated = False
+    def _search_files_sync() -> tuple[List[FileItem], bool]:
+        found: List[FileItem] = []
+        is_truncated = False
 
-    for search_root in search_roots:
-        for root, dirs, files in os.walk(search_root):
-            norm_root = os.path.normpath(root)
-            if not is_path_allowed(norm_root, user_info):
-                continue
-
-            dirs[:] = sorted(d for d in dirs if not d.startswith("."))
-
-            for name in sorted(dirs):
-                if _name_matches_search_keyword(name, keyword):
-                    _append_fs_entry(results, os.path.join(root, name), True, user_info=user_info)
-                    if len(results) >= max_results:
-                        truncated = True
-                        break
-            if truncated:
-                break
-
-            for name in sorted(files):
-                if name.startswith("."):
+        for search_root in search_roots:
+            for root, dirs, files in os.walk(search_root):
+                norm_root = os.path.normpath(root)
+                if not is_path_allowed(norm_root, user_info):
+                    dirs[:] = []
                     continue
-                if _name_matches_search_keyword(name, keyword):
-                    _append_fs_entry(results, os.path.join(root, name), False, user_info=user_info)
-                    if len(results) >= max_results:
-                        truncated = True
-                        break
-            if truncated:
-                break
-        if truncated:
-            break
 
-    results.sort(key=lambda x: (not x.is_dir, x.name.lower()))
+                dirs[:] = sorted(
+                    d
+                    for d in dirs
+                    if not d.startswith(".")
+                    and not is_forbidden_platform_skill_path(os.path.join(root, d), user_info)
+                )
+
+                for name in dirs:
+                    if _name_matches_search_keyword(name, keyword):
+                        _append_fs_entry(found, os.path.join(root, name), True, user_info=user_info)
+                        if len(found) >= max_results:
+                            is_truncated = True
+                            break
+                if is_truncated:
+                    break
+
+                for name in sorted(files):
+                    if name.startswith("."):
+                        continue
+                    file_path = os.path.join(root, name)
+                    if is_forbidden_platform_skill_path(file_path, user_info):
+                        continue
+                    if _name_matches_search_keyword(name, keyword):
+                        _append_fs_entry(found, file_path, False, user_info=user_info)
+                        if len(found) >= max_results:
+                            is_truncated = True
+                            break
+                if is_truncated:
+                    break
+            if is_truncated:
+                break
+
+        found.sort(key=lambda x: (not x.is_dir, x.name.lower()))
+        return found, is_truncated
+
+    results, truncated = await run_in_threadpool(_search_files_sync)
 
     return StandardResponse(
         data=FileSearchResponse(

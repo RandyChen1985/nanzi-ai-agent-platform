@@ -1317,8 +1317,12 @@ async def _system_memory_consolidation_job():
                 logger.warning("⏩ System memory consolidation skipped: lock already acquired by another node.")
                 return
         except Exception as lock_err:
-            logger.warning("Failed to acquire redis lock for memory consolidation: %s", lock_err)
-            return
+            # 拿不到锁 ≠ 不能干活。这是日频维护任务，锁只为省掉多节点重复劳动；
+            # Redis 一挂就整天不跑，记忆不再整理且没人会发现。重复跑一遍最坏是浪费 CPU。
+            logger.warning(
+                "System memory consolidation: redis lock unavailable, running without lock: %s",
+                lock_err,
+            )
         
     try:
         from app.services.ai.memory_index_service import MemoryIndexService
@@ -1351,12 +1355,18 @@ async def _system_knowledge_metrics_sync_job():
     logger.info("⏰ Starting system knowledge metrics sync job...")
     
     lock_key = f"lock:system_knowledge_metrics_sync:{datetime.now().strftime('%Y%m%d%H%M')}"
-    try:
-        if not await redis.redis_client.set(lock_key, "locked", ex=300, nx=True):
-            logger.warning("⏩ System knowledge metrics sync skipped: lock already acquired by another node.")
-            return
-    except Exception as lock_err:
-        logger.warning(f"Failed to acquire redis lock: {lock_err}")
+    # 判空是必须的：不判的话 redis_client 为 None 时 .set 抛 AttributeError，被下面
+    # except 接住后「碰巧」放行——行为是对的，但每天白打一条 warning，且语义靠意外成立。
+    if redis.redis_client is not None:
+        try:
+            if not await redis.redis_client.set(lock_key, "locked", ex=300, nx=True):
+                logger.warning("⏩ System knowledge metrics sync skipped: lock already acquired by another node.")
+                return
+        except Exception as lock_err:
+            logger.warning(
+                "System knowledge metrics sync: redis lock unavailable, running without lock: %s",
+                lock_err,
+            )
         
     try:
         from app.services.knowledge_metrics_service import KnowledgeMetricsService
@@ -1393,8 +1403,11 @@ async def _system_third_party_user_sync_job():
                 logger.warning("⏩ Third-party user sync skipped: lock already acquired by another node.")
                 return
         except Exception as lock_err:
-            logger.warning("Failed to acquire redis lock for third-party user sync: %s", lock_err)
-            return
+            # 同上：同步是 upsert，重复执行安全，宁可多跑也不要整天不同步。
+            logger.warning(
+                "Third-party user sync: redis lock unavailable, running without lock: %s",
+                lock_err,
+            )
 
     try:
         from app.services.user_sync_service import UserSyncService
