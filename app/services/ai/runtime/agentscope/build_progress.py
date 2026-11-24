@@ -48,6 +48,7 @@ BUILD_STAGE_LABELS: dict[str, str] = {
 BUILD_STAGE_CHILDREN: dict[str, dict[str, str]] = {
     "workspace": {
         "workspace:config": "配置与会话目录",
+        "workspace:forbidden": "权限禁用集合",
         "workspace:skills": "技能发现",
         "workspace:sandbox": "沙箱获取",
         "workspace:preseed": "技能快照播种",

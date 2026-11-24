@@ -67,6 +67,10 @@ _sandbox_host_prepare_locks: dict[str, asyncio.Lock] = {}
 #: 工作区准备分段测量的子阶段名 → 摘要里的展示名（顺序即摘要顺序）。
 _WORKSPACE_TRACE_STAGE_LABELS: dict[str, str] = {
     "config": "配置与会话目录",
+    # 权限禁用集合与技能扫描都会改变 skill_paths，但开销来源完全不同：前者是一次
+    # 权限查询（Redis 命中后还可能补一次明细聚合，未命中直接走 DB），后者是逐个目录
+    # 读 SKILL.md 的纯磁盘 IO。合成一格时「15s」无法判断该优化谁，故拆开测。
+    "forbidden": "权限禁用集合",
     "skills": "技能发现",
     "sandbox": "沙箱获取",
     "preseed": "技能快照播种",
@@ -385,18 +389,33 @@ def discover_platform_skill_paths(
     paths: list[str] = []
     from app.utils.skill_metadata import is_skill_enabled, parse_skill_frontmatter
 
-    for entry in sorted(os.listdir(skills_root)):
-        skill_dir = os.path.join(skills_root, entry)
-        if os.path.isdir(skill_dir) and os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
-            if allowlist is not None and entry not in allowlist:
-                continue
-            if entry in forbidden:
-                continue
-            # 过滤禁用的技能
-            meta = parse_skill_frontmatter(entry, os.path.join(skill_dir, "SKILL.md"))
-            if not is_skill_enabled(meta):
-                continue
-            paths.append(os.path.abspath(skill_dir))
+    # 用 scandir 而不是 listdir + isdir：目录项类型由 readdir 的 d_type 直接给出，
+    # 省掉「每个条目一次 stat」。技能库上千条时这一项就是秒级差距（网络盘/同步盘上
+    # 单次 stat 可达毫秒量级）。白名单/禁用过滤放在读 SKILL.md 之前——只有真正入选的
+    # 技能才需要 open + 解析 frontmatter。
+    try:
+        with os.scandir(skills_root) as scan:
+            entries = sorted(scan, key=lambda item: item.name)
+    except OSError as exc:
+        logger.warning("[workspace] Failed to scan skills root %s: %s", skills_root, exc)
+        return []
+
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        name = entry.name
+        if allowlist is not None and name not in allowlist:
+            continue
+        if name in forbidden:
+            continue
+        skill_md = os.path.join(entry.path, "SKILL.md")
+        if not os.path.isfile(skill_md):
+            continue
+        # 过滤禁用的技能
+        meta = parse_skill_frontmatter(name, skill_md)
+        if not is_skill_enabled(meta):
+            continue
+        paths.append(os.path.abspath(entry.path))
 
     # 追加用户个人技能路径
     if user_info:
@@ -4832,6 +4851,7 @@ async def get_local_workspace(
     from app.services.ai.skills.policy import get_forbidden_skill_ids
 
     forbidden_skill_ids = await get_forbidden_skill_ids(_resolve_identity_user_id(user_info))
+    prepare.mark("forbidden")
     # 技能发现要逐个目录读 SKILL.md 解析 frontmatter（同步 IO，随技能库线性增长），
     # 同样放线程里，别在首 token 前的关键路径上占着事件循环。
     skill_paths = await asyncio.to_thread(

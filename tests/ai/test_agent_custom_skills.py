@@ -134,3 +134,62 @@ def test_skill_filter_kwargs_from_config():
         "skills_custom": True,
         "allowed_global_skills": ["a", "b"],
     }
+
+
+def test_discover_skips_non_skill_entries_and_missing_root(tmp_path, monkeypatch):
+    """目录枚举用 scandir：非目录、无 SKILL.md 的条目都要跳过，根目录不可读不许抛。
+
+    技能库里常有 .git、README、临时目录；老实现靠 listdir + 两次 stat，新实现靠
+    dirent 类型。这里锁住「跳过规则不变」和「根目录消失时返回空列表」。
+    """
+    global_root = tmp_path / "global"
+    _write_skill(global_root, "alpha")
+    (global_root / "not-a-skill").mkdir()
+    (global_root / "README.md").write_text("docs", encoding="utf-8")
+    (global_root / ".git").mkdir()
+    (global_root / ".git" / "config").write_text("x", encoding="utf-8")
+
+    with patch("app.core.config.Settings.SKILLS_DIR", new_callable=PropertyMock) as mock_dir:
+        mock_dir.return_value = str(global_root)
+        paths = discover_platform_skill_paths(user_info=None)
+        assert {os.path.basename(p) for p in paths} == {"alpha"}
+
+        mock_dir.return_value = str(tmp_path / "does-not-exist")
+        assert discover_platform_skill_paths(user_info=None) == []
+
+
+def test_discover_parses_frontmatter_only_for_selected_skills(tmp_path, monkeypatch):
+    """★ 白名单 / 禁用集合的过滤必须发生在读 SKILL.md 之前。
+
+    技能库上千条时，扫描本身是 dirent 级操作（廉价），真正的成本是「每个技能 open
+    一次读 8KB 解析 frontmatter」。若过滤排在解析之后，白名单只选 1 个技能也要为其余
+    全部付磁盘 IO——这正是「技能发现」随技能库线性变慢、被报成十几秒的来源之一。
+    """
+    from unittest.mock import patch as _patch
+
+    global_root = tmp_path / "global"
+    for skill_id in ("alpha", "beta", "gamma", "delta"):
+        _write_skill(global_root, skill_id)
+
+    parsed: list[str] = []
+    import app.utils.skill_metadata as skill_metadata
+
+    real_parse = skill_metadata.parse_skill_frontmatter
+
+    def spy(skill_id, skill_md_path):
+        parsed.append(skill_id)
+        return real_parse(skill_id, skill_md_path)
+
+    monkeypatch.setattr(skill_metadata, "parse_skill_frontmatter", spy)
+
+    with _patch("app.core.config.Settings.SKILLS_DIR", new_callable=PropertyMock) as mock_dir:
+        mock_dir.return_value = str(global_root)
+        paths = discover_platform_skill_paths(
+            user_info=None,
+            skills_custom=True,
+            allowed_global_skills=["beta"],
+            forbidden_skill_ids=["gamma"],
+        )
+
+    assert {os.path.basename(p) for p in paths} == {"beta"}
+    assert parsed == ["beta"], "只有入选的技能才该被读进来解析"

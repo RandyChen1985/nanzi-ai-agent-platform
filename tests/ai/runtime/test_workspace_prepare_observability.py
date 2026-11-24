@@ -96,6 +96,9 @@ async def test_prepare_trace_reports_stages_notes_and_summary(tmp_path, monkeypa
     # 子阶段覆盖整条链路，顺序即真实执行顺序
     assert [name for name, _ms in trace.stages] == [
         "config",
+        # 权限禁用集合单独一格：它是一次权限查询（Redis 可能还要补明细聚合），
+        # 与「逐个目录读 SKILL.md」的磁盘扫描是两个完全不同的开销来源。
+        "forbidden",
         "skills",
         "sandbox",
         "preseed",
