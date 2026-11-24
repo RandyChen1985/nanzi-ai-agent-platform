@@ -2822,11 +2822,6 @@ onMounted(async () => {
               :class="taskMetricText(task).rateNum !== null && taskMetricText(task).rateNum < 90 ? 'text-red-600' : 'text-gray-900'"
             >{{ taskMetricText(task).rate }}</b>
           </span>
-          <span
-            v-if="String(task.config?.task_constraints || '').trim()"
-            class="ml-auto shrink-0 rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700"
-            title="该任务已配置输出要求（任务约束）"
-          >约束</span>
         </div>
 
         <!-- 时间：相对时间打头，绝对时间兜底；暂停任务写「已暂停」而不是「暂无计划」 -->
@@ -2842,6 +2837,15 @@ onMounted(async () => {
               {{ nextRunCell(task).text }}<span class="ml-1 font-medium text-gray-400">{{ nextRunCell(task).abs }}</span>
             </span>
           </div>
+          <!-- 输出要求是配置细节，不是数据指标：放细节区、用灰字，hover 直接看写了什么 -->
+          <span
+            v-if="String(task.config?.task_constraints || '').trim()"
+            class="ml-auto inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-gray-400"
+            :title="'已设置「输出有什么要求」，会作为高优先级约束合并进智能体提示词：\n' + String(task.config.task_constraints).trim().slice(0, 160)"
+          >
+            <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+            已设输出要求
+          </span>
         </div>
 
         <!-- 操作：主操作文字按钮 + 启停一处，其余进 ⋯ 菜单 -->
