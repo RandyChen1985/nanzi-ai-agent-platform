@@ -285,3 +285,92 @@ def test_resolver_script_methods_are_defined_once():
     source = inspect.getsource(SecretResolver)
     assert source.count("async def resolve_by_key") == 1
     assert source.count("async def list_keys_for_script") == 1
+
+
+def test_conversation_id_falls_back_to_agent_context(tmp_path, fake_platform, monkeypatch):
+    """绑定时漏传 conversation_id（例如上游 LocalWorkspace 没挂该属性）时，
+    运行时必须能从 AgentContext 兜底拿到，不能因为 no-conversation-id 直接跳过注入。
+    """
+    from types import SimpleNamespace
+
+    _patch_secret_layer(monkeypatch, fake_platform)
+    monkeypatch.setattr(
+        "app.core.context.get_current_agent_context",
+        lambda: SimpleNamespace(conversation_id="conv-from-ctx"),
+    )
+    chunks = asyncio.run(
+        _run_bash(
+            str(tmp_path),
+            "nanzi-credential get weather.api.key",
+            conversation_id=None,
+        )
+    )
+    text = _chunk_text(chunks)
+    assert "***" in text, f"未从 AgentContext 兜底拿到 conversation_id：{text!r}"
+    assert VALUE not in text
+
+
+def test_local_workspace_factories_attach_conversation_id():
+    """get_local_workspace 与 build_host_only_workspace 构造 LocalWorkspace 后必须挂上 conversation_id。
+
+    上游 LocalWorkspace 没有 conversation_id 字段，不显式挂上会导致
+    bind_configured_tools_to_workspace 永远拿到 None，实机 100% command not found。
+    """
+    import inspect
+
+    from app.services.ai.runtime.agentscope import workspace as ws_module
+
+    for fn in (ws_module.get_local_workspace, ws_module.build_host_only_workspace):
+        src = inspect.getsource(fn)
+        assert "local_ws.conversation_id =" in src, f"{fn.__name__} 未给 local_ws 挂载 conversation_id"
+
+
+def test_bash_in_subdirectory_finds_parent_nanzi_helper(tmp_path, fake_platform, monkeypatch):
+    """命令在会话子目录中执行时（例如 cd subdir 或传入子目录 cwd），仍能向上找到 .nanzi/nanzi-credential。"""
+    _patch_secret_layer(monkeypatch, fake_platform)
+    sub = tmp_path / "skills" / "demo"
+    sub.mkdir(parents=True)
+    # 先切进子目录再让 prelude 跑（模拟带子目录 cwd 启动）：通过 _decorate 直接验证 shell 逻辑
+    from app.services.ai.runtime.agentscope.workspace import (
+        TICKET_FILE_PREFIX,
+        _ScriptCredentialBashContext,
+        _ScriptCredentialBashNativeTool,
+    )
+    from app.services.secrets.sandbox_helper import write_credential_helper
+
+    write_credential_helper(
+        tmp_path,
+        ticket="v1.t.s",
+        platform_url=fake_platform,
+        ticket_name=f"{TICKET_FILE_PREFIX}sub123",
+    )
+
+    class _Stub:
+        name = "Bash"
+
+    tool = _ScriptCredentialBashNativeTool(
+        _Stub(),
+        workdir=str(tmp_path),
+        host_root=None,
+        sandboxed=False,
+        user_info={"user_id": "u1", "dept_code": ""},
+        conversation_id="c1",
+    )
+    ctx = _ScriptCredentialBashContext(
+        jti="sub123",
+        platform_url=fake_platform,
+        ticket_path=str(tmp_path / ".nanzi" / f"{TICKET_FILE_PREFIX}sub123"),
+        workdir=str(tmp_path),
+    )
+    decorated = tool._decorate("command -v nanzi-credential", str(tmp_path / ".nanzi"), ctx)
+    import subprocess
+
+    proc = subprocess.run(
+        ["bash", "-c", decorated],
+        cwd=str(sub),
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert str(tmp_path / ".nanzi" / "nanzi-credential") in proc.stdout.strip()

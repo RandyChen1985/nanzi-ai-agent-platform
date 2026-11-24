@@ -5038,6 +5038,10 @@ async def get_local_workspace(
                 workdir=workdir,
                 skill_paths=skill_paths,
             )
+            # 上游 LocalWorkspace 没有 conversation_id 属性：必须显式挂上，否则
+            # 脚本凭据通道（_ScriptCredentialBashNativeTool）与脚本工具（_bind_script_tool_spec）
+            # 都会拿到 None，导致脚本凭据每次都因 no-conversation-id 静默跳过注入。
+            local_ws.conversation_id = str(conversation_id or "").strip()
             if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S) and sandbox_user_key:
                 local_ws.workspace_user_root = os.path.join(root, sandbox_user_key)
                 if sandbox_ws is not None and not isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
@@ -6375,6 +6379,7 @@ async def build_host_only_workspace(
         user_info,
     )
     local_ws = LocalWorkspace(workdir=workdir, skill_paths=skill_paths)
+    local_ws.conversation_id = str(conversation_id or "").strip()
     await local_ws.initialize()
     return local_ws
 
@@ -7778,6 +7783,21 @@ class _ScriptCredentialBashNativeTool:
 
     # ── 身份与路径 ────────────────────────────────────────────────
 
+    def _resolved_conversation_id(self) -> str:
+        """取当前会话 id：优先用绑定时传入的，缺省时从运行时 AgentContext 兜底。"""
+        cid = str(self._conversation_id or "").strip()
+        if cid:
+            return cid
+        try:
+            from app.core.context import get_current_agent_context
+
+            agent_ctx = get_current_agent_context()
+            if agent_ctx is not None:
+                return str(getattr(agent_ctx, "conversation_id", "") or "").strip()
+        except Exception:  # noqa: BLE001 - 上下文不可读时按缺失处理
+            pass
+        return ""
+
     def _identity(self) -> tuple[str, str, str] | None:
         """(user_id, conversation_id, dept_code)。缺前两个就签不出票，跳过注入。
 
@@ -7788,7 +7808,7 @@ class _ScriptCredentialBashNativeTool:
         if not isinstance(info, dict):
             return None
         user_id = str(info.get("user_id") or info.get("id") or "")
-        conversation_id = str(self._conversation_id or "")
+        conversation_id = self._resolved_conversation_id()
         if not user_id or not conversation_id or not self._workdir:
             return None
         return user_id, conversation_id, str(info.get("dept_code") or "")
@@ -7829,7 +7849,7 @@ class _ScriptCredentialBashNativeTool:
             return "no-user-info"
         if not str(info.get("user_id") or info.get("id") or ""):
             return "no-user-id"
-        if not str(self._conversation_id or ""):
+        if not self._resolved_conversation_id():
             return "no-conversation-id"
         if not self._workdir:
             return "no-workdir"
@@ -7917,13 +7937,25 @@ class _ScriptCredentialBashNativeTool:
         # 沙箱里只挂载了 /workspace，宿主路径在容器中不存在，helper 会报「票据
         # 不存在」——而且这个错看起来像权限问题，排查方向会被带偏。
         # ctx.ticket_path 留给宿主侧的 _cleanup 删文件用。
-        # **helper 目录用 `$(pwd)` 现算，不用宿主转容器算出来的绝对路径。**
-        # 平台的 workdir 是「平台侧」路径，容器里挂到哪一层取决于部署方式
-        # （DooD 下还要过 HOST_DATA_DIR 映射），推错一层就是全链路失效、而现象
-        # 只是 `command not found`。Bash 的初始 cwd 一定就是会话目录
-        # （_SandboxSessionBashNativeTool 保证），所以 `$(pwd)` 是唯一可靠的锚点。
+        # **helper 目录用 `$(pwd)` 现算，并兼容子目录 `cwd` 与跨目录 `cwd`。**
+        # 1. 常规（无 cwd）：初始 cwd 就是会话目录，`$(pwd)/.nanzi` 直接命中；
+        # 2. 子目录 cwd（如 skills/xxx）：沿父目录向上回溯找到 `.nanzi`；
+        # 3. 沙箱跨目录 cwd（如 /tmp）：若可换算出容器内 `/workspace/.../.nanzi`，作为最后兜底。
+        fallback_view = ""
+        if self._sandboxed:
+            view_dir = self._helper_dir_in_command_view()
+            if view_dir and view_dir.startswith(f"{DOCKER_WORKSPACE_LOGICAL_ROOT}/"):
+                fallback_view = (
+                    f' [ -d "$NANZI_H" ] || {{ [ -d {shlex.quote(view_dir)} ] '
+                    f'&& NANZI_H={shlex.quote(view_dir)}; }};'
+                )
         prelude = (
             'NANZI_H="$(pwd)/.nanzi"; '
+            '[ -d "$NANZI_H" ] || { NANZI_D="$(pwd)"; '
+            'while [ "$NANZI_D" != "/" ] && [ -n "$NANZI_D" ]; do '
+            '[ -d "$NANZI_D/.nanzi" ] && { NANZI_H="$NANZI_D/.nanzi"; break; }; '
+            'NANZI_D="$(dirname "$NANZI_D")"; done; };'
+            f"{fallback_view} "
             f"export NANZI_PLATFORM_URL={shlex.quote(ctx.platform_url)}; "
             f'export NANZI_TICKET_FILE="$NANZI_H/{TICKET_FILE_PREFIX}{ctx.jti}"; '
             'export PATH="$NANZI_H:$PATH";'
