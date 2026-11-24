@@ -65,6 +65,7 @@
     - [3.7.6 任务未执行或重复执行排查](#376-任务未执行或重复执行排查)
   - [3.8 调试与联调工具链 (Agent Debug / Playground / Widget Debugger)](#38-调试与联调工具链-agent-debug--playground--widget-debugger)
   - [3.9 小白高频问题与智能体排查 Q&A](#39-小白高频问题与智能体排查-qa)
+  - [3.10 凭据中心与脚本读取凭据 (Credential Center &amp; Script Access)](#310-凭据中心与脚本读取凭据-credential-center--script-access)
 - [四、ChatBI 开发平台 (ChatBI Platform)](#四chatbi-开发平台)
   - [4.1 核心逻辑：ChatBI 是如何安全查询企业数据的？](#41-核心逻辑chatbi-是如何安全查询企业数据的)
   - [4.2 元数据同步与业务语义字典标注 (Metadata Management)](#42-元数据同步与业务语义字典标注-metadata-management)
@@ -2097,6 +2098,131 @@ sequenceDiagram
     - 其他人创建的智能体，只有通过系统管理员**角色/用户权限分配**，或在**项目空间协作中显式挂载共享**给您时，您才具备对话使用权限；
   - 🌐 **系统级智能体 (System Agents)**：
     - 平台预置与系统级智能体（`is_system`），全平台所有授权用户**全局只读可用**；其版本迭代、Prompt 调优与配置修改受平台管理员权限严格管控。
+
+### 3.10 凭据中心与脚本读取凭据 (Credential Center & Script Access)
+
+#### 核心逻辑：为什么不该把 key 写死在脚本里
+
+把 API Key 直接写进 `.py` / `.sh`，会连带四个问题：**改一次要改代码并重新上传**、**值跟着技能包/对话记录一起扩散**、**谁用过查不出来**、**泄露了只能靠删代码止血**。凭据中心把值收进加密存储，脚本只拿一个**标识**（如 `weather.api.key`）去换，换来的是三件事——轮换只改一处、每次取用都留审计、停用即全局失效。
+
+值是加密存的（`ENCRYPTION_KEY`），不落日志、不进对话历史。界面上凭证类凭据**没有「查看」入口**，这是刻意的：能看一次就能被截图一次。
+
+#### 三道闸门：默认全关，要显式打开
+
+| 层 | 在哪 | 默认 |
+|---|---|---|
+| ① 平台策略 | 系统管理 → 凭据注入策略，「脚本读取」 | **关** |
+| ② 你的偏好 | 我的凭据 → 注入策略，「脚本读取」 | **关** |
+| ③ 这条凭据本身 | 凭据的「可用场景」勾上 **脚本可用** | 新建时勾上；别人授予你的默认不勾 |
+
+> ⚠️ **测试前最容易踩的坑**：①②两层默认都是关的。没打开就去试，`get` 一律返回「平台或你的偏好关闭了…」，看着像功能没上线。三层任意一层没开都取不到。
+
+#### 脚本里怎么取：两条通道
+
+先分清你用的是哪一种，两者不通用：
+
+| 你写的是 | 走哪条 | 怎么取 |
+|---|---|---|
+| 平台「脚本工具」（`sys_script_tools`，在工具集里配置的那种） | **A. 环境变量** | 绑定槽位写 `env:MY_KEY`，脚本里 `os.environ["MY_KEY"]` |
+| **技能（skill）里的 `.py` / `.js`**、对话里让 agent 跑的任何 bash | **B. helper** | `nanzi-credential get <标识>` |
+
+**技能里的脚本走 Bash，没有环境变量注入**——这是最容易误解的一条。skill 的 `scripts/*.py` 是被 agent 用 Bash 执行的，不是平台脚本工具，所以 `os.environ["MY_KEY"]` 拿不到任何东西。
+
+#### 通道 B：helper 用法
+
+对话里（或任何沙箱命令里）直接可用：
+
+```bash
+# 不知道有哪些可用的，先列出来（只给标识和名称，不含值）
+nanzi-credential list
+
+# 取一条，值走 stdout，不打印任何多余内容
+KEY=$(nanzi-credential get weather.api.key)
+curl -s -H "Authorization: Bearer $KEY" https://api.example.com/v1/weather
+
+# 结构化凭据按字段取（凭据值是 JSON 时）
+HOST=$(nanzi-credential get mail.smtp | python3 -c 'import json,sys;print(json.load(sys.stdin)["host"])')
+```
+
+Python 脚本里推荐用 `subprocess` 而不是 `os.environ`：
+
+```python
+# skills/my-skill/scripts/fetch_weather.py
+import subprocess
+
+def get_secret(key: str) -> str:
+    """从凭据中心取一条凭据。失败时 helper 返回 exit 1，stderr 是人话。"""
+    result = subprocess.run(
+        ["nanzi-credential", "get", key],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"取凭据失败：{key}")
+    return result.stdout.strip()
+
+key = get_secret("weather.api.key")
+# 用 key 发请求……
+```
+
+在 `SKILL.md` 里把这件事讲给模型听，否则它会自己猜着写：
+
+```markdown
+## 外部 API 凭据
+调用第三方 API 时，凭据**不要**写死、也不要读环境变量（技能脚本没有注入）。
+统一用 helper 按需取：
+
+    KEY=$(nanzi-credential get weather.api.key)
+
+不确定标识时先跑 `nanzi-credential list`。
+```
+
+#### 怎么验证这条链路真的通了
+
+按顺序走，每一步都对应一个常见失败点：
+
+1. **打开两层开关**：系统管理 → 注入策略打开「脚本读取」；我的凭据 → 注入策略也打开。
+2. **建一条凭据**：新建时「脚本可用」默认是勾上的；确认它确实被勾着。用「系统共享」凭据的，还要确认管理员授权给了你，并**自己勾上「脚本可用」**（授予凭据默认不勾）。
+3. **问 agent「列一下我能在脚本里用的凭据」**，它应该跑 `nanzi-credential list` 并列出标识。
+4. **让它取一次**：`说明：把 weather.api.key 取出来，只告诉我长度，不要打印内容`。取到了说明全链路通。
+5. **复核审计**：凭据中心 → 变更记录 / 调用记录，应有一条 `sandbox_script` 场景的记录，能看到是谁、哪个会话、哪个标识。
+6. **负向验证**：把凭据上的「脚本可用」取消勾选，再取一次，应报「这条凭据没有授权给当前场景」；把个人偏好关掉，应报「平台或你的偏好关闭了…」。两个提示不同，能帮你定位是哪一层没开。
+
+#### 排查对照表
+
+| 现象 | 原因 | 怎么办 |
+|---|---|---|
+| `nanzi-credential: command not found` | 这条命令不在 Bash 工具里跑的（如定时任务里的其它执行路径），或工作区不可写 | 在对话的 Bash 里执行；确认会话工作区可写 |
+| 「平台或你的偏好关闭了…」 | 第 ① 或 ② 层开关没开 | 见上面「三道闸门」 |
+| 「这条凭据没有授权给当前场景」 | 第 ③ 层没勾「脚本可用」 | 编辑这条凭据，勾上 |
+| 「没有这条凭据，或它不在你可见的范围内」 | 标识拼错，或这条凭据不是你的、也没授权给你 | 先跑 `list` 核对拼写 |
+| 「凭据还没有授权给你」 | 系统共享凭据没授权到你 | 找管理员授权（部门或全体） |
+| 「票据无效或已过期」 | 命令执行超过 5 分钟才用到值（长脚本的极端情况） | 重新执行；或先把值取到一个 shell 变量里 |
+| 「连不上平台」 | 沙箱访问不到平台地址（Linux 上 docker 缺 `--add-host`） | 见下方部署说明 |
+| 「取凭据太频繁」 | 一分钟内超过 60 次 | 改成分批取，或复用已取到的值 |
+
+#### 边界：值交出去之后，平台拦不住
+
+前几项（MCP 请求头、API 工具参数）都是**平台代发**，出站目标受域名白名单约束，平台知道值发给了谁。脚本通道不一样——**脚本自己发请求**：
+
+- 值一旦交给脚本，它能 `print`、能写文件、能发到任何域名，**平台拦不住**，只留一条调用记录；
+- 因此脚本场景**不校验域名白名单**（拦在这里只会误杀）；
+- 脱敏只保护**模型上下文**这一条路：脚本把值 print 到 stdout 时，进模型之前会被掩码（超过 12 位的留头尾各 4 位，如 `sk-s***3456`；短的直接全掩成 `***`），够你认出是哪条、抄不走；但写进日志文件、或发到外网的部分，平台看不到；
+- 结论：**按凭据逐条勾「脚本可用」，不要拿一条万能 key 全开**。什么时候该勾，「边界」这个词就该被想起。
+
+#### 部署侧（管理员）
+
+helper 要回连平台取凭据，所以沙箱必须能访问到平台地址：
+
+| 部署形态 | 地址 | 额外要求 |
+|---|---|---|
+| 本机执行（local 策略） | `http://127.0.0.1:<端口>` | 无 |
+| Docker（macOS / Windows） | `http://host.docker.internal:<端口>` | Docker Desktop 内置，无需配置 |
+| Docker（Linux） | 同上 | 需 `--add-host=host.docker.internal:host-gateway` |
+| Kubernetes | `http://<service>.<ns>.svc.cluster.local:<端口>` | 走 service DNS |
+
+平台地址可用 `system_configs.sandbox_platform_base_url` 显式配置（留空时按上表推导）。
+
+另外 `/internal/` 这组接口**只认票据、不认登录态**，应在网关层限制为内网 / 沙箱网段可达，不要暴露到公网。
 
 ---
 

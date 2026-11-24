@@ -252,8 +252,57 @@ class TestSecretCenterUsageHelp:
 
     def test_help_lists_all_four_real_injection_points(self):
         source = _read(self.CENTER)
-        for anchor in ["MCP 服务", "API 工具 · 请求头", "API 工具 · 参数位", "脚本工具 · 环境变量"]:
+        for anchor in ["MCP 服务", "API 工具 · 请求头", "API 工具 · 参数位", "脚本 · 两条通道"]:
             assert anchor in source, f"弹窗缺少场景：{anchor}"
+
+    def test_help_covers_both_script_channels_and_the_boundary(self):
+        """脚本那一条必须同时讲清 helper 用法与「值会离开平台」的边界。
+
+        只写「脚本可以用」会让人以为它也受域名白名单约束——前几项是平台代发，
+        脚本是自己发请求，这是两种完全不同的信任模型。
+        """
+        source = _read(self.CENTER)
+        assert "nanzi-credential get" in source
+        assert "nanzi-credential list" in source
+        assert "边界" in source
+        assert "拦不住它被打印或发到别处" in source
+
+    def test_help_has_a_code_usage_tab(self):
+        """弹窗要有「怎么在代码里用」这个页签。
+
+        只说「脚本可用」而不给能复制的命令，用户只能自己猜 helper 怎么调；
+        猜错了的报错是「没有这条凭据」，看着像权限问题，实际是用法问题。
+        """
+        source = _read(self.CENTER)
+        assert "usageHelpTab" in source, "弹窗缺少页签状态"
+        assert "会被用在哪里" in source
+        assert "怎么在代码里用" in source
+
+    def test_code_tab_covers_both_languages(self):
+        """bash 与 python 都要给，且必须是实测可用的形态。"""
+        source = _read(self.CENTER)
+        assert "nanzi-credential list" in source
+        assert "nanzi-credential get weather.api.key" in source
+        # python 侧走 subprocess，不是 os.environ——后者在 skill 里拿不到东西
+        assert "subprocess.run" in source
+        assert "SNIPPET_BASH" in source and "SNIPPET_PYTHON" in source
+
+    def test_code_tab_warns_skills_have_no_env_injection(self):
+        """必须讲明 skill 的脚本走 Bash、没有环境变量注入。
+
+        这是整条链路最容易被误解的一点：用户习惯性写 os.environ["KEY"]，
+        然后在 skill 里拿到空字符串且没有任何报错。
+        """
+        source = _read(self.CENTER)
+        assert "没有环境变量注入" in source
+        assert 'os.environ["MY_KEY"]' in source
+
+    def test_code_blocks_go_through_the_shared_component(self):
+        """代码块必须用 CodeSnippet，页面自己不许调复制工具（同上一条契约）。"""
+        source = _read(self.CENTER)
+        template = source[source.index("<template>") :]
+        assert "<CodeSnippet" in template
+        assert "copyToClipboard" not in source
 
     def test_help_says_scheduled_task_reuses_the_same_rule(self):
         """定时任务不是单独的注入点，它跑的就是内部那个工具/MCP 的通道。"""

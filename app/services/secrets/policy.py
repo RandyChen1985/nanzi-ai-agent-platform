@@ -25,6 +25,12 @@ from typing import Any, Iterable
 SCENE_MCP = "mcp"
 SCENE_API_TOOL = "api_tool"
 SCENE_SCRIPT_ENV = "script_env"
+#: 脚本自己发请求时「按 key 取值」用的场景（`nanzi-credential` helper）。
+#:
+#: 授权上**与 script_env 等价**：用户只需要理解一件事「这条凭据允不允许脚本用」，
+#: 不该为了「脚本工具注入」和「helper 取值」勾两次。两者仅在消费方和值离开
+#: 平台的方式上不同，所以判定复用同一段逻辑（见 evaluate_secret）。
+SCENE_SANDBOX_SCRIPT = "sandbox_script"
 # 历史遗留：曾经用来给「无人值守调用」单独加一道闸门。现在定时任务和其它调用
 # 走同一套判定，这个场景不再参与任何判断。常量留着只为兼容已存数据里的取值，
 # 不要在新代码里用它做条件。
@@ -32,8 +38,19 @@ SCENE_SCHEDULED_TASK = "scheduled_task"
 SCENE_AGENT = "agent"
 
 ALL_SCENES: frozenset[str] = frozenset(
-    {SCENE_MCP, SCENE_API_TOOL, SCENE_SCRIPT_ENV, SCENE_SCHEDULED_TASK, SCENE_AGENT}
+    {
+        SCENE_MCP,
+        SCENE_API_TOOL,
+        SCENE_SCRIPT_ENV,
+        SCENE_SANDBOX_SCRIPT,
+        SCENE_SCHEDULED_TASK,
+        SCENE_AGENT,
+    }
 )
+
+#: 「脚本读得到」的场景集合。勾了其中任意一个，两条脚本通道都算放行——
+#: 但存量 UI 只暴露 `script_env`，`sandbox_script` 是给判定和审计用的场景值。
+SCRIPT_SCENES: frozenset[str] = frozenset({SCENE_SCRIPT_ENV, SCENE_SANDBOX_SCRIPT})
 
 # ── 消费者常量 ──────────────────────────────────────────────────────────
 CONSUMER_MCP = "mcp_server"
@@ -52,6 +69,10 @@ DENY_DISABLED = "disabled"
 #: 绑的是定位规则，但按本次入参没有匹配到任何可见凭据，且规则声明的策略是 fail。
 #: 单独一个值是为了和「压根没绑定」区分开：前者要提示配置者改规则，后者是常态。
 DENY_RULE_MISS = "rule_miss"
+#: 按 key 取值的通道（脚本 helper）找不到这条凭据：要么 key 拼错，要么它不在
+#: 当前用户的可见集合里。和「没有绑定」分开记，否则脚本报错时看不出是名字写错
+#: 还是权限不够——前者改脚本，后者改授权，处理方式完全不同。
+DENY_NOT_FOUND = "not_found"
 
 # ── 类型常量 ────────────────────────────────────────────────────────────
 TYPE_CREDENTIAL = "credential"
@@ -261,13 +282,20 @@ def evaluate_secret(secret: SecretRecord, context: SecretContext, *, now: dateti
     if not secret.is_live(now):
         return DENY_EXPIRED
 
-    if context.scene not in secret.allowed_scenarios:
+    # 脚本场景按「勾了 script_env 就算放行」判定：同一条凭据同时服务
+    # 「平台脚本工具 env 注入」和「skill 里 helper 取值」，不该要求勾两次。
+    is_script_scene = context.scene in SCRIPT_SCENES
+    allowed_scenarios = set(secret.allowed_scenarios or ())
+    if is_script_scene:
+        if not (allowed_scenarios & SCRIPT_SCENES):
+            return DENY_SCENARIO
+    elif context.scene not in allowed_scenarios:
         return DENY_SCENARIO
 
-    # 脚本环境变量是所有场景里唯一「值会离开平台」的：脚本能读 os.environ，
-    # 就一定能 print 出来，再由 stdout 落进工具结果。所以它单独加一道开关，
-    # 而且是「整类拒绝」，不逐条商量。
-    if context.scene == SCENE_SCRIPT_ENV:
+    # 脚本是所有场景里唯一「值会离开平台」的：脚本能读 os.environ、也能拿到
+    # helper 返回的明文，就一定能 print 出来，再由 stdout 落进工具结果。
+    # 所以它单独加一道开关，而且是「整类拒绝」，不逐条商量。
+    if is_script_scene:
         return None if context.allow_script_env else DENY_SCRIPT_POLICY
 
     # 以下是带目标的注入（MCP / API 工具 / 定时任务 / 智能体）

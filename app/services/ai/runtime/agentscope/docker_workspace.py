@@ -6,6 +6,8 @@ skills snapshot and the read-only public documentation tree.
 """
 from __future__ import annotations
 
+import platform
+
 from typing import Any
 
 from app.services.ai.runtime.agentscope.docker_template_patch import (
@@ -98,6 +100,16 @@ def build_docker_workspace_with_extra_binds(
             if limits.get("pids_limit"):
                 # 阻断 fork bomb：默认值要能容纳 pip/uv 的并发编译，又要挡得住无限 fork。
                 host_config["PidsLimit"] = limits["pids_limit"]
+
+            # Linux 宿主机上 `host.docker.internal` 不会自动解析（那是 Docker
+            # Desktop 的特性）。沙箱里的 `nanzi-credential` 要回连平台取凭据，
+            # 解析不了就报「连不上平台」——错出现在用户脚本里，很容易被当成
+            # 凭据权限问题去查。macOS / Windows 由 Docker Desktop 提供，重复添加
+            # 在旧版 Docker 上会报 invalid host-gateway，所以按平台判断。
+            if platform.system() == "Linux":
+                host_config.setdefault("ExtraHosts", []).append(
+                    "host.docker.internal:host-gateway"
+                )
 
             config["HostConfig"] = host_config
 

@@ -16,6 +16,9 @@ export const RESULT_LABEL: Record<string, string> = {
   denied_by_host: '域名不符',
   denied_by_scenario: '场景未启用',
   denied_by_script_policy: '脚本注入被关',
+  // 脚本 helper 按标识取值时找不到：要么名字写错，要么不在可见范围。
+  // 和执行期的另外几种「取不到」分开，因为要改的地方不同（改脚本 vs 改授权）。
+  not_found: '没有这条凭据',
   denied_by_user_pref: '你已关闭该场景',
   denied_by_platform_policy: '平台已关闭该场景',
   denied_disabled: '已停用',
