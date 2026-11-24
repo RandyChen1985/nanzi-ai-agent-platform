@@ -555,15 +555,19 @@ def test_task_list_has_keyword_search() -> None:
 
 
 def test_workspace_page_is_left_aligned() -> None:
-    """工作空间内容靠左，不居中。
+    """工作空间内容靠左、铺满，不居中也不限宽。
 
     居中（mx-auto）在侧栏收起成 68px 后会把富余宽度全堆到左侧，
     表现为"折叠之后多出一大块空白"。
+    另外根容器不许再带 `max-w-[1200px]`：宽屏上右侧会空出一截，
+    和同级的知识库页（根容器铺满）并排看就是"一个铺满一个缩着"。
     """
     page = _read("frontend/src/views/WorkspaceManage.vue")
 
-    assert 'class="relative flex h-full w-full max-w-[1200px] flex-col' in page
-    assert "relative mx-auto flex h-full w-full max-w-[1200px]" not in page
+    assert 'class="relative flex h-full w-full flex-col' in page
+    assert "relative mx-auto flex h-full w-full" not in page
+    # 只看根容器的类名：注释里会提到历史写法，不能按全文出现即判失败
+    assert "flex h-full w-full max-w-" not in page
 
 
 def test_experts_group_is_open_in_user_mode_only() -> None:

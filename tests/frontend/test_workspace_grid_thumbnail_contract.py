@@ -27,7 +27,7 @@ def _read() -> str:
 
 def _grid_block(source: str) -> str:
     """卡片视图的模板片段：从 grid 容器到它的收尾，避免命中列表视图。"""
-    start = source.index('class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4"')
+    start = source.index('class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"')
     return source[start : start + 2600]
 
 

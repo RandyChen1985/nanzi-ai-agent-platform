@@ -22,10 +22,11 @@
   和聊天布局强耦合，强行页面化会破坏现有功能（抽屉文件保持零改动）。
 -->
 <template>
-  <!-- 间距只由 Dashboard 的 main 统一给（与知识库同口径）：这里再叠加一层
-       px-4/py-4，会让工作空间的左右、上下留白比知识库明显大一截。 -->
+  <!-- 宽度口径与知识库一致：两边都只由 Dashboard 的 main 给内外边距，页面自身铺满。
+       之前这里带着 `max-w-[1200px]`，在 1440+ 的宽屏上右侧会空出一大片，
+       和知识库页并排看就是「一个铺满一个缩着」。 -->
   <div
-    class="relative flex h-full w-full max-w-[1200px] flex-col gap-3"
+    class="relative flex h-full w-full flex-col gap-3"
     @dragenter.prevent="onDragEnter"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
@@ -345,7 +346,9 @@
       <p v-else-if="!visibleItems.length" class="py-10 text-center text-xs text-gray-400">
         {{ keyword ? "没有匹配的文件" : "这个目录还是空的，上传一个文件试试" }}
       </p>
-      <div v-else class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+      <!-- 列数跟着宽度走：页面铺满后，大屏还按 4 列排会把每张卡拉到近 400px 宽，
+           媒体区只有 64px 高，看着又扁又空。 -->
+      <div v-else class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
         <div
           v-for="item in visibleItems"
           :key="item.path"
