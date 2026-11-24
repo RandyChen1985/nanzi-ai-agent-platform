@@ -1184,15 +1184,29 @@ onMounted(() => {
                 与上面的平台策略取交集——两层都开才真正生效。
               </p>
             </div>
-            <button
-              type="button"
-              :disabled="policyBusy"
-              class="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-medium disabled:opacity-60"
-              :class="prefs.allow_script_env ? 'bg-gray-200 text-gray-700' : 'bg-blue-600 text-white'"
-              @click="savePrefs(!prefs.allow_script_env)"
-            >
-              {{ prefs.allow_script_env ? '改为禁止' : '允许' }}
-            </button>
+            <!-- 状态与动作分成两件事：上面两行同一位置放的是「已开启/已关闭」，
+                 这里如果只放一个「改为禁止」按钮，用户读不出当前到底是开还是关。 -->
+            <div class="flex shrink-0 items-center gap-2">
+              <span
+                class="rounded-md px-2 py-0.5 text-[11px] font-medium"
+                :class="prefs.allow_script_env ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'"
+              >
+                {{ prefs.allow_script_env ? '已开启' : '已关闭' }}
+              </span>
+              <button
+                type="button"
+                :disabled="policyBusy"
+                class="rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-60"
+                :class="
+                  prefs.allow_script_env
+                    ? 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                    : 'border-blue-600 bg-white text-blue-700 hover:bg-blue-50'
+                "
+                @click="savePrefs(!prefs.allow_script_env)"
+              >
+                {{ prefs.allow_script_env ? '禁止' : '允许' }}
+              </button>
+            </div>
           </div>
           <!-- 平台关着的时候点「允许」什么也不会发生，不说明就是让人白点 -->
           <p
