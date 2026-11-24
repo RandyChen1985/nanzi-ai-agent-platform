@@ -168,7 +168,9 @@ process.stdout.write(JSON.stringify(result));
 
 
 def test_banner_action_handler_guards_platform_tabs():
-    handler = _function_body("handleSkillBannerAction", "const confirmState = ref({")
+    # 结束 marker 只写到 `const confirmState = ref`：后来给 ref 加了显式类型参数
+    # （`ref<{...}>`），写死花括号会让这条契约随之脆断。
+    handler = _function_body("handleSkillBannerAction", "const confirmState = ref")
     guard = handler.index("if (!canAccessPlatformWorkspace.value) {")
     review_tab = handler.index("activeWorkspaceTab.value = 'review'")
     global_tab = handler.index("activeWorkspaceTab.value = 'global'")

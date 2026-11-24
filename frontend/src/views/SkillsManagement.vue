@@ -16,6 +16,12 @@ import { copyToClipboard } from '../utils/clipboard'
 import { useUser } from '../composables/useUser'
 import InputModal from '../components/InputModal.vue'
 import { isSkillEnabled } from '@/utils/skillEnabled'
+import {
+  buildSkillSubmissionConfirm,
+  isSkillSubmissionPending,
+  skillPublicationActionLabel,
+  skillSubmissionSuccessToast,
+} from '@/utils/skillPublication'
 import ToolGroupTabs from '@/components/system/ToolGroupTabs.vue'
 import {
   ALL_GROUP_KEY,
@@ -197,11 +203,19 @@ const handleSkillBannerAction = (type: 'create' | 'review' | 'global') => {
   }
 }
 
-const confirmState = ref({
+const confirmState = ref<{
+  show: boolean
+  title: string
+  message: string
+  type: 'danger' | 'primary' | 'warning'
+  /** 确认按钮文案：不传沿用组件默认「确认」（提交类动作写成「确认提交」更明确） */
+  confirmText?: string
+  onConfirm: () => void
+}>({
   show: false,
   title: '',
   message: '',
-  type: 'danger' as 'danger' | 'primary' | 'warning',
+  type: 'danger',
   onConfirm: () => {}
 })
 
@@ -677,17 +691,43 @@ const openSharedSkill = async (skillId: string) => {
   }
 }
 
-const submitSkillPublication = async (skill: Skill) => {
-  const isResubmission = skill.publication_status === 'PUBLISHED' || skill.publication_status === 'REJECTED'
-  try {
-    const response = await axios.post(`/api/portal/skills/personal/${skill.id}/publication-requests`)
-    if (response.data?.status === 'success') {
-      Object.assign(skill, response.data.data || {})
-      skill.publication_status = response.data.data?.publication_status || 'PENDING'
-      showToast(isResubmission ? '新版本已提交管理员审核' : '已提交管理员审核', 'success')
-    }
-  } catch (e: any) {
-    showToast(e.response?.data?.detail || '提交平台技能审核失败', 'error')
+/**
+ * 提交平台技能审核。
+ *
+ * 先弹确认框：提交动作会立刻在管理员审核队列里产生一条待审记录，撤销还得再点一次
+ * 「撤销审核」，而按钮本身就挨着启用开关，误点成本由审核者承担。确认框顺带说清
+ * 提交的是哪个目录、通过后平台版变成几（文案全在 utils/skillPublication 里）。
+ */
+const submitSkillPublication = (skill: Skill) => {
+  const copy = buildSkillSubmissionConfirm({
+    id: skill.id,
+    path: skill.path,
+    publication_status: skill.publication_status,
+    current_public_version: skill.current_public_version,
+    last_review_comment: skill.last_review_comment,
+  })
+  confirmState.value = {
+    show: true,
+    title: copy.title,
+    message: copy.message,
+    type: 'primary',
+    confirmText: '确认提交',
+    onConfirm: async () => {
+      // 提交前先留档：`Object.assign` 会把状态刷成 PENDING，之后再判断就只剩「审核中」
+      const statusBefore = skill.publication_status
+      try {
+        const response = await axios.post(`/api/portal/skills/personal/${skill.id}/publication-requests`)
+        if (response.data?.status === 'success') {
+          Object.assign(skill, response.data.data || {})
+          skill.publication_status = response.data.data?.publication_status || 'PENDING'
+          showToast(skillSubmissionSuccessToast(statusBefore), 'success')
+        }
+      } catch (e: any) {
+        showToast(e.response?.data?.detail || '提交平台技能审核失败', 'error')
+      } finally {
+        confirmState.value.show = false
+      }
+    },
   }
 }
 
@@ -2764,12 +2804,12 @@ onUnmounted(() => {
           <span v-else class="text-[10px] text-gray-400">个人源文件始终保留</span>
           <div class="flex shrink-0 items-center gap-1.5">
             <button
-              v-if="skill.publication_status !== 'PENDING'"
+              v-if="!isSkillSubmissionPending(skill)"
               type="button"
               class="rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-50"
               @click.stop="submitSkillPublication(skill)"
             >
-              {{ skill.publication_status === 'PUBLISHED' || skill.publication_status === 'REJECTED' ? '提交新版本' : '提交为平台技能' }}
+              {{ skillPublicationActionLabel(skill.publication_status) }}
             </button>
             <button
               v-else
@@ -3846,6 +3886,7 @@ onUnmounted(() => {
     :title="confirmState.title"
     :message="confirmState.message"
     :type="confirmState.type"
+    :confirm-text="confirmState.confirmText"
     @confirm="confirmState.onConfirm"
     @cancel="confirmState.show = false"
   />

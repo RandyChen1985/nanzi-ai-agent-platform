@@ -40,7 +40,11 @@ def test_share_entry_only_for_personal_skills():
 
 
 def test_publish_action_still_visible():
-    """「提交为平台技能」是卡片主操作，不能被收进菜单。"""
+    """「提交为平台技能」是卡片主操作，不能被收进菜单（文案由 utils/skillPublication 提供）。"""
     template = _source()[_source().index("<template>"):]
     assert "submitSkillPublication(skill)" in template
-    assert "提交为平台技能" in template
+    assert "skillPublicationActionLabel(skill.publication_status)" in template
+    copy_source = (
+        Path(__file__).resolve().parents[2] / "frontend/src/utils/skillPublication.ts"
+    ).read_text(encoding="utf-8")
+    assert "提交为平台技能" in copy_source
