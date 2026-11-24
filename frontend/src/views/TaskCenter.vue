@@ -9,8 +9,6 @@ import cronstrue from 'cronstrue/i18n'
 import SessionTraceModal from '../components/SessionTraceModal.vue'
 import axios from '../utils/axios'
 import { 
-  PlayCircleIcon,
-  PauseCircleIcon,
   PencilSquareIcon,
   ClockIcon,
   PaperAirplaneIcon,
@@ -1263,12 +1261,11 @@ const attentionHeadline = computed(() => {
   const candidates = scopedTasks.value
     .map((task) => ({ task, meta: taskStatusMeta(task) }))
     .filter((item) => item.meta.key === 'error' || item.meta.key === 'warn')
-  if (!candidates.length) return null
-
   const severity = (item: { task: AgentTask; meta: { key: string } }) =>
     (item.meta.key === 'error' ? 1000 : 0) + Number(item.task.consecutive_failures || 0)
   candidates.sort((a, b) => severity(b) - severity(a))
   const top = candidates[0]
+  if (!top) return null
   const task = top.task
 
   const rawReason = task.last_error
@@ -1703,7 +1700,7 @@ const groupedLogs = computed(() => {
     buckets[day].push(log)
   })
   return order.map((day) => {
-    const runs = buckets[day]
+    const runs = buckets[day] || []
     const ok = runs.filter(isLogOk).length
     return { day, runs, ok, fail: runs.length - ok }
   })
@@ -1892,6 +1889,12 @@ const taskMetricText = (task: AgentTask) => {
   return { runs, rate: taskRateText(task), rateNum: taskRateNum(task) }
 }
 
+/** 成功率跌破 90% 才标红；没有分母时（rateNum 为 null）不判红 */
+const taskRateIsLow = (task: AgentTask): boolean => {
+  const rate = taskMetricText(task).rateNum
+  return rate !== null && rate < 90
+}
+
 // ── 下次运行：相对时间打头，绝对时间兜底 ───────────────────────────────
 /**
  * Intl.DateTimeFormat 构造开销不小，而列表里每张卡片会算 3~4 次时间文案，
@@ -1984,7 +1987,7 @@ const cronFiresMoreThanOncePerDay = (expr: string) => {
   if (parts.length < 5) return false
   const wildish = (field: string) => /[*/,]|-/.test(field)
   // 分钟或小时不固定 → 一天内会跑多次
-  return wildish(parts[0]) || wildish(parts[1])
+  return wildish(parts[0] || '') || wildish(parts[1] || '')
 }
 
 const taskScheduleMismatch = (task: AgentTask): string => {
@@ -2819,7 +2822,7 @@ onMounted(async () => {
             成功率
             <b
               class="font-black"
-              :class="taskMetricText(task).rateNum !== null && taskMetricText(task).rateNum < 90 ? 'text-red-600' : 'text-gray-900'"
+              :class="taskRateIsLow(task) ? 'text-red-600' : 'text-gray-900'"
             >{{ taskMetricText(task).rate }}</b>
           </span>
         </div>
@@ -2960,7 +2963,7 @@ onMounted(async () => {
               <td v-if="showRateColumn" class="px-3 py-3">
                 <span
                   class="text-xs font-black tabular-nums"
-                  :class="taskMetricText(task).rateNum !== null && taskMetricText(task).rateNum < 90 ? 'text-red-600' : 'text-gray-800'"
+                  :class="taskRateIsLow(task) ? 'text-red-600' : 'text-gray-800'"
                 >{{ taskMetricText(task).rate }}</span>
               </td>
               <td class="px-3 py-3">
