@@ -296,7 +296,22 @@ async def test_bind_sandbox_mcp_bash_as_canonical_bash_tool_name():
 
     assert bound[0].name == "Bash"
     assert bound[0].native_tool.name == "Bash"
-    assert await bound[0].callable(command="hostname") == "hostname"
+
+    # 绑定出口会挂一层「按需取凭据」包装（`_ScriptCredentialBashNativeTool`）；它和
+    # canonical 名称包装的先后不固定，这里沿 `_native_tool` 往里找。没传 user_info 时
+    # 它签不出票据，因此不注入 helper 前缀，只把原因挂到 `$NANZI_CREDENTIAL_STATUS`
+    # 上供脚本自查——命令本身必须原样执行。
+    from app.services.ai.runtime.agentscope.workspace import (
+        _ScriptCredentialBashNativeTool,
+    )
+
+    node = bound[0].native_tool
+    while node is not None and not isinstance(node, _ScriptCredentialBashNativeTool):
+        node = getattr(node, "_native_tool", None)
+    assert node is not None, "Bash 绑定出口必须挂上脚本凭据注入包装"
+    result = await bound[0].callable(command="hostname")
+    assert result.startswith("export NANZI_CREDENTIAL_STATUS=no-user-info;")
+    assert result.endswith("hostname")
 
     from app.services.ai.runtime.agentscope.tools import build_toolkit
 
@@ -1565,7 +1580,11 @@ async def test_docker_bash_defaults_to_the_current_session_logical_directory():
     )
 
     assert await bound[0].callable(command="pwd") == "pwd-ok"
-    assert calls == [{"command": "pwd", "cwd": "sessions/conversation-1"}]
+    assert len(calls) == 1
+    # 会话 cwd 包装照旧生效；命令被外层凭据包装挂了诊断前缀，原命令保留在最后一行。
+    assert calls[0]["cwd"] == "sessions/conversation-1"
+    assert calls[0]["command"].startswith("export NANZI_CREDENTIAL_STATUS=no-user-info;")
+    assert calls[0]["command"].endswith("\npwd")
 
 
 @pytest.mark.asyncio
