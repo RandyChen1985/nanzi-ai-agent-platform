@@ -148,6 +148,13 @@ _BUILTIN_FORBIDDEN_TOOL_SPECS: tuple[tuple[str, str, str, str, str | None], ...]
         "knowledge",
         None,
     ),
+    (
+        "read_image",
+        "读取并识别图片 (read_image)",
+        "读取工作区或公共目录中的图片并交给多模态模型识别，可跨目录读取",
+        "file",
+        None,
+    ),
 )
 
 

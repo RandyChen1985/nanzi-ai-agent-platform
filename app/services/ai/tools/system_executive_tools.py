@@ -8,7 +8,7 @@ import json
 import re
 import fnmatch
 import time
-from typing import Optional
+from typing import Any, Optional
 from app.services.ai.tools.tool_compat import tool
 from app.services.ai.code_execution_service import run_shell_command_capture
 from app.services.ai.runtime.shell_deletion_policy import assess_shell_deletion
@@ -37,6 +37,24 @@ def _current_tool_temperature() -> Optional[float]:
 
         return get_current_tool_temperature()
     except Exception:  # noqa: BLE001 - 取不到上下文就退回默认行为
+        return None
+
+
+def _resolve_path_access_user_info() -> dict[str, Any] | None:
+    """当前工具调用所属用户，供 ``read_image`` 做跨租户判定。
+
+    返回 ``None`` 表示拿不到身份上下文（定时任务、内部自调用等）。此时调用方
+    **跳过**跨租户比对而不是一律拒绝：没有身份就没有"他人"的概念，历史行为也是
+    放行。真正基于身份的严格鉴权（``fs_access.is_runtime_path_allowed``）只用于
+    Read/Write 这类走绑定层的文件工具，不套在 ``read_image`` 上——它的公共根口径
+    太窄，会把 ``data/uploads``、``data/generated_files`` 这些既有图片入口全挡死。
+    """
+    try:
+        from app.utils.context import current_user_info
+
+        info = current_user_info.get()
+        return info or None
+    except Exception:  # noqa: BLE001 - 取不到上下文就当作无身份
         return None
 
 
@@ -696,6 +714,30 @@ async def read_image(path: str, question: str = "") -> str:
     """
     try:
         abs_path = validate_safe_path(path)
+        # ① 软链接逃逸：validate_safe_path 用的是 abspath、不解析软链，于是在自己
+        #    工作区放一个指向 /etc/shadow 的 fake.png 就能读走宿主机文件。对
+        #    realpath 再校验一次，解引用后仍必须落在 data 安全目录内。
+        resolved_path = os.path.realpath(abs_path)
+        if resolved_path != os.path.normpath(abs_path):
+            validate_safe_path(resolved_path)
+        # ② 跨租户读取：read_image 不在 AGENTSCOPE_BUILTIN_TOOL_ALIASES 里，绑定层
+        #    不会把它换成走 fs_access 的 Read，因此这里必须自己补——否则任意用户
+        #    都能让模型读走 agent_workspaces/<别人>/ 下的私有图片。
+        #
+        #    刻意**不**用 is_runtime_path_allowed 的全量口径：它只认
+        #    branding/skills/docs 三个公共根，而平台历史上传目录(data/uploads)、
+        #    产物图(data/generated_files) 都在其外，全量收紧会把 read_image 的
+        #    主要用法直接打死。这里只堵"他人工作区"这一个真实越权面。
+        from app.utils.fs_access import is_fs_admin, is_other_user_workspace_path
+
+        user_info = _resolve_path_access_user_info()
+        if (
+            user_info
+            and not is_fs_admin(user_info)
+            and is_other_user_workspace_path(resolved_path, user_info)
+        ):
+            logger.warning("read_image 跨用户工作区读取被拒绝: path=%s", path)
+            return f"错误：无权访问图片路径 {path}（仅限本人工作区与平台公共目录）。"
         if not os.path.exists(abs_path):
             return f"错误：图片文件 {path} 不存在。"
         if os.path.isdir(abs_path):

@@ -795,3 +795,34 @@ def _isolate_delegation_session_store(monkeypatch):
         DelegationSessionStore, "from_runtime", classmethod(_no_redis)
     )
     yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_agent_workspace_root(tmp_path_factory, monkeypatch):
+    """默认不让单测把 AI 工作区写进代码仓库。
+
+    历史事故：``tests/services/ai/test_agent_service_history_alignment.py`` 把
+    ``ConfigService.get`` 一刀切成 ``AsyncMock(return_value="20")``（本意只是想给
+    ``max_history_messages`` 一个值），而 ``resolve_workspace_root()`` 当时对配置值
+    没有任何校验，``os.path.abspath("20")`` 就把工作区根算成了 ``<仓库>/20``；
+    紧随其后的 ``_preseed_session_skills`` 又把 42 份平台技能 copytree 进去，
+    最终在仓库根留下 ``./20/admin__1/sessions/conversation-1/skills/.seed``。
+
+    这里是第一道防线（默认工作区根重定向到本次用例独立的 tmp 目录）；第二道是
+    ``workspace_root_config_error()`` 对非法配置值的拒绝，两者互不依赖。
+    所有 ``default_workspace_root`` 的调用点都是函数内 import，patch 模块属性即可生效。
+
+    刻意用 ``tmp_path_factory`` 而不是 ``tmp_path``：后者常被用例自己当作
+    SKILLS_DIR / 工作区根来扫描，把 ``agent_workspaces`` 塞进去会让那些用例多扫到
+    一个"技能目录"（``test_list_available_skills_reports_total_and_truncation``
+    就是这么多出 total=7 的）。
+    """
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    isolated_root = tmp_path_factory.mktemp("agent_workspaces")
+    monkeypatch.setattr(
+        workspace_module,
+        "default_workspace_root",
+        lambda *args, **kwargs: str(isolated_root),
+    )
+    yield

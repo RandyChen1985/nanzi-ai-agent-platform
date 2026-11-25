@@ -175,11 +175,15 @@ async def run_shell_command_capture(
     timeout_seconds: float = 30.0,
 ) -> ShellCaptureResult:
     """Run a legacy shell command through the same bounded process primitive."""
+    from app.services.ai.runtime.child_env import sandbox_child_env
+
     process = await asyncio.create_subprocess_shell(
         command,
         cwd=str(cwd) if cwd is not None else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        # 白名单环境：绝不把后端 os.environ（含数据库/Redis/ENCRYPTION_KEY）交给用户命令。
+        env=sandbox_child_env(workdir=cwd),
         start_new_session=os.name == "posix",
     )
     timed_out = False
@@ -550,10 +554,15 @@ class CodeExecutionHandle:
 
             self._script_path = materialize_script(self.workspace, self.language, self.code)
             command = build_script_command(self.language, self._script_path)
+            from app.services.ai.runtime.child_env import sandbox_child_env
+
             process_kwargs: dict[str, Any] = {
                 "cwd": str(self.workspace),
                 "stdout": asyncio.subprocess.PIPE,
                 "stderr": asyncio.subprocess.PIPE,
+                # 画布「运行」同样在宿主跑用户代码：环境必须收敛到白名单，
+                # 否则 print(os.environ) 就能读走平台全部密钥。
+                "env": sandbox_child_env(workdir=self.workspace),
             }
             if os.name == "posix":
                 process_kwargs["start_new_session"] = True

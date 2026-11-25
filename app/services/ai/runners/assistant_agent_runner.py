@@ -124,6 +124,7 @@ from app.services.ai.runtime.agentscope.workspace import (
     get_workspace_offloader,
 )
 from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+from app.services.ai.runtime.sandbox_errors import SandboxUnavailableError
 from app.services.ai.runtime.sandbox_degradation import (
     clear_sandbox_degraded,
     set_sandbox_degraded,
@@ -2627,7 +2628,14 @@ class AssistantAgentRunner(BaseExecutor):
                 ),
                 timeout=90.0,
             )
-        except (DockerSandboxUnavailableError, K8sSandboxUnavailableError, asyncio.TimeoutError) as exc:
+        except (
+            DockerSandboxUnavailableError,
+            K8sSandboxUnavailableError,
+            # 基类兜住 e2b / ssh / local 等其余策略的失败：它们此前静默返回 None，
+            # 会被当成"工作区已就绪"，导致 Bash 落回宿主执行。
+            SandboxUnavailableError,
+            asyncio.TimeoutError,
+        ) as exc:
             if isinstance(exc, asyncio.TimeoutError):
                 logger.warning(
                     "[agent] Sandbox workspace init timed out (conversation=%s); treating as unavailable: %s",
