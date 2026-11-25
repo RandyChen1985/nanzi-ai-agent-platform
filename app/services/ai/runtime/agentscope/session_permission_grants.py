@@ -232,8 +232,12 @@ class SessionPermissionGrantStore:
             if redis:
                 added = int(await redis.sadd(key, normalized) or 0)
                 # TTL 只在该 key 第一次创建时设置：给工具 B 授权不应该把工具 A 的
-                # 到期时间续回 24h（设计口径是「写入时设置，命中不续期」）。
-                if added:
+                # 到期时间续回 24h（设计口径是「写入时设置、命中不续期」）。
+                #
+                # 判断依据必须是「这个 Set 有没有 TTL」而不是 SADD 的返回值：SADD 返回
+                # 的是本次新加入的元素数，工具 B 此前不在集合里时就返回 1——无论 key
+                # 是否早已存在，于是每加一个工具都会把同一会话下所有既有授权续期。
+                if added and await redis.ttl(key) < 0:
                     await redis.expire(key, SESSION_GRANT_TTL_SECONDS)
                 return True
         except Exception as exc:  # pragma: no cover - Redis 异常走内存兜底

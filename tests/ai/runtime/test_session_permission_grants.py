@@ -67,6 +67,18 @@ class _AskNativeTool:
         )
 
 
+class _NonShellAskNativeTool(_AskNativeTool):
+    """同一 ASK 桩，但用非 shell 工具名。
+
+    shell 类工具（Bash / execute_system_command / mcp_sandbox_bash_*）已被禁止提供
+    「本会话总是允许」——一个 shell 工具名下能跑的命令是无限的，按工具名记忆授权
+    等于把 ``curl … | bash`` 也一并放行。验证「写入侧与判定侧同源」这类与工具种类
+    无关的契约时，改用普通工具名。
+    """
+
+    name = "web_fetch"
+
+
 class _DenyNativeTool(_AskNativeTool):
     def check_permissions(self, tool_input, context):
         from agentscope.permission import PermissionBehavior, PermissionDecision
@@ -109,6 +121,10 @@ class _FakeRedis:
 
     def __init__(self) -> None:
         self.members: set[str] = set()
+        # 与 Redis 语义一致：key 已存在且**没有** TTL 时返回 -1，key 不存在返回 -2。
+        # grant() 只在 ttl < 0 时设置过期时间（不因新增工具而续期），所以桩必须
+        # 如实报告 TTL 状态，否则会退化成「每次都续期」或「永不设置」两种错误行为。
+        self.ttl_seconds: int = -1
 
     async def sadd(self, key, value):
         self.members.add(value)
@@ -126,7 +142,11 @@ class _FakeRedis:
         return set(self.members)
 
     async def expire(self, key, ttl):
+        self.ttl_seconds = int(ttl)
         return True
+
+    async def ttl(self, key):
+        return self.ttl_seconds if self.members else -2
 
 
 def _native_tool(
@@ -311,24 +331,55 @@ async def test_grant_written_from_pending_unlocks_the_same_tool():
     from app.services.ai.runtime.agentscope.resume import AgentScopeResumeHandler
 
     pending = SimpleNamespace(
-        tool_call=SimpleNamespace(name="Bash"),
+        tool_call=SimpleNamespace(name="web_fetch"),
         snapshot=SimpleNamespace(conversation_id="c-e2e"),
     )
 
     await AgentScopeResumeHandler._grant_session_permission(pending, user_id="u1")
 
-    tool = _native_tool(_AskNativeTool(), conversation_id="c-e2e")
-    decision = await tool.check_permissions({"command": "ls -la"}, None)
+    tool = _native_tool(_NonShellAskNativeTool(), conversation_id="c-e2e")
+    decision = await tool.check_permissions({"url": "https://example.com"}, None)
     assert decision.behavior.name == "ALLOW"
 
     # 授权只属于写入它的那个用户
     other_user_tool = _native_tool(
-        _AskNativeTool(),
+        _NonShellAskNativeTool(),
         user_id="u2",
         conversation_id="c-e2e",
     )
-    other_decision = await other_user_tool.check_permissions({"command": "ls -la"}, None)
+    other_decision = await other_user_tool.check_permissions(
+        {"url": "https://example.com"}, None
+    )
     assert other_decision.behavior.name == "ASK"
+
+
+async def test_shell_tool_is_refused_session_grant():
+    """shell 类工具不提供「本会话总是允许」，接口侧也必须拒绝（不能比按钮宽）。
+
+    授权按**工具名**记忆，而一个 shell 工具名下能跑的命令是无限的：用户为 ``ls``
+    点一次「本会话允许」，之后 ``curl … | bash`` 就全程免确认。沙箱 shell 没有
+    命令替换/敏感路径复核，这层承诺撑不住，所以按钮不给、接口也拒。
+    """
+
+    from app.services.ai.runtime.agentscope.resume import AgentScopeResumeHandler
+
+    for shell_tool_name in ("Bash", "execute_system_command", "mcp_sandbox_bash_ab12cd"):
+        pending = SimpleNamespace(
+            tool_call=SimpleNamespace(name=shell_tool_name),
+            snapshot=SimpleNamespace(conversation_id="c-shell"),
+        )
+
+        result = await AgentScopeResumeHandler._grant_session_permission(
+            pending,
+            user_id="u1",
+        )
+
+        assert result["granted"] is False, shell_tool_name
+        assert result["reason"] == "not_grantable", shell_tool_name
+        assert (
+            await session_permission_grants.is_granted("u1", "c-shell", shell_tool_name)
+            is False
+        ), shell_tool_name
 
 
 async def test_session_grant_covers_native_passthrough_through_real_engine():
@@ -434,7 +485,7 @@ async def test_grant_written_from_pending_snapshot_conversation():
     from app.services.ai.runtime.agentscope.resume import AgentScopeResumeHandler
 
     pending = SimpleNamespace(
-        tool_call=SimpleNamespace(name="Bash"),
+        tool_call=SimpleNamespace(name="web_fetch"),
         snapshot=SimpleNamespace(conversation_id="c-from-snapshot"),
     )
 
@@ -444,10 +495,10 @@ async def test_grant_written_from_pending_snapshot_conversation():
     )
 
     assert result["granted"] is True
-    assert result["tool_name"] == "Bash"
+    assert result["tool_name"] == "web_fetch"
     assert result["conversation_id"] == "c-from-snapshot"
     assert await session_permission_grants.is_granted(
-        "u1", "c-from-snapshot", "Bash"
+        "u1", "c-from-snapshot", "web_fetch"
     )
 
 

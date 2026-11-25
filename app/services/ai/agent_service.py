@@ -444,10 +444,26 @@ def _turn_status_signal(chunk: Dict[str, Any]) -> Optional[str]:
     """
     chunk_type = str(chunk.get("type") or "")
     if chunk_type == "permission_required":
+        # 子代理转发上来的审批（chunk 带 subagent / source_agent_display_name）必须
+        # 与 user_question 同构地映射成 awaiting_user，当场落库。
+        #
+        # 原因：子代理的挂起快照属于内部子会话（child_session_*），父轮次在转发这一帧
+        # 后就已经结束——用户确认时 resume.py 走 `_handoff_subagent_permission` 写完
+        # 授权直接 return，全程不会再有一次收尾机会。若沿用 awaiting_permission，这一轮
+        # 会被 AUDIT_DEFERRED_STATUSES 跳过不写审计表，刷新后原始提问、主专家前半段
+        # 思考时间线、以及 batch 里其余已完成子代理的结果全部消失，只能看到一条突兀的
+        # 【用户授权】消息。
+        if chunk.get("subagent") or chunk.get("source_agent_display_name"):
+            return "awaiting_user"
         return "awaiting_permission"
     if chunk_type == "external_execution_required":
         return "awaiting_external_execution"
     if chunk_type == "user_question":
+        return "awaiting_user"
+    if chunk_type == "business_confirmation":
+        # 业务确认卡与主动提问同构：用户点「确定/取消」会以新消息开**新**轮次，
+        # 本轮不会再有收尾机会，必须当场落库（awaiting_user 不在
+        # AUDIT_DEFERRED_STATUSES 里），否则这一轮的历史与侧栏会话都会消失。
         return "awaiting_user"
     if chunk_type == "error":
         return "error"

@@ -410,20 +410,26 @@ async def stream_agentscope_events(
                 tool_call_id=tool_id,
             )
             if question_event:
-                try:
-                    await persist_user_question_event(
-                        event=question_event,
-                        user_id=runner._runtime_user_id(),
-                        conversation_id=runner.conversation_id or "",
-                    )
-                except Exception:
-                    logger.exception("Failed to persist pending user question")
-                    yield {
-                        "type": "error",
-                        "status": "error",
-                        "content": "无法保存待回答问题，请稍后重试。",
-                    }
-                    return
+                # 委派子代理不在这里登记：它的会话 id 是 child_session_xxx，写进去是
+                # 一条永远没人能回答的 pending（用户看到、可点击的卡在父会话下）。
+                # 父侧 _persist_delegated_user_question 会登记到真正的会话；这里再写
+                # 一次还有反作用——写失败会把整条提问退化成 error 直接掐掉。
+                # 与 assistant_agent_runner 的 ask_user_question 分支保持同一口径。
+                if not runner._runtime_is_delegated_sub_agent():
+                    try:
+                        await persist_user_question_event(
+                            event=question_event,
+                            user_id=runner._runtime_user_id(),
+                            conversation_id=runner.conversation_id or "",
+                        )
+                    except Exception:
+                        logger.exception("Failed to persist pending user question")
+                        yield {
+                            "type": "error",
+                            "status": "error",
+                            "content": "无法保存待回答问题，请稍后重试。",
+                        }
+                        return
                 yield question_event
 
     def track_sql_plan_delta(delta: str) -> None:

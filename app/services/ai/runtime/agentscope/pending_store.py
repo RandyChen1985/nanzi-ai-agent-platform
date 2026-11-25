@@ -136,6 +136,13 @@ class PendingAgentScopeStore:
         if snapshot and snapshot.is_expired():
             self._memory_fallback.pop(request_id, None)
             return None
+        # 内存兜底分支同样要校验归属：Redis 分支的 key 里带 user_id 天然隔离，
+        # 这里只按 request_id 取值。缺了这一步，Redis 异常期间用户 B 拿到用户 A 的
+        # request_id 就能 peek 出 A 的会话（确认接口随后还会据此释放 A 的会话锁）。
+        # 只在**显式传了** user_id 时校验：调用方不传是既有的「按 request_id 直取」
+        # 语义，保持原行为，免得改成无条件校验后把不带用户维度的调用点全部判空。
+        if snapshot and user_id is not None and not self._user_matches(snapshot, user_id):
+            return None
         return snapshot
 
     async def prune(self) -> None:

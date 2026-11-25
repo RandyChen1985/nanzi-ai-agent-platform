@@ -1269,6 +1269,9 @@ export const NON_LIVE_TIMER_CATEGORIES: ReadonlySet<string> = new Set([
   // 向用户追问（user_question）同样是在等人：机器没在跑，秒表一直涨会让用户
   // 以为还在执行；收尾时也不该被标成 success——它停的是「等回答」，不是「已完成」。
   "user_question",
+  // 业务数据确认卡（request_user_confirmation）同理：这一轮已经停在等用户点
+  // 确定/取消上，不是还在跑，秒表与呼吸灯都不该继续。
+  "business_confirmation",
 ]);
 
 /**

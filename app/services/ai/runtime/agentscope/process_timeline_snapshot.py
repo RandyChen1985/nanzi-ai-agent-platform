@@ -386,6 +386,62 @@ def _user_question_log_payload(chunk: Dict[str, Any]) -> Dict[str, Any] | None:
     return payload
 
 
+def _business_confirmation_log_payload(
+    chunk: Dict[str, Any],
+) -> Dict[str, Any] | None:
+    """Extract the replayable business-confirmation card carried by its chunk.
+
+    与 ``user_question`` 同理：实时路径把卡片挂在消息对象上、并不落库，历史回放
+    只能依赖 process_timeline。不把字段一起存下来，刷新后只剩一行「需要确认」，
+    用户既看不到待确认的数据，也无法继续那一轮。
+
+    只保留可重建卡片的最小字段集；``status`` **一律写 pending**。业务确认卡没有
+    user_question 那样的「终态回写快照」机制（提问轮会有后端把 submitted/cancelled
+    写回自己那份快照），所以时间线里这张卡永远停在 pending。前端回放时会强制把它
+    标成 stale：它可以用来**看**当时要确认的数据，但不能点——业务确认回执会触发真实
+    写入，放行一张陈旧卡片等于开了一个重复执行的入口。
+    """
+    confirmation_id = str(chunk.get("confirmation_id") or "").strip()
+    title = str(chunk.get("title") or "").strip()
+    raw_fields = chunk.get("fields")
+    if not confirmation_id or not isinstance(raw_fields, list) or not raw_fields:
+        return None
+
+    fields: List[Dict[str, Any]] = []
+    for field in raw_fields:
+        if not isinstance(field, dict):
+            continue
+        key = str(field.get("key") or "").strip()
+        if not key:
+            continue
+        item: Dict[str, Any] = {
+            "key": key,
+            "label": str(field.get("label") or key).strip(),
+            "value": field.get("value", ""),
+        }
+        if field.get("editable") is False:
+            item["editable"] = False
+        value_type = str(field.get("value_type") or "").strip()
+        if value_type:
+            item["value_type"] = value_type
+        fields.append(item)
+
+    if not fields:
+        return None
+
+    return {
+        "confirmation_id": confirmation_id,
+        "title": title or "请确认以下信息",
+        "summary": str(chunk.get("summary") or ""),
+        "fields": fields,
+        "confirm_label": str(chunk.get("confirm_label") or "确定"),
+        "cancel_label": str(chunk.get("cancel_label") or "取消"),
+        "risk_note": str(chunk.get("risk_note") or ""),
+        "status": "pending",
+        "tool_call_id": str(chunk.get("tool_call_id") or ""),
+    }
+
+
 def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> None:
     """Mutate ``state`` with one user-visible thinking-card event."""
     if not isinstance(chunk, dict):
@@ -522,6 +578,20 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
             # 历史会话回放只能依赖 process_timeline，因此这里随日志一并持久化
             # 选项与交互配置，否则历史里只剩一行标题、卡片无法重建。
             "user_question": _user_question_log_payload(chunk),
+        })
+        return
+
+    if event_type == "business_confirmation":
+        apply_stream_chunk(state, {
+            "type": "log",
+            "id": f"business_confirmation_{chunk.get('confirmation_id') or _next_id(state, 'confirmation')}",
+            "title": str(chunk.get("title") or "需要确认业务数据"),
+            "details": str(chunk.get("summary") or ""),
+            "status": "pending",
+            "category": "business_confirmation",
+            # 与 user_question 同构：SSE 实时路径把卡片挂在消息对象上、不落库，
+            # 不随日志存下字段与按钮文案，历史回放就只剩一行标题。
+            "business_confirmation": _business_confirmation_log_payload(chunk),
         })
         return
 

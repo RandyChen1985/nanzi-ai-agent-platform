@@ -1492,6 +1492,30 @@ async def _consume_sub_agent_stream(
                 # 权限确认必须交回主会话：子智能体没有自己的用户交互面，把事件转发进
                 # 父流，确认卡才会在主会话弹出来。这里只「暂停」不「失败」——挂起快照
                 # 已在子流内部登记（TTL 内有效），用户点选后由父专家 resume 继续。
+                #
+                # 但同一时刻只能放行一张：前端 pendingPermission 是单槽字段，batch 里
+                # 两个子代理同时要授权时，后到的会直接覆盖前一张卡，前一个子代理就
+                # 永远拿不到授权、挂死在内部子会话里。让后到的明确失败，父专家至少
+                # 能看到原因并重新委派。
+                permission_run_key = str(
+                    (subagent_metadata or {}).get("run_id") or sub_display_name
+                )
+                occupied_permission = next(
+                    iter(main_ctx.delegation_pending_permissions), None
+                )
+                if occupied_permission and occupied_permission != permission_run_key:
+                    full_output = (
+                        "本轮已有另一个子智能体在等待工具授权，同一时刻只允许一张审批卡。"
+                        "请等当前授权完成后再重新委派，或改用不需要授权的操作。"
+                    )
+                    interrupt_type = chunk_type
+                    logger.info(
+                        "[Delegation] 已有委派 %s 占用审批卡，拒绝 %s 的并发审批请求",
+                        occupied_permission,
+                        permission_run_key,
+                    )
+                    break
+                main_ctx.delegation_pending_permissions[permission_run_key] = "pending"
                 chunk["source_agent_display_name"] = sub_display_name
                 if subagent_metadata is not None:
                     chunk["subagent"] = dict(subagent_metadata)

@@ -3024,6 +3024,7 @@ import { resolveImagePlaceholder } from "@/utils/imageGenerationPlaceholder";
 import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
+  businessConfirmationStatesFromTimeline,
   type BusinessConfirmationField,
   type BusinessConfirmationState,
 } from "@/utils/businessConfirmation";
@@ -11229,6 +11230,9 @@ const fetchConversationHistory = async (
               // 提问卡实时渲染依赖消息对象上的 userQuestion（不落库），历史回放需从
               // process_timeline 快照重建，否则卡片只剩一行「需要用户回答」。
               const persistedQuestions = userQuestionStatesFromTimeline(hydratedTimeline);
+              // 业务确认卡同理：不随消息落库，只能从时间线快照重建，否则历史里
+              // 只剩一行「需要确认业务数据」，用户看不到当时要确认的数据。
+              const persistedConfirmations = businessConfirmationStatesFromTimeline(hydratedTimeline);
               const restoredAgentMessage: Message = {
                   id: Date.now() + idx * 2 + 1 + offset,
                   trace_id: item.trace_id,
@@ -11239,6 +11243,16 @@ const fetchConversationHistory = async (
                   citations: item.citations ?? undefined,
                   isHistory: true,
                   userQuestion: persistedQuestions[0],
+                  // 取**最后一张**：同一轮里可能先后确认过多组数据，取首张会还原成
+                  // 过期的那一版。历史卡一律标 stale —— 它是快照，实时状态未知，而
+                  // 业务确认回执会触发真正的写入动作，允许点击就等于给一条陈旧卡片
+                  // 开了重复执行的入口。仍在等待的那一轮由恢复器按实时快照重建。
+                  businessConfirmation: persistedConfirmations.length
+                    ? {
+                        ...persistedConfirmations[persistedConfirmations.length - 1],
+                        status: "stale",
+                      }
+                    : undefined,
                   logs: [],
                   isThinking: false,
                   feedback: null,
@@ -13855,6 +13869,19 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
               clearInterval(thoughtTimer);
               thoughtTimer = null;
             }
+            // 需要用户操作的卡片（审批/外部执行/主动提问/业务确认）到达时必须立刻把
+            // 流快照写进 storage，不能等 1.5s 节流窗口：卡片往往紧跟在一串高密度
+            // reasoning 帧之后，而 pagehide 是同步事件、只能读已落盘的快照。晚一步
+            // 落盘，用户在这半秒内刷新/关页，回来就只剩一段没有卡片的思考过程——
+            // 那一轮既不会继续也不会结束，输入框还被锁着。
+            if (
+              data.type === "permission_required"
+              || data.type === "external_execution_required"
+              || data.type === "user_question"
+              || data.type === "business_confirmation"
+            ) {
+              maybePersistStreamSnapshot(true);
+            }
           } else if (data.type === "meta") {
             if (data.agent_name) {
               agentMsg.value.agentName = data.agent_name;
@@ -13969,6 +13996,25 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     // 当前会话的消息上（`currentStreamAgentMessage` 的兜底是「列表最后一条」）。
     // 收到 duplicate_request 仅代表本次并发请求被拒，原有后台任务仍在运行，不可提前清草稿与续显计时器。
     if (!receivedDuplicateRequest) {
+      // 流结束了但卡片还在等人操作（审批/外部执行/提问/业务确认）：先按会话归属把
+      // 快照写进 storage，再清内存引用——落盘函数读的就是 activeStreamDraft，清完就
+      // 写不出来了。漏这一步，pagehide 时无草稿可写，刷新后卡片凭空消失，而后端那
+      // 一边其实正挂着等确认，两边状态永久错开。
+      // 只认「四类交互卡」这一个信号，不看时间线里有没有 pending 节点：收尾阶段
+      // 个别工具日志/todo 仍可能停在 pending（由 finalizeAllPendingStreamLogs 落定），
+      // 那不是「等人操作」，拿它当条件会让正常跑完的轮次也留下一份快照，恢复器随后
+      // 把它误判成断线在途——正是这段代码原本要避免的事。
+      if (
+        conversationId.value === streamConversationId
+        && (
+          agentMsg.value.pendingPermission
+          || agentMsg.value.pendingExternalExecution
+          || agentMsg.value.userQuestion
+          || agentMsg.value.businessConfirmation
+        )
+      ) {
+        maybePersistStreamSnapshot(true);
+      }
       if (conversationId.value === streamConversationId) {
         activeStreamDraft = null;
         // 本轮的输出已经完整落到界面，恢复卡片转入完成态。

@@ -113,6 +113,19 @@ def is_tool_concurrency_safe(
     if custom_flag is False:
         return False
 
+    # shell 类工具一律串行：删除命令、命令黑名单、命令替换这些运行时安全 ASK 都是
+    # bypass_immune 的，即使 approval_mode="allow" 也会弹确认。一旦同一批次里有两个
+    # 以上这样的调用被并发执行，AgentScope 会把它们同时置为 ASKING 并各发一个
+    # RequireUserConfirmEvent；而挂起快照只保存**单条** tool_call、恢复时也只提交
+    # 单条 ConfirmResult——第 1 个确认后其余仍停在 ASKING，`_next_action` 于是直接
+    # 以「I'm waiting for your permission or the external execution to finish.」
+    # 退出，后端误判 interrupted=False，把这句英文当成最终回答落库。
+    # 串行批次会在第 1 个 ASK 处安全停下，其余保持 PENDING，逐个确认即可恢复。
+    from app.services.ai.runtime.command_policy import is_shell_like_tool_name
+
+    if is_shell_like_tool_name(tool_name):
+        return False
+
     enabled = (
         parallel_enabled
         if parallel_enabled is not None

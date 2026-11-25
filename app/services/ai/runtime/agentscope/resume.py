@@ -686,6 +686,10 @@ class AgentScopeResumeHandler:
         后，由父会话自己用 `sub_agent_call(resume=True)` 续聊；子智能体重跑到同一个
         调用时命中授权（一次性令牌按工具名 + 参数指纹精确匹配，会话授权按工具名）。
         """
+        from app.services.ai.runtime.agentscope.permission_directives import (
+            SUBAGENT_PERMISSION_DENY_PREFIX,
+            SUBAGENT_PERMISSION_GRANT_PREFIX,
+        )
         from app.services.ai.runtime.agentscope.session_permission_grants import (
             delegation_grant_scope,
             once_permission_grants,
@@ -714,7 +718,15 @@ class AgentScopeResumeHandler:
 
         tool_input_for_grant = _tool_input_from_snapshot(pending)
         deletion_only_once = shell_deletion_needs_confirmation(tool_name, tool_input_for_grant)
-        effective_session = session_scope and not deletion_only_once
+        # shell 类工具一律只给一次性令牌，与主会话路径（`_grant_session_permission`
+        # 里 `supports_session_grant` 直接拒绝）保持同一口径：会话授权按工具名记忆，
+        # 一个 shell 工具名下能跑的命令是无限的，写成「本会话」等于把后续所有命令
+        # 一起放行。卡片本就不给这个按钮，这里再挡一次，防止客户端伪造 scope=session。
+        from app.services.ai.runtime.command_policy import is_shell_like_tool_name
+
+        effective_session = (
+            session_scope and not deletion_only_once and not is_shell_like_tool_name(tool_name)
+        )
 
         granted = False
         if confirmed and scope and tool_name:
@@ -780,13 +792,13 @@ class AgentScopeResumeHandler:
             else:
                 grant_phrase = "本会话内有效" if effective_session else "仅这一次"
             directive = (
-                f"【用户授权】子智能体「{agent_name}」请求执行的工具 {tool_name} 已获允许"
+                f"{SUBAGENT_PERMISSION_GRANT_PREFIX}「{agent_name}」请求执行的工具 {tool_name} 已获允许"
                 f"（{grant_phrase}）。"
                 f"{resume_hint}，不要从头重跑，也不要重复申请同一授权。"
             )
         else:
             directive = (
-                f"【用户拒绝】用户拒绝子智能体「{agent_name}」执行工具 {tool_name} 的请求。"
+                f"{SUBAGENT_PERMISSION_DENY_PREFIX}「{agent_name}」执行工具 {tool_name} 的请求。"
                 f"{resume_hint}，并让子智能体改用不需要该工具权限的方式完成任务；"
                 "不要重复申请同一授权。"
             )
@@ -834,9 +846,11 @@ class AgentScopeResumeHandler:
         tool_name = str(getattr(pending.tool_call, "name", "") or "").strip()
         conversation_id = str(pending.snapshot.conversation_id or "").strip()
 
-        # 与卡片按钮同源：只读/危险工具不写授权，避免「接口能写、按钮不给」两套口径。
-        # 跨进程恢复时挂起句柄里没有工具定义，此时放行——真正的降级仍受 tools.py 里
-        # 先于判定返回的 DENY 顺序约束，写进去也只是一条永远不会被用到的记录。
+        # 与卡片按钮同源：只读/危险/shell 类工具不写授权，避免「接口能写、按钮不给」
+        # 两套口径。跨进程恢复时挂起句柄里没有工具定义（target 为 None），此时对
+        # shell 类工具仍然拒绝——否则客户端可以手工构造 scope=session 把任意
+        # ``mcp_sandbox_bash_*`` / ``execute_system_command`` 写进授权表，之后该会话里
+        # 所有命令全程免确认（沙箱 shell 没有命令替换/敏感路径复核，粒度撑不起这个承诺）。
         target = next(
             (
                 tool
@@ -845,7 +859,13 @@ class AgentScopeResumeHandler:
             ),
             None,
         )
-        if target is not None and not supports_session_grant(target):
+        if target is not None:
+            grantable = supports_session_grant(target)
+        else:
+            from app.services.ai.runtime.command_policy import is_shell_like_tool_name
+
+            grantable = not is_shell_like_tool_name(tool_name)
+        if not grantable:
             return {
                 "granted": False,
                 "tool_name": tool_name,

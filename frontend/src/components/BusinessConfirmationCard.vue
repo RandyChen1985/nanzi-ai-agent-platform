@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import type {
   BusinessConfirmationField,
   BusinessConfirmationState,
@@ -54,8 +54,33 @@ watch(
   },
 );
 
+// 点击后到父组件把 status 翻成 submitted 之间有一次网络往返：这段窗口里卡片看起来
+// 还是 pending，用户连点两下就会发两条【业务确认】回执，后端按两条消息各跑一轮。
+// 用本地 submitting 立刻锁住，并在 status 变化或超时后解锁（失败时不至于永久卡死）。
+const submitting = ref(false);
+let submittingTimer: ReturnType<typeof setTimeout> | null = null;
+
+watch(
+  () => props.payload.status,
+  (next) => {
+    if (next !== 'pending' && submitting.value) {
+      submitting.value = false;
+      if (submittingTimer) {
+        clearTimeout(submittingTimer);
+        submittingTimer = null;
+      }
+    }
+  },
+);
+
+onBeforeUnmount(() => {
+  if (submittingTimer) clearTimeout(submittingTimer);
+  submittingTimer = null;
+});
+
 const locked = computed(
   () =>
+    submitting.value ||
     props.disabled ||
     props.payload.status === 'submitted' ||
     props.payload.status === 'stale',
@@ -79,6 +104,13 @@ function onBooleanChange(field: BusinessConfirmationField, checked: boolean) {
 
 function submit(confirmed: boolean) {
   if (locked.value) return;
+  submitting.value = true;
+  if (submittingTimer) clearTimeout(submittingTimer);
+  // 兜底解锁：请求失败/父组件没改 status 时不能让卡片永久不可点。
+  submittingTimer = setTimeout(() => {
+    submitting.value = false;
+    submittingTimer = null;
+  }, 8000);
   emit('submit', {
     confirmed,
     fields: draftFields.map((field) => ({ ...field })),

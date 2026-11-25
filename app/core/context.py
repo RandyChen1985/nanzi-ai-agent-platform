@@ -132,6 +132,10 @@ class AgentContext(BaseModel):
     #: active 槽位，batch 并行时多个子代理同时提问会把先来的标成 superseded 静默吃掉；
     #: 用这个共享标记保证同一时刻只放行一张卡（deep=False 的 model_copy 共享同一实例）。
     delegation_pending_questions: Dict[str, str] = Field(default_factory=dict)
+    #: 本轮已经占用了审批卡的委派 run_id。前端 ``msg.pendingPermission`` 是**单槽**
+    #: 字段，batch 并行时多个子代理同时请求工具授权，后到的会直接覆盖前一张卡——
+    #: 前一个子代理永远等不到确认、就此挂死。与提问卡同理，同一时刻只放行一张。
+    delegation_pending_permissions: Dict[str, str] = Field(default_factory=dict)
 
     # Runtime tool approval (inherited by sub_agent_call delegation)
     permission_options: Dict[str, Any] = Field(default_factory=dict)

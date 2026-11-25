@@ -484,6 +484,34 @@ thought 不超过 40 个汉字。只返回下列 JSON，不要 Markdown 或额�
                     user_action_type="chat",
                 )
 
+        # 子代理权限交接回执（【用户授权】/【用户拒绝】）：这是 resume 生成的系统指令，
+        # 不是真人发言。文案里显式点名了子智能体名与工具名，交给路由 LLM 极易被派给
+        # 子智能体本人；而子智能体在主会话直接跑时没有 sub_agent_call、
+        # parent_conversation_id 为空，命不中写在 {parent_conv}::sub::{agent} 上的
+        # 授权，同一个工具会再弹一次卡，用户陷入「点允许 → 又弹 → 再点」的死循环。
+        from app.services.ai.runtime.agentscope.permission_directives import (
+            is_subagent_permission_directive,
+        )
+
+        if last_agent_name and is_subagent_permission_directive(user_input):
+            sticky_agent = self._match_agent(last_agent_name, agents_metadata)
+            if sticky_agent:
+                logger.info(
+                    "Sub-agent permission directive shortcut: sticky route to %s without LLM",
+                    sticky_agent["name"],
+                )
+                return TurnDecision.from_router_components(
+                    agent_id=sticky_agent["id"],
+                    agent_name=sticky_agent.get("name"),
+                    confidence=0.99,
+                    reasoning=(
+                        "子代理权限交接回执，会话粘性沿用上一轮智能体（跳过路由 LLM）"
+                    ),
+                    turn_labels=["subagent_permission_receipt", "follow_up"],
+                    relation_to_previous="follow_up",
+                    user_action_type="chat",
+                )
+
         # 业务确认回执（确定/取消）：协议固定前缀，会话粘性沿用上一轮智能体，跳过路由 LLM。
         from app.services.ai.business_confirmation import is_business_confirmation_receipt_message
 

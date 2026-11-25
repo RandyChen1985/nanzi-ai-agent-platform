@@ -176,6 +176,10 @@ def is_interrupt_sse_chunk(chunk: Dict[str, Any]) -> bool:
         "permission_required",
         "external_execution_required",
         "user_question",
+        # 业务数据确认卡同样是「等人」的硬中断：不在这里停下，runner 会一路跑到
+        # 模型空转/超时，用户点「确定」时这一轮的运行早已结束（锁已释放、快照已清），
+        # 回执只能当成一条普通新消息重新开始，前置上下文全丢。
+        "business_confirmation",
         "error",
     }
 

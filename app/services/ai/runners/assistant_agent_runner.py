@@ -148,6 +148,12 @@ from app.services.ai.time_anchor import filter_redundant_time_tools
 
 logger = logging.getLogger(__name__)
 
+# AgentScope `_agent.py` 在「还有工具停在 ASKING」时构造的 Exit 占位文案。
+# 它来自框架、不是模型输出，被当成助手正文转发/落库就是一条纯垃圾回答。
+_AWAITING_PERMISSION_EXIT_TEXT = (
+    "I'm waiting for your permission or the external execution to finish."
+)
+
 
 _FILE_TOOL_OPERATIONS = {
     "Read": "read",
@@ -2980,6 +2986,13 @@ class AssistantAgentRunner(BaseExecutor):
             delta = sanitize_assistant_stream_text(str(getattr(event, "delta", "")))
             if not delta:
                 return
+            # AgentScope 在「还有工具停在 ASKING」时用 Exit 收尾，会把框架占位文案
+            # 「I'm waiting for your permission or the external execution to finish.」
+            # 当成助手正文吐出来。它不是模型产出，原样转发会成为本轮回答、还会连库。
+            # 正常路径下 permission_required 帧会让上面的事件循环提前 return，这里是
+            # 兜底（并发审批、快照被覆盖等情况）。
+            if delta.strip() == _AWAITING_PERMISSION_EXIT_TEXT:
+                return
             for chunk in process_narration_events.on_text_delta(state, delta):
                 async for item in self._yield_process_narration_chunk(state, chunk):
                     yield item
@@ -3022,6 +3035,18 @@ class AssistantAgentRunner(BaseExecutor):
                 yield chunk
                 if is_interrupt_sse_chunk(chunk):
                     return
+
+        # 兜底：正文里如果只剩下框架的「等待授权」占位语，说明这一轮其实停在
+        # ASKING 上、并没有真实产出（on_text_block_delta 已吞掉那句话，这里处理
+        # 它混在其他文本里或走了别的通道情况）。按中断收尾——不合成正文、不让
+        # 调用方把这份 AgentState 存回去（存回去会让下次恢复接着这份半死状态）。
+        if str(state.get("full_content") or "").strip() == _AWAITING_PERMISSION_EXIT_TEXT:
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "本轮在等待工具授权时提前结束，请重新发起该任务。",
+            }
+            return
 
         async for chunk in self._reconcile_reply_after_stream(
             agent=agent,
