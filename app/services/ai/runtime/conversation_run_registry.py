@@ -78,6 +78,12 @@ class ConversationRunHandle:
     _tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     persistence_task: asyncio.Task[Any] | None = None
     finished: asyncio.Event = field(default_factory=asyncio.Event)
+    # 本轮持有的会话 lane 锁令牌（= acquire 时传入的 trace_id）。
+    #
+    # 客户端断开/取消后要清理残留锁时，必须拿这个令牌做 compare-and-delete：
+    # 无 token 的 DEL 会把「取消后立刻发起的下一轮」刚抢到的锁一并删掉，
+    # 导致两个 run 并发操作同一个 AgentState。
+    lane_token: str | None = None
 
     @property
     def cancelled(self) -> bool:

@@ -1233,6 +1233,11 @@ class AgentService:
                 lane_user_id, conversation_id
             ) as run_handle:
                 pipeline_context.run_handle = run_handle
+                if run_handle is not None:
+                    # 记下本轮持有的 lane 令牌（= hold 用的 trace_id）：客户端断开后
+                    # 清理残留锁时必须拿它做 compare-and-delete，否则会误删下一轮
+                    # 刚抢到的锁，让两个 run 并发操作同一 AgentState。
+                    run_handle.lane_token = trace_id
                 if callable(on_lane_acquired):
                     callback_result = on_lane_acquired()
                     if asyncio.iscoroutine(callback_result):

@@ -85,6 +85,19 @@ onUnmounted(() => {
   if (expiryTimer) window.clearInterval(expiryTimer);
   expiryTimer = null;
 });
+
+// 卡片一旦落到终态（已批准 / 已拒绝 / 已放弃 / 已过期）就停掉秒级 tick。
+// 只靠 onUnmounted 清理是不够的：挂起卡片常常在会话里留存很久（用户可能几分钟
+// 后才继续对话），这期间 timer 每秒空转、nowSeconds 每秒触发一次重渲染。
+watch(
+  () => props.payload.status,
+  (status) => {
+    if (status !== "pending" && expiryTimer) {
+      window.clearInterval(expiryTimer);
+      expiryTimer = null;
+    }
+  },
+);
 const isSubmitting = computed(() => Boolean(props.payload.isSubmitting));
 const locked = computed(
   () => Boolean(props.disabled) || !isPending.value || isSubmitting.value || isExpired.value,

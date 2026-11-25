@@ -702,8 +702,8 @@ class AgentScopeResumeHandler:
         scope = delegation_grant_scope(parent_conversation_id, agent_name)
         session_scope = str(grant_scope or "").strip().lower() == "session"
 
-        # 快照只消费一次：连点确认不应该重复写授权，也不该留下第二份令牌。
-        await pending_agentscope_confirmations.pop_async(request_id, user_id=user_id)
+        # 快照的消费必须放在授权写入**之后**（见下方 pop_async 调用处）：
+        # 这里的顺序决定了 grant 失败时用户还能不能重试。
 
         # 删除类确认带 bypass_immune，会话授权对它无效。用户点「本会话总是允许」时
         # 若照写会话授权，只会留下一条永远不生效的记录，下次照样弹——所以这类一律
@@ -743,6 +743,14 @@ class AgentScopeResumeHandler:
                 "trace_id": str(getattr(pending, "trace_id", "") or ""),
             }
             return
+
+        # 授权已经落库（或用户明确拒绝）才消费快照。反过来的话，grant 失败时快照
+        # 已被 pop，模型收到「请重试」而用户再点按钮只会拿到「请求不存在」——
+        # 这一轮彻底无法继续，只能让用户重发整条消息。
+        #
+        # 连点确认仍然安全：两种 grant 都是按 key 覆盖写（幂等），重复写只是把
+        # 同一个 key 的 TTL 刷新一次；快照也只会在成功路径上被 pop 一次。
+        await pending_agentscope_confirmations.pop_async(request_id, user_id=user_id)
 
         yield {
             "type": "permission_result",

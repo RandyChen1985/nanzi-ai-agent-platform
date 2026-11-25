@@ -56,6 +56,22 @@ def _parse_event_seq(raw: Any) -> int | None:
 TRANSIENT_EVENT_TYPES = frozenset({"tool_progress"})
 
 
+def is_thinking_heartbeat(event: object) -> bool:
+    """是否为「思考中」心跳帧（无任何信息的 `{"type": "thinking", "status": "continuing"}`）。
+
+    `THINKING_BLOCK_DELTA` 每处理一个增量都会**额外**先发一条这样的心跳（真正的内容
+    在随后的 `reasoning_content` 里）。深度思考 1500 token 就产生 1500 条心跳，
+    足以挤掉 8000 条日志上限的一大半，让断线重放拿不到更早的工具事件与正文。
+
+    带 `phase` 的 start/end 相位帧要保留：续显需要它们判断思考块的边界。
+    """
+    if not isinstance(event, dict):
+        return False
+    if str(event.get("type") or "") != "thinking":
+        return False
+    return not event.get("phase")
+
+
 class ConversationStreamJournal:
     """按 (user, conversation) 保存流式事件的有界日志。"""
 
@@ -126,6 +142,7 @@ class ConversationStreamJournal:
                 for event in events
                 if isinstance(event, dict)
                 and str(event.get("type") or "") not in TRANSIENT_EVENT_TYPES
+                and not is_thinking_heartbeat(event)
             ]
             if not valid_events:
                 return

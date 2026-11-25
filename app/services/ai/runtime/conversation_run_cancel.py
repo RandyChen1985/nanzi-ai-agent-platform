@@ -20,6 +20,11 @@ async def release_conversation_run_locks(
 
     Used when the client aborts SSE or explicitly cancels generation so the
     user can send a new message without waiting for Redis lock TTL expiry.
+
+    `trace_id` 不只是日志字段：它会作为 lane 锁的 compare-and-delete 令牌
+    （acquire 时 `token = trace_id or uuid4().hex`）。取消后紧跟一条新消息时，
+    新请求可能已在同一毫秒内抢到这把锁——盲删会把新一轮的互斥抹掉，
+    两个 run 并发操作同一 AgentState。
     """
     if not conversation_id:
         return {
@@ -31,6 +36,7 @@ async def release_conversation_run_locks(
     lane_released = await conversation_run_lane.force_release(
         user_id=user_id,
         conversation_id=conversation_id,
+        expected_token=trace_id,
     )
     session_locks_released = await agentscope_session_lock.force_release_all_for_conversation(
         user_id=user_id,

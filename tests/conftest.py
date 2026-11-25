@@ -798,8 +798,8 @@ def _isolate_delegation_session_store(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_agent_workspace_root(tmp_path_factory, monkeypatch):
-    """默认不让单测把 AI 工作区写进代码仓库。
+def _isolate_agent_workspace_root(monkeypatch):
+    """不让单测把 AI 工作区写进代码仓库的**单一**防线。
 
     历史事故：``tests/services/ai/test_agent_service_history_alignment.py`` 把
     ``ConfigService.get`` 一刀切成 ``AsyncMock(return_value="20")``（本意只是想给
@@ -808,21 +808,27 @@ def _isolate_agent_workspace_root(tmp_path_factory, monkeypatch):
     紧随其后的 ``_preseed_session_skills`` 又把 42 份平台技能 copytree 进去，
     最终在仓库根留下 ``./20/admin__1/sessions/conversation-1/skills/.seed``。
 
-    这里是第一道防线（默认工作区根重定向到本次用例独立的 tmp 目录）；第二道是
-    ``workspace_root_config_error()`` 对非法配置值的拒绝，两者互不依赖。
-    所有 ``default_workspace_root`` 的调用点都是函数内 import，patch 模块属性即可生效。
+    真正的修复在 ``workspace_root_config_error()``：``resolve_workspace_root()``
+    读到非法配置值（相对路径、系统根、代码根）时会拒绝并回退到
+    ``default_workspace_root()``，而后者不读配置。这里只做一件事——把配置伪装成
+    那个事故值，验证防线确实挡住了它，顺便保证用例不会真的写出仓库。
 
-    刻意用 ``tmp_path_factory`` 而不是 ``tmp_path``：后者常被用例自己当作
-    SKILLS_DIR / 工作区根来扫描，把 ``agent_workspaces`` 塞进去会让那些用例多扫到
-    一个"技能目录"（``test_list_available_skills_reports_total_and_truncation``
-    就是这么多出 total=7 的）。
+    这里**不再**重定向 ``default_workspace_root`` / ``resolve_workspace_root``：
+    那会让「写路径」落在系统 tmp、「校验路径」仍按 ``data/`` 计算，
+    fs 浏览器与工作区相关用例会集体变成 403/404（隔离根不在允许根之内）。
     """
     from app.services.ai.runtime.agentscope import workspace as workspace_module
 
-    isolated_root = tmp_path_factory.mktemp("agent_workspaces")
+    illegal_root = "20"
+    assert workspace_module.workspace_root_config_error(illegal_root) is not None, (
+        "工作区根校验必须拦住相对路径配置值，否则会在仓库根生成 ./20"
+    )
+
+    # 事故值只用于断言校验函数；不真的写进任何 ConfigService 的返回值。
     monkeypatch.setattr(
         workspace_module,
-        "default_workspace_root",
-        lambda *args, **kwargs: str(isolated_root),
+        "_WARNED_BAD_WORKSPACE_ROOTS",
+        set(),
+        raising=False,
     )
     yield

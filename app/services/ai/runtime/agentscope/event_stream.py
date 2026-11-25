@@ -737,6 +737,9 @@ async def map_standard_agentscope_event(
             "type": "log",
             "id": tool_id,
             "title": f"调用工具: {tool_name}",
+            # 下发给前端做统计与展示：只靠标题解析时，除 Bash 外的工具在摘要里
+            # 全都消失（「执行过程」只剩「深度思考」一项）。
+            "tool_name": tool_name,
             "details": "",
             "status": "pending",
             "category": "tool",

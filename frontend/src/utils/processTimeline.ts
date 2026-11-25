@@ -1266,6 +1266,9 @@ function sortBatchRun<T extends ProcessTimelineItem | ProcessTimelineLogItem>(
 export const NON_LIVE_TIMER_CATEGORIES: ReadonlySet<string> = new Set([
   "permission",
   "external",
+  // 向用户追问（user_question）同样是在等人：机器没在跑，秒表一直涨会让用户
+  // 以为还在执行；收尾时也不该被标成 success——它停的是「等回答」，不是「已完成」。
+  "user_question",
 ]);
 
 /**
@@ -1335,6 +1338,7 @@ export function resolveLiveTimerLogId(
  */
 export function settlePendingTimelineSteps(
   items: ProcessTimelineItem[] | undefined,
+  settleStatus: Extract<ProcessTimelineStatus, "success" | "interrupted" | "error"> = "success",
 ): number {
   let settled = 0;
 
@@ -1345,7 +1349,7 @@ export function settlePendingTimelineSteps(
         const waitingOnHuman =
           Boolean(item.category) && NON_LIVE_TIMER_CATEGORIES.has(item.category as string);
         if (item.status === "pending" && !waitingOnHuman) {
-          item.status = "success";
+          item.status = settleStatus;
           settled += 1;
         }
       } else if (item.kind === "text") {
@@ -1550,7 +1554,20 @@ export function upsertTimelineLog(
     // 「任一派发卡」这条兜底，被并进第一个容器——第二个 run 没有独立容器，还会把
     // 第一个容器的元数据和标题一起覆盖成「续聊 #N」，让首次委派也被标成续聊。
     const matchesDelegationCard = (c: ProcessTimelineLogItem) => {
-      if (targetRunId) return c.subagent?.run_id === targetRunId;
+      if (targetRunId) {
+        if (c.subagent?.run_id === targetRunId) return true;
+        // 派发卡（sub_agent_call / batch 的工具事件）本身可能不带 subagent 字段。
+        // 只认 run_id 的话这类卡永远认领不到：第一次委派留下一张永远 pending 的卡，
+        // 生命周期事件又新建一张，用户看到两张委派卡。这里允许「尚无 run_id 的
+        // 派发卡」被认领一次——认领后立即写入 subagent（见下方），后续委派不会再抢。
+        return (
+          !c.subagent?.run_id &&
+          (c.tool_name === "sub_agent_call" ||
+            c.tool_name === "sub_agent_batch_call" ||
+            String(c.title || "").includes("委派智能体") ||
+            String(c.title || "").includes("sub_agent_call"))
+        );
+      }
       return (
         c.tool_name === "sub_agent_call" ||
         c.title.includes("委派智能体") ||
@@ -1569,9 +1586,11 @@ export function upsertTimelineLog(
       if (existingContainer.kind === "log") {
         containerLog = existingContainer;
       } else if (existingContainer.kind === "text") {
-        containerLog = (existingContainer.children || []).find((c: ProcessTimelineLogItem) =>
-          matchesDelegationCard(c)
-        );
+        // 从后往前取：正向 find 会命中最早的那张委派卡，把新一轮的状态写到
+        // 已经结束的第一个子代理头上。
+        containerLog = [...(existingContainer.children || [])]
+          .reverse()
+          .find((c: ProcessTimelineLogItem) => matchesDelegationCard(c));
       }
       if (containerLog) {
         if (data.execution_time_ms !== undefined) containerLog.execution_time_ms = data.execution_time_ms;
@@ -1597,10 +1616,19 @@ export function upsertTimelineLog(
   }
 
   if (isIncomingSubagentTool) {
+    const incomingToolId = String((data as { id?: unknown }).id ?? "");
+    const matchToolContainer = (c: ProcessTimelineLogItem) => {
+      if (!isDelegationContainerLike(c)) return false;
+      // 同一个 tool_call 的后续帧（start → result）按 id 精确命中
+      if (incomingToolId && String(c.id) === incomingToolId) return true;
+      // 拿不到 id 时**只**认仍在进行中的容器：命中已完成的那张会把第一次委派
+      // 的结果反向改回 pending，用户看到第一个子代理又卡住了。
+      return c.status === "pending";
+    };
     const existingContainer = [...target.processTimeline].reverse().find((item) => {
-      if (item.kind === "log" && isDelegationContainerLike(item)) return true;
+      if (item.kind === "log") return matchToolContainer(item);
       if (item.kind === "text") {
-        return (item.children || []).some((c) => isDelegationContainerLike(c as ProcessTimelineLogItem));
+        return (item.children || []).some((c) => matchToolContainer(c as ProcessTimelineLogItem));
       }
       return false;
     });
@@ -1609,9 +1637,11 @@ export function upsertTimelineLog(
       if (existingContainer.kind === "log") {
         containerLog = existingContainer;
       } else if (existingContainer.kind === "text") {
-        containerLog = (existingContainer.children || []).find((c: ProcessTimelineLogItem) =>
-          isDelegationContainerLike(c)
-        );
+        // 同 lifecycle 分支：取**最后**一张，否则第二次委派的收尾状态会被写到
+        // 第一个子代理的卡上（已完成卡被反向改成 pending，第一个结果看起来卡住了）。
+        containerLog = [...(existingContainer.children || [])]
+          .reverse()
+          .find((c: ProcessTimelineLogItem) => matchToolContainer(c));
       }
       if (containerLog) {
         if (data.execution_time_ms !== undefined) containerLog.execution_time_ms = data.execution_time_ms;
@@ -2015,18 +2045,10 @@ export function countTimelineSteps(items: ProcessTimelineItem[]): number {
   return items.reduce((count, item) => {
     // 任务清单是任务级概览，不是一次执行步骤：不计入「执行过程 · N 步骤」。
     if (item.kind === "todo") return count;
-    if (item.kind === "log" && item.id === ROUTE_TIMELINE_ROOT_ID) {
-      return count + 1 + (item.children?.length || 0);
-    }
-    if (item.kind === "log" && item.id === "preparation:auth_context_capability") {
-      return count + 1 + (item.children || []).reduce((nestedCount, child) => {
-        if (child.id === ROUTE_TIMELINE_ROOT_ID) {
-          return nestedCount + 1 + (child.children?.length || 0);
-        }
-        return nestedCount + 1;
-      }, 0);
-    }
-    return count + 1;
+    // 递归统计子节点：子代理容器（委派 → 子代理内部的每一步）的二级 children
+    // 此前完全不计入，于是「执行过程 · 3 步骤」里明明展开了七八行。
+    const children = (item as { children?: ProcessTimelineItem[] }).children;
+    return count + 1 + countTimelineSteps(children || []);
   }, 0);
 }
 
@@ -2200,7 +2222,10 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
     }
 
     if (item.kind === "log" && isContainer(item)) {
-      if (activeContainer) {
+      // 必须确认是**同一个子代理**才并进当前容器：裸 `if (activeContainer)` 会把
+      // 第二个子代理（run_id 不同）的整张卡并进第一个，界面上少一张卡，元数据
+      // 与标题还被覆盖。缺 run_id 时 isSameSubagentRun 返回 true，保持原行为。
+      if (activeContainer && isSameSubagentRun(activeContainer, item)) {
         activeContainer.execution_time_ms = item.execution_time_ms || activeContainer.execution_time_ms;
         activeContainer.status = item.status || activeContainer.status;
         if (item.details) activeContainer.details = item.details;

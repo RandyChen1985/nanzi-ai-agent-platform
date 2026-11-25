@@ -4949,7 +4949,10 @@ async def get_local_workspace(
                 reason_code="k8s_workspace_start_failed",
                 user_message="缺少会话 ID，K8S 沙箱未启动，代码未执行。",
             )
-        if policy_without_conversation not in (SANDBOX_POLICY_LOCAL, SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S):
+        if sandbox_policy_is_sandbox(policy_without_conversation) and (
+            policy_without_conversation
+            not in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S)
+        ):
             # e2b / ssh：此前与 local 一起落到下面的 ``return None``。但 local 返回
             # None 是"本来就没有沙箱"，而远端沙箱返回 None 会被调用方当成"工作区
             # 已就绪"，最后只能由 bind 抛出一句语焉不详的"沙箱未就绪"。这里与
@@ -8720,7 +8723,12 @@ async def _effective_policy_for_tool_binding() -> str:
         )
 
         raw = await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL)
-        return resolve_effective_sandbox_policy(raw, SANDBOX_POLICY_LOCAL)
+        policy = resolve_effective_sandbox_policy(raw, SANDBOX_POLICY_LOCAL)
+        # 未识别的取值不能当成沙箱：`sandbox_policy` 是自由文本配置，误配（历史测试里
+        # 就出现过把 ConfigService.get 一律 mock 成数字的情况）会让会话走到
+        # 「非 local 却没有工作区」的 fail-closed 分支，整站不可用。只有真正的沙箱
+        # 策略才允许进入非 local 分支。
+        return policy if sandbox_policy_is_sandbox(policy) else SANDBOX_POLICY_LOCAL
     except Exception as exc:  # noqa: BLE001 - 配置不可用按 local 处理
         logger.warning(
             "[workspace] 读取 sandbox_policy 失败，工具绑定按 local 处理: %s", exc

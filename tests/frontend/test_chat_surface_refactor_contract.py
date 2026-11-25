@@ -242,8 +242,10 @@ def test_both_chat_surfaces_share_stream_trace_and_citation_normalization():
         assert name in debug
     assert "chunk_id" in shared
     assert "doc_name" in shared
-    assert "data.data?.trace_id || data.trace_id" in shared
-    assert 'msg.trace_id = traceId as T["trace_id"]' in shared
+    # 顶层 trace_id 优先：嵌套事件的 data.data.trace_id 属于子智能体，
+    # 不能覆盖本轮主 trace（否则产物归集、断线重放、取消全对不上那一轮）。
+    assert "data?.trace_id || data?.data?.trace_id" in shared
+    assert 'msg.trace_id = incoming as T["trace_id"]' in shared
 
 
 def test_embed_chat_uses_shared_sse_parser_for_process_events():

@@ -67,6 +67,7 @@ import {
   appendAssistantBodyDelta,
   createBufferedStreamEventPump,
   dispatchAgentscopeStreamEvent,
+  finalizeAllPendingStreamLogs,
   formatExternalExecutionStatus,
   markStalePendingStreamLogs,
   mergeStreamCitations,
@@ -4217,18 +4218,19 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     }
 
     // Final cleanup of pending logs
-    if (agentMsg.value.logs) {
-      agentMsg.value.logs.forEach(log => {
-        if (log.status === 'pending' && log.category !== 'permission') {
-          log.status = 'success'; // Assume success if stream finished normally
-        }
-      });
-    }
+    // 统一收尾入口：排除 permission/external，并同步落定 processTimeline 里的
+    // 旁白与推理节点（只遍历 logs 会漏掉它们，呼吸灯与思考光标就此常亮）。
+    finalizeAllPendingStreamLogs(agentMsg.value);
 
     // Refresh history sidebar
     fetchHistory();
   } catch (error: any) {
-    if (error.name === "AbortError") return;
+    if (error.name === "AbortError") {
+      // 用户点停止：此前这里直接 return，一个挂起节点都不收敛，思考卡片会永久
+      // 转圈。中断不是「成功」，按 interrupted 落定。
+      finalizeAllPendingStreamLogs(agentMsg.value, Date.now(), "interrupted");
+      return;
+    }
 
     agentMsg.value.content += `\n[异常中断: ${error.message}]`;
     agentMsg.value.isThinking = false;
@@ -4238,13 +4240,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     }
 
     // Mark pending logs as error
-    if (agentMsg.value.logs) {
-      agentMsg.value.logs.forEach(log => {
-        if (log.status === 'pending') {
-          log.status = 'error';
-        }
-      });
-    }
+    finalizeAllPendingStreamLogs(agentMsg.value, Date.now(), "error");
   } finally {
     if (liveWriterToken === streamToken) {
       isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
@@ -4890,6 +4886,11 @@ const expirePendingPermission = (msg: Message) => {
   // 只用本地状态收尾：服务端快照本来就已过期，不再发请求。
   pending.status = "expired";
   pending.isSubmitting = false;
+  // 这条路径不发起恢复流，事后没有任何东西会复位锁态：不显式解锁，输入框会被
+  // sendMessage 的 isProcessing 判断永久拦死，只能刷新页面。
+  isProcessing.value =
+    msg.pendingExternalExecution?.status === "pending" ||
+    msg.pendingPermission?.status === "pending";
 };
 
 const discardPendingPermission = (msg: Message) => {
@@ -4899,6 +4900,9 @@ const discardPendingPermission = (msg: Message) => {
   pending.status = "rejected";
   pending.isSubmitting = false;
   pending.expanded = false;
+  isProcessing.value =
+    msg.pendingExternalExecution?.status === "pending" ||
+    msg.pendingPermission?.status === "pending";
 };
 
 let debugUnmounted = false;

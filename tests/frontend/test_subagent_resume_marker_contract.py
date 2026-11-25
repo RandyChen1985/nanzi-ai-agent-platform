@@ -64,6 +64,13 @@ def test_delegation_container_matching_prefers_run_id():
         Path(__file__).resolve().parents[2] / "frontend/src/utils/processTimeline.ts"
     ).read_text(encoding="utf-8")
 
-    assert "if (targetRunId) return c.subagent?.run_id === targetRunId;" in source
+    # 有 run_id 时必须先按 run_id 精确匹配
+    assert "if (c.subagent?.run_id === targetRunId) return true;" in source
+    # 放宽只对「尚无 subagent 元数据」的派发卡生效：这类卡是 sub_agent_call 的
+    # 工具事件，本身不带 run_id，不放宽就永远认领不到，会留下一张永久 pending 的
+    # 双卡。认领后立即写入 subagent（见 data.subagent 赋值），第二个 run 因此
+    # 不会并进第一个容器。
+    assert "!c.subagent?.run_id &&" in source
+    assert "if (data.subagent) containerLog.subagent = data.subagent;" in source
     # 标题后缀要用容器上已合并的元数据，否则后续不带 subagent 的事件会抹掉后缀
     assert "const mergedSubagent = containerLog.subagent ?? data.subagent;" in source

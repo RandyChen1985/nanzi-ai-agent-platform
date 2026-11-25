@@ -20,6 +20,7 @@ import {
   NON_LIVE_TIMER_CATEGORIES,
   normalizeProcessNarrationText,
   promoteTimelineNarration,
+  settlePendingTimelineSteps,
   timelineHasPending,
   upsertTimelineLog,
   upsertTimelineTodo,
@@ -47,6 +48,16 @@ export interface PendingToolPermission {
     args?: Record<string, unknown>;
   };
   status: "pending" | "approved" | "approved_session" | "rejected" | "expired" | "error";
+  /**
+   * 后端 `PENDING_CONFIRMATION_TTL_SECONDS` 对应的**绝对**秒级过期时间戳。
+   *
+   * ToolPermissionCard 靠它算倒计时并 emit("expire")。这两个字段此前没有从 SSE
+   * 事件里抄过来，导致 `expiresAt` 恒为 0、`isExpired` 恒为 false——「10 分钟自动
+   * 失效」在界面上完全不存在：后端快照早已被 TTL 销毁，卡片还显示「待确认」、
+   * 按钮仍可点，点下去只会拿到一个「请求不存在」的错误。
+   */
+  expires_at?: number;
+  expires_in_seconds?: number;
   isSubmitting?: boolean;
   expanded?: boolean;
   /** 后端判定该工具可以提供「本会话总是允许」选项。 */
@@ -180,15 +191,27 @@ export type AddStreamLogFn<T extends AgentStreamMessage = AgentStreamMessage> = 
   data: Record<string, unknown>,
 ) => void;
 
+/**
+ * 主轮次 trace_id 形如 UUID；子智能体/嵌套委派用的是 `subagent_*` 这类非 UUID 串。
+ * 只有这种形状差异能可靠区分「本轮编排」与「某一步委派」。
+ */
+const MAIN_TRACE_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function applyStreamTraceId<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, any>,
 ): boolean {
-  // Preserve the original page behavior: a nested sub-agent trace overrides
-  // the outer orchestration trace when both are present.
-  const traceId = data.data?.trace_id || data.trace_id;
-  if (!traceId) return false;
-  msg.trace_id = traceId as T["trace_id"];
+  // 顶层字段优先：嵌套事件把 trace_id 放在 data.data 里，它属于子智能体。
+  const incoming = String(data?.trace_id || data?.data?.trace_id || "").trim();
+  if (!incoming) return false;
+  const current = String(msg.trace_id || "").trim();
+  // 主轮次 trace 已经确定时，任何非 UUID 的「子代理 trace」都不能覆盖它：
+  // 覆盖后产物归集、断线重放、取消都对不上真正的那一轮，整条链路的 trace 断言失效。
+  if (MAIN_TRACE_ID_PATTERN.test(current) && !MAIN_TRACE_ID_PATTERN.test(incoming)) {
+    return false;
+  }
+  msg.trace_id = incoming as T["trace_id"];
   return true;
 }
 
@@ -252,6 +275,10 @@ export function handlePermissionRequired<T extends AgentStreamMessage>(
     expanded: true,
     supports_session_grant: Boolean(data.supports_session_grant),
     subagent: data.subagent as PendingToolPermission["subagent"],
+    // 必须从事件里抄过来（后端 event_stream 已经在发）：漏抄就等于关掉了整块过期逻辑。
+    expires_at: typeof data.expires_at === "number" ? data.expires_at : undefined,
+    expires_in_seconds:
+      typeof data.expires_in_seconds === "number" ? data.expires_in_seconds : undefined,
   };
   msg.isThinking = false;
   const subagentLabel = String(
@@ -416,18 +443,25 @@ export function isLiveThoughtStepTimer(
 export function finalizeAllPendingStreamLogs(
   msg: AgentStreamMessage,
   now = Date.now(),
+  settleStatus: "success" | "interrupted" | "error" = "success",
 ) {
   // 流异常结束/用户中止时，最后一小段旁白可能还停在合帧缓冲里；收尾前先落盘。
   flushTimelineNarrationDelta(msg);
   for (const log of msg.logs || []) {
     if (log.status !== "pending") continue;
     if (log.category && NON_LIVE_TIMER_CATEGORIES.has(log.category)) continue;
-    log.status = "success";
+    log.status = settleStatus;
     const durationMs = resolveStreamLogDurationMs(log, undefined, now);
     if (durationMs !== undefined) {
       log.execution_time_ms = durationMs;
     }
   }
+  // `msg.logs` 只是时间线的一个子集：深度思考、过程旁白以及「快照还原后 logs 为空」
+  // 的消息，挂起节点只存在于 processTimeline。不在这里一并落定，停止生成/网络中断
+  // 后呼吸灯（timelineHasPending 恒 true）与思考流式光标会永久闪烁。
+  settlePendingTimelineSteps(msg.processTimeline, settleStatus);
+  // 推理项还要补一个 execution_time_ms，否则冻结后显示 0ms。
+  finishTimelineReasoning(msg);
 }
 
 const STALE_PENDING_CATEGORIES = new Set(["model", "agent", "tool", "sql", "knowledge", "default"]);
@@ -454,11 +488,11 @@ export function markStalePendingStreamLogs(
       : resolveAgentMaxToolcallTimeoutMs(msg);
   const staleSeconds = Math.max(1, Math.round(effectiveStaleMs / 1000));
   let changed = false;
-  for (const log of msg.logs || []) {
-    if (log.status !== "pending") continue;
-    if (log.category && NON_LIVE_TIMER_CATEGORIES.has(log.category)) continue;
-    if (log.category && !STALE_PENDING_CATEGORIES.has(log.category)) continue;
-    if (!log.started_at || now - log.started_at < effectiveStaleMs) continue;
+  const markStale = (log: AgentStreamLog) => {
+    if (log.status !== "pending") return;
+    if (log.category && NON_LIVE_TIMER_CATEGORIES.has(log.category)) return;
+    if (log.category && !STALE_PENDING_CATEGORIES.has(log.category)) return;
+    if (!log.started_at || now - log.started_at < effectiveStaleMs) return;
     log.status = "error";
     const durationMs = resolveStreamLogDurationMs(log, undefined, now);
     if (durationMs !== undefined) {
@@ -467,7 +501,20 @@ export function markStalePendingStreamLogs(
     const suffix = `（超过 ${staleSeconds} 秒无响应，可能模型或工具调用超时）`;
     log.details = log.details ? `${log.details}\n${suffix}` : suffix;
     changed = true;
+  };
+  for (const log of msg.logs || []) {
+    markStale(log);
   }
+  // 快照还原的消息 `logs` 是空的，挂起工具行只存在于 processTimeline：不同步标记，
+  // 那些行会永远是「进行中」，500ms 秒表在组件存活期间一直空转。
+  const walkTimeline = (list: ProcessTimelineItem[] | undefined) => {
+    for (const item of list || []) {
+      if (!item) continue;
+      if (item.kind === "log") markStale(item as unknown as AgentStreamLog);
+      walkTimeline((item as { children?: ProcessTimelineItem[] }).children);
+    }
+  };
+  walkTimeline(msg.processTimeline);
   return changed;
 }
 
