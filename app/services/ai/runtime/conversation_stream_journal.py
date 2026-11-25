@@ -56,6 +56,22 @@ def _parse_event_seq(raw: Any) -> int | None:
 TRANSIENT_EVENT_TYPES = frozenset({"tool_progress"})
 
 
+def is_thinking_heartbeat(event: object) -> bool:
+    """是否为「思考中」心跳帧（无任何信息的 `{"type": "thinking", "status": "continuing"}`）。
+
+    `THINKING_BLOCK_DELTA` 每处理一个增量都会**额外**先发一条这样的心跳（真正的内容
+    在随后的 `reasoning_content` 里）。深度思考 1500 token 就产生 1500 条心跳，
+    足以挤掉 8000 条日志上限的一大半，让断线重放拿不到更早的工具事件与正文。
+
+    带 `phase` 的 start/end 相位帧要保留：续显需要它们判断思考块的边界。
+    """
+    if not isinstance(event, dict):
+        return False
+    if str(event.get("type") or "") != "thinking":
+        return False
+    return not event.get("phase")
+
+
 class ConversationStreamJournal:
     """按 (user, conversation) 保存流式事件的有界日志。"""
 
@@ -126,6 +142,7 @@ class ConversationStreamJournal:
                 for event in events
                 if isinstance(event, dict)
                 and str(event.get("type") or "") not in TRANSIENT_EVENT_TYPES
+                and not is_thinking_heartbeat(event)
             ]
             if not valid_events:
                 return
@@ -231,8 +248,22 @@ class ConversationStreamJournal:
             next_seq = max(next_seq, seq)
         return {"events": events, "next_seq": next_seq}
 
-    async def clear(self, user_id: str | int | None, conversation_id: str) -> None:
-        """清空事件日志与序号计数器（每轮 producer 启动时调用）。
+    async def clear(
+        self,
+        user_id: str | int | None,
+        conversation_id: str,
+        *,
+        preserve_seq: bool = False,
+    ) -> None:
+        """清空事件日志（每轮 producer 启动时调用）。
+
+        - 默认 ``preserve_seq=False``：全新一轮对话启动时同时删除事件列表与序号计数器，
+          序号从 1 重新计数。
+        - ``preserve_seq=True``：权限确认 / 外部执行等**同轮恢复流**启动时只清列表、
+          保留 `:seq` 计数器。恢复流事件会继续追加到审批前的同一张思考卡片上，若重置
+          `:seq` 归零，恢复流产生的新步骤会拿到比审批前更小的 `_seq`，前端按 `seq`
+          排序（`orderTimelineBySeq`）时会直接插队到审批前步骤之前；保留计数器也为
+          后续放开恢复期事件续显保持游标连续。
 
         失败只告警、不影响对话主流程，但留下一个隐蔽后果：上一轮事件残留在列表里，而
         前端新一轮会把游标整体归零、并把 traceId 置空（否则本轮事件会被上一轮的 traceId
@@ -241,15 +272,20 @@ class ConversationStreamJournal:
         """
         if not conversation_id:
             return
+        keys = (
+            (self._list_key(user_id, conversation_id),)
+            if preserve_seq
+            else (
+                self._list_key(user_id, conversation_id),
+                self._seq_key(user_id, conversation_id),
+            )
+        )
         for attempt in range(2):
             try:
                 redis = await self._redis()
                 if redis is None:
                     return
-                await redis.delete(
-                    self._list_key(user_id, conversation_id),
-                    self._seq_key(user_id, conversation_id),
-                )
+                await redis.delete(*keys)
                 return
             except Exception as exc:  # noqa: BLE001
                 log = logger.error if attempt == 1 else logger.warning

@@ -118,10 +118,17 @@ def test_general_chat_implicit_tools_include_safe_skill_lookup():
 # --------------------------------------------------------------------------- #
 
 
-def _write_skill(skill_dir, *, name: str, body: str = "# 主体\n", extra: dict | None = None):
+def _write_skill(
+    skill_dir,
+    *,
+    name: str,
+    body: str = "# 主体\n",
+    extra: dict | None = None,
+    enabled: bool = True,
+):
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
-        f"---\nname: {name}\ndescription: desc-{name}\nenabled: true\n---\n\n{body}",
+        f"---\nname: {name}\ndescription: desc-{name}\nenabled: {str(enabled).lower()}\n---\n\n{body}",
         encoding="utf-8",
     )
     for rel, content in (extra or {}).items():

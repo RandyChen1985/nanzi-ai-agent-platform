@@ -444,10 +444,26 @@ def _turn_status_signal(chunk: Dict[str, Any]) -> Optional[str]:
     """
     chunk_type = str(chunk.get("type") or "")
     if chunk_type == "permission_required":
+        # 子代理转发上来的审批（chunk 带 subagent / source_agent_display_name）必须
+        # 与 user_question 同构地映射成 awaiting_user，当场落库。
+        #
+        # 原因：子代理的挂起快照属于内部子会话（child_session_*），父轮次在转发这一帧
+        # 后就已经结束——用户确认时 resume.py 走 `_handoff_subagent_permission` 写完
+        # 授权直接 return，全程不会再有一次收尾机会。若沿用 awaiting_permission，这一轮
+        # 会被 AUDIT_DEFERRED_STATUSES 跳过不写审计表，刷新后原始提问、主专家前半段
+        # 思考时间线、以及 batch 里其余已完成子代理的结果全部消失，只能看到一条突兀的
+        # 【用户授权】消息。
+        if chunk.get("subagent") or chunk.get("source_agent_display_name"):
+            return "awaiting_user"
         return "awaiting_permission"
     if chunk_type == "external_execution_required":
         return "awaiting_external_execution"
     if chunk_type == "user_question":
+        return "awaiting_user"
+    if chunk_type == "business_confirmation":
+        # 业务确认卡与主动提问同构：用户点「确定/取消」会以新消息开**新**轮次，
+        # 本轮不会再有收尾机会，必须当场落库（awaiting_user 不在
+        # AUDIT_DEFERRED_STATUSES 里），否则这一轮的历史与侧栏会话都会消失。
         return "awaiting_user"
     if chunk_type == "error":
         return "error"
@@ -1233,6 +1249,11 @@ class AgentService:
                 lane_user_id, conversation_id
             ) as run_handle:
                 pipeline_context.run_handle = run_handle
+                if run_handle is not None:
+                    # 记下本轮持有的 lane 令牌（= hold 用的 trace_id）：客户端断开后
+                    # 清理残留锁时必须拿它做 compare-and-delete，否则会误删下一轮
+                    # 刚抢到的锁，让两个 run 并发操作同一 AgentState。
+                    run_handle.lane_token = trace_id
                 if callable(on_lane_acquired):
                     callback_result = on_lane_acquired()
                     if asyncio.iscoroutine(callback_result):
@@ -1870,6 +1891,7 @@ class AgentService:
         user_info: Optional[dict[str, Any]] = None,
         skills_log_callback: Optional[callable] = None,
         resource_scope: Optional[dict[str, Any]] = None,
+        conversation_id: Optional[str] = None,
     ) -> list[str]:
         """挂载与自动匹配技能，委托给 SkillInjector。"""
         return await SkillInjector.inject_skills(
@@ -1879,6 +1901,7 @@ class AgentService:
             user_info=user_info,
             skills_log_callback=skills_log_callback,
             resource_scope=resource_scope,
+            conversation_id=conversation_id,
         )
 
     async def _load_memory_context(
@@ -2195,6 +2218,7 @@ class AgentService:
                         user_info=user_info,
                         skills_log_callback=skills_log_callback,
                         resource_scope=(execution_options or {}).get("resource_scope"),
+                        conversation_id=conversation_id,
                     )
             except Exception as err:
                 logger.warning(f"Error in concurrent _inject_skills: {err}")

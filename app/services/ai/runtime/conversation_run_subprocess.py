@@ -5,6 +5,7 @@ import contextlib
 import os
 from typing import Any
 
+from app.services.ai.runtime.child_env import sandbox_child_env
 from app.services.ai.runtime.conversation_run_registry import (
     get_current_run_handle,
     terminate_process_group,
@@ -15,6 +16,10 @@ def _subprocess_kwargs(cwd: str | None = None) -> dict[str, Any]:
     kwargs: dict[str, Any] = {}
     if cwd is not None:
         kwargs["cwd"] = cwd
+    # 子进程与后端同 UID，不传 env 就等于把 DATABASE_URL / REDIS_PASSWORD /
+    # ENCRYPTION_KEY 这类平台机密一并交给用户可控的 shell（一句 `env` 读走）。
+    # 统一走白名单构造，HOME 指向会话工作区（见 child_env 模块 docstring）。
+    kwargs["env"] = sandbox_child_env(workdir=cwd)
     if os.name == "posix":
         kwargs["start_new_session"] = True
     elif os.name == "nt":

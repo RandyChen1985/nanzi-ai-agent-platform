@@ -88,6 +88,12 @@ _LEX_PUNCTUATION = _COMMAND_SEPARATORS + "<>"
 _REDIRECT_CHARS = frozenset("<>&0123456789")
 
 # 包装器：真正的命令在它们后面。不展开的话 `sudo cat x` 的命令名会被当成 `sudo`。
+#
+# `builtin` 是 bash 内建前缀（`builtin eval "..."`）；`xargs` / `watch` 把后续命令当
+# 自己的实参执行——三者都是"真命令在参数位"的形态，不展开等于给黑名单开后门
+# （实测 `printf x | xargs rm -rf` / `watch -n1 rm` 的命令名只到 xargs/watch）。
+# 注意 `eval` 刻意**不**放在这里：它的实参是拼起来的一整条脚本，需要单独递归解析
+# （见 `_segment_command_names`）。
 _WRAPPER_COMMANDS = {
     "env",
     "sudo",
@@ -95,12 +101,15 @@ _WRAPPER_COMMANDS = {
     "nohup",
     "time",
     "command",
+    "builtin",
     "exec",
     "nice",
     "setsid",
     "stdbuf",
     "ionice",
     "timeout",
+    "xargs",
+    "watch",
 }
 
 # 包装器里**带取值**的选项：不显式跳过取值，`sudo -u root cat` 会把 `root` 当成命令名，
@@ -119,10 +128,16 @@ _WRAPPER_OPTIONS_WITH_VALUE: dict[str, frozenset[str]] = {
     "stdbuf": frozenset({"-i", "--input", "-o", "--output", "-e", "--error"}),
     "time": frozenset({"-f", "--format", "-o", "--output", "-a", "--append"}),
     "exec": frozenset({"-a"}),
+    "xargs": frozenset({"-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-lines", "--max-chars", "--replace", "--eof"}),
+    "watch": frozenset({"-n", "--interval", "-d", "--differences"}),
 }
 
-# 包装器的**位置**参数个数（`timeout 5 cat x` 里的 duration 不是命令名）。
+#: 包装器的**位置**参数个数（`timeout 5 cat x` 里的 duration 不是命令名）。
 _WRAPPER_POSITIONAL_COUNT = {"timeout": 1}
+
+#: 把后续命令当**实参**执行的 find 动作（`find . -exec rm {} \;`）。
+#: 不提取的话命令名只到 find，"禁用 rm" 被绕过（实测）。
+_EXEC_PRIMARIES = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 
 # shell 解释器：`sh -c "cat x"` 里真正执行的是内层脚本。
 _SHELL_INTERPRETERS = {"sh", "bash", "zsh", "dash", "ksh", "ash", "busybox"}
@@ -253,6 +268,13 @@ def _segment_command_names(segment: list[str], depth: int) -> list[str]:
             index += 2
             continue
         name = _normalize(segment[index])
+        if name == "eval" and depth < _MAX_EXPAND_DEPTH:
+            # eval 的实参拼起来就是一条脚本：`eval "rm -rf x"` 真正执行的是 rm。
+            # 不递归的话命令名只到 eval，所有黑名单被绕过（实测）。
+            payload = " ".join(segment[index + 1 :]).strip()
+            if payload:
+                return [name, *shell_command_names(payload, depth=depth + 1)]
+            return [name]
         if name in _WRAPPER_COMMANDS:
             index = _skip_wrapper_arguments(segment, index + 1, name)
             continue
@@ -266,6 +288,26 @@ def _segment_command_names(segment: list[str], depth: int) -> list[str]:
     return []
 
 
+def _exec_primary_names(segment: list[str], depth: int) -> list[str]:
+    """提取 ``find ... -exec cmd ... \\;`` 里被执行的命令名。
+
+    ``-exec`` 之后到 ``;`` / ``+`` 之间的整段当作一条命令递归解析，因此
+    ``-exec sh -c "rm -rf x" {} \\;`` 也能落到 ``rm`` 上。
+    """
+    names: list[str] = []
+    for index, token in enumerate(segment):
+        if token not in _EXEC_PRIMARIES:
+            continue
+        payload: list[str] = []
+        for candidate in segment[index + 1 :]:
+            if candidate in {";", "+", "\\;"}:
+                break
+            payload.append(candidate)
+        if payload:
+            names.extend(shell_command_names(" ".join(payload), depth=depth + 1))
+    return names
+
+
 def shell_command_names(command: str, depth: int = 0) -> list[str]:
     """命令**名**序列（各子命令的可执行名，basename + 小写）。
 
@@ -277,7 +319,81 @@ def shell_command_names(command: str, depth: int = 0) -> list[str]:
     names: list[str] = []
     for segment in _split_segments(_lex(command)):
         names.extend(_segment_command_names(segment, depth))
+        if depth < _MAX_EXPAND_DEPTH:
+            # `find ... -exec cmd ...` 的 cmd 不在命令位置，单独提取。
+            # 递归深度与解释器/命令替换共用同一个上限，避免刻意嵌套 `-exec` 拖爆栈。
+            names.extend(_exec_primary_names(segment, depth))
     return names
+
+
+#: 命令替换的两种形态：``$(...)`` 与反引号。POSIX ``shlex`` 都不会把它们拆成独立
+#: token（双引号内更是原样保留），于是 ``echo "$(rm -rf /tmp/x)"`` 的命令名只提取到
+#: ``echo``，单词/多词黑名单全部被绕过（实测）。这里显式把内层脚本抠出来递归判定。
+#:
+#: 同时兼作扫描上限：超过该长度的命令不再做替换提取（仍会走常规命令名解析），
+#: 免得一段超长脚本人为拖慢每条规则的判定。
+_MAX_SUBSTITUTION_CHARS = 8192
+
+
+def _command_substitution_scripts(command: str) -> list[str]:
+    """提取命令替换（``$(...)`` / 反引号）里的内层脚本，按出现顺序返回。
+
+    刻意**不做**单引号豁免：``echo '$(rm -rf /)'`` 里虽然不会展开，但宁可多判一条，
+    也不留"加个单引号就绕过"的口子。
+    """
+    scripts: list[str] = []
+    index = 0
+    length = len(command)
+    while index < length:
+        char = command[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "`":
+            end = command.find("`", index + 1)
+            if end < 0:
+                break
+            inner = command[index + 1 : end]
+            if inner.strip():
+                scripts.append(inner)
+            index = end + 1
+            continue
+        if char == "$" and index + 1 < length and command[index + 1] == "(":
+            if index + 2 < length and command[index + 2] == "(":
+                # 算术展开 `$((1+2))`：直接跳到配对的 `))`，不当命令分析
+                depth = 0
+                scan = index + 1
+                while scan < length:
+                    if command[scan] == "(":
+                        depth += 1
+                    elif command[scan] == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    scan += 1
+                index = scan + 1
+                continue
+            depth = 0
+            scan = index + 1
+            while scan < length:
+                current = command[scan]
+                if current == "\\":
+                    scan += 2
+                    continue
+                if current == "(":
+                    depth += 1
+                elif current == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                scan += 1
+            inner = command[index + 2 : scan]
+            if inner.strip():
+                scripts.append(inner)
+            index = scan + 1
+            continue
+        index += 1
+    return scripts
 
 
 def shell_command_tokens(command: str, depth: int = 0) -> list[str]:
@@ -312,6 +428,32 @@ def shell_command_tokens(command: str, depth: int = 0) -> list[str]:
     return tokens
 
 
+def _matches_rule_once(command: str, rule_tokens: list[str], depth: int) -> bool:
+    """单层匹配：不展开命令替换，只看这条命令本身。"""
+    if len(rule_tokens) == 1:
+        return rule_tokens[0] in shell_command_names(command, depth=depth)
+    command_tokens = shell_command_tokens(command, depth=depth)
+    if not command_tokens:
+        return False
+    window = len(rule_tokens)
+    return any(
+        command_tokens[start : start + window] == rule_tokens
+        for start in range(len(command_tokens) - window + 1)
+    )
+
+
+def _matches_forbidden_rule(command: str, rule_tokens: list[str], depth: int = 0) -> bool:
+    """命中判定：本条命令 + 递归展开其中的命令替换。"""
+    if _matches_rule_once(command, rule_tokens, depth):
+        return True
+    if depth >= _MAX_EXPAND_DEPTH or len(command) > _MAX_SUBSTITUTION_CHARS:
+        return False
+    for script in _command_substitution_scripts(command):
+        if _matches_forbidden_rule(script, rule_tokens, depth + 1):
+            return True
+    return False
+
+
 def matches_forbidden_command(command: str, rule: str) -> bool:
     """命令是否命中某条禁用规则。
 
@@ -321,6 +463,9 @@ def matches_forbidden_command(command: str, rule: str) -> bool:
       `rm -rf /tmp/test` 不会命中"禁用 test"，`echo rm` 也不会命中"禁用 rm"
       （后者是 docstring 一直声称、旧实现却没做到的行为）。
     - **多词规则**（`rm -rf`）：在规范化 token 序列上滑窗，保留原有表达能力。
+
+    两条规则都会**递归展开命令替换**：``echo `rm -rf /` ``、``echo "$(rm -rf /)"``
+    里的内层脚本单独判定，否则加一层引号就能绕过全部黑名单（实测）。
     """
     if not isinstance(command, str) or not isinstance(rule, str):
         return False
@@ -332,18 +477,7 @@ def matches_forbidden_command(command: str, rule: str) -> bool:
     rule_tokens = shell_command_tokens(rule)
     if not rule_tokens:
         return False
-
-    if len(rule_tokens) == 1:
-        return rule_tokens[0] in shell_command_names(command)
-
-    command_tokens = shell_command_tokens(command)
-    if not command_tokens:
-        return False
-    window = len(rule_tokens)
-    return any(
-        command_tokens[start : start + window] == rule_tokens
-        for start in range(len(command_tokens) - window + 1)
-    )
+    return _matches_forbidden_rule(command, rule_tokens)
 
 
 async def find_forbidden_command_rule(

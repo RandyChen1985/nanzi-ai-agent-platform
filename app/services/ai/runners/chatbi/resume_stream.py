@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, AsyncGenerator, Dict, List
 
 from app.services.ai.config import AgentConfigProvider
@@ -14,6 +15,8 @@ from app.services.ai.runners.chatbi import agent_builder as chatbi_agent_builder
 from app.services.ai.runners.chatbi import state_serialization as chatbi_state
 from app.services.ai.runners.chatbi.run_state import DataRunState
 
+logger = logging.getLogger(__name__)
+
 
 async def resolve_pending_runtime(
     runner: Any,
@@ -22,6 +25,26 @@ async def resolve_pending_runtime(
     if pending.agent is not None and pending.tools and pending.native_model is not None:
         data_state, stream_meta = chatbi_state.pending_state_to_data_run_state(pending.state or {})
         guarded_tools = runner._wrap_tools_with_schema_gate(pending.tools, data_state)
+        # 复用挂起句柄里的 agent（省掉一次模型/工具重建），但必须把它的工具换成
+        # 用**本次** data_state 重新包装的那一份。
+        #
+        # 挂起时 DataRunState 被序列化进快照、恢复时反序列化成一个**新的**实例；
+        # 而原 agent 的 toolkit 里闭包捕获的还是挂起前那个旧实例。不重绑就会分裂：
+        # 工具侧（schema 门禁的重试计数、SQL 计划、上下文元数据）写旧对象，外层
+        # `_stream_agentscope_events(state=data_state)` 读新对象——表现为恢复后模型
+        # 看不到自己检索到的表、schema 校验失败后重试次数永远从 0 开始，一路空转到
+        # max_steps 才失败。
+        toolkit = getattr(pending.agent, "toolkit", None)
+        if toolkit is not None:
+            try:
+                await toolkit.remove_tool([tool.name for tool in guarded_tools])
+                await toolkit.add_tool(guarded_tools)
+            except Exception:
+                # 重绑失败不能拖垮恢复本身：退回旧行为（有分裂但能跑），并留下线索。
+                logger.warning(
+                    "[ChatBI] 恢复时重绑 agent 工具失败，data_state 可能与工具闭包不一致",
+                    exc_info=True,
+                )
         return pending.agent, guarded_tools, pending.native_model, data_state, stream_meta
 
     ctx = pending.snapshot.runner_context

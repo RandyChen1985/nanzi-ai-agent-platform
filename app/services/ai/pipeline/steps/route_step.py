@@ -264,6 +264,42 @@ class RouteStep(BasePipelineStep):
             context.agent_config = agent_config
             context.turn_decision = turn_decision
             shared_state["turn_decision"] = turn_decision
+
+            # 路由落定最终智能体后，若 agent_id 与 ContextStep 预路由阶段不同（例如默认主助手或 @mention），
+            # 补做一次智能体作用域的禁用公共技能缓存预热与内存上下文二次净化。
+            resolved_agent_id = str(getattr(agent_config, "agent_id", "") or "").strip() or None
+            pre_route_agent_id = str(agent_id or "").strip() or None
+            if resolved_agent_id and resolved_agent_id != pre_route_agent_id:
+                try:
+                    from app.services.ai.skills.policy import (
+                        get_forbidden_skill_ids,
+                        prime_forbidden_skill_cache,
+                    )
+                    from app.utils.skill_metadata import sanitize_forbidden_skill_context
+
+                    await prime_forbidden_skill_cache(
+                        context.lane_user_id,
+                        user_info=user_info,
+                        agent_id=resolved_agent_id,
+                    )
+                    scoped_forbidden = await get_forbidden_skill_ids(
+                        context.lane_user_id, resolved_agent_id
+                    )
+                    if scoped_forbidden:
+                        sanitize_forbidden_skill_context(context.messages, scoped_forbidden)
+                        source_history = shared_state.get("context_source_history")
+                        if isinstance(source_history, list):
+                            sanitize_forbidden_skill_context(source_history, scoped_forbidden)
+                        # `_rebuild_context_for_resolved_model` 会从 `context_user_message`
+                        # 独立副本重新拼回当前轮 user 消息，必须一并清洗以免覆盖净化结果。
+                        context_user_msg = shared_state.get("context_user_message")
+                        if isinstance(context_user_msg, dict):
+                            sanitize_forbidden_skill_context([context_user_msg], scoped_forbidden)
+                except Exception as scope_clean_err:
+                    logger.debug(
+                        "[RouteStep] Post-route agent-scoped forbidden skill sanitize skipped: %s",
+                        scope_clean_err,
+                    )
         else:
             preparation_elapsed_ms = (
                 asyncio.get_running_loop().time() - shared_state.get("preparation_started_at", context.start_time)

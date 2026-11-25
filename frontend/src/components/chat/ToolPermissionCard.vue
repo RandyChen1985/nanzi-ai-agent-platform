@@ -85,6 +85,19 @@ onUnmounted(() => {
   if (expiryTimer) window.clearInterval(expiryTimer);
   expiryTimer = null;
 });
+
+// 卡片一旦落到终态（已批准 / 已拒绝 / 已放弃 / 已过期）就停掉秒级 tick。
+// 只靠 onUnmounted 清理是不够的：挂起卡片常常在会话里留存很久（用户可能几分钟
+// 后才继续对话），这期间 timer 每秒空转、nowSeconds 每秒触发一次重渲染。
+watch(
+  () => props.payload.status,
+  (status) => {
+    if (status !== "pending" && expiryTimer) {
+      window.clearInterval(expiryTimer);
+      expiryTimer = null;
+    }
+  },
+);
 const isSubmitting = computed(() => Boolean(props.payload.isSubmitting));
 const locked = computed(
   () => Boolean(props.disabled) || !isPending.value || isSubmitting.value || isExpired.value,
@@ -219,8 +232,22 @@ function discard() {
 
 // 过期必须“落”到状态上：卡片自己只是 computed，父组件的待确认锁看的是 status，
 // 不通知就会锁死输入框。父组件据此把 status 置为 expired，锁随之解除。
+//
 watch(isExpired, (expired) => {
   if (expired && props.payload.status === "pending" && !props.payload.discarded) {
+    emit("expire");
+  }
+});
+
+// 从流快照还原时卡片可能**已经**过了 TTL：此时 isExpired 初值就是 true，上面的
+// watch 只观察变化、回调永远不触发，那一轮照样锁死输入框（卡片写着「已超时」但父
+// 组件还在等确认）。所以挂载后再补一次判定。
+//
+// 用 onMounted 而不是 `watch(..., { immediate: true })`：immediate 会在父组件渲染
+// 子组件的**同一帧**里同步 emit，父侧 handler 随即改 msg 状态，等于在渲染期改响应式
+// 数据。挂载后触发就没有这个时序问题。
+onMounted(() => {
+  if (isExpired.value && props.payload.status === "pending" && !props.payload.discarded) {
     emit("expire");
   }
 });

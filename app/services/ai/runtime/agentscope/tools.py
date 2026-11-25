@@ -2314,13 +2314,29 @@ async def _session_grant_override(
 
 
 def supports_session_grant(tool: Any) -> bool:
-    """该工具是否适合提供「本会话总是允许」选项（只读与危险工具不提供）。"""
+    """该工具是否适合提供「本会话总是允许」选项（只读、危险与 shell 类工具不提供）。
+
+    shell 类工具（原生 Bash、``execute_system_command``、沙箱的
+    ``mcp_sandbox_bash_<hash>``）单独禁掉的原因：会话授权是**按工具名**记忆的，
+    而一个 shell 工具名下能跑的命令是无限的。用户为了 ``ls`` 点一次「本会话总是
+    允许」，此后 ``curl … | bash``、``cat ~/.ssh/id_rsa`` 都不再确认。原生 Bash 还有
+    命令替换、敏感路径这类 bypass_immune 复核，平台的沙箱 shell 只有删除命令与命令
+    黑名单两道，粒度根本撑不起这个承诺。
+    """
 
     scope = getattr(tool, "permission_scope", None)
     if scope is None:
         spec = getattr(tool, "spec", None)
         scope = getattr(spec, "permission_scope", None)
-    return str(scope or "ask") not in {"read", "dangerous"}
+    if str(scope or "ask") in {"read", "dangerous"}:
+        return False
+    tool_name = str(getattr(tool, "name", "") or "")
+    if tool_name:
+        from app.services.ai.runtime.command_policy import is_shell_like_tool_name
+
+        if is_shell_like_tool_name(tool_name):
+            return False
+    return True
 
 
 async def enforce_tool_forbidden(

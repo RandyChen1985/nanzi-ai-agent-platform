@@ -124,6 +124,7 @@ from app.services.ai.runtime.agentscope.workspace import (
     get_workspace_offloader,
 )
 from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+from app.services.ai.runtime.sandbox_errors import SandboxUnavailableError
 from app.services.ai.runtime.sandbox_degradation import (
     clear_sandbox_degraded,
     set_sandbox_degraded,
@@ -146,6 +147,12 @@ from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 from app.services.ai.time_anchor import filter_redundant_time_tools
 
 logger = logging.getLogger(__name__)
+
+# AgentScope `_agent.py` 在「还有工具停在 ASKING」时构造的 Exit 占位文案。
+# 它来自框架、不是模型输出，被当成助手正文转发/落库就是一条纯垃圾回答。
+_AWAITING_PERMISSION_EXIT_TEXT = (
+    "I'm waiting for your permission or the external execution to finish."
+)
 
 
 _FILE_TOOL_OPERATIONS = {
@@ -1198,19 +1205,21 @@ class AssistantAgentRunner(BaseExecutor):
         from app.services.ai.memory_recall_policy import (
             looks_like_cross_session_recall_query,
         )
+        from app.utils.skill_metadata import extract_plain_user_query
 
+        plain_query = extract_plain_user_query(user_query)
         signal_contracts = (
-            (looks_like_strong_business_data_request(user_query), EvidenceType.INTERNAL_DATA),
+            (looks_like_strong_business_data_request(plain_query), EvidenceType.INTERNAL_DATA),
             (
-                looks_like_web_search_query(user_query)
-                or looks_like_dynamic_public_fact_query(user_query)
-                or looks_like_public_profile_lookup(user_query),
+                looks_like_web_search_query(plain_query)
+                or looks_like_dynamic_public_fact_query(plain_query)
+                or looks_like_public_profile_lookup(plain_query),
                 EvidenceType.PUBLIC_WEB,
             ),
-            (looks_like_runtime_diagnostic_query(user_query), EvidenceType.RUNTIME_STATE),
-            (looks_like_knowledge_query(user_query), EvidenceType.INTERNAL_KNOWLEDGE),
+            (looks_like_runtime_diagnostic_query(plain_query), EvidenceType.RUNTIME_STATE),
+            (looks_like_knowledge_query(plain_query), EvidenceType.INTERNAL_KNOWLEDGE),
             (
-                looks_like_cross_session_recall_query(user_query),
+                looks_like_cross_session_recall_query(plain_query),
                 EvidenceType.CONVERSATION_MEMORY,
             ),
         )
@@ -1324,11 +1333,14 @@ class AssistantAgentRunner(BaseExecutor):
         self,
         history: List[Dict[str, str]]
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.utils.skill_metadata import extract_plain_user_query
+
         user_query = self._current_user_query(history)
+        plain_user_query = extract_plain_user_query(user_query)
         grounding_enabled = self._grounding_enabled()
         run_data_guard = (
             grounding_enabled
-            and self._should_run_data_hallucination_guard(user_query)
+            and self._should_run_data_hallucination_guard(plain_user_query)
         )
         ctx = self._ensure_agent_context()
         shared_ledger = (
@@ -1345,7 +1357,7 @@ class AssistantAgentRunner(BaseExecutor):
         # 才能把正文里的引用反查回正确的切片，避免多次检索导致引用错配。
         new_turn_knowledge_citation_ledger(ctx)
         grounding_requirement = (
-            self._resolve_turn_grounding_requirement(user_query, ctx)
+            self._resolve_turn_grounding_requirement(plain_user_query, ctx)
             if grounding_enabled
             else FactRequirement(required=False, accepted_types=frozenset())
         )
@@ -1884,6 +1896,9 @@ class AssistantAgentRunner(BaseExecutor):
             tools_include_memory_search,
         )
         from app.services.memory_config_service import MemoryConfigService
+        from app.utils.skill_metadata import extract_plain_user_query
+
+        _preflight_user_query = extract_plain_user_query(user_query)
 
         memory_search_available = tools_include_memory_search(tools)
         recall_query_pending = False
@@ -1891,11 +1906,11 @@ class AssistantAgentRunner(BaseExecutor):
             try:
                 enabled = await MemoryConfigService.get_bool("memory_service_enabled", True)
                 recall_query_pending = enabled and looks_like_cross_session_recall_query(
-                    user_query
+                    _preflight_user_query
                 )
             except Exception:
                 recall_query_pending = looks_like_cross_session_recall_query(
-                    user_query
+                    _preflight_user_query
                 )
 
         native_system_content = system_content
@@ -1910,12 +1925,18 @@ class AssistantAgentRunner(BaseExecutor):
         # 模式 agent_tool_preflight_mode：off=关闭；soft=普通工具注入便签；hard=便签+首步强制调用。
         # 证据型只读工具即使在 soft 模式也必须首步取证，避免模型凭上下文直接生成动态事实。
         preflight_tool_choice = None
-        _preflight_user_query = user_query
         from app.services.ai.tool_nudge_policy import (
+            extract_active_skill_state,
             is_automatic_delivery_context,
             is_tool_meta_query,
             looks_like_explicit_user_question_request,
         )
+
+        (
+            _has_active_skills,
+            _has_full_preloaded_skill,
+            _summary_only_skill_ids,
+        ) = extract_active_skill_state(system_content)
 
         _preflight_ctx = self._ensure_agent_context()
         grounding_request_decision = self._resolve_grounding_request_decision(_preflight_user_query)
@@ -1999,9 +2020,13 @@ class AssistantAgentRunner(BaseExecutor):
                             force_first_call=True,
                         )
                     else:
-                        evidence_plan = resolve_tool_nudge_plan(
-                            _preflight_user_query,
-                            tools,
+                        evidence_plan = (
+                            None
+                            if _has_full_preloaded_skill
+                            else resolve_tool_nudge_plan(
+                                _preflight_user_query,
+                                tools,
+                            )
                         )
                         if evidence_plan is not None:
                             evidence_contracts = tuple(
@@ -2014,7 +2039,7 @@ class AssistantAgentRunner(BaseExecutor):
                             )
                         else:
                             tool_nudge = resolve_tool_nudge(
-                                user_query,
+                                _preflight_user_query,
                                 tools,
                                 available_sub_agent_names=available_sub_agent_names,
                                 sub_agent_candidates_by_capability=sub_agent_candidates_by_capability,
@@ -2029,6 +2054,9 @@ class AssistantAgentRunner(BaseExecutor):
                                     else None
                                 ),
                                 allow_explicit_question=interactive_question_allowed,
+                                has_active_skills=_has_active_skills,
+                                has_full_preloaded_skill=_has_full_preloaded_skill,
+                                summary_only_skill_ids=_summary_only_skill_ids,
                             )
                     if tool_nudge is None and grounding_requires_tool:
                         capability_name = next(
@@ -2606,7 +2634,14 @@ class AssistantAgentRunner(BaseExecutor):
                 ),
                 timeout=90.0,
             )
-        except (DockerSandboxUnavailableError, K8sSandboxUnavailableError, asyncio.TimeoutError) as exc:
+        except (
+            DockerSandboxUnavailableError,
+            K8sSandboxUnavailableError,
+            # 基类兜住 e2b / ssh / local 等其余策略的失败：它们此前静默返回 None，
+            # 会被当成"工作区已就绪"，导致 Bash 落回宿主执行。
+            SandboxUnavailableError,
+            asyncio.TimeoutError,
+        ) as exc:
             if isinstance(exc, asyncio.TimeoutError):
                 logger.warning(
                     "[agent] Sandbox workspace init timed out (conversation=%s); treating as unavailable: %s",
@@ -2951,6 +2986,13 @@ class AssistantAgentRunner(BaseExecutor):
             delta = sanitize_assistant_stream_text(str(getattr(event, "delta", "")))
             if not delta:
                 return
+            # AgentScope 在「还有工具停在 ASKING」时用 Exit 收尾，会把框架占位文案
+            # 「I'm waiting for your permission or the external execution to finish.」
+            # 当成助手正文吐出来。它不是模型产出，原样转发会成为本轮回答、还会连库。
+            # 正常路径下 permission_required 帧会让上面的事件循环提前 return，这里是
+            # 兜底（并发审批、快照被覆盖等情况）。
+            if delta.strip() == _AWAITING_PERMISSION_EXIT_TEXT:
+                return
             for chunk in process_narration_events.on_text_delta(state, delta):
                 async for item in self._yield_process_narration_chunk(state, chunk):
                     yield item
@@ -2993,6 +3035,18 @@ class AssistantAgentRunner(BaseExecutor):
                 yield chunk
                 if is_interrupt_sse_chunk(chunk):
                     return
+
+        # 兜底：正文里如果只剩下框架的「等待授权」占位语，说明这一轮其实停在
+        # ASKING 上、并没有真实产出（on_text_block_delta 已吞掉那句话，这里处理
+        # 它混在其他文本里或走了别的通道情况）。按中断收尾——不合成正文、不让
+        # 调用方把这份 AgentState 存回去（存回去会让下次恢复接着这份半死状态）。
+        if str(state.get("full_content") or "").strip() == _AWAITING_PERMISSION_EXIT_TEXT:
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "本轮在等待工具授权时提前结束，请重新发起该任务。",
+            }
+            return
 
         async for chunk in self._reconcile_reply_after_stream(
             agent=agent,

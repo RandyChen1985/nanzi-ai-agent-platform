@@ -19,6 +19,8 @@ from app.services.ai.agent_service import (
 from app.services.ai.memory_service import memory_service
 from app.utils.skill_metadata import (
     enrich_messages_with_skill_meta,
+    is_skill_enabled,
+    sanitize_disabled_skill_context,
     sanitize_forbidden_skill_context,
     upgrade_legacy_skill_mount_hints,
 )
@@ -63,6 +65,30 @@ class ContextStep(BasePipelineStep):
         if forbidden_skill_ids:
             sanitize_forbidden_skill_context(messages, forbidden_skill_ids)
 
+        # 同样清洗已停用（enabled=false）技能的挂载附件与假预载提示，防止落库或误导模型以为已预载。
+        try:
+            from app.services.ai.skills.injector import SkillInjector
+
+            disabled_mount_ids: set[str] = set()
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                for item in msg.get("files") or []:
+                    if not isinstance(item, dict) or item.get("type") != "skill":
+                        continue
+                    skill_id = str(item.get("url") or "").strip()
+                    if not skill_id:
+                        continue
+                    meta = SkillInjector.resolve_mount_meta(
+                        item, skill_id, context.user_info
+                    )
+                    if not is_skill_enabled(meta):
+                        disabled_mount_ids.add(skill_id)
+            if disabled_mount_ids:
+                sanitize_disabled_skill_context(messages, disabled_mount_ids)
+        except Exception as disabled_err:
+            logger.debug("[Skills] Disabled skill mount sanitize skipped: %s", disabled_err)
+
         # 老会话里"带 SKILL.md 死路径"的挂载提示就地升级成新文案（只改内存快照、不回写库）：
         # 那条路径对个人技能与 Docker/K8s 沙箱都不成立，模型每轮都可能照抄着读一次。
         # 必须排在禁用清洗**之后**——被禁技能的整块提示已被换成禁令，不能又被升级回正常文案。
@@ -100,6 +126,30 @@ class ContextStep(BasePipelineStep):
 
         if conversation_id:
             u_id = lane_user_id
+            # 上一轮如果停在审批/外部执行、用户没点确认就直接发了新消息，那一轮已经
+            # 结束，它的挂起快照不会再被使用。不清掉有两个后果：
+            # 1) 旧快照的 AgentState 会在新轮次收尾时经 agent_state_store 写回，把
+            #    新轮次的状态覆盖成几分钟前的旧状态（表现为模型"记住"了上上轮的工具
+            #    结果、或者忘了刚才说过的话）；
+            # 2) TTL 内有人提交旧 request_id 还能把那个中断轮恢复出来，带着过期上下文
+            #    再回复一次。
+            # 审批卡的恢复走独立的 /chat/permission/{id}/confirm 接口，不经过这条流水线，
+            # 所以普通对话开头清理快照不会误伤正在等待的那张卡。
+            if u_id is not None:
+                try:
+                    from app.services.ai.runtime.agentscope.confirmations import (
+                        pending_agentscope_confirmations,
+                    )
+
+                    await pending_agentscope_confirmations.clear_conversation(
+                        u_id, conversation_id
+                    )
+                except Exception:
+                    logger.warning(
+                        "[ContextStep] 清理会话挂起快照失败 (conv=%s)",
+                        conversation_id,
+                        exc_info=True,
+                    )
             raw_history = await memory_service.get_history(u_id, conversation_id)
             server_history = _regular_completion_history(raw_history, messages)
             server_history = await _apply_context_snapshot(

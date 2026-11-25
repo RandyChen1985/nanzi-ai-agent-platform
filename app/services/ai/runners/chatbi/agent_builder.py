@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 from app.services.ai.runtime.agentscope.build_progress import (
@@ -13,8 +14,11 @@ from app.services.ai.runtime.agentscope.tools import (
     RuntimeToolSpec,
 )
 from app.services.ai.runtime.agentscope.workspace import WorkspacePrepareTrace
+from app.services.ai.runtime.sandbox_errors import SandboxUnavailableError
 from app.services.ai.tool_capability import AgentScopeToolConsumer
 from app.services.ai.tools.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def _runner_module():
@@ -62,26 +66,51 @@ async def build_native_agent(
     tools = filter_redundant_time_tools(tools, system_content)
     # 与助手路径同口径：工作区准备的分段测量（沙箱获取 / 技能播种 / 会话初始化）。
     prepare_trace = WorkspacePrepareTrace()
-    workspace = await dar.get_local_workspace(
-        user_id=runner._current_user_id(),
-        user_name=runner._runtime_user_name(),
-        user_info=runner.user_info,
-        conversation_id=runner.conversation_id,
-        skills_custom=bool(getattr(runner.config, "skills_custom", False)),
-        allowed_global_skills=list(getattr(runner.config, "skills", None) or []),
-        lazy_sandbox=True,
-        prepare_trace=prepare_trace,
-    )
+    try:
+        workspace = await dar.get_local_workspace(
+            user_id=runner._current_user_id(),
+            user_name=runner._runtime_user_name(),
+            user_info=runner.user_info,
+            conversation_id=runner.conversation_id,
+            skills_custom=bool(getattr(runner.config, "skills_custom", False)),
+            allowed_global_skills=list(getattr(runner.config, "skills", None) or []),
+            lazy_sandbox=True,
+            prepare_trace=prepare_trace,
+        )
+    except SandboxUnavailableError as exc:
+        # ChatBI 也是智能体会话：容器 daemon 故障 / 集群不可用 / e2b 凭据失效时，
+        # 此前异常直接冒泡成"整轮构建失败"，连纯 SQL 问答都做不了。这里降级成
+        # "无沙箱"，并摘掉依赖沙箱的 Bash 与文件工具——已经取到的数据仍能通过
+        # SQL 工具与文本回答交付，用户至少不会因为沙箱故障而完全不可用。
+        logger.warning(
+            "[chatbi] 沙箱不可用，降级为无沙箱模式（policy=%s reason=%s）：%s",
+            getattr(exc, "policy", ""),
+            getattr(exc, "reason_code", ""),
+            exc,
+        )
+        workspace = None
     build_timer.mark("workspace")
     for _stage_name, _stage_ms in prepare_trace.stages:
         build_timer.record(f"workspace:{_stage_name}", _stage_ms)
     if prepare_trace.joined_inflight:
         build_timer.record("workspace:joined", prepare_trace.total_ms)
     from app.services.ai.runtime.agentscope.workspace import (
+        WORKSPACE_BUILTIN_TOOL_NAMES,
+        _workspace_native_name_for_spec,
         bind_configured_tools_to_workspace,
         get_workspace_execution_backend,
         get_workspace_offloader,
     )
+
+    if workspace is None:
+        # 无沙箱就地摘掉依赖工作区的内置工具：留给 bind 去拒绝只会把整轮变成
+        # PermissionError，与"降级后仍要能答 SQL"的目标相反。
+        tools = [
+            spec
+            for spec in tools
+            if _workspace_native_name_for_spec(spec)
+            not in WORKSPACE_BUILTIN_TOOL_NAMES
+        ]
 
     tools = await bind_configured_tools_to_workspace(
         workspace,

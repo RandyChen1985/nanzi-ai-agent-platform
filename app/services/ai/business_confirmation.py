@@ -16,12 +16,26 @@ _cancel_gate_armed: ContextVar[bool] = ContextVar(
 )
 
 
+def _starts_with_marker(text: str | None, marker: str) -> bool:
+    """必须是行首前缀，不能是子串包含。
+
+    回执是前端卡片拼出来的固定文案，一定以 ``【业务确认】`` 开头。改成行首判定是为了
+    收窄误判面：原先用子串包含，任何**提及**这两个标记的发言（例如把一张旧回执粘进
+    对话框、或让模型解释这段协议文案）都会被当成回执，preflight 随后直接走取消闸门，
+    用户这条真实提问被静默吞掉。
+
+    注意行首判定并不能覆盖「用户自己就用这两个字开头」的情况——那串文案本身就是协议
+    前缀，只能靠它足够特殊来规避；这也是 ``is_user_question_receipt_message`` 的口径。
+    """
+    return str(text or "").lstrip().startswith(marker)
+
+
 def is_business_confirmation_cancel_message(text: str | None) -> bool:
-    return BUSINESS_CONFIRMATION_CANCEL_MARKER in str(text or "")
+    return _starts_with_marker(text, BUSINESS_CONFIRMATION_CANCEL_MARKER)
 
 
 def is_business_confirmation_confirm_message(text: str | None) -> bool:
-    return BUSINESS_CONFIRMATION_CONFIRM_MARKER in str(text or "")
+    return _starts_with_marker(text, BUSINESS_CONFIRMATION_CONFIRM_MARKER)
 
 
 def is_business_confirmation_receipt_message(text: str | None) -> bool:

@@ -21,6 +21,8 @@ import time
 import uuid
 from typing import Any
 
+from app.services.ai.runtime.sandbox_errors import SandboxUnavailableError
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_K8S_CPU_REQUEST = "100m"
@@ -304,20 +306,23 @@ def evaluate_k8s_workspace_mount_config(
     return warnings
 
 
-class K8sSandboxUnavailableError(RuntimeError):
+class K8sSandboxUnavailableError(SandboxUnavailableError):
     """Normalized K8s sandbox unavailability error with user-friendly diagnosis."""
 
     def __init__(
         self,
         message: str,
         *,
+        policy: str = "k8s",
         reason_code: str = "k8s_sandbox_unavailable",
         user_message: str | None = None,
     ) -> None:
-        super().__init__(message)
-        self.reason_code = reason_code
-        self.user_message = user_message or (
-            "Kubernetes 沙箱不可用，代码未执行。请检查集群网络、命名空间权限（RBAC）与镜像拉取状态。"
+        super().__init__(
+            message,
+            policy=policy,
+            reason_code=reason_code,
+            user_message=user_message
+            or "Kubernetes 沙箱不可用，代码未执行。请检查集群网络、命名空间权限（RBAC）与镜像拉取状态。",
         )
 
 

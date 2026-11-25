@@ -18,6 +18,8 @@ EXPECTED_BUILTIN_IDS = (
     "manage_process",
     "list_process",
     "search_qa_examples",
+    # 能跨目录读取图片正文（含其他租户工作区）的工具，必须可被禁用
+    "read_image",
 )
 
 

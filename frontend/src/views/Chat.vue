@@ -127,9 +127,16 @@ const initChat = () => {
 
     // `new=1` 已经交给挂件了，立刻从地址栏摘掉：否则这一页刷新会再开一条新的空会话，
     // 刚建的那条就"丢"了。摘掉之后刷新走正常续接，接回刚开的会话。
+    //
+    // conversation_id 必须一起摘：新建任务时地址栏往往还留着**上一条**会话的 ID。
+    // 挂件 URL 本身只带 preview/new，问题出在挂件就绪后的 `INIT_CONFIG`——它的兜底
+    // 是「route.query.new === '1' 时下发 null」，而这里刚把 new 摘掉，兜底立刻失效，
+    // 于是 else 分支会把**旧** conversation_id 下发给刚建的空会话，把它顶掉；
+    // 刷新时也会带着旧 ID 直接跳回上一轮。两个 query 一起摘，两种时序拿到的都是 null。
     if (embedQuery.has('new')) {
         const nextQuery = { ...route.query };
         delete nextQuery.new;
+        delete nextQuery.conversation_id;
         void router.replace({ path: route.path, query: nextQuery });
     }
     

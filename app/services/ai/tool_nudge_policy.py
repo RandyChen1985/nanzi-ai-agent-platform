@@ -29,8 +29,87 @@ from app.services.ai.chatbi_qualification import ChatBIMode
 from app.services.ai.turn_decision import TurnDecision
 from app.services.ai.tool_policy import ToolMetadata, resolve_tool_metadata
 from app.services.ai.grounding.models import EvidenceType
+from app.utils.skill_metadata import extract_plain_user_query
 
 logger = logging.getLogger(__name__)
+
+_SUMMARY_ONLY_SKILL_ID_RE = re.compile(
+    r'未预载；执行前必须调用\s+read_skill_instruction\(skill_id="([^"]+)"\)'
+)
+
+
+def extract_active_skill_state(system_content: Optional[str]) -> tuple[bool, bool, tuple[str, ...]]:
+    """从组装后的 System Prompt 中提取本轮技能激活状态。
+
+    注意：``AgentServicePrompts.skills_profile`` 的头部说明文自身就包含「已预载完整指令」字样，
+    因此判定“确实存在全文预载块”必须认 full block 独有的结构标记（``--- BEGIN SKILL.md ---``
+    或 ``- **完整指令**: 已预载完整指令``），绝不能对裸短语做子串匹配。
+
+    Returns:
+        ``(has_active_skills, has_full_preloaded_skill, summary_only_skill_ids)``
+    """
+    text = str(system_content or "")
+    if "[Active Skills Loaded]" not in text:
+        return False, False, ()
+    has_full = (
+        "--- BEGIN SKILL.md ---" in text
+        or "- **完整指令**: 已预载完整指令" in text
+    )
+    summary_ids = tuple(dict.fromkeys(_SUMMARY_ONLY_SKILL_ID_RE.findall(text)))
+    return True, has_full, summary_ids
+
+
+def _resolve_skill_summary_nudge(
+    query: str,
+    tools: List[Any],
+    *,
+    summary_only_skill_ids: Optional[Sequence[str]],
+    has_full_preloaded_skill: bool,
+    metadata_by_name: Optional[Mapping[str, ToolMetadata]] = None,
+) -> Optional[ToolNudge]:
+    """当本轮仅有摘要态技能时，引导模型优先调用 ``read_skill_instruction`` 读取全文。"""
+    if has_full_preloaded_skill or not summary_only_skill_ids:
+        return None
+    read_skill_tool = next(
+        (
+            t
+            for t in (tools or [])
+            if str(getattr(t, "name", "") or "").strip() == "read_skill_instruction"
+        ),
+        None,
+    )
+    if read_skill_tool is None:
+        return None
+
+    from app.services.ai.intent_service import looks_like_skill_execution
+
+    skill_ids = [str(s).strip() for s in summary_only_skill_ids if str(s).strip()]
+    if not skill_ids:
+        return None
+    primary_id = skill_ids[0]
+    explicit_exec = looks_like_skill_execution(query)
+    id_hint = "、".join(f"`{sid}`" for sid in skill_ids[:3])
+    if explicit_exec:
+        message = (
+            "【本轮技能优先】用户明确要求执行技能，但 System Prompt 中 [Active Skills Loaded] "
+            f"当前仅加载了摘要（待读取全文的技能 ID：{id_hint}）。"
+            f'必须先调用 read_skill_instruction(skill_id="{primary_id}") 读取完整 SKILL.md 与资源清单后再按步骤执行，'
+            "禁止凭摘要编造流程或跳过读技能直接作答。"
+        )
+    else:
+        message = (
+            "【候选技能提示（仅摘要）】System Prompt 中 [Active Skills Loaded] 已匹配候选技能"
+            f"（ID：{id_hint}），但当前不含 SKILL.md 全文。"
+            f'若判断该技能适用于本轮任务，请先调用 read_skill_instruction(skill_id="{primary_id}") '
+            "读取完整指令后再执行；不要凭摘要臆造步骤。"
+        )
+    return ToolNudge(
+        tool_name="read_skill_instruction",
+        score=0.95 if explicit_exec else 0.6,
+        message=message,
+        force_first_call=explicit_exec,
+        metadata=resolve_tool_metadata(read_skill_tool, metadata_by_name=metadata_by_name),
+    )
 
 # 不主动促发的工具（写入/管理/记忆维护类）：避免推动模型产生副作用或与专门机制重复。
 _NUDGE_EXCLUDED_TOOLS = frozenset({
@@ -1307,6 +1386,9 @@ def resolve_tool_nudge(
     turn_decision: Optional[TurnDecision] = None,
     tool_metadata: Optional[Mapping[str, ToolMetadata]] = None,
     allow_explicit_question: bool = True,
+    has_active_skills: bool = False,
+    has_full_preloaded_skill: bool = False,
+    summary_only_skill_ids: Optional[Sequence[str]] = None,
 ) -> Optional[ToolNudge]:
     """解析本轮是否需要工具促发；返回相关度最高的一条便签或 None。
 
@@ -1317,8 +1399,17 @@ def resolve_tool_nudge(
     通讯录语义选择（与自动路由对齐），不再按 sort_order 点名唯一目标。
     ``sub_agent_targets_by_capability`` 仅为兼容旧调用方，等价于单元素候选。
     """
-    query = (user_query or "").strip()
+    query = extract_plain_user_query(user_query)
     if not query:
+        # 用户只挂载了技能 chip 未附带文字，且该技能未预载全文时，仍引导先读全文。
+        if summary_only_skill_ids and not has_full_preloaded_skill:
+            return _resolve_skill_summary_nudge(
+                "",
+                tools,
+                summary_only_skill_ids=summary_only_skill_ids,
+                has_full_preloaded_skill=False,
+                metadata_by_name=tool_metadata,
+            )
         return None
 
     if allow_explicit_question:
@@ -1395,8 +1486,34 @@ def resolve_tool_nudge(
                 ),
             )
 
+    # 已激活技能优先权：
+    # 1. 若仅有摘要态技能（未预载全文），优先引导调用 read_skill_instruction；
+    # 2. 若已预载完整 SKILL.md 指令，则抑制 todo_write / PLATFORM_SELF_HELP 文档强推 /
+    #    泛化知识库与数据委派抢占，让模型按技能 workflow 自主决定首步调用；
+    #    但保留「显式平台文档求助」与「强外部实时事实（PUBLIC_WEB / RUNTIME_DIAGNOSTIC）」例外。
+    skill_summary_nudge = _resolve_skill_summary_nudge(
+        query,
+        tools,
+        summary_only_skill_ids=summary_only_skill_ids,
+        has_full_preloaded_skill=has_full_preloaded_skill,
+        metadata_by_name=tool_metadata,
+    )
+    if skill_summary_nudge is not None:
+        return skill_summary_nudge
+    if has_full_preloaded_skill:
+        if looks_like_explicit_platform_docs_query(query):
+            platform_docs_nudge = _resolve_platform_docs_nudge(tools)
+            if platform_docs_nudge is not None:
+                return _attach_tool_metadata(platform_docs_nudge, tools, tool_metadata)
+        # 强外部事实（联网搜索 / 运行时诊断）：仍允许走后续只读证据工具匹配，不直接一刀切掐断。
+        if request_decision.source not in {
+            RequestSource.PUBLIC_WEB,
+            RequestSource.RUNTIME_DIAGNOSTIC,
+        }:
+            return None
+
     todo_tool = next((t for t in (tools or []) if getattr(t, "name", "") == "todo_write"), None)
-    if todo_tool is not None and _looks_like_multi_step_request(query):
+    if not has_full_preloaded_skill and todo_tool is not None and _looks_like_multi_step_request(query):
         return ToolNudge(
             tool_name="todo_write",
             score=1.0,
@@ -1421,7 +1538,7 @@ def resolve_tool_nudge(
     if (
         not _looks_like_model_identity_ask(query)
         and (
-            request_decision.source == RequestSource.PLATFORM_SELF_HELP
+            (not has_active_skills and request_decision.source == RequestSource.PLATFORM_SELF_HELP)
             or looks_like_explicit_platform_docs_query(query)
         )
     ):
@@ -1431,7 +1548,7 @@ def resolve_tool_nudge(
 
     # 目录未给出高置信匹配时，允许主助手做一次低成本直接检索兜底；
     # 该路径必须先于知识库 sub_agent nudge，避免候选信号升级为委派。
-    if request_decision.knowledge_fallback_allowed:
+    if not has_full_preloaded_skill and request_decision.knowledge_fallback_allowed:
         direct_knowledge_tool = next(
             (
                 tool
@@ -1616,7 +1733,7 @@ def resolve_evidence_tool_fallback_nudge(
     出错时又依赖同一条可能失败的复杂路由分支。它不处理写工具、委派工具或
     记忆复用工具；命中后始终锁定具体工具，不能退化为任意 ``required``。
     """
-    query = (user_query or "").strip()
+    query = extract_plain_user_query(user_query)
     if _looks_like_tool_meta_query(query) or not should_consider_tool_nudge(query):
         return None
     signals = _query_signals(query)
@@ -1703,7 +1820,7 @@ def resolve_tool_nudge_plan(
     min_gap: float = 0.10,
 ) -> Optional[ToolNudgePlan]:
     """仅为明确的多意图只读查询生成独立证据合同计划。"""
-    query = (user_query or "").strip()
+    query = extract_plain_user_query(user_query)
     if (
         _looks_like_tool_meta_query(query)
         or not should_consider_tool_nudge(query)

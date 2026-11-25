@@ -24,6 +24,7 @@ from app.services.ai.runtime.agentscope.build_progress import BuildStageTimer
 from app.services.ai.runtime.agentscope.tool_timeout import (
     apply_sandbox_gateway_timeout,
 )
+from app.services.ai.runtime.sandbox_errors import SandboxUnavailableError
 from app.services.ai.tools.registry import AGENTSCOPE_BUILTIN_TOOL_ALIASES
 
 logger = logging.getLogger(__name__)
@@ -231,20 +232,23 @@ async def resolve_effective_sandbox_idle_seconds(*, default_seconds: float) -> f
 _effective_sandbox_idle_seconds = resolve_effective_sandbox_idle_seconds
 
 
-class DockerSandboxUnavailableError(RuntimeError):
+class DockerSandboxUnavailableError(SandboxUnavailableError):
     """Docker 沙箱未能初始化，调用方不得回退到宿主 Bash。"""
 
     def __init__(
         self,
         message: str,
         *,
+        policy: str = "docker",
         reason_code: str = "docker_workspace_start_failed",
         user_message: str | None = None,
     ) -> None:
-        super().__init__(message)
-        self.reason_code = reason_code
-        self.user_message = user_message or (
-            "Docker 沙箱不可用，Bash 未执行。请检查 Docker daemon、镜像和权限。"
+        super().__init__(
+            message,
+            policy=policy,
+            reason_code=reason_code,
+            user_message=user_message
+            or "Docker 沙箱不可用，Bash 未执行。请检查 Docker daemon、镜像和权限。",
         )
 
 
@@ -446,11 +450,143 @@ def discover_platform_skill_paths(
     return paths
 
 
+#: 后台配置的 ``agentscope_workspace_root`` 绝不能**恰好等于**的系统目录。
+#:
+#: 拦的不是"越权读写"（那由 ``fs_access`` 负责），而是"工作区根本身就选在系统目录"：
+#: 一旦踩中，技能播种与会话目录会直接写进 ``/`` 或 ``/etc``，空闲回收还会对着系统
+#: 目录做 rmtree。``/app`` 只在这里拦——它的子孙（容器内默认的
+#: ``/app/data/agent_workspaces``）是合法值。
+_PROTECTED_WORKSPACE_ROOT_EXACT = frozenset(
+    {
+        "/",
+        "/Applications",
+        "/Library",
+        "/System",
+        "/Users",
+        "/app",
+        "/bin",
+        "/boot",
+        "/data",
+        "/dev",
+        "/etc",
+        "/home",
+        "/lib",
+        "/lib64",
+        "/media",
+        "/mnt",
+        "/opt",
+        "/private",
+        "/proc",
+        "/root",
+        "/run",
+        "/sbin",
+        "/srv",
+        "/sys",
+        "/tmp",
+        "/usr",
+        "/var",
+        "/workspace",
+    }
+)
+
+#: 绝不允许工作区根落在其**内部**的系统目录（比上面更严：子孙也不许）。
+#:
+#: ``/var`` 与 ``/private`` 刻意只出现在上面的 exact 名单里：macOS 的 ``/tmp``、
+#: ``/var/folders`` 经 realpath 解析后都在 ``/private`` 下，若列为前缀会把测试临时
+#: 目录、正常部署路径一并误杀。
+_PROTECTED_WORKSPACE_ROOT_PREFIXES = (
+    "/Applications",
+    "/Library",
+    "/System",
+    "/bin",
+    "/boot",
+    "/dev",
+    "/etc",
+    "/lib",
+    "/lib64",
+    "/proc",
+    "/root",
+    "/sbin",
+    "/sys",
+    "/usr",
+)
+
+
+def _repository_root_dir() -> str:
+    """平台代码根目录（``workspace.py`` 往上 5 层到仓库根）。"""
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
+
+
+#: 已经就"配置值非法"告警过的原始值。
+#:
+#: ``resolve_workspace_root()`` 在每次构建会话工作区时都会被调用，若配置一直非法，
+#: 逐次打 error 日志会把日志刷满。这里只对**第一次**见到的非法值告警；集合本身有
+#: 上限，避免长期运行下无限增长。
+_WARNED_BAD_WORKSPACE_ROOTS: set[str] = set()
+_WARNED_BAD_WORKSPACE_ROOTS_LIMIT = 16
+
+
+def workspace_root_config_error(raw: Any) -> str | None:
+    """校验后台配置的工作区根，返回错误原因；合法时返回 ``None``。
+
+    历史实现是 ``os.path.abspath(str(raw))`` 照单全收，于是：
+
+    * 配成相对路径 ``20`` 得到 ``<cwd>/20``——单测把 ``ConfigService.get`` 一刀切
+      成返回 ``"20"`` 时，技能快照就被 copytree 进了仓库根（仓库根 ``./20/admin__1/``
+      就是这么来的）；
+    * 配成 ``/`` 得到根目录，后续 ``makedirs`` / 写入直接落到宿主根。
+
+    这类值必须忽略并回退 ``default_workspace_root()``，绝不能"照配执行"。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return "空值"
+    if any(char in text for char in ("\n", "\r", "\t", "\0")):
+        return "包含控制字符或换行"
+    if not os.path.isabs(text):
+        return "不是绝对路径"
+    # 同时看"字面规范路径"与"解引用软链接后的路径"：前者给出可读的拒绝理由
+    # （`/etc` 不会被 macOS 解析成 `/private/etc` 而误导管理员），后者防软链接绕过。
+    literal = os.path.normpath(os.path.abspath(text))
+    resolved = os.path.normpath(os.path.realpath(text))
+    for candidate in (literal, resolved):
+        if candidate in _PROTECTED_WORKSPACE_ROOT_EXACT:
+            return "指向系统敏感目录"
+        for prefix in _PROTECTED_WORKSPACE_ROOT_PREFIXES:
+            if candidate == prefix or candidate.startswith(prefix + os.sep):
+                return f"位于系统目录 {prefix} 下"
+    repository_root = os.path.normpath(os.path.realpath(_repository_root_dir()))
+    for candidate in {literal, resolved}:
+        if candidate == repository_root:
+            return "指向平台代码根目录"
+        if repository_root.startswith(candidate + os.sep):
+            return "是平台代码根目录的上级目录"
+    if len([part for part in literal.split(os.sep) if part]) < 2:
+        return "层级过浅"
+    return None
+
+
 async def resolve_workspace_root(*, ensure_exists: bool = True) -> str:
     try:
         from app.services.config_service import ConfigService
 
         raw = await ConfigService.get("agentscope_workspace_root")
+        if raw:
+            # 先校验再 abspath：非法值（相对路径、系统根、代码根）一律回退默认根。
+            config_error = workspace_root_config_error(raw)
+            if config_error:
+                if str(raw) not in _WARNED_BAD_WORKSPACE_ROOTS:
+                    if len(_WARNED_BAD_WORKSPACE_ROOTS) >= _WARNED_BAD_WORKSPACE_ROOTS_LIMIT:
+                        _WARNED_BAD_WORKSPACE_ROOTS.clear()
+                    _WARNED_BAD_WORKSPACE_ROOTS.add(str(raw))
+                    logger.error(
+                        "[workspace] 忽略非法的 agentscope_workspace_root=%r（%s），"
+                        "回退默认工作区根 %s。请在系统配置中填写部署时真实存在的绝对路径。",
+                        raw,
+                        config_error,
+                        default_workspace_root(),
+                    )
+                raw = None
         if raw:
             configured = os.path.abspath(str(raw))
             # 个人技能源由 default_workspace_root() 拼接（不读该配置），二者不一致时
@@ -4781,8 +4917,11 @@ async def get_local_workspace(
     ``conversation_id`` is available; either element may be ``None``:
       - local policy            -> ``(None, LocalWorkspace)``
       - docker/e2b/ssh policy   -> ``(sandbox_ws, LocalWorkspace)``
-      - no id                   -> ``None``
-      - Docker init failure     -> ``DockerSandboxUnavailableError`` (fail-closed)
+      - no id + local           -> ``None``（local 本就没有沙箱）
+      - no id + 远端沙箱策略    -> ``SandboxUnavailableError``（fail-closed，调用方降级）
+      - Docker/K8s init failure -> ``DockerSandboxUnavailableError`` / ``K8sSandboxUnavailableError``
+      - e2b/ssh init failure    -> ``SandboxUnavailableError``
+      - local init failure      -> ``None``（保持历史容错，bind 侧只拦文件工具）
 
     ``prepare_trace``：传入一个空 :class:`WorkspacePrepareTrace` 即可拿到分段耗时与
     关键事实（谁慢、沙箱是新建还是复用）；不传则完全不记录，行为与改造前一致。
@@ -4809,6 +4948,23 @@ async def get_local_workspace(
                 "K8s sandbox requires a conversation_id",
                 reason_code="k8s_workspace_start_failed",
                 user_message="缺少会话 ID，K8S 沙箱未启动，代码未执行。",
+            )
+        if sandbox_policy_is_sandbox(policy_without_conversation) and (
+            policy_without_conversation
+            not in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S)
+        ):
+            # e2b / ssh：此前与 local 一起落到下面的 ``return None``。但 local 返回
+            # None 是"本来就没有沙箱"，而远端沙箱返回 None 会被调用方当成"工作区
+            # 已就绪"，最后只能由 bind 抛出一句语焉不详的"沙箱未就绪"。这里与
+            # docker/k8s 对齐：明确说清是缺会话 ID，让调用方走统一降级分支。
+            raise SandboxUnavailableError(
+                f"{policy_without_conversation} sandbox requires a conversation_id",
+                policy=policy_without_conversation,
+                reason_code=f"{policy_without_conversation}_workspace_start_failed",
+                user_message=(
+                    f"缺少会话 ID，{str(policy_without_conversation).upper()} 沙箱未启动，"
+                    "Bash 未执行（已降级为仅文件工具）。"
+                ),
             )
         return None
 
@@ -5092,7 +5248,25 @@ async def get_local_workspace(
                     str(exc),
                     reason_code="k8s_workspace_start_failed",
                 ) from exc
-            return None
+            if policy == SANDBOX_POLICY_LOCAL:
+                # local 策略没有沙箱可兜底：宿主的 LocalWorkspace 起不来时保持历史
+                # 行为（返回 None），交由 bind 按 local 语义只拦文件工具，Bash 仍可用。
+                # 这里若改成抛异常，local 模式的容错反而变差。
+                return None
+            # e2b / ssh：此前同样静默 ``return None``，而调用方把 ``None`` 当成
+            # "工作区已就绪"（照常清空降级标记）。若智能体只挂了 Bash、没有文件工具
+            # 去触发 PermissionError，用户命令就会以平台后端的 cwd 直接执行——
+            # 与"沙箱不可用绝不退回宿主执行"的承诺相反。这里必须 fail-closed，
+            # 交给调用方的统一降级分支处理（见 SandboxUnavailableError）。
+            raise SandboxUnavailableError(
+                str(exc),
+                policy=policy,
+                reason_code=f"{policy}_workspace_start_failed",
+                user_message=(
+                    f"{str(policy).upper()} 沙箱不可用，命令未执行。"
+                    "请检查沙箱配置或联系管理员。"
+                ),
+            ) from exc
 
         pair = (sandbox_ws, local_ws)
         _workspace_cache[cache_key] = pair
@@ -8534,6 +8708,34 @@ def _bind_script_tool_spec(
     return replace(spec, callable=_invoke_script_tool)
 
 
+async def _effective_policy_for_tool_binding() -> str:
+    """当前生效的沙箱策略，仅供 ``bind_configured_tools_to_workspace`` 分流用。
+
+    读取失败一律按 ``local`` 处理：这条路径只在"工作区拿不到"的异常场景上用到，
+    此时把 local 当作默认是保守选择（local 分支本身不做任何宿主回退，只是保持
+    历史行为）；真正的安全兜底在 ``get_local_workspace`` 里——非 local 策略的
+    失败会抛 ``SandboxUnavailableError``，根本走不到这里。
+    """
+    try:
+        from app.services.config_service import (
+            ConfigService,
+            resolve_effective_sandbox_policy,
+        )
+
+        raw = await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL)
+        policy = resolve_effective_sandbox_policy(raw, SANDBOX_POLICY_LOCAL)
+        # 未识别的取值不能当成沙箱：`sandbox_policy` 是自由文本配置，误配（历史测试里
+        # 就出现过把 ConfigService.get 一律 mock 成数字的情况）会让会话走到
+        # 「非 local 却没有工作区」的 fail-closed 分支，整站不可用。只有真正的沙箱
+        # 策略才允许进入非 local 分支。
+        return policy if sandbox_policy_is_sandbox(policy) else SANDBOX_POLICY_LOCAL
+    except Exception as exc:  # noqa: BLE001 - 配置不可用按 local 处理
+        logger.warning(
+            "[workspace] 读取 sandbox_policy 失败，工具绑定按 local 处理: %s", exc
+        )
+        return SANDBOX_POLICY_LOCAL
+
+
 async def bind_configured_tools_to_workspace(
     workspace: Any,
     tool_specs: list[Any] | None,
@@ -8554,13 +8756,41 @@ async def bind_configured_tools_to_workspace(
     """
     specs = list(tool_specs or [])
     if workspace is None:
-        if any(
-            _workspace_native_name_for_spec(spec)
-            in DOCKER_WORKSPACE_FILE_TOOL_NAMES
+        # ``workspace is None`` 有两种完全不同的含义，必须按当前沙箱策略区分：
+        #
+        # 1) **local 策略**：本来就没有沙箱工作区，"宿主本地执行"正是它的语义。
+        #    历史行为是只拦文件工具（它们需要 LocalWorkspace 才能安全落盘），
+        #    Bash 照旧可用。这里保持原样——否则 local 模式下没有 conversation_id
+        #    的会话（``get_local_workspace`` 对 local 直接 return None）里，
+        #    凡挂了 Bash 的智能体都会整轮报错。
+        #
+        # 2) **非 local 策略**：用户明确要求了沙箱，此时拿到 None 说明沙箱没建立
+        #    起来（e2b/ssh 初始化失败等）。绝不能把 Bash 交回平台后端执行，否则
+        #    用户命令会以 /app 为 cwd 跑在宿主 root 下，还能读到后端全部环境变量。
+        file_tool_blocked = any(
+            _workspace_native_name_for_spec(spec) in DOCKER_WORKSPACE_FILE_TOOL_NAMES
             for spec in specs
-        ):
+        )
+        policy = await _effective_policy_for_tool_binding()
+        if policy == SANDBOX_POLICY_LOCAL:
+            if file_tool_blocked:
+                raise PermissionError(
+                    "文件访问被拒绝：宿主工作区不可用，文件工具未执行"
+                )
+            return specs
+        blocked = sorted(
+            {
+                native_name
+                for native_name in (
+                    _workspace_native_name_for_spec(spec) for spec in specs
+                )
+                if native_name in WORKSPACE_BUILTIN_TOOL_NAMES
+            }
+        )
+        if blocked:
             raise PermissionError(
-                "文件访问被拒绝：宿主工作区不可用，文件工具未执行"
+                f"工作区访问被拒绝：{policy} 沙箱未就绪，以下工具未执行："
+                + "、".join(blocked)
             )
         return specs
     if not specs:

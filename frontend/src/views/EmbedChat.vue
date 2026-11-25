@@ -3012,11 +3012,19 @@ import {
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
-import { hydrateHistoryProcessTimeline, resolveBannerTodoTimeline, settlePendingTimelineSteps, timelineHasPending } from "@/utils/processTimeline";
+import {
+  createResumeSeqNormalizer,
+  hydrateHistoryProcessTimeline,
+  maxTimelineSeq,
+  resolveBannerTodoTimeline,
+  settlePendingTimelineSteps,
+  timelineHasPending,
+} from "@/utils/processTimeline";
 import { resolveImagePlaceholder } from "@/utils/imageGenerationPlaceholder";
 import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
+  businessConfirmationStatesFromTimeline,
   type BusinessConfirmationField,
   type BusinessConfirmationState,
 } from "@/utils/businessConfirmation";
@@ -3038,7 +3046,9 @@ interface LogEntry {
   name?: string;
   title: string;
   details: string;
-  status: "pending" | "success" | "error";
+  // 与 AgentStreamLog / ProcessTimelineStatus 对齐：被用户中止的挂起行以
+  // "interrupted" 落定（settlePendingConfirmationLocally 与终态收尾都用它）。
+  status: "pending" | "success" | "error" | "interrupted";
   error_reason?: string;
   isExpanded: boolean;
   isRouter?: boolean;
@@ -4123,6 +4133,21 @@ const openEmbedTrace = (traceId: string) => {
 // @conversation-scoped: isProcessing
 const isProcessing = ref(false);
 /**
+ * 子智能体授权交接锁：确认流拿到 `subagent_permission_handoff` 并在收尾阶段
+ * 异步把续聊指令发回父会话之前，保持输入框锁定，避免出现短暂释放/聚焦空窗。
+ */
+// @conversation-scoped: subagentHandoffPending
+const subagentHandoffPending = ref(false);
+// 子智能体交接轮询代次：主动停止或切会话时自增，正在 300ms 等待中的 dispatchResumeDirective 立即作废。
+// @conversation-scoped: handoffGeneration
+let handoffGeneration = 0;
+const hasActivePendingPermission = () =>
+  messages.value.some(
+    (item: Message) =>
+      item.pendingPermission?.status === "pending"
+      || item.pendingExternalExecution?.status === "pending",
+  );
+/**
  * 有待处理确认卡时保持锁定。
  *
  * 挂起确认意味着后端这一轮已经停在「等你点按钮」上：interrupt 之后 SSE 流结束、
@@ -4131,12 +4156,16 @@ const isProcessing = ref(false);
  * 由卡片上的「放弃本轮」显式解除。
  */
 const pendingPermissionLocking = computed(() =>
-  messages.value.some(
-    (item: Message) =>
-      item.pendingPermission?.status === "pending"
-      || item.pendingExternalExecution?.status === "pending",
-  ),
+  subagentHandoffPending.value || hasActivePendingPermission(),
 );
+// 指向 onMounted 内 `clearVisibilitySyncTimer` 的清理句柄：新流 / 恢复流启动或切会话时
+// 立即取消残留的 1.5s 历史同步轮询，防止旧轮询在重试耗尽时误清当前流的锁态。
+let cancelPendingHistorySync: () => void = () => {};
+// 待复活的「被中断恢复轮」观察者（见 restoreEmbedStreamSnapshot）：run 还在后台跑时
+// 不能立刻把卡片翻回「待确认」，得等它收敛。同一会话反复恢复快照会叠加多个观察者，
+// 它们会在收敛时对同一张卡片重复复活（用户刚点完提交又被翻回待确认），所以每次
+// 重建前先停掉上一个。
+let stopPendingReviveWatch: (() => void) | null = null;
 // 流式读取是否在途：用于区分「流仍在读」与「流已死但界面还挂着 busy」。
 // @conversation-scoped: streamInFlight
 let streamInFlight = false;
@@ -6285,10 +6314,11 @@ let activeStreamDraft: {
   msg: Message;
   lastAppliedSeq?: number;
   /**
-   * 本轮正文由「不写事件日志的恢复流」（权限确认 / 外部执行恢复）写出。
+   * 本轮正文由恢复流（权限确认 / 外部执行恢复）独占写出。
    *
-   * 这类流只转发 SSE，事件日志里仍只有挂起前的事件；此时按日志首拉重建会把恢复流
-   * 刚写出的正文换回挂起前的旧内容（内容回退）。置位后本轮不再启动续显。
+   * 虽然恢复流现在也写事件日志（且保留 `:seq`），但高频增量帧（`answer_delta` /
+   * `reasoning_content`）走合并窗口、实时 SSE 帧发出时尚未带序号，前端无法精确推进
+   * `lastAppliedSeq`。因此恢复期仍暂不启用事件续显（避免重放叠字），等落库终态同步收敛。
    */
   resumeOwned?: boolean;
 } | null = null;
@@ -6504,7 +6534,22 @@ const restoreEmbedStreamSnapshot = async (expectedGeneration?: number) => {
       // 恢复轮被中断了，后端挂起快照还在（见 resume.py「跑完才消费」）。把被恢复流
       // 改成「已批准 / 已完成」的卡片复活，用户可以直接重试。
       if (snapshot.resumeOwned === true && traceId) {
-        reviveInterruptedResumeCards(restoredAgent);
+        const reviveTarget = restoredAgent;
+        if (remoteRunActive.value) {
+          // 后端这一轮其实**还在跑**：恢复流是有后台 producer 的（见 chat.py 的
+          // `_build_resume_background_sse_response`），客户端断线并不会让它停下。
+          // 此刻把卡片翻回「待确认」，用户点下去只会撞上恢复互斥，而真正的事件
+          // 仍在往这条消息上流。等 run 真正收敛后再复活。
+          stopPendingReviveWatch?.();
+          stopPendingReviveWatch = watch(() => remoteRunActive.value, (active) => {
+            if (active) return;
+            stopPendingReviveWatch?.();
+            stopPendingReviveWatch = null;
+            reviveInterruptedResumeCards(reviveTarget);
+          });
+        } else {
+          reviveInterruptedResumeCards(restoredAgent);
+        }
       }
       restored.push(restoredAgent);
     }
@@ -6629,7 +6674,8 @@ const pollConversationStreamEvents = async () => {
     // 草稿槽被清空后恢复器/输入锁判据要立刻跟上，避免残留的 recoveryPending 继续轮询。
     refreshRecoveryCard();
   }
-  // 本轮正文由恢复流（不写事件日志）写出：日志无法描述它，重放只会把正文重建回挂起前。
+  // 本轮正文由恢复流独占写出：高频增量帧实时下发时不带序号、无法精确推进 lastAppliedSeq，
+  // 暂不启用事件续显以避免正文重复，等落库终态同步收敛。
   if (activeStreamDraft?.resumeOwned) return;
   streamReplayInFlight = true;
   try {
@@ -6754,7 +6800,8 @@ const scheduleStreamReplay = () => {
   }
   clearStreamReplayTimer();
   if (document.visibilityState !== "visible") return;
-  // 本轮正文由恢复流（不写事件日志）写出：按日志重建只会把它换回挂起前的旧内容。
+  // 本轮正文由恢复流独占写出：高频增量帧实时下发时不带序号、无法精确推进 lastAppliedSeq，
+  // 暂不启用事件续显以避免正文重复，等落库终态同步收敛。
   if (activeStreamDraft?.resumeOwned) return;
   // 续显接管意味着 SSE 已不再推进（切页面回来 / 流已结束）。提示交给恢复卡片：
   // 它装得下后台状态、执行阶段与同步进度，并且可以被用户手动关闭。
@@ -6960,8 +7007,8 @@ const finishRecoveredTurn = () => {
   streamReplayGeneration += 1;
   recoveryGraceExpired.value = false;
   recoveryUnknownCycles = 0;
-  // 本端仍在读流时不要提前解锁：可见性同步可能在流健康推进期间也跑到这里。
-  if (!streamInFlight && isProcessing.value) isProcessing.value = false;
+  // 本端仍在读流或仍有待确认卡时不要提前解锁：可见性同步可能在流健康推进或等待审批期间跑到这里。
+  if (!streamInFlight && isProcessing.value && !pendingPermissionLocking.value) isProcessing.value = false;
   recoveryCardTerminalApplied.value = true;
   clearStreamReplayTimer();
   clearStreamSnapshot(conversationId.value);
@@ -7355,6 +7402,8 @@ const resetConversationScopedState = () => {
   streamAbortReason = null;
   streamPendingConfirmation = () => false;
   isProcessing.value = false;
+  subagentHandoffPending.value = false;
+  handoffGeneration += 1;
   if (thoughtTimer) {
     clearInterval(thoughtTimer);
     thoughtTimer = null;
@@ -7367,6 +7416,7 @@ const resetConversationScopedState = () => {
   // 这里只是不留残留、也不留下一次无效的运行态核验）。
   dropPendingQuickSend();
   clearRunStatusNudge();
+  cancelPendingHistorySync();
   // 运行态轮询与锁态：目标会话若真在跑，watch(conversationId) 会重新核验并重新提供锁。
   stopRemoteRunPolling();
   resetRunStatus();
@@ -11182,6 +11232,9 @@ const fetchConversationHistory = async (
               // 提问卡实时渲染依赖消息对象上的 userQuestion（不落库），历史回放需从
               // process_timeline 快照重建，否则卡片只剩一行「需要用户回答」。
               const persistedQuestions = userQuestionStatesFromTimeline(hydratedTimeline);
+              // 业务确认卡同理：不随消息落库，只能从时间线快照重建，否则历史里
+              // 只剩一行「需要确认业务数据」，用户看不到当时要确认的数据。
+              const persistedConfirmations = businessConfirmationStatesFromTimeline(hydratedTimeline);
               const restoredAgentMessage: Message = {
                   id: Date.now() + idx * 2 + 1 + offset,
                   trace_id: item.trace_id,
@@ -11192,6 +11245,14 @@ const fetchConversationHistory = async (
                   citations: item.citations ?? undefined,
                   isHistory: true,
                   userQuestion: persistedQuestions[0],
+                  // 取**最后一张**（同一轮可能确认过多组数据）；历史卡一律标 stale——
+                  // 快照的实时状态未知，而回执会触发真实写入。`!` 见上面的 length 判断。
+                  businessConfirmation: persistedConfirmations.length
+                    ? {
+                        ...persistedConfirmations[persistedConfirmations.length - 1]!,
+                        status: "stale",
+                      }
+                    : undefined,
                   logs: [],
                   isThinking: false,
                   feedback: null,
@@ -11613,6 +11674,7 @@ const stopGeneration = (options?: StopGenerationOptions) => {
   // watch 会把刚才排队的提问发出去——用户明明按了停止，系统却反向发出一条新提问。
   dropPendingQuickSend();
   clearRunStatusNudge();
+  cancelPendingHistorySync();
   const lastMsg = messages.value.length > 0 ? messages.value[messages.value.length - 1] : null;
   if (conversationId.value) {
     void cancelConversationRun(conversationId.value, {
@@ -11636,6 +11698,8 @@ const stopGeneration = (options?: StopGenerationOptions) => {
     abortController = null;
   }
   isProcessing.value = false;
+  subagentHandoffPending.value = false;
+  handoffGeneration += 1;
   // 用户主动停止不是「后台还在跑」：置位本轮标记，否则 abort 收尾时 streamInFlight
   // 归零、草稿仍在、后端锁尚未释放，恢复卡片会把它判成恢复场景——先弹「会话仍在后台
   // 处理中」，取消轮落库后再补「内容已补齐」。真正的重算在 abort 的 finally 里，这里
@@ -11647,7 +11711,14 @@ const stopGeneration = (options?: StopGenerationOptions) => {
     thoughtTimer = null;
   }
   // Mark last thinking message as stopped
-  if (lastMsg && lastMsg.isThinking) {
+  //
+  // 条件不能只看 `isThinking`：用户常在「工具间隙」点停止——那时模型在等工具返回，
+  // isThinking 已被置 false，正文也还没开始。旧逻辑在这个窗口里什么都不做，消息
+  // 既没有正文也没有「已停止」标记，思考头会一直转圈显示「执行过程」。
+  const shouldMarkStopped =
+    Boolean(lastMsg && lastMsg.role !== "system") &&
+    (lastMsg?.isThinking === true || !lastMsg?.content);
+  if (lastMsg && shouldMarkStopped) {
     lastMsg.isThinking = false;
     if (!lastMsg.content) {
       lastMsg.content = "[已停止生成]";
@@ -11942,6 +12013,7 @@ watch([isProcessing, remoteRunBusy, sendLocked], () => {
 watch(conversationId, () => {
   dropPendingQuickSend();
   clearRunStatusNudge();
+  cancelPendingHistorySync();
 });
 
 const handleQuickQuestion = async (
@@ -12661,10 +12733,16 @@ const submitPendingExternalExecution = async (msg: Message) => {
   const pending = msg.pendingExternalExecution;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
-  // 这段恢复流直接写这条消息，而事件日志并不记录它（恢复接口只转发 SSE）：
+  // 这段恢复流直接独占写这条消息（高频增量帧实时下发时不带序号，暂不与事件续显混写）：
   // 既要停掉可能还在跑的续显（两路同写会重复正文），也要让恢复器在它运行期间认
   // 「流在途」，不去补占位 / 拉续显。
   stopReplayForLiveStream();
+  // 取消上一轮残留的历史同步轮询与 run-status 助推，停止可能仍在跑的主流看门狗，
+  // 并同步声明后端恢复运行锁已开始。
+  stopStreamLivenessWatch();
+  cancelPendingHistorySync();
+  clearRunStatusNudge();
+  markRunStarted();
   // 主流结束时已把草稿置空（见 sendMessageInternal 的收尾），所以正常流程走到这里
   // `activeStreamDraft` 一定是 null——必须把草稿重新绑定到这条消息，否则：
   // ① 恢复流期间 pagehide / visibilitychange 触发的 maybePersistStreamSnapshot 会因
@@ -12682,23 +12760,26 @@ const submitPendingExternalExecution = async (msg: Message) => {
   }
   streamInFlight = true;
   isProcessing.value = true;
+  // 先自增写入方令牌再 abort 旧控制器：主流在被接管中止时据此识别「已交权」，
+  // 不得再把本轮刚置上的 streamInFlight / isProcessing 覆盖回 false。
+  const resumeToken = ++liveWriterToken;
   // 恢复流绑定当前会话 AbortController（支持主动停止、切会话与卸载取消），同时保留 liveWriterToken 防并发串台。
   const resumeAbort = new AbortController();
   if (abortController) {
     abortController.abort();
   }
   abortController = resumeAbort;
-  const resumeToken = ++liveWriterToken;
   msg.isThinking = true;
   startThoughtTimer(msg);
   msg.isThoughtExpanded = config.expandThoughts;
   msg.thinkingText = "正在提交外部执行结果...";
   resetStallTimer();
 
+  const normalizeResumeSeq = createResumeSeqNormalizer(maxTimelineSeq(msg.processTimeline));
   const resumeEventPump = createBufferedStreamEventPump(
     (data) => {
       if (liveWriterToken !== resumeToken || embedUnmounted) return;
-      applyPermissionStreamEvent(msg, data);
+      applyPermissionStreamEvent(msg, normalizeResumeSeq(data));
       if (data.type !== "keepalive" && data.type !== "reasoning_content" && data.type !== "answer_delta") {
         maybePersistStreamSnapshot();
       }
@@ -12733,6 +12814,9 @@ const submitPendingExternalExecution = async (msg: Message) => {
     // 先把合帧缓冲刷进消息，再追加失败提示：否则残留的正文/思考会排在提示之后，顺序错乱
     resumeEventPump.flush();
     if (error?.name === "AbortError") {
+      // 主动取消不是成功：挂起节点按 interrupted 落定，否则状态会被 finally 里的
+      // 默认 success 收尾盖成「已完成」。
+      finalizeAllPendingStreamLogs(msg, Date.now(), "interrupted");
       if (!embedUnmounted) {
         msg.content += "\n[已取消提交外部执行结果]";
       }
@@ -12758,6 +12842,9 @@ const submitPendingExternalExecution = async (msg: Message) => {
       isProcessing.value = Boolean(
         msg.pendingExternalExecution?.status === "pending" || msg.pendingPermission?.status === "pending",
       );
+      if (!embedUnmounted) {
+        nudgeRunStatusConvergence();
+      }
       msg.isThinking = false;
       clearStallTimer();
       showStalledPrompt.value = false;
@@ -12765,11 +12852,9 @@ const submitPendingExternalExecution = async (msg: Message) => {
         clearInterval(thoughtTimer);
         thoughtTimer = null;
       }
-      if (msg.logs) {
-        msg.logs.forEach((l) => {
-          if (l.status === "pending" && l.category !== "permission" && l.category !== "external") l.status = "success";
-        });
-      }
+      // 统一走主流同一收尾入口：排除 permission/external，并同步落定 processTimeline
+      // 里的旁白与推理节点（只遍历 msg.logs 会漏掉它们，呼吸灯与光标就此常亮）。
+      finalizeAllPendingStreamLogs(msg);
       scrollToBottom();
       nextTick(() => {
         if (!isMobile.value) chatInputRef.value?.focus();
@@ -12877,9 +12962,15 @@ const confirmPendingPermission = async (
   const pending = msg.pendingPermission;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
-  // 与外部执行恢复同理：这段恢复流直接写这条消息，事件日志不记录它。先让续显让位，
+  // 与外部执行恢复同理：这段恢复流独占写这条消息（暂不与事件续显混写）。先让续显让位，
   // 再把自己标记为「流在途」，恢复器在此期间不会补占位或启动续显。
   stopReplayForLiveStream();
+  // 取消上一轮残留的历史同步轮询与 run-status 助推（awaiting_permission 不落库会让旧轮询
+  // 走到重试耗尽兜底），停止可能仍在跑的主流看门狗，并同步声明后端恢复运行锁已开始。
+  stopStreamLivenessWatch();
+  cancelPendingHistorySync();
+  clearRunStatusNudge();
+  markRunStarted();
   // 与外部执行恢复同理：主流结束时草稿已被置空，这里必须重新绑定到被确认的这条消息，
   // 否则恢复流期间刷新/切后台时快照不落盘，恢复流写出的正文会随首拉重建被换回挂起前。
   if (activeStreamDraft?.msg === msg) {
@@ -12894,13 +12985,15 @@ const confirmPendingPermission = async (
   }
   streamInFlight = true;
   isProcessing.value = true;
+  // 先自增写入方令牌再 abort 旧控制器：若主流尚未完全收尾，旧流在 catch/finally 中
+  // 通过 liveWriterToken 识别已被接管，避免把本轮的 streamInFlight / isProcessing 覆盖回 false。
+  const resumeToken = ++liveWriterToken;
   // 恢复流绑定当前会话 AbortController（支持主动停止、切会话与卸载取消），同时保留 liveWriterToken 防并发串台。
   const resumeAbort = new AbortController();
   if (abortController) {
     abortController.abort();
   }
   abortController = resumeAbort;
-  const resumeToken = ++liveWriterToken;
   if (confirmed) {
     msg.isThinking = true;
     startThoughtTimer(msg);
@@ -12909,10 +13002,11 @@ const confirmPendingPermission = async (
     resetStallTimer();
   }
 
+  const normalizeResumeSeq = createResumeSeqNormalizer(maxTimelineSeq(msg.processTimeline));
   const permissionEventPump = createBufferedStreamEventPump(
     (data) => {
       if (liveWriterToken !== resumeToken || embedUnmounted) return;
-      applyPermissionStreamEvent(msg, data);
+      applyPermissionStreamEvent(msg, normalizeResumeSeq(data));
       if (data.type !== "keepalive" && data.type !== "reasoning_content" && data.type !== "answer_delta") {
         maybePersistStreamSnapshot();
       }
@@ -12990,6 +13084,7 @@ const confirmPendingPermission = async (
     // 同外部执行恢复：先落盘缓冲，再写失败提示，避免「半段正文 + 提示 + 剩下那截正文」
     permissionEventPump.flush();
     if (error?.name === "AbortError") {
+      finalizeAllPendingStreamLogs(msg, Date.now(), "interrupted");
       if (!embedUnmounted) {
         msg.content += "\n[已终止工具确认流]";
       }
@@ -13009,6 +13104,13 @@ const confirmPendingPermission = async (
       } else {
         permissionEventPump.cancel();
       }
+      const resumeDirective = pending.resumeDirective;
+      const hasSubagentHandoff = Boolean(resumeDirective && !pending.discarded);
+      // 子智能体授权交接：在清空本流锁态前先立起交接锁，确保到 dispatchResumeDirective
+      // 真正接棒发起续聊之间输入框零空窗、绝不提前释放或弹回焦点。
+      if (hasSubagentHandoff) {
+        subagentHandoffPending.value = true;
+      }
       streamInFlight = false;
       isProcessing.value = Boolean(
         msg.pendingPermission?.status === "pending" || msg.pendingExternalExecution?.status === "pending",
@@ -13020,23 +13122,24 @@ const confirmPendingPermission = async (
         clearInterval(thoughtTimer);
         thoughtTimer = null;
       }
-      if (msg.logs) {
-        msg.logs.forEach((l) => {
-          if (l.status === "pending" && l.category !== "permission") l.status = "success";
-        });
-      }
+      // 同上：此前这里只排除了 permission，漏掉 external 会把仍在等待外部执行的
+      // 挂起行误标成 success；也没有处理 processTimeline。统一交给同一入口。
+      finalizeAllPendingStreamLogs(msg);
       scrollToBottom();
       // 子智能体的权限确认：授权已在后端落库，这里把续聊指令发回父会话，父专家才会
       // 用 sub_agent_call(resume=True) 让子智能体接着跑完。指令发完即清空——不清空的话
       // 任何一次重渲染都会再发一遍，等于无限续聊。
-      const resumeDirective = pending.resumeDirective;
       if (resumeDirective && !pending.discarded) {
         pending.resumeDirective = undefined;
         void dispatchResumeDirective(msg, resumeDirective);
+      } else {
+        if (!embedUnmounted) {
+          nudgeRunStatusConvergence();
+        }
+        nextTick(() => {
+          if (!isMobile.value) chatInputRef.value?.focus();
+        });
       }
-      nextTick(() => {
-        if (!isMobile.value) chatInputRef.value?.focus();
-      });
     }
   }
 };
@@ -13077,6 +13180,37 @@ const revokeSessionPermission = async (msg: Message) => {
 };
 
 /**
+ * 挂起确认卡片落到终态（放弃 / 过期）后的本地收尾。
+ *
+ * 这两条路径都**不发起恢复流**，所以事后没有任何东西会把锁态复位：唯一的解锁
+ * watcher 挂在 `remoteRunActive` 上（见下方 watch），而它此刻早已是 false，
+ * 再也不会触发。漏了这一步，`isProcessing` 会永久停在 true，`sendMessage` 一进来
+ * 就被拦，用户只能刷新页面才能继续对话。
+ */
+const settlePendingConfirmationLocally = (
+  msg: Message,
+  logStatus: "interrupted" | "error",
+) => {
+  const permissionRequestId = msg.pendingPermission?.permission_request_id || "";
+  const permissionLogId = permissionRequestId ? `permission_${permissionRequestId}` : "";
+  // 时间线里的挂起行同步收敛，否则卡片左侧的呼吸灯会一直亮着。
+  for (const item of msg.processTimeline || []) {
+    if (item.kind !== "log") continue;
+    const isPermissionLog =
+      item.category === "permission" ||
+      (permissionLogId !== "" && String(item.id) === permissionLogId);
+    if (isPermissionLog && item.status === "pending") item.status = logStatus;
+  }
+  for (const log of msg.logs || []) {
+    if (log.id === permissionLogId && log.status === "pending") log.status = logStatus;
+  }
+  // 用与 sendMessage 同源的锁态重算，避免这边解了、那边还锁着。
+  if (!streamInFlight) {
+    isProcessing.value = pendingPermissionLocking.value;
+  }
+};
+
+/**
  * 「放弃本轮」：不执行这条命令，也不写任何会话授权。
  *
  * 纯粹的前端收尾——挂起快照留在服务端等 TTL 自然过期（不发请求就不会执行），
@@ -13088,6 +13222,7 @@ const expirePendingPermission = (msg: Message) => {
   // 只用本地状态收尾：服务端快照本来就已过期，不再发请求。
   pending.status = "expired";
   pending.isSubmitting = false;
+  settlePendingConfirmationLocally(msg, "error");
 };
 
 const discardPendingPermission = (msg: Message) => {
@@ -13097,6 +13232,7 @@ const discardPendingPermission = (msg: Message) => {
   pending.status = "rejected";
   pending.isSubmitting = false;
   pending.expanded = false;
+  settlePendingConfirmationLocally(msg, "interrupted");
 };
 
 const tryLocalChartOptionPatch = (userText: string): boolean => {
@@ -13250,28 +13386,40 @@ const sendSandboxHealthReport = () => {
  */
 const dispatchResumeDirective = async (msg: Message, directive: string) => {
   const originConversationId = String(conversationId.value || "");
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    // 用户可能在这几秒里切走会话或关掉页面：指令属于原会话那一段，发到别处
-    // 会把「继续」塞进另一段对话。宁可丢这条指令（用户还能手动说「继续」）。
-    if (embedDisposed.value) return;
-    if (String(conversationId.value || "") !== originConversationId) return;
-    const busy =
-      isProcessing.value
-      || remoteRunBusy.value
-      || recoveryLocking.value
-      || pendingPermissionLocking.value
-      || sendLocked.value;
-    if (!busy) {
-      if (embedDisposed.value) return;
+  const handoffGen = ++handoffGeneration;
+  subagentHandoffPending.value = true;
+  try {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      // 用户可能在这几秒里点击停止、切走会话或关掉页面：指令属于原会话那一段，
+      // 停止后或发到别处都会反向发问。代次失配即立即作废。
+      if (embedDisposed.value || handoffGeneration !== handoffGen) return;
       if (String(conversationId.value || "") !== originConversationId) return;
-      await sendMessage({ content: directive });
-      return;
+      // 轮询自身不能被 `subagentHandoffPending` 挡住，只看外部运行态与真正的待确认卡。
+      const busy =
+        isProcessing.value
+        || remoteRunBusy.value
+        || recoveryLocking.value
+        || hasActivePendingPermission()
+        || sendLocked.value;
+      if (!busy) {
+        if (embedDisposed.value || handoffGeneration !== handoffGen) return;
+        if (String(conversationId.value || "") !== originConversationId) return;
+        // 同步释放交接锁并立即进入 sendMessage（runSendExclusive 同步立起 sendLocked），
+        // Vue 同一微任务批内无解锁空窗。
+        subagentHandoffPending.value = false;
+        await sendMessage({ content: directive });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
     }
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (embedDisposed.value || handoffGeneration !== handoffGen) return;
+    msg.content +=
+      "\n\n[授权已记录，但本轮仍在运行，没能自动唤回子智能体。请稍等片刻后发送「继续」，子智能体会接着跑完。]";
+  } finally {
+    if (handoffGeneration === handoffGen) {
+      subagentHandoffPending.value = false;
+    }
   }
-  if (embedDisposed.value) return;
-  msg.content +=
-    "\n\n[授权已记录，但本轮仍在运行，没能自动唤回子智能体。请稍等片刻后发送「继续」，子智能体会接着跑完。]";
 };
 
 const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
@@ -13283,6 +13431,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   // 「强制走查数」意图一起撤销，避免劫持用户的手动提问。
   dropPendingQuickSend();
   clearRunStatusNudge();
+  cancelPendingHistorySync();
 
   // 尽早消费「强制查数智能体」标记，避免中途 return 后泄漏到下一轮普通提问
   const forcedDataAgentIdForTurn = forceDataQueryAgentOnce.value ? resolvePreferredDataQueryAgentId() : "";
@@ -13373,8 +13522,10 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       agentMsg.value.pendingPermission?.status === "pending"
       || agentMsg.value.pendingExternalExecution?.status === "pending",
   );
-  // 新一轮是新的写入方：令牌自增后，仍在收尾的旧恢复流就不能再复位本轮的锁态。
+  // 新一轮是新的写入方：令牌自增后，仍在收尾的旧恢复流就不能再复位本轮的锁态；
+  // 同时保存本轮令牌，若后续被权限确认/外部执行恢复流接管，本轮 finally 不得再踩踏新流的锁态。
   liveWriterToken += 1;
+  const streamToken = liveWriterToken;
   // 新一轮开始：续显游标整体归零。后端在 producer 启动时会清空上一轮日志并让 _seq
   // 从 1 重新计数，所以这里必须同步归零——保留 lastSeq 会让本轮事件全部落在
   // after_seq 之内而被丢弃；保留 traceId 则会把上一轮的残留事件放行进来。
@@ -13718,6 +13869,19 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
               clearInterval(thoughtTimer);
               thoughtTimer = null;
             }
+            // 需要用户操作的卡片（审批/外部执行/主动提问/业务确认）到达时必须立刻把
+            // 流快照写进 storage，不能等 1.5s 节流窗口：卡片往往紧跟在一串高密度
+            // reasoning 帧之后，而 pagehide 是同步事件、只能读已落盘的快照。晚一步
+            // 落盘，用户在这半秒内刷新/关页，回来就只剩一段没有卡片的思考过程——
+            // 那一轮既不会继续也不会结束，输入框还被锁着。
+            if (
+              data.type === "permission_required"
+              || data.type === "external_execution_required"
+              || data.type === "user_question"
+              || data.type === "business_confirmation"
+            ) {
+              maybePersistStreamSnapshot(true);
+            }
           } else if (data.type === "meta") {
             if (data.agent_name) {
               agentMsg.value.agentName = data.agent_name;
@@ -13832,6 +13996,25 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     // 当前会话的消息上（`currentStreamAgentMessage` 的兜底是「列表最后一条」）。
     // 收到 duplicate_request 仅代表本次并发请求被拒，原有后台任务仍在运行，不可提前清草稿与续显计时器。
     if (!receivedDuplicateRequest) {
+      // 流结束了但卡片还在等人操作（审批/外部执行/提问/业务确认）：先按会话归属把
+      // 快照写进 storage，再清内存引用——落盘函数读的就是 activeStreamDraft，清完就
+      // 写不出来了。漏这一步，pagehide 时无草稿可写，刷新后卡片凭空消失，而后端那
+      // 一边其实正挂着等确认，两边状态永久错开。
+      // 只认「四类交互卡」这一个信号，不看时间线里有没有 pending 节点：收尾阶段
+      // 个别工具日志/todo 仍可能停在 pending（由 finalizeAllPendingStreamLogs 落定），
+      // 那不是「等人操作」，拿它当条件会让正常跑完的轮次也留下一份快照，恢复器随后
+      // 把它误判成断线在途——正是这段代码原本要避免的事。
+      if (
+        conversationId.value === streamConversationId
+        && (
+          agentMsg.value.pendingPermission
+          || agentMsg.value.pendingExternalExecution
+          || agentMsg.value.userQuestion
+          || agentMsg.value.businessConfirmation
+        )
+      ) {
+        maybePersistStreamSnapshot(true);
+      }
       if (conversationId.value === streamConversationId) {
         activeStreamDraft = null;
         // 本轮的输出已经完整落到界面，恢复卡片转入完成态。
@@ -13844,11 +14027,14 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     flushReasoningBuffer();
     flushContentBuffer();
     if (e.name === "AbortError") {
+      // 中断同样要落定时间线：只写正文标记不动节点的话，思考卡片与呼吸灯会一直
+      // 停在「进行中」，直到用户刷新。
+      finalizeAllPendingStreamLogs(agentMsg.value, Date.now(), "interrupted");
       if (streamAbortReason) {
         // 看门狗中止不是用户操作：不写「[用户终止]」，交给 finally 的 run-status 核验
         // 与历史收敛把界面补齐（卡住时正文往往已在后端落库）。
         console.warn(`[Stream] aborted by liveness watchdog (${streamAbortReason})`);
-      } else if (!embedUnmounted) {
+      } else if (liveWriterToken === streamToken && !embedUnmounted) {
         agentMsg.value.content += "\n[用户终止]";
       }
     } else if (document.visibilityState === "hidden") {
@@ -13861,39 +14047,50 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       agentMsg.value.clientTransportErrorSuffix = transportErrorSuffix;
     }
   } finally {
+    // 看门狗属于本条主流资源，必须无条件停止；否则主流被恢复流接管后看门狗会继续存活，
+    // 15s 后按冻结的 streamLastFrameAt 误杀新恢复流的 abortController。
     stopStreamLivenessWatch();
-    streamInFlight = false;
+    const ownsLiveWriter = liveWriterToken === streamToken;
+    if (ownsLiveWriter) {
+      streamInFlight = false;
+    }
     // 本轮结束：把当前会话再报一次给宿主。新建会话的 URL 早在首条消息之前就有了，
     // 宿主侧栏要靠这条消息（而不只是 URL 变化）把刚落库的任务刷进列表。
     postMessageToHost({ type: "CONVERSATION_ACTIVE", conversation_id: conversationId.value });
     // SSE 已收流结束，此时才谈得上完成态：放在 streamInFlight 归零之后刷新，
     // 否则「本端仍在收流」的判据会把完成提示压掉。
-    refreshRecoveryCard();
+    if (ownsLiveWriter) {
+      refreshRecoveryCard();
+    }
     // 组件已卸载时不再执行收尾副作用：否则 abort 后的 refreshCurrentRunStatus 会在
     // 已销毁的实例上重启会话轮询与网络请求。结果由下次挂载时的运行恢复器取回。
     if (!embedUnmounted) {
       flushReasoningBuffer();
       flushContentBuffer();
-      // 锁态是全局的：只有本轮仍是当前会话时才用本轮的权限态覆盖它。切走后若照写，
-      // 会把目标会话刚算好的锁态冲掉，或用本轮的 pending 权限把它误锁住。
+      // 锁态是全局的：只有本轮仍是当前会话且仍是当前写入方时才用本轮的权限态覆盖它。
+      // 切走或已被确认恢复流接管后若照写，会把新流的锁态直接冲掉。
       if (conversationId.value === streamConversationId) {
-        isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
+        if (ownsLiveWriter) {
+          isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
+        }
       }
       // 流刚结束：立刻核验一次后端真相，并短时重试，把「后端已收尾、前端锁尚未收敛」
       // 的窗口从最长 1.5s 压到近乎瞬时（不能直接清锁：流被中断时后端可能仍在跑）。
-      nudgeRunStatusConvergence();
-      agentMsg.value.isThinking = false;
+      if (ownsLiveWriter) {
+        nudgeRunStatusConvergence();
+        agentMsg.value.isThinking = false;
+        clearStallTimer();
+        clearStalePendingTimer();
+        showStalledPrompt.value = false;
+        finishThoughtTimer(agentMsg.value);
+        // Final cleanup: stop any remaining log spinners
+        finalizeAllPendingStreamLogs(agentMsg.value);
+      }
       void refreshQuota();
       void loadReusableResultAvailability(); // 刷新会话可复用结果入口
       void loadArtifactCounts(); // 刷新产物数量，新生成的产物即时显示角标与按钮
-      clearStallTimer();
-      clearStalePendingTimer();
-      showStalledPrompt.value = false;
       void refreshEmbedContextUsage();
       void refreshEmbedContextCompactions(true);
-      finishThoughtTimer(agentMsg.value);
-      // Final cleanup: stop any remaining log spinners
-      finalizeAllPendingStreamLogs(agentMsg.value);
       scrollToBottom();
     } else {
       if (reasoningFlushTimer !== null) {
@@ -14016,6 +14213,9 @@ onUnmounted(() => {
     window.clearTimeout(scrollAnchorIdleTimer);
     scrollAnchorIdleTimer = null;
   }
+  // 观察者持有消息对象，组件卸载后不能再复活任何卡片。
+  stopPendingReviveWatch?.();
+  stopPendingReviveWatch = null;
 });
 
 /** 鼠标进入时暂停淡出倒计时，离开后重新计时。 */
@@ -14313,26 +14513,34 @@ onMounted(() => {
 
   // 切回前台（切回 App 或多标签页）时自动探测并拉取最新会话历史，支持退避轮询直到后台持久化完成
   let visibilitySyncTimer: any = null;
-  const clearVisibilitySyncTimer = () => {
+  let visibilitySyncGeneration = 0;
+  const clearVisibilitySyncTimer = (invalidateInFlight = false) => {
+    if (invalidateInFlight) {
+      visibilitySyncGeneration += 1;
+    }
     if (visibilitySyncTimer) {
       clearTimeout(visibilitySyncTimer);
       visibilitySyncTimer = null;
     }
   };
+  cancelPendingHistorySync = () => clearVisibilitySyncTimer(true);
 
   const syncLatestSessionHistory = async (attempt = 1, maxAttempts = 15) => {
     // 请求可能在组件卸载后才返回：不要再写已销毁实例的消息/草稿/快照。
     if (embedUnmounted) return;
     if (!conversationId.value || !hasPermission.value) return;
+    const syncGeneration = visibilitySyncGeneration;
     // 本次同步服务于哪个会话：await 期间可能已经切走，那时任何写入（尤其是 reload 分支
     // 的 clearStreamSnapshot）都会打到新会话身上。
     const startedForConversation = conversationId.value;
     const conversationChanged = () => conversationId.value !== startedForConversation;
 
     const scheduleHistoryRetry = () => {
+      if (syncGeneration !== visibilitySyncGeneration) return;
       if (attempt >= maxAttempts || document.visibilityState !== "visible") return;
       clearVisibilitySyncTimer();
       visibilitySyncTimer = setTimeout(() => {
+        if (syncGeneration !== visibilitySyncGeneration) return;
         void syncLatestSessionHistory(attempt + 1, maxAttempts);
       }, 1500);
     };
@@ -14357,6 +14565,7 @@ onMounted(() => {
         params: { conversation_id: conversationId.value, page: 1, page_size: 1 },
         headers,
       });
+      if (syncGeneration !== visibilitySyncGeneration) return;
       if (res.data?.data && Array.isArray(res.data.data.items) && res.data.data.items.length > 0) {
         const latestServerItem = res.data.data.items[0];
         if (conversationId.value !== startedForConversation) return;
@@ -14536,6 +14745,7 @@ onMounted(() => {
     } catch (err) {
       console.warn("[LifeCycle] Failed to sync session on visibility change:", err);
     }
+    if (syncGeneration !== visibilitySyncGeneration) return;
 
     if (attempt < maxAttempts) {
       // 判据只看「有语义」的最后一条：首屏历史末尾的 system 分隔符不代表任何轮次状态，
@@ -14556,7 +14766,9 @@ onMounted(() => {
       // 只有「带重试的调用」才存在「重试耗尽」这件事。恢复器是按 (1, 1) 调用的周期
       // 轮询，它本身就靠外层定时器反复重试；若也落进这个兜底分支，就会每 3s 调一次
       // markOutputCompleted，把仍被后端锁住的输入框反复解锁，并留下「输出已完成」标记。
-      if (isProcessing.value) {
+      // 同时必须守卫 `!streamInFlight && !hasPendingConfirmation()`：客户端正在读恢复流
+      // （或仍有待确认卡）时，旧轮询重试耗尽绝不能把当前在途流的 isProcessing 清掉。
+      if (isProcessing.value && !streamInFlight && !hasPendingConfirmation()) {
         isProcessing.value = false;
       }
       // 历史同步重试已耗尽，说明前端再也拿不到更权威的进展信号。此时若界面已无待确认
@@ -14781,6 +14993,7 @@ onUnmounted(() => {
   afterStreamSnapshotRestored = null;
   recoveryPending.value = false;
   if (handlers?.clearVisibilitySyncTimer) handlers.clearVisibilitySyncTimer();
+  cancelPendingHistorySync = () => {};
   if (handlers?.clearRunRecoveryTimer) handlers.clearRunRecoveryTimer();
   if (handlers?.clearStreamReplayTimer) handlers.clearStreamReplayTimer();
   clearRunStatusNudge();

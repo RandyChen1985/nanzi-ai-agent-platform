@@ -8,12 +8,20 @@ import json
 import re
 import fnmatch
 import time
-from typing import Optional
+from typing import Any, Optional
 from app.services.ai.tools.tool_compat import tool
 from app.services.ai.code_execution_service import run_shell_command_capture
 from app.services.ai.runtime.shell_deletion_policy import assess_shell_deletion
 from app.services.skill_rename_service import SkillRenameError, validate_skill_id
-from app.utils.skill_metadata import is_skill_enabled, parse_skill_frontmatter
+from app.utils.skill_metadata import (
+    SKILL_READ_MAX_CHARS,
+    SKILL_RESOURCE_LIST_MAX_DEPTH as _SKILL_RESOURCE_LIST_MAX_DEPTH,
+    SKILL_RESOURCE_LIST_MAX_ENTRIES as _SKILL_RESOURCE_LIST_MAX_ENTRIES,
+    clip_skill_text,
+    format_skill_resource_tree,
+    is_skill_enabled,
+    parse_skill_frontmatter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +37,24 @@ def _current_tool_temperature() -> Optional[float]:
 
         return get_current_tool_temperature()
     except Exception:  # noqa: BLE001 - 取不到上下文就退回默认行为
+        return None
+
+
+def _resolve_path_access_user_info() -> dict[str, Any] | None:
+    """当前工具调用所属用户，供 ``read_image`` 做跨租户判定。
+
+    返回 ``None`` 表示拿不到身份上下文（定时任务、内部自调用等）。此时调用方
+    **跳过**跨租户比对而不是一律拒绝：没有身份就没有"他人"的概念，历史行为也是
+    放行。真正基于身份的严格鉴权（``fs_access.is_runtime_path_allowed``）只用于
+    Read/Write 这类走绑定层的文件工具，不套在 ``read_image`` 上——它的公共根口径
+    太窄，会把 ``data/uploads``、``data/generated_files`` 这些既有图片入口全挡死。
+    """
+    try:
+        from app.utils.context import current_user_info
+
+        info = current_user_info.get()
+        return info or None
+    except Exception:  # noqa: BLE001 - 取不到上下文就当作无身份
         return None
 
 
@@ -95,15 +121,9 @@ def _parse_skill_frontmatter(skill_id: str, skill_md_path: str) -> dict:
     return parse_skill_frontmatter(skill_id, skill_md_path)
 
 
-#: 技能文件单次读取上限（SKILL.md 与技能包内资源同一口径）
+#: 技能文件单次读取上限（SKILL.md 与技能包内资源同一口径）；
+#: 截断上限 SKILL_READ_MAX_CHARS 与资源树上限均统一收敛在 app.utils.skill_metadata。
 SKILL_RESOURCE_MAX_BYTES = 262144
-#: 单次返回给模型的技能正文上限（字符）。必须明显低于上下文侧
-#: ``DEFAULT_TOOL_OUTPUT_MAX_LEN``（64Ki 字符），并给返回头与资源清单留出余量：
-#: 否则工具内部读到的内容会在下一层被静默砍掉，而模型以为拿到的是全文。
-SKILL_READ_MAX_CHARS = 56_000
-#: 技能资源清单的条目 / 深度上限：技能包导入上限是 2000 个文件，清单无上限会写爆上下文
-_SKILL_RESOURCE_LIST_MAX_ENTRIES = 200
-_SKILL_RESOURCE_LIST_MAX_DEPTH = 4
 
 
 def _skill_allowed_roots(user_info: Optional[dict]) -> list[str]:
@@ -161,65 +181,17 @@ def _decode_skill_resource(blob: bytes) -> Optional[str]:
 
 
 def _format_skill_resource_tree(skill_dir: str) -> str:
-    """技能包内资源清单（路径相对技能目录，排除 SKILL.md 与隐藏项）。
-
-    这是"有哪些资源可读"的提示，不是目录树工具：条目数与深度都有上限，超限在末尾
-    显式说明，避免大技能包把上下文写爆。没有任何附带资源时返回空串。
-    """
-    entries: list[str] = []
-    truncated = False
-    root = os.path.abspath(skill_dir)
-    for current, dirnames, filenames in os.walk(root, followlinks=False):
-        depth = 0 if current == root else os.path.relpath(current, root).count(os.sep) + 1
-        dirnames[:] = sorted(
-            name for name in dirnames if not name.startswith(".") and name != "__pycache__"
-        )
-        if depth >= _SKILL_RESOURCE_LIST_MAX_DEPTH:
-            if dirnames:
-                truncated = True
-            dirnames[:] = []
-        rel_dir = os.path.relpath(current, root)
-        for filename in sorted(filenames):
-            if filename.startswith(".") or filename == "SKILL.md":
-                continue
-            if len(entries) >= _SKILL_RESOURCE_LIST_MAX_ENTRIES:
-                truncated = True
-                break
-            rel = filename if rel_dir == os.curdir else os.path.join(rel_dir, filename)
-            entries.append(rel.replace(os.sep, "/"))
-        if len(entries) >= _SKILL_RESOURCE_LIST_MAX_ENTRIES:
-            break
-    if not entries and not truncated:
-        return ""
-    lines = [f"- {entry}" for entry in entries]
-    if truncated:
-        lines.append(
-            f"- …（清单已截断：最多列 {_SKILL_RESOURCE_LIST_MAX_ENTRIES} 条 / "
-            f"{_SKILL_RESOURCE_LIST_MAX_DEPTH} 层；需要完整目录请用 directory_tree_navigator 或 Bash）"
-        )
-    return "\n".join(lines)
+    """技能包内资源清单（复用 ``app.utils.skill_metadata.format_skill_resource_tree``）。"""
+    return format_skill_resource_tree(
+        skill_dir,
+        max_entries=_SKILL_RESOURCE_LIST_MAX_ENTRIES,
+        max_depth=_SKILL_RESOURCE_LIST_MAX_DEPTH,
+    )
 
 
 def _clip_skill_text(text: str, *, max_chars: int = SKILL_READ_MAX_CHARS) -> tuple[str, int]:
-    """把过长的技能正文裁成「头 + 尾」，中间显式标注省略量。
-
-    技能尾部的「禁止事项 / 输出格式 / 异常处理」最容易被整段丢掉，又最容易导致
-    越权或格式错，所以超限时保留结尾而不是简单砍尾。
-
-    Args:
-        text: 已解码的技能正文。
-        max_chars: 单次返回的字符上限。
-
-    Returns:
-        ``(裁剪后的正文, 被省略的字符数)``；未超限时省略量为 0，正文原样返回。
-    """
-    if len(text) <= max_chars:
-        return text, 0
-    head_chars = int(max_chars * 0.7)
-    tail_chars = max_chars - head_chars
-    omitted = len(text) - max_chars
-    marker = f"\n… [中间省略 {omitted} 字符；共 {len(text)} 字符] …\n"
-    return f"{text[:head_chars]}{marker}{text[-tail_chars:]}", omitted
+    """把过长的技能正文裁成「头 + 尾」（复用 ``app.utils.skill_metadata.clip_skill_text``）。"""
+    return clip_skill_text(text, max_chars=max_chars)
 
 
 def _read_skill_resource_file(
@@ -667,6 +639,26 @@ async def read_skill_instruction(skill_id: str, path: Optional[str] = None) -> s
                 f'read_skill_instruction(skill_id="{safe_skill_id}", path="<相对路径>")）]\n'
                 f"{resource_tree}"
             )
+        # 动态通过 read_skill_instruction 加载 SKILL.md 时补记技能激活统计（读取附带 path 不重复计数；
+        # 若存在当前 AgentContext，同一轮内重复读取同一技能 SKILL.md 也只记 1 次，避免虚高）。
+        try:
+            recorded_set = None
+            if ctx is not None:
+                recorded_set = getattr(ctx, "_recorded_skill_activations", None)
+                if not isinstance(recorded_set, set):
+                    recorded_set = set()
+                    try:
+                        setattr(ctx, "_recorded_skill_activations", recorded_set)
+                    except Exception:
+                        recorded_set = None
+            if recorded_set is None or safe_skill_id not in recorded_set:
+                from app.services.ai.skills_stats_service import skills_stats_service
+
+                await skills_stats_service.record_activations([safe_skill_id])
+                if recorded_set is not None:
+                    recorded_set.add(safe_skill_id)
+        except Exception as stats_err:
+            logger.debug("[SkillsStats] Recording dynamic skill read failed: %s", stats_err)
         return f"{header}\n{content}"
     except ValueError as e:
         return f"错误：非法技能 ID，{str(e)}"
@@ -722,6 +714,30 @@ async def read_image(path: str, question: str = "") -> str:
     """
     try:
         abs_path = validate_safe_path(path)
+        # ① 软链接逃逸：validate_safe_path 用的是 abspath、不解析软链，于是在自己
+        #    工作区放一个指向 /etc/shadow 的 fake.png 就能读走宿主机文件。对
+        #    realpath 再校验一次，解引用后仍必须落在 data 安全目录内。
+        resolved_path = os.path.realpath(abs_path)
+        if resolved_path != os.path.normpath(abs_path):
+            validate_safe_path(resolved_path)
+        # ② 跨租户读取：read_image 不在 AGENTSCOPE_BUILTIN_TOOL_ALIASES 里，绑定层
+        #    不会把它换成走 fs_access 的 Read，因此这里必须自己补——否则任意用户
+        #    都能让模型读走 agent_workspaces/<别人>/ 下的私有图片。
+        #
+        #    刻意**不**用 is_runtime_path_allowed 的全量口径：它只认
+        #    branding/skills/docs 三个公共根，而平台历史上传目录(data/uploads)、
+        #    产物图(data/generated_files) 都在其外，全量收紧会把 read_image 的
+        #    主要用法直接打死。这里只堵"他人工作区"这一个真实越权面。
+        from app.utils.fs_access import is_fs_admin, is_other_user_workspace_path
+
+        user_info = _resolve_path_access_user_info()
+        if (
+            user_info
+            and not is_fs_admin(user_info)
+            and is_other_user_workspace_path(resolved_path, user_info)
+        ):
+            logger.warning("read_image 跨用户工作区读取被拒绝: path=%s", path)
+            return f"错误：无权访问图片路径 {path}（仅限本人工作区与平台公共目录）。"
         if not os.path.exists(abs_path):
             return f"错误：图片文件 {path} 不存在。"
         if os.path.isdir(abs_path):

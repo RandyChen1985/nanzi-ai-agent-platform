@@ -77,6 +77,58 @@ export function parseBusinessConfirmationEvent(
   };
 }
 
+/**
+ * 从历史时间线快照重建业务确认卡。
+ *
+ * 实时路径把卡片挂在消息对象上（msg.businessConfirmation）、并不落库；刷新后只剩
+ * process_timeline，因此后端在写快照时把字段一并存进 log.business_confirmation。
+ * 与 `userQuestionStateFromTimelineLog` 同一套思路：复用实时事件的解析校验，
+ * 避免历史回放与实时路径各有一套口径而漂移。
+ */
+export function businessConfirmationStateFromTimelineLog(
+  log: { category?: unknown; business_confirmation?: unknown } | null | undefined,
+): BusinessConfirmationState | null {
+  if (!log || String(log.category || "") !== "business_confirmation") return null;
+  const raw = log.business_confirmation;
+  if (!raw || typeof raw !== "object") return null;
+  const state = parseBusinessConfirmationEvent({
+    ...(raw as Record<string, unknown>),
+    type: "business_confirmation",
+  });
+  if (!state) return null;
+  const persisted = String((raw as Record<string, unknown>).status || "").trim();
+  // 卡片类型里 status 只有 pending / submitted / stale 三态，「用户点了取消」表达在
+  // decision 上——直接 `state.status = "cancelled"` 既过不了类型检查，也让
+  // BusinessConfirmationCard 的 locked 判定漏掉这一支（取消过的是终态，不该再能点）。
+  if (persisted === "cancelled") {
+    state.status = "submitted";
+    state.decision = "cancelled";
+  } else if (persisted === "submitted" || persisted === "stale") {
+    state.status = persisted;
+  }
+  return state;
+}
+
+export function businessConfirmationStatesFromTimeline(
+  items: unknown[] | null | undefined,
+): BusinessConfirmationState[] {
+  const states: BusinessConfirmationState[] = [];
+  const visit = (list: unknown[] | null | undefined): void => {
+    if (!Array.isArray(list)) return;
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const record = item as Record<string, unknown>;
+      if (record.kind === "log") {
+        const state = businessConfirmationStateFromTimelineLog(record);
+        if (state) states.push(state);
+      }
+      if (Array.isArray(record.children)) visit(record.children);
+    }
+  };
+  visit(items);
+  return states;
+}
+
 export function formatBusinessConfirmationSnapshot(
   fields: BusinessConfirmationField[],
 ): string {

@@ -334,6 +334,23 @@ class DataAgentRunner(BaseExecutor):
         user_id = self._current_user_id()
         return str(user_id) if user_id is not None else None
 
+    def _runtime_is_delegated_sub_agent(self) -> bool:
+        """当前 runner 是否跑在委派子代理里（与 AssistantAgentRunner 同口径）。
+
+        ChatBI 是最常被主专家委派的 runner。委派场景下 ``self.conversation_id``
+        是内部子会话 ``child_session_*``：把提问登记在它名下等于写一条永远没人能
+        回答的孤儿记录（用户看到、可点击的卡其实挂在父会话下），登记失败还会把
+        整条提问退化成 error 直接掐掉。父侧的 ``_persist_delegated_user_question``
+        会负责登记到真正的会话。
+        """
+        from app.core.context import execution_options_context
+
+        options = execution_options_context.get() or {}
+        value = options.get("delegated_sub_agent")
+        if isinstance(value, bool):
+            return value
+        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
     def _runtime_user_name(self) -> str | None:
         if not self.user_info:
             return None

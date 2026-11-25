@@ -2355,12 +2355,30 @@ async def create_chat_completion(
         claim_trace_id: Optional[str] = None
         claim_status = "completed"
 
-        async def _release_locks_on_client_abort() -> None:
+        def _resolve_lane_token() -> Optional[str]:
+            """本轮会话 lane 锁的令牌，用作 compare-and-delete 的期望值。
+
+            优先取 run_handle 上记录的真实令牌（agent_service 在 hold 成功后写入），
+            取不到时退回本轮已观察到的顶层 trace_id（即 acquire 时 `token = trace_id`）。
+            两者都拿不到就返回 None——那意味着只能退回无条件强删，属于兜底而非正常路径。
+            """
+            from app.services.ai.runtime.conversation_run_registry import (
+                conversation_run_registry,
+            )
+
+            handle = conversation_run_registry.get(lane_user_id, conversation_id)
+            token = getattr(handle, "lane_token", None) if handle is not None else None
+            if token:
+                return str(token)
+            return str(claim_trace_id) if claim_trace_id else None
+
+        async def _release_locks_on_client_abort(lane_token: Optional[str] = None) -> None:
             from app.services.ai.runtime.conversation_run_cancel import release_conversation_run_locks
 
             await release_conversation_run_locks(
                 user_id=lane_user_id,
                 conversation_id=conversation_id,
+                trace_id=lane_token if lane_token is not None else _resolve_lane_token(),
             )
 
         client_disconnected_event = asyncio.Event()
@@ -2425,6 +2443,15 @@ async def create_chat_completion(
                 # 瞬态帧（工具进度）不落日志；这里必须直接返回，否则每条进度都会
                 # 强制 flush 一次正文合并窗口，把事件日志写得又碎又慢。
                 return
+            from app.services.ai.runtime.conversation_stream_journal import (
+                is_thinking_heartbeat,
+            )
+
+            if is_thinking_heartbeat(chunk):
+                # 每个思考增量都会额外先发一条 thinking/continuing 心跳：纯心跳，
+                # 重放没有信息量。不挡掉，1500 token 的深度思考就占掉 1500 条日志
+                # 配额，把工具事件与正文挤出 8000 条上限。
+                return
             if event_type in STREAM_JOURNAL_COALESCED_TYPES:
                 stream_journal_pending.append(chunk)
                 stream_journal_chars += len(str(chunk.get("content") or ""))
@@ -2487,7 +2514,17 @@ async def create_chat_completion(
                                     request_claim = await chat_request_idempotency.update_trace_id(
                                         request_claim, claim_trace_id
                                     )
-                        if chunk.get("type") == "error" or chunk.get("status") == "error":
+                        # 只有**轮次级**终态才把 request claim 标成 failed。
+                        #
+                        # 工具失败会以 {"type": "log", "status": "error"} 混在同一条
+                        # 流里（见 event_stream 里「工具日志失败不应中断循环」的说明），
+                        # 按 status 一刀切会把「工具失败后模型照样答完」的这一轮记成
+                        # 失败：幂等重放时直接回放上一轮的 failed，用户重发也拿不到答案。
+                        chunk_type = str(chunk.get("type") or "")
+                        chunk_status = str(chunk.get("status") or "")
+                        if chunk_type == "error" or (
+                            chunk_type == "run_status" and chunk_status == "error"
+                        ):
                             claim_status = "failed"
                     # 清理只由 `_on_lane_acquired`（真正拿到会话锁之后）驱动，这里**不能**有兜底：
                     # 会话忙 / 配额超限的早退路径从未持有过锁，它们随后发出的 error 帧一旦触发
@@ -2520,8 +2557,11 @@ async def create_chat_completion(
                     )
                 from app.core.cancellation import spawn_detached
 
+                # 令牌必须在**取消的当下**取：等 detached 协程真正跑起来时，
+                # run_handle 可能已经 unregister，届时就只剩盲删这条路了。
+                lane_token = _resolve_lane_token()
                 spawn_detached(
-                    _release_locks_on_client_abort(),
+                    _release_locks_on_client_abort(lane_token),
                     name=f"release-locks-producer-{conversation_id or 'unknown'}",
                 )
                 raise
@@ -2783,9 +2823,18 @@ async def _build_resume_background_sse_response(
 
     async def _release_locks_on_abort() -> None:
         if lane_user_id and conversation_id:
+            # 同主流：带本轮 lane 令牌做 compare-and-delete，避免把「取消后立刻
+            # 发起的新一轮」刚抢到的锁一起删掉。
+            from app.services.ai.runtime.conversation_run_registry import (
+                conversation_run_registry,
+            )
+
+            handle = conversation_run_registry.get(lane_user_id, conversation_id)
+            lane_token = getattr(handle, "lane_token", None) if handle is not None else None
             await release_conversation_run_locks(
                 user_id=lane_user_id,
                 conversation_id=conversation_id,
+                trace_id=str(lane_token) if lane_token else None,
             )
 
     async def _flush_resume_journal(*, force: bool = False) -> None:
@@ -2808,6 +2857,13 @@ async def _build_resume_background_sse_response(
         event_type = str(chunk.get("type") or "")
         if event_type in TRANSIENT_EVENT_TYPES:
             return
+        from app.services.ai.runtime.conversation_stream_journal import (
+            is_thinking_heartbeat,
+        )
+
+        if is_thinking_heartbeat(chunk):
+            # 与主流同口径：思考心跳不进日志，避免挤占 8000 条上限。
+            return
         if event_type in _RESUME_JOURNAL_COALESCED_TYPES:
             stream_journal_pending.append(chunk)
             stream_journal_chars += len(str(chunk.get("content") or ""))
@@ -2821,7 +2877,14 @@ async def _build_resume_background_sse_response(
         if lane_acquired:
             return
         if conversation_id and lane_user_id:
-            await conversation_stream_journal.clear(lane_user_id, conversation_id)
+            # 权限确认 / 外部执行恢复与挂起前同属一轮思考卡片：只清旧事件列表、保留
+            # `:seq` 单调递增，避免恢复流新事件从 1 重新编号后在前端 `orderTimelineBySeq`
+            # 中插队到审批前步骤之前，也为后续放开恢复期事件续显保持游标连续。
+            await conversation_stream_journal.clear(
+                lane_user_id,
+                conversation_id,
+                preserve_seq=True,
+            )
         lane_acquired = True
 
     async def _producer_task() -> None:

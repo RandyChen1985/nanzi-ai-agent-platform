@@ -314,6 +314,9 @@ def looks_like_platform_self_service_query(user_question: str) -> bool:
         return False
     if any(marker in q for marker in _EXPLICIT_INTERNAL_DOC_MARKERS):
         return False
+    # 明确点名执行某个具体技能（如「使用用户列表查询技能查询一次」）是业务执行而非平台配置咨询。
+    if looks_like_skill_execution(q):
+        return False
     has_subject = any(sig in q for sig in _PLATFORM_SELF_SERVICE_SUBJECTS)
     if not has_subject:
         return False
@@ -852,32 +855,75 @@ _META_ACTION_PATTERNS = [
 ]
 
 
+# 当句子以「使用/用/调用/按/执行/运行...<技能名>技能」明确调用已有技能时，
+# 技能名末尾若恰好含「生成/创建/保存」等字样（如「周报生成技能」「工单创建技能」），
+# 属于调用该技能而非「创建一个新技能」的元操作。
+_SKILL_INVOCATION_PREFIX_RE = re.compile(
+    r"(?:使用|用|调用|按|按照|执行|运行|加载|触发|套用)(?:一下|下)?[「\"'\s]*([^，,。；;？?\n]{1,24}?)[」\"'\s]*(?:的)?(?:技能|skill)",
+    re.I,
+)
+_SKILL_INVOCATION_CREATING_OBJECT_RE = re.compile(
+    r"^(?:创建|新建|建个|建一个|做个|做一个|封装|做成|保存|存为|存成|固化|固定|生成)",
+    re.I,
+)
+
+
 def looks_like_meta_action(user_question: str) -> bool:
     """轻量启发式：判断本轮是否为“元操作”（如基于上文创建/保存技能），而非数据查询。"""
     q = (user_question or "").strip()
     if not q:
         return False
-    return any(p.search(q) for p in _META_ACTION_PATTERNS)
+    if not any(p.search(q) for p in _META_ACTION_PATTERNS):
+        return False
+    inv_match = _SKILL_INVOCATION_PREFIX_RE.search(q)
+    if inv_match:
+        target = (inv_match.group(1) or "").strip("「」\"' \t")
+        # 只有「使用/用/调用」后面跟着具体业务技能名（而非「用上文创建一个技能」这种纯创建短语）才豁免
+        if target and not _SKILL_INVOCATION_CREATING_OBJECT_RE.match(target):
+            return False
+    return True
 
 
-# 显式要求使用/执行某个已创建技能（与“创建技能”元操作区分）。
-_SKILL_EXEC_PATTERNS = [
-    re.compile(r"使用.{0,24}技能", re.I),
-    re.compile(r"用.{0,24}技能", re.I),
-    re.compile(r"(执行|运行|加载|触发|套用|按照).{0,16}技能", re.I),
-    re.compile(r"use\s+.{0,24}skill", re.I),
-    re.compile(r"run\s+.{0,24}skill", re.I),
+# 显式要求使用/执行某个已创建技能（与“创建技能”元操作、“如何使用技能”平台咨询区分）。
+_SKILL_EXEC_HELP_PATTERNS = [
+    re.compile(
+        r"(?:怎么|如何|怎样|能否|可以|哪里|在哪|介绍|解释|什么意思).{0,6}"
+        r"(?:使用|用|执行|运行|加载|触发|调用|安装|挂载|配置).{0,6}(?:技能|skill)",
+        re.I,
+    ),
+    re.compile(
+        r"(?:技能|skill).{0,6}(?:怎么|如何|怎样|用法|作用|原理|是什么|怎么用|如何用|怎么挂载|如何挂载|怎么安装|如何安装)",
+        re.I,
+    ),
 ]
+_SKILL_EXEC_PATTERNS = [
+    re.compile(r"(?:使用|用|调用|按|按照|执行|运行|加载|触发|套用)(?:一下|下)?[「\"'\s]*([^，,。；;？?\n]{1,28}?)[」\"'\s]*(?:的)?(?:技能|skill)", re.I),
+    re.compile(r"(?:技能|skill)[「\"'\s]*([^，,。；;？?\n]{1,28}?)[」\"'\s]*(?:执行|运行|查|查询|处理|分析|生成)", re.I),
+    re.compile(r"\b(?:use|run|invoke|call|execute)\s+([a-zA-Z0-9_\u4e00-\u9fff -]{1,32}?)\s+skill\b", re.I),
+]
+_SKILL_EXEC_NON_TARGET_TOKENS = frozenset({
+    "的", "一个", "某个", "什么", "哪些", "这个", "那个", "一下", "下",
+    "怎么", "如何", "怎样", "能否", "可以", "是否", "a", "an", "the", "this", "that",
+})
 
 
 def looks_like_skill_execution(user_question: str) -> bool:
-    """轻量启发式：用户是否在要求使用/执行某个技能（而非创建新技能）。"""
+    """轻量启发式：用户是否在要求使用/执行某个具体技能（而非创建新技能或询问用法）。"""
     q = (user_question or "").strip()
     if not q:
         return False
     if looks_like_meta_action(q):
         return False
-    return any(p.search(q) for p in _SKILL_EXEC_PATTERNS)
+    if any(p.search(q) for p in _SKILL_EXEC_HELP_PATTERNS):
+        return False
+    for pattern in _SKILL_EXEC_PATTERNS:
+        match = pattern.search(q)
+        if not match:
+            continue
+        target = (match.group(1) or "").strip("「」\"' \t，,。.")
+        if target and target.lower() not in _SKILL_EXEC_NON_TARGET_TOKENS:
+            return True
+    return False
 
 
 # 上下文动作（Context-Action）：对“已有对话/上一轮结果”执行保存、导出、发送、记忆等动作。

@@ -503,9 +503,13 @@ async def test_lazy_k8s_bash_gets_session_cwd_wrapper(tmp_path, monkeypatch):
 
     from app.services.ai.runtime.agentscope.workspace import (
         _SandboxSessionBashNativeTool,
+        _ScriptCredentialBashNativeTool,
     )
 
     proxy_bash = bound[0].native_tool
+    # 最外层是凭据注入包装，剥掉它才看得到 cwd 包装链。
+    assert isinstance(proxy_bash, _ScriptCredentialBashNativeTool)
+    proxy_bash = proxy_bash._native_tool
     assert isinstance(proxy_bash, LazySandboxBashNativeTool)
     assert isinstance(proxy_bash._real_tool, _SandboxSessionBashNativeTool), (
         "K8s 懒加载 Bash 必须套上会话 cwd 包装，否则默认 cwd 停在 /workspace"
@@ -572,10 +576,18 @@ async def test_bind_configured_tools_wraps_k8s_sandbox_bash(tmp_path, monkeypatc
     )
     by_name = {spec.name: spec for spec in bound}
 
-    assert isinstance(by_name["Bash"].native_tool, _SandboxSessionBashNativeTool), (
+    from app.services.ai.runtime.agentscope.workspace import (
+        _ScriptCredentialBashNativeTool,
+    )
+
+    outer_bash = by_name["Bash"].native_tool
+    # 最外层是凭据注入包装；剥掉后必须是会话 cwd 包装。
+    assert isinstance(outer_bash, _ScriptCredentialBashNativeTool)
+    inner_bash = outer_bash._native_tool
+    assert isinstance(inner_bash, _SandboxSessionBashNativeTool), (
         "K8s 非懒加载 Bash 必须套上会话 cwd 包装"
     )
-    assert by_name["Bash"].native_tool._default_cwd() == os.path.relpath(
+    assert inner_bash._default_cwd() == os.path.relpath(
         local_ws.workdir, str(user_root)
     )
 

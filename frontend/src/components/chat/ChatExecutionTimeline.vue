@@ -846,7 +846,8 @@ const props = withDefaults(defineProps<{
     parent_id?: string | number;
     title: string;
     details: string;
-    status: "pending" | "success" | "error" | "warning";
+    // 与 ProcessTimelineStatus 对齐：被中止的挂起行以 "interrupted" 落定。
+    status: "pending" | "success" | "error" | "warning" | "interrupted";
     error_reason?: string;
     category?: string;
     tool_args?: string;
@@ -1152,6 +1153,14 @@ const headerSkillSummary = computed(() =>
 );
 
 /** 关键动作摘要：提炼出工具调用与深度思考动作，供 Header 直观展示 */
+/** 从「调用工具: Read」这类标题里回退解析工具名（后端旧版本不下发 tool_name）。 */
+function toolNameFromTitle(title?: string): string {
+  const text = String(title || "");
+  const matched = text.match(/^调用工具[:：]\s*(.+)$/);
+  // tsconfig 开了 noUncheckedIndexedAccess：matched[1] 是 string | undefined。
+  return matched?.[1]?.trim() || "";
+}
+
 const actionSummary = computed(() => {
   if (props.isThinking && !props.hasAnswer) return "";
   const toolCounts: Record<string, number> = {};
@@ -1162,8 +1171,12 @@ const actionSummary = computed(() => {
       hasReasoning = true;
     }
     if (it.kind === "log") {
-      if (it.tool_name) {
-        const name = String(it.tool_name).trim();
+      // 后端 start_log 早先不带 tool_name，于是除 Bash 外的工具全被漏统计，
+      // 摘要常年是「深度思考」一项。这里按 category 回退解析标题。
+      const explicit = String(it.tool_name || "").trim();
+      const fallback = it.category === "tool" ? toolNameFromTitle(it.title) : "";
+      const name = explicit || fallback;
+      if (name) {
         toolCounts[name] = (toolCounts[name] || 0) + 1;
       } else if (it.title?.includes("Bash")) {
         toolCounts["Bash"] = (toolCounts["Bash"] || 0) + 1;

@@ -3,6 +3,10 @@ import pytest
 from app.services.ai.runtime.agentscope.process_timeline_snapshot import (
     apply_stream_chunk,
     finalize_process_timeline,
+    merge_process_timeline_sequence,
+    merge_process_timelines,
+    merge_reasoning_contents,
+    merge_text_contents,
 )
 
 
@@ -564,4 +568,311 @@ def test_subagent_reasoning_log_attached_to_container_children_and_preserves_rea
     reasoning_node = next(c for c in children if c.get("id") == "subagent_reasoning:run-1:1")
     assert reasoning_node.get("reasoning") is True
     assert reasoning_node.get("title") == "子代理思考"
+
+
+def test_tool_after_non_narration_step_does_not_attach_to_stale_narration():
+    """与前端 attachableNarrationParent 口径一致：旁白之后若已出现其他顶层步骤（如权限确认），
+    后续工具调用不得跨阶段吸回旧旁白 children，必须作为顶层步骤按真实顺序留在后面。
+    """
+    items = _run(
+        [
+            {"type": "process_narration", "content": "我先确认文档目录。"},
+            {"type": "process_narration_commit", "content": "我先确认文档目录。"},
+            {
+                "type": "log",
+                "id": "glob_1",
+                "title": "工具完成: Glob",
+                "status": "success",
+                "category": "tool",
+            },
+            {
+                "type": "permission_result",
+                "permission_request_id": "perm_1",
+                "status": "success",
+            },
+            {
+                "type": "log",
+                "id": "bash_after_confirm",
+                "title": "工具完成: Bash",
+                "status": "success",
+                "category": "tool",
+            },
+        ]
+    )
+
+    assert items is not None
+    top_ids = [item.get("id") for item in items]
+    assert top_ids == ["narration_1", "permission_perm_1", "bash_after_confirm"]
+    assert [c.get("id") for c in items[0]["children"]] == ["glob_1"]
+
+
+def test_agent_lifecycle_log_does_not_attach_to_narration():
+    """「Agent 回复开始 / 结束」是阶段标记，不得被吸附进上一条旁白的 children。"""
+    items = _run(
+        [
+            {"type": "process_narration", "content": "先检查一下。"},
+            {"type": "process_narration_commit", "content": "先检查一下。"},
+            {
+                "type": "log",
+                "id": "agent_reply_1",
+                "title": "Agent 回复开始",
+                "status": "success",
+                "category": "agent",
+            },
+        ]
+    )
+
+    assert items is not None
+    assert [item.get("id") for item in items] == ["narration_1", "agent_reply_1"]
+    assert items[0].get("children") == []
+
+
+def test_merge_process_timelines_combines_pre_and_post_approval_steps():
+    """审批前与审批后的快照合并：保留前序准备/工具、同 id 原位更新并保护 tool_args、
+    孤儿子步骤按 parent_id 挂回原父节点、撞 id 的新旁白不覆盖旧旁白、todo 仅留最新。
+    """
+    pre_approval = _run(
+        [
+            {
+                "type": "log",
+                "id": "preparation:auth_context_capability",
+                "title": "鉴权及上下文与能力准备",
+                "status": "success",
+                "category": "system",
+            },
+            {
+                "type": "log",
+                "id": "grep_1",
+                "title": "工具完成: Grep",
+                "details": "matched 2 files",
+                "status": "success",
+                "category": "tool",
+            },
+            {"type": "process_narration", "content": "我先确认目录再执行命令。"},
+            {"type": "process_narration_commit", "content": "我先确认目录再执行命令。"},
+            {
+                "type": "log",
+                "id": "bash_1",
+                "title": "调用工具: Bash",
+                "details": "",
+                "tool_args": "sleep 5s && echo ok",
+                "tool_summary": "延时 5 秒后输出 ok",
+                "status": "pending",
+                "category": "tool",
+            },
+            {
+                "type": "todo_update",
+                "todos": [
+                    {"content": "搜索文档", "status": "completed"},
+                    {"content": "执行命令", "status": "in_progress"},
+                ],
+            },
+            {
+                "type": "log",
+                "id": "permission_req_1",
+                "title": "工具调用需要确认",
+                "details": "确认请求: req_1",
+                "status": "pending",
+                "category": "permission",
+            },
+        ]
+    )
+
+    post_approval = _run(
+        [
+            {
+                "type": "permission_result",
+                "permission_request_id": "req_1",
+                "status": "success",
+            },
+            {
+                "type": "log",
+                "id": "workspace:sandbox:bash_1",
+                "parent_id": "bash_1",
+                "title": "沙箱工作区准备",
+                "details": "沙箱工作区准备就绪（40ms）",
+                "status": "success",
+                "category": "system",
+                "execution_time_ms": 40,
+            },
+            {
+                "type": "log",
+                "id": "bash_1",
+                "title": "工具完成: Bash",
+                "details": '{"ok": true, "stdout": "ok\\n"}',
+                "status": "success",
+                "category": "tool",
+                "execution_time_ms": 5020,
+            },
+            {"type": "process_narration", "content": "命令已完成，我来整理结果。"},
+            {"type": "process_narration_commit", "content": "命令已完成，我来整理结果。"},
+            {
+                "type": "log",
+                "id": "summary_1",
+                "title": "汇总工具结果",
+                "status": "success",
+                "category": "tool",
+            },
+            {
+                "type": "todo_update",
+                "todos": [
+                    {"content": "搜索文档", "status": "completed"},
+                    {"content": "执行命令", "status": "completed"},
+                ],
+                "settled": True,
+                "settledStatus": "success",
+            },
+        ]
+    )
+
+    merged = merge_process_timelines(pre_approval, post_approval)
+    assert merged is not None
+
+    top_ids = [item.get("id") for item in merged]
+    # 前序准备、Grep、旧旁白、todo、permission 均在原位，新旁白追加在后且未覆盖旧旁白
+    assert top_ids[:4] == [
+        "preparation:auth_context_capability",
+        "grep_1",
+        "narration_3",
+        "todo_current",
+    ]
+    assert "permission_req_1" in top_ids
+    assert len([item for item in merged if item.get("kind") == "todo"]) == 1
+    todo_item = next(item for item in merged if item.get("kind") == "todo")
+    assert todo_item.get("settled") is True
+    assert todo_item["todos"][1]["status"] == "completed"
+
+    # permission_req_1 已由 pending 翻为 success
+    perm_item = next(item for item in merged if item.get("id") == "permission_req_1")
+    assert perm_item["status"] == "success"
+    assert perm_item["title"] == "已允许工具调用"
+
+    # bash_1 位于旧旁白 children 下：原位更新为 success，保留 tool_args/tool_summary，且挂回沙箱子步骤
+    old_narration = next(item for item in merged if item.get("id") == "narration_3")
+    assert old_narration["content"] == "我先确认目录再执行命令。"
+    bash_node = next(c for c in old_narration["children"] if c.get("id") == "bash_1")
+    assert bash_node["status"] == "success"
+    assert bash_node["tool_args"] == "sleep 5s && echo ok"
+    assert bash_node["tool_summary"] == "延时 5 秒后输出 ok"
+    assert bash_node["execution_time_ms"] == 5020
+    assert '{"ok": true' in bash_node["details"]
+    assert [sub.get("id") for sub in bash_node.get("children") or []] == ["workspace:sandbox:bash_1"]
+    assert "parent_id" not in bash_node["children"][0]
+
+    # 后阶段新旁白保留独立节点（含 summary_1 子节点）
+    text_items = [item for item in merged if item.get("kind") == "text"]
+    assert [t["content"] for t in text_items] == [
+        "我先确认目录再执行命令。",
+        "命令已完成，我来整理结果。",
+    ]
+    assert text_items[0]["id"] != text_items[1]["id"]
+    assert [c.get("id") for c in text_items[1]["children"]] == ["summary_1"]
+
+
+def test_merge_process_timeline_sequence_is_idempotent_across_multiple_approvals():
+    """单轮连续两次审批时，归并 [阶段1, 阶段1+2已合并, 阶段3] 不得产生重复旁白或重复步骤。"""
+    stage1 = _run(
+        [
+            {"type": "log", "id": "prep", "title": "鉴权及上下文与能力准备", "status": "success", "category": "system"},
+            {"type": "process_narration", "content": "先执行第一步。"},
+            {"type": "process_narration_commit", "content": "先执行第一步。"},
+            {"type": "log", "id": "tool_1", "title": "调用工具: Bash", "tool_args": "cmd1", "status": "pending", "category": "tool"},
+        ]
+    )
+    stage2_delta = _run(
+        [
+            {"type": "log", "id": "tool_1", "title": "工具完成: Bash", "details": "ok1", "status": "success", "category": "tool"},
+            {"type": "process_narration", "content": "再执行第二步。"},
+            {"type": "process_narration_commit", "content": "再执行第二步。"},
+            {"type": "log", "id": "tool_2", "title": "调用工具: Bash", "tool_args": "cmd2", "status": "pending", "category": "tool"},
+        ]
+    )
+    stage1_plus_2 = merge_process_timelines(stage1, stage2_delta)
+    stage3_delta = _run(
+        [
+            {"type": "log", "id": "tool_2", "title": "工具完成: Bash", "details": "ok2", "status": "success", "category": "tool"},
+            {"type": "log", "id": "summary", "title": "汇总工具结果", "status": "success", "category": "tool"},
+        ]
+    )
+
+    final_merged = merge_process_timeline_sequence([stage1, stage1_plus_2, stage3_delta])
+    assert final_merged is not None
+
+    narrations = [item for item in final_merged if item.get("kind") == "text"]
+    assert [n["content"] for n in narrations] == ["先执行第一步。", "再执行第二步。"]
+    assert [c["id"] for c in narrations[0]["children"]] == ["tool_1"]
+    assert narrations[0]["children"][0]["status"] == "success"
+    assert narrations[0]["children"][0]["tool_args"] == "cmd1"
+    assert [c["id"] for c in narrations[1]["children"]] == ["tool_2"]
+    assert narrations[1]["children"][0]["status"] == "success"
+    assert narrations[1]["children"][0]["tool_args"] == "cmd2"
+    assert [item["id"] for item in final_merged if item.get("kind") == "log"] == ["prep", "summary"]
+
+
+def test_merge_reasoning_contents_deduplicates_across_multiple_resumes():
+    assert merge_reasoning_contents(["第一段思考", None]) == "第一段思考"
+    assert merge_reasoning_contents(["第一段思考", "第二段思考"]) == "第一段思考\n\n第二段思考"
+    assert (
+        merge_reasoning_contents(["第一段思考", "第一段思考\n\n第二段思考", "第三段思考"])
+        == "第一段思考\n\n第二段思考\n\n第三段思考"
+    )
+    assert merge_reasoning_contents([None, ""]) is None
+
+
+def test_merge_text_contents_deduplicates_across_multiple_resumes():
+    assert merge_text_contents(["前半段正文。", ""]) == "前半段正文。"
+    assert merge_text_contents(["前半段正文。", "后半段正文。"]) == "前半段正文。\n\n后半段正文。"
+    assert (
+        merge_text_contents(["前半段正文。", "前半段正文。\n\n后半段正文。", "第三段正文。"])
+        == "前半段正文。\n\n后半段正文。\n\n第三段正文。"
+    )
+    # 已带换行时不强行多拼空行
+    assert merge_text_contents(["第一段\n", "第二段"]) == "第一段\n第二段"
+    assert merge_text_contents(["", None]) == ""
+
+
+def test_merge_process_timelines_reallocates_colliding_synthetic_log_id_without_splitting_real_ids():
+    """兜底合成 id（log_1）在两段快照撞 id 且标题不同时重分配唯一 id；
+    但真实业务 id（工具/权限卡）即便挂起前后标题不同，仍必须按原 id 原位合并。
+    """
+    pre = _run(
+        [
+            {"type": "log", "title": "前序无 ID 步骤", "details": "step-a", "status": "success"},
+            {
+                "type": "log",
+                "id": "call_bash_1",
+                "title": "调用工具: Bash",
+                "tool_args": "echo 1",
+                "status": "pending",
+                "category": "tool",
+            },
+        ]
+    )
+    post = _run(
+        [
+            {"type": "log", "title": "恢复轮无 ID 步骤", "details": "step-b", "status": "success"},
+            {
+                "type": "log",
+                "id": "call_bash_1",
+                "title": "工具完成: Bash",
+                "details": "1",
+                "status": "success",
+                "category": "tool",
+            },
+        ]
+    )
+
+    merged = merge_process_timelines(pre, post)
+    assert merged is not None
+    # 两条无 id 步骤均保留且 id 互不冲突；真实业务 id 合并为同一条
+    assert [item["title"] for item in merged] == [
+        "前序无 ID 步骤",
+        "工具完成: Bash",
+        "恢复轮无 ID 步骤",
+    ]
+    assert merged[0]["id"] == "log_1"
+    assert merged[2]["id"] != "log_1"
+    assert merged[1]["id"] == "call_bash_1"
+    assert merged[1]["tool_args"] == "echo 1"
+    assert merged[1]["status"] == "success"
 

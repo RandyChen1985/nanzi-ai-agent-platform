@@ -69,9 +69,14 @@ def test_every_container_predicate_excludes_reasoning_logs():
     assert "!isSubagentReasoningLog(log) &&" in timeline
     # ③ isToolLog：老快照没有 category，靠这里挡住
     assert "if (isSubagentReasoningLog(data)) return false;" in timeline
-    # ④ isIncomingSubagentTool 的容器查找收敛到同一个 helper
+    # ④ isIncomingSubagentTool 的容器查找收敛到**唯一**一个 helper：
+    #    find 的三个 lambda（log 分支 / text 分支 / children 反向查找）全部改走
+    #    matchToolContainer，所以这里只剩「1 处定义 + 1 处使用」。收敛比原来的
+    #    三处平行调用更强——新增判定不可能漏掉 reasoning 排除。
     assert "function isDelegationContainerLike(" in timeline
-    assert timeline.count("isDelegationContainerLike(") == 4  # 1 处定义 + 3 处使用
+    assert "const matchToolContainer = (c: ProcessTimelineLogItem) => {" in timeline
+    assert "if (!isDelegationContainerLike(c)) return false;" in timeline
+    assert timeline.count("isDelegationContainerLike(") == 2  # 1 处定义 + 1 处唯一使用点
     # ⑤ Vue 层 isSubagentLog
     assert "if (isSubagentReasoningLog(log)) return false;" in view
     assert "isSubagentReasoningLog," in view

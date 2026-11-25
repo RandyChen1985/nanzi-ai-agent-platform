@@ -67,6 +67,7 @@ import {
   appendAssistantBodyDelta,
   createBufferedStreamEventPump,
   dispatchAgentscopeStreamEvent,
+  finalizeAllPendingStreamLogs,
   formatExternalExecutionStatus,
   markStalePendingStreamLogs,
   mergeStreamCitations,
@@ -77,7 +78,13 @@ import {
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
-import { hydrateHistoryProcessTimeline, resolveBannerTodoTimeline, timelineHasPending } from "@/utils/processTimeline";
+import {
+  createResumeSeqNormalizer,
+  hydrateHistoryProcessTimeline,
+  maxTimelineSeq,
+  resolveBannerTodoTimeline,
+  timelineHasPending,
+} from "@/utils/processTimeline";
 import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
@@ -1898,16 +1905,30 @@ const manualCompactDebugContext = async (retainRatio: 0.25 | 0.5 | 0.75 = 0.5, m
 // useSandboxWorkspace 内部 watch(..., { immediate: true }) 会立即读取 isProcessing，
 // 因此 isProcessing 必须在沙箱组合式函数调用之前完成声明，否则触发 TDZ 运行时崩溃。
 const isProcessing = ref(false);
+// 写入方令牌：每次开流（主发送 / 权限确认 / 外部执行恢复）时自增，防止被接管中止的旧流
+// 在 finally 里踩踏新流的 isProcessing。主动停止（stopGeneration）刻意**不**自增：
+// 停止后恢复流仍要走完自己的 flush() 与 logs 定稿，令牌一变就整段跳过了。
+let liveWriterToken = 0;
+// 子智能体授权交接锁：确保确认流结束到自动续聊指令发出之间输入框保持锁定。
+const subagentHandoffPending = ref(false);
+// 交接轮询代次：主动停止或切会话时自增，正在 300ms 等待中的 dispatchResumeDirective 立即作废。
+let handoffGeneration = 0;
+watch(conversationId, () => {
+  subagentHandoffPending.value = false;
+  handoffGeneration += 1;
+});
+const hasActivePendingPermission = () =>
+  messages.value.some(
+    (item: any) =>
+      item.pendingPermission?.status === "pending"
+      || item.pendingExternalExecution?.status === "pending",
+  );
 /**
  * 有待处理确认卡时保持锁定：挂起确认后后端这一轮已停下（SSE 流结束、run_status 回报
  * 不在跑），只看 isProcessing 会把输入框误判为空闲。由卡片上的「放弃本轮」显式解除。
  */
 const pendingPermissionLocking = computed(() =>
-  messages.value.some(
-    (item: any) =>
-      item.pendingPermission?.status === "pending"
-      || item.pendingExternalExecution?.status === "pending",
-  ),
+  subagentHandoffPending.value || hasActivePendingPermission(),
 );
 
 const {
@@ -3540,6 +3561,8 @@ const stopGeneration = (options?: StopGenerationOptions) => {
     abortController = null;
   }
   isProcessing.value = false;
+  subagentHandoffPending.value = false;
+  handoffGeneration += 1;
 
   // Stop thinking timer if active
   if (thoughtTimer) {
@@ -3763,6 +3786,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   // SSE 可能因切后台/网络变化提前结束；在状态接口确认释放前继续阻止新一轮发送。
   // 用 markRunStarted 而非裸置位：必须同时复位上一轮的「输出已完成」。
   markRunStarted();
+  const streamToken = ++liveWriterToken;
   abortController = new AbortController();
   ragRetrievalMeta.value = null;
 
@@ -4194,18 +4218,19 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     }
 
     // Final cleanup of pending logs
-    if (agentMsg.value.logs) {
-      agentMsg.value.logs.forEach(log => {
-        if (log.status === 'pending' && log.category !== 'permission') {
-          log.status = 'success'; // Assume success if stream finished normally
-        }
-      });
-    }
+    // 统一收尾入口：排除 permission/external，并同步落定 processTimeline 里的
+    // 旁白与推理节点（只遍历 logs 会漏掉它们，呼吸灯与思考光标就此常亮）。
+    finalizeAllPendingStreamLogs(agentMsg.value);
 
     // Refresh history sidebar
     fetchHistory();
   } catch (error: any) {
-    if (error.name === "AbortError") return;
+    if (error.name === "AbortError") {
+      // 用户点停止：此前这里直接 return，一个挂起节点都不收敛，思考卡片会永久
+      // 转圈。中断不是「成功」，按 interrupted 落定。
+      finalizeAllPendingStreamLogs(agentMsg.value, Date.now(), "interrupted");
+      return;
+    }
 
     agentMsg.value.content += `\n[异常中断: ${error.message}]`;
     agentMsg.value.isThinking = false;
@@ -4215,16 +4240,12 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     }
 
     // Mark pending logs as error
-    if (agentMsg.value.logs) {
-      agentMsg.value.logs.forEach(log => {
-        if (log.status === 'pending') {
-          log.status = 'error';
-        }
-      });
-    }
+    finalizeAllPendingStreamLogs(agentMsg.value, Date.now(), "error");
   } finally {
-    isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
-    void refreshCurrentRunStatus();
+    if (liveWriterToken === streamToken) {
+      isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
+      void refreshCurrentRunStatus();
+    }
     void refreshDebugContextUsage();
     void refreshDebugContextCompactions(true);
   }
@@ -4307,21 +4328,24 @@ const submitPendingExternalExecution = async (msg: Message) => {
   const pending = msg.pendingExternalExecution;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
+  markRunStarted();
   isProcessing.value = true;
   msg.isThinking = true;
   msg.thoughtStartTime = Date.now();
   msg.thoughtDuration = "0.0";
   msg.thinkingText = "正在提交外部执行结果...";
+  const resumeToken = ++liveWriterToken;
   const resumeAbort = new AbortController();
   if (abortController) {
     abortController.abort();
   }
   abortController = resumeAbort;
 
+  const normalizeResumeSeq = createResumeSeqNormalizer(maxTimelineSeq(msg.processTimeline));
   const resumeEventPump = createBufferedStreamEventPump(
     (data) => {
-      if (debugUnmounted) return;
-      applyPermissionStreamEvent(msg, data);
+      if (liveWriterToken !== resumeToken || debugUnmounted) return;
+      applyPermissionStreamEvent(msg, normalizeResumeSeq(data));
       if (data.type !== "model_call" && data.type !== "run_config" && data.type !== "keepalive") {
         scrollToBottom();
       }
@@ -4330,7 +4354,7 @@ const submitPendingExternalExecution = async (msg: Message) => {
       hasReasoning: () => Boolean(msg.reasoningContent),
       hasContent: () => Boolean(msg.content),
       onFlush: () => {
-        if (!debugUnmounted) scrollToBottom();
+        if (liveWriterToken === resumeToken && !debugUnmounted) scrollToBottom();
       },
     },
   );
@@ -4347,7 +4371,7 @@ const submitPendingExternalExecution = async (msg: Message) => {
     // 先刷缓冲再写提示，否则残留正文会排到失败提示后面
     resumeEventPump.flush();
     if (error?.name === "AbortError") {
-      if (!debugUnmounted) msg.content += "\n[已取消提交外部执行结果]";
+      if (liveWriterToken === resumeToken && !debugUnmounted) msg.content += "\n[已取消提交外部执行结果]";
     } else {
       pending.status = "error";
       msg.content += `\n[外部执行恢复失败: ${error.message || "Unknown error"}]`;
@@ -4356,26 +4380,33 @@ const submitPendingExternalExecution = async (msg: Message) => {
     if (abortController === resumeAbort) {
       abortController = null;
     }
-    if (!debugUnmounted) {
-      resumeEventPump.flush();
+    pending.isSubmitting = false;
+    if (liveWriterToken === resumeToken) {
+      if (!debugUnmounted) {
+        resumeEventPump.flush();
+      } else {
+        resumeEventPump.cancel();
+      }
+      isProcessing.value = msg.pendingExternalExecution?.status === "pending" || msg.pendingPermission?.status === "pending";
+      if (!debugUnmounted) {
+        void refreshCurrentRunStatus();
+      }
+      msg.isThinking = false;
+      if (thoughtTimer) {
+        clearInterval(thoughtTimer);
+        thoughtTimer = null;
+      }
+      if (msg.logs) {
+        msg.logs.forEach((log) => {
+          if (log.status === "pending" && log.category !== "permission" && log.category !== "external") {
+            log.status = "success";
+          }
+        });
+      }
+      scrollToBottom();
     } else {
       resumeEventPump.cancel();
     }
-    pending.isSubmitting = false;
-    isProcessing.value = msg.pendingExternalExecution?.status === "pending" || msg.pendingPermission?.status === "pending";
-    msg.isThinking = false;
-    if (thoughtTimer) {
-      clearInterval(thoughtTimer);
-      thoughtTimer = null;
-    }
-    if (msg.logs) {
-      msg.logs.forEach((log) => {
-        if (log.status === "pending" && log.category !== "permission" && log.category !== "external") {
-          log.status = "success";
-        }
-      });
-    }
-    scrollToBottom();
   }
 };
 
@@ -4386,6 +4417,22 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
   applyStreamTraceId(msg, data);
   if (data.agent_name && !msg.agentName) msg.agentName = data.agent_name;
   if (data.agent_display_name && !msg.agentDisplayName) msg.agentDisplayName = data.agent_display_name;
+
+  if (data?.type === "subagent_permission_handoff") {
+    if (msg.pendingPermission) {
+      if (
+        data.subagent
+        && typeof data.subagent === "object"
+        && !msg.pendingPermission.subagent?.display_name
+      ) {
+        msg.pendingPermission.subagent = data.subagent;
+      }
+      if (typeof data.directive === "string" && data.directive.trim()) {
+        msg.pendingPermission.resumeDirective = data.directive;
+      }
+    }
+    return;
+  }
 
   if (data?.type === "run_status") {
     // 恢复流末尾的 run_status 终态：status 为 success / rejected / error 等真实结果，
@@ -4622,6 +4669,38 @@ const submitUserQuestion = async (
   await sendMessage();
 };
 
+const dispatchResumeDirective = async (msg: Message, directive: string) => {
+  const originConversationId = String(conversationId.value || "");
+  const handoffGen = ++handoffGeneration;
+  subagentHandoffPending.value = true;
+  try {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (debugUnmounted || handoffGeneration !== handoffGen) return;
+      if (String(conversationId.value || "") !== originConversationId) return;
+      const busy =
+        isProcessing.value
+        || remoteRunBusy.value
+        || hasActivePendingPermission()
+        || sendLocked.value;
+      if (!busy) {
+        if (debugUnmounted || handoffGeneration !== handoffGen) return;
+        if (String(conversationId.value || "") !== originConversationId) return;
+        subagentHandoffPending.value = false;
+        await sendMessage({ content: directive });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    if (debugUnmounted || handoffGeneration !== handoffGen) return;
+    msg.content +=
+      "\n\n[授权已记录，但本轮仍在运行，没能自动唤回子智能体。请稍等片刻后发送「继续」，子智能体会接着跑完。]";
+  } finally {
+    if (handoffGeneration === handoffGen) {
+      subagentHandoffPending.value = false;
+    }
+  }
+};
+
 const confirmPendingPermission = async (
   msg: Message,
   confirmed: boolean,
@@ -4630,6 +4709,7 @@ const confirmPendingPermission = async (
   const pending = msg.pendingPermission;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
+  markRunStarted();
   isProcessing.value = true;
   if (confirmed) {
     msg.isThinking = true;
@@ -4637,16 +4717,18 @@ const confirmPendingPermission = async (
     msg.thoughtDuration = "0.0";
     msg.thinkingText = "正在继续执行...";
   }
+  const resumeToken = ++liveWriterToken;
   const resumeAbort = new AbortController();
   if (abortController) {
     abortController.abort();
   }
   abortController = resumeAbort;
 
+  const normalizeResumeSeq = createResumeSeqNormalizer(maxTimelineSeq(msg.processTimeline));
   const permissionEventPump = createBufferedStreamEventPump(
     (data) => {
-      if (debugUnmounted) return;
-      applyPermissionStreamEvent(msg, data);
+      if (liveWriterToken !== resumeToken || debugUnmounted) return;
+      applyPermissionStreamEvent(msg, normalizeResumeSeq(data));
       if (data.type !== "model_call" && data.type !== "run_config" && data.type !== "keepalive") {
         scrollToBottom();
       }
@@ -4655,7 +4737,7 @@ const confirmPendingPermission = async (
       hasReasoning: () => Boolean(msg.reasoningContent),
       hasContent: () => Boolean(msg.content),
       onFlush: () => {
-        if (!debugUnmounted) scrollToBottom();
+        if (liveWriterToken === resumeToken && !debugUnmounted) scrollToBottom();
       },
     },
   );
@@ -4717,7 +4799,7 @@ const confirmPendingPermission = async (
     permissionEventPump.flush();
     if (error?.name === "AbortError") {
       msg.isThinking = false;
-      if (!debugUnmounted) msg.content += "\n[已终止工具确认流]";
+      if (liveWriterToken === resumeToken && !debugUnmounted) msg.content += "\n[已终止工具确认流]";
     } else {
       pending.status = "error";
       msg.isThinking = false;
@@ -4727,26 +4809,41 @@ const confirmPendingPermission = async (
     if (abortController === resumeAbort) {
       abortController = null;
     }
-    if (!debugUnmounted) {
-      permissionEventPump.flush();
+    pending.isSubmitting = false;
+    if (liveWriterToken === resumeToken) {
+      if (!debugUnmounted) {
+        permissionEventPump.flush();
+      } else {
+        permissionEventPump.cancel();
+      }
+      const resumeDirective = pending.resumeDirective;
+      const hasSubagentHandoff = Boolean(resumeDirective && !pending.discarded);
+      if (hasSubagentHandoff) {
+        subagentHandoffPending.value = true;
+      }
+      isProcessing.value = Boolean(
+        msg.pendingPermission?.status === "pending" || msg.pendingExternalExecution?.status === "pending",
+      );
+      msg.isThinking = false;
+      if (thoughtTimer) {
+        clearInterval(thoughtTimer);
+        thoughtTimer = null;
+      }
+      if (msg.logs) {
+        msg.logs.forEach(log => {
+          if (log.status === "pending" && log.category !== "permission") {
+            log.status = "success";
+          }
+        });
+      }
+      if (resumeDirective && !pending.discarded) {
+        pending.resumeDirective = undefined;
+        void dispatchResumeDirective(msg, resumeDirective);
+      } else if (!debugUnmounted) {
+        void refreshCurrentRunStatus();
+      }
     } else {
       permissionEventPump.cancel();
-    }
-    pending.isSubmitting = false;
-    isProcessing.value = Boolean(
-      msg.pendingPermission?.status === "pending" || msg.pendingExternalExecution?.status === "pending",
-    );
-    msg.isThinking = false;
-    if (thoughtTimer) {
-      clearInterval(thoughtTimer);
-      thoughtTimer = null;
-    }
-    if (msg.logs) {
-      msg.logs.forEach(log => {
-        if (log.status === "pending" && log.category !== "permission") {
-          log.status = "success";
-        }
-      });
     }
   }
 };
@@ -4754,7 +4851,7 @@ const confirmPendingPermission = async (
 /** 撤销「本会话总是允许」：撤销后该工具在会话内重新逐次确认。 */
 const revokeSessionPermission = async (msg: Message) => {
   const pending = msg.pendingPermission;
-  const conversation = String(conversationId.value || "").trim();
+  const conversation = String(pending?.sessionGrantScope || conversationId.value || "").trim();
   const toolName = String(pending?.tool_call?.name || "").trim();
   if (!pending || !toolName) return;
   if (!conversation) {
@@ -4789,6 +4886,11 @@ const expirePendingPermission = (msg: Message) => {
   // 只用本地状态收尾：服务端快照本来就已过期，不再发请求。
   pending.status = "expired";
   pending.isSubmitting = false;
+  // 这条路径不发起恢复流，事后没有任何东西会复位锁态：不显式解锁，输入框会被
+  // sendMessage 的 isProcessing 判断永久拦死，只能刷新页面。
+  isProcessing.value =
+    msg.pendingExternalExecution?.status === "pending" ||
+    msg.pendingPermission?.status === "pending";
 };
 
 const discardPendingPermission = (msg: Message) => {
@@ -4798,6 +4900,9 @@ const discardPendingPermission = (msg: Message) => {
   pending.status = "rejected";
   pending.isSubmitting = false;
   pending.expanded = false;
+  isProcessing.value =
+    msg.pendingExternalExecution?.status === "pending" ||
+    msg.pendingPermission?.status === "pending";
 };
 
 let debugUnmounted = false;

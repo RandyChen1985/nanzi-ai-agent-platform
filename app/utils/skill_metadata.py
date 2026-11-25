@@ -12,6 +12,105 @@ logger = logging.getLogger(__name__)
 
 USER_MESSAGE_CONTEXT_DIVIDER = "\n\n---\n\n"
 
+# 平台前端/后端在 USER_MESSAGE_CONTEXT_DIVIDER 后拼接的附件提示特征。
+# 只有分隔符后出现这些已知特征时才视为平台附件上下文块，避免误截用户自己写的 Markdown `---`。
+_ATTACHMENT_CONTEXT_MARKERS = (
+    "用户本轮已",
+    "用户本轮挂载的技能",
+    "skills meta 为：",
+    "💡 以下引用的是历史记忆",
+    "<system_injected_attachments>",
+    "<backend_injected_attachments>",
+)
+
+
+def extract_plain_user_query(text: Optional[str]) -> str:
+    """提取剥离平台附件提示块后的纯用户提问文本。
+
+    前端（``useChatAttachments.appendAttachmentContext``）与后端（``enrich_messages_with_skill_meta``）
+    会在 ``\\n\\n---\\n\\n`` 之后拼接技能/知识库/文件等附件说明，这些说明本身带有
+    「技能」「执行」「加载」等词。若直接拿整段字符串去做意图判定、工具促发或技能扫描，
+    会触发 ``PLATFORM_SELF_HELP`` 误拦截并强推文档检索。
+
+    只在分隔符后确实命中平台附件提示特征时才截断，普通 Markdown 水平线不受影响。
+    """
+    raw = str(text or "")
+    if not raw:
+        return ""
+    if USER_MESSAGE_CONTEXT_DIVIDER not in raw:
+        return raw.strip()
+    user_part, ctx_part = raw.split(USER_MESSAGE_CONTEXT_DIVIDER, 1)
+    if any(marker in ctx_part for marker in _ATTACHMENT_CONTEXT_MARKERS):
+        return user_part.strip()
+    return raw.strip()
+
+
+SKILL_RESOURCE_LIST_MAX_ENTRIES = 200
+SKILL_RESOURCE_LIST_MAX_DEPTH = 4
+SKILL_READ_MAX_CHARS = 56_000
+
+
+def format_skill_resource_tree(
+    skill_dir: str,
+    *,
+    max_entries: int = SKILL_RESOURCE_LIST_MAX_ENTRIES,
+    max_depth: int = SKILL_RESOURCE_LIST_MAX_DEPTH,
+) -> str:
+    """列出技能包内附带资源（路径相对技能目录，排除 SKILL.md 与隐藏项）。
+
+    由预载注入与 ``read_skill_instruction`` 共用，确保模型预载完 SKILL.md 后即可直接
+    知道 ``references/``、``scripts/`` 等相对路径，不必为拿清单再重读一次 SKILL.md。
+    """
+    if not skill_dir or not os.path.isdir(skill_dir):
+        return ""
+    entries: list[str] = []
+    truncated = False
+    root = os.path.abspath(skill_dir)
+    for current, dirnames, filenames in os.walk(root, followlinks=False):
+        depth = 0 if current == root else os.path.relpath(current, root).count(os.sep) + 1
+        dirnames[:] = sorted(
+            name for name in dirnames if not name.startswith(".") and name != "__pycache__"
+        )
+        if depth >= max_depth:
+            if dirnames:
+                truncated = True
+            dirnames[:] = []
+        rel_dir = os.path.relpath(current, root)
+        for filename in sorted(filenames):
+            if filename.startswith(".") or filename == "SKILL.md":
+                continue
+            if len(entries) >= max_entries:
+                truncated = True
+                break
+            rel = filename if rel_dir == os.curdir else os.path.join(rel_dir, filename)
+            entries.append(rel.replace(os.sep, "/"))
+        if len(entries) >= max_entries:
+            break
+    if not entries and not truncated:
+        return ""
+    lines = [f"- {entry}" for entry in entries]
+    if truncated:
+        lines.append(
+            f"- …（清单已截断：最多列 {max_entries} 条 / "
+            f"{max_depth} 层；需要完整目录请用 directory_tree_navigator 或 Bash）"
+        )
+    return "\n".join(lines)
+
+
+def clip_skill_text(text: str, *, max_chars: int = SKILL_READ_MAX_CHARS) -> tuple[str, int]:
+    """把超长技能正文裁成「70% 开头 + 30% 结尾」，并显式标注中间省略字符数。
+
+    技能尾部的「禁止事项 / 输出格式 / 异常处理 / <HARD-GATE>」最容易在简单头部截断时
+    丢失，预载与 ``read_skill_instruction`` 共用本函数以保留首尾关键规则。
+    """
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text, 0
+    head_chars = int(max_chars * 0.7)
+    tail_chars = max_chars - head_chars
+    omitted = len(text) - max_chars
+    marker = f"\n… [中间省略 {omitted} 字符；共 {len(text)} 字符] …\n"
+    return f"{text[:head_chars]}{marker}{text[-tail_chars:]}", omitted
+
 # `enabled` 的真值白名单。与 SkillPolicy._parse_bool_config 同一语义：只认这些为「启用」。
 _TRUTHY_FLAGS = frozenset({"1", "true", "yes", "on"})
 
@@ -293,7 +392,8 @@ def _skill_hint_headline(skill_id: str, display_name: str, directory_hint: str) 
     """挂载提示的说明行（不含 meta 行）——新文案与历史升级共用这一份口径。"""
     return (
         f"{SKILL_HINT_PREFIX}{display_name}（技能 ID：{skill_id}）。"
-        f"其 SKILL.md 正文已随本轮上下文预载，本轮直接按预载指令执行，无需再读取技能文件；"
+        f"其 SKILL.md 正文已随本轮上下文预载（以 System Prompt 中 [Active Skills Loaded] "
+        f"的实际状态为准：已预载则直接按指令执行，若因数量上限仅加载摘要则按提示读取完整说明后再执行）；"
         f"{directory_hint}。"
     )
 
@@ -319,9 +419,6 @@ def build_skill_attachment_hint(
     需要目录，那时用平台内置的 ``list_accessible_directories`` 取真实位置；
     ``skill_dir`` 是给「调用方确知真实目录」场景的显式覆盖（不给就退回清单工具指引）。
     """
-    from app.core.config import settings
-
-    skill_md_path = os.path.join(settings.SKILLS_DIR, skill_id, "SKILL.md")
     if meta_override:
         meta = {
             "id": skill_id,
@@ -329,6 +426,9 @@ def build_skill_attachment_hint(
             "description": str(meta_override.get("description") or ""),
         }
     else:
+        from app.core.config import settings
+
+        skill_md_path = os.path.join(settings.SKILLS_DIR, skill_id, "SKILL.md")
         meta = parse_skill_frontmatter(skill_id, skill_md_path)
 
     display_name = (skill_name or meta.get("name") or skill_id).replace(" (技能)", "")
@@ -399,11 +499,20 @@ FORBIDDEN_SKILL_ATTACHMENT_NOTICE = (
     "用户本轮挂载的技能「{skill_id}」已被管理员禁用，不可使用；"
     "其技能描述文件不可读取，禁止尝试读取或检索该技能的任何文件。"
 )
+DISABLED_SKILL_ATTACHMENT_NOTICE = (
+    "用户本轮挂载的技能「{skill_id}」当前已停用（enabled=false），本轮不可使用；"
+    "请勿假装已预载该技能或凭记忆编造其步骤。"
+)
 
 
 def forbidden_skill_attachment_notice(skill_id: str) -> str:
     """被禁技能的挂载说明：明确"不可用、不可读"，且**不带任何绝对路径**。"""
     return FORBIDDEN_SKILL_ATTACHMENT_NOTICE.format(skill_id=str(skill_id or "").strip())
+
+
+def disabled_skill_attachment_notice(skill_id: str) -> str:
+    """已停用技能的挂载说明：明确已停用，防止模型以为正文已预载而产生幻觉。"""
+    return DISABLED_SKILL_ATTACHMENT_NOTICE.format(skill_id=str(skill_id or "").strip())
 
 
 def _skill_attachment_id(item: Any) -> str:
@@ -546,7 +655,12 @@ def _skill_ids_in_hint_line(line: str) -> set[str]:
     }
 
 
-def _rewrite_forbidden_skill_hints(content: str, blocked_ids: set[str]) -> str:
+def _rewrite_forbidden_skill_hints(
+    content: str,
+    blocked_ids: set[str],
+    *,
+    notice_builder=forbidden_skill_attachment_notice,
+) -> str:
     if not blocked_ids:
         return content
     parts = content.split(_CONTEXT_HINT_SEPARATOR)
@@ -578,13 +692,61 @@ def _rewrite_forbidden_skill_hints(content: str, blocked_ids: set[str]) -> str:
             continue
         changed = True
         notice = "\n".join(
-            forbidden_skill_attachment_notice(skill_id) for skill_id in sorted(hit_ids)
+            notice_builder(skill_id) for skill_id in sorted(hit_ids)
         )
         body = "\n".join(kept_lines).strip()
         rewritten.append(f"{body}\n{notice}" if body else notice)
     if not changed:
         return content
     return _CONTEXT_HINT_SEPARATOR.join(rewritten)
+
+
+def sanitize_disabled_skill_context(
+    messages: List[Dict[str, Any]],
+    disabled_ids: Optional[Any],
+) -> int:
+    """就地清洗已停用（enabled=false）技能的挂载附件与提示文本，返回被移除的附件个数。
+
+    与 :func:`sanitize_forbidden_skill_context` 同口径：停用技能不该在用户消息里继续
+    保留「已随本轮上下文预载」的假提示，否则模型会空等预载或编造步骤。
+    """
+    disabled = {
+        str(skill_id).strip()
+        for skill_id in (disabled_ids or ())
+        if str(skill_id).strip()
+    }
+    if not disabled or not messages:
+        return 0
+
+    removed = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        files = message.get("files")
+        if isinstance(files, list):
+            kept = [
+                item
+                for item in files
+                if not (
+                    isinstance(item, dict)
+                    and item.get("type") == "skill"
+                    and _skill_attachment_id(item) in disabled
+                )
+            ]
+            if len(kept) != len(files):
+                removed += len(files) - len(kept)
+                message["files"] = kept
+
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            rewritten = _rewrite_forbidden_skill_hints(
+                content,
+                disabled,
+                notice_builder=disabled_skill_attachment_notice,
+            )
+            if rewritten != content:
+                message["content"] = rewritten
+    return removed
 
 
 def sanitize_forbidden_skill_context(

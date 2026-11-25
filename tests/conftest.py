@@ -795,3 +795,40 @@ def _isolate_delegation_session_store(monkeypatch):
         DelegationSessionStore, "from_runtime", classmethod(_no_redis)
     )
     yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_agent_workspace_root(monkeypatch):
+    """不让单测把 AI 工作区写进代码仓库的**单一**防线。
+
+    历史事故：``tests/services/ai/test_agent_service_history_alignment.py`` 把
+    ``ConfigService.get`` 一刀切成 ``AsyncMock(return_value="20")``（本意只是想给
+    ``max_history_messages`` 一个值），而 ``resolve_workspace_root()`` 当时对配置值
+    没有任何校验，``os.path.abspath("20")`` 就把工作区根算成了 ``<仓库>/20``；
+    紧随其后的 ``_preseed_session_skills`` 又把 42 份平台技能 copytree 进去，
+    最终在仓库根留下 ``./20/admin__1/sessions/conversation-1/skills/.seed``。
+
+    真正的修复在 ``workspace_root_config_error()``：``resolve_workspace_root()``
+    读到非法配置值（相对路径、系统根、代码根）时会拒绝并回退到
+    ``default_workspace_root()``，而后者不读配置。这里只做一件事——把配置伪装成
+    那个事故值，验证防线确实挡住了它，顺便保证用例不会真的写出仓库。
+
+    这里**不再**重定向 ``default_workspace_root`` / ``resolve_workspace_root``：
+    那会让「写路径」落在系统 tmp、「校验路径」仍按 ``data/`` 计算，
+    fs 浏览器与工作区相关用例会集体变成 403/404（隔离根不在允许根之内）。
+    """
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    illegal_root = "20"
+    assert workspace_module.workspace_root_config_error(illegal_root) is not None, (
+        "工作区根校验必须拦住相对路径配置值，否则会在仓库根生成 ./20"
+    )
+
+    # 事故值只用于断言校验函数；不真的写进任何 ConfigService 的返回值。
+    monkeypatch.setattr(
+        workspace_module,
+        "_WARNED_BAD_WORKSPACE_ROOTS",
+        set(),
+        raising=False,
+    )
+    yield

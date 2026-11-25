@@ -411,8 +411,22 @@ def _skip_sudo_options(tokens: list[str], index: int) -> int:
 
 
 def _shell_payload_after_c(tokens: list[str]) -> str | None:
+    """取出解释器 ``-c`` 后面的内层脚本，兼容组合短参。
+
+    此前只认精确的 ``-c``，于是 ``bash -lc 'rm -rf /'`` / ``sh -ic ...`` /
+    ``bash --command '...'`` 全部返回 ``None`` → 直接 ``pass``，把硬拒绝整个绕过
+    （实测：``bash -c 'rm -rf /'`` 判 deny，``bash -lc 'rm -rf /'`` 判 pass）。
+    判定口径与 ``command_policy._script_after_dash_c`` 对齐。
+    """
     for index, token in enumerate(tokens):
-        if token == "-c" and index + 1 < len(tokens):
+        if index + 1 >= len(tokens):
+            return None
+        if token == "--command":
+            return " ".join(tokens[index + 1 :])
+        if token == "-c":
+            return " ".join(tokens[index + 1 :])
+        # 组合短参（`-lc` / `-ic` / `-euc` …）：与 command_policy 同口径。
+        if token.startswith("-") and not token.startswith("--") and "c" in token[1:]:
             return " ".join(tokens[index + 1 :])
     return None
 

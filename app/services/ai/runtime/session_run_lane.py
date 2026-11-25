@@ -203,8 +203,16 @@ class ConversationRunLane:
         *,
         user_id: str | int | None,
         conversation_id: str | None,
+        expected_token: str | None = None,
     ) -> bool:
-        """Delete the run-lane lock regardless of holder token (client cancel)."""
+        """Release the run-lane lock (client cancel).
+
+        `expected_token` 给出时退化为 compare-and-delete：只有当前持有者仍是该
+        token（即本轮 trace_id，见 acquire 里 `token = trace_id or uuid4().hex`）
+        才删除。取消后紧跟一条新消息时，新请求可能已经抢到了同一把锁——此时
+        无条件 DEL 会把新一轮的互斥抹掉，两个 run 并发操作同一 AgentState。
+        仅在确实拿不到令牌（兜底路径）时才允许留空，走原来的强删语义。
+        """
         if not conversation_id:
             return False
 
@@ -216,7 +224,14 @@ class ConversationRunLane:
 
         key = self._lock_key(user_id, conversation_id)
         try:
-            deleted = await redis.delete(key)
+            if expected_token:
+                script = (
+                    "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                    "return redis.call('del', KEYS[1]) else return 0 end"
+                )
+                deleted = await redis.eval(script, 1, key, expected_token)
+            else:
+                deleted = await redis.delete(key)
             return bool(deleted)
         except Exception as exc:
             logger.warning("[ConversationRunLane] force_release failed: %s", exc)
@@ -485,7 +500,15 @@ class ConversationRunLane:
             renewal.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await renewal
-            await self.release(key, token)
+            # 释放必须 shield：本轮被取消时当前 task 已处于 cancelling 状态，
+            # 裸 `await self.release(...)` 会立刻被 CancelledError 打断，锁就留在
+            # Redis 里等 TTL，用户的下一条消息只能排队。shield 让释放协程继续跑完，
+            # CancelledError 仍照常向外传播，取消语义不受影响。
+            #
+            # 这一步做好之后，外部「取消后盲删锁」就没有存在必要了——而且那种盲删
+            # 恰恰是危险的：用户取消后立刻发下一条时，新请求可能已经在同一毫秒内
+            # 抢到这把锁，无 token 的 DEL 会把**新一轮**的互斥直接抹掉。
+            await asyncio.shield(self.release(key, token))
 
 
 conversation_run_lane = ConversationRunLane()

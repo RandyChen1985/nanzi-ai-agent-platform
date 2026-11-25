@@ -9,7 +9,12 @@ import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Set
 
-from app.utils.skill_metadata import is_skill_enabled
+from app.utils.skill_metadata import (
+    clip_skill_text,
+    extract_plain_user_query,
+    format_skill_resource_tree,
+    is_skill_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,17 +27,34 @@ MAIN_GENERAL_AGENT_SLUGS = frozenset({"assistant", "main", "general-chat"})
 
 # 扫描时从用户问题中剔除的泛化词，避免「查一下」「帮我」误命中
 _SCAN_STOP_TERMS = frozenset({
-    "一下", "帮我", "帮忙", "请", "查询", "查", "看看", "看下", "了解", "知道",
-    "怎么", "如何", "什么", "哪些", "有没有", "能否", "可以", "吗", "呢", "啊",
+    "一下", "帮我", "帮忙", "麻烦", "请问", "请", "查询", "查一下", "查下", "查",
+    "看看", "看一下", "看下", "了解", "知道", "怎么", "如何", "怎样", "什么", "哪些",
+    "有没有", "能否", "可以", "给我", "告诉我", "吗", "呢", "啊", "吧",
     "的", "了", "是", "在", "有", "和", "与", "或", "及", "把", "给", "我", "你",
     "the", "and", "for", "with", "this", "that", "what", "how", "please", "help",
 })
+# 中文长句没有空格分隔，先把高泛化功能词从连续汉字中切开，再对剩余实词抽 2-gram。
+_CJK_STOP_SPLIT_TERMS = sorted(
+    (
+        "帮我", "帮忙", "麻烦", "请问", "查一下", "看一下", "看下", "查下",
+        "查询", "看看", "一下", "了解", "知道", "怎么", "如何", "怎样",
+        "什么", "哪些", "有没有", "能否", "可以", "给我", "告诉我",
+        "请", "查", "的", "了", "吗", "呢", "啊", "吧", "是", "在", "有",
+        "和", "与", "或", "及", "把", "给", "我", "你",
+    ),
+    key=len,
+    reverse=True,
+)
+_CJK_STOP_SPLIT_RE = re.compile("|".join(re.escape(term) for term in _CJK_STOP_SPLIT_TERMS))
+_CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
+_ALNUM_WORD_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9_-]{1,}")
 
 _SKILL_USE_PATTERNS = [
-    re.compile(r"使用(?:一下|下)?[「\"']?(.+?)[」\"']?(?:技能|skill)", re.I),
-    re.compile(r"用(?:一下|下)?[「\"']?(.+?)[」\"']?(?:技能|skill)", re.I),
-    re.compile(r"(?:执行|运行|触发|加载|套用|按照)(?:一下|下)?[「\"']?(.+?)[」\"']?(?:技能|skill)", re.I),
-    re.compile(r"(?:技能|skill)[「\"']?(.+?)[」\"']?(?:执行|运行|查|查询)", re.I),
+    re.compile(r"使用(?:一下|下)?[「\"']?(.+?)[」\"']?(?:的)?(?:技能|skill)", re.I),
+    re.compile(r"用(?:一下|下)?[「\"']?(.+?)[」\"']?(?:的)?(?:技能|skill)", re.I),
+    re.compile(r"(?:调用|按|按照|执行|运行|触发|加载|套用)(?:一下|下)?[「\"']?(.+?)[」\"']?(?:的)?(?:技能|skill)", re.I),
+    re.compile(r"(?:技能|skill)[「\"']?(.+?)[」\"']?(?:执行|运行|查|查询|处理|分析|生成)", re.I),
+    re.compile(r"\b(?:use|run|invoke|call|execute)\s+([a-zA-Z0-9_\u4e00-\u9fff -]{2,36}?)\s+skill\b", re.I),
 ]
 
 _SKILL_META_CACHE_MAX_ENTRIES = 128
@@ -302,6 +324,16 @@ def _scan_skill_dir_cached(
     return _copy_skill_metas(frozen_metas)
 
 
+def scan_skill_dir_cached(
+    skills_dir: str,
+    scope: str,
+    *,
+    allow_seed: bool = False,
+) -> List[Dict[str, str]]:
+    """带目录指纹缓存的技能元数据扫描（公开入口，供挂载解析与列表复用）。"""
+    return _scan_skill_dir_cached(skills_dir, scope, allow_seed=allow_seed)
+
+
 def clear_skill_meta_cache() -> None:
     """清理技能元数据缓存，供技能变更流程和测试调用。"""
     with _skill_meta_cache_lock:
@@ -425,14 +457,41 @@ def _read_skill_md_if_allowed(
     *,
     allowed_roots: List[str],
     max_bytes: int,
+    skill_id: Optional[str] = None,
+    include_resource_tree: bool = False,
 ) -> Optional[str]:
     abs_path = os.path.abspath(skill_md_path)
     if not any(_is_path_under_root(abs_path, root) for root in allowed_roots):
         return None
     if not os.path.exists(abs_path):
         return None
+    # 读取上限放宽以拿到文件末尾的红线规则 / 输出格式，再统一用 70% 头 + 30% 尾裁剪。
+    read_cap = max(max_bytes * 4, 262144) if max_bytes > 0 else 262144
     with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
-        return f.read(max_bytes)
+        raw_content = f.read(read_cap + 1)
+    read_truncated = len(raw_content) > read_cap
+    raw_content = raw_content[:read_cap]
+    content, omitted = clip_skill_text(raw_content, max_chars=max_bytes)
+    prefix_lines: list[str] = []
+    if omitted:
+        prefix_lines.append(
+            f"[已截断：保留开头与结尾，中间省略 {omitted} 字符；"
+            "完整内容可按需通过 read_skill_instruction 或分片资源读取]"
+        )
+    elif read_truncated:
+        prefix_lines.append(f"[文件超过 {read_cap} 字符，仅读取前 {read_cap} 字符]")
+    if include_resource_tree:
+        resource_tree = format_skill_resource_tree(os.path.dirname(abs_path))
+        if resource_tree:
+            target_id = skill_id or os.path.basename(os.path.dirname(abs_path))
+            prefix_lines.append(
+                "[技能自带资源（路径相对技能目录，可按需读取："
+                f'read_skill_instruction(skill_id="{target_id}", path="<相对路径>")）]\n'
+                f"{resource_tree}"
+            )
+    if prefix_lines:
+        return "\n".join(prefix_lines) + "\n\n" + content
+    return content
 
 
 def load_skill_md_content(
@@ -442,6 +501,7 @@ def load_skill_md_content(
     user_info: Optional[Dict[str, Any]] = None,
     scope: Optional[str] = None,
     skill_md_path: Optional[str] = None,
+    include_resource_tree: bool = False,
 ) -> Optional[str]:
     """读取技能 SKILL.md 全文；支持平台与个人目录。失败返回 None。"""
     if not _validate_skill_id(skill_id):
@@ -481,6 +541,8 @@ def load_skill_md_content(
                 abs_candidate,
                 allowed_roots=allowed_roots,
                 max_bytes=max_bytes,
+                skill_id=skill_id,
+                include_resource_tree=include_resource_tree,
             )
             if content is not None:
                 return content
@@ -522,31 +584,71 @@ def _score_skill_match(hint: str, meta: Dict[str, str]) -> float:
 
 
 def _significant_terms(text: str) -> List[str]:
-    """从文本提取可用于匹配的中文片段与英文词。"""
+    """从文本提取可用于匹配的中文 2-gram 信号与英文/数字词（先剥离泛化停用词）。"""
+    raw = str(text or "")
+    if not raw:
+        return []
     terms: List[str] = []
-    for match in re.finditer(r"[\u4e00-\u9fff]{2,}|[a-zA-Z][a-zA-Z0-9_-]{1,}", text or ""):
+    seen: Set[str] = set()
+
+    def _add(token: str) -> None:
+        if not token or token in _SCAN_STOP_TERMS or token in seen:
+            return
+        seen.add(token)
+        terms.append(token)
+
+    for match in _CJK_RUN_RE.finditer(raw):
+        cleaned = _CJK_STOP_SPLIT_RE.sub(" ", match.group(0))
+        for seg in cleaned.split():
+            if len(seg) < 2:
+                continue
+            if len(seg) == 2:
+                _add(seg)
+            else:
+                for i in range(len(seg) - 1):
+                    _add(seg[i : i + 2])
+
+    for match in _ALNUM_WORD_RE.finditer(raw):
         token = match.group(0).lower()
         if token in _SCAN_STOP_TERMS:
             continue
-        terms.append(token)
+        _add(token)
+        # 兼容连字符/下划线复合词拆分（如 pdf-helper -> pdf, helper）
+        if "-" in token or "_" in token:
+            for part in re.split(r"[_-]+", token):
+                if len(part) >= 2:
+                    _add(part)
+
     return terms
 
 
 def _term_hits(query_term: str, skill_term: str) -> bool:
     if len(query_term) < 2 or len(skill_term) < 2:
         return False
-    return query_term in skill_term or skill_term in query_term
+    # 中文 2-gram 直接精确匹配，避免双字片段互相误包含；英文词保留子串兼容。
+    if query_term.isascii() and skill_term.isascii():
+        return query_term in skill_term or skill_term in query_term
+    return query_term == skill_term
+
+
+# 2 字泛化业务/通用名词：不能仅凭单个 2 字核心词出现在长句里就直接命中扫描，避免误触发
+_GENERIC_TWO_CHAR_CORE_TERMS = frozenset({
+    "数据", "代码", "系统", "文件", "文档", "信息", "内容", "问题", "助手", "工具",
+    "服务", "管理", "分析", "处理", "查询", "报告", "记录", "列表", "测试", "项目",
+    "任务", "用户", "平台", "接口", "脚本", "知识", "搜索", "流程", "配置", "监控",
+})
 
 
 def lexical_relevance_score(user_query: str, meta: Dict[str, str]) -> float:
-    """按 name/description/id 与用户问题的关键词重叠打分（无向量、无 LLM）。"""
-    query = (user_query or "").strip()
+    """按 name/description/id/tags 与用户问题的关键词重叠打分（无向量、无 LLM）。"""
+    query = extract_plain_user_query(user_query)
     if not query:
         return 0.0
 
     name = (meta.get("name") or "").strip()
     description = (meta.get("description") or "").strip()
     skill_id = (meta.get("id") or "").strip()
+    tags = str(meta.get("tags") or meta.get("keywords") or "").strip()
     query_n = _normalize(query)
     name_n = _normalize(name)
 
@@ -555,10 +657,17 @@ def lexical_relevance_score(user_query: str, meta: Dict[str, str]) -> float:
     if len(name_n) >= 2 and query_n in name_n:
         return 0.88
 
-    # 技能名去掉「查询/技能」等后缀后的核心词出现在问题中（如「用户列表」⊂「查一下用户列表」）
-    name_core = re.sub(r"(查询|查数|技能|工具|助手|服务)$", "", name_n)
-    if len(name_core) >= 2 and name_core in query_n:
+    # 技能名去掉「查询/技能/预报/流程」等后缀后的核心词出现在问题中（如「用户列表」⊂「查一下用户列表」）
+    name_core = re.sub(r"(查询|查数|技能|工具|助手|服务|预报|流程)$", "", name_n)
+    if len(name_core) >= 3 and name_core in query_n:
         return 0.9
+    if (
+        len(name_core) == 2
+        and name_core not in _GENERIC_TWO_CHAR_CORE_TERMS
+        and name_core in query_n
+    ):
+        # 2 字具体领域实词（如「天气」「发票」）稳定命中扫描，泛化词（如「代码」「数据」）不走捷径
+        return 0.65
 
     query_terms = _significant_terms(query)
     if not query_terms:
@@ -566,25 +675,47 @@ def lexical_relevance_score(user_query: str, meta: Dict[str, str]) -> float:
 
     name_terms = _significant_terms(name)
     desc_terms = _significant_terms(description)
+    tag_terms = _significant_terms(tags)
     id_terms = [t for t in re.split(r"[_-]+", skill_id.lower()) if len(t) >= 2]
-    skill_terms = list(dict.fromkeys(name_terms + desc_terms + id_terms))
+    skill_terms = list(dict.fromkeys(name_terms + desc_terms + tag_terms + id_terms))
     if not skill_terms:
         return 0.0
+
+    skill_term_set = set(skill_terms)
+    name_term_set = set(name_terms)
+    ascii_skill_terms = [t for t in skill_terms if t.isascii()]
+    ascii_name_terms = [t for t in name_terms if t.isascii()]
 
     matched = 0
     name_matched = 0
     for query_term in query_terms:
-        if any(_term_hits(query_term, skill_term) for skill_term in skill_terms):
+        hit_skill = query_term in skill_term_set or (
+            query_term.isascii()
+            and any(_term_hits(query_term, st) for st in ascii_skill_terms)
+        )
+        if hit_skill:
             matched += 1
-        if any(_term_hits(query_term, name_term) for name_term in name_terms):
+        hit_name = query_term in name_term_set or (
+            query_term.isascii()
+            and any(_term_hits(query_term, nt) for nt in ascii_name_terms)
+        )
+        if hit_name:
             name_matched += 1
 
     if matched == 0:
         return 0.0
 
-    score = matched / len(query_terms)
-    if name_matched > 0:
-        score = min(1.0, score + 0.2 * name_matched)
+    query_cov = matched / len(query_terms)
+    name_cov = (name_matched / len(name_terms)) if name_terms else 0.0
+    # 长句中仅偶发撞上 1 个泛化名称 2-gram 时不虚高；多信号或较高查询覆盖时才融合 name_cov
+    if name_matched >= 2 or query_cov >= 0.3:
+        score = max(query_cov, 0.55 * name_cov)
+    else:
+        score = query_cov
+    if name_matched > 0 and (name_matched >= 2 or query_cov >= 0.3):
+        score = min(1.0, score + min(0.18, 0.15 * name_matched))
+    elif matched >= 2:
+        score = min(0.74, score + min(0.15, 0.05 * matched))
     return score
 
 
@@ -606,7 +737,7 @@ def is_main_general_agent(agent_config: Any) -> bool:
 
 def should_scan_skills_for_query(user_query: str) -> bool:
     """是否应对本轮用户问题执行技能库扫描（流程门禁）。"""
-    query = (user_query or "").strip()
+    query = extract_plain_user_query(user_query)
     if len(query) < 4:
         return False
 
@@ -633,7 +764,7 @@ def scan_relevant_skills(
     在每轮用户提问后、挂载/口头解析均未命中时由 AgentService 调用。
     个人技能（scope=personal）相关度加权 +0.05，优先被匹配。
     """
-    query = (user_query or "").strip()
+    query = extract_plain_user_query(user_query)
     if not query or not should_scan_skills_for_query(query):
         return []
 
@@ -687,7 +818,7 @@ def resolve_skills_from_query(
 
     例如「使用用户列表查询技能查询一次」→ 匹配 name 含「用户列表查询」的技能。
     """
-    query = (user_query or "").strip()
+    query = extract_plain_user_query(user_query)
     if not query:
         return []
 
@@ -713,13 +844,15 @@ def resolve_skills_from_query(
             if score >= 0.7:
                 scored.append((score, meta))
 
-    # 兜底：用户直接在句子里提到技能 display_name
+    # 兜底：用户直接在句子里提到技能 display_name 或 skill_id（不区分大小写/空格）
     if not scored:
+        query_n = _normalize(query)
         for meta in metas:
             if not is_skill_enabled(meta):
                 continue
-            name = (meta.get("name") or "").strip()
-            if len(name) >= 2 and name in query:
+            name_n = _normalize(meta.get("name") or "")
+            id_n = _normalize(meta.get("id") or "")
+            if (len(name_n) >= 2 and name_n in query_n) or (len(id_n) >= 2 and id_n in query_n):
                 scored.append((0.75, meta))
 
     scored.sort(key=lambda item: item[0], reverse=True)
