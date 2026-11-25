@@ -71,9 +71,6 @@ export interface PendingToolPermission {
    * 会删除一个根本不存在的记录，界面却显示撤销成功，用户以为授权已经收回。
    */
   sessionGrantScope?: string;
-  /** 挂起确认的绝对过期时间（unix 秒）：刷新/恢复后仍能判断卡片是否已失效。 */
-  expires_at?: number;
-  expires_in_seconds?: number;
   /** 用户主动「放弃本轮」：命令没有执行，卡片显示放弃回执而不是「已拒绝」。 */
   discarded?: boolean;
   /**
@@ -134,7 +131,9 @@ export interface AgentStreamLog {
   id: string | number;
   title: string;
   details: string;
-  status: "pending" | "success" | "error" | "warning";
+  // 与 ProcessTimelineStatus 对齐：流被用户中止时挂起行以 "interrupted" 落定
+  // （见 finalizeAllPendingStreamLogs 的 settleStatus），少这一支会写不进去。
+  status: "pending" | "success" | "error" | "warning" | "interrupted";
   error_reason?: string;
   isExpanded?: boolean;
   category?: string;

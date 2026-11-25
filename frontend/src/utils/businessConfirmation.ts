@@ -97,7 +97,13 @@ export function businessConfirmationStateFromTimelineLog(
   });
   if (!state) return null;
   const persisted = String((raw as Record<string, unknown>).status || "").trim();
-  if (persisted === "submitted" || persisted === "cancelled" || persisted === "stale") {
+  // 卡片类型里 status 只有 pending / submitted / stale 三态，「用户点了取消」表达在
+  // decision 上——直接 `state.status = "cancelled"` 既过不了类型检查，也让
+  // BusinessConfirmationCard 的 locked 判定漏掉这一支（取消过的是终态，不该再能点）。
+  if (persisted === "cancelled") {
+    state.status = "submitted";
+    state.decision = "cancelled";
+  } else if (persisted === "submitted" || persisted === "stale") {
     state.status = persisted;
   }
   return state;

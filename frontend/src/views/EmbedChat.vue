@@ -3046,7 +3046,9 @@ interface LogEntry {
   name?: string;
   title: string;
   details: string;
-  status: "pending" | "success" | "error";
+  // 与 AgentStreamLog / ProcessTimelineStatus 对齐：被用户中止的挂起行以
+  // "interrupted" 落定（settlePendingConfirmationLocally 与终态收尾都用它）。
+  status: "pending" | "success" | "error" | "interrupted";
   error_reason?: string;
   isExpanded: boolean;
   isRouter?: boolean;
@@ -11243,13 +11245,11 @@ const fetchConversationHistory = async (
                   citations: item.citations ?? undefined,
                   isHistory: true,
                   userQuestion: persistedQuestions[0],
-                  // 取**最后一张**：同一轮里可能先后确认过多组数据，取首张会还原成
-                  // 过期的那一版。历史卡一律标 stale —— 它是快照，实时状态未知，而
-                  // 业务确认回执会触发真正的写入动作，允许点击就等于给一条陈旧卡片
-                  // 开了重复执行的入口。仍在等待的那一轮由恢复器按实时快照重建。
+                  // 取**最后一张**（同一轮可能确认过多组数据）；历史卡一律标 stale——
+                  // 快照的实时状态未知，而回执会触发真实写入。`!` 见上面的 length 判断。
                   businessConfirmation: persistedConfirmations.length
                     ? {
-                        ...persistedConfirmations[persistedConfirmations.length - 1],
+                        ...persistedConfirmations[persistedConfirmations.length - 1]!,
                         status: "stale",
                       }
                     : undefined,

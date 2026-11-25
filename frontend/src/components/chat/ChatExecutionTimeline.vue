@@ -846,7 +846,8 @@ const props = withDefaults(defineProps<{
     parent_id?: string | number;
     title: string;
     details: string;
-    status: "pending" | "success" | "error" | "warning";
+    // 与 ProcessTimelineStatus 对齐：被中止的挂起行以 "interrupted" 落定。
+    status: "pending" | "success" | "error" | "warning" | "interrupted";
     error_reason?: string;
     category?: string;
     tool_args?: string;
@@ -1156,7 +1157,8 @@ const headerSkillSummary = computed(() =>
 function toolNameFromTitle(title?: string): string {
   const text = String(title || "");
   const matched = text.match(/^调用工具[:：]\s*(.+)$/);
-  return matched ? matched[1].trim() : "";
+  // tsconfig 开了 noUncheckedIndexedAccess：matched[1] 是 string | undefined。
+  return matched?.[1]?.trim() || "";
 }
 
 const actionSummary = computed(() => {
