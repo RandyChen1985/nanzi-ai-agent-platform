@@ -39,7 +39,10 @@ async def test_rename_reports_tool_ids_so_conversation_mounts_can_follow():
     """改名只改库不够：会话资源里存的旧工具名要拿 id 去纠。"""
     tool = _tool()
     db = MagicMock()
-    db.execute = AsyncMock(side_effect=[_scalars_all([tool]), _rows_all([])])
+    # 三次查询：工具缓存 → 变更表（改名要同步 tool_name）→ 智能体版本
+    db.execute = AsyncMock(
+        side_effect=[_scalars_all([tool]), _scalars_all([]), _rows_all([])]
+    )
 
     renamed = await mcp._migrate_server_name_references(
         db, "srv-1", "old-name", "new-name"

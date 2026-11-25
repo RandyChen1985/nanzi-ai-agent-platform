@@ -1,0 +1,1705 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="prototype-kind" content="交互原型" />
+<title>MCP 工具集 · 定义变更自动探测与变更历史原型</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-h:#4096ff; --primary-a:#0958d9; --primary-10:rgba(22,119,255,.10);
+    --sidebar:#0b0f19; --sidebar-l:#131b2e;
+    --g50:#f9fafb; --g100:#f3f4f6; --g200:#e5e7eb; --g300:#d1d5db; --g400:#9ca3af; --g500:#6b7280;
+    --g600:#4b5563; --g700:#374151; --g800:#1f2937; --g900:#111827;
+    --amber50:#fffbeb; --amber100:#fef3c7; --amber200:#fde68a; --amber500:#f59e0b; --amber600:#d97706; --amber700:#b45309; --amber800:#92400e;
+    --green50:#f0fdf4; --green100:#dcfce7; --green600:#16a34a; --green700:#15803d;
+    --emerald50:#ecfdf5; --emerald100:#d1fae5; --emerald500:#10b981; --emerald600:#059669; --emerald700:#047857;
+    --indigo50:#eef2ff; --indigo100:#e0e7ff; --indigo600:#4f46e5; --indigo700:#4338ca;
+    --violet50:#f5f3ff; --violet100:#ede9fe; --violet200:#ddd6fe; --violet600:#7c3aed; --violet700:#6d28d9;
+    --red50:#fef2f2; --red100:#fee2e2; --red200:#fecaca; --red600:#dc2626; --red700:#b91c1c;
+    --shadow-sm:0 1px 2px 0 rgba(0,0,0,.05);
+    --shadow:0 1px 3px 0 rgba(0,0,0,.1),0 1px 2px -1px rgba(0,0,0,.1);
+    --shadow-lg:0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1);
+    --shadow-xl:0 20px 25px -5px rgba(0,0,0,.1),0 8px 10px -6px rgba(0,0,0,.1);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:#f3f4f6;color:var(--g900);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ───────── 页面外框：深色瘦侧栏 + 内容区 ───────── */
+  .app{display:flex;min-height:100%}
+  .rail{
+    width:56px;flex:0 0 56px;background:var(--sidebar);display:flex;flex-direction:column;
+    align-items:center;gap:6px;padding:14px 0;position:sticky;top:0;height:100vh;
+  }
+  .rail .logo{
+    width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#1677ff,#0958d9);
+    display:grid;place-items:center;color:#fff;font-weight:800;font-size:13px;margin-bottom:8px;
+  }
+  .rail .ri{
+    width:36px;height:36px;border-radius:9px;display:grid;place-items:center;color:#5b6779;
+    cursor:pointer;transition:.15s;
+  }
+  .rail .ri:hover{background:var(--sidebar-l);color:#c7d2e0}
+  .rail .ri.on{background:rgba(22,119,255,.16);color:#4c9dff}
+  .rail svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+  .main{flex:1;min-width:0;padding:16px 20px 64px;height:100vh;display:flex;flex-direction:column;gap:12px;overflow:hidden}
+
+  /* ───────── 页头 ───────── */
+  .ph{flex:0 0 auto;display:flex;flex-direction:column;gap:3px}
+  .ph .row1{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .ph h1{margin:0;font-size:22px;font-weight:800;letter-spacing:-.3px}
+  .badge-mcp{
+    display:inline-flex;align-items:center;border-radius:999px;background:var(--indigo50);
+    padding:2px 10px;font-size:11.5px;font-weight:600;color:var(--indigo700);
+  }
+  .ph .row2{font-size:12px;color:var(--g500);max-width:900px}
+  .qmark{
+    width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:var(--g400);
+    cursor:pointer;font-size:12px;border:1px solid var(--g200);
+  }
+  .qmark:hover{background:var(--g100);color:var(--g600)}
+
+  /* scope tabs */
+  .scope-tabs{
+    flex:0 0 auto;display:flex;align-items:center;gap:0;border-bottom:1px solid var(--g200);
+  }
+  .st{
+    display:inline-flex;align-items:center;gap:7px;padding:9px 16px;font-size:13.5px;font-weight:500;
+    color:var(--g500);border-bottom:2px solid transparent;cursor:pointer;transition:.15s;margin-bottom:-1px;
+  }
+  .st:hover{color:var(--g700)}
+  .st.on.blue{color:var(--primary);border-color:var(--primary);font-weight:700}
+  .st.on.green{color:var(--emerald600);border-color:var(--emerald600);font-weight:700}
+  .st.on.violet{color:var(--violet600);border-color:var(--violet600);font-weight:700}
+  .st .cnt.warn{background:var(--violet50);color:var(--violet700);box-shadow:inset 0 0 0 1px var(--violet200)}
+  .st.on.violet .cnt{background:var(--violet100);color:var(--violet700)}
+  .st .cnt{
+    display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:1px 8px;
+    font-size:11.5px;font-weight:600;background:var(--g100);color:var(--g600);
+  }
+  .st.on.blue .cnt{background:#dbeafe;color:#1d4ed8}
+  .st.on.green .cnt{background:var(--emerald100);color:var(--emerald700)}
+  .st svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8}
+
+  /* ───────── 流程指引横幅（真实现有组件） ───────── */
+  .guide{
+    flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:8px;
+    background:linear-gradient(90deg,#eef2ff,#f8faff);border:1px solid var(--indigo100);
+    font-size:12px;color:#3730a3;
+  }
+  .guide b{font-weight:700}
+  .guide .steps{display:flex;align-items:center;gap:6px;margin-left:6px;flex-wrap:wrap}
+  .guide .sp{display:inline-flex;align-items:center;gap:4px;background:#fff;border:1px solid var(--indigo100);border-radius:999px;padding:1px 8px;font-size:11px}
+  .guide .sp.on{background:#4f46e5;border-color:#4f46e5;color:#fff;font-weight:600}
+  .guide .x{margin-left:auto;cursor:pointer;color:#818cf8;font-size:14px}
+
+  /* ───────── 双栏注册表 ───────── */
+  .reg{display:flex;gap:20px;flex:1;min-height:0}
+  .col-left{
+    width:372px;flex:0 0 372px;display:flex;flex-direction:column;overflow:hidden;
+    background:#fff;border:1px solid var(--g200);border-radius:8px;box-shadow:var(--shadow-sm);
+  }
+  .col-right{
+    flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;
+    background:#fff;border:1px solid var(--g200);border-radius:8px;box-shadow:var(--shadow-sm);
+  }
+
+  /* 左栏顶部：市场入口 */
+  .market{
+    display:flex;align-items:center;gap:6px;padding:6px 14px;font-size:11px;color:var(--g500);
+    background:rgba(249,250,251,.6);border-bottom:1px solid var(--g100);cursor:pointer;
+  }
+  .market:hover{color:var(--indigo600)}
+  .market .arr{margin-left:auto}
+
+  /* 左栏搜索区 */
+  .lsearch{display:flex;flex-direction:column;gap:8px;padding:10px 14px;background:rgba(249,250,251,.8);border-bottom:1px solid var(--g100)}
+  .srow{display:flex;align-items:center;gap:8px}
+  .sbox{position:relative;flex:1;min-width:0}
+  .sbox input{
+    width:100%;height:32px;border-radius:6px;border:1px solid var(--g200);background:#fff;
+    padding:0 26px 0 30px;font-size:12px;color:var(--g700);box-shadow:var(--shadow-sm);outline:none;
+  }
+  .sbox input::placeholder{color:var(--g400)}
+  .sbox input:focus{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
+  .sbox .ic{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--g400)}
+  .sbox svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2}
+  .btn-new{
+    height:32px;display:inline-flex;align-items:center;gap:5px;padding:0 11px;border-radius:6px;
+    background:var(--primary);color:#fff;font-size:12px;font-weight:600;cursor:pointer;border:none;
+    box-shadow:var(--shadow-sm);white-space:nowrap;
+  }
+  .btn-new:hover{background:var(--primary-h)}
+
+  /* 分组页签 */
+  .gtabs{display:flex;align-items:center;gap:6px;overflow-x:auto;padding-bottom:1px;scrollbar-width:none}
+  .gtabs::-webkit-scrollbar{display:none}
+  .gtab{
+    flex:0 0 auto;padding:3px 9px;border-radius:6px;font-size:11px;color:var(--g500);
+    background:var(--g100);cursor:pointer;white-space:nowrap;
+  }
+  .gtab:hover{background:var(--g200)}
+  .gtab.on{background:#111827;color:#fff;font-weight:600}
+  .gtab .nop{opacity:.65;margin-left:3px}
+
+  /* 筛选行 */
+  .frow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .btn-f{
+    height:32px;display:inline-flex;align-items:center;gap:6px;padding:0 8px;border-radius:6px;
+    border:1px solid var(--g200);background:#fff;color:var(--g500);font-size:11px;cursor:pointer;
+  }
+  .btn-f:hover{background:var(--g50)}
+  .btn-f.on{border-color:#c7d2fe;background:#eef2ff;color:var(--indigo700)}
+  .btn-f .pb{width:6px;height:6px;border-radius:50%;background:var(--g300)}
+  .btn-f.on .pb{background:#6366f1}
+  .btn-f.chip-amber{border-color:var(--amber200);background:var(--amber50);color:var(--amber700)}
+  .sel{
+    height:32px;border-radius:6px;border:1px solid var(--g200);background:#fff;padding:0 6px;
+    font-size:11px;color:var(--g600);box-shadow:var(--shadow-sm);outline:none;
+  }
+  .fcount{margin-left:auto;font-size:10px;color:var(--g400);white-space:nowrap}
+
+  /* ★ 新增：待确认变更提示条 */
+  .chg-banner{
+    display:flex;align-items:flex-start;gap:8px;margin:0 14px 0;padding:8px 10px;border-radius:7px;
+    background:var(--violet50);border:1px solid var(--violet200);cursor:pointer;transition:.15s;
+  }
+  .chg-banner:hover{background:#f0ebff;border-color:#c4b5fd}
+  .chg-banner .di{width:15px;height:15px;flex:0 0 15px;margin-top:1px;color:var(--violet600)}
+  .chg-banner .tx{font-size:11px;line-height:1.45;color:var(--violet700)}
+  .chg-banner .tx b{font-weight:800}
+  .chg-banner .go{margin-left:auto;font-size:10.5px;font-weight:700;color:var(--violet700);white-space:nowrap;align-self:center}
+
+  /* 服务卡片列表 */
+  .slist{flex:1;overflow-y:auto;padding:10px 0 0}
+  .scard{
+    position:relative;border-left:4px solid transparent;padding:12px 14px;cursor:pointer;
+    border-top:1px solid #f9fafb;transition:background .14s;
+  }
+  .scard:first-child{border-top:none}
+  .scard:hover{background:var(--g50)}
+  .scard.on{border-left-color:var(--primary);background:var(--primary-10);box-shadow:inset 0 0 0 1px rgba(22,119,255,.25)}
+  .scard.on:hover{background:rgba(22,119,255,.15)}
+  .scard .top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .scard .nm{font-size:13.5px;font-weight:700;color:var(--g900);truncate;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .scard.on .nm{color:var(--primary)}
+  .scard .nmrow{display:flex;align-items:center;gap:6px;min-width:0}
+  .gpill{
+    flex:0 0 auto;border:1px solid var(--violet100);background:var(--violet50);color:var(--violet700);
+    border-radius:4px;padding:1px 6px;font-size:9px;font-weight:600;
+  }
+  .gpill.empty{border-style:dashed;border-color:var(--g300);background:transparent;color:var(--g400)}
+  .scard .right{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--g300)}
+  .dot.on{background:var(--emerald500)}
+  .sw{width:30px;height:17px;border-radius:999px;background:var(--g300);position:relative;cursor:pointer;transition:.16s;flex:0 0 auto}
+  .sw.on{background:var(--primary)}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff;transition:.16s;box-shadow:var(--shadow-sm)}
+  .sw.on::after{left:15px}
+  .scard .more{color:var(--g400);cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
+  .scard .more:hover{color:var(--g700)}
+  .scard .sig{
+    display:inline-flex;border:1px solid var(--indigo100);background:var(--indigo50);color:var(--indigo700);
+    border-radius:3px;padding:1px 5px;font-size:9px;font-weight:600;margin-top:4px;
+  }
+  .scard .rmk{margin:4px 0 0;font-size:11px;color:var(--g500);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .scard .url{margin:5px 0 0;font-family:var(--mono);font-size:10px;color:var(--g400);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* 指标行（真实现有 + ★ 新增变更徽标） */
+  .metrics{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin-top:8px;font-size:10px}
+  .m-tool{background:var(--g100);color:var(--g500);border-radius:4px;padding:1px 6px}
+  .m-pub{border-radius:4px;padding:1px 6px;font-weight:700;border:1px solid var(--amber200);background:var(--amber50);color:var(--amber700)}
+  .m-pub.ok{background:var(--green50);border-color:var(--green100);color:var(--green600)}
+  .m-pub.zero{background:var(--g100);border-color:transparent;color:var(--g400);font-weight:400}
+  .m-stale{color:var(--amber600);cursor:help}
+  .m-share{background:var(--emerald50);color:var(--emerald700);border-radius:4px;padding:1px 6px;font-weight:500}
+  /* ★ 新增 */
+  .m-chg{
+    display:inline-flex;align-items:center;gap:3px;border-radius:4px;padding:1px 6px;font-weight:700;
+    border:1px solid var(--violet200);background:var(--violet50);color:var(--violet700);cursor:pointer;
+  }
+  .m-chg:hover{background:var(--violet100);border-color:#c4b5fd}
+  .m-chg svg{width:9px;height:9px;stroke:currentColor;fill:none;stroke-width:2.5}
+  .m-time{margin-left:auto;color:var(--g400);font-size:10px;white-space:nowrap}
+  /* ★ 新增：探测状态异常行 */
+  .m-probe{color:var(--g400);font-size:10px;display:inline-flex;align-items:center;gap:3px}
+  .m-probe.bad{color:var(--red600)}
+  .m-probe.needs{color:var(--violet600)}
+
+  /* 严重度 / 通用小徽章 */
+  .chip{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;font-weight:700;border-radius:999px;padding:1px 7px;border:1px solid transparent;white-space:nowrap}
+  .chip.ok{background:var(--green50);color:var(--green700);border-color:var(--green100)}
+  .chip.warn{background:var(--amber50);color:var(--amber700);border-color:var(--amber200)}
+  .chip.bad{background:var(--red50);color:var(--red700);border-color:var(--red200)}
+
+  /* ───────── ★ 新增：全局「定义变更」页签 ───────── */
+  .ctab{flex:1;min-height:0;display:none;flex-direction:column;gap:12px;overflow:hidden}
+  .ctab.on{display:flex}
+  .cstats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;flex:0 0 auto}
+  .cstat{
+    background:#fff;border:1px solid var(--g200);border-radius:8px;padding:11px 14px;box-shadow:var(--shadow-sm);
+  }
+  .cstat .k{font-size:10px;color:var(--g500);display:flex;align-items:center;gap:5px}
+  .cstat .v{font-size:20px;font-weight:800;letter-spacing:-.4px;margin-top:2px;font-variant-numeric:tabular-nums}
+  .cstat .v.warn{color:var(--violet700)}
+  .cstat .v.bad{color:var(--red600)}
+  .cstat .d{font-size:10px;color:var(--g400);margin-top:1px}
+  .cbar{
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 12px;background:#fff;
+    border:1px solid var(--g200);border-radius:8px;box-shadow:var(--shadow-sm);flex:0 0 auto;
+  }
+  .cseg{display:inline-flex;border:1px solid var(--g200);border-radius:7px;padding:2px;background:var(--g100)}
+  .cseg button{
+    appearance:none;border:none;background:transparent;font-size:11.5px;font-weight:600;color:var(--g500);
+    padding:4px 10px;border-radius:5px;cursor:pointer;
+  }
+  .cseg button.on{background:#fff;color:var(--g900);box-shadow:var(--shadow-sm)}
+  .cseg button.on.v{background:var(--violet600);color:#fff;box-shadow:none}
+  .cbody{
+    flex:1;min-height:0;display:flex;flex-direction:column;background:#fff;border:1px solid var(--g200);
+    border-radius:8px;box-shadow:var(--shadow-sm);overflow:hidden;
+  }
+  .chead,.crow{
+    display:grid;
+    grid-template-columns:24px 178px 230px minmax(160px,1fr) 92px 84px 92px 76px;
+    gap:10px;align-items:center;
+  }
+  .chead{
+    padding:8px 14px;border-bottom:1px solid var(--g200);background:var(--g50);
+    font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--g500);
+  }
+  .crow{
+    padding:9px 14px;border-bottom:1px solid var(--g100);cursor:pointer;
+    font-size:12px;transition:background .14s;
+  }
+  .crow:hover{background:var(--g50)}
+  .crow.pending{background:rgba(245,243,255,.35)}
+  .crow.pending:hover{background:rgba(245,243,255,.7)}
+  .crow .cbx{width:14px;height:14px;border-radius:4px;border:1px solid var(--g300);background:#fff;cursor:pointer}
+  .crow .srv{font-family:var(--mono);font-size:11px;color:var(--g600);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .crow .ckt{font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--g900);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .crow .tm{font-size:10.5px;color:var(--g400);font-variant-numeric:tabular-nums}
+  .crow .who{font-size:10.5px;color:var(--g500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .crow-wrap{border-bottom:1px solid var(--g100)}
+  .crow-wrap.open .crow{border-bottom:none;background:rgba(245,243,255,.7)}
+  .cdiff{display:none;padding:0 14px 14px 50px;border-bottom:1px solid var(--g100);background:rgba(249,250,251,.6)}
+  .crow-wrap.open .cdiff{display:block}
+  .cfoot{
+    display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--g200);
+    background:var(--g50);font-size:11.5px;color:var(--g600);flex:0 0 auto;
+  }
+  .cfoot .acts{margin-left:auto;display:flex;gap:8px}
+
+  /* ───────── 右栏 ───────── */
+  .rhead{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-bottom:1px solid var(--g200);background:#f8fafc}
+  .rhead .l{flex:1;min-width:0}
+  .rhead h3{margin:0;font-size:13.5px;font-weight:700;color:#1e293b}
+  .rhead .sub{margin-top:2px;font-size:10px;color:#64748b}
+  .rhead .bind{
+    display:inline-flex;align-items:center;gap:7px;margin-top:4px;font-size:10px;cursor:pointer;
+    color:#64748b;border-radius:5px;padding:1px 4px;margin-left:-4px;
+  }
+  .rhead .bind:hover{background:#fff;box-shadow:var(--shadow-sm);color:var(--primary)}
+  .rhead .bind .em{color:var(--emerald600)}
+  .rhead .url2{display:flex;align-items:center;gap:4px;margin-top:4px;font-family:var(--mono);font-size:10px;color:var(--g400)}
+  .rhead .url2 svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:1.8;flex:0 0 12px}
+  .rhead .url2 span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .iconbar{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .ibtn{
+    position:relative;width:32px;height:32px;border-radius:8px;border:1px solid var(--g200);background:#fff;
+    display:grid;place-items:center;color:#64748b;cursor:pointer;box-shadow:var(--shadow-sm);transition:.15s;
+  }
+  .ibtn:hover{border-color:rgba(22,119,255,.3);background:rgba(22,119,255,.05);color:var(--primary)}
+  .ibtn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+  /* ★ 新增：变更历史按钮 */
+  .ibtn.chg{border-color:var(--violet200);background:var(--violet50);color:var(--violet700)}
+  .ibtn.chg:hover{border-color:#c4b5fd;background:var(--violet100);color:var(--violet700)}
+  .ibtn .cb{
+    position:absolute;right:-6px;top:-6px;min-width:16px;height:16px;border-radius:999px;background:var(--violet600);
+    color:#fff;font-size:9px;font-weight:800;display:grid;place-items:center;padding:0 4px;box-shadow:var(--shadow-sm);
+  }
+  .ibtn.stale{border-color:var(--amber200);background:rgba(255,251,235,.6);color:var(--amber600)}
+  .ibtn .ab{
+    position:absolute;right:-6px;top:-6px;min-width:16px;height:16px;border-radius:999px;background:var(--amber500);
+    color:#fff;font-size:9px;font-weight:800;display:grid;place-items:center;padding:0 4px;
+  }
+
+  /* ★ 新增：右栏顶部变更提示条（该服务有 pending 时） */
+  .rchg{
+    display:flex;align-items:center;gap:9px;padding:9px 16px;background:linear-gradient(90deg,var(--violet50),#fff);
+    border-bottom:1px solid var(--violet100);font-size:11.5px;color:var(--violet700);
+  }
+  .rchg .di{width:15px;height:15px;flex:0 0 15px;color:var(--violet600)}
+  .rchg b{font-weight:800}
+  .rchg .acts{margin-left:auto;display:flex;gap:7px}
+  .btn-xs{
+    height:24px;display:inline-flex;align-items:center;gap:4px;padding:0 9px;border-radius:6px;border:1px solid var(--g200);
+    background:#fff;color:var(--g600);font-size:11px;font-weight:600;cursor:pointer;
+  }
+  .btn-xs:hover{background:var(--g50)}
+  .btn-xs.pri{background:var(--violet600);border-color:var(--violet600);color:#fff}
+  .btn-xs.pri:hover{background:var(--violet700)}
+
+  .tools{flex:1;overflow-y:auto;padding:12px 16px}
+  .tool{
+    display:flex;gap:12px;padding:12px;border-radius:8px;border:1px solid var(--g100);
+    background:rgba(249,250,251,.3);margin-bottom:12px;transition:.15s;
+  }
+  .tool:hover{border-color:rgba(22,119,255,.3)}
+  .tool.chg-on{border-color:var(--violet200);background:rgba(245,243,255,.45)}
+  .tool .cbx{width:14px;height:14px;border-radius:4px;border:1px solid var(--g300);margin-top:3px;flex:0 0 14px;background:#fff;cursor:pointer}
+  .tool .body{flex:1;min-width:0}
+  .tool .nameline{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:4px}
+  .tool .tname{font-size:13px;font-weight:700;color:var(--g900);word-break:break-all}
+  .tb{border-radius:3px;padding:1px 6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:-.02em;border:1px solid transparent}
+  .tb.pub{border-color:var(--green100);background:var(--green50);color:var(--green600)}
+  .tb.wait{border-color:var(--g200);background:var(--g100);color:var(--g400)}
+  .tb.gone{border-color:var(--amber100);background:var(--amber50);color:var(--amber600)}
+  .tb.used{background:#dbeafe;color:#1d4ed8;font-weight:500;display:inline-flex;align-items:center;gap:2px}
+  /* ★ 新增 */
+  .tb.chg{border-color:var(--violet200);background:var(--violet50);color:var(--violet700);cursor:pointer;display:inline-flex;align-items:center;gap:3px}
+  .tb.chg:hover{background:var(--violet100)}
+  .tb.chg svg{width:9px;height:9px;stroke:currentColor;fill:none;stroke-width:2.5}
+  .tool .desc{margin:0;font-size:12px;line-height:1.55;color:var(--g600);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .tool .params{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:8px}
+  .pbtn{
+    display:inline-flex;align-items:center;gap:3px;border:1px solid #c7d2fe;background:var(--indigo50);
+    color:var(--indigo600);border-radius:3px;padding:1px 6px;font-size:9px;font-weight:500;cursor:pointer;margin-right:4px;
+  }
+  .pbtn:hover{background:var(--indigo100)}
+  .pcode{
+    font-family:var(--mono);font-size:9px;background:var(--g100);color:var(--g500);
+    border-radius:3px;padding:1px 5px;
+  }
+  .pcode.newp{background:var(--violet50);color:var(--violet700);box-shadow:inset 0 0 0 1px var(--violet200)}
+  .pcode.reqp{background:var(--red50);color:var(--red700);font-weight:700;box-shadow:inset 0 0 0 1px var(--red200)}
+  .pcode.rmp{background:var(--red50);color:var(--red700);text-decoration:line-through}
+
+  /* 空状态（未选服务时，真实现有「值得处理」chips + ★ 新增一项） */
+  .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;color:var(--g400)}
+  .empty .big{margin-bottom:12px;opacity:.2}
+  .empty .big svg{width:40px;height:40px;stroke:currentColor;fill:none;stroke-width:1.5}
+  .empty p{margin:0;font-size:13px}
+  .todo{margin-top:22px;width:100%;max-width:420px}
+  .todo .lbl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--g400);margin-bottom:6px}
+  .todo .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .tchip{
+    display:inline-flex;align-items:center;gap:6px;border:1px solid var(--g200);background:#fff;color:var(--g600);
+    border-radius:8px;padding:4px 8px;font-size:11px;cursor:pointer;
+  }
+  .tchip:hover{background:var(--g50)}
+  .tchip.new{border-color:var(--violet200);background:var(--violet50);color:var(--violet700)}
+  .tchip.new:hover{background:var(--violet100)}
+  .tchip b{font-weight:800;font-variant-numeric:tabular-nums}
+
+  /* ───────── 抽屉：变更历史 ★ 新增 ───────── */
+  .mask{
+    position:fixed;inset:0;background:rgba(15,23,42,.45);backdrop-filter:blur(2px);z-index:90;
+    opacity:0;pointer-events:none;transition:.22s;
+  }
+  .mask.on{opacity:1;pointer-events:auto}
+  .drawer{
+    position:fixed;top:0;right:0;bottom:0;width:min(620px,94vw);background:#fff;z-index:95;
+    box-shadow:var(--shadow-xl);display:flex;flex-direction:column;
+    transform:translateX(100%);transition:transform .26s cubic-bezier(.32,.72,0,1);
+  }
+  .drawer.on{transform:translateX(0)}
+  .dh{padding:16px 20px;border-bottom:1px solid var(--g200);display:flex;align-items:flex-start;gap:12px}
+  .dh .ic{
+    width:34px;height:34px;border-radius:10px;background:var(--violet50);color:var(--violet600);
+    display:grid;place-items:center;flex:0 0 34px;border:1px solid var(--violet100);
+  }
+  .dh .ic svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+  .dh h2{margin:0;font-size:15px;font-weight:700}
+  .dh .s{margin-top:2px;font-size:11.5px;color:var(--g500)}
+  .dh .s code{font-family:var(--mono);font-size:11px;color:var(--g700)}
+  .dh .x{margin-left:auto;color:var(--g400);cursor:pointer;font-size:18px;line-height:1;padding:4px}
+  .dh .x:hover{color:var(--g700)}
+  .dsum{
+    display:flex;gap:16px;padding:10px 20px;border-bottom:1px solid var(--g100);background:var(--g50);font-size:11px;color:var(--g500);
+  }
+  .dsum b{color:var(--g800);font-weight:700}
+  .dsum .v{color:var(--violet700)}
+  .dbody{flex:1;overflow-y:auto;padding:16px 20px 8px}
+  .batch{margin-bottom:18px}
+  .batch-hd{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .batch-hd .t{font-size:11px;font-weight:700;color:var(--g700);font-variant-numeric:tabular-nums}
+  .batch-hd .src{
+    font-size:9.5px;font-weight:600;border-radius:999px;padding:1px 7px;background:var(--g100);color:var(--g600);
+  }
+  .batch-hd .src.night{background:#e0e7ff;color:#3730a3}
+  .batch-hd .src.page{background:#dbeafe;color:#1d4ed8}
+  .batch-hd .src.hot{background:#dcfce7;color:#15803d}
+  .batch-hd .ln{flex:1;height:1px;background:var(--g100)}
+
+  .item{border:1px solid var(--g200);border-radius:9px;margin-bottom:8px;overflow:hidden;background:#fff}
+  .item.pending{border-color:var(--violet200)}
+  .item-hd{display:flex;align-items:center;gap:9px;padding:10px 12px;cursor:pointer}
+  .item-hd .tw{width:10px;font-size:9px;color:var(--g400);transition:.16s;flex:0 0 10px}
+  .item.open .item-hd .tw{transform:rotate(90deg)}
+  .item-hd .tn{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--g900)}
+  .item-hd .kind{font-size:9px;font-weight:700;border-radius:3px;padding:1px 6px;border:1px solid var(--g200);background:var(--g100);color:var(--g500)}
+  .item-hd .kind.v{border-color:var(--violet200);background:var(--violet50);color:var(--violet700)}
+  .item-hd .tl{font-size:11.5px;color:var(--g600);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .st-pill{font-size:9px;font-weight:700;border-radius:999px;padding:1px 7px;white-space:nowrap}
+  .st-pill.pending{background:var(--violet50);color:var(--violet700);border:1px solid var(--violet200)}
+  .st-pill.applied{background:var(--green50);color:var(--green700);border:1px solid var(--green100)}
+  .st-pill.dismissed{background:var(--g100);color:var(--g500);border:1px solid var(--g200)}
+  .item-bd{display:none;padding:0 12px 12px 30px;border-top:1px dashed var(--g100)}
+  .item.open .item-bd{display:block}
+  .item .cbx{margin-top:1px}
+
+  .dbox{margin-top:9px;padding:9px 11px;border-radius:7px;background:var(--g50);border:1px solid var(--g200);font-size:11.5px;line-height:1.7}
+  .dbox .l{font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--g400);display:block;margin-bottom:2px}
+  .dbox.old .tx{color:var(--g500);text-decoration:line-through rgba(220,38,38,.4)}
+  .dbox.new{background:#fff;border-color:var(--violet200)}
+  .dbox.new .tx{color:var(--g900);background:#fdf9ff;border-radius:3px;padding:0 2px;box-shadow:0 0 0 1px var(--violet100) inset}
+
+  table.pd{width:100%;border-collapse:collapse;margin-top:9px;font-size:11px}
+  table.pd th{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--g400);font-weight:700;padding:5px 7px;background:var(--g50);border-bottom:1px solid var(--g200)}
+  table.pd td{padding:6px 7px;border-bottom:1px solid var(--g100);vertical-align:top}
+  table.pd td.n{font-family:var(--mono);font-weight:700;white-space:nowrap;color:var(--g800)}
+  .ov{background:var(--red50);color:var(--red700);border-radius:3px;padding:0 4px;font-family:var(--mono)}
+  .nv{background:var(--green50);color:var(--green700);border-radius:3px;padding:0 4px;font-family:var(--mono)}
+  .na{color:var(--g300)}
+
+  .meta-line{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:8px;font-size:10.5px;color:var(--g400)}
+  .meta-line .aff{color:var(--red600);font-weight:600}
+  .note-inline{
+    margin-top:9px;padding:8px 10px;border-radius:7px;font-size:11px;line-height:1.6;
+    background:var(--red50);border:1px solid var(--red200);color:var(--red700);
+  }
+  .note-inline.info{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+
+  .dfoot{
+    padding:12px 20px;border-top:1px solid var(--g200);background:var(--g50);
+    display:flex;align-items:center;gap:10px;
+  }
+  .dfoot .cnt{font-size:11.5px;color:var(--g600)}
+  .dfoot .cnt b{color:var(--g900)}
+  .dfoot .acts{margin-left:auto;display:flex;gap:8px}
+  .btn{
+    height:32px;display:inline-flex;align-items:center;gap:6px;padding:0 13px;border-radius:7px;
+    border:1px solid var(--g200);background:#fff;color:var(--g700);font-size:12px;font-weight:600;cursor:pointer;
+  }
+  .btn:hover{background:var(--g50)}
+  .btn.pri{background:var(--violet600);border-color:var(--violet600);color:#fff}
+  .btn.pri:hover{background:var(--violet700)}
+  .btn.pri:disabled{opacity:.45;cursor:not-allowed}
+
+  /* ───────── 通知中心浮层 ───────── */
+  .notify{
+    position:fixed;top:56px;right:24px;width:400px;background:#fff;border-radius:12px;z-index:100;
+    box-shadow:var(--shadow-xl);border:1px solid var(--g200);overflow:hidden;
+    opacity:0;pointer-events:none;transform:translateY(-8px);transition:.2s;
+  }
+  .notify.on{opacity:1;pointer-events:auto;transform:translateY(0)}
+  .notify .nh{padding:11px 14px;border-bottom:1px solid var(--g100);display:flex;align-items:center;font-size:12.5px;font-weight:700}
+  .notify .nh span{margin-left:auto;font-size:11px;font-weight:500;color:var(--primary);cursor:pointer}
+  .notify .ni{display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid var(--g50);cursor:pointer;background:#fbfaff}
+  .notify .ni:hover{background:#f6f4ff}
+  .notify .ni .di{
+    width:28px;height:28px;border-radius:8px;background:var(--violet50);color:var(--violet600);
+    display:grid;place-items:center;flex:0 0 28px;border:1px solid var(--violet100);
+  }
+  .notify .ni .di svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2}
+  .notify .ni .tt{font-size:12.5px;font-weight:700;color:var(--g900)}
+  .notify .ni .dd{font-size:11.5px;color:var(--g600);margin-top:2px;line-height:1.5}
+  .notify .ni .tm{font-size:10px;color:var(--g400);margin-top:4px}
+  .notify .ni .cta{font-size:11px;font-weight:700;color:var(--violet700);margin-top:5px}
+
+  /* ───────── 说明页（时机 / 取舍 / 表结构） ───────── */
+  .doc{position:fixed;inset:0;background:#eef2f7;z-index:110;overflow-y:auto;display:none}
+  .doc.on{display:block}
+  .doc .wrap{max-width:1180px;margin:0 auto;padding:26px 24px 80px}
+  .doc .hero{
+    background:linear-gradient(135deg,#0f172a,#1e3a5f 55%,#1d4ed8);border-radius:14px;padding:26px 28px;color:#fff;
+    position:relative;overflow:hidden;box-shadow:var(--shadow);
+  }
+  .doc .hero::after{content:"";position:absolute;right:-80px;top:-80px;width:300px;height:300px;border-radius:50%;background:radial-gradient(circle,rgba(96,165,250,.28),transparent 68%)}
+  .doc .hero h1{margin:0 0 7px;font-size:22px}
+  .doc .hero p{margin:0;font-size:13px;color:#c7d7ee;max-width:900px;line-height:1.75}
+  .doc .hero code{background:rgba(255,255,255,.14);padding:1px 6px;border-radius:5px;font-family:var(--mono);font-size:12px;color:#dbeafe}
+  .doc .hero .x{position:absolute;right:18px;top:16px;cursor:pointer;color:#93b4dd;font-size:20px;z-index:2}
+  .doc h3{margin:26px 0 10px;font-size:15px;font-weight:800;display:flex;align-items:center;gap:9px}
+  .doc h3 .ln{flex:1;height:1px;background:#dbe1ea}
+  .doc .card{background:#fff;border:1px solid var(--g200);border-radius:11px;padding:16px 18px;box-shadow:var(--shadow-sm)}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:13px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+  .tcard{background:#fff;border:1px solid var(--g200);border-radius:11px;padding:15px 16px;box-shadow:var(--shadow-sm)}
+  .tcard .hd{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  .tcard .hd .n{width:21px;height:21px;border-radius:6px;background:#111827;color:#fff;display:grid;place-items:center;font-size:11px;font-weight:800;flex:0 0 21px}
+  .tcard .hd b{font-size:13px}
+  .tcard p{margin:0 0 8px;font-size:12px;color:var(--g600);line-height:1.65}
+  .tcard ul{margin:0;padding-left:15px;font-size:11.5px;color:var(--g600);line-height:1.8}
+  .tcard li b{color:var(--g800)}
+  table.cmp{width:100%;border-collapse:collapse;font-size:12px;background:#fff;border-radius:11px;overflow:hidden;box-shadow:var(--shadow-sm)}
+  table.cmp th{text-align:left;padding:9px 12px;background:var(--g50);border-bottom:1px solid var(--g200);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--g500)}
+  table.cmp td{padding:10px 12px;border-bottom:1px solid var(--g100);vertical-align:top;line-height:1.65}
+  table.cmp tr:last-child td{border-bottom:none}
+  table.cmp code{font-family:var(--mono);font-size:11px;background:var(--g100);padding:0 4px;border-radius:3px}
+  .yes{color:var(--green700);font-weight:700}
+  .no{color:var(--red600);font-weight:700}
+  pre{background:#0f172a;color:#d7e2f0;border-radius:10px;padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:11.5px;line-height:1.8;margin:0}
+  pre .c{color:#6f8499}
+  pre .k{color:#7dd3fc}
+  pre .s{color:#86efac}
+  pre .t{color:#fcd34d}
+  .pill{display:inline-flex;align-items:center;font-size:9.5px;font-weight:700;border-radius:999px;padding:1px 8px}
+  .pill.v{background:var(--violet50);color:var(--violet700);border:1px solid var(--violet200)}
+  .pill.a{background:var(--amber50);color:var(--amber700);border:1px solid var(--amber200)}
+
+  /* ───────── 视图切换器（原型专用） ───────── */
+  .switcher{
+    position:fixed;left:18px;bottom:18px;z-index:120;display:flex;align-items:center;gap:3px;
+    background:#0f172a;border-radius:11px;padding:4px;box-shadow:var(--shadow-xl);
+  }
+  .switcher .lb{font-size:10px;color:#64748b;padding:0 7px;font-weight:600}
+  .switcher button{
+    appearance:none;border:none;background:transparent;color:#94a3b8;font-size:11px;font-weight:600;
+    padding:6px 10px;border-radius:8px;cursor:pointer;transition:.15s;white-space:nowrap;
+  }
+  .switcher button:hover{background:rgba(255,255,255,.08);color:#e2e8f0}
+  .switcher button.on{background:#fff;color:#0f172a}
+
+  .toast{
+    position:fixed;left:50%;bottom:76px;transform:translate(-50%,14px);opacity:0;pointer-events:none;
+    background:#0f172a;color:#fff;padding:10px 17px;border-radius:10px;font-size:12.5px;z-index:130;
+    box-shadow:var(--shadow-xl);transition:.24s;max-width:80vw;
+  }
+  .toast.on{opacity:1;transform:translate(-50%,0)}
+
+  .no-anim *{transition:none!important;animation:none!important}
+
+  @media (max-width:1100px){
+    .col-left{width:320px;flex:0 0 320px}
+    .grid3,.grid2{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- 左侧全局导航（简化） -->
+  <aside class="rail">
+    <div class="logo">南</div>
+    <div class="ri" title="工作台"><svg viewBox="0 0 24 24"><path d="M3 12l9-9 9 9"/><path d="M5 10v10h14V10"/></svg></div>
+    <div class="ri" title="智能体"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a6 6 0 0112 0v2"/></svg></div>
+    <div class="ri on" title="MCP 工具集"><svg viewBox="0 0 24 24"><path d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg></div>
+    <div class="ri" title="技能"><svg viewBox="0 0 24 24"><path d="M12 2l3 6 6 1-4.5 4.3L18 20l-6-3-6 3 1.5-6.7L3 9l6-1z"/></svg></div>
+    <div class="ri" title="知识库"><svg viewBox="0 0 24 24"><path d="M4 5a2 2 0 012-2h12a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M8 7h8M8 11h8"/></svg></div>
+    <div style="margin-top:auto" class="ri" title="通知" onclick="toggleNotify()"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 10-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg></div>
+  </aside>
+
+  <main class="main">
+    <!-- 页头 -->
+    <div class="ph">
+      <div class="row1">
+        <h1>MCP 工具集</h1>
+        <span class="qmark" title="MCP 设计规范与全流程指引">?</span>
+        <span class="badge-mcp">Model Context Protocol</span>
+      </div>
+      <div class="row2">远端 MCP 服务的接入、工具发现与发布。工具发布后智能体才能在版本配置里勾选、问答时调用。</div>
+    </div>
+
+    <!-- scope tabs -->
+    <div class="scope-tabs">
+      <div class="st on blue" id="st-global" onclick="switchScope('global')">
+        <svg viewBox="0 0 24 24"><path d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"/></svg>
+        平台 MCP <span class="cnt">7</span>
+      </div>
+      <div class="st green" id="st-personal" onclick="switchScope('personal')">
+        <svg viewBox="0 0 24 24"><path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+        我的 MCP <span class="cnt">3</span>
+      </div>
+      <div class="st" id="st-audit" onclick="switchScope('audit')">
+        <svg viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        审计日志
+      </div>
+      <!-- ★ 新增：全局「定义变更」页签 -->
+      <div class="st violet" id="st-changes" onclick="switchScope('changes')">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.2 2"/></svg>
+        定义变更 <span class="cnt warn" id="st-changes-cnt">5</span>
+      </div>
+    </div>
+
+    <!-- 流程指引横幅（真实现有） -->
+    <div class="guide">
+      <b>接入流程</b>
+      <div class="steps">
+        <span class="sp on">1 接入服务</span>
+        <span class="sp">2 发现工具</span>
+        <span class="sp">3 发布工具</span>
+        <span class="sp">4 智能体装配</span>
+        <span class="sp">5 调用与审计</span>
+      </div>
+      <span class="x" title="关闭">×</span>
+    </div>
+
+    <!-- 双栏 -->
+    <div class="reg" id="view-registry">
+      <!-- ═════════ 左栏：服务列表 ═════════ -->
+      <div class="col-left">
+        <div class="market">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8"><path d="M6 2l1.5 3h9L18 2"/><path d="M4 6h16l-1.5 12.5a2 2 0 01-2 1.5H7.5a2 2 0 01-2-1.5z"/></svg>
+          去魔搭发现更多 MCP 服务 <span class="arr">→</span>
+        </div>
+
+        <div class="lsearch">
+          <div class="srow">
+            <div class="sbox">
+              <span class="ic"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
+              <input placeholder="搜索服务或工具..." value="" />
+            </div>
+            <button class="btn-new">
+              <svg viewBox="0 0 24 24" style="width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2.2"><path d="M12 5v14M5 12h14"/></svg>
+              新建
+            </button>
+          </div>
+          <div class="gtabs">
+            <span class="gtab on">全部 <span class="nop">7</span></span>
+            <span class="gtab">业务系统 <span class="nop">2</span></span>
+            <span class="gtab">出行 <span class="nop">1</span></span>
+            <span class="gtab">数据 <span class="nop">1</span></span>
+            <span class="gtab">知识 <span class="nop">1</span></span>
+            <span class="gtab">财务 <span class="nop">1</span></span>
+            <span class="gtab">未分组 <span class="nop">1</span></span>
+          </div>
+          <div class="frow">
+            <button class="btn-f on"><span class="pb"></span>仅运行中</button>
+            <select class="sel">
+              <option>默认排序</option>
+              <option>最近同步</option>
+              <option>名称</option>
+              <option>工具数</option>
+            </select>
+            <span class="fcount">7 / 7 个服务</span>
+          </div>
+        </div>
+
+        <!-- ★ 新增：待确认变更提示条（进页面探测后发现变更时出现） -->
+        <div style="padding:10px 14px 0">
+          <div class="chg-banner" onclick="openDrawer('crm')">
+            <svg class="di" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2.4 17a2 2 0 001.7 3h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>
+            <div class="tx">
+              2 个服务的工具定义有更新，共 <b>5 项</b>待确认<br />
+              <span style="opacity:.85">其中 2 项影响已发布工具（3 个智能体版本）</span>
+            </div>
+            <span class="go">查看 →</span>
+          </div>
+        </div>
+
+        <!-- 服务卡片列表 -->
+        <div class="slist" id="slist"></div>
+      </div>
+
+      <!-- ═════════ 右栏：工具列表 ═════════ -->
+      <div class="col-right" id="right"></div>
+    </div>
+
+    <!-- ★ 新增：全局「定义变更」页签 —— 新组件 McpDefinitionChangesTab.vue -->
+    <div class="ctab" id="view-changes">
+      <div class="cstats">
+        <div class="cstat">
+          <div class="k">待确认变更</div>
+          <div class="v warn" id="cs-pending">5</div>
+          <div class="d" id="cs-pending-d">来自 2 个服务</div>
+        </div>
+        <div class="cstat">
+          <div class="k">影响已发布工具</div>
+          <div class="v bad" id="cs-affect">2</div>
+          <div class="d">涉及 3 个智能体版本</div>
+        </div>
+        <div class="cstat">
+          <div class="k">近 7 天已应用</div>
+          <div class="v" id="cs-applied">1</div>
+          <div class="d">最近一次 11-18 10:22</div>
+        </div>
+        <div class="cstat">
+          <div class="k">探测覆盖</div>
+          <div class="v">6 / 7</div>
+          <div class="d">1 个需用户签名 · 1 个已禁用跳过</div>
+        </div>
+      </div>
+
+      <div class="cbar">
+        <div class="cseg" id="seg-status">
+          <button class="on v" data-s="pending" onclick="setCStatus('pending')">待确认 <span id="sg-pending">5</span></button>
+          <button data-s="applied" onclick="setCStatus('applied')">已应用 <span id="sg-applied">1</span></button>
+          <button data-s="dismissed" onclick="setCStatus('dismissed')">已忽略 <span id="sg-dismissed">1</span></button>
+          <button data-s="all" onclick="setCStatus('all')">全部</button>
+        </div>
+        <select class="sel" id="f-server" onchange="renderChanges()">
+          <option value="">全部服务</option>
+        </select>
+        <select class="sel" id="f-kind" onchange="renderChanges()">
+          <option value="">全部类型</option>
+          <option value="description">描述变更</option>
+          <option value="param">参数变更</option>
+          <option value="tool">工具增删</option>
+        </select>
+        <select class="sel">
+          <option>近 7 天</option>
+          <option>近 30 天</option>
+          <option>全部时间</option>
+        </select>
+        <span class="fcount" id="c-count">5 条记录</span>
+      </div>
+
+      <div class="cbody">
+        <div class="chead">
+          <span></span>
+          <span>服务</span>
+          <span>工具 / 类型</span>
+          <span>变更摘要</span>
+          <span>严重度</span>
+          <span>状态</span>
+          <span>探测时间</span>
+          <span>处理人</span>
+        </div>
+        <div style="flex:1;min-height:0;overflow-y:auto" id="crows"></div>
+        <div class="cfoot">
+          <span id="c-sel">未勾选任何变更</span>
+          <div class="acts">
+            <button class="btn" style="height:28px;font-size:11.5px" onclick="dismissC()">忽略所选</button>
+            <button class="btn pri" style="height:28px;font-size:11.5px" id="c-apply" onclick="applyC()" disabled>应用所选</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ═════════ 抽屉：工具定义变更历史（★ 新增组件） ═════════ -->
+<div class="mask" id="mask" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div class="dh">
+    <div class="ic">
+      <svg viewBox="0 0 24 24"><path d="M12 8v4l3 3"/><path d="M3.05 11a9 9 0 1118 0 9 9 0 01-18 0z"/></svg>
+    </div>
+    <div>
+      <h2>工具定义变更</h2>
+      <div class="s">服务 <code id="d-srv">mcp-crm-hcp</code> · 自动探测发现远端 <code>tools/list</code> 与本地的差异</div>
+    </div>
+    <div class="x" onclick="closeDrawer()">×</div>
+  </div>
+  <div class="dsum">
+    <span>待确认 <b class="v" id="s-pending">3</b> 项</span>
+    <span>已应用 <b id="s-applied">1</b> 项</span>
+    <span>已忽略 <b id="s-dismissed">0</b> 项</span>
+    <span style="margin-left:auto">最近探测 <b id="s-probe">11-25 04:31</b></span>
+  </div>
+  <div class="dbody" id="dbody"></div>
+  <div class="dfoot">
+    <div class="cnt" id="d-cnt">未勾选任何变更</div>
+    <div class="acts">
+      <button class="btn" onclick="dismissSel()">忽略所选</button>
+      <button class="btn pri" id="d-apply" onclick="applySel()" disabled>应用所选</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════ 通知中心浮层 ═════════ -->
+<div class="notify" id="notify">
+  <div class="nh">通知中心 <span onclick="toggleNotify()">收起</span></div>
+  <div class="ni" onclick="toggleNotify();openDrawer('crm')">
+    <div class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2.4 17a2 2 0 001.7 3h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg></div>
+    <div>
+      <div class="tt">2 个 MCP 服务的工具定义有更新</div>
+      <div class="dd">夜间巡检（04:30）发现 mcp-crm-hcp 3 项、mcp-12306-train 2 项变更待确认，其中 2 项影响已发布工具。</div>
+      <div class="tm">今天 04:31 · 系统巡检</div>
+      <div class="cta">查看变更明细 →</div>
+    </div>
+  </div>
+  <div class="ni" style="background:#fff">
+    <div class="di" style="background:var(--amber50);border-color:var(--amber200);color:var(--amber700)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2"><path d="M12 9v4M12 17h.01M12 3a9 9 0 100 18 9 9 0 000-18z"/></svg></div>
+    <div>
+      <div class="tt">mcp-oa-approval 未能自动探测</div>
+      <div class="dd">该服务已启用用户身份签名，后台没有操作者身份，tools/list 会被远端拒绝。需要手动同步或在页面内探测。</div>
+      <div class="tm">今天 04:30</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════ 说明页（时机 / 表结构 / 取舍） ═════════ -->
+<div class="doc" id="doc">
+  <div class="wrap">
+    <div class="hero">
+      <div class="x" onclick="closeDoc()">×</div>
+      <h1>这套东西落在哪、怎么跑</h1>
+      <p>
+        现状：刷新只能手点「同步工具」，而 <code>sync_tools()</code> 是<b>整批覆盖</b>——远端改了描述、加了参数、删了参数，
+        点一次就被静默吃掉，库里只剩一个 <code>last_sync_at</code>。本方案把「探测」和「应用」拆开：
+        <b>自动只负责发现差异并留痕，应用仍由人确认</b>。
+      </p>
+    </div>
+
+    <h3>页面插入点（都在现有组件里，不新增一级导航）<span class="ln"></span></h3>
+    <table class="cmp">
+      <thead><tr><th style="width:220px">位置</th><th style="width:200px">改哪个文件</th><th>加了什么</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>左栏服务卡片 · 指标行</b></td>
+          <td><code>McpServerRegistry.vue</code> 指标行（现有「N 工具 / 已发布 / 远端已删除 / 已分享 / 相对时间」）</td>
+          <td>插入紫色 <span class="pill v">3 项定义变更</span> 徽标；相对时间从「最近同步」扩成「最近检查」，hover 显示同步与探测两个时间</td>
+        </tr>
+        <tr>
+          <td><b>左栏筛选区 · 待办 chip</b></td>
+          <td><code>McpTodoKey</code> 加一个 key（现有 <code>offline / unpublished / stale-tools / stale-sync</code>）</td>
+          <td>右栏空状态「值得处理」多一项「定义有变更 2」，点一下左栏就只剩有变更的服务 —— 零新组件</td>
+        </tr>
+        <tr>
+          <td><b>左栏顶部 · 提示条</b></td>
+          <td>搜索区下方，与 <code>McpFlowGuideBanner</code> 同一套视觉</td>
+          <td>进页面惰性探测后发现变更时出现一次，可关闭；点击直接开抽屉</td>
+        </tr>
+        <tr>
+          <td><b>右栏头部 · 图标工具栏</b></td>
+          <td>现有「出站日志 / 重新同步 / 清理远端删除」三个 32×32 图标按钮</td>
+          <td>插入第 4 个紫色「变更历史」按钮，右上角数字角标＝待确认条数</td>
+        </tr>
+        <tr>
+          <td><b>右栏顶部 · 服务级提示条</b></td>
+          <td>工具列表上方，批量操作条同层</td>
+          <td>该服务有 pending 时出现：「该服务 3 项定义变更待确认」+ 两个快捷动作</td>
+        </tr>
+        <tr>
+          <td><b>工具行 · 徽章区</b></td>
+          <td>现有 <code>远端已删除 / 已发布 / 待发布</code> 三态旁</td>
+          <td>追加 <span class="pill v">定义已变更</span>（可点，直接跳到抽屉里那一条并展开 diff）</td>
+        </tr>
+        <tr>
+          <td><b>抽屉 · 变更历史</b></td>
+          <td>新组件 <code>McpDefinitionChangesDrawer.vue</code></td>
+          <td>按探测批次分组，列出全部历史（待确认 / 已应用 / 已忽略），待确认项可勾选应用或忽略</td>
+        </tr>
+        <tr>
+          <td><b>顶部 · 「定义变更」页签</b></td>
+          <td><code>McpManagement.vue</code> 的 <code>activeScope</code> 加一个 <code>'changes'</code>；新组件 <code>McpDefinitionChangesTab.vue</code></td>
+          <td>跟在「平台 MCP / 我的 MCP / 审计日志」后面，管理员可见，角标＝待确认总数。跨服务平铺视图 + 状态/服务/类型/时间筛选 + 批量应用</td>
+        </tr>
+        <tr>
+          <td><b>通知中心</b></td>
+          <td><code>portal_notifications</code>（现成），只发管理员</td>
+          <td>夜间巡检发现变更后发一条，深链到抽屉</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>三种触发时机<span class="ln"></span></h3>
+    <div class="grid3">
+      <div class="tcard">
+        <div class="hd"><span class="n">1</span><b>每日 04:30 巡检</b></div>
+        <p>复用现有 APScheduler 常驻任务（已有 02:00 / 03:00 / 03:30 / 04:00 四条，错开）。</p>
+        <ul>
+          <li>范围：<b>只探已启用的公共服务</b>；个人服务、禁用服务都不探</li>
+          <li>并发 3、每服务抖动 0–90s、单服务 30s 超时</li>
+          <li>发现变更 → 写变更表 + 发管理员通知</li>
+          <li>只在开了 <code>TASK_SCHEDULER_ENABLED</code> 的那台跑</li>
+        </ul>
+      </div>
+      <div class="tcard">
+        <div class="hd"><span class="n">2</span><b>进页面惰性探测</b></div>
+        <p>保证看到的是新的，成本只跟「有多少服务过期」成正比。</p>
+        <ul>
+          <li>列表接口返回 <code>last_probe_at</code>，超过 <b>6 小时</b>的进待探队列</li>
+          <li>前端批量 <code>POST /servers/probe</code>，一次最多 10 个</li>
+          <li>不阻塞列表渲染，探测完只更新徽标</li>
+        </ul>
+      </div>
+      <div class="tcard">
+        <div class="hd"><span class="n">3</span><b>活跃会话热刷新</b></div>
+        <p>智能体正在用这个服务时连接是现成的，<code>tools/list</code> 几乎免费。</p>
+        <ul>
+          <li>触发点：<code>call_remote_tool</code> 成功后</li>
+          <li>条件：该服务 <code>last_probe_at</code> 超 <b>15 分钟</b></li>
+          <li><b>fire-and-forget</b>，不进调用链、不加延迟</li>
+          <li>Redis 去抖锁，防止并发下重复探</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>数据表：变更历史（按你的要求落表）<span class="ln"></span></h3>
+    <div class="grid2">
+      <div class="card">
+        <p style="margin:0 0 10px;font-size:12px;color:var(--g600)">新增一张表，只存「差异项」，不存全量工具快照。</p>
+        <pre><span class="k">CREATE TABLE</span> sys_mcp_tool_definition_changes (
+  id            VARCHAR(36)  <span class="k">PRIMARY KEY</span>,
+  batch_id      VARCHAR(36)  <span class="k">NOT NULL</span>,   <span class="c">-- 一次探测一批</span>
+  server_id     VARCHAR(36)  <span class="k">NOT NULL</span>,   <span class="c">-- FK → sys_mcp_servers CASCADE</span>
+  tool_name     VARCHAR(255) <span class="k">NOT NULL</span>,   <span class="c">-- 全名 server:tool</span>
+  change_kind   VARCHAR(32)  <span class="k">NOT NULL</span>,   <span class="c">-- 见下</span>
+  severity      VARCHAR(16)  <span class="k">NOT NULL</span>,   <span class="c">-- safe|notice|breaking</span>
+  before_value  TEXT,                    <span class="c">-- 仅变化部分的 JSON</span>
+  after_value   TEXT,
+  detected_at   DATETIME     <span class="k">NOT NULL</span>,
+  detected_by   VARCHAR(24)  <span class="k">NOT NULL</span>,   <span class="c">-- nightly|page|hot_call|manual</span>
+  status        VARCHAR(16)  <span class="k">NOT NULL</span>,   <span class="c">-- pending|applied|dismissed</span>
+  handled_at    DATETIME,
+  handled_by    INT,
+  <span class="k">INDEX</span> idx_srv_status (server_id, status),
+  <span class="k">INDEX</span> idx_detected (detected_at)
+);</pre>
+      </div>
+      <div class="card">
+        <p style="margin:0 0 10px;font-size:12px;color:var(--g600)"><code>change_kind</code> 取值与分级：</p>
+        <table class="cmp" style="box-shadow:none">
+          <tbody>
+            <tr><td style="width:190px"><code>tool_added</code> / <code>tool_removed</code></td><td><span class="pill a">notice</span> 复用现有「待发布 / 远端已删除」机制，只提示</td></tr>
+            <tr><td><code>description_changed</code></td><td><span class="pill v">safe</span> 描述文本变了</td></tr>
+            <tr><td><code>param_added_optional</code></td><td><span class="pill v">safe</span> 新增可选参数</td></tr>
+            <tr><td><code>param_removed</code></td><td><span class="pill a">breaking</span> 会让凭据槽 <code>arg:</code> 失效</td></tr>
+            <tr><td><code>param_required</code> / <code>param_type</code> / <code>param_enum</code></td><td><span class="pill a">breaking</span> 已绑定智能体可能调不通</td></tr>
+            <tr><td><code>annotations_changed</code></td><td><span class="pill a">notice</span> destructive 相关变化要标红</td></tr>
+          </tbody>
+        </table>
+        <p style="margin:12px 0 0;font-size:11.5px;color:var(--g600);line-height:1.7">
+          <b>两张现有表各加两列</b>：<code>sys_mcp_servers</code> 加 <code>last_probe_at / last_probe_status / probe_failure_count / last_probe_error</code>；
+          <code>sys_mcp_tool_cache</code> 加 <code>definition_hash</code>（描述+schema+annotations 的规范化 sha256）与 <code>definition_changed_at</code>。
+        </p>
+      </div>
+    </div>
+
+    <h3>为什么探测必须走独立只读路径<span class="ln"></span></h3>
+    <div class="card">
+      <p style="margin:0;font-size:12.5px;color:var(--g600);line-height:1.8">
+        现有 <code>sync_tools()</code> 一次调用会同时：覆盖 <code>tool_description</code> / <code>parameter_schema</code>、把远端没返回的工具标
+        <code>is_available=false</code>、下架已发布工具、删掉失效的凭据槽。探测如果复用它，「看一眼」就等于「应用」。
+        所以探测是另一条路径：拉 <code>tools/list</code> → 算 <code>definition_hash</code> → 跟库里比 → 只写变更表。
+        这样每天探 24 次也不会误下线任何工具，现有「远端返回 0 工具需 force」的保护也不会被绕过。
+      </p>
+    </div>
+
+    <h3>三个坑<span class="ln"></span></h3>
+    <table class="cmp">
+      <thead><tr><th style="width:240px">坑</th><th>怎么绕</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>UserContext 服务没法后台探</b></td>
+          <td><code>user_assertion_enabled</code> 的服务连 <code>tools/list</code> 都要按用户签名的断言，后台没有「当前操作者」。降级为 <span class="pill v">needs_user</span>，卡片上显示「需用户签名，无法后台探测」，进页面时用当前管理员身份探，或手动同步。</td>
+        </tr>
+        <tr>
+          <td><b>不能靠 <code>updated_at</code> 判断变没变</b></td>
+          <td>它是 <code>onupdate=datetime.now</code>，只反映你上次同步的时间。必须存独立指纹：<code>sha256(json.dumps(canonical, sort_keys=True))</code>，并先剥掉 <code>x-nanzi-*</code> 扩展字段，否则 key 顺序和空白差异会天天报假变更。</td>
+        </tr>
+        <tr>
+          <td><b>参数变更不会剔智能体版本引用</b></td>
+          <td>工具<b>删除</b>时会 <code>prune_agent_versions_by_names</code>，但参数增删/类型变化不会。所以变更项上要直接点名「影响 3 个智能体版本」，而不是等运行时参数对不上。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>已定 / 待定<span class="ln"></span></h3>
+    <div class="card">
+      <p style="margin:0 0 8px;font-size:12.5px;color:var(--g600);line-height:1.8">
+        <b>已定</b>：落表存历史、只通知管理员、加一个全局「定义变更」页签、探测与应用分离。
+      </p>
+      <p style="margin:0;font-size:12.5px;color:var(--g600);line-height:1.8">
+        <b>建议仍按整批应用</b>：「应用所选」内部走一次 <code>sync_tools()</code>（幂等，复用现有 0 工具保护与
+        <code>stale_arg_slots</code> 凭据槽清理），勾选只用来筛选你看哪些。逐项应用要单独写部分同步逻辑，容易和现有清理路径打架。
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- 视图切换器（原型专用） -->
+<div class="switcher">
+  <span class="lb">原型视图</span>
+  <button class="on" data-v="list" onclick="setView('list')">列表</button>
+  <button data-v="changes" onclick="setView('changes')">定义变更 tab</button>
+  <button data-v="drawer" onclick="setView('drawer')">变更抽屉</button>
+  <button data-v="notify" onclick="setView('notify')">通知</button>
+  <button data-v="doc" onclick="setView('doc')">插入点与表结构</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════ 数据：服务与工具定义变更 ═══════════ */
+const SERVERS = [
+  {
+    id: 'crm', name: 'mcp-crm-hcp', group: '业务系统', enabled: true, remark: '内部 CRM 客户与合同查询、更新，走网关鉴权。',
+    url: 'https://mcp-gw.nanzi.internal/crm/sse', tools: 18, published: 12, stale: 0, share: 0,
+    probe: { at: '2 小时前', exact: '2026-11-25 04:31', status: 'changed', by: 'nightly' },
+    pending: 3, breaking: 2,
+  },
+  {
+    id: 'train', name: 'mcp-12306-train', group: '出行', enabled: true, remark: '车次余票查询与候补下单。',
+    url: 'https://mcp-12306.example.com/mcp', tools: 6, published: 4, stale: 1, share: 2,
+    probe: { at: '2 小时前', exact: '2026-11-25 04:30', status: 'changed', by: 'nightly' },
+    pending: 2, breaking: 1,
+  },
+  {
+    id: 'oa', name: 'mcp-oa-approval', group: '业务系统', enabled: true, remark: 'OA 审批流：发起、催办、查进度。',
+    url: 'https://oa.nanzi.internal/mcp', tools: 9, published: 7, stale: 0, share: 1,
+    probe: { at: '昨天 04:30', exact: '2026-11-24 04:30', status: 'needs_user', by: 'nightly' },
+    pending: 0, breaking: 0, signed: true,
+  },
+  {
+    id: 'kb', name: 'mcp-knowledge-gw', group: '知识', enabled: true, remark: '知识库检索与文档摘要。',
+    url: 'https://mcp-gw.nanzi.internal/kb/sse', tools: 4, published: 4, stale: 0, share: 0,
+    probe: { at: '2 小时前', exact: '2026-11-25 04:30', status: 'ok', by: 'nightly' },
+    pending: 0, breaking: 0,
+  },
+  {
+    id: 'meta', name: 'mcp-metadata-catalog', group: '数据', enabled: true, remark: '元数据目录：数据集、表结构、指标口径。',
+    url: 'https://mcp-gw.nanzi.internal/meta/sse', tools: 11, published: 11, stale: 0, share: 3,
+    probe: { at: '2 小时前', exact: '2026-11-25 04:30', status: 'ok', by: 'nightly' },
+    pending: 0, breaking: 0,
+  },
+  {
+    id: 'erp', name: 'mcp-erp-finance', group: '财务', enabled: false, remark: 'ERP 财务凭证与台账。远端已停用，等迁移。',
+    url: 'https://erp.nanzi.internal:9443/mcp', tools: 14, published: 8, stale: 0, share: 0,
+    probe: { at: '11-20 04:30', exact: '2026-11-20 04:30', status: 'skipped_disabled', by: 'nightly' },
+    pending: 0, breaking: 0, fail: 0,
+  },
+  {
+    id: 'wx', name: 'my-weather-mcp', group: '', enabled: true, remark: '',
+    url: 'https://weather.example.com/mcp', tools: 3, published: 2, stale: 0, share: 0,
+    probe: { at: '12 分钟前', exact: '2026-11-25 16:52', status: 'ok', by: 'page' },
+    pending: 0, breaking: 0, personal: true,
+  },
+];
+
+/* 变更记录（真实数据结构对齐 sys_mcp_tool_definition_changes） */
+const CHANGES = {
+  crm: [
+    { id: 'c1', batch: '2026-11-25 04:31', by: 'nightly', tool: 'mcp-crm-hcp:crm_update_contract', kind: 'param_required', sev: 'breaking',
+      title: '参数 contract_no 从可选变必填', status: 'pending', affect: 3,
+      params: [{ n: 'contract_no', k: '必填性变化', before: 'string，可选', after: 'string，必填' }],
+      hint: '此前不传也能调通，现在会直接报错。已绑定的智能体如果没有固定传这个参数，下次运行就会失败。' },
+    { id: 'c2', batch: '2026-11-25 04:31', by: 'nightly', tool: 'mcp-crm-hcp:crm_query_customer', kind: 'description_changed', sev: 'safe',
+      title: '描述文本变更', status: 'pending', affect: 0,
+      desc: { before: '查询客户信息，支持按手机号或姓名检索。',
+              after: '查询客户信息，支持按手机号、姓名或统一社会信用代码检索；默认只返回近 2 年有交易的客户。' },
+      hint: '描述会作为工具说明进入提示词。这里按原文展示、不做美化，方便判断是否有可疑指令注入。' },
+    { id: 'c3', batch: '2026-11-25 04:31', by: 'nightly', tool: 'mcp-crm-hcp:crm_query_customer', kind: 'param_added_optional', sev: 'safe',
+      title: '新增可选参数 include_archived', status: 'pending', affect: 0,
+      params: [{ n: 'include_archived', k: '新增参数', before: '—', after: 'boolean，可选，默认 false' }],
+      hint: '只新增可选参数，老调用方式仍然成立。' },
+    { id: 'c4', batch: '2026-11-18 04:31', by: 'nightly', tool: 'mcp-crm-hcp:crm_list_contracts', kind: 'param_enum', sev: 'notice',
+      title: '参数 status 新增枚举值 draft', status: 'applied', affect: 0,
+      params: [{ n: 'status', k: '枚举新增', before: 'signed | void', after: 'signed | void | draft' }],
+      hint: '', handler: '陈小龙', handledAt: '11-18 10:22' },
+  ],
+  train: [
+    { id: 't1', batch: '2026-11-25 04:30', by: 'nightly', tool: 'mcp-12306-train:train_export_ticket', kind: 'tool_removed', sev: 'breaking',
+      title: '远端已删除该工具', status: 'pending', affect: 1,
+      hint: '远端 tools/list 里已不存在。应用后会下线缓存，并从 1 个智能体版本里剔除该引用。' },
+    { id: 't2', batch: '2026-11-25 04:30', by: 'nightly', tool: 'mcp-12306-train:train_search', kind: 'description_changed', sev: 'safe',
+      title: '描述文本变更', status: 'pending', affect: 0,
+      desc: { before: '查询指定日期、出发站与到达站的车次余票。',
+              after: '查询指定日期、出发站与到达站的车次余票。支持按车次类型（高铁/动车/普快）过滤，并返回候补状态。' },
+      hint: '远端补齐了能力说明，但参数没变——描述里承诺的「按车次类型过滤」其实还没对应参数，值得留意。' },
+    { id: 't3', batch: '2026-11-20 04:30', by: 'nightly', tool: 'mcp-12306-train:train_seat_map', kind: 'description_changed', sev: 'safe',
+      title: '描述文本变更', status: 'dismissed', affect: 0,
+      desc: { before: '返回车厢座位分布。', after: '返回车厢座位分布（含无障碍座位）。' },
+      hint: '', handler: '陈小龙', handledAt: '11-20 09:41' },
+  ],
+  oa: [], kb: [], meta: [], erp: [], wx: [],
+};
+
+const TOOLS = {
+  crm: [
+    { name: 'crm_query_customer', desc: '查询客户信息，支持按手机号、姓名或统一社会信用代码检索；默认只返回近 2 年有交易的客户。',
+      published: true, used: 4, params: ['keyword', 'city', 'page'], chg: ['c2', 'c3'], newParams: ['include_archived'] },
+    { name: 'crm_update_contract', desc: '更新合同金额、生效日期与签约主体。仅限签署中状态的合同。',
+      published: true, used: 3, params: ['contract_id', 'amount', 'sign_date'], chg: ['c1'], requiredParams: ['contract_no'] },
+    { name: 'crm_list_contracts', desc: '按客户或状态列出合同，支持分页与到期时间筛选。',
+      published: true, used: 1, params: ['customer_id', 'status', 'page_size'], chg: [] },
+    { name: 'crm_create_followup', desc: '为 CRM 客户创建一条跟进记录。',
+      published: false, used: 0, params: ['customer_id', 'content'], chg: [] },
+  ],
+  train: [
+    { name: 'train_search', desc: '查询指定日期、出发站与到达站的车次余票。支持按车次类型（高铁/动车/普快）过滤，并返回候补状态。',
+      published: true, used: 6, params: ['from_station', 'to_station', 'date'], chg: ['t2'] },
+    { name: 'train_export_ticket', desc: '导出订单 PDF 行程单。',
+      published: true, used: 1, params: ['order_no'], chg: ['t1'], gone: true },
+    { name: 'train_submit_order', desc: '提交订单，需先调用 train_search 拿到车次与席别。',
+      published: true, used: 2, params: ['train_no', 'seat_type', 'passengers'], chg: [] },
+    { name: 'train_seat_map', desc: '返回车厢座位分布（含无障碍座位）。',
+      published: false, used: 0, params: ['train_no', 'carriage'], chg: [] },
+  ],
+  oa: [{ name: 'oa_submit_leave', desc: '发起请假审批。', published: true, used: 2, params: ['leave_type', 'start', 'end'], chg: [] }],
+  kb: [{ name: 'kb_search', desc: '知识库语义检索。', published: true, used: 9, params: ['query', 'top_k'], chg: [] }],
+  meta: [{ name: 'metadata_list_datasets', desc: '列出可访问的数据集。', published: true, used: 5, params: ['keyword'], chg: [] }],
+  erp: [{ name: 'create_voucher', desc: '创建记账凭证。', published: true, used: 1, params: ['period', 'entries'], chg: [] }],
+  wx: [{ name: 'get_weather', desc: '查询城市天气。', published: true, used: 0, params: ['city'], chg: [] }],
+};
+
+const KIND_LABEL = {
+  description_changed: '描述变更', param_added_optional: '新增参数', param_removed: '删除参数',
+  param_required: '必填变化', param_type: '类型变化', param_enum: '枚举变化',
+  tool_added: '新增工具', tool_removed: '工具删除', annotations_changed: '标注变化',
+};
+const SRC_LABEL = { nightly: '夜间巡检', page: '进页面探测', hot_call: '活跃会话热刷新', manual: '手动探测' };
+const SRC_CLASS = { nightly: 'night', page: 'page', hot_call: 'hot', manual: '' };
+
+let active = 'crm';
+const picked = new Set();
+
+/* ═══════════ 左栏渲染 ═══════════ */
+function probeText(s) {
+  if (s.probe.status === 'skipped_disabled') return `<span class="m-probe">服务已禁用，跳过探测</span>`;
+  if (s.probe.status === 'needs_user') return `<span class="m-probe needs">需用户签名，无法后台探测</span>`;
+  if (s.probe.status === 'unreachable') return `<span class="m-probe bad">连续 ${s.fail} 次探测失败</span>`;
+  return '';
+}
+function renderList() {
+  document.getElementById('slist').innerHTML = SERVERS.map(s => {
+    const pending = CHANGES[s.id] ? CHANGES[s.id].filter(c => c.status === 'pending').length : 0;
+    const pubCls = s.published === 0 ? 'm-pub zero' : (s.published === s.tools ? 'm-pub ok' : 'm-pub');
+    return `
+    <div class="scard ${s.id === active ? 'on' : ''}" onclick="selectServer('${s.id}')">
+      <div class="top">
+        <div style="min-width:0;flex:1">
+          <div class="nmrow">
+            <span class="nm">${s.name}</span>
+            ${s.group ? `<span class="gpill">${s.group}</span>` : `<span class="gpill empty">未分组</span>`}
+          </div>
+          ${s.signed ? `<span class="sig">已启用用户身份签名</span>` : ''}
+          ${s.remark ? `<p class="rmk">${s.remark}</p>` : ''}
+        </div>
+        <div class="right">
+          <span class="dot ${s.enabled ? 'on' : ''}" title="${s.enabled ? '运行中' : '已禁用'}"></span>
+          <span class="sw ${s.enabled ? 'on' : ''}" onclick="event.stopPropagation();toast('原型里开关不可用')"></span>
+          <span class="more" onclick="event.stopPropagation();toast('更多操作：编辑 / 设置分组 / 分享 / 删除')">⋯</span>
+        </div>
+      </div>
+      <p class="url">${s.url}</p>
+      <div class="metrics">
+        <span class="m-tool">${s.tools} 工具</span>
+        <span class="${pubCls}">${s.published === 0 ? '未发布 · 智能体不可见' : `${s.published} / ${s.tools} 已发布`}</span>
+        ${pending ? `<span class="m-chg" onclick="event.stopPropagation();openDrawer('${s.id}')">
+            <svg viewBox="0 0 24 24"><path d="M12 8v5M12 16h.01M10.3 3.9L2.4 17a2 2 0 001.7 3h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>
+            ${pending} 项定义变更</span>` : ''}
+        ${s.stale ? `<span class="m-stale" title="上次同步时远端已不再返回这些工具">${s.stale} 个远端已删除</span>` : ''}
+        ${probeText(s)}
+        ${s.share ? `<span class="m-share">已分享 ${s.share} 次</span>` : ''}
+        <span class="m-time" title="最近探测 ${s.probe.exact}">${s.probe.at}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ═══════════ 右栏渲染 ═══════════ */
+function selectServer(id) {
+  active = id;
+  renderList();
+  renderRight();
+}
+function renderRight() {
+  const s = SERVERS.find(x => x.id === active);
+  const pend = CHANGES[s.id] ? CHANGES[s.id].filter(c => c.status === 'pending') : [];
+  const brk = pend.filter(c => c.sev === 'breaking' && c.affect > 0).length;
+  const bind = { crm: 6, train: 3, oa: 4, kb: 5, meta: 2, erp: 1, wx: 0 }[s.id];
+
+  document.getElementById('right').innerHTML = `
+    <div class="rhead">
+      <div class="l">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <h3>${s.name} 工具</h3>
+          ${pend.length ? `<span class="tb chg" onclick="openDrawer('${s.id}')">
+            <svg viewBox="0 0 24 24"><path d="M12 8v5M12 16h.01M10.3 3.9L2.4 17a2 2 0 001.7 3h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>
+            ${pend.length} 项待确认</span>` : ''}
+        </div>
+        <p class="sub">${s.enabled ? '发布后的工具智能体才可见' : '服务已禁用，工具暂不可测试、发布或下线'}</p>
+        <div class="bind" onclick="toast('打开「绑定智能体」抽屉')">
+          <span>绑定 ${bind} 个智能体</span><span class="em">生效 ${Math.max(0, bind - 1)} 个</span>
+          <span style="color:#94a3b8">${bind + 2} 个版本配置</span>
+          <span style="font-weight:500">查看 ›</span>
+        </div>
+        <p class="url2">
+          <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 00-7.5-.5l-3 3a5 5 0 007 7L12.2 19"/></svg>
+          <span>${s.url}</span>
+        </p>
+      </div>
+      <div class="iconbar">
+        <button class="ibtn" title="查看该服务的出站调用日志" onclick="toast('打开出站调用日志')">
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
+        </button>
+        <button class="ibtn" title="重新同步远端工具列表" onclick="toast('正在同步远端工具…（这条是现有手动同步）')">
+          <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+        </button>
+        ${pend.length ? `<button class="ibtn chg" title="工具定义变更历史" onclick="openDrawer('${s.id}')">
+          <svg viewBox="0 0 24 24"><path d="M12 8v4l3 3"/><path d="M3.05 11a9 9 0 1118 0 9 9 0 01-18 0z"/></svg>
+          <span class="cb">${pend.length}</span>
+        </button>` : `<button class="ibtn" title="工具定义变更历史（暂无待确认）" onclick="openDrawer('${s.id}')">
+          <svg viewBox="0 0 24 24"><path d="M12 8v4l3 3"/><path d="M3.05 11a9 9 0 1118 0 9 9 0 01-18 0z"/></svg>
+        </button>`}
+        ${s.stale ? `<button class="ibtn stale" title="清理 ${s.stale} 个远端已删除的工具" onclick="toast('清理远端已删除的工具（现有能力）')">
+          <svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+          <span class="ab">${s.stale}</span>
+        </button>` : ''}
+      </div>
+    </div>
+
+    ${pend.length ? `
+    <div class="rchg">
+      <svg class="di" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2.4 17a2 2 0 001.7 3h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>
+      <span>该服务有 <b>${pend.length} 项</b>定义变更待确认${brk ? `，其中 <b>${brk} 项</b>影响已发布工具` : ''}。探测只记录差异，未改动任何工具。</span>
+      <div class="acts">
+        <button class="btn-xs" onclick="openDrawer('${s.id}')">查看差异</button>
+        <button class="btn-xs pri" onclick="toast('应用全部 ${pend.length} 项（内部走一次整批 sync）')">全部应用</button>
+      </div>
+    </div>` : ''}
+
+    <div class="tools">
+      ${(TOOLS[s.id] || []).map(t => {
+        const chgs = (t.chg || []).map(id => (CHANGES[s.id] || []).find(c => c.id === id)).filter(Boolean);
+        const pendC = chgs.filter(c => c.status === 'pending');
+        const pub = t.gone ? 'gone' : (t.published ? 'pub' : 'wait');
+        const pubTxt = t.gone ? '远端已删除' : (t.published ? '已发布' : '待发布');
+        return `
+        <div class="tool ${pendC.length ? 'chg-on' : ''}">
+          <span class="cbx"></span>
+          <div class="body">
+            <div class="nameline">
+              <span class="tname">${t.name}</span>
+              ${t.used ? `<span class="tb used">🔗 ${t.used}</span>` : ''}
+              <span class="tb ${pub}">${pubTxt}</span>
+              ${pendC.length ? `<span class="tb chg" onclick="openDrawer('${s.id}','${pendC[0].id}')">
+                <svg viewBox="0 0 24 24"><path d="M12 8v5M12 16h.01M10.3 3.9L2.4 17a2 2 0 001.7 3h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>
+                定义已变更</span>` : ''}
+            </div>
+            <p class="desc">${t.desc}</p>
+            <div class="params">
+              <span class="pbtn" onclick="toast('参数设置：标记哪些参数的值来自凭据中心')">🔑 参数设置</span>
+              ${(t.params || []).map(p => {
+                const isNew = (t.newParams || []).includes(p);
+                try { if (isNew) return ''; } catch (e) {}
+                return `<code class="pcode">${p}</code>`;
+              }).join('')}
+              ${(t.newParams || []).map(p => `<code class="pcode newp" title="远端新增的参数">${p} +</code>`).join('')}
+              ${(t.requiredParams || []).map(p => `<code class="pcode reqp" title="远端改为必填的参数">${p} *</code>`).join('')}
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+/* ═══════════ 抽屉 ═══════════ */
+function openDrawer(serverId, expandId) {
+  active = serverId;
+  picked.clear();
+  const s = SERVERS.find(x => x.id === serverId);
+  document.getElementById('d-srv').textContent = s.name;
+  document.getElementById('s-probe').textContent = s.probe.exact;
+  renderDrawer(expandId);
+  /* 没指定展开项时，默认展开第一条待确认 —— 打开就能看到差异，不用多点一次 */
+  if (!expandId) {
+    const first = (CHANGES[serverId] || []).find(c => c.status === 'pending');
+    if (first) {
+      const el = document.getElementById('it-' + first.id);
+      if (el) el.classList.add('open');
+    }
+  }
+  document.getElementById('mask').classList.add('on');
+  document.getElementById('drawer').classList.add('on');
+  renderList();
+}
+function closeDrawer() {
+  document.getElementById('mask').classList.remove('on');
+  document.getElementById('drawer').classList.remove('on');
+}
+function renderDrawer(expandId) {
+  const s = SERVERS.find(x => x.id === active);
+  const list = (CHANGES[s.id] || []).slice();
+  const pending = list.filter(c => c.status === 'pending');
+  const applied = list.filter(c => c.status === 'applied');
+  const dismissed = list.filter(c => c.status === 'dismissed');
+  document.getElementById('s-pending').textContent = pending.length;
+  document.getElementById('s-applied').textContent = applied.length;
+  document.getElementById('s-dismissed').textContent = dismissed.length;
+
+  /* 按批次分组，批次倒序 */
+  const batches = [];
+  list.forEach(c => {
+    let b = batches.find(x => x.batch === c.batch);
+    if (!b) { b = { batch: c.batch, by: c.by, items: [] }; batches.push(b); }
+    b.items.push(c);
+  });
+
+  const body = document.getElementById('dbody');
+  if (!batches.length) {
+    body.innerHTML = `<p style="font-size:12px;color:#9ca3af">这个服务还没有探测到定义变更。夜间巡检与进页面探测都会记录在这里。</p>`;
+    updateFoot();
+    return;
+  }
+
+  body.innerHTML = batches.map(b => `
+    <div class="batch">
+      <div class="batch-hd">
+        <span class="t">${b.batch}</span>
+        <span class="src ${SRC_CLASS[b.by] || ''}">${SRC_LABEL[b.by] || b.by}</span>
+        <span class="ln"></span>
+        <span style="font-size:10px;color:#9ca3af">${b.items.length} 项</span>
+      </div>
+      ${b.items.map(c => {
+        const isP = c.status === 'pending';
+        const stTxt = { pending: '待确认', applied: '已应用', dismissed: '已忽略' }[c.status];
+        return `
+        <div class="item ${isP ? 'pending' : ''} ${c.id === expandId ? 'open' : ''}" id="it-${c.id}">
+          <div class="item-hd" onclick="toggleItem('${c.id}')">
+            <span class="tw">▶</span>
+            ${isP ? `<input type="checkbox" class="cbx" onclick="event.stopPropagation();pickItem('${c.id}',this)" ${picked.has(c.id) ? 'checked' : ''} style="width:14px;height:14px;accent-color:#7c3aed;cursor:pointer" />` : ''}
+            <span class="tn">${c.tool.split(':')[1]}</span>
+            <span class="kind ${c.sev === 'safe' ? 'v' : ''}">${KIND_LABEL[c.kind] || c.kind}</span>
+            <span class="tl">${c.title}</span>
+            ${c.affect ? `<span class="kind" style="border-color:var(--red200);background:var(--red50);color:var(--red700)">影响 ${c.affect} 个版本</span>` : ''}
+            <span class="st-pill ${c.status}">${stTxt}</span>
+          </div>
+          <div class="item-bd">
+            ${renderDiff(c)}
+            <div class="meta-line">
+              <span>探测于 ${c.batch}</span>
+              ${c.affect ? `<span class="aff">影响 ${c.affect} 个智能体版本</span>` : ''}
+              ${c.handler ? `<span>${c.status === 'applied' ? '应用' : '忽略'}人 ${c.handler} · ${c.handledAt}</span>` : ''}
+            </div>
+            ${c.hint ? `<p style="margin:8px 0 0;font-size:11.5px;color:#4b5563;line-height:1.65">${c.hint}</p>` : ''}
+            ${c.affect ? `<div class="note-inline info">影响面：该工具已发布且被引用（智能体「合同助手」v3 / v4、「财务运营」v2），这些版本下次运行时会受影响。</div>` : ''}
+            ${isP ? `<div style="display:flex;gap:7px;margin-top:10px">
+              <button class="btn-xs pri" onclick="applyOne('${c.id}')">应用这一项</button>
+              <button class="btn-xs" onclick="dismissOne('${c.id}')">忽略</button>
+            </div>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+  updateFoot();
+}
+function renderDiff(c) {
+  let h = '';
+  if (c.desc) {
+    h += `<div class="dbox old"><span class="l">远端原描述（旧）</span><span class="tx">${c.desc.before}</span></div>
+          <div class="dbox new" style="margin-top:7px"><span class="l">远端原描述（新）</span><span class="tx">${c.desc.after}</span></div>`;
+  }
+  if (c.params) {
+    h += `<table class="pd">
+      <thead><tr><th style="width:150px">参数</th><th style="width:100px">变化</th><th>之前</th><th>之后</th></tr></thead>
+      <tbody>${c.params.map(p => `<tr>
+        <td class="n">${p.n}</td>
+        <td><span class="kind ${p.k === '新增参数' ? 'v' : ''}">${p.k}</span></td>
+        <td>${p.before === '—' ? '<span class="na">—</span>' : `<span class="ov">${p.before}</span>`}</td>
+        <td><span class="nv">${p.after}</span></td>
+      </tr>`).join('')}</tbody></table>`;
+  }
+  if (c.kind === 'tool_removed') {
+    h += `<div class="note-inline" style="margin-top:9px">远端 <code style="font-family:var(--mono)">tools/list</code> 已不再返回该工具。应用后会标记 <code style="font-family:var(--mono)">is_available=false</code> → 若已发布则一并下线 → 从 ${c.affect || 0} 个智能体版本里剔除引用。</div>`;
+  }
+  if (c.kind === 'tool_added') {
+    h += `<div class="note-inline info" style="margin-top:9px">新增工具默认 <code style="font-family:var(--mono)">is_published=false</code>，需人工发布后智能体才可见。走现有「待发布」流程即可。</div>`;
+  }
+  return h;
+}
+function toggleItem(id) {
+  const el = document.getElementById('it-' + id);
+  if (el) el.classList.toggle('open');
+}
+function pickItem(id, cb) {
+  if (cb.checked) picked.add(id); else picked.delete(id);
+  updateFoot();
+}
+function updateFoot() {
+  const s = SERVERS.find(x => x.id === active);
+  const pend = (CHANGES[s.id] || []).filter(c => c.status === 'pending');
+  const n = picked.size;
+  const brk = pend.filter(c => picked.has(c.id) && c.sev === 'breaking').length;
+  document.getElementById('d-cnt').innerHTML = n
+    ? `已选 <b>${n}</b> 项${brk ? `（含 <span style="color:#dc2626">${brk} 项破坏性</span>）` : ''}`
+    : `未勾选任何变更 · 共 ${pend.length} 项待确认`;
+  document.getElementById('d-apply').disabled = n === 0;
+}
+function applyOne(id) {
+  const s = SERVERS.find(x => x.id === active);
+  const c = (CHANGES[s.id] || []).find(x => x.id === id);
+  if (!c) return;
+  c.status = 'applied'; c.handler = '陈小龙'; c.handledAt = '刚刚';
+  syncPending();
+  renderDrawer(id);
+  toast(`已应用 1 项${c.affect ? `，影响 ${c.affect} 个智能体版本，下次运行生效` : ''}`);
+}
+function dismissOne(id) {
+  const s = SERVERS.find(x => x.id === active);
+  const c = (CHANGES[s.id] || []).find(x => x.id === id);
+  if (!c) return;
+  c.status = 'dismissed'; c.handler = '陈小龙'; c.handledAt = '刚刚';
+  syncPending(); renderDrawer(id);
+  toast('已忽略：本地缓存保持原样，远端再变会重新报');
+}
+function applySel() {
+  if (!picked.size) return;
+  const s = SERVERS.find(x => x.id === active);
+  const ids = [...picked];
+  const brk = ids.filter(id => (CHANGES[s.id] || []).find(c => c.id === id)?.sev === 'breaking').length;
+  ids.forEach(id => {
+    const c = (CHANGES[s.id] || []).find(x => x.id === id);
+    if (c) { c.status = 'applied'; c.handler = '陈小龙'; c.handledAt = '刚刚'; }
+  });
+  picked.clear();
+  syncPending(); renderDrawer();
+  toast(`已应用 ${ids.length} 项${brk ? `，其中 ${brk} 项破坏性变更会影响已绑定智能体` : ''}`);
+}
+function dismissSel() {
+  if (!picked.size) return;
+  const s = SERVERS.find(x => x.id === active);
+  const ids = [...picked];
+  ids.forEach(id => {
+    const c = (CHANGES[s.id] || []).find(x => x.id === id);
+    if (c) { c.status = 'dismissed'; c.handler = '陈小龙'; c.handledAt = '刚刚'; }
+  });
+  picked.clear();
+  syncPending(); renderDrawer();
+  toast(`已忽略 ${ids.length} 项`);
+}
+function syncPending() {
+  SERVERS.forEach(s => {
+    const list = CHANGES[s.id] || [];
+    s.pending = list.filter(c => c.status === 'pending').length;
+    s.breaking = list.filter(c => c.status === 'pending' && c.sev === 'breaking').length;
+  });
+  const totalPending = Object.values(CHANGES).flat().filter(c => c.status === 'pending').length;
+  document.getElementById('st-changes-cnt').textContent = totalPending;
+  renderList();
+}
+
+/* ═══════════ ★ 新增：全局「定义变更」页签 ═══════════ */
+let cStatus = 'pending';
+const cPicked = new Set();
+
+function allChanges() {
+  const out = [];
+  SERVERS.forEach(sv => {
+    (CHANGES[sv.id] || []).forEach(c => out.push({ ...c, serverId: sv.id, serverName: sv.name }));
+  });
+  return out.sort((a, b) => (a.batch < b.batch ? 1 : -1));
+}
+function kindGroup(k) {
+  if (k === 'description_changed') return 'description';
+  if (k === 'tool_added' || k === 'tool_removed') return 'tool';
+  return 'param';
+}
+function switchScope(scope) {
+  const showChanges = scope === 'changes';
+  document.getElementById('view-registry').style.display = showChanges ? 'none' : 'flex';
+  document.getElementById('view-changes').classList.toggle('on', showChanges);
+  ['global', 'personal', 'audit', 'changes'].forEach(k => {
+    const el = document.getElementById('st-' + k);
+    if (!el) return;
+    el.classList.remove('on', 'blue', 'green', 'violet');
+  });
+  if (scope === 'changes') {
+    document.getElementById('st-changes').classList.add('on', 'violet');
+    renderChanges();
+  } else if (scope === 'personal') {
+    document.getElementById('st-personal').classList.add('on', 'green');
+    toast('原型只做了「平台 MCP」与「定义变更」两个页签');
+  } else if (scope === 'audit') {
+    document.getElementById('st-audit').classList.add('on', 'blue');
+    toast('审计日志是现有页签，本原型不改动它');
+  } else {
+    document.getElementById('st-global').classList.add('on', 'blue');
+  }
+  document.querySelectorAll('.switcher button').forEach(b =>
+    b.classList.toggle('on', b.dataset.v === (showChanges ? 'changes' : 'list')));
+}
+function setCStatus(st) {
+  cStatus = st;
+  document.querySelectorAll('#seg-status button').forEach(b => {
+    b.classList.toggle('on', b.dataset.s === st);
+    b.classList.toggle('v', b.dataset.s === st && st === 'pending');
+  });
+  renderChanges();
+}
+function renderChanges() {
+  const list = allChanges();
+  const serverFilter = document.getElementById('f-server').value;
+  const kindFilter = document.getElementById('f-kind').value;
+
+  /* 服务下拉 */
+  const sel = document.getElementById('f-server');
+  if (sel.options.length <= 1) {
+    [...new Set(list.map(c => c.serverId))].forEach(id => {
+      const sv = SERVERS.find(x => x.id === id);
+      sel.insertAdjacentHTML('beforeend', `<option value="${id}">${sv.name}</option>`);
+    });
+  }
+
+  const rows = list.filter(c =>
+    (cStatus === 'all' || c.status === cStatus) &&
+    (!serverFilter || c.serverId === serverFilter) &&
+    (!kindFilter || kindGroup(c.kind) === kindFilter)
+  );
+
+  document.getElementById('c-count').textContent = `${rows.length} 条记录`;
+  document.getElementById('sg-pending').textContent = list.filter(c => c.status === 'pending').length;
+  document.getElementById('sg-applied').textContent = list.filter(c => c.status === 'applied').length;
+  document.getElementById('sg-dismissed').textContent = list.filter(c => c.status === 'dismissed').length;
+
+  const box = document.getElementById('crows');
+  if (!rows.length) {
+    box.innerHTML = `<div style="padding:40px;text-align:center;font-size:12px;color:#9ca3af">
+      该筛选下没有记录。夜间巡检与进页面探测发现的差异都会落在这里。</div>`;
+    updateCfoot();
+    return;
+  }
+  box.innerHTML = rows.map(c => {
+    const isP = c.status === 'pending';
+    const sev = c.sev === 'breaking' ? ['破坏性', 'bad'] : (c.sev === 'safe' ? ['安全', 'ok'] : ['需留意', 'warn']);
+    const stTxt = { pending: '待确认', applied: '已应用', dismissed: '已忽略' }[c.status];
+    return `
+    <div class="crow-wrap ${isP ? 'open-pending' : ''}" id="cw-${c.id}">
+      <div class="crow ${isP ? 'pending' : ''}" onclick="toggleC('${c.id}')">
+        <span>${isP ? `<input type="checkbox" class="cbx" onclick="event.stopPropagation();pickC('${c.id}',this)" ${cPicked.has(c.id) ? 'checked' : ''} style="width:14px;height:14px;accent-color:#7c3aed;cursor:pointer" />` : ''}</span>
+        <span class="srv">${c.serverName}</span>
+        <span style="min-width:0;display:flex;align-items:center;gap:5px">
+          <span class="ckt">${c.tool.split(':')[1]}</span>
+          <span class="kind ${c.sev === 'safe' ? 'v' : ''}">${KIND_LABEL[c.kind] || c.kind}</span>
+        </span>
+        <span style="min-width:0;font-size:11px;color:#4b5563;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.title}</span>
+        <span><span class="chip ${sev[1]}">${sev[0]}</span>${c.affect ? `<span style="font-size:9.5px;color:#dc2626;margin-left:4px">${c.affect} 版本</span>` : ''}</span>
+        <span><span class="st-pill ${c.status}">${stTxt}</span></span>
+        <span class="tm">${c.batch.replace('2026-', '').slice(0, 11)}</span>
+        <span class="who">${c.handler || '—'}</span>
+      </div>
+      <div class="cdiff">
+        ${renderDiff(c)}
+        <p style="margin:8px 0 0;font-size:10.5px;color:#6b7280">
+          探测于 ${c.batch} · 触发源 ${SRC_LABEL[c.by] || c.by}
+          ${c.affect ? ` · <span style="color:#dc2626">影响 ${c.affect} 个智能体版本</span>` : ''}
+        </p>
+        ${c.hint ? `<p style="margin:6px 0 0;font-size:11px;color:#4b5563;line-height:1.6">${c.hint}</p>` : ''}
+        <div style="display:flex;gap:7px;margin-top:9px">
+          ${isP ? `<button class="btn-xs pri" onclick="applyCone('${c.id}')">应用这一项</button>
+                   <button class="btn-xs" onclick="dismissCone('${c.id}')">忽略</button>` : ''}
+          <button class="btn-xs" onclick="openServerDrawerFromTab('${c.serverId}','${c.id}')">在服务里查看 ›</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  updateCfoot();
+  document.getElementById('st-changes-cnt').textContent = list.filter(c => c.status === 'pending').length;
+  refreshCStats();
+}
+function refreshCStats() {
+  const list = allChanges();
+  const pend = list.filter(c => c.status === 'pending');
+  document.getElementById('cs-pending').textContent = pend.length;
+  document.getElementById('cs-pending-d').textContent = `来自 ${new Set(pend.map(c => c.serverId)).size} 个服务`;
+  document.getElementById('cs-affect').textContent = pend.filter(c => c.affect > 0).length;
+  document.getElementById('cs-applied').textContent = list.filter(c => c.status === 'applied').length;
+}
+function toggleC(id) {
+  const el = document.getElementById('cw-' + id);
+  if (el) el.classList.toggle('open');
+}
+function pickC(id, cb) {
+  if (cb.checked) cPicked.add(id); else cPicked.delete(id);
+  updateCfoot();
+}
+function updateCfoot() {
+  const n = cPicked.size;
+  const brk = allChanges().filter(c => cPicked.has(c.id) && c.sev === 'breaking').length;
+  document.getElementById('c-sel').innerHTML = n
+    ? `已选 <b>${n}</b> 项${brk ? `（含 <span style="color:#dc2626">${brk} 项破坏性</span>）` : ''}`
+    : '未勾选任何变更';
+  document.getElementById('c-apply').disabled = n === 0;
+}
+function findChange(id) {
+  for (const sid of Object.keys(CHANGES)) {
+    const c = (CHANGES[sid] || []).find(x => x.id === id);
+    if (c) return c;
+  }
+  return null;
+}
+function applyCone(id) {
+  const c = findChange(id);
+  if (!c) return;
+  c.status = 'applied'; c.handler = '陈小龙'; c.handledAt = '刚刚';
+  syncPending(); renderChanges();
+  toast(`已应用 1 项${c.affect ? `，影响 ${c.affect} 个智能体版本` : ''}`);
+}
+function dismissCone(id) {
+  const c = findChange(id);
+  if (!c) return;
+  c.status = 'dismissed'; c.handler = '陈小龙'; c.handledAt = '刚刚';
+  syncPending(); renderChanges();
+  toast('已忽略：本地缓存保持原样，远端再变会重新报');
+}
+function applyC() {
+  if (!cPicked.size) return;
+  const n = cPicked.size;
+  cPicked.forEach(id => {
+    const c = findChange(id);
+    if (c) { c.status = 'applied'; c.handler = '陈小龙'; c.handledAt = '刚刚'; }
+  });
+  cPicked.clear(); syncPending(); renderChanges();
+  toast(`已应用 ${n} 项变更`);
+}
+function dismissC() {
+  if (!cPicked.size) return;
+  const n = cPicked.size;
+  cPicked.forEach(id => {
+    const c = findChange(id);
+    if (c) { c.status = 'dismissed'; c.handler = '陈小龙'; c.handledAt = '刚刚'; }
+  });
+  cPicked.clear(); syncPending(); renderChanges();
+  toast(`已忽略 ${n} 项`);
+}
+function openServerDrawerFromTab(serverId, changeId) {
+  switchScope('global');
+  document.querySelectorAll('.switcher button').forEach(b => b.classList.toggle('on', b.dataset.v === 'drawer'));
+  openDrawer(serverId, changeId);
+}
+
+/* ═══════════ 通知 ═══════════ */
+function toggleNotify() { document.getElementById('notify').classList.toggle('on'); }
+
+/* ═══════════ 视图切换 ═══════════ */
+function setView(v) {
+  document.querySelectorAll('.switcher button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  const doc = document.getElementById('doc');
+  if (v === 'doc') { doc.classList.add('on'); closeDrawer(); document.getElementById('notify').classList.remove('on'); return; }
+  doc.classList.remove('on');
+  if (v === 'changes') { closeDrawer(); document.getElementById('notify').classList.remove('on'); switchScope('changes'); return; }
+  if (v === 'drawer') { openDrawer(active); document.getElementById('notify').classList.remove('on'); return; }
+  if (v === 'notify') { closeDrawer(); document.getElementById('notify').classList.add('on'); return; }
+  closeDrawer(); document.getElementById('notify').classList.remove('on');
+}
+function closeDoc() {
+  document.getElementById('doc').classList.remove('on');
+  document.querySelectorAll('.switcher button').forEach(b => b.classList.toggle('on', b.dataset.v === 'list'));
+}
+
+/* ═══════════ 提示 ═══════════ */
+let tT = null;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('on');
+  clearTimeout(tT);
+  tT = setTimeout(() => el.classList.remove('on'), 3200);
+}
+
+/* ═══════════ 启动 ═══════════ */
+syncPending();
+renderRight();
+/* 支持 ?view=drawer|notify|doc 直接落到某个视图（方便截图/分享） */
+(function bootView() {
+  const v = new URLSearchParams(location.search).get('view');
+  if (v && ['drawer', 'notify', 'doc', 'changes'].includes(v)) {
+    document.body.classList.add('no-anim');
+    setTimeout(() => setView(v), 30);
+  }
+})();
+</script>
+</body>
+</html>

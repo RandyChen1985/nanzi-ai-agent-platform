@@ -18,7 +18,7 @@ except Exception:  # noqa: BLE001 - 老版本 SDK 缺这个模块时不应影响
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from app.core.orm import AsyncSessionLocal
-from app.models.mcp import McpServer, McpToolCache
+from app.models.mcp import McpServer, McpToolCache, McpToolDefinitionChange
 from app.services.mcp.mcp_auth_policy import build_mcp_headers, resolve_mcp_auth_headers
 from app.services.ai.tools.tool_credentials import (
     unbound_reason,
@@ -27,6 +27,12 @@ from app.services.ai.tools.tool_credentials import (
 from app.services.secrets.injection import apply_mcp_bindings
 from app.services.secrets.redact import redact_value
 from app.services.mcp.outbound_audit import record_outbound_audit_log
+from app.services.mcp.definition_diff import (
+    definition_fingerprint,
+    strip_platform_schema_extensions as _strip_platform_schema_extensions,
+    tool_annotations as _tool_annotations,
+    tool_input_schema as _tool_input_schema,
+)
 from sqlalchemy import delete, select, update
 
 logger = logging.getLogger(__name__)
@@ -71,6 +77,63 @@ MAX_REMOTE_TOOLS = 5000
 # 同步时若远端返回空列表而本地已有可用工具，默认拒绝应用（见 sync_tools）。
 # 这是防止远端瞬时故障/权限抖动把整批工具误标为删除的最后一道闸门。
 _AUDIT_TASKS: set[asyncio.Task] = set()
+
+async def _run_hot_probe(server_id: str, user_info: Optional[Dict[str, Any]]) -> None:
+    """热刷新的实际执行体：去抖后调一次只读探测。"""
+    try:
+        from app.core.redis import get_redis
+
+        redis_client = await get_redis()
+        if redis_client is not None:
+            acquired = await redis_client.set(
+                f"mcp:hot_probe:{server_id}",
+                "1",
+                ex=_HOT_PROBE_DEBOUNCE_SECONDS,
+                nx=True,
+            )
+            if not acquired:
+                return
+        else:
+            now = time.monotonic()
+            last = _HOT_PROBE_LOCAL_TTL.get(server_id)
+            if last is not None and now - last < _HOT_PROBE_DEBOUNCE_SECONDS:
+                return
+            _HOT_PROBE_LOCAL_TTL[server_id] = now
+            if len(_HOT_PROBE_LOCAL_TTL) > 4096:
+                expired = [
+                    key
+                    for key, stamp in _HOT_PROBE_LOCAL_TTL.items()
+                    if now - stamp >= _HOT_PROBE_DEBOUNCE_SECONDS
+                ]
+                for key in expired:
+                    _HOT_PROBE_LOCAL_TTL.pop(key, None)
+        from app.services.mcp.definition_probe import DETECTED_HOT_CALL, probe_server
+
+        # 需要用户签名的服务，tools/list 的返回是「这个用户能看到的子集」，不是全量。
+        # 拿某个用户的视角去和全量缓存比对，会把他本来就无权使用的工具全判成「远端已
+        # 删除」（breaking）——探测反而制造出成批的假警报。这类服务的定义漂移只能靠
+        # 管理员在页面里手动探测。
+        server = await McpClientService._load_server(server_id)
+        if bool(getattr(server, "user_assertion_enabled", False)):
+            return
+
+        await probe_server(server_id, user_info=user_info, detected_by=DETECTED_HOT_CALL)
+    except Exception as exc:  # noqa: BLE001 - 后台链路，任何异常都不该冒泡
+        logger.debug("[MCP] 热刷新探测失败（不影响工具调用）: %s", exc)
+
+
+#: 活跃会话热刷新：工具调用成功后顺手探一次定义，别等到第二天凌晨才发现远端改了。
+#: 与审计同理，事件循环对 Task 只持弱引用，必须自己留强引用否则可能没跑就被 GC。
+_HOT_PROBE_TASKS: set[asyncio.Task] = set()
+
+#: 同一服务两次热刷新之间的最小间隔。工具调用可能每分钟几十次，不去抖会变成
+#: 「每次调用都多连一次远端」——那等于把探测成本摊到了业务调用上。
+_HOT_PROBE_DEBOUNCE_SECONDS = 900
+
+#: Redis 不可用时的进程内去抖表（server_id → 上次探测的 monotonic 时间）。
+#: 多实例部署下各实例各去各的，最多多探几次；但没有它就会退化成「每次工具调用
+#: 都额外连一次远端 tools/list」——把探测成本直接摊到业务调用上，比不探更糟。
+_HOT_PROBE_LOCAL_TTL: Dict[str, float] = {}
 
 # anyio 取消宿主 task 时写进 CancelledError 文案的固定片段（见 mcp 2.x
 # ``streamable_http_client`` 内的 ``anyio.create_task_group``）。
@@ -130,20 +193,10 @@ _TRANSPORT_ERROR_TYPES: tuple = (
 #: 平台私有 JSON-Schema 扩展前缀。这些字段决定「证据类型 / 证据策略」等调用门禁，
 #: 只能由平台自己写；远端服务在 inputSchema 里自带同名键时必须剥掉，否则等于让远端
 #: 改写平台的调用策略。
+#:
+#: 剥离实现与「定义指纹」放在一起（``app/services/mcp/definition_diff.py``）：探测侧
+#: 也要算同一份规范化结果，两份实现一旦漂移，就会天天报「远端定义了变更」。
 _PLATFORM_SCHEMA_EXTENSION_PREFIX = "x-nanzi-"
-
-
-def _strip_platform_schema_extensions(value: Any) -> Any:
-    """递归移除远端 schema 里的平台私有扩展键（``x-nanzi-*``）。"""
-    if isinstance(value, dict):
-        return {
-            key: _strip_platform_schema_extensions(item)
-            for key, item in value.items()
-            if not (isinstance(key, str) and key.strip().casefold().startswith(_PLATFORM_SCHEMA_EXTENSION_PREFIX))
-        }
-    if isinstance(value, list):
-        return [_strip_platform_schema_extensions(item) for item in value]
-    return value
 
 
 def _is_mcp_connection_closed(err: BaseException) -> bool:
@@ -201,25 +254,6 @@ def _is_anyio_scope_cancellation(err: BaseException) -> bool:
     if not isinstance(err, asyncio.CancelledError):
         return False
     return _ANYIO_SCOPE_CANCEL_MARKER in str(err).lower()
-
-
-def _tool_input_schema(tool: Any) -> Any:
-    """取 MCP 工具的入参 schema。
-
-    mcp 2.x 把 JSON-RPC 的 ``inputSchema`` 字段改名为 ``input_schema``（与
-    ``read_only_hint`` 等注解一起）；但外部服务返回的原始 dict、以及历史缓存里
-    仍可能是旧名。这里按「新名 → 旧名 → 平台缓存字段」依次回退，两个大版本都能取到。
-    """
-    for attr in ("input_schema", "inputSchema"):
-        value = getattr(tool, attr, None)
-        if value is not None:
-            return value
-    if isinstance(tool, dict):
-        for key in ("input_schema", "inputSchema", "parameter_schema"):
-            value = tool.get(key)
-            if value is not None:
-                return value
-    return None
 
 
 class McpSyncGuardError(RuntimeError):
@@ -1401,6 +1435,27 @@ class McpClientService:
                 if session_key:
                     cls._sessions.pop(session_key, None)
 
+            # 调用成功说明这个服务此刻是活的、且正被业务使用——顺手探一次定义漂移。
+            # 放在审计之后、任务原样 return 之前：这里 ``call_status`` 一定有值，
+            # 且派发本身被 try 包住，绝不影响已经成功的调用。
+            if call_status == "success":
+                cls._dispatch_hot_probe(server_id, user_info)
+
+    @staticmethod
+    def _dispatch_hot_probe(server_id: str, user_info: Optional[Dict[str, Any]]) -> None:
+        """调用成功后异步探测一次定义（fire-and-forget）。
+
+        这条链路的价值在于「活跃会话」：正在被调用的服务，它的定义漂移影响面最大，
+        15 分钟内被发现比等到第二天凌晨更有意义。但它绝不能影响调用本身，所以：
+        独立 Task、异常全吞、Redis 去抖。
+        """
+        try:
+            task = asyncio.create_task(_run_hot_probe(server_id, user_info))
+            _HOT_PROBE_TASKS.add(task)
+            task.add_done_callback(_HOT_PROBE_TASKS.discard)
+        except Exception as exc:  # noqa: BLE001 - 派发失败不能影响工具调用
+            logger.debug("[MCP] 热刷新探测派发失败: %s", exc)
+
     @staticmethod
     def _parse_sse_payload(text: str) -> Optional[Dict]:
         """从 Streamable HTTP 的 SSE 响应体中解析出 JSON-RPC payload。
@@ -1777,6 +1832,12 @@ class McpClientService:
                     existing.is_available = True
                     existing.tool_description = t_desc
                     existing.parameter_schema = json.dumps(schema_payload)
+                    # 同步即「应用」：把已确认的远端定义指纹推进到当前值。漏了这一步，
+                    # 下次探测会把刚刚应用的定义再报一遍变更（库里 hash 还是旧的）。
+                    existing.definition_hash = definition_fingerprint(
+                        t_desc, schema_payload, annotations
+                    )
+                    existing.definition_changed_at = None
                     raw_creds = getattr(existing, "credential_params", None)
                     if raw_creds:
                         try:
@@ -1802,6 +1863,9 @@ class McpClientService:
                         parameter_schema=json.dumps(schema_payload),
                         is_published=False,
                         is_available=True,
+                        definition_hash=definition_fingerprint(
+                            t_desc, schema_payload, annotations
+                        ),
                     )
                     db.add(created)
                     # 同一批远端结果即使有重复名（normally 已在 list_remote_tools 去重），
@@ -1826,6 +1890,16 @@ class McpClientService:
                 )
 
             server.last_sync_at = datetime.now()
+            # 本地已与远端对齐，该服务残留的 pending 变更不该再挂在待办里——否则
+            # 「点一次同步」之后列表还显示「3 项待确认」，人会以为同步没生效。
+            await db.execute(
+                update(McpToolDefinitionChange)
+                .where(
+                    McpToolDefinitionChange.server_id == server_id,
+                    McpToolDefinitionChange.status == "pending",
+                )
+                .values(status="applied", handled_at=datetime.now())
+            )
             for cached_tool in cached_tools:
                 if cached_tool.tool_name not in remote_tool_names and cached_tool.is_published:
                     cached_tool.is_published = False

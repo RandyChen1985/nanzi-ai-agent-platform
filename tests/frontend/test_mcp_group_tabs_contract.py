@@ -223,8 +223,15 @@ def test_edit_form_refills_group_name(registry: str) -> None:
 
 
 def test_todo_filters_drive_the_list(registry: str) -> None:
-    """右栏待办不是装饰：点一下要改变左栏列表，且页签计数跟着变。"""
-    assert "type McpTodoKey = 'offline' | 'unpublished' | 'stale-tools' | 'stale-sync'" in registry
+    """右栏待办不是装饰：点一下要改变左栏列表，且页签计数跟着变。
+
+    待办键是「功能清单」：定义变更与探测失败各自独立成项，不能挤进既有键——
+    把 ``stale-sync`` 的判据悄悄换成「多久没探测」，会让「超过 7 天未同步」永远为空，
+    而标签还写着「未同步」。
+    """
+    for key in ("offline", "unpublished", "stale-tools", "stale-sync",
+                "definition-changed", "probe-failing"):
+        assert f"'{key}'" in registry
     filter_pos = registry.index("const serversMatchingFilters = computed(")
     block = registry[filter_pos:registry.index("const filteredServers = computed(")]
     assert "matchesTodo(s, todoFilter.value as McpTodoKey)" in block

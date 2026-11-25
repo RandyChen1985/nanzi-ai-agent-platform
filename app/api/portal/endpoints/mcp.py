@@ -17,7 +17,12 @@ from app.core.dependencies import (
     require_permission,
     require_api_key,
 )
-from app.models.mcp import McpServer, McpToolCache, McpOutboundAuditLog
+from app.models.mcp import (
+    McpOutboundAuditLog,
+    McpServer,
+    McpToolCache,
+    McpToolDefinitionChange,
+)
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.tool_credentials import unresolved_credential_headers
 from app.services.ai.tools.mcp_client import (
@@ -269,9 +274,27 @@ class McpServerResponse(McpServerBase):
     tool_count: int = 0
     published_tool_count: int = 0
     stale_tool_count: int = 0
+    #: 定义探测（只读）的元数据：与 last_sync_at 分开，探测每天都跑且从不写业务字段。
+    last_probe_at: Optional[Any] = None
+    #: ok / changed / unreachable / needs_user / skipped_disabled
+    last_probe_status: Optional[str] = None
+    probe_failure_count: int = 0
+    last_probe_error: Optional[str] = None
+    #: 待确认的定义变更条数；卡片徽标、页签角标、服务级提示条都读这一个数
+    pending_change_count: int = 0
     # 分享血缘：这条服务是不是从别人的分享安装来的、以及我把它分享出去过几次
     shared_from: Optional[Dict[str, Any]] = None
     share_count: int = 0
+
+    @field_validator("probe_failure_count", "pending_change_count", mode="before")
+    @classmethod
+    def _null_counters_to_zero(cls, value: Any) -> Any:
+        """计数器在「刚构造还没 flush」的对象上是 None（DB 默认值要到 flush 才落）。
+
+        进度类字段不能因此让整个响应 500：语义上「没有失败次数」就是 0。前端也就
+        不用在每个数字旁边写一遍 ``|| 0``。
+        """
+        return 0 if value is None else value
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -400,6 +423,20 @@ async def _migrate_server_name_references(
         tool.tool_name = renamed_name
         cached_by_name[renamed_name] = tool
         renamed_cache.append((tool.id, renamed_name))
+
+    # 变更表里的工具名同样是 "{服务名}:{工具名}"：不改的话改名后历史待办会指向一个
+    # 不存在的名字，而且「已忽略 tool_added/tool_removed」的止噪记忆也会失配，
+    # 让确认过的事情重新冒出来。
+    change_rows = (
+        await db.execute(
+            select(McpToolDefinitionChange).where(
+                McpToolDefinitionChange.server_id == server_id
+            )
+        )
+    ).scalars().all()
+    for change in change_rows:
+        if change.tool_name.startswith(old_prefix):
+            change.tool_name = f"{new_name}{change.tool_name[len(old_name):]}"
 
     # 只取 (id, tools)：全字段加载会把每个版本的提示词/模型配置都读进内存。
     version_result = await db.execute(select(AIAgentVersion.id, AIAgentVersion.tools))
@@ -947,6 +984,21 @@ async def list_mcp_servers(
                 "published": int(row.published_count or 0),
             }
 
+    # 待确认的定义变更数单独聚合：变更表是多行/工具的，塞进上面那条 counts 会把
+    # 工具行数乘出来（一个工具改了两处，工具数就翻倍）。
+    pending_changes_by_server: Dict[str, int] = {}
+    if server_ids:
+        change_counts_stmt = (
+            select(McpToolDefinitionChange.server_id, func.count())
+            .where(
+                McpToolDefinitionChange.server_id.in_(server_ids),
+                McpToolDefinitionChange.status == "pending",
+            )
+            .group_by(McpToolDefinitionChange.server_id)
+        )
+        for row in (await db.execute(change_counts_stmt)).all():
+            pending_changes_by_server[str(row[0])] = int(row[1] or 0)
+
     owner_profiles = await _mcp_owner_profiles(db, {s.user_id for s in servers})
     res = []
     for s in servers:
@@ -959,6 +1011,7 @@ async def list_mcp_servers(
         item.tool_count = counts["available"]
         item.published_tool_count = counts["published"]
         item.stale_tool_count = counts["stale"]
+        item.pending_change_count = pending_changes_by_server.get(str(s.id), 0)
         owner_name, owner_display = owner_profiles.get(int(s.user_id), (None, None)) if s.user_id else (None, None)
         item.owner_user_name = owner_name
         item.owner_display_name = owner_display
@@ -1397,6 +1450,19 @@ async def _server_response_with_counts(db: AsyncSession, server: McpServer) -> M
     item.tool_count = int(row.available or 0)
     item.stale_tool_count = int(row.stale or 0)
     item.published_tool_count = int(row.published or 0)
+    # 待确认变更数同理：改分组/改配置只改一列，前端拿返回值合并列表项时，
+    # 漏了它卡片上的紫色角标会瞬间消失，看起来像「刚探测过、已经没问题了」。
+    pending_changes = (
+        await db.execute(
+            select(func.count())
+            .select_from(McpToolDefinitionChange)
+            .where(
+                McpToolDefinitionChange.server_id == server.id,
+                McpToolDefinitionChange.status == "pending",
+            )
+        )
+    ).scalar()
+    item.pending_change_count = int(pending_changes or 0)
     item.auth_headers_configured = mcp_auth_headers_configured(server)
     item.authorization_configured, item.masked_auth_headers = mcp_auth_headers_summary(server)
     return item
@@ -1662,6 +1728,19 @@ async def update_mcp_server(
     response_data["authorization_configured"], response_data["masked_auth_headers"] = (
         mcp_auth_headers_summary(server)
     )
+    # 与 ``_server_response_with_counts`` 保持同一字段集：前端目前是逐字段取值、
+    # 不做整体替换，少几个字段不会立刻出事；但两个接口返同一资源却给出不同形状，
+    # 谁哪天改成「用返回值覆盖列表项」，角标和探测信息就会凭空归零。
+    pending_changes = (
+        await db.execute(
+            select(func.count())
+            .select_from(McpToolDefinitionChange)
+            .where(
+                McpToolDefinitionChange.server_id == server_id,
+                McpToolDefinitionChange.status == "pending",
+            )
+        )
+    ).scalar()
     return {
         **response_data,
         "id": server_id,
@@ -1670,6 +1749,11 @@ async def update_mcp_server(
         "tool_count": total,
         "published_tool_count": pub,
         "stale_tool_count": stale,
+        "pending_change_count": int(pending_changes or 0),
+        "last_probe_at": server.last_probe_at,
+        "last_probe_status": server.last_probe_status,
+        "probe_failure_count": int(server.probe_failure_count or 0),
+        "last_probe_error": server.last_probe_error,
     }
 
 @router.delete("/servers/{server_id}", dependencies=[Depends(require_permission("element", "element:mcp_management:delete"))])

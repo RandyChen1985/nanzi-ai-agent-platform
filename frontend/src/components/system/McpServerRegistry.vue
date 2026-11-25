@@ -59,6 +59,7 @@ function withRulePath(rule: LocatorRule | null, valuePath?: string | null): Loca
 }
 import { isAuthorizationHeader, planMcpAuthHeaders } from '@/utils/mcpAuthHeaders'
 import McpServerAgentsDrawer from './McpServerAgentsDrawer.vue'
+import McpDefinitionChangesDrawer from '../mcp/McpDefinitionChangesDrawer.vue'
 import ToolGroupTabs from './ToolGroupTabs.vue'
 import { ALL_GROUP_KEY, computeGroupTabs, type GroupableTool } from '@/utils/toolGroupTabs'
 import { buildJavaMcpSample, buildPythonMcpSample } from './mcpCodeSamples'
@@ -152,7 +153,13 @@ function sortServers(list: any[]): any[] {
  * 右栏概览里的「值得处理」四项：点一下就把左栏切成对应筛选。
  * 它们不进后端（列表接口只有 scope 一个参数），纯前端过滤即可。
  */
-type McpTodoKey = 'offline' | 'unpublished' | 'stale-tools' | 'stale-sync'
+type McpTodoKey =
+  | 'offline'
+  | 'unpublished'
+  | 'stale-tools'
+  | 'stale-sync'
+  | 'definition-changed'
+  | 'probe-failing'
 const todoFilter = ref<McpTodoKey | ''>('')
 
 const MCP_TODO_LABELS: Record<McpTodoKey, string> = {
@@ -160,6 +167,10 @@ const MCP_TODO_LABELS: Record<McpTodoKey, string> = {
   unpublished: '一个工具都没发布',
   'stale-tools': '远端已失效',
   'stale-sync': '超过 7 天未同步',
+  'definition-changed': '工具定义有变更',
+  // 抄近路把 stale-sync 的判据换成「多久没探测」是错的：探测每天跑，那个待办会
+  // 永远为空，而标签还写着「未同步」。探测的问题单独成一项，语义才不串。
+  'probe-failing': '探测连不上远端',
 }
 
 const STALE_SYNC_MS = 7 * 24 * 60 * 60 * 1000
@@ -170,6 +181,11 @@ const matchesTodo = (server: any, key: McpTodoKey): boolean => {
     return server.enabled_status === 1 && Number(server.published_tool_count || 0) === 0
   }
   if (key === 'stale-tools') return Number(server.stale_tool_count || 0) > 0
+  if (key === 'definition-changed') return Number(server.pending_change_count || 0) > 0
+  if (key === 'probe-failing') {
+    return String(server.last_probe_status || '') === 'unreachable'
+      || Number(server.probe_failure_count || 0) >= 3
+  }
   const ts = server.last_sync_at ? new Date(server.last_sync_at).getTime() : 0
   return !ts || Date.now() - ts > STALE_SYNC_MS
 }
@@ -350,7 +366,14 @@ const mcpGroupDistribution = computed(() => {
 
 const mcpTodoCounts = computed(() => {
   const rows = serversMatchingFilters.value
-  return (['offline', 'unpublished', 'stale-tools', 'stale-sync'] as McpTodoKey[])
+  return ([
+    'definition-changed',
+    'probe-failing',
+    'offline',
+    'unpublished',
+    'stale-tools',
+    'stale-sync',
+  ] as McpTodoKey[])
     .map((key) => ({
       key,
       label: MCP_TODO_LABELS[key],
@@ -498,6 +521,75 @@ const selectedToolIds = ref<Set<string>>(new Set())
 const selectedServer = ref<any>(null)
 const tools = ref<any[]>([])
 const toolsLoading = ref(false)
+
+/* ---------------- 工具定义变更（自动探测发现，只读结果） ---------------- */
+
+const showChangesDrawer = ref(false)
+/** 当前服务下「定义已变更」的工具全名集合，工具行据此显示徽章 */
+const changedToolNames = ref<Set<string>>(new Set())
+
+/**
+ * 拉当前服务的待确认变更。
+ *
+ * 只取 tool_name 用于工具行徽章；明细在抽屉里（抽屉自己请求，避免把 before/after
+ * 全量塞进列表响应——一个服务几十条变更时那是几百 KB 的无用载荷）。
+ */
+const fetchDefinitionChanges = async (serverId: string) => {
+  try {
+    const res = await axios.get('/api/portal/mcp/changes', {
+      params: { server_id: serverId, status: 'pending', days: 90, limit: 200 },
+    })
+    if (selectedServer.value?.id !== serverId) return
+    const list = Array.isArray(res.data?.items) ? res.data.items : []
+    changedToolNames.value = new Set(list.map((item: any) => String(item.tool_name)))
+  } catch {
+    // 变更列表拉不到不该挡住工具列表：工具照常展示，只是不显示「定义已变更」徽章。
+    changedToolNames.value = new Set()
+  }
+}
+
+const pendingChangeCount = computed(() => Number(selectedServer.value?.pending_change_count || 0))
+
+/** 全平台待确认变更总数：提示条与页签角标都从服务列表的聚合字段来，不额外查库 */
+const totalPendingChanges = computed(() =>
+  servers.value.reduce((sum: number, server: any) => sum + Number(server.pending_change_count || 0), 0))
+
+const hasChangedTool = (tool: any) => changedToolNames.value.has(String(tool?.tool_name || ''))
+
+/**
+ * 进页面时看到提示条就够一次，关掉别再来烦。
+ * 与分组页签的收起状态同一个套路：认状态存本地，不问你第二遍。
+ */
+const DEFINITION_HINT_DISMISSED_KEY = 'mcp-console:definition-changes-hint-dismissed'
+const definitionHintDismissed = ref(false)
+try {
+  definitionHintDismissed.value = localStorage.getItem(DEFINITION_HINT_DISMISSED_KEY) === '1'
+} catch {
+  definitionHintDismissed.value = false
+}
+const dismissDefinitionHint = () => {
+  definitionHintDismissed.value = true
+  try {
+    localStorage.setItem(DEFINITION_HINT_DISMISSED_KEY, '1')
+  } catch {
+    // 隐私模式下写不进去：本次会话内仍然生效
+  }
+}
+
+const openChangesDrawer = () => {
+  if (!selectedServer.value?.id) return
+  showChangesDrawer.value = true
+}
+
+/** 抽屉里应用/忽略之后：卡片角标与工具行徽章都要跟着变 */
+const onDefinitionChangesUpdated = () => {
+  const id = selectedServer.value?.id
+  // fetchServers 内部会顺带刷新变更角标，不用再单独 fetchDefinitionChanges
+  fetchServers()
+  // 应用变更走的是「整服务 sync_tools」，工具的描述/参数/增删都变了——不刷新工具列表，
+  // 用户关掉抽屉后看到的还是旧定义，会以为没生效。
+  if (id) fetchTools(id)
+}
 /** 工具列表请求序号：快速切换服务时，旧响应不得覆盖新选中服务的工具。 */
 let toolsRequestSeq = 0
 
@@ -1431,6 +1523,8 @@ const fetchServers = async () => {
       count: servers.value.length,
     })
     serversLoaded.value = true
+    // 列表刷新后角标是新的，当前服务的工具徽章也要跟着刷新
+    if (selectedServer.value?.id) fetchDefinitionChanges(selectedServer.value.id)
     // 从「收到的分享」点「去我的 MCP 看看」时列表可能刚重建，加载完再落选中
     if (pendingFocusServerId && !tryResolvePendingFocus()) {
       settlePendingFocus(false)
@@ -1447,17 +1541,28 @@ const fetchServers = async () => {
 const isEchoTestServer = (server: any) =>
   String(server?.sse_url || '').includes('/mcp/echo/')
 
+/** 卡片时间的 tooltip：同步时间 + 探测时间一起给，避免两个时间在界面上打架 */
+const probeTimeHint = (server: any): string => {
+  const lines: string[] = []
+  if (server?.last_sync_at) lines.push(`最近同步：${new Date(server.last_sync_at).toLocaleString()}`)
+  if (server?.last_probe_at) {
+    lines.push(`最近检查远端定义：${new Date(server.last_probe_at).toLocaleString()}`)
+  }
+  if (server?.last_probe_error) lines.push(`最近一次探测失败：${server.last_probe_error}`)
+  return lines.join('\n')
+}
+
 /** 同步时间放完整时间会在窄卡片里挤成一坨：显示相对时间，完整值留给 title */
-function formatRelativeTime(value: string | null | undefined): string {
+function formatRelativeTime(value: string | null | undefined, verb = '同步'): string {
   if (!value) return ''
   const ts = new Date(value).getTime()
   if (Number.isNaN(ts)) return ''
   const diff = Date.now() - ts
-  if (diff < 60_000) return '刚刚同步'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前同步`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前同步`
-  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前同步`
-  return `${new Date(ts).toLocaleDateString('zh-CN')} 同步`
+  if (diff < 60_000) return `刚刚${verb}`
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前${verb}`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前${verb}`
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前${verb}`
+  return `${new Date(ts).toLocaleDateString('zh-CN')} ${verb}`
 }
 
 /** 参数名只做展示：坏 schema 不能把整个工具列表的渲染打断 */
@@ -3104,7 +3209,9 @@ const selectServer = (server: any) => {
   // 先清空，避免新服务的标题下短暂展示上一个服务的工具；同时让旧请求失效。
   tools.value = []
   toolsRequestSeq += 1
+  changedToolNames.value = new Set()
   fetchTools(server.id)
+  fetchDefinitionChanges(server.id)
   fetchServerUsage(server.id).then((usage) => {
     if (selectedServer.value?.id === server.id) selectedServerUsage.value = usage
   })
@@ -3469,6 +3576,36 @@ onMounted(fetchServers)
             <TableCellsIcon class="h-4 w-4" :class="cardDensity === 'compact' ? 'text-indigo-500' : ''" />
           </button>
         </div>
+
+        <!-- 进页面就能看见的提示条：发现变更时出现一次，关掉不再烦 -->
+        <div
+          v-if="canSyncMcp && !definitionHintDismissed && totalPendingChanges > 0"
+          class="flex items-start gap-2 rounded-md border border-violet-200 bg-violet-50 px-2 py-1.5"
+        >
+          <svg class="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5.2l3.2 2" />
+          </svg>
+          <div class="min-w-0 flex-1">
+            <p class="text-[11px] leading-snug text-violet-900">
+              有 <strong>{{ totalPendingChanges }} 处工具定义变更</strong>待确认，探测只记录差异、未改动任何工具。
+            </p>
+            <button
+              type="button"
+              class="mt-0.5 text-[10px] font-bold text-violet-700 underline decoration-violet-300 underline-offset-2 hover:text-violet-900"
+              @click="todoFilter = 'definition-changed'"
+            >只看有变更的服务 →</button>
+          </div>
+          <button
+            type="button"
+            class="shrink-0 rounded p-0.5 text-violet-400 transition-colors hover:text-violet-700"
+            aria-label="收起变更提示"
+            @click="dismissDefinitionHint"
+          >
+            <XMarkIcon class="h-3.5 w-3.5" />
+          </button>
+        </div>
+
       </div>
 
       <div class="custom-scrollbar max-h-[min(52vh,28rem)] flex-1 overflow-y-auto lg:max-h-none">
@@ -3637,10 +3774,20 @@ onMounted(fetchServers)
               >
                 已分享 {{ server.share_count }} 次
               </span>
+              <!-- 定义变更用紫色：amber 已被「未发布 / 远端已删除」占用，绿色是「已发布」，
+                   red 是错误。同一屏里颜色不能有两种含义。 -->
+              <span
+                v-if="canSyncMcp && Number(server.pending_change_count || 0) > 0"
+                class="cursor-help rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 font-bold text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300"
+                v-tooltip="`自动探测发现 ${server.pending_change_count} 处远端定义与本地不一致（描述、参数等）。这些差异只被记录下来，还没有改动任何工具；确认后才应用。`"
+              >{{ server.pending_change_count }} 项定义变更</span>
+              <!-- 显示「最近同步」而不是「最近检查」：这张卡上用户想判断的是
+                   「本地数据多新」，而探测时间只代表「系统看过」——后者放 tooltip 就够，
+                   占着右下角会让人误以为工具定义刚刚被更新过。 -->
               <span
                 v-if="server.last_sync_at && cardDensity !== 'compact'"
                 class="ml-auto shrink-0 text-gray-400"
-                :title="new Date(server.last_sync_at).toLocaleString()"
+                :title="probeTimeHint(server)"
               >{{ formatRelativeTime(server.last_sync_at) }}</span>
             </div>
 
@@ -3823,6 +3970,26 @@ onMounted(fetchServers)
               </svg>
               <span class="absolute -right-1.5 -top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold leading-none text-white shadow-sm">{{ staleToolCount }}</span>
             </button>
+            <!-- 定义变更：自动探测发现远端与本地不一致时，入口就在这里 -->
+            <button
+              v-if="canSave && canSyncMcp"
+              type="button"
+              class="relative inline-flex h-8 items-center justify-center gap-1 rounded-lg border px-2 shadow-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 active:scale-[0.96]"
+              :class="pendingChangeCount > 0
+                ? 'border-violet-200 bg-violet-50/70 text-violet-600 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700'
+                : 'border-gray-200 bg-white text-slate-400 hover:border-violet-200 hover:bg-violet-50/60 hover:text-violet-600'"
+              @click="openChangesDrawer"
+              v-tooltip="pendingChangeCount > 0
+                ? `该服务有 ${pendingChangeCount} 项工具定义变更待确认（探测只记录差异，未改动任何工具）`
+                : '查看工具定义变更历史（自动探测远端 tools/list 的差异）'"
+              :aria-label="`查看工具定义变更历史，待确认 ${pendingChangeCount} 项`"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 7v5.2l3.2 2" />
+              </svg>
+              <span v-if="pendingChangeCount > 0" class="text-[11px] font-bold tabular-nums">{{ pendingChangeCount }}</span>
+            </button>
           </div>
         </div>
 
@@ -3874,6 +4041,30 @@ onMounted(fetchServers)
               批量下线
             </button>
           </div>
+        </div>
+
+        <!-- 定义变更服务级提示条：探测发现差异时出现，一键进抽屉 -->
+        <div
+          v-if="canSyncMcp && pendingChangeCount > 0"
+          class="flex flex-col gap-2 border-b border-violet-200 bg-violet-50/80 px-3 py-2.5 animate-fade-in sm:flex-row sm:items-center sm:justify-between sm:px-4"
+        >
+          <div class="flex min-w-0 items-center gap-2">
+            <svg class="h-4 w-4 shrink-0 text-violet-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5.2l3.2 2" />
+            </svg>
+            <span class="text-xs leading-snug text-violet-900">
+              自动探测发现该服务有 <strong class="text-violet-800">{{ pendingChangeCount }} 处工具定义变更</strong>待确认。
+              <span class="text-violet-700/80">探测只记录差异，没有改动任何工具。</span>
+            </span>
+          </div>
+          <button
+            type="button"
+            class="inline-flex shrink-0 items-center justify-center gap-1 rounded-md bg-violet-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-violet-700 active:scale-95"
+            @click="openChangesDrawer"
+          >
+            查看差异
+          </button>
         </div>
 
         <!-- 全待发布提示条（当服务启用且工具全部为待发布时展示） -->
@@ -3940,6 +4131,17 @@ onMounted(fetchServers)
                     >远端已删除</span>
                     <span v-else-if="tool.is_published" class="rounded border border-green-100 bg-green-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-green-600">已发布</span>
                     <span v-else class="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-gray-400">待发布</span>
+                    <!-- 必须放在上面那条 v-if/v-else-if/v-else 四态链**之外**：中间插一个
+                         v-if 会把后面的 v-else-if / v-else 接到这个按钮上，结果是「定义
+                         已变更」一出现，发布状态徽标就消失；而服务禁用／远端已删除的工具
+                         又会同时显示矛盾的发布状态。 -->
+                    <button
+                      v-if="canSyncMcp && tool.is_available !== false && hasChangedTool(tool)"
+                      type="button"
+                      class="cursor-pointer rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-violet-700 transition-colors hover:bg-violet-100"
+                      v-tooltip="'远端这份工具的定义与本地生效的不一致，正在等人工确认。点开看差异；确认前智能体仍按本地旧定义调用。'"
+                      @click.stop="openChangesDrawer"
+                    >定义已变更</button>
                   </div>
                   <p class="line-clamp-2 text-xs leading-relaxed text-gray-600 dark:text-gray-400">
                     {{ tool.tool_description || '暂无描述' }}
@@ -5053,6 +5255,15 @@ onMounted(fetchServers)
       :loading="!!(selectedServer && usageLoading[selectedServer.id])"
       @close="closeAgentUsageDrawer"
       @refresh="refreshSelectedServerUsage"
+    />
+
+    <!-- 工具定义变更抽屉：看差异 + 决定，应用前不会改动任何工具 -->
+    <McpDefinitionChangesDrawer
+      :visible="showChangesDrawer"
+      :server-id="selectedServer?.id || ''"
+      :server-name="selectedServer?.server_name || ''"
+      @close="showChangesDrawer = false"
+      @changed="onDefinitionChangesUpdated"
     />
   </div>
         <!-- 参数级凭据：像工具参数那样一张表里逐个选，一次提交 -->

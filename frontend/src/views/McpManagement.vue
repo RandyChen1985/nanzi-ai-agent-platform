@@ -5,6 +5,7 @@ import axios from '../utils/axios'
 import McpServerRegistry from '../components/system/McpServerRegistry.vue'
 import McpFlowGuideBanner from '../components/mcp/McpFlowGuideBanner.vue'
 import McpAuditLogTab from '../components/mcp/McpAuditLogTab.vue'
+import McpDefinitionChangesTab from '../components/mcp/McpDefinitionChangesTab.vue'
 import McpCallSummary from '../components/mcp/McpCallSummary.vue'
 import McpPersonalMenu from '../components/mcp/McpPersonalMenu.vue'
 import McpShareDialog from '../components/mcp/McpShareDialog.vue'
@@ -64,7 +65,7 @@ watch(personalMenuCollapsed, (collapsed) => {
 const shareDialogServer = ref<{ id: string; server_name: string; sse_url: string } | null>(null)
 const mcpShareCounts = ref({ received_pending: 0, sent_pending: 0, sent_total: 0 })
 // 平台 MCP 列表/工具/日志已收紧为 admin；非管理员直接落到「我的 MCP」，不显示会 403 的平台页签。
-const activeScope = ref<'global' | 'personal' | 'audit'>(
+const activeScope = ref<'global' | 'personal' | 'audit' | 'changes'>(
   props.personalOnly || !isAdmin.value ? 'personal' : 'global',
 )
 const registryRef = ref<InstanceType<typeof McpServerRegistry> | null>(null)
@@ -299,6 +300,20 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         </svg>
         审计日志
       </button>
+      <!-- 定义变更：跨服务看「这周远端改了什么」，与单个服务抽屉互补 -->
+      <button
+        v-if="isAdmin"
+        id="tab-definition-changes"
+        type="button"
+        @click="activeScope = 'changes'"
+        class="flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
+        :class="activeScope === 'changes' ? 'border-violet-600 font-bold text-violet-600 dark:border-violet-400 dark:text-violet-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+      >
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>定义变更</span>
+      </button>
     </div>
 
     <!-- 普通用户只有一个「我的 MCP」：把二级视图提到顶部，内容区全宽 -->
@@ -317,6 +332,12 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
       :class="personalOnly ? 'min-h-[28rem]' : 'min-h-0 flex-1 overflow-hidden'"
     >
       <McpAuditLogTab v-if="activeScope === 'audit' && isAdmin" />
+
+      <!-- 定义变更：只对管理员开放（探测与应用都需要 sync 权限，且影响全平台智能体） -->
+      <McpDefinitionChangesTab
+        v-else-if="activeScope === 'changes' && isAdmin"
+        class="min-h-0 flex-1"
+      />
 
       <!-- 我的 MCP：与「我的技能」同构，左侧二级菜单 + 三块内容 -->
       <div v-else-if="activeScope === 'personal'" class="flex min-h-0 flex-1 flex-col gap-2 md:flex-row md:gap-4">
