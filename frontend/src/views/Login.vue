@@ -21,7 +21,7 @@ import type { BrowserDetectResult } from '../utils/browserDetect'
 
 const router = useRouter()
 const route = useRoute()
-const { branding, loadBranding } = useBranding()
+const { branding, loadBranding, brandingReady } = useBranding()
 const { loginTheme, setLoginTheme } = useLoginTheme()
 
 // ---------------------------------------------------------------------------
@@ -817,18 +817,40 @@ const handleLogin = async () => {
           ]"
         >
           <img
+            v-if="brandingReady"
             :src="iconUrl"
             class="w-10 h-10 rounded-xl object-cover shadow-lg ring-1 ring-white/15 shrink-0"
             alt="NanZi logo"
           />
+          <!-- 品牌配置未就绪（首次访问、无本机快照）：占同尺寸空位，不先画默认图标 -->
+          <div
+            v-else
+            class="w-10 h-10 shrink-0 rounded-xl ring-1 ring-white/15 animate-pulse"
+            :class="activeThemeMeta.isLightStage ? 'bg-slate-900/10' : 'bg-white/15'"
+            aria-hidden="true"
+          />
           <div class="text-left min-w-0">
-            <div class="text-base font-bold tracking-tight truncate">{{ productName }}</div>
-            <div
-              class="text-[10px] font-mono tracking-[0.14em] uppercase truncate"
-              :class="activeThemeMeta.isLightStage ? 'text-slate-500' : 'text-slate-300/80'"
-            >
-              {{ loginSubtitle }}
-            </div>
+            <template v-if="brandingReady">
+              <div class="text-base font-bold tracking-tight truncate">{{ productName }}</div>
+              <div
+                class="text-[10px] font-mono tracking-[0.14em] uppercase truncate"
+                :class="activeThemeMeta.isLightStage ? 'text-slate-500' : 'text-slate-300/80'"
+              >
+                {{ loginSubtitle }}
+              </div>
+            </template>
+            <template v-else>
+              <div
+                class="h-4 w-28 rounded animate-pulse"
+                :class="activeThemeMeta.isLightStage ? 'bg-slate-900/10' : 'bg-white/25'"
+                aria-hidden="true"
+              />
+              <div
+                class="mt-1.5 h-2.5 w-44 rounded animate-pulse"
+                :class="activeThemeMeta.isLightStage ? 'bg-slate-900/[0.07]' : 'bg-white/15'"
+                aria-hidden="true"
+              />
+            </template>
           </div>
         </div>
 
@@ -955,10 +977,13 @@ const handleLogin = async () => {
             <!-- Mobile Header (Visible only on small screens) -->
             <div class="lg:hidden pt-8 px-6 pb-0 animate-fade-in shrink-0" :class="{ 'mt-10': isPreviewMode }">
               <div class="flex items-center gap-3 mb-2">
-                <img :src="iconUrl" class="w-8 h-8 rounded-lg drop-shadow-md object-cover" alt="Logo" />
-                <h1 class="text-xl font-bold text-slate-900 tracking-tight">{{ productName }}</h1>
+                <img v-if="brandingReady" :src="iconUrl" class="w-8 h-8 rounded-lg drop-shadow-md object-cover" alt="Logo" />
+                <div v-else class="h-8 w-8 shrink-0 rounded-lg bg-slate-200 animate-pulse" aria-hidden="true" />
+                <h1 v-if="brandingReady" class="text-xl font-bold text-slate-900 tracking-tight">{{ productName }}</h1>
+                <div v-else class="h-5 w-32 rounded bg-slate-200 animate-pulse" aria-hidden="true" />
               </div>
-              <p class="text-xs text-slate-500 tracking-wide uppercase">{{ loginSubtitle }}</p>
+              <p v-if="brandingReady" class="text-xs text-slate-500 tracking-wide uppercase">{{ loginSubtitle }}</p>
+              <div v-else class="h-3 w-48 rounded bg-slate-100 animate-pulse" aria-hidden="true" />
             </div>
 
             <!-- 移动端从顶部排布（lg 起才垂直居中）；注册表单较高时强制顶部对齐防裁切，悬浮卡在 xl 下保留上下呼吸留白 -->
