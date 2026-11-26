@@ -16,6 +16,7 @@ import AvatarCropperModal from '../components/common/AvatarCropperModal.vue'
 import PermissionSectionCard from '../components/personal/PermissionSectionCard.vue'
 import type { PermissionNode } from '../constants/permissions'
 import PersonalPermissionTree from '../components/personal/PersonalPermissionTree.vue'
+import LoginThemeSelector from '../components/personal/LoginThemeSelector.vue'
 import { useUiMode } from '../composables/useUiMode'
 
 const { branding, loadBranding } = useBranding()
@@ -27,7 +28,7 @@ const apiKeyRevealed = ref(false)
 const newPassword = ref('')
 const confirmPassword = ref('')
 const loadingPassword = ref(false)
-const infoSubTab = ref<'profile' | 'security' | 'browser' | 'preferences'>('profile')
+const infoSubTab = ref<'profile' | 'security' | 'browser' | 'preferences' | 'login-theme'>('profile')
 
 const passwordPolicyResult = computed(() => checkPasswordPolicy(newPassword.value, userInfo.value?.user_name))
 
@@ -1062,7 +1063,7 @@ watch(() => route.query.tab, (value) => {
 }, { immediate: true })
 
 watch(() => route.query.subtab, (value) => {
-    if (value === 'security' || value === 'profile' || value === 'browser') {
+    if (value === 'security' || value === 'profile' || value === 'browser' || value === 'preferences' || value === 'login-theme') {
         infoSubTab.value = value
     }
     if (value === 'requests' && activeTab.value === 'permissions') {
@@ -1261,6 +1262,23 @@ onMounted(() => {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 9.5h16M9.5 9.5V20" />
                         </svg>
                         <span>界面偏好</span>
+                        <span class="ml-auto rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600">新</span>
+                    </button>
+                    <!-- 登录页风格：8 套主题可选，默认 F1，账号级存 Redis -->
+                    <button
+                        type="button"
+                        data-user-sub-tab="login-theme"
+                        @click="infoSubTab = 'login-theme'"
+                        class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs sm:text-sm transition-all cursor-pointer whitespace-nowrap"
+                        :class="infoSubTab === 'login-theme' ? 'bg-blue-600 font-semibold text-white shadow-sm shadow-blue-500/20' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
+                    >
+                        <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3a9 9 0 109 9c0-.9-.7-1.5-1.5-1.5h-2.1a1.5 1.5 0 01-1.4-2l.4-1.2A3 3 0 0013.5 3H12z" />
+                            <circle cx="7.5" cy="10.5" r="1" fill="currentColor" stroke="none" />
+                            <circle cx="10.5" cy="7.5" r="1" fill="currentColor" stroke="none" />
+                            <circle cx="7.5" cy="14.5" r="1" fill="currentColor" stroke="none" />
+                        </svg>
+                        <span>登录页风格</span>
                         <span class="ml-auto rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600">新</span>
                     </button>
                 </nav>
@@ -1795,6 +1813,12 @@ onMounted(() => {
                         小提示：不管选哪种模式，页面本身的权限校验不变——没有权限的入口不会出现，也不会出现「点了提示无权限」的情况。
                     </p>
                 </div>
+
+                <!-- 登录页风格：8 套主题选择（F1~F4、G~J，默认 F1），存 Redis -->
+                <LoginThemeSelector
+                    v-else-if="infoSubTab === 'login-theme'"
+                    @toast="showToast"
+                />
 
                 <div v-else-if="infoSubTab === 'browser'" class="max-w-2xl space-y-6">
                     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-3">

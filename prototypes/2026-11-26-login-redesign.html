@@ -1,0 +1,1550 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>登录页 · 9 套跨风格高阶科技感重构方案对比</title>
+<meta name="prototype-kind" content="方案对比" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --font-sans: "SF Pro Display", "PingFang SC", -apple-system, BlinkMacSystemFont, "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: #070b14;
+    color: #e2e8f0;
+  }
+
+  button, input, textarea { font-family: inherit; }
+
+  /* ==================== 顶部悬浮评审工具栏 ==================== */
+  .review-bar {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px 5px 10px;
+    border-radius: 999px;
+    background: rgba(11, 16, 26, 0.90);
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    max-width: calc(100vw - 20px);
+  }
+  .review-bar.collapsed { padding: 5px 10px; }
+  .review-bar.collapsed .review-body { display: none; }
+  .review-body {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .review-body::-webkit-scrollbar { display: none; }
+  .scheme-tabs {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    background: rgba(255, 255, 255, 0.06);
+    padding: 3px;
+    border-radius: 999px;
+  }
+  .scheme-btn {
+    border: 0;
+    background: transparent;
+    color: #cbd5e1;
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 5px 9.5px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .scheme-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.09); }
+  .scheme-btn.active {
+    background: #ffffff;
+    color: #0b1120;
+    font-weight: 600;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+  }
+  .scheme-new {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: rgba(16, 185, 129, 0.22);
+    color: #6ee7b7;
+    font-weight: 700;
+  }
+  .scheme-btn.active .scheme-new {
+    background: #dcfce7;
+    color: #15803d;
+  }
+  .scheme-sep {
+    width: 1px;
+    height: 12px;
+    background: rgba(255, 255, 255, 0.16);
+    margin: 0 2px;
+    flex-shrink: 0;
+  }
+  .review-divider { width: 1px; height: 15px; background: rgba(255, 255, 255, 0.16); flex-shrink: 0; }
+  .state-pills { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+  .state-pill {
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: transparent;
+    color: #94a3b8;
+    font-size: 11px;
+    padding: 4px 7.5px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    white-space: nowrap;
+  }
+  .state-pill:hover { color: #f8fafc; border-color: rgba(255, 255, 255, 0.28); }
+  .state-pill.active { background: rgba(56, 189, 248, 0.18); border-color: rgba(56, 189, 248, 0.5); color: #7dd3fc; }
+  .review-toggle {
+    border: 0;
+    background: rgba(255, 255, 255, 0.1);
+    color: #e2e8f0;
+    font-size: 11px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .review-toggle:hover { background: rgba(255, 255, 255, 0.2); }
+
+  /* 底部说明条 */
+  .scheme-note {
+    position: fixed;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9998;
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: rgba(11, 16, 26, 0.86);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    font-size: 12px;
+    color: #cbd5e1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: calc(100vw - 24px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  }
+  .scheme-note.hidden { display: none; }
+  .scheme-note strong { color: #f8fafc; font-weight: 600; }
+  .scheme-note .note-close { border: 0; background: transparent; color: #64748b; cursor: pointer; font-size: 15px; line-height: 1; }
+  .scheme-note .note-close:hover { color: #e2e8f0; }
+
+  .scheme-view {
+    position: fixed;
+    inset: 0;
+    display: none;
+    width: 100vw;
+    height: 100dvh;
+    overflow: hidden;
+  }
+  .scheme-view.active { display: flex; }
+
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes shake {
+    10%, 90% { transform: translateX(-1px); }
+    20%, 80% { transform: translateX(2px); }
+    30%, 50%, 70% { transform: translateX(-2px); }
+    40%, 60% { transform: translateX(2px); }
+  }
+  @keyframes pulseDot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.84); } }
+  .anim-in { animation: fadeUp 0.26s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .anim-shake { animation: shake 0.36s cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+
+  /* ==================== 通用亮色低眩光表单体系（支持多色温主题微调） ==================== */
+  .fm-head { margin-bottom: 22px; }
+  .fm-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: #64748b;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .fm-status-dot { display: inline-flex; align-items: center; gap: 5px; color: #0284c7; font-size: 10px; }
+  .fm-status-dot i { width: 5px; height: 5px; border-radius: 50%; background: #0ea5e9; display: inline-block; box-shadow: 0 0 6px rgba(14, 165, 233, 0.65); }
+  .fm-title { font-size: 23px; font-weight: 650; letter-spacing: -0.025em; color: #0f172a; }
+  .fm-sub { font-size: 12.5px; color: #52627a; margin-top: 5px; line-height: 1.5; }
+  .fm-tabs {
+    display: flex; gap: 4px; padding: 4px; border-radius: 11px;
+    background: rgba(15, 23, 42, 0.055); border: 1px solid rgba(15, 23, 42, 0.07);
+    margin-bottom: 20px;
+  }
+  .fm-tab {
+    flex: 1; border: 0; background: transparent; padding: 7.5px 10px; border-radius: 8px;
+    font-size: 12.5px; font-weight: 500; color: #52627a; cursor: pointer; transition: all 0.18s ease;
+  }
+  .fm-tab:hover { color: #0f172a; }
+  .fm-tab.active {
+    background: rgba(255, 255, 255, 0.9); color: #0b1324; font-weight: 600;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.05);
+  }
+  .fm-field { margin-bottom: 15px; }
+  .fm-label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .fm-label { display: block; font-size: 12px; font-weight: 600; color: #334155; margin-bottom: 6px; }
+  .fm-label-row .fm-label { margin-bottom: 0; }
+  .fm-input, .fm-textarea {
+    width: 100%; border-radius: 10px;
+    background: rgba(255, 255, 255, 0.8); border: 1px solid rgba(15, 23, 42, 0.13);
+    color: #0f172a; font-size: 13.5px; padding: 10.5px 13px; outline: none; transition: all 0.18s ease;
+  }
+  .fm-input::placeholder, .fm-textarea::placeholder { color: #8b9bb4; }
+  .fm-input:focus, .fm-textarea:focus {
+    background: #ffffff; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  }
+  .fm-textarea { resize: none; font-family: var(--font-mono); font-size: 12.5px; }
+  .fm-seg {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
+    background: rgba(15, 23, 42, 0.055); padding: 3.5px; border-radius: 9px;
+  }
+  .fm-seg-btn {
+    border: 0; background: transparent; color: #52627a; font-size: 12px; font-weight: 500;
+    padding: 6.5px 10px; border-radius: 7px; cursor: pointer; transition: all 0.18s ease;
+  }
+  .fm-seg-btn.active { background: rgba(255, 255, 255, 0.94); color: #0f172a; font-weight: 600; box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08); }
+  .fm-submit {
+    width: 100%; border: 0; border-radius: 10px; padding: 11.5px 16px;
+    font-size: 13.5px; font-weight: 600; color: #f8fafc;
+    background: linear-gradient(180deg, #162442 0%, #0d172b 100%);
+    box-shadow: 0 8px 20px rgba(11, 20, 38, 0.22), inset 0 1px 0 rgba(125, 211, 252, 0.2);
+    cursor: pointer; transition: all 0.18s ease;
+    display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 6px;
+  }
+  .fm-submit:hover { filter: brightness(1.1); }
+  .fm-submit:active { transform: scale(0.985); }
+  .fm-submit.btn-blue { background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%); box-shadow: 0 8px 20px rgba(37, 99, 235, 0.26); }
+  .fm-submit.btn-ink { background: linear-gradient(180deg, #27292e 0%, #16181c 100%); box-shadow: 0 8px 20px rgba(20, 22, 26, 0.2); }
+  .fm-submit.btn-hud { background: linear-gradient(180deg, #132a22 0%, #0c1c16 100%); box-shadow: 0 8px 20px rgba(12, 28, 22, 0.25), inset 0 1px 0 rgba(52, 211, 153, 0.28); }
+  .fm-error {
+    display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 9px;
+    background: rgba(239, 68, 68, 0.09); border: 1px solid rgba(220, 38, 38, 0.25);
+    color: #b91c1c; font-size: 12px; margin-bottom: 13px;
+  }
+  .fm-links { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 16px; font-size: 12px; color: #5c6c84; }
+  .fm-link-btn { border: 0; background: transparent; color: #1d4ed8; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .fm-link-btn:hover { text-decoration: underline; }
+  .fm-foot {
+    margin-top: 22px; padding-top: 14px; border-top: 1px solid rgba(15, 23, 42, 0.08);
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 10.5px; color: #7c8ca6; font-family: var(--font-mono);
+  }
+  .fm-2fa-card {
+    display: flex; align-items: center; gap: 12px; padding: 11px 13px; border-radius: 11px;
+    background: rgba(255, 255, 255, 0.68); border: 1px solid rgba(15, 23, 42, 0.1); margin-bottom: 16px;
+  }
+  .fm-2fa-icon {
+    width: 34px; height: 34px; border-radius: 9px; background: #0f1b33; color: #7dd3fc;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .otp-input { text-align: center; font-family: var(--font-mono); font-size: 22px; font-weight: 600; letter-spacing: 0.42em; padding: 12px 14px; }
+
+  /* 航电 J 主题微调 */
+  .theme-hud .fm-status-dot { color: #059669; }
+  .theme-hud .fm-status-dot i { background: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.7); }
+  .theme-hud .fm-input:focus, .theme-hud .fm-textarea:focus { border-color: #059669; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.14); }
+  .theme-hud .fm-link-btn { color: #047857; }
+  /* 东方山脊 G 主题微调 */
+  .theme-ink .fm-status-dot { color: #475569; }
+  .theme-ink .fm-status-dot i { background: #334155; box-shadow: none; }
+  .theme-ink .fm-input:focus, .theme-ink .fm-textarea:focus { border-color: #1e293b; box-shadow: 0 0 0 3px rgba(30, 41, 59, 0.10); }
+  .theme-ink .fm-link-btn { color: #1e293b; }
+
+  /* 通用品牌块 */
+  .ast-brand { display: flex; align-items: center; gap: 12px; pointer-events: auto; }
+  .ast-brand-logo {
+    width: 36px; height: 36px; border-radius: 10px; overflow: hidden;
+    box-shadow: 0 8px 22px rgba(37, 99, 235, 0.25); flex-shrink: 0;
+  }
+  .ast-brand-name { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+  .ast-brand-sub { font-size: 10.5px; font-family: var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
+
+  /* ==================== F1 · 双面穿界星盘 ==================== */
+  .scheme-f1 { background: #070d18; position: relative; }
+  .f1-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; }
+  .f1-shell { position: relative; z-index: 3; width: 100%; height: 100%; display: flex; }
+  .f1-left { flex: 1; min-width: 0; padding: 40px 52px; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+  .f1-copy { max-width: 490px; }
+  .f1-coord { font-family: var(--font-mono); font-size: 11px; color: #7dd3fc; letter-spacing: 0.1em; margin-bottom: 14px; display: inline-flex; align-items: center; gap: 8px; }
+  .f1-coord::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 8px #38bdf8; animation: pulseDot 2.4s ease-in-out infinite; }
+  .f1-headline { font-size: clamp(32px, 3.6vw, 48px); font-weight: 600; line-height: 1.15; letter-spacing: -0.03em; color: #f8fafc; margin-bottom: 14px; }
+  .f1-sub { font-size: 14px; line-height: 1.72; color: #94a3b8; }
+  .f1-foot { display: flex; align-items: center; gap: 18px; font-family: var(--font-mono); font-size: 11px; color: #64748b; }
+  .f1-right {
+    width: 472px; flex-shrink: 0; height: 100%; display: flex; align-items: center; justify-content: center;
+    padding: 36px 46px; position: relative; overflow-y: auto;
+    border-left: 1px solid rgba(148, 163, 184, 0.22); box-shadow: -28px 0 70px rgba(7, 13, 24, 0.35);
+  }
+  .f1-right-inner { width: 100%; position: relative; z-index: 2; }
+
+  /* ==================== F2 · 冰雾外鞘星盘 ==================== */
+  .scheme-f2 { background: #070b14; position: relative; }
+  .f2-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  .f2-shell { position: relative; z-index: 3; width: 100%; height: 100%; display: flex; align-items: stretch; padding: 36px 48px; gap: 44px; }
+  .f2-left { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+  .f2-panel-wrap { width: 454px; flex-shrink: 0; display: flex; align-items: center; }
+  .optical-bezel {
+    width: 100%; max-height: 100%; padding: 10px; border-radius: 28px;
+    background: linear-gradient(155deg, rgba(148, 163, 184, 0.22) 0%, rgba(30, 41, 59, 0.28) 55%, rgba(56, 189, 248, 0.16) 100%);
+    border: 1px solid rgba(186, 230, 253, 0.22);
+    box-shadow: 0 34px 90px rgba(0, 0, 0, 0.56), 0 0 64px rgba(37, 99, 235, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); display: flex;
+  }
+  .optical-core {
+    width: 100%; max-height: calc(100dvh - 100px); overflow-y: auto; border-radius: 19px; padding: 30px 30px 22px;
+    background: linear-gradient(180deg, rgba(242, 246, 252, 0.94) 0%, rgba(230, 238, 248, 0.92) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.85); color: #0f172a;
+  }
+
+  /* ==================== F3 · 引力卫星+钛银卡 ==================== */
+  .scheme-f3 { background: #080d17; position: relative; }
+  .f3-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  .f3-shell { position: relative; z-index: 3; width: 100%; height: 100%; display: flex; align-items: stretch; padding: 36px 48px; gap: 40px; }
+  .f3-left { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; }
+  .f3-readout {
+    pointer-events: auto; max-width: 490px; padding: 16px 18px; border-radius: 16px;
+    background: rgba(13, 21, 36, 0.72); border: 1px solid rgba(125, 211, 252, 0.2); backdrop-filter: blur(14px);
+  }
+  .f3-sat-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .f3-sat-btn {
+    border: 1px solid rgba(148, 163, 184, 0.2); background: rgba(255, 255, 255, 0.03);
+    color: #94a3b8; font-family: var(--font-mono); font-size: 11px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  }
+  .f3-sat-btn.active { background: rgba(14, 165, 233, 0.2); border-color: #38bdf8; color: #e0f2fe; }
+  .f3-sat-title { font-size: 16px; font-weight: 600; color: #f8fafc; margin-bottom: 5px; }
+  .f3-sat-desc { font-size: 12.5px; color: #94a3b8; line-height: 1.6; }
+  .f3-panel-wrap { width: 446px; flex-shrink: 0; display: flex; align-items: center; }
+  .titanium-card {
+    width: 100%; max-height: 100%; overflow-y: auto; border-radius: 22px; padding: 32px 32px 24px;
+    background: linear-gradient(165deg, #e7edf5 0%, #dce4f0 100%);
+    border: 1px solid rgba(226, 236, 248, 0.65);
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55), 0 0 90px rgba(56, 189, 248, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    color: #0f172a;
+  }
+
+  /* ==================== F4 · 白盘天文台 ==================== */
+  .scheme-f4 { background: #edf1f7; color: #0f172a; position: relative; }
+  .f4-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  .f4-shell { position: relative; z-index: 3; width: 100%; height: 100%; display: flex; align-items: stretch; padding: 36px 48px; gap: 44px; }
+  .f4-left { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+  .f4-coord { font-family: var(--font-mono); font-size: 11px; color: #2563eb; letter-spacing: 0.1em; margin-bottom: 14px; font-weight: 600; }
+  .f4-headline { font-size: clamp(32px, 3.8vw, 50px); font-weight: 650; line-height: 1.13; letter-spacing: -0.03em; color: #0f172a; margin-bottom: 14px; }
+  .f4-sub { font-size: 14.5px; line-height: 1.7; color: #475569; max-width: 470px; }
+  .f4-foot { display: flex; gap: 18px; font-family: var(--font-mono); font-size: 11px; color: #64748b; }
+  .f4-panel-wrap { width: 442px; flex-shrink: 0; display: flex; align-items: center; }
+  .daylight-card {
+    width: 100%; max-height: 100%; overflow-y: auto; border-radius: 22px; padding: 32px 32px 24px;
+    background: rgba(255, 255, 255, 0.86); border: 1px solid rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    box-shadow: 0 24px 64px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  }
+
+  /* ==================== A · 实时编排剧场 ==================== */
+  .scheme-a { background: #080b12; color: #e6edf7; position: relative; }
+  .a-bg-ambient { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(880px 540px at 24% 42%, rgba(37, 99, 235, 0.11), transparent 68%), linear-gradient(180deg, #090d16 0%, #060910 100%); }
+  .a-grid-frame { position: absolute; inset: 22px; border: 1px solid rgba(148, 163, 184, 0.08); border-radius: 22px; pointer-events: none; }
+  .a-shell { position: relative; z-index: 2; display: flex; width: 100%; height: 100%; padding: 36px 46px; gap: 44px; align-items: stretch; }
+  .a-stage { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; padding: 8px 4px; }
+  .a-hero { margin: 14px 0 18px; }
+  .a-eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; color: #93c5fd; letter-spacing: 0.08em; margin-bottom: 12px; }
+  .a-eyebrow-dot { width: 6px; height: 6px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 10px rgba(56, 189, 248, 0.9); animation: pulseDot 2.4s ease-in-out infinite; }
+  .a-title { font-size: clamp(30px, 3.4vw, 44px); font-weight: 600; line-height: 1.15; letter-spacing: -0.03em; color: #f8fafc; max-width: 620px; }
+  .a-title span { color: #94a3b8; font-weight: 400; }
+  .a-theater { border-radius: 16px; background: linear-gradient(180deg, rgba(16, 22, 34, 0.88) 0%, rgba(11, 15, 24, 0.94) 100%); border: 1px solid rgba(148, 163, 184, 0.14); padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; max-width: 740px; }
+  .a-theater-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .a-scenario-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .a-scenario-btn { border: 1px solid rgba(148, 163, 184, 0.16); background: rgba(255, 255, 255, 0.02); color: #94a3b8; font-size: 12px; padding: 5px 11px; border-radius: 8px; cursor: pointer; }
+  .a-scenario-btn.active { background: rgba(37, 99, 235, 0.18); border-color: rgba(96, 165, 250, 0.5); color: #dbeafe; }
+  .a-theater-meta { font-family: var(--font-mono); font-size: 11px; color: #64748b; display: flex; gap: 8px; }
+  .a-prompt-bar { display: flex; align-items: center; gap: 10px; padding: 9px 13px; border-radius: 10px; background: rgba(6, 9, 14, 0.72); border: 1px solid rgba(148, 163, 184, 0.1); font-size: 13px; color: #e2e8f0; }
+  .a-prompt-chevron { font-family: var(--font-mono); color: #38bdf8; font-weight: 700; }
+  .a-prompt-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .a-prompt-time { font-family: var(--font-mono); font-size: 11px; color: #64748b; }
+  .a-graph-wrap { position: relative; height: 180px; border-radius: 12px; background: rgba(7, 10, 16, 0.65); border: 1px solid rgba(148, 163, 184, 0.08); overflow: hidden; }
+  .a-graph-svg { width: 100%; height: 100%; display: block; }
+  .a-node-card { position: absolute; padding: 8px 11px; border-radius: 10px; background: rgba(15, 20, 30, 0.94); border: 1px solid rgba(148, 163, 184, 0.16); transition: all 0.35s ease; }
+  .a-node-card.lit { border-color: rgba(56, 189, 248, 0.6); box-shadow: 0 0 22px rgba(56, 189, 248, 0.18); }
+  .a-node-card.done { border-color: rgba(52, 211, 153, 0.42); }
+  .a-node-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
+  .a-node-name { font-size: 11px; font-weight: 600; color: #f1f5f9; }
+  .a-node-dot { width: 6px; height: 6px; border-radius: 50%; background: #475569; }
+  .a-node-card.lit .a-node-dot { background: #38bdf8; box-shadow: 0 0 8px #38bdf8; }
+  .a-node-card.done .a-node-dot { background: #34d399; }
+  .a-node-sub { font-family: var(--font-mono); font-size: 10px; color: #64748b; white-space: nowrap; }
+  .a-node-card.lit .a-node-sub { color: #93c5fd; }
+  .a-trace-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border-radius: 10px; background: rgba(16, 185, 129, 0.06); border: 1px solid rgba(52, 211, 153, 0.18); font-size: 12px; color: #cbd5e1; }
+  .a-trace-badge { font-family: var(--font-mono); font-size: 10px; color: #34d399; padding: 2px 7px; border-radius: 5px; background: rgba(16, 185, 129, 0.14); }
+  .a-trace-summary { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .a-trace-metric { font-family: var(--font-mono); font-size: 11px; color: #94a3b8; white-space: nowrap; }
+  .a-stage-footer { display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-family: var(--font-mono); color: #64748b; padding-top: 6px; }
+  .a-panel-wrap { width: 454px; flex-shrink: 0; display: flex; align-items: center; }
+
+  /* =====================================================================
+     新方案 G · 东方现代山脊光影 (Architectural Ink & Horizon · 暖白禅意科技)
+     ===================================================================== */
+  .scheme-g {
+    background: #f5f3ee;
+    color: #1c1e22;
+    position: relative;
+  }
+  .g-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  .g-shell {
+    position: relative; z-index: 3;
+    width: 100%; height: 100%;
+    display: flex; align-items: stretch;
+  }
+  .g-left {
+    flex: 1; min-width: 0;
+    padding: 42px 54px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    pointer-events: none;
+  }
+  .g-vertical-tag {
+    position: absolute;
+    left: 24px;
+    top: 50%;
+    transform: translateY(-50%);
+    writing-mode: vertical-rl;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.28em;
+    color: rgba(28, 30, 34, 0.32);
+    user-select: none;
+  }
+  .g-copy { max-width: 500px; padding-left: 14px; }
+  .g-eyebrow {
+    font-family: var(--font-mono); font-size: 11px; color: #57606f;
+    letter-spacing: 0.16em; margin-bottom: 16px;
+  }
+  .g-title {
+    font-size: clamp(34px, 4vw, 52px);
+    font-weight: 500;
+    line-height: 1.18;
+    letter-spacing: -0.02em;
+    color: #16181d;
+    margin-bottom: 18px;
+  }
+  .g-title b { font-weight: 700; }
+  .g-desc { font-size: 14.5px; line-height: 1.85; color: #525866; max-width: 440px; }
+  .g-foot {
+    padding-left: 14px;
+    display: flex; gap: 22px; font-family: var(--font-mono); font-size: 11px; color: #7c8089;
+  }
+  .g-right {
+    width: 468px; flex-shrink: 0;
+    background: rgba(251, 250, 247, 0.84);
+    border-left: 1px solid rgba(28, 30, 34, 0.09);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    padding: 40px 44px;
+    display: flex; align-items: center;
+    overflow-y: auto;
+  }
+
+  /* =====================================================================
+     新方案 H · 物理波纹干涉实验 (Quantum Interference Field · 冷白极客)
+     ===================================================================== */
+  .scheme-h {
+    background: #f1f4f8;
+    color: #0f172a;
+    position: relative;
+  }
+  .h-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  .h-shell {
+    position: relative; z-index: 3;
+    width: 100%; height: 100%;
+    display: flex; align-items: stretch;
+    padding: 36px 46px; gap: 40px;
+  }
+  .h-left {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column; justify-content: space-between;
+    pointer-events: none;
+  }
+  .h-copy {
+    max-width: 480px;
+    background: rgba(241, 244, 248, 0.72);
+    backdrop-filter: blur(8px);
+    padding: 20px 22px;
+    border-radius: 16px;
+    border: 1px solid rgba(15, 23, 42, 0.07);
+  }
+  .h-tag {
+    font-family: var(--font-mono); font-size: 10.5px; color: #2563eb; font-weight: 600;
+    letter-spacing: 0.1em; margin-bottom: 10px;
+  }
+  .h-title {
+    font-size: clamp(30px, 3.5vw, 44px); font-weight: 650;
+    line-height: 1.14; letter-spacing: -0.03em; color: #0f172a; margin-bottom: 12px;
+  }
+  .h-desc { font-size: 13.5px; line-height: 1.7; color: #475569; }
+  .h-metrics {
+    display: inline-flex; align-items: center; gap: 16px;
+    padding: 8px 14px; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.76); border: 1px solid rgba(15, 23, 42, 0.08);
+    font-family: var(--font-mono); font-size: 11px; color: #475569;
+    width: fit-content;
+  }
+  .h-panel-wrap { width: 444px; flex-shrink: 0; display: flex; align-items: center; }
+  .h-card {
+    width: 100%; max-height: 100%; overflow-y: auto;
+    border-radius: 20px; padding: 32px 32px 24px;
+    background: rgba(255, 255, 255, 0.90);
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    backdrop-filter: blur(22px);
+    box-shadow: 0 22px 60px rgba(15, 23, 42, 0.09);
+    position: relative;
+  }
+  .h-card::before {
+    content: ""; position: absolute; top: 0; left: 24px; right: 24px; height: 2px;
+    background: #0f172a;
+  }
+
+  /* =====================================================================
+     新方案 I · 美术馆长虹压花玻璃幕墙 (Fluted Architectural Glass)
+     ===================================================================== */
+  .scheme-i {
+    background: #0d1628;
+    position: relative;
+  }
+  .i-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  /* 真实长虹竖纹压花玻璃覆盖层 */
+  .i-fluted {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background-image: repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.14) 0px,
+      rgba(255, 255, 255, 0.02) 4px,
+      rgba(7, 13, 28, 0.22) 10px,
+      rgba(255, 255, 255, 0.08) 18px,
+      rgba(255, 255, 255, 0.14) 22px
+    );
+    backdrop-filter: blur(22px) saturate(135%);
+    -webkit-backdrop-filter: blur(22px) saturate(135%);
+  }
+  .i-shell {
+    position: relative; z-index: 3;
+    width: 100%; height: 100%;
+    display: flex;
+  }
+  .i-left {
+    flex: 1; min-width: 0;
+    padding: 42px 52px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    pointer-events: none;
+  }
+  .i-title {
+    font-size: clamp(34px, 4vw, 52px); font-weight: 600;
+    line-height: 1.14; letter-spacing: -0.03em; color: #ffffff;
+    text-shadow: 0 8px 32px rgba(7, 14, 30, 0.35);
+    margin-bottom: 16px; max-width: 520px;
+  }
+  .i-sub {
+    font-size: 14.5px; line-height: 1.75; color: rgba(241, 245, 249, 0.85);
+    max-width: 440px;
+  }
+  .i-foot {
+    font-family: var(--font-mono); font-size: 11px; color: rgba(226, 232, 240, 0.65);
+    display: flex; gap: 18px;
+  }
+  /* 玻璃羽化过渡带 + 柔和雾白侧翼（彻底柔和连接） */
+  .i-transition-slats {
+    width: 54px;
+    height: 100%;
+    flex-shrink: 0;
+    background: linear-gradient(90deg, rgba(244, 247, 252, 0.0) 0%, rgba(244, 247, 252, 0.45) 50%, rgba(244, 247, 252, 0.92) 100%);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-left: 1px solid rgba(255, 255, 255, 0.16);
+  }
+  .i-right {
+    width: 454px;
+    flex-shrink: 0;
+    height: 100%;
+    background: rgba(244, 247, 252, 0.93);
+    backdrop-filter: blur(28px);
+    -webkit-backdrop-filter: blur(28px);
+    padding: 40px 44px;
+    display: flex; align-items: center;
+    overflow-y: auto;
+  }
+
+  /* =====================================================================
+     新方案 J · 航空精密地平仪 HUD (Avionics Horizon · 翡翠绿/暖灰岩卡)
+     ===================================================================== */
+  .scheme-j {
+    background: #0b110f;
+    color: #e2ebe7;
+    position: relative;
+  }
+  .j-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  .j-shell {
+    position: relative; z-index: 3;
+    width: 100%; height: 100%;
+    display: flex; align-items: stretch;
+    padding: 36px 48px; gap: 44px;
+  }
+  .j-left {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column; justify-content: space-between;
+    pointer-events: none;
+  }
+  .j-coord {
+    font-family: var(--font-mono); font-size: 11px; color: #34d399;
+    letter-spacing: 0.12em; margin-bottom: 14px;
+  }
+  .j-title {
+    font-size: clamp(32px, 3.6vw, 48px); font-weight: 600;
+    line-height: 1.15; letter-spacing: -0.03em; color: #f3f7f5; margin-bottom: 14px;
+  }
+  .j-sub { font-size: 14px; line-height: 1.72; color: #8da39a; max-width: 460px; }
+  .j-foot { display: flex; gap: 18px; font-family: var(--font-mono); font-size: 11px; color: #5b736a; }
+  .j-panel-wrap { width: 454px; flex-shrink: 0; display: flex; align-items: center; }
+  /* 暖灰岩低眩光外鞘 + 卡片（完全契合深橄榄绿黑底色） */
+  .j-bezel {
+    width: 100%; max-height: 100%; padding: 10px; border-radius: 26px;
+    background: linear-gradient(155deg, rgba(167, 243, 208, 0.16) 0%, rgba(20, 34, 29, 0.45) 60%, rgba(16, 185, 129, 0.14) 100%);
+    border: 1px solid rgba(110, 231, 183, 0.22);
+    box-shadow: 0 32px 86px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(18px);
+    display: flex;
+  }
+  .j-core {
+    width: 100%; max-height: calc(100dvh - 100px); overflow-y: auto;
+    border-radius: 17px; padding: 30px 30px 22px;
+    background: linear-gradient(180deg, #eff2ef 0%, #e5eae6 100%);
+    border: 1px solid rgba(255, 255, 255, 0.78);
+    color: #0f172a;
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed; top: 66px; right: 24px; z-index: 10000;
+    padding: 11px 16px; border-radius: 12px;
+    background: rgba(15, 23, 42, 0.94); border: 1px solid rgba(52, 211, 153, 0.45);
+    color: #ecfdf5; font-size: 13px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+    display: flex; align-items: center; gap: 10px;
+    opacity: 0; transform: translateY(-8px); pointer-events: none; transition: all 0.25s ease;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  @media (max-width: 1024px) {
+    .f1-left, .f2-left, .f3-left, .f4-left, .a-stage, .g-left, .h-left, .i-left, .i-transition-slats, .j-left { display: none; }
+    .f1-right, .g-right, .i-right { width: 100%; border-left: 0; padding: 72px 22px 24px; }
+    .f2-shell, .f3-shell, .f4-shell, .a-shell, .h-shell, .j-shell { padding: 72px 20px 20px; }
+    .f2-panel-wrap, .f3-panel-wrap, .f4-panel-wrap, .a-panel-wrap, .h-panel-wrap, .j-panel-wrap { width: 100%; max-width: 450px; margin: 0 auto; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ==================== 顶部悬浮评审工具栏 ==================== -->
+<div class="review-bar" id="reviewBar">
+  <div class="review-body">
+    <div class="scheme-tabs" role="tablist">
+      <button class="scheme-btn active" data-scheme="f1">F1 · 穿界星盘</button>
+      <button class="scheme-btn" data-scheme="f2">F2 · 冰雾外鞘</button>
+      <button class="scheme-btn" data-scheme="f3">F3 · 引力卫星</button>
+      <button class="scheme-btn" data-scheme="f4">F4 · 白盘天文</button>
+      <button class="scheme-btn" data-scheme="a">A · 编排剧场</button>
+      <span class="scheme-sep"></span>
+      <button class="scheme-btn" data-scheme="g">G · 东方山脊 <span class="scheme-new">新</span></button>
+      <button class="scheme-btn" data-scheme="h">H · 波纹干涉 <span class="scheme-new">新</span></button>
+      <button class="scheme-btn" data-scheme="i">I · 长虹玻璃 <span class="scheme-new">新</span></button>
+      <button class="scheme-btn" data-scheme="j">J · 航电地平仪 <span class="scheme-new">新</span></button>
+    </div>
+    <div class="review-divider"></div>
+    <div class="state-pills" title="切换预览不同业务状态">
+      <button class="state-pill active" data-state="login">常规</button>
+      <button class="state-pill" data-state="2fa">2FA</button>
+      <button class="state-pill" data-state="register">注册</button>
+      <button class="state-pill" data-state="error">错误</button>
+    </div>
+  </div>
+  <button class="review-toggle" id="toggleBarBtn">收起</button>
+</div>
+
+<div class="scheme-note" id="schemeNote">
+  <span id="schemeNoteText"></span>
+  <button class="note-close" id="closeNoteBtn" aria-label="隐藏说明">×</button>
+</div>
+
+<div class="toast" id="toast">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.4"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+  <span id="toastMsg">认证成功</span>
+</div>
+
+<!-- 原版 NanZi Favicon SVG -->
+<template id="nanzi-logo-tpl">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" width="100%" height="100%">
+    <defs>
+      <linearGradient id="nz-grad" x1="64" y1="448" x2="448" y2="64" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#2563EB"/>
+        <stop offset="1" stop-color="#6366F1"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#nz-grad)"/>
+    <path d="M136 374V135C136 109 170 98 187 122L352 322V135" stroke="white" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M136 374L224 304L352 322" stroke="#A5F3FC" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"/>
+    <circle cx="136" cy="374" r="18" fill="#A5F3FC" stroke="white" stroke-width="6"/>
+    <circle cx="352" cy="322" r="18" fill="#C4B5FD" stroke="white" stroke-width="6"/>
+  </svg>
+</template>
+
+<!-- ==================== F1 · 双面穿界星盘 ==================== -->
+<section class="scheme-view scheme-f1 active" id="view-f1">
+  <canvas class="f1-canvas" id="f1Canvas"></canvas>
+  <div class="f1-shell">
+    <div class="f1-left">
+      <div class="ast-brand"><div class="ast-brand-logo" data-logo></div><div><div class="ast-brand-name" style="color:#f8fafc;">NanZi · 智能体平台</div><div class="ast-brand-sub" style="color:#64748b;">Autonomous Agent Observatory</div></div></div>
+      <div class="f1-copy"><div class="f1-coord" id="f1Coord">AZIMUTH 042.8° · ORBITAL SYNC</div><h1 class="f1-headline">精密运转的<br />企业智能体中枢</h1><p class="f1-sub">星盘刻度贯穿暗面与亮面：在可验证的数据链路与受控权限边界内，让智能体如天文仪器般稳定协作。</p></div>
+      <div class="f1-foot"><span>AGENTSCOPE RUNTIME</span><span>·</span><span>MCP · RAG · CHATBI</span></div>
+    </div>
+    <div class="f1-right"><div class="f1-right-inner" id="form-host-f1"></div></div>
+  </div>
+</section>
+
+<!-- ==================== F2 · 冰雾外鞘星盘 ==================== -->
+<section class="scheme-view scheme-f2" id="view-f2">
+  <canvas class="f2-canvas" id="f2Canvas"></canvas>
+  <div class="f2-shell">
+    <div class="f2-left">
+      <div class="ast-brand"><div class="ast-brand-logo" data-logo></div><div><div class="ast-brand-name" style="color:#f8fafc;">NanZi · 智能体平台</div><div class="ast-brand-sub" style="color:#64748b;">Optical Astrolabe Console</div></div></div>
+      <div class="f1-copy"><div class="f1-coord" id="f2Coord">CALIBRATION · OPTICS LOCKED</div><h1 class="f1-headline">把复杂调度，<br />收束进一枚精密仪盘</h1><p class="f1-sub">半透明深色光学外鞘承托冷雾磨砂亮卡，让表单像镶嵌在仪盘上的冷光屏，柔和不刺眼。</p></div>
+      <div class="f1-foot"><span>MULTI-AGENT ORCHESTRATION</span><span>·</span><span>ENTERPRISE RBAC</span></div>
+    </div>
+    <div class="f2-panel-wrap"><div class="optical-bezel"><div class="optical-core" id="form-host-f2"></div></div></div>
+  </div>
+</section>
+
+<!-- ==================== F3 · 引力卫星+钛银卡 ==================== -->
+<section class="scheme-view scheme-f3" id="view-f3">
+  <canvas class="f3-canvas" id="f3Canvas"></canvas>
+  <div class="f3-shell">
+    <div class="f3-left">
+      <div class="ast-brand"><div class="ast-brand-logo" data-logo></div><div><div class="ast-brand-name" style="color:#f8fafc;">NanZi · 智能体平台</div><div class="ast-brand-sub" style="color:#64748b;">Orbital Telemetry Network</div></div></div>
+      <div class="f1-copy" style="pointer-events:none;"><div class="f1-coord">ORBITAL MODULES · 4 SATELLITES ONLINE</div><h1 class="f1-headline">四轨协同，<br />驱动真实业务闭环</h1></div>
+      <div class="f3-readout">
+        <div class="f3-sat-tabs" id="f3SatTabs">
+          <button type="button" class="f3-sat-btn active" data-sat="0">01 · Router 编排</button>
+          <button type="button" class="f3-sat-btn" data-sat="1">02 · ChatBI 查数</button>
+          <button type="button" class="f3-sat-btn" data-sat="2">03 · 知识库 RAG</button>
+          <button type="button" class="f3-sat-btn" data-sat="3">04 · MCP 工具链</button>
+        </div>
+        <div class="f3-sat-title" id="f3SatTitle"></div>
+        <div class="f3-sat-desc" id="f3SatDesc"></div>
+      </div>
+    </div>
+    <div class="f3-panel-wrap"><div class="titanium-card" id="form-host-f3"></div></div>
+  </div>
+</section>
+
+<!-- ==================== F4 · 白盘天文台 ==================== -->
+<section class="scheme-view scheme-f4" id="view-f4">
+  <canvas class="f4-canvas" id="f4Canvas"></canvas>
+  <div class="f4-shell">
+    <div class="f4-left">
+      <div class="ast-brand"><div class="ast-brand-logo" data-logo></div><div><div class="ast-brand-name" style="color:#0f172a;">NanZi · 智能体平台</div><div class="ast-brand-sub" style="color:#64748b;">Daylight Chronometer Edition</div></div></div>
+      <div><div class="f4-coord" id="f4Coord">CHRONO DIAL · 042.8° SYNC</div><h1 class="f4-headline">如精密时计般<br />稳定可控的智能体中枢</h1><p class="f4-sub">以瑞士白盘机械表盘的精密克制重塑科技感——全亮色通透统一，彻底告别暗黑 AI 审美疲劳。</p></div>
+      <div class="f4-foot"><span>DAYLIGHT ASTROLABE</span><span>·</span><span>ZERO VISUAL CLASH</span></div>
+    </div>
+    <div class="f4-panel-wrap"><div class="daylight-card" id="form-host-f4"></div></div>
+  </div>
+</section>
+
+<!-- ==================== A · 编排剧场 ==================== -->
+<section class="scheme-view scheme-a" id="view-a">
+  <div class="a-bg-ambient"></div>
+  <div class="a-grid-frame"></div>
+  <div class="a-shell">
+    <div class="a-stage">
+      <div class="ast-brand"><div class="ast-brand-logo" data-logo></div><div><div class="ast-brand-name" style="color:#f8fafc;">NanZi · 智能体平台</div><div class="ast-brand-sub" style="color:#64748b;">Enterprise Agent Orchestration</div></div></div>
+      <div>
+        <div class="a-hero"><div class="a-eyebrow"><span class="a-eyebrow-dot"></span><span>AGENT RUNTIME · LIVE EXECUTION</span></div><h1 class="a-title">把自然语言，<span>实时编排为</span><br />可审计的企业级执行链路</h1></div>
+        <div class="a-theater">
+          <div class="a-theater-head">
+            <div class="a-scenario-tabs" id="aScenarioTabs">
+              <button class="a-scenario-btn active" data-idx="0">经营归因 · ChatBI</button>
+              <button class="a-scenario-btn" data-idx="1">研发运维 · MCP 排障</button>
+              <button class="a-scenario-btn" data-idx="2">制度合规 · RAG 审查</button>
+            </div>
+            <div class="a-theater-meta"><span id="aTraceId">TRACE #NZ-8419</span><span>·</span><span id="aLatency">1.42s</span></div>
+          </div>
+          <div class="a-prompt-bar"><span class="a-prompt-chevron">&gt;_</span><span class="a-prompt-text" id="aPromptText"></span><span class="a-prompt-time" id="aPromptStep">阶段 1/4</span></div>
+          <div class="a-graph-wrap">
+            <svg class="a-graph-svg" viewBox="0 0 740 180" preserveAspectRatio="none">
+              <defs><linearGradient id="aLineActive" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#3b82f6" stop-opacity="0.3"/><stop offset="50%" stop-color="#38bdf8" stop-opacity="0.95"/><stop offset="100%" stop-color="#34d399" stop-opacity="0.85"/></linearGradient></defs>
+              <path d="M 155 90 C 215 90, 225 42, 285 42" stroke="rgba(148,163,184,0.16)" stroke-width="1.5" fill="none"/>
+              <path d="M 155 90 C 215 90, 225 138, 285 138" stroke="rgba(148,163,184,0.16)" stroke-width="1.5" fill="none"/>
+              <path d="M 440 42 C 500 42, 505 90, 560 90" stroke="rgba(148,163,184,0.16)" stroke-width="1.5" fill="none"/>
+              <path d="M 440 138 C 500 138, 505 90, 560 90" stroke="rgba(148,163,184,0.16)" stroke-width="1.5" fill="none"/>
+              <path id="beam-1" d="M 155 90 C 215 90, 225 42, 285 42" stroke="url(#aLineActive)" stroke-width="2.2" fill="none" stroke-dasharray="36 220" stroke-dashoffset="256"/>
+              <path id="beam-2" d="M 155 90 C 215 90, 225 138, 285 138" stroke="url(#aLineActive)" stroke-width="2.2" fill="none" stroke-dasharray="36 220" stroke-dashoffset="256"/>
+              <path id="beam-3" d="M 440 42 C 500 42, 505 90, 560 90" stroke="url(#aLineActive)" stroke-width="2.2" fill="none" stroke-dasharray="36 220" stroke-dashoffset="256"/>
+              <path id="beam-4" d="M 440 138 C 500 138, 505 90, 560 90" stroke="url(#aLineActive)" stroke-width="2.2" fill="none" stroke-dasharray="36 220" stroke-dashoffset="256"/>
+            </svg>
+            <div class="a-node-card" id="aNode0" style="left: 18px; top: 62px; width: 138px;"><div class="a-node-head"><span class="a-node-name" id="aN0Name"></span><span class="a-node-dot"></span></div><div class="a-node-sub" id="aN0Sub"></div></div>
+            <div class="a-node-card" id="aNode1" style="left: 38.5%; top: 15px; width: 158px;"><div class="a-node-head"><span class="a-node-name" id="aN1Name"></span><span class="a-node-dot"></span></div><div class="a-node-sub" id="aN1Sub"></div></div>
+            <div class="a-node-card" id="aNode2" style="left: 38.5%; top: 112px; width: 158px;"><div class="a-node-head"><span class="a-node-name" id="aN2Name"></span><span class="a-node-dot"></span></div><div class="a-node-sub" id="aN2Sub"></div></div>
+            <div class="a-node-card" id="aNode3" style="right: 18px; top: 62px; width: 156px;"><div class="a-node-head"><span class="a-node-name" id="aN3Name"></span><span class="a-node-dot"></span></div><div class="a-node-sub" id="aN3Sub"></div></div>
+          </div>
+          <div class="a-trace-foot"><span class="a-trace-badge" id="aTraceStatus">DONE</span><span class="a-trace-summary" id="aTraceSummary"></span><span class="a-trace-metric" id="aTraceMetric"></span></div>
+        </div>
+      </div>
+      <div class="a-stage-footer"><span>多智能体协同 · MCP 协议 · RBAC 权限隔离</span><span>光学外鞘 + 冰雾冷白</span></div>
+    </div>
+    <div class="a-panel-wrap"><div class="optical-bezel"><div class="optical-core" id="form-host-a"></div></div></div>
+  </div>
+</section>
+
+<!-- ==================== 新方案 G · 东方现代山脊光影 ==================== -->
+<section class="scheme-view scheme-g" id="view-g">
+  <canvas class="g-canvas" id="gCanvas"></canvas>
+  <span class="g-vertical-tag">NANZI · INTELLIGENT ARCHITECTURE · 2026</span>
+  <div class="g-shell">
+    <div class="g-left">
+      <div class="ast-brand" style="padding-left:14px;">
+        <div class="ast-brand-logo" data-logo></div>
+        <div>
+          <div class="ast-brand-name" style="color:#16181d;">NanZi · 智能体平台</div>
+          <div class="ast-brand-sub" style="color:#6c727f;">Quiet Intelligence Atelier</div>
+        </div>
+      </div>
+
+      <div class="g-copy">
+        <div class="g-eyebrow">CALM ARCHITECTURE · 静谧算力</div>
+        <h1 class="g-title">大道至简，<br /><b>让智能融入日常工作</b></h1>
+        <p class="g-desc">退去浮躁的霓虹与噪点。以建筑空间般的留白与层次，承载多智能体协同、企业知识库与数据洞察。</p>
+      </div>
+
+      <div class="g-foot">
+        <span>宣纸暖灰 · 建筑山脊流场</span><span>·</span><span>移动鼠标轻抚山脊光影</span>
+      </div>
+    </div>
+
+    <div class="g-right theme-ink">
+      <div style="width:100%;" id="form-host-g"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 新方案 H · 物理波纹干涉实验 ==================== -->
+<section class="scheme-view scheme-h" id="view-h">
+  <canvas class="h-canvas" id="hCanvas"></canvas>
+  <div class="h-shell">
+    <div class="h-left">
+      <div class="ast-brand">
+        <div class="ast-brand-logo" data-logo></div>
+        <div>
+          <div class="ast-brand-name" style="color:#0f172a;">NanZi · 智能体平台</div>
+          <div class="ast-brand-sub" style="color:#64748b;">Wave Interference Lab</div>
+        </div>
+      </div>
+
+      <div class="h-copy">
+        <div class="h-tag">DUAL-SOURCE MOIRÉ · 实时物理干涉场</div>
+        <h1 class="h-title">当意图与工具<br />同频共振</h1>
+        <p class="h-desc">移动鼠标控制第二波源，实时观看数学摩尔纹干涉场。用纯粹的物理几何美感表达智能体与业务系统的协同共振。</p>
+      </div>
+
+      <div class="h-metrics">
+        <span id="hWaveInfo">λ = 26.0px · ΔΦ = 0.00 rad</span>
+        <span>·</span>
+        <span>移动鼠标改变干涉波纹</span>
+      </div>
+    </div>
+
+    <div class="h-panel-wrap">
+      <div class="h-card" id="form-host-h"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 新方案 I · 美术馆长虹压花玻璃幕墙 ==================== -->
+<section class="scheme-view scheme-i" id="view-i">
+  <canvas class="i-canvas" id="iCanvas"></canvas>
+  <div class="i-fluted"></div>
+  <div class="i-shell">
+    <div class="i-left">
+      <div class="ast-brand">
+        <div class="ast-brand-logo" data-logo></div>
+        <div>
+          <div class="ast-brand-name" style="color:#ffffff;">NanZi · 智能体平台</div>
+          <div class="ast-brand-sub" style="color:rgba(226,232,240,0.72);">Fluted Glass Edition</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="f1-coord" style="color:#bae6fd;">OPTICAL PRISM · 建筑压花玻璃折射</div>
+        <h1 class="i-title">光影穿过秩序，<br />连接每一项智能能力</h1>
+        <p class="i-sub">灵感源自现代美术馆长虹压花玻璃幕墙——柔和色散光带经由柱面棱镜过滤，与右侧雾白工作舱自然羽化衔接。</p>
+      </div>
+
+      <div class="i-foot">
+        <span>左右移动鼠标 · 观感背后光柱沿压花玻璃平滑折射</span>
+      </div>
+    </div>
+
+    <div class="i-transition-slats"></div>
+    <div class="i-right">
+      <div style="width:100%;" id="form-host-i"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 新方案 J · 航空精密地平仪 HUD ==================== -->
+<section class="scheme-view scheme-j" id="view-j">
+  <canvas class="j-canvas" id="jCanvas"></canvas>
+  <div class="j-shell">
+    <div class="j-left">
+      <div class="ast-brand">
+        <div class="ast-brand-logo" data-logo></div>
+        <div>
+          <div class="ast-brand-name" style="color:#f3f7f5;">NanZi · 智能体平台</div>
+          <div class="ast-brand-sub" style="color:#6c857b;">Avionics Precision Deck</div>
+        </div>
+      </div>
+
+      <div class="f1-copy">
+        <div class="j-coord" id="jCoord">PITCH +00.0° · ROLL +00.0° · HDG 042°</div>
+        <h1 class="j-title">全链路稳态掌控，<br />面向生产级智能体</h1>
+        <p class="j-sub">跳出泛滥的蓝紫体系，采用航空航电深石板绿黑与暖灰岩低眩光卡片；移动鼠标实时联动姿态地平仪与航向刻度。</p>
+      </div>
+
+      <div class="j-foot">
+        <span>FLIGHT-GRADE STABILITY</span><span>·</span><span>FULL AUDIT TRAIL</span><span>·</span><span>RBAC GUARDED</span>
+      </div>
+    </div>
+
+    <div class="j-panel-wrap">
+      <div class="j-bezel">
+        <div class="j-core theme-hud" id="form-host-j"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+(function () {
+  // 独立渐变 ID 注入，确保任意方案切换时 Logo 蓝紫底色始终清晰
+  const logoTpl = document.getElementById('nanzi-logo-tpl');
+  document.querySelectorAll('[data-logo]').forEach((el, idx) => {
+    const frag = logoTpl.content.cloneNode(true);
+    const gid = `nz-grad-${idx}`;
+    const grad = frag.querySelector('#nz-grad');
+    if (grad) grad.id = gid;
+    const rect = frag.querySelector('rect[fill="url(#nz-grad)"]');
+    if (rect) rect.setAttribute('fill', `url(#${gid})`);
+    el.appendChild(frag);
+  });
+
+  const state = { scheme: 'f1', mode: 'login', tab: 'sso', ssoType: 'ad' };
+
+  const schemeNotes = {
+    f1: '<strong>F1 · 穿界星盘：</strong>星盘刻度直接穿透暗/亮分界线化作淡灰制图线继续旋转，暗面与亮面浑然一体。',
+    f2: '<strong>F2 · 冰雾外鞘：</strong>10px 半透明深色光学玻璃外鞘 + 冷雾磨砂亮卡，像精密仪器壳体里嵌进冷光屏。',
+    f3: '<strong>F3 · 引力卫星：</strong>4 颗真实能力卫星绕核公转可点选锁星，右侧配低眩光钛银灰卡柔和承接。',
+    f4: '<strong>F4 · 白盘天文台：</strong>瑞士精密白盘机械表盘思路，全亮色冷灰画布 + 钢蓝刻度，零反差零突兀。',
+    a:  '<strong>A · 编排剧场：</strong>实时多智能体执行拓扑脉冲剧场 + 冰雾外鞘改良亮卡，直观传达产品内核。',
+    g:  '<strong>G · 东方山脊（新）：</strong>宣纸暖灰白 + 建筑水墨等高线山脊流场，克制高级、静谧如现代美术馆画册。',
+    h:  '<strong>H · 波纹干涉（新）：</strong>全亮色实时物理「双波源摩尔纹干涉场」，纯数学几何奇观，零廉价发光感。',
+    i:  '<strong>I · 长虹压花玻璃（新）：</strong>现代建筑竖纹压花玻璃折射柔和极光色带，交界处玻璃羽化带无缝过渡到雾白表单。',
+    j:  '<strong>J · 航电地平仪（新）：</strong>彻底跳出蓝紫体系！航空驾驶舱姿态地平仪 HUD（翡翠绿 + 暖灰岩低眩光外鞘卡），硬核辨识度拉满。',
+  };
+
+  function renderFormHTML(btnStyle) {
+    const titles = {
+      login: ['登录工作台', '选择认证方式以进入智能体平台'],
+      '2fa': ['两步验证', '该账号已开启动态口令保护，请输入 6 位验证码'],
+      register: ['申请平台账号', '提交后将由管理员审核开通使用权限'],
+      error: ['登录工作台', '选择认证方式以进入智能体平台'],
+    };
+    const [title, sub] = titles[state.mode];
+    const btnCls = btnStyle ? `fm-submit ${btnStyle}` : 'fm-submit';
+
+    const head = `
+      <div class="fm-head">
+        <div class="fm-eyebrow"><span>NANZI PORTAL ACCESS</span><span class="fm-status-dot"><i></i>READY</span></div>
+        <h2 class="fm-title">${title}</h2>
+        <p class="fm-sub">${sub}</p>
+      </div>
+    `;
+
+    if (state.mode === '2fa') {
+      return `
+        <div class="anim-in">
+          ${head}
+          <div class="fm-2fa-card">
+            <div class="fm-2fa-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3l7 4v5c0 5-3.5 8.5-7 9-3.5-.5-7-4-7-9V7l7-4z"/><path stroke-linecap="round" stroke-linejoin="round" d="M9.5 12.5l1.8 1.8 3.7-4"/></svg></div>
+            <div><div style="font-size:12.5px;font-weight:600;color:#0f172a;">Google 身份验证器 · 2FA</div><div style="font-size:11px;font-family:var(--font-mono);color:#64748b;margin-top:2px;">@chen.xiaolong</div></div>
+          </div>
+          <div class="fm-field">
+            <div class="fm-label-row"><label class="fm-label">6 位动态验证码</label><span style="font-size:11px;color:#7c8ca6;">30 秒自动刷新</span></div>
+            <input class="fm-input otp-input" type="text" maxlength="6" value="482910" placeholder="000000" />
+          </div>
+          <button type="button" class="${btnCls}" data-action="submit-2fa">完成验证并进入</button>
+          <div class="fm-links"><button type="button" class="fm-link-btn" data-action="back-login">← 返回修改账号密码</button></div>
+        </div>
+        <div class="fm-foot"><span>© 2026 NanZi Platform</span><span>TLS 1.3 · HttpOnly</span></div>
+      `;
+    }
+
+    if (state.mode === 'register') {
+      return `
+        <div class="anim-in">
+          ${head}
+          <div class="fm-field"><label class="fm-label">账号名</label><input class="fm-input" type="text" value="lin.zhiyuan" /><div style="font-size:11px;color:#059669;margin-top:4px;">✓ 该账号名可以使用</div></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="fm-field"><label class="fm-label">用户姓名</label><input class="fm-input" type="text" value="林致远" /></div>
+            <div class="fm-field"><label class="fm-label">邮箱（选填）</label><input class="fm-input" type="email" placeholder="name@corp.com" /></div>
+          </div>
+          <div class="fm-field"><label class="fm-label">设置密码</label><input class="fm-input" type="password" value="NanZi@2026" /></div>
+          <button type="button" class="${btnCls}" data-action="submit-reg">提交注册申请</button>
+          <div class="fm-links"><button type="button" class="fm-link-btn" data-action="back-login">← 返回登录</button></div>
+        </div>
+        <div class="fm-foot"><span>© 2026 NanZi Platform</span><span>TLS 1.3 · HttpOnly</span></div>
+      `;
+    }
+
+    const err = state.mode === 'error'
+      ? `<div class="fm-error anim-shake"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg><span>认证失败：账号名或密码不正确，请核对后重试</span></div>`
+      : '';
+
+    let fields = '';
+    if (state.tab === 'sso') {
+      fields = `
+        <div class="fm-field">
+          <label class="fm-label">凭据类型</label>
+          <div class="fm-seg">
+            <button type="button" class="fm-seg-btn ${state.ssoType === 'ad' ? 'active' : ''}" data-sso="ad">域账号 (AD)</button>
+            <button type="button" class="fm-seg-btn ${state.ssoType === 'local' ? 'active' : ''}" data-sso="local">门户本地密码</button>
+          </div>
+        </div>
+        <div class="fm-field"><label class="fm-label">SSO 账号</label><input class="fm-input" type="text" value="chen.xiaolong" /></div>
+        <div class="fm-field"><label class="fm-label">密码</label><input class="fm-input" type="password" value="••••••••••••" /></div>
+      `;
+    } else if (state.tab === 'password') {
+      fields = `
+        <div class="fm-field"><label class="fm-label">本地账号</label><input class="fm-input" type="text" value="admin" /></div>
+        <div class="fm-field">
+          <div class="fm-label-row"><label class="fm-label">密码</label><button type="button" class="fm-link-btn" style="font-size:11.5px;" data-action="forgot">忘记密码？</button></div>
+          <input class="fm-input" type="password" value="••••••••••••" />
+        </div>
+      `;
+    } else {
+      fields = `<div class="fm-field"><label class="fm-label">API Key (X-API-Key)</label><textarea class="fm-textarea" rows="3">ys_live_9f4b2c8e1a7d3056f2a9c4e7b18d</textarea></div>`;
+    }
+
+    const submitLabel = state.tab === 'sso' ? '统一认证登录' : state.tab === 'apikey' ? '使用密钥接入' : '进入工作台';
+    return `
+      <div>
+        ${head}
+        <div class="fm-tabs">
+          <button type="button" class="fm-tab ${state.tab === 'sso' ? 'active' : ''}" data-tab="sso">SSO 登录</button>
+          <button type="button" class="fm-tab ${state.tab === 'password' ? 'active' : ''}" data-tab="password">本地账号</button>
+          <button type="button" class="fm-tab ${state.tab === 'apikey' ? 'active' : ''}" data-tab="apikey">API Key</button>
+        </div>
+        <form onsubmit="return false;">
+          ${fields}
+          ${err}
+          <button type="button" class="${btnCls}" data-action="submit-login">
+            <span>${submitLabel}</span>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6l6 6-6 6"/></svg>
+          </button>
+          ${state.tab === 'password'
+            ? `<div class="fm-links"><span>还没有账号？</span><button type="button" class="fm-link-btn" data-action="go-register">申请账号</button></div>`
+            : `<div class="fm-links"><span>${state.tab === 'sso' ? (state.ssoType === 'ad' ? '将使用企业域账号（AD）完成统一认证' : '将使用门户本地密码完成认证') : '适用于受控服务与自动化调试凭证'}</span></div>`
+          }
+        </form>
+      </div>
+      <div class="fm-foot"><span>© 2026 NanZi Platform</span><span>TLS 1.3 · HttpOnly</span></div>
+    `;
+  }
+
+  function renderAllForms() {
+    document.getElementById('form-host-f1').innerHTML = renderFormHTML('');
+    document.getElementById('form-host-f2').innerHTML = renderFormHTML('');
+    document.getElementById('form-host-f3').innerHTML = renderFormHTML('');
+    document.getElementById('form-host-f4').innerHTML = renderFormHTML('btn-blue');
+    document.getElementById('form-host-a').innerHTML = renderFormHTML('');
+    document.getElementById('form-host-g').innerHTML = renderFormHTML('btn-ink');
+    document.getElementById('form-host-h').innerHTML = renderFormHTML('btn-ink');
+    document.getElementById('form-host-i').innerHTML = renderFormHTML('');
+    document.getElementById('form-host-j').innerHTML = renderFormHTML('btn-hud');
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    document.getElementById('toastMsg').textContent = msg;
+    t.classList.add('show');
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  document.addEventListener('click', (e) => {
+    const tabBtn = e.target.closest('[data-tab]');
+    if (tabBtn) { state.tab = tabBtn.dataset.tab; if (state.mode === 'error') state.mode = 'login'; renderAllForms(); return; }
+    const ssoBtn = e.target.closest('[data-sso]');
+    if (ssoBtn) { state.ssoType = ssoBtn.dataset.sso; renderAllForms(); return; }
+    const actBtn = e.target.closest('[data-action]');
+    if (actBtn) {
+      const act = actBtn.dataset.action;
+      if (act === 'go-register') setMode('register');
+      else if (act === 'back-login') setMode('login');
+      else if (act === 'submit-login') showToast('凭据校验通过，已演示登录响应');
+      else if (act === 'submit-2fa') showToast('两步验证通过，正在进入工作台');
+      else if (act === 'submit-reg') { showToast('注册申请已提交，等待管理员审核'); setMode('login'); }
+      else if (act === 'forgot') showToast('将跳转至 /reset-password 找回密码页');
+    }
+  });
+
+  function setScheme(id) {
+    state.scheme = id;
+    document.querySelectorAll('.scheme-view').forEach((v) => v.classList.remove('active'));
+    document.getElementById('view-' + id).classList.add('active');
+    document.querySelectorAll('.scheme-btn').forEach((b) => b.classList.toggle('active', b.dataset.scheme === id));
+    document.getElementById('schemeNoteText').innerHTML = schemeNotes[id];
+    resizeAll();
+  }
+  function setMode(m) {
+    state.mode = m;
+    document.querySelectorAll('.state-pill').forEach((p) => p.classList.toggle('active', p.dataset.state === m));
+    renderAllForms();
+  }
+  document.querySelectorAll('.scheme-btn').forEach((b) => b.addEventListener('click', () => setScheme(b.dataset.scheme)));
+  document.querySelectorAll('.state-pill').forEach((p) => p.addEventListener('click', () => setMode(p.dataset.state)));
+  document.getElementById('toggleBarBtn').addEventListener('click', () => {
+    const bar = document.getElementById('reviewBar');
+    const c = bar.classList.toggle('collapsed');
+    document.getElementById('toggleBarBtn').textContent = c ? '展开 9 套方案' : '收起';
+  });
+  document.getElementById('closeNoteBtn').addEventListener('click', () => document.getElementById('schemeNote').classList.add('hidden'));
+
+  // ==================== 共享鼠标追踪 ====================
+  const ptr = { x: 0.4, y: 0.5, tx: 0.4, ty: 0.5 };
+  window.addEventListener('mousemove', (e) => {
+    ptr.tx = e.clientX / Math.max(1, window.innerWidth);
+    ptr.ty = e.clientY / Math.max(1, window.innerHeight);
+    const az = (ptr.tx * 360).toFixed(1).padStart(5, '0');
+    const el = ((0.5 - ptr.ty) * 90).toFixed(1);
+    const elStr = (el >= 0 ? '+' : '') + el;
+    const c1 = document.getElementById('f1Coord'); if (c1) c1.textContent = `AZIMUTH ${az}° · ELEVATION ${elStr}° · ORBITAL SYNC`;
+    const c2 = document.getElementById('f2Coord'); if (c2) c2.textContent = `AZIMUTH ${az}° · OPTICS LOCKED`;
+    const c4 = document.getElementById('f4Coord'); if (c4) c4.textContent = `CHRONO DIAL · ${az}° / ${elStr}° SYNC`;
+    const hw = document.getElementById('hWaveInfo'); if (hw) hw.textContent = `λ = 26.0px · ΔΦ = ${((ptr.tx - 0.5) * 6.28).toFixed(2)} rad`;
+    const jc = document.getElementById('jCoord');
+    if (jc) {
+      const pitch = ((0.5 - ptr.ty) * 24).toFixed(1);
+      const roll = ((ptr.tx - 0.5) * 30).toFixed(1);
+      const hdg = Math.round(ptr.tx * 360).toString().padStart(3, '0');
+      jc.textContent = `PITCH ${pitch >= 0 ? '+' : ''}${pitch}° · ROLL ${roll >= 0 ? '+' : ''}${roll}° · HDG ${hdg}°`;
+    }
+  });
+
+  // ==================== Canvas 初始化 ====================
+  const canvasIds = ['f1', 'f2', 'f3', 'f4', 'g', 'h', 'i', 'j'];
+  const canvases = {}, ctxs = {};
+  canvasIds.forEach((k) => {
+    canvases[k] = document.getElementById(k + 'Canvas');
+    ctxs[k] = canvases[k].getContext('2d');
+  });
+  let W = 0, H = 0;
+  function resizeAll() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvasIds.forEach((k) => {
+      canvases[k].width = Math.max(1, Math.floor(W * dpr));
+      canvases[k].height = Math.max(1, Math.floor(H * dpr));
+      ctxs[k].setTransform(dpr, 0, 0, dpr, 0, 0);
+    });
+  }
+
+  // ==================== F1 / F2 / F4 共享精密星盘 ====================
+  function drawAstrolabe(ctx, cx, cy, baseR, t, mx, my, pal) {
+    const grad = ctx.createRadialGradient(cx, cy, 8, cx, cy, baseR * 1.25);
+    grad.addColorStop(0, pal.glow0); grad.addColorStop(0.55, pal.glow1); grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, baseR * 1.3, 0, Math.PI * 2); ctx.fill();
+
+    ctx.strokeStyle = pal.axis; ctx.lineWidth = 1; ctx.beginPath();
+    ctx.moveTo(cx - baseR * 1.35, cy); ctx.lineTo(cx + baseR * 1.35, cy);
+    ctx.moveTo(cx, cy - baseR * 1.35); ctx.lineTo(cx, cy + baseR * 1.35); ctx.stroke();
+
+    [0.32, 0.54, 0.78, 1.06, 1.34].forEach((scale, idx) => {
+      const r = baseR * scale;
+      ctx.save(); ctx.translate(cx, cy);
+      ctx.rotate((idx % 2 === 0 ? 1 : -1) * t * 0.000075 * (idx + 1) + (mx - 0.5) * (0.2 + idx * 0.09));
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.strokeStyle = idx === 2 ? pal.ringAccent : pal.ring;
+      ctx.lineWidth = idx === 2 ? 1.25 : 0.95;
+      if (idx === 1 || idx === 4) ctx.setLineDash([4, 9]);
+      ctx.stroke(); ctx.setLineDash([]);
+
+      const ticks = idx >= 3 ? 72 : idx === 2 ? 48 : 24;
+      for (let i = 0; i < ticks; i++) {
+        const a = (i / ticks) * Math.PI * 2, major = i % 6 === 0, len = major ? 9 : 4;
+        ctx.beginPath(); ctx.moveTo(Math.cos(a) * (r - len), Math.sin(a) * (r - len)); ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+        ctx.strokeStyle = major ? pal.tickMajor : pal.tickMinor; ctx.lineWidth = major ? 1.15 : 0.75; ctx.stroke();
+      }
+      if (idx < 4) {
+        const dotA = t * 0.00032 * (idx % 2 === 0 ? 1 : -1.25) + idx * 1.65;
+        ctx.beginPath(); ctx.arc(Math.cos(dotA) * r, Math.sin(dotA) * r, idx === 2 ? 3.5 : 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = idx === 2 ? pal.dotAccent : pal.dot; ctx.fill();
+      }
+      ctx.restore();
+    });
+  }
+  const darkPal = { glow0: 'rgba(37,99,235,0.17)', glow1: 'rgba(14,165,233,0.05)', axis: 'rgba(148,163,184,0.09)', ring: 'rgba(148,163,184,0.15)', ringAccent: 'rgba(56,189,248,0.32)', tickMajor: 'rgba(125,211,252,0.44)', tickMinor: 'rgba(148,163,184,0.16)', dot: '#93c5fd', dotAccent: '#38bdf8' };
+  const lightCrossPal = { glow0: 'rgba(37,99,235,0.04)', glow1: 'rgba(14,165,233,0.01)', axis: 'rgba(15,23,42,0.05)', ring: 'rgba(15,23,42,0.065)', ringAccent: 'rgba(37,99,235,0.15)', tickMajor: 'rgba(37,99,235,0.22)', tickMinor: 'rgba(15,23,42,0.07)', dot: '#60a5fa', dotAccent: '#2563eb' };
+  const daylightPal = { glow0: 'rgba(37,99,235,0.09)', glow1: 'rgba(56,189,248,0.03)', axis: 'rgba(15,23,42,0.07)', ring: 'rgba(15,23,42,0.11)', ringAccent: 'rgba(37,99,235,0.34)', tickMajor: 'rgba(37,99,235,0.42)', tickMinor: 'rgba(15,23,42,0.13)', dot: '#3b82f6', dotAccent: '#1d4ed8' };
+
+  function drawF1(t) {
+    if (state.scheme !== 'f1' || !W) return;
+    const ctx = ctxs.f1, splitX = W > 1024 ? W - 472 : 0;
+    const cx = splitX * 0.62 + (ptr.x - 0.5) * 26, cy = H * 0.52 + (ptr.y - 0.5) * 22, baseR = Math.min(W, H) * 0.43;
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, splitX, H); ctx.clip();
+    const bgD = ctx.createLinearGradient(0, 0, splitX, H); bgD.addColorStop(0, '#070c17'); bgD.addColorStop(1, '#0b1426');
+    ctx.fillStyle = bgD; ctx.fillRect(0, 0, splitX, H);
+    drawAstrolabe(ctx, cx, cy, baseR, t, ptr.x, ptr.y, darkPal); ctx.restore();
+    ctx.save(); ctx.beginPath(); ctx.rect(splitX, 0, W - splitX, H); ctx.clip();
+    const bgL = ctx.createLinearGradient(splitX, 0, W, H); bgL.addColorStop(0, '#eef3f9'); bgL.addColorStop(1, '#f7f9fc');
+    ctx.fillStyle = bgL; ctx.fillRect(splitX, 0, W - splitX, H);
+    drawAstrolabe(ctx, cx, cy, baseR, t, ptr.x, ptr.y, lightCrossPal); ctx.restore();
+  }
+  function drawF2(t) {
+    if (state.scheme !== 'f2' || !W) return;
+    const ctx = ctxs.f2; ctx.fillStyle = '#070b14'; ctx.fillRect(0, 0, W, H);
+    drawAstrolabe(ctx, W * 0.34 + (ptr.x - 0.5) * 30, H * 0.52 + (ptr.y - 0.5) * 24, Math.min(W, H) * 0.42, t, ptr.x, ptr.y, darkPal);
+  }
+  function drawF4(t) {
+    if (state.scheme !== 'f4' || !W) return;
+    const ctx = ctxs.f4, bg = ctx.createLinearGradient(0, 0, W, H);
+    bg.addColorStop(0, '#edf2f8'); bg.addColorStop(1, '#e6ecf5'); ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    drawAstrolabe(ctx, W * 0.36 + (ptr.x - 0.5) * 28, H * 0.52 + (ptr.y - 0.5) * 22, Math.min(W, H) * 0.43, t, ptr.x, ptr.y, daylightPal);
+  }
+
+  // ==================== F3：引力卫星 ====================
+  const f3Sats = [
+    { name: 'ROUTER', title: '多智能体意图编排与委派', desc: '自动识别复杂任务类型，拆解为并行执行计划并委派给领域专家智能体，全过程轨迹实时可见。', orbit: 0.42, speed: 0.00048, phase: 0.4 },
+    { name: 'CHATBI', title: '受控权限下的自然语言分析', desc: '直连业务数仓与关系库，在行级权限与脱敏策略保护下即时生成 SQL、可视化图表与归因结论。', orbit: 0.64, speed: -0.00036, phase: 2.1 },
+    { name: 'RAG',    title: '引用级可溯源企业知识库', desc: '结合文档结构切片与混合检索，每条答复附带原文出处定位，让知识问答真正可用于企业决策。', orbit: 0.86, speed: 0.00028, phase: 3.9 },
+    { name: 'MCP',    title: '开放协议连接内部业务系统', desc: '通过标准化 MCP 工具集与托管凭据安全接驳工单、监控、IM 与研发系统，实现从问答到执行。', orbit: 1.08, speed: -0.00022, phase: 5.2 },
+  ];
+  let activeSat = 0;
+  function applyF3Sat(idx) {
+    activeSat = idx;
+    document.querySelectorAll('#f3SatTabs .f3-sat-btn').forEach((b, i) => b.classList.toggle('active', i === idx));
+    document.getElementById('f3SatTitle').textContent = f3Sats[idx].title;
+    document.getElementById('f3SatDesc').textContent = f3Sats[idx].desc;
+  }
+  document.querySelectorAll('#f3SatTabs .f3-sat-btn').forEach((b) => b.addEventListener('click', () => applyF3Sat(Number(b.dataset.sat))));
+  function drawF3(t) {
+    if (state.scheme !== 'f3' || !W) return;
+    const ctx = ctxs.f3; ctx.fillStyle = '#080d17'; ctx.fillRect(0, 0, W, H);
+    const cx = W * 0.35 + (ptr.x - 0.5) * 26, cy = H * 0.48 + (ptr.y - 0.5) * 22, baseR = Math.min(W, H) * 0.38;
+    const g = ctx.createRadialGradient(cx, cy, 4, cx, cy, baseR * 1.3);
+    g.addColorStop(0, 'rgba(56,189,248,0.16)'); g.addColorStop(0.5, 'rgba(37,99,235,0.05)'); g.addColorStop(1, 'rgba(8,13,23,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.beginPath(); ctx.arc(cx, cy, 18, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(125,211,252,0.45)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2); ctx.fillStyle = '#38bdf8'; ctx.fill();
+    f3Sats.forEach((sat, idx) => {
+      const r = baseR * sat.orbit, isSel = idx === activeSat;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = isSel ? 'rgba(56,189,248,0.42)' : 'rgba(148,163,184,0.14)'; ctx.lineWidth = isSel ? 1.4 : 0.9;
+      if (!isSel && idx % 2 === 1) ctx.setLineDash([4, 8]); ctx.stroke(); ctx.setLineDash([]);
+      const a = t * sat.speed + sat.phase + (ptr.x - 0.5) * 0.35, sx = cx + Math.cos(a) * r, sy = cy + Math.sin(a) * r;
+      if (isSel) {
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(sx, sy); ctx.strokeStyle = 'rgba(56,189,248,0.32)'; ctx.lineWidth = 1; ctx.setLineDash([3, 4]); ctx.stroke(); ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(sx, sy, 13, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(56,189,248,0.72)'; ctx.lineWidth = 1.2; ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(sx, sy, isSel ? 5 : 3.5, 0, Math.PI * 2); ctx.fillStyle = isSel ? '#38bdf8' : '#94a3b8'; ctx.fill();
+      ctx.font = '600 10px "SF Mono", ui-monospace, monospace'; ctx.fillStyle = isSel ? '#e0f2fe' : 'rgba(148,163,184,0.65)';
+      ctx.fillText(sat.name, sx + (isSel ? 18 : 10), sy + 3);
+    });
+  }
+
+  // ==================== 新方案 G：东方现代山脊光影 ====================
+  function drawG(t) {
+    if (state.scheme !== 'g' || !W) return;
+    const ctx = ctxs.g;
+    const bg = ctx.createLinearGradient(0, 0, W, H);
+    bg.addColorStop(0, '#f7f5f0');
+    bg.addColorStop(1, '#edeae2');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // 淡日光晕
+    const sunX = W * 0.28 + (ptr.x - 0.5) * 60;
+    const sunY = H * 0.24 + (ptr.y - 0.5) * 40;
+    const sun = ctx.createRadialGradient(sunX, sunY, 10, sunX, sunY, 320);
+    sun.addColorStop(0, 'rgba(217, 179, 130, 0.22)');
+    sun.addColorStop(0.6, 'rgba(217, 179, 130, 0.06)');
+    sun.addColorStop(1, 'rgba(247, 245, 240, 0)');
+    ctx.fillStyle = sun;
+    ctx.fillRect(0, 0, W, H);
+
+    // 7 层远近淡墨山脊流场
+    const layers = [
+      { base: 0.58, amp: 56, freq: 2.2, speed: 0.00018, fill: 'rgba(54, 65, 82, 0.055)', stroke: 'rgba(54, 65, 82, 0.14)' },
+      { base: 0.64, amp: 48, freq: 2.8, speed: -0.00022, fill: 'rgba(43, 53, 68, 0.07)', stroke: 'rgba(43, 53, 68, 0.18)' },
+      { base: 0.70, amp: 44, freq: 3.2, speed: 0.00015, fill: 'rgba(34, 42, 54, 0.085)', stroke: 'rgba(34, 42, 54, 0.20)' },
+      { base: 0.77, amp: 36, freq: 3.6, speed: -0.00019, fill: 'rgba(26, 32, 42, 0.10)', stroke: 'rgba(26, 32, 42, 0.22)' },
+      { base: 0.85, amp: 28, freq: 4.1, speed: 0.00012, fill: 'rgba(22, 26, 34, 0.12)', stroke: 'rgba(22, 26, 34, 0.26)' },
+    ];
+    layers.forEach((ly, idx) => {
+      ctx.beginPath();
+      ctx.moveTo(0, H);
+      for (let i = 0; i <= 80; i++) {
+        const u = i / 80;
+        const x = u * W;
+        const parallax = (ptr.x - 0.5) * (idx + 1) * 18;
+        const ridge = Math.sin(u * Math.PI * ly.freq + t * ly.speed + idx * 1.4) * ly.amp
+                    + Math.cos(u * Math.PI * (ly.freq * 1.8) - t * ly.speed * 0.7 + idx) * (ly.amp * 0.38)
+                    + Math.exp(-Math.pow((u - ptr.x) * 3.8, 2)) * ((0.5 - ptr.y) * 28);
+        const y = H * ly.base + ridge + parallax * 0.15;
+        ctx.lineTo(x, y);
+      }
+      ctx.lineTo(W, H);
+      ctx.closePath();
+      ctx.fillStyle = ly.fill;
+      ctx.fill();
+      ctx.strokeStyle = ly.stroke;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+  }
+
+  // ==================== 新方案 H：物理波纹干涉实验（双波源摩尔纹） ====================
+  function drawH(t) {
+    if (state.scheme !== 'h' || !W) return;
+    const ctx = ctxs.h;
+    ctx.fillStyle = '#f1f4f8';
+    ctx.fillRect(0, 0, W, H);
+
+    const s1x = W * 0.28 + Math.cos(t * 0.00045) * 46;
+    const s1y = H * 0.48 + Math.sin(t * 0.00038) * 38;
+    const s2x = W * (0.24 + ptr.x * 0.32);
+    const s2y = H * (0.22 + ptr.y * 0.56);
+
+    const step = 22;
+    const count = 34;
+
+    // 波源 1（深墨灰精密同心圆）
+    ctx.lineWidth = 0.9;
+    for (let i = 1; i <= count; i++) {
+      const r = i * step + ((t * 0.02) % step);
+      const a = Math.max(0.02, 0.22 * (1 - i / count));
+      ctx.beginPath();
+      ctx.arc(s1x, s1y, r, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(15, 23, 42, ${a.toFixed(3)})`;
+      ctx.stroke();
+    }
+
+    // 波源 2（克莱因蓝同心圆，与波源 1 叠加出绝美摩尔纹！）
+    for (let i = 1; i <= count; i++) {
+      const r = i * step + ((t * 0.02) % step);
+      const a = Math.max(0.02, 0.26 * (1 - i / count));
+      ctx.beginPath();
+      ctx.arc(s2x, s2y, r, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(37, 99, 235, ${a.toFixed(3)})`;
+      ctx.stroke();
+    }
+
+    // 波源中心准星点
+    [[s1x, s1y, '#0f172a'], [s2x, s2y, '#2563eb']].forEach(([x, y, col]) => {
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.stroke();
+    });
+  }
+
+  // ==================== 新方案 I：长虹压花玻璃幕墙光带 ====================
+  function drawI(t) {
+    if (state.scheme !== 'i' || !W) return;
+    const ctx = ctxs.i;
+    ctx.fillStyle = '#0c1629';
+    ctx.fillRect(0, 0, W, H);
+
+    // 背后柔和流动的建筑极光色柱（会被上层长虹压花玻璃折射成高级条纹光！）
+    const blobs = [
+      { x: 0.18 + Math.sin(t * 0.00035) * 0.08 + (ptr.x - 0.5) * 0.14, y: 0.35, rx: 0.24, ry: 0.72, c: 'rgba(37, 99, 235, 0.78)' },
+      { x: 0.42 + Math.cos(t * 0.00028) * 0.10 + (ptr.x - 0.5) * 0.18, y: 0.58, rx: 0.22, ry: 0.68, c: 'rgba(14, 165, 233, 0.72)' },
+      { x: 0.60 + Math.sin(t * 0.00022 + 2) * 0.08, y: 0.26, rx: 0.18, ry: 0.58, c: 'rgba(56, 189, 248, 0.52)' },
+      { x: 0.28 + Math.cos(t * 0.0002 + 1) * 0.07, y: 0.80, rx: 0.20, ry: 0.45, c: 'rgba(245, 158, 11, 0.32)' },
+    ];
+    blobs.forEach((b) => {
+      const gx = b.x * W, gy = b.y * H, r = Math.max(W * b.rx, H * b.ry);
+      const g = ctx.createRadialGradient(gx, gy, 10, gx, gy, r);
+      g.addColorStop(0, b.c);
+      g.addColorStop(1, 'rgba(12, 22, 41, 0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+    });
+  }
+
+  // ==================== 新方案 J：航空精密地平仪 HUD ====================
+  function drawJ(t) {
+    if (state.scheme !== 'j' || !W) return;
+    const ctx = ctxs.j;
+    ctx.fillStyle = '#0b110f';
+    ctx.fillRect(0, 0, W, H);
+
+    const cx = W * 0.34;
+    const cy = H * 0.50;
+    const roll = (ptr.x - 0.5) * 0.36;
+    const pitchPx = (0.5 - ptr.y) * 95;
+    const r = Math.min(W, H) * 0.34;
+
+    // 微弱翡翠氛围光
+    const glow = ctx.createRadialGradient(cx, cy, 10, cx, cy, r * 1.45);
+    glow.addColorStop(0, 'rgba(16, 185, 129, 0.13)');
+    glow.addColorStop(0.6, 'rgba(16, 185, 129, 0.03)');
+    glow.addColorStop(1, 'rgba(11, 17, 15, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+
+    // 顶部航向罗盘带
+    const tapeY = 74;
+    ctx.strokeStyle = 'rgba(110, 231, 183, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - 210, tapeY); ctx.lineTo(cx + 210, tapeY); ctx.stroke();
+    const shift = (ptr.x - 0.5) * 140;
+    for (let i = -14; i <= 14; i++) {
+      const x = cx + i * 16 - (shift % 16);
+      if (x < cx - 208 || x > cx + 208) continue;
+      const major = i % 3 === 0;
+      ctx.beginPath(); ctx.moveTo(x, tapeY); ctx.lineTo(x, tapeY - (major ? 10 : 5));
+      ctx.strokeStyle = major ? 'rgba(52, 211, 153, 0.5)' : 'rgba(110, 231, 183, 0.22)';
+      ctx.stroke();
+    }
+
+    // 外圈圆盘 + 俯仰滚转地平线
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(110, 231, 183, 0.22)'; ctx.lineWidth = 1.1; ctx.stroke();
+    ctx.clip();
+
+    ctx.save();
+    ctx.translate(cx, cy + pitchPx);
+    ctx.rotate(roll);
+
+    // 地平线下半部极暗微色调
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.045)';
+    ctx.fillRect(-r * 2, 0, r * 4, r * 2);
+
+    // 主人工地平线
+    ctx.beginPath(); ctx.moveTo(-r * 1.4, 0); ctx.lineTo(r * 1.4, 0);
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.55)'; ctx.lineWidth = 1.4; ctx.stroke();
+
+    // 俯仰角阶梯标尺（Pitch Ladder）
+    for (let p = -5; p <= 5; p++) {
+      if (p === 0) continue;
+      const py = p * 34;
+      const w = p % 2 === 0 ? 58 : 30;
+      ctx.strokeStyle = p < 0 ? 'rgba(110, 231, 183, 0.34)' : 'rgba(245, 158, 11, 0.34)';
+      ctx.lineWidth = 1;
+      if (p > 0) ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(-w, py); ctx.lineTo(-14, py);
+      ctx.moveTo(14, py); ctx.lineTo(w, py);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+    ctx.restore();
+
+    // 中心固定机头准星（琥珀金点睛）
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(cx - 28, cy); ctx.lineTo(cx - 8, cy); ctx.lineTo(cx - 8, cy + 6);
+    ctx.moveTo(cx + 28, cy); ctx.lineTo(cx + 8, cy); ctx.lineTo(cx + 8, cy + 6);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, Math.PI * 2); ctx.fillStyle = '#f59e0b'; ctx.fill();
+  }
+
+  // ==================== 方案 A 剧本动画 ====================
+  const aScenarios = [
+    { id: 'TRACE #NZ-8419', latency: '1.42s', prompt: '分析 Q4 华东区毛利率下滑原因，并结合上月复盘文档给出 3 条可执行建议', nodes: [['意图路由', 'Router · 拆解 2 路子任务'], ['ChatBI 查数', 'Doris · 华东区毛利下钻'], ['知识库 RAG', '检索 10 月经营复盘纪要'], ['归因简报', '汇总图表 · RBAC 脱敏']], summary: '已定位 2 家重点大客户折扣上浮（-2.4pt）与冷链履约成本上升（-0.9pt），生成调价清单。', metric: '3 Tools · 18,420 rows' },
+    { id: 'TRACE #NZ-9104', latency: '1.86s', prompt: '排查支付回调服务近 15 分钟 P99 延迟突增，定位变更单并草拟告警通报', nodes: [['根因调度', 'Router · 并发诊断链路'], ['MCP · 监控日志', 'Prometheus + Trace 拉取'], ['MCP · 发布记录', '检索近 2h 变更与回滚项'], ['处置预案', '定位慢 SQL · 草拟通报']], summary: '已锁定 07:52 索引变更导致回表扫描，P99 升至 1.8s，建议立即执行回滚方案 B。', metric: '4 MCP Calls · 0 人工干预' },
+    { id: 'TRACE #NZ-7731', latency: '1.15s', prompt: '核对《华南渠道返利协议 v3》与最新财务内控条款，标出全部高风险差异', nodes: [['合规路由', 'Router · 条款切片比对'], ['知识库 RAG', '命中内控手册 V2026.2'], ['条款校验器', '逐项核对账期与上限'], ['风险批注', '输出 4 处红线修订稿']], summary: '发现第 4.2 条季度返利封顶比例超出财务红线 1.5%，已附法务修订措辞与依据出处。', metric: '12 Clauses · 引用可溯源' },
+  ];
+  let aIdx = 0, aStep = 0, aTimer = null;
+  function animateBeam(id) {
+    const el = document.getElementById(id); if (!el) return;
+    el.style.transition = 'none'; el.style.strokeDashoffset = '256'; el.getBoundingClientRect();
+    el.style.transition = 'stroke-dashoffset 0.9s cubic-bezier(0.22, 1, 0.36, 1)'; el.style.strokeDashoffset = '-40';
+  }
+  function runAStep() {
+    const nodes = [0, 1, 2, 3].map((i) => document.getElementById('aNode' + i));
+    nodes.forEach((n) => n.classList.remove('lit', 'done'));
+    const st = document.getElementById('aTraceStatus'), sp = document.getElementById('aPromptStep');
+    if (aStep === 0) { nodes[0].classList.add('lit'); st.textContent = 'ROUTING'; sp.textContent = '阶段 1/4 · 意图拆解'; }
+    else if (aStep === 1) { nodes[0].classList.add('done'); nodes[1].classList.add('lit'); nodes[2].classList.add('lit'); animateBeam('beam-1'); animateBeam('beam-2'); st.textContent = 'PARALLEL'; sp.textContent = '阶段 2/4 · 并发调用工具'; }
+    else if (aStep === 2) { nodes[0].classList.add('done'); nodes[1].classList.add('done'); nodes[2].classList.add('done'); nodes[3].classList.add('lit'); animateBeam('beam-3'); animateBeam('beam-4'); st.textContent = 'SYNTHESIS'; sp.textContent = '阶段 3/4 · 归因合成'; }
+    else { nodes.forEach((n) => n.classList.add('done')); st.textContent = 'VERIFIED'; sp.textContent = '阶段 4/4 · 交付就绪'; }
+  }
+  function applyAScenario(idx) {
+    aIdx = idx; const sc = aScenarios[idx];
+    document.querySelectorAll('#aScenarioTabs .a-scenario-btn').forEach((b, i) => b.classList.toggle('active', i === idx));
+    document.getElementById('aTraceId').textContent = sc.id; document.getElementById('aLatency').textContent = sc.latency;
+    document.getElementById('aPromptText').textContent = sc.prompt;
+    for (let i = 0; i < 4; i++) { document.getElementById(`aN${i}Name`).textContent = sc.nodes[i][0]; document.getElementById(`aN${i}Sub`).textContent = sc.nodes[i][1]; }
+    document.getElementById('aTraceSummary').textContent = sc.summary; document.getElementById('aTraceMetric').textContent = sc.metric;
+    aStep = 0; runAStep(); clearInterval(aTimer);
+    aTimer = setInterval(() => { if (state.scheme !== 'a') return; aStep++; if (aStep > 5) applyAScenario((aIdx + 1) % aScenarios.length); else runAStep(); }, 1150);
+  }
+  document.querySelectorAll('#aScenarioTabs .a-scenario-btn').forEach((b) => b.addEventListener('click', () => applyAScenario(Number(b.dataset.idx))));
+
+  const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function raf(t) {
+    ptr.x += (ptr.tx - ptr.x) * 0.045;
+    ptr.y += (ptr.ty - ptr.y) * 0.045;
+    const time = prefersReduced ? 0 : t;
+    drawF1(time); drawF2(time); drawF3(time); drawF4(time);
+    drawG(time); drawH(time); drawI(time); drawJ(time);
+    requestAnimationFrame(raf);
+  }
+  window.addEventListener('resize', resizeAll);
+
+  renderAllForms();
+  applyF3Sat(0);
+  applyAScenario(0);
+  setScheme('g'); // 刷新后直接默认定位到新增的方案 G，方便用户第一时间看新方案
+  resizeAll();
+  requestAnimationFrame(raf);
+})();
+</script>
+</body>
+</html>

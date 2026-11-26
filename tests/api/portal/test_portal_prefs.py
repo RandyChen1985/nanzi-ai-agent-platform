@@ -644,6 +644,77 @@ def test_ui_mode_model_rejects_unknown_value():
         portal_prefs.UiModeUpdate(ui_mode="developer")
 
 
+@pytest.mark.asyncio
+async def test_get_portal_prefs_defaults_login_theme_to_f1(monkeypatch):
+    redis = FakeRedis()
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    result = await portal_prefs.get_portal_prefs(user_info(), db=None)
+
+    assert result["data"]["login_theme"] == "f1"
+
+
+@pytest.mark.asyncio
+async def test_get_portal_prefs_sanitizes_invalid_login_theme(monkeypatch):
+    redis = FakeRedis(json.dumps({"login_theme": "unknown-theme"}))
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    result = await portal_prefs.get_portal_prefs(user_info(), db=None)
+
+    assert result["data"]["login_theme"] == "f1"
+
+
+@pytest.mark.asyncio
+async def test_get_portal_prefs_tolerates_null_login_theme_without_dropping_other_fields(monkeypatch):
+    redis = FakeRedis(json.dumps({"login_theme": None, "ui_mode": "pro", "markdown_theme": "academic"}))
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    result = await portal_prefs.get_portal_prefs(user_info(), db=None)
+
+    assert result["data"]["login_theme"] == "f1"
+    assert result["data"]["ui_mode"] == "pro"
+    assert result["data"]["markdown_theme"] == "academic"
+
+
+@pytest.mark.asyncio
+async def test_update_login_theme_persists_to_redis_and_preserves_other_fields(monkeypatch):
+    redis = FakeRedis(json.dumps({"ui_mode": "pro", "markdown_theme": "academic"}))
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    result = await portal_prefs.update_login_theme(
+        portal_prefs.LoginThemeUpdate(login_theme="j"),
+        user_info(),
+    )
+
+    saved = json.loads(redis.saved)
+    assert result["data"] == {"login_theme": "j"}
+    assert saved["login_theme"] == "j"
+    assert saved["ui_mode"] == "pro"
+    assert saved["markdown_theme"] == "academic"
+
+
+@pytest.mark.asyncio
+async def test_legacy_full_preference_update_does_not_wipe_login_theme(monkeypatch):
+    redis = FakeRedis(json.dumps({"login_theme": "g", "markdown_theme": "academic"}))
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    await portal_prefs.update_portal_prefs(
+        portal_prefs.PortalPrefsUpdate(markdown_theme="minimal"),
+        user_info(),
+    )
+
+    saved = json.loads(redis.saved)
+    assert saved["login_theme"] == "g"
+    assert saved["markdown_theme"] == "minimal"
+
+
+def test_login_theme_model_accepts_all_8_themes_and_rejects_unknown():
+    for theme in ("f1", "f2", "f3", "f4", "g", "h", "i", "j"):
+        assert portal_prefs.LoginThemeUpdate(login_theme=theme).login_theme == theme
+    with pytest.raises(ValidationError):
+        portal_prefs.LoginThemeUpdate(login_theme="a")
+
+
 async def _resolved(value):
     return value
 
