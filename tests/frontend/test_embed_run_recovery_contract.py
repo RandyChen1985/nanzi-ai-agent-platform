@@ -619,8 +619,41 @@ def test_repeated_identical_question_still_converges_its_own_new_record():
 
 
 def test_embed_chat_synced_cleanup_requires_the_answer_after_the_last_user():
-    """已同步收尾也必须校验位置：重复提问时上一轮的答案不能触发本轮收尾。"""
+    """已同步收尾也必须校验位置与非挂起态：重复提问旧答或挂起态留痕都不能触发本轮收尾。"""
     source = _embed_source()
     assert "const latestSyncedIndex =" in source
     assert "latestSyncedIndex > lastLocalUserIndex" in source
-    assert "if (latestSyncedIndex !== -1 && isLatestTurn)" in source
+    assert "!isSuspendedHistoryStatus(latestServerItem?.status)" in source
+
+
+@pytest.mark.parametrize(
+    "suspended_status",
+    ["awaiting_permission", "awaiting_external_execution"],
+)
+def test_suspended_resumable_history_does_not_overwrite_or_settle_local_pending_turn(
+    suspended_status: str,
+):
+    """挂起轮当场落库后，恢复同步拉回挂起态记录不得当成终态覆盖或清掉本地审批草稿。"""
+    local_messages = [
+        {"role": "user", "trace_id": "t-perm", "content": "执行操作"},
+        {"role": "agent", "trace_id": "t-perm", "content": "", "isThinking": False},
+    ]
+    suspended_record = {
+        "trace_id": "t-perm",
+        "query": "执行操作",
+        "summary": "准备执行工具",
+        "process_timeline": [{"kind": "log", "id": "p1", "status": "pending"}],
+        "status": suspended_status,
+    }
+    assert _plan(local_messages, suspended_record, {"hasUnsettledDraft": True}) == {
+        "kind": "ignore"
+    }
+    assert _plan(local_messages, suspended_record, {"hasUnsettledDraft": False}) == {
+        "kind": "ignore"
+    }
+    # 真正终态（success）到达后必须正常 update 收敛。
+    settled_record = {**suspended_record, "status": "success", "summary": "执行完成"}
+    assert _plan(local_messages, settled_record, {"hasUnsettledDraft": True}) == {
+        "kind": "update",
+        "index": 1,
+    }

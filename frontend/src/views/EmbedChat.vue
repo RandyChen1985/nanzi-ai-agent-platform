@@ -2697,7 +2697,7 @@ import { shouldStartConversationHistoryLoad } from "@/utils/conversationHistoryR
 import { FIRST_SCREEN_SKELETON_TIMEOUT_MS, shouldStartThreadSkeleton, threadSkeletonRemainingVisibleMs } from "@/utils/embedFirstScreen";
 import { isApiSuccess } from "@/utils/apiEnvelope";
 import { isSkillForbidden } from "@/utils/skillForbidden";
-import { planHistorySync, shouldKeepRecoverySync } from "@/utils/runRecoverySync";
+import { isSuspendedHistoryStatus, planHistorySync, shouldKeepRecoverySync } from "@/utils/runRecoverySync";
 import { computePinnedDrawerLayout } from "@/utils/pinnedDrawerLayout";
 import { planRecoveryCard, type RecoveryCardState } from "@/utils/recoveryCard";
 import {
@@ -3222,6 +3222,8 @@ interface Message {
   completion_tokens?: number;
   total_tokens?: number;
   feedback?: "up" | "down" | null;
+  /** 历史接口或终态事件回传的轮次状态（用于区分可恢复挂起态与真正终态）。 */
+  status?: string;
   timestamp?: string;
   isTimeLabel?: boolean;
   pendingPermission?: PendingToolPermission;
@@ -6475,12 +6477,80 @@ const restoreEmbedStreamSnapshot = async (expectedGeneration?: number) => {
     }
 
     const traceId = String(snapshot.traceId || "").trim();
-    const terminalAlreadyVisible = traceId
-      ? messages.value.some(message => message.role === "agent" && message.trace_id === traceId)
-      : false;
-    if (terminalAlreadyVisible) {
-      // 落库终态已经在界面上，草稿没有价值。
-      clearStreamSnapshot(cid);
+    const existingAgent = traceId
+      ? messages.value.find(message => message.role === "agent" && message.trace_id === traceId)
+      : undefined;
+    if (existingAgent) {
+      const existingSuspended = isSuspendedHistoryStatus(existingAgent.status);
+      const snapshotHasResumableCard = Boolean(
+        snapshot.draft?.pendingPermission
+        || snapshot.draft?.pendingExternalExecution
+        || snapshot.resumeOwned === true,
+      );
+      if (!existingSuspended || !snapshotHasResumableCard) {
+        // 落库终态已经在界面上（或已无待恢复卡片/恢复流草稿），草稿没有价值。
+        clearStreamSnapshot(cid);
+        return;
+      }
+      // 挂起轮（awaiting_permission / awaiting_external_execution）会当场落库以防放弃后
+      // 丢历史，刷新时首屏历史会先渲染出同 trace_id 的挂起消息（不含可点审批卡）。此时
+      // 不能清掉快照，应原地把待确认卡片与恢复流增量挂回该条消息，既无重复气泡、又保留
+      // 继续审批与断线恢复能力。
+      existingAgent.isHistory = false;
+      if (snapshot.draft?.pendingPermission && !existingAgent.pendingPermission) {
+        existingAgent.pendingPermission =
+          snapshot.draft.pendingPermission as unknown as Message["pendingPermission"];
+      }
+      if (snapshot.draft?.pendingExternalExecution && !existingAgent.pendingExternalExecution) {
+        existingAgent.pendingExternalExecution =
+          snapshot.draft.pendingExternalExecution as unknown as Message["pendingExternalExecution"];
+      }
+      if (snapshot.resumeOwned === true) {
+        if (
+          snapshot.draft?.content
+          && snapshot.draft.content.length > String(existingAgent.content || "").length
+        ) {
+          existingAgent.content = snapshot.draft.content;
+        }
+        if (
+          snapshot.draft?.reasoningContent
+          && snapshot.draft.reasoningContent.length > String(existingAgent.reasoningContent || "").length
+        ) {
+          existingAgent.reasoningContent = snapshot.draft.reasoningContent;
+        }
+        if (
+          Array.isArray(snapshot.draft?.processTimeline)
+          && snapshot.draft.processTimeline.length > (existingAgent.processTimeline?.length || 0)
+        ) {
+          existingAgent.processTimeline =
+            snapshot.draft.processTimeline as Message["processTimeline"];
+        }
+        if (remoteRunActive.value) {
+          stopPendingReviveWatch?.();
+          stopPendingReviveWatch = watch(() => remoteRunActive.value, (active) => {
+            if (active) return;
+            stopPendingReviveWatch?.();
+            stopPendingReviveWatch = null;
+            reviveInterruptedResumeCards(existingAgent);
+          });
+        } else {
+          reviveInterruptedResumeCards(existingAgent);
+        }
+        activeStreamDraft = {
+          conversationId: cid,
+          msg: existingAgent,
+          lastAppliedSeq: Number(snapshot.lastSeq || 0) || 0,
+          resumeOwned: true,
+        };
+        recoveryGraceExpired.value = false;
+        refreshRecoveryCard();
+        streamReplayCursor.value = {
+          lastSeq: Number(snapshot.lastSeq || 0) || 0,
+          traceId: String(snapshot.traceId || ""),
+        };
+      }
+      await nextTick();
+      scrollToBottom(true);
       return;
     }
 
@@ -11224,6 +11294,7 @@ const fetchConversationHistory = async (
                   logs: [],
                   isThinking: false,
                   feedback: null,
+                  status: item.status ?? undefined,
                   timestamp: item.created_at
               });
           }
@@ -11256,6 +11327,7 @@ const fetchConversationHistory = async (
                   logs: [],
                   isThinking: false,
                   feedback: null,
+                  status: item.status ?? undefined,
                   agentName: item.agent_name ?? undefined,
                   agentDisplayName: item.agent_display_name || (String(item.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
                   agentType: item.agent_type ?? undefined,
@@ -12965,7 +13037,7 @@ const confirmPendingPermission = async (
   // 与外部执行恢复同理：这段恢复流独占写这条消息（暂不与事件续显混写）。先让续显让位，
   // 再把自己标记为「流在途」，恢复器在此期间不会补占位或启动续显。
   stopReplayForLiveStream();
-  // 取消上一轮残留的历史同步轮询与 run-status 助推（awaiting_permission 不落库会让旧轮询
+  // 取消上一轮残留的历史同步轮询与 run-status 助推（挂起态历史不代表终态，旧轮询可能
   // 走到重试耗尽兜底），停止可能仍在跑的主流看门狗，并同步声明后端恢复运行锁已开始。
   stopStreamLivenessWatch();
   cancelPendingHistorySync();
@@ -14637,6 +14709,7 @@ onMounted(() => {
               );
             }
             currentMsg.citations = latestServerItem.citations ?? currentMsg.citations;
+            if (latestServerItem.status) currentMsg.status = latestServerItem.status;
             currentMsg.isThinking = false;
             // 流中断时占位消息拿不到智能体元数据，恢复同步时补齐。
             if (!currentMsg.agentName) {
@@ -14674,6 +14747,7 @@ onMounted(() => {
             logs: [],
             isThinking: false,
             feedback: null,
+            status: latestServerItem.status ?? undefined,
             agentName: latestServerItem.agent_name ?? undefined,
             agentDisplayName: latestServerItem.agent_display_name || (String(latestServerItem.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
             agentType: latestServerItem.agent_type ?? undefined,
@@ -14732,7 +14806,11 @@ onMounted(() => {
           Boolean(latestServerItem?.query) &&
           Boolean(lastLocalUser) &&
           String(lastLocalUser?.content || "") === String(latestServerItem.query || "");
-        if (latestSyncedIndex !== -1 && isLatestTurn) {
+        if (
+          latestSyncedIndex !== -1 &&
+          isLatestTurn &&
+          !isSuspendedHistoryStatus(latestServerItem?.status)
+        ) {
           if (activeStreamDraft) {
             finishRecoveredTurn();
           } else {

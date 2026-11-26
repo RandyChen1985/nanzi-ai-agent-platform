@@ -256,12 +256,22 @@ class AgentScopeResumeHandler:
                 # 持锁复核后、重建重型 runner 前先发回执，避免首字节在装配工具与上下文阶段干等。
                 yield initial_chunk
 
+                reused_in_process_runner = getattr(pending, "runner", None) is not None
                 runner = cls.build_agentscope_runner_from_pending(pending, user_info=user_info)
                 await cls.restore_runner_execution_context(
                     agent_service,
                     runner,
                     pending,
                     user_info=user_info,
+                )
+                # 同进程恢复复用了原 runner，其 trace_buffer 保留了挂起轮已落库的前半段步骤：
+                # 记下基线长度，收尾时只把恢复阶段新增切片写入 trace 表（Token 仍按全量聚合）；
+                # 跨进程恢复新建了空 trace_buffer，只含后半段，需在 upsert 历史时累加前序 Token
+                # 并顺延 trace step_number。耗时在两种模式下都是本恢复阶段的增量，统一累加。
+                prior_trace_count = (
+                    len(getattr(runner, "trace_buffer", None) or [])
+                    if reused_in_process_runner
+                    else 0
                 )
                 execution_results = (
                     cls.build_external_execution_results(results or [])
@@ -331,6 +341,11 @@ class AgentScopeResumeHandler:
                             await persist_coro
 
                     duration = (asyncio.get_running_loop().time() - start_time) * 1000
+                    incremental_traces = (
+                        list(trace_buffer[prior_trace_count:])
+                        if (reused_in_process_runner and trace_buffer)
+                        else trace_buffer
+                    )
                     audit_coro = AuditManager.log_transaction(
                         pending.trace_id,
                         agent_config,
@@ -343,6 +358,11 @@ class AgentScopeResumeHandler:
                         conversation_id=conversation_id,
                         reasoning_content=final_reasoning or None,
                         process_timeline=final_timeline,
+                        trace_logs_to_save=incremental_traces,
+                        accumulate_tokens=not reused_in_process_runner,
+                        accumulate_duration=True,
+                        dedup_trace_logs=True,
+                        offset_trace_steps=not reused_in_process_runner,
                     )
                     if cancelling:
                         # 同上传工厂；返回的是 Optional[bool]，不能当二元组解包。

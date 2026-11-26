@@ -21,16 +21,13 @@ AWAITING_RESUME_STATUSES = {
     "awaiting_user",
 }
 
-# 其中真正具备「同轮恢复」语义、由恢复轮补写审计的状态。
-# awaiting_user 刻意不在此列：主动提问（ask_user_question）的恢复方式是用户下一条
-# 消息开启全新轮次（新 trace_id），本轮永远不会再有收尾机会；若在此处跳过，
-# ai_agent_execution_traces / ai_agent_execution_history 将永久缺少这一轮，
-# 导致历史会话列表与历史消息都无法回放该提问。
-AUDIT_DEFERRED_STATUSES = {
-    "interrupted",
-    "awaiting_permission",
-    "awaiting_external_execution",
-}
+# 延后至恢复轮再写审计的状态集合。
+# AuditManager.save_history 已改为按 trace_id 幂等 upsert，save_trace_logs 也支持增量
+# 追加与防重：因此 awaiting_permission / awaiting_external_execution（以及 interrupted）
+# 不再延后，而是在挂起当下即写入历史与前半段 trace；恢复轮随后按同一 trace_id 更新终态
+# 并合并前后半段内容与指标。这样用户若放弃审批/直接离开/另发新消息，该轮历史也不会凭空消失。
+# 保留空集合常量以维持外部导入兼容性。
+AUDIT_DEFERRED_STATUSES: set[str] = set()
 
 # 原版（重构前）在 chat_completion_stream 外层早退、根本没有任何终结产物的状态。
 # 恢复原行为：这些短路态不应产生 run_status 事件，也不应产生审计记录。

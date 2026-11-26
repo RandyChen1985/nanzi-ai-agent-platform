@@ -152,3 +152,129 @@ def test_resume_flow_wires_prior_snapshot_merge_before_persist_and_audit():
     assert "final_reasoning=merged_reasoning_content" in source
     assert "content=final_content" in source
     assert "reasoning_content=final_reasoning or None" in source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reused_in_process", [True, False])
+async def test_resume_flow_passes_upsert_trace_slice_and_metric_flags(
+    monkeypatch, reused_in_process: bool
+):
+    """同进程恢复只落新增 trace 且覆盖全量 Token；跨进程恢复累加 Token 并顺延 step_number。"""
+    from contextlib import asynccontextmanager
+    from datetime import datetime
+    from unittest.mock import AsyncMock
+
+    from app.schemas.agent import AgentExecutionStep
+    from app.services.ai.runtime.agentscope import resume as resume_module
+    from app.services.ai.runtime.agentscope.confirmations import (
+        pending_agentscope_confirmations,
+    )
+
+    prior_step = AgentExecutionStep(
+        step_number=1,
+        event_type="model_call",
+        prompt_tokens=100,
+        completion_tokens=20,
+        total_tokens=120,
+        span_id="span-prior",
+        timestamp=datetime.now(),
+    )
+    new_step = AgentExecutionStep(
+        step_number=2 if reused_in_process else 1,
+        event_type="model_call",
+        prompt_tokens=60,
+        completion_tokens=15,
+        total_tokens=75,
+        span_id="span-resume",
+        timestamp=datetime.now(),
+    )
+
+    class _FakeRunner:
+        def __init__(self):
+            self.conversation_id = "conv-resume-1"
+            self.config = SimpleNamespace(
+                agent_id="a1",
+                agent_name="ops",
+                agent_version="v1",
+                model_name="m1",
+            )
+            self.trace_buffer = [prior_step] if reused_in_process else []
+
+        async def resume_agentscope_native_confirmation(self, pending, *, confirmed):
+            self.trace_buffer.append(new_step)
+            yield {"content": "恢复完成"}
+
+    runner = _FakeRunner()
+    pending = SimpleNamespace(
+        request_id="req-upsert-1",
+        trace_id="trace-upsert-resume-1",
+        user_id="u1",
+        runner=runner if reused_in_process else None,
+        tool_call=SimpleNamespace(id="call_1", name="web_fetch"),
+        state={"user_query": "帮我处理"},
+        snapshot=SimpleNamespace(
+            kind="permission",
+            conversation_id="conv-resume-1",
+            delegation={},
+            runner_context={},
+        ),
+    )
+
+    @asynccontextmanager
+    async def _noop_cm(*_args, **_kwargs):
+        yield SimpleNamespace(cancelled=False)
+
+    captured_kwargs = {}
+
+    async def _fake_log_transaction(*args, **kwargs):
+        captured_kwargs["args"] = args
+        captured_kwargs["kwargs"] = kwargs
+        return True
+
+    monkeypatch.setattr(resume_module.conversation_run_lane, "hold", _noop_cm)
+    monkeypatch.setattr(resume_module, "track_conversation_run", _noop_cm)
+    monkeypatch.setattr(
+        pending_agentscope_confirmations, "peek_async", AsyncMock(return_value=pending)
+    )
+    monkeypatch.setattr(
+        pending_agentscope_confirmations, "pop_async", AsyncMock(return_value=pending)
+    )
+    monkeypatch.setattr(
+        AgentScopeResumeHandler,
+        "build_agentscope_runner_from_pending",
+        classmethod(lambda cls, p, **kw: runner),
+    )
+    monkeypatch.setattr(
+        AgentScopeResumeHandler,
+        "restore_runner_execution_context",
+        classmethod(AsyncMock()),
+    )
+    monkeypatch.setattr(
+        AgentScopeResumeHandler,
+        "_merge_prior_turn_snapshot",
+        classmethod(
+            AsyncMock(return_value=([], None, "恢复完成"))
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.agent_service._should_persist_turn_history",
+        lambda *a, **k: False,
+    )
+    monkeypatch.setattr(resume_module.AuditManager, "log_transaction", _fake_log_transaction)
+
+    _ = [
+        chunk
+        async for chunk in AgentScopeResumeHandler.resume_permission_stream(
+            SimpleNamespace(_quota_block_message=AsyncMock(return_value=None)),
+            permission_request_id="req-upsert-1",
+            confirmed=True,
+            user_info={"user_id": "u1"},
+        )
+    ]
+
+    kwargs = captured_kwargs["kwargs"]
+    assert [s.span_id for s in kwargs["trace_logs_to_save"]] == ["span-resume"]
+    assert kwargs["accumulate_duration"] is True
+    assert kwargs["dedup_trace_logs"] is True
+    assert kwargs["accumulate_tokens"] is (not reused_in_process)
+    assert kwargs["offset_trace_steps"] is (not reused_in_process)
