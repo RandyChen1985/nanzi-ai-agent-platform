@@ -86,12 +86,14 @@ def test_service_rejects_unknown_login_type_before_requesting():
 
 
 def test_login_page_honours_method_switches():
-    """被关掉的方式要在页面上置灰 + 标「禁用」，而不是只靠后端拒绝。"""
+    """被关掉的方式不渲染；只剩一种时连切换器都不出现（不是置灰）。"""
     source = _read(LOGIN_VUE)
 
     assert "sso_login_enabled_types" in source
-    assert ':disabled="!isSsoTypeEnabled(opt.value)"' in source
-    assert "禁用" in source
+    assert "const enabledSsoTypeOptions = computed(" in source
+    assert 'v-for="opt in enabledSsoTypeOptions"' in source
+    # 只剩一种可用凭据方式 → 整块切换器隐藏，当前用的是哪一种由下方提示语说明
+    assert "activeTab === 'sso' && enabledSsoTypeOptions.length > 1" in source
 
 
 def test_all_methods_off_disables_the_whole_form():

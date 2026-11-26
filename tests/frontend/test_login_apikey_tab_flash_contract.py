@@ -21,6 +21,8 @@
 3. 回退判定只能看「配置是否真的拿到」，不能用 `catch` 兜底：`fetchPublicConfig` 里
    时区动态导入等后续步骤失败也会落到 `catch`，那会把已读到的 `true` 覆盖成 `false`，
    该藏的 Tab 又放出来。
+4. 只剩一种登录方式时整条 Tab 切换器不渲染：一个选项的 Tab 条既占高度又暗示「可以选」，
+   实际点不动也切不了，纯噪音。
 """
 
 import re
@@ -52,7 +54,21 @@ def test_tab_strip_filters_by_the_flag():
     """Tab 渲染必须以该标志过滤，而不是无条件渲染。"""
     source = _normalized()
 
-    assert "(t.id !== 'apikey' || !hideLoginApiKey)" in source
+    assert "(t.id !== 'apikey' || !hideLoginApiKey.value)" in source
+    assert "const loginTabs = computed(" in source
+
+
+def test_tab_strip_is_hidden_when_only_one_method_is_available():
+    """只剩一种登录方式时不渲染切换器。
+
+    典型场景：部署关掉了 SSO、也隐藏了 API Key，页面只有「本地账号」——此时一个
+    只有一枚按钮的 Tab 条既占高度又暗示「可以选」，应当整条去掉，表单直接落到该方式。
+    """
+    source = _normalized()
+
+    assert 'v-if="!isTwoFactorStep && !isRegisterStep && loginTabs.length > 1"' in source
+    # 副标题不能再说「选择认证方式」——此时没得选
+    assert "loginTabs.value.length === 1" in source
 
 
 def test_missing_public_config_falls_back_to_showing_api_key():

@@ -174,6 +174,11 @@ const ssoEnabledTypes = ref<string[]>(SSO_LOGIN_TYPE_OPTIONS.map((o) => o.value)
 const isSsoTypeEnabled = (value: string) => ssoEnabledTypes.value.includes(value)
 // 两种方式都被关掉 = 这个部署不提供 SSO 登录：输入框和提交按钮整体禁用
 const ssoAvailable = computed(() => ssoEnabledTypes.value.length > 0)
+// 后台实际允许的凭据方式。只有一种可用时不必让用户选——一个选项的切换器只是噪音，
+// 直接用该方式登录即可（提示文案仍会说明用的是域账号还是本地密码）。
+const enabledSsoTypeOptions = computed(() =>
+    SSO_LOGIN_TYPE_OPTIONS.filter((o) => isSsoTypeEnabled(o.value)),
+)
 
 const DEFAULT_LOGIN_BRAND_NAME = 'NanZi · 智能体平台'
 const DEFAULT_LOGIN_SUBTITLE = 'Your Intelligent Agent Platform'
@@ -293,6 +298,26 @@ const handleTwoFactorLogin = async () => {
  * 是 Tab 稍后出现（不刺眼），配置没拿到时由 fetchPublicConfig 的 finally 回退为显示。
  */
 const hideLoginApiKey = ref(true)
+
+/**
+ * 实际可用的登录方式页签。
+ *
+ * 三种方式里只有「本地账号」恒定可用：SSO 受 `yovole_sso_enabled` 与品牌 `hide_login_sso`
+ * 双重约束，API Key 受 `hide_login_apikey` 约束。只剩一种时整条切换器不渲染——一个选项的
+ * Tab 条既占高度又暗示「可以选」，实际点不动也切不了，纯噪音。
+ */
+const LOGIN_TAB_OPTIONS = [
+    { id: 'sso', name: 'SSO 登录' },
+    { id: 'password', name: '本地账号' },
+    { id: 'apikey', name: 'API Key' },
+] as const
+const loginTabs = computed(() =>
+    LOGIN_TAB_OPTIONS.filter(
+        (t) =>
+            (t.id !== 'sso' || (ssoEnabled.value && showSsoFromBranding.value))
+            && (t.id !== 'apikey' || !hideLoginApiKey.value),
+    ),
+)
 
 // ---------------------------------------------------------------------------
 // 账号自主注册申请
@@ -528,6 +553,12 @@ const panelSubtitle = computed(() => {
         return registerSuccess.value
             ? '管理员审核通过后即可使用该账号登录'
             : '填写信息提交注册申请，需管理员审核通过后才能登录'
+    }
+    // 只有一种登录方式时切换器不渲染，副标题再让用户「选择」就自相矛盾了
+    if (loginTabs.value.length === 1) {
+        return loginTabs.value[0].id === 'password'
+            ? '使用本地账号进入智能体平台'
+            : `使用 ${loginTabs.value[0].name} 进入智能体平台`
     }
     return '选择认证方式以进入智能体平台'
 })
@@ -957,13 +988,13 @@ const handleLogin = async () => {
                 </p>
               </div>
 
-              <!-- 常规登录 Tabs (仅在非 2FA、非注册阶段展示) -->
+              <!-- 常规登录 Tabs：仅在非 2FA、非注册阶段且有多种登录方式时展示 -->
               <div
-                v-if="!isTwoFactorStep && !isRegisterStep"
+                v-if="!isTwoFactorStep && !isRegisterStep && loginTabs.length > 1"
                 class="flex gap-1 rounded-xl bg-slate-900/[0.055] border border-slate-900/[0.07] p-1 mb-5 xl:mb-6"
               >
                 <button
-                  v-for="tab in [{id:'sso', name:'SSO 登录'}, {id:'password', name:'本地账号'}, {id:'apikey', name:'API Key'}].filter(t => (t.id !== 'sso' || (ssoEnabled && showSsoFromBranding)) && (t.id !== 'apikey' || !hideLoginApiKey))"
+                  v-for="tab in loginTabs"
                   :key="tab.id"
                   type="button"
                   @click="activeTab = tab.id as any"
@@ -978,28 +1009,20 @@ const handleLogin = async () => {
               <form v-if="!isTwoFactorStep && !isRegisterStep" @submit.prevent="handleLogin" class="space-y-4 xl:space-y-5">
                 <div class="space-y-4">
                   <div v-if="activeTab === 'password' || activeTab === 'sso'" class="space-y-4 animate-fade-slide-up">
-                    <!-- SSO 凭据方式切换 -->
-                    <div v-if="activeTab === 'sso'" class="space-y-1.5">
+                    <!-- SSO 凭据方式切换：后台只开了一种就不渲染（一个选项的切换器没意义），
+                         当前用的是域账号还是本地密码由下方提示语说明 -->
+                    <div v-if="activeTab === 'sso' && enabledSsoTypeOptions.length > 1" class="space-y-1.5">
                       <label class="text-xs font-semibold text-slate-700 ml-0.5">登录方式</label>
                       <div class="grid grid-cols-2 gap-1 rounded-lg bg-slate-900/[0.055] p-1">
                         <button
-                          v-for="opt in SSO_LOGIN_TYPE_OPTIONS"
+                          v-for="opt in enabledSsoTypeOptions"
                           :key="opt.value"
                           type="button"
-                          :disabled="!isSsoTypeEnabled(opt.value)"
-                          @click="isSsoTypeEnabled(opt.value) && (ssoLoginType = opt.value)"
-                          class="relative rounded-md px-3 py-1.5 text-xs font-semibold transition-all"
-                          :class="[
-                            !isSsoTypeEnabled(opt.value)
-                              ? 'cursor-not-allowed text-slate-400/70'
-                              : (ssoLoginType === opt.value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')
-                          ]"
+                          @click="ssoLoginType = opt.value"
+                          class="relative rounded-md px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer"
+                          :class="ssoLoginType === opt.value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
                         >
-                          <span :class="{ 'line-through decoration-slate-400': !isSsoTypeEnabled(opt.value) }">{{ opt.label }}</span>
-                          <span
-                            v-if="!isSsoTypeEnabled(opt.value)"
-                            class="ml-1 align-middle text-[9px] font-normal text-slate-400"
-                          >禁用</span>
+                          {{ opt.label }}
                         </button>
                       </div>
                     </div>
